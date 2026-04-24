@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proven C Library Architecture</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        code { font-family: 'JetBrains Mono', monospace; }
+        .tab-btn.active { color: #2563eb; border-bottom: 2px solid #2563eb; font-weight: 600; }
+        .tab-btn { color: #64748b; font-weight: 500; transition: all 0.2s; border-bottom: 2px solid transparent; }
+        .tab-btn:hover { color: #0f172a; }
+        .tab-content { display: none; animation: fadeIn 0.3s ease-in-out; }
+        .tab-content.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        /* SVG Architecture Styles */
+        .svg-text-title { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 14px; fill: #64748b; }
+        .svg-border-dashed { fill: none; stroke: #cbd5e1; stroke-width: 2; stroke-dasharray: 6 6; rx: 12; }
+        .svg-arrow { stroke: #94a3b8; stroke-width: 2; fill: none; }
+        .svg-arrow-head { fill: #94a3b8; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        
+        <!-- Header -->
+        <header class="mb-12 space-y-4">
+            <div class="flex items-center gap-3">
+                <div class="inline-flex items-center justify-center px-3 py-1 rounded-full bg-blue-100 text-blue-800 text-sm font-semibold tracking-wide">
+                    C23 / No-CRT Framework (v26.04.24)
+                </div>
+                <div class="inline-flex items-center justify-center px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-sm font-semibold tracking-wide flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    High Performance
+                </div>
+            </div>
+            <h1 class="text-4xl md:text-6xl font-bold tracking-tight text-slate-900">
+                <span class="text-blue-600">Proven</span> C Library
+            </h1>
+            <p class="text-lg text-slate-600 max-w-3xl">
+                An architecture and specification dashboard for the next-generation C library aiming for absolute platform independence, zero-cost interfaces, and perfect memory/thread control.
+            </p>
+        </header>
+
+        <!-- Dynamic Navigation Tabs -->
+        <nav class="flex overflow-x-auto border-b border-slate-200 mb-8 pb-px">
+            <button class="tab-btn active px-6 py-3 text-base whitespace-nowrap focus:outline-none" onclick="switchTab('arch')">Architecture & Overview</button>
+            <button class="tab-btn px-6 py-3 text-base whitespace-nowrap focus:outline-none" onclick="switchTab('concurrency')">Concurrency & Coroutines</button>
+            <button class="tab-btn px-6 py-3 text-base whitespace-nowrap focus:outline-none" onclick="switchTab('core')">Core Primitives</button>
+            <button class="tab-btn px-6 py-3 text-base whitespace-nowrap focus:outline-none" onclick="switchTab('structures')">Data Structures</button>
+            <button class="tab-btn px-6 py-3 text-base whitespace-nowrap focus:outline-none" onclick="switchTab('io')">Filesystem & I/O</button>
+            <button class="tab-btn px-6 py-3 text-base whitespace-nowrap focus:outline-none" onclick="switchTab('fmt_scan')">Formatting & Scanning</button>
+            <button class="tab-btn px-6 py-3 text-base whitespace-nowrap focus:outline-none" onclick="switchTab('tests')">TDD & Verification</button>
+        </nav>
+
+        <main class="min-h-[600px]">
+            
+            <!-- TAB 1: Architecture -->
+            <div id="arch" class="tab-content active space-y-8">
+                <section class="bg-white p-2 rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="w-full overflow-x-auto p-6 relative">
+                        <!-- Custom Standalone SVG Diagram replacing Mermaid -->
+                        <svg class="w-full min-w-[800px]" viewBox="0 0 1000 600" xmlns="http://www.w3.org/2000/svg">
+                            <!-- Backgrounds for Subgraphs -->
+                            <!-- Core Subgraph -->
+                            <rect class="svg-border-dashed" x="40" y="10" width="650" height="360" />
+                            <text x="60" y="35" class="svg-text-title" fill="#94a3b8">Application & Concurrency Layer</text>
+                            
+                            <!-- Allocator Trait -->
+                            <rect class="svg-border-dashed" x="40" y="390" width="400" height="90" />
+                            <text x="60" y="415" class="svg-text-title" fill="#94a3b8">Polymorphic Memory Interface</text>
+
+                            <!-- Implementations -->
+                            <rect class="svg-border-dashed" x="40" y="500" width="400" height="90" />
+                            <text x="60" y="525" class="svg-text-title" fill="#94a3b8">Concrete Allocators</text>
+
+                            <!-- PAL -->
+                            <rect class="svg-border-dashed" x="720" y="10" width="250" height="580" fill="#f8fafc" />
+                            <text x="740" y="35" class="svg-text-title" fill="#94a3b8">Platform Abstraction Layer (PAL)</text>
+
+                            <!-- Arrow marker -->
+                            <defs>
+                                <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                                    <path d="M 0 0 L 10 5 L 0 10 z" class="svg-arrow-head" />
+                                </marker>
+                            </defs>
+
+                            <!-- Concurrency Nodes -->
+                            <foreignObject x="60" y="60" width="180" height="60">
+                                <div xmlns="http://www.w3.org/1999/xhtml" class="current-h-full h-full flex flex-col justify-center px-4 rounded-lg border-2 border-emerald-400 bg-emerald-50 hover:bg-emerald-100 transition-colors shadow-sm">
+                                    <span class="font-semibold text-slate-800 text-sm">Stackless Coroutines</span>
+                                    <span class="text-xs text-slate-500 mt-0.5">Zero-overhead yield/await</span>
+                                </div>
+                            </foreignObject>
+                            <foreignObject x="260" y="60" width="200" height="60">
+                                <div xmlns="http://www.w3.org/1999/xhtml" class="current-h-full h-full flex flex-col justify-center px-4 rounded-lg border-2 border-emerald-400 bg-emerald-50 hover:bg-emerald-100 transition-colors shadow-sm">
+                                    <span class="font-semibold text-slate-800 text-sm">Lock-Free Job System</span>
+                                    <span class="text-xs text-slate-500 mt-0.5">MPMC Atomic ring buffer pool</span>
+                                </div>
+                            </foreignObject>
+                            
+                            <!-- Data Structures Nodes -->
+                            <foreignObject x="60" y="160" width="180" height="60">
+                                <div xmlns="http://www.w3.org/1999/xhtml" class="current-h-full h-full flex flex-col justify-center px-4 rounded-lg border-2 border-sky-400 bg-sky-50 hover:bg-sky-100 transition-colors shadow-sm">
+                                    <span class="font-semibold text-slate-800 text-sm">proven_array / list</span>
+                                    <span class="text-xs text-slate-500 mt-0.5">Zero-copy dynamic vectors</span>
+                                </div>
+                            </foreignObject>
+                            <foreignObject x="260" y="160" width="200" height="60">
+                                <div xmlns="http://www.w3.org/1999/xhtml" class="current-h-full h-full flex flex-col justify-center px-4 rounded-lg border-2 border-sky-400 bg-sky-50 hover:bg-sky-100 transition-colors shadow-sm">
+                                    <span class="font-semibold text-slate-800 text-sm">proven_map / ring</span>
+                                    <span class="text-xs text-slate-500 mt-0.5">Open-addressing hash maps</span>
+                                </div>
+                            </foreignObject>
+                            <foreignObject x="480" y="160" width="190" height="60">
+                                <div xmlns="http://www.w3.org/1999/xhtml" class="current-h-full h-full flex flex-col justify-center px-4 rounded-lg border-2 border-sky-400 bg-sky-50 hover:bg-sky-100 transition-colors shadow-sm">
+                                    <span class="font-semibold text-slate-800 text-sm">proven_u8str_t</span>
+                                    <span class="text-xs text-slate-500 mt-0.5">Zero-cost C-String view</span>
+                                </div>
+                            </foreignObject>
+
+                            <!-- Primitives Nodes -->
+                            <foreignObject x="60" y="260" width="180" height="60">
+                                <div xmlns="http://www.w3.org/1999/xhtml" class="current-h-full h-full flex flex-col justify-center px-4 rounded-lg border-2 border-slate-300 bg-slate-50 hover:bg-slate-100 transition-colors shadow-sm">
+                                    <span class="font-semibold text-slate-800 text-sm">proven_buf_..._t</span>
+                                    <span class="text-xs text-slate-500 mt-0.5">Raw bounding primitives</span>
+                                </div>
+                            </foreignObject>
+                            <foreignObject x="260" y="260" width="200" height="60">
+                                <div xmlns="http://www.w3.org/1999/xhtml" class="current-h-full h-full flex flex-col justify-center px-4 rounded-lg border-2 border-slate-300 bg-slate-50 hover:bg-slate-100 transition-colors shadow-sm">
+                                    <span class="font-semibold text-slate-800 text-sm">proven_result_..._t</span>
+                                    <span class="text-xs text-slate-500 mt-0.5">Strict error wrapping</span>
+                                </div>
+                            </foreignObject>
+
+                            <!-- Trait Node -->
+                            <foreignObject x="60" y="420" width="360" height="50">
+                                <div xmlns="http://www.w3.org/1999/xhtml" class="current-h-full h-full flex items-center justify-center rounded-lg border-2 border-amber-500 bg-amber-100 hover:bg-amber-200 transition-colors shadow-sm">
+                                    <span class="font-semibold text-amber-900 text-sm">proven_allocator_t (VTable Interface)</span>
+                                </div>
+                            </foreignObject>
+
+                            <!-- Allocators -->
+                            <foreignObject x="60" y="530" width="170" height="50">
+                                <div xmlns="http://www.w3.org/1999/xhtml" class="current-h-full h-full flex items-center justify-center rounded-lg border-2 border-slate-300 bg-slate-50 hover:bg-slate-100 transition-colors shadow-sm">
+                                    <span class="font-semibold text-slate-800 text-sm">proven_arena_t</span>
+                                </div>
+                            </foreignObject>
+                            <foreignObject x="250" y="530" width="170" height="50">
+                                <div xmlns="http://www.w3.org/1999/xhtml" class="current-h-full h-full flex items-center justify-center rounded-lg border-2 border-slate-300 bg-slate-50 hover:bg-slate-100 transition-colors shadow-sm">
+                                    <span class="font-semibold text-slate-800 text-sm">proven_heap_allocator()</span>
+                                </div>
+                            </foreignObject>
+
+                            <!-- PAL Nodes -->
+                            <foreignObject x="740" y="60" width="210" height="42">
+                                <div xmlns="http://www.w3.org/1999/xhtml" class="current-h-full h-full flex items-center px-4 rounded-lg border-2 border-rose-300 bg-rose-50 hover:bg-rose-100 transition-colors shadow-sm">
+                                    <span class="font-semibold text-rose-900 text-sm">proven_sys_thread.c</span>
+                                </div>
+                            </foreignObject>
+                            <foreignObject x="740" y="120" width="210" height="42">
+                                <div xmlns="http://www.w3.org/1999/xhtml" class="current-h-full h-full flex items-center px-4 rounded-lg border-2 border-rose-300 bg-rose-50 hover:bg-rose-100 transition-colors shadow-sm">
+                                    <span class="font-semibold text-rose-900 text-sm">proven_sys_mem.c</span>
+                                </div>
+                            </foreignObject>
+                            <foreignObject x="740" y="180" width="210" height="42">
+                                <div xmlns="http://www.w3.org/1999/xhtml" class="current-h-full h-full flex items-center px-4 rounded-lg border-2 border-rose-300 bg-rose-50 hover:bg-rose-100 transition-colors shadow-sm">
+                                    <span class="font-semibold text-rose-900 text-sm">proven_sys_fs.c</span>
+                                </div>
+                            </foreignObject>
+                            <foreignObject x="740" y="240" width="210" height="42">
+                                <div xmlns="http://www.w3.org/1999/xhtml" class="current-h-full h-full flex items-center px-4 rounded-lg border-2 border-rose-300 bg-rose-50 hover:bg-rose-100 transition-colors shadow-sm">
+                                    <span class="font-semibold text-rose-900 text-sm">proven_sys_time.c</span>
+                                </div>
+                            </foreignObject>
+                            <foreignObject x="740" y="300" width="210" height="42">
+                                <div xmlns="http://www.w3.org/1999/xhtml" class="current-h-full h-full flex items-center px-4 rounded-lg border-2 border-rose-300 bg-rose-50 hover:bg-rose-100 transition-colors shadow-sm">
+                                    <span class="font-semibold text-rose-900 text-sm">proven_sys_env.c</span>
+                                </div>
+                            </foreignObject>
+                            <foreignObject x="740" y="360" width="210" height="42">
+                                <div xmlns="http://www.w3.org/1999/xhtml" class="current-h-full h-full flex items-center px-4 rounded-lg border-2 border-rose-300 bg-rose-50 hover:bg-rose-100 transition-colors shadow-sm">
+                                    <span class="font-semibold text-rose-900 text-sm">proven_sys_io.c</span>
+                                </div>
+                            </foreignObject>
+
+                            <!-- Arrows -->
+                            <!-- Job -> Arrays & Str -->
+                            <path class="svg-arrow" marker-end="url(#arrow)" d="M 360 120 L 360 155" />
+                            <path class="svg-arrow" marker-end="url(#arrow)" d="M 460 90 L 575 155" />
+                            
+                            <!-- Structs -> Primitives -->
+                            <path class="svg-arrow" marker-end="url(#arrow)" d="M 150 220 L 150 255" />
+                            <path class="svg-arrow" marker-end="url(#arrow)" d="M 360 220 L 360 255" />
+
+                            <!-- Primitives -> VTable -->
+                            <path class="svg-arrow" marker-end="url(#arrow)" d="M 150 320 L 150 415" />
+                            <path class="svg-arrow" marker-end="url(#arrow)" d="M 360 320 L 360 415" />
+
+                            <!-- VTable -> Implementations -->
+                            <path class="svg-arrow" stroke-dasharray="4" marker-start="url(#arrow)" d="M 145 470 L 145 525" />
+                            <path class="svg-arrow" stroke-dasharray="4" marker-start="url(#arrow)" d="M 335 470 L 335 525" />
+
+                            <!-- Connections over to PAL -->
+                            <path class="svg-arrow" fill="none" stroke-dasharray="4" d="M 420 555 C 500 555, 600 155, 735 155" marker-end="url(#arrow)"/>
+                            <path class="svg-arrow" fill="none" stroke-dasharray="4" d="M 460 90 C 550 90, 600 85, 735 85" marker-end="url(#arrow)"/>
+                        </svg>
+                    </div>
+                </section>
+                
+                <section class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                        <h3 class="text-xl font-bold text-slate-800 mb-2">No-CRT Philosophy</h3>
+                        <p class="text-slate-600 text-sm leading-relaxed">
+                            The core logic never directly invokes external standard library APIs like <code>&lt;stdlib.h&gt;</code>. All system calls are completely isolated and routed through the Platform Abstraction Layer (PAL), ensuring 100% consistent execution and memory safety across any target OS.
+                        </p>
+                    </div>
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                        <h3 class="text-xl font-bold text-slate-800 mb-2">VTable Polymorphism</h3>
+                        <p class="text-slate-600 text-sm leading-relaxed">
+                            Memory allocation is decoupled from concrete implementations via inverted dependencies (DI). All operations reference a <code>proven_allocator_t</code> interface, allowing zero-cost scaling between high-speed Arenas and standard Heap allocators.
+                        </p>
+                    </div>
+                </section>
+            </div>
+
+            <!-- TAB 2: Concurrency -->
+            <div id="concurrency" class="tab-content space-y-6">
+                <div class="bg-green-50 p-6 rounded-2xl border border-green-200 flex items-start gap-4">
+                    <div class="p-2 bg-green-100 rounded text-green-700 mt-1">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-bold text-green-900 mb-2">Thread Safety Contract</h3>
+                        <p class="text-green-800 text-sm leading-relaxed">
+                            To achieve extreme theoretical efficiency, `proven` <strong>entirely excludes internal locks (Mutex, Spinlocks)</strong> within its core arrays and data structures. It functions flawlessly as a single-threaded entity where each thread isolates its resources. For concurrent mutation, external synchronization (External Lock) at the application level is strictly mandated.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                        <h4 class="font-bold text-slate-800 text-lg mb-3">Stackless Coroutines (Duff's Device)</h4>
+                        <p class="text-slate-600 text-sm mb-4">A zero-allocation, macro-based coroutine engine resolving state jumps exclusively using a 4-byte <code>int</code> without spawning OS threads or allocating execution stacks.</p>
+                        <pre><code class="language-c text-sm">struct Fetcher {
+    proven_coro_t coro;
+    int progress;
+};
+
+int fetch_data(struct Fetcher *f) {
+    // Zero context-switching overhead
+    PROVEN_CORO_BEGIN(&f->coro);
+
+    proven_println("Loading...");
+    PROVEN_CORO_YIELD(&f->coro); // Pauses and returns
+
+    while(f->progress &lt; 100) {
+        PROVEN_CORO_YIELD(&f->coro);
+    }
+    
+    PROVEN_CORO_END(&f->coro);
+}</code></pre>
+                    </div>
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                        <h4 class="font-bold text-slate-800 text-lg mb-3">Lock-Free MPMC Job System</h4>
+                        <p class="text-slate-600 text-sm mb-4">A high-velocity scheduler running on C11 <code>stdatomic</code>. Enables distributing thousands of heavy payloads to physical cores via Lock-Free Ring Buffers.</p>
+                        <pre><code class="language-c text-sm">// 1. Initialize Thread Pool (Lock-Free)
+proven_job_system_init(heap, 4, 1024);
+
+// 2. Submit thousands of jobs without blocking
+for (int i = 0; i &lt; 1000; i++) {
+    while (!proven_job_submit(my_task, arg)) {
+        proven_sys_thread_yield(); // Ring buffer full
+    }
+}
+
+// 3. Threads automatically consume tasks concurrently.
+proven_job_system_shutdown();</code></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 3: Core Primitives -->
+            <div id="core" class="tab-content space-y-6">
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <h3 class="text-xl font-bold text-slate-800 mb-4">Result Pattern vs Out Pointers</h3>
+                    <p class="text-slate-600 text-sm mb-4">Prohibits traditional C patterns like returning `NULL` or modifying output pointers (`out_val`). All errors are strictly wrapped in a Result struct containing both the error reason (`ERR`) and the payload (`VALUE`).</p>
+                    <pre><code class="language-c text-sm">// Deprecated C Standard Approach (Forbidden)
+int* p = malloc(size);
+if (!p) { ... } // Error reason unknown
+
+// Proven Library Pattern (Safe, Explicit)
+proven_result_mem_mut_t res = alloc.alloc_fn(ctx, 128, 8);
+if (!proven_is_ok(res.err)) {
+    // Exact reason like PROVEN_ERR_NOMEM available for early return
+    return res.err; 
+}
+// Perfectly safe pointer usage
+proven_byte_t *safe_ptr = res.value.ptr;</code></pre>
+                </div>
+                
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <h3 class="text-xl font-bold text-slate-800 mb-4">Compile-Time String Macro</h3>
+                    <p class="text-slate-600 text-sm mb-4">Compresses string literals into O(1) text views dynamically during compilation, eliminating the need for runtime `strlen` calculations.</p>
+                    <pre><code class="language-c text-sm">// String length is resolved automatically as 5 at compile time
+// Completely avoids runtime calls like `strlen`
+proven_u8str_view_t text = PROVEN_LIT("Hello");
+
+if (proven_u8str_view_eq(text, PROVEN_LIT("World"))) {
+    // Evaluated via short-circuiting struct value comparisons
+}</code></pre>
+                </div>
+            </div>
+
+            <!-- TAB 4: Data Structures -->
+            <div id="structures" class="tab-content space-y-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                        <div class="font-mono font-bold text-blue-600 text-lg mb-2">proven_array_t / list_t</div>
+                        <p class="text-sm text-slate-600 leading-relaxed">
+                            <b>Generic Array (Vector):</b> Dynamically growing arrays backed by polymorphic allocators. Even in C, macro wrappers fully infer type parameters to provide type-safe <code>push</code> and <code>pop</code> operations.<br/>
+                            <b>Intrusive Linked List:</b> "Zero-allocation" node linkages that do not allocate or free memory themselves. Extracts parent structures mathmetically via <code>PROVEN_CONTAINER_OF</code>. Built for kernel-level optimization.
+                        </p>
+                    </div>
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                        <div class="font-mono font-bold text-purple-600 text-lg mb-2">proven_map_t / ring_t</div>
+                        <p class="text-sm text-slate-600 leading-relaxed">
+                            <b>Open-Addressing Hash Map:</b> A seamless flat router eliminating OOM fragmentation and cache misses caused by Linked List chaining. Equipped with Tombstone states and SplitMix64 hashing, ensuring extreme O(1) speeds.<br/>
+                            <b>Circular Ring Buffer:</b> Lock-free/Bounded pipeline engine that rotates indices continuously within a pre-determined capacity buffer.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+             <!-- TAB 5: I/O -->
+             <div id="io" class="tab-content space-y-6">
+                <div class="grid grid-cols-1 gap-6">
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                        <h3 class="text-lg font-bold text-slate-800 mb-3 flex items-center gap-2">
+                            <span class="w-2 h-2 bg-indigo-500 rounded-full"></span> Filesystem & MMap Engine
+                        </h3>
+                        <p class="text-slate-600 text-sm leading-relaxed mb-4">
+                            Integrates system file slurping, directory traversal (with automatic sorting), permission controls (chmod), and Advisory Locking into the Platform Abstraction Layer (PAL). Crucially, it supports memory-mapped files (mmap) for zero-copy file I/O operations directly mapped into virtual memory.
+                        </p>
+                        <pre><code class="language-c text-sm">proven_fs_handle_t file = proven_sys_fs_open("data.bin", PROVEN_FS_MODE_READ);
+
+// Zero-copy I/O: MMap the file directly into virtual memory.
+proven_result_mmap_t mapping = proven_mmap_create(
+    file, 0, size, PROVEN_MMAP_PROT_READ, false);
+
+if (proven_is_ok(mapping.err)) {
+    proven_u8str_view_t view = proven_mmap_view(mapping.value);
+    // Directly process text view without allocating read buffers...
+    proven_mmap_close(mapping.value);
+}</code></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 6: Fmt & Scan -->
+            <div id="fmt_scan" class="tab-content space-y-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                        <h3 class="text-lg font-bold text-slate-800 mb-3 flex items-center gap-2">
+                            <span class="w-2 h-2 bg-orange-500 rounded-full"></span> Formatting (fmt.h)
+                        </h3>
+                        <p class="text-slate-600 text-sm leading-relaxed mb-4">
+                            To eliminate dependencies on classic C standard I/O (<code>&lt;stdio.h&gt;</code>) and mitigate format string vulnerabilities, the library provides a Python/Zig style safe formatter. It supports auto-indexing, padding, and type-safe argument injection.<br/><br/>
+                            <b>Variadic Architecture:</b> Functions do not use <code>va_list</code>. Instead, macros like <code>proven_println</code> wrap <code>__VA_ARGS__</code> into compound literal arrays (<code>(proven_arg_t[]){ ... }</code>), allowing the compiler to deduce the argument count statically using <code>sizeof</code>. This fully avoids runtime counting and missing sentinel errors.<br/><br/>
+                            <b>Auto-Flushing:</b> Calls to formatting macros are passed directly to OS-level standard out/error handles. The <code>proven_println</code> variant implicitly attaches a trailing newline character <code>\n</code> and synchronously issues a <code>proven_sysio_flush</code> to the underlying system channel to ensure exact determinism.
+                        </p>
+                        <pre><code class="language-c text-sm">// Output directly through proven_sys_io, bypassing libc
+proven_file_t file = proven_sysio_stdout();
+
+// Secure, Zig-style formatting. Automatically flushes to console.
+// e.g. prints: "Count: 00100" followed by a newline (\n)
+proven_println_to(file, "Count: {:0>5}", proven_arg_i32(100));</code></pre>
+                    </div>
+                    
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                        <h3 class="text-lg font-bold text-slate-800 mb-3 flex items-center gap-2">
+                            <span class="w-2 h-2 bg-teal-500 rounded-full"></span> Scanning (scan.h)
+                        </h3>
+                        <p class="text-slate-600 text-sm leading-relaxed mb-4">
+                            Safely parses structured input from memory views or standard input. Unlike `scanf`, which can cause buffer overflows, this scanning module operates on strict bounds and securely parses integers, floats, and character sets.
+                        </p>
+                        <pre><code class="language-c text-sm">proven_u8str_view_t input = PROVEN_LIT("ID: 402");
+int32_t parsed_id = 0;
+
+// Scan text to extract integer
+if (proven_scan_i32(&input, "ID: {}", &parsed_id)) {
+    // parsed_id = 402
+    // input view boundary is safely advanced automatically
+}</code></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 7: Test Suite -->
+            <div id="tests" class="tab-content space-y-6">
+                <div class="bg-indigo-50 p-6 rounded-2xl border border-indigo-200 flex items-start gap-4">
+                    <div class="p-2 bg-indigo-100 rounded text-indigo-700 mt-1">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-bold text-indigo-900 mb-2">TDD Integrity Validation Pipeline (20 Phases)</h3>
+                        <p class="text-indigo-800 text-sm leading-relaxed">
+                            The <code>proven</code> library is strictly validated by a proprietary build script (<code>nob.c</code>) executing 20 rigorous TDD phases without external frameworks. These tests simulate pointer overruns, forced OOM, memory leaks, and concurrent race conditions to test architectural integrity to its absolute limit.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- Category 1 -->
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                        <h4 class="font-bold text-slate-800 text-lg mb-4 flex items-center gap-2">
+                            <span class="w-2 h-2 bg-emerald-500 rounded-full"></span> 1. Foundation & Memory Guard
+                        </h4>
+                        <ul class="space-y-3 text-sm text-slate-600">
+                            <li><strong class="text-slate-800">Phase 1-3 (Primitives):</strong> Evaluates View/Mut slices against Out-Of-Bounds (OOB) exceptions and mathematical alignment behavior.</li>
+                            <li><strong class="text-slate-800">Phase 4 (Arena Allocator):</strong> Injects deliberate Out-of-Memory (OOM) triggers across 200+ bytes to ensure graceful <code>PROVEN_ERR_NOMEM</code> returns instead of crashes.</li>
+                            <li><strong class="text-slate-800">Phase 6 (Polymorphic Bindings):</strong> Ensures that `free` is effectively a no-op inside the Arena but routes strictly to OS syscalls under dynamic Heap bindings.</li>
+                        </ul>
+                    </div>
+
+                    <!-- Category 2 -->
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                        <h4 class="font-bold text-slate-800 text-lg mb-4 flex items-center gap-2">
+                            <span class="w-2 h-2 bg-blue-500 rounded-full"></span> 2. Zero-Cost Formatting & String
+                        </h4>
+                        <ul class="space-y-3 text-sm text-slate-600">
+                            <li><strong class="text-slate-800">Phase 5, 7 (U8 Strings):</strong> Validates that the <code>PROVEN_LIT</code> macro compresses array length statically to O(1) without <code>strlen</code> overhead, and strings maintain null seal termination on truncations.</li>
+                            <li><strong class="text-slate-800">Phase 16 (Formatting):</strong> Verifies secure Zig-style structural formatters overriding malicious Format String vulnerabilities intrinsic to `<stdio.h>`.</li>
+                            <li><strong class="text-slate-800">Phase 18 (System I/O):</strong> Connects secure buffers directly to `stdout` file descriptors entirely independent of the CRT.</li>
+                        </ul>
+                    </div>
+
+                    <!-- Category 3 -->
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                        <h4 class="font-bold text-slate-800 text-lg mb-4 flex items-center gap-2">
+                            <span class="w-2 h-2 bg-purple-500 rounded-full"></span> 3. Intensive Data Structures
+                        </h4>
+                        <ul class="space-y-3 text-sm text-slate-600">
+                            <li><strong class="text-slate-800">Phase 8-9 (Vectors):</strong> Verifies dynamic array buffer swaps and mathematically reverse-engineered Zero-allocation LinkedList via <code>PROVEN_CONTAINER_OF</code>.</li>
+                            <li><strong class="text-slate-800">Phase 10-11 (Map & Ring):</strong> Evaluates Open-Addressing HashMaps under heavy 75% load constraints. Verifies Tombstone state recovery and cache-hit optimization during array migration.</li>
+                            <li><strong class="text-slate-800">Phase 12 (Algorithms):</strong> Confirms macro-injected `Quicksort` and `Binary Search` preserve mathematically sound O(N log N) thresholds.</li>
+                        </ul>
+                    </div>
+
+                    <!-- Category 4 -->
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                        <h4 class="font-bold text-slate-800 text-lg mb-4 flex items-center gap-2">
+                            <span class="w-2 h-2 bg-rose-500 rounded-full"></span> 4. Low-Level I/O & Concurrency
+                        </h4>
+                        <ul class="space-y-3 text-sm text-slate-600">
+                            <li><strong class="text-slate-800">Phase 13-15, 17 (I/O & Mmap):</strong> Corroborates cross-platform file slurry maps into virtual memory with strictly Zero-copy semantics.</li>
+                            <li><strong class="text-slate-800">Phase 19 (Coroutines):</strong> Tests Duff's Device state machine spanning multiple execution blocks retaining its byte integrity solely in an integer instance context.</li>
+                            <li><strong class="text-slate-800">Phase 20 (Lock-Free Job Pool):</strong> Verifies ring buffer endurance against hundreds of physical thread pollutions without Mutex. Ensures 100% job execution delivery under atomic racing conditions.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+        
+        <footer class="mt-12 text-center text-slate-500 text-sm border-t border-slate-200 pt-6">
+            Creator: rubidus-api | Email: rubidus@gmail.com | GitHub: <a href="https://github.com/rubidus-api/proven_c_lib/" class="text-blue-500 hover:underline">https://github.com/rubidus-api/proven_c_lib/</a> | License: MIT License
+        </footer>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-c.min.js"></script>
+    <script>
+        function switchTab(tabId) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            // Show target tab
+            document.getElementById(tabId).classList.add('active');
+            event.currentTarget.classList.add('active');
+        }
+    </script>
+</body>
+</html>

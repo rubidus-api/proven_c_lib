@@ -1,0 +1,76 @@
+#ifndef PROVEN_ARRAY_H
+#define PROVEN_ARRAY_H
+
+#include <stdalign.h>
+#include "proven/types.h"
+#include "proven/error.h"
+#include "proven/allocator.h"
+#include "proven/align.h"
+
+/**
+ * @file array.h
+ * @brief Dynamic array implementation guaranteeing polymorphic memory bounds and contiguous memory locality.
+ */
+
+typedef struct {
+    proven_allocator_t alloc;    // Allocator trait driving memory decisions
+    proven_mem_mut_t internal;   // Backing memory slice representing physical capacity space
+    proven_size_t len;           // The current active element count
+    proven_size_t elem_size;     // Size of a single element (e.g., sizeof(int))
+    proven_size_t align;         // The alignment boundary mandated by the stored type
+} proven_array_t;
+
+typedef struct {
+    proven_err_t err;
+    proven_array_t value;
+} proven_result_array_t;
+
+// -------------------------------------------------------------
+// Type-Agnostic Core C API
+// -------------------------------------------------------------
+
+[[nodiscard]] proven_result_array_t proven_array_create(proven_allocator_t alloc, proven_size_t init_cap, proven_size_t elem_size, proven_size_t align);
+
+[[nodiscard]] proven_err_t proven_array_push(proven_array_t *arr, const void *element);
+
+[[nodiscard]] proven_err_t proven_array_pop(proven_array_t *arr, void *out_element);
+
+[[nodiscard]] void* proven_array_get(const proven_array_t *arr, proven_size_t index);
+
+void proven_array_destroy(proven_array_t *arr);
+
+// -------------------------------------------------------------
+// Type-Safe Strict Macro Wrappers
+// -------------------------------------------------------------
+
+/**
+ * @brief Initializes a generic proven array with type-safety guaranteeing perfect byte-size and alignment deduction.
+ */
+#define PROVEN_ARRAY_INIT(alloc, type, init_cap) \
+    proven_array_create((alloc), (init_cap), sizeof(type), alignof(type))
+
+/**
+ * @brief Pushes an element into the dynamic array, creating a temporary block to securely capture rvalues.
+ */
+#define PROVEN_ARRAY_PUSH(arr_ptr, type, value) \
+    proven_array_push((arr_ptr), (type[]){(value)})
+
+/**
+ * @brief Pops the last element. Can pass NULL for out_ptr to just discard.
+ */
+#define PROVEN_ARRAY_POP(arr_ptr, type, out_ptr) \
+    proven_array_pop((arr_ptr), (out_ptr))
+
+/**
+ * @brief References memory data guaranteeing the retrieved pointer inherits the specific structured type context.
+ */
+#define PROVEN_ARRAY_GET(arr_ptr, type, index) \
+    ((type*)proven_array_get((arr_ptr), (index)))
+
+/**
+ * @brief Cleans up internal structures delegating array data memory returns back through the contextual VTable alloc.
+ */
+#define PROVEN_ARRAY_DESTROY(arr_ptr) \
+    proven_array_destroy(arr_ptr)
+
+#endif /* PROVEN_ARRAY_H */
