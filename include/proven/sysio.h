@@ -1,0 +1,109 @@
+#ifndef PROVEN_SYSIO_H
+#define PROVEN_SYSIO_H
+
+#include "proven/types.h"
+#include "proven/error.h"
+#include "proven/u8str.h"
+#include "proven/fmt.h"
+#include "proven/fs.h"
+#include "proven/scan.h"
+
+/**
+ * @file sysio.h
+ * @brief Console I/O and Environment variable access cleanly eliminating <stdio.h> needs.
+ */
+
+// -----------------------------------------------------------------------------
+// Standard Data Streams
+// -----------------------------------------------------------------------------
+
+/**
+ * @brief Retrieves the standard input handle.
+ */
+[[nodiscard]] proven_file_t proven_sysio_stdin(void);
+
+/**
+ * @brief Retrieves the standard output handle.
+ */
+[[nodiscard]] proven_file_t proven_sysio_stdout(void);
+
+/**
+ * @brief Retrieves the standard error handle.
+ */
+[[nodiscard]] proven_file_t proven_sysio_stderr(void);
+
+/**
+ * @brief Flushes the internal buffer of the given file/stream to the OS.
+ */
+void proven_sysio_flush(proven_file_t file);
+
+// -----------------------------------------------------------------------------
+// Type-Safe Printing Console macros
+// -----------------------------------------------------------------------------
+
+proven_err_t proven_sysio_print_impl(proven_file_t file, const char *fmt, const proven_arg_t *args, size_t args_count);
+
+/**
+ * @brief Type-safe formatted printing to stdout.
+ * Replacing printf(fmt, ...).
+ */
+#define proven_print(fmt, ...) \
+    proven_sysio_print_impl(proven_sysio_stdout(), fmt, \
+        (proven_arg_t[]){ proven_arg_none(), __VA_ARGS__ }, \
+        (sizeof((proven_arg_t[]){ proven_arg_none(), __VA_ARGS__ }) / sizeof(proven_arg_t)))
+
+/**
+ * @brief Type-safe formatted printing to stdout with a trailing newline.
+ * Replacing printf(fmt "\n", ...).
+ */
+#define proven_println(fmt, ...) \
+    proven_print(fmt "\n", ##__VA_ARGS__)
+
+/**
+ * @brief Type-safe formatted printing to stderr.
+ * Replacing fprintf(stderr, fmt, ...).
+ */
+#define proven_eprint(fmt, ...) \
+    proven_sysio_print_impl(proven_sysio_stderr(), fmt, \
+        (proven_arg_t[]){ proven_arg_none(), __VA_ARGS__ }, \
+        (sizeof((proven_arg_t[]){ proven_arg_none(), __VA_ARGS__ }) / sizeof(proven_arg_t)))
+
+/**
+ * @brief Type-safe formatted printing to stderr with a trailing newline.
+ */
+#define proven_eprintln(fmt, ...) \
+    proven_eprint(fmt "\n", ##__VA_ARGS__)
+
+// -----------------------------------------------------------------------------
+// Type-Safe Scanning Console macros
+// -----------------------------------------------------------------------------
+
+[[nodiscard]] proven_err_t proven_sysio_scan_file_impl(proven_file_t file, const char *fmt, const proven_scan_arg_t *args, size_t args_count);
+
+/**
+ * @brief Type-safe formatting scanner from a file descriptor.
+ */
+#define proven_scan_fmt_from_file(file, fmt, ...) \
+    proven_sysio_scan_file_impl(file, fmt, \
+        (proven_scan_arg_t[]){ proven_scan_arg_none(), __VA_ARGS__ }, \
+        (sizeof((proven_scan_arg_t[]){ proven_scan_arg_none(), __VA_ARGS__ }) / sizeof(proven_scan_arg_t)))
+
+/**
+ * @brief Type-safe formatting scanner from standard input.
+ */
+#define proven_scan_fmt_from_stdin(fmt, ...) \
+    proven_scan_fmt_from_file(proven_sysio_stdin(), fmt, ##__VA_ARGS__)
+
+// -----------------------------------------------------------------------------
+// Environment Variables
+// -----------------------------------------------------------------------------
+
+/**
+ * @brief Fetches an environment variable by name.
+ * @param alloc The allocator to securely hold the resulting UTF-8 string.
+ * @param key The environment variable name view.
+ * @return An error if not found, or a dynamically allocated string containing the value.
+ */
+[[nodiscard]] proven_result_u8str_t proven_env_get(proven_allocator_t alloc, proven_u8str_view_t key);
+
+#endif /* PROVEN_SYSIO_H */
