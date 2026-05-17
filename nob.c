@@ -180,6 +180,28 @@ typedef struct {
     const char *arch_flag_2;
 } Proven_Cross_Target;
 
+typedef struct {
+    const char *path;
+    const char *title;
+    const char *intent;
+    const char *failure_hint;
+} Proven_Test_Case;
+
+static void print_proven_test_begin(const Proven_Test_Case *test) {
+    nob_log(NOB_INFO, "[PROVEN][TEST][BEGIN] path=%s title=%s", test->path, test->title);
+    nob_log(NOB_INFO, "[PROVEN][TEST][INTENT] %s", test->intent);
+    nob_log(NOB_INFO, "[PROVEN][TEST][FAIL_HINT] %s", test->failure_hint);
+}
+
+static void print_proven_test_fail(const Proven_Test_Case *test, const char *stage, const char *detail) {
+    nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL] path=%s stage=%s", test->path, stage);
+    nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL_HINT] %s", detail ? detail : test->failure_hint);
+}
+
+static void print_proven_test_pass(const Proven_Test_Case *test) {
+    nob_log(NOB_INFO, "[PROVEN][TEST][PASS] path=%s", test->path);
+}
+
 static bool cross_source_is_freestanding(const char *src) {
     if (strcmp(src, "src/proven/u16str.c") == 0) return false;
     if (strcmp(src, "src/proven/fs.c") == 0) return false;
@@ -285,6 +307,9 @@ static bool run_cross_compile_matrix(const char *build_root,
         snprintf(target_dir, sizeof(target_dir), "%s/%s", build_root, target->name);
         if (!mkdir_p_safe(target_dir)) return false;
 
+        nob_log(NOB_INFO, "[PROVEN][TEST][BEGIN] path=cross/%s title=cross compile target", target->name);
+        nob_log(NOB_INFO, "[PROVEN][TEST][INTENT] Compile proven sources and the smoke translation unit for target %s using %s.", target->name, target->compiler);
+        nob_log(NOB_INFO, "[PROVEN][TEST][FAIL_HINT] If this target fails, check the compiler/sysroot for %s first; otherwise inspect the source file named in the compiler diagnostic.", target->name);
         nob_log(NOB_INFO, "Cross compile target: %s (%s)", target->name, target->compiler);
 
         for (size_t i = 0; i < srcs_count; ++i) {
@@ -302,7 +327,11 @@ static bool run_cross_compile_matrix(const char *build_root,
             nob_cmd_append(&cmd, "-c", srcs[i], "-o", obj_path);
             bool ok = nob_cmd_run_sync(cmd);
             nob_cmd_free(cmd);
-            if (!ok) return false;
+            if (!ok) {
+                nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL] path=cross/%s stage=compile-source source=%s", target->name, srcs[i]);
+                nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL_HINT] Check the diagnostic above for the exact source portability issue on this target.");
+                return false;
+            }
         }
 
         const char *smoke = target->freestanding ? "tests/test_freestanding.c" : "tests/test_cross_compile_smoke.c";
@@ -314,7 +343,12 @@ static bool run_cross_compile_matrix(const char *build_root,
         nob_cmd_append(&cmd, "-c", smoke, "-o", smoke_path);
         bool ok = nob_cmd_run_sync(cmd);
         nob_cmd_free(cmd);
-        if (!ok) return false;
+        if (!ok) {
+            nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL] path=cross/%s stage=compile-smoke source=%s", target->name, smoke);
+            nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL_HINT] Check public header feature guards and target-specific compiler diagnostics above.");
+            return false;
+        }
+        nob_log(NOB_INFO, "[PROVEN][TEST][PASS] path=cross/%s", target->name);
     }
 
     if (available == 0) {
@@ -562,32 +596,53 @@ int main(int argc, char **argv)
         "platform/proven_sys_env.h", "platform/proven_sys_thread.h", "platform/proven_sys_io.h", "platform/proven_sys_math.h"
     };
 
-    const char *all_tests[] = {
-        "tests/test_phase1", "tests/test_foundation", "tests/test_phase2", "tests/test_phase3",
-        "tests/test_phase4", "tests/test_phase5", "tests/test_phase6_pool", "tests/test_dealloc",
-        "tests/test_phase7_u8str_mut", "tests/test_phase8_array", "tests/test_phase9_list",
-        "tests/test_phase10_ring", "tests/test_phase11_map", "tests/test_phase12_algorithm",
-        "tests/test_phase13_fs", "tests/test_phase14_fs_advanced", "tests/test_phase15_fs_security",
-        "tests/test_phase16_time_fmt", "tests/test_phase17_mmap", "tests/test_phase17_u16str",
-        "tests/test_phase18_sysio", "tests/test_phase19_coro", "tests/test_phase20_job",
-        "tests/test_phase21_scan", "tests/test_phase22_fmt_best_effort", "tests/test_scan_overflow_f64", 
-        "tests/test_sysio_scanner", "tests/test_regression_v26_05",
-        "tests/test_regression_fs_copy_to_self", "tests/test_regression_source_contracts",
-        "tests/test_arena_panic", "tests/test_alias_smoke"
+    const Proven_Test_Case all_tests[] = {
+        { "tests/test_phase1", "memory byte views", "Verify immutable and mutable byte view construction keeps pointer, size, and aliasing contracts explicit.", "Inspect memory view constructors and callers that pass borrowed storage; size or pointer mismatches usually point to a broken view initialization contract." },
+        { "tests/test_foundation", "foundation primitives", "Verify checked arithmetic, result values, and basic public type assumptions used by the rest of the library.", "Check include/proven/types.h, include/proven/error.h, and compiler feature macros; a failure here can invalidate many higher-level tests." },
+        { "tests/test_phase2", "memory slicing", "Verify owned memory can be exposed as read-only or mutable views and sliced without losing pointer/size accuracy.", "Review src/proven/memory.c and unchecked slice preconditions; failures often mean offset arithmetic or view aliasing changed." },
+        { "tests/test_phase3", "error and result primitives", "Verify error helpers and result structs carry explicit success/failure state without hidden control flow.", "Inspect error enum values and PROVEN_IS_OK/proven_is_ok semantics before debugging downstream callers." },
+        { "tests/test_phase4", "arena allocator", "Verify arena alignment, bump allocation, exhaustion behavior, reset, and no-op free semantics.", "Check proven_arena_init, alignment rounding, and capacity checks; sanitizer failures usually indicate out-of-bounds arena math." },
+        { "tests/test_phase5", "buffer and U8 string basics", "Verify fixed-capacity buffers, literal views, U8 string creation, append, C-string termination, and bounds defense.", "Inspect buffer/u8str capacity accounting and NUL termination; failures often come from off-by-one capacity rules." },
+        { "tests/test_phase6_pool", "pool allocator", "Verify fixed-size pool allocation rejects wrong sizes and recycles blocks through its bounded free bin.", "Check pool item_size, bin_len, and fallback allocator routing; leaks or wrong reuse indicate free-list corruption." },
+        { "tests/test_dealloc", "allocator deallocation policies", "Demonstrate that arena free is intentionally a no-op while heap free returns memory through the allocator trait.", "If this fails, verify allocator trait wiring and remember that arena lifetime is reset-based, not per-allocation free-based." },
+        { "tests/test_phase7_u8str_mut", "U8 string mutation", "Verify searching, slicing, replace/insert/remove, atomic append, partial append, and growable append policies.", "Check mutation functions for failure-atomic behavior and stale-view risks; most failures are capacity or memmove boundary mistakes." },
+        { "tests/test_phase8_array", "growable array", "Verify array initialization, validation, push/pop, growth, migration, get/set, and capacity invariants.", "Review element-size arithmetic and reallocation paths; stale element pointers after growth are caller misuse and should not be preserved." },
+        { "tests/test_phase9_list", "intrusive list", "Verify sentinel initialization, append, reverse iteration, safe removal, and container-of access.", "Check list node linkage and removal ordering; failures usually indicate next/prev corruption or misuse of detached nodes." },
+        { "tests/test_phase10_ring", "bounded ring", "Verify FIFO order, wraparound, full/empty boundaries, and slot reuse in the fixed-capacity ring buffer.", "Inspect head/tail/len updates and modulo arithmetic; failures often come from off-by-one full/empty handling." },
+        { "tests/test_phase11_map", "hash map", "Verify open-addressing insertion, lookup, update, deletion, tombstones, and growth behavior.", "Check hash/equality callbacks, tombstone reuse, and rehash migration; failures can also mean borrowed key lifetimes are invalid." },
+        { "tests/test_phase12_algorithm", "algorithms", "Verify sort and binary-search helpers over array-backed data with caller-provided comparators.", "Inspect comparator return convention and element-size usage; unstable or wrong ordering usually starts there." },
+        { "tests/test_phase13_fs", "basic filesystem", "Verify file open/write/read/read-all/size and absolute path classification across hosted platforms.", "Check PAL filesystem open flags, read/write byte counts, cleanup of temporary files, and Windows absolute path rules." },
+        { "tests/test_phase14_fs_advanced", "advanced filesystem", "Verify directory creation, nested file creation, rename, directory listing, and recursive cleanup behavior.", "Inspect path joining, directory iterator ownership, and platform-specific directory APIs when entries are missing." },
+        { "tests/test_phase15_fs_security", "filesystem metadata and permissions", "Verify metadata queries and permission-related behavior remain explicit and portable enough for hosted targets.", "Check platform stat wrappers, permission assumptions, and test directory cleanup; OS policy differences should be isolated in PAL code." },
+        { "tests/test_phase16_time_fmt", "time and formatting integration", "Verify time retrieval/conversion and formatter integration for datetime and structured arguments.", "Inspect platform time conversion, formatter datetime branch, and locale-independent assumptions." },
+        { "tests/test_phase17_mmap", "memory mapped files", "Verify hosted mmap open/map/view/unmap/close behavior and byte visibility over mapped file ranges.", "Check offset alignment, file-size bounds, and PAL map/unmap ownership; failures often show platform handle lifetime issues." },
+        { "tests/test_phase17_u16str", "U16 strings", "Verify U16 string/code-unit creation, append, view, and optional build behavior where char16_t is available.", "Inspect PROVEN_NO_U16STR guards and UTF-16 code-unit capacity accounting; do not assume one code unit is one Unicode scalar." },
+        { "tests/test_phase18_sysio", "sysio and environment", "Verify standard stream wrappers, formatted console output, environment lookup, and long environment-key handling.", "Check sysio wrappers, env C-string conversion, allocator use for long keys/values, and PAL UTF conversion on Windows." },
+        { "tests/test_phase19_coro", "stackless coroutine", "Verify coroutine macros preserve state across yields and resume to completion with caller-managed storage.", "Inspect coroutine state labels and re-entry rules; failures usually mean state was reset or a yield point was skipped." },
+        { "tests/test_phase20_job", "job system", "Verify worker creation, concurrent job dispatch, shutdown synchronization, and exactly-once execution of submitted jobs.", "Use TSAN for deeper diagnosis; check admission state, queue sequence counters, atomics, and worker wake/shutdown ordering." },
+        { "tests/test_phase21_scan", "scanner", "Verify token extraction, integer/float parsing, strings, literals, cursor movement, and invalid-input errors.", "Inspect scanner cursor advancement and overflow/invalid parsing paths; failures may leave the cursor at the wrong byte." },
+        { "tests/test_phase22_fmt_best_effort", "formatter failure policy", "Verify fixed atomic formatting, truncating formatting, growable formatting, and extreme padding safety.", "Check formatter required/written counts, scratch allocation, and failure-atomic append rules before changing format internals." },
+        { "tests/test_scan_overflow_f64", "float scanner overflow", "Verify extremely large floating-point input reports PROVEN_ERR_OVERFLOW instead of silently accepting infinity.", "Inspect proven_scan_f64 exponent/range checks and math PAL behavior if this fails." },
+        { "tests/test_sysio_scanner", "sysio-backed scanner", "Verify scanner operation over file-backed sysio data rather than only in-memory string views.", "Check file open/read wrappers, scanner buffer refill logic, and temporary file permissions." },
+        { "tests/test_regression_v26_05", "v26.05 regressions", "Protect previously fixed map, format, scan, array/string aliasing, and environment-value regressions.", "Read the named sub-check in TEST.md, then inspect the exact historical area before simplifying the regression." },
+        { "tests/test_regression_fs_copy_to_self", "filesystem self-copy regression", "Verify copy-to-self and copy-to-hardlink-self fail without truncating or corrupting the source file.", "Inspect same-file detection and open/truncate ordering; never open the destination for truncation before proving it is not the source." },
+        { "tests/test_regression_source_contracts", "source portability contracts", "Verify source-level guards for platform branches that are hard to execute on the current host.", "A failure points at a missing safety pattern or stale documentation contract; inspect the named source file and keep this narrow." },
+        { "tests/test_arena_panic", "arena panic path", "Verify alloc-or-panic succeeds when capacity exists and invokes the panic hook on arena exhaustion.", "Check panic hook installation/restoration and arena capacity math; a failure can hide fatal OOM paths." },
+        { "tests/test_alias_smoke", "alias layer smoke", "Verify public XCV alias macros continue to compile and map to the intended canonical proven APIs.", "Inspect include/proven/alias_xcv.h and TEST.md alias coverage when public symbols are renamed or added." },
     };
 
-    const char *regression_tests[] = {
-        "tests/test_regression_v26_05",
-        "tests/test_regression_fs_copy_to_self",
-        "tests/test_regression_source_contracts"
+    const Proven_Test_Case regression_tests[] = {
+        { "tests/test_regression_v26_05", "v26.05 regressions", "Protect previously fixed map, format, scan, array/string aliasing, and environment-value regressions.", "Read the named sub-check in TEST.md, then inspect the exact historical area before simplifying the regression." },
+        { "tests/test_regression_fs_copy_to_self", "filesystem self-copy regression", "Verify copy-to-self and copy-to-hardlink-self fail without truncating or corrupting the source file.", "Inspect same-file detection and open/truncate ordering; never open the destination for truncation before proving it is not the source." },
+        { "tests/test_regression_source_contracts", "source portability contracts", "Verify source-level guards for platform branches that are hard to execute on the current host.", "A failure points at a missing safety pattern or stale documentation contract; inspect the named source file and keep this narrow." },
     };
 
-    const char *freestanding_tests[] = {
-        "tests/test_freestanding_heap_stub",
-        "tests/test_compile_freestanding",
-        "tests/test_compile_nofloat",
-        "tests/test_compile_nou16str",
-        "tests/test_freestanding"
+    const Proven_Test_Case freestanding_tests[] = {
+        { "tests/test_freestanding_heap_stub", "freestanding heap stub", "Verify PROVEN_FREESTANDING does not expose a valid hosted heap allocator by accident.", "If this fails, inspect platform heap guards and ensure freestanding builds do not pull hosted OS allocation paths." },
+        { "tests/test_compile_freestanding", "freestanding compile link", "Verify the reduced freestanding core compiles and links under PROVEN_FREESTANDING.", "Check that hosted-only modules remain excluded and that public headers guard OS-dependent declarations." },
+        { "tests/test_compile_nofloat", "no-float formatter compile", "Verify PROVEN_FMT_NO_FLOAT removes floating-point formatting dependencies while keeping integer/text formatting usable.", "Inspect fmt feature guards and accidental references to float/double helpers." },
+        { "tests/test_compile_nou16str", "no-U16 compile", "Verify PROVEN_NO_U16STR removes optional U16 string support without breaking the core library.", "Check u16str guards in umbrella headers, source lists, and alias exports." },
+        { "tests/test_freestanding", "freestanding runtime core", "Verify allocator-backed arrays, algorithms, intrusive lists, rings, maps, strings, formatting, and scanning in the reduced core.", "Inspect only freestanding-safe modules first; any hosted PAL dependency here is a portability regression." },
     };
 
     if (build_root == NULL) build_root = getenv("PROVEN_BUILD_ROOT");
@@ -598,7 +653,7 @@ int main(int argc, char **argv)
         return run_cross_compile_matrix(cross_root, srcs, NOB_ARRAY_LEN(srcs), headers, NOB_ARRAY_LEN(headers)) ? 0 : 1;
     }
 
-    const char **tests = only_regression ? regression_tests : all_tests;
+    const Proven_Test_Case *tests = only_regression ? regression_tests : all_tests;
     size_t tests_count = only_regression ? NOB_ARRAY_LEN(regression_tests) : NOB_ARRAY_LEN(all_tests);
 
     if (strcmp(build_mode, "freestanding") == 0) {
@@ -682,8 +737,11 @@ int main(int argc, char **argv)
 
     // Tests Compilation & Execution
     for (size_t i = 0; i < tests_count; ++i) {
-        const char *src_path = nob_temp_sprintf("%s.c", tests[i]);
-        const char *exec_path = nob_temp_sprintf("%s/%s%s", build_dir, tests[i], exe_ext);
+        const Proven_Test_Case *test = &tests[i];
+        const char *src_path = nob_temp_sprintf("%s.c", test->path);
+        const char *exec_path = nob_temp_sprintf("%s/%s%s", build_dir, test->path, exe_ext);
+
+        print_proven_test_begin(test);
 
         size_t input_count = 1 + NOB_ARRAY_LEN(headers) + obj_files.count;
         const char **inputs = nob_temp_alloc(sizeof(const char *) * input_count);
@@ -724,10 +782,12 @@ int main(int argc, char **argv)
         
         if (needs_link || hash_differs || force_rebuild) {
             if (!link_executable_tmp(linker_exe, src_path, obj_files, exec_tmp, build_mode, user_ldflags, NULL)) {
+                print_proven_test_fail(test, "link", "The test executable did not link. Read the compiler diagnostics above, then check source/header/API drift.");
                 if (nob_file_exists(exec_tmp)) nob_delete_file(exec_tmp);
                 return 1;
             }
             if (!nob_rename(exec_tmp, exec_path)) {
+                print_proven_test_fail(test, "install", "The linked executable could not be moved into place. Check build-root permissions and stale locked files.");
                 if (nob_file_exists(exec_tmp)) nob_delete_file(exec_tmp);
                 return 1;
             }
@@ -736,7 +796,11 @@ int main(int argc, char **argv)
         
         cmd.count = 0;
         nob_cmd_append(&cmd, exec_path);
-        if (!nob_cmd_run_sync(cmd)) return 1;
+        if (!nob_cmd_run_sync(cmd)) {
+            print_proven_test_fail(test, "run", test->failure_hint);
+            return 1;
+        }
+        print_proven_test_pass(test);
         nob_temp_reset();
     }
 
