@@ -43,8 +43,9 @@ int main(void) {
     PROVEN_CORO_INIT(&my_fetcher.coro);
 
     int main_loop_ticks = 0;
+    PROVEN_TEST_INFO("Starting coroutine main execution loop...");
     while (!PROVEN_CORO_IS_DONE(&my_fetcher.coro)) {
-        PROVEN_TEST_INFO("Main Frame #%d", main_loop_ticks);
+        PROVEN_TEST_INFO("Main Frame #{}", PROVEN_ARG(main_loop_ticks));
         
         // Execute a slice of the fetcher without halting the main thread
         fetch_data(&my_fetcher);
@@ -54,6 +55,6 @@ int main(void) {
     PROVEN_TEST_ASSERT(my_fetcher.payload == 404, "Testing condition: my_fetcher.payload == 404", "Review logic surrounding my_fetcher.payload == 404");
     PROVEN_TEST_ASSERT(main_loop_ticks >= 3, "Testing condition: main_loop_ticks >= 3", "Review logic surrounding main_loop_ticks >= 3");
     
-    PROVEN_TEST_INFO("All Phase 19 Coroutine Tests Passed Successfully!");
+    PROVEN_TEST_PASS("All Phase 19 Coroutine Tests Passed Successfully!");
     return 0;
 }

@@ -11,8 +11,7 @@ int main() {
 
     // ============================================
     // 1. Creation and Edge Boundaries Checks
-    // ============================================
-    // Capping memory to precisely 3 integers capacity
+    PROVEN_TEST_INFO("Checking creation and edge boundaries...");
     proven_result_ring_t res = PROVEN_RING_INIT(heap, int, 3);
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(res.err), "Testing condition: PROVEN_IS_OK(res.err)", "Review logic surrounding PROVEN_IS_OK(res.err)");
     proven_ring_t ring = res.value;
@@ -21,9 +20,8 @@ int main() {
     PROVEN_TEST_ASSERT(ring.len == 0, "Testing condition: ring.len == 0", "Review logic surrounding ring.len == 0");
     PROVEN_TEST_ASSERT(ring.head == 0 && ring.tail == 0, "Testing condition: ring.head == 0 && ring.tail == 0", "Review logic surrounding ring.head == 0 && ring.tail == 0");
 
-    // ============================================
     // 2. FIFO Order Validation (Push & Pop)
-    // ============================================
+    PROVEN_TEST_INFO("Validating FIFO order (Push & Pop)...");
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(PROVEN_RING_PUSH(&ring, int, 100)), "Testing condition: PROVEN_IS_OK(PROVEN_RING_PUSH(&ring, int, 100))", "Review logic surrounding PROVEN_IS_OK(PROVEN_RING_PUSH(&ring, int, 100))");
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(PROVEN_RING_PUSH(&ring, int, 200)), "Testing condition: PROVEN_IS_OK(PROVEN_RING_PUSH(&ring, int, 200))", "Review logic surrounding PROVEN_IS_OK(PROVEN_RING_PUSH(&ring, int, 200))");
     PROVEN_TEST_ASSERT(ring.len == 2, "Testing condition: ring.len == 2", "Review logic surrounding ring.len == 2");
@@ -35,9 +33,8 @@ int main() {
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(PROVEN_RING_PUSH(&ring, int, 300)), "Testing condition: PROVEN_IS_OK(PROVEN_RING_PUSH(&ring, int, 300))", "Review logic surrounding PROVEN_IS_OK(PROVEN_RING_PUSH(&ring, int, 300))"); 
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(PROVEN_RING_PUSH(&ring, int, 400)), "Testing condition: PROVEN_IS_OK(PROVEN_RING_PUSH(&ring, int, 400))", "Review logic surrounding PROVEN_IS_OK(PROVEN_RING_PUSH(&ring, int, 400))"); // Tail is now overlapping bounds physically!
 
-    // ============================================
     // 3. OOB Starvation & Full Rejection Defense
-    // ============================================
+    PROVEN_TEST_INFO("Testing OOB starvation and full rejection defense...");
     PROVEN_TEST_ASSERT(ring.len == 3, "Testing condition: ring.len == 3", "Review logic surrounding ring.len == 3"); // 200, 300, 400
     
     // Ring is mathematically fully capped. Prevent allocations safely!
@@ -57,6 +54,12 @@ int main() {
 
     PROVEN_RING_DESTROY(&ring);
     
-    PROVEN_TEST_INFO("All Phase 10 Ring Buffer Tests Passed Successfully!");
+    // 4. Integer Overflow Bounds Tests
+    PROVEN_TEST_INFO("Testing integer overflow bounds...");
+    // Should prevent extremely large capacities from integer multiplication wrapping around sizes
+    proven_result_ring_t res_fail = proven_ring_create(heap, (proven_size_t)-5, 1000, 8); 
+    PROVEN_TEST_ASSERT(res_fail.err == PROVEN_ERR_OUT_OF_BOUNDS, "Creation integer overflow logic prevents extreme caps from becoming OOM exploits", "Check ring create bounds logic");
+
+    PROVEN_TEST_PASS("All Phase 10 Ring Buffer Tests Passed Successfully!");
     return 0;
 }

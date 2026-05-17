@@ -4,7 +4,7 @@
 
 int main(void) {
     PROVEN_TEST_INFO("--- Phase 6: Pool Allocator Constraint & Recycling Tests ---");
-
+    
     proven_allocator_t heap = proven_heap_allocator();
     proven_pool_t pool;
     
@@ -53,9 +53,7 @@ int main(void) {
     pool_alloc.free_fn(pool_alloc.ctx, r4.value.ptr);
     pool_alloc.free_fn(pool_alloc.ctx, r5.value.ptr);
     
-    if (pool.bin) {
-        heap.free_fn(heap.ctx, pool.bin);
-    }
+    proven_pool_destroy(&pool);
 
     PROVEN_TEST_INFO("--- test_phase6_pool Passed Completely! ---");
     return 0;

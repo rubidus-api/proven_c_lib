@@ -12,14 +12,16 @@
 int main() {
     PROVEN_TEST_INFO("Running Phase 3 Error Handling Tests...");
 
-    /* 1. Test basic error mappings */
+    // 1. Test basic error mappings
+    PROVEN_TEST_INFO("Testing basic error mappings...");
     proven_err_t err_ok = PROVEN_OK;
     proven_err_t err_nomem = PROVEN_ERR_NOMEM;
 
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(err_ok) == 1, "Testing condition: PROVEN_IS_OK(err_ok) == 1", "Review logic surrounding PROVEN_IS_OK(err_ok) == 1");
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(err_nomem) == 0, "Testing condition: PROVEN_IS_OK(err_nomem) == 0", "Review logic surrounding PROVEN_IS_OK(err_nomem) == 0");
 
-    /* 2. Test Result Structure */
+    // 2. Test Result Structure
+    PROVEN_TEST_INFO("Testing Result structure semantics...");
     proven_byte_t dummy_data[10] = {0};
     proven_mem_mut_t dummy_mut = { .ptr = dummy_data, .size = 10 };
 
@@ -41,6 +43,6 @@ int main() {
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(res_fail.err) == 0, "Testing condition: PROVEN_IS_OK(res_fail.err) == 0", "Review logic surrounding PROVEN_IS_OK(res_fail.err) == 0");
     PROVEN_TEST_ASSERT(res_fail.value.ptr == NULL, "Testing condition: res_fail.value.ptr == NULL", "Review logic surrounding res_fail.value.ptr == NULL");
 
-    PROVEN_TEST_INFO("All Phase 3 Tests Passed Successfully!");
+    PROVEN_TEST_PASS("All Phase 3 Tests Passed Successfully!");
     return 0;
 }
