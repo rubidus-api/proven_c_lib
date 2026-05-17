@@ -42,7 +42,7 @@ Common checks:
 ./nob tsan
 ./nob regression
 ./nob freestanding
-./nob cross -build-root /mnt/ai-share/build/proven
+./nob cross -build-root /mnt/ai-share/build/proven_c_lib
 ```
 
 Use another compiler:

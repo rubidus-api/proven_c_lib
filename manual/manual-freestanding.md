@@ -22,13 +22,13 @@ Run the project freestanding check:
 
 ```sh
 cc nob.c -o nob
-./nob freestanding -build-root /mnt/ai-share/build/proven
+./nob freestanding -build-root /mnt/ai-share/build/proven_c_lib
 ```
 
 Run the compile-only cross matrix:
 
 ```sh
-./nob cross -build-root /mnt/ai-share/build/proven
+./nob cross -build-root /mnt/ai-share/build/proven_c_lib
 ```
 
 ## 2. Available source files

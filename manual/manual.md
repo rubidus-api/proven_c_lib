@@ -58,7 +58,7 @@ Common validation commands:
 ./nob regression-asan
 ./nob regression-ubsan
 ./nob freestanding
-./nob cross -build-root /mnt/ai-share/build/proven
+./nob cross -build-root /mnt/ai-share/build/proven_c_lib
 ```
 
 Use the umbrella header when you want the full hosted API:
