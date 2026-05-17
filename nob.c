@@ -483,7 +483,7 @@ int main(int argc, char **argv)
         printf("  ./nob -cc clang    Build using the Clang compiler.\n");
         printf("  ./nob -cflags \"-DDEBUG\"  Build with custom debug definition.\n");
         printf("  ./nob asan -f      Force rebuild and check for memory leaks with ASan.\n");
-        printf("  ./nob cross -build-root /mnt/ai-share/build/proven  Compile target matrix.\n");
+        printf("  ./nob cross -build-root /mnt/ai-share/build/proven_c_lib  Compile target matrix.\n");
         printf("  ./nob clean        Clean up all build artifacts.\n");
         return 0;
     }

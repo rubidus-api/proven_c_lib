@@ -213,7 +213,7 @@ See `manual-freestanding.md` for the exact source list and command examples.
 The build driver command is:
 
 ```sh
-./nob cross -build-root /mnt/ai-share/build/proven
+./nob cross -build-root /mnt/ai-share/build/proven_c_lib
 ```
 
 Current target categories:
