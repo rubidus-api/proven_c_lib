@@ -1,0 +1,6 @@
+{
+  "name": "Proven C Library",
+  "description": "Architecture and design specification for the proven C library, focusing on memory safety and C23 provenance rules.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
