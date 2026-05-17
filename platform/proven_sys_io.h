@@ -2,6 +2,7 @@
 #define PROVEN_PLATFORM_SYS_IO_H
 
 #include "proven/types.h"
+#include "proven/error.h"
 #include <stddef.h>
 
 /**
@@ -12,19 +13,36 @@
  */
 
 typedef struct {
-    void *internal;
+    union {
+        void *handle;
+        int fd;
+    };
 } proven_sys_io_handle_t;
 
 [[nodiscard]] proven_sys_io_handle_t proven_sys_io_std_in(void);
 [[nodiscard]] proven_sys_io_handle_t proven_sys_io_std_out(void);
 [[nodiscard]] proven_sys_io_handle_t proven_sys_io_std_err(void);
 
-[[nodiscard]]
-size_t proven_sys_io_write(proven_sys_io_handle_t handle, const void *buf, size_t size);
+typedef struct {
+    proven_err_t err;
+    proven_size_t value;
+} proven_sys_result_size_t;
 
 [[nodiscard]]
-size_t proven_sys_io_read(proven_sys_io_handle_t handle, void *buf, size_t size);
+proven_sys_result_size_t proven_sys_io_write_once(proven_sys_io_handle_t handle, const void *buf, size_t size);
+
+[[nodiscard]]
+proven_sys_result_size_t proven_sys_io_write_all(proven_sys_io_handle_t handle, const void *buf, size_t size);
+
+[[nodiscard]]
+proven_sys_result_size_t proven_sys_io_read_once(proven_sys_io_handle_t handle, void *buf, size_t size);
+
+[[nodiscard]]
+proven_sys_result_size_t proven_sys_io_read_all(proven_sys_io_handle_t handle, void *buf, size_t size);
 
 void proven_sys_io_flush(proven_sys_io_handle_t handle);
+
+[[nodiscard]]
+proven_sys_result_size_t proven_sys_io_seek_relative(proven_sys_io_handle_t handle, int64_t offset);
 
 #endif /* PROVEN_PLATFORM_SYS_IO_H */

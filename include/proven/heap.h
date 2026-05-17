@@ -10,6 +10,9 @@
 
 /**
  * @brief Returns an allocator trait powered by the system's underlying Heap (malloc).
+ * 
+ * @note Under PROVEN_FREESTANDING, this returns a zero-initialized `(proven_allocator_t){0}` stub.
+ * `proven_alloc_is_valid()` will subsequently return false for the returned allocator.
  */
 [[nodiscard]]
 proven_allocator_t proven_heap_allocator(void);

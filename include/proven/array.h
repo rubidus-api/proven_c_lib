@@ -9,13 +9,14 @@
 
 /**
  * @file array.h
- * @brief Dynamic array implementation guaranteeing polymorphic memory bounds and contiguous memory locality.
+ * @brief Dynamic array implementation with bounds checks and contiguous memory locality.
  */
 
 typedef struct {
     proven_allocator_t alloc;    // Allocator trait driving memory decisions
-    proven_mem_mut_t internal;   // Backing memory slice representing physical capacity space
+    proven_byte_t *data;         // Backing memory slice representing physical capacity space
     proven_size_t len;           // The current active element count
+    proven_size_t cap;           // The capacity in elements
     proven_size_t elem_size;     // Size of a single element (e.g., sizeof(int))
     proven_size_t align;         // The alignment boundary mandated by the stored type
 } proven_array_t;
@@ -31,11 +32,23 @@ typedef struct {
 
 [[nodiscard]] proven_result_array_t proven_array_create(proven_allocator_t alloc, proven_size_t init_cap, proven_size_t elem_size, proven_size_t align);
 
+/**
+ * @brief Validates the structural integrity of the public array fields.
+ */
+[[nodiscard]] bool proven_array_is_valid(const proven_array_t *arr);
+
+/**
+ * @brief Pre-allocates memory for the array to reach at least `new_cap` capacity.
+ * Useful when working with arena allocators to prevent dead storage from reallocations.
+ */
+[[nodiscard]] proven_err_t proven_array_reserve(proven_array_t *arr, proven_size_t new_cap);
+
 [[nodiscard]] proven_err_t proven_array_push(proven_array_t *arr, const void *element);
 
 [[nodiscard]] proven_err_t proven_array_pop(proven_array_t *arr, void *out_element);
 
-[[nodiscard]] void* proven_array_get(const proven_array_t *arr, proven_size_t index);
+[[nodiscard]] void* proven_array_get_mut(proven_array_t *arr, proven_size_t index);
+[[nodiscard]] const void* proven_array_get(const proven_array_t *arr, proven_size_t index);
 
 void proven_array_destroy(proven_array_t *arr);
 
@@ -44,7 +57,7 @@ void proven_array_destroy(proven_array_t *arr);
 // -------------------------------------------------------------
 
 /**
- * @brief Initializes a generic proven array with type-safety guaranteeing perfect byte-size and alignment deduction.
+ * @brief Initializes a generic proven array with type-safe size and alignment deduction.
  */
 #define PROVEN_ARRAY_INIT(alloc, type, init_cap) \
     proven_array_create((alloc), (init_cap), sizeof(type), alignof(type))
@@ -62,10 +75,16 @@ void proven_array_destroy(proven_array_t *arr);
     proven_array_pop((arr_ptr), (out_ptr))
 
 /**
- * @brief References memory data guaranteeing the retrieved pointer inherits the specific structured type context.
+ * @brief Retrieves a typed pointer to an element in the array.
  */
 #define PROVEN_ARRAY_GET(arr_ptr, type, index) \
-    ((type*)proven_array_get((arr_ptr), (index)))
+    ((const type*)proven_array_get((arr_ptr), (index)))
+
+/**
+ * @brief Retrieves a typed mutable pointer to an element in the array.
+ */
+#define PROVEN_ARRAY_GET_MUT(arr_ptr, type, index) \
+    ((type*)proven_array_get_mut((arr_ptr), (index)))
 
 /**
  * @brief Cleans up internal structures delegating array data memory returns back through the contextual VTable alloc.

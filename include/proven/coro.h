@@ -1,19 +1,26 @@
 #ifndef PROVEN_CORO_H
 #define PROVEN_CORO_H
 
+#include "proven/types.h"
+
 /**
  * @file coro.h
- * @brief Zero-overhead Stackless Coroutine Engine
+ * @brief Low-overhead Stackless Coroutine Engine
  * 
- * pure C11/C23 macro tricks based on Duff's Device allowing asynchronous 
+ * Based on Duff's Device allowing asynchronous 
  * state-machine execution without OS Thread context switching overhead.
+ * 
+ * @note Macro constraints: PROVEN_CORO_YIELD and PROVEN_CORO_AWAIT MUST NOT 
+ *       be used more than once on the same source line, as they rely on 
+ *       __LINE__ for state labels.
  */
 
 /**
- * @brief Coroutine state tracker. Only 4 bytes (int) per Coroutine.
+ * @brief Coroutine state tracker. Only 4 bytes (proven_i32) per Coroutine.
+ * Functions utilizing this MUST return proven_i32 (0 for yield/retry, 1 for done).
  */
 typedef struct {
-    int state;
+    proven_i32 state;
 } proven_coro_t;
 
 /**

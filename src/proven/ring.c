@@ -1,15 +1,19 @@
 #include "proven/ring.h"
+#include "../../platform/proven_sys_mem.h"
 
 proven_result_ring_t proven_ring_create(proven_allocator_t alloc, proven_size_t cap, proven_size_t elem_size, proven_size_t align) {
     proven_result_ring_t res = {0};
     
-    // Bounds prevention enforcing non-zero dimension limitations
-    if (cap == 0 || elem_size == 0) {
+    if (cap == 0 || elem_size == 0 || !proven_alloc_is_valid(alloc) || !proven_is_pow2(align)) {
         res.err = PROVEN_ERR_INVALID_ARG;
         return res;
     }
 
-    proven_size_t bytes_needed = cap * elem_size;
+    proven_size_t bytes_needed;
+    if (PROVEN_CKD_MUL(&bytes_needed, cap, elem_size)) {
+        res.err = PROVEN_ERR_OUT_OF_BOUNDS;
+        return res;
+    }
     proven_result_mem_mut_t alloc_res = alloc.alloc_fn(alloc.ctx, bytes_needed, align);
     
     if (!PROVEN_IS_OK(alloc_res.err)) {
@@ -33,20 +37,38 @@ proven_result_ring_t proven_ring_create(proven_allocator_t alloc, proven_size_t 
     return res;
 }
 
+bool proven_ring_is_valid(const proven_ring_t *ring) {
+    if (!ring) return false;
+    if (ring->elem_size == 0 || !proven_is_pow2(ring->align)) return false;
+    if (ring->cap == 0) return false;
+    if (ring->len > ring->cap) return false;
+    if (ring->head >= ring->cap || ring->tail >= ring->cap) return false;
+    if ((ring->head + ring->len) % ring->cap != ring->tail) return false;
+    if (!ring->internal.ptr) return false;
+    proven_size_t bytes_needed;
+    if (PROVEN_CKD_MUL(&bytes_needed, ring->cap, ring->elem_size)) return false;
+    if (ring->internal.size < bytes_needed) return false;
+    if (!proven_alloc_is_valid(ring->alloc)) return false;
+    return true;
+}
+
 proven_err_t proven_ring_push(proven_ring_t *ring, const void *element) {
     if (!ring || !element) return PROVEN_ERR_INVALID_ARG;
     
-    // Hardcap logic guaranteeing absolute containment avoiding re-allocations
+    // Fixed-capacity ring; push fails when the buffer is full avoiding re-allocations
     if (ring->len >= ring->cap) return PROVEN_ERR_OUT_OF_BOUNDS;
 
-    proven_byte_t *dst = ring->internal.ptr + (ring->tail * ring->elem_size);
-    const proven_byte_t *src = (const proven_byte_t *)element;
-
-    for (proven_size_t i = 0; i < ring->elem_size; ++i) {
-        dst[i] = src[i];
+    proven_size_t dst_offset;
+    proven_size_t required_bytes;
+    if (PROVEN_CKD_MUL(&dst_offset, ring->tail, ring->elem_size) || 
+        PROVEN_CKD_ADD(&required_bytes, dst_offset, ring->elem_size) ||
+        ring->internal.size < required_bytes) {
+        return PROVEN_ERR_OUT_OF_BOUNDS;
     }
+    proven_byte_t *dst = ring->internal.ptr + dst_offset;
+    proven_sys_mem_copy(dst, element, ring->elem_size);
 
-    // Mathematical logical wrap-around
+    // Wrap around to the beginning of the ring.
     ring->tail = (ring->tail + 1) % ring->cap;
     ring->len++;
     
@@ -54,17 +76,21 @@ proven_err_t proven_ring_push(proven_ring_t *ring, const void *element) {
 }
 
 proven_err_t proven_ring_pop(proven_ring_t *ring, void *out_element) {
-    if (!ring || ring->len == 0) return PROVEN_ERR_OUT_OF_BOUNDS; // Read starvation threshold
+    if (!ring || ring->len == 0) return PROVEN_ERR_OUT_OF_BOUNDS; // Fail if empty
 
     if (out_element) {
-        const proven_byte_t *src = ring->internal.ptr + (ring->head * ring->elem_size);
-        proven_byte_t *dst = (proven_byte_t *)out_element;
-        for (proven_size_t i = 0; i < ring->elem_size; ++i) {
-            dst[i] = src[i];
+        proven_size_t src_offset;
+        proven_size_t required_bytes;
+        if (PROVEN_CKD_MUL(&src_offset, ring->head, ring->elem_size) || 
+            PROVEN_CKD_ADD(&required_bytes, src_offset, ring->elem_size) ||
+            ring->internal.size < required_bytes) {
+            return PROVEN_ERR_OUT_OF_BOUNDS;
         }
+        const proven_byte_t *src = ring->internal.ptr + src_offset;
+        proven_sys_mem_copy(out_element, src, ring->elem_size);
     }
 
-    // Mathematical logical wrap-around
+    // Wrap around to the beginning of the ring.
     ring->head = (ring->head + 1) % ring->cap;
     ring->len--;
     

@@ -2,6 +2,8 @@
 #define PROVEN_PLATFORM_SYS_FS_H
 
 #include "proven/types.h"
+#include "proven/error.h"
+#include "proven_sys_io.h"
 #include <stdbool.h>
 
 /**
@@ -10,22 +12,35 @@
  */
 
 typedef struct {
-    void *internal;
+#if defined(_WIN32) || defined(_WIN64)
+    void *handle;
+#else
+    int fd;
+#endif
 } proven_sys_file_handle_t;
 
+typedef enum {
+    PROVEN_SYS_FS_READ   = 1 << 0,
+    PROVEN_SYS_FS_WRITE  = 1 << 1,
+    PROVEN_SYS_FS_APPEND = 1 << 2,
+    PROVEN_SYS_FS_CREATE = 1 << 3,
+    PROVEN_SYS_FS_TRUNC  = 1 << 4,
+    PROVEN_SYS_FS_CREATE_NEW = 1 << 5
+} proven_sys_fs_mode_t;
+
 [[nodiscard]]
-proven_sys_file_handle_t proven_sys_fs_open(const char *path, const char *mode_str);
+proven_sys_file_handle_t proven_sys_fs_open(const char *path, int flags);
 
 void proven_sys_fs_close(proven_sys_file_handle_t handle);
 
 [[nodiscard]]
-size_t proven_sys_fs_read(proven_sys_file_handle_t handle, void *buf, size_t size);
+proven_sys_result_size_t proven_sys_fs_read(proven_sys_file_handle_t handle, void *buf, size_t size);
 
 [[nodiscard]]
-size_t proven_sys_fs_write(proven_sys_file_handle_t handle, const void *buf, size_t size);
+proven_sys_result_size_t proven_sys_fs_write(proven_sys_file_handle_t handle, const void *buf, size_t size);
 
 [[nodiscard]]
-size_t proven_sys_fs_size(proven_sys_file_handle_t handle);
+proven_sys_result_size_t proven_sys_fs_size(proven_sys_file_handle_t handle);
 
 [[nodiscard]]
 bool proven_sys_fs_rename(const char *src, const char *dest);
@@ -69,6 +84,8 @@ typedef struct {
     bool is_dir;
     unsigned int mode;
     long long mtime;
+    unsigned long long dev;
+    unsigned long long ino;
 } proven_sys_fs_stat_t;
 
 [[nodiscard]]

@@ -14,27 +14,46 @@ static void swap_elements(proven_byte_t *a, proven_byte_t *b, proven_size_t size
 }
 
 static void quicksort_recursive(proven_byte_t *base, proven_size_t left, proven_size_t right, proven_size_t size, proven_compare_fn_t cmp) {
-    if (left >= right) return;
+    while (left < right) {
+        // Small partition optimization: use insertion sort if range is very small? 
+        // For now, let's keep it simple quicksort but with better pivot.
+        
+        proven_size_t mid = left + (right - left) / 2;
+        
+        // Median-of-Three pivot selection
+        if (cmp(base + (mid * size), base + (left * size)) < 0) {
+            swap_elements(base + (mid * size), base + (left * size), size);
+        }
+        if (cmp(base + (right * size), base + (left * size)) < 0) {
+            swap_elements(base + (right * size), base + (left * size), size);
+        }
+        if (cmp(base + (right * size), base + (mid * size)) < 0) {
+            swap_elements(base + (right * size), base + (mid * size), size);
+        }
+        
+        // Mid is now the median. Use it as pivot.
+        swap_elements(base + (mid * size), base + (right * size), size);
+        
+        proven_size_t store_idx = left;
+        for (proven_size_t i = left; i < right; ++i) {
+            if (cmp(base + (i * size), base + (right * size)) < 0) {
+                swap_elements(base + (i * size), base + (store_idx * size), size);
+                store_idx++;
+            }
+        }
+        
+        swap_elements(base + (store_idx * size), base + (right * size), size);
 
-    // Median-of-three or simple middle pivot for simplicity in Phase 12
-    proven_size_t pivot_idx = left + (right - left) / 2;
-    proven_byte_t *pivot_ptr = base + (pivot_idx * size);
-    
-    // We move the pivot to the end for partitioning
-    swap_elements(pivot_ptr, base + (right * size), size);
-    
-    proven_size_t store_idx = left;
-    for (proven_size_t i = left; i < right; ++i) {
-        if (cmp(base + (i * size), base + (right * size)) < 0) {
-            swap_elements(base + (i * size), base + (store_idx * size), size);
-            store_idx++;
+        // Recursive call on the smaller side and loop on the larger side to limit stack depth
+        if (store_idx - left < right - store_idx) {
+            if (store_idx > 0) quicksort_recursive(base, left, store_idx - 1, size, cmp);
+            left = store_idx + 1;
+        } else {
+            quicksort_recursive(base, store_idx + 1, right, size, cmp);
+            if (store_idx > 0) right = store_idx - 1;
+            else break;
         }
     }
-    
-    swap_elements(base + (store_idx * size), base + (right * size), size);
-
-    if (store_idx > 0) quicksort_recursive(base, left, store_idx - 1, size, cmp);
-    quicksort_recursive(base, store_idx + 1, right, size, cmp);
 }
 
 // -------------------------------------------------------------
@@ -43,7 +62,7 @@ static void quicksort_recursive(proven_byte_t *base, proven_size_t left, proven_
 
 void proven_array_sort(proven_array_t *arr, proven_compare_fn_t cmp) {
     if (!arr || arr->len < 2 || !cmp) return;
-    quicksort_recursive((proven_byte_t*)arr->internal.ptr, 0, arr->len - 1, arr->elem_size, cmp);
+    quicksort_recursive((proven_byte_t*)arr->data, 0, arr->len - 1, arr->elem_size, cmp);
 }
 
 void* proven_array_binary_search(const proven_array_t *arr, const void *key, proven_compare_fn_t cmp) {
@@ -51,11 +70,11 @@ void* proven_array_binary_search(const proven_array_t *arr, const void *key, pro
 
     proven_ptrdiff_t low = 0;
     proven_ptrdiff_t high = (proven_ptrdiff_t)arr->len - 1;
-    proven_byte_t *base = (proven_byte_t*)arr->internal.ptr;
+    proven_byte_t *base = (proven_byte_t*)arr->data;
 
     while (low <= high) {
         proven_ptrdiff_t mid = low + (high - low) / 2;
-        void *mid_ptr = base + (mid * arr->elem_size);
+        void *mid_ptr = base + ((proven_size_t)mid * arr->elem_size);
         int res = cmp(key, mid_ptr);
 
         if (res == 0) return mid_ptr;
@@ -69,7 +88,7 @@ void* proven_array_binary_search(const proven_array_t *arr, const void *key, pro
 void* proven_array_linear_search(const proven_array_t *arr, const void *key, proven_compare_fn_t cmp) {
     if (!arr || !key || !cmp) return (void*)0;
     
-    proven_byte_t *base = (proven_byte_t*)arr->internal.ptr;
+    proven_byte_t *base = (proven_byte_t*)arr->data;
     for (proven_size_t i = 0; i < arr->len; ++i) {
         void *current = base + (i * arr->elem_size);
         if (cmp(key, current) == 0) return current;
