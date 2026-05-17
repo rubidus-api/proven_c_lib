@@ -33,9 +33,8 @@ int main() {
 
     proven_allocator_t heap = proven_heap_allocator();
 
-    // ============================================
     // 1. Integer Sorting & Binary Search
-    // ============================================
+    PROVEN_TEST_INFO("Testing Integer Sorting & Binary Search...");
     proven_result_array_t res = PROVEN_ARRAY_INIT(heap, int, 5);
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(res.err), "Testing condition: PROVEN_IS_OK(res.err)", "Review logic surrounding PROVEN_IS_OK(res.err)");
     proven_array_t arr = res.value;
@@ -67,9 +66,8 @@ int main() {
 
     PROVEN_ARRAY_DESTROY(&arr);
 
-    // ============================================
     // 2. Struct Sorting (Complex Comparator)
-    // ============================================
+    PROVEN_TEST_INFO("Testing Struct Sorting (Complex Comparator)...");
     proven_result_array_t s_res = PROVEN_ARRAY_INIT(heap, score_t, 3);
     proven_array_t s_arr = s_res.value;
 
@@ -95,6 +93,6 @@ int main() {
 
     PROVEN_ARRAY_DESTROY(&s_arr);
 
-    PROVEN_TEST_INFO("All Phase 12 Algorithm Tests Passed Successfully!");
+    PROVEN_TEST_PASS("All Phase 12 Algorithm Tests Passed Successfully!");
     return 0;
 }

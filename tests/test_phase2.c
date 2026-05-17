@@ -15,6 +15,7 @@ int main() {
     PROVEN_TEST_INFO("Running Phase 2 Memory Core Tests...");
 
     /* 1. Setup raw memory for testing */
+    PROVEN_TEST_INFO("Setting up raw memory buffer...");
     proven_u8 raw_data[16] = {
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
     };
@@ -44,18 +45,18 @@ int main() {
     PROVEN_TEST_INFO("Testing slicing utilities...");
     
     /* Slice from index 4, size 4 (should be [4, 0xFF, 6, 7]) */
-    proven_mem_view_t sub_view = proven_mem_view_slice(view, 4, 4);
+    proven_mem_view_t sub_view = proven_mem_view_slice_unchecked(view, 4, 4);
     PROVEN_TEST_ASSERT(sub_view.size == 4, "Testing condition: sub_view.size == 4", "Review logic surrounding sub_view.size == 4");
     PROVEN_TEST_ASSERT(sub_view.ptr[0] == 4, "Testing condition: sub_view.ptr[0] == 4", "Review logic surrounding sub_view.ptr[0] == 4");
     PROVEN_TEST_ASSERT(sub_view.ptr[1] == 0xFF, "Testing condition: sub_view.ptr[1] == 0xFF", "Review logic surrounding sub_view.ptr[1] == 0xFF");
     PROVEN_TEST_ASSERT(sub_view.ptr[3] == 7, "Testing condition: sub_view.ptr[3] == 7", "Review logic surrounding sub_view.ptr[3] == 7");
 
-    proven_mem_mut_t sub_mut = proven_mem_mut_slice(mut, 8, 2);
+    proven_mem_mut_t sub_mut = proven_mem_mut_slice_unchecked(mut, 8, 2);
     PROVEN_TEST_ASSERT(sub_mut.size == 2, "Testing condition: sub_mut.size == 2", "Review logic surrounding sub_mut.size == 2");
     PROVEN_TEST_ASSERT(sub_mut.ptr[0] == 8, "Testing condition: sub_mut.ptr[0] == 8", "Review logic surrounding sub_mut.ptr[0] == 8");
     sub_mut.ptr[0] = 0xAA;
     PROVEN_TEST_ASSERT(raw_data[8] == 0xAA, "Testing condition: raw_data[8] == 0xAA", "Review logic surrounding raw_data[8] == 0xAA");
 
-    PROVEN_TEST_INFO("All Phase 2 Tests Passed Successfully!");
+    PROVEN_TEST_PASS("All Phase 2 Tests Passed Successfully!");
     return 0;
 }

@@ -41,6 +41,6 @@ int main(void) {
     PROVEN_TEST_ASSERT(mem.ptr == (proven_byte_t*)0x1234, "Memory pointer assignment check", "Review proven_mem_t in memory.h");
     PROVEN_TEST_ASSERT(mem.size == 100, "Memory size assignment check", "Review proven_mem_t in memory.h");
 
-    PROVEN_TEST_INFO("All Phase 1 Tests Passed Successfully!");
+    PROVEN_TEST_PASS("All Phase 1 Tests Passed Successfully!");
     return 0;
 }

@@ -14,17 +14,15 @@ typedef struct {
 int main() {
     PROVEN_TEST_INFO("Running Phase 9 Intrusive Linked List Tests...");
 
-    // ============================================
     // 1. List Initialization
-    // ============================================
+    PROVEN_TEST_INFO("Testing intrusive list initialization...");
     proven_list_t job_queue;
     proven_list_init(&job_queue);
     
     PROVEN_TEST_ASSERT(proven_list_is_empty(&job_queue), "Testing condition: proven_list_is_empty(&job_queue)", "Review logic surrounding proven_list_is_empty(&job_queue)");
 
-    // ============================================
     // 2. Safe Structural Node Appending
-    // ============================================
+    PROVEN_TEST_INFO("Testing safe structural node appending...");
     job_task_t t1 = { .job_id = 10, .computed_value = 1.0f };
     job_task_t t2 = { .job_id = 20, .computed_value = 2.0f };
     job_task_t t3 = { .job_id = 30, .computed_value = 3.0f };
@@ -36,9 +34,8 @@ int main() {
     proven_list_push_back(&job_queue, &t2.linkage);
     proven_list_push_back(&job_queue, &t3.linkage);
 
-    // ============================================
     // 3. Mathematical Reverse Iteration & Extraction
-    // ============================================
+    PROVEN_TEST_INFO("Testing mathematical reverse iteration and extraction...");
     int sum = 0;
     proven_list_node_t *curr;
     
@@ -51,9 +48,8 @@ int main() {
     // Assert 10 + 20 + 30 = 60 implicitly validating memory bounds distance offset calculations.
     PROVEN_TEST_ASSERT(sum == 60, "Testing condition: sum == 60", "Review logic surrounding sum == 60");
 
-    // ============================================
     // 4. Safe Detachment Loop
-    // ============================================
+    PROVEN_TEST_INFO("Testing safe detachment loops...");
     proven_list_node_t *safe_next;
     sum = 0;
 
@@ -76,6 +72,6 @@ int main() {
     PROVEN_TEST_ASSERT(first->job_id == 10, "Testing condition: first->job_id == 10", "Review logic surrounding first->job_id == 10");
     PROVEN_TEST_ASSERT(last->job_id == 30, "Testing condition: last->job_id == 30", "Review logic surrounding last->job_id == 30");
 
-    PROVEN_TEST_INFO("All Phase 9 Intrusive List Tests Passed Successfully!");
+    PROVEN_TEST_PASS("All Phase 9 Intrusive List Tests Passed Successfully!");
     return 0;
 }
