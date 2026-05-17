@@ -146,18 +146,30 @@ static bool shell_token_is_safe(const char *s) {
 }
 
 static bool mkdir_p_safe(const char *path) {
+    if (!path || !*path) return false;
     if (!shell_token_is_safe(path)) {
         nob_log(NOB_ERROR, "Unsafe directory path: %s", path ? path : "(null)");
         return false;
     }
-#if defined(_WIN32) || defined(_WIN64)
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "mkdir %s >nul 2>nul", path);
-#else
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "mkdir -p %s", path);
-#endif
-    return system(cmd) == 0;
+    char tmp[1024];
+    size_t len = strlen(path);
+    if (len >= sizeof(tmp)) {
+        nob_log(NOB_ERROR, "Directory path is too long: %s", path);
+        return false;
+    }
+    memcpy(tmp, path, len + 1u);
+    for (char *p = tmp; *p; ++p) {
+        if (*p == '/' || *p == '\\') {
+            char saved = *p;
+            *p = '\0';
+            if (tmp[0] != '\0' && strcmp(tmp, ".") != 0) {
+                if (!nob_mkdir_if_not_exists(tmp)) return false;
+            }
+            *p = saved;
+            while (p[1] == '/' || p[1] == '\\') ++p;
+        }
+    }
+    return nob_mkdir_if_not_exists(tmp);
 }
 
 static bool command_available(const char *cmd_name) {
@@ -200,6 +212,48 @@ static void print_proven_test_fail(const Proven_Test_Case *test, const char *sta
 
 static void print_proven_test_pass(const Proven_Test_Case *test) {
     nob_log(NOB_INFO, "[PROVEN][TEST][PASS] path=%s", test->path);
+}
+
+static const char *detect_runtime_profile(void) {
+#if defined(_WIN32) || defined(_WIN64)
+    const char *msystem = getenv("MSYSTEM");
+    if (msystem && *msystem) return msystem;
+    return "Windows";
+#else
+    const char *ostype = getenv("OSTYPE");
+    if (ostype && *ostype) return ostype;
+    return "POSIX";
+#endif
+}
+
+static void print_proven_build_plan(const char *build_mode, const char *compiler_exe, const char *linker_exe,
+                                    const char *build_root, const char *build_dir, size_t source_count,
+                                    size_t test_count, bool cross_check, bool only_regression) {
+    nob_log(NOB_INFO, "[PROVEN][BUILD][BEGIN] mode=%s cc=%s ld=%s build_root=%s build_dir=%s",
+            build_mode, compiler_exe, linker_exe, build_root, build_dir);
+    nob_log(NOB_INFO, "[PROVEN][BUILD][ENV] runtime=%s platform=%s", detect_runtime_profile(),
+#if defined(_WIN32) || defined(_WIN64)
+            "windows"
+#else
+            "posix"
+#endif
+    );
+    if (cross_check) {
+        nob_log(NOB_INFO, "[PROVEN][BUILD][PLAN] cross matrix selected; no hosted test executables will be linked or run.");
+    } else if (only_regression) {
+        nob_log(NOB_INFO, "[PROVEN][BUILD][PLAN] regression-only run selected; only the regression subset will be linked and executed.");
+    } else {
+        nob_log(NOB_INFO, "[PROVEN][BUILD][PLAN] sources=%zu tests=%zu; library objects will be compiled before test executables are linked and executed.",
+                source_count, test_count);
+    }
+#if defined(_WIN32) || defined(_WIN64)
+    const char *msystem = getenv("MSYSTEM");
+    if (msystem && *msystem) {
+        nob_log(NOB_WARNING, "[PROVEN][BUILD][NOTE] Windows/MSYS2 runtime detected (%s). If the build appears silent, confirm the compiler is on PATH, the build-root is writable, and the shell can launch child processes.", msystem);
+    } else {
+        nob_log(NOB_WARNING, "[PROVEN][BUILD][NOTE] Native Windows runtime detected. If the build appears to do nothing, first verify compiler availability and writable output paths.");
+    }
+#endif
 }
 
 static bool cross_source_is_freestanding(const char *src) {
@@ -648,6 +702,9 @@ int main(int argc, char **argv)
     if (build_root == NULL) build_root = getenv("PROVEN_BUILD_ROOT");
     if (build_root == NULL) build_root = "build";
 
+    print_proven_build_plan(build_mode, compiler_exe, linker_exe, build_root, build_dir,
+                            NOB_ARRAY_LEN(srcs), NOB_ARRAY_LEN(all_tests), cross_check, only_regression);
+
     if (cross_check) {
         const char *cross_root = nob_temp_sprintf("%s/cross", build_root);
         return run_cross_compile_matrix(cross_root, srcs, NOB_ARRAY_LEN(srcs), headers, NOB_ARRAY_LEN(headers)) ? 0 : 1;
@@ -672,6 +729,9 @@ int main(int argc, char **argv)
     Nob_File_Paths obj_files = {0};
 
     // Library Compilation
+    size_t library_rebuilt = 0;
+    size_t library_cached = 0;
+    nob_log(NOB_INFO, "[PROVEN][BUILD][PHASE] library compilation start source_count=%zu", NOB_ARRAY_LEN(srcs));
     for (size_t i = 0; i < NOB_ARRAY_LEN(srcs); ++i) {
         if (strcmp(build_mode, "freestanding") == 0) {
             if (strcmp(srcs[i], "src/proven/u16str.c") == 0) continue;
@@ -705,9 +765,7 @@ int main(int argc, char **argv)
         const char *obj_tmp = nob_temp_sprintf("%s.tmp", final_obj_path);
         const char *hash_path = nob_temp_sprintf("%s.cmdhash", final_obj_path);
 
-        // We need to calculate the hash to see if flags changed
         uint32_t current_hash = 0;
-        // Mock command to get hash without running yet
         {
             Nob_Cmd mock = {0};
             nob_cmd_append(&mock, compiler_exe);
@@ -721,21 +779,33 @@ int main(int argc, char **argv)
         uint32_t old_hash = 0;
         bool hash_differs = !read_cmdhash(hash_path, &old_hash) || old_hash != current_hash;
         bool rebuild = nob_needs_rebuild(final_obj_path, inputs, 1 + NOB_ARRAY_LEN(headers));
-
-        if (rebuild || hash_differs || !output_file_valid(final_obj_path, false) || force_rebuild) {
+        bool should_rebuild = rebuild || hash_differs || !output_file_valid(final_obj_path, false) || force_rebuild;
+        if (should_rebuild) {
+            nob_log(NOB_INFO, "[PROVEN][BUILD][SOURCE][REBUILD] path=%s", srcs[i]);
             if (!compile_object_tmp(compiler_exe, srcs[i], obj_tmp, build_mode, user_cflags, NULL)) {
+                nob_log(NOB_ERROR, "[PROVEN][BUILD][FAIL] stage=compile-source path=%s", srcs[i]);
+                nob_log(NOB_ERROR, "[PROVEN][BUILD][FAIL_HINT] Read the compiler diagnostic above and inspect the portability contract for this source file.");
                 if (nob_file_exists(obj_tmp)) nob_delete_file(obj_tmp);
                 return 1;
             }
             if (!nob_rename(obj_tmp, final_obj_path)) {
+                nob_log(NOB_ERROR, "[PROVEN][BUILD][FAIL] stage=install-object path=%s", final_obj_path);
+                nob_log(NOB_ERROR, "[PROVEN][BUILD][FAIL_HINT] Check the build-root permissions and any stale locked object file at the destination.");
                 if (nob_file_exists(obj_tmp)) nob_delete_file(obj_tmp);
                 return 1;
             }
             write_cmdhash(hash_path, current_hash);
+            library_rebuilt += 1;
+        } else {
+            nob_log(NOB_INFO, "[PROVEN][BUILD][SOURCE][CACHED] path=%s", srcs[i]);
+            library_cached += 1;
         }
     }
 
     // Tests Compilation & Execution
+    size_t tests_rebuilt = 0;
+    size_t tests_cached = 0;
+    nob_log(NOB_INFO, "[PROVEN][BUILD][PHASE] test link-and-run start test_count=%zu", tests_count);
     for (size_t i = 0; i < tests_count; ++i) {
         const Proven_Test_Case *test = &tests[i];
         const char *src_path = nob_temp_sprintf("%s.c", test->path);
@@ -761,13 +831,13 @@ int main(int argc, char **argv)
             if (strcmp(build_mode, "asan") == 0) nob_cmd_append(&mock, "-fsanitize=address");
             else if (strcmp(build_mode, "ubsan") == 0) nob_cmd_append(&mock, "-fsanitize=undefined");
             else if (strcmp(build_mode, "tsan") == 0) nob_cmd_append(&mock, "-fsanitize=thread");
-            
+
             if (strcmp(build_mode, "freestanding") != 0) {
                 nob_cmd_append(&mock, "-pthread");
             } else {
                 nob_cmd_append(&mock, "-static");
             }
-            
+
             nob_cmd_append(&mock, src_path);
             for (size_t j = 0; j < obj_files.count; ++j) nob_cmd_append(&mock, obj_files.items[j]);
             if (user_ldflags) nob_cmd_append(&mock, user_ldflags);
@@ -779,8 +849,11 @@ int main(int argc, char **argv)
         uint32_t old_hash = 0;
         bool hash_differs = !read_cmdhash(hash_path, &old_hash) || old_hash != current_hash;
         bool needs_link = nob_needs_rebuild(exec_path, inputs, idx) || !output_file_valid(exec_path, true);
-        
-        if (needs_link || hash_differs || force_rebuild) {
+        bool should_link = needs_link || hash_differs || force_rebuild;
+
+        if (should_link) {
+            tests_rebuilt += 1;
+            nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][REBUILD] path=%s", test->path);
             if (!link_executable_tmp(linker_exe, src_path, obj_files, exec_tmp, build_mode, user_ldflags, NULL)) {
                 print_proven_test_fail(test, "link", "The test executable did not link. Read the compiler diagnostics above, then check source/header/API drift.");
                 if (nob_file_exists(exec_tmp)) nob_delete_file(exec_tmp);
@@ -792,10 +865,14 @@ int main(int argc, char **argv)
                 return 1;
             }
             write_cmdhash(hash_path, current_hash);
+        } else {
+            tests_cached += 1;
+            nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][CACHED] path=%s", test->path);
         }
-        
+
         cmd.count = 0;
         nob_cmd_append(&cmd, exec_path);
+        nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][RUN] path=%s", test->path);
         if (!nob_cmd_run_sync(cmd)) {
             print_proven_test_fail(test, "run", test->failure_hint);
             return 1;
@@ -805,5 +882,9 @@ int main(int argc, char **argv)
     }
 
     nob_cmd_free(cmd);
+    nob_log(NOB_INFO, "[PROVEN][BUILD][SUMMARY] mode=%s rebuilt_sources=%zu cached_sources=%zu rebuilt_tests=%zu cached_tests=%zu",
+            build_mode, library_rebuilt, library_cached, tests_rebuilt, tests_cached);
+    nob_log(NOB_INFO, "[PROVEN][BUILD][PASS] mode=%s build_dir=%s", build_mode, build_dir);
     return 0;
 }
+

@@ -70,6 +70,13 @@ int main(void) {
 
     char *nob = read_text_file("nob.c");
     require(contains(nob, "Proven_Test_Case"), "nob.c stores structured metadata for each test executable");
+    require(contains(nob, "[PROVEN][BUILD][BEGIN]"), "nob.c announces the build mode and output directory before platform-specific setup");
+    require(contains(nob, "[PROVEN][BUILD][NOTE]"), "nob.c warns when it detects a Windows or MSYS2 runtime that may need extra PATH/toolchain setup");
+    require(contains(nob, "[PROVEN][BUILD][PHASE] library compilation start"), "nob.c prints a build-phase banner before source compilation begins");
+    require(contains(nob, "[PROVEN][BUILD][PHASE] test link-and-run start"), "nob.c prints a build-phase banner before linked test executables run");
+    require(contains(nob, "[PROVEN][BUILD][PASS]"), "nob.c prints a standard build pass line after all selected tests succeed");
+    require(!contains(nob, "mkdir %s >nul"), "nob.c does not use silent cmd.exe mkdir redirection on Windows");
+    require(!contains(nob, "mkdir -p %s"), "nob.c does not depend on a POSIX shell for recursive directory creation");
     require(contains(nob, "[PROVEN][TEST][BEGIN]"), "nob.c prints a standard test begin line before execution");
     require(contains(nob, "[PROVEN][TEST][INTENT]"), "nob.c prints each test executable intent before execution");
     require(contains(nob, "[PROVEN][TEST][FAIL_HINT]"), "nob.c prints a failure hint before each test executable runs");
