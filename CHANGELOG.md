@@ -1,16 +1,25 @@
 # Project Updates and Changelog
-v26.05.10
+v26.05.17
 
 ## Overview
 
 **Project Core:** `proven` (C23 Library)
-**Latest Version:** `v26.05.10`
+**Latest Version:** `v26.05.17`
 
 This file serves as the definitive record of all modifications, enhancements, and additions made to the **proven** library. All changes must be appended here chronologically to maintain a transparent history of the project's evolution.
 
 **Note on Historical Notes:** Older entries may refer to legacy API names (e.g., `append_view` instead of `append_grow`). These are retained for historical accuracy. Refer to the Developer Manual for current naming conventions.
 
-## Status: v26.05.16 (Latest)
+## Status: v26.05.17 (Latest)
+
+### Documentation governance and version-source cleanup
+*   **Version Source of Truth**: Declared `include/proven/version.h` as the single source for version macros and synchronized the visible version string to `v26.05.17`.
+*   **Docs Consolidation**: Folded the archived guidance from `docs/` and `docs/ai/` into `AGENTS.md` so the working rules live in one place.
+*   **Durable Notes**: Added `MEMORY.md` for stable repository facts and `CHECKLIST.md` for recurring bug lessons and prevention rules.
+*   **Path Hygiene**: Reaffirmed that public docs, comments, and help text must not expose private host paths or share-specific account details.
+*   **Version Sync**: Updated the visible version markers in root docs, manuals, and the site banner to match `v26.05.17`.
+
+## Status: v26.05.16 (Archive)
 
 ### mmap Flag Validation
 *   **Safety Enhancement:** Added strict flag validation in `proven_mmap_create()`. Memory mapping now enforces that either `PROVEN_MMAP_PRIVATE` or `PROVEN_MMAP_SHARED` must be provided, while explicitly rejecting conflicting bounds and bit combinations.
