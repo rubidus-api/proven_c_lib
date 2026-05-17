@@ -206,7 +206,7 @@ Excluded or stubbed modules:
 - `u16str`: excluded by `PROVEN_NO_U16STR` in the current freestanding build.
 - `fs`, `sysio`, `mmap`, `time`, `job`: hosted/PAL services excluded from the current freestanding subset.
 
-See `manual/FREESTANDING.md` for the exact source list and command examples.
+See `manual-freestanding.md` for the exact source list and command examples.
 
 ## 6. Cross compilation
 

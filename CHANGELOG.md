@@ -76,7 +76,7 @@ This file serves as the definitive record of all modifications, enhancements, an
 
 ### Release Blocker Resolution & Freestanding Hardening
 *   **Freestanding Build Fixes**: Resolved critical compilation failures in `./nob freestanding` mode.
-    *   Renamed invalid `PROVEN_MAX_ALIGN_T` to `PROVEN_MAX_ALIGN` in `test_freestanding.c` and `FREESTANDING.md`.
+    *   Renamed invalid `PROVEN_MAX_ALIGN_T` to `PROVEN_MAX_ALIGN` in `test_freestanding.c` and `manual/manual-freestanding.md`.
     *   Corrected `PROVEN_ARG` usage in `test_freestanding.c` by ensuring appropriate formatting macros are utilized for primitive types.
     *   Added verification for `proven_scan_fmt` within the freestanding test suite.
 *   **Alias Synchronicity**: Purged stale scan aliases from `alias_xcv.h` and integrated modern `XCV_SCAN_ARG_TYPE_*` mappings. Verified parity via `test_alias_smoke.c`.
@@ -99,7 +99,7 @@ This file serves as the definitive record of all modifications, enhancements, an
 ## Status: v26.05.08y (Archive)
 
 ### Phase 7: User-Facing Documentation
-*   **Manual Supplement**: Created `/manual/FREESTANDING.md` describing requirements, execution constraints, combinations, and matrices for embedded usage.
+*   **Manual Supplement**: Created the freestanding manual, now stored as `manual/manual-freestanding.md`, describing requirements, execution constraints, combinations, and matrices for embedded usage.
 *   **Readme Integration**: Integrated freestanding goals into existing architectural README objectives displaying lightweight cross-platform behavior.
 *   **Version Update**: Advanced version numbering sequentially to `v26.05.08y`.
 
@@ -108,7 +108,7 @@ This file serves as the definitive record of all modifications, enhancements, an
 ### Phase 6: Cross-Compile Verification Script
 *   **Documentation Artifact**: Created `tests/freestanding_compile_check.sh` script invoking `arm-none-eabi-gcc` for freestanding compilation.
 *   **Validation**: Confirmed all non-excluded `.c` files generate `.o` files correctly without stdlib inclusion.
-*   **Manual**: Updated `docs/FREESTANDING.md` indicating execution syntax and documentational architecture of the cross-check script.
+*   **Manual**: Updated freestanding manual material, now stored as `manual/manual-freestanding.md`, indicating execution syntax and documentational architecture of the cross-check script.
 
 ## Status: v26.05.08w (Archive)
 

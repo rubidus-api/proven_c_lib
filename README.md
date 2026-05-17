@@ -109,7 +109,7 @@ cc -std=c23 -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L \
 ## Documentation
 
 - User manual: `manual/manual.md`
-- Freestanding guide: `manual/FREESTANDING.md`
+- Freestanding guide: `manual/manual-freestanding.md`
 - Specification: `SPEC.md`
 - Test matrix: `TEST.md`
 - Architecture and requirements: `docs/`

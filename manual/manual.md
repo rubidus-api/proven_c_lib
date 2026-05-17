@@ -237,4 +237,4 @@ Compile-only cross coverage exists when the corresponding toolchains are install
 
 The cross matrix checks compilation, public header visibility, and target ABI assumptions. It does not replace runtime validation on the target platform.
 
-Freestanding mode builds a reduced subset with OS-backed services removed. See `manual/FREESTANDING.md` and Chapter 6 for details.
+Freestanding mode builds a reduced subset with OS-backed services removed. See `manual-freestanding.md` and Chapter 6 for details.
