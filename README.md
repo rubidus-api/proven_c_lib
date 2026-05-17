@@ -1,6 +1,6 @@
      1|# Proven C library
      2|
-     3|Version: proven_c_lib-v26.05.17
+     3|Version: proven_c_lib-v26.05.18
      4|Standard: C23
      5|License: MIT
      6|Repository: https://github.com/rubidus-api/proven_c_lib
