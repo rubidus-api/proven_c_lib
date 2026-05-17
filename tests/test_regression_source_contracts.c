@@ -3,12 +3,17 @@
 #include <stdbool.h>
 #include <string.h>
 
-static void require(bool cond, const char *msg) {
+static void require_impl(bool cond, const char *cond_text, const char *msg, const char *file, int line) {
     if (!cond) {
-        fprintf(stderr, "[FAIL] %s\n", msg);
+        fprintf(stderr, "\n[PROVEN][CHECK][FAIL] file=%s line=%d\n", file, line);
+        fprintf(stderr, "[PROVEN][CHECK][COND] %s\n", cond_text);
+        fprintf(stderr, "[PROVEN][CHECK][INTENT] %s\n", msg);
+        fprintf(stderr, "[PROVEN][CHECK][FAIL_HINT] This source-contract check protects a portability or documentation invariant. Inspect the named file and restore the expected safe pattern.\n");
         exit(1);
     }
 }
+
+#define require(cond, msg) require_impl((cond), #cond, (msg), __FILE__, __LINE__)
 
 static char *read_text_file(const char *path) {
     FILE *f = fopen(path, "rb");
@@ -62,6 +67,20 @@ int main(void) {
     require(contains(job, "proven_job_begin_submit"), "job submit claims admission before queue slot claim");
     require(contains(job, "proven_job_end_submit"), "job submit releases admission after commit");
     free(job);
+
+    char *nob = read_text_file("nob.c");
+    require(contains(nob, "Proven_Test_Case"), "nob.c stores structured metadata for each test executable");
+    require(contains(nob, "[PROVEN][TEST][BEGIN]"), "nob.c prints a standard test begin line before execution");
+    require(contains(nob, "[PROVEN][TEST][INTENT]"), "nob.c prints each test executable intent before execution");
+    require(contains(nob, "[PROVEN][TEST][FAIL_HINT]"), "nob.c prints a failure hint before each test executable runs");
+    require(contains(nob, "[PROVEN][TEST][PASS]"), "nob.c prints a standard pass line after each test executable succeeds");
+    free(nob);
+
+    char *test_md = read_text_file("TEST.md");
+    require(contains(test_md, "Failure tip"), "TEST.md documents failure tips for test modes and individual tests");
+    require(contains(test_md, "Sub-checks"), "TEST.md documents the lower-level checks covered by each test executable");
+    require(contains(test_md, "Log format"), "TEST.md documents the standardized test log format");
+    free(test_md);
 
     return 0;
 }
