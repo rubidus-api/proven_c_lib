@@ -47,7 +47,7 @@ Freestanding subset run:
 Cross compile-only matrix:
 
 ```sh
-./nob cross -build-root /mnt/ai-share/build/proven
+./nob cross -build-root /mnt/ai-share/build/proven_c_lib
 ```
 
 Missing optional compilers are skipped. Compile errors fail the command.
@@ -151,7 +151,7 @@ Recommended release gate:
 ./nob regression-asan
 ./nob regression-ubsan
 ./nob freestanding
-./nob cross -build-root /mnt/ai-share/build/proven
+./nob cross -build-root /mnt/ai-share/build/proven_c_lib
 ```
 
 Optional compiler-specific gate:

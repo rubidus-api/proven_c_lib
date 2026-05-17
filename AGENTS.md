@@ -6,6 +6,8 @@ This file defines the working rules for humans and AI agents editing the `proven
 
 - Language: ISO C23.
 - License: MIT.
+- Repository directory: `/mnt/ai-share/proven_c_lib` on Hermes, `/home/hermes/ai-share/proven_c_lib` on arch-dev.
+- Shared build root: `/mnt/ai-share/build/proven_c_lib` on Hermes, `/home/hermes/ai-share/build/proven_c_lib` on arch-dev.
 - Build system: root-level `nob.c` with `nob.h`.
 - Public API: `include/proven/*.h` and umbrella header `include/proven.h`.
 - Implementation: `src/proven/*.c`.
@@ -58,8 +60,8 @@ Useful options:
 ./nob strict-error -cc clang
 ./nob build -cflags "-DNAME=value"
 ./nob build -ldflags "-lm"
-./nob build -build-root /mnt/ai-share/build/proven
-./nob cross -build-root /mnt/ai-share/build/proven
+./nob build -build-root /mnt/ai-share/build/proven_c_lib
+./nob cross -build-root /mnt/ai-share/build/proven_c_lib
 ./nob build -f
 ```
 
@@ -69,7 +71,7 @@ Cross-platform policy:
 - The cross matrix skips missing compilers and fails on real compile errors.
 - Current target names cover native GCC/Clang, Linux AArch64, Linux ARM hard-float, Linux i686 via either `i686-linux-gnu-gcc` or `gcc -m32`, WinAPI x86_64/i686 via MinGW, ARM Cortex-M freestanding, and RISC-V ELF freestanding.
 - Runtime tests still require a matching runner or host. Cross compilation is not a replacement for runtime validation.
-- Keep build outputs outside source trees when using shared servers: `-build-root /mnt/ai-share/build/proven`.
+- Keep build outputs outside source trees when using shared servers: `-build-root /mnt/ai-share/build/proven_c_lib`.
 
 ## Documentation rules
 

@@ -176,7 +176,7 @@ cc nob.c -o nob
 
 Supported commands include `build`, `debug`, `release`, `strict`, `strict-error`, `asan`, `ubsan`, `tsan`, `freestanding`, `cross`, `regression`, `regression-asan`, `regression-ubsan`, `clean`, and `help`.
 
-`-build-root <dir>` redirects generated output. Use `/mnt/ai-share/build/proven` on shared build servers.
+`-build-root <dir>` redirects generated output. Use `/mnt/ai-share/build/proven_c_lib` on shared build servers.
 
 ## 15. Verification specification
 
@@ -190,7 +190,7 @@ Required validation before release:
 ./nob regression-asan
 ./nob regression-ubsan
 ./nob freestanding
-./nob cross -build-root /mnt/ai-share/build/proven
+./nob cross -build-root /mnt/ai-share/build/proven_c_lib
 ```
 
 Use Clang validation when available:
