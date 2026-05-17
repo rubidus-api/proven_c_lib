@@ -7,6 +7,7 @@
  */
 
 #include "proven/types.h"
+#include "proven/version.h"
 #include "proven/error.h"
 #include "proven/memory.h"
 #include "proven/align.h"
@@ -16,6 +17,7 @@
 #include "proven/pool.h"
 #include "proven/buffer.h"
 #include "proven/u8str.h"
+#include "proven/u16str.h"
 #include "proven/array.h"
 #include "proven/list.h"
 #include "proven/ring.h"

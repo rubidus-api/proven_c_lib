@@ -37,4 +37,11 @@ proven_err_t proven_pool_init(proven_pool_t *pool, proven_allocator_t base_alloc
  */
 proven_allocator_t proven_pool_as_allocator(proven_pool_t *pool);
 
+/**
+ * @brief Destroys a pool allocator, freeing all cached blocks and the bin.
+ * 
+ * @param pool The pool to destroy.
+ */
+void proven_pool_destroy(proven_pool_t *pool);
+
 #endif /* PROVEN_POOL_H */

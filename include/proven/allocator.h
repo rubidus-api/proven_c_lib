@@ -32,8 +32,18 @@ typedef void (*proven_free_fn_t)(void *ctx, void *ptr);
 typedef struct {
     void *ctx;
     proven_alloc_fn_t alloc_fn;
+    /**
+     * @brief Must leave old_ptr valid and unmodified on failure.
+     */
     proven_realloc_fn_t realloc_fn;
     proven_free_fn_t  free_fn;
 } proven_allocator_t;
+
+/**
+ * @brief Checks if all allocator functions are correctly provided.
+ */
+static inline bool proven_alloc_is_valid(proven_allocator_t alloc) {
+    return alloc.alloc_fn && alloc.realloc_fn && alloc.free_fn;
+}
 
 #endif /* PROVEN_ALLOCATOR_H */

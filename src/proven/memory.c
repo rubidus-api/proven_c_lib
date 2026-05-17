@@ -1,4 +1,5 @@
 #include "proven/memory.h"
+#include "../../platform/proven_sys_mem.h"
 
 /**
  * @file memory.c
@@ -7,5 +8,6 @@
  * but this file serves as the library's memory core object.
  */
 
-/* Placeholder for future non-inline functions like 
-   complex memory transformation or debug logging. */
+int proven_memcmp(const void *s1, const void *s2, proven_size_t size) {
+    return proven_sys_mem_cmp(s1, s2, size); // forward to sys
+}

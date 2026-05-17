@@ -9,7 +9,10 @@
 
 /**
  * @file u8str.h
- * @brief String wrappers enforcing Unsigned 8-bit (UTF-8/ASCII) logic and null-termination guarantees.
+ * @brief String wrappers enforcing Unsigned 8-bit (encoding-agnostic) logic and null-termination guarantees.
+ * v26.05.08n
+ *
+ * Length is calculated in units of u8. Encoding assumptions (like UTF-8) are deferred to higher layers.
  */
 
 /**
@@ -55,6 +58,7 @@ typedef struct {
  * @brief Macro to create a u8str view strictly from a C string literal at compile time.
  */
 #define PROVEN_LIT(s) ((proven_u8str_view_t){ .ptr = (const proven_byte_t *)("" s), .size = sizeof("" s) - 1 })
+#define PROVEN_LIT_INIT(s) { .ptr = (const proven_byte_t *)(s), .size = sizeof(s) - 1 }
 
 #include "proven/align.h"
 
@@ -63,13 +67,58 @@ typedef struct {
 [[nodiscard]] proven_result_u8str_t proven_u8str_create(proven_allocator_t alloc, proven_size_t limit);
 [[nodiscard]] proven_result_u8str_t proven_u8str_create_from_view(proven_allocator_t alloc, proven_u8str_view_t view);
 
+/**
+ * @brief Validates the structural integrity of the public string fields.
+ */
+[[nodiscard]] bool proven_u8str_is_valid(const proven_u8str_t *str);
+
+/**
+ * @brief Pre-allocates memory for the string to reach at least `new_cap` capacity.
+ * Useful when working with arena allocators to prevent dead storage from reallocations.
+ */
+[[nodiscard]] proven_err_t proven_u8str_reserve(proven_allocator_t alloc, proven_u8str_t *str, proven_size_t new_cap);
+
+/**
+ * @brief Appends data to a string. 
+ * CATEGORY: Atomic Fixed-Capacity
+ * 
+ * If the data fits entirely within the current capacity, it appends and returns PROVEN_OK.
+ * If not, it returns PROVEN_ERR_OUT_OF_BOUNDS without modifying the original string.
+ * This is guaranteed by performing a capacity check before any writes.
+ */
 [[nodiscard]] proven_err_t proven_u8str_append(proven_u8str_t *str, proven_u8str_view_t data);
-[[nodiscard]] proven_err_t proven_u8str_append_byte(proven_allocator_t alloc, proven_u8str_t *str, proven_u8 byte);
-[[nodiscard]] proven_err_t proven_u8str_append_view(proven_allocator_t alloc, proven_u8str_t *str, proven_u8str_view_t data);
+
+/**
+ * @brief Appends data to a string as much as possible.
+ * CATEGORY: Best-Effort/Truncating
+ * 
+ * Partial modification is allowed. Always ensures valid null-termination.
+ * If the full data cannot be appended, it returns PROVEN_ERR_OUT_OF_BOUNDS but 
+ * populates the result with the actual number of bytes written.
+ */
+[[nodiscard]] proven_result_size_t proven_u8str_append_partial(proven_u8str_t *str, proven_u8str_view_t data);
+
+/**
+ * @brief Appends data to a string, growing the buffer if necessary.
+ * CATEGORY: Atomic Growable
+ * 
+ * If reallocation fails, returns PROVEN_ERR_NOMEM and leaves the string unchanged.
+ * Does NOT fallback to partial append on growth failure.
+ */
+[[nodiscard]] proven_err_t proven_u8str_append_grow(proven_allocator_t alloc, proven_u8str_t *str, proven_u8str_view_t data);
+
+[[nodiscard]] proven_err_t proven_u8str_append_byte(proven_allocator_t alloc, proven_u8str_t *str, proven_u8 b);
 
 [[nodiscard]] proven_err_t proven_u8str_replace_at(proven_u8str_t *str, proven_size_t index, proven_size_t old_len, proven_u8str_view_t data);
 [[nodiscard]] proven_err_t proven_u8str_insert(proven_u8str_t *str, proven_size_t index, proven_u8str_view_t data);
 [[nodiscard]] proven_err_t proven_u8str_remove(proven_u8str_t *str, proven_size_t index, proven_size_t len);
+/**
+ * @brief Replaces the first occurrence of a target substring with a replacement.
+ *
+ * If target is not found, the string is left unchanged and PROVEN_OK is returned.
+ * Use proven_u8str_view_find() first if the caller needs to distinguish
+ * "not found" from "replaced".
+ */
 [[nodiscard]] proven_err_t proven_u8str_replace_first(proven_u8str_t *str, proven_size_t start_offset, proven_u8str_view_t target, proven_u8str_view_t replacement);
 
 [[nodiscard]] proven_size_t proven_u8str_view_find(proven_u8str_view_t haystack, proven_size_t start_offset, proven_u8str_view_t needle);

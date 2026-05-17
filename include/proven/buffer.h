@@ -30,7 +30,9 @@ typedef struct {
 } proven_result_buf_t;
 
 /**
- * @brief Creates a buffer with a specific capacity from the given polymorphic allocator trait.
+ * @brief Creates a buffer with non-zero capacity from the given allocator.
+ *
+ * Returns PROVEN_ERR_INVALID_ARG if the allocator is invalid or cap == 0.
  */
 [[nodiscard]]
 proven_result_buf_t proven_buf_create(proven_allocator_t alloc, proven_size_t cap);
@@ -40,5 +42,10 @@ proven_result_buf_t proven_buf_create(proven_allocator_t alloc, proven_size_t ca
  */
 [[nodiscard]]
 proven_err_t proven_buf_append(proven_buf_t *buf, proven_mem_view_t data);
+
+/**
+ * @brief Destroys a buffer by freeing its memory via the allocator it was created with.
+ */
+void proven_buf_destroy(proven_allocator_t alloc, proven_buf_t *buf);
 
 #endif /* PROVEN_BUFFER_H */

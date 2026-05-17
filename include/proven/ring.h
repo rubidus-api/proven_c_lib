@@ -9,8 +9,8 @@
 
 /**
  * @file ring.h
- * @brief High-performance, fixed-capacity Circular Ring Buffer.
- *        Guarantees zero-allocation during mutations securely shifting read/write boundary indices.
+ * @brief Fixed-capacity Circular Ring Buffer.
+ *        Push fails when the buffer is full; pop succeeds or returns empty.
  */
 
 typedef struct {
@@ -35,8 +35,18 @@ typedef struct {
 
 [[nodiscard]] proven_result_ring_t proven_ring_create(proven_allocator_t alloc, proven_size_t cap, proven_size_t elem_size, proven_size_t align);
 
+/**
+ * @brief Validates the structural integrity of the public ring fields.
+ */
+[[nodiscard]] bool proven_ring_is_valid(const proven_ring_t *ring);
+
 [[nodiscard]] proven_err_t proven_ring_push(proven_ring_t *ring, const void *element);
 
+/**
+ * @brief Pops one element from the ring.
+ *
+ * If out_element is NULL, the element is discarded.
+ */
 [[nodiscard]] proven_err_t proven_ring_pop(proven_ring_t *ring, void *out_element);
 
 void proven_ring_destroy(proven_ring_t *ring);
@@ -52,7 +62,7 @@ void proven_ring_destroy(proven_ring_t *ring);
     proven_ring_create((alloc), (cap), sizeof(type), alignof(type))
 
 /**
- * @brief Thread-independent value injection avoiding dynamic resizing triggering Out-Of-Bounds failures when full.
+ * @brief Thread-independent value injection; fails when the buffer is full.
  */
 #define PROVEN_RING_PUSH(ring_ptr, type, value) \
     proven_ring_push((ring_ptr), (type[]){(value)})

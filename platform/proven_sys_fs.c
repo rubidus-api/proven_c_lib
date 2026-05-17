@@ -1,3 +1,12 @@
+#if !defined(_WIN32) && !defined(_WIN64)
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE
+#endif
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+#endif
+
 #include "proven_sys_fs.h"
 #include <sys/stat.h>
 
@@ -11,125 +20,245 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sys/mman.h>
 #include <time.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <errno.h>
 #endif
 
 // Internal helper for UTF-8 to Wide conversion on Windows
 #if defined(_WIN32) || defined(_WIN64)
-static void utf8_to_wide(const char *src, wchar_t *dst, size_t dst_cap) {
-    MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, (int)dst_cap);
+static wchar_t *utf8_to_wide_alloc(const char *src) {
+    if (!src) return NULL;
+    int len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, src, -1, NULL, 0);
+    if (len <= 0) return NULL;
+    
+    // Allocate temporary buffer for initial conversion
+    size_t len_sz = (size_t)len;
+    wchar_t *tmp = HeapAlloc(GetProcessHeap(), 0, len_sz * sizeof(wchar_t));
+    if (!tmp) return NULL;
+    
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, src, -1, tmp, len) <= 0) {
+        HeapFree(GetProcessHeap(), 0, tmp);
+        return NULL;
+    }
+
+    // Get full path length
+    DWORD full_len = GetFullPathNameW(tmp, 0, NULL, NULL);
+    if (full_len == 0) {
+        HeapFree(GetProcessHeap(), 0, tmp);
+        return NULL;
+    }
+
+    // Allocate enough including potential \\?\ prefix
+    wchar_t *dst = HeapAlloc(GetProcessHeap(), 0, (full_len + 8) * sizeof(wchar_t));
+    if (!dst) {
+        HeapFree(GetProcessHeap(), 0, tmp);
+        return NULL;
+    }
+
+    GetFullPathNameW(tmp, full_len, dst, NULL);
+    HeapFree(GetProcessHeap(), 0, tmp);
+
+    // If it's a long absolute path and not already prefixed
+    if (full_len >= MAX_PATH && wcsncmp(dst, L"\\\\?\\", 4) != 0 && wcsncmp(dst, L"\\\\.\\", 4) != 0) {
+        wchar_t *prefixed = HeapAlloc(GetProcessHeap(), 0, (full_len + 8) * sizeof(wchar_t));
+        if (prefixed) {
+            if (wcsncmp(dst, L"\\\\", 2) == 0) { // UNC path
+                lstrcpyW(prefixed, L"\\\\?\\UNC\\");
+                lstrcatW(prefixed, dst + 2);
+            } else {
+                lstrcpyW(prefixed, L"\\\\?\\");
+                lstrcatW(prefixed, dst);
+            }
+            HeapFree(GetProcessHeap(), 0, dst);
+            return prefixed;
+        }
+    }
+
+    return dst;
 }
 #endif
 
-proven_sys_file_handle_t proven_sys_fs_open(const char *path, const char *mode_str) {
+proven_sys_file_handle_t proven_sys_fs_open(const char *path, int flags) {
+    if (!path) {
 #if defined(_WIN32) || defined(_WIN64)
-    wchar_t wpath[MAX_PATH];
-    utf8_to_wide(path, wpath, MAX_PATH);
+        return (proven_sys_file_handle_t){ .handle = NULL };
+#else
+        return (proven_sys_file_handle_t){ .fd = -1 };
+#endif
+    }
+#if defined(_WIN32) || defined(_WIN64)
+    wchar_t *wpath = utf8_to_wide_alloc(path);
+    if (!wpath) return (proven_sys_file_handle_t){ .handle = NULL };
 
     DWORD access = 0;
-    DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE;
-    DWORD disposition = 0;
-
-    // Simplified mapping for "rb", "wb+", "ab+"
-    if (mode_str[0] == 'r') {
-        access = GENERIC_READ;
-        disposition = OPEN_EXISTING;
-        if (mode_str[1] == '+') access |= GENERIC_WRITE;
-    } else if (mode_str[0] == 'w') {
-        access = GENERIC_READ | GENERIC_WRITE;
-        disposition = CREATE_ALWAYS;
-    } else if (mode_str[0] == 'a') {
-        access = GENERIC_READ | GENERIC_WRITE;
-        disposition = OPEN_ALWAYS;
+    if (flags & PROVEN_SYS_FS_READ) access |= GENERIC_READ;
+    if (flags & PROVEN_SYS_FS_APPEND) {
+        access |= FILE_APPEND_DATA;
+    } else if (flags & PROVEN_SYS_FS_WRITE) {
+        access |= GENERIC_WRITE;
     }
+    if ((flags & PROVEN_SYS_FS_TRUNC) && !(flags & PROVEN_SYS_FS_APPEND)) access |= GENERIC_WRITE;
+
+    DWORD disposition = OPEN_EXISTING;
+    if (flags & PROVEN_SYS_FS_CREATE_NEW) {
+        disposition = CREATE_NEW;
+    } else if ((flags & PROVEN_SYS_FS_CREATE) && (flags & PROVEN_SYS_FS_TRUNC)) {
+        disposition = CREATE_ALWAYS;
+    } else if (flags & PROVEN_SYS_FS_CREATE) {
+        disposition = OPEN_ALWAYS;
+    } else if (flags & PROVEN_SYS_FS_TRUNC) {
+        disposition = TRUNCATE_EXISTING;
+    }
+
+    DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 
     HANDLE h = CreateFileW(wpath, access, share, NULL, disposition, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (h == INVALID_HANDLE_VALUE) return (proven_sys_file_handle_t){ .internal = NULL };
+    HeapFree(GetProcessHeap(), 0, wpath);
+    if (h == INVALID_HANDLE_VALUE) return (proven_sys_file_handle_t){ .handle = NULL };
     
-    if (mode_str[0] == 'a') {
-        SetFilePointer(h, 0, NULL, FILE_END);
+    return (proven_sys_file_handle_t){ .handle = (void*)h };
+#else
+    int o_flags = 0;
+    if ((flags & PROVEN_SYS_FS_READ) && (flags & PROVEN_SYS_FS_WRITE)) {
+        o_flags = O_RDWR;
+    } else if (flags & PROVEN_SYS_FS_WRITE) {
+        o_flags = O_WRONLY;
+    } else {
+        o_flags = O_RDONLY;
     }
 
-    return (proven_sys_file_handle_t){ .internal = (void*)h };
-#else
-    int flags = 0;
-    if (mode_str[0] == 'r') {
-        flags = O_RDONLY;
-        if (mode_str[1] == '+') flags = O_RDWR;
-    } else if (mode_str[0] == 'w') {
-        flags = O_CREAT | O_TRUNC | O_RDWR;
-    } else if (mode_str[0] == 'a') {
-        flags = O_CREAT | O_APPEND | O_RDWR;
-    }
+    if (flags & PROVEN_SYS_FS_APPEND) o_flags |= O_APPEND;
+    if (flags & PROVEN_SYS_FS_CREATE_NEW) o_flags |= O_CREAT | O_EXCL;
+    else if (flags & PROVEN_SYS_FS_CREATE) o_flags |= O_CREAT;
     
-    int fd = open(path, flags, 0666);
-    if (fd < 0) return (proven_sys_file_handle_t){ .internal = NULL };
-    // We cast the integer fd to void* by casting it through intptr_t
-    return (proven_sys_file_handle_t){ .internal = (void*)(intptr_t)fd };
+    if (flags & PROVEN_SYS_FS_TRUNC)  o_flags |= O_TRUNC;
+    
+    int fd = open(path, o_flags, 0666);
+    if (fd < 0) return (proven_sys_file_handle_t){ .fd = -1 };
+    return (proven_sys_file_handle_t){ .fd = fd };
 #endif
 }
 
 void proven_sys_fs_close(proven_sys_file_handle_t handle) {
-    if (!handle.internal) return;
 #if defined(_WIN32) || defined(_WIN64)
-    CloseHandle((HANDLE)handle.internal);
+    if (!handle.handle) return;
+    CloseHandle((HANDLE)handle.handle);
 #else
-    close((int)(intptr_t)handle.internal);
+    if (handle.fd < 0) return;
+    close(handle.fd);
 #endif
 }
 
-size_t proven_sys_fs_read(proven_sys_file_handle_t handle, void *buf, size_t size) {
-    if (!handle.internal) return 0;
+proven_sys_result_size_t proven_sys_fs_read(proven_sys_file_handle_t handle, void *buf, size_t size) {
 #if defined(_WIN32) || defined(_WIN64)
-    DWORD read = 0;
-    if (ReadFile((HANDLE)handle.internal, buf, (DWORD)size, &read, NULL)) {
-        return (size_t)read;
+    if (!handle.handle) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
+#else
+    if (handle.fd < 0) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
+#endif
+    if (size > 0 && !buf) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
+    if (size == 0) return (proven_sys_result_size_t){ PROVEN_OK, 0 };
+
+#if defined(_WIN32) || defined(_WIN64)
+    HANDLE h = (HANDLE)handle.handle;
+    DWORD to_read = (size > 0x7FFFFFFF) ? 0x7FFFFFFF : (DWORD)size;
+    DWORD read_bytes = 0;
+    if (ReadFile(h, buf, to_read, &read_bytes, NULL)) {
+        if (read_bytes == 0) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
+        return (proven_sys_result_size_t){ PROVEN_OK, (size_t)read_bytes };
+    } else {
+        DWORD err = GetLastError();
+        if (err == ERROR_HANDLE_EOF) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
+        return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
     }
-    return 0;
 #else
-    ssize_t res = read((int)(intptr_t)handle.internal, buf, size);
-    return res > 0 ? (size_t)res : 0;
+    int fd = handle.fd;
+    size_t to_read = (size > 0x7FFFFFFF) ? 0x7FFFFFFF : size;
+    ssize_t r;
+    do {
+        r = read(fd, buf, to_read);
+    } while (r < 0 && errno == EINTR);
+    
+    if (r < 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
+    if (r == 0) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
+    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)r };
 #endif
 }
 
-size_t proven_sys_fs_write(proven_sys_file_handle_t handle, const void *buf, size_t size) {
-    if (!handle.internal) return 0;
+proven_sys_result_size_t proven_sys_fs_write(proven_sys_file_handle_t handle, const void *buf, size_t size) {
 #if defined(_WIN32) || defined(_WIN64)
+    if (!handle.handle) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
+#else
+    if (handle.fd < 0) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
+#endif
+    if (size > 0 && !buf) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
+    if (size == 0) return (proven_sys_result_size_t){ PROVEN_OK, 0 };
+
+#if defined(_WIN32) || defined(_WIN64)
+    HANDLE h = (HANDLE)handle.handle;
+    DWORD to_write = (size > 0x7FFFFFFF) ? 0x7FFFFFFF : (DWORD)size;
     DWORD written = 0;
-    if (WriteFile((HANDLE)handle.internal, buf, (DWORD)size, &written, NULL)) {
-        return (size_t)written;
+    if (WriteFile(h, buf, to_write, &written, NULL)) {
+        if (written == 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
+        return (proven_sys_result_size_t){ PROVEN_OK, (size_t)written };
+    } else {
+        return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
     }
-    return 0;
 #else
-    ssize_t res = write((int)(intptr_t)handle.internal, buf, size);
-    return res > 0 ? (size_t)res : 0;
+    int fd = handle.fd;
+    size_t to_write = (size > 0x7FFFFFFF) ? 0x7FFFFFFF : size;
+    ssize_t r;
+    do {
+        r = write(fd, buf, to_write);
+    } while (r < 0 && errno == EINTR);
+    
+    if (r < 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
+    if (r == 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
+    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)r };
 #endif
 }
 
-size_t proven_sys_fs_size(proven_sys_file_handle_t handle) {
-    if (!handle.internal) return 0;
+proven_sys_result_size_t proven_sys_fs_size(proven_sys_file_handle_t handle) {
 #if defined(_WIN32) || defined(_WIN64)
+    if (!handle.handle) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
+    if (GetFileType((HANDLE)handle.handle) != FILE_TYPE_DISK) {
+        return (proven_sys_result_size_t){ PROVEN_OK, 0 };
+    }
     LARGE_INTEGER li;
-    if (GetFileSizeEx((HANDLE)handle.internal, &li)) {
-        return (size_t)li.QuadPart;
+    if (GetFileSizeEx((HANDLE)handle.handle, &li)) {
+        uint64_t sz = (uint64_t)li.QuadPart;
+        if (sz > (uint64_t)PROVEN_SIZE_MAX) return (proven_sys_result_size_t){ PROVEN_ERR_OVERFLOW, 0 };
+        return (proven_sys_result_size_t){ PROVEN_OK, (size_t)sz };
     }
-    return 0;
+    return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
 #else
+    if (handle.fd < 0) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
     struct stat st;
-    if (fstat((int)(intptr_t)handle.internal, &st) == 0) {
-        return (size_t)st.st_size;
+    if (fstat(handle.fd, &st) == 0) {
+        if (!S_ISREG(st.st_mode)) return (proven_sys_result_size_t){ PROVEN_OK, 0 };
+        if (st.st_size < 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
+        if ((uintmax_t)st.st_size > (uintmax_t)PROVEN_SIZE_MAX) return (proven_sys_result_size_t){ PROVEN_ERR_OVERFLOW, 0 };
+        return (proven_sys_result_size_t){ PROVEN_OK, (size_t)st.st_size };
     }
-    return 0;
+    return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
 #endif
 }
 
 bool proven_sys_fs_rename(const char *src, const char *dest) {
 #if defined(_WIN32) || defined(_WIN64)
-    wchar_t wsrc[MAX_PATH], wdest[MAX_PATH];
-    utf8_to_wide(src, wsrc, MAX_PATH);
-    utf8_to_wide(dest, wdest, MAX_PATH);
-    return MoveFileW(wsrc, wdest) != 0;
+    wchar_t *wsrc = utf8_to_wide_alloc(src);
+    wchar_t *wdest = utf8_to_wide_alloc(dest);
+    if (!wsrc || !wdest) {
+        if (wsrc) HeapFree(GetProcessHeap(), 0, wsrc);
+        if (wdest) HeapFree(GetProcessHeap(), 0, wdest);
+        return false;
+    }
+    bool success = MoveFileW(wsrc, wdest) != 0;
+    HeapFree(GetProcessHeap(), 0, wsrc);
+    HeapFree(GetProcessHeap(), 0, wdest);
+    return success;
 #else
     return rename(src, dest) == 0;
 #endif
@@ -137,9 +266,11 @@ bool proven_sys_fs_rename(const char *src, const char *dest) {
 
 bool proven_sys_fs_remove(const char *path) {
 #if defined(_WIN32) || defined(_WIN64)
-    wchar_t wpath[MAX_PATH];
-    utf8_to_wide(path, wpath, MAX_PATH);
-    return DeleteFileW(wpath) != 0;
+    wchar_t *wpath = utf8_to_wide_alloc(path);
+    if (!wpath) return false;
+    bool success = DeleteFileW(wpath) != 0;
+    HeapFree(GetProcessHeap(), 0, wpath);
+    return success;
 #else
     return remove(path) == 0;
 #endif
@@ -147,9 +278,11 @@ bool proven_sys_fs_remove(const char *path) {
 
 bool proven_sys_fs_mkdir(const char *path) {
 #if defined(_WIN32) || defined(_WIN64)
-    wchar_t wpath[MAX_PATH];
-    utf8_to_wide(path, wpath, MAX_PATH);
-    return CreateDirectoryW(wpath, NULL) != 0;
+    wchar_t *wpath = utf8_to_wide_alloc(path);
+    if (!wpath) return false;
+    bool success = CreateDirectoryW(wpath, NULL) != 0;
+    HeapFree(GetProcessHeap(), 0, wpath);
+    return success;
 #else
     return mkdir(path, 0755) == 0;
 #endif
@@ -157,9 +290,11 @@ bool proven_sys_fs_mkdir(const char *path) {
 
 bool proven_sys_fs_rmdir(const char *path) {
 #if defined(_WIN32) || defined(_WIN64)
-    wchar_t wpath[MAX_PATH];
-    utf8_to_wide(path, wpath, MAX_PATH);
-    return RemoveDirectoryW(wpath) != 0;
+    wchar_t *wpath = utf8_to_wide_alloc(path);
+    if (!wpath) return false;
+    bool success = RemoveDirectoryW(wpath) != 0;
+    HeapFree(GetProcessHeap(), 0, wpath);
+    return success;
 #else
     return rmdir(path) == 0;
 #endif
@@ -167,22 +302,44 @@ bool proven_sys_fs_rmdir(const char *path) {
 
 proven_sys_dir_handle_t proven_sys_fs_dir_open(const char *path) {
 #if defined(_WIN32) || defined(_WIN64)
-    wchar_t wpath[MAX_PATH];
-    utf8_to_wide(path, wpath, MAX_PATH);
+    wchar_t *wpath_orig = utf8_to_wide_alloc(path);
+    if (!wpath_orig) return (proven_sys_dir_handle_t){ .internal = NULL };
+    
+    size_t len = (size_t)lstrlenW(wpath_orig);
+    wchar_t *wpath = HeapAlloc(GetProcessHeap(), 0, (len + 3) * sizeof(wchar_t));
+    if (!wpath) {
+        HeapFree(GetProcessHeap(), 0, wpath_orig);
+        return (proven_sys_dir_handle_t){ .internal = NULL };
+    }
+    lstrcpyW(wpath, wpath_orig);
     lstrcatW(wpath, L"\\*");
+    HeapFree(GetProcessHeap(), 0, wpath_orig);
 
     WIN32_FIND_DATAW *fd = HeapAlloc(GetProcessHeap(), 0, sizeof(WIN32_FIND_DATAW));
+    if (!fd) {
+        HeapFree(GetProcessHeap(), 0, wpath);
+        return (proven_sys_dir_handle_t){ .internal = NULL };
+    }
+
     HANDLE h = FindFirstFileW(wpath, fd);
+    HeapFree(GetProcessHeap(), 0, wpath);
     if (h == INVALID_HANDLE_VALUE) {
         HeapFree(GetProcessHeap(), 0, fd);
         return (proven_sys_dir_handle_t){ .internal = NULL };
     }
-    // We store the handle and the first result in a tiny struct for next calls
-    struct win_dir { HANDLE h; WIN32_FIND_DATAW fd; bool first; };
+    // We store the handle and the first result
+    struct win_dir { HANDLE h; WIN32_FIND_DATAW fd; bool first; char *utf8_name; size_t utf8_cap; };
     struct win_dir *wd = HeapAlloc(GetProcessHeap(), 0, sizeof(struct win_dir));
+    if (!wd) {
+        FindClose(h);
+        HeapFree(GetProcessHeap(), 0, fd);
+        return (proven_sys_dir_handle_t){ .internal = NULL };
+    }
     wd->h = h;
     wd->fd = *fd;
     wd->first = true;
+    wd->utf8_name = NULL;
+    wd->utf8_cap = 0;
     HeapFree(GetProcessHeap(), 0, fd);
     return (proven_sys_dir_handle_t){ .internal = (void*)wd };
 #else
@@ -194,8 +351,9 @@ proven_sys_dir_handle_t proven_sys_fs_dir_open(const char *path) {
 void proven_sys_fs_dir_close(proven_sys_dir_handle_t handle) {
     if (!handle.internal) return;
 #if defined(_WIN32) || defined(_WIN64)
-    struct win_dir { HANDLE h; WIN32_FIND_DATAW fd; bool first; } *wd = handle.internal;
+    struct win_dir { HANDLE h; WIN32_FIND_DATAW fd; bool first; char *utf8_name; size_t utf8_cap; } *wd = handle.internal;
     FindClose(wd->h);
+    if (wd->utf8_name) HeapFree(GetProcessHeap(), 0, wd->utf8_name);
     HeapFree(GetProcessHeap(), 0, wd);
 #else
     closedir((DIR*)handle.internal);
@@ -205,7 +363,7 @@ void proven_sys_fs_dir_close(proven_sys_dir_handle_t handle) {
 bool proven_sys_fs_dir_next(proven_sys_dir_handle_t handle, proven_sys_dir_entry_t *out_entry) {
     if (!handle.internal) return false;
 #if defined(_WIN32) || defined(_WIN64)
-    struct win_dir { HANDLE h; WIN32_FIND_DATAW fd; bool first; } *wd = handle.internal;
+    struct win_dir { HANDLE h; WIN32_FIND_DATAW fd; bool first; char *utf8_name; size_t utf8_cap; } *wd = handle.internal;
     if (!wd->first) {
         if (!FindNextFileW(wd->h, &wd->fd)) return false;
     }
@@ -220,12 +378,31 @@ bool proven_sys_fs_dir_next(proven_sys_dir_handle_t handle, proven_sys_dir_entry
         break;
     }
 
-    // Convert back from Wide to UTF-8 (static buffer for name return as per PAL style)
-    static char name_buf[MAX_PATH];
-    WideCharToMultiByte(CP_UTF8, 0, wd->fd.cFileName, -1, name_buf, MAX_PATH, NULL, NULL);
-    out_entry->name = name_buf;
-    out_entry->is_dir = (wd->fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
-    out_entry->size = ((size_t)wd->fd.nFileSizeHigh << 32) | wd->fd.nFileSizeLow;
+    // Convert back from Wide to UTF-8
+    int required_size = WideCharToMultiByte(CP_UTF8, 0, wd->fd.cFileName, -1, NULL, 0, NULL, NULL);
+    if (required_size <= 0) {
+        return false; // Conversion failed
+    } else {
+        if (!wd->utf8_name || wd->utf8_cap < (size_t)required_size) {
+            if (wd->utf8_name) HeapFree(GetProcessHeap(), 0, wd->utf8_name);
+            wd->utf8_name = HeapAlloc(GetProcessHeap(), 0, (size_t)required_size);
+            wd->utf8_cap = (size_t)required_size;
+        }
+        if (wd->utf8_name) {
+            int n = WideCharToMultiByte(CP_UTF8, 0, wd->fd.cFileName, -1, wd->utf8_name, required_size, NULL, NULL);
+            if (n <= 0) {
+                return false;
+            } else {
+                out_entry->name = wd->utf8_name;
+            }
+        } else {
+            return false; // Allocation failed
+        }
+    }
+    out_entry->is_dir = (wd->fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    uint64_t sz = ((uint64_t)wd->fd.nFileSizeHigh << 32) | wd->fd.nFileSizeLow;
+    if (sz > (uint64_t)PROVEN_SIZE_MAX) out_entry->size = PROVEN_SIZE_MAX;
+    else out_entry->size = (size_t)sz;
     return true;
 #else
     DIR *d = (DIR*)handle.internal;
@@ -235,8 +412,21 @@ bool proven_sys_fs_dir_next(proven_sys_dir_handle_t handle, proven_sys_dir_entry
             if (entry->d_name[1] == '\0' || (entry->d_name[1] == '.' && entry->d_name[2] == '\0')) continue;
         }
         out_entry->name = entry->d_name;
-        out_entry->is_dir = (entry->d_type == DT_DIR);
-        out_entry->size = 0; 
+        
+        struct stat st;
+        if (fstatat(dirfd(d), entry->d_name, &st, AT_SYMLINK_NOFOLLOW) == 0) {
+            out_entry->is_dir = S_ISDIR(st.st_mode);
+            if (S_ISREG(st.st_mode)) {
+                if (st.st_size < 0) out_entry->size = 0;
+                else if ((uintmax_t)st.st_size > (uintmax_t)PROVEN_SIZE_MAX) out_entry->size = PROVEN_SIZE_MAX;
+                else out_entry->size = (size_t)st.st_size;
+            } else {
+                out_entry->size = 0;
+            }
+        } else {
+            out_entry->is_dir = false; // Fallback
+            out_entry->size = 0;
+        }
         return true;
     }
     return false;
@@ -245,25 +435,30 @@ bool proven_sys_fs_dir_next(proven_sys_dir_handle_t handle, proven_sys_dir_entry
 
 bool proven_sys_fs_chmod(const char *path, unsigned int perms) {
 #if defined(_WIN32) || defined(_WIN64)
-    wchar_t wpath[MAX_PATH];
-    utf8_to_wide(path, wpath, MAX_PATH);
+    wchar_t *wpath = utf8_to_wide_alloc(path);
+    if (!wpath) return false;
     DWORD attr = GetFileAttributesW(wpath);
-    if (attr == INVALID_FILE_ATTRIBUTES) return false;
+    if (attr == INVALID_FILE_ATTRIBUTES) {
+        HeapFree(GetProcessHeap(), 0, wpath);
+        return false;
+    }
     
     // Logic: If Owner-W (bit 7) is missing, set ReadOnly
     if (!(perms & 0200)) attr |= FILE_ATTRIBUTE_READONLY;
-    else attr &= ~FILE_ATTRIBUTE_READONLY;
+    else attr &= (DWORD)~((DWORD)FILE_ATTRIBUTE_READONLY);
     
-    return SetFileAttributesW(wpath, attr) != 0;
+    bool success = SetFileAttributesW(wpath, attr) != 0;
+    HeapFree(GetProcessHeap(), 0, wpath);
+    return success;
 #else
     return chmod(path, perms) == 0;
 #endif
 }
 
 bool proven_sys_fs_lock(proven_sys_file_handle_t handle, int type, bool wait) {
-    if (!handle.internal) return false;
 #if defined(_WIN32) || defined(_WIN64)
-    HANDLE h = (HANDLE)handle.internal;
+    if (!handle.handle) return false;
+    HANDLE h = (HANDLE)handle.handle;
     OVERLAPPED ov = {0};
     DWORD flags = (type == 1) ? LOCKFILE_EXCLUSIVE_LOCK : 0;
     if (!wait) flags |= LOCKFILE_FAIL_IMMEDIATELY;
@@ -271,7 +466,8 @@ bool proven_sys_fs_lock(proven_sys_file_handle_t handle, int type, bool wait) {
     if (type == 2) return UnlockFileEx(h, 0, 0xFFFFFFFF, 0xFFFFFFFF, &ov) != 0;
     return LockFileEx(h, flags, 0, 0xFFFFFFFF, 0xFFFFFFFF, &ov) != 0;
 #else
-    int fd = (int)(intptr_t)handle.internal;
+    if (handle.fd < 0) return false;
+    int fd = handle.fd;
     struct flock fl = {0};
     if (type == 0) fl.l_type = F_RDLCK;
     else if (type == 1) fl.l_type = F_WRLCK;
@@ -285,39 +481,84 @@ bool proven_sys_fs_lock(proven_sys_file_handle_t handle, int type, bool wait) {
 }
 
 bool proven_sys_fs_stat(const char *path, proven_sys_fs_stat_t *out_stat) {
+    if (!path || !out_stat) return false;
 #if defined(_WIN32) || defined(_WIN64)
-    wchar_t wpath[MAX_PATH];
-    utf8_to_wide(path, wpath, MAX_PATH);
-    WIN32_FILE_ATTRIBUTE_DATA data;
-    if (!GetFileAttributesExW(wpath, GetFileExInfoStandard, &data)) return false;
-    out_stat->size = ((size_t)data.nFileSizeHigh << 32) | data.nFileSizeLow;
-    out_stat->is_dir = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
-    out_stat->mode = out_stat->is_dir ? 0755 : 0644;
-    if (data.dwFileAttributes & FILE_ATTRIBUTE_READONLY) out_stat->mode &= ~0222;
+    wchar_t *wpath = utf8_to_wide_alloc(path);
+    if (!wpath) return false;
     
-    // Convert FILETIME to unix timestamp
+    // We use CreateFileW + GetFileInformationByHandle to get Volume/File ID for identity
+    // FILE_FLAG_BACKUP_SEMANTICS is required to open directories
+    HANDLE h = CreateFileW(wpath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 
+                           NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    HeapFree(GetProcessHeap(), 0, wpath);
+    if (h == INVALID_HANDLE_VALUE) return false;
+
+    BY_HANDLE_FILE_INFORMATION info;
+    if (!GetFileInformationByHandle(h, &info)) {
+        CloseHandle(h);
+        return false;
+    }
+    CloseHandle(h);
+
+    out_stat->is_dir = (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    if (out_stat->is_dir) {
+        out_stat->size = 0;
+    } else {
+        uint64_t sz = ((uint64_t)info.nFileSizeHigh << 32) | info.nFileSizeLow;
+        if (sz > (uint64_t)PROVEN_SIZE_MAX) return false;
+        out_stat->size = (size_t)sz;
+    }
+    out_stat->mode = out_stat->is_dir ? 0755u : 0644u;
+    if (info.dwFileAttributes & FILE_ATTRIBUTE_READONLY) out_stat->mode &= (unsigned int)~0222u;
+    
+    // Convert FILETIME to Unix timestamp. Pre-1970 values are represented
+    // as negative seconds instead of underflowing the unsigned subtraction.
     ULARGE_INTEGER ull;
-    ull.LowPart = data.ftLastWriteTime.dwLowDateTime;
-    ull.HighPart = data.ftLastWriteTime.dwHighDateTime;
-    out_stat->mtime = (ull.QuadPart - 116444736000000000ULL) / 10000000ULL;
+    ull.LowPart = info.ftLastWriteTime.dwLowDateTime;
+    ull.HighPart = info.ftLastWriteTime.dwHighDateTime;
+    if (ull.QuadPart < 116444736000000000ULL) {
+        out_stat->mtime = -(long long)((116444736000000000ULL - ull.QuadPart + 9999999ULL) / 10000000ULL);
+    } else {
+        out_stat->mtime = (long long)((ull.QuadPart - 116444736000000000ULL) / 10000000ULL);
+    }
+
+    out_stat->dev = (unsigned long long)info.dwVolumeSerialNumber;
+    out_stat->ino = ((unsigned long long)info.nFileIndexHigh << 32) | (unsigned long long)info.nFileIndexLow;
     return true;
 #else
     struct stat st;
     if (stat(path, &st) != 0) return false;
-    out_stat->size = (size_t)st.st_size;
+    
+    if (S_ISREG(st.st_mode)) {
+        if (st.st_size < 0) return false;
+        if ((uintmax_t)st.st_size > (uintmax_t)PROVEN_SIZE_MAX) return false;
+        out_stat->size = (size_t)st.st_size;
+    } else {
+        out_stat->size = 0;
+    }
+    
     out_stat->is_dir = S_ISDIR(st.st_mode);
     out_stat->mode = (unsigned int)st.st_mode;
     out_stat->mtime = (long long)st.st_mtime;
+    out_stat->dev = (unsigned long long)st.st_dev;
+    out_stat->ino = (unsigned long long)st.st_ino;
     return true;
 #endif
 }
 
 bool proven_sys_fs_link(const char *oldpath, const char *newpath) {
 #if defined(_WIN32) || defined(_WIN64)
-    wchar_t wold[MAX_PATH], wnew[MAX_PATH];
-    utf8_to_wide(oldpath, wold, MAX_PATH);
-    utf8_to_wide(newpath, wnew, MAX_PATH);
-    return CreateHardLinkW(wnew, wold, NULL) != 0;
+    wchar_t *wold = utf8_to_wide_alloc(oldpath);
+    wchar_t *wnew = utf8_to_wide_alloc(newpath);
+    if (!wold || !wnew) {
+        if (wold) HeapFree(GetProcessHeap(), 0, wold);
+        if (wnew) HeapFree(GetProcessHeap(), 0, wnew);
+        return false;
+    }
+    bool success = CreateHardLinkW(wnew, wold, NULL) != 0;
+    HeapFree(GetProcessHeap(), 0, wold);
+    HeapFree(GetProcessHeap(), 0, wnew);
+    return success;
 #else
     return link(oldpath, newpath) == 0;
 #endif
@@ -325,12 +566,19 @@ bool proven_sys_fs_link(const char *oldpath, const char *newpath) {
 
 bool proven_sys_fs_symlink(const char *target, const char *linkpath) {
 #if defined(_WIN32) || defined(_WIN64)
-    wchar_t wtarget[MAX_PATH], wlink[MAX_PATH];
-    utf8_to_wide(target, wtarget, MAX_PATH);
-    utf8_to_wide(linkpath, wlink, MAX_PATH);
+    wchar_t *wtarget = utf8_to_wide_alloc(target);
+    wchar_t *wlink = utf8_to_wide_alloc(linkpath);
+    if (!wtarget || !wlink) {
+        if (wtarget) HeapFree(GetProcessHeap(), 0, wtarget);
+        if (wlink) HeapFree(GetProcessHeap(), 0, wlink);
+        return false;
+    }
     DWORD flags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
     // Note: requires checking if target is a directory for the flag
-    return CreateSymbolicLinkW(wlink, wtarget, flags) != 0;
+    bool success = CreateSymbolicLinkW(wlink, wtarget, flags) != 0;
+    HeapFree(GetProcessHeap(), 0, wtarget);
+    HeapFree(GetProcessHeap(), 0, wlink);
+    return success;
 #else
     return symlink(target, linkpath) == 0;
 #endif
@@ -343,7 +591,8 @@ bool proven_sys_fs_symlink(const char *target, const char *linkpath) {
 proven_sys_mmap_res_t proven_sys_fs_create(proven_sys_file_handle_t handle, size_t offset, size_t size, int prot, int flags) {
     proven_sys_mmap_res_t res = { .ptr = NULL, .internal_handle = NULL };
 #if defined(_WIN32) || defined(_WIN64)
-    HANDLE hFile = (HANDLE)handle.internal;
+    if (!handle.handle) return res;
+    HANDLE hFile = (HANDLE)handle.handle;
     DWORD flProtect = 0;
     DWORD dwAccess = 0;
 
@@ -364,7 +613,11 @@ proven_sys_mmap_res_t proven_sys_fs_create(proven_sys_file_handle_t handle, size
     HANDLE hMap = CreateFileMappingW(hFile, NULL, flProtect, 0, 0, NULL);
     if (!hMap) return res;
 
-    void *ptr = MapViewOfFile(hMap, dwAccess, (DWORD)(offset >> 32), (DWORD)(offset & 0xFFFFFFFF), size);
+    uint64_t map_offset = (uint64_t)offset;
+    void *ptr = MapViewOfFile(hMap, dwAccess,
+                              (DWORD)(map_offset >> 32),
+                              (DWORD)(map_offset & UINT64_C(0xFFFFFFFF)),
+                              size);
     if (!ptr) {
         CloseHandle(hMap);
         return res;
@@ -374,7 +627,8 @@ proven_sys_mmap_res_t proven_sys_fs_create(proven_sys_file_handle_t handle, size
     res.internal_handle = (void*)hMap;
     return res;
 #else
-    int fd = (int)(intptr_t)handle.internal;
+    if (handle.fd < 0) return res;
+    int fd = handle.fd;
     int p = 0;
     if (prot & 0x01) p |= PROT_READ;
     if (prot & 0x02) p |= PROT_WRITE;
@@ -384,7 +638,10 @@ proven_sys_mmap_res_t proven_sys_fs_create(proven_sys_file_handle_t handle, size
     if (flags & 0x01) f |= MAP_PRIVATE;
     if (flags & 0x02) f |= MAP_SHARED;
 
-    void *ptr = mmap(NULL, size, p, f, fd, (off_t)offset);
+    off_t mmap_offset = (off_t)offset;
+    if ((size_t)mmap_offset != offset) return res;
+
+    void *ptr = mmap(NULL, size, p, f, fd, mmap_offset);
     if (ptr == MAP_FAILED) return res;
 
     res.ptr = ptr;
@@ -394,6 +651,7 @@ proven_sys_mmap_res_t proven_sys_fs_create(proven_sys_file_handle_t handle, size
 
 bool proven_sys_fs_destroy(void *ptr, size_t size, void *internal_handle) {
 #if defined(_WIN32) || defined(_WIN64)
+    (void)size;
     UnmapViewOfFile(ptr);
     if (internal_handle) CloseHandle((HANDLE)internal_handle);
     return true;

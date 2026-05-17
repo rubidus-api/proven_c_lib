@@ -38,10 +38,61 @@
 void proven_sysio_flush(proven_file_t file);
 
 // -----------------------------------------------------------------------------
+// Buffered Scanner for sysio (Safe for pipes/stdin)
+// -----------------------------------------------------------------------------
+
+/**
+ * @brief Buffered scanner for system I/O, providing safe scanning for both
+ * seekable and non-seekable streams (pipes, stdin).
+ */
+typedef struct {
+    proven_file_t file;
+    proven_allocator_t alloc;
+    proven_u8 *buffer;
+    proven_size_t capacity;
+    proven_size_t cursor;
+    proven_size_t length;
+    bool eof;
+} proven_sysio_scanner_t;
+
+/**
+ * @brief Initializes a buffered sysio scanner.
+ * @param scanner The scanner object to initialize.
+ * @param file The file handle to read from.
+ * @param alloc The allocator for the internal buffer.
+ * @param buffer_capacity The size of the internal buffer (e.g., 4096).
+ */
+[[nodiscard]] proven_err_t proven_sysio_scanner_init(proven_sysio_scanner_t *scanner, proven_file_t file, proven_allocator_t alloc, proven_size_t buffer_capacity);
+
+/**
+ * @brief Deinitializes the sysio scanner and frees its internal buffer.
+ */
+void proven_sysio_scanner_deinit(proven_sysio_scanner_t *scanner);
+
+/**
+ * @brief Low-level implementation for buffered scanning.
+ */
+proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, const char *fmt, const proven_scan_arg_t *args, size_t args_count);
+
+/**
+ * @brief Type-safe formatted scanning using a buffered scanner.
+ */
+#define proven_sysio_scanner_scan(scanner, fmt, ...) \
+    proven_sysio_scanner_scan_impl(scanner, fmt, \
+        ((proven_scan_arg_t[]){ proven_scan_arg_none() __VA_OPT__(,) __VA_ARGS__ }), \
+        (sizeof((proven_scan_arg_t[]){ proven_scan_arg_none() __VA_OPT__(,) __VA_ARGS__ }) / sizeof(proven_scan_arg_t)))
+
+// -----------------------------------------------------------------------------
 // Type-Safe Printing Console macros
 // -----------------------------------------------------------------------------
 
-proven_err_t proven_sysio_print_impl(proven_file_t file, const char *fmt, const proven_arg_t *args, size_t args_count);
+proven_err_t proven_sysio_print_impl(proven_file_t handle, const char *fmt, const proven_arg_t *args, size_t args_count);
+/**
+ * @brief Type-safe formatted scanning from a file descriptor.
+ * Note: proven_sysio_scan_chunk_impl() reads at most one fixed-size chunk (4096 bytes). 
+ * It is intended for small interactive inputs, not full-stream parsing.
+ */
+proven_err_t proven_sysio_scan_chunk_impl(proven_file_t handle, const char *fmt, const proven_scan_arg_t *args, size_t args_count);
 
 /**
  * @brief Type-safe formatted printing to stdout.
@@ -49,15 +100,15 @@ proven_err_t proven_sysio_print_impl(proven_file_t file, const char *fmt, const 
  */
 #define proven_print(fmt, ...) \
     proven_sysio_print_impl(proven_sysio_stdout(), fmt, \
-        (proven_arg_t[]){ proven_arg_none(), __VA_ARGS__ }, \
-        (sizeof((proven_arg_t[]){ proven_arg_none(), __VA_ARGS__ }) / sizeof(proven_arg_t)))
+        ((const proven_arg_t[]){ proven_arg_none() __VA_OPT__(,) __VA_ARGS__ }), \
+        (sizeof((proven_arg_t[]){ proven_arg_none() __VA_OPT__(,) __VA_ARGS__ }) / sizeof(proven_arg_t)))
 
 /**
  * @brief Type-safe formatted printing to stdout with a trailing newline.
  * Replacing printf(fmt "\n", ...).
  */
 #define proven_println(fmt, ...) \
-    proven_print(fmt "\n", ##__VA_ARGS__)
+    proven_print(fmt "\n" __VA_OPT__(,) __VA_ARGS__)
 
 /**
  * @brief Type-safe formatted printing to stderr.
@@ -65,34 +116,32 @@ proven_err_t proven_sysio_print_impl(proven_file_t file, const char *fmt, const 
  */
 #define proven_eprint(fmt, ...) \
     proven_sysio_print_impl(proven_sysio_stderr(), fmt, \
-        (proven_arg_t[]){ proven_arg_none(), __VA_ARGS__ }, \
-        (sizeof((proven_arg_t[]){ proven_arg_none(), __VA_ARGS__ }) / sizeof(proven_arg_t)))
+        ((const proven_arg_t[]){ proven_arg_none() __VA_OPT__(,) __VA_ARGS__ }), \
+        (sizeof((proven_arg_t[]){ proven_arg_none() __VA_OPT__(,) __VA_ARGS__ }) / sizeof(proven_arg_t)))
 
 /**
  * @brief Type-safe formatted printing to stderr with a trailing newline.
  */
 #define proven_eprintln(fmt, ...) \
-    proven_eprint(fmt "\n", ##__VA_ARGS__)
+    proven_eprint(fmt "\n" __VA_OPT__(,) __VA_ARGS__)
 
 // -----------------------------------------------------------------------------
 // Type-Safe Scanning Console macros
 // -----------------------------------------------------------------------------
 
-[[nodiscard]] proven_err_t proven_sysio_scan_file_impl(proven_file_t file, const char *fmt, const proven_scan_arg_t *args, size_t args_count);
-
 /**
  * @brief Type-safe formatting scanner from a file descriptor.
  */
 #define proven_scan_fmt_from_file(file, fmt, ...) \
-    proven_sysio_scan_file_impl(file, fmt, \
-        (proven_scan_arg_t[]){ proven_scan_arg_none(), __VA_ARGS__ }, \
-        (sizeof((proven_scan_arg_t[]){ proven_scan_arg_none(), __VA_ARGS__ }) / sizeof(proven_scan_arg_t)))
+    proven_sysio_scan_chunk_impl(file, fmt, \
+        (proven_scan_arg_t[]){ proven_scan_arg_none() __VA_OPT__(,) __VA_ARGS__ }, \
+        (sizeof((proven_scan_arg_t[]){ proven_scan_arg_none() __VA_OPT__(,) __VA_ARGS__ }) / sizeof(proven_scan_arg_t)))
 
 /**
  * @brief Type-safe formatting scanner from standard input.
  */
 #define proven_scan_fmt_from_stdin(fmt, ...) \
-    proven_scan_fmt_from_file(proven_sysio_stdin(), fmt, ##__VA_ARGS__)
+    proven_scan_fmt_from_file(proven_sysio_stdin(), fmt __VA_OPT__(,) __VA_ARGS__)
 
 // -----------------------------------------------------------------------------
 // Environment Variables
@@ -100,7 +149,7 @@ proven_err_t proven_sysio_print_impl(proven_file_t file, const char *fmt, const 
 
 /**
  * @brief Fetches an environment variable by name.
- * @param alloc The allocator to securely hold the resulting UTF-8 string.
+ * @param alloc The allocator to securely hold the resulting string.
  * @param key The environment variable name view.
  * @return An error if not found, or a dynamically allocated string containing the value.
  */

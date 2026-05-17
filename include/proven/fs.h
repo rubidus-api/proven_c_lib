@@ -14,7 +14,10 @@
 
 // We redefine this here for internal PAL coherence or just use void*
 typedef struct {
-    void *internal;
+    union {
+        void *ptr;
+        int   fd;
+    } internal;
 } proven_fs_handle_t;
 
 typedef enum {
@@ -22,7 +25,8 @@ typedef enum {
     PROVEN_FS_WRITE  = 1 << 1,
     PROVEN_FS_APPEND = 1 << 2,
     PROVEN_FS_CREATE = 1 << 3,
-    PROVEN_FS_TRUNC  = 1 << 4
+    PROVEN_FS_TRUNC  = 1 << 4,
+    PROVEN_FS_CREATE_NEW = 1 << 5
 } proven_fs_mode_t;
 
 typedef enum {
@@ -50,11 +54,6 @@ typedef struct {
     proven_file_t value;
 } proven_result_file_t;
 
-typedef struct {
-    proven_err_t err;
-    proven_size_t value;
-} proven_result_size_t;
-
 // -------------------------------------------------------------
 // Core File Operations
 // -------------------------------------------------------------
@@ -63,7 +62,7 @@ typedef struct {
  * @brief Opens a file at the specified path with the given mode.
  */
 [[nodiscard]]
-proven_result_file_t proven_fs_open(proven_u8str_view_t path, proven_fs_mode_t mode);
+proven_result_file_t proven_fs_open(proven_allocator_t scratch, proven_u8str_view_t path, proven_fs_mode_t mode);
 
 /**
  * @brief Closes an open file handle.
@@ -83,6 +82,12 @@ proven_result_size_t proven_fs_read(proven_file_t file, proven_mem_mut_t dest);
 proven_result_size_t proven_fs_write(proven_file_t file, proven_mem_view_t src);
 
 /**
+ * @brief Writes the entire src view into an open file, retrying on partial writes.
+ */
+[[nodiscard]]
+proven_err_t proven_fs_write_all(proven_file_t file, proven_mem_view_t src);
+
+/**
  * @brief Retrieves the size of an open file in bytes.
  */
 [[nodiscard]]
@@ -96,13 +101,13 @@ proven_result_size_t proven_fs_size(proven_file_t file);
  * @brief Renames or moves a file/directory from src to dest.
  */
 [[nodiscard]]
-proven_err_t proven_fs_rename(proven_u8str_view_t src, proven_u8str_view_t dest);
+proven_err_t proven_fs_rename(proven_allocator_t scratch, proven_u8str_view_t src, proven_u8str_view_t dest);
 
 /**
  * @brief Deletes a file at the specified path.
  */
 [[nodiscard]]
-proven_err_t proven_fs_remove(proven_u8str_view_t path);
+proven_err_t proven_fs_remove(proven_allocator_t scratch, proven_u8str_view_t path);
 
 /**
  * @brief Copies a file from src to dest using custom memory buffers for efficiency.
@@ -114,13 +119,13 @@ proven_err_t proven_fs_copy(proven_allocator_t temp_alloc, proven_u8str_view_t s
  * @brief Creates a directory.
  */
 [[nodiscard]]
-proven_err_t proven_fs_mkdir(proven_u8str_view_t path);
+proven_err_t proven_fs_mkdir(proven_allocator_t scratch, proven_u8str_view_t path);
 
 /**
  * @brief Removes an empty directory.
  */
 [[nodiscard]]
-proven_err_t proven_fs_rmdir(proven_u8str_view_t path);
+proven_err_t proven_fs_rmdir(proven_allocator_t scratch, proven_u8str_view_t path);
 
 // -------------------------------------------------------------
 // Directory Iteration
@@ -133,6 +138,11 @@ proven_err_t proven_fs_rmdir(proven_u8str_view_t path);
  */
 [[nodiscard]]
 proven_result_array_t proven_fs_list(proven_allocator_t alloc, proven_u8str_view_t path);
+
+/**
+ * @brief Destroys an array of proven_fs_entry_t, freeing all internal strings.
+ */
+void proven_fs_list_destroy(proven_allocator_t alloc, proven_array_t *list);
 
 // -------------------------------------------------------------
 // Permissions & Locking
@@ -167,7 +177,7 @@ typedef enum {
  * @brief Set file permissions.
  */
 [[nodiscard]]
-proven_err_t proven_fs_chmod(proven_u8str_view_t path, proven_fs_perms_t perms);
+proven_err_t proven_fs_chmod(proven_allocator_t scratch, proven_u8str_view_t path, proven_fs_perms_t perms);
 
 /**
  * @brief Apply or release a file lock.
@@ -186,25 +196,27 @@ typedef struct {
     proven_fs_perms_t perms;
     proven_i64 created_at;
     proven_i64 modified_at;
+    unsigned long long dev;
+    unsigned long long ino;
 } proven_fs_stat_t;
 
 /**
  * @brief Get detailed file/directory information.
  */
 [[nodiscard]]
-proven_err_t proven_fs_stat(proven_u8str_view_t path, proven_fs_stat_t *out_stat);
+proven_err_t proven_fs_stat(proven_allocator_t scratch, proven_u8str_view_t path, proven_fs_stat_t *out_stat);
 
 /**
  * @brief Create a symbolic link.
  */
 [[nodiscard]]
-proven_err_t proven_fs_symlink(proven_u8str_view_t target, proven_u8str_view_t linkpath);
+proven_err_t proven_fs_symlink(proven_allocator_t scratch, proven_u8str_view_t target, proven_u8str_view_t linkpath);
 
 /**
  * @brief Create a hard link.
  */
 [[nodiscard]]
-proven_err_t proven_fs_link(proven_u8str_view_t oldpath, proven_u8str_view_t newpath);
+proven_err_t proven_fs_link(proven_allocator_t scratch, proven_u8str_view_t oldpath, proven_u8str_view_t newpath);
 
 /**
  * @brief Check if a path is absolute.
@@ -218,6 +230,10 @@ bool proven_fs_is_absolute(proven_u8str_view_t path);
 
 /**
  * @brief Reads the entire contents of a file into a newly allocated buffer.
+ * @note If the file size changes concurrently, this reads up to the original size
+ *       or until EOF is reached, returning the actual number of bytes read.
+ *       If the final shrink realloc fails, this returns the original larger 
+ *       allocation with `value.size` correctly set to the actual bytes read.
  */
 [[nodiscard]]
 proven_result_mem_mut_t proven_fs_read_all(proven_allocator_t alloc, proven_u8str_view_t path);

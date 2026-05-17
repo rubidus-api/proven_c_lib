@@ -7,11 +7,11 @@
 
 /**
  * @file job.h
- * @brief Zero-overhead Lock-Free MPMC (Multi-Producer Multi-Consumer) Job Scheduler.
+ * @brief Low-overhead MPMC (Multi-Producer Multi-Consumer) Job Scheduler.
  * 
  * Submits work to a pre-allocated pool of worker threads.
- * Synchronization is handled exclusively through C11 Atomics (stdatomic.h),
- * allowing threads to pull work without ever triggering expensive block/sleep states (until inherently starved).
+ * Synchronization is handled through Atomics,
+ * allowing threads to pull work smoothly.
  */
 
 /**
@@ -22,32 +22,48 @@ typedef struct {
     void* arg;
 } proven_job_t;
 
+typedef struct proven_job_sys proven_job_sys_t;
+
 /**
- * @brief Initialize the global Job System.
+ * @brief Initialize a Job System instance.
  * 
- * @param alloc The allocator for the Lock-Free Ring Buffer.
+ * @param alloc The allocator for the Job Queue Buffer.
  * @param num_workers Total OS threads to reserve.
  * @param max_queue_capacity Size of the command buffer. MUST be a power of 2!
+ * @param out_sys Pointer to store the created system instance.
  * 
  * @return PROVEN_OK if successful.
  */
 [[nodiscard]]
-proven_err_t proven_job_system_init(proven_allocator_t alloc, proven_size_t num_workers, proven_size_t max_queue_capacity);
+proven_err_t proven_job_system_init(proven_allocator_t alloc, proven_size_t num_workers, proven_size_t max_queue_capacity, proven_job_sys_t **out_sys);
 
 /**
- * @brief Shuts down the Job System. 
- * Blocks calling thread until the queue is completely exhausted and all workers are gracefully joined.
+ * @brief Signals the Job System to stop accepting new jobs.
+ * Further calls to proven_job_submit() will fail.
  */
-void proven_job_system_shutdown(void);
+void proven_job_system_close(proven_job_sys_t *sys);
+
+/**
+ * @brief Destroys the Job System.
+ * Blocks calling thread until the queue is completely exhausted and all workers are gracefully joined.
+ * Users must call `proven_job_system_close()` prior to (or implicitly via this function) stopping submissions.
+ */
+void proven_job_system_destroy(proven_job_sys_t *sys);
 
 /**
  * @brief Enqueue work to the Ring-Buffer.
- * This is 100% Lock-Free and can be safely called simultaneously from hundreds of threads.
+ * This is thread-safe and can be called simultaneously from hundreds of threads.
+ * Uses atomic operations internally to manage queue indices.
+ * 
+ * @note proven_job_system_destroy() must not race with proven_job_submit().
+ * The caller must externally synchronize close/destroy against all producer threads.
+ * The job queue assumes sequence counters do not wrap beyond the signed 
+ * pointer-difference range during the lifetime of a job system.
  * 
  * @return true if enqueued successfully. false if the ring buffer is completely full.
  */
 [[nodiscard]]
-bool proven_job_submit(void (*routine)(void*), void* arg);
+bool proven_job_submit(proven_job_sys_t *sys, void (*routine)(void*), void* arg);
 
 /**
  * @brief Forces the calling thread to attempt executing one task from the queue.
@@ -56,6 +72,6 @@ bool proven_job_submit(void (*routine)(void*), void* arg);
  * @return true if a job was found and executed. false if the queue was empty.
  */
 [[nodiscard]]
-bool proven_job_execute_one(void);
+bool proven_job_execute_one(proven_job_sys_t *sys);
 
 #endif /* PROVEN_JOB_H */

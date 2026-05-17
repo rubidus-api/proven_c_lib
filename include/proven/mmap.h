@@ -1,9 +1,10 @@
 #ifndef PROVEN_MMAP_H
 #define PROVEN_MMAP_H
 
-#include "types.h"
-#include "error.h"
-#include "fs.h"
+#include "proven/types.h"
+#include "proven/u8str.h"
+#include "proven/error.h"
+#include "proven/fs.h"
 
 /**
  * @brief Memory mapping protection modes.
@@ -62,5 +63,12 @@ proven_err_t proven_mmap_destroy(proven_mmap_t *mmap);
  */
 [[nodiscard]]
 proven_err_t proven_mmap_sync(proven_mmap_t *mmap);
+
+/**
+ * @brief Returns a read-only view of the entire mapped memory.
+ */
+static inline proven_u8str_view_t proven_mmap_as_view(proven_mmap_t mmap) {
+    return (proven_u8str_view_t){ .ptr = (const proven_byte_t*)mmap.ptr, .size = mmap.size };
+}
 
 #endif /* PROVEN_MMAP_H */

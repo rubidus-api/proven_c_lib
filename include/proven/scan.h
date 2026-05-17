@@ -36,8 +36,12 @@ typedef struct {
 
 /**
  * @brief Initialize a scanner with a string view.
+ * Normalizes invalid views (size > 0 && !ptr) to empty views.
  */
 static inline proven_scan_t proven_scan_init(proven_u8str_view_t view) {
+    if (view.size > 0 && !view.ptr) {
+        view = (proven_u8str_view_t){ .ptr = (const proven_byte_t*)0, .size = 0 };
+    }
     return (proven_scan_t){ .view = view, .cursor = 0 };
 }
 
@@ -84,14 +88,21 @@ void proven_scan_skip_until_number(proven_scan_t *scan);
  * @brief Supported argument types for the structural scanner.
  */
 typedef enum {
-    PROVEN_SCAN_ARG_NONE,
-    PROVEN_SCAN_ARG_I32,
-    PROVEN_SCAN_ARG_U32,
-    PROVEN_SCAN_ARG_I64,
-    PROVEN_SCAN_ARG_U64,
-    PROVEN_SCAN_ARG_F64,
-    PROVEN_SCAN_ARG_CSTR_BUF,
-    PROVEN_SCAN_ARG_STR_VIEW,
+    PROVEN_SCAN_ARG_TYPE_NONE,
+    PROVEN_SCAN_ARG_TYPE_I32,
+    PROVEN_SCAN_ARG_TYPE_U32,
+    PROVEN_SCAN_ARG_TYPE_I64,
+    PROVEN_SCAN_ARG_TYPE_U64,
+    PROVEN_SCAN_ARG_TYPE_SHORT,
+    PROVEN_SCAN_ARG_TYPE_USHORT,
+    PROVEN_SCAN_ARG_TYPE_INT,
+    PROVEN_SCAN_ARG_TYPE_UINT,
+    PROVEN_SCAN_ARG_TYPE_LONG,
+    PROVEN_SCAN_ARG_TYPE_ULONG,
+    PROVEN_SCAN_ARG_TYPE_LLONG,
+    PROVEN_SCAN_ARG_TYPE_ULLONG,
+    PROVEN_SCAN_ARG_TYPE_F64,
+    PROVEN_SCAN_ARG_TYPE_STR_VIEW,
 } proven_scan_arg_type_t;
 
 /**
@@ -104,23 +115,44 @@ typedef struct {
         proven_u32 *u32;
         proven_i64 *i64;
         proven_u64 *u64;
+        short *s;
+        unsigned short *us;
+        int *i;
+        unsigned int *ui;
+        long *l;
+        unsigned long *ul;
+        long long *ll;
+        unsigned long long *ull;
         double     *f64;
-        char       *cstr_buf;
         proven_u8str_view_t *str_view;
     } ptr;
 } proven_scan_arg_t;
 
 /**
  * @brief Simple argument constructors.
+ *
+ * Note: PROVEN_SCAN_ARG(&x) selects by the variable's underlying native C type.
+ * For fixed proven integer destinations, this is still safe because proven_i32
+ * and proven_i64 are typedefs of native integer types.
+ *
+ * The explicit proven_scan_arg_i32/i64/u32/u64 helpers remain available for
+ * callers that want to construct proven_scan_arg_t values manually.
  */
-static inline proven_scan_arg_t proven_scan_arg_none(void) { return (proven_scan_arg_t){PROVEN_SCAN_ARG_NONE, {0}}; }
-static inline proven_scan_arg_t proven_scan_arg_i32(proven_i32 *v) { return (proven_scan_arg_t){PROVEN_SCAN_ARG_I32, {.i32 = v}}; }
-static inline proven_scan_arg_t proven_scan_arg_u32(proven_u32 *v) { return (proven_scan_arg_t){PROVEN_SCAN_ARG_U32, {.u32 = v}}; }
-static inline proven_scan_arg_t proven_scan_arg_i64(proven_i64 *v) { return (proven_scan_arg_t){PROVEN_SCAN_ARG_I64, {.i64 = v}}; }
-static inline proven_scan_arg_t proven_scan_arg_u64(proven_u64 *v) { return (proven_scan_arg_t){PROVEN_SCAN_ARG_U64, {.u64 = v}}; }
-static inline proven_scan_arg_t proven_scan_arg_f64(double *v) { return (proven_scan_arg_t){PROVEN_SCAN_ARG_F64, {.f64 = v}}; }
-static inline proven_scan_arg_t proven_scan_arg_cstr_buf(char *v) { return (proven_scan_arg_t){PROVEN_SCAN_ARG_CSTR_BUF, {.cstr_buf = v}}; }
-static inline proven_scan_arg_t proven_scan_arg_str_view(proven_u8str_view_t *v) { return (proven_scan_arg_t){PROVEN_SCAN_ARG_STR_VIEW, {.str_view = v}}; }
+static inline proven_scan_arg_t proven_scan_arg_none(void) { return (proven_scan_arg_t){PROVEN_SCAN_ARG_TYPE_NONE, {0}}; }
+static inline proven_scan_arg_t proven_scan_arg_i32(proven_i32 *v) { return (proven_scan_arg_t){.type = PROVEN_SCAN_ARG_TYPE_I32, .ptr = {.i32 = v}}; }
+static inline proven_scan_arg_t proven_scan_arg_u32(proven_u32 *v) { return (proven_scan_arg_t){.type = PROVEN_SCAN_ARG_TYPE_U32, .ptr = {.u32 = v}}; }
+static inline proven_scan_arg_t proven_scan_arg_i64(proven_i64 *v) { return (proven_scan_arg_t){.type = PROVEN_SCAN_ARG_TYPE_I64, .ptr = {.i64 = v}}; }
+static inline proven_scan_arg_t proven_scan_arg_u64(proven_u64 *v) { return (proven_scan_arg_t){.type = PROVEN_SCAN_ARG_TYPE_U64, .ptr = {.u64 = v}}; }
+static inline proven_scan_arg_t proven_scan_arg_short(short *v) { return (proven_scan_arg_t){.type = PROVEN_SCAN_ARG_TYPE_SHORT, .ptr = {.s = v}}; }
+static inline proven_scan_arg_t proven_scan_arg_ushort(unsigned short *v) { return (proven_scan_arg_t){.type = PROVEN_SCAN_ARG_TYPE_USHORT, .ptr = {.us = v}}; }
+static inline proven_scan_arg_t proven_scan_arg_int(int *v) { return (proven_scan_arg_t){.type = PROVEN_SCAN_ARG_TYPE_INT, .ptr = {.i = v}}; }
+static inline proven_scan_arg_t proven_scan_arg_uint(unsigned int *v) { return (proven_scan_arg_t){.type = PROVEN_SCAN_ARG_TYPE_UINT, .ptr = {.ui = v}}; }
+static inline proven_scan_arg_t proven_scan_arg_long(long *v) { return (proven_scan_arg_t){.type = PROVEN_SCAN_ARG_TYPE_LONG, .ptr = {.l = v}}; }
+static inline proven_scan_arg_t proven_scan_arg_ulong(unsigned long *v) { return (proven_scan_arg_t){.type = PROVEN_SCAN_ARG_TYPE_ULONG, .ptr = {.ul = v}}; }
+static inline proven_scan_arg_t proven_scan_arg_llong(long long *v) { return (proven_scan_arg_t){.type = PROVEN_SCAN_ARG_TYPE_LLONG, .ptr = {.ll = v}}; }
+static inline proven_scan_arg_t proven_scan_arg_ullong(unsigned long long *v) { return (proven_scan_arg_t){.type = PROVEN_SCAN_ARG_TYPE_ULLONG, .ptr = {.ull = v}}; }
+static inline proven_scan_arg_t proven_scan_arg_f64(double *v) { return (proven_scan_arg_t){.type = PROVEN_SCAN_ARG_TYPE_F64, .ptr = {.f64 = v}}; }
+static inline proven_scan_arg_t proven_scan_arg_str_view(proven_u8str_view_t *v) { return (proven_scan_arg_t){.type = PROVEN_SCAN_ARG_TYPE_STR_VIEW, .ptr = {.str_view = v}}; }
 
 /**
  * @brief Identity function for arguments that are already proven_scan_arg_t.
@@ -129,30 +161,58 @@ static inline proven_scan_arg_t proven_scan_arg_identity(proven_scan_arg_t v) { 
 
 /**
  * @brief Type-safe argument selection using C11 _Generic for pointers.
+ * Mapping is done to native C types to avoid selection conflicts with fixed-width typedefs (e.g. long vs int64_t).
+ *
+ * Native integer destinations are range-checked through the scanner's internal
+ * proven_i64/proven_u64 parser. On platforms where a native integer type is wider
+ * than 64 bits, scan support is limited to the proven_i64/proven_u64 range.
  */
 #define PROVEN_SCAN_ARG(x) _Generic((x), \
-    int*: proven_scan_arg_i32, \
-    unsigned int*: proven_scan_arg_u32, \
-    long*: proven_scan_arg_i64, \
-    unsigned long*: proven_scan_arg_u64, \
-    long long*: proven_scan_arg_i64, \
-    unsigned long long*: proven_scan_arg_u64, \
-    double*: proven_scan_arg_f64, \
-    char*: proven_scan_arg_cstr_buf, \
+    short*:              proven_scan_arg_short, \
+    unsigned short*:     proven_scan_arg_ushort, \
+    int*:                proven_scan_arg_int, \
+    unsigned int*:       proven_scan_arg_uint, \
+    long*:               proven_scan_arg_long, \
+    unsigned long*:      proven_scan_arg_ulong, \
+    long long*:          proven_scan_arg_llong, \
+    unsigned long long*: proven_scan_arg_ullong, \
+    double*:             proven_scan_arg_f64, \
     proven_u8str_view_t*: proven_scan_arg_str_view, \
-    proven_scan_arg_t: proven_scan_arg_identity \
+    proven_scan_arg_t:    proven_scan_arg_identity \
 )(x)
 
 /**
+ * @brief Explicit aliases for platform-native long destinations.
+ *
+ * PROVEN_SCAN_ARG(&x) already supports long* and unsigned long*.
+ * These macros are provided for callers who want to be explicit at the call site.
+ *
+ * These helpers store through long* / unsigned long* directly and do not cast
+ * to proven_i32*, proven_i64*, proven_u32*, or proven_u64*.
+ */
+#define PROVEN_SCAN_ARG_LONG(ptr)  proven_scan_arg_long(ptr)
+#define PROVEN_SCAN_ARG_ULONG(ptr) proven_scan_arg_ulong(ptr)
+
+/**
  * @brief Modern structural scanner.
+ *
+ * The args array is expected to include a leading proven_scan_arg_none()
+ * sentinel at index 0. User code should normally call the public
+ * scanning macros instead of this function.
+ *
  * Expects exactly as many {} in the format string as provided arguments.
+ *
+ * Note: This function may advance the cursor and write destination values
+ * before returning an error (e.g. if a literal mismatch occurs after a placeholder).
+ * If transactional parsing is required, save scan.cursor and destination 
+ * values before calling and restore them on failure.
  */
 [[nodiscard]]
-proven_err_t proven_scan_fmt_impl(proven_scan_t *scan, const char *fmt, const proven_scan_arg_t *args, size_t args_count);
+proven_err_t proven_scan_fmt_internal(proven_scan_t *scan, const char *fmt, const proven_scan_arg_t *args, proven_size_t args_count);
 
-static inline proven_err_t proven_scan_fmt_impl_view(proven_u8str_view_t view, const char *fmt, const proven_scan_arg_t *args, size_t count) {
+static inline proven_err_t proven_scan_fmt_internal_view(proven_u8str_view_t view, const char *fmt, const proven_scan_arg_t *args, proven_size_t count) {
     proven_scan_t scan = proven_scan_init(view);
-    return proven_scan_fmt_impl(&scan, fmt, args, count);
+    return proven_scan_fmt_internal(&scan, fmt, args, count);
 }
 
 /**
@@ -160,17 +220,17 @@ static inline proven_err_t proven_scan_fmt_impl_view(proven_u8str_view_t view, c
  * Usage: proven_scan_fmt_cursor(&scan, "Hello {}", PROVEN_SCAN_ARG(&num));
  */
 #define proven_scan_fmt_cursor(scan_ptr, fmt, ...) \
-    proven_scan_fmt_impl(scan_ptr, fmt, \
-        (proven_scan_arg_t[]){ proven_scan_arg_none(), __VA_ARGS__ }, \
-        (sizeof((proven_scan_arg_t[]){ proven_scan_arg_none(), __VA_ARGS__ }) / sizeof(proven_scan_arg_t)))
+    proven_scan_fmt_internal(scan_ptr, fmt, \
+        (proven_scan_arg_t[]){ proven_scan_arg_none() __VA_OPT__(,) __VA_ARGS__ }, \
+        (sizeof((proven_scan_arg_t[]){ proven_scan_arg_none() __VA_OPT__(,) __VA_ARGS__ }) / sizeof(proven_scan_arg_t)))
 
 /**
  * @brief Variadic macro to scan strings into strictly-typed out-pointers from a view.
  * Usage: proven_scan_fmt(view, "Hello {}", PROVEN_SCAN_ARG(&num));
  */
 #define proven_scan_fmt(view, fmt, ...) \
-    proven_scan_fmt_impl_view(view, fmt, \
-        (proven_scan_arg_t[]){ proven_scan_arg_none(), __VA_ARGS__ }, \
-        (sizeof((proven_scan_arg_t[]){ proven_scan_arg_none(), __VA_ARGS__ }) / sizeof(proven_scan_arg_t)))
+    proven_scan_fmt_internal_view(view, fmt, \
+        (proven_scan_arg_t[]){ proven_scan_arg_none() __VA_OPT__(,) __VA_ARGS__ }, \
+        (sizeof((proven_scan_arg_t[]){ proven_scan_arg_none() __VA_OPT__(,) __VA_ARGS__ }) / sizeof(proven_scan_arg_t)))
 
 #endif // PROVEN_SCAN_H

@@ -1,4 +1,13 @@
 #include "proven/heap.h"
+
+#ifdef PROVEN_FREESTANDING
+
+proven_allocator_t proven_heap_allocator(void) {
+    return (proven_allocator_t){0};
+}
+
+#else
+
 #include "../../platform/proven_sys_mem.h" // Platform Abstraction Layer Injection
 
 static proven_result_mem_mut_t proven_heap_alloc_trait(void *ctx, proven_size_t size, proven_size_t align) {
@@ -48,3 +57,5 @@ proven_allocator_t proven_heap_allocator(void) {
         .free_fn = proven_heap_free_trait
     };
 }
+
+#endif /* PROVEN_FREESTANDING */

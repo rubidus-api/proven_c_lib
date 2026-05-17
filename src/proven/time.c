@@ -1,17 +1,331 @@
 #include "proven/time.h"
+#include "proven/u8str.h"
+#include "proven/fmt.h"
+#include "proven/memory.h"
 #include "../../platform/proven_sys_time.h"
+
+static const proven_u8str_view_t time_month_names[12] = {
+    PROVEN_LIT_INIT("January"), PROVEN_LIT_INIT("February"), PROVEN_LIT_INIT("March"), PROVEN_LIT_INIT("April"), PROVEN_LIT_INIT("May"), PROVEN_LIT_INIT("June"),
+    PROVEN_LIT_INIT("July"), PROVEN_LIT_INIT("August"), PROVEN_LIT_INIT("September"), PROVEN_LIT_INIT("October"), PROVEN_LIT_INIT("November"), PROVEN_LIT_INIT("December")
+};
+
+static const proven_u8str_view_t time_month_short_names[12] = {
+    PROVEN_LIT_INIT("Jan"), PROVEN_LIT_INIT("Feb"), PROVEN_LIT_INIT("Mar"), PROVEN_LIT_INIT("Apr"), PROVEN_LIT_INIT("May"), PROVEN_LIT_INIT("Jun"),
+    PROVEN_LIT_INIT("Jul"), PROVEN_LIT_INIT("Aug"), PROVEN_LIT_INIT("Sep"), PROVEN_LIT_INIT("Oct"), PROVEN_LIT_INIT("Nov"), PROVEN_LIT_INIT("Dec")
+};
+
+static const proven_u8str_view_t time_weekday_names[7] = {
+    PROVEN_LIT_INIT("Sunday"), PROVEN_LIT_INIT("Monday"), PROVEN_LIT_INIT("Tuesday"), PROVEN_LIT_INIT("Wednesday"), PROVEN_LIT_INIT("Thursday"), PROVEN_LIT_INIT("Friday"), PROVEN_LIT_INIT("Saturday")
+};
+
+static const proven_u8str_view_t time_weekday_short_names[7] = {
+    PROVEN_LIT_INIT("Sun"), PROVEN_LIT_INIT("Mon"), PROVEN_LIT_INIT("Tue"), PROVEN_LIT_INIT("Wed"), PROVEN_LIT_INIT("Thu"), PROVEN_LIT_INIT("Fri"), PROVEN_LIT_INIT("Sat")
+};
+
+const proven_time_locale_t proven_time_locale_en = {
+    .month_names = time_month_names,
+    .month_short_names = time_month_short_names,
+    .weekday_names = time_weekday_names,
+    .weekday_short_names = time_weekday_short_names
+};
+
+proven_err_t proven_time_u8_fmt(proven_allocator_t alloc, proven_u8str_t *str, proven_datetime_t dt, const proven_time_locale_t *locale, const char *fmt) {
+    if (!str || !fmt) return PROVEN_ERR_INVALID_ARG;
+    if (!locale) locale = &proven_time_locale_en;
+    
+    const char *p = fmt;
+    while (*p) {
+        if (*p == '{') {
+            p++;
+            if (*p == '{') {
+                proven_err_t err = proven_u8str_append_byte(alloc, str, '{');
+                if (!PROVEN_IS_OK(err)) return err;
+                p++;
+                continue;
+            }
+            
+            const char *key_start = p;
+            while (*p && *p != ':' && *p != '}') p++;
+            const char *key_end = p;
+            
+            const char *spec_start = NULL;
+            const char *spec_end = NULL;
+            if (*p == ':') {
+                spec_start = p;
+                while (*p && *p != '}') p++;
+                spec_end = p;
+            } else {
+                spec_start = p;
+                spec_end = p;
+            }
+            
+            if (*p == '}') p++;
+            
+            char fmt_buf[64];
+            int fmt_len = 0;
+            fmt_buf[fmt_len++] = '{';
+            if (spec_start && spec_end > spec_start) {
+                for (const char *s = spec_start; s < spec_end && fmt_len < 60; s++) {
+                    fmt_buf[fmt_len++] = *s;
+                }
+            }
+            fmt_buf[fmt_len++] = '}';
+            fmt_buf[fmt_len] = '\0';
+            
+            proven_size_t key_len = (proven_size_t)(key_end - key_start);
+            #define KEY_EQ(str_lit) (key_len == (sizeof(str_lit)-1) && proven_memcmp(key_start, str_lit, key_len) == 0)
+            
+            proven_err_t err = PROVEN_OK;
+            if (KEY_EQ("year")) {
+                err = proven_u8str_append_fmt_grow(alloc, str, fmt_buf, PROVEN_ARG(dt.year)).err;
+            } else if (KEY_EQ("month")) {
+                err = proven_u8str_append_fmt_grow(alloc, str, fmt_buf, PROVEN_ARG(dt.month)).err;
+            } else if (KEY_EQ("day")) {
+                err = proven_u8str_append_fmt_grow(alloc, str, fmt_buf, PROVEN_ARG(dt.day)).err;
+            } else if (KEY_EQ("hour")) {
+                err = proven_u8str_append_fmt_grow(alloc, str, fmt_buf, PROVEN_ARG(dt.hour)).err;
+            } else if (KEY_EQ("min")) {
+                err = proven_u8str_append_fmt_grow(alloc, str, fmt_buf, PROVEN_ARG(dt.min)).err;
+            } else if (KEY_EQ("sec")) {
+                err = proven_u8str_append_fmt_grow(alloc, str, fmt_buf, PROVEN_ARG(dt.sec)).err;
+            } else if (KEY_EQ("ms")) {
+                err = proven_u8str_append_fmt_grow(alloc, str, fmt_buf, PROVEN_ARG(dt.ms)).err;
+            } else if (KEY_EQ("wday_num")) {
+                err = proven_u8str_append_fmt_grow(alloc, str, fmt_buf, PROVEN_ARG(dt.weekday)).err;
+            } else if (KEY_EQ("Month") && locale->month_names) {
+                if (dt.month >= 1 && dt.month <= 12) {
+                    err = proven_u8str_append_fmt_grow(alloc, str, fmt_buf, PROVEN_ARG(locale->month_names[dt.month - 1])).err;
+                }
+            } else if (KEY_EQ("mon") && locale->month_short_names) {
+                if (dt.month >= 1 && dt.month <= 12) {
+                    err = proven_u8str_append_fmt_grow(alloc, str, fmt_buf, PROVEN_ARG(locale->month_short_names[dt.month - 1])).err;
+                }
+            } else if (KEY_EQ("Weekday") && locale->weekday_names) {
+                if (dt.weekday <= 6) {
+                    err = proven_u8str_append_fmt_grow(alloc, str, fmt_buf, PROVEN_ARG(locale->weekday_names[dt.weekday])).err;
+                }
+            } else if (KEY_EQ("wday") && locale->weekday_short_names) {
+                if (dt.weekday <= 6) {
+                    err = proven_u8str_append_fmt_grow(alloc, str, fmt_buf, PROVEN_ARG(locale->weekday_short_names[dt.weekday])).err;
+                }
+            } else {
+                err = proven_u8str_append_byte(alloc, str, '{');
+                if (PROVEN_IS_OK(err)) {
+                    for (proven_size_t i = 0; i < key_len; i++) {
+                        err = proven_u8str_append_byte(alloc, str, (proven_u8)key_start[i]);
+                        if (!PROVEN_IS_OK(err)) return err;
+                    }
+                    if (spec_end && spec_end > spec_start) {
+                        for (const char *s = spec_start; s < spec_end; s++) {
+                            err = proven_u8str_append_byte(alloc, str, (proven_u8)*s);
+                            if (!PROVEN_IS_OK(err)) return err;
+                        }
+                    }
+                    err = proven_u8str_append_byte(alloc, str, '}');
+                    if (!PROVEN_IS_OK(err)) return err;
+                }
+            }
+            if (!PROVEN_IS_OK(err)) return err;
+            #undef KEY_EQ
+            
+        } else if (*p == '}') {
+            p++;
+            if (*p == '}') {
+                proven_err_t err = proven_u8str_append_byte(alloc, str, '}');
+                if (!PROVEN_IS_OK(err)) return err;
+                p++;
+            } else {
+                proven_err_t err = proven_u8str_append_byte(alloc, str, '}');
+                if (!PROVEN_IS_OK(err)) return err;
+            }
+        } else {
+            proven_err_t err = proven_u8str_append_byte(alloc, str, (proven_u8)*p);
+            if (!PROVEN_IS_OK(err)) return err;
+            p++;
+        }
+    }
+    return PROVEN_OK;
+}
+
+#ifndef PROVEN_NO_U16STR
+
+static proven_err_t append_u8_view_to_u16str(proven_allocator_t alloc, proven_u16str_t *str, proven_u8str_view_t view) {
+    for (proven_size_t i = 0; i < view.size; i++) {
+        proven_u16 ch = (proven_u16)view.ptr[i];
+        proven_u16str_view_t v = { &ch, 1 };
+        proven_err_t err = proven_u16str_append_grow(alloc, str, v);
+        if (!PROVEN_IS_OK(err)) return err;
+    }
+    return PROVEN_OK;
+}
+
+static proven_err_t append_u16_char(proven_allocator_t alloc, proven_u16str_t *str, proven_u16 ch) {
+    proven_u16str_view_t v = { &ch, 1 };
+    return proven_u16str_append_grow(alloc, str, v);
+}
+
+proven_err_t proven_time_u16_fmt(proven_allocator_t alloc, proven_u16str_t *str, proven_datetime_t dt, const proven_time_locale_t *locale, const char *fmt) {
+    if (!str || !fmt) return PROVEN_ERR_INVALID_ARG;
+    if (!locale) locale = &proven_time_locale_en;
+    
+    const char *p = fmt;
+    while (*p) {
+        if (*p == '{') {
+            p++;
+            if (*p == '{') {
+                proven_err_t err = append_u16_char(alloc, str, '{');
+                if (!PROVEN_IS_OK(err)) return err;
+                p++;
+                continue;
+            }
+            
+            const char *key_start = p;
+            while (*p && *p != ':' && *p != '}') p++;
+            const char *key_end = p;
+            
+            const char *spec_start = NULL;
+            const char *spec_end = NULL;
+            if (*p == ':') {
+                spec_start = p;
+                while (*p && *p != '}') p++;
+                spec_end = p;
+            } else {
+                spec_start = p;
+                spec_end = p;
+            }
+            
+            if (*p == '}') p++;
+            
+            int pad_zeros = 0;
+            if (spec_start && spec_end > spec_start) {
+                // Expecting e.g. ":0>2" or ":0>4"
+                if (spec_end - spec_start >= 4 && spec_start[0] == ':' && spec_start[1] == '0' && spec_start[2] == '>') {
+                    pad_zeros = spec_start[3] - '0';
+                    if (spec_end - spec_start >= 5 && spec_start[4] >= '0' && spec_start[4] <= '9') {
+                        pad_zeros = pad_zeros * 10 + (spec_start[4] - '0');
+                    }
+                }
+            }
+            
+            proven_size_t key_len = (proven_size_t)(key_end - key_start);
+            #define KEY_EQ(str_lit) (key_len == (sizeof(str_lit)-1) && proven_memcmp(key_start, str_lit, key_len) == 0)
+            
+            proven_err_t err = PROVEN_OK;
+            proven_u16 num_buf[32];
+            int num_len = -1;
+            
+            if (KEY_EQ("year")) {
+                num_len = proven_sys_time_format_int_u16(num_buf, 32, dt.year, pad_zeros);
+            } else if (KEY_EQ("month")) {
+                num_len = proven_sys_time_format_int_u16(num_buf, 32, dt.month, pad_zeros);
+            } else if (KEY_EQ("day")) {
+                num_len = proven_sys_time_format_int_u16(num_buf, 32, dt.day, pad_zeros);
+            } else if (KEY_EQ("hour")) {
+                num_len = proven_sys_time_format_int_u16(num_buf, 32, dt.hour, pad_zeros);
+            } else if (KEY_EQ("min")) {
+                num_len = proven_sys_time_format_int_u16(num_buf, 32, dt.min, pad_zeros);
+            } else if (KEY_EQ("sec")) {
+                num_len = proven_sys_time_format_int_u16(num_buf, 32, dt.sec, pad_zeros);
+            } else if (KEY_EQ("ms")) {
+                num_len = proven_sys_time_format_int_u16(num_buf, 32, (int)dt.ms, pad_zeros);
+            } else if (KEY_EQ("wday_num")) {
+                num_len = proven_sys_time_format_int_u16(num_buf, 32, dt.weekday, pad_zeros);
+            } else if (KEY_EQ("Month") && locale->month_names) {
+                if (dt.month >= 1 && dt.month <= 12) {
+                    err = append_u8_view_to_u16str(alloc, str, locale->month_names[dt.month - 1]);
+                }
+            } else if (KEY_EQ("mon") && locale->month_short_names) {
+                if (dt.month >= 1 && dt.month <= 12) {
+                    err = append_u8_view_to_u16str(alloc, str, locale->month_short_names[dt.month - 1]);
+                }
+            } else if (KEY_EQ("Weekday") && locale->weekday_names) {
+                if (dt.weekday <= 6) {
+                    err = append_u8_view_to_u16str(alloc, str, locale->weekday_names[dt.weekday]);
+                }
+            } else if (KEY_EQ("wday") && locale->weekday_short_names) {
+                if (dt.weekday <= 6) {
+                    err = append_u8_view_to_u16str(alloc, str, locale->weekday_short_names[dt.weekday]);
+                }
+            } else {
+                err = append_u16_char(alloc, str, '{');
+                if (PROVEN_IS_OK(err)) {
+                    for (proven_size_t i = 0; i < key_len; i++) {
+                        err = append_u16_char(alloc, str, (proven_u16)key_start[i]);
+                        if (!PROVEN_IS_OK(err)) return err;
+                    }
+                    if (spec_end && spec_end > spec_start) {
+                        for (const char *s = spec_start; s < spec_end; s++) {
+                            err = append_u16_char(alloc, str, (proven_u16)*s);
+                            if (!PROVEN_IS_OK(err)) return err;
+                        }
+                    }
+                    err = append_u16_char(alloc, str, '}');
+                    if (!PROVEN_IS_OK(err)) return err;
+                }
+            }
+            
+            if (num_len > 0) {
+                proven_u16str_view_t v = { num_buf, (proven_size_t)num_len };
+                err = proven_u16str_append_grow(alloc, str, v);
+            }
+            
+            if (!PROVEN_IS_OK(err)) return err;
+            #undef KEY_EQ
+            
+        } else if (*p == '}') {
+            p++;
+            if (*p == '}') {
+                proven_err_t err = append_u16_char(alloc, str, '}');
+                if (!PROVEN_IS_OK(err)) return err;
+                p++;
+            } else {
+                proven_err_t err = append_u16_char(alloc, str, '}');
+                if (!PROVEN_IS_OK(err)) return err;
+            }
+        } else {
+            proven_err_t err = append_u16_char(alloc, str, (proven_u16)*p);
+            if (!PROVEN_IS_OK(err)) return err;
+            p++;
+        }
+    }
+    return PROVEN_OK;
+}
+
+#endif /* PROVEN_NO_U16STR */
+
+static proven_u8 calc_weekday(proven_i32 year, proven_u8 month, proven_u8 day) {
+    if (month < 1 || month > 12) return 0;
+    static const int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+    int y = year - (month < 3);
+    int w = (y + y/4 - y/100 + y/400 + t[month-1] + day) % 7;
+    // Adding 7 maps negative remainders into [0, 6].
+    if (w < 0) w += 7;
+    return (proven_u8)w;
+}
 
 proven_time_t proven_time_now(void) {
     return (proven_time_t)proven_sys_time_now_ns();
 }
 
 proven_datetime_t proven_time_breakdown(proven_time_t time_ns) {
-    proven_i64 seconds = time_ns / 1000000000ULL;
-    proven_u32 ms = (proven_u32)((time_ns % 1000000000ULL) / 1000000ULL);
+    proven_i64 seconds = time_ns / (proven_i64)1000000000;
+    proven_i64 nsec = time_ns % (proven_i64)1000000000;
+    
+    if (nsec < 0) {
+        nsec += 1000000000;
+        seconds -= 1;
+    }
+    
+    proven_u32 ms = (proven_u32)(nsec / 1000000);
 
     // Simple Civil Date algorithm (Howard Hinnant) 
     proven_i64 days = seconds / 86400;
     proven_i64 rem = seconds % 86400;
+    
+    if (rem < 0) {
+        rem += 86400;
+        days -= 1;
+    }
 
     proven_datetime_t dt;
     dt.hour = (proven_u8)(rem / 3600);
@@ -36,6 +350,10 @@ proven_datetime_t proven_time_breakdown(proven_time_t time_ns) {
     dt.month = (proven_u8)m;
     dt.day = (proven_u8)d;
     
+    proven_i64 w = (days + 4) % 7;
+    if (w < 0) w += 7;
+    dt.weekday = (proven_u8)w;
+    
     return dt;
 }
 
@@ -51,6 +369,7 @@ proven_datetime_t proven_time_now_datetime(void) {
     dt.min = (proven_u8)sdt.min;
     dt.sec = (proven_u8)sdt.sec;
     dt.ms = (proven_u32)sdt.ms;
+    dt.weekday = calc_weekday(dt.year, dt.month, dt.day);
     return dt;
 }
 
