@@ -13,7 +13,7 @@ This file is the working rulebook for humans and AI agents editing `proven_c_lib
 - PAL boundary: `platform/proven_sys_*.[ch]`.
 - Tests: plain C executables in `tests/`.
 - Version source of truth: `include/proven/version.h`.
-- Current version string: `proven_c_lib-v26.05.17`.
+- Current version string: `proven_c_lib-v26.05.18`.
 
 ## Path and privacy policy
 
@@ -33,10 +33,10 @@ This file is the working rulebook for humans and AI agents editing `proven_c_lib
 - `SPEC.md`: behavior and layout contract.
 - `TEST.md`: detailed test matrix and log contract.
 - `CHANGELOG.md`: chronological record of public changes.
-- `docs-site/`: optional web presentation. Keep its version display consistent if the site is used.
 - `MEMORY.md`: durable repository facts and stable environment notes.
 - `CHECKLIST.md`: recurring bug lessons and release guardrails.
 - `docs/` and `docs/ai/` have been consolidated into this guide. Do not recreate their old markdown files.
+- `docs-site/` and the root `package.json` wrapper were removed. Do not recreate them in this repository unless the project scope changes.
 - `build/`: generated output. Do not edit by hand.
 
 ## Required commands
@@ -87,7 +87,6 @@ Useful options:
   - `SPEC.md`
   - `TEST.md`
   - manual files under `manual/`
-  - `docs-site/index.html` if it exists
   - any help text, comments, generated examples, or snippets that display the version
 - Update the version first, then sync all visible docs in the same change.
 - Record the change in `CHANGELOG.md` every time source, tests, build scripts, or public docs change.

@@ -1,4 +1,4 @@
-     1|# proven C Library Specification (v26.05.17)
+     1|# proven C Library Specification (v26.05.18)
      2|
      3|## 1. Scope
      4|
