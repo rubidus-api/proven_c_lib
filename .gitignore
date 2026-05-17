@@ -14,3 +14,6 @@ nob
 /test_sysio_scanner.txt
 *.tmp
 *.out
+AGENTS.md
+MEMORY.md
+CHECKLIST.md
