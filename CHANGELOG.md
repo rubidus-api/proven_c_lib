@@ -1,23 +1,24 @@
 # Project Updates and Changelog
-v26.05.17
+v26.05.18
 
 ## Overview
 
 **Project Core:** `proven` (C23 Library)
-**Latest Version:** `v26.05.17`
+**Latest Version:** `v26.05.18`
 
 This file serves as the definitive record of all modifications, enhancements, and additions made to the **proven** library. All changes must be appended here chronologically to maintain a transparent history of the project's evolution.
 
 **Note on Historical Notes:** Older entries may refer to legacy API names (e.g., `append_view` instead of `append_grow`). These are retained for historical accuracy. Refer to the Developer Manual for current naming conventions.
 
-## Status: v26.05.17 (Latest)
+## Status: v26.05.18 (Latest)
 
-### Documentation governance and version-source cleanup
-*   **Version Source of Truth**: Declared `include/proven/version.h` as the single source for version macros and synchronized the visible version string to `v26.05.17`.
+### Docs-site retirement and version-source cleanup
+*   **Version Source of Truth**: Declared `include/proven/version.h` as the single source for version macros and synchronized the visible version string to `v26.05.18`.
 *   **Docs Consolidation**: Folded the archived guidance from `docs/` and `docs/ai/` into `AGENTS.md` so the working rules live in one place.
 *   **Durable Notes**: Added `MEMORY.md` for stable repository facts and `CHECKLIST.md` for recurring bug lessons and prevention rules.
 *   **Path Hygiene**: Reaffirmed that public docs, comments, and help text must not expose private host paths or share-specific account details.
-*   **Version Sync**: Updated the visible version markers in root docs, manuals, and the site banner to match `v26.05.17`.
+*   **Frontend Cleanup**: Retired the optional frontend presentation and the root package wrapper so the repository now focuses on the C library, its build driver, tests, and manuals.
+*   **Version Sync**: Updated the visible version markers in root docs and manuals to match `v26.05.18`.
 
 ## Status: v26.05.16 (Archive)
 
@@ -283,7 +284,7 @@ This file serves as the definitive record of all modifications, enhancements, an
 *   **Map Element Overlap Safety (`map.c`):** Implemented directional byte copier logic within `map_set()` handling cases where `element` overlaps existing map values (e.g. self-payload references). Maintains pointer structural integrity avoiding libc `memmove` dependency inside the core.
 *   **Rehash Memory Policy Documentation:** Clarified limitations of `map_set()` arena retention behavior when inserting large multi-KB struct types during self-aliased operations structurally resolving unrecoverable bounds exhaustion patterns.
 *   **Backend Support Policy:** Stated explicitly in `README.md` that Linux ARM/AArch64 raw syscalls implementation is currently experimental.
-*   **Documentation Site Cleansing:** Clarified within `README.md` that root/`docs-site` `package.json` logic only governs the optional frontend documentation builder, ensuring absolute boundaries with the independent C library engine.
+*   **Documentation Site Cleansing:** Clarified within `README.md` that the optional frontend documentation builder stayed separate from the independent C library engine.
 
 ## Status: v26.05.07k (Archive)
 
@@ -322,7 +323,7 @@ This file serves as the definitive record of all modifications, enhancements, an
 
 ### Documentation & Maintenance
 *   **PAL Thread Allocations:** Documented in `README.md` the internal exception allowing PAL thread lifecycle functions to utilize OS heap allocations for metadata tracking, without violating the strict allocator trait mandates of core data structures.
-*   **Demo Artifact Cleanup:** Removed unnecessary AI Studio framework dependencies (`@google/genai`) from the `docs-site/package.json` to keep the library demo UI lightweight, and clarified the site's optional nature in `README.md`.
+*   **Demo Artifact Cleanup:** Removed unnecessary AI Studio framework dependencies to keep the optional demo UI lightweight, and clarified the site's optional nature in `README.md`.
 
 ## Status: v26.05.07f (Archive)
 
