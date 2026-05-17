@@ -213,7 +213,3 @@ Useful options:
 - Keep the platform abstraction explicit and narrow.
 - Prefer checked, visible behavior over clever implicit behavior.
 - If a change reveals a recurring mistake, record the prevention rule in `CHECKLIST.md`.
-
-### Web footer rule
-
-- `docs-site/index.html` must keep creator, email, GitHub, and license footer information visible if the site is maintained.

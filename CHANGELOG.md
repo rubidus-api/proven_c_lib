@@ -12,6 +12,11 @@ This file serves as the definitive record of all modifications, enhancements, an
 
 ## Status: v26.05.18 (Latest)
 
+### README markdown cleanup and source-sync refresh
+*   **Landing Page Rewrite**: Reworked `README.md` to read as a concise GitHub front page: project intent, practical advantages, quick start, and small source-based examples.
+*   **Markdown Hygiene**: Removed stale or awkward escaping and tightened section flow so the README renders cleanly as Markdown instead of looking like an exported draft.
+*   **Source Sync**: Rechecked the README examples and module summary against the public headers and current build/test surface.
+
 ### Docs-site retirement and version-source cleanup
 *   **Version Source of Truth**: Declared `include/proven/version.h` as the single source for version macros and synchronized the visible version string to `v26.05.18`.
 *   **Docs Consolidation**: Folded the archived guidance from `docs/` and `docs/ai/` into `AGENTS.md` so the working rules live in one place.
