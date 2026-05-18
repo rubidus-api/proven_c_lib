@@ -1,16 +1,23 @@
 # Project Updates and Changelog
-v26.05.18
+v26.05.19
 
 ## Overview
 
 **Project Core:** `proven` (C23 Library)
-**Latest Version:** `v26.05.18`
+**Latest Version:** `v26.05.19`
 
 This file serves as the definitive record of all modifications, enhancements, and additions made to the **proven** library. All changes must be appended here chronologically to maintain a transparent history of the project's evolution.
 
 **Note on Historical Notes:** Older entries may refer to legacy API names (e.g., `append_view` instead of `append_grow`). These are retained for historical accuracy. Refer to the Developer Manual for current naming conventions.
 
-## Status: v26.05.18 (Latest)
+## Status: v26.05.19 (Latest)
+
+### Fmt and scan manual expansion
+*   **Detailed Reference**: Added `manual/manual-08-fmt-scan.md` to document formatter arguments, format grammar, scan argument types, cursor rollback, and misuse cases in source-grounded detail.
+*   **Version Sync**: Updated the visible version markers in the public docs and manuals to `v26.05.19`.
+*   **Tone Alignment**: Kept the new reference factual and restrained so it matches the repository's technical-language rule.
+
+## Status: v26.05.18 (Archive)
 
 ### README markdown cleanup and source-sync refresh
 *   **Landing Page Rewrite**: Reworked `README.md` to read as a concise GitHub front page: project intent, practical advantages, quick start, and small source-based examples.
