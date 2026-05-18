@@ -177,9 +177,94 @@ static void render_with_spec(proven_fmt_ctx_t *ctx, const char *val, proven_size
     }
 }
 
+static bool proven_fmt_normalize_scientific(long double *abs_v, int *sci_exp) {
+    /* Defensive cap: comfortably above the decimal exponent range of double. */
+    const int guard_limit = 400;
+    int guard = guard_limit;
+
+    while (*abs_v >= 1e256L && guard > 0) {
+        *abs_v /= 1e256L;
+        *sci_exp += 256;
+        guard--;
+    }
+    while (*abs_v >= 1e128L && guard > 0) {
+        *abs_v /= 1e128L;
+        *sci_exp += 128;
+        guard--;
+    }
+    while (*abs_v >= 1e64L && guard > 0) {
+        *abs_v /= 1e64L;
+        *sci_exp += 64;
+        guard--;
+    }
+    while (*abs_v >= 1e32L && guard > 0) {
+        *abs_v /= 1e32L;
+        *sci_exp += 32;
+        guard--;
+    }
+    while (*abs_v >= 1e16L && guard > 0) {
+        *abs_v /= 1e16L;
+        *sci_exp += 16;
+        guard--;
+    }
+    while (*abs_v >= 1e8L && guard > 0) {
+        *abs_v /= 1e8L;
+        *sci_exp += 8;
+        guard--;
+    }
+    while (*abs_v >= 1e4L && guard > 0) {
+        *abs_v /= 1e4L;
+        *sci_exp += 4;
+        guard--;
+    }
+    while (*abs_v >= 1e2L && guard > 0) {
+        *abs_v /= 1e2L;
+        *sci_exp += 2;
+        guard--;
+    }
+    while (*abs_v >= 10.0L && guard > 0) {
+        *abs_v /= 10.0L;
+        (*sci_exp)++;
+        guard--;
+    }
+    while (*abs_v > 0.0L && *abs_v < 1.0L && guard > 0) {
+        *abs_v *= 1e256L;
+        *sci_exp -= 256;
+        if (*abs_v >= 1.0L) break;
+        *abs_v *= 1e128L;
+        *sci_exp -= 128;
+        if (*abs_v >= 1.0L) break;
+        *abs_v *= 1e64L;
+        *sci_exp -= 64;
+        if (*abs_v >= 1.0L) break;
+        *abs_v *= 1e32L;
+        *sci_exp -= 32;
+        if (*abs_v >= 1.0L) break;
+        *abs_v *= 1e16L;
+        *sci_exp -= 16;
+        if (*abs_v >= 1.0L) break;
+        *abs_v *= 1e8L;
+        *sci_exp -= 8;
+        if (*abs_v >= 1.0L) break;
+        *abs_v *= 1e4L;
+        *sci_exp -= 4;
+        if (*abs_v >= 1.0L) break;
+        *abs_v *= 1e2L;
+        *sci_exp -= 2;
+        if (*abs_v >= 1.0L) break;
+        *abs_v *= 10.0L;
+        *sci_exp -= 1;
+        guard--;
+    }
+
+    return guard > 0;
+}
+
 static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fmt_spec_t spec) {
     if (!proven_is_ok(ctx->err)) return;
 
+    /* 128 bytes comfortably cover sign, integer digits, decimal point, six fractional digits,
+       scientific exponent text, and the trailing NUL byte. */
     char buf[128];
     proven_size_t len = 0;
 
@@ -260,33 +345,9 @@ static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fm
 
             if (use_scientific) {
                 int sci_exp = 0;
-                while (abs_v >= 1e256L) { abs_v /= 1e256L; sci_exp += 256; }
-                while (abs_v >= 1e128L) { abs_v /= 1e128L; sci_exp += 128; }
-                while (abs_v >= 1e64L) { abs_v /= 1e64L; sci_exp += 64; }
-                while (abs_v >= 1e32L) { abs_v /= 1e32L; sci_exp += 32; }
-                while (abs_v >= 1e16L) { abs_v /= 1e16L; sci_exp += 16; }
-                while (abs_v >= 1e8L) { abs_v /= 1e8L; sci_exp += 8; }
-                while (abs_v >= 1e4L) { abs_v /= 1e4L; sci_exp += 4; }
-                while (abs_v >= 1e2L) { abs_v /= 1e2L; sci_exp += 2; }
-                while (abs_v >= 10.0L) { abs_v /= 10.0L; sci_exp++; }
-                while (abs_v > 0.0L && abs_v < 1.0L) {
-                    abs_v *= 1e256L; sci_exp -= 256;
-                    if (abs_v >= 1.0L) break;
-                    abs_v *= 1e128L; sci_exp -= 128;
-                    if (abs_v >= 1.0L) break;
-                    abs_v *= 1e64L; sci_exp -= 64;
-                    if (abs_v >= 1.0L) break;
-                    abs_v *= 1e32L; sci_exp -= 32;
-                    if (abs_v >= 1.0L) break;
-                    abs_v *= 1e16L; sci_exp -= 16;
-                    if (abs_v >= 1.0L) break;
-                    abs_v *= 1e8L; sci_exp -= 8;
-                    if (abs_v >= 1.0L) break;
-                    abs_v *= 1e4L; sci_exp -= 4;
-                    if (abs_v >= 1.0L) break;
-                    abs_v *= 1e2L; sci_exp -= 2;
-                    if (abs_v >= 1.0L) break;
-                    abs_v *= 10.0L; sci_exp--;
+                if (!proven_fmt_normalize_scientific(&abs_v, &sci_exp)) {
+                    render_with_spec(ctx, sign ? "-Inf" : "Inf", sign ? 4u : 3u, spec);
+                    break;
                 }
 
                 unsigned long long digit = (unsigned long long)abs_v;
@@ -655,6 +716,51 @@ proven_fmt_result_t proven_u8str_fmt_internal(proven_allocator_t alloc, proven_u
         }
     }
 
+    const proven_byte_t *old_ptr = str->internal.ptr;
+    proven_size_t old_cap = str->internal.cap;
+    proven_size_t old_len = str->internal.len;
+    proven_fmt_arg_patch_t patch = {0};
+
+    if (trunc && !proven_alloc_is_valid(alloc)) {
+        proven_fmt_ctx_t write_ctx = {
+            .str = str,
+            .err = PROVEN_OK,
+            .written = 0,
+            .required = 0,
+            .measure_only = false
+        };
+        proven_size_t max_idx = 0;
+        fmt_run(&write_ctx, fmt, args, args_count, &max_idx);
+        proven_size_t produced_required = write_ctx.required;
+        proven_size_t produced_written = write_ctx.written;
+        res.err = write_ctx.err;
+
+        if (proven_is_ok(res.err)) {
+            proven_size_t expected_args;
+            if (PROVEN_CKD_ADD(&expected_args, max_idx, 1)) {
+                res.err = PROVEN_ERR_OVERFLOW;
+            } else if (expected_args != args_count) {
+                res.err = PROVEN_ERR_INVALID_ARG;
+            }
+        }
+
+        if (!proven_is_ok(res.err)) {
+            if (old_len < old_cap) {
+                str->internal.ptr[old_len] = 0;
+            }
+            res.required = 0;
+            res.written = 0;
+            return res;
+        }
+
+        res.required = produced_required;
+        res.written = produced_written;
+        if (trunc && res.written < res.required) {
+            res.err = PROVEN_ERR_OUT_OF_BOUNDS;
+        }
+        return res;
+    }
+
     // Pass 1: Measure required length
     proven_fmt_ctx_t measure_ctx = {
         .str = str,
@@ -683,10 +789,6 @@ proven_fmt_result_t proven_u8str_fmt_internal(proven_allocator_t alloc, proven_u
     }
 
     res.required = measure_ctx.required;
-
-    const proven_byte_t *old_ptr = str->internal.ptr;
-    proven_size_t old_cap = str->internal.cap;
-    proven_fmt_arg_patch_t patch = {0};
 
     // Growth logic
     if (proven_alloc_is_valid(alloc)) {

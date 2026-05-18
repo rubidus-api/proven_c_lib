@@ -34,13 +34,13 @@ int main(void) {
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(opened.err), "reopen temp file", "Check read access for the regression file.");
 
     proven_u8str_view_t token = {0};
-    proven_scan_arg_t token_args[] = { PROVEN_SCAN_ARG(&token) };
-    proven_err_t first = proven_sysio_scan_chunk_impl(opened.value, "{}", token_args, 1u);
+    proven_scan_arg_t token_args[] = { proven_scan_arg_none(), PROVEN_SCAN_ARG(&token) };
+    proven_err_t first = proven_sysio_scan_chunk_impl(opened.value, "{}", token_args, 2u);
     PROVEN_TEST_ASSERT(first == PROVEN_ERR_OUT_OF_BOUNDS, "chunk overflow reports an explicit bounds error", "Inspect the one-chunk scan path and its truncation policy.");
 
     proven_u64 number = 0;
-    proven_scan_arg_t number_args[] = { PROVEN_SCAN_ARG(&number) };
-    proven_err_t second = proven_sysio_scan_chunk_impl(opened.value, "{}", number_args, 1u);
+    proven_scan_arg_t number_args[] = { proven_scan_arg_none(), PROVEN_SCAN_ARG(&number) };
+    proven_err_t second = proven_sysio_scan_chunk_impl(opened.value, "{}", number_args, 2u);
     PROVEN_TEST_ASSERT(second != PROVEN_OK, "failed chunk scan keeps the stream at the original position", "Inspect cursor rewind after a truncated scan.");
     PROVEN_TEST_ASSERT(number == 0u, "failed chunk scan does not leak the trailing integer", "Inspect stream cursor restoration after truncation.");
 

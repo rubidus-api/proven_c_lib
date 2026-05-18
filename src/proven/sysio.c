@@ -171,7 +171,7 @@ proven_err_t proven_sysio_scan_chunk_impl(proven_file_t file, const char *fmt, c
     proven_sys_io_handle_t handle = { .fd = file.internal.fd };
 #endif
     
-    // We read up to an arbitrary chunk size to evaluate locally.
+    // We read up to a fixed chunk size to evaluate locally.
     proven_sys_result_size_t read_res = proven_sys_io_read_once(handle, buf, sizeof(buf));
     if (read_res.err == PROVEN_ERR_EOF || read_res.value == 0) {
         return PROVEN_ERR_NOT_FOUND;
@@ -179,6 +179,8 @@ proven_err_t proven_sysio_scan_chunk_impl(proven_file_t file, const char *fmt, c
     if (!proven_is_ok(read_res.err)) {
         return read_res.err;
     }
+
+    bool maybe_truncated = (read_res.value == sizeof(buf) && read_res.err == PROVEN_OK);
 
     proven_u8str_view_t view = { .ptr = (const proven_byte_t*)buf, .size = read_res.value };
     proven_scan_t scan = proven_scan_init(view);
@@ -190,10 +192,19 @@ proven_err_t proven_sysio_scan_chunk_impl(proven_file_t file, const char *fmt, c
         if (!proven_is_ok(seek_res.err)) {
             return seek_res.err;
         }
-        if (read_res.value == sizeof(buf)) {
+        if (maybe_truncated && scan.cursor == read_res.value) {
             return PROVEN_ERR_OUT_OF_BOUNDS;
         }
         return err;
+    }
+
+    if (maybe_truncated && scan.cursor == read_res.value) {
+        int64_t rewind_offset = -((int64_t)read_res.value);
+        proven_sys_result_size_t seek_res = proven_sys_io_seek_relative(handle, rewind_offset);
+        if (!proven_is_ok(seek_res.err)) {
+            return seek_res.err;
+        }
+        return PROVEN_ERR_OUT_OF_BOUNDS;
     }
 
     // Rewind any unconsumed bytes to prevent data loss (evaporation)

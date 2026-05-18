@@ -1,4 +1,5 @@
 #include "proven/scan.h"
+#include "../../platform/proven_sys_mem.h"
 #include <limits.h>
 
 #if !defined(PROVEN_FREESTANDING)
@@ -7,12 +8,10 @@ extern bool proven_sys_math_isfinite_f64(double val);
 
 static bool proven_scan_isfinite_f64(double val) {
 #if defined(PROVEN_FREESTANDING)
-    union {
-        double f;
-        proven_u64 u;
-    } bits = { .f = val };
-    return (bits.u & 0x7FF0000000000000ull) != 0x7FF0000000000000ull ||
-           (bits.u & 0x000FFFFFFFFFFFFFull) == 0;
+    proven_u64 bits = 0;
+    proven_sys_mem_copy(&bits, &val, sizeof bits);
+    return (bits & 0x7FF0000000000000ull) != 0x7FF0000000000000ull ||
+           (bits & 0x000FFFFFFFFFFFFFull) == 0;
 #else
     return proven_sys_math_isfinite_f64(val);
 #endif
@@ -130,52 +129,46 @@ proven_result_i64_t proven_scan_i64(proven_scan_t *scan) {
     }
 }
 
-static const long double proven_scan_pow10_exact[] = {
-    1e0,
-    1e1,
-    1e2,
-    1e3,
-    1e4,
-    1e5,
-    1e6,
-    1e7,
-    1e8,
-    1e9,
-    1e10,
-    1e11,
-    1e12,
-    1e13,
-    1e14,
-    1e15,
-    1e16,
-    1e17,
-    1e18,
-    1e19,
-    1e20,
-    1e21,
-    1e22,
+static const double proven_scan_pow10_exact[] = {
+    1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11,
+    1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
 };
 
 static long double proven_scan_scale_pow10(long double value, proven_i64 exp10) {
-    if (value == 0.0 || exp10 == 0) {
+    if (value == 0.0L || exp10 == 0) {
         return value;
     }
 
     if (exp10 > 0) {
         while (exp10 > 22) {
-            value *= proven_scan_pow10_exact[22];
+            value *= (long double)proven_scan_pow10_exact[22];
             exp10 -= 22;
         }
-        value *= proven_scan_pow10_exact[(proven_size_t)exp10];
+        value *= (long double)proven_scan_pow10_exact[(proven_size_t)exp10];
     } else {
         while (exp10 < -22) {
-            value /= proven_scan_pow10_exact[22];
+            value /= (long double)proven_scan_pow10_exact[22];
             exp10 += 22;
         }
-        value /= proven_scan_pow10_exact[(proven_size_t)(-exp10)];
+        value /= (long double)proven_scan_pow10_exact[(proven_size_t)(-exp10)];
     }
 
     return value;
+}
+
+static double proven_scan_convert_decimal(proven_u64 mantissa, proven_i64 exp10) {
+    if (mantissa == 0) {
+        return 0.0;
+    }
+
+    if (exp10 >= -22 && exp10 <= 22 && mantissa <= 9007199254740991ull) {
+        if (exp10 >= 0) {
+            return (double)mantissa * proven_scan_pow10_exact[(proven_size_t)exp10];
+        }
+        return (double)mantissa / proven_scan_pow10_exact[(proven_size_t)(-exp10)];
+    }
+
+    return (double)proven_scan_scale_pow10((long double)mantissa, exp10);
 }
 
 proven_result_f64_t proven_scan_f64(proven_scan_t *scan) {
@@ -289,12 +282,11 @@ proven_result_f64_t proven_scan_f64(proven_scan_t *scan) {
     exp10 -= (proven_i64)frac_digits;
     exp10 += (proven_i64)dropped_integer_digits;
 
-    long double val = (long double)mantissa;
-    val = proven_scan_scale_pow10(val, exp10);
+    double result = proven_scan_convert_decimal(mantissa, exp10);
+    if (negative) {
+        result = -result;
+    }
 
-    if (negative) val = -val;
-
-    double result = (double)val;
     if (!proven_scan_isfinite_f64(result)) {
         scan->cursor = start_cursor;
         return (proven_result_f64_t){ .err = PROVEN_ERR_OVERFLOW };

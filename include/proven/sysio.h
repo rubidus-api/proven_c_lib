@@ -91,8 +91,9 @@ proven_err_t proven_sysio_print_impl(proven_file_t handle, const char *fmt, cons
  * @brief Type-safe formatted scanning from a file descriptor.
  *
  * Reads at most one fixed-size chunk (4096 bytes). If the chunk fills before a
- * complete token is available, the function returns PROVEN_ERR_OUT_OF_BOUNDS and
- * restores the file cursor to the start of the chunk.
+ * complete token is available, the function returns PROVEN_ERR_OUT_OF_BOUNDS
+ * instead of accepting a silently truncated parse, and the file cursor is restored
+ * to the start of the chunk.
  */
 proven_err_t proven_sysio_scan_chunk_impl(proven_file_t handle, const char *fmt, const proven_scan_arg_t *args, size_t args_count);
 
