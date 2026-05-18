@@ -213,7 +213,7 @@ Purpose: buffered scanner for seekable files, pipes, and stdin.
 | `proven_scan_fmt_from_stdin(fmt, ...)` | Scan one fixed-size chunk from stdin. | `proven_err_t`. |
 | `proven_env_get(alloc, key)` | Read environment variable into owned U8 string. | `proven_result_u8str_t`. |
 
-`proven_sysio_scan_chunk_impl()` is intended for small interactive inputs. It reads at most one fixed-size chunk. Use `proven_sysio_scanner_t` for repeated or pipe-friendly scanning.
+`proven_sysio_scan_chunk_impl()` is intended for small interactive inputs. It reads at most one fixed-size chunk. If the chunk fills before a complete token is available, it returns `PROVEN_ERR_OUT_OF_BOUNDS` and rewinds the file cursor to the start of the chunk. Use `proven_sysio_scanner_t` for repeated or pipe-friendly scanning.
 
 Example:
 

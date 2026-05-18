@@ -179,20 +179,32 @@ proven_err_t proven_sysio_scan_chunk_impl(proven_file_t file, const char *fmt, c
     if (!proven_is_ok(read_res.err)) {
         return read_res.err;
     }
-    
+
     proven_u8str_view_t view = { .ptr = (const proven_byte_t*)buf, .size = read_res.value };
     proven_scan_t scan = proven_scan_init(view);
     proven_err_t err = proven_scan_fmt_internal(&scan, fmt, args, args_count);
-    
+
+    if (!proven_is_ok(err)) {
+        int64_t rewind_offset = -((int64_t)read_res.value);
+        proven_sys_result_size_t seek_res = proven_sys_io_seek_relative(handle, rewind_offset);
+        if (!proven_is_ok(seek_res.err)) {
+            return seek_res.err;
+        }
+        if (read_res.value == sizeof(buf)) {
+            return PROVEN_ERR_OUT_OF_BOUNDS;
+        }
+        return err;
+    }
+
     // Rewind any unconsumed bytes to prevent data loss (evaporation)
     if (scan.cursor < read_res.value) {
         int64_t rewind_offset = -((int64_t)(read_res.value - scan.cursor));
         proven_sys_result_size_t seek_res = proven_sys_io_seek_relative(handle, rewind_offset);
-        if (proven_is_ok(err) && !proven_is_ok(seek_res.err)) {
+        if (!proven_is_ok(seek_res.err)) {
             err = seek_res.err;
         }
     }
-    
+
     return err;
 }
 

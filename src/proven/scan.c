@@ -1,6 +1,22 @@
 #include "proven/scan.h"
-#include "proven_sys_math.h"
 #include <limits.h>
+
+#if !defined(PROVEN_FREESTANDING)
+extern bool proven_sys_math_isfinite_f64(double val);
+#endif
+
+static bool proven_scan_isfinite_f64(double val) {
+#if defined(PROVEN_FREESTANDING)
+    union {
+        double f;
+        proven_u64 u;
+    } bits = { .f = val };
+    return (bits.u & 0x7FF0000000000000ull) != 0x7FF0000000000000ull ||
+           (bits.u & 0x000FFFFFFFFFFFFFull) == 0;
+#else
+    return proven_sys_math_isfinite_f64(val);
+#endif
+}
 
 static bool is_whitespace(proven_u8 c) {
     return c == (proven_u8)' ' || c == (proven_u8)'\n' || c == (proven_u8)'\r' || 
@@ -114,6 +130,54 @@ proven_result_i64_t proven_scan_i64(proven_scan_t *scan) {
     }
 }
 
+static const long double proven_scan_pow10_exact[] = {
+    1e0,
+    1e1,
+    1e2,
+    1e3,
+    1e4,
+    1e5,
+    1e6,
+    1e7,
+    1e8,
+    1e9,
+    1e10,
+    1e11,
+    1e12,
+    1e13,
+    1e14,
+    1e15,
+    1e16,
+    1e17,
+    1e18,
+    1e19,
+    1e20,
+    1e21,
+    1e22,
+};
+
+static long double proven_scan_scale_pow10(long double value, proven_i64 exp10) {
+    if (value == 0.0 || exp10 == 0) {
+        return value;
+    }
+
+    if (exp10 > 0) {
+        while (exp10 > 22) {
+            value *= proven_scan_pow10_exact[22];
+            exp10 -= 22;
+        }
+        value *= proven_scan_pow10_exact[(proven_size_t)exp10];
+    } else {
+        while (exp10 < -22) {
+            value /= proven_scan_pow10_exact[22];
+            exp10 += 22;
+        }
+        value /= proven_scan_pow10_exact[(proven_size_t)(-exp10)];
+    }
+
+    return value;
+}
+
 proven_result_f64_t proven_scan_f64(proven_scan_t *scan) {
     if (!scan_valid(scan)) return (proven_result_f64_t){ .err = PROVEN_ERR_INVALID_ARG };
     proven_scan_skip_whitespace(scan);
@@ -131,37 +195,62 @@ proven_result_f64_t proven_scan_f64(proven_scan_t *scan) {
         scan->cursor++;
     }
 
-    double val = 0.0;
+    proven_u64 mantissa = 0;
+    proven_size_t digits_seen = 0;
+    proven_size_t frac_digits = 0;
+    proven_size_t dropped_integer_digits = 0;
+    bool mantissa_started = false;
     bool found_digit = false;
 
-    // Integer part
     while (scan->cursor < scan->view.size && is_digit(scan->view.ptr[scan->cursor])) {
-        val = val * 10.0 + (double)(scan->view.ptr[scan->cursor] - '0');
-        scan->cursor++;
+        proven_u8 digit = (proven_u8)(scan->view.ptr[scan->cursor] - '0');
         found_digit = true;
+        if (digit == 0 && !mantissa_started) {
+            scan->cursor++;
+            continue;
+        }
+        if (digits_seen < 19) {
+            mantissa = mantissa * 10u + (proven_u64)digit;
+            digits_seen++;
+            if (digit != 0) {
+                mantissa_started = true;
+            }
+        } else {
+            dropped_integer_digits++;
+        }
+        scan->cursor++;
     }
 
-    // Fractional part
     if (scan->cursor < scan->view.size && scan->view.ptr[scan->cursor] == (proven_u8)'.') {
         scan->cursor++;
-        double weight = 0.1;
         while (scan->cursor < scan->view.size && is_digit(scan->view.ptr[scan->cursor])) {
-            val += (double)(scan->view.ptr[scan->cursor] - '0') * weight;
-            weight /= 10.0;
-            scan->cursor++;
+            proven_u8 digit = (proven_u8)(scan->view.ptr[scan->cursor] - '0');
             found_digit = true;
+            frac_digits++;
+            if (digit == 0 && !mantissa_started) {
+                scan->cursor++;
+                continue;
+            }
+            if (digits_seen < 19) {
+                mantissa = mantissa * 10u + (proven_u64)digit;
+                digits_seen++;
+                if (digit != 0) {
+                    mantissa_started = true;
+                }
+            }
+            scan->cursor++;
         }
     }
 
-    // Exponent part (e.g., 1.23e-10)
+    proven_i64 e = 0;
     if (scan->cursor < scan->view.size && (scan->view.ptr[scan->cursor] == (proven_u8)'e' || scan->view.ptr[scan->cursor] == (proven_u8)'E')) {
         if (!found_digit) {
             scan->cursor = start_cursor;
             return (proven_result_f64_t){ .err = PROVEN_ERR_INVALID_ARG };
         }
-        
+
         scan->cursor++;
-        
+
         bool exp_negative = false;
         if (scan->cursor < scan->view.size && (scan->view.ptr[scan->cursor] == '+' || scan->view.ptr[scan->cursor] == '-')) {
             exp_negative = scan->view.ptr[scan->cursor] == '-';
@@ -173,14 +262,13 @@ proven_result_f64_t proven_scan_f64(proven_scan_t *scan) {
             return (proven_result_f64_t){ .err = PROVEN_ERR_INVALID_ARG };
         }
 
-        proven_i64 e = 0;
         while (scan->cursor < scan->view.size && is_digit(scan->view.ptr[scan->cursor])) {
-            proven_u8 digit = scan->view.ptr[scan->cursor] - '0';
-            if (e > 999) { // If e already 1000+, adding another digit > 9999
+            proven_u8 digit = (proven_u8)(scan->view.ptr[scan->cursor] - '0');
+            if (e > 999) {
                 scan->cursor = start_cursor;
                 return (proven_result_f64_t){ .err = PROVEN_ERR_OUT_OF_BOUNDS };
             }
-            e = e * 10 + digit;
+            e = e * 10 + (proven_i64)digit;
             scan->cursor++;
         }
 
@@ -190,29 +278,29 @@ proven_result_f64_t proven_scan_f64(proven_scan_t *scan) {
             scan->cursor = start_cursor;
             return (proven_result_f64_t){ .err = PROVEN_ERR_OUT_OF_BOUNDS };
         }
-
-        double factor = 1.0;
-        if (e > 0) {
-            while (e--) factor *= 10.0;
-        } else if (e < 0) {
-            while (e++) factor /= 10.0;
-        }
-        val *= factor;
     }
 
     if (!found_digit) {
         scan->cursor = start_cursor;
         return (proven_result_f64_t){ .err = PROVEN_ERR_INVALID_ARG };
     }
-    
+
+    proven_i64 exp10 = e;
+    exp10 -= (proven_i64)frac_digits;
+    exp10 += (proven_i64)dropped_integer_digits;
+
+    long double val = (long double)mantissa;
+    val = proven_scan_scale_pow10(val, exp10);
+
     if (negative) val = -val;
-    
-    if (!proven_sys_math_isfinite_f64(val)) {
+
+    double result = (double)val;
+    if (!proven_scan_isfinite_f64(result)) {
         scan->cursor = start_cursor;
         return (proven_result_f64_t){ .err = PROVEN_ERR_OVERFLOW };
     }
 
-    return (proven_result_f64_t){ .val = val, .err = PROVEN_OK };
+    return (proven_result_f64_t){ .val = result, .err = PROVEN_OK };
 }
 
 proven_result_u8str_view_t proven_scan_str(proven_scan_t *scan) {
