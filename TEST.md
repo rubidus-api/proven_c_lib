@@ -621,21 +621,35 @@
    612|
    613|Failure tip: inspect `proven_scan_f64` in `src/proven/scan.c` and math helper behavior in the PAL. Do not accept `inf` as a successful parsed finite value.
    614|
-   615|### 27. `tests/test_sysio_scanner` - sysio-backed scanner
-   616|
-   617|Intent: verify scanner behavior over file-backed sysio data instead of only in-memory string views.
-   618|
-   619|Sub-checks:
-   620|
-   621|- Creates a temporary file and writes integer/token content.
-   622|- Opens the file for reading.
-   623|- Initializes a sysio scanner with an allocator-backed buffer.
-   624|- Scans two integers and a word from the file stream.
-   625|- Cleans up scanner and file resources.
-   626|
-   627|Failure tip: inspect `src/proven/sysio.c`, `src/proven/scan.c`, and file read wrappers. If in-memory scan tests pass but this fails, suspect buffer refill or file-position behavior.
-   628|
-   629|### 28. `tests/test_regression_v26_05` - v26.05 regressions
+   615|### 27. `tests/test_scan_f64_accuracy` - float scanner accuracy
+
+Intent: verify float scanning preserves exact small values, signed zero, a round-trip style decimal token, exponent extremes, and cursor restoration on malformed input.
+
+Sub-checks:
+
+- Confirms exact bit patterns for `0.0`, `-0.0`, `1.0`, `-1.0`, `0.5`, `0.1`, and `123456789.0`.
+- Confirms the parsed bits for `0.30000000000000004` match the source literal.
+- Confirms `1.7976931348623157e308`, `2.2250738585072014e-308`, and `4.9e-324` remain finite and stable.
+- Confirms `1e309` reports a deterministic out-of-range error.
+- Confirms malformed input restores the scanner cursor to its original position.
+
+Failure tip: inspect `src/proven/scan.c`, especially the decimal mantissa accumulation, exponent scaling, and final finite-value check. If a malformed token leaves the cursor advanced, inspect the failure-atomic rollback path first.
+
+### 28. `tests/test_sysio_scanner` - sysio-backed scanner
+
+Intent: verify scanner behavior over file-backed sysio data instead of only in-memory string views.
+
+Sub-checks:
+
+- Creates a temporary file and writes integer/token content.
+- Opens the file for reading.
+- Initializes a sysio scanner with an allocator-backed buffer.
+- Scans two integers and a word from the file stream.
+- Cleans up scanner and file resources.
+
+Failure tip: inspect `src/proven/sysio.c`, `src/proven/scan.c`, and file read wrappers. If in-memory scan tests pass but this fails, suspect buffer refill or file-position behavior.
+
+### 29. `tests/test_regression_v26_05` - v26.05 regressions
    630|
    631|Intent: protect historically fixed issues in map rehashing, formatting, scanning, aliasing, and environment handling.
    632|
@@ -656,7 +670,7 @@
    647|
    648|Failure tip: this file is intentionally a set of historical tripwires. Do not collapse it into broad smoke coverage. Read the failing sub-check name printed in the log and inspect the corresponding source module.
    649|
-   650|### 29. `tests/test_regression_fs_copy_to_self` - filesystem self-copy regression
+   650|### 30. `tests/test_regression_fs_copy_to_self` - filesystem self-copy regression
    651|
    652|Intent: verify copy-to-self and copy-to-hardlink-self fail without truncating or corrupting the file.
    653|
@@ -670,7 +684,7 @@
    661|
    662|Failure tip: inspect same-file detection and open/truncate ordering in filesystem copy code. The destination must not be opened with truncation before proving it is not the same file as the source.
    663|
-   664|### 30. `tests/test_regression_source_contracts` - source portability contracts
+   664|### 31. `tests/test_regression_source_contracts` - source portability contracts
    665|
    666|Intent: guard platform branches and documentation/test-output contracts that may not be executable on the current host.
    667|
@@ -715,7 +729,45 @@
    706|
    707|Failure tip: inspect `include/proven/alias_xcv.h` and `tests/test_alias_smoke.c`. When public symbols are added, renamed, or removed, update the alias header and this smoke test together.
    708|
-   709|## Regression subset
+   709|### 33. `tests/test_fmt_f64_accuracy` - float formatter accuracy
+
+Intent: verify fixed-point rounding, scientific carry, and special-value text for floating-point formatting.
+
+Sub-checks:
+
+- Checks normal-path rounding to six fractional digits.
+- Checks carry from the fractional tail into the integer part.
+- Checks scientific notation carry around the mantissa boundary.
+- Checks NaN and infinity text stay stable.
+
+Failure tip: inspect `src/proven/fmt.c` and `tests/test_fmt_f64_accuracy.c`.
+
+### 34. `tests/test_fmt_fastpath` - formatter truncation comparison
+
+Intent: compare truncating fixed-capacity formatting against the growable reference path for exact-fit, truncation, malformed format, and excess-argument cases.
+
+Sub-checks:
+
+- Checks exact-fit truncation output matches the reference path.
+- Checks over-capacity truncation keeps the same prefix bytes and counts.
+- Checks excess-argument validation.
+- Checks malformed-format validation.
+
+Failure tip: inspect `src/proven/fmt.c` and `tests/test_fmt_fastpath.c`.
+
+### 35. `tests/test_sysio_scan_truncation` - chunked sysio scan truncation
+
+Intent: verify one-chunk file scanning rejects inputs that exceed the fixed buffer and leaves the stream reusable after a failed attempt.
+
+Sub-checks:
+
+- Checks a chunk-full string token reports the bounds error used by the one-chunk scan path.
+- Checks the file cursor is still usable after the failure.
+- Checks the trailing integer is not consumed by the failed scan.
+
+Failure tip: inspect `src/proven/sysio.c` and `tests/test_sysio_scan_truncation.c`.
+
+## Regression subset
    710|
    711|`./nob regression`, `./nob regression-asan`, and `./nob regression-ubsan` currently run:
    712|
