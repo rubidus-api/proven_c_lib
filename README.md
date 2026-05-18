@@ -1,13 +1,13 @@
 # Proven C library
 
-Version: proven_c_lib-v26.05.18
-Standard: C23
-License: MIT
-Repository: https://github.com/rubidus-api/proven_c_lib
-
-`proven` is a small C23 systems library for code that should stay readable after the first month. It gives you the everyday pieces C projects usually end up re-inventing: explicit allocators, owned and borrowed strings, dynamic arrays, maps, formatting and scanning, filesystem helpers, memory mapping, time, stackless coroutines, and a bounded job system.
+`proven` is a small C23 systems library for code that should stay readable over time. It gives you the everyday pieces C projects usually end up rewriting: explicit allocators, owned and borrowed strings, dynamic arrays, maps, formatting and scanning, filesystem helpers, memory mapping, time, stackless coroutines, and a bounded job system.
 
 The point is not to hide C behind a framework. The point is to make practical C less repetitive while still keeping ownership, errors, allocator choice, and platform boundaries visible.
+
+- Version: proven_c_lib-v26.05.18
+- Standard: C23
+- License: MIT
+- Repository: https://github.com/rubidus-api/proven_c_lib
 
 ## why people reach for it
 
@@ -155,7 +155,7 @@ Portable implementation files live in `src/proven/`. OS and C runtime calls are 
 
 This split keeps the core library easier to audit and gives ports a clear place to work. Hosted Linux is the primary runtime target today. The build also has compile-only checks for optional targets when the toolchains are installed: Linux AArch64, Linux ARM hard-float, Linux i686, MinGW Windows x86_64/i686, ARM Cortex-M freestanding, and RISC-V ELF freestanding.
 
-Cross compilation proves that headers, source visibility, ABI assumptions, and compile-time platform branches line up. It does not replace runtime tests on the target machine.
+Cross compilation shows that headers, source visibility, ABI assumptions, and compile-time platform branches line up. It does not replace runtime tests on the target machine.
 
 ## main modules
 

@@ -1,6 +1,6 @@
      1|# proven Test Matrix (v26.05.18)
      2|
-     3|This document describes how the `proven` test suite is organized, what each test is intended to prove, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
+     3|This document describes how the `proven` test suite is organized, what each test is intended to validate, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
      4|
      5|## Table of contents
      6|
@@ -96,7 +96,7 @@
     87|
     88|```text
     89|[PROVEN][TEST][BEGIN] path=<test executable path> title=<short title>
-    90|[PROVEN][TEST][INTENT] <what this executable proves>
+    90|[PROVEN][TEST][INTENT] <what this executable validates>
     91|[PROVEN][TEST][FAIL_HINT] <where to start if this executable fails>
     92|[PROVEN][TEST][PASS] path=<test executable path>
     93|```

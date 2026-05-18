@@ -91,7 +91,7 @@ static void* worker_main(void* arg) {
         }
     }
     
-    // Once shutdown is signaled, exhaust any remaining tasks before committing suicide
+    // Once shutdown is signaled, exhaust any remaining tasks before exiting
     while (proven_job_execute_one(sys)) {}
     
     return NULL;
