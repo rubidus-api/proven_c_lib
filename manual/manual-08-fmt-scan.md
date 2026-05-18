@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v26.05.19)
+# Chapter 8: Formatting and Scanning (v26.05.20)
 
 This chapter is the detailed reference for `fmt.h` and `scan.h`.
 Chapter 3 gives the shorter overview and the everyday examples.
@@ -17,6 +17,7 @@ This chapter focuses on exact syntax, parameter shapes, return values, and the p
 9. [Scan argument model](#9-scan-argument-model)
 10. [Structural scan grammar](#10-structural-scan-grammar)
 11. [Scan formatting APIs](#11-scan-formatting-apis)
+11.1. [Scan error code guide and recovery](#111-scan-error-code-guide-and-recovery)
 12. [Examples and misuse cases](#12-examples-and-misuse-cases)
 13. [Freestanding and build-mode notes](#13-freestanding-and-build-mode-notes)
 
@@ -816,6 +817,7 @@ Return value:
 - `PROVEN_ERR_INVALID_ARG` when the placeholder count, arguments, or spec shape is invalid
 - `PROVEN_ERR_NOT_FOUND` when a literal does not match
 - `PROVEN_ERR_OVERFLOW` when a destination type cannot hold the parsed value
+- `PROVEN_ERR_OUT_OF_BOUNDS` when floating-point parsing hits the parser's exponent limits
 
 ### `proven_scan_fmt_internal_view(view, fmt, args, count)`
 
@@ -863,6 +865,32 @@ if (!proven_is_ok(e)) {
 int value = 0;
 e = proven_scan_fmt_cursor(&scan, "VALUE: {}", PROVEN_SCAN_ARG(&value));
 ```
+
+## 11.1 Scan error code guide and recovery
+
+The scan APIs use a small, predictable set of error codes. The practical meaning depends on which entry point you call, but the recovery strategy is usually the same: check the cursor, check the destination types, and check whether the format string is actually describing the input you have.
+
+| Error code | Seen in current scan code | What it usually means | Typical recovery |
+|---|---|---|---|
+| `PROVEN_OK` | all scan entry points | The parse succeeded. | Use the output value and continue. |
+| `PROVEN_ERR_INVALID_ARG` | primitive scanners, `skip_until`, and structural scan | The scanner object is invalid, a destination pointer is null, the format string is malformed, the placeholder count does not match the argument count, the input is empty where a token is required, or the numeric syntax is incomplete. | Check the scanner/view lifetime, make sure `PROVEN_SCAN_ARG` is used on the scan side, verify the destination pointers are non-null, and keep structural scan formats to bare `{}` placeholders. |
+| `PROVEN_ERR_NOT_FOUND` | `proven_scan_skip_until`, structural literal matching | The target text is not present from the current cursor position, or a literal in the scan format does not match the input. | Confirm the cursor is at the right location, normalize or loosen surrounding whitespace, or search for the marker first with `skip_until`. |
+| `PROVEN_ERR_OVERFLOW` | integer scanners and narrowing structural scans | The parsed value does not fit the destination type, or a floating-point parse produced a non-finite value. | Parse into a wider type first, widen the destination, or reject the input before it reaches the scanner. |
+| `PROVEN_ERR_OUT_OF_BOUNDS` | `proven_scan_f64` | The floating-point parser hit its own exponent-range limit. The current implementation rejects very large exponents instead of trying to normalize them indefinitely. | Use a smaller exponent, pre-normalize the data, or replace the built-in parser if your input regularly exceeds that range. |
+
+Important notes:
+
+- Structural scan currently treats malformed scan syntax as `PROVEN_ERR_INVALID_ARG`, not as a separate syntax-specific code.
+- `PROVEN_ERR_OUT_OF_BOUNDS` is currently a floating-point parsing limit, not a generic input-length limit.
+- If a structural scan writes some earlier outputs before a later mismatch, restore the cursor and any destinations you care about yourself.
+- The primitive numeric scanners roll back their own cursor on failure, but the full structural engine is not fully transactional across all destination variables.
+
+Practical debugging tips:
+
+1. If the failure is `INVALID_ARG`, first check the call site: `PROVEN_ARG` vs `PROVEN_SCAN_ARG`, null pointers, and placeholder count mismatch are the most common causes.
+2. If the failure is `NOT_FOUND`, print the remaining input from the cursor and compare it to the literal text in the scan format.
+3. If the failure is `OVERFLOW`, scan into a wider destination and narrow only after the parse succeeds.
+4. If the failure is `OUT_OF_BOUNDS`, the data is usually using a larger scientific-notation exponent than this parser supports.
 
 ## 12. Examples and misuse cases
 
