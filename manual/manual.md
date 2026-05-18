@@ -1,4 +1,4 @@
-     1|# Proven C Library Complete Manual (v26.05.18)
+     1|# Proven C Library Complete Manual (v26.05.19)
      2|
      3|This manual is rebuilt from three sources:
      4|
@@ -184,8 +184,9 @@
    184|3. [Strings and text: U8, U16, formatting, scanning](manual-03-strings-text.md)
    185|4. [Containers and algorithms: array, list, ring, map, sort/search](manual-04-containers-algorithms.md)
    186|5. [Hosted services: filesystem, sysio, environment, mmap, time](manual-05-hosted-services.md)
-   187|6. [Execution and platform: coroutines, jobs, aliases, PAL, freestanding, cross builds](manual-06-execution-and-platform.md)
-   188|7. [Alias index: every `alias_xcv.h` spelling map](manual-07-alias-xcv-index.md)
+6. [Execution and platform: coroutines, jobs, aliases, PAL, freestanding, cross builds](manual-06-execution-and-platform.md)
+7. [Alias index: every `alias_xcv.h` spelling map](manual-07-alias-xcv-index.md)
+8. [Formatting and scanning: full `fmt.h` and `scan.h` reference](manual-08-fmt-scan.md)
    189|
    190|## 7. Public header map
    191|

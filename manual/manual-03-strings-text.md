@@ -1,6 +1,7 @@
 # Chapter 3: Strings, Formatting, and Scanning
 
 This chapter covers `u8str.h`, `u16str.h`, `fmt.h`, and `scan.h`.
+For the full format grammar and scanner edge cases, see `manual-08-fmt-scan.md`.
 
 ## Table of contents
 
