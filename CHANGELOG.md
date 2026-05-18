@@ -12,6 +12,11 @@ This file serves as the definitive record of all modifications, enhancements, an
 
 ## Status: v26.05.20 (Latest)
 
+### Freestanding scan compile fix
+*   **PAL Access Cleanup**: Reworked `src/proven/scan.c` so the finite-value check does not require `platform/proven_sys_math.h` during freestanding source compilation.
+*   **Freestanding Regression**: Confirmed `tests/freestanding_compile_check.sh` now compiles `src/proven/scan.c` under `-DPROVEN_FREESTANDING -DPROVEN_FMT_NO_FLOAT -DPROVEN_NO_U16STR` without the missing-header failure.
+*   **Hosted Behavior**: Kept the hosted finite-value check routed through the existing PAL helper when freestanding mode is not enabled.
+
 ### Scan recovery guide expansion
 *   **Error Code Table**: Added a scan-focused error code guide to `manual/manual-08-fmt-scan.md` covering `PROVEN_ERR_INVALID_ARG`, `PROVEN_ERR_NOT_FOUND`, `PROVEN_ERR_OVERFLOW`, and `PROVEN_ERR_OUT_OF_BOUNDS`.
 *   **Recovery Tips**: Documented the common fixes for format mismatches, literal mismatches, numeric range failures, and the scanner's exponent-range limit.

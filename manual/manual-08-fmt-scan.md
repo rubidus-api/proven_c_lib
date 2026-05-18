@@ -256,6 +256,8 @@ proven_u8str_append_fmt_grow(alloc, &s, "{}", PROVEN_ARG(buf)); /* wrong if buf 
 If `PROVEN_FMT_NO_FLOAT` is defined, float support is removed from the generic selector and the float constructor is not available.
 That is a compile-time configuration choice, not a runtime toggle.
 
+Current float rendering keeps a fixed six-digit fractional form for finite values, then switches to scientific notation when the magnitude is too large or too small for the compact form. The carry logic is bounded so values near a rounding boundary stay stable instead of expanding into an unbounded normalization loop.
+
 ## 4. Format string grammar
 
 The formatter accepts a deliberately small grammar.
@@ -581,7 +583,7 @@ Supported patterns include:
 - scientific notation such as `1.25e3`
 - signed values such as `-0.5`
 
-The parser rejects values that are not finite or fall outside the supported exponent range.
+The parser rejects values that are not finite or fall outside the supported exponent range. It restores the cursor on failure so callers can retry from the same position.
 
 Example:
 
@@ -876,12 +878,12 @@ The scan APIs use a small, predictable set of error codes. The practical meaning
 | `PROVEN_ERR_INVALID_ARG` | primitive scanners, `skip_until`, and structural scan | The scanner object is invalid, a destination pointer is null, the format string is malformed, the placeholder count does not match the argument count, the input is empty where a token is required, or the numeric syntax is incomplete. | Check the scanner/view lifetime, make sure `PROVEN_SCAN_ARG` is used on the scan side, verify the destination pointers are non-null, and keep structural scan formats to bare `{}` placeholders. |
 | `PROVEN_ERR_NOT_FOUND` | `proven_scan_skip_until`, structural literal matching | The target text is not present from the current cursor position, or a literal in the scan format does not match the input. | Confirm the cursor is at the right location, normalize or loosen surrounding whitespace, or search for the marker first with `skip_until`. |
 | `PROVEN_ERR_OVERFLOW` | integer scanners and narrowing structural scans | The parsed value does not fit the destination type, or a floating-point parse produced a non-finite value. | Parse into a wider type first, widen the destination, or reject the input before it reaches the scanner. |
-| `PROVEN_ERR_OUT_OF_BOUNDS` | `proven_scan_f64` | The floating-point parser hit its own exponent-range limit. The current implementation rejects very large exponents instead of trying to normalize them indefinitely. | Use a smaller exponent, pre-normalize the data, or replace the built-in parser if your input regularly exceeds that range. |
+| `PROVEN_ERR_OUT_OF_BOUNDS` | `proven_scan_f64`, `proven_sysio_scan_chunk_impl` | The floating-point parser hit its own exponent-range limit, or the one-chunk file scanner filled its fixed buffer before it saw a complete token. | Use a smaller exponent, pre-normalize the data, or switch to the buffered scanner when the input can exceed one chunk. |
 
 Important notes:
 
 - Structural scan currently treats malformed scan syntax as `PROVEN_ERR_INVALID_ARG`, not as a separate syntax-specific code.
-- `PROVEN_ERR_OUT_OF_BOUNDS` is currently a floating-point parsing limit, not a generic input-length limit.
+- `PROVEN_ERR_OUT_OF_BOUNDS` is currently used by floating-point exponent limits and by the one-chunk sysio scanner when the buffer fills before a complete token is available.
 - If a structural scan writes some earlier outputs before a later mismatch, restore the cursor and any destinations you care about yourself.
 - The primitive numeric scanners roll back their own cursor on failure, but the full structural engine is not fully transactional across all destination variables.
 
@@ -890,7 +892,7 @@ Practical debugging tips:
 1. If the failure is `INVALID_ARG`, first check the call site: `PROVEN_ARG` vs `PROVEN_SCAN_ARG`, null pointers, and placeholder count mismatch are the most common causes.
 2. If the failure is `NOT_FOUND`, print the remaining input from the cursor and compare it to the literal text in the scan format.
 3. If the failure is `OVERFLOW`, scan into a wider destination and narrow only after the parse succeeds.
-4. If the failure is `OUT_OF_BOUNDS`, the data is usually using a larger scientific-notation exponent than this parser supports.
+4. If the failure is `OUT_OF_BOUNDS`, the data is usually using a larger scientific-notation exponent than this parser supports, or the one-chunk file scanner hit its fixed buffer limit before the token completed.
 
 ## 12. Examples and misuse cases
 

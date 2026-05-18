@@ -62,6 +62,7 @@ void proven_scan_skip_whitespace(proven_scan_t *scan);
 
 /**
  * @brief Extract a 64-bit floating point number.
+ * Failure restores the cursor to its original position.
  */
 [[nodiscard]] proven_result_f64_t proven_scan_f64(proven_scan_t *scan);
 
