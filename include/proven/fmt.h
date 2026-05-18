@@ -84,6 +84,12 @@ static inline proven_arg_t proven_arg_u64(unsigned long long v) {
     return arg;
 }
 #ifndef PROVEN_FMT_NO_FLOAT
+/**
+ * @brief Floating-point argument for diagnostic formatting.
+ *
+ * Output uses a fixed six-digit fractional form with round-half-up behavior.
+ * It is intended for logs and debugging text rather than round-trip storage.
+ */
 static inline proven_arg_t proven_arg_f64(double v) {
     proven_arg_t arg = {0};
     arg.type = PROVEN_ARG_F64;

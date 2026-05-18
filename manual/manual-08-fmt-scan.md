@@ -258,6 +258,12 @@ That is a compile-time configuration choice, not a runtime toggle.
 
 Current float rendering keeps a fixed six-digit fractional form for finite values, then switches to scientific notation when the magnitude is too large or too small for the compact form. The carry logic is bounded so values near a rounding boundary stay stable instead of expanding into an unbounded normalization loop.
 
+### Accuracy and limits
+
+- Floating-point output uses six fractional digits with round-half-up behavior.
+- The text form is intended for diagnostics and logs, not for round-trip serialization.
+- Decimal-to-double scanning is designed to stay exact within the implementation's limited power-of-ten range; outside that range, results are approximate.
+
 ## 4. Format string grammar
 
 The formatter accepts a deliberately small grammar.
@@ -584,6 +590,12 @@ Supported patterns include:
 - signed values such as `-0.5`
 
 The parser rejects values that are not finite or fall outside the supported exponent range. It restores the cursor on failure so callers can retry from the same position.
+
+Accuracy note:
+
+- Within the supported decimal range, scanning is designed to be exact enough for common finite inputs.
+- Outside the exact range, the parsed result is approximate and may not round-trip exactly.
+- For very large or very small decimal inputs, callers should treat the text form as a best-effort conversion rather than a full `strtod` replacement.
 
 Example:
 
