@@ -17,6 +17,12 @@ This file serves as the definitive record of all modifications, enhancements, an
 *   **Markdown Hygiene**: Removed stale or awkward escaping and tightened section flow so the README renders cleanly as Markdown instead of looking like an exported draft.
 *   **Source Sync**: Rechecked the README examples and module summary against the public headers and current build/test surface.
 
+### Tone and contract cleanup
+*   **Restrained Wording**: Softened README and TEST wording so public-facing language says validate/check/show where the code can actually support that, rather than implying proof or guarantees.
+*   **Ring Contract**: Clarified that `proven_ring_t` is bounded but not thread-safe by itself; callers still need synchronization for shared mutable use.
+*   **Guideline Alignment**: Added a dedicated restrained-language rule to `AGENTS.md` so the repository guide matches the current documentation style.
+*   **Source Comment Cleanup**: Replaced a non-neutral job-system shutdown comment with plain lifecycle wording.
+
 ### Docs-site retirement and version-source cleanup
 *   **Version Source of Truth**: Declared `include/proven/version.h` as the single source for version macros and synchronized the visible version string to `v26.05.18`.
 *   **Docs Consolidation**: Folded the archived guidance from `docs/` and `docs/ai/` into `AGENTS.md` so the working rules live in one place.
@@ -275,7 +281,7 @@ This file serves as the definitive record of all modifications, enhancements, an
 
 ### Build System & Verification
 *   **Command Hashing Integrity:** Reinforced `nob.c` with explicit null-termination for command-line string builders before hashing, resolving potential out-of-bounds reads and ensuring bit-exact rebuild triggers.
-*   **Test Diagnostic Modernization:** Replaced implicit library `printf` calls with PAL-isolated `proven_eprintln` within `test_phase11_map.c`, maintaining the project's CRT-isolated strategy.
+*   **Test Diagnostic Modernization**: Replaced implicit library `printf` calls with PAL-isolated `proven_eprintln` within `test_phase11_map.c`, maintaining the project's PAL-isolated strategy.
 
 ## Status: v26.05.07n (Archive)
 
@@ -533,7 +539,7 @@ This file serves as the definitive record of all modifications, enhancements, an
 *   **Platform Portability & Warnings (`platform/proven_sys_time.c`):**
     - Resolved strict-mode warnings related to signedness conversions and potential range loss in time calculation and integer formatting logic.
 *   **Documentation Alignment:**
-    - Updated `TEST.md` to clarify the `CRT/PAL-isolated` architectural strategy.
+    - Updated `TEST.md` to clarify the `PAL-isolated` architectural strategy.
     - Updated the landing page (`index.html`) to reflect the completion of 22 TDD phases and refined technical language.
 
 ## Status: v26.05.03q

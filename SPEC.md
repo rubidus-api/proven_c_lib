@@ -50,7 +50,7 @@
     50|- `u16str.h`: `char16_t` string container and views.
     51|- `array.h`: generic growable array macros and functions.
     52|- `list.h`: intrusive doubly-linked list.
-    53|- `ring.h`: bounded ring buffer.
+    53|- `ring.h`: bounded ring buffer; not thread-safe by itself.
     54|- `map.h`: open-addressing hash map.
     55|- `algorithm.h`: sorting and search helpers.
     56|- `fs.h`: filesystem API.
@@ -153,8 +153,8 @@
    153|
    154|## 12. Concurrency model
    155|
-   156|- Core containers do not add hidden locks.
-   157|- Shared mutable containers require caller synchronization.
+- Core containers do not add hidden locks.
+- Shared mutable containers, including ring buffers, require caller synchronization.
    158|- Coroutine support is stackless and macro-based.
    159|- The job system uses bounded queueing and atomic coordination for its scheduler internals.
    160|- Job-system destruction must not race with producers.

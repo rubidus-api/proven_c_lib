@@ -1,4 +1,4 @@
-# proven Agent Guide (v26.05.17)
+# proven Agent Guide (v26.05.18)
 
 This file is the working rulebook for humans and AI agents editing `proven_c_lib`.
 
@@ -155,6 +155,14 @@ Useful options:
 - Keep manual files detailed, with intent, parameters, return values, examples, and misuse cases.
 - Do not summarize away important contracts.
 - Update docs alongside code and tests.
+
+## Rule 11 - restrained technical language
+
+- Prefer bounded, testable wording over absolute claims.
+- Avoid language that implies guarantees, elimination, permanence, or proof unless the code or test can actually support that claim.
+- Use terms such as designed to, intended to, validates, checks, reduces, or preserves when they are accurate.
+- Keep changelog prose factual and compact.
+- If a phrase sounds like marketing copy, rewrite it before publishing.
 
 ## Troubleshooting policy
 
