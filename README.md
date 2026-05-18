@@ -4,7 +4,7 @@
 
 The point is not to hide C behind a framework. The point is to make practical C less repetitive while still keeping ownership, errors, allocator choice, and platform boundaries visible.
 
-- Version: proven_c_lib-v26.05.19
+- Version: proven_c_lib-v26.05.20
 - Standard: C23
 - License: MIT
 - Repository: https://github.com/rubidus-api/proven_c_lib

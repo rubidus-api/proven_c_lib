@@ -1,16 +1,23 @@
 # Project Updates and Changelog
-v26.05.19
+v26.05.20
 
 ## Overview
 
 **Project Core:** `proven` (C23 Library)
-**Latest Version:** `v26.05.19`
+**Latest Version:** `v26.05.20`
 
 This file serves as the definitive record of all modifications, enhancements, and additions made to the **proven** library. All changes must be appended here chronologically to maintain a transparent history of the project's evolution.
 
 **Note on Historical Notes:** Older entries may refer to legacy API names (e.g., `append_view` instead of `append_grow`). These are retained for historical accuracy. Refer to the Developer Manual for current naming conventions.
 
-## Status: v26.05.19 (Latest)
+## Status: v26.05.20 (Latest)
+
+### Scan recovery guide expansion
+*   **Error Code Table**: Added a scan-focused error code guide to `manual/manual-08-fmt-scan.md` covering `PROVEN_ERR_INVALID_ARG`, `PROVEN_ERR_NOT_FOUND`, `PROVEN_ERR_OVERFLOW`, and `PROVEN_ERR_OUT_OF_BOUNDS`.
+*   **Recovery Tips**: Documented the common fixes for format mismatches, literal mismatches, numeric range failures, and the scanner's exponent-range limit.
+*   **Version Sync**: Updated visible version markers to `v26.05.20` across `version.h`, `README.md`, `SPEC.md`, `TEST.md`, `manual/`, and `AGENTS.md`.
+
+## Status: v26.05.19 (Archive)
 
 ### Fmt and scan manual expansion
 *   **Detailed Reference**: Added `manual/manual-08-fmt-scan.md` to document formatter arguments, format grammar, scan argument types, cursor rollback, and misuse cases in source-grounded detail.
