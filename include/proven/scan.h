@@ -63,6 +63,11 @@ void proven_scan_skip_whitespace(proven_scan_t *scan);
 /**
  * @brief Extract a 64-bit floating point number.
  * Failure restores the cursor to its original position.
+ *
+ * Decimal-to-double conversion is designed to be correctly rounded when the
+ * significand fits in 64 bits and the decimal exponent stays within the exact
+ * power-of-ten table used by the implementation. Outside that range, results
+ * are approximate and may not round-trip exactly.
  */
 [[nodiscard]] proven_result_f64_t proven_scan_f64(proven_scan_t *scan);
 
@@ -202,6 +207,8 @@ static inline proven_scan_arg_t proven_scan_arg_identity(proven_scan_arg_t v) { 
  * scanning macros instead of this function.
  *
  * Expects exactly as many {} in the format string as provided arguments.
+ * Double destinations use the same floating-point conversion limits as
+ * proven_scan_f64.
  *
  * Note: This function may advance the cursor and write destination values
  * before returning an error (e.g. if a literal mismatch occurs after a placeholder).
