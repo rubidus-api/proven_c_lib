@@ -152,9 +152,9 @@ Useful options:
 ## Documentation rules
 
 - Keep all public docs and comments in English ASCII.
+- README.md is bilingual: present the same substantive content in English first and Korean second.
 - Keep README concise and front-page friendly.
 - Keep manual files detailed, with intent, parameters, return values, examples, and misuse cases.
-- Do not summarize away important contracts.
 - Update docs alongside code and tests.
 
 ## Rule 11 - restrained technical language
