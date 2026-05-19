@@ -246,6 +246,7 @@ Field notes:
 | `proven_map_reserve(map, new_cap)` | Ensure capacity. | `proven_err_t`. |
 | `proven_map_set_with_scratch(map, key, element, scratch)` | Insert/update using scratch for temporary alias-safe copies. | `proven_err_t`. |
 | `proven_map_set(map, key, element)` | Insert/update. | `proven_err_t`. |
+| `proven_map_set_u8_owned(map, key, element)` | Insert/update with map-owned U8 key storage. | `proven_err_t`. |
 | `proven_map_get_mut(map, key)` | Lookup mutable value. | pointer or null. |
 | `proven_map_get(map, key)` | Lookup const value. | pointer or null. |
 | `proven_map_remove(map, key)` | Remove key if present. | `proven_err_t`. |
@@ -258,17 +259,28 @@ Field notes:
 | `proven_map_create_with_capacity(...)` | Alias emphasizing capacity allocation. |
 | `PROVEN_MAP_INIT_INT(alloc, type, init_cap)` | Create integer-key typed map. |
 | `PROVEN_MAP_INIT_U8_BORROWED(alloc, type, init_cap)` | Create borrowed-string-key typed map. |
+| `PROVEN_MAP_INIT_U8_OWNED(alloc, type, init_cap)` | Create owned-string-key typed map. |
 | `PROVEN_MAP_SET_INT(map_ptr, int_key, type, value)` | Set integer key. |
 | `PROVEN_MAP_SET_WITH_SCRATCH_INT(map_ptr, int_key, type, value, scratch)` | Set integer key using scratch allocator. |
 | `PROVEN_MAP_SET_U8_BORROWED(map_ptr, u8_view, type, value)` | Set borrowed U8 key. |
+| `PROVEN_MAP_SET_U8_OWNED(map_ptr, u8_view, type, value)` | Set owned U8 key. |
 | `PROVEN_MAP_SET_WITH_SCRATCH_U8_BORROWED(map_ptr, u8_view, type, value, scratch)` | Set borrowed U8 key using scratch allocator. |
 | `PROVEN_MAP_GET_INT(map_ptr, type, int_key)` | Get const value by integer key. |
 | `PROVEN_MAP_GET_U8_BORROWED(map_ptr, type, u8_view)` | Get const value by borrowed U8 key. |
+| `PROVEN_MAP_GET_U8_OWNED(map_ptr, type, u8_view)` | Get const value by owned U8 key. |
 | `PROVEN_MAP_GET_MUT_INT(map_ptr, type, int_key)` | Get mutable value by integer key. |
 | `PROVEN_MAP_GET_MUT_U8_BORROWED(map_ptr, type, u8_view)` | Get mutable value by borrowed U8 key. |
+| `PROVEN_MAP_GET_MUT_U8_OWNED(map_ptr, type, u8_view)` | Get mutable value by owned U8 key. |
 | `PROVEN_MAP_REMOVE_INT(map_ptr, int_key)` | Remove integer key. |
 | `PROVEN_MAP_REMOVE_U8_BORROWED(map_ptr, u8_view)` | Remove U8 key. |
+| `PROVEN_MAP_REMOVE_U8_OWNED(map_ptr, u8_view)` | Remove owned U8 key. |
 | `PROVEN_MAP_DESTROY(map_ptr)` | Destroy map. |
+
+Owned key path:
+
+`PROVEN_KEY_TYPE_U8_OWNED` stores a duplicate of the key bytes inside the map. Use it when the source buffer may move or be freed after insertion. The owned bytes are released on remove and destroy, and they move with the entry during rehash.
+
+`PROVEN_HARDENED` and debug validation can reject some borrowed-key pointers that fall inside the map's own internal storage. That check is defensive only; it does not make borrowed keys self-owning.
 
 Example:
 
