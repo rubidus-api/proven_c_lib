@@ -672,7 +672,7 @@ Sub-checks:
 - Confirms `1.7976931348623157e308`, `2.2250738585072014e-308`, and `4.9e-324` remain finite and stable.
 - Confirms `1e309` reports `PROVEN_ERR_OVERFLOW`.
 - Confirms malformed input restores the scanner cursor to its original position.
-- `tests/test_scan_f64_bounds` covers underflow-to-zero spellings and overflow boundary behavior at the same parser boundary.
+- `tests/test_scan_f64_bounds` covers underflow-to-signed-zero spellings and overflow boundary behavior at the same parser boundary.
 
 Failure tip: inspect `src/proven/scan.c`, especially the decimal mantissa accumulation, exponent scaling, and final finite-value check. If a malformed token leaves the cursor advanced, inspect the failure-atomic rollback path first.
 

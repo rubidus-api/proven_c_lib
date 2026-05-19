@@ -263,6 +263,7 @@
    263|- Floating-point output uses six fractional digits with round-half-up behavior.
    264|- The text form is intended for diagnostics and logs, not for round-trip serialization.
    265|- Decimal-to-double scanning is designed to stay exact within the implementation's limited power-of-ten range; outside that range, results are approximate but target-deterministic.
+- Values below the smallest subnormal round to signed zero with the input sign preserved.
    266|
    267|## 4. Format string grammar
    268|
