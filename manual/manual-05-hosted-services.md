@@ -193,7 +193,7 @@ typedef struct {
 } proven_sysio_scanner_t;
 ```
 
-Purpose: buffered scanner for seekable files, pipes, and stdin.
+Purpose: buffered scanner for bounded file-backed input. Tokens must fit within the current loaded buffer; if a token reaches the end of that buffer before EOF, the scanner reports `PROVEN_ERR_OUT_OF_BOUNDS` instead of accepting a truncated value.
 
 ### Sysio functions and macros
 
