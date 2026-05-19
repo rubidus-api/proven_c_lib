@@ -90,7 +90,9 @@ proven_err_t proven_sysio_print_impl(proven_file_t handle, const char *fmt, cons
 /**
  * @brief Type-safe formatted scanning from a file descriptor.
  *
- * Reads at most one fixed-size chunk (4096 bytes). If the chunk fills before a
+ * Reads at most one fixed-size chunk (4096 bytes). The helper is intended for
+ * seekable inputs; if the handle cannot be rewound, it returns
+ * PROVEN_ERR_UNSUPPORTED before consuming data. If the chunk fills before a
  * complete token is available, the function returns PROVEN_ERR_OUT_OF_BOUNDS
  * instead of accepting a silently truncated parse, and the file cursor is restored
  * to the start of the chunk.
