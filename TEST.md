@@ -1,4 +1,4 @@
-     1|# proven Test Matrix (v26.05.19b)
+     1|# proven Test Matrix (v26.05.19c)
      2|
      3|This document describes how the `proven` test suite is organized, what each test is intended to validate, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
      4|
@@ -645,9 +645,10 @@ Sub-checks:
 - Opens the file for reading.
 - Initializes a sysio scanner with an allocator-backed buffer.
 - Scans two integers and a word from the file stream.
+- Verifies `tests/test_sysio_scanner_boundary` rejects a token that reaches the end of the current buffer and leaves the file handle reusable.
 - Cleans up scanner and file resources.
 
-Failure tip: inspect `src/proven/sysio.c`, `src/proven/scan.c`, and file read wrappers. If in-memory scan tests pass but this fails, suspect buffer refill or file-position behavior.
+Failure tip: inspect `src/proven/sysio.c`, `src/proven/scan.c`, and file read wrappers. If in-memory scan tests pass but this fails, suspect buffer refill or file-position behavior, especially at the current-buffer boundary.
 
 ### 29. `tests/test_regression_v26_05` - v26.05 regressions
    630|
