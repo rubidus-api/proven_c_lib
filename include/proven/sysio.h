@@ -71,6 +71,11 @@ void proven_sysio_scanner_deinit(proven_sysio_scanner_t *scanner);
 
 /**
  * @brief Low-level implementation for buffered scanning.
+ *
+ * The scanner is bounded to the bytes currently loaded in its buffer. If a
+ * token reaches the end of that buffer before EOF, the helper returns
+ * PROVEN_ERR_OUT_OF_BOUNDS and restores the scanner state and file position on
+ * seekable inputs instead of accepting a truncated token.
  */
 proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, const char *fmt, const proven_scan_arg_t *args, size_t args_count);
 
