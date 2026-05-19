@@ -12,6 +12,11 @@ This file serves as the definitive record of all modifications, enhancements, an
 
 ## Status: v26.05.19i (Latest)
 
+### Manual markdown cleanup
+*   **Formatting Fix**: Removed stray line-number prefixes from `manual/manual.md` so the file renders as normal Markdown again.
+*   **Docs Sync**: Kept the manual content and version marker unchanged; this is a formatting-only correction.
+*   **Alias Layer**: No alias changes.
+
 ### README bilingual update
 *   **Bilingual Front Page**: Expanded `README.md` so the front page now presents the same substantive content in English first and Korean second.
 *   **Policy Update**: Updated `AGENTS.md` to require the bilingual README layout while keeping the other public docs in English ASCII.
