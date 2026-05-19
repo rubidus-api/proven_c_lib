@@ -34,9 +34,8 @@ proven_err_t proven_buf_append(proven_buf_t *buf, proven_mem_view_t data) {
     }
     if (!buf->ptr) return PROVEN_ERR_INVALID_ARG;
     
-    // Copy data into the buffer
-    // Memory overlaps check is not required for independent slices by design
-    proven_sys_mem_copy(buf->ptr + buf->len, data.ptr, data.size);
+    // Move data into the buffer so overlapping source views remain well-defined.
+    proven_sys_mem_move(buf->ptr + buf->len, data.ptr, data.size);
     
     buf->len = new_len;
     return PROVEN_OK;
