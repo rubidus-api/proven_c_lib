@@ -12,6 +12,11 @@ This file serves as the definitive record of all modifications, enhancements, an
 
 ## Status: v26.05.19i (Latest)
 
+### Float contract documentation
+*   **Underflow Policy**: Clarified in `include/proven/scan.h` and `manual/manual-08-fmt-scan.md` that values below the smallest subnormal round to signed zero with the input sign preserved, while out-of-exact-range conversions stay target-deterministic and approximate.
+*   **Long-term Work**: Kept the Eisel-Lemire / Ryu-class float conversion upgrade and the verification-infrastructure review in `TODO.md` for later work.
+*   **Alias Layer**: No alias changes.
+
 ### Repository hygiene update
 *   **Temp-file Cleanup**: Removed the tracked `test_commit.txt` file from the repository and documented the temporary-file policy in `AGENTS.md`.
 *   **Policy Update**: Temporary or non-distributed artifacts should be created outside the repository tree.
