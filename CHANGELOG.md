@@ -12,6 +12,11 @@ This file serves as the definitive record of all modifications, enhancements, an
 
 ## Status: v26.05.19i (Latest)
 
+### Repository hygiene update
+*   **Temp-file Cleanup**: Removed the tracked `test_commit.txt` file from the repository and documented the temporary-file policy in `AGENTS.md`.
+*   **Policy Update**: Temporary or non-distributed artifacts should be created outside the repository tree.
+*   **Alias Layer**: No alias changes.
+
 ### Manual markdown cleanup
 *   **Formatting Fix**: Removed stray line-number prefixes from `manual/manual.md` so the file renders as normal Markdown again.
 *   **Docs Sync**: Kept the manual content and version marker unchanged; this is a formatting-only correction.
