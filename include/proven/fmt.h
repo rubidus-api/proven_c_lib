@@ -89,6 +89,7 @@ static inline proven_arg_t proven_arg_u64(unsigned long long v) {
  *
  * Output uses a fixed six-digit fractional form with round-half-up behavior.
  * It is intended for logs and debugging text rather than round-trip storage.
+ * The float path stays in double precision so the output remains target-deterministic.
  */
 static inline proven_arg_t proven_arg_f64(double v) {
     proven_arg_t arg = {0};

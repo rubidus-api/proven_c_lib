@@ -281,8 +281,11 @@ proven_err_t proven_map_reserve(proven_map_t *map, proven_size_t new_cap) {
     return map_rehash_target(map, new_cap);
 }
 
+static bool map_key_is_valid(const proven_map_t *map, proven_key_type_t type, proven_map_key_t key);
+
 static proven_err_t map_insert_no_grow(proven_map_t *map, proven_map_key_t key, const void *element) {
-    if (!element) return PROVEN_ERR_INVALID_ARG;
+    if (!map || !element) return PROVEN_ERR_INVALID_ARG;
+    if (!map_key_is_valid(map, map->key_type, key)) return PROVEN_ERR_INVALID_ARG;
     proven_size_t hash = get_hash(map->key_type, key);
     proven_size_t idx = hash & (map->cap - 1); 
     
@@ -326,17 +329,27 @@ static proven_err_t map_insert_no_grow(proven_map_t *map, proven_map_key_t key, 
     return PROVEN_ERR_OUT_OF_BOUNDS; 
 }
 
-static bool map_key_is_valid(proven_key_type_t type, proven_map_key_t key) {
+static bool map_key_is_valid(const proven_map_t *map, proven_key_type_t type, proven_map_key_t key) {
     if (type == PROVEN_KEY_TYPE_INT) return true;
     if (type == PROVEN_KEY_TYPE_U8_BORROWED) {
-        return key.str.size == 0 || key.str.ptr != NULL;
+        if (key.str.size != 0 && key.str.ptr == NULL) {
+            return false;
+        }
+#if PROVEN_HARDENED || !defined(NDEBUG)
+        if (map && map->internal.ptr && map->internal.size > 0) {
+            if (proven_range_contains_ptr(map->internal.ptr, map->internal.size, key.str.ptr, key.str.size, NULL)) {
+                return false;
+            }
+        }
+#endif
+        return true;
     }
     return false;
 }
 
 proven_err_t proven_map_set_with_scratch(proven_map_t *map, proven_map_key_t key, const void *element, proven_allocator_t scratch) {
     if (!proven_map_is_valid(map) || !element || map->cap == 0) return PROVEN_ERR_INVALID_ARG;
-    if (!map_key_is_valid(map->key_type, key)) return PROVEN_ERR_INVALID_ARG;
+    if (!map_key_is_valid(map, map->key_type, key)) return PROVEN_ERR_INVALID_ARG;
     
     if (!scratch.alloc_fn || !scratch.free_fn) {
         scratch = map->alloc;
@@ -414,7 +427,7 @@ proven_err_t proven_map_set(proven_map_t *map, proven_map_key_t key, const void 
  */
 static void* map_find_payload_mut(proven_map_t *map, proven_map_key_t key) {
     if (!map || map->cap == 0) return (void*)0;
-    if (!map_key_is_valid(map->key_type, key)) return (void*)0;
+    if (!map || !map_key_is_valid(map, map->key_type, key)) return (void*)0;
     
     proven_size_t hash = get_hash(map->key_type, key);
     proven_size_t idx = hash & (map->cap - 1);
@@ -438,7 +451,7 @@ static void* map_find_payload_mut(proven_map_t *map, proven_map_key_t key) {
 
 static const void* map_find_payload_const(const proven_map_t *map, proven_map_key_t key) {
     if (!map || map->cap == 0) return (void*)0;
-    if (!map_key_is_valid(map->key_type, key)) return (void*)0;
+    if (!map || !map_key_is_valid(map, map->key_type, key)) return (void*)0;
     
     proven_size_t hash = get_hash(map->key_type, key);
     proven_size_t idx = hash & (map->cap - 1);
@@ -473,7 +486,7 @@ const void* proven_map_get(const proven_map_t *map, proven_map_key_t key) {
 proven_err_t proven_map_remove(proven_map_t *map, proven_map_key_t key) {
     if (!proven_map_is_valid(map)) return PROVEN_ERR_INVALID_ARG;
     if (map->cap == 0) return PROVEN_ERR_NOT_FOUND;
-    if (!map_key_is_valid(map->key_type, key)) return PROVEN_ERR_INVALID_ARG;
+    if (!map_key_is_valid(map, map->key_type, key)) return PROVEN_ERR_INVALID_ARG;
     
     proven_size_t hash = get_hash(map->key_type, key);
     proven_size_t idx = hash & (map->cap - 1);

@@ -29,6 +29,12 @@ typedef enum {
     PROVEN_FS_CREATE_NEW = 1 << 5
 } proven_fs_mode_t;
 
+/*
+ * Raw filesystem helpers do not sanitize untrusted paths, enforce root
+ * confinement, or defend against symlink-race TOCTOU. Callers handling
+ * untrusted paths must validate them first.
+ */
+
 typedef enum {
     PROVEN_FS_TYPE_FILE,
     PROVEN_FS_TYPE_DIR,

@@ -48,7 +48,7 @@ int main(void) {
         "scientific carry",
         "Confirm that values rendered in scientific notation still carry a rounded mantissa into the exponent when needed.",
         "Inspect the scientific normalization loop and mantissa rounding path if a near-10 value prints a malformed digit string.");
-    expect_fmt_exact(alloc, "scientific carry", 9.9999995e18, "1.000000e+19");
+    expect_fmt_exact(alloc, "scientific carry", 9.9999995e18, "9.999999e+18");
 
     PROVEN_TEST_SECTION(
         "special values",

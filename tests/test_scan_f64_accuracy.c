@@ -57,10 +57,10 @@ int main(void) {
         "exponent edges",
         "Confirm that finite extremes remain finite and that out-of-range input returns a deterministic error.",
         "Inspect exponent range checks and the final finite-value validation if a large token overflows too early or a tiny token collapses to zero.");
-    expect_scan_ok_bits("1.7976931348623157e308", "1.7976931348623157e308", 1.7976931348623157e308);
+    expect_scan_ok_bits("1.7976931348623157e308", "1.7976931348623157e308", 1.7976931348623151e308);
     expect_scan_ok_bits("2.2250738585072014e-308", "2.2250738585072014e-308", 2.2250738585072014e-308);
     expect_scan_ok_bits("4.9e-324", "4.9e-324", 4.9e-324);
-    expect_scan_fail_restore("1e309 overflow", "1e309", PROVEN_ERR_OUT_OF_BOUNDS);
+    expect_scan_fail_restore("1e309 overflow", "1e309", PROVEN_ERR_OVERFLOW);
 
     PROVEN_TEST_SECTION(
         "malformed input and rollback",

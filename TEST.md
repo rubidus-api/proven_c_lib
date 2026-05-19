@@ -1,4 +1,4 @@
-     1|# proven Test Matrix (v26.05.19g)
+     1|# proven Test Matrix (v26.05.19h)
      2|
      3|This document describes how the `proven` test suite is organized, what each test is intended to validate, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
      4|
@@ -346,6 +346,19 @@
    337|- Tears down the pool without leaking bin storage.
    338|
    339|Failure tip: inspect `src/proven/pool.c`. Wrong-size requests should not be silently accepted. Bin overflow must never lose ownership of the block being freed.
+
+### 7a. `tests/test_pool_misuse` - pool double-free hardening
+
+Intent: verify the pool free trait catches repeated frees when debug validation or `PROVEN_HARDENED` is enabled.
+
+Sub-checks:
+
+- Installs a test panic handler.
+- Allocates one fixed-size block through the pool allocator trait.
+- Frees the block once successfully.
+- Frees the same block again and expects the validation path to reach the panic handler when hardening or debug validation is active.
+
+Failure tip: inspect `src/proven/pool.c`. The repeated-free check must remain gated on debug validation or `PROVEN_HARDENED`, and the test should only require the panic path when that gate is active.
    340|
    341|### 8. `tests/test_dealloc` - allocator deallocation policies
    342|
@@ -436,6 +449,18 @@
    427|- Tracks scratch allocation during safe rehash paths.
    428|
    429|Failure tip: inspect `src/proven/map.c`. Check hash/equality callbacks, tombstone reuse, threshold calculation, and whether borrowed keys or value pointers are being used after rehash.
+
+### 13a. `tests/test_map_hardening` - map borrowed-key hardening
+
+Intent: verify borrowed U8 keys that point into internal map storage are rejected when debug validation or `PROVEN_HARDENED` is enabled.
+
+Sub-checks:
+
+- Inserts a normal external borrowed key and confirms it still works.
+- Constructs a borrowed view that points into the map's own internal storage.
+- Expects `PROVEN_ERR_INVALID_ARG` for that internal-storage key when the validation gate is active.
+
+Failure tip: inspect the borrowed-key range guard in `src/proven/map.c` if an internal pointer is accepted or if ordinary borrowed keys stop working.
    430|
    431|### 14. `tests/test_phase12_algorithm` - algorithms
    432|
@@ -630,8 +655,9 @@ Sub-checks:
 - Confirms exact bit patterns for `0.0`, `-0.0`, `1.0`, `-1.0`, `0.5`, `0.1`, and `123456789.0`.
 - Confirms the parsed bits for `0.30000000000000004` match the source literal.
 - Confirms `1.7976931348623157e308`, `2.2250738585072014e-308`, and `4.9e-324` remain finite and stable.
-- Confirms `1e309` reports a deterministic out-of-range error.
+- Confirms `1e309` reports `PROVEN_ERR_OVERFLOW`.
 - Confirms malformed input restores the scanner cursor to its original position.
+- `tests/test_scan_f64_bounds` covers underflow-to-zero spellings and overflow boundary behavior at the same parser boundary.
 
 Failure tip: inspect `src/proven/scan.c`, especially the decimal mantissa accumulation, exponent scaling, and final finite-value check. If a malformed token leaves the cursor advanced, inspect the failure-atomic rollback path first.
 
@@ -644,8 +670,8 @@ Sub-checks:
 - Creates a temporary file and writes integer/token content.
 - Opens the file for reading.
 - Initializes a sysio scanner with an allocator-backed buffer.
-- Scans two integers and a word from the file stream.
-- Verifies `tests/test_sysio_scanner_boundary` rejects a token that reaches the end of the current buffer and leaves the file handle reusable.
+- Scans two integers across the file stream and confirms EOF after the final token.
+- Verifies `tests/test_sysio_scanner_boundary` resumes across a chunk boundary, refills as needed, and only reports EOF after the final token is consumed.
 - Cleans up scanner and file resources.
 
 Failure tip: inspect `src/proven/sysio.c`, `src/proven/scan.c`, and file read wrappers. If in-memory scan tests pass but this fails, suspect buffer refill or file-position behavior, especially at the current-buffer boundary.
@@ -828,6 +854,31 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/array.c`, `src/proven/map.c`, `src/proven/fs.c`, and `platform/proven_sys_fs.c`. If a corrupted struct reaches an allocator callback or append behaves like read-only open, the public contract guard is missing.
 
+### 34a. `tests/test_map_hardening` - map borrowed-key hardening
+
+Intent: verify borrowed U8 keys that point into internal map storage are rejected when debug validation or `PROVEN_HARDENED` is enabled.
+
+Sub-checks:
+
+- Inserts a normal external borrowed key and confirms it still works.
+- Constructs a borrowed view that points into the map's own internal storage.
+- Expects `PROVEN_ERR_INVALID_ARG` for that internal-storage key when the validation gate is active.
+
+Failure tip: inspect the borrowed-key range guard in `src/proven/map.c` if an internal pointer is accepted or if ordinary borrowed keys stop working.
+
+### 34b. `tests/test_pool_misuse` - pool double-free hardening
+
+Intent: verify the pool free trait catches repeated frees when debug validation or `PROVEN_HARDENED` is enabled.
+
+Sub-checks:
+
+- Installs a test panic handler.
+- Allocates one fixed-size block through the pool allocator trait.
+- Frees the block once successfully.
+- Frees the same block again and expects the validation path to reach the panic handler when hardening or debug validation is active.
+
+Failure tip: inspect `src/proven/pool.c`. The repeated-free check must remain gated on debug validation or `PROVEN_HARDENED`, and the test should only require the panic path when that gate is active.
+
 ## Freestanding tests
    728|
    729|`./nob freestanding` currently builds the library with `PROVEN_FREESTANDING`, `PROVEN_FMT_NO_FLOAT`, `PROVEN_NO_U16STR`, and `-ffreestanding`, then runs five reduced tests.
@@ -926,6 +977,20 @@ Sub-checks:
 - Confirms the wrapper log records both the rejected c23 attempt and the accepted c2x attempt.
 
 Failure tip: inspect nob.c standard-flag selection, build-hash construction, and the compiler/toolchain preflight checks if the fallback probe does not reach the c2x path.
+
+### 35. `tests/test_float_portable` - float portability
+
+Intent: verify scan and format float conversion paths stay double-only and keep target-deterministic behavior without long double dependence.
+
+Sub-checks:
+
+- Confirms `src/proven/scan.c` no longer contains `long double` in the decimal conversion path.
+- Confirms `proven_scan_scale_pow10` and `proven_scan_convert_decimal` use double-only scaling.
+- Confirms `src/proven/fmt.c` no longer contains `long double` in the float formatter path.
+- Confirms `proven_fmt_normalize_scientific` uses double-only working values.
+- Confirms representative formatting and scanning still produce the documented values for a carried scientific number and a round-trip-style decimal.
+
+Failure tip: inspect `src/proven/scan.c` and `src/proven/fmt.c`. If the source-contract checks fail, the float portability cleanup regressed back to long double-dependent code. If the runtime checks fail, inspect the double-only conversion and normalization math first.
 
 ## Failure triage workflow
    814|

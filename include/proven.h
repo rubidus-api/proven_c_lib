@@ -7,6 +7,7 @@
  */
 
 #include "proven/types.h"
+#include "proven/config.h"
 #include "proven/version.h"
 #include "proven/error.h"
 #include "proven/memory.h"

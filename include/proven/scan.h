@@ -67,7 +67,7 @@ void proven_scan_skip_whitespace(proven_scan_t *scan);
  * Decimal-to-double conversion is designed to be correctly rounded when the
  * significand fits in 64 bits and the decimal exponent stays within the exact
  * power-of-ten table used by the implementation. Outside that range, results
- * are approximate and may not round-trip exactly.
+ * are approximate but target-deterministic and may not round-trip exactly.
  */
 [[nodiscard]] proven_result_f64_t proven_scan_f64(proven_scan_t *scan);
 

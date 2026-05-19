@@ -4,6 +4,7 @@
 #include <stdalign.h>
 #include "proven/types.h"
 #include "proven/error.h"
+#include "proven/config.h"
 #include "proven/allocator.h"
 #include "proven/align.h"
 #include "proven/u8str.h"
@@ -16,7 +17,7 @@
 
 typedef enum {
     PROVEN_KEY_TYPE_INT,
-    PROVEN_KEY_TYPE_U8_BORROWED  // Clarify that string keys are borrowed views and not owned
+    PROVEN_KEY_TYPE_U8_BORROWED  // Borrowed view; caller keeps the bytes alive for the map lifetime
 } proven_key_type_t;
 
 typedef union {
