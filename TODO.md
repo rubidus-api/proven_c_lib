@@ -4,28 +4,24 @@ This file tracks the remaining follow-up items from the current main-branch revi
 
 ## Open items
 
-1. sysio scan helper and non-seekable input handling
-   - `proven_sysio_scan_chunk_impl()` still assumes the input can be rewound after a fixed 4096-byte read.
-   - On pipes, stdin, sockets, or other non-seekable streams, unread bytes can be lost after a partial scan.
-   - Decide whether to reject non-seekable inputs up front or to replace the helper with a design that does not rely on rewind.
-
-2. Streaming token boundary policy for `proven_sysio_scanner_t`
+1. Streaming token boundary policy for `proven_sysio_scanner_t`
    - The current buffered scanner still needs a clear contract for tokens that straddle the buffer boundary.
    - Decide whether the API should expose a "need more input" result, or whether scanner use should stay limited to complete in-memory views.
    - If streaming support is kept, add tests that cover boundary-crossing integers, floats, identifiers, and paths.
 
-3. `proven_buf_append()` overlap contract
+2. `proven_buf_append()` overlap contract
    - The current append path assumes independent source and destination slices.
    - Decide whether overlapping views should be rejected explicitly or handled with move semantics.
    - Add a regression test once the contract is fixed.
 
-4. Public CI coverage
+3. Public CI coverage
    - Add GitHub Actions workflows for at least hosted Linux GCC and Clang builds.
    - If practical, add one additional platform job to cover a non-Linux compiler/runtime combination.
    - Keep the workflow limited to the already documented regression and strict-error checks.
 
 ## Already addressed in this pass
 
+- `proven_sysio_scan_chunk_impl()` now rejects non-seekable inputs before reading, so pipes/stdin-like handles no longer lose unread bytes.
 - POSIX append open flag handling now treats append as a write intent.
 - `proven_mmap_create()` now rejects misaligned offsets before calling the PAL.
 - Windows `PROVEN_MMAP_EXEC` requests are rejected explicitly instead of being ignored.

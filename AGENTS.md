@@ -1,4 +1,4 @@
-# proven Agent Guide (v26.05.19a)
+# proven Agent Guide (v26.05.19b)
 
 This file is the working rulebook for humans and AI agents editing `proven_c_lib`.
 
@@ -13,7 +13,7 @@ This file is the working rulebook for humans and AI agents editing `proven_c_lib
 - PAL boundary: `platform/proven_sys_*.[ch]`.
 - Tests: plain C executables in `tests/`.
 - Version source of truth: `include/proven/version.h`.
-- Current version string: `proven_c_lib-v26.05.19a`.
+- Current version string: `proven_c_lib-v26.05.19b`.
 
 ## Path and privacy policy
 
@@ -192,6 +192,13 @@ Useful options:
 - Put recurring bug lessons and prevention rules in `CHECKLIST.md`.
 - Keep both files short and stable.
 - Move a rule there when it is clearly worth remembering across sessions.
+
+## TODO.md policy
+
+- `TODO.md` tracks only unresolved review follow-ups and repository-wide maintenance items.
+- Each TODO entry should name the scope, the risk or open decision, and the next verification hook.
+- When a TODO item is implemented and verified, remove it from `TODO.md` and record the closure in `CHANGELOG.md`.
+- Do not use `TODO.md` for ephemeral task planning; use the session `todo` tool for temporary work lists.
 
 ## Consolidated guidance from archived docs
 

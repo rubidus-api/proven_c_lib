@@ -1,4 +1,4 @@
-     1|# proven C Library Specification (v26.05.19a)
+     1|# proven C Library Specification (v26.05.19b)
      2|
      3|## 1. Scope
      4|

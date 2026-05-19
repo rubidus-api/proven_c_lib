@@ -1,16 +1,25 @@
 # Project Updates and Changelog
-v26.05.19a
+v26.05.19b
 
 ## Overview
 
 **Project Core:** `proven` (C23 Library)
-**Latest Version:** `v26.05.19a`
+**Latest Version:** `v26.05.19b`
 
 This file serves as the definitive record of all modifications, enhancements, and additions made to the **proven** library. All changes must be appended here chronologically to maintain a transparent history of the project's evolution.
 
 **Note on Historical Notes:** Older entries may refer to legacy API names (e.g., `append_view` instead of `append_grow`). These are retained for historical accuracy. Refer to the Developer Manual for current naming conventions.
 
-## Status: v26.05.19a (Latest)
+## Status: v26.05.19b (Latest)
+
+### sysio non-seekable rejection follow-up
+*   **Seekability Probe**: `proven_sysio_scan_chunk_impl()` now probes seekability before reading and returns `PROVEN_ERR_UNSUPPORTED` for non-seekable handles.
+*   **Regression Coverage**: Added `tests/test_sysio_scan_nonseekable.c` and wired it into `nob.c` and `TEST.md`.
+*   **TODO Policy**: Added `TODO.md` handling guidance to `AGENTS.md` and removed the resolved sysio follow-up from `TODO.md`.
+*   **Version Sync**: Updated visible version markers to `v26.05.19b` across `version.h`, `README.md`, `SPEC.md`, `TEST.md`, `manual/`, and `AGENTS.md`.
+*   **Alias Layer**: No alias changes.
+
+## Status: v26.05.19a (Archive)
 
 ### fmt, scan, and sysio hardening follow-up
 *   **Scan Accuracy**: Updated `proven_scan_f64` to use integer mantissa accumulation with decimal-exponent scaling, keeping cursor rollback on failure.
@@ -22,7 +31,6 @@ This file serves as the definitive record of all modifications, enhancements, an
 *   **Follow-Up Tracking**: Added `TODO.md` at the repository root for the remaining review items.
 *   **Version Sync**: Updated visible version markers to `v26.05.19a` across `version.h`, `README.md`, `SPEC.md`, `TEST.md`, `manual/`, and `AGENTS.md`.
 *   **Alias Layer**: No alias changes.
-
 ## Status: v26.05.20 (Archive)
 
 ### Freestanding scan compile fix
