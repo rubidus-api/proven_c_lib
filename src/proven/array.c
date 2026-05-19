@@ -56,7 +56,7 @@ bool proven_array_is_valid(const proven_array_t *arr) {
 }
 
 proven_err_t proven_array_reserve(proven_array_t *arr, proven_size_t new_cap) {
-    if (!arr) return PROVEN_ERR_INVALID_ARG;
+    if (!proven_array_is_valid(arr)) return PROVEN_ERR_INVALID_ARG;
     if (new_cap <= arr->cap) return PROVEN_OK;
     
     proven_size_t new_bytes;
@@ -80,7 +80,7 @@ proven_err_t proven_array_reserve(proven_array_t *arr, proven_size_t new_cap) {
 }
 
 proven_err_t proven_array_push(proven_array_t *arr, const void *element) {
-    if (!arr || !element) return PROVEN_ERR_INVALID_ARG;
+    if (!proven_array_is_valid(arr) || !element) return PROVEN_ERR_INVALID_ARG;
 
     // Bounds limit reached, engage dynamic expansion!
     if (arr->len >= arr->cap) {
@@ -134,7 +134,8 @@ proven_err_t proven_array_push(proven_array_t *arr, const void *element) {
 }
 
 proven_err_t proven_array_pop(proven_array_t *arr, void *out_element) {
-    if (!arr || arr->len == 0) return PROVEN_ERR_OUT_OF_BOUNDS;
+    if (!proven_array_is_valid(arr)) return PROVEN_ERR_INVALID_ARG;
+    if (arr->len == 0) return PROVEN_ERR_OUT_OF_BOUNDS;
 
     arr->len--;
     if (out_element) {
@@ -148,7 +149,7 @@ proven_err_t proven_array_pop(proven_array_t *arr, void *out_element) {
 }
 
 void* proven_array_get_mut(proven_array_t *arr, proven_size_t index) {
-    if (!arr || index >= arr->len) return (void*)0;
+    if (!proven_array_is_valid(arr) || index >= arr->len) return (void*)0;
     
     proven_size_t offset;
     if (PROVEN_CKD_MUL(&offset, index, arr->elem_size)) {
@@ -158,7 +159,7 @@ void* proven_array_get_mut(proven_array_t *arr, proven_size_t index) {
 }
 
 const void* proven_array_get(const proven_array_t *arr, proven_size_t index) {
-    if (!arr || index >= arr->len) return (const void*)0;
+    if (!proven_array_is_valid(arr) || index >= arr->len) return (const void*)0;
     
     proven_size_t offset;
     if (PROVEN_CKD_MUL(&offset, index, arr->elem_size)) {
@@ -169,7 +170,7 @@ const void* proven_array_get(const proven_array_t *arr, proven_size_t index) {
 
 void proven_array_destroy(proven_array_t *arr) {
     if (!arr) return;
-    if (arr->data) {
+    if (arr->data && proven_alloc_is_valid(arr->alloc) && arr->alloc.free_fn) {
         arr->alloc.free_fn(arr->alloc.ctx, arr->data); // Cleaned by trait mapping safely
     }
     arr->data = (void*)0;

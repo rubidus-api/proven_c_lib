@@ -122,9 +122,11 @@ proven_sys_file_handle_t proven_sys_fs_open(const char *path, int flags) {
     return (proven_sys_file_handle_t){ .handle = (void*)h };
 #else
     int o_flags = 0;
-    if ((flags & PROVEN_SYS_FS_READ) && (flags & PROVEN_SYS_FS_WRITE)) {
+    const bool wants_read = (flags & PROVEN_SYS_FS_READ) != 0;
+    const bool wants_write = (flags & (PROVEN_SYS_FS_WRITE | PROVEN_SYS_FS_APPEND)) != 0;
+    if (wants_read && wants_write) {
         o_flags = O_RDWR;
-    } else if (flags & PROVEN_SYS_FS_WRITE) {
+    } else if (wants_write) {
         o_flags = O_WRONLY;
     } else {
         o_flags = O_RDONLY;

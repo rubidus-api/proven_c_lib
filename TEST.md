@@ -1,4 +1,4 @@
-     1|# proven Test Matrix (v26.05.19e)
+     1|# proven Test Matrix (v26.05.19f)
      2|
      3|This document describes how the `proven` test suite is organized, what each test is intended to validate, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
      4|
@@ -785,9 +785,10 @@ Failure tip: inspect `src/proven/sysio.c` and `tests/test_sysio_scan_truncation.
    710|
    711|`./nob regression`, `./nob regression-asan`, and `./nob regression-ubsan` currently run:
    712|
-   713|- `tests/test_regression_v26_05`
-   714|- `tests/test_regression_fs_copy_to_self`
-   715|- `tests/test_regression_source_contracts`
+- `tests/test_regression_v26_05`
+- `tests/test_regression_public_contracts`
+- `tests/test_regression_fs_copy_to_self`
+- `tests/test_regression_source_contracts`
    716|
    717|Intent: provide a short feedback loop for bug-fix work without running every hosted example and container test.
    718|
@@ -797,9 +798,24 @@ Failure tip: inspect `src/proven/sysio.c` and `tests/test_sysio_scan_truncation.
    722|- Filesystem destructive edge cases remain protected.
    723|- Source-level portability contracts and test-log/documentation contracts remain present.
    724|
-   725|Failure tip: a regression failure is usually more specific than a full-suite failure. Use the sub-check name and preserve the regression unless the underlying public contract is intentionally changed and documented.
-   726|
-   727|## Freestanding tests
+Failure tip: a regression failure is usually more specific than a full-suite failure. Use the sub-check name and preserve the regression unless the underlying public contract is intentionally changed and documented.
+
+### 34. `tests/test_regression_public_contracts` - public array/map/filesystem contracts
+
+Intent: verify corrupted public array and map structs fail safely and filesystem append-mode requests keep write intent explicit.
+
+Sub-checks:
+
+- Calls array reserve and push on an intentionally corrupted public struct and expects `PROVEN_ERR_INVALID_ARG`.
+- Calls array destroy on a corrupted struct and checks that the visible fields are cleared after best-effort cleanup.
+- Calls map reserve and set on an intentionally corrupted public struct and expects `PROVEN_ERR_INVALID_ARG`.
+- Calls map destroy on a corrupted struct and checks that the visible fields are cleared after best-effort cleanup.
+- Opens a file with append-plus-create, writes through the returned handle, and confirms POSIX append mode keeps write intent explicit.
+- Confirms append plus truncation is rejected as `PROVEN_ERR_INVALID_ARG`.
+
+Failure tip: inspect `src/proven/array.c`, `src/proven/map.c`, `src/proven/fs.c`, and `platform/proven_sys_fs.c`. If a corrupted struct reaches an allocator callback or append behaves like read-only open, the public contract guard is missing.
+
+## Freestanding tests
    728|
    729|`./nob freestanding` currently builds the library with `PROVEN_FREESTANDING`, `PROVEN_FMT_NO_FLOAT`, `PROVEN_NO_U16STR`, and `-ffreestanding`, then runs five reduced tests.
    730|
