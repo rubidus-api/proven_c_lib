@@ -97,6 +97,7 @@ Useful options:
 - Commit each verified change set.
 - Use short imperative commit subjects.
 - Do not commit build output, the local `nob` executable, logs, temporary test files, or environment files.
+- Do not create temporary or non-distributed files inside the repository tree; use a separate workspace outside the repository for scratch artifacts and generated files that are not meant to be shipped.
 - Local commits remain the source of truth until they are explicitly pushed.
 - GitHub is used for distribution only in this repository; do not add Actions workflows unless the scope changes explicitly.
 
