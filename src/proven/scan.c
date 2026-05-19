@@ -134,23 +134,23 @@ static const double proven_scan_pow10_exact[] = {
     1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
 };
 
-static long double proven_scan_scale_pow10(long double value, proven_i64 exp10) {
-    if (value == 0.0L || exp10 == 0) {
+static double proven_scan_scale_pow10(double value, proven_i64 exp10) {
+    if (value == 0.0 || exp10 == 0) {
         return value;
     }
 
     if (exp10 > 0) {
         while (exp10 > 22) {
-            value *= (long double)proven_scan_pow10_exact[22];
+            value *= proven_scan_pow10_exact[22];
             exp10 -= 22;
         }
-        value *= (long double)proven_scan_pow10_exact[(proven_size_t)exp10];
+        value *= proven_scan_pow10_exact[(proven_size_t)exp10];
     } else {
         while (exp10 < -22) {
-            value /= (long double)proven_scan_pow10_exact[22];
+            value /= proven_scan_pow10_exact[22];
             exp10 += 22;
         }
-        value /= (long double)proven_scan_pow10_exact[(proven_size_t)(-exp10)];
+        value /= proven_scan_pow10_exact[(proven_size_t)(-exp10)];
     }
 
     return value;
@@ -168,7 +168,7 @@ static double proven_scan_convert_decimal(proven_u64 mantissa, proven_i64 exp10)
         return (double)mantissa / proven_scan_pow10_exact[(proven_size_t)(-exp10)];
     }
 
-    return (double)proven_scan_scale_pow10((long double)mantissa, exp10);
+    return proven_scan_scale_pow10((double)mantissa, exp10);
 }
 
 proven_result_f64_t proven_scan_f64(proven_scan_t *scan) {
@@ -266,11 +266,6 @@ proven_result_f64_t proven_scan_f64(proven_scan_t *scan) {
         }
 
         if (exp_negative) e = -e;
-
-        if (e > 308 || e < -324) {
-            scan->cursor = start_cursor;
-            return (proven_result_f64_t){ .err = PROVEN_ERR_OUT_OF_BOUNDS };
-        }
     }
 
     if (!found_digit) {

@@ -1,16 +1,23 @@
 # Project Updates and Changelog
-v26.05.19g
+v26.05.19h
 
 ## Overview
 
 **Project Core:** `proven` (C23 Library)
-**Latest Version:** `v26.05.19g`
+**Latest Version:** `v26.05.19h`
 
 This file serves as the definitive record of all modifications, enhancements, and additions made to the **proven** library. All changes must be appended here chronologically to maintain a transparent history of the project's evolution.
 
 **Note on Historical Notes:** Older entries may refer to legacy API names (e.g., `append_view` instead of `append_grow`). These are retained for historical accuracy. Refer to the Developer Manual for current naming conventions.
 
-## Status: v26.05.19g (Latest)
+## Status: v26.05.19h (Latest)
+
+### Documentation truthfulness and version sync
+*   **Public Wording**: Tightened the README, SPEC, TEST, manual, and filesystem header wording to state the raw filesystem non-goal and the cross-compilation/runtime distinction in restrained language.
+*   **Version Sync**: Updated visible version markers to `v26.05.19h` across `version.h`, `README.md`, `SPEC.md`, `TEST.md`, `manual/`, and `AGENTS.md`.
+*   **Follow-Up Tracking**: Kept the remaining map owned-key follow-up in `TODO.md`; no alias changes.
+
+## Status: v26.05.19g (Archive)
 
 ### Build driver standard-flag fallback
 *   **Standard Probe**: `nob.c` now probes `-std=c23` first and falls back to `-std=c2x` when the compiler still uses the transitional spelling.
@@ -19,7 +26,21 @@ This file serves as the definitive record of all modifications, enhancements, an
 *   **Docs and Version Sync**: Updated `version.h`, `README.md`, `SPEC.md`, `TEST.md`, `manual/`, `AGENTS.md`, `TODO.md`, and the freestanding manual to reflect the fallback policy and current version.
 *   **Alias Layer**: No alias changes.
 
-## Status: v26.05.19f (Archive)
+### float scanner boundary handling
+*   **Boundary Contract**: `proven_scan_f64()` now accepts underflow cases such as `1e-330` as signed zero, reports overflow as `PROVEN_ERR_OVERFLOW`, and no longer rejects the value solely because the literal exponent token is outside the earlier `e > 308 || e < -324` check.
+*   **Regression Coverage**: Added `tests/test_scan_f64_bounds.c` and wired it into `nob.c` and `TEST.md`.
+*   **Docs and TODO Sync**: Updated `TODO.md` and the scan test notes to reflect the resolved boundary behavior and the remaining portability work.
+
+### float conversion portability cleanup
+*   **Double-Only Float Paths**: Removed the remaining `long double` dependence from `src/proven/scan.c` and `src/proven/fmt.c`, so the decimal conversion and formatting paths stay in double precision and avoid hidden per-target float widening differences.
+*   **Observable Formatting Change**: Representative scientific formatting for `9.9999995e18` now stays at `9.999999e+18` on this double-only path instead of carrying to `1.000000e+19`.
+*   **Regression Coverage**: Added `tests/test_float_portable.c` and wired it into `nob.c` and `TEST.md`.
+*   **Docs and TODO Sync**: Updated the public scan/fmt comments and manual notes to describe the target-deterministic approximate-range behavior, and marked the portability item resolved in `TODO.md`.
+
+### buffered sysio scanner refill-and-retry
+*   **Boundary Contract**: `proven_sysio_scanner_scan_impl()` now refills and retries when a buffered token reaches the end of the loaded fragment before EOF, and only reports EOF once the remaining stream is exhausted.
+*   **Regression Coverage**: Updated `tests/test_sysio_scanner_boundary.c` to exercise refill-and-retry across a chunk boundary and wired it into `nob.c` and `TEST.md`.
+*   **Docs and TODO Sync**: Updated `sysio.h`, the hosted-services manual, `TODO.md`, and `AGENTS.md` to describe the buffered scanner contract and remaining review items.
 
 ### Public contract hardening
 *   **Array Guards**: `proven_array_reserve()`, `proven_array_push()`, `proven_array_pop()`, `proven_array_get()`, `proven_array_get_mut()`, and `proven_array_destroy()` now check the array invariant before touching allocator callbacks or element storage.
@@ -30,6 +51,14 @@ This file serves as the definitive record of all modifications, enhancements, an
 *   **Regression Coverage**: Added `tests/test_regression_public_contracts.c` and `tests/test_sysio_scanner_init.c`, then wired them into `nob.c` and `TEST.md`.
 *   **Docs and Version Sync**: Updated `version.h`, `README.md`, `SPEC.md`, `TEST.md`, `manual/`, `AGENTS.md`, and `TODO.md` to reflect the new contract guards and current version.
 *   **GitHub Actions Removed**: Deleted the repository workflow file and kept GitHub usage limited to distribution.
+*   **Alias Layer**: No alias changes.
+
+### Map hardening gate
+*   **Validation Gate**: Added `PROVEN_HARDENED` as a compile-time switch that extends selected debug-style validation into release builds when explicitly enabled.
+*   **Borrowed-Key Check**: Borrowed U8 map keys that point into the map's own internal storage are rejected when debug validation or `PROVEN_HARDENED` is active.
+*   **Pool Gating**: The existing pool double-free check and an optional freed-block poison fill now run under the same validation gate.
+*   **Regression Coverage**: Added `tests/test_map_hardening.c` and `tests/test_pool_misuse.c`, then wired them into `nob.c` and `TEST.md`.
+*   **Docs and TODO Sync**: Updated the map header comment and `TODO.md` to record the remaining owned-key follow-up.
 *   **Alias Layer**: No alias changes.
 
 ## Status: v26.05.19e (Archive)

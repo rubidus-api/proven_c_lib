@@ -177,82 +177,82 @@ static void render_with_spec(proven_fmt_ctx_t *ctx, const char *val, proven_size
     }
 }
 
-static bool proven_fmt_normalize_scientific(long double *abs_v, int *sci_exp) {
+static bool proven_fmt_normalize_scientific(double *abs_v, int *sci_exp) {
     /* Defensive cap: comfortably above the decimal exponent range of double. */
     const int guard_limit = 400;
     int guard = guard_limit;
 
-    while (*abs_v >= 1e256L && guard > 0) {
-        *abs_v /= 1e256L;
+    while (*abs_v >= 1e256 && guard > 0) {
+        *abs_v /= 1e256;
         *sci_exp += 256;
         guard--;
     }
-    while (*abs_v >= 1e128L && guard > 0) {
-        *abs_v /= 1e128L;
+    while (*abs_v >= 1e128 && guard > 0) {
+        *abs_v /= 1e128;
         *sci_exp += 128;
         guard--;
     }
-    while (*abs_v >= 1e64L && guard > 0) {
-        *abs_v /= 1e64L;
+    while (*abs_v >= 1e64 && guard > 0) {
+        *abs_v /= 1e64;
         *sci_exp += 64;
         guard--;
     }
-    while (*abs_v >= 1e32L && guard > 0) {
-        *abs_v /= 1e32L;
+    while (*abs_v >= 1e32 && guard > 0) {
+        *abs_v /= 1e32;
         *sci_exp += 32;
         guard--;
     }
-    while (*abs_v >= 1e16L && guard > 0) {
-        *abs_v /= 1e16L;
+    while (*abs_v >= 1e16 && guard > 0) {
+        *abs_v /= 1e16;
         *sci_exp += 16;
         guard--;
     }
-    while (*abs_v >= 1e8L && guard > 0) {
-        *abs_v /= 1e8L;
+    while (*abs_v >= 1e8 && guard > 0) {
+        *abs_v /= 1e8;
         *sci_exp += 8;
         guard--;
     }
-    while (*abs_v >= 1e4L && guard > 0) {
-        *abs_v /= 1e4L;
+    while (*abs_v >= 1e4 && guard > 0) {
+        *abs_v /= 1e4;
         *sci_exp += 4;
         guard--;
     }
-    while (*abs_v >= 1e2L && guard > 0) {
-        *abs_v /= 1e2L;
+    while (*abs_v >= 1e2 && guard > 0) {
+        *abs_v /= 1e2;
         *sci_exp += 2;
         guard--;
     }
-    while (*abs_v >= 10.0L && guard > 0) {
-        *abs_v /= 10.0L;
+    while (*abs_v >= 10.0 && guard > 0) {
+        *abs_v /= 10.0;
         (*sci_exp)++;
         guard--;
     }
-    while (*abs_v > 0.0L && *abs_v < 1.0L && guard > 0) {
-        *abs_v *= 1e256L;
+    while (*abs_v > 0.0 && *abs_v < 1.0 && guard > 0) {
+        *abs_v *= 1e256;
         *sci_exp -= 256;
-        if (*abs_v >= 1.0L) break;
-        *abs_v *= 1e128L;
+        if (*abs_v >= 1.0) break;
+        *abs_v *= 1e128;
         *sci_exp -= 128;
-        if (*abs_v >= 1.0L) break;
-        *abs_v *= 1e64L;
+        if (*abs_v >= 1.0) break;
+        *abs_v *= 1e64;
         *sci_exp -= 64;
-        if (*abs_v >= 1.0L) break;
-        *abs_v *= 1e32L;
+        if (*abs_v >= 1.0) break;
+        *abs_v *= 1e32;
         *sci_exp -= 32;
-        if (*abs_v >= 1.0L) break;
-        *abs_v *= 1e16L;
+        if (*abs_v >= 1.0) break;
+        *abs_v *= 1e16;
         *sci_exp -= 16;
-        if (*abs_v >= 1.0L) break;
-        *abs_v *= 1e8L;
+        if (*abs_v >= 1.0) break;
+        *abs_v *= 1e8;
         *sci_exp -= 8;
-        if (*abs_v >= 1.0L) break;
-        *abs_v *= 1e4L;
+        if (*abs_v >= 1.0) break;
+        *abs_v *= 1e4;
         *sci_exp -= 4;
-        if (*abs_v >= 1.0L) break;
-        *abs_v *= 1e2L;
+        if (*abs_v >= 1.0) break;
+        *abs_v *= 1e2;
         *sci_exp -= 2;
-        if (*abs_v >= 1.0L) break;
-        *abs_v *= 10.0L;
+        if (*abs_v >= 1.0) break;
+        *abs_v *= 10.0;
         *sci_exp -= 1;
         guard--;
     }
@@ -334,14 +334,14 @@ static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fm
             }
 
             proven_size_t offset = 0;
-            long double abs_v = sign ? -(long double)v : (long double)v;
+            double abs_v = sign ? -v : v;
             if (sign) {
                 buf[offset++] = '-';
             }
 
             const unsigned long long precision_scale = 1000000ULL;
             const int precision = 6;
-            bool use_scientific = (abs_v >= 1e18L || (abs_v > 0.0L && abs_v < 1e-4L));
+            bool use_scientific = (abs_v >= 1e18 || (abs_v > 0.0 && abs_v < 1e-4));
 
             if (use_scientific) {
                 int sci_exp = 0;
@@ -351,8 +351,8 @@ static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fm
                 }
 
                 unsigned long long digit = (unsigned long long)abs_v;
-                long double frac = abs_v - (long double)digit;
-                unsigned long long frac_i = (unsigned long long)(frac * (long double)precision_scale + 0.5L);
+                double frac = abs_v - (double)digit;
+                unsigned long long frac_i = (unsigned long long)(frac * (double)precision_scale + 0.5);
                 if (frac_i >= precision_scale) {
                     frac_i -= precision_scale;
                     digit++;
@@ -383,8 +383,8 @@ static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fm
             }
 
             unsigned long long ipart = (unsigned long long)abs_v;
-            long double frac = abs_v - (long double)ipart;
-            unsigned long long frac_i = (unsigned long long)(frac * (long double)precision_scale + 0.5L);
+            double frac = abs_v - (double)ipart;
+            unsigned long long frac_i = (unsigned long long)(frac * (double)precision_scale + 0.5);
             if (frac_i >= precision_scale) {
                 frac_i -= precision_scale;
                 ipart++;
