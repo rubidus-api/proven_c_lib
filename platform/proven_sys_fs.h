@@ -110,6 +110,12 @@ typedef struct {
 [[nodiscard]]
 proven_sys_mmap_res_t proven_sys_fs_create(proven_sys_file_handle_t handle, size_t offset, size_t size, int prot, int flags);
 
+/**
+ * @brief Returns the required file offset granularity for memory mapping on the current platform.
+ */
+[[nodiscard]]
+size_t proven_sys_fs_mmap_offset_granularity(void);
+
 [[nodiscard]]
 bool proven_sys_fs_destroy(void *ptr, size_t size, void *internal_handle);
 
