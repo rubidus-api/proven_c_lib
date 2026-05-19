@@ -1,4 +1,4 @@
-     1|# proven Test Matrix (v26.05.19f)
+     1|# proven Test Matrix (v26.05.19g)
      2|
      3|This document describes how the `proven` test suite is organized, what each test is intended to validate, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
      4|
@@ -781,6 +781,19 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/sysio.c` and `tests/test_sysio_scan_truncation.c`.
 
+### 37. `tests/test_sysio_scanner_init` - sysio scanner init allocator validation
+
+Intent: verify buffered scanner initialization rejects partial allocators and leaves the scanner zero-safe on failure.
+
+Sub-checks:
+
+- Passes an allocator that only exposes `alloc_fn` and expects `PROVEN_ERR_INVALID_ARG`.
+- Confirms the partial allocator is never called.
+- Confirms a rejected initialization leaves the scanner fields cleared.
+- In hosted builds, confirms a valid heap allocator still initializes and deinitializes the scanner normally.
+
+Failure tip: inspect `proven_sysio_scanner_init` in `src/proven/sysio.c`. If a partial allocator is accepted, the full allocator trait check is missing; if the scanner keeps non-zero state after failure, the failure path is not zero-safe.
+
 ## Regression subset
    710|
    711|`./nob regression`, `./nob regression-asan`, and `./nob regression-ubsan` currently run:
@@ -897,11 +910,24 @@ Failure tip: inspect `src/proven/array.c`, `src/proven/map.c`, `src/proven/fs.c`
    806|- `freestanding-riscv64-elf` through `riscv64-elf-gcc`
    807|- `freestanding-riscv64-unknown-elf` through `riscv64-unknown-elf-gcc`
    808|
-   809|Hosted targets compile all hosted source files and `tests/test_cross_compile_smoke.c`. Freestanding targets compile only freestanding-safe source files and `tests/test_freestanding.c` as a smoke translation unit.
-   810|
-   811|Failure tip: if the log says the compiler is missing, fix the build-server toolchain rather than the library. If the target probe fails, check sysroot, multilib headers, or target flags. If a later library source file fails, treat it as a real portability bug.
-   812|
-   813|## Failure triage workflow
+Hosted targets compile all hosted source files and `tests/test_cross_compile_smoke.c`. Freestanding targets compile only freestanding-safe source files and `tests/test_freestanding.c` as a smoke translation unit.
+
+Failure tip: if the log says the compiler is missing, fix the build-server toolchain rather than the library. If the target probe fails, check sysroot, multilib headers, or target flags. If a later library source file fails, treat it as a real portability bug.
+
+### 34. `tests/test_nob_std_probe` - build driver standard probe
+
+Intent: verify the build driver probes `-std=c23` first and falls back to `-std=c2x` when the compiler rejects the newer spelling.
+
+Sub-checks:
+
+- Creates a wrapper compiler that rejects `-std=c23`.
+- Runs `./nob regression` with that wrapper as `-cc`.
+- Confirms the build driver completes successfully after retrying with `-std=c2x`.
+- Confirms the wrapper log records both the rejected c23 attempt and the accepted c2x attempt.
+
+Failure tip: inspect nob.c standard-flag selection, build-hash construction, and the compiler/toolchain preflight checks if the fallback probe does not reach the c2x path.
+
+## Failure triage workflow
    814|
    815|1. Find the first `[PROVEN][TEST][FAIL]` line. Later failures can be cascading noise.
    816|2. Note the `stage` field.
