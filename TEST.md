@@ -248,7 +248,7 @@
    238|
    239|## Hosted test executables
    240|
-   241|The hosted full run currently builds and executes 32 tests.
+   241|The hosted full run currently builds and executes 48 tests.
    242|
    243|### 1. `tests/test_phase1` - memory byte views
    244|
