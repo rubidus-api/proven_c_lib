@@ -4,7 +4,7 @@ This manual is rebuilt from three sources:
 
 1. The current public headers in `include/proven/`.
 2. The current implementation and tests in `src/proven/`, `platform/`, and `tests/`.
-3. The older developer manual kept as `PROVEN_MANUAL_old-20260511.md` in the shared workspace.
+3. The older developer manual kept in a private workspace outside the repository.
 
 The goal is to keep the architectural explanation from the older manual while adding practical examples, return-value rules, ownership rules, and common misuse cases from the current source tree.
 
