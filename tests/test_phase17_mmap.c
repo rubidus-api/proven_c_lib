@@ -27,7 +27,7 @@ int main() {
     (void)proven_fs_write(file, (proven_mem_view_t){ .ptr = (void*)TEST_DATA, .size = strlen(TEST_DATA) });
 
     // 2. Map the file
-    PROVEN_TEST_INFO("Testing invalid mmap flags...");
+    PROVEN_TEST_INFO("Testing invalid mmap flags and alignment...");
     proven_result_mmap_t invalid_mmap_1 = proven_mmap_create(file, 0, 0, PROVEN_MMAP_READ, 0);
     PROVEN_TEST_ASSERT(invalid_mmap_1.err == PROVEN_ERR_INVALID_ARG, "mmap should reject 0 flags", "");
     
@@ -39,6 +39,14 @@ int main() {
 
     proven_result_mmap_t invalid_mmap_4 = proven_mmap_create(file, 0, 0, PROVEN_MMAP_READ | 0x8, PROVEN_MMAP_PRIVATE);
     PROVEN_TEST_ASSERT(invalid_mmap_4.err == PROVEN_ERR_INVALID_ARG, "mmap should reject unknown prot bits", "");
+
+    proven_result_mmap_t invalid_mmap_5 = proven_mmap_create(file, 1, 0, PROVEN_MMAP_READ, PROVEN_MMAP_PRIVATE);
+    PROVEN_TEST_ASSERT(invalid_mmap_5.err == PROVEN_ERR_INVALID_ARG, "mmap should reject misaligned offsets", "");
+
+#if defined(_WIN32) || defined(_WIN64)
+    proven_result_mmap_t invalid_mmap_6 = proven_mmap_create(file, 0, 0, PROVEN_MMAP_READ | PROVEN_MMAP_EXEC, PROVEN_MMAP_PRIVATE);
+    PROVEN_TEST_ASSERT(invalid_mmap_6.err == PROVEN_ERR_INVALID_ARG, "mmap should reject EXEC until Windows support is explicit", "");
+#endif
 
     PROVEN_TEST_INFO("Mapping file into memory...");
     proven_result_mmap_t mmap_res = proven_mmap_create(file, 0, 0, PROVEN_MMAP_READ | PROVEN_MMAP_WRITE, PROVEN_MMAP_SHARED);

@@ -18,6 +18,8 @@ This file serves as the definitive record of all modifications, enhancements, an
 *   **Truncation Signaling**: Updated the one-chunk sysio scanner to report deterministic truncation when a parse reaches the end of a full 4096-byte chunk and needs more input.
 *   **Fast Path**: Added a truncating single-pass formatter path for fixed-capacity destinations without a growth allocator.
 *   **Documentation Sync**: Updated the public scan, fmt, and sysio comments plus the manual accuracy notes to describe the real limits and recovery behavior.
+*   **Mmap Alignment**: Added explicit offset-granularity validation for `proven_mmap_create()` and rejected Windows `PROVEN_MMAP_EXEC` requests instead of letting them pass through silently.
+*   **Follow-Up Tracking**: Added `TODO.md` at the repository root for the remaining review items.
 *   **Version Sync**: Updated visible version markers to `v26.05.19a` across `version.h`, `README.md`, `SPEC.md`, `TEST.md`, `manual/`, and `AGENTS.md`.
 *   **Alias Layer**: No alias changes.
 

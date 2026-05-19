@@ -265,7 +265,7 @@ typedef struct {
 
 | API | Intent | Return |
 |---|---|---|
-| `proven_mmap_create(file, offset, size, prot, flags)` | Map a file region. `size == 0` maps until EOF. | `proven_result_mmap_t`. |
+| `proven_mmap_create(file, offset, size, prot, flags)` | Map a file region. `size == 0` maps until EOF. Offset must match the platform mapping granularity. | `proven_result_mmap_t`. |
 | `proven_mmap_destroy(mmap)` | Unmap region and clear state. | `proven_err_t`. |
 | `proven_mmap_sync(mmap)` | Flush shared writable changes to storage. | `proven_err_t`. |
 | `proven_mmap_as_view(mmap)` | Borrow mapped memory as U8 view. | `proven_u8str_view_t`. |
