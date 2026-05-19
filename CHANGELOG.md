@@ -15,6 +15,7 @@ This file serves as the definitive record of all modifications, enhancements, an
 ### Repository hygiene update
 *   **Temp-file Cleanup**: Removed the tracked `test_commit.txt` file from the repository and documented the temporary-file policy in `AGENTS.md`.
 *   **Policy Update**: Temporary or non-distributed artifacts should be created outside the repository tree.
+*   **Manual Reference Cleanup**: Removed the stale reference to the old internal manual draft from `manual/manual.md` after moving private reference files out of the repository tree.
 *   **Alias Layer**: No alias changes.
 
 ### Manual markdown cleanup
