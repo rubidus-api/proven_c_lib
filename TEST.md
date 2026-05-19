@@ -1021,6 +1021,30 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/float_decimal.c`, `src/proven/float_decimal.h`, `src/proven/scan.c`, `src/proven/fmt.c`, and `nob.c` if the shared float helper scaffold drifts back into the scanner or formatter files.
 
+### 37. `tests/test_float_bits` - float bit extraction
+
+Intent: verify the internal float bit helpers preserve the raw IEEE-754 bit patterns for `f32` and `f64` values.
+
+Sub-checks:
+
+- Confirms `proven_float_bits_f64()` preserves `+0.0`, `-0.0`, `1.0`, `+Inf`, and NaN payload bits.
+- Confirms `proven_float_bits_f32()` preserves `+0.0f`, `-0.0f`, `1.0f`, `+Inf`, and NaN payload bits.
+- Confirms the helpers return the raw object representation instead of normalizing or reinterpreting the values.
+
+Failure tip: inspect `src/proven/float_decimal.c` and `src/proven/float_decimal.h` if the raw byte-copy helpers stop matching the object representation.
+
+### 38. `tests/test_u128_mul` - wide multiply helper
+
+Intent: verify the shared 64x64 to 128-bit multiply helper returns exact high and low halves for representative operands.
+
+Sub-checks:
+
+- Confirms zero, one, power-of-two, and all-ones vectors produce the exact 128-bit product.
+- Confirms a few asymmetric hand-computed vectors also match the reference product.
+- Confirms the helper exposes the product in a stable high/low part structure for later float algorithms.
+
+Failure tip: inspect `src/proven/float_decimal.c` if the wide multiply helper stops matching the reference product.
+
 ## Failure triage workflow
    814|
    815|1. Find the first `[PROVEN][TEST][FAIL]` line. Later failures can be cascading noise.
