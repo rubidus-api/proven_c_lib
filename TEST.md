@@ -1,4 +1,4 @@
-     1|# proven Test Matrix (v26.05.19a)
+     1|# proven Test Matrix (v26.05.19b)
      2|
      3|This document describes how the `proven` test suite is organized, what each test is intended to validate, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
      4|
@@ -755,7 +755,19 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/fmt.c` and `tests/test_fmt_fastpath.c`.
 
-### 35. `tests/test_sysio_scan_truncation` - chunked sysio scan truncation
+### 35. `tests/test_sysio_scan_nonseekable` - non-seekable sysio rejection
+
+Intent: verify one-chunk file scanning rejects pipe/stdin-like inputs before consuming data.
+
+Sub-checks:
+
+- Checks the helper returns `PROVEN_ERR_UNSUPPORTED` for a non-seekable handle.
+- Checks the scan destination is left unchanged on the early rejection path.
+- Checks the original pipe payload is still readable after the rejected scan attempt.
+
+Failure tip: inspect `src/proven/sysio.c` and make sure the one-chunk scan path probes seekability before reading.
+
+### 36. `tests/test_sysio_scan_truncation` - chunked sysio scan truncation
 
 Intent: verify one-chunk file scanning rejects inputs that exceed the fixed buffer and leaves the stream reusable after a failed attempt.
 

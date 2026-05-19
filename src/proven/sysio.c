@@ -170,6 +170,13 @@ proven_err_t proven_sysio_scan_chunk_impl(proven_file_t file, const char *fmt, c
 #else
     proven_sys_io_handle_t handle = { .fd = file.internal.fd };
 #endif
+
+    // This helper is intentionally limited to seekable inputs.
+    // Probe with a zero-offset seek so pipes/stdin/sockets are rejected before any bytes are consumed.
+    proven_sys_result_size_t seek_probe = proven_sys_io_seek_relative(handle, 0);
+    if (!proven_is_ok(seek_probe.err)) {
+        return PROVEN_ERR_UNSUPPORTED;
+    }
     
     // We read up to a fixed chunk size to evaluate locally.
     proven_sys_result_size_t read_res = proven_sys_io_read_once(handle, buf, sizeof(buf));
