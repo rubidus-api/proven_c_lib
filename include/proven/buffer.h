@@ -39,6 +39,8 @@ proven_result_buf_t proven_buf_create(proven_allocator_t alloc, proven_size_t ca
 
 /**
  * @brief Appends raw data to the buffer.
+ *
+ * Overlapping source views are handled with move semantics.
  */
 [[nodiscard]]
 proven_err_t proven_buf_append(proven_buf_t *buf, proven_mem_view_t data);

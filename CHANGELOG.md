@@ -1,16 +1,34 @@
 # Project Updates and Changelog
-v26.05.19c
+v26.05.19e
 
 ## Overview
 
 **Project Core:** `proven` (C23 Library)
-**Latest Version:** `v26.05.19c`
+**Latest Version:** `v26.05.19e`
 
 This file serves as the definitive record of all modifications, enhancements, and additions made to the **proven** library. All changes must be appended here chronologically to maintain a transparent history of the project's evolution.
 
 **Note on Historical Notes:** Older entries may refer to legacy API names (e.g., `append_view` instead of `append_grow`). These are retained for historical accuracy. Refer to the Developer Manual for current naming conventions.
 
-## Status: v26.05.19c (Latest)
+## Status: v26.05.19e (Latest)
+
+### hosted CI coverage
+*   **Workflow Added**: Added GitHub Actions coverage for hosted Linux GCC and Clang strict-error and regression checks.
+*   **Regression Coverage**: The workflow builds the driver and runs `./nob strict-error` plus `./nob regression` on both hosted compiler lanes.
+*   **Docs and TODO Sync**: Updated `TODO.md` and `AGENTS.md` to record the CI follow-up as addressed.
+*   **Version Sync**: Updated visible version markers to `v26.05.19e` across `version.h`, `README.md`, `SPEC.md`, `TEST.md`, `manual/`, and `AGENTS.md`.
+*   **Alias Layer**: No alias changes.
+
+## Status: v26.05.19d (Archive)
+
+### buffered append overlap contract
+*   **Boundary Contract**: `proven_buf_append()` now uses move semantics so overlapping source views remain well-defined.
+*   **Regression Coverage**: Updated `tests/test_phase5.c` to exercise an overlapping append and verify the resulting byte pattern.
+*   **Docs and TODO Sync**: Updated `buffer.h`, the allocation manual, `TEST.md`, `TODO.md`, and `AGENTS.md` to describe the overlap contract and remaining CI follow-up.
+*   **Version Sync**: Updated visible version markers to `v26.05.19d` across `version.h`, `README.md`, `SPEC.md`, `TEST.md`, `manual/`, and `AGENTS.md`.
+*   **Alias Layer**: No alias changes.
+
+## Status: v26.05.19c (Archive)
 
 ### buffered sysio scanner boundary policy
 *   **Boundary Contract**: `proven_sysio_scanner_scan_impl()` now treats tokens that reach the end of the current buffer before EOF as `PROVEN_ERR_OUT_OF_BOUNDS` and keeps scanner state and the file position reusable.
