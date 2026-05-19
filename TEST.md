@@ -515,7 +515,7 @@
    506|Sub-checks:
    507|
    508|- Creates a test file with known content.
-   509|- Rejects invalid mmap flag combinations: zero flags, private plus shared, zero protection, and unknown protection bits.
+   509|- Rejects invalid mmap flag combinations: zero flags, private plus shared, zero protection, unknown protection bits, and misaligned offsets.
    510|- Maps a file range.
    511|- Verifies mapped bytes match expected content.
    512|- Modifies mapped memory and syncs/unmaps it.

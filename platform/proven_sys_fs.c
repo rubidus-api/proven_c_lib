@@ -649,6 +649,20 @@ proven_sys_mmap_res_t proven_sys_fs_create(proven_sys_file_handle_t handle, size
 #endif
 }
 
+size_t proven_sys_fs_mmap_offset_granularity(void) {
+#if defined(_WIN32) || defined(_WIN64)
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    return (size_t)info.dwAllocationGranularity;
+#else
+    long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) {
+        page_size = 4096;
+    }
+    return (size_t)page_size;
+#endif
+}
+
 bool proven_sys_fs_destroy(void *ptr, size_t size, void *internal_handle) {
 #if defined(_WIN32) || defined(_WIN64)
     (void)size;

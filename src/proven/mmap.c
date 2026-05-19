@@ -12,6 +12,9 @@ proven_result_mmap_t proven_mmap_create(proven_fs_handle_t file, proven_size_t o
     }
 
 #if defined(_WIN32) || defined(_WIN64)
+    if (prot & PROVEN_MMAP_EXEC) {
+        return (proven_result_mmap_t){ .err = PROVEN_ERR_INVALID_ARG, .value = {0} };
+    }
     proven_sys_file_handle_t sh = { .handle = file.internal.ptr };
 #else
     proven_sys_file_handle_t sh = { .fd = file.internal.fd };
@@ -19,6 +22,11 @@ proven_result_mmap_t proven_mmap_create(proven_fs_handle_t file, proven_size_t o
     proven_sys_result_size_t sr = proven_sys_fs_size(sh);
     if (!proven_is_ok(sr.err)) {
         return (proven_result_mmap_t){ .err = sr.err, .value = {0} };
+    }
+
+    proven_size_t offset_granularity = proven_sys_fs_mmap_offset_granularity();
+    if (offset_granularity == 0 || (offset % offset_granularity) != 0) {
+        return (proven_result_mmap_t){ .err = PROVEN_ERR_INVALID_ARG, .value = {0} };
     }
 
     if (offset >= (proven_size_t)sr.value) {

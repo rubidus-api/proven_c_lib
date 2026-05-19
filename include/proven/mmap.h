@@ -44,9 +44,9 @@ typedef struct {
 /**
  * @brief Maps a file into memory.
  * @param file The opened file handle.
- * @param offset Start offset in the file (must be page-aligned in some OS).
+ * @param offset Start offset in the file; it must match the platform mapping granularity.
  * @param size Number of bytes to map. 0 means map until EOF.
- * @param prot Protection mode (read/write).
+ * @param prot Protection mode (read/write/exec where supported).
  * @param flags Mapping flags (shared/private).
  */
 [[nodiscard]]
