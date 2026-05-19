@@ -50,17 +50,20 @@ void proven_sysio_flush(proven_file_t file) {
 // -----------------------------------------------------------------------------
 
 [[nodiscard]] proven_err_t proven_sysio_scanner_init(proven_sysio_scanner_t *scanner, proven_file_t file, proven_allocator_t alloc, proven_size_t buffer_capacity) {
-    if (!scanner || !alloc.alloc_fn || buffer_capacity == 0) return PROVEN_ERR_INVALID_ARG;
-    
+    if (!scanner || !proven_alloc_is_valid(alloc) || buffer_capacity == 0) return PROVEN_ERR_INVALID_ARG;
+
+    *scanner = (proven_sysio_scanner_t){0};
+
+    proven_result_mem_mut_t alloc_res = alloc.alloc_fn(alloc.ctx, buffer_capacity, 1);
+    if (!proven_is_ok(alloc_res.err)) return alloc_res.err;
+    if (!alloc_res.value.ptr) return PROVEN_ERR_INVALID_ARG;
+
     scanner->file = file;
     scanner->alloc = alloc;
     scanner->capacity = buffer_capacity;
     scanner->cursor = 0;
     scanner->length = 0;
     scanner->eof = false;
-    
-    proven_result_mem_mut_t alloc_res = alloc.alloc_fn(alloc.ctx, buffer_capacity, 1);
-    if (alloc_res.err != PROVEN_OK) return alloc_res.err;
     scanner->buffer = (proven_u8 *)alloc_res.value.ptr;
     
     return PROVEN_OK;

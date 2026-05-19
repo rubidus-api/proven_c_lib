@@ -1,22 +1,33 @@
 # Project Updates and Changelog
-v26.05.19f
+v26.05.19g
 
 ## Overview
 
 **Project Core:** `proven` (C23 Library)
-**Latest Version:** `v26.05.19f`
+**Latest Version:** `v26.05.19g`
 
 This file serves as the definitive record of all modifications, enhancements, and additions made to the **proven** library. All changes must be appended here chronologically to maintain a transparent history of the project's evolution.
 
 **Note on Historical Notes:** Older entries may refer to legacy API names (e.g., `append_view` instead of `append_grow`). These are retained for historical accuracy. Refer to the Developer Manual for current naming conventions.
 
-## Status: v26.05.19f (Latest)
+## Status: v26.05.19g (Latest)
+
+### Build driver standard-flag fallback
+*   **Standard Probe**: `nob.c` now probes `-std=c23` first and falls back to `-std=c2x` when the compiler still uses the transitional spelling.
+*   **Toolchain Inputs**: The build driver now reads `CC`, `LD`, `AR`, and `SYSROOT` before built-in defaults, checks toolchain availability up front, and records the selected standard flag in the build hash.
+*   **Regression Coverage**: Added `tests/test_nob_std_probe.c` and wired it into `nob.c` and `TEST.md`.
+*   **Docs and Version Sync**: Updated `version.h`, `README.md`, `SPEC.md`, `TEST.md`, `manual/`, `AGENTS.md`, `TODO.md`, and the freestanding manual to reflect the fallback policy and current version.
+*   **Alias Layer**: No alias changes.
+
+## Status: v26.05.19f (Archive)
 
 ### Public contract hardening
 *   **Array Guards**: `proven_array_reserve()`, `proven_array_push()`, `proven_array_pop()`, `proven_array_get()`, `proven_array_get_mut()`, and `proven_array_destroy()` now check the array invariant before touching allocator callbacks or element storage.
 *   **Map Guards**: `proven_map_reserve()`, `proven_map_set()`, `proven_map_set_with_scratch()`, `proven_map_get()`, `proven_map_get_mut()`, `proven_map_remove()`, and `proven_map_destroy()` now reject corrupted public map structs before rehashing or freeing storage.
 *   **Filesystem Flags**: POSIX append opens now treat append as write intent, and `PROVEN_FS_APPEND | PROVEN_FS_TRUNC` is rejected as a conflicting request.
-*   **Regression Coverage**: Added `tests/test_regression_public_contracts.c` and wired it into `nob.c` and `TEST.md`.
+*   **Sysio Init Validation**: `proven_sysio_scanner_init()` now rejects partial allocators up front and leaves the scanner zero-safe on failure.
+*   **Build Driver Paths**: `nob.c` now checks path formatting results for build and cross-compile directories instead of relying on unchecked `snprintf` truncation.
+*   **Regression Coverage**: Added `tests/test_regression_public_contracts.c` and `tests/test_sysio_scanner_init.c`, then wired them into `nob.c` and `TEST.md`.
 *   **Docs and Version Sync**: Updated `version.h`, `README.md`, `SPEC.md`, `TEST.md`, `manual/`, `AGENTS.md`, and `TODO.md` to reflect the new contract guards and current version.
 *   **GitHub Actions Removed**: Deleted the repository workflow file and kept GitHub usage limited to distribution.
 *   **Alias Layer**: No alias changes.

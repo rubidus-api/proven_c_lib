@@ -3,6 +3,7 @@
 #define NOB_IMPLEMENTATION
 #include "nob.h"
 #include <string.h>
+#include <stdarg.h>
 
 #include <sys/stat.h>
 #include <errno.h>
@@ -62,7 +63,7 @@ static bool output_file_valid(const char *path, bool executable) {
     return true;
 }
 
-static void append_mode_cflags(Nob_Cmd *cmd, const char *mode) {
+static void append_mode_cflags(Nob_Cmd *cmd, const char *mode, const char *standard_flag, const char *sysroot) {
     nob_cmd_append(cmd, "-D_DEFAULT_SOURCE", "-D_POSIX_C_SOURCE=200809L");
     if (strcmp(mode, "release") == 0) nob_cmd_append(cmd, "-O3");
     else if (strcmp(mode, "asan") == 0) nob_cmd_append(cmd, "-g", "-O0", "-fsanitize=address");
@@ -71,13 +72,15 @@ static void append_mode_cflags(Nob_Cmd *cmd, const char *mode) {
     else if (strcmp(mode, "strict-error") == 0) nob_cmd_append(cmd, "-g", "-O0", "-Wall", "-Wextra", "-Werror");
     else if (strcmp(mode, "freestanding") == 0) nob_cmd_append(cmd, "-g", "-O0", "-Wall", "-Wextra", "-Werror", "-DPROVEN_FREESTANDING", "-DPROVEN_FMT_NO_FLOAT", "-DPROVEN_NO_U16STR", "-ffreestanding");
     else nob_cmd_append(cmd, "-g", "-O0");
-    nob_cmd_append(cmd, "-std=c23", "-I./include", "-I./platform");
+    if (standard_flag) nob_cmd_append(cmd, standard_flag);
+    if (sysroot && *sysroot) nob_cmd_append(cmd, "--sysroot", sysroot);
+    nob_cmd_append(cmd, "-I./include", "-I./platform");
 }
 
-static bool compile_object_tmp(const char *compiler, const char *src, const char *obj_tmp, const char *mode, const char *extra_cflags, uint32_t *out_hash) {
+static bool compile_object_tmp(const char *compiler, const char *src, const char *obj_tmp, const char *mode, const char *extra_cflags, const char *standard_flag, const char *sysroot, uint32_t *out_hash) {
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, compiler);
-    append_mode_cflags(&cmd, mode);
+    append_mode_cflags(&cmd, mode, standard_flag, sysroot);
     if (extra_cflags) nob_cmd_append(&cmd, extra_cflags);
     nob_cmd_append(&cmd, "-c", src, "-o", obj_tmp);
     
@@ -87,10 +90,10 @@ static bool compile_object_tmp(const char *compiler, const char *src, const char
     return success;
 }
 
-static bool link_executable_tmp(const char *compiler, const char *src, Nob_File_Paths obj_files, const char *exec_tmp, const char *mode, const char *extra_ldflags, uint32_t *out_hash) {
+static bool link_executable_tmp(const char *compiler, const char *src, Nob_File_Paths obj_files, const char *exec_tmp, const char *mode, const char *extra_ldflags, const char *standard_flag, const char *sysroot, uint32_t *out_hash) {
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, compiler);
-    append_mode_cflags(&cmd, mode);
+    append_mode_cflags(&cmd, mode, standard_flag, sysroot);
     if (strcmp(mode, "asan") == 0) nob_cmd_append(&cmd, "-fsanitize=address");
     else if (strcmp(mode, "ubsan") == 0) nob_cmd_append(&cmd, "-fsanitize=undefined");
     else if (strcmp(mode, "tsan") == 0) nob_cmd_append(&cmd, "-fsanitize=thread");
@@ -129,6 +132,15 @@ static void sanitize_name(char *dst, size_t cap, const char *src) {
     dst[n] = 0;
 }
 
+
+static bool format_path(char *dst, size_t cap, const char *fmt, ...) {
+    if (!dst || cap == 0 || !fmt) return false;
+    va_list ap;
+    va_start(ap, fmt);
+    int written = vsnprintf(dst, cap, fmt, ap);
+    va_end(ap);
+    return written >= 0 && (size_t)written < cap;
+}
 
 static bool shell_token_is_safe(const char *s) {
     if (!s || !*s) return false;
@@ -176,12 +188,52 @@ static bool command_available(const char *cmd_name) {
     if (!shell_token_is_safe(cmd_name)) return false;
 #if defined(_WIN32) || defined(_WIN64)
     char cmd[512];
-    snprintf(cmd, sizeof(cmd), "where %s >nul 2>nul", cmd_name);
+    if (!format_path(cmd, sizeof(cmd), "where %s >nul 2>nul", cmd_name)) return false;
 #else
     char cmd[512];
-    snprintf(cmd, sizeof(cmd), "command -v %s >/dev/null 2>&1", cmd_name);
+    if (!format_path(cmd, sizeof(cmd), "command -v %s >/dev/null 2>&1", cmd_name)) return false;
 #endif
     return system(cmd) == 0;
+}
+
+static bool compiler_accepts_standard_flag(const char *compiler, const char *standard_flag, const char *sysroot, const char *probe_dir) {
+    char src_path[768];
+    char obj_path[768];
+    if (!format_path(src_path, sizeof(src_path), "%s/std_probe.c", probe_dir)) return false;
+    if (!format_path(obj_path, sizeof(obj_path), "%s/std_probe.o", probe_dir)) return false;
+
+    FILE *f = fopen(src_path, "w");
+    if (!f) return false;
+    fputs("int proven_std_probe(void) { return 0; }\n", f);
+    fclose(f);
+
+    Nob_Cmd cmd = {0};
+    nob_cmd_append(&cmd, compiler, standard_flag);
+    if (sysroot && *sysroot) nob_cmd_append(&cmd, "--sysroot", sysroot);
+    nob_cmd_append(&cmd, "-c", src_path, "-o", obj_path);
+    bool ok = nob_cmd_run_sync(cmd);
+    nob_cmd_free(cmd);
+    return ok;
+}
+
+static const char *select_c_standard_flag(const char *compiler, const char *sysroot, const char *probe_dir) {
+    static const char *const candidates[] = { "-std=c23", "-std=c2x" };
+    if (!mkdir_p_safe(probe_dir)) return NULL;
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(candidates); ++i) {
+        const char *candidate = candidates[i];
+        nob_log(NOB_INFO, "[PROVEN][BUILD][NOTE] probing compiler standard support with %s", candidate);
+        if (compiler_accepts_standard_flag(compiler, candidate, sysroot, probe_dir)) {
+            nob_log(NOB_INFO, "[PROVEN][BUILD][NOTE] selected compiler standard flag %s", candidate);
+            return candidate;
+        }
+        if (i == 0) {
+            nob_log(NOB_INFO, "[PROVEN][BUILD][NOTE] compiler rejected -std=c23; retrying with -std=c2x");
+        }
+    }
+
+    nob_log(NOB_ERROR, "[PROVEN][BUILD][FAIL] compiler %s does not accept -std=c23 or -std=c2x", compiler);
+    return NULL;
 }
 
 typedef struct {
@@ -227,6 +279,7 @@ static const char *detect_runtime_profile(void) {
 }
 
 static void print_proven_build_plan(const char *build_mode, const char *compiler_exe, const char *linker_exe,
+                                    const char *archiver_exe, const char *sysroot,
                                     const char *build_root, const char *build_dir, size_t source_count,
                                     size_t test_count, bool cross_check, bool only_regression) {
     nob_log(NOB_INFO, "[PROVEN][BUILD][BEGIN] mode=%s cc=%s ld=%s build_root=%s build_dir=%s",
@@ -238,6 +291,9 @@ static void print_proven_build_plan(const char *build_mode, const char *compiler
             "posix"
 #endif
     );
+    nob_log(NOB_INFO, "[PROVEN][BUILD][ENV] ar=%s sysroot=%s",
+            archiver_exe && *archiver_exe ? archiver_exe : "(unset)",
+            sysroot && *sysroot ? sysroot : "(unset)");
     if (cross_check) {
         nob_log(NOB_INFO, "[PROVEN][BUILD][PLAN] cross matrix selected; no hosted test executables will be linked or run.");
     } else if (only_regression) {
@@ -271,30 +327,35 @@ static bool cross_source_is_freestanding(const char *src) {
     return true;
 }
 
-static void append_cross_cflags(Nob_Cmd *cmd, const Proven_Cross_Target *target) {
+static void append_cross_cflags(Nob_Cmd *cmd, const Proven_Cross_Target *target, const char *standard_flag, const char *sysroot) {
     if (target->freestanding) {
         nob_cmd_append(cmd,
-                       "-std=c23", "-ffreestanding", "-nostdlib",
+                       standard_flag, "-ffreestanding", "-nostdlib",
                        "-DPROVEN_FREESTANDING", "-DPROVEN_FMT_NO_FLOAT", "-DPROVEN_NO_U16STR",
                        "-Wall", "-Wextra", "-Werror", "-I./include", "-I./platform");
     } else {
         nob_cmd_append(cmd,
-                       "-std=c23", "-D_DEFAULT_SOURCE", "-D_POSIX_C_SOURCE=200809L",
+                       standard_flag, "-D_DEFAULT_SOURCE", "-D_POSIX_C_SOURCE=200809L",
                        "-Wall", "-Wextra", "-Werror", "-I./include", "-I./platform");
     }
+    if (sysroot && *sysroot) nob_cmd_append(cmd, "--sysroot", sysroot);
     if (target->arch_flag_1) nob_cmd_append(cmd, target->arch_flag_1);
     if (target->arch_flag_2) nob_cmd_append(cmd, target->arch_flag_2);
 }
 
-static bool cross_target_toolchain_usable(const char *build_root, const Proven_Cross_Target *target) {
+static bool cross_target_toolchain_usable(const char *build_root, const Proven_Cross_Target *target, const char *sysroot, const char **out_standard_flag) {
     char probe_dir[512];
-    snprintf(probe_dir, sizeof(probe_dir), "%s/_probe", build_root);
+    if (!format_path(probe_dir, sizeof(probe_dir), "%s/_probe", build_root)) return false;
     if (!mkdir_p_safe(probe_dir)) return false;
+
+    const char *standard_flag = select_c_standard_flag(target->compiler, sysroot, probe_dir);
+    if (!standard_flag) return false;
+    if (out_standard_flag) *out_standard_flag = standard_flag;
 
     char src_path[768];
     char obj_path[768];
-    snprintf(src_path, sizeof(src_path), "%s/%s.c", probe_dir, target->name);
-    snprintf(obj_path, sizeof(obj_path), "%s/%s.o", probe_dir, target->name);
+    if (!format_path(src_path, sizeof(src_path), "%s/%s.c", probe_dir, target->name)) return false;
+    if (!format_path(obj_path, sizeof(obj_path), "%s/%s.o", probe_dir, target->name)) return false;
 
     FILE *f = fopen(src_path, "w");
     if (!f) {
@@ -312,7 +373,7 @@ static bool cross_target_toolchain_usable(const char *build_root, const Proven_C
 
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, target->compiler);
-    append_cross_cflags(&cmd, target);
+    append_cross_cflags(&cmd, target, standard_flag, sysroot);
     nob_cmd_append(&cmd, "-c", src_path, "-o", obj_path);
     bool ok = nob_cmd_run_sync(cmd);
     nob_cmd_free(cmd);
@@ -323,7 +384,7 @@ static bool cross_target_toolchain_usable(const char *build_root, const Proven_C
     return ok;
 }
 
-static bool run_cross_compile_matrix(const char *build_root,
+static bool run_cross_compile_matrix(const char *build_root, const char *sysroot,
                                      const char **srcs, size_t srcs_count,
                                      const char **headers, size_t headers_count) {
     (void)headers;
@@ -348,17 +409,18 @@ static bool run_cross_compile_matrix(const char *build_root,
     size_t available = 0;
     for (size_t t = 0; t < NOB_ARRAY_LEN(targets); ++t) {
         const Proven_Cross_Target *target = &targets[t];
+        const char *standard_flag = NULL;
         if (!command_available(target->compiler)) {
             nob_log(NOB_WARNING, "Skipping %s: compiler not found: %s", target->name, target->compiler);
             continue;
         }
-        if (!cross_target_toolchain_usable(build_root, target)) {
+        if (!cross_target_toolchain_usable(build_root, target, sysroot, &standard_flag)) {
             continue;
         }
         available += 1;
 
         char target_dir[512];
-        snprintf(target_dir, sizeof(target_dir), "%s/%s", build_root, target->name);
+        if (!format_path(target_dir, sizeof(target_dir), "%s/%s", build_root, target->name)) return false;
         if (!mkdir_p_safe(target_dir)) return false;
 
         nob_log(NOB_INFO, "[PROVEN][TEST][BEGIN] path=cross/%s title=cross compile target", target->name);
@@ -373,11 +435,11 @@ static bool run_cross_compile_matrix(const char *build_root,
             sanitize_name(obj_name, sizeof obj_name, srcs[i]);
 
             char obj_path[768];
-            snprintf(obj_path, sizeof(obj_path), "%s/%s.o", target_dir, obj_name);
+            if (!format_path(obj_path, sizeof(obj_path), "%s/%s.o", target_dir, obj_name)) return false;
 
             Nob_Cmd cmd = {0};
             nob_cmd_append(&cmd, target->compiler);
-            append_cross_cflags(&cmd, target);
+            append_cross_cflags(&cmd, target, standard_flag, sysroot);
             nob_cmd_append(&cmd, "-c", srcs[i], "-o", obj_path);
             bool ok = nob_cmd_run_sync(cmd);
             nob_cmd_free(cmd);
@@ -390,10 +452,10 @@ static bool run_cross_compile_matrix(const char *build_root,
 
         const char *smoke = target->freestanding ? "tests/test_freestanding.c" : "tests/test_cross_compile_smoke.c";
         char smoke_path[768];
-        snprintf(smoke_path, sizeof(smoke_path), "%s/smoke.o", target_dir);
+        if (!format_path(smoke_path, sizeof(smoke_path), "%s/smoke.o", target_dir)) return false;
         Nob_Cmd cmd = {0};
         nob_cmd_append(&cmd, target->compiler);
-        append_cross_cflags(&cmd, target);
+        append_cross_cflags(&cmd, target, standard_flag, sysroot);
         nob_cmd_append(&cmd, "-c", smoke, "-o", smoke_path);
         bool ok = nob_cmd_run_sync(cmd);
         nob_cmd_free(cmd);
@@ -564,7 +626,9 @@ int main(int argc, char **argv)
         printf("  -build-root <dir>  Build output root, defaults to build or PROVEN_BUILD_ROOT.\n\n");
         printf("Environment Variables:\n");
         printf("  CC, NOB_COMPILER   Alternative ways to specify the compiler.\n");
-        printf("  LD                 Alternative way to specify the linker.\n\n");
+        printf("  LD                 Alternative way to specify the linker.\n");
+        printf("  AR                 Optional archiver path recorded in the build plan.\n");
+        printf("  SYSROOT            Optional compiler sysroot passed through to build probes.\n\n");
         printf("Examples:\n");
         printf("  ./nob build        Build and run all tests in debug mode.\n");
         printf("  ./nob release      Build and run all tests with optimizations.\n");
@@ -576,6 +640,9 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    if (build_root == NULL) build_root = getenv("PROVEN_BUILD_ROOT");
+    if (build_root == NULL) build_root = "build";
+
     if (cc == NULL) cc = getenv("CC");
     if (cc == NULL) cc = getenv("NOB_COMPILER");
     if (cc == NULL) cc = "gcc";
@@ -586,12 +653,37 @@ int main(int argc, char **argv)
     if (user_ld == NULL) user_ld = compiler_exe;
     const char *linker_exe = user_ld;
 
+    const char *archiver_exe = getenv("AR");
+    if (archiver_exe && *archiver_exe == '\0') archiver_exe = NULL;
+
+    const char *sysroot = getenv("SYSROOT");
+    if (sysroot && *sysroot == '\0') sysroot = NULL;
+
+    if (!command_available(compiler_exe)) {
+        nob_log(NOB_ERROR, "[PROVEN][BUILD][FAIL] compiler not found on PATH: %s", compiler_exe);
+        return 1;
+    }
+    if (!command_available(linker_exe)) {
+        nob_log(NOB_ERROR, "[PROVEN][BUILD][FAIL] linker not found on PATH: %s", linker_exe);
+        return 1;
+    }
+
+    char std_probe_root[768];
+    if (!format_path(std_probe_root, sizeof(std_probe_root), "%s/_std_probe", build_root)) return 1;
+    const char *standard_flag = select_c_standard_flag(compiler_exe, sysroot, std_probe_root);
+    if (!standard_flag) return 1;
+
+    nob_log(NOB_INFO, "[PROVEN][BUILD][ENV] standard_flag=%s", standard_flag);
+
     // Calculate flag hash for directory isolation
     Nob_String_Builder hash_src = {0};
     nob_sb_append_cstr(&hash_src, compiler_exe);
     nob_sb_append_cstr(&hash_src, linker_exe);
+    if (archiver_exe) nob_sb_append_cstr(&hash_src, archiver_exe);
     nob_sb_append_cstr(&hash_src, build_mode);
-    nob_sb_append_cstr(&hash_src, "-std=c23-I./include-D_DEFAULT_SOURCE-D_POSIX_C_SOURCE=200809L");
+    nob_sb_append_cstr(&hash_src, standard_flag);
+    nob_sb_append_cstr(&hash_src, "-I./include-D_DEFAULT_SOURCE-D_POSIX_C_SOURCE=200809L");
+    if (sysroot) nob_sb_append_cstr(&hash_src, sysroot);
     if (user_cflags) nob_sb_append_cstr(&hash_src, user_cflags);
     if (user_ldflags) nob_sb_append_cstr(&hash_src, user_ldflags);
     
@@ -611,11 +703,8 @@ int main(int argc, char **argv)
     char compiler_name[64];
     sanitize_name(compiler_name, sizeof compiler_name, compiler_exe);
 
-    if (build_root == NULL) build_root = getenv("PROVEN_BUILD_ROOT");
-    if (build_root == NULL) build_root = "build";
-
     char build_dir[512];
-    snprintf(build_dir, sizeof(build_dir), "%s/%s-%s-%08x", build_root, compiler_name, build_mode, flag_hash);
+    if (!format_path(build_dir, sizeof(build_dir), "%s/%s-%s-%08x", build_root, compiler_name, build_mode, flag_hash)) return 1;
     
     if (!mkdir_p_safe(build_root)) return 1;
     if (!mkdir_p_safe(build_dir)) return 1;
@@ -624,7 +713,7 @@ int main(int argc, char **argv)
     static const char *subdirs[] = {"src", "src/proven", "platform", "tests"};
     for (size_t i = 0; i < NOB_ARRAY_LEN(subdirs); ++i) {
         char buf[256];
-        snprintf(buf, sizeof(buf), "%s/%s", build_dir, subdirs[i]);
+        if (!format_path(buf, sizeof(buf), "%s/%s", build_dir, subdirs[i])) return 1;
         if (!mkdir_p_safe(buf)) return 1;
     }
 
@@ -680,7 +769,9 @@ int main(int argc, char **argv)
         { "tests/test_fmt_fastpath", "formatter truncation comparison", "Compare truncating fixed-capacity formatting against the growable reference path for exact-fit, truncation, malformed format, and excess-argument cases.", "Inspect truncation accounting and the fixed-capacity write path if the result bytes or counts drift." },
         { "tests/test_scan_f64_accuracy", "float scanner accuracy", "Verify float scanning preserves exact small values, signed zero, round-trip style decimals, exponent edges, and cursor rollback on malformed input.", "Inspect proven_scan_f64 decimal accumulation, exponent scaling, and failure-atomic cursor restore if any exact-value case drifts." },
         { "tests/test_scan_overflow_f64", "float scanner overflow", "Verify extremely large floating-point input reports PROVEN_ERR_OVERFLOW instead of silently accepting infinity.", "Inspect proven_scan_f64 exponent/range checks and math PAL behavior if this fails." },
+        { "tests/test_nob_std_probe", "build driver standard probe", "Verify nob probes -std=c23 first and falls back to -std=c2x when the compiler rejects c23.", "Inspect nob.c standard-flag selection and toolchain probing if the fallback does not trigger." },
         { "tests/test_sysio_scan_nonseekable", "sysio scan non-seekable rejection", "Verify one-chunk sysio scanning rejects pipes/stdin-like inputs before consuming bytes.", "Inspect the seekability probe in proven_sysio_scan_chunk_impl if a non-seekable handle is accepted or partially consumed." },
+        { "tests/test_sysio_scanner_init", "sysio scanner init allocator validation", "Verify buffered scanner initialization rejects partial allocators and leaves the scanner zero-safe on failure.", "Inspect proven_sysio_scanner_init if a partial allocator is accepted, called, or leaves non-zero state behind." },
         { "tests/test_sysio_scan_truncation", "sysio scan truncation", "Verify one-chunk scanning rejects inputs that exceed the fixed chunk and keeps the file position reusable after failure.", "Inspect proven_sysio_scan_chunk_impl truncation detection and cursor rewind if a long input is accepted or consumed." },
         { "tests/test_sysio_scanner_boundary", "sysio scanner boundary rejection", "Verify buffered sysio scanning rejects tokens that cross the current buffer boundary and leaves the file handle reusable.", "Inspect proven_sysio_scanner_scan_impl staging, cursor commit, and file rewind behavior when a token reaches the end of the buffer." },
         { "tests/test_sysio_scanner", "sysio-backed scanner", "Verify scanner operation over file-backed sysio data rather than only in-memory string views.", "Check file open/read wrappers, scanner buffer refill logic, and temporary file permissions." },
@@ -707,15 +798,12 @@ int main(int argc, char **argv)
         { "tests/test_freestanding", "freestanding runtime core", "Verify allocator-backed arrays, algorithms, intrusive lists, rings, maps, strings, formatting, and scanning in the reduced core.", "Inspect only freestanding-safe modules first; any hosted PAL dependency here is a portability regression." },
     };
 
-    if (build_root == NULL) build_root = getenv("PROVEN_BUILD_ROOT");
-    if (build_root == NULL) build_root = "build";
-
-    print_proven_build_plan(build_mode, compiler_exe, linker_exe, build_root, build_dir,
+    print_proven_build_plan(build_mode, compiler_exe, linker_exe, archiver_exe, sysroot, build_root, build_dir,
                             NOB_ARRAY_LEN(srcs), NOB_ARRAY_LEN(all_tests), cross_check, only_regression);
 
     if (cross_check) {
         const char *cross_root = nob_temp_sprintf("%s/cross", build_root);
-        return run_cross_compile_matrix(cross_root, srcs, NOB_ARRAY_LEN(srcs), headers, NOB_ARRAY_LEN(headers)) ? 0 : 1;
+        return run_cross_compile_matrix(cross_root, sysroot, srcs, NOB_ARRAY_LEN(srcs), headers, NOB_ARRAY_LEN(headers)) ? 0 : 1;
     }
 
     const Proven_Test_Case *tests = only_regression ? regression_tests : all_tests;
@@ -777,7 +865,7 @@ int main(int argc, char **argv)
         {
             Nob_Cmd mock = {0};
             nob_cmd_append(&mock, compiler_exe);
-            append_mode_cflags(&mock, build_mode);
+            append_mode_cflags(&mock, build_mode, standard_flag, sysroot);
             if (user_cflags) nob_cmd_append(&mock, user_cflags);
             nob_cmd_append(&mock, "-c", srcs[i], "-o", obj_tmp);
             current_hash = hash_cmd(&mock);
@@ -790,7 +878,7 @@ int main(int argc, char **argv)
         bool should_rebuild = rebuild || hash_differs || !output_file_valid(final_obj_path, false) || force_rebuild;
         if (should_rebuild) {
             nob_log(NOB_INFO, "[PROVEN][BUILD][SOURCE][REBUILD] path=%s", srcs[i]);
-            if (!compile_object_tmp(compiler_exe, srcs[i], obj_tmp, build_mode, user_cflags, NULL)) {
+            if (!compile_object_tmp(compiler_exe, srcs[i], obj_tmp, build_mode, user_cflags, standard_flag, sysroot, NULL)) {
                 nob_log(NOB_ERROR, "[PROVEN][BUILD][FAIL] stage=compile-source path=%s", srcs[i]);
                 nob_log(NOB_ERROR, "[PROVEN][BUILD][FAIL_HINT] Read the compiler diagnostic above and inspect the portability contract for this source file.");
                 if (nob_file_exists(obj_tmp)) nob_delete_file(obj_tmp);
@@ -835,7 +923,7 @@ int main(int argc, char **argv)
         {
             Nob_Cmd mock = {0};
             nob_cmd_append(&mock, linker_exe);
-            append_mode_cflags(&mock, build_mode);
+            append_mode_cflags(&mock, build_mode, standard_flag, sysroot);
             if (strcmp(build_mode, "asan") == 0) nob_cmd_append(&mock, "-fsanitize=address");
             else if (strcmp(build_mode, "ubsan") == 0) nob_cmd_append(&mock, "-fsanitize=undefined");
             else if (strcmp(build_mode, "tsan") == 0) nob_cmd_append(&mock, "-fsanitize=thread");
@@ -862,7 +950,7 @@ int main(int argc, char **argv)
         if (should_link) {
             tests_rebuilt += 1;
             nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][REBUILD] path=%s", test->path);
-            if (!link_executable_tmp(linker_exe, src_path, obj_files, exec_tmp, build_mode, user_ldflags, NULL)) {
+            if (!link_executable_tmp(linker_exe, src_path, obj_files, exec_tmp, build_mode, user_ldflags, standard_flag, sysroot, NULL)) {
                 print_proven_test_fail(test, "link", "The test executable did not link. Read the compiler diagnostics above, then check source/header/API drift.");
                 if (nob_file_exists(exec_tmp)) nob_delete_file(exec_tmp);
                 return 1;

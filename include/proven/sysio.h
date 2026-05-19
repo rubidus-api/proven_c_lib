@@ -59,8 +59,11 @@ typedef struct {
  * @brief Initializes a buffered sysio scanner.
  * @param scanner The scanner object to initialize.
  * @param file The file handle to read from.
- * @param alloc The allocator for the internal buffer.
+ * @param alloc The allocator for the internal buffer. The allocator must satisfy
+ *        the full proven_allocator_t contract.
  * @param buffer_capacity The size of the internal buffer (e.g., 4096).
+ * @return PROVEN_ERR_INVALID_ARG for a null scanner, an invalid allocator, or a
+ *         zero buffer size. On failure, the scanner is left zero-safe.
  */
 [[nodiscard]] proven_err_t proven_sysio_scanner_init(proven_sysio_scanner_t *scanner, proven_file_t file, proven_allocator_t alloc, proven_size_t buffer_capacity);
 
