@@ -18,3 +18,5 @@ AGENTS.md
 MEMORY.md
 CHECKLIST.md
 .hermes/
+.*
+!.env.example
