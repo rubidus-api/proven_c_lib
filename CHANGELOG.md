@@ -17,6 +17,12 @@ This file serves as the definitive record of all modifications, enhancements, an
 *   **Long-term Work**: Kept the Eisel-Lemire / Ryu-class float conversion upgrade and the verification-infrastructure review in `TODO.md` for later work.
 *   **Alias Layer**: No alias changes.
 
+### Float module scaffold
+*   **Internal Split**: Moved the shared decimal float helpers into `src/proven/float_decimal.c` and `src/proven/float_decimal.h` so the scanner and formatter can share one internal implementation surface without copying helper bodies.
+*   **Regression Coverage**: Added `tests/test_float_module_scaffold.c` and wired it into `nob.c` and `TEST.md`.
+*   **Behavior**: No observable float conversion behavior changed in this stage.
+*   **Alias Layer**: No alias changes.
+
 ### Repository hygiene update
 *   **Temp-file Cleanup**: Removed the tracked `test_commit.txt` file from the repository and documented the temporary-file policy in `AGENTS.md`.
 *   **Policy Update**: Temporary or non-distributed artifacts should be created outside the repository tree.
