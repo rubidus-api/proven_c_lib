@@ -98,6 +98,7 @@ Useful options:
 - Use short imperative commit subjects.
 - Do not commit build output, the local `nob` executable, logs, temporary test files, or environment files.
 - Local commits remain the source of truth until they are explicitly pushed.
+- GitHub is used for distribution only in this repository; do not add Actions workflows unless the scope changes explicitly.
 
 ## C rules
 

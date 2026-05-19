@@ -9,7 +9,7 @@ No open items.
 ## Already addressed in this pass
 
 - Public contract hardening: array and map mutation entry points now reject corrupted public structs before touching allocator callbacks, and filesystem append opens now treat append as write intent while rejecting append-plus-truncation conflicts.
-- Public CI coverage: added GitHub Actions workflows for hosted Linux GCC and Clang strict-error and regression checks.
+- Public CI coverage: removed the GitHub Actions workflow file after deciding this repository will not use Actions for deployment or validation.
 - `proven_buf_append()` now uses move semantics so overlapping source views remain well-defined.
 - `proven_sysio_scanner_t` now treats tokens that reach the end of the loaded buffer as an out-of-bounds failure instead of accepting a truncated token.
 - `proven_sysio_scan_chunk_impl()` now rejects non-seekable inputs before reading, so pipes/stdin-like handles no longer lose unread bytes.
