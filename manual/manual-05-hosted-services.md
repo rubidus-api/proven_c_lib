@@ -16,6 +16,8 @@ These APIs require hosted platform support and are excluded from the current fre
 
 The filesystem layer wraps platform file handles, paths, directory listing, metadata, permissions, links, and locks.
 
+Raw filesystem helpers do not sanitize untrusted paths, enforce root confinement, or defend against symlink-race TOCTOU. Callers that accept untrusted paths must validate them before using the API.
+
 ### Structures and enums
 
 ```c

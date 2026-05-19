@@ -1,6 +1,7 @@
 #ifndef PROVEN_POOL_H
 #define PROVEN_POOL_H
 
+#include "proven/config.h"
 #include "proven/allocator.h"
 
 /**

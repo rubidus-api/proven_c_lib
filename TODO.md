@@ -4,11 +4,10 @@ This file tracks the remaining follow-up items from the current main-branch revi
 
 ## Open items
 
-- Float scanner exponent bounds: review whether `proven_scan_f64()` should treat underflow and overflow boundaries more explicitly after the current decimal parser changes. Next verification hook: add boundary tests for `1e-330`, `1e308`, `1e309`, and the smallest subnormal spellings.
-- Float conversion portability: remove the remaining `long double` dependence in the scan and format conversion paths if target-deterministic `double` scaling is required. Next verification hook: build and compare float outputs on a target where `long double` is not wider than `double`.
-- Map borrowed-key contracts: document and harden the lifetime rules for `PROVEN_KEY_TYPE_U8_BORROWED`, and decide whether an owned-key path and hardened validation gate are needed. Next verification hook: add tests that reject internal borrowed keys and exercise any owned-key path if it is introduced.
-- Streaming scanner boundary behavior: review whether token-split cases across buffered sysio fragments need `PROVEN_ERR_NEED_MORE` semantics or a line-based fallback. Next verification hook: add a boundary test with a token that spans the loaded buffer size.
-- Documentation and version synchronization: check for remaining wording, version, and contract mismatches after code changes. Next verification hook: run the doc grep checks and confirm the top-of-tree version strings stay in sync with `include/proven/version.h`.
+- Float scanner exponent bounds: resolved so that underflow cases like `1e-330` now round to signed zero and overflow cases report `PROVEN_ERR_OVERFLOW`. Keep any future precision-policy work separate from this boundary fix.
+- Float conversion portability: resolved by removing `long double` from the scan and format conversion paths and keeping the remaining float math in double precision.
+- Map borrowed-key contracts: internal borrowed keys are now rejected under debug validation or `PROVEN_HARDENED`. The remaining follow-up is whether an owned-key path should be added for callers that need map-owned storage. Next verification hook: add a dedicated owned-key API only if a caller needs it, and keep the borrowed-key lifetime rule documented.
+- Streaming scanner boundary behavior: resolved for buffered sysio scans that can refill and retry; keep any remaining float-specific edge cases under separate review if needed.
 
 ## Already addressed in this pass
 

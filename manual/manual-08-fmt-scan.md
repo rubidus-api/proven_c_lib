@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v26.05.19g)
+# Chapter 8: Formatting and Scanning (v26.05.19h)
 
 This chapter is the detailed reference for `fmt.h` and `scan.h`.
 Chapter 3 gives the shorter overview and the everyday examples.
@@ -262,7 +262,7 @@ Current float rendering keeps a fixed six-digit fractional form for finite value
 
 - Floating-point output uses six fractional digits with round-half-up behavior.
 - The text form is intended for diagnostics and logs, not for round-trip serialization.
-- Decimal-to-double scanning is designed to stay exact within the implementation's limited power-of-ten range; outside that range, results are approximate.
+- Decimal-to-double scanning is designed to stay exact within the implementation's limited power-of-ten range; outside that range, results are approximate but target-deterministic.
 
 ## 4. Format string grammar
 
@@ -594,7 +594,7 @@ The parser rejects values that are not finite or fall outside the supported expo
 Accuracy note:
 
 - Within the supported decimal range, scanning is designed to be exact enough for common finite inputs.
-- Outside the exact range, the parsed result is approximate and may not round-trip exactly.
+- Outside the exact range, the parsed result is approximate but target-deterministic and may not round-trip exactly.
 - For very large or very small decimal inputs, callers should treat the text form as a best-effort conversion rather than a full `strtod` replacement.
 
 Example:

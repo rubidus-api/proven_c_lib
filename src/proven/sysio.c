@@ -2,6 +2,7 @@
 #include "proven/heap.h"
 #include "../../platform/proven_sys_io.h"
 #include "../../platform/proven_sys_env.h"
+#include "../../platform/proven_sys_mem.h"
 
 proven_file_t proven_sysio_stdin(void) {
     proven_sys_io_handle_t sh = proven_sys_io_std_in();
@@ -77,22 +78,21 @@ void proven_sysio_scanner_deinit(proven_sysio_scanner_t *scanner) {
     scanner->buffer = NULL;
 }
 
-static proven_err_t scanner_fill(proven_sysio_scanner_t *scanner) {
+static proven_err_t scanner_fill(proven_sysio_scanner_t *scanner, proven_size_t *read_bytes_out) {
+    if (read_bytes_out) *read_bytes_out = 0;
     if (!scanner || scanner->eof) return PROVEN_ERR_EOF;
 
     // Move remaining data to start.
     if (scanner->cursor > 0 && scanner->cursor < scanner->length) {
         proven_size_t remaining = scanner->length - scanner->cursor;
-        for (proven_size_t i = 0; i < remaining; i++) {
-            scanner->buffer[i] = scanner->buffer[scanner->cursor + i];
-        }
+        proven_sys_mem_move(scanner->buffer, scanner->buffer + scanner->cursor, remaining);
         scanner->length = remaining;
     } else if (scanner->cursor >= scanner->length) {
         scanner->length = 0;
     }
     scanner->cursor = 0;
 
-    if (scanner->length >= scanner->capacity) return PROVEN_OK; // full
+    if (scanner->length >= scanner->capacity) return PROVEN_ERR_OUT_OF_BOUNDS;
 
 #if defined(_WIN32) || defined(_WIN64)
     proven_sys_io_handle_t handle = { .handle = scanner->file.internal.ptr };
@@ -102,15 +102,22 @@ static proven_err_t scanner_fill(proven_sysio_scanner_t *scanner) {
 
     proven_size_t request_size = scanner->capacity - scanner->length;
     proven_sys_result_size_t read_res = proven_sys_io_read_once(handle, (char*)(scanner->buffer + scanner->length), request_size);
-    if (read_res.err == PROVEN_ERR_EOF || (read_res.err == PROVEN_OK && read_res.value < request_size)) {
-        scanner->eof = true;
+    if (!proven_is_ok(read_res.err)) {
         if (read_res.err == PROVEN_ERR_EOF || read_res.value == 0) {
+            scanner->eof = true;
+            return PROVEN_ERR_EOF;
+        }
+        return read_res.err;
+    }
+
+    scanner->length += read_res.value;
+    if (read_bytes_out) *read_bytes_out = read_res.value;
+    if (read_res.value < request_size) {
+        scanner->eof = true;
+        if (read_res.value == 0) {
             return PROVEN_ERR_EOF;
         }
     }
-    if (!proven_is_ok(read_res.err)) return read_res.err;
-
-    scanner->length += read_res.value;
     return PROVEN_OK;
 }
 
@@ -272,28 +279,15 @@ static proven_err_t scanner_rewind_file(proven_sysio_scanner_t *scanner, proven_
 proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, const char *fmt, const proven_scan_arg_t *args, size_t args_count) {
     if (!scanner || !scanner->buffer || !fmt) return PROVEN_ERR_INVALID_ARG;
     if (args_count > 0 && !args) return PROVEN_ERR_INVALID_ARG;
+    if (args_count == 0) return PROVEN_ERR_INVALID_ARG;
 
     proven_size_t start_cursor = scanner->cursor;
     proven_size_t start_length = scanner->length;
     bool start_eof = scanner->eof;
-    proven_size_t filled_bytes = 0;
-    bool filled_this_call = false;
+    proven_size_t bytes_read_total = 0;
 
-    if (scanner->cursor >= scanner->length && !scanner->eof) {
-        proven_err_t fill_err = scanner_fill(scanner);
-        if (!proven_is_ok(fill_err)) {
-            return fill_err;
-        }
-        filled_this_call = true;
-        filled_bytes = scanner->length;
-    }
-
-    if (scanner->length == 0 && scanner->eof) {
+    if (scanner->cursor >= scanner->length && scanner->eof) {
         return PROVEN_ERR_EOF;
-    }
-
-    if (args_count == 0) {
-        return PROVEN_ERR_INVALID_ARG;
     }
 
     proven_allocator_t alloc = scanner->alloc;
@@ -303,23 +297,11 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
 
     proven_result_mem_mut_t stage_mem = alloc.alloc_fn(alloc.ctx, args_count * sizeof(proven_sysio_scan_stage_t), alignof(proven_sysio_scan_stage_t));
     if (!proven_is_ok(stage_mem.err) || !stage_mem.value.ptr) {
-        if (filled_this_call && filled_bytes > 0) {
-            (void)scanner_rewind_file(scanner, filled_bytes);
-            scanner->cursor = start_cursor;
-            scanner->length = start_length;
-            scanner->eof = start_eof;
-        }
         return stage_mem.err;
     }
 
     proven_result_mem_mut_t scratch_mem = alloc.alloc_fn(alloc.ctx, args_count * sizeof(proven_scan_arg_t), alignof(proven_scan_arg_t));
     if (!proven_is_ok(scratch_mem.err) || !scratch_mem.value.ptr) {
-        if (filled_this_call && filled_bytes > 0) {
-            (void)scanner_rewind_file(scanner, filled_bytes);
-            scanner->cursor = start_cursor;
-            scanner->length = start_length;
-            scanner->eof = start_eof;
-        }
         alloc.free_fn(alloc.ctx, stage_mem.value.ptr);
         return scratch_mem.err;
     }
@@ -331,34 +313,69 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
         scratch_args[i] = stages[i].scratch;
     }
 
-    proven_u8str_view_t view = { .ptr = (const proven_byte_t*)scanner->buffer + scanner->cursor, .size = scanner->length - scanner->cursor };
-    proven_scan_t scan = proven_scan_init(view);
-    proven_err_t err = proven_scan_fmt_internal(&scan, fmt, scratch_args, args_count);
+    proven_err_t err = PROVEN_OK;
+    for (;;) {
+        if (scanner->cursor >= scanner->length && !scanner->eof) {
+            proven_size_t read_bytes = 0;
+            proven_err_t fill_err = scanner_fill(scanner, &read_bytes);
+            if (!proven_is_ok(fill_err)) {
+                err = fill_err;
+                break;
+            }
+            bytes_read_total += read_bytes;
+        }
 
-    if (proven_is_ok(err) && !scanner->eof && scan.cursor == scan.view.size) {
-        err = PROVEN_ERR_OUT_OF_BOUNDS;
+        if (scanner->length == 0 && scanner->eof) {
+            err = PROVEN_ERR_EOF;
+            break;
+        }
+
+        proven_u8str_view_t view = { .ptr = (const proven_byte_t*)scanner->buffer + scanner->cursor, .size = scanner->length - scanner->cursor };
+        proven_scan_t scan = proven_scan_init(view);
+        err = proven_scan_fmt_internal(&scan, fmt, scratch_args, args_count);
+
+        if (proven_is_ok(err) && !scanner->eof && scan.cursor == scan.view.size) {
+            err = PROVEN_ERR_NEED_MORE;
+        }
+
+        if (err == PROVEN_ERR_NEED_MORE) {
+            proven_size_t read_bytes = 0;
+            proven_err_t fill_err = scanner_fill(scanner, &read_bytes);
+            if (proven_is_ok(fill_err)) {
+                bytes_read_total += read_bytes;
+                continue;
+            }
+            if (fill_err == PROVEN_ERR_EOF && scanner->length > 0) {
+                continue;
+            }
+            err = fill_err;
+            break;
+        }
+
+        if (!proven_is_ok(err)) {
+            break;
+        }
+
+        for (size_t i = 0; i < args_count; i++) {
+            scanner_stage_commit(&stages[i]);
+        }
+        scanner->cursor += scan.cursor;
+        err = PROVEN_OK;
+        break;
     }
 
     if (!proven_is_ok(err)) {
-        if (filled_this_call && filled_bytes > 0) {
-            (void)scanner_rewind_file(scanner, filled_bytes);
-            scanner->cursor = start_cursor;
-            scanner->length = start_length;
-            scanner->eof = start_eof;
+        if (bytes_read_total > 0) {
+            (void)scanner_rewind_file(scanner, bytes_read_total);
         }
-        alloc.free_fn(alloc.ctx, scratch_args);
-        alloc.free_fn(alloc.ctx, stages);
-        return err;
+        scanner->cursor = start_cursor;
+        scanner->length = start_length;
+        scanner->eof = start_eof;
     }
-
-    for (size_t i = 0; i < args_count; i++) {
-        scanner_stage_commit(&stages[i]);
-    }
-    scanner->cursor = start_cursor + scan.cursor;
 
     alloc.free_fn(alloc.ctx, scratch_args);
     alloc.free_fn(alloc.ctx, stages);
-    return PROVEN_OK;
+    return err;
 }
 
 proven_err_t proven_sysio_print_impl(proven_file_t file, const char *fmt, const proven_arg_t *args, size_t args_count) {

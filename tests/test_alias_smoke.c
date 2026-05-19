@@ -35,6 +35,7 @@ int main(void) {
     (void)xcv_arg_fn;
 
     /* Test macro alias compilation */
+    int e0 = XCV_ERR_NEED_MORE;
     int t0  = XCV_SCAN_ARG_TYPE_NONE;
     int t1  = XCV_SCAN_ARG_TYPE_I32;
     int t2  = XCV_SCAN_ARG_TYPE_U32;
@@ -51,6 +52,7 @@ int main(void) {
     int t13 = XCV_SCAN_ARG_TYPE_F64;
     int t14 = XCV_SCAN_ARG_TYPE_STR_VIEW;
 
+    (void)e0;
     (void)t0;  (void)t1;  (void)t2;  (void)t3;  (void)t4;
     (void)t5;  (void)t6;  (void)t7;  (void)t8;  (void)t9;
     (void)t10; (void)t11; (void)t12; (void)t13; (void)t14;

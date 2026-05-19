@@ -1,6 +1,7 @@
 #include "proven/pool.h"
 #include "proven/align.h"
 #include "proven/panic.h"
+#include "../../platform/proven_sys_mem.h"
 
 proven_err_t proven_pool_init(proven_pool_t *pool, proven_allocator_t base_alloc, proven_size_t item_size, proven_size_t item_align, proven_size_t bin_cap) {
     if (!pool || !proven_alloc_is_valid(base_alloc) || item_size == 0 || !proven_is_pow2(item_align)) {
@@ -75,7 +76,7 @@ static void proven_pool_free_trait(void *ctx, void *ptr) {
 
     proven_pool_t *pool = (proven_pool_t *)ctx;
 
-#ifndef NDEBUG
+#if PROVEN_HARDENED || !defined(NDEBUG)
     if (((uintptr_t)ptr) % pool->item_align != 0) {
         proven_panic_handler("proven_pool_free: mismatched item alignment");
         return;
@@ -90,6 +91,9 @@ static void proven_pool_free_trait(void *ctx, void *ptr) {
 #endif
 
     if (pool->bin_len < pool->bin_cap) {
+#if PROVEN_HARDENED || !defined(NDEBUG)
+        proven_sys_mem_set(ptr, 0xDD, pool->item_size);
+#endif
         pool->bin[pool->bin_len] = ptr;
         pool->bin_len++;
     } else {

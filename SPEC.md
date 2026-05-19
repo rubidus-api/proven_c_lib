@@ -1,4 +1,4 @@
-     1|# proven C Library Specification (v26.05.19g)
+     1|# proven C Library Specification (v26.05.19h)
      2|
      3|## 1. Scope
      4|
@@ -215,12 +215,18 @@
    215|- MSVC when required C23 features and checked arithmetic support are available.
    216|- Freestanding C environments for the reduced subset, including ARM Cortex-M and RISC-V ELF compile-only checks when toolchains are installed.
    217|
-   218|## 17. Non-goals
-   219|
-   220|- No C++ API layer.
-   221|- No mandatory dependency on CMake, Make, Meson, or npm.
-   222|- No hidden garbage collection.
-   223|- No implicit process-wide allocator.
-   224|- No promise that internal public-struct fields may be mutated arbitrarily by callers.
-   225|- No Wine-based validation requirement for Windows behavior.
+## 17. Non-goals
+
+- No C++ API layer.
+- No mandatory dependency on CMake, Make, Meson, or npm.
+- No hidden garbage collection.
+- No implicit process-wide allocator.
+- No promise that internal public-struct fields may be mutated arbitrarily by callers.
+- No Wine-based validation requirement for Windows behavior.
+
+## 18. Status
+
+The primary verified runtime target is Linux x86_64 with GCC or Clang in C23 mode. Cross compilation is compile-time coverage only and does not replace runtime validation on each target.
+
+The library is not a formal strict-provenance system. Borrowed views require caller-managed lifetime, and public structs should not be manually corrupted; defensive validation helpers exist for callers that need them.
    226|
