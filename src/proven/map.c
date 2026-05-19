@@ -276,7 +276,7 @@ static proven_err_t map_rehash(proven_map_t *map) {
 }
 
 proven_err_t proven_map_reserve(proven_map_t *map, proven_size_t new_cap) {
-    if (!map) return PROVEN_ERR_INVALID_ARG;
+    if (!proven_map_is_valid(map)) return PROVEN_ERR_INVALID_ARG;
     if (new_cap <= map->cap) return PROVEN_OK;
     return map_rehash_target(map, new_cap);
 }
@@ -335,7 +335,7 @@ static bool map_key_is_valid(proven_key_type_t type, proven_map_key_t key) {
 }
 
 proven_err_t proven_map_set_with_scratch(proven_map_t *map, proven_map_key_t key, const void *element, proven_allocator_t scratch) {
-    if (!map || !element || map->cap == 0) return PROVEN_ERR_INVALID_ARG;
+    if (!proven_map_is_valid(map) || !element || map->cap == 0) return PROVEN_ERR_INVALID_ARG;
     if (!map_key_is_valid(map->key_type, key)) return PROVEN_ERR_INVALID_ARG;
     
     if (!scratch.alloc_fn || !scratch.free_fn) {
@@ -401,7 +401,7 @@ proven_err_t proven_map_set_with_scratch(proven_map_t *map, proven_map_key_t key
 }
 
 proven_err_t proven_map_set(proven_map_t *map, proven_map_key_t key, const void *element) {
-    if (!map) return PROVEN_ERR_INVALID_ARG;
+    if (!proven_map_is_valid(map)) return PROVEN_ERR_INVALID_ARG;
     return proven_map_set_with_scratch(map, key, element, map->alloc);
 }
 
@@ -461,15 +461,17 @@ static const void* map_find_payload_const(const proven_map_t *map, proven_map_ke
 }
 
 void* proven_map_get_mut(proven_map_t *map, proven_map_key_t key) {
+    if (!proven_map_is_valid(map)) return (void*)0;
     return map_find_payload_mut(map, key);
 }
 
 const void* proven_map_get(const proven_map_t *map, proven_map_key_t key) {
+    if (!proven_map_is_valid(map)) return (const void*)0;
     return map_find_payload_const(map, key);
 }
 
 proven_err_t proven_map_remove(proven_map_t *map, proven_map_key_t key) {
-    if (!map) return PROVEN_ERR_INVALID_ARG;
+    if (!proven_map_is_valid(map)) return PROVEN_ERR_INVALID_ARG;
     if (map->cap == 0) return PROVEN_ERR_NOT_FOUND;
     if (!map_key_is_valid(map->key_type, key)) return PROVEN_ERR_INVALID_ARG;
     
@@ -496,7 +498,7 @@ proven_err_t proven_map_remove(proven_map_t *map, proven_map_key_t key) {
 
 void proven_map_destroy(proven_map_t *map) {
     if (!map) return;
-    if (map->internal.ptr) {
+    if (map->internal.ptr && proven_alloc_is_valid(map->alloc) && map->alloc.free_fn) {
         map->alloc.free_fn(map->alloc.ctx, map->internal.ptr);
     }
     *map = (proven_map_t){0};

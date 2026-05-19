@@ -45,6 +45,11 @@ proven_result_file_t proven_fs_open(proven_allocator_t scratch, proven_u8str_vie
     char *path_buf = path_res.value;
 
     int pal_flags = (int)mode;
+    if ((pal_flags & PROVEN_FS_APPEND) && (pal_flags & PROVEN_FS_TRUNC)) {
+        internal_cstr_free(scratch, path_buf);
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
     // If no access bits are set, default to READ
     if (!(pal_flags & (PROVEN_FS_READ | PROVEN_FS_WRITE | PROVEN_FS_APPEND))) {
         pal_flags |= PROVEN_FS_READ;
