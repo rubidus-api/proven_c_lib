@@ -12,6 +12,13 @@ This file serves as the definitive record of all modifications, enhancements, an
 
 ## Status: v26.05.19i (Latest)
 
+### Float helper primitives
+*   **Raw Bit Helpers**: Added `proven_float_bits_f32()` and `proven_float_bits_f64()` in `src/proven/float_decimal.c` so later float work can inspect IEEE-754 object representations without aliasing casts.
+*   **Wide Multiply Helper**: Added `proven_float_mul_u64_u64_to_u128()` and a small internal 128-bit parts struct for later parser/formatter algorithms.
+*   **Regression Coverage**: Added `tests/test_float_bits.c` and `tests/test_u128_mul.c`, then wired them into `nob.c` and `TEST.md`.
+*   **Behavior**: No public float scan/format behavior changed in this stage.
+*   **Alias Layer**: No alias changes.
+
 ### Float contract documentation
 *   **Underflow Policy**: Clarified in `include/proven/scan.h` and `manual/manual-08-fmt-scan.md` that values below the smallest subnormal round to signed zero with the input sign preserved, while out-of-exact-range conversions stay target-deterministic and approximate.
 *   **Long-term Work**: Kept the Eisel-Lemire / Ryu-class float conversion upgrade and the verification-infrastructure review in `TODO.md` for later work.
