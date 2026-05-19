@@ -67,7 +67,38 @@ static int keys_equal(proven_key_type_t type, proven_map_key_t a, proven_map_key
     }
 }
 
-static proven_err_t map_insert_no_grow(proven_map_t *map, proven_map_key_t key, const void *element);
+static void map_release_owned_key(proven_map_t *map, proven_map_bucket_header_t *hdr) {
+    if (!map || !hdr || map->key_type != PROVEN_KEY_TYPE_U8_OWNED) {
+        return;
+    }
+    if (hdr->state == BUCKET_OCCUPIED && hdr->key.str.ptr && map->alloc.free_fn) {
+        map->alloc.free_fn(map->alloc.ctx, (void *)hdr->key.str.ptr);
+    }
+    hdr->key.str.ptr = NULL;
+    hdr->key.str.size = 0;
+}
+
+static proven_err_t map_store_key(proven_map_t *map, proven_map_bucket_header_t *hdr, proven_map_key_t key, bool duplicate_owned) {
+    hdr->key = key;
+    if (map->key_type != PROVEN_KEY_TYPE_U8_OWNED || !duplicate_owned) {
+        return PROVEN_OK;
+    }
+    if (key.str.size == 0) {
+        hdr->key.str.ptr = NULL;
+        return PROVEN_OK;
+    }
+    proven_result_mem_mut_t key_alloc = map->alloc.alloc_fn(map->alloc.ctx, key.str.size, 1);
+    if (!PROVEN_IS_OK(key_alloc.err)) {
+        hdr->key.str.ptr = NULL;
+        hdr->key.str.size = 0;
+        return key_alloc.err;
+    }
+    proven_sys_mem_copy(key_alloc.value.ptr, key.str.ptr, key.str.size);
+    hdr->key.str.ptr = key_alloc.value.ptr;
+    return PROVEN_OK;
+}
+
+static proven_err_t map_insert_no_grow(proven_map_t *map, proven_map_key_t key, const void *element, bool duplicate_owned);
 static void* map_find_payload_mut(proven_map_t *map, proven_map_key_t key);
 static const void* map_find_payload_const(const proven_map_t *map, proven_map_key_t key);
 
@@ -123,7 +154,8 @@ static proven_result_mem_mut_t alloc_buckets(proven_allocator_t alloc, proven_si
 
 static bool map_key_type_is_valid(proven_key_type_t key_type) {
     return key_type == PROVEN_KEY_TYPE_INT ||
-           key_type == PROVEN_KEY_TYPE_U8_BORROWED;
+           key_type == PROVEN_KEY_TYPE_U8_BORROWED ||
+           key_type == PROVEN_KEY_TYPE_U8_OWNED;
 }
 
 proven_result_map_t proven_map_create(proven_allocator_t alloc, proven_size_t init_cap, proven_key_type_t key_type, proven_size_t elem_size, proven_size_t align) {
@@ -214,7 +246,7 @@ bool proven_map_is_valid(const proven_map_t *map) {
     return true;
 }
 
-static proven_err_t map_insert_no_grow(proven_map_t *map, proven_map_key_t key, const void *element);
+static proven_err_t map_insert_no_grow(proven_map_t *map, proven_map_key_t key, const void *element, bool duplicate_owned);
 
 static proven_err_t map_rehash_target(proven_map_t *map, proven_size_t target_cap) {
     proven_size_t new_cap = target_cap;
@@ -250,7 +282,7 @@ static proven_err_t map_rehash_target(proven_map_t *map, proven_size_t target_ca
         proven_map_bucket_header_t *old_hdr = (proven_map_bucket_header_t *)(old_ptr + offset);
         if (old_hdr->state == BUCKET_OCCUPIED) {
             void *old_payload = (void *)((proven_byte_t *)old_hdr + map->payload_offset);
-            proven_err_t err = map_insert_no_grow(&new_map, old_hdr->key, old_payload);
+            proven_err_t err = map_insert_no_grow(&new_map, old_hdr->key, old_payload, false);
             if (!PROVEN_IS_OK(err)) {
                 map->alloc.free_fn(map->alloc.ctx, new_block_res.value.ptr);
                 return err;
@@ -283,7 +315,7 @@ proven_err_t proven_map_reserve(proven_map_t *map, proven_size_t new_cap) {
 
 static bool map_key_is_valid(const proven_map_t *map, proven_key_type_t type, proven_map_key_t key);
 
-static proven_err_t map_insert_no_grow(proven_map_t *map, proven_map_key_t key, const void *element) {
+static proven_err_t map_insert_no_grow(proven_map_t *map, proven_map_key_t key, const void *element, bool duplicate_owned) {
     if (!map || !element) return PROVEN_ERR_INVALID_ARG;
     if (!map_key_is_valid(map, map->key_type, key)) return PROVEN_ERR_INVALID_ARG;
     proven_size_t hash = get_hash(map->key_type, key);
@@ -299,7 +331,11 @@ static proven_err_t map_insert_no_grow(proven_map_t *map, proven_map_key_t key, 
         if (hdr->state == BUCKET_EMPTY) {
             proven_map_bucket_header_t *target = first_tombstone ? first_tombstone : hdr;
             target->state = BUCKET_OCCUPIED;
-            target->key = key;
+            proven_err_t key_err = map_store_key(map, target, key, duplicate_owned);
+            if (!PROVEN_IS_OK(key_err)) {
+                target->state = first_tombstone ? BUCKET_TOMBSTONE : BUCKET_EMPTY;
+                return key_err;
+            }
             proven_byte_t *dst = (proven_byte_t *)target + map->payload_offset;
             proven_sys_mem_move(dst, element, map->elem_size);
             map->len++;
@@ -319,7 +355,11 @@ static proven_err_t map_insert_no_grow(proven_map_t *map, proven_map_key_t key, 
     
     if (first_tombstone) {
         first_tombstone->state = BUCKET_OCCUPIED;
-        first_tombstone->key = key;
+        proven_err_t key_err = map_store_key(map, first_tombstone, key, duplicate_owned);
+        if (!PROVEN_IS_OK(key_err)) {
+            first_tombstone->state = BUCKET_TOMBSTONE;
+            return key_err;
+        }
         proven_byte_t *dst = (proven_byte_t *)first_tombstone + map->payload_offset;
         proven_sys_mem_move(dst, element, map->elem_size);
         map->len++;
@@ -331,7 +371,7 @@ static proven_err_t map_insert_no_grow(proven_map_t *map, proven_map_key_t key, 
 
 static bool map_key_is_valid(const proven_map_t *map, proven_key_type_t type, proven_map_key_t key) {
     if (type == PROVEN_KEY_TYPE_INT) return true;
-    if (type == PROVEN_KEY_TYPE_U8_BORROWED) {
+    if (type == PROVEN_KEY_TYPE_U8_BORROWED || type == PROVEN_KEY_TYPE_U8_OWNED) {
         if (key.str.size != 0 && key.str.ptr == NULL) {
             return false;
         }
@@ -405,17 +445,24 @@ proven_err_t proven_map_set_with_scratch(proven_map_t *map, proven_map_key_t key
         }
         
         // After rehash, we must insert using the temp buffer if it was aliased
-        proven_err_t res = map_insert_no_grow(map, key, insert_elem);
+        proven_err_t res = map_insert_no_grow(map, key, insert_elem, map->key_type == PROVEN_KEY_TYPE_U8_OWNED);
         if (heap_temp) scratch.free_fn(scratch.ctx, heap_temp);
         return res;
     }
 
-    return map_insert_no_grow(map, key, insert_elem);
+    return map_insert_no_grow(map, key, insert_elem, map->key_type == PROVEN_KEY_TYPE_U8_OWNED);
 }
 
 proven_err_t proven_map_set(proven_map_t *map, proven_map_key_t key, const void *element) {
     if (!proven_map_is_valid(map)) return PROVEN_ERR_INVALID_ARG;
     return proven_map_set_with_scratch(map, key, element, map->alloc);
+}
+
+proven_err_t proven_map_set_u8_owned(proven_map_t *map, proven_u8str_view_t key, const void *element) {
+    if (!proven_map_is_valid(map) || map->key_type != PROVEN_KEY_TYPE_U8_OWNED) {
+        return PROVEN_ERR_INVALID_ARG;
+    }
+    return proven_map_set(map, (proven_map_key_t){ .str = key }, element);
 }
 
 /*
@@ -499,6 +546,7 @@ proven_err_t proven_map_remove(proven_map_t *map, proven_map_key_t key) {
         if (hdr->state == BUCKET_EMPTY) {
             return PROVEN_ERR_NOT_FOUND;
         } else if (hdr->state == BUCKET_OCCUPIED && keys_equal(map->key_type, hdr->key, key)) {
+            map_release_owned_key(map, hdr);
             hdr->state = BUCKET_TOMBSTONE; // Drop Tombstone correctly maintaining ongoing open chaining algorithms mathematically!
             map->len--;
             return PROVEN_OK;
@@ -512,6 +560,18 @@ proven_err_t proven_map_remove(proven_map_t *map, proven_map_key_t key) {
 void proven_map_destroy(proven_map_t *map) {
     if (!map) return;
     if (map->internal.ptr && proven_alloc_is_valid(map->alloc) && map->alloc.free_fn) {
+        if (map->key_type == PROVEN_KEY_TYPE_U8_OWNED) {
+            for (proven_size_t i = 0; i < map->cap; ++i) {
+                proven_size_t offset;
+                if (PROVEN_CKD_MUL(&offset, i, map->bucket_stride)) {
+                    break;
+                }
+                proven_map_bucket_header_t *hdr = (proven_map_bucket_header_t *)(map->internal.ptr + offset);
+                if (hdr->state == BUCKET_OCCUPIED) {
+                    map_release_owned_key(map, hdr);
+                }
+            }
+        }
         map->alloc.free_fn(map->alloc.ctx, map->internal.ptr);
     }
     *map = (proven_map_t){0};

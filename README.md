@@ -1,11 +1,11 @@
 # Proven C library
 
-`proven` is a small C23 systems library for code that should stay readable over time. It gives you the everyday pieces C projects usually end up rewriting: explicit allocators, owned and borrowed strings, dynamic arrays, maps, formatting and scanning, filesystem helpers, memory mapping, time, stackless coroutines, and a bounded job system.
+`proven` is a small C23 systems library for code that should stay readable over time. It gives you the everyday pieces C projects usually end up rewriting: explicit allocators, owned and borrowed strings, dynamic arrays, maps with borrowed or owned string keys, formatting and scanning, filesystem helpers, memory mapping, time, stackless coroutines, and a bounded job system.
 
 The point is not to hide C behind a framework. The point is to make practical C less repetitive while still keeping ownership, errors, allocator choice, and platform boundaries visible.
 
 The build driver probes `-std=c23` first and falls back to `-std=c2x` when the compiler still uses the transitional spelling, so older GCC and Clang front ends can still build the tree without changing the library's C23 baseline.
-- Version: proven_c_lib-v26.05.19h
+- Version: proven_c_lib-v26.05.19i
 - Standard: C23
 - License: MIT
 - Repository: https://github.com/rubidus-api/proven_c_lib

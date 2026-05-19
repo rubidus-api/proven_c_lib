@@ -17,7 +17,8 @@
 
 typedef enum {
     PROVEN_KEY_TYPE_INT,
-    PROVEN_KEY_TYPE_U8_BORROWED  // Borrowed view; caller keeps the bytes alive for the map lifetime
+    PROVEN_KEY_TYPE_U8_BORROWED, // Borrowed view; caller keeps the bytes alive for the map lifetime
+    PROVEN_KEY_TYPE_U8_OWNED     // Copied bytes; the map owns and frees the key storage
 } proven_key_type_t;
 
 typedef union {
@@ -78,6 +79,14 @@ typedef struct {
 
 [[nodiscard]] proven_err_t proven_map_set(proven_map_t *map, proven_map_key_t key, const void *element);
 
+/**
+ * @brief Inserts or replaces a value in an owned U8-string-key map.
+ *
+ * The map duplicates the key bytes into map-owned storage on insert.
+ * The caller may release or reuse the source buffer after the call returns.
+ */
+[[nodiscard]] proven_err_t proven_map_set_u8_owned(proven_map_t *map, proven_u8str_view_t key, const void *element);
+
 [[nodiscard]] void* proven_map_get_mut(proven_map_t *map, proven_map_key_t key);
 [[nodiscard]] const void* proven_map_get(const proven_map_t *map, proven_map_key_t key);
 
@@ -95,6 +104,9 @@ void proven_map_destroy(proven_map_t *map);
 #define PROVEN_MAP_INIT_U8_BORROWED(alloc, type, init_cap) \
     proven_map_create((alloc), (init_cap), PROVEN_KEY_TYPE_U8_BORROWED, sizeof(type), alignof(type))
 
+#define PROVEN_MAP_INIT_U8_OWNED(alloc, type, init_cap) \
+    proven_map_create((alloc), (init_cap), PROVEN_KEY_TYPE_U8_OWNED, sizeof(type), alignof(type))
+
 #define PROVEN_MAP_SET_INT(map_ptr, int_key, type, value) \
     proven_map_set((map_ptr), (proven_map_key_t){ .id = (proven_size_t)(int_key) }, (type[]){(value)})
 
@@ -108,6 +120,9 @@ void proven_map_destroy(proven_map_t *map);
 
 #define PROVEN_MAP_SET_U8_BORROWED(map_ptr, u8_view, type, value) \
     proven_map_set((map_ptr), (proven_map_key_t){ .str = (u8_view) }, (type[]){(value)})
+
+#define PROVEN_MAP_SET_U8_OWNED(map_ptr, u8_view, type, value) \
+    proven_map_set_u8_owned((map_ptr), (u8_view), (type[]){(value)})
 
 #define PROVEN_MAP_SET_WITH_SCRATCH_U8_BORROWED(map_ptr, u8_view, type, value, scratch) \
     proven_map_set_with_scratch( \
@@ -123,16 +138,25 @@ void proven_map_destroy(proven_map_t *map);
 #define PROVEN_MAP_GET_U8_BORROWED(map_ptr, type, u8_view) \
     ((const type*)proven_map_get((map_ptr), (proven_map_key_t){ .str = (u8_view) }))
 
+#define PROVEN_MAP_GET_U8_OWNED(map_ptr, type, u8_view) \
+    ((const type*)proven_map_get((map_ptr), (proven_map_key_t){ .str = (u8_view) }))
+
 #define PROVEN_MAP_GET_MUT_INT(map_ptr, type, int_key) \
     ((type*)proven_map_get_mut((map_ptr), (proven_map_key_t){ .id = (proven_size_t)(int_key) }))
 
 #define PROVEN_MAP_GET_MUT_U8_BORROWED(map_ptr, type, u8_view) \
     ((type*)proven_map_get_mut((map_ptr), (proven_map_key_t){ .str = (u8_view) }))
 
+#define PROVEN_MAP_GET_MUT_U8_OWNED(map_ptr, type, u8_view) \
+    ((type*)proven_map_get_mut((map_ptr), (proven_map_key_t){ .str = (u8_view) }))
+
 #define PROVEN_MAP_REMOVE_INT(map_ptr, int_key) \
     proven_map_remove((map_ptr), (proven_map_key_t){ .id = (proven_size_t)(int_key) })
 
 #define PROVEN_MAP_REMOVE_U8_BORROWED(map_ptr, u8_view) \
+    proven_map_remove((map_ptr), (proven_map_key_t){ .str = (u8_view) })
+
+#define PROVEN_MAP_REMOVE_U8_OWNED(map_ptr, u8_view) \
     proven_map_remove((map_ptr), (proven_map_key_t){ .str = (u8_view) })
 
 #define PROVEN_MAP_DESTROY(map_ptr) \

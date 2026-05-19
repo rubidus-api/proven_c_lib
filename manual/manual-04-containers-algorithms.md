@@ -194,7 +194,7 @@ PROVEN_RING_DESTROY(&q);
 
 ## 4. Hash map
 
-`proven_map_t` is an open-addressing hash map with tombstones. It supports integer keys and borrowed U8 string keys. It stores its allocator internally.
+`proven_map_t` is an open-addressing hash map with tombstones. It supports integer keys and borrowed or owned U8 string keys. It stores its allocator internally.
 
 ### Structures
 
@@ -235,6 +235,7 @@ Field notes:
 - `cap`: bucket capacity, maintained as a power of two.
 - `key_type`: key mode selected at creation.
 - `PROVEN_KEY_TYPE_U8_BORROWED` does not copy key bytes.
+- `PROVEN_KEY_TYPE_U8_OWNED` duplicates key bytes into map-owned storage and frees them on remove or destroy.
 
 ### Functions
 
@@ -402,7 +403,7 @@ Correct options:
 
 - Use string literals or other stable storage for borrowed keys.
 - Store owned key objects elsewhere and destroy them after removing map entries.
-- Add a higher-level owned-key map wrapper if the application needs key ownership.
+- Use `PROVEN_KEY_TYPE_U8_OWNED` and `proven_map_set_u8_owned()` when the map should own key storage.
 
 ### Use scratch when inserting a value borrowed from the same map
 
