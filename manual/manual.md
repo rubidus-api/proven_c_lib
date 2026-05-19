@@ -1,12 +1,12 @@
-     1|# Proven C Library Complete Manual (v26.05.19i)
-     2|
-     3|This manual is rebuilt from three sources:
-     4|
-     5|1. The current public headers in `include/proven/`.
-     6|2. The current implementation and tests in `src/proven/`, `platform/`, and `tests/`.
-     7|3. The older developer manual kept as `PROVEN_MANUAL_old-20260511.md` in the shared workspace.
-     8|
-     9|The goal is to keep the architectural explanation from the older manual while adding practical examples, return-value rules, ownership rules, and common misuse cases from the current source tree.
+# Proven C Library Complete Manual (v26.05.19i)
+
+This manual is rebuilt from three sources:
+
+1. The current public headers in `include/proven/`.
+2. The current implementation and tests in `src/proven/`, `platform/`, and `tests/`.
+3. The older developer manual kept as `PROVEN_MANUAL_old-20260511.md` in the shared workspace.
+
+The goal is to keep the architectural explanation from the older manual while adding practical examples, return-value rules, ownership rules, and common misuse cases from the current source tree.
     10|
     11|## Table of contents
     12|
