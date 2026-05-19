@@ -1,4 +1,4 @@
-     1|# proven C Library Specification (v26.05.19h)
+     1|# proven C Library Specification (v26.05.19i)
      2|
      3|## 1. Scope
      4|
@@ -51,7 +51,7 @@
     51|- `array.h`: generic growable array macros and functions.
     52|- `list.h`: intrusive doubly-linked list.
     53|- `ring.h`: bounded ring buffer; not thread-safe by itself.
-    54|- `map.h`: open-addressing hash map.
+    54|- `map.h`: open-addressing hash map with borrowed or owned U8 string keys.
     55|- `algorithm.h`: sorting and search helpers.
     56|- `fs.h`: filesystem API.
     57|- `time.h`: time API.
@@ -132,7 +132,7 @@
    132|- Arrays are generic growable vectors with allocator-backed storage.
    133|- Lists are intrusive and do not allocate nodes.
    134|- Rings are bounded circular buffers.
-   135|- Maps use open addressing and tombstones.
+   135|- Maps use open addressing and tombstones. Integer keys and borrowed or owned U8 string keys are supported; borrowed keys must outlive the map, while the owned-key helper duplicates key bytes when caller-managed lifetime is inconvenient.
    136|- Algorithms operate on explicit views and element sizes.
    137|- Public structs expose layout for C usability, but callers must preserve documented invariants.
    138|

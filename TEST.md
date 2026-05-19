@@ -1,4 +1,4 @@
-     1|# proven Test Matrix (v26.05.19h)
+     1|# proven Test Matrix (v26.05.19i)
      2|
      3|This document describes how the `proven` test suite is organized, what each test is intended to validate, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
      4|
@@ -7,9 +7,10 @@
      7|- [Running tests](#running-tests)
      8|- [Log format](#log-format)
      9|- [Test modes](#test-modes)
-    10|- [Hosted test executables](#hosted-test-executables)
-    11|- [Regression subset](#regression-subset)
-    12|- [Freestanding tests](#freestanding-tests)
+- [Hosted test executables](#hosted-test-executables)
+- [Map owned-key storage](#map-owned-key-storage)
+- [Regression subset](#regression-subset)
+
     13|- [Cross compile-only matrix](#cross-compile-only-matrix)
     14|- [Failure triage workflow](#failure-triage-workflow)
     15|- [Change policy](#change-policy)
@@ -435,22 +436,36 @@ Failure tip: inspect `src/proven/pool.c`. The repeated-free check must remain ga
    413|
    414|Failure tip: inspect `src/proven/ring.c`. The first suspects are head/tail modulo math, `len` updates, and full-vs-empty boundary handling.
    415|
-   416|### 13. `tests/test_phase11_map` - hash map
-   417|
-   418|Intent: verify open-addressing map behavior for integer and U8 string keys, including tombstones, growth, and scratch allocation.
-   419|
-   420|Sub-checks:
-   421|
-   422|- Creates an integer-key map and confirms capacity normalization.
-   423|- Inserts, retrieves, updates, and deletes entries.
-   424|- Confirms deletion reduces live length and leaves tombstones usable.
-   425|- Creates a U8 string-key map and inserts enough entries to force growth.
-   426|- Verifies all expected string keys remain reachable after rehash.
-   427|- Tracks scratch allocation during safe rehash paths.
-   428|
-   429|Failure tip: inspect `src/proven/map.c`. Check hash/equality callbacks, tombstone reuse, threshold calculation, and whether borrowed keys or value pointers are being used after rehash.
+### 13. `tests/test_phase11_map` - hash map
 
-### 13a. `tests/test_map_hardening` - map borrowed-key hardening
+Intent: verify open-addressing map behavior for integer and U8 string keys, including tombstones, growth, and scratch allocation.
+
+Sub-checks:
+
+- Creates an integer-key map and confirms capacity normalization.
+- Inserts, retrieves, updates, and deletes entries.
+- Confirms deletion reduces live length and leaves tombstones usable.
+- Creates a U8 string-key map and inserts enough entries to force growth.
+- Verifies all expected string keys remain reachable after rehash.
+- Tracks scratch allocation during safe rehash paths.
+
+Failure tip: inspect `src/proven/map.c`. Check hash/equality callbacks, tombstone reuse, threshold calculation, and whether borrowed keys or value pointers are being used after rehash.
+
+### 13a. `tests/test_map_owned_key` - map owned-key storage
+
+Intent: verify owned U8 keys are duplicated into map storage, survive source-buffer mutation, and free their copied bytes on remove and destroy.
+
+Sub-checks:
+
+- Creates a U8 owned-key map.
+- Inserts a key from mutable source storage and confirms the lookup survives source-buffer mutation.
+- Removes the entry and confirms the copied key bytes are released once.
+- Inserts enough owned keys to force rehash and confirms every copied key still resolves after growth.
+- Destroys the map and confirms all owned key allocations have matching frees.
+
+Failure tip: inspect the owned-key duplication, cleanup, and rehash migration paths in `src/proven/map.c` if a key is lost, leaks, or follows a mutated source buffer.
+
+### 13b. `tests/test_map_hardening` - map borrowed-key hardening
 
 Intent: verify borrowed U8 keys that point into internal map storage are rejected when debug validation or `PROVEN_HARDENED` is enabled.
 
@@ -825,6 +840,7 @@ Failure tip: inspect `proven_sysio_scanner_init` in `src/proven/sysio.c`. If a p
    711|`./nob regression`, `./nob regression-asan`, and `./nob regression-ubsan` currently run:
    712|
 - `tests/test_regression_v26_05`
+- `tests/test_map_owned_key`
 - `tests/test_regression_public_contracts`
 - `tests/test_regression_fs_copy_to_self`
 - `tests/test_regression_source_contracts`

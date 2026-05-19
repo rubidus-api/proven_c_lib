@@ -1,21 +1,22 @@
 # Project Updates and Changelog
-v26.05.19h
+v26.05.19i
 
 ## Overview
 
 **Project Core:** `proven` (C23 Library)
-**Latest Version:** `v26.05.19h`
+**Latest Version:** `v26.05.19i`
 
 This file serves as the definitive record of all modifications, enhancements, and additions made to the **proven** library. All changes must be appended here chronologically to maintain a transparent history of the project's evolution.
 
 **Note on Historical Notes:** Older entries may refer to legacy API names (e.g., `append_view` instead of `append_grow`). These are retained for historical accuracy. Refer to the Developer Manual for current naming conventions.
 
-## Status: v26.05.19h (Latest)
+## Status: v26.05.19i (Latest)
 
-### Documentation truthfulness and version sync
-*   **Public Wording**: Tightened the README, SPEC, TEST, manual, and filesystem header wording to state the raw filesystem non-goal and the cross-compilation/runtime distinction in restrained language.
-*   **Version Sync**: Updated visible version markers to `v26.05.19h` across `version.h`, `README.md`, `SPEC.md`, `TEST.md`, `manual/`, and `AGENTS.md`.
-*   **Follow-Up Tracking**: Kept the remaining map owned-key follow-up in `TODO.md`; no alias changes.
+### Owned-key map storage
+*   **Owned-Key API**: Added `PROVEN_KEY_TYPE_U8_OWNED` and `proven_map_set_u8_owned()` so maps can duplicate U8 keys on insert instead of depending only on borrowed storage.
+*   **Ownership Semantics**: Owned keys are migrated during rehash without extra copies and are released exactly once on remove or destroy.
+*   **Regression Coverage**: Added `tests/test_map_owned_key.c` and wired it into `nob.c` and `TEST.md`.
+*   **Docs and Version Sync**: Updated `version.h`, `README.md`, `SPEC.md`, `TEST.md`, `manual/`, `AGENTS.md`, `TODO.md`, and the alias layer to reflect the owned-key API and current version.
 
 ## Status: v26.05.19g (Archive)
 

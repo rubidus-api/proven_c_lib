@@ -1,4 +1,4 @@
-# proven Agent Guide (v26.05.19h)
+# proven Agent Guide (v26.05.19i)
 
 This file is the working rulebook for humans and AI agents editing `proven_c_lib`.
 
@@ -13,7 +13,7 @@ This file is the working rulebook for humans and AI agents editing `proven_c_lib
 - PAL boundary: `platform/proven_sys_*.[ch]`.
 - Tests: plain C executables in `tests/`.
 - Version source of truth: `include/proven/version.h`.
-- Current version string: `proven_c_lib-v26.05.19h`.
+- Current version string: `proven_c_lib-v26.05.19i`.
 
 ## Path and privacy policy
 
