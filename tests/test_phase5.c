@@ -31,14 +31,32 @@ int main() {
     proven_err_t err = proven_buf_append(&buf, raw_lit1);
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(err), "Testing condition: PROVEN_IS_OK(err)", "Review logic surrounding PROVEN_IS_OK(err)");
 
-    // 3. Test Buffer Bounds Defense
+    // 3. Test overlapping buffer append handling
+    PROVEN_TEST_INFO("Testing overlapping buffer append handling...");
+    proven_result_buf_t overlap_res = proven_buf_create(alloc, 16);
+    PROVEN_TEST_ASSERT(PROVEN_IS_OK(overlap_res.err), "Testing condition: PROVEN_IS_OK(overlap_res.err)", "Review logic surrounding PROVEN_IS_OK(overlap_res.err)");
+    proven_buf_t overlap_buf = overlap_res.value;
+    proven_err_t overlap_err = proven_buf_append(&overlap_buf, (proven_mem_view_t){
+        .ptr = (const proven_byte_t *)"abcdef",
+        .size = 6,
+    });
+    PROVEN_TEST_ASSERT(PROVEN_IS_OK(overlap_err), "Testing condition: PROVEN_IS_OK(overlap_err)", "Review logic surrounding PROVEN_IS_OK(overlap_err)");
+    overlap_buf.len = 4;
+    proven_mem_view_t overlap_view = { .ptr = overlap_buf.ptr + 2, .size = 4 };
+    err = proven_buf_append(&overlap_buf, overlap_view);
+    PROVEN_TEST_ASSERT(PROVEN_IS_OK(err), "Testing condition: PROVEN_IS_OK(err)", "Review logic surrounding PROVEN_IS_OK(err)");
+    PROVEN_TEST_ASSERT(overlap_buf.len == 8, "Testing condition: overlap_buf.len == 8", "Review logic surrounding overlap_buf.len == 8");
+    PROVEN_TEST_ASSERT(memcmp(overlap_buf.ptr, "abcdcdef", 8) == 0, "Testing condition: memcmp(overlap_buf.ptr, 'abcdcdef', 8) == 0", "Review logic surrounding memcmp(overlap_buf.ptr, 'abcdcdef', 8) == 0");
+    proven_buf_destroy(alloc, &overlap_buf);
+
+    // 4. Test Buffer Bounds Defense
     PROVEN_TEST_INFO("Testing buffer bounds defense...");
     proven_u8str_view_t lit2 = PROVEN_LIT(" World!");
     proven_mem_view_t raw_lit2 = { .ptr = lit2.ptr, .size = lit2.size };
     err = proven_buf_append(&buf, raw_lit2);
     PROVEN_TEST_ASSERT(err == PROVEN_ERR_OUT_OF_BOUNDS, "Testing condition: err == PROVEN_ERR_OUT_OF_BOUNDS", "Review logic surrounding err == PROVEN_ERR_OUT_OF_BOUNDS");
 
-    // 4. U8Str Tests
+    // 5. U8Str Tests
     PROVEN_TEST_INFO("Testing U8Str creation and appending...");
     proven_result_u8str_t res_str = proven_u8str_create(alloc, 12);
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(res_str.err), "Testing condition: PROVEN_IS_OK(res_str.err)", "Review logic surrounding PROVEN_IS_OK(res_str.err)");

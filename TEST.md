@@ -1,4 +1,4 @@
-     1|# proven Test Matrix (v26.05.19c)
+     1|# proven Test Matrix (v26.05.19e)
      2|
      3|This document describes how the `proven` test suite is organized, what each test is intended to validate, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
      4|
@@ -665,8 +665,9 @@ Failure tip: inspect `src/proven/sysio.c`, `src/proven/scan.c`, and file read wr
    641|- Formatter many args without alias: large argument arrays must not overflow stack or internal accounting.
    642|- Formatter many args with alias scratch: alias-safe scratch paths must allocate and release scratch correctly.
    643|- Scanner invalid cursor: invalid scan state must not be treated as success.
-   644|- Array/string self-alias grow: grow operations must not corrupt when source and destination overlap in documented ways.
-   645|- `PROVEN_ARG_CSTR_N` safety bounds: C-string-with-length arguments must respect the caller-supplied bound.
+   644|- Buffer append overlap: `test_phase5` checks that `proven_buf_append()` preserves overlapping source views with move semantics instead of corrupting the appended bytes.
+   645|- Array/string self-alias grow: grow operations must not corrupt when source and destination overlap in documented ways.
+   646|- `PROVEN_ARG_CSTR_N` safety bounds: C-string-with-length arguments must respect the caller-supplied bound.
    646|- Environment large value: environment values larger than a small stack buffer must be read through dynamic allocation.
    647|
    648|Failure tip: this file is intentionally a set of historical tripwires. Do not collapse it into broad smoke coverage. Read the failing sub-check name printed in the log and inspect the corresponding source module.

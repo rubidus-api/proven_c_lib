@@ -352,3 +352,22 @@ proven_buf_append(&buf, huge_data); /* returns out-of-bounds; no automatic growt
 ```
 
 Use `proven_u8str_append_grow()` or an array if you need growth.
+
+### Buffer append tolerates overlap
+
+Correct:
+
+```c
+proven_buf_t buf = ...;
+/* buf already contains initialized bytes */
+proven_err_t e = proven_buf_append(&buf, (proven_mem_view_t){
+    .ptr = buf.ptr + 2,
+    .size = 4,
+});
+```
+
+Wrong:
+
+```c
+proven_sys_mem_copy(buf.ptr + buf.len, buf.ptr + 2, 4); /* copy is not the public contract here */
+```

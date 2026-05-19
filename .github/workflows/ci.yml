@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  hosted-linux-gcc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build driver
+        run: cc nob.c -o nob
+
+      - name: Strict-error regression
+        run: ./nob strict-error
+
+      - name: Regression suite
+        run: ./nob regression
+
+  hosted-linux-clang:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build driver
+        run: cc nob.c -o nob
+
+      - name: Strict-error regression
+        run: ./nob strict-error -cc clang
+
+      - name: Regression suite
+        run: ./nob regression -cc clang
