@@ -132,7 +132,7 @@
    132|- Arrays are generic growable vectors with allocator-backed storage.
    133|- Lists are intrusive and do not allocate nodes.
    134|- Rings are bounded circular buffers.
-   135|- Maps use open addressing and tombstones. Integer keys and borrowed or owned U8 string keys are supported; borrowed keys must outlive the map, while the owned-key helper duplicates key bytes when caller-managed lifetime is inconvenient.
+   135|- Maps use open addressing and tombstones. Integer keys and borrowed or owned U8 string keys are supported; borrowed keys must outlive the map, and debug validation or `PROVEN_HARDENED` can reject some internal-pointer misuse.
    136|- Algorithms operate on explicit views and element sizes.
    137|- Public structs expose layout for C usability, but callers must preserve documented invariants.
    138|
