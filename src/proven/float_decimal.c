@@ -1,4 +1,44 @@
 #include "float_decimal.h"
+#include <string.h>
+
+static proven_u32 proven_float_bits_copy_u32(float value) {
+    proven_u32 bits = 0;
+    memcpy(&bits, &value, sizeof bits);
+    return bits;
+}
+
+static proven_u64 proven_float_bits_copy_u64(double value) {
+    proven_u64 bits = 0;
+    memcpy(&bits, &value, sizeof bits);
+    return bits;
+}
+
+proven_u32 proven_float_bits_f32(float value) {
+    return proven_float_bits_copy_u32(value);
+}
+
+proven_u64 proven_float_bits_f64(double value) {
+    return proven_float_bits_copy_u64(value);
+}
+
+proven_u128_parts_t proven_float_mul_u64_u64_to_u128(proven_u64 lhs, proven_u64 rhs) {
+    const proven_u64 lhs_lo = lhs & 0xffffffffu;
+    const proven_u64 lhs_hi = lhs >> 32;
+    const proven_u64 rhs_lo = rhs & 0xffffffffu;
+    const proven_u64 rhs_hi = rhs >> 32;
+
+    const proven_u64 p0 = lhs_lo * rhs_lo;
+    const proven_u64 p1 = lhs_lo * rhs_hi;
+    const proven_u64 p2 = lhs_hi * rhs_lo;
+    const proven_u64 p3 = lhs_hi * rhs_hi;
+
+    const proven_u64 middle = (p0 >> 32) + (p1 & 0xffffffffu) + (p2 & 0xffffffffu);
+
+    proven_u128_parts_t out;
+    out.lo = (p0 & 0xffffffffu) | (middle << 32);
+    out.hi = p3 + (p1 >> 32) + (p2 >> 32) + (middle >> 32);
+    return out;
+}
 
 static const double proven_float_pow10_exact[] = {
     1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11,
