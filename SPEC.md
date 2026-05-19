@@ -1,4 +1,4 @@
-     1|# proven C Library Specification (v26.05.19f)
+     1|# proven C Library Specification (v26.05.19g)
      2|
      3|## 1. Scope
      4|
@@ -8,7 +8,7 @@
      8|
      9|## 2. Design principles
     10|
-    11|1. C23 first: build with `-std=c23`.
+    11|1. C23 first: build with `-std=c23` when the compiler accepts it; the build driver falls back to `-std=c2x` on toolchains that still use the transitional spelling.
     12|2. Explicit ownership: callers pass allocators and destroy owned objects.
     13|3. Explicit errors: fallible APIs return `proven_err_t` or `proven_result_*_t`.
     14|4. Provenance-aware memory: raw object access uses `proven_byte_t` and memory views.
@@ -203,7 +203,7 @@
    203|
    204|Primary target:
    205|
-   206|- Linux x86_64 with GCC or Clang and C23 support.
+   206|- Linux x86_64 with GCC or Clang and C23 support. The build driver probes `-std=c23` first and falls back to `-std=c2x` when needed on older front ends.
    207|
    208|Experimental or partial targets:
    209|
