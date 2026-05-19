@@ -18,6 +18,7 @@ This file serves as the definitive record of all modifications, enhancements, an
 *   **Filesystem Flags**: POSIX append opens now treat append as write intent, and `PROVEN_FS_APPEND | PROVEN_FS_TRUNC` is rejected as a conflicting request.
 *   **Regression Coverage**: Added `tests/test_regression_public_contracts.c` and wired it into `nob.c` and `TEST.md`.
 *   **Docs and Version Sync**: Updated `version.h`, `README.md`, `SPEC.md`, `TEST.md`, `manual/`, `AGENTS.md`, and `TODO.md` to reflect the new contract guards and current version.
+*   **GitHub Actions Removed**: Deleted the repository workflow file and kept GitHub usage limited to distribution.
 *   **Alias Layer**: No alias changes.
 
 ## Status: v26.05.19e (Archive)
