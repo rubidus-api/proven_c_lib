@@ -54,13 +54,17 @@ int main(void) {
 
     char *scan_src = read_text_file("src/proven/scan.c");
     require(!contains(scan_src, "long double"), "scan.c should not depend on long double for decimal conversion");
-    require(contains(scan_src, "static double proven_scan_scale_pow10(double value, proven_i64 exp10)"), "scan.c should scale decimal exponents with double-only helpers");
-    require(contains(scan_src, "return proven_scan_scale_pow10((double)mantissa, exp10);"), "scan.c should convert decimal mantissas through double-only scaling");
+    require(contains(scan_src, "#include \"float_decimal.h\""), "scan.c should include the shared float helper header");
+    require(!contains(scan_src, "static double proven_scan_scale_pow10("), "scan.c should not define the shared pow10 scaling helper inline");
+    require(!contains(scan_src, "static double proven_scan_convert_decimal("), "scan.c should not define the shared decimal conversion helper inline");
+    require(contains(scan_src, "proven_float_convert_decimal"), "scan.c should convert decimal mantissas through the shared helper");
     free(scan_src);
 
     char *fmt_src = read_text_file("src/proven/fmt.c");
     require(!contains(fmt_src, "long double"), "fmt.c should not depend on long double for float formatting");
-    require(contains(fmt_src, "static bool proven_fmt_normalize_scientific(double *abs_v, int *sci_exp)"), "fmt.c should normalize scientific notation with double-only helpers");
+    require(contains(fmt_src, "#include \"float_decimal.h\""), "fmt.c should include the shared float helper header");
+    require(!contains(fmt_src, "static bool proven_fmt_normalize_scientific("), "fmt.c should not define the shared scientific normalization helper inline");
+    require(contains(fmt_src, "proven_float_normalize_scientific"), "fmt.c should normalize scientific notation through the shared helper");
     require(contains(fmt_src, "double abs_v = sign ? -v : v;"), "fmt.c should hold the absolute working value in double precision");
     free(fmt_src);
 

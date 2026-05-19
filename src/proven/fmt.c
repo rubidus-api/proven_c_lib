@@ -1,4 +1,5 @@
 #include "proven/fmt.h"
+#include "float_decimal.h"
 #include "proven_internal_memrange.h"
 #include "../../platform/proven_sys_mem.h"
 
@@ -177,89 +178,6 @@ static void render_with_spec(proven_fmt_ctx_t *ctx, const char *val, proven_size
     }
 }
 
-static bool proven_fmt_normalize_scientific(double *abs_v, int *sci_exp) {
-    /* Defensive cap: comfortably above the decimal exponent range of double. */
-    const int guard_limit = 400;
-    int guard = guard_limit;
-
-    while (*abs_v >= 1e256 && guard > 0) {
-        *abs_v /= 1e256;
-        *sci_exp += 256;
-        guard--;
-    }
-    while (*abs_v >= 1e128 && guard > 0) {
-        *abs_v /= 1e128;
-        *sci_exp += 128;
-        guard--;
-    }
-    while (*abs_v >= 1e64 && guard > 0) {
-        *abs_v /= 1e64;
-        *sci_exp += 64;
-        guard--;
-    }
-    while (*abs_v >= 1e32 && guard > 0) {
-        *abs_v /= 1e32;
-        *sci_exp += 32;
-        guard--;
-    }
-    while (*abs_v >= 1e16 && guard > 0) {
-        *abs_v /= 1e16;
-        *sci_exp += 16;
-        guard--;
-    }
-    while (*abs_v >= 1e8 && guard > 0) {
-        *abs_v /= 1e8;
-        *sci_exp += 8;
-        guard--;
-    }
-    while (*abs_v >= 1e4 && guard > 0) {
-        *abs_v /= 1e4;
-        *sci_exp += 4;
-        guard--;
-    }
-    while (*abs_v >= 1e2 && guard > 0) {
-        *abs_v /= 1e2;
-        *sci_exp += 2;
-        guard--;
-    }
-    while (*abs_v >= 10.0 && guard > 0) {
-        *abs_v /= 10.0;
-        (*sci_exp)++;
-        guard--;
-    }
-    while (*abs_v > 0.0 && *abs_v < 1.0 && guard > 0) {
-        *abs_v *= 1e256;
-        *sci_exp -= 256;
-        if (*abs_v >= 1.0) break;
-        *abs_v *= 1e128;
-        *sci_exp -= 128;
-        if (*abs_v >= 1.0) break;
-        *abs_v *= 1e64;
-        *sci_exp -= 64;
-        if (*abs_v >= 1.0) break;
-        *abs_v *= 1e32;
-        *sci_exp -= 32;
-        if (*abs_v >= 1.0) break;
-        *abs_v *= 1e16;
-        *sci_exp -= 16;
-        if (*abs_v >= 1.0) break;
-        *abs_v *= 1e8;
-        *sci_exp -= 8;
-        if (*abs_v >= 1.0) break;
-        *abs_v *= 1e4;
-        *sci_exp -= 4;
-        if (*abs_v >= 1.0) break;
-        *abs_v *= 1e2;
-        *sci_exp -= 2;
-        if (*abs_v >= 1.0) break;
-        *abs_v *= 10.0;
-        *sci_exp -= 1;
-        guard--;
-    }
-
-    return guard > 0;
-}
-
 static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fmt_spec_t spec) {
     if (!proven_is_ok(ctx->err)) return;
 
@@ -345,7 +263,7 @@ static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fm
 
             if (use_scientific) {
                 int sci_exp = 0;
-                if (!proven_fmt_normalize_scientific(&abs_v, &sci_exp)) {
+                if (!proven_float_normalize_scientific(&abs_v, &sci_exp)) {
                     render_with_spec(ctx, sign ? "-Inf" : "Inf", sign ? 4u : 3u, spec);
                     break;
                 }

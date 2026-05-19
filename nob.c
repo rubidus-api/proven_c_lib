@@ -722,7 +722,7 @@ int main(int argc, char **argv)
         "src/proven/heap.c", "src/proven/u8str.c", "src/proven/u16str.c", "src/proven/array.c",
         "src/proven/ring.c", "src/proven/map.c", "src/proven/algorithm.c", "src/proven/fs.c",
         "src/proven/time.c", "src/proven/fmt.c", "src/proven/mmap.c", "src/proven/sysio.c",
-        "src/proven/job.c", "src/proven/scan.c", "src/proven/panic.c", "platform/proven_sys_mem.c",
+        "src/proven/job.c", "src/proven/scan.c", "src/proven/float_decimal.c", "src/proven/panic.c", "platform/proven_sys_mem.c",
         "platform/proven_sys_fs.c", "platform/proven_sys_time.c", "platform/proven_sys_env.c",
         "platform/proven_sys_thread.c", "platform/proven_sys_io.c", "platform/proven_sys_math.c"
     };
@@ -735,6 +735,7 @@ int main(int argc, char **argv)
         "include/proven/buffer.h", "include/proven/fs.h", "include/proven/sysio.h", "include/proven/align.h",
         "include/proven/u8str.h", "include/proven/u16str.h", "include/proven/job.h", "include/proven/allocator.h",
         "include/proven/pool.h", "include/proven/version.h", "include/proven/alias_xcv.h",
+        "src/proven/float_decimal.h",
         "platform/proven_sys_mem.h", "platform/proven_sys_fs.h", "platform/proven_sys_time.h",
         "platform/proven_sys_env.h", "platform/proven_sys_thread.h", "platform/proven_sys_io.h", "platform/proven_sys_math.h"
     };
@@ -770,6 +771,7 @@ int main(int argc, char **argv)
         { "tests/test_phase22_fmt_best_effort", "formatter failure policy", "Verify fixed atomic formatting, truncating formatting, growable formatting, and extreme padding safety.", "Check formatter required/written counts, scratch allocation, and failure-atomic append rules before changing format internals." },
         { "tests/test_fmt_f64_accuracy", "float formatter accuracy", "Verify float formatting keeps fixed-point rounding, scientific carry, and special values stable.", "Inspect PROVEN_ARG_F64 digit extraction, carry propagation, and scientific normalization if a formatted value drifts." },
         { "tests/test_float_portable", "float portability", "Verify scan and format float conversion paths stay double-only and keep target-deterministic behavior without long double dependence.", "Inspect src/proven/scan.c and src/proven/fmt.c if long double returns, casts, or target-specific float drift reappear." },
+        { "tests/test_float_module_scaffold", "float module scaffold", "Verify the shared float helpers live in a dedicated internal translation unit instead of being copied into fmt.c and scan.c.", "Inspect src/proven/float_decimal.c, src/proven/float_decimal.h, fmt.c, scan.c, and nob.c if the shared decimal helper scaffold regresses." },
         { "tests/test_fmt_fastpath", "formatter truncation comparison", "Compare truncating fixed-capacity formatting against the growable reference path for exact-fit, truncation, malformed format, and excess-argument cases.", "Inspect truncation accounting and the fixed-capacity write path if the result bytes or counts drift." },
         { "tests/test_scan_f64_accuracy", "float scanner accuracy", "Verify float scanning preserves exact small values, signed zero, round-trip style decimals, exponent edges, and cursor rollback on malformed input.", "Inspect proven_scan_f64 decimal accumulation, exponent scaling, and failure-atomic cursor restore if any exact-value case drifts." },
         { "tests/test_scan_f64_bounds", "float scanner boundary behavior", "Verify float scanning treats underflow as signed zero, reports overflow deterministically, and preserves cursor rollback at the true boundary cases.", "Inspect proven_scan_f64 exponent-to-value handling and final finite checks if a boundary token returns the wrong error or wrong sign." },
@@ -786,6 +788,7 @@ int main(int argc, char **argv)
         { "tests/test_pool_misuse", "pool double-free hardening", "Verify pool free detects a repeated free when debug validation or hardened validation is enabled.", "Inspect the pool free-trait gating if a repeated free is accepted silently or if the panic hook is not reached." },
         { "tests/test_regression_fs_copy_to_self", "filesystem self-copy regression", "Verify copy-to-self and copy-to-hardlink-self fail without truncating or corrupting the source file.", "Inspect same-file detection and open/truncate ordering; never open the destination for truncation before proving it is not the source." },
         { "tests/test_regression_source_contracts", "source portability contracts", "Verify source-level guards for platform branches that are hard to execute on the current host.", "A failure points at a missing safety pattern or stale documentation contract; inspect the named source file and keep this narrow." },
+        { "tests/test_float_module_scaffold", "float module scaffold", "Verify the shared float helpers live in a dedicated internal translation unit instead of being copied into fmt.c and scan.c.", "Inspect src/proven/float_decimal.c, src/proven/float_decimal.h, fmt.c, scan.c, and nob.c if the shared decimal helper scaffold regresses." },
         { "tests/test_arena_panic", "arena panic path", "Verify alloc-or-panic succeeds when capacity exists and invokes the panic hook on arena exhaustion.", "Check panic hook installation/restoration and arena capacity math; a failure can hide fatal OOM paths." },
         { "tests/test_alias_smoke", "alias layer smoke", "Verify public XCV alias macros continue to compile and map to the intended canonical proven APIs.", "Inspect include/proven/alias_xcv.h and TEST.md alias coverage when public symbols are renamed or added." },
     };

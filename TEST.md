@@ -1008,6 +1008,19 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/scan.c` and `src/proven/fmt.c`. If the source-contract checks fail, the float portability cleanup regressed back to long double-dependent code. If the runtime checks fail, inspect the double-only conversion and normalization math first.
 
+### 36. `tests/test_float_module_scaffold` - float module scaffold
+
+Intent: verify the shared decimal float helpers live in a dedicated internal translation unit and are not re-embedded inline inside `src/proven/fmt.c` or `src/proven/scan.c`.
+
+Sub-checks:
+
+- Confirms `src/proven/float_decimal.h` declares the shared pow10 scaling, decimal conversion, and scientific normalization helpers.
+- Confirms `src/proven/float_decimal.c` defines the shared pow10 scaling, decimal conversion, and scientific normalization helpers.
+- Confirms `src/proven/scan.c` and `src/proven/fmt.c` include `float_decimal.h` instead of defining the shared helper bodies inline.
+- Confirms `nob.c` compiles `src/proven/float_decimal.c` as part of the library build.
+
+Failure tip: inspect `src/proven/float_decimal.c`, `src/proven/float_decimal.h`, `src/proven/scan.c`, `src/proven/fmt.c`, and `nob.c` if the shared float helper scaffold drifts back into the scanner or formatter files.
+
 ## Failure triage workflow
    814|
    815|1. Find the first `[PROVEN][TEST][FAIL]` line. Later failures can be cascading noise.
