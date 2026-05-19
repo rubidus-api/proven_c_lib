@@ -12,6 +12,11 @@ This file serves as the definitive record of all modifications, enhancements, an
 
 ## Status: v26.05.19i (Latest)
 
+### README bilingual update
+*   **Bilingual Front Page**: Expanded `README.md` so the front page now presents the same substantive content in English first and Korean second.
+*   **Policy Update**: Updated `AGENTS.md` to require the bilingual README layout while keeping the other public docs in English ASCII.
+*   **Alias Layer**: No alias changes.
+
 ### Owned-key map storage
 *   **Owned-Key API**: Added `PROVEN_KEY_TYPE_U8_OWNED` and `proven_map_set_u8_owned()` so maps can duplicate U8 keys on insert instead of depending only on borrowed storage.
 *   **Ownership Semantics**: Owned keys are migrated during rehash without extra copies and are released exactly once on remove or destroy.
