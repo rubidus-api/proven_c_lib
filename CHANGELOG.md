@@ -12,11 +12,10 @@ This file serves as the definitive record of all modifications, enhancements, an
 
 ## Status: v26.05.19j (Latest)
 
-### Float helper primitives
-*   **Raw Bit Helpers**: Added `proven_float_bits_f32()` and `proven_float_bits_f64()` in `src/proven/float_decimal.c` so later float work can inspect IEEE-754 object representations without aliasing casts.
-*   **Wide Multiply Helper**: Added `proven_float_mul_u64_u64_to_u128()` and a small internal 128-bit parts struct for later parser/formatter algorithms.
-*   **Regression Coverage**: Added `tests/test_float_bits.c` and `tests/test_u128_mul.c`, then wired them into `nob.c` and `TEST.md`.
-*   **Behavior**: No public float scan/format behavior changed in this stage.
+### Float scan boundary correction
+*   **Hosted fallback**: Added a narrow hosted-only fallback for tiny out-of-exact-range decimal spellings near the subnormal boundary so the scanner now matches the host oracle on the affected inputs.
+*   **Regression Coverage**: Extended `tests/test_float_host_oracle.c` with the DBL_MIN neighborhood spellings that previously rounded one ULP too low or too high.
+*   **Behavior**: The broader Eisel-Lemire / Ryu-class upgrade remains open in `TODO.md`.
 *   **Alias Layer**: No alias changes.
 
 ### Float format policy scaffold
@@ -28,7 +27,7 @@ This file serves as the definitive record of all modifications, enhancements, an
 
 ### Float contract documentation
 *   **Underflow Policy**: Clarified in `include/proven/scan.h` and `manual/manual-08-fmt-scan.md` that values below the smallest subnormal round to signed zero with the input sign preserved, while out-of-exact-range conversions stay target-deterministic and approximate.
-*   **Long-term Work**: Kept the Eisel-Lemire / Ryu-class float conversion upgrade and the verification-infrastructure review in `TODO.md` for later work.
+*   **Long-term Work**: Kept the Eisel-Lemire / Ryu-class float conversion upgrade in `TODO.md` for later work and split it into staged follow-up steps so the remaining scope stays narrow.
 *   **Alias Layer**: No alias changes.
 
 ### Float module scaffold
