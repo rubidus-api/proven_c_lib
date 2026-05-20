@@ -1,4 +1,4 @@
-     1|# Chapter 8: Formatting and Scanning (v26.05.19i)
+     1|# Chapter 8: Formatting and Scanning (v26.05.19j)
      2|
      3|This chapter is the detailed reference for `fmt.h` and `scan.h`.
      4|Chapter 3 gives the shorter overview and the everyday examples.
@@ -446,7 +446,44 @@
    445|Use a real allocator for both `alloc` and `scratch`.
    446|Do not pass a dead arena or a one-shot temporary buffer unless its lifetime is long enough for the call.
    447|
-   448|### `PROVEN_FMT_IS_OK(res)`
+   448|### Float format policy seam
+
+The public float policy header provides an explicit policy layer for float formatting.
+It is intentionally small and keeps the current fixed-precision formatter behavior as the default path.
+
+The main entry points are:
+
+- `proven_float_format_f64_policy(...)`
+- `proven_float_format_f32_policy(...)`
+- `proven_float_format_options_fixed_default()`
+- `proven_float_format_options_shortest()`
+
+Policy notes:
+
+- `PROVEN_FLOAT_FORMAT_POLICY_DEFAULT` and `PROVEN_FLOAT_FORMAT_POLICY_SIMPLE` preserve the current fixed-precision output.
+- `PROVEN_FLOAT_FORMAT_POLICY_RYU` is the shortest-output policy branch.
+- The policy API returns `PROVEN_ERR_INVALID_ARG` for unsupported enum values.
+- The policy API returns `PROVEN_ERR_OUT_OF_BOUNDS` when the caller-provided buffer is too small.
+
+Example:
+
+```c
+char buf[128];
+proven_size_t written = 0;
+proven_err_t err = proven_float_format_f64_policy(
+    buf,
+    sizeof buf,
+    0.1,
+    PROVEN_FLOAT_FORMAT_POLICY_RYU,
+    proven_float_format_options_shortest(),
+    &written
+);
+if (!proven_is_ok(err)) {
+    return err;
+}
+```
+
+### `PROVEN_FMT_IS_OK(res)`
    449|
    450|A small helper macro for checking `proven_fmt_result_t`.
    451|Use it when you want the intent to stay compact.

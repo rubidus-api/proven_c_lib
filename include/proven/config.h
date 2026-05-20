@@ -1,6 +1,8 @@
 #ifndef PROVEN_CONFIG_H
 #define PROVEN_CONFIG_H
 
+#include "proven/float_config.h"
+
 /*
  * Compile-time feature switches for the proven library.
  *

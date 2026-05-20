@@ -722,7 +722,7 @@ int main(int argc, char **argv)
         "src/proven/heap.c", "src/proven/u8str.c", "src/proven/u16str.c", "src/proven/array.c",
         "src/proven/ring.c", "src/proven/map.c", "src/proven/algorithm.c", "src/proven/fs.c",
         "src/proven/time.c", "src/proven/fmt.c", "src/proven/mmap.c", "src/proven/sysio.c",
-        "src/proven/job.c", "src/proven/scan.c", "src/proven/float_decimal.c", "src/proven/panic.c", "platform/proven_sys_mem.c",
+        "src/proven/job.c", "src/proven/scan.c", "src/proven/float_decimal.c", "src/proven/float_format.c", "src/proven/panic.c", "platform/proven_sys_mem.c",
         "platform/proven_sys_fs.c", "platform/proven_sys_time.c", "platform/proven_sys_env.c",
         "platform/proven_sys_thread.c", "platform/proven_sys_io.c", "platform/proven_sys_math.c"
     };
@@ -735,7 +735,7 @@ int main(int argc, char **argv)
         "include/proven/buffer.h", "include/proven/fs.h", "include/proven/sysio.h", "include/proven/align.h",
         "include/proven/u8str.h", "include/proven/u16str.h", "include/proven/job.h", "include/proven/allocator.h",
         "include/proven/pool.h", "include/proven/version.h", "include/proven/alias_xcv.h",
-        "src/proven/float_decimal.h",
+        "include/proven/float_config.h", "include/proven/float_format.h", "src/proven/float_decimal.h",
         "platform/proven_sys_mem.h", "platform/proven_sys_fs.h", "platform/proven_sys_time.h",
         "platform/proven_sys_env.h", "platform/proven_sys_thread.h", "platform/proven_sys_io.h", "platform/proven_sys_math.h"
     };
@@ -771,6 +771,9 @@ int main(int argc, char **argv)
         { "tests/test_phase22_fmt_best_effort", "formatter failure policy", "Verify fixed atomic formatting, truncating formatting, growable formatting, and extreme padding safety.", "Check formatter required/written counts, scratch allocation, and failure-atomic append rules before changing format internals." },
         { "tests/test_fmt_f64_accuracy", "float formatter accuracy", "Verify float formatting keeps fixed-point rounding, scientific carry, and special values stable.", "Inspect PROVEN_ARG_F64 digit extraction, carry propagation, and scientific normalization if a formatted value drifts." },
         { "tests/test_float_portable", "float portability", "Verify scan and format float conversion paths stay double-only and keep target-deterministic behavior without long double dependence.", "Inspect src/proven/scan.c and src/proven/fmt.c if long double returns, casts, or target-specific float drift reappear." },
+        { "tests/test_float_format_policy", "float format policy scaffold", "Verify the new float format policy seam preserves the current simple formatter behavior, rejects unsupported shortest-mode requests, and reports invalid inputs clearly.", "Inspect src/proven/float_format.c and include/proven/float_format.h if the policy dispatch or fixed formatter helper regresses." },
+        { "tests/test_float_format_shortest_known", "float shortest known values", "Verify the shortest float formatting policy emits the documented exact spellings for representative f64 and f32 values.", "Inspect src/proven/float_format.c if the shortest-policy output drifts or if RYU requests stop reaching the active backend." },
+        { "tests/test_float_format_shortest_roundtrip", "float shortest round-trip", "Verify shortest float formatting round-trips through host strtod for representative f64 and f32 values.", "Inspect src/proven/float_format.c if the shortest output stops round-tripping, and keep the host strtod oracle limited to tests." },
         { "tests/test_float_module_scaffold", "float module scaffold", "Verify the shared float helpers live in a dedicated internal translation unit instead of being copied into fmt.c and scan.c.", "Inspect src/proven/float_decimal.c, src/proven/float_decimal.h, fmt.c, scan.c, and nob.c if the shared decimal helper scaffold regresses." },
         { "tests/test_float_bits", "float bit extraction", "Verify the internal float bit helpers preserve raw IEEE-754 bit patterns for f32 and f64 values, including signed zero, infinities, and NaN payloads.", "Inspect src/proven/float_decimal.c if the raw byte-copy helpers stop matching the object representation." },
         { "tests/test_u128_mul", "wide multiply helper", "Verify the shared 64x64 to 128-bit multiply helper returns exact high and low halves for representative operands.", "Inspect src/proven/float_decimal.c if the wide multiply helper stops matching the reference product." },

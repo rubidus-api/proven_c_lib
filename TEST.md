@@ -1,4 +1,4 @@
-     1|# proven Test Matrix (v26.05.19i)
+     1|# proven Test Matrix (v26.05.19j)
      2|
      3|This document describes how the `proven` test suite is organized, what each test is intended to validate, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
      4|
@@ -1044,6 +1044,45 @@ Sub-checks:
 - Confirms the helper exposes the product in a stable high/low part structure for later float algorithms.
 
 Failure tip: inspect `src/proven/float_decimal.c` if the wide multiply helper stops matching the reference product.
+
+### 39. `tests/test_float_format_policy` - float format policy scaffold
+
+Intent: verify the new float format policy seam preserves the current simple formatter behavior and supports shortest-mode requests explicitly.
+
+Sub-checks:
+
+- Confirms the DEFAULT and SIMPLE policies match the current `PROVEN_ARG_F64` formatter output for representative finite values.
+- Confirms NaN and infinity spellings stay aligned with the current formatter.
+- Confirms `PROVEN_FLOAT_FORMAT_POLICY_RYU` with shortest mode returns a compact shortest-form output.
+- Confirms invalid policy and invalid mode values return `PROVEN_ERR_INVALID_ARG`.
+- Confirms too-small output buffers return `PROVEN_ERR_OUT_OF_BOUNDS`.
+- Confirms the `f32` policy entry point follows the same shortest and fixed-precision behavior.
+
+Failure tip: inspect `src/proven/float_format.c`, `include/proven/float_format.h`, and `include/proven/float_config.h` if the policy seam or fixed formatter helper regresses.
+
+### 40. `tests/test_float_format_shortest_known` - float shortest known values
+
+Intent: verify the shortest float formatting policy emits the documented exact spellings for representative f64 and f32 values.
+
+Sub-checks:
+
+- Confirms representative finite f64 values format to the expected shortest strings.
+- Confirms representative finite f32 values format to the expected shortest strings through the float32 policy shim.
+- Confirms zero, signed zero, integer, power-of-ten, subnormal, and max-finite edge cases keep their documented spellings.
+
+Failure tip: inspect `src/proven/float_format.c` if the shortest-policy output drifts or if RYU requests stop reaching the active backend.
+
+### 41. `tests/test_float_format_shortest_roundtrip` - float shortest round-trip
+
+Intent: verify shortest float formatting round-trips through host strtod for representative f64 and f32 values.
+
+Sub-checks:
+
+- Confirms representative finite f64 values format to strings that parse back to the original bit pattern through host strtod.
+- Confirms representative finite f32 values format to strings that parse back to the original float bit pattern when cast back from host strtod.
+- Confirms the round-trip oracle remains a test-only dependency and does not leak into the library.
+
+Failure tip: inspect `src/proven/float_format.c` if the shortest output stops round-tripping, and keep the host strtod oracle limited to tests.
 
 ## Failure triage workflow
    814|

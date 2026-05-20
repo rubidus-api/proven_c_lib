@@ -1,0 +1,51 @@
+#ifndef PROVEN_FLOAT_FORMAT_H
+#define PROVEN_FLOAT_FORMAT_H
+
+#include "proven/types.h"
+#include "proven/error.h"
+#include "proven/float_config.h"
+
+/*
+ * Policy API for the float-format module scaffold.
+ *
+ * The DEFAULT and SIMPLE policies intentionally preserve the current hosted
+ * fixed-precision formatter behavior. The RYU policy uses the shortest-mode
+ * backend when requested with PROVEN_FLOAT_FORMAT_MODE_SHORTEST.
+ */
+typedef enum {
+    PROVEN_FLOAT_FORMAT_POLICY_DEFAULT = 0,
+    PROVEN_FLOAT_FORMAT_POLICY_SIMPLE = 1,
+    PROVEN_FLOAT_FORMAT_POLICY_RYU = 2,
+} proven_float_format_policy_t;
+
+typedef enum {
+    PROVEN_FLOAT_FORMAT_MODE_FIXED = 0,
+    PROVEN_FLOAT_FORMAT_MODE_SHORTEST = 1,
+} proven_float_format_mode_t;
+
+typedef struct {
+    proven_float_format_mode_t mode;
+    proven_i32 precision;
+} proven_float_format_options_t;
+
+static inline proven_float_format_options_t proven_float_format_options_fixed_default(void) {
+    return (proven_float_format_options_t){ .mode = PROVEN_FLOAT_FORMAT_MODE_FIXED, .precision = 6 };
+}
+
+static inline proven_float_format_options_t proven_float_format_options_shortest(void) {
+    return (proven_float_format_options_t){ .mode = PROVEN_FLOAT_FORMAT_MODE_SHORTEST, .precision = 0 };
+}
+
+[[nodiscard]]
+proven_err_t proven_float_format_f64_policy(char *buf, proven_size_t buf_cap, double value,
+                                            proven_float_format_policy_t policy,
+                                            proven_float_format_options_t opt,
+                                            proven_size_t *written_out);
+
+[[nodiscard]]
+proven_err_t proven_float_format_f32_policy(char *buf, proven_size_t buf_cap, float value,
+                                            proven_float_format_policy_t policy,
+                                            proven_float_format_options_t opt,
+                                            proven_size_t *written_out);
+
+#endif /* PROVEN_FLOAT_FORMAT_H */
