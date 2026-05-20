@@ -4,11 +4,18 @@ This file tracks the remaining follow-up items from the current main-branch revi
 
 ## Open items
 
-- Verification infrastructure: add a stronger ThreadSanitizer stress pass for the job queue and a host-oracle differential float check that compares this library against the platform C library without linking the implementation together.
-- Eisel-Lemire / Ryu-class float conversion upgrade: long-term accuracy work for the out-of-exact-range decimal-to-double path and the matching formatter path.
+- Eisel-Lemire / Ryu-class float conversion upgrade.
+  - Scope: long-term accuracy work for the out-of-exact-range decimal-to-double path and the matching formatter path.
+  - Current state: the hosted scanner already uses the shared double-only helper path, the portable no-long-double regression is in place, and the present fixed-precision formatter remains the default.
+  - Next staged steps:
+    1. Expand the representative corpus for exact-range, subnormal-boundary, and shortest-format cases so the upgrade target stays pinned to known spellings.
+    2. Replace the current decimal-to-double fallback path with a target-deterministic exact-range backend that stays within the documented no-long-double contract.
+    3. Replace the shortest-output policy backend with the final round-trip-oriented formatter once the parser backend is in place.
+  - Out of scope for this pass: broad algorithmic rewrites that would change the current fixed-precision default or add hidden heap allocation on hot paths.
 
 ## Already addressed in this pass
 
+- Verification infrastructure: added `tests/test_job_stress_tsan` for a denser job-queue stress pass and `tests/test_float_host_oracle` for host-oracle float comparisons against the platform C library.
 - Decimal underflow policy: decimal inputs below the smallest subnormal are documented and tested as signed zero with the input sign preserved.
 - Scientific normalization guard: the formatter already uses a bounded local loop cap in `proven_fmt_normalize_scientific()`.
 - Build driver portability: `nob.c` already probes `-std=c23` first, falls back to `-std=c2x`, and keeps the selected standard flag in the build hash.
