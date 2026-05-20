@@ -1,22 +1,29 @@
 # Project Updates and Changelog
-v26.05.19i
+v26.05.19j
 
 ## Overview
 
 **Project Core:** `proven` (C23 Library)
-**Latest Version:** `v26.05.19i`
+**Latest Version:** `v26.05.19j`
 
 This file serves as the definitive record of all modifications, enhancements, and additions made to the **proven** library. All changes must be appended here chronologically to maintain a transparent history of the project's evolution.
 
 **Note on Historical Notes:** Older entries may refer to legacy API names (e.g., `append_view` instead of `append_grow`). These are retained for historical accuracy. Refer to the Developer Manual for current naming conventions.
 
-## Status: v26.05.19i (Latest)
+## Status: v26.05.19j (Latest)
 
 ### Float helper primitives
 *   **Raw Bit Helpers**: Added `proven_float_bits_f32()` and `proven_float_bits_f64()` in `src/proven/float_decimal.c` so later float work can inspect IEEE-754 object representations without aliasing casts.
 *   **Wide Multiply Helper**: Added `proven_float_mul_u64_u64_to_u128()` and a small internal 128-bit parts struct for later parser/formatter algorithms.
 *   **Regression Coverage**: Added `tests/test_float_bits.c` and `tests/test_u128_mul.c`, then wired them into `nob.c` and `TEST.md`.
 *   **Behavior**: No public float scan/format behavior changed in this stage.
+*   **Alias Layer**: No alias changes.
+
+### Float format policy scaffold
+*   **Policy API**: Added `include/proven/float_format.h` and `src/proven/float_format.c` as a public policy seam for future float-format backends.
+*   **Current Scope**: DEFAULT and SIMPLE policies preserve the existing fixed-precision output; the shortest-mode policy is now available through the RYU branch for representative values, while the fixed path remains the default.
+*   **Regression Coverage**: Added `tests/test_float_format_policy.c` and wired it into `nob.c` and `TEST.md`.
+*   **Behavior**: No existing `PROVEN_ARG_F64` output changed in this stage.
 *   **Alias Layer**: No alias changes.
 
 ### Float contract documentation
