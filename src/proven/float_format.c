@@ -196,6 +196,39 @@ static bool proven_float_format_copy_literal(char *buf, proven_size_t buf_cap, c
     return true;
 }
 
+static bool proven_float_format_roundtrip_search_fixed(double value, bool use_scientific, bool is_f32, proven_i32 max_precision, char *candidate, proven_size_t candidate_cap, proven_size_t *candidate_len_out);
+
+static bool proven_float_format_candidate_roundtrips(double value, bool is_f32, const char *candidate) {
+    if (is_f32) {
+        return proven_float_format_roundtrips_f32((float)value, candidate);
+    }
+    return proven_float_format_roundtrips_f64(value, candidate);
+}
+
+static bool proven_float_format_build_shortest_roundtrip_f64(double value, bool use_scientific, char *candidate, proven_size_t candidate_cap, proven_size_t *candidate_len_out) {
+    return proven_float_format_roundtrip_search_fixed(value, use_scientific, false, 17, candidate, candidate_cap, candidate_len_out);
+}
+
+static bool proven_float_format_build_shortest_roundtrip_f32(float value, bool use_scientific, char *candidate, proven_size_t candidate_cap, proven_size_t *candidate_len_out) {
+    return proven_float_format_roundtrip_search_fixed((double)value, use_scientific, true, 9, candidate, candidate_cap, candidate_len_out);
+}
+
+static bool proven_float_format_roundtrip_search_fixed(double value, bool use_scientific, bool is_f32, proven_i32 max_precision, char *candidate, proven_size_t candidate_cap, proven_size_t *candidate_len_out) {
+    for (proven_i32 precision = 0; precision <= max_precision; ++precision) {
+        proven_size_t candidate_len = 0;
+        if (!proven_float_format_build_fixed(candidate, candidate_cap, value, precision, use_scientific, false, &candidate_len)) {
+            return false;
+        }
+        if (proven_float_format_candidate_roundtrips(value, is_f32, candidate)) {
+            if (candidate_len_out) {
+                *candidate_len_out = candidate_len;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 static proven_err_t proven_float_format_build_shortest_f64(char *buf, proven_size_t buf_cap, double value, proven_size_t *written_out) {
     if (!buf) {
         return PROVEN_ERR_INVALID_ARG;
@@ -208,6 +241,8 @@ static proven_err_t proven_float_format_build_shortest_f64(char *buf, proven_siz
     if (bits == 0x7ff0000000000000ULL) return proven_float_format_copy_literal(buf, buf_cap, "Inf", written_out) ? PROVEN_OK : PROVEN_ERR_OUT_OF_BOUNDS;
     if (bits == 0xfff0000000000000ULL) return proven_float_format_copy_literal(buf, buf_cap, "-Inf", written_out) ? PROVEN_OK : PROVEN_ERR_OUT_OF_BOUNDS;
     if ((bits & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL) return proven_float_format_copy_literal(buf, buf_cap, "NaN", written_out) ? PROVEN_OK : PROVEN_ERR_OUT_OF_BOUNDS;
+    if (bits == 0x0000000000000000ULL) return proven_float_format_copy_literal(buf, buf_cap, "0", written_out) ? PROVEN_OK : PROVEN_ERR_OUT_OF_BOUNDS;
+    if (bits == 0x8000000000000000ULL) return proven_float_format_copy_literal(buf, buf_cap, "-0", written_out) ? PROVEN_OK : PROVEN_ERR_OUT_OF_BOUNDS;
     if (bits == 0x0010000000000000ULL) return proven_float_format_copy_literal(buf, buf_cap, "2.2250738585072014e-308", written_out) ? PROVEN_OK : PROVEN_ERR_OUT_OF_BOUNDS;
     if (bits == 0x8010000000000000ULL) return proven_float_format_copy_literal(buf, buf_cap, "-2.2250738585072014e-308", written_out) ? PROVEN_OK : PROVEN_ERR_OUT_OF_BOUNDS;
     if (bits == 0x7fefffffffffffffULL) return proven_float_format_copy_literal(buf, buf_cap, "1.7976931348623157e308", written_out) ? PROVEN_OK : PROVEN_ERR_OUT_OF_BOUNDS;
@@ -221,20 +256,15 @@ static proven_err_t proven_float_format_build_shortest_f64(char *buf, proven_siz
 
     for (proven_i32 style = 0; style < 2; ++style) {
         bool use_scientific = (style != 0);
-        for (proven_i32 precision = 0; precision <= 17; ++precision) {
-            char candidate[128];
-            proven_size_t candidate_len = 0;
-            if (!proven_float_format_build_fixed(candidate, sizeof candidate, value, precision, use_scientific, false, &candidate_len)) {
-                continue;
-            }
-            if (!proven_float_format_roundtrips_f64(value, candidate)) {
-                continue;
-            }
-            if (!have_best || candidate_len < best_len) {
-                memcpy(best, candidate, candidate_len + 1u);
-                best_len = candidate_len;
-                have_best = true;
-            }
+        char candidate[128];
+        proven_size_t candidate_len = 0;
+        if (!proven_float_format_build_shortest_roundtrip_f64(value, use_scientific, candidate, sizeof candidate, &candidate_len)) {
+            continue;
+        }
+        if (!have_best || candidate_len < best_len) {
+            memcpy(best, candidate, candidate_len + 1u);
+            best_len = candidate_len;
+            have_best = true;
         }
     }
 
@@ -276,20 +306,15 @@ static proven_err_t proven_float_format_build_shortest_f32(char *buf, proven_siz
 
     for (proven_i32 style = 0; style < 2; ++style) {
         bool use_scientific = (style != 0);
-        for (proven_i32 precision = 0; precision <= 17; ++precision) {
-            char candidate[128];
-            proven_size_t candidate_len = 0;
-            if (!proven_float_format_build_fixed(candidate, sizeof candidate, (double)value, precision, use_scientific, false, &candidate_len)) {
-                continue;
-            }
-            if (!proven_float_format_roundtrips_f32(value, candidate)) {
-                continue;
-            }
-            if (!have_best || candidate_len < best_len) {
-                memcpy(best, candidate, candidate_len + 1u);
-                best_len = candidate_len;
-                have_best = true;
-            }
+        char candidate[128];
+        proven_size_t candidate_len = 0;
+        if (!proven_float_format_build_shortest_roundtrip_f32(value, use_scientific, candidate, sizeof candidate, &candidate_len)) {
+            continue;
+        }
+        if (!have_best || candidate_len < best_len) {
+            memcpy(best, candidate, candidate_len + 1u);
+            best_len = candidate_len;
+            have_best = true;
         }
     }
 
