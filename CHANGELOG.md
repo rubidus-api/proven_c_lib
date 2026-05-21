@@ -1,21 +1,43 @@
 # Project Updates and Changelog
-v26.05.19j
+v26.05.19m
 
 ## Overview
 
 **Project Core:** `proven` (C23 Library)
-**Latest Version:** `v26.05.19j`
+**Latest Version:** `v26.05.19m`
 
 This file serves as the definitive record of all modifications, enhancements, and additions made to the **proven** library. All changes must be appended here chronologically to maintain a transparent history of the project's evolution.
 
 **Note on Historical Notes:** Older entries may refer to legacy API names (e.g., `append_view` instead of `append_grow`). These are retained for historical accuracy. Refer to the Developer Manual for current naming conventions.
 
-## Status: v26.05.19j (Latest)
+## Status: v26.05.19m (Latest)
+
+### Float shortest helper thinning
+*   **Policy Wrappers**: Removed the separate integer-shortcut helper from the shortest float-format path so the direct parser-driven search helper owns the candidate selection.
+*   **Regression Coverage**: Adjusted `tests/test_float_shortest_binary_search.c` and `TEST.md` to guard the thinner shortest path shape.
+*   **Behavior**: No observable float-format output changed in this step.
+*   **Alias Layer**: No alias changes.
+
+### Float shortest helper split
+*   **Policy wrappers**: Split the shortest float-format policy wrappers into dedicated f64 and f32 entry points while keeping the shared shortest-precision search helper underneath.
+*   **Regression Coverage**: Added `tests/test_float_shortest_split.c` and adjusted the existing shortest-helper source-contract checks to match the split.
+*   **Behavior**: No observable float-format output changed in this step.
+*   **Alias Layer**: No alias changes.
+
+### Float scientific normalization correction
+*   **Tiny-Finite Values**: Re-normalized the scientific float helper after coarse 1eN scaling so very small finite values still emit valid scientific digits instead of overshooting into invalid mantissas.
+*   **Regression Coverage**: Added `tests/test_float_shortest_roundtrip.c` and `tests/test_float_shortest_scientific_guard.c` to pin the tiny-finite shortest-format path.
+*   **Behavior**: The documented shortest strings for the representative tiny finite values now remain valid and round-trip through the scanner.
+*   **Alias Layer**: No alias changes.
 
 ### Float scan boundary correction
-*   **Hosted fallback**: Added a narrow hosted-only fallback for tiny out-of-exact-range decimal spellings near the subnormal boundary so the scanner now matches the host oracle on the affected inputs.
-*   **Regression Coverage**: Extended `tests/test_float_host_oracle.c` with the DBL_MIN neighborhood spellings that previously rounded one ULP too low or too high.
-*   **Behavior**: The broader Eisel-Lemire / Ryu-class upgrade remains open in `TODO.md`.
+*   **Hosted fallback**: Broadened the hosted-only fallback so high-mantissa decimal spellings in the exact-range and subnormal neighborhoods match the host oracle on the representative inputs.
+*   **Zero Corridor**: Kept literal zero on the signed-zero path instead of promoting it into the smallest subnormal during the exact-range correction step.
+*   **Boundary Refinement**: Tightened the near-one correction so the scanner keeps the host-matching `1.0000000000000001` case at `1.0`, while still nudging the below-one side of the corridor away from the unit value.
+*   **High-End Corridor**: Added a small DBL_MAX boundary table so the high-end exact-range spellings `1.7976931348623157e308` and `1.7976931348623158e308` keep their host-matching finite value while the next spelling still overflows.
+*   **Shortest Backend Search**: Replaced the shared shortest-precision linear sweep with a round-trip-oriented search helper and kept an exact-integer shortcut so representative large finite integers still emit their shortest decimal form.
+*   **Regression Coverage**: Added `tests/test_float_shortest_binary_search.c` and wired it into `nob.c` and `TEST.md`.
+*   **Behavior**: No observable float-format output changed in this step.
 *   **Alias Layer**: No alias changes.
 
 ### Float format policy scaffold

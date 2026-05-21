@@ -1,4 +1,4 @@
-     1|# proven Test Matrix (v26.05.19j)
+     1|# proven Test Matrix (v26.05.19l)
      2|
      3|This document describes how the `proven` test suite is organized, what each test is intended to validate, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
      4|
@@ -672,7 +672,7 @@ Sub-checks:
 - Confirms `1.7976931348623157e308`, `2.2250738585072014e-308`, and `4.9e-324` remain finite and stable.
 - Confirms `1e309` reports `PROVEN_ERR_OVERFLOW`.
 - Confirms malformed input restores the scanner cursor to its original position.
-- `tests/test_scan_f64_bounds` covers underflow-to-signed-zero spellings and overflow boundary behavior at the same parser boundary.
+- `tests/test_scan_f64_bounds` covers underflow-to-signed-zero spellings, subnormal-boundary spellings around DBL_MIN, and overflow boundary behavior at the same parser boundary.
 
 Failure tip: inspect `src/proven/scan.c`, especially the decimal mantissa accumulation, exponent scaling, and final finite-value check. If a malformed token leaves the cursor advanced, inspect the failure-atomic rollback path first.
 
@@ -1084,8 +1084,104 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/float_format.c` if the shortest output stops round-tripping, and keep the host strtod oracle limited to tests.
 
+### 42. `tests/test_job_stress_tsan` - job queue stress
+
+Intent: verify the hosted job queue tolerates a denser concurrent producer pattern and still executes each submitted job exactly once.
+
+Sub-checks:
+
+- Launches four producer threads against a small bounded queue.
+- Submits 1024 jobs per producer while yielding between retries.
+- Counts total executions with an atomic counter.
+- Uses per-slot atomics to detect duplicate or missing execution.
+- Closes and destroys the job system only after all producers have joined.
+
+Failure tip: run `./nob tsan` if available and inspect `src/proven/job.c` plus `platform/proven_sys_thread.c` if counts drift or a producer stalls.
+
+### 43. `tests/test_float_host_oracle` - float host oracle
+
+Intent: compare representative finite float parsing and simple fixed-format rendering against the platform C library without sharing implementation code.
+
+Sub-checks:
+
+- Parses a representative finite decimal corpus with host `strtod` and with `proven_scan_f64`.
+- Compares parsed bit patterns for exact agreement on the finite corpus.
+- Formats the same finite values with the default fixed formatter path.
+- Chooses the same scientific-versus-fixed branch threshold as the library for the comparison corpus.
+- Compares the library text against host `snprintf` on the same finite inputs.
+
+Failure tip: inspect `src/proven/scan.c` and `src/proven/float_format.c` if the host oracle and library disagree on the representative finite corpus.
+
+### 44. `tests/test_float_upgrade_corpus` - float upgrade corpus
+
+Intent: pin representative exact-range, subnormal-boundary, and shortest-format float spellings while the long-term parser and formatter upgrade stays staged.
+
+Sub-checks:
+
+- Parses representative boundary spellings around the exact integer range, the binary64 unit-in-the-last-place boundary, and the subnormal edge.
+- Compares representative scanned values against the host `strtod` bit pattern for the same text.
+- Formats representative exact-range and subnormal-boundary doubles with the shortest policy.
+- Confirms the expected shortest spellings for `DBL_MIN`, `DBL_MAX`, `DBL_TRUE_MIN`, and nearby exact values.
+
+Failure tip: inspect `src/proven/scan.c` and `src/proven/float_format.c` if a representative corpus value changes bit pattern or shortest spelling.
+
+### 45. `tests/test_float_exact_range_backend` - float exact-range backend
+
+Intent: verify that the decimal-to-double path stays deterministic without the host strtod fallback and preserves representative exact-range spellings.
+
+Sub-checks:
+- Confirms representative exact-range, subnormal-boundary, and high-end boundary spellings still parse to the documented bits.
+- Confirms `src/proven/scan.c` no longer calls host `strtod` for decimal conversion.
+- Confirms `src/proven/float_format.c` keeps the shortest-format helper split from the dedicated policy wrappers.
+
+Failure tip: inspect `src/proven/scan.c` and the shared float decimal helper if the exact-range backend falls back to host strtod or the corpus drifts.
+
+### 46. `tests/test_float_shortest_split` - float shortest helper split
+
+Intent: verify the shortest float-format backend keeps dedicated f64 and f32 wrappers instead of collapsing back to one shared common helper.
+
+Sub-checks:
+- Confirms `src/proven/float_format.c` still defines the dedicated f64 and f32 shortest helper entry points.
+- Confirms the source no longer contains the shared shortest common helper.
+- Confirms the split stays narrow and does not alter the visible shortest output contract.
+
+Failure tip: inspect `src/proven/float_format.c` if the shortest backend reintroduces a shared common helper or loses one of the dedicated helper entry points.
+
+### 47. `tests/test_float_shortest_shared` - float shortest helper sharing
+
+Intent: verify the shortest float-format backend keeps dedicated f64 and f32 round-trip helpers without collapsing back to a shared common helper.
+
+Sub-checks:
+- Confirms `src/proven/float_format.c` defines dedicated shortest round-trip helpers for f64 and f32.
+- Confirms the dedicated f64 and f32 shortest helpers remain present.
+- Confirms the shared shortest common helper does not return.
+
+Failure tip: inspect `src/proven/float_format.c` if the shared shortest search helper disappears or the dedicated wrappers collapse back together.
+
+### 48. `tests/test_float_shortest_binary_search` - float shortest round-trip backend
+
+Intent: verify the shortest float-format backend uses parser-driven round-trip helpers without the old binary-search precision sweep or a separate integer shortcut.
+
+Sub-checks:
+- Confirms `src/proven/float_format.c` defines dedicated shortest round-trip helpers for f64 and f32.
+- Confirms the shared shortest backend no longer contains the old `precision <= 17` or `precision <= 9` binary-search helpers.
+- Confirms the shared round-trip search helper remains present and the separate integer-shortcut helper does not return.
+
+Failure tip: inspect `src/proven/float_format.c` if the shortest backend reverts to a precision-search helper, reintroduces a separate integer shortcut, or stops routing through the shared round-trip search helper.
+
+### 49. `tests/test_float_shortest_scientific_guard` - float shortest scientific guard
+
+Intent: verify the shortest float formatter handles very small finite values by producing a valid shortest candidate instead of an invalid scientific normalization result.
+
+Sub-checks:
+- Confirms a representative tiny finite value still formats successfully through the shortest policy.
+- Confirms the formatted spelling round-trips through the library scanner.
+- Confirms the formatted spelling matches the shortest candidate found by exhaustive fixed-precision search over the documented precision range.
+
+Failure tip: inspect `src/proven/float_decimal.c` and `src/proven/float_format.c` if the shortest formatter rejects a tiny finite value, emits an invalid scientific spelling, or stops matching the shortest exhaustive candidate.
+
 ## Failure triage workflow
-   814|
+
    815|1. Find the first `[PROVEN][TEST][FAIL]` line. Later failures can be cascading noise.
    816|2. Note the `stage` field.
    817|   - `link`: inspect the compiler/linker diagnostic immediately above the failure.

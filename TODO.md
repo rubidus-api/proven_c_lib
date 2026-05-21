@@ -6,18 +6,18 @@ This file tracks the remaining follow-up items from the current main-branch revi
 
 - Eisel-Lemire / Ryu-class float conversion upgrade.
   - Scope: long-term accuracy work for the out-of-exact-range decimal-to-double path and the matching formatter path.
-  - Current state: the hosted scanner already uses the shared double-only helper path, the portable no-long-double regression is in place, and the present fixed-precision formatter remains the default.
-  - Next staged steps:
-    1. Expand the representative corpus for exact-range, subnormal-boundary, and shortest-format cases so the upgrade target stays pinned to known spellings.
-    2. Replace the current decimal-to-double fallback path with a target-deterministic exact-range backend that stays within the documented no-long-double contract.
-    3. Replace the shortest-output policy backend with the final round-trip-oriented formatter once the parser backend is in place.
+  - Current state: the hosted scanner already uses the shared double-only helper path, the portable no-long-double regression is in place, the representative exact-range, subnormal-boundary, and shortest-format corpus is pinned in `tests/test_float_upgrade_corpus`, the exact-range scan corridor now includes the DBL_MAX boundary, the shortest-policy backend now uses direct parser-driven round-trip helpers, the separate integer-shortcut helper has been folded back into the parser-driven search path, and the scientific normalization helper now re-normalizes after coarse scaling so very small finite values still produce valid scientific digits. The float32 and float64 shortest paths now use dedicated wrappers around the shared round-trip helper instead of a single policy helper.
+  - Recent validation: `tests/test_float_exact_range_backend.c` now also pins the near-one, subnormal-adjacent, and high-end boundary cases that the latest scan correction touches, `tests/test_float_shortest_binary_search.c` now guards the round-trip formatter rewrite without the separate integer shortcut, and `tests/test_float_shortest_split.c` now guards the dedicated f64/f32 wrapper split.
+  - Next staged step:
+    1. Fold the remaining per-width round-trip wrappers into the final parser-driven shortest formatter path so the policy wrapper layer becomes thinner and the implementation contract is easier to read.
   - Out of scope for this pass: broad algorithmic rewrites that would change the current fixed-precision default or add hidden heap allocation on hot paths.
 
 ## Already addressed in this pass
 
 - Verification infrastructure: added `tests/test_job_stress_tsan` for a denser job-queue stress pass and `tests/test_float_host_oracle` for host-oracle float comparisons against the platform C library.
+- Float corpus pinning: added `tests/test_float_upgrade_corpus` to pin exact-range, subnormal-boundary, and shortest-format spellings while the staged float upgrade remains open.
 - Decimal underflow policy: decimal inputs below the smallest subnormal are documented and tested as signed zero with the input sign preserved.
-- Scientific normalization guard: the formatter already uses a bounded local loop cap in `proven_fmt_normalize_scientific()`.
+- Scientific normalization correction: the formatter now re-normalizes after coarse scaling so very small finite values do not overshoot into invalid mantissas.
 - Build driver portability: `nob.c` already probes `-std=c23` first, falls back to `-std=c2x`, and keeps the selected standard flag in the build hash.
 - Map owned-key storage: added `PROVEN_KEY_TYPE_U8_OWNED` and `proven_map_set_u8_owned()` so callers that need map-owned keys can duplicate bytes on insert and release them on remove or destroy.
 - Public contract hardening: array and map mutation entry points now reject corrupted public structs before allocator callbacks are touched, and filesystem append opens now treat append as write intent while rejecting append-plus-truncation conflicts.
