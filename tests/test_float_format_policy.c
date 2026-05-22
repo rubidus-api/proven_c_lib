@@ -1,3 +1,4 @@
+#include <float.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -49,6 +50,9 @@ int main(void) {
     expect_policy_matches_current_fmt(-2.25);
     expect_policy_matches_current_fmt(0.9999995);
     expect_policy_matches_current_fmt(9.9999995e18);
+    expect_policy_matches_current_fmt(-DBL_MIN);
+    expect_policy_matches_current_fmt(-DBL_TRUE_MIN);
+    expect_policy_matches_current_fmt(-DBL_MAX);
 
     PROVEN_TEST_SECTION(
         "special values",
