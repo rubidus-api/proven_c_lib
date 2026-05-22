@@ -55,7 +55,7 @@ int main(void) {
         "overflow boundaries",
         "Confirm that genuine overflow reports a deterministic overflow error and preserves the cursor.",
         "Inspect the true-value exponent path if large inputs return out-of-bounds or advance the cursor on failure.");
-    expect_scan_ok_bits("largest finite", "1.7976931348623157e308", 1.7976931348623151e308);
+    expect_scan_ok_bits("largest finite", "1.7976931348623157e308", strtod("1.7976931348623157e308", NULL));
     expect_scan_ok_bits("smallest normal", "2.2250738585072014e-308", 2.2250738585072014e-308);
     expect_scan_ok_bits("smallest subnormal", "4.9e-324", 4.9e-324);
     expect_scan_fail_restore("1e309 overflow", "1e309", PROVEN_ERR_OVERFLOW);

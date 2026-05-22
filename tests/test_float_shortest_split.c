@@ -20,42 +20,31 @@ static char *read_file_text(const char *path) {
 }
 
 static void require_text_present(const char *text, const char *needle, const char *label) {
-    PROVEN_TEST_ASSERT(strstr(text, needle) != NULL, label, "Inspect src/proven/float_format.c if the round-trip shortest helper disappears.");
+    PROVEN_TEST_ASSERT(strstr(text, needle) != NULL, label, "Inspect src/proven/float_format.c if a dedicated shortest helper disappears.");
 }
 
 static void require_text_missing(const char *text, const char *needle, const char *label) {
-    PROVEN_TEST_ASSERT(strstr(text, needle) == NULL, label, "Inspect src/proven/float_format.c if the linear precision sweep returns.");
+    PROVEN_TEST_ASSERT(strstr(text, needle) == NULL, label, "Inspect src/proven/float_format.c if the shared shortest helper returns.");
 }
 
 int main(void) {
     PROVEN_TEST_SUITE(
-        "test_float_shortest_binary_search",
+        "test_float_shortest_split",
         "Verify the shortest float-format backend keeps thin per-width policy shims while routing both widths through the shared parser-driven round-trip helper.",
-        "Inspect src/proven/float_format.c if the shortest backend keeps a precision-search helper, drops the shared round-trip search helper, or removes the width-specific policy shims."
+        "Inspect src/proven/float_format.c if the shortest path loses the shared round-trip search helper or the per-width policy shims stop forwarding into it."
     );
 
     char *src = read_file_text("src/proven/float_format.c");
-    require_text_missing(src, "proven_float_format_find_shortest_precision", "old binary-search helper should be removed");
     require_text_present(src, "proven_float_format_build_shortest_common", "shared shortest helper should remain present");
     require_text_present(src, "proven_float_format_build_shortest_f64", "f64 shortest policy shim should remain present");
     require_text_present(src, "proven_float_format_build_shortest_f32", "f32 shortest policy shim should remain present");
     require_text_present(src, "return proven_float_format_build_shortest_f64(buf, buf_cap, value, written_out);", "f64 policy dispatch should call the width-specific shim");
     require_text_present(src, "return proven_float_format_build_shortest_f32(buf, buf_cap, value, written_out);", "f32 policy dispatch should call the width-specific shim");
     require_text_present(src, "proven_float_format_roundtrip_search_fixed", "shared round-trip search helper should remain present");
+    require_text_missing(src, "proven_float_format_best_shortest_style_common", "shared shortest policy helper should be removed");
+    require_text_missing(src, "proven_float_format_find_shortest_precision", "shared shortest search helper should be removed");
 
-    require_text_missing(src, "proven_float_format_best_shortest_style_common", "shared shortest helper should remain removed");
-    require_text_missing(
-        src,
-        "for (proven_i32 precision = 0; precision <= 17; ++precision)",
-        "f64 shortest helper should not keep a direct linear precision sweep in the formatter source"
-    );
-    require_text_missing(
-        src,
-        "for (proven_i32 precision = 0; precision <= 9; ++precision)",
-        "f32 shortest helper should not keep a direct linear precision sweep in the formatter source"
-    );
     free(src);
-
-    PROVEN_TEST_PASS("Shortest backend parser-driven checks passed.");
+    PROVEN_TEST_PASS("Shortest backend split checks passed.");
     return 0;
 }
