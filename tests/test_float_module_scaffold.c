@@ -53,6 +53,9 @@ int main(void) {
     require(contains(mod_c, "proven_float_scale_pow10"), "float_decimal.c should define the shared pow10 scaling helper");
     require(contains(mod_c, "proven_float_convert_decimal"), "float_decimal.c should define the shared decimal-to-double helper");
     require(contains(mod_c, "proven_float_normalize_scientific"), "float_decimal.c should define the shared scientific normalization helper");
+    require(contains(mod_c, "proven_float_shortest_literal_common"), "float_decimal.c should define the shared shortest-literal helper");
+    require(contains(mod_c, "proven_float_shortest_literal_f64"), "float_decimal.c should define the shared f64 shortest-literal wrapper");
+    require(contains(mod_c, "proven_float_shortest_literal_f32"), "float_decimal.c should define the shared f32 shortest-literal wrapper");
     free(mod_c);
 
     char *scan = read_text_file("src/proven/scan.c");
@@ -61,9 +64,12 @@ int main(void) {
     require(!contains(scan, "static double proven_scan_convert_decimal("), "scan.c should not define the shared decimal conversion helper inline");
     free(scan);
 
-    char *fmt = read_text_file("src/proven/fmt.c");
-    require(contains(fmt, "#include \"float_decimal.h\""), "fmt.c should include the float helper header instead of carrying the shared helpers inline");
-    require(!contains(fmt, "static bool proven_fmt_normalize_scientific("), "fmt.c should not define the shared scientific normalization helper inline");
+    char *fmt = read_text_file("src/proven/float_format.c");
+    require(contains(fmt, "#include \"float_decimal.h\""), "float_format.c should include the float helper header instead of carrying the shared helpers inline");
+    require(contains(fmt, "proven_float_shortest_literal_f64"), "float_format.c should call the shared f64 shortest-literal helper");
+    require(contains(fmt, "proven_float_shortest_literal_f32"), "float_format.c should call the shared f32 shortest-literal helper");
+    require(!contains(fmt, "0x7ff0000000000000ULL"), "float_format.c should not carry the f64 shortest special-case literal table inline");
+    require(!contains(fmt, "0x7f800000u"), "float_format.c should not carry the f32 shortest special-case literal table inline");
     free(fmt);
 
     char *nob = read_text_file("nob.c");

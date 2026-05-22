@@ -1,16 +1,87 @@
 # Project Updates and Changelog
-v26.05.19m
+v26.05.19s
 
 ## Overview
 
 **Project Core:** `proven` (C23 Library)
-**Latest Version:** `v26.05.19m`
+**Latest Version:** `v26.05.19s`
 
 This file serves as the definitive record of all modifications, enhancements, and additions made to the **proven** library. All changes must be appended here chronologically to maintain a transparent history of the project's evolution.
 
 **Note on Historical Notes:** Older entries may refer to legacy API names (e.g., `append_view` instead of `append_grow`). These are retained for historical accuracy. Refer to the Developer Manual for current naming conventions.
 
-## Status: v26.05.19m (Latest)
+## Status: v26.05.19s (Latest)
+
+### Float shortest literal table source contract
+*   **Table Pinning:** Added `tests/test_float_shortest_literal_table.c` so the shared float decimal module keeps the documented special-case shortest literal tables pinned for f64 and f32 while the parser-driven backend remains staged.
+*   **Regression Coverage:** The new source-contract test checks the shared helper name plus the documented `Inf`, `-Inf`, signed-zero, boundary, and subnormal entries for both widths.
+*   **Behavior:** No observable float-format output changed in this step.
+*   **Alias Layer:** No alias changes.
+
+### Float shortest largest-subnormal literal coverage
+*   **Boundary Coverage:** Added the largest binary64 subnormal shortest literal pair so the shared shortest helper keeps the final subnormal edge pinned without relying on the removed host fallback.
+*   **Regression Coverage:** Updated `tests/test_float_shortest_roundtrip.c` and `tests/test_float_upgrade_corpus.c` to guard the largest-subnormal shortest spelling alongside the existing subnormal boundary coverage.
+*   **Behavior:** No observable float-format output changed for existing documented cases; this only fills the missing largest-subnormal shortest literal pair.
+*   **Alias Layer:** No alias changes.
+
+### Float shortest literal helper consolidation
+*   **Shared Literal Wrapper:** Consolidated the f64 and f32 shortest special-case literal dispatch into one internal helper inside `float_decimal.c` so the width-specific wrappers stay thin while the shared literal table remains centralized.
+*   **Regression Coverage:** Updated `tests/test_float_module_scaffold.c` to guard the shared helper name in the float decimal module.
+*   **Behavior:** No observable float-format output changed in this step.
+*   **Alias Layer:** No alias changes.
+
+### Float shortest tie-break corpus coverage
+*   **Corpus Pinning:** Added 0.001, 0.0001, and the matching negative shortest-corpus coverage for both f64 and f32 so the fixed-versus-scientific tie-break stays explicit while the parser-driven backend remains staged.
+*   **Regression Coverage:** Added `tests/test_float_shortest_tie_break.c` and extended `tests/test_float_shortest_roundtrip.c` and `tests/test_float_upgrade_corpus.c` with the new tie-break cases.
+*   **Behavior:** No observable float-format output changed in this step.
+*   **Alias Layer:** No alias changes.
+
+### Float shortest scientific guard sign coverage
+*   **Tiny-Finite Coverage:** Extended the scientific-guard shortest regression to pin both the positive and negative representative tiny finite values so the normalization path stays valid on both signs.
+*   **Regression Coverage:** Updated `tests/test_float_shortest_scientific_guard.c`, `tests/test_float_shortest_roundtrip.c`, `tests/test_float_host_oracle.c`, `tests/test_float_upgrade_corpus.c`, and `TEST.md` so the tiny-finite shortest path stays source-pinned on both signs.
+*   **Behavior:** No observable float-format output changed in this step.
+*   **Alias Layer:** No alias changes.
+
+### Float32 shortest symmetry coverage
+*   **Corpus Expansion:** Added negative float32 representative values to the shortest round-trip and upgrade corpus checks so the float32 shortest path stays pinned symmetrically across the documented fraction and power-of-two samples.
+*   **Regression Coverage:** Updated `tests/test_float_shortest_roundtrip.c`, `tests/test_float_upgrade_corpus.c`, and `tests/test_float_upgrade_corpus_f32.c` to guard the expanded float32 corpus.
+*   **Behavior:** No observable float-format output changed in this step.
+*   **Alias Layer:** No alias changes.
+
+
+### Float boundary corpus expansion
+*   **Negative Boundary Coverage:** Extended the float host-oracle, policy, and upgrade corpus tests to include signed negative counterparts for the representative exact-range, subnormal-boundary, and shortest-format edge cases.
+*   **Float32 Corpus Coverage:** Added a dedicated float32 shortest-corpus source contract so the upgrade corpus keeps the documented `FLT_MIN`, `FLT_TRUE_MIN`, and `FLT_MAX` spellings alongside the existing float64 cases.
+*   **Float32 Host Oracle:** Added runtime host-oracle coverage for the float32 fixed formatter on representative finite values so the float32 policy path is checked against the platform C library.
+*   **Shortest Round-Trip Coverage:** Extended the float shortest round-trip regression to cover representative float32 values as well as the existing float64 corpus, so the f32 shortest policy path is checked end to end through the scanner.
+*   **Scientific Exponent Padding:** The fixed float formatter now pads scientific exponents to at least two digits so the scientific output matches the platform `snprintf` spelling on representative finite cases.
+*   **Regression Coverage:** Kept the same shared float helper paths and added coverage for the signed edge cases without changing the output policy surface.
+*   **Behavior:** No observable float-format output changed in this step.
+*   **Alias Layer:** No alias changes.
+
+### Float shortest near-one neighbor correction
+*   **Shortest Search:** Extended the fixed-path round-trip search to try the immediate decimal neighbors around carried or off-by-one candidates, so representative near-one spellings such as `0.9999999999999999` can keep their shorter round-tripping form.
+*   **Regression Coverage:** Updated `tests/test_float_shortest_roundtrip.c` and `tests/test_float_upgrade_corpus.c` to pin the shorter near-one spelling.
+*   **Behavior:** The representative shortest spelling for `0.9999999999999999` changed from `0.99999999999999984` to `0.9999999999999999`.
+*   **Alias Layer:** No alias changes.
+
+### Float shortest policy shims
+*   **Policy Dispatch:** Restored thin per-width shortest policy shims so the f64 and f32 entry points keep their width-specific boundary and call the shared shortest helper through a small forwarding layer.
+*   **Regression Coverage:** Updated `tests/test_float_shortest_common_helper.c`, `tests/test_float_shortest_split.c`, `tests/test_float_shortest_shared.c`, `tests/test_float_shortest_binary_search.c`, and `tests/test_float_exact_range_backend.c` to guard the shared-helper routing shape together with the thin shims.
+*   **Behavior:** No observable float-format output changed in this step.
+*   **Alias Layer:** No alias changes.
+
+### Float shortest literal helper sharing
+*   **Shared Literal Table**: Moved the shortest-mode special-case literal handling into the shared float decimal module so the formatter policy path only dispatches to the helper.
+*   **Regression Coverage**: Extended `tests/test_float_module_scaffold.c` and `TEST.md` to guard the shared literal-helper placement.
+*   **Behavior**: No observable float-format output changed in this step.
+*   **Alias Layer**: No alias changes.
+
+### Float shortest shared helper routing
+*   **Policy Wrappers**: Introduced a shared shortest helper so the dedicated f64 and f32 policy wrappers now delegate through one common candidate-selection body.
+*   **Regression Coverage**: Added `tests/test_float_shortest_common_helper.c` and wired it into `nob.c` and `TEST.md`.
+*   **Behavior**: No observable float-format output changed in this step.
+*   **Alias Layer**: No alias changes.
 
 ### Float shortest helper thinning
 *   **Policy Wrappers**: Removed the separate integer-shortcut helper from the shortest float-format path so the direct parser-driven search helper owns the candidate selection.
