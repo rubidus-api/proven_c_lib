@@ -315,13 +315,13 @@ proven_result_f64_t proven_scan_f64(proven_scan_t *scan) {
     const proven_u64 max_mantissa = 17976931348623157ull;
     const proven_i64 min_exp10 = -324;
     const proven_u64 min_mantissa = 22250738585072014ull;
-    const proven_i64 true_min_exp10 = -340;
-    const proven_u64 true_min_mantissa = 49406564584124654ull;
+    const proven_i64 half_true_min_exp10 = -340;
+    const proven_u64 half_true_min_mantissa = 24703282292062328ull;
 
     int cmp_one = proven_scan_cmp_decimal(mantissa, exp10, 1ull, one_exp10);
     int cmp_max = proven_scan_cmp_decimal(mantissa, exp10, max_mantissa, max_exp10);
     int cmp_min = proven_scan_cmp_decimal(mantissa, exp10, min_mantissa, min_exp10);
-    int cmp_true_min = proven_scan_cmp_decimal(mantissa, exp10, true_min_mantissa, true_min_exp10);
+    int cmp_half_true_min = proven_scan_cmp_decimal(mantissa, exp10, half_true_min_mantissa, half_true_min_exp10);
 
     if (!proven_scan_isfinite_f64(result)) {
         if (cmp_max <= 0 || (exp10 == 292 && mantissa <= 17976931348623158ull)) {
@@ -372,7 +372,7 @@ proven_result_f64_t proven_scan_f64(proven_scan_t *scan) {
         }
     }
 
-    if (result == 0.0 && mantissa != 0 && cmp_true_min >= 0) {
+    if (result == 0.0 && mantissa != 0 && cmp_half_true_min >= 0) {
         result = 4.9406564584124654e-324;
     }
 

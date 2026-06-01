@@ -30,6 +30,13 @@ static void expect_scan_case(const char *input) {
     PROVEN_TEST_ASSERT(scan.cursor == strlen(input), input, "Inspect cursor advancement if a representative scan case stops consuming the full token.");
 }
 
+static void expect_scan_fail(const char *input, proven_err_t expected_err) {
+    proven_scan_t scan = proven_scan_init(proven_u8str_view_from_cstr(input));
+    proven_result_f64_t parsed = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(parsed.err == expected_err, input, "Inspect proven_scan_f64 if a representative off-range spelling stops reporting the documented error.");
+    PROVEN_TEST_ASSERT(scan.cursor == 0, input, "Inspect cursor rollback if an off-range scan failure advances the cursor.");
+}
+
 static void expect_shortest_case(double value, const char *expected) {
     char buf[128];
     proven_size_t written = 0;
@@ -87,8 +94,12 @@ int main(void) {
     expect_scan_case("2.2250738585072011e-308");
     expect_scan_case("4.9406564584124654e-324");
     expect_scan_case("-4.9406564584124654e-324");
+    expect_scan_case("2.4703282292062327e-324");
+    expect_scan_case("2.4703282292062328e-324");
     expect_scan_case("5e-324");
     expect_scan_case("-5e-324");
+    expect_scan_case("1.7976931348623158e308");
+    expect_scan_fail("1.7976931348623159e308", PROVEN_ERR_OVERFLOW);
 
     PROVEN_TEST_SECTION(
         "shortest format corpus",

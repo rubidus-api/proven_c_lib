@@ -12,6 +12,13 @@ This file serves as the definitive record of all modifications, enhancements, an
 
 ## Status: v26.05.19u (Latest)
 
+### Float scan corridor boundary coverage
+*   **Scan Corridor:** Corrected the underflow adjustment to use the half-way threshold to the smallest subnormal, then added regression coverage for that threshold and the final DBL_MAX rounding/overflow boundary.
+*   **Regression Coverage:** Extended `tests/test_scan_f64_bounds.c`, `tests/test_float_upgrade_corpus.c`, and `tests/test_float_host_oracle.c`.
+*   **Documentation:** Updated the scan API and Chapter 8 manual wording to describe the half-way threshold instead of every value below the smallest subnormal.
+*   **Behavior:** Decimal inputs at or above the half-way threshold to the smallest subnormal now round to `DBL_TRUE_MIN` instead of signed zero.
+*   **Alias Layer:** No alias changes.
+
 ### Float shortest width-aware candidate search contract
 *   **Parser-Driven Search:** Strengthened the shortest backend source-contract test so the round-trip search helper must keep width and precision parameters, walk the caller-provided precision boundary, and validate candidates through the selected width.
 *   **Behavior:** No observable float-format output changed in this step.
