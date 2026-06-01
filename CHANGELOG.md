@@ -1,16 +1,33 @@
 # Project Updates and Changelog
-v26.05.19s
+v26.05.19u
 
 ## Overview
 
 **Project Core:** `proven` (C23 Library)
-**Latest Version:** `v26.05.19s`
+**Latest Version:** `v26.05.19u`
 
 This file serves as the definitive record of all modifications, enhancements, and additions made to the **proven** library. All changes must be appended here chronologically to maintain a transparent history of the project's evolution.
 
 **Note on Historical Notes:** Older entries may refer to legacy API names (e.g., `append_view` instead of `append_grow`). These are retained for historical accuracy. Refer to the Developer Manual for current naming conventions.
 
-## Status: v26.05.19s (Latest)
+## Status: v26.05.19u (Latest)
+
+### TODO parser-driven backend plan cleanup
+*   **Documentation:** Reshaped `TODO.md` into smaller staged steps for the remaining parser-driven float backend work so the next implementation pass has clearer boundaries.
+*   **Behavior:** No code behavior changed in this update.
+*   **Alias Layer:** No alias changes.
+
+### Float32 boundary-neighbor corpus pinning
+*   **Boundary Coverage:** Added the float32 ULP-adjacent neighbors around `FLT_MIN` and `FLT_TRUE_MIN` to the shortest round-trip and upgrade corpus checks so the parser-driven backend keeps the documented shortest spellings for the values one step away from those boundaries.
+*   **Regression Coverage:** Added `tests/test_float_f32_boundary_neighbors.c` to pin the upgrade-corpus source text and the shortest round-trip behavior for the new float32 boundary-neighbor cases.
+*   **Behavior:** No observable float-format output changed for the already documented cases; this only extends coverage around the float32 boundary neighbors.
+*   **Alias Layer:** No alias changes.
+
+### Float shortest parser-driven search cleanup
+*   **Search Shape:** Reworked the shortest fixed-mode helper to keep parser-driven round-trip validation while walking precisions from high to low, removing the direct ascending precision sweep from the formatter source.
+*   **Regression Coverage:** The existing shortest backend source-contract tests now cover the parser-driven round-trip helper shape without the old linear sweep string.
+*   **Behavior:** No observable float-format output changed in this step.
+*   **Alias Layer:** No alias changes.
 
 ### Float shortest literal table source contract
 *   **Table Pinning:** Added `tests/test_float_shortest_literal_table.c` so the shared float decimal module keeps the documented special-case shortest literal tables pinned for f64 and f32 while the parser-driven backend remains staged.
@@ -31,7 +48,7 @@ This file serves as the definitive record of all modifications, enhancements, an
 *   **Alias Layer:** No alias changes.
 
 ### Float shortest tie-break corpus coverage
-*   **Corpus Pinning:** Added 0.001, 0.0001, and the matching negative shortest-corpus coverage for both f64 and f32 so the fixed-versus-scientific tie-break stays explicit while the parser-driven backend remains staged.
+*   The float shortest corpus now also keeps the 0.01 and 0.00001 precision-band samples pinned for both widths while the parser-driven backend remains staged.
 *   **Regression Coverage:** Added `tests/test_float_shortest_tie_break.c` and extended `tests/test_float_shortest_roundtrip.c` and `tests/test_float_upgrade_corpus.c` with the new tie-break cases.
 *   **Behavior:** No observable float-format output changed in this step.
 *   **Alias Layer:** No alias changes.
