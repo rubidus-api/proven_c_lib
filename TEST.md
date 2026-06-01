@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.05.19s)
+# proven Test Matrix (v26.05.19u)
 
 This document describes how the `proven` test suite is organized, what each test is intended to validate, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
 
@@ -1097,10 +1097,10 @@ Failure tip: inspect `src/proven/float_format.c` if the shortest output stops ro
 
 ### 41a. `tests/test_float_shortest_tie_break` - float shortest tie-break corpus
 
-Intent: verify the shortest round-trip corpus keeps the 0.001 and 0.0001 fixed-versus-scientific tie-break cases pinned for both f64 and f32 coverage.
+Intent: verify the shortest round-trip corpus keeps the 0.001 and 0.0001 fixed-versus-scientific tie-break cases pinned for both f64 and f32 coverage, along with the next 0.01 and 0.00001 precision-band samples.
 
 Sub-checks:
-- `tests/test_float_shortest_roundtrip.c` contains the f64 and f32 `0.001` and `0.0001` cases
+- `tests/test_float_shortest_roundtrip.c` contains the f64 and f32 `0.001`, `0.0001`, `0.01`, and `0.00001` cases
 - `tests/test_float_upgrade_corpus.c` contains the matching upgrade corpus cases
 
 Failure tip: inspect the shortest corpus tests if the tie-break cases disappear or are renamed.
@@ -1172,6 +1172,18 @@ Sub-checks:
 - The float32 short-literal coverage stays aligned with `float_decimal.c` and the float32 shortest-policy path.
 
 Failure tip: inspect `tests/test_float_upgrade_corpus.c` first. If the source contract fails, restore the missing float32 section before changing the formatter.
+
+### 44b. `tests/test_float_f32_boundary_neighbors` - float32 boundary neighbors
+
+Intent: keep the float32 ULP-adjacent neighbors around `FLT_MIN` and `FLT_TRUE_MIN` pinned in both the upgrade corpus and the shortest round-trip corpus so the parser-driven backend preserves the documented boundary spellings.
+
+Sub-checks:
+
+- Confirms `tests/test_float_upgrade_corpus.c` still records the float32 value one ULP below `FLT_MIN` and the value one ULP above `FLT_TRUE_MIN` with their documented shortest spellings.
+- Confirms `tests/test_float_shortest_roundtrip.c` still round-trips those same float32 boundary neighbors through the scanner.
+- Keeps the two values distinct from the already-pinned `FLT_MIN` and `FLT_TRUE_MIN` cases.
+
+Failure tip: inspect `tests/test_float_upgrade_corpus.c` and `tests/test_float_shortest_roundtrip.c` if one of the boundary-neighbor spellings disappears, changes, or stops round-tripping.
 
 ### 45. `tests/test_float_exact_range_backend` - float exact-range backend
 

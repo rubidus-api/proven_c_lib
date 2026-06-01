@@ -15,8 +15,11 @@ nob
 *.tmp
 *.out
 AGENTS.md
+CONTEXT.md
 MEMORY.md
 CHECKLIST.md
+CHANGELOGS.md
+*.local.md
 .hermes/
 .*
 !.env.example

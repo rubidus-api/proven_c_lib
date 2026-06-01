@@ -26,7 +26,7 @@ static void require_text_present(const char *text, const char *needle, const cha
 int main(void) {
     PROVEN_TEST_SUITE(
         "test_float_shortest_tie_break",
-        "Verify the float shortest corpus keeps the 0.001 and 0.0001 fixed-versus-scientific tie-break cases pinned for both f64 and f32 round-trip coverage.",
+        "Verify the float shortest corpus keeps the 0.001 and 0.0001 fixed-versus-scientific tie-break cases pinned for both f64 and f32 round-trip coverage, along with the next 0.01 and 0.00001 precision-band samples.",
         "Inspect tests/test_float_shortest_roundtrip.c and tests/test_float_upgrade_corpus.c if the fixed-versus-scientific tie-break coverage disappears."
     );
 
@@ -39,18 +39,26 @@ int main(void) {
         "Inspect the shortest corpus files if the fixed-versus-scientific tie-break cases are removed or renamed."
     );
     require_text_present(roundtrip, "check_expected(0.001, \"0.001\")", "f64 0.001 corpus should be present");
+    require_text_present(roundtrip, "check_expected(0.00001, \"1e-05\")", "f64 0.00001 corpus should be present");
+    require_text_present(roundtrip, "check_expected(-0.00001, \"-1e-05\")", "f64 -0.00001 corpus should be present");
     require_text_present(roundtrip, "check_expected(-0.001, \"-0.001\")", "f64 -0.001 corpus should be present");
     require_text_present(roundtrip, "check_expected(0.0001, \"1e-04\")", "f64 0.0001 corpus should be present");
     require_text_present(roundtrip, "check_expected(-0.0001, \"-1e-04\")", "f64 -0.0001 corpus should be present");
     require_text_present(roundtrip, "check_expected_f32(0.001f, \"0.001\")", "f32 0.001 corpus should be present");
+    require_text_present(roundtrip, "check_expected_f32(0.00001f, \"1e-05\")", "f32 0.00001 corpus should be present");
+    require_text_present(roundtrip, "check_expected_f32(-0.00001f, \"-1e-05\")", "f32 -0.00001 corpus should be present");
     require_text_present(roundtrip, "check_expected_f32(-0.001f, \"-0.001\")", "f32 -0.001 corpus should be present");
     require_text_present(roundtrip, "check_expected_f32(0.0001f, \"1e-04\")", "f32 0.0001 corpus should be present");
     require_text_present(roundtrip, "check_expected_f32(-0.0001f, \"-1e-04\")", "f32 -0.0001 corpus should be present");
     require_text_present(corpus, "expect_shortest_case(0.001, \"0.001\")", "f64 0.001 upgrade corpus should be present");
+    require_text_present(corpus, "expect_shortest_case(0.00001, \"1e-05\")", "f64 0.00001 upgrade corpus should be present");
+    require_text_present(corpus, "expect_shortest_case(-0.00001, \"-1e-05\")", "f64 -0.00001 upgrade corpus should be present");
     require_text_present(corpus, "expect_shortest_case(-0.001, \"-0.001\")", "f64 -0.001 upgrade corpus should be present");
     require_text_present(corpus, "expect_shortest_case(0.0001, \"1e-04\")", "f64 0.0001 upgrade corpus should be present");
     require_text_present(corpus, "expect_shortest_case(-0.0001, \"-1e-04\")", "f64 -0.0001 upgrade corpus should be present");
     require_text_present(corpus, "expect_shortest_case_f32(0.001f, \"0.001\")", "f32 0.001 upgrade corpus should be present");
+    require_text_present(corpus, "expect_shortest_case_f32(0.00001f, \"1e-05\")", "f32 0.00001 upgrade corpus should be present");
+    require_text_present(corpus, "expect_shortest_case_f32(-0.00001f, \"-1e-05\")", "f32 -0.00001 upgrade corpus should be present");
     require_text_present(corpus, "expect_shortest_case_f32(-0.001f, \"-0.001\")", "f32 -0.001 upgrade corpus should be present");
     require_text_present(corpus, "expect_shortest_case_f32(0.0001f, \"1e-04\")", "f32 0.0001 upgrade corpus should be present");
     require_text_present(corpus, "expect_shortest_case_f32(-0.0001f, \"-1e-04\")", "f32 -0.0001 upgrade corpus should be present");

@@ -12,6 +12,12 @@ static uint64_t double_bits(double value) {
     return bits;
 }
 
+static float float_from_bits(uint32_t bits) {
+    float value = 0.0f;
+    memcpy(&value, &bits, sizeof value);
+    return value;
+}
+
 static void expect_scan_case(const char *input) {
     char *end = NULL;
     double host = strtod(input, &end);
@@ -92,10 +98,14 @@ int main(void) {
     expect_shortest_case(0.0, "0");
     expect_shortest_case(-0.0, "-0");
     expect_shortest_case(0.1, "0.1");
+    expect_shortest_case(0.01, "0.01");
+    expect_shortest_case(-0.01, "-0.01");
     expect_shortest_case(0.001, "0.001");
     expect_shortest_case(-0.001, "-0.001");
     expect_shortest_case(0.0001, "1e-04");
     expect_shortest_case(-0.0001, "-1e-04");
+    expect_shortest_case(0.00001, "1e-05");
+    expect_shortest_case(-0.00001, "-1e-05");
     expect_shortest_case(100000.0, "1e05");
     expect_shortest_case(-100000.0, "-1e05");
     expect_shortest_case(1.0, "1");
@@ -120,11 +130,14 @@ int main(void) {
         "Inspect the float32 shortest helper if any documented float32 literal changes spelling."
     );
     expect_shortest_case_f32(FLT_MIN, "1.17549435e-38");
+    expect_shortest_case_f32(float_from_bits(0x007fffffu), "1.1754942e-38");
     expect_shortest_case_f32(-FLT_MIN, "-1.17549435e-38");
     expect_shortest_case_f32(0.001f, "0.001");
     expect_shortest_case_f32(-0.001f, "-0.001");
     expect_shortest_case_f32(0.0001f, "1e-04");
     expect_shortest_case_f32(-0.0001f, "-1e-04");
+    expect_shortest_case_f32(0.00001f, "1e-05");
+    expect_shortest_case_f32(-0.00001f, "-1e-05");
     expect_shortest_case_f32(100000.0f, "1e05");
     expect_shortest_case_f32(-100000.0f, "-1e05");
     expect_shortest_case_f32(0.2f, "0.2");
@@ -138,6 +151,7 @@ int main(void) {
     expect_shortest_case_f32(33554432.0f, "33554432");
     expect_shortest_case_f32(-33554432.0f, "-33554432");
     expect_shortest_case_f32(FLT_TRUE_MIN, "1e-45");
+    expect_shortest_case_f32(float_from_bits(0x00000002u), "3e-45");
     expect_shortest_case_f32(-FLT_TRUE_MIN, "-1e-45");
     expect_shortest_case_f32(FLT_MAX, "3.4028235e38");
     expect_shortest_case_f32(-FLT_MAX, "-3.4028235e38");

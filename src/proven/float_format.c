@@ -372,42 +372,54 @@ static bool proven_float_format_adjust_fixed_neighbor(char *buf, proven_size_t b
 }
 
 static bool proven_float_format_roundtrip_search_fixed(double value, bool use_scientific, bool is_f32, proven_i32 max_precision, char *candidate, proven_size_t candidate_cap, proven_size_t *candidate_len_out) {
-    for (proven_i32 precision = 0; precision <= max_precision; ++precision) {
+    bool found = false;
+    char best[128];
+    proven_size_t best_len = 0;
+    for (proven_i32 precision = max_precision; precision >= 0; --precision) {
         proven_size_t candidate_len = 0;
         if (!proven_float_format_build_fixed(candidate, candidate_cap, value, precision, use_scientific, false, &candidate_len, NULL)) {
             return false;
         }
-        if (proven_float_format_candidate_roundtrips(value, is_f32, candidate)) {
-            if (candidate_len_out) {
-                *candidate_len_out = candidate_len;
+        char base[128];
+        memcpy(base, candidate, candidate_len + 1u);
+        if (proven_float_format_candidate_roundtrips(value, is_f32, base)) {
+            if (!found || candidate_len < best_len) {
+                memcpy(best, base, candidate_len + 1u);
+                best_len = candidate_len;
+                found = true;
             }
-            return true;
         }
         if (!use_scientific && precision > 0) {
             char alt[128];
-            memcpy(alt, candidate, candidate_len + 1u);
+            memcpy(alt, base, candidate_len + 1u);
             if (proven_float_format_adjust_fixed_neighbor(alt, sizeof alt, precision, 1) &&
                 proven_float_format_candidate_roundtrips(value, is_f32, alt)) {
                 proven_size_t alt_copy_len = (proven_size_t)strlen(alt);
-                memcpy(candidate, alt, alt_copy_len + 1u);
-                if (candidate_len_out) {
-                    *candidate_len_out = alt_copy_len;
+                if (!found || alt_copy_len < best_len) {
+                    memcpy(best, alt, alt_copy_len + 1u);
+                    best_len = alt_copy_len;
+                    found = true;
                 }
-                return true;
             }
-            memcpy(alt, candidate, candidate_len + 1u);
+            memcpy(alt, base, candidate_len + 1u);
             if (proven_float_format_adjust_fixed_neighbor(alt, sizeof alt, precision, -1) &&
                 proven_float_format_candidate_roundtrips(value, is_f32, alt)) {
                 proven_size_t alt_copy_len = (proven_size_t)strlen(alt);
-                memcpy(candidate, alt, alt_copy_len + 1u);
-                if (candidate_len_out) {
-                    *candidate_len_out = alt_copy_len;
+                if (!found || alt_copy_len < best_len) {
+                    memcpy(best, alt, alt_copy_len + 1u);
+                    best_len = alt_copy_len;
+                    found = true;
                 }
-                return true;
             }
         }
     }
-    return false;
+    if (found) {
+        memcpy(candidate, best, best_len + 1u);
+        if (candidate_len_out) {
+            *candidate_len_out = best_len;
+        }
+    }
+    return found;
 }
 
 static proven_err_t proven_float_format_dispatch_f64(char *buf, proven_size_t buf_cap, double value,

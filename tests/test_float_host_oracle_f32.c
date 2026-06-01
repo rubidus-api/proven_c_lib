@@ -35,8 +35,10 @@ int main(void) {
     require_format_matches_host_f32(0.0f);
     require_format_matches_host_f32(-0.0f);
     require_format_matches_host_f32(0.1f);
+    require_format_matches_host_f32(0.01f);
     require_format_matches_host_f32(0.001f);
     require_format_matches_host_f32(0.0001f);
+    require_format_matches_host_f32(0.00001f);
     require_format_matches_host_f32(1.0f);
     require_format_matches_host_f32(1.234567f);
     require_format_matches_host_f32(123.45679f);

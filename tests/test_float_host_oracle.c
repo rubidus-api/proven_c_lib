@@ -56,8 +56,10 @@ int main(void) {
     require_scan_matches_host("0");
     require_scan_matches_host("-0");
     require_scan_matches_host("0.1");
+    require_scan_matches_host("0.01");
     require_scan_matches_host("0.001");
     require_scan_matches_host("0.0001");
+    require_scan_matches_host("0.00001");
     require_scan_matches_host("1");
     require_scan_matches_host("1.234567");
     require_scan_matches_host("123.4567899");
@@ -89,8 +91,10 @@ int main(void) {
     require_format_matches_host(0.0);
     require_format_matches_host(-0.0);
     require_format_matches_host(0.1);
+    require_format_matches_host(0.01);
     require_format_matches_host(0.001);
     require_format_matches_host(0.0001);
+    require_format_matches_host(0.00001);
     require_format_matches_host(1.0);
     require_format_matches_host(1.234567);
     require_format_matches_host(123.4567899);
