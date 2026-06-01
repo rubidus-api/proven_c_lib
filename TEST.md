@@ -672,7 +672,7 @@ Sub-checks:
 - Confirms `1.7976931348623157e308`, `2.2250738585072014e-308`, and `4.9e-324` remain finite and stable.
 - Confirms `1e309` reports `PROVEN_ERR_OVERFLOW`.
 - Confirms malformed input restores the scanner cursor to its original position.
-- `tests/test_scan_f64_bounds` covers underflow-to-signed-zero spellings, subnormal-boundary spellings around DBL_MIN, and overflow boundary behavior at the same parser boundary.
+- `tests/test_scan_f64_bounds` covers underflow-to-signed-zero spellings, the true-min half threshold, subnormal-boundary spellings around DBL_MIN, and overflow boundary behavior at the same parser boundary.
 
 Failure tip: inspect `src/proven/scan.c`, especially the decimal mantissa accumulation, exponent scaling, and final finite-value check. If a malformed token leaves the cursor advanced, inspect the failure-atomic rollback path first.
 
@@ -1148,11 +1148,11 @@ Failure tip: inspect `src/proven/float_format.c` if the float32 host oracle and 
 
 ### 44. `tests/test_float_upgrade_corpus` - float upgrade corpus
 
-Intent: pin representative exact-range, subnormal-boundary, and shortest-format float spellings while the long-term parser and formatter upgrade stays staged.
+Intent: pin representative exact-range, subnormal-boundary, off-range, and shortest-format float spellings while the long-term parser and formatter upgrade stays staged.
 
 Sub-checks:
 
-- Parses representative boundary spellings around the exact integer range, the binary64 unit-in-the-last-place boundary, and the subnormal edge, including negative counterparts where the same exact bits are expected.
+- Parses representative boundary spellings around the exact integer range, the binary64 unit-in-the-last-place boundary, the true-min half threshold, the high-end overflow boundary, and the subnormal edge, including negative counterparts where the same exact bits are expected.
 - Compares representative scanned values against the host `strtod` bit pattern for the same text.
 - Representative exact-range and subnormal-boundary doubles with the shortest policy, including the matching negative special cases and the largest binary64 subnormal shortest pair.
 - Confirms the expected shortest spellings for `DBL_MIN`, `DBL_MAX`, `DBL_TRUE_MIN`, and their negative counterparts, plus nearby exact values.
@@ -1190,7 +1190,7 @@ Failure tip: inspect `tests/test_float_upgrade_corpus.c` and `tests/test_float_s
 Intent: verify that the decimal-to-double path stays deterministic without the host strtod fallback and preserves representative exact-range spellings.
 
 Sub-checks:
-- Confirms representative exact-range, subnormal-boundary, and high-end boundary spellings still parse to the documented bits.
+- Confirms representative exact-range, subnormal-boundary, true-min half-threshold, and high-end boundary spellings still parse to the documented bits.
 - Confirms `src/proven/scan.c` no longer calls host `strtod` for decimal conversion.
 - Confirms `src/proven/float_format.c` keeps the shortest-format helper routed through the shared direct-dispatch helper path.
 

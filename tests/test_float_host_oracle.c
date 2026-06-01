@@ -79,9 +79,12 @@ int main(void) {
     require_scan_matches_host("2.2250738585072020e-308");
     require_scan_matches_host("-2.2250738585072014e-308");
     require_scan_matches_host("4.9406564584124654e-324");
+    require_scan_matches_host("2.4703282292062327e-324");
+    require_scan_matches_host("2.4703282292062328e-324");
     require_scan_matches_host("-4.9406564584124654e-324");
     require_scan_matches_host("-5e-324");
     require_scan_matches_host("-6.3508876286570945e-242");
+    require_scan_matches_host("1.7976931348623158e308");
 
     PROVEN_TEST_SECTION(
         "host-oracle formatting",
