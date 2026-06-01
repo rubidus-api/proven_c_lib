@@ -12,6 +12,12 @@ This file serves as the definitive record of all modifications, enhancements, an
 
 ## Status: v26.05.19u (Latest)
 
+### Parser-driven float backend closure
+*   **Review:** Completed the staged parser-driven float backend review pass and removed the resolved float backend item from `TODO.md`.
+*   **Source Contract:** Confirmed no old host fallback, removed shortest precision helper, removed shortest style helper, or `long double` dependency is present in the active scan/format source paths.
+*   **Behavior:** No additional behavior change in this cleanup step.
+*   **Alias Layer:** No alias changes.
+
 ### Float scan corridor boundary coverage
 *   **Scan Corridor:** Corrected the underflow adjustment to use the half-way threshold to the smallest subnormal, then added regression coverage for that threshold and the final DBL_MAX rounding/overflow boundary.
 *   **Regression Coverage:** Extended `tests/test_scan_f64_bounds.c`, `tests/test_float_upgrade_corpus.c`, and `tests/test_float_host_oracle.c`.
