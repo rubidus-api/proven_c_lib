@@ -1227,6 +1227,7 @@ Intent: verify the shortest float-format backend uses parser-driven round-trip h
 Sub-checks:
 - Confirms `src/proven/float_format.c` defines the shared shortest common helper and direct policy dispatch.
 - Confirms the f64 and f32 shims keep the binary64 and binary32 parser-driven precision limits.
+- Confirms the shared round-trip search helper keeps width and precision parameters, walks the caller-provided precision boundary, and validates candidates through the selected width.
 - Confirms `src/proven/float_format.c` no longer contains the old `precision <= 17` or `precision <= 9` binary-search helpers.
 - Confirms the shared round-trip search helper remains present and the separate integer-shortcut helper does not return.
 
