@@ -34,6 +34,8 @@ int main(void) {
     require_text_present(src, "proven_float_format_build_shortest_common", "shared shortest helper should exist");
     require_text_present(src, "proven_float_format_build_shortest_f64", "f64 shortest wrapper should exist");
     require_text_present(src, "proven_float_format_build_shortest_f32", "f32 shortest wrapper should exist");
+    require_text_present(src, "return proven_float_format_build_shortest_common(buf, buf_cap, value, false, 17, written_out);", "f64 wrapper should keep the binary64 width contract");
+    require_text_present(src, "return proven_float_format_build_shortest_common(buf, buf_cap, (double)value, true, 9, written_out);", "f32 wrapper should keep the binary32 width contract");
     require_text_present(src, "return proven_float_format_build_shortest_f64(buf, buf_cap, value, written_out);", "f64 policy dispatch should call the width-specific wrapper");
     require_text_present(src, "return proven_float_format_build_shortest_f32(buf, buf_cap, value, written_out);", "f32 policy dispatch should call the width-specific wrapper");
     free(src);

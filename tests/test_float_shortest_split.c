@@ -38,6 +38,8 @@ int main(void) {
     require_text_present(src, "proven_float_format_build_shortest_common", "shared shortest helper should remain present");
     require_text_present(src, "proven_float_format_build_shortest_f64", "f64 shortest policy shim should remain present");
     require_text_present(src, "proven_float_format_build_shortest_f32", "f32 shortest policy shim should remain present");
+    require_text_present(src, "return proven_float_format_build_shortest_common(buf, buf_cap, value, false, 17, written_out);", "f64 shim should preserve the binary64 parser-driven boundary");
+    require_text_present(src, "return proven_float_format_build_shortest_common(buf, buf_cap, (double)value, true, 9, written_out);", "f32 shim should preserve the binary32 parser-driven boundary");
     require_text_present(src, "return proven_float_format_build_shortest_f64(buf, buf_cap, value, written_out);", "f64 policy dispatch should call the width-specific shim");
     require_text_present(src, "return proven_float_format_build_shortest_f32(buf, buf_cap, value, written_out);", "f32 policy dispatch should call the width-specific shim");
     require_text_present(src, "proven_float_format_roundtrip_search_fixed", "shared round-trip search helper should remain present");

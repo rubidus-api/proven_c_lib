@@ -1198,15 +1198,16 @@ Failure tip: inspect `src/proven/scan.c` and the shared float decimal helper if 
 
 ### 46. `tests/test_float_shortest_split` - float shortest helper split
 
-Intent: verify the shortest float-format backend keeps thin per-width policy shims while routing both widths through one shared common helper.
+Intent: verify the shortest float-format backend keeps thin per-width policy shims while routing both widths through one shared parser-driven helper.
 
 Sub-checks:
 - Confirms `src/proven/float_format.c` still defines the shared shortest common helper.
-- Confirms the f64 and f32 policy dispatch paths call the shared helper directly.
-- Confirms the source no longer contains dedicated f64 and f32 shortest helper entry points.
+- Confirms the f64 shim preserves the binary64 parser-driven boundary.
+- Confirms the f32 shim preserves the binary32 parser-driven boundary.
+- Confirms the f64 and f32 policy dispatch paths call the width-specific shims.
 - Confirms the split stays narrow and does not alter the visible shortest output contract.
 
-Failure tip: inspect `src/proven/float_format.c` if the shortest backend reintroduces per-width wrapper helpers or stops calling the shared helper directly.
+Failure tip: inspect `src/proven/float_format.c` if the shortest backend loses the shared helper or collapses the width-specific shims too early.
 
 ### 47. `tests/test_float_shortest_shared` - float shortest helper sharing
 
@@ -1214,10 +1215,10 @@ Intent: verify the shortest float-format backend keeps the shared shortest helpe
 
 Sub-checks:
 - Confirms `src/proven/float_format.c` defines the shared shortest common helper.
-- Confirms the f64 and f32 policy dispatch paths call the shared helper directly.
-- Confirms the dedicated f64 and f32 shortest helper wrappers do not return.
+- Confirms the f64 and f32 policy dispatch paths call the width-specific shims.
+- Confirms the width-specific shims keep their binary64 and binary32 parser-driven precision limits.
 
-Failure tip: inspect `src/proven/float_format.c` if the shared shortest search helper disappears or the wrapper layer returns.
+Failure tip: inspect `src/proven/float_format.c` if the shared shortest search helper disappears or the width-specific shim layer collapses.
 
 ### 48. `tests/test_float_shortest_binary_search` - float shortest round-trip backend
 
@@ -1225,6 +1226,7 @@ Intent: verify the shortest float-format backend uses parser-driven round-trip h
 
 Sub-checks:
 - Confirms `src/proven/float_format.c` defines the shared shortest common helper and direct policy dispatch.
+- Confirms the f64 and f32 shims keep the binary64 and binary32 parser-driven precision limits.
 - Confirms `src/proven/float_format.c` no longer contains the old `precision <= 17` or `precision <= 9` binary-search helpers.
 - Confirms the shared round-trip search helper remains present and the separate integer-shortcut helper does not return.
 
@@ -1243,14 +1245,15 @@ Failure tip: inspect `src/proven/float_decimal.c` and `src/proven/float_format.c
 
 ### 50. `tests/test_float_shortest_common_helper` - float shortest common helper routing
 
-Intent: verify the shortest float-format backend routes both widths directly through one shared shortest helper.
+Intent: verify the shortest float-format backend routes both widths through thin width-specific shims over one shared shortest helper.
 
 Sub-checks:
 - Confirms `src/proven/float_format.c` defines a shared shortest helper for the f64 and f32 policy paths.
-- Confirms the f64 policy dispatch calls the shared helper directly.
-- Confirms the f32 policy dispatch calls the shared helper directly.
+- Confirms the f64 shim forwards to the shared helper with the binary64 precision limit.
+- Confirms the f32 shim forwards to the shared helper with the binary32 precision limit.
+- Confirms policy dispatch still routes through the width-specific shims.
 
-Failure tip: inspect `src/proven/float_format.c` if the direct dispatch stops calling the shared helper or if the helper disappears.
+Failure tip: inspect `src/proven/float_format.c` if the dispatch stops using the width-specific shims or if the shared helper disappears.
 
 ## Failure triage workflow
 

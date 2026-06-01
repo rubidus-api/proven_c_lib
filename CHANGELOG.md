@@ -12,6 +12,12 @@ This file serves as the definitive record of all modifications, enhancements, an
 
 ## Status: v26.05.19u (Latest)
 
+### Float shortest width-boundary source contract
+*   **Parser-Driven Boundary:** Strengthened the shortest backend source-contract tests so the f64 shim must keep the binary64 precision boundary and the f32 shim must keep the binary32 precision boundary while both route through the shared parser-driven helper.
+*   **Regression Coverage:** Updated the shortest split, binary-search, and common-helper tests plus their test-matrix descriptions to fail if the per-width shim layer collapses too early.
+*   **Behavior:** No observable float-format output changed in this step.
+*   **Alias Layer:** No alias changes.
+
 ### TODO parser-driven backend plan cleanup
 *   **Documentation:** Reshaped `TODO.md` into smaller staged steps for the remaining parser-driven float backend work so the next implementation pass has clearer boundaries.
 *   **Behavior:** No code behavior changed in this update.
