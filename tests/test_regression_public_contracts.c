@@ -95,12 +95,16 @@ static void check_append_open_flags(void) {
 
 static void check_invalid_open_flags(void) {
     PROVEN_TEST_SECTION(
-        "filesystem invalid open flags",
-        "Verify unsupported filesystem mode bits are rejected before reaching the PAL layer.",
-        "Inspect the filesystem open-mode mask if an out-of-range flag silently reaches the platform open call."
+        "filesystem invalid open inputs",
+        "Verify unsupported filesystem mode bits and empty paths are rejected before reaching the PAL layer.",
+        "Inspect the filesystem path conversion or open-mode mask if an empty path or out-of-range flag reaches the platform open call."
     );
 
     proven_allocator_t heap = proven_heap_allocator();
+    proven_u8str_view_t empty_path = {0};
+    proven_result_file_t empty_res = proven_fs_open(heap, empty_path, PROVEN_FS_READ);
+    PROVEN_TEST_ASSERT(empty_res.err == PROVEN_ERR_INVALID_ARG, "Empty filesystem paths should fail with invalid arg", "Inspect the shared path conversion helper if empty paths stop being rejected.");
+
     proven_u8str_view_t path = PROVEN_LIT("test_regression_invalid_fs_mode.txt");
     proven_fs_mode_t invalid_mode = (proven_fs_mode_t)(1u << 6);
     proven_result_file_t res = proven_fs_open(heap, path, invalid_mode);

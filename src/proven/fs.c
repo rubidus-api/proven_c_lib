@@ -18,6 +18,7 @@ static bool view_has_nul(proven_u8str_view_t view) {
 
 static internal_result_cstr_t internal_view_to_cstr(proven_allocator_t scratch, proven_u8str_view_t view) {
     if (!proven_alloc_is_valid(scratch)) return (internal_result_cstr_t){.err = PROVEN_ERR_INVALID_ARG};
+    if (view.size == 0) return (internal_result_cstr_t){.err = PROVEN_ERR_INVALID_ARG};
     if (view_has_nul(view)) return (internal_result_cstr_t){.err = PROVEN_ERR_INVALID_ARG};
     proven_size_t cap;
     if (PROVEN_CKD_ADD(&cap, view.size, 1)) return (internal_result_cstr_t){.err = PROVEN_ERR_OVERFLOW};
