@@ -41,12 +41,15 @@ int main() {
         
         // Release Lock
         PROVEN_TEST_ASSERT(PROVEN_IS_OK(proven_fs_lock(r.value, PROVEN_FS_LOCK_UNLOCK, true)), "Testing condition: PROVEN_IS_OK(proven_fs_lock(r.value, PROVEN_FS_LOCK_UNLOCK, true))", "Review logic surrounding PROVEN_IS_OK(proven_fs_lock(r.value, PROVEN_FS_LOCK_UNLOCK, true))");
-        
+
         // Acquire Exclusive Lock
         PROVEN_TEST_ASSERT(PROVEN_IS_OK(proven_fs_lock(r.value, PROVEN_FS_LOCK_EXCLUSIVE, true)), "Testing condition: PROVEN_IS_OK(proven_fs_lock(r.value, PROVEN_FS_LOCK_EXCLUSIVE, true))", "Review logic surrounding PROVEN_IS_OK(proven_fs_lock(r.value, PROVEN_FS_LOCK_EXCLUSIVE, true))");
         
         // Release Lock
         PROVEN_TEST_ASSERT(PROVEN_IS_OK(proven_fs_lock(r.value, PROVEN_FS_LOCK_UNLOCK, true)), "Testing condition: PROVEN_IS_OK(proven_fs_lock(r.value, PROVEN_FS_LOCK_UNLOCK, true))", "Review logic surrounding PROVEN_IS_OK(proven_fs_lock(r.value, PROVEN_FS_LOCK_UNLOCK, true))");
+
+        // Invalid lock mode should be rejected instead of being treated as unlock.
+        PROVEN_TEST_ASSERT(proven_fs_lock(r.value, (proven_fs_lock_type_t)99, true) == PROVEN_ERR_INVALID_ARG, "Invalid lock type should fail with invalid arg", "Review the lock-mode validation if unsupported enum values are accepted.");
         
         proven_fs_close(r.value);
     }

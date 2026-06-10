@@ -18,6 +18,8 @@ The format follows Keep a Changelog:
 - `proven_sysio_scanner_deinit()` now clears the full scanner state after releasing the buffer.
 - `proven_map_is_valid()` now checks the public `internal.size` against the bucket layout.
 - `proven_fs_open()` now rejects unsupported mode bits before reaching the PAL layer.
+- `proven_fs_open()` now rejects truncation requests that do not carry write intent.
+- `proven_fs_lock()` now rejects unsupported lock modes instead of treating them as unlock.
 
 ### Changed
 
