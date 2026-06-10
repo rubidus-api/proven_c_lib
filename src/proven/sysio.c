@@ -442,6 +442,14 @@ proven_err_t proven_sysio_scan_chunk_impl(proven_file_t file, const char *fmt, c
     proven_err_t err = proven_scan_fmt_internal(&scan, fmt, args, args_count);
 
     if (!proven_is_ok(err)) {
+        if (buffer_filled && scan.cursor == read_res.value) {
+            int64_t rewind_offset = -((int64_t)read_res.value);
+            proven_sys_result_size_t seek_res = proven_sys_io_seek_relative(handle, rewind_offset);
+            if (!proven_is_ok(seek_res.err)) {
+                return seek_res.err;
+            }
+            return PROVEN_ERR_OUT_OF_BOUNDS;
+        }
         int64_t rewind_offset = -((int64_t)read_res.value);
         proven_sys_result_size_t seek_res = proven_sys_io_seek_relative(handle, rewind_offset);
         if (!proven_is_ok(seek_res.err)) {
