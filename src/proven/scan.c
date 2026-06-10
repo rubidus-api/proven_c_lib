@@ -488,6 +488,7 @@ static proven_err_t proven_scan_fmt_count_placeholders(const char *fmt, proven_s
 
 proven_err_t proven_scan_fmt_internal(proven_scan_t *scan, const char *fmt, const proven_scan_arg_t *args, proven_size_t args_count) {
     if (!scan_valid(scan) || !fmt || (args_count > 0 && !args)) return PROVEN_ERR_INVALID_ARG;
+    if (args_count == 0 || args[0].type != PROVEN_SCAN_ARG_TYPE_NONE) return PROVEN_ERR_INVALID_ARG;
 
     proven_size_t placeholder_count = 0;
     proven_err_t count_err = proven_scan_fmt_count_placeholders(fmt, &placeholder_count);
