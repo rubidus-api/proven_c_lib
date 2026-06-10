@@ -432,6 +432,11 @@ static proven_err_t proven_float_format_dispatch_f64(char *buf, proven_size_t bu
     if (buf_cap == 0) {
         return PROVEN_ERR_OUT_OF_BOUNDS;
     }
+    if (policy != PROVEN_FLOAT_FORMAT_POLICY_DEFAULT &&
+        policy != PROVEN_FLOAT_FORMAT_POLICY_SIMPLE &&
+        policy != PROVEN_FLOAT_FORMAT_POLICY_RYU) {
+        return PROVEN_ERR_INVALID_ARG;
+    }
 
     if (opt.mode == PROVEN_FLOAT_FORMAT_MODE_SHORTEST) {
         if (policy == PROVEN_FLOAT_FORMAT_POLICY_RYU) {

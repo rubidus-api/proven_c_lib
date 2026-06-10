@@ -78,6 +78,8 @@ int main(void) {
         PROVEN_TEST_ASSERT(strcmp(buf, "0.1") == 0, "RYU shortest output should be compact", "Inspect the shortest backend if the emitted text changes.");
         err = proven_float_format_f64_policy(buf, sizeof buf, 0.1, (proven_float_format_policy_t)99, proven_float_format_options_fixed_default(), &written);
         PROVEN_TEST_ASSERT(err == PROVEN_ERR_INVALID_ARG, "invalid policy enum should fail", "Inspect the policy enum validation if an out-of-range value stops being rejected.");
+        err = proven_float_format_f64_policy(buf, sizeof buf, 0.1, (proven_float_format_policy_t)99, proven_float_format_options_shortest(), &written);
+        PROVEN_TEST_ASSERT(err == PROVEN_ERR_INVALID_ARG, "invalid policy enum should fail in shortest mode too", "Inspect the policy enum validation order if shortest-mode policy rejects become unsupported instead of invalid.");
         proven_float_format_options_t bad_mode = proven_float_format_options_fixed_default();
         bad_mode.mode = (proven_float_format_mode_t)99;
         err = proven_float_format_f64_policy(buf, sizeof buf, 0.1, PROVEN_FLOAT_FORMAT_POLICY_SIMPLE, bad_mode, &written);
@@ -101,6 +103,8 @@ int main(void) {
         PROVEN_TEST_ASSERT(err == PROVEN_OK, "float32 simple policy should succeed", "Inspect the float32 policy shim if it stops delegating to the fixed formatter helper.");
         PROVEN_TEST_ASSERT(strcmp(buf, "1.500000") == 0, "float32 output should match fixed formatter", "Inspect the float32 helper if the emitted text changes.");
         PROVEN_TEST_ASSERT(written == strlen("1.500000"), "float32 written count should match", "Inspect the float32 helper if the reported length changes.");
+        err = proven_float_format_f32_policy(buf, sizeof buf, 1.5f, (proven_float_format_policy_t)99, proven_float_format_options_shortest(), &written);
+        PROVEN_TEST_ASSERT(err == PROVEN_ERR_INVALID_ARG, "float32 invalid policy enum should fail in shortest mode too", "Inspect the policy enum validation order if float32 shortest-mode policy rejects become unsupported instead of invalid.");
         err = proven_float_format_f32_policy(buf, sizeof buf, 1.5f, PROVEN_FLOAT_FORMAT_POLICY_RYU, proven_float_format_options_shortest(), &written);
         PROVEN_TEST_ASSERT(err == PROVEN_OK, "float32 shortest mode should succeed", "Inspect the float32 policy branch if shortest mode stops reaching the active backend.");
         PROVEN_TEST_ASSERT(strcmp(buf, "1.5") == 0, "float32 shortest output should be compact", "Inspect the float32 shortest backend if the emitted text changes.");
