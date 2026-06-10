@@ -21,6 +21,7 @@ The format follows Keep a Changelog:
 - `proven_fs_open()` now rejects truncation requests that do not carry write intent.
 - `proven_fs_lock()` now rejects unsupported lock modes instead of treating them as unlock.
 - `proven_fs_chmod()` now rejects unsupported permission bits before reaching the PAL layer.
+- `proven_float_format_f64_policy()` now rejects out-of-range fixed-mode precision values with `INVALID_ARG`.
 
 ### Changed
 

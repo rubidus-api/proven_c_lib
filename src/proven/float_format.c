@@ -442,6 +442,9 @@ static proven_err_t proven_float_format_dispatch_f64(char *buf, proven_size_t bu
     if (opt.mode != PROVEN_FLOAT_FORMAT_MODE_FIXED) {
         return PROVEN_ERR_INVALID_ARG;
     }
+    if (opt.precision < 0 || opt.precision > 18) {
+        return PROVEN_ERR_INVALID_ARG;
+    }
 
     if (policy == PROVEN_FLOAT_FORMAT_POLICY_DEFAULT || policy == PROVEN_FLOAT_FORMAT_POLICY_SIMPLE) {
         char tmp[128];
