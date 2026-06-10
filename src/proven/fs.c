@@ -56,6 +56,11 @@ proven_result_file_t proven_fs_open(proven_allocator_t scratch, proven_u8str_vie
         res.err = PROVEN_ERR_INVALID_ARG;
         return res;
     }
+    if ((pal_flags & PROVEN_FS_TRUNC) && !(pal_flags & (PROVEN_FS_WRITE | PROVEN_FS_APPEND))) {
+        internal_cstr_free(scratch, path_buf);
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
     // If no access bits are set, default to READ
     if (!(pal_flags & (PROVEN_FS_READ | PROVEN_FS_WRITE | PROVEN_FS_APPEND))) {
         pal_flags |= PROVEN_FS_READ;
@@ -444,9 +449,15 @@ proven_err_t proven_fs_chmod(proven_allocator_t scratch, proven_u8str_view_t pat
 
 proven_err_t proven_fs_lock(proven_file_t file, proven_fs_lock_type_t type, bool wait) {
     int t = 0;
-    if (type == PROVEN_FS_LOCK_SHARED) t = 0;
-    else if (type == PROVEN_FS_LOCK_EXCLUSIVE) t = 1;
-    else t = 2;
+    if (type == PROVEN_FS_LOCK_SHARED) {
+        t = 0;
+    } else if (type == PROVEN_FS_LOCK_EXCLUSIVE) {
+        t = 1;
+    } else if (type == PROVEN_FS_LOCK_UNLOCK) {
+        t = 2;
+    } else {
+        return PROVEN_ERR_INVALID_ARG;
+    }
     
 #if defined(_WIN32) || defined(_WIN64)
     return proven_sys_fs_lock((proven_sys_file_handle_t){ .handle = file.internal.ptr }, t, wait) ? PROVEN_OK : PROVEN_ERR_IO;

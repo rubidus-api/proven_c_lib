@@ -107,6 +107,19 @@ static void check_invalid_open_flags(void) {
     PROVEN_TEST_ASSERT(res.err == PROVEN_ERR_INVALID_ARG, "Unsupported filesystem mode bits should fail with invalid arg", "Inspect the supported-mode mask in proven_fs_open before changing platform flag translation.");
 }
 
+static void check_trunc_requires_write(void) {
+    PROVEN_TEST_SECTION(
+        "filesystem truncation intent",
+        "Verify truncation without write intent is rejected instead of being silently converted into a read-only open.",
+        "Inspect the filesystem mode validation if truncation is accepted without a write-capable access mode."
+    );
+
+    proven_allocator_t heap = proven_heap_allocator();
+    proven_u8str_view_t path = PROVEN_LIT("test_regression_trunc_requires_write.txt");
+    proven_result_file_t res = proven_fs_open(heap, path, PROVEN_FS_TRUNC);
+    PROVEN_TEST_ASSERT(res.err == PROVEN_ERR_INVALID_ARG, "Truncation without write intent should fail with invalid arg", "Inspect the truncation-mode validation in proven_fs_open before changing access defaults.");
+}
+
 int main(void) {
     PROVEN_TEST_SUITE(
         "regression public contracts",
@@ -118,6 +131,7 @@ int main(void) {
     check_map_guarding();
     check_append_open_flags();
     check_invalid_open_flags();
+    check_trunc_requires_write();
 
     PROVEN_TEST_PASS("Public contract regression checks passed.");
     return 0;
