@@ -435,8 +435,7 @@ proven_err_t proven_sysio_scan_chunk_impl(proven_file_t file, const char *fmt, c
     if (!proven_is_ok(read_res.err)) {
         return read_res.err;
     }
-
-    bool maybe_truncated = (read_res.value == sizeof(buf) && read_res.err == PROVEN_OK);
+    bool buffer_filled = (read_res.value == sizeof(buf));
 
     proven_u8str_view_t view = { .ptr = (const proven_byte_t*)buf, .size = read_res.value };
     proven_scan_t scan = proven_scan_init(view);
@@ -448,19 +447,33 @@ proven_err_t proven_sysio_scan_chunk_impl(proven_file_t file, const char *fmt, c
         if (!proven_is_ok(seek_res.err)) {
             return seek_res.err;
         }
-        if (maybe_truncated && scan.cursor == read_res.value) {
-            return PROVEN_ERR_OUT_OF_BOUNDS;
-        }
         return err;
     }
 
-    if (maybe_truncated && scan.cursor == read_res.value) {
-        int64_t rewind_offset = -((int64_t)read_res.value);
-        proven_sys_result_size_t seek_res = proven_sys_io_seek_relative(handle, rewind_offset);
-        if (!proven_is_ok(seek_res.err)) {
-            return seek_res.err;
+    if (buffer_filled && scan.cursor == read_res.value) {
+        char probe;
+        proven_sys_result_size_t probe_res = proven_sys_io_read_once(handle, &probe, 1);
+        if (!proven_is_ok(probe_res.err) && probe_res.err != PROVEN_ERR_EOF) {
+            int64_t rewind_offset = -((int64_t)read_res.value);
+            proven_sys_result_size_t seek_res = proven_sys_io_seek_relative(handle, rewind_offset);
+            if (!proven_is_ok(seek_res.err)) {
+                return seek_res.err;
+            }
+            return probe_res.err;
         }
-        return PROVEN_ERR_OUT_OF_BOUNDS;
+        if (probe_res.err != PROVEN_ERR_EOF) {
+            int64_t rewind_offset = -1;
+            proven_sys_result_size_t seek_res = proven_sys_io_seek_relative(handle, rewind_offset);
+            if (!proven_is_ok(seek_res.err)) {
+                return seek_res.err;
+            }
+            rewind_offset = -((int64_t)read_res.value);
+            seek_res = proven_sys_io_seek_relative(handle, rewind_offset);
+            if (!proven_is_ok(seek_res.err)) {
+                return seek_res.err;
+            }
+            return PROVEN_ERR_OUT_OF_BOUNDS;
+        }
     }
 
     // Rewind any unconsumed bytes to prevent data loss (evaporation)
