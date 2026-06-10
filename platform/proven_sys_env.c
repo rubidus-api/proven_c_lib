@@ -10,7 +10,7 @@
 #endif
 
 proven_err_t proven_sys_env_get(const char *name, char *out_buf, size_t buf_cap, size_t *out_len) {
-    if (!name) return PROVEN_ERR_INVALID_ARG;
+    if (!name || name[0] == '\0') return PROVEN_ERR_INVALID_ARG;
 
 #if defined(_WIN32) || defined(_WIN64)
     int wname_len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, name, -1, NULL, 0);

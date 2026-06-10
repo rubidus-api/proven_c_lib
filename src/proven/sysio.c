@@ -500,6 +500,9 @@ proven_result_u8str_t proven_env_get(proven_allocator_t alloc, proven_u8str_view
     if (key.size > 0 && !key.ptr) {
         return (proven_result_u8str_t){ .err = PROVEN_ERR_INVALID_ARG };
     }
+    if (key.size == 0) {
+        return (proven_result_u8str_t){ .err = PROVEN_ERR_INVALID_ARG };
+    }
     // Reject interior NUL for safety
     for (size_t i = 0; i < key.size; ++i) {
         if (key.ptr[i] == 0) return (proven_result_u8str_t){ .err = PROVEN_ERR_INVALID_ARG };
