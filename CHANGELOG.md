@@ -23,6 +23,7 @@ The format follows Keep a Changelog:
 - `proven_fs_chmod()` now rejects unsupported permission bits before reaching the PAL layer.
 - `proven_float_format_f64_policy()` now rejects out-of-range fixed-mode precision values with `INVALID_ARG`.
 - `proven_u8str_view_slice()` now allows empty slices at the end of a view.
+- `proven_float_format_*_policy()` now rejects invalid policy enums before mode-specific dispatch.
 
 ### Changed
 
