@@ -317,6 +317,22 @@ int main(void) {
         PROVEN_TEST_ASSERT(a == 0, "destination unchanged on missing arg", "");
     }
 
+    // Test 6.8: Sentinel corruption rejection
+    PROVEN_TEST_INFO("Testing sentinel corruption rejection...");
+    {
+        proven_scan_t scan = proven_scan_init(PROVEN_LIT("123"));
+        int value = 0;
+        proven_scan_arg_t args[] = {
+            { .type = PROVEN_SCAN_ARG_TYPE_INT, .ptr = { .i = NULL } },
+            PROVEN_SCAN_ARG(&value)
+        };
+
+        proven_err_t e = proven_scan_fmt_internal(&scan, "{}", args, 2u);
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_INVALID_ARG, "corrupted sentinel rejected before scan", "");
+        PROVEN_TEST_ASSERT(scan.cursor == 0, "cursor unchanged on corrupted sentinel", "");
+        PROVEN_TEST_ASSERT(value == 0, "destination unchanged on corrupted sentinel", "");
+    }
+
     // Test 7: format scanning directly from string view using proven_scan_fmt
     PROVEN_TEST_INFO("Testing direct format scanning from view...");
     {
