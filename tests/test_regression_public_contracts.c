@@ -41,6 +41,7 @@ static void check_map_guarding(void) {
     proven_map_t map = {
         .alloc = {0},
         .internal.ptr = &dummy,
+        .internal.size = 1,
         .cap = 8,
         .used = 1,
         .len = 1,
@@ -92,6 +93,20 @@ static void check_append_open_flags(void) {
     (void)proven_fs_remove(heap, path);
 }
 
+static void check_invalid_open_flags(void) {
+    PROVEN_TEST_SECTION(
+        "filesystem invalid open flags",
+        "Verify unsupported filesystem mode bits are rejected before reaching the PAL layer.",
+        "Inspect the filesystem open-mode mask if an out-of-range flag silently reaches the platform open call."
+    );
+
+    proven_allocator_t heap = proven_heap_allocator();
+    proven_u8str_view_t path = PROVEN_LIT("test_regression_invalid_fs_mode.txt");
+    proven_fs_mode_t invalid_mode = (proven_fs_mode_t)(1u << 6);
+    proven_result_file_t res = proven_fs_open(heap, path, invalid_mode);
+    PROVEN_TEST_ASSERT(res.err == PROVEN_ERR_INVALID_ARG, "Unsupported filesystem mode bits should fail with invalid arg", "Inspect the supported-mode mask in proven_fs_open before changing platform flag translation.");
+}
+
 int main(void) {
     PROVEN_TEST_SUITE(
         "regression public contracts",
@@ -102,6 +117,7 @@ int main(void) {
     check_array_guarding();
     check_map_guarding();
     check_append_open_flags();
+    check_invalid_open_flags();
 
     PROVEN_TEST_PASS("Public contract regression checks passed.");
     return 0;

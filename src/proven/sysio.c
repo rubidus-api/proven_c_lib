@@ -75,7 +75,7 @@ void proven_sysio_scanner_deinit(proven_sysio_scanner_t *scanner) {
     if (scanner->buffer && scanner->alloc.free_fn) {
         scanner->alloc.free_fn(scanner->alloc.ctx, scanner->buffer);
     }
-    scanner->buffer = NULL;
+    *scanner = (proven_sysio_scanner_t){0};
 }
 
 static proven_err_t scanner_fill(proven_sysio_scanner_t *scanner, proven_size_t *read_bytes_out) {

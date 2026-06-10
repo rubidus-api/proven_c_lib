@@ -230,6 +230,7 @@ bool proven_map_is_valid(const proven_map_t *map) {
     if (map->cap > 0 && !proven_is_pow2(map->cap)) return false;
     if (map->cap > 0 && !map->internal.ptr) return false;
     if (map->cap == 0 && map->internal.ptr) return false;
+    if (map->cap == 0 && map->internal.size != 0) return false;
     
     if (!map_key_type_is_valid(map->key_type)) return false;
     if (!proven_alloc_is_valid(map->alloc)) return false;
@@ -242,6 +243,11 @@ bool proven_map_is_valid(const proven_map_t *map) {
     if (PROVEN_CKD_ADD(&stride_base, payload_offset, map->elem_size)) return false;
     proven_size_t bucket_stride = proven_mem_align_up(stride_base, req_align);
     if (bucket_stride == 0 || bucket_stride != map->bucket_stride) return false;
+    if (map->cap > 0) {
+        proven_size_t expected_size;
+        if (PROVEN_CKD_MUL(&expected_size, map->cap, map->bucket_stride)) return false;
+        if (map->internal.size != expected_size) return false;
+    }
     
     return true;
 }
