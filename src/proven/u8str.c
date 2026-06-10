@@ -278,7 +278,16 @@ int proven_u8str_view_ends_with(proven_u8str_view_t str, proven_u8str_view_t suf
 }
 
 proven_u8str_view_t proven_u8str_view_slice(proven_u8str_view_t str, proven_size_t index, proven_size_t len) {
-    if ((str.size > 0 && !str.ptr) || index >= str.size || len == 0) {
+    if (str.size > 0 && !str.ptr) {
+        return (proven_u8str_view_t){ .ptr = (const proven_byte_t*)0, .size = 0 };
+    }
+    if (len == 0) {
+        if (index > str.size) {
+            return (proven_u8str_view_t){ .ptr = (const proven_byte_t*)0, .size = 0 };
+        }
+        return (proven_u8str_view_t){ .ptr = (const proven_byte_t*)0, .size = 0 };
+    }
+    if (index >= str.size) {
         return (proven_u8str_view_t){ .ptr = (const proven_byte_t*)0, .size = 0 };
     }
     // Clamp length
