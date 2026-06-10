@@ -34,6 +34,8 @@ int main() {
     // Slice clamping
     proven_u8str_view_t slice1 = proven_u8str_view_slice(haystack, 6, 6); // "banana"
     PROVEN_TEST_ASSERT(proven_u8str_view_eq(slice1, PROVEN_LIT("banana")) == 1, "Testing condition: proven_u8str_view_eq(slice1, PROVEN_LIT('banana')) == 1", "Review logic surrounding proven_u8str_view_eq(slice1, PROVEN_LIT('banana')) == 1");
+    proven_u8str_view_t slice_end = proven_u8str_view_slice(haystack, haystack.size, 0);
+    PROVEN_TEST_ASSERT(proven_u8str_view_eq(slice_end, (proven_u8str_view_t){0}) == 1, "Testing condition: proven_u8str_view_eq(slice_end, empty) == 1", "Review logic surrounding the empty slice-at-end boundary.");
 
     // 2. String Mutation (Replace At, Insert, Remove)
     PROVEN_TEST_INFO("Testing string mutation (replace/insert/remove)...");
