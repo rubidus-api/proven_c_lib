@@ -25,6 +25,7 @@ The format follows Keep a Changelog:
 - `proven_u8str_view_slice()` now allows empty slices at the end of a view.
 - `proven_float_format_*_policy()` now rejects invalid policy enums before mode-specific dispatch.
 - `proven_sysio_scan_chunk_impl()` now accepts exact 4096-byte chunk fits instead of treating them as truncation.
+- `proven_u8str_fmt_internal()` now rejects unknown argument types instead of silently dropping them.
 
 ### Changed
 

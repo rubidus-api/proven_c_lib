@@ -376,7 +376,9 @@ static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fm
             render_with_spec(ctx, buf, len, spec);
             break;
         }
-        default: break;
+        default:
+            ctx->err = PROVEN_ERR_INVALID_ARG;
+            break;
     }
 }
 
@@ -784,4 +786,3 @@ proven_fmt_result_t proven_u8str_fmt_internal(proven_allocator_t alloc, proven_u
 
     return res;
 }
-

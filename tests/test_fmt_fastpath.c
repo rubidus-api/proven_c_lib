@@ -71,6 +71,15 @@ int main(void) {
         const proven_arg_t args[] = { PROVEN_ARG(1) };
         expect_trunc_matches_reference("malformed format", alloc, 16, "{", args, 1);
     }
+    {
+        const proven_arg_t args[] = { { .type = (proven_arg_type_t)99 } };
+        proven_result_u8str_t out_res = proven_u8str_create(alloc, 16);
+        PROVEN_TEST_ASSERT(out_res.err == PROVEN_OK, "invalid arg type setup", "Inspect the helper allocator if test setup fails.");
+        proven_u8str_t out = out_res.value;
+        proven_fmt_result_t res = proven_u8str_fmt_internal(alloc, &out, false, "{}", (proven_allocator_t){0}, args, 1u);
+        PROVEN_TEST_ASSERT(res.err == PROVEN_ERR_INVALID_ARG, "invalid arg type should fail", "Inspect render_arg default handling if unknown argument types are ignored.");
+        proven_u8str_destroy(alloc, &out);
+    }
 
     PROVEN_TEST_PASS("Formatter fast-path comparison checks passed.");
     return 0;
