@@ -64,9 +64,9 @@ int main(void) {
                        "Successful initialization should populate the scanner buffer and capacity",
                        "Inspect the successful allocation assignment path in proven_sysio_scanner_init.");
     proven_sysio_scanner_deinit(&ok_scanner);
-    PROVEN_TEST_ASSERT(ok_scanner.buffer == NULL,
-                       "Deinit should clear the scanner buffer pointer",
-                       "Inspect proven_sysio_scanner_deinit if the buffer pointer remains non-NULL after cleanup.");
+    PROVEN_TEST_ASSERT(ok_scanner.buffer == NULL && ok_scanner.capacity == 0 && ok_scanner.cursor == 0 && ok_scanner.length == 0 && !ok_scanner.eof,
+                       "Deinit should clear the scanner state",
+                       "Inspect proven_sysio_scanner_deinit if stale scanner fields remain after cleanup.");
 #endif
 
     PROVEN_TEST_PASS("--- Finished test_sysio_scanner_init ---");

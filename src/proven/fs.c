@@ -45,6 +45,12 @@ proven_result_file_t proven_fs_open(proven_allocator_t scratch, proven_u8str_vie
     char *path_buf = path_res.value;
 
     int pal_flags = (int)mode;
+    const int supported_flags = PROVEN_FS_READ | PROVEN_FS_WRITE | PROVEN_FS_APPEND | PROVEN_FS_CREATE | PROVEN_FS_TRUNC | PROVEN_FS_CREATE_NEW;
+    if (pal_flags & ~supported_flags) {
+        internal_cstr_free(scratch, path_buf);
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
     if ((pal_flags & PROVEN_FS_APPEND) && (pal_flags & PROVEN_FS_TRUNC)) {
         internal_cstr_free(scratch, path_buf);
         res.err = PROVEN_ERR_INVALID_ARG;

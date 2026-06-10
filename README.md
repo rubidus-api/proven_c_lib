@@ -184,6 +184,7 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 - Freestanding guide: `manual/manual-freestanding.md`
 - Specification: `SPEC.md`
 - Test matrix: `TEST.md`
+- Changelog: `CHANGELOG.md`
 - Project guide: `AGENTS.md`
 - Durable facts: `MEMORY.md`
 - Bug lessons: `CHECKLIST.md`
