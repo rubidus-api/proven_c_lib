@@ -439,6 +439,13 @@ proven_result_mem_mut_t proven_fs_read_all(proven_allocator_t alloc, proven_u8st
 }
 
 proven_err_t proven_fs_chmod(proven_allocator_t scratch, proven_u8str_view_t path, proven_fs_perms_t perms) {
+    const proven_fs_perms_t supported_perms =
+        PROVEN_FS_PERM_OWNER_R | PROVEN_FS_PERM_OWNER_W | PROVEN_FS_PERM_OWNER_X |
+        PROVEN_FS_PERM_GROUP_R | PROVEN_FS_PERM_GROUP_W | PROVEN_FS_PERM_GROUP_X |
+        PROVEN_FS_PERM_OTHER_R | PROVEN_FS_PERM_OTHER_W | PROVEN_FS_PERM_OTHER_X;
+    if (((proven_fs_perms_t)perms & ~supported_perms) != 0) {
+        return PROVEN_ERR_INVALID_ARG;
+    }
     internal_result_cstr_t p_res = internal_view_to_cstr(scratch, path);
     if (!proven_is_ok(p_res.err)) return p_res.err;
     

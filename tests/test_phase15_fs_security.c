@@ -24,6 +24,9 @@ int main() {
         
         // Change back to Default
         PROVEN_TEST_ASSERT(PROVEN_IS_OK(proven_fs_chmod(heap, test_file, PROVEN_FS_PERM_DEFAULT)), "Testing condition: PROVEN_IS_OK(proven_fs_chmod(heap, test_file, PROVEN_FS_PERM_DEFAULT))", "Review logic surrounding PROVEN_IS_OK(proven_fs_chmod(heap, test_file, PROVEN_FS_PERM_DEFAULT))");
+
+        // Unsupported permission bits should be rejected instead of reaching the PAL layer.
+        PROVEN_TEST_ASSERT(proven_fs_chmod(heap, test_file, (proven_fs_perms_t)(1u << 9)) == PROVEN_ERR_INVALID_ARG, "Invalid permission bits should fail with invalid arg", "Review the permission mask validation if unsupported bits are accepted.");
     }
 
     // 2. Advisory Locking Test
