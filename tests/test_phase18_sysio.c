@@ -63,6 +63,9 @@ int main() {
         (void)proven_eprintln("FAIL: Oh no! The fake env var somehow existed?");
     }
 
+    proven_result_u8str_t empty_env = proven_env_get(alloc, (proven_u8str_view_t){0});
+    PROVEN_TEST_ASSERT(empty_env.err == PROVEN_ERR_INVALID_ARG, "Empty environment keys should fail with invalid arg", "Inspect the environment key validation if empty names stop being rejected.");
+
     // Long names must not be rejected by an internal fixed-size key buffer.
     char long_key[320];
     for (proven_size_t i = 0; i < sizeof(long_key) - 1u; ++i) {
