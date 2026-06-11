@@ -50,16 +50,18 @@ double proven_float_scale_pow10(double value, proven_i64 exp10) {
         return value;
     }
 
+    const proven_i64 chunk = exp10 > 100 ? 19 : 22;
+
     if (exp10 > 0) {
-        while (exp10 > 22) {
-            value *= proven_float_pow10_exact[22];
-            exp10 -= 22;
+        while (exp10 > chunk) {
+            value *= proven_float_pow10_exact[(proven_size_t)chunk];
+            exp10 -= chunk;
         }
         value *= proven_float_pow10_exact[(proven_size_t)exp10];
     } else {
-        while (exp10 < -22) {
-            value /= proven_float_pow10_exact[22];
-            exp10 += 22;
+        while (exp10 < -chunk) {
+            value /= proven_float_pow10_exact[(proven_size_t)chunk];
+            exp10 += chunk;
         }
         value /= proven_float_pow10_exact[(proven_size_t)(-exp10)];
     }
