@@ -31,6 +31,12 @@ static float float_from_bits(uint32_t bits) {
     return value;
 }
 
+static double double_from_bits(uint64_t bits) {
+    double value = 0.0;
+    memcpy(&value, &bits, sizeof value);
+    return value;
+}
+
 static int roundtrips_f32(const char *text, float expected) {
     proven_scan_t scan = proven_scan_init(proven_u8str_view_from_cstr(text));
     proven_result_f64_t parsed = proven_scan_f64(&scan);
@@ -73,6 +79,23 @@ static void check_expected_f32(float value, const char *expected) {
     PROVEN_TEST_ASSERT(roundtrips_f32(actual, value), "float32 shortest text should round-trip through the scanner", "Inspect the float32 shortest formatter if the text no longer parses back to the original value.");
 }
 
+static void check_roundtrips_f64(double value) {
+    char actual[128];
+    proven_size_t written = 0;
+    proven_err_t err = proven_float_format_f64_policy(
+        actual,
+        sizeof actual,
+        value,
+        PROVEN_FLOAT_FORMAT_POLICY_RYU,
+        proven_float_format_options_shortest(),
+        &written
+    );
+    PROVEN_TEST_ASSERT(err == PROVEN_OK, "shortest f64 formatting should succeed", "Inspect the shortest formatter if a finite subnormal stops formatting.");
+    PROVEN_TEST_ASSERT(written > 0, "shortest output should not be empty", "Inspect the shortest formatter if it emits an empty string.");
+    PROVEN_TEST_ASSERT(written < sizeof actual, "shortest output should fit the scratch buffer", "Inspect the shortest formatter if it reports a length that exceeds the buffer.");
+    PROVEN_TEST_ASSERT(roundtrips_f64(actual, value), "shortest text should round-trip through the scanner", "Inspect the shortest formatter if the text no longer parses back to the original value.");
+}
+
 int main(void) {
     PROVEN_TEST_SUITE(
         "test_float_shortest_roundtrip",
@@ -108,6 +131,13 @@ int main(void) {
     check_expected(0x0.fffffffffffffp-1022, "2.2250738585072009e-308");
     check_expected(-0x0.fffffffffffffp-1022, "-2.2250738585072009e-308");
     check_expected(DBL_MAX, "1.7976931348623157e308");
+
+    PROVEN_TEST_SECTION(
+        "tiny subnormal regression",
+        "Confirm shortest f64 formatting still succeeds for a finite tiny subnormal that previously fell through to unsupported.",
+        "Inspect the scientific formatting path if a tiny finite value stops round-tripping."
+    );
+    check_roundtrips_f64(double_from_bits(0x000246fc714d2188ULL));
 
     PROVEN_TEST_SECTION(
         "representative float32 values",

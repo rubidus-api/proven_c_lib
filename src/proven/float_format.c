@@ -33,6 +33,92 @@ static int proven_float_format_itoa_raw(unsigned long long val, char *s, int bas
     return n;
 }
 
+static bool proven_float_normalize_scientific_ld(long double *abs_v, int *sci_exp) {
+    const int guard_limit = 400;
+    int guard = guard_limit;
+
+    while (*abs_v >= 1e256L && guard > 0) {
+        *abs_v /= 1e256L;
+        *sci_exp += 256;
+        guard--;
+    }
+    while (*abs_v >= 1e128L && guard > 0) {
+        *abs_v /= 1e128L;
+        *sci_exp += 128;
+        guard--;
+    }
+    while (*abs_v >= 1e64L && guard > 0) {
+        *abs_v /= 1e64L;
+        *sci_exp += 64;
+        guard--;
+    }
+    while (*abs_v >= 1e32L && guard > 0) {
+        *abs_v /= 1e32L;
+        *sci_exp += 32;
+        guard--;
+    }
+    while (*abs_v >= 1e16L && guard > 0) {
+        *abs_v /= 1e16L;
+        *sci_exp += 16;
+        guard--;
+    }
+    while (*abs_v >= 1e8L && guard > 0) {
+        *abs_v /= 1e8L;
+        *sci_exp += 8;
+        guard--;
+    }
+    while (*abs_v >= 1e4L && guard > 0) {
+        *abs_v /= 1e4L;
+        *sci_exp += 4;
+        guard--;
+    }
+    while (*abs_v >= 1e2L && guard > 0) {
+        *abs_v /= 1e2L;
+        *sci_exp += 2;
+        guard--;
+    }
+    while (*abs_v >= 10.0L && guard > 0) {
+        *abs_v /= 10.0L;
+        (*sci_exp)++;
+        guard--;
+    }
+    while (*abs_v > 0.0L && *abs_v < 1.0L && guard > 0) {
+        *abs_v *= 1e256L;
+        *sci_exp -= 256;
+        if (*abs_v >= 1.0L) break;
+        *abs_v *= 1e128L;
+        *sci_exp -= 128;
+        if (*abs_v >= 1.0L) break;
+        *abs_v *= 1e64L;
+        *sci_exp -= 64;
+        if (*abs_v >= 1.0L) break;
+        *abs_v *= 1e32L;
+        *sci_exp -= 32;
+        if (*abs_v >= 1.0L) break;
+        *abs_v *= 1e16L;
+        *sci_exp -= 16;
+        if (*abs_v >= 1.0L) break;
+        *abs_v *= 1e8L;
+        *sci_exp -= 8;
+        if (*abs_v >= 1.0L) break;
+        *abs_v *= 1e4L;
+        *sci_exp -= 4;
+        if (*abs_v >= 1.0L) break;
+        *abs_v *= 1e2L;
+        *sci_exp -= 2;
+        if (*abs_v >= 1.0L) break;
+        *abs_v *= 10.0L;
+        *sci_exp -= 1;
+    }
+    while (*abs_v >= 10.0L && guard > 0) {
+        *abs_v /= 10.0L;
+        (*sci_exp)++;
+        guard--;
+    }
+
+    return guard != 0;
+}
+
 static bool proven_float_format_build_fixed(char *tmp, proven_size_t tmp_cap, double value, proven_i32 precision, bool use_scientific, bool exp_plus_sign, proven_size_t *written_out, bool *carried_out) {
     if (!tmp || tmp_cap == 0 || precision < 0 || precision > 18) {
         return false;
@@ -188,6 +274,125 @@ static bool proven_float_format_build_fixed(char *tmp, proven_size_t tmp_cap, do
         tmp[offset] = '\0';
     }
 
+    if (written_out) {
+        *written_out = offset;
+    }
+    return true;
+}
+
+static bool proven_float_format_build_scientific_ld(char *tmp, proven_size_t tmp_cap, double value, proven_i32 precision, bool exp_plus_sign, proven_size_t *written_out) {
+    if (!tmp || tmp_cap == 0 || precision < 0 || precision > 18) {
+        return false;
+    }
+
+    proven_u64 bits = proven_float_bits_f64(value);
+    bool sign = (bits >> 63) != 0;
+    int exp = (int)((bits >> 52) & 0x7FF);
+    proven_u64 mantissa = bits & 0xFFFFFFFFFFFFFull;
+    if (exp == 0x7FF) {
+        const char *special = mantissa != 0 ? "NaN" : (sign ? "-Inf" : "Inf");
+        proven_size_t len = (proven_size_t)strlen(special);
+        if (len + 1 > tmp_cap) {
+            return false;
+        }
+        memcpy(tmp, special, len + 1u);
+        if (written_out) {
+            *written_out = len;
+        }
+        return true;
+    }
+
+    proven_size_t offset = 0;
+    if (sign) {
+        if (offset + 1u >= tmp_cap) {
+            return false;
+        }
+        tmp[offset++] = '-';
+    }
+
+    const proven_u64 precision_scale_max = 1000000000000000000ULL;
+    proven_u64 scale = 1;
+    for (proven_i32 i = 0; i < precision; ++i) {
+        if (scale > precision_scale_max / 10ULL) {
+            return false;
+        }
+        scale *= 10ULL;
+    }
+
+    int sci_exp = 0;
+    long double abs_v_ld = sign ? -(long double)value : (long double)value;
+    if (!proven_float_normalize_scientific_ld(&abs_v_ld, &sci_exp)) {
+        const char *special = sign ? "-Inf" : "Inf";
+        proven_size_t len = (proven_size_t)strlen(special);
+        if (len + 1u > tmp_cap) {
+            return false;
+        }
+        memcpy(tmp, special, len + 1u);
+        if (written_out) {
+            *written_out = len;
+        }
+        return true;
+    }
+
+    unsigned long long digit = (unsigned long long)abs_v_ld;
+    long double frac = abs_v_ld - (long double)digit;
+    unsigned long long frac_i = (unsigned long long)(frac * (long double)scale + 0.5L);
+    if (frac_i >= scale) {
+        frac_i -= scale;
+        digit++;
+        if (digit >= 10ULL) {
+            digit = 1ULL;
+            sci_exp++;
+        }
+    }
+
+    if (offset + 1u >= tmp_cap) {
+        return false;
+    }
+    tmp[offset++] = (char)('0' + (int)digit);
+    if (precision > 0) {
+        if (offset + 1u >= tmp_cap) {
+            return false;
+        }
+        tmp[offset++] = '.';
+        for (proven_i32 i = precision - 1; i >= 0; --i) {
+            if (offset + 1u >= tmp_cap) {
+                return false;
+            }
+            tmp[offset + (proven_size_t)i] = (char)('0' + (int)(frac_i % 10ULL));
+            frac_i /= 10ULL;
+        }
+        offset += (proven_size_t)precision;
+    }
+    if (offset + 2u >= tmp_cap) {
+        return false;
+    }
+    tmp[offset++] = 'e';
+    {
+        char expbuf[32];
+        proven_size_t exp_len = 0;
+        unsigned long long exp_abs = sci_exp < 0 ? (unsigned long long)(-(long long)sci_exp) : (unsigned long long)sci_exp;
+        exp_len = (proven_size_t)proven_float_format_itoa_raw(exp_abs, expbuf, 10);
+        if (exp_len < 2u) {
+            expbuf[1] = expbuf[0];
+            expbuf[0] = '0';
+            exp_len = 2u;
+        }
+        if (sci_exp < 0) {
+            tmp[offset++] = '-';
+        } else if (exp_plus_sign) {
+            tmp[offset++] = '+';
+        }
+        if (offset + exp_len >= tmp_cap) {
+            return false;
+        }
+        memcpy(tmp + offset, expbuf, exp_len);
+        offset += exp_len;
+    }
+    if (offset >= tmp_cap) {
+        return false;
+    }
+    tmp[offset] = '\0';
     if (written_out) {
         *written_out = offset;
     }
@@ -382,7 +587,18 @@ static bool proven_float_format_roundtrip_search_fixed(double value, bool use_sc
         }
         char base[128];
         memcpy(base, candidate, candidate_len + 1u);
-        if (proven_float_format_candidate_roundtrips(value, is_f32, base)) {
+        bool roundtrips = proven_float_format_candidate_roundtrips(value, is_f32, base);
+        if (!roundtrips && use_scientific && precision > 6) {
+            char alt[128];
+            proven_size_t alt_len = 0;
+            if (proven_float_format_build_scientific_ld(alt, sizeof alt, value, precision, false, &alt_len) &&
+                proven_float_format_candidate_roundtrips(value, is_f32, alt)) {
+                memcpy(base, alt, alt_len + 1u);
+                candidate_len = alt_len;
+                roundtrips = true;
+            }
+        }
+        if (roundtrips) {
             if (!found || candidate_len < best_len) {
                 memcpy(best, base, candidate_len + 1u);
                 best_len = candidate_len;
