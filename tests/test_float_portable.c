@@ -85,6 +85,11 @@ int main(void) {
     PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "round-trip style decimal", "Inspect proven_scan_f64 if a representative decimal stops parsing successfully.");
     PROVEN_TEST_ASSERT(double_bits(fres.val) == double_bits(0.30000000000000004), "round-trip style decimal", "Inspect decimal-to-double conversion if the parsed bits change.");
 
+    scan = proven_scan_init(proven_u8str_view_from_cstr("-1.74070841063175697e+205"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "large scientific decimal", "Inspect proven_scan_f64 if a large finite scientific decimal stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0xea8bc28d457c01f2ULL, "large scientific decimal", "Inspect decimal-to-double scaling if the parsed bits drift by one ULP at large exponents.");
+
     PROVEN_TEST_PASS("Float portability checks passed.");
     return 0;
 }

@@ -140,6 +140,13 @@ int main(void) {
     check_roundtrips_f64(double_from_bits(0x000246fc714d2188ULL));
 
     PROVEN_TEST_SECTION(
+        "large scientific regression",
+        "Confirm shortest f64 formatting still round-trips a large scientific value that previously parsed one ULP low.",
+        "Inspect decimal scaling in src/proven/float_decimal.c if the large scientific value stops round-tripping."
+    );
+    check_roundtrips_f64(double_from_bits(0xea8bc28d457c01f2ULL));
+
+    PROVEN_TEST_SECTION(
         "representative float32 values",
         "Confirm shortest float32 output round-trips and keeps the representative corpus spellings stable.",
         "Inspect the float32 shortest formatting path if any representative value stops round-tripping or if the corpus strings drift."
