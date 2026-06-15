@@ -53,12 +53,36 @@ bool proven_float_bigint_divmod_u64(const proven_u64 *num, proven_size_t nlen,
                                     proven_u64 *quot, proven_size_t *qlen,
                                     proven_u64 *rem, proven_size_t *rlen);
 
+/*
+ * Computes round-half-to-even(|value| * 10^scale_exp10) exactly and writes its
+ * decimal digits (most significant first, no sign) to out, NUL-terminated.
+ * Returns the digit count, or -1 on capacity overflow. value must be finite;
+ * zero yields "0". Shared exact engine for the fixed-precision and scientific
+ * float formatters.
+ */
+int proven_float_scaled_round_digits(double value, proven_i64 scale_exp10, char *out, proven_size_t out_cap);
+
+/*
+ * Rounds |value| to sig_digits significant decimal digits (round half to even),
+ * writing exactly that many digits (most significant first) to out and setting
+ * *decimal_exp to the power of ten of the leading digit. Returns sig_digits or -1
+ * on overflow. value must be finite; zero yields all-zero digits, exponent 0.
+ */
+int proven_float_scaled_round_sig_digits(double value, int sig_digits, char *out, proven_size_t out_cap,
+                                         proven_i64 *decimal_exp);
+
+/*
+ * Shortest round-trippable significant digits of |value| (round-to-nearest-ties-to
+ * -even), most significant first, with *decimal_exp set to the power of ten of the
+ * leading digit. Returns the digit count or -1. value must be finite; zero -> "0".
+ */
+int proven_float_shortest_digits(double value, char *out, proven_size_t out_cap, proven_i64 *decimal_exp);
+int proven_float_shortest_digits_f32(float value, char *out, proven_size_t out_cap, proven_i64 *decimal_exp);
+
 proven_float_parse_result_t proven_float_parse_ascii_token(const proven_u8 *input, proven_size_t len);
 proven_err_t proven_float_convert_decimal(const proven_u8 *input, proven_size_t len, double *out);
 void proven_float_decimal_reset_stats(void);
 void proven_float_decimal_get_stats(proven_float_decimal_stats_t *out);
 bool proven_float_normalize_scientific(double *abs_v, int *sci_exp);
-bool proven_float_shortest_literal_f64(double value, char *buf, proven_size_t buf_cap, proven_size_t *written_out);
-bool proven_float_shortest_literal_f32(float value, char *buf, proven_size_t buf_cap, proven_size_t *written_out);
 
 #endif /* PROVEN_FLOAT_DECIMAL_H */

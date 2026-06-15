@@ -126,12 +126,12 @@ int main(void) {
     expect_shortest_case(9007199254740992.0, "9007199254740992");
     expect_shortest_case(DBL_MIN, "2.2250738585072014e-308");
     expect_shortest_case(-DBL_MIN, "-2.2250738585072014e-308");
-    expect_shortest_case(0x0.fffffffffffffp-1022, "2.2250738585072009e-308");
-    expect_shortest_case(-0x0.fffffffffffffp-1022, "-2.2250738585072009e-308");
+    expect_shortest_case(0x0.fffffffffffffp-1022, "2.225073858507201e-308");
+    expect_shortest_case(-0x0.fffffffffffffp-1022, "-2.225073858507201e-308");
     expect_shortest_case(DBL_TRUE_MIN, "5e-324");
     expect_shortest_case(-DBL_TRUE_MIN, "-5e-324");
-    expect_shortest_case(6.3508876286570945e-242, "6.3508876286570946e-242");
-    expect_shortest_case(-6.3508876286570945e-242, "-6.3508876286570946e-242");
+    expect_shortest_case(6.3508876286570945e-242, "6.3508876286570945e-242");
+    expect_shortest_case(-6.3508876286570945e-242, "-6.3508876286570945e-242");
     expect_shortest_case(DBL_MAX, "1.7976931348623157e308");
     expect_shortest_case(-DBL_MAX, "-1.7976931348623157e308");
 
@@ -140,9 +140,9 @@ int main(void) {
         "Confirm the shortest formatter keeps the representative float32 literals stable alongside the float64 corpus.",
         "Inspect the float32 shortest helper if any documented float32 literal changes spelling."
     );
-    expect_shortest_case_f32(FLT_MIN, "1.17549435e-38");
+    expect_shortest_case_f32(FLT_MIN, "1.1754944e-38");
     expect_shortest_case_f32(float_from_bits(0x007fffffu), "1.1754942e-38");
-    expect_shortest_case_f32(-FLT_MIN, "-1.17549435e-38");
+    expect_shortest_case_f32(-FLT_MIN, "-1.1754944e-38");
     expect_shortest_case_f32(0.001f, "0.001");
     expect_shortest_case_f32(-0.001f, "-0.001");
     expect_shortest_case_f32(0.0001f, "1e-04");

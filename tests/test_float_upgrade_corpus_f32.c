@@ -56,8 +56,8 @@ int main(void) {
         "Inspect tests/test_float_upgrade_corpus.c if any documented float32 literal is missing from the corpus section."
     );
     require_text_present(src, "float32 shortest corpus", "float32 shortest corpus section should be present");
-    require_text_present(src, "expect_shortest_case_f32(FLT_MIN, \"1.17549435e-38\")", "FLT_MIN shortest literal should be present");
-    require_text_present(src, "expect_shortest_case_f32(-FLT_MIN, \"-1.17549435e-38\")", "-FLT_MIN shortest literal should be present");
+    require_text_present(src, "expect_shortest_case_f32(FLT_MIN, \"1.1754944e-38\")", "FLT_MIN shortest literal should be present");
+    require_text_present(src, "expect_shortest_case_f32(-FLT_MIN, \"-1.1754944e-38\")", "-FLT_MIN shortest literal should be present");
     require_text_present(src, "expect_shortest_case_f32(0.2f, \"0.2\")", "0.2f shortest literal should be present");
     require_text_present(src, "expect_shortest_case_f32(-0.2f, \"-0.2\")", "-0.2f shortest literal should be present");
     require_text_present(src, "expect_shortest_case_f32(0.29999998f, \"0.29999998\")", "0.29999998f shortest literal should be present");

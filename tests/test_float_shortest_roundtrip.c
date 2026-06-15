@@ -124,12 +124,12 @@ int main(void) {
     check_expected(-100000.0, "-1e05");
     check_expected(0.9999999999999999, "0.9999999999999999");
     check_expected(1.2345678901234567, "1.2345678901234567");
-    check_expected(6.3508876286570945e-242, "6.3508876286570946e-242");
-    check_expected(-6.3508876286570945e-242, "-6.3508876286570946e-242");
+    check_expected(6.3508876286570945e-242, "6.3508876286570945e-242");
+    check_expected(-6.3508876286570945e-242, "-6.3508876286570945e-242");
     check_expected(DBL_MIN, "2.2250738585072014e-308");
     check_expected(-DBL_MIN, "-2.2250738585072014e-308");
-    check_expected(0x0.fffffffffffffp-1022, "2.2250738585072009e-308");
-    check_expected(-0x0.fffffffffffffp-1022, "-2.2250738585072009e-308");
+    check_expected(0x0.fffffffffffffp-1022, "2.225073858507201e-308");
+    check_expected(-0x0.fffffffffffffp-1022, "-2.225073858507201e-308");
     check_expected(DBL_MAX, "1.7976931348623157e308");
 
     PROVEN_TEST_SECTION(
@@ -176,9 +176,9 @@ int main(void) {
     check_expected_f32(-2.5f, "-2.5");
     check_expected_f32(33554432.0f, "33554432");
     check_expected_f32(-33554432.0f, "-33554432");
-    check_expected_f32(FLT_MIN, "1.17549435e-38");
+    check_expected_f32(FLT_MIN, "1.1754944e-38");
     check_expected_f32(float_from_bits(0x007fffffu), "1.1754942e-38");
-    check_expected_f32(-FLT_MIN, "-1.17549435e-38");
+    check_expected_f32(-FLT_MIN, "-1.1754944e-38");
     check_expected_f32(FLT_TRUE_MIN, "1e-45");
     check_expected_f32(float_from_bits(0x00000002u), "3e-45");
     check_expected_f32(-FLT_TRUE_MIN, "-1e-45");
