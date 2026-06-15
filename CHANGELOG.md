@@ -15,7 +15,7 @@ The format follows Keep a Changelog:
 
 ### Changed
 
-- Replaced the shortest float formatter with a single-pass exact algorithm (Burger-Dybvig / Dragon4, round-to-nearest-ties-to-even) for both binary64 and binary32. The previous implementation searched every precision and re-parsed each candidate to test round-tripping; the new one generates the shortest round-trippable digits directly with the shared big-integer helpers. Measured about 23x faster (59,018 -> 2,546 ns/call on a mixed corpus) with identical correctly-rounded, minimal output (validated round-trip and minimality over ~3M doubles and ~5M floats).
+- Replaced the shortest float formatter. First with a single-pass exact algorithm (Burger-Dybvig / Dragon4, round-to-nearest-ties-to-even) for binary64 and binary32, then with a Grisu3 fast path (64-bit diy_fp + a generated cached-power table) that falls back to the exact path only when it cannot prove the result is shortest. Net result is about 670x faster than the original round-trip-search formatter (59,018 -> 88 ns/call on a mixed corpus) and uniform across magnitudes, with the same correctly-rounded minimal output (validated round-trip and minimality over ~3M doubles and ~5M floats).
 
 ### Removed
 

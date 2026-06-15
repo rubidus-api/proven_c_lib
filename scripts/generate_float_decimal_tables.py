@@ -9,8 +9,38 @@ implementation.
 
 from __future__ import annotations
 
+import math
+
+
+def grisu_cached_power(k: int) -> tuple[int, int]:
+    """Return (f, e) with 10**k ~= f * 2**e, 2**63 <= f < 2**64, round to nearest."""
+    e = math.floor(k * math.log2(10)) - 63
+    if k >= 0:
+        num, den = (10 ** k), 1
+    else:
+        num, den = 1, (10 ** (-k))
+    if e <= 0:
+        num <<= (-e)
+    else:
+        den <<= e
+    f = (2 * num + den) // (2 * den)  # round to nearest
+    if f >= (1 << 64):
+        f >>= 1
+        e += 1
+    assert (1 << 63) <= f < (1 << 64)
+    return f, e
+
 
 def emit() -> str:
+    # Grisu3 cached powers of ten: decimal exponents -348..340 in steps of 8.
+    grisu_min_decimal_exp = -348
+    grisu_max_decimal_exp = 340
+    grisu_distance = 8
+    grisu_powers = [
+        (k, *grisu_cached_power(k))
+        for k in range(grisu_min_decimal_exp, grisu_max_decimal_exp + 1, grisu_distance)
+    ]
+
     max_u64_q = 27
     max_u128_q = 55
     max_scaled_u128_q = 350
@@ -105,6 +135,30 @@ def emit() -> str:
         lo = recip & ((1 << 64) - 1)
         hi = recip >> 64
         lines.append(f"    {{ .lo = 0x{lo:016x}ull, .hi = 0x{hi:016x}ull, .shift = {shift}u }},")
+    lines.extend(
+        [
+            "};",
+            "",
+        ]
+    )
+
+    lines.extend(
+        [
+            f"#define PROVEN_FLOAT_GRISU_MIN_DECIMAL_EXP {grisu_min_decimal_exp}",
+            f"#define PROVEN_FLOAT_GRISU_DECIMAL_DISTANCE {grisu_distance}u",
+            f"#define PROVEN_FLOAT_GRISU_POWER_COUNT {len(grisu_powers)}u",
+            "",
+            "typedef struct proven_float_grisu_power_t {",
+            "    proven_u64 f;",
+            "    proven_i16 e;",
+            "    proven_i16 k;",
+            "} proven_float_grisu_power_t;",
+            "",
+            "static const proven_float_grisu_power_t proven_float_grisu_powers[] = {",
+        ]
+    )
+    for k, f, e in grisu_powers:
+        lines.append(f"    {{ .f = 0x{f:016x}ull, .e = {e}, .k = {k} }},")
     lines.extend(
         [
             "};",
