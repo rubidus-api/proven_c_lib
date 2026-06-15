@@ -1509,6 +1509,193 @@ int proven_float_scaled_round_sig_digits(double value, int sig_digits, char *out
  * finite; zero yields "0" with exponent 0. Exact big-integer arithmetic, single
  * pass, no re-parsing.
  */
+
+/* ---- Grisu3 fast shortest path (Loitsch / double-conversion fast-dtoa) ---- */
+
+typedef struct {
+    proven_u64 f;
+    int e;
+} proven_diy_fp_t;
+
+/* (x.f * y.f) high 64 bits, rounded; e = x.e + y.e + 64. */
+static proven_diy_fp_t proven_diy_fp_mul(proven_diy_fp_t x, proven_diy_fp_t y) {
+    proven_u128_parts_t p = proven_float_mul_u64_u64_to_u128(x.f, y.f);
+    proven_diy_fp_t r;
+    r.f = p.hi + (p.lo >> 63); /* round to nearest via bit 63 of the low half */
+    r.e = x.e + y.e + 64;
+    return r;
+}
+
+static proven_diy_fp_t proven_diy_fp_normalize(proven_diy_fp_t x) {
+    int c = proven_float_clz_u64(x.f);
+    x.f <<= c;
+    x.e -= c;
+    return x;
+}
+
+static void proven_grisu_biggest_power_ten(proven_u32 number, int number_bits,
+                                           proven_u32 *power, int *exponent_plus_one) {
+    static const proven_u32 small_powers[] = {
+        0u, 1u, 10u, 100u, 1000u, 10000u, 100000u, 1000000u, 10000000u,
+        100000000u, 1000000000u,
+    };
+    int guess = ((number_bits + 1) * 1233) >> 12;
+    guess++;
+    if (number < small_powers[guess]) {
+        guess--;
+    }
+    *power = small_powers[guess];
+    *exponent_plus_one = guess;
+}
+
+static bool proven_grisu_round_weed(char *buffer, int length, proven_u64 distance_too_high_w,
+                                    proven_u64 unsafe_interval, proven_u64 rest,
+                                    proven_u64 ten_kappa, proven_u64 unit) {
+    proven_u64 small_distance = distance_too_high_w - unit;
+    proven_u64 big_distance = distance_too_high_w + unit;
+
+    while (rest < small_distance &&
+           unsafe_interval - rest >= ten_kappa &&
+           (rest + ten_kappa < small_distance ||
+            small_distance - rest >= rest + ten_kappa - small_distance)) {
+        buffer[length - 1]--;
+        rest += ten_kappa;
+    }
+    if (rest < big_distance &&
+        unsafe_interval - rest >= ten_kappa &&
+        (rest + ten_kappa < big_distance ||
+         big_distance - rest > rest + ten_kappa - big_distance)) {
+        return false;
+    }
+    return (2u * unit <= rest) && (rest <= unsafe_interval - 4u * unit);
+}
+
+static bool proven_grisu_digit_gen(proven_diy_fp_t low, proven_diy_fp_t w, proven_diy_fp_t high,
+                                   char *buffer, int *length, int *kappa) {
+    proven_u64 unit = 1u;
+    proven_diy_fp_t too_low = { low.f - unit, low.e };
+    proven_diy_fp_t too_high = { high.f + unit, high.e };
+    proven_u64 unsafe_interval = too_high.f - too_low.f;
+    proven_diy_fp_t one = { (proven_u64)1 << (-w.e), w.e };
+    proven_u32 integrals = (proven_u32)(too_high.f >> (-one.e));
+    proven_u64 fractionals = too_high.f & (one.f - 1u);
+    proven_u32 divisor;
+    int divisor_exp_plus_one;
+    proven_u64 dist = too_high.f - w.f;
+
+    proven_grisu_biggest_power_ten(integrals, 64 - (-one.e), &divisor, &divisor_exp_plus_one);
+    *kappa = divisor_exp_plus_one;
+    *length = 0;
+    while (*kappa > 0) {
+        int digit = (int)(integrals / divisor);
+        buffer[*length] = (char)('0' + digit);
+        (*length)++;
+        integrals %= divisor;
+        (*kappa)--;
+        {
+            proven_u64 rest = ((proven_u64)integrals << (-one.e)) + fractionals;
+            if (rest < unsafe_interval) {
+                return proven_grisu_round_weed(buffer, *length, dist, unsafe_interval, rest,
+                                               (proven_u64)divisor << (-one.e), unit);
+            }
+        }
+        divisor /= 10u;
+    }
+    for (;;) {
+        int digit;
+        fractionals *= 10u;
+        unit *= 10u;
+        unsafe_interval *= 10u;
+        digit = (int)(fractionals >> (-one.e));
+        buffer[*length] = (char)('0' + digit);
+        (*length)++;
+        fractionals &= one.f - 1u;
+        (*kappa)--;
+        if (fractionals < unsafe_interval) {
+            return proven_grisu_round_weed(buffer, *length, dist * unit, unsafe_interval,
+                                           fractionals, one.f, unit);
+        }
+    }
+}
+
+/*
+ * Grisu3 shortest digits for |value| = f * 2^e, with pow2_boundary = 2^(p-1) and
+ * min_e the smallest exponent. Returns the digit count and sets *decimal_exp (the
+ * power of ten of the leading digit), or -1 when Grisu3 cannot prove the result is
+ * shortest (the caller then falls back to the exact Dragon4 path).
+ */
+static int proven_float_shortest_digits_grisu(proven_u64 f, proven_i64 e, proven_u64 pow2_boundary,
+                                              proven_i64 min_e, char *out, proven_size_t out_cap,
+                                              proven_i64 *decimal_exp) {
+    proven_diy_fp_t v = { f, (int)e };
+    proven_diy_fp_t w;
+    proven_diy_fp_t m_plus;
+    proven_diy_fp_t m_minus;
+    proven_diy_fp_t ten_mk;
+    proven_diy_fp_t scaled_w;
+    proven_diy_fp_t scaled_mp;
+    proven_diy_fp_t scaled_mm;
+    bool lower_closer = (f == pow2_boundary) && (e != min_e);
+    int min_exp;
+    int kk;
+    int index;
+    int mk;
+    int length = 0;
+    int kappa = 0;
+    char buf[24];
+
+    if (out_cap < 19u) {
+        return -1;
+    }
+
+    m_plus = proven_diy_fp_normalize((proven_diy_fp_t){ (v.f << 1) + 1u, v.e - 1 });
+    if (lower_closer) {
+        m_minus = (proven_diy_fp_t){ (v.f << 2) - 1u, v.e - 2 };
+    } else {
+        m_minus = (proven_diy_fp_t){ (v.f << 1) - 1u, v.e - 1 };
+    }
+    m_minus.f <<= (m_minus.e - m_plus.e);
+    m_minus.e = m_plus.e;
+    w = proven_diy_fp_normalize(v);
+
+    min_exp = -60 - (m_plus.e + 64);
+    {
+        double dk = (double)(min_exp + 63) * 0.30102999566398114;
+        kk = (int)dk;
+        if ((double)kk < dk) {
+            kk++;
+        }
+    }
+    index = (348 + kk - 1) / (int)PROVEN_FLOAT_GRISU_DECIMAL_DISTANCE + 1;
+    if (index < 0 || index >= (int)PROVEN_FLOAT_GRISU_POWER_COUNT) {
+        return -1;
+    }
+    ten_mk.f = proven_float_grisu_powers[index].f;
+    ten_mk.e = proven_float_grisu_powers[index].e;
+    mk = proven_float_grisu_powers[index].k;
+
+    scaled_w = proven_diy_fp_mul(w, ten_mk);
+    scaled_mp = proven_diy_fp_mul(m_plus, ten_mk);
+    scaled_mm = proven_diy_fp_mul(m_minus, ten_mk);
+
+    if (!proven_grisu_digit_gen(scaled_mm, scaled_w, scaled_mp, buf, &length, &kappa)) {
+        return -1;
+    }
+    if ((proven_size_t)length + 1u > out_cap) {
+        return -1;
+    }
+    {
+        int i;
+        for (i = 0; i < length; ++i) {
+            out[i] = buf[i];
+        }
+        out[length] = '\0';
+    }
+    /* trailing-digit decimal exponent is (-mk + kappa); leading is + (length-1). */
+    *decimal_exp = (proven_i64)(-mk + kappa) + (proven_i64)(length - 1);
+    return length;
+}
+
 static int proven_float_shortest_digits_core(proven_u64 f, proven_i64 e, proven_u64 pow2_boundary,
                                              proven_i64 min_e, char *out, proven_size_t out_cap,
                                              proven_i64 *decimal_exp) {
@@ -1689,6 +1876,12 @@ int proven_float_shortest_digits(double value, char *out, proven_size_t out_cap,
     proven_i64 e = 0;
     proven_float_f64_to_scaled(bits, &f, &e);
     /* boundary significand 2^52, minimum exponent -1074 for binary64. */
+    {
+        int g = proven_float_shortest_digits_grisu(f, e, 1ull << 52, -1074, out, out_cap, decimal_exp);
+        if (g >= 0) {
+            return g;
+        }
+    }
     return proven_float_shortest_digits_core(f, e, 1ull << 52, -1074, out, out_cap, decimal_exp);
 }
 
@@ -1707,6 +1900,12 @@ int proven_float_shortest_digits_f32(float value, char *out, proven_size_t out_c
         e = (proven_i64)exp - 150;
     }
     /* boundary significand 2^23, minimum exponent -149 for binary32. */
+    {
+        int g = proven_float_shortest_digits_grisu(f, e, 1u << 23, -149, out, out_cap, decimal_exp);
+        if (g >= 0) {
+            return g;
+        }
+    }
     return proven_float_shortest_digits_core(f, e, 1u << 23, -149, out, out_cap, decimal_exp);
 }
 
