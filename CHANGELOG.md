@@ -13,6 +13,20 @@ The format follows Keep a Changelog:
 
 ## [Unreleased]
 
+### Changed
+
+- Replaced the shortest float formatter with a single-pass exact algorithm (Burger-Dybvig / Dragon4, round-to-nearest-ties-to-even) for both binary64 and binary32. The previous implementation searched every precision and re-parsed each candidate to test round-tripping; the new one generates the shortest round-trippable digits directly with the shared big-integer helpers. Measured about 23x faster (59,018 -> 2,546 ns/call on a mixed corpus) with identical correctly-rounded, minimal output (validated round-trip and minimality over ~3M doubles and ~5M floats).
+
+### Removed
+
+- Removed the obsolete hand-maintained shortest literal table (`proven_float_shortest_literal_f64`/`_f32` and their tables) now that the shortest formatter computes every value directly, along with the structural tests that pinned the old staged round-trip-search backend.
+
+### Fixed
+
+- Made fixed-precision float formatting (`%f`/`%e` via `proven_float_format_f64_policy` and the `{}` formatter) exact and correctly rounded. The previous path used `double`/`long double` arithmetic capped at 18 fractional digits and produced wrong digits for high precision, values at or above 2^64, subnormals, and boundary cases; a differential check against host `snprintf` went from roughly 20% mismatches to zero across 4,000,000 value/precision pairs. The new path is integer-only (no long double), correctly rounds to nearest-even, and supports arbitrary precision up to the big-integer capacity.
+- Fixed an out-of-bounds read in `proven_float_bigint_cmp_shift_left` when the shift was a multiple of 64: the low zero-padding limbs were not compared and the index underflowed. This helper is shared with the decimal parser's exact comparison; the parser's differential fuzz remains at zero mismatches after the fix.
+- Corrected the shortest float formatter to emit the true minimal round-tripping form. The shortest search now generates candidates with the exact digit engine and no longer consults the hand-maintained literal table, several of whose entries were non-minimal (for example the largest subnormal and `FLT_MIN`).
+
 ### Added
 
 - Added a big-integer division helper (`proven_float_bigint_divmod`, Knuth Algorithm D on base-2^32 limbs, no `__int128`, freestanding-safe) with a limb-array entry point `proven_float_bigint_divmod_u64` and a unit test (`tests/test_float_bigint_divmod`). It is a validated reusable primitive; a measured experiment showed that using it to compute the exact-fallback float result is slower than the existing estimate-seeded search, so the parser keeps the search and the division is not on the parse hot path.

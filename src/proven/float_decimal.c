@@ -471,6 +471,38 @@ static bool proven_float_bigint_add_small(proven_float_bigint_t *value, proven_u
     return true;
 }
 
+/* dst += src. Used by the Dragon4 shortest digit generator. */
+static bool proven_float_bigint_add(proven_float_bigint_t *dst, const proven_float_bigint_t *src) {
+    proven_size_t max_len = dst->len > src->len ? dst->len : src->len;
+    proven_u64 carry = 0;
+
+    if (max_len > PROVEN_FLOAT_BIGINT_LIMBS) {
+        return false;
+    }
+    for (proven_size_t i = 0; i < max_len; ++i) {
+        proven_u64 lhs = i < dst->len ? dst->limbs[i] : 0ull;
+        proven_u64 rhs = i < src->len ? src->limbs[i] : 0ull;
+        proven_u64 sum = lhs + rhs;
+        proven_u64 carry_out = sum < lhs ? 1ull : 0ull;
+        sum += carry;
+        if (sum < carry) {
+            carry_out += 1ull;
+        }
+        dst->limbs[i] = sum;
+        carry = carry_out;
+    }
+    dst->len = max_len;
+    while (carry != 0) {
+        if (dst->len >= PROVEN_FLOAT_BIGINT_LIMBS) {
+            return false;
+        }
+        dst->limbs[dst->len++] = carry;
+        carry = 0;
+    }
+    proven_float_bigint_trim(dst);
+    return true;
+}
+
 static bool proven_float_bigint_shl_bits(proven_float_bigint_t *value, proven_i64 shift);
 
 static bool proven_float_bigint_mul_factor(proven_float_bigint_t *value, const proven_float_bigint_t *factor) {
@@ -806,7 +838,10 @@ static int proven_float_bigint_cmp_shift_left(const proven_float_bigint_t *lhs, 
     max_len = lhs_len;
     if (bit_shift == 0u) {
         for (i = max_len; i > 0u; --i) {
-            proven_u64 a = lhs->limbs[i - 1u - limb_shift];
+            /* Positions below limb_shift are the zero padding introduced by the
+             * left shift; comparing them against rhs is what decides ties when
+             * all higher limbs are equal. Reading lhs there would underflow. */
+            proven_u64 a = (i - 1u >= limb_shift) ? lhs->limbs[i - 1u - limb_shift] : 0u;
             proven_u64 b = rhs->limbs[i - 1u];
             if (a < b) {
                 return -1;
@@ -1098,13 +1133,52 @@ bool proven_float_bigint_divmod_u64(const proven_u64 *num, proven_size_t nlen,
     return true;
 }
 
+static bool proven_float_bigint_copy_mul_factor(proven_float_bigint_t *dst, const proven_float_bigint_t *src,
+                                                const proven_float_bigint_t *factor);
+
+/*
+ * Multiplies value by an exact 5^exp10 using exponentiation by squaring, so the
+ * cost grows with log(exp10) big multiplies rather than exp10 single-limb ones.
+ * This matters for the formatter's scientific path at extreme exponents.
+ */
 static bool proven_float_bigint_mul_pow5(proven_float_bigint_t *value, proven_i64 exp10) {
-    for (proven_i64 i = 0; i < exp10; ++i) {
-        if (!proven_float_bigint_mul_u64(value, 5u)) {
-            return false;
+    proven_float_bigint_t base;
+    proven_float_bigint_t acc;
+    proven_float_bigint_t tmp;
+    proven_i64 e = exp10;
+
+    if (e <= 0) {
+        return true;
+    }
+    if (e <= 64) {
+        /* For small exponents the in-place single-limb loop avoids the big-integer
+         * copies that exponentiation by squaring incurs. */
+        proven_i64 i;
+        for (i = 0; i < e; ++i) {
+            if (!proven_float_bigint_mul_u64(value, 5u)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    proven_float_bigint_set_u64(&base, 5u);
+    proven_float_bigint_set_u64(&acc, 1u);
+    while (e > 0) {
+        if ((e & 1) != 0) {
+            if (!proven_float_bigint_copy_mul_factor(&tmp, &acc, &base)) {
+                return false;
+            }
+            acc = tmp;
+        }
+        e >>= 1;
+        if (e > 0) {
+            if (!proven_float_bigint_copy_mul_factor(&tmp, &base, &base)) {
+                return false;
+            }
+            base = tmp;
         }
     }
-    return true;
+    return proven_float_bigint_mul_factor(value, &acc);
 }
 
 static bool proven_float_bigint_build_pow5_cached(proven_i64 exp10, proven_float_bigint_t *out) {
@@ -1158,6 +1232,482 @@ static void proven_float_f64_to_scaled(proven_u64 bits, proven_u64 *mantissa, pr
         *mantissa = (1ull << 52) | frac;
         *exp2 = (proven_i64)exp - 1075;
     }
+}
+
+/* Upper bound on 18-digit chunks needed to print a full-capacity big integer. */
+#define PROVEN_FLOAT_DECIMAL_CHUNKS ((PROVEN_FLOAT_BIGINT_LIMBS * 20u) / 18u + 2u)
+
+/*
+ * Writes the decimal digits of a big integer, most significant first, to out
+ * (NUL-terminated, no sign). Returns the digit count, or -1 if out is too small.
+ * A zero value yields "0". Digits are extracted 18 at a time via division by
+ * 10^18 (a single-limb divisor, so the fast division path is used).
+ */
+static int proven_float_bigint_to_decimal(const proven_float_bigint_t *value, char *out, proven_size_t out_cap) {
+    proven_u64 chunks[PROVEN_FLOAT_DECIMAL_CHUNKS];
+    proven_float_bigint_t work;
+    proven_float_bigint_t divisor;
+    proven_float_bigint_t quot;
+    proven_float_bigint_t rem;
+    proven_size_t nchunks = 0;
+    proven_size_t pos = 0;
+    proven_size_t i;
+
+    if (!out || out_cap == 0u) {
+        return -1;
+    }
+    if (value->len == 0u) {
+        if (out_cap < 2u) {
+            return -1;
+        }
+        out[0] = '0';
+        out[1] = '\0';
+        return 1;
+    }
+
+    proven_float_bigint_set_u64(&divisor, 1000000000000000000ull); /* 10^18 */
+    proven_float_bigint_copy(&work, value);
+    while (work.len != 0u) {
+        if (nchunks >= PROVEN_FLOAT_DECIMAL_CHUNKS) {
+            return -1;
+        }
+        if (!proven_float_bigint_divmod(&work, &divisor, &quot, &rem)) {
+            return -1;
+        }
+        chunks[nchunks++] = (rem.len != 0u) ? rem.limbs[0] : 0u;
+        proven_float_bigint_copy(&work, &quot);
+    }
+
+    /* Most significant chunk: no leading zeros. */
+    {
+        char tmp[20];
+        proven_size_t tlen = 0;
+        proven_u64 v = chunks[nchunks - 1u];
+        if (v == 0u) {
+            tmp[tlen++] = '0';
+        } else {
+            char rev[20];
+            proven_size_t rl = 0;
+            while (v != 0u) {
+                rev[rl++] = (char)('0' + (int)(v % 10u));
+                v /= 10u;
+            }
+            while (rl > 0u) {
+                tmp[tlen++] = rev[--rl];
+            }
+        }
+        if (pos + tlen >= out_cap) {
+            return -1;
+        }
+        for (i = 0; i < tlen; ++i) {
+            out[pos++] = tmp[i];
+        }
+    }
+    /* Remaining chunks: exactly 18 zero-padded digits each. */
+    for (i = nchunks - 1u; i > 0u; --i) {
+        proven_u64 v = chunks[i - 1u];
+        char tmp[18];
+        proven_size_t d;
+        for (d = 18u; d > 0u; --d) {
+            tmp[d - 1u] = (char)('0' + (int)(v % 10u));
+            v /= 10u;
+        }
+        if (pos + 18u >= out_cap) {
+            return -1;
+        }
+        for (d = 0; d < 18u; ++d) {
+            out[pos++] = tmp[d];
+        }
+    }
+
+    if (pos >= out_cap) {
+        return -1;
+    }
+    out[pos] = '\0';
+    return (int)pos;
+}
+
+/*
+ * Computes Q = round-half-to-even(|value| * 10^scale_exp10) as an exact integer
+ * and writes its decimal digits (most significant first, no sign) to out. Returns
+ * the digit count, or -1 on capacity overflow. value must be finite. A value of
+ * zero yields "0". This is the exact engine shared by the fixed-precision and
+ * scientific formatters.
+ */
+int proven_float_scaled_round_digits(double value, proven_i64 scale_exp10, char *out, proven_size_t out_cap) {
+    proven_u64 bits = proven_float_bits_f64(value) & 0x7fffffffffffffffull;
+    proven_u64 m = 0;
+    proven_i64 e2 = 0;
+    proven_float_bigint_t num;
+    proven_float_bigint_t den;
+    proven_float_bigint_t quot;
+    proven_float_bigint_t rem;
+    proven_i64 twoexp;
+    int cmp;
+    proven_u64 q_low;
+
+    proven_float_f64_to_scaled(bits, &m, &e2);
+    if (m == 0u) {
+        if (!out || out_cap < 2u) {
+            return -1;
+        }
+        out[0] = '0';
+        out[1] = '\0';
+        return 1;
+    }
+
+    /* |value| * 10^F = m * 5^max(F,0) / 5^max(-F,0) * 2^(e2 + F). */
+    proven_float_bigint_set_u64(&num, m);
+    proven_float_bigint_set_u64(&den, 1u);
+    if (scale_exp10 > 0) {
+        if (!proven_float_bigint_mul_pow5(&num, scale_exp10)) {
+            return -1;
+        }
+    } else if (scale_exp10 < 0) {
+        if (!proven_float_bigint_mul_pow5(&den, -scale_exp10)) {
+            return -1;
+        }
+    }
+
+    twoexp = e2 + scale_exp10;
+    if (twoexp > 0) {
+        if (!proven_float_bigint_shl_bits(&num, twoexp)) {
+            return -1;
+        }
+    } else if (twoexp < 0) {
+        if (!proven_float_bigint_shl_bits(&den, -twoexp)) {
+            return -1;
+        }
+    }
+
+    if (!proven_float_bigint_divmod(&num, &den, &quot, &rem)) {
+        return -1;
+    }
+
+    /* Round half to even: compare 2*rem against den. */
+    if (!proven_float_bigint_shl_bits(&rem, 1)) {
+        return -1;
+    }
+    cmp = proven_float_bigint_cmp(&rem, &den);
+    q_low = (quot.len != 0u) ? quot.limbs[0] : 0u;
+    if (cmp > 0 || (cmp == 0 && (q_low & 1u) != 0u)) {
+        if (!proven_float_bigint_add_small(&quot, 1u)) {
+            return -1;
+        }
+    }
+
+    return proven_float_bigint_to_decimal(&quot, out, out_cap);
+}
+
+/*
+ * Rounds |value| to exactly sig_digits significant decimal digits (round half to
+ * even) and writes those digits (most significant first, no point/sign) to out.
+ * Sets *decimal_exp to the power of ten of the leading digit, i.e.
+ * value ~= out[0].out[1..] x 10^(*decimal_exp). Returns sig_digits, or -1 on
+ * overflow. value must be finite; zero yields all-zero digits with exponent 0.
+ * Shared exact engine for the scientific formatter.
+ */
+static int proven_float_compare_bigints_with_exp2(const proven_float_bigint_t *lhs_int, proven_i64 lhs_exp2,
+                                                  const proven_float_bigint_t *rhs_int, proven_i64 rhs_exp2);
+
+/*
+ * Returns the sign of (|value| - 10^k): >0 if |value| > 10^k, 0 if equal, <0 if
+ * less. Exact (big-integer) comparison. m/e2 describe |value| = m * 2^e2.
+ */
+static int proven_float_cmp_value_pow10(proven_u64 m, proven_i64 e2, proven_i64 k) {
+    proven_float_bigint_t lhs;
+    proven_float_bigint_t rhs;
+
+    proven_float_bigint_set_u64(&lhs, m);
+    if (k < 0) {
+        if (!proven_float_bigint_mul_pow5(&lhs, -k)) {
+            return 1; /* overflow: treat |value| as larger */
+        }
+    }
+    proven_float_bigint_set_u64(&rhs, 1u);
+    if (k > 0) {
+        if (!proven_float_bigint_mul_pow5(&rhs, k)) {
+            return -1;
+        }
+    }
+    /* |value| - 10^k has the sign of (m*5^max(-k,0))*2^e2 - 5^max(k,0)*2^k. */
+    return proven_float_compare_bigints_with_exp2(&lhs, e2, &rhs, k);
+}
+
+int proven_float_scaled_round_sig_digits(double value, int sig_digits, char *out, proven_size_t out_cap,
+                                         proven_i64 *decimal_exp) {
+    proven_u64 bits = proven_float_bits_f64(value) & 0x7fffffffffffffffull;
+    proven_u64 m = 0;
+    proven_i64 e2 = 0;
+    int bitlen;
+    proven_i64 approxlog2;
+    proven_i64 prod;
+    proven_i64 k;
+    int iter;
+    int nd;
+
+    if (!out || !decimal_exp || sig_digits < 1 || out_cap < (proven_size_t)sig_digits + 1u) {
+        return -1;
+    }
+
+    proven_float_f64_to_scaled(bits, &m, &e2);
+    if (m == 0u) {
+        int i;
+        for (i = 0; i < sig_digits; ++i) {
+            out[i] = '0';
+        }
+        out[sig_digits] = '\0';
+        *decimal_exp = 0;
+        return sig_digits;
+    }
+
+    /* Seed floor(log10(|value|)) from the binary exponent (1233/4096 ~= log10(2)). */
+    bitlen = 64 - proven_float_clz_u64(m);
+    approxlog2 = e2 + (proven_i64)bitlen - 1;
+    prod = approxlog2 * 1233;
+    k = prod / 4096;
+    if (prod < 0 && (prod % 4096) != 0) {
+        k -= 1;
+    }
+
+    /* Correct k to the exact unrounded exponent: 10^k <= |value| < 10^(k+1). */
+    for (iter = 0; iter < 6; ++iter) {
+        if (proven_float_cmp_value_pow10(m, e2, k) < 0) {
+            k -= 1;
+        } else if (proven_float_cmp_value_pow10(m, e2, k + 1) >= 0) {
+            k += 1;
+        } else {
+            break;
+        }
+    }
+
+    /* Round to sig_digits at the now-exact leading position. The result has
+     * sig_digits digits, or sig_digits+1 when rounding carries to 10^sig_digits. */
+    nd = proven_float_scaled_round_digits(value, (proven_i64)(sig_digits - 1) - k, out, out_cap);
+    if (nd < 0) {
+        return -1;
+    }
+    if (nd == sig_digits) {
+        *decimal_exp = k;
+        return sig_digits;
+    }
+    if (nd == sig_digits + 1) {
+        /* out == "1" followed by sig_digits zeros; keep the first sig_digits and
+         * bump the exponent. */
+        out[sig_digits] = '\0';
+        *decimal_exp = k + 1;
+        return sig_digits;
+    }
+    return -1;
+}
+
+/*
+ * Shortest round-trippable significant digits of |value| (Burger-Dybvig / Dragon4,
+ * free-format, round-to-nearest-ties-to-even). Writes the digits (most significant
+ * first, no sign/point) to out and sets *decimal_exp to the power of ten of the
+ * leading digit. Returns the digit count or -1 on error/overflow. value must be
+ * finite; zero yields "0" with exponent 0. Exact big-integer arithmetic, single
+ * pass, no re-parsing.
+ */
+static int proven_float_shortest_digits_core(proven_u64 f, proven_i64 e, proven_u64 pow2_boundary,
+                                             proven_i64 min_e, char *out, proven_size_t out_cap,
+                                             proven_i64 *decimal_exp) {
+    proven_float_bigint_t R;
+    proven_float_bigint_t S;
+    proven_float_bigint_t mp;
+    proven_float_bigint_t mm;
+    proven_float_bigint_t tmp;
+    proven_float_bigint_t q;
+    proven_float_bigint_t rem;
+    bool even;
+    bool boundary_closer;
+    int bitlen;
+    proven_i64 fl2;
+    proven_i64 prod;
+    proven_i64 floorlog10;
+    proven_i64 k;
+    proven_size_t pos = 0;
+
+    if (!out || !decimal_exp || out_cap < 2u) {
+        return -1;
+    }
+    if (f == 0u) {
+        out[0] = '0';
+        out[1] = '\0';
+        *decimal_exp = 0;
+        return 1;
+    }
+
+    even = (f & 1u) == 0u;
+    boundary_closer = (f == pow2_boundary) && (e != min_e);
+
+    /* Step 1: set up R, S, m+ (mp), m- (mm) as exact scaled boundaries. */
+    proven_float_bigint_set_u64(&R, f);
+    proven_float_bigint_set_u64(&S, 1u);
+    proven_float_bigint_set_u64(&mp, 1u);
+    proven_float_bigint_set_u64(&mm, 1u);
+    if (e >= 0) {
+        if (!boundary_closer) {
+            if (!proven_float_bigint_shl_bits(&R, e + 1)) return -1;
+            proven_float_bigint_set_u64(&S, 2u);
+            if (!proven_float_bigint_shl_bits(&mp, e)) return -1;
+            if (!proven_float_bigint_shl_bits(&mm, e)) return -1;
+        } else {
+            if (!proven_float_bigint_shl_bits(&R, e + 2)) return -1;
+            proven_float_bigint_set_u64(&S, 4u);
+            if (!proven_float_bigint_shl_bits(&mp, e + 1)) return -1;
+            if (!proven_float_bigint_shl_bits(&mm, e)) return -1;
+        }
+    } else {
+        if (!boundary_closer) {
+            if (!proven_float_bigint_shl_bits(&R, 1)) return -1;
+            if (!proven_float_bigint_shl_bits(&S, 1 - e)) return -1;
+        } else {
+            if (!proven_float_bigint_shl_bits(&R, 2)) return -1;
+            if (!proven_float_bigint_shl_bits(&S, 2 - e)) return -1;
+            proven_float_bigint_set_u64(&mp, 2u);
+        }
+    }
+
+    /* Step 2: estimate k = ceil(log10(value)) (1233/4096 ~= log10(2)). */
+    bitlen = 64 - proven_float_clz_u64(f);
+    fl2 = e + (proven_i64)bitlen - 1;
+    prod = fl2 * 1233;
+    floorlog10 = (prod >= 0) ? (prod / 4096) : -(((-prod) + 4095) / 4096);
+    k = floorlog10 + 1;
+
+    /* Step 2b: scale by 10^k. */
+    if (k >= 0) {
+        if (!proven_float_bigint_mul_pow5(&S, k) || !proven_float_bigint_shl_bits(&S, k)) return -1;
+    } else {
+        proven_i64 nk = -k;
+        if (!proven_float_bigint_mul_pow5(&R, nk) || !proven_float_bigint_shl_bits(&R, nk)) return -1;
+        if (!proven_float_bigint_mul_pow5(&mp, nk) || !proven_float_bigint_shl_bits(&mp, nk)) return -1;
+        if (!proven_float_bigint_mul_pow5(&mm, nk) || !proven_float_bigint_shl_bits(&mm, nk)) return -1;
+    }
+
+    /* Step 3: fix up the estimate so the first generated digit is correct. */
+    proven_float_bigint_copy(&tmp, &R);
+    if (!proven_float_bigint_add(&tmp, &mp)) return -1;
+    {
+        int c = proven_float_bigint_cmp(&tmp, &S);
+        bool need = even ? (c >= 0) : (c > 0);
+        if (need) {
+            if (!proven_float_bigint_mul_u64(&S, 10u)) return -1;
+            k += 1;
+        }
+    }
+
+    /* Step 4: generate digits. Leading digit sits at 10^(k-1). */
+    *decimal_exp = k - 1;
+    for (;;) {
+        proven_u64 d;
+        bool low;
+        bool high;
+        int cl;
+        int ch;
+
+        if (!proven_float_bigint_mul_u64(&R, 10u) ||
+            !proven_float_bigint_mul_u64(&mp, 10u) ||
+            !proven_float_bigint_mul_u64(&mm, 10u)) {
+            return -1;
+        }
+        if (!proven_float_bigint_divmod(&R, &S, &q, &rem)) return -1;
+        d = (q.len != 0u) ? q.limbs[0] : 0u;
+        proven_float_bigint_copy(&R, &rem);
+
+        cl = proven_float_bigint_cmp(&R, &mm);
+        low = even ? (cl <= 0) : (cl < 0);
+        proven_float_bigint_copy(&tmp, &R);
+        if (!proven_float_bigint_add(&tmp, &mp)) return -1;
+        ch = proven_float_bigint_cmp(&tmp, &S);
+        high = even ? (ch >= 0) : (ch > 0);
+
+        if (!low && !high) {
+            if (pos + 1u >= out_cap) return -1;
+            out[pos++] = (char)('0' + (int)d);
+            continue;
+        }
+
+        /* Terminal digit. */
+        {
+            proven_u64 dd;
+            if (low && !high) {
+                dd = d;
+            } else if (high && !low) {
+                dd = d + 1u;
+            } else {
+                /* both boundaries: round to nearer via 2*R vs S, ties to even. */
+                int cc;
+                proven_float_bigint_copy(&tmp, &R);
+                if (!proven_float_bigint_shl_bits(&tmp, 1)) return -1;
+                cc = proven_float_bigint_cmp(&tmp, &S);
+                if (cc > 0) {
+                    dd = d + 1u;
+                } else if (cc < 0) {
+                    dd = d;
+                } else {
+                    dd = d + (d & 1u);
+                }
+            }
+            if (dd < 10u) {
+                if (pos + 1u >= out_cap) return -1;
+                out[pos++] = (char)('0' + (int)dd);
+            } else {
+                /* Carry: this digit becomes 0 and 1 propagates into the prefix. */
+                proven_i64 j = (proven_i64)pos - 1;
+                int carry = 1;
+                if (pos + 1u >= out_cap) return -1;
+                out[pos++] = '0';
+                while (j >= 0 && carry) {
+                    int nv = (out[j] - '0') + carry;
+                    out[j] = (char)('0' + (nv % 10));
+                    carry = nv / 10;
+                    --j;
+                }
+                if (carry) {
+                    out[0] = '1';
+                    pos = 1u;
+                    *decimal_exp += 1;
+                }
+            }
+            break;
+        }
+    }
+
+    /* Trim trailing zeros (a terminal carry can introduce them). */
+    while (pos > 1u && out[pos - 1u] == '0') {
+        --pos;
+    }
+    out[pos] = '\0';
+    return (int)pos;
+}
+
+int proven_float_shortest_digits(double value, char *out, proven_size_t out_cap, proven_i64 *decimal_exp) {
+    proven_u64 bits = proven_float_bits_f64(value) & 0x7fffffffffffffffull;
+    proven_u64 f = 0;
+    proven_i64 e = 0;
+    proven_float_f64_to_scaled(bits, &f, &e);
+    /* boundary significand 2^52, minimum exponent -1074 for binary64. */
+    return proven_float_shortest_digits_core(f, e, 1ull << 52, -1074, out, out_cap, decimal_exp);
+}
+
+int proven_float_shortest_digits_f32(float value, char *out, proven_size_t out_cap, proven_i64 *decimal_exp) {
+    proven_u32 bits = proven_float_bits_f32(value) & 0x7fffffffu;
+    proven_u32 frac = bits & 0x007fffffu;
+    proven_u32 exp = (bits >> 23) & 0xffu;
+    proven_u64 f;
+    proven_i64 e;
+
+    if (exp == 0u) {
+        f = frac;        /* subnormal (or zero) */
+        e = -149;
+    } else {
+        f = (1u << 23) | frac;
+        e = (proven_i64)exp - 150;
+    }
+    /* boundary significand 2^23, minimum exponent -149 for binary32. */
+    return proven_float_shortest_digits_core(f, e, 1u << 23, -149, out, out_cap, decimal_exp);
 }
 
 static bool proven_float_decimal_build_number(const proven_u8 *input, proven_size_t len, proven_float_decimal_number_t *out) {
@@ -2560,83 +3110,4 @@ bool proven_float_normalize_scientific(double *abs_v, int *sci_exp) {
     }
 
     return true;
-}
-
-static bool proven_float_copy_literal(char *buf, proven_size_t buf_cap, const char *text, proven_size_t *written_out) {
-    proven_size_t len = (proven_size_t)strlen(text);
-    if (len + 1u > buf_cap) {
-        return false;
-    }
-    memcpy(buf, text, len + 1u);
-    if (written_out) {
-        *written_out = len;
-    }
-    return true;
-}
-
-typedef struct {
-    proven_u64 bits;
-    const char *text;
-} proven_float_shortest_literal_entry_t;
-
-static bool proven_float_copy_shortest_literal(const proven_float_shortest_literal_entry_t *table, proven_size_t table_len,
-                                               proven_u64 bits, char *buf, proven_size_t buf_cap, proven_size_t *written_out) {
-    for (proven_size_t i = 0; i < table_len; ++i) {
-        if (table[i].bits == bits) {
-            return proven_float_copy_literal(buf, buf_cap, table[i].text, written_out);
-        }
-    }
-    return false;
-}
-
-static bool proven_float_shortest_literal_common(proven_u64 bits, bool is_f32, char *buf, proven_size_t buf_cap, proven_size_t *written_out) {
-    static const proven_float_shortest_literal_entry_t f64_literals[] = {
-        { 0x7ff0000000000000ULL, "Inf" },
-        { 0xfff0000000000000ULL, "-Inf" },
-        { 0x0000000000000000ULL, "0" },
-        { 0x8000000000000000ULL, "-0" },
-        { 0x0010000000000000ULL, "2.2250738585072014e-308" },
-        { 0x8010000000000000ULL, "-2.2250738585072014e-308" },
-        { 0x000fffffffffffffULL, "2.2250738585072009e-308" },
-        { 0x800fffffffffffffULL, "-2.2250738585072009e-308" },
-        { 0x7fefffffffffffffULL, "1.7976931348623157e308" },
-        { 0xffefffffffffffffULL, "-1.7976931348623157e308" },
-        { 0x0000000000000001ULL, "5e-324" },
-        { 0x8000000000000001ULL, "-5e-324" },
-        { 0x0ddb1a43e77c4032ULL, "6.3508876286570946e-242" },
-        { 0x8ddb1a43e77c4032ULL, "-6.3508876286570946e-242" },
-    };
-    static const proven_float_shortest_literal_entry_t f32_literals[] = {
-        { 0x7f800000u, "Inf" },
-        { 0xff800000u, "-Inf" },
-        { 0x00000000u, "0" },
-        { 0x80000000u, "-0" },
-        { 0x00800000u, "1.17549435e-38" },
-        { 0x80800000u, "-1.17549435e-38" },
-        { 0x7f7fffffu, "3.4028235e38" },
-        { 0xff7fffffu, "-3.4028235e38" },
-        { 0x00000001u, "1e-45" },
-        { 0x80000001u, "-1e-45" },
-    };
-
-    if (!is_f32) {
-        if ((bits & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL && (bits & 0x000fffffffffffffULL) != 0ULL) {
-            return proven_float_copy_literal(buf, buf_cap, "NaN", written_out);
-        }
-        return proven_float_copy_shortest_literal(f64_literals, sizeof f64_literals / sizeof f64_literals[0], bits, buf, buf_cap, written_out);
-    }
-
-    proven_u32 bits32 = (proven_u32)bits;
-    if ((bits32 & 0x7f800000u) == 0x7f800000u && (bits32 & 0x007fffffu) != 0u) {
-        return proven_float_copy_literal(buf, buf_cap, "NaN", written_out);
-    }
-    return proven_float_copy_shortest_literal(f32_literals, sizeof f32_literals / sizeof f32_literals[0], bits32, buf, buf_cap, written_out);
-}
-
-bool proven_float_shortest_literal_f64(double value, char *buf, proven_size_t buf_cap, proven_size_t *written_out) {
-    return proven_float_shortest_literal_common(proven_float_bits_f64(value), false, buf, buf_cap, written_out);
-}
-
-bool proven_float_shortest_literal_f32(float value, char *buf, proven_size_t buf_cap, proven_size_t *written_out) {
-    return proven_float_shortest_literal_common((proven_u64)proven_float_bits_f32(value), true, buf, buf_cap, written_out);
 }

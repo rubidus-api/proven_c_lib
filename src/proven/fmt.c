@@ -1,5 +1,6 @@
 #include "proven/fmt.h"
 #include "float_decimal.h"
+#include "proven/float_format.h"
 #include "proven_internal_memrange.h"
 #include "../../platform/proven_sys_mem.h"
 
@@ -233,90 +234,17 @@ static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fm
             break;
 #ifndef PROVEN_FMT_NO_FLOAT
         case PROVEN_ARG_F64: {
-            double v = arg->value.f64;
-            unsigned long long bits;
-            proven_sys_mem_copy(&bits, &v, sizeof(double));
-            bool sign = (bits >> 63) != 0;
-            int exp = (int)((bits >> 52) & 0x7FF);
-            unsigned long long mantissa = bits & 0xFFFFFFFFFFFFFull;
-
-            if (exp == 0x7FF) {
-                if (mantissa != 0) {
-                    render_with_spec(ctx, "NaN", 3, spec);
-                } else if (sign) {
-                    render_with_spec(ctx, "-Inf", 4, spec);
-                } else {
-                    render_with_spec(ctx, "Inf", 3, spec);
-                }
+            /* Unified on the exact policy formatter (fixed precision 6, default
+             * scientific switching), so all float output shares one correctly
+             * rounded engine. */
+            proven_size_t flen = 0;
+            if (proven_float_format_f64_policy(buf, sizeof buf, arg->value.f64,
+                                               PROVEN_FLOAT_FORMAT_POLICY_DEFAULT,
+                                               proven_float_format_options_fixed_default(),
+                                               &flen) != PROVEN_OK) {
                 break;
             }
-
-            proven_size_t offset = 0;
-            double abs_v = sign ? -v : v;
-            if (sign) {
-                buf[offset++] = '-';
-            }
-
-            const unsigned long long precision_scale = 1000000ULL;
-            const int precision = 6;
-            bool use_scientific = (abs_v >= 1e18 || (abs_v > 0.0 && abs_v < 1e-4));
-
-            if (use_scientific) {
-                int sci_exp = 0;
-                if (!proven_float_normalize_scientific(&abs_v, &sci_exp)) {
-                    render_with_spec(ctx, sign ? "-Inf" : "Inf", sign ? 4u : 3u, spec);
-                    break;
-                }
-
-                unsigned long long digit = (unsigned long long)abs_v;
-                double frac = abs_v - (double)digit;
-                unsigned long long frac_i = (unsigned long long)(frac * (double)precision_scale + 0.5);
-                if (frac_i >= precision_scale) {
-                    frac_i -= precision_scale;
-                    digit++;
-                    if (digit >= 10ULL) {
-                        digit = 1ULL;
-                        sci_exp++;
-                    }
-                }
-
-                buf[offset++] = (char)('0' + (int)digit);
-                buf[offset++] = '.';
-                for (int i = precision - 1; i >= 0; --i) {
-                    buf[offset + (proven_size_t)i] = (char)('0' + (int)(frac_i % 10ULL));
-                    frac_i /= 10ULL;
-                }
-                offset += (proven_size_t)precision;
-                buf[offset++] = 'e';
-                if (sci_exp >= 0) {
-                    buf[offset++] = '+';
-                    offset += (proven_size_t)itoa_raw((unsigned long long)sci_exp, buf + offset, 10);
-                } else {
-                    buf[offset++] = '-';
-                    offset += (proven_size_t)itoa_raw((unsigned long long)(-sci_exp), buf + offset, 10);
-                }
-                buf[offset] = '\0';
-                render_with_spec(ctx, buf, offset, spec);
-                break;
-            }
-
-            unsigned long long ipart = (unsigned long long)abs_v;
-            double frac = abs_v - (double)ipart;
-            unsigned long long frac_i = (unsigned long long)(frac * (double)precision_scale + 0.5);
-            if (frac_i >= precision_scale) {
-                frac_i -= precision_scale;
-                ipart++;
-            }
-
-            offset += (proven_size_t)itoa_raw(ipart, buf + offset, 10);
-            buf[offset++] = '.';
-            for (int i = precision - 1; i >= 0; --i) {
-                buf[offset + (proven_size_t)i] = (char)('0' + (int)(frac_i % 10ULL));
-                frac_i /= 10ULL;
-            }
-            offset += (proven_size_t)precision;
-            buf[offset] = '\0';
-            render_with_spec(ctx, buf, offset, spec);
+            render_with_spec(ctx, buf, flen, spec);
             break;
         }
 #endif

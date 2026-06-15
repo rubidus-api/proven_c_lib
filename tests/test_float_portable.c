@@ -64,8 +64,7 @@ int main(void) {
     require(!contains(fmt_src, "long double"), "fmt.c should not depend on long double for float formatting");
     require(contains(fmt_src, "#include \"float_decimal.h\""), "fmt.c should include the shared float helper header");
     require(!contains(fmt_src, "static bool proven_fmt_normalize_scientific("), "fmt.c should not define the shared scientific normalization helper inline");
-    require(contains(fmt_src, "proven_float_normalize_scientific"), "fmt.c should normalize scientific notation through the shared helper");
-    require(contains(fmt_src, "double abs_v = sign ? -v : v;"), "fmt.c should hold the absolute working value in double precision");
+    require(contains(fmt_src, "proven_float_format_f64_policy"), "fmt.c should format floats through the shared exact policy formatter");
     free(fmt_src);
 
     PROVEN_TEST_SECTION(
@@ -77,7 +76,7 @@ int main(void) {
     require(sres.err == PROVEN_OK, "create a scratch string for float formatting");
     proven_u8str_t str = sres.value;
     PROVEN_TEST_ASSERT(PROVEN_FMT_IS_OK(proven_u8str_append_fmt_grow(alloc, &str, "{}", PROVEN_ARG(9.9999995e18))), "scientific carry", "Inspect the scientific normalization path if near-10 values stop producing the documented text.");
-    PROVEN_TEST_ASSERT(strcmp(proven_u8str_as_cstr(&str), "9.999999e+18") == 0, "scientific carry", "Inspect the scientific normalization path if the formatted scientific output changes.");
+    PROVEN_TEST_ASSERT(strcmp(proven_u8str_as_cstr(&str), "1.000000e+19") == 0, "scientific carry", "Inspect the scientific normalization path if the formatted scientific output changes.");
     proven_u8str_destroy(alloc, &str);
 
     proven_scan_t scan = proven_scan_init(proven_u8str_view_from_cstr("0.30000000000000004"));

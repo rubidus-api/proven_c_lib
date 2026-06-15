@@ -84,10 +84,24 @@ int main(void) {
         bad_mode.mode = (proven_float_format_mode_t)99;
         err = proven_float_format_f64_policy(buf, sizeof buf, 0.1, PROVEN_FLOAT_FORMAT_POLICY_SIMPLE, bad_mode, &written);
         PROVEN_TEST_ASSERT(err == PROVEN_ERR_INVALID_ARG, "invalid mode enum should fail", "Inspect the mode enum validation if an out-of-range value stops being rejected.");
+        /*
+         * The exact %f path supports arbitrary precision now, so a precision of
+         * 19 is valid and correctly rounded; only precision past the capacity
+         * ceiling is rejected.
+         */
+        proven_float_format_options_t high_precision = proven_float_format_options_fixed_default();
+        high_precision.precision = 19;
+        err = proven_float_format_f64_policy(buf, sizeof buf, 0.1, PROVEN_FLOAT_FORMAT_POLICY_SIMPLE, high_precision, &written);
+        PROVEN_TEST_ASSERT(err == PROVEN_OK, "precision 19 should now be supported", "Inspect the exact fixed-precision path if a precision above 18 is rejected.");
+        {
+            char hostbuf[64];
+            snprintf(hostbuf, sizeof hostbuf, "%.19f", 0.1);
+            PROVEN_TEST_ASSERT(strcmp(buf, hostbuf) == 0, "exact %f should match host at precision 19", "Inspect the exact fixed-precision digit generation if high-precision output diverges from host snprintf.");
+        }
         proven_float_format_options_t bad_precision = proven_float_format_options_fixed_default();
-        bad_precision.precision = 19;
+        bad_precision.precision = 5000;
         err = proven_float_format_f64_policy(buf, sizeof buf, 0.1, PROVEN_FLOAT_FORMAT_POLICY_SIMPLE, bad_precision, &written);
-        PROVEN_TEST_ASSERT(err == PROVEN_ERR_INVALID_ARG, "invalid precision should fail", "Inspect the fixed-mode precision validation if out-of-range precision starts being treated like buffer exhaustion.");
+        PROVEN_TEST_ASSERT(err == PROVEN_ERR_INVALID_ARG, "precision past the capacity ceiling should fail", "Inspect the fixed-mode precision validation if an out-of-range precision stops being rejected.");
         err = proven_float_format_f64_policy(buf, 4, 1.0, PROVEN_FLOAT_FORMAT_POLICY_SIMPLE, proven_float_format_options_fixed_default(), &written);
         PROVEN_TEST_ASSERT(err == PROVEN_ERR_OUT_OF_BOUNDS, "too-small buffer should fail", "Inspect the buffer capacity check if a truncated write is accepted.");
     }

@@ -91,7 +91,7 @@ int main(void) {
         "Inspect src/proven/float_format.c if the f32 shortest backend stops sharing the same first-roundtrip helper shape as f64."
     );
     char *fmt_src = read_file_text("src/proven/float_format.c");
-    require_text_present(fmt_src, "proven_float_format_build_shortest_common", "float_format.c should keep the shared shortest helper");
+    require_text_present(fmt_src, "proven_float_format_shortest_from_digits", "float_format.c should keep the shared shortest helper");
     require_text_present(fmt_src, "proven_float_format_build_shortest_f32", "float_format.c should keep the float32 shortest shim");
     require_text_present(fmt_src, "proven_float_format_build_shortest_f64", "float_format.c should keep the float64 shortest shim");
     require_text_present(fmt_src, "return proven_float_format_build_shortest_f64(buf, buf_cap, value, written_out);", "float_format.c should dispatch shortest f64 through the width-specific shim");

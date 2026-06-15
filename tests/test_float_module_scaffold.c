@@ -60,9 +60,7 @@ int main(void) {
     require(contains(mod_c, "proven_float_compare_decimal_to_midpoint"), "float_decimal.c should keep the exact midpoint comparison helper in the shared module");
     require(contains(mod_c, "proven_float_decimal_stats"), "float_decimal.c should keep internal fast-path and fallback counters");
     require(contains(mod_c, "proven_float_normalize_scientific"), "float_decimal.c should define the shared scientific normalization helper");
-    require(contains(mod_c, "proven_float_shortest_literal_common"), "float_decimal.c should define the shared shortest-literal helper");
-    require(contains(mod_c, "proven_float_shortest_literal_f64"), "float_decimal.c should define the shared f64 shortest-literal wrapper");
-    require(contains(mod_c, "proven_float_shortest_literal_f32"), "float_decimal.c should define the shared f32 shortest-literal wrapper");
+    require(contains(mod_c, "proven_float_shortest_digits"), "float_decimal.c should define the shared shortest-digits engine");
     free(mod_c);
 
     char *tables = read_text_file("src/proven/float_decimal_tables.h");
@@ -88,8 +86,8 @@ int main(void) {
 
     char *fmt = read_text_file("src/proven/float_format.c");
     require(contains(fmt, "#include \"float_decimal.h\""), "float_format.c should include the float helper header instead of carrying the shared helpers inline");
-    require(contains(fmt, "proven_float_shortest_literal_f64"), "float_format.c should call the shared f64 shortest-literal helper");
-    require(contains(fmt, "proven_float_shortest_literal_f32"), "float_format.c should call the shared f32 shortest-literal helper");
+    require(contains(fmt, "proven_float_scaled_round_digits"), "float_format.c should format fixed-precision digits through the shared exact engine");
+    require(contains(fmt, "proven_float_scaled_round_sig_digits"), "float_format.c should format scientific digits through the shared exact engine");
     require(!contains(fmt, "0x7ff0000000000000ULL"), "float_format.c should not carry the f64 shortest special-case literal table inline");
     require(!contains(fmt, "0x7f800000u"), "float_format.c should not carry the f32 shortest special-case literal table inline");
     free(fmt);
