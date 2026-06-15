@@ -9,10 +9,11 @@ parser and formatter are trustworthy and fast enough for production use.
 - **Scope:** decimal → `binary64` parsing (the scanner), and `binary64`/`binary32`
   → decimal formatting (shortest, fixed `%f`, scientific `%e`).
 - **Headline result:** the formatter has been validated **exhaustively** over all
-  4,278,190,080 finite `binary32` values with **zero** failures, the parser is
-  **bit-for-bit identical** to the host `strtod` on every input tested, and on
-  realistic data the library is **faster than glibc** at almost everything it
-  does. Full numbers and methodology are below.
+  4,278,190,080 finite `binary32` values with **zero** failures, and over
+  **2,560,000,000** random `binary64` values (after that sweep found and fixed one
+  real defect); the parser is **bit-for-bit identical** to the host `strtod` on
+  every input tested; and on realistic data the library is **faster than glibc** at
+  almost everything it does. Full numbers and methodology are below.
 - **Environment for the measurements in this document:** x86-64, GCC 14.2.0,
   glibc 2.41, single-threaded benchmarks, 16-thread exhaustive sweep.
 
@@ -152,22 +153,46 @@ target type actually rounds, not the way a decimal printf rounds.
 
 ### 2.2 binary64 — differential fuzzing
 
-`binary64` has 2^64 values and cannot be enumerated, so it is validated the way
-every production float library validates it — large-scale differential fuzzing
-against the host, plus the structural guarantees of the algorithms:
+`binary64` has 2^64 values and cannot be enumerated, so it is validated with a
+large-scale randomized differential sweep against the host — the same four checks
+as the `binary32` sweep, with `strtod` (a direct decimal → `binary64` conversion)
+as the round-trip oracle, so there is no double-rounding subtlety.
 
-- Parser: millions of randomized decimals (many significant digits × extreme
-  exponents, the inputs that exercise the exact fallback) compared bit-for-bit
-  against host `strtod` — zero mismatches.
-- Fixed `%f`/`%e`: millions of value/precision pairs compared against host
-  `snprintf` — zero mismatches.
-- Shortest: millions of random doubles checked for round-trip and minimality —
-  zero failures — with Grisu3 and Dragon4 cross-checking each other on every value.
+**2,560,000,000 random finite doubles**, drawn from a mix of generators (uniform
+64-bit patterns, subnormals, and `mantissa × 10^exp` decimals spanning the full
+exponent range) so both the fast paths and the exact fallback are exercised:
 
-The exhaustive `binary32` result is strong evidence for the `binary64` paths too:
-the shortest formatter, the exact `%f`/`%e` engine, and the parser share the same
-big-integer core and the same Grisu3/Dragon4 code, parameterised only by the
-significand width and exponent range.
+```
+random finite values     : 2560000000
+avg shortest digits       : 16.2459
+
+formatter error          : 0
+B round-trip (strtod)    : 0
+C minimality             : 0
+D parser on S (vs strtod): 0
+E parser canonical       : 0
+TOTAL FAILURES           : 0
+```
+
+(16 threads, ~19.5 minutes.) B and C prove every shortest string round-trips and
+is minimal; D and E prove the parser is bit-identical to `strtod` on both the
+shortest strings and canonical `%.17e` renderings.
+
+This sweep also did its job as a bug-finder. An earlier run flagged 93 values
+(all just below a power of ten, e.g. `9.995442674871462e-265`) as non-minimal:
+both digit generators were emitting a spurious leading zero with the decimal
+exponent one too high (`0.9995442674871462e-264`). The output still round-tripped,
+but it was non-canonical and one digit too long. The shortest wrappers now strip
+the leading zero and lower the exponent; the trailing digits were already correct,
+so the value and minimal length are unchanged. After the fix the sweep above
+reports zero, and the exhaustive `binary32` sweep — which had no such cases — still
+reports zero. This is a concrete example of the validation catching a real defect
+that round-trip testing alone would have missed.
+
+Together with the exhaustive `binary32` result, this gives strong evidence for the
+`binary64` paths: the shortest formatter, the exact `%f`/`%e` engine, and the
+parser share the same big-integer core and the same Grisu3/Dragon4 code,
+parameterised only by the significand width and exponent range.
 
 ---
 
