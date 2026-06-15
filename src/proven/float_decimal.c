@@ -1870,19 +1870,47 @@ static int proven_float_shortest_digits_core(proven_u64 f, proven_i64 e, proven_
     return (int)pos;
 }
 
+/*
+ * A canonical shortest result has a nonzero leading digit. Some boundary values
+ * just below a power of ten leave the digit generators (both Grisu3 and Dragon4)
+ * with a spurious leading zero and a decimal exponent one too high, e.g. digits
+ * "0999..." at exponent k instead of "999..." at k-1. The trailing digits are
+ * the correct shortest digits; only the leading position is off. Strip the
+ * leading zero(s) and lower the decimal exponent to canonicalize, leaving the
+ * value, round-trip property, and minimal length intact.
+ */
+static int proven_float_normalize_shortest_digits(char *out, int length, proven_i64 *decimal_exp) {
+    if (length <= 0) {
+        return length;
+    }
+    while (length > 1 && out[0] == '0') {
+        int i;
+        for (i = 1; i < length; ++i) {
+            out[i - 1] = out[i];
+        }
+        length--;
+        out[length] = '\0';
+        *decimal_exp -= 1;
+    }
+    return length;
+}
+
 int proven_float_shortest_digits(double value, char *out, proven_size_t out_cap, proven_i64 *decimal_exp) {
     proven_u64 bits = proven_float_bits_f64(value) & 0x7fffffffffffffffull;
     proven_u64 f = 0;
     proven_i64 e = 0;
+    int n;
     proven_float_f64_to_scaled(bits, &f, &e);
     /* boundary significand 2^52, minimum exponent -1074 for binary64. */
     {
         int g = proven_float_shortest_digits_grisu(f, e, 1ull << 52, -1074, out, out_cap, decimal_exp);
-        if (g >= 0) {
-            return g;
-        }
+        n = (g >= 0) ? g
+                     : proven_float_shortest_digits_core(f, e, 1ull << 52, -1074, out, out_cap, decimal_exp);
     }
-    return proven_float_shortest_digits_core(f, e, 1ull << 52, -1074, out, out_cap, decimal_exp);
+    if (n < 0) {
+        return n;
+    }
+    return proven_float_normalize_shortest_digits(out, n, decimal_exp);
 }
 
 int proven_float_shortest_digits_f32(float value, char *out, proven_size_t out_cap, proven_i64 *decimal_exp) {
@@ -1891,6 +1919,7 @@ int proven_float_shortest_digits_f32(float value, char *out, proven_size_t out_c
     proven_u32 exp = (bits >> 23) & 0xffu;
     proven_u64 f;
     proven_i64 e;
+    int n;
 
     if (exp == 0u) {
         f = frac;        /* subnormal (or zero) */
@@ -1902,11 +1931,13 @@ int proven_float_shortest_digits_f32(float value, char *out, proven_size_t out_c
     /* boundary significand 2^23, minimum exponent -149 for binary32. */
     {
         int g = proven_float_shortest_digits_grisu(f, e, 1u << 23, -149, out, out_cap, decimal_exp);
-        if (g >= 0) {
-            return g;
-        }
+        n = (g >= 0) ? g
+                     : proven_float_shortest_digits_core(f, e, 1u << 23, -149, out, out_cap, decimal_exp);
     }
-    return proven_float_shortest_digits_core(f, e, 1u << 23, -149, out, out_cap, decimal_exp);
+    if (n < 0) {
+        return n;
+    }
+    return proven_float_normalize_shortest_digits(out, n, decimal_exp);
 }
 
 static bool proven_float_decimal_build_number(const proven_u8 *input, proven_size_t len, proven_float_decimal_number_t *out) {
