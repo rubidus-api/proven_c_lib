@@ -319,6 +319,9 @@ Purpose: hold input and current parse position. `proven_scan_init()` normalizes 
 | `proven_scan_i64(scan)` | Parse signed 64-bit integer. | `proven_result_i64_t`. |
 | `proven_scan_u64(scan)` | Parse unsigned 64-bit integer. | `proven_result_u64_t`. |
 | `proven_scan_f64(scan)` | Parse floating-point value. | `proven_result_f64_t`. |
+| `proven_parse_double_ascii(view)` | Parse one locale-free ASCII float token without skipping whitespace. | `proven_parse_double_result_t`. |
+| `proven_parse_f64_ascii(view)` | Compatibility alias for the same locale-free binary64 parser. | `proven_parse_f64_result_t`. |
+| `proven_strtod(nptr, endptr)` | Parse one `strtod`-style token with whitespace skipping and `endptr` reporting. | `double`. |
 | `proven_scan_str(scan)` | Parse a whitespace-delimited token as view into input. | `proven_result_u8str_view_t`. |
 | `proven_scan_skip_until(scan, target)` | Move cursor to target if found. | `proven_err_t`. |
 | `proven_scan_skip_until_number(scan)` | Move cursor to next number-looking position. | void. |
@@ -402,6 +405,30 @@ proven_err_t e = proven_scan_fmt_cursor(
 );
 if (!proven_is_ok(e)) return e;
 ```
+
+### Float parsing notes
+
+- `proven_scan_f64()` and `proven_parse_double_ascii()` route through the shared
+  decimal-to-binary64 backend.
+- Finite decimal inputs are rounded to IEEE-754 binary64 with
+  round-to-nearest, ties-to-even behavior.
+- The current conversion stack is `Clinger fast path -> staged
+  Eisel-Lemire layer -> exact bigint fallback`, with internal counters used by
+  tests to confirm which path took a representative input.
+- The staged Eisel-Lemire layer currently accepts generated-`5^q` positive
+  exponent cases and exact negative-exponent cases where the decimal
+  significand cleanly cancels the required `5^q`.
+- On compilers with `__uint128_t`, the same layer also accepts a conservative
+  rounded negative-exponent ratio subset in normal-range cases, including
+  wider left-shift normalization than the original narrow prototype allowed.
+- The widened cached-power product path now also stages some subnormal cases,
+  including `5e-324`, while values below the half-threshold to true-min still
+  defer to the exact bigint fallback.
+- The checked-in cached `5^q` constants are generated locally by
+  `scripts/generate_float_decimal_tables.py`.
+- `proven_parse_double_ascii()` does not skip leading whitespace.
+- `proven_strtod()` skips leading ASCII whitespace, updates `endptr`, returns
+  signed infinity on overflow, and preserves signed zero on underflow.
 
 ## 5. Examples and misuse cases
 

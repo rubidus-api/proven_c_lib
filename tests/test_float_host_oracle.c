@@ -1,5 +1,6 @@
 #include "proven_test.h"
 #include "proven/float_format.h"
+#include "proven/float_config.h"
 #include "proven/scan.h"
 #include "proven/u8str.h"
 #include <stdbool.h>
@@ -65,7 +66,11 @@ int main(void) {
     require_scan_matches_host("123.4567899");
     require_scan_matches_host("1e17");
     require_scan_matches_host("1e18");
+    require_scan_matches_host("1e40");
     require_scan_matches_host("1e-4");
+    require_scan_matches_host("1e-30");
+    require_scan_matches_host("1e-40");
+    require_scan_matches_host("1e-100");
     require_scan_matches_host("9.999999e-5");
     require_scan_matches_host("2.2250738585072000e-308");
     require_scan_matches_host("2.2250738585072001e-308");
@@ -84,7 +89,56 @@ int main(void) {
     require_scan_matches_host("-4.9406564584124654e-324");
     require_scan_matches_host("-5e-324");
     require_scan_matches_host("-6.3508876286570945e-242");
+    require_scan_matches_host("1844674407370955161e27");
+    require_scan_matches_host("-1844674407370955161e27");
     require_scan_matches_host("1.7976931348623158e308");
+    /*
+     * Long-mantissa inputs whose last significant digit is zero. The trailing
+     * zero is folded into exp10, so significant_digits must match the shorter
+     * significand; an inflated count biases the exact-search exponent bounds
+     * high and used to round these to a power of two.
+     */
+    require_scan_matches_host("12345678901234567890");
+    require_scan_matches_host("-12345678901234567890");
+    require_scan_matches_host("109.31074080952665007690591502623020");
+    require_scan_matches_host("100021278015120571669.80");
+    require_scan_matches_host("10623356351110754525.2518093850");
+    require_scan_matches_host("1970.952033404821949905103880");
+    require_scan_matches_host("123456789012345678901e40");
+    /*
+     * Very long mantissas exceed the exact-significand digit cap, so they are
+     * truncated and a sticky flag carries the dropped tail. These cases pin the
+     * sticky tie-break: each sits exactly on a binary64 rounding midpoint and the
+     * trailing nonzero tail must round the result up, while the matching zero/short
+     * tails must keep the even value.
+     *
+     * The subnormal midpoint needs its full 751-digit expansion, so these run only
+     * when the configured cap can hold a binary64 rounding boundary exactly
+     * (>= 768 digits). Smaller embedded caps stay within one ULP but are not exact
+     * for boundaries longer than the cap, so the assertion would not hold there.
+     */
+#if PROVEN_FLOAT_MAX_SIGNIFICAND_DIGITS >= 768u
+    require_scan_matches_host("1.00000000000000011102230246251565404236316680908203125"); /* exact mid of 1.0, ties to even */
+    require_scan_matches_host(
+        "1.00000000000000011102230246251565404236316680908203125"
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        "0000000000000000000000000000000000000001"); /* mid + sticky tail past the cap -> rounds up */
+    require_scan_matches_host(
+        "2.4703282292062327208828439643411068618252990130716238221279284125033775363510437593264991818081799618"
+        "9898282347722858865463328355177969898199387398005390939063150356595155702263922908583924491051844359318"
+        "0284993653615250031937045767824921936562366986365848075700158576926990370631192827955855133292783433840"
+        "9351978015531246597263579574622766465272827220056374006485499977096599470454020828166226237857393450736"
+        "3390079677619305775067401763246736009689513405355374585166611342237666786041621596804619144672918403005"
+        "3005753084904876539171138659164623952491262365388187963623937328042389101867234849766823508986338858792"
+        "5628302755995657524455507255189313690836254779186948667994968324049705821028513185451396213837722826145"
+        "4376934125320985913276672363281251e-324"); /* subnormal half + sticky -> smallest subnormal */
+#endif
 
     PROVEN_TEST_SECTION(
         "host-oracle formatting",

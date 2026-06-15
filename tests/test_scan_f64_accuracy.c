@@ -68,8 +68,20 @@ int main(void) {
         "Inspect the start_cursor save/restore path if malformed input leaves the scanner advanced.");
     expect_scan_fail_restore("empty token", "", PROVEN_ERR_INVALID_ARG);
     expect_scan_fail_restore("non-numeric token", "abc", PROVEN_ERR_INVALID_ARG);
-    expect_scan_fail_restore("dangling exponent", "1e", PROVEN_ERR_INVALID_ARG);
-    expect_scan_fail_restore("dangling exponent sign", "1e+", PROVEN_ERR_INVALID_ARG);
+    {
+        /*
+         * A dangling exponent marker is not part of the number. Match strtod:
+         * the scanner accepts the mantissa and stops at the `e`.
+         */
+        proven_scan_t scan = proven_scan_init(proven_u8str_view_from_cstr("1e"));
+        proven_result_f64_t res = proven_scan_f64(&scan);
+        PROVEN_TEST_ASSERT(res.err == PROVEN_OK && double_bits(res.val) == double_bits(1.0) && scan.cursor == 1,
+                           "dangling exponent keeps mantissa", "Inspect incomplete-exponent backtracking in proven_scan_f64.");
+        proven_scan_t scan2 = proven_scan_init(proven_u8str_view_from_cstr("1e+"));
+        proven_result_f64_t res2 = proven_scan_f64(&scan2);
+        PROVEN_TEST_ASSERT(res2.err == PROVEN_OK && double_bits(res2.val) == double_bits(1.0) && scan2.cursor == 1,
+                           "dangling exponent sign keeps mantissa", "Inspect incomplete-exponent backtracking in proven_scan_f64.");
+    }
 
     PROVEN_TEST_PASS("Float scanner accuracy checks passed.");
     return 0;

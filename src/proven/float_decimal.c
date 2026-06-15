@@ -1,4 +1,6 @@
 #include "float_decimal.h"
+#include "float_decimal_tables.h"
+#include "proven/float_config.h"
 #include <string.h>
 
 static proven_u32 proven_float_bits_copy_u32(float value) {
@@ -40,53 +42,2433 @@ proven_u128_parts_t proven_float_mul_u64_u64_to_u128(proven_u64 lhs, proven_u64 
     return out;
 }
 
-static const double proven_float_pow10_exact[] = {
-    1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11,
-    1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
-};
+/*
+ * PROVEN_FLOAT_BIGINT_LIMBS, PROVEN_FLOAT_BIGINT_SCALE_HEADROOM, and
+ * PROVEN_FLOAT_MAX_SIGNIFICAND_DIGITS come from proven/float_config.h so the big
+ * integer capacity (and thus the exact-fallback stack footprint) is tunable at
+ * build time. Any binary64 value or rounding midpoint has an exact decimal
+ * expansion of at most 767 significant digits, which the default cap covers;
+ * further nonzero digits only push the value strictly upward and are recorded by
+ * significand_sticky instead of being stored, bounding the bigint work for
+ * arbitrarily long inputs.
+ */
+typedef struct {
+    proven_u64 limbs[PROVEN_FLOAT_BIGINT_LIMBS];
+    proven_size_t len;
+} proven_float_bigint_t;
 
-double proven_float_scale_pow10(double value, proven_i64 exp10) {
-    if (value == 0.0 || exp10 == 0) {
-        return value;
+typedef struct {
+    bool negative;
+    bool is_zero;
+    bool mantissa_fits_u64;
+    bool significand_sticky;
+    proven_u64 mantissa_u64;
+    proven_size_t significant_digits;
+    proven_i64 exp10;
+    proven_size_t digits_total;
+    proven_size_t frac_digits;
+    proven_size_t first_nonzero;
+    proven_size_t last_nonzero;
+    proven_float_bigint_t significand;
+} proven_float_decimal_number_t;
+
+typedef enum {
+    PROVEN_FLOAT_FAST_PATH_UNSUPPORTED = 0,
+    PROVEN_FLOAT_FAST_PATH_UNCERTAIN,
+    PROVEN_FLOAT_FAST_PATH_SUCCESS,
+} proven_float_fast_path_result_t;
+
+typedef enum {
+    PROVEN_FLOAT_EISEL_LEMIRE_CANDIDATE_PRODUCT = 0,
+} proven_float_eisel_lemire_candidate_mode_t;
+
+typedef struct {
+    proven_float_eisel_lemire_candidate_mode_t mode;
+    proven_u128_parts_t wide;
+    proven_i64 exp2;
+} proven_float_eisel_lemire_candidate_plan_t;
+
+static proven_float_decimal_stats_t proven_float_decimal_stats = {0};
+
+static proven_u8 proven_float_ascii_lower(proven_u8 ch) {
+    if (ch >= (proven_u8)'A' && ch <= (proven_u8)'Z') {
+        return (proven_u8)(ch - (proven_u8)'A' + (proven_u8)'a');
+    }
+    return ch;
+}
+
+static bool proven_float_match_keyword(const proven_u8 *input, proven_size_t len, const char *word, proven_size_t *matched_len) {
+    proven_size_t i = 0;
+    while (word[i] != '\0') {
+        if (i >= len) {
+            return false;
+        }
+        if (proven_float_ascii_lower(input[i]) != (proven_u8)word[i]) {
+            return false;
+        }
+        ++i;
+    }
+    *matched_len = i;
+    return true;
+}
+
+#define PROVEN_FLOAT_EXP10_PARSE_CLAMP 1000000ll
+
+static proven_i64 proven_float_exp10_accumulate_clamped(proven_i64 current, proven_u8 digit) {
+    const proven_i64 clamp = PROVEN_FLOAT_EXP10_PARSE_CLAMP;
+    if (current >= clamp) {
+        return clamp;
+    }
+    if (current > (clamp - (proven_i64)digit) / 10ll) {
+        return clamp;
+    }
+    return current * 10ll + (proven_i64)digit;
+}
+
+static proven_i64 proven_float_floor_long_double_to_i64(long double value) {
+    proven_i64 out = (proven_i64)value;
+    if ((long double)out > value) {
+        --out;
+    }
+    return out;
+}
+
+static void proven_float_decimal_binary_exp_bounds(const proven_float_decimal_number_t *decimal,
+                                                   proven_size_t significant_digits,
+                                                   proven_i64 *min_exp2_out,
+                                                   proven_i64 *max_exp2_out) {
+    const long double log2_10 = 3.321928094887362347870319429489390175864L;
+    proven_i64 digits = (proven_i64)significant_digits;
+    proven_i64 k_min = decimal->exp10 + digits - 1;
+    proven_i64 k_max = decimal->exp10 + digits;
+    proven_i64 min_exp2 = proven_float_floor_long_double_to_i64((long double)k_min * log2_10) - 2;
+    proven_i64 max_exp2 = proven_float_floor_long_double_to_i64((long double)k_max * log2_10) + 2;
+
+    if (min_exp2 < -1074) {
+        min_exp2 = -1074;
+    }
+    if (max_exp2 > 1023) {
+        max_exp2 = 1023;
+    }
+    if (min_exp2 > max_exp2) {
+        min_exp2 = -1074;
+        max_exp2 = 1023;
     }
 
-    const proven_i64 chunk = exp10 > 100 ? 19 : 22;
+    *min_exp2_out = min_exp2;
+    *max_exp2_out = max_exp2;
+}
 
-    if (exp10 > 0) {
-        while (exp10 > chunk) {
-            value *= proven_float_pow10_exact[(proven_size_t)chunk];
-            exp10 -= chunk;
+proven_float_parse_result_t proven_float_parse_ascii_token(const proven_u8 *input, proven_size_t len) {
+    proven_float_parse_result_t out = {
+        .err = PROVEN_ERR_INVALID_ARG,
+        .kind = PROVEN_FLOAT_PARSE_KIND_DECIMAL,
+        .negative = false,
+        .consumed = 0,
+        .has_nonzero_digit = false,
+    };
+    if (!input || len == 0) {
+        return out;
+    }
+
+    proven_size_t cursor = 0;
+    if (input[cursor] == (proven_u8)'-') {
+        out.negative = true;
+        ++cursor;
+    } else if (input[cursor] == (proven_u8)'+') {
+        ++cursor;
+    }
+
+    if (cursor >= len) {
+        return out;
+    }
+
+    {
+        proven_size_t matched = 0;
+        if (proven_float_match_keyword(input + cursor, len - cursor, "infinity", &matched) ||
+            proven_float_match_keyword(input + cursor, len - cursor, "inf", &matched)) {
+            out.err = PROVEN_OK;
+            out.kind = PROVEN_FLOAT_PARSE_KIND_INF;
+            out.consumed = cursor + matched;
+            return out;
         }
-        value *= proven_float_pow10_exact[(proven_size_t)exp10];
+        if (proven_float_match_keyword(input + cursor, len - cursor, "nan", &matched)) {
+            proven_size_t end = cursor + matched;
+            if (end < len && input[end] == (proven_u8)'(') {
+                ++end;
+                while (end < len && input[end] != (proven_u8)')') {
+                    ++end;
+                }
+                if (end < len && input[end] == (proven_u8)')') {
+                    ++end;
+                } else {
+                    return out;
+                }
+            }
+            out.err = PROVEN_OK;
+            out.kind = PROVEN_FLOAT_PARSE_KIND_NAN;
+            out.consumed = end;
+            return out;
+        }
+    }
+
+    bool found_digit = false;
+    bool has_nonzero_digit = false;
+
+    while (cursor < len && input[cursor] >= (proven_u8)'0' && input[cursor] <= (proven_u8)'9') {
+        found_digit = true;
+        if (input[cursor] != (proven_u8)'0') {
+            has_nonzero_digit = true;
+        }
+        ++cursor;
+    }
+
+    if (cursor < len && input[cursor] == (proven_u8)'.') {
+        ++cursor;
+        while (cursor < len && input[cursor] >= (proven_u8)'0' && input[cursor] <= (proven_u8)'9') {
+            found_digit = true;
+            if (input[cursor] != (proven_u8)'0') {
+                has_nonzero_digit = true;
+            }
+            ++cursor;
+        }
+    }
+
+    if (!found_digit) {
+        return out;
+    }
+
+    if (cursor < len && (input[cursor] == (proven_u8)'e' || input[cursor] == (proven_u8)'E')) {
+        proven_size_t exp_anchor = cursor;
+        ++cursor;
+
+        if (cursor < len && (input[cursor] == (proven_u8)'+' || input[cursor] == (proven_u8)'-')) {
+            ++cursor;
+        }
+
+        if (cursor >= len || input[cursor] < (proven_u8)'0' || input[cursor] > (proven_u8)'9') {
+            /*
+             * An `e`/`E` not followed by a valid exponent is not part of the
+             * number. Match strtod: rewind to the `e` and accept the mantissa
+             * parsed so far instead of rejecting the whole token.
+             */
+            cursor = exp_anchor;
+        } else {
+            while (cursor < len && input[cursor] >= (proven_u8)'0' && input[cursor] <= (proven_u8)'9') {
+                ++cursor;
+            }
+        }
+    }
+
+    out.err = PROVEN_OK;
+    out.kind = PROVEN_FLOAT_PARSE_KIND_DECIMAL;
+    out.consumed = cursor;
+    out.has_nonzero_digit = has_nonzero_digit;
+    return out;
+}
+
+void proven_float_decimal_reset_stats(void) {
+    proven_float_decimal_stats = (proven_float_decimal_stats_t){0};
+}
+
+void proven_float_decimal_get_stats(proven_float_decimal_stats_t *out) {
+    if (out) {
+        *out = proven_float_decimal_stats;
+    }
+}
+
+static int proven_float_clz_u64(proven_u64 value) {
+    if (value == 0u) {
+        return 64;
+    }
+    int count = 0;
+    while ((value & 0x8000000000000000ull) == 0u) {
+        value <<= 1;
+        ++count;
+    }
+    return count;
+}
+
+static void proven_float_bigint_zero(proven_float_bigint_t *value) {
+    if (!value) {
+        return;
+    }
+    value->len = 0;
+    memset(value->limbs, 0, sizeof value->limbs);
+}
+
+static void proven_float_bigint_trim(proven_float_bigint_t *value) {
+    while (value->len > 0 && value->limbs[value->len - 1] == 0) {
+        --value->len;
+    }
+}
+
+static void proven_float_bigint_clear_prefix(proven_float_bigint_t *value, proven_size_t len) {
+    if (!value) {
+        return;
+    }
+    if (len > PROVEN_FLOAT_BIGINT_LIMBS) {
+        len = PROVEN_FLOAT_BIGINT_LIMBS;
+    }
+    memset(value->limbs, 0, len * sizeof value->limbs[0]);
+    value->len = 0;
+}
+
+static void proven_float_bigint_from_u64(proven_float_bigint_t *value, proven_u64 u64) {
+    if (!value) {
+        return;
+    }
+    value->len = 0;
+    if (u64 != 0) {
+        value->limbs[0] = u64;
+        value->len = 1;
+    }
+}
+
+static void proven_float_bigint_from_u128_parts(proven_float_bigint_t *value, proven_u128_parts_t u128) {
+    if (!value) {
+        return;
+    }
+    value->len = 0;
+    if (u128.lo != 0u) {
+        value->limbs[0] = u128.lo;
+        value->len = 1u;
+    }
+    if (u128.hi != 0u) {
+        value->limbs[value->len++] = u128.hi;
+    }
+}
+
+static void proven_float_bigint_set_u64(proven_float_bigint_t *value, proven_u64 u64) {
+    if (u64 != 0u) {
+        value->limbs[0] = u64;
+        value->len = 1u;
     } else {
-        while (exp10 < -chunk) {
-            value /= proven_float_pow10_exact[(proven_size_t)chunk];
-            exp10 += chunk;
-        }
-        value /= proven_float_pow10_exact[(proven_size_t)(-exp10)];
+        value->len = 0u;
+    }
+}
+
+static void proven_float_bigint_set_u128_parts(proven_float_bigint_t *value, proven_u128_parts_t u128) {
+    if (u128.lo != 0u) {
+        value->limbs[0] = u128.lo;
+        value->len = 1u;
+    } else {
+        value->len = 0u;
+    }
+    if (u128.hi != 0u) {
+        value->limbs[value->len++] = u128.hi;
+    }
+}
+
+static void proven_float_bigint_copy(proven_float_bigint_t *dst, const proven_float_bigint_t *src) {
+    if (!dst || !src) {
+        return;
+    }
+    dst->len = src->len;
+    switch (src->len) {
+        case 0u:
+            break;
+        case 1u:
+            dst->limbs[0] = src->limbs[0];
+            break;
+        case 2u:
+            dst->limbs[0] = src->limbs[0];
+            dst->limbs[1] = src->limbs[1];
+            break;
+        case 3u:
+            dst->limbs[0] = src->limbs[0];
+            dst->limbs[1] = src->limbs[1];
+            dst->limbs[2] = src->limbs[2];
+            break;
+        case 4u:
+            dst->limbs[0] = src->limbs[0];
+            dst->limbs[1] = src->limbs[1];
+            dst->limbs[2] = src->limbs[2];
+            dst->limbs[3] = src->limbs[3];
+            break;
+        default:
+            memcpy(dst->limbs, src->limbs, src->len * sizeof dst->limbs[0]);
+            break;
+    }
+}
+
+static bool proven_float_bigint_mul_small(proven_float_bigint_t *value, proven_u32 mul) {
+    if (value->len == 0 || mul == 1u) {
+        return true;
+    }
+    if (mul == 0u) {
+        proven_float_bigint_zero(value);
+        return true;
     }
 
+    proven_u64 carry = 0;
+    for (proven_size_t i = 0; i < value->len; ++i) {
+        proven_u128_parts_t product = proven_float_mul_u64_u64_to_u128(value->limbs[i], (proven_u64)mul);
+        proven_u64 lo = product.lo + carry;
+        proven_u64 hi = product.hi + (lo < product.lo ? 1ull : 0ull);
+        value->limbs[i] = lo;
+        carry = hi;
+    }
+
+    if (carry != 0) {
+        if (value->len >= PROVEN_FLOAT_BIGINT_LIMBS) {
+            return false;
+        }
+        value->limbs[value->len++] = carry;
+    }
+    return true;
+}
+
+static bool proven_float_bigint_mul_u64(proven_float_bigint_t *value, proven_u64 mul) {
+    if (value->len == 0 || mul == 1u) {
+        return true;
+    }
+    if (mul == 0u) {
+        proven_float_bigint_zero(value);
+        return true;
+    }
+
+    proven_u64 carry = 0;
+    for (proven_size_t i = 0; i < value->len; ++i) {
+        proven_u128_parts_t product = proven_float_mul_u64_u64_to_u128(value->limbs[i], mul);
+        proven_u64 lo = product.lo + carry;
+        proven_u64 hi = product.hi + (lo < product.lo ? 1ull : 0ull);
+        value->limbs[i] = lo;
+        carry = hi;
+    }
+
+    if (carry != 0) {
+        if (value->len >= PROVEN_FLOAT_BIGINT_LIMBS) {
+            return false;
+        }
+        value->limbs[value->len++] = carry;
+    }
+    return true;
+}
+
+static bool proven_float_bigint_add_small(proven_float_bigint_t *value, proven_u32 add) {
+    if (value->len == 0) {
+        if (add == 0u) {
+            return true;
+        }
+        value->limbs[0] = (proven_u64)add;
+        value->len = 1;
+        return true;
+    }
+
+    proven_u64 carry = (proven_u64)add;
+    for (proven_size_t i = 0; i < value->len && carry != 0; ++i) {
+        proven_u64 next = value->limbs[i] + carry;
+        carry = next < value->limbs[i] ? 1ull : 0ull;
+        value->limbs[i] = next;
+    }
+    if (carry != 0) {
+        if (value->len >= PROVEN_FLOAT_BIGINT_LIMBS) {
+            return false;
+        }
+        value->limbs[value->len++] = carry;
+    }
+    return true;
+}
+
+static bool proven_float_bigint_shl_bits(proven_float_bigint_t *value, proven_i64 shift);
+
+static bool proven_float_bigint_mul_factor(proven_float_bigint_t *value, const proven_float_bigint_t *factor) {
+    proven_float_bigint_t product;
+
+    if (!value || !factor) {
+        return false;
+    }
+    if (value->len == 0 || factor->len == 0) {
+        proven_float_bigint_zero(value);
+        return true;
+    }
+    if (factor->len == 1u) {
+        return proven_float_bigint_mul_u64(value, factor->limbs[0]);
+    }
+    if (value->len + factor->len > PROVEN_FLOAT_BIGINT_LIMBS) {
+        return false;
+    }
+#if defined(__SIZEOF_INT128__)
+    if (factor->len == 2u) {
+        const unsigned __int128 f0 = factor->limbs[0];
+        const unsigned __int128 f1 = factor->limbs[1];
+
+        proven_float_bigint_clear_prefix(&product, value->len + 2u);
+        for (proven_size_t i = 0; i < value->len; ++i) {
+            unsigned __int128 a = value->limbs[i];
+            unsigned __int128 acc0 = (unsigned __int128)product.limbs[i] + a * f0;
+            unsigned __int128 acc1 = (unsigned __int128)product.limbs[i + 1u] + (acc0 >> 64) + a * f1;
+
+            product.limbs[i] = (proven_u64)acc0;
+            product.limbs[i + 1u] = (proven_u64)acc1;
+
+            {
+                unsigned __int128 carry = acc1 >> 64;
+                proven_size_t k = i + 2u;
+                while (carry != 0u) {
+                    unsigned __int128 next = (unsigned __int128)product.limbs[k] + carry;
+                    product.limbs[k] = (proven_u64)next;
+                    carry = next >> 64;
+                    ++k;
+                }
+            }
+        }
+
+        product.len = value->len + 2u;
+        proven_float_bigint_trim(&product);
+        *value = product;
+        return true;
+    }
+#endif
+
+    proven_float_bigint_clear_prefix(&product, value->len + factor->len);
+    for (proven_size_t i = 0; i < value->len; ++i) {
+        proven_u64 carry = 0;
+
+        for (proven_size_t j = 0; j < factor->len; ++j) {
+            proven_u128_parts_t mul = proven_float_mul_u64_u64_to_u128(value->limbs[i], factor->limbs[j]);
+            proven_u64 acc = product.limbs[i + j] + mul.lo;
+            proven_u64 carry_out = acc < product.limbs[i + j] ? 1ull : 0ull;
+
+            acc += carry;
+            if (acc < carry) {
+                carry_out += 1ull;
+            }
+
+            product.limbs[i + j] = acc;
+            carry = mul.hi + carry_out;
+        }
+
+        {
+            proven_size_t k = i + factor->len;
+            while (carry != 0u) {
+                proven_u64 acc = product.limbs[k] + carry;
+                carry = acc < product.limbs[k] ? 1ull : 0ull;
+                product.limbs[k] = acc;
+                ++k;
+            }
+        }
+    }
+
+    product.len = value->len + factor->len;
+    proven_float_bigint_trim(&product);
+    *value = product;
+    return true;
+}
+
+static bool proven_float_bigint_copy_mul_factor(proven_float_bigint_t *dst, const proven_float_bigint_t *src,
+                                                const proven_float_bigint_t *factor) {
+    proven_float_bigint_t product;
+
+    if (!dst || !src || !factor) {
+        return false;
+    }
+    if (src->len == 0u || factor->len == 0u) {
+        proven_float_bigint_zero(dst);
+        return true;
+    }
+    if (src->len + factor->len > PROVEN_FLOAT_BIGINT_LIMBS) {
+        return false;
+    }
+#if defined(__SIZEOF_INT128__)
+    if (factor->len == 1u) {
+        proven_u64 mul = factor->limbs[0];
+
+        if (mul == 0u) {
+            proven_float_bigint_zero(dst);
+            return true;
+        }
+        product.len = 0u;
+        {
+            proven_u64 carry = 0u;
+            for (proven_size_t i = 0; i < src->len; ++i) {
+                proven_u128_parts_t prod = proven_float_mul_u64_u64_to_u128(src->limbs[i], mul);
+                proven_u64 lo = prod.lo + carry;
+                proven_u64 carry_out = prod.hi + (lo < prod.lo ? 1ull : 0ull);
+                product.limbs[i] = lo;
+                carry = carry_out;
+            }
+            if (carry != 0u) {
+                product.limbs[src->len] = carry;
+                product.len = src->len + 1u;
+            } else {
+                product.len = src->len;
+            }
+        }
+        *dst = product;
+        return true;
+    }
+    if (factor->len == 2u) {
+        proven_float_bigint_clear_prefix(&product, src->len + 2u);
+        const unsigned __int128 f0 = factor->limbs[0];
+        const unsigned __int128 f1 = factor->limbs[1];
+
+        for (proven_size_t i = 0; i < src->len; ++i) {
+            unsigned __int128 a = src->limbs[i];
+            unsigned __int128 acc0 = (unsigned __int128)product.limbs[i] + a * f0;
+            unsigned __int128 acc1 = (unsigned __int128)product.limbs[i + 1u] + (acc0 >> 64) + a * f1;
+
+            product.limbs[i] = (proven_u64)acc0;
+            product.limbs[i + 1u] = (proven_u64)acc1;
+
+            {
+                unsigned __int128 carry = acc1 >> 64;
+                proven_size_t k = i + 2u;
+                while (carry != 0u) {
+                    unsigned __int128 next = (unsigned __int128)product.limbs[k] + carry;
+                    product.limbs[k] = (proven_u64)next;
+                    carry = next >> 64;
+                    ++k;
+                }
+            }
+        }
+
+        product.len = src->len + 2u;
+        proven_float_bigint_trim(&product);
+        *dst = product;
+        return true;
+    }
+#endif
+    proven_float_bigint_clear_prefix(&product, src->len + factor->len);
+    for (proven_size_t i = 0; i < src->len; ++i) {
+        proven_u64 carry = 0;
+
+        for (proven_size_t j = 0; j < factor->len; ++j) {
+            proven_u128_parts_t mul = proven_float_mul_u64_u64_to_u128(src->limbs[i], factor->limbs[j]);
+            proven_u64 acc = product.limbs[i + j] + mul.lo;
+            proven_u64 carry_out = acc < product.limbs[i + j] ? 1ull : 0ull;
+
+            acc += carry;
+            if (acc < carry) {
+                carry_out += 1ull;
+            }
+
+            product.limbs[i + j] = acc;
+            carry = mul.hi + carry_out;
+        }
+
+        {
+            proven_size_t k = i + factor->len;
+            while (carry != 0u) {
+                proven_u64 acc = product.limbs[k] + carry;
+                carry = acc < product.limbs[k] ? 1ull : 0ull;
+                product.limbs[k] = acc;
+                ++k;
+            }
+        }
+    }
+
+    product.len = src->len + factor->len;
+    proven_float_bigint_trim(&product);
+    *dst = product;
+    return true;
+}
+
+static bool proven_float_bigint_mul_u64_factor(proven_float_bigint_t *dst, proven_u64 src, const proven_float_bigint_t *factor) {
+    if (!dst || !factor) {
+        return false;
+    }
+    if (src == 0u || factor->len == 0u) {
+        proven_float_bigint_zero(dst);
+        return true;
+    }
+
+    dst->len = 0u;
+    {
+        proven_u64 carry = 0u;
+        proven_size_t i = 0u;
+
+        for (; i < factor->len; ++i) {
+            proven_u128_parts_t prod = proven_float_mul_u64_u64_to_u128(src, factor->limbs[i]);
+            proven_u64 lo = prod.lo + carry;
+            proven_u64 carry_out = lo < prod.lo ? 1ull : 0ull;
+            dst->limbs[i] = lo;
+            carry = prod.hi + carry_out;
+        }
+
+        if (carry != 0u) {
+            dst->limbs[i] = carry;
+            dst->len = factor->len + 1u;
+        } else {
+            dst->len = factor->len;
+        }
+    }
+    return true;
+}
+
+static bool proven_float_bigint_shl_bits(proven_float_bigint_t *value, proven_i64 shift) {
+    if (shift <= 0 || value->len == 0) {
+        return true;
+    }
+
+    proven_size_t limb_shift = (proven_size_t)(shift / 64);
+    unsigned bit_shift = (unsigned)(shift % 64);
+
+    if (value->len + limb_shift + (bit_shift != 0u ? 1u : 0u) > PROVEN_FLOAT_BIGINT_LIMBS) {
+        return false;
+    }
+
+    if (limb_shift != 0u) {
+        memmove(&value->limbs[limb_shift], &value->limbs[0], value->len * sizeof value->limbs[0]);
+        memset(&value->limbs[0], 0, limb_shift * sizeof value->limbs[0]);
+        value->len += limb_shift;
+    }
+
+    if (bit_shift != 0u) {
+        if (limb_shift == 0u && value->len <= 2u) {
+            proven_u64 carry = 0;
+            if (value->len >= 1u) {
+                proven_u64 next_carry = value->limbs[0] >> (64u - bit_shift);
+                value->limbs[0] = (value->limbs[0] << bit_shift) | carry;
+                carry = next_carry;
+            }
+            if (value->len == 2u) {
+                proven_u64 next_carry = value->limbs[1] >> (64u - bit_shift);
+                value->limbs[1] = (value->limbs[1] << bit_shift) | carry;
+                carry = next_carry;
+            }
+            if (carry != 0u) {
+                value->limbs[value->len++] = carry;
+            }
+            return true;
+        }
+
+        proven_u64 carry = 0;
+        for (proven_size_t i = limb_shift; i < value->len; ++i) {
+            proven_u64 next_carry = value->limbs[i] >> (64u - bit_shift);
+            value->limbs[i] = (value->limbs[i] << bit_shift) | carry;
+            carry = next_carry;
+        }
+        if (carry != 0u) {
+            if (value->len >= PROVEN_FLOAT_BIGINT_LIMBS) {
+                return false;
+            }
+            value->limbs[value->len++] = carry;
+        }
+    }
+
+    return true;
+}
+
+static int proven_float_bigint_cmp(const proven_float_bigint_t *lhs, const proven_float_bigint_t *rhs) {
+    if (lhs->len < rhs->len) {
+        return -1;
+    }
+    if (lhs->len > rhs->len) {
+        return 1;
+    }
+    for (proven_size_t i = lhs->len; i > 0; --i) {
+        proven_u64 a = lhs->limbs[i - 1];
+        proven_u64 b = rhs->limbs[i - 1];
+        if (a < b) {
+            return -1;
+        }
+        if (a > b) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int proven_float_bigint_cmp_shift_left(const proven_float_bigint_t *lhs, proven_size_t shift, const proven_float_bigint_t *rhs) {
+    proven_size_t lhs_len = 0u;
+    proven_size_t rhs_len = 0u;
+    proven_size_t max_len = 0u;
+    proven_size_t i = 0u;
+    proven_size_t limb_shift = shift / 64u;
+    unsigned bit_shift = (unsigned)(shift % 64u);
+    proven_u64 top = 0u;
+
+    if (!lhs || !rhs) {
+        return -1;
+    }
+    if (lhs->len == 0u || rhs->len == 0u || shift == 0u) {
+        return proven_float_bigint_cmp(lhs, rhs);
+    }
+
+    lhs_len = lhs->len + limb_shift;
+    if (bit_shift != 0u) {
+        top = lhs->limbs[lhs->len - 1u] >> (64u - bit_shift);
+        if (top != 0u) {
+            ++lhs_len;
+        }
+    }
+    rhs_len = rhs->len;
+
+    if (lhs_len < rhs_len) {
+        return -1;
+    }
+    if (lhs_len > rhs_len) {
+        return 1;
+    }
+
+    max_len = lhs_len;
+    if (bit_shift == 0u) {
+        for (i = max_len; i > 0u; --i) {
+            proven_u64 a = lhs->limbs[i - 1u - limb_shift];
+            proven_u64 b = rhs->limbs[i - 1u];
+            if (a < b) {
+                return -1;
+            }
+            if (a > b) {
+                return 1;
+            }
+        }
+        return 0;
+    }
+
+    if (top != 0u) {
+        proven_u64 b = rhs->limbs[max_len - 1u];
+        if (top < b) {
+            return -1;
+        }
+        if (top > b) {
+            return 1;
+        }
+        --max_len;
+    }
+
+    if (max_len > limb_shift + 1u) {
+        for (i = max_len; i > limb_shift + 1u; --i) {
+            proven_u64 a = (lhs->limbs[i - 1u - limb_shift] << bit_shift) |
+                           (lhs->limbs[i - 2u - limb_shift] >> (64u - bit_shift));
+            proven_u64 b = rhs->limbs[i - 1u];
+            if (a < b) {
+                return -1;
+            }
+            if (a > b) {
+                return 1;
+            }
+        }
+    }
+
+    {
+        proven_u64 a = lhs->limbs[0] << bit_shift;
+        proven_u64 b = rhs->limbs[limb_shift];
+
+        if (a < b) {
+            return -1;
+        }
+        if (a > b) {
+            return 1;
+        }
+    }
+
+    {
+        proven_u64 lower_nonzero = 0u;
+
+        for (i = limb_shift; i > 0u; --i) {
+            lower_nonzero |= rhs->limbs[i - 1u];
+        }
+        if (lower_nonzero != 0u) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+/* Number of 32-bit limbs that back a bigint of PROVEN_FLOAT_BIGINT_LIMBS u64s. */
+#define PROVEN_FLOAT_BIGINT_LIMBS32 (PROVEN_FLOAT_BIGINT_LIMBS * 2u)
+
+static int proven_float_nlz_u32(proven_u32 value) {
+    int count = 0;
+    if (value == 0u) {
+        return 32;
+    }
+    while ((value & 0x80000000u) == 0u) {
+        value <<= 1;
+        ++count;
+    }
+    return count;
+}
+
+/* Pack a base-2^64 bigint into base-2^32 limbs (little-endian). Returns the
+ * number of significant 32-bit limbs (trailing zeros trimmed). */
+static proven_size_t proven_float_bigint_to_u32(const proven_float_bigint_t *value, proven_u32 *out) {
+    proven_size_t n = 0;
+    for (proven_size_t i = 0; i < value->len; ++i) {
+        out[2u * i] = (proven_u32)(value->limbs[i] & 0xffffffffu);
+        out[2u * i + 1u] = (proven_u32)(value->limbs[i] >> 32);
+    }
+    n = value->len * 2u;
+    while (n > 0u && out[n - 1u] == 0u) {
+        --n;
+    }
+    return n;
+}
+
+/* Rebuild a base-2^64 bigint from base-2^32 limbs (little-endian, len32 of them). */
+static void proven_float_bigint_from_u32(proven_float_bigint_t *value, const proven_u32 *in, proven_size_t len32) {
+    proven_size_t len64 = (len32 + 1u) / 2u;
+    proven_float_bigint_zero(value);
+    for (proven_size_t i = 0; i < len64; ++i) {
+        proven_u64 lo = in[2u * i];
+        proven_u64 hi = (2u * i + 1u < len32) ? in[2u * i + 1u] : 0u;
+        value->limbs[i] = lo | (hi << 32);
+    }
+    value->len = len64;
+    proven_float_bigint_trim(value);
+}
+
+/*
+ * Knuth Algorithm D long division on base-2^32 limbs (after Hacker's Delight
+ * "divmnu"). Computes q = floor(u / v) and r = u mod v, where u has m limbs and
+ * v has n >= 1 limbs (v[n-1] != 0). q receives m-n+1 limbs, r receives n limbs.
+ * Requires m >= n. The normalization shift is applied with 64-bit arithmetic so
+ * a zero shift never triggers an out-of-range 32-bit shift.
+ */
+static void proven_float_bigint_divmnu32(proven_u32 *q, proven_u32 *r,
+                                         const proven_u32 *u, const proven_u32 *v,
+                                         proven_size_t m, proven_size_t n) {
+    const proven_u64 base = 0x100000000ull; /* 2^32 */
+    proven_u32 un[PROVEN_FLOAT_BIGINT_LIMBS32 + 2u];
+    proven_u32 vn[PROVEN_FLOAT_BIGINT_LIMBS32 + 1u];
+    int s;
+    proven_size_t i;
+    proven_size_t j;
+
+    if (n == 1u) {
+        proven_u64 rem = 0u;
+        for (j = m; j > 0u; --j) {
+            proven_u64 cur = rem * base + u[j - 1u];
+            q[j - 1u] = (proven_u32)(cur / v[0]);
+            rem = cur - (proven_u64)q[j - 1u] * v[0];
+        }
+        if (r) {
+            r[0] = (proven_u32)rem;
+        }
+        return;
+    }
+
+    s = proven_float_nlz_u32(v[n - 1u]);
+    for (i = n - 1u; i > 0u; --i) {
+        proven_u64 hi = (proven_u64)v[i] << s;
+        proven_u64 lo = s ? ((proven_u64)v[i - 1u] >> (32 - s)) : 0u;
+        vn[i] = (proven_u32)(hi | lo);
+    }
+    vn[0] = (proven_u32)((proven_u64)v[0] << s);
+
+    un[m] = (proven_u32)(s ? ((proven_u64)u[m - 1u] >> (32 - s)) : 0u);
+    for (i = m - 1u; i > 0u; --i) {
+        proven_u64 hi = (proven_u64)u[i] << s;
+        proven_u64 lo = s ? ((proven_u64)u[i - 1u] >> (32 - s)) : 0u;
+        un[i] = (proven_u32)(hi | lo);
+    }
+    un[0] = (proven_u32)((proven_u64)u[0] << s);
+
+    for (j = m - n + 1u; j > 0u; --j) {
+        proven_size_t jj = j - 1u;
+        proven_u64 num = (proven_u64)un[jj + n] * base + un[jj + n - 1u];
+        proven_u64 qhat = num / vn[n - 1u];
+        proven_u64 rhat = num - qhat * vn[n - 1u];
+        proven_i64 k;
+        proven_i64 t;
+
+        while (qhat >= base || qhat * vn[n - 2u] > base * rhat + un[jj + n - 2u]) {
+            --qhat;
+            rhat += vn[n - 1u];
+            if (rhat >= base) {
+                break;
+            }
+        }
+
+        k = 0;
+        for (i = 0; i < n; ++i) {
+            proven_u64 p = qhat * vn[i];
+            t = (proven_i64)un[i + jj] - k - (proven_i64)(p & 0xffffffffu);
+            un[i + jj] = (proven_u32)t;
+            k = (proven_i64)(p >> 32) - (t >> 32);
+        }
+        t = (proven_i64)un[jj + n] - k;
+        un[jj + n] = (proven_u32)t;
+
+        q[jj] = (proven_u32)qhat;
+        if (t < 0) {
+            --q[jj];
+            k = 0;
+            for (i = 0; i < n; ++i) {
+                proven_u64 sum = (proven_u64)un[i + jj] + vn[i] + (proven_u64)k;
+                un[i + jj] = (proven_u32)sum;
+                k = (proven_i64)(sum >> 32);
+            }
+            un[jj + n] = (proven_u32)((proven_u64)un[jj + n] + (proven_u64)k);
+        }
+    }
+
+    if (r) {
+        for (i = 0; i < n; ++i) {
+            proven_u64 lo = (proven_u64)un[i] >> s;
+            proven_u64 hi = s ? ((proven_u64)un[i + 1u] << (32 - s)) : 0u;
+            r[i] = (proven_u32)(lo | hi);
+        }
+    }
+}
+
+/*
+ * Computes quot = floor(num / den) and rem = num mod den for base-2^64 bigints.
+ * Either output may be null. Returns false on division by zero. The quotient and
+ * remainder always fit because they are no larger than num.
+ */
+static bool proven_float_bigint_divmod(const proven_float_bigint_t *num,
+                                       const proven_float_bigint_t *den,
+                                       proven_float_bigint_t *quot,
+                                       proven_float_bigint_t *rem) {
+    proven_u32 u[PROVEN_FLOAT_BIGINT_LIMBS32 + 1u];
+    proven_u32 v[PROVEN_FLOAT_BIGINT_LIMBS32 + 1u];
+    proven_u32 q[PROVEN_FLOAT_BIGINT_LIMBS32 + 1u];
+    proven_u32 r[PROVEN_FLOAT_BIGINT_LIMBS32 + 1u];
+    proven_size_t m;
+    proven_size_t n;
+
+    if (!num || !den) {
+        return false;
+    }
+    n = proven_float_bigint_to_u32(den, v);
+    if (n == 0u) {
+        return false; /* division by zero */
+    }
+    m = proven_float_bigint_to_u32(num, u);
+
+    if (m < n) {
+        /* num < den: quotient 0, remainder = num. */
+        if (quot) {
+            proven_float_bigint_zero(quot);
+        }
+        if (rem) {
+            proven_float_bigint_copy(rem, num);
+        }
+        return true;
+    }
+
+    proven_float_bigint_divmnu32(q, r, u, v, m, n);
+
+    if (quot) {
+        proven_float_bigint_from_u32(quot, q, m - n + 1u);
+    }
+    if (rem) {
+        proven_float_bigint_from_u32(rem, r, n);
+    }
+    return true;
+}
+
+bool proven_float_bigint_divmod_u64(const proven_u64 *num, proven_size_t nlen,
+                                    const proven_u64 *den, proven_size_t dlen,
+                                    proven_u64 *quot, proven_size_t *qlen,
+                                    proven_u64 *rem, proven_size_t *rlen) {
+    proven_float_bigint_t bnum;
+    proven_float_bigint_t bden;
+    proven_float_bigint_t bquot;
+    proven_float_bigint_t brem;
+    proven_size_t i;
+
+    if (!num || !den || !quot || !qlen || !rem || !rlen) {
+        return false;
+    }
+    if (nlen > PROVEN_FLOAT_BIGINT_LIMBS || dlen > PROVEN_FLOAT_BIGINT_LIMBS) {
+        return false;
+    }
+
+    proven_float_bigint_zero(&bnum);
+    proven_float_bigint_zero(&bden);
+    for (i = 0; i < nlen; ++i) {
+        bnum.limbs[i] = num[i];
+    }
+    bnum.len = nlen;
+    proven_float_bigint_trim(&bnum);
+    for (i = 0; i < dlen; ++i) {
+        bden.limbs[i] = den[i];
+    }
+    bden.len = dlen;
+    proven_float_bigint_trim(&bden);
+
+    if (!proven_float_bigint_divmod(&bnum, &bden, &bquot, &brem)) {
+        return false;
+    }
+
+    for (i = 0; i < bquot.len; ++i) {
+        quot[i] = bquot.limbs[i];
+    }
+    *qlen = bquot.len;
+    for (i = 0; i < brem.len; ++i) {
+        rem[i] = brem.limbs[i];
+    }
+    *rlen = brem.len;
+    return true;
+}
+
+static bool proven_float_bigint_mul_pow5(proven_float_bigint_t *value, proven_i64 exp10) {
+    for (proven_i64 i = 0; i < exp10; ++i) {
+        if (!proven_float_bigint_mul_u64(value, 5u)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool proven_float_bigint_build_pow5_cached(proven_i64 exp10, proven_float_bigint_t *out) {
+    proven_size_t q = 0;
+    proven_u128_parts_t wide = {0};
+
+    if (!out || exp10 < 0) {
+        return false;
+    }
+
+    q = (proven_size_t)exp10;
+    out->len = 0u;
+
+    if (q <= PROVEN_FLOAT_CACHED_POW5_U128_MAX_Q) {
+        proven_float_bigint_from_u128_parts(out, (proven_u128_parts_t){
+            .lo = proven_float_cached_pow5_u128[q].lo,
+            .hi = proven_float_cached_pow5_u128[q].hi,
+        });
+        return true;
+    }
+
+    if (q <= PROVEN_FLOAT_CACHED_POW5_SCALED_U128_MAX_Q) {
+        proven_float_cached_pow5_scaled_u128_entry_t entry = proven_float_cached_pow5_scaled_u128[q];
+        wide = (proven_u128_parts_t){ .lo = entry.lo, .hi = entry.hi };
+        proven_float_bigint_from_u128_parts(out, wide);
+        return proven_float_bigint_shl_bits(out, (proven_i64)entry.shift);
+    }
+
+    out->limbs[0] = 1u;
+    out->len = 1u;
+    return proven_float_bigint_mul_pow5(out, (proven_i64)q);
+}
+
+static double proven_float_from_bits(proven_u64 bits) {
+    double value = 0.0;
+    memcpy(&value, &bits, sizeof value);
     return value;
 }
 
-double proven_float_convert_decimal(proven_u64 mantissa, proven_i64 exp10) {
-    if (mantissa == 0) {
-        return 0.0;
+static void proven_float_f64_to_scaled(proven_u64 bits, proven_u64 *mantissa, proven_i64 *exp2) {
+    proven_u64 frac = bits & 0x000fffffffffffffull;
+    proven_u64 exp = (bits >> 52) & 0x7ffull;
+
+    if (bits == 0) {
+        *mantissa = 0;
+        *exp2 = -1074;
+    } else if (exp == 0) {
+        *mantissa = frac;
+        *exp2 = -1074;
+    } else {
+        *mantissa = (1ull << 52) | frac;
+        *exp2 = (proven_i64)exp - 1075;
+    }
+}
+
+static bool proven_float_decimal_build_number(const proven_u8 *input, proven_size_t len, proven_float_decimal_number_t *out) {
+    proven_size_t cursor = 0;
+    bool negative = false;
+    bool seen_point = false;
+    proven_i64 explicit_exp = 0;
+    proven_size_t digits_total = 0;
+    proven_size_t frac_digits = 0;
+    proven_size_t first_nonzero = PROVEN_SIZE_MAX;
+    proven_size_t last_nonzero = PROVEN_SIZE_MAX;
+    proven_u64 mantissa_u64 = 0;
+    bool mantissa_fits_u64 = true;
+    proven_size_t significant_digits = 0;
+    proven_size_t pending_zero_digits = 0;
+    bool have_mantissa = false;
+
+    if (cursor < len && (input[cursor] == (proven_u8)'+' || input[cursor] == (proven_u8)'-')) {
+        negative = input[cursor] == (proven_u8)'-';
+        ++cursor;
     }
 
-    if (exp10 >= -22 && exp10 <= 22 && mantissa <= 9007199254740991ull) {
-        if (exp10 >= 0) {
-            return (double)mantissa * proven_float_pow10_exact[(proven_size_t)exp10];
+    while (cursor < len && input[cursor] != (proven_u8)'e' && input[cursor] != (proven_u8)'E') {
+        proven_u8 ch = input[cursor];
+        if (ch == (proven_u8)'.') {
+            seen_point = true;
+        } else {
+            proven_u32 digit = (proven_u32)(ch - (proven_u8)'0');
+
+            if (digit != 0u) {
+                if (first_nonzero == PROVEN_SIZE_MAX) {
+                    first_nonzero = digits_total;
+                }
+                last_nonzero = digits_total;
+                if (mantissa_fits_u64) {
+                    if (!have_mantissa) {
+                        mantissa_u64 = (proven_u64)digit;
+                        have_mantissa = true;
+                    } else {
+                        while (pending_zero_digits > 0u) {
+                            if (mantissa_u64 > 1844674407370955161ull) {
+                                mantissa_fits_u64 = false;
+                                break;
+                            }
+                            mantissa_u64 *= 10ull;
+                            --pending_zero_digits;
+                        }
+                        if (mantissa_fits_u64) {
+                            if (mantissa_u64 > 1844674407370955161ull ||
+                                (mantissa_u64 == 1844674407370955161ull && (proven_u64)digit > 5ull)) {
+                                mantissa_fits_u64 = false;
+                            } else {
+                                mantissa_u64 = mantissa_u64 * 10ull + (proven_u64)digit;
+                            }
+                        }
+                    }
+                }
+                pending_zero_digits = 0u;
+                ++significant_digits;
+            } else if (first_nonzero != PROVEN_SIZE_MAX) {
+                ++pending_zero_digits;
+                ++significant_digits;
+            }
+            ++digits_total;
+            if (seen_point) {
+                ++frac_digits;
+            }
         }
-        return (double)mantissa / proven_float_pow10_exact[(proven_size_t)(-exp10)];
+        ++cursor;
     }
 
+    if (cursor < len && (input[cursor] == (proven_u8)'e' || input[cursor] == (proven_u8)'E')) {
+        bool exp_negative = false;
+        ++cursor;
+        if (cursor < len && (input[cursor] == (proven_u8)'+' || input[cursor] == (proven_u8)'-')) {
+            exp_negative = input[cursor] == (proven_u8)'-';
+            ++cursor;
+        }
+        while (cursor < len && input[cursor] >= (proven_u8)'0' && input[cursor] <= (proven_u8)'9') {
+            explicit_exp = proven_float_exp10_accumulate_clamped(
+                explicit_exp,
+                (proven_u8)(input[cursor] - (proven_u8)'0')
+            );
+            ++cursor;
+        }
+        if (exp_negative) {
+            explicit_exp = -explicit_exp;
+        }
+    }
+
+    out->negative = negative;
+    out->is_zero = first_nonzero == PROVEN_SIZE_MAX;
+    out->mantissa_fits_u64 = true;
+    out->significand_sticky = false;
+    out->mantissa_u64 = 0;
+    out->significant_digits = 0;
+    out->exp10 = 0;
+
+    if (out->is_zero) {
+        return true;
+    }
+
+    out->negative = negative;
+    out->is_zero = false;
+    out->mantissa_fits_u64 = mantissa_fits_u64;
+    out->mantissa_u64 = mantissa_fits_u64 ? mantissa_u64 : 0ull;
     /*
-     * Keep the shared decimal helper double-only and deterministic. The scan
-     * path applies boundary correction on the representative exact-range cases
-     * that still need a one-ULP nudge around 1.0 and the binary64 extremes.
+     * Trailing zeros after the last nonzero digit are folded into exp10 and are
+     * not stored in the significand or mantissa_u64. Exclude them here so
+     * significant_digits matches the significand's true digit count; otherwise
+     * the magnitude estimate (exp10 + significant_digits - 1) and the binary
+     * exponent bounds derived from it are biased high, which can push the true
+     * result outside the exact-search range.
      */
-    return proven_float_scale_pow10((double)mantissa, exp10);
+    out->significant_digits = significant_digits - pending_zero_digits;
+    out->exp10 = explicit_exp - (proven_i64)frac_digits + (proven_i64)(digits_total - 1u - last_nonzero);
+    out->digits_total = digits_total;
+    out->frac_digits = frac_digits;
+    out->first_nonzero = first_nonzero;
+    out->last_nonzero = last_nonzero;
+
+    return true;
+}
+
+/*
+ * Builds the exact significand from the input digits, keeping at most
+ * PROVEN_FLOAT_MAX_SIGNIFICAND_DIGITS significant digits. Significant digits
+ * beyond the cap are dropped: *dropped_out counts them so the caller can shift
+ * exp10 to preserve magnitude, and *sticky_out records whether any dropped digit
+ * was nonzero (meaning the true value is strictly above the kept significand).
+ */
+static bool proven_float_decimal_build_significand(const proven_u8 *input, proven_size_t len,
+                                                   const proven_float_decimal_number_t *decimal,
+                                                   proven_float_bigint_t *out,
+                                                   proven_size_t *dropped_out, bool *sticky_out) {
+    proven_size_t cursor = 0;
+    proven_size_t digit_index = 0;
+    proven_size_t kept = 0;
+    proven_size_t dropped = 0;
+    bool sticky = false;
+
+    if (!input || !decimal || !out || !dropped_out || !sticky_out) {
+        return false;
+    }
+
+    out->len = 0u;
+    *dropped_out = 0u;
+    *sticky_out = false;
+    if (decimal->is_zero) {
+        return true;
+    }
+
+    if (input[cursor] == (proven_u8)'-' || input[cursor] == (proven_u8)'+') {
+        ++cursor;
+    }
+
+    while (cursor < len && input[cursor] != (proven_u8)'e' && input[cursor] != (proven_u8)'E') {
+            proven_u8 ch = input[cursor];
+            if (ch >= (proven_u8)'0' && ch <= (proven_u8)'9') {
+                proven_u32 digit = (proven_u32)(ch - (proven_u8)'0');
+                if (digit_index >= decimal->first_nonzero && digit_index <= decimal->last_nonzero) {
+                    if (kept < PROVEN_FLOAT_MAX_SIGNIFICAND_DIGITS) {
+                        if (!proven_float_bigint_mul_small(out, 10u) || !proven_float_bigint_add_small(out, digit)) {
+                            return false;
+                        }
+                        ++kept;
+                    } else {
+                        ++dropped;
+                        if (digit != 0u) {
+                            sticky = true;
+                        }
+                    }
+                }
+                ++digit_index;
+        }
+        ++cursor;
+    }
+
+    *dropped_out = dropped;
+    *sticky_out = sticky;
+    return true;
+}
+
+static int proven_float_compare_bigints_with_exp2(const proven_float_bigint_t *lhs_int, proven_i64 lhs_exp2,
+                                                  const proven_float_bigint_t *rhs_int, proven_i64 rhs_exp2) {
+    if (!lhs_int || !rhs_int) {
+        return -1;
+    }
+
+    if (lhs_exp2 > rhs_exp2) {
+        return proven_float_bigint_cmp_shift_left(lhs_int, (proven_size_t)(lhs_exp2 - rhs_exp2), rhs_int);
+    }
+
+    if (rhs_exp2 > lhs_exp2) {
+        return -proven_float_bigint_cmp_shift_left(rhs_int, (proven_size_t)(rhs_exp2 - lhs_exp2), lhs_int);
+    }
+
+    return proven_float_bigint_cmp(lhs_int, rhs_int);
+}
+
+static proven_u128_parts_t proven_float_u128_shift_u64(proven_u64 value, unsigned shift) {
+    if (shift == 0u) {
+        return (proven_u128_parts_t){ .lo = value, .hi = 0u };
+    }
+    if (shift < 64u) {
+        return (proven_u128_parts_t){
+            .lo = value << shift,
+            .hi = value >> (64u - shift),
+        };
+    }
+    if (shift < 128u) {
+        return (proven_u128_parts_t){
+            .lo = 0u,
+            .hi = value << (shift - 64u),
+        };
+    }
+    return (proven_u128_parts_t){ .lo = 0u, .hi = 0u };
+}
+
+static proven_u128_parts_t proven_float_u128_add(proven_u128_parts_t lhs, proven_u128_parts_t rhs) {
+    proven_u64 lo = lhs.lo + rhs.lo;
+    proven_u64 carry = lo < lhs.lo ? 1ull : 0ull;
+    return (proven_u128_parts_t){
+        .lo = lo,
+        .hi = lhs.hi + rhs.hi + carry,
+    };
+}
+
+static bool proven_float_bigint_from_adjacent_midpoint(
+    proven_u64 lower_mantissa,
+    proven_i64 lower_exp2,
+    proven_u64 upper_mantissa,
+    proven_i64 upper_exp2,
+    proven_float_bigint_t *midpoint_num,
+    proven_i64 *mid_exp2
+) {
+    proven_i64 min_exp2 = lower_exp2 < upper_exp2 ? lower_exp2 : upper_exp2;
+    unsigned lower_shift = (unsigned)(lower_exp2 - min_exp2);
+    unsigned upper_shift = (unsigned)(upper_exp2 - min_exp2);
+    proven_u128_parts_t sum;
+
+    if (!midpoint_num || !mid_exp2) {
+        return false;
+    }
+
+    if (lower_shift == 0u && upper_shift == 0u) {
+        sum.lo = lower_mantissa + upper_mantissa;
+        sum.hi = (sum.lo < lower_mantissa) ? 1u : 0u;
+    } else {
+        sum = proven_float_u128_add(
+            proven_float_u128_shift_u64(lower_mantissa, lower_shift),
+            proven_float_u128_shift_u64(upper_mantissa, upper_shift)
+        );
+    }
+
+    proven_float_bigint_set_u128_parts(midpoint_num, sum);
+    *mid_exp2 = min_exp2 - 1;
+    return true;
+}
+
+typedef struct {
+    proven_i64 exp10;
+    bool pow5_factor_ready;
+    proven_float_bigint_t pow5_factor;
+    proven_float_bigint_t scaled_significand;
+    bool scaled_significand_ready;
+} proven_float_exact_compare_state_t;
+
+typedef struct {
+    proven_i64 exp10;
+    bool pow5_factor_ready;
+    proven_float_bigint_t pow5_factor;
+} proven_float_eisel_validate_state_t;
+
+static bool proven_float_prepare_exact_compare_state(const proven_float_decimal_number_t *decimal,
+                                                     proven_float_exact_compare_state_t *state) {
+    if (!decimal || !state) {
+        return false;
+    }
+
+    state->exp10 = decimal->exp10;
+    state->pow5_factor_ready = false;
+    state->pow5_factor.limbs[0] = 1u;
+    state->pow5_factor.len = 1u;
+    state->scaled_significand_ready = false;
+
+    if (decimal->exp10 == 0) {
+        state->pow5_factor_ready = true;
+    } else if (proven_float_bigint_build_pow5_cached(decimal->exp10 < 0 ? -decimal->exp10 : decimal->exp10, &state->pow5_factor)) {
+        state->pow5_factor_ready = true;
+    }
+    if (decimal->exp10 > 0) {
+        proven_float_bigint_copy(&state->scaled_significand, &decimal->significand);
+        if (state->pow5_factor_ready && proven_float_bigint_mul_factor(&state->scaled_significand, &state->pow5_factor)) {
+            state->scaled_significand_ready = true;
+        }
+    }
+
+    return true;
+}
+
+static bool proven_float_prepare_eisel_validate_state(const proven_float_decimal_number_t *decimal,
+                                                      proven_float_eisel_validate_state_t *state) {
+    if (!decimal || !state) {
+        return false;
+    }
+
+    state->exp10 = decimal->exp10;
+    state->pow5_factor_ready = false;
+    state->pow5_factor.limbs[0] = 1u;
+    state->pow5_factor.len = 1u;
+
+    if (decimal->exp10 == 0) {
+        state->pow5_factor_ready = true;
+        return true;
+    }
+
+    if (proven_float_bigint_build_pow5_cached(decimal->exp10 < 0 ? -decimal->exp10 : decimal->exp10, &state->pow5_factor)) {
+        state->pow5_factor_ready = true;
+    }
+
+    return true;
+}
+
+static int proven_float_compare_mantissa_to_scaled_legacy(const proven_float_decimal_number_t *decimal,
+                                                          const proven_float_bigint_t *rhs_int, proven_i64 rhs_exp2) {
+    proven_float_bigint_t lhs_int;
+    proven_float_bigint_t rhs_work;
+    proven_float_bigint_t pow5_factor;
+    proven_i64 lhs_exp2 = 0;
+    bool rhs_work_ready = false;
+
+    if (!decimal || !rhs_int) {
+        return -1;
+    }
+
+    proven_float_bigint_set_u64(&lhs_int, decimal->mantissa_u64);
+
+    if (decimal->exp10 >= 0) {
+        if (!proven_float_bigint_build_pow5_cached(decimal->exp10, &pow5_factor)) {
+            return 1;
+        }
+        if (!proven_float_bigint_mul_factor(&lhs_int, &pow5_factor)) {
+            return 1;
+        }
+        lhs_exp2 = decimal->exp10;
+    } else {
+        proven_i64 neg_exp10 = -decimal->exp10;
+        if (!proven_float_bigint_build_pow5_cached(neg_exp10, &pow5_factor)) {
+            return -1;
+        }
+        rhs_work_ready = true;
+        proven_float_bigint_copy(&rhs_work, rhs_int);
+        if (!proven_float_bigint_mul_factor(&rhs_work, &pow5_factor)) {
+            return -1;
+        }
+        rhs_exp2 += neg_exp10;
+    }
+
+    if (lhs_exp2 > rhs_exp2) {
+        if (!proven_float_bigint_shl_bits(&lhs_int, lhs_exp2 - rhs_exp2)) {
+            return 1;
+        }
+    } else if (rhs_exp2 > lhs_exp2) {
+        if (!rhs_work_ready) {
+            proven_float_bigint_copy(&rhs_work, rhs_int);
+            rhs_work_ready = true;
+        }
+        if (!proven_float_bigint_shl_bits(&rhs_work, rhs_exp2 - lhs_exp2)) {
+            return -1;
+        }
+    }
+
+    if (rhs_work_ready) {
+        return proven_float_bigint_cmp(&lhs_int, &rhs_work);
+    }
+    return proven_float_bigint_cmp(&lhs_int, rhs_int);
+}
+
+static int proven_float_compare_mantissa_to_scaled_with_state(const proven_float_decimal_number_t *decimal,
+                                                              const proven_float_eisel_validate_state_t *state,
+                                                              const proven_float_bigint_t *rhs_int, proven_i64 rhs_exp2) {
+    if (!decimal || !state || !rhs_int) {
+        return -1;
+    }
+
+    if (decimal->exp10 > 0) {
+        proven_float_bigint_t lhs_int;
+        proven_float_bigint_set_u64(&lhs_int, decimal->mantissa_u64);
+        if (state->pow5_factor_ready) {
+            if (!proven_float_bigint_mul_factor(&lhs_int, &state->pow5_factor)) {
+                return proven_float_compare_mantissa_to_scaled_legacy(decimal, rhs_int, rhs_exp2);
+            }
+            return proven_float_compare_bigints_with_exp2(&lhs_int, decimal->exp10, rhs_int, rhs_exp2);
+        }
+        return proven_float_compare_mantissa_to_scaled_legacy(decimal, rhs_int, rhs_exp2);
+    }
+
+    if (decimal->exp10 < 0) {
+        if (!state->pow5_factor_ready) {
+            return proven_float_compare_mantissa_to_scaled_legacy(decimal, rhs_int, rhs_exp2);
+        }
+        proven_float_bigint_t lhs_int;
+        proven_float_bigint_set_u64(&lhs_int, decimal->mantissa_u64);
+        proven_float_bigint_t rhs_work;
+        if (rhs_int->len == 1u) {
+            if (!proven_float_bigint_mul_u64_factor(&rhs_work, rhs_int->limbs[0], &state->pow5_factor)) {
+                return proven_float_compare_mantissa_to_scaled_legacy(decimal, rhs_int, rhs_exp2);
+            }
+        } else {
+            proven_float_bigint_copy(&rhs_work, rhs_int);
+            if (!proven_float_bigint_mul_factor(&rhs_work, &state->pow5_factor)) {
+                return proven_float_compare_mantissa_to_scaled_legacy(decimal, rhs_int, rhs_exp2);
+            }
+        }
+        return proven_float_compare_bigints_with_exp2(&lhs_int, 0, &rhs_work, rhs_exp2 - decimal->exp10);
+    }
+
+    {
+        proven_float_bigint_t lhs_int;
+        proven_float_bigint_set_u64(&lhs_int, decimal->mantissa_u64);
+        return proven_float_compare_bigints_with_exp2(&lhs_int, 0, rhs_int, rhs_exp2);
+    }
+}
+
+static int proven_float_compare_mantissa_to_bits(const proven_float_decimal_number_t *decimal,
+                                                 const proven_float_eisel_validate_state_t *state,
+                                                 proven_u64 bits) {
+    proven_u64 mantissa = 0;
+    proven_i64 exp2 = 0;
+    proven_float_bigint_t rhs_int;
+
+    proven_float_f64_to_scaled(bits, &mantissa, &exp2);
+    proven_float_bigint_set_u64(&rhs_int, mantissa);
+    return proven_float_compare_mantissa_to_scaled_with_state(decimal, state, &rhs_int, exp2);
+}
+
+static int proven_float_compare_mantissa_to_midpoint(const proven_float_decimal_number_t *decimal,
+                                                     const proven_float_eisel_validate_state_t *state,
+                                                     proven_u64 lower_bits, proven_u64 upper_bits) {
+    proven_u64 lower_mantissa = 0;
+    proven_u64 upper_mantissa = 0;
+    proven_i64 lower_exp2 = 0;
+    proven_i64 upper_exp2 = 0;
+    proven_float_bigint_t midpoint_num;
+
+    proven_float_f64_to_scaled(lower_bits, &lower_mantissa, &lower_exp2);
+    proven_float_f64_to_scaled(upper_bits, &upper_mantissa, &upper_exp2);
+    if (!proven_float_bigint_from_adjacent_midpoint(lower_mantissa, lower_exp2, upper_mantissa, upper_exp2, &midpoint_num, &lower_exp2)) {
+        return -1;
+    }
+
+    return proven_float_compare_mantissa_to_scaled_with_state(decimal, state, &midpoint_num, lower_exp2);
+}
+
+static int proven_float_compare_decimal_to_scaled_legacy(const proven_float_decimal_number_t *decimal,
+                                                         const proven_float_bigint_t *rhs_int, proven_i64 rhs_exp2) {
+    proven_float_bigint_t lhs_int;
+    proven_float_bigint_t rhs_work;
+    proven_i64 lhs_exp2 = 0;
+    bool rhs_work_ready = false;
+
+    proven_float_bigint_copy(&lhs_int, &decimal->significand);
+
+    if (decimal->exp10 >= 0) {
+        if (!proven_float_bigint_mul_pow5(&lhs_int, decimal->exp10)) {
+            return 1;
+        }
+        lhs_exp2 = decimal->exp10;
+    } else {
+        proven_i64 neg_exp10 = -decimal->exp10;
+        proven_float_bigint_copy(&rhs_work, rhs_int);
+        rhs_work_ready = true;
+        if (!proven_float_bigint_mul_pow5(&rhs_work, neg_exp10)) {
+            return -1;
+        }
+        rhs_exp2 += neg_exp10;
+    }
+
+    if (lhs_exp2 > rhs_exp2) {
+        if (!proven_float_bigint_shl_bits(&lhs_int, lhs_exp2 - rhs_exp2)) {
+            return 1;
+        }
+    } else if (rhs_exp2 > lhs_exp2) {
+        if (!rhs_work_ready) {
+            proven_float_bigint_copy(&rhs_work, rhs_int);
+            rhs_work_ready = true;
+        }
+        if (!proven_float_bigint_shl_bits(&rhs_work, rhs_exp2 - lhs_exp2)) {
+            return -1;
+        }
+    }
+
+    if (rhs_work_ready) {
+        return proven_float_bigint_cmp(&lhs_int, &rhs_work);
+    }
+    return proven_float_bigint_cmp(&lhs_int, rhs_int);
+}
+
+static int proven_float_compare_decimal_to_scaled_raw(const proven_float_decimal_number_t *decimal,
+                                                      const proven_float_exact_compare_state_t *state,
+                                                      const proven_float_bigint_t *rhs_int, proven_i64 rhs_exp2) {
+    if (!decimal || !state || !rhs_int) {
+        return -1;
+    }
+
+    if (decimal->exp10 > 0) {
+        if (state->pow5_factor_ready && state->scaled_significand_ready) {
+            return proven_float_compare_bigints_with_exp2(&state->scaled_significand, decimal->exp10, rhs_int, rhs_exp2);
+        }
+        return proven_float_compare_decimal_to_scaled_legacy(decimal, rhs_int, rhs_exp2);
+    }
+
+    if (decimal->exp10 < 0) {
+        if (!state->pow5_factor_ready) {
+            return proven_float_compare_decimal_to_scaled_legacy(decimal, rhs_int, rhs_exp2);
+        }
+        proven_float_bigint_t rhs_work;
+        if (rhs_int->len == 1u) {
+            if (!proven_float_bigint_mul_u64_factor(&rhs_work, rhs_int->limbs[0], &state->pow5_factor)) {
+                return proven_float_compare_decimal_to_scaled_legacy(decimal, rhs_int, rhs_exp2);
+            }
+        } else {
+            if (!proven_float_bigint_copy_mul_factor(&rhs_work, rhs_int, &state->pow5_factor)) {
+                return proven_float_compare_decimal_to_scaled_legacy(decimal, rhs_int, rhs_exp2);
+            }
+        }
+        return proven_float_compare_bigints_with_exp2(&decimal->significand, 0, &rhs_work, rhs_exp2 - decimal->exp10);
+    }
+
+    return proven_float_compare_bigints_with_exp2(&decimal->significand, 0, rhs_int, rhs_exp2);
+}
+
+/*
+ * Sticky-aware comparison of the decimal value against a scaled candidate.
+ * The stored significand may be a truncation of a longer input; when it compares
+ * exactly equal to the candidate but dropped digits were nonzero, the true value
+ * is strictly greater, so the tie is broken upward. With the significand cap at
+ * least as large as the longest binary64 rounding boundary, an exact-equal raw
+ * result implies the candidate has no digits past the kept prefix, so this tie
+ * break is exact.
+ */
+static int proven_float_compare_decimal_to_scaled(const proven_float_decimal_number_t *decimal,
+                                                  const proven_float_exact_compare_state_t *state,
+                                                  const proven_float_bigint_t *rhs_int, proven_i64 rhs_exp2) {
+    int raw = proven_float_compare_decimal_to_scaled_raw(decimal, state, rhs_int, rhs_exp2);
+    if (raw == 0 && decimal && decimal->significand_sticky) {
+        return 1;
+    }
+    return raw;
+}
+
+static int proven_float_compare_decimal_to_bits(const proven_float_decimal_number_t *decimal,
+                                                const proven_float_exact_compare_state_t *state,
+                                                proven_u64 bits) {
+    proven_u64 mantissa = 0;
+    proven_i64 exp2 = 0;
+    proven_float_bigint_t rhs_int;
+
+    proven_float_f64_to_scaled(bits, &mantissa, &exp2);
+    proven_float_bigint_set_u64(&rhs_int, mantissa);
+    return proven_float_compare_decimal_to_scaled(decimal, state, &rhs_int, exp2);
+}
+
+static int proven_float_compare_decimal_to_midpoint(const proven_float_decimal_number_t *decimal,
+                                                    const proven_float_exact_compare_state_t *state,
+                                                    proven_u64 lower_bits, proven_u64 upper_bits) {
+    proven_u64 lower_mantissa = 0;
+    proven_u64 upper_mantissa = 0;
+    proven_i64 lower_exp2 = 0;
+    proven_i64 upper_exp2 = 0;
+    proven_float_bigint_t midpoint_num;
+
+    proven_float_f64_to_scaled(lower_bits, &lower_mantissa, &lower_exp2);
+    proven_float_f64_to_scaled(upper_bits, &upper_mantissa, &upper_exp2);
+    if (!proven_float_bigint_from_adjacent_midpoint(lower_mantissa, lower_exp2, upper_mantissa, upper_exp2, &midpoint_num, &lower_exp2)) {
+        return -1;
+    }
+
+    return proven_float_compare_decimal_to_scaled(decimal, state, &midpoint_num, lower_exp2);
+}
+
+static proven_float_fast_path_result_t proven_float_validate_eisel_lemire_candidate(
+    const proven_float_decimal_number_t *decimal,
+    const proven_float_eisel_validate_state_t *state,
+    proven_u64 candidate_bits,
+    proven_u64 *bits_out
+) {
+    const proven_u64 max_finite_bits = 0x7fefffffffffffffull;
+    int cmp = 0;
+    int cmp_mid = 0;
+
+    if (decimal == 0 || bits_out == 0 || state == 0) {
+        return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
+    }
+
+    cmp = proven_float_compare_mantissa_to_bits(decimal, state, candidate_bits);
+    if (cmp == 0) {
+        *bits_out = candidate_bits;
+        return PROVEN_FLOAT_FAST_PATH_SUCCESS;
+    }
+
+    if (cmp < 0) {
+        if (candidate_bits == 0u) {
+            return PROVEN_FLOAT_FAST_PATH_UNCERTAIN;
+        }
+        cmp_mid = proven_float_compare_mantissa_to_midpoint(decimal, state, candidate_bits - 1u, candidate_bits);
+        if (cmp_mid > 0 || (cmp_mid == 0 && (candidate_bits & 1ull) == 0u)) {
+            *bits_out = candidate_bits;
+            return PROVEN_FLOAT_FAST_PATH_SUCCESS;
+        }
+        return PROVEN_FLOAT_FAST_PATH_UNCERTAIN;
+    }
+
+    if (candidate_bits == max_finite_bits) {
+        return PROVEN_FLOAT_FAST_PATH_UNCERTAIN;
+    }
+
+    cmp_mid = proven_float_compare_mantissa_to_midpoint(decimal, state, candidate_bits, candidate_bits + 1u);
+    if (cmp_mid < 0 || (cmp_mid == 0 && (candidate_bits & 1ull) == 0u)) {
+        *bits_out = candidate_bits;
+        return PROVEN_FLOAT_FAST_PATH_SUCCESS;
+    }
+    return PROVEN_FLOAT_FAST_PATH_UNCERTAIN;
+}
+
+static proven_float_fast_path_result_t proven_float_pack_binary64_candidate(
+    proven_u64 sig,
+    proven_i64 unbiased_exp,
+    proven_u64 *bits_out
+);
+
+static proven_float_fast_path_result_t proven_float_finalize_eisel_lemire_candidate_bits(
+    const proven_float_decimal_number_t *decimal,
+    const proven_float_eisel_validate_state_t *state,
+    proven_u64 candidate_bits,
+    proven_u64 *bits_out
+) {
+    proven_u64 exp_bits = (candidate_bits >> 52) & 0x7ffull;
+
+    if (decimal == 0 || bits_out == 0) {
+        return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
+    }
+    if (candidate_bits == 0u || exp_bits == 0x7ffull) {
+        return PROVEN_FLOAT_FAST_PATH_UNCERTAIN;
+    }
+
+    return proven_float_validate_eisel_lemire_candidate(decimal, state, candidate_bits, bits_out);
+}
+
+static proven_float_fast_path_result_t proven_float_finalize_eisel_lemire_significand(
+    const proven_float_decimal_number_t *decimal,
+    const proven_float_eisel_validate_state_t *state,
+    proven_u64 sig,
+    proven_i64 unbiased_exp,
+    proven_u64 *bits_out
+) {
+    proven_u64 candidate_bits = 0;
+
+    if (proven_float_pack_binary64_candidate(sig, unbiased_exp, &candidate_bits) != PROVEN_FLOAT_FAST_PATH_SUCCESS) {
+        return PROVEN_FLOAT_FAST_PATH_UNCERTAIN;
+    }
+
+    return proven_float_finalize_eisel_lemire_candidate_bits(decimal, state, candidate_bits, bits_out);
+}
+
+static proven_err_t proven_float_try_clinger(const proven_float_decimal_number_t *decimal, double *out) {
+    static const double pow10_exact[] = {
+        1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11,
+        1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
+    };
+
+    if (!decimal->mantissa_fits_u64 || decimal->mantissa_u64 > 9007199254740991ull) {
+        return PROVEN_ERR_UNSUPPORTED;
+    }
+    if (decimal->exp10 < -22 || decimal->exp10 > 22) {
+        return PROVEN_ERR_UNSUPPORTED;
+    }
+
+    if (decimal->exp10 >= 0) {
+        *out = (double)decimal->mantissa_u64 * pow10_exact[(proven_size_t)decimal->exp10];
+    } else {
+        *out = (double)decimal->mantissa_u64 / pow10_exact[(proven_size_t)(-decimal->exp10)];
+    }
+    if (decimal->negative) {
+        *out = -*out;
+    }
+    return PROVEN_OK;
+}
+
+#if defined(__SIZEOF_INT128__)
+typedef struct proven_u256_parts_t {
+    proven_u64 limb0;
+    proven_u64 limb1;
+    proven_u64 limb2;
+    proven_u64 limb3;
+} proven_u256_parts_t;
+
+static proven_u256_parts_t proven_float_mul_u64_u128_to_u256(proven_u64 lhs, proven_u128_parts_t rhs) {
+    proven_u128_parts_t lo_prod = proven_float_mul_u64_u64_to_u128(lhs, rhs.lo);
+    proven_u128_parts_t hi_prod = proven_float_mul_u64_u64_to_u128(lhs, rhs.hi);
+    proven_u64 limb1 = lo_prod.hi + hi_prod.lo;
+    proven_u64 carry = limb1 < lo_prod.hi ? 1ull : 0ull;
+    return (proven_u256_parts_t){
+        .limb0 = lo_prod.lo,
+        .limb1 = limb1,
+        .limb2 = hi_prod.hi + carry,
+        .limb3 = 0u,
+    };
+}
+
+static int proven_float_u256_bit_length(proven_u256_parts_t value) {
+    if (value.limb3 != 0u) {
+        return 256 - proven_float_clz_u64(value.limb3);
+    }
+    if (value.limb2 != 0u) {
+        return 192 - proven_float_clz_u64(value.limb2);
+    }
+    if (value.limb1 != 0u) {
+        return 128 - proven_float_clz_u64(value.limb1);
+    }
+    if (value.limb0 != 0u) {
+        return 64 - proven_float_clz_u64(value.limb0);
+    }
+    return 0;
+}
+
+static proven_u64 proven_float_u256_shr_to_u64(proven_u256_parts_t value, unsigned shift, bool *sticky) {
+    const proven_u64 *limbs = &value.limb0;
+    proven_u64 result = 0;
+    bool extra = false;
+    unsigned limb = shift / 64u;
+    unsigned bits = shift % 64u;
+
+    if (shift >= 256u) {
+        extra = value.limb0 != 0u || value.limb1 != 0u || value.limb2 != 0u || value.limb3 != 0u;
+        result = 0u;
+    } else {
+        result = limbs[limb] >> bits;
+        if (bits != 0u && limb + 1u < 4u) {
+            result |= limbs[limb + 1u] << (64u - bits);
+        }
+        for (unsigned i = 0; i < limb; ++i) {
+            extra = extra || limbs[i] != 0u;
+        }
+        if (bits != 0u) {
+            proven_u64 mask = (1ull << bits) - 1ull;
+            extra = extra || (limbs[limb] & mask) != 0u;
+        }
+    }
+
+    if (sticky) {
+        *sticky = extra;
+    }
+    return result;
+}
+
+static proven_float_fast_path_result_t proven_float_round_u256_to_significand(
+    proven_u256_parts_t integer,
+    proven_i64 exp2,
+    proven_u64 *sig_out,
+    proven_i64 *unbiased_exp_out
+) {
+    int bit_length = proven_float_u256_bit_length(integer);
+    int shift = bit_length - 53;
+    proven_u64 significand = 0;
+    bool sticky = false;
+    proven_i64 unbiased_exp = exp2 + (proven_i64)bit_length - 1;
+
+    if (bit_length == 0 || sig_out == 0 || unbiased_exp_out == 0) {
+        return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
+    }
+
+    if (shift <= 0) {
+        significand = integer.limb0 << (unsigned)(-shift);
+    } else {
+        proven_u64 truncated = proven_float_u256_shr_to_u64(integer, (unsigned)shift, NULL);
+        bool round_bit = false;
+        if ((unsigned)(shift - 1) < 256u) {
+            round_bit = (proven_float_u256_shr_to_u64(integer, (unsigned)(shift - 1), NULL) & 1ull) != 0u;
+        }
+        if (shift > 1) {
+            (void)proven_float_u256_shr_to_u64(integer, (unsigned)(shift - 1), &sticky);
+        }
+        significand = truncated;
+        if (round_bit && (sticky || (significand & 1ull) != 0u)) {
+            ++significand;
+            if (significand == (1ull << 53)) {
+                significand >>= 1;
+                ++unbiased_exp;
+            }
+        }
+    }
+
+    *sig_out = significand;
+    *unbiased_exp_out = unbiased_exp;
+    return PROVEN_FLOAT_FAST_PATH_SUCCESS;
+}
+
+static proven_float_fast_path_result_t proven_float_try_eisel_lemire_product_u256(
+    const proven_float_decimal_number_t *decimal,
+    const proven_float_eisel_validate_state_t *state,
+    proven_u256_parts_t product,
+    proven_i64 exp2,
+    proven_u64 *bits_out
+) {
+    proven_u64 sig = 0;
+    proven_i64 unbiased_exp = 0;
+
+    if (proven_float_round_u256_to_significand(product, exp2, &sig, &unbiased_exp) != PROVEN_FLOAT_FAST_PATH_SUCCESS) {
+        return PROVEN_FLOAT_FAST_PATH_UNCERTAIN;
+    }
+
+    return proven_float_finalize_eisel_lemire_significand(decimal, state, sig, unbiased_exp, bits_out);
+}
+
+static proven_float_fast_path_result_t proven_float_try_eisel_lemire_cached_power_product(
+    const proven_float_decimal_number_t *decimal,
+    const proven_float_eisel_validate_state_t *state,
+    proven_u64 integer,
+    proven_u128_parts_t cached_power,
+    proven_i64 exp2,
+    proven_u64 *bits_out
+) {
+    proven_u256_parts_t product;
+
+    if (decimal == 0 || integer == 0u || bits_out == 0) {
+        return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
+    }
+
+    product = proven_float_mul_u64_u128_to_u256(integer, cached_power);
+    return proven_float_try_eisel_lemire_product_u256(decimal, state, product, exp2, bits_out);
+}
+
+static bool proven_float_build_cached_power_product_plan(
+    proven_i64 exp10,
+    proven_float_eisel_lemire_candidate_plan_t *plan
+) {
+    if (plan == 0) {
+        return false;
+    }
+    if (exp10 >= 0) {
+        proven_size_t q = (proven_size_t)exp10;
+        if (q <= PROVEN_FLOAT_CACHED_POW5_U128_MAX_Q) {
+            proven_float_cached_pow5_u128_entry_t entry = proven_float_cached_pow5_u128[q];
+            *plan = (proven_float_eisel_lemire_candidate_plan_t){
+                .mode = PROVEN_FLOAT_EISEL_LEMIRE_CANDIDATE_PRODUCT,
+                .wide = { .lo = entry.lo, .hi = entry.hi },
+                .exp2 = (proven_i64)q,
+            };
+            return true;
+        } else if (q <= PROVEN_FLOAT_CACHED_POW5_SCALED_U128_MAX_Q) {
+            proven_float_cached_pow5_scaled_u128_entry_t entry = proven_float_cached_pow5_scaled_u128[q];
+            *plan = (proven_float_eisel_lemire_candidate_plan_t){
+                .mode = PROVEN_FLOAT_EISEL_LEMIRE_CANDIDATE_PRODUCT,
+                .wide = { .lo = entry.lo, .hi = entry.hi },
+                .exp2 = (proven_i64)q + (proven_i64)entry.shift,
+            };
+            return true;
+        }
+        return false;
+    }
+
+    {
+        proven_size_t q = (proven_size_t)(-exp10);
+        if (q > PROVEN_FLOAT_CACHED_POW5_INV_U128_MAX_Q) {
+            return false;
+        }
+        proven_float_cached_pow5_inv_u128_entry_t entry = proven_float_cached_pow5_inv_u128[q];
+        *plan = (proven_float_eisel_lemire_candidate_plan_t){
+            .mode = PROVEN_FLOAT_EISEL_LEMIRE_CANDIDATE_PRODUCT,
+            .wide = { .lo = entry.lo, .hi = entry.hi },
+            .exp2 = -((proven_i64)entry.shift) - (proven_i64)q,
+        };
+        return true;
+    }
+}
+
+static proven_float_fast_path_result_t proven_float_pack_binary64_candidate(
+    proven_u64 sig,
+    proven_i64 unbiased_exp,
+    proven_u64 *bits_out
+) {
+    proven_u64 frac = 0;
+    proven_i64 shift = 0;
+
+    if (bits_out == 0) {
+        return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
+    }
+    if (sig < (1ull << 52) || sig >= (1ull << 53)) {
+        return PROVEN_FLOAT_FAST_PATH_UNCERTAIN;
+    }
+    if (unbiased_exp > 1023) {
+        return PROVEN_FLOAT_FAST_PATH_UNCERTAIN;
+    }
+
+    if (unbiased_exp >= -1022) {
+        *bits_out = ((proven_u64)(unbiased_exp + 1023) << 52) | (sig & 0x000fffffffffffffull);
+        return PROVEN_FLOAT_FAST_PATH_SUCCESS;
+    }
+
+    shift = -1022 - unbiased_exp;
+    if (shift >= 64) {
+        *bits_out = 0u;
+        return PROVEN_FLOAT_FAST_PATH_SUCCESS;
+    }
+
+    frac = sig >> (unsigned)shift;
+    if (shift > 0) {
+        proven_u64 mask = (1ull << (unsigned)shift) - 1ull;
+        proven_u64 rem = sig & mask;
+        proven_u64 halfway = 1ull << (unsigned)(shift - 1);
+        if (rem > halfway || (rem == halfway && (frac & 1ull) != 0u)) {
+            ++frac;
+        }
+    }
+
+    if (frac >= (1ull << 52)) {
+        *bits_out = 0x0010000000000000ull;
+        return PROVEN_FLOAT_FAST_PATH_SUCCESS;
+    }
+
+    *bits_out = frac;
+    return PROVEN_FLOAT_FAST_PATH_SUCCESS;
+}
+
+static proven_float_fast_path_result_t proven_float_execute_eisel_lemire_plan(
+    const proven_float_decimal_number_t *decimal,
+    const proven_float_eisel_validate_state_t *state,
+    const proven_float_eisel_lemire_candidate_plan_t *plan,
+    proven_u64 *bits_out
+) {
+    if (decimal == 0 || plan == 0 || bits_out == 0) {
+        return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
+    }
+
+    switch (plan->mode) {
+        case PROVEN_FLOAT_EISEL_LEMIRE_CANDIDATE_PRODUCT: {
+            proven_float_fast_path_result_t result = proven_float_try_eisel_lemire_cached_power_product(
+                decimal,
+                state,
+                decimal->mantissa_u64,
+                plan->wide,
+                plan->exp2,
+                bits_out
+            );
+            if (result == PROVEN_FLOAT_FAST_PATH_SUCCESS) {
+                ++proven_float_decimal_stats.eisel_lemire_product_plan_hits;
+            }
+            return result;
+        }
+    }
+
+    return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
+}
+
+static proven_float_fast_path_result_t proven_float_try_eisel_lemire_pow5_product_q(
+    const proven_float_decimal_number_t *decimal,
+    const proven_float_eisel_validate_state_t *state,
+    proven_size_t q,
+    proven_u64 *bits_out
+) {
+    proven_float_eisel_lemire_candidate_plan_t plan;
+
+    if (decimal == 0 || bits_out == 0) {
+        return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
+    }
+    if (!proven_float_build_cached_power_product_plan((proven_i64)q, &plan)) {
+        return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
+    }
+
+    return proven_float_execute_eisel_lemire_plan(decimal, state, &plan, bits_out);
+}
+
+static proven_float_fast_path_result_t proven_float_try_eisel_lemire_negative_q(
+    const proven_float_decimal_number_t *decimal,
+    const proven_float_eisel_validate_state_t *state,
+    proven_size_t q,
+    proven_u64 *bits_out
+) {
+    proven_float_eisel_lemire_candidate_plan_t plan;
+
+    if (decimal == 0 || bits_out == 0) {
+        return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
+    }
+
+    if (proven_float_build_cached_power_product_plan(-(proven_i64)q, &plan)) {
+        return proven_float_execute_eisel_lemire_plan(decimal, state, &plan, bits_out);
+    }
+    return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
+}
+
+#endif
+
+static proven_float_fast_path_result_t proven_float_try_eisel_lemire_with_state(
+    const proven_float_decimal_number_t *decimal,
+    const proven_float_eisel_validate_state_t *state,
+    proven_u64 *bits_out
+) {
+    /*
+     * RFC-0001 target: this layer grows into a full Eisel-Lemire candidate path.
+     * Current subset:
+     * - requires a 64-bit significand
+     * - routes both positive and negative decimal exponents through one
+     *   signed cached-power product plan builder
+     * - returns UNCERTAIN instead of guessing outside the checked subset
+     */
+    if (!decimal->mantissa_fits_u64 || decimal->significant_digits > 19u) {
+        return PROVEN_FLOAT_FAST_PATH_UNCERTAIN;
+    }
+    if (decimal->exp10 > (proven_i64)PROVEN_FLOAT_CACHED_POW5_SCALED_U128_MAX_Q ||
+        decimal->exp10 < -(proven_i64)PROVEN_FLOAT_CACHED_POW5_INV_U128_MAX_Q) {
+        return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
+    }
+    if (bits_out == 0) {
+        return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
+    }
+
+    if (decimal->exp10 > 0) {
+        return proven_float_try_eisel_lemire_pow5_product_q(decimal, state, (proven_size_t)decimal->exp10, bits_out);
+    }
+
+    if (decimal->exp10 < 0) {
+        proven_size_t q = (proven_size_t)(-decimal->exp10);
+        return proven_float_try_eisel_lemire_negative_q(decimal, state, q, bits_out);
+    }
+
+    if (decimal->exp10 == 0) {
+        return proven_float_try_eisel_lemire_pow5_product_q(decimal, state, 0u, bits_out);
+    }
+
+    return PROVEN_FLOAT_FAST_PATH_UNCERTAIN;
+}
+
+static proven_float_fast_path_result_t proven_float_try_eisel_lemire(const proven_float_decimal_number_t *decimal,
+                                                                     proven_u64 *bits_out) {
+    proven_float_eisel_validate_state_t state;
+
+    if (!proven_float_prepare_eisel_validate_state(decimal, &state)) {
+        return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
+    }
+
+    return proven_float_try_eisel_lemire_with_state(decimal, &state, bits_out);
+}
+
+/*
+ * Pull a normal positive double back into [0.5, 1) and fold the binary exponent
+ * it carried into *exp_acc. This is a freestanding-safe frexp specialised for
+ * the always-normal, always-positive intermediates of the estimate path; it
+ * works purely on the bit pattern so the PAL math boundary is preserved.
+ */
+static double proven_float_frexp_normal(double x, proven_i64 *exp_acc) {
+    proven_u64 bits = proven_float_bits_f64(x);
+    proven_u64 exp_field = (bits >> 52) & 0x7ffull;
+
+    *exp_acc += (proven_i64)exp_field - 1022;
+    bits = (bits & ~(0x7ffull << 52)) | (1022ull << 52);
+    return proven_float_from_bits(bits);
+}
+
+/*
+ * Best-effort estimate of the magnitude bits for a decimal that has reached the
+ * exact fallback. The value is significand x 10^exp10; this reconstructs it as a
+ * normalised double mantissa times a power of two, multiplies in 5^exp10 with
+ * exact chunked powers and bit-level renormalisation (so no intermediate over-
+ * or underflows), then packs the result with the shared candidate packer.
+ *
+ * Returns false when no usable estimate is available so the caller falls back to
+ * the full exponent-bracket search. The estimate is only a seed: the exact
+ * binary search verifies a window around it before trusting it, so a few ULP of
+ * error here only affects speed, never the rounded result.
+ */
+static bool proven_float_estimate_value_bits(const proven_float_decimal_number_t *decimal, proven_u64 *bits_out) {
+    /* 5^0 .. 5^22, all exactly representable in binary64 (5^22 < 2^53). */
+    static const double pow5_exact[] = {
+        1.0, 5.0, 25.0, 125.0, 625.0, 3125.0, 15625.0, 78125.0, 390625.0,
+        1953125.0, 9765625.0, 48828125.0, 244140625.0, 1220703125.0,
+        6103515625.0, 30517578125.0, 152587890625.0, 762939453125.0,
+        3814697265625.0, 19073486328125.0, 95367431640625.0,
+        476837158203125.0, 2384185791015625.0,
+    };
+    const double pow5_chunk = 2384185791015625.0; /* 5^22 */
+    const proven_float_bigint_t *sig = &decimal->significand;
+    proven_i64 acc2;
+    proven_i64 nbits;
+    proven_u64 top;
+    proven_u64 hi_limb;
+    proven_u64 mant_sig;
+    double md;
+    proven_size_t n;
+    int lz;
+
+    if (bits_out == 0 || sig->len == 0u) {
+        return false;
+    }
+
+    /* Reconstruct the significand as top x 2^(nbits-64), top in [2^63, 2^64). */
+    n = sig->len;
+    hi_limb = sig->limbs[n - 1u];
+    lz = proven_float_clz_u64(hi_limb);
+    nbits = (proven_i64)(n - 1u) * 64 + (64 - lz);
+    if (lz == 0) {
+        top = hi_limb;
+    } else {
+        proven_u64 lo_limb = (n >= 2u) ? sig->limbs[n - 2u] : 0u;
+        top = (hi_limb << lz) | (lo_limb >> (64 - lz));
+    }
+
+    acc2 = nbits - 64;
+    md = proven_float_frexp_normal((double)top, &acc2);
+
+    /* Multiply in 5^exp10 using exact chunks, renormalising md each step. */
+    if (decimal->exp10 >= 0) {
+        proven_i64 e = decimal->exp10;
+        while (e >= 22) {
+            md = proven_float_frexp_normal(md * pow5_chunk, &acc2);
+            e -= 22;
+        }
+        if (e > 0) {
+            md = proven_float_frexp_normal(md * pow5_exact[(proven_size_t)e], &acc2);
+        }
+    } else {
+        proven_i64 e = -decimal->exp10;
+        while (e >= 22) {
+            md = proven_float_frexp_normal(md / pow5_chunk, &acc2);
+            e -= 22;
+        }
+        if (e > 0) {
+            md = proven_float_frexp_normal(md / pow5_exact[(proven_size_t)e], &acc2);
+        }
+    }
+
+    /* Fold in the 2^exp10 factor: value ~= md x 2^(acc2 + exp10), md in [0.5,1). */
+    acc2 += decimal->exp10;
+
+    /* md in [0.5,1) packs as significand (1<<52)|frac with unbiased exp acc2-1. */
+    mant_sig = (1ull << 52) | (proven_float_bits_f64(md) & 0x000fffffffffffffull);
+    if (proven_float_pack_binary64_candidate(mant_sig, acc2 - 1, bits_out) != PROVEN_FLOAT_FAST_PATH_SUCCESS) {
+        return false;
+    }
+    return true;
+}
+
+proven_err_t proven_float_convert_decimal(const proven_u8 *input, proven_size_t len, double *out) {
+    const proven_u64 max_finite_bits = 0x7fefffffffffffffull;
+    proven_float_bigint_t overflow_midpoint;
+    proven_float_decimal_number_t decimal;
+    proven_u64 floor_bits = 0;
+    proven_u64 upper_bits = 0;
+    proven_u64 rounded_bits = 0;
+    proven_u64 eisel_lemire_bits = 0;
+    double fast = 0.0;
+
+    if (!input || len == 0 || !out) {
+        return PROVEN_ERR_INVALID_ARG;
+    }
+    if (!proven_float_decimal_build_number(input, len, &decimal)) {
+        return PROVEN_ERR_OUT_OF_BOUNDS;
+    }
+
+    ++proven_float_decimal_stats.total_conversions;
+
+    if (decimal.is_zero) {
+        ++proven_float_decimal_stats.exact_fallback_hits;
+        *out = decimal.negative ? proven_float_from_bits(0x8000000000000000ull) : 0.0;
+        return PROVEN_OK;
+    }
+
+    if (proven_float_try_clinger(&decimal, &fast) == PROVEN_OK) {
+        ++proven_float_decimal_stats.clinger_fast_path_hits;
+        *out = fast;
+        return PROVEN_OK;
+    }
+    {
+        proven_float_fast_path_result_t eisel_lemire = proven_float_try_eisel_lemire(&decimal, &eisel_lemire_bits);
+        if (eisel_lemire == PROVEN_FLOAT_FAST_PATH_SUCCESS) {
+            ++proven_float_decimal_stats.eisel_lemire_fast_path_hits;
+            *out = proven_float_from_bits(decimal.negative ? (eisel_lemire_bits | 0x8000000000000000ull) : eisel_lemire_bits);
+            return PROVEN_OK;
+        }
+    }
+
+    ++proven_float_decimal_stats.exact_fallback_hits;
+
+    {
+        proven_size_t dropped_digits = 0;
+        bool sticky = false;
+        if (!proven_float_decimal_build_significand(input, len, &decimal, &decimal.significand,
+                                                    &dropped_digits, &sticky)) {
+            return PROVEN_ERR_OUT_OF_BOUNDS;
+        }
+        /*
+         * Digits dropped past the significand cap shift magnitude into exp10 and
+         * shorten the significant-digit count; the kept significand still scales
+         * to the same magnitude, and significand_sticky carries the dropped tail.
+         */
+        decimal.exp10 += (proven_i64)dropped_digits;
+        decimal.significant_digits -= dropped_digits;
+        decimal.significand_sticky = sticky;
+    }
+
+    {
+        proven_float_exact_compare_state_t compare_state;
+        if (!proven_float_prepare_exact_compare_state(&decimal, &compare_state)) {
+            return PROVEN_ERR_OUT_OF_BOUNDS;
+        }
+
+        proven_i64 adjusted_exp10 = decimal.exp10 + (proven_i64)decimal.significant_digits - 1;
+        if (adjusted_exp10 > 309) {
+            return PROVEN_ERR_OVERFLOW;
+        }
+        if (adjusted_exp10 < -350) {
+            *out = decimal.negative ? proven_float_from_bits(0x8000000000000000ull) : 0.0;
+            return PROVEN_OK;
+        }
+
+        proven_float_bigint_from_u64(&overflow_midpoint, (1ull << 54) - 1ull);
+        if (proven_float_compare_decimal_to_scaled(&decimal, &compare_state, &overflow_midpoint, 970) >= 0) {
+            return PROVEN_ERR_OVERFLOW;
+        }
+
+        {
+            proven_i64 min_exp2 = -1074;
+            proven_i64 max_exp2 = 1023;
+            proven_u64 lo = 0;
+            proven_u64 hi = max_finite_bits;
+
+            proven_float_decimal_binary_exp_bounds(&decimal, decimal.significant_digits, &min_exp2, &max_exp2);
+
+            if (max_exp2 < -1022) {
+                lo = 0u;
+                hi = 0x000fffffffffffffull;
+            } else {
+                if (min_exp2 < -1022) {
+                    lo = 0u;
+                } else {
+                    lo = ((proven_u64)(min_exp2 + 1023) << 52);
+                }
+                if (max_exp2 < -1022) {
+                    hi = 0x000fffffffffffffull;
+                } else {
+                    hi = (((proven_u64)(max_exp2 + 1023) << 52) | 0x000fffffffffffffull);
+                }
+            }
+
+            /*
+             * Seed the search from a cheap double estimate when one is
+             * available. The narrowed window is only adopted after verifying
+             * it brackets the true floor, so a wrong estimate costs two extra
+             * comparisons and a fall-back to the full range, never a wrong
+             * result. When the estimate is good this collapses the 52-bit
+             * mantissa search to a handful of iterations.
+             */
+            {
+                proven_u64 est_bits = 0;
+                if (proven_float_estimate_value_bits(&decimal, &est_bits)) {
+                    const proven_u64 window = 16u;
+                    proven_u64 cand_lo;
+                    proven_u64 cand_hi;
+
+                    if (est_bits < lo) {
+                        est_bits = lo;
+                    } else if (est_bits > hi) {
+                        est_bits = hi;
+                    }
+                    cand_lo = (est_bits - lo > window) ? est_bits - window : lo;
+                    cand_hi = (hi - est_bits > window) ? est_bits + window : hi;
+
+                    if (proven_float_compare_decimal_to_bits(&decimal, &compare_state, cand_lo) >= 0 &&
+                        proven_float_compare_decimal_to_bits(&decimal, &compare_state, cand_hi) < 0) {
+                        lo = cand_lo;
+                        hi = cand_hi;
+                    }
+                }
+            }
+
+            while (lo < hi) {
+                proven_u64 mid = lo + ((hi - lo + 1ull) >> 1);
+                int cmp = proven_float_compare_decimal_to_bits(&decimal, &compare_state, mid);
+                if (cmp >= 0) {
+                    lo = mid;
+                } else {
+                    hi = mid - 1ull;
+                }
+            }
+            floor_bits = lo;
+        }
+
+        if (proven_float_compare_decimal_to_bits(&decimal, &compare_state, floor_bits) == 0) {
+            rounded_bits = floor_bits;
+        } else if (floor_bits == max_finite_bits) {
+            rounded_bits = max_finite_bits;
+        } else {
+            int cmp_mid = 0;
+            upper_bits = floor_bits + 1ull;
+            cmp_mid = proven_float_compare_decimal_to_midpoint(&decimal, &compare_state, floor_bits, upper_bits);
+            if (cmp_mid < 0) {
+                rounded_bits = floor_bits;
+            } else if (cmp_mid > 0) {
+                rounded_bits = upper_bits;
+            } else {
+                rounded_bits = (floor_bits & 1ull) == 0ull ? floor_bits : upper_bits;
+            }
+        }
+    }
+
+    if (decimal.negative) {
+        rounded_bits |= 0x8000000000000000ull;
+    }
+    *out = proven_float_from_bits(rounded_bits);
+    return PROVEN_OK;
 }
 
 bool proven_float_normalize_scientific(double *abs_v, int *sci_exp) {
@@ -221,6 +2603,8 @@ static bool proven_float_shortest_literal_common(proven_u64 bits, bool is_f32, c
         { 0xffefffffffffffffULL, "-1.7976931348623157e308" },
         { 0x0000000000000001ULL, "5e-324" },
         { 0x8000000000000001ULL, "-5e-324" },
+        { 0x0ddb1a43e77c4032ULL, "6.3508876286570946e-242" },
+        { 0x8ddb1a43e77c4032ULL, "-6.3508876286570946e-242" },
     };
     static const proven_float_shortest_literal_entry_t f32_literals[] = {
         { 0x7f800000u, "Inf" },

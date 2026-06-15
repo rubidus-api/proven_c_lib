@@ -52,6 +52,12 @@ Run focused regression modes:
 ./nob regression-ubsan -build-root /home/user/work/build/proven_c_lib
 ```
 
+Run the float parse path benchmark:
+
+```sh
+./nob bench-float -build-root /home/user/work/build/proven_c_lib
+```
+
 Run freestanding checks:
 
 ```sh
@@ -129,6 +135,8 @@ Standard informational and pass lines printed by test executables:
 ```
 
 The older test files still use many direct `PROVEN_TEST_INFO` calls. Those messages now share the `[PROVEN][TEST][INFO]` prefix. New or substantially edited tests should prefer `PROVEN_TEST_SECTION(name, intent, hint)` for each logically separate sub-check group.
+
+The float parse path benchmark uses the same test harness and emits its timing rows through `[PROVEN][TEST][INFO]` so the captured output can be saved directly as a dated markdown report under `docs/benchmarks/`.
 
 ## Test modes
 
@@ -222,6 +230,18 @@ What it checks:
 - Bug-fix verification is faster than a complete suite run.
 
 Failure tip: do not delete a regression because it feels narrow. It exists because the same class of bug already happened. Read the corresponding section below and preserve the contract.
+
+### `bench-float`
+
+Intent: run the float parse path benchmark executable only and write a dated report under `docs/benchmarks/`.
+
+What it checks:
+
+- Each path-specific corpus still matches host `strtod` before any timing starts.
+- The shared ASCII parser, the `proven_strtod()` wrapper, and host `strtod` can be timed on the same path-oriented corpora.
+- The benchmark output stays suitable for archival in a dated docs file.
+
+Failure tip: if a path corpus fails, inspect `src/proven/float_parse.c` and `src/proven/float_decimal.c` first. If the timing rows look implausible, check the compiler mode, the corpus split, and any host-specific CPU throttling before changing the parser.
 
 ### `freestanding`
 
@@ -1014,10 +1034,13 @@ Intent: verify the shared decimal float helpers live in a dedicated internal tra
 
 Sub-checks:
 
-- Confirms `src/proven/float_decimal.h` declares the shared pow10 scaling, decimal conversion, scientific normalization, and shortest-literal helpers.
-- Confirms `src/proven/float_decimal.c` defines the shared pow10 scaling, decimal conversion, scientific normalization, and shortest-literal helpers.
+- Confirms `src/proven/float_decimal.h` declares the shared ASCII parser, decimal conversion, scientific normalization, and shortest-literal helpers.
+- Confirms `src/proven/float_decimal.h` also declares the internal conversion metrics helpers used to distinguish fast paths from the exact fallback in tests.
+- Confirms `src/proven/float_decimal.c` defines the shared ASCII parser, exact midpoint comparison, decimal conversion, scientific normalization, shortest-literal helpers, and internal path counters.
+- Confirms `src/proven/float_decimal.c` includes the generated cached-power header and that `scripts/generate_float_decimal_tables.py` remains the documented source of that header.
 - Confirms `src/proven/scan.c` and `src/proven/fmt.c` include `float_decimal.h` instead of defining the shared helper bodies inline, and that `src/proven/float_format.c` calls the shared shortest-literal helpers instead of keeping the literal tables inline.
 - Confirms `nob.c` compiles `src/proven/float_decimal.c` as part of the library build.
+- Confirms `THIRD_PARTY_NOTICES.md` records the clean-room status of the float parse rewrite.
 
 Failure tip: inspect `src/proven/float_decimal.c`, `src/proven/float_decimal.h`, `src/proven/float_format.c`, `src/proven/scan.c`, and `nob.c` if the shared float helper scaffold drifts back into the scanner or formatter files.
 
@@ -1044,6 +1067,36 @@ Sub-checks:
 - Confirms the helper exposes the product in a stable high/low part structure for later float algorithms.
 
 Failure tip: inspect `src/proven/float_decimal.c` if the wide multiply helper stops matching the reference product.
+
+### 38a. `tests/test_float_parse_api` - float parse public API
+
+Intent: verify the public locale-free float parser and `strtod`-style wrapper expose consumed-length, `endptr`, and range signaling over the shared exact backend.
+
+Sub-checks:
+
+- Confirms `proven_parse_double_ascii()` accepts valid decimal and special-value tokens and reports the consumed byte count.
+- Confirms `proven_parse_double_ascii()` does not skip leading whitespace and rejects malformed exponent tails.
+- Confirms `proven_strtod()` skips leading ASCII whitespace and leaves `endptr` at the first byte after the parsed token.
+- Confirms hosted overflow and underflow cases report `ERANGE` while preserving signed infinity and signed zero behavior.
+- Confirms internal conversion counters distinguish a Clinger hit, staged Eisel-Lemire hits across positive-exponent, negative-exponent, and subnormal representative inputs, and exact bigint fallback hits for representative uncertain inputs.
+- Confirms the documented representative staged inputs currently finish through the shared cached-power product plan, while uncertain negative cases defer straight to the exact fallback.
+
+Failure tip: inspect `include/proven/float_parse.h`, `src/proven/float_parse.c`, and `src/proven/float_decimal.c` if the public parser seam or wrapper contract drifts.
+
+### 38b. `tests/test_float_rfc_0001` - RFC-0001 parse audit
+
+Intent: verify the decimal-to-binary64 rewrite still satisfies the explicit named cases from `docs/proposals/rfc-0001`.
+
+Sub-checks:
+
+- Confirms the basic RFC finite corpus parses and matches the host oracle.
+- Confirms `inf`, `infinity`, `nan`, signed infinity, and signed NaN payload spellings parse through the public ASCII seam.
+- Confirms the `2^53` boundary corpus and a true-min midpoint below/exact/above triplet obey round-to-nearest, ties-to-even.
+- Confirms DBL_MAX, DBL_MIN, the largest subnormal, the normal/subnormal boundary, and the smallest subnormal still parse to the expected binary64 values.
+- Confirms a 110-digit significand plus huge overflow/underflow exponents scan safely.
+- Confirms malformed/endptr RFC cases such as `123abc`, `.`, `e10`, `1e`, `1e+`, and leading whitespace through the wrapper keep the documented behavior.
+
+Failure tip: inspect `docs/proposals/rfc-0001`, `include/proven/float_parse.h`, `src/proven/float_parse.c`, and `src/proven/float_decimal.c` if a named RFC audit case fails.
 
 ### 39. `tests/test_float_format_policy` - float format policy scaffold
 
