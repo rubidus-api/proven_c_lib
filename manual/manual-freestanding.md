@@ -211,6 +211,28 @@ proven_u8str_append_fmt_grow(g_alloc, &s, "{}", PROVEN_ARG(3.14));
 /* wrong in the current freestanding profile: float args are excluded */
 ```
 
+## 8a. Tuning the float big-integer capacity
+
+The exact decimal-to-binary64 fallback and the big-integer division helper use a
+fixed-size big integer whose capacity is set by `PROVEN_FLOAT_BIGINT_LIMBS`
+(default 160, in `proven/float_config.h`). This is the dominant factor in their
+stack usage: each big integer is `8 * PROVEN_FLOAT_BIGINT_LIMBS` bytes, and a
+division uses several plus 32-bit scratch.
+
+Targets with tight stacks can lower it, for example:
+
+```sh
+-DPROVEN_FLOAT_BIGINT_LIMBS=48
+```
+
+The kept-significand cap (`PROVEN_FLOAT_MAX_SIGNIFICAND_DIGITS`) is derived from
+the capacity, so a smaller value never overflows: the parser still rounds
+correctly for inputs up to the derived number of significant digits and stays
+within one ULP for longer inputs. The Clinger and Eisel-Lemire fast paths do not
+use the big integer, so typical short inputs are unaffected. Keep the default
+(160) when exact rounding of pathological long decimals matters, since a binary64
+rounding boundary can need up to 767 significant digits.
+
 ## 9. Avoid hosted APIs
 
 Do not call these in the current freestanding profile:

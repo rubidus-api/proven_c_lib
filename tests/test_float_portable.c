@@ -90,6 +90,131 @@ int main(void) {
     PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "large scientific decimal", "Inspect proven_scan_f64 if a large finite scientific decimal stops parsing successfully.");
     PROVEN_TEST_ASSERT(double_bits(fres.val) == 0xea8bc28d457c01f2ULL, "large scientific decimal", "Inspect decimal-to-double scaling if the parsed bits drift by one ULP at large exponents.");
 
+    scan = proven_scan_init(proven_u8str_view_from_cstr("-68e-221"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "tiny negative scientific decimal", "Inspect proven_scan_f64 if a small finite scientific decimal with a negative exponent stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x926eb9ab6ad58f6dULL, "tiny negative scientific decimal", "Inspect decimal-to-double scaling if a tiny negative scientific decimal drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("-3.2535069386238e-213"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "tiny negative scientific decimal mid-band", "Inspect proven_scan_f64 if a tiny negative scientific decimal in the mid-band stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x93d1864da04d3b38ULL, "tiny negative scientific decimal mid-band", "Inspect decimal-to-double scaling if a tiny negative scientific decimal in the mid-band drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("6390280087381e177"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "mid-large scientific decimal", "Inspect proven_scan_f64 if a mid-large finite scientific decimal stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x6756f2a865275d94ULL, "mid-large scientific decimal", "Inspect decimal-to-double scaling if a mid-large scientific decimal drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("7.363189778827297e98"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "mid scientific decimal", "Inspect proven_scan_f64 if a mid scientific decimal stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x54758b880c4516ebULL, "mid scientific decimal", "Inspect decimal-to-double scaling if a mid scientific decimal drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("6390280087381e-39"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "tiny scientific decimal", "Inspect proven_scan_f64 if a tiny scientific decimal stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x3a7fa4a47390dbf8ULL, "tiny scientific decimal", "Inspect decimal-to-double scaling if a tiny scientific decimal drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("304951476376883325e116"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "large scientific decimal mid-band", "Inspect proven_scan_f64 if a large scientific decimal in the mid-band stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x5ba57b3d3afd21a0ULL, "large scientific decimal mid-band", "Inspect decimal-to-double scaling if a large scientific decimal in the mid-band drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("6.4456509097e-267"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "tiny scientific decimal deep band", "Inspect proven_scan_f64 if a tiny scientific decimal deep in the negative band stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x08aa9a677cf46aecULL, "tiny scientific decimal deep band", "Inspect decimal-to-double scaling if a tiny scientific decimal deep in the negative band drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("33064920252e132"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "large scientific decimal upper band", "Inspect proven_scan_f64 if a large scientific decimal in the upper band stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x5d85b126a443e433ULL, "large scientific decimal upper band", "Inspect decimal-to-double scaling if a large scientific decimal in the upper band drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("2e-235"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "tiny scientific decimal far band", "Inspect proven_scan_f64 if a tiny scientific decimal in the far negative band stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x0f345962e2f6a490ULL, "tiny scientific decimal far band", "Inspect decimal-to-double scaling if a tiny scientific decimal in the far negative band drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("-85062e84"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "large scientific decimal high band", "Inspect proven_scan_f64 if a large scientific decimal in the high band stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0xd2656144f0942e32ULL, "large scientific decimal high band", "Inspect decimal-to-double scaling if a large scientific decimal in the high band drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("-6.691e-126"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "negative scientific decimal mid band", "Inspect proven_scan_f64 if a negative scientific decimal in the mid band stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0xa5f21dfbb50430c4ULL, "negative scientific decimal mid band", "Inspect decimal-to-double scaling if a negative scientific decimal in the mid band drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("-50200632795643e-285"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "negative scientific decimal deep band", "Inspect proven_scan_f64 if a negative scientific decimal in the deep band stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x879b283f603c922fULL, "negative scientific decimal deep band", "Inspect decimal-to-double scaling if a negative scientific decimal in the deep band drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("7.2318e-179"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "mid negative scientific decimal", "Inspect proven_scan_f64 if a mid negative scientific decimal stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x1af2c15acbb0af1fULL, "mid negative scientific decimal", "Inspect decimal-to-double scaling if a mid negative scientific decimal drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("851041725486047647e176"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "large scientific decimal far band", "Inspect proven_scan_f64 if a large scientific decimal in the far positive band stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x6832a738e88c729eULL, "large scientific decimal far band", "Inspect decimal-to-double scaling if a large scientific decimal in the far positive band drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("16215694128170e256"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "large scientific decimal upper edge", "Inspect proven_scan_f64 if a large scientific decimal near the upper edge stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x77d3a4f947426897ULL, "large scientific decimal upper edge", "Inspect decimal-to-double scaling if a large scientific decimal near the upper edge drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("-85e138"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "negative large scientific decimal high band", "Inspect proven_scan_f64 if a negative large scientific decimal in the high band stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0xdcfc8d0c98b37780ULL, "negative large scientific decimal high band", "Inspect decimal-to-double scaling if a negative large scientific decimal in the high band drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("-7.64e85"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "negative large scientific decimal compact mantissa", "Inspect proven_scan_f64 if a negative large scientific decimal with a compact mantissa stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0xd1c3a9e646cdfac7ULL, "negative large scientific decimal compact mantissa", "Inspect decimal-to-double scaling if a negative large scientific decimal with a compact mantissa drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("-7.8991867e-215"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "negative tiny scientific decimal compact mantissa", "Inspect proven_scan_f64 if a negative tiny scientific decimal with a compact mantissa stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x937b3b11148be106ULL, "negative tiny scientific decimal compact mantissa", "Inspect decimal-to-double scaling if a negative tiny scientific decimal with a compact mantissa drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("-06850422e-297"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "negative tiny scientific decimal with leading zero", "Inspect proven_scan_f64 if a negative tiny scientific decimal with a leading zero stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x83b11726c72e94e6ULL, "negative tiny scientific decimal with leading zero", "Inspect decimal-to-double scaling if a negative tiny scientific decimal with a leading zero drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("-135170513485e-284"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "negative tiny scientific decimal deep compact mantissa", "Inspect proven_scan_f64 if a negative tiny scientific decimal with a deep exponent stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x8747664ab3d3e8dbULL, "negative tiny scientific decimal deep compact mantissa", "Inspect decimal-to-double scaling if a negative tiny scientific decimal with a deep exponent drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("-55379398548477183e-295"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "negative tiny scientific decimal deep full mantissa", "Inspect proven_scan_f64 if a negative tiny scientific decimal with a full mantissa stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x8629219a0a5b79d4ULL, "negative tiny scientific decimal deep full mantissa", "Inspect decimal-to-double scaling if a negative tiny scientific decimal with a full mantissa drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("7346e79"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "large scientific decimal compact mantissa", "Inspect proven_scan_f64 if a large scientific decimal with a compact mantissa stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x51235c59e2555387ULL, "large scientific decimal compact mantissa", "Inspect decimal-to-double scaling if a large scientific decimal with a compact mantissa drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("30018820096e110"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "large scientific decimal hosted fallback", "Inspect proven_scan_f64 if a large scientific decimal in the hosted fallback stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x58f299a04f943f9fULL, "large scientific decimal hosted fallback", "Inspect decimal-to-double scaling if a large scientific decimal in the hosted fallback drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("-63306334748e-173"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "negative scientific decimal hosted fallback", "Inspect proven_scan_f64 if a negative scientific decimal in the hosted fallback stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0x9e423a52a4991165ULL, "negative scientific decimal hosted fallback", "Inspect decimal-to-double scaling if a negative scientific decimal in the hosted fallback drifts by one ULP.");
+
+    scan = proven_scan_init(proven_u8str_view_from_cstr("-15714e249"));
+    fres = proven_scan_f64(&scan);
+    PROVEN_TEST_ASSERT(fres.err == PROVEN_OK, "negative large scientific decimal hosted fallback", "Inspect proven_scan_f64 if a negative large scientific decimal in the hosted fallback stops parsing successfully.");
+    PROVEN_TEST_ASSERT(double_bits(fres.val) == 0xf481258db00b5cc1ULL, "negative large scientific decimal hosted fallback", "Inspect decimal-to-double scaling if a negative large scientific decimal in the hosted fallback drifts by one ULP.");
+
     PROVEN_TEST_PASS("Float portability checks passed.");
     return 0;
 }

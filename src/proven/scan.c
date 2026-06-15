@@ -3,21 +3,6 @@
 #include "../../platform/proven_sys_mem.h"
 #include <limits.h>
 
-#if !defined(PROVEN_FREESTANDING)
-extern bool proven_sys_math_isfinite_f64(double val);
-#endif
-
-static bool proven_scan_isfinite_f64(double val) {
-#if defined(PROVEN_FREESTANDING)
-    proven_u64 bits = 0;
-    proven_sys_mem_copy(&bits, &val, sizeof bits);
-    return (bits & 0x7FF0000000000000ull) != 0x7FF0000000000000ull ||
-           (bits & 0x000FFFFFFFFFFFFFull) == 0;
-#else
-    return proven_sys_math_isfinite_f64(val);
-#endif
-}
-
 static bool is_whitespace(proven_u8 c) {
     return c == (proven_u8)' ' || c == (proven_u8)'\n' || c == (proven_u8)'\r' || 
            c == (proven_u8)'\t' || c == (proven_u8)'\v' || c == (proven_u8)'\f';
@@ -31,77 +16,10 @@ static bool scan_valid(const proven_scan_t *scan) {
     return scan && (scan->view.size == 0 || scan->view.ptr != (void*)0) && scan->cursor <= scan->view.size;
 }
 
-static const proven_u64 proven_scan_pow10_u64[] = {
-    1ull,
-    10ull,
-    100ull,
-    1000ull,
-    10000ull,
-    100000ull,
-    1000000ull,
-    10000000ull,
-    100000000ull,
-    1000000000ull,
-    10000000000ull,
-    100000000000ull,
-    1000000000000ull,
-    10000000000000ull,
-    100000000000000ull,
-    1000000000000000ull,
-    10000000000000000ull,
-    100000000000000000ull,
-    1000000000000000000ull,
-    10000000000000000000ull,
-};
-
 static double proven_scan_double_from_bits(proven_u64 bits) {
     double value = 0.0;
     proven_sys_mem_copy(&value, &bits, sizeof value);
     return value;
-}
-
-static double proven_scan_nextafter_positive(double value, int direction) {
-    proven_u64 bits = proven_float_bits_f64(value);
-    if (direction < 0) {
-        bits -= 1ull;
-    } else {
-        bits += 1ull;
-    }
-    return proven_scan_double_from_bits(bits);
-}
-
-static int proven_scan_cmp_decimal(proven_u64 lhs_mantissa, proven_i64 lhs_exp10, proven_u64 rhs_mantissa, proven_i64 rhs_exp10) {
-    if (lhs_exp10 == rhs_exp10) {
-        if (lhs_mantissa < rhs_mantissa) return -1;
-        if (lhs_mantissa > rhs_mantissa) return 1;
-        return 0;
-    }
-
-    if (lhs_exp10 > rhs_exp10) {
-        proven_i64 diff = lhs_exp10 - rhs_exp10;
-        if (diff > 19) {
-            return 1;
-        }
-        proven_u128_parts_t scaled = proven_float_mul_u64_u64_to_u128(lhs_mantissa, proven_scan_pow10_u64[(proven_size_t)diff]);
-        if (scaled.hi != 0) {
-            return 1;
-        }
-        if (scaled.lo < rhs_mantissa) return -1;
-        if (scaled.lo > rhs_mantissa) return 1;
-        return 0;
-    }
-
-    proven_i64 diff = rhs_exp10 - lhs_exp10;
-    if (diff > 19) {
-        return -1;
-    }
-    proven_u128_parts_t scaled = proven_float_mul_u64_u64_to_u128(rhs_mantissa, proven_scan_pow10_u64[(proven_size_t)diff]);
-    if (scaled.hi != 0) {
-        return -1;
-    }
-    if (lhs_mantissa < scaled.lo) return -1;
-    if (lhs_mantissa > scaled.lo) return 1;
-    return 0;
 }
 
 void proven_scan_skip_whitespace(proven_scan_t *scan) {
@@ -212,189 +130,30 @@ proven_result_f64_t proven_scan_f64(proven_scan_t *scan) {
         return (proven_result_f64_t){ .err = PROVEN_ERR_INVALID_ARG };
     }
 
-    bool negative = false;
-    if (scan->view.ptr[scan->cursor] == (proven_u8)'-') {
-        negative = true;
-        scan->cursor++;
-    } else if (scan->view.ptr[scan->cursor] == (proven_u8)'+') {
-        scan->cursor++;
-    }
-
-    proven_u64 mantissa = 0;
-    proven_size_t digits_seen = 0;
-    proven_size_t frac_digits = 0;
-    proven_size_t dropped_integer_digits = 0;
-    bool mantissa_started = false;
-    bool found_digit = false;
-
-    while (scan->cursor < scan->view.size && is_digit(scan->view.ptr[scan->cursor])) {
-        proven_u8 digit = (proven_u8)(scan->view.ptr[scan->cursor] - '0');
-        found_digit = true;
-        if (digit == 0 && !mantissa_started) {
-            scan->cursor++;
-            continue;
-        }
-        if (digits_seen < 19) {
-            mantissa = mantissa * 10u + (proven_u64)digit;
-            digits_seen++;
-            if (digit != 0) {
-                mantissa_started = true;
-            }
-        } else {
-            dropped_integer_digits++;
-        }
-        scan->cursor++;
-    }
-
-    if (scan->cursor < scan->view.size && scan->view.ptr[scan->cursor] == (proven_u8)'.') {
-        scan->cursor++;
-        while (scan->cursor < scan->view.size && is_digit(scan->view.ptr[scan->cursor])) {
-            proven_u8 digit = (proven_u8)(scan->view.ptr[scan->cursor] - '0');
-            found_digit = true;
-            frac_digits++;
-            if (digit == 0 && !mantissa_started) {
-                scan->cursor++;
-                continue;
-            }
-            if (digits_seen < 19) {
-                mantissa = mantissa * 10u + (proven_u64)digit;
-                digits_seen++;
-                if (digit != 0) {
-                    mantissa_started = true;
-                }
-            }
-            scan->cursor++;
-        }
-    }
-
-    proven_i64 e = 0;
-    if (scan->cursor < scan->view.size && (scan->view.ptr[scan->cursor] == (proven_u8)'e' || scan->view.ptr[scan->cursor] == (proven_u8)'E')) {
-        if (!found_digit) {
-            scan->cursor = start_cursor;
-            return (proven_result_f64_t){ .err = PROVEN_ERR_INVALID_ARG };
-        }
-
-        scan->cursor++;
-
-        bool exp_negative = false;
-        if (scan->cursor < scan->view.size && (scan->view.ptr[scan->cursor] == '+' || scan->view.ptr[scan->cursor] == '-')) {
-            exp_negative = scan->view.ptr[scan->cursor] == '-';
-            scan->cursor++;
-        }
-
-        if (scan->cursor >= scan->view.size || !is_digit(scan->view.ptr[scan->cursor])) {
-            scan->cursor = start_cursor;
-            return (proven_result_f64_t){ .err = PROVEN_ERR_INVALID_ARG };
-        }
-
-        while (scan->cursor < scan->view.size && is_digit(scan->view.ptr[scan->cursor])) {
-            proven_u8 digit = (proven_u8)(scan->view.ptr[scan->cursor] - '0');
-            if (e > 999) {
-                scan->cursor = start_cursor;
-                return (proven_result_f64_t){ .err = PROVEN_ERR_OUT_OF_BOUNDS };
-            }
-            e = e * 10 + (proven_i64)digit;
-            scan->cursor++;
-        }
-
-        if (exp_negative) e = -e;
-    }
-
-    if (!found_digit) {
+    proven_float_parse_result_t parsed = proven_float_parse_ascii_token(scan->view.ptr + scan->cursor, scan->view.size - scan->cursor);
+    if (parsed.err != PROVEN_OK) {
         scan->cursor = start_cursor;
-        return (proven_result_f64_t){ .err = PROVEN_ERR_INVALID_ARG };
+        return (proven_result_f64_t){ .err = parsed.err };
     }
+    scan->cursor += parsed.consumed;
 
-    proven_i64 exp10 = e;
-    exp10 -= (proven_i64)frac_digits;
-    exp10 += (proven_i64)dropped_integer_digits;
-
-    double result = proven_float_convert_decimal(mantissa, exp10);
-    const proven_i64 one_exp10 = 0;
-    const proven_i64 max_exp10 = 292;
-    const proven_u64 max_mantissa = 17976931348623157ull;
-    const proven_i64 min_exp10 = -324;
-    const proven_u64 min_mantissa = 22250738585072014ull;
-    const proven_i64 half_true_min_exp10 = -340;
-    const proven_u64 half_true_min_mantissa = 24703282292062328ull;
-
-    int cmp_one = proven_scan_cmp_decimal(mantissa, exp10, 1ull, one_exp10);
-    int cmp_max = proven_scan_cmp_decimal(mantissa, exp10, max_mantissa, max_exp10);
-    int cmp_min = proven_scan_cmp_decimal(mantissa, exp10, min_mantissa, min_exp10);
-    int cmp_half_true_min = proven_scan_cmp_decimal(mantissa, exp10, half_true_min_mantissa, half_true_min_exp10);
-
-    if (!proven_scan_isfinite_f64(result)) {
-        if (cmp_max <= 0 || (exp10 == 292 && mantissa <= 17976931348623158ull)) {
-            result = 1.7976931348623157e308;
-        } else {
+    if (parsed.kind == PROVEN_FLOAT_PARSE_KIND_INF) {
+        proven_u64 bits = parsed.negative ? 0xfff0000000000000ull : 0x7ff0000000000000ull;
+        return (proven_result_f64_t){ .val = proven_scan_double_from_bits(bits), .err = PROVEN_OK };
+    }
+    if (parsed.kind == PROVEN_FLOAT_PARSE_KIND_NAN) {
+        proven_u64 bits = parsed.negative ? 0xfff8000000000000ull : 0x7ff8000000000000ull;
+        return (proven_result_f64_t){ .val = proven_scan_double_from_bits(bits), .err = PROVEN_OK };
+    }
+    {
+        double result = 0.0;
+        proven_err_t err = proven_float_convert_decimal(scan->view.ptr + start_cursor, parsed.consumed, &result);
+        if (err != PROVEN_OK) {
             scan->cursor = start_cursor;
-            return (proven_result_f64_t){ .err = PROVEN_ERR_OVERFLOW };
+            return (proven_result_f64_t){ .err = err };
         }
+        return (proven_result_f64_t){ .val = result, .err = PROVEN_OK };
     }
-
-    if (result == 1.0 && cmp_one < 0) {
-        result = proven_scan_nextafter_positive(result, -1);
-    }
-
-    if (cmp_min == 0) {
-        double dbl_min = 2.2250738585072014e-308;
-        if (result != dbl_min) {
-            double dbl_min_prev = proven_scan_nextafter_positive(dbl_min, -1);
-            if (result == dbl_min_prev) {
-                result = dbl_min;
-            }
-        }
-    } else if (cmp_min < 0) {
-        double dbl_min = 2.2250738585072014e-308;
-        double dbl_min_prev = proven_scan_nextafter_positive(dbl_min, -1);
-        if (result == dbl_min) {
-            result = dbl_min_prev;
-        }
-    } else if (cmp_min > 0) {
-        double dbl_min = 2.2250738585072014e-308;
-        double dbl_min_prev = proven_scan_nextafter_positive(dbl_min, -1);
-        if (result == dbl_min_prev) {
-            result = dbl_min;
-        }
-    }
-
-    if (exp10 == 292 && mantissa >= 17976931348623150ull && mantissa <= 17976931348623158ull) {
-        if (mantissa < 17976931348623151ull) {
-            result = proven_scan_double_from_bits(0x7feffffffffffffbull);
-        } else if (mantissa < 17976931348623153ull) {
-            result = proven_scan_double_from_bits(0x7feffffffffffffcull);
-        } else if (mantissa < 17976931348623155ull) {
-            result = proven_scan_double_from_bits(0x7feffffffffffffdull);
-        } else if (mantissa < 17976931348623157ull) {
-            result = proven_scan_double_from_bits(0x7feffffffffffffeull);
-        } else {
-            result = proven_scan_double_from_bits(0x7fefffffffffffffull);
-        }
-    }
-
-    if (result == 0.0 && mantissa != 0 && cmp_half_true_min >= 0) {
-        result = 4.9406564584124654e-324;
-    }
-
-    if (exp10 == -324 && mantissa >= 22250738585072000ull && mantissa <= 22250738585072020ull) {
-        if (mantissa < 22250738585072002ull) {
-            result = proven_scan_double_from_bits(0x000ffffffffffffdull);
-        } else if (mantissa < 22250738585072007ull) {
-            result = proven_scan_double_from_bits(0x000ffffffffffffeull);
-        } else if (mantissa < 22250738585072012ull) {
-            result = proven_scan_double_from_bits(0x000fffffffffffffull);
-        } else if (mantissa < 22250738585072017ull) {
-            result = proven_scan_double_from_bits(0x0010000000000000ull);
-        } else {
-            result = proven_scan_nextafter_positive(2.2250738585072014e-308, 1);
-        }
-    }
-
-    if (negative) {
-        result = -result;
-    }
-
-    return (proven_result_f64_t){ .val = result, .err = PROVEN_OK };
 }
 
 proven_result_u8str_view_t proven_scan_str(proven_scan_t *scan) {

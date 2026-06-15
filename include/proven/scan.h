@@ -64,12 +64,11 @@ void proven_scan_skip_whitespace(proven_scan_t *scan);
  * @brief Extract a 64-bit floating point number.
  * Failure restores the cursor to its original position.
  *
- * Decimal-to-double conversion is designed to be correctly rounded when the
- * significand fits in 64 bits and the decimal exponent stays within the exact
- * power-of-ten table used by the implementation. Outside that range, results
- * are approximate but target-deterministic and may not round-trip exactly.
- * Values below the half-way threshold to the smallest subnormal round to
- * signed zero with the input sign preserved.
+ * Decimal-to-double conversion routes through the shared ASCII float backend.
+ * Finite decimal inputs are rounded to IEEE-754 binary64 with
+ * round-to-nearest, ties-to-even behavior. Values below the half-way threshold
+ * to the smallest subnormal round to signed zero with the input sign
+ * preserved.
  */
 [[nodiscard]] proven_result_f64_t proven_scan_f64(proven_scan_t *scan);
 

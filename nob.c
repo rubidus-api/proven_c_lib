@@ -90,10 +90,13 @@ static bool compile_object_tmp(const char *compiler, const char *src, const char
     return success;
 }
 
-static bool link_executable_tmp(const char *compiler, const char *src, Nob_File_Paths obj_files, const char *exec_tmp, const char *mode, const char *extra_ldflags, const char *standard_flag, const char *sysroot, uint32_t *out_hash) {
+static bool link_executable_tmp(const char *compiler, const char *src, Nob_File_Paths obj_files, const char *exec_tmp, const char *mode, const char *extra_cflags, const char *extra_ldflags, const char *standard_flag, const char *sysroot, uint32_t *out_hash) {
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, compiler);
     append_mode_cflags(&cmd, mode, standard_flag, sysroot);
+    /* Mirror the user -cflags onto test compilation so config macros that affect
+     * public headers stay consistent with the library objects. */
+    if (extra_cflags) nob_cmd_append(&cmd, extra_cflags);
     if (strcmp(mode, "asan") == 0) nob_cmd_append(&cmd, "-fsanitize=address");
     else if (strcmp(mode, "ubsan") == 0) nob_cmd_append(&cmd, "-fsanitize=undefined");
     else if (strcmp(mode, "tsan") == 0) nob_cmd_append(&cmd, "-fsanitize=thread");
@@ -281,7 +284,7 @@ static const char *detect_runtime_profile(void) {
 static void print_proven_build_plan(const char *build_mode, const char *compiler_exe, const char *linker_exe,
                                     const char *archiver_exe, const char *sysroot,
                                     const char *build_root, const char *build_dir, size_t source_count,
-                                    size_t test_count, bool cross_check, bool only_regression) {
+                                    size_t test_count, bool cross_check, bool only_regression, bool benchmark_mode) {
     nob_log(NOB_INFO, "[PROVEN][BUILD][BEGIN] mode=%s cc=%s ld=%s build_root=%s build_dir=%s",
             build_mode, compiler_exe, linker_exe, build_root, build_dir);
     nob_log(NOB_INFO, "[PROVEN][BUILD][ENV] runtime=%s platform=%s", detect_runtime_profile(),
@@ -298,6 +301,8 @@ static void print_proven_build_plan(const char *build_mode, const char *compiler
         nob_log(NOB_INFO, "[PROVEN][BUILD][PLAN] cross matrix selected; no hosted test executables will be linked or run.");
     } else if (only_regression) {
         nob_log(NOB_INFO, "[PROVEN][BUILD][PLAN] regression-only run selected; only the regression subset will be linked and executed.");
+    } else if (benchmark_mode) {
+        nob_log(NOB_INFO, "[PROVEN][BUILD][PLAN] benchmark run selected; only the benchmark executable will be linked and executed.");
     } else {
         nob_log(NOB_INFO, "[PROVEN][BUILD][PLAN] sources=%zu tests=%zu; library objects will be compiled before test executables are linked and executed.",
                 source_count, test_count);
@@ -486,6 +491,7 @@ int main(int argc, char **argv)
     const char *user_ldflags = NULL;
     bool show_help = false;
     bool only_regression = false;
+    bool benchmark_mode = false;
     bool cross_check = false;
     const char *build_root = NULL;
 
@@ -518,6 +524,10 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[0], "regression-ubsan") == 0) {
             build_mode = "ubsan";
             only_regression = true;
+            nob_shift_args(&argc, &argv);
+        } else if (strcmp(argv[0], "bench-float") == 0 || strcmp(argv[0], "benchmark-float") == 0) {
+            build_mode = "release";
+            benchmark_mode = true;
             nob_shift_args(&argc, &argv);
         } else if (strcmp(argv[0], "asan") == 0) {
             build_mode = "asan";
@@ -615,6 +625,7 @@ int main(int argc, char **argv)
         printf("  regression         Run only the regression test suite (debug mode).\n");
         printf("  regression-asan    Run regression tests with AddressSanitizer.\n");
         printf("  regression-ubsan   Run regression tests with UndefinedBehaviorSanitizer.\n");
+        printf("  bench-float        Run the float parse benchmark only.\n");
         printf("  clean              Remove the build directory.\n");
         printf("  help, -h, --help   Show this help message.\n\n");
         printf("Options:\n");
@@ -635,6 +646,7 @@ int main(int argc, char **argv)
         printf("  ./nob -cc clang    Build using the Clang compiler.\n");
         printf("  ./nob -cflags \"-DDEBUG\"  Build with custom debug definition.\n");
         printf("  ./nob asan -f      Force rebuild and check for memory leaks with ASan.\n");
+        printf("  ./nob bench-float  Build and run the float parse benchmark.\n");
         printf("  ./nob cross -build-root /home/user/work/build/proven_c_lib  Compile target matrix.\n");
         printf("  ./nob clean        Clean up all build artifacts.\n");
         return 0;
@@ -722,7 +734,7 @@ int main(int argc, char **argv)
         "src/proven/heap.c", "src/proven/u8str.c", "src/proven/u16str.c", "src/proven/array.c",
         "src/proven/ring.c", "src/proven/map.c", "src/proven/algorithm.c", "src/proven/fs.c",
         "src/proven/time.c", "src/proven/fmt.c", "src/proven/mmap.c", "src/proven/sysio.c",
-        "src/proven/job.c", "src/proven/scan.c", "src/proven/float_decimal.c", "src/proven/float_format.c", "src/proven/panic.c", "platform/proven_sys_mem.c",
+        "src/proven/job.c", "src/proven/scan.c", "src/proven/float_decimal.c", "src/proven/float_parse.c", "src/proven/float_format.c", "src/proven/panic.c", "platform/proven_sys_mem.c",
         "platform/proven_sys_fs.c", "platform/proven_sys_time.c", "platform/proven_sys_env.c",
         "platform/proven_sys_thread.c", "platform/proven_sys_io.c", "platform/proven_sys_math.c"
     };
@@ -735,7 +747,7 @@ int main(int argc, char **argv)
         "include/proven/buffer.h", "include/proven/fs.h", "include/proven/sysio.h", "include/proven/align.h",
         "include/proven/u8str.h", "include/proven/u16str.h", "include/proven/job.h", "include/proven/allocator.h",
         "include/proven/pool.h", "include/proven/version.h", "include/proven/alias_xcv.h",
-        "include/proven/float_config.h", "include/proven/float_format.h", "src/proven/float_decimal.h",
+        "include/proven/float_config.h", "include/proven/float_format.h", "include/proven/float_parse.h", "src/proven/float_decimal.h",
         "platform/proven_sys_mem.h", "platform/proven_sys_fs.h", "platform/proven_sys_time.h",
         "platform/proven_sys_env.h", "platform/proven_sys_thread.h", "platform/proven_sys_io.h", "platform/proven_sys_math.h"
     };
@@ -791,6 +803,9 @@ int main(int argc, char **argv)
         { "tests/test_float_module_scaffold", "float module scaffold", "Verify the shared float helpers live in a dedicated internal translation unit instead of being copied into fmt.c and scan.c.", "Inspect src/proven/float_decimal.c, src/proven/float_decimal.h, fmt.c, scan.c, and nob.c if the shared decimal helper scaffold regresses." },
         { "tests/test_float_bits", "float bit extraction", "Verify the internal float bit helpers preserve raw IEEE-754 bit patterns for f32 and f64 values, including signed zero, infinities, and NaN payloads.", "Inspect src/proven/float_decimal.c if the raw byte-copy helpers stop matching the object representation." },
         { "tests/test_u128_mul", "wide multiply helper", "Verify the shared 64x64 to 128-bit multiply helper returns exact high and low halves for representative operands.", "Inspect src/proven/float_decimal.c if the wide multiply helper stops matching the reference product." },
+        { "tests/test_float_bigint_divmod", "bigint divmod helper", "Verify the shared big-integer division helper returns an exact quotient and remainder (q*den + r == num, r < den) across single-limb and multi-limb operands.", "Inspect proven_float_bigint_divmod (Knuth Algorithm D) in src/proven/float_decimal.c if reconstruction fails." },
+        { "tests/test_float_parse_api", "float parse API", "Verify the public ASCII float parser and strtod-like wrapper expose consumed-length, endptr, and range signaling over the shared exact backend.", "Inspect include/proven/float_parse.h, src/proven/float_parse.c, and src/proven/float_decimal.c if the public parser seam or wrapper contract drifts." },
+        { "tests/test_float_rfc_0001", "RFC-0001 parse audit", "Verify the decimal-to-binary64 rewrite still satisfies the explicit named cases from docs/proposals/rfc-0001.", "Inspect docs/proposals/rfc-0001, include/proven/float_parse.h, src/proven/float_parse.c, and src/proven/float_decimal.c if a named RFC audit case fails." },
         { "tests/test_fmt_fastpath", "formatter truncation comparison", "Compare truncating fixed-capacity formatting against the growable reference path for exact-fit, truncation, malformed format, and excess-argument cases.", "Inspect truncation accounting and the fixed-capacity write path if the result bytes or counts drift." },
         { "tests/test_scan_f64_accuracy", "float scanner accuracy", "Verify float scanning preserves exact small values, signed zero, round-trip style decimals, exponent edges, and cursor rollback on malformed input.", "Inspect proven_scan_f64 decimal accumulation, exponent scaling, and failure-atomic cursor restore if any exact-value case drifts." },
         { "tests/test_scan_f64_bounds", "float scanner boundary behavior", "Verify float scanning treats underflow as signed zero, reports overflow deterministically, and preserves cursor rollback at the true boundary cases.", "Inspect proven_scan_f64 exponent-to-value handling and final finite checks if a boundary token returns the wrong error or wrong sign." },
@@ -830,8 +845,12 @@ int main(int argc, char **argv)
         { "tests/test_freestanding", "freestanding runtime core", "Verify allocator-backed arrays, algorithms, intrusive lists, rings, maps, strings, formatting, and scanning in the reduced core.", "Inspect only freestanding-safe modules first; any hosted PAL dependency here is a portability regression." },
     };
 
+    const Proven_Test_Case benchmark_tests[] = {
+        { "tests/test_float_parse_path_benchmark", "float parse path benchmark", "Compare the shared float parser, wrapper, and host strtod on separate path-oriented decimal corpora and record dated docs output.", "Inspect src/proven/float_parse.c, src/proven/float_decimal.c, and the path-specific corpus split if the timing harness fails or any checksum drifts." },
+    };
+
     print_proven_build_plan(build_mode, compiler_exe, linker_exe, archiver_exe, sysroot, build_root, build_dir,
-                            NOB_ARRAY_LEN(srcs), NOB_ARRAY_LEN(all_tests), cross_check, only_regression);
+                            NOB_ARRAY_LEN(srcs), NOB_ARRAY_LEN(all_tests), cross_check, only_regression, benchmark_mode);
 
     if (cross_check) {
         const char *cross_root = nob_temp_sprintf("%s/cross", build_root);
@@ -844,6 +863,9 @@ int main(int argc, char **argv)
     if (strcmp(build_mode, "freestanding") == 0) {
         tests = freestanding_tests;
         tests_count = NOB_ARRAY_LEN(freestanding_tests);
+    } else if (benchmark_mode) {
+        tests = benchmark_tests;
+        tests_count = NOB_ARRAY_LEN(benchmark_tests);
     }
 
     const char *obj_ext = ".o";
@@ -956,6 +978,10 @@ int main(int argc, char **argv)
             Nob_Cmd mock = {0};
             nob_cmd_append(&mock, linker_exe);
             append_mode_cflags(&mock, build_mode, standard_flag, sysroot);
+            /* Pass user -cflags to test compilation too, so config macros that
+             * affect public headers (e.g. PROVEN_FLOAT_BIGINT_LIMBS) stay
+             * consistent between the library objects and the test sources. */
+            if (user_cflags) nob_cmd_append(&mock, user_cflags);
             if (strcmp(build_mode, "asan") == 0) nob_cmd_append(&mock, "-fsanitize=address");
             else if (strcmp(build_mode, "ubsan") == 0) nob_cmd_append(&mock, "-fsanitize=undefined");
             else if (strcmp(build_mode, "tsan") == 0) nob_cmd_append(&mock, "-fsanitize=thread");
@@ -982,7 +1008,7 @@ int main(int argc, char **argv)
         if (should_link) {
             tests_rebuilt += 1;
             nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][REBUILD] path=%s", test->path);
-            if (!link_executable_tmp(linker_exe, src_path, obj_files, exec_tmp, build_mode, user_ldflags, standard_flag, sysroot, NULL)) {
+            if (!link_executable_tmp(linker_exe, src_path, obj_files, exec_tmp, build_mode, user_cflags, user_ldflags, standard_flag, sysroot, NULL)) {
                 print_proven_test_fail(test, "link", "The test executable did not link. Read the compiler diagnostics above, then check source/header/API drift.");
                 if (nob_file_exists(exec_tmp)) nob_delete_file(exec_tmp);
                 return 1;

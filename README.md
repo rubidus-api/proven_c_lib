@@ -48,6 +48,7 @@ Common checks:
 ./nob ubsan
 ./nob tsan
 ./nob regression
+./nob bench-float
 ./nob freestanding
 ./nob cross -build-root /home/user/work/build/proven_c_lib
 ```

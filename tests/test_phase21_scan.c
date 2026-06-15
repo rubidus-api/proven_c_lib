@@ -352,15 +352,21 @@ int main(void) {
     // Test 8: Security and edge cases for f64 parsing
     PROVEN_TEST_INFO("Testing f64 scanning security and edge cases...");
     {
+        /*
+         * A dangling exponent marker is not part of the number. Like strtod,
+         * the scanner accepts the mantissa and stops at the `e`, leaving the
+         * rest of the field for the next token.
+         */
         proven_scan_t scan1 = proven_scan_init(PROVEN_LIT("1e 5"));
         proven_result_f64_t res1 = proven_scan_f64(&scan1);
-        PROVEN_TEST_ASSERT(res1.err == PROVEN_ERR_INVALID_ARG || res1.err == PROVEN_ERR_OUT_OF_BOUNDS, 
-                           "Whitespace inside exponent must be blocked", "Fix proven_scan_f64");
+        PROVEN_TEST_ASSERT(res1.err == PROVEN_OK && res1.val > 0.999 && res1.val < 1.001,
+                           "Dangling exponent marker leaves the mantissa intact", "Fix proven_scan_f64");
+        PROVEN_TEST_ASSERT(scan1.cursor == 1, "Scanner stops at the dangling exponent marker", "Inspect proven_scan_f64 cursor advancement for incomplete exponents");
 
         proven_scan_t scan2 = proven_scan_init(PROVEN_LIT("1e9999999"));
         proven_result_f64_t res2 = proven_scan_f64(&scan2);
-        PROVEN_TEST_ASSERT(res2.err == PROVEN_ERR_OUT_OF_BOUNDS, 
-                           "Large exponent must be blocked to prevent DoS", "Limit e in proven_scan_f64");
+        PROVEN_TEST_ASSERT(res2.err == PROVEN_ERR_OVERFLOW,
+                           "Large exponent must report overflow after full tokenization", "Keep large exponent scanning finite-time and let the decimal converter classify overflow.");
                            
         proven_scan_t scan3 = proven_scan_init(PROVEN_LIT("1e+5"));
         proven_result_f64_t res3 = proven_scan_f64(&scan3);

@@ -262,8 +262,33 @@ Current float rendering keeps a fixed six-digit fractional form for finite value
 
 - Floating-point output uses six fractional digits with round-half-up behavior.
 - The text form is intended for diagnostics and logs, not for round-trip serialization.
-- Decimal-to-double scanning is designed to stay exact within the implementation's limited power-of-ten range; outside that range, results are approximate but target-deterministic.
+- Decimal-to-double scanning routes through the shared exact backend and rounds finite decimal inputs to IEEE-754 binary64 with round-to-nearest, ties-to-even behavior.
 - Values below the half-way threshold to the smallest subnormal round to signed zero with the input sign preserved.
+- The current parser path is layered as `Clinger fast path -> staged Eisel-Lemire layer -> exact bigint fallback`.
+- Internal metrics exist so tests can verify which path accepted a representative decimal token.
+- The current cached `5^q` table is checked in as generated source and can be
+  regenerated from `scripts/generate_float_decimal_tables.py`.
+- The current staged Eisel-Lemire layer handles a conservative subset only:
+  positive exponents backed by the generated `5^q` table and exact
+  negative-exponent cases where the same `5^q` cancels cleanly out of the
+  significand.
+- When `__uint128_t` is available, the staged layer also handles a bounded
+  negative-exponent ratio subset by rounding `mantissa / 5^q` directly for
+  normal-range candidates, including cases that need more than 64 bits of
+  temporary left-shift during normalization.
+- On the current implementation, staged successes finish through the shared
+  cached-power product plan. Negative cases that remain uncertain now defer
+  directly to the exact bigint fallback instead of going through a separate
+  denominator-normalization staged family.
+- The same staged cached-power path now also reaches some subnormal candidates
+  such as `5e-324`; values below the half-threshold to the smallest subnormal
+  still fall through to exact fallback.
+
+### Public float parsing APIs
+
+- `proven_scan_f64()` parses from a scanner cursor and restores the cursor on failure.
+- `proven_parse_double_ascii()` parses one locale-free ASCII token from a view and reports consumed length.
+- `proven_strtod()` is the wrapper layer that skips leading ASCII whitespace and reports `endptr`.
 
 ## 4. Format string grammar
 

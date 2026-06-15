@@ -13,12 +13,50 @@ typedef struct proven_u128_parts_t {
     proven_u64 hi;
 } proven_u128_parts_t;
 
+typedef enum {
+    PROVEN_FLOAT_PARSE_KIND_DECIMAL = 0,
+    PROVEN_FLOAT_PARSE_KIND_INF,
+    PROVEN_FLOAT_PARSE_KIND_NAN,
+} proven_float_parse_kind_t;
+
+typedef struct {
+    proven_err_t err;
+    proven_float_parse_kind_t kind;
+    bool negative;
+    proven_size_t consumed;
+    bool has_nonzero_digit;
+} proven_float_parse_result_t;
+
+typedef struct {
+    proven_u64 total_conversions;
+    proven_u64 clinger_fast_path_hits;
+    proven_u64 eisel_lemire_fast_path_hits;
+    proven_u64 eisel_lemire_product_plan_hits;
+    proven_u64 exact_fallback_hits;
+} proven_float_decimal_stats_t;
+
 proven_u32 proven_float_bits_f32(float value);
 proven_u64 proven_float_bits_f64(double value);
 proven_u128_parts_t proven_float_mul_u64_u64_to_u128(proven_u64 lhs, proven_u64 rhs);
 
-double proven_float_scale_pow10(double value, proven_i64 exp10);
-double proven_float_convert_decimal(proven_u64 mantissa, proven_i64 exp10);
+/*
+ * Big-integer division on little-endian base-2^64 limb arrays. Computes
+ * quot = floor(num / den) and rem = num mod den. The caller provides output
+ * buffers with capacity for at least nlen (quotient) and dlen (remainder)
+ * limbs; the significant lengths are written to *qlen and *rlen. num and den
+ * must each have at most 160 significant limbs and be trimmed (no leading-zero
+ * limb). Returns false on division by zero or an over-capacity operand.
+ * Exposed for testing the shared float decimal backend's division helper.
+ */
+bool proven_float_bigint_divmod_u64(const proven_u64 *num, proven_size_t nlen,
+                                    const proven_u64 *den, proven_size_t dlen,
+                                    proven_u64 *quot, proven_size_t *qlen,
+                                    proven_u64 *rem, proven_size_t *rlen);
+
+proven_float_parse_result_t proven_float_parse_ascii_token(const proven_u8 *input, proven_size_t len);
+proven_err_t proven_float_convert_decimal(const proven_u8 *input, proven_size_t len, double *out);
+void proven_float_decimal_reset_stats(void);
+void proven_float_decimal_get_stats(proven_float_decimal_stats_t *out);
 bool proven_float_normalize_scientific(double *abs_v, int *sci_exp);
 bool proven_float_shortest_literal_f64(double value, char *buf, proven_size_t buf_cap, proven_size_t *written_out);
 bool proven_float_shortest_literal_f32(float value, char *buf, proven_size_t buf_cap, proven_size_t *written_out);

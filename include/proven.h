@@ -27,6 +27,7 @@
 #include "proven/fs.h"
 #include "proven/time.h"
 #include "proven/fmt.h"
+#include "proven/float_parse.h"
 #include "proven/float_format.h"
 #include "proven/mmap.h"
 #include "proven/sysio.h"
