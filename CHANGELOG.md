@@ -20,6 +20,7 @@ The format follows Keep a Changelog:
 ### Removed
 
 - Removed the obsolete hand-maintained shortest literal table (`proven_float_shortest_literal_f64`/`_f32` and their tables) now that the shortest formatter computes every value directly, along with the structural tests that pinned the old staged round-trip-search backend.
+- Removed the dead round-trip-search fixed-precision machinery in `float_format.c` (`proven_float_format_roundtrip_search_fixed`, `candidate_exact`, `candidate_roundtrips`, `roundtrips_f64`/`_f32`, `adjust_fixed_neighbor`, `build_scientific_ld`, `normalize_scientific_ld`). It was reachable only through the `RYU` policy in `FIXED` mode, which no caller or test used; that combination now routes to the same exact integer path as the other policies. This removes the formatter's last `long double` use, so `float_format.c` is now entirely integer-based. Behavior of the exercised paths is unchanged (re-validated against host `snprintf` over ~3M doubles at precisions 1..18, zero mismatches).
 
 ### Fixed
 
