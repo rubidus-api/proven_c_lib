@@ -136,7 +136,7 @@ Standard informational and pass lines printed by test executables:
 
 The older test files still use many direct `PROVEN_TEST_INFO` calls. Those messages now share the `[PROVEN][TEST][INFO]` prefix. New or substantially edited tests should prefer `PROVEN_TEST_SECTION(name, intent, hint)` for each logically separate sub-check group.
 
-The float parse path benchmark uses the same test harness and emits its timing rows through `[PROVEN][TEST][INFO]` so the captured output can be saved directly as a dated markdown report under `docs/benchmarks/`.
+The float parse path benchmark uses the same test harness and emits its timing rows through `[PROVEN][TEST][INFO]` so the captured output can be saved directly as a dated markdown report under `docs/internal/benchmarks/`.
 
 ## Test modes
 
@@ -233,7 +233,7 @@ Failure tip: do not delete a regression because it feels narrow. It exists becau
 
 ### `bench-float`
 
-Intent: run the float parse path benchmark executable only and write a dated report under `docs/benchmarks/`.
+Intent: run the float parse path benchmark executable only and write a dated report under `docs/internal/benchmarks/`.
 
 What it checks:
 
@@ -1085,7 +1085,7 @@ Failure tip: inspect `include/proven/float_parse.h`, `src/proven/float_parse.c`,
 
 ### 38b. `tests/test_float_rfc_0001` - RFC-0001 parse audit
 
-Intent: verify the decimal-to-binary64 rewrite still satisfies the explicit named cases from `docs/proposals/rfc-0001`.
+Intent: verify the decimal-to-binary64 rewrite still satisfies the explicit named cases from `docs/internal/proposals/rfc-0001`.
 
 Sub-checks:
 
@@ -1096,7 +1096,7 @@ Sub-checks:
 - Confirms a 110-digit significand plus huge overflow/underflow exponents scan safely.
 - Confirms malformed/endptr RFC cases such as `123abc`, `.`, `e10`, `1e`, `1e+`, and leading whitespace through the wrapper keep the documented behavior.
 
-Failure tip: inspect `docs/proposals/rfc-0001`, `include/proven/float_parse.h`, `src/proven/float_parse.c`, and `src/proven/float_decimal.c` if a named RFC audit case fails.
+Failure tip: inspect `docs/internal/proposals/rfc-0001`, `include/proven/float_parse.h`, `src/proven/float_parse.c`, and `src/proven/float_decimal.c` if a named RFC audit case fails.
 
 ### 39. `tests/test_float_format_policy` - float format policy scaffold
 

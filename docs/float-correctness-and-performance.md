@@ -278,8 +278,9 @@ glibc on these cases, and such magnitudes are uncommon in practice.
 
 The exhaustive sweep and the benchmark are standalone C programs that link the
 library sources and the host C library as the oracle. The dated raw outputs are
-kept alongside this document under `docs/benchmarks/`
-(`*-f32-exhaustive-validation.md` and `*-float-vs-host-benchmark.md`). To
+kept under `docs/internal/benchmarks/`
+(`*-f32-exhaustive-validation.md`, `*-f64-differential-validation.md`, and
+`*-float-vs-host-benchmark.md`). To
 re-run: compile the library sources at `-O2`, link the harness, and run — the
 exhaustive sweep prints the failure table above (all zeros), and the benchmark
 prints the tables in §3.
