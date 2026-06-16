@@ -11,6 +11,17 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [Unreleased]
+
+### Added
+
+- Added growing variants of the in-place string edits: `proven_u8str_insert_grow` and `proven_u8str_replace_at_grow` (plus `xcv_` aliases). They have the same semantics as `proven_u8str_insert` / `proven_u8str_replace_at` but grow the buffer (doubling capacity) when the edit does not fit instead of returning `PROVEN_ERR_OUT_OF_BOUNDS`, so callers (for example a text editor making mid-buffer edits) no longer have to `reserve` manually before every insert. On allocation failure the string is left unchanged. New unit coverage in `tests/test_phase7_u8str_mut`.
+- Added `proven_sys_mem_chr` to the platform memory layer: the system `memchr` when hosted, a freestanding-safe SWAR (word-at-a-time) scan otherwise. Verified against `memchr` over 2,000,000 randomized cases.
+
+### Changed
+
+- Rewrote `proven_u8str_view_find` from a naive O(n·m) byte loop to an adaptive-anchor `memchr` search: it samples the haystack, picks the needle byte that looks rarest, scans for it with `proven_sys_mem_chr`, and verifies the bytes on each side. On realistic text it is faster than glibc `memmem` (0.17–1.01× the time; single-byte search equals `memchr`), because a typical needle contains a byte that is rare or absent in the text. On adversarial binary-alphabet inputs it stays within ~3.6× of `memmem`. Validated for first-match equivalence against host `memmem` over 3,000,000 cases per alphabet (2/4/26 symbols) with zero mismatches. Benchmark: `docs/internal/benchmarks/20260616-141356-u8str-find-vs-memmem.md`.
+
 ## [2026-06-16] — proven_c_lib-v26.06.16v
 
 ### Changed

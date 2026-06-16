@@ -129,6 +129,54 @@ int main() {
         proven_u8str_destroy(alloc, &atomic_str);
     }
 
+    // 5. Growable insert / replace_at (capacity is grown instead of failing)
+    PROVEN_TEST_INFO("Verifying growable insert/replace_at...");
+    {
+        proven_result_u8str_t gres = proven_u8str_create(alloc, 4); // tiny capacity
+        proven_u8str_t g = gres.value;
+        PROVEN_TEST_ASSERT(PROVEN_IS_OK(proven_u8str_append(&g, PROVEN_LIT("AD"))), "seed AD", "check append");
+
+        // insert_grow in the middle, exceeding the original capacity
+        proven_err_t e = proven_u8str_insert_grow(alloc, &g, 1, PROVEN_LIT("BC"));
+        PROVEN_TEST_ASSERT(PROVEN_IS_OK(e), "insert_grow should grow and succeed", "check insert_grow");
+        PROVEN_TEST_ASSERT(strcmp(proven_u8str_as_cstr(&g), "ABCD") == 0, "ABCD after insert_grow", "check content");
+
+        // replace_at_grow expanding a region beyond capacity
+        e = proven_u8str_replace_at_grow(alloc, &g, 1, 2, PROVEN_LIT("XXXXXXXX"));
+        PROVEN_TEST_ASSERT(PROVEN_IS_OK(e), "replace_at_grow should grow and succeed", "check replace_at_grow");
+        PROVEN_TEST_ASSERT(strcmp(proven_u8str_as_cstr(&g), "AXXXXXXXXD") == 0, "AXXXXXXXXD after replace_at_grow", "check content");
+
+        // insert_grow at the exact end (append semantics)
+        e = proven_u8str_insert_grow(alloc, &g, g.internal.len, PROVEN_LIT("!"));
+        PROVEN_TEST_ASSERT(PROVEN_IS_OK(e) && strcmp(proven_u8str_as_cstr(&g), "AXXXXXXXXD!") == 0, "append via insert_grow", "check end insert");
+
+        // out-of-range index still rejected
+        e = proven_u8str_insert_grow(alloc, &g, g.internal.len + 5, PROVEN_LIT("?"));
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_OUT_OF_BOUNDS, "insert_grow rejects index past length", "check bounds");
+
+        proven_u8str_destroy(alloc, &g);
+    }
+
+    // 6. view_find edge cases (anchor selection / boundaries)
+    PROVEN_TEST_INFO("Verifying view_find edge cases...");
+    {
+        proven_u8str_view_t h = PROVEN_LIT("abracadabra_abracadabra");
+        PROVEN_TEST_ASSERT(proven_u8str_view_find(h, 0, PROVEN_LIT("abra")) == 0, "find at 0", "check find");
+        PROVEN_TEST_ASSERT(proven_u8str_view_find(h, 1, PROVEN_LIT("abra")) == 7, "find after offset", "check find");
+        PROVEN_TEST_ASSERT(proven_u8str_view_find(h, 0, PROVEN_LIT("cad")) == 4, "find middle", "check find");
+        // "dabra" occurs at index 6 and again ending exactly at the haystack end (18)
+        PROVEN_TEST_ASSERT(proven_u8str_view_find(h, 0, PROVEN_LIT("dabra")) == 6, "find first dabra", "check find");
+        PROVEN_TEST_ASSERT(proven_u8str_view_find(h, 7, PROVEN_LIT("dabra")) == 18, "find dabra ending at end", "check tail");
+        // single byte
+        PROVEN_TEST_ASSERT(proven_u8str_view_find(h, 0, PROVEN_LIT("_")) == 11, "single-byte find", "check single");
+        // absent
+        PROVEN_TEST_ASSERT(proven_u8str_view_find(h, 0, PROVEN_LIT("xyz")) == PROVEN_INDEX_NOT_FOUND, "absent needle", "check absent");
+        // needle longer than haystack
+        PROVEN_TEST_ASSERT(proven_u8str_view_find(PROVEN_LIT("ab"), 0, PROVEN_LIT("abc")) == PROVEN_INDEX_NOT_FOUND, "needle too long", "check length");
+        // empty needle matches at offset
+        PROVEN_TEST_ASSERT(proven_u8str_view_find(h, 3, (proven_u8str_view_t){0}) == 3, "empty needle at offset", "check empty");
+    }
+
     PROVEN_TEST_PASS("All Phase 7 Tests Passed Successfully!");
     return 0;
 }

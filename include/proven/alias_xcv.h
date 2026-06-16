@@ -378,10 +378,12 @@
 #define xcv_u8str_destroy proven_u8str_destroy
 #define xcv_u8str_fmt_internal proven_u8str_fmt_internal
 #define xcv_u8str_insert proven_u8str_insert
+#define xcv_u8str_insert_grow proven_u8str_insert_grow
 #define xcv_u8str_is_valid proven_u8str_is_valid
 #define xcv_u8str_mut_t proven_u8str_mut_t
 #define xcv_u8str_remove proven_u8str_remove
 #define xcv_u8str_replace_at proven_u8str_replace_at
+#define xcv_u8str_replace_at_grow proven_u8str_replace_at_grow
 #define xcv_u8str_replace_first proven_u8str_replace_first
 #define xcv_u8str_reserve proven_u8str_reserve
 #define xcv_u8str_t proven_u8str_t

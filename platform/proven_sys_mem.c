@@ -96,6 +96,11 @@ int proven_sys_mem_cmp(const void* s1, const void* s2, proven_size_t size) {
     if (!s1 && !s2) return 0;
     if (!s1) return -1;
     if (!s2) return 1;
-    
+
     return memcmp(s1, s2, size);
+}
+
+const void* proven_sys_mem_chr(const void* s, int c, proven_size_t size) {
+    if (!s || size == 0) return (const void*)0;
+    return memchr(s, c, size);
 }
