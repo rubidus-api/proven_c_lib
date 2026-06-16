@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.06.16w)
+# proven Test Matrix (v26.06.16x)
 
 This document describes how the `proven` test suite is organized, what each test is intended to validate, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
 
@@ -772,7 +772,7 @@ Intent: verify panic-on-allocation-failure behavior is deterministic and does no
 
 Sub-checks:
 
-- Overrides the weak panic handler with a test hook.
+- Installs a test panic handler with `proven_set_panic_handler`.
 - Allocates successfully with `alloc_or_panic` and confirms no panic occurred.
 - Requests more memory than the arena can provide.
 - Confirms the panic hook was invoked exactly for the out-of-memory path.

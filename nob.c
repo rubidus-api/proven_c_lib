@@ -348,6 +348,13 @@ static void append_cross_cflags(Nob_Cmd *cmd, const Proven_Cross_Target *target,
     if (target->arch_flag_2) nob_cmd_append(cmd, target->arch_flag_2);
 }
 
+/* Targets that also link a smoke executable instead of compiling only.
+ * This catches link-time symbol resolution that differs from ELF, notably
+ * PE/COFF (Windows / mingw-w64) weak-symbol handling. */
+static bool target_links_smoke(const Proven_Cross_Target *target) {
+    return !target->freestanding && strncmp(target->name, "windows-", 8) == 0;
+}
+
 static bool cross_target_toolchain_usable(const char *build_root, const Proven_Cross_Target *target, const char *sysroot, const char **out_standard_flag) {
     char probe_dir[512];
     if (!format_path(probe_dir, sizeof(probe_dir), "%s/_probe", build_root)) return false;
@@ -469,6 +476,35 @@ static bool run_cross_compile_matrix(const char *build_root, const char *sysroot
             nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL_HINT] Check public header feature guards and target-specific compiler diagnostics above.");
             return false;
         }
+
+        if (target_links_smoke(target)) {
+            char exe_path[768];
+            if (!format_path(exe_path, sizeof(exe_path), "%s/link-smoke", target_dir)) return false;
+            Nob_Cmd link = {0};
+            nob_cmd_append(&link, target->compiler);
+            append_cross_cflags(&link, target, standard_flag, sysroot);
+            for (size_t i = 0; i < srcs_count; ++i) {
+                char link_obj[256];
+                sanitize_name(link_obj, sizeof link_obj, srcs[i]);
+                char link_obj_path[768];
+                if (!format_path(link_obj_path, sizeof(link_obj_path), "%s/%s.o", target_dir, link_obj)) {
+                    nob_cmd_free(link);
+                    return false;
+                }
+                nob_cmd_append(&link, nob_temp_sprintf("%s", link_obj_path));
+            }
+            nob_cmd_append(&link, smoke_path, "tests/test_cross_link_smoke.c");
+            nob_cmd_append(&link, "-o", exe_path, "-lwinpthread");
+            bool linked = nob_cmd_run_sync(link);
+            nob_cmd_free(link);
+            if (!linked) {
+                nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL] path=cross/%s stage=link", target->name);
+                nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL_HINT] A symbol resolved on ELF but not on this target's object format (e.g. a PE/COFF weak symbol). Inspect the undefined reference above.");
+                return false;
+            }
+            nob_log(NOB_INFO, "[PROVEN][TEST][INFO] path=cross/%s stage=link linked smoke executable", target->name);
+        }
+
         nob_log(NOB_INFO, "[PROVEN][TEST][PASS] path=cross/%s", target->name);
     }
 

@@ -84,7 +84,7 @@ static inline proven_result_mem_mut_t proven_arena_alloc(proven_arena_t *arena, 
 static inline proven_mem_mut_t proven_arena_alloc_aligned_or_panic(proven_arena_t *arena, proven_size_t size, proven_size_t align) {
     proven_result_mem_mut_t res = proven_arena_alloc_aligned(arena, size, align);
     if (res.err != PROVEN_OK) {
-        proven_panic_handler("proven_arena_alloc_aligned_or_panic: Out of Memory");
+        proven_panic("proven_arena_alloc_aligned_or_panic: Out of Memory");
     }
     return res.value;
 }

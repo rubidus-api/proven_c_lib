@@ -259,7 +259,7 @@ proven_size_t aligned = (size + align - 1) & ~(align - 1); /* wrong: may overflo
 ## 6. Version macros
 
 ```c
-#define PROVEN_VERSION_STRING "proven_c_lib-v26.06.16w"
+#define PROVEN_VERSION_STRING "proven_c_lib-v26.06.16x"
 #define PROVEN_VERSION_NUM    260616
 #define PROVEN_VERSION_SUFFIX "w"
 ```
@@ -271,22 +271,27 @@ Use `PROVEN_VERSION_STRING` in diagnostics and build reports. Use `PROVEN_VERSIO
 ## 7. Panic hook
 
 ```c
-void proven_panic_handler(const char *msg);
+typedef void (*proven_panic_handler_t)(const char *msg);
+
+void proven_panic(const char *msg);
+void proven_set_panic_handler(proven_panic_handler_t handler);
 ```
 
-Purpose: handle terminal failure paths used by panic-style APIs such as `proven_arena_alloc_or_panic()`.
+Purpose: handle terminal failure paths used by panic-style APIs such as `proven_arena_alloc_or_panic()`. The library raises a panic by calling `proven_panic()`, which dispatches to the installed handler.
 
-Default behavior: the library provides a weak default implementation that traps.
+Default behavior: a built-in default handler traps (`__builtin_trap()`). The handler is dispatched through a function pointer rather than a weak symbol, so it links uniformly on ELF and PE/COFF (Windows / mingw-w64) toolchains.
 
 User override:
 
 ```c
-void proven_panic_handler(const char *msg) {
+static void my_panic(const char *msg) {
     log_critical(msg);
     for (;;) {
         /* reset, halt, or wait for debugger */
     }
 }
+
+proven_set_panic_handler(my_panic);   /* pass NULL to restore the default */
 ```
 
 Contract: production panic handlers should not return. If a panic handler returns, `_or_panic` result validity is not guaranteed.

@@ -1,4 +1,4 @@
-# Proven Freestanding Mode (v26.06.16w)
+# Proven Freestanding Mode (v26.06.16x)
 
 This guide describes the current `PROVEN_FREESTANDING` configuration as implemented by `nob.c` and the public headers.
 
@@ -146,18 +146,21 @@ if (!proven_alloc_is_valid(heap)) {
 
 ## 5. Panic handler override
 
-`proven_arena_alloc_or_panic()` and related panic paths call `proven_panic_handler()`.
+`proven_arena_alloc_or_panic()` and related panic paths call `proven_panic()`, which dispatches to the handler installed with `proven_set_panic_handler()`. The default handler traps.
 
 ```c
 #include "proven/panic.h"
 
-void proven_panic_handler(const char *msg) {
+static void my_panic(const char *msg) {
 (void)msg;
 /* optional: write msg to UART or crash log */
 for (;;) {
 /* or reset the MCU */
 }
 }
+
+/* install once during startup; pass NULL to restore the default */
+proven_set_panic_handler(my_panic);
 ```
 
 A production panic handler should not return. If it returns, the allocation result that triggered the panic is not guaranteed to be valid.

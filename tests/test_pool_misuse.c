@@ -4,7 +4,7 @@
 
 static int panic_triggered = 0;
 
-void proven_panic_handler(const char *msg) {
+static void on_panic(const char *msg) {
     (void)msg;
     panic_triggered = 1;
 }
@@ -39,6 +39,7 @@ static void check_pool_double_free_hardening(void) {
 
 int main(void) {
     PROVEN_TEST_INFO("Running pool misuse hardening checks...");
+    proven_set_panic_handler(on_panic);
     check_pool_double_free_hardening();
     return 0;
 }

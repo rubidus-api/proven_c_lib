@@ -78,13 +78,13 @@ static void proven_pool_free_trait(void *ctx, void *ptr) {
 
 #if PROVEN_HARDENED || !defined(NDEBUG)
     if (((uintptr_t)ptr) % pool->item_align != 0) {
-        proven_panic_handler("proven_pool_free: mismatched item alignment");
+        proven_panic("proven_pool_free: mismatched item alignment");
         return;
     }
 
     for (proven_size_t i = 0; i < pool->bin_len; i++) {
         if (pool->bin[i] == ptr) {
-            proven_panic_handler("proven_pool_free: double free detected");
+            proven_panic("proven_pool_free: double free detected");
             return;
         }
     }

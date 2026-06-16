@@ -44,12 +44,6 @@ typedef struct my_node {
     proven_i32 val;
 } my_node_t;
 
-// Override the panic handler for freestanding deterministic traps
-void proven_panic_handler(const char *msg) {
-    (void)msg;
-    __builtin_trap();
-}
-
 int main(void) {
     PROVEN_TEST_INFO("--- Starting Freestanding Environment Tests ---");
     proven_mem_mut_t backing = { .ptr = g_arena_mem, .size = sizeof(g_arena_mem) };
