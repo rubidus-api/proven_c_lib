@@ -256,39 +256,106 @@ proven_u8str_append_fmt_grow(alloc, &s, "{}", PROVEN_ARG(buf)); /* wrong if buf 
 If `PROVEN_FMT_NO_FLOAT` is defined, float support is removed from the generic selector and the float constructor is not available.
 That is a compile-time configuration choice, not a runtime toggle.
 
-Current float rendering keeps a fixed six-digit fractional form for finite values, then switches to scientific notation when the magnitude is too large or too small for the compact form. The carry logic is bounded so values near a rounding boundary stay stable instead of expanding into an unbounded normalization loop.
+The default `{}` rendering of a `double` produces a fixed six-digit fractional
+form for finite values and switches to scientific notation when the magnitude is
+too large or too small for the compact form. Unlike earlier versions, this output
+is now computed by an **exact, integer-only** engine (no `double`/`long double`
+approximation): the digits are correctly rounded (round-half-to-even), so `{}`
+matches what `printf("%.6f")` / `%.6e` would print on the same value. For a
+shortest round-trippable form, or for a precision other than six, use the
+`proven_float_format_*` policy API described below.
 
 ### Accuracy and limits
 
-- Floating-point output uses six fractional digits with round-half-up behavior.
-- The text form is intended for diagnostics and logs, not for round-trip serialization.
-- Decimal-to-double scanning routes through the shared exact backend and rounds finite decimal inputs to IEEE-754 binary64 with round-to-nearest, ties-to-even behavior.
-- Values below the half-way threshold to the smallest subnormal round to signed zero with the input sign preserved.
-- The current parser path is layered as `Clinger fast path -> staged Eisel-Lemire layer -> exact bigint fallback`.
-- Internal metrics exist so tests can verify which path accepted a representative decimal token.
-- The current cached `5^q` table is checked in as generated source and can be
-  regenerated from `scripts/generate_float_decimal_tables.py`.
-- The current staged Eisel-Lemire layer handles a conservative subset only:
-  positive exponents backed by the generated `5^q` table and exact
-  negative-exponent cases where the same `5^q` cancels cleanly out of the
-  significand.
-- When `__uint128_t` is available, the staged layer also handles a bounded
-  negative-exponent ratio subset by rounding `mantissa / 5^q` directly for
-  normal-range candidates, including cases that need more than 64 bits of
-  temporary left-shift during normalization.
-- On the current implementation, staged successes finish through the shared
-  cached-power product plan. Negative cases that remain uncertain now defer
-  directly to the exact bigint fallback instead of going through a separate
-  denominator-normalization staged family.
-- The same staged cached-power path now also reaches some subnormal candidates
-  such as `5e-324`; values below the half-threshold to the smallest subnormal
-  still fall through to exact fallback.
+- The default `{}` float output uses six fractional digits, correctly rounded to
+  nearest with ties to even (matching glibc `%.6f`/`%.6e`). It is exact at any
+  magnitude — there is no `long double` and no precision/magnitude ceiling beyond
+  the configurable big-integer capacity.
+- For round-trip serialization use the **shortest** policy
+  (`proven_float_format_options_shortest()`), which emits the shortest decimal
+  string that parses back to the exact same value.
+- Decimal-to-double scanning is correctly rounded to IEEE-754 binary64 with
+  round-to-nearest, ties-to-even, matching the host `strtod` bit for bit. Values
+  below the half-way threshold to the smallest subnormal round to signed zero with
+  the input sign preserved.
+- The parser is layered `Clinger fast path -> Eisel-Lemire -> exact big-integer
+  fallback`; every tier is exact and the fallback is the arbiter, so the result is
+  correctly rounded for every input. The cached power tables are generated source
+  (`scripts/generate_float_decimal_tables.py`).
+- The exact-fallback big-integer capacity is tunable with
+  `PROVEN_FLOAT_BIGINT_LIMBS` (see `include/proven/float_config.h`) for embedded
+  targets; the fast paths never touch the big integer.
+- Validation: the formatter and parser are checked exhaustively over all
+  4.28 billion finite `binary32` values and over 2.56 billion random `binary64`
+  values against the host C library, with zero mismatches. See
+  `docs/float-correctness-and-performance.md` for algorithms, methodology, and a
+  benchmark against glibc.
 
 ### Public float parsing APIs
 
-- `proven_scan_f64()` parses from a scanner cursor and restores the cursor on failure.
-- `proven_parse_double_ascii()` parses one locale-free ASCII token from a view and reports consumed length.
-- `proven_strtod()` is the wrapper layer that skips leading ASCII whitespace and reports `endptr`.
+Three entry points, sharing one correctly-rounded backend:
+
+- `proven_scan_f64(scan)` — parse from a `proven_scan_t` cursor; restores the
+  cursor on failure. The native, length-bounded path (no NUL terminator needed).
+- `proven_parse_double_ascii(view)` — parse one locale-free ASCII token from a
+  `proven_u8str_view_t` and report the consumed length.
+- `proven_strtod(nptr, endptr)` — a `strtod`-style convenience wrapper over a C
+  string: skips leading ASCII whitespace and reports `endptr`.
+
+#### Worked example: parsing
+
+```c
+#include "proven/scan.h"
+#include "proven/float_parse.h"
+
+/* (1) Native, view-based parsing through a scanner cursor. */
+proven_scan_t sc = proven_scan_init(proven_u8str_view_from_cstr("3.14159e2 rest"));
+proven_result_f64_t r = proven_scan_f64(&sc);
+if (r.err == PROVEN_OK) {
+    /* r.val == 314.159; the cursor now sits at " rest". */
+}
+
+/* (2) strtod-style wrapper for C strings. endptr reports where parsing stopped. */
+char *end = NULL;
+double v = proven_strtod("  -0.5\t", &end);   /* v == -0.5, *end == '\t' */
+
+/* A trailing exponent marker with no digits stops like strtod: "1e" parses 1,
+   leaving endptr at 'e'. Inputs with hundreds of significant digits and extreme
+   exponents are still rounded correctly via the exact fallback. */
+```
+
+#### Worked example: formatting with the policy API
+
+`proven_float_format_f64_policy` / `_f32_policy` write directly into a caller
+buffer and report the number of bytes written. They never allocate.
+
+```c
+#include "proven/float_format.h"
+
+char buf[64];
+proven_size_t n = 0;
+
+/* Shortest round-trippable form: 0.1 -> "0.1" (not "0.10000000000000001"). */
+proven_float_format_f64_policy(buf, sizeof buf, 0.1,
+    PROVEN_FLOAT_FORMAT_POLICY_RYU,
+    proven_float_format_options_shortest(), &n);
+/* buf == "0.1", n == 3 */
+
+/* Fixed precision (correctly rounded, round-half-to-even). */
+proven_float_format_options_t opt = proven_float_format_options_fixed_default();
+opt.precision = 2;
+proven_float_format_f64_policy(buf, sizeof buf, 3.14159,
+    PROVEN_FLOAT_FORMAT_POLICY_DEFAULT, opt, &n);
+/* buf == "3.14" */
+```
+
+- `PROVEN_FLOAT_FORMAT_POLICY_RYU` selects shortest output; `DEFAULT`/`SIMPLE`
+  select the exact fixed-precision path (`%f`, switching to `%e` for very large or
+  very small magnitudes).
+- Returns `PROVEN_ERR_OUT_OF_BOUNDS` if the buffer is too small (the value is never
+  truncated silently) and `PROVEN_ERR_INVALID_ARG` for an unsupported policy.
+- The generic `{}` formatter (`proven_u8str_append_fmt*`) uses the `DEFAULT`
+  policy internally, so everyday logging needs no direct call to this API.
 
 ## 4. Format string grammar
 
@@ -474,7 +541,7 @@ Do not pass a dead arena or a one-shot temporary buffer unless its lifetime is l
 ### Float format policy seam
 
 The public float policy header provides an explicit policy layer for float formatting.
-It is intentionally small and keeps the current fixed-precision formatter behavior as the default path.
+It is intentionally small and keeps the exact fixed-precision formatter as the default path.
 
 The main entry points are:
 
@@ -485,7 +552,7 @@ The main entry points are:
 
 Policy notes:
 
-- `PROVEN_FLOAT_FORMAT_POLICY_DEFAULT` and `PROVEN_FLOAT_FORMAT_POLICY_SIMPLE` preserve the current fixed-precision output.
+- `PROVEN_FLOAT_FORMAT_POLICY_DEFAULT` and `PROVEN_FLOAT_FORMAT_POLICY_SIMPLE` select the exact fixed-precision output (correctly rounded, round-half-to-even).
 - `PROVEN_FLOAT_FORMAT_POLICY_RYU` is the shortest-output policy branch.
 - The policy API returns `PROVEN_ERR_INVALID_ARG` for unsupported enum values.
 - The policy API returns `PROVEN_ERR_OUT_OF_BOUNDS` when the caller-provided buffer is too small.
