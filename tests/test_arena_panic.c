@@ -5,14 +5,15 @@
 
 static int panic_triggered = 0;
 
-// Override the weakly linked panic handler
-void proven_panic_handler(const char *msg) {
+// Install a non-trapping panic handler so the panic path can be observed.
+static void on_panic(const char *msg) {
     (void)msg;
     panic_triggered = 1;
 }
 
 int main(void) {
     PROVEN_TEST_INFO("--- Running test_arena_panic ---");
+    proven_set_panic_handler(on_panic);
 
     proven_u8 buffer[64];
     proven_mem_mut_t backing = { .ptr = buffer, .size = sizeof(buffer) };

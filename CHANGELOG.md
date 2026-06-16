@@ -11,6 +11,37 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-06-16] — proven_c_lib-v26.06.16x
+
+### Fixed
+
+- Made the panic handler link on Windows / PE-COFF (mingw-w64). The previous
+  weakly-linked `proven_panic_handler` default linked on ELF but not on PE: a
+  weak function definition in a separate object did not satisfy references,
+  producing `undefined reference to proven_panic_handler` on every Windows link
+  (the cross matrix is compile-only, so this was latent). Reported in
+  `docs/REPORT.md`.
+
+### Added
+
+- Cross matrix link smoke for the Windows targets (`./nob cross`): the
+  `windows-*` targets now link the full proven object set into an executable
+  (`tests/test_cross_link_smoke.c`) instead of compiling only, so link-time
+  symbol-resolution differences from ELF (such as the PE/COFF weak-symbol issue
+  above) are caught instead of slipping through.
+
+### Changed
+
+- Replaced the weak-symbol panic override with a portable registration model:
+  the library now raises panics via `proven_panic()` and installs handlers via
+  `proven_set_panic_handler(proven_panic_handler_t)` (pass `NULL` to restore the
+  trapping default). **Breaking:** defining a strong `proven_panic_handler` no
+  longer overrides the handler; call `proven_set_panic_handler()` instead.
+  Updated call sites (`pool.c`, `arena.h`), the override tests, and the panic
+  documentation in `manual/` and `TEST.md`.
+- Bumped the version to `proven_c_lib-v26.06.16x` and synced the version string
+  across `include/proven/version.h`, `README.md`, `TEST.md`, and `manual/`.
+
 ## [2026-06-16] — proven_c_lib-v26.06.16w
 
 ### Changed
