@@ -11,7 +11,11 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
-## [Unreleased]
+## [2026-06-16] — proven_c_lib-v26.06.16w
+
+### Changed
+
+- Bumped the version to `proven_c_lib-v26.06.16w`, releasing the editor-oriented `proven_u8str` work: the growing in-place edit variants and the multi-algorithm substring search. Synced the version string across `include/proven/version.h`, `README.md`, `TEST.md`, and the `manual/` chapters.
 
 ### Added
 
