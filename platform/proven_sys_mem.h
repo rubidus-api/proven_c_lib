@@ -77,6 +77,37 @@ static inline int proven_sys_mem_cmp(const void* s1, const void* s2, proven_size
     return 0;
 }
 
+static inline const void* proven_sys_mem_chr(const void* s, int c, proven_size_t n) {
+    if (!s || n == 0) return (const void*)0;
+    const unsigned char *p = (const unsigned char *)s;
+    unsigned char target = (unsigned char)c;
+    /* SWAR word-at-a-time scan; the 8-byte load is built by byte copies so there
+       is no alignment or strict-aliasing UB, and the wide stride only runs while
+       at least 8 bytes remain so it never over-reads. */
+    const proven_u64 ones = (proven_u64)0x0101010101010101ull;
+    const proven_u64 highs = (proven_u64)0x8080808080808080ull;
+    proven_u64 cmask = ones * (proven_u64)target;
+    while (n >= 8u) {
+        proven_u64 w = 0;
+        unsigned char *wp = (unsigned char *)&w;
+        for (int i = 0; i < 8; ++i) wp[i] = p[i];
+        proven_u64 x = w ^ cmask;
+        if (((x - ones) & ~x & highs) != 0u) {
+            for (proven_size_t i = 0; i < 8u; ++i) {
+                if (p[i] == target) return (const void*)(p + i);
+            }
+        }
+        p += 8u;
+        n -= 8u;
+    }
+    while (n > 0u) {
+        if (*p == target) return (const void*)p;
+        ++p;
+        --n;
+    }
+    return (const void*)0;
+}
+
 #else
 
 /**
@@ -121,6 +152,12 @@ void proven_sys_mem_set(void* dst, int value, proven_size_t size);
  * @brief Compares memory between two regions.
  */
 int proven_sys_mem_cmp(const void* s1, const void* s2, proven_size_t size);
+
+/**
+ * @brief Finds the first byte equal to `c` in the first `n` bytes of `s`.
+ * Returns a pointer to it, or NULL. Uses the system routine when hosted.
+ */
+const void* proven_sys_mem_chr(const void* s, int c, proven_size_t n);
 
 #endif /* PROVEN_FREESTANDING */
 

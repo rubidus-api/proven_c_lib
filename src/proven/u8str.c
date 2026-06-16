@@ -242,22 +242,81 @@ int proven_u8str_view_eq(proven_u8str_view_t a, proven_u8str_view_t b) {
     return proven_sys_mem_cmp(a.ptr, b.ptr, a.size) == 0;
 }
 
+/*
+ * Substring search: anchor on the rarest-looking byte of the needle (chosen
+ * cheaply below) and scan for it with proven_sys_mem_chr (the system memchr when
+ * hosted, a SWAR scan when freestanding), then verify the surrounding bytes.
+ * Anchoring on a needle byte that is uncommon in the haystack collapses the
+ * false-positive verifies that a fixed first-byte anchor suffers on adversarial
+ * inputs. See docs/internal/benchmarks for the comparison against memmem/memchr.
+ */
 proven_size_t proven_u8str_view_find(proven_u8str_view_t haystack, proven_size_t start_offset, proven_u8str_view_t needle) {
     if (start_offset > haystack.size) return PROVEN_INDEX_NOT_FOUND;
     if (needle.size == 0) return start_offset; // Empty needle always matches at offset
     if (haystack.size > 0 && !haystack.ptr) return PROVEN_INDEX_NOT_FOUND;
     if (needle.size > 0 && !needle.ptr) return PROVEN_INDEX_NOT_FOUND;
     if (needle.size > haystack.size - start_offset) return PROVEN_INDEX_NOT_FOUND;
-    
-    for (proven_size_t i = start_offset; i <= haystack.size - needle.size; ++i) {
-        int match = 1;
-        for (proven_size_t j = 0; j < needle.size; ++j) {
-            if (haystack.ptr[i + j] != needle.ptr[j]) {
-                match = 0;
-                break;
+
+    const proven_byte_t *base = haystack.ptr;
+
+    if (needle.size == 1u) {
+        const void *hit = proven_sys_mem_chr(base + start_offset, needle.ptr[0],
+                                             haystack.size - start_offset);
+        return hit ? (proven_size_t)((const proven_byte_t *)hit - base) : PROVEN_INDEX_NOT_FOUND;
+    }
+
+    /* Pick the anchor: the needle byte that looks rarest in the haystack, so the
+       memchr scan yields the fewest false positives. Estimate frequencies from a
+       small spread-out sample (cheap, and adapts to the data). Default to the
+       last byte when the region is too small to bother sampling. */
+    proven_size_t anchor = needle.size - 1u;
+    proven_size_t span = haystack.size - start_offset;
+    if (span >= 16u) {
+        /* Sample enough positions that a genuinely common byte reliably gets a
+           nonzero count (a too-sparse sample makes common bytes look absent and
+           picks a bad anchor). 256 samples; unsigned short avoids overflow when a
+           byte fills the whole sample. */
+        unsigned short cnt[256];
+        proven_sys_mem_zero(cnt, sizeof cnt);
+        proven_size_t samples = span < 256u ? span : 256u;
+        proven_size_t step = span / samples;
+        if (step == 0u) step = 1u;
+        proven_size_t pos = start_offset;
+        for (proven_size_t i = 0; i < samples; ++i) {
+            cnt[base[pos]]++;
+            pos += step;
+        }
+        unsigned best = 0xffffffffu;
+        for (proven_size_t i = 0; i < needle.size; ++i) {
+            unsigned ch = (unsigned)needle.ptr[i];
+            if ((unsigned)cnt[ch] <= best) {
+                best = (unsigned)cnt[ch];
+                anchor = i;
             }
         }
-        if (match) return i;
+    }
+    proven_byte_t anchor_c = needle.ptr[anchor];
+
+    /* Scan the anchor byte only over positions whose match start leaves room for
+       the whole needle: there are (haystack.size - needle.size - start_offset + 1)
+       candidate match starts, and the anchor sits `anchor` bytes into each. */
+    const proven_byte_t *scan = base + start_offset + anchor;
+    proven_size_t scan_n = (haystack.size - needle.size) - start_offset + 1u;
+
+    while (scan_n > 0u) {
+        const void *hitv = proven_sys_mem_chr(scan, anchor_c, scan_n);
+        if (!hitv) break;
+        const proven_byte_t *hit = (const proven_byte_t *)hitv;
+        const proven_byte_t *match = hit - anchor; /* candidate needle start */
+        /* verify the bytes before and after the anchor */
+        if (proven_sys_mem_cmp(match, needle.ptr, anchor) == 0 &&
+            proven_sys_mem_cmp(hit + 1, needle.ptr + anchor + 1u, needle.size - anchor - 1u) == 0) {
+            return (proven_size_t)(match - base);
+        }
+        proven_size_t consumed = (proven_size_t)(hit - scan) + 1u;
+        if (consumed >= scan_n) break;
+        scan = hit + 1;
+        scan_n -= consumed;
     }
     return PROVEN_INDEX_NOT_FOUND;
 }
@@ -356,6 +415,55 @@ proven_err_t proven_u8str_replace_at(proven_u8str_t *str, proven_size_t index, p
 
 proven_err_t proven_u8str_insert(proven_u8str_t *str, proven_size_t index, proven_u8str_view_t data) {
     return proven_u8str_replace_at(str, index, 0, data);
+}
+
+proven_err_t proven_u8str_replace_at_grow(proven_allocator_t alloc, proven_u8str_t *str, proven_size_t index, proven_size_t old_len, proven_u8str_view_t data) {
+    if (!str || !str->internal.ptr) return PROVEN_ERR_INVALID_ARG;
+    if (data.size > 0 && !data.ptr) return PROVEN_ERR_INVALID_ARG;
+    if (index > str->internal.len) return PROVEN_ERR_OUT_OF_BOUNDS;
+
+    /* Clamp old_len the same way replace_at does, then size the grow to the
+       exact post-edit byte length (plus the NUL seal). */
+    proven_size_t actual_old = old_len;
+    proven_size_t total_end;
+    if (PROVEN_CKD_ADD(&total_end, index, old_len) || total_end > str->internal.len) {
+        actual_old = str->internal.len - index;
+    }
+
+    proven_size_t new_total_len;
+    if (PROVEN_CKD_SUB(&new_total_len, str->internal.len, actual_old)) return PROVEN_ERR_OVERFLOW;
+    if (PROVEN_CKD_ADD(&new_total_len, new_total_len, data.size)) return PROVEN_ERR_OVERFLOW;
+    proven_size_t required;
+    if (PROVEN_CKD_ADD(&required, new_total_len, 1)) return PROVEN_ERR_OVERFLOW;
+
+    if (required > str->internal.cap) {
+        if (!proven_alloc_is_valid(alloc)) return PROVEN_ERR_INVALID_ARG;
+
+        proven_size_t new_cap = str->internal.cap == 0 ? 16 : str->internal.cap;
+        while (new_cap < required) {
+            if (PROVEN_CKD_MUL(&new_cap, new_cap, 2)) {
+                new_cap = required;
+                break;
+            }
+        }
+
+        /* If data points into this string's buffer, rebase it across the realloc
+           so replace_at sees a consistent pointer. */
+        proven_bufref_t alias_ref = proven_bufref_capture(str->internal.ptr, str->internal.cap, data.ptr, data.size);
+        proven_result_mem_mut_t new_mem = alloc.realloc_fn(alloc.ctx, str->internal.ptr, str->internal.cap, new_cap, PROVEN_DEFAULT_ALIGNMENT);
+        if (!proven_is_ok(new_mem.err)) return new_mem.err;
+        str->internal.ptr = (proven_byte_t*)new_mem.value.ptr;
+        str->internal.cap = new_cap;
+        if (alias_ref.valid) {
+            data.ptr = (const proven_byte_t*)proven_bufref_rebase_const(alias_ref, str->internal.ptr);
+        }
+    }
+
+    return proven_u8str_replace_at(str, index, old_len, data);
+}
+
+proven_err_t proven_u8str_insert_grow(proven_allocator_t alloc, proven_u8str_t *str, proven_size_t index, proven_u8str_view_t data) {
+    return proven_u8str_replace_at_grow(alloc, str, index, 0, data);
 }
 
 proven_err_t proven_u8str_remove(proven_u8str_t *str, proven_size_t index, proven_size_t len) {

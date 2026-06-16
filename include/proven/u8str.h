@@ -112,6 +112,19 @@ typedef struct {
 [[nodiscard]] proven_err_t proven_u8str_replace_at(proven_u8str_t *str, proven_size_t index, proven_size_t old_len, proven_u8str_view_t data);
 [[nodiscard]] proven_err_t proven_u8str_insert(proven_u8str_t *str, proven_size_t index, proven_u8str_view_t data);
 [[nodiscard]] proven_err_t proven_u8str_remove(proven_u8str_t *str, proven_size_t index, proven_size_t len);
+
+/**
+ * @brief Growing variants of replace_at / insert.
+ * CATEGORY: Atomic Growable
+ *
+ * Same semantics as proven_u8str_replace_at / proven_u8str_insert, but the
+ * buffer is grown (doubling capacity) when the edit does not fit, instead of
+ * returning PROVEN_ERR_OUT_OF_BOUNDS. On allocation failure the string is left
+ * unchanged and the allocator error is returned. `index` must be <= length.
+ * `data` must not alias the string buffer when the edit shifts the tail.
+ */
+[[nodiscard]] proven_err_t proven_u8str_replace_at_grow(proven_allocator_t alloc, proven_u8str_t *str, proven_size_t index, proven_size_t old_len, proven_u8str_view_t data);
+[[nodiscard]] proven_err_t proven_u8str_insert_grow(proven_allocator_t alloc, proven_u8str_t *str, proven_size_t index, proven_u8str_view_t data);
 /**
  * @brief Replaces the first occurrence of a target substring with a replacement.
  *
