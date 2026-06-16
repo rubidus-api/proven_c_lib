@@ -11,6 +11,24 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-06-17] — proven_c_lib-v26.06.17a
+
+### Fixed
+
+- Made `src/proven/float_decimal.c` compile on hosted targets without 128-bit
+  integers (e.g. 32-bit ARM / `linux-armhf-hosted`). The Eisel-Lemire fast path
+  is `__int128`-only, but its guard boundaries were inconsistent: helper calls
+  sat outside the guard while definitions sat inside (and vice versa), so the
+  cross matrix's new Windows link smoke exposed it via `arm-linux-gnueabihf-gcc`
+  failures (implicit declarations, used-but-undefined, and unused-function
+  `-Werror`). Moved the int128-free `proven_float_pack_binary64_candidate` out
+  of the guard, added `#else` stubs for the two Eisel-Lemire entry helpers so
+  the unconditional dispatcher links and reports "unsupported" (falling back to
+  the scalar exact path, which already had a non-int128 multiply), and marked
+  the Eisel-Lemire-only helpers `[[maybe_unused]]`. No behavior change on
+  targets with `__int128` (x86-64 output is unchanged). `./nob cross` now passes
+  every target, including both Windows link smokes.
+
 ## [2026-06-16] — proven_c_lib-v26.06.16x
 
 ### Fixed
