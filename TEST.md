@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.06.16v)
+# proven Test Matrix (v26.06.16w)
 
 This document describes how the `proven` test suite is organized, what each test is intended to validate, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
 

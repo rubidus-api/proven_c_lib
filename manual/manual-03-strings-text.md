@@ -72,10 +72,12 @@ Intent:
 | `proven_u8str_append_grow(alloc, str, data)` | Atomic growable append. | `proven_err_t`. |
 | `proven_u8str_append_byte(alloc, str, b)` | Append one byte, growing if needed. | `proven_err_t`. |
 | `proven_u8str_replace_at(str, index, old_len, data)` | Replace an exact byte range with fixed-capacity semantics. | `proven_err_t`. |
+| `proven_u8str_replace_at_grow(alloc, str, index, old_len, data)` | Like `replace_at`, but grows the buffer (doubling) when the edit does not fit instead of failing. | `proven_err_t`; string unchanged on alloc failure. |
 | `proven_u8str_insert(str, index, data)` | Insert bytes at `index` with fixed-capacity semantics. | `proven_err_t`. |
+| `proven_u8str_insert_grow(alloc, str, index, data)` | Like `insert`, but grows the buffer when needed. No manual `reserve` required. | `proven_err_t`; string unchanged on alloc failure. |
 | `proven_u8str_remove(str, index, len)` | Remove a byte range. | `proven_err_t`. |
 | `proven_u8str_replace_first(str, start_offset, target, replacement)` | Replace first matching target at or after start. | `PROVEN_OK` even when not found. |
-| `proven_u8str_view_find(haystack, start_offset, needle)` | Find a byte substring. | index or `PROVEN_INDEX_NOT_FOUND`. |
+| `proven_u8str_view_find(haystack, start_offset, needle)` | Find the first occurrence of a byte substring (correctly handles any byte values; not NUL-terminated). | index or `PROVEN_INDEX_NOT_FOUND`. |
 | `proven_u8str_view_starts_with(str, prefix)` | Prefix test. | int truth value. |
 | `proven_u8str_view_ends_with(str, suffix)` | Suffix test. | int truth value. |
 | `proven_u8str_view_slice(str, index, len)` | Return a clamped subview. | `proven_u8str_view_t`. |
