@@ -2239,6 +2239,7 @@ static bool proven_float_prepare_exact_compare_state(const proven_float_decimal_
     return true;
 }
 
+[[maybe_unused]]
 static bool proven_float_prepare_eisel_validate_state(const proven_float_decimal_number_t *decimal,
                                                       proven_float_eisel_validate_state_t *state) {
     if (!decimal || !state) {
@@ -2520,6 +2521,7 @@ static int proven_float_compare_decimal_to_midpoint(const proven_float_decimal_n
     return proven_float_compare_decimal_to_scaled(decimal, state, &midpoint_num, lower_exp2);
 }
 
+[[maybe_unused]]
 static proven_float_fast_path_result_t proven_float_validate_eisel_lemire_candidate(
     const proven_float_decimal_number_t *decimal,
     const proven_float_eisel_validate_state_t *state,
@@ -2564,12 +2566,57 @@ static proven_float_fast_path_result_t proven_float_validate_eisel_lemire_candid
     return PROVEN_FLOAT_FAST_PATH_UNCERTAIN;
 }
 
+/* Defined unconditionally: it needs no 128-bit integers and is used by both the
+ * Eisel-Lemire fast path and the estimate path (which is always compiled). */
 static proven_float_fast_path_result_t proven_float_pack_binary64_candidate(
     proven_u64 sig,
     proven_i64 unbiased_exp,
     proven_u64 *bits_out
-);
+) {
+    proven_u64 frac = 0;
+    proven_i64 shift = 0;
 
+    if (bits_out == 0) {
+        return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
+    }
+    if (sig < (1ull << 52) || sig >= (1ull << 53)) {
+        return PROVEN_FLOAT_FAST_PATH_UNCERTAIN;
+    }
+    if (unbiased_exp > 1023) {
+        return PROVEN_FLOAT_FAST_PATH_UNCERTAIN;
+    }
+
+    if (unbiased_exp >= -1022) {
+        *bits_out = ((proven_u64)(unbiased_exp + 1023) << 52) | (sig & 0x000fffffffffffffull);
+        return PROVEN_FLOAT_FAST_PATH_SUCCESS;
+    }
+
+    shift = -1022 - unbiased_exp;
+    if (shift >= 64) {
+        *bits_out = 0u;
+        return PROVEN_FLOAT_FAST_PATH_SUCCESS;
+    }
+
+    frac = sig >> (unsigned)shift;
+    if (shift > 0) {
+        proven_u64 mask = (1ull << (unsigned)shift) - 1ull;
+        proven_u64 rem = sig & mask;
+        proven_u64 halfway = 1ull << (unsigned)(shift - 1);
+        if (rem > halfway || (rem == halfway && (frac & 1ull) != 0u)) {
+            ++frac;
+        }
+    }
+
+    if (frac >= (1ull << 52)) {
+        *bits_out = 0x0010000000000000ull;
+        return PROVEN_FLOAT_FAST_PATH_SUCCESS;
+    }
+
+    *bits_out = frac;
+    return PROVEN_FLOAT_FAST_PATH_SUCCESS;
+}
+
+[[maybe_unused]]
 static proven_float_fast_path_result_t proven_float_finalize_eisel_lemire_candidate_bits(
     const proven_float_decimal_number_t *decimal,
     const proven_float_eisel_validate_state_t *state,
@@ -2588,6 +2635,7 @@ static proven_float_fast_path_result_t proven_float_finalize_eisel_lemire_candid
     return proven_float_validate_eisel_lemire_candidate(decimal, state, candidate_bits, bits_out);
 }
 
+[[maybe_unused]]
 static proven_float_fast_path_result_t proven_float_finalize_eisel_lemire_significand(
     const proven_float_decimal_number_t *decimal,
     const proven_float_eisel_validate_state_t *state,
@@ -2816,54 +2864,6 @@ static bool proven_float_build_cached_power_product_plan(
     }
 }
 
-static proven_float_fast_path_result_t proven_float_pack_binary64_candidate(
-    proven_u64 sig,
-    proven_i64 unbiased_exp,
-    proven_u64 *bits_out
-) {
-    proven_u64 frac = 0;
-    proven_i64 shift = 0;
-
-    if (bits_out == 0) {
-        return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
-    }
-    if (sig < (1ull << 52) || sig >= (1ull << 53)) {
-        return PROVEN_FLOAT_FAST_PATH_UNCERTAIN;
-    }
-    if (unbiased_exp > 1023) {
-        return PROVEN_FLOAT_FAST_PATH_UNCERTAIN;
-    }
-
-    if (unbiased_exp >= -1022) {
-        *bits_out = ((proven_u64)(unbiased_exp + 1023) << 52) | (sig & 0x000fffffffffffffull);
-        return PROVEN_FLOAT_FAST_PATH_SUCCESS;
-    }
-
-    shift = -1022 - unbiased_exp;
-    if (shift >= 64) {
-        *bits_out = 0u;
-        return PROVEN_FLOAT_FAST_PATH_SUCCESS;
-    }
-
-    frac = sig >> (unsigned)shift;
-    if (shift > 0) {
-        proven_u64 mask = (1ull << (unsigned)shift) - 1ull;
-        proven_u64 rem = sig & mask;
-        proven_u64 halfway = 1ull << (unsigned)(shift - 1);
-        if (rem > halfway || (rem == halfway && (frac & 1ull) != 0u)) {
-            ++frac;
-        }
-    }
-
-    if (frac >= (1ull << 52)) {
-        *bits_out = 0x0010000000000000ull;
-        return PROVEN_FLOAT_FAST_PATH_SUCCESS;
-    }
-
-    *bits_out = frac;
-    return PROVEN_FLOAT_FAST_PATH_SUCCESS;
-}
-
 static proven_float_fast_path_result_t proven_float_execute_eisel_lemire_plan(
     const proven_float_decimal_number_t *decimal,
     const proven_float_eisel_validate_state_t *state,
@@ -2927,6 +2927,34 @@ static proven_float_fast_path_result_t proven_float_try_eisel_lemire_negative_q(
     if (proven_float_build_cached_power_product_plan(-(proven_i64)q, &plan)) {
         return proven_float_execute_eisel_lemire_plan(decimal, state, &plan, bits_out);
     }
+    return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
+}
+
+#else  /* !defined(__SIZEOF_INT128__) */
+
+/*
+ * Without 128-bit integers the Eisel-Lemire fast path is unavailable. These
+ * stubs let `proven_float_try_eisel_lemire_with_state` (compiled unconditionally)
+ * resolve its calls and report "unsupported", so parsing falls through to the
+ * scalar exact path. The big-integer multiply has its own scalar fallback.
+ */
+static proven_float_fast_path_result_t proven_float_try_eisel_lemire_pow5_product_q(
+    const proven_float_decimal_number_t *decimal,
+    const proven_float_eisel_validate_state_t *state,
+    proven_size_t q,
+    proven_u64 *bits_out
+) {
+    (void)decimal; (void)state; (void)q; (void)bits_out;
+    return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
+}
+
+static proven_float_fast_path_result_t proven_float_try_eisel_lemire_negative_q(
+    const proven_float_decimal_number_t *decimal,
+    const proven_float_eisel_validate_state_t *state,
+    proven_size_t q,
+    proven_u64 *bits_out
+) {
+    (void)decimal; (void)state; (void)q; (void)bits_out;
     return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
 }
 
