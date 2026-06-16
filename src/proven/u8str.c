@@ -243,13 +243,114 @@ int proven_u8str_view_eq(proven_u8str_view_t a, proven_u8str_view_t b) {
 }
 
 /*
- * Substring search: anchor on the rarest-looking byte of the needle (chosen
- * cheaply below) and scan for it with proven_sys_mem_chr (the system memchr when
- * hosted, a SWAR scan when freestanding), then verify the surrounding bytes.
- * Anchoring on a needle byte that is uncommon in the haystack collapses the
- * false-positive verifies that a fixed first-byte anchor suffers on adversarial
- * inputs. See docs/internal/benchmarks for the comparison against memmem/memchr.
+ * Substring search strategy
+ * -------------------------
+ * The fast path (used on ordinary text) anchors on the rarest-looking needle
+ * byte and scans for it with proven_sys_mem_chr (system memchr when hosted, a
+ * SWAR scan when freestanding), then verifies. That is fast because a typical
+ * needle contains a byte that is rare or absent in the haystack.
+ *
+ * When the haystack has low entropy (a small effective alphabet: DNA, binary
+ * blobs, long single-byte runs) every needle byte is common, the anchor cannot
+ * be selective, and memchr+verify degrades. A cheap frequency sample detects
+ * this and falls back to a self-contained linear algorithm that does not lean on
+ * memchr at all (so it is robust and identical under freestanding):
+ *   - needles up to 64 bytes: Shift-Or (bitap), O(n), alphabet-independent;
+ *   - longer needles: Two-Way (Crochemore-Perrin), O(n), any length.
+ *
+ * The long-needle fallback is selectable at compile time (Two-Way is the
+ * benchmark-chosen default; define PROVEN_U8STR_FIND_LONG=2 to keep the
+ * memchr-adaptive scan instead). PROVEN_U8STR_FIND_FORCE forces one algorithm
+ * and exists only for benchmarking/validation.
  */
+#ifndef PROVEN_U8STR_FIND_LONG
+#define PROVEN_U8STR_FIND_LONG 1   /* 1 = Two-Way (default), 2 = memchr-adaptive */
+#endif
+#ifndef PROVEN_U8STR_FIND_FORCE
+#define PROVEN_U8STR_FIND_FORCE 0  /* 0 = auto; 1 = Shift-Or; 2 = Two-Way; 3 = memchr */
+#endif
+
+/* Shift-Or (bitap): needle length 1..64. Linear, no skip table, no libc.
+   Returns the first match offset in h[0..n), or PROVEN_INDEX_NOT_FOUND. */
+static proven_size_t proven_u8_find_shiftor(const proven_byte_t *h, proven_size_t n,
+                                            const proven_byte_t *ndl, proven_size_t m) {
+    proven_u64 mask[256];
+    proven_u64 all_ones = ~(proven_u64)0;
+    proven_u64 state = all_ones;
+    proven_u64 match_bit = (proven_u64)1 << (m - 1u);
+    proven_size_t j;
+    for (j = 0; j < 256u; ++j) mask[j] = all_ones;
+    for (j = 0; j < m; ++j) mask[ndl[j]] &= ~((proven_u64)1 << j);
+    for (j = 0; j < n; ++j) {
+        state = (state << 1) | mask[h[j]];
+        if ((state & match_bit) == 0u) {
+            return j + 1u - m;
+        }
+    }
+    return PROVEN_INDEX_NOT_FOUND;
+}
+
+/* Two-Way (Crochemore-Perrin), ported from the musl libc memmem. O(n) for any
+   needle length, no libc, freestanding-safe. The (size_t)-1 index wraparound is
+   intentional (n[ip+k] with ip == -1 reads n[k-1]). */
+#define PROVEN_FIND_BITOP(a, b, op) \
+    ((a)[(proven_size_t)(b) / (8u * sizeof *(a))] op (proven_size_t)1 << ((proven_size_t)(b) % (8u * sizeof *(a))))
+static proven_size_t proven_u8_find_twoway(const proven_byte_t *h0, proven_size_t hn,
+                                           const proven_byte_t *n, proven_size_t l) {
+    const proven_byte_t *h = h0;
+    const proven_byte_t *hend = h0 + hn;
+    proven_size_t i, ip, jp, k, p, ms, p0, mem, mem0;
+    proven_size_t byteset[32 / sizeof(proven_size_t)] = { 0 };
+    proven_size_t shift[256];
+
+    for (i = 0; i < l; ++i) {
+        PROVEN_FIND_BITOP(byteset, n[i], |=);
+        shift[n[i]] = i + 1u;
+    }
+    /* maximal suffix, ordinary ordering */
+    ip = (proven_size_t)-1; jp = 0; k = p = 1;
+    while (jp + k < l) {
+        if (n[ip + k] == n[jp + k]) { if (k == p) { jp += p; k = 1; } else ++k; }
+        else if (n[ip + k] > n[jp + k]) { jp += k; k = 1; p = jp - ip; }
+        else { ip = jp++; k = 1; p = 1; }
+    }
+    ms = ip; p0 = p;
+    /* maximal suffix, reversed ordering */
+    ip = (proven_size_t)-1; jp = 0; k = p = 1;
+    while (jp + k < l) {
+        if (n[ip + k] == n[jp + k]) { if (k == p) { jp += p; k = 1; } else ++k; }
+        else if (n[ip + k] < n[jp + k]) { jp += k; k = 1; p = jp - ip; }
+        else { ip = jp++; k = 1; p = 1; }
+    }
+    if (ip + 1u > ms + 1u) ms = ip; else p = p0;
+
+    if (proven_sys_mem_cmp(n, n + p, ms + 1u) != 0) {
+        mem0 = 0;
+        p = ((ms > l - ms - 1u) ? ms : (l - ms - 1u)) + 1u;
+    } else {
+        mem0 = l - p;
+    }
+    mem = 0;
+
+    for (;;) {
+        if ((proven_size_t)(hend - h) < l) return PROVEN_INDEX_NOT_FOUND;
+        if (PROVEN_FIND_BITOP(byteset, h[l - 1u], &)) {
+            k = l - shift[h[l - 1u]];
+            if (k) {
+                if (k < mem) k = mem;
+                h += k; mem = 0; continue;
+            }
+        } else {
+            h += l; mem = 0; continue;
+        }
+        for (k = (ms + 1u > mem ? ms + 1u : mem); k < l && n[k] == h[k]; ++k) { }
+        if (k < l) { h += k - ms; mem = 0; continue; }
+        for (k = ms + 1u; k > mem && n[k - 1u] == h[k - 1u]; --k) { }
+        if (k <= mem) return (proven_size_t)(h - h0);
+        h += p; mem = mem0;
+    }
+}
+
 proven_size_t proven_u8str_view_find(proven_u8str_view_t haystack, proven_size_t start_offset, proven_u8str_view_t needle) {
     if (start_offset > haystack.size) return PROVEN_INDEX_NOT_FOUND;
     if (needle.size == 0) return start_offset; // Empty needle always matches at offset
@@ -258,48 +359,68 @@ proven_size_t proven_u8str_view_find(proven_u8str_view_t haystack, proven_size_t
     if (needle.size > haystack.size - start_offset) return PROVEN_INDEX_NOT_FOUND;
 
     const proven_byte_t *base = haystack.ptr;
+    proven_size_t span = haystack.size - start_offset;
 
     if (needle.size == 1u) {
-        const void *hit = proven_sys_mem_chr(base + start_offset, needle.ptr[0],
-                                             haystack.size - start_offset);
+        const void *hit = proven_sys_mem_chr(base + start_offset, needle.ptr[0], span);
         return hit ? (proven_size_t)((const proven_byte_t *)hit - base) : PROVEN_INDEX_NOT_FOUND;
     }
 
-    /* Pick the anchor: the needle byte that looks rarest in the haystack, so the
-       memchr scan yields the fewest false positives. Estimate frequencies from a
-       small spread-out sample (cheap, and adapts to the data). Default to the
-       last byte when the region is too small to bother sampling. */
+#if PROVEN_U8STR_FIND_FORCE == 1
+    {
+        proven_size_t r = proven_u8_find_shiftor(base + start_offset, span, needle.ptr, needle.size);
+        return (r == PROVEN_INDEX_NOT_FOUND) ? r : start_offset + r;
+    }
+#elif PROVEN_U8STR_FIND_FORCE == 2
+    {
+        proven_size_t r = proven_u8_find_twoway(base + start_offset, span, needle.ptr, needle.size);
+        return (r == PROVEN_INDEX_NOT_FOUND) ? r : start_offset + r;
+    }
+#else
+    /* Pick the anchor: the rarest-looking needle byte, from a spread-out sample.
+       Also learn whether even that rarest byte is common (low-entropy haystack). */
     proven_size_t anchor = needle.size - 1u;
-    proven_size_t span = haystack.size - start_offset;
+    int low_entropy = 0;
     if (span >= 16u) {
-        /* Sample enough positions that a genuinely common byte reliably gets a
-           nonzero count (a too-sparse sample makes common bytes look absent and
-           picks a bad anchor). 256 samples; unsigned short avoids overflow when a
-           byte fills the whole sample. */
         unsigned short cnt[256];
         proven_sys_mem_zero(cnt, sizeof cnt);
-        proven_size_t samples = span < 256u ? span : 256u;
-        proven_size_t step = span / samples;
+        proven_size_t cap = span < 256u ? span : 256u;
+        proven_size_t step = span / cap;
         if (step == 0u) step = 1u;
-        proven_size_t pos = start_offset;
-        for (proven_size_t i = 0; i < samples; ++i) {
+        step |= 1u; /* odd stride: avoid aliasing a periodic haystack (e.g. strict
+                       "abab…") to a single phase, which would hide a common byte */
+        proven_size_t taken = 0;
+        for (proven_size_t pos = start_offset; pos < haystack.size && taken < 256u; pos += step) {
             cnt[base[pos]]++;
-            pos += step;
+            ++taken;
         }
         unsigned best = 0xffffffffu;
         for (proven_size_t i = 0; i < needle.size; ++i) {
             unsigned ch = (unsigned)needle.ptr[i];
-            if ((unsigned)cnt[ch] <= best) {
-                best = (unsigned)cnt[ch];
-                anchor = i;
-            }
+            if ((unsigned)cnt[ch] <= best) { best = (unsigned)cnt[ch]; anchor = i; }
         }
+        /* rarest needle byte still in > ~1/8 of the sample => memchr+verify will
+           thrash; use the alphabet-independent linear fallback instead. */
+        low_entropy = (best * 8u > (unsigned)taken);
     }
-    proven_byte_t anchor_c = needle.ptr[anchor];
 
-    /* Scan the anchor byte only over positions whose match start leaves room for
-       the whole needle: there are (haystack.size - needle.size - start_offset + 1)
-       candidate match starts, and the anchor sits `anchor` bytes into each. */
+#if PROVEN_U8STR_FIND_FORCE != 3
+    if (low_entropy) {
+        if (needle.size <= 64u) {
+            proven_size_t r = proven_u8_find_shiftor(base + start_offset, span, needle.ptr, needle.size);
+            return (r == PROVEN_INDEX_NOT_FOUND) ? r : start_offset + r;
+        }
+#if PROVEN_U8STR_FIND_LONG == 1
+        {
+            proven_size_t r = proven_u8_find_twoway(base + start_offset, span, needle.ptr, needle.size);
+            return (r == PROVEN_INDEX_NOT_FOUND) ? r : start_offset + r;
+        }
+#endif
+    }
+#endif
+
+    proven_byte_t anchor_c = needle.ptr[anchor];
+    /* Scan the anchor only where the whole needle still fits. */
     const proven_byte_t *scan = base + start_offset + anchor;
     proven_size_t scan_n = (haystack.size - needle.size) - start_offset + 1u;
 
@@ -307,8 +428,7 @@ proven_size_t proven_u8str_view_find(proven_u8str_view_t haystack, proven_size_t
         const void *hitv = proven_sys_mem_chr(scan, anchor_c, scan_n);
         if (!hitv) break;
         const proven_byte_t *hit = (const proven_byte_t *)hitv;
-        const proven_byte_t *match = hit - anchor; /* candidate needle start */
-        /* verify the bytes before and after the anchor */
+        const proven_byte_t *match = hit - anchor;
         if (proven_sys_mem_cmp(match, needle.ptr, anchor) == 0 &&
             proven_sys_mem_cmp(hit + 1, needle.ptr + anchor + 1u, needle.size - anchor - 1u) == 0) {
             return (proven_size_t)(match - base);
@@ -319,6 +439,7 @@ proven_size_t proven_u8str_view_find(proven_u8str_view_t haystack, proven_size_t
         scan_n -= consumed;
     }
     return PROVEN_INDEX_NOT_FOUND;
+#endif
 }
 
 int proven_u8str_view_starts_with(proven_u8str_view_t str, proven_u8str_view_t prefix) {
