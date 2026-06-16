@@ -11,10 +11,11 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
-## [Unreleased]
+## [2026-06-16] — proven_c_lib-v26.06.16v
 
 ### Changed
 
+- Bumped the version to `proven_c_lib-v26.06.16v` (`PROVEN_VERSION_NUM` 260616), releasing the exact/fast floating-point parser and formatter work, the exhaustive and large-scale validation, and the documentation overhaul. Synced the version string across `include/proven/version.h`, `README.md`, `TEST.md`, and the `manual/` chapters.
 - Documentation reorganization and refresh. Moved the dated benchmark reports and the design proposals/RFC audits under `docs/internal/` (with a `docs/internal/README.md` describing the folder), since they are development records rather than user docs; `docs/float-correctness-and-performance.md` remains the user-facing summary. Updated the floating-point section of `manual/manual-08-fmt-scan.md` to describe the current exact, correctly-rounded (round-half-to-even) formatter and three-tier parser with worked examples (the old text still described an approximate six-digit/round-half-up formatter). Rewrote the relevant parts of `README.md` (both language halves) to add a "correct, fast number conversion" section with example code and objective validation/benchmark numbers, list the `float_parse`/`float_format` modules, and fix the documentation index, which pointed at files that are not part of the published repository (`SPEC.md`, `AGENTS.md`, `MEMORY.md`).
 
 - Replaced the shortest float formatter. First with a single-pass exact algorithm (Burger-Dybvig / Dragon4, round-to-nearest-ties-to-even) for binary64 and binary32, then with a Grisu3 fast path (64-bit diy_fp + a generated cached-power table) that falls back to the exact path only when it cannot prove the result is shortest. Net result is about 670x faster than the original round-trip-search formatter (59,018 -> 88 ns/call on a mixed corpus) and uniform across magnitudes, with the same correctly-rounded minimal output (validated round-trip and minimality over ~3M doubles and ~5M floats).
