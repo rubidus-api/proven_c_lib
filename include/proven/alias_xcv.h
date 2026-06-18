@@ -255,6 +255,7 @@
 #define xcv_map_set_with_scratch proven_map_set_with_scratch
 #define xcv_map_t proven_map_t
 #define xcv_mem_align_up proven_mem_align_up
+#define xcv_mem_copy proven_mem_copy
 #define xcv_mem_mut_from_owned proven_mem_mut_from_owned
 #define xcv_mem_mut_slice_checked proven_mem_mut_slice_checked
 #define xcv_mem_mut_slice_unchecked proven_mem_mut_slice_unchecked
@@ -373,6 +374,7 @@
 #define xcv_u8str_append_partial proven_u8str_append_partial
 #define xcv_u8str_as_cstr proven_u8str_as_cstr
 #define xcv_u8str_as_view proven_u8str_as_view
+#define xcv_u8str_borrow proven_u8str_borrow
 #define xcv_u8str_create proven_u8str_create
 #define xcv_u8str_create_from_view proven_u8str_create_from_view
 #define xcv_u8str_destroy proven_u8str_destroy
@@ -386,6 +388,7 @@
 #define xcv_u8str_replace_at_grow proven_u8str_replace_at_grow
 #define xcv_u8str_replace_first proven_u8str_replace_first
 #define xcv_u8str_reserve proven_u8str_reserve
+#define xcv_u8str_reset proven_u8str_reset
 #define xcv_u8str_t proven_u8str_t
 #define xcv_u8str_view_ends_with proven_u8str_view_ends_with
 #define xcv_u8str_view_eq proven_u8str_view_eq

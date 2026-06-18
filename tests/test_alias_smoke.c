@@ -19,6 +19,9 @@ int main(void) {
     (void)xcv_scan_fmt_internal;
     (void)xcv_scan_fmt_internal_view;
     (void)xcv_u8str_fmt_internal;
+    (void)xcv_u8str_borrow;
+    (void)xcv_u8str_reset;
+    (void)xcv_mem_copy;
 
     /* Test arg alias compilation */
     xcv_arg_t a01 = XCV_ARG(42);
