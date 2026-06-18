@@ -1528,6 +1528,12 @@ static proven_diy_fp_t proven_diy_fp_mul(proven_diy_fp_t x, proven_diy_fp_t y) {
 
 static proven_diy_fp_t proven_diy_fp_normalize(proven_diy_fp_t x) {
     int c = proven_float_clz_u64(x.f);
+    if (c >= 64) {          /* x.f == 0: a left shift by the type width is UB.
+                               Mirror the masked result (f stays 0) without it. */
+        x.f = 0;
+        x.e -= 64;
+        return x;
+    }
     x.f <<= c;
     x.e -= c;
     return x;
