@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.06.18a)
+# proven Test Matrix (v26.06.18b)
 
 This document describes how the `proven` test suite is organized, what each test is intended to validate, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
 
@@ -1324,7 +1324,7 @@ Sub-checks:
 
 Failure tip: inspect `proven_u8str_borrow`/`proven_u8str_reset` and the `borrowed`-flag guards in `reserve`, `append_grow`, `replace_at_grow`, and `destroy` in `src/proven/u8str.c`.
 
-### 52. `tests/test_mem_copy` - bounded memory copy
+### 52. `tests/test_mem_copy` - bounded memory copy & move
 
 Intent: verify `proven_mem_copy` performs a bounded byte copy.
 

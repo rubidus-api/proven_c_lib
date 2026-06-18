@@ -218,6 +218,7 @@ Purpose: checked slicing result type.
 | `proven_range_contains_ptr(base, cap, ptr, size, out_offset)` | Check whether a pointer range is inside a base allocation using integer address checks. | `base`, `cap`, `ptr`, `size`, optional `out_offset`. | `_Bool`. |
 | `proven_memcmp(s1, s2, size)` | Compare raw memory regions. | Two pointers and byte size. | Zero if equal, negative or positive by byte order. |
 | `proven_mem_copy(dst, dst_cap, src)` | Bounded copy of a byte view into `dst`. | `dst`, capacity, `src` view. | `PROVEN_OK`, `PROVEN_ERR_OUT_OF_BOUNDS` if it would overflow (nothing written), or `PROVEN_ERR_INVALID_ARG` on a null pointer with non-zero size. Non-overlapping. |
+| `proven_mem_move(dst, dst_cap, src)` | Like `proven_mem_copy` but the source and destination may overlap. | same as copy | same as copy. |
 
 Checked slice behavior:
 
@@ -260,7 +261,7 @@ proven_size_t aligned = (size + align - 1) & ~(align - 1); /* wrong: may overflo
 ## 6. Version macros
 
 ```c
-#define PROVEN_VERSION_STRING "proven_c_lib-v26.06.18a"
+#define PROVEN_VERSION_STRING "proven_c_lib-v26.06.18b"
 #define PROVEN_VERSION_NUM    260616
 #define PROVEN_VERSION_SUFFIX "w"
 ```

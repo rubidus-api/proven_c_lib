@@ -11,6 +11,16 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-06-18] — proven_c_lib-v26.06.18b
+
+### Added
+
+- `proven_mem_move(dst, dst_cap, src_view)` (`memory.h`): a bounded,
+  overlap-safe byte move with the same guards as `proven_mem_copy` (overflow →
+  `PROVEN_ERR_OUT_OF_BOUNDS` without writing, null with size → `INVALID_ARG`,
+  zero size → no-op). Lets downstream code drop libc `memmove` for overlapping
+  array-element shifts. XCV alias `xcv_mem_move`.
+
 ## [2026-06-18] — proven_c_lib-v26.06.18a
 
 ### Added

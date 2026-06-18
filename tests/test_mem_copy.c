@@ -38,6 +38,19 @@ int main(void) {
     e = proven_mem_copy((void *)0, 8, src);
     PROVEN_TEST_ASSERT(e == PROVEN_ERR_INVALID_ARG, "null dst rejected", "Null pointer with size must be INVALID_ARG.");
 
-    PROVEN_TEST_PASS("mem copy tests passed");
+    /* --- proven_mem_move: overlap-safe --- */
+    proven_byte_t buf[16];
+    for (int i = 0; i < 8; i++) buf[i] = (proven_byte_t)('A' + i);   /* "ABCDEFGH" */
+    /* shift right by 1 (overlapping, dst > src) */
+    e = proven_mem_move(buf + 1, sizeof buf - 1, (proven_mem_view_t){ buf, 8 });
+    PROVEN_TEST_ASSERT(PROVEN_IS_OK(e), "overlapping move ok", "Overlapping move should succeed.");
+    PROVEN_TEST_ASSERT(memcmp(buf + 1, "ABCDEFGH", 8) == 0, "overlap move preserves bytes", "memmove semantics: no self-clobber.");
+    /* move bounds + null + zero size match mem_copy */
+    e = proven_mem_move(dst, sizeof dst, big);
+    PROVEN_TEST_ASSERT(e == PROVEN_ERR_OUT_OF_BOUNDS, "move overflow rejected", "size > cap must be OUT_OF_BOUNDS.");
+    e = proven_mem_move(dst, sizeof dst, empty);
+    PROVEN_TEST_ASSERT(PROVEN_IS_OK(e), "move zero-size no-op", "Empty source no-op.");
+
+    PROVEN_TEST_PASS("mem copy/move tests passed");
     return 0;
 }

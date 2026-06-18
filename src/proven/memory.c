@@ -19,3 +19,11 @@ proven_err_t proven_mem_copy(void *dst, proven_size_t dst_cap, proven_mem_view_t
     proven_sys_mem_copy(dst, src.ptr, src.size); // non-overlapping bounded copy
     return PROVEN_OK;
 }
+
+proven_err_t proven_mem_move(void *dst, proven_size_t dst_cap, proven_mem_view_t src) {
+    if (src.size == 0) return PROVEN_OK;
+    if (!dst || !src.ptr) return PROVEN_ERR_INVALID_ARG;
+    if (src.size > dst_cap) return PROVEN_ERR_OUT_OF_BOUNDS;
+    proven_sys_mem_move(dst, src.ptr, src.size); // overlap-safe bounded move
+    return PROVEN_OK;
+}

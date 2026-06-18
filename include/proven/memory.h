@@ -166,4 +166,13 @@ int proven_memcmp(const void *s1, const void *s2, proven_size_t size);
  */
 proven_err_t proven_mem_copy(void *dst, proven_size_t dst_cap, proven_mem_view_t src);
 
+/**
+ * @brief Bounded, overlap-safe move of a read-only byte view into a buffer.
+ *
+ * Same contract as proven_mem_copy (OUT_OF_BOUNDS if it would overflow,
+ * INVALID_ARG on a null pointer with non-zero size, no-op for a zero-size
+ * source), but the source and destination regions may overlap.
+ */
+proven_err_t proven_mem_move(void *dst, proven_size_t dst_cap, proven_mem_view_t src);
+
 #endif /* PROVEN_MEMORY_H */
