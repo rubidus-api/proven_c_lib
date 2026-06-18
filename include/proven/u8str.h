@@ -33,9 +33,16 @@ typedef struct {
 
 /**
  * @brief A string buffer tracking U8 bytes.
+ *
+ * `borrowed` is false (0) for allocator-owned strings created by
+ * proven_u8str_create / _create_from_view, so a zero-initialized handle is
+ * owned by default. It is set true only by proven_u8str_borrow, which wraps
+ * caller-owned memory: for a borrowed string the growing operations refuse to
+ * reallocate and proven_u8str_destroy is a no-op.
  */
 typedef struct {
     proven_buf_t internal;
+    bool         borrowed;
 } proven_u8str_t;
 
 /**
@@ -66,6 +73,33 @@ typedef struct {
 
 [[nodiscard]] proven_result_u8str_t proven_u8str_create(proven_allocator_t alloc, proven_size_t limit);
 [[nodiscard]] proven_result_u8str_t proven_u8str_create_from_view(proven_allocator_t alloc, proven_u8str_view_t view);
+
+/**
+ * @brief Wraps caller-owned memory as a fixed-capacity string (no allocation).
+ *
+ * The returned string borrows `[buf, buf+cap)`; `cap` is the total byte
+ * capacity *including* the NUL terminator, so it can hold `cap - 1` content
+ * bytes. It starts empty and NUL-terminated. No ownership is taken: the caller
+ * keeps `buf` alive for the string's lifetime, and proven_u8str_destroy on it
+ * is a no-op.
+ *
+ * The fixed-capacity operations (append, append_partial, replace_at, insert,
+ * remove, append_fmt, append_fmt_trunc) work as usual. The growing operations
+ * (reserve, *_grow, append_byte, append_fmt_grow) still succeed while the data
+ * fits within `cap`, but return PROVEN_ERR_OUT_OF_BOUNDS instead of
+ * reallocating caller memory once it would not.
+ *
+ * `cap == 0` or `buf == NULL` yields an empty (cap 0) borrowed string.
+ */
+[[nodiscard]] proven_u8str_t proven_u8str_borrow(proven_byte_t *buf, proven_size_t cap);
+
+/**
+ * @brief Truncates a string to empty, keeping its buffer and capacity.
+ *
+ * Lets an owned or borrowed string be reused (e.g. rebuilt each frame) without
+ * reallocating. Returns PROVEN_ERR_INVALID_ARG for a null or capacity-0 string.
+ */
+[[nodiscard]] proven_err_t proven_u8str_reset(proven_u8str_t *str);
 
 /**
  * @brief Validates the structural integrity of the public string fields.

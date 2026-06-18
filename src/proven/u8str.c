@@ -36,6 +36,24 @@ proven_result_u8str_t proven_u8str_create_from_view(proven_allocator_t alloc, pr
     return res;
 }
 
+proven_u8str_t proven_u8str_borrow(proven_byte_t *buf, proven_size_t cap) {
+    proven_u8str_t s = {0};
+    s.borrowed = true;
+    if (!buf || cap == 0) return s;     /* empty (cap 0) borrowed string */
+    buf[0] = 0;
+    s.internal.ptr = buf;
+    s.internal.len = 0;
+    s.internal.cap = cap;
+    return s;
+}
+
+proven_err_t proven_u8str_reset(proven_u8str_t *str) {
+    if (!str || !str->internal.ptr) return PROVEN_ERR_INVALID_ARG;
+    str->internal.len = 0;
+    str->internal.ptr[0] = 0;
+    return PROVEN_OK;
+}
+
 bool proven_u8str_is_valid(const proven_u8str_t *str) {
     if (!str) return false;
     if (str->internal.cap > 0) {
@@ -124,6 +142,7 @@ proven_result_size_t proven_u8str_append_partial(proven_u8str_t *str, proven_u8s
 proven_err_t proven_u8str_reserve(proven_allocator_t alloc, proven_u8str_t *str, proven_size_t new_cap) {
     if (!str) return PROVEN_ERR_INVALID_ARG;
     if (new_cap <= str->internal.cap) return PROVEN_OK;
+    if (str->borrowed) return PROVEN_ERR_OUT_OF_BOUNDS;   /* cannot reallocate caller memory */
     if (!proven_alloc_is_valid(alloc)) return PROVEN_ERR_INVALID_ARG;
     
     proven_result_mem_mut_t new_mem = alloc.realloc_fn(alloc.ctx, str->internal.ptr, str->internal.cap, new_cap, PROVEN_DEFAULT_ALIGNMENT);
@@ -143,6 +162,7 @@ proven_err_t proven_u8str_append_grow(proven_allocator_t alloc, proven_u8str_t *
     if (PROVEN_CKD_ADD(&required, required, 1)) return PROVEN_ERR_OVERFLOW;
 
     if (required > str->internal.cap) {
+        if (str->borrowed) return PROVEN_ERR_OUT_OF_BOUNDS;   /* cannot reallocate caller memory */
         if (!proven_alloc_is_valid(alloc)) {
             return PROVEN_ERR_INVALID_ARG;
         }
@@ -154,7 +174,7 @@ proven_err_t proven_u8str_append_grow(proven_allocator_t alloc, proven_u8str_t *
                 break;
             }
         }
-        
+
         proven_bufref_t alias_ref = proven_bufref_capture(str->internal.ptr, str->internal.cap, data.ptr, data.size);
         if (alias_ref.valid && data.size > str->internal.cap - alias_ref.offset) {
             return PROVEN_ERR_INVALID_ARG;
@@ -558,6 +578,7 @@ proven_err_t proven_u8str_replace_at_grow(proven_allocator_t alloc, proven_u8str
     if (PROVEN_CKD_ADD(&required, new_total_len, 1)) return PROVEN_ERR_OVERFLOW;
 
     if (required > str->internal.cap) {
+        if (str->borrowed) return PROVEN_ERR_OUT_OF_BOUNDS;   /* cannot reallocate caller memory */
         if (!proven_alloc_is_valid(alloc)) return PROVEN_ERR_INVALID_ARG;
 
         proven_size_t new_cap = str->internal.cap == 0 ? 16 : str->internal.cap;
@@ -601,5 +622,9 @@ proven_err_t proven_u8str_replace_first(proven_u8str_t *str, proven_size_t start
 
 void proven_u8str_destroy(proven_allocator_t alloc, proven_u8str_t *str) {
     if (!str) return;
+    if (str->borrowed) {                 /* caller owns the memory: free nothing */
+        str->internal = (proven_buf_t){0};
+        return;
+    }
     proven_buf_destroy(alloc, &str->internal);
 }
