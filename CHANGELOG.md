@@ -37,6 +37,14 @@ The format follows Keep a Changelog:
   layout is unchanged. No public API consumes `sizeof(proven_u8str_t)` by
   contract; source compatibility holds after a recompile.
 
+### Fixed
+
+- `proven_diy_fp_normalize` (`float_decimal.c`) left-shifted a 64-bit value by
+  the type width when the significand was zero (`clz` returns 64), which is
+  undefined behavior surfaced by UBSan. Guard the zero case to mirror the
+  previously-masked result (significand stays 0) without the UB; no change on
+  any non-zero input, so formatter output is unchanged.
+
 ## [2026-06-17] — proven_c_lib-v26.06.17a
 
 ### Fixed
