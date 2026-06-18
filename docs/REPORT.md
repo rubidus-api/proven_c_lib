@@ -66,7 +66,11 @@ AGENTS §10.1 halt-and-report policy). The native Linux build is unaffected.
 
 ## 2026-06-18 — ENHANCEMENT: no fixed-capacity `proven_u8str_t` over caller-owned memory
 
-- **Status:** OPEN — request for an upstream API addition.
+- **Status:** RESOLVED in `proven_c_lib-v26.06.18a`. Added `proven_u8str_borrow`
+  / `proven_u8str_reset` (fixed-capacity string over caller memory; safe-by-
+  default `borrowed` flag so growing ops refuse to reallocate caller memory and
+  destroy is a no-op) and the bounded `proven_mem_copy`. See CHANGELOG and
+  `docs/internal/proposals/rfc-0002-borrowed-fixed-capacity-u8str.md`.
 - **Reported by:** prov_text_editor (RFC-0004 / Special Milestone S — adopting the
   proven string system across the editor).
 - **Category:** enhancement (not a defect; existing behavior is correct).
