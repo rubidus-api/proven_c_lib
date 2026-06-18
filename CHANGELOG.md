@@ -11,6 +11,32 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-06-18] — proven_c_lib-v26.06.18a
+
+### Added
+
+- `proven_u8str_borrow(buf, cap)` and `proven_u8str_reset(str)` (`u8str.h`):
+  wrap caller-owned memory as a fixed-capacity string and truncate-to-empty for
+  reuse. A new `borrowed` flag on `proven_u8str_t` defaults to owned, so a
+  zero-initialized handle keeps its existing semantics. The fixed-capacity
+  operations and `proven_u8str_append_fmt` work on a borrowed string; the
+  growing operations (`reserve`, `*_grow`, `append_byte`, `append_fmt_grow`)
+  still succeed while the data fits but return `PROVEN_ERR_OUT_OF_BOUNDS`
+  instead of reallocating caller memory, and `proven_u8str_destroy` is a no-op
+  for a borrowed string. This lets allocator-free and per-frame call sites use
+  the proven string system / formatter without heap allocation. Requested by a
+  downstream project (`docs/REPORT.md`, 2026-06-18).
+- `proven_mem_copy(dst, dst_cap, src_view)` (`memory.h`): a bounded byte copy
+  that rejects overflow without writing, treats a zero-size source as a no-op,
+  and rejects null pointers.
+- XCV aliases `xcv_u8str_borrow`, `xcv_u8str_reset`, `xcv_mem_copy`.
+
+### Changed
+
+- `proven_u8str_t` gains a trailing `bool borrowed` field. `proven_buf_t`
+  layout is unchanged. No public API consumes `sizeof(proven_u8str_t)` by
+  contract; source compatibility holds after a recompile.
+
 ## [2026-06-17] — proven_c_lib-v26.06.17a
 
 ### Fixed

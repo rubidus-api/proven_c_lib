@@ -65,8 +65,10 @@ Intent:
 |---|---|---|
 | `proven_u8str_create(alloc, limit)` | Create an empty owned string with capacity for `limit` bytes plus NUL. | `proven_result_u8str_t`. |
 | `proven_u8str_create_from_view(alloc, view)` | Copy a view into a new owned string. | `proven_result_u8str_t`. |
+| `proven_u8str_borrow(buf, cap)` | Wrap caller-owned `[buf, buf+cap)` as a fixed-capacity string (no allocation). Fixed-capacity ops and `append_fmt` work; growing ops refuse to reallocate caller memory; destroy is a no-op. `cap` includes the NUL. | `proven_u8str_t`. |
+| `proven_u8str_reset(str)` | Truncate to empty, keeping the buffer/capacity for reuse (owned or borrowed). | `proven_err_t`. |
 | `proven_u8str_is_valid(str)` | Validate public string invariants. | `bool`. |
-| `proven_u8str_reserve(alloc, str, new_cap)` | Ensure at least `new_cap` bytes of internal capacity. | `proven_err_t`. |
+| `proven_u8str_reserve(alloc, str, new_cap)` | Ensure at least `new_cap` bytes of internal capacity. (Borrowed strings cannot grow.) | `proven_err_t`. |
 | `proven_u8str_append(str, data)` | Atomic fixed-capacity append. | `PROVEN_OK` or `PROVEN_ERR_OUT_OF_BOUNDS`. |
 | `proven_u8str_append_partial(str, data)` | Truncating append. | `proven_result_size_t`; `value` is bytes written. |
 | `proven_u8str_append_grow(alloc, str, data)` | Atomic growable append. | `proven_err_t`. |
@@ -498,6 +500,32 @@ Correct:
 
 ```c
 proven_println("{}", PROVEN_ARG_CSTR_N(untrusted, max_len));
+```
+
+### Borrowed fixed-capacity strings
+
+Use `proven_u8str_borrow` to format into a stack or static buffer without any
+allocation — useful in allocator-free code and on hot paths. Use the
+fixed-capacity operations (and `proven_u8str_append_fmt`), reuse with
+`proven_u8str_reset`, and do not call growing operations or `proven_u8str_destroy`
+on it (the caller owns the memory).
+
+```c
+proven_byte_t line[64];
+proven_u8str_t s = proven_u8str_borrow(line, sizeof line);   /* cap includes NUL */
+proven_u8str_append_fmt(&s, "L{}/{}", PROVEN_ARG(cur), PROVEN_ARG(total));
+write_status(proven_u8str_as_cstr(&s));
+proven_u8str_reset(&s);   /* reuse next frame, no allocation */
+```
+
+Misuse: a growing call that would exceed the borrowed capacity returns
+`PROVEN_ERR_OUT_OF_BOUNDS` rather than reallocating caller memory.
+
+```c
+proven_byte_t small[4];
+proven_u8str_t t = proven_u8str_borrow(small, sizeof small);
+proven_err_t e = proven_u8str_append_grow(alloc, &t, PROVEN_LIT("toolong"));
+/* e == PROVEN_ERR_OUT_OF_BOUNDS; small[] is untouched */
 ```
 
 ### Self-referential formatting

@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.06.17a)
+# proven Test Matrix (v26.06.18a)
 
 This document describes how the `proven` test suite is organized, what each test is intended to validate, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
 
@@ -1308,6 +1308,33 @@ Sub-checks:
 - Confirms policy dispatch still routes through the width-specific shims.
 
 Failure tip: inspect `src/proven/float_format.c` if the dispatch stops using the width-specific shims or if the shared helper disappears.
+
+### 51. `tests/test_u8str_borrow` - U8 string borrow (fixed-capacity over caller memory)
+
+Intent: verify `proven_u8str_borrow` and `proven_u8str_reset` over caller-owned memory.
+
+Sub-checks:
+
+- Borrow sets the borrowed flag and starts empty and valid.
+- Fixed-capacity append and `append_fmt` work; an over-capacity append fails atomically.
+- `append_byte` fills to capacity then returns `PROVEN_ERR_OUT_OF_BOUNDS`.
+- A growing call that would reallocate (`append_grow`, `reserve`) is rejected without touching caller memory; a within-capacity grow succeeds.
+- `reset` empties the buffer for reuse.
+- `destroy` on a borrow frees nothing and clears the handle.
+
+Failure tip: inspect `proven_u8str_borrow`/`proven_u8str_reset` and the `borrowed`-flag guards in `reserve`, `append_grow`, `replace_at_grow`, and `destroy` in `src/proven/u8str.c`.
+
+### 52. `tests/test_mem_copy` - bounded memory copy
+
+Intent: verify `proven_mem_copy` performs a bounded byte copy.
+
+Sub-checks:
+
+- Copies a source that fits, including the exact-capacity case.
+- Rejects an overflowing source with `PROVEN_ERR_OUT_OF_BOUNDS` and writes nothing.
+- Treats a zero-size source as a no-op and rejects a null destination.
+
+Failure tip: inspect `proven_mem_copy` in `src/proven/memory.c`.
 
 ## Failure triage workflow
 
