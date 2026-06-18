@@ -61,3 +61,79 @@ x86_64-w64-mingw32-gcc -o test.exe build/win/*.o   # undefined reference
 ### Downstream status
 prov_text_editor has **halted** its Windows x64 build pending this fix (per its
 AGENTS §10.1 halt-and-report policy). The native Linux build is unaffected.
+
+---
+
+## 2026-06-18 — ENHANCEMENT: no fixed-capacity `proven_u8str_t` over caller-owned memory
+
+- **Status:** OPEN — request for an upstream API addition.
+- **Reported by:** prov_text_editor (RFC-0004 / Special Milestone S — adopting the
+  proven string system across the editor).
+- **Category:** enhancement (not a defect; existing behavior is correct).
+- **Affected:** `include/proven/u8str.h`, `include/proven/buffer.h`.
+
+### Context
+prov adopted `proven_u8str_t` / `proven_u8str_view_t` widely (config parser,
+buffer-set paths, filename basenames, the piece-table insert store, the prompt
+accumulator, and the global status line via `proven_u8str_append_fmt_grow`).
+Four call sites could **not** be moved onto the proven string system and still
+rely on libc `snprintf` / `memcpy`.
+
+### Observed limitation
+`proven_u8str_t` always owns allocator-backed memory: the only constructors are
+`proven_u8str_create(alloc, limit)` and `proven_u8str_create_from_view(alloc, …)`,
+and `proven_buf_t` likewise only has `proven_buf_create(alloc, cap)`. There is
+**no constructor that wraps caller-owned memory** (a stack/static `char buf[N]`)
+as a fixed-capacity string. Consequently:
+
+1. **Per-frame formatting cannot use proven.** prov rebuilds its command line,
+   per-window status line, tab bar, and transient `message` every render frame
+   into stack buffers. Using `proven_u8str_t` there would force a heap
+   allocation (or a reused scratch) per line, per frame — so these stay on
+   bounded `snprintf`. The type-safe `proven_*_fmt` formatter (which we *do* use
+   for the one heap-backed status scratch) is unavailable here.
+2. **Pure / allocator-free modules cannot use proven.** prov's command-label
+   helper (`command.c`, no allocator by design) formats `"%s %s"` into a
+   caller-owned buffer. With no borrow constructor, `proven_u8str_append_fmt`
+   (the atomic fixed-capacity variant already in the API) has nothing to write
+   into, so it stays on `snprintf`.
+
+The fixed-capacity append family (`proven_u8str_append`,
+`proven_u8str_append_fmt` — "Atomic Fixed-Capacity", returning
+`PROVEN_ERR_OUT_OF_BOUNDS` on overflow) is already designed for exactly this
+use; only the *constructor* over external memory is missing.
+
+### Requested API (maintainer's call on the exact shape)
+A borrow constructor that yields a fixed-capacity `proven_u8str_t` over
+caller-owned bytes, where the fixed-capacity (non-growing) operations work and
+`proven_u8str_destroy` is a safe no-op. For example:
+
+```c
+/* Wrap caller-owned memory [buf, buf+cap) as a fixed-capacity, initially-empty,
+ * NUL-terminated string. No ownership is taken; destroy is a no-op. The
+ * growing operations (*_grow) must reject it (PROVEN_ERR_OUT_OF_BOUNDS or
+ * INVALID_ARG) since the memory cannot be reallocated. */
+proven_u8str_t proven_u8str_borrow(proven_byte_t *buf, proven_size_t cap);
+```
+
+(or the equivalent at the `proven_buf_t` layer, e.g.
+`proven_buf_borrow(ptr, cap)`, with the u8str wrapper built on top). A
+companion `proven_u8str_reset(&s)` (truncate to empty, keep the buffer) would
+let a borrowed or owned string be reused each frame without reallocation.
+
+### Why this matters
+It would let prov replace its remaining hot-path and allocator-free `snprintf`
+sites with proven's type-safe structural formatter — removing the last libc
+string dependencies and closing the "format/argument mismatch" bug class there —
+with **zero per-frame allocation**.
+
+### Secondary, minor
+A bounded `proven_mem_copy(dst, dst_cap, proven_mem_view_t src)` in `memory.h`
+would let byte-range *reads* (e.g. copying a document slice into a caller
+buffer) drop raw `memcpy` for a bounds-checked primitive. Low priority — these
+are byte moves, not string assembly.
+
+### Downstream status
+prov is **not** halted on this — it shipped Milestone S with these four sites
+intentionally left on libc and documented (RFC-0004 §8, TODO "libc dependency
+ledger"). It will convert them once a borrow constructor is available.
