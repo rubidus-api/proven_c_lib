@@ -156,4 +156,14 @@ static inline _Bool proven_range_contains_ptr(const void *base, proven_size_t ca
  */
 int proven_memcmp(const void *s1, const void *s2, proven_size_t size);
 
+/**
+ * @brief Bounded copy of a read-only byte view into a destination buffer.
+ *
+ * Copies src.size bytes into dst, whose capacity is dst_cap. Returns
+ * PROVEN_ERR_OUT_OF_BOUNDS if the source would not fit, PROVEN_ERR_INVALID_ARG
+ * on a null pointer with non-zero size, and PROVEN_OK otherwise (a zero-size
+ * source is a no-op). The regions must not overlap.
+ */
+proven_err_t proven_mem_copy(void *dst, proven_size_t dst_cap, proven_mem_view_t src);
+
 #endif /* PROVEN_MEMORY_H */
