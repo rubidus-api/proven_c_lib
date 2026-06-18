@@ -22,6 +22,7 @@ int main(void) {
     (void)xcv_u8str_borrow;
     (void)xcv_u8str_reset;
     (void)xcv_mem_copy;
+    (void)xcv_mem_move;
 
     /* Test arg alias compilation */
     xcv_arg_t a01 = XCV_ARG(42);

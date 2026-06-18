@@ -256,6 +256,7 @@
 #define xcv_map_t proven_map_t
 #define xcv_mem_align_up proven_mem_align_up
 #define xcv_mem_copy proven_mem_copy
+#define xcv_mem_move proven_mem_move
 #define xcv_mem_mut_from_owned proven_mem_mut_from_owned
 #define xcv_mem_mut_slice_checked proven_mem_mut_slice_checked
 #define xcv_mem_mut_slice_unchecked proven_mem_mut_slice_unchecked
