@@ -218,6 +218,23 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 
 `proven` is not a libc replacement, a garbage collector, or a framework. It does not try to own your process, your build graph, or your error policy. It is a set of C components that are meant to be easy to read, easy to test, and possible to port one boundary at a time.
 
+## utility in a real project
+
+These notes come from building a small terminal text editor (`prov`) on top of `proven`. They are one data point, recorded plainly rather than as a sales pitch.
+
+What it bought:
+
+- **Testability.** Threading `proven_allocator_t` through every module let the whole editor core run under ASan/UBSan and leak detection, including randomized edit-vs-model cross-checks. This was the largest practical gain.
+- **Fewer unchecked-error and string bugs.** `proven_err_t` with `[[nodiscard]]` makes an ignored error a compile-time signal; bounded/owning `u8str` and the typed formatter removed the `snprintf` format/overflow bug class. The editor core stayed libc-free apart from its `main` entry point.
+- **Portability.** The `fs` / `time` / `mmap` / terminal PAL let one codebase build for Linux x86_64/arm64/armhf and Windows x64; a file browser worked on both through `proven_fs_list` / `proven_fs_stat` / `proven_time_breakdown` with no platform `#ifdef`s in the editor.
+
+What you accept, and should not expect:
+
+- **It is not a performance win.** Replacing libc `memmove` with `proven_mem_move` was benchmark-neutral; the editor's 5–50× edit speedups came entirely from its own data structures (incremental line index, piece coalescing), not from the library.
+- **Vendoring discipline.** A copy-only, do-not-patch integration means library gaps are filed upstream rather than fixed in place. Early editor work hit three such gaps (a Windows panic-symbol link failure, a missing fixed-capacity string constructor, and absent owner/group in `fs` stat); they were resolved or deferred upstream, not patched downstream.
+- **Pervasive coupling.** Passing the allocator and Result types everywhere is a deliberate commitment. It pays off on a long-lived, multi-platform codebase and is heavier than warranted for throwaway code.
+- **A young library has gaps.** Expect to occasionally find a missing primitive and to fill or report it. The value is concentrated in safety, testability, and portability — not in convenience or raw speed.
+
 ## documentation
 
 - User manual: `manual/manual.md` (chapters under `manual/`)
@@ -462,6 +479,23 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 ## 이 라이브러리가 아닌 것
 
 `proven`은 libc 대체품도 아니고, garbage collector도 아니고, 프레임워크도 아닙니다. 프로세스, build graph, error policy를 대신 소유하려고 하지도 않습니다. 읽기 쉽고, 테스트하기 쉽고, 한 경계씩 포팅할 수 있도록 만든 C 컴포넌트 모음입니다.
+
+## 실제로 프로젝트에 적용했을 때의 효용성
+
+아래는 `proven` 위에서 작은 터미널 텍스트 에디터(`prov`)를 만들며 관찰한 기록입니다. 하나의 사례일 뿐이며, 과장 없이 사실대로 적습니다.
+
+이런 효능이 있었습니다:
+
+- **테스트 용이성.** `proven_allocator_t`를 모든 모듈에 꿰니 에디터 코어 전체를 ASan/UBSan + leak 검출 아래에서 돌릴 수 있었고, 무작위 편집과 모델을 대조하는 검증까지 가능했습니다. 실무적으로 가장 큰 이득이었습니다.
+- **에러 누락·문자열 버그 감소.** `[[nodiscard]]`가 붙은 `proven_err_t`는 무시된 에러를 컴파일 단계 신호로 만들고, bounded/owning `u8str`와 타입 기반 포매터는 `snprintf` 포맷/오버플로 버그 클래스를 없앴습니다. 에디터 코어는 `main` 진입점을 빼면 libc-free로 유지됐습니다.
+- **이식성.** `fs` / `time` / `mmap` / 터미널 PAL 덕에 한 코드베이스로 Linux x86_64/arm64/armhf와 Windows x64를 빌드했습니다. 파일 브라우저가 에디터 쪽에는 플랫폼 `#ifdef` 하나 없이 `proven_fs_list` / `proven_fs_stat` / `proven_time_breakdown`만으로 양쪽에서 동작했습니다.
+
+이런 점은 감수해야 하고, 기대해서는 안 됩니다:
+
+- **성능 향상은 아닙니다.** libc `memmove`를 `proven_mem_move`로 바꾼 것은 벤치마크상 중립이었습니다. 에디터의 5~50× 편집 속도 향상은 전적으로 자체 자료구조(증분 라인 인덱스, piece 코얼레싱)에서 나왔지 라이브러리에서 나온 것이 아닙니다.
+- **벤더링 규율.** 복사만 하고 직접 패치하지 않는 통합 방식이라, 라이브러리 공백은 그 자리에서 고치지 않고 업스트림에 상신해야 합니다. 초기 개발에서 그런 공백 3건(Windows panic 심볼 링크 실패, 고정용량 문자열 생성자 부재, `fs` stat의 owner/group 부재)을 만났고, 다운스트림에서 패치하는 대신 업스트림에서 해결하거나 보류했습니다.
+- **전면적 결합.** 할당자와 Result 타입을 도처에 넘기는 것은 의도된 약속입니다. 오래 유지되는 멀티플랫폼 코드베이스에서 값을 하지만, 일회성 코드에는 과합니다.
+- **젊은 라이브러리에는 공백이 있습니다.** 필요한 primitive가 없어서 직접 메우거나 상신해야 하는 경우를 종종 만나게 됩니다. 가치는 안전성·테스트 용이성·이식성에 집중돼 있고, 편의성이나 순수 속도에 있지 않습니다.
 
 ## 문서
 
