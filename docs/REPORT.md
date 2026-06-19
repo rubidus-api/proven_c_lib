@@ -141,3 +141,36 @@ are byte moves, not string assembly.
 prov is **not** halted on this — it shipped Milestone S with these four sites
 intentionally left on libc and documented (RFC-0004 §8, TODO "libc dependency
 ledger"). It will convert them once a borrow constructor is available.
+
+---
+
+## 2026-06-19 — ENHANCEMENT: `proven_fs_stat` exposes no owner/group (uid/gid)
+
+- **Status:** OPEN — feature request (not a defect).
+- **Reported by:** prov_text_editor (building the file-open directory browser).
+- **Affected file/symbol:** `include/proven/fs.h` — `proven_fs_stat_t`
+  (fields: `size`, `type`, `perms`, `created_at`, `modified_at`, `dev`, `ino`)
+  and `platform/proven_sys_fs.c` — `proven_sys_fs_stat` / `proven_sys_fs_stat_t`.
+
+### Observed behavior
+`proven_fs_stat` returns permissions and timestamps but no ownership. The POSIX
+backend already does a `stat()` whose `struct stat` carries `st_uid` / `st_gid`,
+and `proven_sys_fs_dir_next` likewise `fstatat()`s every entry — the ownership
+fields are simply discarded.
+
+### Expected behavior
+A way to obtain an entry's owner and group. Minimal shape:
+
+- Add `unsigned long long uid; unsigned long long gid;` to `proven_fs_stat_t`
+  (and the sys-level stat struct), populated from `st_uid` / `st_gid` on POSIX.
+- Windows has no uid/gid; a documented convention (e.g. leave them 0, or expose
+  the owner SID / account name through a separate optional call) would let
+  downstream show an "owner" column without `#ifdef`-ing the platform.
+- Optional but ideal: a name-resolution helper (uid → user name, gid → group
+  name) so callers need not link `getpwuid`/`getgrgid` themselves.
+
+### Downstream status
+prov is **not** halted on this. The browser shipped with the size / permissions
+/ mtime / type columns (all derivable from the current API) and the owner/group
+columns documented as deferred (CHANGELOG "File-open browser"). It will add the
+owner/group columns once `proven_fs_stat` exposes uid/gid.
