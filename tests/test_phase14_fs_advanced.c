@@ -3,6 +3,9 @@
 #include "proven/sysio.h"
 
 #include <string.h>
+#if !defined(_WIN32) && !defined(_WIN64)
+#include <unistd.h>   /* getuid / getgid for the owner-field check */
+#endif
 
 
 int main() {
@@ -69,6 +72,28 @@ int main() {
     
     // Cleanup list strings
     proven_fs_list_destroy(heap, arr);
+
+    // 4b. Stat exposes owner/group (uid/gid). On POSIX they equal the calling
+    //     process's ids for a file we just created; on Windows they are 0.
+    PROVEN_TEST_INFO("Testing stat owner/group (uid/gid)...");
+    {
+        proven_fs_stat_t st;
+        PROVEN_TEST_ASSERT(PROVEN_IS_OK(proven_fs_stat(heap, file_a, &st)),
+            "Testing condition: proven_fs_stat(file_a) ok",
+            "Review proven_fs_stat / proven_sys_fs_stat owner-field population");
+#if !defined(_WIN32) && !defined(_WIN64)
+        PROVEN_TEST_ASSERT(st.uid == (unsigned long long)getuid(),
+            "stat uid matches getuid() for a just-created file",
+            "Check st_uid propagation in proven_sys_fs_stat (POSIX)");
+        PROVEN_TEST_ASSERT(st.gid == (unsigned long long)getgid(),
+            "stat gid matches getgid() for a just-created file",
+            "Check st_gid propagation in proven_sys_fs_stat (POSIX)");
+#else
+        PROVEN_TEST_ASSERT(st.uid == 0 && st.gid == 0,
+            "stat uid/gid are 0 on Windows (no POSIX ownership)",
+            "Check the Windows branch of proven_sys_fs_stat");
+#endif
+    }
 
     // 5. Cleanup
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(proven_fs_remove(heap, file_a)), "Testing condition: PROVEN_IS_OK(proven_fs_remove(heap, file_a))", "Review logic surrounding PROVEN_IS_OK(proven_fs_remove(heap, file_a))");

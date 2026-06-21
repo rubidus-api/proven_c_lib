@@ -86,6 +86,8 @@ typedef struct {
     long long mtime;
     unsigned long long dev;
     unsigned long long ino;
+    unsigned long long uid;   /* owner id (POSIX st_uid; 0 on Windows) */
+    unsigned long long gid;   /* group id (POSIX st_gid; 0 on Windows) */
 } proven_sys_fs_stat_t;
 
 [[nodiscard]]

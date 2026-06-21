@@ -11,6 +11,18 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-06-22] — proven_c_lib-v26.06.22a
+
+### Added
+
+- `proven_fs_stat` now exposes file ownership: `proven_fs_stat_t` gains
+  `unsigned long long uid` and `gid`, populated from `st_uid` / `st_gid` on
+  POSIX and set to `0` on Windows (which has no POSIX ownership). The sys-level
+  `proven_sys_fs_stat_t` carries the same two fields. Resolves the prov_text_editor
+  enhancement request (docs/REPORT.md, 2026-06-19) that blocked the file browser's
+  owner/group columns. Verified in `tests/test_phase14_fs_advanced.c` (uid/gid
+  equal `getuid()`/`getgid()` for a just-created file on POSIX).
+
 ## [2026-06-21] — proven_c_lib-v26.06.21a
 
 ### Fixed

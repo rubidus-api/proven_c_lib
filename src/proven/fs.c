@@ -493,7 +493,9 @@ proven_err_t proven_fs_stat(proven_allocator_t scratch, proven_u8str_view_t path
     out_stat->created_at = 0; // standard stat doesn't provide birth time on all posix
     out_stat->dev = se.dev;
     out_stat->ino = se.ino;
-    
+    out_stat->uid = se.uid;
+    out_stat->gid = se.gid;
+
     return PROVEN_OK;
 }
 

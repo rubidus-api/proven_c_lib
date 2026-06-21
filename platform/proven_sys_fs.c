@@ -526,6 +526,8 @@ bool proven_sys_fs_stat(const char *path, proven_sys_fs_stat_t *out_stat) {
 
     out_stat->dev = (unsigned long long)info.dwVolumeSerialNumber;
     out_stat->ino = ((unsigned long long)info.nFileIndexHigh << 32) | (unsigned long long)info.nFileIndexLow;
+    out_stat->uid = 0;   /* Windows has no POSIX uid/gid; see proven_fs_stat_t docs */
+    out_stat->gid = 0;
     return true;
 #else
     struct stat st;
@@ -544,6 +546,8 @@ bool proven_sys_fs_stat(const char *path, proven_sys_fs_stat_t *out_stat) {
     out_stat->mtime = (long long)st.st_mtime;
     out_stat->dev = (unsigned long long)st.st_dev;
     out_stat->ino = (unsigned long long)st.st_ino;
+    out_stat->uid = (unsigned long long)st.st_uid;
+    out_stat->gid = (unsigned long long)st.st_gid;
     return true;
 #endif
 }
