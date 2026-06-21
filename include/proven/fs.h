@@ -204,6 +204,8 @@ typedef struct {
     proven_i64 modified_at;
     unsigned long long dev;
     unsigned long long ino;
+    unsigned long long uid;   /* owner id: POSIX st_uid; 0 on Windows (no uid/gid) */
+    unsigned long long gid;   /* group id: POSIX st_gid; 0 on Windows */
 } proven_fs_stat_t;
 
 /**

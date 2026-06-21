@@ -146,7 +146,12 @@ ledger"). It will convert them once a borrow constructor is available.
 
 ## 2026-06-19 — ENHANCEMENT: `proven_fs_stat` exposes no owner/group (uid/gid)
 
-- **Status:** OPEN — feature request (not a defect).
+- **Status:** RESOLVED 2026-06-22 in **v26.06.22a** — `proven_fs_stat_t` (and the
+  sys-level `proven_sys_fs_stat_t`) gained `uid`/`gid` (`unsigned long long`),
+  populated from `st_uid`/`st_gid` on POSIX and `0` on Windows. The optional
+  name-resolution helper (uid→user, gid→group) was left to the caller (prov
+  resolves via `getpwuid`/`getgrgid` in its browser). Verified in
+  `tests/test_phase14_fs_advanced.c`.
 - **Reported by:** prov_text_editor (building the file-open directory browser).
 - **Affected file/symbol:** `include/proven/fs.h` — `proven_fs_stat_t`
   (fields: `size`, `type`, `perms`, `created_at`, `modified_at`, `dev`, `ino`)
