@@ -8,7 +8,7 @@ The point is not to hide C behind a framework. The point is to make practical C 
 
 The build driver probes `-std=c23` first and falls back to `-std=c2x` when the compiler still uses the transitional spelling, so older GCC and Clang front ends can still build the tree without changing the library's C23 baseline.
 
-- Version: proven_c_lib-v26.06.18b
+- Version: proven_c_lib-v26.06.21a
 - Standard: C23
 - License: MIT
 - Repository: https://github.com/rubidus-api/proven_c_lib
@@ -272,7 +272,7 @@ License: MIT License. See `LICENSE`.
 
 빌드 드라이버는 먼저 `-std=c23`를 시도하고, 컴파일러가 아직 transitional spelling만 받아들이는 경우 `-std=c2x`로 내려갑니다. 그래서 기존 GCC와 Clang 프런트엔드도 라이브러리의 C23 기준을 바꾸지 않고 트리를 빌드할 수 있습니다.
 
-- 버전: proven_c_lib-v26.06.18b
+- 버전: proven_c_lib-v26.06.21a
 - 표준: C23
 - 라이선스: MIT
 - 저장소: https://github.com/rubidus-api/proven_c_lib
