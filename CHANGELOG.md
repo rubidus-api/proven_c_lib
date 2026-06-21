@@ -11,6 +11,23 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-06-21] — proven_c_lib-v26.06.21a
+
+### Fixed
+
+- `map.c`: silenced a `-Wunused-parameter` warning on the `map` argument of
+  `map_key_is_valid`. Its only use is the hardened overlap check, which is
+  compiled out on `-DNDEBUG` non-hardened builds, so downstream release builds
+  (`-Wall -Wextra -DNDEBUG`) saw the warning. Added `(void)map;`. Reported via
+  `docs/REPORT.md`.
+
+### Changed
+
+- Synced the version string to `proven_c_lib-v26.06.21a` across
+  `include/proven/version.h`, `README.md`, `TEST.md`, and the `manual/`
+  chapters. Also corrected the `manual-01` version-macro example, whose
+  `STRING`/`NUM`/`SUFFIX` lines had drifted out of sync with each other.
+
 ## [2026-06-18] — proven_c_lib-v26.06.18b
 
 ### Added

@@ -376,6 +376,7 @@ static proven_err_t map_insert_no_grow(proven_map_t *map, proven_map_key_t key, 
 }
 
 static bool map_key_is_valid(const proven_map_t *map, proven_key_type_t type, proven_map_key_t key) {
+    (void)map;  /* only read by the hardened overlap check below; compiled out on -DNDEBUG non-hardened builds */
     if (type == PROVEN_KEY_TYPE_INT) return true;
     if (type == PROVEN_KEY_TYPE_U8_BORROWED || type == PROVEN_KEY_TYPE_U8_OWNED) {
         if (key.str.size != 0 && key.str.ptr == NULL) {

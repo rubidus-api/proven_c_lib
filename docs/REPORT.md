@@ -174,3 +174,106 @@ prov is **not** halted on this. The browser shipped with the size / permissions
 / mtime / type columns (all derivable from the current API) and the owner/group
 columns documented as deferred (CHANGELOG "File-open browser"). It will add the
 owner/group columns once `proven_fs_stat` exposes uid/gid.
+
+---
+
+## 2026-06-21 — ENHANCEMENT: no way to drop float support from the `{}` formatter (size)
+
+- **Status:** NOT A DEFECT — **already available** (see Resolution). The original
+  filing was a downstream oversight: prov's TODO carried this as a "candidate"
+  before its author re-checked proven's current API. No upstream change needed.
+- **Reported by:** prov_text_editor (size-reducing the release / cross binaries).
+- **Found in:** vendored `proven_c_lib-v26.06.18b`.
+- **Affected:** `src/proven/fmt.c` (the `{}` / `PROVEN_ARG` formatter dispatch),
+  which references the float path in `src/proven/float_format.c`,
+  `src/proven/float_decimal.c` (+ its large embedded decimal tables in
+  `float_decimal_tables.h`) and `src/proven/float_parse.c`.
+
+### Context
+prov uses the structural formatter (`FMT_INTO` / `proven_u8str_append_fmt*` with
+`{}` + `PROVEN_ARG`) pervasively — command line, status lines, labels, the config
+writer, diagnostics — but **never formats a floating-point argument**. Every
+value prov prints is an integer, string/view, or char.
+
+### Observed behavior
+Because the `{}` dispatch can format float specifiers, the float
+formatting/parsing code is reachable from `fmt.c` and therefore survives the
+release link, even with `-O2 -flto -ffunction-sections -fdata-sections
+-Wl,--gc-sections -s`. The linker cannot prove the float path dead (it is
+reachable through the generic formatter), so the float code + its decimal
+conversion tables stay in the binary. `float_decimal` in particular carries large
+static tables (its LTO object alone is ~190 KB of bytecode). prov's earlier
+estimate of the retained cost was ~6 KB of the final stripped binary; the exact
+figure is best measured upstream with a link map (`-Wl,-Map`) or an unstripped
+build, since prov ships `-s` (stripped) binaries.
+
+### Expected / requested
+A compile-time way for size-constrained consumers to exclude float support from
+the `{}` formatter and reclaim the float code + tables. Maintainer's call on the
+exact shape, e.g.:
+
+- A `-DPROVEN_FMT_NO_FLOAT` build option: `{}` on a float arg becomes a
+  compile-time error (or a defined fallback such as emitting `<float>`), and the
+  float TUs are not referenced, so `--gc-sections` drops them; **or**
+- An explicit int/string-only formatter entry point (e.g.
+  `proven_u8str_append_fmt_lite`) that never reaches the float path, leaving the
+  full `{}` available for consumers that do want floats.
+
+### Why this matters
+prov targets a tiny footprint (release native ~56 KB before this float code; four
+cross targets shipped). Dropping unused float conversion would be a meaningful
+percentage of a binary this small, on every target.
+
+### Resolution
+The requested capability **already exists** in proven and needs no upstream work:
+
+- `include/proven/fmt.h` gates the float argument type, the float arg
+  constructor, and the generic-selector float branch behind `PROVEN_FMT_NO_FLOAT`.
+- `src/proven/fmt.c` gates the `PROVEN_ARG_F64` render case behind the same macro.
+- `nob.c` builds a `freestanding` profile with `-DPROVEN_FMT_NO_FLOAT`
+  (+ `-DPROVEN_FREESTANDING -DPROVEN_NO_U16STR`), and `tests/test_compile_nofloat`
+  verifies that the macro removes the float dependency while integer/text
+  formatting keeps working. The manual documents it (`manual-freestanding.md`,
+  `manual-03`, `manual-06`, `manual-08`).
+
+So a size-constrained consumer simply defines `-DPROVEN_FMT_NO_FLOAT`; with
+`--gc-sections` the unreferenced float TUs then drop out. **This is a downstream
+(prov) action**, not a proven gap: prov should add the macro to its release build
+if it wants to reclaim the float code.
+
+---
+
+## 2026-06-21 — DEFECT (cosmetic): `-Wunused-parameter` in `map.c` on `-DNDEBUG` builds
+
+- **Status:** RESOLVED in `proven_c_lib-v26.06.21a` — added `(void)map;` to
+  `map_key_is_valid` so the parameter is referenced on the compiled-out path.
+  Verified clean under `-std=c23 -Wall -Wextra -DNDEBUG`.
+- **Reported by:** prov_text_editor (its `--release` / `dist` builds compile with
+  `-Wall -Wextra -DNDEBUG` and surface this every time).
+- **Found in:** vendored `proven_c_lib-v26.06.18b`.
+- **Affected file/symbol:** `src/proven/map.c:378` —
+  `static bool map_key_is_valid(const proven_map_t *map, proven_key_type_t type,
+  proven_map_key_t key)`; parameter `map`.
+
+### Observed behavior
+Compiling for release (`-std=c23 -Wall -Wextra -O2 -DNDEBUG …`) emits:
+
+```
+src/proven/map.c:378:50: warning: unused parameter 'map' [-Wunused-parameter]
+```
+
+It does **not** appear in the default debug build.
+
+### Root cause
+Inside `map_key_is_valid`, the only use of `map` is guarded by
+`#if PROVEN_HARDENED || !defined(NDEBUG)`. In a plain `-DNDEBUG` build without
+`PROVEN_HARDENED`, that block is compiled out, so `map` is never read and
+`-Wextra` flags it.
+
+### Expected / suggested (maintainer's call)
+Keep release builds warning-clean, e.g. add `(void)map;` on the non-hardened
+path, mark the parameter, or restructure so the parameter is always referenced.
+
+### Downstream status
+prov is **not** halted — it is only a warning. Filed per the
+no-local-patches policy because it recurs on every release/dist build.
