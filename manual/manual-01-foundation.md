@@ -261,7 +261,7 @@ proven_size_t aligned = (size + align - 1) & ~(align - 1); /* wrong: may overflo
 ## 6. Version macros
 
 ```c
-#define PROVEN_VERSION_STRING "proven_c_lib-v26.06.21a"
+#define PROVEN_VERSION_STRING "proven_c_lib-v26.06.24a"
 #define PROVEN_VERSION_NUM    260621
 #define PROVEN_VERSION_SUFFIX "a"
 ```
