@@ -10,6 +10,14 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+/*
+ * <stdalign.h> makes `alignof`/`alignas` available as macros under the older
+ * `-std=c2x` fallback (and C11/C17), where they are not yet keywords. In C23
+ * the header is empty and these are real keywords, so including it is harmless.
+ * It lives in this foundation header — which every translation unit pulls in —
+ * so any `.c` using `alignof` is covered regardless of its own include list.
+ */
+#include <stdalign.h>
 
 #if defined(__has_include)
 #  if __has_include(<uchar.h>)

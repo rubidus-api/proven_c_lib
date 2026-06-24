@@ -11,6 +11,27 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-06-24] — proven_c_lib-v26.06.24b
+
+### Fixed
+
+- Build break on older GCC under the `-std=c2x` fallback: `src/proven/job.c`
+  used `alignof` without `<stdalign.h>`. `alignof` is a first-class keyword only
+  in C23; under the documented `-std=c2x` fallback (and C11/C17) it is a macro
+  that `<stdalign.h>` provides. On a compiler new enough to keyword-ify `alignof`
+  under c2x (e.g. GCC 14) it built anyway, which is why builds on newer toolchains
+  did not catch it; on an older GCC the c2x fallback failed to compile at
+  `job.c:111`, taking down the whole hosted build. Reported by an external tester
+  whose default GCC fell back to c2x (their clang regression / ASan / UBSan /
+  freestanding runs passed).
+- Fix is centralized: `<stdalign.h>` is now included from `include/proven/types.h`,
+  the foundation header every translation unit pulls in, so all `alignof`/`alignas`
+  users are covered regardless of their own include list. This also closes the same
+  latent gap in `fmt.c`, `pool.c`, and `sysio.c` (which previously relied on
+  transitive includes). Verified: `alignof` via `proven/types.h` compiles even
+  under `-std=c11` (where it is not a keyword); full gcc build, `strict-error`, and
+  `freestanding` gates pass.
+
 ## [2026-06-24] — proven_c_lib-v26.06.24a
 
 ### Changed
