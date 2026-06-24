@@ -11,6 +11,31 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-06-24] — proven_c_lib-v26.06.24a
+
+### Changed
+
+- Documentation release (no library code changes). Brought the manuals and README
+  current with v26.06.22a and added deep-dive sections to the chapters:
+  - `manual/manual-04`: how the hash map works internally (bucket layout,
+    FNV-1a / bit-mix hashing, linear probing, tombstones, the 3/4 load factor and
+    rehash, the three key modes, and the `set_with_scratch` alias case).
+  - `manual/manual-06`: the job system's concurrency model (atomic MPMC ring,
+    lifecycle state machine, memory-visibility via the destroy/join sync point) and
+    the stackless-coroutine expansion with the "locals do not survive a yield" rule.
+  - `manual/manual-02`: how the pool's recycle bin works, with misuse cases.
+  - `manual/manual-08`: an "Inside the engine" section for the float parse tiers
+    (Clinger / Eisel-Lemire / exact big-integer) and the two formatters (Grisu3 +
+    Dragon4 shortest, exact integer `%f`/`%e`).
+  - `manual/manual-03`: the `proven_u8str_t` internal layout (`proven_buf_t internal`
+    + `borrowed`) with a borrowed-string counter-example.
+  - `manual/manual-05`: `proven_fs_stat_t` now documents `uid`/`gid`.
+  - `manual/manual.md`: corrected the arena ownership row (caller-backed bump
+    pointer, not an owner); header map adds `config.h`, `float_parse.h`,
+    `float_format.h`, `float_config.h`.
+- Moved the internal-only docs (`docs/internal/`: benchmarks, RFC drafts, overhaul
+  plans) out of the repository into the private workspace and gitignored the path.
+
 ## [2026-06-22] — proven_c_lib-v26.06.22a
 
 ### Added
