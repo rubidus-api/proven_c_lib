@@ -202,7 +202,7 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 
 ## main modules
 
-- Foundation: `types`, `error`, `memory`, `align`.
+- Foundation: `types`, `error`, `memory`, `align`, `version`, `config`.
 - Allocation: `allocator`, `heap`, `arena`, `pool`.
 - Buffers and strings: `buffer`, `u8str`, `u16str`.
 - Containers: `array`, `list`, `ring`, `map`.
@@ -464,7 +464,7 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 
 ## 주요 모듈
 
-- Foundation: `types`, `error`, `memory`, `align`.
+- Foundation: `types`, `error`, `memory`, `align`, `version`, `config`.
 - Allocation: `allocator`, `heap`, `arena`, `pool`.
 - Buffers and strings: `buffer`, `u8str`, `u16str`.
 - Containers: `array`, `list`, `ring`, `map`.

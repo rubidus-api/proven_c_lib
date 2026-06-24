@@ -51,6 +51,48 @@ Intent:
 - `proven_result_u8str_t`: result wrapper for owned strings.
 - `proven_result_cstr_t`: result wrapper for an allocated NUL-terminated C string.
 
+### Internal layout
+
+The views are exactly what they look like — a pointer and a byte count:
+
+```c
+typedef struct { const proven_byte_t *ptr; proven_size_t size; } proven_u8str_view_t;
+typedef struct { proven_byte_t *ptr;       proven_size_t size; } proven_u8str_mut_t;
+```
+
+The owned string wraps a `proven_buf_t` (the fixed-capacity byte buffer from
+Chapter 2) plus one flag:
+
+```c
+typedef struct {
+    proven_buf_t internal;   /* the bytes + length + capacity; always keeps room for a NUL */
+    bool         borrowed;   /* false = allocator-owned (default); true = wraps caller memory */
+} proven_u8str_t;
+```
+
+- `internal.size` is the byte length; the byte at `internal.size` is always the
+  NUL terminator while the string is valid, so `proven_u8str_as_cstr()` is O(1).
+- `borrowed` is `false` for a zero-initialized handle, so an allocator-owned
+  string is the safe default. It is set `true` only by `proven_u8str_borrow`,
+  which wraps `[buf, buf+cap)` you own: growing operations then refuse to
+  reallocate (`PROVEN_ERR_OUT_OF_BOUNDS`) and `proven_u8str_destroy` is a no-op.
+- **Do not** read or write these fields directly to change the string; use the
+  functions below. Reading `internal.size` for length is fine, but prefer
+  `proven_u8str_as_view()`.
+
+Counter-example — treating a borrowed string like an owned one:
+
+```c
+proven_byte_t stack[32];
+proven_u8str_t s = proven_u8str_borrow(stack, sizeof stack);   /* borrowed */
+/* WRONG: this would need to reallocate caller memory -> returns OUT_OF_BOUNDS,
+   it does NOT silently grow the stack buffer. */
+proven_err_t e = proven_u8str_append_grow(alloc, &s, PROVEN_LIT("...long..."));
+/* WRONG: destroy does not free `stack` (it's yours); calling free() on it after
+   a no-op destroy and then reusing `s` is a use-after-free of your own making. */
+proven_u8str_destroy(alloc, &s);   /* no-op for a borrowed string */
+```
+
 ### Macros
 
 | Macro | Intent | Notes |
