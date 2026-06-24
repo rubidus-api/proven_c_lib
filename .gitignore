@@ -22,5 +22,13 @@ SPEC.md
 CHECKLIST.md
 *.local.md
 .hermes/
+docs/internal/
 .*
 !.env.example
+
+# credentials — never track (defense in depth)
+github-personal-access-token
+*-ssh-key-*
+*.pem
+*api*key*
+cloudflare*.env
