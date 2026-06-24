@@ -211,6 +211,39 @@ Fields:
 - `bin_cap`: maximum cached block count.
 - `bin_len`: current cached block count.
 
+### How recycling works
+
+The pool does not own one big slab; it allocates each item individually from
+`base_alloc` and keeps a small **stack of freed blocks** (the `bin`, an array of up
+to `bin_cap` pointers):
+
+- **Allocate.** If `bin_len > 0`, pop the top pointer (O(1), no `base_alloc` call) —
+  this is the whole point of the pool. Otherwise fall through to `base_alloc`.
+- **Free.** If `bin_len < bin_cap`, push the pointer onto the bin for reuse;
+  otherwise (bin full) free it straight back to `base_alloc`. So the bin caps how
+  much memory the pool keeps parked for reuse.
+- **Destroy.** `proven_pool_destroy` frees every pointer still in the bin and the
+  bin array itself — but it does **not** track live (handed-out) items, so you must
+  free everything you allocated before destroying the pool.
+
+This makes the pool a churn optimizer for short-lived same-type objects (nodes,
+events), not a region allocator. Use an `arena` when you want "allocate many,
+free all at once"; use a `pool` when you want "allocate/free the same size over
+and over cheaply".
+
+#### Counter-examples
+
+```c
+/* WRONG: the pool only handles its configured size/alignment. */
+proven_allocator_t a = proven_pool_as_allocator(&pool);   /* item_size == sizeof(Node) */
+a.alloc_fn(a.ctx, sizeof(BigThing), alignof(BigThing));   /* not the pool's item -> rejected */
+
+/* WRONG: destroying while items are still live leaks (and dangles) them. */
+void *p = a.alloc_fn(a.ctx, sizeof(Node), alignof(Node)).value.ptr;
+proven_pool_destroy(&pool);   /* `p` is NOT freed and is now dangling */
+/* RIGHT: free every handed-out item first, then destroy. */
+```
+
 ### Pool functions
 
 | API | Intent | Return |

@@ -35,6 +35,52 @@ proven_i32 state;
 | `PROVEN_CORO_END(c)` | Mark done and return 1. |
 | `PROVEN_CORO_IS_DONE(c)` | Check whether state is -1. |
 
+### How it expands (and the one rule that matters)
+
+These macros are the classic Protothreads/Duff's-device trick. `BEGIN` opens a
+`switch (state)`, each `YIELD`/`AWAIT` records `__LINE__` as the resume label and
+`return`s, and `END` closes the switch. Conceptually:
+
+```c
+proven_i32 f(Ctx *c) {
+    switch (c->coro.state) {       /* PROVEN_CORO_BEGIN */
+    case 0:
+        /* ... code before the first yield ... */
+        c->coro.state = 42; return 0; case 42:;   /* PROVEN_CORO_YIELD on line 42 */
+        /* ... code after the yield ... */
+    }
+    c->coro.state = -1; return 1;  /* PROVEN_CORO_END */
+}
+```
+
+The function **returns** at each yield and is **re-entered from the top**, jumping
+straight to the resume `case`. The consequence — the single rule to remember:
+
+> **Local (stack) variables do NOT survive a yield.** Anything whose value must
+> persist across a `YIELD`/`AWAIT` must live in the coroutine's own struct (or be
+> `static`), because the locals are re-created on every call.
+
+Other constraints that follow from the expansion: two coroutine macros must not
+share a source line (they'd collide on `__LINE__`), and a `YIELD`/`AWAIT` must not
+sit inside a `switch` of your own (it would land in the wrong `case`). The
+coroutine has no stack, so it cannot yield from a helper function it calls — only
+from its own body.
+
+#### Counter-example — a local across a yield
+
+```c
+static proven_i32 bad(Ctx *c) {
+    PROVEN_CORO_BEGIN(&c->coro);
+    int i = 0;                       /* WRONG: a local */
+    while (i < 3) {
+        i += 1;
+        PROVEN_CORO_YIELD(&c->coro); /* on re-entry `i` is re-initialized to 0 */
+    }
+    PROVEN_CORO_END(&c->coro);       /* loop never ends: infinite yields */
+}
+/* RIGHT: put `i` in Ctx (like `value` in the Counter example below). */
+```
+
 Example:
 
 ```c
@@ -92,6 +138,61 @@ Important constraints:
 - `proven_job_system_destroy()` must not race with producer threads still calling `proven_job_submit()`.
 - Callers should externally synchronize producer shutdown, then close/destroy.
 - Queue sequence counters assume they do not wrap beyond signed pointer-difference range during one job-system lifetime.
+
+### Concurrency model
+
+The queue is a fixed-size ring buffer of `max_queue_capacity` slots (must be a
+power of two, so a slot index is `seq & (capacity - 1)`). Producers and consumers
+do not lock the whole queue; they coordinate with **atomic sequence counters**:
+
+- A producer (`proven_job_submit`) atomically claims the next enqueue position. If
+  claiming would overrun the slowest un-consumed slot, the queue is full and submit
+  returns `false` — it never blocks and never overwrites pending work.
+- A consumer (a worker thread, or your own thread via `proven_job_execute_one`)
+  atomically claims the next dequeue position, reads the `routine`/`arg`, marks the
+  slot reusable, and runs the routine outside the claim.
+
+Because submit and execute are MPMC-safe, *many* threads may submit and *many* may
+consume at once. What the library does **not** do for you: it does not synchronize
+the *data your jobs touch*. Two jobs that write the same variable still need their
+own locking/atomics — the queue only orders the handoff, not the work.
+
+Lifecycle state machine (drive it in this order):
+
+```
+init  --->  running  --(close)-->  closed  --(destroy: drain + join)-->  freed
+```
+
+- `init` reserves `num_workers` OS threads and the slot buffer up front.
+- `close` flips a flag so every later `submit` returns `false`; already-queued and
+  in-flight jobs still run.
+- `destroy` closes if needed, then **blocks the calling thread until the queue is
+  empty and every worker has joined**, then frees everything.
+
+**Memory visibility.** A worker joining inside `destroy` is a synchronization
+point: every memory effect of every job is visible to the thread that called
+`destroy` *after `destroy` returns*. So the safe pattern for collecting results is
+"submit all → close → destroy → read results". Reading a job's output from another
+thread *before* that join needs your own synchronization.
+
+#### Counter-examples
+
+```c
+/* WRONG: capacity must be a power of two. */
+proven_job_system_init(alloc, 4, 100, &sys);   /* 100 is not 2^n */
+
+/* WRONG: reading a result before the join makes it visible. */
+int total = 0;
+(void)proven_job_submit(sys, accumulate, &total);
+proven_println("total = {}", PROVEN_ARG(total));  /* data race: job may still be running */
+/* RIGHT: */
+proven_job_system_close(sys);
+proven_job_system_destroy(sys);                   /* joins workers -> writes now visible */
+proven_println("total = {}", PROVEN_ARG(total));
+
+/* WRONG: ignoring the submit result drops work silently when the ring is full. */
+proven_job_submit(sys, work, arg);   /* [[nodiscard]]: a false return means NOT queued */
+```
 
 Example:
 
