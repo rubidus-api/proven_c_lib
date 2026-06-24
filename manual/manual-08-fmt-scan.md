@@ -291,6 +291,45 @@ shortest round-trippable form, or for a precision other than six, use the
   `docs/float-correctness-and-performance.md` for algorithms, methodology, and a
   benchmark against glibc.
 
+### Inside the engine (conceptual)
+
+You do not need any of this to use the API — it is here for readers who want to
+know why the output is trustworthy. Full detail is in
+`docs/float-correctness-and-performance.md`.
+
+**Parsing (decimal → binary64), three tiers, fastest first.** The result is always
+correctly rounded; the tiers are purely a speed staircase, each one only taken when
+it can guarantee the exact answer:
+
+1. *Clinger fast path.* When the value has few significant digits and a small
+   exponent, both the significand and `10^exp` are exactly representable as
+   `double`, so a single rounded multiply/divide is provably correct. Covers most
+   everyday numbers.
+2. *Eisel-Lemire.* A 64×128-bit fixed-point multiply by a cached power of ten,
+   with a check that the result is far enough from a rounding boundary to be
+   certain. If the check is inconclusive (the value sits on a halfway tie), it
+   falls through.
+3. *Exact big-integer fallback.* Builds the value as a ratio of big integers
+   (`significand` and `5^q`/`2^q`) and compares against the candidate `double` and
+   its neighbor exactly — this is the arbiter that makes ties and subnormals
+   correct. A seeded ±16-ULP window keeps the search to a few comparisons. The
+   big-integer capacity is bounded by `PROVEN_FLOAT_BIGINT_LIMBS`; the tier is the
+   only one that allocates limbs (on the stack), and the fast paths never reach it.
+
+**Formatting (binary64/32 → decimal).** Two engines, no `long double` anywhere:
+
+- *Shortest* (`proven_float_format_options_shortest()`): a **Grisu3** fast path
+  produces the minimal round-trippable digits for almost all inputs in ~90 ns; the
+  rare cases where Grisu3 cannot prove minimality fall back to an exact **Dragon4**
+  (Burger–Dybvig, round-to-even) core. The result is the unique shortest decimal
+  that parses back to the same bits.
+- *Fixed `%f` / scientific `%e`* (the default `{}` and the fixed options): an exact
+  integer engine scales the value by `10^precision` with big-integer
+  `mul_pow5`/shift, does an integer `divmod`, and rounds half-to-even — so it
+  matches glibc at any precision and magnitude, with no `2^64`/precision ceiling.
+  Extreme exponents do real arbitrary-precision work and are correspondingly slower
+  (rare in practice).
+
 ### Public float parsing APIs
 
 Three entry points, sharing one correctly-rounded backend:

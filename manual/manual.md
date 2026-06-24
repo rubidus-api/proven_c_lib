@@ -153,8 +153,8 @@ Application code should prefer public APIs. Direct PAL calls are for porting and
 
 | Object | Owns storage | Stores allocator | Destroy function | Notes |
 |---|---:|---:|---|---|
-| `proven_arena_t` | the backing block | the backing allocator | `proven_arena_destroy(&arena)` | Individual arena allocations are never freed; the whole block is released at destroy/reset. |
-| `proven_pool_t` | the slab | the backing allocator | `proven_pool_destroy(&pool)` | Fixed block size; `proven_pool_free` recycles a slot but never shrinks the slab. |
+| `proven_arena_t` | no — caller owns the backing slice | no | `proven_arena_destroy(&arena)` (no-op) | Bump pointer over caller memory: `alloc` advances an offset, `free` is a no-op, `reset` rewinds to empty. The caller owns/frees the backing block. |
+| `proven_pool_t` | yes — items + recycle bin | yes (`base_alloc`) | `proven_pool_destroy(&pool)` | Fixed item size; `proven_pool_free` returns a slot to the recycle bin for reuse rather than freeing it. |
 | `proven_buf_t` | yes | no | `proven_buf_destroy(alloc, &buf)` | Caller must pass the matching allocator. |
 | `proven_u8str_t` | yes | no | `proven_u8str_destroy(alloc, &str)` | Always NUL-terminated when valid. |
 | `proven_u16str_t` | yes | no | `proven_u16str_destroy(alloc, &str)` | Tracks byte length internally; API length is in `proven_u16` units. |

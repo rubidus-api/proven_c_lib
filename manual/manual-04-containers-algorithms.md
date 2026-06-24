@@ -200,26 +200,27 @@ PROVEN_RING_DESTROY(&q);
 
 ```c
 typedef enum {
-    PROVEN_KEY_TYPE_INT,
-    PROVEN_KEY_TYPE_U8_BORROWED
+    PROVEN_KEY_TYPE_INT,          /* keys are proven_size_t integers */
+    PROVEN_KEY_TYPE_U8_BORROWED,  /* keys are u8 views; caller keeps the bytes alive */
+    PROVEN_KEY_TYPE_U8_OWNED      /* keys are u8 views; the map copies and frees the bytes */
 } proven_key_type_t;
 
 typedef union {
-    proven_size_t id;
-    proven_u8str_view_t str;
+    proven_size_t id;             /* used when key_type == PROVEN_KEY_TYPE_INT */
+    proven_u8str_view_t str;      /* used for the two U8 key modes */
 } proven_map_key_t;
 
 typedef struct {
-    proven_allocator_t alloc;
-    proven_mem_mut_t internal;
-    proven_size_t len;
-    proven_size_t used;
-    proven_size_t cap;
-    proven_size_t elem_size;
-    proven_size_t align;
-    proven_size_t bucket_stride;
-    proven_size_t payload_offset;
-    proven_key_type_t key_type;
+    proven_allocator_t alloc;     /* allocator for the bucket array and owned keys */
+    proven_mem_mut_t internal;    /* the single contiguous bucket array (ptr + size) */
+    proven_size_t len;            /* live entries */
+    proven_size_t used;           /* live entries + tombstones (drives the load factor) */
+    proven_size_t cap;            /* number of buckets, always a power of two */
+    proven_size_t elem_size;      /* size of one stored value */
+    proven_size_t align;          /* alignment requested for the value */
+    proven_size_t bucket_stride;  /* bytes per bucket: align_up(header + elem_size) */
+    proven_size_t payload_offset; /* bytes from a bucket start to its value payload */
+    proven_key_type_t key_type;   /* key mode chosen at create time */
 } proven_map_t;
 
 typedef struct {
@@ -228,14 +229,61 @@ typedef struct {
 } proven_result_map_t;
 ```
 
-Field notes:
+### How it works internally
 
-- `len`: live entries.
-- `used`: live entries plus tombstones.
-- `cap`: bucket capacity, maintained as a power of two.
-- `key_type`: key mode selected at creation.
-- `PROVEN_KEY_TYPE_U8_BORROWED` does not copy key bytes.
-- `PROVEN_KEY_TYPE_U8_OWNED` duplicates key bytes into map-owned storage and frees them on remove or destroy.
+The map is a single flat array of `cap` buckets — there are no per-entry
+allocations for values (and none for keys in INT/BORROWED mode), so lookups stay
+cache-friendly. Each bucket is laid out as:
+
+```
+[ header: state + key ][ padding to the value's alignment ][ value payload ]
+^ bucket start                                              ^ payload_offset
+|<------------------------- bucket_stride ------------------------------------>|
+```
+
+The header's `state` is one of **EMPTY** (never used), **OCCUPIED** (holds a live
+key+value), or **TOMBSTONE** (a removed entry). `payload_offset` and
+`bucket_stride` are computed once at create time from `elem_size`/`align`, so
+addressing bucket `i`'s value is just `internal.ptr + i*bucket_stride + payload_offset`.
+
+- **Hashing.** Integer keys go through a SplitMix/Murmur-style bit-mix finalizer
+  (so sequential ids spread across buckets); U8 keys use FNV-1a over the bytes.
+- **Probing.** Linear open addressing: the start bucket is `hash & (cap - 1)`
+  (cheap because `cap` is a power of two), then the search walks forward one
+  bucket at a time, wrapping around, until it finds the key (OCCUPIED with an
+  equal key) or an EMPTY bucket (which proves the key is absent). Linear probing
+  keeps the walked buckets contiguous in memory.
+- **Removal and tombstones.** `proven_map_remove` cannot just blank a bucket —
+  that would cut a probe chain and hide later keys. It marks the bucket TOMBSTONE
+  instead. Tombstones are skipped by lookups but still consume a slot, which is
+  why `used` (live + tombstones) — not `len` — drives growth.
+- **Load factor and resize.** When `used >= cap * 3/4`, the map allocates a new
+  bucket array of the next power of two and **rehashes** every OCCUPIED entry into
+  it, dropping all tombstones in the process. Capacity only grows; it never shrinks.
+  Reserve ahead with `proven_map_reserve` (especially with arena allocators, to
+  avoid leaving dead arrays behind).
+
+### Key modes — choosing one
+
+- `PROVEN_KEY_TYPE_INT`: keys are `proven_size_t`. No key storage.
+- `PROVEN_KEY_TYPE_U8_BORROWED`: the bucket stores the *view* (pointer + length).
+  **The map never copies the bytes**, so the caller must keep the exact bytes
+  alive and unmoved for the whole time the entry exists. Cheapest for keys that
+  already live somewhere stable (string literals, interned strings).
+- `PROVEN_KEY_TYPE_U8_OWNED`: on insert (`proven_map_set_u8_owned` /
+  `PROVEN_MAP_SET_U8_OWNED`) the map **duplicates** the key bytes into its own
+  storage and frees them on remove/destroy, so the source buffer may be released
+  or reused immediately after the call.
+
+### The `set_with_scratch` / alias case
+
+If the `element` you pass to `proven_map_set` points *into the map's own bucket
+array* (for example, copying a value from one key to another via a pointer
+returned by `proven_map_get`), a rehash triggered by that same insert would move
+or free the bytes you are reading. `proven_map_set_with_scratch` (and the
+`*_WITH_SCRATCH_*` macros) capture the source bytes into a temporary buffer from
+the scratch allocator first, so the insert is alias-safe. Persistent storage
+still uses `map->alloc`; the scratch allocator is only for that transient copy.
 
 ### Functions
 
