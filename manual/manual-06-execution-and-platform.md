@@ -155,7 +155,11 @@ do not lock the whole queue; they coordinate with **atomic sequence counters**:
 Because submit and execute are MPMC-safe, *many* threads may submit and *many* may
 consume at once. What the library does **not** do for you: it does not synchronize
 the *data your jobs touch*. Two jobs that write the same variable still need their
-own locking/atomics — the queue only orders the handoff, not the work.
+own locking/atomics — the queue only orders the handoff, not the work. For the
+thread-safety of the allocators those jobs use, the pointer-provenance hazards of
+sharing allocations, and the lock-free toolbox (CAS, ABA, tagged pointers, hazard
+pointers, epoch-based reclamation), see Chapter 2 §7 "Allocator thread-safety &
+provenance".
 
 Lifecycle state machine (drive it in this order):
 
