@@ -1,4 +1,4 @@
-# Proven C Library Complete Manual (v26.06.21a)
+# Proven C Library Complete Manual (v26.06.22a)
 
 This manual is rebuilt from three sources:
 
@@ -153,6 +153,8 @@ Application code should prefer public APIs. Direct PAL calls are for porting and
 
 | Object | Owns storage | Stores allocator | Destroy function | Notes |
 |---|---:|---:|---|---|
+| `proven_arena_t` | the backing block | the backing allocator | `proven_arena_destroy(&arena)` | Individual arena allocations are never freed; the whole block is released at destroy/reset. |
+| `proven_pool_t` | the slab | the backing allocator | `proven_pool_destroy(&pool)` | Fixed block size; `proven_pool_free` recycles a slot but never shrinks the slab. |
 | `proven_buf_t` | yes | no | `proven_buf_destroy(alloc, &buf)` | Caller must pass the matching allocator. |
 | `proven_u8str_t` | yes | no | `proven_u8str_destroy(alloc, &str)` | Always NUL-terminated when valid. |
 | `proven_u16str_t` | yes | no | `proven_u16str_destroy(alloc, &str)` | Tracks byte length internally; API length is in `proven_u16` units. |
@@ -198,7 +200,8 @@ The detailed reference is split by chapter so it can stay readable and source-gr
 | `memory.h` | Byte views, slicing, range checks, memcmp | Chapter 1 |
 | `align.h` | Alignment constants and align-up helpers | Chapter 1 |
 | `version.h` | Version macros | Chapter 1 |
-| `panic.h` | Weak panic hook | Chapter 1 |
+| `panic.h` | Registerable panic handler | Chapter 1 |
+| `config.h` | Compile-time feature toggles (`PROVEN_FREESTANDING`, `PROVEN_FMT_NO_FLOAT`, `PROVEN_NO_U16STR`, …) | Chapters 1 and 6 |
 | `allocator.h` | Allocator trait | Chapter 2 |
 | `heap.h` | PAL-backed heap allocator | Chapter 2 |
 | `arena.h` | Bump allocator | Chapter 2 |
@@ -208,6 +211,9 @@ The detailed reference is split by chapter so it can stay readable and source-gr
 | `u16str.h` | Owned U16 string and borrowed U16 views | Chapter 3 |
 | `fmt.h` | Structural formatter and format arguments | Chapter 3 |
 | `scan.h` | Structural scanner and typed scan destinations | Chapter 3 |
+| `float_parse.h` | Locale-free decimal → `double`/`float` parser (`proven_strtod`, `proven_parse_double_ascii`) | Chapter 8 |
+| `float_format.h` | `double`/`float` → decimal formatter (fixed `%f`/`%e`, shortest) | Chapter 8 |
+| `float_config.h` | Float-engine tuning (`PROVEN_FLOAT_BIGINT_LIMBS`, precision caps) | Chapters 6 and 8 |
 | `array.h` | Generic growable vector | Chapter 4 |
 | `list.h` | Intrusive doubly-linked list | Chapter 4 |
 | `ring.h` | Fixed-capacity FIFO ring | Chapter 4 |

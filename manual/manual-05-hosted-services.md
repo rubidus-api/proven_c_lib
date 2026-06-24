@@ -101,14 +101,28 @@ typedef enum {
 
 ```c
 typedef struct {
-    proven_size_t size;
-    proven_fs_type_t type;
-    proven_fs_perms_t perms;
-    proven_i64 created_at;
-    proven_i64 modified_at;
-    unsigned long long dev;
-    unsigned long long ino;
+    proven_size_t size;          /* size in bytes (0 for directories on some hosts) */
+    proven_fs_type_t type;       /* regular / directory / symlink / other */
+    proven_fs_perms_t perms;     /* POSIX-style permission bits (see proven_fs_perms_t) */
+    proven_i64 created_at;       /* creation time, seconds since the Unix epoch */
+    proven_i64 modified_at;      /* last-modification time, seconds since the Unix epoch */
+    unsigned long long dev;      /* device id (POSIX st_dev; 0 where unavailable) */
+    unsigned long long ino;      /* inode number (POSIX st_ino; 0 where unavailable) */
+    unsigned long long uid;      /* owner id  (POSIX st_uid; 0 on Windows — no uid/gid) */
+    unsigned long long gid;      /* group id  (POSIX st_gid; 0 on Windows) */
 } proven_fs_stat_t;
+```
+
+`uid`/`gid` (added in v26.06.22a) hold the POSIX owner and group ids; both are `0`
+on Windows, which has no `uid`/`gid` concept. Resolve them to names with the
+host's `getpwuid`/`getgrgid` when displaying an `ls -l`-style owner/group column.
+
+```c
+proven_fs_stat_t st;
+if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
+    proven_println("size={} uid={} gid={}",
+        PROVEN_ARG(st.size), PROVEN_ARG(st.uid), PROVEN_ARG(st.gid));
+}
 ```
 
 ### Macro
