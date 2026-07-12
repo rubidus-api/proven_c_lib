@@ -11,6 +11,149 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-12] — proven_c_lib-v26.07.12b
+
+### Fixed
+
+- `proven_array_sort` was quadratic on duplicate keys. The Lomuto partition used
+  a strict `cmp(x, pivot) < 0` test, so every element *equal* to the pivot went
+  into the right partition; on a low-cardinality key - a status column, an enum,
+  a bucket id - the split collapsed to 1/(n-1). Sorting 100,000 identical
+  `int32` keys took **10.6 seconds**. A caller sorting data an attacker can shape
+  had a denial of service, not merely a slow path. Replaced with an introsort:
+  a Bentley-McIlroy three-way partition (so an equal run is final and never
+  recursed into, and every element is compared exactly once), an insertion-sort
+  cutoff, and a heapsort fallback past a depth of `2*log2(n)` - which is what
+  makes the O(n log n) bound a guarantee rather than a hope, since
+  median-of-three alone can still be driven quadratic.
+- A `proven_job_system` worker could exit leaving an accepted job unrun. A
+  submitter that passed `begin_submit` before the close can have claimed its slot
+  with the enqueue CAS without yet publishing `cell->sequence`, which to a
+  dequeuer is indistinguishable from an empty queue. The last worker could
+  therefore exit, the submitter then publish, and `proven_job_submit` return true
+  for a job nobody would ever run - while `proven_job_system_destroy`, documented
+  to block until the queue is exhausted, returned. A worker now leaves only once
+  no submitter is in flight *and* the queue is still empty when re-checked.
+- `proven_fs_read_all` allocated twice the file size for every regular file: the
+  buffer was seeded to the exact reported size, so the read loop filled it and
+  then had to grow before it could issue the read that would observe EOF. Peak
+  memory was 3x the file. EOF is now confirmed with a one-byte probe, and the
+  buffer grows only if the source really does outrun its reported size.
+- `proven_fs_read_all_u8str` started from a one-byte buffer for any source that
+  reports no size: the chunk fallback tested the capacity, which is never 0 once
+  a terminator byte is reserved. Reading `/proc/self/status` took 12 reallocs.
+- `proven_fs_write_file_atomic` widened permissions. The temp sibling is created
+  with `0666 & ~umask` and `rename` carries its mode onto the target, so
+  atomically rewriting a `0600` key file republished it as `0644`. The target's
+  mode is now copied onto the temp before the rename.
+- `proven_fs_write_file_atomic` failed on legal long filenames: a 250-character
+  basename - which `proven_fs_write_file` accepts - made the temp sibling exceed
+  `NAME_MAX`. The copied stem is now trimmed to leave room for the suffix.
+- `proven_fs_stat` put the raw `st_mode` into `perms`, a field typed
+  `proven_fs_perms_t`. `st_mode` also carries the file-type bits, and
+  `proven_fs_chmod` rejects any bit outside the nine it supports - so
+  `chmod(path, stat(path).perms)`, the obvious use of the field, returned
+  `PROVEN_ERR_INVALID_ARG` for every real file. `perms` is now masked to the low
+  nine bits.
+
+### Changed
+
+- The decimal parser's exponent-bounds estimate no longer uses `long double`,
+  the one type in C whose width differs across the targets this library builds
+  for (80-bit on x86, 128-bit on aarch64, plain 64-bit on armhf and MSVC). The
+  estimate happened to come out identical on all of them - verified over the
+  entire input range it can see - so nothing was ever wrong, but a
+  correctness-critical path had no business depending on it, and on a soft-float
+  target it pulled in libgcc routines for no reason. Replaced with an integer
+  fixed-point computation, bit-identical to the exact `floor(k * log2(10))` for
+  every k in range, and verified to produce byte-identical parse results over
+  3,000,000 randomized decimal inputs.
+- `proven_fmt` appends literal text in runs instead of one character at a time.
+  Each literal character used to cost a checked add, an out-of-line one-byte
+  move and a NUL reseal - twice, since the format string is walked once to
+  measure and once to write. A 101-character literal went from 1322 ns to 166 ns;
+  a four-argument log line from 998 ns to 307 ns.
+- `proven_map_set` no longer probes the same chain twice. It validated the map,
+  then `set_with_scratch` validated it again, then walked the probe chain looking
+  for an existing key, then called `map_insert_no_grow` - which walks the same
+  chain and already overwrites a key it finds. The probe is now taken only when
+  the map is about to grow, where it still saves an unnecessary rehash. 500k
+  int inserts: 215.5 ns -> 190.2 ns per op.
+- Sorting wide elements is faster: `swap_elements` takes a bulk-copy branch above
+  16 bytes instead of swapping a byte at a time. 100k 48-byte structs:
+  59.2 ms -> 16.2 ms.
+
+## [2026-07-12] — proven_c_lib-v26.07.12a
+
+### Fixed
+
+- `proven_fs_read_all` silently returned an empty buffer for any source whose
+  size cannot be measured up front. `proven_sys_fs_size` reports 0 for anything
+  that is not a regular file, and `read_all` used that 0 as its buffer size, so
+  reading a FIFO, a character device, or a `/proc` entry succeeded with zero
+  bytes and dropped the contents. `proven_fs_size("/proc/self/status")` is
+  `0`/`PROVEN_OK`, so a 1516-byte file read as empty. `read_all` now reads to
+  EOF and uses the reported size only to seed the initial capacity: a regular
+  file is still one allocation and one pass, an unmeasurable source is read
+  correctly, and a regular file that grows mid-read is no longer truncated.
+- Stack buffer overflow formatting a `proven_datetime_t` with a negative year.
+  `year` is `proven_i32`, but it was cast to `unsigned long long` before
+  conversion, so `-1` became `18446744073709551615` — twenty digits plus a NUL
+  into a twenty-byte scratch buffer (ASan: stack-buffer-overflow in `itoa_raw`).
+  The year now renders with its sign, and the scratch holds any 64-bit value.
+- `proven_sysio_scanner_scan_impl` corrupted the stream when it rolled back a
+  failed scan. `scanner_fill` compacts the buffer, but the rollback restored the
+  cursor and length captured *before* that compaction, so the restored indices
+  described different bytes: one byte was dropped from the front of the stream
+  and one byte — already returned to the file by the rewind — was read twice.
+  The rollback now accounts for how far the buffer moved. On a non-seekable
+  input, where the rewind cannot succeed, the bytes already read are kept
+  buffered instead of being discarded.
+- `proven_u8str_reserve` and the growth path of the formatter left `ptr[len]`
+  uninitialized. Both allocate, and allocators do not return zeroed memory, so
+  reserving on a zero-initialized string — or formatting something that produces
+  no output — broke the NUL seal that `proven_u8str_as_cstr` is documented to
+  rely on, and `proven_u8str_is_valid` rejected the result. Both paths now seal
+  the terminator.
+- `proven_pool_init` published `bin_cap` before allocating the bin behind it, so
+  a failed init left a pool claiming slots it did not have. The free trait tests
+  `bin_len < bin_cap` and then writes `bin[bin_len]`, which with `bin == NULL` is
+  a null write. `bin_cap` is now set only after the bin exists.
+- Unchecked `count * size` arithmetic in `proven_sysio_scanner_scan_impl`, a
+  public entry point that takes `args_count` from the caller. It is now routed
+  through `PROVEN_CKD_MUL` like every other size computation in the library.
+
+### Added
+
+- `proven_fs_read_all_u8str`: the whole-file read most callers actually want,
+  returning a NUL-terminated owned `proven_u8str_t` so `proven_u8str_as_view` and
+  `proven_u8str_as_cstr` work on the result without a second copy. The terminator
+  slot is reserved up front, so it costs no extra allocation over `read_all`.
+- `proven_fs_write_file`: one-call create-or-truncate whole-file write, the half
+  of the API that was missing next to `read_all`.
+- `proven_fs_write_file_atomic`: writes through a sibling temp file and renames
+  it over the target, so a concurrent reader never observes a half-written file.
+  Atomic with respect to readers, not durable across power loss — proven exposes
+  no fsync, and the header says so.
+- `[[nodiscard]]` on `proven_sysio_scanner_scan_impl` and
+  `proven_sysio_scan_chunk_impl`. `proven_sysio_print_impl` is deliberately left
+  unannotated: `proven_print` expands to it and is used as `printf` is.
+
+### Changed
+
+- `proven_sys_mem_realloc` can now grow a block in place. Every allocation used
+  to go through `posix_memalign` / `_aligned_malloc`, which cannot be handed to
+  `realloc()`, so growth always paid a full copy. Requests at or below
+  `alignof(max_align_t)` — every string, buffer, and byte array in the library —
+  now come from `malloc` and grow through `realloc`, which for large blocks
+  remaps pages instead of copying them. Over-aligned requests keep the aligned
+  path. Windows keeps every block on the aligned family (`free` and
+  `_aligned_free` are not interchangeable, and the free trait is not told the
+  alignment) and uses `_aligned_realloc`. Failure atomicity is unchanged.
+  Measured, with every byte of the buffer written: growing a buffer to 256 MiB by
+  doubling went from 0.69s to 0.32s (2.1x); 200k small allocations with six
+  reallocs each went from 0.05s to 0.035s (1.4x).
+
 ## [2026-06-24] — proven_c_lib-v26.06.24b
 
 ### Fixed

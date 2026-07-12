@@ -78,11 +78,18 @@ void proven_sysio_scanner_deinit(proven_sysio_scanner_t *scanner) {
     *scanner = (proven_sysio_scanner_t){0};
 }
 
-static proven_err_t scanner_fill(proven_sysio_scanner_t *scanner, proven_size_t *read_bytes_out) {
+/*
+ * `shifted_out` reports how far left the buffer contents moved, because a
+ * caller that may need to undo the scan cannot otherwise reconcile the indices
+ * it snapshotted with the compacted buffer it is looking at afterwards.
+ */
+static proven_err_t scanner_fill(proven_sysio_scanner_t *scanner, proven_size_t *read_bytes_out, proven_size_t *shifted_out) {
     if (read_bytes_out) *read_bytes_out = 0;
+    if (shifted_out) *shifted_out = 0;
     if (!scanner || scanner->eof) return PROVEN_ERR_EOF;
 
     // Move remaining data to start.
+    if (shifted_out) *shifted_out = scanner->cursor;
     if (scanner->cursor > 0 && scanner->cursor < scanner->length) {
         proven_size_t remaining = scanner->length - scanner->cursor;
         proven_sys_mem_move(scanner->buffer, scanner->buffer + scanner->cursor, remaining);
@@ -285,6 +292,7 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
     proven_size_t start_length = scanner->length;
     bool start_eof = scanner->eof;
     proven_size_t bytes_read_total = 0;
+    proven_size_t total_shift = 0;   /* how far scanner_fill compacted the buffer */
 
     if (scanner->cursor >= scanner->length && scanner->eof) {
         return PROVEN_ERR_EOF;
@@ -295,12 +303,21 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
         return PROVEN_ERR_INVALID_ARG;
     }
 
-    proven_result_mem_mut_t stage_mem = alloc.alloc_fn(alloc.ctx, args_count * sizeof(proven_sysio_scan_stage_t), alignof(proven_sysio_scan_stage_t));
+    /* args_count comes from the caller on this public entry point, so the size
+     * math is checked like every other count * size in the library. */
+    proven_size_t stage_bytes;
+    proven_size_t scratch_bytes;
+    if (PROVEN_CKD_MUL(&stage_bytes, (proven_size_t)args_count, sizeof(proven_sysio_scan_stage_t)) ||
+        PROVEN_CKD_MUL(&scratch_bytes, (proven_size_t)args_count, sizeof(proven_scan_arg_t))) {
+        return PROVEN_ERR_OVERFLOW;
+    }
+
+    proven_result_mem_mut_t stage_mem = alloc.alloc_fn(alloc.ctx, stage_bytes, alignof(proven_sysio_scan_stage_t));
     if (!proven_is_ok(stage_mem.err) || !stage_mem.value.ptr) {
         return stage_mem.err;
     }
 
-    proven_result_mem_mut_t scratch_mem = alloc.alloc_fn(alloc.ctx, args_count * sizeof(proven_scan_arg_t), alignof(proven_scan_arg_t));
+    proven_result_mem_mut_t scratch_mem = alloc.alloc_fn(alloc.ctx, scratch_bytes, alignof(proven_scan_arg_t));
     if (!proven_is_ok(scratch_mem.err) || !scratch_mem.value.ptr) {
         alloc.free_fn(alloc.ctx, stage_mem.value.ptr);
         return scratch_mem.err;
@@ -317,7 +334,9 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
     for (;;) {
         if (scanner->cursor >= scanner->length && !scanner->eof) {
             proven_size_t read_bytes = 0;
-            proven_err_t fill_err = scanner_fill(scanner, &read_bytes);
+            proven_size_t shifted = 0;
+            proven_err_t fill_err = scanner_fill(scanner, &read_bytes, &shifted);
+            total_shift += shifted;
             if (!proven_is_ok(fill_err)) {
                 err = fill_err;
                 break;
@@ -340,7 +359,9 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
 
         if (err == PROVEN_ERR_NEED_MORE) {
             proven_size_t read_bytes = 0;
-            proven_err_t fill_err = scanner_fill(scanner, &read_bytes);
+            proven_size_t shifted = 0;
+            proven_err_t fill_err = scanner_fill(scanner, &read_bytes, &shifted);
+            total_shift += shifted;
             if (proven_is_ok(fill_err)) {
                 bytes_read_total += read_bytes;
                 continue;
@@ -365,12 +386,24 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
     }
 
     if (!proven_is_ok(err)) {
+        /* Undoing the scan means undoing it against the buffer we now have, not
+         * the one we started with: scanner_fill compacts, so every index we
+         * snapshotted moved left by total_shift. Restoring the raw snapshot
+         * dropped a byte from the front of the stream and re-read bytes that had
+         * already been buffered. */
+        bool rewound = true;
         if (bytes_read_total > 0) {
-            (void)scanner_rewind_file(scanner, bytes_read_total);
+            rewound = proven_is_ok(scanner_rewind_file(scanner, bytes_read_total));
         }
-        scanner->cursor = start_cursor;
-        scanner->length = start_length;
-        scanner->eof = start_eof;
+        scanner->cursor = start_cursor - total_shift;
+        if (rewound) {
+            /* The bytes this call pulled in are back in the file; drop them. */
+            scanner->length = start_length - total_shift;
+            scanner->eof = start_eof;
+        }
+        /* Otherwise the input does not seek (a pipe): the bytes cannot be put
+         * back, so keep them buffered rather than discarding them, and leave eof
+         * describing what was actually observed. */
     }
 
     alloc.free_fn(alloc.ctx, scratch_args);

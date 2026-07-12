@@ -125,24 +125,45 @@ static proven_i64 proven_float_exp10_accumulate_clamped(proven_i64 current, prov
     return current * 10ll + (proven_i64)digit;
 }
 
-static proven_i64 proven_float_floor_long_double_to_i64(long double value) {
-    proven_i64 out = (proven_i64)value;
-    if ((long double)out > value) {
-        --out;
+/*
+ * floor(k * log2(10)), in integers only.
+ *
+ * This used to go through `long double`, which is the one type in C whose width
+ * is not the same on every target the library builds for: 80-bit on x86, 128-bit
+ * on aarch64, and a plain 64-bit double on armhf and MSVC. The estimate happened
+ * to come out identical on all of them - verified over the entire input range
+ * this can see, k in [-1000900, 1000900] (the exp10 clamp plus the digit cap) -
+ * so nothing was ever wrong. But a correctness-critical path had no business
+ * depending on a type whose precision varies by platform, and on a soft-float
+ * target the arithmetic pulls in libgcc routines for no reason.
+ *
+ * PROVEN_FLOAT_LOG2_10_Q40 is floor(log2(10) * 2^40). Over the full k range the
+ * result is bit-identical to the exact floor of k * log2(10) - checked against
+ * exact rational arithmetic for every k, not sampled - and |k * C| stays under
+ * 3.66e18, well inside proven_i64.
+ */
+#define PROVEN_FLOAT_LOG2_10_Q40  ((proven_i64)3652498566964ll)
+#define PROVEN_FLOAT_LOG2_10_SHIFT 40
+
+static proven_i64 proven_float_floor_mul_log2_10(proven_i64 k) {
+    const proven_i64 scale = (proven_i64)1 << PROVEN_FLOAT_LOG2_10_SHIFT;
+    proven_i64 product = k * PROVEN_FLOAT_LOG2_10_Q40;
+    if (product >= 0) {
+        return product >> PROVEN_FLOAT_LOG2_10_SHIFT;
     }
-    return out;
+    /* Floor, not truncate: C division rounds toward zero for negatives. */
+    return -((-product + scale - 1) >> PROVEN_FLOAT_LOG2_10_SHIFT);
 }
 
 static void proven_float_decimal_binary_exp_bounds(const proven_float_decimal_number_t *decimal,
                                                    proven_size_t significant_digits,
                                                    proven_i64 *min_exp2_out,
                                                    proven_i64 *max_exp2_out) {
-    const long double log2_10 = 3.321928094887362347870319429489390175864L;
     proven_i64 digits = (proven_i64)significant_digits;
     proven_i64 k_min = decimal->exp10 + digits - 1;
     proven_i64 k_max = decimal->exp10 + digits;
-    proven_i64 min_exp2 = proven_float_floor_long_double_to_i64((long double)k_min * log2_10) - 2;
-    proven_i64 max_exp2 = proven_float_floor_long_double_to_i64((long double)k_max * log2_10) + 2;
+    proven_i64 min_exp2 = proven_float_floor_mul_log2_10(k_min) - 2;
+    proven_i64 max_exp2 = proven_float_floor_mul_log2_10(k_max) + 2;
 
     if (min_exp2 < -1074) {
         min_exp2 = -1074;

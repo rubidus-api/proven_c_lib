@@ -257,15 +257,33 @@ static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fm
         case PROVEN_ARG_DATETIME: {
             proven_datetime_t dt = arg->value.datetime;
             char *curr = buf;
-            
+
+            /* itoa_raw writes n digits plus a NUL, so the scratch must hold
+             * ULLONG_MAX (20 digits) and its terminator. */
             #define APPEND_FIXED(val, digits) { \
-                char temp[20]; \
+                char temp[24]; \
                 int n = itoa_raw((unsigned long long)(val), temp, 10); \
                 for (int _i = 0; _i < (digits) - n; _i++) *curr++ = '0'; \
                 for (int _i = 0; _i < n; _i++) *curr++ = temp[_i]; \
             }
-            
-            APPEND_FIXED(dt.year, 4); *curr++ = '-';
+
+            /* year is the one signed field. Casting it straight to unsigned
+             * long long turned -1 into 18446744073709551615: twenty digits of
+             * nonsense, and twenty digits plus a NUL into a twenty-byte
+             * scratch buffer. Render the sign, then the magnitude. Negating
+             * through long long keeps INT32_MIN in range. */
+            {
+                char temp[24];
+                proven_i32 y = dt.year;
+                unsigned long long mag = (y < 0)
+                    ? (unsigned long long)(-(long long)y)
+                    : (unsigned long long)y;
+                if (y < 0) *curr++ = '-';
+                int n = itoa_raw(mag, temp, 10);
+                for (int _i = 0; _i < 4 - n; _i++) *curr++ = '0';
+                for (int _i = 0; _i < n; _i++) *curr++ = temp[_i];
+            }
+            *curr++ = '-';
             APPEND_FIXED(dt.month, 2); *curr++ = '-';
             APPEND_FIXED(dt.day, 2); *curr++ = ' ';
             APPEND_FIXED(dt.hour, 2); *curr++ = ':';
@@ -356,8 +374,18 @@ static void fmt_run(proven_fmt_ctx_t *ctx, const char *fmt, const proven_arg_t *
         }
 
         if (*p != '{') {
-            fmt_append_byte(ctx, (proven_u8)*p);
-            p++; continue;
+            /* Take the whole literal run in one go. Feeding it a character at a
+             * time cost a checked add, an out-of-line one-byte move and a NUL
+             * reseal per character - and the whole format runs twice, once to
+             * measure and once to write. */
+            const char *run = p;
+            do { ++p; } while (*p && *p != '{' && *p != '}');
+            proven_u8str_view_t lit = {
+                .ptr = (const proven_byte_t *)run,
+                .size = (proven_size_t)(p - run)
+            };
+            fmt_append_view(ctx, lit);
+            continue;
         }
 
         p++; // skip {
@@ -667,6 +695,10 @@ proven_fmt_result_t proven_u8str_fmt_internal(proven_allocator_t alloc, proven_u
             }
             str->internal.ptr = (proven_byte_t*)new_mem.value.ptr;
             str->internal.cap = new_cap;
+            /* Seal the terminator now. A format that produces no output writes
+             * nothing below, so on a freshly allocated (never zeroed) block
+             * ptr[len] would otherwise stay uninitialized. */
+            str->internal.ptr[str->internal.len] = 0;
         }
     }
 

@@ -11,7 +11,7 @@ proven_err_t proven_pool_init(proven_pool_t *pool, proven_allocator_t base_alloc
     pool->base_alloc = base_alloc;
     pool->item_size = item_size;
     pool->item_align = item_align;
-    pool->bin_cap = bin_cap;
+    pool->bin_cap = 0;
     pool->bin_len = 0;
     pool->bin = 0;
 
@@ -29,6 +29,11 @@ proven_err_t proven_pool_init(proven_pool_t *pool, proven_allocator_t base_alloc
         pool->bin = (void **)res.value.ptr;
     }
 
+    /* Publish the capacity only once the bin behind it exists. Setting it up
+     * front left a failed init claiming bin_cap slots with bin == NULL, and the
+     * free trait tests bin_len < bin_cap before writing bin[bin_len] - so a pool
+     * used after an ignored init error wrote through a null pointer. */
+    pool->bin_cap = bin_cap;
     return PROVEN_OK;
 }
 

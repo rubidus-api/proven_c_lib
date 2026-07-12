@@ -48,7 +48,12 @@ int main() {
 
     PROVEN_TEST_ASSERT(arr.len == 3, "Testing condition: arr.len == 3", "Review logic surrounding arr.len == 3");
     PROVEN_TEST_ASSERT(arr.cap >= 4, "Testing condition: arr.cap >= 4", "Review logic surrounding arr.cap >= 4"); // Expanded capacity
-    PROVEN_TEST_ASSERT(arr.data != old_ptr, "Testing condition: arr.data != old_ptr", "Review logic surrounding arr.data != old_ptr"); // Pointer MUST have changed via re-alloc
+    // Growing must preserve the elements. Whether the block moved is the
+    // allocator's business: an in-place realloc is a correct, and cheaper,
+    // outcome, so asserting the pointer changed would test the allocator's
+    // implementation rather than the array's contract.
+    (void)old_ptr;
+    PROVEN_TEST_ASSERT(arr.data != NULL, "Testing condition: arr.data != NULL after growth", "Growth must leave the array with live storage.");
 
     // Verify pristine data state after migration
     const test_player_t *migrated_p1 = PROVEN_ARRAY_GET(&arr, test_player_t, 0);
