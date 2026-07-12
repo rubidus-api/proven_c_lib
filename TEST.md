@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.07.12f)
+# proven Test Matrix (v26.07.12g)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -16,7 +16,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 46 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 47 |
 | `contract` | Does it *refuse* what it says it refuses? | 10 |
 | `regression` | Does a defect that actually shipped stay fixed? | 7 |
 | `differential` | Does it agree with an oracle we did not write? | 4 |
@@ -513,6 +513,22 @@ Sub-checks:
 - Shuts down workers and flushes synchronization barriers.
 
 Failure tip: inspect `src/proven/job.c` and `platform/proven_sys_thread.c`. For races, run `./nob tsan`. Check admission state, sequence counters, queue claim/commit ordering, and shutdown wakeups.
+
+### `tests/test_unit_fs_position_and_sync` — file position, positional I/O, and durability
+
+Intent: verify `seek` / `tell` / `truncate` / `pread` / `pwrite` / `sync`, and the contracts around them.
+
+Sub-checks:
+
+- `SEEK_SET` / `SEEK_CUR` / `SEEK_END` land where arithmetic says, and a read afterwards sees the right byte.
+- `pread` and `pwrite` do **not** move the file position — the whole point of positional I/O.
+- `pread` past the end is `PROVEN_ERR_EOF`, not a zero-byte success.
+- `truncate` shortens and grows (zero-filling), and does not move the position either.
+- `proven_fs_sync` succeeds on a writable file; `sync_dir` either works or returns `PROVEN_ERR_UNSUPPORTED` rather than silently returning OK where it does nothing.
+- A FIFO seek is `PROVEN_ERR_UNSUPPORTED`, not `PROVEN_ERR_IO`: not being seekable is a property of a pipe, not a failure.
+- `proven_fs_write_file_durable` round-trips, preserves the target's permissions, and leaves no temp file behind.
+
+Failure tip: inspect `proven_fs_seek` and friends in `src/proven/fs.c`, and the libc calls behind them in `platform/proven_sys_io.c`.
 
 ### `tests/test_unit_list` — intrusive list
 

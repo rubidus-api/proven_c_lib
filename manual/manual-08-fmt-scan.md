@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v26.07.12f)
+# Chapter 8: Formatting and Scanning (v26.07.12g)
 
 This chapter is the detailed reference for `fmt.h` and `scan.h`.
 Chapter 3 gives the shorter overview and the everyday examples.

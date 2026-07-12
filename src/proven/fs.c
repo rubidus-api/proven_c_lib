@@ -1,5 +1,6 @@
 #include "proven/fs.h"
 #include "../../platform/proven_sys_fs.h"
+#include "../../platform/proven_sys_io.h"
 #include "proven/array.h"
 #include "proven/algorithm.h"
 
@@ -176,6 +177,109 @@ proven_result_size_t proven_fs_size(proven_file_t file) {
     res.err = sr.err;
     res.value = sr.value;
     return res;
+}
+
+
+// -------------------------------------------------------------
+// Position, size, and durability
+// -------------------------------------------------------------
+
+/* The file and console PALs use the same underlying handle; this is the one place
+ * that says so, rather than each entry point re-deriving it. */
+static proven_sys_io_handle_t internal_io_handle(proven_file_t file) {
+#if defined(_WIN32) || defined(_WIN64)
+    return (proven_sys_io_handle_t){ .handle = file.internal.ptr };
+#else
+    return (proven_sys_io_handle_t){ .fd = file.internal.fd };
+#endif
+}
+
+static bool internal_file_is_valid(proven_file_t file) {
+#if defined(_WIN32) || defined(_WIN64)
+    return file.internal.ptr != 0;
+#else
+    return file.internal.fd >= 0;
+#endif
+}
+
+proven_result_u64_t proven_fs_seek(proven_file_t file, proven_i64 offset, proven_fs_whence_t whence) {
+    if (!internal_file_is_valid(file)) return (proven_result_u64_t){ PROVEN_ERR_INVALID_ARG, 0 };
+
+    int w;
+    switch (whence) {
+        case PROVEN_FS_SEEK_SET: w = PROVEN_SYS_IO_SEEK_SET; break;
+        case PROVEN_FS_SEEK_CUR: w = PROVEN_SYS_IO_SEEK_CUR; break;
+        case PROVEN_FS_SEEK_END: w = PROVEN_SYS_IO_SEEK_END; break;
+        default: return (proven_result_u64_t){ PROVEN_ERR_INVALID_ARG, 0 };
+    }
+
+    proven_sys_result_u64_t r = proven_sys_io_seek(internal_io_handle(file), (int64_t)offset, w);
+    return (proven_result_u64_t){ r.err, (proven_u64)r.value };
+}
+
+proven_result_u64_t proven_fs_tell(proven_file_t file) {
+    return proven_fs_seek(file, 0, PROVEN_FS_SEEK_CUR);
+}
+
+proven_err_t proven_fs_truncate(proven_file_t file, proven_u64 length) {
+    if (!internal_file_is_valid(file)) return PROVEN_ERR_INVALID_ARG;
+    return proven_sys_io_truncate(internal_io_handle(file), (uint64_t)length);
+}
+
+proven_result_size_t proven_fs_pread(proven_file_t file, proven_mem_mut_t dest, proven_u64 offset) {
+    proven_result_size_t res = {0};
+    if (!internal_file_is_valid(file)) {
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
+    if (dest.size > 0 && !dest.ptr) {
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
+    proven_sys_result_size_t r = proven_sys_io_pread(internal_io_handle(file), dest.ptr, dest.size, (uint64_t)offset);
+    res.err = r.err;
+    res.value = r.value;
+    return res;
+}
+
+proven_result_size_t proven_fs_pwrite(proven_file_t file, proven_mem_view_t src, proven_u64 offset) {
+    proven_result_size_t res = {0};
+    if (!internal_file_is_valid(file)) {
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
+    if (src.size > 0 && !src.ptr) {
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
+    proven_sys_result_size_t r = proven_sys_io_pwrite(internal_io_handle(file), src.ptr, src.size, (uint64_t)offset);
+    res.err = r.err;
+    res.value = r.value;
+    return res;
+}
+
+proven_err_t proven_fs_sync(proven_file_t file) {
+    if (!internal_file_is_valid(file)) return PROVEN_ERR_INVALID_ARG;
+    return proven_sys_io_sync(internal_io_handle(file));
+}
+
+proven_err_t proven_fs_sync_dir(proven_allocator_t scratch, proven_u8str_view_t path) {
+#if defined(_WIN32) || defined(_WIN64)
+    (void)scratch;
+    (void)path;
+    /* Windows has no directory handle that can be flushed like this. Say so rather
+     * than returning OK and leaving the caller believing the rename is durable. */
+    return PROVEN_ERR_UNSUPPORTED;
+#else
+    /* A directory has to be opened read-only to be fsync'd: opening it for writing
+     * is EISDIR. */
+    proven_result_file_t d = proven_fs_open(scratch, path, PROVEN_FS_READ);
+    if (!proven_is_ok(d.err)) return d.err;
+
+    proven_err_t err = proven_sys_io_sync(internal_io_handle(d.value));
+    proven_fs_close(d.value);
+    return err;
+#endif
 }
 
 proven_err_t proven_fs_rename(proven_allocator_t scratch, proven_u8str_view_t src, proven_u8str_view_t dest) {
@@ -645,7 +749,21 @@ proven_err_t proven_fs_write_file(proven_allocator_t scratch, proven_u8str_view_
  * data does. A caller that needs crash durability needs more than this library
  * currently offers.
  */
-proven_err_t proven_fs_write_file_atomic(proven_allocator_t scratch, proven_u8str_view_t path, proven_mem_view_t data) {
+
+/* The directory a path lives in - "." when the path has no separator. Used to sync
+ * the directory after a rename, which is the only thing that makes the rename
+ * itself survive a power cut. */
+static proven_u8str_view_t internal_parent_dir(proven_u8str_view_t path) {
+    proven_size_t cut = PROVEN_INDEX_NOT_FOUND;
+    for (proven_size_t i = 0; i < path.size; ++i) {
+        if (path.ptr[i] == (proven_byte_t)'/' || path.ptr[i] == (proven_byte_t)'\\') cut = i;
+    }
+    if (cut == PROVEN_INDEX_NOT_FOUND) return PROVEN_LIT(".");
+    if (cut == 0) return PROVEN_LIT("/");           /* "/foo" -> the root */
+    return (proven_u8str_view_t){ .ptr = path.ptr, .size = cut };
+}
+
+static proven_err_t internal_write_file_atomic(proven_allocator_t scratch, proven_u8str_view_t path, proven_mem_view_t data, bool durable) {
     if (!proven_alloc_is_valid(scratch)) return PROVEN_ERR_INVALID_ARG;
     if (data.size > 0 && !data.ptr) return PROVEN_ERR_INVALID_ARG;
     if (path.size == 0 || !path.ptr) return PROVEN_ERR_INVALID_ARG;
@@ -708,6 +826,14 @@ proven_err_t proven_fs_write_file_atomic(proven_allocator_t scratch, proven_u8st
     }
 
     proven_err_t err = proven_fs_write_all(f_res.value, data);
+
+    if (proven_is_ok(err) && durable) {
+        /* The data has to be on the disk BEFORE the rename makes it visible under
+         * the target name. Rename first and sync after, and a power cut in between
+         * leaves the name pointing at a file whose contents never arrived - which
+         * is exactly the corruption an atomic write exists to prevent. */
+        err = proven_fs_sync(f_res.value);
+    }
     proven_fs_close(f_res.value);
 
     if (proven_is_ok(err) && have_target_perms) {
@@ -718,6 +844,22 @@ proven_err_t proven_fs_write_file_atomic(proven_allocator_t scratch, proven_u8st
     if (proven_is_ok(err)) {
         err = proven_fs_rename(scratch, tmp_view, path);
     }
+
+    if (proven_is_ok(err) && durable) {
+        /* And the rename itself is only durable once the DIRECTORY has reached the
+         * disk. Syncing the file alone leaves a window where the bytes are safe and
+         * the name that points at them is not.
+         *
+         * A platform that cannot do this says so; it does not get to fail the write
+         * over it, because the write did happen and is atomic - it is only the
+         * crash-durability of the rename that is unavailable. */
+        proven_u8str_view_t dir = internal_parent_dir(path);
+        proven_err_t derr = proven_fs_sync_dir(scratch, dir);
+        if (!proven_is_ok(derr) && derr != PROVEN_ERR_UNSUPPORTED) {
+            err = derr;
+        }
+    }
+
     if (!proven_is_ok(err)) {
         /* Leave no debris behind; the remove itself cannot rescue the error. */
         (void)proven_fs_remove(scratch, tmp_view);
@@ -725,6 +867,14 @@ proven_err_t proven_fs_write_file_atomic(proven_allocator_t scratch, proven_u8st
 
     scratch.free_fn(scratch.ctx, tmp);
     return err;
+}
+
+proven_err_t proven_fs_write_file_atomic(proven_allocator_t scratch, proven_u8str_view_t path, proven_mem_view_t data) {
+    return internal_write_file_atomic(scratch, path, data, false);
+}
+
+proven_err_t proven_fs_write_file_durable(proven_allocator_t scratch, proven_u8str_view_t path, proven_mem_view_t data) {
+    return internal_write_file_atomic(scratch, path, data, true);
 }
 
 proven_err_t proven_fs_chmod(proven_allocator_t scratch, proven_u8str_view_t path, proven_fs_perms_t perms) {

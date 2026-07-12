@@ -6,6 +6,7 @@
 #include "proven/u8str.h"
 #include "proven/memory.h"
 #include "proven/array.h"
+#include "proven/scan.h"   /* proven_result_u64_t */
 
 /**
  * @file fs.h
@@ -95,9 +96,101 @@ proven_err_t proven_fs_write_all(proven_file_t file, proven_mem_view_t src);
 
 /**
  * @brief Retrieves the size of an open file in bytes.
+ *
+ * @note This is the file's length, not the write cursor. Use proven_fs_tell for
+ *       the position.
  */
 [[nodiscard]]
 proven_result_size_t proven_fs_size(proven_file_t file);
+
+// -------------------------------------------------------------
+// Position, size, and durability
+// -------------------------------------------------------------
+
+typedef enum {
+    PROVEN_FS_SEEK_SET = 0,   /**< from the beginning of the file */
+    PROVEN_FS_SEEK_CUR = 1,   /**< from the current position */
+    PROVEN_FS_SEEK_END = 2    /**< from the end; a negative offset goes backwards */
+} proven_fs_whence_t;
+
+/**
+ * @brief Moves the file position. Returns the resulting absolute offset.
+ *
+ * @note A handle that cannot seek - a pipe, a FIFO, a terminal - returns
+ *       PROVEN_ERR_UNSUPPORTED, not PROVEN_ERR_IO. Not being seekable is a
+ *       property of the thing, not a failure of the call, and code that adapts to
+ *       it needs to be able to tell the two apart.
+ * @note Seeking past the end of a file is legal and does not extend it; a write
+ *       there does, leaving a hole.
+ */
+[[nodiscard]]
+proven_result_u64_t proven_fs_seek(proven_file_t file, proven_i64 offset, proven_fs_whence_t whence);
+
+/**
+ * @brief Returns the current file position without moving it.
+ */
+[[nodiscard]]
+proven_result_u64_t proven_fs_tell(proven_file_t file);
+
+/**
+ * @brief Sets the file's length, growing it with zeros or discarding the tail.
+ *
+ * @note This is O(1). Truncating used to require reading the whole file and
+ *       rewriting the part you wanted to keep - an O(n) copy for an O(1)
+ *       operation - because there was no way to say this.
+ * @note The file position is unchanged. If it now sits past the end, that is
+ *       allowed; a write there extends the file again.
+ */
+[[nodiscard]]
+proven_err_t proven_fs_truncate(proven_file_t file, proven_u64 length);
+
+/**
+ * @brief Reads at an absolute offset without moving the file position.
+ *
+ * @note This is what makes concurrent reads of one file handle safe: two threads
+ *       sharing a handle cannot race on a cursor that neither of them moves.
+ * @note Same EOF contract as proven_fs_read: end of file is PROVEN_ERR_EOF, not a
+ *       zero-byte success.
+ * @note Not available on a pipe: PROVEN_ERR_UNSUPPORTED.
+ */
+[[nodiscard]]
+proven_result_size_t proven_fs_pread(proven_file_t file, proven_mem_mut_t dest, proven_u64 offset);
+
+/**
+ * @brief Writes at an absolute offset without moving the file position.
+ *
+ * @note May write fewer bytes than requested, like proven_fs_write.
+ * @note Not available on a pipe: PROVEN_ERR_UNSUPPORTED.
+ */
+[[nodiscard]]
+proven_result_size_t proven_fs_pwrite(proven_file_t file, proven_mem_view_t src, proven_u64 offset);
+
+/**
+ * @brief Forces this file's data to the storage device (fsync).
+ *
+ * Until now the library had no way to do this at any price: it imported no fsync
+ * and no fdatasync, so a caller who wanted their bytes on the platter simply could
+ * not ask. proven_sysio_flush was not it - that call does nothing.
+ *
+ * @note This is expensive, and it is meant to be. Call it when you have decided
+ *       that losing the data would be worse than the wait.
+ */
+[[nodiscard]]
+proven_err_t proven_fs_sync(proven_file_t file);
+
+/**
+ * @brief Forces a directory's own metadata to the storage device.
+ *
+ * A rename is only durable once the *directory* has reached the disk. So an atomic
+ * rewrite that must survive a power cut needs both: sync the new file's data, then
+ * rename, then sync the directory the rename happened in. Syncing the file alone
+ * leaves a window in which the data is safe and the name that points at it is not.
+ *
+ * @note POSIX only in effect. On Windows a directory handle cannot be flushed this
+ *       way, and this returns PROVEN_ERR_UNSUPPORTED rather than pretending.
+ */
+[[nodiscard]]
+proven_err_t proven_fs_sync_dir(proven_allocator_t scratch, proven_u8str_view_t path);
 
 // -------------------------------------------------------------
 // Advanced Filesystem Management
@@ -307,5 +400,35 @@ proven_err_t proven_fs_write_file(proven_allocator_t scratch, proven_u8str_view_
  */
 [[nodiscard]]
 proven_err_t proven_fs_write_file_atomic(proven_allocator_t scratch, proven_u8str_view_t path, proven_mem_view_t data);
+
+/**
+ * @brief Like proven_fs_write_file_atomic, but the bytes are on the disk before it
+ *        returns.
+ *
+ * Atomicity and durability are different promises, and conflating them is how data
+ * gets lost. `write_file_atomic` guarantees that a *reader* never sees a half-written
+ * file. It does not guarantee that the file survives a power cut - the kernel may
+ * still be holding the bytes, and the rename may reach the disk before the data it
+ * points at.
+ *
+ * This call closes that window, in the only order that works:
+ *
+ *   1. write the temp file, then **fsync it** - the data is on the disk;
+ *   2. rename it over the target - readers now see the new file, atomically;
+ *   3. **fsync the directory** - the rename itself is now on the disk.
+ *
+ * Syncing the file but not the directory leaves a crash window in which the bytes are
+ * safe and the name that points at them is not, which is the corruption an atomic
+ * write exists to prevent.
+ *
+ * @note This is slow, and it is meant to be: it waits for the storage device, twice.
+ *       Use it when losing the write would be worse than the wait, and use
+ *       proven_fs_write_file_atomic when it would not.
+ * @note On a platform with no directory sync (Windows), step 3 is skipped rather than
+ *       failing the write: the write did happen and is atomic; only the
+ *       crash-durability of the rename is unavailable.
+ */
+[[nodiscard]]
+proven_err_t proven_fs_write_file_durable(proven_allocator_t scratch, proven_u8str_view_t path, proven_mem_view_t data);
 
 #endif /* PROVEN_FS_H */
