@@ -21,7 +21,7 @@ typedef struct {
     char align;      // '<', '>', '^'
     int  width;
     int  precision;  // -1 when unset
-    char type;       // 0, 'x', 'X', 'o', 'b', 'd', 'f', 'g'
+    char type;       // 0, 'x', 'X', 'o', 'b', 'd', 'f', 'g', 'e'
     char sign;       // 0, '+', ' '
     bool alt;        // '#' - 0x / 0o / 0b prefix
     bool hex;        // kept: true when type is 'x' or 'X'
@@ -746,7 +746,7 @@ static void fmt_run(proven_fmt_ctx_t *ctx, const char *fmt, const proven_arg_t *
 
             /* The type letter. */
             switch (*p) {
-                case 'x': case 'X': case 'o': case 'b': case 'd': case 'f': case 'g':
+                case 'x': case 'X': case 'o': case 'b': case 'd': case 'f': case 'g': case 'e':
                     spec.type = *p;
                     spec.hex = (*p == 'x' || *p == 'X');
                     ++p;

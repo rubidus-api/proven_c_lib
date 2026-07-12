@@ -11,6 +11,21 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-13] — proven_c_lib-v26.07.13f
+
+### Added
+
+- **`{:e}` — scientific float formatting, completing the printf trio.** `{:f}` gives fixed and
+  `{:g}` gives shortest, but neither is `%e`: `{:f}` never shows an exponent and `{:g}` uses one
+  only when it is shorter, so there was no way to ask for "always scientific, N digits after the
+  point" — the form you want for an aligned column of magnitudes or to match existing `%e`
+  output. `{:e}` / `{:.Ne}` now render exactly what printf does: mantissa, a signed
+  two-digit-minimum exponent, correctly rounded (half-to-even), at any magnitude including the
+  smallest subnormal. The correctly-rounded scientific core was already there (the default form
+  uses it at the extremes); this exposes it as `PROVEN_FLOAT_FORMAT_MODE_SCIENTIFIC`. Written
+  test-first against printf's own output, and checked differentially against `%.Ne` over 200,000
+  random doubles at every precision (0 mismatches).
+
 ## [2026-07-13] — proven_c_lib-v26.07.13e
 
 Two defects found while exercising the modules together rather than one at a time - a
