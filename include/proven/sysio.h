@@ -81,6 +81,7 @@ void proven_sysio_scanner_deinit(proven_sysio_scanner_t *scanner);
  * PROVEN_ERR_OUT_OF_BOUNDS and restores the scanner state and file position on
  * seekable inputs instead of accepting a truncated token.
  */
+[[nodiscard]]
 proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, const char *fmt, const proven_scan_arg_t *args, size_t args_count);
 
 /**
@@ -95,6 +96,10 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
 // Type-Safe Printing Console macros
 // -----------------------------------------------------------------------------
 
+/* Deliberately not [[nodiscard]]: proven_print / proven_eprint expand to this
+ * and are used as printf is - a failed write to a console is conventionally
+ * ignored. The scan entry points above and below are annotated, because
+ * dropping their error means reading data that was never parsed. */
 proven_err_t proven_sysio_print_impl(proven_file_t handle, const char *fmt, const proven_arg_t *args, size_t args_count);
 /**
  * @brief Type-safe formatted scanning from a file descriptor.
@@ -106,6 +111,7 @@ proven_err_t proven_sysio_print_impl(proven_file_t handle, const char *fmt, cons
  * instead of accepting a silently truncated parse, and the file cursor is restored
  * to the start of the chunk.
  */
+[[nodiscard]]
 proven_err_t proven_sysio_scan_chunk_impl(proven_file_t handle, const char *fmt, const proven_scan_arg_t *args, size_t args_count);
 
 /**

@@ -147,9 +147,15 @@ proven_err_t proven_u8str_reserve(proven_allocator_t alloc, proven_u8str_t *str,
     
     proven_result_mem_mut_t new_mem = alloc.realloc_fn(alloc.ctx, str->internal.ptr, str->internal.cap, new_cap, PROVEN_DEFAULT_ALIGNMENT);
     if (!proven_is_ok(new_mem.err)) return new_mem.err;
-    
+
     str->internal.ptr = (proven_byte_t*)new_mem.value.ptr;
     str->internal.cap = new_cap;
+    /* Re-seal the terminator. Reserving on a zero-initialized string performs
+     * the first allocation, and allocators do not hand back zeroed memory, so
+     * without this ptr[len] is whatever the block last held - and
+     * proven_u8str_as_cstr is documented to be readable without a second
+     * thought. */
+    str->internal.ptr[str->internal.len] = 0;
     return PROVEN_OK;
 }
 
