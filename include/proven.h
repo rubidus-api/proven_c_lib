@@ -30,6 +30,9 @@
 #include "proven/float_parse.h"
 #include "proven/float_format.h"
 #include "proven/mmap.h"
+#ifndef PROVEN_FREESTANDING
+#include "proven/stream.h"
+#endif
 #include "proven/sysio.h"
 #include "proven/job.h"
 #include "proven/scan.h"

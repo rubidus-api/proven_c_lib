@@ -729,3 +729,164 @@ int main(void) {
     return EXAMPLE_OK();
 }
 ```
+
+## Streams: writers and readers
+
+The formatter's only sink used to be a `proven_u8str_t`. A file was a
+`proven_file_t`. The in-memory scanner read a view; the file scanner read something
+else again. **Four types, four function families, no common interface** — so you
+could not write one `serialize(sink, value)` that worked over both memory and a
+file, you could not format into a file at all, and there was no way to read a file
+line by line.
+
+A **writer** is a byte sink. A **reader** is a byte source. Both are small vtables
+passed by value, exactly like `proven_allocator_t`, and for the same reason: the
+caller decides where the bytes go, and nothing is hidden.
+
+| API | Intent |
+|---|---|
+| `proven_writer_from_file(&file)` | Unbuffered sink over an open file. |
+| `proven_writer_from_u8str(&state, &str, alloc)` | Appends to an owned string. |
+| `proven_writer_from_buffer(&state)` | Fixed caller memory. Allocates nothing, ever. |
+| `proven_writer_buffered(&state, inner, buf)` | Accumulates small writes; **you** supply the buffer. |
+| `proven_fprint(w, fmt, ...)` / `proven_fprintln` | Format straight into a writer. No allocation. |
+| `proven_reader_from_file(&file)` / `_from_view(&state, view)` | Byte sources. |
+| `proven_reader_buffered(&state, inner, buf)` | Buffered source; required for line reading. |
+| `proven_reader_read_line(&state)` | One line, without the newline. |
+
+Three rules worth stating plainly, because each of them is a way this could have
+been designed badly:
+
+- **Buffering uses memory you supply.** `proven_writer_buffered` takes a
+  `proven_mem_mut_t`, the way `proven_arena_create` does. There is no hidden global
+  buffer, which means there is also no destructor to flush it for you — **you must
+  flush before the buffer goes out of scope.** In exchange, your logging path never
+  allocates, and a program logging its way out of an out-of-memory condition can
+  still log.
+- **A full sink refuses; it does not truncate.** A fixed buffer that fills up
+  returns `PROVEN_ERR_OUT_OF_BOUNDS` and records `overflowed`. A sink that silently
+  drops the end of your data is worse than one that says it cannot take it.
+- **A line too long for the reader's buffer is an error**, not a truncated line. A
+  truncated line handed back as if it were whole is a corruption the caller has no
+  way to detect. The buffer is yours; size it for the input you expect.
+
+What it costs, measured over 10,000 lines to stdout:
+
+| | `write()` syscalls | `malloc()` |
+|---|---|---|
+| `proven_println` | 10,000 | **0** (was 10,000) |
+| buffered writer, 8 KiB of caller memory | **24** | **0** |
+
+`proven_println` is deliberately still one syscall per line: buffering it would need
+hidden global state. A caller who wants the 24 builds a buffered writer and says so.
+
+### Worked example: one serializer, three destinations, and reading it back
+
+Compiled and run by the test suite. Note that `render_row` does not know where its
+bytes are going — that is the entire point.
+
+<!-- example: manual/examples/ex_05_stream.c -->
+```c
+/*
+ * Writers and readers: one interface for "where bytes go" and one for "where bytes
+ * come from".
+ *
+ * The point is that the code below - render_row - does not know and does not care
+ * whether it is writing to a string, to a fixed buffer, or to a file. That was
+ * impossible before: the formatter's only sink was a proven_u8str_t.
+ */
+
+/* One serializer. It takes a sink, not a destination. */
+static proven_err_t render_row(proven_writer_t w, int id, const char *name) {
+    proven_fmt_result_t r = proven_fprintln(w, "{:>4} | {}", PROVEN_ARG(id), PROVEN_ARG(name));
+    return r.err;
+}
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* --- the same code, into a growing string ----------------------------- */
+    proven_result_u8str_t s = proven_u8str_create(alloc, 16);
+    EXAMPLE_REQUIRE(proven_is_ok(s.err), "string create");
+
+    proven_writer_u8str_t s_state;
+    proven_writer_t to_string = proven_writer_from_u8str(&s_state, &s.value, alloc);
+    EXAMPLE_REQUIRE(proven_is_ok(render_row(to_string, 7, "ada")), "render into a string");
+
+    printf("into a string:\n%s", proven_u8str_as_cstr(&s.value));
+    proven_u8str_destroy(alloc, &s.value);
+
+    /* --- the same code, into memory you own: zero allocations ------------- */
+    proven_byte_t fixed[64];
+    proven_writer_buf_t b_state = { .buf = { .ptr = fixed, .size = sizeof fixed } };
+    proven_writer_t to_buffer = proven_writer_from_buffer(&b_state);
+    EXAMPLE_REQUIRE(proven_is_ok(render_row(to_buffer, 8, "grace")), "render into a buffer");
+    EXAMPLE_REQUIRE(b_state.len > 0, "the buffer received the row");
+
+    /* A full buffer REFUSES; it does not truncate. A sink that silently drops the
+     * end of your data is worse than one that says it cannot take it. */
+    proven_byte_t tiny[4];
+    proven_writer_buf_t t_state = { .buf = { .ptr = tiny, .size = sizeof tiny } };
+    proven_writer_t to_tiny = proven_writer_from_buffer(&t_state);
+    EXAMPLE_REQUIRE(proven_writer_write_str(to_tiny, PROVEN_LIT("far too long")) == PROVEN_ERR_OUT_OF_BOUNDS,
+                    "a full buffer refuses rather than truncating");
+    EXAMPLE_REQUIRE(t_state.overflowed, "and it records that it did");
+
+    /* --- the same code, into a file, buffered ------------------------------ */
+    /*
+     * The buffer is memory YOU supply, exactly like an arena's. This library has no
+     * hidden global state, so it cannot flush for you at exit - which is why you must
+     * flush before the buffer goes out of scope. In exchange, your logging path never
+     * allocates: ten thousand lines here cost 0 mallocs and a couple of dozen write
+     * syscalls, where ten thousand proven_println calls cost 10,000 syscalls.
+     */
+    proven_u8str_view_t path = PROVEN_LIT("example_stream_rows.txt");
+    proven_result_file_t f = proven_fs_open(alloc, path,
+        (proven_fs_mode_t)(PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC));
+    EXAMPLE_REQUIRE(proven_is_ok(f.err), "open the output file");
+    proven_file_t file = f.value;
+
+    proven_byte_t out_buf[4096];
+    proven_writer_buffered_t w_state;
+    proven_writer_t to_file = proven_writer_buffered(&w_state,
+        proven_writer_from_file(&file),
+        (proven_mem_mut_t){ .ptr = out_buf, .size = sizeof out_buf });
+
+    for (int i = 0; i < 3; ++i) {
+        EXAMPLE_REQUIRE(proven_is_ok(render_row(to_file, i, "row")), "render into the file");
+    }
+    EXAMPLE_REQUIRE(proven_is_ok(proven_writer_flush(to_file)),
+                    "flush: nothing is written until you say so");
+    proven_fs_close(file);
+
+    /* --- reading it back, a line at a time -------------------------------- */
+    /* Reading a file line by line was simply not possible before: the only route was
+     * loading the entire file into memory and splitting it by hand. */
+    proven_result_file_t rf = proven_fs_open(alloc, path, PROVEN_FS_READ);
+    EXAMPLE_REQUIRE(proven_is_ok(rf.err), "reopen for reading");
+    proven_file_t rfile = rf.value;
+
+    proven_byte_t in_buf[128];
+    proven_reader_buffered_t r_state;
+    (void)proven_reader_buffered(&r_state, proven_reader_from_file(&rfile),
+                                 (proven_mem_mut_t){ .ptr = in_buf, .size = sizeof in_buf });
+
+    int lines = 0;
+    for (;;) {
+        proven_result_u8str_view_t line = proven_reader_read_line(&r_state);
+        if (line.err == PROVEN_ERR_EOF) break;
+        EXAMPLE_REQUIRE(proven_is_ok(line.err), "read a line");
+        /* The view points INTO the reader's buffer, and is valid only until the next
+         * call. Copy it if it has to outlive that. */
+        printf("line %d: %.*s\n", lines, (int)line.val.size, (const char *)line.val.ptr);
+        ++lines;
+    }
+    EXAMPLE_REQUIRE(lines == 3, "three rows in, three lines out");
+
+    proven_fs_close(rfile);
+    (void)proven_fs_remove(alloc, path);
+
+    return EXAMPLE_OK();
+}
+```
+

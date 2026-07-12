@@ -57,6 +57,41 @@ deliberate choice, not something a documentation pass slips in.
 
 Items are moved here with the commit that closed them, so the reasoning survives.
 
+### B-007 — streams (closed v26.07.12h)
+
+There was no `proven_writer_t` and no `proven_reader_t`: the formatter's only sink was
+a `proven_u8str_t`, a file was a `proven_file_t`, and the two scanners read two other
+things again. Four types, four function families, no common interface — so one
+`serialize(sink, value)` over both memory and a file was impossible, and formatting
+into a file meant building a whole heap string and dumping it.
+
+Both traits now exist, modelled on the allocator trait: a small vtable passed by value,
+with **buffering over caller-supplied memory**, because a logging path that allocates
+is a logging path that fails when you most need it.
+
+Measured over 10,000 lines:
+
+| | `write()` | `malloc()` |
+|---|---|---|
+| `proven_println`, before | 10,000 | 10,000 |
+| `proven_println`, after | 10,000 | **0** |
+| buffered writer, 8 KiB of caller memory | **24** | **0** |
+
+`proven_println` is still one syscall per line on purpose — buffering it would need
+hidden global state, which this library does not have. A caller who wants the 24 builds
+a buffered writer and says so.
+
+### B-008 — a line reader (closed v26.07.12h)
+
+`proven_reader_read_line`. Reading a file line by line was impossible: the only route
+was `read_all_u8str` — the whole file into memory — and splitting by hand.
+
+The two contracts that matter are the ones a naive implementation gets wrong, and both
+are pinned by tests: **the final line with no trailing newline is still returned**
+(dropping it is how the last record of a file goes missing), and **a line too long for
+the buffer is an error, not a truncated line** (a truncated line handed back as if it
+were whole is a corruption the caller cannot detect).
+
 ### B-004 — the hand-written syscall assembly is gone (closed v26.07.12g)
 
 The PAL implemented read, write and seek in inline-assembly raw syscalls, one path per
@@ -135,34 +170,6 @@ has a streaming iterator (`proven_sys_fs_dir_open` / `_dir_next` / `_dir_close`)
 
 **Done looks like:** `proven_fs_dir_open` / `_next` / `_close` exposed, and
 `proven_fs_list` reimplemented on top of them rather than the other way round.
-
-### B-007 — no stream abstraction; console output is 213x the syscalls of stdio
-
-**Status:** open. **This is the keystone item.** RFC-0001 §4.1, §4.2.
-
-There is no `proven_writer_t` and no `proven_reader_t`. The formatter's only sink is
-`proven_u8str_t`; a file is a `proven_file_t`; the scanner reads either a view or a
-`proven_sysio_scanner_t`. Four types, four function families, no common interface —
-so you cannot write one `serialize(writer, value)` that works over both memory and a
-file, and you cannot format directly into a file at all.
-
-Measured: `proven_println` × 10,000 issues **10,000 `write()` syscalls** (stdio: 47)
-and **10,000 mallocs** — one heap round-trip per line. **The logging path allocates**,
-which is the one place an allocation is least welcome: a program logging its way out
-of an out-of-memory condition will fail to log it.
-
-`proven_sysio_flush` is a no-op on POSIX (`ret`, one instruction) and a full disk
-sync on Windows. One API, two meanings, neither of them what the name promised. Its
-documentation now says so.
-
-### B-008 — no line reader
-
-**Status:** open. RFC-0001 §4.3.
-
-There is no way to read a file line by line. The only route is
-`proven_fs_read_all_u8str` — the whole file into memory — then split on `\n` by hand.
-Unusable for a file larger than memory; absurd for a log tail. The buffered scanner
-is token-oriented and has no delimiter entry point.
 
 ### B-009 — the formatter cannot ask for float precision, and has no `{:c}`
 

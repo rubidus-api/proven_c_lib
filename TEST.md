@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.07.12g)
+# proven Test Matrix (v26.07.12h)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -16,7 +16,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 47 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 48 |
 | `contract` | Does it *refuse* what it says it refuses? | 10 |
 | `regression` | Does a defect that actually shipped stay fixed? | 7 |
 | `differential` | Does it agree with an oracle we did not write? | 4 |
@@ -675,6 +675,21 @@ Sub-checks:
 - `tests/test_unit_scan_f64_bounds` covers underflow-to-signed-zero spellings, the true-min half threshold, subnormal-boundary spellings around DBL_MIN, and overflow boundary behavior at the same parser boundary.
 
 Failure tip: inspect `src/proven/scan.c`, especially the decimal mantissa accumulation, exponent scaling, and final finite-value check. If a malformed token leaves the cursor advanced, inspect the failure-atomic rollback path first.
+
+### `tests/test_unit_stream` — writers and readers
+
+Intent: verify one piece of code can move bytes without knowing where they go, and that the sinks refuse rather than truncate.
+
+Sub-checks:
+
+- The same serializer writes into an owned string, a fixed caller buffer, and a file, and all three agree byte for byte.
+- A full fixed buffer returns `PROVEN_ERR_OUT_OF_BOUNDS` and records `overflowed` — it does **not** truncate, and a refused write is not partially applied.
+- A buffered writer holds bytes until flushed, auto-flushes when it wraps without losing any, and passes a chunk larger than the whole buffer straight through.
+- `proven_reader_read_line` handles `\r\n`, empty lines, and **returns the final line even with no trailing newline**.
+- A line longer than the reader's buffer is `PROVEN_ERR_OUT_OF_BOUNDS`, not a silently truncated line.
+- End of input is `PROVEN_ERR_EOF`, never a zero-byte success.
+
+Failure tip: inspect `src/proven/stream.c`. Buffering uses caller-supplied memory: there is no hidden global state and no allocation the caller did not ask for.
 
 ### `tests/test_unit_sysio_env` — sysio and environment
 

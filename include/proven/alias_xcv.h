@@ -198,6 +198,8 @@
 #define xcv_float_format_f64_policy proven_float_format_f64_policy
 #define xcv_float_format_options_fixed_default proven_float_format_options_fixed_default
 #define xcv_float_format_options_shortest proven_float_format_options_shortest
+#define xcv_fmt_to_writer_impl proven_fmt_to_writer_impl
+#define xcv_fprint proven_fprint
 #define xcv_free_fn_t proven_free_fn_t
 #define xcv_fs_chmod proven_fs_chmod
 #define xcv_fs_close proven_fs_close
@@ -306,6 +308,12 @@
 #define xcv_println proven_println
 #define xcv_ptrdiff_t proven_ptrdiff_t
 #define xcv_range_contains_ptr proven_range_contains_ptr
+#define xcv_reader_buffered proven_reader_buffered
+#define xcv_reader_from_file proven_reader_from_file
+#define xcv_reader_from_view proven_reader_from_view
+#define xcv_reader_is_valid proven_reader_is_valid
+#define xcv_reader_read proven_reader_read
+#define xcv_reader_read_line proven_reader_read_line
 #define xcv_realloc_fn_t proven_realloc_fn_t
 #define xcv_result_array_t proven_result_array_t
 #define xcv_result_buf_t proven_result_buf_t
@@ -433,5 +441,13 @@
 #define xcv_u8str_view_to_cstr proven_u8str_view_to_cstr
 #define xcv_uintptr_align_up proven_uintptr_align_up
 #define xcv_uintptr_t proven_uintptr_t
+#define xcv_writer_buffered proven_writer_buffered
+#define xcv_writer_flush proven_writer_flush
+#define xcv_writer_from_buffer proven_writer_from_buffer
+#define xcv_writer_from_file proven_writer_from_file
+#define xcv_writer_from_u8str proven_writer_from_u8str
+#define xcv_writer_is_valid proven_writer_is_valid
+#define xcv_writer_write proven_writer_write
+#define xcv_writer_write_str proven_writer_write_str
 
 #endif // PROVEN_ALIAS_XCV_H
