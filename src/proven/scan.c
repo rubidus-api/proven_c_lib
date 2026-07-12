@@ -155,6 +155,25 @@ proven_result_f64_t proven_scan_f64(proven_scan_t *scan) {
 
     proven_float_parse_result_t parsed = proven_float_parse_ascii_token(scan->view.ptr + scan->cursor, scan->view.size - scan->cursor);
     if (parsed.err != PROVEN_OK) {
+        /*
+         * The parse FAILED - but over a stream that can mean "the float is not here" OR "only
+         * the front of the float made it into the buffer". A boundary that leaves just "-",
+         * "-3.", or "-3.2e" in the buffer parses as a failure, and without saying so the
+         * buffered scanner would drop those bytes and desync every later scan (a real bug the
+         * fmt->file->scanner round-trip caught). So if everything still in the view is a float
+         * PREFIX - only sign/digit/point/exponent characters, nothing that definitively ends a
+         * number - flag that more input might complete it. "abc" contains a non-float char and
+         * is left as the genuine error it is.
+         */
+        bool all_float_chars = (scan->cursor < scan->view.size);
+        for (proven_size_t i = scan->cursor; i < scan->view.size; ++i) {
+            proven_u8 ch = scan->view.ptr[i];
+            bool ok = (ch >= (proven_u8)'0' && ch <= (proven_u8)'9') ||
+                      ch == (proven_u8)'.' || ch == (proven_u8)'+' || ch == (proven_u8)'-' ||
+                      ch == (proven_u8)'e' || ch == (proven_u8)'E';
+            if (!ok) { all_float_chars = false; break; }
+        }
+        if (all_float_chars) scan_mark_needs_more(scan);
         scan->cursor = start_cursor;
         return (proven_result_f64_t){ .err = parsed.err };
     }
@@ -175,6 +194,37 @@ proven_result_f64_t proven_scan_f64(proven_scan_t *scan) {
             scan->cursor = start_cursor;
             return (proven_result_f64_t){ .err = err };
         }
+
+        /*
+         * A float can be cut short by a buffer boundary, and unlike a truncated integer the
+         * cut is invisible: the parser stops at a dangling exponent 'e' and returns the
+         * MANTISSA as a perfectly valid float, silently dropping the "e-222" that had not
+         * arrived yet. Over a complete view that is correct (a trailing 'e' is not part of
+         * the number). Over a stream it is a truncated value committed as a success, and the
+         * leftover "e-222" then desyncs every later scan.
+         *
+         * So flag "this float might continue if more input arrives" - and only then, so a
+         * genuinely-complete "3.14energy" is not mistaken for an unfinished exponent:
+         *   - the float ran to the end of the view (more digits/./e could follow), OR
+         *   - it stopped at an 'e'/'E' whose exponent could still complete: 'e' at the view
+         *     end, or 'e' then a lone sign at the view end. 'e' followed by a non-sign,
+         *     non-digit char is a definitively-finished float, not a split exponent.
+         */
+        proven_size_t c = scan->cursor;
+        proven_size_t n = scan->view.size;
+        bool boundary_continuable = (c == n);
+        if (!boundary_continuable && c < n) {
+            proven_u8 ch = scan->view.ptr[c];
+            if (ch == (proven_u8)'e' || ch == (proven_u8)'E') {
+                if (c + 1 == n) boundary_continuable = true;
+                else if (c + 2 == n) {
+                    proven_u8 nx = scan->view.ptr[c + 1];
+                    if (nx == (proven_u8)'+' || nx == (proven_u8)'-') boundary_continuable = true;
+                }
+            }
+        }
+        if (boundary_continuable) scan_mark_needs_more(scan);
+
         return (proven_result_f64_t){ .val = result, .err = PROVEN_OK };
     }
 }

@@ -93,6 +93,34 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("u16str append_grow seals its 2-byte terminator at the right UNIT index",
+        "internal.len is a byte count; the u16 terminator's index is len/sizeof(u16), not len - the latter writes at twice the offset.",
+        "Latent under the doubling growth policy (the stray write lands in unused slack and append re-seals the real NUL), but an out-of-bounds heap write the moment growth becomes exact-fit. This pins the invariant.");
+    // ---------------------------------------------------------------
+    {
+        proven_arena_t a;
+        proven_allocator_t A = poisoned_arena(&a);
+
+        proven_u16str_t s = {0};
+        proven_err_t e = proven_u16str_append_grow(A, &s, (proven_u16str_view_t){ .ptr = NULL, .size = 0 });
+        PROVEN_TEST_ASSERT(proven_is_ok(e), "an empty u16 append must succeed", "");
+        PROVEN_TEST_ASSERT(proven_u16str_len(&s) == 0 && proven_u16str_as_ptr(&s)[0] == 0,
+            "a fresh empty u16 string is terminated at unit 0", "");
+
+        /* A non-empty grow: the content must be intact and the terminator must sit at the
+         * unit AFTER it (index len), which is where a reader looks - not at 2*len. */
+        proven_u16 chars[3] = { 'H', 'i', '!' };
+        e = proven_u16str_append_grow(A, &s, (proven_u16str_view_t){ .ptr = chars, .size = 3 });
+        PROVEN_TEST_ASSERT(proven_is_ok(e), "a real u16 append must work", "");
+        const proven_u16 *p16 = proven_u16str_as_ptr(&s);
+        PROVEN_TEST_ASSERT(proven_u16str_len(&s) == 3 && p16[0] == 'H' && p16[1] == 'i' && p16[2] == '!',
+            "the content must be intact", "");
+        PROVEN_TEST_ASSERT(p16[3] == 0,
+            "and the 2-byte terminator must sit at unit index len (3), where a reader expects it",
+            "The seal index used to be the BYTE length, placing it at unit 2*len.");
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a negative datetime year formats as a negative number",
         "dt.year is signed. Casting it to unsigned long long turned -1 into twenty digits, which overran the twenty-byte conversion scratch.",
         "Inspect the PROVEN_ARG_DATETIME case in render_arg: the year must be rendered with its sign, and itoa_raw needs room for 20 digits plus a NUL.");

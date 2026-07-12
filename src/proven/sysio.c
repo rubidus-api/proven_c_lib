@@ -434,7 +434,10 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
         proven_scan_t scan = proven_scan_init(view);
         err = proven_scan_fmt_internal(&scan, fmt, scratch_args, args_count);
 
-        if (proven_is_ok(err) && !scanner->eof && scan.cursor == scan.view.size) {
+        if (proven_is_ok(err) && !scanner->eof && (scan.cursor == scan.view.size || scan.needs_more)) {
+            /* scan.needs_more covers the token that parsed as valid but might still grow -
+             * a float whose exponent was cut off at the buffer boundary returns the mantissa
+             * as a complete number, so cursor != view.size, yet the value is truncated. */
             err = PROVEN_ERR_NEED_MORE;
         }
 

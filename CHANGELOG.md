@@ -11,6 +11,34 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-13] — proven_c_lib-v26.07.13e
+
+Two defects found while exercising the modules together rather than one at a time - a
+fmt -> file -> scanner -> float round-trip over 20,000 lines, and a fresh audit of the
+string modules.
+
+### Fixed
+
+- **A float split across the buffered scanner's refill boundary was scanned wrong** - in two
+  invisible ways. If the boundary fell on the exponent, "-3.0448…e" parsed as a valid float
+  (the mantissa) and silently dropped the "e-222" that had not arrived: a truncated value
+  committed as a success. If it fell on the sign, "-" alone is a parse FAILURE, and the
+  scanner dropped the byte and desynced every later scan instead of asking for the rest. An
+  integer that runs out mid-token already said "need more"; a float could not, because unlike
+  an integer it can look complete, or look like garbage, when it is merely unfinished.
+  proven_scan_f64 now flags needs_more both when a valid float might still grow (it ran to the
+  buffer end, or stopped at a splittable exponent) and when a failed parse left only a float
+  PREFIX - genuine garbage like "abc" is still the error it is, and does not wedge the scanner
+  waiting for it to become a number. Found by the round-trip; pinned by
+  tests/test_regression_scanner_float_split, which drives the split to every byte of the token.
+
+- **proven_u16str_append_grow sealed its 2-byte terminator at the byte index, not the unit
+  index.** internal.len is a byte count, so `[len]` writes the NUL at unit `2*len` instead of
+  `len`. Latent under the doubling growth policy - the stray zero lands in unused slack and the
+  following append re-seals the real terminator - but an out-of-bounds heap write the instant
+  growth becomes exact-fit. Found by the u16str audit's poisoned-allocator repro; the invariant
+  is pinned in tests/test_regression_v26_07.
+
 ## [2026-07-13] — proven_c_lib-v26.07.13a
 
 An adversarial audit of the modules that had never had one — the scanner and the float
