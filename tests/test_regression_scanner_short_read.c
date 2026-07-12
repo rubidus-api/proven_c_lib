@@ -51,6 +51,21 @@ static void *split_writer(void *arg) {
     return NULL;
 }
 
+/* A writer that dribbles its message one byte at a time. */
+typedef struct { int fd; const char *msg; } byte_writer_t;
+
+static void *byte_writer(void *arg) {
+    byte_writer_t *w = (byte_writer_t *)arg;
+    for (const char *p = w->msg; *p; ++p) {
+        ssize_t n = write(w->fd, p, 1);
+        (void)n;
+        struct timespec ts = { .tv_sec = 0, .tv_nsec = 200 * 1000 };  /* 0.2 ms */
+        nanosleep(&ts, NULL);
+    }
+    close(w->fd);
+    return NULL;
+}
+
 /* Scan one int from a pipe fed in two pieces. */
 static proven_err_t scan_split(proven_allocator_t heap, const char *first, const char *second,
                                const char *fmt, proven_i32 *out) {
@@ -207,6 +222,86 @@ int main(void) {
         e = scan_split(heap, "x=", "1 ", "key={}", &v);
         PROVEN_TEST_ASSERT(e == PROVEN_ERR_NOT_FOUND,
             "a literal that is present and WRONG must fail, not block", "");
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a pipe delivering ONE BYTE at a time, into an 8-byte scanner buffer",
+        "The worst case the refill loop can be given: every token crosses several read boundaries, and the buffer is barely bigger than the tokens.",
+        "If this hangs, the refill loop has a state it cannot leave. If a value is wrong, a token was committed across a compaction that moved it.");
+    // ---------------------------------------------------------------
+    {
+        int fds[2];
+        PROVEN_TEST_ASSERT(pipe(fds) == 0, "setup: a pipe", "");
+
+        pthread_t th;
+        static const char *msg = "  -12345 key=678   9.5\n";
+        static byte_writer_t bw;
+        bw.fd = fds[1];
+        bw.msg = msg;
+        PROVEN_TEST_ASSERT(pthread_create(&th, NULL, byte_writer, &bw) == 0, "setup: a dribbling writer", "");
+
+        proven_file_t pf = {0};
+        pf.internal.fd = fds[0];
+
+        proven_sysio_scanner_t sc;
+        proven_err_t e = proven_sysio_scanner_init(&sc, pf, heap, 8);   /* barely larger than a token */
+        PROVEN_TEST_ASSERT(proven_is_ok(e), "setup: an 8-byte scanner", "");
+
+        proven_i32 a = 0, b = 0;
+        double d = 0.0;
+
+        e = proven_sysio_scanner_scan(&sc, "{}", PROVEN_SCAN_ARG(&a));
+        PROVEN_TEST_ASSERT(proven_is_ok(e) && a == -12345,
+            "a six-character signed number arriving one byte at a time must scan whole", "");
+
+        e = proven_sysio_scanner_scan(&sc, "key={}", PROVEN_SCAN_ARG(&b));
+        PROVEN_TEST_ASSERT(proven_is_ok(e) && b == 678,
+            "and a literal plus a number, also one byte at a time", "");
+
+        e = proven_sysio_scanner_scan(&sc, "{}", PROVEN_SCAN_ARG(&d));
+        PROVEN_TEST_ASSERT(proven_is_ok(e) && d == 9.5,
+            "and a float", "");
+
+        e = proven_sysio_scanner_scan(&sc, "{}", PROVEN_SCAN_ARG(&a));
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_EOF, "and then the stream ends", "");
+
+        proven_sysio_scanner_deinit(&sc);
+        (void)pthread_join(th, NULL);
+        close(fds[0]);
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a token too big for the buffer fails; it does not wait forever",
+        "Refilling on \"the token is not complete yet\" must not become an infinite wait when the token can never fit.",
+        "scanner_fill returns PROVEN_ERR_OUT_OF_BOUNDS once the buffer is full and the token still is not finished. The buffer is the caller's; size it for the input.");
+    // ---------------------------------------------------------------
+    {
+        int fds[2];
+        PROVEN_TEST_ASSERT(pipe(fds) == 0, "setup: a pipe", "");
+
+        pthread_t th;
+        static split_writer_t w2;
+        w2.fd = fds[1];
+        w2.first = "123456789012345678 ";
+        w2.second = "42\n";
+        PROVEN_TEST_ASSERT(pthread_create(&th, NULL, split_writer, &w2) == 0, "setup: a writer", "");
+
+        proven_file_t pf = {0};
+        pf.internal.fd = fds[0];
+
+        proven_sysio_scanner_t sc;
+        proven_err_t e = proven_sysio_scanner_init(&sc, pf, heap, 8);
+        PROVEN_TEST_ASSERT(proven_is_ok(e), "setup: an 8-byte scanner", "");
+
+        proven_i32 v = -1;
+        e = proven_sysio_scanner_scan(&sc, "{}", PROVEN_SCAN_ARG(&v));
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_OUT_OF_BOUNDS,
+            "an 18-digit token in an 8-byte buffer must be an error",
+            "If this test hangs instead, the refill loop is waiting for input that cannot help.");
+
+        proven_sysio_scanner_deinit(&sc);
+        (void)pthread_join(th, NULL);
+        close(fds[0]);
     }
 
     PROVEN_TEST_PASS("the scanner reads pipes the way pipes actually behave.");
