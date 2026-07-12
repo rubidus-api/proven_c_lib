@@ -1301,15 +1301,7 @@ proven_err_t proven_fs_walk_next(proven_fs_walk_t *walk, proven_fs_walk_entry_t 
 
             proven_u8str_view_t dpath = walk_path(s);
             proven_fs_stat_t st = {0};
-            proven_err_t serr = proven_fs_stat(s->alloc, dpath, &st);
-
-            bool cycle = proven_is_ok(serr) && walk_is_ancestor(s, st.dev, st.ino);
-
-            if (cycle) {
-                /* Not an error: the entry was reported, and we simply do not go in. */
-                walk_truncate(s, s->pending_path_len);
-                continue;
-            }
+            (void)proven_fs_stat(s->alloc, dpath, &st);   /* seeds cdev/cino for the fallback path */
 
             if (s->depth >= PROVEN_FS_WALK_DEPTH_LIMIT) {
                 /*
@@ -1337,12 +1329,61 @@ proven_err_t proven_fs_walk_next(proven_fs_walk_t *walk, proven_fs_walk_entry_t 
                 return PROVEN_ERR_OUT_OF_BOUNDS;
             }
 
-            proven_result_dir_t d = proven_fs_dir_open(s->alloc, dpath);
+            /*
+             * Open the child RELATIVE TO the parent's open handle, refusing to follow a
+             * symlink - not by re-opening the reconstructed path string.
+             *
+             * That string could be swapped out from under us: an entry that was a real
+             * directory when it was listed can be a symlink-to-outside by the time we go to
+             * enter it, and opening it by path would follow the link and walk the whole
+             * filesystem. The audit's TOCTOU repro did exactly that. openat(parent, name,
+             * O_NOFOLLOW) cannot be fooled that way - if `name` is a symlink now, the open
+             * fails - and it is what makes "cannot escape" true rather than merely likely.
+             *
+             * We also take dev/ino from the handle we actually opened (fstat), not from a
+             * path, so the cycle guard is checking the real directory too.
+             */
+            proven_fs_dir_t child = {0};
+            unsigned long long cdev = st.dev, cino = st.ino;
+            bool have_ids = false;
+            proven_err_t open_err;
 
-            if (!proven_is_ok(d.err)) {
-                /* A directory we cannot read. REPORT it - the caller asked for this tree,
-                 * and a subtree that silently vanishes is how a backup misses files and
-                 * says it succeeded. Then carry on with the next sibling. */
+            if (proven_sys_fs_dir_supports_open_at()) {
+                proven_size_t nlen = dpath.size - s->pending_path_len - 1u;
+                const proven_u8 *nptr = dpath.ptr + s->pending_path_len + 1u;
+                /* dpath is NUL-terminated at path_len; the name component is too, because it
+                 * is the tail of it. Pass it as a C string. */
+                proven_sys_dir_handle_t parent = { .internal = s->stack[s->depth - 1].dir.internal };
+                proven_sys_dir_handle_t ch = proven_sys_fs_dir_open_at(parent, (const char *)nptr);
+                (void)nlen; (void)nptr;
+                if (ch.internal) {
+                    child.internal = ch.internal;
+                    have_ids = proven_sys_fs_dir_ids(ch, &cdev, &cino);
+                    open_err = PROVEN_OK;
+                } else {
+                    open_err = PROVEN_ERR_IO;
+                }
+            } else {
+                /* No fd-relative open on this platform: fall back to the by-path open. */
+                proven_result_dir_t d = proven_fs_dir_open(s->alloc, dpath);
+                child = d.value;
+                open_err = d.err;
+                have_ids = true;   /* the path-stat ids above are the best we have here */
+            }
+
+            /* Re-check the cycle against what we actually opened. On a bind mount or a
+             * hardlinked directory the openat succeeds and only the (dev, ino) tells us it
+             * is an ancestor. */
+            if (proven_is_ok(open_err) && have_ids && walk_is_ancestor(s, cdev, cino)) {
+                proven_fs_dir_close(&child);
+                walk_truncate(s, s->pending_path_len);
+                continue;
+            }
+
+            if (!proven_is_ok(open_err)) {
+                /* A directory we cannot read, or one that turned into a symlink under us.
+                 * REPORT it - a subtree that silently vanishes is how a backup misses files
+                 * and says it succeeded - and carry on with the next sibling. */
                 out_entry->path = dpath;
                 out_entry->name = dpath;   /* narrowed below */
                 for (proven_size_t i = dpath.size; i > 0; --i) {
@@ -1359,15 +1400,15 @@ proven_err_t proven_fs_walk_next(proven_fs_walk_t *walk, proven_fs_walk_entry_t 
 
                 /* Trim on the NEXT call, not now: the caller is holding a view into this
                  * buffer, and truncating writes a NUL into the middle of what they are
-                 * looking at. (It did, and the error came back naming the parent.) */
+                 * looking at. */
                 s->pending_trim = true;
-                return d.err;
+                return open_err;
             }
 
-            s->stack[s->depth].dir = d.value;
+            s->stack[s->depth].dir = child;
             s->stack[s->depth].path_len = s->pending_path_len;
-            s->stack[s->depth].dev = st.dev;
-            s->stack[s->depth].ino = st.ino;
+            s->stack[s->depth].dev = cdev;
+            s->stack[s->depth].ino = cino;
             s->depth++;
             continue;
         }
@@ -1385,13 +1426,28 @@ proven_err_t proven_fs_walk_next(proven_fs_walk_t *walk, proven_fs_walk_entry_t 
             continue;
         }
         if (!proven_is_ok(e)) {
-            /* The directory's own read failed. Same rule: report it, name it, move on. */
+            /*
+             * The directory's own read failed mid-iteration. Report it, name it, move on -
+             * and describe it the SAME way the other two error branches do, which this one
+             * used not to. `name` is the last component, not the whole path; and the depth
+             * is the directory's OWN depth (the one it was reported at as an entry), not its
+             * children's. We are inside the frame here, so that is s->depth - 2, where the
+             * open-failure branch - which is one level shallower, before the frame is pushed
+             * - correctly uses s->depth - 1.
+             */
             proven_u8str_view_t dpath = walk_path(s);
             out_entry->path = dpath;
             out_entry->name = dpath;
+            for (proven_size_t i = dpath.size; i > 0; --i) {
+                if (dpath.ptr[i - 1] == (proven_u8)'/') {
+                    out_entry->name.ptr = dpath.ptr + i;
+                    out_entry->name.size = dpath.size - i;
+                    break;
+                }
+            }
             out_entry->type = PROVEN_FS_TYPE_DIR;
             out_entry->size = 0;
-            out_entry->depth = s->depth - 1;
+            out_entry->depth = (s->depth >= 2) ? s->depth - 2 : 0;
             out_entry->is_symlink = false;
 
             proven_fs_dir_close(&top->dir);

@@ -355,6 +355,52 @@ proven_sys_dir_handle_t proven_sys_fs_dir_open(const char *path) {
 #endif
 }
 
+proven_sys_dir_handle_t proven_sys_fs_dir_open_at(proven_sys_dir_handle_t parent, const char *name) {
+#if defined(_WIN32) || defined(_WIN64)
+    (void)parent; (void)name;
+    return (proven_sys_dir_handle_t){ .internal = NULL };
+#else
+    if (!parent.internal || !name) return (proven_sys_dir_handle_t){ .internal = NULL };
+    DIR *pd = (DIR *)parent.internal;
+    int pfd = dirfd(pd);
+    if (pfd < 0) return (proven_sys_dir_handle_t){ .internal = NULL };
+
+    /* O_NOFOLLOW is the whole point: if `name` is a symlink now (whatever it was when it
+     * was listed), the open fails rather than following it out of the tree. */
+    int fd = openat(pfd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) return (proven_sys_dir_handle_t){ .internal = NULL };
+
+    DIR *d = fdopendir(fd);
+    if (!d) { close(fd); return (proven_sys_dir_handle_t){ .internal = NULL }; }
+    return (proven_sys_dir_handle_t){ .internal = (void *)d };
+#endif
+}
+
+bool proven_sys_fs_dir_supports_open_at(void) {
+#if defined(_WIN32) || defined(_WIN64)
+    return false;
+#else
+    return true;
+#endif
+}
+
+bool proven_sys_fs_dir_ids(proven_sys_dir_handle_t handle, unsigned long long *dev, unsigned long long *ino) {
+#if defined(_WIN32) || defined(_WIN64)
+    (void)handle; (void)dev; (void)ino;
+    return false;
+#else
+    if (!handle.internal) return false;
+    DIR *d = (DIR *)handle.internal;
+    int fd = dirfd(d);
+    if (fd < 0) return false;
+    struct stat st;
+    if (fstat(fd, &st) != 0) return false;
+    if (dev) *dev = (unsigned long long)st.st_dev;
+    if (ino) *ino = (unsigned long long)st.st_ino;
+    return true;
+#endif
+}
+
 void proven_sys_fs_dir_close(proven_sys_dir_handle_t handle) {
     if (!handle.internal) return;
 #if defined(_WIN32) || defined(_WIN64)
