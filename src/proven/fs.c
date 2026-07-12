@@ -349,6 +349,25 @@ proven_err_t proven_fs_copy(proven_allocator_t temp_alloc, proven_u8str_view_t s
     proven_result_file_t r_res = proven_fs_open(temp_alloc, src, PROVEN_FS_READ);
     if (!proven_is_ok(r_res.err)) return r_res.err;
     
+    /*
+     * An existing destination we cannot WRITE to has to be made writable first.
+     *
+     * The copy carries the source's mode onto the destination (see below), so copying a
+     * 0400 file leaves a 0400 file - and the NEXT copy onto it could not even open it:
+     * open(O_WRONLY) on a 0400 file fails, so a backup loop worked once and failed forever
+     * after, with the destination silently keeping its old contents. We are about to
+     * overwrite the file anyway; making it writable first is the honest thing, and the
+     * final mode goes back on at the end.
+     */
+    {
+        proven_fs_stat_t d_stat = {0};
+        if (proven_is_ok(proven_fs_stat(temp_alloc, dest, &d_stat)) &&
+            d_stat.type == PROVEN_FS_TYPE_FILE &&
+            (d_stat.perms & 0200u) == 0u) {
+            (void)proven_fs_chmod(temp_alloc, dest, (proven_fs_perms_t)(d_stat.perms | 0600u));
+        }
+    }
+
     proven_result_file_t w_res = proven_fs_open(temp_alloc, dest, PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
     if (!proven_is_ok(w_res.err)) {
         (void)proven_fs_close(r_res.value);
@@ -356,24 +375,25 @@ proven_err_t proven_fs_copy(proven_allocator_t temp_alloc, proven_u8str_view_t s
     }
 
     /*
-     * Carry the source's mode onto the destination, and do it BEFORE the contents go in.
+     * Take the source's mode, and narrow the destination to owner-only for the duration of
+     * the write.
      *
-     * A copy used to create the destination with the process umask - so copying a 0600
-     * file produced a 0644 one, and every byte of a private file was world-readable from
-     * the moment it was written. `cp` does not do that, and neither should this. Setting
-     * the mode first means the contents are never visible under a wider mode than the
-     * original had, not even briefly.
+     * A copy used to create the destination with the process umask - so copying a 0600 file
+     * produced a 0644 one, and every byte of a private file was world-readable from the
+     * moment it was written. `cp` does not do that, and neither should this. Writing under
+     * 0600 and setting the real mode at the end means the contents are never visible under
+     * a wider mode than the original had, not even briefly, AND the file stays writable
+     * while we are writing it.
      */
-    {
-        proven_fs_stat_t src_stat = {0};
-        if (proven_is_ok(proven_fs_stat(temp_alloc, src, &src_stat)) &&
-            src_stat.type == PROVEN_FS_TYPE_FILE) {
-            proven_err_t merr = proven_fs_chmod(temp_alloc, dest, src_stat.perms);
-            if (!proven_is_ok(merr) && merr != PROVEN_ERR_UNSUPPORTED) {
-                (void)proven_fs_close(r_res.value);
-                (void)proven_fs_close(w_res.value);
-                return merr;
-            }
+    proven_fs_stat_t src_stat = {0};
+    bool have_src_perms = proven_is_ok(proven_fs_stat(temp_alloc, src, &src_stat)) &&
+                          src_stat.type == PROVEN_FS_TYPE_FILE;
+    if (have_src_perms) {
+        proven_err_t merr = proven_fs_chmod(temp_alloc, dest, (proven_fs_perms_t)0600u);
+        if (!proven_is_ok(merr) && merr != PROVEN_ERR_UNSUPPORTED) {
+            (void)proven_fs_close(r_res.value);
+            (void)proven_fs_close(w_res.value);
+            return merr;
         }
     }
 
@@ -411,6 +431,12 @@ proven_err_t proven_fs_copy(proven_allocator_t temp_alloc, proven_u8str_view_t s
          * worse than one that fails. */
         proven_err_t cerr = proven_fs_close(w_res.value);
         if (proven_is_ok(final_err) && !proven_is_ok(cerr)) final_err = cerr;
+    }
+
+    /* The real mode goes on now that the bytes are all in and the fd is closed. */
+    if (proven_is_ok(final_err) && have_src_perms) {
+        proven_err_t merr = proven_fs_chmod(temp_alloc, dest, src_stat.perms);
+        if (!proven_is_ok(merr) && merr != PROVEN_ERR_UNSUPPORTED) final_err = merr;
     }
     return final_err;
 }

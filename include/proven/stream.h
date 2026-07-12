@@ -97,6 +97,15 @@ proven_writer_t proven_writer_from_file(proven_file_t *file);
 typedef struct {
     proven_u8str_t    *str;
     proven_allocator_t alloc;
+
+    /**
+     * @brief Once this writer has failed, it stays failed. See proven_writer_buffered_t::err.
+     *
+     * An allocation failure mid-render leaves the string holding a PREFIX of the output -
+     * valid, terminated, and missing its end. `flush` used to answer PROVEN_OK on it, so a
+     * caller who renders and then checks the flush was told a truncated document was whole.
+     */
+    proven_err_t err;
 } proven_writer_u8str_t;
 
 /**

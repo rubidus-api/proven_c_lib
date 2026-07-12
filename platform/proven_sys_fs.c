@@ -430,7 +430,17 @@ int proven_sys_fs_dir_step(proven_sys_dir_handle_t handle, proven_sys_dir_entry_
         out_entry->name = entry->d_name;
         
         struct stat st;
-        if (fstatat(dirfd(d), entry->d_name, &st, AT_SYMLINK_NOFOLLOW) == 0) {
+        /*
+         * FOLLOW the symlink, the way stat() does.
+         *
+         * With AT_SYMLINK_NOFOLLOW a symlink pointing at a perfectly ordinary file came
+         * back as "not a regular file", while proven_fs_stat on the same path said FILE -
+         * so a caller filtering a listing on `type == FILE` skipped files it could open and
+         * read. Two answers to the same question is worse than either answer. A dangling
+         * link fails the follow and lands in the fallback below, which reports OTHER: it
+         * cannot be opened, so calling it a file would be the lie that started this.
+         */
+        if (fstatat(dirfd(d), entry->d_name, &st, 0) == 0) {
             out_entry->is_dir = S_ISDIR(st.st_mode);
             out_entry->is_regular = S_ISREG(st.st_mode) != 0;
             if (S_ISREG(st.st_mode)) {

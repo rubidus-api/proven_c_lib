@@ -21,6 +21,37 @@ unfixed source.
 The theme, again: **code that is correct for the input it was tested with and silently
 wrong for the input it will actually meet.**
 
+### Fixed (third audit round: the fixes from the second round)
+
+Pointing the audit at the code the previous audit had just produced found three regressions
+in it. That is the point of B-011, made twice in one day.
+
+- **Copying a read-only file worked once and failed forever after.** Carrying the source's
+  mode meant a 0400 destination — and `open(O_WRONLY)` on a 0400 file fails, so the *second*
+  copy could not even open it, returned `PROVEN_ERR_IO`, and left the destination holding its
+  old contents. An unwritable destination is made writable first (we are about to overwrite it
+  anyway), the payload is written under 0600, and the real mode goes on at the end — so the
+  contents are still never exposed under a wider mode than the original's.
+
+- **The buffered writer remembered an inner *error* but not an inner *stall*.** A sink that
+  takes nothing and reports no error — every wedged sink looks like this — made
+  `proven_writer_write` return `PROVEN_ERR_IO` while leaving the writer thinking it was
+  healthy, so it went on accepting writes: the receiver got `ABC`, a 27-byte hole, and `XYZ`,
+  with the second write reporting success. The flush path had always treated `{OK, 0}` as a
+  failure; the write path did not, and the two disagreed.
+
+- **A symlink to a regular file was `PROVEN_FS_TYPE_OTHER` in a listing and
+  `PROVEN_FS_TYPE_FILE` from `stat`.** The walk stat'd with `AT_SYMLINK_NOFOLLOW`. Two answers
+  to the same question is worse than either answer, and a caller filtering a listing on
+  `type == FILE` skipped files it could open and read. The walk follows now, exactly as `stat`
+  does; a *dangling* link fails the follow and is still `OTHER`, which is honest — it cannot be
+  opened at all.
+
+- **`proven_writer_from_u8str` had no flush**, so a render that ran out of memory halfway left
+  the string holding a valid, NUL-terminated *prefix* of the output — and `proven_writer_flush`
+  answered `PROVEN_OK` on it. Found by asking whether every writer implementation keeps the same
+  contract, which is the same question that found the pool refusing to free a block.
+
 ### Fixed (second audit round: the new code, the allocators, the filesystem)
 
 - **`close()` failures were thrown away** — and `close()` is the last chance a filesystem

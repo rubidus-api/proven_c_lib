@@ -133,6 +133,36 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("copying a read-only file twice still works",
+        "Carrying the source's mode means the destination ends up 0400 - and open(O_WRONLY) on a 0400 file fails, so the SECOND copy could not even open it.",
+        "A backup loop worked once and failed forever after, with the destination silently keeping its old contents. The copy makes an unwritable destination writable first: it is about to overwrite it anyway.");
+    // ---------------------------------------------------------------
+    {
+        proven_u8str_view_t src = PROVEN_LIT("test_fs_perms.d/ro-src.txt");
+        proven_u8str_view_t dst = PROVEN_LIT("test_fs_perms.d/ro-dst.txt");
+        proven_byte_t d1[] = "first";
+
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_write_file(heap, src,
+            (proven_mem_view_t){ .ptr = d1, .size = sizeof d1 })), "setup: a source", "");
+        PROVEN_TEST_ASSERT(chmod("test_fs_perms.d/ro-src.txt", 0400) == 0, "setup: make it read-only", "");
+
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_copy(heap, src, dst)), "the first copy must succeed", "");
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_copy(heap, src, dst)),
+            "and the SECOND copy onto the same destination must succeed too",
+            "It used to fail with PROVEN_ERR_IO: the destination carried the source's 0400 and could no longer be opened for writing.");
+
+        struct stat st;
+        PROVEN_TEST_ASSERT(stat("test_fs_perms.d/ro-dst.txt", &st) == 0 && (st.st_mode & 0777) == 0400,
+            "and the destination must still end up 0400", "");
+
+        proven_result_mem_mut_t back = proven_fs_read_all(heap, dst);
+        PROVEN_TEST_ASSERT(proven_is_ok(back.err) && back.value.size == sizeof d1 &&
+                           memcmp(back.value.ptr, d1, sizeof d1) == 0,
+            "and hold the source's contents", "");
+        heap.free_fn(heap.ctx, back.value.ptr);
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a symlink and a FIFO are not regular files",
         "They used to come back as PROVEN_FS_TYPE_FILE, which tells a caller it may open them and read bytes out of them.",
         "A dangling symlink cannot even be opened. Inspect the is_regular mapping in platform/proven_sys_fs.c.");
@@ -140,13 +170,15 @@ int main(void) {
     {
         PROVEN_TEST_ASSERT(symlink("/nonexistent/target", "test_fs_perms.d/dangling") == 0,
             "setup: a dangling symlink", "");
+        PROVEN_TEST_ASSERT(symlink("secret.txt", "test_fs_perms.d/good1") == 0,
+            "setup: a symlink to a real file", "");
         PROVEN_TEST_ASSERT(mkfifo("test_fs_perms.d/pipe", 0600) == 0, "setup: a FIFO", "");
 
         proven_result_dir_t dr = proven_fs_dir_open(heap, PROVEN_LIT("test_fs_perms.d"));
         PROVEN_TEST_ASSERT(proven_is_ok(dr.err), "the directory must open", "");
         proven_fs_dir_t dir = dr.value;
 
-        bool saw_dangling = false, saw_fifo = false, saw_regular = false;
+        bool saw_dangling = false, saw_fifo = false, saw_regular = false, saw_good_link = false;
         for (;;) {
             proven_fs_dir_entry_t entry = {0};
             proven_err_t e = proven_fs_dir_next(&dir, &entry);
@@ -168,12 +200,24 @@ int main(void) {
                 saw_regular = true;
                 PROVEN_TEST_ASSERT(entry.type == PROVEN_FS_TYPE_FILE,
                     "and a regular file must still be PROVEN_FS_TYPE_FILE", "");
+            } else if (n.size == 5 && memcmp(n.ptr, "good1", 5) == 0) {
+                saw_good_link = true;
+                PROVEN_TEST_ASSERT(entry.type == PROVEN_FS_TYPE_FILE,
+                    "a symlink to a regular file must be PROVEN_FS_TYPE_FILE, like stat says it is",
+                    "The walk used to stat with AT_SYMLINK_NOFOLLOW, so it said OTHER while proven_fs_stat on the same path said FILE. A caller filtering a listing on type == FILE skipped files it could open and read.");
             }
         }
         proven_fs_dir_close(&dir);
 
-        PROVEN_TEST_ASSERT(saw_dangling && saw_fifo && saw_regular,
-            "the walk must have seen all three entries", "");
+        PROVEN_TEST_ASSERT(saw_dangling && saw_fifo && saw_regular && saw_good_link,
+            "the walk must have seen all four entries", "");
+
+        /* And stat must agree with the listing, which is the whole point. */
+        proven_fs_stat_t st = {0};
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_stat(heap, PROVEN_LIT("test_fs_perms.d/good1"), &st)) &&
+                           st.type == PROVEN_FS_TYPE_FILE,
+            "and proven_fs_stat must say the same thing about that symlink",
+            "Two answers to the same question is worse than either answer.");
     }
 
     // ---------------------------------------------------------------
