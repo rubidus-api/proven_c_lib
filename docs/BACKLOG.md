@@ -20,28 +20,6 @@ An item with no exit condition is a complaint, not a backlog item.
 
 ## Open
 
-### B-001 — manual chapter 8 is missing sections 7 through 13
-
-**Status:** open. Found 2026-07-12 while writing the verified examples.
-
-`manual/manual-08-fmt-scan.md` lists thirteen sections in its table of contents
-and ends mid-chapter at `## 7. Scanner data model` — a bare heading with no body.
-Sections 7-13 (scanner data model, primitive scan APIs, the scan-arg model, the
-structural scan grammar, the scan APIs, the error-code guide, and the examples)
-do not exist. Roughly half the chapter's promised content is absent, and the half
-that is missing is the scanner — the side a reader is most likely to need help
-with, because `proven_scan_*` has no libc analogue to fall back on.
-
-**Done looks like:** sections 7-13 written against `include/proven/scan.h` and
-`src/proven/scan.c`, each API with its return contract and its failure modes, and
-at least one worked example under `manual/examples/` quoted by the chapter (so it
-is compiled and run like the rest).
-
-**Why not now:** it is a chapter to write, not a line to fix. The scanner's
-`_Generic` arg model and the `NEED_MORE` / partial-consume semantics need to be
-explained carefully or the chapter will do more harm than the gap does. Tracked
-rather than rushed.
-
 ### B-002 — most manual code blocks are still unverifiable sketches
 
 **Status:** open, partially mitigated. Found 2026-07-12.
@@ -109,6 +87,23 @@ deliberate choice, not something a documentation pass slips in.
 ## Done
 
 Items are moved here with the commit that closed them, so the reasoning survives.
+
+### B-001 — manual chapter 8 was missing sections 7 through 13 (closed v26.07.12e)
+
+The chapter listed thirteen sections and ended at a bare `## 7. Scanner data model`
+heading: the whole scanner half was absent, and the scanner is the side with no
+libc analogue to fall back on.
+
+Sections 7-13 are written, against the header and against *measured* behaviour
+rather than against the header alone — which is how the surprising parts got
+documented at all: `proven_scan_i64("0x10")` is decimal zero, `"1e309"` overflows
+while `"1e-400"` quietly rounds to zero, and a failed structural scan has **already
+written through** the destinations before the mismatch.
+
+`manual/examples/ex_08_scan_recovery.c` provokes every error code on purpose, and
+`tests/test_docs_manual_ch08_contracts` asserts each of the 18 behaviours the
+chapter states as fact. The chapter cannot drift from the scanner without the build
+saying so.
 
 ### B-000 — the alias layer had drifted (closed v26.07.12c)
 

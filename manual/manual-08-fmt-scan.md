@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v26.07.12d)
+# Chapter 8: Formatting and Scanning (v26.07.12e)
 
 This chapter is the detailed reference for `fmt.h` and `scan.h`.
 Chapter 3 gives the shorter overview and the everyday examples.
@@ -667,9 +667,215 @@ Common mistakes:
 
 ## 7. Scanner data model
 
+The scanner is a cursor over bytes you already have. It does not own the text, it
+does not copy it, and it does not read from anywhere - `proven_scan_t` is a view
+plus an offset, and that is the whole of it.
+
+```text
+typedef struct {
+    proven_u8str_view_t view;    /* the bytes being read; not owned */
+    proven_size_t       cursor;  /* how far in we are */
+} proven_scan_t;
+```
+
+Two consequences worth stating, because they are what make this different from
+`scanf`:
+
+- **The scanner never allocates and never writes into your input.** A scanned word
+  comes back as a `proven_u8str_view_t` pointing *into* the original bytes. It is
+  valid exactly as long as those bytes are, and no longer. If it must outlive them,
+  copy it with `proven_u8str_create_from_view()`.
+- **The cursor is yours.** It is a plain field. You may save it, restore it, or step
+  it by hand (§12 does exactly that after `proven_scan_skip_until`). Nothing in the
+  scanner is hidden from you, so nothing has to be undone for you.
+
+`proven_scan_init()` normalizes a malformed view (`size > 0` with a null pointer) to
+an empty one rather than trusting it, so a scanner built from garbage reads as
+end-of-input instead of dereferencing.
+
+Each primitive returns a result struct pairing the value with the error that guards
+it: `proven_result_i64_t`, `proven_result_u64_t`, `proven_result_f64_t`,
+`proven_result_u8str_view_t`. **The value is meaningless unless the error is
+`PROVEN_OK`** - the scanner does not use a sentinel value to mean failure, because
+every sentinel is also a legitimate input.
+
+## 8. Scanner primitive APIs
+
+```text
+void                       proven_scan_skip_whitespace(proven_scan_t *scan);
+proven_result_i64_t        proven_scan_i64(proven_scan_t *scan);
+proven_result_u64_t        proven_scan_u64(proven_scan_t *scan);
+proven_result_f64_t        proven_scan_f64(proven_scan_t *scan);
+proven_result_u8str_view_t proven_scan_str(proven_scan_t *scan);
+proven_err_t               proven_scan_skip_until(proven_scan_t *scan, proven_u8str_view_t target);
+void                       proven_scan_skip_until_number(proven_scan_t *scan);
+```
+
+The value-returning ones are `[[nodiscard]]`: a scan whose result you throw away is
+a scan you did not need to make.
+
+### Shared behaviour
+
+- **Leading whitespace is skipped** by every value scanner. You do not need to call
+  `proven_scan_skip_whitespace()` first; it exists for when you want to position the
+  cursor yourself.
+- **Scanning stops at the first byte that cannot belong to the value.** `"12abc"`
+  yields `12` and leaves the cursor on the `a`. That is not an error - the scanner
+  answered the question you asked and left the rest for whoever asks next.
+- **On failure the cursor is restored**, so a failed scan is a non-event: you can
+  turn around and parse the same position as something else. §12 does this.
+
+### The integer scanners
+
+| Input | `proven_scan_i64` | Why |
+|---|---|---|
+| `"42"`, `"+42"`, `"-42"` | `OK` - 42, 42, -42 | a sign is part of the number |
+| `"9223372036854775808"` | `PROVEN_ERR_OVERFLOW` | one past `INT64_MAX`; it does **not** wrap |
+| `"abc"`, `""` | `PROVEN_ERR_INVALID_ARG` | there is no number here |
+| `"0x10"` | `OK` - **0**, cursor at 1 | **decimal only**: a zero, followed by text |
+
+That last row is the one that surprises people. `proven_scan_i64` and
+`proven_scan_u64` read decimal. There is no hex, no octal, no base prefix. `0x10` is
+the integer zero, and `x10` is still in the input.
+
+`proven_scan_u64` means unsigned: `"-1"` is `PROVEN_ERR_INVALID_ARG`, not a wrap to
+`18446744073709551615`. A scanner that quietly turns a negative number into a huge
+positive one is how a bounds check gets defeated.
+
+### The float scanner
+
+`proven_scan_f64` routes through the same correctly-rounded decimal engine as the
+rest of the library: round-to-nearest, ties-to-even, no `long double` anywhere. It
+accepts `nan` and `inf`.
+
+Its two boundary behaviours are **deliberately asymmetric**, and the asymmetry is
+the point:
+
+- `"1e309"` gives `PROVEN_ERR_OVERFLOW`. There is no correct finite answer, so it
+  refuses rather than handing you an infinity you did not ask for.
+- `"1e-400"` gives `PROVEN_OK` and `0.0`, with the sign preserved. Underflow to zero
+  *is* the correctly rounded answer. Reporting it as an error would mean reporting
+  correct arithmetic as a failure.
+
+### Words and navigation
+
+`proven_scan_str` returns the next whitespace-delimited run as a view into the
+input. Nothing left but whitespace is `PROVEN_ERR_INVALID_ARG`.
+
+`proven_scan_skip_until(scan, target)` moves the cursor **to** the target, not past
+it - you decide how much of it to consume. If the target is not there the result is
+`PROVEN_ERR_NOT_FOUND` **and the cursor does not move**: the scanner does not consume
+input it failed to navigate.
+
+`proven_scan_skip_until_number` stops at the first digit, or at a sign immediately
+followed by a digit. If there is no number it runs the cursor to the end of the
+input - so check `scan.cursor < scan.view.size` before assuming there is something
+to read.
+
+## 9. Scan argument model
+
+A scan argument is a **typed pointer to your destination**, selected by the compiler:
+
+```text
+PROVEN_SCAN_ARG(&x)     /* _Generic on the pointer type */
+```
+
+This is where the scanner differs most sharply from `scanf`. There is no format
+letter to get wrong, because there is no format letter at all. `%d` against a `long`,
+or `%s` against a buffer that is too small, are not mistakes available here: the
+destination's type *is* the specification, and a mismatch is a compile error rather
+than a corrupted stack.
+
+Supported destinations: `short`, `unsigned short`, `int`, `unsigned int`, `long`,
+`unsigned long`, `long long`, `unsigned long long`, `double`, and
+`proven_u8str_view_t`.
+
+`PROVEN_SCAN_ARG_LONG(&x)` and `PROVEN_SCAN_ARG_ULONG(&x)` exist for callers who want
+to be explicit at the call site; `PROVEN_SCAN_ARG` already handles `long*` and
+`unsigned long*`.
+
+**Narrow destinations are range-checked.** Scanning `"70000"` into a `short` is
+`PROVEN_ERR_OVERFLOW`, not a truncated `4464`. The value is parsed at 64 bits and
+checked against the destination's range before anything is stored.
+
+The `proven_scan_arg_*` constructors are public if you need to build an argument
+array by hand, but the macros are what callers use.
+
+## 10. Structural scan grammar
+
+The scan format string is the formatter's, read backwards:
+
+- a placeholder consumes one argument, in order;
+- anything else is a **literal that must match the input exactly**.
+
+There are no specs inside a placeholder on the scanning side. Width, fill and
+alignment are formatting concerns; the scanner reads what is there.
+
+Whitespace in the format is not special. The value scanners skip leading whitespace
+themselves, so a format with a space between two placeholders and one without parse
+`"7 8"` identically - the space in the format matches the space in the input, and had
+it not been there, the second scanner would have skipped it anyway.
+
+The number of placeholders must equal the number of arguments. Too few values in the
+input is an error; **too many is not** (§11.1).
+
+## 11. Scan formatting APIs
+
+```text
+proven_scan_fmt(view, fmt, ...)            /* scan a view from the beginning */
+proven_scan_fmt_cursor(&scan, fmt, ...)    /* continue from an existing cursor */
+proven_err_t proven_scan_fmt_internal(...) /* what the macros expand to */
+```
+
+Use `proven_scan_fmt` for a self-contained line. Use `proven_scan_fmt_cursor` when
+the scan is one step in a longer walk over the same input: it advances the cursor you
+own, so it mixes freely with the primitives of §8.
+
+### 11.1. Scan error code guide and recovery
+
+| Code | What actually happened | What to do |
+|---|---|---|
+| `PROVEN_OK` | Every placeholder was filled and every literal matched. | Publish the values. |
+| `PROVEN_ERR_INVALID_ARG` | The input is not the shape you asked for - a placeholder had no value to read, or the input ran out. | The line does not match. Report it; do not retry the same shape. |
+| `PROVEN_ERR_NOT_FOUND` | A **literal** in the format did not match. | The line has a different shape than expected. Try another format, from a saved cursor. |
+| `PROVEN_ERR_OVERFLOW` | A number was well-formed but does not fit the destination. | The input may be valid and your destination too narrow, or the input may be hostile. Those are very different situations - tell them apart before widening the type. |
+| `PROVEN_ERR_INVALID_FORMAT` | The format string itself is malformed. | A bug in your code, not in the input. |
+
+**The structural scanner is not transactional, and this is the one that bites.**
+
+When a literal fails to match, the placeholders *before* the mismatch have already
+been written through. The call returns `PROVEN_ERR_NOT_FOUND` and your destination
+holds a value anyway - `id` below is 7, from a call that failed:
+
+```text
+int id = -1;
+double ratio = -1.0;
+proven_err_t err = proven_scan_fmt(line, "id={} XXX={}",
+                                   PROVEN_SCAN_ARG(&id), PROVEN_SCAN_ARG(&ratio));
+/* err == PROVEN_ERR_NOT_FOUND, and id == 7: it was written before the failure. */
+```
+
+So: **on failure, treat every destination as clobbered.** If you need all-or-nothing,
+scan into locals and publish them only once the call has succeeded - the worked
+example in §12 shows the shape. Alternatively, save `scan.cursor` before the call and
+restore it afterwards. The cursor is a plain field, and that is deliberate.
+
+**Trailing input is not an error.** Scanning one placeholder against `"7 8"` succeeds
+with the value 7 and leaves `8` unconsumed. The scanner matched what you asked for and
+stopped; it does not police what you did not ask about. If the whole line must be
+consumed, check the cursor yourself:
+
+```text
+if (scan.cursor != scan.view.size) { /* there is unparsed input left */ }
+```
+
+## 12. Examples and misuse cases
+
 ### Worked example: formatting a line and scanning it back
 
-Compiled and run by the test suite. It formats into a stack-borrowed string (atomic on overflow) and into an allocator-backed one (grows), uses a bounded argument for untrusted bytes, and then parses the line back — with the float round-tripping exactly.
+Compiled and run by the test suite. It formats into a stack-borrowed string (atomic on
+overflow) and into an allocator-backed one (grows), uses a bounded argument for
+untrusted bytes, and then parses the line back - with the float round-tripping exactly.
 
 <!-- example: manual/examples/ex_08_fmt_scan.c -->
 ```c
@@ -789,3 +995,221 @@ int main(void) {
     return EXAMPLE_OK();
 }
 ```
+
+### Worked example: the scanner's error codes, and recovering from them
+
+Compiled and run by the test suite. Every code in the table above is provoked on
+purpose here, including the non-transactional failure - because a contract you have
+only read is a contract you have not learned.
+
+<!-- example: manual/examples/ex_08_scan_recovery.c -->
+```c
+/*
+ * The scanner's error codes, and how to recover from them.
+ *
+ * The scanner is not scanf. It never writes through a pointer it was not given,
+ * it never guesses a width, and it tells you which of several different things
+ * went wrong. That last part only helps if you know what the codes mean - so
+ * this program provokes each one on purpose.
+ */
+
+static proven_u8str_view_t v(const char *s) {
+    return proven_u8str_view_from_cstr(s);
+}
+
+int main(void) {
+    /* --- the primitives restore the cursor when they fail ----------------- */
+    /* A failed scan is a non-event: the cursor is where it was, so you can try
+     * to parse the same position as something else. */
+    {
+        proven_scan_t sc = proven_scan_init(v("abc"));
+        proven_result_i64_t n = proven_scan_i64(&sc);
+        EXAMPLE_REQUIRE(n.err == PROVEN_ERR_INVALID_ARG, "'abc' is not an integer");
+        EXAMPLE_REQUIRE(sc.cursor == 0, "a failed integer scan leaves the cursor alone");
+
+        /* So the same position can be read as a word instead. */
+        proven_result_u8str_view_t w = proven_scan_str(&sc);
+        EXAMPLE_REQUIRE(proven_is_ok(w.err) && proven_u8str_view_eq(w.val, PROVEN_LIT("abc")),
+                        "the same bytes parse fine as a word");
+    }
+
+    /* --- a number that does not fit is OVERFLOW, not a wrapped value ------ */
+    {
+        proven_scan_t sc = proven_scan_init(v("9223372036854775808"));   /* INT64_MAX + 1 */
+        proven_result_i64_t n = proven_scan_i64(&sc);
+        EXAMPLE_REQUIRE(n.err == PROVEN_ERR_OVERFLOW, "one past INT64_MAX must not wrap");
+        EXAMPLE_REQUIRE(sc.cursor == 0, "the cursor is restored on overflow too");
+    }
+
+    /* --- but a float that underflows is NOT an error ---------------------- */
+    /* Too large is OVERFLOW; too small is zero, with the sign kept. That
+     * asymmetry is deliberate - underflow to zero is the correctly rounded
+     * answer, while overflow has no correct finite answer at all. */
+    {
+        proven_scan_t big = proven_scan_init(v("1e309"));
+        proven_result_f64_t b = proven_scan_f64(&big);
+        EXAMPLE_REQUIRE(b.err == PROVEN_ERR_OVERFLOW, "1e309 does not fit a double");
+
+        proven_scan_t tiny = proven_scan_init(v("-1e-400"));
+        proven_result_f64_t t = proven_scan_f64(&tiny);
+        EXAMPLE_REQUIRE(proven_is_ok(t.err), "1e-400 underflows, which is not an error");
+        EXAMPLE_REQUIRE(t.val == 0.0, "it rounds to zero");
+    }
+
+    /* --- the integer scanners are decimal only ---------------------------- */
+    /* "0x10" is not sixteen. It is a zero, followed by text the scanner has not
+     * been asked to look at. This surprises people, so it is worth knowing. */
+    {
+        proven_scan_t sc = proven_scan_init(v("0x10"));
+        proven_result_i64_t n = proven_scan_i64(&sc);
+        EXAMPLE_REQUIRE(proven_is_ok(n.err) && n.val == 0, "0x10 scans as the integer 0");
+        EXAMPLE_REQUIRE(sc.cursor == 1, "and the cursor stops before the 'x'");
+    }
+
+    /* --- scanning stops at the first byte that cannot belong to the value -- */
+    {
+        proven_scan_t sc = proven_scan_init(v("12abc"));
+        proven_result_i64_t n = proven_scan_i64(&sc);
+        EXAMPLE_REQUIRE(proven_is_ok(n.err) && n.val == 12, "12abc yields 12");
+        EXAMPLE_REQUIRE(sc.cursor == 2, "and leaves 'abc' for whoever asks next");
+    }
+
+    /* --- unsigned means unsigned ------------------------------------------ */
+    {
+        proven_scan_t sc = proven_scan_init(v("-1"));
+        proven_result_u64_t n = proven_scan_u64(&sc);
+        EXAMPLE_REQUIRE(n.err == PROVEN_ERR_INVALID_ARG,
+                        "-1 is rejected rather than wrapping to a huge unsigned value");
+    }
+
+    /* --- navigating to a value: skip_until ------------------------------- */
+    /* skip_until leaves the cursor ON the target, not past it, so you decide
+     * how much of it to consume. */
+    {
+        proven_scan_t sc = proven_scan_init(v("port=8080"));
+        proven_err_t err = proven_scan_skip_until(&sc, PROVEN_LIT("="));
+        EXAMPLE_REQUIRE(proven_is_ok(err), "the '=' is there");
+        EXAMPLE_REQUIRE(sc.cursor == 4, "the cursor sits on the '=' itself");
+
+        ++sc.cursor;                                  /* step over it */
+        proven_result_i64_t port = proven_scan_i64(&sc);
+        EXAMPLE_REQUIRE(proven_is_ok(port.err) && port.val == 8080, "the port parses");
+
+        /* Not finding it is NOT_FOUND, and the cursor does not move - the
+         * scanner does not consume the input it failed to navigate. */
+        proven_scan_t sc2 = proven_scan_init(v("port=8080"));
+        proven_err_t missing = proven_scan_skip_until(&sc2, PROVEN_LIT("#"));
+        EXAMPLE_REQUIRE(missing == PROVEN_ERR_NOT_FOUND, "there is no '#'");
+        EXAMPLE_REQUIRE(sc2.cursor == 0, "and the cursor stayed put");
+    }
+
+    /* --- the structural scanner ------------------------------------------- */
+    {
+        int id = 0;
+        double ratio = 0.0;
+        proven_u8str_view_t name = {0};
+
+        proven_err_t err = proven_scan_fmt(v("id=7 ratio=0.5 name=ada"),
+                                           "id={} ratio={} name={}",
+                                           PROVEN_SCAN_ARG(&id),
+                                           PROVEN_SCAN_ARG(&ratio),
+                                           PROVEN_SCAN_ARG(&name));
+        EXAMPLE_REQUIRE(proven_is_ok(err), "the line matches the shape");
+        EXAMPLE_REQUIRE(id == 7 && ratio == 0.5, "the values land in the right places");
+        EXAMPLE_REQUIRE(proven_u8str_view_eq(name, PROVEN_LIT("ada")), "including the word");
+    }
+
+    /* --- the structural scanner is NOT transactional ---------------------- */
+    /*
+     * This is the one that bites. When a literal fails to match, the scan
+     * returns an error - but the placeholders BEFORE the mismatch have already
+     * been written through. `id` is 7 even though the call failed.
+     *
+     * So: on failure, treat every destination as clobbered. If you need
+     * all-or-nothing, scan into locals and only publish them once the call
+     * succeeded, which is what the code below does.
+     */
+    {
+        int id = -1;
+        double ratio = -1.0;
+        proven_err_t err = proven_scan_fmt(v("id=7 ratio=0.5"),
+                                           "id={} XXX={}",       /* the literal is wrong */
+                                           PROVEN_SCAN_ARG(&id),
+                                           PROVEN_SCAN_ARG(&ratio));
+        EXAMPLE_REQUIRE(err == PROVEN_ERR_NOT_FOUND, "the literal 'XXX=' is not in the input");
+        EXAMPLE_REQUIRE(id == 7, "and yet id was already written: the scan is not atomic");
+
+        /* The safe shape: scan into locals, publish on success. */
+        int good_id = 0;
+        double good_ratio = 0.0;
+        int published_id = -1;
+        proven_err_t ok = proven_scan_fmt(v("id=7 ratio=0.5"), "id={} ratio={}",
+                                          PROVEN_SCAN_ARG(&good_id), PROVEN_SCAN_ARG(&good_ratio));
+        if (proven_is_ok(ok)) published_id = good_id;
+        EXAMPLE_REQUIRE(published_id == 7, "publish only what a successful scan produced");
+    }
+
+    /* --- running out of input, and having input left over ------------------ */
+    {
+        int a = 0, b = 0;
+        proven_err_t short_input = proven_scan_fmt(v("5"), "{} {}",
+                                                   PROVEN_SCAN_ARG(&a), PROVEN_SCAN_ARG(&b));
+        EXAMPLE_REQUIRE(!proven_is_ok(short_input), "two placeholders, one value: that fails");
+
+        /* Trailing input is NOT an error. The scanner matched what you asked for
+         * and stopped; it does not police what you did not ask about. If the
+         * whole line must be consumed, check that yourself. */
+        int only = 0;
+        proven_scan_t sc = proven_scan_init(v("7 8"));
+        proven_err_t err = proven_scan_fmt_cursor(&sc, "{}", PROVEN_SCAN_ARG(&only));
+        EXAMPLE_REQUIRE(proven_is_ok(err) && only == 7, "the first value scans");
+        EXAMPLE_REQUIRE(sc.cursor < sc.view.size, "and '8' is still sitting there, unconsumed");
+    }
+
+    /* --- narrow destinations are range-checked ---------------------------- */
+    {
+        short small = 0;
+        proven_err_t err = proven_scan_fmt(v("70000"), "{}", PROVEN_SCAN_ARG(&small));
+        EXAMPLE_REQUIRE(err == PROVEN_ERR_OVERFLOW,
+                        "70000 does not fit a short, and the scanner says so rather than truncating");
+    }
+
+    return EXAMPLE_OK();
+}
+```
+
+### Misuse: assuming `0x10` is sixteen
+
+It is zero. The integer scanners are decimal only, and `x10` is still in the input. If
+you need hex, you are writing that digit loop yourself.
+
+### Misuse: treating trailing input as an error
+
+It is not one. One placeholder against `"7 8"` succeeds. Check the cursor if you care.
+
+### Misuse: trusting destinations after a failed scan
+
+They are clobbered. See §11.1.
+
+### Misuse: keeping a scanned word after its input is gone
+
+`proven_scan_str` returns a **view into the input**, not a copy. When the buffer goes,
+so does the word. Copy it with `proven_u8str_create_from_view()` if it has to outlive
+the bytes it came from.
+
+## 13. Freestanding and build-mode notes
+
+The scanner is core: it does no I/O, allocates nothing, and touches no platform layer,
+so it is available in a freestanding build exactly as it is in a hosted one.
+
+The one build-mode dependency is float. The freestanding build sets
+`PROVEN_FMT_NO_FLOAT` (which compiles out the float *formatter*) along with
+`PROVEN_NO_U16STR`. `proven_scan_f64` pulls in the decimal parsing engine
+(`float_parse.c` and `float_decimal.c`), which is integer-only - no `long double`, no
+libm, no soft-float helper calls - but it is not free in code size. On a target where
+that matters and you do not need to read floats, simply do not call it: nothing else
+in the scanner references the float path.
+
+`proven_sysio_scanner_*` (Chapter 5) is a **different** thing: a buffered scanner over
+a file, hosted-only, because it does I/O. The scanner described in this chapter reads
+bytes you already have.
