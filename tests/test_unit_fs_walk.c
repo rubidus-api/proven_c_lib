@@ -57,7 +57,9 @@ static void make_fixture(void) {
     (void)system("printf b > walkroot/sub/b.txt");
     (void)system("printf c > walkroot/sub/deep/c.txt");
     (void)system("printf h > walkroot/locked/hidden.txt");
-    (void)system("ln -s .. walkroot/loop");
+    (void)system("ln -s .. walkroot/loop");             /* a cycle: symlink to an ancestor */
+    (void)system("ln -s a.txt walkroot/flink");         /* a symlink to a file */
+    (void)system("ln -s sub walkroot/dlink");           /* a symlink to a sibling directory */
     (void)system("chmod 000 walkroot/locked");
 }
 
@@ -178,6 +180,19 @@ int main(void) {
                            index_of(&s, "walkroot/loop/sub") < 0,
             "but nothing may be reported inside it: the walk must not descend into a cycle",
             "Descending here re-enters the root, and the walk never ends.");
+
+        /* A symlink to a sibling directory is the SAME rule: reported as a DIR, is_symlink,
+         * and NOT entered - because following it walks you out of the tree you asked about. */
+        int dl = index_of(&s, "walkroot/dlink");
+        PROVEN_TEST_ASSERT(dl >= 0 && s.types[dl] == PROVEN_FS_TYPE_DIR,
+            "a symlink to a directory is reported, with type DIR", "");
+        PROVEN_TEST_ASSERT(index_of(&s, "walkroot/dlink/b.txt") < 0,
+            "but the walk must not descend through it",
+            "It points at walkroot/sub; entering it would report sub's contents twice and, for a link pointing OUTSIDE the tree, walk the whole filesystem.");
+
+        int fl = index_of(&s, "walkroot/flink");
+        PROVEN_TEST_ASSERT(fl >= 0 && s.types[fl] == PROVEN_FS_TYPE_FILE,
+            "and a symlink to a file is reported with type FILE", "");
     }
 
     // ---------------------------------------------------------------
