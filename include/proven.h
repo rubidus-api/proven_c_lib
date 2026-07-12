@@ -24,6 +24,7 @@
 #include "proven/ring.h"
 #include "proven/map.h"
 #include "proven/algorithm.h"
+#include "proven/hash.h"
 #include "proven/fs.h"
 #include "proven/time.h"
 #include "proven/fmt.h"
