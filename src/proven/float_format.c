@@ -398,6 +398,7 @@ static proven_err_t proven_float_format_dispatch_f64(char *buf, proven_size_t bu
     {
         double abs_v = value < 0.0 ? -value : value;
         bool use_scientific = (abs_v >= 1e18 || (abs_v > 0.0 && abs_v < 1e-4));
+        if (opt.never_scientific) use_scientific = false;
         if (!use_scientific) {
             /* Exact, arbitrary-precision %f path. */
             return proven_float_format_fixed_f_exact(buf, buf_cap, value, opt.precision, written_out);
@@ -411,9 +412,15 @@ proven_err_t proven_float_format_f64_policy(char *buf, proven_size_t buf_cap, do
                                             proven_float_format_policy_t policy,
                                             proven_float_format_options_t opt,
                                             proven_size_t *written_out) {
-    if (opt.mode == PROVEN_FLOAT_FORMAT_MODE_FIXED && opt.precision == 0) {
-        opt = proven_float_format_options_fixed_default();
-    }
+    /*
+     * Precision 0 used to be silently rewritten to 6.
+     *
+     * "No decimals" is a legitimate request - it is what `%.0f` means everywhere -
+     * and answering it with six decimals is the same disease as accepting a spec and
+     * ignoring it: the caller asked for something, got something else, and was told
+     * it worked. A caller who wants the default asks for it by name, with
+     * proven_float_format_options_fixed_default().
+     */
     return proven_float_format_dispatch_f64(buf, buf_cap, value, policy, opt, written_out);
 }
 

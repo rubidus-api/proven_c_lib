@@ -11,6 +11,91 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-12] — proven_c_lib-v26.07.12i
+
+Closes `docs/BACKLOG.md` B-005 and B-009.
+
+### Added
+
+- **The format spec grammar grew the things it was missing.** It supported exactly
+  four: fill, align, width, and lowercase `x`. Now:
+
+  ```text
+  {:[[fill]align][sign][#][0][width][.precision][type]}
+  ```
+
+  - **Float precision**: `{:.3}`, `{:.0}`, `{:f}` (fixed), `{:g}` (shortest
+    round-trip). This is the one that mattered. Every float came out with **exactly six
+    decimals, forever**, so a float column could not be aligned - 12.5 rendered nine
+    characters wide and 100.0 rendered ten, and the column broke. The exact engine could
+    always do precision; the `{}` grammar simply could not reach it.
+  - **Bases and case**: `{:x}` `{:X}` `{:o}` `{:b}`, with `#` for the `0x` / `0X` /
+    `0o` / `0b` prefix. A conventional uppercase hex dump was impossible before.
+  - **Sign**: `{:+}` and `{: }`. Zero-padding goes *between* the sign and the digits -
+    `{:+08}` on 42 is `+0000042`, never `0000+42`.
+  - **`char` and `bool` arguments.** `PROVEN_ARG('Z')` printed `90`; there was no way
+    to emit a single character at all. A `bool` renders `true` / `false`.
+
+- **`proven_fs_dir_open` / `_next` / `_close`** - streaming directory iteration.
+  `proven_fs_list` reads the whole directory before the caller sees any of it. Measured
+  on 20,000 entries: 80 ms and **+1,664 KB** resident, nothing visible until the last
+  one. The iterator: 64 ms and **+0 KB**. The entry name is borrowed from the
+  iterator's storage, which is what lets a huge directory be walked without an
+  allocation per entry.
+
+- `tests/test_unit_fmt_spec`, `tests/test_regression_stream_partial_write`, and
+  directory-iteration coverage in `tests/test_unit_fs_position_and_sync`.
+
+### Changed
+
+- **A writer's `write_fn` now returns how many bytes the sink took**
+  (`proven_result_size_t`), not just success or failure, and `proven_writer_write_partial`
+  exposes that count to callers. The old trait said "consume the whole chunk or fail",
+  which is a promise a pipe, a socket, or a filling disk cannot keep - so no correct sink
+  could be written against it. `proven_writer_write` still means all-or-nothing; it loops.
+
+- **The PAL directory walk reports failure.** `proven_sys_fs_dir_step` returns 1 / 0 / -1
+  (entry / end / failure) in place of a bool, because `readdir()` returns NULL for both
+  "the directory ended" and "the read failed", and errno is the only thing that tells
+  them apart.
+
+### Fixed
+
+- **The buffered writer duplicated bytes on a partial write.** A sink that accepted
+  4096 of 6000 bytes and then failed left the whole buffer in place, and the next flush
+  re-sent it from the start: the receiver got **10,096 bytes, with the first 4096
+  twice**, and no way to detect it. The flush now advances past the bytes the sink
+  acknowledged and keeps only the unsent tail. Losing data is bad; silently doubling it
+  is worse.
+
+- **A failed read looked like a clean end of file.** The buffered reader had nowhere to
+  put an error, so a source that broke mid-file set `eof` and the caller saw a complete,
+  successfully-read file. It carries the error now. A file truncated by a disk error and
+  a file that simply ended are not the same fact.
+
+- **`{:f}` did not force the fixed form.** It set the SIMPLE policy and the dispatcher
+  then ignored it, switching to scientific above 1e18 and below 1e-4 anyway - so `{:f}`
+  on `1e20` rendered `1.000000e+20`, and `{}` and `{:f}` were byte-identical for every
+  input in the language. The exact fixed-point engine was there the whole time; nothing
+  called it.
+
+- **A failed directory read was reported as end-of-directory.** `proven_fs_dir_next`
+  mapped a NULL `readdir()` to `PROVEN_ERR_EOF` whether the directory had ended or the
+  disk had failed, so a listing cut short by an I/O error was indistinguishable from a
+  complete one. That is how a backup silently skips files. It is `PROVEN_ERR_IO` now,
+  and `proven_fs_list` propagates it instead of returning half a directory.
+
+- **The float engine silently rewrote precision 0 to 6.** `{:.0}` on 3.7 gave
+  `3.700000`. "No decimals" is what `%.0f` means everywhere, and answering it with six
+  is the same disease as accepting a spec and then ignoring it: the caller asked for
+  something, got something else, and was told it worked.
+
+- **A wide zero-fill was silently truncated.** The first version of the new integer
+  renderer assembled the padded number in a fixed 128-byte buffer, so `{:#0200x}` - a
+  legal request, since the parser allows a width up to 10000 - produced **127
+  characters and returned PROVEN_OK**. The padding is now emitted through the same path
+  that already knows how to write N of something without holding N of it.
+
 ## [2026-07-12] — proven_c_lib-v26.07.12h
 
 Steps 4-6 of `docs/RFC-0001-streams-and-io.md`: the keystone. Closes B-007 and B-008.

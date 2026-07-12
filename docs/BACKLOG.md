@@ -57,6 +57,39 @@ deliberate choice, not something a documentation pass slips in.
 
 Items are moved here with the commit that closed them, so the reasoning survives.
 
+### B-005 — streaming directory iteration (closed v26.07.12i)
+
+`proven_fs_list` read the WHOLE directory before the caller saw any of it. Measured on
+20,000 entries: 80 ms and **+1,664 KB of resident memory**, with nothing visible until
+the last entry was read.
+
+`proven_fs_dir_open` / `_next` / `_close` walk it one entry at a time: 64 ms and
+**+0 KB**. The entry name is *borrowed* from the iterator's storage — which is the
+point, and is what lets a million-entry directory be walked without a million
+allocations. `proven_fs_list` remains, because materialising a small directory is often
+exactly what you want.
+
+### B-009 — the format spec grammar (closed v26.07.12i)
+
+Precision (`{:.3}`, `{:.0}`), fixed and shortest float forms (`{:f}`, `{:g}`), bases and
+case (`{:x}` `{:X}` `{:o}` `{:b}`), alternate form (`{:#x}`), sign (`{:+}`, `{: }`), and
+`char` / `bool` argument types.
+
+The float gap was the one that mattered: every float came out with **exactly six
+decimals, forever**, so a float column could not be aligned — 12.5 rendered nine
+characters wide and 100.0 rendered ten, and the column broke. The exact engine could
+always do precision; the `{}` grammar simply could not reach it.
+
+Two silent defects were found while doing it, and both are pinned by tests:
+
+- The float engine rewrote **precision 0 to 6**. "No decimals" is what `%.0f` means
+  everywhere, and answering it with six decimals is the same disease as accepting a
+  spec and ignoring it.
+- The first version of the new integer renderer assembled the padded number in a fixed
+  128-byte buffer, so `{:#0200x}` — a legal request, since the parser allows a width up
+  to 10000 — **silently produced 127 characters and returned PROVEN_OK**. The padding
+  is now emitted rather than assembled.
+
 ### B-007 — streams (closed v26.07.12h)
 
 There was no `proven_writer_t` and no `proven_reader_t`: the formatter's only sink was
@@ -156,33 +189,6 @@ written through** the destinations before the mismatch.
 `tests/test_docs_manual_ch08_contracts` asserts each of the 18 behaviours the
 chapter states as fact. The chapter cannot drift from the scanner without the build
 saying so.
-
-### B-005 — `proven_fs_list` still materialises the whole directory
-
-**Status:** open (partially closed in v26.07.12g). RFC-0001 §4.4.
-
-Seek, tell, truncate, pread and pwrite **landed** in v26.07.12g. What remains is the
-directory iterator: `proven_fs_list` reads, `fstatat`s, allocates and sorts every
-entry before the caller sees any of them. Measured on 50,000 entries: 189 ms,
-+4.2 MB RSS, 50,008 mallocs, and nothing visible until the last one. The PAL already
-has a streaming iterator (`proven_sys_fs_dir_open` / `_dir_next` / `_dir_close`);
-`fs.c` wraps it in a loop that buffers everything and throws the stream away.
-
-**Done looks like:** `proven_fs_dir_open` / `_next` / `_close` exposed, and
-`proven_fs_list` reimplemented on top of them rather than the other way round.
-
-### B-009 — the formatter cannot ask for float precision, and has no `{:c}`
-
-**Status:** open. RFC-0001 §3.
-
-`{}` means six decimals, forever. `{:.3}` is `INVALID_FORMAT`. The engine behind
-`proven_float_format_f64_policy` does precision, scientific and shortest-round-trip
-— **and the `{}` syntax cannot reach any of it.** Consequences: a float column cannot
-be aligned (12.5 renders nine wide, 100.0 renders ten, overflowing the column), and a
-log line with a latency to three decimals cannot be expressed at all.
-
-Also missing: `{:c}` (there is no way to emit a single character — `PROVEN_ARG('Z')`
-prints `90`), `bool`, `{:X}`, `{:o}`, `{:b}`, `{:#x}`, `{:+}`.
 
 ### B-010 — the formatter has no extension point
 

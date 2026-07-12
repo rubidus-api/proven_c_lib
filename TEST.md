@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.07.12h)
+# proven Test Matrix (v26.07.12i)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -16,7 +16,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 48 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 49 |
 | `contract` | Does it *refuse* what it says it refuses? | 10 |
 | `regression` | Does a defect that actually shipped stay fixed? | 7 |
 | `differential` | Does it agree with an oracle we did not write? | 4 |
@@ -429,6 +429,23 @@ Sub-checks:
 - Checks NaN and infinity text stay stable.
 
 Failure tip: inspect `src/proven/fmt.c` and `tests/test_unit_fmt_f64_accuracy.c`.
+
+### `tests/test_unit_fmt_spec` — format spec grammar
+
+Intent: verify precision, bases, case, alternate form, sign, `char` and `bool` — and that a spec the argument cannot honour is refused rather than ignored.
+
+Sub-checks:
+
+- `{:.3}`, `{:.0}` (no decimals — the engine used to silently rewrite precision 0 to 6), `{:.3f}`, `{:g}`.
+- A float column actually lines up: `{:>9.2}` on 12.5, 100.0 and -3.125.
+- `{:x}` `{:X}` `{:#x}` `{:o}` `{:b}` `{:#b}` `{:08x}` `{:#010x}`.
+- `{:+}`, `{: }`, and that zero-padding lands **between** the sign and the digits.
+- `char` renders as a character (it used to print 90) and `bool` as `true`/`false`.
+- Eight specs that must be **refused**, not ignored.
+- A width of 200 produces exactly 200 characters — the first version of the renderer assembled the padded number in a 128-byte buffer and silently produced 127 while returning OK.
+- Every pre-existing spelling still means what it meant.
+
+Failure tip: inspect the spec parser and `render_integer` / the float case in `src/proven/fmt.c`.
 
 ### `tests/test_unit_fmt_fastpath` — formatter truncation comparison
 
@@ -990,6 +1007,21 @@ Failure tip: inspect public invariant guards in array/map mutation entry points 
 ## Regression tests
 
 One test per defect that actually shipped. Each is named for what broke, not for a version or a number, and each was verified to FAIL against the pre-fix source. A regression test that passes before the fix is not a regression test.
+
+### `tests/test_regression_stream_partial_write` — partial writes, failed reads, and `{:f}`
+
+Intent: verify a sink that accepts only part of a chunk receives every byte exactly once; that a read failure reaches the caller as `PROVEN_ERR_IO` rather than as a clean end of file; and that `{:f}` forces the fixed form at any magnitude.
+
+Sub-checks:
+
+- Drives a buffered writer over a sink that never accepts more than 700 bytes at a time, and checks the sink receives exactly the 6000-byte payload, in order. The first buffered writer kept the whole buffer after a partial write and re-sent it, so the sink received 10,096 bytes with the first 4096 duplicated.
+- Drives `proven_writer_write_partial` over a sink that takes 8 bytes and then fails, and checks the caller is told both facts: the error, and the 8.
+- Drives a buffered reader over a source that yields 4 bytes and then fails, and checks the second read reports `PROVEN_ERR_IO`. It used to report a clean EOF, making a file truncated by a disk error indistinguishable from a complete one.
+- Checks `{:.1f}` on `1e20` and `{:.8f}` on `1e-7` contain no exponent, and that plain `{}` on `1e20` still chooses the shorter scientific spelling.
+
+Note: all three defects were in code written the same day, and all three passed every test that existed — because every sink the tests used behaved perfectly. The bug in each case was a contract that only a well-behaved sink could honour.
+
+Failure tip: inspect `writer_buffered_flush` and `reader_buffered_fill` in `src/proven/stream.c`, and `never_scientific` in `src/proven/float_format.c`.
 
 ### `tests/test_regression_fmt_spec_silently_wrong` — formatter specs that used to be silently wrong
 

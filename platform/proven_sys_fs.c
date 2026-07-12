@@ -362,19 +362,23 @@ void proven_sys_fs_dir_close(proven_sys_dir_handle_t handle) {
 #endif
 }
 
-bool proven_sys_fs_dir_next(proven_sys_dir_handle_t handle, proven_sys_dir_entry_t *out_entry) {
-    if (!handle.internal) return false;
+int proven_sys_fs_dir_step(proven_sys_dir_handle_t handle, proven_sys_dir_entry_t *out_entry) {
+    if (!handle.internal || !out_entry) return -1;
 #if defined(_WIN32) || defined(_WIN64)
     struct win_dir { HANDLE h; WIN32_FIND_DATAW fd; bool first; char *utf8_name; size_t utf8_cap; } *wd = handle.internal;
     if (!wd->first) {
-        if (!FindNextFileW(wd->h, &wd->fd)) return false;
+        if (!FindNextFileW(wd->h, &wd->fd)) {
+            return (GetLastError() == ERROR_NO_MORE_FILES) ? 0 : -1;
+        }
     }
     wd->first = false;
 
     // Skip . and ..
     while (wd->fd.cFileName[0] == L'.') {
         if (wd->fd.cFileName[1] == L'\0' || (wd->fd.cFileName[1] == L'.' && wd->fd.cFileName[2] == L'\0')) {
-            if (!FindNextFileW(wd->h, &wd->fd)) return false;
+            if (!FindNextFileW(wd->h, &wd->fd)) {
+                return (GetLastError() == ERROR_NO_MORE_FILES) ? 0 : -1;
+            }
             continue;
         }
         break;
@@ -383,7 +387,7 @@ bool proven_sys_fs_dir_next(proven_sys_dir_handle_t handle, proven_sys_dir_entry
     // Convert back from Wide to UTF-8
     int required_size = WideCharToMultiByte(CP_UTF8, 0, wd->fd.cFileName, -1, NULL, 0, NULL, NULL);
     if (required_size <= 0) {
-        return false; // Conversion failed
+        return -1; // Conversion failed
     } else {
         if (!wd->utf8_name || wd->utf8_cap < (size_t)required_size) {
             if (wd->utf8_name) HeapFree(GetProcessHeap(), 0, wd->utf8_name);
@@ -393,22 +397,25 @@ bool proven_sys_fs_dir_next(proven_sys_dir_handle_t handle, proven_sys_dir_entry
         if (wd->utf8_name) {
             int n = WideCharToMultiByte(CP_UTF8, 0, wd->fd.cFileName, -1, wd->utf8_name, required_size, NULL, NULL);
             if (n <= 0) {
-                return false;
+                return -1;
             } else {
                 out_entry->name = wd->utf8_name;
             }
         } else {
-            return false; // Allocation failed
+            return -1; // Allocation failed
         }
     }
     out_entry->is_dir = (wd->fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
     uint64_t sz = ((uint64_t)wd->fd.nFileSizeHigh << 32) | wd->fd.nFileSizeLow;
     if (sz > (uint64_t)PROVEN_SIZE_MAX) out_entry->size = PROVEN_SIZE_MAX;
     else out_entry->size = (size_t)sz;
-    return true;
+    return 1;
 #else
     DIR *d = (DIR*)handle.internal;
     struct dirent *entry;
+    /* readdir() returns NULL for both end-of-directory and failure. errno is the only
+     * thing that tells them apart, and it is only meaningful if we clear it first. */
+    errno = 0;
     while ((entry = readdir(d)) != NULL) {
         if (entry->d_name[0] == '.') {
             if (entry->d_name[1] == '\0' || (entry->d_name[1] == '.' && entry->d_name[2] == '\0')) continue;
@@ -429,10 +436,14 @@ bool proven_sys_fs_dir_next(proven_sys_dir_handle_t handle, proven_sys_dir_entry
             out_entry->is_dir = false; // Fallback
             out_entry->size = 0;
         }
-        return true;
+        return 1;
     }
-    return false;
+    return (errno != 0) ? -1 : 0;
 #endif
+}
+
+bool proven_sys_fs_dir_next(proven_sys_dir_handle_t handle, proven_sys_dir_entry_t *out_entry) {
+    return proven_sys_fs_dir_step(handle, out_entry) == 1;
 }
 
 bool proven_sys_fs_chmod(const char *path, unsigned int perms) {

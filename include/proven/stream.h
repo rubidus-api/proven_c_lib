@@ -38,13 +38,22 @@
 /**
  * @brief A byte sink.
  *
- * `write_fn` must consume the whole chunk or fail; a short write is not a thing a
- * caller of this interface has to handle. `flush_fn` may be NULL, which means the
- * writer holds nothing back.
+ * `write_fn` writes what it can and **reports how much went out**, even when it then
+ * fails. That count is not a nicety - it is what makes a failed write recoverable.
+ *
+ * The first version of this interface said "write_fn must consume the whole chunk or
+ * fail", which sounds tidier and is a lie a file cannot tell: a write to a pipe or a
+ * full disk really does put some bytes out and then fail. A buffered writer built on
+ * the tidy contract kept its whole buffer on failure and re-sent it on the next
+ * flush, so a 6000-byte payload arrived as 10,096 bytes with the first 4096
+ * DUPLICATED. Losing data is bad; silently doubling it is worse, because the receiver
+ * cannot tell.
+ *
+ * `flush_fn` may be NULL, which means the writer holds nothing back.
  */
 typedef struct {
     void *ctx;
-    proven_err_t (*write_fn)(void *ctx, proven_mem_view_t chunk);
+    proven_result_size_t (*write_fn)(void *ctx, proven_mem_view_t chunk);
     proven_err_t (*flush_fn)(void *ctx);
 } proven_writer_t;
 
@@ -53,9 +62,18 @@ static inline bool proven_writer_is_valid(proven_writer_t w) {
     return w.write_fn != (void *)0;
 }
 
-/** @brief Write a chunk. */
+/**
+ * @brief Write a whole chunk, retrying across short writes.
+ * @note On failure, some of the chunk may already have gone out. There is no way for
+ *       any sink to promise otherwise. Use proven_writer_write_partial if you need to
+ *       know how much.
+ */
 [[nodiscard]]
 proven_err_t proven_writer_write(proven_writer_t w, proven_mem_view_t chunk);
+
+/** @brief Write what the sink will take, and report how much that was. */
+[[nodiscard]]
+proven_result_size_t proven_writer_write_partial(proven_writer_t w, proven_mem_view_t chunk);
 
 /** @brief Write a string view. */
 [[nodiscard]]
@@ -113,6 +131,9 @@ typedef struct {
     proven_size_t    len;
 } proven_writer_buffered_t;
 
+/* Reader state carries the error that ended it, because "the input stopped" and "the
+ * input broke" are not the same fact. */
+
 /**
  * @brief Wraps a writer so that small writes accumulate before reaching it.
  *
@@ -136,6 +157,10 @@ proven_writer_t proven_writer_buffered(proven_writer_buffered_t *state, proven_w
  * `read_fn` fills as much of `dest` as it can. End of input is
  * `PROVEN_ERR_EOF` - never a zero-byte success, because "I read nothing and
  * everything is fine" is the shape of a loop that never terminates.
+ *
+ * @note An I/O failure is **not** end of input, and must never be reported as one. A
+ *       disk error that truncated a file would then be indistinguishable from a
+ *       complete file, and the caller would believe it had read everything.
  */
 typedef struct {
     void *ctx;
@@ -170,6 +195,7 @@ typedef struct {
     proven_size_t    len;      /* bytes currently held */
     proven_size_t    cursor;   /* how far into them we have read */
     bool             eof;
+    proven_err_t     err;      /* the failure that stopped the source, if any */
 } proven_reader_buffered_t;
 
 /**

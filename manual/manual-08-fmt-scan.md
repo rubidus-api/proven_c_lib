@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v26.07.12h)
+# Chapter 8: Formatting and Scanning (v26.07.12i)
 
 This chapter is the detailed reference for `fmt.h` and `scan.h`.
 Chapter 3 gives the shorter overview and the everyday examples.
@@ -466,104 +466,75 @@ The implementation stores a hidden sentinel at index 0 and maps user index `0` t
 - `{{` becomes a literal `{`
 - `}}` becomes a literal `}`
 
-### Alignment and width specifiers
-
-The formatter accepts a compact layout spec after `:`:
+### The layout spec
 
 ```text
-{:fillalignwidthx}
+{:[[fill]align][sign][#][0][width][.precision][type]}
 ```
 
-More precisely:
+Every part is optional, and the order is the one the rest of the world uses, so a
+spec copied from Python or Rust means here what it means there.
 
-- optional fill character, followed by alignment
-- or alignment by itself
-- optional decimal width
-- optional trailing `x` for hexadecimal numeric rendering
+| Part | Values | What it does |
+|---|---|---|
+| `align` | `<` `>` `^` | left, right, centre. Default `>`. |
+| `fill` | any character, before an align | the pad character. Default space. |
+| `sign` | `+` or a space | force a sign on a non-negative number, or reserve a space for one. |
+| `#` | | alternate form: `0x`, `0X`, `0o`, `0b` prefixes. Integers only. |
+| `0` | | zero-fill. `{:08}` on 42 is `00000042`. |
+| `width` | digits, up to 10000 | minimum field width. |
+| `.precision` | `.N`, up to 60 | decimals. **Floats only.** |
+| `type` | `x X o b d` (int), `f g` (float) | base and case; `f` fixed, `g` shortest round-trip. |
 
-Supported alignment characters:
+Two things are worth knowing because they used to be false:
 
-- `<` left align
-- `>` right align
-- `^` center align
+- **A leading `0` is zero-fill, not the first digit of the width.** `{:08}` produced
+  `"      42"` — space-padded, no error — until v26.07.12f. An explicit fill still
+  wins: `{:*>08}` pads with `*`.
+- **Zero-padding goes between the sign and the digits.** `{:+08}` on 42 is
+  `+0000042`, never `0000+42`. Padding is part of the number, and a number's sign
+  comes first.
 
-Default behavior:
+### Floats
 
-- fill = space
-- align = right
-- width = 0
-- hex mode = off
+`{}` gives six decimals, correctly rounded. `{:.3}` gives three, `{:.0}` gives none,
+`{:f}` forces the fixed form, and `{:g}` gives the shortest representation that
+round-trips.
 
-Examples:
+Until v26.07.12i **none of these existed**: every float came out with exactly six
+decimals, forever. The exact engine could always do all of it — the `{}` grammar
+simply could not reach it. The visible cost was that a float column could not be
+aligned, because `12.5` rendered nine characters wide and `100.0` rendered ten:
 
 ```c
-proven_result_u8str_t rs = proven_u8str_create(alloc, 64);
-if (proven_is_ok(rs.err)) {
-    proven_u8str_t s = rs.value;
-    (void)proven_u8str_append_fmt_grow(alloc, &s, "{:0>5}", PROVEN_ARG(42));    /* 00042 */
-    (void)proven_u8str_append_fmt_grow(alloc, &s, "{:*^10}", PROVEN_ARG("ok")); /* ****ok**** */
-    (void)proven_u8str_append_fmt_grow(alloc, &s, "{:.<10}", PROVEN_ARG("x"));  /* x......... */
-    proven_u8str_destroy(alloc, &s);
-}
+proven_byte_t buf[64];
+proven_u8str_t line = proven_u8str_borrow(buf, sizeof buf);
+(void)proven_u8str_append_fmt(&line, "{:>9.2}", PROVEN_ARG(12.5));    /* "    12.50" */
 ```
 
-### Hex mode
+### A spec the argument cannot honour is an error
 
-A trailing `x` turns on lowercase hexadecimal rendering for numeric arguments.
-The formatter does not use uppercase hex and does not add a `0x` prefix for integer values.
+`{:x}` on a double, `{:.2}` on an integer, `{:f}` on an integer, `{:#}` on a string:
+all `PROVEN_ERR_INVALID_FORMAT`.
 
-Example:
+They used to be *ignored* — `{:x}` on a double printed `3.500000` and reported
+success. The caller asked for something, got something else, and was told it had
+worked. That is the worst available outcome, and it is worse than refusing.
+
+### `char` and `bool`
+
+`PROVEN_ARG('Z')` renders `Z`, and a `bool` renders `true` or `false`. Both used to
+go through the integer path, so a character printed as `90` and there was no way to
+emit one at all — the ASCII column of a hex dump had to be built by hand in a
+separate buffer and passed as a string. An uppercase hex dump is now one loop:
 
 ```c
-proven_result_u8str_t rs = proven_u8str_create(alloc, 16);
-if (proven_is_ok(rs.err)) {
-    /* renders "0xbeef": the 0x is literal text, the {:x} is the hex conversion */
-    (void)proven_u8str_append_fmt_grow(alloc, &rs.value, "0x{:x}", PROVEN_ARG(48879));
-    proven_u8str_destroy(alloc, &rs.value);
-}
+proven_byte_t hexbuf[64];
+proven_u8str_t hexline = proven_u8str_borrow(hexbuf, sizeof hexbuf);
+unsigned char byte = 0xde;
+(void)proven_u8str_append_fmt(&hexline, "{:02X} ", PROVEN_ARG((unsigned)byte));
+(void)proven_u8str_append_fmt(&hexline, "{}", PROVEN_ARG((char)'.'));
 ```
-
-For signed integers, the numeric value is rendered through the implementation's unsigned conversion path when hex mode is enabled.
-That means negative numbers are shown in their unsigned representation rather than as a signed decimal value.
-
-### Width limit and invalid specs
-
-Width parsing is checked.
-Very large widths are rejected instead of silently wrapping.
-The current parser also rejects unknown format characters.
-
-Wrong:
-
-```text
-proven_u8str_append_fmt_grow(alloc, &s, "{:>9999999999}", PROVEN_ARG(123)); /* width too large */
-proven_u8str_append_fmt_grow(alloc, &s, "{:q}", PROVEN_ARG(123));            /* invalid spec */
-proven_u8str_append_fmt_grow(alloc, &s, "{", PROVEN_ARG(123));               /* invalid format */
-```
-
-### What the formatter does not support
-
-Do not expect these features:
-
-- precision fields
-- sign flags
-- alternate form flags such as `#`
-- locale-aware grouping
-- nested format language
-- Python-style format type families
-- full `printf` compatibility
-
-The project intentionally keeps the language small.
-
-### Type-specific rendering notes
-
-- integers render in base 10 unless hex mode is set
-- strings and string views are rendered as byte sequences
-- datetimes render using the datetime formatter in `time.h`
-- object pointers render as pointer text
-- function pointers render as raw representation bytes with a function-pointer prefix
-
-That means a spec like `:x` mostly matters for the numeric types.
-For strings, views, and datetimes, width and alignment are the important pieces.
 
 ## 5. Formatting APIs
 

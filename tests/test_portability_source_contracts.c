@@ -44,8 +44,23 @@ int main(void) {
     require(contains(fs, "off_t mmap_offset"), "POSIX mmap stores offset in an off_t temporary");
     require(contains(fs, "(size_t)mmap_offset != offset"), "POSIX mmap rejects size_t to off_t truncation");
     require(contains(fs, "FILE_APPEND_DATA"), "Windows append opens with FILE_APPEND_DATA");
+    /* readdir() returns NULL for BOTH "the directory ended" and "the read failed", and
+     * only errno tells them apart - so it must be cleared first. A listing cut short by
+     * a failing disk or a vanished NFS mount used to look exactly like a complete one,
+     * which is how a backup silently skips files. There is no way to provoke a readdir
+     * failure from a test on a healthy host, so the contract lives here, in the source. */
+    require(contains(fs, "int proven_sys_fs_dir_step"), "the PAL directory walk can report failure, not just end-of-directory");
+    require(contains(fs, "errno = 0;"), "POSIX dir_step clears errno so a NULL readdir can be told apart from a failure");
+    require(contains(fs, "return (errno != 0) ? -1 : 0;"), "POSIX dir_step reports a readdir failure as failure");
+    require(contains(fs, "ERROR_NO_MORE_FILES"), "Windows dir_step tells a finished directory apart from a failed one");
     require(!contains(fs, "SetFilePointer(h, 0, NULL, FILE_END)"), "Windows append does not emulate O_APPEND with a one-time seek");
     free(fs);
+
+    char *fs_c = read_text_file("src/proven/fs.c");
+    require(contains(fs_c, "proven_sys_fs_dir_step"), "the public directory walk uses the failure-reporting PAL entry point");
+    require(!contains(fs_c, "if (!proven_sys_fs_dir_next(dh, &se)) return PROVEN_ERR_EOF;"),
+            "a failed directory read is not reported to the caller as end-of-directory");
+    free(fs_c);
 
     char *env = read_text_file("platform/proven_sys_env.c");
     require(!contains(env, "wchar_t wname[256]"), "Windows env key conversion has no 255-byte fixed limit");
