@@ -53,9 +53,60 @@ deliberate choice, not something a documentation pass slips in.
 
 ---
 
+### B-011 — the modules that had never been audited had defects in every one
+
+**Status:** open (a process item, like B-003).
+
+Three adversarial audits in one day — the scanner and float engine, the containers,
+the platform layer — found a defect of consequence in **every module that had never
+had one**: the "correctly rounded" float parser was not correctly rounded (2,923
+misrounded values against glibc), the buffered scanner could not read a pipe (the one
+thing it exists for), a map with churn grew without bound (33 MB for 100 live entries),
+`append_grow` of an empty view left the string unterminated, and the sort handed the
+caller's comparator a misaligned pointer.
+
+None of those were found by the test suite, and none of them would have been. Every one
+of them was correct for the input the tests used and silently wrong for the input the
+code will actually meet: a file rather than a pipe, a short input rather than a
+twenty-digit one, a run rather than a churn.
+
+**Done looks like:** a decision on whether an adversarial audit — a reader whose job is
+to find the input that breaks it, with a reproducer required before anything is reported
+— is a standing part of the process for new modules, or a thing that happens when
+somebody thinks of it. And, if it is standing: what triggers it.
+
+**Why not now:** same reason as B-003. It changes how the project works, and that is a
+choice to make deliberately.
+
+---
+
 ## Done
 
 Items are moved here with the commit that closed them, so the reasoning survives.
+
+### B-012 — the audit findings (closed v26.07.13a)
+
+Every one reproduced before it was fixed, every fix pinned by a regression test that was
+checked to fail against the unfixed source:
+
+- the exact float tier compared against a **rounded** `5^q` (`float_decimal.c`), so every
+  exact halfway value in the `56..350` exponent window broke to a fixed direction instead
+  of to even — 2,923 misroundings against glibc, all reporting `PROVEN_OK`;
+- the buffered scanner treated a **short read as EOF** and latched it, so a token
+  straddling a pipe's read boundary was committed **truncated** and the rest of the stream
+  became unreachable; a failed read was reported as a clean end of input;
+- the scan engine could not say *"I ran out of input"*, so a number or a literal cut in
+  half by the read boundary was reported as malformed rather than waited for;
+- `map_rehash` doubled unconditionally, so tombstone pressure grew a steady-state cache
+  **forever** (100 live entries → 33 MB);
+- `proven_u8str_append_grow` / `proven_u16str_append_grow` of an **empty view** left a
+  freshly allocated block unterminated, and `as_cstr` read past the end of it;
+- `insertion_sort` handed the caller's comparator a scratch buffer of alignment **1**;
+- the panic handler was a data race;
+- the buffered writer **duplicated bytes** on a partial write, and the buffered reader
+  turned an I/O error into a clean EOF;
+- `{:f}` did not force the fixed form;
+- `proven_fs_dir_next` reported a failed `readdir()` as end-of-directory.
 
 ### B-005 — streaming directory iteration (closed v26.07.12i)
 
