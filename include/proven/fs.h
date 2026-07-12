@@ -376,13 +376,18 @@ typedef struct {
  * The walk that proven_fs_dir_* deliberately does not give you, with the three things a
  * recursive walker gets wrong:
  *
- * - **It cannot loop, and it cannot escape.** The walk never descends THROUGH a symlink.
- *   A symlinked directory is still REPORTED (it exists, `type` is DIR, `is_symlink` is
- *   true, and hiding it would be its own lie) — it is simply not entered. That one rule
- *   buys both guarantees: a link pointing at an ancestor cannot loop the walk, and a link
- *   pointing anywhere else cannot walk you out of the tree you asked about and into the
- *   rest of the filesystem. (This rule is here because the contract's own test found the
- *   first draft of it — "follow, but stop at a cycle" — quietly walking all of /tmp.)
+ * - **It cannot loop, and it cannot escape — even under a race.** The walk never descends
+ *   THROUGH a symlink. A symlinked directory is still REPORTED (it exists, `type` is DIR,
+ *   `is_symlink` is true, and hiding it would be its own lie) — it is simply not entered.
+ *   That one rule buys both guarantees: a link pointing at an ancestor cannot loop the walk,
+ *   and a link pointing anywhere else cannot walk you out of the tree you asked about.
+ *
+ *   The descent is fd-relative and refuses to follow a symlink (`openat(parent, name,
+ *   O_NOFOLLOW)` where the platform has it), so this holds even against a TOCTOU attacker:
+ *   an entry that is a real directory when it is listed and a symlink when it is entered
+ *   makes the descent FAIL — reported as that directory's error — rather than following the
+ *   swapped link out of the tree. (Both this and the "follow, but stop at a cycle" first
+ *   draft that quietly walked all of /tmp were found by the contract's own audit.)
  *
  *   Belt and braces: the walk also carries the (dev, ino) of every directory on the current
  *   path and refuses to descend into one it is already inside, which covers the loops a

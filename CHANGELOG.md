@@ -235,9 +235,15 @@ in it. That is the point of B-011, made twice in one day.
   breadth: one handle and one `(dev, ino)` per level, plus a single reused path buffer.
 
   This is the first feature written under the test-first rule (`docs/TESTING.md` §5.1): the
-  contract and a failing test in one commit, the implementation in the next. The test paid for
-  itself before the implementation existed — it caught the first draft of the contract ("follow,
-  but stop at a cycle") quietly walking all of `/tmp`.
+  contract and a failing test in one commit, the implementation in the next, and then the
+  standing adversarial audit (§5.2). Between them they caught, before and after it shipped: the
+  first draft of the contract ("follow, but stop at a cycle") quietly walking all of `/tmp`; a
+  300-level tree silently truncated at 256 and reported as a clean end-of-walk; a `readdir()`
+  failure reporting the whole path instead of the directory name and a depth one too high; and
+  a **TOCTOU escape** — a directory swapped for a symlink between being listed and being
+  entered was followed out of the tree, until the descent was made fd-relative and
+  `O_NOFOLLOW`. Every one is pinned by a regression test verified to fail against the code
+  before its fix.
 
 - `tests/test_regression_float_exact_pow5`, `tests/test_regression_scanner_short_read`,
   `tests/test_regression_map_churn`, `tests/test_contract_sort_alignment`,

@@ -85,6 +85,33 @@ typedef struct {
 [[nodiscard]]
 proven_sys_dir_handle_t proven_sys_fs_dir_open(const char *path);
 
+/**
+ * @brief Open a subdirectory of an already-open directory, by name, WITHOUT following a
+ *        symlink - the TOCTOU-safe descent a tree walker needs.
+ *
+ * `name` is a single path component (no slashes). The open is relative to `parent`'s own
+ * file descriptor and refuses to traverse a symlink, so an entry that was a real directory
+ * when it was listed and a symlink when it is entered cannot walk you out of the tree:
+ * the open simply fails. Returns a NULL handle on any failure, including that one.
+ *
+ * Only meaningful where proven_sys_fs_dir_supports_open_at() is true (POSIX openat). On a
+ * platform without it, the handle is always NULL and the caller must fall back to a
+ * by-path open.
+ */
+[[nodiscard]]
+proven_sys_dir_handle_t proven_sys_fs_dir_open_at(proven_sys_dir_handle_t parent, const char *name);
+
+/** @brief True where proven_sys_fs_dir_open_at does a real fd-relative, no-follow open. */
+[[nodiscard]]
+bool proven_sys_fs_dir_supports_open_at(void);
+
+/**
+ * @brief The (dev, ino) of an open directory, from the handle itself - not from a path
+ *        that could be swapped under us. Used for the walk's cycle guard.
+ */
+[[nodiscard]]
+bool proven_sys_fs_dir_ids(proven_sys_dir_handle_t handle, unsigned long long *dev, unsigned long long *ino);
+
 void proven_sys_fs_dir_close(proven_sys_dir_handle_t handle);
 
 /**
