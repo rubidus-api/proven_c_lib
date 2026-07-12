@@ -18,9 +18,13 @@ static const char digit_pairs[201] =
 
 typedef struct {
     char fill;
-    char align; // '<', '>', '^'
+    char align;      // '<', '>', '^'
     int  width;
-    bool hex;
+    int  precision;  // -1 when unset
+    char type;       // 0, 'x', 'X', 'o', 'b', 'd', 'f', 'g'
+    char sign;       // 0, '+', ' '
+    bool alt;        // '#' - 0x / 0o / 0b prefix
+    bool hex;        // kept: true when type is 'x' or 'X'
 } proven_fmt_spec_t;
  
  typedef struct {
@@ -179,29 +183,130 @@ static void render_with_spec(proven_fmt_ctx_t *ctx, const char *val, proven_size
     }
 }
 
+
+/* A type letter picks the base. Nothing else does. */
+static int spec_base(proven_fmt_spec_t spec) {
+    switch (spec.type) {
+        case 'x': case 'X': return 16;
+        case 'o':           return 8;
+        case 'b':           return 2;
+        default:            return 10;
+    }
+}
+
+static const char *spec_prefix(proven_fmt_spec_t spec) {
+    if (!spec.alt) return "";
+    switch (spec.type) {
+        case 'x': return "0x";
+        case 'X': return "0X";
+        case 'o': return "0o";
+        case 'b': return "0b";
+        default:  return "";
+    }
+}
+
+/*
+ * One integer renderer for i32/u32/i64/u64.
+ *
+ * The four cases used to be four near-copies that between them supported exactly one
+ * type letter (lowercase 'x') and no sign control at all, so `{:X}`, `{:o}`, `{:b}`,
+ * `{:#x}` and `{:+}` did not exist and `{:08}` was silently mis-parsed. Doing it once
+ * is what makes them all possible.
+ */
+static void render_integer(proven_fmt_ctx_t *ctx, unsigned long long mag, bool negative, proven_fmt_spec_t spec) {
+    char digits[72];                       /* 64 binary digits + NUL, with room to spare */
+    int base = spec_base(spec);
+    int n = itoa_raw(mag, digits, base);
+
+    if (spec.type == 'X') {
+        for (int i = 0; i < n; ++i) {
+            if (digits[i] >= 'a' && digits[i] <= 'f') digits[i] = (char)(digits[i] - 'a' + 'A');
+        }
+    }
+
+    char sign = 0;
+    if (negative)              sign = '-';
+    else if (spec.sign == '+') sign = '+';
+    else if (spec.sign == ' ') sign = ' ';
+
+    const char *prefix = spec_prefix(spec);
+    proven_size_t plen = 0;
+    while (prefix[plen]) ++plen;
+
+    /*
+     * Zero-padding is EMITTED, not assembled.
+     *
+     * The first version of this built the whole padded number in a fixed 128-byte
+     * buffer, which meant `{:#0200x}` - a perfectly legal request, since the parser
+     * allows a width up to 10000 - silently produced 127 characters and returned
+     * PROVEN_OK. The width was not honoured and nobody was told. That is the same
+     * disease as a spec that is parsed and then ignored, and it is why the padding is
+     * streamed through append_padding here instead: append_padding already knows how
+     * to write N of something without holding N of it.
+     *
+     * The zeros go BETWEEN the sign and the digits: `{:+08}` on 42 is "+0000042",
+     * never "0000+42". Padding is part of the number, and a number's sign comes first.
+     */
+    proven_size_t body = (sign ? 1u : 0u) + plen + (proven_size_t)n;
+
+    if (spec.fill == '0' && spec.align == '>' && spec.width > 0 && (proven_size_t)spec.width > body) {
+        if (sign) fmt_append_byte(ctx, (proven_u8)sign);
+        if (plen) fmt_append_view(ctx, (proven_u8str_view_t){ (const proven_u8 *)prefix, plen });
+        append_padding(ctx, '0', spec.width - (int)body);
+        fmt_append_view(ctx, (proven_u8str_view_t){ (const proven_u8 *)digits, (proven_size_t)n });
+        return;
+    }
+
+    /* No zero-fill: assemble sign + prefix + digits (at most 1 + 2 + 64 bytes) and let
+     * render_with_spec do the alignment padding. */
+    char out[80];
+    proven_size_t len = 0;
+    if (sign) out[len++] = sign;
+    for (proven_size_t i = 0; i < plen; ++i) out[len++] = prefix[i];
+    for (int i = 0; i < n; ++i) out[len++] = digits[i];
+
+    render_with_spec(ctx, out, len, spec);
+}
+
 static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fmt_spec_t spec) {
     if (!proven_is_ok(ctx->err)) return;
 
     /*
      * A spec the argument cannot honour is a mistake, not a suggestion.
      *
-     * `{:x}` on a double used to print "3.500000" and on a string used to print
-     * the string - the hex request was read, then dropped on the floor, with no
-     * error. The caller asked for something and got something else while being
-     * told it had worked. Only the integer cases can honour `x`; anyone else who
-     * is handed it is being asked for the impossible, and says so.
+     * `{:x}` on a double used to print "3.500000" and on a string used to print the
+     * string - the request was read, then dropped on the floor, with no error. The
+     * caller asked for something and got something else while being told it worked.
      */
-    if (spec.hex) {
-        switch (arg->type) {
-            case PROVEN_ARG_I32:
-            case PROVEN_ARG_U32:
-            case PROVEN_ARG_I64:
-            case PROVEN_ARG_U64:
-                break;
-            default:
-                ctx->err = PROVEN_ERR_INVALID_FORMAT;
-                return;
-        }
+    bool is_int = (arg->type == PROVEN_ARG_I32 || arg->type == PROVEN_ARG_U32 ||
+                   arg->type == PROVEN_ARG_I64 || arg->type == PROVEN_ARG_U64);
+#ifndef PROVEN_FMT_NO_FLOAT
+    bool is_float = (arg->type == PROVEN_ARG_F64);
+#else
+    /* No float support compiled in: nothing can honour a float spec, so every float
+     * form is refused rather than silently ignored. */
+    bool is_float = false;
+#endif
+
+    switch (spec.type) {
+        case 0: break;
+        case 'x': case 'X': case 'o': case 'b': case 'd':
+            if (!is_int) { ctx->err = PROVEN_ERR_INVALID_FORMAT; return; }
+            break;
+        case 'f': case 'g':
+            if (!is_float) { ctx->err = PROVEN_ERR_INVALID_FORMAT; return; }
+            break;
+        default:
+            ctx->err = PROVEN_ERR_INVALID_FORMAT;
+            return;
+    }
+    if (spec.alt && !is_int) { ctx->err = PROVEN_ERR_INVALID_FORMAT; return; }
+    if (spec.sign && !(is_int || is_float)) { ctx->err = PROVEN_ERR_INVALID_FORMAT; return; }
+    if (spec.precision >= 0 && !is_float) {
+        /* Precision on an integer or a string has no meaning here, and guessing one
+         * would be worse than refusing. */
+        ctx->err = PROVEN_ERR_INVALID_FORMAT;
+        return;
     }
 
     /* 128 bytes comfortably cover sign, integer digits, decimal point, six fractional digits,
@@ -211,65 +316,86 @@ static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fm
 
     switch (arg->type) {
         case PROVEN_ARG_I32: {
-            if (spec.hex) {
-                len = (proven_size_t)itoa_raw((unsigned int)arg->value.i32, buf, 16);
-            } else {
-                long long v = arg->value.i32;
-                uint64_t mag;
-                proven_size_t offset = 0;
-                if (v < 0) {
-                    buf[offset++] = '-';
-                    mag = (uint64_t)(-(v + 1)) + 1;
-                } else {
-                    mag = (uint64_t)v;
-                }
-                len = (proven_size_t)itoa_raw((unsigned long long)mag, buf + offset, 10) + offset;
-            }
-            render_with_spec(ctx, buf, len, spec);
+            long long v = arg->value.i32;
+            bool neg = (v < 0) && spec_base(spec) == 10;
+            unsigned long long mag = neg ? (unsigned long long)(-(v + 1)) + 1ull
+                                         : (unsigned long long)(unsigned int)arg->value.i32;
+            /* In base 10 a negative number gets a '-' and its magnitude. In base 16,
+             * 8 or 2 it is shown as its bit pattern - that is what a caller asking
+             * for hex wants to see. */
+            if (spec_base(spec) == 10 && v >= 0) mag = (unsigned long long)v;
+            render_integer(ctx, mag, neg, spec);
             break;
         }
         case PROVEN_ARG_U32:
-            len = (proven_size_t)itoa_raw(arg->value.u32, buf, spec.hex ? 16 : 10);
-            render_with_spec(ctx, buf, len, spec);
+            render_integer(ctx, arg->value.u32, false, spec);
             break;
         case PROVEN_ARG_I64: {
-            if (spec.hex) {
-                len = (proven_size_t)itoa_raw((unsigned long long)arg->value.i64, buf, 16);
-            } else {
-                long long v = arg->value.i64;
-                uint64_t mag;
-                proven_size_t offset = 0;
-                if (v < 0) {
-                    buf[offset++] = '-';
-                    mag = (uint64_t)(-(v + 1)) + 1;
-                } else {
-                    mag = (uint64_t)v;
-                }
-                len = (proven_size_t)itoa_raw((unsigned long long)mag, buf + offset, 10) + offset;
-            }
-            render_with_spec(ctx, buf, len, spec);
+            long long v = arg->value.i64;
+            bool neg = (v < 0) && spec_base(spec) == 10;
+            unsigned long long mag = neg ? (unsigned long long)(-(v + 1)) + 1ull
+                                         : (unsigned long long)v;
+            render_integer(ctx, mag, neg, spec);
             break;
         }
         case PROVEN_ARG_U64:
-            len = (proven_size_t)itoa_raw(arg->value.u64, buf, spec.hex ? 16 : 10);
-            render_with_spec(ctx, buf, len, spec);
+            render_integer(ctx, arg->value.u64, false, spec);
             break;
 #ifndef PROVEN_FMT_NO_FLOAT
         case PROVEN_ARG_F64: {
-            /* Unified on the exact policy formatter (fixed precision 6, default
-             * scientific switching), so all float output shares one correctly
-             * rounded engine. */
+            /*
+             * The exact engine has always been able to do precision, fixed form and
+             * shortest round-trip. The `{}` grammar simply could not reach it: every
+             * float came out with exactly six decimals, forever, which is why a float
+             * column could not be aligned - 12.5 rendered nine characters wide and
+             * 100.0 rendered ten.
+             */
+            proven_float_format_options_t opt = proven_float_format_options_fixed_default();
+            proven_float_format_policy_t policy = PROVEN_FLOAT_FORMAT_POLICY_DEFAULT;
+
+            if (spec.type == 'g') {
+                opt = proven_float_format_options_shortest();
+                policy = PROVEN_FLOAT_FORMAT_POLICY_RYU;
+            } else if (spec.precision >= 0 || spec.type == 'f') {
+                opt.mode = PROVEN_FLOAT_FORMAT_MODE_FIXED;
+                opt.precision = (spec.precision >= 0) ? spec.precision : 6;
+                if (spec.type == 'f') {
+                    /* `%f` means no exponent, ever. Without this, `{:f}` on 1e20 gave
+                     * "1.000000e+20" - the scientific form it was asked to avoid -
+                     * and `{}` and `{:f}` were byte-identical for every input. */
+                    policy = PROVEN_FLOAT_FORMAT_POLICY_SIMPLE;
+                    opt.never_scientific = true;
+                }
+            }
+
             proven_size_t flen = 0;
             if (proven_float_format_f64_policy(buf, sizeof buf, arg->value.f64,
-                                               PROVEN_FLOAT_FORMAT_POLICY_DEFAULT,
-                                               proven_float_format_options_fixed_default(),
-                                               &flen) != PROVEN_OK) {
+                                               policy, opt, &flen) != PROVEN_OK) {
+                ctx->err = PROVEN_ERR_INVALID_FORMAT;
+                break;
+            }
+
+            /* A sign was asked for and the value is not negative: add it. */
+            if (spec.sign && buf[0] != '-') {
+                char signed_buf[136];
+                signed_buf[0] = spec.sign;
+                for (proven_size_t i = 0; i < flen && i + 1 < sizeof signed_buf; ++i) signed_buf[i + 1] = buf[i];
+                render_with_spec(ctx, signed_buf, flen + 1, spec);
                 break;
             }
             render_with_spec(ctx, buf, flen, spec);
             break;
         }
 #endif
+        case PROVEN_ARG_CHAR: {
+            char c = arg->value.c;
+            render_with_spec(ctx, &c, 1, spec);
+            break;
+        }
+        case PROVEN_ARG_BOOL:
+            if (arg->value.b) render_with_spec(ctx, "true", 4, spec);
+            else              render_with_spec(ctx, "false", 5, spec);
+            break;
         case PROVEN_ARG_CSTR:
             render_with_spec(ctx, arg->value.cstr, (proven_size_t)proven_cstr_len(arg->value.cstr), spec);
             break;
@@ -437,7 +563,7 @@ static void fmt_run(proven_fmt_ctx_t *ctx, const char *fmt, const proven_arg_t *
 
         if (arg_idx != PROVEN_INDEX_NOT_FOUND && arg_idx > *max_idx) *max_idx = arg_idx;
 
-        proven_fmt_spec_t spec = { .fill = ' ', .align = '>', .width = 0, .hex = false };
+        proven_fmt_spec_t spec = { .fill = ' ', .align = '>', .width = 0, .precision = -1, .type = 0, .sign = 0, .alt = false, .hex = false };
         if (*p == ':') {
             p++;
             // Check for fill + align
@@ -448,6 +574,18 @@ static void fmt_run(proven_fmt_ctx_t *ctx, const char *fmt, const proven_arg_t *
             } else if (*p == '<' || *p == '>' || *p == '^') {
                 spec.align = *p;
                 p++;
+            }
+
+            /* Sign, then alternate form, then zero-fill, then width - the order the
+             * rest of the world uses, so a spec copied from anywhere else means here
+             * what it means there. */
+            if (*p == '+' || *p == ' ') {
+                spec.sign = *p;
+                ++p;
+            }
+            if (*p == '#') {
+                spec.alt = true;
+                ++p;
             }
 
             /* A leading zero is zero-padding, not the first digit of the width.
@@ -473,11 +611,36 @@ static void fmt_run(proven_fmt_ctx_t *ctx, const char *fmt, const proven_arg_t *
                 p++;
             }
 
-            if (*p == 'x') { 
-                spec.hex = true; 
-                p++; 
+            /* Precision: `.N`. This is what makes a float column alignable - without
+             * it every float was six decimals wide no matter what, so 12.5 took nine
+             * characters and 100.0 took ten, and the column simply broke. */
+            if (*p == '.') {
+                ++p;
+                if (!(*p >= '0' && *p <= '9')) {
+                    ctx->err = PROVEN_ERR_INVALID_FORMAT;
+                    return;
+                }
+                spec.precision = 0;
+                while (*p >= '0' && *p <= '9') {
+                    int digit = (*p - '0');
+                    if (PROVEN_CKD_MUL(&spec.precision, spec.precision, 10)) { ctx->err = PROVEN_ERR_OVERFLOW; return; }
+                    if (PROVEN_CKD_ADD(&spec.precision, spec.precision, digit)) { ctx->err = PROVEN_ERR_OVERFLOW; return; }
+                    if (spec.precision > 60) { ctx->err = PROVEN_ERR_OUT_OF_BOUNDS; return; }
+                    ++p;
+                }
             }
-            
+
+            /* The type letter. */
+            switch (*p) {
+                case 'x': case 'X': case 'o': case 'b': case 'd': case 'f': case 'g':
+                    spec.type = *p;
+                    spec.hex = (*p == 'x' || *p == 'X');
+                    ++p;
+                    break;
+                default:
+                    break;
+            }
+
             // If we are not at '}', it's an invalid specifier character
             if (*p != '}') {
                 ctx->err = PROVEN_ERR_INVALID_FORMAT;

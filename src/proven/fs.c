@@ -430,7 +430,8 @@ proven_result_array_t proven_fs_list(proven_allocator_t alloc, proven_u8str_view
     }
 
     proven_sys_dir_entry_t se;
-    while (proven_sys_fs_dir_next(dh, &se)) {
+    int step;
+    while ((step = proven_sys_fs_dir_step(dh, &se)) == 1) {
         proven_fs_entry_t entry = {0};
         entry.type = se.is_dir ? PROVEN_FS_TYPE_DIR : PROVEN_FS_TYPE_FILE;
         entry.size = se.size;
@@ -457,6 +458,12 @@ proven_result_array_t proven_fs_list(proven_allocator_t alloc, proven_u8str_view
         }
     }
     proven_sys_fs_dir_close(dh);
+    if (step < 0) {
+        /* Half a listing reported as a whole one is how a backup silently skips files. */
+        proven_fs_list_destroy(alloc, &a_res.value);
+        res.err = PROVEN_ERR_IO;
+        return res;
+    }
 
     // Sort entries: directories first, then alphabetical
     proven_array_sort(&a_res.value, compare_fs_entries);
@@ -875,6 +882,54 @@ proven_err_t proven_fs_write_file_atomic(proven_allocator_t scratch, proven_u8st
 
 proven_err_t proven_fs_write_file_durable(proven_allocator_t scratch, proven_u8str_view_t path, proven_mem_view_t data) {
     return internal_write_file_atomic(scratch, path, data, true);
+}
+
+
+// -------------------------------------------------------------
+// Streaming directory iteration
+// -------------------------------------------------------------
+
+proven_result_dir_t proven_fs_dir_open(proven_allocator_t scratch, proven_u8str_view_t path) {
+    proven_result_dir_t res = {0};
+    internal_result_cstr_t p_res = internal_view_to_cstr(scratch, path);
+    if (!proven_is_ok(p_res.err)) {
+        res.err = p_res.err;
+        return res;
+    }
+
+    proven_sys_dir_handle_t dh = proven_sys_fs_dir_open(p_res.value);
+    internal_cstr_free(scratch, p_res.value);
+
+    if (!dh.internal) {
+        res.err = PROVEN_ERR_NOT_FOUND;
+        return res;
+    }
+    res.err = PROVEN_OK;
+    res.value.internal = dh.internal;
+    return res;
+}
+
+proven_err_t proven_fs_dir_next(proven_fs_dir_t *dir, proven_fs_dir_entry_t *out_entry) {
+    if (!dir || !dir->internal || !out_entry) return PROVEN_ERR_INVALID_ARG;
+
+    proven_sys_dir_entry_t se = {0};
+    proven_sys_dir_handle_t dh = { .internal = dir->internal };
+    int step = proven_sys_fs_dir_step(dh, &se);
+    if (step == 0) return PROVEN_ERR_EOF;
+    if (step < 0) return PROVEN_ERR_IO;   /* a failed read is not an empty directory */
+
+    /* Borrowed: the name points into the iterator's own storage, which is what lets a
+     * huge directory be walked without an allocation per entry. */
+    out_entry->name = proven_u8str_view_from_cstr(se.name);
+    out_entry->type = se.is_dir ? PROVEN_FS_TYPE_DIR : PROVEN_FS_TYPE_FILE;
+    out_entry->size = se.size;
+    return PROVEN_OK;
+}
+
+void proven_fs_dir_close(proven_fs_dir_t *dir) {
+    if (!dir || !dir->internal) return;
+    proven_sys_fs_dir_close((proven_sys_dir_handle_t){ .internal = dir->internal });
+    dir->internal = (void *)0;
 }
 
 proven_err_t proven_fs_chmod(proven_allocator_t scratch, proven_u8str_view_t path, proven_fs_perms_t perms) {

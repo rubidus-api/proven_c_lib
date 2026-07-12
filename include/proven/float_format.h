@@ -26,6 +26,16 @@ typedef enum {
 typedef struct {
     proven_float_format_mode_t mode;
     proven_i32 precision;
+    /**
+     * @brief Never fall back to scientific notation, whatever the magnitude.
+     *
+     * FIXED mode still switches to `%e` outside roughly [1e-4, 1e18), because that is
+     * what the default `{}` form wants. But `%f` means "no exponent, ever" everywhere
+     * else in the world, so `{:f}` needs a way to say it - and without this flag it
+     * could not: `{:f}` on 1e20 produced "1.000000e+20", which is precisely the
+     * fixed form it was asked to force.
+     */
+    bool never_scientific;
 } proven_float_format_options_t;
 
 static inline proven_float_format_options_t proven_float_format_options_fixed_default(void) {

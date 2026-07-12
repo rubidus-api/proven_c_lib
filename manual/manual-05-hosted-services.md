@@ -754,7 +754,7 @@ caller decides where the bytes go, and nothing is hidden.
 | `proven_reader_buffered(&state, inner, buf)` | Buffered source; required for line reading. |
 | `proven_reader_read_line(&state)` | One line, without the newline. |
 
-Three rules worth stating plainly, because each of them is a way this could have
+Four rules worth stating plainly, because each of them is a way this could have
 been designed badly:
 
 - **Buffering uses memory you supply.** `proven_writer_buffered` takes a
@@ -769,6 +769,21 @@ been designed badly:
 - **A line too long for the reader's buffer is an error**, not a truncated line. A
   truncated line handed back as if it were whole is a corruption the caller has no
   way to detect. The buffer is yours; size it for the input you expect.
+- **A partial write is a fact, not a failure to be papered over.** A `write_fn`
+  returns a `proven_result_size_t`: how many bytes the sink took, *and* what went
+  wrong. A pipe, a socket, or a filling disk really does accept 4096 of your 6000
+  bytes and then fail, and a trait that says "consume it all or fail" simply makes
+  such a sink impossible to write correctly. `proven_writer_write` still means
+  all-or-nothing (it loops); `proven_writer_write_partial` is there when you need to
+  see how far you got. The buffered writer keeps only the tail the sink did **not**
+  take — the first version kept the whole buffer and re-sent it, so a failing sink
+  received the accepted prefix twice.
+
+A reader's rule is the mirror image: **a read that fails is an error, never an end of
+file.** `proven_reader_read` returns `PROVEN_ERR_IO`, not a clean zero-byte EOF, when
+the source breaks — because a file cut short by a disk error and a file that simply
+ended are the same thing to a caller who cannot tell them apart, and only one of them
+is safe to act on.
 
 What it costs, measured over 10,000 lines to stdout:
 

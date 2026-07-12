@@ -230,6 +230,55 @@ int main(void) {
         (void)proven_fs_remove(heap, dpath);
     }
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("streaming directory iteration",
+        "proven_fs_list reads the WHOLE directory before the caller sees any of it. The iterator hands over entries one at a time and allocates nothing per entry.",
+        "Inspect proven_fs_dir_open/_next/_close in src/proven/fs.c. The entry name is BORROWED - it points into the iterator's storage and is valid only until the next call.");
+    // ---------------------------------------------------------------
+    {
+        proven_u8str_view_t dir = PROVEN_LIT("test_fs_dir");
+        (void)proven_fs_rmdir(heap, dir);
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_mkdir(heap, dir)), "mkdir failed", "");
+
+        proven_u8str_view_t files[3] = {
+            PROVEN_LIT("test_fs_dir/a.txt"),
+            PROVEN_LIT("test_fs_dir/b.txt"),
+            PROVEN_LIT("test_fs_dir/c.txt"),
+        };
+        for (int i = 0; i < 3; ++i) {
+            PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_write_file(heap, files[i], proven_mem_view_from_u8(PROVEN_LIT("x")))),
+                "writing a fixture file failed", "");
+        }
+
+        proven_result_dir_t d = proven_fs_dir_open(heap, dir);
+        PROVEN_TEST_ASSERT(proven_is_ok(d.err), "dir_open failed", "");
+
+        int seen = 0;
+        bool saw_a = false, saw_b = false, saw_c = false;
+        proven_fs_dir_entry_t e;
+        while (proven_is_ok(proven_fs_dir_next(&d.value, &e))) {
+            if (proven_u8str_view_eq(e.name, PROVEN_LIT("."))) continue;
+            if (proven_u8str_view_eq(e.name, PROVEN_LIT(".."))) continue;
+            if (proven_u8str_view_eq(e.name, PROVEN_LIT("a.txt"))) saw_a = true;
+            if (proven_u8str_view_eq(e.name, PROVEN_LIT("b.txt"))) saw_b = true;
+            if (proven_u8str_view_eq(e.name, PROVEN_LIT("c.txt"))) saw_c = true;
+            ++seen;
+        }
+        proven_fs_dir_close(&d.value);
+
+        PROVEN_TEST_ASSERT(seen == 3, "the iterator must yield exactly the three files", "");
+        PROVEN_TEST_ASSERT(saw_a && saw_b && saw_c, "and all three by name", "");
+
+        /* Opening something that is not there fails rather than yielding nothing. */
+        proven_result_dir_t missing = proven_fs_dir_open(heap, PROVEN_LIT("test_fs_dir_nope"));
+        PROVEN_TEST_ASSERT(!proven_is_ok(missing.err),
+            "opening a directory that does not exist must fail",
+            "Silently iterating zero entries would look exactly like an empty directory.");
+
+        for (int i = 0; i < 3; ++i) (void)proven_fs_remove(heap, files[i]);
+        (void)proven_fs_rmdir(heap, dir);
+    }
+
     (void)proven_fs_remove(heap, path);
     PROVEN_TEST_PASS("position, positional I/O, and durability behave.");
     return 0;

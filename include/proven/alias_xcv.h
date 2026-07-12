@@ -151,6 +151,8 @@
 #define xcv_arena_realloc_trait proven_arena_realloc_trait
 #define xcv_arena_reset proven_arena_reset
 #define xcv_arena_t proven_arena_t
+#define xcv_arg_bool proven_arg_bool
+#define xcv_arg_char proven_arg_char
 #define xcv_arg_cstr proven_arg_cstr
 #define xcv_arg_cstr_n proven_arg_cstr_n
 #define xcv_arg_datetime proven_arg_datetime
@@ -204,6 +206,9 @@
 #define xcv_fs_chmod proven_fs_chmod
 #define xcv_fs_close proven_fs_close
 #define xcv_fs_copy proven_fs_copy
+#define xcv_fs_dir_close proven_fs_dir_close
+#define xcv_fs_dir_next proven_fs_dir_next
+#define xcv_fs_dir_open proven_fs_dir_open
 #define xcv_fs_entry_t proven_fs_entry_t
 #define xcv_fs_handle_t proven_fs_handle_t
 #define xcv_fs_is_absolute proven_fs_is_absolute
@@ -448,6 +453,7 @@
 #define xcv_writer_from_u8str proven_writer_from_u8str
 #define xcv_writer_is_valid proven_writer_is_valid
 #define xcv_writer_write proven_writer_write
+#define xcv_writer_write_partial proven_writer_write_partial
 #define xcv_writer_write_str proven_writer_write_str
 
 #endif // PROVEN_ALIAS_XCV_H

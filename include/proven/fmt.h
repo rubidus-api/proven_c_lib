@@ -30,6 +30,8 @@ typedef enum {
     PROVEN_ARG_DATETIME,
     PROVEN_ARG_PTR,
     PROVEN_ARG_FN,
+    PROVEN_ARG_CHAR,
+    PROVEN_ARG_BOOL,
 } proven_arg_type_t;
 
 /**
@@ -48,6 +50,8 @@ typedef struct {
         proven_datetime_t   datetime;
         const void         *ptr;
         void (*fn)(void);
+        char c;
+        bool b;
     } value;
 } proven_arg_t;
 
@@ -59,6 +63,22 @@ static inline proven_arg_t proven_arg_none(void) {
     arg.type = PROVEN_ARG_NONE;
     return arg;
 }
+/**
+ * @brief A single character.
+ *
+ * `PROVEN_ARG('Z')` used to print `90`. `char` was mapped to the integer argument, so
+ * there was no way to emit a character at all - the ASCII column of a hex dump had to
+ * be built by hand into a separate buffer and passed as a string.
+ */
+static inline proven_arg_t proven_arg_char(char v) {
+    return (proven_arg_t){ .type = PROVEN_ARG_CHAR, .value = { .c = v } };
+}
+
+/** @brief A boolean. Renders as `true` or `false`, not as 1 or 0. */
+static inline proven_arg_t proven_arg_bool(bool v) {
+    return (proven_arg_t){ .type = PROVEN_ARG_BOOL, .value = { .b = v } };
+}
+
 static inline proven_arg_t proven_arg_i32(int v) {
     proven_arg_t arg = {0};
     arg.type = PROVEN_ARG_I32;
@@ -97,13 +117,12 @@ static inline proven_arg_t proven_arg_u64(unsigned long long v) {
  *       notation: `1e20` renders as `1.000000e+20`, and `5e-7` as `5.000000e-07`
  *       rather than `printf`'s `0.000000`. That is more informative, and it is a
  *       difference worth knowing about before you diff two logs.
- * @note **`{}` is the only float form the spec grammar can ask for.** There is no
- *       `{:.3}`, no `{:e}`, no shortest-round-trip. The engine behind
- *       proven_float_format_f64_policy does all of those; the `{}` syntax cannot
- *       reach it. This is the largest gap in the formatter and it is tracked as
- *       B-009 in docs/BACKLOG.md - see docs/RFC-0001-streams-and-io.md.
- *       In particular, a float column cannot be aligned today: 12.5 renders nine
- *       characters wide and 100.0 renders ten.
+ * @note The spec grammar can ask for more than the default: `{:.3}` gives three
+ *       decimals, `{:.0}` gives none, `{:f}` forces the fixed form, and `{:g}` gives
+ *       the shortest representation that round-trips. Until v26.07.12i none of these
+ *       existed - every float came out with exactly six decimals, forever, which is
+ *       why a float column could not be aligned: 12.5 took nine characters and 100.0
+ *       took ten, and the column broke.
  * @note The float path stays in double precision, so output is target-deterministic.
  */
 static inline proven_arg_t proven_arg_f64(double v) {
@@ -212,8 +231,8 @@ static inline proven_arg_t proven_arg_identity(proven_arg_t v) { return v; }
  */
 #ifndef PROVEN_FMT_NO_FLOAT
 #define PROVEN_ARG(x) _Generic((x), \
-    _Bool: proven_arg_i32, \
-    char: proven_arg_i32, \
+    _Bool: proven_arg_bool, \
+    char: proven_arg_char, \
     signed char: proven_arg_i32, \
     unsigned char: proven_arg_u32, \
     short: proven_arg_i32, \
@@ -238,8 +257,8 @@ static inline proven_arg_t proven_arg_identity(proven_arg_t v) { return v; }
 )(x)
 #else
 #define PROVEN_ARG(x) _Generic((x), \
-    _Bool: proven_arg_i32, \
-    char: proven_arg_i32, \
+    _Bool: proven_arg_bool, \
+    char: proven_arg_char, \
     signed char: proven_arg_i32, \
     unsigned char: proven_arg_u32, \
     short: proven_arg_i32, \

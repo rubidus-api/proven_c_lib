@@ -70,6 +70,20 @@ proven_sys_dir_handle_t proven_sys_fs_dir_open(const char *path);
 
 void proven_sys_fs_dir_close(proven_sys_dir_handle_t handle);
 
+/**
+ * @brief One step of a directory walk, with end-of-directory told apart from failure.
+ *
+ * @return 1 an entry was produced, 0 the directory ended, -1 the OS failed.
+ *
+ * readdir() returns NULL for both "no more entries" and "the read failed", and the
+ * only thing that tells them apart is errno. Collapsing the two makes a truncated
+ * listing - a directory on a failing disk, an NFS mount that went away - look exactly
+ * like a complete one, which is the failure mode a filesystem library exists to prevent.
+ */
+[[nodiscard]]
+int proven_sys_fs_dir_step(proven_sys_dir_handle_t handle, proven_sys_dir_entry_t *out_entry);
+
+/** @brief Convenience wrapper: an entry was produced. Cannot report failure; prefer proven_sys_fs_dir_step. */
 [[nodiscard]]
 bool proven_sys_fs_dir_next(proven_sys_dir_handle_t handle, proven_sys_dir_entry_t *out_entry);
 

@@ -5,11 +5,30 @@
 // Writer
 // -------------------------------------------------------------
 
-proven_err_t proven_writer_write(proven_writer_t w, proven_mem_view_t chunk) {
-    if (!proven_writer_is_valid(w)) return PROVEN_ERR_INVALID_ARG;
-    if (chunk.size == 0) return PROVEN_OK;
-    if (!chunk.ptr) return PROVEN_ERR_INVALID_ARG;
+proven_result_size_t proven_writer_write_partial(proven_writer_t w, proven_mem_view_t chunk) {
+    proven_result_size_t res = {0};
+    if (!proven_writer_is_valid(w)) {
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
+    if (chunk.size == 0) return res;   /* OK, zero bytes */
+    if (!chunk.ptr) {
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
     return w.write_fn(w.ctx, chunk);
+}
+
+proven_err_t proven_writer_write(proven_writer_t w, proven_mem_view_t chunk) {
+    proven_size_t done = 0;
+    while (done < chunk.size) {
+        proven_mem_view_t rest = { .ptr = chunk.ptr + done, .size = chunk.size - done };
+        proven_result_size_t r = proven_writer_write_partial(w, rest);
+        if (!proven_is_ok(r.err)) return r.err;
+        if (r.value == 0) return PROVEN_ERR_IO;   /* no progress: a sink that will never take it */
+        done += r.value;
+    }
+    return PROVEN_OK;
 }
 
 proven_err_t proven_writer_write_str(proven_writer_t w, proven_u8str_view_t view) {
@@ -24,10 +43,18 @@ proven_err_t proven_writer_flush(proven_writer_t w) {
 
 /* --- a file ----------------------------------------------------------- */
 
-static proven_err_t writer_file_write(void *ctx, proven_mem_view_t chunk) {
+static proven_result_size_t writer_file_write(void *ctx, proven_mem_view_t chunk) {
+    proven_result_size_t res = {0};
     proven_file_t *file = (proven_file_t *)ctx;
-    if (!file) return PROVEN_ERR_INVALID_ARG;
-    return proven_fs_write_all(*file, chunk);
+    if (!file) {
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
+    /* proven_fs_write is a single write: it reports exactly how many bytes the OS
+     * took. That count is the whole point - proven_fs_write_all would swallow it and
+     * report only the error, which is how the buffered writer used to duplicate the
+     * prefix that had already gone out. */
+    return proven_fs_write(*file, chunk);
 }
 
 proven_writer_t proven_writer_from_file(proven_file_t *file) {
@@ -37,11 +64,18 @@ proven_writer_t proven_writer_from_file(proven_file_t *file) {
 
 /* --- an owned string --------------------------------------------------- */
 
-static proven_err_t writer_u8str_write(void *ctx, proven_mem_view_t chunk) {
+static proven_result_size_t writer_u8str_write(void *ctx, proven_mem_view_t chunk) {
+    proven_result_size_t res = {0};
     proven_writer_u8str_t *s = (proven_writer_u8str_t *)ctx;
-    if (!s || !s->str) return PROVEN_ERR_INVALID_ARG;
+    if (!s || !s->str) {
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
     proven_u8str_view_t view = { .ptr = chunk.ptr, .size = chunk.size };
-    return proven_u8str_append_grow(s->alloc, s->str, view);
+    /* append_grow is failure-atomic: it takes all of it or none of it. */
+    res.err = proven_u8str_append_grow(s->alloc, s->str, view);
+    res.value = proven_is_ok(res.err) ? chunk.size : 0;
+    return res;
 }
 
 proven_writer_t proven_writer_from_u8str(proven_writer_u8str_t *state, proven_u8str_t *str, proven_allocator_t alloc) {
@@ -53,19 +87,27 @@ proven_writer_t proven_writer_from_u8str(proven_writer_u8str_t *state, proven_u8
 
 /* --- a fixed buffer ---------------------------------------------------- */
 
-static proven_err_t writer_buf_write(void *ctx, proven_mem_view_t chunk) {
+static proven_result_size_t writer_buf_write(void *ctx, proven_mem_view_t chunk) {
+    proven_result_size_t res = {0};
     proven_writer_buf_t *s = (proven_writer_buf_t *)ctx;
-    if (!s || !s->buf.ptr) return PROVEN_ERR_INVALID_ARG;
+    if (!s || !s->buf.ptr) {
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
 
     if (chunk.size > s->buf.size - s->len) {
         /* Refuse rather than truncate. A sink that silently drops the end of your
-         * data is worse than one that says it cannot take it. */
+         * data is worse than one that says it cannot take it. Nothing is written, so
+         * nothing is reported written. */
         s->overflowed = true;
-        return PROVEN_ERR_OUT_OF_BOUNDS;
+        res.err = PROVEN_ERR_OUT_OF_BOUNDS;
+        return res;
     }
     proven_sys_mem_copy(s->buf.ptr + s->len, chunk.ptr, chunk.size);
     s->len += chunk.size;
-    return PROVEN_OK;
+    res.err = PROVEN_OK;
+    res.value = chunk.size;
+    return res;
 }
 
 proven_writer_t proven_writer_from_buffer(proven_writer_buf_t *state) {
@@ -80,36 +122,61 @@ static proven_err_t writer_buffered_flush(void *ctx) {
     if (!s) return PROVEN_ERR_INVALID_ARG;
     if (s->len == 0) return PROVEN_OK;
 
-    proven_mem_view_t held = { .ptr = s->buf.ptr, .size = s->len };
-    proven_err_t err = proven_writer_write(s->inner, held);
-    if (!proven_is_ok(err)) return err;
+    /*
+     * Drop exactly what went out, and keep exactly what did not.
+     *
+     * This used to hand the whole buffer to a writer that promised all-or-nothing and,
+     * on failure, keep all of it - reasoning that a failed flush must not discard
+     * bytes. But a write to a pipe or a full disk really does put some bytes out and
+     * THEN fail, so the next flush re-sent the whole buffer: a 6000-byte payload
+     * arrived as 10,096 bytes with the first 4096 duplicated. The receiver cannot
+     * detect that. Losing data is bad; silently doubling it is worse.
+     */
+    proven_size_t sent = 0;
+    while (sent < s->len) {
+        proven_mem_view_t rest = { .ptr = s->buf.ptr + sent, .size = s->len - sent };
+        proven_result_size_t r = proven_writer_write_partial(s->inner, rest);
+        sent += r.value;
 
-    /* Only drop what actually went out. A flush that fails must not silently
-     * discard the bytes it failed to write. */
+        if (!proven_is_ok(r.err) || (r.value == 0 && rest.size > 0)) {
+            /* Keep the unsent tail, and only that. */
+            proven_size_t keep = s->len - sent;
+            if (keep > 0 && sent > 0) proven_sys_mem_move(s->buf.ptr, s->buf.ptr + sent, keep);
+            s->len = keep;
+            return proven_is_ok(r.err) ? PROVEN_ERR_IO : r.err;
+        }
+    }
+
     s->len = 0;
     return proven_writer_flush(s->inner);
 }
 
-static proven_err_t writer_buffered_write(void *ctx, proven_mem_view_t chunk) {
+static proven_result_size_t writer_buffered_write(void *ctx, proven_mem_view_t chunk) {
+    proven_result_size_t res = {0};
     proven_writer_buffered_t *s = (proven_writer_buffered_t *)ctx;
-    if (!s || !s->buf.ptr) return PROVEN_ERR_INVALID_ARG;
+    if (!s || !s->buf.ptr) {
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
 
     /* A chunk bigger than the whole buffer is passed straight through: buffering it
      * would mean either failing or splitting it, and neither helps anyone. */
     if (chunk.size >= s->buf.size) {
-        proven_err_t err = writer_buffered_flush(s);
-        if (!proven_is_ok(err)) return err;
-        return proven_writer_write(s->inner, chunk);
+        res.err = writer_buffered_flush(s);
+        if (!proven_is_ok(res.err)) return res;
+        return proven_writer_write_partial(s->inner, chunk);
     }
 
     if (chunk.size > s->buf.size - s->len) {
-        proven_err_t err = writer_buffered_flush(s);
-        if (!proven_is_ok(err)) return err;
+        res.err = writer_buffered_flush(s);
+        if (!proven_is_ok(res.err)) return res;
     }
 
     proven_sys_mem_copy(s->buf.ptr + s->len, chunk.ptr, chunk.size);
     s->len += chunk.size;
-    return PROVEN_OK;
+    res.err = PROVEN_OK;
+    res.value = chunk.size;
+    return res;
 }
 
 proven_writer_t proven_writer_buffered(proven_writer_buffered_t *state, proven_writer_t inner, proven_mem_mut_t buf) {
@@ -194,7 +261,7 @@ proven_reader_t proven_reader_from_view(proven_reader_view_t *state, proven_u8st
 /* Pull more bytes in, compacting whatever has not been handed out yet to the front.
  * Returns false when the source is exhausted and nothing new arrived. */
 static bool reader_buffered_fill(proven_reader_buffered_t *s) {
-    if (s->eof) return false;
+    if (s->eof || !proven_is_ok(s->err)) return false;
 
     if (s->cursor > 0) {
         proven_size_t keep = s->len - s->cursor;
@@ -211,7 +278,14 @@ static bool reader_buffered_fill(proven_reader_buffered_t *s) {
         return false;
     }
     if (!proven_is_ok(r.err)) {
-        s->eof = true;   /* a broken source is not going to get better */
+        /*
+         * An I/O failure is NOT end of input, and reporting it as one is how a disk
+         * error that truncated a file becomes indistinguishable from a complete file:
+         * the caller reads two lines, gets EOF, and believes it has the whole thing.
+         *
+         * Remember the failure so every subsequent call reports it instead.
+         */
+        s->err = r.err;
         return false;
     }
     s->len += r.value;
@@ -227,7 +301,7 @@ static proven_result_size_t reader_buffered_read(void *ctx, proven_mem_mut_t des
     }
 
     if (s->cursor == s->len && !reader_buffered_fill(s)) {
-        res.err = PROVEN_ERR_EOF;
+        res.err = proven_is_ok(s->err) ? PROVEN_ERR_EOF : s->err;
         return res;
     }
 
@@ -249,6 +323,7 @@ proven_reader_t proven_reader_buffered(proven_reader_buffered_t *state, proven_r
     state->len = 0;
     state->cursor = 0;
     state->eof = false;
+    state->err = PROVEN_OK;
     return (proven_reader_t){ .ctx = state, .read_fn = reader_buffered_read };
 }
 
@@ -292,6 +367,12 @@ proven_result_u8str_view_t proven_reader_read_line(proven_reader_buffered_t *s) 
             /* The source really is exhausted. A final line with no trailing newline
              * is still a line - dropping it is how the last record of a file goes
              * missing. */
+            /* If the source BROKE rather than ended, say so - what we hold is a
+             * fragment of a line, not a line. */
+            if (!proven_is_ok(s->err)) {
+                res.err = s->err;
+                return res;
+            }
             if (s->cursor < s->len) {
                 res.err = PROVEN_OK;
                 res.val = (proven_u8str_view_t){ .ptr = s->buf.ptr + s->cursor, .size = s->len - s->cursor };
