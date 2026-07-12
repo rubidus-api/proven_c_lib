@@ -371,6 +371,24 @@ Return negative if `a < b`, zero if equal, positive if `a > b`.
 | `proven_array_binary_search(arr, key, cmp)` | Search sorted array. | pointer to element or null. |
 | `proven_array_linear_search(arr, key, cmp)` | Search any array by scanning. | pointer to element or null. |
 
+`proven_array_sort` is an introsort: a Bentley-McIlroy three-way partition, an
+insertion-sort cutoff for small ranges, and a heapsort fallback once the
+recursion exceeds `2*log2(n)` levels.
+
+Two properties are worth stating, because they are the ones that bite:
+
+- **O(n log n) is a guarantee, not a typical case.** The heapsort fallback is
+  what makes it one. A sort whose worst case can be reached by an adversarial
+  ordering is a denial of service in any program that sorts data it did not
+  author.
+- **Duplicate keys are the fast case, not the slow one.** Elements equal to the
+  pivot are collected into a run that is final and never recursed into, so
+  all-equal input costs a single pass. This matters because low-cardinality keys
+  - a status column, an enum, a bucket id - are what callers actually sort by,
+  and they are exactly what a naive two-way partition degrades on.
+
+The sort is not stable: equal elements may be reordered.
+
 Example:
 
 ```c
