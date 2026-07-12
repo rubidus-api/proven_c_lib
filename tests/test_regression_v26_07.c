@@ -69,6 +69,30 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("append_grow of an EMPTY view seals the terminator",
+        "The same disease, one function along: proven_u8str_append copies nothing and returns OK before it can seal, so the grow that just allocated the block left it unterminated.",
+        "Inspect proven_u8str_append_grow (and proven_u16str_append_grow): the seal must happen where the block is allocated, not in the append that may return early. reserve() has always done it there.");
+    // ---------------------------------------------------------------
+    {
+        proven_arena_t a;
+        proven_allocator_t A = poisoned_arena(&a);
+
+        proven_u8str_t s = {0};
+        proven_err_t e = proven_u8str_append_grow(A, &s, (proven_u8str_view_t){ .ptr = NULL, .size = 0 });
+        PROVEN_TEST_ASSERT(proven_is_ok(e), "appending nothing must succeed", "");
+        PROVEN_TEST_ASSERT(proven_u8str_is_valid(&s),
+            "appending an empty view left the string without its NUL seal",
+            "as_cstr is documented as always terminated - 'guaranteed by internal structure'. It was reading past the end of a fresh heap block.");
+        PROVEN_TEST_ASSERT(proven_u8str_as_cstr(&s)[0] == '\0',
+            "as_cstr after an empty append read uninitialized memory", "");
+
+        /* And the string must still work afterwards. */
+        e = proven_u8str_append_grow(A, &s, PROVEN_LIT("ok"));
+        PROVEN_TEST_ASSERT(proven_is_ok(e) && proven_u8str_view_eq(proven_u8str_as_view(&s), PROVEN_LIT("ok")),
+            "and a real append after the empty one must still work", "");
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a negative datetime year formats as a negative number",
         "dt.year is signed. Casting it to unsigned long long turned -1 into twenty digits, which overran the twenty-byte conversion scratch.",
         "Inspect the PROVEN_ARG_DATETIME case in render_arg: the year must be rendered with its sign, and itoa_raw needs room for 20 digits plus a NUL.");

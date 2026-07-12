@@ -109,21 +109,45 @@ static proven_err_t scanner_fill(proven_sysio_scanner_t *scanner, proven_size_t 
 
     proven_size_t request_size = scanner->capacity - scanner->length;
     proven_sys_result_size_t read_res = proven_sys_io_read_once(handle, (char*)(scanner->buffer + scanner->length), request_size);
+
     if (!proven_is_ok(read_res.err)) {
-        if (read_res.err == PROVEN_ERR_EOF || read_res.value == 0) {
+        /*
+         * A read that FAILED is not an end of input.
+         *
+         * This used to say `if (err == EOF || value == 0)`, and proven_sys_io_read_once
+         * reports a failed read() as {PROVEN_ERR_IO, 0} - so every EBADF, EIO and
+         * ECONNRESET took the second disjunct, latched eof, and was handed to the caller
+         * as a clean, complete end of input. A stream that broke halfway through was
+         * indistinguishable from one that finished.
+         */
+        if (read_res.err == PROVEN_ERR_EOF) {
+            scanner->length += read_res.value;   /* an EOF may still carry bytes */
+            if (read_bytes_out) *read_bytes_out = read_res.value;
             scanner->eof = true;
-            return PROVEN_ERR_EOF;
+            return (read_res.value > 0) ? PROVEN_OK : PROVEN_ERR_EOF;
         }
         return read_res.err;
     }
 
     scanner->length += read_res.value;
     if (read_bytes_out) *read_bytes_out = read_res.value;
-    if (read_res.value < request_size) {
+
+    /*
+     * A SHORT read is not an end of input either.
+     *
+     * read() on a pipe, a socket or a terminal returns whatever has arrived so far -
+     * that is its contract, not an error and not an EOF. This used to treat any read
+     * shorter than the request as end-of-input and LATCH it, which did two things, both
+     * silent: a token straddling the read boundary was committed truncated (a writer
+     * that sent "123", paused, then "456 789\n" produced the integer 123, not 123456),
+     * and every subsequent scan returned PROVEN_ERR_EOF while the rest of the stream sat
+     * unread in the pipe. Only a zero-byte read means the input has ended - which is
+     * what read() itself has always meant by it. Regular files hid the bug completely:
+     * a file read is short only at real EOF.
+     */
+    if (read_res.value == 0) {
         scanner->eof = true;
-        if (read_res.value == 0) {
-            return PROVEN_ERR_EOF;
-        }
+        return PROVEN_ERR_EOF;
     }
     return PROVEN_OK;
 }
@@ -347,6 +371,40 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
         if (scanner->length == 0 && scanner->eof) {
             err = PROVEN_ERR_EOF;
             break;
+        }
+
+        /*
+         * Nothing but whitespace left, and the stream has not ended: the token is still
+         * on its way. Ask for it.
+         *
+         * The scan engine works on a complete view and has no way to say "I ran out of
+         * input" - for a fixed view, running out IS the answer, and it reports
+         * PROVEN_ERR_INVALID_ARG. Over a stream that answer is a lie, and it used to be
+         * hidden by a worse bug: eof was latched by the first short read, so this case
+         * came out as a (wrong, but plausible) end of input instead. With the latch gone,
+         * a buffer holding only the "\n" that trailed the last token would report the
+         * next scan as malformed input rather than waiting for the next line.
+         */
+        if (!scanner->eof) {
+            proven_size_t ws = scanner->cursor;
+            while (ws < scanner->length) {
+                proven_u8 c = scanner->buffer[ws];
+                if (c != ' ' && c != '\t' && c != '\r' && c != '\n' && c != '\f' && c != '\v') break;
+                ws++;
+            }
+            if (ws == scanner->length) {
+                scanner->cursor = ws;   /* the whitespace is consumed either way */
+                proven_size_t read_bytes = 0;
+                proven_size_t shifted = 0;
+                proven_err_t fill_err = scanner_fill(scanner, &read_bytes, &shifted);
+                total_shift += shifted;
+                if (!proven_is_ok(fill_err)) {
+                    err = fill_err;
+                    break;
+                }
+                bytes_read_total += read_bytes;
+                continue;
+            }
         }
 
         proven_u8str_view_t view = { .ptr = (const proven_byte_t*)scanner->buffer + scanner->cursor, .size = scanner->length - scanner->cursor };

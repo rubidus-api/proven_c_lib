@@ -917,6 +917,60 @@ proven_fmt_result_t proven_u8str_fmt_internal(proven_allocator_t alloc, proven_u
         return res;
     }
 
+    /*
+     * Fixed capacity and atomic: one pass, not two.
+     *
+     * This is the allocation-free path - PROVEN_FMT into a borrowed stack buffer, the
+     * one a logger uses - and it was formatting every value TWICE: once to measure, and
+     * then again to write. For a double that means running the correctly-rounded decimal
+     * engine twice and throwing the first answer away, which is why formatting a float
+     * cost four times what printf's does.
+     *
+     * It does not need two passes. fmt_append_view already counts every byte the format
+     * WANTS (`required`) while copying only the bytes that fit, so one write pass yields
+     * both numbers. If the output did not fit, or the format was bad, or the argument
+     * count was wrong, we put the length back where it was: the caller's string is
+     * unchanged, which is exactly what atomic promised. (Bytes past `len` are scratch;
+     * nothing may read them.)
+     *
+     * The alias-patch machinery below is skipped because it cannot apply: it exists to
+     * rebase argument views that pointed into a buffer the allocator moved, and here
+     * there is no allocator and nothing moves.
+     */
+    if (!trunc && !proven_alloc_is_valid(alloc)) {
+        proven_fmt_ctx_t one = {
+            .str = str, .err = PROVEN_OK, .written = 0, .required = 0, .measure_only = false
+        };
+        proven_size_t one_max_idx = 0;
+        fmt_run(&one, fmt, args, args_count, &one_max_idx);
+
+        res.err = one.err;
+        if (proven_is_ok(res.err)) {
+            proven_size_t expected;
+            if (PROVEN_CKD_ADD(&expected, one_max_idx, 1)) {
+                res.err = PROVEN_ERR_OVERFLOW;
+            } else if (expected != args_count) {
+                res.err = PROVEN_ERR_INVALID_ARG;
+            } else if (one.written < one.required) {
+                res.err = PROVEN_ERR_OUT_OF_BOUNDS;
+            }
+        }
+
+        if (!proven_is_ok(res.err)) {
+            str->internal.len = old_len;
+            if (str->internal.ptr && old_len < str->internal.cap) {
+                str->internal.ptr[old_len] = 0;
+            }
+            res.required = one.required;   /* so a caller can size a buffer and retry */
+            res.written = 0;
+            return res;
+        }
+
+        res.required = one.required;
+        res.written = one.written;
+        return res;
+    }
+
     // Pass 1: Measure required length
     proven_fmt_ctx_t measure_ctx = {
         .str = str,

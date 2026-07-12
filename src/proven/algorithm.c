@@ -48,13 +48,24 @@ static proven_byte_t *elem_at(proven_byte_t *base, proven_size_t i, proven_size_
     return base + (i * size);
 }
 
+/* The scratch below is handed to the CALLER'S comparator, which will read it as the
+ * element type. A plain `proven_byte_t[128]` has alignment 1, so for any element more
+ * strictly aligned than the compiler happened to place that array, the comparator makes
+ * a misaligned typed access: undefined behaviour, and a fault on a strict-alignment
+ * target. UBSan flags it at every optimisation level for an over-aligned struct. Over-
+ * aligning the scratch fixes it up to this bound; beyond it, insertion_sort takes the
+ * swap path, which only ever shows the comparator real array elements. (swap_elements'
+ * own scratch never reaches the comparator - memcpy only - so it needs nothing.) */
+#define PROVEN_SORT_SCRATCH_ALIGN ((proven_size_t)64)
+
 // Shift, do not swap: a swap-per-step insertion sort writes each displaced
 // element once per position it moves past.
-static void insertion_sort(proven_byte_t *base, proven_size_t n, proven_size_t size, proven_compare_fn_t cmp) {
+static void insertion_sort(proven_byte_t *base, proven_size_t n, proven_size_t size,
+                           proven_size_t align, proven_compare_fn_t cmp) {
     if (n < 2) return;
 
-    if (size <= PROVEN_SORT_SCRATCH) {
-        proven_byte_t tmp[PROVEN_SORT_SCRATCH];
+    if (size <= PROVEN_SORT_SCRATCH && align <= PROVEN_SORT_SCRATCH_ALIGN) {
+        alignas(PROVEN_SORT_SCRATCH_ALIGN) proven_byte_t tmp[PROVEN_SORT_SCRATCH];
         for (proven_size_t i = 1; i < n; ++i) {
             proven_byte_t *cur = elem_at(base, i, size);
             if (cmp(cur, elem_at(base, i - 1, size)) >= 0) continue;
@@ -128,7 +139,7 @@ static void vec_swap(proven_byte_t *a, proven_byte_t *b, proven_size_t count, pr
 }
 
 static void introsort(proven_byte_t *base, proven_size_t n, proven_size_t size,
-                      proven_compare_fn_t cmp, proven_size_t depth_budget) {
+                      proven_size_t align, proven_compare_fn_t cmp, proven_size_t depth_budget) {
     while (n > PROVEN_SORT_INSERTION_CUTOFF) {
         if (depth_budget == 0) {
             heapsort_range(base, n, size, cmp);
@@ -196,15 +207,15 @@ static void introsort(proven_byte_t *base, proven_size_t n, proven_size_t size,
         // Elements equal to the pivot are now in the middle and final; never
         // recurse into them. All-equal input therefore costs one pass, not n.
         if (left_n < right_n) {
-            introsort(base, left_n, size, cmp, depth_budget);
+            introsort(base, left_n, size, align, cmp, depth_budget);
             base = elem_at(base, n - right_n, size);
             n = right_n;
         } else {
-            introsort(elem_at(base, n - right_n, size), right_n, size, cmp, depth_budget);
+            introsort(elem_at(base, n - right_n, size), right_n, size, align, cmp, depth_budget);
             n = left_n;
         }
     }
-    insertion_sort(base, n, size, cmp);
+    insertion_sort(base, n, size, align, cmp);
 }
 
 static proven_size_t depth_limit(proven_size_t n) {
@@ -222,7 +233,8 @@ static proven_size_t depth_limit(proven_size_t n) {
 
 void proven_array_sort(proven_array_t *arr, proven_compare_fn_t cmp) {
     if (!arr || arr->len < 2 || !cmp || arr->elem_size == 0) return;
-    introsort((proven_byte_t*)arr->data, arr->len, arr->elem_size, cmp, depth_limit(arr->len));
+    introsort((proven_byte_t*)arr->data, arr->len, arr->elem_size,
+              arr->align ? arr->align : (proven_size_t)1, cmp, depth_limit(arr->len));
 }
 
 void* proven_array_binary_search(const proven_array_t *arr, const void *key, proven_compare_fn_t cmp) {

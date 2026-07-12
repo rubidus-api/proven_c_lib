@@ -87,6 +87,14 @@ typedef struct {
  */
 [[nodiscard]] proven_err_t proven_map_set_u8_owned(proven_map_t *map, proven_u8str_view_t key, const void *element);
 
+/**
+ * @brief A pointer into the container's storage. It dies the next time the container grows.
+ *
+ * @warning The returned pointer is INVALIDATED by any operation that may reallocate -
+ *          push, reserve, set, append, an insert that triggers a rehash. Using it
+ *          afterwards is a use-after-free, and the sanitizers will say so. Hold the index
+ *          or the key, not the pointer, across a mutation.
+ */
 [[nodiscard]] void* proven_map_get_mut(proven_map_t *map, proven_map_key_t key);
 [[nodiscard]] const void* proven_map_get(const proven_map_t *map, proven_map_key_t key);
 
