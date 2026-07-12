@@ -103,7 +103,7 @@ typedef enum {
 typedef struct {
     proven_size_t size;          /* size in bytes (0 for directories on some hosts) */
     proven_fs_type_t type;       /* regular / directory / symlink / other */
-    proven_fs_perms_t perms;     /* POSIX-style permission bits (see proven_fs_perms_t) */
+    proven_fs_perms_t perms;     /* the nine permission bits only; the file type is in `type` */
     proven_i64 created_at;       /* creation time, seconds since the Unix epoch */
     proven_i64 modified_at;      /* last-modification time, seconds since the Unix epoch */
     unsigned long long dev;      /* device id (POSIX st_dev; 0 where unavailable) */
@@ -151,6 +151,9 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 | `proven_fs_chmod(scratch, path, perms)` | Set permissions. | `proven_err_t`. |
 | `proven_fs_lock(file, type, wait)` | Acquire/release file lock. | `proven_err_t`. |
 | `proven_fs_stat(scratch, path, out_stat)` | Fill metadata. | `proven_err_t`. |
+
+`proven_fs_stat()` reports only the nine permission bits in `perms`, so a stat's `perms` can be handed straight back to `proven_fs_chmod()`. It used to carry the raw POSIX `st_mode`, whose file-type bits `chmod` rejects - which made that round-trip, the obvious use of the field, fail with `PROVEN_ERR_INVALID_ARG` for every real file. Read the file type from `type`.
+
 | `proven_fs_symlink(scratch, target, linkpath)` | Create symbolic link. | `proven_err_t`. |
 | `proven_fs_link(scratch, oldpath, newpath)` | Create hard link. | `proven_err_t`. |
 | `proven_fs_is_absolute(path)` | Classify absolute path. | bool. |

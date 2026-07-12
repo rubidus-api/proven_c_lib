@@ -70,7 +70,7 @@ AGENTS §10.1 halt-and-report policy). The native Linux build is unaffected.
   / `proven_u8str_reset` (fixed-capacity string over caller memory; safe-by-
   default `borrowed` flag so growing ops refuse to reallocate caller memory and
   destroy is a no-op) and the bounded `proven_mem_copy`. See CHANGELOG and
-  `docs/internal/proposals/rfc-0002-borrowed-fixed-capacity-u8str.md`.
+  RFC-0002 (borrowed fixed-capacity u8str), which is maintainer-local `docs/internal/` (kept outside the published repository).
 - **Reported by:** prov_text_editor (RFC-0004 / Special Milestone S — adopting the
   proven string system across the editor).
 - **Category:** enhancement (not a defect; existing behavior is correct).

@@ -15,398 +15,425 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-| Header line | Alias macro | Expands to |
-|---:|---|---|
-| 12 | `XCV_ARG` | `PROVEN_ARG` |
-| 13 | `XCV_ARG_CSTR` | `proven_arg_cstr` |
-| 14 | `XCV_ARG_DATETIME` | `proven_arg_datetime` |
-| 15 | `XCV_ARG_F64` | `proven_arg_f64` |
-| 16 | `XCV_ARG_FN(f)` | `PROVEN_ARG_FN(f)` |
-| 17 | `XCV_ARG_I32` | `proven_arg_i32` |
-| 18 | `XCV_ARG_I64` | `proven_arg_i64` |
-| 19 | `XCV_ARG_NONE` | `proven_arg_none` |
-| 20 | `XCV_ARG_PTR` | `proven_arg_ptr` |
-| 21 | `XCV_ARG_STR_VIEW` | `proven_arg_str_view` |
-| 22 | `XCV_ARG_U32` | `proven_arg_u32` |
-| 23 | `XCV_ARG_U64` | `proven_arg_u64` |
-| 24 | `XCV_ARRAY_DESTROY` | `PROVEN_ARRAY_DESTROY` |
-| 25 | `XCV_ARRAY_GET` | `PROVEN_ARRAY_GET` |
-| 26 | `XCV_ARRAY_GET_MUT` | `PROVEN_ARRAY_GET_MUT` |
-| 27 | `XCV_ARRAY_INIT` | `PROVEN_ARRAY_INIT` |
-| 28 | `XCV_ARRAY_IS_VALID` | `proven_array_is_valid` |
-| 29 | `XCV_ARRAY_POP` | `PROVEN_ARRAY_POP` |
-| 30 | `XCV_ARRAY_PUSH` | `PROVEN_ARRAY_PUSH` |
-| 31 | `XCV_CKD_ADD` | `PROVEN_CKD_ADD` |
-| 32 | `XCV_CKD_MUL` | `PROVEN_CKD_MUL` |
-| 33 | `XCV_CKD_SUB` | `PROVEN_CKD_SUB` |
-| 34 | `XCV_CONTAINER_OF` | `PROVEN_CONTAINER_OF` |
-| 35 | `XCV_CORO_AWAIT` | `PROVEN_CORO_AWAIT` |
-| 36 | `XCV_CORO_BEGIN` | `PROVEN_CORO_BEGIN` |
-| 37 | `XCV_CORO_END` | `PROVEN_CORO_END` |
-| 38 | `XCV_CORO_INIT` | `PROVEN_CORO_INIT` |
-| 39 | `XCV_CORO_IS_DONE` | `PROVEN_CORO_IS_DONE` |
-| 40 | `XCV_CORO_YIELD` | `PROVEN_CORO_YIELD` |
-| 41 | `XCV_DEFAULT_ALIGNMENT` | `PROVEN_DEFAULT_ALIGNMENT` |
-| 42 | `XCV_ERR_AGAIN` | `PROVEN_ERR_AGAIN` |
-| 43 | `XCV_ERR_BUSY` | `PROVEN_ERR_BUSY` |
-| 44 | `XCV_ERR_EOF` | `PROVEN_ERR_EOF` |
-| 45 | `XCV_ERR_INVALID_ARG` | `PROVEN_ERR_INVALID_ARG` |
-| 46 | `XCV_ERR_INVALID_ENCODING` | `PROVEN_ERR_INVALID_ENCODING` |
-| 47 | `XCV_ERR_INVALID_STATE` | `PROVEN_ERR_INVALID_STATE` |
-| 48 | `XCV_ERR_IO` | `PROVEN_ERR_IO` |
-| 49 | `XCV_ERR_NOMEM` | `PROVEN_ERR_NOMEM` |
-| 50 | `XCV_ERR_NOT_FOUND` | `PROVEN_ERR_NOT_FOUND` |
-| 51 | `XCV_ERR_OUT_OF_BOUNDS` | `PROVEN_ERR_OUT_OF_BOUNDS` |
-| 52 | `XCV_ERR_OVERFLOW` | `PROVEN_ERR_OVERFLOW` |
-| 53 | `XCV_ERR_PERMISSION` | `PROVEN_ERR_PERMISSION` |
-| 54 | `XCV_ERR_UNSUPPORTED` | `PROVEN_ERR_UNSUPPORTED` |
-| 55 | `XCV_FS_APPEND` | `PROVEN_FS_APPEND` |
-| 56 | `XCV_FS_CREATE` | `PROVEN_FS_CREATE` |
-| 57 | `XCV_FS_LOCK_EXCLUSIVE` | `PROVEN_FS_LOCK_EXCLUSIVE` |
-| 58 | `XCV_FS_LOCK_SHARED` | `PROVEN_FS_LOCK_SHARED` |
-| 59 | `XCV_FS_LOCK_UNLOCK` | `PROVEN_FS_LOCK_UNLOCK` |
-| 60 | `XCV_FS_PATH_SEP` | `PROVEN_FS_PATH_SEP` |
-| 61 | `XCV_FS_PERM_DEFAULT` | `PROVEN_FS_PERM_DEFAULT` |
-| 62 | `XCV_FS_PERM_GROUP_R` | `PROVEN_FS_PERM_GROUP_R` |
-| 63 | `XCV_FS_PERM_GROUP_W` | `PROVEN_FS_PERM_GROUP_W` |
-| 64 | `XCV_FS_PERM_GROUP_X` | `PROVEN_FS_PERM_GROUP_X` |
-| 65 | `XCV_FS_PERM_OTHER_R` | `PROVEN_FS_PERM_OTHER_R` |
-| 66 | `XCV_FS_PERM_OTHER_W` | `PROVEN_FS_PERM_OTHER_W` |
-| 67 | `XCV_FS_PERM_OTHER_X` | `PROVEN_FS_PERM_OTHER_X` |
-| 68 | `XCV_FS_PERM_OWNER_R` | `PROVEN_FS_PERM_OWNER_R` |
-| 69 | `XCV_FS_PERM_OWNER_W` | `PROVEN_FS_PERM_OWNER_W` |
-| 70 | `XCV_FS_PERM_OWNER_X` | `PROVEN_FS_PERM_OWNER_X` |
-| 71 | `XCV_FS_READ` | `PROVEN_FS_READ` |
-| 72 | `XCV_FS_TRUNC` | `PROVEN_FS_TRUNC` |
-| 73 | `XCV_FS_TYPE_DIR` | `PROVEN_FS_TYPE_DIR` |
-| 74 | `XCV_FS_TYPE_FILE` | `PROVEN_FS_TYPE_FILE` |
-| 75 | `XCV_FS_TYPE_OTHER` | `PROVEN_FS_TYPE_OTHER` |
-| 76 | `XCV_FS_WRITE` | `PROVEN_FS_WRITE` |
-| 77 | `XCV_INDEX_NOT_FOUND` | `PROVEN_INDEX_NOT_FOUND` |
-| 78 | `XCV_IS_OK` | `PROVEN_IS_OK` |
-| 79 | `XCV_KEY_TYPE_INT` | `PROVEN_KEY_TYPE_INT` |
-| 80 | `XCV_KEY_TYPE_U8_BORROWED` | `PROVEN_KEY_TYPE_U8_BORROWED` |
-| 81 | `XCV_LIST_ENTRY` | `PROVEN_LIST_ENTRY` |
-| 82 | `XCV_LIST_FOR_EACH` | `PROVEN_LIST_FOR_EACH` |
-| 83 | `XCV_LIST_FOR_EACH_SAFE` | `PROVEN_LIST_FOR_EACH_SAFE` |
-| 84 | `XCV_LIT` | `PROVEN_LIT` |
-| 85 | `XCV_MAP_DESTROY` | `PROVEN_MAP_DESTROY` |
-| 86 | `XCV_MAP_GET_INT` | `PROVEN_MAP_GET_INT` |
-| 87 | `XCV_MAP_GET_MUT_INT` | `PROVEN_MAP_GET_MUT_INT` |
-| 88 | `XCV_MAP_GET_MUT_U8_BORROWED` | `PROVEN_MAP_GET_MUT_U8_BORROWED` |
-| 89 | `XCV_MAP_GET_U8_BORROWED` | `PROVEN_MAP_GET_U8_BORROWED` |
-| 90 | `XCV_MAP_INIT_INT` | `PROVEN_MAP_INIT_INT` |
-| 91 | `XCV_MAP_INIT_U8_BORROWED` | `PROVEN_MAP_INIT_U8_BORROWED` |
-| 92 | `XCV_MAP_IS_VALID` | `proven_map_is_valid` |
-| 93 | `XCV_MAP_REMOVE_INT` | `PROVEN_MAP_REMOVE_INT` |
-| 94 | `XCV_MAP_REMOVE_U8_BORROWED` | `PROVEN_MAP_REMOVE_U8_BORROWED` |
-| 95 | `XCV_MAP_SET_INT` | `PROVEN_MAP_SET_INT` |
-| 96 | `XCV_MAP_SET_WITH_SCRATCH_INT` | `PROVEN_MAP_SET_WITH_SCRATCH_INT` |
-| 97 | `XCV_MAP_SET_U8_BORROWED` | `PROVEN_MAP_SET_U8_BORROWED` |
-| 98 | `XCV_MAP_SET_WITH_SCRATCH_U8_BORROWED` | `PROVEN_MAP_SET_WITH_SCRATCH_U8_BORROWED` |
-| 99 | `XCV_MAX_ALIGN` | `PROVEN_MAX_ALIGN` |
-| 100 | `XCV_MMAP_EXEC` | `PROVEN_MMAP_EXEC` |
-| 101 | `XCV_MMAP_PRIVATE` | `PROVEN_MMAP_PRIVATE` |
-| 102 | `XCV_MMAP_READ` | `PROVEN_MMAP_READ` |
-| 103 | `XCV_MMAP_SHARED` | `PROVEN_MMAP_SHARED` |
-| 104 | `XCV_MMAP_WRITE` | `PROVEN_MMAP_WRITE` |
-| 105 | `XCV_OK` | `PROVEN_OK` |
-| 106 | `XCV_RING_DESTROY` | `PROVEN_RING_DESTROY` |
-| 107 | `XCV_RING_INIT` | `PROVEN_RING_INIT` |
-| 108 | `XCV_RING_IS_VALID` | `proven_ring_is_valid` |
-| 109 | `XCV_RING_POP` | `PROVEN_RING_POP` |
-| 110 | `XCV_RING_PUSH` | `PROVEN_RING_PUSH` |
-| 111 | `XCV_SCAN_ARG(x)` | `PROVEN_SCAN_ARG(x)` |
-| 112 | `XCV_SCAN_ARG_LONG(ptr)` | `PROVEN_SCAN_ARG_LONG(ptr)` |
-| 113 | `XCV_SCAN_ARG_TYPE_F64` | `PROVEN_SCAN_ARG_TYPE_F64` |
-| 114 | `XCV_SCAN_ARG_TYPE_I32` | `PROVEN_SCAN_ARG_TYPE_I32` |
-| 115 | `XCV_SCAN_ARG_TYPE_I64` | `PROVEN_SCAN_ARG_TYPE_I64` |
-| 116 | `XCV_SCAN_ARG_TYPE_INT` | `PROVEN_SCAN_ARG_TYPE_INT` |
-| 117 | `XCV_SCAN_ARG_TYPE_LLONG` | `PROVEN_SCAN_ARG_TYPE_LLONG` |
-| 118 | `XCV_SCAN_ARG_TYPE_LONG` | `PROVEN_SCAN_ARG_TYPE_LONG` |
-| 119 | `XCV_SCAN_ARG_TYPE_NONE` | `PROVEN_SCAN_ARG_TYPE_NONE` |
-| 120 | `XCV_SCAN_ARG_TYPE_SHORT` | `PROVEN_SCAN_ARG_TYPE_SHORT` |
-| 121 | `XCV_SCAN_ARG_TYPE_STR_VIEW` | `PROVEN_SCAN_ARG_TYPE_STR_VIEW` |
-| 122 | `XCV_SCAN_ARG_TYPE_U32` | `PROVEN_SCAN_ARG_TYPE_U32` |
-| 123 | `XCV_SCAN_ARG_TYPE_U64` | `PROVEN_SCAN_ARG_TYPE_U64` |
-| 124 | `XCV_SCAN_ARG_TYPE_UINT` | `PROVEN_SCAN_ARG_TYPE_UINT` |
-| 125 | `XCV_SCAN_ARG_TYPE_ULLONG` | `PROVEN_SCAN_ARG_TYPE_ULLONG` |
-| 126 | `XCV_SCAN_ARG_TYPE_ULONG` | `PROVEN_SCAN_ARG_TYPE_ULONG` |
-| 127 | `XCV_SCAN_ARG_TYPE_USHORT` | `PROVEN_SCAN_ARG_TYPE_USHORT` |
-| 128 | `XCV_SCAN_ARG_ULONG(ptr)` | `PROVEN_SCAN_ARG_ULONG(ptr)` |
-| 129 | `XCV_U16_LIT` | `PROVEN_U16_LIT` |
-| 130 | `XCV_VERSION_NUM` | `PROVEN_VERSION_NUM` |
-| 131 | `XCV_VERSION_STRING` | `PROVEN_VERSION_STRING` |
-| 132 | `xcv_alloc_fn_t` | `proven_alloc_fn_t` |
-| 133 | `xcv_alloc_is_valid` | `proven_alloc_is_valid` |
-| 134 | `xcv_allocator_t` | `proven_allocator_t` |
-| 135 | `xcv_arena_alloc` | `proven_arena_alloc` |
-| 136 | `xcv_arena_alloc_aligned` | `proven_arena_alloc_aligned` |
-| 137 | `xcv_arena_alloc_aligned_or_panic` | `proven_arena_alloc_aligned_or_panic` |
-| 138 | `xcv_arena_alloc_or_panic` | `proven_arena_alloc_or_panic` |
-| 139 | `xcv_arena_alloc_trait` | `proven_arena_alloc_trait` |
-| 140 | `xcv_arena_as_allocator` | `proven_arena_as_allocator` |
-| 141 | `xcv_arena_create` | `proven_arena_create` |
-| 142 | `xcv_arena_destroy` | `proven_arena_destroy` |
-| 143 | `xcv_arena_free_trait` | `proven_arena_free_trait` |
-| 144 | `xcv_arena_realloc_aligned` | `proven_arena_realloc_aligned` |
-| 145 | `xcv_arena_realloc_trait` | `proven_arena_realloc_trait` |
-| 146 | `xcv_arena_reset` | `proven_arena_reset` |
-| 147 | `xcv_arena_t` | `proven_arena_t` |
-| 148 | `xcv_arg_cstr` | `proven_arg_cstr` |
-| 149 | `xcv_arg_datetime` | `proven_arg_datetime` |
-| 150 | `xcv_arg_f64` | `proven_arg_f64` |
-| 151 | `xcv_arg_fn` | `proven_arg_fn` |
-| 152 | `xcv_arg_i32` | `proven_arg_i32` |
-| 153 | `xcv_arg_i64` | `proven_arg_i64` |
-| 154 | `xcv_arg_identity` | `proven_arg_identity` |
-| 155 | `xcv_arg_none` | `proven_arg_none` |
-| 156 | `xcv_arg_ptr` | `proven_arg_ptr` |
-| 157 | `xcv_arg_str_view` | `proven_arg_str_view` |
-| 158 | `xcv_arg_t` | `proven_arg_t` |
-| 159 | `xcv_arg_type_t` | `proven_arg_type_t` |
-| 160 | `xcv_arg_u32` | `proven_arg_u32` |
-| 161 | `xcv_arg_u64` | `proven_arg_u64` |
-| 162 | `xcv_arg_ucstr` | `proven_arg_ucstr` |
-| 163 | `xcv_array_binary_search` | `proven_array_binary_search` |
-| 164 | `xcv_array_create` | `proven_array_create` |
-| 165 | `xcv_array_destroy` | `proven_array_destroy` |
-| 166 | `xcv_array_get` | `proven_array_get` |
-| 167 | `xcv_array_get_mut` | `proven_array_get_mut` |
-| 168 | `xcv_array_is_valid` | `proven_array_is_valid` |
-| 169 | `xcv_array_linear_search` | `proven_array_linear_search` |
-| 170 | `xcv_array_pop` | `proven_array_pop` |
-| 171 | `xcv_array_push` | `proven_array_push` |
-| 172 | `xcv_array_reserve` | `proven_array_reserve` |
-| 173 | `xcv_array_sort` | `proven_array_sort` |
-| 174 | `xcv_array_t` | `proven_array_t` |
-| 175 | `xcv_buf_append` | `proven_buf_append` |
-| 176 | `xcv_buf_create` | `proven_buf_create` |
-| 177 | `xcv_buf_t` | `proven_buf_t` |
-| 178 | `xcv_byte_t` | `proven_byte_t` |
-| 179 | `xcv_c_lib` | `proven_c_lib` |
-| 180 | `xcv_compare_fn_t` | `proven_compare_fn_t` |
-| 181 | `xcv_coro_t` | `proven_coro_t` |
-| 182 | `xcv_cstr_len` | `proven_cstr_len` |
-| 183 | `xcv_datetime_t` | `proven_datetime_t` |
-| 184 | `xcv_env_get` | `proven_env_get` |
-| 185 | `xcv_eprint` | `proven_eprint` |
-| 186 | `xcv_eprintln` | `proven_eprintln` |
-| 187 | `xcv_err_t` | `proven_err_t` |
-| 188 | `xcv_file_t` | `proven_file_t` |
-| 189 | `xcv_free_fn_t` | `proven_free_fn_t` |
-| 190 | `xcv_fs_chmod` | `proven_fs_chmod` |
-| 191 | `xcv_fs_close` | `proven_fs_close` |
-| 192 | `xcv_fs_copy` | `proven_fs_copy` |
-| 193 | `xcv_fs_entry_t` | `proven_fs_entry_t` |
-| 194 | `xcv_fs_handle_t` | `proven_fs_handle_t` |
-| 195 | `xcv_fs_is_absolute` | `proven_fs_is_absolute` |
-| 196 | `xcv_fs_link` | `proven_fs_link` |
-| 197 | `xcv_fs_list` | `proven_fs_list` |
-| 198 | `xcv_fs_lock` | `proven_fs_lock` |
-| 199 | `xcv_fs_lock_type_t` | `proven_fs_lock_type_t` |
-| 200 | `xcv_fs_mkdir` | `proven_fs_mkdir` |
-| 201 | `xcv_fs_mode_t` | `proven_fs_mode_t` |
-| 202 | `xcv_fs_open` | `proven_fs_open` |
-| 203 | `xcv_fs_perms_t` | `proven_fs_perms_t` |
-| 204 | `xcv_fs_read` | `proven_fs_read` |
-| 205 | `xcv_fs_read_all` | `proven_fs_read_all` |
-| 206 | `xcv_fs_remove` | `proven_fs_remove` |
-| 207 | `xcv_fs_rename` | `proven_fs_rename` |
-| 208 | `xcv_fs_rmdir` | `proven_fs_rmdir` |
-| 209 | `xcv_fs_size` | `proven_fs_size` |
-| 210 | `xcv_fs_stat` | `proven_fs_stat` |
-| 211 | `xcv_fs_stat_t` | `proven_fs_stat_t` |
-| 212 | `xcv_fs_symlink` | `proven_fs_symlink` |
-| 213 | `xcv_fs_type_t` | `proven_fs_type_t` |
-| 214 | `xcv_fs_write` | `proven_fs_write` |
-| 215 | `xcv_heap_allocator` | `proven_heap_allocator` |
-| 216 | `xcv_i16` | `proven_i16` |
-| 217 | `xcv_i32` | `proven_i32` |
-| 218 | `xcv_i64` | `proven_i64` |
-| 219 | `xcv_i8` | `proven_i8` |
-| 220 | `xcv_intptr_t` | `proven_intptr_t` |
-| 221 | `xcv_is_ok` | `proven_is_ok` |
-| 222 | `xcv_is_pow2` | `proven_is_pow2` |
-| 223 | `xcv_job_execute_one` | `proven_job_execute_one` |
-| 224 | `xcv_job_submit` | `proven_job_submit` |
-| 225 | `xcv_job_sys` | `proven_job_sys` |
-| 226 | `xcv_job_sys_t` | `proven_job_sys_t` |
-| 227 | `xcv_job_system_init` | `proven_job_system_init` |
-| 228 | `xcv_job_system_close` | `proven_job_system_close` |
-| 229 | `xcv_job_system_destroy` | `proven_job_system_destroy` |
-| 230 | `xcv_job_t` | `proven_job_t` |
-| 231 | `xcv_key_type_t` | `proven_key_type_t` |
-| 232 | `xcv_list_init` | `proven_list_init` |
-| 233 | `xcv_list_insert_after` | `proven_list_insert_after` |
-| 234 | `xcv_list_is_empty` | `proven_list_is_empty` |
-| 235 | `xcv_list_node_t` | `proven_list_node_t` |
-| 236 | `xcv_list_push_back` | `proven_list_push_back` |
-| 237 | `xcv_list_remove` | `proven_list_remove` |
-| 238 | `xcv_list_t` | `proven_list_t` |
-| 239 | `xcv_map_create` | `proven_map_create` |
-| 240 | `xcv_map_create_with_capacity` | `proven_map_create_with_capacity` |
-| 241 | `xcv_map_destroy` | `proven_map_destroy` |
-| 242 | `xcv_map_get` | `proven_map_get` |
-| 243 | `xcv_map_get_mut` | `proven_map_get_mut` |
-| 244 | `xcv_map_is_valid` | `proven_map_is_valid` |
-| 245 | `xcv_map_key_t` | `proven_map_key_t` |
-| 246 | `xcv_map_remove` | `proven_map_remove` |
-| 247 | `xcv_map_reserve` | `proven_map_reserve` |
-| 248 | `xcv_map_set` | `proven_map_set` |
-| 249 | `xcv_map_set_with_scratch` | `proven_map_set_with_scratch` |
-| 250 | `xcv_map_t` | `proven_map_t` |
-| 251 | `xcv_mem_align_up` | `proven_mem_align_up` |
-| 252 | `xcv_mem_mut_from_owned` | `proven_mem_mut_from_owned` |
-| 253 | `xcv_mem_mut_slice_checked` | `proven_mem_mut_slice_checked` |
-| 254 | `xcv_mem_mut_slice_unchecked` | `proven_mem_mut_slice_unchecked` |
-| 255 | `xcv_mem_mut_t` | `proven_mem_mut_t` |
-| 256 | `xcv_mem_t` | `proven_mem_t` |
-| 257 | `xcv_mem_view_from_owned` | `proven_mem_view_from_owned` |
-| 258 | `xcv_mem_view_from_u8` | `proven_mem_view_from_u8` |
-| 259 | `xcv_mem_view_slice_checked` | `proven_mem_view_slice_checked` |
-| 260 | `xcv_mem_view_slice_unchecked` | `proven_mem_view_slice_unchecked` |
-| 261 | `xcv_mem_view_t` | `proven_mem_view_t` |
-| 262 | `xcv_mmap_create` | `proven_mmap_create` |
-| 263 | `xcv_mmap_destroy` | `proven_mmap_destroy` |
-| 264 | `xcv_mmap_flags_t` | `proven_mmap_flags_t` |
-| 265 | `xcv_mmap_prot_t` | `proven_mmap_prot_t` |
-| 266 | `xcv_mmap_sync` | `proven_mmap_sync` |
-| 267 | `xcv_mmap_t` | `proven_mmap_t` |
-| 268 | `xcv_pool_as_allocator` | `proven_pool_as_allocator` |
-| 269 | `xcv_pool_init` | `proven_pool_init` |
-| 270 | `xcv_pool_t` | `proven_pool_t` |
-| 271 | `xcv_print` | `proven_print` |
-| 272 | `xcv_println` | `proven_println` |
-| 273 | `xcv_ptrdiff_t` | `proven_ptrdiff_t` |
-| 274 | `xcv_realloc_fn_t` | `proven_realloc_fn_t` |
-| 275 | `xcv_result_array_t` | `proven_result_array_t` |
-| 276 | `xcv_result_buf_t` | `proven_result_buf_t` |
-| 277 | `xcv_result_cstr_t` | `proven_result_cstr_t` |
-| 278 | `xcv_result_f64_t` | `proven_result_f64_t` |
-| 279 | `xcv_result_file_t` | `proven_result_file_t` |
-| 280 | `xcv_result_i64_t` | `proven_result_i64_t` |
-| 281 | `xcv_result_map_t` | `proven_result_map_t` |
-| 282 | `xcv_result_mem_mut_t` | `proven_result_mem_mut_t` |
-| 283 | `xcv_result_mem_view_t` | `proven_result_mem_view_t` |
-| 284 | `xcv_result_mmap_t` | `proven_result_mmap_t` |
-| 285 | `xcv_result_ring_t` | `proven_result_ring_t` |
-| 286 | `xcv_result_size_t` | `proven_result_size_t` |
-| 287 | `xcv_result_u16str_t` | `proven_result_u16str_t` |
-| 288 | `xcv_result_u64_t` | `proven_result_u64_t` |
-| 289 | `xcv_result_u8str_t` | `proven_result_u8str_t` |
-| 290 | `xcv_result_u8str_view_t` | `proven_result_u8str_view_t` |
-| 291 | `xcv_ring_create` | `proven_ring_create` |
-| 292 | `xcv_ring_destroy` | `proven_ring_destroy` |
-| 293 | `xcv_ring_is_valid` | `proven_ring_is_valid` |
-| 294 | `xcv_ring_pop` | `proven_ring_pop` |
-| 295 | `xcv_ring_push` | `proven_ring_push` |
-| 296 | `xcv_ring_t` | `proven_ring_t` |
-| 297 | `xcv_scan_arg_f64` | `proven_scan_arg_f64` |
-| 298 | `xcv_scan_arg_i32` | `proven_scan_arg_i32` |
-| 299 | `xcv_scan_arg_i64` | `proven_scan_arg_i64` |
-| 300 | `xcv_scan_arg_identity` | `proven_scan_arg_identity` |
-| 301 | `xcv_scan_arg_int` | `proven_scan_arg_int` |
-| 302 | `xcv_scan_arg_llong` | `proven_scan_arg_llong` |
-| 303 | `xcv_scan_arg_long` | `proven_scan_arg_long` |
-| 304 | `xcv_scan_arg_none` | `proven_scan_arg_none` |
-| 305 | `xcv_scan_arg_short` | `proven_scan_arg_short` |
-| 306 | `xcv_scan_arg_str_view` | `proven_scan_arg_str_view` |
-| 307 | `xcv_scan_arg_t` | `proven_scan_arg_t` |
-| 308 | `xcv_scan_arg_type_t` | `proven_scan_arg_type_t` |
-| 309 | `xcv_scan_arg_u32` | `proven_scan_arg_u32` |
-| 310 | `xcv_scan_arg_u64` | `proven_scan_arg_u64` |
-| 311 | `xcv_scan_arg_uint` | `proven_scan_arg_uint` |
-| 312 | `xcv_scan_arg_ullong` | `proven_scan_arg_ullong` |
-| 313 | `xcv_scan_arg_ulong` | `proven_scan_arg_ulong` |
-| 314 | `xcv_scan_arg_ushort` | `proven_scan_arg_ushort` |
-| 315 | `xcv_scan_f64` | `proven_scan_f64` |
-| 316 | `xcv_scan_fmt` | `proven_scan_fmt` |
-| 317 | `xcv_scan_fmt_cursor` | `proven_scan_fmt_cursor` |
-| 318 | `xcv_scan_fmt_from_file` | `proven_scan_fmt_from_file` |
-| 319 | `xcv_scan_fmt_from_stdin` | `proven_scan_fmt_from_stdin` |
-| 320 | `xcv_scan_fmt_internal` | `proven_scan_fmt_internal` |
-| 321 | `xcv_scan_fmt_internal_view` | `proven_scan_fmt_internal_view` |
-| 322 | `xcv_scan_i64` | `proven_scan_i64` |
-| 323 | `xcv_scan_init` | `proven_scan_init` |
-| 324 | `xcv_scan_skip_until` | `proven_scan_skip_until` |
-| 325 | `xcv_scan_skip_until_number` | `proven_scan_skip_until_number` |
-| 326 | `xcv_scan_skip_whitespace` | `proven_scan_skip_whitespace` |
-| 327 | `xcv_scan_str` | `proven_scan_str` |
-| 328 | `xcv_scan_t` | `proven_scan_t` |
-| 329 | `xcv_scan_u64` | `proven_scan_u64` |
-| 330 | `xcv_size_t` | `proven_size_t` |
-| 331 | `xcv_sysio_flush` | `proven_sysio_flush` |
-| 332 | `xcv_sysio_print_impl` | `proven_sysio_print_impl` |
-| 333 | `xcv_sysio_scan_chunk_impl` | `proven_sysio_scan_chunk_impl` |
-| 334 | `xcv_sysio_stderr` | `proven_sysio_stderr` |
-| 335 | `xcv_sysio_stdin` | `proven_sysio_stdin` |
-| 336 | `xcv_sysio_stdout` | `proven_sysio_stdout` |
-| 337 | `xcv_time_breakdown` | `proven_time_breakdown` |
-| 338 | `xcv_time_u16_fmt` | `proven_time_u16_fmt` |
-| 339 | `xcv_time_u8_fmt` | `proven_time_u8_fmt` |
-| 340 | `xcv_time_locale_en` | `proven_time_locale_en` |
-| 341 | `xcv_time_locale_t` | `proven_time_locale_t` |
-| 342 | `xcv_time_now` | `proven_time_now` |
-| 343 | `xcv_time_now_datetime` | `proven_time_now_datetime` |
-| 344 | `xcv_time_sleep` | `proven_time_sleep` |
-| 345 | `xcv_time_t` | `proven_time_t` |
-| 346 | `xcv_u16` | `proven_u16` |
-| 347 | `xcv_u16str_append` | `proven_u16str_append` |
-| 348 | `xcv_u16str_append_grow` | `proven_u16str_append_grow` |
-| 349 | `xcv_u16str_append_partial` | `proven_u16str_append_partial` |
-| 350 | `xcv_u16str_as_ptr` | `proven_u16str_as_ptr` |
-| 351 | `xcv_u16str_create` | `proven_u16str_create` |
-| 352 | `xcv_u16str_create_from_view` | `proven_u16str_create_from_view` |
-| 353 | `xcv_u16str_destroy` | `proven_u16str_destroy` |
-| 354 | `xcv_u16str_len` | `proven_u16str_len` |
-| 355 | `xcv_u16str_t` | `proven_u16str_t` |
-| 356 | `xcv_u16str_view_t` | `proven_u16str_view_t` |
-| 357 | `xcv_u32` | `proven_u32` |
-| 358 | `xcv_u64` | `proven_u64` |
-| 359 | `xcv_u8` | `proven_u8` |
-| 360 | `xcv_u8str_append` | `proven_u8str_append` |
-| 361 | `xcv_u8str_append_byte` | `proven_u8str_append_byte` |
-| 362 | `xcv_u8str_append_fmt` | `proven_u8str_append_fmt` |
-| 363 | `xcv_u8str_append_fmt_trunc` | `proven_u8str_append_fmt_trunc` |
-| 364 | `xcv_u8str_append_fmt_grow` | `proven_u8str_append_fmt_grow` |
-| 365 | `xcv_u8str_append_fmt_with_scratch` | `proven_u8str_append_fmt_with_scratch` |
-| 366 | `xcv_u8str_append_grow` | `proven_u8str_append_grow` |
-| 367 | `xcv_u8str_append_partial` | `proven_u8str_append_partial` |
-| 368 | `xcv_u8str_as_cstr` | `proven_u8str_as_cstr` |
-| 369 | `xcv_u8str_as_view` | `proven_u8str_as_view` |
-| 370 | `xcv_u8str_create` | `proven_u8str_create` |
-| 371 | `xcv_u8str_create_from_view` | `proven_u8str_create_from_view` |
-| 372 | `xcv_u8str_destroy` | `proven_u8str_destroy` |
-| 373 | `xcv_u8str_fmt_internal` | `proven_u8str_fmt_internal` |
-| 374 | `xcv_u8str_insert` | `proven_u8str_insert` |
-| 375 | `xcv_u8str_is_valid` | `proven_u8str_is_valid` |
-| 376 | `xcv_u8str_mut_t` | `proven_u8str_mut_t` |
-| 377 | `xcv_u8str_remove` | `proven_u8str_remove` |
-| 378 | `xcv_u8str_replace_at` | `proven_u8str_replace_at` |
-| 379 | `xcv_u8str_replace_first` | `proven_u8str_replace_first` |
-| 380 | `xcv_u8str_reserve` | `proven_u8str_reserve` |
-| 381 | `xcv_u8str_t` | `proven_u8str_t` |
-| 382 | `xcv_u8str_view_ends_with` | `proven_u8str_view_ends_with` |
-| 383 | `xcv_u8str_view_eq` | `proven_u8str_view_eq` |
-| 384 | `xcv_u8str_view_find` | `proven_u8str_view_find` |
-| 385 | `xcv_u8str_view_from_cstr` | `proven_u8str_view_from_cstr` |
-| 386 | `xcv_u8str_view_slice` | `proven_u8str_view_slice` |
-| 387 | `xcv_u8str_view_starts_with` | `proven_u8str_view_starts_with` |
-| 388 | `xcv_u8str_view_t` | `proven_u8str_view_t` |
-| 389 | `xcv_u8str_view_to_cstr` | `proven_u8str_view_to_cstr` |
-| 390 | `xcv_uintptr_t` | `proven_uintptr_t` |
+416 aliases, one per public name. The table is generated from `include/proven/alias_xcv.h`; `tests/test_alias_completeness` fails the build if a public function has no alias, so this list cannot quietly fall behind the header again.
 
-## Common misuse cases
+There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
-Wrong:
-
-```c
-/* Treating xcv_* as a separate ABI family. */
-```
-
-Correct:
-
-```c
-/* Treat xcv_* as preprocessor spelling for the canonical proven_* API. */
-```
+| Alias macro | Expands to |
+|---|---|
+| `XCV_ARG` | `PROVEN_ARG` |
+| `XCV_ARG_CSTR` | `proven_arg_cstr` |
+| `XCV_ARG_DATETIME` | `proven_arg_datetime` |
+| `XCV_ARG_F64` | `proven_arg_f64` |
+| `XCV_ARG_FN` | `PROVEN_ARG_FN(f)` |
+| `XCV_ARG_I32` | `proven_arg_i32` |
+| `XCV_ARG_I64` | `proven_arg_i64` |
+| `XCV_ARG_NONE` | `proven_arg_none` |
+| `XCV_ARG_PTR` | `proven_arg_ptr` |
+| `XCV_ARG_STR_VIEW` | `proven_arg_str_view` |
+| `XCV_ARG_U32` | `proven_arg_u32` |
+| `XCV_ARG_U64` | `proven_arg_u64` |
+| `XCV_ARRAY_DESTROY` | `PROVEN_ARRAY_DESTROY` |
+| `XCV_ARRAY_GET` | `PROVEN_ARRAY_GET` |
+| `XCV_ARRAY_GET_MUT` | `PROVEN_ARRAY_GET_MUT` |
+| `XCV_ARRAY_INIT` | `PROVEN_ARRAY_INIT` |
+| `XCV_ARRAY_IS_VALID` | `proven_array_is_valid` |
+| `XCV_ARRAY_POP` | `PROVEN_ARRAY_POP` |
+| `XCV_ARRAY_PUSH` | `PROVEN_ARRAY_PUSH` |
+| `XCV_CKD_ADD` | `PROVEN_CKD_ADD` |
+| `XCV_CKD_MUL` | `PROVEN_CKD_MUL` |
+| `XCV_CKD_SUB` | `PROVEN_CKD_SUB` |
+| `XCV_CONTAINER_OF` | `PROVEN_CONTAINER_OF` |
+| `XCV_CORO_AWAIT` | `PROVEN_CORO_AWAIT` |
+| `XCV_CORO_BEGIN` | `PROVEN_CORO_BEGIN` |
+| `XCV_CORO_END` | `PROVEN_CORO_END` |
+| `XCV_CORO_INIT` | `PROVEN_CORO_INIT` |
+| `XCV_CORO_IS_DONE` | `PROVEN_CORO_IS_DONE` |
+| `XCV_CORO_YIELD` | `PROVEN_CORO_YIELD` |
+| `XCV_DEFAULT_ALIGNMENT` | `PROVEN_DEFAULT_ALIGNMENT` |
+| `XCV_ERR_AGAIN` | `PROVEN_ERR_AGAIN` |
+| `XCV_ERR_BUSY` | `PROVEN_ERR_BUSY` |
+| `XCV_ERR_EOF` | `PROVEN_ERR_EOF` |
+| `XCV_ERR_INVALID_ARG` | `PROVEN_ERR_INVALID_ARG` |
+| `XCV_ERR_INVALID_ENCODING` | `PROVEN_ERR_INVALID_ENCODING` |
+| `XCV_ERR_INVALID_STATE` | `PROVEN_ERR_INVALID_STATE` |
+| `XCV_ERR_IO` | `PROVEN_ERR_IO` |
+| `XCV_ERR_NEED_MORE` | `PROVEN_ERR_NEED_MORE` |
+| `XCV_ERR_NOMEM` | `PROVEN_ERR_NOMEM` |
+| `XCV_ERR_NOT_FOUND` | `PROVEN_ERR_NOT_FOUND` |
+| `XCV_ERR_OUT_OF_BOUNDS` | `PROVEN_ERR_OUT_OF_BOUNDS` |
+| `XCV_ERR_OVERFLOW` | `PROVEN_ERR_OVERFLOW` |
+| `XCV_ERR_PERMISSION` | `PROVEN_ERR_PERMISSION` |
+| `XCV_ERR_UNSUPPORTED` | `PROVEN_ERR_UNSUPPORTED` |
+| `XCV_FS_APPEND` | `PROVEN_FS_APPEND` |
+| `XCV_FS_CREATE` | `PROVEN_FS_CREATE` |
+| `XCV_FS_LOCK_EXCLUSIVE` | `PROVEN_FS_LOCK_EXCLUSIVE` |
+| `XCV_FS_LOCK_SHARED` | `PROVEN_FS_LOCK_SHARED` |
+| `XCV_FS_LOCK_UNLOCK` | `PROVEN_FS_LOCK_UNLOCK` |
+| `XCV_FS_PATH_SEP` | `PROVEN_FS_PATH_SEP` |
+| `XCV_FS_PERM_DEFAULT` | `PROVEN_FS_PERM_DEFAULT` |
+| `XCV_FS_PERM_GROUP_R` | `PROVEN_FS_PERM_GROUP_R` |
+| `XCV_FS_PERM_GROUP_W` | `PROVEN_FS_PERM_GROUP_W` |
+| `XCV_FS_PERM_GROUP_X` | `PROVEN_FS_PERM_GROUP_X` |
+| `XCV_FS_PERM_OTHER_R` | `PROVEN_FS_PERM_OTHER_R` |
+| `XCV_FS_PERM_OTHER_W` | `PROVEN_FS_PERM_OTHER_W` |
+| `XCV_FS_PERM_OTHER_X` | `PROVEN_FS_PERM_OTHER_X` |
+| `XCV_FS_PERM_OWNER_R` | `PROVEN_FS_PERM_OWNER_R` |
+| `XCV_FS_PERM_OWNER_W` | `PROVEN_FS_PERM_OWNER_W` |
+| `XCV_FS_PERM_OWNER_X` | `PROVEN_FS_PERM_OWNER_X` |
+| `XCV_FS_READ` | `PROVEN_FS_READ` |
+| `XCV_FS_TRUNC` | `PROVEN_FS_TRUNC` |
+| `XCV_FS_TYPE_DIR` | `PROVEN_FS_TYPE_DIR` |
+| `XCV_FS_TYPE_FILE` | `PROVEN_FS_TYPE_FILE` |
+| `XCV_FS_TYPE_OTHER` | `PROVEN_FS_TYPE_OTHER` |
+| `XCV_FS_WRITE` | `PROVEN_FS_WRITE` |
+| `XCV_INDEX_NOT_FOUND` | `PROVEN_INDEX_NOT_FOUND` |
+| `XCV_IS_OK` | `PROVEN_IS_OK` |
+| `XCV_KEY_TYPE_INT` | `PROVEN_KEY_TYPE_INT` |
+| `XCV_KEY_TYPE_U8_BORROWED` | `PROVEN_KEY_TYPE_U8_BORROWED` |
+| `XCV_KEY_TYPE_U8_OWNED` | `PROVEN_KEY_TYPE_U8_OWNED` |
+| `XCV_LIST_ENTRY` | `PROVEN_LIST_ENTRY` |
+| `XCV_LIST_FOR_EACH` | `PROVEN_LIST_FOR_EACH` |
+| `XCV_LIST_FOR_EACH_SAFE` | `PROVEN_LIST_FOR_EACH_SAFE` |
+| `XCV_LIT` | `PROVEN_LIT` |
+| `XCV_MAP_DESTROY` | `PROVEN_MAP_DESTROY` |
+| `XCV_MAP_GET_INT` | `PROVEN_MAP_GET_INT` |
+| `XCV_MAP_GET_MUT_INT` | `PROVEN_MAP_GET_MUT_INT` |
+| `XCV_MAP_GET_MUT_U8_BORROWED` | `PROVEN_MAP_GET_MUT_U8_BORROWED` |
+| `XCV_MAP_GET_U8_BORROWED` | `PROVEN_MAP_GET_U8_BORROWED` |
+| `XCV_MAP_GET_U8_OWNED` | `PROVEN_MAP_GET_U8_OWNED` |
+| `XCV_MAP_INIT_INT` | `PROVEN_MAP_INIT_INT` |
+| `XCV_MAP_INIT_U8_BORROWED` | `PROVEN_MAP_INIT_U8_BORROWED` |
+| `XCV_MAP_INIT_U8_OWNED` | `PROVEN_MAP_INIT_U8_OWNED` |
+| `XCV_MAP_IS_VALID` | `proven_map_is_valid` |
+| `XCV_MAP_REMOVE_INT` | `PROVEN_MAP_REMOVE_INT` |
+| `XCV_MAP_REMOVE_U8_BORROWED` | `PROVEN_MAP_REMOVE_U8_BORROWED` |
+| `XCV_MAP_REMOVE_U8_OWNED` | `PROVEN_MAP_REMOVE_U8_OWNED` |
+| `XCV_MAP_SET_INT` | `PROVEN_MAP_SET_INT` |
+| `XCV_MAP_SET_U8_BORROWED` | `PROVEN_MAP_SET_U8_BORROWED` |
+| `XCV_MAP_SET_U8_OWNED` | `PROVEN_MAP_SET_U8_OWNED` |
+| `XCV_MAP_SET_WITH_SCRATCH_INT` | `PROVEN_MAP_SET_WITH_SCRATCH_INT` |
+| `XCV_MAP_SET_WITH_SCRATCH_U8_BORROWED` | `PROVEN_MAP_SET_WITH_SCRATCH_U8_BORROWED` |
+| `XCV_MAX_ALIGN` | `PROVEN_MAX_ALIGN` |
+| `XCV_MMAP_EXEC` | `PROVEN_MMAP_EXEC` |
+| `XCV_MMAP_PRIVATE` | `PROVEN_MMAP_PRIVATE` |
+| `XCV_MMAP_READ` | `PROVEN_MMAP_READ` |
+| `XCV_MMAP_SHARED` | `PROVEN_MMAP_SHARED` |
+| `XCV_MMAP_WRITE` | `PROVEN_MMAP_WRITE` |
+| `XCV_OK` | `PROVEN_OK` |
+| `XCV_RING_DESTROY` | `PROVEN_RING_DESTROY` |
+| `XCV_RING_INIT` | `PROVEN_RING_INIT` |
+| `XCV_RING_IS_VALID` | `proven_ring_is_valid` |
+| `XCV_RING_POP` | `PROVEN_RING_POP` |
+| `XCV_RING_PUSH` | `PROVEN_RING_PUSH` |
+| `XCV_SCAN_ARG` | `PROVEN_SCAN_ARG(x)` |
+| `XCV_SCAN_ARG_LONG` | `PROVEN_SCAN_ARG_LONG(ptr)` |
+| `XCV_SCAN_ARG_TYPE_F64` | `PROVEN_SCAN_ARG_TYPE_F64` |
+| `XCV_SCAN_ARG_TYPE_I32` | `PROVEN_SCAN_ARG_TYPE_I32` |
+| `XCV_SCAN_ARG_TYPE_I64` | `PROVEN_SCAN_ARG_TYPE_I64` |
+| `XCV_SCAN_ARG_TYPE_INT` | `PROVEN_SCAN_ARG_TYPE_INT` |
+| `XCV_SCAN_ARG_TYPE_LLONG` | `PROVEN_SCAN_ARG_TYPE_LLONG` |
+| `XCV_SCAN_ARG_TYPE_LONG` | `PROVEN_SCAN_ARG_TYPE_LONG` |
+| `XCV_SCAN_ARG_TYPE_NONE` | `PROVEN_SCAN_ARG_TYPE_NONE` |
+| `XCV_SCAN_ARG_TYPE_SHORT` | `PROVEN_SCAN_ARG_TYPE_SHORT` |
+| `XCV_SCAN_ARG_TYPE_STR_VIEW` | `PROVEN_SCAN_ARG_TYPE_STR_VIEW` |
+| `XCV_SCAN_ARG_TYPE_U32` | `PROVEN_SCAN_ARG_TYPE_U32` |
+| `XCV_SCAN_ARG_TYPE_U64` | `PROVEN_SCAN_ARG_TYPE_U64` |
+| `XCV_SCAN_ARG_TYPE_UINT` | `PROVEN_SCAN_ARG_TYPE_UINT` |
+| `XCV_SCAN_ARG_TYPE_ULLONG` | `PROVEN_SCAN_ARG_TYPE_ULLONG` |
+| `XCV_SCAN_ARG_TYPE_ULONG` | `PROVEN_SCAN_ARG_TYPE_ULONG` |
+| `XCV_SCAN_ARG_TYPE_USHORT` | `PROVEN_SCAN_ARG_TYPE_USHORT` |
+| `XCV_SCAN_ARG_ULONG` | `PROVEN_SCAN_ARG_ULONG(ptr)` |
+| `XCV_U16_LIT` | `PROVEN_U16_LIT` |
+| `XCV_VERSION_NUM` | `PROVEN_VERSION_NUM` |
+| `XCV_VERSION_STRING` | `PROVEN_VERSION_STRING` |
+| `xcv_alloc_fn_t` | `proven_alloc_fn_t` |
+| `xcv_alloc_is_valid` | `proven_alloc_is_valid` |
+| `xcv_allocator_t` | `proven_allocator_t` |
+| `xcv_arena_alloc` | `proven_arena_alloc` |
+| `xcv_arena_alloc_aligned` | `proven_arena_alloc_aligned` |
+| `xcv_arena_alloc_aligned_or_panic` | `proven_arena_alloc_aligned_or_panic` |
+| `xcv_arena_alloc_or_panic` | `proven_arena_alloc_or_panic` |
+| `xcv_arena_alloc_trait` | `proven_arena_alloc_trait` |
+| `xcv_arena_as_allocator` | `proven_arena_as_allocator` |
+| `xcv_arena_create` | `proven_arena_create` |
+| `xcv_arena_destroy` | `proven_arena_destroy` |
+| `xcv_arena_free_trait` | `proven_arena_free_trait` |
+| `xcv_arena_realloc_aligned` | `proven_arena_realloc_aligned` |
+| `xcv_arena_realloc_trait` | `proven_arena_realloc_trait` |
+| `xcv_arena_reset` | `proven_arena_reset` |
+| `xcv_arena_t` | `proven_arena_t` |
+| `xcv_arg_cstr` | `proven_arg_cstr` |
+| `xcv_arg_cstr_n` | `proven_arg_cstr_n` |
+| `xcv_arg_datetime` | `proven_arg_datetime` |
+| `xcv_arg_f64` | `proven_arg_f64` |
+| `xcv_arg_fn` | `proven_arg_fn` |
+| `xcv_arg_i32` | `proven_arg_i32` |
+| `xcv_arg_i64` | `proven_arg_i64` |
+| `xcv_arg_identity` | `proven_arg_identity` |
+| `xcv_arg_none` | `proven_arg_none` |
+| `xcv_arg_ptr` | `proven_arg_ptr` |
+| `xcv_arg_str_view` | `proven_arg_str_view` |
+| `xcv_arg_t` | `proven_arg_t` |
+| `xcv_arg_type_t` | `proven_arg_type_t` |
+| `xcv_arg_u32` | `proven_arg_u32` |
+| `xcv_arg_u64` | `proven_arg_u64` |
+| `xcv_arg_ucstr` | `proven_arg_ucstr` |
+| `xcv_array_binary_search` | `proven_array_binary_search` |
+| `xcv_array_create` | `proven_array_create` |
+| `xcv_array_destroy` | `proven_array_destroy` |
+| `xcv_array_get` | `proven_array_get` |
+| `xcv_array_get_mut` | `proven_array_get_mut` |
+| `xcv_array_is_valid` | `proven_array_is_valid` |
+| `xcv_array_linear_search` | `proven_array_linear_search` |
+| `xcv_array_pop` | `proven_array_pop` |
+| `xcv_array_push` | `proven_array_push` |
+| `xcv_array_reserve` | `proven_array_reserve` |
+| `xcv_array_sort` | `proven_array_sort` |
+| `xcv_array_t` | `proven_array_t` |
+| `xcv_buf_append` | `proven_buf_append` |
+| `xcv_buf_create` | `proven_buf_create` |
+| `xcv_buf_destroy` | `proven_buf_destroy` |
+| `xcv_buf_t` | `proven_buf_t` |
+| `xcv_byte_t` | `proven_byte_t` |
+| `xcv_c_lib` | `proven_c_lib` |
+| `xcv_compare_fn_t` | `proven_compare_fn_t` |
+| `xcv_coro_t` | `proven_coro_t` |
+| `xcv_cstr_len` | `proven_cstr_len` |
+| `xcv_datetime_t` | `proven_datetime_t` |
+| `xcv_env_get` | `proven_env_get` |
+| `xcv_eprint` | `proven_eprint` |
+| `xcv_eprintln` | `proven_eprintln` |
+| `xcv_err_t` | `proven_err_t` |
+| `xcv_file_t` | `proven_file_t` |
+| `xcv_float_format_f32_policy` | `proven_float_format_f32_policy` |
+| `xcv_float_format_f64_policy` | `proven_float_format_f64_policy` |
+| `xcv_float_format_options_fixed_default` | `proven_float_format_options_fixed_default` |
+| `xcv_float_format_options_shortest` | `proven_float_format_options_shortest` |
+| `xcv_free_fn_t` | `proven_free_fn_t` |
+| `xcv_fs_chmod` | `proven_fs_chmod` |
+| `xcv_fs_close` | `proven_fs_close` |
+| `xcv_fs_copy` | `proven_fs_copy` |
+| `xcv_fs_entry_t` | `proven_fs_entry_t` |
+| `xcv_fs_handle_t` | `proven_fs_handle_t` |
+| `xcv_fs_is_absolute` | `proven_fs_is_absolute` |
+| `xcv_fs_link` | `proven_fs_link` |
+| `xcv_fs_list` | `proven_fs_list` |
+| `xcv_fs_list_destroy` | `proven_fs_list_destroy` |
+| `xcv_fs_lock` | `proven_fs_lock` |
+| `xcv_fs_lock_type_t` | `proven_fs_lock_type_t` |
+| `xcv_fs_mkdir` | `proven_fs_mkdir` |
+| `xcv_fs_mode_t` | `proven_fs_mode_t` |
+| `xcv_fs_open` | `proven_fs_open` |
+| `xcv_fs_perms_t` | `proven_fs_perms_t` |
+| `xcv_fs_read` | `proven_fs_read` |
+| `xcv_fs_read_all` | `proven_fs_read_all` |
+| `xcv_fs_read_all_u8str` | `proven_fs_read_all_u8str` |
+| `xcv_fs_remove` | `proven_fs_remove` |
+| `xcv_fs_rename` | `proven_fs_rename` |
+| `xcv_fs_rmdir` | `proven_fs_rmdir` |
+| `xcv_fs_size` | `proven_fs_size` |
+| `xcv_fs_stat` | `proven_fs_stat` |
+| `xcv_fs_stat_t` | `proven_fs_stat_t` |
+| `xcv_fs_symlink` | `proven_fs_symlink` |
+| `xcv_fs_type_t` | `proven_fs_type_t` |
+| `xcv_fs_write` | `proven_fs_write` |
+| `xcv_fs_write_all` | `proven_fs_write_all` |
+| `xcv_fs_write_file` | `proven_fs_write_file` |
+| `xcv_fs_write_file_atomic` | `proven_fs_write_file_atomic` |
+| `xcv_heap_allocator` | `proven_heap_allocator` |
+| `xcv_i16` | `proven_i16` |
+| `xcv_i32` | `proven_i32` |
+| `xcv_i64` | `proven_i64` |
+| `xcv_i8` | `proven_i8` |
+| `xcv_intptr_t` | `proven_intptr_t` |
+| `xcv_is_ok` | `proven_is_ok` |
+| `xcv_is_pow2` | `proven_is_pow2` |
+| `xcv_job_execute_one` | `proven_job_execute_one` |
+| `xcv_job_submit` | `proven_job_submit` |
+| `xcv_job_sys` | `proven_job_sys` |
+| `xcv_job_sys_t` | `proven_job_sys_t` |
+| `xcv_job_system_close` | `proven_job_system_close` |
+| `xcv_job_system_destroy` | `proven_job_system_destroy` |
+| `xcv_job_system_init` | `proven_job_system_init` |
+| `xcv_job_t` | `proven_job_t` |
+| `xcv_key_type_t` | `proven_key_type_t` |
+| `xcv_list_init` | `proven_list_init` |
+| `xcv_list_insert_after` | `proven_list_insert_after` |
+| `xcv_list_is_empty` | `proven_list_is_empty` |
+| `xcv_list_node_t` | `proven_list_node_t` |
+| `xcv_list_push_back` | `proven_list_push_back` |
+| `xcv_list_remove` | `proven_list_remove` |
+| `xcv_list_t` | `proven_list_t` |
+| `xcv_map_create` | `proven_map_create` |
+| `xcv_map_create_with_capacity` | `proven_map_create_with_capacity` |
+| `xcv_map_destroy` | `proven_map_destroy` |
+| `xcv_map_get` | `proven_map_get` |
+| `xcv_map_get_mut` | `proven_map_get_mut` |
+| `xcv_map_is_valid` | `proven_map_is_valid` |
+| `xcv_map_key_t` | `proven_map_key_t` |
+| `xcv_map_remove` | `proven_map_remove` |
+| `xcv_map_reserve` | `proven_map_reserve` |
+| `xcv_map_set` | `proven_map_set` |
+| `xcv_map_set_u8_owned` | `proven_map_set_u8_owned` |
+| `xcv_map_set_with_scratch` | `proven_map_set_with_scratch` |
+| `xcv_map_t` | `proven_map_t` |
+| `xcv_mem_align_up` | `proven_mem_align_up` |
+| `xcv_mem_copy` | `proven_mem_copy` |
+| `xcv_mem_move` | `proven_mem_move` |
+| `xcv_mem_mut_from_owned` | `proven_mem_mut_from_owned` |
+| `xcv_mem_mut_slice_checked` | `proven_mem_mut_slice_checked` |
+| `xcv_mem_mut_slice_unchecked` | `proven_mem_mut_slice_unchecked` |
+| `xcv_mem_mut_t` | `proven_mem_mut_t` |
+| `xcv_mem_t` | `proven_mem_t` |
+| `xcv_mem_view_from_owned` | `proven_mem_view_from_owned` |
+| `xcv_mem_view_from_u8` | `proven_mem_view_from_u8` |
+| `xcv_mem_view_slice_checked` | `proven_mem_view_slice_checked` |
+| `xcv_mem_view_slice_unchecked` | `proven_mem_view_slice_unchecked` |
+| `xcv_mem_view_t` | `proven_mem_view_t` |
+| `xcv_memcmp` | `proven_memcmp` |
+| `xcv_mmap_as_view` | `proven_mmap_as_view` |
+| `xcv_mmap_create` | `proven_mmap_create` |
+| `xcv_mmap_destroy` | `proven_mmap_destroy` |
+| `xcv_mmap_flags_t` | `proven_mmap_flags_t` |
+| `xcv_mmap_prot_t` | `proven_mmap_prot_t` |
+| `xcv_mmap_sync` | `proven_mmap_sync` |
+| `xcv_mmap_t` | `proven_mmap_t` |
+| `xcv_panic` | `proven_panic` |
+| `xcv_parse_double_ascii` | `proven_parse_double_ascii` |
+| `xcv_parse_f64_ascii` | `proven_parse_f64_ascii` |
+| `xcv_pool_as_allocator` | `proven_pool_as_allocator` |
+| `xcv_pool_destroy` | `proven_pool_destroy` |
+| `xcv_pool_init` | `proven_pool_init` |
+| `xcv_pool_t` | `proven_pool_t` |
+| `xcv_print` | `proven_print` |
+| `xcv_println` | `proven_println` |
+| `xcv_ptrdiff_t` | `proven_ptrdiff_t` |
+| `xcv_range_contains_ptr` | `proven_range_contains_ptr` |
+| `xcv_realloc_fn_t` | `proven_realloc_fn_t` |
+| `xcv_result_array_t` | `proven_result_array_t` |
+| `xcv_result_buf_t` | `proven_result_buf_t` |
+| `xcv_result_cstr_t` | `proven_result_cstr_t` |
+| `xcv_result_f64_t` | `proven_result_f64_t` |
+| `xcv_result_file_t` | `proven_result_file_t` |
+| `xcv_result_i64_t` | `proven_result_i64_t` |
+| `xcv_result_map_t` | `proven_result_map_t` |
+| `xcv_result_mem_mut_t` | `proven_result_mem_mut_t` |
+| `xcv_result_mem_view_t` | `proven_result_mem_view_t` |
+| `xcv_result_mmap_t` | `proven_result_mmap_t` |
+| `xcv_result_ring_t` | `proven_result_ring_t` |
+| `xcv_result_size_t` | `proven_result_size_t` |
+| `xcv_result_u16str_t` | `proven_result_u16str_t` |
+| `xcv_result_u64_t` | `proven_result_u64_t` |
+| `xcv_result_u8str_t` | `proven_result_u8str_t` |
+| `xcv_result_u8str_view_t` | `proven_result_u8str_view_t` |
+| `xcv_ring_create` | `proven_ring_create` |
+| `xcv_ring_destroy` | `proven_ring_destroy` |
+| `xcv_ring_is_valid` | `proven_ring_is_valid` |
+| `xcv_ring_pop` | `proven_ring_pop` |
+| `xcv_ring_push` | `proven_ring_push` |
+| `xcv_ring_t` | `proven_ring_t` |
+| `xcv_scan_arg_f64` | `proven_scan_arg_f64` |
+| `xcv_scan_arg_i32` | `proven_scan_arg_i32` |
+| `xcv_scan_arg_i64` | `proven_scan_arg_i64` |
+| `xcv_scan_arg_identity` | `proven_scan_arg_identity` |
+| `xcv_scan_arg_int` | `proven_scan_arg_int` |
+| `xcv_scan_arg_llong` | `proven_scan_arg_llong` |
+| `xcv_scan_arg_long` | `proven_scan_arg_long` |
+| `xcv_scan_arg_none` | `proven_scan_arg_none` |
+| `xcv_scan_arg_short` | `proven_scan_arg_short` |
+| `xcv_scan_arg_str_view` | `proven_scan_arg_str_view` |
+| `xcv_scan_arg_t` | `proven_scan_arg_t` |
+| `xcv_scan_arg_type_t` | `proven_scan_arg_type_t` |
+| `xcv_scan_arg_u32` | `proven_scan_arg_u32` |
+| `xcv_scan_arg_u64` | `proven_scan_arg_u64` |
+| `xcv_scan_arg_uint` | `proven_scan_arg_uint` |
+| `xcv_scan_arg_ullong` | `proven_scan_arg_ullong` |
+| `xcv_scan_arg_ulong` | `proven_scan_arg_ulong` |
+| `xcv_scan_arg_ushort` | `proven_scan_arg_ushort` |
+| `xcv_scan_f64` | `proven_scan_f64` |
+| `xcv_scan_fmt` | `proven_scan_fmt` |
+| `xcv_scan_fmt_cursor` | `proven_scan_fmt_cursor` |
+| `xcv_scan_fmt_from_file` | `proven_scan_fmt_from_file` |
+| `xcv_scan_fmt_from_stdin` | `proven_scan_fmt_from_stdin` |
+| `xcv_scan_fmt_internal` | `proven_scan_fmt_internal` |
+| `xcv_scan_fmt_internal_view` | `proven_scan_fmt_internal_view` |
+| `xcv_scan_i64` | `proven_scan_i64` |
+| `xcv_scan_init` | `proven_scan_init` |
+| `xcv_scan_skip_until` | `proven_scan_skip_until` |
+| `xcv_scan_skip_until_number` | `proven_scan_skip_until_number` |
+| `xcv_scan_skip_whitespace` | `proven_scan_skip_whitespace` |
+| `xcv_scan_str` | `proven_scan_str` |
+| `xcv_scan_t` | `proven_scan_t` |
+| `xcv_scan_u64` | `proven_scan_u64` |
+| `xcv_set_panic_handler` | `proven_set_panic_handler` |
+| `xcv_size_t` | `proven_size_t` |
+| `xcv_strtod` | `proven_strtod` |
+| `xcv_sysio_flush` | `proven_sysio_flush` |
+| `xcv_sysio_print_impl` | `proven_sysio_print_impl` |
+| `xcv_sysio_scan_chunk_impl` | `proven_sysio_scan_chunk_impl` |
+| `xcv_sysio_scanner_deinit` | `proven_sysio_scanner_deinit` |
+| `xcv_sysio_scanner_init` | `proven_sysio_scanner_init` |
+| `xcv_sysio_scanner_scan_impl` | `proven_sysio_scanner_scan_impl` |
+| `xcv_sysio_stderr` | `proven_sysio_stderr` |
+| `xcv_sysio_stdin` | `proven_sysio_stdin` |
+| `xcv_sysio_stdout` | `proven_sysio_stdout` |
+| `xcv_time_breakdown` | `proven_time_breakdown` |
+| `xcv_time_locale_en` | `proven_time_locale_en` |
+| `xcv_time_locale_t` | `proven_time_locale_t` |
+| `xcv_time_now` | `proven_time_now` |
+| `xcv_time_now_datetime` | `proven_time_now_datetime` |
+| `xcv_time_sleep` | `proven_time_sleep` |
+| `xcv_time_t` | `proven_time_t` |
+| `xcv_time_u16_fmt` | `proven_time_u16_fmt` |
+| `xcv_time_u8_fmt` | `proven_time_u8_fmt` |
+| `xcv_u16` | `proven_u16` |
+| `xcv_u16str_append` | `proven_u16str_append` |
+| `xcv_u16str_append_grow` | `proven_u16str_append_grow` |
+| `xcv_u16str_append_partial` | `proven_u16str_append_partial` |
+| `xcv_u16str_as_ptr` | `proven_u16str_as_ptr` |
+| `xcv_u16str_create` | `proven_u16str_create` |
+| `xcv_u16str_create_from_view` | `proven_u16str_create_from_view` |
+| `xcv_u16str_destroy` | `proven_u16str_destroy` |
+| `xcv_u16str_len` | `proven_u16str_len` |
+| `xcv_u16str_t` | `proven_u16str_t` |
+| `xcv_u16str_view_t` | `proven_u16str_view_t` |
+| `xcv_u32` | `proven_u32` |
+| `xcv_u64` | `proven_u64` |
+| `xcv_u8` | `proven_u8` |
+| `xcv_u8str_append` | `proven_u8str_append` |
+| `xcv_u8str_append_byte` | `proven_u8str_append_byte` |
+| `xcv_u8str_append_fmt` | `proven_u8str_append_fmt` |
+| `xcv_u8str_append_fmt_grow` | `proven_u8str_append_fmt_grow` |
+| `xcv_u8str_append_fmt_trunc` | `proven_u8str_append_fmt_trunc` |
+| `xcv_u8str_append_fmt_with_scratch` | `proven_u8str_append_fmt_with_scratch` |
+| `xcv_u8str_append_grow` | `proven_u8str_append_grow` |
+| `xcv_u8str_append_partial` | `proven_u8str_append_partial` |
+| `xcv_u8str_as_cstr` | `proven_u8str_as_cstr` |
+| `xcv_u8str_as_view` | `proven_u8str_as_view` |
+| `xcv_u8str_borrow` | `proven_u8str_borrow` |
+| `xcv_u8str_create` | `proven_u8str_create` |
+| `xcv_u8str_create_from_view` | `proven_u8str_create_from_view` |
+| `xcv_u8str_destroy` | `proven_u8str_destroy` |
+| `xcv_u8str_fmt_internal` | `proven_u8str_fmt_internal` |
+| `xcv_u8str_insert` | `proven_u8str_insert` |
+| `xcv_u8str_insert_grow` | `proven_u8str_insert_grow` |
+| `xcv_u8str_is_valid` | `proven_u8str_is_valid` |
+| `xcv_u8str_mut_t` | `proven_u8str_mut_t` |
+| `xcv_u8str_remove` | `proven_u8str_remove` |
+| `xcv_u8str_replace_at` | `proven_u8str_replace_at` |
+| `xcv_u8str_replace_at_grow` | `proven_u8str_replace_at_grow` |
+| `xcv_u8str_replace_first` | `proven_u8str_replace_first` |
+| `xcv_u8str_reserve` | `proven_u8str_reserve` |
+| `xcv_u8str_reset` | `proven_u8str_reset` |
+| `xcv_u8str_t` | `proven_u8str_t` |
+| `xcv_u8str_view_ends_with` | `proven_u8str_view_ends_with` |
+| `xcv_u8str_view_eq` | `proven_u8str_view_eq` |
+| `xcv_u8str_view_find` | `proven_u8str_view_find` |
+| `xcv_u8str_view_from_cstr` | `proven_u8str_view_from_cstr` |
+| `xcv_u8str_view_slice` | `proven_u8str_view_slice` |
+| `xcv_u8str_view_starts_with` | `proven_u8str_view_starts_with` |
+| `xcv_u8str_view_t` | `proven_u8str_view_t` |
+| `xcv_u8str_view_to_cstr` | `proven_u8str_view_to_cstr` |
+| `xcv_uintptr_align_up` | `proven_uintptr_align_up` |
+| `xcv_uintptr_t` | `proven_uintptr_t` |

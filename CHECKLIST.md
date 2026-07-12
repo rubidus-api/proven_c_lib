@@ -2,15 +2,12 @@
 
 ## Active Task
 
-- [x] B4: Grisu3 fast shortest path + Dragon4 exact fallback (f64 + f32)
-- [x] Generate `proven_float_grisu_powers` cached-power table (no libm)
-- [x] Validate round-trip + minimality over ~3M f64 / ~5M f32; all gates green
-- [x] Refresh benchmark docs and changelog
+- None.
 
 ## Always before committing
 
 - Update `include/proven/version.h` first.
-- Sync the visible version string in `README.md`, `SPEC.md`, `TEST.md`, `manual/`, `CHANGELOG.md`, and `docs-site/index.html` when present.
+- Sync the visible version string in `README.md` (both language halves), `TEST.md`, `manual/` (chapter headings and the `version.h` excerpt in chapter 1), and `CHANGELOG.md`.
 - Add a `CHANGELOG.md` entry that explains the change.
 - Keep public examples and help text on `/home/user/work/...` paths only.
 - Do not expose private host paths, share names, user names, or SSH key names in public docs or source comments.
