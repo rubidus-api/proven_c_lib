@@ -214,12 +214,31 @@ proven_result_map_t proven_map_create(proven_allocator_t alloc, proven_size_t in
         .align = align,
         .bucket_stride = bucket_stride,
         .payload_offset = payload_offset,
-        .key_type = key_type
+        .key_type = key_type,
+        .trusted_keys = false
     };
 
     res.err = PROVEN_OK;
     res.value = map;
     return res;
+}
+
+/*
+ * Contract first, implementation next (docs/TESTING.md §5.1). These are the stubs the
+ * keyed-hash test was written against; proven_map_create_trusted is real (it only flips a
+ * flag), but the default create still hashes strings with FNV, so the test's assertion that
+ * a default map's hash differs from FNV lands RED here and goes green in the next commit.
+ */
+proven_result_map_t proven_map_create_trusted(proven_allocator_t alloc, proven_size_t init_cap, proven_key_type_t key_type, proven_size_t elem_size, proven_size_t align) {
+    proven_result_map_t r = proven_map_create(alloc, init_cap, key_type, elem_size, align);
+    if (PROVEN_IS_OK(r.err)) r.value.trusted_keys = true;
+    return r;
+}
+
+proven_u64 proven_map_hash(const proven_map_t *map, proven_map_key_t key) {
+    if (!map) return 0;
+    /* stub: report the same non-keyed hash the internals currently use */
+    return (proven_u64)get_hash(map->key_type, key);
 }
 
 bool proven_map_is_valid(const proven_map_t *map) {
