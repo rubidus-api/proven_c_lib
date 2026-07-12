@@ -11,6 +11,78 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-12] — proven_c_lib-v26.07.12b
+
+### Fixed
+
+- `proven_array_sort` was quadratic on duplicate keys. The Lomuto partition used
+  a strict `cmp(x, pivot) < 0` test, so every element *equal* to the pivot went
+  into the right partition; on a low-cardinality key - a status column, an enum,
+  a bucket id - the split collapsed to 1/(n-1). Sorting 100,000 identical
+  `int32` keys took **10.6 seconds**. A caller sorting data an attacker can shape
+  had a denial of service, not merely a slow path. Replaced with an introsort:
+  a Bentley-McIlroy three-way partition (so an equal run is final and never
+  recursed into, and every element is compared exactly once), an insertion-sort
+  cutoff, and a heapsort fallback past a depth of `2*log2(n)` - which is what
+  makes the O(n log n) bound a guarantee rather than a hope, since
+  median-of-three alone can still be driven quadratic.
+- A `proven_job_system` worker could exit leaving an accepted job unrun. A
+  submitter that passed `begin_submit` before the close can have claimed its slot
+  with the enqueue CAS without yet publishing `cell->sequence`, which to a
+  dequeuer is indistinguishable from an empty queue. The last worker could
+  therefore exit, the submitter then publish, and `proven_job_submit` return true
+  for a job nobody would ever run - while `proven_job_system_destroy`, documented
+  to block until the queue is exhausted, returned. A worker now leaves only once
+  no submitter is in flight *and* the queue is still empty when re-checked.
+- `proven_fs_read_all` allocated twice the file size for every regular file: the
+  buffer was seeded to the exact reported size, so the read loop filled it and
+  then had to grow before it could issue the read that would observe EOF. Peak
+  memory was 3x the file. EOF is now confirmed with a one-byte probe, and the
+  buffer grows only if the source really does outrun its reported size.
+- `proven_fs_read_all_u8str` started from a one-byte buffer for any source that
+  reports no size: the chunk fallback tested the capacity, which is never 0 once
+  a terminator byte is reserved. Reading `/proc/self/status` took 12 reallocs.
+- `proven_fs_write_file_atomic` widened permissions. The temp sibling is created
+  with `0666 & ~umask` and `rename` carries its mode onto the target, so
+  atomically rewriting a `0600` key file republished it as `0644`. The target's
+  mode is now copied onto the temp before the rename.
+- `proven_fs_write_file_atomic` failed on legal long filenames: a 250-character
+  basename - which `proven_fs_write_file` accepts - made the temp sibling exceed
+  `NAME_MAX`. The copied stem is now trimmed to leave room for the suffix.
+- `proven_fs_stat` put the raw `st_mode` into `perms`, a field typed
+  `proven_fs_perms_t`. `st_mode` also carries the file-type bits, and
+  `proven_fs_chmod` rejects any bit outside the nine it supports - so
+  `chmod(path, stat(path).perms)`, the obvious use of the field, returned
+  `PROVEN_ERR_INVALID_ARG` for every real file. `perms` is now masked to the low
+  nine bits.
+
+### Changed
+
+- The decimal parser's exponent-bounds estimate no longer uses `long double`,
+  the one type in C whose width differs across the targets this library builds
+  for (80-bit on x86, 128-bit on aarch64, plain 64-bit on armhf and MSVC). The
+  estimate happened to come out identical on all of them - verified over the
+  entire input range it can see - so nothing was ever wrong, but a
+  correctness-critical path had no business depending on it, and on a soft-float
+  target it pulled in libgcc routines for no reason. Replaced with an integer
+  fixed-point computation, bit-identical to the exact `floor(k * log2(10))` for
+  every k in range, and verified to produce byte-identical parse results over
+  3,000,000 randomized decimal inputs.
+- `proven_fmt` appends literal text in runs instead of one character at a time.
+  Each literal character used to cost a checked add, an out-of-line one-byte
+  move and a NUL reseal - twice, since the format string is walked once to
+  measure and once to write. A 101-character literal went from 1322 ns to 166 ns;
+  a four-argument log line from 998 ns to 307 ns.
+- `proven_map_set` no longer probes the same chain twice. It validated the map,
+  then `set_with_scratch` validated it again, then walked the probe chain looking
+  for an existing key, then called `map_insert_no_grow` - which walks the same
+  chain and already overwrites a key it finds. The probe is now taken only when
+  the map is about to grow, where it still saves an unnecessary rehash. 500k
+  int inserts: 215.5 ns -> 190.2 ns per op.
+- Sorting wide elements is faster: `swap_elements` takes a bulk-copy branch above
+  16 bytes instead of swapping a byte at a time. 100k 48-byte structs:
+  59.2 ms -> 16.2 ms.
+
 ## [2026-07-12] — proven_c_lib-v26.07.12a
 
 ### Fixed

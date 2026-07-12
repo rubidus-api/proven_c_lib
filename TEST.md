@@ -792,6 +792,21 @@ Note: the string checks allocate from an arena over deliberately poisoned backin
 
 Failure tip: each section names one area - `proven_u8str_reserve` in `u8str.c`, the growth branch and `PROVEN_ARG_DATETIME` case in `fmt.c`, the init ordering in `pool.c`.
 
+### 30d. `tests/test_regression_sort_duplicates` - sort on duplicate keys
+
+Intent: verify `proven_array_sort` stays sub-quadratic on duplicate and degenerate input.
+
+Sub-checks:
+
+- 20,000 all-equal keys: comparison count must stay below 40n. A two-way partition that sends equal elements to one side needs ~2x10^8 comparisons here.
+- 20,000 keys drawn from 8 distinct values: comparison count below 60n.
+- Sorted, reverse-sorted, and organ-pipe orderings: comparison count below 60n each - the classic quicksort killers, bounded by median-of-three plus the heapsort depth fallback.
+- 48-byte elements with a payload tied to the key, to catch a torn bulk swap.
+
+Note: this suite counts comparisons, not wall-clock time. A timing threshold is a flaky test on a shared machine; the comparison count is exactly what blew up.
+
+Failure tip: inspect the partition in `src/proven/algorithm.c`. Equal elements must be collected into a run that is final and never recursed into.
+
 ### 31. `tests/test_regression_source_contracts` - source portability contracts
 
 Intent: guard platform branches and documentation/test-output contracts that may not be executable on the current host.
@@ -911,6 +926,7 @@ Failure tip: inspect `proven_sysio_scanner_init` in `src/proven/sysio.c`. If a p
 - `tests/test_regression_fs_copy_to_self`
 - `tests/test_regression_fs_slurp`
 - `tests/test_regression_scanner_rollback`
+- `tests/test_regression_sort_duplicates`
 - `tests/test_regression_source_contracts`
 
 Intent: provide a short feedback loop for bug-fix work without running every hosted example and container test.
