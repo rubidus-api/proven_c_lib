@@ -415,6 +415,21 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
             err = PROVEN_ERR_NEED_MORE;
         }
 
+        /*
+         * The parse failed AT the end of what we have, and the stream has not ended: the
+         * rest of the token is still in flight. Ask for it.
+         *
+         * Without this, a number or a literal split across a read boundary was reported as
+         * malformed input - "-" then "12" was PROVEN_ERR_INVALID_ARG, "ke" then "y=7" was
+         * PROVEN_ERR_NOT_FOUND - because the scan engine, which works on a complete view,
+         * has always treated "the input ran out" and "the input is wrong" as the same fact.
+         * For a view they ARE the same fact. For a stream they are opposites, and only the
+         * engine knows which one happened, so it says so now (proven_scan_t::needs_more).
+         */
+        if (!proven_is_ok(err) && !scanner->eof && scan.needs_more) {
+            err = PROVEN_ERR_NEED_MORE;
+        }
+
         if (err == PROVEN_ERR_NEED_MORE) {
             proven_size_t read_bytes = 0;
             proven_size_t shifted = 0;

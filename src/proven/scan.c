@@ -12,6 +12,12 @@ static bool is_digit(proven_u8 c) {
     return c >= (proven_u8)'0' && c <= (proven_u8)'9';
 }
 
+/* The parse failed at the very end of what we have: over a stream, that means "ask again
+ * when more has arrived", not "this input is wrong". */
+static void scan_mark_needs_more(proven_scan_t *scan) {
+    if (scan) scan->needs_more = true;
+}
+
 static bool scan_valid(const proven_scan_t *scan) {
     return scan && (scan->view.size == 0 || scan->view.ptr != (void*)0) && scan->cursor <= scan->view.size;
 }
@@ -31,10 +37,15 @@ void proven_scan_skip_whitespace(proven_scan_t *scan) {
 
 proven_result_u64_t proven_scan_u64(proven_scan_t *scan) {
     if (!scan_valid(scan)) return (proven_result_u64_t){ .err = PROVEN_ERR_INVALID_ARG };
+    scan->needs_more = false;
     proven_scan_skip_whitespace(scan);
-    
+
     proven_size_t start_cursor = scan->cursor;
-    if (scan->cursor >= scan->view.size || !is_digit(scan->view.ptr[scan->cursor])) {
+    if (scan->cursor >= scan->view.size) {
+        scan_mark_needs_more(scan);
+        return (proven_result_u64_t){ .err = PROVEN_ERR_INVALID_ARG };
+    }
+    if (!is_digit(scan->view.ptr[scan->cursor])) {
         return (proven_result_u64_t){ .err = PROVEN_ERR_INVALID_ARG };
     }
 
@@ -61,10 +72,12 @@ proven_result_u64_t proven_scan_u64(proven_scan_t *scan) {
 
 proven_result_i64_t proven_scan_i64(proven_scan_t *scan) {
     if (!scan_valid(scan)) return (proven_result_i64_t){ .err = PROVEN_ERR_INVALID_ARG };
+    scan->needs_more = false;
     proven_scan_skip_whitespace(scan);
-    
+
     proven_size_t start_cursor = scan->cursor;
     if (scan->cursor >= scan->view.size) {
+        scan_mark_needs_more(scan);
         return (proven_result_i64_t){ .err = PROVEN_ERR_INVALID_ARG };
     }
 
@@ -77,7 +90,15 @@ proven_result_i64_t proven_scan_i64(proven_scan_t *scan) {
     }
 
     // No whitespace allowed after sign
-    if (scan->cursor >= scan->view.size || !is_digit(scan->view.ptr[scan->cursor])) {
+    if (scan->cursor >= scan->view.size) {
+        /* A sign and nothing after it. Over a stream the digits are simply still in
+         * flight - "-" arrived, "12" has not - and calling that a malformed number
+         * meant the buffered scanner could not read a number split across a read. */
+        scan_mark_needs_more(scan);
+        scan->cursor = start_cursor;
+        return (proven_result_i64_t){ .err = PROVEN_ERR_INVALID_ARG };
+    }
+    if (!is_digit(scan->view.ptr[scan->cursor])) {
         scan->cursor = start_cursor;
         return (proven_result_i64_t){ .err = PROVEN_ERR_INVALID_ARG };
     }
@@ -123,10 +144,12 @@ proven_result_i64_t proven_scan_i64(proven_scan_t *scan) {
 
 proven_result_f64_t proven_scan_f64(proven_scan_t *scan) {
     if (!scan_valid(scan)) return (proven_result_f64_t){ .err = PROVEN_ERR_INVALID_ARG };
+    scan->needs_more = false;
     proven_scan_skip_whitespace(scan);
 
     proven_size_t start_cursor = scan->cursor;
     if (scan->cursor >= scan->view.size) {
+        scan_mark_needs_more(scan);
         return (proven_result_f64_t){ .err = PROVEN_ERR_INVALID_ARG };
     }
 
@@ -158,9 +181,11 @@ proven_result_f64_t proven_scan_f64(proven_scan_t *scan) {
 
 proven_result_u8str_view_t proven_scan_str(proven_scan_t *scan) {
     if (!scan_valid(scan)) return (proven_result_u8str_view_t){ .err = PROVEN_ERR_INVALID_ARG };
+    scan->needs_more = false;
     proven_scan_skip_whitespace(scan);
-    
+
     if (scan->cursor >= scan->view.size) {
+        scan_mark_needs_more(scan);
         return (proven_result_u8str_view_t){ .err = PROVEN_ERR_INVALID_ARG };
     }
 
@@ -248,6 +273,7 @@ static proven_err_t proven_scan_fmt_count_placeholders(const char *fmt, proven_s
 proven_err_t proven_scan_fmt_internal(proven_scan_t *scan, const char *fmt, const proven_scan_arg_t *args, proven_size_t args_count) {
     if (!scan_valid(scan) || !fmt || (args_count > 0 && !args)) return PROVEN_ERR_INVALID_ARG;
     if (args_count == 0 || args[0].type != PROVEN_SCAN_ARG_TYPE_NONE) return PROVEN_ERR_INVALID_ARG;
+    scan->needs_more = false;
 
     proven_size_t placeholder_count = 0;
     proven_err_t count_err = proven_scan_fmt_count_placeholders(fmt, &placeholder_count);
@@ -525,7 +551,13 @@ proven_err_t proven_scan_fmt_internal(proven_scan_t *scan, const char *fmt, cons
                 while (*p != '\0' && is_whitespace((proven_u8)*p)) p++;
                 continue;
             } else {
-                if (scan->cursor >= scan->view.size || scan->view.ptr[scan->cursor] != (proven_u8)*p) {
+                if (scan->cursor >= scan->view.size) {
+                    /* The literal is not absent - it has not arrived. "key=" against a
+                     * pipe that has so far delivered "ke" is not a mismatch. */
+                    scan_mark_needs_more(scan);
+                    return PROVEN_ERR_NOT_FOUND;
+                }
+                if (scan->view.ptr[scan->cursor] != (proven_u8)*p) {
                     return PROVEN_ERR_NOT_FOUND;
                 }
                 scan->cursor++;

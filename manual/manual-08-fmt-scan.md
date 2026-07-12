@@ -913,6 +913,16 @@ the point:
 `proven_scan_str` returns the next whitespace-delimited run as a view into the
 input. Nothing left but whitespace is `PROVEN_ERR_INVALID_ARG`.
 
+On a **complete view**, "the input ran out" and "the input is wrong" are the same fact -
+there is no more input, so a number cut off at the end really is malformed. Over a
+**stream** they are opposite facts, and the difference decides whether you wait or report
+an error. The scanner sets `proven_scan_t::needs_more` when the parse ran off the end of
+what it had, and the buffered scanner uses exactly that to refill and retry: a pipe that
+delivers `-` and then, a moment later, `12` scans as `-12`. Before, it was a malformed
+number. A wrong byte that is actually *present* - a letter where a digit belongs - is
+still an error, and no amount of further input will change that; the scanner does not wait
+for it.
+
 `proven_scan_skip_until(scan, target)` moves the cursor **to** the target, not past
 it - you decide how much of it to consume. If the target is not there the result is
 `PROVEN_ERR_NOT_FOUND` **and the cursor does not move**: the scanner does not consume
@@ -988,6 +998,7 @@ own, so it mixes freely with the primitives of §8.
 |---|---|---|
 | `PROVEN_OK` | Every placeholder was filled and every literal matched. | Publish the values. |
 | `PROVEN_ERR_INVALID_ARG` | The input is not the shape you asked for - a placeholder had no value to read, or the input ran out. | The line does not match. Report it; do not retry the same shape. |
+| `PROVEN_ERR_NEED_MORE` | **Buffered scanner only.** The token is cut in half by the read boundary: the rest of it has not arrived yet. You will not normally see this - `proven_sysio_scanner_scan` refills and retries for you - it is what the scanner says to itself. | Nothing. It is handled. |
 | `PROVEN_ERR_NOT_FOUND` | A **literal** in the format did not match. | The line has a different shape than expected. Try another format, from a saved cursor. |
 | `PROVEN_ERR_OVERFLOW` | A number was well-formed but does not fit the destination. | The input may be valid and your destination too narrow, or the input may be hostile. Those are very different situations - tell them apart before widening the type. |
 | `PROVEN_ERR_INVALID_FORMAT` | The format string itself is malformed. | A bug in your code, not in the input. |
