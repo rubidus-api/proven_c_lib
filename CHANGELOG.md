@@ -11,6 +11,77 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-12] — proven_c_lib-v26.07.12a
+
+### Fixed
+
+- `proven_fs_read_all` silently returned an empty buffer for any source whose
+  size cannot be measured up front. `proven_sys_fs_size` reports 0 for anything
+  that is not a regular file, and `read_all` used that 0 as its buffer size, so
+  reading a FIFO, a character device, or a `/proc` entry succeeded with zero
+  bytes and dropped the contents. `proven_fs_size("/proc/self/status")` is
+  `0`/`PROVEN_OK`, so a 1516-byte file read as empty. `read_all` now reads to
+  EOF and uses the reported size only to seed the initial capacity: a regular
+  file is still one allocation and one pass, an unmeasurable source is read
+  correctly, and a regular file that grows mid-read is no longer truncated.
+- Stack buffer overflow formatting a `proven_datetime_t` with a negative year.
+  `year` is `proven_i32`, but it was cast to `unsigned long long` before
+  conversion, so `-1` became `18446744073709551615` — twenty digits plus a NUL
+  into a twenty-byte scratch buffer (ASan: stack-buffer-overflow in `itoa_raw`).
+  The year now renders with its sign, and the scratch holds any 64-bit value.
+- `proven_sysio_scanner_scan_impl` corrupted the stream when it rolled back a
+  failed scan. `scanner_fill` compacts the buffer, but the rollback restored the
+  cursor and length captured *before* that compaction, so the restored indices
+  described different bytes: one byte was dropped from the front of the stream
+  and one byte — already returned to the file by the rewind — was read twice.
+  The rollback now accounts for how far the buffer moved. On a non-seekable
+  input, where the rewind cannot succeed, the bytes already read are kept
+  buffered instead of being discarded.
+- `proven_u8str_reserve` and the growth path of the formatter left `ptr[len]`
+  uninitialized. Both allocate, and allocators do not return zeroed memory, so
+  reserving on a zero-initialized string — or formatting something that produces
+  no output — broke the NUL seal that `proven_u8str_as_cstr` is documented to
+  rely on, and `proven_u8str_is_valid` rejected the result. Both paths now seal
+  the terminator.
+- `proven_pool_init` published `bin_cap` before allocating the bin behind it, so
+  a failed init left a pool claiming slots it did not have. The free trait tests
+  `bin_len < bin_cap` and then writes `bin[bin_len]`, which with `bin == NULL` is
+  a null write. `bin_cap` is now set only after the bin exists.
+- Unchecked `count * size` arithmetic in `proven_sysio_scanner_scan_impl`, a
+  public entry point that takes `args_count` from the caller. It is now routed
+  through `PROVEN_CKD_MUL` like every other size computation in the library.
+
+### Added
+
+- `proven_fs_read_all_u8str`: the whole-file read most callers actually want,
+  returning a NUL-terminated owned `proven_u8str_t` so `proven_u8str_as_view` and
+  `proven_u8str_as_cstr` work on the result without a second copy. The terminator
+  slot is reserved up front, so it costs no extra allocation over `read_all`.
+- `proven_fs_write_file`: one-call create-or-truncate whole-file write, the half
+  of the API that was missing next to `read_all`.
+- `proven_fs_write_file_atomic`: writes through a sibling temp file and renames
+  it over the target, so a concurrent reader never observes a half-written file.
+  Atomic with respect to readers, not durable across power loss — proven exposes
+  no fsync, and the header says so.
+- `[[nodiscard]]` on `proven_sysio_scanner_scan_impl` and
+  `proven_sysio_scan_chunk_impl`. `proven_sysio_print_impl` is deliberately left
+  unannotated: `proven_print` expands to it and is used as `printf` is.
+
+### Changed
+
+- `proven_sys_mem_realloc` can now grow a block in place. Every allocation used
+  to go through `posix_memalign` / `_aligned_malloc`, which cannot be handed to
+  `realloc()`, so growth always paid a full copy. Requests at or below
+  `alignof(max_align_t)` — every string, buffer, and byte array in the library —
+  now come from `malloc` and grow through `realloc`, which for large blocks
+  remaps pages instead of copying them. Over-aligned requests keep the aligned
+  path. Windows keeps every block on the aligned family (`free` and
+  `_aligned_free` are not interchangeable, and the free trait is not told the
+  alignment) and uses `_aligned_realloc`. Failure atomicity is unchanged.
+  Measured, with every byte of the buffer written: growing a buffer to 256 MiB by
+  doubling went from 0.69s to 0.32s (2.1x); 200k small allocations with six
+  reallocs each went from 0.05s to 0.035s (1.4x).
+
 ## [2026-06-24] — proven_c_lib-v26.06.24b
 
 ### Fixed
