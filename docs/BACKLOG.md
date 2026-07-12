@@ -20,67 +20,31 @@ An item with no exit condition is a complaint, not a backlog item.
 
 ## Open
 
-### B-003 — the process is test-after, not test-first
-
-**Status:** open. This is a process item, not a code item. See
-`docs/TESTING.md` for the full account.
-
-Regression tests in this repository are genuinely test-first: each one was written
-against the *unfixed* source, watched to fail, and only then was the fix written.
-That discipline is real and it is enforced — a regression test that passes before
-the fix is not a regression test, and the catalog says so.
-
-New *features*, however, are written first and tested afterwards. The whole-file
-API (`proven_fs_read_all_u8str`, `write_file`, `write_file_atomic`) was implemented
-and then covered. The introsort was written and then fuzzed. That is not TDD, and
-calling it TDD would be a lie the next person would have to discover for themselves.
-
-The cost is not hypothetical: the second audit found four defects in the
-whole-file API *after* it had been written and tested — a doubled allocation, a
-one-byte starting buffer, a permission widening, a `NAME_MAX` failure. Tests
-written first, from the contract, would have caught at least the first two,
-because they are questions you ask when you are designing the contract ("what
-does it cost?", "what happens when the size is unknown?") and questions you do
-not think to ask when you are confirming code you already believe in.
-
-**Done looks like:** a decision, recorded in `docs/TESTING.md`, on whether
-new public API is written test-first — and if so, the first feature that follows
-it end to end, with the failing test in one commit and the implementation in the
-next, so the discipline is visible in the history rather than merely claimed.
-
-**Why not now:** it is a change to how the project works, and it should be a
-deliberate choice, not something a documentation pass slips in.
-
----
-
-### B-011 — the modules that had never been audited had defects in every one
-
-**Status:** open (a process item, like B-003).
-
-Three adversarial audits in one day — the scanner and float engine, the containers,
-the platform layer — found a defect of consequence in **every module that had never
-had one**: the "correctly rounded" float parser was not correctly rounded (2,923
-misrounded values against glibc), the buffered scanner could not read a pipe (the one
-thing it exists for), a map with churn grew without bound (33 MB for 100 live entries),
-`append_grow` of an empty view left the string unterminated, and the sort handed the
-caller's comparator a misaligned pointer.
-
-None of those were found by the test suite, and none of them would have been. Every one
-of them was correct for the input the tests used and silently wrong for the input the
-code will actually meet: a file rather than a pipe, a short input rather than a
-twenty-digit one, a run rather than a churn.
-
-**Done looks like:** a decision on whether an adversarial audit — a reader whose job is
-to find the input that breaks it, with a reproducer required before anything is reported
-— is a standing part of the process for new modules, or a thing that happens when
-somebody thinks of it. And, if it is standing: what triggers it.
-
-**Why not now:** same reason as B-003. It changes how the project works, and that is a
-choice to make deliberately.
+_Nothing open._
 
 ---
 
 ## Done
+
+### B-003 — the process was test-after (closed v26.07.13b)
+
+**Decision (2026-07-13): new public API is written test-first, in separate commits** — the
+contract and a failing test in one, the implementation in the next. Recorded in
+`docs/TESTING.md` §5.1, with the reasoning and the case study (the whole-file API, which was
+written first, tested afterwards, and then found to have four defects an audit had to catch).
+`proven_fs_walk` is the first feature to follow the rule end to end; `git log` shows the two
+commits.
+
+Defect fixes were already test-first in method and stay that way.
+
+### B-011 — the adversarial audit was ad hoc (closed v26.07.13b)
+
+**Decision (2026-07-13): the adversarial audit is a standing part of the process.** It runs on
+every new module or public API, on any module that has never had one, on the fixes an audit
+itself produced (that is where the next bugs are — one such round found three regressions,
+including a heap-buffer-overflow), and before a release. A reproducer is required before any
+finding may be reported. Recorded in `docs/TESTING.md` §5.2, with the evidence: pointed at the
+modules that had never had it, it found a defect of consequence in every single one.
 
 Items are moved here with the commit that closed them, so the reasoning survives.
 
