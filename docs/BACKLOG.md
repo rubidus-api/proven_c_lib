@@ -23,7 +23,7 @@ An item with no exit condition is a complaint, not a backlog item.
 ### B-003 — the process is test-after, not test-first
 
 **Status:** open. This is a process item, not a code item. See
-`docs/tests/TESTING.md` for the full account.
+`docs/TESTING.md` for the full account.
 
 Regression tests in this repository are genuinely test-first: each one was written
 against the *unfixed* source, watched to fail, and only then was the fix written.
@@ -43,7 +43,7 @@ because they are questions you ask when you are designing the contract ("what
 does it cost?", "what happens when the size is unknown?") and questions you do
 not think to ask when you are confirming code you already believe in.
 
-**Done looks like:** a decision, recorded in `docs/tests/TESTING.md`, on whether
+**Done looks like:** a decision, recorded in `docs/TESTING.md`, on whether
 new public API is written test-first — and if so, the first feature that follows
 it end to end, with the failing test in one commit and the implementation in the
 next, so the discipline is visible in the history rather than merely claimed.

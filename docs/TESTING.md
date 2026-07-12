@@ -161,10 +161,32 @@ notice, because nothing had been asked to.
 **What we do instead of TDD, and where it works.** The real engine of quality here
 is not test-first; it is **adversarial verification after the fact** — sanitizers
 on every mode, differential oracles, exhaustive sweeps, and independent audits
-whose brief is to break the thing. It works: it found twelve real defects this
-cycle, two of them memory-safety. But it works *late*. It finds bugs in shipped
-code instead of preventing them in unwritten code, and every one of them costs a
-fix, a test, a changelog entry, and a release.
+whose brief is to break the thing, with a reproducer required before anything may
+be reported. It works, and the evidence is not subtle. Turned on the modules that
+had never had it, it found a defect of consequence in **every one of them**:
+
+- the "correctly rounded" float parser was not correctly rounded — 2,923 values
+  misrounded against glibc, every one of them an exact halfway value, every one
+  returning `PROVEN_OK`;
+- the buffered scanner could not read a **pipe**, which is the one thing it exists
+  for: a short read was treated as end-of-input, so a token straddling the boundary
+  was committed **truncated** and the rest of the stream became unreachable;
+- a map with churn grew **without bound** — 100 live entries, 33 MB;
+- `append_grow` of an empty view left a fresh heap block unterminated, and `as_cstr`
+  read off the end of it;
+- the sort handed the caller's comparator a pointer of alignment 1;
+- a buffered writer that had failed reported **success** on the next flush.
+
+Not one of those was found by the test suite, and not one of them would have been.
+Every one was correct for the input the tests used and silently wrong for the input
+the code will actually meet: a pipe rather than a file, a twenty-digit number rather
+than a short one, a churn rather than a run, a full disk rather than an empty one.
+
+But it works *late*. It finds bugs in shipped code instead of preventing them in
+unwritten code, and every one of them costs a fix, a test, a changelog entry, and a
+release. Whether the audit becomes a standing part of the process — and what triggers
+it — is recorded as **B-011**, unresolved, for the same reason as B-003: it changes how
+the project works, and that is a choice to make deliberately.
 
 **The open question is recorded, not resolved.** See `docs/BACKLOG.md` item
 **B-003**. The decision to make is whether new *public API* is written test-first —
