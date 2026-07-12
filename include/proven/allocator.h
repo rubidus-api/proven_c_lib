@@ -12,11 +12,27 @@
 
 /**
  * @brief Function signature for a raw memory allocation trait.
+ *
+ * @note `align` must be a power of two.
+ * @note A block must be reallocated with the SAME `align` it was allocated with,
+ *       and freed through the same allocator. An allocator is entitled to pick a
+ *       different underlying mechanism for over-aligned requests than for
+ *       ordinary ones - the heap allocator does exactly that, using malloc and
+ *       realloc when `align <= alignof(max_align_t)` (which is every string,
+ *       buffer and byte array in this library) so that growth can happen in
+ *       place, and an aligned allocator otherwise. Handing a block back with a
+ *       different alignment class is undefined.
  */
 typedef proven_result_mem_mut_t (*proven_alloc_fn_t)(void *ctx, proven_size_t size, proven_size_t align);
 
 /**
  * @brief Function signature for reallocating memory through the trait.
+ *
+ * @note `old_size` and `align` must be the ones the block was allocated with.
+ * @note `new_size == 0` frees the block and returns a null pointer with
+ *       PROVEN_OK.
+ * @note Failure atomicity: on failure `old_ptr` must be left valid and
+ *       unmodified, so the caller still owns the original block.
  */
 typedef proven_result_mem_mut_t (*proven_realloc_fn_t)(void *ctx, void *old_ptr, proven_size_t old_size, proven_size_t new_size, proven_size_t align);
 

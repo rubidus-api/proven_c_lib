@@ -826,6 +826,7 @@ int main(int argc, char **argv)
         { "tests/test_float_format_policy", "float format policy scaffold", "Verify the new float format policy seam preserves the current simple formatter behavior, rejects unsupported shortest-mode requests, and reports invalid inputs clearly.", "Inspect src/proven/float_format.c and include/proven/float_format.h if the policy dispatch or fixed formatter helper regresses." },
         { "tests/test_float_format_shortest_known", "float shortest known values", "Verify the shortest float formatting policy emits the documented exact spellings for representative f64 and f32 values.", "Inspect src/proven/float_format.c if the shortest-policy output drifts or if RYU requests stop reaching the active backend." },
         { "tests/test_float_shortest_roundtrip", "float shortest round-trip", "Verify shortest float formatting round-trips through host strtod for representative f64 and f32 values.", "Inspect src/proven/float_format.c if the shortest output stops round-tripping, and keep the host strtod oracle limited to tests." },
+        { "tests/test_float_format_shortest_roundtrip", "float shortest formatter round-trip", "Verify the shortest formatter round-trips through the parser across the documented corpora.", "Inspect src/proven/float_format.c and the shortest-digit engines if a value fails to round-trip." },
         { "tests/test_float_shortest_tie_break", "float shortest tie-break corpus", "Verify the shortest corpus keeps the 0.001 fixed-versus-scientific tie-break cases pinned for both widths.", "Inspect tests/test_float_shortest_roundtrip.c and tests/test_float_upgrade_corpus.c if the tie-break corpus disappears or is renamed." },
         { "tests/test_float_shortest_scientific_guard", "float shortest scientific guard", "Verify the shortest float formatter handles very small finite values by producing a valid shortest candidate instead of an invalid scientific normalization result.", "Inspect src/proven/float_decimal.c and src/proven/float_format.c if the shortest formatter rejects a tiny finite value or emits an invalid scientific spelling." },
         { "tests/test_float_host_oracle", "float host oracle", "Verify representative finite float parsing and simple fixed-format rendering match the platform C library on the same inputs without sharing implementation code.", "Inspect src/proven/scan.c and src/proven/float_format.c if the host oracle and library disagree on the representative finite corpus." },
@@ -862,6 +863,7 @@ int main(int argc, char **argv)
         { "tests/test_float_module_scaffold", "float module scaffold", "Verify the shared float helpers live in a dedicated internal translation unit instead of being copied into fmt.c and scan.c.", "Inspect src/proven/float_decimal.c, src/proven/float_decimal.h, fmt.c, scan.c, and nob.c if the shared decimal helper scaffold regresses." },
         { "tests/test_arena_panic", "arena panic path", "Verify alloc-or-panic succeeds when capacity exists and invokes the panic hook on arena exhaustion.", "Check panic hook installation/restoration and arena capacity math; a failure can hide fatal OOM paths." },
         { "tests/test_alias_smoke", "alias layer smoke", "Verify public XCV alias macros continue to compile and map to the intended canonical proven APIs.", "Inspect include/proven/alias_xcv.h and TEST.md alias coverage when public symbols are renamed or added." },
+        { "tests/test_alias_completeness", "alias layer completeness", "Verify every public proven_* function has an xcv_* alias, by parsing the public headers and the alias header.", "A listed name has no alias: add `#define xcv_<name> proven_<name>` to include/proven/alias_xcv.h, keeping the file alphabetical. A half-covered alias layer fails at the caller's call site, not here." },
     };
 
     const Proven_Test_Case regression_tests[] = {
@@ -888,6 +890,7 @@ int main(int argc, char **argv)
 
     const Proven_Test_Case benchmark_tests[] = {
         { "tests/test_float_parse_path_benchmark", "float parse path benchmark", "Compare the shared float parser, wrapper, and host strtod on separate path-oriented decimal corpora and record dated docs output.", "Inspect src/proven/float_parse.c, src/proven/float_decimal.c, and the path-specific corpus split if the timing harness fails or any checksum drifts." },
+        { "tests/test_float_parse_benchmark", "float parse benchmark", "Time the decimal parser against the host strtod on a mixed corpus and record the result.", "Inspect src/proven/float_parse.c and src/proven/float_decimal.c if a timing run regresses or a checksum drifts." },
     };
 
     print_proven_build_plan(build_mode, compiler_exe, linker_exe, archiver_exe, sysroot, build_root, build_dir,

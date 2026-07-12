@@ -11,6 +11,76 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-12] — proven_c_lib-v26.07.12c
+
+A documentation-currency release, plus the API-surface gap that the sweep turned up.
+
+### Added
+
+- 25 missing `xcv_*` aliases. `include/proven/alias_xcv.h` claims to cover the
+  public API and did not: three functions added in v26.07.12b had no alias, and
+  22 more had been missing for months - among them `proven_fs_write_all`,
+  `proven_panic`, `proven_strtod`, `proven_pool_destroy` and the `sysio` scanner
+  entry points. An alias layer that covers most of the API is worse than none:
+  the caller finds the gaps one compile error at a time, at whichever call site
+  happens to need the one function nobody aliased. The layer now covers all 203
+  public functions.
+- `tests/test_alias_completeness` - parses the public headers and the alias
+  header and fails the build if any public function has no alias. `test_alias_smoke`
+  could never have caught this: it hand-picks a subset of aliases and only checks
+  that they compile, so it cannot notice one that is absent. This is the only way
+  a list like that stays true.
+- Two tests that existed on disk but were never registered in `nob.c` -
+  `tests/test_float_format_shortest_roundtrip` and `tests/test_float_parse_benchmark` -
+  are registered and now actually run. Both pass.
+
+### Fixed
+
+- `proven_array_sort`'s header comment still described it as "a robust quicksort".
+  It is an introsort, and the two properties that matter to a caller - the
+  O(n log n) guarantee, and duplicate keys being the fast case rather than the
+  quadratic one - were documented nowhere a caller would look.
+- The allocator's alignment-class contract was undocumented. v26.07.12b made the
+  heap allocator route `align <= alignof(max_align_t)` through malloc/realloc (so
+  growth can happen in place) and over-aligned requests through the aligned
+  family. A block must therefore be reallocated and freed with the alignment it
+  was allocated with - a real obligation on callers that existed only as a comment
+  in a `.c` file. Now stated in `allocator.h`, `platform/proven_sys_mem.h`, and
+  manual chapter 2.
+- `docs/float-correctness-and-performance.md` still said the parser used
+  `long double` to seed its exponent estimate. It has not since v26.07.12b; the
+  whole engine is integer-only now, formatter and parser alike.
+- `proven_fs_stat`'s `perms` field is documented as carrying only the nine
+  permission bits, and the manual now says why that changed: it used to hand back
+  the raw `st_mode`, whose file-type bits `proven_fs_chmod` rejects, so the
+  obvious round-trip failed for every real file.
+- `TEST.md` claimed 48 hosted tests (there are 75), documented five test files
+  that were deleted months ago, and never mentioned five that exist. It now
+  matches the tests on disk and the registry in `nob.c`.
+- `manual/manual-07-alias-xcv-index.md` was missing 37 aliases and 340 of its 379
+  rows had the wrong line number. Regenerated from the header, and the line-number
+  column is gone: it was wrong after every alias inserted above it, which is worse
+  than not having the column.
+- `manual/manual-01-foundation.md` showed a stale `PROVEN_VERSION_NUM` and suffix.
+- `CHECKLIST.md` told the maintainer to sync the version string in `SPEC.md` and
+  `docs-site/index.html`, neither of which exists, and its "Active Task" was work
+  finished several releases ago.
+- References to `docs/internal/` now say plainly that it is maintainer-local and
+  not part of the published repository, instead of reading as a path the reader
+  could follow.
+
+### Changed
+
+- README states where the platform boundary stops - the PAL covers memory,
+  filesystem, time, mmap, environment, console I/O and threads, and does *not*
+  cover process control, terminal control, or networking - and names the
+  deliberate non-goals (hashing, path manipulation, argument parsing, logging).
+  A boundary you have to discover by running into it is a worse boundary than one
+  that is written down.
+- README documents the whole-file I/O added in v26.07.12b and the sort's
+  guarantees, in both language halves; the Korean quick start now matches the
+  English one.
+
 ## [2026-07-12] — proven_c_lib-v26.07.12b
 
 ### Fixed

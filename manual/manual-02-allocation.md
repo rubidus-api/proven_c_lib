@@ -36,7 +36,15 @@ typedef void (*proven_free_fn_t)(void *ctx, void *ptr);
 Intent:
 
 - `alloc_fn` allocates a new byte slice.
-- `realloc_fn` changes allocation size and must be failure-atomic.
+- `realloc_fn` changes allocation size and must be failure-atomic: on failure the
+  old block is still valid and unmodified, so the caller has lost nothing.
+- A block must be reallocated and freed with the **same `align`** it was allocated
+  with. An allocator may pick a different underlying mechanism for over-aligned
+  requests than for ordinary ones, and the heap allocator does: `align <=
+  alignof(max_align_t)` — which is every string, buffer and byte array in this
+  library — goes through `malloc`/`realloc` so that growth can happen in place,
+  and anything more strictly aligned goes through an aligned allocator. Handing a
+  block back under a different alignment class is undefined.
 - `free_fn` releases memory. If an allocator needs size metadata, it must track that internally.
 
 ### `proven_allocator_t`

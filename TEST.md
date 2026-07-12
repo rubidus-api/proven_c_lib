@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.06.24b)
+# proven Test Matrix (v26.07.12c)
 
 This document describes how the `proven` test suite is organized, what each test is intended to validate, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
 
@@ -136,7 +136,7 @@ Standard informational and pass lines printed by test executables:
 
 The older test files still use many direct `PROVEN_TEST_INFO` calls. Those messages now share the `[PROVEN][TEST][INFO]` prefix. New or substantially edited tests should prefer `PROVEN_TEST_SECTION(name, intent, hint)` for each logically separate sub-check group.
 
-The float parse path benchmark uses the same test harness and emits its timing rows through `[PROVEN][TEST][INFO]` so the captured output can be saved directly as a dated markdown report under `docs/internal/benchmarks/`.
+The float parse path benchmark uses the same test harness and emits its timing rows through `[PROVEN][TEST][INFO]` so the captured output can be saved directly as a dated markdown report. Those reports live in maintainer-local `docs/internal/` (kept outside the published repository), so a reader of this repository will not find them here.
 
 ## Test modes
 
@@ -233,7 +233,7 @@ Failure tip: do not delete a regression because it feels narrow. It exists becau
 
 ### `bench-float`
 
-Intent: run the float parse path benchmark executable only and write a dated report under `docs/internal/benchmarks/`.
+Intent: run the float parse path benchmark executable only and write a dated report. The reports live in maintainer-local `docs/internal/` (kept outside the published repository).
 
 What it checks:
 
@@ -268,7 +268,9 @@ Failure tip: identify the target name in the log, then check whether the failure
 
 ## Hosted test executables
 
-The hosted full run currently builds and executes 48 tests.
+The hosted full run currently builds and executes 75 tests. `./nob regression` runs an 11-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 2 benchmarks.
+
+These counts are checked against `nob.c` - `tests/test_alias_completeness` exists precisely because a list nobody checks stops being true.
 
 ### 1. `tests/test_phase1` - memory byte views
 
@@ -915,6 +917,33 @@ Sub-checks:
 
 Failure tip: inspect `proven_sysio_scanner_init` in `src/proven/sysio.c`. If a partial allocator is accepted, the full allocator trait check is missing; if the scanner keeps non-zero state after failure, the failure path is not zero-safe.
 
+### 30e. `tests/test_alias_completeness` - alias layer completeness
+
+Intent: verify every public `proven_*` function has an `xcv_*` alias in `include/proven/alias_xcv.h`.
+
+Sub-checks:
+
+- Parses every header in `include/proven/` (excluding the alias header itself) for public function declarations.
+- Requires each one to appear as the target of an `xcv_*` alias; names any that do not.
+
+Note: `tests/test_alias_smoke` only checks that a hand-picked subset of aliases compiles. It cannot notice a *missing* alias, which is how 25 public functions ended up with none. This test closes that gap: adding a public function without an alias now fails the build.
+
+Failure tip: add `#define xcv_<name> proven_<name>` to `include/proven/alias_xcv.h`, keeping the file alphabetical. A half-covered alias layer fails at the caller's call site, not here.
+
+### 30f. `tests/test_float_bigint_divmod` - float big-integer division
+
+Intent: verify the big-integer divide/modulo used by the exact float fallback.
+
+Failure tip: inspect `src/proven/float_decimal.c`; a wrong quotient or remainder here silently corrupts the exact arbiter that decides ties.
+
+### 30g. `tests/test_float_format_shortest_roundtrip` - shortest formatter round-trip
+
+Intent: verify values formatted by the shortest formatter parse back to the identical bits.
+
+Note: this test existed on disk but was never registered in `nob.c`, so it had never run. It is registered now.
+
+Failure tip: inspect `src/proven/float_format.c` and the Grisu3/Dragon4 shortest-digit engines if a value fails to round-trip.
+
 ## Regression subset
 
 `./nob regression`, `./nob regression-asan`, and `./nob regression-ubsan` currently run:
@@ -1045,7 +1074,18 @@ Sub-checks:
 
 Failure tip: inspect only freestanding-safe modules first: memory, arena, pool when included, buffer, U8 string, array, ring, map, algorithm, scan, fmt without float, panic, and non-hosted math helpers. Any filesystem, mmap, sysio, environment, time, thread, or hosted heap dependency is a portability regression.
 
+## Benchmarks
+
+`./nob bench-float` runs:
+
+- `tests/test_float_parse_path_benchmark` - times the shared float parser, its wrapper, and the host `strtod` on path-oriented decimal corpora, and records dated output.
+- `tests/test_float_parse_benchmark` - times the decimal parser against the host `strtod` on a mixed corpus. Like the round-trip test above, this file existed but was never registered; it is registered now.
+
+Benchmarks are not correctness gates. A timing regression is a signal to investigate, not a build failure; a checksum drift is a correctness signal and must be.
+
 ## Cross compile-only matrix
+
+The matrix compiles `tests/test_cross_compile_smoke.c` (or `tests/test_freestanding.c` for freestanding targets) and links it with `tests/test_cross_link_smoke.c`, which exists to prove the objects actually link - a header-only compile check would miss a missing symbol.
 
 `./nob cross` builds object files and smoke tests for available target compilers. The matrix currently includes:
 
@@ -1149,7 +1189,7 @@ Failure tip: inspect `include/proven/float_parse.h`, `src/proven/float_parse.c`,
 
 ### 38b. `tests/test_float_rfc_0001` - RFC-0001 parse audit
 
-Intent: verify the decimal-to-binary64 rewrite still satisfies the explicit named cases from `docs/internal/proposals/rfc-0001`.
+Intent: verify the decimal-to-binary64 rewrite still satisfies the explicit named cases from RFC-0001 (the RFC itself is maintainer-local `docs/internal/` (kept outside the published repository); the cases it names are reproduced in the test).
 
 Sub-checks:
 
@@ -1160,7 +1200,7 @@ Sub-checks:
 - Confirms a 110-digit significand plus huge overflow/underflow exponents scan safely.
 - Confirms malformed/endptr RFC cases such as `123abc`, `.`, `e10`, `1e`, `1e+`, and leading whitespace through the wrapper keep the documented behavior.
 
-Failure tip: inspect `docs/internal/proposals/rfc-0001`, `include/proven/float_parse.h`, `src/proven/float_parse.c`, and `src/proven/float_decimal.c` if a named RFC audit case fails.
+Failure tip: inspect the RFC-0001 case list in the test itself, `include/proven/float_parse.h`, `src/proven/float_parse.c`, and `src/proven/float_decimal.c` if a named RFC audit case fails.
 
 ### 39. `tests/test_float_format_policy` - float format policy scaffold
 
@@ -1188,18 +1228,6 @@ Sub-checks:
 - Confirms zero, signed zero, integer, power-of-ten, subnormal, and max-finite edge cases keep their documented spellings.
 
 Failure tip: inspect `src/proven/float_format.c` if the shortest-policy output drifts or if RYU requests stop reaching the active backend.
-
-### 40a. `tests/test_float_shortest_literal_table` - float shortest literal table
-
-Intent: verify the shared float decimal module keeps the documented special-case shortest literals pinned for both widths while the parser-driven backend remains staged.
-
-Sub-checks:
-
-- Confirms the shared shortest literal helper remains present in `src/proven/float_decimal.c`.
-- Confirms the f64 literal table still carries the documented `Inf`, `-Inf`, zero, signed zero, boundary, and subnormal shortest spellings.
-- Confirms the f32 literal table still carries the documented `Inf`, `-Inf`, zero, signed zero, boundary, and subnormal shortest spellings.
-
-Failure tip: inspect `src/proven/float_decimal.c` if a documented shortest literal disappears, changes spelling, or moves out of the shared table.
 
 ### 41. `tests/test_float_shortest_roundtrip` - float shortest round-trip
 
@@ -1313,43 +1341,6 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/scan.c` and the shared float decimal helper if the exact-range backend falls back to host strtod or the corpus drifts.
 
-### 46. `tests/test_float_shortest_split` - float shortest helper split
-
-Intent: verify the shortest float-format backend keeps thin per-width policy shims while routing both widths through one shared parser-driven helper.
-
-Sub-checks:
-- Confirms `src/proven/float_format.c` still defines the shared shortest common helper.
-- Confirms the f64 shim preserves the binary64 parser-driven boundary.
-- Confirms the f32 shim preserves the binary32 parser-driven boundary.
-- Confirms the f64 and f32 policy dispatch paths call the width-specific shims.
-- Confirms the split stays narrow and does not alter the visible shortest output contract.
-
-Failure tip: inspect `src/proven/float_format.c` if the shortest backend loses the shared helper or collapses the width-specific shims too early.
-
-### 47. `tests/test_float_shortest_shared` - float shortest helper sharing
-
-Intent: verify the shortest float-format backend keeps the shared shortest helper together with the thin width-specific policy shims that forward into it.
-
-Sub-checks:
-- Confirms `src/proven/float_format.c` defines the shared shortest common helper.
-- Confirms the f64 and f32 policy dispatch paths call the width-specific shims.
-- Confirms the width-specific shims keep their binary64 and binary32 parser-driven precision limits.
-
-Failure tip: inspect `src/proven/float_format.c` if the shared shortest search helper disappears or the width-specific shim layer collapses.
-
-### 48. `tests/test_float_shortest_binary_search` - float shortest round-trip backend
-
-Intent: verify the shortest float-format backend uses parser-driven round-trip helpers without the old binary-search precision sweep or a separate integer shortcut, while the width-specific policy shims remain thin.
-
-Sub-checks:
-- Confirms `src/proven/float_format.c` defines the shared shortest common helper and direct policy dispatch.
-- Confirms the f64 and f32 shims keep the binary64 and binary32 parser-driven precision limits.
-- Confirms the shared round-trip search helper keeps width and precision parameters, walks the caller-provided precision boundary, and validates candidates through the selected width.
-- Confirms `src/proven/float_format.c` no longer contains the old `precision <= 17` or `precision <= 9` binary-search helpers.
-- Confirms the shared round-trip search helper remains present and the separate integer-shortcut helper does not return.
-
-Failure tip: inspect `src/proven/float_format.c` if the shortest backend reverts to a precision-search helper, reintroduces a separate integer shortcut, or stops routing through the shared round-trip search helper.
-
 ### 49. `tests/test_float_shortest_scientific_guard` - float shortest scientific guard
 
 Intent: verify the shortest float formatter handles very small finite values by producing a valid shortest candidate instead of an invalid scientific normalization result.
@@ -1360,18 +1351,6 @@ Sub-checks:
 - Confirms the formatted spelling matches the shortest candidate found by exhaustive fixed-precision search over the documented precision range.
 
 Failure tip: inspect `src/proven/float_decimal.c` and `src/proven/float_format.c` if the shortest formatter rejects a tiny finite value, emits an invalid scientific spelling, or stops matching the shortest exhaustive candidate.
-
-### 50. `tests/test_float_shortest_common_helper` - float shortest common helper routing
-
-Intent: verify the shortest float-format backend routes both widths through thin width-specific shims over one shared shortest helper.
-
-Sub-checks:
-- Confirms `src/proven/float_format.c` defines a shared shortest helper for the f64 and f32 policy paths.
-- Confirms the f64 shim forwards to the shared helper with the binary64 precision limit.
-- Confirms the f32 shim forwards to the shared helper with the binary32 precision limit.
-- Confirms policy dispatch still routes through the width-specific shims.
-
-Failure tip: inspect `src/proven/float_format.c` if the dispatch stops using the width-specific shims or if the shared helper disappears.
 
 ### 51. `tests/test_u8str_borrow` - U8 string borrow (fixed-capacity over caller memory)
 
