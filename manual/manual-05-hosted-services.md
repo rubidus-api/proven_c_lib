@@ -102,7 +102,7 @@ typedef enum {
 ```c
 typedef struct {
     proven_size_t size;          /* size in bytes (0 for directories on some hosts) */
-    proven_fs_type_t type;       /* regular / directory / symlink / other */
+    proven_fs_type_t type;       /* PROVEN_FS_TYPE_FILE / _DIR / _OTHER - there is no symlink type */
     proven_fs_perms_t perms;     /* the nine permission bits only; the file type is in `type` */
     proven_i64 created_at;       /* creation time, seconds since the Unix epoch */
     proven_i64 modified_at;      /* last-modification time, seconds since the Unix epoch */
@@ -165,6 +165,9 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 Important behavior:
 
 - `proven_fs_read()` and `proven_fs_write()` are single-operation APIs and may process fewer bytes than requested.
+- **A read at end-of-file returns `PROVEN_ERR_EOF`, not a zero-byte success.** A loop written the obvious way -
+  `if (r.value == 0) break;` - never takes that branch, and treats the end of the file as an I/O failure instead.
+  Check for `PROVEN_ERR_EOF` explicitly; the worked example at the end of this chapter shows the shape.
 - Use `proven_fs_write_all()` when all bytes must be written.
 - Zero-size read/write requests should succeed with zero bytes processed without requiring a non-null buffer.
 - `proven_fs_is_absolute()` recognizes POSIX absolute paths, Windows drive-root paths, UNC paths, and extended Windows path forms.
@@ -471,5 +474,200 @@ proven_result_u8str_t env = proven_env_get(alloc, PROVEN_LIT("PATH"));
 if (proven_is_ok(env.err)) {
     use_path(proven_u8str_as_view(&env.value));
     proven_u8str_destroy(alloc, &env.value);
+}
+```
+
+### Worked example: reading and writing whole files
+
+Compiled and run by the test suite. This is the whole-file API most callers actually want, including the atomic rewrite that preserves the target's permissions.
+
+<!-- example: manual/examples/ex_05_fs_wholefile.c -->
+```c
+/*
+ * The whole-file API: one call in, one call out. It exists because the
+ * open/read-loop/close dance is where most file-handling bugs live - a forgotten
+ * close, a partial read treated as EOF, a truncated file left behind by a failed
+ * write. If you are reading or writing a file in its entirety, this is the API.
+ */
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* A relative path in the current directory: the example must not depend on a
+     * writable /tmp, and it removes what it creates before returning. */
+    proven_u8str_view_t path = PROVEN_LIT("proven_example_wholefile.tmp");
+    proven_u8str_view_t text = PROVEN_LIT("first line\nsecond line\n");
+
+    /* --- write it in one call ---------------------------------------------- */
+    /* Not atomic: a concurrent reader can see this file half-written. Fine here,
+     * because nobody else is looking at it yet. */
+    proven_err_t err = proven_fs_write_file(alloc, path, proven_mem_view_from_u8(text));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "writing the whole file should succeed");
+    if (!proven_is_ok(err)) return 1;
+
+    /* --- read it back as raw bytes ----------------------------------------- */
+    /* proven_fs_read_all reads to EOF rather than to a pre-measured size, so it
+     * also works on a pipe or a /proc entry, whose size cannot be known up front. */
+    proven_result_mem_mut_t raw = proven_fs_read_all(alloc, path);
+    EXAMPLE_REQUIRE(proven_is_ok(raw.err), "reading the whole file should succeed");
+    if (proven_is_ok(raw.err)) {
+        EXAMPLE_REQUIRE(raw.value.size == text.size, "read_all should return every byte written");
+        /* The block is plain allocator memory - hand it back to the allocator that
+         * produced it. There is no proven_fs_read_all_destroy. */
+        alloc.free_fn(alloc.ctx, raw.value.ptr);
+    }
+
+    /* --- read it back as a string ------------------------------------------ */
+    /* This is the one most callers want: the result is NUL-terminated, so it can
+     * be handed to a view, to as_cstr, or to the scanner with no second copy. The
+     * terminator slot is reserved up front, so it costs no extra allocation. */
+    proven_result_u8str_t s = proven_fs_read_all_u8str(alloc, path);
+    EXAMPLE_REQUIRE(proven_is_ok(s.err), "reading the whole file as a string should succeed");
+    if (!proven_is_ok(s.err)) {
+        (void)proven_fs_remove(alloc, path);
+        return 1;
+    }
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&s.value), text),
+                    "the file's contents should come back unchanged");
+    printf("read back %zu bytes: %s", (size_t)proven_u8str_as_view(&s.value).size,
+           proven_u8str_as_cstr(&s.value));
+    proven_u8str_destroy(alloc, &s.value);
+
+    /* --- stat, and the perms round-trip ------------------------------------ */
+    proven_fs_stat_t st = {0};
+    err = proven_fs_stat(alloc, path, &st);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "stat on a file we just wrote should succeed");
+    EXAMPLE_REQUIRE(st.type == PROVEN_FS_TYPE_FILE, "a regular file should stat as a FILE");
+    EXAMPLE_REQUIRE(st.size == text.size, "stat should report the size we wrote");
+
+    /* `perms` carries the nine permission bits and nothing else, so it can be fed
+     * straight back to chmod. That is the whole point of the field: read a file's
+     * mode, and later restore it. (It used to carry the raw POSIX st_mode, whose
+     * file-type bits chmod rejects - so this obvious round-trip failed.) */
+    err = proven_fs_chmod(alloc, path, st.perms);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "a stat's perms must be accepted back by chmod");
+
+    /* Now make the file owner-only, so the next check has something to prove. */
+    proven_fs_perms_t private_perms = PROVEN_FS_PERM_OWNER_R | PROVEN_FS_PERM_OWNER_W;
+    err = proven_fs_chmod(alloc, path, private_perms);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "restricting the file to its owner should succeed");
+
+    /* --- rewrite it atomically --------------------------------------------- */
+    /* A sibling temp file plus a rename: a concurrent reader sees either the whole
+     * old file or the whole new one, never a half-written mix. Atomic for readers,
+     * not durable across power loss - proven exposes no fsync. */
+    proven_u8str_view_t text2 = PROVEN_LIT("replacement\n");
+    err = proven_fs_write_file_atomic(alloc, path, proven_mem_view_from_u8(text2));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "the atomic rewrite should succeed");
+
+    proven_fs_stat_t st2 = {0};
+    err = proven_fs_stat(alloc, path, &st2);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "stat after the atomic rewrite should succeed");
+    EXAMPLE_REQUIRE(st2.size == text2.size, "the file should now hold the replacement text");
+    /* The rename writes a *new* inode over the old name, so the permissions would
+     * be lost unless they were copied across. They are: rewriting a 0600 file does
+     * not republish it as 0644. */
+    EXAMPLE_REQUIRE(st2.perms == private_perms,
+                    "the atomic rewrite must preserve the target's permissions");
+
+    /* --- clean up ----------------------------------------------------------- */
+    err = proven_fs_remove(alloc, path);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "removing the temp file should succeed");
+
+    return EXAMPLE_OK();
+}
+```
+
+### Worked example: open, read, write, close
+
+Compiled and run by the test suite. Note the read loop: a read at end-of-file returns `PROVEN_ERR_EOF`, not a zero-byte success, so a loop that only checks for zero bytes never terminates the way its author expected.
+
+<!-- example: manual/examples/ex_05_fs_stream.c -->
+```c
+/*
+ * The open/read/write/close path, for when the whole-file API (ex_05_fs_wholefile)
+ * is not enough: you are streaming, or you want to own the buffer.
+ *
+ * The one thing to get right here: a single read or write moves *up to* the
+ * requested number of bytes, not exactly that many. Treating one short read as
+ * end-of-file is the classic way to silently lose the tail of a file.
+ */
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    proven_u8str_view_t path = PROVEN_LIT("proven_example_stream.tmp");
+    proven_u8str_view_t text = PROVEN_LIT("streamed bytes, read back in chunks\n");
+
+    /* --- write ------------------------------------------------------------- */
+    /* CREATE makes the file if it is absent; TRUNC empties it if it is not. The
+     * allocator is only used to convert the path for the platform call. */
+    proven_result_file_t out = proven_fs_open(alloc, path,
+                                              PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
+    EXAMPLE_REQUIRE(proven_is_ok(out.err), "opening the file for writing should succeed");
+    if (!proven_is_ok(out.err)) return 1;
+
+    /* write_all loops for us. proven_fs_write does one attempt and may write less,
+     * which is almost never what a caller means. */
+    proven_err_t err = proven_fs_write_all(out.value, proven_mem_view_from_u8(text));
+    proven_fs_close(out.value);   /* close on the failure path too: the handle is owned */
+    EXAMPLE_REQUIRE(proven_is_ok(err), "writing the whole buffer should succeed");
+    if (!proven_is_ok(err)) {
+        (void)proven_fs_remove(alloc, path);
+        return 1;
+    }
+
+    /* --- read -------------------------------------------------------------- */
+    proven_result_file_t in = proven_fs_open(alloc, path, PROVEN_FS_READ);
+    EXAMPLE_REQUIRE(proven_is_ok(in.err), "opening the file for reading should succeed");
+    if (!proven_is_ok(in.err)) {
+        (void)proven_fs_remove(alloc, path);
+        return 1;
+    }
+
+    /* size is a hint for sizing the buffer, not a promise about how many bytes any
+     * one read will hand over - and it is 0 for anything that is not a regular
+     * file (a pipe, a device, a /proc entry). The loop below does not rely on it. */
+    proven_result_size_t sz = proven_fs_size(in.value);
+    EXAMPLE_REQUIRE(proven_is_ok(sz.err), "querying the size of an open file should succeed");
+    EXAMPLE_REQUIRE(sz.value == text.size, "the file should be as long as what we wrote");
+
+    proven_byte_t buf[128];
+    proven_size_t total = 0;
+
+    /* The partial-read loop. Each pass asks for whatever is left of the buffer and
+     * advances by however much actually arrived: a short read is normal, not the
+     * end of the file. The end of the file is a distinct status - PROVEN_ERR_EOF
+     * with zero bytes - so the loop terminates on that, and on nothing else. The
+     * loop also stops if the source outgrows the buffer; noticing that is the
+     * caller's business (here it cannot happen, but a growing file could). */
+    for (;;) {
+        if (total == sizeof buf) break;   /* buffer full: caller decides what to do */
+
+        proven_mem_mut_t dest = { .ptr = buf + total, .size = sizeof buf - total };
+        proven_result_size_t r = proven_fs_read(in.value, dest);
+        if (r.err == PROVEN_ERR_EOF) break;
+        if (!proven_is_ok(r.err)) {
+            proven_fs_close(in.value);
+            (void)proven_fs_remove(alloc, path);
+            EXAMPLE_REQUIRE(false, "reading from the open file should not fail");
+            return 1;
+        }
+        total += r.value;
+    }
+
+    proven_fs_close(in.value);
+
+    EXAMPLE_REQUIRE(total == text.size, "the loop should have read every byte in the file");
+    proven_u8str_view_t got = { .ptr = buf, .size = total };
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(got, text), "the bytes should come back unchanged");
+
+    printf("read %zu bytes in chunks: %.*s", (size_t)total, (int)total, (const char *)buf);
+
+    /* --- clean up ----------------------------------------------------------- */
+    err = proven_fs_remove(alloc, path);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "removing the temp file should succeed");
+
+    return EXAMPLE_OK();
 }
 ```

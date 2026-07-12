@@ -15,7 +15,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-416 aliases, one per public name. The table is generated from `include/proven/alias_xcv.h`; `tests/test_alias_completeness` fails the build if a public function has no alias, so this list cannot quietly fall behind the header again.
+416 aliases, one per public name. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias, so this list cannot quietly fall behind the header again.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 

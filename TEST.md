@@ -1,16 +1,44 @@
-# proven Test Matrix (v26.07.12c)
+# proven Test Matrix (v26.07.12d)
 
-This document describes how the `proven` test suite is organized, what each test is intended to validate, what each test checks internally, and where to start when a failure occurs. Tests are plain C executables built and run by `nob.c`. No external test framework is required.
+This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
+
+For the **policy** — how tests are named, what each class is for, the rules a new test has to satisfy, and an honest account of how this project actually develops — see [`docs/TESTING.md`](docs/TESTING.md).
+
+## Naming
+
+```text
+tests/test_<class>_<subject>.c
+```
+
+The filename is the identifier. **There are no numbers.** Numbers were tried and they rotted: this catalog once ran `1..50` with `7a`, `30a`, `30b`, `30c`, `40a` wedged in wherever something new arrived, and five of its entries described files that had been deleted months earlier. The tests themselves were named `test_phase1` … `test_phase22` — the development order, which is the one fact about a test that nobody ever needs.
+
+The class says what kind of question the test answers:
+
+| Class | Question | Count |
+|---|---|---|
+| `unit` | Does this module do what it says, used the way a caller uses it? | 46 |
+| `contract` | Does it *refuse* what it says it refuses? | 10 |
+| `regression` | Does a defect that actually shipped stay fixed? | 6 |
+| `differential` | Does it agree with an oracle we did not write? | 4 |
+| `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 10 |
+| `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
+| `docs` | Are the claims the documentation makes still true? | 3 |
+| `bench` | How fast is it? (Not a correctness gate.) | 2 |
 
 ## Table of contents
 
 - [Running tests](#running-tests)
 - [Log format](#log-format)
 - [Test modes](#test-modes)
-- [Hosted test executables](#hosted-test-executables)
-- [Map owned-key storage](#map-owned-key-storage)
+- [Unit tests](#unit-tests)
+- [Contract and hardening tests](#contract-and-hardening-tests)
+- [Regression tests](#regression-tests)
+- [Differential tests](#differential-tests)
+- [Portability tests](#portability-tests)
+- [Stress tests](#stress-tests)
+- [Documentation tests](#documentation-tests)
+- [Benchmarks](#benchmarks)
 - [Regression subset](#regression-subset)
-
 - [Cross compile-only matrix](#cross-compile-only-matrix)
 - [Failure triage workflow](#failure-triage-workflow)
 - [Change policy](#change-policy)
@@ -266,66 +294,45 @@ What it checks:
 
 Failure tip: identify the target name in the log, then check whether the failure is from compiler availability, sysroot usability, or actual source incompatibility. Cross compilation does not replace runtime testing on the target.
 
-## Hosted test executables
+## Test catalog
+
 
 The hosted full run currently builds and executes 75 tests. `./nob regression` runs an 11-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 2 benchmarks.
 
-These counts are checked against `nob.c` - `tests/test_alias_completeness` exists precisely because a list nobody checks stops being true.
+These counts are checked against `nob.c` - `tests/test_docs_alias_completeness` exists precisely because a list nobody checks stops being true.
 
-### 1. `tests/test_phase1` - memory byte views
+Tests are named `test_<class>_<subject>`, and the name is the identifier - there are no numbers.
+Numbers rot: this catalog used to run 1..50 with `7a`, `30a`, `30b`, `30c`, `40a` wedged in wherever something new arrived, and five of its entries described files that had been deleted months earlier.
 
-Intent: verify the fixed-width integer aliases, semantic pointer/offset types, alignment helpers, and the first memory slice/view contracts.
+The class says what kind of question the test answers:
 
-Sub-checks:
+- **`unit`** — One module's public API, used the way a caller uses it. These are the tests that say what the library *does*. (31 tests)
+- **`contract`** — The public invariants: misuse, corrupted structs, exhausted allocators, refused input. These say what the library *refuses to do*, which is the half a caller cannot infer from the happy path. (8 tests)
+- **`regression`** — One test per defect that actually shipped. Each is named for what broke, not for a version or a number, and each was verified to FAIL against the pre-fix source. A regression test that passes before the fix is not a regression test. (6 tests)
+- **`differential`** — Correctness against an independent oracle - the host libc, or a corpus with known-good answers. These catch what a self-written expectation cannot: a wrong belief held consistently by both the code and its test. (0 tests)
+- **`portability`** — Freestanding builds, compile-only cross targets, source-level platform contracts, and the build driver's own standard probe. Most of these cannot be *run* on the host, so they check what can be checked: that the code compiles, links, and keeps its platform branches intact. (1 tests)
+- **`stress`** — Concurrency under a sanitizer, over enough iterations to make a race likely rather than theoretical. (0 tests)
+- **`docs`** — The documentation is checked by the build, not by eye: every public function has an alias, every example the manual prints is a program that compiles and runs, and no example drifts from its chapter. (2 tests)
+- **`bench`** — Timing, not correctness. A benchmark regression is a signal to investigate; a checksum drift inside one is a correctness failure and does fail the build. (0 tests)
 
-- Confirms `proven_u8`, `proven_i8`, `proven_u16`, `proven_i16`, `proven_u32`, `proven_i32`, `proven_u64`, and `proven_i64` have the expected byte widths.
-- Confirms semantic pointer/size/offset types are usable for memory calculations.
-- Exercises default alignment logic.
-- Builds a memory core structure and confirms pointer and size fields remain exact.
+## Unit tests
 
-Failure tip: start in `include/proven/types.h`, `include/proven/align.h`, and `include/proven/memory.h`. A width failure usually means a typedef or platform feature branch changed. An alignment failure usually means the helper no longer implements power-of-two alignment correctly.
+One module's public API, used the way a caller uses it. These are the tests that say what the library *does*.
 
-### 2. `tests/test_foundation` - foundation primitives
+### `tests/test_unit_algorithm` — algorithms
 
-Intent: verify the core error and checked-arithmetic assumptions used by all higher-level modules.
-
-Sub-checks:
-
-- Confirms `PROVEN_IS_OK` and `proven_is_ok` classify success and failure correctly.
-- Confirms checked add detects overflow and preserves the wrapped C result where the C23 checked-arithmetic API says it should.
-- Confirms checked subtract detects underflow.
-- Confirms checked multiply detects overflow and succeeds for safe products.
-- Confirms simple result structs can carry both an error and a value.
-
-Failure tip: inspect `include/proven/error.h` and the `PROVEN_CKD_*` definitions in `include/proven/types.h`. If this test fails, avoid debugging later modules until the foundation behavior is fixed.
-
-### 3. `tests/test_phase2` - memory slicing
-
-Intent: verify owned memory can be exposed as immutable and mutable views and sliced without losing pointer or length identity.
+Intent: verify generic sort and binary search helpers using both scalar and struct comparators.
 
 Sub-checks:
 
-- Creates raw byte storage and wraps it in the owned memory abstraction.
-- Converts owned memory to a read-only view and checks pointer, size, and byte contents.
-- Converts owned memory to a mutable view and checks that writes through the mutable view are visible through the original buffer and read-only view.
-- Slices read-only and mutable views and checks offset, length, and shared backing storage.
+- Sorts an integer array and verifies ascending order.
+- Binary-searches for an existing and a missing integer.
+- Sorts structs using a comparator that sorts by score descending and ID ascending.
+- Verifies comparator tie-breaking order.
 
-Failure tip: inspect `src/proven/memory.c` and `include/proven/memory.h`. Most failures here are offset arithmetic mistakes, accidental copies instead of views, or unchecked slice preconditions used with the wrong ranges.
+Failure tip: inspect `src/proven/algorithm.c`. Comparator return convention must stay consistent: callers expect negative, zero, and positive values to drive ordering.
 
-### 4. `tests/test_phase3` - error and result primitives
-
-Intent: verify the explicit error/result style has stable semantics and no hidden control flow.
-
-Sub-checks:
-
-- Confirms `PROVEN_OK` is accepted as success.
-- Confirms representative failures such as `PROVEN_ERR_NOMEM` are rejected as success.
-- Builds a successful memory result and verifies both the error and value fields.
-- Builds a failed memory result and verifies the error and null value fields.
-
-Failure tip: inspect `include/proven/error.h` and generated/result typedefs. Do not change enum values or result layouts without updating every call site, alias, manual, and test that relies on them.
-
-### 5. `tests/test_phase4` - arena allocator
+### `tests/test_unit_arena` — arena allocator
 
 Intent: verify bump-allocation behavior, alignment, exhaustion, reset, realloc, and zero-copy semantics for the arena allocator.
 
@@ -339,7 +346,23 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/arena.c`, especially offset rounding, overflow checks, and reset behavior. Under ASan, any failure is likely a true bounds or lifetime bug.
 
-### 6. `tests/test_phase5` - buffer and U8 string basics
+### `tests/test_unit_array` — growable array
+
+Intent: verify generic array allocation, validation, push/pop, growth, migration, element access, and arena-backed use.
+
+Sub-checks:
+
+- Initializes an array with a typed element size and initial capacity.
+- Checks validation catches corrupted length/capacity state.
+- Pushes typed values through macros.
+- Forces growth and verifies data migrated correctly.
+- Pops values and checks boundary rejection on empty pop.
+- Checks invalid get/set ranges.
+- Creates an arena-backed array to ensure allocator independence.
+
+Failure tip: inspect `src/proven/array.c`. Growth failures usually mean element-size multiplication, capacity doubling, or realloc failure-atomic behavior changed. Remember that pointers into array storage are invalid after growth.
+
+### `tests/test_unit_buffer_u8str_basics` — buffer and U8 string basics
 
 Intent: verify fixed-capacity buffers, U8 string views, literal construction, append behavior, C-string conversion, and bounds defense.
 
@@ -354,7 +377,228 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/buffer.c` and `src/proven/u8str.c`. Off-by-one capacity mistakes usually show up here first, especially around the extra NUL byte for C-string compatibility.
 
-### 7. `tests/test_phase6_pool` - pool allocator
+### `tests/test_unit_coro` — stackless coroutine
+
+Intent: verify coroutine macros preserve caller-owned state across yields and complete after multiple resume calls.
+
+Sub-checks:
+
+- Defines a simulated network fetcher that yields across multiple phases.
+- Repeatedly resumes the coroutine from a main loop.
+- Confirms final payload value is set after completion.
+- Confirms the main loop observed multiple ticks rather than one blocking call.
+
+Failure tip: inspect `include/proven/coro.h`. Coroutine state must live in caller-owned storage and must not be reset between resumes.
+
+### `tests/test_unit_error_results` — error and result primitives
+
+Intent: verify the explicit error/result style has stable semantics and no hidden control flow.
+
+Sub-checks:
+
+- Confirms `PROVEN_OK` is accepted as success.
+- Confirms representative failures such as `PROVEN_ERR_NOMEM` are rejected as success.
+- Builds a successful memory result and verifies both the error and value fields.
+- Builds a failed memory result and verifies the error and null value fields.
+
+Failure tip: inspect `include/proven/error.h` and generated/result typedefs. Do not change enum values or result layouts without updating every call site, alias, manual, and test that relies on them.
+
+### `tests/test_unit_float_bigint_divmod` — float big-integer division
+
+Intent: verify the big-integer divide/modulo used by the exact float fallback.
+
+Failure tip: inspect `src/proven/float_decimal.c`; a wrong quotient or remainder here silently corrupts the exact arbiter that decides ties.
+
+### `tests/test_unit_float_shortest_format_roundtrip` — shortest formatter round-trip
+
+Intent: verify values formatted by the shortest formatter parse back to the identical bits.
+
+Note: this test existed on disk but was never registered in `nob.c`, so it had never run. It is registered now.
+
+Failure tip: inspect `src/proven/float_format.c` and the Grisu3/Dragon4 shortest-digit engines if a value fails to round-trip.
+
+### `tests/test_unit_fmt_f64_accuracy` — float formatter accuracy
+
+Intent: verify fixed-point rounding, scientific carry, and special-value text for floating-point formatting.
+
+Sub-checks:
+
+- Checks normal-path rounding to six fractional digits.
+- Checks carry from the fractional tail into the integer part.
+- Checks scientific notation carry around the mantissa boundary.
+- Checks NaN and infinity text stay stable.
+
+Failure tip: inspect `src/proven/fmt.c` and `tests/test_unit_fmt_f64_accuracy.c`.
+
+### `tests/test_unit_fmt_fastpath` — formatter truncation comparison
+
+Intent: compare truncating fixed-capacity formatting against the growable reference path for exact-fit, truncation, malformed format, and excess-argument cases.
+
+Sub-checks:
+
+- Checks exact-fit truncation output matches the reference path.
+- Checks over-capacity truncation keeps the same prefix bytes and counts.
+- Checks excess-argument validation.
+- Checks malformed-format validation.
+
+Failure tip: inspect `src/proven/fmt.c` and `tests/test_unit_fmt_fastpath.c`.
+
+### `tests/test_unit_foundation` — foundation primitives
+
+Intent: verify the core error and checked-arithmetic assumptions used by all higher-level modules.
+
+Sub-checks:
+
+- Confirms `PROVEN_IS_OK` and `proven_is_ok` classify success and failure correctly.
+- Confirms checked add detects overflow and preserves the wrapped C result where the C23 checked-arithmetic API says it should.
+- Confirms checked subtract detects underflow.
+- Confirms checked multiply detects overflow and succeeds for safe products.
+- Confirms simple result structs can carry both an error and a value.
+
+Failure tip: inspect `include/proven/error.h` and the `PROVEN_CKD_*` definitions in `include/proven/types.h`. If this test fails, avoid debugging later modules until the foundation behavior is fixed.
+
+### `tests/test_unit_fs_advanced` — advanced filesystem
+
+Intent: verify directory lifecycle, nested file creation, rename/move, listing, sorting expectations, and cleanup.
+
+Sub-checks:
+
+- Removes stale test directories from earlier failed runs.
+- Creates a directory.
+- Creates multiple files inside it.
+- Renames/moves one file.
+- Lists directory entries into a library array.
+- Confirms expected files are present.
+- Releases listed strings and removes test files/directories.
+
+Failure tip: inspect `platform/proven_sys_fs.c` for directory iteration and path handling. On failure, check whether cleanup from a previous run left permissions or stale entries behind.
+
+### `tests/test_unit_fs_basic` — basic filesystem
+
+Intent: verify hosted file open, write, read-all, size queries, and absolute-path classification.
+
+Sub-checks:
+
+- Opens a temporary file for create/write/truncate.
+- Writes known content and checks byte count.
+- Reads the whole file and checks size and byte equality.
+- Reopens the file and queries its size.
+- Verifies absolute path classification for POSIX, drive-letter Windows paths, UNC paths, and extended Windows paths.
+
+Failure tip: inspect `src/proven/fs.c` and `platform/proven_sys_fs.c`. If only Windows path cases fail, check path-prefix parsing rather than POSIX filesystem behavior.
+
+### `tests/test_unit_fs_metadata_perms` — filesystem metadata and permissions
+
+Intent: verify hosted permission and locking-related filesystem behavior stays explicit and isolated behind the PAL.
+
+Sub-checks:
+
+- Creates a temporary file.
+- Changes permissions to read-only and back when the platform supports it.
+- Opens files for write where needed.
+- Acquires and releases advisory locks where supported.
+
+Failure tip: inspect `platform/proven_sys_fs.c`. Permission and locking semantics are OS-dependent; keep differences in PAL code and avoid assuming POSIX behavior on every target.
+
+### `tests/test_unit_job` — job system
+
+Intent: verify the hosted worker-thread job system executes submitted jobs exactly once and shuts down cleanly.
+
+Sub-checks:
+
+- Initializes a job system with four workers and a 1024-entry queue.
+- Dispatches 1000 jobs.
+- Uses atomics to count total executed jobs.
+- Uses indexed atomics to detect duplicate or missing job execution.
+- Shuts down workers and flushes synchronization barriers.
+
+Failure tip: inspect `src/proven/job.c` and `platform/proven_sys_thread.c`. For races, run `./nob tsan`. Check admission state, sequence counters, queue claim/commit ordering, and shutdown wakeups.
+
+### `tests/test_unit_list` — intrusive list
+
+Intent: verify zero-allocation intrusive list behavior and container-of usage.
+
+Sub-checks:
+
+- Initializes an empty sentinel list.
+- Appends embedded nodes from caller-owned structs.
+- Iterates in reverse and sums payload values.
+- Removes nodes while iterating.
+- Reads first and last entries through container-of style access.
+
+Failure tip: inspect `include/proven/list.h`. Intrusive lists do not own node storage. A failure usually means `next`/`prev` linkage was corrupted or a detached node was reused incorrectly.
+
+### `tests/test_unit_map` — hash map
+
+Intent: verify open-addressing map behavior for integer and U8 string keys, including tombstones, growth, and scratch allocation.
+
+Sub-checks:
+
+- Creates an integer-key map and confirms capacity normalization.
+- Inserts, retrieves, updates, and deletes entries.
+- Confirms deletion reduces live length and leaves tombstones usable.
+- Creates a U8 string-key map and inserts enough entries to force growth.
+- Verifies all expected string keys remain reachable after rehash.
+- Tracks scratch allocation during safe rehash paths.
+
+Failure tip: inspect `src/proven/map.c`. Check hash/equality callbacks, tombstone reuse, threshold calculation, and whether borrowed keys or value pointers are being used after rehash.
+
+### `tests/test_unit_map_owned_key` — map owned-key storage
+
+Intent: verify owned U8 keys are duplicated into map storage, survive source-buffer mutation, and free their copied bytes on remove and destroy.
+
+Sub-checks:
+
+- Creates a U8 owned-key map.
+- Inserts a key from mutable source storage and confirms the lookup survives source-buffer mutation.
+- Removes the entry and confirms the copied key bytes are released once.
+- Inserts enough owned keys to force rehash and confirms every copied key still resolves after growth.
+- Destroys the map and confirms all owned key allocations have matching frees.
+
+Failure tip: inspect the owned-key duplication, cleanup, and rehash migration paths in `src/proven/map.c` if a key is lost, leaks, or follows a mutated source buffer.
+
+### `tests/test_unit_memory_slicing` — memory slicing
+
+Intent: verify owned memory can be exposed as immutable and mutable views and sliced without losing pointer or length identity.
+
+Sub-checks:
+
+- Creates raw byte storage and wraps it in the owned memory abstraction.
+- Converts owned memory to a read-only view and checks pointer, size, and byte contents.
+- Converts owned memory to a mutable view and checks that writes through the mutable view are visible through the original buffer and read-only view.
+- Slices read-only and mutable views and checks offset, length, and shared backing storage.
+
+Failure tip: inspect `src/proven/memory.c` and `include/proven/memory.h`. Most failures here are offset arithmetic mistakes, accidental copies instead of views, or unchecked slice preconditions used with the wrong ranges.
+
+### `tests/test_unit_memory_views` — memory byte views
+
+Intent: verify the fixed-width integer aliases, semantic pointer/offset types, alignment helpers, and the first memory slice/view contracts.
+
+Sub-checks:
+
+- Confirms `proven_u8`, `proven_i8`, `proven_u16`, `proven_i16`, `proven_u32`, `proven_i32`, `proven_u64`, and `proven_i64` have the expected byte widths.
+- Confirms semantic pointer/size/offset types are usable for memory calculations.
+- Exercises default alignment logic.
+- Builds a memory core structure and confirms pointer and size fields remain exact.
+
+Failure tip: start in `include/proven/types.h`, `include/proven/align.h`, and `include/proven/memory.h`. A width failure usually means a typedef or platform feature branch changed. An alignment failure usually means the helper no longer implements power-of-two alignment correctly.
+
+### `tests/test_unit_mmap` — memory mapped files
+
+Intent: verify hosted memory mapping rejects invalid flags and exposes file bytes through mapped memory.
+
+Sub-checks:
+
+- Creates a test file with known content.
+- Rejects invalid mmap flag combinations: zero flags, private plus shared, zero protection, unknown protection bits, and misaligned offsets.
+- Maps a file range.
+- Verifies mapped bytes match expected content.
+- Modifies mapped memory and syncs/unmaps it.
+- Reads the file back to verify the modification reached disk when mapping mode requires it.
+
+Failure tip: inspect `src/proven/mmap.c` and `platform/proven_sys_fs.c`. Pay special attention to offset alignment, map length, file handle lifetime, and unmap ownership.
+
+### `tests/test_unit_pool` — pool allocator
 
 Intent: verify the fixed-size pool allocator enforces item-size constraints and recycles freed blocks through a bounded LIFO bin.
 
@@ -370,33 +614,124 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/pool.c`. Wrong-size requests should not be silently accepted. Bin overflow must never lose ownership of the block being freed.
 
-### 7a. `tests/test_pool_misuse` - pool double-free hardening
+### `tests/test_unit_ring` — bounded ring
 
-Intent: verify the pool free trait catches repeated frees when debug validation or `PROVEN_HARDENED` is enabled.
-
-Sub-checks:
-
-- Installs a test panic handler.
-- Allocates one fixed-size block through the pool allocator trait.
-- Frees the block once successfully.
-- Frees the same block again and expects the validation path to reach the panic handler when hardening or debug validation is active.
-
-Failure tip: inspect `src/proven/pool.c`. The repeated-free check must remain gated on debug validation or `PROVEN_HARDENED`, and the test should only require the panic path when that gate is active.
-
-### 8. `tests/test_dealloc` - allocator deallocation policies
-
-Intent: document and verify the different deallocation policies exposed through the allocator trait.
+Intent: verify fixed-capacity FIFO semantics, wraparound, full/empty detection, and overflow guards.
 
 Sub-checks:
 
-- Allocates from an arena through the generic allocator trait.
-- Calls the arena free function and verifies it is intentionally a no-op.
-- Resets the arena as the correct lifetime-ending operation.
-- Allocates from the heap allocator and frees through the heap trait.
+- Creates a ring and verifies initial head, tail, length, and capacity.
+- Pushes and pops values in FIFO order.
+- Fills the ring and verifies extra push is rejected.
+- Pops across physical wraparound boundaries.
+- Verifies empty pop rejection.
+- Checks integer-overflow bounds for capacity calculations.
 
-Failure tip: inspect `src/proven/arena.c`, `src/proven/heap.c`, and the allocator trait definition. Do not make arena `free` reclaim individual blocks; that would break the arena lifetime model.
+Failure tip: inspect `src/proven/ring.c`. The first suspects are head/tail modulo math, `len` updates, and full-vs-empty boundary handling.
 
-### 9. `tests/test_phase7_u8str_mut` - U8 string mutation
+### `tests/test_unit_scan` — scanner
+
+Intent: verify scanner parsing for integers, floats, tokens, skip-until operations, format scanning, and fixed-width integer destinations.
+
+Sub-checks:
+
+- Scans unsigned and signed integers.
+- Scans positive, negative, and exponent-style floating-point values.
+- Scans tokens and string views.
+- Skips until substrings and numbers.
+- Confirms not-found behavior.
+- Scans using `{}` and spec-style format patterns.
+- Scans native and fixed-width integer aliases.
+
+Failure tip: inspect `src/proven/scan.c`. The most common bugs are cursor advancement on failure, overflow detection, and accepting invalid trailing characters.
+
+### `tests/test_unit_scan_f64_accuracy` — float scanner accuracy
+
+Intent: verify float scanning preserves exact small values, signed zero, a round-trip style decimal token, exponent extremes, and cursor restoration on malformed input.
+
+Sub-checks:
+
+- Confirms exact bit patterns for `0.0`, `-0.0`, `1.0`, `-1.0`, `0.5`, `0.1`, and `123456789.0`.
+- Confirms the parsed bits for `0.30000000000000004` match the source literal.
+- Confirms `1.7976931348623157e308`, `2.2250738585072014e-308`, and `4.9e-324` remain finite and stable.
+- Confirms `1e309` reports `PROVEN_ERR_OVERFLOW`.
+- Confirms malformed input restores the scanner cursor to its original position.
+- `tests/test_unit_scan_f64_bounds` covers underflow-to-signed-zero spellings, the true-min half threshold, subnormal-boundary spellings around DBL_MIN, and overflow boundary behavior at the same parser boundary.
+
+Failure tip: inspect `src/proven/scan.c`, especially the decimal mantissa accumulation, exponent scaling, and final finite-value check. If a malformed token leaves the cursor advanced, inspect the failure-atomic rollback path first.
+
+### `tests/test_unit_sysio_env` — sysio and environment
+
+Intent: verify standard stream access, formatter-backed console output, environment lookup, missing-variable errors, and long environment-key handling.
+
+Sub-checks:
+
+- Uses proven sysio/formatter APIs without including `<stdio.h>` directly in the test.
+- Prints structured output to prove standard stream wrappers are usable.
+- Reads a likely existing environment variable such as `PATH`.
+- Confirms a fake environment variable reports failure.
+- Creates and reads an environment variable whose key is larger than the old fixed stack limit.
+
+Failure tip: inspect `src/proven/sysio.c` and `platform/proven_sys_env.c`. Long-key failures usually mean a fixed-size C-string conversion path returned. Windows failures may involve UTF-8 to UTF-16 conversion and allocator ownership.
+
+### `tests/test_unit_sysio_scanner` — sysio-backed scanner
+
+Intent: verify scanner behavior over file-backed sysio data instead of only in-memory string views.
+
+Sub-checks:
+
+- Creates a temporary file and writes integer/token content.
+- Opens the file for reading.
+- Initializes a sysio scanner with an allocator-backed buffer.
+- Scans two integers across the file stream and confirms EOF after the final token.
+- Verifies `tests/test_unit_sysio_scanner_boundary` resumes across a chunk boundary, refills as needed, and only reports EOF after the final token is consumed.
+- Cleans up scanner and file resources.
+
+Failure tip: inspect `src/proven/sysio.c`, `src/proven/scan.c`, and file read wrappers. If in-memory scan tests pass but this fails, suspect buffer refill or file-position behavior, especially at the current-buffer boundary.
+
+### `tests/test_unit_sysio_scanner_init` — sysio scanner init allocator validation
+
+Intent: verify buffered scanner initialization rejects partial allocators and leaves the scanner zero-safe on failure.
+
+Sub-checks:
+
+- Passes an allocator that only exposes `alloc_fn` and expects `PROVEN_ERR_INVALID_ARG`.
+- Confirms the partial allocator is never called.
+- Confirms a rejected initialization leaves the scanner fields cleared.
+- In hosted builds, confirms a valid heap allocator still initializes and deinitializes the scanner normally.
+
+Failure tip: inspect `proven_sysio_scanner_init` in `src/proven/sysio.c`. If a partial allocator is accepted, the full allocator trait check is missing; if the scanner keeps non-zero state after failure, the failure path is not zero-safe.
+
+### `tests/test_unit_time_fmt` — time and formatting integration
+
+Intent: verify time measurement, sleep duration, modern format syntax, datetime formatting, and escaped braces.
+
+Sub-checks:
+
+- Reads monotonic or high-resolution time before and after a short sleep.
+- Confirms elapsed nanoseconds are at least approximately the requested sleep.
+- Formats positional and automatic arguments.
+- Converts the Unix epoch to a datetime and checks year/month.
+- Formats a datetime value through `PROVEN_ARG`.
+- Verifies `{{` and `}}` produce literal braces.
+
+Failure tip: inspect `platform/proven_sys_time.c` for clock conversion and `src/proven/fmt.c` for datetime formatting. Timing failures can be caused by a broken clock source or by assuming exact scheduling latency.
+
+### `tests/test_unit_u16str` — U16 strings
+
+Intent: verify optional UTF-16/code-unit string support and its append policies.
+
+Sub-checks:
+
+- Creates and destroys a U16 string.
+- Appends code units into fixed capacity.
+- Confirms atomic append failure leaves content and length unchanged.
+- Confirms partial append writes the count that fits and reports out-of-bounds.
+- Confirms growable append reallocates and completes the write.
+
+Failure tip: inspect `src/proven/u16str.c` and `include/proven/u16str.h`. Treat U16 values as UTF-16 code units, not Unicode scalar values. Check `PROVEN_NO_U16STR` guards if the failure is compile-time.
+
+### `tests/test_unit_u8str_mutation` — U8 string mutation
 
 Intent: verify U8 string search, slicing, replacement, insertion, removal, and the three append policies: atomic fixed-capacity, partial fixed-capacity, and growable.
 
@@ -413,250 +748,127 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/u8str.c`. For failures after a reallocation path, assume saved views or C-string pointers are stale unless proven otherwise. For fixed-capacity failures, check whether the operation is documented as atomic or partial.
 
-### 10. `tests/test_phase8_array` - growable array
+### `tests/test_unit_float_bits` — float bit extraction
 
-Intent: verify generic array allocation, validation, push/pop, growth, migration, element access, and arena-backed use.
+Intent: verify the internal float bit helpers preserve raw IEEE-754 bit patterns for f32 and f64 values, including signed zero, infinities, and NaN payloads.
 
-Sub-checks:
+Failure tip: inspect src/proven/float_decimal.c if the raw byte-copy helpers stop matching the object representation.
 
-- Initializes an array with a typed element size and initial capacity.
-- Checks validation catches corrupted length/capacity state.
-- Pushes typed values through macros.
-- Forces growth and verifies data migrated correctly.
-- Pops values and checks boundary rejection on empty pop.
-- Checks invalid get/set ranges.
-- Creates an arena-backed array to ensure allocator independence.
+### `tests/test_unit_float_exact_range` — float exact-range backend
 
-Failure tip: inspect `src/proven/array.c`. Growth failures usually mean element-size multiplication, capacity doubling, or realloc failure-atomic behavior changed. Remember that pointers into array storage are invalid after growth.
+Intent: verify representative exact-range decimal spellings keep their documented bit patterns without the host strtod fallback.
 
-### 11. `tests/test_phase9_list` - intrusive list
+Failure tip: inspect src/proven/scan.c and the shared float decimal helper if the exact-range backend falls back to host strtod or the corpus drifts.
 
-Intent: verify zero-allocation intrusive list behavior and container-of usage.
+### `tests/test_unit_float_f32_boundaries` — float32 boundary neighbors
 
-Sub-checks:
+Intent: verify the float32 upgrade and shortest corpora pin the ULP-adjacent neighbors around FLT_MIN and FLT_TRUE_MIN so the parser-driven backend keeps the documented boundary spellings.
 
-- Initializes an empty sentinel list.
-- Appends embedded nodes from caller-owned structs.
-- Iterates in reverse and sums payload values.
-- Removes nodes while iterating.
-- Reads first and last entries through container-of style access.
+Failure tip: inspect tests/test_differential_float_corpus_f64.c and tests/test_unit_float_shortest_roundtrip.c if a float32 boundary-neighbor corpus value disappears or changes spelling.
 
-Failure tip: inspect `include/proven/list.h`. Intrusive lists do not own node storage. A failure usually means `next`/`prev` linkage was corrupted or a detached node was reused incorrectly.
+### `tests/test_unit_float_format_policy` — float format policy scaffold
 
-### 12. `tests/test_phase10_ring` - bounded ring
+Intent: verify the new float format policy seam preserves the current simple formatter behavior, rejects unsupported shortest-mode requests, and reports invalid inputs clearly.
 
-Intent: verify fixed-capacity FIFO semantics, wraparound, full/empty detection, and overflow guards.
+Failure tip: inspect src/proven/float_format.c and include/proven/float_format.h if the policy dispatch or fixed formatter helper regresses.
 
-Sub-checks:
+### `tests/test_unit_float_parse_api` — float parse API
 
-- Creates a ring and verifies initial head, tail, length, and capacity.
-- Pushes and pops values in FIFO order.
-- Fills the ring and verifies extra push is rejected.
-- Pops across physical wraparound boundaries.
-- Verifies empty pop rejection.
-- Checks integer-overflow bounds for capacity calculations.
+Intent: verify the public ASCII float parser and strtod-like wrapper expose consumed-length, endptr, and range signaling over the shared exact backend.
 
-Failure tip: inspect `src/proven/ring.c`. The first suspects are head/tail modulo math, `len` updates, and full-vs-empty boundary handling.
+Failure tip: inspect include/proven/float_parse.h, src/proven/float_parse.c, and src/proven/float_decimal.c if the public parser seam or wrapper contract drifts.
 
-### 13. `tests/test_phase11_map` - hash map
+### `tests/test_unit_float_rfc_0001_cases` — RFC-0001 parse audit
 
-Intent: verify open-addressing map behavior for integer and U8 string keys, including tombstones, growth, and scratch allocation.
+Intent: verify the decimal-to-binary64 rewrite still satisfies the explicit named cases from docs/proposals/rfc-0001.
 
-Sub-checks:
+Failure tip: inspect docs/proposals/rfc-0001, include/proven/float_parse.h, src/proven/float_parse.c, and src/proven/float_decimal.c if a named RFC audit case fails.
 
-- Creates an integer-key map and confirms capacity normalization.
-- Inserts, retrieves, updates, and deletes entries.
-- Confirms deletion reduces live length and leaves tombstones usable.
-- Creates a U8 string-key map and inserts enough entries to force growth.
-- Verifies all expected string keys remain reachable after rehash.
-- Tracks scratch allocation during safe rehash paths.
+### `tests/test_unit_float_shortest_known` — float shortest known values
 
-Failure tip: inspect `src/proven/map.c`. Check hash/equality callbacks, tombstone reuse, threshold calculation, and whether borrowed keys or value pointers are being used after rehash.
+Intent: verify the shortest float formatting policy emits the documented exact spellings for representative f64 and f32 values.
 
-### 13a. `tests/test_map_owned_key` - map owned-key storage
+Failure tip: inspect src/proven/float_format.c if the shortest-policy output drifts or if RYU requests stop reaching the active backend.
 
-Intent: verify owned U8 keys are duplicated into map storage, survive source-buffer mutation, and free their copied bytes on remove and destroy.
+### `tests/test_unit_float_shortest_roundtrip` — float shortest round-trip
 
-Sub-checks:
+Intent: verify shortest float formatting round-trips through host strtod for representative f64 and f32 values.
 
-- Creates a U8 owned-key map.
-- Inserts a key from mutable source storage and confirms the lookup survives source-buffer mutation.
-- Removes the entry and confirms the copied key bytes are released once.
-- Inserts enough owned keys to force rehash and confirms every copied key still resolves after growth.
-- Destroys the map and confirms all owned key allocations have matching frees.
+Failure tip: inspect src/proven/float_format.c if the shortest output stops round-tripping, and keep the host strtod oracle limited to tests.
 
-Failure tip: inspect the owned-key duplication, cleanup, and rehash migration paths in `src/proven/map.c` if a key is lost, leaks, or follows a mutated source buffer.
+### `tests/test_unit_float_shortest_scientific_guard` — float shortest scientific guard
 
-### 13b. `tests/test_map_hardening` - map borrowed-key hardening
+Intent: verify the shortest float formatter handles very small finite values by producing a valid shortest candidate instead of an invalid scientific normalization result.
 
-Intent: verify borrowed U8 keys that point into internal map storage are rejected when debug validation or `PROVEN_HARDENED` is enabled.
+Failure tip: inspect src/proven/float_decimal.c and src/proven/float_format.c if the shortest formatter rejects a tiny finite value or emits an invalid scientific spelling.
 
-Sub-checks:
+### `tests/test_unit_float_shortest_tie_break` — float shortest tie-break corpus
 
-- Inserts a normal external borrowed key and confirms it still works.
-- Constructs a borrowed view that points into the map's own internal storage.
-- Expects `PROVEN_ERR_INVALID_ARG` for that internal-storage key when the validation gate is active.
+Intent: verify the shortest corpus keeps the 0.001 fixed-versus-scientific tie-break cases pinned for both widths.
 
-Failure tip: inspect the borrowed-key range guard in `src/proven/map.c` if an internal pointer is accepted or if ordinary borrowed keys stop working.
+Failure tip: inspect tests/test_unit_float_shortest_roundtrip.c and tests/test_differential_float_corpus_f64.c if the tie-break corpus disappears or is renamed.
 
-### 14. `tests/test_phase12_algorithm` - algorithms
+### `tests/test_unit_mem_copy` — bounded memory copy
 
-Intent: verify generic sort and binary search helpers using both scalar and struct comparators.
+Intent: verify proven_mem_copy copies within capacity, rejects overflow without writing, treats a zero-size source as a no-op, and rejects null pointers.
 
-Sub-checks:
+Failure tip: inspect proven_mem_copy in src/proven/memory.c if a copy overflows, writes on rejection, or mishandles empty/null inputs.
 
-- Sorts an integer array and verifies ascending order.
-- Binary-searches for an existing and a missing integer.
-- Sorts structs using a comparator that sorts by score descending and ID ascending.
-- Verifies comparator tie-breaking order.
+### `tests/test_unit_scan_f64_bounds` — float scanner boundary behavior
 
-Failure tip: inspect `src/proven/algorithm.c`. Comparator return convention must stay consistent: callers expect negative, zero, and positive values to drive ordering.
+Intent: verify float scanning treats underflow as signed zero, reports overflow deterministically, and preserves cursor rollback at the true boundary cases.
 
-### 15. `tests/test_phase13_fs` - basic filesystem
+Failure tip: inspect proven_scan_f64 exponent-to-value handling and final finite checks if a boundary token returns the wrong error or wrong sign.
 
-Intent: verify hosted file open, write, read-all, size queries, and absolute-path classification.
+### `tests/test_unit_sysio_scanner_boundary` — sysio scanner boundary refill
+
+Intent: verify buffered sysio scanning resumes across a chunk boundary, refills as needed, and only reports EOF after the final token is consumed.
+
+Failure tip: inspect proven_sysio_scanner_scan_impl staging, refill handling, and EOF transition behavior when a token reaches the end of the buffer.
+
+### `tests/test_unit_u128_mul` — wide multiply helper
+
+Intent: verify the shared 64x64 to 128-bit multiply helper returns exact high and low halves for representative operands.
+
+Failure tip: inspect src/proven/float_decimal.c if the wide multiply helper stops matching the reference product.
+
+### `tests/test_unit_u8str_borrow` — U8 string borrow (fixed-capacity over caller memory)
+
+Intent: verify proven_u8str_borrow/_reset: fixed-capacity ops and fmt work, growing ops refuse to reallocate caller memory, and destroy is a no-op.
+
+Failure tip: inspect proven_u8str_borrow/_reset and the borrowed-flag guards in reserve/append_grow/replace_at_grow/destroy.
+
+## Contract and hardening tests
+
+The public invariants: misuse, corrupted structs, exhausted allocators, refused input. These say what the library *refuses to do*, which is the half a caller cannot infer from the happy path.
+
+### `tests/test_contract_allocator_dealloc` — allocator deallocation policies
+
+Intent: document and verify the different deallocation policies exposed through the allocator trait.
 
 Sub-checks:
 
-- Opens a temporary file for create/write/truncate.
-- Writes known content and checks byte count.
-- Reads the whole file and checks size and byte equality.
-- Reopens the file and queries its size.
-- Verifies absolute path classification for POSIX, drive-letter Windows paths, UNC paths, and extended Windows paths.
+- Allocates from an arena through the generic allocator trait.
+- Calls the arena free function and verifies it is intentionally a no-op.
+- Resets the arena as the correct lifetime-ending operation.
+- Allocates from the heap allocator and frees through the heap trait.
 
-Failure tip: inspect `src/proven/fs.c` and `platform/proven_sys_fs.c`. If only Windows path cases fail, check path-prefix parsing rather than POSIX filesystem behavior.
+Failure tip: inspect `src/proven/arena.c`, `src/proven/heap.c`, and the allocator trait definition. Do not make arena `free` reclaim individual blocks; that would break the arena lifetime model.
 
-### 16. `tests/test_phase14_fs_advanced` - advanced filesystem
+### `tests/test_contract_arena_panic` — arena panic path
 
-Intent: verify directory lifecycle, nested file creation, rename/move, listing, sorting expectations, and cleanup.
-
-Sub-checks:
-
-- Removes stale test directories from earlier failed runs.
-- Creates a directory.
-- Creates multiple files inside it.
-- Renames/moves one file.
-- Lists directory entries into a library array.
-- Confirms expected files are present.
-- Releases listed strings and removes test files/directories.
-
-Failure tip: inspect `platform/proven_sys_fs.c` for directory iteration and path handling. On failure, check whether cleanup from a previous run left permissions or stale entries behind.
-
-### 17. `tests/test_phase15_fs_security` - filesystem metadata and permissions
-
-Intent: verify hosted permission and locking-related filesystem behavior stays explicit and isolated behind the PAL.
+Intent: verify panic-on-allocation-failure behavior is deterministic and does not fire on successful arena allocation.
 
 Sub-checks:
 
-- Creates a temporary file.
-- Changes permissions to read-only and back when the platform supports it.
-- Opens files for write where needed.
-- Acquires and releases advisory locks where supported.
+- Installs a test panic handler with `proven_set_panic_handler`.
+- Allocates successfully with `alloc_or_panic` and confirms no panic occurred.
+- Requests more memory than the arena can provide.
+- Confirms the panic hook was invoked exactly for the out-of-memory path.
 
-Failure tip: inspect `platform/proven_sys_fs.c`. Permission and locking semantics are OS-dependent; keep differences in PAL code and avoid assuming POSIX behavior on every target.
+Failure tip: inspect `src/proven/arena.c` and `src/proven/panic.c`. Restore the panic hook carefully in tests so later tests are not affected.
 
-### 18. `tests/test_phase16_time_fmt` - time and formatting integration
-
-Intent: verify time measurement, sleep duration, modern format syntax, datetime formatting, and escaped braces.
-
-Sub-checks:
-
-- Reads monotonic or high-resolution time before and after a short sleep.
-- Confirms elapsed nanoseconds are at least approximately the requested sleep.
-- Formats positional and automatic arguments.
-- Converts the Unix epoch to a datetime and checks year/month.
-- Formats a datetime value through `PROVEN_ARG`.
-- Verifies `{{` and `}}` produce literal braces.
-
-Failure tip: inspect `platform/proven_sys_time.c` for clock conversion and `src/proven/fmt.c` for datetime formatting. Timing failures can be caused by a broken clock source or by assuming exact scheduling latency.
-
-### 19. `tests/test_phase17_mmap` - memory mapped files
-
-Intent: verify hosted memory mapping rejects invalid flags and exposes file bytes through mapped memory.
-
-Sub-checks:
-
-- Creates a test file with known content.
-- Rejects invalid mmap flag combinations: zero flags, private plus shared, zero protection, unknown protection bits, and misaligned offsets.
-- Maps a file range.
-- Verifies mapped bytes match expected content.
-- Modifies mapped memory and syncs/unmaps it.
-- Reads the file back to verify the modification reached disk when mapping mode requires it.
-
-Failure tip: inspect `src/proven/mmap.c` and `platform/proven_sys_fs.c`. Pay special attention to offset alignment, map length, file handle lifetime, and unmap ownership.
-
-### 20. `tests/test_phase17_u16str` - U16 strings
-
-Intent: verify optional UTF-16/code-unit string support and its append policies.
-
-Sub-checks:
-
-- Creates and destroys a U16 string.
-- Appends code units into fixed capacity.
-- Confirms atomic append failure leaves content and length unchanged.
-- Confirms partial append writes the count that fits and reports out-of-bounds.
-- Confirms growable append reallocates and completes the write.
-
-Failure tip: inspect `src/proven/u16str.c` and `include/proven/u16str.h`. Treat U16 values as UTF-16 code units, not Unicode scalar values. Check `PROVEN_NO_U16STR` guards if the failure is compile-time.
-
-### 21. `tests/test_phase18_sysio` - sysio and environment
-
-Intent: verify standard stream access, formatter-backed console output, environment lookup, missing-variable errors, and long environment-key handling.
-
-Sub-checks:
-
-- Uses proven sysio/formatter APIs without including `<stdio.h>` directly in the test.
-- Prints structured output to prove standard stream wrappers are usable.
-- Reads a likely existing environment variable such as `PATH`.
-- Confirms a fake environment variable reports failure.
-- Creates and reads an environment variable whose key is larger than the old fixed stack limit.
-
-Failure tip: inspect `src/proven/sysio.c` and `platform/proven_sys_env.c`. Long-key failures usually mean a fixed-size C-string conversion path returned. Windows failures may involve UTF-8 to UTF-16 conversion and allocator ownership.
-
-### 22. `tests/test_phase19_coro` - stackless coroutine
-
-Intent: verify coroutine macros preserve caller-owned state across yields and complete after multiple resume calls.
-
-Sub-checks:
-
-- Defines a simulated network fetcher that yields across multiple phases.
-- Repeatedly resumes the coroutine from a main loop.
-- Confirms final payload value is set after completion.
-- Confirms the main loop observed multiple ticks rather than one blocking call.
-
-Failure tip: inspect `include/proven/coro.h`. Coroutine state must live in caller-owned storage and must not be reset between resumes.
-
-### 23. `tests/test_phase20_job` - job system
-
-Intent: verify the hosted worker-thread job system executes submitted jobs exactly once and shuts down cleanly.
-
-Sub-checks:
-
-- Initializes a job system with four workers and a 1024-entry queue.
-- Dispatches 1000 jobs.
-- Uses atomics to count total executed jobs.
-- Uses indexed atomics to detect duplicate or missing job execution.
-- Shuts down workers and flushes synchronization barriers.
-
-Failure tip: inspect `src/proven/job.c` and `platform/proven_sys_thread.c`. For races, run `./nob tsan`. Check admission state, sequence counters, queue claim/commit ordering, and shutdown wakeups.
-
-### 24. `tests/test_phase21_scan` - scanner
-
-Intent: verify scanner parsing for integers, floats, tokens, skip-until operations, format scanning, and fixed-width integer destinations.
-
-Sub-checks:
-
-- Scans unsigned and signed integers.
-- Scans positive, negative, and exponent-style floating-point values.
-- Scans tokens and string views.
-- Skips until substrings and numbers.
-- Confirms not-found behavior.
-- Scans using `{}` and spec-style format patterns.
-- Scans native and fixed-width integer aliases.
-
-Failure tip: inspect `src/proven/scan.c`. The most common bugs are cursor advancement on failure, overflow detection, and accepting invalid trailing characters.
-
-### 25. `tests/test_phase22_fmt_best_effort` - formatter failure policy
+### `tests/test_contract_fmt_failure_policy` — formatter failure policy
 
 Intent: verify formatting append policies are explicit: fixed-capacity atomic, fixed-capacity truncating, and allocator-backed growable.
 
@@ -671,7 +883,32 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/fmt.c`. Track `written`, `required`, and destination length separately. Atomic failure must not modify the destination.
 
-### 26. `tests/test_scan_overflow_f64` - float scanner overflow
+### `tests/test_contract_map_hardening` — map borrowed-key hardening
+
+Intent: verify borrowed U8 keys that point into internal map storage are rejected when debug validation or `PROVEN_HARDENED` is enabled.
+
+Sub-checks:
+
+- Inserts a normal external borrowed key and confirms it still works.
+- Constructs a borrowed view that points into the map's own internal storage.
+- Expects `PROVEN_ERR_INVALID_ARG` for that internal-storage key when the validation gate is active.
+
+Failure tip: inspect the borrowed-key range guard in `src/proven/map.c` if an internal pointer is accepted or if ordinary borrowed keys stop working.
+
+### `tests/test_contract_pool_misuse` — pool double-free hardening
+
+Intent: verify the pool free trait catches repeated frees when debug validation or `PROVEN_HARDENED` is enabled.
+
+Sub-checks:
+
+- Installs a test panic handler.
+- Allocates one fixed-size block through the pool allocator trait.
+- Frees the block once successfully.
+- Frees the same block again and expects the validation path to reach the panic handler when hardening or debug validation is active.
+
+Failure tip: inspect `src/proven/pool.c`. The repeated-free check must remain gated on debug validation or `PROVEN_HARDENED`, and the test should only require the panic path when that gate is active.
+
+### `tests/test_contract_scan_f64_overflow` — float scanner overflow
 
 Intent: verify a very large floating-point token reports `PROVEN_ERR_OVERFLOW` instead of silently accepting infinity.
 
@@ -683,59 +920,47 @@ Sub-checks:
 
 Failure tip: inspect `proven_scan_f64` in `src/proven/scan.c` and math helper behavior in the PAL. Do not accept `inf` as a successful parsed finite value.
 
-### 27. `tests/test_scan_f64_accuracy` - float scanner accuracy
+### `tests/test_contract_sysio_scan_nonseekable` — non-seekable sysio rejection
 
-Intent: verify float scanning preserves exact small values, signed zero, a round-trip style decimal token, exponent extremes, and cursor restoration on malformed input.
-
-Sub-checks:
-
-- Confirms exact bit patterns for `0.0`, `-0.0`, `1.0`, `-1.0`, `0.5`, `0.1`, and `123456789.0`.
-- Confirms the parsed bits for `0.30000000000000004` match the source literal.
-- Confirms `1.7976931348623157e308`, `2.2250738585072014e-308`, and `4.9e-324` remain finite and stable.
-- Confirms `1e309` reports `PROVEN_ERR_OVERFLOW`.
-- Confirms malformed input restores the scanner cursor to its original position.
-- `tests/test_scan_f64_bounds` covers underflow-to-signed-zero spellings, the true-min half threshold, subnormal-boundary spellings around DBL_MIN, and overflow boundary behavior at the same parser boundary.
-
-Failure tip: inspect `src/proven/scan.c`, especially the decimal mantissa accumulation, exponent scaling, and final finite-value check. If a malformed token leaves the cursor advanced, inspect the failure-atomic rollback path first.
-
-### 28. `tests/test_sysio_scanner` - sysio-backed scanner
-
-Intent: verify scanner behavior over file-backed sysio data instead of only in-memory string views.
+Intent: verify one-chunk file scanning rejects pipe/stdin-like inputs before consuming data.
 
 Sub-checks:
 
-- Creates a temporary file and writes integer/token content.
-- Opens the file for reading.
-- Initializes a sysio scanner with an allocator-backed buffer.
-- Scans two integers across the file stream and confirms EOF after the final token.
-- Verifies `tests/test_sysio_scanner_boundary` resumes across a chunk boundary, refills as needed, and only reports EOF after the final token is consumed.
-- Cleans up scanner and file resources.
+- Checks the helper returns `PROVEN_ERR_UNSUPPORTED` for a non-seekable handle.
+- Checks the scan destination is left unchanged on the early rejection path.
+- Checks the original pipe payload is still readable after the rejected scan attempt.
 
-Failure tip: inspect `src/proven/sysio.c`, `src/proven/scan.c`, and file read wrappers. If in-memory scan tests pass but this fails, suspect buffer refill or file-position behavior, especially at the current-buffer boundary.
+Failure tip: inspect `src/proven/sysio.c` and make sure the one-chunk scan path probes seekability before reading.
 
-### 29. `tests/test_regression_v26_05` - v26.05 regressions
+### `tests/test_contract_sysio_scan_truncation` — chunked sysio scan truncation
 
-Intent: protect historically fixed issues in map rehashing, formatting, scanning, aliasing, and environment handling.
+Intent: verify one-chunk file scanning rejects inputs that exceed the fixed buffer and leaves the stream reusable after a failed attempt.
 
 Sub-checks:
 
-- Map self-payload rehash: inserting a value pointer that points inside the map must not corrupt the new value during rehash.
-- Map existing-key update before rehash: updating an existing key must not incorrectly grow or lose the value.
-- Map large-value rehash allocation tracking: rehash must allocate/free scratch exactly as expected for large values.
-- Formatter self `STR_VIEW` grow: formatting from a view into the destination must handle aliasing safely.
-- Formatter self `CSTR` grow invalid-arg: unsafe self C-string aliasing should be rejected.
-- Formatter huge argument index: very large explicit indexes must fail safely.
-- Formatter many args without alias: large argument arrays must not overflow stack or internal accounting.
-- Formatter many args with alias scratch: alias-safe scratch paths must allocate and release scratch correctly.
-- Scanner invalid cursor: invalid scan state must not be treated as success.
-- Buffer append overlap: `test_phase5` checks that `proven_buf_append()` preserves overlapping source views with move semantics instead of corrupting the appended bytes.
-- Array/string self-alias grow: grow operations must not corrupt when source and destination overlap in documented ways.
-- `PROVEN_ARG_CSTR_N` safety bounds: C-string-with-length arguments must respect the caller-supplied bound.
-- Environment large value: environment values larger than a small stack buffer must be read through dynamic allocation.
+- Checks a chunk-full string token reports the bounds error used by the one-chunk scan path.
+- Checks the file cursor is still usable after the failure.
+- Checks the trailing integer is not consumed by the failed scan.
 
-Failure tip: this file is intentionally a set of historical tripwires. Do not collapse it into broad smoke coverage. Read the failing sub-check name printed in the log and inspect the corresponding source module.
+Failure tip: inspect `src/proven/sysio.c` and `tests/test_contract_sysio_scan_truncation.c`.
 
-### 30. `tests/test_regression_fs_copy_to_self` - filesystem self-copy regression
+### `tests/test_contract_float_module_layout` — float module scaffold
+
+Intent: verify the shared float helpers live in a dedicated internal translation unit instead of being copied into fmt.c and scan.c.
+
+Failure tip: inspect src/proven/float_decimal.c, src/proven/float_decimal.h, fmt.c, scan.c, and nob.c if the shared decimal helper scaffold regresses.
+
+### `tests/test_contract_public_structs` — public array/map/filesystem contracts
+
+Intent: verify corrupted public array and map structs fail safely and filesystem append-mode requests keep write intent explicit.
+
+Failure tip: inspect public invariant guards in array/map mutation entry points and the filesystem open-flag translation if a corrupt struct or append request slips through.
+
+## Regression tests
+
+One test per defect that actually shipped. Each is named for what broke, not for a version or a number, and each was verified to FAIL against the pre-fix source. A regression test that passes before the fix is not a regression test.
+
+### `tests/test_regression_fs_copy_to_self` — filesystem self-copy regression
 
 Intent: verify copy-to-self and copy-to-hardlink-self fail without truncating or corrupting the file.
 
@@ -749,7 +974,7 @@ Sub-checks:
 
 Failure tip: inspect same-file detection and open/truncate ordering in filesystem copy code. The destination must not be opened with truncation before proving it is not the same file as the source.
 
-### 30a. `tests/test_regression_fs_slurp` - filesystem whole-file read/write
+### `tests/test_regression_fs_slurp` — filesystem whole-file read/write
 
 Intent: verify whole-file reads go to EOF rather than to a pre-measured size, and that the whole-file write entry points round-trip.
 
@@ -765,7 +990,7 @@ Sub-checks:
 
 Failure tip: `proven_fs_size` reports 0 for anything that is not a regular file, so the reported size may only seed the read capacity - never bound the read. Inspect `internal_slurp_path` and `internal_read_to_eof` in `src/proven/fs.c`.
 
-### 30b. `tests/test_regression_scanner_rollback` - scanner rollback after a failed scan
+### `tests/test_regression_scanner_rollback` — scanner rollback after a failed scan
 
 Intent: verify a scan that fails on an oversized token restores the stream exactly - dropping no byte and duplicating none.
 
@@ -779,22 +1004,7 @@ Sub-checks:
 
 Failure tip: `scanner_fill` compacts the buffer (it memmoves unconsumed bytes to the front and resets the cursor). A snapshot taken before compaction cannot be written back afterwards without accounting for how far the contents moved. Inspect the rollback in `proven_sysio_scanner_scan_impl`.
 
-### 30c. `tests/test_regression_v26_07` - v26.07 regressions
-
-Intent: protect the fixed `u8str` NUL-seal, datetime formatting, and pool init defects.
-
-Sub-checks:
-
-- `proven_u8str_reserve` on a zero-initialized string leaves `ptr[len] == 0`, so `proven_u8str_as_cstr` is readable and `proven_u8str_is_valid` accepts it.
-- A format that produces no output still leaves the string sealed after its growth allocation.
-- A `proven_datetime_t` with year `-1` renders as `-0001-...`, and `INT32_MIN` renders correctly.
-- A `proven_pool_init` whose bin allocation fails leaves `bin_cap == 0`, so the free trait cannot write through a null bin.
-
-Note: the string checks allocate from an arena over deliberately poisoned backing memory. Allocators do not return zeroed memory, and on a quiet heap a fresh block is often zero by luck - which is exactly why these defects went unnoticed.
-
-Failure tip: each section names one area - `proven_u8str_reserve` in `u8str.c`, the growth branch and `PROVEN_ARG_DATETIME` case in `fmt.c`, the init ordering in `pool.c`.
-
-### 30d. `tests/test_regression_sort_duplicates` - sort on duplicate keys
+### `tests/test_regression_sort_duplicates` — sort on duplicate keys
 
 Intent: verify `proven_array_sort` stays sub-quadratic on duplicate and degenerate input.
 
@@ -809,7 +1019,48 @@ Note: this suite counts comparisons, not wall-clock time. A timing threshold is 
 
 Failure tip: inspect the partition in `src/proven/algorithm.c`. Equal elements must be collected into a run that is final and never recursed into.
 
-### 31. `tests/test_regression_source_contracts` - source portability contracts
+### `tests/test_regression_v26_05` — v26.05 regressions
+
+Intent: protect historically fixed issues in map rehashing, formatting, scanning, aliasing, and environment handling.
+
+Sub-checks:
+
+- Map self-payload rehash: inserting a value pointer that points inside the map must not corrupt the new value during rehash.
+- Map existing-key update before rehash: updating an existing key must not incorrectly grow or lose the value.
+- Map large-value rehash allocation tracking: rehash must allocate/free scratch exactly as expected for large values.
+- Formatter self `STR_VIEW` grow: formatting from a view into the destination must handle aliasing safely.
+- Formatter self `CSTR` grow invalid-arg: unsafe self C-string aliasing should be rejected.
+- Formatter huge argument index: very large explicit indexes must fail safely.
+- Formatter many args without alias: large argument arrays must not overflow stack or internal accounting.
+- Formatter many args with alias scratch: alias-safe scratch paths must allocate and release scratch correctly.
+- Scanner invalid cursor: invalid scan state must not be treated as success.
+- Buffer append overlap: `test_unit_buffer_u8str_basics` checks that `proven_buf_append()` preserves overlapping source views with move semantics instead of corrupting the appended bytes.
+- Array/string self-alias grow: grow operations must not corrupt when source and destination overlap in documented ways.
+- `PROVEN_ARG_CSTR_N` safety bounds: C-string-with-length arguments must respect the caller-supplied bound.
+- Environment large value: environment values larger than a small stack buffer must be read through dynamic allocation.
+
+Failure tip: this file is intentionally a set of historical tripwires. Do not collapse it into broad smoke coverage. Read the failing sub-check name printed in the log and inspect the corresponding source module.
+
+### `tests/test_regression_v26_07` — v26.07 regressions
+
+Intent: protect the fixed `u8str` NUL-seal, datetime formatting, and pool init defects.
+
+Sub-checks:
+
+- `proven_u8str_reserve` on a zero-initialized string leaves `ptr[len] == 0`, so `proven_u8str_as_cstr` is readable and `proven_u8str_is_valid` accepts it.
+- A format that produces no output still leaves the string sealed after its growth allocation.
+- A `proven_datetime_t` with year `-1` renders as `-0001-...`, and `INT32_MIN` renders correctly.
+- A `proven_pool_init` whose bin allocation fails leaves `bin_cap == 0`, so the free trait cannot write through a null bin.
+
+Note: the string checks allocate from an arena over deliberately poisoned backing memory. Allocators do not return zeroed memory, and on a quiet heap a fresh block is often zero by luck - which is exactly why these defects went unnoticed.
+
+Failure tip: each section names one area - `proven_u8str_reserve` in `u8str.c`, the growth branch and `PROVEN_ARG_DATETIME` case in `fmt.c`, the init ordering in `pool.c`.
+
+## Portability tests
+
+Freestanding builds, compile-only cross targets, source-level platform contracts, and the build driver's own standard probe. Most of these cannot be *run* on the host, so they check what can be checked: that the code compiles, links, and keeps its platform branches intact.
+
+### `tests/test_portability_source_contracts` — source portability contracts
 
 Intent: guard platform branches and documentation/test-output contracts that may not be executable on the current host.
 
@@ -828,20 +1079,40 @@ Sub-checks:
 
 Failure tip: source-contract tests should stay narrow. If a source pattern changes legitimately, update the contract to the new safe pattern in the same commit as the source change and explain it in docs.
 
-### 31. `tests/test_arena_panic` - arena panic path
+### `tests/test_portability_cross_compile_smoke` — cross compile smoke
 
-Intent: verify panic-on-allocation-failure behavior is deterministic and does not fire on successful arena allocation.
+### `tests/test_portability_cross_link_smoke` — cross link smoke
+
+### `tests/test_portability_float` — float portability
+
+Intent: verify scan and format float conversion paths stay double-only and keep target-deterministic behavior without long double dependence.
+
+Failure tip: inspect src/proven/scan.c and src/proven/fmt.c if long double returns, casts, or target-specific float drift reappear.
+
+### `tests/test_portability_nob_std_probe` — build driver standard probe
+
+Intent: verify nob probes -std=c23 first and falls back to -std=c2x when the compiler rejects c23.
+
+Failure tip: inspect nob.c standard-flag selection and toolchain probing if the fallback does not trigger.
+
+## Documentation tests
+
+The documentation is checked by the build, not by eye: every public function has an alias, every example the manual prints is a program that compiles and runs, and no example drifts from its chapter.
+
+### `tests/test_docs_alias_completeness` — alias layer completeness
+
+Intent: verify every public `proven_*` function has an `xcv_*` alias in `include/proven/alias_xcv.h`.
 
 Sub-checks:
 
-- Installs a test panic handler with `proven_set_panic_handler`.
-- Allocates successfully with `alloc_or_panic` and confirms no panic occurred.
-- Requests more memory than the arena can provide.
-- Confirms the panic hook was invoked exactly for the out-of-memory path.
+- Parses every header in `include/proven/` (excluding the alias header itself) for public function declarations.
+- Requires each one to appear as the target of an `xcv_*` alias; names any that do not.
 
-Failure tip: inspect `src/proven/arena.c` and `src/proven/panic.c`. Restore the panic hook carefully in tests so later tests are not affected.
+Note: `tests/test_docs_alias_smoke` only checks that a hand-picked subset of aliases compiles. It cannot notice a *missing* alias, which is how 25 public functions ended up with none. This test closes that gap: adding a public function without an alias now fails the build.
 
-### 32. `tests/test_alias_smoke` - alias layer smoke
+Failure tip: add `#define xcv_<name> proven_<name>` to `include/proven/alias_xcv.h`, keeping the file alphabetical. A half-covered alias layer fails at the caller's call site, not here.
+
+### `tests/test_docs_alias_smoke` — alias layer smoke
 
 Intent: verify the public XCV alias layer compiles and maps representative aliases to canonical proven APIs.
 
@@ -852,97 +1123,53 @@ Sub-checks:
 - Uses formatting argument aliases.
 - Uses macro aliases that are expected to stay available for the alias layer.
 
-Failure tip: inspect `include/proven/alias_xcv.h` and `tests/test_alias_smoke.c`. When public symbols are added, renamed, or removed, update the alias header and this smoke test together.
+Failure tip: inspect `include/proven/alias_xcv.h` and `tests/test_docs_alias_smoke.c`. When public symbols are added, renamed, or removed, update the alias header and this smoke test together.
 
-### 33. `tests/test_fmt_f64_accuracy` - float formatter accuracy
+### `tests/test_docs_manual_examples` — manual examples match the manual
 
-Intent: verify fixed-point rounding, scientific carry, and special-value text for floating-point formatting.
+Intent: verify every example the manual prints exists in manual/examples/, matches it verbatim, and that no example file is left unquoted.
 
-Sub-checks:
+Failure tip: the example file is the source of truth: it is compiled and run. Copy its body into the chapter rather than hand-editing the chapter to look right.
 
-- Checks normal-path rounding to six fractional digits.
-- Checks carry from the fractional tail into the integer part.
-- Checks scientific notation carry around the mantissa boundary.
-- Checks NaN and infinity text stay stable.
+## Differential tests
 
-Failure tip: inspect `src/proven/fmt.c` and `tests/test_fmt_f64_accuracy.c`.
+Correctness against an independent oracle - the host libc, or a corpus with known-good answers. These catch what a self-written expectation cannot: a wrong belief held consistently by both the code and its test.
 
-### 34. `tests/test_fmt_fastpath` - formatter truncation comparison
+### `tests/test_differential_float_corpus_f32` — float upgrade corpus float32 coverage
 
-Intent: compare truncating fixed-capacity formatting against the growable reference path for exact-fit, truncation, malformed format, and excess-argument cases.
+Intent: verify the upgrade corpus source also keeps the documented float32 shortest literals pinned alongside the existing float64 cases.
 
-Sub-checks:
+Failure tip: inspect tests/test_differential_float_corpus_f64.c if the float32 corpus section disappears or drifts from the documented literals.
 
-- Checks exact-fit truncation output matches the reference path.
-- Checks over-capacity truncation keeps the same prefix bytes and counts.
-- Checks excess-argument validation.
-- Checks malformed-format validation.
+### `tests/test_differential_float_corpus_f64` — float upgrade corpus
 
-Failure tip: inspect `src/proven/fmt.c` and `tests/test_fmt_fastpath.c`.
+Intent: verify the representative exact-range, subnormal-boundary, and shortest-format corpus stays pinned to the documented spellings while the float upgrade remains staged.
 
-### 35. `tests/test_sysio_scan_nonseekable` - non-seekable sysio rejection
+Failure tip: inspect src/proven/scan.c and src/proven/float_format.c if a representative corpus value changes bit pattern or shortest spelling.
 
-Intent: verify one-chunk file scanning rejects pipe/stdin-like inputs before consuming data.
+### `tests/test_differential_float_host_oracle_f32` — float host oracle float32
 
-Sub-checks:
+Intent: verify representative finite float32 fixed-format rendering matches the platform C library on the same inputs without sharing implementation code.
 
-- Checks the helper returns `PROVEN_ERR_UNSUPPORTED` for a non-seekable handle.
-- Checks the scan destination is left unchanged on the early rejection path.
-- Checks the original pipe payload is still readable after the rejected scan attempt.
+Failure tip: inspect src/proven/float_format.c if the float32 fixed formatter stops matching the host oracle corpus.
 
-Failure tip: inspect `src/proven/sysio.c` and make sure the one-chunk scan path probes seekability before reading.
+### `tests/test_differential_float_host_oracle_f64` — float host oracle
 
-### 36. `tests/test_sysio_scan_truncation` - chunked sysio scan truncation
+Intent: verify representative finite float parsing and simple fixed-format rendering match the platform C library on the same inputs without sharing implementation code.
 
-Intent: verify one-chunk file scanning rejects inputs that exceed the fixed buffer and leaves the stream reusable after a failed attempt.
+Failure tip: inspect src/proven/scan.c and src/proven/float_format.c if the host oracle and library disagree on the representative finite corpus.
 
-Sub-checks:
 
-- Checks a chunk-full string token reports the bounds error used by the one-chunk scan path.
-- Checks the file cursor is still usable after the failure.
-- Checks the trailing integer is not consumed by the failed scan.
+## Stress tests
 
-Failure tip: inspect `src/proven/sysio.c` and `tests/test_sysio_scan_truncation.c`.
+Concurrency under a sanitizer, over enough iterations to make a race likely rather than theoretical.
 
-### 37. `tests/test_sysio_scanner_init` - sysio scanner init allocator validation
+### `tests/test_stress_job_concurrency` — job queue stress
 
-Intent: verify buffered scanner initialization rejects partial allocators and leaves the scanner zero-safe on failure.
+Intent: verify the job queue tolerates a denser concurrent producer pattern and still executes each submitted job exactly once.
 
-Sub-checks:
+Failure tip: run this under TSAN first; inspect queue admission, claim, and shutdown ordering if a slot count drifts or a producer stalls.
 
-- Passes an allocator that only exposes `alloc_fn` and expects `PROVEN_ERR_INVALID_ARG`.
-- Confirms the partial allocator is never called.
-- Confirms a rejected initialization leaves the scanner fields cleared.
-- In hosted builds, confirms a valid heap allocator still initializes and deinitializes the scanner normally.
-
-Failure tip: inspect `proven_sysio_scanner_init` in `src/proven/sysio.c`. If a partial allocator is accepted, the full allocator trait check is missing; if the scanner keeps non-zero state after failure, the failure path is not zero-safe.
-
-### 30e. `tests/test_alias_completeness` - alias layer completeness
-
-Intent: verify every public `proven_*` function has an `xcv_*` alias in `include/proven/alias_xcv.h`.
-
-Sub-checks:
-
-- Parses every header in `include/proven/` (excluding the alias header itself) for public function declarations.
-- Requires each one to appear as the target of an `xcv_*` alias; names any that do not.
-
-Note: `tests/test_alias_smoke` only checks that a hand-picked subset of aliases compiles. It cannot notice a *missing* alias, which is how 25 public functions ended up with none. This test closes that gap: adding a public function without an alias now fails the build.
-
-Failure tip: add `#define xcv_<name> proven_<name>` to `include/proven/alias_xcv.h`, keeping the file alphabetical. A half-covered alias layer fails at the caller's call site, not here.
-
-### 30f. `tests/test_float_bigint_divmod` - float big-integer division
-
-Intent: verify the big-integer divide/modulo used by the exact float fallback.
-
-Failure tip: inspect `src/proven/float_decimal.c`; a wrong quotient or remainder here silently corrupts the exact arbiter that decides ties.
-
-### 30g. `tests/test_float_format_shortest_roundtrip` - shortest formatter round-trip
-
-Intent: verify values formatted by the shortest formatter parse back to the identical bits.
-
-Note: this test existed on disk but was never registered in `nob.c`, so it had never run. It is registered now.
-
-Failure tip: inspect `src/proven/float_format.c` and the Grisu3/Dragon4 shortest-digit engines if a value fails to round-trip.
 
 ## Regression subset
 
@@ -950,13 +1177,13 @@ Failure tip: inspect `src/proven/float_format.c` and the Grisu3/Dragon4 shortest
 
 - `tests/test_regression_v26_05`
 - `tests/test_regression_v26_07`
-- `tests/test_map_owned_key`
-- `tests/test_regression_public_contracts`
+- `tests/test_unit_map_owned_key`
+- `tests/test_contract_public_structs`
 - `tests/test_regression_fs_copy_to_self`
 - `tests/test_regression_fs_slurp`
 - `tests/test_regression_scanner_rollback`
 - `tests/test_regression_sort_duplicates`
-- `tests/test_regression_source_contracts`
+- `tests/test_portability_source_contracts`
 
 Intent: provide a short feedback loop for bug-fix work without running every hosted example and container test.
 
@@ -968,7 +1195,7 @@ What it checks:
 
 Failure tip: a regression failure is usually more specific than a full-suite failure. Use the sub-check name and preserve the regression unless the underlying public contract is intentionally changed and documented.
 
-### 34. `tests/test_regression_public_contracts` - public array/map/filesystem contracts
+### 34. `tests/test_contract_public_structs` - public array/map/filesystem contracts
 
 Intent: verify corrupted public array and map structs fail safely and filesystem append-mode requests keep write intent explicit.
 
@@ -983,7 +1210,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/array.c`, `src/proven/map.c`, `src/proven/fs.c`, and `platform/proven_sys_fs.c`. If a corrupted struct reaches an allocator callback or append behaves like read-only open, the public contract guard is missing.
 
-### 34a. `tests/test_map_hardening` - map borrowed-key hardening
+### 34a. `tests/test_contract_map_hardening` - map borrowed-key hardening
 
 Intent: verify borrowed U8 keys that point into internal map storage are rejected when debug validation or `PROVEN_HARDENED` is enabled.
 
@@ -995,7 +1222,7 @@ Sub-checks:
 
 Failure tip: inspect the borrowed-key range guard in `src/proven/map.c` if an internal pointer is accepted or if ordinary borrowed keys stop working.
 
-### 34b. `tests/test_pool_misuse` - pool double-free hardening
+### 34b. `tests/test_contract_pool_misuse` - pool double-free hardening
 
 Intent: verify the pool free trait catches repeated frees when debug validation or `PROVEN_HARDENED` is enabled.
 
@@ -1012,7 +1239,7 @@ Failure tip: inspect `src/proven/pool.c`. The repeated-free check must remain ga
 
 `./nob freestanding` currently builds the library with `PROVEN_FREESTANDING`, `PROVEN_FMT_NO_FLOAT`, `PROVEN_NO_U16STR`, and `-ffreestanding`, then runs five reduced tests.
 
-### `tests/test_freestanding_heap_stub`
+### `tests/test_portability_freestanding_heap_stub`
 
 Intent: verify the hosted heap allocator is not accidentally available in freestanding mode.
 
@@ -1024,7 +1251,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/heap.c` and platform heap guards. Freestanding code must not silently pull a hosted allocator.
 
-### `tests/test_compile_freestanding`
+### `tests/test_portability_compile_freestanding`
 
 Intent: verify the reduced freestanding core can compile and link.
 
@@ -1035,7 +1262,7 @@ Sub-checks:
 
 Failure tip: inspect `nob.c` source exclusion lists and public header feature guards. A hosted-only declaration may have leaked into freestanding builds.
 
-### `tests/test_compile_nofloat`
+### `tests/test_portability_compile_nofloat`
 
 Intent: verify `PROVEN_FMT_NO_FLOAT` removes floating-point formatting dependencies without breaking the rest of formatting.
 
@@ -1046,7 +1273,7 @@ Sub-checks:
 
 Failure tip: inspect `include/proven/fmt.h` and `src/proven/fmt.c` for unguarded `float`, `double`, or math-helper references.
 
-### `tests/test_compile_nou16str`
+### `tests/test_portability_compile_nou16str`
 
 Intent: verify `PROVEN_NO_U16STR` removes optional U16 string support without breaking core headers and linking.
 
@@ -1057,7 +1284,7 @@ Sub-checks:
 
 Failure tip: inspect `include/proven.h`, `include/proven/u16str.h`, aliases, and the `nob.c` freestanding source list.
 
-### `tests/test_freestanding`
+### `tests/test_portability_freestanding`
 
 Intent: verify the actual freestanding core runtime behavior, not just compilation.
 
@@ -1078,14 +1305,26 @@ Failure tip: inspect only freestanding-safe modules first: memory, arena, pool w
 
 `./nob bench-float` runs:
 
-- `tests/test_float_parse_path_benchmark` - times the shared float parser, its wrapper, and the host `strtod` on path-oriented decimal corpora, and records dated output.
-- `tests/test_float_parse_benchmark` - times the decimal parser against the host `strtod` on a mixed corpus. Like the round-trip test above, this file existed but was never registered; it is registered now.
+- `tests/test_bench_float_parse_paths` - times the shared float parser, its wrapper, and the host `strtod` on path-oriented decimal corpora, and records dated output.
+- `tests/test_bench_float_parse` - times the decimal parser against the host `strtod` on a mixed corpus. Like the round-trip test above, this file existed but was never registered; it is registered now.
 
 Benchmarks are not correctness gates. A timing regression is a signal to investigate, not a build failure; a checksum drift is a correctness signal and must be.
 
+### `tests/test_bench_float_parse_paths` — float parse path benchmark
+
+Intent: compare the shared float parser, wrapper, and host strtod on separate path-oriented decimal corpora and record dated docs output.
+
+Failure tip: inspect src/proven/float_parse.c, src/proven/float_decimal.c, and the path-specific corpus split if the timing harness fails or any checksum drifts.
+
+### `tests/test_bench_float_parse` — float parse benchmark
+
+Intent: time the decimal parser against the host strtod on a mixed corpus and record the result.
+
+Failure tip: inspect src/proven/float_parse.c and src/proven/float_decimal.c if a timing run regresses or a checksum drifts.
+
 ## Cross compile-only matrix
 
-The matrix compiles `tests/test_cross_compile_smoke.c` (or `tests/test_freestanding.c` for freestanding targets) and links it with `tests/test_cross_link_smoke.c`, which exists to prove the objects actually link - a header-only compile check would miss a missing symbol.
+The matrix compiles `tests/test_portability_cross_compile_smoke.c` (or `tests/test_portability_freestanding.c` for freestanding targets) and links it with `tests/test_portability_cross_link_smoke.c`, which exists to prove the objects actually link - a header-only compile check would miss a missing symbol.
 
 `./nob cross` builds object files and smoke tests for available target compilers. The matrix currently includes:
 
@@ -1101,11 +1340,11 @@ The matrix compiles `tests/test_cross_compile_smoke.c` (or `tests/test_freestand
 - `freestanding-riscv64-elf` through `riscv64-elf-gcc`
 - `freestanding-riscv64-unknown-elf` through `riscv64-unknown-elf-gcc`
 
-Hosted targets compile all hosted source files and `tests/test_cross_compile_smoke.c`. Freestanding targets compile only freestanding-safe source files and `tests/test_freestanding.c` as a smoke translation unit.
+Hosted targets compile all hosted source files and `tests/test_portability_cross_compile_smoke.c`. Freestanding targets compile only freestanding-safe source files and `tests/test_portability_freestanding.c` as a smoke translation unit.
 
 Failure tip: if the log says the compiler is missing, fix the build-server toolchain rather than the library. If the target probe fails, check sysroot, multilib headers, or target flags. If a later library source file fails, treat it as a real portability bug.
 
-### 34. `tests/test_nob_std_probe` - build driver standard probe
+### 34. `tests/test_portability_nob_std_probe` - build driver standard probe
 
 Intent: verify the build driver probes `-std=c23` first and falls back to `-std=c2x` when the compiler rejects the newer spelling.
 
@@ -1118,7 +1357,7 @@ Sub-checks:
 
 Failure tip: inspect nob.c standard-flag selection, build-hash construction, and the compiler/toolchain preflight checks if the fallback probe does not reach the c2x path.
 
-### 35. `tests/test_float_portable` - float portability
+### 35. `tests/test_portability_float` - float portability
 
 Intent: verify scan and format float conversion paths stay double-only and keep target-deterministic behavior without long double dependence.
 
@@ -1132,7 +1371,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/scan.c` and `src/proven/fmt.c`. If the source-contract checks fail, the float portability cleanup regressed back to long double-dependent code. If the runtime checks fail, inspect the double-only conversion and normalization math first.
 
-### 36. `tests/test_float_module_scaffold` - float module scaffold
+### 36. `tests/test_contract_float_module_layout` - float module scaffold
 
 Intent: verify the shared decimal float helpers live in a dedicated internal translation unit and are not re-embedded inline inside `src/proven/fmt.c` or `src/proven/scan.c`, while the shortest-literal helper stays centralized with the shared float decimal code.
 
@@ -1148,7 +1387,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/float_decimal.c`, `src/proven/float_decimal.h`, `src/proven/float_format.c`, `src/proven/scan.c`, and `nob.c` if the shared float helper scaffold drifts back into the scanner or formatter files.
 
-### 37. `tests/test_float_bits` - float bit extraction
+### 37. `tests/test_unit_float_bits` - float bit extraction
 
 Intent: verify the internal float bit helpers preserve the raw IEEE-754 bit patterns for `f32` and `f64` values.
 
@@ -1160,7 +1399,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/float_decimal.c` and `src/proven/float_decimal.h` if the raw byte-copy helpers stop matching the object representation.
 
-### 38. `tests/test_u128_mul` - wide multiply helper
+### 38. `tests/test_unit_u128_mul` - wide multiply helper
 
 Intent: verify the shared 64x64 to 128-bit multiply helper returns exact high and low halves for representative operands.
 
@@ -1172,7 +1411,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/float_decimal.c` if the wide multiply helper stops matching the reference product.
 
-### 38a. `tests/test_float_parse_api` - float parse public API
+### 38a. `tests/test_unit_float_parse_api` - float parse public API
 
 Intent: verify the public locale-free float parser and `strtod`-style wrapper expose consumed-length, `endptr`, and range signaling over the shared exact backend.
 
@@ -1187,7 +1426,7 @@ Sub-checks:
 
 Failure tip: inspect `include/proven/float_parse.h`, `src/proven/float_parse.c`, and `src/proven/float_decimal.c` if the public parser seam or wrapper contract drifts.
 
-### 38b. `tests/test_float_rfc_0001` - RFC-0001 parse audit
+### 38b. `tests/test_unit_float_rfc_0001_cases` - RFC-0001 parse audit
 
 Intent: verify the decimal-to-binary64 rewrite still satisfies the explicit named cases from RFC-0001 (the RFC itself is maintainer-local `docs/internal/` (kept outside the published repository); the cases it names are reproduced in the test).
 
@@ -1202,7 +1441,7 @@ Sub-checks:
 
 Failure tip: inspect the RFC-0001 case list in the test itself, `include/proven/float_parse.h`, `src/proven/float_parse.c`, and `src/proven/float_decimal.c` if a named RFC audit case fails.
 
-### 39. `tests/test_float_format_policy` - float format policy scaffold
+### 39. `tests/test_unit_float_format_policy` - float format policy scaffold
 
 Intent: verify the new float format policy seam preserves the current simple formatter behavior and supports shortest-mode requests explicitly.
 
@@ -1217,7 +1456,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/float_format.c`, `include/proven/float_format.h`, and `include/proven/float_config.h` if the policy seam or fixed formatter helper regresses.
 
-### 40. `tests/test_float_format_shortest_known` - float shortest known values
+### 40. `tests/test_unit_float_shortest_known` - float shortest known values
 
 Intent: verify the shortest float formatting policy emits the documented exact spellings for representative f64 and f32 values.
 
@@ -1229,7 +1468,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/float_format.c` if the shortest-policy output drifts or if RYU requests stop reaching the active backend.
 
-### 41. `tests/test_float_shortest_roundtrip` - float shortest round-trip
+### 41. `tests/test_unit_float_shortest_roundtrip` - float shortest round-trip
 
 Intent: verify shortest float formatting round-trips through host strtod for representative f64 and f32 values, including the broader float32 fraction, power-of-two, signed-symmetry, and 0.001 / 0.0001 tie-break samples added during the staged float upgrade.
 
@@ -1240,17 +1479,17 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/float_format.c` if the shortest output stops round-tripping or if the representative corpus drifts.
 
-### 41a. `tests/test_float_shortest_tie_break` - float shortest tie-break corpus
+### 41a. `tests/test_unit_float_shortest_tie_break` - float shortest tie-break corpus
 
 Intent: verify the shortest round-trip corpus keeps the 0.001 and 0.0001 fixed-versus-scientific tie-break cases pinned for both f64 and f32 coverage, along with the next 0.01 and 0.00001 precision-band samples.
 
 Sub-checks:
-- `tests/test_float_shortest_roundtrip.c` contains the f64 and f32 `0.001`, `0.0001`, `0.01`, and `0.00001` cases
-- `tests/test_float_upgrade_corpus.c` contains the matching upgrade corpus cases
+- `tests/test_unit_float_shortest_roundtrip.c` contains the f64 and f32 `0.001`, `0.0001`, `0.01`, and `0.00001` cases
+- `tests/test_differential_float_corpus_f64.c` contains the matching upgrade corpus cases
 
 Failure tip: inspect the shortest corpus tests if the tie-break cases disappear or are renamed.
 
-### 42. `tests/test_job_stress_tsan` - job queue stress
+### 42. `tests/test_stress_job_concurrency` - job queue stress
 
 Intent: verify the hosted job queue tolerates a denser concurrent producer pattern and still executes each submitted job exactly once.
 
@@ -1264,7 +1503,7 @@ Sub-checks:
 
 Failure tip: run `./nob tsan` if available and inspect `src/proven/job.c` plus `platform/proven_sys_thread.c` if counts drift or a producer stalls.
 
-### 43. `tests/test_float_host_oracle` - float host oracle
+### 43. `tests/test_differential_float_host_oracle_f64` - float host oracle
 
 Intent: compare representative finite float parsing and simple fixed-format rendering against the platform C library without sharing implementation code, including signed zero and negative boundary cases, plus the 0.001 / 0.0001 fixed-versus-scientific boundary samples.
 
@@ -1278,7 +1517,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/scan.c` and `src/proven/float_format.c` if the host oracle and library disagree on the representative finite corpus.
 
-### 43a. `tests/test_float_host_oracle_f32` - float host oracle float32
+### 43a. `tests/test_differential_float_host_oracle_f32` - float host oracle float32
 
 Intent: compare representative finite float32 fixed-format rendering against the platform C library without sharing implementation code, including the 0.001 / 0.0001 boundary samples.
 
@@ -1291,7 +1530,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/float_format.c` if the float32 host oracle and library disagree on the representative finite corpus.
 
-### 44. `tests/test_float_upgrade_corpus` - float upgrade corpus
+### 44. `tests/test_differential_float_corpus_f64` - float upgrade corpus
 
 Intent: pin representative exact-range, subnormal-boundary, off-range, and shortest-format float spellings while the long-term parser and formatter upgrade stays staged.
 
@@ -1305,7 +1544,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/scan.c` and `src/proven/float_format.c` if a representative corpus value changes bit pattern or shortest spelling.
 
-### 44a. `tests/test_float_upgrade_corpus_f32` - float upgrade corpus float32 coverage
+### 44a. `tests/test_differential_float_corpus_f32` - float upgrade corpus float32 coverage
 
 Intent: keep the documented float32 shortest literals pinned in the upgrade corpus alongside the existing float64 coverage.
 
@@ -1316,21 +1555,21 @@ Sub-checks:
 - The float32 short-literal coverage also pins representative fraction and power-of-two samples such as `0.2f`, `0.29999998f`, `-0.2f`, `-0.29999998f`, `1.0000002f`, `-1.0000002f`, `2.5f`, `-2.5f`, `33554432.0f`, and `-33554432.0f`.
 - The float32 short-literal coverage stays aligned with `float_decimal.c` and the float32 shortest-policy path.
 
-Failure tip: inspect `tests/test_float_upgrade_corpus.c` first. If the source contract fails, restore the missing float32 section before changing the formatter.
+Failure tip: inspect `tests/test_differential_float_corpus_f64.c` first. If the source contract fails, restore the missing float32 section before changing the formatter.
 
-### 44b. `tests/test_float_f32_boundary_neighbors` - float32 boundary neighbors
+### 44b. `tests/test_unit_float_f32_boundaries` - float32 boundary neighbors
 
 Intent: keep the float32 ULP-adjacent neighbors around `FLT_MIN` and `FLT_TRUE_MIN` pinned in both the upgrade corpus and the shortest round-trip corpus so the parser-driven backend preserves the documented boundary spellings.
 
 Sub-checks:
 
-- Confirms `tests/test_float_upgrade_corpus.c` still records the float32 value one ULP below `FLT_MIN` and the value one ULP above `FLT_TRUE_MIN` with their documented shortest spellings.
-- Confirms `tests/test_float_shortest_roundtrip.c` still round-trips those same float32 boundary neighbors through the scanner.
+- Confirms `tests/test_differential_float_corpus_f64.c` still records the float32 value one ULP below `FLT_MIN` and the value one ULP above `FLT_TRUE_MIN` with their documented shortest spellings.
+- Confirms `tests/test_unit_float_shortest_roundtrip.c` still round-trips those same float32 boundary neighbors through the scanner.
 - Keeps the two values distinct from the already-pinned `FLT_MIN` and `FLT_TRUE_MIN` cases.
 
-Failure tip: inspect `tests/test_float_upgrade_corpus.c` and `tests/test_float_shortest_roundtrip.c` if one of the boundary-neighbor spellings disappears, changes, or stops round-tripping.
+Failure tip: inspect `tests/test_differential_float_corpus_f64.c` and `tests/test_unit_float_shortest_roundtrip.c` if one of the boundary-neighbor spellings disappears, changes, or stops round-tripping.
 
-### 45. `tests/test_float_exact_range_backend` - float exact-range backend
+### 45. `tests/test_unit_float_exact_range` - float exact-range backend
 
 Intent: verify that the decimal-to-double path stays deterministic without the host strtod fallback and preserves representative exact-range spellings.
 
@@ -1341,7 +1580,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/scan.c` and the shared float decimal helper if the exact-range backend falls back to host strtod or the corpus drifts.
 
-### 49. `tests/test_float_shortest_scientific_guard` - float shortest scientific guard
+### 49. `tests/test_unit_float_shortest_scientific_guard` - float shortest scientific guard
 
 Intent: verify the shortest float formatter handles very small finite values by producing a valid shortest candidate instead of an invalid scientific normalization result.
 
@@ -1352,7 +1591,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/float_decimal.c` and `src/proven/float_format.c` if the shortest formatter rejects a tiny finite value, emits an invalid scientific spelling, or stops matching the shortest exhaustive candidate.
 
-### 51. `tests/test_u8str_borrow` - U8 string borrow (fixed-capacity over caller memory)
+### 51. `tests/test_unit_u8str_borrow` - U8 string borrow (fixed-capacity over caller memory)
 
 Intent: verify `proven_u8str_borrow` and `proven_u8str_reset` over caller-owned memory.
 
@@ -1367,7 +1606,7 @@ Sub-checks:
 
 Failure tip: inspect `proven_u8str_borrow`/`proven_u8str_reset` and the `borrowed`-flag guards in `reserve`, `append_grow`, `replace_at_grow`, and `destroy` in `src/proven/u8str.c`.
 
-### 52. `tests/test_mem_copy` - bounded memory copy & move
+### 52. `tests/test_unit_mem_copy` - bounded memory copy & move
 
 Intent: verify `proven_mem_copy` performs a bounded byte copy.
 
