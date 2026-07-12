@@ -37,3 +37,4 @@ cloudflare*.env
 walkroot/
 widedir/
 test_fs_perms.d/
+deeptree/
