@@ -190,6 +190,8 @@
 #define xcv_c_lib proven_c_lib
 #define xcv_compare_fn_t proven_compare_fn_t
 #define xcv_coro_t proven_coro_t
+#define xcv_crc32 proven_crc32
+#define xcv_crc32_update proven_crc32_update
 #define xcv_cstr_len proven_cstr_len
 #define xcv_datetime_t proven_datetime_t
 #define xcv_env_get proven_env_get
@@ -249,6 +251,8 @@
 #define xcv_fs_write_file proven_fs_write_file
 #define xcv_fs_write_file_atomic proven_fs_write_file_atomic
 #define xcv_fs_write_file_durable proven_fs_write_file_durable
+#define xcv_hash_bytes proven_hash_bytes
+#define xcv_hash_keyed proven_hash_keyed
 #define xcv_heap_allocator proven_heap_allocator
 #define xcv_i16 proven_i16
 #define xcv_i32 proven_i32
@@ -381,6 +385,11 @@
 #define xcv_scan_t proven_scan_t
 #define xcv_scan_u64 proven_scan_u64
 #define xcv_set_panic_handler proven_set_panic_handler
+#define xcv_sha256 proven_sha256
+#define xcv_sha256_final proven_sha256_final
+#define xcv_sha256_init proven_sha256_init
+#define xcv_sha256_to_hex proven_sha256_to_hex
+#define xcv_sha256_update proven_sha256_update
 #define xcv_size_t proven_size_t
 #define xcv_strtod proven_strtod
 #define xcv_sysio_flush proven_sysio_flush
