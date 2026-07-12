@@ -385,10 +385,13 @@ static proven_err_t proven_float_format_dispatch_f64(char *buf, proven_size_t bu
         return PROVEN_ERR_UNSUPPORTED;
     }
     if (opt.mode == PROVEN_FLOAT_FORMAT_MODE_SCIENTIFIC) {
-        /* Contract stub (docs/TESTING.md §5.1): the always-scientific mode is declared and
-         * the {:e} grammar routes to it, but it is not wired to the engine yet - so the
-         * known-answer test lands red here, and the next commit makes it pass. */
-        return PROVEN_ERR_UNSUPPORTED;
+        /* Always scientific, whatever the magnitude - printf %e. The same correctly-rounded
+         * core the default form uses at the extremes, just never allowed to fall back to
+         * fixed. Signed two-digit-minimum exponent, precision digits after the point. */
+        if (opt.precision < 0 || opt.precision > PROVEN_FLOAT_FMT_PRECISION_MAX) {
+            return PROVEN_ERR_INVALID_ARG;
+        }
+        return proven_float_format_e_exact(buf, buf_cap, value, opt.precision, true, 2, written_out);
     }
     if (opt.mode != PROVEN_FLOAT_FORMAT_MODE_FIXED) {
         return PROVEN_ERR_INVALID_ARG;

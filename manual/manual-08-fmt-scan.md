@@ -485,7 +485,7 @@ spec copied from Python or Rust means here what it means there.
 | `0` | | zero-fill. `{:08}` on 42 is `00000042`. |
 | `width` | digits, up to 10000 | minimum field width. |
 | `.precision` | `.N`, up to 60 | decimals. **Floats only.** |
-| `type` | `x X o b d` (int), `f g` (float) | base and case; `f` fixed, `g` shortest round-trip. |
+| `type` | `x X o b d` (int), `f g e` (float) | base and case; `f` fixed, `g` shortest round-trip, `e` scientific (printf `%e`). |
 
 Two things are worth knowing because they used to be false:
 
@@ -499,7 +499,10 @@ Two things are worth knowing because they used to be false:
 ### Floats
 
 `{}` gives six decimals, correctly rounded. `{:.3}` gives three, `{:.0}` gives none,
-`{:f}` forces the fixed form, and `{:g}` gives the shortest representation that
+`{:e}` forces scientific notation - mantissa, `precision` fractional digits (six by
+default), a signed two-digit-minimum exponent, correctly rounded, exactly as printf's `%e` -
+which is the form `{:f}` and `{:g}` do not reach: `{:f}` never shows an exponent, and `{:g}`
+uses one only when it is shorter. `{:f}` forces the fixed form, and `{:g}` gives the shortest representation that
 round-trips.
 
 Until v26.07.12i **none of these existed**: every float came out with exactly six
