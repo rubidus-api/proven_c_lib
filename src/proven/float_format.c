@@ -384,6 +384,12 @@ static proven_err_t proven_float_format_dispatch_f64(char *buf, proven_size_t bu
         }
         return PROVEN_ERR_UNSUPPORTED;
     }
+    if (opt.mode == PROVEN_FLOAT_FORMAT_MODE_SCIENTIFIC) {
+        /* Contract stub (docs/TESTING.md §5.1): the always-scientific mode is declared and
+         * the {:e} grammar routes to it, but it is not wired to the engine yet - so the
+         * known-answer test lands red here, and the next commit makes it pass. */
+        return PROVEN_ERR_UNSUPPORTED;
+    }
     if (opt.mode != PROVEN_FLOAT_FORMAT_MODE_FIXED) {
         return PROVEN_ERR_INVALID_ARG;
     }
