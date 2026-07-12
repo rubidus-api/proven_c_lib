@@ -1221,12 +1221,29 @@ static bool proven_float_bigint_build_pow5_cached(proven_i64 exp10, proven_float
         return true;
     }
 
-    if (q <= PROVEN_FLOAT_CACHED_POW5_SCALED_U128_MAX_Q) {
-        proven_float_cached_pow5_scaled_u128_entry_t entry = proven_float_cached_pow5_scaled_u128[q];
-        wide = (proven_u128_parts_t){ .lo = entry.lo, .hi = entry.hi };
-        proven_float_bigint_from_u128_parts(out, wide);
-        return proven_float_bigint_shl_bits(out, (proven_i64)entry.shift);
-    }
+    /*
+     * Everything above the exact table is built by multiplication, not looked up.
+     *
+     * It used to take proven_float_cached_pow5_scaled_u128[q] - the Eisel-Lemire table -
+     * and shift it left. That table holds a 128-bit mantissa ROUNDED to 128 bits, and
+     * 5^q is odd, so `entry << shift` is exactly 5^q only when shift is 0. For every
+     * 56 <= q <= 350 it was off, by about 1e-38 relative:
+     *
+     *     q=55  table ...078124   exact ...078125
+     *
+     * This is the fallback whose entire job is to be EXACT. It is the thing that decides,
+     * bit for bit, which way a decimal sitting on a rounding boundary goes - and it was
+     * comparing against a corrupted power of five. Every exact halfway value in that
+     * window rounded the same direction instead of to even (up for a negative exponent,
+     * down for a positive one), and a differential run against glibc found 2,923 of them.
+     * The library's central promise - correctly rounded, ties to even, bit-identical to a
+     * correct strtod - was false for any input with 20 or more significant digits in that
+     * exponent range.
+     *
+     * The bigint multiply below is slower. It is also right, and this path is the slow
+     * path by construction: Clinger and Eisel-Lemire already answer the common cases.
+     */
+    (void)wide;
 
     out->limbs[0] = 1u;
     out->len = 1u;

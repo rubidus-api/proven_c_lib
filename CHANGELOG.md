@@ -11,6 +11,100 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-13] — proven_c_lib-v26.07.13a
+
+An adversarial audit of the modules that had never had one — the scanner and the float
+engine, the containers, and the platform layer. Everything below was **reproduced** before
+it was fixed, and every fix has a regression test that was checked to fail against the
+unfixed source.
+
+The theme, again: **code that is correct for the input it was tested with and silently
+wrong for the input it will actually meet.**
+
+### Fixed
+
+- **The "correctly rounded" float parser was not correctly rounded.** The exact
+  big-integer fallback — the tier whose entire job is to decide, bit for bit, which way a
+  decimal sitting on a rounding boundary goes — built `5^q` for `56 <= q <= 350` by taking
+  the *Eisel-Lemire* table entry and shifting it left. That entry is a 128-bit mantissa
+  **rounded** to 128 bits, and `5^q` is odd, so the shift can never be exact (`q=55`: the
+  table says `…078124`, the truth is `…078125`). The exactness tier was comparing against a
+  corrupted power of five. Every exact halfway value in that exponent window broke the tie
+  in a fixed direction instead of to even, and any value within ~1e-38 of a boundary came
+  out one ULP wrong — with `PROVEN_OK`. A differential run against glibc found **2,923**
+  of them. `scan.h` and manual chapter 8 both promise ties-to-even, bit-identical to a
+  correct `strtod`; for any input with 20+ significant digits in that range, that promise
+  was false. Above the exact table, `5^q` is now multiplied, not looked up.
+
+- **The buffered scanner could not read a pipe** — the one thing it exists for. `read()`
+  on a pipe returns whatever has arrived so far; `scanner_fill` treated *any* short read as
+  end-of-input and **latched** it. So a token straddling the boundary was committed
+  **truncated** (a writer sending `"123"`, a pause, then `"456 789\n"` produced the integer
+  **123**, reported as a successful scan), and every later scan returned `PROVEN_ERR_EOF`
+  while the rest of the stream sat unread in the pipe forever. Only a zero-byte read is an
+  end of input now — which is what `read()` itself has always meant by it. Regular files hid
+  the bug completely: a file read is short only at real EOF.
+
+- **A failed read was reported as a clean end of input** (scanner). `proven_sys_io_read_once`
+  reports a failed `read()` as `{PROVEN_ERR_IO, 0}`, and the end-of-input test accepted any
+  zero-byte result — so every `EBADF`, `EIO` and `ECONNRESET` became a tidy EOF. A stream
+  that broke halfway through was indistinguishable from one that finished.
+
+- **A map with churn grew forever.** `remove()` cannot free a bucket — an open-addressed
+  table needs the tombstone — so `used` only ever rises, and the rehash it triggers doubled
+  the capacity **unconditionally**, even when the live count had not moved. That is every
+  cache, every session table, every work queue. Measured: 100 live entries, two million
+  operations, capacity **1,048,576**, **33 MB** held. Not a leak — every byte reachable,
+  every byte freed at destroy — which is precisely why no leak checker ever mentioned it.
+  The rehash now grows only when the *live* set needs the room, and otherwise reclaims
+  tombstones at the same capacity (same walk, same cost). The 33 MB is now 8 KB.
+
+- **`proven_u8str_append_grow` of an empty view left the string unterminated.** The grow
+  allocated the block, then delegated to `append`, which returns early on an empty view —
+  before sealing the NUL. `as_cstr()` is documented as always terminated, and it read
+  straight off the end of a fresh heap block (ASan confirms). `proven_u16str_append_grow`
+  had the identical bug. The seal now happens where the block is allocated, as `reserve()`
+  has always done.
+
+- **The sort handed the comparator a misaligned element.** `insertion_sort` held the moving
+  element in a `proven_byte_t[128]` — alignment **1** — and passed its address to the
+  caller's comparator, which reads it as the element type. For any over-aligned element that
+  is a misaligned typed access: UB, flagged by UBSan at every optimisation level, and a fault
+  on a strict-alignment target. It never crashed on x86, which is why it survived. The scratch
+  is over-aligned now, and elements aligned more strictly than the scratch take the swap path,
+  which only ever shows the comparator real array elements.
+
+- **The panic handler was a data race** (TSan). It is read on the `*_or_panic` allocator
+  paths, which run on every thread, and written by `proven_set_panic_handler`, which a
+  program may call while those threads are running. It is atomic now.
+
+### Changed
+
+- **`proven_u8str_append_fmt` renders each argument once, not twice.** The allocation-free
+  fixed-capacity path measured the whole output and then formatted it all over again — for a
+  double, that is the correctly-rounded decimal engine run twice with the first answer thrown
+  away. It writes as it goes now and restores the original length if it fails, so "atomic"
+  still means what it said. Measured: an int/string/int line **254 ns → 155 ns**; a double
+  **545 ns → 277 ns**. Pinned by `tests/test_contract_fmt_atomic`, because atomicity now rests
+  on a rollback rather than on never having written.
+
+- **Interior pointers are documented as perishable.** `proven_array_get(_mut)`,
+  `proven_map_get(_mut)` and `proven_u8str_as_view` return pointers into the container's
+  storage that the next growing operation frees. The headers now say so; all three were
+  demonstrably a use-after-free waiting to happen.
+
+- **`platform/proven_sys_time.h` no longer calls the wall clock "monotonic".** It reads
+  `CLOCK_REALTIME` (Windows: `GetSystemTimeAsFileTime`) and always has. Code measuring an
+  interval by subtracting two of these can get a negative duration; the header was telling
+  it that could not happen.
+
+### Added
+
+- `tests/test_regression_float_exact_pow5`, `tests/test_regression_scanner_short_read`,
+  `tests/test_regression_map_churn`, `tests/test_contract_sort_alignment`,
+  `tests/test_contract_fmt_atomic`, and an empty-view NUL-seal section in
+  `tests/test_regression_v26_07`.
+
 ## [2026-07-12] — proven_c_lib-v26.07.12i
 
 Closes `docs/BACKLOG.md` B-005, B-009 and B-010.

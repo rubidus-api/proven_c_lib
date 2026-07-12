@@ -1022,6 +1022,38 @@ Failure tip: inspect public invariant guards in array/map mutation entry points 
 
 One test per defect that actually shipped. Each is named for what broke, not for a version or a number, and each was verified to FAIL against the pre-fix source. A regression test that passes before the fix is not a regression test.
 
+### `tests/test_regression_float_exact_pow5` — the exact float fallback uses an exact power of five
+
+Intent: verify an exact halfway value in the `56..350` exponent window breaks to even, and that values just below and just above a rounding boundary there land on the correct double.
+
+Note: the exact big-integer tier is the one that makes "correctly rounded, ties-to-even, bit-identical to a correct `strtod`" true. It built `5^q` above the exact table by shifting a **rounded** Eisel-Lemire table entry, and `5^q` is odd, so the shift was never exact. A differential run against glibc found 2,923 misrounded values — all of them exact ties. The expectations here were verified with exact rational arithmetic, not against a host `strtod`, so the test states what is true rather than what this machine agrees with.
+
+Failure tip: inspect `proven_float_bigint_build_pow5_cached` in `src/proven/float_decimal.c`.
+
+### `tests/test_regression_scanner_short_read` — the scanner over a pipe
+
+Intent: verify a token split across two pipe writes scans whole, that the rest of the stream stays readable, and that a failed read is `PROVEN_ERR_IO` rather than a clean end of input.
+
+Note: POSIX-only (needs `pipe()` and a writer thread); it compiles to a skip on Windows. `read()` on a pipe returns whatever has arrived; treating that as EOF truncated the token *and* discarded the rest of the stream. Regular files hide the bug entirely, which is why the whole suite passed.
+
+Failure tip: inspect `scanner_fill` in `src/proven/sysio.c`.
+
+### `tests/test_regression_map_churn` — a map with churn does not grow without bound
+
+Intent: verify a bounded live set with endless insert/remove keeps the capacity bounded, that live keys survive an in-place rehash, that removed keys stay removed, and that a genuinely growing map still grows.
+
+Note: `used` counts tombstones and never falls on its own, so an unconditional doubling grew a steady-state cache forever — 100 live entries reached 33 MB. Not a leak, which is why nothing caught it.
+
+Failure tip: inspect `map_rehash` in `src/proven/map.c`.
+
+### `tests/test_contract_sort_alignment` — the sort never hands the comparator a misaligned element
+
+Intent: verify sorting over-aligned elements passes only correctly-aligned pointers to the caller's comparator, and still sorts.
+
+Note: the check lives in the comparator, so it fails in **every** build mode, not only under UBSan. A contract only one build enforces is a contract that breaks in release.
+
+Failure tip: inspect `insertion_sort` in `src/proven/algorithm.c`.
+
 ### `tests/test_regression_stream_partial_write` — partial writes, failed reads, and `{:f}`
 
 Intent: verify a sink that accepts only part of a chunk receives every byte exactly once; that a read failure reaches the caller as `PROVEN_ERR_IO` rather than as a clean end of file; and that `{:f}` forces the fixed form at any magnitude.
