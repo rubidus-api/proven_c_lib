@@ -747,6 +747,51 @@ Sub-checks:
 
 Failure tip: inspect same-file detection and open/truncate ordering in filesystem copy code. The destination must not be opened with truncation before proving it is not the same file as the source.
 
+### 30a. `tests/test_regression_fs_slurp` - filesystem whole-file read/write
+
+Intent: verify whole-file reads go to EOF rather than to a pre-measured size, and that the whole-file write entry points round-trip.
+
+Sub-checks:
+
+- Round-trips a regular file through `proven_fs_write_file` and `proven_fs_read_all`.
+- Verifies `proven_fs_write_file` truncates a longer existing file.
+- Verifies an empty file reads as `{NULL, 0}` with `PROVEN_OK`.
+- Reads a source whose size cannot be known up front (`/proc/self/status`, whose `st_size` is 0) and requires a non-empty result. Skipped where the path is unavailable.
+- Verifies `proven_fs_read_all_u8str` is NUL-terminated and valid, including for an empty file.
+- Verifies `proven_fs_write_file_atomic` replaces the contents, creates a missing target, and leaves no temp file behind.
+- Verifies an invalid allocator and a missing path are rejected as values.
+
+Failure tip: `proven_fs_size` reports 0 for anything that is not a regular file, so the reported size may only seed the read capacity - never bound the read. Inspect `internal_slurp_path` and `internal_read_to_eof` in `src/proven/fs.c`.
+
+### 30b. `tests/test_regression_scanner_rollback` - scanner rollback after a failed scan
+
+Intent: verify a scan that fails on an oversized token restores the stream exactly - dropping no byte and duplicating none.
+
+Sub-checks:
+
+- Scans a token successfully, then snapshots the bytes the scanner holds unconsumed.
+- Scans a token too large for the scanner buffer and requires failure.
+- Requires the unconsumed bytes after the failure to match the snapshot in both count and content.
+- Requires a retry of the oversized token to fail the same way, not succeed from stale bytes.
+- Scans the same file with a buffer large enough and requires every token to come back in order.
+
+Failure tip: `scanner_fill` compacts the buffer (it memmoves unconsumed bytes to the front and resets the cursor). A snapshot taken before compaction cannot be written back afterwards without accounting for how far the contents moved. Inspect the rollback in `proven_sysio_scanner_scan_impl`.
+
+### 30c. `tests/test_regression_v26_07` - v26.07 regressions
+
+Intent: protect the fixed `u8str` NUL-seal, datetime formatting, and pool init defects.
+
+Sub-checks:
+
+- `proven_u8str_reserve` on a zero-initialized string leaves `ptr[len] == 0`, so `proven_u8str_as_cstr` is readable and `proven_u8str_is_valid` accepts it.
+- A format that produces no output still leaves the string sealed after its growth allocation.
+- A `proven_datetime_t` with year `-1` renders as `-0001-...`, and `INT32_MIN` renders correctly.
+- A `proven_pool_init` whose bin allocation fails leaves `bin_cap == 0`, so the free trait cannot write through a null bin.
+
+Note: the string checks allocate from an arena over deliberately poisoned backing memory. Allocators do not return zeroed memory, and on a quiet heap a fresh block is often zero by luck - which is exactly why these defects went unnoticed.
+
+Failure tip: each section names one area - `proven_u8str_reserve` in `u8str.c`, the growth branch and `PROVEN_ARG_DATETIME` case in `fmt.c`, the init ordering in `pool.c`.
+
 ### 31. `tests/test_regression_source_contracts` - source portability contracts
 
 Intent: guard platform branches and documentation/test-output contracts that may not be executable on the current host.
@@ -860,9 +905,12 @@ Failure tip: inspect `proven_sysio_scanner_init` in `src/proven/sysio.c`. If a p
 `./nob regression`, `./nob regression-asan`, and `./nob regression-ubsan` currently run:
 
 - `tests/test_regression_v26_05`
+- `tests/test_regression_v26_07`
 - `tests/test_map_owned_key`
 - `tests/test_regression_public_contracts`
 - `tests/test_regression_fs_copy_to_self`
+- `tests/test_regression_fs_slurp`
+- `tests/test_regression_scanner_rollback`
 - `tests/test_regression_source_contracts`
 
 Intent: provide a short feedback loop for bug-fix work without running every hosted example and container test.
