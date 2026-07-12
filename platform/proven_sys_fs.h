@@ -75,6 +75,10 @@ typedef struct {
      * it can open it and read bytes out of it, and a dangling symlink cannot even be
      * opened. */
     bool is_regular;
+    /* Reached through a symlink. `is_dir`/`is_regular` describe the TARGET (they follow, so
+     * a listing agrees with stat) - but a walker still has to know it was a link, because
+     * following one can leave the tree it was asked to walk. */
+    bool is_symlink;
     size_t size;
 } proven_sys_dir_entry_t;
 

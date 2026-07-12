@@ -1054,6 +1054,14 @@ Note: the check lives in the comparator, so it fails in **every** build mode, no
 
 Failure tip: inspect `insertion_sort` in `src/proven/algorithm.c`.
 
+### `tests/test_unit_fs_walk` — the recursive walk
+
+Intent: verify `proven_fs_walk` reports every entry once in pre-order with the right depth, reports a symlinked directory without descending into it, REPORTS an unreadable directory as an error rather than skipping it, honours `max_depth` while still reporting the boundary directory, and streams a wide directory rather than buffering it.
+
+Note: this test was written **from the contract, before the implementation existed** — the first feature under the rule in `docs/TESTING.md` §5.1 — and it landed red, in its own commit. It earned its keep immediately: it found the first draft of the contract ("follow symlinked directories, but stop at a cycle") quietly walking all of `/tmp`, and it found the implementation writing a NUL into the middle of a path view the caller was still holding. Neither would have been asked about by a test written afterwards to confirm code that already looked right.
+
+Failure tip: inspect `proven_fs_walk_open/_next/_close` in `src/proven/fs.c`.
+
 ### `tests/test_regression_fs_perms_and_types` — filesystem permissions and entry types
 
 Intent: verify a copy carries the source's mode, that an atomic write never exposes its contents under a wider mode, that a symlink and a FIFO are `PROVEN_FS_TYPE_OTHER`, and that syncing a PRIVATE mapping is `PROVEN_ERR_UNSUPPORTED`.

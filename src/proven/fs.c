@@ -1008,6 +1008,7 @@ proven_err_t proven_fs_dir_next(proven_fs_dir_t *dir, proven_fs_dir_entry_t *out
     out_entry->type = se.is_dir ? PROVEN_FS_TYPE_DIR
                     : se.is_regular ? PROVEN_FS_TYPE_FILE
                     : PROVEN_FS_TYPE_OTHER;
+    out_entry->is_symlink = se.is_symlink;
     out_entry->size = se.size;
     return PROVEN_OK;
 }
@@ -1139,24 +1140,289 @@ bool proven_fs_is_absolute(proven_u8str_view_t path) {
 // -------------------------------------------------------------
 // Recursive walk
 //
-// Contract first, implementation next - see docs/TESTING.md §5.1. This is the stub the
-// contract's tests were written against; they fail here, on purpose, and the commit that
-// implements the walk makes them pass without changing what they assert.
+// Written to the contract in include/proven/fs.h, whose test (tests/test_unit_fs_walk)
+// landed red one commit earlier. Nothing that test asserts was changed to make this pass.
 // -------------------------------------------------------------
+
+#define PROVEN_FS_WALK_MAX_DEPTH ((proven_size_t)256)
+
+typedef struct {
+    proven_fs_dir_t     dir;
+    proven_size_t       path_len;   /* length of `path` when this level was entered */
+    unsigned long long  dev;
+    unsigned long long  ino;
+} proven_fs_walk_frame_t;
+
+typedef struct {
+    proven_allocator_t     alloc;
+    proven_size_t          max_depth;
+
+    /* ONE path buffer, reused and only ever grown: the walk costs no allocation per entry,
+     * which is what makes its memory a function of DEPTH rather than of breadth. */
+    proven_byte_t         *path;
+    proven_size_t          path_len;
+    proven_size_t          path_cap;
+    proven_fs_walk_frame_t stack[PROVEN_FS_WALK_MAX_DEPTH];
+    proven_size_t          depth;   /* number of open frames */
+
+    /*
+     * The path buffer currently holds the entry we handed to the caller last time - their
+     * `path` view points into it, and it must stay valid until they ask for the next one.
+     * So the work of moving on happens at the START of the next call:
+     *
+     *   pending_descend: that entry was a directory we are going to enter.
+     *   pending_trim:    that entry was not, and the path goes back to its parent.
+     *
+     * `pending_path_len` is the parent's length in both cases.
+     */
+    bool                   pending_descend;
+    bool                   pending_trim;
+    proven_size_t          pending_path_len;
+} proven_fs_walk_state_t;
+
+static proven_u8str_view_t walk_path(const proven_fs_walk_state_t *s) {
+    return (proven_u8str_view_t){ .ptr = s->path, .size = s->path_len };
+}
+
+static proven_err_t walk_reserve(proven_fs_walk_state_t *s, proven_size_t need) {
+    if (need <= s->path_cap) return PROVEN_OK;
+
+    proven_size_t cap = s->path_cap ? s->path_cap : 128u;
+    while (cap < need) {
+        if (PROVEN_CKD_MUL(&cap, cap, 2u)) return PROVEN_ERR_OVERFLOW;
+    }
+
+    proven_result_mem_mut_t m = s->alloc.realloc_fn(s->alloc.ctx, s->path, s->path_cap, cap, 1u);
+    if (!proven_is_ok(m.err)) return m.err;   /* realloc is failure-atomic: the old block lives */
+
+    s->path = (proven_byte_t *)m.value.ptr;
+    s->path_cap = cap;
+    return PROVEN_OK;
+}
+
+/* Append "/name". */
+static proven_err_t walk_push_name(proven_fs_walk_state_t *s, proven_u8str_view_t name) {
+    proven_size_t need;
+    if (PROVEN_CKD_ADD(&need, s->path_len, name.size) || PROVEN_CKD_ADD(&need, need, 2u)) {
+        return PROVEN_ERR_OVERFLOW;   /* '/' and the NUL the path needs to be openable */
+    }
+    proven_err_t e = walk_reserve(s, need);
+    if (!proven_is_ok(e)) return e;
+
+    s->path[s->path_len++] = (proven_byte_t)'/';
+    for (proven_size_t i = 0; i < name.size; ++i) s->path[s->path_len + i] = name.ptr[i];
+    s->path_len += name.size;
+    s->path[s->path_len] = 0;
+    return PROVEN_OK;
+}
+
+static void walk_truncate(proven_fs_walk_state_t *s, proven_size_t len) {
+    if (len <= s->path_len) {
+        s->path_len = len;
+        if (s->path && s->path_cap > len) s->path[len] = 0;
+    }
+}
+
+/* Is (dev, ino) already an ancestor on the current path? That is a cycle, and it is the
+ * only thing standing between this walk and an infinite loop through `loop -> ..`. */
+static bool walk_is_ancestor(const proven_fs_walk_state_t *s, unsigned long long dev, unsigned long long ino) {
+    for (proven_size_t i = 0; i < s->depth; ++i) {
+        if (s->stack[i].dev == dev && s->stack[i].ino == ino) return true;
+    }
+    return false;
+}
 
 proven_result_walk_t proven_fs_walk_open(proven_allocator_t alloc, proven_u8str_view_t root,
                                          proven_size_t max_depth) {
-    (void)alloc; (void)root; (void)max_depth;
     proven_result_walk_t res = {0};
-    res.err = PROVEN_ERR_UNSUPPORTED;
+
+    if (!proven_alloc_is_valid(alloc) || root.size == 0 || !root.ptr) {
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
+
+    proven_result_mem_mut_t mem = alloc.alloc_fn(alloc.ctx, sizeof(proven_fs_walk_state_t),
+                                                 alignof(proven_fs_walk_state_t));
+    if (!proven_is_ok(mem.err)) {
+        res.err = mem.err;
+        return res;
+    }
+
+    proven_fs_walk_state_t *s = (proven_fs_walk_state_t *)mem.value.ptr;
+    for (proven_size_t i = 0; i < sizeof *s; ++i) ((proven_byte_t *)s)[i] = 0;
+    s->alloc = alloc;
+    s->max_depth = max_depth;
+
+    proven_err_t perr = walk_reserve(s, root.size + 2u);
+    if (!proven_is_ok(perr)) {
+        alloc.free_fn(alloc.ctx, s);
+        res.err = perr;
+        return res;
+    }
+    for (proven_size_t i = 0; i < root.size; ++i) s->path[i] = root.ptr[i];
+    s->path_len = root.size;
+    s->path[s->path_len] = 0;
+
+    proven_result_dir_t d = proven_fs_dir_open(alloc, root);
+    if (!proven_is_ok(d.err)) {
+        alloc.free_fn(alloc.ctx, s->path);
+        alloc.free_fn(alloc.ctx, s);
+        res.err = d.err;
+        return res;
+    }
+
+    proven_fs_stat_t st = {0};
+    (void)proven_fs_stat(alloc, root, &st);   /* dev/ino of the root: the first ancestor */
+
+    s->stack[0].dir = d.value;
+    s->stack[0].path_len = s->path_len;
+    s->stack[0].dev = st.dev;
+    s->stack[0].ino = st.ino;
+    s->depth = 1;
+
+    res.err = PROVEN_OK;
+    res.value.internal = s;
     return res;
 }
 
 proven_err_t proven_fs_walk_next(proven_fs_walk_t *walk, proven_fs_walk_entry_t *out_entry) {
-    (void)walk; (void)out_entry;
-    return PROVEN_ERR_UNSUPPORTED;
+    if (!walk || !walk->internal || !out_entry) return PROVEN_ERR_INVALID_ARG;
+    proven_fs_walk_state_t *s = (proven_fs_walk_state_t *)walk->internal;
+
+    for (;;) {
+        if (s->pending_trim) {
+            /* The caller is done with the entry we handed them last time. */
+            s->pending_trim = false;
+            walk_truncate(s, s->pending_path_len);
+        }
+
+        /* A directory reported on the previous call is entered now - after the caller has
+         * seen it, which is what pre-order means. */
+        if (s->pending_descend) {
+            s->pending_descend = false;
+
+            proven_u8str_view_t dpath = walk_path(s);
+            proven_fs_stat_t st = {0};
+            proven_err_t serr = proven_fs_stat(s->alloc, dpath, &st);
+
+            bool cycle = proven_is_ok(serr) && walk_is_ancestor(s, st.dev, st.ino);
+            proven_result_dir_t d = { .err = PROVEN_ERR_UNSUPPORTED };
+            if (!cycle && s->depth < PROVEN_FS_WALK_MAX_DEPTH) {
+                d = proven_fs_dir_open(s->alloc, dpath);
+            }
+
+            if (cycle || s->depth >= PROVEN_FS_WALK_MAX_DEPTH) {
+                /* Not an error: the entry was reported, and we simply do not go in. */
+                walk_truncate(s, s->pending_path_len);
+                continue;
+            }
+
+            if (!proven_is_ok(d.err)) {
+                /* A directory we cannot read. REPORT it - the caller asked for this tree,
+                 * and a subtree that silently vanishes is how a backup misses files and
+                 * says it succeeded. Then carry on with the next sibling. */
+                out_entry->path = dpath;
+                out_entry->name = dpath;   /* narrowed below */
+                for (proven_size_t i = dpath.size; i > 0; --i) {
+                    if (dpath.ptr[i - 1] == (proven_u8)'/') {
+                        out_entry->name.ptr = dpath.ptr + i;
+                        out_entry->name.size = dpath.size - i;
+                        break;
+                    }
+                }
+                out_entry->type = PROVEN_FS_TYPE_DIR;
+                out_entry->size = 0;
+                out_entry->depth = s->depth - 1;
+                out_entry->is_symlink = false;
+
+                /* Trim on the NEXT call, not now: the caller is holding a view into this
+                 * buffer, and truncating writes a NUL into the middle of what they are
+                 * looking at. (It did, and the error came back naming the parent.) */
+                s->pending_trim = true;
+                return d.err;
+            }
+
+            s->stack[s->depth].dir = d.value;
+            s->stack[s->depth].path_len = s->pending_path_len;
+            s->stack[s->depth].dev = st.dev;
+            s->stack[s->depth].ino = st.ino;
+            s->depth++;
+            continue;
+        }
+
+        if (s->depth == 0) return PROVEN_ERR_EOF;
+
+        proven_fs_walk_frame_t *top = &s->stack[s->depth - 1];
+        proven_fs_dir_entry_t de = {0};
+        proven_err_t e = proven_fs_dir_next(&top->dir, &de);
+
+        if (e == PROVEN_ERR_EOF) {
+            proven_fs_dir_close(&top->dir);
+            walk_truncate(s, top->path_len);
+            s->depth--;
+            continue;
+        }
+        if (!proven_is_ok(e)) {
+            /* The directory's own read failed. Same rule: report it, name it, move on. */
+            proven_u8str_view_t dpath = walk_path(s);
+            out_entry->path = dpath;
+            out_entry->name = dpath;
+            out_entry->type = PROVEN_FS_TYPE_DIR;
+            out_entry->size = 0;
+            out_entry->depth = s->depth - 1;
+            out_entry->is_symlink = false;
+
+            proven_fs_dir_close(&top->dir);
+            s->pending_trim = true;
+            s->pending_path_len = top->path_len;
+            s->depth--;
+            return e;
+        }
+
+        proven_size_t base_len = s->path_len;
+        proven_err_t perr = walk_push_name(s, de.name);
+        if (!proven_is_ok(perr)) {
+            walk_truncate(s, base_len);
+            return perr;
+        }
+
+        proven_u8str_view_t full = walk_path(s);
+        proven_size_t depth = s->depth - 1;
+
+        out_entry->path = full;
+        out_entry->name.ptr = full.ptr + base_len + 1u;
+        out_entry->name.size = full.size - base_len - 1u;
+        out_entry->type = de.type;
+        out_entry->size = de.size;
+        out_entry->depth = depth;
+        out_entry->is_symlink = de.is_symlink;
+
+        s->pending_path_len = base_len;
+        if (de.type == PROVEN_FS_TYPE_DIR && !de.is_symlink &&
+            (s->max_depth == PROVEN_FS_WALK_UNLIMITED || depth < s->max_depth)) {
+            /* Report it now, enter it next time: that is what pre-order means. */
+            s->pending_descend = true;
+            s->pending_trim = false;
+        } else {
+            /* A directory AT the limit is still reported - it is an entry - it is simply
+             * not entered. Same for a file. Either way the path goes back to the parent's
+             * at the start of the next call, not now: the caller is holding a view into it. */
+            s->pending_descend = false;
+            s->pending_trim = true;
+        }
+        return PROVEN_OK;
+    }
 }
 
 void proven_fs_walk_close(proven_fs_walk_t *walk) {
-    (void)walk;
+    if (!walk || !walk->internal) return;
+    proven_fs_walk_state_t *s = (proven_fs_walk_state_t *)walk->internal;
+
+    for (proven_size_t i = 0; i < s->depth; ++i) {
+        proven_fs_dir_close(&s->stack[i].dir);
+    }
+    proven_allocator_t a = s->alloc;
+    if (s->path) a.free_fn(a.ctx, s->path);
+    a.free_fn(a.ctx, s);
+    walk->internal = NULL;
 }

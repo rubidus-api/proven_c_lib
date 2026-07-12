@@ -222,6 +222,23 @@ in it. That is the point of B-011, made twice in one day.
 
 ### Added
 
+- **`proven_fs_walk`** — recursive, pre-order directory iteration that **cannot loop and cannot
+  escape**. The manual had been telling callers to guard against symlink cycles themselves ever
+  since the walk learned to follow links; this is the guard. It never descends *through* a
+  symlink (the symlinked directory is still reported — it exists — it is simply not entered),
+  which buys both guarantees at once: a link to an ancestor cannot loop it, and a link anywhere
+  else cannot walk it out of the tree you asked about. It also carries the `(dev, ino)` of every
+  directory on the current path, for the loops a symlink is not needed for. A directory it cannot
+  read is **reported** — `proven_fs_walk_next` returns that directory's error with the entry
+  naming it, and the walk goes on — because a tree walker that silently skips an unreadable
+  subtree is how a backup misses files and reports success. Memory is bounded by **depth**, not
+  breadth: one handle and one `(dev, ino)` per level, plus a single reused path buffer.
+
+  This is the first feature written under the test-first rule (`docs/TESTING.md` §5.1): the
+  contract and a failing test in one commit, the implementation in the next. The test paid for
+  itself before the implementation existed — it caught the first draft of the contract ("follow,
+  but stop at a cycle") quietly walking all of `/tmp`.
+
 - `tests/test_regression_float_exact_pow5`, `tests/test_regression_scanner_short_read`,
   `tests/test_regression_map_churn`, `tests/test_contract_sort_alignment`,
   `tests/test_contract_fmt_atomic`, and an empty-view NUL-seal section in
