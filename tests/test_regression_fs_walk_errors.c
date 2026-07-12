@@ -21,6 +21,7 @@ int main(void) {
 #include <dlfcn.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 
 /*
  * Two defects the standing audit of proven_fs_walk found (docs/TESTING.md §5.2), pinned
@@ -68,21 +69,46 @@ struct dirent *readdir(DIR *d) {
 }
 
 /*
- * The swap fires HERE, on the plain stat() the descent does - which is the window between
- * "trap was classified as a real directory" (that used fstatat, not stat) and "trap is
- * opened". Swapping in readdir would be too early: trap would be a symlink by the time it
- * was classified, and the walk would never try to descend into it at all - passing the test
- * for the wrong reason.
+ * The swap fires at the descent's OPEN - the window between "trap was classified as a real
+ * directory" and "trap is opened" - whichever kind of open the code does:
+ *
+ *   - the shipped code opens with openat(parent_fd, "trap", O_NOFOLLOW): the swap turns trap
+ *     into a symlink first, and O_NOFOLLOW then makes the open FAIL, so there is no escape;
+ *   - the old by-path code opened with opendir("we_in/trap"), which follows the symlink and
+ *     escapes.
+ *
+ * Interposing both is what lets this one test prove the fix AND fail against the code before
+ * it. (Swapping earlier - in readdir - would be too early: trap would be a symlink by the
+ * time it was classified, and the walk would never try to enter it, passing for the wrong
+ * reason.)
  */
-int stat(const char *path, struct stat *out) {
-    static int (*real)(const char *, struct stat *) = NULL;
-    if (!real) real = (int (*)(const char *, struct stat *))dlsym(RTLD_NEXT, "stat");
-    if (g_swap_name && !g_swap_done && g_swap_path && strcmp(path, g_swap_full) == 0) {
+static void do_swap(void) {
+    if (g_swap_name && !g_swap_done && g_swap_path) {
         g_swap_done = 1;
         (void)rmdir(g_swap_path);
         (void)symlink(g_swap_to, g_swap_path);
     }
-    return real(path, out);
+}
+
+static const char *tail_is(const char *path, const char *name) {
+    size_t pl = strlen(path), nl = strlen(name);
+    if (pl >= nl && strcmp(path + pl - nl, name) == 0) return path + pl - nl;
+    return NULL;
+}
+
+int openat(int dirfd, const char *path, int flags, ...) {
+    static int (*real)(int, const char *, int, ...) = NULL;
+    if (!real) real = (int (*)(int, const char *, int, ...))dlsym(RTLD_NEXT, "openat");
+    if (g_swap_name && !g_swap_done && strcmp(path, g_swap_name) == 0) do_swap();
+    /* O_NOFOLLOW carries no mode; the walk never passes O_CREAT here. */
+    return real(dirfd, path, flags);
+}
+
+DIR *opendir(const char *path) {
+    static DIR *(*real)(const char *) = NULL;
+    if (!real) real = (DIR *(*)(const char *))dlsym(RTLD_NEXT, "opendir");
+    if (g_swap_name && !g_swap_done && tail_is(path, g_swap_full)) do_swap();
+    return real(path);
 }
 
 int main(void) {

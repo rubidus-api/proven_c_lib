@@ -1300,8 +1300,6 @@ proven_err_t proven_fs_walk_next(proven_fs_walk_t *walk, proven_fs_walk_entry_t 
             s->pending_descend = false;
 
             proven_u8str_view_t dpath = walk_path(s);
-            proven_fs_stat_t st = {0};
-            (void)proven_fs_stat(s->alloc, dpath, &st);   /* seeds cdev/cino for the fallback path */
 
             if (s->depth >= PROVEN_FS_WALK_DEPTH_LIMIT) {
                 /*
@@ -1344,7 +1342,7 @@ proven_err_t proven_fs_walk_next(proven_fs_walk_t *walk, proven_fs_walk_entry_t 
              * path, so the cycle guard is checking the real directory too.
              */
             proven_fs_dir_t child = {0};
-            unsigned long long cdev = st.dev, cino = st.ino;
+            unsigned long long cdev = 0, cino = 0;
             bool have_ids = false;
             proven_err_t open_err;
 
@@ -1364,11 +1362,18 @@ proven_err_t proven_fs_walk_next(proven_fs_walk_t *walk, proven_fs_walk_entry_t 
                     open_err = PROVEN_ERR_IO;
                 }
             } else {
-                /* No fd-relative open on this platform: fall back to the by-path open. */
+                /* No fd-relative open on this platform: fall back to the by-path open, and
+                 * stat the path for the cycle guard's ids - the one place that stat is worth
+                 * paying for, rather than on every descent as it used to be. */
                 proven_result_dir_t d = proven_fs_dir_open(s->alloc, dpath);
                 child = d.value;
                 open_err = d.err;
-                have_ids = true;   /* the path-stat ids above are the best we have here */
+                if (proven_is_ok(open_err)) {
+                    proven_fs_stat_t st = {0};
+                    have_ids = proven_is_ok(proven_fs_stat(s->alloc, dpath, &st));
+                    cdev = st.dev;
+                    cino = st.ino;
+                }
             }
 
             /* Re-check the cycle against what we actually opened. On a bind mount or a
