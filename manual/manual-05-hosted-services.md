@@ -169,6 +169,41 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 | `proven_fs_read_all_u8str(alloc, path)` | Same, as a NUL-terminated owned string. | `proven_result_u8str_t`. |
 | `proven_fs_write_file(scratch, path, data)` | Create-or-truncate whole-file write. | `proven_err_t`. |
 | `proven_fs_write_file_atomic(scratch, path, data)` | Whole-file write via temp file + rename. | `proven_err_t`. |
+| `proven_fs_write_file_durable(scratch, path, data)` | Same, and on the disk before it returns. | `proven_err_t`. |
+| `proven_fs_seek(file, offset, whence)` | Move the file position. | `proven_result_u64_t` (new offset). |
+| `proven_fs_tell(file)` | Current position. | `proven_result_u64_t`. |
+| `proven_fs_truncate(file, length)` | Set the file's length. O(1). | `proven_err_t`. |
+| `proven_fs_pread(file, dest, offset)` | Read at an offset; does not move the position. | `proven_result_size_t`. |
+| `proven_fs_pwrite(file, src, offset)` | Write at an offset; does not move the position. | `proven_result_size_t`. |
+| `proven_fs_sync(file)` | Force this file's data to the disk (fsync). | `proven_err_t`. |
+| `proven_fs_sync_dir(scratch, path)` | Force a directory's metadata to the disk. | `proven_err_t`. |
+
+### Position, and the difference between atomic and durable
+
+**A handle that cannot seek says so.** A pipe, a FIFO or a terminal returns
+`PROVEN_ERR_UNSUPPORTED` from `proven_fs_seek`, not `PROVEN_ERR_IO`. Not being seekable
+is a property of the thing, not a failure of the call, and code that adapts to it — the
+scanner does — has to be able to tell them apart.
+
+**`pread` and `pwrite` do not move the position.** That is what they are for: two
+readers sharing one handle cannot race on a cursor that neither of them moves.
+
+**Atomic and durable are different promises, and conflating them is how data gets
+lost.**
+
+- `proven_fs_write_file_atomic` guarantees that a *reader* never sees a half-written
+  file. It says nothing about a power cut: the kernel may still be holding your bytes,
+  and the rename may reach the disk before the data it points at.
+- `proven_fs_write_file_durable` closes that window, in the only order that works:
+  fsync the temp file, **then** rename, **then** fsync the directory. Syncing the file
+  but not the directory leaves a crash window in which the bytes are safe and the name
+  that points at them is not — which is exactly the corruption an atomic write exists
+  to prevent.
+
+The durable form waits for the storage device twice. Use it when losing the write would
+be worse than the wait, and the atomic form when it would not.
+
+`proven_sysio_flush` is none of this. It does nothing.
 
 Important behavior:
 

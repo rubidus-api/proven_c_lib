@@ -57,9 +57,20 @@ int main(void) {
     require(!contains(sysio, "key.size >= 256"), "public env API does not reject oversized keys before PAL lookup");
     free(sysio);
 
+    /* The PAL used to implement read, write and seek in inline-assembly raw
+     * syscalls, one path per architecture. It bought nothing - proven_sys_fs.c in
+     * the same library already calls libc's open/read/write - and it cost real
+     * things: three of the four paths were unverifiable on a machine without the
+     * cross-toolchains, and because the console path issued raw `syscall`
+     * instructions, LD_PRELOAD tracing was BLIND to every one of this library's
+     * console writes.
+     *
+     * It is gone. This contract keeps it gone: an architecture-specific syscall
+     * path is a thing you add on purpose, not something that creeps back. */
     char *io = read_text_file("platform/proven_sys_io.c");
-    require(contains(io, "uint64_t result_off = 0"), "32-bit Linux _llseek uses a 64-bit result buffer");
-    require(!contains(io, "unsigned long result_off = 0"), "32-bit Linux _llseek no longer uses unsigned long result buffers");
+    require(!contains(io, "__asm__ volatile"), "the PAL uses libc, not hand-written syscall assembly");
+    require(contains(io, "lseek("), "seek goes through libc lseek");
+    require(contains(io, "fsync("), "durability goes through libc fsync");
     free(io);
 
     char *job = read_text_file("src/proven/job.c");

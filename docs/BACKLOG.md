@@ -57,6 +57,35 @@ deliberate choice, not something a documentation pass slips in.
 
 Items are moved here with the commit that closed them, so the reasoning survives.
 
+### B-004 — the hand-written syscall assembly is gone (closed v26.07.12g)
+
+The PAL implemented read, write and seek in inline-assembly raw syscalls, one path per
+architecture. It bought nothing — `proven_sys_fs.c` in the same library already called
+libc's `open`, `read`, `write`, `close` — and it cost real things: three of the four
+paths were unverifiable on a machine without cross-toolchains, and because the console
+path issued raw `syscall` instructions, **standard tracing tooling was blind to every
+one of this library's console writes.**
+
+Replaced with plain libc. Proof it was gratuitous: forcing every branch into the POSIX
+fallback passed 12 of 12 I/O tests byte-identically *before* the change. Proof the
+blindness is fixed: an LD_PRELOAD interposer now counts 5 of 5 writes from five
+`proven_println` calls, where it used to count 0.
+
+`tests/test_portability_source_contracts` now *forbids* the assembly rather than
+requiring it — an architecture-specific syscall path is something you add on purpose,
+not something that creeps back.
+
+### B-006 — durability is reachable (closed v26.07.12g)
+
+The library imported no `fsync` and no `fdatasync`, so a caller who wanted their bytes
+on the platter could not ask at any price. Added `proven_fs_sync` (fsync),
+`proven_fs_sync_dir`, and `proven_fs_write_file_durable` — which does the three steps
+in the only order that works: fsync the temp file, rename, fsync the directory.
+Syncing the file but not the directory leaves a crash window in which the bytes are
+safe and the name that points at them is not.
+
+`proven_sysio_flush` was never this. It does nothing.
+
 ### B-002 — the manual's code blocks were unverifiable sketches (closed v26.07.12f)
 
 Of ~190 fenced `c` blocks, **four** could be compiled. The rest referenced imaginary
@@ -93,42 +122,19 @@ written through** the destinations before the mismatch.
 chapter states as fact. The chapter cannot drift from the scanner without the build
 saying so.
 
-### B-004 — the hand-written syscall assembly should be `lseek`
+### B-005 — `proven_fs_list` still materialises the whole directory
 
-**Status:** open. See `docs/RFC-0001-streams-and-io.md` §4.5.
+**Status:** open (partially closed in v26.07.12g). RFC-0001 §4.4.
 
-`platform/proven_sys_io.c` implements seek with inline-assembly raw syscalls, one
-per architecture. It is gratuitous — `proven_sys_fs.o` in the same library already
-imports `open`, `read`, `write`, `close` from libc — and it has a real cost:
-because the console path issues raw `syscall` instructions, **an LD_PRELOAD
-interposer counts zero of `proven_println`'s ten thousand writes.** Standard tracing
-tooling is blind to proven's console I/O.
+Seek, tell, truncate, pread and pwrite **landed** in v26.07.12g. What remains is the
+directory iterator: `proven_fs_list` reads, `fstatat`s, allocates and sorts every
+entry before the caller sees any of them. Measured on 50,000 entries: 189 ms,
++4.2 MB RSS, 50,008 mallocs, and nothing visible until the last one. The PAL already
+has a streaming iterator (`proven_sys_fs_dir_open` / `_dir_next` / `_dir_close`);
+`fs.c` wraps it in a loop that buffers everything and throws the stream away.
 
-Proven safe to remove: recompiling with `-U__linux__`, forcing every branch into the
-POSIX `#else`, passes 12 of 12 I/O tests with byte-identical output. Three of the
-four asm paths have zero verification on any machine without cross-toolchains.
-
-**Done looks like:** the asm is gone, `lseek` is called, and the cross matrix still
-compiles.
-
-### B-005 — no seek, tell, truncate, positional I/O, or streaming directory iteration
-
-**Status:** open. RFC-0001 §4.4.
-
-`fs.h` has no seek at all. Truncating a file therefore means reading the whole thing
-and rewriting it: an O(n) copy for an O(1) operation. `proven_fs_list` materialises
-the entire directory — measured on 50,000 entries: 189 ms, +4.2 MB RSS, 50,008
-mallocs, and nothing visible to the caller until the last entry is read. The PAL
-already has a streaming iterator; `fs.c` wraps it in a loop that buffers everything.
-
-### B-006 — no durability: `fsync` is unreachable
-
-**Status:** open. RFC-0001 §4.4.
-
-The complete list of sync-ish libc symbols the whole library imports is `msync`.
-There is no `fsync` and no `fdatasync`, so `proven_fs_write_file_atomic` cannot be
-made crash-durable **even by a caller willing to pay for it** — you cannot sync the
-file, and you cannot sync the directory the rename happened in.
+**Done looks like:** `proven_fs_dir_open` / `_next` / `_close` exposed, and
+`proven_fs_list` reimplemented on top of them rather than the other way round.
 
 ### B-007 — no stream abstraction; console output is 213x the syscalls of stdio
 

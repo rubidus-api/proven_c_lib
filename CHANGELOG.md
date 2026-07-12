@@ -11,6 +11,70 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-12] — proven_c_lib-v26.07.12g
+
+Steps 1-3 of `docs/RFC-0001-streams-and-io.md`. Subtraction first, then the two things
+the library simply could not do.
+
+### Removed
+
+- **The hand-written syscall assembly.** `platform/proven_sys_io.c` implemented read,
+  write and seek in inline assembly, one raw-syscall path per architecture: x86_64,
+  i386, aarch64, plus an opt-in ARM32 path. It bought nothing — `proven_sys_fs.c` in
+  the same library already called libc's `open`, `read`, `write` and `close`, so libc
+  was always linked and always doing file I/O.
+
+  What it cost was real. Three of the four paths could not be verified on a machine
+  without the cross-toolchains, which is most machines. And because the console path
+  issued raw `syscall` instructions, **standard tracing tooling was blind to every one
+  of this library's console writes** — an LD_PRELOAD interposer counted zero of
+  `proven_println`'s ten thousand. It now counts all of them.
+
+  Removing it changed no behaviour: forcing every branch into the POSIX fallback passed
+  12 of 12 I/O tests byte-identically before the change was made.
+  `tests/test_portability_source_contracts` now *forbids* the assembly rather than
+  requiring it.
+
+### Added
+
+- **`proven_fs_seek`, `proven_fs_tell`, `proven_fs_truncate`, `proven_fs_pread`,
+  `proven_fs_pwrite`.** None of these existed. Truncating a file meant reading all of
+  it and rewriting the part you kept — an O(n) copy for an O(1) operation.
+
+  A handle that cannot seek — a pipe, a FIFO, a terminal — returns
+  `PROVEN_ERR_UNSUPPORTED`, **not** `PROVEN_ERR_IO`. Not being seekable is a property
+  of the thing, not a failure of the call, and code that adapts to it has to be able to
+  tell them apart.
+
+  `pread` and `pwrite` do not move the file position. That is the whole point: two
+  readers sharing a handle cannot race on a cursor that neither of them moves.
+
+- **`proven_fs_sync`, `proven_fs_sync_dir`, `proven_fs_write_file_durable`.** The
+  library imported no `fsync` and no `fdatasync` — a caller who wanted their bytes on
+  the disk could not ask **at any price**.
+
+  `write_file_durable` does the three steps in the only order that works: fsync the
+  temp file, rename it over the target, then fsync the directory. Atomicity and
+  durability are different promises, and conflating them is how data gets lost:
+  `write_file_atomic` guarantees a reader never sees a half-written file, and says
+  nothing about a power cut. Syncing the file but not the *directory* leaves a window
+  in which the bytes are safe and the name that points at them is not — which is
+  exactly the corruption an atomic write exists to prevent.
+
+  It is slow, and it is meant to be. It waits for the storage device, twice.
+
+- `tests/test_unit_fs_position_and_sync` — covers all of it, including the contracts
+  that are easy to get wrong: a FIFO seek is `UNSUPPORTED`, `pread`/`pwrite`/`truncate`
+  leave the position alone, growing a file zero-fills, and a durable rewrite still
+  preserves the target's permissions and leaves no temp debris.
+
+### Fixed
+
+- `proven_sysio_flush` no longer calls `FlushFileBuffers` on Windows. It did nothing on
+  POSIX and forced a full disk sync on Windows: one API, two meanings, neither of them
+  what "flush" promised. It now does nothing everywhere, and durability is its own
+  explicit call that a caller pays for knowingly.
+
 ## [2026-07-12] — proven_c_lib-v26.07.12f
 
 Two audits went looking for weakness in the formatter and the I/O layer. They found
