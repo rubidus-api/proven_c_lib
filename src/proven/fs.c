@@ -92,12 +92,13 @@ proven_result_file_t proven_fs_open(proven_allocator_t scratch, proven_u8str_vie
     return res;
 }
 
-void proven_fs_close(proven_file_t file) {
+proven_err_t proven_fs_close(proven_file_t file) {
 #if defined(_WIN32) || defined(_WIN64)
-    proven_sys_fs_close((proven_sys_file_handle_t){ .handle = file.internal.ptr });
+    bool ok = proven_sys_fs_close((proven_sys_file_handle_t){ .handle = file.internal.ptr });
 #else
-    proven_sys_fs_close((proven_sys_file_handle_t){ .fd = file.internal.fd });
+    bool ok = proven_sys_fs_close((proven_sys_file_handle_t){ .fd = file.internal.fd });
 #endif
+    return ok ? PROVEN_OK : PROVEN_ERR_IO;
 }
 
 proven_result_size_t proven_fs_read(proven_file_t file, proven_mem_mut_t dest) {
@@ -277,7 +278,7 @@ proven_err_t proven_fs_sync_dir(proven_allocator_t scratch, proven_u8str_view_t 
     if (!proven_is_ok(d.err)) return d.err;
 
     proven_err_t err = proven_sys_io_sync(internal_io_handle(d.value));
-    proven_fs_close(d.value);
+    (void)proven_fs_close(d.value);
     return err;
 #endif
 }
@@ -350,15 +351,37 @@ proven_err_t proven_fs_copy(proven_allocator_t temp_alloc, proven_u8str_view_t s
     
     proven_result_file_t w_res = proven_fs_open(temp_alloc, dest, PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
     if (!proven_is_ok(w_res.err)) {
-        proven_fs_close(r_res.value);
+        (void)proven_fs_close(r_res.value);
         return w_res.err;
+    }
+
+    /*
+     * Carry the source's mode onto the destination, and do it BEFORE the contents go in.
+     *
+     * A copy used to create the destination with the process umask - so copying a 0600
+     * file produced a 0644 one, and every byte of a private file was world-readable from
+     * the moment it was written. `cp` does not do that, and neither should this. Setting
+     * the mode first means the contents are never visible under a wider mode than the
+     * original had, not even briefly.
+     */
+    {
+        proven_fs_stat_t src_stat = {0};
+        if (proven_is_ok(proven_fs_stat(temp_alloc, src, &src_stat)) &&
+            src_stat.type == PROVEN_FS_TYPE_FILE) {
+            proven_err_t merr = proven_fs_chmod(temp_alloc, dest, src_stat.perms);
+            if (!proven_is_ok(merr) && merr != PROVEN_ERR_UNSUPPORTED) {
+                (void)proven_fs_close(r_res.value);
+                (void)proven_fs_close(w_res.value);
+                return merr;
+            }
+        }
     }
 
     proven_size_t buf_size = 4096 * 16;
     proven_result_mem_mut_t m_res = temp_alloc.alloc_fn(temp_alloc.ctx, buf_size, 8);
     if (!proven_is_ok(m_res.err)) {
-        proven_fs_close(r_res.value);
-        proven_fs_close(w_res.value);
+        (void)proven_fs_close(r_res.value);
+        (void)proven_fs_close(w_res.value);
         return m_res.err;
     }
 
@@ -381,8 +404,14 @@ proven_err_t proven_fs_copy(proven_allocator_t temp_alloc, proven_u8str_view_t s
     }
 
     temp_alloc.free_fn(temp_alloc.ctx, m_res.value.ptr);
-    proven_fs_close(r_res.value);
-    proven_fs_close(w_res.value);
+    (void)proven_fs_close(r_res.value);   /* a read close cannot lose data */
+    {
+        /* The destination close CAN: on NFS or over quota this is where the failure
+         * appears, and a copy that reports success with a truncated destination is
+         * worse than one that fails. */
+        proven_err_t cerr = proven_fs_close(w_res.value);
+        if (proven_is_ok(final_err) && !proven_is_ok(cerr)) final_err = cerr;
+    }
     return final_err;
 }
 
@@ -433,7 +462,9 @@ proven_result_array_t proven_fs_list(proven_allocator_t alloc, proven_u8str_view
     int step;
     while ((step = proven_sys_fs_dir_step(dh, &se)) == 1) {
         proven_fs_entry_t entry = {0};
-        entry.type = se.is_dir ? PROVEN_FS_TYPE_DIR : PROVEN_FS_TYPE_FILE;
+        entry.type = se.is_dir ? PROVEN_FS_TYPE_DIR
+                  : se.is_regular ? PROVEN_FS_TYPE_FILE
+                  : PROVEN_FS_TYPE_OTHER;
         entry.size = se.size;
         
         proven_u8str_view_t name_view = { .ptr = (const proven_u8*)se.name, .size = 0 };
@@ -600,7 +631,7 @@ static internal_slurp_t internal_slurp_path(proven_allocator_t alloc,
 
     proven_result_size_t s_res = proven_fs_size(f);
     if (!proven_is_ok(s_res.err)) {
-        proven_fs_close(f);
+        (void)proven_fs_close(f);
         res.err = s_res.err;
         return res;
     }
@@ -613,20 +644,20 @@ static internal_slurp_t internal_slurp_path(proven_allocator_t alloc,
     if (s_res.value == 0) {
         cap = INTERNAL_SLURP_CHUNK;
     } else if (PROVEN_CKD_ADD(&cap, s_res.value, extra)) {
-        proven_fs_close(f);
+        (void)proven_fs_close(f);
         res.err = PROVEN_ERR_OVERFLOW;
         return res;
     }
 
     proven_result_mem_mut_t m_res = alloc.alloc_fn(alloc.ctx, cap, align);
     if (!proven_is_ok(m_res.err)) {
-        proven_fs_close(f);
+        (void)proven_fs_close(f);
         res.err = m_res.err;
         return res;
     }
 
     res = internal_read_to_eof(alloc, f, m_res.value.ptr, cap, align);
-    proven_fs_close(f);
+    (void)proven_fs_close(f);
     return res;
 }
 
@@ -731,7 +762,12 @@ proven_err_t proven_fs_write_file(proven_allocator_t scratch, proven_u8str_view_
     if (!proven_is_ok(f_res.err)) return f_res.err;
 
     proven_err_t err = proven_fs_write_all(f_res.value, data);
-    proven_fs_close(f_res.value);
+
+    /* The close is part of the write. A filesystem that buffered the data and then could
+     * not store it says so HERE - and this function used to throw that away and return
+     * PROVEN_OK. */
+    proven_err_t cerr = proven_fs_close(f_res.value);
+    if (proven_is_ok(err)) err = cerr;
     return err;
 }
 
@@ -832,7 +868,24 @@ static proven_err_t internal_write_file_atomic(proven_allocator_t scratch, prove
         return f_res.err;
     }
 
-    proven_err_t err = proven_fs_write_all(f_res.value, data);
+    /*
+     * Put the mode on the temp BEFORE writing a single byte of the payload.
+     *
+     * It used to be chmod'd after the write, at the very end - which meant the entire new
+     * contents of a 0600 file sat in a world-readable 0644 temp for the whole duration of
+     * the write. A watcher thread stat'ing the temp during a 64 MiB rewrite saw exactly
+     * that. The end state was right and the window was wide open, and a window is all a
+     * secret needs. If there is no target, the temp's fresh mode is the right answer, the
+     * same as for write_file.
+     */
+    proven_err_t err = PROVEN_OK;
+    if (have_target_perms) {
+        err = proven_fs_chmod(scratch, tmp_view, target.perms);
+    }
+
+    if (proven_is_ok(err)) {
+        err = proven_fs_write_all(f_res.value, data);
+    }
 
     if (proven_is_ok(err) && durable) {
         /* The data has to be on the disk BEFORE the rename makes it visible under
@@ -841,13 +894,15 @@ static proven_err_t internal_write_file_atomic(proven_allocator_t scratch, prove
          * is exactly the corruption an atomic write exists to prevent. */
         err = proven_fs_sync(f_res.value);
     }
-    proven_fs_close(f_res.value);
 
-    if (proven_is_ok(err) && have_target_perms) {
-        /* Do this before the rename: the mode must be in place the instant the
-         * new contents become visible under the target name. */
-        err = proven_fs_chmod(scratch, tmp_view, target.perms);
+    /* And the close can fail too, which means the temp does not hold what we think it
+     * holds. Renaming it over the target would then publish content the filesystem
+     * refused to write - the exact corruption an atomic write exists to prevent. */
+    {
+        proven_err_t cerr = proven_fs_close(f_res.value);
+        if (proven_is_ok(err)) err = cerr;
     }
+
     if (proven_is_ok(err)) {
         err = proven_fs_rename(scratch, tmp_view, path);
     }
@@ -921,7 +976,12 @@ proven_err_t proven_fs_dir_next(proven_fs_dir_t *dir, proven_fs_dir_entry_t *out
     /* Borrowed: the name points into the iterator's own storage, which is what lets a
      * huge directory be walked without an allocation per entry. */
     out_entry->name = proven_u8str_view_from_cstr(se.name);
-    out_entry->type = se.is_dir ? PROVEN_FS_TYPE_DIR : PROVEN_FS_TYPE_FILE;
+    /* A symlink, FIFO, socket or device is neither. It used to be reported as a regular
+     * file, which told the caller it could open it and read bytes out of it - and a
+     * dangling symlink cannot even be opened. */
+    out_entry->type = se.is_dir ? PROVEN_FS_TYPE_DIR
+                    : se.is_regular ? PROVEN_FS_TYPE_FILE
+                    : PROVEN_FS_TYPE_OTHER;
     out_entry->size = se.size;
     return PROVEN_OK;
 }
@@ -980,7 +1040,9 @@ proven_err_t proven_fs_stat(proven_allocator_t scratch, proven_u8str_view_t path
     if (!stat_ok) return PROVEN_ERR_IO;
     
     out_stat->size = se.size;
-    out_stat->type = se.is_dir ? PROVEN_FS_TYPE_DIR : PROVEN_FS_TYPE_FILE;
+    out_stat->type = se.is_dir ? PROVEN_FS_TYPE_DIR
+                   : se.is_regular ? PROVEN_FS_TYPE_FILE
+                   : PROVEN_FS_TYPE_OTHER;
     /* Permission bits only. se.mode is the raw st_mode, which also carries the
      * file-type bits (S_IFREG and friends). Handing those back in a field typed
      * proven_fs_perms_t broke the most obvious use of it: feeding a stat's perms

@@ -77,7 +77,7 @@ int main() {
 
     // 5. Clean up
     (void)proven_mmap_destroy(&map);
-    proven_fs_close(file);
+    (void)proven_fs_close(file);
 
     // 6. Verify modification on disk
     PROVEN_TEST_INFO("Verifying modification persists on disk...");
@@ -91,7 +91,7 @@ int main() {
         return 1;
     }
 
-    proven_fs_close(file_res.value);
+    (void)proven_fs_close(file_res.value);
     (void)proven_fs_remove(alloc, path);
 
     PROVEN_TEST_INFO("Phase 17 [mmap] passed!");

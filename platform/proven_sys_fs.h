@@ -31,7 +31,15 @@ typedef enum {
 [[nodiscard]]
 proven_sys_file_handle_t proven_sys_fs_open(const char *path, int flags);
 
-void proven_sys_fs_close(proven_sys_file_handle_t handle);
+/**
+ * @brief Closes the handle. Returns false if the OS reported an error.
+ *
+ * close() is the last chance the filesystem has to tell you a write did not land -
+ * NFS, CIFS and quota-enforcing filesystems report exactly that, at exactly this
+ * moment, and nowhere else. Discarding it is discarding the report.
+ */
+[[nodiscard]]
+bool proven_sys_fs_close(proven_sys_file_handle_t handle);
 
 [[nodiscard]]
 proven_sys_result_size_t proven_sys_fs_read(proven_sys_file_handle_t handle, void *buf, size_t size);
@@ -62,6 +70,11 @@ typedef struct {
 typedef struct {
     const char *name;
     bool is_dir;
+    /* A symlink, a FIFO, a socket or a device is none of the two. Reporting it as a
+     * regular file - which is what "not a directory" used to mean here - tells a caller
+     * it can open it and read bytes out of it, and a dangling symlink cannot even be
+     * opened. */
+    bool is_regular;
     size_t size;
 } proven_sys_dir_entry_t;
 
@@ -96,6 +109,7 @@ bool proven_sys_fs_lock(proven_sys_file_handle_t handle, int type, bool wait);
 typedef struct {
     size_t size;
     bool is_dir;
+    bool is_regular;
     unsigned int mode;
     long long mtime;
     unsigned long long dev;

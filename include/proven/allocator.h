@@ -22,6 +22,11 @@
  *       buffer and byte array in this library) so that growth can happen in
  *       place, and an aligned allocator otherwise. Handing a block back with a
  *       different alignment class is undefined.
+ *
+ * @note `size == 0` is PROVEN_ERR_INVALID_ARG. A zero-byte allocation is a caller bug,
+ *       and the two allocators used to disagree about it - the heap said NOMEM (a lie:
+ *       nothing was out of memory) and the arena handed back a live pointer to nothing.
+ *       Trait-generic code cannot be written against a rule that changes per allocator.
  */
 typedef proven_result_mem_mut_t (*proven_alloc_fn_t)(void *ctx, proven_size_t size, proven_size_t align);
 

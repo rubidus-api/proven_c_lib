@@ -85,7 +85,7 @@ int main(void) {
     proven_result_size_t eof = proven_fs_pread(f.value, (proven_mem_mut_t){ .ptr = three, .size = 3 }, 100);
     PROVEN_TEST_ASSERT(eof.err == PROVEN_ERR_EOF, "pread past the end is PROVEN_ERR_EOF", "");
 
-    proven_fs_close(f.value);
+    (void)proven_fs_close(f.value);
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("pwrite writes where told, without moving the position",
@@ -101,7 +101,7 @@ int main(void) {
 
     after = proven_fs_tell(f.value);
     PROVEN_TEST_ASSERT(after.val == before.val, "pwrite left the position alone", "");
-    proven_fs_close(f.value);
+    (void)proven_fs_close(f.value);
 
     proven_result_mem_mut_t all = proven_fs_read_all(heap, path);
     PROVEN_TEST_ASSERT(proven_is_ok(all.err) && all.value.size == 10, "the file is still 10 bytes", "");
@@ -133,7 +133,7 @@ int main(void) {
     PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_truncate(f.value, 8)), "grow to 8 failed", "");
     sz = proven_fs_size(f.value);
     PROVEN_TEST_ASSERT(sz.value == 8, "the file is now 8 bytes", "");
-    proven_fs_close(f.value);
+    (void)proven_fs_close(f.value);
 
     all = proven_fs_read_all(heap, path);
     PROVEN_TEST_ASSERT(proven_is_ok(all.err) && all.value.size == 8, "read back 8 bytes", "");
@@ -152,7 +152,7 @@ int main(void) {
     PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_sync(f.value)),
         "syncing a writable file must succeed",
         "If this fails, fsync is not reachable - which was the whole gap.");
-    proven_fs_close(f.value);
+    (void)proven_fs_close(f.value);
 
     /* The directory sync is what makes a rename durable. On Windows it is honestly
      * unsupported rather than a lie. */

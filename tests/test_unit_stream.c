@@ -65,7 +65,7 @@ int main(void) {
     proven_file_t file = f.value;
     proven_writer_t fw = proven_writer_from_file(&file);
     PROVEN_TEST_ASSERT(proven_is_ok(emit_report(fw)), "writing to a file failed", "");
-    proven_fs_close(file);
+    (void)proven_fs_close(file);
 
     proven_result_mem_mut_t back = proven_fs_read_all(heap, path);
     PROVEN_TEST_ASSERT(proven_is_ok(back.err) && back.value.size == strlen(expected) &&
@@ -171,7 +171,7 @@ int main(void) {
         ln = proven_reader_read_line(&rstate);
         PROVEN_TEST_ASSERT(ln.err == PROVEN_ERR_EOF, "and then EOF", "");
 
-        proven_fs_close(lfile);
+        (void)proven_fs_close(lfile);
         (void)proven_fs_remove(heap, lines_path);
     }
 
@@ -200,7 +200,7 @@ int main(void) {
             "a line that cannot fit the buffer must be refused",
             "Returning the first 8 bytes as if they were the line is a corruption nobody can see.");
 
-        proven_fs_close(lfile);
+        (void)proven_fs_close(lfile);
         (void)proven_fs_remove(heap, lp);
     }
 

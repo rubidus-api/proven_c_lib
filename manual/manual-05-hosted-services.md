@@ -668,7 +668,14 @@ int main(void) {
     /* write_all loops for us. proven_fs_write does one attempt and may write less,
      * which is almost never what a caller means. */
     proven_err_t err = proven_fs_write_all(out.value, proven_mem_view_from_u8(text));
-    proven_fs_close(out.value);   /* close on the failure path too: the handle is owned */
+
+    /* The close is part of the write, and on a network or quota-enforced filesystem it is
+     * the ONLY place the failure appears: the bytes were buffered, write() said yes, and
+     * close() is where the disk finally says no. Close on the failure path too - the
+     * handle is ours either way - but do not throw the answer away. */
+    proven_err_t cerr = proven_fs_close(out.value);
+    if (proven_is_ok(err)) err = cerr;
+
     EXAMPLE_REQUIRE(proven_is_ok(err), "writing the whole buffer should succeed");
     if (!proven_is_ok(err)) {
         (void)proven_fs_remove(alloc, path);
@@ -706,7 +713,7 @@ int main(void) {
         proven_result_size_t r = proven_fs_read(in.value, dest);
         if (r.err == PROVEN_ERR_EOF) break;
         if (!proven_is_ok(r.err)) {
-            proven_fs_close(in.value);
+            (void)proven_fs_close(in.value);
             (void)proven_fs_remove(alloc, path);
             EXAMPLE_REQUIRE(false, "reading from the open file should not fail");
             return 1;
@@ -714,7 +721,7 @@ int main(void) {
         total += r.value;
     }
 
-    proven_fs_close(in.value);
+    (void)proven_fs_close(in.value);
 
     EXAMPLE_REQUIRE(total == text.size, "the loop should have read every byte in the file");
     proven_u8str_view_t got = { .ptr = buf, .size = total };
@@ -881,7 +888,8 @@ int main(void) {
     }
     EXAMPLE_REQUIRE(proven_is_ok(proven_writer_flush(to_file)),
                     "flush: nothing is written until you say so");
-    proven_fs_close(file);
+    /* And the close, which is the last thing that can tell you the write did not land. */
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_close(file)), "closing the written file");
 
     /* --- reading it back, a line at a time -------------------------------- */
     /* Reading a file line by line was simply not possible before: the only route was
@@ -907,7 +915,7 @@ int main(void) {
     }
     EXAMPLE_REQUIRE(lines == 3, "three rows in, three lines out");
 
-    proven_fs_close(rfile);
+    (void)proven_fs_close(rfile);
     (void)proven_fs_remove(alloc, path);
 
     return EXAMPLE_OK();
