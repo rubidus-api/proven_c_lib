@@ -19,7 +19,11 @@
  * Every check below runs against BOTH allocators, from the same code, which is the point.
  */
 
-static void check_trait(const char *who, proven_allocator_t a) {
+/* `item` is the size this allocator can serve (a pool serves exactly one); `general` says
+ * whether it serves arbitrary sizes and alignments. The rules that must hold for EVERY
+ * allocator are checked for every allocator; the pool's specialisation is checked as a
+ * specialisation, not smuggled in as an exception. */
+static void check_trait(const char *who, proven_allocator_t a, proven_size_t item, bool general) {
     /* alloc(0) is a caller bug, and both must say so the same way. */
     proven_result_mem_mut_t z = a.alloc_fn(a.ctx, 0, 8);
     PROVEN_TEST_ASSERT(z.err == PROVEN_ERR_INVALID_ARG,
@@ -28,25 +32,28 @@ static void check_trait(const char *who, proven_allocator_t a) {
     (void)who;
 
     /* A real allocation, then a realloc to zero: the block is gone and the pointer is NULL. */
-    proven_result_mem_mut_t m = a.alloc_fn(a.ctx, 64, 8);
-    PROVEN_TEST_ASSERT(proven_is_ok(m.err) && m.value.ptr != NULL, "a 64-byte allocation must succeed", "");
-    memset(m.value.ptr, 0xAB, 64);
+    proven_result_mem_mut_t m = a.alloc_fn(a.ctx, item, 8);
+    PROVEN_TEST_ASSERT(proven_is_ok(m.err) && m.value.ptr != NULL, "an allocation must succeed", "");
+    memset(m.value.ptr, 0xAB, item);
 
-    proven_result_mem_mut_t gone = a.realloc_fn(a.ctx, m.value.ptr, 64, 0, 8);
+    proven_result_mem_mut_t gone = a.realloc_fn(a.ctx, m.value.ptr, item, 0, 8);
     PROVEN_TEST_ASSERT(proven_is_ok(gone.err),
         "realloc(ptr, 0) must be PROVEN_OK", "");
     PROVEN_TEST_ASSERT(gone.value.ptr == NULL,
         "realloc(ptr, 0) must return a NULL pointer, as the trait documents",
         "The arena used to return a live pointer, so a caller that tests for NULL to learn the block is gone got a different answer per allocator.");
 
-    /* Alignment: what is asked for is what is delivered, for every allocator. */
-    const proven_size_t aligns[] = { 8, 16, 32, 64, 128, 256 };
-    for (proven_size_t i = 0; i < sizeof aligns / sizeof aligns[0]; ++i) {
-        proven_result_mem_mut_t p = a.alloc_fn(a.ctx, 100, aligns[i]);
-        PROVEN_TEST_ASSERT(proven_is_ok(p.err), "an over-aligned allocation must succeed", "");
-        PROVEN_TEST_ASSERT(((proven_uintptr_t)p.value.ptr % aligns[i]) == 0,
-            "and the pointer must actually have the alignment it was asked for", "");
-        a.free_fn(a.ctx, p.value.ptr);
+    /* Alignment: what is asked for is what is delivered - for the allocators that serve
+     * arbitrary alignments at all. */
+    if (general) {
+        const proven_size_t aligns[] = { 8, 16, 32, 64, 128, 256 };
+        for (proven_size_t i = 0; i < sizeof aligns / sizeof aligns[0]; ++i) {
+            proven_result_mem_mut_t p = a.alloc_fn(a.ctx, 100, aligns[i]);
+            PROVEN_TEST_ASSERT(proven_is_ok(p.err), "an over-aligned allocation must succeed", "");
+            PROVEN_TEST_ASSERT(((proven_uintptr_t)p.value.ptr % aligns[i]) == 0,
+                "and the pointer must actually have the alignment it was asked for", "");
+            a.free_fn(a.ctx, p.value.ptr);
+        }
     }
 }
 
@@ -60,7 +67,7 @@ int main(void) {
         "The reference implementation of the trait.",
         "");
     // ---------------------------------------------------------------
-    check_trait("heap", proven_heap_allocator());
+    check_trait("heap", proven_heap_allocator(), 64, true);
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("the arena allocator answers identically",
@@ -71,7 +78,43 @@ int main(void) {
         static proven_byte_t backing[64 * 1024];
         proven_arena_t arena = proven_arena_create(
             (proven_mem_mut_t){ .ptr = backing, .size = sizeof backing });
-        check_trait("arena", proven_arena_as_allocator(&arena));
+        check_trait("arena", proven_arena_as_allocator(&arena), 64, true);
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("and so does the pool allocator",
+        "Three allocators, one contract. If a fourth is added, this is the test it has to pass.",
+        "");
+    // ---------------------------------------------------------------
+    {
+        proven_pool_t pool;
+        proven_err_t e = proven_pool_init(&pool, proven_heap_allocator(), 64, 16, 32);
+        PROVEN_TEST_ASSERT(proven_is_ok(e), "setup: a pool", "");
+        proven_allocator_t a = proven_pool_as_allocator(&pool);
+        check_trait("pool", a, 64, false);
+
+        /* And the pool's specialisation, stated as a specialisation: a size it does not
+         * serve is UNSUPPORTED - "not my job" - and not INVALID_ARG, which reads as "you
+         * passed me garbage" and sends a caller hunting for a bug in its own code. */
+        proven_result_mem_mut_t wrong = a.alloc_fn(a.ctx, 65, 8);
+        PROVEN_TEST_ASSERT(wrong.err == PROVEN_ERR_UNSUPPORTED,
+            "a size a pool does not serve must be PROVEN_ERR_UNSUPPORTED", "");
+
+        proven_result_mem_mut_t ok = a.alloc_fn(a.ctx, 64, 16);
+        PROVEN_TEST_ASSERT(proven_is_ok(ok.err) && ((proven_uintptr_t)ok.value.ptr % 16) == 0,
+            "and the size it does serve must come back correctly aligned", "");
+
+        proven_result_mem_mut_t grow = a.realloc_fn(a.ctx, ok.value.ptr, 64, 128, 16);
+        PROVEN_TEST_ASSERT(grow.err == PROVEN_ERR_UNSUPPORTED,
+            "growing past the item size must be UNSUPPORTED - a pool genuinely cannot do it", "");
+
+        proven_result_mem_mut_t shrink = a.realloc_fn(a.ctx, ok.value.ptr, 64, 32, 16);
+        PROVEN_TEST_ASSERT(proven_is_ok(shrink.err) && shrink.value.ptr == ok.value.ptr,
+            "but shrinking within the item size is a no-op, not a failure",
+            "It used to be refused outright: every realloc, including 'make it smaller' and 'free it', was PROVEN_ERR_INVALID_ARG.");
+
+        a.free_fn(a.ctx, ok.value.ptr);
+        proven_pool_destroy(&pool);
     }
 
     // ---------------------------------------------------------------

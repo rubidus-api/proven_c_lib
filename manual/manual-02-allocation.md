@@ -635,10 +635,12 @@ int main(void) {
     EXAMPLE_REQUIRE(m->id == 2, "the recycled block is ours to overwrite");
 
     /* --- one pool serves one size and one alignment ------------------------- */
-    /* A request for anything else is rejected outright: this is not a general
-     * allocator, and it will not silently hand you a block of the wrong size. */
+    /* A request for anything else is refused: this is not a general allocator, and it will
+     * not silently hand you a block of the wrong size. The code is PROVEN_ERR_UNSUPPORTED -
+     * "not my job" - and not INVALID_ARG, which would read as "you passed me garbage" and
+     * send you hunting for a bug in your own code. */
     proven_result_mem_mut_t wrong = nodes.alloc_fn(nodes.ctx, sizeof(node_t) * 2, alignof(node_t));
-    EXAMPLE_REQUIRE(wrong.err == PROVEN_ERR_INVALID_ARG, "the pool only serves its configured item size");
+    EXAMPLE_REQUIRE(wrong.err == PROVEN_ERR_UNSUPPORTED, "the pool only serves its configured item size");
 
     /* --- return every live block before destroying -------------------------- */
     /* proven_pool_destroy frees what is in the bin and the bin itself. `m` is
