@@ -222,6 +222,26 @@ in it. That is the point of B-011, made twice in one day.
 
 ### Added
 
+- **`map` is HashDoS-resistant by default (B-015).** `map` hashed untrusted string keys with
+  non-keyed FNV-1a, so an attacker who controls the keys could compute collisions offline and
+  flood one bucket — turning the map's O(1) into O(n²) on demand. It now hashes string keys
+  with **keyed SipHash-2-4 under a per-process secret** drawn once from the OS CSPRNG, exactly
+  the switch Python, Rust and the Linux kernel made for their built-in tables. `proven_map_create`
+  gives you this safe default; `proven_map_create_trusted` opts into fast FNV for keys your own
+  program chooses. `proven_map_hash` exposes the function a map actually uses, so the choice is
+  observable (and useful for inspecting distribution). Integer keys are unaffected; on a
+  freestanding target, which has no CSPRNG and no attacker model, string keys fall back to FNV.
+  The per-process key is seeded exactly once even under a 64-thread race (verified under TSan);
+  a map created in one process hashes a given key differently from the same map in another,
+  which is the unpredictability the defence rests on.
+
+- **`proven/random.h` — cryptographically strong OS randomness.** `proven_random_bytes` fills a
+  buffer from the OS CSPRNG (getrandom / getentropy / BCryptGenRandom), returning false where
+  there is none rather than handing back weak bytes. No user-visible PRNG: a fast reproducible
+  generator and a secure one are different tools, and offering one under the other's name is how
+  insecure tokens ship. It is what seeds map's keyed hash, and what any caller needing a key, a
+  token, or a nonce should use.
+
 - **`proven/hash.h` — hashing, organised by use case.** lowent's case study needed a
   content-addressing digest, found proven had no hash of any kind, and hand-wrote BLAKE3-256
   — "exactly the kind of code that should not be hand-rolled". There is no single "hash", so
