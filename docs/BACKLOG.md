@@ -20,32 +20,22 @@ An item with no exit condition is a complaint, not a backlog item.
 
 ## Open
 
-### B-015 — `map` uses a non-keyed hash, so it is HashDoS-able
-
-**Status:** open. A decision, not a defect.
-
-`map` hashes string keys with FNV-1a (`src/proven/map.c`). That is fine for keys the
-program chooses, and dangerous for keys an adversary chooses: FNV is not keyed, so an
-attacker who controls the keys can compute collisions offline and drive every insertion
-into one bucket, turning the map's O(1) into O(n²) at a time of their choosing. This is the
-exact attack `proven_hash_keyed` (SipHash-2-4) now exists to stop — Python, Rust, and the
-Linux kernel all switched their built-in tables to a keyed hash for precisely this reason.
-
-**The decision:** whether `map` should hash untrusted keys with SipHash under a per-process
-random key. It is not automatic, because (a) it needs a seed, and where the entropy comes
-from is a policy choice (getrandom? a caller-supplied seed? both?), and (b) a keyed hash is
-measurably slower than FNV, so a program that only ever hashes trusted keys should be able
-to keep the fast path. A plausible shape: `map` seeds a process-global SipHash key lazily
-from the OS RNG, with an opt-out for the trusted-key case — but the shape is the decision.
-
-**Why not now:** it changes `map`'s behaviour and adds an entropy dependency to a module
-that currently has none. That is a deliberate call for the maintainer, not something a
-"add the hash functions" task should slip in. The primitive it needs (`proven_hash_keyed`)
-now exists; wiring it into `map` is the open question.
+_Nothing open._
 
 ---
 
 ## Done
+
+### B-015 — map hashed untrusted string keys with a non-keyed hash (closed v26.07.13d)
+
+**Decision taken (2026-07-13): SipHash by default, with a trusted-key opt-out.** `map` now
+hashes string keys with keyed SipHash-2-4 under a per-process secret from the OS CSPRNG, so an
+attacker who controls the keys cannot compute collisions and flood a bucket. `proven_map_create`
+is the safe default; `proven_map_create_trusted` keeps fast FNV for keys the program chooses
+itself; `proven_map_hash` makes the choice observable. The secret is seeded exactly once even
+under a 64-thread race (TSan-verified), integer keys are unchanged, and a freestanding build
+falls back to FNV. The measured cost of the default is ~9% on insert and ~40% on a short-key
+lookup — which is why the opt-out exists. Required a new randomness PAL (`proven/random.h`).
 
 ### B-014 — no hash / digest module (closed v26.07.13c)
 
