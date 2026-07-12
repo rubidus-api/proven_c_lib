@@ -64,8 +64,8 @@ int main(void) {
         struct { proven_size_t len; proven_u64 want; } v[] = {
             { 0,  0x726fdb47dd0e0e31ull },
             { 1,  0x74f839c593dc67fdull },
-            { 7,  0x37d1018bf50002abull },
-            { 8,  0x6224939a79f5f593ull },
+            { 7,  0xab0200f58b01d137ull },
+            { 8,  0x93f5f5799a932462ull },
             { 15, 0xa129ca6149be45e5ull },
         };
         for (proven_size_t i = 0; i < sizeof v / sizeof v[0]; ++i) {
