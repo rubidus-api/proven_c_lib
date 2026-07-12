@@ -199,7 +199,7 @@ proven_err_t proven_fs_lock(proven_file_t file, proven_fs_lock_type_t type, bool
 typedef struct {
     proven_size_t size;
     proven_fs_type_t type;
-    proven_fs_perms_t perms;
+    proven_fs_perms_t perms;  /* permission bits only; the file type is in `type` */
     proven_i64 created_at;
     proven_i64 modified_at;
     unsigned long long dev;
@@ -210,6 +210,11 @@ typedef struct {
 
 /**
  * @brief Get detailed file/directory information.
+ *
+ * @note `perms` carries only the nine permission bits, so it can be handed
+ *       straight back to proven_fs_chmod. It used to carry the raw POSIX
+ *       st_mode, whose file-type bits chmod rejects - which made the obvious
+ *       round-trip fail for every real file. Read the file type from `type`.
  */
 [[nodiscard]]
 proven_err_t proven_fs_stat(proven_allocator_t scratch, proven_u8str_view_t path, proven_fs_stat_t *out_stat);
