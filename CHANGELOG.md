@@ -13,7 +13,7 @@ The format follows Keep a Changelog:
 
 ## [2026-07-12] — proven_c_lib-v26.07.12i
 
-Closes `docs/BACKLOG.md` B-005 and B-009.
+Closes `docs/BACKLOG.md` B-005, B-009 and B-010.
 
 ### Added
 
@@ -35,6 +35,20 @@ Closes `docs/BACKLOG.md` B-005 and B-009.
     `{:+08}` on 42 is `+0000042`, never `0000+42`.
   - **`char` and `bool` arguments.** `PROVEN_ARG('Z')` printed `90`; there was no way
     to emit a single character at all. A `bool` renders `true` / `false`.
+
+- **`PROVEN_ARG_OF(&obj, render)`** - the formatter is no longer a closed set. `PROVEN_ARG`
+  is built on `_Generic`, which cannot be taught a type it was not told about at compile
+  time, so a user struct could not reach `{}` at all: you pre-rendered it into a scratch
+  string (an allocation and a copy per value, in the logging path, which is the one path
+  that must keep working when allocation is what has failed) or you printed the fields one
+  at a time and gave up on aligning the column.
+
+  A renderer takes a sink, not a buffer, so it composes - it may call the formatter again.
+  And the formatter runs it **twice**, once against a counting sink, which is what lets
+  `{:>20}` align a user type exactly as it aligns an int with nothing allocated. A renderer
+  whose two passes disagree is an error rather than a silently misaligned field, and a spec
+  the library cannot interpret for your type (`{:x}`, `{:.2}`, `{:+}`) is refused rather
+  than guessed at. Closes `docs/BACKLOG.md` B-010.
 
 - **`proven_fs_dir_open` / `_next` / `_close`** - streaming directory iteration.
   `proven_fs_list` reads the whole directory before the caller sees any of it. Measured

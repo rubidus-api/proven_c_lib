@@ -268,6 +268,76 @@ static void render_integer(proven_fmt_ctx_t *ctx, unsigned long long mag, bool n
     render_with_spec(ctx, out, len, spec);
 }
 
+/* --- custom arguments ---------------------------------------------------- */
+
+/* A sink that counts and throws away, so a custom renderer's output can be measured
+ * before it is emitted. That is what lets width and alignment work on a type the
+ * library has never seen, without allocating a scratch buffer for it. */
+typedef struct {
+    proven_size_t len;
+} fmt_count_sink_t;
+
+static proven_err_t fmt_count_sink_write(void *vctx, proven_u8str_view_t chunk) {
+    fmt_count_sink_t *s = (fmt_count_sink_t *)vctx;
+    if (chunk.size > 0 && !chunk.ptr) return PROVEN_ERR_INVALID_ARG;
+    s->len += chunk.size;
+    return PROVEN_OK;
+}
+
+/* A sink that appends straight into the formatter's own output. */
+static proven_err_t fmt_ctx_sink_write(void *vctx, proven_u8str_view_t chunk) {
+    proven_fmt_ctx_t *ctx = (proven_fmt_ctx_t *)vctx;
+    fmt_append_view(ctx, chunk);
+    return ctx->err;
+}
+
+static void render_custom(proven_fmt_ctx_t *ctx, proven_arg_custom_t c, proven_fmt_spec_t spec) {
+    if (!c.render) {
+        ctx->err = PROVEN_ERR_INVALID_ARG;
+        return;
+    }
+
+    /* Pass one: how long is it? The renderer must be deterministic; the check below
+     * holds it to that, because a renderer that answers differently the second time
+     * would silently produce a field of the wrong width. */
+    fmt_count_sink_t count = { .len = 0 };
+    proven_err_t err = c.render((proven_fmt_sink_t){ .ctx = &count, .write = fmt_count_sink_write }, c.obj);
+    if (!proven_is_ok(err)) {
+        ctx->err = err;
+        return;
+    }
+
+    int total_padding = 0;
+    if (spec.width > 0 && (proven_size_t)spec.width > count.len) {
+        total_padding = spec.width - (int)count.len;
+    }
+    int left = 0, right = 0;
+    if (total_padding > 0) {
+        if (spec.align == '>')      { left = total_padding; }
+        else if (spec.align == '<') { right = total_padding; }
+        else                        { left = total_padding / 2; right = total_padding - left; }
+    }
+
+    append_padding(ctx, spec.fill, left);
+
+    proven_size_t before = ctx->required;
+    err = c.render((proven_fmt_sink_t){ .ctx = ctx, .write = fmt_ctx_sink_write }, c.obj);
+    if (!proven_is_ok(err)) {
+        if (proven_is_ok(ctx->err)) ctx->err = err;
+        return;
+    }
+    if (!proven_is_ok(ctx->err)) return;
+
+    if (ctx->required - before != count.len) {
+        /* The two passes disagreed. Emitting the result would put a field of the wrong
+         * width into an aligned column, and the caller would never know. */
+        ctx->err = PROVEN_ERR_INVALID_ARG;
+        return;
+    }
+
+    append_padding(ctx, spec.fill, right);
+}
+
 static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fmt_spec_t spec) {
     if (!proven_is_ok(ctx->err)) return;
 
@@ -287,6 +357,14 @@ static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fm
      * form is refused rather than silently ignored. */
     bool is_float = false;
 #endif
+
+    if (arg->type == PROVEN_ARG_CUSTOM && (spec.type != 0 || spec.precision >= 0 || spec.alt || spec.sign)) {
+        /* The library does not know what {:x} or {:.2} would mean for your type. Making
+         * something up and reporting success is exactly the failure this guard exists
+         * to prevent - it just happens to be your type instead of a double. */
+        ctx->err = PROVEN_ERR_INVALID_FORMAT;
+        return;
+    }
 
     switch (spec.type) {
         case 0: break;
@@ -395,6 +473,9 @@ static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fm
         case PROVEN_ARG_BOOL:
             if (arg->value.b) render_with_spec(ctx, "true", 4, spec);
             else              render_with_spec(ctx, "false", 5, spec);
+            break;
+        case PROVEN_ARG_CUSTOM:
+            render_custom(ctx, arg->value.custom, spec);
             break;
         case PROVEN_ARG_CSTR:
             render_with_spec(ctx, arg->value.cstr, (proven_size_t)proven_cstr_len(arg->value.cstr), spec);

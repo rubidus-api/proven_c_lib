@@ -190,14 +190,21 @@ written through** the destinations before the mismatch.
 chapter states as fact. The chapter cannot drift from the scanner without the build
 saying so.
 
-### B-010 — the formatter has no extension point
+### B-010 — the formatter had no extension point (closed v26.07.12i)
 
-**Status:** open. RFC-0001 §3.
+`proven_arg_type_t` was a closed enum, and `_Generic` cannot be taught a type it was
+not told about at compile time, so a user struct could not reach `{}` at all. The ways
+out were to pre-render into a scratch string (an allocation and a copy per value, in
+the logging path) or to print the fields one at a time and give up on alignment.
 
-`proven_arg_type_t` is a closed enum. To format a user struct you must pre-render it
-into your own buffer and pass a string — which means you cannot then compose it:
-`{:>20}` on a user type is impossible unless you pad it yourself. Wanted:
-`proven_arg_custom(user, render_fn)`.
+Closed by `proven_arg_custom(obj, render_fn)` / `PROVEN_ARG_OF(&obj, render_fn)`. The
+renderer receives a `proven_fmt_sink_t`, not a buffer, so it composes — it may call the
+formatter again — and the formatter runs it **twice**, once against a counting sink, so
+that `{:>20}` aligns a user type exactly as it aligns an int, without allocating. A
+renderer whose two passes disagree is an error, not a silently misaligned column, and a
+spec the library cannot interpret for a user type (`{:x}`, `{:.2}`, `{:+}`) is refused
+rather than guessed at. Covered by `tests/test_unit_fmt_custom` and
+`manual/examples/ex_08_fmt_custom.c`; documented in manual chapter 8 §5.1.
 
 ### B-000 — the alias layer had drifted (closed v26.07.12c)
 

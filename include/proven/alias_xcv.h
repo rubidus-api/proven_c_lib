@@ -155,6 +155,7 @@
 #define xcv_arg_char proven_arg_char
 #define xcv_arg_cstr proven_arg_cstr
 #define xcv_arg_cstr_n proven_arg_cstr_n
+#define xcv_arg_custom proven_arg_custom
 #define xcv_arg_datetime proven_arg_datetime
 #define xcv_arg_f64 proven_arg_f64
 #define xcv_arg_fn proven_arg_fn
@@ -200,6 +201,7 @@
 #define xcv_float_format_f64_policy proven_float_format_f64_policy
 #define xcv_float_format_options_fixed_default proven_float_format_options_fixed_default
 #define xcv_float_format_options_shortest proven_float_format_options_shortest
+#define xcv_fmt_put proven_fmt_put
 #define xcv_fmt_to_writer_impl proven_fmt_to_writer_impl
 #define xcv_fprint proven_fprint
 #define xcv_free_fn_t proven_free_fn_t

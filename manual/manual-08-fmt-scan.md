@@ -11,6 +11,7 @@ This chapter focuses on exact syntax, parameter shapes, return values, and the p
 3. [Formatter constructors and selectors](#3-formatter-constructors-and-selectors)
 4. [Format string grammar](#4-format-string-grammar)
 5. [Formatting APIs](#5-formatting-apis)
+5.1. [Formatting a type of your own](#51-formatting-a-type-of-your-own)
 6. [Console print helpers](#6-console-print-helpers)
 7. [Scanner data model](#7-scanner-data-model)
 8. [Scanner primitive APIs](#8-scanner-primitive-apis)
@@ -690,6 +691,117 @@ Example:
 if (!proven_is_ok(proven_println("hello {}", PROVEN_ARG("world")))) {
     /* the write to stdout failed - a closed pipe, a full disk */
     proven_eprintln("stdout is not writable");
+}
+```
+
+### 5.1. Formatting a type of your own
+
+`PROVEN_ARG` is built on `_Generic`, and `_Generic` can only dispatch on types it was
+told about at compile time. It cannot be told about yours. So the formatter's argument
+set — integers, floats, strings, pointers, datetimes — was a **closed** one: a `rect_t`,
+a `uuid_t`, a `vec3_t` could not be passed to `{}` at all.
+
+The two ways around it were both bad. Pre-format the value into a scratch string and
+pass *that*: an allocation and a copy for every value, in the logging path, which is the
+one path that must keep working when allocation is exactly what has failed. Or print the
+fields one at a time and give up on ever aligning the column.
+
+`PROVEN_ARG_OF(&obj, render)` is the door:
+
+```c
+proven_err_t render(proven_fmt_sink_t out, const void *obj);
+```
+
+Three things follow from the shape of that signature:
+
+- **The renderer gets a sink, not a buffer.** It does not need to know how much room
+  there is, and it cannot overflow anything. It emits with `proven_fmt_put`.
+- **It composes.** The renderer may call the formatter again — into a stack buffer,
+  with no allocator — and hand the result to the sink. A type whose fields are
+  themselves user types nests naturally.
+- **Width, fill and alignment work.** The formatter runs the renderer **twice**: once
+  against a counting sink to learn how wide the output is, then once for real, with the
+  padding applied around it. This is why `{:>10}` lines up a column of your type exactly
+  as it lines up a column of ints — and it is why the renderer must be **deterministic**
+  and must not mutate `obj`. If the two passes disagree, the formatter returns
+  `PROVEN_ERR_INVALID_ARG` rather than emit a field of the wrong width into an aligned
+  column and let you find out later.
+
+What the formatter will **not** do is guess. `{:x}` on a rectangle, `{:.2}` on a UUID,
+`{:+}` on a matrix — the library has no idea what those would mean for your type, and
+so it refuses them with `PROVEN_ERR_INVALID_FORMAT`. Inventing a plausible answer and
+reporting success is how a formatter starts lying; a type letter you did not ask for is
+not better than an error.
+
+Compiled and run by the test suite:
+
+<!-- example: manual/examples/ex_08_fmt_custom.c -->
+```c
+/*
+ * Formatting a type the library has never heard of.
+ *
+ * `PROVEN_ARG` is built on `_Generic`, which can only dispatch on types it was told
+ * about - and it cannot be told about yours. So before `PROVEN_ARG_OF` existed, a
+ * `rect_t` simply could not be printed. You either pre-formatted it into a scratch
+ * string and passed that (an allocation and a copy per value, in the logging path,
+ * which is the one path that must not allocate), or you printed the fields one at a
+ * time and gave up on ever aligning the column.
+ *
+ * A renderer receives a *sink*, not a buffer. That is what makes it compose: it can
+ * call the formatter again, and its output is just bytes going somewhere. And because
+ * the formatter measures the renderer's output before emitting it - by running it once
+ * against a counting sink - width, fill and alignment work on a user type exactly as
+ * they do on an int.
+ */
+
+typedef struct { int w, h; } rect_t;
+
+static proven_err_t render_rect(proven_fmt_sink_t out, const void *obj) {
+    const rect_t *r = (const rect_t *)obj;
+
+    /* Compose: the formatter, into a stack buffer, no allocator anywhere. */
+    proven_byte_t tmp[64];
+    proven_u8str_t s = proven_u8str_borrow(tmp, sizeof tmp);
+    proven_fmt_result_t f = proven_u8str_append_fmt(&s, "{}x{}",
+                                                    PROVEN_ARG(r->w), PROVEN_ARG(r->h));
+    if (!PROVEN_FMT_IS_OK(f)) return f.err;
+
+    return proven_fmt_put(out, proven_u8str_as_view(&s));
+}
+
+int main(void) {
+    rect_t a = { .w = 1920, .h = 1080 };
+    rect_t b = { .w = 640,  .h = 480  };
+
+    proven_byte_t buf[128];
+    proven_u8str_t line = proven_u8str_borrow(buf, sizeof buf);
+
+    /* Just like any other argument. */
+    proven_fmt_result_t r = proven_u8str_append_fmt(&line, "mode={}", PROVEN_ARG_OF(&a, render_rect));
+    EXAMPLE_REQUIRE(PROVEN_FMT_IS_OK(r), "a user type should format");
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&line), PROVEN_LIT("mode=1920x1080")),
+                    "the renderer's bytes should be what came out");
+
+    /* And it aligns, which is the whole reason the formatter measures it first: a
+     * column of user-defined values lines up like a column of anything else. */
+    (void)proven_u8str_reset(&line);
+    r = proven_u8str_append_fmt(&line, "[{:>10}]\n[{:>10}]",
+                                PROVEN_ARG_OF(&a, render_rect),
+                                PROVEN_ARG_OF(&b, render_rect));
+    EXAMPLE_REQUIRE(PROVEN_FMT_IS_OK(r), "two user types should format");
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&line),
+                                         PROVEN_LIT("[ 1920x1080]\n[   640x480]")),
+                    "both rows should be right-aligned to the same width");
+
+    /* A spec the library cannot interpret for your type is refused, not guessed at.
+     * `{:x}` on a rectangle has no meaning, and answering it with something plausible
+     * while reporting success is how a formatter starts lying to you. */
+    (void)proven_u8str_reset(&line);
+    r = proven_u8str_append_fmt(&line, "{:x}", PROVEN_ARG_OF(&a, render_rect));
+    EXAMPLE_REQUIRE(r.err == PROVEN_ERR_INVALID_FORMAT,
+                    "a type letter on a user type should be an error");
+
+    return EXAMPLE_OK();
 }
 ```
 

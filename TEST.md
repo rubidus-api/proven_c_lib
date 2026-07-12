@@ -430,6 +430,20 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/fmt.c` and `tests/test_unit_fmt_f64_accuracy.c`.
 
+### `tests/test_unit_fmt_custom` — formatting a user-defined type
+
+Intent: verify `PROVEN_ARG_OF(&obj, render)` renders a type the library has never heard of, that width/fill/alignment apply to the rendered result, that a spec the library cannot interpret for that type is refused, that the renderer's own error reaches the caller, and that a non-deterministic renderer is caught.
+
+Sub-checks:
+
+- A `point_t` renders as `(3, -7)` through a renderer that composes — it calls the formatter again, into a stack buffer, with no allocator.
+- `{:>12}`, `{:<12}` and `{:*^11}` align it. This is what the measuring pass exists for: the formatter runs the renderer once against a counting sink to learn its width, so a column of user types lines up like any other column, with no scratch allocation.
+- `{:x}`, `{:.2}` and `{:+}` on a user type are `PROVEN_ERR_INVALID_FORMAT`. The library has no idea what they would mean; inventing an answer and reporting success is how a formatter starts lying.
+- A renderer that returns `PROVEN_ERR_IO` makes the format call return `PROVEN_ERR_IO`; a NULL renderer is `PROVEN_ERR_INVALID_ARG`, not a crash.
+- A renderer that emits two bytes on the measuring pass and eight on the real one is rejected, because emitting it would silently break the column it was being aligned into.
+
+Failure tip: inspect `render_custom` and the counting/emitting sinks in `src/proven/fmt.c`.
+
 ### `tests/test_unit_fmt_spec` — format spec grammar
 
 Intent: verify precision, bases, case, alternate form, sign, `char` and `bool` — and that a spec the argument cannot honour is refused rather than ignored.
