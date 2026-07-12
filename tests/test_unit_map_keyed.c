@@ -132,6 +132,30 @@ int main(void) {
         }
     }
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a malformed {NULL, size>0} key is handled the same on both kinds",
+        "proven_map_hash does not validate its key, so a NULL pointer with a nonzero size must not crash on a trusted map when it does not on a default one.",
+        "The trusted path used a duplicate internal FNV that dereferenced the pointer; it now uses proven_hash_bytes, which guards it - so the two agree.");
+    // ---------------------------------------------------------------
+    {
+        proven_map_key_t bad = { .str = { .ptr = NULL, .size = 5 } };
+
+        proven_result_map_t dr = proven_map_create(heap, 16, PROVEN_KEY_TYPE_U8_BORROWED, sizeof(int), alignof(int));
+        proven_result_map_t tr = proven_map_create_trusted(heap, 16, PROVEN_KEY_TYPE_U8_BORROWED, sizeof(int), alignof(int));
+        PROVEN_TEST_ASSERT(proven_is_ok(dr.err) && proven_is_ok(tr.err), "setup", "");
+
+        /* Neither must dereference the NULL (UBSan would catch it); both treat it as empty. */
+        proven_u64 dh = proven_map_hash(&dr.value, bad);
+        proven_u64 th = proven_map_hash(&tr.value, bad);
+        PROVEN_TEST_ASSERT(th == proven_hash_bytes((proven_mem_view_t){ NULL, 0 }),
+            "a trusted map hashes a NULL/size-5 key as empty FNV, not a crash",
+            "It used to call an internal FNV that read through the NULL pointer.");
+        (void)dh;
+
+        proven_map_destroy(&dr.value);
+        proven_map_destroy(&tr.value);
+    }
+
     PROVEN_TEST_PASS("string keys are keyed by default, fast when trusted, and correct either way.");
     return 0;
 }
