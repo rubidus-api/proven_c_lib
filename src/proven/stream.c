@@ -71,18 +71,42 @@ static proven_result_size_t writer_u8str_write(void *ctx, proven_mem_view_t chun
         res.err = PROVEN_ERR_INVALID_ARG;
         return res;
     }
+    if (!proven_is_ok(s->err)) {
+        /* A chunk is already missing from the middle of this document. Appending more
+         * would produce a string that reads as complete output and is not. */
+        res.err = s->err;
+        return res;
+    }
     proven_u8str_view_t view = { .ptr = chunk.ptr, .size = chunk.size };
     /* append_grow is failure-atomic: it takes all of it or none of it. */
     res.err = proven_u8str_append_grow(s->alloc, s->str, view);
-    res.value = proven_is_ok(res.err) ? chunk.size : 0;
+    if (!proven_is_ok(res.err)) {
+        s->err = res.err;
+        return res;
+    }
+    res.value = chunk.size;
     return res;
+}
+
+/*
+ * The allocation that fails mid-render leaves the string holding a PREFIX of the output -
+ * valid, NUL-terminated, and missing its end. There is nothing to push out (the string IS
+ * the sink), so this writer had no flush at all and proven_writer_flush answered PROVEN_OK
+ * for it. "Render, render, render, check the flush" is what every caller does, and it was
+ * told a truncated document was whole.
+ */
+static proven_err_t writer_u8str_flush(void *ctx) {
+    proven_writer_u8str_t *s = (proven_writer_u8str_t *)ctx;
+    if (!s) return PROVEN_ERR_INVALID_ARG;
+    return s->err;
 }
 
 proven_writer_t proven_writer_from_u8str(proven_writer_u8str_t *state, proven_u8str_t *str, proven_allocator_t alloc) {
     if (!state || !str) return (proven_writer_t){0};
     state->str = str;
     state->alloc = alloc;
-    return (proven_writer_t){ .ctx = state, .write_fn = writer_u8str_write, .flush_fn = (void *)0 };
+    state->err = PROVEN_OK;
+    return (proven_writer_t){ .ctx = state, .write_fn = writer_u8str_write, .flush_fn = writer_u8str_flush };
 }
 
 /* --- a fixed buffer ---------------------------------------------------- */
@@ -199,7 +223,17 @@ static proven_result_size_t writer_buffered_write(void *ctx, proven_mem_view_t c
         res.err = writer_buffered_flush(s);
         if (!proven_is_ok(res.err)) return res;
         res = proven_writer_write_partial(s->inner, chunk);
-        if (!proven_is_ok(res.err)) s->err = res.err;
+        if (!proven_is_ok(res.err)) {
+            s->err = res.err;
+        } else if (res.value == 0 && chunk.size > 0) {
+            /* The sink took nothing and reported no error: it has stalled. The all-or-
+             * nothing wrapper turns that into PROVEN_ERR_IO for the caller, and this
+             * writer must remember it - the flush path already treats {OK, 0} as a
+             * failure, and the two used to disagree. Without this the writer went on
+             * accepting writes, and the receiver got a stream with a hole in it. */
+            s->err = PROVEN_ERR_IO;
+            res.err = PROVEN_ERR_IO;
+        }
         return res;
     }
 

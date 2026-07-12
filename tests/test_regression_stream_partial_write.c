@@ -28,6 +28,7 @@ typedef struct {
     proven_size_t got_len;
     proven_size_t accept_per_call; /* 0 = unlimited */
     int fail_after_calls;          /* -1 = never */
+    int stall_after;               /* 0 = never: after N calls, take nothing and report OK */
     int calls;
 } throttled_sink_t;
 
@@ -35,6 +36,14 @@ static proven_result_size_t throttled_write(void *ctx, proven_mem_view_t chunk) 
     throttled_sink_t *s = ctx;
     proven_result_size_t r = {0};
     proven_size_t take = chunk.size;
+
+    if (s->stall_after && s->calls >= s->stall_after) {
+        /* The stall: no bytes, no error. Every sink that has ever wedged looks like this. */
+        s->calls++;
+        r.err = PROVEN_OK;
+        r.value = 0;
+        return r;
+    }
 
     if (s->accept_per_call && take > s->accept_per_call) take = s->accept_per_call;
 
@@ -315,6 +324,41 @@ int main(void) {
             "and a later chunk that WOULD fit must still be refused",
             "Two bytes fit in the remaining eight. Writing them would put them after the hole, and the result would look like complete output.");
         PROVEN_TEST_ASSERT(st.len == 0, "nothing must have been written at all", "");
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a sink that STALLS - takes nothing, reports no error - is a failure too",
+        "The buffered writer remembered an inner error but not an inner stall, so it went on accepting writes after bytes had been lost.",
+        "The receiver then got 'ABC' + a 27-byte hole + 'XYZ', with the second write reporting success. The flush path already treated {OK, 0} as a failure; the write path did not, and the two disagreed.");
+    // ---------------------------------------------------------------
+    {
+        static throttled_sink_t sink;
+        memset(&sink, 0, sizeof sink);
+        sink.accept_per_call = 3;     /* takes 3 bytes... */
+        sink.stall_after = 1;         /* ...once, then takes nothing and reports OK */
+        sink.fail_after_calls = -1;
+
+        proven_writer_t raw = {
+            .ctx = &sink, .write_fn = throttled_write, .flush_fn = throttled_flush,
+        };
+        static proven_byte_t bufmem[16];
+        proven_writer_buffered_t bw;
+        proven_writer_t w = proven_writer_buffered(&bw, raw,
+            (proven_mem_mut_t){ .ptr = bufmem, .size = sizeof bufmem });
+
+        proven_byte_t payload[30];
+        memset(payload, 'A', sizeof payload);
+
+        proven_err_t e = proven_writer_write(w, (proven_mem_view_t){ .ptr = payload, .size = sizeof payload });
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_IO, "a stalled sink must be an I/O failure", "");
+
+        e = proven_writer_write(w, (proven_mem_view_t){ .ptr = payload, .size = 3 });
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_IO,
+            "and a later write must be refused, not appended after the hole",
+            "The writer used to think it was healthy: it only remembered an inner ERROR, and a stall is not an error - it is worse, because it looks like nothing happened.");
+
+        e = proven_writer_flush(w);
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_IO, "and the flush must say so", "");
     }
 
     PROVEN_TEST_PASS("partial writes, failed reads, and {:f} all behave.");
