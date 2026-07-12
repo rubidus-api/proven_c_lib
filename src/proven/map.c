@@ -19,28 +19,6 @@ typedef struct {
     proven_map_key_t key;
 } proven_map_bucket_header_t;
 
-// Standard FNV-1a extremely efficient U8 string hashing
-static proven_size_t hash_u8(proven_u8str_view_t view) {
-    proven_size_t hash;
-    proven_size_t prime;
-
-    if (sizeof(proven_size_t) == 4) {
-        // 32-bit FNV parameters
-        hash = (proven_size_t)2166136261u;
-        prime = (proven_size_t)16777619u;
-    } else {
-        // 64-bit FNV parameters
-        hash = (proven_size_t)14695981039346656037ull;
-        prime = (proven_size_t)1099511628211ull;
-    }
-
-    for (proven_size_t i = 0; i < view.size; ++i) {
-        hash ^= (proven_size_t)view.ptr[i];
-        hash *= prime;
-    }
-    return hash;
-}
-
 // SplitMix64 rapid avalanche integer mixer
 static proven_size_t hash_int(proven_size_t key) {
 #if UINTPTR_MAX == 0xffffffff
@@ -105,13 +83,17 @@ static proven_u64 map_hash64(const proven_map_t *map, proven_map_key_t key) {
     if (map->key_type == PROVEN_KEY_TYPE_INT) {
         return (proven_u64)hash_int(key.id);
     }
+    proven_mem_view_t kv = { .ptr = key.str.ptr, .size = key.str.size };
 #ifndef PROVEN_FREESTANDING
     if (!map->trusted_keys) {
         map_ensure_key();
-        return proven_hash_keyed((proven_mem_view_t){ .ptr = key.str.ptr, .size = key.str.size }, g_map_key);
+        return proven_hash_keyed(kv, g_map_key);
     }
 #endif
-    return (proven_u64)hash_u8(key.str);
+    /* proven_hash_bytes is the public 64-bit FNV-1a, and unlike the internal duplicate it
+     * removed it guards a {NULL, size>0} key rather than dereferencing it - so a malformed
+     * key handed to proven_map_hash behaves the same on a trusted map as on a default one. */
+    return proven_hash_bytes(kv);
 }
 
 static proven_size_t get_hash(const proven_map_t *map, proven_map_key_t key) {
