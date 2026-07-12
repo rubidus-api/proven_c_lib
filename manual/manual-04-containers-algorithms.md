@@ -495,3 +495,259 @@ Wrong:
 int *hit = proven_array_binary_search(&nums, &key, cmp_int);
 /* wrong if nums was not sorted by cmp_int */
 ```
+
+### Worked example: array, sort, binary search
+
+Compiled and run by the test suite. Note the sort's behaviour on duplicate keys: they are the *fast* case, not the quadratic one.
+
+<!-- example: manual/examples/ex_04_array.c -->
+```c
+/*
+ * proven_array_t is a growable vector of one element type. It stores the
+ * allocator you created it with, so push can grow and destroy can free without
+ * you passing the allocator back in - which also means the array must be
+ * destroyed with nothing but itself.
+ *
+ * The PROVEN_ARRAY_* macros are the type-safe face of the void* core: they
+ * derive sizeof/alignof from the type and hand the element to the array by
+ * pointer, so pushing an int into an array of records will not compile.
+ */
+
+/* A task queue keyed by priority. Real data is low-cardinality: three
+ * priorities, many tasks. That matters for the sort - see below. */
+typedef struct {
+    int priority;
+    int id;
+} task_t;
+
+/* The comparator is the array's ordering. The same one MUST be used for the
+ * sort and for the binary search - a search under a different order is a bug
+ * the compiler cannot see.
+ *
+ * The (x > y) - (x < y) form is deliberate: subtracting the two ints would
+ * overflow for large values and hand back a nonsense sign. */
+static int cmp_priority(const void *a, const void *b) {
+    int x = ((const task_t *)a)->priority;
+    int y = ((const task_t *)b)->priority;
+    return (x > y) - (x < y);
+}
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* --- push / get / pop --------------------------------------------------- */
+    /* init_cap is a hint, not a limit: push grows past it. Sizing it right just
+     * avoids the reallocations. */
+    proven_result_array_t r = PROVEN_ARRAY_INIT(alloc, task_t, 4);
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating an array of task_t must succeed");
+    if (!proven_is_ok(r.err)) {
+        return 1;
+    }
+    proven_array_t tasks = r.value;
+
+    /* Deliberately duplicate-heavy, because that is what real keys look like:
+     * a status column, an enum, a bucket id. */
+    static const task_t seed[] = {
+        { .priority = 2, .id = 10 }, { .priority = 0, .id = 11 },
+        { .priority = 2, .id = 12 }, { .priority = 1, .id = 13 },
+        { .priority = 2, .id = 14 }, { .priority = 0, .id = 15 },
+        { .priority = 1, .id = 16 }, { .priority = 2, .id = 17 },
+    };
+
+    for (proven_size_t i = 0; i < sizeof seed / sizeof seed[0]; ++i) {
+        proven_err_t err = PROVEN_ARRAY_PUSH(&tasks, task_t, seed[i]);
+        EXAMPLE_REQUIRE(proven_is_ok(err), "pushing into a growable array must succeed");
+        if (!proven_is_ok(err)) {
+            PROVEN_ARRAY_DESTROY(&tasks);
+            return 1;
+        }
+    }
+    EXAMPLE_REQUIRE(tasks.len == 8, "eight pushes give eight elements");
+
+    /* get returns a pointer INTO the array's storage - it is not a copy, and the
+     * next push may reallocate and leave it dangling. Fetch it after the pushes,
+     * use it, do not store it. */
+    const task_t *front = PROVEN_ARRAY_GET(&tasks, task_t, 0);
+    EXAMPLE_REQUIRE(front && front->id == 10, "element 0 is the first one pushed");
+
+    /* Out of range is a null pointer, not a crash and not UB. */
+    EXAMPLE_REQUIRE(PROVEN_ARRAY_GET(&tasks, task_t, 99) == NULL, "an out-of-range index yields NULL");
+
+    /* pop copies the last element out (pass NULL to just discard it). */
+    task_t last = {0};
+    proven_err_t err = PROVEN_ARRAY_POP(&tasks, task_t, &last);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "popping a non-empty array must succeed");
+    EXAMPLE_REQUIRE(last.id == 17 && tasks.len == 7, "pop returns the last element and shrinks the array");
+
+    /* Put it back: the rest of the example wants all eight. */
+    err = PROVEN_ARRAY_PUSH(&tasks, task_t, last);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "pushing the popped element back must succeed");
+
+    /* --- sort --------------------------------------------------------------- */
+    /* An introsort: O(n log n) is a guarantee, not an average - the heapsort
+     * fallback rules out the quadratic case an adversary could otherwise steer
+     * you into. And equal keys are the FAST path here: everything equal to the
+     * pivot is partitioned into a run that is never recursed into, so the
+     * duplicate priorities above cost less than distinct ones would, not more.
+     *
+     * It is not stable: task 10 and task 12 may come out in either order. */
+    proven_array_sort(&tasks, cmp_priority);
+
+    for (proven_size_t i = 1; i < tasks.len; ++i) {
+        const task_t *prev = PROVEN_ARRAY_GET(&tasks, task_t, i - 1);
+        const task_t *cur  = PROVEN_ARRAY_GET(&tasks, task_t, i);
+        EXAMPLE_REQUIRE(prev && cur && prev->priority <= cur->priority,
+                        "after sorting, priorities must be non-decreasing");
+    }
+
+    /* --- binary search ------------------------------------------------------ */
+    /* Only legal because the array is sorted by this exact comparator. The key
+     * is a whole element, but only the fields the comparator reads matter. */
+    task_t key = { .priority = 1, .id = 0 };
+    const task_t *hit = (const task_t *)proven_array_binary_search(&tasks, &key, cmp_priority);
+    EXAMPLE_REQUIRE(hit != NULL, "priority 1 is present, so the search must find it");
+    EXAMPLE_REQUIRE(hit && hit->priority == 1, "the hit must be an element with the searched key");
+    /* With duplicate keys it finds SOME element with that key, not the first one.
+     * If you need the first, scan backwards from the hit. */
+
+    task_t absent = { .priority = 9, .id = 0 };
+    EXAMPLE_REQUIRE(proven_array_binary_search(&tasks, &absent, cmp_priority) == NULL,
+                    "a key that is not there must return NULL");
+
+    printf("tasks: %zu sorted, found priority %d (id %d)\n",
+           (size_t)tasks.len, hit ? hit->priority : -1, hit ? hit->id : -1);
+
+    /* The array owns its element storage; destroy returns it through the
+     * allocator the array was created with. Elements are plain data here - if
+     * they owned anything, you would have to destroy each one first. */
+    PROVEN_ARRAY_DESTROY(&tasks);
+    return EXAMPLE_OK();
+}
+```
+
+### Worked example: a map with integer keys and with owned string keys
+
+Compiled and run by the test suite. The owned-key half proves the point that is easy to get wrong: the map copies the key, so the buffer you built it in is yours to reuse immediately.
+
+<!-- example: manual/examples/ex_04_map.c -->
+```c
+/*
+ * proven_map_t is a flat open-addressing hash map. The value type is fixed at
+ * create time and stored inline in the bucket array - there is no per-entry
+ * allocation for values, and get hands back a pointer straight into that array.
+ *
+ * The interesting decision is the KEY:
+ *
+ *   PROVEN_KEY_TYPE_INT          - the key is a proven_size_t. Nothing to own.
+ *   PROVEN_KEY_TYPE_U8_BORROWED  - the bucket stores your pointer and length.
+ *                                  The map never copies the bytes, so YOU must
+ *                                  keep them alive and unmoved for as long as
+ *                                  the entry exists. Right for string literals.
+ *   PROVEN_KEY_TYPE_U8_OWNED     - the map copies the key bytes into its own
+ *                                  storage and frees them again. Right for keys
+ *                                  built at runtime, which is most of them.
+ *
+ * The second half of this example is the reason OWNED exists.
+ */
+
+typedef struct {
+    int  level;
+    long score;
+} player_t;
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* --- integer keys ------------------------------------------------------- */
+    proven_result_map_t r = PROVEN_MAP_INIT_INT(alloc, player_t, 8);
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating an int-keyed map must succeed");
+    if (!proven_is_ok(r.err)) {
+        return 1;
+    }
+    proven_map_t by_id = r.value;
+
+    proven_err_t err = PROVEN_MAP_SET_INT(&by_id, 404, player_t, ((player_t){ .level = 3, .score = 990 }));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "inserting into the map must succeed");
+    err = PROVEN_MAP_SET_INT(&by_id, 7, player_t, ((player_t){ .level = 1, .score = 10 }));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "inserting a second key must succeed");
+
+    /* set on an existing key replaces the value; it does not add an entry. */
+    err = PROVEN_MAP_SET_INT(&by_id, 7, player_t, ((player_t){ .level = 2, .score = 40 }));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "re-setting an existing key must succeed");
+    EXAMPLE_REQUIRE(by_id.len == 2, "re-setting a key replaces its value rather than adding an entry");
+
+    /* get returns a pointer into the bucket array, or NULL when absent. It is
+     * invalidated by any insert that rehashes - look it up, use it, drop it. */
+    const player_t *p = PROVEN_MAP_GET_INT(&by_id, player_t, 7);
+    EXAMPLE_REQUIRE(p && p->level == 2 && p->score == 40, "get must see the replaced value");
+    EXAMPLE_REQUIRE(PROVEN_MAP_GET_INT(&by_id, player_t, 999) == NULL, "a missing key yields NULL");
+
+    err = PROVEN_MAP_REMOVE_INT(&by_id, 7);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "removing a present key must succeed");
+    EXAMPLE_REQUIRE(PROVEN_MAP_GET_INT(&by_id, player_t, 7) == NULL, "a removed key is gone");
+    EXAMPLE_REQUIRE(by_id.len == 1, "removal decrements the live entry count");
+
+    PROVEN_MAP_DESTROY(&by_id);
+
+    /* --- owned string keys --------------------------------------------------- */
+    /* Same map, keyed by a name that we build at runtime - the case where a
+     * borrowed key would be a dangling pointer waiting to happen. */
+    proven_result_map_t rm = PROVEN_MAP_INIT_U8_OWNED(alloc, player_t, 8);
+    EXAMPLE_REQUIRE(proven_is_ok(rm.err), "creating an owned-string-keyed map must succeed");
+    if (!proven_is_ok(rm.err)) {
+        return 1;
+    }
+    proven_map_t by_name = rm.value;
+
+    /* A scratch buffer we intend to reuse for every key. With a BORROWED map
+     * that plan is fatal: every entry would point at these same bytes. */
+    proven_byte_t scratch[32];
+    proven_u8str_t name = proven_u8str_borrow(scratch, sizeof scratch);
+
+    err = proven_u8str_append(&name, PROVEN_LIT("ada"));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "building the first key must succeed");
+
+    /* set_u8_owned COPIES the key bytes into map storage. After it returns, the
+     * map's key no longer has anything to do with `scratch`. */
+    err = PROVEN_MAP_SET_U8_OWNED(&by_name, proven_u8str_as_view(&name), player_t,
+                                  ((player_t){ .level = 9, .score = 5000 }));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "inserting with an owned key must succeed");
+
+    /* So the buffer is immediately free to be reused for the next key... */
+    err = proven_u8str_reset(&name);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "the key buffer is ours again the moment set returns");
+    err = proven_u8str_append(&name, PROVEN_LIT("grace"));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "overwriting the buffer with the next key must succeed");
+
+    err = PROVEN_MAP_SET_U8_OWNED(&by_name, proven_u8str_as_view(&name), player_t,
+                                  ((player_t){ .level = 4, .score = 700 }));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "inserting the second owned key must succeed");
+
+    /* ...and the first entry is untouched by that overwrite. This is the whole
+     * point: the map holds its own copy of "ada", not a view of a buffer that
+     * now says "grace". A BORROWED map would report two entries both keyed
+     * "grace" - or worse, one keyed by freed memory. */
+    const player_t *ada = PROVEN_MAP_GET_U8_OWNED(&by_name, player_t, PROVEN_LIT("ada"));
+    EXAMPLE_REQUIRE(ada && ada->score == 5000, "the copied key survives the caller reusing its buffer");
+
+    const player_t *grace = PROVEN_MAP_GET_U8_OWNED(&by_name, player_t, PROVEN_LIT("grace"));
+    EXAMPLE_REQUIRE(grace && grace->score == 700, "the second key is a separate entry");
+    EXAMPLE_REQUIRE(by_name.len == 2, "two distinct keys means two entries");
+
+    /* Remove frees the key copy the map made - you never free it yourself. */
+    err = PROVEN_MAP_REMOVE_U8_OWNED(&by_name, PROVEN_LIT("ada"));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "removing an owned key must succeed");
+    EXAMPLE_REQUIRE(PROVEN_MAP_GET_U8_OWNED(&by_name, player_t, PROVEN_LIT("ada")) == NULL,
+                    "the removed entry is gone");
+
+    printf("map: %zu name(s) left, grace at level %d\n",
+           (size_t)by_name.len, grace ? grace->level : -1);
+
+    /* destroy frees the bucket array AND every key copy still in it ("grace"
+     * here). `scratch` is ours and outlives the map; the borrowed `name` handle
+     * has nothing to free. */
+    PROVEN_MAP_DESTROY(&by_name);
+    proven_u8str_destroy(alloc, &name);
+    return EXAMPLE_OK();
+}
+```

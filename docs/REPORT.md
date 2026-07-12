@@ -151,7 +151,7 @@ ledger"). It will convert them once a borrow constructor is available.
   populated from `st_uid`/`st_gid` on POSIX and `0` on Windows. The optional
   name-resolution helper (uid→user, gid→group) was left to the caller (prov
   resolves via `getpwuid`/`getgrgid` in its browser). Verified in
-  `tests/test_phase14_fs_advanced.c`.
+  `tests/test_unit_fs_advanced.c`.
 - **Reported by:** prov_text_editor (building the file-open directory browser).
 - **Affected file/symbol:** `include/proven/fs.h` — `proven_fs_stat_t`
   (fields: `size`, `type`, `perms`, `created_at`, `modified_at`, `dev`, `ino`)
@@ -236,7 +236,7 @@ The requested capability **already exists** in proven and needs no upstream work
   constructor, and the generic-selector float branch behind `PROVEN_FMT_NO_FLOAT`.
 - `src/proven/fmt.c` gates the `PROVEN_ARG_F64` render case behind the same macro.
 - `nob.c` builds a `freestanding` profile with `-DPROVEN_FMT_NO_FLOAT`
-  (+ `-DPROVEN_FREESTANDING -DPROVEN_NO_U16STR`), and `tests/test_compile_nofloat`
+  (+ `-DPROVEN_FREESTANDING -DPROVEN_NO_U16STR`), and `tests/test_portability_compile_nofloat`
   verifies that the macro removes the float dependency while integer/text
   formatting keeps working. The manual documents it (`manual-freestanding.md`,
   `manual-03`, `manual-06`, `manual-08`).

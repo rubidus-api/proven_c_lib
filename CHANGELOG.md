@@ -11,6 +11,68 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-12] — proven_c_lib-v26.07.12d
+
+The manual's examples are now programs, the tests are named for what they check,
+and the testing policy says out loud how this project actually develops.
+
+### Added
+
+- `manual/examples/` — eleven complete programs, one per topic the manual teaches.
+  The build driver compiles and **runs** every one of them, under every sanitizer
+  mode. They are written the way a caller writes code: explicit allocator, real
+  error handling, a destroy for everything owned.
+- `tests/test_docs_manual_examples` — requires every example the manual prints to
+  be one of those programs, quoted verbatim; fails the build if a chapter and its
+  example disagree, if a chapter quotes an example that does not exist, or if an
+  example exists that no chapter shows.
+- `docs/TESTING.md` — the testing policy: the naming scheme, what each test class
+  is *for*, the rules a new test must satisfy, and an honest account of how this
+  project develops. It records plainly that this is not TDD: every commit that
+  adds a test also changes source in the same commit, and there is not one where a
+  failing test lands first.
+- `docs/BACKLOG.md` — a **tracked** backlog. The repository had `BACKLOGS.md` and
+  `TODO.md`, but both are gitignored: a private queue nobody else can read and no
+  commit can reference. Known work that lives on one machine is not tracked work.
+
+### Changed
+
+- **Tests are renamed for what they check.** `test_phase1` … `test_phase22` encoded
+  the order they were written in, which is the one fact about a test nobody needs.
+  Every test is now `test_<class>_<subject>`, where the class is one of `unit`,
+  `contract`, `regression`, `differential`, `portability`, `stress`, `docs`,
+  `bench`. 75 files renamed.
+- **The test catalog has no numbers.** It ran `1..50` with `7a`, `30a`, `30b`,
+  `30c`, `40a` wedged in wherever something new arrived — and five of its entries
+  described files deleted months earlier. The filename is the identifier now, and
+  the catalog is grouped by class.
+
+### Fixed
+
+- manual chapter 3 listed `proven_u8str_t` without its `borrowed` field, and told
+  readers to use `internal.size` for the length. There is no `size` member -
+  `proven_buf_t` is `ptr` / `len` / `cap` - so code following the manual did not
+  compile.
+- manual chapter 5 never said how end-of-file is reported. `proven_fs_read`
+  returns `PROVEN_ERR_EOF`, not a zero-byte success, so the obvious read loop
+  (`if (r.value == 0) break;`) never takes that branch and treats the end of the
+  file as an I/O failure. The chapter now says so, and the worked example shows the
+  correct shape.
+- manual chapter 5's `proven_fs_stat_t` listing claimed a symlink file type.
+  `proven_fs_type_t` has only `_FILE`, `_DIR` and `_OTHER`.
+
+### Known
+
+Two items are registered in `docs/BACKLOG.md` rather than rushed:
+
+- **B-001** — manual chapter 8 ends mid-chapter at a bare `## 7. Scanner data
+  model` heading. Sections 7-13 are in the table of contents and absent from the
+  document: roughly half the chapter, and the half covering the scanner.
+- **B-002** — of the manual's ~190 fenced code blocks, four could be compiled
+  before this release. Eleven are now real programs; the rest are still sketches
+  that reference imaginary helpers. They are being converted chapter by chapter,
+  with the mechanism already in place to keep each finished chapter finished.
+
 ## [2026-07-12] — proven_c_lib-v26.07.12c
 
 A documentation-currency release, plus the API-surface gap that the sweep turned up.
