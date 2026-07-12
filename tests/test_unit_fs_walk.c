@@ -252,6 +252,42 @@ int main(void) {
         (void)system("rm -rf widedir");
     }
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a tree deeper than the walk's own stack is an ERROR, not a quiet stop",
+        "The walk's stack of open directories is fixed at PROVEN_FS_WALK_DEPTH_LIMIT. A tree deeper than that cannot be walked - and it must SAY so.",
+        "The first version just stopped descending: a 300-level tree came back with 256 entries and a clean end-of-walk. A hidden subtree, reported as success, is the one thing this API exists not to do - and it was doing it.");
+    // ---------------------------------------------------------------
+    {
+        (void)system("rm -rf deeptree; d=deeptree; for i in $(seq 1 300); do d=$d/l; mkdir -p $d; done; printf x > $d/leaf.txt");
+
+        proven_result_walk_t w = proven_fs_walk_open(heap, PROVEN_LIT("deeptree"), PROVEN_FS_WALK_UNLIMITED);
+        PROVEN_TEST_ASSERT(proven_is_ok(w.err), "the deep walk must open", "");
+
+        int too_deep = 0;
+        proven_size_t deepest = 0;
+        for (;;) {
+            proven_fs_walk_entry_t e = {0};
+            proven_err_t err = proven_fs_walk_next(&w.value, &e);
+            if (err == PROVEN_ERR_EOF) break;
+            if (err == PROVEN_ERR_OUT_OF_BOUNDS) {
+                too_deep++;
+                PROVEN_TEST_ASSERT(e.path.size > 0, "and it must name the directory it could not enter", "");
+                continue;
+            }
+            PROVEN_TEST_ASSERT(proven_is_ok(err), "no other error is expected here", "");
+            if (e.depth > deepest) deepest = e.depth;
+        }
+        proven_fs_walk_close(&w.value);
+
+        PROVEN_TEST_ASSERT(too_deep == 1,
+            "the directory past the depth limit must be reported as PROVEN_ERR_OUT_OF_BOUNDS",
+            "Silence here means the walk decided, on your behalf, that everything below 256 levels did not exist.");
+        PROVEN_TEST_ASSERT(deepest == PROVEN_FS_WALK_DEPTH_LIMIT - 1,
+            "and everything down to the limit must still have been walked", "");
+
+        (void)system("rm -rf deeptree");
+    }
+
     drop_fixture();
     PROVEN_TEST_PASS("the walk is pre-order, cycle-proof, honest, and bounded by depth.");
     return 0;

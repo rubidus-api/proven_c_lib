@@ -322,8 +322,18 @@ void proven_fs_dir_close(proven_fs_dir_t *dir);
 // Recursive walk
 // -----------------------------------------------------------------------------
 
-/** @brief Descend without limit. */
+/** @brief Descend without limit - as far as PROVEN_FS_WALK_DEPTH_LIMIT allows. */
 #define PROVEN_FS_WALK_UNLIMITED ((proven_size_t)-1)
+
+/**
+ * @brief The deepest the walk can go, ever: its stack of open directories is fixed.
+ *
+ * A directory deeper than this is reported with PROVEN_ERR_OUT_OF_BOUNDS, naming the
+ * directory - it is NOT silently skipped. Stopping quietly at the limit would mean a tree
+ * 300 levels deep came back with 256 entries and a clean end-of-walk: a hidden subtree,
+ * reported as success, which is the one thing this API exists not to do.
+ */
+#define PROVEN_FS_WALK_DEPTH_LIMIT ((proven_size_t)256)
 
 typedef struct {
     /**

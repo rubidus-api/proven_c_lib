@@ -1144,8 +1144,6 @@ bool proven_fs_is_absolute(proven_u8str_view_t path) {
 // landed red one commit earlier. Nothing that test asserts was changed to make this pass.
 // -------------------------------------------------------------
 
-#define PROVEN_FS_WALK_MAX_DEPTH ((proven_size_t)256)
-
 typedef struct {
     proven_fs_dir_t     dir;
     proven_size_t       path_len;   /* length of `path` when this level was entered */
@@ -1162,7 +1160,7 @@ typedef struct {
     proven_byte_t         *path;
     proven_size_t          path_len;
     proven_size_t          path_cap;
-    proven_fs_walk_frame_t stack[PROVEN_FS_WALK_MAX_DEPTH];
+    proven_fs_walk_frame_t stack[PROVEN_FS_WALK_DEPTH_LIMIT];
     proven_size_t          depth;   /* number of open frames */
 
     /*
@@ -1306,16 +1304,40 @@ proven_err_t proven_fs_walk_next(proven_fs_walk_t *walk, proven_fs_walk_entry_t 
             proven_err_t serr = proven_fs_stat(s->alloc, dpath, &st);
 
             bool cycle = proven_is_ok(serr) && walk_is_ancestor(s, st.dev, st.ino);
-            proven_result_dir_t d = { .err = PROVEN_ERR_UNSUPPORTED };
-            if (!cycle && s->depth < PROVEN_FS_WALK_MAX_DEPTH) {
-                d = proven_fs_dir_open(s->alloc, dpath);
-            }
 
-            if (cycle || s->depth >= PROVEN_FS_WALK_MAX_DEPTH) {
+            if (cycle) {
                 /* Not an error: the entry was reported, and we simply do not go in. */
                 walk_truncate(s, s->pending_path_len);
                 continue;
             }
+
+            if (s->depth >= PROVEN_FS_WALK_DEPTH_LIMIT) {
+                /*
+                 * Deeper than the walk's own stack can hold. This IS an error, and saying so
+                 * is the whole point: the first version just stopped descending, so a tree
+                 * 300 levels deep came back with 256 entries and a clean PROVEN_ERR_EOF -
+                 * the walk had hidden a subtree and reported success, which is precisely the
+                 * failure this API's contract condemns. It does not get to commit it.
+                 */
+                out_entry->path = dpath;
+                out_entry->name = dpath;
+                for (proven_size_t i = dpath.size; i > 0; --i) {
+                    if (dpath.ptr[i - 1] == (proven_u8)'/') {
+                        out_entry->name.ptr = dpath.ptr + i;
+                        out_entry->name.size = dpath.size - i;
+                        break;
+                    }
+                }
+                out_entry->type = PROVEN_FS_TYPE_DIR;
+                out_entry->size = 0;
+                out_entry->depth = s->depth - 1;
+                out_entry->is_symlink = false;
+
+                s->pending_trim = true;
+                return PROVEN_ERR_OUT_OF_BOUNDS;
+            }
+
+            proven_result_dir_t d = proven_fs_dir_open(s->alloc, dpath);
 
             if (!proven_is_ok(d.err)) {
                 /* A directory we cannot read. REPORT it - the caller asked for this tree,
