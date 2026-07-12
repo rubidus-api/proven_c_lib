@@ -29,7 +29,7 @@ This chapter covers `types.h`, `error.h`, `memory.h`, `align.h`, `version.h`, an
 
 ### `proven_result_size_t`
 
-```c
+```text
 typedef struct {
     proven_err_t  err;
     proven_size_t value;
@@ -44,7 +44,7 @@ Common users: partial append operations, file read/write, file size queries.
 
 ### `proven_err_t`
 
-```c
+```text
 typedef enum {
     PROVEN_OK = 0,
     PROVEN_ERR_NOMEM,
@@ -98,13 +98,15 @@ Correct:
 ```c
 proven_result_u8str_t s = proven_u8str_create(alloc, 32);
 if (!proven_is_ok(s.err)) {
-    return s.err;
+    return;   /* nothing was created, so there is nothing to destroy */
 }
+(void)proven_u8str_append(&s.value, PROVEN_LIT("ready"));
+proven_u8str_destroy(alloc, &s.value);
 ```
 
 Wrong:
 
-```c
+```text
 proven_result_u8str_t s = proven_u8str_create(alloc, 32);
 if (s.err) {
     /* works today because PROVEN_OK is 0, but it hides the API convention,
@@ -197,7 +199,7 @@ Maximum value of `proven_size_t`.
 
 ### `PROVEN_CKD_ADD`, `PROVEN_CKD_SUB`, `PROVEN_CKD_MUL`
 
-```c
+```text
 #define PROVEN_CKD_ADD(res, a, b) ...
 #define PROVEN_CKD_SUB(res, a, b) ...
 #define PROVEN_CKD_MUL(res, a, b) ...
@@ -215,15 +217,27 @@ Return: true on overflow, false on success.
 Correct:
 
 ```c
+typedef struct { int id; double weight; } item_t;
+
+proven_size_t count = 1024;
 proven_size_t total = 0;
-if (PROVEN_CKD_MUL(&total, count, sizeof(Item))) {
-    return PROVEN_ERR_OVERFLOW;
+proven_err_t err = PROVEN_OK;
+
+if (PROVEN_CKD_MUL(&total, count, sizeof(item_t))) {
+    err = PROVEN_ERR_OVERFLOW;   /* refuse to allocate a size that wrapped */
+} else {
+    proven_result_mem_mut_t block = alloc.alloc_fn(alloc.ctx, total, alignof(item_t));
+    err = block.err;
+    if (proven_is_ok(err)) {
+        alloc.free_fn(alloc.ctx, block.value.ptr);
+    }
 }
+(void)err;
 ```
 
 Wrong:
 
-```c
+```text
 proven_size_t total = count * sizeof(Item); /* wrong: may wrap */
 ```
 
@@ -231,7 +245,7 @@ proven_size_t total = count * sizeof(Item); /* wrong: may wrap */
 
 ### `proven_mem_t`
 
-```c
+```text
 typedef struct {
     proven_byte_t *ptr;
     proven_size_t size;
@@ -242,7 +256,7 @@ Purpose: describes an owned memory block. Ownership is not enforced by the type;
 
 ### `proven_mem_view_t`
 
-```c
+```text
 typedef struct {
     const proven_byte_t *ptr;
     proven_size_t size;
@@ -253,7 +267,7 @@ Purpose: borrowed read-only byte range. It does not own memory and is not NUL-te
 
 ### `proven_mem_mut_t`
 
-```c
+```text
 typedef struct {
     proven_byte_t *ptr;
     proven_size_t size;
@@ -264,7 +278,7 @@ Purpose: borrowed mutable byte range.
 
 ### `proven_result_mem_mut_t`
 
-```c
+```text
 typedef struct {
     proven_err_t err;
     proven_mem_mut_t value;
@@ -275,7 +289,7 @@ Purpose: allocator and slice-producing result type.
 
 ### `proven_result_mem_view_t`
 
-```c
+```text
 typedef struct {
     proven_err_t err;
     proven_mem_view_t value;
@@ -325,24 +339,26 @@ Checked slice behavior:
 Correct:
 
 ```c
-proven_size_t aligned = proven_mem_align_up(size, alignof(Item));
-if (aligned == 0) {
-    return PROVEN_ERR_OVERFLOW;
-}
+typedef struct { int id; double weight; } item_t;
+
+proven_size_t size = 100;
+proven_size_t aligned = proven_mem_align_up(size, alignof(item_t));
+proven_err_t err = (aligned == 0) ? PROVEN_ERR_OVERFLOW : PROVEN_OK;
+(void)err;
 ```
 
 Wrong:
 
-```c
+```text
 proven_size_t aligned = (size + align - 1) & ~(align - 1); /* wrong: may overflow */
 ```
 
 ## 6. Version macros
 
-```c
-#define PROVEN_VERSION_STRING "proven_c_lib-v26.07.12e"
+```text
+#define PROVEN_VERSION_STRING "proven_c_lib-v26.07.12f"
 #define PROVEN_VERSION_NUM    260712
-#define PROVEN_VERSION_SUFFIX "e"
+#define PROVEN_VERSION_SUFFIX "f"
 ```
 
 Purpose: compile-time version identification.
@@ -351,7 +367,7 @@ Use `PROVEN_VERSION_STRING` in diagnostics and build reports. Use `PROVEN_VERSIO
 
 ## 7. Panic hook
 
-```c
+```text
 typedef void (*proven_panic_handler_t)(const char *msg);
 
 void proven_panic(const char *msg);
@@ -360,13 +376,14 @@ void proven_set_panic_handler(proven_panic_handler_t handler);
 
 Purpose: handle terminal failure paths used by panic-style APIs such as `proven_arena_alloc_or_panic()`. The library raises a panic by calling `proven_panic()`, which dispatches to the installed handler.
 
-Default behavior: a built-in default handler traps (`__builtin_trap()`). The handler is dispatched through a function pointer rather than a weak symbol, so it links uniformly on ELF and PE/COFF (Windows / mingw-w64) toolchains.
+Default behavior: a built-in default handler traps (`__builtin_trap()` on GCC and Clang; on any other compiler it spins in an infinite loop instead). The handler is dispatched through a function pointer rather than a weak symbol, so it links uniformly on ELF and PE/COFF (Windows / mingw-w64) toolchains.
 
-User override:
+User override (the handler is a file-scope function, so this is a listing, not a
+block you can paste inside another function):
 
-```c
+```text
 static void my_panic(const char *msg) {
-    log_critical(msg);
+    log_critical(msg);            /* your logger */
     for (;;) {
         /* reset, halt, or wait for debugger */
     }
@@ -382,11 +399,17 @@ Contract: production panic handlers should not return. If a panic handler return
 ### Safe result handling
 
 ```c
+proven_byte_t record[16] = {0};
+proven_mem_view_t view = { .ptr = record, .size = sizeof record };
+
 proven_result_mem_view_t part = proven_mem_view_slice_checked(view, 4, 8);
 if (!proven_is_ok(part.err)) {
-    return part.err;
+    return;   /* the range was not inside the view */
 }
-consume(part.value);
+
+proven_byte_t payload[8];
+proven_err_t err = proven_mem_copy(payload, sizeof payload, part.value);
+(void)err;
 ```
 
 ### Unchecked slicing only after proof
@@ -394,15 +417,20 @@ consume(part.value);
 Correct when the caller already proved the range:
 
 ```c
+proven_byte_t record[16] = {0};
+proven_mem_view_t view = { .ptr = record, .size = sizeof record };
+proven_size_t offset = 4;
+proven_size_t size = 8;
+
 if (offset <= view.size && size <= view.size - offset) {
     proven_mem_view_t part = proven_mem_view_slice_unchecked(view, offset, size);
-    consume(part);
+    (void)part;   /* proved in range: safe to read */
 }
 ```
 
 Wrong:
 
-```c
+```text
 proven_mem_view_t part = proven_mem_view_slice_unchecked(view, user_offset, user_size);
 /* wrong: user_offset and user_size were not validated */
 ```
@@ -413,12 +441,18 @@ A zero-size view may have a null pointer. Do not reject it blindly.
 
 Wrong:
 
-```c
+```text
 if (!view.ptr) return PROVEN_ERR_INVALID_ARG; /* wrong for empty views */
 ```
 
 Better:
 
 ```c
-if (view.size > 0 && !view.ptr) return PROVEN_ERR_INVALID_ARG;
+proven_mem_view_t view = {0};   /* size 0, ptr NULL: a legal empty view */
+proven_err_t err = PROVEN_OK;
+
+if (view.size > 0 && !view.ptr) {
+    err = PROVEN_ERR_INVALID_ARG;   /* only a null pointer with bytes behind it is a bug */
+}
+(void)err;
 ```

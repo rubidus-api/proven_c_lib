@@ -182,6 +182,28 @@ static void render_with_spec(proven_fmt_ctx_t *ctx, const char *val, proven_size
 static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fmt_spec_t spec) {
     if (!proven_is_ok(ctx->err)) return;
 
+    /*
+     * A spec the argument cannot honour is a mistake, not a suggestion.
+     *
+     * `{:x}` on a double used to print "3.500000" and on a string used to print
+     * the string - the hex request was read, then dropped on the floor, with no
+     * error. The caller asked for something and got something else while being
+     * told it had worked. Only the integer cases can honour `x`; anyone else who
+     * is handed it is being asked for the impossible, and says so.
+     */
+    if (spec.hex) {
+        switch (arg->type) {
+            case PROVEN_ARG_I32:
+            case PROVEN_ARG_U32:
+            case PROVEN_ARG_I64:
+            case PROVEN_ARG_U64:
+                break;
+            default:
+                ctx->err = PROVEN_ERR_INVALID_FORMAT;
+                return;
+        }
+    }
+
     /* 128 bytes comfortably cover sign, integer digits, decimal point, six fractional digits,
        scientific exponent text, and the trailing NUL byte. */
     char buf[128];
@@ -426,6 +448,20 @@ static void fmt_run(proven_fmt_ctx_t *ctx, const char *fmt, const proven_arg_t *
             } else if (*p == '<' || *p == '>' || *p == '^') {
                 spec.align = *p;
                 p++;
+            }
+
+            /* A leading zero is zero-padding, not the first digit of the width.
+             *
+             * `{:08}` is what every C, Python and Rust programmer writes, and it
+             * used to be accepted and silently WRONG: the '0' was eaten as a width
+             * digit, so `{:08}` on 42 produced "      42" - space-padded - with no
+             * error. A near-miss spelling that is accepted and quietly does the
+             * wrong thing is worse than one that is rejected.
+             *
+             * An explicit fill/align wins, so `{:*>08}` still pads with '*'. */
+            if (*p == '0' && spec.fill == ' ' && spec.align == '>') {
+                spec.fill = '0';
+                ++p;
             }
 
             int limit = 10000;

@@ -396,6 +396,117 @@ static bool cross_target_toolchain_usable(const char *build_root, const Proven_C
     return ok;
 }
 
+
+// -------------------------------------------------------------
+// Manual code-block check
+// -------------------------------------------------------------
+//
+// Every ```c block in the manual must be code a compiler has actually seen.
+// Blocks quoted from manual/examples/ are compiled and RUN as programs; the
+// remaining inline blocks are fragments, and this check wraps each one in a
+// function body and syntax-checks it.
+//
+// Anything that is not runnable code - a signature listing, a struct listing,
+// pseudo-code, a deliberate counter-example - belongs in a ```text fence. That
+// distinction is the whole point: before it existed, 186 of the manual's 190
+// code blocks could not be compiled, so nothing could tell anyone when they
+// stopped being true.
+static bool check_manual_code_blocks(const char *compiler, const char *standard_flag, const char *build_dir)
+{
+    static const char *chapters[] = {
+        "manual/manual.md",
+        "manual/manual-01-foundation.md",
+        "manual/manual-02-allocation.md",
+        "manual/manual-03-strings-text.md",
+        "manual/manual-04-containers-algorithms.md",
+        "manual/manual-05-hosted-services.md",
+        "manual/manual-06-execution-and-platform.md",
+        "manual/manual-07-alias-xcv-index.md",
+        "manual/manual-08-fmt-scan.md",
+        "manual/manual-freestanding.md",
+    };
+
+    bool all_ok = true;
+    nob_log(NOB_INFO, "[PROVEN][BUILD][PHASE] manual code-block check start chapter_count=%zu", NOB_ARRAY_LEN(chapters));
+
+    for (size_t c = 0; c < NOB_ARRAY_LEN(chapters); ++c) {
+        Nob_String_Builder md = {0};
+        if (!nob_read_entire_file(chapters[c], &md)) {
+            nob_log(NOB_ERROR, "[PROVEN][DOCS][FAIL] path=%s stage=read", chapters[c]);
+            nob_log(NOB_ERROR, "[PROVEN][DOCS][FAIL_HINT] The manual chapter list in nob.c names a file that does not exist.");
+            all_ok = false;
+            continue;
+        }
+        nob_sb_append_null(&md);
+
+        char out_path[768];
+        char base[128];
+        const char *slash = strrchr(chapters[c], '/');
+        snprintf(base, sizeof(base), "%s", slash ? slash + 1 : chapters[c]);
+        char *dot = strrchr(base, '.');
+        if (dot) *dot = '\0';
+        if (!format_path(out_path, sizeof(out_path), "%s/manual/%s_blocks.c", build_dir, base)) {
+            nob_sb_free(md);
+            all_ok = false;
+            continue;
+        }
+
+        FILE *out = fopen(out_path, "w");
+        if (!out) {
+            nob_log(NOB_ERROR, "[PROVEN][DOCS][FAIL] path=%s stage=open-scratch", out_path);
+            nob_sb_free(md);
+            all_ok = false;
+            continue;
+        }
+        fputs("#include \"proven.h\"\n#include \"proven/alias_xcv.h\"\n", out);
+
+        size_t blocks = 0;
+        const char *p = md.items;
+        while ((p = strstr(p, "```c\n")) != NULL) {
+            const char *body = p + 5;
+            const char *end = strstr(body, "\n```");
+            if (!end) break;
+
+            /* Blocks quoted from manual/examples/ are whole programs: they are
+             * compiled and run elsewhere, so skip them here. The marker sits
+             * immediately above the fence. */
+            bool is_example = false;
+            const char *look = p;
+            size_t back = 0;
+            while (look > md.items && back < 200) { --look; ++back; if (*look == '\n' && back > 1) break; }
+            if (strncmp(look, "\n<!-- example:", 14) == 0 || strncmp(look, "<!-- example:", 13) == 0) is_example = true;
+
+            if (!is_example) {
+                fprintf(out, "static void blk_%zu(proven_allocator_t alloc, proven_allocator_t scratch) {\n(void)alloc; (void)scratch;\n", blocks);
+                fwrite(body, 1, (size_t)(end - body), out);
+                fputs("\n}\n", out);
+                ++blocks;
+            }
+            p = end + 4;
+        }
+        fclose(out);
+        nob_sb_free(md);
+
+        Nob_Cmd cmd = {0};
+        nob_cmd_append(&cmd, compiler);
+        if (standard_flag) nob_cmd_append(&cmd, standard_flag);
+        nob_cmd_append(&cmd, "-Wall", "-Wextra", "-D_DEFAULT_SOURCE", "-D_POSIX_C_SOURCE=200809L",
+                       "-I./include", "-I./platform", "-fsyntax-only", out_path);
+        bool ok = nob_cmd_run_sync(cmd);
+        nob_cmd_free(cmd);
+
+        if (ok) {
+            nob_log(NOB_INFO, "[PROVEN][DOCS][OK] path=%s blocks=%zu", chapters[c], blocks);
+        } else {
+            nob_log(NOB_ERROR, "[PROVEN][DOCS][FAIL] path=%s stage=compile-blocks blocks=%zu", chapters[c], blocks);
+            nob_log(NOB_ERROR, "[PROVEN][DOCS][FAIL_HINT] A ```c block in this chapter does not compile. Either fix the code, or - if it is a signature listing, a struct listing, pseudo-code, or a deliberate counter-example - fence it as ```text. The scratch translation unit is at %s; each blk_N corresponds to the Nth non-example ```c block in the chapter.", out_path);
+            all_ok = false;
+        }
+    }
+
+    return all_ok;
+}
+
 static bool run_cross_compile_matrix(const char *build_root, const char *sysroot,
                                      const char **srcs, size_t srcs_count,
                                      const char **headers, size_t headers_count) {
@@ -859,6 +970,7 @@ int main(int argc, char **argv)
         { "tests/test_regression_scanner_rollback", "scanner rollback after a failed scan", "Verify a scan that fails on an oversized token restores the stream exactly, dropping no byte and duplicating none.", "Inspect scanner_fill compaction and the rollback in proven_sysio_scanner_scan_impl; a snapshot taken before compaction must be reconciled with how far the buffer moved." },
         { "tests/test_regression_v26_07", "v26.07 regressions", "Protect the fixed u8str NUL-seal (reserve and zero-output fmt growth), signed datetime-year formatting, and pool init capacity-claim defects.", "Read the failing section name; each maps to one area (u8str.c reserve, fmt.c growth and PROVEN_ARG_DATETIME, pool.c init ordering)." },
         { "tests/test_regression_sort_duplicates", "sort on duplicate keys", "Verify proven_array_sort stays sub-quadratic on all-equal, few-distinct, and degenerate orderings, and moves wide elements intact.", "Inspect the partition in src/proven/algorithm.c: a two-way partition that sends elements equal to the pivot to one side is quadratic on duplicates. The comparison-count bounds, not wall-clock time, are what this test measures." },
+        { "tests/test_regression_fmt_spec_silently_wrong", "formatter specs that used to be silently wrong", "Verify {:08} zero-pads instead of eating the 0 as a width digit, and that a spec the argument cannot honour (hex on a double or a string) is rejected instead of being ignored.", "Inspect the spec parser and the applicability guard in src/proven/fmt.c. A spec that is accepted and then ignored is worse than one that is rejected." },
         { "tests/test_portability_source_contracts", "source portability contracts", "Verify source-level guards for platform branches that are hard to execute on the current host.", "A failure points at a missing safety pattern or stale documentation contract; inspect the named source file and keep this narrow." },
         { "tests/test_contract_float_module_layout", "float module scaffold", "Verify the shared float helpers live in a dedicated internal translation unit instead of being copied into fmt.c and scan.c.", "Inspect src/proven/float_decimal.c, src/proven/float_decimal.h, fmt.c, scan.c, and nob.c if the shared decimal helper scaffold regresses." },
         { "tests/test_contract_arena_panic", "arena panic path", "Verify alloc-or-panic succeeds when capacity exists and invokes the panic hook on arena exhaustion.", "Check panic hook installation/restoration and arena capacity math; a failure can hide fatal OOM paths." },
@@ -891,6 +1003,7 @@ int main(int argc, char **argv)
         { "tests/test_regression_scanner_rollback", "scanner rollback after a failed scan", "Verify a scan that fails on an oversized token restores the stream exactly, dropping no byte and duplicating none.", "Inspect scanner_fill compaction and the rollback in proven_sysio_scanner_scan_impl; a snapshot taken before compaction must be reconciled with how far the buffer moved." },
         { "tests/test_regression_v26_07", "v26.07 regressions", "Protect the fixed u8str NUL-seal (reserve and zero-output fmt growth), signed datetime-year formatting, and pool init capacity-claim defects.", "Read the failing section name; each maps to one area (u8str.c reserve, fmt.c growth and PROVEN_ARG_DATETIME, pool.c init ordering)." },
         { "tests/test_regression_sort_duplicates", "sort on duplicate keys", "Verify proven_array_sort stays sub-quadratic on all-equal, few-distinct, and degenerate orderings, and moves wide elements intact.", "Inspect the partition in src/proven/algorithm.c: a two-way partition that sends elements equal to the pivot to one side is quadratic on duplicates. The comparison-count bounds, not wall-clock time, are what this test measures." },
+        { "tests/test_regression_fmt_spec_silently_wrong", "formatter specs that used to be silently wrong", "Verify {:08} zero-pads instead of eating the 0 as a width digit, and that a spec the argument cannot honour (hex on a double or a string) is rejected instead of being ignored.", "Inspect the spec parser and the applicability guard in src/proven/fmt.c. A spec that is accepted and then ignored is worse than one that is rejected." },
         { "tests/test_portability_source_contracts", "source portability contracts", "Verify source-level guards for platform branches that are hard to execute on the current host.", "A failure points at a missing safety pattern or stale documentation contract; inspect the named source file and keep this narrow." },
     };
 
@@ -1007,6 +1120,14 @@ int main(int argc, char **argv)
         } else {
             nob_log(NOB_INFO, "[PROVEN][BUILD][SOURCE][CACHED] path=%s", srcs[i]);
             library_cached += 1;
+        }
+    }
+
+    // Manual code-block check (hosted builds only: the fragments use the hosted API)
+    if (strcmp(build_mode, "freestanding") != 0 && !benchmark_mode) {
+        if (!check_manual_code_blocks(compiler_exe, standard_flag, build_dir)) {
+            nob_log(NOB_ERROR, "[PROVEN][BUILD][FAIL] stage=manual-code-blocks");
+            return 1;
         }
     }
 

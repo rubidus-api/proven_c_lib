@@ -85,11 +85,26 @@ static inline proven_arg_t proven_arg_u64(unsigned long long v) {
 }
 #ifndef PROVEN_FMT_NO_FLOAT
 /**
- * @brief Floating-point argument for diagnostic formatting.
+ * @brief Floating-point argument.
  *
- * Output uses a fixed six-digit fractional form with round-half-up behavior.
- * It is intended for logs and debugging text rather than round-trip storage.
- * The float path stays in double precision so the output remains target-deterministic.
+ * `{}` renders six fractional digits, **correctly rounded** - round-to-nearest,
+ * ties-to-even on the exact binary value, through the same engine the rest of the
+ * library uses. It matches `printf("%.6f")` where `printf` is itself correct.
+ * (This comment used to say "round-half-up". It was wrong.)
+ *
+ * @note The form is not always fixed-point. Magnitudes outside the range where a
+ *       six-digit fixed form would carry information switch to scientific
+ *       notation: `1e20` renders as `1.000000e+20`, and `5e-7` as `5.000000e-07`
+ *       rather than `printf`'s `0.000000`. That is more informative, and it is a
+ *       difference worth knowing about before you diff two logs.
+ * @note **`{}` is the only float form the spec grammar can ask for.** There is no
+ *       `{:.3}`, no `{:e}`, no shortest-round-trip. The engine behind
+ *       proven_float_format_f64_policy does all of those; the `{}` syntax cannot
+ *       reach it. This is the largest gap in the formatter and it is tracked as
+ *       B-009 in docs/BACKLOG.md - see docs/RFC-0001-streams-and-io.md.
+ *       In particular, a float column cannot be aligned today: 12.5 renders nine
+ *       characters wide and 100.0 renders ten.
+ * @note The float path stays in double precision, so output is target-deterministic.
  */
 static inline proven_arg_t proven_arg_f64(double v) {
     proven_arg_t arg = {0};

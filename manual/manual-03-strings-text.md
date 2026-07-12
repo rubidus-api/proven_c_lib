@@ -17,7 +17,7 @@ A U8 string is an owned, NUL-terminated byte string. Length is counted in bytes,
 
 ### Structures
 
-```c
+```text
 typedef struct {
     const proven_byte_t *ptr;
     proven_size_t size;
@@ -56,7 +56,7 @@ Intent:
 
 The views are exactly what they look like — a pointer and a byte count:
 
-```c
+```text
 typedef struct { const proven_byte_t *ptr; proven_size_t size; } proven_u8str_view_t;
 typedef struct { proven_byte_t *ptr;       proven_size_t size; } proven_u8str_mut_t;
 ```
@@ -64,7 +64,7 @@ typedef struct { proven_byte_t *ptr;       proven_size_t size; } proven_u8str_mu
 The owned string wraps a `proven_buf_t` (the fixed-capacity byte buffer from
 Chapter 2) plus one flag:
 
-```c
+```text
 typedef struct {
     proven_buf_t internal;   /* the bytes + length + capacity; always keeps room for a NUL */
     bool         borrowed;   /* false = allocator-owned (default); true = wraps caller memory */
@@ -85,14 +85,18 @@ typedef struct {
 Counter-example — treating a borrowed string like an owned one:
 
 ```c
-proven_byte_t stack[32];
+proven_byte_t stack[8];
 proven_u8str_t s = proven_u8str_borrow(stack, sizeof stack);   /* borrowed */
-/* WRONG: this would need to reallocate caller memory -> returns OUT_OF_BOUNDS,
-   it does NOT silently grow the stack buffer. */
-proven_err_t e = proven_u8str_append_grow(alloc, &s, PROVEN_LIT("...long..."));
-/* WRONG: destroy does not free `stack` (it's yours); calling free() on it after
-   a no-op destroy and then reusing `s` is a use-after-free of your own making. */
-proven_u8str_destroy(alloc, &s);   /* no-op for a borrowed string */
+
+/* This would have to reallocate caller memory, so it refuses: the call returns
+   PROVEN_ERR_OUT_OF_BOUNDS and `stack` is left exactly as it was. A borrowed
+   string never silently escapes to the heap. */
+proven_err_t e = proven_u8str_append_grow(alloc, &s, PROVEN_LIT("far too long for eight bytes"));
+(void)e;   /* == PROVEN_ERR_OUT_OF_BOUNDS */
+
+/* destroy is a no-op here: `stack` is yours, and the library will not free it.
+   Writing it anyway is correct, and it keeps teardown code uniform. */
+proven_u8str_destroy(alloc, &s);
 ```
 
 ### Macros
@@ -139,19 +143,22 @@ proven_u8str_destroy(alloc, &s);   /* no-op for a borrowed string */
 ### Basic U8 example
 
 ```c
-proven_allocator_t alloc = proven_heap_allocator();
 proven_result_u8str_t r = proven_u8str_create_from_view(alloc, PROVEN_LIT("log"));
-if (!proven_is_ok(r.err)) return r.err;
+if (!proven_is_ok(r.err)) {
+    return;
+}
 proven_u8str_t s = r.value;
 
 proven_err_t e = proven_u8str_append_grow(alloc, &s, PROVEN_LIT(": ready"));
 if (!proven_is_ok(e)) {
     proven_u8str_destroy(alloc, &s);
-    return e;
+    return;
 }
 
+/* Valid until the next growing call: as_cstr points into the string's storage. */
 const char *cstr = proven_u8str_as_cstr(&s);
-use_c_string(cstr);
+(void)cstr;
+
 proven_u8str_destroy(alloc, &s);
 ```
 
@@ -161,7 +168,7 @@ U16 APIs are excluded when `PROVEN_NO_U16STR` is defined. U16 sizes are counted 
 
 ### Structures
 
-```c
+```text
 typedef struct {
     const proven_u16 *ptr;
     proven_size_t size;
@@ -202,10 +209,17 @@ Example:
 #ifndef PROVEN_NO_U16STR
 proven_result_u16str_t r =
     proven_u16str_create_from_view(alloc, PROVEN_U16_LIT("hello"));
-if (!proven_is_ok(r.err)) return r.err;
+if (!proven_is_ok(r.err)) {
+    return;
+}
 proven_u16str_t s = r.value;
 
-proven_u16str_append_grow(alloc, &s, PROVEN_U16_LIT(" world"));
+(void)proven_u16str_append_grow(alloc, &s, PROVEN_U16_LIT(" world"));
+
+/* Length is in code units, not characters: "hello world" is 11 units. */
+proven_size_t units = proven_u16str_len(&s);
+(void)units;
+
 proven_u16str_destroy(alloc, &s);
 #endif
 ```
@@ -218,7 +232,7 @@ The formatter writes into `proven_u8str_t` or PAL-backed streams. It uses a smal
 
 ### Structures and enums
 
-```c
+```text
 typedef struct {
     proven_err_t err;
     proven_size_t written;
@@ -246,7 +260,7 @@ Fields:
 - `PROVEN_ARG_PTR`
 - `PROVEN_ARG_FN`
 
-```c
+```text
 typedef struct {
     proven_arg_type_t type;
     union {
@@ -296,7 +310,7 @@ typedef struct {
 
 ### Formatting engine
 
-```c
+```text
 proven_fmt_result_t proven_u8str_fmt_internal(
     proven_allocator_t alloc,
     proven_u8str_t *str,
@@ -316,9 +330,12 @@ Example:
 
 ```c
 proven_result_u8str_t r = proven_u8str_create(alloc, 8);
-if (!proven_is_ok(r.err)) return r.err;
+if (!proven_is_ok(r.err)) {
+    return;
+}
 proven_u8str_t s = r.value;
 
+/* The target is only 8 bytes; the _grow form reallocates rather than truncate. */
 proven_fmt_result_t fr = proven_u8str_append_fmt_grow(
     alloc,
     &s,
@@ -328,8 +345,9 @@ proven_fmt_result_t fr = proven_u8str_append_fmt_grow(
 );
 if (!PROVEN_FMT_IS_OK(fr)) {
     proven_u8str_destroy(alloc, &s);
-    return fr.err;
+    return;
 }
+/* s == "name=ada score=0042" */
 
 proven_u8str_destroy(alloc, &s);
 ```
@@ -340,7 +358,7 @@ The scanner parses from a borrowed `proven_u8str_view_t`. A cursor tracks progre
 
 ### Result structs
 
-```c
+```text
 typedef struct { proven_err_t err; proven_i64 val; } proven_result_i64_t;
 typedef struct { proven_err_t err; proven_u64 val; } proven_result_u64_t;
 typedef struct { proven_err_t err; double val; } proven_result_f64_t;
@@ -349,7 +367,7 @@ typedef struct { proven_err_t err; proven_u8str_view_t val; } proven_result_u8st
 
 ### `proven_scan_t`
 
-```c
+```text
 typedef struct {
     proven_u8str_view_t view;
     proven_size_t cursor;
@@ -403,7 +421,7 @@ Explicit fixed-width and utility helpers:
 
 Long aliases:
 
-```c
+```text
 #define PROVEN_SCAN_ARG_LONG(ptr)  proven_scan_arg_long(ptr)
 #define PROVEN_SCAN_ARG_ULONG(ptr) proven_scan_arg_ulong(ptr)
 ```
@@ -418,7 +436,7 @@ Long aliases:
 
 ### Scan engine
 
-```c
+```text
 proven_err_t proven_scan_fmt_internal(
     proven_scan_t *scan,
     const char *fmt,
@@ -451,7 +469,11 @@ proven_err_t e = proven_scan_fmt_cursor(
     PROVEN_SCAN_ARG(&score),
     PROVEN_SCAN_ARG(&user)
 );
-if (!proven_is_ok(e)) return e;
+if (!proven_is_ok(e)) {
+    return;
+}
+/* id == 402, score == 99.5, user borrows "ada" out of the input - it is not a
+ * copy, so it is only valid while the scanned bytes are. */
 ```
 
 ### Float parsing notes
@@ -484,7 +506,7 @@ if (!proven_is_ok(e)) return e;
 
 Wrong:
 
-```c
+```text
 proven_u8str_view_t view = get_view();
 printf("%s\n", (const char *)view.ptr); /* wrong: view may not be NUL-terminated */
 ```
@@ -492,9 +514,15 @@ printf("%s\n", (const char *)view.ptr); /* wrong: view may not be NUL-terminated
 Correct:
 
 ```c
+proven_u8str_view_t view = proven_u8str_view_slice(PROVEN_LIT("/etc/hosts"), 5, 5);
+
+/* A view is a pointer and a length into somebody else's bytes. To hand it to a
+ * C API that wants a NUL, allocate a real C string from it. */
 proven_result_cstr_t c = proven_u8str_view_to_cstr(view, alloc);
-if (!proven_is_ok(c.err)) return c.err;
-call_c_api(c.value);
+if (!proven_is_ok(c.err)) {
+    return;
+}
+/* c.value is "hosts", NUL-terminated. It is yours, so free it. */
 alloc.free_fn(alloc.ctx, (void *)c.value);
 ```
 
@@ -504,11 +532,12 @@ Correct:
 
 ```c
 proven_u8str_view_t a = PROVEN_LIT("abc");
+(void)a;
 ```
 
 Wrong:
 
-```c
+```text
 const char *runtime = getenv("NAME");
 proven_u8str_view_t a = PROVEN_LIT(runtime); /* wrong: macro requires literal syntax */
 ```
@@ -516,7 +545,9 @@ proven_u8str_view_t a = PROVEN_LIT(runtime); /* wrong: macro requires literal sy
 Use:
 
 ```c
+const char *runtime = "NAME=value";   /* any trusted NUL-terminated string */
 proven_u8str_view_t a = proven_u8str_view_from_cstr(runtime);
+(void)a;
 ```
 
 ### Distinguish not found from replaced
@@ -524,17 +555,25 @@ proven_u8str_view_t a = proven_u8str_view_from_cstr(runtime);
 `proven_u8str_replace_first()` returns `PROVEN_OK` when the target is not found. Search first if that matters.
 
 ```c
+proven_result_u8str_t r = proven_u8str_create_from_view(alloc, PROVEN_LIT("the old way"));
+if (!proven_is_ok(r.err)) {
+    return;
+}
+proven_u8str_t s = r.value;
+
 proven_size_t at = proven_u8str_view_find(proven_u8str_as_view(&s), 0, PROVEN_LIT("old"));
 if (at != PROVEN_INDEX_NOT_FOUND) {
-    proven_u8str_replace_first(&s, 0, PROVEN_LIT("old"), PROVEN_LIT("new"));
+    (void)proven_u8str_replace_first(&s, 0, PROVEN_LIT("old"), PROVEN_LIT("new"));
 }
+
+proven_u8str_destroy(alloc, &s);
 ```
 
 ### Bounded format input
 
 Wrong:
 
-```c
+```text
 char *untrusted = get_untrusted_pointer();
 proven_println("{}", PROVEN_ARG(untrusted));
 /* wrong: C-string formatting scans until NUL */
@@ -543,6 +582,10 @@ proven_println("{}", PROVEN_ARG(untrusted));
 Correct:
 
 ```c
+char untrusted[16] = { 'n', 'o', ' ', 'n', 'u', 'l', ' ', 'h', 'e', 'r', 'e', '!', '!', '!', '!', '!' };
+proven_size_t max_len = sizeof untrusted;
+
+/* The bounded form stops looking for a NUL after max_len bytes. */
 proven_println("{}", PROVEN_ARG_CSTR_N(untrusted, max_len));
 ```
 
@@ -555,11 +598,18 @@ fixed-capacity operations (and `proven_u8str_append_fmt`), reuse with
 on it (the caller owns the memory).
 
 ```c
+int cur = 3;
+int total = 10;
+
 proven_byte_t line[64];
 proven_u8str_t s = proven_u8str_borrow(line, sizeof line);   /* cap includes NUL */
-proven_u8str_append_fmt(&s, "L{}/{}", PROVEN_ARG(cur), PROVEN_ARG(total));
-write_status(proven_u8str_as_cstr(&s));
-proven_u8str_reset(&s);   /* reuse next frame, no allocation */
+
+proven_fmt_result_t fr = proven_u8str_append_fmt(&s, "L{}/{}", PROVEN_ARG(cur), PROVEN_ARG(total));
+if (PROVEN_FMT_IS_OK(fr)) {
+    proven_println("{}", PROVEN_ARG(proven_u8str_as_view(&s)));
+}
+
+(void)proven_u8str_reset(&s);   /* reuse next frame, no allocation */
 ```
 
 Misuse: a growing call that would exceed the borrowed capacity returns
@@ -569,14 +619,14 @@ Misuse: a growing call that would exceed the borrowed capacity returns
 proven_byte_t small[4];
 proven_u8str_t t = proven_u8str_borrow(small, sizeof small);
 proven_err_t e = proven_u8str_append_grow(alloc, &t, PROVEN_LIT("toolong"));
-/* e == PROVEN_ERR_OUT_OF_BOUNDS; small[] is untouched */
+(void)e;   /* e == PROVEN_ERR_OUT_OF_BOUNDS; small[] is untouched */
 ```
 
 ### Self-referential formatting
 
 Wrong:
 
-```c
+```text
 const char *inside = proven_u8str_as_cstr(&s);
 proven_u8str_append_fmt_grow(alloc, &s, "{}", PROVEN_ARG(inside));
 /* wrong: self-aliasing C-string arguments are rejected */
@@ -585,15 +635,25 @@ proven_u8str_append_fmt_grow(alloc, &s, "{}", PROVEN_ARG(inside));
 Correct:
 
 ```c
+proven_result_u8str_t r = proven_u8str_create_from_view(alloc, PROVEN_LIT("ab"));
+if (!proven_is_ok(r.err)) {
+    return;
+}
+proven_u8str_t s = r.value;
+
+/* A view carries a length, so the formatter knows exactly which bytes to snapshot. */
 proven_u8str_view_t before = proven_u8str_as_view(&s);
-proven_u8str_append_fmt_grow(alloc, &s, "{}", PROVEN_ARG(before));
+proven_fmt_result_t fr = proven_u8str_append_fmt_grow(alloc, &s, "{}", PROVEN_ARG(before));
+(void)fr;   /* s == "abab" */
+
+proven_u8str_destroy(alloc, &s);
 ```
 
 ### Transactional scanning
 
 Wrong assumption:
 
-```c
+```text
 proven_err_t e = proven_scan_fmt_cursor(&scan, "{} suffix", PROVEN_SCAN_ARG(&x));
 /* if suffix mismatches, x and scan.cursor may already have changed */
 ```
@@ -601,10 +661,16 @@ proven_err_t e = proven_scan_fmt_cursor(&scan, "{} suffix", PROVEN_SCAN_ARG(&x))
 Correct pattern:
 
 ```c
+proven_scan_t scan = proven_scan_init(PROVEN_LIT("42 prefix"));
+int x = -1;
+
 proven_size_t old_cursor = scan.cursor;
 int old_x = x;
+
 proven_err_t e = proven_scan_fmt_cursor(&scan, "{} suffix", PROVEN_SCAN_ARG(&x));
 if (!proven_is_ok(e)) {
+    /* The literal "suffix" did not match, but 42 was already written into x and
+     * the cursor already moved. Put both back yourself. */
     scan.cursor = old_cursor;
     x = old_x;
 }
