@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v26.07.12e)
+# Chapter 8: Formatting and Scanning (v26.07.12f)
 
 This chapter is the detailed reference for `fmt.h` and `scan.h`.
 Chapter 3 gives the shorter overview and the everyday examples.
@@ -40,7 +40,7 @@ The practical result is that the APIs are easier to reason about than large gene
 
 ### `proven_fmt_result_t`
 
-```c
+```text
 typedef struct {
 proven_err_t  err;
 proven_size_t written;
@@ -59,31 +59,49 @@ Use `err` first. The other fields are most useful for truncating or partially su
 A successful result looks like this:
 
 ```c
-proven_fmt_result_t r = proven_u8str_append_fmt_trunc(
-&s,
-"hello {}",
-PROVEN_ARG("world")
-);
-if (!proven_is_ok(r.err)) {
-return r.err;
+proven_result_u8str_t rs = proven_u8str_create(alloc, 64);
+if (proven_is_ok(rs.err)) {
+    proven_u8str_t s = rs.value;
+
+    proven_fmt_result_t r = proven_u8str_append_fmt_trunc(
+        &s,
+        "hello {}",
+        PROVEN_ARG("world")
+    );
+    if (proven_is_ok(r.err)) {
+        proven_println("{}", PROVEN_ARG(proven_u8str_as_view(&s)));
+    }
+
+    proven_u8str_destroy(alloc, &s);
 }
 ```
 
-A truncating result can still tell you how much more space you would have needed:
+A truncating result can still tell you how much more space you would have needed.
+Here the destination is deliberately too small, so `written` stops short of
+`required` - and the string is still valid:
 
 ```c
-proven_fmt_result_t r = proven_u8str_append_fmt_trunc(
-&s,
-"name={} score={}",
-PROVEN_ARG("ada"),
-PROVEN_ARG(42)
-);
-/* r.written and r.required are useful here. */
+proven_result_u8str_t rs = proven_u8str_create(alloc, 8);   /* on purpose: too small */
+if (proven_is_ok(rs.err)) {
+    proven_u8str_t s = rs.value;
+
+    proven_fmt_result_t r = proven_u8str_append_fmt_trunc(
+        &s,
+        "name={} score={}",
+        PROVEN_ARG("ada"),
+        PROVEN_ARG(42)
+    );
+    /* r.written is what fit; r.required is what the whole output needed. */
+    proven_println("wrote {} of {} bytes",
+                   PROVEN_ARG(r.written), PROVEN_ARG(r.required));
+
+    proven_u8str_destroy(alloc, &s);
+}
 ```
 
 ### `proven_arg_type_t`
 
-```c
+```text
 typedef enum {
 PROVEN_ARG_NONE,
 PROVEN_ARG_I32,
@@ -116,7 +134,7 @@ The formatter currently recognizes these value classes:
 
 ### `proven_arg_t`
 
-```c
+```text
 typedef struct {
 proven_arg_type_t type;
 union {
@@ -139,7 +157,7 @@ Do not manufacture a `proven_arg_t` by writing a mismatched union field and hopi
 
 Wrong:
 
-```c
+```text
 proven_arg_t arg = {0};
 arg.type = PROVEN_ARG_I64;
 arg.value.u64 = 123; /* wrong: type and union field do not match */
@@ -149,6 +167,7 @@ Correct:
 
 ```c
 proven_arg_t arg = proven_arg_i64(123);
+(void)arg;   /* pass it to a formatting macro; PROVEN_ARG(arg) accepts it as-is */
 ```
 
 ## 3. Formatter constructors and selectors
@@ -198,7 +217,7 @@ Important consequence:
 
 Wrong:
 
-```c
+```text
 void helper(void) {}
 proven_u8str_append_fmt_grow(alloc, &s, "{}", PROVEN_ARG(helper)); /* wrong */
 ```
@@ -206,7 +225,15 @@ proven_u8str_append_fmt_grow(alloc, &s, "{}", PROVEN_ARG(helper)); /* wrong */
 Correct:
 
 ```c
-proven_u8str_append_fmt_grow(alloc, &s, "{}", PROVEN_ARG_FN(helper));
+void helper(void);   /* whatever function you want to print the address of */
+
+proven_result_u8str_t rs = proven_u8str_create(alloc, 64);
+if (proven_is_ok(rs.err)) {
+    proven_fmt_result_t r = proven_u8str_append_fmt_grow(alloc, &rs.value, "{}",
+                                                         PROVEN_ARG_FN(helper));
+    (void)r;
+    proven_u8str_destroy(alloc, &rs.value);
+}
 ```
 
 ### `PROVEN_ARG_FN(f)`
@@ -217,12 +244,24 @@ It is a small safety wrapper around `proven_arg_fn`.
 Example:
 
 ```c
-proven_fmt_result_t r = proven_u8str_append_fmt_grow(
-alloc,
-&s,
-"callback = {}",
-PROVEN_ARG_FN(helper)
-);
+void helper(void);
+
+proven_result_u8str_t rs = proven_u8str_create(alloc, 64);
+if (proven_is_ok(rs.err)) {
+    proven_u8str_t s = rs.value;
+
+    proven_fmt_result_t r = proven_u8str_append_fmt_grow(
+        alloc,
+        &s,
+        "callback = {}",
+        PROVEN_ARG_FN(helper)
+    );
+    if (!PROVEN_FMT_IS_OK(r)) {
+        proven_eprintln("formatting the callback failed");
+    }
+
+    proven_u8str_destroy(alloc, &s);
+}
 ```
 
 ### `PROVEN_ARG_CSTR_N(v, max_len)`
@@ -232,21 +271,28 @@ Use it when the source may not be a fully trusted C string, but you still want C
 
 It scans for NUL only up to `max_len` and then formats the bounded prefix as a view.
 
-Good use case:
+Good use case - `buf` came off the wire, so nothing promises it is NUL-terminated:
 
 ```c
-const char *buf = get_network_buffer();
-proven_fmt_result_t r = proven_u8str_append_fmt_grow(
-alloc,
-&s,
-"payload={}",
-PROVEN_ARG_CSTR_N(buf, 128)
-);
+char buf[128];                       /* filled from an untrusted source */
+(void)proven_mem_copy(buf, sizeof buf, proven_mem_view_from_u8(PROVEN_LIT("payload")));
+
+proven_result_u8str_t rs = proven_u8str_create(alloc, 64);
+if (proven_is_ok(rs.err)) {
+    proven_fmt_result_t r = proven_u8str_append_fmt_grow(
+        alloc,
+        &rs.value,
+        "payload={}",
+        PROVEN_ARG_CSTR_N(buf, sizeof buf)   /* looks for NUL only within 128 bytes */
+    );
+    (void)r;
+    proven_u8str_destroy(alloc, &rs.value);
+}
 ```
 
 Bad use case:
 
-```c
+```text
 const char *buf = get_network_buffer();
 proven_u8str_append_fmt_grow(alloc, &s, "{}", PROVEN_ARG(buf)); /* wrong if buf is not trusted */
 ```
@@ -352,11 +398,13 @@ proven_scan_t sc = proven_scan_init(proven_u8str_view_from_cstr("3.14159e2 rest"
 proven_result_f64_t r = proven_scan_f64(&sc);
 if (r.err == PROVEN_OK) {
     /* r.val == 314.159; the cursor now sits at " rest". */
+    proven_println("parsed {}", PROVEN_ARG(r.val));
 }
 
 /* (2) strtod-style wrapper for C strings. endptr reports where parsing stopped. */
 char *end = NULL;
 double v = proven_strtod("  -0.5\t", &end);   /* v == -0.5, *end == '\t' */
+(void)v;
 
 /* A trailing exponent marker with no digits stops like strtod: "1e" parses 1,
    leaving endptr at 'e'. Inputs with hundreds of significant digits and extreme
@@ -375,7 +423,7 @@ char buf[64];
 proven_size_t n = 0;
 
 /* Shortest round-trippable form: 0.1 -> "0.1" (not "0.10000000000000001"). */
-proven_float_format_f64_policy(buf, sizeof buf, 0.1,
+(void)proven_float_format_f64_policy(buf, sizeof buf, 0.1,
     PROVEN_FLOAT_FORMAT_POLICY_RYU,
     proven_float_format_options_shortest(), &n);
 /* buf == "0.1", n == 3 */
@@ -383,7 +431,7 @@ proven_float_format_f64_policy(buf, sizeof buf, 0.1,
 /* Fixed precision (correctly rounded, round-half-to-even). */
 proven_float_format_options_t opt = proven_float_format_options_fixed_default();
 opt.precision = 2;
-proven_float_format_f64_policy(buf, sizeof buf, 3.14159,
+(void)proven_float_format_f64_policy(buf, sizeof buf, 3.14159,
     PROVEN_FLOAT_FORMAT_POLICY_DEFAULT, opt, &n);
 /* buf == "3.14" */
 ```
@@ -449,9 +497,14 @@ Default behavior:
 Examples:
 
 ```c
-proven_u8str_append_fmt_grow(alloc, &s, "{:0>5}", PROVEN_ARG(42));    /* 00042 */
-proven_u8str_append_fmt_grow(alloc, &s, "{:*^10}", PROVEN_ARG("ok")); /* ****ok**** */
-proven_u8str_append_fmt_grow(alloc, &s, "{:.<10}", PROVEN_ARG("x"));  /* x......... */
+proven_result_u8str_t rs = proven_u8str_create(alloc, 64);
+if (proven_is_ok(rs.err)) {
+    proven_u8str_t s = rs.value;
+    (void)proven_u8str_append_fmt_grow(alloc, &s, "{:0>5}", PROVEN_ARG(42));    /* 00042 */
+    (void)proven_u8str_append_fmt_grow(alloc, &s, "{:*^10}", PROVEN_ARG("ok")); /* ****ok**** */
+    (void)proven_u8str_append_fmt_grow(alloc, &s, "{:.<10}", PROVEN_ARG("x"));  /* x......... */
+    proven_u8str_destroy(alloc, &s);
+}
 ```
 
 ### Hex mode
@@ -462,7 +515,12 @@ The formatter does not use uppercase hex and does not add a `0x` prefix for inte
 Example:
 
 ```c
-proven_u8str_append_fmt_grow(alloc, &s, "0x{:x}", PROVEN_ARG(48879));
+proven_result_u8str_t rs = proven_u8str_create(alloc, 16);
+if (proven_is_ok(rs.err)) {
+    /* renders "0xbeef": the 0x is literal text, the {:x} is the hex conversion */
+    (void)proven_u8str_append_fmt_grow(alloc, &rs.value, "0x{:x}", PROVEN_ARG(48879));
+    proven_u8str_destroy(alloc, &rs.value);
+}
 ```
 
 For signed integers, the numeric value is rendered through the implementation's unsigned conversion path when hex mode is enabled.
@@ -476,7 +534,7 @@ The current parser also rejects unknown format characters.
 
 Wrong:
 
-```c
+```text
 proven_u8str_append_fmt_grow(alloc, &s, "{:>9999999999}", PROVEN_ARG(123)); /* width too large */
 proven_u8str_append_fmt_grow(alloc, &s, "{:q}", PROVEN_ARG(123));            /* invalid spec */
 proven_u8str_append_fmt_grow(alloc, &s, "{", PROVEN_ARG(123));               /* invalid format */
@@ -511,7 +569,7 @@ For strings, views, and datetimes, width and alignment are the important pieces.
 
 ### `proven_u8str_fmt_internal(...)`
 
-```c
+```text
 proven_fmt_result_t proven_u8str_fmt_internal(
 proven_allocator_t alloc,
 proven_u8str_t *str,
@@ -609,8 +667,9 @@ proven_err_t err = proven_float_format_f64_policy(
     proven_float_format_options_shortest(),
     &written
 );
-if (!proven_is_ok(err)) {
-    return err;
+if (proven_is_ok(err)) {
+    /* buf holds the shortest form that parses back to exactly 0.1 */
+    proven_println("{}", PROVEN_ARG_CSTR_N(buf, written));
 }
 ```
 
@@ -622,15 +681,23 @@ Use it when you want the intent to stay compact.
 Example:
 
 ```c
-proven_fmt_result_t r = proven_u8str_append_fmt_grow(
-alloc,
-&s,
-"name={} score={:0>4}",
-PROVEN_ARG("ada"),
-PROVEN_ARG(42)
-);
-if (!PROVEN_FMT_IS_OK(r)) {
-return r.err;
+proven_result_u8str_t rs = proven_u8str_create(alloc, 32);
+if (proven_is_ok(rs.err)) {
+    proven_u8str_t s = rs.value;
+
+    proven_fmt_result_t r = proven_u8str_append_fmt_grow(
+        alloc,
+        &s,
+        "name={} score={:0>4}",
+        PROVEN_ARG("ada"),
+        PROVEN_ARG(42)
+    );
+    if (!PROVEN_FMT_IS_OK(r)) {
+        /* the string is untouched: grow-mode formatting is failure-atomic */
+        proven_eprintln("formatting failed");
+    }
+
+    proven_u8str_destroy(alloc, &s);
 }
 ```
 
@@ -650,7 +717,8 @@ Example:
 
 ```c
 if (!proven_is_ok(proven_println("hello {}", PROVEN_ARG("world")))) {
-return 1;
+    /* the write to stdout failed - a closed pipe, a full disk */
+    proven_eprintln("stdout is not writable");
 }
 ```
 

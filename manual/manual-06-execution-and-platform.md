@@ -18,7 +18,7 @@ The coroutine macros implement stackless state machines using `__LINE__` labels 
 
 ### Structure
 
-```c
+```text
 typedef struct {
 proven_i32 state;
 } proven_coro_t;
@@ -41,7 +41,7 @@ These macros are the classic Protothreads/Duff's-device trick. `BEGIN` opens a
 `switch (state)`, each `YIELD`/`AWAIT` records `__LINE__` as the resume label and
 `return`s, and `END` closes the switch. Conceptually:
 
-```c
+```text
 proven_i32 f(Ctx *c) {
     switch (c->coro.state) {       /* PROVEN_CORO_BEGIN */
     case 0:
@@ -68,7 +68,7 @@ from its own body.
 
 #### Counter-example — a local across a yield
 
-```c
+```text
 static proven_i32 bad(Ctx *c) {
     PROVEN_CORO_BEGIN(&c->coro);
     int i = 0;                       /* WRONG: a local */
@@ -81,9 +81,11 @@ static proven_i32 bad(Ctx *c) {
 /* RIGHT: put `i` in Ctx (like `value` in the Counter example below). */
 ```
 
-Example:
+Example (a sketch: a coroutine is a whole function, so it cannot be shown as a
+statement fragment - the compiled version of this shape is the worked example in
+[section 7](#7-examples-and-misuse-cases), `manual/examples/ex_06_coro.c`):
 
-```c
+```text
 typedef struct Counter {
 proven_coro_t coro;
 int value;
@@ -112,7 +114,7 @@ The job system owns worker threads and a bounded MPMC-style queue. Producers sub
 
 ### Structures
 
-```c
+```text
 typedef struct {
 void (*routine)(void *arg);
 void *arg;
@@ -177,7 +179,7 @@ thread *before* that join needs your own synchronization.
 
 #### Counter-examples
 
-```c
+```text
 /* WRONG: capacity must be a power of two. */
 proven_job_system_init(alloc, 4, 100, &sys);   /* 100 is not 2^n */
 
@@ -194,9 +196,12 @@ proven_println("total = {}", PROVEN_ARG(total));
 proven_job_submit(sys, work, arg);   /* [[nodiscard]]: a false return means NOT queued */
 ```
 
-Example:
+Example (a sketch, because the job routine has to be a function of its own; the
+compiled version, with the atomics a shared counter really needs, is the worked
+example in [section 7](#7-examples-and-misuse-cases),
+`manual/examples/ex_06_job.c`):
 
-```c
+```text
 static void increment(void *arg) {
 int *p = arg;
 *p += 1;
@@ -217,6 +222,18 @@ proven_job_system_close(sys);
 proven_job_system_destroy(sys);
 ```
 
+The lifecycle itself, with no routine in sight, is ordinary statement code:
+
+```c
+proven_job_sys_t *sys = NULL;
+proven_err_t e = proven_job_system_init(alloc, 2, 64, &sys);  /* capacity: power of two */
+if (proven_is_ok(e)) {
+    /* ... submit work here, from this thread or from producers you own ... */
+    proven_job_system_close(sys);     /* every later submit now returns false */
+    proven_job_system_destroy(sys);   /* drains the queue, joins the workers */
+}
+```
+
 ## 3. Alias layer
 
 `include/proven/alias_xcv.h` provides a shorter optional alias prefix. It maps canonical `proven_` and `PROVEN_` names to `xcv_` and `XCV_` names.
@@ -227,7 +244,8 @@ Include it after the canonical headers:
 #include "proven.h"
 #include "proven/alias_xcv.h"
 
-xcv_allocator_t alloc = xcv_heap_allocator();
+xcv_allocator_t heap = xcv_heap_allocator();
+(void)heap;
 xcv_println("{}", XCV_ARG(123));
 ```
 
@@ -303,9 +321,14 @@ Available modules in the current freestanding configuration:
 
 Excluded or stubbed modules:
 
-- `heap`: returns an invalid zero allocator.
+- `heap`: compiled, but `proven_heap_allocator()` returns an invalid zero allocator.
 - `u16str`: excluded by `PROVEN_NO_U16STR` in the current freestanding build.
-- `fs`, `sysio`, `mmap`, `time`, `job`: hosted/PAL services excluded from the current freestanding subset.
+- `time`: partial. `src/proven/time.c` is compiled, so `proven_time_breakdown()` and
+  the datetime formatters are available, but the clock backend
+  (`platform/proven_sys_time.c`) is not - so `proven_time_now()`,
+  `proven_time_now_datetime()`, and `proven_time_sleep()` have no implementation to
+  link against.
+- `fs`, `sysio`, `mmap`, `job`: hosted/PAL services excluded from the current freestanding subset.
 
 See `manual-freestanding.md` for the exact source list and command examples.
 
@@ -341,14 +364,14 @@ Rules:
 
 Wrong:
 
-```c
+```text
 PROVEN_CORO_YIELD(&c->coro); PROVEN_CORO_YIELD(&c->coro);
 /* wrong: both use the same __LINE__ value */
 ```
 
 Correct:
 
-```c
+```text
 PROVEN_CORO_YIELD(&c->coro);
 PROVEN_CORO_YIELD(&c->coro);
 ```
@@ -359,7 +382,7 @@ A stackless coroutine returns to the caller. Any local variable whose value must
 
 Wrong:
 
-```c
+```text
 static proven_i32 next(Task *t) {
 int temporary = 0;
 PROVEN_CORO_BEGIN(&t->coro);
@@ -372,7 +395,7 @@ PROVEN_CORO_END(&t->coro);
 
 Correct:
 
-```c
+```text
 typedef struct Task {
 proven_coro_t coro;
 int temporary;
@@ -383,7 +406,7 @@ int temporary;
 
 Wrong:
 
-```c
+```text
 /* thread A */
 proven_job_system_destroy(sys);
 
@@ -393,7 +416,7 @@ proven_job_submit(sys, work, arg); /* wrong: external synchronization missing */
 
 Correct:
 
-```c
+```text
 stop_producer_threads();
 join_producer_threads();
 proven_job_system_close(sys);
@@ -404,7 +427,7 @@ proven_job_system_destroy(sys);
 
 Wrong:
 
-```c
+```text
 void submit_bad(proven_job_sys_t *sys) {
 int value = 10;
 proven_job_submit(sys, work, &value);
@@ -413,7 +436,7 @@ proven_job_submit(sys, work, &value);
 
 Correct:
 
-```c
+```text
 JobData *data = allocate_job_data();
 proven_job_submit(sys, work_and_free_data, data);
 ```
@@ -422,7 +445,7 @@ proven_job_submit(sys, work_and_free_data, data);
 
 Wrong:
 
-```c
+```text
 /* Document only xcv_map_t and forget proven_map_t. */
 ```
 

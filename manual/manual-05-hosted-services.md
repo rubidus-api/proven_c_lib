@@ -20,7 +20,7 @@ Raw filesystem helpers do not sanitize untrusted paths, enforce root confinement
 
 ### Structures and enums
 
-```c
+```text
 typedef struct {
     union {
         void *ptr;
@@ -33,7 +33,7 @@ typedef proven_fs_handle_t proven_file_t;
 
 Intent: represent a platform file handle without exposing POSIX or Win32 details to higher layers.
 
-```c
+```text
 typedef enum {
     PROVEN_FS_READ   = 1 << 0,
     PROVEN_FS_WRITE  = 1 << 1,
@@ -50,7 +50,7 @@ File mode flags can be combined. Examples:
 - `PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC`
 - `PROVEN_FS_WRITE | PROVEN_FS_APPEND | PROVEN_FS_CREATE`
 
-```c
+```text
 typedef enum {
     PROVEN_FS_TYPE_FILE,
     PROVEN_FS_TYPE_DIR,
@@ -58,7 +58,7 @@ typedef enum {
 } proven_fs_type_t;
 ```
 
-```c
+```text
 typedef struct {
     proven_u8str_t name;
     proven_fs_type_t type;
@@ -68,14 +68,14 @@ typedef struct {
 
 Directory entries own `name`. Use `proven_fs_list_destroy()` for arrays returned by `proven_fs_list()`.
 
-```c
+```text
 typedef struct {
     proven_err_t err;
     proven_file_t value;
 } proven_result_file_t;
 ```
 
-```c
+```text
 typedef enum {
     PROVEN_FS_PERM_OWNER_R = 1 << 8,
     PROVEN_FS_PERM_OWNER_W = 1 << 7,
@@ -91,7 +91,7 @@ typedef enum {
 } proven_fs_perms_t;
 ```
 
-```c
+```text
 typedef enum {
     PROVEN_FS_LOCK_SHARED,
     PROVEN_FS_LOCK_EXCLUSIVE,
@@ -99,12 +99,12 @@ typedef enum {
 } proven_fs_lock_type_t;
 ```
 
-```c
+```text
 typedef struct {
     proven_size_t size;          /* size in bytes (0 for directories on some hosts) */
-    proven_fs_type_t type;       /* PROVEN_FS_TYPE_FILE / _DIR / _OTHER - there is no symlink type */
+    proven_fs_type_t type;       /* PROVEN_FS_TYPE_FILE / _DIR - there is no symlink type */
     proven_fs_perms_t perms;     /* the nine permission bits only; the file type is in `type` */
-    proven_i64 created_at;       /* creation time, seconds since the Unix epoch */
+    proven_i64 created_at;       /* always 0: no birth time is queried - see below */
     proven_i64 modified_at;      /* last-modification time, seconds since the Unix epoch */
     unsigned long long dev;      /* device id (POSIX st_dev; 0 where unavailable) */
     unsigned long long ino;      /* inode number (POSIX st_ino; 0 where unavailable) */
@@ -116,6 +116,14 @@ typedef struct {
 `uid`/`gid` (added in v26.06.22a) hold the POSIX owner and group ids; both are `0`
 on Windows, which has no `uid`/`gid` concept. Resolve them to names with the
 host's `getpwuid`/`getgrgid` when displaying an `ls -l`-style owner/group column.
+
+Two fields are narrower than they look:
+
+- `created_at` is **always 0**. Plain `stat()` has no portable birth time, and the
+  PAL does not ask for one. Only `modified_at` carries a real timestamp.
+- `type` is only ever `PROVEN_FS_TYPE_FILE` or `PROVEN_FS_TYPE_DIR`. The PAL
+  classifies by "is it a directory", so a FIFO, a socket, or a device stats as
+  `FILE`. `PROVEN_FS_TYPE_OTHER` exists in the enum but nothing produces it today.
 
 ```c
 proven_fs_stat_t st;
@@ -184,21 +192,23 @@ proven_result_file_t of = proven_fs_open(
     PROVEN_LIT("out.txt"),
     PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC
 );
-if (!proven_is_ok(of.err)) return of.err;
-
-proven_err_t e = proven_fs_write_all(
-    of.value,
-    proven_mem_view_from_u8(PROVEN_LIT("hello\n"))
-);
-proven_fs_close(of.value);
-if (!proven_is_ok(e)) return e;
+if (proven_is_ok(of.err)) {
+    proven_err_t e = proven_fs_write_all(
+        of.value,
+        proven_mem_view_from_u8(PROVEN_LIT("hello\n"))
+    );
+    proven_fs_close(of.value);   /* the handle is owned: close on the failure path too */
+    if (!proven_is_ok(e)) {
+        proven_eprintln("writing out.txt failed");
+    }
+}
 ```
 
 ## 2. System I/O and environment
 
 ### Standard streams
 
-```c
+```text
 proven_file_t proven_sysio_stdin(void);
 proven_file_t proven_sysio_stdout(void);
 proven_file_t proven_sysio_stderr(void);
@@ -209,7 +219,7 @@ Purpose: expose standard streams as `proven_file_t` handles and flush when neede
 
 ### `proven_sysio_scanner_t`
 
-```c
+```text
 typedef struct {
     proven_file_t file;
     proven_allocator_t alloc;
@@ -221,7 +231,7 @@ typedef struct {
 } proven_sysio_scanner_t;
 ```
 
-Purpose: buffered scanner for bounded file-backed input. Tokens must fit within the current loaded buffer; if a token reaches the end of that buffer before EOF, the scanner reports `PROVEN_ERR_OUT_OF_BOUNDS` instead of accepting a truncated value.
+Purpose: buffered scanner for bounded stream input, safe for pipes and stdin as well as seekable files. When a token reaches the end of the currently loaded fragment before EOF, the scanner refills the buffer and retries; only a token that cannot fit inside the whole buffer even after a refill is rejected, with `PROVEN_ERR_OUT_OF_BOUNDS`, instead of being accepted truncated.
 
 ### Sysio functions and macros
 
@@ -250,12 +260,13 @@ proven_println("answer={}", PROVEN_ARG(42));
 proven_eprintln("warning: {}", PROVEN_ARG(PROVEN_LIT("low memory")));
 ```
 
-Environment example:
+Environment example. `proven_env_get` hands back an owned string, so it has to be destroyed:
 
 ```c
 proven_result_u8str_t env = proven_env_get(alloc, PROVEN_LIT("PATH"));
 if (proven_is_ok(env.err)) {
-    use_path(proven_u8str_as_view(&env.value));
+    proven_u8str_view_t path = proven_u8str_as_view(&env.value);
+    proven_println("PATH is {} bytes", PROVEN_ARG(path.size));
     proven_u8str_destroy(alloc, &env.value);
 }
 ```
@@ -264,7 +275,7 @@ if (proven_is_ok(env.err)) {
 
 ### Structures and enums
 
-```c
+```text
 typedef enum {
     PROVEN_MMAP_READ  = 0x01,
     PROVEN_MMAP_WRITE = 0x02,
@@ -302,34 +313,35 @@ Example:
 
 ```c
 proven_result_file_t f = proven_fs_open(alloc, PROVEN_LIT("data.bin"), PROVEN_FS_READ);
-if (!proven_is_ok(f.err)) return f.err;
-
-proven_result_mmap_t mr = proven_mmap_create(
-    f.value,
-    0,
-    0,
-    PROVEN_MMAP_READ,
-    PROVEN_MMAP_PRIVATE
-);
-if (proven_is_ok(mr.err)) {
-    proven_u8str_view_t bytes = proven_mmap_as_view(mr.value);
-    use_bytes(bytes.ptr, bytes.size);
-    proven_mmap_destroy(&mr.value);
+if (proven_is_ok(f.err)) {
+    proven_result_mmap_t mr = proven_mmap_create(
+        f.value,
+        0,
+        0,
+        PROVEN_MMAP_READ,
+        PROVEN_MMAP_PRIVATE
+    );
+    if (proven_is_ok(mr.err)) {
+        /* The view borrows the mapping: it dies when the mapping is destroyed. */
+        proven_u8str_view_t bytes = proven_mmap_as_view(mr.value);
+        proven_println("mapped {} bytes", PROVEN_ARG(bytes.size));
+        (void)proven_mmap_destroy(&mr.value);
+    }
+    proven_fs_close(f.value);
 }
-proven_fs_close(f.value);
 ```
 
 ## 4. Time API
 
 ### Types
 
-```c
+```text
 typedef proven_i64 proven_time_t;
 ```
 
 Nanoseconds since UNIX epoch.
 
-```c
+```text
 typedef struct {
     proven_i32 year;
     proven_u8 month;
@@ -352,7 +364,7 @@ Field ranges:
 - `ms`: 0 to 999.
 - `weekday`: 0 to 6, Sunday is 0.
 
-```c
+```text
 typedef struct {
     const proven_u8str_view_t *month_names;
     const proven_u8str_view_t *month_short_names;
@@ -384,20 +396,23 @@ Example:
 
 ```c
 proven_result_u8str_t r = proven_u8str_create(alloc, 32);
-if (!proven_is_ok(r.err)) return r.err;
-proven_u8str_t s = r.value;
+if (proven_is_ok(r.err)) {
+    proven_u8str_t s = r.value;
 
-proven_datetime_t now = proven_time_now_datetime();
-proven_err_t e = proven_time_u8_fmt(
-    alloc,
-    &s,
-    now,
-    &proven_time_locale_en,
-    "{year}-{month:0>2}-{day:0>2} {hour:0>2}:{min:0>2}:{sec:0>2}"
-);
+    proven_datetime_t now = proven_time_now_datetime();
+    proven_err_t e = proven_time_u8_fmt(
+        alloc,
+        &s,
+        now,
+        &proven_time_locale_en,
+        "{year}-{month:0>2}-{day:0>2} {hour:0>2}:{min:0>2}:{sec:0>2}"
+    );
+    if (proven_is_ok(e)) {
+        proven_println("{}", PROVEN_ARG(proven_u8str_as_view(&s)));
+    }
 
-proven_u8str_destroy(alloc, &s);
-return e;
+    proven_u8str_destroy(alloc, &s);
+}
 ```
 
 ## 5. Examples and misuse cases
@@ -406,22 +421,29 @@ return e;
 
 Wrong:
 
-```c
+```text
 proven_result_size_t w = proven_fs_write(file, data);
-/* wrong: one write may be partial */
+/* wrong: one write may be partial, and w.value is never looked at */
 ```
 
 Correct:
 
 ```c
-proven_err_t e = proven_fs_write_all(file, data);
+proven_result_file_t f = proven_fs_open(alloc, PROVEN_LIT("out.txt"),
+                                        PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
+if (proven_is_ok(f.err)) {
+    proven_mem_view_t data = proven_mem_view_from_u8(PROVEN_LIT("payload"));
+    proven_err_t e = proven_fs_write_all(f.value, data);   /* loops until done */
+    (void)e;
+    proven_fs_close(f.value);
+}
 ```
 
 ### Directory listings need special destruction
 
 Wrong:
 
-```c
+```text
 proven_result_array_t r = proven_fs_list(alloc, PROVEN_LIT("."));
 PROVEN_ARRAY_DESTROY(&r.value); /* wrong: entry names leak */
 ```
@@ -439,7 +461,7 @@ if (proven_is_ok(r.err)) {
 
 Wrong:
 
-```c
+```text
 proven_mmap_destroy(&map);
 use_bytes(map.ptr, map.size); /* wrong: mapping has been released */
 ```
@@ -462,17 +484,18 @@ if (proven_is_ok(e)) {
 
 Wrong:
 
-```c
+```text
 proven_result_u8str_t env = proven_env_get(alloc, PROVEN_LIT("PATH"));
-use_path(proven_u8str_as_view(&env.value)); /* wrong if env.err was not checked */
+use_path(proven_u8str_as_view(&env.value)); /* wrong if env.err was not checked, and it leaks */
 ```
 
 Correct:
 
 ```c
-proven_result_u8str_t env = proven_env_get(alloc, PROVEN_LIT("PATH"));
+proven_result_u8str_t env = proven_env_get(alloc, PROVEN_LIT("HOME"));
 if (proven_is_ok(env.err)) {
-    use_path(proven_u8str_as_view(&env.value));
+    proven_u8str_view_t home = proven_u8str_as_view(&env.value);
+    proven_println("HOME={}", PROVEN_ARG(home));
     proven_u8str_destroy(alloc, &env.value);
 }
 ```

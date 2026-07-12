@@ -20,37 +20,6 @@ An item with no exit condition is a complaint, not a backlog item.
 
 ## Open
 
-### B-002 — most manual code blocks are still unverifiable sketches
-
-**Status:** open, partially mitigated. Found 2026-07-12.
-
-The manual carries ~190 fenced `c` blocks. Before this cycle **four** of them
-could be compiled at all; the rest referenced imaginary helpers (`do_work()`,
-`get_view()`) or discarded `[[nodiscard]]` results, so no compiler ever saw them
-and nothing could tell you when they went stale. That is the same disease as the
-alias layer nobody checked: a claim with no mechanism behind it.
-
-**Mitigated so far:** eleven examples now live in `manual/examples/` as real
-programs. The build compiles and runs every one, and `tests/test_docs_manual_examples`
-fails if a chapter and its example disagree, if a chapter quotes an example that
-does not exist, or if an example exists that no chapter shows.
-
-**Still open:** the remaining inline fragments. Each is one of three things and
-should be converted accordingly:
-
-1. an illustration of real API use → fold into an example file and quote it;
-2. a signature or struct listing → fence as `text`, not `c` (it is not code a
-   reader can run, and pretending otherwise is what let the errors hide);
-3. wrong → fix it.
-
-**Done looks like:** every `c` block in `manual/` is either quoted from
-`manual/examples/` or compiles, and `tests/test_docs_manual_examples` enforces
-that — so the class of defect cannot come back.
-
-**Why not now:** ~180 blocks across eight chapters. Doing it chapter by chapter,
-with the mechanism already in place to keep each finished chapter finished, is
-the way this stays done. Doing it in one pass is how it gets done badly.
-
 ### B-003 — the process is test-after, not test-first
 
 **Status:** open. This is a process item, not a code item. See
@@ -88,6 +57,25 @@ deliberate choice, not something a documentation pass slips in.
 
 Items are moved here with the commit that closed them, so the reasoning survives.
 
+### B-002 — the manual's code blocks were unverifiable sketches (closed v26.07.12f)
+
+Of ~190 fenced `c` blocks, **four** could be compiled. The rest referenced imaginary
+helpers, discarded `[[nodiscard]]` results, or were signature listings masquerading as
+code — so nothing could tell anyone when they stopped being true, and several had not
+been true for a long time.
+
+Every block in every chapter is now either a compiled-and-run program from
+`manual/examples/`, a fragment that the build **syntax-checks**, or a `text` fence for
+things that are not runnable code. `nob` compiles every chapter's blocks as part of the
+build; a chapter that stops compiling stops the build.
+
+Converting them found six more false claims, all fixed: the pool's `item_align` is an
+upper bound rather than an exact match; the panic fallback is `while(1)` on non-GCC;
+the buffered scanner *does* refill and retry rather than failing on a token that reaches
+the end of the buffer; `proven_fs_stat_t.created_at` is always 0; `PROVEN_FS_TYPE_OTHER`
+is never produced; and `src/proven/time.c` *is* compiled freestanding (only the clock
+backend is absent).
+
 ### B-001 — manual chapter 8 was missing sections 7 through 13 (closed v26.07.12e)
 
 The chapter listed thirteen sections and ended at a bare `## 7. Scanner data model`
@@ -104,6 +92,93 @@ written through** the destinations before the mismatch.
 `tests/test_docs_manual_ch08_contracts` asserts each of the 18 behaviours the
 chapter states as fact. The chapter cannot drift from the scanner without the build
 saying so.
+
+### B-004 — the hand-written syscall assembly should be `lseek`
+
+**Status:** open. See `docs/RFC-0001-streams-and-io.md` §4.5.
+
+`platform/proven_sys_io.c` implements seek with inline-assembly raw syscalls, one
+per architecture. It is gratuitous — `proven_sys_fs.o` in the same library already
+imports `open`, `read`, `write`, `close` from libc — and it has a real cost:
+because the console path issues raw `syscall` instructions, **an LD_PRELOAD
+interposer counts zero of `proven_println`'s ten thousand writes.** Standard tracing
+tooling is blind to proven's console I/O.
+
+Proven safe to remove: recompiling with `-U__linux__`, forcing every branch into the
+POSIX `#else`, passes 12 of 12 I/O tests with byte-identical output. Three of the
+four asm paths have zero verification on any machine without cross-toolchains.
+
+**Done looks like:** the asm is gone, `lseek` is called, and the cross matrix still
+compiles.
+
+### B-005 — no seek, tell, truncate, positional I/O, or streaming directory iteration
+
+**Status:** open. RFC-0001 §4.4.
+
+`fs.h` has no seek at all. Truncating a file therefore means reading the whole thing
+and rewriting it: an O(n) copy for an O(1) operation. `proven_fs_list` materialises
+the entire directory — measured on 50,000 entries: 189 ms, +4.2 MB RSS, 50,008
+mallocs, and nothing visible to the caller until the last entry is read. The PAL
+already has a streaming iterator; `fs.c` wraps it in a loop that buffers everything.
+
+### B-006 — no durability: `fsync` is unreachable
+
+**Status:** open. RFC-0001 §4.4.
+
+The complete list of sync-ish libc symbols the whole library imports is `msync`.
+There is no `fsync` and no `fdatasync`, so `proven_fs_write_file_atomic` cannot be
+made crash-durable **even by a caller willing to pay for it** — you cannot sync the
+file, and you cannot sync the directory the rename happened in.
+
+### B-007 — no stream abstraction; console output is 213x the syscalls of stdio
+
+**Status:** open. **This is the keystone item.** RFC-0001 §4.1, §4.2.
+
+There is no `proven_writer_t` and no `proven_reader_t`. The formatter's only sink is
+`proven_u8str_t`; a file is a `proven_file_t`; the scanner reads either a view or a
+`proven_sysio_scanner_t`. Four types, four function families, no common interface —
+so you cannot write one `serialize(writer, value)` that works over both memory and a
+file, and you cannot format directly into a file at all.
+
+Measured: `proven_println` × 10,000 issues **10,000 `write()` syscalls** (stdio: 47)
+and **10,000 mallocs** — one heap round-trip per line. **The logging path allocates**,
+which is the one place an allocation is least welcome: a program logging its way out
+of an out-of-memory condition will fail to log it.
+
+`proven_sysio_flush` is a no-op on POSIX (`ret`, one instruction) and a full disk
+sync on Windows. One API, two meanings, neither of them what the name promised. Its
+documentation now says so.
+
+### B-008 — no line reader
+
+**Status:** open. RFC-0001 §4.3.
+
+There is no way to read a file line by line. The only route is
+`proven_fs_read_all_u8str` — the whole file into memory — then split on `\n` by hand.
+Unusable for a file larger than memory; absurd for a log tail. The buffered scanner
+is token-oriented and has no delimiter entry point.
+
+### B-009 — the formatter cannot ask for float precision, and has no `{:c}`
+
+**Status:** open. RFC-0001 §3.
+
+`{}` means six decimals, forever. `{:.3}` is `INVALID_FORMAT`. The engine behind
+`proven_float_format_f64_policy` does precision, scientific and shortest-round-trip
+— **and the `{}` syntax cannot reach any of it.** Consequences: a float column cannot
+be aligned (12.5 renders nine wide, 100.0 renders ten, overflowing the column), and a
+log line with a latency to three decimals cannot be expressed at all.
+
+Also missing: `{:c}` (there is no way to emit a single character — `PROVEN_ARG('Z')`
+prints `90`), `bool`, `{:X}`, `{:o}`, `{:b}`, `{:#x}`, `{:+}`.
+
+### B-010 — the formatter has no extension point
+
+**Status:** open. RFC-0001 §3.
+
+`proven_arg_type_t` is a closed enum. To format a user struct you must pre-render it
+into your own buffer and pass a string — which means you cannot then compose it:
+`{:>20}` on a user type is impossible unless you pad it yourself. Wanted:
+`proven_arg_custom(user, render_fn)`.
 
 ### B-000 — the alias layer had drifted (closed v26.07.12c)
 

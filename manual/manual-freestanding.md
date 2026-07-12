@@ -1,4 +1,4 @@
-# Proven Freestanding Mode (v26.07.12e)
+# Proven Freestanding Mode (v26.07.12f)
 
 This guide describes the current `PROVEN_FREESTANDING` configuration as implemented by `nob.c` and the public headers.
 
@@ -98,6 +98,10 @@ Do not add excluded hosted modules to a bare-metal build unless you also provide
 
 ## 4. Minimal static arena setup
 
+There is no heap, so the memory comes from a static block and an arena is laid over
+it. The arena does not own that block: `alloc` bumps an offset, `free` is a no-op,
+and `reset` rewinds the whole thing at once.
+
 ```c
 #include "proven/types.h"
 #include "proven/memory.h"
@@ -105,32 +109,29 @@ Do not add excluded hosted modules to a bare-metal build unless you also provide
 #include "proven/array.h"
 #include "proven/panic.h"
 
-static alignas(PROVEN_MAX_ALIGN) proven_byte_t g_storage[4096];
-static proven_arena_t g_arena;
-static proven_allocator_t g_alloc;
+/* static storage: no OS, no heap, known at link time */
+static alignas(PROVEN_MAX_ALIGN) proven_byte_t storage[4096];
 
-void platform_init(void) {
-g_arena = proven_arena_create((proven_mem_mut_t){
-.ptr = g_storage,
-.size = sizeof g_storage,
+proven_arena_t arena = proven_arena_create((proven_mem_mut_t){
+    .ptr = storage,
+    .size = sizeof storage,
 });
-g_alloc = proven_arena_as_allocator(&g_arena);
+proven_allocator_t arena_alloc = proven_arena_as_allocator(&arena);
+
+proven_result_array_t r = PROVEN_ARRAY_INIT(arena_alloc, proven_i32, 16);
+if (proven_is_ok(r.err)) {
+    proven_array_t values = r.value;
+    proven_err_t e = PROVEN_ARRAY_PUSH(&values, proven_i32, 42);
+    (void)e;
+    PROVEN_ARRAY_DESTROY(&values); /* arena free is a no-op */
 }
 
-proven_err_t make_values(void) {
-proven_result_array_t r = PROVEN_ARRAY_INIT(g_alloc, proven_i32, 16);
-if (!proven_is_ok(r.err)) return r.err;
-
-proven_array_t values = r.value;
-proven_err_t e = PROVEN_ARRAY_PUSH(&values, proven_i32, 42);
-PROVEN_ARRAY_DESTROY(&values); /* arena free is a no-op */
-return e;
-}
+proven_arena_destroy(&arena);      /* also a no-op: the caller owns `storage` */
 ```
 
 Common mistake:
 
-```c
+```text
 proven_allocator_t heap = proven_heap_allocator();
 heap.alloc_fn(heap.ctx, 64, 8); /* wrong: heap is invalid in PROVEN_FREESTANDING */
 ```
@@ -140,7 +141,8 @@ Correct:
 ```c
 proven_allocator_t heap = proven_heap_allocator();
 if (!proven_alloc_is_valid(heap)) {
-/* use an arena, pool, or target-provided allocator instead */
+    /* use an arena, pool, or target-provided allocator instead */
+    proven_panic("no heap on this target");
 }
 ```
 
@@ -148,7 +150,9 @@ if (!proven_alloc_is_valid(heap)) {
 
 `proven_arena_alloc_or_panic()` and related panic paths call `proven_panic()`, which dispatches to the handler installed with `proven_set_panic_handler()`. The default handler traps.
 
-```c
+The handler is a whole function, so this is a listing rather than a fragment:
+
+```text
 #include "proven/panic.h"
 
 static void my_panic(const char *msg) {
@@ -200,18 +204,24 @@ If your toolchain uses the `riscv64-unknown-elf-gcc` name, use that compiler ins
 
 Float formatting is disabled by `PROVEN_FMT_NO_FLOAT`. Integer and string-view formatting remain available.
 
-Correct:
+Correct (`alloc` here is an arena allocator, as in section 4 - there is no heap):
 
 ```c
-proven_u8str_t s = make_fixed_string_from_arena();
-proven_u8str_append_fmt_grow(g_alloc, &s, "value={}", PROVEN_ARG(123));
+proven_result_u8str_t r = proven_u8str_create(alloc, 32);
+if (proven_is_ok(r.err)) {
+    proven_fmt_result_t f = proven_u8str_append_fmt_grow(alloc, &r.value,
+                                                         "value={}", PROVEN_ARG(123));
+    (void)f;
+    proven_u8str_destroy(alloc, &r.value);
+}
 ```
 
 Wrong:
 
-```c
-proven_u8str_append_fmt_grow(g_alloc, &s, "{}", PROVEN_ARG(3.14));
-/* wrong in the current freestanding profile: float args are excluded */
+```text
+proven_u8str_append_fmt_grow(alloc, &s, "{}", PROVEN_ARG(3.14));
+/* wrong in the current freestanding profile: float args are excluded, so
+   PROVEN_ARG has no _Generic association for double and this fails to compile */
 ```
 
 ## 8a. Tuning the float big-integer capacity
@@ -240,7 +250,7 @@ rounding boundary can need up to 767 significant digits.
 
 Do not call these in the current freestanding profile:
 
-```c
+```text
 proven_fs_open(...);
 proven_println(...);
 proven_env_get(...);
@@ -256,7 +266,7 @@ Freestanding does not relax container rules.
 
 Wrong:
 
-```c
+```text
 int *p = PROVEN_ARRAY_GET_MUT(&arr, int, 0);
 PROVEN_ARRAY_PUSH(&arr, int, 9);
 *p = 1; /* wrong: push may have moved the array */
@@ -264,7 +274,7 @@ PROVEN_ARRAY_PUSH(&arr, int, 9);
 
 Wrong:
 
-```c
+```text
 proven_u8str_view_t key = make_stack_view();
 PROVEN_MAP_SET_U8_BORROWED(&map, key, int, 1);
 return; /* wrong if map survives after key bytes go out of scope */

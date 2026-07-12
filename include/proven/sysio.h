@@ -33,7 +33,21 @@
 [[nodiscard]] proven_file_t proven_sysio_stderr(void);
 
 /**
- * @brief Flushes the internal buffer of the given file/stream to the OS.
+ * @brief Historically "flushes the buffer". There is no buffer.
+ *
+ * proven writes go straight to the OS - there is no user-space buffering
+ * anywhere in this library - so on POSIX this call does nothing at all. On
+ * Windows it currently calls FlushFileBuffers, which is a *disk* sync, a far
+ * stronger and much slower thing.
+ *
+ * @note Do not use this. It means nothing on one platform and something
+ *       expensive on the other, and it means neither of the things its old
+ *       description implied: it is not a buffer flush (there is no buffer) and
+ *       it is not a portable durability barrier (it is a no-op on POSIX).
+ *       Nothing in the library depends on it.
+ * @note This is tracked as B-004 in docs/BACKLOG.md. `flush` acquires an honest
+ *       meaning when the buffered writer lands, and durability gets its own
+ *       explicit call rather than hiding inside a word that promises less.
  */
 void proven_sysio_flush(proven_file_t file);
 

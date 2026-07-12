@@ -1,4 +1,4 @@
-# Proven C Library Complete Manual (v26.07.12e)
+# Proven C Library Complete Manual (v26.07.12f)
 
 This manual is rebuilt from three sources:
 
@@ -94,15 +94,17 @@ Correct:
 
 ```c
 proven_result_mem_mut_t r = alloc.alloc_fn(alloc.ctx, 128, PROVEN_DEFAULT_ALIGNMENT);
-if (!proven_is_ok(r.err)) {
-    return r.err;
+if (proven_is_ok(r.err)) {
+    /* only now does r.value mean anything */
+    proven_mem_mut_t mem = r.value;
+    (void)proven_mem_copy(mem.ptr, mem.size, proven_mem_view_from_u8(PROVEN_LIT("hi")));
+    alloc.free_fn(alloc.ctx, mem.ptr);
 }
-proven_mem_mut_t mem = r.value;
 ```
 
-Wrong:
+Wrong (does not compile as shown - the value is read before the error is checked):
 
-```c
+```text
 proven_result_mem_mut_t r = alloc.alloc_fn(alloc.ctx, 128, PROVEN_DEFAULT_ALIGNMENT);
 use_bytes(r.value.ptr, r.value.size); /* wrong: r.err was not checked */
 ```
@@ -113,7 +115,7 @@ Many public structs expose layout for C usability. This does not mean arbitrary 
 
 Wrong:
 
-```c
+```text
 arr.len = 999;      /* wrong: breaks array invariants */
 str.internal.cap=0; /* wrong: breaks string invariants */
 ```
@@ -126,7 +128,7 @@ Views do not own memory. A `proven_u8str_view_t`, `proven_u16str_view_t`, `prove
 
 Wrong:
 
-```c
+```text
 proven_u8str_view_t v = proven_u8str_as_view(&s);
 proven_u8str_append_grow(alloc, &s, PROVEN_LIT("more"));
 use_view(v); /* wrong: growth may reallocate s */
@@ -137,9 +139,10 @@ use_view(v); /* wrong: growth may reallocate s */
 A `proven_allocator_t` is valid only when all three function pointers are present. Reallocation must be failure-atomic: if it fails, the old allocation remains valid.
 
 ```c
-proven_allocator_t alloc = proven_heap_allocator();
-if (!proven_alloc_is_valid(alloc)) {
-    return PROVEN_ERR_UNSUPPORTED;
+proven_allocator_t heap = proven_heap_allocator();
+if (!proven_alloc_is_valid(heap)) {
+    /* no usable allocator here: e.g. the freestanding heap stub */
+    proven_panic("no heap allocator on this target");
 }
 ```
 

@@ -17,7 +17,7 @@ This chapter covers `array.h`, `list.h`, `ring.h`, `map.h`, and `algorithm.h`.
 
 ### Structures
 
-```c
+```text
 typedef struct {
     proven_allocator_t alloc;
     proven_byte_t *data;
@@ -70,15 +70,21 @@ Example:
 
 ```c
 proven_result_array_t r = PROVEN_ARRAY_INIT(alloc, int, 4);
-if (!proven_is_ok(r.err)) return r.err;
+if (!proven_is_ok(r.err)) {
+    return;
+}
 proven_array_t nums = r.value;
 
-PROVEN_ARRAY_PUSH(&nums, int, 10);
-PROVEN_ARRAY_PUSH(&nums, int, 20);
+(void)PROVEN_ARRAY_PUSH(&nums, int, 10);
+(void)PROVEN_ARRAY_PUSH(&nums, int, 20);
 
+/* GET points into the array's own storage, and returns NULL out of range. */
 const int *first = PROVEN_ARRAY_GET(&nums, int, 0);
-if (first) use_int(*first);
+if (first) {
+    proven_println("first={}", PROVEN_ARG(*first));
+}
 
+/* The array stores its allocator, so destroy needs nothing but the array. */
 PROVEN_ARRAY_DESTROY(&nums);
 ```
 
@@ -88,7 +94,7 @@ PROVEN_ARRAY_DESTROY(&nums);
 
 ### Structures
 
-```c
+```text
 typedef struct proven_list_node_t {
     struct proven_list_node_t *next;
     struct proven_list_node_t *prev;
@@ -118,7 +124,7 @@ Example:
 ```c
 typedef struct Item {
     int value;
-    proven_list_node_t link;
+    proven_list_node_t link;   /* the list lives inside the object; it allocates nothing */
 } Item;
 
 proven_list_t list;
@@ -129,11 +135,14 @@ Item b = { .value = 2 };
 proven_list_push_back(&list, &a.link);
 proven_list_push_back(&list, &b.link);
 
+int total = 0;
 proven_list_node_t *it = NULL;
 PROVEN_LIST_FOR_EACH(it, &list) {
+    /* The iterator walks nodes; ENTRY converts a node back to its owner. */
     Item *item = PROVEN_LIST_ENTRY(it, Item, link);
-    use_item(item);
+    total += item->value;
 }
+proven_println("total={}", PROVEN_ARG(total));   /* 3 */
 ```
 
 ## 3. Ring buffer
@@ -142,7 +151,7 @@ PROVEN_LIST_FOR_EACH(it, &list) {
 
 ### Structures
 
-```c
+```text
 typedef struct {
     proven_allocator_t alloc;
     proven_mem_mut_t internal;
@@ -178,17 +187,23 @@ Example:
 
 ```c
 proven_result_ring_t r = PROVEN_RING_INIT(alloc, int, 8);
-if (!proven_is_ok(r.err)) return r.err;
+if (!proven_is_ok(r.err)) {
+    return;
+}
 proven_ring_t q = r.value;
 
 proven_err_t e = PROVEN_RING_PUSH(&q, int, 7);
 if (!proven_is_ok(e)) {
+    /* The ring is fixed-capacity: a full ring is PROVEN_ERR_OUT_OF_BOUNDS,
+     * never a silent grow. */
     PROVEN_RING_DESTROY(&q);
-    return e;
+    return;
 }
 
 int out = 0;
-PROVEN_RING_POP(&q, int, &out);
+e = PROVEN_RING_POP(&q, int, &out);   /* FIFO: out == 7. Empty ring is OUT_OF_BOUNDS. */
+(void)e;
+
 PROVEN_RING_DESTROY(&q);
 ```
 
@@ -198,7 +213,7 @@ PROVEN_RING_DESTROY(&q);
 
 ### Structures
 
-```c
+```text
 typedef enum {
     PROVEN_KEY_TYPE_INT,          /* keys are proven_size_t integers */
     PROVEN_KEY_TYPE_U8_BORROWED,  /* keys are u8 views; caller keeps the bytes alive */
@@ -339,14 +354,20 @@ typedef struct UserInfo {
 } UserInfo;
 
 proven_result_map_t r = PROVEN_MAP_INIT_INT(alloc, UserInfo, 8);
-if (!proven_is_ok(r.err)) return r.err;
+if (!proven_is_ok(r.err)) {
+    return;
+}
 proven_map_t users = r.value;
 
 UserInfo u = { .level = 3, .budget = 99.0 };
-PROVEN_MAP_SET_INT(&users, 404, UserInfo, u);
+(void)PROVEN_MAP_SET_INT(&users, 404, UserInfo, u);
 
+/* GET returns a pointer into the bucket array, or NULL when absent. Any insert
+ * that rehashes invalidates it: look it up, use it, drop it. */
 const UserInfo *found = PROVEN_MAP_GET_INT(&users, UserInfo, 404);
-if (found) use_user(found);
+if (found) {
+    proven_println("level={}", PROVEN_ARG(found->level));
+}
 
 PROVEN_MAP_DESTROY(&users);
 ```
@@ -357,7 +378,7 @@ Array algorithms operate on `proven_array_t` and a comparison callback.
 
 ### Comparison function
 
-```c
+```text
 typedef int (*proven_compare_fn_t)(const void *a, const void *b);
 ```
 
@@ -389,13 +410,13 @@ Two properties are worth stating, because they are the ones that bite:
 
 The sort is not stable: equal elements may be reordered.
 
-Example:
+The comparator is an ordinary file-scope function, so the shape is:
 
-```c
+```text
 static int cmp_int(const void *a, const void *b) {
     int x = *(const int *)a;
     int y = *(const int *)b;
-    return (x > y) - (x < y);
+    return (x > y) - (x < y);   /* not (x - y): that overflows */
 }
 
 proven_array_sort(&nums, cmp_int);
@@ -403,13 +424,16 @@ int key = 20;
 int *hit = proven_array_binary_search(&nums, &key, cmp_int);
 ```
 
+The worked example at the end of this chapter (`manual/examples/ex_04_array.c`)
+is the compiled-and-run version of exactly this.
+
 ## 6. Examples and misuse cases
 
 ### Pointers into arrays can become stale
 
 Wrong:
 
-```c
+```text
 int *p = PROVEN_ARRAY_GET_MUT(&nums, int, 0);
 PROVEN_ARRAY_PUSH(&nums, int, 30);
 *p = 99; /* wrong: push may have reallocated the array */
@@ -418,16 +442,29 @@ PROVEN_ARRAY_PUSH(&nums, int, 30);
 Correct:
 
 ```c
-PROVEN_ARRAY_PUSH(&nums, int, 30);
+proven_result_array_t r = PROVEN_ARRAY_INIT(alloc, int, 2);
+if (!proven_is_ok(r.err)) {
+    return;
+}
+proven_array_t nums = r.value;
+(void)PROVEN_ARRAY_PUSH(&nums, int, 10);
+
+/* Push first, then take the pointer. A pointer fetched before a push may point
+ * at a block the array has already reallocated away. */
+(void)PROVEN_ARRAY_PUSH(&nums, int, 30);
 int *p = PROVEN_ARRAY_GET_MUT(&nums, int, 0);
-if (p) *p = 99;
+if (p) {
+    *p = 99;
+}
+
+PROVEN_ARRAY_DESTROY(&nums);
 ```
 
 ### One intrusive node belongs to one list at a time
 
 Wrong:
 
-```c
+```text
 proven_list_push_back(&list_a, &item.link);
 proven_list_push_back(&list_b, &item.link); /* wrong */
 ```
@@ -439,11 +476,25 @@ Use one embedded node per membership.
 Correct:
 
 ```c
+typedef struct Item {
+    int value;
+    proven_list_node_t link;
+} Item;
+
+proven_list_t list;
+proven_list_init(&list);
+Item a = { .value = 1 };
+Item b = { .value = 2 };
+proven_list_push_back(&list, &a.link);
+proven_list_push_back(&list, &b.link);
+
+/* The SAFE form reads `it->next` into `next` before the body runs, so removing
+ * `it` (which nulls its links) cannot strand the loop. */
 proven_list_node_t *it = NULL;
 proven_list_node_t *next = NULL;
 PROVEN_LIST_FOR_EACH_SAFE(it, next, &list) {
     Item *item = PROVEN_LIST_ENTRY(it, Item, link);
-    if (should_remove(item)) {
+    if (item->value % 2 == 0) {
         proven_list_remove(it);
     }
 }
@@ -453,24 +504,39 @@ PROVEN_LIST_FOR_EACH_SAFE(it, next, &list) {
 
 Wrong:
 
-```c
+```text
 PROVEN_RING_PUSH(&q, int, value); /* wrong if you ignore full-ring errors */
 ```
 
 Correct:
 
 ```c
-proven_err_t e = PROVEN_RING_PUSH(&q, int, value);
-if (e == PROVEN_ERR_OUT_OF_BOUNDS) {
-    handle_full_queue();
+proven_result_ring_t r = PROVEN_RING_INIT(alloc, int, 2);
+if (!proven_is_ok(r.err)) {
+    return;
 }
+proven_ring_t q = r.value;
+
+int value = 7;
+for (int i = 0; i < 3; ++i) {
+    proven_err_t e = PROVEN_RING_PUSH(&q, int, value);
+    if (e == PROVEN_ERR_OUT_OF_BOUNDS) {
+        /* The ring is full. Drop the item, or drain one first - but decide. */
+        int drop = 0;
+        (void)PROVEN_RING_POP(&q, int, &drop);
+        e = PROVEN_RING_PUSH(&q, int, value);
+    }
+    (void)e;
+}
+
+PROVEN_RING_DESTROY(&q);
 ```
 
 ### Borrowed map keys must outlive entries
 
 Wrong:
 
-```c
+```text
 proven_u8str_t key = make_key(alloc);
 PROVEN_MAP_SET_U8_BORROWED(&m, proven_u8str_as_view(&key), int, 1);
 proven_u8str_destroy(alloc, &key);
@@ -487,11 +553,31 @@ Correct options:
 
 If `element` points into map storage and insertion can rehash, use `proven_map_set_with_scratch()` or the scratch macros.
 
+```c
+proven_result_map_t r = PROVEN_MAP_INIT_INT(alloc, int, 4);
+if (!proven_is_ok(r.err)) {
+    return;
+}
+proven_map_t m = r.value;
+(void)PROVEN_MAP_SET_INT(&m, 1, int, 42);
+
+/* `src` points into the map's own bucket array. Passing it straight to
+ * proven_map_set would be an alias: a rehash triggered by that same insert can
+ * free the bytes it is still reading from. The scratch form captures the source
+ * bytes into a temporary from `scratch` first, so the insert is alias-safe. */
+const int *src = PROVEN_MAP_GET_INT(&m, int, 1);
+if (src) {
+    (void)proven_map_set_with_scratch(&m, (proven_map_key_t){ .id = 2 }, src, scratch);
+}
+
+PROVEN_MAP_DESTROY(&m);
+```
+
 ### Binary search requires sorted input
 
 Wrong:
 
-```c
+```text
 int *hit = proven_array_binary_search(&nums, &key, cmp_int);
 /* wrong if nums was not sorted by cmp_int */
 ```

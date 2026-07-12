@@ -15,7 +15,7 @@ This chapter covers `allocator.h`, `heap.h`, `arena.h`, `pool.h`, and `buffer.h`
 
 ### Function pointer types
 
-```c
+```text
 typedef proven_result_mem_mut_t (*proven_alloc_fn_t)(
     void *ctx,
     proven_size_t size,
@@ -49,7 +49,7 @@ Intent:
 
 ### `proven_allocator_t`
 
-```c
+```text
 typedef struct {
     void *ctx;
     proven_alloc_fn_t alloc_fn;
@@ -67,7 +67,7 @@ Fields:
 
 ### `proven_alloc_is_valid`
 
-```c
+```text
 static inline bool proven_alloc_is_valid(proven_allocator_t alloc);
 ```
 
@@ -78,23 +78,22 @@ Return: true if the trait can be called.
 Correct:
 
 ```c
-proven_allocator_t alloc = proven_heap_allocator();
-if (!proven_alloc_is_valid(alloc)) {
-    return PROVEN_ERR_UNSUPPORTED;
-}
+proven_allocator_t heap = proven_heap_allocator();
+proven_err_t err = proven_alloc_is_valid(heap) ? PROVEN_OK : PROVEN_ERR_UNSUPPORTED;
+(void)err;   /* a freestanding build hands back a zero allocator, not a valid one */
 ```
 
 Wrong:
 
-```c
+```text
 proven_allocator_t alloc = {0};
 proven_result_mem_mut_t r = alloc.alloc_fn(alloc.ctx, 64, 8); /* wrong: null call */
 ```
 
 ## 2. Heap allocator
 
-```c
-proven_allocator_t proven_heap_allocator(void);
+```text
+[[nodiscard]] proven_allocator_t proven_heap_allocator(void);
 ```
 
 Purpose: return a PAL-backed heap allocator.
@@ -108,12 +107,15 @@ Example:
 ```c
 proven_allocator_t heap = proven_heap_allocator();
 if (!proven_alloc_is_valid(heap)) {
-    return PROVEN_ERR_UNSUPPORTED;
+    return;   /* freestanding build: there is no heap to allocate from */
 }
 
 proven_result_mem_mut_t r = heap.alloc_fn(heap.ctx, 256, PROVEN_DEFAULT_ALIGNMENT);
-if (!proven_is_ok(r.err)) return r.err;
+if (!proven_is_ok(r.err)) {
+    return;
+}
 
+/* r.value.ptr is 256 writable bytes; free it through the same allocator. */
 heap.free_fn(heap.ctx, r.value.ptr);
 ```
 
@@ -123,7 +125,7 @@ An arena allocates linearly from caller-provided backing storage. Individual fre
 
 ### `proven_arena_t`
 
-```c
+```text
 typedef struct {
     proven_mem_mut_t backing;
     proven_size_t offset;
@@ -167,9 +169,12 @@ proven_arena_t arena = proven_arena_create((proven_mem_mut_t){
 });
 
 proven_result_mem_mut_t r = proven_arena_alloc(&arena, 64);
-if (!proven_is_ok(r.err)) return r.err;
+if (!proven_is_ok(r.err)) {
+    return;   /* the arena cannot grow: it reports NOMEM instead */
+}
 
-proven_arena_reset(&arena);
+proven_arena_reset(&arena);   /* reclaims r and everything else at once */
+proven_arena_destroy(&arena);
 ```
 
 ### Arena with growable containers
@@ -179,17 +184,29 @@ Growable containers can use an arena allocator, but growth may abandon earlier b
 Correct:
 
 ```c
+alignas(max_align_t) proven_byte_t storage[4096];
+proven_arena_t arena = proven_arena_create((proven_mem_mut_t){
+    .ptr = storage,
+    .size = sizeof storage,
+});
 proven_allocator_t a = proven_arena_as_allocator(&arena);
+
+/* Ask for the capacity up front, so growth never has to abandon a block. */
 proven_result_array_t ar = PROVEN_ARRAY_INIT(a, int, 128);
-if (!proven_is_ok(ar.err)) return ar.err;
+if (!proven_is_ok(ar.err)) {
+    return;
+}
+(void)PROVEN_ARRAY_PUSH(&ar.value, int, 10);
+PROVEN_ARRAY_DESTROY(&ar.value);   /* correct, but arena free reclaims nothing */
+proven_arena_reset(&arena);        /* this is what gives the bytes back */
 ```
 
 Risky:
 
-```c
+```text
 proven_result_array_t ar = PROVEN_ARRAY_INIT(a, int, 1);
 for (int i = 0; i < 10000; ++i) {
-    PROVEN_ARRAY_PUSH(&ar.value, int, i); /* may consume arena storage repeatedly */
+    PROVEN_ARRAY_PUSH(&ar.value, int, i); /* every regrow abandons the old block */
 }
 ```
 
@@ -199,7 +216,7 @@ A pool recycles fixed-size blocks. It is useful when many objects have exactly t
 
 ### `proven_pool_t`
 
-```c
+```text
 typedef struct {
     proven_allocator_t base_alloc;
     proven_size_t item_size;
@@ -213,8 +230,8 @@ typedef struct {
 Fields:
 
 - `base_alloc`: allocator used for new blocks and the recycle bin.
-- `item_size`: exact object size accepted by the pool.
-- `item_align`: exact object alignment.
+- `item_size`: exact object size accepted by the pool. Any other size is rejected with `PROVEN_ERR_INVALID_ARG`.
+- `item_align`: the alignment every block is allocated with. A request for a *stricter* alignment is rejected with `PROVEN_ERR_INVALID_ARG`; a looser one is served, since the block already meets it.
 - `bin`: cached free-list array.
 - `bin_cap`: maximum cached block count.
 - `bin_len`: current cached block count.
@@ -241,7 +258,7 @@ and over cheaply".
 
 #### Counter-examples
 
-```c
+```text
 /* WRONG: the pool only handles its configured size/alignment. */
 proven_allocator_t a = proven_pool_as_allocator(&pool);   /* item_size == sizeof(Node) */
 a.alloc_fn(a.ctx, sizeof(BigThing), alignof(BigThing));   /* not the pool's item -> rejected */
@@ -266,18 +283,15 @@ Example:
 typedef struct Node { int value; } Node;
 
 proven_pool_t pool = {0};
-proven_err_t e = proven_pool_init(
-    &pool,
-    proven_heap_allocator(),
-    sizeof(Node),
-    alignof(Node),
-    64
-);
-if (!proven_is_ok(e)) return e;
+proven_err_t e = proven_pool_init(&pool, alloc, sizeof(Node), alignof(Node), 64);
+if (!proven_is_ok(e)) {
+    return;
+}
 
 proven_allocator_t node_alloc = proven_pool_as_allocator(&pool);
 proven_result_mem_mut_t n = node_alloc.alloc_fn(node_alloc.ctx, sizeof(Node), alignof(Node));
 if (proven_is_ok(n.err)) {
+    /* Hand it back before destroy: the pool does not track live items. */
     node_alloc.free_fn(node_alloc.ctx, n.value.ptr);
 }
 
@@ -286,7 +300,7 @@ proven_pool_destroy(&pool);
 
 Wrong:
 
-```c
+```text
 node_alloc.alloc_fn(node_alloc.ctx, sizeof(LargerObject), alignof(LargerObject));
 /* wrong: one pool is for one fixed object size and alignment */
 ```
@@ -297,7 +311,7 @@ node_alloc.alloc_fn(node_alloc.ctx, sizeof(LargerObject), alignof(LargerObject))
 
 ### `proven_buf_t`
 
-```c
+```text
 typedef struct {
     proven_byte_t *ptr;
     proven_size_t len;
@@ -313,7 +327,7 @@ Fields:
 
 ### `proven_result_buf_t`
 
-```c
+```text
 typedef struct {
     proven_err_t err;
     proven_buf_t value;
@@ -332,16 +346,18 @@ Example:
 
 ```c
 proven_result_buf_t r = proven_buf_create(alloc, 64);
-if (!proven_is_ok(r.err)) return r.err;
+if (!proven_is_ok(r.err)) {
+    return;
+}
 proven_buf_t buf = r.value;
 
 proven_err_t e = proven_buf_append(&buf, (proven_mem_view_t){
     .ptr = (const proven_byte_t *)"abc",
     .size = 3,
 });
+(void)e;   /* PROVEN_ERR_OUT_OF_BOUNDS if it would not fit: the buffer never grows */
 
 proven_buf_destroy(alloc, &buf);
-return e;
 ```
 
 ## 6. Examples and misuse cases
@@ -351,14 +367,18 @@ return e;
 Correct:
 
 ```c
+proven_allocator_t heap = proven_heap_allocator();
+
 proven_result_buf_t r = proven_buf_create(heap, 128);
-if (!proven_is_ok(r.err)) return r.err;
-proven_buf_destroy(heap, &r.value);
+if (!proven_is_ok(r.err)) {
+    return;
+}
+proven_buf_destroy(heap, &r.value);   /* the same allocator that created it */
 ```
 
 Wrong:
 
-```c
+```text
 proven_result_buf_t r = proven_buf_create(heap, 128);
 proven_buf_destroy(other_alloc, &r.value); /* wrong: allocator mismatch */
 ```
@@ -366,8 +386,19 @@ proven_buf_destroy(other_alloc, &r.value); /* wrong: allocator mismatch */
 ### Arena free is a no-op
 
 ```c
+alignas(max_align_t) proven_byte_t storage[1024];
+proven_arena_t arena = proven_arena_create((proven_mem_mut_t){
+    .ptr = storage,
+    .size = sizeof storage,
+});
 proven_allocator_t a = proven_arena_as_allocator(&arena);
-a.free_fn(a.ctx, ptr); /* legal call, but intentionally does not reclaim one object */
+
+proven_result_mem_mut_t r = proven_arena_alloc(&arena, 32);
+if (proven_is_ok(r.err)) {
+    /* Legal, and correct to write - but it intentionally reclaims nothing. */
+    a.free_fn(a.ctx, r.value.ptr);
+}
+proven_arena_reset(&arena);   /* only this gives the 32 bytes back */
 ```
 
 ### Pool size contract
@@ -375,20 +406,39 @@ a.free_fn(a.ctx, ptr); /* legal call, but intentionally does not reclaim one obj
 Correct:
 
 ```c
-node_alloc.alloc_fn(node_alloc.ctx, sizeof(Node), alignof(Node));
+typedef struct Node { int value; } Node;
+
+proven_pool_t pool = {0};
+if (!proven_is_ok(proven_pool_init(&pool, alloc, sizeof(Node), alignof(Node), 8))) {
+    return;
+}
+proven_allocator_t node_alloc = proven_pool_as_allocator(&pool);
+
+/* The pool serves exactly the size and alignment it was configured with. */
+proven_result_mem_mut_t n = node_alloc.alloc_fn(node_alloc.ctx, sizeof(Node), alignof(Node));
+if (proven_is_ok(n.err)) {
+    node_alloc.free_fn(node_alloc.ctx, n.value.ptr);
+}
+
+/* Anything else is refused with PROVEN_ERR_INVALID_ARG rather than served. */
+proven_result_mem_mut_t wrong = node_alloc.alloc_fn(node_alloc.ctx, sizeof(Node) * 2, alignof(Node));
+(void)wrong;
+
+proven_pool_destroy(&pool);
 ```
 
 Wrong:
 
-```c
+```text
 node_alloc.alloc_fn(node_alloc.ctx, sizeof(Other), alignof(Other));
+/* wrong: PROVEN_ERR_INVALID_ARG - a pool is for one size and one alignment */
 ```
 
 ### Buffer append does not grow
 
 Wrong:
 
-```c
+```text
 proven_buf_append(&buf, huge_data); /* returns out-of-bounds; no automatic growth */
 ```
 
@@ -399,17 +449,32 @@ Use `proven_u8str_append_grow()` or an array if you need growth.
 Correct:
 
 ```c
-proven_buf_t buf = ...;
-/* buf already contains initialized bytes */
+proven_result_buf_t r = proven_buf_create(alloc, 64);
+if (!proven_is_ok(r.err)) {
+    return;
+}
+proven_buf_t buf = r.value;
+
 proven_err_t e = proven_buf_append(&buf, (proven_mem_view_t){
-    .ptr = buf.ptr + 2,
-    .size = 4,
+    .ptr = (const proven_byte_t *)"abcdefgh",
+    .size = 8,
 });
+if (proven_is_ok(e)) {
+    /* The source view points back into the buffer's own bytes. That is allowed:
+     * append moves rather than copies, so the overlap is well defined. */
+    e = proven_buf_append(&buf, (proven_mem_view_t){
+        .ptr = buf.ptr + 2,
+        .size = 4,
+    });
+}
+(void)e;
+
+proven_buf_destroy(alloc, &buf);
 ```
 
 Wrong:
 
-```c
+```text
 proven_sys_mem_copy(buf.ptr + buf.len, buf.ptr + 2, 4); /* copy is not the public contract here */
 ```
 

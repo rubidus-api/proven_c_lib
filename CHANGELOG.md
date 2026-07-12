@@ -11,6 +11,64 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-12] — proven_c_lib-v26.07.12f
+
+Two audits went looking for weakness in the formatter and the I/O layer. They found
+several things that were quietly wrong — fixed here — and one thing that is missing,
+which is now designed rather than patched: see `docs/RFC-0001-streams-and-io.md`.
+
+### Fixed
+
+- **`{:08}` was accepted and silently wrong.** The `0` was eaten as the first digit of
+  the width, so `{:08}` on 42 produced `"      42"` — space-padded, eight wide, no
+  error — and `{:08x}` produced `"      2a"`. That is the spelling every C, Python and
+  Rust programmer reaches for. A near-miss that is accepted and quietly does the wrong
+  thing is worse than one that is rejected. A leading zero now means zero-fill; an
+  explicit fill still wins.
+- **A format spec the argument could not honour was ignored.** `{:x}` on a double
+  printed `3.500000`; on a string it printed the string. The request was parsed and
+  dropped on the floor, and the call reported success. It is now
+  `PROVEN_ERR_INVALID_FORMAT`.
+- **`proven_sysio_flush`'s documentation was a lie.** It claimed to flush an internal
+  buffer to the OS. There is no buffer: on POSIX it is a single `ret` instruction, and
+  on Windows it is `FlushFileBuffers` — a full disk sync. One API, two meanings,
+  neither of them the promised one. The header now says exactly that, and says not to
+  use it.
+- **`proven_arg_f64`'s documentation was wrong twice.** It is not round-half-up (it is
+  correctly rounded, ties-to-even, matching `printf("%.6f")`), and the form is not
+  always fixed-point (`5e-7` renders as `5.000000e-07`, not `0.000000`).
+- Six more false claims found while making the manual's code compile: the pool's
+  `item_align` is an upper bound, not an exact match; the panic fallback is `while(1)`
+  on non-GCC compilers; the buffered scanner *does* refill and retry rather than
+  failing on a token that reaches the end of the buffer; `proven_fs_stat_t.created_at`
+  is always 0; `PROVEN_FS_TYPE_OTHER` is never produced; and `src/proven/time.c` *is*
+  compiled in freestanding builds (only the clock backend is absent).
+
+### Added
+
+- **`docs/RFC-0001-streams-and-io.md`** — the design for what is missing, with the
+  measurements behind it. The short version: **there is no stream abstraction.** No
+  `proven_writer_t`, no `proven_reader_t`. The formatter's only sink is
+  `proven_u8str_t`, so you cannot format into a file; there is no line reader, so you
+  cannot read a file line by line without loading all of it; and `proven_println`
+  issues **10,000 `write()` syscalls and 10,000 mallocs for 10,000 lines** (stdio: 47
+  syscalls, 0). The logging path allocates — the one place an allocation is least
+  welcome. Seven backlog items (B-004 … B-010) and a ten-step plan, ordered so that
+  each step is useful on its own.
+- `tests/test_regression_fmt_spec_silently_wrong` — pins both silent formatter
+  defects. Verified to fail against the pre-fix source.
+- **The build now compiles every code block in the manual.** `nob` extracts each `c`
+  block, wraps it in a function body, and syntax-checks it. A chapter whose code stops
+  compiling stops the build.
+
+### Changed
+
+- **Every code block in the manual is now real.** Of ~190 fenced `c` blocks, four could
+  be compiled before this cycle. Every one is now either a compiled-and-run program
+  from `manual/examples/`, a fragment the build syntax-checks, or a `text` fence for
+  the things that are not runnable code (signature listings, struct listings,
+  deliberate counter-examples). Closes `docs/BACKLOG.md` B-002.
+
 ## [2026-07-12] — proven_c_lib-v26.07.12e
 
 ### Added

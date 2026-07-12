@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.07.12e)
+# proven Test Matrix (v26.07.12f)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 |---|---|---|
 | `unit` | Does this module do what it says, used the way a caller uses it? | 46 |
 | `contract` | Does it *refuse* what it says it refuses? | 10 |
-| `regression` | Does a defect that actually shipped stay fixed? | 6 |
+| `regression` | Does a defect that actually shipped stay fixed? | 7 |
 | `differential` | Does it agree with an oracle we did not write? | 4 |
 | `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 10 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
@@ -959,6 +959,14 @@ Failure tip: inspect public invariant guards in array/map mutation entry points 
 ## Regression tests
 
 One test per defect that actually shipped. Each is named for what broke, not for a version or a number, and each was verified to FAIL against the pre-fix source. A regression test that passes before the fix is not a regression test.
+
+### `tests/test_regression_fmt_spec_silently_wrong` — formatter specs that used to be silently wrong
+
+Intent: verify `{:08}` zero-pads instead of eating the `0` as a width digit, and that a spec the argument cannot honour (hex on a double or a string) is rejected rather than ignored.
+
+Note: both defects failed the worst way available — silently. `{:08}` on 42 produced `"      42"` and returned OK; `{:x}` on a double printed `3.500000` and returned OK. A spelling that is accepted and quietly does the wrong thing is worse than one that is rejected.
+
+Failure tip: inspect the spec parser and the applicability guard in `src/proven/fmt.c`.
 
 ### `tests/test_regression_fs_copy_to_self` — filesystem self-copy regression
 
