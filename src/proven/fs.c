@@ -1135,3 +1135,28 @@ bool proven_fs_is_absolute(proven_u8str_view_t path) {
 #undef PROVEN_FS_IS_SEP
     return false;
 }
+
+// -------------------------------------------------------------
+// Recursive walk
+//
+// Contract first, implementation next - see docs/TESTING.md §5.1. This is the stub the
+// contract's tests were written against; they fail here, on purpose, and the commit that
+// implements the walk makes them pass without changing what they assert.
+// -------------------------------------------------------------
+
+proven_result_walk_t proven_fs_walk_open(proven_allocator_t alloc, proven_u8str_view_t root,
+                                         proven_size_t max_depth) {
+    (void)alloc; (void)root; (void)max_depth;
+    proven_result_walk_t res = {0};
+    res.err = PROVEN_ERR_UNSUPPORTED;
+    return res;
+}
+
+proven_err_t proven_fs_walk_next(proven_fs_walk_t *walk, proven_fs_walk_entry_t *out_entry) {
+    (void)walk; (void)out_entry;
+    return PROVEN_ERR_UNSUPPORTED;
+}
+
+void proven_fs_walk_close(proven_fs_walk_t *walk) {
+    (void)walk;
+}
