@@ -189,6 +189,44 @@ int main(void) {
             "Forcing fixed is what {:f} is FOR. It must not change what {} does.");
     }
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a writer that has failed stays failed",
+        "flush() used to answer PROVEN_OK after a write had already failed - the buffer was empty, so there was nothing left to fail on.",
+        "The shape \"write, write, write, check the flush\" is how almost everyone uses a buffered writer. On a full disk it reported success on a stream missing every byte.");
+    // ---------------------------------------------------------------
+    {
+        static throttled_sink_t sink;
+        memset(&sink, 0, sizeof sink);
+        sink.accept_per_call = 0;
+        sink.fail_after_calls = 0;   /* fails immediately, like a full disk */
+
+        proven_writer_t raw = {
+            .ctx = &sink, .write_fn = throttled_write, .flush_fn = throttled_flush,
+        };
+        static proven_byte_t bufmem[4096];
+        proven_writer_buffered_t bw;
+        proven_writer_t w = proven_writer_buffered(&bw, raw,
+            (proven_mem_mut_t){ .ptr = bufmem, .size = sizeof bufmem });
+
+        /* Bigger than the buffer, so it goes straight to the sink - and the sink dies. */
+        static proven_byte_t payload[10000];
+        memset(payload, 'x', sizeof payload);
+
+        proven_err_t err = proven_writer_write(w, (proven_mem_view_t){ .ptr = payload, .size = sizeof payload });
+        PROVEN_TEST_ASSERT(err == PROVEN_ERR_IO, "the write must fail", "");
+
+        err = proven_writer_flush(w);
+        PROVEN_TEST_ASSERT(err == PROVEN_ERR_IO,
+            "and the flush must NOT report success",
+            "It used to return PROVEN_OK: nothing was left in the buffer, so nothing failed. A caller that checks only the flush - which is most callers - was told a stream missing 10,000 bytes had been written.");
+
+        /* And it does not quietly recover, either. */
+        err = proven_writer_write(w, (proven_mem_view_t){ .ptr = payload, .size = 8 });
+        PROVEN_TEST_ASSERT(err == PROVEN_ERR_IO,
+            "a later write on a failed writer must also fail",
+            "The byte stream has a hole in it. Continuing to write into it produces a file that looks complete and is not.");
+    }
+
     PROVEN_TEST_PASS("partial writes, failed reads, and {:f} all behave.");
     return 0;
 }

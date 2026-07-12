@@ -779,6 +779,15 @@ been designed badly:
   take — the first version kept the whole buffer and re-sent it, so a failing sink
   received the accepted prefix twice.
 
+- **A writer that has failed stays failed.** Once a buffered writer has lost bytes, the
+  stream it was producing has a hole in it that the receiver cannot see, so every later
+  write and flush returns the original error. There is no `clear()`: if you have a
+  recovery story it involves a new writer over a new sink, not pretending this one is
+  fine. (Before this, `flush` answered `PROVEN_OK` after a failed write — the buffer was
+  empty, so there was nothing left to fail on — and "write, write, write, check the
+  flush", which is how almost everyone uses a buffered writer, reported success on a
+  full disk.)
+
 A reader's rule is the mirror image: **a read that fails is an error, never an end of
 file.** `proven_reader_read` returns `PROVEN_ERR_IO`, not a clean zero-byte EOF, when
 the source breaks — because a file cut short by a disk error and a file that simply
