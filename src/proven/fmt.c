@@ -371,7 +371,7 @@ static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fm
         case 'x': case 'X': case 'o': case 'b': case 'd':
             if (!is_int) { ctx->err = PROVEN_ERR_INVALID_FORMAT; return; }
             break;
-        case 'f': case 'g':
+        case 'f': case 'g': case 'e':
             if (!is_float) { ctx->err = PROVEN_ERR_INVALID_FORMAT; return; }
             break;
         default:
@@ -444,6 +444,11 @@ static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fm
             if (spec.type == 'g') {
                 opt = proven_float_format_options_shortest();
                 policy = PROVEN_FLOAT_FORMAT_POLICY_RYU;
+            } else if (spec.type == 'e') {
+                /* Always scientific, printf %e: precision digits after the point (default 6). */
+                opt.mode = PROVEN_FLOAT_FORMAT_MODE_SCIENTIFIC;
+                opt.precision = (spec.precision >= 0) ? spec.precision : 6;
+                policy = PROVEN_FLOAT_FORMAT_POLICY_SIMPLE;
             } else if (spec.precision >= 0 || spec.type == 'f') {
                 opt.mode = PROVEN_FLOAT_FORMAT_MODE_FIXED;
                 opt.precision = (spec.precision >= 0) ? spec.precision : 6;

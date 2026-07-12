@@ -21,6 +21,14 @@ typedef enum {
 typedef enum {
     PROVEN_FLOAT_FORMAT_MODE_FIXED = 0,
     PROVEN_FLOAT_FORMAT_MODE_SHORTEST = 1,
+    /**
+     * @brief Always scientific: "d.ddde±XX", `precision` digits after the point, whatever
+     *        the magnitude. This is printf's %e - the one float form FIXED and SHORTEST do
+     *        not cover, because FIXED only reaches scientific for extreme magnitudes and
+     *        SHORTEST picks the shorter spelling. The correctly-rounded scientific core is
+     *        the same one the default form already uses at the extremes.
+     */
+    PROVEN_FLOAT_FORMAT_MODE_SCIENTIFIC = 2,
 } proven_float_format_mode_t;
 
 typedef struct {
@@ -44,6 +52,11 @@ static inline proven_float_format_options_t proven_float_format_options_fixed_de
 
 static inline proven_float_format_options_t proven_float_format_options_shortest(void) {
     return (proven_float_format_options_t){ .mode = PROVEN_FLOAT_FORMAT_MODE_SHORTEST, .precision = 0 };
+}
+
+/** @brief Always-scientific with 6 digits after the point, like printf's default %e. */
+static inline proven_float_format_options_t proven_float_format_options_scientific(void) {
+    return (proven_float_format_options_t){ .mode = PROVEN_FLOAT_FORMAT_MODE_SCIENTIFIC, .precision = 6 };
 }
 
 [[nodiscard]]
