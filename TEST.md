@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.07.12d)
+# proven Test Matrix (v26.07.12e)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -22,7 +22,7 @@ The class says what kind of question the test answers:
 | `differential` | Does it agree with an oracle we did not write? | 4 |
 | `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 10 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
-| `docs` | Are the claims the documentation makes still true? | 3 |
+| `docs` | Are the claims the documentation makes still true? | 4 |
 | `bench` | How fast is it? (Not a correctness gate.) | 2 |
 
 ## Table of contents
@@ -1124,6 +1124,14 @@ Sub-checks:
 - Uses macro aliases that are expected to stay available for the alias layer.
 
 Failure tip: inspect `include/proven/alias_xcv.h` and `tests/test_docs_alias_smoke.c`. When public symbols are added, renamed, or removed, update the alias header and this smoke test together.
+
+### `tests/test_docs_manual_ch08_contracts` — manual chapter 8 scanner contracts
+
+Intent: verify every behaviour manual chapter 8 states as fact about the scanner is actually true — error codes, cursor restoration on failure, decimal-only integers (`0x10` is zero), the overflow/underflow asymmetry, and the non-transactional structural scan.
+
+Note: prose is where a contract goes to drift. Chapter 8 makes 18 factual claims about the scanner; this test makes each one executable. A false claim fails the build and names itself.
+
+Failure tip: find the named claim in `manual/manual-08-fmt-scan.md` and decide which side is wrong before changing either.
 
 ### `tests/test_docs_manual_examples` — manual examples match the manual
 

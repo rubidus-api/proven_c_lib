@@ -11,6 +11,37 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-12] — proven_c_lib-v26.07.12e
+
+### Added
+
+- **Manual chapter 8, sections 7-13** — the scanner half of the chapter, which had
+  never been written. The chapter listed thirteen sections and ended at a bare
+  `## 7. Scanner data model` heading. Closes `docs/BACKLOG.md` **B-001**.
+
+  It was written against *measured* behaviour, not against the header, and that is
+  how the surprising parts came to be documented at all:
+
+  - `proven_scan_i64("0x10")` is the integer **zero**, cursor at 1. The integer
+    scanners are decimal only - no hex, no octal, no base prefix.
+  - `"1e309"` is `PROVEN_ERR_OVERFLOW`, but `"1e-400"` is `PROVEN_OK` with the value
+    `0.0`. The asymmetry is deliberate: underflow to zero *is* the correctly rounded
+    answer, while overflow has no correct finite answer at all.
+  - `proven_scan_u64("-1")` is rejected rather than wrapping to a huge unsigned
+    value - which is how a bounds check gets defeated.
+  - **The structural scanner is not transactional.** When a literal fails to match,
+    the placeholders *before* the mismatch have already been written through: the
+    call returns `PROVEN_ERR_NOT_FOUND` and your destination holds a value anyway.
+    On failure, treat every destination as clobbered.
+  - Trailing input is **not** an error. The scanner matches what you asked for and
+    stops; it does not police what you did not ask about.
+
+- `manual/examples/ex_08_scan_recovery.c` — provokes every scan error code on
+  purpose, including the non-transactional failure. Compiled and run by the build.
+- `tests/test_docs_manual_ch08_contracts` — asserts each of the 18 behaviours
+  chapter 8 states as fact. Prose is where a contract goes to drift; this one
+  cannot. A false claim fails the build and names itself.
+
 ## [2026-07-12] — proven_c_lib-v26.07.12d
 
 The manual's examples are now programs, the tests are named for what they check,
