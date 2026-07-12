@@ -136,6 +136,12 @@ wrong for the input it will actually meet.**
   is over-aligned now, and elements aligned more strictly than the scratch take the swap path,
   which only ever shows the comparator real array elements.
 
+- **A fixed-buffer writer that had overflowed reported success on flush**, because it had no
+  flush function at all — `proven_writer_flush` returned `PROVEN_OK` for it. "Render, render,
+  render, check the flush" is what every caller does, and it was told a buffer that had refused
+  half the output was fine. It reports the overflow now, and a later chunk that *would* fit is
+  refused as well: writing it would land it after the hole.
+
 - **A buffered writer that had failed reported success on the next flush.** The failing
   write emptied nothing into the buffer, so `flush` found nothing to fail on and answered
   `PROVEN_OK` — and "write, write, write, check the flush", which is how almost everyone
