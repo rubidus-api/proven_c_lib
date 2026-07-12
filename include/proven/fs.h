@@ -308,6 +308,91 @@ proven_err_t proven_fs_dir_next(proven_fs_dir_t *dir, proven_fs_dir_entry_t *out
 
 void proven_fs_dir_close(proven_fs_dir_t *dir);
 
+// -----------------------------------------------------------------------------
+// Recursive walk
+// -----------------------------------------------------------------------------
+
+/** @brief Descend without limit. */
+#define PROVEN_FS_WALK_UNLIMITED ((proven_size_t)-1)
+
+typedef struct {
+    /**
+     * @brief Full path, from the root the walk was opened on. Borrowed.
+     *
+     * Valid until the next call to proven_fs_walk_next or _close. Copy it if you need it
+     * to outlive the step - the walk reuses one buffer, which is what lets a walk of a
+     * million entries cost one allocation instead of a million.
+     */
+    proven_u8str_view_t path;
+
+    /** @brief The last component of `path`. Borrowed, same lifetime. */
+    proven_u8str_view_t name;
+
+    /** @brief FILE, DIR, or OTHER - and it follows symlinks, exactly as proven_fs_stat does. */
+    proven_fs_type_t type;
+
+    /** @brief Size in bytes for a regular file; 0 otherwise. */
+    proven_size_t size;
+
+    /** @brief 0 for an entry directly inside the root, 1 for one level down, and so on. */
+    proven_size_t depth;
+} proven_fs_walk_entry_t;
+
+typedef struct {
+    void *internal;
+} proven_fs_walk_t;
+
+typedef struct {
+    proven_err_t    err;
+    proven_fs_walk_t value;
+} proven_result_walk_t;
+
+/**
+ * @brief Opens a recursive, pre-order walk of `root`.
+ *
+ * The walk that proven_fs_dir_* deliberately does not give you, with the three things a
+ * recursive walker gets wrong:
+ *
+ * - **It cannot loop.** `type` follows symlinks (so a link to a directory is a DIR, and the
+ *   walk and proven_fs_stat agree about it), which means a link pointing at an ancestor is
+ *   a CYCLE. The walk carries the (dev, ino) of every directory on the current path and
+ *   refuses to descend into one it is already inside. The cycle entry is still REPORTED -
+ *   it exists, and hiding it would be its own lie - it is simply not descended into.
+ *
+ * - **It does not hide what it could not read.** A directory the walk cannot open is
+ *   reported: proven_fs_walk_next returns that directory's error, with `out_entry` filled
+ *   in so you know which one it was, and the walk goes on from the next sibling. A tree
+ *   walker that silently skips an unreadable directory is how a backup misses a subtree
+ *   and reports success.
+ *
+ * - **Its memory is bounded by DEPTH, not by breadth.** One open directory handle and one
+ *   (dev, ino) pair per level of the current path, plus a single reused path buffer. A
+ *   directory of a million entries costs no more than a directory of ten.
+ *
+ * @param alloc     Allocator for the walk's own state. Freed by proven_fs_walk_close.
+ * @param root      The directory to walk. Not itself reported; its contents are.
+ * @param max_depth How far to descend. 0 reports only the entries directly inside `root`
+ *                  and descends nowhere; PROVEN_FS_WALK_UNLIMITED has no limit. A directory
+ *                  at the limit is still REPORTED (it is an entry); it is not descended into.
+ *
+ * @note Not thread-safe, like every other handle in this library. One walk per thread.
+ */
+[[nodiscard]]
+proven_result_walk_t proven_fs_walk_open(proven_allocator_t alloc, proven_u8str_view_t root,
+                                         proven_size_t max_depth);
+
+/**
+ * @brief The next entry in pre-order, or PROVEN_ERR_EOF when the walk is finished.
+ *
+ * A directory is reported BEFORE its contents. On an error that belongs to one directory
+ * (it could not be opened, or its read failed), the error is returned and `out_entry`
+ * describes that directory; call again to continue with the rest of the tree.
+ */
+[[nodiscard]]
+proven_err_t proven_fs_walk_next(proven_fs_walk_t *walk, proven_fs_walk_entry_t *out_entry);
+
+void proven_fs_walk_close(proven_fs_walk_t *walk);
+
 /**
  * @brief Lists the contents of a directory into an array of proven_fs_entry_t.
  * @note This uses the provided allocator to store strings for entry names.

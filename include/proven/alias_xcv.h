@@ -241,6 +241,9 @@
 #define xcv_fs_tell proven_fs_tell
 #define xcv_fs_truncate proven_fs_truncate
 #define xcv_fs_type_t proven_fs_type_t
+#define xcv_fs_walk_close proven_fs_walk_close
+#define xcv_fs_walk_next proven_fs_walk_next
+#define xcv_fs_walk_open proven_fs_walk_open
 #define xcv_fs_write proven_fs_write
 #define xcv_fs_write_all proven_fs_write_all
 #define xcv_fs_write_file proven_fs_write_file
