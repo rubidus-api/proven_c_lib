@@ -238,12 +238,69 @@ bool proven_fs_is_absolute(proven_u8str_view_t path);
 
 /**
  * @brief Reads the entire contents of a file into a newly allocated buffer.
- * @note If the file size changes concurrently, this reads up to the original size
- *       or until EOF is reached, returning the actual number of bytes read.
- *       If the final shrink realloc fails, this returns the original larger 
- *       allocation with `value.size` correctly set to the actual bytes read.
+ *
+ * @note Reads to EOF, not to a pre-measured size. The file's reported size only
+ *       seeds the initial capacity, so a regular file is still read in one
+ *       allocation and one pass - but a source whose size cannot be known up
+ *       front (pipe, FIFO, /proc entry, character device) is read correctly
+ *       rather than returning empty, and a regular file that grows mid-read is
+ *       not silently truncated.
+ * @note An empty source yields `{.ptr = NULL, .size = 0}` with PROVEN_OK.
+ * @note A regular file of known size costs exactly one allocation: EOF is
+ *       confirmed with a one-byte probe rather than by growing the buffer.
+ *       The buffer only grows if the source really does outrun its reported
+ *       size. If the final shrink realloc fails, the larger allocation is
+ *       returned with `value.size` correctly set to the bytes read.
  */
 [[nodiscard]]
 proven_result_mem_mut_t proven_fs_read_all(proven_allocator_t alloc, proven_u8str_view_t path);
+
+/**
+ * @brief Reads the entire contents of a file into a newly allocated owned string.
+ *
+ * The whole-file read most callers actually want: the result is a
+ * NUL-terminated `proven_u8str_t`, so `proven_u8str_as_view` and
+ * `proven_u8str_as_cstr` work on it without a second copy. The terminator is
+ * reserved up front, so this costs no extra allocation over proven_fs_read_all.
+ *
+ * @note Contents are not validated as UTF-8; the bytes are returned as they are.
+ * @note Same EOF and allocator semantics as proven_fs_read_all.
+ * @note Destroy the result with proven_u8str_destroy.
+ */
+[[nodiscard]]
+proven_result_u8str_t proven_fs_read_all_u8str(proven_allocator_t alloc, proven_u8str_view_t path);
+
+/**
+ * @brief Writes a buffer to a path in one call, creating or truncating the file.
+ *
+ * @note Not atomic: a reader can observe a partially written file, and a failure
+ *       mid-write leaves the file truncated. Use proven_fs_write_file_atomic
+ *       when a concurrent reader must never see a half-written file.
+ */
+[[nodiscard]]
+proven_err_t proven_fs_write_file(proven_allocator_t scratch, proven_u8str_view_t path, proven_mem_view_t data);
+
+/**
+ * @brief Writes a buffer to a path via a sibling temp file and a rename.
+ *
+ * A concurrent reader sees either the entire old file or the entire new one,
+ * never a partial write. On any failure the temp file is removed and the
+ * original file is left untouched.
+ *
+ * @note Permissions are preserved. If the target exists, its mode is copied onto
+ *       the temp file before the rename, so rewriting a 0600 file does not
+ *       republish it as 0644. A new file gets the process default, as with
+ *       proven_fs_write_file.
+ * @note Atomic with respect to readers, not durable across power loss: proven
+ *       exposes no fsync, so the rename may reach the disk before the data.
+ * @note Replaces, rather than follows, a symbolic link at `path`: the rename
+ *       leaves a regular file where the link was. proven_fs_write_file writes
+ *       *through* the link instead. Pick accordingly.
+ * @note Needs write permission on the containing directory, and a filesystem
+ *       where the temp sibling and the target share a mount (they always do,
+ *       since the temp file is created next to the target).
+ */
+[[nodiscard]]
+proven_err_t proven_fs_write_file_atomic(proven_allocator_t scratch, proven_u8str_view_t path, proven_mem_view_t data);
 
 #endif /* PROVEN_FS_H */
