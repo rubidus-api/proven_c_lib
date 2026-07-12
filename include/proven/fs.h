@@ -266,6 +266,16 @@ typedef struct {
     proven_u8str_view_t name;
     proven_fs_type_t    type;
     proven_size_t       size;
+
+    /**
+     * @brief This entry was reached through a symlink. `type` still describes the TARGET.
+     *
+     * You need both facts, and they are different facts. `type` follows the link so that a
+     * listing and proven_fs_stat agree about what a thing is. `is_symlink` says how you got
+     * there — and a tree walker has to know, because following a symlinked directory can
+     * walk it straight out of the tree it was asked about.
+     */
+    bool is_symlink;
 } proven_fs_dir_entry_t;
 
 /**
@@ -336,6 +346,9 @@ typedef struct {
 
     /** @brief 0 for an entry directly inside the root, 1 for one level down, and so on. */
     proven_size_t depth;
+
+    /** @brief Reached through a symlink. `type` describes the target; the walk does not enter it. */
+    bool is_symlink;
 } proven_fs_walk_entry_t;
 
 typedef struct {
@@ -353,11 +366,18 @@ typedef struct {
  * The walk that proven_fs_dir_* deliberately does not give you, with the three things a
  * recursive walker gets wrong:
  *
- * - **It cannot loop.** `type` follows symlinks (so a link to a directory is a DIR, and the
- *   walk and proven_fs_stat agree about it), which means a link pointing at an ancestor is
- *   a CYCLE. The walk carries the (dev, ino) of every directory on the current path and
- *   refuses to descend into one it is already inside. The cycle entry is still REPORTED -
- *   it exists, and hiding it would be its own lie - it is simply not descended into.
+ * - **It cannot loop, and it cannot escape.** The walk never descends THROUGH a symlink.
+ *   A symlinked directory is still REPORTED (it exists, `type` is DIR, `is_symlink` is
+ *   true, and hiding it would be its own lie) — it is simply not entered. That one rule
+ *   buys both guarantees: a link pointing at an ancestor cannot loop the walk, and a link
+ *   pointing anywhere else cannot walk you out of the tree you asked about and into the
+ *   rest of the filesystem. (This rule is here because the contract's own test found the
+ *   first draft of it — "follow, but stop at a cycle" — quietly walking all of /tmp.)
+ *
+ *   Belt and braces: the walk also carries the (dev, ino) of every directory on the current
+ *   path and refuses to descend into one it is already inside, which covers the loops a
+ *   symlink is not needed for — bind mounts, and the hardlinked directories some
+ *   filesystems still allow.
  *
  * - **It does not hide what it could not read.** A directory the walk cannot open is
  *   reported: proven_fs_walk_next returns that directory's error, with `out_entry` filled

@@ -49,7 +49,10 @@ int main(void) {
  *       hidden.txt           (never visible)
  */
 static void make_fixture(void) {
-    (void)system("rm -rf walkroot && mkdir -p walkroot/sub/deep walkroot/locked");
+    /* chmod first: a previous run that died mid-test leaves `locked` at mode 000, and then
+     * `rm -rf` cannot remove it and the fixture comes up half-built. */
+    (void)system("chmod -R u+rwx walkroot 2>/dev/null; rm -rf walkroot");
+    (void)system("mkdir -p walkroot/sub/deep walkroot/locked");
     (void)system("printf a > walkroot/a.txt");
     (void)system("printf b > walkroot/sub/b.txt");
     (void)system("printf c > walkroot/sub/deep/c.txt");
@@ -59,7 +62,7 @@ static void make_fixture(void) {
 }
 
 static void drop_fixture(void) {
-    (void)system("chmod 700 walkroot/locked 2>/dev/null; rm -rf walkroot");
+    (void)system("chmod -R u+rwx walkroot 2>/dev/null; rm -rf walkroot");
 }
 
 /* Did the walk report a path ending in `suffix`? */
@@ -229,11 +232,6 @@ int main(void) {
     {
         (void)system("rm -rf widedir && mkdir -p widedir");
         (void)system("cd widedir && for i in $(seq 1 2000); do : > f$i; done");
-
-        /* An allocator that counts. */
-        static struct { proven_allocator_t inner; int allocs; } counter;
-        counter.inner = heap;
-        counter.allocs = 0;
 
         proven_result_walk_t w = proven_fs_walk_open(heap, PROVEN_LIT("widedir"), PROVEN_FS_WALK_UNLIMITED);
         PROVEN_TEST_ASSERT(proven_is_ok(w.err), "the wide walk must open", "");

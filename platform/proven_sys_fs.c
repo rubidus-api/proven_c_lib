@@ -410,9 +410,9 @@ int proven_sys_fs_dir_step(proven_sys_dir_handle_t handle, proven_sys_dir_entry_
             return -1; // Allocation failed
         }
     }
+    out_entry->is_symlink = (wd->fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
     out_entry->is_dir = (wd->fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-    out_entry->is_regular = !out_entry->is_dir &&
-        (wd->fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
+    out_entry->is_regular = !out_entry->is_dir && !out_entry->is_symlink;
     uint64_t sz = ((uint64_t)wd->fd.nFileSizeHigh << 32) | wd->fd.nFileSizeLow;
     if (sz > (uint64_t)PROVEN_SIZE_MAX) out_entry->size = PROVEN_SIZE_MAX;
     else out_entry->size = (size_t)sz;
@@ -440,6 +440,10 @@ int proven_sys_fs_dir_step(proven_sys_dir_handle_t handle, proven_sys_dir_entry_
          * link fails the follow and lands in the fallback below, which reports OTHER: it
          * cannot be opened, so calling it a file would be the lie that started this.
          */
+        struct stat lst;
+        out_entry->is_symlink = (fstatat(dirfd(d), entry->d_name, &lst, AT_SYMLINK_NOFOLLOW) == 0) &&
+                                S_ISLNK(lst.st_mode);
+
         if (fstatat(dirfd(d), entry->d_name, &st, 0) == 0) {
             out_entry->is_dir = S_ISDIR(st.st_mode);
             out_entry->is_regular = S_ISREG(st.st_mode) != 0;
