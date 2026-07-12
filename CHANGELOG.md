@@ -222,6 +222,20 @@ in it. That is the point of B-011, made twice in one day.
 
 ### Added
 
+- **`proven/hash.h` — hashing, organised by use case.** lowent's case study needed a
+  content-addressing digest, found proven had no hash of any kind, and hand-wrote BLAKE3-256
+  — "exactly the kind of code that should not be hand-rolled". There is no single "hash", so
+  the module gives one primitive per job and names the job: `proven_hash_bytes` (FNV-1a) for
+  your own table on trusted input; `proven_hash_keyed` (SipHash-2-4) for a table on *untrusted*
+  input, where a non-keyed hash lets an attacker collide every key into one bucket;
+  `proven_crc32` (IEEE, gzip/zlib/PNG-compatible, streaming) for detecting *corruption*; and
+  `proven_sha256` (FIPS 180-4, streaming, with a git/sha256sum-style hex) for *fingerprinting*
+  content safely against a forged match. Every one is byte-exact and endianness-independent,
+  all are royalty-free, all are implemented from their specifications rather than copied, and
+  each is checked against its standard's own known-answer vectors (`tests/test_unit_hash`) and
+  differentially against Python's hashlib/zlib and an independent SipHash over every length to
+  300. The second feature written test-first (`docs/TESTING.md` §5.1).
+
 - **`proven_fs_walk`** — recursive, pre-order directory iteration that **cannot loop and cannot
   escape**. The manual had been telling callers to guard against symlink cycles themselves ever
   since the walk learned to follow links; this is the guard. It never descends *through* a
