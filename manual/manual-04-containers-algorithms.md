@@ -262,8 +262,17 @@ key+value), or **TOMBSTONE** (a removed entry). `payload_offset` and
 `bucket_stride` are computed once at create time from `elem_size`/`align`, so
 addressing bucket `i`'s value is just `internal.ptr + i*bucket_stride + payload_offset`.
 
-- **Hashing.** Integer keys go through a SplitMix/Murmur-style bit-mix finalizer
-  (so sequential ids spread across buckets); U8 keys use FNV-1a over the bytes.
+- **Hashing, and why the default is the safe one.** Integer keys go through a
+  SplitMix/Murmur-style bit-mix finaliser (so sequential ids spread across buckets).
+  **String keys are hashed with keyed SipHash-2-4 under a per-process secret** drawn once
+  from the OS CSPRNG — because a map that hashes *untrusted* keys with a predictable function
+  is a denial of service waiting to happen: an attacker who controls the keys computes
+  collisions offline, floods them all into one bucket, and turns every lookup into a linear
+  scan. Keying the hash with a secret they cannot see is what closes that, and it is the same
+  choice Python, Rust, and the Linux kernel made for their own tables. If your keys all come
+  from your own program, `proven_map_create_trusted` opts into fast unkeyed FNV-1a instead;
+  `proven_map_hash` shows you which function a given map actually uses. (On a freestanding
+  target, which has no CSPRNG and no attacker model, string keys fall back to FNV.)
 - **Probing.** Linear open addressing: the start bucket is `hash & (cap - 1)`
   (cheap because `cap` is a power of two), then the search walks forward one
   bucket at a time, wrapping around, until it finds the key (OCCUPIED with an
