@@ -170,18 +170,28 @@ static void introsort(proven_byte_t *base, proven_size_t n, proven_size_t size,
             --pc;
         }
 
-        // Sweep the two equal runs from the ends into the middle.
+        // The loop leaves the array as
+        //
+        //   [ ==  |  <   |   >   |  ==  ]
+        //   0..pa-1  pa..pb-1  pc+1..pd  pd+1..n-1
+        //
+        // so the equal elements sit at the two ENDS and have to be swept into the
+        // middle. Each sweep exchanges as many elements as the shorter of the two
+        // runs it is joining - swapping more would run off the end of one of them.
+        proven_size_t left_equal  = pa;                   /* == parked at the front */
+        proven_size_t left_less   = pb - pa;              /* strictly less than pivot */
+        proven_size_t right_more  = pd - pc;              /* strictly greater than pivot */
+        proven_size_t right_equal = n - 1 - pd;           /* == parked at the back */
+
         proven_size_t s;
-        s = (pa < pb - pa) ? pa : pb - pa;
+        s = (left_equal < left_less) ? left_equal : left_less;
         vec_swap(base, elem_at(base, pb - s, size), s, size);
 
-        proven_size_t right_equal = pd - pc;              /* count of == parked right */
-        proven_size_t tail = n - 1 - pd;                  /* elements after pd */
-        s = (right_equal < tail) ? right_equal : tail;
+        s = (right_equal < right_more) ? right_equal : right_more;
         vec_swap(elem_at(base, pb, size), elem_at(base, n - s, size), s, size);
 
-        proven_size_t left_n  = pb - pa;                  /* strictly less than pivot */
-        proven_size_t right_n = pd - pc;                  /* strictly greater than pivot */
+        proven_size_t left_n  = left_less;
+        proven_size_t right_n = right_more;
 
         // Elements equal to the pivot are now in the middle and final; never
         // recurse into them. All-equal input therefore costs one pass, not n.
