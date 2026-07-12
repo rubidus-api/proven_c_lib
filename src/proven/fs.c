@@ -398,7 +398,8 @@ typedef struct {
 static internal_slurp_t internal_read_to_eof(proven_allocator_t alloc,
                                              proven_file_t f,
                                              proven_byte_t *ptr,
-                                             proven_size_t cap) {
+                                             proven_size_t cap,
+                                             proven_size_t align) {
     internal_slurp_t res = {0};
     proven_size_t len = 0;
 
@@ -417,7 +418,7 @@ static internal_slurp_t internal_read_to_eof(proven_allocator_t alloc,
                 res.err = PROVEN_ERR_OVERFLOW;
                 return res;
             }
-            proven_result_mem_mut_t grow = alloc.realloc_fn(alloc.ctx, ptr, cap, new_cap, 1);
+            proven_result_mem_mut_t grow = alloc.realloc_fn(alloc.ctx, ptr, cap, new_cap, align);
             if (!proven_is_ok(grow.err)) {
                 /* realloc is failure-atomic: `ptr` is still the live allocation. */
                 alloc.free_fn(alloc.ctx, ptr);
@@ -462,7 +463,8 @@ static internal_slurp_t internal_read_to_eof(proven_allocator_t alloc,
  */
 static internal_slurp_t internal_slurp_path(proven_allocator_t alloc,
                                             proven_u8str_view_t path,
-                                            proven_size_t extra) {
+                                            proven_size_t extra,
+                                            proven_size_t align) {
     internal_slurp_t res = {0};
 
     proven_result_file_t f_res = proven_fs_open(alloc, path, PROVEN_FS_READ);
@@ -487,14 +489,14 @@ static internal_slurp_t internal_slurp_path(proven_allocator_t alloc,
     }
     if (cap == 0) cap = INTERNAL_SLURP_CHUNK;
 
-    proven_result_mem_mut_t m_res = alloc.alloc_fn(alloc.ctx, cap, 1);
+    proven_result_mem_mut_t m_res = alloc.alloc_fn(alloc.ctx, cap, align);
     if (!proven_is_ok(m_res.err)) {
         proven_fs_close(f);
         res.err = m_res.err;
         return res;
     }
 
-    res = internal_read_to_eof(alloc, f, m_res.value.ptr, cap);
+    res = internal_read_to_eof(alloc, f, m_res.value.ptr, cap, align);
     proven_fs_close(f);
     return res;
 }
@@ -506,7 +508,7 @@ proven_result_mem_mut_t proven_fs_read_all(proven_allocator_t alloc, proven_u8st
         return res;
     }
 
-    internal_slurp_t s = internal_slurp_path(alloc, path, 0);
+    internal_slurp_t s = internal_slurp_path(alloc, path, 0, 1);
     if (!proven_is_ok(s.err)) {
         res.err = s.err;
         return res;
@@ -541,8 +543,14 @@ proven_result_u8str_t proven_fs_read_all_u8str(proven_allocator_t alloc, proven_
         return res;
     }
 
-    /* +1 so the NUL that proven_u8str_as_cstr relies on always has room. */
-    internal_slurp_t s = internal_slurp_path(alloc, path, 1);
+    /* +1 so the NUL that proven_u8str_as_cstr relies on always has room.
+     *
+     * PROVEN_DEFAULT_ALIGNMENT, not 1: the caller may go on to grow or destroy
+     * this string through the normal u8str entry points, which realloc and free
+     * it at that alignment. A block must be reallocated with the alignment it
+     * was allocated with, so the string this returns has to be allocated exactly
+     * as proven_u8str_create would have allocated it. */
+    internal_slurp_t s = internal_slurp_path(alloc, path, 1, PROVEN_DEFAULT_ALIGNMENT);
     if (!proven_is_ok(s.err)) {
         res.err = s.err;
         return res;
@@ -556,7 +564,7 @@ proven_result_u8str_t proven_fs_read_all_u8str(proven_allocator_t alloc, proven_
             res.err = alloc.realloc_fn ? PROVEN_ERR_OVERFLOW : PROVEN_ERR_UNSUPPORTED;
             return res;
         }
-        proven_result_mem_mut_t grow = alloc.realloc_fn(alloc.ctx, s.ptr, s.cap, new_cap, 1);
+        proven_result_mem_mut_t grow = alloc.realloc_fn(alloc.ctx, s.ptr, s.cap, new_cap, PROVEN_DEFAULT_ALIGNMENT);
         if (!proven_is_ok(grow.err)) {
             alloc.free_fn(alloc.ctx, s.ptr);
             res.err = grow.err;
@@ -565,7 +573,7 @@ proven_result_u8str_t proven_fs_read_all_u8str(proven_allocator_t alloc, proven_
         s.ptr = grow.value.ptr;
         s.cap = new_cap;
     } else if (s.len + 1 < s.cap && alloc.realloc_fn) {
-        proven_result_mem_mut_t shrink = alloc.realloc_fn(alloc.ctx, s.ptr, s.cap, s.len + 1, 1);
+        proven_result_mem_mut_t shrink = alloc.realloc_fn(alloc.ctx, s.ptr, s.cap, s.len + 1, PROVEN_DEFAULT_ALIGNMENT);
         if (proven_is_ok(shrink.err)) {
             s.ptr = shrink.value.ptr;
             s.cap = s.len + 1;
