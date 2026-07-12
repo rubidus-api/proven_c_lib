@@ -278,10 +278,12 @@
 #define xcv_list_remove proven_list_remove
 #define xcv_list_t proven_list_t
 #define xcv_map_create proven_map_create
+#define xcv_map_create_trusted proven_map_create_trusted
 #define xcv_map_create_with_capacity proven_map_create_with_capacity
 #define xcv_map_destroy proven_map_destroy
 #define xcv_map_get proven_map_get
 #define xcv_map_get_mut proven_map_get_mut
+#define xcv_map_hash proven_map_hash
 #define xcv_map_is_valid proven_map_is_valid
 #define xcv_map_key_t proven_map_key_t
 #define xcv_map_remove proven_map_remove
