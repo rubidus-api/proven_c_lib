@@ -71,6 +71,15 @@ typedef struct {
 
 /**
  * @brief Initializes a buffered sysio scanner.
+ *
+ * @note Size `buffer_capacity` for the longest TOKEN you expect. Whitespace in front of a
+ *       token does not count: it is consumed before the scan proper, so a run of it longer
+ *       than the buffer is not a problem. A token that does not fit is
+ *       PROVEN_ERR_OUT_OF_BOUNDS, never a truncated value.
+ * @note A failed scan restores every byte a scan could still read. It may consume the
+ *       whitespace ahead of the token - no scan can address that whitespace anyway, and a
+ *       scanner that could not drop it would be wedged forever by a whitespace run longer
+ *       than its buffer.
  * @param scanner The scanner object to initialize.
  * @param file The file handle to read from.
  * @param alloc The allocator for the internal buffer. The allocator must satisfy

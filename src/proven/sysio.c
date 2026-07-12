@@ -312,6 +312,47 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
     if (args_count > 0 && !args) return PROVEN_ERR_INVALID_ARG;
     if (args_count == 0) return PROVEN_ERR_INVALID_ARG;
 
+    /*
+     * Step over leading whitespace BEFORE taking the rollback snapshot.
+     *
+     * Two facts collide here, and this is where they are reconciled.
+     *
+     * (1) A failed scan must restore the stream - that is what lets a caller try another
+     *     format against the same input. (2) Whitespace has to be droppable: a run of it
+     *     longer than the buffer would otherwise WEDGE the scanner forever - it cannot
+     *     parse (only whitespace), it cannot refill (the buffer is full), and it cannot
+     *     drop what it holds (that would be "changing the stream"). Every later scan
+     *     returns PROVEN_ERR_OUT_OF_BOUNDS, permanently, on a stream that is perfectly
+     *     fine. A pipe sending eight spaces to an eight-byte scanner did exactly that.
+     *
+     * So: whitespace ahead of a token is consumed, and the snapshot is taken AFTER. No
+     * token byte is ever lost, and no scan can address the whitespace anyway - the next
+     * scan would skip it too. What a failed scan restores is every byte a scan could still
+     * read, which is the promise that was actually worth making.
+     *
+     * Doing this INSIDE the scan - after the snapshot - is what broke catastrophically:
+     * scanner_fill reports how far it compacted the buffer, the rollback subtracts that
+     * from the snapshot, and a cursor that moved first made the shift exceed the snapshot.
+     * `start_cursor - total_shift` wrapped to ~2^64; cursor and length wrapped by the same
+     * amount so every guard still compared true, and the next scan read buffer[SIZE_MAX-15].
+     * ASan called it a heap-buffer-overflow. On a pipe it silently discarded the buffer.
+     */
+    for (;;) {
+        while (scanner->cursor < scanner->length) {
+            proven_u8 c = scanner->buffer[scanner->cursor];
+            if (c != ' ' && c != '\t' && c != '\r' && c != '\n' && c != '\f' && c != '\v') break;
+            scanner->cursor++;
+        }
+        if (scanner->cursor < scanner->length) break;   /* a real byte is waiting */
+        if (scanner->eof) break;                        /* nothing more is coming */
+
+        proven_size_t pre_read = 0;
+        proven_size_t pre_shift = 0;
+        proven_err_t pre_err = scanner_fill(scanner, &pre_read, &pre_shift);
+        if (pre_err == PROVEN_ERR_EOF) break;           /* eof is set; the check below fires */
+        if (!proven_is_ok(pre_err)) return pre_err;     /* only whitespace was consumed */
+    }
+
     proven_size_t start_cursor = scanner->cursor;
     proven_size_t start_length = scanner->length;
     bool start_eof = scanner->eof;
@@ -373,19 +414,10 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
             break;
         }
 
-        /*
-         * Nothing but whitespace left, and the stream has not ended: the token is still
-         * on its way. Ask for it.
-         *
-         * The scan engine works on a complete view and has no way to say "I ran out of
-         * input" - for a fixed view, running out IS the answer, and it reports
-         * PROVEN_ERR_INVALID_ARG. Over a stream that answer is a lie, and it used to be
-         * hidden by a worse bug: eof was latched by the first short read, so this case
-         * came out as a (wrong, but plausible) end of input instead. With the latch gone,
-         * a buffer holding only the "\n" that trailed the last token would report the
-         * next scan as malformed input rather than waiting for the next line.
-         */
-        if (!scanner->eof) {
+        /* Nothing but whitespace left and the stream has ended: that IS the end of the
+         * input, not a malformed token. (The cursor is NOT moved here - see the pre-scan
+         * whitespace skip above for why that matters.) */
+        if (scanner->eof) {
             proven_size_t ws = scanner->cursor;
             while (ws < scanner->length) {
                 proven_u8 c = scanner->buffer[ws];
@@ -393,17 +425,8 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
                 ws++;
             }
             if (ws == scanner->length) {
-                scanner->cursor = ws;   /* the whitespace is consumed either way */
-                proven_size_t read_bytes = 0;
-                proven_size_t shifted = 0;
-                proven_err_t fill_err = scanner_fill(scanner, &read_bytes, &shifted);
-                total_shift += shifted;
-                if (!proven_is_ok(fill_err)) {
-                    err = fill_err;
-                    break;
-                }
-                bytes_read_total += read_bytes;
-                continue;
+                err = PROVEN_ERR_EOF;
+                break;
             }
         }
 

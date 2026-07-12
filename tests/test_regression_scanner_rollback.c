@@ -52,10 +52,21 @@ int main(void) {
     PROVEN_TEST_ASSERT(proven_is_ok(e), "the first token must scan", "");
     PROVEN_TEST_ASSERT(first == 1, "the first token must be 1", "");
 
-    /* Snapshot the bytes the scanner holds but has not consumed. After a failed
-     * scan these exact bytes - same count, same content - must still be the ones
-     * waiting. */
+    /* Snapshot the bytes the scanner holds but has not consumed - skipping the whitespace
+     * in front of them, which a failed scan is allowed to drop.
+     *
+     * That exception is not a loophole, it is the fix for a wedge: a whitespace run longer
+     * than the buffer cannot be parsed, cannot be refilled around, and - if it also cannot
+     * be dropped - leaves the scanner returning PROVEN_ERR_OUT_OF_BOUNDS forever on a
+     * stream that is perfectly fine. No scan can address whitespace anyway; the next one
+     * would skip it too. What must survive a failed scan is every byte a scan could still
+     * READ, and that is what this checks. */
     proven_byte_t before[64];
+    while (sc.cursor < sc.length) {
+        proven_u8 c = ((const proven_byte_t*)sc.buffer)[sc.cursor];
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
+        sc.cursor++;
+    }
     proven_size_t before_len = sc.length - sc.cursor;
     PROVEN_TEST_ASSERT(before_len > 0 && before_len <= sizeof before,
         "the fixture must leave unconsumed bytes buffered", "");
@@ -98,7 +109,7 @@ int main(void) {
         "if this now succeeds, the failed scan consumed or shifted bytes it promised to restore");
 
     proven_sysio_scanner_deinit(&sc);
-    proven_fs_close(f.value);
+    (void)proven_fs_close(f.value);
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a buffer large enough reads every token in order",
@@ -123,7 +134,7 @@ int main(void) {
         "a wrong value here means bytes were dropped or duplicated between tokens");
 
     proven_sysio_scanner_deinit(&sc);
-    proven_fs_close(f.value);
+    (void)proven_fs_close(f.value);
 
     (void)proven_fs_remove(heap, path);
 

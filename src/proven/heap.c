@@ -13,7 +13,15 @@ proven_allocator_t proven_heap_allocator(void) {
 static proven_result_mem_mut_t proven_heap_alloc_trait(void *ctx, proven_size_t size, proven_size_t align) {
     (void)ctx;
     proven_result_mem_mut_t res = {0};
-    
+
+    /* A zero-byte request is a caller bug, and it is NOT "out of memory" - nothing was
+     * out of anything. The arena answered the same call with PROVEN_OK and a live pointer
+     * to nothing, so trait-generic code could not be written against either answer. */
+    if (size == 0) {
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
+
     // Defer entirely to the OS Platform Abstraction Layer
     void *ptr = proven_sys_mem_alloc(size, align);
 

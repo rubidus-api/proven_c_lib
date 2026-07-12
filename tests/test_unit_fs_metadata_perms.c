@@ -16,7 +16,7 @@ int main() {
         // Create file
         proven_result_file_t r = proven_fs_open(heap, test_file, PROVEN_FS_WRITE | PROVEN_FS_CREATE);
         PROVEN_TEST_ASSERT(PROVEN_IS_OK(r.err), "Testing condition: PROVEN_IS_OK(r.err)", "Review logic surrounding PROVEN_IS_OK(r.err)");
-        proven_fs_close(r.value);
+        (void)proven_fs_close(r.value);
         
         // Change to Read-Only (0444)
         proven_fs_perms_t ro_perms = PROVEN_FS_PERM_OWNER_R | PROVEN_FS_PERM_GROUP_R | PROVEN_FS_PERM_OTHER_R;
@@ -54,7 +54,7 @@ int main() {
         // Invalid lock mode should be rejected instead of being treated as unlock.
         PROVEN_TEST_ASSERT(proven_fs_lock(r.value, (proven_fs_lock_type_t)99, true) == PROVEN_ERR_INVALID_ARG, "Invalid lock type should fail with invalid arg", "Review the lock-mode validation if unsupported enum values are accepted.");
         
-        proven_fs_close(r.value);
+        (void)proven_fs_close(r.value);
     }
 
     // Cleanup

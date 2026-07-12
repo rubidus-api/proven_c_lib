@@ -387,8 +387,18 @@ static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fm
         return;
     }
 
-    /* 128 bytes comfortably cover sign, integer digits, decimal point, six fractional digits,
-       scientific exponent text, and the trailing NUL byte. */
+    /*
+     * 128 bytes cover every non-float rendering: sign, digits, decimal point, exponent
+     * text, NUL.
+     *
+     * The FIXED form of a float does not fit in that, and cannot be made to: 1e308 written
+     * out in full is 309 integer digits, and the parser accepts a precision of up to 1100
+     * on top. The first version of `{:f}` rendered into this buffer and reported anything
+     * larger as PROVEN_ERR_INVALID_FORMAT - a *bad format string* - so `{:f}` on 1e121 was
+     * indistinguishable from a typo in the spec, and no output buffer the caller supplied
+     * could make it work. The float case gets scratch sized for what it is actually asked
+     * to produce.
+     */
     char buf[128];
     proven_size_t len = 0;
 
@@ -446,22 +456,40 @@ static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fm
                 }
             }
 
+            /*
+             * Scratch big enough for the widest thing the grammar can ask for: the fixed
+             * form of 1e308 is 309 integer digits, the spec allows up to 60 decimals, plus
+             * a sign, a point and a NUL. (The engine itself goes to 1100 decimals; the
+             * grammar does not, and says so with PROVEN_ERR_OUT_OF_BOUNDS.)
+             *
+             * `{:f}` used to render into the shared 128-byte buffer and report anything
+             * longer as PROVEN_ERR_INVALID_FORMAT - a *bad format string*. So `{:f}` on
+             * 1e121 looked exactly like a typo in the spec, and no output buffer the caller
+             * supplied could make it work. The number was fine; the scratch was not.
+             */
+            char fbuf[1536];
             proven_size_t flen = 0;
-            if (proven_float_format_f64_policy(buf, sizeof buf, arg->value.f64,
-                                               policy, opt, &flen) != PROVEN_OK) {
-                ctx->err = PROVEN_ERR_INVALID_FORMAT;
+            proven_err_t ferr = proven_float_format_f64_policy(fbuf, sizeof fbuf, arg->value.f64,
+                                                               policy, opt, &flen);
+            if (ferr != PROVEN_OK) {
+                /* Out of room is not a malformed spec. Say which it was. */
+                ctx->err = (ferr == PROVEN_ERR_OUT_OF_BOUNDS) ? PROVEN_ERR_OUT_OF_BOUNDS
+                                                              : PROVEN_ERR_INVALID_FORMAT;
                 break;
             }
 
             /* A sign was asked for and the value is not negative: add it. */
-            if (spec.sign && buf[0] != '-') {
-                char signed_buf[136];
-                signed_buf[0] = spec.sign;
-                for (proven_size_t i = 0; i < flen && i + 1 < sizeof signed_buf; ++i) signed_buf[i + 1] = buf[i];
-                render_with_spec(ctx, signed_buf, flen + 1, spec);
+            if (spec.sign && fbuf[0] != '-') {
+                if (flen + 2u > sizeof fbuf) {
+                    ctx->err = PROVEN_ERR_OUT_OF_BOUNDS;
+                    break;
+                }
+                for (proven_size_t i = flen; i > 0; --i) fbuf[i] = fbuf[i - 1];
+                fbuf[0] = spec.sign;
+                render_with_spec(ctx, fbuf, flen + 1, spec);
                 break;
             }
-            render_with_spec(ctx, buf, flen, spec);
+            render_with_spec(ctx, fbuf, flen, spec);
             break;
         }
 #endif

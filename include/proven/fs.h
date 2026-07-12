@@ -72,9 +72,20 @@ typedef struct {
 proven_result_file_t proven_fs_open(proven_allocator_t scratch, proven_u8str_view_t path, proven_fs_mode_t mode);
 
 /**
- * @brief Closes an open file handle.
+ * @brief Closes an open file handle, and tells you whether the OS was happy about it.
+ *
+ * `close()` is the LAST chance a filesystem has to report that a write did not land, and
+ * on NFS, CIFS and quota-enforcing filesystems it is the ONLY chance: the bytes were
+ * buffered, `write()` returned success, and the failure surfaces here or nowhere. This
+ * used to return `void`. `proven_fs_write_file` therefore returned `PROVEN_OK` for a file
+ * the filesystem had just refused to write, and `write_file_atomic` went ahead and
+ * renamed the temp over the target, publishing content the disk had rejected.
+ *
+ * On a file you only read from, a close failure is not data loss and `(void)`-ing it is
+ * reasonable. On a file you wrote to, it is the report.
  */
-void proven_fs_close(proven_file_t file);
+[[nodiscard]]
+proven_err_t proven_fs_close(proven_file_t file);
 
 /**
  * @brief Reads data from an open file into a mutable slice.

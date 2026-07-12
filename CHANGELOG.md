@@ -21,6 +21,61 @@ unfixed source.
 The theme, again: **code that is correct for the input it was tested with and silently
 wrong for the input it will actually meet.**
 
+### Fixed (second audit round: the new code, the allocators, the filesystem)
+
+- **`close()` failures were thrown away** — and `close()` is the last chance a filesystem
+  has to say a write did not land. On NFS, CIFS and quota-enforcing filesystems it is the
+  *only* chance: the bytes were buffered, `write()` said yes, and the refusal surfaces
+  there or nowhere. `proven_fs_write_file` returned `PROVEN_OK` for a file the filesystem
+  had just refused, and `write_file_atomic` went on to `rename()` the temp over the target,
+  **publishing content the disk had rejected**. Reproduced with an `LD_PRELOAD` that fails
+  `close()`. `proven_fs_close` now returns `proven_err_t` and is `[[nodiscard]]`; the write
+  paths check it, and a failed close aborts the rename and removes the temp.
+
+- **An atomic write exposed its contents under a wider mode.** The temp was chmod'd to the
+  target's mode at the *end*, so the entire new contents of a 0600 file sat in a
+  world-readable temp for as long as the write took. A watcher thread stat'ing the temp
+  during a 64 MiB rewrite saw `0644`. The mode goes on before the first byte does.
+
+- **`proven_fs_copy` widened permissions.** Copying a 0600 file produced a 0644 one — `cp`
+  does not do that. The source's mode is carried across, and set before the contents go in.
+
+- **A symlink, a FIFO, a socket or a device was reported as `PROVEN_FS_TYPE_FILE`**, which
+  tells a caller it may open it and read bytes out of it. A dangling symlink cannot even be
+  opened; a FIFO blocks forever on a writer that never comes. They are `PROVEN_FS_TYPE_OTHER`.
+
+- **`proven_mmap_sync` on a PRIVATE mapping returned `PROVEN_OK` and persisted nothing.**
+  A copy-on-write mapping has nothing to write back. It is `PROVEN_ERR_UNSUPPORTED`.
+
+- **The scanner's rollback wrapped `cursor` and `length` to ~2^64** — a defect introduced by
+  the pipe fix earlier the same day, and the worst kind: the whitespace refill moved the
+  cursor *before* the fill that compacts the buffer, so the reported shift exceeded the
+  snapshot the rollback subtracts it from. Both indices wrapped by the same amount, so every
+  guard still compared true, and the next scan read `buffer[SIZE_MAX-15]`. ASan called it a
+  heap-buffer-overflow; on a pipe it silently discarded the buffered bytes instead. The
+  whitespace is now stepped over *before* the snapshot, where there is nothing to roll back
+  to yet.
+
+- **`{:f}` refused any double above ~1e121** with `PROVEN_ERR_INVALID_FORMAT` — a *bad format
+  string* — because the fixed form was rendered into a 128-byte scratch. The number was fine;
+  the scratch was not, and no output buffer the caller supplied could help. `{:.60f}` on
+  1e308 (370 characters) now renders whole.
+
+- **The buffered reader dropped the bytes of an EOF that carried them.** A reader may return
+  `{PROVEN_ERR_EOF, N}` with N nonzero — the library's own `read_all` does — and the last N
+  bytes of a file are still bytes. The final line of a file vanished whenever the source
+  reported its end and its last bytes in the same breath.
+
+- **The allocator trait meant different things per allocator**: `alloc(0)` was `NOMEM` on the
+  heap (a lie — nothing was out of memory) and `PROVEN_OK` with a live pointer on the arena;
+  `realloc(ptr, 0)` returned NULL on the heap and a non-NULL pointer on the arena, though the
+  trait documents NULL; and a pure *shrink* of a non-tail arena block failed with `NOMEM` on a
+  full arena, which is an absurd answer to "please use less". All three now answer identically,
+  pinned by `tests/test_contract_allocator_trait`, which runs the same code against both.
+
+- `fmt.h` claimed `PROVEN_ARG('Z')` prints `Z`. It cannot: `'Z'` has type `int` in C. A `char`
+  *variable* does print as a character; the note now says which is which.
+
 ### Fixed
 
 - **The "correctly rounded" float parser was not correctly rounded.** The exact

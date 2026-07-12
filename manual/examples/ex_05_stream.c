@@ -70,7 +70,8 @@ int main(void) {
     }
     EXAMPLE_REQUIRE(proven_is_ok(proven_writer_flush(to_file)),
                     "flush: nothing is written until you say so");
-    proven_fs_close(file);
+    /* And the close, which is the last thing that can tell you the write did not land. */
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_close(file)), "closing the written file");
 
     /* --- reading it back, a line at a time -------------------------------- */
     /* Reading a file line by line was simply not possible before: the only route was
@@ -96,7 +97,7 @@ int main(void) {
     }
     EXAMPLE_REQUIRE(lines == 3, "three rows in, three lines out");
 
-    proven_fs_close(rfile);
+    (void)proven_fs_close(rfile);
     (void)proven_fs_remove(alloc, path);
 
     return EXAMPLE_OK();

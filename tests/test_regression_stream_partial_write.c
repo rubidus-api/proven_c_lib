@@ -227,8 +227,91 @@ int main(void) {
             "The byte stream has a hole in it. Continuing to write into it produces a file that looks complete and is not.");
     }
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("an EOF that carries bytes does not lose them",
+        "A reader may return {PROVEN_ERR_EOF, N} with N nonzero - the library's own read_all does - and the last N bytes of the file are still bytes.",
+        "reader_buffered_fill must add r.value to the buffer before latching eof. It used to drop them, so the final line of a file vanished whenever the source reported its end and its last bytes in the same breath.");
+    // ---------------------------------------------------------------
+    {
+        extern proven_result_size_t proven_test_eof_with_bytes(void *ctx, proven_mem_mut_t out);
+        int calls = 0;
+        proven_reader_t raw = { .ctx = &calls, .read_fn = proven_test_eof_with_bytes };
+
+        static proven_byte_t bufmem[64];
+        proven_reader_buffered_t br;
+        proven_reader_t r = proven_reader_buffered(&br, raw,
+            (proven_mem_mut_t){ .ptr = bufmem, .size = sizeof bufmem });
+
+        proven_u8str_view_t line = {0};
+        proven_result_u8str_view_t lr = proven_reader_read_line(&br);
+        PROVEN_TEST_ASSERT(proven_is_ok(lr.err), "the first line must be readable", "");
+        line = lr.val;
+        PROVEN_TEST_ASSERT(line.size == 5 && memcmp(line.ptr, "alpha", 5) == 0,
+            "the first line must be \"alpha\"",
+            "The reader used to answer EOF here: the source handed over eleven bytes together with its EOF, and they were thrown away.");
+
+        lr = proven_reader_read_line(&br);
+        PROVEN_TEST_ASSERT(proven_is_ok(lr.err) && lr.val.size == 4 && memcmp(lr.val.ptr, "beta", 4) == 0,
+            "and the second line must be \"beta\"", "");
+
+        (void)r;
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("{:f} works at every magnitude a double can hold",
+        "The fixed form of 1e308 is 309 digits. It used to be rendered into a 128-byte scratch and refused - as PROVEN_ERR_INVALID_FORMAT, a *bad format string*.",
+        "A caller could not fix that by supplying a bigger output buffer, because the limit was not the output buffer. Inspect the float case in render_arg.");
+    // ---------------------------------------------------------------
+    {
+        proven_allocator_t heap = proven_heap_allocator();
+
+        proven_result_u8str_t s = proven_u8str_create(heap, 16);
+        PROVEN_TEST_ASSERT(proven_is_ok(s.err), "setup", "");
+        proven_fmt_result_t f = proven_u8str_append_fmt_grow(heap, &s.value, "{:.1f}", PROVEN_ARG(1e121));
+        PROVEN_TEST_ASSERT(proven_is_ok(f.err),
+            "{:.1f} on 1e121 must format",
+            "It used to be PROVEN_ERR_INVALID_FORMAT - indistinguishable from a typo in the spec.");
+        PROVEN_TEST_ASSERT(proven_u8str_as_view(&s.value).size == 124,
+            "and produce all 124 characters of it", "");
+        proven_u8str_destroy(heap, &s.value);
+
+        s = proven_u8str_create(heap, 16);
+        f = proven_u8str_append_fmt_grow(heap, &s.value, "{:.60f}", PROVEN_ARG(1e308));
+        PROVEN_TEST_ASSERT(proven_is_ok(f.err) && proven_u8str_as_view(&s.value).size == 370,
+            "the widest thing the grammar allows - 1e308 with 60 decimals - must render whole",
+            "309 integer digits, a point, and 60 decimals.");
+        proven_u8str_destroy(heap, &s.value);
+
+        /* And a precision the grammar does NOT allow is an out-of-bounds request, not a
+         * malformed format: the spec is well-formed, it is simply asking for too much. */
+        s = proven_u8str_create(heap, 16);
+        f = proven_u8str_append_fmt_grow(heap, &s.value, "{:.61f}", PROVEN_ARG(1.0));
+        PROVEN_TEST_ASSERT(f.err == PROVEN_ERR_OUT_OF_BOUNDS,
+            "a precision past the grammar's limit must be PROVEN_ERR_OUT_OF_BOUNDS", "");
+        proven_u8str_destroy(heap, &s.value);
+    }
+
     PROVEN_TEST_PASS("partial writes, failed reads, and {:f} all behave.");
     return 0;
+}
+
+/* Hands over eleven bytes and its EOF in the same breath - which is exactly what the
+ * library's own proven_sys_io_read_all does. */
+proven_result_size_t proven_test_eof_with_bytes(void *ctx, proven_mem_mut_t out) {
+    int *calls = (int *)ctx;
+    proven_result_size_t r = {0};
+    static const char payload[] = "alpha\nbeta\n";
+    proven_size_t n = sizeof payload - 1u;
+
+    if ((*calls)++ == 0 && out.size >= n) {
+        memcpy(out.ptr, payload, n);
+        r.err = PROVEN_ERR_EOF;   /* the end AND the bytes, together */
+        r.value = n;
+        return r;
+    }
+    r.err = PROVEN_ERR_EOF;
+    r.value = 0;
+    return r;
 }
 
 /* Yields 4 bytes once, then fails. Defined after main so the test body reads top-down. */

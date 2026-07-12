@@ -75,17 +75,17 @@ static void check_append_open_flags(void) {
 
     proven_result_file_t create_res = proven_fs_open(heap, path, PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
     PROVEN_TEST_ASSERT(proven_is_ok(create_res.err), "Setup file should open for writing", "Check the temp-file setup before testing append flags.");
-    proven_fs_close(create_res.value);
+    (void)proven_fs_close(create_res.value);
 
     proven_result_file_t append_res = proven_fs_open(heap, path, PROVEN_FS_APPEND | PROVEN_FS_CREATE);
     PROVEN_TEST_ASSERT(proven_is_ok(append_res.err), "Append plus create should open a writable file", "Inspect POSIX open flags so append is treated as write intent.");
     proven_err_t write_err = proven_fs_write_all(append_res.value, proven_mem_view_from_u8(PROVEN_LIT("abc")));
     PROVEN_TEST_ASSERT(write_err == PROVEN_OK, "Append-open file should accept writes", "Inspect POSIX open flags so O_APPEND is paired with write access.");
-    proven_fs_close(append_res.value);
+    (void)proven_fs_close(append_res.value);
 
     proven_result_file_t conflict_res = proven_fs_open(heap, path, PROVEN_FS_APPEND | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
     if (proven_is_ok(conflict_res.err)) {
-        proven_fs_close(conflict_res.value);
+        (void)proven_fs_close(conflict_res.value);
         (void)proven_fs_remove(heap, path);
     }
     PROVEN_TEST_ASSERT(conflict_res.err == PROVEN_ERR_INVALID_ARG, "Append plus truncation should be rejected as a conflicting request", "Inspect the filesystem mode validation before changing the open-flag translation.");

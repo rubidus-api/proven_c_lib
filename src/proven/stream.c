@@ -287,8 +287,14 @@ static bool reader_buffered_fill(proven_reader_buffered_t *s) {
     proven_mem_mut_t space = { .ptr = s->buf.ptr + s->len, .size = s->buf.size - s->len };
     proven_result_size_t r = proven_reader_read(s->inner, space);
     if (r.err == PROVEN_ERR_EOF || (proven_is_ok(r.err) && r.value == 0)) {
+        /* An EOF may still carry bytes - proven_sys_io_read_all returns {EOF, N} with N
+         * nonzero, and any reader a caller writes may do the same. Dropping them here made
+         * the last line of a file disappear whenever the source reported its end and its
+         * final bytes in the same breath, and it made this reader disagree with the
+         * buffered scanner in the same library, which honours that shape. */
+        s->len += r.value;
         s->eof = true;
-        return false;
+        return r.value > 0;
     }
     if (!proven_is_ok(r.err)) {
         /*

@@ -144,13 +144,18 @@ proven_sys_file_handle_t proven_sys_fs_open(const char *path, int flags) {
 #endif
 }
 
-void proven_sys_fs_close(proven_sys_file_handle_t handle) {
+bool proven_sys_fs_close(proven_sys_file_handle_t handle) {
 #if defined(_WIN32) || defined(_WIN64)
-    if (!handle.handle) return;
-    CloseHandle((HANDLE)handle.handle);
+    if (!handle.handle) return false;
+    return CloseHandle((HANDLE)handle.handle) != 0;
 #else
-    if (handle.fd < 0) return;
-    close(handle.fd);
+    if (handle.fd < 0) return false;
+    /* EINTR on close: on Linux the descriptor is closed anyway, and retrying could close
+     * a descriptor another thread has just been given. Treat it as closed. */
+    if (close(handle.fd) != 0) {
+        return errno == EINTR;
+    }
+    return true;
 #endif
 }
 
@@ -406,6 +411,8 @@ int proven_sys_fs_dir_step(proven_sys_dir_handle_t handle, proven_sys_dir_entry_
         }
     }
     out_entry->is_dir = (wd->fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    out_entry->is_regular = !out_entry->is_dir &&
+        (wd->fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
     uint64_t sz = ((uint64_t)wd->fd.nFileSizeHigh << 32) | wd->fd.nFileSizeLow;
     if (sz > (uint64_t)PROVEN_SIZE_MAX) out_entry->size = PROVEN_SIZE_MAX;
     else out_entry->size = (size_t)sz;
@@ -425,6 +432,7 @@ int proven_sys_fs_dir_step(proven_sys_dir_handle_t handle, proven_sys_dir_entry_
         struct stat st;
         if (fstatat(dirfd(d), entry->d_name, &st, AT_SYMLINK_NOFOLLOW) == 0) {
             out_entry->is_dir = S_ISDIR(st.st_mode);
+            out_entry->is_regular = S_ISREG(st.st_mode) != 0;
             if (S_ISREG(st.st_mode)) {
                 if (st.st_size < 0) out_entry->size = 0;
                 else if ((uintmax_t)st.st_size > (uintmax_t)PROVEN_SIZE_MAX) out_entry->size = PROVEN_SIZE_MAX;
@@ -433,7 +441,8 @@ int proven_sys_fs_dir_step(proven_sys_dir_handle_t handle, proven_sys_dir_entry_
                 out_entry->size = 0;
             }
         } else {
-            out_entry->is_dir = false; // Fallback
+            out_entry->is_dir = false;      // Fallback: we do not know what it is,
+            out_entry->is_regular = false;  // so we must not claim it is a file.
             out_entry->size = 0;
         }
         return 1;
@@ -514,6 +523,8 @@ bool proven_sys_fs_stat(const char *path, proven_sys_fs_stat_t *out_stat) {
     CloseHandle(h);
 
     out_stat->is_dir = (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    out_stat->is_regular = !out_stat->is_dir &&
+        (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
     if (out_stat->is_dir) {
         out_stat->size = 0;
     } else {
@@ -553,6 +564,7 @@ bool proven_sys_fs_stat(const char *path, proven_sys_fs_stat_t *out_stat) {
     }
     
     out_stat->is_dir = S_ISDIR(st.st_mode);
+    out_stat->is_regular = S_ISREG(st.st_mode) != 0;
     out_stat->mode = (unsigned int)st.st_mode;
     out_stat->mtime = (long long)st.st_mtime;
     out_stat->dev = (unsigned long long)st.st_dev;

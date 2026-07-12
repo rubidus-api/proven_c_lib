@@ -102,9 +102,14 @@ static inline proven_arg_t proven_arg_none(void) {
 /**
  * @brief A single character.
  *
- * `PROVEN_ARG('Z')` used to print `90`. `char` was mapped to the integer argument, so
- * there was no way to emit a character at all - the ASCII column of a hex dump had to
- * be built by hand into a separate buffer and passed as a string.
+ * A `char` VARIABLE now renders as a character: `char c = 'Z'; PROVEN_ARG(c)` gives `Z`.
+ * It used to give `90` - `char` was mapped to the integer argument, so there was no way
+ * to emit a character at all, and the ASCII column of a hex dump had to be built by hand
+ * into a separate buffer and passed as a string.
+ *
+ * @note A character LITERAL is not a `char` in C - `'Z'` has type `int` - so
+ *       `PROVEN_ARG('Z')` still renders `90`, and no amount of `_Generic` can change
+ *       that. Use `proven_arg_char('Z')` when you mean the character.
  */
 static inline proven_arg_t proven_arg_char(char v) {
     return (proven_arg_t){ .type = PROVEN_ARG_CHAR, .value = { .c = v } };

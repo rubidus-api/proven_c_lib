@@ -244,7 +244,7 @@ int main(void) {
         pf.internal.fd = fds[0];
 
         proven_sysio_scanner_t sc;
-        proven_err_t e = proven_sysio_scanner_init(&sc, pf, heap, 8);   /* barely larger than a token */
+        proven_err_t e = proven_sysio_scanner_init(&sc, pf, heap, 8);   /* barely a token wide */
         PROVEN_TEST_ASSERT(proven_is_ok(e), "setup: an 8-byte scanner", "");
 
         proven_i32 a = 0, b = 0;
@@ -254,7 +254,9 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_is_ok(e) && a == -12345,
             "a six-character signed number arriving one byte at a time must scan whole", "");
 
-        e = proven_sysio_scanner_scan(&sc, "key={}", PROVEN_SCAN_ARG(&b));
+        /* The leading space in the format is what skips the space in the input: a literal
+         * matches exactly, like scanf's, and does not skip whitespace on its own. */
+        e = proven_sysio_scanner_scan(&sc, " key={}", PROVEN_SCAN_ARG(&b));
         PROVEN_TEST_ASSERT(proven_is_ok(e) && b == 678,
             "and a literal plus a number, also one byte at a time", "");
 
