@@ -32,7 +32,42 @@ typedef enum {
     PROVEN_ARG_FN,
     PROVEN_ARG_CHAR,
     PROVEN_ARG_BOOL,
+    PROVEN_ARG_CUSTOM,
 } proven_arg_type_t;
+
+/**
+ * @brief Where a custom renderer puts its bytes.
+ *
+ * Deliberately NOT proven_writer_t: that lives in stream.h, which is hosted-only, and
+ * the formatter must keep working on a freestanding target. This is the same idea with
+ * no dependencies.
+ */
+typedef struct {
+    void *ctx;
+    proven_err_t (*write)(void *ctx, proven_u8str_view_t chunk);
+} proven_fmt_sink_t;
+
+/** @brief Emit bytes from inside a custom renderer. */
+static inline proven_err_t proven_fmt_put(proven_fmt_sink_t out, proven_u8str_view_t chunk) {
+    if (!out.write) return PROVEN_ERR_INVALID_ARG;
+    return out.write(out.ctx, chunk);
+}
+
+/**
+ * @brief Renders one value of a type the library has never heard of.
+ *
+ * @note It is called TWICE per `{}`: once with a counting sink to measure the output so
+ *       that width and alignment can be applied without allocating, and once for real.
+ *       It must therefore be deterministic and must not mutate `obj`. If the two passes
+ *       disagree the formatter returns PROVEN_ERR_INVALID_ARG rather than emit a
+ *       misaligned field.
+ */
+typedef proven_err_t (*proven_fmt_render_fn)(proven_fmt_sink_t out, const void *obj);
+
+typedef struct {
+    const void          *obj;
+    proven_fmt_render_fn render;
+} proven_arg_custom_t;
 
 /**
  * @brief Container for a single format argument.
@@ -52,6 +87,7 @@ typedef struct {
         void (*fn)(void);
         char c;
         bool b;
+        proven_arg_custom_t custom;
     } value;
 } proven_arg_t;
 
@@ -72,6 +108,40 @@ static inline proven_arg_t proven_arg_none(void) {
  */
 static inline proven_arg_t proven_arg_char(char v) {
     return (proven_arg_t){ .type = PROVEN_ARG_CHAR, .value = { .c = v } };
+}
+
+/**
+ * @brief A value of your own type, rendered by your own function.
+ *
+ * Before this existed the formatter was a closed set: a `vec3` or a `uuid` could not be
+ * printed at all. The choice was to pre-format it into a scratch string and pass THAT -
+ * an allocation and a copy per value - or to give up and print the fields one by one.
+ *
+ * The renderer sees a sink, not a buffer, so it composes: it can call the formatter
+ * again. Width, fill and alignment work on the result, because the formatter measures
+ * it first. Type letters (`{:x}`, `{:f}`) are refused - the library has no idea what
+ * they would mean for your type, and inventing an answer is how a formatter starts
+ * lying.
+ *
+ * ```c
+ * static proven_err_t render_point(proven_fmt_sink_t out, const void *obj) {
+ *     const point_t *p = obj;
+ *     proven_byte_t tmp[64];
+ *     proven_u8str_t s = proven_u8str_borrow(tmp, sizeof tmp);
+ *     proven_err_t e = PROVEN_FMT(&s, "({}, {})", PROVEN_ARG(p->x), PROVEN_ARG(p->y)).err;
+ *     if (!proven_is_ok(e)) return e;
+ *     return proven_fmt_put(out, proven_u8str_as_view(&s));
+ * }
+ * ...
+ * PROVEN_FMT(&out, "at {:>12}", PROVEN_ARG_OF(&p, render_point));
+ * ```
+ */
+static inline proven_arg_t proven_arg_custom(const void *obj, proven_fmt_render_fn render) {
+    proven_arg_t arg = {0};
+    arg.type = PROVEN_ARG_CUSTOM;
+    arg.value.custom.obj = obj;
+    arg.value.custom.render = render;
+    return arg;
 }
 
 /** @brief A boolean. Renders as `true` or `false`, not as 1 or 0. */
@@ -225,6 +295,14 @@ static inline proven_arg_t proven_arg_identity(proven_arg_t v) { return v; }
  * @brief Helper macro for safely bounding C-string arguments.
  */
 #define PROVEN_ARG_CSTR_N(v, max_len) proven_arg_cstr_n(v, max_len)
+
+/**
+ * @brief A value of your own type: `PROVEN_ARG_OF(&p, render_point)`.
+ *
+ * `PROVEN_ARG` cannot reach user types - `_Generic` has to know every type it dispatches
+ * on, and it cannot know yours. This is the door.
+ */
+#define PROVEN_ARG_OF(objptr, renderfn) proven_arg_custom((const void *)(objptr), (renderfn))
 
 /**
  * @brief Type-safe argument selection using C11 _Generic.
