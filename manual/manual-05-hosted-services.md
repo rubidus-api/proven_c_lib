@@ -117,13 +117,20 @@ typedef struct {
 on Windows, which has no `uid`/`gid` concept. Resolve them to names with the
 host's `getpwuid`/`getgrgid` when displaying an `ls -l`-style owner/group column.
 
-Two fields are narrower than they look:
+One field is narrower than it looks, and one has a sharp edge:
 
 - `created_at` is **always 0**. Plain `stat()` has no portable birth time, and the
   PAL does not ask for one. Only `modified_at` carries a real timestamp.
-- `type` is only ever `PROVEN_FS_TYPE_FILE` or `PROVEN_FS_TYPE_DIR`. The PAL
-  classifies by "is it a directory", so a FIFO, a socket, or a device stats as
-  `FILE`. `PROVEN_FS_TYPE_OTHER` exists in the enum but nothing produces it today.
+- `type` is `FILE` for a regular file, `DIR` for a directory, and
+  **`PROVEN_FS_TYPE_OTHER`** for everything else — a FIFO, a socket, a device, a dangling
+  symlink. (Until v26.07.13a all of those stat'd as `FILE`, which told a caller it could
+  open them and read bytes out of them. A dangling symlink cannot be opened at all.)
+
+  `type` **follows symlinks**, here and in the directory walk, which is what makes the two
+  agree: a symlink to a regular file is `FILE`, and a symlink to a directory is `DIR`. The
+  edge that follows is real — **a recursive walker can loop**, because a symlink pointing
+  at an ancestor is a cycle and its type says `DIR`. Carry a depth limit, or remember
+  `(dev, ino)` pairs and refuse to descend into one you have seen.
 
 ```c
 proven_fs_stat_t st;

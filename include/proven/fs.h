@@ -283,7 +283,25 @@ proven_result_dir_t proven_fs_dir_open(proven_allocator_t scratch, proven_u8str_
 
 /**
  * @brief Next entry, or PROVEN_ERR_EOF when the directory is exhausted.
+ *
  * @note The returned name is borrowed; see proven_fs_dir_entry_t.
+ *
+ * @note `type` FOLLOWS symlinks, exactly as proven_fs_stat does — a symlink to a regular
+ *       file is PROVEN_FS_TYPE_FILE, and a symlink to a directory is PROVEN_FS_TYPE_DIR.
+ *       That consistency is deliberate: the walk used to report a perfectly ordinary file
+ *       as PROVEN_FS_TYPE_OTHER because it was reached through a link, while `stat` on the
+ *       same path said FILE, and a caller filtering on `type == FILE` skipped files it
+ *       could open and read.
+ *
+ *       The consequence you must handle: **a recursive walker can loop.** A symlink
+ *       pointing at an ancestor directory is a cycle, and the type says DIR. Guard it the
+ *       way every tree walker does — carry a depth limit, or remember (dev, ino) pairs
+ *       from proven_fs_stat and refuse to descend into one you have already seen.
+ *
+ *       A DANGLING symlink, and anything else that is neither a regular file nor a
+ *       directory (a FIFO, a socket, a device), is PROVEN_FS_TYPE_OTHER. A dangling link
+ *       cannot be opened at all, so calling it a file would be the lie this note exists to
+ *       prevent.
  */
 [[nodiscard]]
 proven_err_t proven_fs_dir_next(proven_fs_dir_t *dir, proven_fs_dir_entry_t *out_entry);
