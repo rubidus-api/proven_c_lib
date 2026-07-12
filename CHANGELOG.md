@@ -66,6 +66,13 @@ wrong for the input it will actually meet.**
   bytes of a file are still bytes. The final line of a file vanished whenever the source
   reported its end and its last bytes in the same breath.
 
+- **The pool refused every `realloc`, including "free it" and "make it smaller".** Every call
+  was `PROVEN_ERR_INVALID_ARG` - which a trait-generic caller reads as *"you passed me
+  garbage"* and goes hunting for a bug in its own code. A pool genuinely cannot grow a block,
+  and that is `PROVEN_ERR_UNSUPPORTED` now ("not my job"); `realloc(ptr, 0)` frees and returns
+  NULL like every other allocator, and a shrink within the item size is the no-op it obviously
+  is. A size the pool does not serve is `UNSUPPORTED` for the same reason.
+
 - **The allocator trait meant different things per allocator**: `alloc(0)` was `NOMEM` on the
   heap (a lie — nothing was out of memory) and `PROVEN_OK` with a live pointer on the arena;
   `realloc(ptr, 0)` returned NULL on the heap and a non-NULL pointer on the arena, though the
