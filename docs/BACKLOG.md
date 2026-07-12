@@ -84,6 +84,28 @@ choice to make deliberately.
 
 Items are moved here with the commit that closed them, so the reasoning survives.
 
+### B-013 — the second audit round (closed v26.07.13a)
+
+Pointed at the code written that same day, at the allocators, and at the filesystem. It
+found, and every one was reproduced first:
+
+- **`close()` failures were discarded**, and `close()` is the last chance a filesystem has
+  to say a write did not land — on NFS, CIFS or over quota, the only chance. `write_file`
+  returned `PROVEN_OK` for a file the filesystem had refused; `write_file_atomic` renamed
+  the temp over the target anyway. `proven_fs_close` returns an error now, and is
+  `[[nodiscard]]` so a write path cannot ignore it.
+- **the scanner's rollback wrapped `cursor` and `length` to ~2^64** — introduced by the pipe
+  fix earlier the same day. Heap-buffer-overflow on a file (ASan), silent buffer discard on
+  a pipe. New code is where new bugs are; that is the whole lesson of B-011.
+- an atomic write left the whole payload of a 0600 file in a **world-readable temp** for the
+  duration of the write; `proven_fs_copy` widened 0600 to 0644;
+- symlinks, FIFOs and devices were reported as **regular files**;
+- `proven_mmap_sync` on a PRIVATE mapping reported **success while persisting nothing**;
+- `{:f}` refused any double above ~1e121 as a *bad format string*;
+- the buffered reader **dropped the bytes of an EOF that carried them**;
+- the allocator **trait** answered `alloc(0)`, `realloc(ptr, 0)` and a non-tail shrink
+  differently depending on which allocator you were handed.
+
 ### B-012 — the audit findings (closed v26.07.13a)
 
 Every one reproduced before it was fixed, every fix pinned by a regression test that was
