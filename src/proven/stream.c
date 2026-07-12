@@ -95,6 +95,14 @@ static proven_result_size_t writer_buf_write(void *ctx, proven_mem_view_t chunk)
         return res;
     }
 
+    if (s->overflowed) {
+        /* Something has already been dropped. A shorter chunk that happens to fit would
+         * land AFTER the hole, producing a buffer that looks like valid output and is
+         * missing a piece in the middle - which nobody downstream can detect. */
+        res.err = PROVEN_ERR_OUT_OF_BOUNDS;
+        return res;
+    }
+
     if (chunk.size > s->buf.size - s->len) {
         /* Refuse rather than truncate. A sink that silently drops the end of your
          * data is worse than one that says it cannot take it. Nothing is written, so
@@ -110,9 +118,25 @@ static proven_result_size_t writer_buf_write(void *ctx, proven_mem_view_t chunk)
     return res;
 }
 
+/*
+ * A fixed-buffer writer that has overflowed has DROPPED data, and it must not answer a
+ * flush with PROVEN_OK. There is nothing to push out - the whole point of this writer is
+ * that there is no sink behind it - but "did everything I was given get through?" is the
+ * question a caller asks a flush, and the honest answer here is no.
+ *
+ * Without this, "render, render, render, check the flush" - the shape every caller uses -
+ * reported success on a buffer that had refused half the output. The write that overflowed
+ * did return PROVEN_ERR_OUT_OF_BOUNDS, but a caller who checks only at the end never saw it.
+ */
+static proven_err_t writer_buf_flush(void *ctx) {
+    proven_writer_buf_t *s = (proven_writer_buf_t *)ctx;
+    if (!s) return PROVEN_ERR_INVALID_ARG;
+    return s->overflowed ? PROVEN_ERR_OUT_OF_BOUNDS : PROVEN_OK;
+}
+
 proven_writer_t proven_writer_from_buffer(proven_writer_buf_t *state) {
     if (!state || !state->buf.ptr) return (proven_writer_t){0};
-    return (proven_writer_t){ .ctx = state, .write_fn = writer_buf_write, .flush_fn = (void *)0 };
+    return (proven_writer_t){ .ctx = state, .write_fn = writer_buf_write, .flush_fn = writer_buf_flush };
 }
 
 /* --- buffering over another writer -------------------------------------- */

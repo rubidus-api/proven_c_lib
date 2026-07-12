@@ -791,9 +791,11 @@ been designed badly:
   take — the first version kept the whole buffer and re-sent it, so a failing sink
   received the accepted prefix twice.
 
-- **A writer that has failed stays failed.** Once a buffered writer has lost bytes, the
-  stream it was producing has a hole in it that the receiver cannot see, so every later
-  write and flush returns the original error. There is no `clear()`: if you have a
+- **A writer that has failed stays failed.** Once a writer has lost bytes — a buffered
+  writer whose sink died, a fixed buffer that overflowed — the stream it was producing has
+  a hole in it that the receiver cannot see, so every later write and flush returns the
+  error. A shorter chunk that *would* fit is refused too: writing it would put it after the
+  hole, and the result would look like complete output. There is no `clear()`: if you have a
   recovery story it involves a new writer over a new sink, not pretending this one is
   fine. (Before this, `flush` answered `PROVEN_OK` after a failed write — the buffer was
   empty, so there was nothing left to fail on — and "write, write, write, check the

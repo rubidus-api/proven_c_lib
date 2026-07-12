@@ -291,6 +291,32 @@ int main(void) {
         proven_u8str_destroy(heap, &s.value);
     }
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a fixed buffer that overflowed reports it on flush too",
+        "The same disease as the buffered writer: the write that overflowed said so, but a caller who checks only the flush - which is most callers - was told everything was fine.",
+        "And a later, shorter chunk must not sneak in behind the hole: a buffer that looks like valid output and is missing a piece in the middle is undetectable downstream.");
+    // ---------------------------------------------------------------
+    {
+        proven_byte_t small[8];
+        proven_writer_buf_t st = { .buf = { .ptr = small, .size = sizeof small } };
+        proven_writer_t w = proven_writer_from_buffer(&st);
+
+        proven_err_t e = proven_writer_write_str(w, PROVEN_LIT("way too long for eight bytes"));
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_OUT_OF_BOUNDS, "the oversized write must be refused", "");
+        PROVEN_TEST_ASSERT(st.overflowed, "and the writer must record it", "");
+
+        e = proven_writer_flush(w);
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_OUT_OF_BOUNDS,
+            "the flush must NOT report success after data was dropped",
+            "It used to have no flush function at all, so proven_writer_flush returned PROVEN_OK.");
+
+        e = proven_writer_write_str(w, PROVEN_LIT("ok"));
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_OUT_OF_BOUNDS,
+            "and a later chunk that WOULD fit must still be refused",
+            "Two bytes fit in the remaining eight. Writing them would put them after the hole, and the result would look like complete output.");
+        PROVEN_TEST_ASSERT(st.len == 0, "nothing must have been written at all", "");
+    }
+
     PROVEN_TEST_PASS("partial writes, failed reads, and {:f} all behave.");
     return 0;
 }
