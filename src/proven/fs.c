@@ -3,6 +3,9 @@
 #include "proven/array.h"
 #include "proven/algorithm.h"
 
+/* Starting capacity when the source reports no usable size (streams, /proc). */
+#define INTERNAL_SLURP_CHUNK ((proven_size_t)65536)
+
 typedef struct {
     proven_err_t err;
     char *value;
@@ -369,74 +372,291 @@ void proven_fs_list_destroy(proven_allocator_t alloc, proven_array_t *list) {
     proven_array_destroy(list);
 }
 
-proven_result_mem_mut_t proven_fs_read_all(proven_allocator_t alloc, proven_u8str_view_t path) {
-    proven_result_mem_mut_t res = {0};
-    if (!proven_alloc_is_valid(alloc)) {
-        res.err = PROVEN_ERR_INVALID_ARG;
-        return res;
+/*
+ * Reads `f` to EOF, taking ownership of the caller's `cap`-byte allocation and
+ * growing it as needed. On success the returned buffer holds every byte the
+ * source produced; on failure the buffer is freed and nothing leaks.
+ *
+ * Reading to EOF rather than to a pre-measured size is what makes this correct
+ * for two cases the size alone cannot express: sources whose size is unknowable
+ * up front (pipes, FIFOs, /proc entries, character devices - proven_fs_size
+ * reports 0 for anything that is not a regular file), and regular files that
+ * grow while they are being read.
+ *
+ * The caller keeps ownership of `f`; this never closes it.
+ *
+ * `reserve_extra` asks for one spare byte beyond the payload, so callers that
+ * need a NUL terminator do not force a second allocation.
+ */
+typedef struct {
+    proven_err_t   err;
+    proven_byte_t *ptr;
+    proven_size_t  len;   /* bytes actually read */
+    proven_size_t  cap;   /* live allocation size */
+} internal_slurp_t;
+
+static internal_slurp_t internal_read_to_eof(proven_allocator_t alloc,
+                                             proven_file_t f,
+                                             proven_byte_t *ptr,
+                                             proven_size_t cap) {
+    internal_slurp_t res = {0};
+    proven_size_t len = 0;
+
+    for (;;) {
+        if (len == cap) {
+            if (!alloc.realloc_fn) {
+                /* A non-growing allocator cannot follow a source past its
+                 * initially reserved capacity. */
+                alloc.free_fn(alloc.ctx, ptr);
+                res.err = PROVEN_ERR_UNSUPPORTED;
+                return res;
+            }
+            proven_size_t new_cap;
+            if (PROVEN_CKD_MUL(&new_cap, cap, (proven_size_t)2)) {
+                alloc.free_fn(alloc.ctx, ptr);
+                res.err = PROVEN_ERR_OVERFLOW;
+                return res;
+            }
+            proven_result_mem_mut_t grow = alloc.realloc_fn(alloc.ctx, ptr, cap, new_cap, 1);
+            if (!proven_is_ok(grow.err)) {
+                /* realloc is failure-atomic: `ptr` is still the live allocation. */
+                alloc.free_fn(alloc.ctx, ptr);
+                res.err = grow.err;
+                return res;
+            }
+            ptr = grow.value.ptr;
+            cap = new_cap;
+        }
+
+        proven_mem_mut_t slice = { .ptr = ptr + len, .size = cap - len };
+        proven_result_size_t r = proven_fs_read(f, slice);
+        if (r.err == PROVEN_ERR_EOF) break;
+        if (!proven_is_ok(r.err)) {
+            alloc.free_fn(alloc.ctx, ptr);
+            res.err = r.err;
+            return res;
+        }
+        if (r.value == 0) break;
+        len += r.value; /* r.value <= cap - len, so this cannot overflow */
     }
-    
+
+    res.err = PROVEN_OK;
+    res.ptr = ptr;
+    res.len = len;
+    res.cap = cap;
+    return res;
+}
+
+/*
+ * Opens `path` and reads it to EOF into an owned buffer.
+ *
+ * `extra` reserves spare bytes past the payload (a NUL terminator for the
+ * u8str variant), so the string form needs no second allocation.
+ *
+ * Reading to EOF rather than to a pre-measured size is what makes this correct
+ * for two cases a size alone cannot express: sources whose size is unknowable up
+ * front (pipes, FIFOs, /proc entries, character devices - proven_fs_size reports
+ * 0 for anything that is not a regular file), and regular files that grow while
+ * they are being read. proven_fs_size still seeds the initial capacity, so a
+ * regular file of known size is read in a single allocation and a single pass.
+ */
+static internal_slurp_t internal_slurp_path(proven_allocator_t alloc,
+                                            proven_u8str_view_t path,
+                                            proven_size_t extra) {
+    internal_slurp_t res = {0};
+
     proven_result_file_t f_res = proven_fs_open(alloc, path, PROVEN_FS_READ);
     if (!proven_is_ok(f_res.err)) {
         res.err = f_res.err;
         return res;
     }
-    
     proven_file_t f = f_res.value;
+
     proven_result_size_t s_res = proven_fs_size(f);
     if (!proven_is_ok(s_res.err)) {
         proven_fs_close(f);
         res.err = s_res.err;
         return res;
     }
-    
-    proven_size_t size = s_res.value;
-    if (size == 0) {
-        res.err = PROVEN_OK;
-        res.value = (proven_mem_mut_t){ .ptr = (proven_byte_t*)0, .size = 0 };
+
+    proven_size_t cap;
+    if (PROVEN_CKD_ADD(&cap, s_res.value, extra)) {
         proven_fs_close(f);
+        res.err = PROVEN_ERR_OVERFLOW;
         return res;
     }
-    
-    proven_result_mem_mut_t m_res = alloc.alloc_fn(alloc.ctx, size, 1);
+    if (cap == 0) cap = INTERNAL_SLURP_CHUNK;
+
+    proven_result_mem_mut_t m_res = alloc.alloc_fn(alloc.ctx, cap, 1);
     if (!proven_is_ok(m_res.err)) {
         proven_fs_close(f);
         res.err = m_res.err;
         return res;
     }
-    
-    proven_size_t total_read = 0;
-    while (total_read < size) {
-        proven_mem_mut_t slice = { .ptr = m_res.value.ptr + total_read, .size = size - total_read };
-        proven_result_size_t r = proven_fs_read(f, slice);
-        if (r.err == PROVEN_ERR_EOF) {
-            break;
+
+    res = internal_read_to_eof(alloc, f, m_res.value.ptr, cap);
+    proven_fs_close(f);
+    return res;
+}
+
+proven_result_mem_mut_t proven_fs_read_all(proven_allocator_t alloc, proven_u8str_view_t path) {
+    proven_result_mem_mut_t res = {0};
+    if (!proven_alloc_is_valid(alloc)) {
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
+
+    internal_slurp_t s = internal_slurp_path(alloc, path, 0);
+    if (!proven_is_ok(s.err)) {
+        res.err = s.err;
+        return res;
+    }
+
+    if (s.len == 0) {
+        alloc.free_fn(alloc.ctx, s.ptr);
+        res.err = PROVEN_OK;
+        res.value = (proven_mem_mut_t){ .ptr = (proven_byte_t*)0, .size = 0 };
+        return res;
+    }
+
+    /* Give back the slack the size estimate over-reserved. A failed shrink is
+     * not an error: the larger allocation is still valid and correctly sized. */
+    if (s.len < s.cap && alloc.realloc_fn) {
+        proven_result_mem_mut_t shrink = alloc.realloc_fn(alloc.ctx, s.ptr, s.cap, s.len, 1);
+        if (proven_is_ok(shrink.err)) {
+            s.ptr = shrink.value.ptr;
         }
-        if (!proven_is_ok(r.err)) {
-            proven_fs_close(f);
-            alloc.free_fn(alloc.ctx, m_res.value.ptr);
-            res.err = r.err;
+    }
+
+    res.err = PROVEN_OK;
+    res.value.ptr = s.ptr;
+    res.value.size = s.len;
+    return res;
+}
+
+proven_result_u8str_t proven_fs_read_all_u8str(proven_allocator_t alloc, proven_u8str_view_t path) {
+    proven_result_u8str_t res = {0};
+    if (!proven_alloc_is_valid(alloc)) {
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
+
+    /* +1 so the NUL that proven_u8str_as_cstr relies on always has room. */
+    internal_slurp_t s = internal_slurp_path(alloc, path, 1);
+    if (!proven_is_ok(s.err)) {
+        res.err = s.err;
+        return res;
+    }
+
+    if (s.len == s.cap) {
+        /* Source exactly filled the buffer; make room for the terminator. */
+        proven_size_t new_cap;
+        if (!alloc.realloc_fn || PROVEN_CKD_ADD(&new_cap, s.cap, (proven_size_t)1)) {
+            alloc.free_fn(alloc.ctx, s.ptr);
+            res.err = alloc.realloc_fn ? PROVEN_ERR_OVERFLOW : PROVEN_ERR_UNSUPPORTED;
             return res;
         }
-        if (r.value == 0) {
-            break;
+        proven_result_mem_mut_t grow = alloc.realloc_fn(alloc.ctx, s.ptr, s.cap, new_cap, 1);
+        if (!proven_is_ok(grow.err)) {
+            alloc.free_fn(alloc.ctx, s.ptr);
+            res.err = grow.err;
+            return res;
         }
-        total_read += r.value;
-    }
-    proven_fs_close(f);
-    
-    // Shrink allocation if partial read happened
-    if (total_read < size && alloc.realloc_fn) {
-        proven_result_mem_mut_t shrink = alloc.realloc_fn(alloc.ctx, m_res.value.ptr, size, total_read, 1);
+        s.ptr = grow.value.ptr;
+        s.cap = new_cap;
+    } else if (s.len + 1 < s.cap && alloc.realloc_fn) {
+        proven_result_mem_mut_t shrink = alloc.realloc_fn(alloc.ctx, s.ptr, s.cap, s.len + 1, 1);
         if (proven_is_ok(shrink.err)) {
-            m_res.value = shrink.value;
+            s.ptr = shrink.value.ptr;
+            s.cap = s.len + 1;
         }
     }
-    
+
+    s.ptr[s.len] = 0;
+
     res.err = PROVEN_OK;
-    res.value = m_res.value;
-    res.value.size = total_read;
+    res.value.borrowed = false;
+    res.value.internal.ptr = s.ptr;
+    res.value.internal.len = s.len;
+    res.value.internal.cap = s.cap;
     return res;
+}
+
+proven_err_t proven_fs_write_file(proven_allocator_t scratch, proven_u8str_view_t path, proven_mem_view_t data) {
+    if (!proven_alloc_is_valid(scratch)) return PROVEN_ERR_INVALID_ARG;
+    if (data.size > 0 && !data.ptr) return PROVEN_ERR_INVALID_ARG;
+
+    proven_result_file_t f_res = proven_fs_open(scratch, path,
+        (proven_fs_mode_t)(PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC));
+    if (!proven_is_ok(f_res.err)) return f_res.err;
+
+    proven_err_t err = proven_fs_write_all(f_res.value, data);
+    proven_fs_close(f_res.value);
+    return err;
+}
+
+/*
+ * Writes `data` to a sibling temp file and renames it over `path`.
+ *
+ * The rename is what readers observe: they see either the whole old file or the
+ * whole new one, never a half-written prefix. The temp file is a sibling so the
+ * rename stays within one filesystem, which is what makes it atomic.
+ *
+ * This is atomic with respect to concurrent readers, not durable across a power
+ * loss - proven exposes no fsync, so the rename may reach the disk before the
+ * data does. A caller that needs crash durability needs more than this library
+ * currently offers.
+ */
+proven_err_t proven_fs_write_file_atomic(proven_allocator_t scratch, proven_u8str_view_t path, proven_mem_view_t data) {
+    if (!proven_alloc_is_valid(scratch)) return PROVEN_ERR_INVALID_ARG;
+    if (data.size > 0 && !data.ptr) return PROVEN_ERR_INVALID_ARG;
+    if (path.size == 0 || !path.ptr) return PROVEN_ERR_INVALID_ARG;
+    if (view_has_nul(path)) return PROVEN_ERR_INVALID_ARG;
+
+    /* "<path>.pvtmpNN": CREATE_NEW makes the winner of a race unambiguous, so
+     * two concurrent writers cannot pick the same temp file. */
+    static const proven_size_t suffix_len = 9; /* ".pvtmp" + 2 digits + NUL */
+    proven_size_t tmp_cap;
+    if (PROVEN_CKD_ADD(&tmp_cap, path.size, suffix_len)) return PROVEN_ERR_OVERFLOW;
+
+    proven_result_mem_mut_t tmp_mem = scratch.alloc_fn(scratch.ctx, tmp_cap, 1);
+    if (!proven_is_ok(tmp_mem.err)) return tmp_mem.err;
+    proven_byte_t *tmp = tmp_mem.value.ptr;
+    for (proven_size_t i = 0; i < path.size; ++i) tmp[i] = path.ptr[i];
+
+    proven_u8str_view_t tmp_view = { .ptr = tmp, .size = path.size + 8 };
+    proven_result_file_t f_res = {0};
+    f_res.err = PROVEN_ERR_BUSY;
+
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        proven_byte_t *s = tmp + path.size;
+        s[0] = '.'; s[1] = 'p'; s[2] = 'v'; s[3] = 't'; s[4] = 'm'; s[5] = 'p';
+        s[6] = (proven_byte_t)('0' + (attempt / 10));
+        s[7] = (proven_byte_t)('0' + (attempt % 10));
+        s[8] = 0;
+
+        f_res = proven_fs_open(scratch, tmp_view,
+            (proven_fs_mode_t)(PROVEN_FS_WRITE | PROVEN_FS_CREATE_NEW));
+        if (proven_is_ok(f_res.err)) break;
+    }
+    if (!proven_is_ok(f_res.err)) {
+        scratch.free_fn(scratch.ctx, tmp);
+        return f_res.err;
+    }
+
+    proven_err_t err = proven_fs_write_all(f_res.value, data);
+    proven_fs_close(f_res.value);
+
+    if (proven_is_ok(err)) {
+        err = proven_fs_rename(scratch, tmp_view, path);
+    }
+    if (!proven_is_ok(err)) {
+        /* Leave no debris behind; the remove itself cannot rescue the error. */
+        (void)proven_fs_remove(scratch, tmp_view);
+    }
+
+    scratch.free_fn(scratch.ctx, tmp);
+    return err;
 }
 
 proven_err_t proven_fs_chmod(proven_allocator_t scratch, proven_u8str_view_t path, proven_fs_perms_t perms) {
