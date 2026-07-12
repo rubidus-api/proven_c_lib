@@ -2,15 +2,12 @@
 
 ## Active Task
 
-- [x] B4: Grisu3 fast shortest path + Dragon4 exact fallback (f64 + f32)
-- [x] Generate `proven_float_grisu_powers` cached-power table (no libm)
-- [x] Validate round-trip + minimality over ~3M f64 / ~5M f32; all gates green
-- [x] Refresh benchmark docs and changelog
+- None.
 
 ## Always before committing
 
 - Update `include/proven/version.h` first.
-- Sync the visible version string in `README.md`, `SPEC.md`, `TEST.md`, `manual/`, `CHANGELOG.md`, and `docs-site/index.html` when present.
+- Sync the visible version string in `README.md` (both language halves), `TEST.md`, `manual/` (chapter headings and the `version.h` excerpt in chapter 1), and `CHANGELOG.md`.
 - Add a `CHANGELOG.md` entry that explains the change.
 - Keep public examples and help text on `/home/user/work/...` paths only.
 - Do not expose private host paths, share names, user names, or SSH key names in public docs or source comments.
@@ -25,6 +22,6 @@
 - Windows append should preserve append semantics. Do not rely on a simple seek-to-end emulation when real append behavior is required.
 - If a public structure or symbol changes, add regression coverage immediately and update the manual.
 - If a bug is serious enough to repeat, add a short prevention note here with the symptom, root cause, and the first thing to inspect.
-- For decimal parsing changes, always re-check `tests/test_float_rfc_0001.c` and `tests/test_phase21_scan.c` together. A tokenizer-level exponent guard can accidentally preserve safety while breaking `strtod`-style `endptr` behavior.
+- For decimal parsing changes, always re-check `tests/test_unit_float_rfc_0001_cases.c` and `tests/test_unit_scan.c` together. A tokenizer-level exponent guard can accidentally preserve safety while breaking `strtod`-style `endptr` behavior.
 - Keep `significant_digits` consistent with the actual significand: trailing zeros are folded into `exp10` and excluded from the significand and `mantissa_u64`, so they must also be excluded from `significant_digits`. Symptom of the mismatch: long-mantissa inputs with a trailing zero (e.g. `12345678901234567890`) round to a power of two because the inflated magnitude estimate pushes `binary_exp_bounds` above the true exponent and the search clamps to its lower bound. First place to inspect: the `out->significant_digits` assignment in `proven_float_decimal_build_number`, then `proven_float_decimal_binary_exp_bounds`.
 - The exact-fallback path is only exercised by long-mantissa and subnormal-tie inputs in the bundled benchmark corpora; normal-range values are caught earlier by Clinger/Eisel-Lemire. To validate fallback changes, run a large randomized differential check against host `strtod` with many significant digits AND extreme exponents — the small fixed corpus will not surface bounds/rounding regressions.

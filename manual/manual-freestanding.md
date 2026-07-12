@@ -1,4 +1,4 @@
-# Proven Freestanding Mode (v26.06.24b)
+# Proven Freestanding Mode (v26.07.12d)
 
 This guide describes the current `PROVEN_FREESTANDING` configuration as implemented by `nob.c` and the public headers.
 
@@ -275,11 +275,11 @@ return; /* wrong if map survives after key bytes go out of scope */
 The project freestanding command builds and runs these local checks on the build host:
 
 ```text
-tests/test_freestanding_heap_stub
-tests/test_compile_freestanding
-tests/test_compile_nofloat
-tests/test_compile_nou16str
-tests/test_freestanding
+tests/test_portability_freestanding_heap_stub
+tests/test_portability_compile_freestanding
+tests/test_portability_compile_nofloat
+tests/test_portability_compile_nou16str
+tests/test_portability_freestanding
 ```
 
 The cross command performs compile-only checks for available embedded compilers:
