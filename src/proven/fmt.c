@@ -374,8 +374,18 @@ static void fmt_run(proven_fmt_ctx_t *ctx, const char *fmt, const proven_arg_t *
         }
 
         if (*p != '{') {
-            fmt_append_byte(ctx, (proven_u8)*p);
-            p++; continue;
+            /* Take the whole literal run in one go. Feeding it a character at a
+             * time cost a checked add, an out-of-line one-byte move and a NUL
+             * reseal per character - and the whole format runs twice, once to
+             * measure and once to write. */
+            const char *run = p;
+            do { ++p; } while (*p && *p != '{' && *p != '}');
+            proven_u8str_view_t lit = {
+                .ptr = (const proven_byte_t *)run,
+                .size = (proven_size_t)(p - run)
+            };
+            fmt_append_view(ctx, lit);
+            continue;
         }
 
         p++; // skip {
