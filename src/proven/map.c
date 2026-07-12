@@ -409,17 +409,23 @@ proven_err_t proven_map_set_with_scratch(proven_map_t *map, proven_map_key_t key
     // Ensure threshold is at least 1 if cap > 1 to avoid premature rehashing on empty maps
     if (map->cap > 1 && threshold == 0) threshold = 1;
 
-    void *existing = map_find_payload_mut(map, key);
-    if (existing) {
-        if (existing != element) {
-            proven_sys_mem_move(existing, element, map->elem_size);
-        }
-        return PROVEN_OK;
-    }
-
     const void *insert_elem = element;
-    
+
     if (map->used >= threshold) {
+        /* Only probe for an existing key when we are about to grow. Overwriting
+         * an existing key needs no new slot, so finding it here saves a rehash.
+         *
+         * Below the threshold this probe is pure waste: map_insert_no_grow
+         * already overwrites a key it finds, so the old code walked the same
+         * chain twice for every set. */
+        void *existing = map_find_payload_mut(map, key);
+        if (existing) {
+            if (existing != element) {
+                proven_sys_mem_move(existing, element, map->elem_size);
+            }
+            return PROVEN_OK;
+        }
+
         proven_bufref_t alias_ref = proven_bufref_capture(
             map->internal.ptr,
             map->internal.size,
@@ -461,7 +467,10 @@ proven_err_t proven_map_set_with_scratch(proven_map_t *map, proven_map_key_t key
 }
 
 proven_err_t proven_map_set(proven_map_t *map, proven_map_key_t key, const void *element) {
-    if (!proven_map_is_valid(map)) return PROVEN_ERR_INVALID_ARG;
+    /* No validation here: proven_map_set_with_scratch validates the same map on
+     * its first line, and reading map->alloc for an invalid map is exactly what
+     * that check would have rejected - so read it only after the check passes. */
+    if (!map) return PROVEN_ERR_INVALID_ARG;
     return proven_map_set_with_scratch(map, key, element, map->alloc);
 }
 
