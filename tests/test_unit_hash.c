@@ -175,6 +175,26 @@ int main(void) {
         PROVEN_TEST_ASSERT(hex[64] == '\0', "and it is NUL-terminated", "");
     }
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a size>0 view with a NULL pointer is treated as empty, not dereferenced",
+        "The mem_view contract says a non-empty view points to valid memory, so this is caller error - but all four functions must handle it the same way rather than three crashing and one not.",
+        "SHA-256's update already guarded it; the byte hashes and CRC now do too.");
+    // ---------------------------------------------------------------
+    {
+        proven_mem_view_t nul = { .ptr = NULL, .size = 8 };
+        PROVEN_TEST_ASSERT(proven_hash_bytes(nul) == proven_hash_bytes((proven_mem_view_t){NULL, 0}),
+            "FNV of a NULL/size-8 view equals FNV of empty", "");
+        proven_byte_t key[16] = {0};
+        PROVEN_TEST_ASSERT(proven_hash_keyed(nul, key) == proven_hash_keyed((proven_mem_view_t){NULL, 0}, key),
+            "SipHash of a NULL/size-8 view equals SipHash of empty", "");
+        PROVEN_TEST_ASSERT(proven_crc32(nul) == proven_crc32((proven_mem_view_t){NULL, 0}),
+            "CRC-32 of a NULL/size-8 view equals CRC-32 of empty", "");
+        proven_byte_t d1[32], d2[32];
+        proven_sha256(nul, d1);
+        proven_sha256((proven_mem_view_t){NULL, 0}, d2);
+        PROVEN_TEST_ASSERT(memcmp(d1, d2, 32) == 0, "SHA-256 likewise", "");
+    }
+
     PROVEN_TEST_PASS("every hash agrees with its own standard's vectors.");
     return 0;
 }
