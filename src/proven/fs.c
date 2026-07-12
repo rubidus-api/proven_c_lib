@@ -405,13 +405,25 @@ static internal_slurp_t internal_read_to_eof(proven_allocator_t alloc,
 
     for (;;) {
         if (len == cap) {
-            if (!alloc.realloc_fn) {
-                /* A non-growing allocator cannot follow a source past its
-                 * initially reserved capacity. */
+            /* The buffer is exactly full. That is the common case for a regular
+             * file whose size we were told, and it does NOT mean there is more
+             * to read - but we cannot know that without asking. Ask with a
+             * single byte on the stack rather than by doubling the buffer first:
+             * growing here would double the allocation for every regular file in
+             * existence, purely to discover that the file ended where its size
+             * said it would. */
+            proven_byte_t probe;
+            proven_mem_mut_t one = { .ptr = &probe, .size = 1 };
+            proven_result_size_t p = proven_fs_read(f, one);
+            if (p.err == PROVEN_ERR_EOF || (proven_is_ok(p.err) && p.value == 0)) break;
+            if (!proven_is_ok(p.err)) {
                 alloc.free_fn(alloc.ctx, ptr);
-                res.err = PROVEN_ERR_UNSUPPORTED;
+                res.err = p.err;
                 return res;
             }
+
+            /* The source really does have more than its size promised. Now grow,
+             * and keep the byte the probe already consumed. */
             proven_size_t new_cap;
             if (PROVEN_CKD_MUL(&new_cap, cap, (proven_size_t)2)) {
                 alloc.free_fn(alloc.ctx, ptr);
@@ -427,6 +439,7 @@ static internal_slurp_t internal_read_to_eof(proven_allocator_t alloc,
             }
             ptr = grow.value.ptr;
             cap = new_cap;
+            ptr[len++] = probe;
         }
 
         proven_mem_mut_t slice = { .ptr = ptr + len, .size = cap - len };
@@ -481,13 +494,18 @@ static internal_slurp_t internal_slurp_path(proven_allocator_t alloc,
         return res;
     }
 
+    /* Base the fallback on the reported size, not on the capacity: with extra=1
+     * the capacity is never 0, so testing the capacity would leave a size-0
+     * source (a pipe, a /proc entry) starting from a one-byte buffer and
+     * doubling its way up. */
     proven_size_t cap;
-    if (PROVEN_CKD_ADD(&cap, s_res.value, extra)) {
+    if (s_res.value == 0) {
+        cap = INTERNAL_SLURP_CHUNK;
+    } else if (PROVEN_CKD_ADD(&cap, s_res.value, extra)) {
         proven_fs_close(f);
         res.err = PROVEN_ERR_OVERFLOW;
         return res;
     }
-    if (cap == 0) cap = INTERNAL_SLURP_CHUNK;
 
     proven_result_mem_mut_t m_res = alloc.alloc_fn(alloc.ctx, cap, align);
     if (!proven_is_ok(m_res.err)) {
@@ -557,11 +575,12 @@ proven_result_u8str_t proven_fs_read_all_u8str(proven_allocator_t alloc, proven_
     }
 
     if (s.len == s.cap) {
-        /* Source exactly filled the buffer; make room for the terminator. */
+        /* The source filled the buffer exactly - it had one more byte than its
+         * size promised. Make room for the terminator. */
         proven_size_t new_cap;
-        if (!alloc.realloc_fn || PROVEN_CKD_ADD(&new_cap, s.cap, (proven_size_t)1)) {
+        if (PROVEN_CKD_ADD(&new_cap, s.cap, (proven_size_t)1)) {
             alloc.free_fn(alloc.ctx, s.ptr);
-            res.err = alloc.realloc_fn ? PROVEN_ERR_OVERFLOW : PROVEN_ERR_UNSUPPORTED;
+            res.err = PROVEN_ERR_OVERFLOW;
             return res;
         }
         proven_result_mem_mut_t grow = alloc.realloc_fn(alloc.ctx, s.ptr, s.cap, new_cap, PROVEN_DEFAULT_ALIGNMENT);
@@ -572,7 +591,9 @@ proven_result_u8str_t proven_fs_read_all_u8str(proven_allocator_t alloc, proven_
         }
         s.ptr = grow.value.ptr;
         s.cap = new_cap;
-    } else if (s.len + 1 < s.cap && alloc.realloc_fn) {
+    } else if (s.len + 1 < s.cap) {
+        /* Give back the slack a chunked read over-reserved. A failed shrink is
+         * not an error: the larger allocation is still valid. */
         proven_result_mem_mut_t shrink = alloc.realloc_fn(alloc.ctx, s.ptr, s.cap, s.len + 1, PROVEN_DEFAULT_ALIGNMENT);
         if (proven_is_ok(shrink.err)) {
             s.ptr = shrink.value.ptr;
@@ -603,12 +624,21 @@ proven_err_t proven_fs_write_file(proven_allocator_t scratch, proven_u8str_view_
     return err;
 }
 
+/* Longest basename most filesystems accept. The temp sibling has to fit too. */
+#define INTERNAL_NAME_MAX ((proven_size_t)255)
+#define INTERNAL_TMP_SUFFIX_LEN ((proven_size_t)8)   /* ".pvtmpNN", no NUL */
+
 /*
  * Writes `data` to a sibling temp file and renames it over `path`.
  *
  * The rename is what readers observe: they see either the whole old file or the
  * whole new one, never a half-written prefix. The temp file is a sibling so the
  * rename stays within one filesystem, which is what makes it atomic.
+ *
+ * If the target already exists, its permissions are copied onto the temp file
+ * before the rename. Without that, the new file would carry the temp file's
+ * fresh 0666 & ~umask - so atomically rewriting a 0600 key file would publish it
+ * as 0644. A rewrite must not widen access to what it rewrites.
  *
  * This is atomic with respect to concurrent readers, not durable across a power
  * loss - proven exposes no fsync, so the rename may reach the disk before the
@@ -621,23 +651,48 @@ proven_err_t proven_fs_write_file_atomic(proven_allocator_t scratch, proven_u8st
     if (path.size == 0 || !path.ptr) return PROVEN_ERR_INVALID_ARG;
     if (view_has_nul(path)) return PROVEN_ERR_INVALID_ARG;
 
-    /* "<path>.pvtmpNN": CREATE_NEW makes the winner of a race unambiguous, so
-     * two concurrent writers cannot pick the same temp file. */
-    static const proven_size_t suffix_len = 9; /* ".pvtmp" + 2 digits + NUL */
+    /* The temp name is "<path>.pvtmpNN". A basename may legally run right up to
+     * NAME_MAX, and write_file would accept it - so trim the copied basename by
+     * however much the suffix needs rather than producing a name the filesystem
+     * will reject. The trimmed stem is only ever a temp file, and CREATE_NEW
+     * still guarantees we never open one somebody else owns. */
+    proven_size_t stem = path.size;
+    proven_size_t name_start = 0;
+    for (proven_size_t i = 0; i < path.size; ++i) {
+        if (path.ptr[i] == (proven_byte_t)'/' || path.ptr[i] == (proven_byte_t)'\\') name_start = i + 1;
+    }
+    proven_size_t name_len = path.size - name_start;
+    if (name_len + INTERNAL_TMP_SUFFIX_LEN > INTERNAL_NAME_MAX) {
+        stem = name_start + (INTERNAL_NAME_MAX - INTERNAL_TMP_SUFFIX_LEN);
+    }
+
     proven_size_t tmp_cap;
-    if (PROVEN_CKD_ADD(&tmp_cap, path.size, suffix_len)) return PROVEN_ERR_OVERFLOW;
+    if (PROVEN_CKD_ADD(&tmp_cap, stem, INTERNAL_TMP_SUFFIX_LEN + 1)) return PROVEN_ERR_OVERFLOW;
 
     proven_result_mem_mut_t tmp_mem = scratch.alloc_fn(scratch.ctx, tmp_cap, 1);
     if (!proven_is_ok(tmp_mem.err)) return tmp_mem.err;
     proven_byte_t *tmp = tmp_mem.value.ptr;
-    for (proven_size_t i = 0; i < path.size; ++i) tmp[i] = path.ptr[i];
+    for (proven_size_t i = 0; i < stem; ++i) tmp[i] = path.ptr[i];
 
-    proven_u8str_view_t tmp_view = { .ptr = tmp, .size = path.size + 8 };
+    proven_u8str_view_t tmp_view = { .ptr = tmp, .size = stem + INTERNAL_TMP_SUFFIX_LEN };
+
+    /* Read the target's permissions before we create anything, so we can carry
+     * them across. A missing target is fine: then the temp's own fresh mode is
+     * the right answer, exactly as it would be for write_file. */
+    proven_fs_stat_t target = {0};
+    bool have_target_perms = proven_is_ok(proven_fs_stat(scratch, path, &target)) &&
+                             target.type == PROVEN_FS_TYPE_FILE;
+
     proven_result_file_t f_res = {0};
     f_res.err = PROVEN_ERR_BUSY;
 
-    for (int attempt = 0; attempt < 100; ++attempt) {
-        proven_byte_t *s = tmp + path.size;
+    /* A handful of attempts, not a hundred: this loop exists to step over a temp
+     * name a concurrent writer already holds, and every attempt costs an open()
+     * and a path allocation. proven_fs_open collapses errno, so a persistent
+     * failure (no write permission on the directory, say) looks the same as a
+     * collision - and there is no point paying for it a hundred times. */
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        proven_byte_t *s = tmp + stem;
         s[0] = '.'; s[1] = 'p'; s[2] = 'v'; s[3] = 't'; s[4] = 'm'; s[5] = 'p';
         s[6] = (proven_byte_t)('0' + (attempt / 10));
         s[7] = (proven_byte_t)('0' + (attempt % 10));
@@ -655,6 +710,11 @@ proven_err_t proven_fs_write_file_atomic(proven_allocator_t scratch, proven_u8st
     proven_err_t err = proven_fs_write_all(f_res.value, data);
     proven_fs_close(f_res.value);
 
+    if (proven_is_ok(err) && have_target_perms) {
+        /* Do this before the rename: the mode must be in place the instant the
+         * new contents become visible under the target name. */
+        err = proven_fs_chmod(scratch, tmp_view, target.perms);
+    }
     if (proven_is_ok(err)) {
         err = proven_fs_rename(scratch, tmp_view, path);
     }
@@ -716,7 +776,13 @@ proven_err_t proven_fs_stat(proven_allocator_t scratch, proven_u8str_view_t path
     
     out_stat->size = se.size;
     out_stat->type = se.is_dir ? PROVEN_FS_TYPE_DIR : PROVEN_FS_TYPE_FILE;
-    out_stat->perms = (proven_fs_perms_t)se.mode;
+    /* Permission bits only. se.mode is the raw st_mode, which also carries the
+     * file-type bits (S_IFREG and friends). Handing those back in a field typed
+     * proven_fs_perms_t broke the most obvious use of it: feeding a stat's perms
+     * straight to proven_fs_chmod, which rejects any bit outside the nine it
+     * supports and so returned PROVEN_ERR_INVALID_ARG for every real file.
+     * The proven_fs_perms_t bits are laid out exactly as the POSIX low nine. */
+    out_stat->perms = (proven_fs_perms_t)(se.mode & 0777u);
     out_stat->modified_at = se.mtime;
     out_stat->created_at = 0; // standard stat doesn't provide birth time on all posix
     out_stat->dev = se.dev;

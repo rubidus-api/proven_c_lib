@@ -246,10 +246,11 @@ bool proven_fs_is_absolute(proven_u8str_view_t path);
  *       rather than returning empty, and a regular file that grows mid-read is
  *       not silently truncated.
  * @note An empty source yields `{.ptr = NULL, .size = 0}` with PROVEN_OK.
- * @note Requires an allocator with `realloc_fn` when the source outgrows its
- *       reported size; a non-growing allocator returns PROVEN_ERR_UNSUPPORTED
- *       in that case. If the final shrink realloc fails, the larger allocation
- *       is returned with `value.size` correctly set to the bytes read.
+ * @note A regular file of known size costs exactly one allocation: EOF is
+ *       confirmed with a one-byte probe rather than by growing the buffer.
+ *       The buffer only grows if the source really does outrun its reported
+ *       size. If the final shrink realloc fails, the larger allocation is
+ *       returned with `value.size` correctly set to the bytes read.
  */
 [[nodiscard]]
 proven_result_mem_mut_t proven_fs_read_all(proven_allocator_t alloc, proven_u8str_view_t path);
@@ -286,8 +287,15 @@ proven_err_t proven_fs_write_file(proven_allocator_t scratch, proven_u8str_view_
  * never a partial write. On any failure the temp file is removed and the
  * original file is left untouched.
  *
+ * @note Permissions are preserved. If the target exists, its mode is copied onto
+ *       the temp file before the rename, so rewriting a 0600 file does not
+ *       republish it as 0644. A new file gets the process default, as with
+ *       proven_fs_write_file.
  * @note Atomic with respect to readers, not durable across power loss: proven
  *       exposes no fsync, so the rename may reach the disk before the data.
+ * @note Replaces, rather than follows, a symbolic link at `path`: the rename
+ *       leaves a regular file where the link was. proven_fs_write_file writes
+ *       *through* the link instead. Pick accordingly.
  * @note Needs write permission on the containing directory, and a filesystem
  *       where the temp sibling and the target share a mount (they always do,
  *       since the temp file is created next to the target).
