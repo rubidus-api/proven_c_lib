@@ -20,11 +20,45 @@ An item with no exit condition is a complaint, not a backlog item.
 
 ## Open
 
-_Nothing open._
+### B-015 — `map` uses a non-keyed hash, so it is HashDoS-able
+
+**Status:** open. A decision, not a defect.
+
+`map` hashes string keys with FNV-1a (`src/proven/map.c`). That is fine for keys the
+program chooses, and dangerous for keys an adversary chooses: FNV is not keyed, so an
+attacker who controls the keys can compute collisions offline and drive every insertion
+into one bucket, turning the map's O(1) into O(n²) at a time of their choosing. This is the
+exact attack `proven_hash_keyed` (SipHash-2-4) now exists to stop — Python, Rust, and the
+Linux kernel all switched their built-in tables to a keyed hash for precisely this reason.
+
+**The decision:** whether `map` should hash untrusted keys with SipHash under a per-process
+random key. It is not automatic, because (a) it needs a seed, and where the entropy comes
+from is a policy choice (getrandom? a caller-supplied seed? both?), and (b) a keyed hash is
+measurably slower than FNV, so a program that only ever hashes trusted keys should be able
+to keep the fast path. A plausible shape: `map` seeds a process-global SipHash key lazily
+from the OS RNG, with an opt-out for the trusted-key case — but the shape is the decision.
+
+**Why not now:** it changes `map`'s behaviour and adds an entropy dependency to a module
+that currently has none. That is a deliberate call for the maintainer, not something a
+"add the hash functions" task should slip in. The primitive it needs (`proven_hash_keyed`)
+now exists; wiring it into `map` is the open question.
 
 ---
 
 ## Done
+
+### B-014 — no hash / digest module (closed v26.07.13c)
+
+lowent's case study asked for this by name: content-addressed IR needed a cryptographic
+digest, proven had no hash of any kind, and the project hand-wrote BLAKE3-256 - "exactly
+the kind of code that should not be hand-rolled". Closed by `proven/hash.h`, organised by
+use case: `proven_hash_bytes` (FNV-1a) for trusted-key tables, `proven_hash_keyed`
+(SipHash-2-4) for untrusted-key tables, `proven_crc32` (IEEE, streaming) for corruption
+detection, and `proven_sha256` (FIPS 180-4, streaming, with git-style hex) for
+fingerprinting. All royalty-free, implemented from spec, checked against each standard's
+known-answer vectors and differentially against Python hashlib/zlib and an independent
+SipHash over every length to 300. The second feature written test-first. The map-HashDoS
+question it makes answerable is tracked as B-015.
 
 ### B-003 — the process was test-after (closed v26.07.13b)
 
