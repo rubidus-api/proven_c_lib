@@ -321,6 +321,8 @@
 #define xcv_print proven_print
 #define xcv_println proven_println
 #define xcv_ptrdiff_t proven_ptrdiff_t
+#define xcv_random_bytes proven_random_bytes
+#define xcv_random_u64 proven_random_u64
 #define xcv_range_contains_ptr proven_range_contains_ptr
 #define xcv_reader_buffered proven_reader_buffered
 #define xcv_reader_from_file proven_reader_from_file
