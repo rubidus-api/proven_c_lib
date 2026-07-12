@@ -74,6 +74,13 @@ wrong for the input it will actually meet.**
   is over-aligned now, and elements aligned more strictly than the scratch take the swap path,
   which only ever shows the comparator real array elements.
 
+- **A buffered writer that had failed reported success on the next flush.** The failing
+  write emptied nothing into the buffer, so `flush` found nothing to fail on and answered
+  `PROVEN_OK` — and "write, write, write, check the flush", which is how almost everyone
+  uses a buffered writer, reported success on a stream missing every byte. Reproduced
+  against `/dev/full`. The writer is sticky now: once it has lost bytes, every later write
+  and flush returns the original error.
+
 - **The panic handler was a data race** (TSan). It is read on the `*_or_panic` allocator
   paths, which run on every thread, and written by `proven_set_panic_handler`, which a
   program may call while those threads are running. It is atomic now.

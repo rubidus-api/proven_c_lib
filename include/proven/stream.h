@@ -129,6 +129,23 @@ typedef struct {
     proven_writer_t  inner;
     proven_mem_mut_t buf;
     proven_size_t    len;
+
+    /**
+     * @brief Once this writer has failed, it stays failed.
+     *
+     * A buffered writer that has lost bytes cannot honestly continue: the byte stream it
+     * was producing now has a hole in it, and the receiver has no way to see that. So the
+     * failure is remembered, and every later write and flush returns it.
+     *
+     * Without this, `flush` answered PROVEN_OK after a write had already failed - there
+     * was nothing left in the buffer, so there was nothing to fail on - and the very
+     * common shape "write, write, write, check the flush" reported success on a stream
+     * that was missing 10,000 bytes. A full disk is not an exotic condition.
+     *
+     * There is no clear() and no reset. If you have a recovery story, it involves a new
+     * writer over a new sink, not pretending this one is fine.
+     */
+    proven_err_t err;
 } proven_writer_buffered_t;
 
 /* Reader state carries the error that ended it, because "the input stopped" and "the

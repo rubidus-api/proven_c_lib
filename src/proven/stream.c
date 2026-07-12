@@ -120,7 +120,12 @@ proven_writer_t proven_writer_from_buffer(proven_writer_buf_t *state) {
 static proven_err_t writer_buffered_flush(void *ctx) {
     proven_writer_buffered_t *s = (proven_writer_buffered_t *)ctx;
     if (!s) return PROVEN_ERR_INVALID_ARG;
-    if (s->len == 0) return PROVEN_OK;
+
+    /* A writer that has already lost bytes cannot report success, whatever it does now.
+     * The stream it was producing has a hole in it and the receiver cannot see that. */
+    if (!proven_is_ok(s->err)) return s->err;
+
+    if (s->len == 0) return proven_writer_flush(s->inner);
 
     /*
      * Drop exactly what went out, and keep exactly what did not.
@@ -143,7 +148,8 @@ static proven_err_t writer_buffered_flush(void *ctx) {
             proven_size_t keep = s->len - sent;
             if (keep > 0 && sent > 0) proven_sys_mem_move(s->buf.ptr, s->buf.ptr + sent, keep);
             s->len = keep;
-            return proven_is_ok(r.err) ? PROVEN_ERR_IO : r.err;
+            s->err = proven_is_ok(r.err) ? PROVEN_ERR_IO : r.err;
+            return s->err;
         }
     }
 
@@ -158,13 +164,19 @@ static proven_result_size_t writer_buffered_write(void *ctx, proven_mem_view_t c
         res.err = PROVEN_ERR_INVALID_ARG;
         return res;
     }
+    if (!proven_is_ok(s->err)) {
+        res.err = s->err;   /* the stream already has a hole in it */
+        return res;
+    }
 
     /* A chunk bigger than the whole buffer is passed straight through: buffering it
      * would mean either failing or splitting it, and neither helps anyone. */
     if (chunk.size >= s->buf.size) {
         res.err = writer_buffered_flush(s);
         if (!proven_is_ok(res.err)) return res;
-        return proven_writer_write_partial(s->inner, chunk);
+        res = proven_writer_write_partial(s->inner, chunk);
+        if (!proven_is_ok(res.err)) s->err = res.err;
+        return res;
     }
 
     if (chunk.size > s->buf.size - s->len) {
@@ -186,6 +198,7 @@ proven_writer_t proven_writer_buffered(proven_writer_buffered_t *state, proven_w
     state->inner = inner;
     state->buf = buf;
     state->len = 0;
+    state->err = PROVEN_OK;
     return (proven_writer_t){ .ctx = state, .write_fn = writer_buffered_write, .flush_fn = writer_buffered_flush };
 }
 
