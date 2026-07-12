@@ -144,7 +144,7 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 | API | Intent | Return |
 |---|---|---|
 | `proven_fs_open(scratch, path, mode)` | Open a file path. `scratch` is used for path conversion. | `proven_result_file_t`. |
-| `proven_fs_close(file)` | Close file handle. | void. |
+| `proven_fs_close(file)` | Close file handle. | **Returns an error.** On a file you wrote to, the close *is* part of the write: NFS, CIFS and quota-enforcing filesystems report a failed write-back here and nowhere else. On a file you only read, `(void)`-ing it is fine. |
 | `proven_fs_read(file, dest)` | Single read attempt into mutable slice. | `proven_result_size_t`. |
 | `proven_fs_write(file, src)` | Single write attempt from byte view. | `proven_result_size_t`. |
 | `proven_fs_write_all(file, src)` | Retry until all bytes are written or an error occurs. | `proven_err_t`. |
@@ -232,7 +232,11 @@ if (proven_is_ok(of.err)) {
         of.value,
         proven_mem_view_from_u8(PROVEN_LIT("hello\n"))
     );
-    proven_fs_close(of.value);   /* the handle is owned: close on the failure path too */
+    /* The close is part of the write. Close on the failure path too - the handle is
+     * ours either way - but do not throw the answer away: on a network filesystem or
+     * over quota, close() is the only place the failure appears. */
+    proven_err_t ce = proven_fs_close(of.value);
+    if (proven_is_ok(e)) e = ce;
     if (!proven_is_ok(e)) {
         proven_eprintln("writing out.txt failed");
     }
@@ -362,7 +366,7 @@ if (proven_is_ok(f.err)) {
         proven_println("mapped {} bytes", PROVEN_ARG(bytes.size));
         (void)proven_mmap_destroy(&mr.value);
     }
-    proven_fs_close(f.value);
+    (void)proven_fs_close(f.value);
 }
 ```
 
@@ -469,8 +473,9 @@ proven_result_file_t f = proven_fs_open(alloc, PROVEN_LIT("out.txt"),
 if (proven_is_ok(f.err)) {
     proven_mem_view_t data = proven_mem_view_from_u8(PROVEN_LIT("payload"));
     proven_err_t e = proven_fs_write_all(f.value, data);   /* loops until done */
+    proven_err_t ce = proven_fs_close(f.value);            /* and the close can fail too */
+    if (proven_is_ok(e)) e = ce;
     (void)e;
-    proven_fs_close(f.value);
 }
 ```
 
