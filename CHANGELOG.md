@@ -80,6 +80,22 @@ wrong for the input it will actually meet.**
 
 ### Changed
 
+- **The scan engine can say "I ran out of input" (`proven_scan_t::needs_more`).** On a
+  complete view, "the input ran out" and "the input is wrong" are the same fact, so the
+  engine reported both as a malformed input — and the buffered scanner on top of it had no
+  way to tell them apart. Over a stream they are *opposite* facts: a pipe that delivered
+  `-` and then, 150 ms later, `12` produced `PROVEN_ERR_INVALID_ARG`, and `key=` against a
+  pipe that had so far sent `ke` produced `PROVEN_ERR_NOT_FOUND`. Both are now refilled and
+  retried. A wrong byte that is actually present is still an error — the scanner does not
+  wait for input that cannot fix it.
+
+- **`5^q` is built 27 exponents at a time.** The exact fallback multiplied by 5 once per
+  unit of exponent below 64, and ran exponentiation-by-squaring over full big integers above
+  it. `5^27` is the largest power of five that fits in a `u64`, so `5^350` now costs thirteen
+  single-limb multiplies. It matters because the (now correct) exact tier is the only way to
+  build `5^q`: the hard-input parse went 3,117 ns → **1,945 ns**, i.e. correctness cost about
+  6% over the old *wrong* answer rather than 70%.
+
 - **`proven_u8str_append_fmt` renders each argument once, not twice.** The allocation-free
   fixed-capacity path measured the whole output and then formatted it all over again — for a
   double, that is the correctly-rounded decimal engine run twice with the first answer thrown

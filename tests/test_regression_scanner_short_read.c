@@ -15,6 +15,7 @@ int main(void) {
 #include <unistd.h>
 #include <pthread.h>
 #include <time.h>
+#include <string.h>
 
 /*
  * The buffered scanner exists FOR pipes - the header says so: "safe scanning for both
@@ -34,6 +35,45 @@ int main(void) {
  * Regular files hid it completely: a file read is short only at real EOF, so the whole
  * test suite passed. The bug lived exactly where the feature was supposed to live.
  */
+
+/* A writer that sends `first`, pauses, then `second` - i.e. every pipe. */
+typedef struct { int fd; const char *first; const char *second; } split_writer_t;
+
+static void *split_writer(void *arg) {
+    split_writer_t *w = (split_writer_t *)arg;
+    ssize_t n = write(w->fd, w->first, strlen(w->first));
+    (void)n;
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = 120 * 1000 * 1000 };
+    nanosleep(&ts, NULL);
+    n = write(w->fd, w->second, strlen(w->second));
+    (void)n;
+    close(w->fd);
+    return NULL;
+}
+
+/* Scan one int from a pipe fed in two pieces. */
+static proven_err_t scan_split(proven_allocator_t heap, const char *first, const char *second,
+                               const char *fmt, proven_i32 *out) {
+    int fds[2];
+    if (pipe(fds) != 0) return PROVEN_ERR_IO;
+
+    split_writer_t w = { .fd = fds[1], .first = first, .second = second };
+    pthread_t th;
+    if (pthread_create(&th, NULL, split_writer, &w) != 0) { close(fds[0]); close(fds[1]); return PROVEN_ERR_IO; }
+
+    proven_file_t pf = {0};
+    pf.internal.fd = fds[0];
+
+    proven_sysio_scanner_t sc;
+    proven_err_t e = proven_sysio_scanner_init(&sc, pf, heap, 64);
+    if (proven_is_ok(e)) {
+        e = proven_sysio_scanner_scan(&sc, fmt, PROVEN_SCAN_ARG(out));
+        proven_sysio_scanner_deinit(&sc);
+    }
+    (void)pthread_join(th, NULL);
+    close(fds[0]);
+    return e;
+}
 
 static void *slow_writer(void *arg) {
     int fd = *(int *)arg;
@@ -125,6 +165,48 @@ int main(void) {
 
         proven_sysio_scanner_deinit(&sc);
         close(fds[1]);
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a token cut in half by the read boundary is waited for, not rejected",
+        "The scan engine works on a complete view, where \"the input ran out\" and \"the input is wrong\" are the same fact. Over a stream they are opposites.",
+        "proven_scan_t::needs_more is how the engine says which one happened; scan_impl turns it into a refill. Without it, a minus sign that arrived before its digits was a malformed number.");
+    // ---------------------------------------------------------------
+    {
+        proven_i32 v = -999;
+        proven_err_t e = scan_split(heap, "-", "12 ", "{}", &v);
+        PROVEN_TEST_ASSERT(proven_is_ok(e) && v == -12,
+            "a minus sign that arrives before its digits must scan as -12",
+            "It used to be PROVEN_ERR_INVALID_ARG: a sign with nothing after it looked like garbage rather than like a number still on its way.");
+
+        v = -999;
+        e = scan_split(heap, "ke", "y=7 ", "key={}", &v);
+        PROVEN_TEST_ASSERT(proven_is_ok(e) && v == 7,
+            "a literal split across the boundary must match once the rest arrives",
+            "It used to be PROVEN_ERR_NOT_FOUND: the literal was not absent, it had not arrived.");
+
+        v = -999;
+        e = scan_split(heap, "12", "34 ", "{}", &v);
+        PROVEN_TEST_ASSERT(proven_is_ok(e) && v == 1234,
+            "and digits split across the boundary still join up", "");
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("input that is genuinely wrong is still wrong",
+        "Waiting for more input must not become a way to wait forever on garbage.",
+        "needs_more is set only when the parse ran off the END of the buffer. A non-digit sitting in front of the cursor is a malformed number no matter how much more arrives.");
+    // ---------------------------------------------------------------
+    {
+        proven_i32 v = -999;
+        proven_err_t e = scan_split(heap, "abc", "def ", "{}", &v);
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_INVALID_ARG,
+            "letters where a number was expected must fail, not block",
+            "If this hangs, the scanner is refilling on a failure that more input cannot fix.");
+
+        v = -999;
+        e = scan_split(heap, "x=", "1 ", "key={}", &v);
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_NOT_FOUND,
+            "a literal that is present and WRONG must fail, not block", "");
     }
 
     PROVEN_TEST_PASS("the scanner reads pipes the way pipes actually behave.");

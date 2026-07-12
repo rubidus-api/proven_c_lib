@@ -1162,44 +1162,39 @@ static bool proven_float_bigint_copy_mul_factor(proven_float_bigint_t *dst, cons
  * cost grows with log(exp10) big multiplies rather than exp10 single-limb ones.
  * This matters for the formatter's scientific path at extreme exponents.
  */
+/* 5^0 .. 5^27: 5^27 is the largest power of five that fits in a u64. Multiplying by
+ * whole chunks of 27 turns a 350-step loop into thirteen single-limb multiplies. */
+static const proven_u64 proven_float_pow5_u64[28] = {
+    1ull, 5ull, 25ull, 125ull, 625ull, 3125ull, 15625ull, 78125ull, 390625ull, 1953125ull, 9765625ull, 48828125ull, 244140625ull, 1220703125ull, 6103515625ull, 30517578125ull, 152587890625ull, 762939453125ull, 3814697265625ull, 19073486328125ull, 95367431640625ull, 476837158203125ull, 2384185791015625ull, 11920928955078125ull, 59604644775390625ull, 298023223876953125ull, 1490116119384765625ull, 7450580596923828125ull
+};
+#define PROVEN_FLOAT_POW5_U64_MAX_E 27
+
 static bool proven_float_bigint_mul_pow5(proven_float_bigint_t *value, proven_i64 exp10) {
-    proven_float_bigint_t base;
-    proven_float_bigint_t acc;
-    proven_float_bigint_t tmp;
     proven_i64 e = exp10;
 
     if (e <= 0) {
         return true;
     }
-    if (e <= 64) {
-        /* For small exponents the in-place single-limb loop avoids the big-integer
-         * copies that exponentiation by squaring incurs. */
-        proven_i64 i;
-        for (i = 0; i < e; ++i) {
-            if (!proven_float_bigint_mul_u64(value, 5u)) {
-                return false;
-            }
+
+    /*
+     * Multiply by 5^27 at a time.
+     *
+     * This used to multiply by 5, one limb-multiply per unit of exponent, for e <= 64 -
+     * and above that it ran exponentiation-by-squaring over full big integers, copying
+     * the whole thing at every step. Both are unnecessary: 5^27 is the largest power of
+     * five that fits in a u64, so any exponent can be consumed 27 at a time with the same
+     * single-limb multiply. 5^350 - the top of the range the exact fallback needs - costs
+     * thirteen multiplies instead of 350, or instead of nine squarings of a growing
+     * bigint. It matters because the exact tier is on the correctness path for every
+     * boundary-adjacent decimal, and it had just become the only way to build 5^q.
+     */
+    while (e > PROVEN_FLOAT_POW5_U64_MAX_E) {
+        if (!proven_float_bigint_mul_u64(value, proven_float_pow5_u64[PROVEN_FLOAT_POW5_U64_MAX_E])) {
+            return false;
         }
-        return true;
+        e -= PROVEN_FLOAT_POW5_U64_MAX_E;
     }
-    proven_float_bigint_set_u64(&base, 5u);
-    proven_float_bigint_set_u64(&acc, 1u);
-    while (e > 0) {
-        if ((e & 1) != 0) {
-            if (!proven_float_bigint_copy_mul_factor(&tmp, &acc, &base)) {
-                return false;
-            }
-            acc = tmp;
-        }
-        e >>= 1;
-        if (e > 0) {
-            if (!proven_float_bigint_copy_mul_factor(&tmp, &base, &base)) {
-                return false;
-            }
-            base = tmp;
-        }
-    }
-    return proven_float_bigint_mul_factor(value, &acc);
+    return proven_float_bigint_mul_u64(value, proven_float_pow5_u64[e]);
 }
 
 static bool proven_float_bigint_build_pow5_cached(proven_i64 exp10, proven_float_bigint_t *out) {
