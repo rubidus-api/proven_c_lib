@@ -320,6 +320,7 @@ static void print_proven_build_plan(const char *build_mode, const char *compiler
 static bool cross_source_is_freestanding(const char *src) {
     if (strcmp(src, "src/proven/u16str.c") == 0) return false;
     if (strcmp(src, "src/proven/fs.c") == 0) return false;
+    if (strcmp(src, "src/proven/stream.c") == 0) return false;
     if (strcmp(src, "src/proven/sysio.c") == 0) return false;
     if (strcmp(src, "src/proven/mmap.c") == 0) return false;
     if (strcmp(src, "src/proven/job.c") == 0) return false;
@@ -877,7 +878,7 @@ int main(int argc, char **argv)
     }
 
     const char *srcs[] = {
-        "src/proven/memory.c", "src/proven/arena.c", "src/proven/pool.c", "src/proven/buffer.c",
+        "src/proven/stream.c", "src/proven/memory.c", "src/proven/arena.c", "src/proven/pool.c", "src/proven/buffer.c",
         "src/proven/heap.c", "src/proven/u8str.c", "src/proven/u16str.c", "src/proven/array.c",
         "src/proven/ring.c", "src/proven/map.c", "src/proven/algorithm.c", "src/proven/fs.c",
         "src/proven/time.c", "src/proven/fmt.c", "src/proven/mmap.c", "src/proven/sysio.c",
@@ -927,6 +928,7 @@ int main(int argc, char **argv)
         { "tests/test_unit_mmap", "memory mapped files", "Verify hosted mmap open/map/view/unmap/close behavior and byte visibility over mapped file ranges.", "Check offset alignment, file-size bounds, and PAL map/unmap ownership; failures often show platform handle lifetime issues." },
         { "tests/test_unit_u16str", "U16 strings", "Verify U16 string/code-unit creation, append, view, and optional build behavior where char16_t is available.", "Inspect PROVEN_NO_U16STR guards and UTF-16 code-unit capacity accounting; do not assume one code unit is one Unicode scalar." },
         { "tests/test_unit_sysio_env", "sysio and environment", "Verify standard stream wrappers, formatted console output, environment lookup, and long environment-key handling.", "Check sysio wrappers, env C-string conversion, allocator use for long keys/values, and PAL UTF conversion on Windows." },
+        { "tests/test_unit_stream", "writers and readers", "Verify one piece of code can write into a string, a fixed buffer and a file through the same interface; that a full buffer refuses rather than truncates; that a buffered writer loses nothing across auto-flushes; and that the line reader returns the final unterminated line but refuses a line too long for its buffer.", "Inspect src/proven/stream.c. Buffering uses caller-supplied memory: no hidden global state, no allocation the caller did not ask for." },
         { "tests/test_unit_coro", "stackless coroutine", "Verify coroutine macros preserve state across yields and resume to completion with caller-managed storage.", "Inspect coroutine state labels and re-entry rules; failures usually mean state was reset or a yield point was skipped." },
         { "tests/test_unit_job", "job system", "Verify worker creation, concurrent job dispatch, shutdown synchronization, and exactly-once execution of submitted jobs.", "Use TSAN for deeper diagnosis; check admission state, queue sequence counters, atomics, and worker wake/shutdown ordering." },
         { "tests/test_stress_job_concurrency", "job queue stress", "Verify the job queue tolerates a denser concurrent producer pattern and still executes each submitted job exactly once.", "Run this under TSAN first; inspect queue admission, claim, and shutdown ordering if a slot count drifts or a producer stalls." },
@@ -985,6 +987,7 @@ int main(int argc, char **argv)
         { "manual/examples/ex_04_map", "manual example: map with int and owned string keys", "Compile and run the map example printed in manual chapter 4.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
         { "manual/examples/ex_05_fs_wholefile", "manual example: whole-file read and write", "Compile and run the whole-file example printed in manual chapter 5.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
         { "manual/examples/ex_05_fs_stream", "manual example: open/read/write/close", "Compile and run the streaming filesystem example printed in manual chapter 5.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
+        { "manual/examples/ex_05_stream", "manual example: writers and readers", "Compile and run the stream example printed in manual chapter 5.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
         { "manual/examples/ex_06_job", "manual example: bounded job system", "Compile and run the job-system example printed in manual chapter 6.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
         { "manual/examples/ex_06_coro", "manual example: stackless coroutine", "Compile and run the coroutine example printed in manual chapter 6.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
         { "manual/examples/ex_08_fmt_scan", "manual example: formatting and scanning", "Compile and run the fmt/scan example printed in manual chapter 8.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
@@ -1058,6 +1061,7 @@ int main(int argc, char **argv)
         if (strcmp(build_mode, "freestanding") == 0) {
             if (strcmp(srcs[i], "src/proven/u16str.c") == 0) continue;
             if (strcmp(srcs[i], "src/proven/fs.c") == 0) continue;
+            if (strcmp(srcs[i], "src/proven/stream.c") == 0) continue;   /* streams sit on fs */
             if (strcmp(srcs[i], "src/proven/sysio.c") == 0) continue;
             if (strcmp(srcs[i], "src/proven/mmap.c") == 0) continue;
             if (strcmp(srcs[i], "src/proven/job.c") == 0) continue;

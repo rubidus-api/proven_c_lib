@@ -412,36 +412,53 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
 }
 
 proven_err_t proven_sysio_print_impl(proven_file_t file, const char *fmt, const proven_arg_t *args, size_t args_count) {
-    // Rely on the ubiquitous thread-safe global allocator to process prints.
-    // In heavily constrained systems, you'd substitute this with a stack buffer.
-    proven_allocator_t alloc = proven_heap_allocator();
-    proven_u8str_t str = {0};
-    
-    proven_fmt_result_t fmt_res = proven_u8str_fmt_internal(alloc, &str, false, fmt, (proven_allocator_t){0}, args, args_count);
-    proven_err_t err = fmt_res.err;
-    if (!proven_is_ok(err)) return err;
+    /*
+     * A stack buffer first, the heap only if the line will not fit.
+     *
+     * This used to allocate a proven_u8str_t from the global heap for EVERY call:
+     * ten thousand log lines meant ten thousand mallocs and ten thousand frees, on
+     * the logging path - which is the one place an allocation is least welcome,
+     * because a program logging its way out of an out-of-memory condition will fail
+     * to log it.
+     *
+     * A typical line fits in 512 bytes and now costs zero allocations. A line that
+     * does not still works: it falls back to the heap rather than being refused,
+     * because refusing to print something because it is long would be worse.
+     *
+     * This is still one write syscall per call. That is deliberate and documented -
+     * buffering would need hidden global state, which this library does not have.
+     * A caller who wants ten thousand lines in a handful of syscalls builds a
+     * proven_writer_buffered over their own memory; see stream.h.
+     */
+    proven_byte_t stack[512];
+    proven_u8str_t str = proven_u8str_borrow(stack, sizeof stack);
 
-    // Send payload straight to kernel OS
+    proven_fmt_result_t fmt_res = proven_u8str_fmt_internal((proven_allocator_t){0}, &str, false, fmt,
+                                                            (proven_allocator_t){0}, args, args_count);
+
+    proven_allocator_t heap = {0};
+    bool used_heap = false;
+    if (fmt_res.err == PROVEN_ERR_OUT_OF_BOUNDS) {
+        heap = proven_heap_allocator();
+        str = (proven_u8str_t){0};
+        fmt_res = proven_u8str_fmt_internal(heap, &str, false, fmt, (proven_allocator_t){0}, args, args_count);
+        used_heap = true;
+    }
+    if (!proven_is_ok(fmt_res.err)) {
+        if (used_heap && str.internal.ptr) heap.free_fn(heap.ctx, str.internal.ptr);
+        return fmt_res.err;
+    }
+
 #if defined(_WIN32) || defined(_WIN64)
     proven_sys_io_handle_t handle = { .handle = file.internal.ptr };
 #else
     proven_sys_io_handle_t handle = { .fd = file.internal.fd };
 #endif
 
-    const proven_byte_t *ptr = str.internal.ptr;
-    proven_sys_result_size_t w_res = proven_sys_io_write_all(handle, ptr, str.internal.len);
-    if (!proven_is_ok(w_res.err)) {
-        err = w_res.err;
-    }
-    
-    // Explicitly flush after writing
-    proven_sys_io_flush(handle);
-    
-    // Explicit clean-up since we used heap manually instead of Arena
-    if (str.internal.ptr) {
-        alloc.free_fn(alloc.ctx, str.internal.ptr);
-    }
-    
+    proven_sys_result_size_t w_res = proven_sys_io_write_all(handle, str.internal.ptr, str.internal.len);
+    proven_err_t err = proven_is_ok(w_res.err) ? PROVEN_OK : w_res.err;
+
+    if (used_heap && str.internal.ptr) heap.free_fn(heap.ctx, str.internal.ptr);
     return err;
 }
 

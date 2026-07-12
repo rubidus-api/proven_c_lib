@@ -11,6 +11,62 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-12] — proven_c_lib-v26.07.12h
+
+Steps 4-6 of `docs/RFC-0001-streams-and-io.md`: the keystone. Closes B-007 and B-008.
+
+### Added
+
+- **`proven_writer_t` and `proven_reader_t`** (`include/proven/stream.h`). There was no
+  stream abstraction at all. The formatter's only sink was a `proven_u8str_t`; a file
+  was a `proven_file_t`; the two scanners read two other things again. Four types, four
+  function families, no common interface — so you could not write one
+  `serialize(sink, value)` that worked over both memory and a file, and you could not
+  format into a file at all.
+
+  Both are small vtables passed by value, modelled on `proven_allocator_t`, with sinks
+  over a file, an owned string, and a fixed caller buffer; sources over a file and over
+  bytes you already have; and buffered adapters for each.
+
+  **Buffering uses memory you supply**, exactly like `proven_arena_create`. There is no
+  hidden global buffer — which means there is no destructor to flush it for you, and
+  you must flush before it goes out of scope. In exchange, the logging path never
+  allocates, and a program logging its way out of an out-of-memory condition can still
+  log.
+
+- **`proven_fmt_to_writer_impl`, `proven_fprint`, `proven_fprintln`** — format straight
+  into a writer, through a stack scratch buffer. No allocation.
+
+- **`proven_reader_read_line`.** Reading a file line by line was impossible: the only
+  route was loading the whole file and splitting by hand. Two contracts are pinned by
+  tests because a naive implementation gets them wrong: the **final line with no
+  trailing newline is still returned** (dropping it is how the last record of a file
+  goes missing), and a **line too long for the buffer is an error, not a truncated
+  line** (a truncated line handed back as if it were whole is a corruption the caller
+  cannot detect).
+
+- `tests/test_unit_stream`, and `manual/examples/ex_05_stream.c` — one serializer
+  writing into a string, a fixed buffer and a file, then reading it back line by line.
+  Compiled and run by the build.
+
+### Fixed
+
+- **`proven_print` no longer allocates.** It built a fresh heap `proven_u8str_t` for
+  *every* call: ten thousand log lines meant ten thousand mallocs and ten thousand
+  frees, on the logging path — the one place an allocation is least welcome. It now
+  formats into a stack buffer and only reaches for the heap if the line will not fit.
+
+  Measured, 10,000 lines: `malloc()` **10,000 → 0**. A buffered writer over 8 KiB of
+  caller memory takes it further: `write()` **10,000 → 24**, `malloc()` **0**.
+
+  `proven_print` remains one syscall per line by design. Buffering it would require
+  hidden global state, which this library does not have; a caller who wants the 24
+  builds a buffered writer and says so.
+
+### Changed
+
+- `stream.h` is hosted-only — it sits on `fs`. The freestanding build excludes it.
+
 ## [2026-07-12] — proven_c_lib-v26.07.12g
 
 Steps 1-3 of `docs/RFC-0001-streams-and-io.md`. Subtraction first, then the two things

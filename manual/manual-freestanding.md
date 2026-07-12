@@ -1,4 +1,4 @@
-# Proven Freestanding Mode (v26.07.12g)
+# Proven Freestanding Mode (v26.07.12h)
 
 This guide describes the current `PROVEN_FREESTANDING` configuration as implemented by `nob.c` and the public headers.
 
