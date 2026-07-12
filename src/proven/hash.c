@@ -18,6 +18,7 @@ proven_u64 proven_hash_bytes(proven_mem_view_t data) {
     /* 64-bit offset basis and prime. xor the byte in, THEN multiply (that ordering is what
      * makes it FNV-1a rather than FNV-1, and it avalanches better). */
     proven_u64 h = 0xcbf29ce484222325ull;
+    if (data.size > 0 && !data.ptr) return h;   /* a size>0 view with no pointer: consistent with the SHA path */
     for (proven_size_t i = 0; i < data.size; ++i) {
         h ^= (proven_u64)data.ptr[i];
         h *= 0x100000001b3ull;
@@ -56,6 +57,7 @@ proven_u64 proven_hash_keyed(proven_mem_view_t data, const proven_byte_t key[16]
     proven_u64 v2 = 0x6c7967656e657261ull ^ k0;
     proven_u64 v3 = 0x7465646279746573ull ^ k1;
 
+    if (data.size > 0 && !data.ptr) { data.size = 0; }   /* consistent with the SHA path */
     const proven_byte_t *in = data.ptr;
     proven_size_t len = data.size;
     proven_size_t left = len & 7u;
@@ -99,6 +101,7 @@ proven_u32 proven_crc32_update(proven_u32 crc, proven_mem_view_t data) {
      * caller holds is the already-inverted CRC, so we invert on the way in and out and the
      * middle stays as a plain register - that is what makes chaining chunks work. */
     proven_u32 c = ~crc;
+    if (data.size > 0 && !data.ptr) return crc;   /* consistent with the SHA path */
     for (proven_size_t i = 0; i < data.size; ++i) {
         c ^= (proven_u32)data.ptr[i];
         for (int k = 0; k < 8; ++k) {
