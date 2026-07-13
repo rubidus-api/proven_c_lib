@@ -2,13 +2,13 @@
 
 This README is bilingual. The English section comes first, then the Korean translation follows with the same substantive content.
 
-`proven` is a small C23 systems library for code that should stay readable over time. It gives you the everyday pieces C projects usually end up rewriting: explicit allocators, owned and borrowed strings, dynamic arrays, maps with borrowed or owned string keys, formatting and scanning, filesystem helpers, memory mapping, time, stackless coroutines, and a bounded job system.
+`proven` is a small C23 systems library for code that should stay readable over time. It gives you the everyday pieces C projects usually end up rewriting: explicit allocators, owned and borrowed strings, dynamic arrays, maps with borrowed or owned string keys (HashDoS-resistant by default), formatting and scanning, buffered streams, filesystem helpers, memory mapping, time, hashing (FNV, SipHash, CRC-32, SHA-256) and OS-strength randomness, stackless coroutines, and a bounded job system.
 
 The point is not to hide C behind a framework. The point is to make practical C less repetitive while still keeping ownership, errors, allocator choice, and platform boundaries visible.
 
 The build driver probes `-std=c23` first and falls back to `-std=c2x` when the compiler still uses the transitional spelling, so older GCC and Clang front ends can still build the tree without changing the library's C23 baseline.
 
-- Version: proven_c_lib-v26.07.13a
+- Version: proven_c_lib-v26.07.13g
 - Standard: C23
 - License: MIT
 - Repository: https://github.com/rubidus-api/proven_c_lib
@@ -229,7 +229,8 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 - Algorithms: `algorithm`.
 - Text: `fmt`, `scan`.
 - Numbers: `float_parse`, `float_format`.
-- Hosted services: `fs`, `time`, `mmap`, `sysio`.
+- Hashing and randomness: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256), `random` (OS CSPRNG).
+- Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
 - Execution: `coro`, `job`.
 - Diagnostics: `panic`.
 - Optional short aliases: `alias_xcv`.
@@ -240,7 +241,7 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 
 It is also worth saying where the platform boundary **stops**, because otherwise you find out by running into it. The PAL covers memory, the filesystem, time, memory mapping, environment variables, console I/O and threads. It does **not** cover process control (`fork` / `exec` / pipes), terminal control (raw mode, job control), or networking — a program whose substance is one of those will reach for POSIX or Win32 directly, and the "no platform `#ifdef`s" property does not extend to it.
 
-Deliberate non-goals, so you do not go looking: no cryptographic hashing, no path manipulation, no argument parsing, no logging framework.
+The `hash` module does provide cryptographic and non-cryptographic hashes (SHA-256 alongside FNV, SipHash, and CRC-32) and `random` provides OS-strength bytes, but `proven` is not a cryptography library: deliberate non-goals, so you do not go looking, are signatures, key exchange, password hashing / KDFs, authenticated encryption, and TLS — along with path manipulation, argument parsing, and a logging framework.
 
 ## utility in a real project
 
@@ -290,13 +291,13 @@ License: MIT License. See `LICENSE`.
 
 이 README는 이중 언어로 작성되어 있습니다. 먼저 영어 본문을 두고, 그 아래에 같은 내용의 한국어 번역을 배치했습니다.
 
-`proven`은 시간이 지나도 읽기 쉬운 코드를 목표로 한 작은 C23 시스템 라이브러리입니다. C 프로젝트가 자주 직접 다시 구현하게 되는 요소들, 즉 명시적 allocator, owned/borrowed 문자열, 동적 배열, borrowed 또는 owned 문자열 키를 쓰는 map, 형식화와 파싱, 파일시스템 헬퍼, 메모리 매핑, 시간, 스택 없는 코루틴, bounded job system을 제공합니다.
+`proven`은 시간이 지나도 읽기 쉬운 코드를 목표로 한 작은 C23 시스템 라이브러리입니다. C 프로젝트가 자주 직접 다시 구현하게 되는 요소들, 즉 명시적 allocator, owned/borrowed 문자열, 동적 배열, borrowed 또는 owned 문자열 키를 쓰는 map(기본이 HashDoS 저항), 형식화와 파싱, 버퍼드 스트림, 파일시스템 헬퍼, 메모리 매핑, 시간, 해싱(FNV, SipHash, CRC-32, SHA-256)과 OS 강도 난수, 스택 없는 코루틴, bounded job system을 제공합니다.
 
 의도는 C를 프레임워크 뒤에 숨기는 것이 아닙니다. 실용적인 C를 덜 반복적으로 만들면서도 ownership, error, allocator 선택, platform boundary를 그대로 보이게 두는 데 있습니다.
 
 빌드 드라이버는 먼저 `-std=c23`를 시도하고, 컴파일러가 아직 transitional spelling만 받아들이는 경우 `-std=c2x`로 내려갑니다. 그래서 기존 GCC와 Clang 프런트엔드도 라이브러리의 C23 기준을 바꾸지 않고 트리를 빌드할 수 있습니다.
 
-- 버전: proven_c_lib-v26.07.13a
+- 버전: proven_c_lib-v26.07.13g
 - 표준: C23
 - 라이선스: MIT
 - 저장소: https://github.com/rubidus-api/proven_c_lib
@@ -516,7 +517,8 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 - Algorithms: `algorithm`.
 - Text: `fmt`, `scan`.
 - Numbers: `float_parse`, `float_format`.
-- Hosted services: `fs`, `time`, `mmap`, `sysio`.
+- 해싱과 난수: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256), `random` (OS CSPRNG).
+- Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
 - Execution: `coro`, `job`.
 - Diagnostics: `panic`.
 - Optional short aliases: `alias_xcv`.
@@ -527,7 +529,7 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 
 플랫폼 경계가 **어디서 끝나는지**도 적어 둘 가치가 있습니다. 적어 두지 않으면 부딪혀 봐야 알게 되기 때문입니다. PAL이 덮는 범위는 메모리, 파일시스템, 시간, 메모리 매핑, 환경 변수, 콘솔 I/O, 스레드입니다. 프로세스 제어(`fork` / `exec` / 파이프), 터미널 제어(raw 모드, job control), 네트워킹은 **덮지 않습니다**. 프로그램의 본질이 그 중 하나라면 POSIX나 Win32를 직접 부르게 되고, "플랫폼 `#ifdef` 없음"이라는 성질은 거기까지 확장되지 않습니다.
 
-의도적인 비목표라서 찾아 헤매지 않으셔도 됩니다: 암호학적 해시, 경로 조작, 인자 파싱, 로깅 프레임워크는 제공하지 않습니다.
+`hash` 모듈은 암호학적·비암호학적 해시(FNV·SipHash·CRC-32와 함께 SHA-256)를, `random`은 OS 강도 바이트를 실제로 제공합니다. 다만 `proven`은 암호 라이브러리가 아닙니다. 의도적인 비목표라서 찾아 헤매지 않으셔도 되는 것은 서명, 키 교환, 비밀번호 해싱/KDF, 인증 암호화(AEAD), TLS이며, 여기에 더해 경로 조작, 인자 파싱, 로깅 프레임워크도 제공하지 않습니다.
 
 ## 실제로 프로젝트에 적용했을 때의 효용성
 

@@ -1,8 +1,20 @@
 # RFC-0001 — Streams, and the I/O layer that is missing
 
-**Status:** proposed
+**Status:** implemented (historical record)
 **Date:** 2026-07-12
-**Tracks:** `docs/BACKLOG.md` B-004 … B-010
+**Tracks:** `docs/BACKLOG.md` B-004 … B-010 (all closed)
+
+> **Implemented.** The stream layer described below shipped in `include/proven/stream.h`
+> (`proven_writer_t`, `proven_reader_t`, buffered writers/readers, and a line reader), and
+> B-004…B-010 are closed. This document is kept as the design record; the shipped API differs
+> from the sketches below in one deliberate way. The signatures here pass buffers and files
+> by value (`proven_writer_from_buffer(proven_mem_mut_t buf, ...)`,
+> `proven_writer_from_file(proven_file_t file)`); the shipped API takes caller-owned state
+> structs and pointers instead — `proven_writer_from_buffer(proven_writer_buf_t *state)`,
+> `proven_reader_read_line(proven_reader_buffered_t *state)`,
+> `proven_writer_from_file(proven_file_t *file)` — and formatting to a writer is the
+> `proven_fprint` / `proven_fprintln` macros over `proven_fmt_to_writer_impl`. See
+> `include/proven/stream.h` and manual chapter 5 for the shipped shapes.
 
 ---
 
