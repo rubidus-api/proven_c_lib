@@ -26,6 +26,16 @@ The format follows Keep a Changelog:
   test-first against printf's own output, and checked differentially against `%.Ne` over 200,000
   random doubles at every precision (0 mismatches).
 
+### Fixed
+
+- **Zero-fill on a float put the zeros before the sign.** `{:08.2f}` on -3.14 produced
+  `000-3.14` and `{:+08.2f}` on 3.14 produced `000+3.14` - not numbers a reader or a numeric
+  column can parse. The integer path already placed zero-fill between the sign and the digits
+  (the `0000+42` fix); the float path never did, and rendered the whole string and padded it,
+  sign included. Pre-existing, and made obvious by `{:e}`, which makes signed scientific columns
+  common. The sign is lifted out and the zeros placed after it now, matching printf: `-0003.14`,
+  `+0003.14`, `-03.14e+00`.
+
 ## [2026-07-13] — proven_c_lib-v26.07.13e
 
 Two defects found while exercising the modules together rather than one at a time - a

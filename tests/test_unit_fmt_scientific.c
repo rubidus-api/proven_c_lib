@@ -78,6 +78,17 @@ int main(void) {
     EQ("{:e}", 1.0, "1.000000e+00");
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("zero-fill goes between the sign and the mantissa, like %e and like an integer",
+        "\"000-3.14e+00\" is not a number; the zeros belong AFTER the sign, exactly as printf and the integer path do it.",
+        "The float render path lifts the sign out and places the zeros after it; render_with_spec would pad the whole string, sign included.");
+    // ---------------------------------------------------------------
+    EQ("{:010.2e}", -3.14, "-03.14e+00");
+    EQ("{:010.2e}", 3.14,  "003.14e+00");
+    EQ("{:+010.2e}", 3.14, "+03.14e+00");
+    EQ("{:08.2f}", -3.14,  "-0003.14");     /* the same bug lived in {:f} */
+    EQ("{:+08.2f}", 3.14,  "+0003.14");
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("{:e} on a non-float is refused, like {:f} and {:g}",
         "The library cannot render an integer in scientific float notation without inventing something.",
         "");

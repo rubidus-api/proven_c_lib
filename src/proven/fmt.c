@@ -491,9 +491,25 @@ static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fm
                 }
                 for (proven_size_t i = flen; i > 0; --i) fbuf[i] = fbuf[i - 1];
                 fbuf[0] = spec.sign;
-                render_with_spec(ctx, fbuf, flen + 1, spec);
+                flen += 1;
+            }
+
+            /*
+             * Zero-fill goes BETWEEN the sign and the digits, exactly as it does for an
+             * integer: `{:08.2f}` on -3.14 is "-0003.14", never "000-3.14", which is not a
+             * number a reader or a numeric column can make sense of. render_with_spec pads
+             * the whole string, so the sign has to be lifted out and the zeros placed after
+             * it here - the same fix render_integer already carries.
+             */
+            if (spec.fill == '0' && spec.align == '>' && spec.width > 0 &&
+                (proven_size_t)spec.width > flen) {
+                proven_size_t sign_len = (flen > 0 && (fbuf[0] == '-' || fbuf[0] == '+' || fbuf[0] == ' ')) ? 1u : 0u;
+                if (sign_len) fmt_append_byte(ctx, (proven_u8)fbuf[0]);
+                append_padding(ctx, '0', spec.width - (int)flen);
+                fmt_append_view(ctx, (proven_u8str_view_t){ (const proven_u8 *)fbuf + sign_len, flen - sign_len });
                 break;
             }
+
             render_with_spec(ctx, fbuf, flen, spec);
             break;
         }
