@@ -103,10 +103,14 @@ int proven_sys_time_format_int_u16(unsigned short *buf, int buf_cap, int val, in
         }
     }
     
-    while (len < pad_zeros && len < 31) {
+    /* The sign counts toward the zero-padded width, exactly as printf's %0Nd and the u8
+     * formatter do: "-044" for width 4, not "-0044". So the digit run is padded to one
+     * fewer than pad_zeros when a sign will precede it, and the two encodings agree. */
+    int digit_width = is_neg ? pad_zeros - 1 : pad_zeros;
+    while (len < digit_width && len < 31) {
         temp[len++] = (unsigned short)'0';
     }
-    
+
     if (is_neg && len < 31) {
         temp[len++] = (unsigned short)'-';
     }
