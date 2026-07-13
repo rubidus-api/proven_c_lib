@@ -40,11 +40,6 @@ static inline void proven_sys_time_sleep_ms(unsigned int ms) {
     (void)ms;
 }
 
-static inline int proven_sys_time_format_int_u16(unsigned short *buf, int buf_cap, int val, int pad_zeros) {
-    (void)buf; (void)buf_cap; (void)val; (void)pad_zeros;
-    return 0;
-}
-
 #else
 
 /**
@@ -69,11 +64,6 @@ void proven_sys_time_now_local(proven_sys_datetime_t *out_dt);
  * @brief Sleep the current thread.
  */
 void proven_sys_time_sleep_ms(unsigned int ms);
-
-/**
- * @brief Formats an integer to a u16 buffer (zero-padded). Returns characters written.
- */
-int proven_sys_time_format_int_u16(unsigned short *buf, int buf_cap, int val, int pad_zeros);
 
 #endif /* PROVEN_FREESTANDING */
 
