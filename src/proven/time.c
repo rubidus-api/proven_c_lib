@@ -159,136 +159,26 @@ static proven_err_t append_u8_view_to_u16str(proven_allocator_t alloc, proven_u1
     return PROVEN_OK;
 }
 
-static proven_err_t append_u16_char(proven_allocator_t alloc, proven_u16str_t *str, proven_u16 ch) {
-    proven_u16str_view_t v = { &ch, 1 };
-    return proven_u16str_append_grow(alloc, str, v);
-}
-
 proven_err_t proven_time_u16_fmt(proven_allocator_t alloc, proven_u16str_t *str, proven_datetime_t dt, const proven_time_locale_t *locale, const char *fmt) {
     if (!str || !fmt) return PROVEN_ERR_INVALID_ARG;
-    if (!locale) locale = &proven_time_locale_en;
-    
-    const char *p = fmt;
-    while (*p) {
-        if (*p == '{') {
-            p++;
-            if (*p == '{') {
-                proven_err_t err = append_u16_char(alloc, str, '{');
-                if (!PROVEN_IS_OK(err)) return err;
-                p++;
-                continue;
-            }
-            
-            const char *key_start = p;
-            while (*p && *p != ':' && *p != '}') p++;
-            const char *key_end = p;
-            
-            const char *spec_start = NULL;
-            const char *spec_end = NULL;
-            if (*p == ':') {
-                spec_start = p;
-                while (*p && *p != '}') p++;
-                spec_end = p;
-            } else {
-                spec_start = p;
-                spec_end = p;
-            }
-            
-            if (*p == '}') p++;
-            
-            int pad_zeros = 0;
-            if (spec_start && spec_end > spec_start) {
-                // Expecting e.g. ":0>2" or ":0>4"
-                if (spec_end - spec_start >= 4 && spec_start[0] == ':' && spec_start[1] == '0' && spec_start[2] == '>') {
-                    pad_zeros = spec_start[3] - '0';
-                    if (spec_end - spec_start >= 5 && spec_start[4] >= '0' && spec_start[4] <= '9') {
-                        pad_zeros = pad_zeros * 10 + (spec_start[4] - '0');
-                    }
-                }
-            }
-            
-            proven_size_t key_len = (proven_size_t)(key_end - key_start);
-            #define KEY_EQ(str_lit) (key_len == (sizeof(str_lit)-1) && proven_memcmp(key_start, str_lit, key_len) == 0)
-            
-            proven_err_t err = PROVEN_OK;
-            proven_u16 num_buf[32];
-            int num_len = -1;
-            
-            if (KEY_EQ("year")) {
-                num_len = proven_sys_time_format_int_u16(num_buf, 32, dt.year, pad_zeros);
-            } else if (KEY_EQ("month")) {
-                num_len = proven_sys_time_format_int_u16(num_buf, 32, dt.month, pad_zeros);
-            } else if (KEY_EQ("day")) {
-                num_len = proven_sys_time_format_int_u16(num_buf, 32, dt.day, pad_zeros);
-            } else if (KEY_EQ("hour")) {
-                num_len = proven_sys_time_format_int_u16(num_buf, 32, dt.hour, pad_zeros);
-            } else if (KEY_EQ("min")) {
-                num_len = proven_sys_time_format_int_u16(num_buf, 32, dt.min, pad_zeros);
-            } else if (KEY_EQ("sec")) {
-                num_len = proven_sys_time_format_int_u16(num_buf, 32, dt.sec, pad_zeros);
-            } else if (KEY_EQ("ms")) {
-                num_len = proven_sys_time_format_int_u16(num_buf, 32, (int)dt.ms, pad_zeros);
-            } else if (KEY_EQ("wday_num")) {
-                num_len = proven_sys_time_format_int_u16(num_buf, 32, dt.weekday, pad_zeros);
-            } else if (KEY_EQ("Month") && locale->month_names) {
-                if (dt.month >= 1 && dt.month <= 12) {
-                    err = append_u8_view_to_u16str(alloc, str, locale->month_names[dt.month - 1]);
-                }
-            } else if (KEY_EQ("mon") && locale->month_short_names) {
-                if (dt.month >= 1 && dt.month <= 12) {
-                    err = append_u8_view_to_u16str(alloc, str, locale->month_short_names[dt.month - 1]);
-                }
-            } else if (KEY_EQ("Weekday") && locale->weekday_names) {
-                if (dt.weekday <= 6) {
-                    err = append_u8_view_to_u16str(alloc, str, locale->weekday_names[dt.weekday]);
-                }
-            } else if (KEY_EQ("wday") && locale->weekday_short_names) {
-                if (dt.weekday <= 6) {
-                    err = append_u8_view_to_u16str(alloc, str, locale->weekday_short_names[dt.weekday]);
-                }
-            } else {
-                err = append_u16_char(alloc, str, '{');
-                if (PROVEN_IS_OK(err)) {
-                    for (proven_size_t i = 0; i < key_len; i++) {
-                        err = append_u16_char(alloc, str, (proven_u16)key_start[i]);
-                        if (!PROVEN_IS_OK(err)) return err;
-                    }
-                    if (spec_end && spec_end > spec_start) {
-                        for (const char *s = spec_start; s < spec_end; s++) {
-                            err = append_u16_char(alloc, str, (proven_u16)*s);
-                            if (!PROVEN_IS_OK(err)) return err;
-                        }
-                    }
-                    err = append_u16_char(alloc, str, '}');
-                    if (!PROVEN_IS_OK(err)) return err;
-                }
-            }
-            
-            if (num_len > 0) {
-                proven_u16str_view_t v = { num_buf, (proven_size_t)num_len };
-                err = proven_u16str_append_grow(alloc, str, v);
-            }
-            
-            if (!PROVEN_IS_OK(err)) return err;
-            #undef KEY_EQ
-            
-        } else if (*p == '}') {
-            p++;
-            if (*p == '}') {
-                proven_err_t err = append_u16_char(alloc, str, '}');
-                if (!PROVEN_IS_OK(err)) return err;
-                p++;
-            } else {
-                proven_err_t err = append_u16_char(alloc, str, '}');
-                if (!PROVEN_IS_OK(err)) return err;
-            }
-        } else {
-            proven_err_t err = append_u16_char(alloc, str, (proven_u16)*p);
-            if (!PROVEN_IS_OK(err)) return err;
-            p++;
-        }
+
+    /* One formatter, two encodings. Render through the u8 path - which delegates every field
+     * to the fmt.h spec engine, so the whole {} grammar (fill, align, width) is honoured for
+     * numeric and named fields alike - then widen the result to u16 code units. All time
+     * output is single-byte (decimal digits, the ASCII locale names, and single-byte fill
+     * characters), so the widening is exact and the two encodings can never again disagree on
+     * a spec. The former hand-rolled u16 parser recognised only ":0>N" and silently dropped
+     * every other fill/align/width spec - the quiet wrong answer this delegation removes. */
+    proven_result_u8str_t tmp = proven_u8str_create(alloc, 64);
+    if (!PROVEN_IS_OK(tmp.err)) return tmp.err;
+
+    proven_err_t err = proven_time_u8_fmt(alloc, &tmp.value, dt, locale, fmt);
+    if (PROVEN_IS_OK(err)) {
+        err = append_u8_view_to_u16str(alloc, str, proven_u8str_as_view(&tmp.value));
     }
-    return PROVEN_OK;
+
+    proven_u8str_destroy(alloc, &tmp.value);
+    return err;
 }
 
 #endif /* PROVEN_NO_U16STR */

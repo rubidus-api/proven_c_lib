@@ -7,12 +7,13 @@
  * only in output encoding (include/proven/time.h). They diverged for negative years under a
  * zero-fill spec: {year:0>4} of year -44 rendered as "-044" through the u8 path (which
  * delegates to fmt.h, where the sign counts toward the field width, exactly as printf's
- * %04d) but as "-0044" through the u16 path, whose hand-rolled padding in
- * proven_sys_time_format_int_u16 zero-filled the digits to the full width and only then
- * prepended the sign - one column too wide.
+ * %04d) but as "-0044" through the u16 path, whose hand-rolled padding zero-filled the
+ * digits to the full width and only then prepended the sign - one column too wide.
  *
- * The two encodings must agree byte-for-byte (modulo width). This test formats the same
- * datetime with both and asserts equality; the negative-year rows are the ones that were red.
+ * The u16 formatter now delegates to the u8 path and widens the result, so this specific
+ * divergence cannot recur; this test pins the observable "-044" contract regardless of how
+ * the u16 path is implemented. It formats the same datetime with both and asserts equality;
+ * the negative-year rows are the ones that were red.
  */
 
 static void decode_u16(const proven_u16str_t *s, char *out, proven_size_t out_cap) {
@@ -25,7 +26,7 @@ static void decode_u16(const proven_u16str_t *s, char *out, proven_size_t out_ca
 int main(void) {
     PROVEN_TEST_SUITE("time formatting: u8 and u16 agree on zero-filled negative years",
         "The two time formatters are one formatter in two encodings; a zero-fill spec on a negative year must render identically, with the sign counted in the width like printf's %0Nd.",
-        "Inspect proven_sys_time_format_int_u16 in platform/proven_sys_time.c: the sign must count toward pad width, matching the u8 path that delegates to fmt.h.");
+        "Inspect proven_time_u16_fmt in src/proven/time.c: it delegates to the u8 path and widens, so the sign counts toward the pad width exactly as fmt.h's %0Nd does.");
 
     proven_allocator_t heap = proven_heap_allocator();
 
