@@ -1,6 +1,6 @@
 # Chapter 5: Hosted Services
 
-This chapter covers `fs.h`, `sysio.h`, `mmap.h`, and `time.h`.
+This chapter covers `fs.h`, `sysio.h`, `mmap.h`, `time.h`, `stream.h`, and `random.h`.
 
 These APIs require hosted platform support and are excluded from the current freestanding subset.
 
@@ -11,6 +11,9 @@ These APIs require hosted platform support and are excluded from the current fre
 3. [Memory mapping](#3-memory-mapping)
 4. [Time API](#4-time-api)
 5. [Examples and misuse cases](#5-examples-and-misuse-cases)
+6. [Walking a tree](#walking-a-tree)
+7. [Streams: writers and readers](#streams-writers-and-readers)
+8. [OS randomness](#os-randomness)
 
 ## 1. Filesystem API
 
@@ -1065,3 +1068,63 @@ int main(void) {
 }
 ```
 
+
+## OS randomness
+
+`proven_random_bytes` is the operating system's CSPRNG and nothing else — `getrandom` on
+Linux, `BCryptGenRandom` on Windows. There is deliberately no seedable, reproducible
+generator beside it: a fast PRNG for a simulation and a strong source for a key are different
+tools, and offering one under a name that suggests the other is how guessable tokens ship.
+This module does one job — bytes you can build a secret on — and the boolean return is load
+bearing: `false` means the platform had no CSPRNG or the OS call failed, and the buffer must
+not be used. It is excluded from freestanding builds, which have no OS entropy source.
+
+| | |
+|---|---|
+| `proven_random_bytes(buf, len)` | Fill `len` bytes; returns `false` on failure (do not use `buf`). `len == 0` is a successful no-op. |
+| `proven_random_u64()` | One strong 64-bit word, or `0` on failure. Use `proven_random_bytes` when you must tell "failed" from a genuine `0`. |
+
+The intended use is to draw a secret once, at startup — for instance the 16-byte key that
+makes a default map's SipHash unpredictable (see [Chapter 4](manual-04-containers-algorithms.md)).
+Compiled and run by the test suite:
+
+<!-- example: manual/examples/ex_05_random.c -->
+```c
+/*
+ * OS randomness, and the one honest thing it is for.
+ *
+ * proven_random_bytes is the operating system's CSPRNG - getrandom on Linux,
+ * BCryptGenRandom on Windows - and nothing else. There is deliberately no seedable,
+ * reproducible generator next to it: a fast PRNG for a simulation and a strong source for a
+ * key are different tools, and handing out one under a name that suggests the other is how
+ * people ship guessable tokens. This module does exactly one job: bytes you can build a
+ * secret on. The return value is not decorative - false means the platform had no CSPRNG or
+ * the OS call failed, and the buffer must not be used.
+ */
+
+int main(void) {
+    /* Draw a 16-byte key ONCE, at startup. This is the intended use: the key that turns the
+     * map's SipHash into a function an attacker who picks your keys still cannot predict. */
+    proven_byte_t map_key[16];
+    EXAMPLE_REQUIRE(proven_random_bytes(map_key, sizeof map_key),
+                    "the OS must give us strong bytes on a hosted platform");
+
+    proven_mem_view_t data = proven_mem_view_from_u8(PROVEN_LIT("session-token"));
+    proven_u64 keyed = proven_hash_keyed(data, map_key);
+    /* With a secret key the hash is unpredictable; without the key, the same bytes hash the
+     * same unkeyed FNV every time - which is exactly why untrusted keys need the keyed one. */
+    EXAMPLE_REQUIRE(keyed != proven_hash_bytes(data),
+                    "a keyed hash is a different function from the unkeyed one");
+
+    /* A single strong word, for a nonce or a one-off seed. Two draws differ - a fixed or
+     * unseeded generator would repeat, which is the whole failure this guards against. */
+    proven_u64 a = proven_random_u64();
+    proven_u64 b = proven_random_u64();
+    EXAMPLE_REQUIRE(a != b, "two independent draws must not be identical");
+
+    /* Asking for nothing succeeds and touches nothing - a clean no-op, not an error. */
+    EXAMPLE_REQUIRE(proven_random_bytes(NULL, 0), "zero bytes is a successful no-op");
+
+    return EXAMPLE_OK();
+}
+```

@@ -1,4 +1,4 @@
-# Proven C Library Complete Manual (v26.07.12i)
+# Proven C Library Complete Manual (v26.07.13g)
 
 This manual is rebuilt from three sources:
 
@@ -23,7 +23,7 @@ The goal is to keep the architectural explanation from the older manual while ad
 
 `proven` is a compact C23 systems foundation library. It is intended for C programs that want practical infrastructure without hiding memory ownership, error control flow, or platform access behind global state.
 
-It is not a libc replacement. It provides a focused set of allocator-driven memory tools, byte views, containers, strings, formatting, scanning, filesystem helpers, time helpers, memory mapping, stackless coroutine macros, and a bounded job system.
+It is not a libc replacement. It provides a focused set of allocator-driven memory tools, byte views, containers, strings, formatting, scanning, hashing (FNV, SipHash, CRC-32, SHA-256), OS-strength randomness, filesystem helpers, buffered streams, time helpers, memory mapping, stackless coroutine macros, and a bounded job system.
 
 Core design principles:
 
@@ -187,8 +187,8 @@ The detailed reference is split by chapter so it can stay readable and source-gr
 1. [Foundation: types, errors, memory, alignment, version, panic](manual-01-foundation.md)
 2. [Allocation: allocator trait, heap, arena, pool, byte buffers](manual-02-allocation.md)
 3. [Strings and text: U8, U16, formatting, scanning](manual-03-strings-text.md)
-4. [Containers and algorithms: array, list, ring, map, sort/search](manual-04-containers-algorithms.md)
-5. [Hosted services: filesystem, sysio, environment, mmap, time](manual-05-hosted-services.md)
+4. [Containers and algorithms: array, list, ring, map, sort/search, hashing](manual-04-containers-algorithms.md)
+5. [Hosted services: filesystem, tree walk, streams, sysio, environment, randomness, mmap, time](manual-05-hosted-services.md)
 6. [Execution and platform: coroutines, jobs, aliases, PAL, freestanding, cross builds](manual-06-execution-and-platform.md)
 7. [Alias index: every `alias_xcv.h` spelling map](manual-07-alias-xcv-index.md)
 8. [Formatting and scanning: full `fmt.h` and `scan.h` reference](manual-08-fmt-scan.md)
@@ -222,8 +222,11 @@ The detailed reference is split by chapter so it can stay readable and source-gr
 | `ring.h` | Fixed-capacity FIFO ring | Chapter 4 |
 | `map.h` | Open-addressing map | Chapter 4 |
 | `algorithm.h` | Array sort and search helpers | Chapter 4 |
-| `fs.h` | Files, directories, metadata, links, locks, read-all | Chapter 5 |
+| `hash.h` | FNV-1a, SipHash-2-4, CRC-32, SHA-256, by use case | Chapter 4 |
+| `fs.h` | Files, directories, metadata, links, locks, read-all, tree walk | Chapter 5 |
+| `stream.h` | Buffered writers, readers, and a line reader (hosted-only) | Chapter 5 |
 | `sysio.h` | Standard streams, printing, scanning, environment access | Chapter 5 |
+| `random.h` | OS CSPRNG bytes — `proven_random_bytes` / `_u64` (hosted-only) | Chapter 5 |
 | `mmap.h` | Memory-mapped file regions | Chapter 5 |
 | `time.h` | Timestamp, datetime, sleep, datetime formatting | Chapter 5 |
 | `coro.h` | Stackless coroutine macros | Chapter 6 |

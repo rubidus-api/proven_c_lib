@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.07.12i)
+# proven Test Matrix (v26.07.13g)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -297,7 +297,7 @@ Failure tip: identify the target name in the log, then check whether the failure
 ## Test catalog
 
 
-The hosted full run currently builds and executes 75 tests. `./nob regression` runs an 11-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 2 benchmarks.
+The hosted full run currently builds and executes 113 tests. `./nob regression` runs a 27-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 2 benchmarks.
 
 These counts are checked against `nob.c` - `tests/test_docs_alias_completeness` exists precisely because a list nobody checks stops being true.
 
@@ -306,14 +306,14 @@ Numbers rot: this catalog used to run 1..50 with `7a`, `30a`, `30b`, `30c`, `40a
 
 The class says what kind of question the test answers:
 
-- **`unit`** — One module's public API, used the way a caller uses it. These are the tests that say what the library *does*. (31 tests)
-- **`contract`** — The public invariants: misuse, corrupted structs, exhausted allocators, refused input. These say what the library *refuses to do*, which is the half a caller cannot infer from the happy path. (8 tests)
-- **`regression`** — One test per defect that actually shipped. Each is named for what broke, not for a version or a number, and each was verified to FAIL against the pre-fix source. A regression test that passes before the fix is not a regression test. (6 tests)
-- **`differential`** — Correctness against an independent oracle - the host libc, or a corpus with known-good answers. These catch what a self-written expectation cannot: a wrong belief held consistently by both the code and its test. (0 tests)
-- **`portability`** — Freestanding builds, compile-only cross targets, source-level platform contracts, and the build driver's own standard probe. Most of these cannot be *run* on the host, so they check what can be checked: that the code compiles, links, and keeps its platform branches intact. (1 tests)
-- **`stress`** — Concurrency under a sanitizer, over enough iterations to make a race likely rather than theoretical. (0 tests)
-- **`docs`** — The documentation is checked by the build, not by eye: every public function has an alias, every example the manual prints is a program that compiles and runs, and no example drifts from its chapter. (2 tests)
-- **`bench`** — Timing, not correctness. A benchmark regression is a signal to investigate; a checksum drift inside one is a correctness failure and does fail the build. (0 tests)
+- **`unit`** — One module's public API, used the way a caller uses it. These are the tests that say what the library *does*. (56 tests)
+- **`contract`** — The public invariants: misuse, corrupted structs, exhausted allocators, refused input. These say what the library *refuses to do*, which is the half a caller cannot infer from the happy path. (13 tests)
+- **`regression`** — One test per defect that actually shipped. Each is named for what broke, not for a version or a number, and each was verified to FAIL against the pre-fix source. A regression test that passes before the fix is not a regression test. (15 tests)
+- **`differential`** — Correctness against an independent oracle - the host libc, or a corpus with known-good answers. These catch what a self-written expectation cannot: a wrong belief held consistently by both the code and its test. (4 tests)
+- **`portability`** — Freestanding builds, compile-only cross targets, source-level platform contracts, and the build driver's own standard probe. Most of these cannot be *run* on the host, so they check what can be checked: that the code compiles, links, and keeps its platform branches intact. (8 tests)
+- **`stress`** — Concurrency under a sanitizer, over enough iterations to make a race likely rather than theoretical. (1 tests)
+- **`docs`** — The documentation is checked by the build, not by eye: every public function has an alias, every example the manual prints is a program that compiles and runs, and no example drifts from its chapter. (4 tests)
+- **`bench`** — Timing, not correctness. A benchmark regression is a signal to investigate; a checksum drift inside one is a correctness failure and does fail the build. (2 tests)
 
 ## Unit tests
 
@@ -531,6 +531,20 @@ Sub-checks:
 
 Failure tip: inspect `platform/proven_sys_fs.c`. Permission and locking semantics are OS-dependent; keep differences in PAL code and avoid assuming POSIX behavior on every target.
 
+### `tests/test_unit_hash` — hashing by use case
+
+Intent: verify each hash does what its use case requires — FNV-1a spreads and is order-sensitive, keyed SipHash is a different function under a different key, CRC-32 matches the shared check value, and SHA-256 matches the official vectors and is chunking-independent.
+
+Sub-checks:
+
+- FNV-1a: distinct inputs hash apart, the empty view hashes to the FNV offset basis, and a one-byte change moves the hash.
+- SipHash-2-4: two keys give two functions for the same bytes; the reference key/message vectors from the paper match (verified against the little-endian readings, which caught a big-endian transcription in the test itself).
+- CRC-32: `"123456789"` is `0xcbf43926`, and `proven_crc32_update` chained over chunks equals the one-shot over the whole.
+- SHA-256: the two NIST example vectors and the empty-input digest match; a streamed `init`/`update`/`final` over arbitrary chunk boundaries equals the one-shot; `to_hex` is 64 lowercase hex characters, NUL-terminated.
+- Every entry point guards a `{NULL, size>0}` view the way SHA-256 does, rather than dereferencing it.
+
+Failure tip: inspect `src/proven/hash.c`. The algorithms are implemented from their specifications; a KAT mismatch means a rotation, round count, or endianness is off.
+
 ### `tests/test_unit_job` — job system
 
 Intent: verify the hosted worker-thread job system executes submitted jobs exactly once and shuts down cleanly.
@@ -604,6 +618,19 @@ Sub-checks:
 
 Failure tip: inspect the owned-key duplication, cleanup, and rehash migration paths in `src/proven/map.c` if a key is lost, leaks, or follows a mutated source buffer.
 
+### `tests/test_unit_map_keyed` — HashDoS-resistant string keys
+
+Intent: verify a default string-key map hashes with a keyed function an attacker cannot predict, that a trusted map keeps the fast unkeyed FNV on purpose, and that both place and find keys correctly.
+
+Sub-checks:
+
+- A default (`proven_map_create`) string-key map has `trusted_keys == false`, and `proven_map_hash` differs from unkeyed `proven_hash_bytes` for essentially every key — a keyed hash agreeing with FNV on one key is coincidence, on all of them is FNV.
+- A trusted map (`proven_map_create_trusted`) has `trusted_keys == true` and `proven_map_hash` equals FNV-1a, which is the fast path it opts into.
+- Both kinds insert 500 distinct string keys, read them all back, remove half, and still resolve the survivors — a keyed hash that broke lookups would be safe and useless.
+- A malformed `{NULL, size>0}` key is hashed as empty on both kinds rather than dereferenced (the trusted path once used a duplicate internal FNV that read through the NULL).
+
+Failure tip: inspect the hash selection and the per-process key in `src/proven/map.c`. The written-first assertion is that the default must NOT equal FNV; a stub that still uses FNV lands it red.
+
 ### `tests/test_unit_memory_slicing` — memory slicing
 
 Intent: verify owned memory can be exposed as immutable and mutable views and sliced without losing pointer or length identity.
@@ -660,6 +687,18 @@ Sub-checks:
 - Tears down the pool without leaking bin storage.
 
 Failure tip: inspect `src/proven/pool.c`. Wrong-size requests should not be silently accepted. Bin overflow must never lose ownership of the block being freed.
+
+### `tests/test_unit_random` — OS randomness
+
+Intent: verify the OS CSPRNG is actually wired up — it succeeds on a hosted platform, fills every byte the caller asked for, does not repeat, and is not trivially structured. None of these prove cryptographic strength (nothing a unit test does could), but each catches a real, shipped failure mode.
+
+Sub-checks:
+
+- `proven_random_bytes` succeeds on a hosted platform, and neither the whole buffer nor its tail is left zero (a stub, a wrong length, or an ignored error leaves zeros).
+- Two draws differ (a fixed or unseeded generator repeats), and the bytes are neither all-equal (a memset) nor a simple counter.
+- `len == 0` is a successful no-op, and two `proven_random_u64` draws differ.
+
+Failure tip: inspect `platform/proven_sys_random.c`. A failure here is a missing or wrong OS entropy call — the `getrandom` guard keys on `GRND_NONBLOCK` from `<sys/random.h>`, not on a syscall number that was never included.
 
 ### `tests/test_unit_ring` — bounded ring
 

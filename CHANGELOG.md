@@ -11,6 +11,43 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-13] — proven_c_lib-v26.07.13g
+
+The time formatter's two encodings were quietly disagreeing, found and closed by the standing
+adversarial audit, which otherwise came back clean across every remaining module.
+
+### Fixed
+
+- **`proven_time_u16_fmt` silently dropped fill/align/width specs the u8 formatter honoured.**
+  The two time formatters are documented as one formatter differing only in output encoding
+  ("specifiers matching `fmt.h`"), but the u16 path hand-rolled a parser that recognised only
+  zero-fill `:0>N`: `{month:>4}` came back as `"3"` instead of `"   3"`, `{Weekday:>12}` was
+  left unpadded, `{Month:*^10}` ignored its spec entirely. A silently discarded spec that emits
+  the wrong-width string is exactly the quiet wrong answer this library refuses. The u16
+  formatter now renders through the u8 path (which delegates each field to the `fmt.h` spec
+  engine) and widens the result to code units, so the whole `{}` grammar is honoured for numeric
+  and named fields alike and the two encodings can never again disagree. The duplicate
+  hand-rolled `proven_sys_time_format_int_u16` PAL function (both the `wsprintfW` and the manual
+  POSIX variant) is deleted. Pinned by `tests/test_unit_time_fmt_u16_parity`, which drives a
+  broad spec matrix through both formatters and asserts byte equality.
+
+- **A negative year under zero-fill padded one column too wide in the u16 formatter.** `{year:0>4}`
+  of -44 rendered as `"-044"` through the u8 path (the sign counts toward the field width, as in
+  printf's `%04d`) but `"-0044"` through the u16 path. Subsumed by the parity fix above, and kept
+  pinned by `tests/test_regression_time_fmt_neg_year`.
+
+### Changed
+
+- **Documentation: the `hash` and `random` modules are now surfaced in `README.md`** (both language
+  halves): the module index lists them, the intro sentence names hashing and OS randomness, and the
+  "what it is not" section no longer claims "no cryptographic hashing" — it now scopes the real
+  non-goals (signatures, key exchange, KDFs, authenticated encryption, TLS) around the hash/CSPRNG
+  primitives that do exist. The `stream` module is listed too.
+- **`ring.h` and `pool.h` gained contract notes** raised as non-defect observations by the audit:
+  the raw `proven_ring_create` does not check `elem_size % align` (the `PROVEN_RING_INIT` macro
+  always threads consistent values), and pool blocks must be freed exactly once and only through
+  the owning pool (a double-free is trapped only in debug / `PROVEN_HARDENED` builds).
+
 ## [2026-07-13] — proven_c_lib-v26.07.13f
 
 ### Added
