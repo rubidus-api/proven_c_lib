@@ -33,6 +33,16 @@ typedef struct {
 // Type-Agnostic Core C API
 // -------------------------------------------------------------
 
+/**
+ * @brief Create a fixed-capacity ring of `cap` elements, each `elem_size` bytes.
+ *
+ * @param align Element alignment; must be a power of two. For the elements to actually land
+ *              on `align`-aligned offsets, `elem_size` must be a multiple of `align` - this
+ *              is not checked, because internally only memcpy touches elements (which has no
+ *              alignment requirement). The PROVEN_RING_INIT macro always threads a consistent
+ *              sizeof(type)/alignof(type), which satisfies this; a caller of the raw API with
+ *              mismatched values gets a working ring whose element offsets are not `align`-aligned.
+ */
 [[nodiscard]] proven_result_ring_t proven_ring_create(proven_allocator_t alloc, proven_size_t cap, proven_size_t elem_size, proven_size_t align);
 
 /**
