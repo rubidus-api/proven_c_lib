@@ -11,6 +11,56 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-15] — proven_c_lib-v26.07.13m
+
+### Added
+
+- **The documentation rules are gates now, and the manual's claims are assertions.** You cannot
+  test-drive prose — but almost nothing that has gone wrong in this manual was a matter of taste.
+  It was a claim that had stopped being true, a symbol that no longer existed, a number that
+  disagreed with itself, a section that was listed instead of explained. Each of those is a
+  *proposition*, and a proposition can be checked by the build. Five new gates, each one
+  motivated by a failure that already happened:
+
+  - **A function the manual documents must exist.** `proven_sysio_flush` was deleted and the
+    manual went on declaring it as public API, in the present tense. **`proven_pool_free` never
+    existed at all** — the real symbol is a static `proven_pool_free_trait`, and freeing a pool
+    slot goes through the allocator trait — and the manual described it as a callable function for
+    as long as the manual has existed. Fixed, and guarded. A reader who follows the manual and
+    gets a *linker* error stops believing the rest of it.
+  - **Every public function must be named in the manual** (the streaming directory API went
+    undocumented for months).
+  - **The version string must agree with itself** across `version.h`, the README's two halves,
+    TEST.md, the manual headings, chapter 1's excerpt and the CHANGELOG's newest entry.
+    `CHECKLIST.md` always required it; nothing checked, and `version.h` once sat five releases
+    behind the CHANGELOG.
+  - **Every module section must be documented to depth** — real prose, a reference table, the
+    structures the caller declares, a runnable example, and **at least one counter-example**. The
+    five modules added this cycle each had an intent paragraph and a table and *not one had a
+    counter-example*; they passed every check that existed and were still half-written. The gate
+    found two more gaps the moment it existed (the tree walk's entry struct, and its
+    borrowed-view trap), both now filled.
+  - **Every factual claim must be true** — the oracle. Twenty assertions drawn straight from
+    sentences the chapters state as fact: the CRC check value the interoperability promise rests
+    on, the standard digest, chunk-independence, base64url's missing padding, a refused call
+    writing *nothing*, an unseeded generator being inert, a line that exactly fills the buffer
+    being returned while a longer one is refused.
+
+  The rule that makes it work, and the useful half of the idea: **when you write a sentence a
+  reader could act on, write the assertion for it.** If you cannot state the assertion, the
+  sentence is too vague to be in the manual.
+
+- **`docs/DOCUMENTING.md`** — the process (survey → plan → edit → verify) and the gate table, with
+  the failure that motivated each gate. `CHECKLIST.md` points at it.
+
+### Fixed
+
+- **`proven_pool_free`, a function the manual documented and which does not exist.** Freeing a
+  pool slot goes through the allocator trait (`proven_pool_as_allocator`), like every other
+  allocator.
+- The tree walk's `proven_fs_walk_entry_t` was never listed, and its borrowed-`path` trap — every
+  entry aliases one reused buffer — had no counter-example.
+
 ## [2026-07-15] — proven_c_lib-v26.07.13l
 
 A documentation release. The library grew five modules this cycle and the manual had kept up
