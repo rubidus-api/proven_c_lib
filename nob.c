@@ -329,7 +329,6 @@ static bool cross_source_is_freestanding(const char *src) {
     if (strcmp(src, "src/proven/stream.c") == 0) return false;
     if (strcmp(src, "src/proven/sysio.c") == 0) return false;
     if (strcmp(src, "src/proven/mmap.c") == 0) return false;
-    if (strcmp(src, "src/proven/random.c") == 0) return false;
     if (strcmp(src, "platform/proven_sys_random.c") == 0) return false;
     if (strcmp(src, "src/proven/job.c") == 0) return false;
     if (strcmp(src, "platform/proven_sys_fs.c") == 0) return false;
@@ -1118,6 +1117,7 @@ int main(int argc, char **argv)
             if (strcmp(srcs[i], "platform/proven_sys_io.c") == 0) continue;
             if (strcmp(srcs[i], "platform/proven_sys_env.c") == 0) continue;
             if (strcmp(srcs[i], "platform/proven_sys_time.c") == 0) continue;
+            if (strcmp(srcs[i], "platform/proven_sys_random.c") == 0) continue;  /* no OS CSPRNG on bare metal */
             if (strcmp(srcs[i], "platform/proven_sys_mem.c") == 0) continue;
         }
 
