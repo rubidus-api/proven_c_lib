@@ -181,7 +181,9 @@ proven_result_size_t proven_fs_pwrite(proven_file_t file, proven_mem_view_t src,
  *
  * Until now the library had no way to do this at any price: it imported no fsync
  * and no fdatasync, so a caller who wanted their bytes on the platter simply could
- * not ask. proven_sysio_flush was not it - that call does nothing.
+ * not ask. The old proven_sysio_flush was not it - it did nothing, and it is gone;
+ * pushing a buffered writer's bytes to the OS is proven_writer_flush, and pushing the
+ * OS's bytes to the disk is this call. They are different things and now say so.
  *
  * @note This is expensive, and it is meant to be. Call it when you have decided
  *       that losing the data would be worse than the wait.
