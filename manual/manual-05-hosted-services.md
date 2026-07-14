@@ -757,6 +757,73 @@ int main(void) {
 }
 ```
 
+## Reading a directory one entry at a time
+
+`proven_fs_list` reads the **whole** directory before you see any of it, and it allocates a
+string for every name. Measured on 50,000 entries: **189 ms, +4.2 MB resident, 50,008
+allocations**, with nothing visible until the last entry was read. That is fine for a config
+directory and useless for a mail spool.
+
+`proven_fs_dir_open` / `_next` / `_close` walks the same directory one entry at a time and
+**allocates nothing per entry**.
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_fs_dir_open(scratch, path)` | Open a streaming iterator. `scratch` is for the path conversion only. | `proven_result_dir_t`. |
+| `proven_fs_dir_next(&dir, &entry)` | The next entry. `PROVEN_ERR_EOF` when there are no more. | `proven_err_t`. |
+| `proven_fs_dir_close(&dir)` | Release the iterator. | void. |
+
+```text
+typedef struct {
+    proven_u8str_view_t name;   /* BORROWED: points into the iterator's own storage,
+                                   valid only until the next proven_fs_dir_next */
+    proven_fs_type_t    type;   /* FILE / DIR / OTHER - and it follows symlinks */
+} proven_fs_dir_entry_t;
+```
+
+Use it like this:
+
+```c
+proven_result_dir_t d = proven_fs_dir_open(alloc, PROVEN_LIT("."));
+if (proven_is_ok(d.err)) {
+    proven_fs_dir_t dir = d.value;
+    proven_fs_dir_entry_t entry;
+    for (;;) {
+        proven_err_t e = proven_fs_dir_next(&dir, &entry);
+        if (e == PROVEN_ERR_EOF) break;
+        if (!proven_is_ok(e)) break;               /* a real error: report it */
+        proven_println("{}", PROVEN_ARG(entry.name));
+    }
+    proven_fs_dir_close(&dir);
+}
+```
+
+**The name is borrowed, and it dies at the next call.** This is what makes the whole thing cost
+no allocations — and a dangling pointer the moment you keep it.
+
+Wrong:
+
+```text
+proven_u8str_view_t names[100];
+int n = 0;
+while (proven_is_ok(proven_fs_dir_next(&dir, &entry)))
+    names[n++] = entry.name;    /* wrong: every entry aliases the same storage, and the
+                                   next _next overwrites it. All 100 end up equal - to
+                                   whatever the last entry happened to be. */
+```
+
+Correct: copy the bytes (`proven_u8str_create_from_view`) for the ones you need to keep — or use
+`proven_fs_list`, which does exactly that for every entry and charges you for it.
+
+**`PROVEN_ERR_EOF` is the end; anything else is a failure.** A loop that stops on "not OK" treats
+a permission error as a complete listing.
+
+```text
+while (proven_is_ok(proven_fs_dir_next(&dir, &entry))) { ... }
+/* wrong: an I/O error ends the loop exactly like the end of the directory does,
+   and you cannot tell whether you saw everything. */
+```
+
 ## Walking a tree
 
 `proven_fs_dir_*` walks ONE directory. `proven_fs_walk` walks a tree — and it is worth
@@ -909,6 +976,9 @@ caller decides where the bytes go, and nothing is hidden.
 | `proven_reader_from_file(&file)` / `_from_view(&state, view)` | Byte sources. |
 | `proven_reader_buffered(&state, inner, buf)` | Buffered source; required for line reading. |
 | `proven_reader_read_line(&state)` | One line, without the newline. |
+| `proven_writer_is_valid(w)` / `proven_reader_is_valid(r)` | Did the constructor succeed? A zeroed handle is invalid, and every constructor returns one on bad arguments — so this is the check, not a NULL test. |
+| `proven_fwrite_fmt(w, scratch, fmt, ...)` | `proven_fprint` with a scratch buffer **you** size. `proven_fprint` uses a 512-byte stack buffer and returns `OUT_OF_BOUNDS` for a longer line; this is how you format one. |
+| `proven_fmt_to_writer_impl(w, scratch, fmt, args, n)` | The function the two macros above expand to. Call it directly only if you are building your own variadic wrapper; the macros exist so you do not have to count arguments. |
 
 Four rules worth stating plainly, because each of them is a way this could have
 been designed badly:
