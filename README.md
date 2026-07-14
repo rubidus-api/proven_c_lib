@@ -266,6 +266,7 @@ What you accept, and should not expect:
 - User manual: `manual/manual.md` (chapters under `manual/`)
 - Freestanding guide: `manual/manual-freestanding.md`
 - Float correctness and performance: `docs/float-correctness-and-performance.md`
+- Primitive throughput (hash/encode/random): `docs/primitives-benchmark.md`
 - Test matrix: `TEST.md`
 - Changelog: `CHANGELOG.md`
 - Contributor checklist: `CHECKLIST.md`
@@ -555,6 +556,7 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 - 사용자 매뉴얼: `manual/manual.md` (`manual/` 아래 챕터들)
 - freestanding 가이드: `manual/manual-freestanding.md`
 - 부동소수점 정확성과 성능: `docs/float-correctness-and-performance.md`
+- 기본 연산 처리량(해시/인코딩/난수): `docs/primitives-benchmark.md`
 - 테스트 매트릭스: `TEST.md`
 - 변경 이력: `CHANGELOG.md`
 - 기여자 체크리스트: `CHECKLIST.md`
