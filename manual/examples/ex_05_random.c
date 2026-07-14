@@ -1,39 +1,77 @@
 #include "example.h"
 
 /*
- * OS randomness, and the one honest thing it is for.
+ * Randomness, by use case. There is no single "random": there are two jobs that look
+ * identical and are not, and picking the wrong one is the whole danger.
  *
- * proven_random_bytes is the operating system's CSPRNG - getrandom on Linux,
- * BCryptGenRandom on Windows - and nothing else. There is deliberately no seedable,
- * reproducible generator next to it: a fast PRNG for a simulation and a strong source for a
- * key are different tools, and handing out one under a name that suggests the other is how
- * people ship guessable tokens. This module does exactly one job: bytes you can build a
- * secret on. The return value is not decorative - false means the platform had no CSPRNG or
- * the OS call failed, and the buffer must not be used.
+ *   A key, a token, a nonce - anything an attacker must not guess - needs a CRYPTOGRAPHIC
+ *   source. A simulation, a test, a game needs a REPRODUCIBLE one, because a failing run you
+ *   cannot replay is a failing run you cannot debug. The two requirements are in direct
+ *   opposition: reproducible means predictable, and predictable is exactly what a token must
+ *   not be. So the library gives them different names, and the choice is visible here at the
+ *   call site rather than buried in how something was seeded.
  */
 
 int main(void) {
-    /* Draw a 16-byte key ONCE, at startup. This is the intended use: the key that turns the
-     * map's SipHash into a function an attacker who picks your keys still cannot predict. */
-    proven_byte_t map_key[16];
-    EXAMPLE_REQUIRE(proven_random_bytes(map_key, sizeof map_key),
+    /* ---- Job 1: a secret. The OS CSPRNG - and the one place randomness can fail. ---- */
+    proven_byte_t key[32];
+    EXAMPLE_REQUIRE(proven_random_bytes(key, sizeof key),
                     "the OS must give us strong bytes on a hosted platform");
 
-    proven_mem_view_t data = proven_mem_view_from_u8(PROVEN_LIT("session-token"));
-    proven_u64 keyed = proven_hash_keyed(data, map_key);
-    /* With a secret key the hash is unpredictable; without the key, the same bytes hash the
-     * same unkeyed FNV every time - which is exactly why untrusted keys need the keyed one. */
-    EXAMPLE_REQUIRE(keyed != proven_hash_bytes(data),
-                    "a keyed hash is a different function from the unkeyed one");
+    /* ---- Job 2: lots of cryptographic bytes, or any at all on a board with no OS.
+     * ChaCha20 is pure arithmetic: seed it once from real entropy and it needs nothing from
+     * the operating system afterwards - no syscall per draw, and it works on bare metal.
+     * Seeding is the ONLY step that can fail, so it is the only one you have to check. ---- */
+    proven_chacha_rng_t crypto;
+    EXAMPLE_REQUIRE(proven_chacha_rng_seed_from_os(&crypto), "seed the CSPRNG from the OS, once");
 
-    /* A single strong word, for a nonce or a one-off seed. Two draws differ - a fixed or
-     * unseeded generator would repeat, which is the whole failure this guards against. */
-    proven_u64 a = proven_random_u64();
-    proven_u64 b = proven_random_u64();
-    EXAMPLE_REQUIRE(a != b, "two independent draws must not be identical");
+    proven_byte_t token[16];
+    proven_chacha_rng_fill(&crypto, token, sizeof token);   /* cannot fail: it is seeded */
 
-    /* Asking for nothing succeeds and touches nothing - a clean no-op, not an error. */
-    EXAMPLE_REQUIRE(proven_random_bytes(NULL, 0), "zero bytes is a successful no-op");
+    /* ---- Job 3: a REPRODUCIBLE run. xoshiro256** is fast and replays exactly from its seed,
+     * which is what makes a failing simulation debuggable. It is NOT secret-grade: a few of
+     * its outputs reveal its whole state. Never hand it a token to generate. ---- */
+    proven_xoshiro256ss_t sim;
+    proven_xoshiro256ss_seed(&sim, 12345);
 
+    proven_xoshiro256ss_t replay;
+    proven_xoshiro256ss_seed(&replay, 12345);
+    EXAMPLE_REQUIRE(proven_xoshiro256ss_next(&sim) == proven_xoshiro256ss_next(&replay),
+                    "the same seed replays the same run - that is the whole point");
+
+    /* ---- The helpers work over ANY source, through the proven_rng_t trait. ---- */
+    proven_rng_t rng = proven_xoshiro256ss_rng(&sim);
+
+    /* A number in a range. `rng_u64() % 6` is what everyone writes, and it is BIASED unless
+     * the bound divides 2^64 - the low values come up more often. This one is not. */
+    for (int i = 0; i < 100; ++i) {
+        proven_u64 die = proven_rng_below(rng, 6) + 1;
+        EXAMPLE_REQUIRE(die >= 1 && die <= 6, "a die roll is 1..6, uniformly");
+    }
+
+    proven_i64 temperature = proven_rng_range(rng, -40, 85);
+    EXAMPLE_REQUIRE(temperature >= -40 && temperature <= 85, "an inclusive range, both ends");
+
+    double p = proven_rng_f64(rng);
+    EXAMPLE_REQUIRE(p >= 0.0 && p < 1.0, "a double in [0, 1) - never 1.0");
+
+    /* An unbiased shuffle: Fisher-Yates over the unbiased index above. The `% n` version of
+     * this loop measurably favours some orderings. */
+    int deck[10];
+    for (int i = 0; i < 10; ++i) deck[i] = i;
+    proven_rng_shuffle(rng, deck, 10, sizeof deck[0]);
+
+    int sum = 0;
+    for (int i = 0; i < 10; ++i) sum += deck[i];
+    EXAMPLE_REQUIRE(sum == 45, "a shuffle is a permutation: every card is still there, once");
+
+    /* The cryptographic generator satisfies the same trait, so the same helpers work over it
+     * when the choice must be unguessable rather than merely uniform. */
+    proven_rng_t secure = proven_chacha_rng(&crypto);
+    proven_u64 unguessable_index = proven_rng_below(secure, 1000);
+    EXAMPLE_REQUIRE(unguessable_index < 1000, "the helpers do not care which source they draw from");
+
+    (void)token;
+    (void)key;
     return EXAMPLE_OK();
 }

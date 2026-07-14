@@ -51,6 +51,7 @@ src/proven/ring.c
 src/proven/map.c
 src/proven/algorithm.c
 src/proven/hash.c
+src/proven/random.c
 src/proven/time.c
 src/proven/fmt.c
 src/proven/scan.c
@@ -66,7 +67,6 @@ src/proven/fs.c
 src/proven/stream.c
 src/proven/sysio.c
 src/proven/mmap.c
-src/proven/random.c
 src/proven/job.c
 platform/proven_sys_fs.c
 platform/proven_sys_thread.c
@@ -98,7 +98,7 @@ Do not add excluded hosted modules to a bare-metal build unless you also provide
 | `time.h` | Limited | Core datetime formatting can compile; real PAL time is excluded. |
 | `heap.h` | Stub | `proven_heap_allocator()` returns an invalid allocator. |
 | `fs.h`, `stream.h`, `mmap.h`, `sysio.h`, `job.h` | Excluded | Require hosted PAL services. |
-| `random.h` | Excluded | No OS CSPRNG on a bare-metal target; there is deliberately no software PRNG fallback. |
+| `random.h` | Available without the OS source | The generators are pure arithmetic and work here: `proven_xoshiro256ss_t` (fast, reproducible) and `proven_chacha_rng_t` (cryptographic), plus `proven_rng_below`/`_range`/`_f64`/`_shuffle`. Only the OS entropy source (`proven_random_bytes`, `proven_random_u64`, `proven_chacha_rng_seed_from_os`) is excluded — a board with no OS has no `getrandom`. Seed ChaCha from the board's own entropy; the module will not substitute a clock-seeded PRNG for a CSPRNG. |
 | `coro.h` | Available | Macro-only stackless coroutine support. |
 | `panic.h` | Available | Override for target-specific trap/reset behavior. |
 

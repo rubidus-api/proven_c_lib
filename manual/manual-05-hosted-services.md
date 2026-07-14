@@ -13,7 +13,8 @@ These APIs require hosted platform support and are excluded from the current fre
 5. [Examples and misuse cases](#5-examples-and-misuse-cases)
 6. [Walking a tree](#walking-a-tree)
 7. [Streams: writers and readers](#streams-writers-and-readers)
-8. [OS randomness](#os-randomness)
+8. [The standard streams](#the-standard-streams)
+9. [Randomness, by use case](#randomness-by-use-case)
 
 ## 1. Filesystem API
 
@@ -1069,62 +1070,171 @@ int main(void) {
 ```
 
 
-## OS randomness
+## The standard streams
 
-`proven_random_bytes` is the operating system's CSPRNG and nothing else — `getrandom` on
-Linux, `BCryptGenRandom` on Windows. There is deliberately no seedable, reproducible
-generator beside it: a fast PRNG for a simulation and a strong source for a key are different
-tools, and offering one under a name that suggests the other is how guessable tokens ship.
-This module does one job — bytes you can build a secret on — and the boolean return is load
-bearing: `false` means the platform had no CSPRNG or the OS call failed, and the buffer must
-not be used. It is excluded from freestanding builds, which have no OS entropy source.
+`stream.h` has writers, readers, buffered writers and a line reader. `sysio.h` has stdin,
+stdout and stderr. Until they were introduced to each other, two things were simply not
+possible — and one call was a lie.
+
+**Reading stdin a line at a time had no route.** The most common thing a program does with
+stdin, and the choices were the token scanner or reading the whole of a stream that may never
+end. The bridge fixes that: a standard handle is parked in caller-owned storage, so the line
+reader has something stable to point at.
+
+```c
+proven_byte_t buf[4096];
+proven_sysio_lines_t lines;
+if (proven_is_ok(proven_sysio_stdin_lines(&lines, (proven_mem_mut_t){ .ptr = buf, .size = sizeof buf }))) {
+    for (;;) {
+        proven_result_u8str_view_t line = proven_sysio_read_line(&lines);
+        if (line.err == PROVEN_ERR_EOF) break;
+        if (!proven_is_ok(line.err)) break;   /* OUT_OF_BOUNDS: a line longer than `buf` */
+        /* `line.val` points INTO `buf` and is valid only until the next call. */
+        proven_println("{}", PROVEN_ARG(line.val));
+    }
+}
+```
+
+It inherits the line reader's properties, which is the point of not writing a second one: the
+view costs no allocation, `"\r\n"` is handled, a final line with no trailing newline is still
+returned, and a line longer than your buffer is `PROVEN_ERR_OUT_OF_BOUNDS` — never a silently
+truncated line.
+
+**The formatter could not be aimed at a standard stream.** `proven_fprintln` takes a writer;
+stdout was not one. Now it is, and it can be a *buffered* one — so a thousand small lines cost
+one syscall instead of a thousand.
 
 | | |
 |---|---|
-| `proven_random_bytes(buf, len)` | Fill `len` bytes; returns `false` on failure (do not use `buf`). `len == 0` is a successful no-op. |
-| `proven_random_u64()` | One strong 64-bit word, or `0` on failure. Use `proven_random_bytes` when you must tell "failed" from a genuine `0`. |
+| `proven_sysio_stdout_writer(&st)` | An unbuffered writer over stdout. Every write is a write syscall. |
+| `proven_sysio_stderr_writer(&st)` | The same for stderr — which is what you want for an error: it is out before the next line of code runs. |
+| `proven_sysio_stdin_reader(&st)` | A reader over stdin. |
+| `proven_sysio_stdout_buffered(&out, buf)` | stdout behind a buffered writer over a buffer you own. |
+| `proven_sysio_file_buffered(&out, file, buf)` | The same over any open file. |
 
-The intended use is to draw a secret once, at startup — for instance the 16-byte key that
-makes a default map's SipHash unpredictable (see [Chapter 4](manual-04-containers-algorithms.md)).
+**And `flush` means something now.** `proven_sysio_flush` used to claim to flush a buffer that
+did not exist: a no-op on POSIX, a *disk sync* on Windows. It is **deleted**. Pushing a
+buffered writer's bytes to the OS is `proven_writer_flush`; pushing the OS's bytes to the disk
+is `proven_fs_sync`. They are different operations and now say so.
+
+> **You must flush a buffered writer.** Nothing reaches the terminal until the buffer fills or
+> you flush it, and nothing in this library registers an `atexit` handler to do it behind your
+> back — a library that owns your process is a library you cannot reason about. Buffered output
+> that is never flushed is output that never happened. The direct calls (`proven_print`,
+> `proven_println`, `proven_eprint`) remain unbuffered for exactly this reason: what they write
+> is on its way out before they return.
+
+## Randomness, by use case
+
+There is no single "random". There are two jobs that look identical and are not:
+
+| Your job | Use | Why |
+|---|---|---|
+| A key, a token, a nonce — anything an attacker must not guess. | `proven_random_bytes`, or a `proven_chacha_rng_t` seeded from it. | Only a cryptographic source is unguessable. |
+| The same, on a target with no OS. | `proven_chacha_rng_t`, seeded from the board's own entropy. | ChaCha20 is pure arithmetic; it needs no OS. It is only as unguessable as its seed. |
+| A simulation, a test, a game, a sample. | `proven_xoshiro256ss_t`. | Fast, and **reproducible**: the same seed replays the same run, which is what makes a failing test debuggable. |
+| A number in a range, a shuffle, a float in [0,1). | `proven_rng_below`, `proven_rng_range`, `proven_rng_f64`, `proven_rng_shuffle` — over any source. | `% n` is biased, and everyone writes it anyway. These are not. |
+
+The two requirements are in direct opposition. Reproducible means predictable, and predictable
+is exactly what a token must not be: a few outputs of `proven_xoshiro256ss_t` reveal its entire
+state and therefore every number it will ever produce. That is a feature for a simulation you
+need to replay and a catastrophe for a session token — so the two carry names that cannot be
+confused, and the choice is visible at the call site rather than buried in how something was
+seeded.
+
+**The trait is infallible.** `proven_rng_t` is a source of random bytes, and drawing from a
+valid one cannot fail. That is not a simplification; it is where the failure went. Asking an
+operating system for entropy *can* fail, so that failure is confined to exactly one place —
+seeding — which you check once, at startup. Every draw downstream is total.
+
+| | |
+|---|---|
+| `proven_random_bytes(buf, len)` | The OS CSPRNG. Returns `false` on failure; do not use `buf` then. `len == 0` is a successful no-op. |
+| `proven_random_u64()` | One strong word from the OS, or `0` on failure. |
+| `proven_chacha_rng_seed_from_os(&g)` | Seed the cryptographic generator from the OS. **This is the call that can fail.** |
+| `proven_chacha_rng_seed(&g, seed32)` | Seed it from 32 bytes you supply — a hardware entropy source on a board. Never the clock. |
+| `proven_xoshiro256ss_seed(&g, seed)` | Seed the reproducible generator. Even seed 0 is fine: it is expanded through SplitMix64. |
+
+Only the OS entropy source is hosted. The generators and the helpers are pure arithmetic and
+work on a bare-metal target — see the [freestanding guide](manual-freestanding.md).
+
 Compiled and run by the test suite:
 
 <!-- example: manual/examples/ex_05_random.c -->
 ```c
 /*
- * OS randomness, and the one honest thing it is for.
+ * Randomness, by use case. There is no single "random": there are two jobs that look
+ * identical and are not, and picking the wrong one is the whole danger.
  *
- * proven_random_bytes is the operating system's CSPRNG - getrandom on Linux,
- * BCryptGenRandom on Windows - and nothing else. There is deliberately no seedable,
- * reproducible generator next to it: a fast PRNG for a simulation and a strong source for a
- * key are different tools, and handing out one under a name that suggests the other is how
- * people ship guessable tokens. This module does exactly one job: bytes you can build a
- * secret on. The return value is not decorative - false means the platform had no CSPRNG or
- * the OS call failed, and the buffer must not be used.
+ *   A key, a token, a nonce - anything an attacker must not guess - needs a CRYPTOGRAPHIC
+ *   source. A simulation, a test, a game needs a REPRODUCIBLE one, because a failing run you
+ *   cannot replay is a failing run you cannot debug. The two requirements are in direct
+ *   opposition: reproducible means predictable, and predictable is exactly what a token must
+ *   not be. So the library gives them different names, and the choice is visible here at the
+ *   call site rather than buried in how something was seeded.
  */
 
 int main(void) {
-    /* Draw a 16-byte key ONCE, at startup. This is the intended use: the key that turns the
-     * map's SipHash into a function an attacker who picks your keys still cannot predict. */
-    proven_byte_t map_key[16];
-    EXAMPLE_REQUIRE(proven_random_bytes(map_key, sizeof map_key),
+    /* ---- Job 1: a secret. The OS CSPRNG - and the one place randomness can fail. ---- */
+    proven_byte_t key[32];
+    EXAMPLE_REQUIRE(proven_random_bytes(key, sizeof key),
                     "the OS must give us strong bytes on a hosted platform");
 
-    proven_mem_view_t data = proven_mem_view_from_u8(PROVEN_LIT("session-token"));
-    proven_u64 keyed = proven_hash_keyed(data, map_key);
-    /* With a secret key the hash is unpredictable; without the key, the same bytes hash the
-     * same unkeyed FNV every time - which is exactly why untrusted keys need the keyed one. */
-    EXAMPLE_REQUIRE(keyed != proven_hash_bytes(data),
-                    "a keyed hash is a different function from the unkeyed one");
+    /* ---- Job 2: lots of cryptographic bytes, or any at all on a board with no OS.
+     * ChaCha20 is pure arithmetic: seed it once from real entropy and it needs nothing from
+     * the operating system afterwards - no syscall per draw, and it works on bare metal.
+     * Seeding is the ONLY step that can fail, so it is the only one you have to check. ---- */
+    proven_chacha_rng_t crypto;
+    EXAMPLE_REQUIRE(proven_chacha_rng_seed_from_os(&crypto), "seed the CSPRNG from the OS, once");
 
-    /* A single strong word, for a nonce or a one-off seed. Two draws differ - a fixed or
-     * unseeded generator would repeat, which is the whole failure this guards against. */
-    proven_u64 a = proven_random_u64();
-    proven_u64 b = proven_random_u64();
-    EXAMPLE_REQUIRE(a != b, "two independent draws must not be identical");
+    proven_byte_t token[16];
+    proven_chacha_rng_fill(&crypto, token, sizeof token);   /* cannot fail: it is seeded */
 
-    /* Asking for nothing succeeds and touches nothing - a clean no-op, not an error. */
-    EXAMPLE_REQUIRE(proven_random_bytes(NULL, 0), "zero bytes is a successful no-op");
+    /* ---- Job 3: a REPRODUCIBLE run. xoshiro256** is fast and replays exactly from its seed,
+     * which is what makes a failing simulation debuggable. It is NOT secret-grade: a few of
+     * its outputs reveal its whole state. Never hand it a token to generate. ---- */
+    proven_xoshiro256ss_t sim;
+    proven_xoshiro256ss_seed(&sim, 12345);
 
+    proven_xoshiro256ss_t replay;
+    proven_xoshiro256ss_seed(&replay, 12345);
+    EXAMPLE_REQUIRE(proven_xoshiro256ss_next(&sim) == proven_xoshiro256ss_next(&replay),
+                    "the same seed replays the same run - that is the whole point");
+
+    /* ---- The helpers work over ANY source, through the proven_rng_t trait. ---- */
+    proven_rng_t rng = proven_xoshiro256ss_rng(&sim);
+
+    /* A number in a range. `rng_u64() % 6` is what everyone writes, and it is BIASED unless
+     * the bound divides 2^64 - the low values come up more often. This one is not. */
+    for (int i = 0; i < 100; ++i) {
+        proven_u64 die = proven_rng_below(rng, 6) + 1;
+        EXAMPLE_REQUIRE(die >= 1 && die <= 6, "a die roll is 1..6, uniformly");
+    }
+
+    proven_i64 temperature = proven_rng_range(rng, -40, 85);
+    EXAMPLE_REQUIRE(temperature >= -40 && temperature <= 85, "an inclusive range, both ends");
+
+    double p = proven_rng_f64(rng);
+    EXAMPLE_REQUIRE(p >= 0.0 && p < 1.0, "a double in [0, 1) - never 1.0");
+
+    /* An unbiased shuffle: Fisher-Yates over the unbiased index above. The `% n` version of
+     * this loop measurably favours some orderings. */
+    int deck[10];
+    for (int i = 0; i < 10; ++i) deck[i] = i;
+    proven_rng_shuffle(rng, deck, 10, sizeof deck[0]);
+
+    int sum = 0;
+    for (int i = 0; i < 10; ++i) sum += deck[i];
+    EXAMPLE_REQUIRE(sum == 45, "a shuffle is a permutation: every card is still there, once");
+
+    /* The cryptographic generator satisfies the same trait, so the same helpers work over it
+     * when the choice must be unguessable rather than merely uniform. */
+    proven_rng_t secure = proven_chacha_rng(&crypto);
+    proven_u64 unguessable_index = proven_rng_below(secure, 1000);
+    EXAMPLE_REQUIRE(unguessable_index < 1000, "the helpers do not care which source they draw from");
+
+    (void)token;
+    (void)key;
     return EXAMPLE_OK();
 }
 ```
