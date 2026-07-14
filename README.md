@@ -166,6 +166,59 @@ Writing is symmetric. `proven_fs_write_file` creates or truncates; `proven_fs_wr
 - **O(n log n) is a guarantee, not a typical case.** A heapsort fallback past a bounded recursion depth is what makes it one. A sort whose worst case can be reached by an adversarial ordering is a denial of service in any program that sorts data it did not author.
 - **Duplicate keys are the fast case.** Elements equal to the pivot are collected into a run that is final and never recursed into, so all-equal input costs a single pass. Low-cardinality keys - a status column, an enum, a bucket id - are what callers actually sort by, and they are exactly what a naive partition degrades on.
 
+## hashes, tokens, and text you can put in a URL
+
+There is no single "hash" and no single "random". Which one is correct depends on what you are doing with the result, and reaching for the wrong one gives you a program that is either needlessly slow or quietly insecure. Both modules are organised so the choice is made once you name the job — and so the wrong choice is hard to make by accident.
+
+| Your job | Use |
+|---|---|
+| Hash keys into **your own** table (trusted input) | `proven_hash_bytes` — FNV-1a, fast |
+| Hash keys from **untrusted** input | `proven_hash_keyed` — SipHash. (`proven_map` already does this for you: string-key maps are HashDoS-resistant by default.) |
+| Detect **corruption** on disk or in transit | `proven_crc32` — interoperates with gzip/zlib/PNG |
+| **Fingerprint** content — dedup, "same file?" | `proven_sha256` — the only one safe against a *deliberately* forged match |
+| A key, a token, a nonce | `proven_random_bytes` (the OS CSPRNG), or a `proven_chacha_rng_t` seeded from it |
+| A **reproducible** run — a simulation, a test | `proven_xoshiro256ss_t`. Fast, replays exactly from its seed, and **never** for a secret |
+
+```c
+/* A URL-safe session token: strong bytes, then text that needs no escaping. */
+proven_byte_t raw[16];
+proven_byte_t token[32];
+proven_size_t n = 0;
+
+if (proven_random_bytes(raw, sizeof raw) &&
+    proven_is_ok(proven_base64url_encode(
+        (proven_mem_view_t){ raw, sizeof raw }, token, sizeof token, &n))) {
+    proven_println("token: {}", PROVEN_ARG_CSTR_N((const char *)token, n));
+}
+```
+
+`encode.h` is the other half of this: `hex`, `base64`, and `base64url` (no padding, nothing to escape). The decoders **validate the whole input before writing a byte** — a stray character is `PROVEN_ERR_INVALID_ENCODING`, never a read past the end or a silently short result — and the output size is a function you call, not a number you remember.
+
+The generators and hashes are pure arithmetic, so they work on a bare-metal target too. On a board with no OS, hand the library its hardware entropy once (`proven_random_set_source`) and the cryptographic generator works with no operating system at all.
+
+## streams: a line from stdin, and printing without a syscall per line
+
+A writer is a byte sink; a reader is a byte source. Both are small vtables passed by value, like the allocator — so one `serialize(writer, value)` works over memory, a file, or a standard stream, and the formatter can be aimed at any of them.
+
+```c
+/* Read stdin a line at a time. One buffer, no allocation per line. */
+proven_byte_t buf[4096];
+proven_sysio_lines_t lines;
+if (proven_is_ok(proven_sysio_stdin_lines(&lines,
+        (proven_mem_mut_t){ .ptr = buf, .size = sizeof buf }))) {
+    for (;;) {
+        proven_result_u8str_view_t line = proven_sysio_read_line(&lines);
+        if (line.err == PROVEN_ERR_EOF) break;
+        if (!proven_is_ok(line.err)) break;   /* a line longer than `buf` is refused, not truncated */
+        proven_println("{}", PROVEN_ARG(line.val));
+    }
+}
+```
+
+The view points *into* your buffer and is valid until the next call — which is what makes a million lines cost one buffer instead of a million allocations. Copy it if you need to keep it.
+
+Buffer the output side and a thousand small prints cost one syscall instead of a thousand — but **you must flush**: there is no hidden global buffer, so there is also no destructor and no `atexit` handler to flush it behind your back. The direct calls (`proven_println`, `proven_eprintln`) stay unbuffered for exactly that reason: what they write is on its way out before they return.
+
 ## correct, fast number conversion
 
 Decimal-to-`double` parsing and `double`/`float`-to-decimal formatting are
@@ -456,6 +509,59 @@ proven_u8str_destroy(alloc, &src.value);
 
 - **O(n log n)은 보장이지 평균적 기대치가 아닙니다.** 재귀 깊이를 넘어서면 heapsort로 탈출하는 것이 그 보장을 만듭니다. 적대적 입력으로 최악의 경우에 도달할 수 있는 정렬은, 자기가 만들지 않은 데이터를 정렬하는 모든 프로그램에서 서비스 거부(DoS)입니다.
 - **중복 키가 빠른 경우입니다.** 피벗과 같은 원소들은 확정된 구간으로 모여 다시 재귀되지 않으므로, 전부 같은 입력은 한 번의 패스로 끝납니다. 저카디널리티 키(상태 컬럼, enum, 버킷 id)야말로 호출자가 실제로 정렬하는 키이고, 순진한 분할이 정확히 그 지점에서 무너집니다.
+
+## 해시, 토큰, 그리고 URL에 넣을 수 있는 텍스트
+
+"해시"도 "난수"도 하나가 아닙니다. 결과를 무엇에 쓰느냐에 따라 정답이 달라지고, 잘못 고르면 쓸데없이 느리거나 **조용히 안전하지 않은** 프로그램이 됩니다. 두 모듈 모두 "무슨 일을 하는가"를 말하는 순간 선택이 정해지도록 구성했고, 잘못된 선택을 실수로 하기 어렵게 이름을 지었습니다.
+
+| 하려는 일 | 쓸 것 |
+|---|---|
+| **내가 만든** 키를 내 테이블에 해싱 (신뢰된 입력) | `proven_hash_bytes` — FNV-1a, 빠름 |
+| **신뢰할 수 없는** 입력의 키를 해싱 | `proven_hash_keyed` — SipHash. (`proven_map`이 이미 이걸 씁니다: 문자열 키 맵은 **기본이 HashDoS 저항**) |
+| 디스크·전송 중 **손상** 검출 | `proven_crc32` — gzip/zlib/PNG와 상호운용 |
+| 콘텐츠 **지문** — 중복제거, "같은 파일인가?" | `proven_sha256` — **고의로 위조된** 일치까지 막는 유일한 것 |
+| 키, 토큰, 논스 | `proven_random_bytes` (OS CSPRNG), 또는 그걸로 시드한 `proven_chacha_rng_t` |
+| **재현 가능한** 실행 — 시뮬레이션, 테스트 | `proven_xoshiro256ss_t`. 빠르고 시드로 정확히 재생. **비밀에는 절대 금지** |
+
+```c
+/* URL에 안전한 세션 토큰: 강한 바이트 → 이스케이프가 필요 없는 텍스트. */
+proven_byte_t raw[16];
+proven_byte_t token[32];
+proven_size_t n = 0;
+
+if (proven_random_bytes(raw, sizeof raw) &&
+    proven_is_ok(proven_base64url_encode(
+        (proven_mem_view_t){ raw, sizeof raw }, token, sizeof token, &n))) {
+    proven_println("token: {}", PROVEN_ARG_CSTR_N((const char *)token, n));
+}
+```
+
+`encode.h`가 나머지 절반입니다: `hex`, `base64`, `base64url`(패딩 없음, 이스케이프 불필요). 디코더는 **한 바이트를 쓰기 전에 입력 전체를 검증**합니다 — 이상한 문자는 `PROVEN_ERR_INVALID_ENCODING`이지, 끝을 넘어 읽거나 조용히 짧은 결과가 되지 않습니다. 출력 크기는 외우는 숫자가 아니라 **호출하는 함수**입니다.
+
+생성기와 해시는 순수 연산이라 베어메탈에서도 동작합니다. OS가 없는 보드라면 하드웨어 엔트로피를 한 번 넘겨주면(`proven_random_set_source`) 암호학적 생성기가 운영체제 없이 그대로 작동합니다.
+
+## 스트림: stdin에서 한 줄, 그리고 줄마다 syscall 하지 않는 출력
+
+writer는 바이트 싱크, reader는 바이트 소스입니다. 둘 다 allocator처럼 값으로 넘기는 작은 vtable이라, `serialize(writer, value)` 하나가 메모리·파일·표준 스트림 위에서 모두 동작하고, 포매터를 그중 아무 데나 겨눌 수 있습니다.
+
+```c
+/* stdin을 한 줄씩. 버퍼 하나, 줄마다 할당 없음. */
+proven_byte_t buf[4096];
+proven_sysio_lines_t lines;
+if (proven_is_ok(proven_sysio_stdin_lines(&lines,
+        (proven_mem_mut_t){ .ptr = buf, .size = sizeof buf }))) {
+    for (;;) {
+        proven_result_u8str_view_t line = proven_sysio_read_line(&lines);
+        if (line.err == PROVEN_ERR_EOF) break;
+        if (!proven_is_ok(line.err)) break;   /* 버퍼보다 긴 줄은 잘리지 않고 거부됩니다 */
+        proven_println("{}", PROVEN_ARG(line.val));
+    }
+}
+```
+
+반환된 view는 **여러분의 버퍼를 가리키며** 다음 호출까지만 유효합니다 — 이것이 백만 줄을 백만 번의 할당이 아니라 버퍼 하나로 처리하게 만드는 이유입니다. 보관하려면 복사하세요.
+
+출력 쪽을 버퍼링하면 작은 출력 1000번이 syscall 1000번이 아니라 **1번**이 됩니다. 다만 **반드시 flush해야 합니다**: 숨겨진 전역 버퍼가 없으니 대신 flush해 줄 소멸자도, `atexit` 핸들러도 없습니다. 직접 호출(`proven_println`, `proven_eprintln`)이 무버퍼로 남아 있는 이유가 바로 이것입니다 — 반환 전에 이미 나가 있습니다.
 
 ## 정확하고 빠른 숫자 변환
 
