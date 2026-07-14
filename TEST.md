@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.07.13i)
+# proven Test Matrix (v26.07.13j)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -308,7 +308,7 @@ The class says what kind of question the test answers:
 
 - **`unit`** — One module's public API, used the way a caller uses it. These are the tests that say what the library *does*. (59 tests)
 - **`contract`** — The public invariants: misuse, corrupted structs, exhausted allocators, refused input. These say what the library *refuses to do*, which is the half a caller cannot infer from the happy path. (13 tests)
-- **`regression`** — One test per defect that actually shipped. Each is named for what broke, not for a version or a number, and each was verified to FAIL against the pre-fix source. A regression test that passes before the fix is not a regression test. (17 tests)
+- **`regression`** — One test per defect that actually shipped. Each is named for what broke, not for a version or a number, and each was verified to FAIL against the pre-fix source. A regression test that passes before the fix is not a regression test. (18 tests)
 - **`differential`** — Correctness against an independent oracle - the host libc, or a corpus with known-good answers. These catch what a self-written expectation cannot: a wrong belief held consistently by both the code and its test. (4 tests)
 - **`portability`** — Freestanding builds, compile-only cross targets, source-level platform contracts, and the build driver's own standard probe. Most of these cannot be *run* on the host, so they check what can be checked: that the code compiles, links, and keeps its platform branches intact. (8 tests)
 - **`stress`** — Concurrency under a sanitizer, over enough iterations to make a race likely rather than theoretical. (1 tests)
