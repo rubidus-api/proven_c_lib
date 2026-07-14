@@ -11,6 +11,110 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-14] — proven_c_lib-v26.07.13h
+
+Two modules that each offered one answer to a question that has several.
+
+### Added
+
+- **Randomness, by use case — a reproducible generator, a cryptographic one, and the OS.**
+  `random.h` offered exactly one thing, the OS CSPRNG, and said in its own header that this was
+  deliberate: a fast PRNG and a secure one are different tools, and shipping one under a name
+  that suggests the other is how insecure tokens get written. The reasoning was right; the
+  conclusion — offer neither — was wrong. A caller who needs a reproducible sequence does not
+  stop needing one. They write `rand()`, or a hand-rolled LCG, and end up with something worse
+  than what the library declined to give them. And a bare-metal target, which has no OS CSPRNG
+  at all, was left with nothing.
+
+  The module is now organised by use case, the way `hash.h` is:
+
+  - `proven_xoshiro256ss_t` — fast and **reproducible**, for simulations, tests, games. The
+    same seed replays the same run, which is what makes a failing test debuggable. Explicitly
+    not secret-grade, and named so it cannot be mistaken for one. Seeded through SplitMix64, so
+    seed 0 — or 1, or 2, which is what callers actually pass — lands on a well-distributed state
+    instead of the all-zero state xoshiro can never leave.
+  - `proven_chacha_rng_t` — cryptographic, and pure arithmetic: it needs no OS once seeded,
+    which makes it the answer on a bare-metal target and the fast answer for bulk random data
+    on a hosted one (no syscall per draw). Verified byte for byte against the standard's
+    keystream, over six random keys and streams of 140 blocks, using OpenSSL as the oracle —
+    which was itself first checked against RFC 8439's own vector.
+  - `proven_rng_below` / `_range` / `_f64` / `_shuffle` — unbiased, over any source.
+    `x % n` is biased whenever `n` does not divide 2^64, and everyone writes it anyway; these
+    use Lemire's multiply-and-reject and an unbiased Fisher-Yates.
+
+  The trait, `proven_rng_t`, is **infallible** by design. That is not a simplification — it is
+  where the failure went: asking an operating system for entropy can fail, so that failure is
+  confined to seeding, checked once, and every draw downstream is total.
+
+  The generators are pure computation, so **`random.h` now works freestanding**; only the OS
+  entropy source stays hosted. A board with no OS gets ChaCha20 seeded from its own hardware
+  entropy — not a clock-seeded PRNG pretending to be a CSPRNG.
+
+- **The standard streams are writers and readers.** `stream.h` had writers, readers, buffered
+  writers and a line reader; `sysio.h` had stdin, stdout and stderr; the two had never been
+  introduced. The cost was concrete: **there was no way to read stdin a line at a time** — the
+  most common thing a program does with it — and the formatter could not be aimed at a standard
+  stream at all, so every `proven_print` was its own write syscall.
+
+  `proven_sysio_stdin_lines` + `proven_sysio_read_line` read stdin a line at a time;
+  `proven_sysio_stdout_buffered` puts stdout behind a buffered writer, so a thousand small
+  prints cost one syscall instead of a thousand, and `proven_fprintln` can finally be aimed at a
+  standard stream; `proven_sysio_stdout_writer` / `_stderr_writer` / `_stdin_reader` are the
+  unbuffered bridge. Nothing re-implements what `stream.c` already does — a second buffered
+  reader would be a second place for the same bug.
+
+  Buffering stays opt-in, and nothing registers an `atexit` handler to flush behind your back.
+  The direct calls remain unbuffered: what they write is on its way out before they return.
+
+### Fixed (found by the standing adversarial audit of both new modules)
+
+The maths came back clean — ChaCha20 byte-identical to OpenSSL over 12 random keys and 10 KB
+streams, xoshiro identical to the upstream reference over 2.56M outputs, Lemire's accept/reject
+exact over 1M cases, the portable 64×64→128 fallback exact over 8M pairs, every chi-square
+inside 2σ. The defects were all in the *failure* paths, and every one handed the caller bytes
+that looked fine.
+
+- **A ChaCha generator that was never usable handed back plausible bytes.** Three defects, two
+  of them one bug: `proven_chacha_rng_next(NULL)` read an uninitialised local and returned this
+  frame's stack as randomness (it was the only entry point in the module without a NULL guard);
+  a never-seeded, stack-declared generator has `used == 0`, which the fill path read as "a full
+  block of fresh keystream is ready" and copied its own uninitialised `block[]` out; and a
+  generator whose `seed_from_os` *failed* was left zeroed — which produces an all-zero first
+  block, so the claim "you get zeros, not plausible garbage" was true for exactly 64 bytes, and
+  then the counter advanced and block 1 was a normal-looking, **fixed, publicly derivable**
+  keystream. `used` alone could not encode usability, because a zero-initialised struct is the
+  shape of "never seeded". The generator now carries an explicit seeded marker: unseeded or
+  failed, it is inert — invalid trait, `next()` of 0, `fill()` of zeros.
+
+- **`proven_reader_read_line` refused a line that fit.** It documented "a line LONGER than the
+  buffer is `PROVEN_ERR_OUT_OF_BOUNDS`" and enforced something stricter — it rejected any line
+  that *filled* the buffer. It had to, because it answered "too long" before attempting a fill,
+  and a fill cannot tell "buffer full" from "source ended". But a full buffer means one of three
+  things and only one is an error: the next byte is the newline that ends the line; the source
+  has ended and what is held IS the final line; or the line really is too long. The middle case
+  was data loss, and not exotic — **a 4-byte file with no trailing newline, read through a
+  4-byte buffer, came back `OUT_OF_BOUNDS` with its entire contents unreachable.** One byte of
+  lookahead tells the three apart, so the documented rule is now the enforced one.
+
+- **`proven_sysio_out_t` / `_lines_t` contained a pointer to themselves**, so copying one
+  dangled (ASan: heap-use-after-free). `proven_sysio_read_line` takes its state *by pointer* —
+  the shape that says "relocatable" — so it now re-binds the inner reader on every call, making
+  the implied contract true. The writer states cannot do that, and the header now says plainly
+  that they must not be copied or moved once a writer has been made from one.
+
+### Removed
+
+- **`proven_sysio_flush` is deleted, and the delete is the point.** It claimed to flush a buffer
+  that did not exist: a no-op on POSIX, a *disk sync* on Windows, and its own header told callers
+  not to use it. Flushing a buffered writer's bytes to the OS is `proven_writer_flush`; pushing
+  the OS's bytes to the disk is `proven_fs_sync`. They are different operations and now say so.
+  Nothing in the library depended on it.
+
+### Fixed
+
+- **The README claimed `proven` exposes no fsync.** It has since v26.07.12g
+  (`proven_fs_sync`, `proven_fs_write_file_durable`). Corrected in both language halves.
+
 ## [2026-07-13] — proven_c_lib-v26.07.13g
 
 The time formatter's two encodings were quietly disagreeing, found and closed by the standing
