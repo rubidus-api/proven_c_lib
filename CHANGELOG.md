@@ -11,6 +11,43 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-15] — proven_c_lib-v26.07.13j
+
+Two regressions the standing audit found in the previous release's own fixes — the place the
+process says the next bugs are (docs/TESTING.md §5.2) — plus a sweep of long-standing doc debt.
+
+### Fixed
+
+- **A stream byte was stranded after a line too long for the buffer.** The read-line lookahead
+  added last release stashes one byte when a line overruns; a following raw `proven_reader_read`
+  then got a spurious `PROVEN_ERR_EOF` while that peeked byte sat unread, because
+  `reader_buffered_fill` reported "did the source hand over bytes" rather than "is there
+  anything to read". A read-to-EOF loop never came back for it, so the byte was silently lost.
+  Fill now reports whether the buffer became non-empty; a re-inserted peek is progress too.
+  Confirmed clean over 2,000,000 rounds of read_line/raw-read interleaving vs a reference.
+
+- **The ChaCha seed scrub compiled to nothing.** `seed_from_entropy` cleared its 32-byte seed
+  with a plain loop, under a comment saying not to leave key material on the stack — but nothing
+  reads the seed afterward, so the stores were dead and the optimiser removed them (at -O1
+  entirely). The raw OS entropy persisted in the frame. Replaced with a `secure_zero` that
+  writes through a volatile pointer (an observable side effect the optimiser must keep, and
+  freestanding-safe, unlike `explicit_bzero`/`memset_s`). Verified in the -O2 disassembly.
+
+- **Documentation debt, swept.** The manual still *declared* `proven_sysio_flush` — deleted a
+  release ago — as public API, and described it in the present tense. "`proven` exposes no
+  fsync" was still asserted in the manual and an example, false since v26.07.12g. The
+  `proven_rng_t` trait's obligation (a degenerate hand-written source makes `proven_rng_below`
+  spin) was undocumented. And nothing said why sysio has both a line reader and a token scanner.
+  All fixed, and TEST.md gained the suite descriptions for tests that had been counted but not
+  catalogued.
+
+### Added
+
+- **A coverage sweep of the public functions no test had ever called** (`proven_fs_symlink`, the
+  bounds-checked mem slices, the formatter's caller-scratch path, the mutable map/array lookups,
+  `linear_search`, `proven_u16str_create_from_view`, and the standard-stream bridges left
+  uncovered). No defect surfaced; the surface is no longer unexercised.
+
 ## [2026-07-14] — proven_c_lib-v26.07.13i
 
 ### Added
