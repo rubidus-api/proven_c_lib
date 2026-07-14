@@ -222,6 +222,13 @@ typedef struct {
     proven_size_t    cursor;   /* how far into them we have read */
     bool             eof;
     proven_err_t     err;      /* the failure that stopped the source, if any */
+
+    /* One byte of lookahead. A full buffer with no newline in it does not mean the line is too
+     * long - the next byte may be the newline that ends it, or the source may have ended, in
+     * which case what is held IS the final line. Both of those FIT, and neither can be told
+     * from a genuinely over-long line without looking at one more byte. */
+    proven_byte_t    peek;
+    bool             has_peek;
 } proven_reader_buffered_t;
 
 /**
@@ -246,7 +253,13 @@ proven_reader_t proven_reader_buffered(proven_reader_buffered_t *state, proven_r
  * @note The view is only valid until the next call. Copy it if it must outlive that.
  * @note A final line with no trailing newline is still returned.
  * @note A line longer than the buffer is PROVEN_ERR_OUT_OF_BOUNDS, not a silently
- *       truncated line. The buffer is yours; size it for the input you expect.
+ *       truncated line. The buffer is yours; size it for the input you expect. A line that
+ *       exactly FILLS the buffer is a line, not an error - the newline that ends it does not
+ *       have to fit too, and neither does a final line that has no newline at all. (It used to
+ *       be refused, which made a 4-byte file read through a 4-byte buffer unreachable.)
+ * @note After an OUT_OF_BOUNDS the reader stays wedged on that line: there is no resync, and
+ *       every later call returns the same error. A line you cannot hold is not a line you can
+ *       skip past without deciding what to do with the bytes.
  * @note "\r\n" is handled: the '\r' is not part of the line.
  */
 [[nodiscard]]

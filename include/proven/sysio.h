@@ -55,6 +55,15 @@
  * `proven_writer_from_file` takes a `proven_file_t *`, and the file has to outlive the
  * writer — so it cannot be a temporary. This struct is that storage, and it is yours: declare
  * one on the stack next to the writer that uses it.
+ *
+ * @warning **Do not copy or move these state structs once a writer or reader has been made
+ *          from one.** The writer holds a pointer INTO the struct, so a copy leaves the
+ *          original addressed and the copy inert — and if the original goes out of scope, the
+ *          writer is left pointing at dead storage. This is the same rule that governs
+ *          `stream.h`'s own state structs (`proven_writer_buffered_t` and friends): the state
+ *          stays where you declared it, for as long as the writer or reader lives.
+ *          (`proven_sysio_lines_t` is the exception — `proven_sysio_read_line` re-binds it on
+ *          every call, so a line reader may be moved.)
  */
 typedef struct {
     proven_file_t file;
@@ -97,7 +106,12 @@ typedef struct {
  */
 [[nodiscard]] proven_writer_t proven_sysio_stdout_buffered(proven_sysio_out_t *st, proven_mem_mut_t buf);
 
-/** @brief The same, over any open file. */
+/**
+ * @brief The same, over any open file.
+ * @note A zero-initialised `proven_file_t` is not an invalid handle - on POSIX it is fd 0,
+ *       which is stdin. Pass a file you actually opened; the library cannot tell a handle
+ *       you forgot to fill in from one that legitimately refers to fd 0.
+ */
 [[nodiscard]] proven_writer_t proven_sysio_file_buffered(proven_sysio_out_t *st, proven_file_t file, proven_mem_mut_t buf);
 
 // -----------------------------------------------------------------------------

@@ -139,6 +139,13 @@ typedef struct {
     proven_u32 state[16];
     proven_byte_t block[64];
     proven_size_t used;   /* bytes of `block` already handed out; 64 == "generate the next one" */
+
+    /* Set by seeding, and by nothing else. A zero-initialised struct - which is the shape of
+     * "never seeded" - must not be able to masquerade as a generator holding a fresh block, so
+     * "is this usable" cannot be inferred from `used` alone. An unseeded generator, or one
+     * whose seeding failed, is INERT: its trait is invalid, its next() is 0, and its fill()
+     * writes zeros rather than whatever the stack was holding. */
+    proven_u32 seeded;
 } proven_chacha_rng_t;
 
 /** @brief Seed from 32 bytes of real entropy. The same seed replays the same stream. */
