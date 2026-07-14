@@ -2,7 +2,7 @@
 
 This README is bilingual. The English section comes first, then the Korean translation follows with the same substantive content.
 
-`proven` is a small C23 systems library for code that should stay readable over time. It gives you the everyday pieces C projects usually end up rewriting: explicit allocators, owned and borrowed strings, dynamic arrays, maps with borrowed or owned string keys (HashDoS-resistant by default), formatting and scanning, buffered streams, filesystem helpers, memory mapping, time, hashing (FNV, SipHash, CRC-32, SHA-256) and OS-strength randomness, stackless coroutines, and a bounded job system.
+`proven` is a small C23 systems library for code that should stay readable over time. It gives you the everyday pieces C projects usually end up rewriting: explicit allocators, owned and borrowed strings, dynamic arrays, maps with borrowed or owned string keys (HashDoS-resistant by default), formatting and scanning, buffered streams and line input from stdin, filesystem helpers, memory mapping, time, hashing (FNV, SipHash, CRC-32, SHA-256), randomness by use case (a reproducible generator, a cryptographic one, and the OS CSPRNG), stackless coroutines, and a bounded job system.
 
 The point is not to hide C behind a framework. The point is to make practical C less repetitive while still keeping ownership, errors, allocator choice, and platform boundaries visible.
 
@@ -159,7 +159,7 @@ proven_u8str_destroy(alloc, &src.value);
 
 `proven_fs_read_all` / `proven_fs_read_all_u8str` read to EOF rather than to a pre-measured size. The file's reported size only seeds the capacity, so a regular file still costs one allocation and one pass - but a source whose size cannot be known up front (a pipe, a FIFO, a `/proc` entry) is read correctly rather than coming back empty, and a file that grows mid-read is not silently truncated.
 
-Writing is symmetric. `proven_fs_write_file` creates or truncates; `proven_fs_write_file_atomic` writes a sibling temp file and renames it over the target, so a concurrent reader sees either the whole old file or the whole new one, and the target's permissions are preserved (a `0600` file is not republished as `0644`). It is atomic with respect to readers, not durable across power loss - `proven` exposes no fsync, and the header says so.
+Writing is symmetric. `proven_fs_write_file` creates or truncates; `proven_fs_write_file_atomic` writes a sibling temp file and renames it over the target, so a concurrent reader sees either the whole old file or the whole new one, and the target's permissions are preserved (a `0600` file is not republished as `0644`). It is atomic with respect to readers; durability across power loss is a separate, explicit ask - `proven_fs_sync` (fsync) and `proven_fs_write_file_durable`, which does the three steps in the only order that works: sync the temp file, rename, then sync the directory.
 
 `proven_array_sort` is an introsort, and two of its properties are worth stating because they are the ones that bite:
 
@@ -229,7 +229,7 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 - Algorithms: `algorithm`.
 - Text: `fmt`, `scan`.
 - Numbers: `float_parse`, `float_format`.
-- Hashing and randomness: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256), `random` (OS CSPRNG).
+- Hashing and randomness: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256), `random` (xoshiro256** reproducible, ChaCha20 cryptographic, the OS CSPRNG, and unbiased range/shuffle helpers).
 - Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
 - Execution: `coro`, `job`.
 - Diagnostics: `panic`.
@@ -291,7 +291,7 @@ License: MIT License. See `LICENSE`.
 
 이 README는 이중 언어로 작성되어 있습니다. 먼저 영어 본문을 두고, 그 아래에 같은 내용의 한국어 번역을 배치했습니다.
 
-`proven`은 시간이 지나도 읽기 쉬운 코드를 목표로 한 작은 C23 시스템 라이브러리입니다. C 프로젝트가 자주 직접 다시 구현하게 되는 요소들, 즉 명시적 allocator, owned/borrowed 문자열, 동적 배열, borrowed 또는 owned 문자열 키를 쓰는 map(기본이 HashDoS 저항), 형식화와 파싱, 버퍼드 스트림, 파일시스템 헬퍼, 메모리 매핑, 시간, 해싱(FNV, SipHash, CRC-32, SHA-256)과 OS 강도 난수, 스택 없는 코루틴, bounded job system을 제공합니다.
+`proven`은 시간이 지나도 읽기 쉬운 코드를 목표로 한 작은 C23 시스템 라이브러리입니다. C 프로젝트가 자주 직접 다시 구현하게 되는 요소들, 즉 명시적 allocator, owned/borrowed 문자열, 동적 배열, borrowed 또는 owned 문자열 키를 쓰는 map(기본이 HashDoS 저항), 형식화와 파싱, 버퍼드 스트림과 stdin 줄 입력, 파일시스템 헬퍼, 메모리 매핑, 시간, 해싱(FNV, SipHash, CRC-32, SHA-256), 용도별 난수(재현 가능한 생성기·암호학적 생성기·OS CSPRNG), 스택 없는 코루틴, bounded job system을 제공합니다.
 
 의도는 C를 프레임워크 뒤에 숨기는 것이 아닙니다. 실용적인 C를 덜 반복적으로 만들면서도 ownership, error, allocator 선택, platform boundary를 그대로 보이게 두는 데 있습니다.
 
@@ -448,7 +448,7 @@ proven_u8str_destroy(alloc, &src.value);
 
 `proven_fs_read_all` / `proven_fs_read_all_u8str`는 미리 잰 크기까지가 아니라 **EOF까지** 읽습니다. 파일이 보고한 크기는 초기 용량을 정하는 데만 쓰이므로 정규 파일은 여전히 할당 1회·패스 1회로 끝나지만, 크기를 미리 알 수 없는 소스(파이프, FIFO, `/proc` 항목)가 빈 결과로 돌아오지 않고, 읽는 도중 자라는 파일도 조용히 잘리지 않습니다.
 
-쓰기도 대칭입니다. `proven_fs_write_file`은 생성하거나 잘라내고, `proven_fs_write_file_atomic`은 형제 임시 파일에 쓴 뒤 rename으로 덮어써서 동시 독자가 옛 파일 전체 또는 새 파일 전체만 보게 합니다. 대상의 권한도 보존됩니다(`0600` 파일이 `0644`로 다시 공개되지 않습니다). 독자에 대해 원자적일 뿐 전원 손실에 대해 내구적이지는 않으며(`proven`은 fsync를 노출하지 않습니다), 헤더에 그렇게 적혀 있습니다.
+쓰기도 대칭입니다. `proven_fs_write_file`은 생성하거나 잘라내고, `proven_fs_write_file_atomic`은 형제 임시 파일에 쓴 뒤 rename으로 덮어써서 동시 독자가 옛 파일 전체 또는 새 파일 전체만 보게 합니다. 대상의 권한도 보존됩니다(`0600` 파일이 `0644`로 다시 공개되지 않습니다). 독자에 대해 원자적이며, 전원 손실에 대한 내구성은 별도의 명시적 요청입니다 - `proven_fs_sync`(fsync)와 `proven_fs_write_file_durable`이 있고, 후자는 유일하게 올바른 순서로 세 단계를 수행합니다: 임시 파일 sync → rename → 디렉터리 sync.
 
 `proven_array_sort`는 introsort이고, 실제로 발목을 잡는 두 성질은 명시할 가치가 있습니다:
 
@@ -517,7 +517,7 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 - Algorithms: `algorithm`.
 - Text: `fmt`, `scan`.
 - Numbers: `float_parse`, `float_format`.
-- 해싱과 난수: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256), `random` (OS CSPRNG).
+- 해싱과 난수: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256), `random` (xoshiro256** 재현 가능, ChaCha20 암호학적, OS CSPRNG, 무편향 범위/셔플 헬퍼).
 - Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
 - Execution: `coro`, `job`.
 - Diagnostics: `panic`.

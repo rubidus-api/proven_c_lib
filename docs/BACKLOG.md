@@ -26,6 +26,55 @@ _Nothing open._
 
 ## Done
 
+### B-017 — the standard streams were not writers, and `flush` was a lie (closed v26.07.13h)
+
+`stream.h` had writers, readers, buffered writers, a line reader and a formatter that
+writes straight into a writer. `sysio.h` had stdin, stdout and stderr. The two had never
+been introduced, and the cost was concrete: **there was no way to read stdin a line at a
+time** — the most common thing a program does with it — and the formatter could not be
+aimed at a standard stream at all, so every `proven_print` was its own write syscall.
+Meanwhile `proven_sysio_flush` claimed to flush a buffer that did not exist: a no-op on
+POSIX, a *disk sync* on Windows, and its own header told callers not to use it.
+
+Closed by bridging sysio onto the stream layer: `proven_sysio_stdin_lines` +
+`proven_sysio_read_line` (stdin, a line at a time), `proven_sysio_stdout_buffered` (a
+thousand small prints, one syscall), and `proven_sysio_stdout_writer` / `_stderr_writer`
+/ `_stdin_reader` for the unbuffered path. Nothing re-implements what `stream.c` already
+does — a second buffered reader would be a second place for the same bug.
+
+`proven_sysio_flush` is **deleted**, and the delete is the point. Flushing a buffered
+writer's bytes to the OS is `proven_writer_flush`; pushing the OS's bytes to the disk is
+`proven_fs_sync`. They are different things and now say so. Buffering stays opt-in, and
+nothing registers an atexit handler to flush behind the caller's back.
+
+### B-016 — randomness was one algorithm, and the wrong one for most jobs (closed v26.07.13h)
+
+`random.h` offered exactly one thing — the OS CSPRNG — and said, in its own header, that
+this was deliberate: a fast PRNG and a secure one are different tools, and shipping one
+under a name that suggests the other is how insecure tokens get written. The reasoning was
+right. The conclusion — offer neither — was wrong. A caller who needs a reproducible
+sequence does not stop needing one: they write `rand()`, or a hand-rolled LCG, and end up
+with something worse than what the library declined to give them. And a bare-metal target,
+which has no OS CSPRNG at all, was left with nothing.
+
+Closed by organising the module by use case, the way `hash.h` is:
+
+- `proven_xoshiro256ss_t` — fast and **reproducible**, for simulations, tests, games. Named
+  so it cannot be mistaken for a secret-grade generator, which it explicitly is not.
+  SplitMix64-expanded seeding, so seed 0 (or 1, or 2 — what callers actually pass) is not
+  degenerate.
+- `proven_chacha_rng_t` — cryptographic, and pure arithmetic: it needs no OS once seeded,
+  which makes it the answer on a bare-metal target and the fast answer for bulk random data
+  on a hosted one. Verified byte-for-byte against the standard's keystream.
+- `proven_random_bytes` — the OS CSPRNG, unchanged.
+- `proven_rng_below` / `_range` / `_f64` / `_shuffle` — unbiased, over any source. `% n` is
+  biased and everyone writes it anyway.
+
+The trait (`proven_rng_t`) is **infallible** by design: asking an OS for entropy can fail,
+so that failure is confined to seeding, checked once, and every draw downstream is total.
+The generators are pure computation, so `random.h` is now available freestanding; only the
+OS entropy source stays hosted.
+
 ### B-015 — map hashed untrusted string keys with a non-keyed hash (closed v26.07.13d)
 
 **Decision taken (2026-07-13): SipHash by default, with a trusted-key opt-out.** `map` now

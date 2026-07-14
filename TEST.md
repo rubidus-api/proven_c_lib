@@ -297,7 +297,7 @@ Failure tip: identify the target name in the log, then check whether the failure
 ## Test catalog
 
 
-The hosted full run currently builds and executes 113 tests. `./nob regression` runs a 27-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 2 benchmarks.
+The hosted full run currently builds and executes 115 tests. `./nob regression` runs a 27-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 2 benchmarks.
 
 These counts are checked against `nob.c` - `tests/test_docs_alias_completeness` exists precisely because a list nobody checks stops being true.
 
@@ -306,7 +306,7 @@ Numbers rot: this catalog used to run 1..50 with `7a`, `30a`, `30b`, `30c`, `40a
 
 The class says what kind of question the test answers:
 
-- **`unit`** — One module's public API, used the way a caller uses it. These are the tests that say what the library *does*. (56 tests)
+- **`unit`** — One module's public API, used the way a caller uses it. These are the tests that say what the library *does*. (58 tests)
 - **`contract`** — The public invariants: misuse, corrupted structs, exhausted allocators, refused input. These say what the library *refuses to do*, which is the half a caller cannot infer from the happy path. (13 tests)
 - **`regression`** — One test per defect that actually shipped. Each is named for what broke, not for a version or a number, and each was verified to FAIL against the pre-fix source. A regression test that passes before the fix is not a regression test. (15 tests)
 - **`differential`** — Correctness against an independent oracle - the host libc, or a corpus with known-good answers. These catch what a self-written expectation cannot: a wrong belief held consistently by both the code and its test. (4 tests)
@@ -700,6 +700,22 @@ Sub-checks:
 
 Failure tip: inspect `platform/proven_sys_random.c`. A failure here is a missing or wrong OS entropy call — the `getrandom` guard keys on `GRND_NONBLOCK` from `<sys/random.h>`, not on a syscall number that was never included.
 
+### `tests/test_unit_rng` — randomness by use case
+
+Intent: verify the two generators against the standard each is judged by — xoshiro256** on being reproducible and non-degenerate, ChaCha20 on being *actually ChaCha20* — and the helpers on being unbiased where `% n` is not.
+
+Sub-checks:
+
+- xoshiro256**: the same seed replays the same 1000 words; a different seed does not. The seeds callers actually pass (0, 1, 2) are not degenerate — the bit balance over 512 output bits is near half, which a raw-counter seed fails badly. The first state word for seed 0 is SplitMix64(0), the published constant, so the expansion is checked against something the library did not invent.
+- ChaCha20: the first 64 bytes of keystream match the standard byte for byte. The expected block came from OpenSSL, which was itself first verified to reproduce RFC 8439 §2.4.2's official ciphertext — a property test cannot establish that something *is* ChaCha20, and this is the generator that guards secrets. The keystream is also chunking-independent: drawn in pieces of 1, 7, 64, 3, 61 it equals the same bytes drawn at once, which is where a block-boundary bug hides.
+- `proven_rng_below`: every draw is strictly below the bound, and 70,000 draws over 7 buckets land near a seventh each. Bound 0 is 0; bound 1 is 0.
+- `proven_rng_range`: inside [lo, hi] inclusive; INT64_MIN..INT64_MAX (a span of 2^64-1) neither overflows nor hangs; an inverted range returns `lo`.
+- `proven_rng_f64`: always in [0, 1), never 1.0.
+- `proven_rng_shuffle`: a permutation at several sizes and element widths (including a 200-byte element, which catches a swap that assumes a word); count 0 and 1 are no-ops; all six orderings of three elements come up, which a biased shuffle cannot manage.
+- The trait: a zero-initialised `proven_rng_t` is inert (0, and a fill that fills nothing) rather than a crash; a valid one fills the tail of a length that is not a multiple of 8.
+
+Failure tip: inspect `src/proven/random.c`. A ChaCha keystream mismatch means a rotation, round count, or word order is wrong — it is not ChaCha20 and must not hold a key.
+
 ### `tests/test_unit_ring` — bounded ring
 
 Intent: verify fixed-capacity FIFO semantics, wraparound, full/empty detection, and overflow guards.
@@ -760,6 +776,23 @@ Sub-checks:
 - End of input is `PROVEN_ERR_EOF`, never a zero-byte success.
 
 Failure tip: inspect `src/proven/stream.c`. Buffering uses caller-supplied memory: there is no hidden global state and no allocation the caller did not ask for.
+
+### `tests/test_unit_sysio_streams` — the standard streams are writers and readers
+
+Intent: verify stdin can be read a line at a time, that a buffered stdout holds its bytes until it is flushed and then emits them in order, and that an unbuffered standard-stream writer is out immediately.
+
+The test dup2's pipes over the **real fd 0 and fd 1**, so a pass means `proven_sysio_stdin()` / `proven_sysio_stdout()` themselves work — not a stand-in — including the short reads a pipe actually delivers.
+
+Sub-checks:
+
+- Lines from stdin: `first\n`, `second\r\n`, a line with spaces, and a final line with no trailing newline all come back without their newline and without a stray `\r`; the end of input is `PROVEN_ERR_EOF`, not an empty line forever.
+- A buffered stdout writes **nothing** to the pipe before `proven_writer_flush`, and after it every buffered byte is out, in order. This assertion is the whole point: `proven_sysio_flush` used to claim to flush a buffer that did not exist, and this is the first time the claim could be tested — because there is finally something to flush.
+- The formatter is aimed straight at a standard stream (`proven_fprintln` into the buffered writer), which could not be done before: `proven_fprint` takes a writer, and stdout was not one.
+- An unbuffered standard-stream writer is in the pipe with no flush at all.
+- A line longer than the buffer is `PROVEN_ERR_OUT_OF_BOUNDS`, never a silently truncated line.
+- A null state or an empty buffer is `PROVEN_ERR_INVALID_ARG`.
+
+Failure tip: inspect the standard-stream bridge in `src/proven/sysio.c`. It composes `stream.h`'s writer/reader over a handle parked in caller-owned storage; it re-implements nothing, because a second buffered reader would be a second place for the same bug.
 
 ### `tests/test_unit_sysio_env` — sysio and environment
 

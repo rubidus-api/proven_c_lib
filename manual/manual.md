@@ -224,9 +224,9 @@ The detailed reference is split by chapter so it can stay readable and source-gr
 | `algorithm.h` | Array sort and search helpers | Chapter 4 |
 | `hash.h` | FNV-1a, SipHash-2-4, CRC-32, SHA-256, by use case | Chapter 4 |
 | `fs.h` | Files, directories, metadata, links, locks, read-all, tree walk | Chapter 5 |
-| `stream.h` | Buffered writers, readers, and a line reader (hosted-only) | Chapter 5 |
-| `sysio.h` | Standard streams, printing, scanning, environment access | Chapter 5 |
-| `random.h` | OS CSPRNG bytes — `proven_random_bytes` / `_u64` (hosted-only) | Chapter 5 |
+| `stream.h` | Buffered writers, readers, and a line reader — and, through `sysio.h`, the standard streams (hosted-only) | Chapter 5 |
+| `sysio.h` | Standard streams as writers/readers, line input from stdin, buffered output, printing, scanning, environment access | Chapter 5 |
+| `random.h` | Randomness by use case: xoshiro256** (reproducible), ChaCha20 (cryptographic), the OS CSPRNG, and unbiased range/shuffle helpers. The generators work freestanding; only the OS source is hosted. | Chapter 5 |
 | `mmap.h` | Memory-mapped file regions | Chapter 5 |
 | `time.h` | Timestamp, datetime, sleep, datetime formatting | Chapter 5 |
 | `coro.h` | Stackless coroutine macros | Chapter 6 |
