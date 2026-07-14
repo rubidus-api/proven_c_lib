@@ -51,6 +51,7 @@ src/proven/ring.c
 src/proven/map.c
 src/proven/algorithm.c
 src/proven/hash.c
+src/proven/encode.c
 src/proven/random.c
 src/proven/time.c
 src/proven/fmt.c
@@ -93,6 +94,7 @@ Do not add excluded hosted modules to a bare-metal build unless you also provide
 | `array.h`, `list.h`, `ring.h`, `map.h` | Available | No hidden OS dependency. |
 | `algorithm.h` | Available | Sort/search helpers for arrays. |
 | `hash.h` | Available | FNV-1a, SipHash-2-4, CRC-32, SHA-256 — byte-exact, no OS dependency. |
+| `encode.h` | Available | Hex and Base64 — pure computation, no OS. |
 | `fmt.h` | Available without float | Current profile defines `PROVEN_FMT_NO_FLOAT`. |
 | `scan.h` | Available | Scanner for memory views. |
 | `time.h` | Limited | Core datetime formatting can compile; real PAL time is excluded. |
