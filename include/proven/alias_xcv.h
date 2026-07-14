@@ -254,6 +254,15 @@
 #define xcv_fs_write_file_durable proven_fs_write_file_durable
 #define xcv_hash_bytes proven_hash_bytes
 #define xcv_hash_keyed proven_hash_keyed
+#define xcv_base64_decode proven_base64_decode
+#define xcv_base64_decoded_size proven_base64_decoded_size
+#define xcv_base64_encode proven_base64_encode
+#define xcv_base64_encoded_size proven_base64_encoded_size
+#define xcv_base64url_encode proven_base64url_encode
+#define xcv_hex_decode proven_hex_decode
+#define xcv_hex_decoded_size proven_hex_decoded_size
+#define xcv_hex_encode proven_hex_encode
+#define xcv_hex_encoded_size proven_hex_encoded_size
 #define xcv_heap_allocator proven_heap_allocator
 #define xcv_i16 proven_i16
 #define xcv_i32 proven_i32
