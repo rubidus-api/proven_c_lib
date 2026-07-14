@@ -101,7 +101,11 @@ proven_size_t proven_base64_encoded_size(proven_size_t n);
 
 /**
  * @brief The maximum number of bytes a Base64 `text` of `n` characters can decode to.
- * @note `3 * (n / 4)`. The exact count depends on the padding and is reported by the decode.
+ * @note An upper bound over both the padded and the UNPADDED form: `((n + 3) / 4) * 3`. The
+ *       exact count depends on the padding and is reported by the decode. It has to round `n`
+ *       up rather than down, or it would under-report the 1-2 bytes an unpadded tail carries -
+ *       and a caller sizing a buffer by a floor would fail to decode this library's own
+ *       `proven_base64url_encode` output.
  */
 [[nodiscard]]
 proven_size_t proven_base64_decoded_size(proven_size_t n);
