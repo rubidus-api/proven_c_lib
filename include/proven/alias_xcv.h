@@ -412,7 +412,6 @@
 #define xcv_sha256_update proven_sha256_update
 #define xcv_size_t proven_size_t
 #define xcv_strtod proven_strtod
-#define xcv_sysio_flush proven_sysio_flush
 #define xcv_sysio_print_impl proven_sysio_print_impl
 #define xcv_sysio_scan_chunk_impl proven_sysio_scan_chunk_impl
 #define xcv_sysio_scanner_deinit proven_sysio_scanner_deinit
