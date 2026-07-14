@@ -11,6 +11,48 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-15] — proven_c_lib-v26.07.13k
+
+### Added
+
+- **`encode.h` — hex and Base64, by use case (RFC 4648).** Once you can hash a thing and draw a
+  random token, you need to write those bytes somewhere that only holds text - a URL, a header,
+  a log line. The library had no general encoding; the only bytes-to-text it owned was SHA-256's
+  own `to_hex`. Now: `proven_hex_encode`/`_decode` (lowercase, what sha256sum and git print);
+  `proven_base64_encode` (standard `+/`, `=`-padded, for HTTP/MIME/JSON);
+  `proven_base64url_encode` (`-_`, no padding, for URLs and filenames); and
+  `proven_base64_decode`, which accepts BOTH alphabets and padded-or-not. The two ways these are
+  usually got wrong are refused: a decode validates its whole input before writing a byte
+  (a stray character, bad length, bad padding, or embedded whitespace is
+  `PROVEN_ERR_INVALID_ENCODING` with nothing committed - never a read past the end or a silently
+  short result), and the output size is a function you call, not a number you remember (a short
+  buffer is `PROVEN_ERR_OUT_OF_BOUNDS`, never a truncated prefix). Pure computation, available
+  freestanding. Checked against RFC 4648's own vectors and differentially against Python and zlib.
+
+- **A primitive throughput benchmark** (`tests/test_bench_primitives`, run through
+  `./nob bench-float`), and the doc it produced, `docs/primitives-benchmark.md`. It times the
+  hashes, encoders, and generators over a fixed buffer, folding each output into a checksum so
+  the work cannot be optimised away and a drift surfaces as a correctness failure.
+
+### Changed
+
+- **CRC-32 is ~4.2× faster.** The benchmark put it at ~104 MB/s - four times slower than FNV -
+  because it was the textbook bitwise form (eight shift-and-xor iterations per byte, no table).
+  Replaced with the standard 256-entry reflected table, turning eight iterations into one lookup:
+  ~104 → ~432 MB/s, for 1 KiB of `.rodata`. Byte-identical output: the table's `"123456789" →
+  0xcbf43926` check value is verified against it, and it still matches `zlib.crc32`.
+
+### Fixed (found by the standing adversarial audit of the new encode module)
+
+- **`proven_base64_decoded_size` under-reported for unpadded input.** It returned `(n/4)*3`,
+  which floors away the 1-2 bytes an unpadded tail carries - so a caller who sized a buffer with
+  the documented function could not decode the library's own `proven_base64url_encode` output
+  (`OUT_OF_BOUNDS` on valid input; the audit hit it 3.3M times in 5M fuzzed inputs). Fixed to
+  `((n+3)/4)*3`. Not a memory bug - the decoder checked the true length internally - a broken
+  size contract.
+- **The decoders lacked the `{out == NULL, out_cap > 0}` guard the encoders have**, so that shape
+  stored through NULL (SEGV). Both now return `PROVEN_ERR_INVALID_ARG`, matching the encoders.
+
 ## [2026-07-15] — proven_c_lib-v26.07.13j
 
 Two regressions the standing audit found in the previous release's own fixes — the place the
