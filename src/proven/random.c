@@ -23,6 +23,17 @@ static inline proven_u32 rotl32(proven_u32 x, int k) {
     return (proven_u32)((x << k) | (x >> (32 - k)));
 }
 
+/* Zero a buffer so the compiler cannot elide it. A plain `for` loop that writes a buffer
+ * nothing reads afterwards is a dead store, and the optimiser removes it - which is exactly
+ * what happened to the seed scrub below: the loop was there, the comment was right about why,
+ * and at -O1 it compiled to nothing. Writing through a volatile pointer is an observable side
+ * effect the optimiser must keep, and unlike explicit_bzero/memset_s it needs no libc, so it
+ * works freestanding too. */
+static void secure_zero(void *buf, proven_size_t len) {
+    volatile proven_byte_t *p = (volatile proven_byte_t *)buf;
+    while (len--) *p++ = 0;
+}
+
 /* 64x64 -> 128. __int128 where the compiler has it, a portable 32-bit decomposition where it
  * does not - this has to work on i686 and on a Cortex-M as well as on x86-64. */
 static inline void mul64x64(proven_u64 a, proven_u64 b, proven_u64 *hi, proven_u64 *lo) {
@@ -412,7 +423,8 @@ bool proven_chacha_rng_seed_from_entropy(proven_chacha_rng_t *g) {
 
     proven_chacha_rng_seed(g, seed);
 
-    /* Do not leave the seed lying in this frame. */
-    for (proven_size_t i = 0; i < sizeof seed; ++i) seed[i] = 0;
+    /* Do not leave the seed lying in this frame - and do it in a way the optimiser cannot
+     * throw away, because a plain loop here IS thrown away (the seed is never read again). */
+    secure_zero(seed, sizeof seed);
     return true;
 }

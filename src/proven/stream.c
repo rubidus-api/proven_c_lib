@@ -343,10 +343,14 @@ static bool reader_buffered_fill(proven_reader_buffered_t *s) {
     if (s->len == s->buf.size) return false;   /* full, and nothing consumed */
 
     /* A byte the line reader looked ahead at belongs to the stream: put it back before asking
-     * the source for more, or it is silently dropped. */
+     * the source for more, or it is silently dropped. Re-inserting it is itself PROGRESS - the
+     * buffer is now non-empty - which is why `made_progress` below tracks the buffer, not just
+     * what the source hands over. */
+    bool reinserted_peek = false;
     if (s->has_peek) {
         s->buf.ptr[s->len++] = s->peek;
         s->has_peek = false;
+        reinserted_peek = true;
         if (s->len == s->buf.size) return true;
     }
 
@@ -360,7 +364,12 @@ static bool reader_buffered_fill(proven_reader_buffered_t *s) {
          * buffered scanner in the same library, which honours that shape. */
         s->len += r.value;
         s->eof = true;
-        return r.value > 0;
+        /* True if the buffer gained a byte this call - from the source OR from a re-inserted
+         * peek. Returning `r.value > 0` alone stranded the peek byte: at EOF the source
+         * contributes nothing, so a caller reading raw bytes after a too-long line got a
+         * spurious EOF with the peeked byte still unread, and a read-to-EOF loop never came
+         * back for it. */
+        return r.value > 0 || reinserted_peek;
     }
     if (!proven_is_ok(r.err)) {
         /*
