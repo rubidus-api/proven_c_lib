@@ -11,6 +11,48 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-15] — proven_c_lib-v26.07.13l
+
+A documentation release. The library grew five modules this cycle and the manual had kept up
+only in the sense that it *mentioned* them; this brings them to the depth of the chapters
+around them, and finishes the job.
+
+### Changed
+
+- **The ownership matrix has a second class.** It used to be a list of things you must destroy,
+  and the sixteen public structs added this cycle destroy nothing — they are a different kind of
+  object, and it needed a name: **caller-owned state**. You declare one, hand its address to a
+  constructor, and use the handle you get back. The rule owning objects do not have is now
+  stated where a reader meets it before they hit it: *a caller-owned state object must not be
+  copied or moved once a handle has been made from it — the handle holds a pointer into the
+  struct.* All sixteen are tabulated with what constructs them and their individual sharp edge
+  (copying a seeded generator clones the keystream: two "independent" tokens become one token).
+
+- **The new modules got their depth.** Hashing, encoding, randomness, streams and the standard
+  streams each gained the three things the older chapters have and they lacked: the structures
+  the caller holds, an API reference table, and — the gap that mattered most — **counter-examples**.
+  The older chapters teach as much through their `Wrong:` blocks as through their prose. Now
+  these do too: a keyed hash with a fixed key; CRC-32 used to decide two things are "the same"
+  where someone gains by fooling you; a session token from the *reproducible* generator; a
+  ChaCha seed taken from the clock; an ignored seeding bool; `% 6`; a buffered writer never
+  flushed; a line view kept past the next read; the state struct copied, which is the
+  use-after-free an audit reproduced.
+
+- **README** showcases the two capabilities that previously only had a name in the module list:
+  hashes/tokens/encoding (with the by-use-case table that is the point of those modules), and
+  streams — reading stdin a line at a time, and printing without a syscall per line. Both
+  language halves; both snippets compiled against the library before being pasted.
+
+### Added
+
+- **`proven_fs_dir_open` / `_next` / `_close` is documented at last** — a whole API that had no
+  section. It is the answer to a real problem (`proven_fs_list` reads the entire directory before
+  you see any of it and allocates a string per name: 50,000 entries cost 189 ms, +4.2 MB and
+  50,008 allocations), and a reader who never learns it exists reaches for the wrong call on a
+  mail spool.
+- The last eleven functions nothing had ever documented. **Every public function in
+  `include/proven/` is now named somewhere in `manual/`.**
+
 ## [2026-07-15] — proven_c_lib-v26.07.13k
 
 ### Added
