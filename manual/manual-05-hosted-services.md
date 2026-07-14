@@ -840,9 +840,36 @@ A symlinked directory is still **reported** — it exists, `type` is `DIR`, `is_
 true — it is simply not entered. Hiding it would be its own kind of lie. If you *want* to
 follow it, you have the path: open a second walk on it, and you own the cycle question.
 
+### The structure you receive
+
+```text
+typedef struct {
+    proven_u8str_view_t path;   /* the whole path, from the root you passed in.
+                                   BORROWED: it points into the walk's one reused
+                                   buffer and is valid only until the next call. */
+    proven_u8str_view_t name;   /* the last component of `path`. Same lifetime. */
+    proven_fs_type_t    type;   /* FILE / DIR / OTHER - and it FOLLOWS symlinks,
+                                   exactly as proven_fs_stat does. */
+    proven_size_t       size;   /* bytes, for a regular file; 0 otherwise. */
+    proven_size_t       depth;  /* 0 for an entry directly inside the root. */
+    bool                is_symlink;  /* reached through a symlink. `type` describes
+                                        the TARGET; the walk does not enter it. */
+} proven_fs_walk_entry_t;
+```
+
 `entry.path` and `entry.name` are borrowed from the walk's one reused buffer and are valid
 **until the next call**. Copy them if you need them to outlive the step; that is the price
 of a walk of a million entries costing one allocation instead of a million.
+
+Wrong — the same trap the directory iterator has, for the same reason:
+
+```text
+proven_u8str_view_t found[100];
+int n = 0;
+while (proven_is_ok(proven_fs_walk_next(&walk, &entry)))
+    found[n++] = entry.path;   /* wrong: every entry aliases ONE buffer. When the loop
+                                  ends, all 100 point at whatever the last path was. */
+```
 
 Two limits, both of which say so rather than going quiet:
 
