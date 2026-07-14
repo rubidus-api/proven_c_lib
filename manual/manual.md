@@ -154,6 +154,25 @@ Application code should prefer public APIs. Direct PAL calls are for porting and
 
 ## 4. Ownership and destruction matrix
 
+There are **two kinds of object** in this library, and the difference decides what you must do
+with them.
+
+**Owning objects** hold storage they allocated, and you must destroy them. They are the table
+immediately below.
+
+**Caller-owned state objects** allocate nothing. They are scratch structs you declare — usually
+on the stack — and hand to a constructor, which returns a small by-value handle that points
+*into* them. They have **no destroy function**, because there is nothing to free. What they have
+instead is a rule that owning objects do not have, and it is the one that bites:
+
+> **A caller-owned state object must not be copied or moved once a handle has been made from
+> it.** The handle holds a pointer into the struct. Copy the struct and the handle still
+> addresses the original; let the original go out of scope and the handle points at dead memory.
+
+They are listed in [§4.2](#42-caller-owned-state-no-destroy-do-not-copy).
+
+### 4.1 Owning objects — you must destroy these
+
 | Object | Owns storage | Stores allocator | Destroy function | Notes |
 |---|---:|---:|---|---|
 | `proven_arena_t` | no — caller owns the backing slice | no | `proven_arena_destroy(&arena)` (no-op) | Bump pointer over caller memory: `alloc` advances an offset, `free` is a no-op, `reset` rewinds to empty. The caller owns/frees the backing block. |
@@ -168,6 +187,60 @@ Application code should prefer public APIs. Direct PAL calls are for porting and
 | `proven_mmap_t` | OS mapping | OS handle state | `proven_mmap_destroy(&map)` | Views into the mapping die with the mapping. |
 | `proven_job_sys_t *` | yes | internal | `proven_job_system_close(sys)` then `proven_job_system_destroy(sys)` | Destroy must not race with producers. |
 
+### 4.2 Caller-owned state — no destroy, do not copy
+
+These allocate nothing and free nothing. You declare one, pass its address to a constructor, and
+use the small handle you get back. The struct must **outlive the handle**, and must **not be
+copied or moved** while the handle is alive.
+
+| State object | Constructed by | The handle it backs | Notes |
+|---|---|---|---|
+| `proven_sha256_t` | `proven_sha256_init` | (used directly) | A hashing context. Safe to copy *before* you start, meaningless to copy mid-stream unless you intend to fork the hash. |
+| `proven_xoshiro256ss_t` | `proven_xoshiro256ss_seed` | `proven_rng_t` | Copying it **clones the sequence** — deliberate and useful for a replay, a bug anywhere else. |
+| `proven_chacha_rng_t` | `proven_chacha_rng_seed` / `_seed_from_entropy` | `proven_rng_t` | Copying it clones the keystream: two "independent" tokens become the same token. |
+| `proven_writer_buf_t` | `proven_writer_from_buffer` | `proven_writer_t` | **Do not copy.** |
+| `proven_writer_u8str_t` | `proven_writer_from_u8str` | `proven_writer_t` | **Do not copy.** The string and allocator must also outlive it. |
+| `proven_writer_buffered_t` | `proven_writer_buffered` | `proven_writer_t` | **Do not copy.** You must `proven_writer_flush` before it or its buffer dies. |
+| `proven_reader_view_t` | `proven_reader_from_view` | `proven_reader_t` | **Do not copy.** |
+| `proven_reader_buffered_t` | `proven_reader_buffered` | `proven_reader_t` | **Do not copy.** Views returned by `proven_reader_read_line` point *into* its buffer. |
+| `proven_sysio_std_t` | `proven_sysio_stdout_writer` / `_stderr_writer` / `_stdin_reader` | `proven_writer_t` / `proven_reader_t` | **Do not copy.** Holds the standard handle the writer points at. |
+| `proven_sysio_out_t` | `proven_sysio_stdout_buffered` / `_file_buffered` | `proven_writer_t` | **Do not copy.** Must be flushed. |
+| `proven_sysio_lines_t` | `proven_sysio_lines_open` / `_stdin_lines` | (used via `proven_sysio_read_line`) | The one exception: `proven_sysio_read_line` re-binds it on every call, so this one **may** be moved. |
+| `proven_sysio_scanner_t` | `proven_sysio_scanner_init` | (used directly) | The exception in the other direction: this one **does** own a buffer, and you must call `proven_sysio_scanner_deinit`. |
+
+Wrong — the copy looks harmless and is a use-after-free:
+
+```text
+proven_sysio_out_t out;
+proven_writer_t w = proven_sysio_stdout_buffered(&out, buf);
+
+proven_sysio_out_t saved = out;   /* wrong: `w` still points into `out`, not `saved` */
+use_elsewhere(&saved);            /* and if `out` goes out of scope, `w` is dangling */
+```
+
+Wrong — returning the state by value from a factory function does the same thing:
+
+```text
+proven_sysio_out_t make_logger(void) {
+    proven_sysio_out_t out;
+    proven_writer_t w = proven_sysio_stdout_buffered(&out, buf);
+    (void)w;
+    return out;   /* wrong: any writer made from `out` addresses this dead frame */
+}
+```
+
+Correct — the state stays put, and the handle travels:
+
+```c
+proven_byte_t buf[512];
+proven_sysio_out_t out;                                   /* lives as long as `w` */
+proven_writer_t w = proven_sysio_stdout_buffered(&out,
+    (proven_mem_mut_t){ .ptr = buf, .size = sizeof buf });
+
+(void)proven_fprintln(w, "one syscall, not {}", PROVEN_ARG(100));
+(void)proven_writer_flush(w);                             /* or the bytes never happened */
+```
+
 ## 5. Operation behavior classes
 
 Several APIs intentionally expose three behavior classes:
@@ -177,8 +250,17 @@ Several APIs intentionally expose three behavior classes:
 | Atomic fixed-capacity | `proven_u8str_append`, `proven_u16str_append`, `proven_u8str_append_fmt` | Return an error and leave the old object unchanged. |
 | Best-effort truncating | `proven_u8str_append_partial`, `proven_u16str_append_partial`, `proven_u8str_append_fmt_trunc` | Write as much as fits, preserve a valid object, report how much was written. |
 | Atomic growable | `proven_u8str_append_grow`, `proven_u16str_append_grow`, `proven_u8str_append_fmt_grow` | Grow with an allocator; on allocation failure, leave the old object unchanged. |
+| **Refuse, never truncate** | `proven_hex_encode`, `proven_base64_encode`, `proven_base64_decode`, `proven_reader_read_line` | Write **nothing** and return `PROVEN_ERR_OUT_OF_BOUNDS`. A half-encoded string or a shortened line is a wrong answer that looks like a right one, so these do not produce one. Size the buffer with the module's own size function (`proven_base64_encoded_size`, …), not by eye. |
 
 Choose the class deliberately. Do not treat a truncating function as an all-or-nothing function.
+
+Wrong — assuming the truncating and the atomic form behave alike:
+
+```text
+/* `_partial` wrote what fit and told you so; the error you did not read is the
+   difference between "all of it" and "some of it". */
+(void)proven_u8str_append_partial(&s, huge);   /* wrong: the result was the point */
+```
 
 ## 6. Manual chapters
 
