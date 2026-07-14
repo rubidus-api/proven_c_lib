@@ -25,9 +25,7 @@
 #include "proven/map.h"
 #include "proven/algorithm.h"
 #include "proven/hash.h"
-#ifndef PROVEN_FREESTANDING
 #include "proven/random.h"
-#endif
 #include "proven/fs.h"
 #include "proven/time.h"
 #include "proven/fmt.h"
