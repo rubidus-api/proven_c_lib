@@ -1073,6 +1073,88 @@ int main(void) {
 }
 ```
 
+### The structures you hold
+
+The two **handles** are passed by value and are cheap:
+
+```text
+typedef struct {
+    void *ctx;
+    proven_result_size_t (*write_fn)(void *ctx, proven_mem_view_t chunk);
+    proven_err_t (*flush_fn)(void *ctx);   /* may be NULL: this sink holds nothing back */
+} proven_writer_t;
+
+typedef struct {
+    void *ctx;
+    proven_result_size_t (*read_fn)(void *ctx, proven_mem_mut_t dest);
+} proven_reader_t;
+```
+
+`write_fn` reports **how much went out even when it then fails**, and that is not a nicety: a
+write to a pipe or a full disk really does put some bytes out and then fail. A buffered writer
+built on the tidier "all or nothing" lie kept its whole buffer on failure and re-sent it on the
+next flush — a 6000-byte payload arrived as 10,096 bytes with the first 4096 **duplicated**.
+Losing data is bad; silently doubling it is worse, because the receiver cannot tell.
+
+Everything else is [caller-owned state](manual.md#42-caller-owned-state-no-destroy-do-not-copy) —
+`proven_writer_buf_t`, `proven_writer_u8str_t`, `proven_writer_buffered_t`,
+`proven_reader_view_t`, `proven_reader_buffered_t`. They allocate nothing, they have no destroy,
+and **they must not be copied or moved** while a handle points into them.
+
+### Cautions, and what goes wrong
+
+**A buffered writer that is never flushed is output that never happened.** There is no hidden
+state, so there is no destructor to flush it for you — and nothing here registers an `atexit`
+handler, because a library that owns your process is a library you cannot reason about.
+
+Wrong:
+
+```text
+proven_writer_buffered_t st;
+proven_writer_t w = proven_writer_buffered(&st, inner, buf);
+(void)proven_fprintln(w, "the important line");
+return;                       /* wrong: the buffer dies with the frame, and so does the line */
+```
+
+Correct — flush before the buffer or the inner sink goes away:
+
+```c
+proven_byte_t buf[256];
+proven_sysio_out_t out;
+proven_writer_t w = proven_sysio_stdout_buffered(&out,
+    (proven_mem_mut_t){ .ptr = buf, .size = sizeof buf });
+(void)proven_fprintln(w, "the important line");
+(void)proven_writer_flush(w);          /* now it has happened */
+```
+
+**The line a reader hands you points into its buffer.** It is valid only until the next call.
+That is what makes reading a million lines cost one buffer instead of a million allocations — and
+it is a dangling pointer the moment you keep it.
+
+Wrong:
+
+```text
+proven_u8str_view_t lines[100];
+for (int i = 0; i < 100; ++i) {
+    proven_result_u8str_view_t ln = proven_reader_read_line(&st);
+    lines[i] = ln.val;        /* wrong: every entry aliases the SAME buffer, and the
+                                 next read_line overwrites what the last one returned */
+}
+```
+
+Correct: copy the bytes you need to keep (into a `proven_u8str_t`, an arena, wherever), before
+you call again.
+
+**A flush is not a durability barrier.** `proven_writer_flush` pushes a buffered writer's bytes
+to the thing behind it; getting a *file's* bytes onto the disk is `proven_fs_sync`. They are
+different operations, and one word could not honestly mean both — which is why the old
+`proven_sysio_flush`, which claimed to be both and was neither, is gone.
+
+**A line longer than the buffer is refused, not truncated.** `PROVEN_ERR_OUT_OF_BOUNDS` — and the
+reader then stays wedged on that line: there is no resync, because a line you cannot hold is not
+a line you can skip past without deciding what to do with the bytes. Size the buffer for the
+input you expect. (A line that *exactly fills* the buffer is fine: the newline does not have to
+fit too, and neither does a final line with no newline at all.)
 
 ## The standard streams
 
@@ -1127,6 +1209,63 @@ is `proven_fs_sync`. They are different operations and now say so.
 > that is never flushed is output that never happened. The direct calls (`proven_print`,
 > `proven_println`, `proven_eprint`) remain unbuffered for exactly this reason: what they write
 > is on its way out before they return.
+
+### The structures you hold
+
+```text
+typedef struct { proven_file_t file; } proven_sysio_std_t;
+    /* Storage for a standard handle, so a writer or reader has something stable to
+       point at. proven_writer_from_file takes a proven_file_t * and the file must
+       outlive the writer - so it cannot be a temporary. This is that storage. */
+
+typedef struct {
+    proven_sysio_std_t       std;
+    proven_writer_buffered_t buffered;
+} proven_sysio_out_t;        /* a buffered writer over a standard stream or a file */
+
+typedef struct {
+    proven_sysio_std_t       std;
+    proven_reader_buffered_t buffered;
+} proven_sysio_lines_t;      /* a line reader over a standard stream or a file */
+```
+
+All three are [caller-owned state](manual.md#42-caller-owned-state-no-destroy-do-not-copy).
+
+### Cautions, and what goes wrong
+
+**These state structs contain a pointer to themselves.** The writer you get back addresses
+`&st->std.file` *inside* the struct you passed. Copy the struct, or return it by value, and the
+writer still points at the original — which may be a dead frame.
+
+Wrong — and an audit reproduced exactly this as a heap-use-after-free:
+
+```text
+proven_sysio_out_t out;
+proven_writer_t w = proven_sysio_stdout_buffered(&out, buf);
+
+proven_sysio_out_t copy = out;      /* wrong: `w` still points into `out` */
+/* ... `out` goes out of scope ... */
+(void)proven_writer_write_str(w, PROVEN_LIT("boom"));   /* writes through dead storage */
+```
+
+The one exception is `proven_sysio_lines_t`: `proven_sysio_read_line` re-binds it on every call,
+so a line reader **may** be moved. That is a deliberate courtesy, because it takes its state by
+pointer — the shape that says "relocatable" — and the library should not lay a trap in the shape
+of a promise.
+
+**A zero-initialised `proven_file_t` is not an invalid handle — on POSIX it is fd 0, which is
+stdin.** The library cannot tell a handle you forgot to fill in from one that legitimately refers
+to fd 0.
+
+```text
+proven_sysio_out_t out;
+proven_file_t f = {0};                                  /* wrong: this is stdin */
+proven_writer_t w = proven_sysio_file_buffered(&out, f, buf);   /* writes to fd 0 */
+```
+
+**Buffered stdout and unbuffered stderr do not interleave in the order you wrote them.** Anything
+you buffer sits in your buffer while stderr goes straight out. Flush before you print an error
+that is supposed to appear after your output.
 
 ## Randomness, by use case
 
@@ -1202,6 +1341,112 @@ already mixes the CPU's instruction into its own pool, so calling it directly bu
 costs you that mixing; and a raw hardware instruction used as the *sole* source is exactly the
 arrangement people have argued about for a decade. If you want it, it is four lines behind this
 hook — and then the choice is visibly yours.
+
+### The structures you hold
+
+All three are [caller-owned state](manual.md#42-caller-owned-state-no-destroy-do-not-copy): they
+allocate nothing, there is nothing to destroy, and **copying one clones its sequence**.
+
+```text
+typedef struct { const proven_rng_vtable_t *vt; void *ctx; } proven_rng_t;
+    /* The trait: two pointers, held by value. `ctx` points at one of the generators
+       below, which must outlive it. Drawing from a VALID one cannot fail - that is
+       the whole design: the failure lives in seeding, not in drawing. */
+
+typedef struct { proven_u64 s[4]; } proven_xoshiro256ss_t;
+    /* 256 bits of state. Reproducible, and NOT secret-grade. */
+
+typedef struct {
+    proven_u32    state[16];   /* the ChaCha state: constants, key, counter, nonce */
+    proven_byte_t block[64];   /* the keystream block currently being handed out */
+    proven_size_t used;        /* how much of it is spent */
+    proven_u32    seeded;      /* set only by seeding. A zero-initialised struct is
+                                  the shape of "never seeded", and must stay inert. */
+} proven_chacha_rng_t;
+```
+
+### Reference
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_random_bytes(buf, len)` | Fill from the entropy source (the OS by default). **The one call that can fail.** | `bool`. On `false`, `buf` is unspecified and must not be used. `len == 0` succeeds. |
+| `proven_random_u64()` | One strong word from the same source. | `proven_u64`, or `0` on failure — which is also a valid draw, so use `proven_random_bytes` when you must tell them apart. |
+| `proven_random_set_source(fn, ctx)` | Install the entropy source. Not needed on a hosted target; this is how a board hands over its TRNG. | void. |
+| `proven_xoshiro256ss_seed(&g, seed)` | Seed the reproducible generator. Any seed is fine — even 0; it is expanded through SplitMix64. | void. |
+| `proven_xoshiro256ss_next(&g)` | The next word. The hot path: call it directly, not through the trait. | `proven_u64`. |
+| `proven_xoshiro256ss_rng(&g)` | View it as a `proven_rng_t`, for the helpers. | `proven_rng_t`. |
+| `proven_chacha_rng_seed(&g, seed32)` | Seed the cryptographic generator from 32 bytes of **real entropy** you supply. | void. |
+| `proven_chacha_rng_seed_from_entropy(&g)` | Seed it from the installed source. **Check this.** | `bool`. On `false` the generator is left INERT — it yields zeros and an invalid trait. |
+| `proven_chacha_rng_next/_fill` | Draw. Cannot fail once seeded. | `proven_u64` / void. |
+| `proven_chacha_rng(&g)` | View it as a `proven_rng_t`. | `proven_rng_t` — **invalid** if the generator was never successfully seeded. |
+| `proven_rng_u64(rng)` / `proven_rng_fill(rng, buf, len)` | Draw through the trait, from whichever generator. | `proven_u64` / void. `0` / no-op for an invalid source. |
+| `proven_rng_below(rng, bound)` | Uniform in `[0, bound)`, **unbiased**. | `proven_u64`; `0` when `bound == 0`. |
+| `proven_rng_range(rng, lo, hi)` | Uniform in `[lo, hi]`, inclusive. The full `INT64_MIN..INT64_MAX` span does not overflow. | `proven_i64`; `lo` if `hi < lo`. |
+| `proven_rng_f64(rng)` | Uniform in `[0, 1)`. 53 bits; never returns `1.0`. | `double`. |
+| `proven_rng_shuffle(rng, base, count, elem_size)` | An unbiased Fisher-Yates permutation, in place. | void. |
+
+### Cautions, and what goes wrong
+
+**Never generate a secret with `proven_xoshiro256ss_t`.** It is fast *because* it is
+predictable: a handful of its outputs reveal its entire 256-bit state, and from the state every
+number it will ever produce. The two generators carry names that cannot be confused for exactly
+this reason.
+
+Wrong — a session token an attacker can compute after watching a few:
+
+```text
+proven_xoshiro256ss_t g;
+proven_xoshiro256ss_seed(&g, 12345);
+proven_u64 session_token = proven_xoshiro256ss_next(&g);   /* wrong: predictable */
+```
+
+**Never seed the cryptographic generator from the clock, a counter, or a serial number.**
+ChaCha20 is exactly as unguessable as its seed. A clock-derived seed produces a stream that
+looks perfectly random and is not — which is worse than an obvious failure, because nothing
+reports it.
+
+```text
+proven_byte_t seed[32] = { 0 };
+memcpy(seed, &now_ns, sizeof now_ns);      /* wrong: ~20 bits of real entropy, and guessable */
+proven_chacha_rng_seed(&g, seed);
+```
+
+**Check the seeding.** It is the only thing here that can fail, which is precisely why ignoring
+it is tempting. If you do, the generator is inert and hands you zeros — a visibly dead value,
+by design, rather than a plausible one.
+
+Wrong:
+
+```text
+proven_chacha_rng_t g;
+proven_chacha_rng_seed_from_entropy(&g);   /* wrong: the bool was the point */
+proven_chacha_rng_fill(&g, key, 32);       /* key is now 32 zero bytes */
+```
+
+Correct:
+
+```c
+proven_chacha_rng_t g;
+if (!proven_chacha_rng_seed_from_entropy(&g)) {
+    /* No entropy. There is nothing safe to do here except refuse to continue. */
+} else {
+    proven_byte_t key[32];
+    proven_chacha_rng_fill(&g, key, sizeof key);   /* cannot fail: it is seeded */
+}
+```
+
+**`% n` is biased, and everyone writes it anyway.** Unless `n` divides 2^64 the low values come
+up more often — invisible in a spot check, real in a shuffle or a sample.
+
+```text
+proven_u64 die = proven_rng_u64(rng) % 6 + 1;   /* wrong: 1 and 2 are slightly likelier */
+```
+
+Correct: `proven_rng_below(rng, 6) + 1`.
+
+**Do not copy a seeded generator** unless you mean to clone its stream. Two "independent"
+generators copied from one produce identical output — which is a feature for replaying a
+simulation and a catastrophe for issuing two tokens.
 
 Compiled and run by the test suite:
 
