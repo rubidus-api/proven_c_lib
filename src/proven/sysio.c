@@ -37,13 +37,51 @@ proven_file_t proven_sysio_stderr(void) {
     return f;
 }
 
-void proven_sysio_flush(proven_file_t file) {
-#if defined(_WIN32) || defined(_WIN64)
-    proven_sys_io_handle_t handle = { .handle = file.internal.ptr };
-#else
-    proven_sys_io_handle_t handle = { .fd = file.internal.fd };
-#endif
-    proven_sys_io_flush(handle);
+/* ------------------------------------------------------------------
+ * STUBS for the standard-stream bridge. The contract is in include/proven/sysio.h and the
+ * test that holds it to that contract is tests/test_unit_sysio_streams.c. Nothing below is
+ * implemented yet: this exists so the test compiles, links, and FAILS - which is the point of
+ * the commit it lands in (docs/TESTING.md §5.1).
+ * ------------------------------------------------------------------ */
+
+proven_writer_t proven_sysio_stdout_writer(proven_sysio_std_t *st) {
+    (void)st;
+    return (proven_writer_t){0};
+}
+
+proven_writer_t proven_sysio_stderr_writer(proven_sysio_std_t *st) {
+    (void)st;
+    return (proven_writer_t){0};
+}
+
+proven_reader_t proven_sysio_stdin_reader(proven_sysio_std_t *st) {
+    (void)st;
+    return (proven_reader_t){0};
+}
+
+proven_writer_t proven_sysio_stdout_buffered(proven_sysio_out_t *st, proven_mem_mut_t buf) {
+    (void)st; (void)buf;
+    return (proven_writer_t){0};
+}
+
+proven_writer_t proven_sysio_file_buffered(proven_sysio_out_t *st, proven_file_t file, proven_mem_mut_t buf) {
+    (void)st; (void)file; (void)buf;
+    return (proven_writer_t){0};
+}
+
+proven_err_t proven_sysio_lines_open(proven_sysio_lines_t *st, proven_file_t file, proven_mem_mut_t buf) {
+    (void)st; (void)file; (void)buf;
+    return PROVEN_ERR_UNSUPPORTED;
+}
+
+proven_err_t proven_sysio_stdin_lines(proven_sysio_lines_t *st, proven_mem_mut_t buf) {
+    (void)st; (void)buf;
+    return PROVEN_ERR_UNSUPPORTED;
+}
+
+proven_result_u8str_view_t proven_sysio_read_line(proven_sysio_lines_t *st) {
+    (void)st;
+    return (proven_result_u8str_view_t){ .err = PROVEN_ERR_UNSUPPORTED };
 }
 
 // -----------------------------------------------------------------------------
