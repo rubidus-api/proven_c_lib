@@ -459,3 +459,5 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_xoshiro256ss_next` | `proven_xoshiro256ss_next` |
 | `xcv_xoshiro256ss_rng` | `proven_xoshiro256ss_rng` |
 | `xcv_xoshiro256ss_seed` | `proven_xoshiro256ss_seed` |
+| `xcv_entropy_fn` | `proven_entropy_fn` |
+| `xcv_random_set_source` | `proven_random_set_source` |

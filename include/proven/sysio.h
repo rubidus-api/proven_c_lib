@@ -158,6 +158,33 @@ typedef struct {
 // Buffered Scanner for sysio (Safe for pipes/stdin)
 // -----------------------------------------------------------------------------
 
+/*
+ * Two buffered readers, and which one you want.
+ *
+ * This header offers a buffered TOKEN scanner (below) and, above, a buffered LINE reader built
+ * on stream.h. Having two is a fair thing to be suspicious of, so here is the distinction,
+ * stated once:
+ *
+ *   - proven_sysio_lines_t / proven_sysio_read_line  -> you want LINES, or bytes.
+ *     It is stream.h's reader, so it composes with everything else there. Reach for this by
+ *     default; it is the one most programs want.
+ *
+ *   - proven_sysio_scanner_t / proven_sysio_scanner_scan  -> you want TYPED TOKENS.
+ *     "{} {} {}" into an int, a double and a string view, out of a pipe, without ever
+ *     committing a half-parsed value.
+ *
+ * They are not the same mechanism wearing two hats. A line reader looks for a delimiter; a
+ * token scanner has to hand the raw bytes to a parser that may reject them, and then put the
+ * stream back exactly as it was - it restores the cursor (and the file position, where the
+ * source can seek) so a failed scan consumes nothing. A refill in the middle of a token has to
+ * be undoable in a way that a refill in the middle of a line never does.
+ *
+ * They were not unified because unifying them would mean giving the line reader a rollback it
+ * has no use for, or giving the scanner a hot path it cannot use - and because the scanner is
+ * the more delicate of the two and is heavily tested where it is. Two mechanisms with two
+ * jobs, said out loud, beats one mechanism pretending to have one job.
+ */
+
 /**
  * @brief Buffered scanner for system I/O, providing safe scanning for both
  * seekable and non-seekable streams (pipes, stdin).

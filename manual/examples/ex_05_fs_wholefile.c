@@ -72,7 +72,7 @@ int main(void) {
     /* --- rewrite it atomically --------------------------------------------- */
     /* A sibling temp file plus a rename: a concurrent reader sees either the whole
      * old file or the whole new one, never a half-written mix. Atomic for readers,
-     * not durable across power loss - proven exposes no fsync. */
+     * not durable across power loss. When it must be, proven_fs_write_file_durable asks. */
     proven_u8str_view_t text2 = PROVEN_LIT("replacement\n");
     err = proven_fs_write_file_atomic(alloc, path, proven_mem_view_from_u8(text2));
     EXAMPLE_REQUIRE(proven_is_ok(err), "the atomic rewrite should succeed");
