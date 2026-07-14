@@ -72,6 +72,17 @@ typedef struct proven_rng_vtable_t {
  * @brief A source of random bytes. Drawing from a valid one cannot fail.
  *
  * Two pointers; hold it by value. The context it points at is yours, and must outlive it.
+ *
+ * @warning If you implement this vtable yourself, `next_u64` must actually be a generator —
+ *          its outputs must be spread over the whole 64-bit range. The helpers rely on that,
+ *          and `proven_rng_below` relies on it in a way worth spelling out: it draws, and
+ *          rejects the small slice of draws that would bias the result. A real generator lands
+ *          outside that slice essentially always, so the loop runs once. A degenerate source —
+ *          one that returns a constant, or only ever lands inside the rejection slice — makes
+ *          that loop **spin forever**. No real generator can do this, and the two shipped here
+ *          cannot; a broken hand-written one can. That is a caller bug, and it hangs loudly
+ *          rather than quietly returning a biased number, which is the trade this makes on
+ *          purpose: a hang you can find beats a bias you cannot.
  */
 typedef struct {
     const proven_rng_vtable_t *vt;

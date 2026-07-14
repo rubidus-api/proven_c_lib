@@ -390,6 +390,22 @@ Sub-checks:
 
 Failure tip: inspect `include/proven/coro.h`. Coroutine state must live in caller-owned storage and must not be reset between resumes.
 
+### `tests/test_unit_entropy_source` — the entropy source is a thing you can install
+
+Intent: verify the OS CSPRNG is the default on a hosted target, that a caller can replace it, and that a source which *fails* leaves the cryptographic generator inert rather than plausible.
+
+Entropy is the one thing a program cannot compute for itself, so it is a hook rather than a hard-coded call: the OS on a hosted target, a board's TRNG on bare metal. Without it, the ChaCha generator ran everywhere and could be seeded nowhere.
+
+Sub-checks:
+
+- With nothing installed, `proven_random_bytes` already works — that is what "hosted" means — and actually produces bytes.
+- An installed source replaces it, and the bytes provably come from *there* (the stand-in counts, so 0,1,…,7 is unmistakable). It feeds `proven_random_u64` too.
+- `proven_random_set_source(NULL, NULL)` puts the platform default back: installing a source is not a one-way door.
+- `proven_chacha_rng_seed_from_entropy` draws its seed from whatever source is installed, **exactly once** — not per byte — and the resulting keystream is ChaCha over the seed, not the seed echoed back.
+- A source that FAILS: `proven_random_bytes` reports the failure rather than papering over it, seeding returns false, and the generator is inert — zeros for every byte well *past* the first block, where a zeroed ChaCha state would otherwise start emitting a fixed, publicly derivable keystream — and its trait is invalid.
+
+Failure tip: inspect `proven_random_set_source` and the source dispatch in `src/proven/random.c`. With no source installed a freestanding build must return `false`, never fall back to a clock-seeded PRNG: that looks like success and is a hole nothing reports.
+
 ### `tests/test_unit_error_results` — error and result primitives
 
 Intent: verify the explicit error/result style has stable semantics and no hidden control flow.
@@ -1093,6 +1109,35 @@ Failure tip: inspect public invariant guards in array/map mutation entry points 
 ## Regression tests
 
 One test per defect that actually shipped. Each is named for what broke, not for a version or a number, and each was verified to FAIL against the pre-fix source. A regression test that passes before the fix is not a regression test.
+
+### `tests/test_regression_rng_unseeded` — an unseeded or failed generator is inert
+
+Intent: verify a ChaCha generator that was never usable never hands back bytes that *look* usable. Three defects, found by the standing audit, all with that shape.
+
+Sub-checks:
+
+- `proven_chacha_rng_next(NULL)` is 0. It used to declare an 8-byte scratch, call `_fill` (which returns immediately for a NULL generator, touching nothing), and read the scratch anyway — returning the caller's own stack as randomness. It was the only entry point in the module without a NULL guard.
+- A never-seeded, stack-declared generator yields zeros and an **invalid trait**. `used == 0` is exactly what a zero-initialised struct holds, and the fill path read that as "a full block of fresh keystream is ready" — and copied its own uninitialised `block[]` out. A silent stack disclosure.
+- A generator whose seeding FAILED stays inert **past the first block**. Zeroing the state was not enough: ChaCha over an all-zero state emits an all-zero *first* block, so "the caller gets zeros" was true for exactly 64 bytes — and then the counter advanced and block 1 was a normal-looking, fixed, publicly derivable keystream.
+- The control: a properly seeded generator is valid, produces a real keystream, and is still ChaCha20 byte for byte. The guard changed nothing about the maths.
+
+Failure tip: inspect the `seeded` marker in `proven_chacha_rng_t`. `used` alone cannot encode usability, because a zero-initialised struct is the shape of "never seeded".
+
+### `tests/test_regression_read_line_exact_fit` — a line that fits the buffer is a line, not an error
+
+Intent: verify the reader enforces the rule it documents. It said "a line **longer** than the buffer is `PROVEN_ERR_OUT_OF_BOUNDS`" and enforced something stricter — it refused any line that *filled* the buffer.
+
+It had to, because it asked the wrong question first: it answered "too long" before attempting a fill, since a fill cannot tell "buffer full" from "source ended". But a full buffer means one of three things and only one is an error — the next byte is the newline that ends the line; the source has ended and what is held IS the final line; or the line really is too long. One byte of lookahead tells them apart.
+
+Sub-checks:
+
+- **The data-loss case:** a 4-byte file with no trailing newline, read through a 4-byte buffer, returns its 4 bytes. It used to return `OUT_OF_BOUNDS`, with the entire contents of the file unreachable through this API.
+- A line exactly the size of the buffer, terminated by the next byte, is returned — and the stream carries on.
+- A CRLF split at the boundary yields the line without its `\r`.
+- A line *genuinely* longer than the buffer is still `OUT_OF_BOUNDS`, never a truncated line returned as a success — that is the corruption the check existed to prevent, and the fix must not trade one for the other.
+- The ordinary cases keep working at every buffer size that fits them.
+
+Failure tip: inspect the buffer-full branch of `proven_reader_read_line` in `src/proven/stream.c`, and the `peek` / `has_peek` lookahead on `proven_reader_buffered_t`. The looked-at byte belongs to the stream: it is stashed, not dropped.
 
 ### `tests/test_regression_float_exact_pow5` — the exact float fallback uses an exact power of five
 

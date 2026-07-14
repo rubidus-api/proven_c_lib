@@ -214,7 +214,10 @@ lost.**
 The durable form waits for the storage device twice. Use it when losing the write would
 be worse than the wait, and the atomic form when it would not.
 
-`proven_sysio_flush` is none of this. It does nothing.
+There used to be a `proven_sysio_flush` here that was none of this: it claimed to flush a
+buffer that did not exist. It is **deleted**. Pushing a buffered writer's bytes to the OS is
+`proven_writer_flush`; pushing the OS's bytes to the disk is `proven_fs_sync`. Those are two
+different operations, and one word could not honestly mean both.
 
 Important behavior:
 
@@ -228,7 +231,7 @@ Important behavior:
 - `proven_fs_read_all()` reads to EOF; it does not read to a pre-measured size. The file's reported size only seeds the initial capacity, so a regular file is still read in one allocation and one pass. This matters because `proven_fs_size()` reports 0 for anything that is not a regular file: a FIFO, a character device, or a `/proc` entry has no size that can be known up front, and reading to EOF is the only way to get their contents. It also means a file that grows while it is being read is not silently truncated. `value.size` is always the actual byte count, and an empty source yields `{ .ptr = NULL, .size = 0 }` with `PROVEN_OK`.
 - `proven_fs_read_all()` and `proven_fs_read_all_u8str()` need an allocator with a `realloc_fn` if the source outgrows its reported size; a non-growing allocator returns `PROVEN_ERR_UNSUPPORTED` in that case.
 - `proven_fs_read_all_u8str()` is the whole-file read most callers want: the result is NUL-terminated, so `proven_u8str_as_view()` and `proven_u8str_as_cstr()` work on it with no second copy. The terminator slot is reserved up front, so it costs no extra allocation. Contents are not validated as UTF-8. Release it with `proven_u8str_destroy()`.
-- `proven_fs_write_file()` is not atomic: a reader can observe a partially written file, and a failure mid-write leaves the file truncated. `proven_fs_write_file_atomic()` writes a sibling temp file and renames it over the target, so a concurrent reader sees either the entire old file or the entire new one. It is atomic with respect to readers, not durable across power loss - `proven` exposes no fsync, so the rename may reach the disk before the data.
+- `proven_fs_write_file()` is not atomic: a reader can observe a partially written file, and a failure mid-write leaves the file truncated. `proven_fs_write_file_atomic()` writes a sibling temp file and renames it over the target, so a concurrent reader sees either the entire old file or the entire new one. It is atomic with respect to readers, not durable across power loss: the rename may reach the disk before the data. When you need durability, ask for it explicitly with `proven_fs_write_file_durable` (or `proven_fs_sync`), described above.
 
 Example:
 
@@ -262,10 +265,11 @@ if (proven_is_ok(of.err)) {
 proven_file_t proven_sysio_stdin(void);
 proven_file_t proven_sysio_stdout(void);
 proven_file_t proven_sysio_stderr(void);
-void proven_sysio_flush(proven_file_t file);
 ```
 
-Purpose: expose standard streams as `proven_file_t` handles and flush when needed.
+Purpose: expose the standard streams as `proven_file_t` handles. They are also writers and
+readers — see [The standard streams](#the-standard-streams) below, which is what lets you read
+stdin a line at a time, buffer stdout, and format straight into either.
 
 ### `proven_sysio_scanner_t`
 
@@ -629,7 +633,7 @@ int main(void) {
     /* --- rewrite it atomically --------------------------------------------- */
     /* A sibling temp file plus a rename: a concurrent reader sees either the whole
      * old file or the whole new one, never a half-written mix. Atomic for readers,
-     * not durable across power loss - proven exposes no fsync. */
+     * not durable across power loss. When it must be, proven_fs_write_file_durable asks. */
     proven_u8str_view_t text2 = PROVEN_LIT("replacement\n");
     err = proven_fs_write_file_atomic(alloc, path, proven_mem_view_from_u8(text2));
     EXAMPLE_REQUIRE(proven_is_ok(err), "the atomic rewrite should succeed");
