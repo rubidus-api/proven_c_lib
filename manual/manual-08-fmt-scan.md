@@ -191,6 +191,9 @@ proven_arg_t arg = proven_arg_i64(123);
 | `proven_arg_fn(void (*v)(void))` | function pointer | `proven_arg_t` | Render the raw function-pointer representation. |
 | `proven_arg_ucstr(const unsigned char *v)` | unsigned-char string | `proven_arg_t` | Convenience wrapper around `proven_arg_cstr`. |
 | `proven_arg_identity(proven_arg_t v)` | existing argument object | `proven_arg_t` | Pass-through helper. |
+| `proven_arg_bool(bool v)` | boolean | `proven_arg_t` | Render `true` / `false` as words, not as `1` / `0`. |
+| `proven_arg_char(char v)` | a character | `proven_arg_t` | Render the **character**. This is why a `char` VARIABLE renders as a character while the literal `PROVEN_ARG('Z')` still renders `90`: in C, `'Z'` has type `int`, and no amount of `_Generic` can tell it apart from the number 90. |
+| `proven_arg_custom(const void *v, proven_fmt_custom_fn fn)` | any type at all | `proven_arg_t` | Render a type the library has never heard of, through a function you supply. See [Formatting a user-defined type](#formatting-a-user-defined-type). |
 
 ### `PROVEN_ARG(x)`
 
@@ -435,6 +438,14 @@ opt.precision = 2;
 (void)proven_float_format_f64_policy(buf, sizeof buf, 3.14159,
     PROVEN_FLOAT_FORMAT_POLICY_DEFAULT, opt, &n);
 /* buf == "3.14" */
+
+/* Always scientific - this is what {:e} selects. Six fractional digits by default,
+   a signed two-digit-minimum exponent: exactly what printf's %e prints. */
+proven_float_format_options_t sci = proven_float_format_options_scientific();
+sci.precision = 2;
+(void)proven_float_format_f64_policy(buf, sizeof buf, 42.0,
+    PROVEN_FLOAT_FORMAT_POLICY_DEFAULT, sci, &n);
+/* buf == "4.20e+01" - where fixed would give "42.00" and shortest "42" */
 ```
 
 - `PROVEN_FLOAT_FORMAT_POLICY_RYU` selects shortest output; `DEFAULT`/`SIMPLE`
