@@ -412,6 +412,17 @@
 #define xcv_sha256_update proven_sha256_update
 #define xcv_size_t proven_size_t
 #define xcv_strtod proven_strtod
+#define xcv_sysio_file_buffered proven_sysio_file_buffered
+#define xcv_sysio_lines_open proven_sysio_lines_open
+#define xcv_sysio_lines_t proven_sysio_lines_t
+#define xcv_sysio_out_t proven_sysio_out_t
+#define xcv_sysio_read_line proven_sysio_read_line
+#define xcv_sysio_std_t proven_sysio_std_t
+#define xcv_sysio_stderr_writer proven_sysio_stderr_writer
+#define xcv_sysio_stdin_lines proven_sysio_stdin_lines
+#define xcv_sysio_stdin_reader proven_sysio_stdin_reader
+#define xcv_sysio_stdout_buffered proven_sysio_stdout_buffered
+#define xcv_sysio_stdout_writer proven_sysio_stdout_writer
 #define xcv_sysio_print_impl proven_sysio_print_impl
 #define xcv_sysio_scan_chunk_impl proven_sysio_scan_chunk_impl
 #define xcv_sysio_scanner_deinit proven_sysio_scanner_deinit

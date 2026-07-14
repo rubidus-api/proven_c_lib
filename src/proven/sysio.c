@@ -37,51 +37,72 @@ proven_file_t proven_sysio_stderr(void) {
     return f;
 }
 
-/* ------------------------------------------------------------------
- * STUBS for the standard-stream bridge. The contract is in include/proven/sysio.h and the
- * test that holds it to that contract is tests/test_unit_sysio_streams.c. Nothing below is
- * implemented yet: this exists so the test compiles, links, and FAILS - which is the point of
- * the commit it lands in (docs/TESTING.md §5.1).
- * ------------------------------------------------------------------ */
+// -----------------------------------------------------------------------------
+// The standard streams, as writers and readers
+// -----------------------------------------------------------------------------
+
+/*
+ * The whole bridge is this: a standard handle parked in caller-owned storage, so that
+ * stream.h's writer and reader - which take a proven_file_t * and require it to outlive them -
+ * have something stable to point at. Everything else is composition; nothing here re-implements
+ * what stream.c already does, which is the point. A second buffered reader would be a second
+ * place for the same bug.
+ */
 
 proven_writer_t proven_sysio_stdout_writer(proven_sysio_std_t *st) {
-    (void)st;
-    return (proven_writer_t){0};
+    if (!st) return (proven_writer_t){0};
+    st->file = proven_sysio_stdout();
+    return proven_writer_from_file(&st->file);
 }
 
 proven_writer_t proven_sysio_stderr_writer(proven_sysio_std_t *st) {
-    (void)st;
-    return (proven_writer_t){0};
+    if (!st) return (proven_writer_t){0};
+    st->file = proven_sysio_stderr();
+    return proven_writer_from_file(&st->file);
 }
 
 proven_reader_t proven_sysio_stdin_reader(proven_sysio_std_t *st) {
-    (void)st;
-    return (proven_reader_t){0};
+    if (!st) return (proven_reader_t){0};
+    st->file = proven_sysio_stdin();
+    return proven_reader_from_file(&st->file);
+}
+
+// -----------------------------------------------------------------------------
+// Buffered output
+// -----------------------------------------------------------------------------
+
+proven_writer_t proven_sysio_file_buffered(proven_sysio_out_t *st, proven_file_t file, proven_mem_mut_t buf) {
+    if (!st || !buf.ptr || buf.size == 0) return (proven_writer_t){0};
+
+    st->std.file = file;
+    proven_writer_t inner = proven_writer_from_file(&st->std.file);
+    return proven_writer_buffered(&st->buffered, inner, buf);
 }
 
 proven_writer_t proven_sysio_stdout_buffered(proven_sysio_out_t *st, proven_mem_mut_t buf) {
-    (void)st; (void)buf;
-    return (proven_writer_t){0};
+    return proven_sysio_file_buffered(st, proven_sysio_stdout(), buf);
 }
 
-proven_writer_t proven_sysio_file_buffered(proven_sysio_out_t *st, proven_file_t file, proven_mem_mut_t buf) {
-    (void)st; (void)file; (void)buf;
-    return (proven_writer_t){0};
-}
+// -----------------------------------------------------------------------------
+// Line input
+// -----------------------------------------------------------------------------
 
 proven_err_t proven_sysio_lines_open(proven_sysio_lines_t *st, proven_file_t file, proven_mem_mut_t buf) {
-    (void)st; (void)file; (void)buf;
-    return PROVEN_ERR_UNSUPPORTED;
+    if (!st || !buf.ptr || buf.size == 0) return PROVEN_ERR_INVALID_ARG;
+
+    st->std.file = file;
+    proven_reader_t inner = proven_reader_from_file(&st->std.file);
+    (void)proven_reader_buffered(&st->buffered, inner, buf);
+    return PROVEN_OK;
 }
 
 proven_err_t proven_sysio_stdin_lines(proven_sysio_lines_t *st, proven_mem_mut_t buf) {
-    (void)st; (void)buf;
-    return PROVEN_ERR_UNSUPPORTED;
+    return proven_sysio_lines_open(st, proven_sysio_stdin(), buf);
 }
 
 proven_result_u8str_view_t proven_sysio_read_line(proven_sysio_lines_t *st) {
-    (void)st;
-    return (proven_result_u8str_view_t){ .err = PROVEN_ERR_UNSUPPORTED };
+    if (!st) return (proven_result_u8str_view_t){ .err = PROVEN_ERR_INVALID_ARG };
+    return proven_reader_read_line(&st->buffered);
 }
 
 // -----------------------------------------------------------------------------
