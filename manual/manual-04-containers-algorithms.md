@@ -10,7 +10,8 @@ This chapter covers `array.h`, `list.h`, `ring.h`, `map.h`, and `algorithm.h`.
 4. [Hash map](#4-hash-map)
 5. [Algorithms](#5-algorithms)
 6. [Hashing, by use case](#6-hashing-by-use-case)
-7. [Examples and misuse cases](#7-examples-and-misuse-cases)
+7. [Bytes to text: hex and Base64](#7-bytes-to-text-hex-and-base64)
+8. [Examples and misuse cases](#8-examples-and-misuse-cases)
 
 ## 1. Dynamic array
 
@@ -524,7 +525,100 @@ int main(void) {
 }
 ```
 
-## 7. Examples and misuse cases
+## 7. Bytes to text: hex and Base64
+
+Once you can hash a thing (above) and draw a random token (`random.h`), you need to write those
+bytes somewhere that only holds text — a URL, an HTTP header, a log line, a JSON string. That is
+`encode.h`. No cryptography, no compression; the two encodings everything already agrees on,
+done without hidden allocation and without the two ways they are usually got wrong.
+
+| You want | Use | Alphabet |
+|---|---|---|
+| A digest or a few bytes a human reads | `proven_hex_encode` | lowercase hex, what `sha256sum` and `git` print |
+| Bytes in a URL, a cookie, a filename | `proven_base64url_encode` | `-` `_`, **no** padding — nothing to escape, no `=` to mangle |
+| Bytes in an HTTP header, MIME, JSON | `proven_base64_encode` | standard `+` `/`, `=`-padded |
+
+Two refusals are the point:
+
+- **A decoder validates its whole input before writing a byte.** Text from outside the program
+  is not guaranteed to be valid; a stray character, a bad length, bad padding, or embedded
+  whitespace is `PROVEN_ERR_INVALID_ENCODING` with nothing committed — not a read past the end,
+  and not a silently short result one byte into which the caller finds the corruption.
+  `proven_base64_decode` accepts **both** alphabets and padded-or-not, because a decoder that
+  only takes what it emits rejects half the Base64 in the world.
+- **The output size is a call, not a guess** — `proven_hex_encoded_size`,
+  `proven_base64_encoded_size`, and their decode counterparts. A buffer one byte too small is
+  `PROVEN_ERR_OUT_OF_BOUNDS` with nothing written, never a truncated prefix.
+
+It is pure computation — no allocation, no OS — and available freestanding.
+
+Compiled and run by the test suite:
+
+<!-- example: manual/examples/ex_04_encode.c -->
+```c
+/*
+ * Bytes to text, by use case. The rule is the same one hashing follows: one function per job,
+ * and the danger is picking the wrong job. Hex for something a human reads; Base64URL for
+ * something that goes in a URL; standard Base64 for something that goes on the wire.
+ */
+
+int main(void) {
+    proven_mem_view_t data = proven_mem_view_from_u8(PROVEN_LIT("the quick brown fox"));
+
+    /* Job 1: a digest a human will read or paste - hex, the spelling sha256sum and git use. */
+    proven_byte_t hex[64];   /* proven_hex_encoded_size(19) = 38 */
+    proven_size_t hn = 0;
+    EXAMPLE_REQUIRE(proven_is_ok(proven_hex_encode(data, hex, sizeof hex, &hn)),
+                    "hex encode into a buffer sized by proven_hex_encoded_size");
+    EXAMPLE_REQUIRE(hn == proven_hex_encoded_size(data.size), "two hex chars per byte");
+
+    /* Job 2: a token that goes in a URL - Base64URL, so nothing needs percent-escaping and
+     * there is no '=' padding for a parser to trip over. */
+    proven_byte_t token_bytes[16] = { 0 };   /* in real code: proven_random_bytes(token_bytes, 16) */
+    proven_byte_t url[32];
+    proven_size_t un = 0;
+    EXAMPLE_REQUIRE(proven_is_ok(proven_base64url_encode(
+                        (proven_mem_view_t){ token_bytes, sizeof token_bytes }, url, sizeof url, &un)),
+                    "base64url encode a token");
+    /* No '=' in a URL-safe token. */
+    bool has_pad = false;
+    for (proven_size_t i = 0; i < un; ++i) if (url[i] == '=') has_pad = true;
+    EXAMPLE_REQUIRE(!has_pad, "the URL form emits no padding");
+
+    /* Job 3: bytes on the wire - standard Base64, the +/= alphabet HTTP and MIME expect. */
+    proven_byte_t b64[64];
+    proven_size_t bn = 0;
+    EXAMPLE_REQUIRE(proven_is_ok(proven_base64_encode(data, b64, sizeof b64, &bn)),
+                    "standard base64 encode");
+
+    /* And it round-trips: decode gives back exactly the bytes. A decoder that accepts both
+     * alphabets and padded-or-not is deliberate - real input comes in every shape. */
+    proven_byte_t back[32];
+    proven_size_t dn = 0;
+    EXAMPLE_REQUIRE(proven_is_ok(proven_base64_decode(
+                        (proven_mem_view_t){ b64, bn }, back, sizeof back, &dn)),
+                    "decode the base64 back");
+    EXAMPLE_REQUIRE(dn == data.size && proven_memcmp(back, data.ptr, dn) == 0,
+                    "what comes back is exactly what went in");
+
+    /* The point of a validating decoder: junk is refused, not guessed. A caller who fed this
+     * to a two-line loop would read past the end or get a silently short result. */
+    proven_err_t bad = proven_base64_decode(
+        proven_mem_view_from_u8(PROVEN_LIT("not valid base64!!")), back, sizeof back, &dn);
+    EXAMPLE_REQUIRE(bad == PROVEN_ERR_INVALID_ENCODING,
+                    "a stray character is INVALID_ENCODING, with nothing committed");
+
+    /* And a buffer one byte too small is refused, never truncated. */
+    proven_byte_t tiny[4];
+    EXAMPLE_REQUIRE(proven_hex_encode(data, tiny, sizeof tiny, &hn) == PROVEN_ERR_OUT_OF_BOUNDS,
+                    "a too-small output buffer is OUT_OF_BOUNDS, not a truncated prefix");
+
+    (void)hex; (void)url; (void)un;
+    return EXAMPLE_OK();
+}
+```
+
+## 8. Examples and misuse cases
 
 ### Pointers into arrays can become stale
 
