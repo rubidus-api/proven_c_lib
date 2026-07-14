@@ -312,7 +312,7 @@ The class says what kind of question the test answers:
 - **`differential`** — Correctness against an independent oracle - the host libc, or a corpus with known-good answers. These catch what a self-written expectation cannot: a wrong belief held consistently by both the code and its test. (4 tests)
 - **`portability`** — Freestanding builds, compile-only cross targets, source-level platform contracts, and the build driver's own standard probe. Most of these cannot be *run* on the host, so they check what can be checked: that the code compiles, links, and keeps its platform branches intact. (8 tests)
 - **`stress`** — Concurrency under a sanitizer, over enough iterations to make a race likely rather than theoretical. (1 tests)
-- **`docs`** — The documentation is checked by the build, not by eye: every public function has an alias, every example the manual prints is a program that compiles and runs, and no example drifts from its chapter. (4 tests)
+- **`docs`** — The documentation is checked by the build, not by eye: every public function has an alias and is named in the manual, the manual never documents a function that does not exist, every example the manual prints is a program that compiles and runs, no example drifts from its chapter, and the version string agrees with itself everywhere, every module section carries its intent/reference/structures/example/counter-example, and every factual claim the chapters make is true. These are the **gates** in `docs/DOCUMENTING.md` §2 — each one exists because the thing it forbids already happened. (8 tests)
 - **`bench`** — Timing, not correctness. A benchmark regression is a signal to investigate; a checksum drift inside one is a correctness failure and does fail the build. (3 tests)
 
 ## Unit tests
@@ -1377,6 +1377,54 @@ Failure tip: inspect nob.c standard-flag selection and toolchain probing if the 
 ## Documentation tests
 
 The documentation is checked by the build, not by eye: every public function has an alias, every example the manual prints is a program that compiles and runs, and no example drifts from its chapter.
+
+### `tests/test_docs_manual_depth` — every module section is documented to depth, not merely mentioned
+
+Intent: a **gate on the shape of a section**. The symbol checks prove a module is *mentioned*; they cannot prove it is *documented*, and that is exactly where the manual failed — the five modules added in the v26.07.13 line each had an intent paragraph and a table, and **not one had a counter-example**. They passed every check that existed and were still half-written.
+
+For each module section registered in the test, it must carry:
+
+- **real prose** — enough words outside the tables and the code fences to actually explain *why* this exists, not just *what* the calls are. Why is the half a reader cannot reconstruct from the header file.
+- **a reference table** — what each call does, what it returns, and which one can *fail*.
+- **the structures the caller declares** — a `text` listing with the role of each field (and, for caller-owned state, the rule that it must not be copied).
+- **a runnable example** — an `<!-- example: -->` marker, so the build compiles and runs it.
+- **at least one counter-example** — a `text` block showing the code a reader would actually write and should not.
+
+A section that is legitimately exempt from *structures* or *an example* declares that **in the test, in code, with a reason**. A gate that cannot be argued with is a gate people route around; an exemption that has to be written down is one that has to survive being written down.
+
+Failure tip: the section and the missing element are named. This is `docs/DOCUMENTING.md` §3 turned from advice into a gate.
+
+### `tests/test_docs_manual_claims` — every factual claim the new chapters make is true
+
+Intent: the manual makes **claims**, and each is a proposition that is either true or false. Prose cannot be test-driven; a claim can be *tested*. You write the assertion the sentence implies, and the build decides whether the sentence is still true.
+
+This is what `test_docs_manual_ch08_contracts` does for the scanner chapter, done for the modules added this cycle. It exists because prose ages worst of anything in a repository: the README said "`proven` exposes no fsync" for a month after `proven_fs_sync` shipped, and nothing objected — because nobody had written down what that sentence was asserting.
+
+Sub-checks (each quotes the claim it tests): the CRC-32 check value the chapter's interoperability promise rests on; chained `crc32_update` equalling the one-shot, because the chapter tells readers they may store the intermediate value and resume; `PROVEN_SHA256_SIZE`; the standard SHA-256 of `"abc"` and its 64-character hex; the streaming digest equalling the one-shot ("depends only on the bytes, never on how they were chunked"); base64url emitting no padding; both alphabets decoding, padded or not; `decoded_size` being an upper bound for unpadded text; a refused encode writing **nothing**; whitespace being `INVALID_ENCODING` rather than skipped; a stray character committing nothing; seed 0 not being degenerate; an unseeded generator presenting an **invalid** trait and yielding zeros; `rng_below` respecting its bound; `rng_f64` never returning 1.0; an inverted range returning `lo`; a line that **exactly fills** the buffer being returned while a longer one is refused.
+
+**The rule for adding to this file:** when you write a sentence a reader could act on — a value, a boundary, a refusal, a guarantee — write the assertion for it here. If you cannot state the assertion, the sentence is too vague to be in the manual.
+
+Failure tip: the claim is named. Either the code changed and the manual did not, or the manual was wrong when it was written — decide which before changing either.
+
+### `tests/test_docs_manual_symbols` — the manual and the headers name the same functions
+
+Intent: verify the two agree in **both** directions, because each direction fails differently and each has already happened here.
+
+Sub-checks:
+
+- **Headers → manual:** every public function is named somewhere in `manual/`. A function nothing documents is a feature nobody can find — `proven_fs_dir_open/_next/_close`, the streaming directory API and the answer to `proven_fs_list` reading a 50,000-entry directory into 4.2 MB before you see any of it, went undocumented for months and nothing noticed. (The PAL, `proven_sys_*`, is exempt: it is an internal layer for porting, not the API a caller programs against.)
+- **Manual → headers:** the manual does not document a function that does not exist. This is the worse direction — the reader writes the call and the *linker* tells them, which is the moment they stop trusting the manual. Two were live: `proven_sysio_flush`, deleted while the manual went on declaring it as public API in the present tense; and `proven_pool_free`, which never existed at all (the real symbol is a static `proven_pool_free_trait`, and freeing a pool slot goes through the allocator trait).
+- Writing a name as a **call** — `proven_x(...)` — is what counts as claiming it exists. A family wildcard (`proven_fs_*`) is not a claim, and a past-tense historical note about a deleted function is not one either.
+
+Failure tip: the name is printed. It is either a function you added without documenting, or one the manual promises and the linker will refuse. See `docs/DOCUMENTING.md`.
+
+### `tests/test_docs_version_sync` — the version string agrees with itself everywhere
+
+Intent: verify `PROVEN_VERSION_STRING` — the source of truth — matches the README (both language halves), TEST.md, the manual headings, chapter 1's `version.h` excerpt, and the CHANGELOG's newest entry.
+
+`CHECKLIST.md` has always required these to be updated together, and nothing checked: `version.h` once sat five releases behind the CHANGELOG while the README claimed a third value that matched neither. That is not cosmetic — it is the number a downstream project pins, the number a bug report quotes, and the number that decides whether a fix is in the copy someone is holding.
+
+Failure tip: bump the version in every place CHECKLIST.md lists.
 
 ### `tests/test_docs_alias_completeness` — alias layer completeness
 
