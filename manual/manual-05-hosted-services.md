@@ -1151,12 +1151,53 @@ seeding — which you check once, at startup. Every draw downstream is total.
 |---|---|
 | `proven_random_bytes(buf, len)` | The OS CSPRNG. Returns `false` on failure; do not use `buf` then. `len == 0` is a successful no-op. |
 | `proven_random_u64()` | One strong word from the OS, or `0` on failure. |
-| `proven_chacha_rng_seed_from_os(&g)` | Seed the cryptographic generator from the OS. **This is the call that can fail.** |
+| `proven_chacha_rng_seed_from_entropy(&g)` | Seed the cryptographic generator from the entropy source. **This is the call that can fail.** |
+| `proven_random_set_source(fn, ctx)` | Install the entropy source. The OS is already installed on a hosted target; a bare-metal target installs its board's TRNG. |
 | `proven_chacha_rng_seed(&g, seed32)` | Seed it from 32 bytes you supply — a hardware entropy source on a board. Never the clock. |
 | `proven_xoshiro256ss_seed(&g, seed)` | Seed the reproducible generator. Even seed 0 is fine: it is expanded through SplitMix64. |
 
-Only the OS entropy source is hosted. The generators and the helpers are pure arithmetic and
-work on a bare-metal target — see the [freestanding guide](manual-freestanding.md).
+### Where entropy comes from
+
+Everything above is pure arithmetic — the generators, the helpers, and `proven_random_bytes`
+itself. What differs by platform is the **entropy source** behind it, because that is the one
+thing a program cannot compute for itself.
+
+- **Hosted:** the OS CSPRNG is installed for you — `getrandom` on Linux, `getentropy` on the
+  BSDs and macOS, `BCryptGenRandom` on Windows, and `/dev/urandom` where none of those exist.
+  You call nothing.
+- **Bare metal:** there is no source until you install one. A board *has* real entropy — an
+  on-chip TRNG, a ring oscillator, an ADC's noise floor — and the library cannot know where.
+
+```text
+/* On a board: hand the library its hardware entropy, once, at startup.
+ * (A listing, not a fragment: it defines a function, and `hardware_rng_read` is
+ * whatever your SoC calls its entropy register.) */
+static bool board_trng(void *ctx, void *buf, proven_size_t len) {
+    (void)ctx;
+    /* read the SoC's entropy register into buf; return false if it is not ready */
+    return hardware_rng_read(buf, len);
+}
+
+proven_random_set_source(board_trng, NULL);
+
+/* From here everything above works unchanged - including the one call that turns a few
+ * hundred bytes of hardware entropy into an endless cryptographic stream. */
+proven_chacha_rng_t g;
+if (!proven_chacha_rng_seed_from_entropy(&g)) {
+    /* the TRNG was not ready. The generator is INERT - it yields zeros and an invalid
+     * trait - so ignoring this does not get you plausible-looking bytes. */
+}
+```
+
+With no source installed, `proven_random_bytes` returns **false**. It does not fall back to a
+clock-seeded PRNG, because that looks like success and is a security hole nothing reports — a
+refusal is a fact a caller can act on.
+
+There is deliberately **no built-in `RDRAND` / `RNDR` backend.** On a hosted target the OS
+already mixes the CPU's instruction into its own pool, so calling it directly buys nothing and
+costs you that mixing; and a raw hardware instruction used as the *sole* source is exactly the
+arrangement people have argued about for a decade. If you want it, it is four lines behind this
+hook — and then the choice is visibly yours.
 
 Compiled and run by the test suite:
 
@@ -1185,7 +1226,7 @@ int main(void) {
      * the operating system afterwards - no syscall per draw, and it works on bare metal.
      * Seeding is the ONLY step that can fail, so it is the only one you have to check. ---- */
     proven_chacha_rng_t crypto;
-    EXAMPLE_REQUIRE(proven_chacha_rng_seed_from_os(&crypto), "seed the CSPRNG from the OS, once");
+    EXAMPLE_REQUIRE(proven_chacha_rng_seed_from_entropy(&crypto), "seed the CSPRNG from the OS, once");
 
     proven_byte_t token[16];
     proven_chacha_rng_fill(&crypto, token, sizeof token);   /* cannot fail: it is seeded */

@@ -37,13 +37,24 @@
  * Asking an operating system for entropy CAN fail, so that failure is confined to exactly one
  * place: seeding. You check it once, at startup, and every draw downstream is total.
  *
- * ## Freestanding
+ * ## Freestanding, and where entropy comes from
  *
- * `proven_xoshiro256ss_t`, `proven_chacha_rng_t` and every helper here are pure arithmetic and
- * work on a bare-metal target. Only the OS entropy source (`proven_random_bytes`,
- * `proven_random_u64`, `proven_chacha_rng_seed_from_os`) is hosted: a board with no OS has no
- * `getrandom`, and this module will not paper over that with a clock-seeded PRNG pretending to
- * be a CSPRNG.
+ * Everything here is pure arithmetic and works on a bare-metal target — the generators, the
+ * helpers, and `proven_random_bytes` itself. What differs is the **entropy source** behind it,
+ * because that is the one thing a program cannot compute for itself:
+ *
+ * - **Hosted:** the OS CSPRNG is installed for you. `getrandom` on Linux, `getentropy` on the
+ *   BSDs and macOS, `BCryptGenRandom` on Windows, `/dev/urandom` where none of those exist.
+ *   You call nothing.
+ * - **Bare metal:** there is no source until you install one, with
+ *   `proven_random_set_source`. A board *has* real entropy — an on-chip TRNG, a ring
+ *   oscillator, an ADC's noise floor — and the library cannot know where. Hand it over once at
+ *   startup and `proven_chacha_rng_seed_from_entropy` turns those few hundred bytes into an
+ *   endless cryptographic stream.
+ *
+ * With no source installed, `proven_random_bytes` returns **false**. It does not fall back to a
+ * clock-seeded PRNG, because that looks like success and is a security hole nothing reports.
+ * A refusal is a fact a caller can act on.
  */
 
 #include "types.h"
@@ -130,7 +141,7 @@ proven_rng_t proven_xoshiro256ss_rng(proven_xoshiro256ss_t *g);
  * bare-metal target and the fast answer for bulk random data on a hosted one (no syscall per
  * draw).
  *
- * @note It is exactly as unguessable as its seed. Seed it from `proven_chacha_rng_seed_from_os`
+ * @note It is exactly as unguessable as its seed. Seed it from `proven_chacha_rng_seed_from_entropy`
  *       on a hosted target, or from a hardware entropy source on a board. Seeding it from the
  *       clock, a serial number, or an uninitialised buffer yields something that looks random
  *       and is not — which is worse than an obvious failure, because nothing reports it.
@@ -202,35 +213,79 @@ double proven_rng_f64(proven_rng_t rng);
 void proven_rng_shuffle(proven_rng_t rng, void *base, proven_size_t count, proven_size_t elem_size);
 
 // -------------------------------------------------------------
-// The OS entropy source (hosted)
+// The entropy source — where a seed comes from
 // -------------------------------------------------------------
 
-#ifndef PROVEN_FREESTANDING
+/**
+ * @brief A source of ENTROPY: the thing you seed a generator from.
+ *
+ * This is not a generator. A generator turns a seed into an endless stream; an entropy source
+ * is the small amount of genuine unpredictability that the seed is made of, and it comes from
+ * outside the program — a hardware noise circuit, an OS pool fed by interrupt timing. It is
+ * the one thing a program cannot compute for itself, which is why it is the one thing that can
+ * fail.
+ *
+ * @return false if it could not produce `len` bytes. `buf` must then not be used.
+ */
+typedef bool (*proven_entropy_fn)(void *ctx, void *buf, proven_size_t len);
 
 /**
- * @brief Fill `buf` with `len` cryptographically strong random bytes from the OS CSPRNG.
+ * @brief Install the system entropy source.
  *
- * `getrandom` on Linux, `getentropy` on the BSDs and macOS, `BCryptGenRandom` on Windows.
- * Not a PRNG seeded from the clock, not `rand()`; the real thing, suitable for keys, tokens,
- * nonces, and for seeding the generators above.
+ * **On a hosted target one is already installed**: the OS CSPRNG (`getrandom` on Linux,
+ * `getentropy` on the BSDs and macOS, `BCryptGenRandom` on Windows, `/dev/urandom` where none
+ * of those exist). You do not have to call this, and you should not unless you have a reason.
  *
- * @return true if `buf` was filled; false if the OS call failed. On false, `buf`'s contents
- *         are unspecified and MUST NOT be used - a caller that ignores the return and uses
- *         the buffer anyway is exactly the bug this boolean exists to prevent.
+ * **On a bare-metal target there is none**, and this is how you supply one. A board has real
+ * entropy — an on-chip TRNG, a ring-oscillator, an ADC's noise floor — and the library cannot
+ * know where. Install it once at startup and everything above works: `proven_random_bytes`,
+ * and `proven_chacha_rng_seed_from_entropy`, which is what turns a board's few hundred bytes
+ * of hardware entropy into an endless cryptographic stream.
+ *
+ * @param fn  the source, or NULL to go back to the platform default (none, freestanding).
+ * @param ctx passed to `fn` unchanged; may be NULL.
+ *
+ * @warning Install exactly one, once, before any thread draws from it. This is a global, and
+ *          it is deliberately not synchronised: a program that swaps its entropy source while
+ *          another thread is drawing a key has a problem that a mutex here would only hide.
+ * @warning **Do not install a clock, a serial number, an uninitialised buffer, or a PRNG.**
+ *          Those produce something that looks random and is not, which is worse than an
+ *          obvious failure because nothing reports it. If the board has no real entropy, say
+ *          so by installing nothing: a refusal is a fact a caller can act on.
+ *
+ * @note There is deliberately no built-in `RDRAND` / `RNDR` backend. On a hosted target the OS
+ *       already mixes the CPU's instruction into its pool, so calling it directly buys nothing
+ *       and costs you the OS's mixing; and a raw hardware instruction used as the sole source
+ *       is exactly the arrangement people have argued about for a decade. If you want it, it
+ *       is four lines behind this hook, and the choice is then visibly yours.
+ */
+void proven_random_set_source(proven_entropy_fn fn, void *ctx);
+
+/**
+ * @brief Fill `buf` with `len` cryptographically strong random bytes from the entropy source.
+ *
+ * On a hosted target this is the OS CSPRNG by default. Not a PRNG seeded from the clock, not
+ * `rand()`; the real thing, suitable for keys, tokens, nonces, and for seeding the generators
+ * above.
+ *
+ * @return true if `buf` was filled; false if there is no entropy source (a bare-metal target
+ *         where none was installed) or the source failed. On false, `buf`'s contents are
+ *         unspecified and MUST NOT be used — a caller that ignores the return and uses the
+ *         buffer anyway is exactly the bug this boolean exists to prevent.
  *
  * @note len == 0 is a successful no-op (returns true).
- * @note This can block briefly, once, very early in a system's life, if the OS entropy pool
- *       is not yet initialised. It never returns low-quality bytes to avoid blocking - it
- *       waits, because bytes that are not random are worse than bytes that are late.
- * @note Drawing a large buffer straight from the OS costs a syscall's worth of work per call.
- *       When you want bulk random data rather than a secret to seed with, seed a
+ * @note This can block briefly, once, very early in a system's life, if the OS entropy pool is
+ *       not yet initialised. It never returns low-quality bytes to avoid blocking — it waits,
+ *       because bytes that are not random are worse than bytes that are late.
+ * @note Drawing a large buffer straight from the source costs a syscall's worth of work per
+ *       call. When you want bulk random data rather than a secret to seed with, seed a
  *       `proven_chacha_rng_t` from this once and draw from that.
  */
 [[nodiscard]]
 bool proven_random_bytes(void *buf, proven_size_t len);
 
 /**
- * @brief A single cryptographically strong 64-bit value from the OS, or 0 on failure.
+ * @brief A single cryptographically strong 64-bit value, or 0 on failure.
  *
  * A convenience over proven_random_bytes for the common case of needing one word - a hash
  * seed, a token. Because 0 is both the failure signal and a (vanishingly unlikely) valid
@@ -241,15 +296,17 @@ bool proven_random_bytes(void *buf, proven_size_t len);
 proven_u64 proven_random_u64(void);
 
 /**
- * @brief Seed a ChaCha generator from the OS CSPRNG.
+ * @brief Seed a ChaCha generator from the entropy source — the OS, or the one you installed.
  *
- * @return false if the OS entropy call failed. The generator is left unseeded and you must
- *         not draw from it. This is the one place randomness is allowed to fail; check it
- *         here, once, and every draw afterwards is infallible.
+ * This is the call that makes the cryptographic generator usable on a board: a few hundred
+ * bytes of real hardware entropy become an endless keystream that needs nothing further.
+ *
+ * @return false if there is no entropy source, or it failed. The generator is left INERT — it
+ *         is not merely unseeded, it refuses to produce anything — so a caller who ignores this
+ *         boolean gets zeros rather than plausible bytes. This is the one place randomness is
+ *         allowed to fail; check it here, once, and every draw afterwards is infallible.
  */
 [[nodiscard]]
-bool proven_chacha_rng_seed_from_os(proven_chacha_rng_t *g);
-
-#endif /* !PROVEN_FREESTANDING */
+bool proven_chacha_rng_seed_from_entropy(proven_chacha_rng_t *g);
 
 #endif /* PROVEN_RANDOM_H */

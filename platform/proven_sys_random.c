@@ -32,6 +32,17 @@ bool proven_sys_random_bytes(void *buf, size_t len) {
 #endif
 #endif
 
+#if defined(__APPLE__) || defined(__OpenBSD__) || defined(__FreeBSD__) || defined(__NetBSD__)
+/* getentropy(): the BSD/macOS spelling. This header used to CLAIM it and never call it - the
+ * BSDs quietly fell through to /dev/urandom, which works but is not what the documentation
+ * said, and needs an fd that an fd-exhausted process cannot open. */
+#include <unistd.h>
+#if defined(__APPLE__)
+#include <sys/random.h>
+#endif
+#define PROVEN_HAVE_GETENTROPY 1
+#endif
+
 bool proven_sys_random_bytes(void *buf, size_t len) {
     if (len == 0) return true;
     if (!buf) return false;
@@ -54,8 +65,20 @@ bool proven_sys_random_bytes(void *buf, size_t len) {
     if (got == len) return true;
 #endif
 
-    /* Fallback for kernels/systems without getrandom: read /dev/urandom to completion. This
-     * is also the path getentropy uses underneath on the BSDs. */
+#if defined(PROVEN_HAVE_GETENTROPY)
+    /* getentropy() takes at most 256 bytes per call, so loop. Like getrandom() it needs no fd,
+     * which matters: a process that has exhausted its descriptors cannot open /dev/urandom, and
+     * that is not a moment at which a key derivation should start failing. */
+    while (got < len) {
+        size_t chunk = len - got;
+        if (chunk > 256) chunk = 256;
+        if (getentropy(p + got, chunk) != 0) break;   /* fall through to /dev/urandom */
+        got += chunk;
+    }
+    if (got == len) return true;
+#endif
+
+    /* Last resort for systems with neither call: read /dev/urandom to completion. */
     int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
     if (fd < 0) return false;
     while (got < len) {

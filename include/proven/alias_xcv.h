@@ -328,8 +328,10 @@
 #define xcv_chacha_rng_fill proven_chacha_rng_fill
 #define xcv_chacha_rng_next proven_chacha_rng_next
 #define xcv_chacha_rng_seed proven_chacha_rng_seed
-#define xcv_chacha_rng_seed_from_os proven_chacha_rng_seed_from_os
+#define xcv_chacha_rng_seed_from_entropy proven_chacha_rng_seed_from_entropy
+#define xcv_entropy_fn proven_entropy_fn
 #define xcv_random_bytes proven_random_bytes
+#define xcv_random_set_source proven_random_set_source
 #define xcv_random_u64 proven_random_u64
 #define xcv_rng_below proven_rng_below
 #define xcv_rng_f64 proven_rng_f64
