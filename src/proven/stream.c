@@ -342,6 +342,14 @@ static bool reader_buffered_fill(proven_reader_buffered_t *s) {
     }
     if (s->len == s->buf.size) return false;   /* full, and nothing consumed */
 
+    /* A byte the line reader looked ahead at belongs to the stream: put it back before asking
+     * the source for more, or it is silently dropped. */
+    if (s->has_peek) {
+        s->buf.ptr[s->len++] = s->peek;
+        s->has_peek = false;
+        if (s->len == s->buf.size) return true;
+    }
+
     proven_mem_mut_t space = { .ptr = s->buf.ptr + s->len, .size = s->buf.size - s->len };
     proven_result_size_t r = proven_reader_read(s->inner, space);
     if (r.err == PROVEN_ERR_EOF || (proven_is_ok(r.err) && r.value == 0)) {
@@ -401,6 +409,8 @@ proven_reader_t proven_reader_buffered(proven_reader_buffered_t *state, proven_r
     state->cursor = 0;
     state->eof = false;
     state->err = PROVEN_OK;
+    state->peek = 0;
+    state->has_peek = false;   /* a stack-declared state holds garbage here otherwise */
     return (proven_reader_t){ .ctx = state, .read_fn = reader_buffered_read };
 }
 
@@ -436,6 +446,65 @@ proven_result_u8str_view_t proven_reader_read_line(proven_reader_buffered_t *s) 
          * cursor == 0 after a compaction means everything held is one unterminated
          * line, and there is nowhere left to put more of it. */
         if (s->cursor == 0 && s->len == s->buf.size) {
+            /*
+             * The buffer is full and holds no newline. That does NOT yet mean the line is too
+             * long. It means one of three things, and only one of them is an error:
+             *
+             *   - the next byte is a newline     -> the line is EXACTLY buffer-sized, and done;
+             *   - the source has ended           -> what we hold IS the file's final line;
+             *   - the next byte is anything else -> the line really is longer than the buffer.
+             *
+             * Answering "too long" without looking cost real data: a 4-byte file with no
+             * trailing newline, read through a 4-byte buffer, came back OUT_OF_BOUNDS with its
+             * entire contents unreachable. One byte of lookahead tells the three apart, and it
+             * makes the documented rule - only a LONGER line is an error - the rule that is
+             * actually enforced.
+             */
+            proven_byte_t probe = 0;
+            proven_result_size_t pr = { .err = PROVEN_OK, .value = 0 };
+
+            if (s->has_peek) {
+                probe = s->peek;
+                pr.value = 1;
+            } else if (s->eof) {
+                pr.value = 0;   /* already known to be exhausted */
+            } else {
+                pr = proven_reader_read(s->inner, (proven_mem_mut_t){ .ptr = &probe, .size = 1 });
+                if (pr.err == PROVEN_ERR_EOF && pr.value == 0) s->eof = true;
+            }
+
+            if (!proven_is_ok(pr.err) && pr.err != PROVEN_ERR_EOF) {
+                /* The source broke. What we hold is a fragment, not a line. */
+                s->err = pr.err;
+                res.err = pr.err;
+                return res;
+            }
+
+            if (pr.value == 0) {
+                /* The source has ended: the full buffer is the final, unterminated line. */
+                s->eof = true;
+                res.err = PROVEN_OK;
+                res.val = (proven_u8str_view_t){ .ptr = s->buf.ptr, .size = s->len };
+                s->cursor = s->len;
+                return res;
+            }
+
+            if (probe == (proven_byte_t)'\n') {
+                /* The line is exactly buffer-sized and properly terminated. */
+                proven_size_t end = s->len;
+                if (end > 0 && s->buf.ptr[end - 1] == (proven_byte_t)'\r') --end;
+
+                res.err = PROVEN_OK;
+                res.val = (proven_u8str_view_t){ .ptr = s->buf.ptr, .size = end };
+                s->cursor = s->len;   /* the newline itself is consumed, not stored */
+                s->has_peek = false;
+                return res;
+            }
+
+            /* The line really is longer than the buffer. Keep the byte we looked at - it is
+             * part of the stream, and dropping it would corrupt whatever comes next. */
+            s->peek = probe;
+            s->has_peek = true;
             res.err = PROVEN_ERR_OUT_OF_BOUNDS;
             return res;
         }

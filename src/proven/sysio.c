@@ -92,7 +92,13 @@ proven_err_t proven_sysio_lines_open(proven_sysio_lines_t *st, proven_file_t fil
 
     st->std.file = file;
     proven_reader_t inner = proven_reader_from_file(&st->std.file);
-    (void)proven_reader_buffered(&st->buffered, inner, buf);
+
+    /* Do not assume this succeeds just because the guards above passed. If the two ever drift
+     * apart, discarding the result leaves st->buffered uninitialised and the first read_line
+     * hands the caller its own stack. */
+    proven_reader_t r = proven_reader_buffered(&st->buffered, inner, buf);
+    if (!proven_reader_is_valid(r)) return PROVEN_ERR_INVALID_ARG;
+
     return PROVEN_OK;
 }
 
@@ -102,6 +108,18 @@ proven_err_t proven_sysio_stdin_lines(proven_sysio_lines_t *st, proven_mem_mut_t
 
 proven_result_u8str_view_t proven_sysio_read_line(proven_sysio_lines_t *st) {
     if (!st) return (proven_result_u8str_view_t){ .err = PROVEN_ERR_INVALID_ARG };
+
+    /*
+     * Re-bind the inner reader to THIS struct's handle before reading.
+     *
+     * proven_sysio_lines_t contains a pointer to itself: the buffered reader's inner reader
+     * addresses `&st->std.file`. A caller who moves or copies the struct - and this function
+     * takes it by pointer, which is exactly the shape that says "relocatable" - would leave the
+     * inner reader pointing into the original storage, which may be gone. One assignment makes
+     * the implied contract true instead of a footgun.
+     */
+    st->buffered.inner = proven_reader_from_file(&st->std.file);
+
     return proven_reader_read_line(&st->buffered);
 }
 

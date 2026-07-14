@@ -123,6 +123,12 @@ proven_rng_t proven_xoshiro256ss_rng(proven_xoshiro256ss_t *g) {
 // ChaCha20 — cryptographic, and OS-free once seeded
 // -------------------------------------------------------------
 
+/* Set in `seeded` by seeding, and by nothing else. A zero-initialised generator - the shape of
+ * "never seeded" - must not be usable, and `used` alone cannot say so: `used == 0` is exactly
+ * what a zeroed struct holds, and the fill path read that as "a fresh block is ready", handing
+ * the caller its own uninitialised block[]. */
+#define CHACHA_SEEDED 0x5EEDEDu
+
 #define CHACHA_QR(a, b, c, d)                        \
     do {                                             \
         a += b; d ^= a; d = rotl32(d, 16);           \
@@ -192,11 +198,21 @@ void proven_chacha_rng_seed(proven_chacha_rng_t *g, const proven_byte_t seed[PRO
     g->state[15] = 0;
 
     g->used = 64;   /* nothing buffered: the next draw generates a block */
+    g->seeded = CHACHA_SEEDED;
 }
 
 void proven_chacha_rng_fill(proven_chacha_rng_t *g, void *buf, proven_size_t len) {
     if (!g || !buf || len == 0) return;
     proven_byte_t *p = (proven_byte_t *)buf;
+
+    /* Never seeded, or seeding failed. Hand back zeros - an obviously dead value - rather than
+     * this frame's stack (which `used == 0` used to serve up as a "ready" block) or the fixed,
+     * publicly derivable keystream of an all-zero key (which is what an advancing counter over
+     * a zeroed state produces after the first block, and which passes every smell test). */
+    if (g->seeded != CHACHA_SEEDED) {
+        for (proven_size_t i = 0; i < len; ++i) p[i] = 0;
+        return;
+    }
 
     while (len > 0) {
         if (g->used >= 64) chacha_block(g);
@@ -212,6 +228,8 @@ void proven_chacha_rng_fill(proven_chacha_rng_t *g, void *buf, proven_size_t len
 }
 
 proven_u64 proven_chacha_rng_next(proven_chacha_rng_t *g) {
+    if (!g || g->seeded != CHACHA_SEEDED) return 0;
+
     proven_byte_t b[8];
     proven_chacha_rng_fill(g, b, sizeof b);
     proven_u64 v = 0;
@@ -233,6 +251,9 @@ static const proven_rng_vtable_t g_chacha_vt = {
 };
 
 proven_rng_t proven_chacha_rng(proven_chacha_rng_t *g) {
+    /* An unseeded generator is not a source of randomness, and must not claim to be one: every
+     * helper - below, range, shuffle, f64 - draws from whatever it is handed. */
+    if (!g || g->seeded != CHACHA_SEEDED) return (proven_rng_t){0};
     return (proven_rng_t){ .vt = &g_chacha_vt, .ctx = g };
 }
 
@@ -348,10 +369,14 @@ bool proven_chacha_rng_seed_from_os(proven_chacha_rng_t *g) {
 
     proven_byte_t seed[PROVEN_CHACHA_SEED_SIZE];
     if (!proven_random_bytes(seed, sizeof seed)) {
-        /* Leave the generator unusable rather than seeded with whatever was on the stack. A
-         * caller who ignores the false and draws anyway gets zeros, not plausible garbage. */
+        /* Leave the generator unusable rather than seeded with whatever was on the stack - and
+         * unusable FOREVER, which zeroing the state alone did not achieve. ChaCha over an
+         * all-zero state emits an all-zero first block, so "the caller gets zeros" was true for
+         * exactly 64 bytes; then the counter advanced and block 1 was a normal-looking, fixed,
+         * publicly derivable keystream. Clearing the marker is what actually stops it. */
         for (int i = 0; i < 16; ++i) g->state[i] = 0;
         g->used = 64;
+        g->seeded = 0;
         return false;
     }
 
