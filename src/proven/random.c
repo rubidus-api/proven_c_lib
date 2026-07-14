@@ -349,13 +349,43 @@ void proven_rng_shuffle(proven_rng_t rng, void *base, proven_size_t count, prove
 }
 
 // -------------------------------------------------------------
-// The OS entropy source (hosted) — the only thing here that can fail
+// The entropy source - the only thing here that can fail
 // -------------------------------------------------------------
 
-#ifndef PROVEN_FREESTANDING
+/*
+ * Entropy is the one thing a program cannot compute for itself, so it is the one thing that
+ * has to come from outside - and the outside is not always an operating system. A board has
+ * real entropy (a TRNG, a ring oscillator, an ADC's noise floor) and no getrandom(); a hosted
+ * process has getrandom() and no idea what a ring oscillator is. Both feed the same generators,
+ * so the source is a hook rather than a hard-coded call.
+ *
+ * The hook is a plain global, deliberately unsynchronised: it is installed once at startup,
+ * before any thread asks for a key. A mutex here would not make "swap the entropy source while
+ * another thread is deriving a key" safe - it would only make it quiet.
+ */
+static proven_entropy_fn g_entropy_fn = NULL;
+static void *g_entropy_ctx = NULL;
+
+void proven_random_set_source(proven_entropy_fn fn, void *ctx) {
+    g_entropy_fn = fn;
+    g_entropy_ctx = ctx;
+}
 
 bool proven_random_bytes(void *buf, proven_size_t len) {
+    if (len == 0) return true;
+    if (!buf) return false;
+
+    if (g_entropy_fn) return g_entropy_fn(g_entropy_ctx, buf, len);
+
+#ifndef PROVEN_FREESTANDING
+    /* The platform default: the OS CSPRNG. A hosted caller never has to install anything. */
     return proven_sys_random_bytes(buf, len);
+#else
+    /* A bare-metal target with no source installed. There is nothing to fall back to, and the
+     * honest answer is to say so: a clock-seeded PRNG here would look like success and be a
+     * security hole nothing reports. */
+    return false;
+#endif
 }
 
 proven_u64 proven_random_u64(void) {
@@ -364,7 +394,7 @@ proven_u64 proven_random_u64(void) {
     return v;
 }
 
-bool proven_chacha_rng_seed_from_os(proven_chacha_rng_t *g) {
+bool proven_chacha_rng_seed_from_entropy(proven_chacha_rng_t *g) {
     if (!g) return false;
 
     proven_byte_t seed[PROVEN_CHACHA_SEED_SIZE];
@@ -386,5 +416,3 @@ bool proven_chacha_rng_seed_from_os(proven_chacha_rng_t *g) {
     for (proven_size_t i = 0; i < sizeof seed; ++i) seed[i] = 0;
     return true;
 }
-
-#endif /* !PROVEN_FREESTANDING */

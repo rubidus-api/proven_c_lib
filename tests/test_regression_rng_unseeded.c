@@ -12,7 +12,7 @@
  *      It returned whatever was on the stack - plausible-looking "random" data, and possibly a
  *      stale secret. Every other entry point in the module guarded its NULL; this one did not.
  *
- *   2. When proven_chacha_rng_seed_from_os failed, it zeroed the state and the comment claimed
+ *   2. When proven_chacha_rng_seed_from_entropy failed, it zeroed the state and the comment claimed
  *      a caller who ignored the `false` "gets zeros, not plausible garbage". That was true for
  *      exactly 64 bytes. ChaCha over an all-zero state produces an all-zero first block - but
  *      the block counter then advances, and block 1 of an all-zero-key ChaCha is a perfectly

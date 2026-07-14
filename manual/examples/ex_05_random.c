@@ -23,7 +23,7 @@ int main(void) {
      * the operating system afterwards - no syscall per draw, and it works on bare metal.
      * Seeding is the ONLY step that can fail, so it is the only one you have to check. ---- */
     proven_chacha_rng_t crypto;
-    EXAMPLE_REQUIRE(proven_chacha_rng_seed_from_os(&crypto), "seed the CSPRNG from the OS, once");
+    EXAMPLE_REQUIRE(proven_chacha_rng_seed_from_entropy(&crypto), "seed the CSPRNG from the OS, once");
 
     proven_byte_t token[16];
     proven_chacha_rng_fill(&crypto, token, sizeof token);   /* cannot fail: it is seeded */

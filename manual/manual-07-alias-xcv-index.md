@@ -440,7 +440,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_chacha_rng_fill` | `proven_chacha_rng_fill` |
 | `xcv_chacha_rng_next` | `proven_chacha_rng_next` |
 | `xcv_chacha_rng_seed` | `proven_chacha_rng_seed` |
-| `xcv_chacha_rng_seed_from_os` | `proven_chacha_rng_seed_from_os` |
+| `xcv_chacha_rng_seed_from_entropy` | `proven_chacha_rng_seed_from_entropy` |
 | `xcv_rng_below` | `proven_rng_below` |
 | `xcv_rng_f64` | `proven_rng_f64` |
 | `xcv_rng_fill` | `proven_rng_fill` |

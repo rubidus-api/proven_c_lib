@@ -11,6 +11,50 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-14] — proven_c_lib-v26.07.13i
+
+### Added
+
+- **The entropy source is a thing you can install.** `random.h` could get entropy from an
+  operating system and from nowhere else. That is fine until the target has no operating system
+  — which is precisely the target the ChaCha generator was added for. The bare-metal story
+  stopped one step short of being usable: the generator ran anywhere, and there was no way to
+  seed it, because `proven_random_bytes` was compiled out of a freestanding build entirely.
+
+  Entropy is the one thing a program cannot compute for itself, so it is now a hook rather than
+  a hard-coded call. `proven_random_set_source(fn, ctx)` installs it:
+
+  - **Hosted:** the OS CSPRNG is already installed. You call nothing.
+  - **Bare metal:** a board *has* real entropy — an on-chip TRNG, a ring oscillator, an ADC's
+    noise floor — and the library cannot know where. Hand it over once at startup, and
+    `proven_random_bytes` and `proven_chacha_rng_seed_from_entropy` work unchanged: a few hundred
+    bytes of hardware entropy become an endless cryptographic stream that needs nothing further.
+
+  With no source installed, `proven_random_bytes` returns **false**. It does not fall back to a
+  clock-seeded PRNG, because that looks like success and is a security hole nothing reports.
+
+  There is deliberately **no built-in `RDRAND` / `RNDR` backend**: on a hosted target the OS
+  already mixes the CPU's instruction into its own pool, so calling it directly buys nothing and
+  costs you that mixing — and a raw hardware instruction used as the sole source is the
+  arrangement people have argued about for a decade. It is four lines behind this hook, and then
+  the choice is visibly yours.
+
+### Fixed
+
+- **`getentropy` was documented and never called.** The header claimed the OS backend was
+  "`getrandom` on Linux, `getentropy` on the BSDs and macOS, `BCryptGenRandom` on Windows". The
+  BSDs and macOS quietly fell through to `/dev/urandom` — which works, but is not what the
+  documentation said, and needs a file descriptor that an fd-exhausted process cannot open,
+  which is not a moment at which a key derivation should start failing. `getentropy` is now
+  actually called there, in 256-byte chunks, with `/dev/urandom` kept as the last resort for
+  systems that have neither call.
+
+### Changed
+
+- **`proven_chacha_rng_seed_from_os` is renamed `proven_chacha_rng_seed_from_entropy`.** On a
+  board there is no "OS" to seed from, and the old name said there was. The call is otherwise
+  unchanged. (Breaking, one release after it was introduced; the library is pre-1.0 and says so.)
+
 ## [2026-07-14] — proven_c_lib-v26.07.13h
 
 Two modules that each offered one answer to a question that has several.

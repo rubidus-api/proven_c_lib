@@ -8,7 +8,7 @@ The point is not to hide C behind a framework. The point is to make practical C 
 
 The build driver probes `-std=c23` first and falls back to `-std=c2x` when the compiler still uses the transitional spelling, so older GCC and Clang front ends can still build the tree without changing the library's C23 baseline.
 
-- Version: proven_c_lib-v26.07.13h
+- Version: proven_c_lib-v26.07.13i
 - Standard: C23
 - License: MIT
 - Repository: https://github.com/rubidus-api/proven_c_lib
@@ -229,7 +229,7 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 - Algorithms: `algorithm`.
 - Text: `fmt`, `scan`.
 - Numbers: `float_parse`, `float_format`.
-- Hashing and randomness: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256), `random` (xoshiro256** reproducible, ChaCha20 cryptographic, the OS CSPRNG, and unbiased range/shuffle helpers).
+- Hashing and randomness: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256), `random` (xoshiro256** reproducible, ChaCha20 cryptographic, unbiased range/shuffle helpers, and a pluggable entropy source — the OS CSPRNG by default, a board's hardware TRNG on bare metal).
 - Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
 - Execution: `coro`, `job`.
 - Diagnostics: `panic`.
@@ -297,7 +297,7 @@ License: MIT License. See `LICENSE`.
 
 빌드 드라이버는 먼저 `-std=c23`를 시도하고, 컴파일러가 아직 transitional spelling만 받아들이는 경우 `-std=c2x`로 내려갑니다. 그래서 기존 GCC와 Clang 프런트엔드도 라이브러리의 C23 기준을 바꾸지 않고 트리를 빌드할 수 있습니다.
 
-- 버전: proven_c_lib-v26.07.13h
+- 버전: proven_c_lib-v26.07.13i
 - 표준: C23
 - 라이선스: MIT
 - 저장소: https://github.com/rubidus-api/proven_c_lib
@@ -517,7 +517,7 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 - Algorithms: `algorithm`.
 - Text: `fmt`, `scan`.
 - Numbers: `float_parse`, `float_format`.
-- 해싱과 난수: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256), `random` (xoshiro256** 재현 가능, ChaCha20 암호학적, OS CSPRNG, 무편향 범위/셔플 헬퍼).
+- 해싱과 난수: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256), `random` (xoshiro256** 재현 가능, ChaCha20 암호학적, 무편향 범위/셔플 헬퍼, 교체 가능한 엔트로피 소스 — 기본은 OS CSPRNG, 베어메탈은 보드의 하드웨어 TRNG).
 - Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
 - Execution: `coro`, `job`.
 - Diagnostics: `panic`.
