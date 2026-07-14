@@ -1075,6 +1075,7 @@ int main(int argc, char **argv)
     };
 
     const Proven_Test_Case benchmark_tests[] = {
+        { "tests/test_bench_primitives", "primitive throughput benchmark", "Time the hashes (FNV-1a, CRC-32, SipHash-2-4, SHA-256), the encoders (hex, Base64), and the two random generators (xoshiro256**, ChaCha20) over a fixed buffer, folding each output into a checksum so the work is not optimised away.", "If a checksum drifts the backend changed behaviour; if a timing regresses, inspect the module named by the backend label. See docs/primitives-benchmark.md." },
         { "tests/test_bench_float_parse_paths", "float parse path benchmark", "Compare the shared float parser, wrapper, and host strtod on separate path-oriented decimal corpora and record dated docs output.", "Inspect src/proven/float_parse.c, src/proven/float_decimal.c, and the path-specific corpus split if the timing harness fails or any checksum drifts." },
         { "tests/test_bench_float_parse", "float parse benchmark", "Time the decimal parser against the host strtod on a mixed corpus and record the result.", "Inspect src/proven/float_parse.c and src/proven/float_decimal.c if a timing run regresses or a checksum drifts." },
     };
