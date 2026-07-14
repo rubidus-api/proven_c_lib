@@ -49,6 +49,7 @@ proven_err_t proven_hex_decode(proven_mem_view_t text, proven_byte_t *out, prove
                                proven_size_t *written_out) {
     if (written_out) *written_out = 0;
     if (text.size > 0 && !text.ptr) return PROVEN_ERR_INVALID_ARG;
+    if (out_cap > 0 && !out) return PROVEN_ERR_INVALID_ARG;   /* the guard the encoders had and this lacked */
 
     if (text.size % 2 != 0) return PROVEN_ERR_INVALID_ENCODING;
     proven_size_t need = text.size / 2;
@@ -89,7 +90,12 @@ proven_size_t proven_base64_encoded_size(proven_size_t n) {
 }
 
 proven_size_t proven_base64_decoded_size(proven_size_t n) {
-    return (n / 4) * 3;
+    /* An UPPER BOUND, and it must hold for unpadded input too: proven_base64url_encode emits
+     * no padding, so a text of length n%4 == 2 or 3 carries 1 or 2 real bytes that the floor
+     * form (n/4)*3 dropped - which made the library unable to decode its own base64url output
+     * into a buffer the caller sized with this function. Rounding n up to the next multiple of
+     * 4 first covers both the padded and the unpadded tail. */
+    return ((n + 3) / 4) * 3;
 }
 
 static proven_err_t base64_encode_impl(proven_mem_view_t data, proven_byte_t *out,
@@ -148,6 +154,7 @@ proven_err_t proven_base64_decode(proven_mem_view_t text, proven_byte_t *out, pr
                                   proven_size_t *written_out) {
     if (written_out) *written_out = 0;
     if (text.size > 0 && !text.ptr) return PROVEN_ERR_INVALID_ARG;
+    if (out_cap > 0 && !out) return PROVEN_ERR_INVALID_ARG;   /* the guard the encoders had and this lacked */
 
     /* Count trailing padding, then validate everything. Padding may only be the last one or two
      * characters, and only on a padded (multiple-of-4) input. */
