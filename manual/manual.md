@@ -6,6 +6,8 @@ This manual is rebuilt from three sources:
 2. The current implementation and tests in `src/proven/`, `platform/`, and `tests/`.
 3. The older developer manual kept in a private workspace outside the repository.
 
+A Korean translation of this manual is in [`manual-ko/`](../manual-ko/manual-ko.md).
+
 The goal is to keep the architectural explanation from the older manual while adding practical examples, return-value rules, ownership rules, and common misuse cases from the current source tree.
 
 ## Table of contents

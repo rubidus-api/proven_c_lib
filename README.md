@@ -317,6 +317,7 @@ What you accept, and should not expect:
 ## documentation
 
 - User manual: `manual/manual.md` (chapters under `manual/`)
+- Korean manual (한국어 매뉴얼): `manual-ko/manual-ko.md`
 - Freestanding guide: `manual/manual-freestanding.md`
 - Float correctness and performance: `docs/float-correctness-and-performance.md`
 - Primitive throughput (hash/encode/random): `docs/primitives-benchmark.md`
@@ -660,6 +661,7 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 ## 문서
 
 - 사용자 매뉴얼: `manual/manual.md` (`manual/` 아래 챕터들)
+- 한국어 매뉴얼: `manual-ko/manual-ko.md`
 - freestanding 가이드: `manual/manual-freestanding.md`
 - 부동소수점 정확성과 성능: `docs/float-correctness-and-performance.md`
 - 기본 연산 처리량(해시/인코딩/난수): `docs/primitives-benchmark.md`
