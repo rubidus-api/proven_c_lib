@@ -17,7 +17,7 @@ int main(void) {
     const char *content = "123 456 Hello";
     proven_result_size_t writer = proven_fs_write(f, proven_mem_view_from_u8(proven_u8str_view_from_cstr(content)));
     PROVEN_TEST_ASSERT(writer.err == PROVEN_OK, "Failed to write to test file", "Check FS");
-    proven_fs_close(f);
+    (void)proven_fs_close(f);
     
     // Now open for reading via scanner
     proven_result_file_t res_read = proven_fs_open(alloc, proven_u8str_view_from_cstr(test_path), PROVEN_FS_READ);
@@ -44,7 +44,7 @@ int main(void) {
     PROVEN_TEST_ASSERT(proven_u8str_view_eq(word, proven_u8str_view_from_cstr("Hello")), "Scanned word mismatch", "Check content");
     
     proven_sysio_scanner_deinit(&scanner);
-    proven_fs_close(f);
+    (void)proven_fs_close(f);
     
     PROVEN_TEST_PASS("SysIO Buffered Scanner Test Passed!");
     return 0;

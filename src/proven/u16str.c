@@ -172,6 +172,13 @@ proven_err_t proven_u16str_append_grow(proven_allocator_t alloc, proven_u16str_t
         str->internal.ptr = (proven_byte_t*)new_mem.value.ptr;
         str->internal.cap = new_cap;
 
+        /* Same seal, same reason as u8str: an append of nothing must still leave a
+         * terminated string, because as_cstr promises one whatever happened. internal.len
+         * is a BYTE count, so the terminator's u16 index is len/sizeof(proven_u16) - not len,
+         * which would write at twice the offset (harmless in the doubling slack today, an
+         * out-of-bounds write the moment growth allocates exactly what is required). */
+        ((proven_u16 *)(void *)str->internal.ptr)[str->internal.len / sizeof(proven_u16)] = 0;
+
         if (alias_ref.valid) {
             data.ptr = (const proven_u16*)proven_bufref_rebase_const(alias_ref, str->internal.ptr);
         }

@@ -119,58 +119,87 @@ The principle generalises, and it is the one lesson this project keeps relearnin
 **a claim with no mechanism behind it stops being true, and nobody notices.** If
 the documentation asserts something, find a way for the build to assert it too.
 
-## 5. Is this TDD? No — and here is the honest version
+## 5. How we work: test-first for new public API, adversarial audit as standing practice
 
-It would be pleasant to claim test-driven development. The claim would not survive
-five minutes with `git log`, so here is what the history actually shows.
+Two decisions, taken deliberately on 2026-07-13 and recorded here rather than left as
+aspirations. They close `docs/BACKLOG.md` **B-003** and **B-011**.
 
-**Every commit in this repository that adds a test also changes source code in the
-same commit.** There is not one commit where a failing test lands first and the
-implementation follows. That is the definition of test-after.
+### 5.1 New public API is written test-first, in separate commits
 
-The picture is not uniformly bad, and the parts deserve separating:
+**The rule.** A new public function, type, or contract lands in *at least two commits*:
 
-**Defect fixes are genuinely test-first in method, if not in commit shape.** The
-sequence used throughout is: reproduce the defect with a program that fails →
-write the test → *verify it fails against the unfixed source* → fix → watch it
-pass. The failing test really does come first; it simply gets squashed into the
-same commit as the fix. The discipline is real. Its visibility in the history is
-not, and that is worth changing, because a discipline nobody can see is a
-discipline the next person will not inherit.
+1. **The contract, and a test that fails.** The header (with the documentation that says
+   what it promises), a stub that compiles and does nothing useful, and the test written
+   from that contract — which must FAIL, and be seen to fail, before anything else happens.
+2. **The implementation.** The same test, now passing, with no change to what it asserts.
 
-**Features are written first and tested afterwards, and it costs us.** The
-whole-file API is the clean case study. It was implemented, tested, documented,
-and released — and then an adversarial audit found four defects in it: the buffer
-doubled for *every* regular file (peak memory 3× the file size); the string variant
-started from a **one-byte** buffer for pipes and `/proc`; the atomic write
-**widened permissions**, republishing a `0600` key file as `0644`; and it failed
-outright on a legal 250-character filename.
+If the second commit had to weaken the first commit's assertions, the contract was wrong,
+and *that* is the finding — record it in the commit message rather than quietly editing the
+test to agree with the code.
 
-Those are not exotic bugs. They are the questions you ask while *designing* a
-contract — *what does this cost? what happens when the size is unknown? what
-happens to the mode? how long can a name be?* — and precisely the questions you do
-not think to ask while confirming code you already believe in. Tests written from
-the contract, before the code, would have surfaced at least the first two, because
-you cannot write "this costs one allocation" as a test without noticing that it
-costs two.
+**Why.** Features used to be written first and tested afterwards, and it cost us, every
+time. The whole-file API is the clean case study: implemented, tested, documented, released
+— and then an adversarial audit found four defects in it. The buffer doubled for *every*
+regular file (peak memory 3× the file size). The string variant started from a **one-byte**
+buffer for pipes and `/proc`. The atomic write **widened permissions**, republishing a
+`0600` key file as `0644`. It failed outright on a legal 250-character filename.
 
-Worse, the header *claimed* "one allocation and one pass" in the same commit that
-made it false. The test suite was green. Nothing in the process was positioned to
-notice, because nothing had been asked to.
+Those are not exotic bugs. They are the questions you ask while *designing* a contract —
+*what does this cost? what happens when the size is unknown? what happens to the mode? how
+long can a name be?* — and precisely the questions you do not think to ask while confirming
+code you already believe in. Worse, the header *claimed* "one allocation and one pass" in
+the same commit that made it false, and the suite was green: nothing in the process was
+positioned to notice, because nothing had been asked to.
 
-**What we do instead of TDD, and where it works.** The real engine of quality here
-is not test-first; it is **adversarial verification after the fact** — sanitizers
-on every mode, differential oracles, exhaustive sweeps, and independent audits
-whose brief is to break the thing. It works: it found twelve real defects this
-cycle, two of them memory-safety. But it works *late*. It finds bugs in shipped
-code instead of preventing them in unwritten code, and every one of them costs a
-fix, a test, a changelog entry, and a release.
+**What this does not change.** Defect fixes were already test-first in method — reproduce,
+write the test, *watch it fail against the unfixed source*, fix, watch it pass — and they
+stay that way. A regression test that passes before the fix is not a regression test. The
+only thing that changes is that the discipline is now visible in the history for features
+too, rather than being a thing the next person has to be told about.
 
-**The open question is recorded, not resolved.** See `docs/BACKLOG.md` item
-**B-003**. The decision to make is whether new *public API* is written test-first —
-contract first, failing test second, implementation third, in separate commits so
-the discipline is visible. This document will say which, once that is decided,
-rather than describing an aspiration as if it were a practice.
+**The first feature under the rule** is `proven_fs_walk` (recursive directory iteration with
+cycle protection). Its contract and failing test landed in one commit and its implementation
+in the next; `git log` shows both.
+
+### 5.2 An adversarial audit is a standing part of the process
+
+**The rule.** An adversarial audit — an independent reader whose brief is to *break* the
+thing, with a **reproducer required before any finding may be reported** — runs on:
+
+- every **new module or new public API**, after it is implemented and before it is called
+  done;
+- every **module that has never had one** (this is now an empty set — but a new one can
+  appear the moment a module is added);
+- the **fixes an audit itself produced**, because that is where the next bugs are (see
+  below);
+- and before a release.
+
+Findings are reproduced, fixed, and pinned by a regression test verified to fail against the
+unfixed source. A finding without a reproducer is a hypothesis, not a finding.
+
+**Why: the evidence.** Turned on the modules that had never had it, the audit found a defect
+of consequence in **every one of them**:
+
+- the "correctly rounded" float parser was not correctly rounded — 2,923 values misrounded
+  against glibc, every one an exact halfway value, every one returning `PROVEN_OK`;
+- the buffered scanner could not read a **pipe**, which is the one thing it exists for;
+- a map with churn grew **without bound** — 100 live entries, 33 MB;
+- `close()` failures were discarded, so a write the filesystem had *refused* was reported as
+  `PROVEN_OK` and an atomic rename published it anyway;
+- `append_grow` of an empty view left a fresh heap block unterminated;
+- the sort handed the caller's comparator a pointer of alignment 1;
+- a writer that had failed reported **success** on the next flush.
+
+Not one of those was found by the test suite, and not one of them would have been. Every one
+was correct for the input the tests used and silently wrong for the input the code will
+actually meet: a pipe rather than a file, a twenty-digit number rather than a short one, a
+churn rather than a run, a full disk rather than an empty one.
+
+**And audit the fixes.** The audit pointed at the code a previous audit had just produced
+found three regressions in it — including a rollback that wrapped `cursor` to ~2^64 and read
+`buffer[SIZE_MAX-15]` (ASan: heap-buffer-overflow). New code is where new bugs are, and code
+written in a hurry to fix a bug is the newest code there is. The rule stops when a round comes
+back clean.
 
 ## 6. Adding a test
 

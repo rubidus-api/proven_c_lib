@@ -23,7 +23,7 @@ int main() {
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(write_res.err), "Testing condition: PROVEN_IS_OK(write_res.err)", "Review logic surrounding PROVEN_IS_OK(write_res.err)");
     PROVEN_TEST_ASSERT(write_res.value == content.size, "Testing condition: write_res.value == content.size", "Review logic surrounding write_res.value == content.size");
 
-    proven_fs_close(file);
+    (void)proven_fs_close(file);
 
     // 2. Read All Test
     PROVEN_TEST_INFO("Testing reading all file content...");
@@ -47,7 +47,7 @@ int main() {
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(size_res.err), "Testing condition: PROVEN_IS_OK(size_res.err)", "Review logic surrounding PROVEN_IS_OK(size_res.err)");
     PROVEN_TEST_ASSERT(size_res.value == content.size, "Testing condition: size_res.value == content.size", "Review logic surrounding size_res.value == content.size");
     
-    proven_fs_close(file);
+    (void)proven_fs_close(file);
 
     // 4. Absolute path classifier should recognize Windows absolute forms too.
     PROVEN_TEST_INFO("Testing absolute path classifier edge cases...");

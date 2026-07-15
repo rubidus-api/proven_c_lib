@@ -59,7 +59,8 @@ proven_result_mmap_t proven_mmap_create(proven_fs_handle_t file, proven_size_t o
         .ptr = res.ptr,
         .size = size,
         .file = file,
-        .internal_handle = res.internal_handle
+        .internal_handle = res.internal_handle,
+        .flags = flags
     };
 
     return (proven_result_mmap_t){ .err = PROVEN_OK, .value = m };
@@ -79,6 +80,17 @@ proven_err_t proven_mmap_destroy(proven_mmap_t *mmap) {
 
 proven_err_t proven_mmap_sync(proven_mmap_t *mmap) {
     if (!mmap || !mmap->ptr) return PROVEN_ERR_INVALID_ARG;
+
+    /*
+     * A PRIVATE mapping is copy-on-write: your writes live in your page tables and nowhere
+     * else, and msync() on it persists exactly nothing. It used to return PROVEN_OK -
+     * "Synchronizes changes back to disk", said the header - so a caller could write
+     * through a private mapping, sync it, be told it worked, and find the file unchanged.
+     * Reporting success for a persist that cannot happen is the worst answer available.
+     */
+    if (mmap->flags == PROVEN_MMAP_PRIVATE) {
+        return PROVEN_ERR_UNSUPPORTED;
+    }
 
     if (!proven_sys_fs_sync(mmap->ptr, (size_t)mmap->size)) {
         return PROVEN_ERR_IO;

@@ -12,6 +12,10 @@
 - Keep public examples and help text on `/home/user/work/...` paths only.
 - Do not expose private host paths, share names, user names, or SSH key names in public docs or source comments.
 - Run the relevant build and test modes for the change.
+- **If the change touches public API, follow `docs/DOCUMENTING.md`** (survey → plan → edit → verify).
+  Most of the rules above are now enforced by the build rather than by memory: the version string
+  must agree with itself (`test_docs_version_sync`), every public function must be documented, and
+  the manual must not document a function that does not exist (`test_docs_manual_symbols`).
 
 ## Known lessons
 

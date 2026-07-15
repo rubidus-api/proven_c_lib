@@ -9,7 +9,9 @@ This chapter covers `array.h`, `list.h`, `ring.h`, `map.h`, and `algorithm.h`.
 3. [Ring buffer](#3-ring-buffer)
 4. [Hash map](#4-hash-map)
 5. [Algorithms](#5-algorithms)
-6. [Examples and misuse cases](#6-examples-and-misuse-cases)
+6. [Hashing, by use case](#6-hashing-by-use-case)
+7. [Bytes to text: hex and Base64](#7-bytes-to-text-hex-and-base64)
+8. [Examples and misuse cases](#8-examples-and-misuse-cases)
 
 ## 1. Dynamic array
 
@@ -17,7 +19,7 @@ This chapter covers `array.h`, `list.h`, `ring.h`, `map.h`, and `algorithm.h`.
 
 ### Structures
 
-```c
+```text
 typedef struct {
     proven_allocator_t alloc;
     proven_byte_t *data;
@@ -70,15 +72,21 @@ Example:
 
 ```c
 proven_result_array_t r = PROVEN_ARRAY_INIT(alloc, int, 4);
-if (!proven_is_ok(r.err)) return r.err;
+if (!proven_is_ok(r.err)) {
+    return;
+}
 proven_array_t nums = r.value;
 
-PROVEN_ARRAY_PUSH(&nums, int, 10);
-PROVEN_ARRAY_PUSH(&nums, int, 20);
+(void)PROVEN_ARRAY_PUSH(&nums, int, 10);
+(void)PROVEN_ARRAY_PUSH(&nums, int, 20);
 
+/* GET points into the array's own storage, and returns NULL out of range. */
 const int *first = PROVEN_ARRAY_GET(&nums, int, 0);
-if (first) use_int(*first);
+if (first) {
+    proven_println("first={}", PROVEN_ARG(*first));
+}
 
+/* The array stores its allocator, so destroy needs nothing but the array. */
 PROVEN_ARRAY_DESTROY(&nums);
 ```
 
@@ -88,7 +96,7 @@ PROVEN_ARRAY_DESTROY(&nums);
 
 ### Structures
 
-```c
+```text
 typedef struct proven_list_node_t {
     struct proven_list_node_t *next;
     struct proven_list_node_t *prev;
@@ -118,7 +126,7 @@ Example:
 ```c
 typedef struct Item {
     int value;
-    proven_list_node_t link;
+    proven_list_node_t link;   /* the list lives inside the object; it allocates nothing */
 } Item;
 
 proven_list_t list;
@@ -129,11 +137,14 @@ Item b = { .value = 2 };
 proven_list_push_back(&list, &a.link);
 proven_list_push_back(&list, &b.link);
 
+int total = 0;
 proven_list_node_t *it = NULL;
 PROVEN_LIST_FOR_EACH(it, &list) {
+    /* The iterator walks nodes; ENTRY converts a node back to its owner. */
     Item *item = PROVEN_LIST_ENTRY(it, Item, link);
-    use_item(item);
+    total += item->value;
 }
+proven_println("total={}", PROVEN_ARG(total));   /* 3 */
 ```
 
 ## 3. Ring buffer
@@ -142,7 +153,7 @@ PROVEN_LIST_FOR_EACH(it, &list) {
 
 ### Structures
 
-```c
+```text
 typedef struct {
     proven_allocator_t alloc;
     proven_mem_mut_t internal;
@@ -178,17 +189,23 @@ Example:
 
 ```c
 proven_result_ring_t r = PROVEN_RING_INIT(alloc, int, 8);
-if (!proven_is_ok(r.err)) return r.err;
+if (!proven_is_ok(r.err)) {
+    return;
+}
 proven_ring_t q = r.value;
 
 proven_err_t e = PROVEN_RING_PUSH(&q, int, 7);
 if (!proven_is_ok(e)) {
+    /* The ring is fixed-capacity: a full ring is PROVEN_ERR_OUT_OF_BOUNDS,
+     * never a silent grow. */
     PROVEN_RING_DESTROY(&q);
-    return e;
+    return;
 }
 
 int out = 0;
-PROVEN_RING_POP(&q, int, &out);
+e = PROVEN_RING_POP(&q, int, &out);   /* FIFO: out == 7. Empty ring is OUT_OF_BOUNDS. */
+(void)e;
+
 PROVEN_RING_DESTROY(&q);
 ```
 
@@ -198,7 +215,7 @@ PROVEN_RING_DESTROY(&q);
 
 ### Structures
 
-```c
+```text
 typedef enum {
     PROVEN_KEY_TYPE_INT,          /* keys are proven_size_t integers */
     PROVEN_KEY_TYPE_U8_BORROWED,  /* keys are u8 views; caller keeps the bytes alive */
@@ -246,8 +263,17 @@ key+value), or **TOMBSTONE** (a removed entry). `payload_offset` and
 `bucket_stride` are computed once at create time from `elem_size`/`align`, so
 addressing bucket `i`'s value is just `internal.ptr + i*bucket_stride + payload_offset`.
 
-- **Hashing.** Integer keys go through a SplitMix/Murmur-style bit-mix finalizer
-  (so sequential ids spread across buckets); U8 keys use FNV-1a over the bytes.
+- **Hashing, and why the default is the safe one.** Integer keys go through a
+  SplitMix/Murmur-style bit-mix finaliser (so sequential ids spread across buckets).
+  **String keys are hashed with keyed SipHash-2-4 under a per-process secret** drawn once
+  from the OS CSPRNG — because a map that hashes *untrusted* keys with a predictable function
+  is a denial of service waiting to happen: an attacker who controls the keys computes
+  collisions offline, floods them all into one bucket, and turns every lookup into a linear
+  scan. Keying the hash with a secret they cannot see is what closes that, and it is the same
+  choice Python, Rust, and the Linux kernel made for their own tables. If your keys all come
+  from your own program, `proven_map_create_trusted` opts into fast unkeyed FNV-1a instead;
+  `proven_map_hash` shows you which function a given map actually uses. (On a freestanding
+  target, which has no CSPRNG and no attacker model, string keys fall back to FNV.)
 - **Probing.** Linear open addressing: the start bucket is `hash & (cap - 1)`
   (cheap because `cap` is a power of two), then the search walks forward one
   bucket at a time, wrapping around, until it finds the key (OCCUPIED with an
@@ -339,14 +365,20 @@ typedef struct UserInfo {
 } UserInfo;
 
 proven_result_map_t r = PROVEN_MAP_INIT_INT(alloc, UserInfo, 8);
-if (!proven_is_ok(r.err)) return r.err;
+if (!proven_is_ok(r.err)) {
+    return;
+}
 proven_map_t users = r.value;
 
 UserInfo u = { .level = 3, .budget = 99.0 };
-PROVEN_MAP_SET_INT(&users, 404, UserInfo, u);
+(void)PROVEN_MAP_SET_INT(&users, 404, UserInfo, u);
 
+/* GET returns a pointer into the bucket array, or NULL when absent. Any insert
+ * that rehashes invalidates it: look it up, use it, drop it. */
 const UserInfo *found = PROVEN_MAP_GET_INT(&users, UserInfo, 404);
-if (found) use_user(found);
+if (found) {
+    proven_println("level={}", PROVEN_ARG(found->level));
+}
 
 PROVEN_MAP_DESTROY(&users);
 ```
@@ -357,7 +389,7 @@ Array algorithms operate on `proven_array_t` and a comparison callback.
 
 ### Comparison function
 
-```c
+```text
 typedef int (*proven_compare_fn_t)(const void *a, const void *b);
 ```
 
@@ -389,13 +421,13 @@ Two properties are worth stating, because they are the ones that bite:
 
 The sort is not stable: equal elements may be reordered.
 
-Example:
+The comparator is an ordinary file-scope function, so the shape is:
 
-```c
+```text
 static int cmp_int(const void *a, const void *b) {
     int x = *(const int *)a;
     int y = *(const int *)b;
-    return (x > y) - (x < y);
+    return (x > y) - (x < y);   /* not (x - y): that overflows */
 }
 
 proven_array_sort(&nums, cmp_int);
@@ -403,13 +435,346 @@ int key = 20;
 int *hit = proven_array_binary_search(&nums, &key, cmp_int);
 ```
 
-## 6. Examples and misuse cases
+The worked example at the end of this chapter (`manual/examples/ex_04_array.c`)
+is the compiled-and-run version of exactly this.
+
+## 6. Hashing, by use case
+
+There is no single "hash". Which function is correct depends entirely on what you are
+doing with the result, and reaching for the wrong one gives you either a program that is
+needlessly slow or one that is quietly insecure. `proven/hash.h` offers exactly one
+primitive per job so the choice is made once you name the job:
+
+| You are... | Use | And crucially |
+|---|---|---|
+| hashing keys into **your own** table, **trusted** input | `proven_hash_bytes` (FNV-1a) | fast; a crypto hash here is ~50× slower for no gain |
+| hashing keys from **untrusted** input into a table | `proven_hash_keyed` (SipHash-2-4) | FNV lets an attacker collide every key into one bucket and turn your O(1) table into O(n²) |
+| checking data was not **corrupted** in transit or on disk | `proven_crc32` | a checksum; interoperates with gzip/zlib/PNG |
+| **fingerprinting** content: dedup, content-addressing, "same file?" | `proven_sha256` | the only one safe against a *deliberately* forged match |
+
+The one line to remember: **CRC-32 and FNV detect accident, not attack.** Do not use them
+to decide whether two things are "the same" when someone might benefit from fooling you —
+that is what `proven_sha256` is for. And a keyed hash is only safe if the key is a real
+secret chosen once from real randomness; a fixed key is no key at all.
+
+Every function is byte-exact and endianness-independent: the same input gives the same
+output on any target, because a fingerprint that changed with the machine would be a
+fingerprint of the machine, not the content. All four are royalty-free algorithms (FNV,
+CRC-32: public domain; SipHash: CC0; SHA-256: FIPS 180-4, unpatented), implemented from
+their specifications and checked against each one's official known-answer vectors.
+
+### Reference
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_hash_bytes(view)` | FNV-1a 64. A hash-table hash for keys you chose yourself. | `proven_u64`. |
+| `proven_hash_keyed(view, key[16])` | SipHash-2-4 under a 16-byte secret. The same job, for keys an attacker supplies. | `proven_u64`. |
+| `proven_crc32(view)` | One-shot CRC-32 (IEEE, reflected) — the one gzip/zlib/PNG carry. | `proven_u32`. |
+| `proven_crc32_update(crc, view)` | The same CRC over a stream of chunks. Start from `0`; the value you hold between calls is the real CRC, so you can store it, log it, and resume. | `proven_u32`. |
+| `proven_sha256(view, out[32])` | One-shot SHA-256. | void; writes `PROVEN_SHA256_SIZE` bytes. |
+| `proven_sha256_init/_update/_final` | The same digest over content you cannot hold in memory at once. The digest depends only on the bytes, never on how they were chunked. | void. |
+| `proven_sha256_to_hex(digest, out[65])` | The 64-character lowercase spelling `sha256sum` and `git` print. NUL-terminated. | void. |
+
+The one structure you hold:
+
+```text
+typedef struct {
+    /* Opaque. A running SHA-256: the 8-word chain value, a 64-byte block being
+       filled, and the message length. Declare one, init it, update it, finalise it. */
+} proven_sha256_t;
+
+#define PROVEN_SHA256_SIZE 32   /* the digest; size your output buffer with this */
+```
+
+`proven_sha256_t` allocates nothing — it is [caller-owned state](manual.md#42-caller-owned-state-no-destroy-do-not-copy), so there is nothing to destroy.
+
+### Cautions, and what goes wrong
+
+**A keyed hash with a fixed key is not a keyed hash.** The security of `proven_hash_keyed`
+rests entirely on the key being a secret drawn once from real randomness. This is why
+`proven_map_create` does it for you and why you should almost never call `proven_hash_keyed`
+yourself for a table.
+
+Wrong:
+
+```text
+proven_byte_t key[16] = { 0 };            /* wrong: a "secret" everyone knows */
+proven_u64 h = proven_hash_keyed(user_input, key);
+```
+
+```text
+proven_byte_t key[16];
+memcpy(key, &timestamp, sizeof timestamp); /* wrong: guessable, and mostly zero */
+```
+
+Correct — draw it once, at startup, from the OS:
+
+```c
+proven_byte_t key[16];
+if (proven_random_bytes(key, sizeof key)) {
+    proven_u64 h = proven_hash_keyed(
+        proven_mem_view_from_u8(PROVEN_LIT("session-token")), key);
+    (void)h;
+}
+```
+
+**Do not use CRC-32 or FNV to decide two things are "the same"** when someone might gain by
+fooling you. Both are trivially forgeable: producing a second input with the same CRC-32 is
+schoolbook arithmetic.
+
+Wrong — a content-addressed store an attacker can poison:
+
+```text
+if (proven_crc32(incoming) == stored_crc) {
+    accept_as_identical(incoming);   /* wrong: a forged collision costs seconds */
+}
+```
+
+Correct — a fingerprint that must not be foolable is `proven_sha256`, compared over all 32
+bytes.
+
+**A digest buffer that is not `PROVEN_SHA256_SIZE` is a buffer overflow.** `proven_sha256`
+writes exactly 32 bytes and does not know how big your array is.
+
+```text
+proven_byte_t digest[16];        /* wrong: SHA-256 is 32 bytes */
+proven_sha256(data, digest);     /* writes 32 into a 16-byte buffer */
+```
+
+Compiled and run by the test suite:
+
+<!-- example: manual/examples/ex_04_hash.c -->
+```c
+/*
+ * Hashing, by use case. The module gives you exactly one function per job, so the only
+ * decision is which job you have - and getting THAT wrong is the whole danger.
+ */
+
+int main(void) {
+    proven_mem_view_t data = proven_mem_view_from_u8(PROVEN_LIT("the quick brown fox"));
+
+    /* Job 1: hash a key into your own table, trusted input. Fast, non-cryptographic. */
+    proven_u64 table_hash = proven_hash_bytes(data);
+    EXAMPLE_REQUIRE(table_hash != 0, "FNV-1a produces a spread-out 64-bit value");
+
+    /* Job 2: hash a key from UNTRUSTED input. Same purpose, but an attacker who picks the
+     * input still cannot make everything collide, because they do not have the key. Pick
+     * the key once at startup from real randomness; a fixed key defeats the point. */
+    proven_byte_t key[16] = { 0 };   /* in real code: fill from a random source, once */
+    proven_u64 safe_hash = proven_hash_keyed(data, key);
+    EXAMPLE_REQUIRE(safe_hash != table_hash, "a keyed hash is a different function");
+
+    /* Job 3: did these bytes get corrupted? A checksum, not a hash. Interoperates with
+     * gzip/zlib/PNG, which all carry this exact CRC-32. */
+    proven_u32 checksum = proven_crc32(data);
+    /* The canonical CRC-32 sanity value, so you can see it is the real one: */
+    EXAMPLE_REQUIRE(proven_crc32(proven_mem_view_from_u8(PROVEN_LIT("123456789"))) == 0xcbf43926u,
+                    "CRC-32 of \"123456789\" is the shared check value");
+    (void)checksum;
+
+    /* Job 4: fingerprint content - dedup, content-addressing, "are these the same file",
+     * answered safely even against someone trying to forge a match. This is the one you
+     * reach for when the answer must not be foolable. */
+    proven_byte_t digest[PROVEN_SHA256_SIZE];
+    proven_sha256(data, digest);
+
+    char hex[65];
+    proven_sha256_to_hex(digest, hex);
+    /* The same spelling sha256sum and git print, so it interoperates: */
+    EXAMPLE_REQUIRE(hex[64] == '\0' && proven_cstr_len(hex) == 64,
+                    "a SHA-256 fingerprint is 64 lowercase hex characters");
+
+    /* SHA-256 streams, for content you cannot hold in memory at once - the digest depends
+     * only on the bytes, never on how they were chunked. */
+    proven_sha256_t ctx;
+    proven_sha256_init(&ctx);
+    proven_sha256_update(&ctx, proven_mem_view_from_u8(PROVEN_LIT("the quick ")));
+    proven_sha256_update(&ctx, proven_mem_view_from_u8(PROVEN_LIT("brown fox")));
+    proven_byte_t streamed[PROVEN_SHA256_SIZE];
+    proven_sha256_final(&ctx, streamed);
+
+    bool same = true;
+    for (proven_size_t i = 0; i < PROVEN_SHA256_SIZE; ++i) {
+        if (streamed[i] != digest[i]) same = false;
+    }
+    EXAMPLE_REQUIRE(same, "two updates of the halves equal one hash of the whole");
+
+    return EXAMPLE_OK();
+}
+```
+
+## 7. Bytes to text: hex and Base64
+
+Once you can hash a thing (above) and draw a random token (`random.h`), you need to write those
+bytes somewhere that only holds text — a URL, an HTTP header, a log line, a JSON string. That is
+`encode.h`. No cryptography, no compression; the two encodings everything already agrees on,
+done without hidden allocation and without the two ways they are usually got wrong.
+
+| You want | Use | Alphabet |
+|---|---|---|
+| A digest or a few bytes a human reads | `proven_hex_encode` | lowercase hex, what `sha256sum` and `git` print |
+| Bytes in a URL, a cookie, a filename | `proven_base64url_encode` | `-` `_`, **no** padding — nothing to escape, no `=` to mangle |
+| Bytes in an HTTP header, MIME, JSON | `proven_base64_encode` | standard `+` `/`, `=`-padded |
+
+Two refusals are the point:
+
+- **A decoder validates its whole input before writing a byte.** Text from outside the program
+  is not guaranteed to be valid; a stray character, a bad length, bad padding, or embedded
+  whitespace is `PROVEN_ERR_INVALID_ENCODING` with nothing committed — not a read past the end,
+  and not a silently short result one byte into which the caller finds the corruption.
+  `proven_base64_decode` accepts **both** alphabets and padded-or-not, because a decoder that
+  only takes what it emits rejects half the Base64 in the world.
+- **The output size is a call, not a guess** — `proven_hex_encoded_size`,
+  `proven_base64_encoded_size`, and their decode counterparts. A buffer one byte too small is
+  `PROVEN_ERR_OUT_OF_BOUNDS` with nothing written, never a truncated prefix.
+
+It is pure computation — no allocation, no OS — and available freestanding.
+
+### Reference
+
+Every call takes the input, a caller-owned output buffer and its capacity, and an optional
+`written_out`. None of them allocate.
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_hex_encoded_size(n)` | The characters `proven_hex_encode` will write for `n` bytes: `n * 2`, no NUL. | `proven_size_t`. |
+| `proven_hex_decoded_size(n)` | The bytes `proven_hex_decode` will write for `n` characters: `n / 2`. | `proven_size_t`. |
+| `proven_hex_encode(data, out, cap, &w)` | Lowercase hex. | `PROVEN_OK`; `OUT_OF_BOUNDS` if `cap` is short (**nothing written**); `INVALID_ARG` for a NULL out or a `{NULL, >0}` view. |
+| `proven_hex_decode(text, out, cap, &w)` | Decode hex; upper and lower case both accepted. | `INVALID_ENCODING` for an odd length or any non-hex byte (**nothing committed**). |
+| `proven_base64_encoded_size(n)` | An upper bound for both Base64 forms: `4 * ceil(n/3)`. | `proven_size_t`. |
+| `proven_base64_decoded_size(n)` | An upper bound for **padded and unpadded** text: `3 * ceil(n/4)`. | `proven_size_t`. |
+| `proven_base64_encode(data, out, cap, &w)` | Standard alphabet (`+` `/`), `=`-padded. | as above. |
+| `proven_base64url_encode(data, out, cap, &w)` | URL-safe alphabet (`-` `_`), **no padding**. | as above. |
+| `proven_base64_decode(text, out, cap, &w)` | Decode. Accepts **both** alphabets, padded or not. | `INVALID_ENCODING` for a stray byte, a bad length, or bad padding. |
+
+`written_out` may be NULL. It is set to `0` on entry and on every error path, so it is never
+stale.
+
+### Cautions, and what goes wrong
+
+**Size the output with the size function, not by eye.** The encoders refuse a short buffer
+rather than truncating — which means the failure you get from a hand-computed size is an error
+you have to handle, not a silent corruption. That is the good outcome; the point is you will
+still have to handle it.
+
+Wrong — the classic off-by-one, and it now *fails* instead of overflowing:
+
+```text
+proven_byte_t out[16];                       /* wrong: 12 bytes of hex needs 24 chars */
+proven_hex_encode(twelve_bytes, out, sizeof out, &w);   /* OUT_OF_BOUNDS, nothing written */
+```
+
+Correct:
+
+```c
+proven_mem_view_t data = proven_mem_view_from_u8(PROVEN_LIT("twelve bytes"));
+proven_byte_t out[64];
+proven_size_t w = 0;
+if (proven_hex_encoded_size(data.size) <= sizeof out &&
+    proven_is_ok(proven_hex_encode(data, out, sizeof out, &w))) {
+    /* `w` characters of lowercase hex in `out` - not NUL-terminated */
+}
+```
+
+**Base64URL emits no padding, and the decoder accepts that.** `proven_base64_decoded_size`
+rounds *up* so it is a correct upper bound for unpadded text too. Do not "improve" on it with
+`3 * (n / 4)` — that floors away the 1-2 bytes an unpadded tail carries, and you will fail to
+decode this library's own URL-safe output. (It did exactly that, once, and an audit caught it.)
+
+```text
+proven_size_t cap = 3 * (text_len / 4);   /* wrong: 0 for "QQ", which decodes to 1 byte */
+```
+
+**Never hand-roll the decoder.** The whole reason these exist is that a decode reads text from
+outside your program, and the two-line loop everyone writes trusts it.
+
+Wrong — reads past the end on odd input, and accepts junk as data:
+
+```text
+for (size_t i = 0; i < len; i += 2)               /* wrong: no length check */
+    out[i/2] = (hexval(text[i]) << 4) | hexval(text[i+1]);   /* wrong: no validation */
+```
+
+`proven_hex_decode` validates the **whole** input before writing a single byte, so a stray
+character near the end cannot leave you holding a half-decoded prefix you believe is complete.
+
+**Whitespace is not skipped, on purpose.** A pasted, line-wrapped Base64 blob is
+`INVALID_ENCODING`, not a silently different result. If you *want* to accept wrapped input,
+strip the whitespace yourself — deliberately, where you can see it.
+
+Compiled and run by the test suite:
+
+<!-- example: manual/examples/ex_04_encode.c -->
+```c
+/*
+ * Bytes to text, by use case. The rule is the same one hashing follows: one function per job,
+ * and the danger is picking the wrong job. Hex for something a human reads; Base64URL for
+ * something that goes in a URL; standard Base64 for something that goes on the wire.
+ */
+
+int main(void) {
+    proven_mem_view_t data = proven_mem_view_from_u8(PROVEN_LIT("the quick brown fox"));
+
+    /* Job 1: a digest a human will read or paste - hex, the spelling sha256sum and git use. */
+    proven_byte_t hex[64];   /* proven_hex_encoded_size(19) = 38 */
+    proven_size_t hn = 0;
+    EXAMPLE_REQUIRE(proven_is_ok(proven_hex_encode(data, hex, sizeof hex, &hn)),
+                    "hex encode into a buffer sized by proven_hex_encoded_size");
+    EXAMPLE_REQUIRE(hn == proven_hex_encoded_size(data.size), "two hex chars per byte");
+
+    /* Job 2: a token that goes in a URL - Base64URL, so nothing needs percent-escaping and
+     * there is no '=' padding for a parser to trip over. */
+    proven_byte_t token_bytes[16] = { 0 };   /* in real code: proven_random_bytes(token_bytes, 16) */
+    proven_byte_t url[32];
+    proven_size_t un = 0;
+    EXAMPLE_REQUIRE(proven_is_ok(proven_base64url_encode(
+                        (proven_mem_view_t){ token_bytes, sizeof token_bytes }, url, sizeof url, &un)),
+                    "base64url encode a token");
+    /* No '=' in a URL-safe token. */
+    bool has_pad = false;
+    for (proven_size_t i = 0; i < un; ++i) if (url[i] == '=') has_pad = true;
+    EXAMPLE_REQUIRE(!has_pad, "the URL form emits no padding");
+
+    /* Job 3: bytes on the wire - standard Base64, the +/= alphabet HTTP and MIME expect. */
+    proven_byte_t b64[64];
+    proven_size_t bn = 0;
+    EXAMPLE_REQUIRE(proven_is_ok(proven_base64_encode(data, b64, sizeof b64, &bn)),
+                    "standard base64 encode");
+
+    /* And it round-trips: decode gives back exactly the bytes. A decoder that accepts both
+     * alphabets and padded-or-not is deliberate - real input comes in every shape. */
+    proven_byte_t back[32];
+    proven_size_t dn = 0;
+    EXAMPLE_REQUIRE(proven_is_ok(proven_base64_decode(
+                        (proven_mem_view_t){ b64, bn }, back, sizeof back, &dn)),
+                    "decode the base64 back");
+    EXAMPLE_REQUIRE(dn == data.size && proven_memcmp(back, data.ptr, dn) == 0,
+                    "what comes back is exactly what went in");
+
+    /* The point of a validating decoder: junk is refused, not guessed. A caller who fed this
+     * to a two-line loop would read past the end or get a silently short result. */
+    proven_err_t bad = proven_base64_decode(
+        proven_mem_view_from_u8(PROVEN_LIT("not valid base64!!")), back, sizeof back, &dn);
+    EXAMPLE_REQUIRE(bad == PROVEN_ERR_INVALID_ENCODING,
+                    "a stray character is INVALID_ENCODING, with nothing committed");
+
+    /* And a buffer one byte too small is refused, never truncated. */
+    proven_byte_t tiny[4];
+    EXAMPLE_REQUIRE(proven_hex_encode(data, tiny, sizeof tiny, &hn) == PROVEN_ERR_OUT_OF_BOUNDS,
+                    "a too-small output buffer is OUT_OF_BOUNDS, not a truncated prefix");
+
+    (void)hex; (void)url; (void)un;
+    return EXAMPLE_OK();
+}
+```
+
+## 8. Examples and misuse cases
 
 ### Pointers into arrays can become stale
 
 Wrong:
 
-```c
+```text
 int *p = PROVEN_ARRAY_GET_MUT(&nums, int, 0);
 PROVEN_ARRAY_PUSH(&nums, int, 30);
 *p = 99; /* wrong: push may have reallocated the array */
@@ -418,16 +783,29 @@ PROVEN_ARRAY_PUSH(&nums, int, 30);
 Correct:
 
 ```c
-PROVEN_ARRAY_PUSH(&nums, int, 30);
+proven_result_array_t r = PROVEN_ARRAY_INIT(alloc, int, 2);
+if (!proven_is_ok(r.err)) {
+    return;
+}
+proven_array_t nums = r.value;
+(void)PROVEN_ARRAY_PUSH(&nums, int, 10);
+
+/* Push first, then take the pointer. A pointer fetched before a push may point
+ * at a block the array has already reallocated away. */
+(void)PROVEN_ARRAY_PUSH(&nums, int, 30);
 int *p = PROVEN_ARRAY_GET_MUT(&nums, int, 0);
-if (p) *p = 99;
+if (p) {
+    *p = 99;
+}
+
+PROVEN_ARRAY_DESTROY(&nums);
 ```
 
 ### One intrusive node belongs to one list at a time
 
 Wrong:
 
-```c
+```text
 proven_list_push_back(&list_a, &item.link);
 proven_list_push_back(&list_b, &item.link); /* wrong */
 ```
@@ -439,11 +817,25 @@ Use one embedded node per membership.
 Correct:
 
 ```c
+typedef struct Item {
+    int value;
+    proven_list_node_t link;
+} Item;
+
+proven_list_t list;
+proven_list_init(&list);
+Item a = { .value = 1 };
+Item b = { .value = 2 };
+proven_list_push_back(&list, &a.link);
+proven_list_push_back(&list, &b.link);
+
+/* The SAFE form reads `it->next` into `next` before the body runs, so removing
+ * `it` (which nulls its links) cannot strand the loop. */
 proven_list_node_t *it = NULL;
 proven_list_node_t *next = NULL;
 PROVEN_LIST_FOR_EACH_SAFE(it, next, &list) {
     Item *item = PROVEN_LIST_ENTRY(it, Item, link);
-    if (should_remove(item)) {
+    if (item->value % 2 == 0) {
         proven_list_remove(it);
     }
 }
@@ -453,24 +845,39 @@ PROVEN_LIST_FOR_EACH_SAFE(it, next, &list) {
 
 Wrong:
 
-```c
+```text
 PROVEN_RING_PUSH(&q, int, value); /* wrong if you ignore full-ring errors */
 ```
 
 Correct:
 
 ```c
-proven_err_t e = PROVEN_RING_PUSH(&q, int, value);
-if (e == PROVEN_ERR_OUT_OF_BOUNDS) {
-    handle_full_queue();
+proven_result_ring_t r = PROVEN_RING_INIT(alloc, int, 2);
+if (!proven_is_ok(r.err)) {
+    return;
 }
+proven_ring_t q = r.value;
+
+int value = 7;
+for (int i = 0; i < 3; ++i) {
+    proven_err_t e = PROVEN_RING_PUSH(&q, int, value);
+    if (e == PROVEN_ERR_OUT_OF_BOUNDS) {
+        /* The ring is full. Drop the item, or drain one first - but decide. */
+        int drop = 0;
+        (void)PROVEN_RING_POP(&q, int, &drop);
+        e = PROVEN_RING_PUSH(&q, int, value);
+    }
+    (void)e;
+}
+
+PROVEN_RING_DESTROY(&q);
 ```
 
 ### Borrowed map keys must outlive entries
 
 Wrong:
 
-```c
+```text
 proven_u8str_t key = make_key(alloc);
 PROVEN_MAP_SET_U8_BORROWED(&m, proven_u8str_as_view(&key), int, 1);
 proven_u8str_destroy(alloc, &key);
@@ -487,11 +894,31 @@ Correct options:
 
 If `element` points into map storage and insertion can rehash, use `proven_map_set_with_scratch()` or the scratch macros.
 
+```c
+proven_result_map_t r = PROVEN_MAP_INIT_INT(alloc, int, 4);
+if (!proven_is_ok(r.err)) {
+    return;
+}
+proven_map_t m = r.value;
+(void)PROVEN_MAP_SET_INT(&m, 1, int, 42);
+
+/* `src` points into the map's own bucket array. Passing it straight to
+ * proven_map_set would be an alias: a rehash triggered by that same insert can
+ * free the bytes it is still reading from. The scratch form captures the source
+ * bytes into a temporary from `scratch` first, so the insert is alias-safe. */
+const int *src = PROVEN_MAP_GET_INT(&m, int, 1);
+if (src) {
+    (void)proven_map_set_with_scratch(&m, (proven_map_key_t){ .id = 2 }, src, scratch);
+}
+
+PROVEN_MAP_DESTROY(&m);
+```
+
 ### Binary search requires sorted input
 
 Wrong:
 
-```c
+```text
 int *hit = proven_array_binary_search(&nums, &key, cmp_int);
 /* wrong if nums was not sorted by cmp_int */
 ```

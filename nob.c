@@ -111,6 +111,12 @@ static bool link_executable_tmp(const char *compiler, const char *src, Nob_File_
     nob_cmd_append(&cmd, src);
     for (size_t i = 0; i < obj_files.count; ++i) nob_cmd_append(&cmd, obj_files.items[i]);
     if (extra_ldflags) nob_cmd_append(&cmd, extra_ldflags);
+#if !defined(_WIN32) && !defined(_WIN64)
+    /* -ldl for the tests that interpose libc functions with dlsym(RTLD_NEXT, ...) to
+     * inject faults an ordinary run cannot produce - a readdir() that fails mid-directory,
+     * an opendir() that swaps a directory for a symlink. Harmless where unused. */
+    if (strcmp(mode, "freestanding") != 0) nob_cmd_append(&cmd, "-ldl");
+#endif
     nob_cmd_append(&cmd, "-o", exec_tmp);
     
     if (out_hash) *out_hash = hash_cmd(&cmd);
@@ -320,8 +326,10 @@ static void print_proven_build_plan(const char *build_mode, const char *compiler
 static bool cross_source_is_freestanding(const char *src) {
     if (strcmp(src, "src/proven/u16str.c") == 0) return false;
     if (strcmp(src, "src/proven/fs.c") == 0) return false;
+    if (strcmp(src, "src/proven/stream.c") == 0) return false;
     if (strcmp(src, "src/proven/sysio.c") == 0) return false;
     if (strcmp(src, "src/proven/mmap.c") == 0) return false;
+    if (strcmp(src, "platform/proven_sys_random.c") == 0) return false;
     if (strcmp(src, "src/proven/job.c") == 0) return false;
     if (strcmp(src, "platform/proven_sys_fs.c") == 0) return false;
     if (strcmp(src, "platform/proven_sys_thread.c") == 0) return false;
@@ -394,6 +402,117 @@ static bool cross_target_toolchain_usable(const char *build_root, const Proven_C
         nob_log(NOB_WARNING, "Skipping %s: compiler exists but target flags/sysroot are not usable", target->name);
     }
     return ok;
+}
+
+
+// -------------------------------------------------------------
+// Manual code-block check
+// -------------------------------------------------------------
+//
+// Every ```c block in the manual must be code a compiler has actually seen.
+// Blocks quoted from manual/examples/ are compiled and RUN as programs; the
+// remaining inline blocks are fragments, and this check wraps each one in a
+// function body and syntax-checks it.
+//
+// Anything that is not runnable code - a signature listing, a struct listing,
+// pseudo-code, a deliberate counter-example - belongs in a ```text fence. That
+// distinction is the whole point: before it existed, 186 of the manual's 190
+// code blocks could not be compiled, so nothing could tell anyone when they
+// stopped being true.
+static bool check_manual_code_blocks(const char *compiler, const char *standard_flag, const char *build_dir)
+{
+    static const char *chapters[] = {
+        "manual/manual.md",
+        "manual/manual-01-foundation.md",
+        "manual/manual-02-allocation.md",
+        "manual/manual-03-strings-text.md",
+        "manual/manual-04-containers-algorithms.md",
+        "manual/manual-05-hosted-services.md",
+        "manual/manual-06-execution-and-platform.md",
+        "manual/manual-07-alias-xcv-index.md",
+        "manual/manual-08-fmt-scan.md",
+        "manual/manual-freestanding.md",
+    };
+
+    bool all_ok = true;
+    nob_log(NOB_INFO, "[PROVEN][BUILD][PHASE] manual code-block check start chapter_count=%zu", NOB_ARRAY_LEN(chapters));
+
+    for (size_t c = 0; c < NOB_ARRAY_LEN(chapters); ++c) {
+        Nob_String_Builder md = {0};
+        if (!nob_read_entire_file(chapters[c], &md)) {
+            nob_log(NOB_ERROR, "[PROVEN][DOCS][FAIL] path=%s stage=read", chapters[c]);
+            nob_log(NOB_ERROR, "[PROVEN][DOCS][FAIL_HINT] The manual chapter list in nob.c names a file that does not exist.");
+            all_ok = false;
+            continue;
+        }
+        nob_sb_append_null(&md);
+
+        char out_path[768];
+        char base[128];
+        const char *slash = strrchr(chapters[c], '/');
+        snprintf(base, sizeof(base), "%s", slash ? slash + 1 : chapters[c]);
+        char *dot = strrchr(base, '.');
+        if (dot) *dot = '\0';
+        if (!format_path(out_path, sizeof(out_path), "%s/manual/%s_blocks.c", build_dir, base)) {
+            nob_sb_free(md);
+            all_ok = false;
+            continue;
+        }
+
+        FILE *out = fopen(out_path, "w");
+        if (!out) {
+            nob_log(NOB_ERROR, "[PROVEN][DOCS][FAIL] path=%s stage=open-scratch", out_path);
+            nob_sb_free(md);
+            all_ok = false;
+            continue;
+        }
+        fputs("#include \"proven.h\"\n#include \"proven/alias_xcv.h\"\n", out);
+
+        size_t blocks = 0;
+        const char *p = md.items;
+        while ((p = strstr(p, "```c\n")) != NULL) {
+            const char *body = p + 5;
+            const char *end = strstr(body, "\n```");
+            if (!end) break;
+
+            /* Blocks quoted from manual/examples/ are whole programs: they are
+             * compiled and run elsewhere, so skip them here. The marker sits
+             * immediately above the fence. */
+            bool is_example = false;
+            const char *look = p;
+            size_t back = 0;
+            while (look > md.items && back < 200) { --look; ++back; if (*look == '\n' && back > 1) break; }
+            if (strncmp(look, "\n<!-- example:", 14) == 0 || strncmp(look, "<!-- example:", 13) == 0) is_example = true;
+
+            if (!is_example) {
+                fprintf(out, "static void blk_%zu(proven_allocator_t alloc, proven_allocator_t scratch) {\n(void)alloc; (void)scratch;\n", blocks);
+                fwrite(body, 1, (size_t)(end - body), out);
+                fputs("\n}\n", out);
+                ++blocks;
+            }
+            p = end + 4;
+        }
+        fclose(out);
+        nob_sb_free(md);
+
+        Nob_Cmd cmd = {0};
+        nob_cmd_append(&cmd, compiler);
+        if (standard_flag) nob_cmd_append(&cmd, standard_flag);
+        nob_cmd_append(&cmd, "-Wall", "-Wextra", "-D_DEFAULT_SOURCE", "-D_POSIX_C_SOURCE=200809L",
+                       "-I./include", "-I./platform", "-fsyntax-only", out_path);
+        bool ok = nob_cmd_run_sync(cmd);
+        nob_cmd_free(cmd);
+
+        if (ok) {
+            nob_log(NOB_INFO, "[PROVEN][DOCS][OK] path=%s blocks=%zu", chapters[c], blocks);
+        } else {
+            nob_log(NOB_ERROR, "[PROVEN][DOCS][FAIL] path=%s stage=compile-blocks blocks=%zu", chapters[c], blocks);
+            nob_log(NOB_ERROR, "[PROVEN][DOCS][FAIL_HINT] A ```c block in this chapter does not compile. Either fix the code, or - if it is a signature listing, a struct listing, pseudo-code, or a deliberate counter-example - fence it as ```text. The scratch translation unit is at %s; each blk_N corresponds to the Nth non-example ```c block in the chapter.", out_path);
+            all_ok = false;
+        }
+    }
+
+    return all_ok;
 }
 
 static bool run_cross_compile_matrix(const char *build_root, const char *sysroot,
@@ -766,12 +885,12 @@ int main(int argc, char **argv)
     }
 
     const char *srcs[] = {
-        "src/proven/memory.c", "src/proven/arena.c", "src/proven/pool.c", "src/proven/buffer.c",
+        "src/proven/stream.c", "src/proven/memory.c", "src/proven/arena.c", "src/proven/pool.c", "src/proven/buffer.c",
         "src/proven/heap.c", "src/proven/u8str.c", "src/proven/u16str.c", "src/proven/array.c",
-        "src/proven/ring.c", "src/proven/map.c", "src/proven/algorithm.c", "src/proven/fs.c",
+        "src/proven/ring.c", "src/proven/map.c", "src/proven/algorithm.c", "src/proven/hash.c", "src/proven/encode.c", "src/proven/random.c", "src/proven/fs.c",
         "src/proven/time.c", "src/proven/fmt.c", "src/proven/mmap.c", "src/proven/sysio.c",
         "src/proven/job.c", "src/proven/scan.c", "src/proven/float_decimal.c", "src/proven/float_parse.c", "src/proven/float_format.c", "src/proven/panic.c", "platform/proven_sys_mem.c",
-        "platform/proven_sys_fs.c", "platform/proven_sys_time.c", "platform/proven_sys_env.c",
+        "platform/proven_sys_fs.c", "platform/proven_sys_time.c", "platform/proven_sys_env.c", "platform/proven_sys_random.c",
         "platform/proven_sys_thread.c", "platform/proven_sys_io.c", "platform/proven_sys_math.c"
     };
 
@@ -792,6 +911,7 @@ int main(int argc, char **argv)
         { "tests/test_unit_memory_views", "memory byte views", "Verify immutable and mutable byte view construction keeps pointer, size, and aliasing contracts explicit.", "Inspect memory view constructors and callers that pass borrowed storage; size or pointer mismatches usually point to a broken view initialization contract." },
         { "tests/test_unit_foundation", "foundation primitives", "Verify checked arithmetic, result values, and basic public type assumptions used by the rest of the library.", "Check include/proven/types.h, include/proven/error.h, and compiler feature macros; a failure here can invalidate many higher-level tests." },
         { "tests/test_unit_memory_slicing", "memory slicing", "Verify owned memory can be exposed as read-only or mutable views and sliced without losing pointer/size accuracy.", "Review src/proven/memory.c and unchecked slice preconditions; failures often mean offset arithmetic or view aliasing changed." },
+        { "tests/test_unit_encode", "hex and Base64 by use case", "Verify hex/Base64/Base64URL encode to RFC 4648's own vectors, that decode is the exact inverse for both alphabets and padded-or-not, that malformed input (stray char, bad length, bad padding, embedded whitespace) is INVALID_ENCODING with nothing committed, that an undersized output buffer is refused rather than truncated, and that all 256 byte values round-trip.", "Inspect src/proven/encode.c. An encoding mismatch is a wrong alphabet or padding; a decoder that accepts junk is the memory bug the module exists to prevent. Vectors verified against Python base64/binascii." },
         { "tests/test_unit_error_results", "error and result primitives", "Verify error helpers and result structs carry explicit success/failure state without hidden control flow.", "Inspect error enum values and PROVEN_IS_OK/proven_is_ok semantics before debugging downstream callers." },
         { "tests/test_unit_arena", "arena allocator", "Verify arena alignment, bump allocation, exhaustion behavior, reset, and no-op free semantics.", "Check proven_arena_init, alignment rounding, and capacity checks; sanitizer failures usually indicate out-of-bounds arena math." },
         { "tests/test_unit_buffer_u8str_basics", "buffer and U8 string basics", "Verify fixed-capacity buffers, literal views, U8 string creation, append, C-string termination, and bounds defense.", "Inspect buffer/u8str capacity accounting and NUL termination; failures often come from off-by-one capacity rules." },
@@ -802,6 +922,7 @@ int main(int argc, char **argv)
         { "tests/test_unit_mem_copy", "bounded memory copy", "Verify proven_mem_copy copies within capacity, rejects overflow without writing, treats a zero-size source as a no-op, and rejects null pointers.", "Inspect proven_mem_copy in src/proven/memory.c if a copy overflows, writes on rejection, or mishandles empty/null inputs." },
         { "tests/test_unit_array", "growable array", "Verify array initialization, validation, push/pop, growth, migration, get/set, and capacity invariants.", "Review element-size arithmetic and reallocation paths; stale element pointers after growth are caller misuse and should not be preserved." },
         { "tests/test_unit_list", "intrusive list", "Verify sentinel initialization, append, reverse iteration, safe removal, and container-of access.", "Check list node linkage and removal ordering; failures usually indicate next/prev corruption or misuse of detached nodes." },
+        { "tests/test_unit_public_surface_gaps", "the public functions nothing had ever called", "Verify the shipped, documented public API that no test exercised: proven_fs_symlink (creation, resolution, stat-follows, refusal to clobber), the bounds-checked mem slices (including offset+size overflow), the formatter's caller-supplied-scratch path, the mutable map/array lookups (a write through get_mut must be visible), linear_search on an UNSORTED array, proven_u16str_create_from_view (sealed at the right unit index), and the standard-stream bridges that shipped with only their siblings covered.", "Found by diffing every proven_* symbol in include/proven against every one named in tests/ or manual/examples/. Untested public API is where bugs live, because nothing has ever disagreed with it." },
         { "tests/test_unit_ring", "bounded ring", "Verify FIFO order, wraparound, full/empty boundaries, and slot reuse in the fixed-capacity ring buffer.", "Inspect head/tail/len updates and modulo arithmetic; failures often come from off-by-one full/empty handling." },
         { "tests/test_unit_map", "hash map", "Verify open-addressing insertion, lookup, update, deletion, tombstones, and growth behavior.", "Check hash/equality callbacks, tombstone reuse, and rehash migration; failures can also mean borrowed key lifetimes are invalid." },
         { "tests/test_unit_map_owned_key", "map owned-key storage", "Verify owned U8 keys are duplicated into map storage, survive source-buffer mutation, and release their copied bytes on remove and destroy.", "Inspect the owned-key duplication, cleanup, and rehash migration paths if a key is lost, leaks, or follows a mutated source buffer." },
@@ -811,10 +932,12 @@ int main(int argc, char **argv)
         { "tests/test_unit_fs_basic", "basic filesystem", "Verify file open/write/read/read-all/size and absolute path classification across hosted platforms.", "Check PAL filesystem open flags, read/write byte counts, cleanup of temporary files, and Windows absolute path rules." },
         { "tests/test_unit_fs_advanced", "advanced filesystem", "Verify directory creation, nested file creation, rename, directory listing, and recursive cleanup behavior.", "Inspect path joining, directory iterator ownership, and platform-specific directory APIs when entries are missing." },
         { "tests/test_unit_fs_metadata_perms", "filesystem metadata and permissions", "Verify metadata queries and permission-related behavior remain explicit and portable enough for hosted targets.", "Check platform stat wrappers, permission assumptions, and test directory cleanup; OS policy differences should be isolated in PAL code." },
+        { "tests/test_unit_fs_position_and_sync", "file position, positional I/O, and durability", "Verify seek/tell/truncate/pread/pwrite/sync: pread and pwrite do not move the file position, truncate does not either, and a thing that cannot seek reports PROVEN_ERR_UNSUPPORTED rather than PROVEN_ERR_IO.", "Inspect proven_fs_seek and friends in src/proven/fs.c and the libc calls behind them in platform/proven_sys_io.c." },
         { "tests/test_unit_time_fmt", "time and formatting integration", "Verify time retrieval/conversion and formatter integration for datetime and structured arguments.", "Inspect platform time conversion, formatter datetime branch, and locale-independent assumptions." },
         { "tests/test_unit_mmap", "memory mapped files", "Verify hosted mmap open/map/view/unmap/close behavior and byte visibility over mapped file ranges.", "Check offset alignment, file-size bounds, and PAL map/unmap ownership; failures often show platform handle lifetime issues." },
         { "tests/test_unit_u16str", "U16 strings", "Verify U16 string/code-unit creation, append, view, and optional build behavior where char16_t is available.", "Inspect PROVEN_NO_U16STR guards and UTF-16 code-unit capacity accounting; do not assume one code unit is one Unicode scalar." },
         { "tests/test_unit_sysio_env", "sysio and environment", "Verify standard stream wrappers, formatted console output, environment lookup, and long environment-key handling.", "Check sysio wrappers, env C-string conversion, allocator use for long keys/values, and PAL UTF conversion on Windows." },
+        { "tests/test_unit_stream", "writers and readers", "Verify one piece of code can write into a string, a fixed buffer and a file through the same interface; that a full buffer refuses rather than truncates; that a buffered writer loses nothing across auto-flushes; and that the line reader returns the final unterminated line but refuses a line too long for its buffer.", "Inspect src/proven/stream.c. Buffering uses caller-supplied memory: no hidden global state, no allocation the caller did not ask for." },
         { "tests/test_unit_coro", "stackless coroutine", "Verify coroutine macros preserve state across yields and resume to completion with caller-managed storage.", "Inspect coroutine state labels and re-entry rules; failures usually mean state was reset or a yield point was skipped." },
         { "tests/test_unit_job", "job system", "Verify worker creation, concurrent job dispatch, shutdown synchronization, and exactly-once execution of submitted jobs.", "Use TSAN for deeper diagnosis; check admission state, queue sequence counters, atomics, and worker wake/shutdown ordering." },
         { "tests/test_stress_job_concurrency", "job queue stress", "Verify the job queue tolerates a denser concurrent producer pattern and still executes each submitted job exactly once.", "Run this under TSAN first; inspect queue admission, claim, and shutdown ordering if a slot count drifts or a producer stalls." },
@@ -841,11 +964,17 @@ int main(int argc, char **argv)
         { "tests/test_unit_float_parse_api", "float parse API", "Verify the public ASCII float parser and strtod-like wrapper expose consumed-length, endptr, and range signaling over the shared exact backend.", "Inspect include/proven/float_parse.h, src/proven/float_parse.c, and src/proven/float_decimal.c if the public parser seam or wrapper contract drifts." },
         { "tests/test_unit_float_rfc_0001_cases", "RFC-0001 parse audit", "Verify the decimal-to-binary64 rewrite still satisfies the explicit named cases from docs/proposals/rfc-0001.", "Inspect docs/proposals/rfc-0001, include/proven/float_parse.h, src/proven/float_parse.c, and src/proven/float_decimal.c if a named RFC audit case fails." },
         { "tests/test_unit_fmt_fastpath", "formatter truncation comparison", "Compare truncating fixed-capacity formatting against the growable reference path for exact-fit, truncation, malformed format, and excess-argument cases.", "Inspect truncation accounting and the fixed-capacity write path if the result bytes or counts drift." },
+        { "tests/test_unit_fmt_spec", "format spec grammar", "Verify precision, bases, case, alternate form, sign, char and bool - and that a spec the argument cannot honour is refused rather than ignored.", "Inspect the spec parser and render_integer / the float case in src/proven/fmt.c." },
         { "tests/test_unit_scan_f64_accuracy", "float scanner accuracy", "Verify float scanning preserves exact small values, signed zero, round-trip style decimals, exponent edges, and cursor rollback on malformed input.", "Inspect proven_scan_f64 decimal accumulation, exponent scaling, and failure-atomic cursor restore if any exact-value case drifts." },
         { "tests/test_unit_scan_f64_bounds", "float scanner boundary behavior", "Verify float scanning treats underflow as signed zero, reports overflow deterministically, and preserves cursor rollback at the true boundary cases.", "Inspect proven_scan_f64 exponent-to-value handling and final finite checks if a boundary token returns the wrong error or wrong sign." },
         { "tests/test_contract_scan_f64_overflow", "float scanner overflow", "Verify extremely large floating-point input reports PROVEN_ERR_OVERFLOW instead of silently accepting infinity.", "Inspect proven_scan_f64 exponent/range checks and math PAL behavior if this fails." },
         { "tests/test_portability_nob_std_probe", "build driver standard probe", "Verify nob probes -std=c23 first and falls back to -std=c2x when the compiler rejects c23.", "Inspect nob.c standard-flag selection and toolchain probing if the fallback does not trigger." },
         { "tests/test_contract_sysio_scan_nonseekable", "sysio scan non-seekable rejection", "Verify one-chunk sysio scanning rejects pipes/stdin-like inputs before consuming bytes.", "Inspect the seekability probe in proven_sysio_scan_chunk_impl if a non-seekable handle is accepted or partially consumed." },
+        { "tests/test_regression_rng_unseeded", "an unseeded or failed generator is inert", "Verify proven_chacha_rng_next(NULL) is 0 rather than the stack, that a never-seeded generator yields zeros and an invalid trait rather than its own uninitialised block, and that a generator whose seeding FAILED stays inert past the first block - where a zeroed ChaCha state produces a fixed, publicly derivable keystream.", "Inspect the seeded marker in proven_chacha_rng_t. `used` alone cannot encode usability: `used == 0` is exactly what a zero-initialised struct holds." },
+        { "tests/test_regression_base64_decoded_size", "Base64 decode sizing round-trips its own output, and NULL out is refused", "Verify proven_base64_decoded_size is an upper bound for UNPADDED input too (so the library can decode its own base64url output into a decoded_size()-sized buffer), and that proven_base64_decode / proven_hex_decode refuse a {out=NULL, out_cap>0} argument with INVALID_ARG rather than storing through NULL, matching the encoders.", "Inspect proven_base64_decoded_size ((n+3)/4*3, not (n/4)*3) and the NULL-out guards in src/proven/encode.c. Found by the standing audit; the unit test missed the sizing by using one oversized buffer." },
+        { "tests/test_regression_read_line_peek_eof", "a stream byte stranded after a too-long line is not lost", "Verify that after proven_reader_read_line reports OUT_OF_BOUNDS (stashing one lookahead byte), a following raw proven_reader_read reaches that byte instead of returning a spurious EOF - so a read-to-EOF loop does not silently lose the byte peeked past the over-long line.", "Inspect reader_buffered_fill in src/proven/stream.c: it must report whether it made the buffer non-empty (a re-inserted peek byte is progress), not just whether the source handed over new bytes this call. `return r.value > 0` alone stranded the peek at EOF." },
+        { "tests/test_regression_read_line_exact_fit", "a line that fits the buffer is a line, not an error", "Verify a line exactly the size of the buffer (terminated by the next byte) is returned, that a file whose entire unterminated contents fill the buffer is returned rather than lost, that a CRLF split at the boundary yields the line without the \\r, and that a line genuinely longer than the buffer is still OUT_OF_BOUNDS rather than truncated.", "Inspect the buffer-full branch of proven_reader_read_line in src/proven/stream.c: it must look at one more byte before answering 'too long'. A 4-byte file read through a 4-byte buffer used to be unreachable." },
+        { "tests/test_unit_sysio_streams", "the standard streams are writers and readers", "Verify stdin can be read a line at a time (the operation that had no route), that a buffered stdout holds its bytes until proven_writer_flush and then emits them in order (the honest meaning flush was waiting for, B-004), that an unbuffered standard-stream writer is out immediately, and that an over-long line is OUT_OF_BOUNDS rather than truncated.", "Inspect the standard-stream bridge in src/proven/sysio.c. The test dup2s pipes over the real fd 0 and fd 1, so a failure is in the streams themselves, not a stand-in." },
         { "tests/test_unit_sysio_scanner_init", "sysio scanner init allocator validation", "Verify buffered scanner initialization rejects partial allocators and leaves the scanner zero-safe on failure.", "Inspect proven_sysio_scanner_init if a partial allocator is accepted, called, or leaves non-zero state behind." },
         { "tests/test_contract_sysio_scan_truncation", "sysio scan truncation", "Verify one-chunk scanning rejects inputs that exceed the fixed chunk and keeps the file position reusable after failure.", "Inspect proven_sysio_scan_chunk_impl truncation detection and cursor rewind if a long input is accepted or consumed." },
         { "tests/test_unit_sysio_scanner_boundary", "sysio scanner boundary refill", "Verify buffered sysio scanning resumes across a chunk boundary, refills as needed, and only reports EOF after the final token is consumed.", "Inspect proven_sysio_scanner_scan_impl staging, refill handling, and EOF transition behavior when a token reaches the end of the buffer." },
@@ -859,23 +988,56 @@ int main(int argc, char **argv)
         { "tests/test_regression_scanner_rollback", "scanner rollback after a failed scan", "Verify a scan that fails on an oversized token restores the stream exactly, dropping no byte and duplicating none.", "Inspect scanner_fill compaction and the rollback in proven_sysio_scanner_scan_impl; a snapshot taken before compaction must be reconciled with how far the buffer moved." },
         { "tests/test_regression_v26_07", "v26.07 regressions", "Protect the fixed u8str NUL-seal (reserve and zero-output fmt growth), signed datetime-year formatting, and pool init capacity-claim defects.", "Read the failing section name; each maps to one area (u8str.c reserve, fmt.c growth and PROVEN_ARG_DATETIME, pool.c init ordering)." },
         { "tests/test_regression_sort_duplicates", "sort on duplicate keys", "Verify proven_array_sort stays sub-quadratic on all-equal, few-distinct, and degenerate orderings, and moves wide elements intact.", "Inspect the partition in src/proven/algorithm.c: a two-way partition that sends elements equal to the pivot to one side is quadratic on duplicates. The comparison-count bounds, not wall-clock time, are what this test measures." },
+        { "tests/test_unit_fmt_scientific", "the {:e} scientific float form", "Verify {:e} renders always-scientific notation (mantissa, default six fractional digits, signed two-digit-minimum exponent, half-to-even rounding) digit-for-digit like printf %e, that {:.Ne} honours a chosen precision, that it forces scientific where {:f}/{:g} would not, and that {:e} on a non-float is refused.", "Inspect the {:e} branch in src/proven/fmt.c and PROVEN_FLOAT_FORMAT_MODE_SCIENTIFIC in float_format.c. Every expected value is exactly printf %e." },
+        { "tests/test_unit_fmt_custom", "formatting a user-defined type", "Verify PROVEN_ARG_OF renders a type the library has never heard of through a caller-supplied function, that width/fill/alignment apply to the rendered result, that a spec the library cannot interpret for that type is refused, that the renderer's own error reaches the caller, and that a non-deterministic renderer is caught instead of silently breaking an aligned column.", "Inspect render_custom and the counting/emitting sinks in src/proven/fmt.c. The renderer runs twice - once to measure, once to emit - which is what lets alignment work without allocating." },
+        { "tests/test_contract_fmt_atomic", "the fixed-capacity format is atomic on failure", "Verify a failed fixed-capacity format leaves the string byte-for-byte as it was - after an overflow, after a format error discovered halfway through the output, and after an argument-count error - and that it still reports how many bytes it needed.", "Inspect the single-pass branch of proven_u8str_fmt_internal in src/proven/fmt.c. It writes as it goes now, so atomicity rests on the rollback restoring internal.len and resealing the NUL." },
+        { "tests/test_regression_scanner_float_split", "a float split across the scanner buffer", "Verify a float whose exponent, sign, or mantissa lands on the buffered scanner's refill boundary still scans to its exact value (not a mantissa-only truncation, not a dropped sign that desyncs the stream), across every buffer size, and that genuine garbage is still an error rather than an endless refill.", "Inspect proven_scan_f64 in src/proven/scan.c: it must flag needs_more both when a valid float might still grow and when a FAILED parse left only a float prefix. Found by a fmt->file->scanner->float round-trip." },
+        { "tests/test_regression_time_fmt_neg_year", "time formatting: u8 and u16 agree on zero-filled negative years", "Verify proven_time_u8_fmt and proven_time_u16_fmt render the same string for a zero-filled negative year - {year:0>4} of -44 is \"-044\" in both, with the sign counted toward the field width like printf %0Nd - and that positive years still agree.", "Inspect proven_time_u16_fmt in src/proven/time.c: it delegates to the u8 path and widens, so the sign counts toward the pad width. The old hand-rolled u16 path padded to full width THEN prepended the sign, one column wider than the fmt.h-based u8 path." },
+        { "tests/test_unit_time_fmt_u16_parity", "time formatting: u16 matches u8 across the whole fmt.h spec grammar", "Verify proven_time_u16_fmt produces the same text as proven_time_u8_fmt (widened to code units) for every field and every fill/align/width spec - right-align, centre, left-align, custom fill - on numeric AND named fields, plus literals and escaping, so no spec is silently dropped.", "Inspect proven_time_u16_fmt in src/proven/time.c: it renders through the u8 path (which delegates each field to the fmt.h spec engine) and widens the result, rather than hand-rolling a u16 parser that recognised only :0>N." },
+        { "tests/test_regression_scanner_short_read", "the scanner over a pipe: a short read is not an end of input", "Verify a token split across two pipe writes scans whole rather than being committed truncated, that the rest of the stream stays readable, and that a failed read is PROVEN_ERR_IO rather than a clean end of input.", "Inspect scanner_fill in src/proven/sysio.c. read() on a pipe returns whatever has arrived so far; only a zero-byte read means the input ended. Regular files hide this bug entirely - a file read is short only at real EOF." },
+        { "tests/test_regression_float_exact_pow5", "the exact float fallback uses an exact power of five", "Verify an exact halfway value in the 56..350 exponent window breaks to even, and that values just below and just above a rounding boundary there land on the correct double.", "Inspect proven_float_bigint_build_pow5_cached in src/proven/float_decimal.c: above the exact u128 table, 5^q must be multiplied, not taken from the rounded Eisel-Lemire table and shifted. That table is rounded and 5^q is odd, so the shift can never be exact - and this is the tier whose whole job is exactness." },
+        { "tests/test_regression_map_churn", "a map with churn does not grow without bound", "Verify a bounded live set with endless insert/remove keeps the table capacity bounded, that live keys survive an in-place rehash, that removed keys stay removed, and that a genuinely growing map still grows.", "Inspect map_rehash in src/proven/map.c. `used` counts tombstones and never falls on its own, so doubling on every rehash trigger grows a steady-state cache forever - 100 live entries reached 33 MB." },
+        { "tests/test_contract_sort_alignment", "the sort never hands the comparator a misaligned element", "Verify sorting over-aligned elements passes only correctly-aligned pointers to the caller's comparator, and still sorts.", "Inspect insertion_sort in src/proven/algorithm.c: its scratch is handed straight to the comparator, so it must be over-aligned, and elements aligned more strictly than the scratch must take the swap path." },
+        { "tests/test_contract_allocator_trait", "the allocator trait means the same thing for every allocator", "Verify alloc(0), realloc(ptr, 0) and over-aligned allocations answer identically for the heap and the arena, and that shrinking a non-tail block in a full arena still succeeds.", "Inspect src/proven/heap.c, src/proven/arena.c and the contract in include/proven/allocator.h. A trait whose answer depends on which allocator you were handed is not a trait." },
+        { "tests/test_regression_fs_walk_errors", "the walk's error branches and TOCTOU safety", "Verify a readdir() that fails mid-directory is reported with the last path component as the name and the directory's own depth (not its children's), and that a directory swapped for a symlink at the moment of descent is not followed out of the tree.", "Inspect the readdir-failure branch of proven_fs_walk_next and the fd-relative, O_NOFOLLOW descent (proven_sys_fs_dir_open_at). Both defects were found by the standing audit and are pinned here against the same fault injection." },
+        { "tests/test_unit_random", "OS randomness", "Verify proven_random_bytes succeeds on a hosted platform, fills every byte (tail included), that two draws differ and are not trivially structured (all-zero, all-equal, or a counter), that len 0 is a successful no-op, and that proven_random_u64 draws distinct words.", "Inspect platform/proven_sys_random.c. There is no known-answer test for randomness; these are the properties that separate a real CSPRNG from the ways it usually breaks." },
+        { "tests/test_unit_entropy_source", "the entropy source is a thing you can install", "Verify the OS CSPRNG is the default on a hosted target, that proven_random_set_source replaces it and the bytes provably come from the installed source, that NULL restores the default, that the ChaCha generator seeds from whatever source is installed (drawing once, not per byte), and that a source which FAILS leaves the generator inert - zeros for every byte, past the first block - rather than plausible.", "Inspect proven_random_set_source and the source dispatch in src/proven/random.c. Entropy is the one thing a program cannot compute for itself, so it is a hook: the OS on a hosted target, a board TRNG on bare metal." },
+        { "tests/test_unit_rng", "randomness by use case: reproducible, cryptographic, unbiased", "Verify xoshiro256** replays a run from its seed and is not degenerate for the seeds people actually pass (0, 1, 2), that ChaCha20 produces the standard's keystream byte for byte and does not depend on chunk sizes, and that below/range/f64/shuffle are unbiased where `% n` is not.", "Inspect src/proven/random.c. A ChaCha keystream mismatch means a rotation, round count, or word order is wrong - it is not ChaCha20 and must not hold a key. The expected block came from OpenSSL, checked first against RFC 8439's own vector." },
+        { "tests/test_unit_map_keyed", "map: keyed hashing for untrusted string keys", "Verify a default string-key map hashes with a keyed hash that differs from FNV (so an attacker cannot compute collisions), that proven_map_create_trusted opts into FNV, and that both kinds set/get/remove 500 string keys correctly.", "Inspect the hash selection in src/proven/map.c and the per-process key drawn from proven_random_bytes. The security property has no known-answer vector; the observable contract is via proven_map_hash." },
+        { "tests/test_unit_hash", "hashing, by use case", "Verify proven_hash_bytes (FNV-1a), proven_hash_keyed (SipHash-2-4), proven_crc32, and proven_sha256 each match their algorithm's own official known-answer vectors, that the CRC and SHA streaming APIs agree with the one-shot over the concatenation, and that the SHA-256 hex spelling matches sha256sum.", "Inspect src/proven/hash.c. A mismatch means the implementation disagrees with the published standard, not merely with itself - the vectors are the differential oracle." },
+        { "tests/test_unit_fs_walk", "the recursive walk", "Verify proven_fs_walk reports every entry once in pre-order with the right depth, reports a symlink cycle without descending into it, REPORTS an unreadable directory as an error rather than skipping it silently, honours max_depth while still reporting the boundary directory, and streams a wide directory rather than buffering it.", "Inspect proven_fs_walk_open/_next/_close in src/proven/fs.c. Every assertion in this test is a sentence the contract in include/proven/fs.h makes - it was written from that contract, before the implementation existed." },
+        { "tests/test_regression_fs_perms_and_types", "filesystem permissions and entry types", "Verify a copy carries the source's mode, that an atomic write never exposes its contents under a wider mode (a watcher thread stats the temp while the write is in flight), that a symlink and a FIFO are PROVEN_FS_TYPE_OTHER rather than regular files, and that syncing a PRIVATE mapping is PROVEN_ERR_UNSUPPORTED rather than a silent no-op reported as success.", "Inspect proven_fs_copy and internal_write_file_atomic in src/proven/fs.c, the is_regular mapping in platform/proven_sys_fs.c, and proven_mmap_sync." },
+        { "tests/test_regression_stream_partial_write", "partial writes, failed reads, and {:f}", "Verify a sink that accepts only part of a chunk receives every byte exactly once (the buffered writer used to re-send the whole buffer, duplicating the accepted prefix), that a read failure is reported as an error rather than as a clean end of file, and that {:f} forces the fixed form at any magnitude.", "Inspect writer_buffered_flush and reader_buffered_fill in src/proven/stream.c, and never_scientific in src/proven/float_format.c. All three defects looked correct against a sink that never misbehaves." },
+        { "tests/test_regression_fmt_spec_silently_wrong", "formatter specs that used to be silently wrong", "Verify {:08} zero-pads instead of eating the 0 as a width digit, and that a spec the argument cannot honour (hex on a double or a string) is rejected instead of being ignored.", "Inspect the spec parser and the applicability guard in src/proven/fmt.c. A spec that is accepted and then ignored is worse than one that is rejected." },
         { "tests/test_portability_source_contracts", "source portability contracts", "Verify source-level guards for platform branches that are hard to execute on the current host.", "A failure points at a missing safety pattern or stale documentation contract; inspect the named source file and keep this narrow." },
         { "tests/test_contract_float_module_layout", "float module scaffold", "Verify the shared float helpers live in a dedicated internal translation unit instead of being copied into fmt.c and scan.c.", "Inspect src/proven/float_decimal.c, src/proven/float_decimal.h, fmt.c, scan.c, and nob.c if the shared decimal helper scaffold regresses." },
         { "tests/test_contract_arena_panic", "arena panic path", "Verify alloc-or-panic succeeds when capacity exists and invokes the panic hook on arena exhaustion.", "Check panic hook installation/restoration and arena capacity math; a failure can hide fatal OOM paths." },
         { "tests/test_docs_alias_smoke", "alias layer smoke", "Verify public XCV alias macros continue to compile and map to the intended canonical proven APIs.", "Inspect include/proven/alias_xcv.h and TEST.md alias coverage when public symbols are renamed or added." },
+        { "tests/test_docs_manual_depth", "every module section is documented to depth, not merely mentioned", "A GATE on the shape of a module section: it must carry real prose (why this exists, not just what the calls are), a reference table, the structures the caller declares, a runnable example, and at least one COUNTER-EXAMPLE. The five modules added this cycle passed every check there was and were still half-written - not one had a counter-example.", "The section and the missing element are named. This is docs/DOCUMENTING.md section 3 turned from advice into a gate; a section that is legitimately exempt from a requirement says so in the test, with a reason." },
+        { "tests/test_docs_manual_claims", "every factual claim the new chapters make is true", "The manual's statements about the hashes, encoders, generators and streams, turned into assertions: the CRC check value, the standard SHA-256 digest, chunk-independence, base64url's missing padding, both alphabets decoding, a refused call writing nothing, whitespace not being skipped, seed 0 not being degenerate, an unseeded generator being inert, and a line that exactly fills the buffer being returned while a longer one is refused.", "A failure names the claim. Either the code changed and the manual did not, or the manual was wrong when it was written - decide which before changing either. Prose cannot be test-driven, but a claim can be tested." },
+        { "tests/test_docs_manual_symbols", "the manual and the headers name the same functions", "Verify every public function is named somewhere in manual/, and - the other direction - that the manual never documents a function which does not exist. Both have happened: proven_sysio_flush was deleted and the manual went on declaring it, and proven_pool_free never existed at all (the real symbol is a static _trait).", "Run from the repository root. A failure names either a function you added without documenting, or a function the manual promises and the linker will refuse. See docs/DOCUMENTING.md." },
+        { "tests/test_docs_version_sync", "the version string agrees with itself everywhere", "Verify PROVEN_VERSION_STRING matches the README (both language halves), TEST.md, the manual headings, chapter 1's version.h excerpt, and the CHANGELOG's newest entry. CHECKLIST.md requires this and nothing checked it: version.h once sat five releases behind the CHANGELOG while the README claimed a third value.", "Bump the version in every place CHECKLIST.md lists, or the number a downstream project pins disagrees with the number the library reports." },
         { "tests/test_docs_alias_completeness", "alias layer completeness", "Verify every public proven_* function has an xcv_* alias, by parsing the public headers and the alias header.", "A listed name has no alias: add `#define xcv_<name> proven_<name>` to include/proven/alias_xcv.h, keeping the file alphabetical. A half-covered alias layer fails at the caller's call site, not here." },
         { "manual/examples/ex_01_errors", "manual example: errors as values", "Compile and run the errors-as-values example printed in manual chapter 1.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
         { "manual/examples/ex_02_arena", "manual example: arena allocator", "Compile and run the arena example printed in manual chapter 2.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
         { "manual/examples/ex_02_pool", "manual example: pool allocator", "Compile and run the pool example printed in manual chapter 2.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
         { "manual/examples/ex_03_u8str", "manual example: owned and borrowed strings", "Compile and run the u8str example printed in manual chapter 3.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
         { "manual/examples/ex_04_array", "manual example: array, sort, binary search", "Compile and run the array example printed in manual chapter 4.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
+        { "manual/examples/ex_04_encode", "manual example: hex and Base64 encoding", "Compile and run the encoding example printed in manual chapter 4, which encodes to hex/Base64URL/Base64 by use case, round-trips a decode, and shows a validating decoder refusing junk.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
+        { "manual/examples/ex_04_hash", "manual example: hashing by use case", "Compile and run the hashing example printed in manual chapter 4.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
         { "manual/examples/ex_04_map", "manual example: map with int and owned string keys", "Compile and run the map example printed in manual chapter 4.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
         { "manual/examples/ex_05_fs_wholefile", "manual example: whole-file read and write", "Compile and run the whole-file example printed in manual chapter 5.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
         { "manual/examples/ex_05_fs_stream", "manual example: open/read/write/close", "Compile and run the streaming filesystem example printed in manual chapter 5.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
+        { "manual/examples/ex_05_fs_walk", "manual example: walking a tree", "Compile and run the recursive-walk example printed in manual chapter 5.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
+        { "manual/examples/ex_05_stream", "manual example: writers and readers", "Compile and run the stream example printed in manual chapter 5.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
+        { "manual/examples/ex_05_random", "manual example: OS randomness", "Compile and run the OS-randomness example printed in manual chapter 5, which draws a map key and a nonce word from the CSPRNG.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
         { "manual/examples/ex_06_job", "manual example: bounded job system", "Compile and run the job-system example printed in manual chapter 6.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
         { "manual/examples/ex_06_coro", "manual example: stackless coroutine", "Compile and run the coroutine example printed in manual chapter 6.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
         { "manual/examples/ex_08_fmt_scan", "manual example: formatting and scanning", "Compile and run the fmt/scan example printed in manual chapter 8.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
+        { "manual/examples/ex_08_fmt_custom", "manual example: formatting a user-defined type", "Compile and run the custom-argument example printed in manual chapter 8.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
+        { "manual/examples/ex_08_scan_recovery", "manual example: scanner error codes and recovery", "Compile and run the scanner error-recovery example printed in manual chapter 8, which provokes every scan error code on purpose.", "The manual prints this program verbatim. If it fails, chapter 8 is now telling readers something untrue about the scanner - fix the example, then re-copy it into the chapter." },
         { "tests/test_docs_manual_examples", "manual examples match the manual", "Verify every example the manual prints exists in manual/examples/, matches it verbatim, and that no example file is left unquoted.", "The example file is the source of truth: it is compiled and run. Copy its body into the chapter rather than hand-editing the chapter to look right." },
+        { "tests/test_docs_manual_ch08_contracts", "manual chapter 8 scanner contracts", "Verify every behaviour manual chapter 8 states as fact about the scanner - error codes, cursor restoration, decimal-only integers, the overflow/underflow asymmetry, and the non-transactional structural scan - is actually true.", "A failing claim is named in the output. The chapter is a contract: decide which side is wrong before changing either." },
     };
 
     const Proven_Test_Case regression_tests[] = {
@@ -889,6 +1051,23 @@ int main(int argc, char **argv)
         { "tests/test_regression_scanner_rollback", "scanner rollback after a failed scan", "Verify a scan that fails on an oversized token restores the stream exactly, dropping no byte and duplicating none.", "Inspect scanner_fill compaction and the rollback in proven_sysio_scanner_scan_impl; a snapshot taken before compaction must be reconciled with how far the buffer moved." },
         { "tests/test_regression_v26_07", "v26.07 regressions", "Protect the fixed u8str NUL-seal (reserve and zero-output fmt growth), signed datetime-year formatting, and pool init capacity-claim defects.", "Read the failing section name; each maps to one area (u8str.c reserve, fmt.c growth and PROVEN_ARG_DATETIME, pool.c init ordering)." },
         { "tests/test_regression_sort_duplicates", "sort on duplicate keys", "Verify proven_array_sort stays sub-quadratic on all-equal, few-distinct, and degenerate orderings, and moves wide elements intact.", "Inspect the partition in src/proven/algorithm.c: a two-way partition that sends elements equal to the pivot to one side is quadratic on duplicates. The comparison-count bounds, not wall-clock time, are what this test measures." },
+        { "tests/test_regression_scanner_float_split", "a float split across the scanner buffer", "Verify a float whose exponent, sign, or mantissa lands on the buffered scanner's refill boundary still scans to its exact value (not a mantissa-only truncation, not a dropped sign that desyncs the stream), across every buffer size, and that genuine garbage is still an error rather than an endless refill.", "Inspect proven_scan_f64 in src/proven/scan.c: it must flag needs_more both when a valid float might still grow and when a FAILED parse left only a float prefix. Found by a fmt->file->scanner->float round-trip." },
+        { "tests/test_regression_time_fmt_neg_year", "time formatting: u8 and u16 agree on zero-filled negative years", "Verify proven_time_u8_fmt and proven_time_u16_fmt render the same string for a zero-filled negative year - {year:0>4} of -44 is \"-044\" in both, with the sign counted toward the field width like printf %0Nd - and that positive years still agree.", "Inspect proven_time_u16_fmt in src/proven/time.c: it delegates to the u8 path and widens, so the sign counts toward the pad width. The old hand-rolled u16 path padded to full width THEN prepended the sign, one column wider than the fmt.h-based u8 path." },
+        { "tests/test_unit_time_fmt_u16_parity", "time formatting: u16 matches u8 across the whole fmt.h spec grammar", "Verify proven_time_u16_fmt produces the same text as proven_time_u8_fmt (widened to code units) for every field and every fill/align/width spec - right-align, centre, left-align, custom fill - on numeric AND named fields, plus literals and escaping, so no spec is silently dropped.", "Inspect proven_time_u16_fmt in src/proven/time.c: it renders through the u8 path (which delegates each field to the fmt.h spec engine) and widens the result, rather than hand-rolling a u16 parser that recognised only :0>N." },
+        { "tests/test_regression_scanner_short_read", "the scanner over a pipe: a short read is not an end of input", "Verify a token split across two pipe writes scans whole rather than being committed truncated, that the rest of the stream stays readable, and that a failed read is PROVEN_ERR_IO rather than a clean end of input.", "Inspect scanner_fill in src/proven/sysio.c. read() on a pipe returns whatever has arrived so far; only a zero-byte read means the input ended. Regular files hide this bug entirely - a file read is short only at real EOF." },
+        { "tests/test_regression_float_exact_pow5", "the exact float fallback uses an exact power of five", "Verify an exact halfway value in the 56..350 exponent window breaks to even, and that values just below and just above a rounding boundary there land on the correct double.", "Inspect proven_float_bigint_build_pow5_cached in src/proven/float_decimal.c: above the exact u128 table, 5^q must be multiplied, not taken from the rounded Eisel-Lemire table and shifted. That table is rounded and 5^q is odd, so the shift can never be exact - and this is the tier whose whole job is exactness." },
+        { "tests/test_regression_map_churn", "a map with churn does not grow without bound", "Verify a bounded live set with endless insert/remove keeps the table capacity bounded, that live keys survive an in-place rehash, that removed keys stay removed, and that a genuinely growing map still grows.", "Inspect map_rehash in src/proven/map.c. `used` counts tombstones and never falls on its own, so doubling on every rehash trigger grows a steady-state cache forever - 100 live entries reached 33 MB." },
+        { "tests/test_contract_sort_alignment", "the sort never hands the comparator a misaligned element", "Verify sorting over-aligned elements passes only correctly-aligned pointers to the caller's comparator, and still sorts.", "Inspect insertion_sort in src/proven/algorithm.c: its scratch is handed straight to the comparator, so it must be over-aligned, and elements aligned more strictly than the scratch must take the swap path." },
+        { "tests/test_contract_allocator_trait", "the allocator trait means the same thing for every allocator", "Verify alloc(0), realloc(ptr, 0) and over-aligned allocations answer identically for the heap and the arena, and that shrinking a non-tail block in a full arena still succeeds.", "Inspect src/proven/heap.c, src/proven/arena.c and the contract in include/proven/allocator.h. A trait whose answer depends on which allocator you were handed is not a trait." },
+        { "tests/test_regression_fs_walk_errors", "the walk's error branches and TOCTOU safety", "Verify a readdir() that fails mid-directory is reported with the last path component as the name and the directory's own depth (not its children's), and that a directory swapped for a symlink at the moment of descent is not followed out of the tree.", "Inspect the readdir-failure branch of proven_fs_walk_next and the fd-relative, O_NOFOLLOW descent (proven_sys_fs_dir_open_at). Both defects were found by the standing audit and are pinned here against the same fault injection." },
+        { "tests/test_unit_random", "OS randomness", "Verify proven_random_bytes succeeds on a hosted platform, fills every byte (tail included), that two draws differ and are not trivially structured (all-zero, all-equal, or a counter), that len 0 is a successful no-op, and that proven_random_u64 draws distinct words.", "Inspect platform/proven_sys_random.c. There is no known-answer test for randomness; these are the properties that separate a real CSPRNG from the ways it usually breaks." },
+        { "tests/test_unit_rng", "randomness by use case: reproducible, cryptographic, unbiased", "Verify xoshiro256** replays a run from its seed and is not degenerate for the seeds people actually pass (0, 1, 2), that ChaCha20 produces the standard's keystream byte for byte and does not depend on chunk sizes, and that below/range/f64/shuffle are unbiased where `% n` is not.", "Inspect src/proven/random.c. A ChaCha keystream mismatch means a rotation, round count, or word order is wrong - it is not ChaCha20 and must not hold a key. The expected block came from OpenSSL, checked first against RFC 8439's own vector." },
+        { "tests/test_unit_map_keyed", "map: keyed hashing for untrusted string keys", "Verify a default string-key map hashes with a keyed hash that differs from FNV (so an attacker cannot compute collisions), that proven_map_create_trusted opts into FNV, and that both kinds set/get/remove 500 string keys correctly.", "Inspect the hash selection in src/proven/map.c and the per-process key drawn from proven_random_bytes. The security property has no known-answer vector; the observable contract is via proven_map_hash." },
+        { "tests/test_unit_hash", "hashing, by use case", "Verify proven_hash_bytes (FNV-1a), proven_hash_keyed (SipHash-2-4), proven_crc32, and proven_sha256 each match their algorithm's own official known-answer vectors, that the CRC and SHA streaming APIs agree with the one-shot over the concatenation, and that the SHA-256 hex spelling matches sha256sum.", "Inspect src/proven/hash.c. A mismatch means the implementation disagrees with the published standard, not merely with itself - the vectors are the differential oracle." },
+        { "tests/test_unit_fs_walk", "the recursive walk", "Verify proven_fs_walk reports every entry once in pre-order with the right depth, reports a symlink cycle without descending into it, REPORTS an unreadable directory as an error rather than skipping it silently, honours max_depth while still reporting the boundary directory, and streams a wide directory rather than buffering it.", "Inspect proven_fs_walk_open/_next/_close in src/proven/fs.c. Every assertion in this test is a sentence the contract in include/proven/fs.h makes - it was written from that contract, before the implementation existed." },
+        { "tests/test_regression_fs_perms_and_types", "filesystem permissions and entry types", "Verify a copy carries the source's mode, that an atomic write never exposes its contents under a wider mode (a watcher thread stats the temp while the write is in flight), that a symlink and a FIFO are PROVEN_FS_TYPE_OTHER rather than regular files, and that syncing a PRIVATE mapping is PROVEN_ERR_UNSUPPORTED rather than a silent no-op reported as success.", "Inspect proven_fs_copy and internal_write_file_atomic in src/proven/fs.c, the is_regular mapping in platform/proven_sys_fs.c, and proven_mmap_sync." },
+        { "tests/test_regression_stream_partial_write", "partial writes, failed reads, and {:f}", "Verify a sink that accepts only part of a chunk receives every byte exactly once (the buffered writer used to re-send the whole buffer, duplicating the accepted prefix), that a read failure is reported as an error rather than as a clean end of file, and that {:f} forces the fixed form at any magnitude.", "Inspect writer_buffered_flush and reader_buffered_fill in src/proven/stream.c, and never_scientific in src/proven/float_format.c. All three defects looked correct against a sink that never misbehaves." },
+        { "tests/test_regression_fmt_spec_silently_wrong", "formatter specs that used to be silently wrong", "Verify {:08} zero-pads instead of eating the 0 as a width digit, and that a spec the argument cannot honour (hex on a double or a string) is rejected instead of being ignored.", "Inspect the spec parser and the applicability guard in src/proven/fmt.c. A spec that is accepted and then ignored is worse than one that is rejected." },
         { "tests/test_portability_source_contracts", "source portability contracts", "Verify source-level guards for platform branches that are hard to execute on the current host.", "A failure points at a missing safety pattern or stale documentation contract; inspect the named source file and keep this narrow." },
     };
 
@@ -901,6 +1080,7 @@ int main(int argc, char **argv)
     };
 
     const Proven_Test_Case benchmark_tests[] = {
+        { "tests/test_bench_primitives", "primitive throughput benchmark", "Time the hashes (FNV-1a, CRC-32, SipHash-2-4, SHA-256), the encoders (hex, Base64), and the two random generators (xoshiro256**, ChaCha20) over a fixed buffer, folding each output into a checksum so the work is not optimised away.", "If a checksum drifts the backend changed behaviour; if a timing regresses, inspect the module named by the backend label. See docs/primitives-benchmark.md." },
         { "tests/test_bench_float_parse_paths", "float parse path benchmark", "Compare the shared float parser, wrapper, and host strtod on separate path-oriented decimal corpora and record dated docs output.", "Inspect src/proven/float_parse.c, src/proven/float_decimal.c, and the path-specific corpus split if the timing harness fails or any checksum drifts." },
         { "tests/test_bench_float_parse", "float parse benchmark", "Time the decimal parser against the host strtod on a mixed corpus and record the result.", "Inspect src/proven/float_parse.c and src/proven/float_decimal.c if a timing run regresses or a checksum drifts." },
     };
@@ -942,6 +1122,7 @@ int main(int argc, char **argv)
         if (strcmp(build_mode, "freestanding") == 0) {
             if (strcmp(srcs[i], "src/proven/u16str.c") == 0) continue;
             if (strcmp(srcs[i], "src/proven/fs.c") == 0) continue;
+            if (strcmp(srcs[i], "src/proven/stream.c") == 0) continue;   /* streams sit on fs */
             if (strcmp(srcs[i], "src/proven/sysio.c") == 0) continue;
             if (strcmp(srcs[i], "src/proven/mmap.c") == 0) continue;
             if (strcmp(srcs[i], "src/proven/job.c") == 0) continue;
@@ -950,6 +1131,7 @@ int main(int argc, char **argv)
             if (strcmp(srcs[i], "platform/proven_sys_io.c") == 0) continue;
             if (strcmp(srcs[i], "platform/proven_sys_env.c") == 0) continue;
             if (strcmp(srcs[i], "platform/proven_sys_time.c") == 0) continue;
+            if (strcmp(srcs[i], "platform/proven_sys_random.c") == 0) continue;  /* no OS CSPRNG on bare metal */
             if (strcmp(srcs[i], "platform/proven_sys_mem.c") == 0) continue;
         }
 
@@ -1005,6 +1187,14 @@ int main(int argc, char **argv)
         } else {
             nob_log(NOB_INFO, "[PROVEN][BUILD][SOURCE][CACHED] path=%s", srcs[i]);
             library_cached += 1;
+        }
+    }
+
+    // Manual code-block check (hosted builds only: the fragments use the hosted API)
+    if (strcmp(build_mode, "freestanding") != 0 && !benchmark_mode) {
+        if (!check_manual_code_blocks(compiler_exe, standard_flag, build_dir)) {
+            nob_log(NOB_ERROR, "[PROVEN][BUILD][FAIL] stage=manual-code-blocks");
+            return 1;
         }
     }
 
