@@ -18,8 +18,15 @@ AGENTS.md
 CONTEXT.md
 MEMORY.md
 TODO.md
+BACKLOGS.md
+HANDOFF.md
 SPEC.md
+REQUIREMENTS.md
+DECISIONS.md
+LESSONS.md
+TESTS.md
 CHECKLIST.md
+WORKLOG.md
 *.local.md
 .hermes/
 docs/internal/
