@@ -45,7 +45,7 @@ static int count_in_file(const char *path, const char *needle) {
 
 int main(void) {
     PROVEN_TEST_SUITE("the version string agrees with itself everywhere",
-        "PROVEN_VERSION_STRING is the source of truth; the README (both halves), TEST.md, the manual headings and the CHANGELOG's newest entry must all carry the same version.",
+        "PROVEN_VERSION_STRING is the source of truth; the README (README.md English + README-ko.md Korean), TEST.md, the manual headings and the CHANGELOG's newest entry must all carry the same version.",
         "CHECKLIST.md says to update these together. Nothing checked, and version.h once sat five releases behind the CHANGELOG while the README claimed a third value.");
 
     /* The string the library itself reports. Strip the "proven_c_lib-" prefix to get "v26.07.13x",
@@ -59,15 +59,19 @@ int main(void) {
     PROVEN_TEST_INFO("version.h says {} (short form {})", PROVEN_ARG(full), PROVEN_ARG(v));
 
     // ---------------------------------------------------------------
-    PROVEN_TEST_SECTION("the README carries it, in both language halves",
+    PROVEN_TEST_SECTION("the README carries it, in both languages",
         "A downstream reader pins the number they see at the top of the README.",
-        "Both halves list `- Version:` / `- 버전:` - so the full string must appear at least twice.");
+        "The README is now split: README.md is English, README-ko.md is Korean. Each must carry the current version, or the two files tell different stories.");
     // ---------------------------------------------------------------
     {
-        int n = count_in_file("README.md", full);
-        PROVEN_TEST_ASSERT(n >= 2,
-            "the full version string must appear at least twice in README.md (English and Korean)",
-            "If this is 0 or 1, a language half was updated and the other was not - which is how the README ends up telling two different stories.");
+        int en = count_in_file("README.md", full);
+        PROVEN_TEST_ASSERT(en >= 1,
+            "the full version string must appear in README.md (English)",
+            "A version bump missed the English README.");
+        int ko = count_in_file("README-ko.md", full);
+        PROVEN_TEST_ASSERT(ko >= 1,
+            "the full version string must appear in README-ko.md (Korean)",
+            "A version bump updated the English README and not the Korean one - which is how the two end up disagreeing.");
     }
 
     // ---------------------------------------------------------------
