@@ -11,6 +11,12 @@ proven_result_mem_mut_t proven_arena_alloc_aligned(proven_arena_t *arena, proven
         res.err = PROVEN_ERR_INVALID_ARG;
         return res;
     }
+    if (size == 0) {
+        /* Same rule as the heap: a zero-byte allocation is a caller bug. This used to
+         * return PROVEN_OK with a live pointer to nothing. */
+        res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
 
     if (arena->offset > arena->backing.size) {
         res.err = PROVEN_ERR_INVALID_ARG;
@@ -70,6 +76,18 @@ proven_result_mem_mut_t proven_arena_realloc_aligned(proven_arena_t *arena, void
 
     if (!proven_is_pow2(align)) {
         res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
+
+    if (new_size == 0) {
+        /* The trait says: free the block, return a null pointer, PROVEN_OK. The arena
+         * frees nothing (that is what an arena is), but it must still answer the way the
+         * trait says it will - it used to hand back a NON-null pointer, so trait-generic
+         * code that tests `ptr == NULL` to learn the block is gone behaved differently
+         * depending on which allocator it had been given. */
+        res.err = PROVEN_OK;
+        res.value.ptr = NULL;
+        res.value.size = 0;
         return res;
     }
 
@@ -134,6 +152,17 @@ proven_result_mem_mut_t proven_arena_realloc_aligned(proven_arena_t *arena, void
         arena->offset = new_offset;
         
         // Recover original pointer efficiently preserving correct array-bounds provenance contexts.
+        res.err = PROVEN_OK;
+        res.value.ptr = arena->backing.ptr + old_offset;
+        res.value.size = new_size;
+        return res;
+    }
+
+    if (new_size <= old_size) {
+        /* A pure SHRINK of a non-tail block needs no new memory at all - the block just
+         * becomes smaller where it stands. Routing it through a fresh tail allocation made
+         * it fail with PROVEN_ERR_NOMEM on a full arena, which is an absurd answer to
+         * "please use less". */
         res.err = PROVEN_OK;
         res.value.ptr = arena->backing.ptr + old_offset;
         res.value.size = new_size;

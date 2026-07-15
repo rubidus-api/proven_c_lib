@@ -15,7 +15,7 @@ int main(void) {
     proven_u8str_view_t content = PROVEN_LIT("Hello World");
     proven_err_t w_err = proven_fs_write_all(f_res.value, proven_mem_view_from_u8(content));
     PROVEN_TEST_ASSERT(proven_is_ok(w_err), "failed to write to test file", "");
-    proven_fs_close(f_res.value);
+    (void)proven_fs_close(f_res.value);
 
     // 2. Try to copy to itself
     PROVEN_TEST_INFO("Attempting copy to itself (should fail)...");

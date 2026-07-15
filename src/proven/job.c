@@ -83,6 +83,10 @@ bool proven_job_execute_one(proven_job_sys_t *sys) {
     return true;
 }
 
+static proven_size_t proven_job_active_submitters(proven_job_sys_t *sys) {
+    return atomic_load_explicit(&sys->admission_state, memory_order_acquire) & PROVEN_JOB_ADMISSION_ACTIVE_MASK;
+}
+
 static void* worker_main(void* arg) {
     proven_job_sys_t *sys = (proven_job_sys_t*)arg;
     while (!proven_job_is_closed(sys)) {
@@ -90,10 +94,38 @@ static void* worker_main(void* arg) {
             proven_sys_thread_yield(); // Back-off to prevent 100% CPU starvation
         }
     }
-    
-    // Once shutdown is signaled, exhaust any remaining tasks before exiting
-    while (proven_job_execute_one(sys)) {}
-    
+
+    /*
+     * Shutdown was signaled. Drain - but "the queue looks empty" is not the same
+     * as "there is nothing left to run".
+     *
+     * A submitter that got past begin_submit before the close can already have
+     * claimed its slot with the enqueue_pos CAS while not yet having published
+     * cell->sequence. To a dequeuer that slot is indistinguishable from an empty
+     * queue, so a worker that exits on the first empty read leaves that job to
+     * nobody: the submitter then publishes it and proven_job_submit returns true,
+     * having accepted a job that will never run. close_admission only waits for
+     * the active count to reach zero, which happens after the worker is already
+     * gone - and proven_job_system_destroy, documented to block until the queue
+     * is exhausted, returns with a job still sitting in it.
+     *
+     * So a worker may only leave once no submitter is in flight AND the queue is
+     * still empty when checked after observing that. This is not the disclaimed
+     * destroy-races-submit case: close() racing submit() is precisely what
+     * close() is for.
+     */
+    for (;;) {
+        while (proven_job_execute_one(sys)) {}
+
+        if (proven_job_active_submitters(sys) != 0) {
+            proven_sys_thread_yield();
+            continue;
+        }
+        /* No submitter is in flight. Anything claimed before that observation is
+         * published by now, so one more empty read settles it. */
+        if (!proven_job_execute_one(sys)) break;
+    }
+
     return NULL;
 }
 

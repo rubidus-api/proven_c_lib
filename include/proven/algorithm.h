@@ -24,7 +24,25 @@ typedef int (*proven_compare_fn_t)(const void *a, const void *b);
 // -------------------------------------------------------------
 
 /**
- * @brief Sorts a proven_array_t in-place using a robust quicksort implementation.
+ * @brief Sorts a proven_array_t in place.
+ *
+ * An introsort: a Bentley-McIlroy three-way partition, an insertion-sort cutoff
+ * for small ranges, and a heapsort fallback once the recursion exceeds
+ * 2*log2(n) levels.
+ *
+ * @note O(n log n) is a guarantee, not a typical case. The heapsort fallback is
+ *       what makes it one - median-of-three alone can still be driven quadratic
+ *       by an adversarial ordering, and a reachable worst case is a denial of
+ *       service in any program that sorts data it did not author.
+ * @note Duplicate keys are the fast case. Elements equal to the pivot are
+ *       collected into a run that is final and never recursed into, so
+ *       all-equal input costs a single pass. This matters because
+ *       low-cardinality keys - a status column, an enum, a bucket id - are what
+ *       callers actually sort by.
+ * @note Not stable: equal elements may be reordered.
+ * @note `cmp` must be a consistent ordering. An inconsistent comparator yields
+ *       an unspecified order (it cannot corrupt memory, but it is still a bug).
+ *
  * @param arr Pointer to the array.
  * @param cmp Comparison function.
  */

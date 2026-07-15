@@ -1,4 +1,4 @@
-# Proven Freestanding Mode (v26.06.24b)
+# Proven Freestanding Mode (v26.07.13m)
 
 This guide describes the current `PROVEN_FREESTANDING` configuration as implemented by `nob.c` and the public headers.
 
@@ -50,6 +50,9 @@ src/proven/array.c
 src/proven/ring.c
 src/proven/map.c
 src/proven/algorithm.c
+src/proven/hash.c
+src/proven/encode.c
+src/proven/random.c
 src/proven/time.c
 src/proven/fmt.c
 src/proven/scan.c
@@ -62,6 +65,7 @@ Excluded hosted modules:
 ```text
 src/proven/u16str.c
 src/proven/fs.c
+src/proven/stream.c
 src/proven/sysio.c
 src/proven/mmap.c
 src/proven/job.c
@@ -70,6 +74,7 @@ platform/proven_sys_thread.c
 platform/proven_sys_io.c
 platform/proven_sys_env.c
 platform/proven_sys_time.c
+platform/proven_sys_random.c
 platform/proven_sys_mem.c
 ```
 
@@ -88,15 +93,22 @@ Do not add excluded hosted modules to a bare-metal build unless you also provide
 | `u16str.h` | Excluded | Current profile defines `PROVEN_NO_U16STR`. |
 | `array.h`, `list.h`, `ring.h`, `map.h` | Available | No hidden OS dependency. |
 | `algorithm.h` | Available | Sort/search helpers for arrays. |
+| `hash.h` | Available | FNV-1a, SipHash-2-4, CRC-32, SHA-256 — byte-exact, no OS dependency. |
+| `encode.h` | Available | Hex and Base64 — pure computation, no OS. |
 | `fmt.h` | Available without float | Current profile defines `PROVEN_FMT_NO_FLOAT`. |
 | `scan.h` | Available | Scanner for memory views. |
 | `time.h` | Limited | Core datetime formatting can compile; real PAL time is excluded. |
 | `heap.h` | Stub | `proven_heap_allocator()` returns an invalid allocator. |
-| `fs.h`, `mmap.h`, `sysio.h`, `job.h` | Excluded | Require hosted PAL services. |
+| `fs.h`, `stream.h`, `mmap.h`, `sysio.h`, `job.h` | Excluded | Require hosted PAL services. |
+| `random.h` | Available | The generators and helpers are pure arithmetic. `proven_random_bytes` works here too, but only once you install an entropy source with `proven_random_set_source` — a board's TRNG, ring oscillator, or ADC noise floor. With none installed it returns **false** rather than falling back to a clock-seeded PRNG, which would look like success and be a security hole nothing reports. `proven_chacha_rng_seed_from_entropy` then turns the board's entropy into an endless cryptographic stream. |
 | `coro.h` | Available | Macro-only stackless coroutine support. |
 | `panic.h` | Available | Override for target-specific trap/reset behavior. |
 
 ## 4. Minimal static arena setup
+
+There is no heap, so the memory comes from a static block and an arena is laid over
+it. The arena does not own that block: `alloc` bumps an offset, `free` is a no-op,
+and `reset` rewinds the whole thing at once.
 
 ```c
 #include "proven/types.h"
@@ -105,32 +117,29 @@ Do not add excluded hosted modules to a bare-metal build unless you also provide
 #include "proven/array.h"
 #include "proven/panic.h"
 
-static alignas(PROVEN_MAX_ALIGN) proven_byte_t g_storage[4096];
-static proven_arena_t g_arena;
-static proven_allocator_t g_alloc;
+/* static storage: no OS, no heap, known at link time */
+static alignas(PROVEN_MAX_ALIGN) proven_byte_t storage[4096];
 
-void platform_init(void) {
-g_arena = proven_arena_create((proven_mem_mut_t){
-.ptr = g_storage,
-.size = sizeof g_storage,
+proven_arena_t arena = proven_arena_create((proven_mem_mut_t){
+    .ptr = storage,
+    .size = sizeof storage,
 });
-g_alloc = proven_arena_as_allocator(&g_arena);
+proven_allocator_t arena_alloc = proven_arena_as_allocator(&arena);
+
+proven_result_array_t r = PROVEN_ARRAY_INIT(arena_alloc, proven_i32, 16);
+if (proven_is_ok(r.err)) {
+    proven_array_t values = r.value;
+    proven_err_t e = PROVEN_ARRAY_PUSH(&values, proven_i32, 42);
+    (void)e;
+    PROVEN_ARRAY_DESTROY(&values); /* arena free is a no-op */
 }
 
-proven_err_t make_values(void) {
-proven_result_array_t r = PROVEN_ARRAY_INIT(g_alloc, proven_i32, 16);
-if (!proven_is_ok(r.err)) return r.err;
-
-proven_array_t values = r.value;
-proven_err_t e = PROVEN_ARRAY_PUSH(&values, proven_i32, 42);
-PROVEN_ARRAY_DESTROY(&values); /* arena free is a no-op */
-return e;
-}
+proven_arena_destroy(&arena);      /* also a no-op: the caller owns `storage` */
 ```
 
 Common mistake:
 
-```c
+```text
 proven_allocator_t heap = proven_heap_allocator();
 heap.alloc_fn(heap.ctx, 64, 8); /* wrong: heap is invalid in PROVEN_FREESTANDING */
 ```
@@ -140,7 +149,8 @@ Correct:
 ```c
 proven_allocator_t heap = proven_heap_allocator();
 if (!proven_alloc_is_valid(heap)) {
-/* use an arena, pool, or target-provided allocator instead */
+    /* use an arena, pool, or target-provided allocator instead */
+    proven_panic("no heap on this target");
 }
 ```
 
@@ -148,7 +158,9 @@ if (!proven_alloc_is_valid(heap)) {
 
 `proven_arena_alloc_or_panic()` and related panic paths call `proven_panic()`, which dispatches to the handler installed with `proven_set_panic_handler()`. The default handler traps.
 
-```c
+The handler is a whole function, so this is a listing rather than a fragment:
+
+```text
 #include "proven/panic.h"
 
 static void my_panic(const char *msg) {
@@ -200,18 +212,24 @@ If your toolchain uses the `riscv64-unknown-elf-gcc` name, use that compiler ins
 
 Float formatting is disabled by `PROVEN_FMT_NO_FLOAT`. Integer and string-view formatting remain available.
 
-Correct:
+Correct (`alloc` here is an arena allocator, as in section 4 - there is no heap):
 
 ```c
-proven_u8str_t s = make_fixed_string_from_arena();
-proven_u8str_append_fmt_grow(g_alloc, &s, "value={}", PROVEN_ARG(123));
+proven_result_u8str_t r = proven_u8str_create(alloc, 32);
+if (proven_is_ok(r.err)) {
+    proven_fmt_result_t f = proven_u8str_append_fmt_grow(alloc, &r.value,
+                                                         "value={}", PROVEN_ARG(123));
+    (void)f;
+    proven_u8str_destroy(alloc, &r.value);
+}
 ```
 
 Wrong:
 
-```c
-proven_u8str_append_fmt_grow(g_alloc, &s, "{}", PROVEN_ARG(3.14));
-/* wrong in the current freestanding profile: float args are excluded */
+```text
+proven_u8str_append_fmt_grow(alloc, &s, "{}", PROVEN_ARG(3.14));
+/* wrong in the current freestanding profile: float args are excluded, so
+   PROVEN_ARG has no _Generic association for double and this fails to compile */
 ```
 
 ## 8a. Tuning the float big-integer capacity
@@ -240,7 +258,7 @@ rounding boundary can need up to 767 significant digits.
 
 Do not call these in the current freestanding profile:
 
-```c
+```text
 proven_fs_open(...);
 proven_println(...);
 proven_env_get(...);
@@ -256,7 +274,7 @@ Freestanding does not relax container rules.
 
 Wrong:
 
-```c
+```text
 int *p = PROVEN_ARRAY_GET_MUT(&arr, int, 0);
 PROVEN_ARRAY_PUSH(&arr, int, 9);
 *p = 1; /* wrong: push may have moved the array */
@@ -264,7 +282,7 @@ PROVEN_ARRAY_PUSH(&arr, int, 9);
 
 Wrong:
 
-```c
+```text
 proven_u8str_view_t key = make_stack_view();
 PROVEN_MAP_SET_U8_BORROWED(&map, key, int, 1);
 return; /* wrong if map survives after key bytes go out of scope */
@@ -275,11 +293,11 @@ return; /* wrong if map survives after key bytes go out of scope */
 The project freestanding command builds and runs these local checks on the build host:
 
 ```text
-tests/test_freestanding_heap_stub
-tests/test_compile_freestanding
-tests/test_compile_nofloat
-tests/test_compile_nou16str
-tests/test_freestanding
+tests/test_portability_freestanding_heap_stub
+tests/test_portability_compile_freestanding
+tests/test_portability_compile_nofloat
+tests/test_portability_compile_nou16str
+tests/test_portability_freestanding
 ```
 
 The cross command performs compile-only checks for available embedded compilers:

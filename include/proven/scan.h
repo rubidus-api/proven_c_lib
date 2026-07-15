@@ -32,6 +32,18 @@ typedef struct {
 typedef struct {
     proven_u8str_view_t view;
     proven_size_t cursor;
+
+    /**
+     * @brief The last failure happened because the input RAN OUT, not because it was wrong.
+     *
+     * For a complete view those are the same fact - there is no more input, so a token cut
+     * off at the end really is malformed. For a STREAM they are opposite facts, and the
+     * scanner had no way to tell them apart: a pipe that delivered "-" and then, 150 ms
+     * later, "12" made proven_scan_i64 report PROVEN_ERR_INVALID_ARG, and the buffered
+     * scanner on top of it had nothing to distinguish "this input is garbage" from "ask me
+     * again when more has arrived". Set on failure, cleared at the start of every scan.
+     */
+    bool needs_more;
 } proven_scan_t;
 
 /**

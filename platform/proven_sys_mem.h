@@ -117,7 +117,15 @@ static inline const void* proven_sys_mem_chr(const void* s, int c, proven_size_t
 void* proven_sys_mem_alloc(proven_size_t size, proven_size_t align);
 
 /**
- * @brief Reallocates memory via generic system calls while maintaining alignment.
+ * @brief Reallocates a block, growing it in place where the allocator can.
+ *
+ * @note `old_size` and `align` must be the ones the block was allocated with.
+ *       Requests at or below alignof(max_align_t) are served by malloc/realloc,
+ *       so they can grow in place (for large blocks that means remapping pages
+ *       rather than copying them); over-aligned requests use the aligned family
+ *       and are moved by hand. A block must not cross between the two families.
+ * @note `new_size == 0` frees the block and returns NULL.
+ * @note Failure atomicity: on failure the old block is left untouched.
  */
 [[nodiscard]]
 void* proven_sys_mem_realloc(void* ptr, proven_size_t old_size, proven_size_t new_size, proven_size_t align);

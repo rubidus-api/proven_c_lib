@@ -147,9 +147,15 @@ proven_err_t proven_u8str_reserve(proven_allocator_t alloc, proven_u8str_t *str,
     
     proven_result_mem_mut_t new_mem = alloc.realloc_fn(alloc.ctx, str->internal.ptr, str->internal.cap, new_cap, PROVEN_DEFAULT_ALIGNMENT);
     if (!proven_is_ok(new_mem.err)) return new_mem.err;
-    
+
     str->internal.ptr = (proven_byte_t*)new_mem.value.ptr;
     str->internal.cap = new_cap;
+    /* Re-seal the terminator. Reserving on a zero-initialized string performs
+     * the first allocation, and allocators do not hand back zeroed memory, so
+     * without this ptr[len] is whatever the block last held - and
+     * proven_u8str_as_cstr is documented to be readable without a second
+     * thought. */
+    str->internal.ptr[str->internal.len] = 0;
     return PROVEN_OK;
 }
 
@@ -187,7 +193,19 @@ proven_err_t proven_u8str_append_grow(proven_allocator_t alloc, proven_u8str_t *
         
         str->internal.ptr = (proven_byte_t*)new_mem.value.ptr;
         str->internal.cap = new_cap;
-        
+
+        /*
+         * Seal the terminator the moment the block exists.
+         *
+         * proven_u8str_append returns early on an empty view - correctly, there is
+         * nothing to copy - so a grow that was asked to append NOTHING left a freshly
+         * allocated, never-initialised block with no NUL in it. as_cstr() is documented
+         * as always NUL-terminated ("guaranteed by internal structure"), and it walked
+         * straight off the end of the heap block. reserve() has always sealed here; this
+         * path did not. It is one store, on the growth path only.
+         */
+        str->internal.ptr[str->internal.len] = 0;
+
         if (alias_ref.valid) {
             data.ptr = (const proven_byte_t*)proven_bufref_rebase_const(alias_ref, str->internal.ptr);
         }
