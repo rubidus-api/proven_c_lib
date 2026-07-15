@@ -46,8 +46,18 @@ static proven_result_mem_mut_t proven_pool_alloc_trait(void *ctx, proven_size_t 
         return res;
     }
 
-    if (size != pool->item_size || align > pool->item_align) {
+    if (size == 0) {
+        /* Same rule as every other allocator: a zero-byte allocation is a caller bug. */
         res.err = PROVEN_ERR_INVALID_ARG;
+        return res;
+    }
+
+    if (size != pool->item_size || align > pool->item_align) {
+        /* A pool serves ONE item size and one alignment. A request for anything else is
+         * not nonsense - it is a perfectly sensible request that this allocator is not the
+         * one to serve. It used to say PROVEN_ERR_INVALID_ARG, which reads as "you passed
+         * me garbage" and sends a trait-generic caller looking for a bug in itself. */
+        res.err = PROVEN_ERR_UNSUPPORTED;
         return res;
     }
 
@@ -62,15 +72,47 @@ static proven_result_mem_mut_t proven_pool_alloc_trait(void *ctx, proven_size_t 
     return pool->base_alloc.alloc_fn(pool->base_alloc.ctx, size, pool->item_align);
 }
 
+static void proven_pool_free_trait(void *ctx, void *ptr);
+
 static proven_result_mem_mut_t proven_pool_realloc_trait(void *ctx, void *old_ptr, proven_size_t old_size, proven_size_t new_size, proven_size_t align) {
-    (void)ctx;
-    (void)old_ptr;
     (void)old_size;
-    (void)new_size;
     (void)align;
     proven_result_mem_mut_t res = {0};
-    // The pool allocator strictly manages fixed-size blocks. Reallocation is not supported.
-    res.err = PROVEN_ERR_INVALID_ARG;
+
+    /*
+     * A pool manages fixed-size blocks, so it genuinely cannot grow one. It can, however,
+     * answer the two requests that are not growth - and it used to refuse those too, with
+     * PROVEN_ERR_INVALID_ARG, which is what a trait-generic caller reads as "you passed me
+     * nonsense" rather than "I cannot do that".
+     */
+    if (new_size == 0) {
+        /* The trait says: free the block, return a null pointer, PROVEN_OK. Every other
+         * allocator does. So does this one now. */
+        proven_pool_free_trait(ctx, old_ptr);
+        res.err = PROVEN_OK;
+        res.value.ptr = NULL;
+        res.value.size = 0;
+        return res;
+    }
+
+    if (!old_ptr) {
+        return proven_pool_alloc_trait(ctx, new_size, align);
+    }
+
+    proven_pool_t *pool = (proven_pool_t *)ctx;
+    if (pool && new_size <= pool->item_size) {
+        /* It already fits where it is. A "shrink" in a fixed-size pool is a no-op, and
+         * telling the caller it failed would be a lie. */
+        res.err = PROVEN_OK;
+        res.value.ptr = (proven_byte_t *)old_ptr;
+        res.value.size = new_size;
+        return res;
+    }
+
+    /* Growing past the item size is the one thing a pool cannot do. It is unsupported,
+     * not invalid: the request is perfectly sensible, this allocator just is not the one
+     * that can serve it. */
+    res.err = PROVEN_ERR_UNSUPPORTED;
     return res;
 }
 

@@ -35,12 +35,12 @@ int main() {
         proven_result_file_t r = proven_fs_open(heap, file_a, PROVEN_FS_WRITE | PROVEN_FS_CREATE);
         PROVEN_TEST_ASSERT(PROVEN_IS_OK(r.err), "Testing condition: PROVEN_IS_OK(r.err)", "Review logic surrounding PROVEN_IS_OK(r.err)");
         (void)proven_fs_write(r.value, proven_mem_view_from_u8(content));
-        proven_fs_close(r.value);
+        (void)proven_fs_close(r.value);
     }
     {
         proven_result_file_t r = proven_fs_open(heap, file_b, PROVEN_FS_WRITE | PROVEN_FS_CREATE);
         PROVEN_TEST_ASSERT(PROVEN_IS_OK(r.err), "Testing condition: PROVEN_IS_OK(r.err)", "Review logic surrounding PROVEN_IS_OK(r.err)");
-        proven_fs_close(r.value);
+        (void)proven_fs_close(r.value);
     }
 
     // 3. Rename/Move

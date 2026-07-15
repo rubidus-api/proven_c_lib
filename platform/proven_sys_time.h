@@ -40,15 +40,18 @@ static inline void proven_sys_time_sleep_ms(unsigned int ms) {
     (void)ms;
 }
 
-static inline int proven_sys_time_format_int_u16(unsigned short *buf, int buf_cap, int val, int pad_zeros) {
-    (void)buf; (void)buf_cap; (void)val; (void)pad_zeros;
-    return 0;
-}
-
 #else
 
 /**
- * @brief Get high-resolution monotonic time (nanoseconds).
+ * @brief Nanoseconds since the Unix epoch, from the system's WALL clock.
+ *
+ * @warning Not monotonic. This header used to call it "high-resolution monotonic time",
+ *          which it has never been: the POSIX path reads CLOCK_REALTIME and the Windows
+ *          path GetSystemTimeAsFileTime, and both step - forwards or backwards - when NTP
+ *          or an administrator adjusts the clock. Code that measured an interval by
+ *          subtracting two of these could get a negative duration and believed the header.
+ *          The public proven_time API documents exactly what this delivers (ns since the
+ *          epoch); only this line was wrong.
  */
 unsigned long long proven_sys_time_now_ns(void);
 
@@ -61,11 +64,6 @@ void proven_sys_time_now_local(proven_sys_datetime_t *out_dt);
  * @brief Sleep the current thread.
  */
 void proven_sys_time_sleep_ms(unsigned int ms);
-
-/**
- * @brief Formats an integer to a u16 buffer (zero-padded). Returns characters written.
- */
-int proven_sys_time_format_int_u16(unsigned short *buf, int buf_cap, int val, int pad_zeros);
 
 #endif /* PROVEN_FREESTANDING */
 

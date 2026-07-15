@@ -144,13 +144,18 @@ proven_sys_file_handle_t proven_sys_fs_open(const char *path, int flags) {
 #endif
 }
 
-void proven_sys_fs_close(proven_sys_file_handle_t handle) {
+bool proven_sys_fs_close(proven_sys_file_handle_t handle) {
 #if defined(_WIN32) || defined(_WIN64)
-    if (!handle.handle) return;
-    CloseHandle((HANDLE)handle.handle);
+    if (!handle.handle) return false;
+    return CloseHandle((HANDLE)handle.handle) != 0;
 #else
-    if (handle.fd < 0) return;
-    close(handle.fd);
+    if (handle.fd < 0) return false;
+    /* EINTR on close: on Linux the descriptor is closed anyway, and retrying could close
+     * a descriptor another thread has just been given. Treat it as closed. */
+    if (close(handle.fd) != 0) {
+        return errno == EINTR;
+    }
+    return true;
 #endif
 }
 
@@ -350,6 +355,52 @@ proven_sys_dir_handle_t proven_sys_fs_dir_open(const char *path) {
 #endif
 }
 
+proven_sys_dir_handle_t proven_sys_fs_dir_open_at(proven_sys_dir_handle_t parent, const char *name) {
+#if defined(_WIN32) || defined(_WIN64)
+    (void)parent; (void)name;
+    return (proven_sys_dir_handle_t){ .internal = NULL };
+#else
+    if (!parent.internal || !name) return (proven_sys_dir_handle_t){ .internal = NULL };
+    DIR *pd = (DIR *)parent.internal;
+    int pfd = dirfd(pd);
+    if (pfd < 0) return (proven_sys_dir_handle_t){ .internal = NULL };
+
+    /* O_NOFOLLOW is the whole point: if `name` is a symlink now (whatever it was when it
+     * was listed), the open fails rather than following it out of the tree. */
+    int fd = openat(pfd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) return (proven_sys_dir_handle_t){ .internal = NULL };
+
+    DIR *d = fdopendir(fd);
+    if (!d) { close(fd); return (proven_sys_dir_handle_t){ .internal = NULL }; }
+    return (proven_sys_dir_handle_t){ .internal = (void *)d };
+#endif
+}
+
+bool proven_sys_fs_dir_supports_open_at(void) {
+#if defined(_WIN32) || defined(_WIN64)
+    return false;
+#else
+    return true;
+#endif
+}
+
+bool proven_sys_fs_dir_ids(proven_sys_dir_handle_t handle, unsigned long long *dev, unsigned long long *ino) {
+#if defined(_WIN32) || defined(_WIN64)
+    (void)handle; (void)dev; (void)ino;
+    return false;
+#else
+    if (!handle.internal) return false;
+    DIR *d = (DIR *)handle.internal;
+    int fd = dirfd(d);
+    if (fd < 0) return false;
+    struct stat st;
+    if (fstat(fd, &st) != 0) return false;
+    if (dev) *dev = (unsigned long long)st.st_dev;
+    if (ino) *ino = (unsigned long long)st.st_ino;
+    return true;
+#endif
+}
+
 void proven_sys_fs_dir_close(proven_sys_dir_handle_t handle) {
     if (!handle.internal) return;
 #if defined(_WIN32) || defined(_WIN64)
@@ -362,19 +413,23 @@ void proven_sys_fs_dir_close(proven_sys_dir_handle_t handle) {
 #endif
 }
 
-bool proven_sys_fs_dir_next(proven_sys_dir_handle_t handle, proven_sys_dir_entry_t *out_entry) {
-    if (!handle.internal) return false;
+int proven_sys_fs_dir_step(proven_sys_dir_handle_t handle, proven_sys_dir_entry_t *out_entry) {
+    if (!handle.internal || !out_entry) return -1;
 #if defined(_WIN32) || defined(_WIN64)
     struct win_dir { HANDLE h; WIN32_FIND_DATAW fd; bool first; char *utf8_name; size_t utf8_cap; } *wd = handle.internal;
     if (!wd->first) {
-        if (!FindNextFileW(wd->h, &wd->fd)) return false;
+        if (!FindNextFileW(wd->h, &wd->fd)) {
+            return (GetLastError() == ERROR_NO_MORE_FILES) ? 0 : -1;
+        }
     }
     wd->first = false;
 
     // Skip . and ..
     while (wd->fd.cFileName[0] == L'.') {
         if (wd->fd.cFileName[1] == L'\0' || (wd->fd.cFileName[1] == L'.' && wd->fd.cFileName[2] == L'\0')) {
-            if (!FindNextFileW(wd->h, &wd->fd)) return false;
+            if (!FindNextFileW(wd->h, &wd->fd)) {
+                return (GetLastError() == ERROR_NO_MORE_FILES) ? 0 : -1;
+            }
             continue;
         }
         break;
@@ -383,7 +438,7 @@ bool proven_sys_fs_dir_next(proven_sys_dir_handle_t handle, proven_sys_dir_entry
     // Convert back from Wide to UTF-8
     int required_size = WideCharToMultiByte(CP_UTF8, 0, wd->fd.cFileName, -1, NULL, 0, NULL, NULL);
     if (required_size <= 0) {
-        return false; // Conversion failed
+        return -1; // Conversion failed
     } else {
         if (!wd->utf8_name || wd->utf8_cap < (size_t)required_size) {
             if (wd->utf8_name) HeapFree(GetProcessHeap(), 0, wd->utf8_name);
@@ -393,22 +448,27 @@ bool proven_sys_fs_dir_next(proven_sys_dir_handle_t handle, proven_sys_dir_entry
         if (wd->utf8_name) {
             int n = WideCharToMultiByte(CP_UTF8, 0, wd->fd.cFileName, -1, wd->utf8_name, required_size, NULL, NULL);
             if (n <= 0) {
-                return false;
+                return -1;
             } else {
                 out_entry->name = wd->utf8_name;
             }
         } else {
-            return false; // Allocation failed
+            return -1; // Allocation failed
         }
     }
+    out_entry->is_symlink = (wd->fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
     out_entry->is_dir = (wd->fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    out_entry->is_regular = !out_entry->is_dir && !out_entry->is_symlink;
     uint64_t sz = ((uint64_t)wd->fd.nFileSizeHigh << 32) | wd->fd.nFileSizeLow;
     if (sz > (uint64_t)PROVEN_SIZE_MAX) out_entry->size = PROVEN_SIZE_MAX;
     else out_entry->size = (size_t)sz;
-    return true;
+    return 1;
 #else
     DIR *d = (DIR*)handle.internal;
     struct dirent *entry;
+    /* readdir() returns NULL for both end-of-directory and failure. errno is the only
+     * thing that tells them apart, and it is only meaningful if we clear it first. */
+    errno = 0;
     while ((entry = readdir(d)) != NULL) {
         if (entry->d_name[0] == '.') {
             if (entry->d_name[1] == '\0' || (entry->d_name[1] == '.' && entry->d_name[2] == '\0')) continue;
@@ -416,8 +476,23 @@ bool proven_sys_fs_dir_next(proven_sys_dir_handle_t handle, proven_sys_dir_entry
         out_entry->name = entry->d_name;
         
         struct stat st;
-        if (fstatat(dirfd(d), entry->d_name, &st, AT_SYMLINK_NOFOLLOW) == 0) {
+        /*
+         * FOLLOW the symlink, the way stat() does.
+         *
+         * With AT_SYMLINK_NOFOLLOW a symlink pointing at a perfectly ordinary file came
+         * back as "not a regular file", while proven_fs_stat on the same path said FILE -
+         * so a caller filtering a listing on `type == FILE` skipped files it could open and
+         * read. Two answers to the same question is worse than either answer. A dangling
+         * link fails the follow and lands in the fallback below, which reports OTHER: it
+         * cannot be opened, so calling it a file would be the lie that started this.
+         */
+        struct stat lst;
+        out_entry->is_symlink = (fstatat(dirfd(d), entry->d_name, &lst, AT_SYMLINK_NOFOLLOW) == 0) &&
+                                S_ISLNK(lst.st_mode);
+
+        if (fstatat(dirfd(d), entry->d_name, &st, 0) == 0) {
             out_entry->is_dir = S_ISDIR(st.st_mode);
+            out_entry->is_regular = S_ISREG(st.st_mode) != 0;
             if (S_ISREG(st.st_mode)) {
                 if (st.st_size < 0) out_entry->size = 0;
                 else if ((uintmax_t)st.st_size > (uintmax_t)PROVEN_SIZE_MAX) out_entry->size = PROVEN_SIZE_MAX;
@@ -426,13 +501,18 @@ bool proven_sys_fs_dir_next(proven_sys_dir_handle_t handle, proven_sys_dir_entry
                 out_entry->size = 0;
             }
         } else {
-            out_entry->is_dir = false; // Fallback
+            out_entry->is_dir = false;      // Fallback: we do not know what it is,
+            out_entry->is_regular = false;  // so we must not claim it is a file.
             out_entry->size = 0;
         }
-        return true;
+        return 1;
     }
-    return false;
+    return (errno != 0) ? -1 : 0;
 #endif
+}
+
+bool proven_sys_fs_dir_next(proven_sys_dir_handle_t handle, proven_sys_dir_entry_t *out_entry) {
+    return proven_sys_fs_dir_step(handle, out_entry) == 1;
 }
 
 bool proven_sys_fs_chmod(const char *path, unsigned int perms) {
@@ -503,6 +583,8 @@ bool proven_sys_fs_stat(const char *path, proven_sys_fs_stat_t *out_stat) {
     CloseHandle(h);
 
     out_stat->is_dir = (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    out_stat->is_regular = !out_stat->is_dir &&
+        (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
     if (out_stat->is_dir) {
         out_stat->size = 0;
     } else {
@@ -542,6 +624,7 @@ bool proven_sys_fs_stat(const char *path, proven_sys_fs_stat_t *out_stat) {
     }
     
     out_stat->is_dir = S_ISDIR(st.st_mode);
+    out_stat->is_regular = S_ISREG(st.st_mode) != 0;
     out_stat->mode = (unsigned int)st.st_mode;
     out_stat->mtime = (long long)st.st_mtime;
     out_stat->dev = (unsigned long long)st.st_dev;

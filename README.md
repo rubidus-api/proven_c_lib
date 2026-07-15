@@ -2,13 +2,13 @@
 
 This README is bilingual. The English section comes first, then the Korean translation follows with the same substantive content.
 
-`proven` is a small C23 systems library for code that should stay readable over time. It gives you the everyday pieces C projects usually end up rewriting: explicit allocators, owned and borrowed strings, dynamic arrays, maps with borrowed or owned string keys, formatting and scanning, filesystem helpers, memory mapping, time, stackless coroutines, and a bounded job system.
+`proven` is a small C23 systems library for code that should stay readable over time. It gives you the everyday pieces C projects usually end up rewriting: explicit allocators, owned and borrowed strings, dynamic arrays, maps with borrowed or owned string keys (HashDoS-resistant by default), formatting and scanning, buffered streams and line input from stdin, filesystem helpers, memory mapping, time, hashing (FNV, SipHash, CRC-32, SHA-256), randomness by use case (a reproducible generator, a cryptographic one, and the OS CSPRNG), stackless coroutines, and a bounded job system.
 
 The point is not to hide C behind a framework. The point is to make practical C less repetitive while still keeping ownership, errors, allocator choice, and platform boundaries visible.
 
 The build driver probes `-std=c23` first and falls back to `-std=c2x` when the compiler still uses the transitional spelling, so older GCC and Clang front ends can still build the tree without changing the library's C23 baseline.
 
-- Version: proven_c_lib-v26.07.12d
+- Version: proven_c_lib-v26.07.13m
 - Standard: C23
 - License: MIT
 - Repository: https://github.com/rubidus-api/proven_c_lib
@@ -159,12 +159,65 @@ proven_u8str_destroy(alloc, &src.value);
 
 `proven_fs_read_all` / `proven_fs_read_all_u8str` read to EOF rather than to a pre-measured size. The file's reported size only seeds the capacity, so a regular file still costs one allocation and one pass - but a source whose size cannot be known up front (a pipe, a FIFO, a `/proc` entry) is read correctly rather than coming back empty, and a file that grows mid-read is not silently truncated.
 
-Writing is symmetric. `proven_fs_write_file` creates or truncates; `proven_fs_write_file_atomic` writes a sibling temp file and renames it over the target, so a concurrent reader sees either the whole old file or the whole new one, and the target's permissions are preserved (a `0600` file is not republished as `0644`). It is atomic with respect to readers, not durable across power loss - `proven` exposes no fsync, and the header says so.
+Writing is symmetric. `proven_fs_write_file` creates or truncates; `proven_fs_write_file_atomic` writes a sibling temp file and renames it over the target, so a concurrent reader sees either the whole old file or the whole new one, and the target's permissions are preserved (a `0600` file is not republished as `0644`). It is atomic with respect to readers; durability across power loss is a separate, explicit ask - `proven_fs_sync` (fsync) and `proven_fs_write_file_durable`, which does the three steps in the only order that works: sync the temp file, rename, then sync the directory.
 
 `proven_array_sort` is an introsort, and two of its properties are worth stating because they are the ones that bite:
 
 - **O(n log n) is a guarantee, not a typical case.** A heapsort fallback past a bounded recursion depth is what makes it one. A sort whose worst case can be reached by an adversarial ordering is a denial of service in any program that sorts data it did not author.
 - **Duplicate keys are the fast case.** Elements equal to the pivot are collected into a run that is final and never recursed into, so all-equal input costs a single pass. Low-cardinality keys - a status column, an enum, a bucket id - are what callers actually sort by, and they are exactly what a naive partition degrades on.
+
+## hashes, tokens, and text you can put in a URL
+
+There is no single "hash" and no single "random". Which one is correct depends on what you are doing with the result, and reaching for the wrong one gives you a program that is either needlessly slow or quietly insecure. Both modules are organised so the choice is made once you name the job — and so the wrong choice is hard to make by accident.
+
+| Your job | Use |
+|---|---|
+| Hash keys into **your own** table (trusted input) | `proven_hash_bytes` — FNV-1a, fast |
+| Hash keys from **untrusted** input | `proven_hash_keyed` — SipHash. (`proven_map` already does this for you: string-key maps are HashDoS-resistant by default.) |
+| Detect **corruption** on disk or in transit | `proven_crc32` — interoperates with gzip/zlib/PNG |
+| **Fingerprint** content — dedup, "same file?" | `proven_sha256` — the only one safe against a *deliberately* forged match |
+| A key, a token, a nonce | `proven_random_bytes` (the OS CSPRNG), or a `proven_chacha_rng_t` seeded from it |
+| A **reproducible** run — a simulation, a test | `proven_xoshiro256ss_t`. Fast, replays exactly from its seed, and **never** for a secret |
+
+```c
+/* A URL-safe session token: strong bytes, then text that needs no escaping. */
+proven_byte_t raw[16];
+proven_byte_t token[32];
+proven_size_t n = 0;
+
+if (proven_random_bytes(raw, sizeof raw) &&
+    proven_is_ok(proven_base64url_encode(
+        (proven_mem_view_t){ raw, sizeof raw }, token, sizeof token, &n))) {
+    proven_println("token: {}", PROVEN_ARG_CSTR_N((const char *)token, n));
+}
+```
+
+`encode.h` is the other half of this: `hex`, `base64`, and `base64url` (no padding, nothing to escape). The decoders **validate the whole input before writing a byte** — a stray character is `PROVEN_ERR_INVALID_ENCODING`, never a read past the end or a silently short result — and the output size is a function you call, not a number you remember.
+
+The generators and hashes are pure arithmetic, so they work on a bare-metal target too. On a board with no OS, hand the library its hardware entropy once (`proven_random_set_source`) and the cryptographic generator works with no operating system at all.
+
+## streams: a line from stdin, and printing without a syscall per line
+
+A writer is a byte sink; a reader is a byte source. Both are small vtables passed by value, like the allocator — so one `serialize(writer, value)` works over memory, a file, or a standard stream, and the formatter can be aimed at any of them.
+
+```c
+/* Read stdin a line at a time. One buffer, no allocation per line. */
+proven_byte_t buf[4096];
+proven_sysio_lines_t lines;
+if (proven_is_ok(proven_sysio_stdin_lines(&lines,
+        (proven_mem_mut_t){ .ptr = buf, .size = sizeof buf }))) {
+    for (;;) {
+        proven_result_u8str_view_t line = proven_sysio_read_line(&lines);
+        if (line.err == PROVEN_ERR_EOF) break;
+        if (!proven_is_ok(line.err)) break;   /* a line longer than `buf` is refused, not truncated */
+        proven_println("{}", PROVEN_ARG(line.val));
+    }
+}
+```
+
+The view points *into* your buffer and is valid until the next call — which is what makes a million lines cost one buffer instead of a million allocations. Copy it if you need to keep it.
+
+Buffer the output side and a thousand small prints cost one syscall instead of a thousand — but **you must flush**: there is no hidden global buffer, so there is also no destructor and no `atexit` handler to flush it behind your back. The direct calls (`proven_println`, `proven_eprintln`) stay unbuffered for exactly that reason: what they write is on its way out before they return.
 
 ## correct, fast number conversion
 
@@ -229,7 +282,9 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 - Algorithms: `algorithm`.
 - Text: `fmt`, `scan`.
 - Numbers: `float_parse`, `float_format`.
-- Hosted services: `fs`, `time`, `mmap`, `sysio`.
+- Hashing and encoding: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256), `encode` (hex, Base64, Base64URL).
+- Randomness: `random` (xoshiro256** reproducible, ChaCha20 cryptographic, unbiased range/shuffle helpers, and a pluggable entropy source — the OS CSPRNG by default, a board's hardware TRNG on bare metal).
+- Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
 - Execution: `coro`, `job`.
 - Diagnostics: `panic`.
 - Optional short aliases: `alias_xcv`.
@@ -240,7 +295,7 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 
 It is also worth saying where the platform boundary **stops**, because otherwise you find out by running into it. The PAL covers memory, the filesystem, time, memory mapping, environment variables, console I/O and threads. It does **not** cover process control (`fork` / `exec` / pipes), terminal control (raw mode, job control), or networking — a program whose substance is one of those will reach for POSIX or Win32 directly, and the "no platform `#ifdef`s" property does not extend to it.
 
-Deliberate non-goals, so you do not go looking: no cryptographic hashing, no path manipulation, no argument parsing, no logging framework.
+The `hash` module does provide cryptographic and non-cryptographic hashes (SHA-256 alongside FNV, SipHash, and CRC-32) and `random` provides OS-strength bytes, but `proven` is not a cryptography library: deliberate non-goals, so you do not go looking, are signatures, key exchange, password hashing / KDFs, authenticated encryption, and TLS — along with path manipulation, argument parsing, and a logging framework.
 
 ## utility in a real project
 
@@ -264,6 +319,7 @@ What you accept, and should not expect:
 - User manual: `manual/manual.md` (chapters under `manual/`)
 - Freestanding guide: `manual/manual-freestanding.md`
 - Float correctness and performance: `docs/float-correctness-and-performance.md`
+- Primitive throughput (hash/encode/random): `docs/primitives-benchmark.md`
 - Test matrix: `TEST.md`
 - Changelog: `CHANGELOG.md`
 - Contributor checklist: `CHECKLIST.md`
@@ -290,13 +346,13 @@ License: MIT License. See `LICENSE`.
 
 이 README는 이중 언어로 작성되어 있습니다. 먼저 영어 본문을 두고, 그 아래에 같은 내용의 한국어 번역을 배치했습니다.
 
-`proven`은 시간이 지나도 읽기 쉬운 코드를 목표로 한 작은 C23 시스템 라이브러리입니다. C 프로젝트가 자주 직접 다시 구현하게 되는 요소들, 즉 명시적 allocator, owned/borrowed 문자열, 동적 배열, borrowed 또는 owned 문자열 키를 쓰는 map, 형식화와 파싱, 파일시스템 헬퍼, 메모리 매핑, 시간, 스택 없는 코루틴, bounded job system을 제공합니다.
+`proven`은 시간이 지나도 읽기 쉬운 코드를 목표로 한 작은 C23 시스템 라이브러리입니다. C 프로젝트가 자주 직접 다시 구현하게 되는 요소들, 즉 명시적 allocator, owned/borrowed 문자열, 동적 배열, borrowed 또는 owned 문자열 키를 쓰는 map(기본이 HashDoS 저항), 형식화와 파싱, 버퍼드 스트림과 stdin 줄 입력, 파일시스템 헬퍼, 메모리 매핑, 시간, 해싱(FNV, SipHash, CRC-32, SHA-256), 용도별 난수(재현 가능한 생성기·암호학적 생성기·OS CSPRNG), 스택 없는 코루틴, bounded job system을 제공합니다.
 
 의도는 C를 프레임워크 뒤에 숨기는 것이 아닙니다. 실용적인 C를 덜 반복적으로 만들면서도 ownership, error, allocator 선택, platform boundary를 그대로 보이게 두는 데 있습니다.
 
 빌드 드라이버는 먼저 `-std=c23`를 시도하고, 컴파일러가 아직 transitional spelling만 받아들이는 경우 `-std=c2x`로 내려갑니다. 그래서 기존 GCC와 Clang 프런트엔드도 라이브러리의 C23 기준을 바꾸지 않고 트리를 빌드할 수 있습니다.
 
-- 버전: proven_c_lib-v26.07.12d
+- 버전: proven_c_lib-v26.07.13m
 - 표준: C23
 - 라이선스: MIT
 - 저장소: https://github.com/rubidus-api/proven_c_lib
@@ -447,12 +503,65 @@ proven_u8str_destroy(alloc, &src.value);
 
 `proven_fs_read_all` / `proven_fs_read_all_u8str`는 미리 잰 크기까지가 아니라 **EOF까지** 읽습니다. 파일이 보고한 크기는 초기 용량을 정하는 데만 쓰이므로 정규 파일은 여전히 할당 1회·패스 1회로 끝나지만, 크기를 미리 알 수 없는 소스(파이프, FIFO, `/proc` 항목)가 빈 결과로 돌아오지 않고, 읽는 도중 자라는 파일도 조용히 잘리지 않습니다.
 
-쓰기도 대칭입니다. `proven_fs_write_file`은 생성하거나 잘라내고, `proven_fs_write_file_atomic`은 형제 임시 파일에 쓴 뒤 rename으로 덮어써서 동시 독자가 옛 파일 전체 또는 새 파일 전체만 보게 합니다. 대상의 권한도 보존됩니다(`0600` 파일이 `0644`로 다시 공개되지 않습니다). 독자에 대해 원자적일 뿐 전원 손실에 대해 내구적이지는 않으며(`proven`은 fsync를 노출하지 않습니다), 헤더에 그렇게 적혀 있습니다.
+쓰기도 대칭입니다. `proven_fs_write_file`은 생성하거나 잘라내고, `proven_fs_write_file_atomic`은 형제 임시 파일에 쓴 뒤 rename으로 덮어써서 동시 독자가 옛 파일 전체 또는 새 파일 전체만 보게 합니다. 대상의 권한도 보존됩니다(`0600` 파일이 `0644`로 다시 공개되지 않습니다). 독자에 대해 원자적이며, 전원 손실에 대한 내구성은 별도의 명시적 요청입니다 - `proven_fs_sync`(fsync)와 `proven_fs_write_file_durable`이 있고, 후자는 유일하게 올바른 순서로 세 단계를 수행합니다: 임시 파일 sync → rename → 디렉터리 sync.
 
 `proven_array_sort`는 introsort이고, 실제로 발목을 잡는 두 성질은 명시할 가치가 있습니다:
 
 - **O(n log n)은 보장이지 평균적 기대치가 아닙니다.** 재귀 깊이를 넘어서면 heapsort로 탈출하는 것이 그 보장을 만듭니다. 적대적 입력으로 최악의 경우에 도달할 수 있는 정렬은, 자기가 만들지 않은 데이터를 정렬하는 모든 프로그램에서 서비스 거부(DoS)입니다.
 - **중복 키가 빠른 경우입니다.** 피벗과 같은 원소들은 확정된 구간으로 모여 다시 재귀되지 않으므로, 전부 같은 입력은 한 번의 패스로 끝납니다. 저카디널리티 키(상태 컬럼, enum, 버킷 id)야말로 호출자가 실제로 정렬하는 키이고, 순진한 분할이 정확히 그 지점에서 무너집니다.
+
+## 해시, 토큰, 그리고 URL에 넣을 수 있는 텍스트
+
+"해시"도 "난수"도 하나가 아닙니다. 결과를 무엇에 쓰느냐에 따라 정답이 달라지고, 잘못 고르면 쓸데없이 느리거나 **조용히 안전하지 않은** 프로그램이 됩니다. 두 모듈 모두 "무슨 일을 하는가"를 말하는 순간 선택이 정해지도록 구성했고, 잘못된 선택을 실수로 하기 어렵게 이름을 지었습니다.
+
+| 하려는 일 | 쓸 것 |
+|---|---|
+| **내가 만든** 키를 내 테이블에 해싱 (신뢰된 입력) | `proven_hash_bytes` — FNV-1a, 빠름 |
+| **신뢰할 수 없는** 입력의 키를 해싱 | `proven_hash_keyed` — SipHash. (`proven_map`이 이미 이걸 씁니다: 문자열 키 맵은 **기본이 HashDoS 저항**) |
+| 디스크·전송 중 **손상** 검출 | `proven_crc32` — gzip/zlib/PNG와 상호운용 |
+| 콘텐츠 **지문** — 중복제거, "같은 파일인가?" | `proven_sha256` — **고의로 위조된** 일치까지 막는 유일한 것 |
+| 키, 토큰, 논스 | `proven_random_bytes` (OS CSPRNG), 또는 그걸로 시드한 `proven_chacha_rng_t` |
+| **재현 가능한** 실행 — 시뮬레이션, 테스트 | `proven_xoshiro256ss_t`. 빠르고 시드로 정확히 재생. **비밀에는 절대 금지** |
+
+```c
+/* URL에 안전한 세션 토큰: 강한 바이트 → 이스케이프가 필요 없는 텍스트. */
+proven_byte_t raw[16];
+proven_byte_t token[32];
+proven_size_t n = 0;
+
+if (proven_random_bytes(raw, sizeof raw) &&
+    proven_is_ok(proven_base64url_encode(
+        (proven_mem_view_t){ raw, sizeof raw }, token, sizeof token, &n))) {
+    proven_println("token: {}", PROVEN_ARG_CSTR_N((const char *)token, n));
+}
+```
+
+`encode.h`가 나머지 절반입니다: `hex`, `base64`, `base64url`(패딩 없음, 이스케이프 불필요). 디코더는 **한 바이트를 쓰기 전에 입력 전체를 검증**합니다 — 이상한 문자는 `PROVEN_ERR_INVALID_ENCODING`이지, 끝을 넘어 읽거나 조용히 짧은 결과가 되지 않습니다. 출력 크기는 외우는 숫자가 아니라 **호출하는 함수**입니다.
+
+생성기와 해시는 순수 연산이라 베어메탈에서도 동작합니다. OS가 없는 보드라면 하드웨어 엔트로피를 한 번 넘겨주면(`proven_random_set_source`) 암호학적 생성기가 운영체제 없이 그대로 작동합니다.
+
+## 스트림: stdin에서 한 줄, 그리고 줄마다 syscall 하지 않는 출력
+
+writer는 바이트 싱크, reader는 바이트 소스입니다. 둘 다 allocator처럼 값으로 넘기는 작은 vtable이라, `serialize(writer, value)` 하나가 메모리·파일·표준 스트림 위에서 모두 동작하고, 포매터를 그중 아무 데나 겨눌 수 있습니다.
+
+```c
+/* stdin을 한 줄씩. 버퍼 하나, 줄마다 할당 없음. */
+proven_byte_t buf[4096];
+proven_sysio_lines_t lines;
+if (proven_is_ok(proven_sysio_stdin_lines(&lines,
+        (proven_mem_mut_t){ .ptr = buf, .size = sizeof buf }))) {
+    for (;;) {
+        proven_result_u8str_view_t line = proven_sysio_read_line(&lines);
+        if (line.err == PROVEN_ERR_EOF) break;
+        if (!proven_is_ok(line.err)) break;   /* 버퍼보다 긴 줄은 잘리지 않고 거부됩니다 */
+        proven_println("{}", PROVEN_ARG(line.val));
+    }
+}
+```
+
+반환된 view는 **여러분의 버퍼를 가리키며** 다음 호출까지만 유효합니다 — 이것이 백만 줄을 백만 번의 할당이 아니라 버퍼 하나로 처리하게 만드는 이유입니다. 보관하려면 복사하세요.
+
+출력 쪽을 버퍼링하면 작은 출력 1000번이 syscall 1000번이 아니라 **1번**이 됩니다. 다만 **반드시 flush해야 합니다**: 숨겨진 전역 버퍼가 없으니 대신 flush해 줄 소멸자도, `atexit` 핸들러도 없습니다. 직접 호출(`proven_println`, `proven_eprintln`)이 무버퍼로 남아 있는 이유가 바로 이것입니다 — 반환 전에 이미 나가 있습니다.
 
 ## 정확하고 빠른 숫자 변환
 
@@ -516,7 +625,9 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 - Algorithms: `algorithm`.
 - Text: `fmt`, `scan`.
 - Numbers: `float_parse`, `float_format`.
-- Hosted services: `fs`, `time`, `mmap`, `sysio`.
+- 해싱과 인코딩: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256), `encode` (hex, Base64, Base64URL).
+- 난수: `random` (xoshiro256** 재현 가능, ChaCha20 암호학적, 무편향 범위/셔플 헬퍼, 교체 가능한 엔트로피 소스 — 기본은 OS CSPRNG, 베어메탈은 보드의 하드웨어 TRNG).
+- Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
 - Execution: `coro`, `job`.
 - Diagnostics: `panic`.
 - Optional short aliases: `alias_xcv`.
@@ -527,7 +638,7 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 
 플랫폼 경계가 **어디서 끝나는지**도 적어 둘 가치가 있습니다. 적어 두지 않으면 부딪혀 봐야 알게 되기 때문입니다. PAL이 덮는 범위는 메모리, 파일시스템, 시간, 메모리 매핑, 환경 변수, 콘솔 I/O, 스레드입니다. 프로세스 제어(`fork` / `exec` / 파이프), 터미널 제어(raw 모드, job control), 네트워킹은 **덮지 않습니다**. 프로그램의 본질이 그 중 하나라면 POSIX나 Win32를 직접 부르게 되고, "플랫폼 `#ifdef` 없음"이라는 성질은 거기까지 확장되지 않습니다.
 
-의도적인 비목표라서 찾아 헤매지 않으셔도 됩니다: 암호학적 해시, 경로 조작, 인자 파싱, 로깅 프레임워크는 제공하지 않습니다.
+`hash` 모듈은 암호학적·비암호학적 해시(FNV·SipHash·CRC-32와 함께 SHA-256)를, `random`은 OS 강도 바이트를 실제로 제공합니다. 다만 `proven`은 암호 라이브러리가 아닙니다. 의도적인 비목표라서 찾아 헤매지 않으셔도 되는 것은 서명, 키 교환, 비밀번호 해싱/KDF, 인증 암호화(AEAD), TLS이며, 여기에 더해 경로 조작, 인자 파싱, 로깅 프레임워크도 제공하지 않습니다.
 
 ## 실제로 프로젝트에 적용했을 때의 효용성
 
@@ -551,6 +662,7 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 - 사용자 매뉴얼: `manual/manual.md` (`manual/` 아래 챕터들)
 - freestanding 가이드: `manual/manual-freestanding.md`
 - 부동소수점 정확성과 성능: `docs/float-correctness-and-performance.md`
+- 기본 연산 처리량(해시/인코딩/난수): `docs/primitives-benchmark.md`
 - 테스트 매트릭스: `TEST.md`
 - 변경 이력: `CHANGELOG.md`
 - 기여자 체크리스트: `CHECKLIST.md`

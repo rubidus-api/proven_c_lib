@@ -44,8 +44,23 @@ int main(void) {
     require(contains(fs, "off_t mmap_offset"), "POSIX mmap stores offset in an off_t temporary");
     require(contains(fs, "(size_t)mmap_offset != offset"), "POSIX mmap rejects size_t to off_t truncation");
     require(contains(fs, "FILE_APPEND_DATA"), "Windows append opens with FILE_APPEND_DATA");
+    /* readdir() returns NULL for BOTH "the directory ended" and "the read failed", and
+     * only errno tells them apart - so it must be cleared first. A listing cut short by
+     * a failing disk or a vanished NFS mount used to look exactly like a complete one,
+     * which is how a backup silently skips files. There is no way to provoke a readdir
+     * failure from a test on a healthy host, so the contract lives here, in the source. */
+    require(contains(fs, "int proven_sys_fs_dir_step"), "the PAL directory walk can report failure, not just end-of-directory");
+    require(contains(fs, "errno = 0;"), "POSIX dir_step clears errno so a NULL readdir can be told apart from a failure");
+    require(contains(fs, "return (errno != 0) ? -1 : 0;"), "POSIX dir_step reports a readdir failure as failure");
+    require(contains(fs, "ERROR_NO_MORE_FILES"), "Windows dir_step tells a finished directory apart from a failed one");
     require(!contains(fs, "SetFilePointer(h, 0, NULL, FILE_END)"), "Windows append does not emulate O_APPEND with a one-time seek");
     free(fs);
+
+    char *fs_c = read_text_file("src/proven/fs.c");
+    require(contains(fs_c, "proven_sys_fs_dir_step"), "the public directory walk uses the failure-reporting PAL entry point");
+    require(!contains(fs_c, "if (!proven_sys_fs_dir_next(dh, &se)) return PROVEN_ERR_EOF;"),
+            "a failed directory read is not reported to the caller as end-of-directory");
+    free(fs_c);
 
     char *env = read_text_file("platform/proven_sys_env.c");
     require(!contains(env, "wchar_t wname[256]"), "Windows env key conversion has no 255-byte fixed limit");
@@ -57,9 +72,20 @@ int main(void) {
     require(!contains(sysio, "key.size >= 256"), "public env API does not reject oversized keys before PAL lookup");
     free(sysio);
 
+    /* The PAL used to implement read, write and seek in inline-assembly raw
+     * syscalls, one path per architecture. It bought nothing - proven_sys_fs.c in
+     * the same library already calls libc's open/read/write - and it cost real
+     * things: three of the four paths were unverifiable on a machine without the
+     * cross-toolchains, and because the console path issued raw `syscall`
+     * instructions, LD_PRELOAD tracing was BLIND to every one of this library's
+     * console writes.
+     *
+     * It is gone. This contract keeps it gone: an architecture-specific syscall
+     * path is a thing you add on purpose, not something that creeps back. */
     char *io = read_text_file("platform/proven_sys_io.c");
-    require(contains(io, "uint64_t result_off = 0"), "32-bit Linux _llseek uses a 64-bit result buffer");
-    require(!contains(io, "unsigned long result_off = 0"), "32-bit Linux _llseek no longer uses unsigned long result buffers");
+    require(!contains(io, "__asm__ volatile"), "the PAL uses libc, not hand-written syscall assembly");
+    require(contains(io, "lseek("), "seek goes through libc lseek");
+    require(contains(io, "fsync("), "durability goes through libc fsync");
     free(io);
 
     char *job = read_text_file("src/proven/job.c");

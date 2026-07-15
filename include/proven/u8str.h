@@ -206,6 +206,10 @@ void proven_u8str_destroy(proven_allocator_t alloc, proven_u8str_t *str);
 
 /**
  * @brief Zero-cost downgrade of a mutable string to a read-only view.
+ *
+ * @warning The view points into the string's own storage, so it is INVALIDATED by any
+ *          operation that may reallocate: append_grow, reserve, a growing fmt. Take the
+ *          view again after a mutation rather than holding one across it.
  */
 static inline proven_u8str_view_t proven_u8str_as_view(const proven_u8str_t *str) {
     if (!str) return (proven_u8str_view_t){ .ptr = (const proven_byte_t*)0, .size = 0 };

@@ -1,4 +1,9 @@
 #include "proven/map.h"
+#include "proven/hash.h"
+#ifndef PROVEN_FREESTANDING
+#include "proven/random.h"
+#include "../../platform/proven_sys_thread.h"
+#endif
 #include "proven/memory.h"
 #include "proven_internal_memrange.h"
 #include "../../platform/proven_sys_mem.h"
@@ -13,28 +18,6 @@ typedef struct {
     // Padding logic handled correctly via proven_mem_align_up mathematics on payload extraction
     proven_map_key_t key;
 } proven_map_bucket_header_t;
-
-// Standard FNV-1a extremely efficient U8 string hashing
-static proven_size_t hash_u8(proven_u8str_view_t view) {
-    proven_size_t hash;
-    proven_size_t prime;
-
-    if (sizeof(proven_size_t) == 4) {
-        // 32-bit FNV parameters
-        hash = (proven_size_t)2166136261u;
-        prime = (proven_size_t)16777619u;
-    } else {
-        // 64-bit FNV parameters
-        hash = (proven_size_t)14695981039346656037ull;
-        prime = (proven_size_t)1099511628211ull;
-    }
-
-    for (proven_size_t i = 0; i < view.size; ++i) {
-        hash ^= (proven_size_t)view.ptr[i];
-        hash *= prime;
-    }
-    return hash;
-}
 
 // SplitMix64 rapid avalanche integer mixer
 static proven_size_t hash_int(proven_size_t key) {
@@ -54,9 +37,67 @@ static proven_size_t hash_int(proven_size_t key) {
 #endif
 }
 
-static proven_size_t get_hash(proven_key_type_t type, proven_map_key_t key) {
-    if (type == PROVEN_KEY_TYPE_INT) return hash_int(key.id);
-    return hash_u8(key.str);
+#ifndef PROVEN_FREESTANDING
+/*
+ * One per-process SipHash key, drawn from the OS CSPRNG the first time any keyed map hashes
+ * a string. Every keyed map shares it (an attacker does not know it, which is the whole
+ * point), and it is seeded EXACTLY once: two threads racing the first hash must end up using
+ * the SAME key, or a key placed under one and looked up under another would be unfindable.
+ *
+ * The CAS on `state` grants exactly one thread the right to seed; the rest wait for it to
+ * publish. 0 = untouched, 1 = being seeded, 2 = ready.
+ */
+static proven_byte_t g_map_key[16];
+static _Atomic int    g_map_key_state = 0;
+
+static void map_ensure_key(void) {
+    if (__atomic_load_n(&g_map_key_state, __ATOMIC_ACQUIRE) == 2) return;
+
+    int expected = 0;
+    if (__atomic_compare_exchange_n(&g_map_key_state, &expected, 1, false,
+                                    __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        if (!proven_random_bytes(g_map_key, sizeof g_map_key)) {
+            /*
+             * The OS CSPRNG failed - essentially impossible on a hosted platform, since it
+             * falls back to /dev/urandom. If it somehow does, derive a key that is at least
+             * not a constant, so the map stays keyed rather than silently becoming FNV: the
+             * address of a static (ASLR) and the address of this frame, mixed. Weaker than a
+             * real secret, stronger than "everyone shares the same key".
+             */
+            proven_uintptr_t a = (proven_uintptr_t)(void *)&g_map_key;
+            proven_uintptr_t b = (proven_uintptr_t)(void *)&expected;
+            proven_u64 mix = (proven_u64)a * 0x9e3779b97f4a7c15ull + (proven_u64)b;
+            for (int i = 0; i < 16; ++i) { mix ^= mix >> 29; mix *= 0xbf58476d1ce4e5b9ull; g_map_key[i] = (proven_byte_t)(mix >> 56); }
+        }
+        __atomic_store_n(&g_map_key_state, 2, __ATOMIC_RELEASE);
+    } else {
+        while (__atomic_load_n(&g_map_key_state, __ATOMIC_ACQUIRE) != 2) {
+            proven_sys_thread_yield();
+        }
+    }
+}
+#endif
+
+/* The full 64-bit hash for a key, honouring the map's trusted/keyed choice. */
+static proven_u64 map_hash64(const proven_map_t *map, proven_map_key_t key) {
+    if (map->key_type == PROVEN_KEY_TYPE_INT) {
+        return (proven_u64)hash_int(key.id);
+    }
+    proven_mem_view_t kv = { .ptr = key.str.ptr, .size = key.str.size };
+#ifndef PROVEN_FREESTANDING
+    if (!map->trusted_keys) {
+        map_ensure_key();
+        return proven_hash_keyed(kv, g_map_key);
+    }
+#endif
+    /* proven_hash_bytes is the public 64-bit FNV-1a, and unlike the internal duplicate it
+     * removed it guards a {NULL, size>0} key rather than dereferencing it - so a malformed
+     * key handed to proven_map_hash behaves the same on a trusted map as on a default one. */
+    return proven_hash_bytes(kv);
+}
+
+static proven_size_t get_hash(const proven_map_t *map, proven_map_key_t key) {
+    return (proven_size_t)map_hash64(map, key);
 }
 
 static int keys_equal(proven_key_type_t type, proven_map_key_t a, proven_map_key_t b) {
@@ -214,12 +255,31 @@ proven_result_map_t proven_map_create(proven_allocator_t alloc, proven_size_t in
         .align = align,
         .bucket_stride = bucket_stride,
         .payload_offset = payload_offset,
-        .key_type = key_type
+        .key_type = key_type,
+        .trusted_keys = false
     };
 
     res.err = PROVEN_OK;
     res.value = map;
     return res;
+}
+
+/*
+ * Contract first, implementation next (docs/TESTING.md §5.1). These are the stubs the
+ * keyed-hash test was written against; proven_map_create_trusted is real (it only flips a
+ * flag), but the default create still hashes strings with FNV, so the test's assertion that
+ * a default map's hash differs from FNV lands RED here and goes green in the next commit.
+ */
+proven_result_map_t proven_map_create_trusted(proven_allocator_t alloc, proven_size_t init_cap, proven_key_type_t key_type, proven_size_t elem_size, proven_size_t align) {
+    proven_result_map_t r = proven_map_create(alloc, init_cap, key_type, elem_size, align);
+    if (PROVEN_IS_OK(r.err)) r.value.trusted_keys = true;
+    return r;
+}
+
+proven_u64 proven_map_hash(const proven_map_t *map, proven_map_key_t key) {
+    if (!map) return 0;
+    /* stub: report the same non-keyed hash the internals currently use */
+    return map_hash64(map, key);
 }
 
 bool proven_map_is_valid(const proven_map_t *map) {
@@ -306,9 +366,27 @@ static proven_err_t map_rehash_target(proven_map_t *map, proven_size_t target_ca
 }
 
 static proven_err_t map_rehash(proven_map_t *map) {
-    proven_size_t new_cap;
-    if (PROVEN_CKD_MUL(&new_cap, map->cap, 2)) {
-        return PROVEN_ERR_OVERFLOW;
+    /*
+     * Grow only when the LIVE set needs the room. Otherwise rehash at the same capacity,
+     * which reclaims every tombstone for the same one walk.
+     *
+     * This used to double unconditionally, and `used` counts tombstones as well as live
+     * entries - it has to, they still occupy a probe slot. So any workload with churn and
+     * a bounded live set - a cache, a session table, a work queue: insert, remove, insert,
+     * remove - drove `used` back to the three-quarter threshold over and over while `len`
+     * stood still, and the table doubled every time. Measured: 100 live entries and two
+     * million operations produced a capacity of 1,048,576 and 33 MB held. It is not a
+     * leak - every byte is reachable and freed at destroy - which is exactly why nothing
+     * caught it. A long-running service just grows until it dies.
+     *
+     * Amortisation still holds: after an in-place rehash `used == len < cap/2`, so at
+     * least cap/4 more inserts are needed before the threshold is reached again.
+     */
+    proven_size_t new_cap = map->cap;
+    if (map->len >= map->cap / 2u) {
+        if (PROVEN_CKD_MUL(&new_cap, map->cap, 2)) {
+            return PROVEN_ERR_OVERFLOW;
+        }
     }
     return map_rehash_target(map, new_cap);
 }
@@ -324,7 +402,7 @@ static bool map_key_is_valid(const proven_map_t *map, proven_key_type_t type, pr
 static proven_err_t map_insert_no_grow(proven_map_t *map, proven_map_key_t key, const void *element, bool duplicate_owned) {
     if (!map || !element) return PROVEN_ERR_INVALID_ARG;
     if (!map_key_is_valid(map, map->key_type, key)) return PROVEN_ERR_INVALID_ARG;
-    proven_size_t hash = get_hash(map->key_type, key);
+    proven_size_t hash = get_hash(map, key);
     proven_size_t idx = hash & (map->cap - 1); 
     
     proven_map_bucket_header_t *first_tombstone = (void*)0;
@@ -492,7 +570,7 @@ static void* map_find_payload_mut(proven_map_t *map, proven_map_key_t key) {
     if (!map || map->cap == 0) return (void*)0;
     if (!map || !map_key_is_valid(map, map->key_type, key)) return (void*)0;
     
-    proven_size_t hash = get_hash(map->key_type, key);
+    proven_size_t hash = get_hash(map, key);
     proven_size_t idx = hash & (map->cap - 1);
     
     for (proven_size_t i = 0; i < map->cap; ++i) {
@@ -516,7 +594,7 @@ static const void* map_find_payload_const(const proven_map_t *map, proven_map_ke
     if (!map || map->cap == 0) return (void*)0;
     if (!map || !map_key_is_valid(map, map->key_type, key)) return (void*)0;
     
-    proven_size_t hash = get_hash(map->key_type, key);
+    proven_size_t hash = get_hash(map, key);
     proven_size_t idx = hash & (map->cap - 1);
     
     for (proven_size_t i = 0; i < map->cap; ++i) {
@@ -551,7 +629,7 @@ proven_err_t proven_map_remove(proven_map_t *map, proven_map_key_t key) {
     if (map->cap == 0) return PROVEN_ERR_NOT_FOUND;
     if (!map_key_is_valid(map, map->key_type, key)) return PROVEN_ERR_INVALID_ARG;
     
-    proven_size_t hash = get_hash(map->key_type, key);
+    proven_size_t hash = get_hash(map, key);
     proven_size_t idx = hash & (map->cap - 1);
     
     for (proven_size_t i = 0; i < map->cap; ++i) {

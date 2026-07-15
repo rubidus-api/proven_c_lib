@@ -47,6 +47,14 @@ typedef struct {
 
 [[nodiscard]] proven_err_t proven_array_pop(proven_array_t *arr, void *out_element);
 
+/**
+ * @brief A pointer into the container's storage. It dies the next time the container grows.
+ *
+ * @warning The returned pointer is INVALIDATED by any operation that may reallocate -
+ *          push, reserve, set, append, an insert that triggers a rehash. Using it
+ *          afterwards is a use-after-free, and the sanitizers will say so. Hold the index
+ *          or the key, not the pointer, across a mutation.
+ */
 [[nodiscard]] void* proven_array_get_mut(proven_array_t *arr, proven_size_t index);
 [[nodiscard]] const void* proven_array_get(const proven_array_t *arr, proven_size_t index);
 

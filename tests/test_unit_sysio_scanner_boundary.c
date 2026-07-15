@@ -19,7 +19,7 @@ int main(void) {
     proven_result_file_t opened = proven_fs_open(alloc, (proven_u8str_view_t){ .ptr = (const proven_byte_t*)path, .size = (proven_size_t)strlen(path) }, PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(opened.err), "open boundary test file", "Check file creation and write flags.");
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(proven_fs_write_all(opened.value, (proven_mem_view_t){ .ptr = (const proven_byte_t*)payload, .size = (proven_size_t)strlen(payload) })), "write boundary payload", "Check temp file write support.");
-    proven_fs_close(opened.value);
+    (void)proven_fs_close(opened.value);
 
     opened = proven_fs_open(alloc, (proven_u8str_view_t){ .ptr = (const proven_byte_t*)path, .size = (proven_size_t)strlen(path) }, PROVEN_FS_READ);
     PROVEN_TEST_ASSERT(PROVEN_IS_OK(opened.err), "reopen boundary test file", "Check file read access.");
@@ -44,7 +44,7 @@ int main(void) {
     PROVEN_TEST_ASSERT(trailing == 0u, "EOF should not write a new value", "Inspect failure-atomic output staging after the final token.");
 
     proven_sysio_scanner_deinit(&scanner);
-    proven_fs_close(opened.value);
+    (void)proven_fs_close(opened.value);
     (void)remove(path);
 
     PROVEN_TEST_PASS("Buffered sysio scanner boundary regression checks passed.");
