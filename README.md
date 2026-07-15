@@ -317,6 +317,7 @@ What you accept, and should not expect:
 ## documentation
 
 - User manual: `manual/manual.md` (chapters under `manual/`)
+- Korean manual (한국어 매뉴얼): `manual-ko/manual-ko.md`
 - Freestanding guide: `manual/manual-freestanding.md`
 - Float correctness and performance: `docs/float-correctness-and-performance.md`
 - Case study, language toolchain: `docs/case-study-lowent.md`

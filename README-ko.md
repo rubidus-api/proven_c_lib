@@ -316,6 +316,7 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 ## 문서
 
 - 사용자 매뉴얼: `manual/manual.md` (`manual/` 아래 챕터들)
+- 한국어 매뉴얼: `manual-ko/manual-ko.md`
 - freestanding 가이드: `manual/manual-freestanding.md`
 - 부동소수점 정확성과 성능: `docs/float-correctness-and-performance.md`
 - 사례 연구, 언어 툴체인: `docs/case-study-lowent.md`
