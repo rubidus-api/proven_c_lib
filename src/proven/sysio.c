@@ -37,13 +37,90 @@ proven_file_t proven_sysio_stderr(void) {
     return f;
 }
 
-void proven_sysio_flush(proven_file_t file) {
-#if defined(_WIN32) || defined(_WIN64)
-    proven_sys_io_handle_t handle = { .handle = file.internal.ptr };
-#else
-    proven_sys_io_handle_t handle = { .fd = file.internal.fd };
-#endif
-    proven_sys_io_flush(handle);
+// -----------------------------------------------------------------------------
+// The standard streams, as writers and readers
+// -----------------------------------------------------------------------------
+
+/*
+ * The whole bridge is this: a standard handle parked in caller-owned storage, so that
+ * stream.h's writer and reader - which take a proven_file_t * and require it to outlive them -
+ * have something stable to point at. Everything else is composition; nothing here re-implements
+ * what stream.c already does, which is the point. A second buffered reader would be a second
+ * place for the same bug.
+ */
+
+proven_writer_t proven_sysio_stdout_writer(proven_sysio_std_t *st) {
+    if (!st) return (proven_writer_t){0};
+    st->file = proven_sysio_stdout();
+    return proven_writer_from_file(&st->file);
+}
+
+proven_writer_t proven_sysio_stderr_writer(proven_sysio_std_t *st) {
+    if (!st) return (proven_writer_t){0};
+    st->file = proven_sysio_stderr();
+    return proven_writer_from_file(&st->file);
+}
+
+proven_reader_t proven_sysio_stdin_reader(proven_sysio_std_t *st) {
+    if (!st) return (proven_reader_t){0};
+    st->file = proven_sysio_stdin();
+    return proven_reader_from_file(&st->file);
+}
+
+// -----------------------------------------------------------------------------
+// Buffered output
+// -----------------------------------------------------------------------------
+
+proven_writer_t proven_sysio_file_buffered(proven_sysio_out_t *st, proven_file_t file, proven_mem_mut_t buf) {
+    if (!st || !buf.ptr || buf.size == 0) return (proven_writer_t){0};
+
+    st->std.file = file;
+    proven_writer_t inner = proven_writer_from_file(&st->std.file);
+    return proven_writer_buffered(&st->buffered, inner, buf);
+}
+
+proven_writer_t proven_sysio_stdout_buffered(proven_sysio_out_t *st, proven_mem_mut_t buf) {
+    return proven_sysio_file_buffered(st, proven_sysio_stdout(), buf);
+}
+
+// -----------------------------------------------------------------------------
+// Line input
+// -----------------------------------------------------------------------------
+
+proven_err_t proven_sysio_lines_open(proven_sysio_lines_t *st, proven_file_t file, proven_mem_mut_t buf) {
+    if (!st || !buf.ptr || buf.size == 0) return PROVEN_ERR_INVALID_ARG;
+
+    st->std.file = file;
+    proven_reader_t inner = proven_reader_from_file(&st->std.file);
+
+    /* Do not assume this succeeds just because the guards above passed. If the two ever drift
+     * apart, discarding the result leaves st->buffered uninitialised and the first read_line
+     * hands the caller its own stack. */
+    proven_reader_t r = proven_reader_buffered(&st->buffered, inner, buf);
+    if (!proven_reader_is_valid(r)) return PROVEN_ERR_INVALID_ARG;
+
+    return PROVEN_OK;
+}
+
+proven_err_t proven_sysio_stdin_lines(proven_sysio_lines_t *st, proven_mem_mut_t buf) {
+    return proven_sysio_lines_open(st, proven_sysio_stdin(), buf);
+}
+
+proven_result_u8str_view_t proven_sysio_read_line(proven_sysio_lines_t *st) {
+    if (!st) return (proven_result_u8str_view_t){ .err = PROVEN_ERR_INVALID_ARG };
+
+    /*
+     * Re-bind the inner reader to THIS struct's handle before reading.
+     *
+     * proven_sysio_lines_t contains a pointer to itself: the buffered reader's inner reader
+     * addresses `&st->std.file`. A caller who moves or copies the struct - and this function
+     * takes it by pointer, which is exactly the shape that says "relocatable" - would leave the
+     * inner reader pointing into the original storage, which may be gone. One assignment makes
+     * the implied contract true instead of a footgun.
+     */
+    st->buffered.inner = proven_reader_from_file(&st->std.file);
+
+    return proven_reader_read_line(&st->buffered);
 }
 
 // -----------------------------------------------------------------------------
@@ -78,11 +155,18 @@ void proven_sysio_scanner_deinit(proven_sysio_scanner_t *scanner) {
     *scanner = (proven_sysio_scanner_t){0};
 }
 
-static proven_err_t scanner_fill(proven_sysio_scanner_t *scanner, proven_size_t *read_bytes_out) {
+/*
+ * `shifted_out` reports how far left the buffer contents moved, because a
+ * caller that may need to undo the scan cannot otherwise reconcile the indices
+ * it snapshotted with the compacted buffer it is looking at afterwards.
+ */
+static proven_err_t scanner_fill(proven_sysio_scanner_t *scanner, proven_size_t *read_bytes_out, proven_size_t *shifted_out) {
     if (read_bytes_out) *read_bytes_out = 0;
+    if (shifted_out) *shifted_out = 0;
     if (!scanner || scanner->eof) return PROVEN_ERR_EOF;
 
     // Move remaining data to start.
+    if (shifted_out) *shifted_out = scanner->cursor;
     if (scanner->cursor > 0 && scanner->cursor < scanner->length) {
         proven_size_t remaining = scanner->length - scanner->cursor;
         proven_sys_mem_move(scanner->buffer, scanner->buffer + scanner->cursor, remaining);
@@ -102,21 +186,45 @@ static proven_err_t scanner_fill(proven_sysio_scanner_t *scanner, proven_size_t 
 
     proven_size_t request_size = scanner->capacity - scanner->length;
     proven_sys_result_size_t read_res = proven_sys_io_read_once(handle, (char*)(scanner->buffer + scanner->length), request_size);
+
     if (!proven_is_ok(read_res.err)) {
-        if (read_res.err == PROVEN_ERR_EOF || read_res.value == 0) {
+        /*
+         * A read that FAILED is not an end of input.
+         *
+         * This used to say `if (err == EOF || value == 0)`, and proven_sys_io_read_once
+         * reports a failed read() as {PROVEN_ERR_IO, 0} - so every EBADF, EIO and
+         * ECONNRESET took the second disjunct, latched eof, and was handed to the caller
+         * as a clean, complete end of input. A stream that broke halfway through was
+         * indistinguishable from one that finished.
+         */
+        if (read_res.err == PROVEN_ERR_EOF) {
+            scanner->length += read_res.value;   /* an EOF may still carry bytes */
+            if (read_bytes_out) *read_bytes_out = read_res.value;
             scanner->eof = true;
-            return PROVEN_ERR_EOF;
+            return (read_res.value > 0) ? PROVEN_OK : PROVEN_ERR_EOF;
         }
         return read_res.err;
     }
 
     scanner->length += read_res.value;
     if (read_bytes_out) *read_bytes_out = read_res.value;
-    if (read_res.value < request_size) {
+
+    /*
+     * A SHORT read is not an end of input either.
+     *
+     * read() on a pipe, a socket or a terminal returns whatever has arrived so far -
+     * that is its contract, not an error and not an EOF. This used to treat any read
+     * shorter than the request as end-of-input and LATCH it, which did two things, both
+     * silent: a token straddling the read boundary was committed truncated (a writer
+     * that sent "123", paused, then "456 789\n" produced the integer 123, not 123456),
+     * and every subsequent scan returned PROVEN_ERR_EOF while the rest of the stream sat
+     * unread in the pipe. Only a zero-byte read means the input has ended - which is
+     * what read() itself has always meant by it. Regular files hid the bug completely:
+     * a file read is short only at real EOF.
+     */
+    if (read_res.value == 0) {
         scanner->eof = true;
-        if (read_res.value == 0) {
-            return PROVEN_ERR_EOF;
-        }
+        return PROVEN_ERR_EOF;
     }
     return PROVEN_OK;
 }
@@ -281,10 +389,52 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
     if (args_count > 0 && !args) return PROVEN_ERR_INVALID_ARG;
     if (args_count == 0) return PROVEN_ERR_INVALID_ARG;
 
+    /*
+     * Step over leading whitespace BEFORE taking the rollback snapshot.
+     *
+     * Two facts collide here, and this is where they are reconciled.
+     *
+     * (1) A failed scan must restore the stream - that is what lets a caller try another
+     *     format against the same input. (2) Whitespace has to be droppable: a run of it
+     *     longer than the buffer would otherwise WEDGE the scanner forever - it cannot
+     *     parse (only whitespace), it cannot refill (the buffer is full), and it cannot
+     *     drop what it holds (that would be "changing the stream"). Every later scan
+     *     returns PROVEN_ERR_OUT_OF_BOUNDS, permanently, on a stream that is perfectly
+     *     fine. A pipe sending eight spaces to an eight-byte scanner did exactly that.
+     *
+     * So: whitespace ahead of a token is consumed, and the snapshot is taken AFTER. No
+     * token byte is ever lost, and no scan can address the whitespace anyway - the next
+     * scan would skip it too. What a failed scan restores is every byte a scan could still
+     * read, which is the promise that was actually worth making.
+     *
+     * Doing this INSIDE the scan - after the snapshot - is what broke catastrophically:
+     * scanner_fill reports how far it compacted the buffer, the rollback subtracts that
+     * from the snapshot, and a cursor that moved first made the shift exceed the snapshot.
+     * `start_cursor - total_shift` wrapped to ~2^64; cursor and length wrapped by the same
+     * amount so every guard still compared true, and the next scan read buffer[SIZE_MAX-15].
+     * ASan called it a heap-buffer-overflow. On a pipe it silently discarded the buffer.
+     */
+    for (;;) {
+        while (scanner->cursor < scanner->length) {
+            proven_u8 c = scanner->buffer[scanner->cursor];
+            if (c != ' ' && c != '\t' && c != '\r' && c != '\n' && c != '\f' && c != '\v') break;
+            scanner->cursor++;
+        }
+        if (scanner->cursor < scanner->length) break;   /* a real byte is waiting */
+        if (scanner->eof) break;                        /* nothing more is coming */
+
+        proven_size_t pre_read = 0;
+        proven_size_t pre_shift = 0;
+        proven_err_t pre_err = scanner_fill(scanner, &pre_read, &pre_shift);
+        if (pre_err == PROVEN_ERR_EOF) break;           /* eof is set; the check below fires */
+        if (!proven_is_ok(pre_err)) return pre_err;     /* only whitespace was consumed */
+    }
+
     proven_size_t start_cursor = scanner->cursor;
     proven_size_t start_length = scanner->length;
     bool start_eof = scanner->eof;
     proven_size_t bytes_read_total = 0;
+    proven_size_t total_shift = 0;   /* how far scanner_fill compacted the buffer */
 
     if (scanner->cursor >= scanner->length && scanner->eof) {
         return PROVEN_ERR_EOF;
@@ -295,12 +445,21 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
         return PROVEN_ERR_INVALID_ARG;
     }
 
-    proven_result_mem_mut_t stage_mem = alloc.alloc_fn(alloc.ctx, args_count * sizeof(proven_sysio_scan_stage_t), alignof(proven_sysio_scan_stage_t));
+    /* args_count comes from the caller on this public entry point, so the size
+     * math is checked like every other count * size in the library. */
+    proven_size_t stage_bytes;
+    proven_size_t scratch_bytes;
+    if (PROVEN_CKD_MUL(&stage_bytes, (proven_size_t)args_count, sizeof(proven_sysio_scan_stage_t)) ||
+        PROVEN_CKD_MUL(&scratch_bytes, (proven_size_t)args_count, sizeof(proven_scan_arg_t))) {
+        return PROVEN_ERR_OVERFLOW;
+    }
+
+    proven_result_mem_mut_t stage_mem = alloc.alloc_fn(alloc.ctx, stage_bytes, alignof(proven_sysio_scan_stage_t));
     if (!proven_is_ok(stage_mem.err) || !stage_mem.value.ptr) {
         return stage_mem.err;
     }
 
-    proven_result_mem_mut_t scratch_mem = alloc.alloc_fn(alloc.ctx, args_count * sizeof(proven_scan_arg_t), alignof(proven_scan_arg_t));
+    proven_result_mem_mut_t scratch_mem = alloc.alloc_fn(alloc.ctx, scratch_bytes, alignof(proven_scan_arg_t));
     if (!proven_is_ok(scratch_mem.err) || !scratch_mem.value.ptr) {
         alloc.free_fn(alloc.ctx, stage_mem.value.ptr);
         return scratch_mem.err;
@@ -317,7 +476,9 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
     for (;;) {
         if (scanner->cursor >= scanner->length && !scanner->eof) {
             proven_size_t read_bytes = 0;
-            proven_err_t fill_err = scanner_fill(scanner, &read_bytes);
+            proven_size_t shifted = 0;
+            proven_err_t fill_err = scanner_fill(scanner, &read_bytes, &shifted);
+            total_shift += shifted;
             if (!proven_is_ok(fill_err)) {
                 err = fill_err;
                 break;
@@ -330,17 +491,53 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
             break;
         }
 
+        /* Nothing but whitespace left and the stream has ended: that IS the end of the
+         * input, not a malformed token. (The cursor is NOT moved here - see the pre-scan
+         * whitespace skip above for why that matters.) */
+        if (scanner->eof) {
+            proven_size_t ws = scanner->cursor;
+            while (ws < scanner->length) {
+                proven_u8 c = scanner->buffer[ws];
+                if (c != ' ' && c != '\t' && c != '\r' && c != '\n' && c != '\f' && c != '\v') break;
+                ws++;
+            }
+            if (ws == scanner->length) {
+                err = PROVEN_ERR_EOF;
+                break;
+            }
+        }
+
         proven_u8str_view_t view = { .ptr = (const proven_byte_t*)scanner->buffer + scanner->cursor, .size = scanner->length - scanner->cursor };
         proven_scan_t scan = proven_scan_init(view);
         err = proven_scan_fmt_internal(&scan, fmt, scratch_args, args_count);
 
-        if (proven_is_ok(err) && !scanner->eof && scan.cursor == scan.view.size) {
+        if (proven_is_ok(err) && !scanner->eof && (scan.cursor == scan.view.size || scan.needs_more)) {
+            /* scan.needs_more covers the token that parsed as valid but might still grow -
+             * a float whose exponent was cut off at the buffer boundary returns the mantissa
+             * as a complete number, so cursor != view.size, yet the value is truncated. */
+            err = PROVEN_ERR_NEED_MORE;
+        }
+
+        /*
+         * The parse failed AT the end of what we have, and the stream has not ended: the
+         * rest of the token is still in flight. Ask for it.
+         *
+         * Without this, a number or a literal split across a read boundary was reported as
+         * malformed input - "-" then "12" was PROVEN_ERR_INVALID_ARG, "ke" then "y=7" was
+         * PROVEN_ERR_NOT_FOUND - because the scan engine, which works on a complete view,
+         * has always treated "the input ran out" and "the input is wrong" as the same fact.
+         * For a view they ARE the same fact. For a stream they are opposites, and only the
+         * engine knows which one happened, so it says so now (proven_scan_t::needs_more).
+         */
+        if (!proven_is_ok(err) && !scanner->eof && scan.needs_more) {
             err = PROVEN_ERR_NEED_MORE;
         }
 
         if (err == PROVEN_ERR_NEED_MORE) {
             proven_size_t read_bytes = 0;
-            proven_err_t fill_err = scanner_fill(scanner, &read_bytes);
+            proven_size_t shifted = 0;
+            proven_err_t fill_err = scanner_fill(scanner, &read_bytes, &shifted);
+            total_shift += shifted;
             if (proven_is_ok(fill_err)) {
                 bytes_read_total += read_bytes;
                 continue;
@@ -365,12 +562,24 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
     }
 
     if (!proven_is_ok(err)) {
+        /* Undoing the scan means undoing it against the buffer we now have, not
+         * the one we started with: scanner_fill compacts, so every index we
+         * snapshotted moved left by total_shift. Restoring the raw snapshot
+         * dropped a byte from the front of the stream and re-read bytes that had
+         * already been buffered. */
+        bool rewound = true;
         if (bytes_read_total > 0) {
-            (void)scanner_rewind_file(scanner, bytes_read_total);
+            rewound = proven_is_ok(scanner_rewind_file(scanner, bytes_read_total));
         }
-        scanner->cursor = start_cursor;
-        scanner->length = start_length;
-        scanner->eof = start_eof;
+        scanner->cursor = start_cursor - total_shift;
+        if (rewound) {
+            /* The bytes this call pulled in are back in the file; drop them. */
+            scanner->length = start_length - total_shift;
+            scanner->eof = start_eof;
+        }
+        /* Otherwise the input does not seek (a pipe): the bytes cannot be put
+         * back, so keep them buffered rather than discarding them, and leave eof
+         * describing what was actually observed. */
     }
 
     alloc.free_fn(alloc.ctx, scratch_args);
@@ -379,36 +588,53 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
 }
 
 proven_err_t proven_sysio_print_impl(proven_file_t file, const char *fmt, const proven_arg_t *args, size_t args_count) {
-    // Rely on the ubiquitous thread-safe global allocator to process prints.
-    // In heavily constrained systems, you'd substitute this with a stack buffer.
-    proven_allocator_t alloc = proven_heap_allocator();
-    proven_u8str_t str = {0};
-    
-    proven_fmt_result_t fmt_res = proven_u8str_fmt_internal(alloc, &str, false, fmt, (proven_allocator_t){0}, args, args_count);
-    proven_err_t err = fmt_res.err;
-    if (!proven_is_ok(err)) return err;
+    /*
+     * A stack buffer first, the heap only if the line will not fit.
+     *
+     * This used to allocate a proven_u8str_t from the global heap for EVERY call:
+     * ten thousand log lines meant ten thousand mallocs and ten thousand frees, on
+     * the logging path - which is the one place an allocation is least welcome,
+     * because a program logging its way out of an out-of-memory condition will fail
+     * to log it.
+     *
+     * A typical line fits in 512 bytes and now costs zero allocations. A line that
+     * does not still works: it falls back to the heap rather than being refused,
+     * because refusing to print something because it is long would be worse.
+     *
+     * This is still one write syscall per call. That is deliberate and documented -
+     * buffering would need hidden global state, which this library does not have.
+     * A caller who wants ten thousand lines in a handful of syscalls builds a
+     * proven_writer_buffered over their own memory; see stream.h.
+     */
+    proven_byte_t stack[512];
+    proven_u8str_t str = proven_u8str_borrow(stack, sizeof stack);
 
-    // Send payload straight to kernel OS
+    proven_fmt_result_t fmt_res = proven_u8str_fmt_internal((proven_allocator_t){0}, &str, false, fmt,
+                                                            (proven_allocator_t){0}, args, args_count);
+
+    proven_allocator_t heap = {0};
+    bool used_heap = false;
+    if (fmt_res.err == PROVEN_ERR_OUT_OF_BOUNDS) {
+        heap = proven_heap_allocator();
+        str = (proven_u8str_t){0};
+        fmt_res = proven_u8str_fmt_internal(heap, &str, false, fmt, (proven_allocator_t){0}, args, args_count);
+        used_heap = true;
+    }
+    if (!proven_is_ok(fmt_res.err)) {
+        if (used_heap && str.internal.ptr) heap.free_fn(heap.ctx, str.internal.ptr);
+        return fmt_res.err;
+    }
+
 #if defined(_WIN32) || defined(_WIN64)
     proven_sys_io_handle_t handle = { .handle = file.internal.ptr };
 #else
     proven_sys_io_handle_t handle = { .fd = file.internal.fd };
 #endif
 
-    const proven_byte_t *ptr = str.internal.ptr;
-    proven_sys_result_size_t w_res = proven_sys_io_write_all(handle, ptr, str.internal.len);
-    if (!proven_is_ok(w_res.err)) {
-        err = w_res.err;
-    }
-    
-    // Explicitly flush after writing
-    proven_sys_io_flush(handle);
-    
-    // Explicit clean-up since we used heap manually instead of Arena
-    if (str.internal.ptr) {
-        alloc.free_fn(alloc.ctx, str.internal.ptr);
-    }
-    
+    proven_sys_result_size_t w_res = proven_sys_io_write_all(handle, str.internal.ptr, str.internal.len);
+    proven_err_t err = proven_is_ok(w_res.err) ? PROVEN_OK : w_res.err;
+
+    if (used_heap && str.internal.ptr) heap.free_fn(heap.ctx, str.internal.ptr);
     return err;
 }
 

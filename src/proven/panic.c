@@ -18,12 +18,25 @@ static void proven_panic_default(const char *msg) {
 #endif
 }
 
-static proven_panic_handler_t g_panic_handler = proven_panic_default;
+/*
+ * Atomic because it is read on the *_or_panic allocator paths, which run on every
+ * thread, and written by proven_set_panic_handler, which a program may call while those
+ * threads are already running. A plain function pointer made that a data race - TSan
+ * says so - and a torn or stale read here means the wrong handler, or none, at the exact
+ * moment the program has decided it cannot continue. Relaxed ordering is enough: the
+ * handler pointer is the only thing being published, and a caller that installs a handler
+ * after other threads may already be panicking has a race in its own design, not in ours.
+ *
+ * _Atomic on a function pointer is lock-free on every target this library builds for, and
+ * the initialiser is still a constant, so nothing about the freestanding build changes.
+ */
+static _Atomic(proven_panic_handler_t) g_panic_handler = proven_panic_default;
 
 void proven_set_panic_handler(proven_panic_handler_t handler) {
-    g_panic_handler = handler ? handler : proven_panic_default;
+    __atomic_store_n(&g_panic_handler, handler ? handler : proven_panic_default, __ATOMIC_RELAXED);
 }
 
 void proven_panic(const char *msg) {
-    g_panic_handler(msg);
+    proven_panic_handler_t h = __atomic_load_n(&g_panic_handler, __ATOMIC_RELAXED);
+    h(msg);
 }

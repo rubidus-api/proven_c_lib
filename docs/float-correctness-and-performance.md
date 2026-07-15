@@ -260,11 +260,13 @@ glibc on these cases, and such magnitudes are uncommon in practice.
 
 ## 4. Portability and footprint
 
-- The formatter is entirely integer-based — **no `long double`**, so it behaves
-  identically on platforms where `long double == double` (MSVC, many ARM targets).
-  (The parser uses `long double` only to *seed* an exponent estimate that is then
-  corrected by exact integer comparison, so it too is correct regardless of
-  `long double` width.)
+- The whole engine is integer-based — **no `long double` anywhere**, in the
+  formatter or the parser, so it behaves identically on platforms where
+  `long double == double` (MSVC, many ARM targets). The parser's exponent-bounds
+  estimate used to go through `long double`; it now uses an integer fixed-point
+  `floor(k * log2(10))` that is bit-identical to the exact value over the whole
+  input range. That also means no libgcc soft-float routines get pulled in on a
+  target without an FPU.
 - No global state; thread-safe and reentrant (the exhaustive sweep ran 16 threads
   through the same code).
 - Freestanding-friendly: no libm dependency in the conversion paths; the
@@ -278,7 +280,7 @@ glibc on these cases, and such magnitudes are uncommon in practice.
 
 The exhaustive sweep and the benchmark are standalone C programs that link the
 library sources and the host C library as the oracle. The dated raw outputs are
-kept under `docs/internal/benchmarks/`
+kept in maintainer-local `docs/internal/` (kept outside the published repository)
 (`*-f32-exhaustive-validation.md`, `*-f64-differential-validation.md`, and
 `*-float-vs-host-benchmark.md`). To
 re-run: compile the library sources at `-O2`, link the harness, and run — the

@@ -24,12 +24,18 @@
 #include "proven/ring.h"
 #include "proven/map.h"
 #include "proven/algorithm.h"
+#include "proven/hash.h"
+#include "proven/encode.h"
+#include "proven/random.h"
 #include "proven/fs.h"
 #include "proven/time.h"
 #include "proven/fmt.h"
 #include "proven/float_parse.h"
 #include "proven/float_format.h"
 #include "proven/mmap.h"
+#ifndef PROVEN_FREESTANDING
+#include "proven/stream.h"
+#endif
 #include "proven/sysio.h"
 #include "proven/job.h"
 #include "proven/scan.h"

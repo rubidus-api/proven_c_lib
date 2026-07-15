@@ -18,7 +18,7 @@ The coroutine macros implement stackless state machines using `__LINE__` labels 
 
 ### Structure
 
-```c
+```text
 typedef struct {
 proven_i32 state;
 } proven_coro_t;
@@ -41,7 +41,7 @@ These macros are the classic Protothreads/Duff's-device trick. `BEGIN` opens a
 `switch (state)`, each `YIELD`/`AWAIT` records `__LINE__` as the resume label and
 `return`s, and `END` closes the switch. Conceptually:
 
-```c
+```text
 proven_i32 f(Ctx *c) {
     switch (c->coro.state) {       /* PROVEN_CORO_BEGIN */
     case 0:
@@ -68,7 +68,7 @@ from its own body.
 
 #### Counter-example — a local across a yield
 
-```c
+```text
 static proven_i32 bad(Ctx *c) {
     PROVEN_CORO_BEGIN(&c->coro);
     int i = 0;                       /* WRONG: a local */
@@ -81,9 +81,11 @@ static proven_i32 bad(Ctx *c) {
 /* RIGHT: put `i` in Ctx (like `value` in the Counter example below). */
 ```
 
-Example:
+Example (a sketch: a coroutine is a whole function, so it cannot be shown as a
+statement fragment - the compiled version of this shape is the worked example in
+[section 7](#7-examples-and-misuse-cases), `manual/examples/ex_06_coro.c`):
 
-```c
+```text
 typedef struct Counter {
 proven_coro_t coro;
 int value;
@@ -112,7 +114,7 @@ The job system owns worker threads and a bounded MPMC-style queue. Producers sub
 
 ### Structures
 
-```c
+```text
 typedef struct {
 void (*routine)(void *arg);
 void *arg;
@@ -181,7 +183,7 @@ thread *before* that join needs your own synchronization.
 
 #### Counter-examples
 
-```c
+```text
 /* WRONG: capacity must be a power of two. */
 proven_job_system_init(alloc, 4, 100, &sys);   /* 100 is not 2^n */
 
@@ -198,9 +200,12 @@ proven_println("total = {}", PROVEN_ARG(total));
 proven_job_submit(sys, work, arg);   /* [[nodiscard]]: a false return means NOT queued */
 ```
 
-Example:
+Example (a sketch, because the job routine has to be a function of its own; the
+compiled version, with the atomics a shared counter really needs, is the worked
+example in [section 7](#7-examples-and-misuse-cases),
+`manual/examples/ex_06_job.c`):
 
-```c
+```text
 static void increment(void *arg) {
 int *p = arg;
 *p += 1;
@@ -221,6 +226,18 @@ proven_job_system_close(sys);
 proven_job_system_destroy(sys);
 ```
 
+The lifecycle itself, with no routine in sight, is ordinary statement code:
+
+```c
+proven_job_sys_t *sys = NULL;
+proven_err_t e = proven_job_system_init(alloc, 2, 64, &sys);  /* capacity: power of two */
+if (proven_is_ok(e)) {
+    /* ... submit work here, from this thread or from producers you own ... */
+    proven_job_system_close(sys);     /* every later submit now returns false */
+    proven_job_system_destroy(sys);   /* drains the queue, joins the workers */
+}
+```
+
 ## 3. Alias layer
 
 `include/proven/alias_xcv.h` provides a shorter optional alias prefix. It maps canonical `proven_` and `PROVEN_` names to `xcv_` and `XCV_` names.
@@ -231,7 +248,8 @@ Include it after the canonical headers:
 #include "proven.h"
 #include "proven/alias_xcv.h"
 
-xcv_allocator_t alloc = xcv_heap_allocator();
+xcv_allocator_t heap = xcv_heap_allocator();
+(void)heap;
 xcv_println("{}", XCV_ARG(123));
 ```
 
@@ -307,9 +325,14 @@ Available modules in the current freestanding configuration:
 
 Excluded or stubbed modules:
 
-- `heap`: returns an invalid zero allocator.
+- `heap`: compiled, but `proven_heap_allocator()` returns an invalid zero allocator.
 - `u16str`: excluded by `PROVEN_NO_U16STR` in the current freestanding build.
-- `fs`, `sysio`, `mmap`, `time`, `job`: hosted/PAL services excluded from the current freestanding subset.
+- `time`: partial. `src/proven/time.c` is compiled, so `proven_time_breakdown()` and
+  the datetime formatters are available, but the clock backend
+  (`platform/proven_sys_time.c`) is not - so `proven_time_now()`,
+  `proven_time_now_datetime()`, and `proven_time_sleep()` have no implementation to
+  link against.
+- `fs`, `sysio`, `mmap`, `job`: hosted/PAL services excluded from the current freestanding subset.
 
 See `manual-freestanding.md` for the exact source list and command examples.
 
@@ -345,14 +368,14 @@ Rules:
 
 Wrong:
 
-```c
+```text
 PROVEN_CORO_YIELD(&c->coro); PROVEN_CORO_YIELD(&c->coro);
 /* wrong: both use the same __LINE__ value */
 ```
 
 Correct:
 
-```c
+```text
 PROVEN_CORO_YIELD(&c->coro);
 PROVEN_CORO_YIELD(&c->coro);
 ```
@@ -363,7 +386,7 @@ A stackless coroutine returns to the caller. Any local variable whose value must
 
 Wrong:
 
-```c
+```text
 static proven_i32 next(Task *t) {
 int temporary = 0;
 PROVEN_CORO_BEGIN(&t->coro);
@@ -376,7 +399,7 @@ PROVEN_CORO_END(&t->coro);
 
 Correct:
 
-```c
+```text
 typedef struct Task {
 proven_coro_t coro;
 int temporary;
@@ -387,7 +410,7 @@ int temporary;
 
 Wrong:
 
-```c
+```text
 /* thread A */
 proven_job_system_destroy(sys);
 
@@ -397,7 +420,7 @@ proven_job_submit(sys, work, arg); /* wrong: external synchronization missing */
 
 Correct:
 
-```c
+```text
 stop_producer_threads();
 join_producer_threads();
 proven_job_system_close(sys);
@@ -408,7 +431,7 @@ proven_job_system_destroy(sys);
 
 Wrong:
 
-```c
+```text
 void submit_bad(proven_job_sys_t *sys) {
 int value = 10;
 proven_job_submit(sys, work, &value);
@@ -417,7 +440,7 @@ proven_job_submit(sys, work, &value);
 
 Correct:
 
-```c
+```text
 JobData *data = allocate_job_data();
 proven_job_submit(sys, work_and_free_data, data);
 ```
@@ -426,8 +449,187 @@ proven_job_submit(sys, work_and_free_data, data);
 
 Wrong:
 
-```c
+```text
 /* Document only xcv_map_t and forget proven_map_t. */
 ```
 
 Correct: document canonical `proven_` API first, then mention aliases as optional local spelling.
+
+### Worked example: the bounded job system
+
+Compiled and run by the test suite. Note the ordering the contract requires: submit, then close, then destroy. `proven_job_system_destroy` must not race with `proven_job_submit`.
+
+<!-- example: manual/examples/ex_06_job.c -->
+```c
+#include <stdatomic.h>
+
+/*
+ * The job system: worker threads plus a bounded lock-free queue. It orders the
+ * *handoff* of work - it does not synchronize the data the work touches. That is
+ * why the counter below is an atomic and not a plain int: two jobs incrementing
+ * the same variable is a data race unless the caller says otherwise.
+ *
+ * The lifecycle is a straight line, and it is not optional:
+ *
+ *     init -> submit... -> close -> destroy
+ *
+ * destroy must not race with submit. Nothing in the library enforces that; the
+ * caller has to stop its producers first. Here there is only one producer - this
+ * thread - so "stop the producers" means "finish the submit loop before closing".
+ */
+
+#define JOB_COUNT 64
+
+static void increment(void *arg) {
+    atomic_int *counter = arg;
+    /* relaxed is enough: we only need the total to be right, not to order anything
+     * against it. The join inside destroy is what publishes the result to us. */
+    atomic_fetch_add_explicit(counter, 1, memory_order_relaxed);
+}
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    proven_job_sys_t *sys = NULL;
+    /* Queue capacity must be a power of two - the ring maps a sequence number to a
+     * slot with a mask. Sized above JOB_COUNT so a submit cannot find the ring
+     * full even if every worker is still starting up. */
+    proven_err_t err = proven_job_system_init(alloc, 4, 128, &sys);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "starting a job system with 4 workers should succeed");
+    if (!proven_is_ok(err)) return 1;
+
+    /* Lives until after destroy: a job's arg must outlive the job, and jobs run
+     * until destroy has drained the queue. */
+    atomic_int counter = 0;
+
+    proven_size_t submitted = 0;
+    for (proven_size_t i = 0; i < JOB_COUNT; ++i) {
+        /* submit returns false when the ring is full or the system is closed - it
+         * never blocks and never drops work silently. Ignoring the answer is how
+         * you lose jobs, which is why it is [[nodiscard]]. */
+        if (!proven_job_submit(sys, increment, &counter)) {
+            /* A real caller would back off and retry, or run the job inline with
+             * proven_job_execute_one. Here a full ring means the sizing above is
+             * wrong, so say so rather than paper over it. */
+            EXAMPLE_REQUIRE(false, "the queue was sized to hold every job");
+            break;
+        }
+        ++submitted;
+    }
+
+    /* This thread is the only producer, and it is done submitting - so it is safe
+     * to close. close makes every later submit fail; jobs already queued still run. */
+    proven_job_system_close(sys);
+
+    /* destroy blocks until the queue is empty and every worker has been joined.
+     * That join is the synchronization point: after destroy returns, every memory
+     * effect of every job is visible to this thread. Reading `counter` before this
+     * line would be reading a value the workers are still writing. */
+    proven_job_system_destroy(sys);
+
+    int ran = atomic_load(&counter);
+    EXAMPLE_REQUIRE(submitted == JOB_COUNT, "every job should have been accepted");
+    EXAMPLE_REQUIRE(ran == (int)submitted, "every submitted job should have run exactly once");
+
+    printf("submitted %zu jobs, %d ran\n", (size_t)submitted, ran);
+
+    return EXAMPLE_OK();
+}
+```
+
+### Worked example: a stackless coroutine
+
+Compiled and run by the test suite. The rule that catches everyone: locals do not survive a yield, so every piece of state the coroutine needs across a suspension has to live in its struct.
+
+<!-- example: manual/examples/ex_06_coro.c -->
+```c
+/*
+ * A stackless coroutine is a switch statement in disguise: BEGIN opens a
+ * switch on the saved state, each YIELD records __LINE__ as a resume label and
+ * *returns*, and the next call re-enters the function from the top and jumps
+ * straight back to that label.
+ *
+ * Everything that follows comes from that one fact:
+ *
+ *   - Locals do NOT survive a yield. The function returned; its stack frame is
+ *     gone. Anything that must persist lives in the coroutine's own struct - which
+ *     is what `value` and `remaining` are doing below.
+ *   - Two coroutine macros must not share a source line (they would collide on
+ *     __LINE__).
+ *   - It cannot yield from a helper it calls: there is no stack to suspend.
+ *
+ * The payoff is that a suspended coroutine costs exactly its struct - four bytes
+ * of state plus whatever you put next to it - and no thread, no stack, no context
+ * switch.
+ */
+
+typedef struct {
+    proven_coro_t coro;
+    /* The generator's state. These would be `int i` locals in a normal loop; here
+     * they have to be fields, or they would be reset to their initial values on
+     * every resume and the loop would never end. */
+    int value;
+    int remaining;
+} squares_t;
+
+/* A coroutine returns proven_i32: 0 = suspended (call me again), 1 = done. */
+static proven_i32 squares_next(squares_t *g) {
+    PROVEN_CORO_BEGIN(&g->coro);
+
+    g->remaining = 5;
+    g->value = 1;
+
+    while (g->remaining > 0) {
+        g->value = g->value * g->value;
+        PROVEN_CORO_YIELD(&g->coro);      /* the caller reads g->value here */
+        g->value = g->value + 1;          /* resumes exactly on this line */
+        g->remaining -= 1;
+    }
+
+    PROVEN_CORO_END(&g->coro);
+}
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* The coroutine owns no memory, so there is nothing to destroy - but the values
+     * it produces have to go somewhere, and that string does have an owner. */
+    proven_result_u8str_t out = proven_u8str_create(alloc, 32);
+    EXAMPLE_REQUIRE(proven_is_ok(out.err), "creating the output string should succeed");
+    if (!proven_is_ok(out.err)) return 1;
+
+    squares_t gen = {0};
+    PROVEN_CORO_INIT(&gen.coro);   /* unconditional, exactly once, before the first call */
+
+    int produced = 0;
+    int last = 0;
+
+    /* Drive it to completion. squares_next returns 1 on the call that runs off the
+     * end of the body - that call produces no value, so the loop body only runs
+     * while it returned 0. */
+    while (!squares_next(&gen)) {
+        proven_fmt_result_t r = proven_u8str_append_fmt_grow(alloc, &out.value, "{} ",
+                                                             PROVEN_ARG(gen.value));
+        EXAMPLE_REQUIRE(PROVEN_FMT_IS_OK(r), "appending a generated value should succeed");
+        last = gen.value;
+        ++produced;
+    }
+
+    /* Done is sticky: the state is -1 and stays there. Calling it again would just
+     * return 1 without re-running the body. */
+    EXAMPLE_REQUIRE(PROVEN_CORO_IS_DONE(&gen.coro), "the generator should have finished");
+    EXAMPLE_REQUIRE(squares_next(&gen) == 1, "a finished coroutine stays finished");
+
+    /* 1, then (1+1)^2 = 4, then (4+1)^2 = 25, then 676, then 458329. */
+    EXAMPLE_REQUIRE(produced == 5, "the generator yields once per iteration");
+    EXAMPLE_REQUIRE(last == 458329, "the state carried across every yield");
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&out.value),
+                                         PROVEN_LIT("1 4 25 676 458329 ")),
+                    "the generated sequence should be exactly this");
+
+    printf("squares: %s\n", proven_u8str_as_cstr(&out.value));
+
+    proven_u8str_destroy(alloc, &out.value);
+    return EXAMPLE_OK();
+}
+```

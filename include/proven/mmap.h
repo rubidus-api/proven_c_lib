@@ -31,6 +31,7 @@ typedef struct {
     proven_size_t size;      ///< Size of the mapping
     proven_fs_handle_t file; ///< Internal file handle
     void *internal_handle;   ///< Internal mapping handle (Win32 specific)
+    proven_mmap_flags_t flags; ///< PRIVATE or SHARED; sync needs to know which
 } proven_mmap_t;
 
 /**
@@ -59,7 +60,11 @@ proven_result_mmap_t proven_mmap_create(proven_fs_handle_t file, proven_size_t o
 proven_err_t proven_mmap_destroy(proven_mmap_t *mmap);
 
 /**
- * @brief Synchronizes changes back to disk.
+ * @brief Synchronizes changes back to disk (SHARED mappings only).
+ *
+ * @note A PRIVATE (copy-on-write) mapping returns PROVEN_ERR_UNSUPPORTED: its writes exist
+ *       only in this process and there is nothing to write back. It used to return
+ *       PROVEN_OK and persist nothing..
  */
 [[nodiscard]]
 proven_err_t proven_mmap_sync(proven_mmap_t *mmap);

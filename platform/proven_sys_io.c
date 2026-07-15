@@ -1,19 +1,37 @@
 #include "proven_sys_io.h"
 
-// Hardware/OS Separation Matrix
+/*
+ * Two platforms: Windows, and POSIX. That is all.
+ *
+ * This file used to implement read, write and seek in hand-written inline
+ * assembly, one raw-syscall path per architecture: x86_64 (`syscall`), i386
+ * (`int $0x80`), aarch64 (`svc #0`), plus an opt-in ARM32 path. It bought
+ * nothing. proven_sys_fs.c, in the same library, already calls libc's open, read,
+ * write, close and mmap - libc was always linked and always doing file I/O, so the
+ * assembly gained independence from nothing.
+ *
+ * What it cost was real:
+ *
+ *   - Three of the four architecture paths had no verification on any machine
+ *     without the cross-toolchains, which is most machines.
+ *   - Because the console path issued raw `syscall` instructions, an LD_PRELOAD
+ *     interposer counted ZERO of proven_println's ten thousand writes. Standard
+ *     tracing tooling was blind to this library's console I/O.
+ *   - The aarch64 seek used `"=r"(x0)` as a write-only output while also naming x0
+ *     as an input - the weaker idiom, and untested.
+ *
+ * Removing it changes no behaviour: forcing every branch into the POSIX fallback
+ * and running the I/O suite passed 12 of 12, byte-identical.
+ *
+ * See docs/RFC-0001-streams-and-io.md.
+ */
 
 #if defined(_WIN32) || defined(_WIN64)
-// Windows 11 / Windows OS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#elif defined(__linux__) && (defined(__x86_64__) || defined(__i386__) || defined(__aarch64__))
-// Linux ABIs with stable inline raw syscall support in this file.
-// ARM32 Linux uses the POSIX fallback below: EABI reserves r7 for the
-// syscall number, but Thumb/frame-pointer configurations can make r7
-// unavailable to inline asm under modern cross compilers.
 #else
-// POSIX Fallback: macOS, BSD, ARM32 Linux, etc. -> Use POSIX FDs and unistd.h
 #include <unistd.h>
+#include <fcntl.h>
 #include <errno.h>
 #endif
 
@@ -21,7 +39,7 @@ proven_sys_io_handle_t proven_sys_io_std_in(void) {
 #if defined(_WIN32) || defined(_WIN64)
     return (proven_sys_io_handle_t){ .handle = GetStdHandle(STD_INPUT_HANDLE) };
 #else
-    return (proven_sys_io_handle_t){ .fd = 0 }; 
+    return (proven_sys_io_handle_t){ .fd = 0 };
 #endif
 }
 
@@ -51,83 +69,13 @@ proven_sys_result_size_t proven_sys_io_write_once(proven_sys_io_handle_t handle,
     if (!buf) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
 
 #if defined(_WIN32) || defined(_WIN64)
-    DWORD chunk = size > 0x7FFFFFFF ? 0x7FFFFFFF : (DWORD)size;
+    DWORD to_write = (size > 0x7FFFFFFF) ? 0x7FFFFFFF : (DWORD)size;
     DWORD written = 0;
-    if (!WriteFile((HANDLE)handle.handle, buf, chunk, &written, NULL)) {
+    if (!WriteFile((HANDLE)handle.handle, buf, to_write, &written, NULL)) {
         return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
     }
     if (written == 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
     return (proven_sys_result_size_t){ PROVEN_OK, (size_t)written };
-#elif defined(__linux__) && defined(__x86_64__)
-    long ret;
-    long real_fd = (long)handle.fd;
-    size_t chunk = size > 0x7ffff000u ? 0x7ffff000u : size;
-    do {
-        __asm__ volatile (
-            "syscall"
-            : "=a" (ret)
-            : "a" (1), "D" (real_fd), "S" (buf), "d" (chunk)
-            : "rcx", "r11", "memory"
-        );
-    } while (ret == -4); // -EINTR
-    if (ret < 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
-    if (ret == 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
-    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)ret };
-#elif defined(__linux__) && defined(__i386__)
-    long ret;
-    long real_fd = (long)handle.fd;
-    size_t chunk = size > 0x7ffff000u ? 0x7ffff000u : size;
-    do {
-        __asm__ volatile (
-            "int $0x80"
-            : "=a" (ret)
-            : "a" (4), "b" (real_fd), "c" (buf), "d" (chunk)
-            : "memory"
-        );
-    } while (ret == -4); // -EINTR
-    if (ret < 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
-    if (ret == 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
-    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)ret };
-#elif defined(__linux__) && defined(__aarch64__)
-    long ret;
-    long real_fd = (long)handle.fd;
-    size_t chunk = size > 0x7ffff000u ? 0x7ffff000u : size;
-    do {
-        register long x8 __asm__("x8") = 64; // sys_write
-        register long x0 __asm__("x0") = real_fd;
-        register const void *x1 __asm__("x1") = buf;
-        register size_t x2 __asm__("x2") = chunk;
-        __asm__ volatile (
-            "svc #0"
-            : "+r" (x0)
-            : "r" (x8), "r" (x1), "r" (x2)
-            : "memory"
-        );
-        ret = x0;
-    } while (ret == -4); // -EINTR
-    if (ret < 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
-    if (ret == 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
-    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)ret };
-#elif defined(__linux__) && defined(PROVEN_SYS_IO_ARM_RAW_SYSCALLS) && (defined(__arm__) || defined(__thumb__))
-    long ret;
-    long real_fd = (long)handle.fd;
-    size_t chunk = size > 0x7ffff000u ? 0x7ffff000u : size;
-    do {
-        register long r7 __asm__("r7") = 4; // sys_write
-        register long r0 __asm__("r0") = real_fd;
-        register const void *r1 __asm__("r1") = buf;
-        register size_t r2 __asm__("r2") = chunk;
-        __asm__ volatile (
-            "swi #0"
-            : "+r" (r0)
-            : "r" (r7), "r" (r1), "r" (r2)
-            : "memory"
-        );
-        ret = r0;
-    } while (ret == -4); // -EINTR
-    if (ret < 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
-    if (ret == 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
-    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)ret };
 #else
     ssize_t ret;
     do {
@@ -145,10 +93,9 @@ proven_sys_result_size_t proven_sys_io_write_all(proven_sys_io_handle_t handle, 
 
     size_t total_written = 0;
     while (total_written < size) {
-        proven_sys_result_size_t res = proven_sys_io_write_once(handle, (const unsigned char*)buf + total_written, size - total_written);
-        if (res.err != PROVEN_OK) {
-            return res; // Forward error
-        }
+        proven_sys_result_size_t res =
+            proven_sys_io_write_once(handle, (const unsigned char *)buf + total_written, size - total_written);
+        if (res.err != PROVEN_OK) return res;
         total_written += res.value;
     }
     return (proven_sys_result_size_t){ PROVEN_OK, total_written };
@@ -156,95 +103,25 @@ proven_sys_result_size_t proven_sys_io_write_all(proven_sys_io_handle_t handle, 
 
 proven_sys_result_size_t proven_sys_io_read_once(proven_sys_io_handle_t handle, void *buf, size_t size) {
 #if defined(_WIN32) || defined(_WIN64)
-    if (!handle.handle) return (proven_sys_result_size_t){PROVEN_ERR_INVALID_ARG, 0};
+    if (!handle.handle) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
 #else
-    if (handle.fd < 0) return (proven_sys_result_size_t){PROVEN_ERR_INVALID_ARG, 0};
+    if (handle.fd < 0) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
 #endif
-    if (size == 0) return (proven_sys_result_size_t){PROVEN_OK, 0};
-    if (!buf) return (proven_sys_result_size_t){PROVEN_ERR_INVALID_ARG, 0};
+    if (size == 0) return (proven_sys_result_size_t){ PROVEN_OK, 0 };
+    if (!buf) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
 
 #if defined(_WIN32) || defined(_WIN64)
-    DWORD chunk = size > 0x7FFFFFFF ? 0x7FFFFFFF : (DWORD)size;
+    DWORD to_read = (size > 0x7FFFFFFF) ? 0x7FFFFFFF : (DWORD)size;
     DWORD read_bytes = 0;
-    if (!ReadFile((HANDLE)handle.handle, (unsigned char*)buf, chunk, &read_bytes, NULL)) {
+    if (!ReadFile((HANDLE)handle.handle, buf, to_read, &read_bytes, NULL)) {
         return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
     }
     if (read_bytes == 0) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
     return (proven_sys_result_size_t){ PROVEN_OK, (size_t)read_bytes };
-#elif defined(__linux__) && defined(__x86_64__)
-    long ret;
-    long real_fd = (long)handle.fd;
-    size_t chunk = size > 0x7ffff000u ? 0x7ffff000u : size;
-    do {
-        __asm__ volatile (
-            "syscall"
-            : "=a" (ret)
-            : "a" (0), "D" (real_fd), "S" ((unsigned char*)buf), "d" (chunk)
-            : "rcx", "r11", "memory"
-        );
-    } while (ret == -4); // -EINTR
-    if (ret < 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
-    if (ret == 0) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
-    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)ret };
-#elif defined(__linux__) && defined(__i386__)
-    long ret;
-    long real_fd = (long)handle.fd;
-    size_t chunk = size > 0x7ffff000u ? 0x7ffff000u : size;
-    do {
-        __asm__ volatile (
-            "int $0x80"
-            : "=a" (ret)
-            : "a" (3), "b" (real_fd), "c" ((unsigned char*)buf), "d" (chunk)
-            : "memory"
-        );
-    } while (ret == -4); // -EINTR
-    if (ret < 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
-    if (ret == 0) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
-    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)ret };
-#elif defined(__linux__) && defined(__aarch64__)
-    long ret;
-    long real_fd = (long)handle.fd;
-    size_t chunk = size > 0x7ffff000u ? 0x7ffff000u : size;
-    do {
-        register long x8 __asm__("x8") = 63; // sys_read
-        register long x0 __asm__("x0") = real_fd;
-        register void *x1 __asm__("x1") = (unsigned char*)buf;
-        register size_t x2 __asm__("x2") = chunk;
-        __asm__ volatile (
-            "svc #0"
-            : "+r" (x0)
-            : "r" (x8), "r" (x1), "r" (x2)
-            : "memory"
-        );
-        ret = x0;
-    } while (ret == -4); // -EINTR
-    if (ret < 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
-    if (ret == 0) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
-    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)ret };
-#elif defined(__linux__) && defined(PROVEN_SYS_IO_ARM_RAW_SYSCALLS) && (defined(__arm__) || defined(__thumb__))
-    long ret;
-    long real_fd = (long)handle.fd;
-    size_t chunk = size > 0x7ffff000u ? 0x7ffff000u : size;
-    do {
-        register long r7 __asm__("r7") = 3; // sys_read
-        register long r0 __asm__("r0") = real_fd;
-        register void *r1 __asm__("r1") = (unsigned char*)buf;
-        register size_t r2 __asm__("r2") = chunk;
-        __asm__ volatile (
-            "swi #0"
-            : "+r" (r0)
-            : "r" (r7), "r" (r1), "r" (r2)
-            : "memory"
-        );
-        ret = r0;
-    } while (ret == -4); // -EINTR
-    if (ret < 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
-    if (ret == 0) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
-    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)ret };
 #else
     ssize_t ret;
     do {
-        ret = read(handle.fd, (unsigned char*)buf, size);
+        ret = read(handle.fd, (unsigned char *)buf, size);
     } while (ret < 0 && errno == EINTR);
     if (ret < 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
     if (ret == 0) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
@@ -258,114 +135,188 @@ proven_sys_result_size_t proven_sys_io_read_all(proven_sys_io_handle_t handle, v
 
     size_t total_read = 0;
     while (total_read < size) {
-        proven_sys_result_size_t res = proven_sys_io_read_once(handle, (unsigned char*)buf + total_read, size - total_read);
+        proven_sys_result_size_t res =
+            proven_sys_io_read_once(handle, (unsigned char *)buf + total_read, size - total_read);
         if (res.err == PROVEN_ERR_EOF) {
-            // Reached EOF before fulfilling the full request
+            /* End of input before the request was satisfied: report how far we got. */
             return (proven_sys_result_size_t){ PROVEN_ERR_EOF, total_read };
         }
-        if (res.err != PROVEN_OK) {
-            return res;
-        }
+        if (res.err != PROVEN_OK) return res;
         total_read += res.value;
     }
     return (proven_sys_result_size_t){ PROVEN_OK, total_read };
 }
 
 void proven_sys_io_flush(proven_sys_io_handle_t handle) {
+    /*
+     * Deliberately does nothing, on every platform.
+     *
+     * Nothing in this library buffers - writes go straight to the OS - so there is
+     * nothing to flush. This used to call FlushFileBuffers on Windows, which is a
+     * *disk sync*: the same call meant nothing on POSIX and something expensive on
+     * Windows, and neither of those is what the word "flush" promised.
+     *
+     * Durability is now its own explicit call, proven_sys_io_sync(), so a caller who
+     * wants the disk to have the bytes has to say so, and pays for it knowingly.
+     */
+    (void)handle;
+}
+
+proven_err_t proven_sys_io_sync(proven_sys_io_handle_t handle) {
 #if defined(_WIN32) || defined(_WIN64)
-    if (!handle.handle) return;
-    FlushFileBuffers((HANDLE)handle.handle);
-#elif defined(__linux__) && (defined(__x86_64__) || defined(__i386__) || defined(__aarch64__))
-    // Raw syscalls are inherently unbuffered in userspace, written directly to the OS kernel.
-    // Explicit sync/fsync requires fs-level syscalls which aren't strictly necessary for stdio.
-    (void)handle;
+    if (!handle.handle) return PROVEN_ERR_INVALID_ARG;
+    if (!FlushFileBuffers((HANDLE)handle.handle)) return PROVEN_ERR_IO;
+    return PROVEN_OK;
 #else
-    // POSIX fds (write()) are unbuffered at this level.
-    (void)handle;
+    if (handle.fd < 0) return PROVEN_ERR_INVALID_ARG;
+    int ret;
+    do {
+        ret = fsync(handle.fd);
+    } while (ret < 0 && errno == EINTR);
+    if (ret < 0) return PROVEN_ERR_IO;
+    return PROVEN_OK;
+#endif
+}
+
+proven_sys_result_u64_t proven_sys_io_seek(proven_sys_io_handle_t handle, int64_t offset, int whence) {
+#if defined(_WIN32) || defined(_WIN64)
+    if (!handle.handle) return (proven_sys_result_u64_t){ PROVEN_ERR_INVALID_ARG, 0 };
+    DWORD method;
+    switch (whence) {
+        case PROVEN_SYS_IO_SEEK_SET: method = FILE_BEGIN;   break;
+        case PROVEN_SYS_IO_SEEK_CUR: method = FILE_CURRENT; break;
+        case PROVEN_SYS_IO_SEEK_END: method = FILE_END;     break;
+        default: return (proven_sys_result_u64_t){ PROVEN_ERR_INVALID_ARG, 0 };
+    }
+    LARGE_INTEGER distance;
+    distance.QuadPart = offset;
+    LARGE_INTEGER result;
+    if (!SetFilePointerEx((HANDLE)handle.handle, distance, &result, method)) {
+        return (proven_sys_result_u64_t){ PROVEN_ERR_IO, 0 };
+    }
+    return (proven_sys_result_u64_t){ PROVEN_OK, (uint64_t)result.QuadPart };
+#else
+    if (handle.fd < 0) return (proven_sys_result_u64_t){ PROVEN_ERR_INVALID_ARG, 0 };
+    int w;
+    switch (whence) {
+        case PROVEN_SYS_IO_SEEK_SET: w = SEEK_SET; break;
+        case PROVEN_SYS_IO_SEEK_CUR: w = SEEK_CUR; break;
+        case PROVEN_SYS_IO_SEEK_END: w = SEEK_END; break;
+        default: return (proven_sys_result_u64_t){ PROVEN_ERR_INVALID_ARG, 0 };
+    }
+    off_t ret = lseek(handle.fd, (off_t)offset, w);
+    if (ret < 0) {
+        /* A pipe or a terminal cannot seek. That is not an I/O failure - it is a
+         * property of the thing, and callers key off it: the scanner probes with a
+         * zero-offset seek to decide whether it is allowed to roll back. */
+        if (errno == ESPIPE) return (proven_sys_result_u64_t){ PROVEN_ERR_UNSUPPORTED, 0 };
+        return (proven_sys_result_u64_t){ PROVEN_ERR_IO, 0 };
+    }
+    return (proven_sys_result_u64_t){ PROVEN_OK, (uint64_t)ret };
 #endif
 }
 
 proven_sys_result_size_t proven_sys_io_seek_relative(proven_sys_io_handle_t handle, int64_t offset) {
+    proven_sys_result_u64_t r = proven_sys_io_seek(handle, offset, PROVEN_SYS_IO_SEEK_CUR);
+    return (proven_sys_result_size_t){ r.err, (proven_size_t)r.value };
+}
+
+proven_err_t proven_sys_io_truncate(proven_sys_io_handle_t handle, uint64_t length) {
+#if defined(_WIN32) || defined(_WIN64)
+    if (!handle.handle) return PROVEN_ERR_INVALID_ARG;
+    /* Windows truncates at the current pointer, so it has to be moved. Put it back
+     * afterwards: truncating a file should not silently reposition it for whoever
+     * writes next. */
+    LARGE_INTEGER saved;
+    LARGE_INTEGER zero;
+    zero.QuadPart = 0;
+    if (!SetFilePointerEx((HANDLE)handle.handle, zero, &saved, FILE_CURRENT)) return PROVEN_ERR_IO;
+
+    LARGE_INTEGER target;
+    target.QuadPart = (LONGLONG)length;
+    if (!SetFilePointerEx((HANDLE)handle.handle, target, NULL, FILE_BEGIN)) return PROVEN_ERR_IO;
+    if (!SetEndOfFile((HANDLE)handle.handle)) {
+        (void)SetFilePointerEx((HANDLE)handle.handle, saved, NULL, FILE_BEGIN);
+        return PROVEN_ERR_IO;
+    }
+    if (!SetFilePointerEx((HANDLE)handle.handle, saved, NULL, FILE_BEGIN)) return PROVEN_ERR_IO;
+    return PROVEN_OK;
+#else
+    if (handle.fd < 0) return PROVEN_ERR_INVALID_ARG;
+    int ret;
+    do {
+        ret = ftruncate(handle.fd, (off_t)length);
+    } while (ret < 0 && errno == EINTR);
+    if (ret < 0) return PROVEN_ERR_IO;
+    return PROVEN_OK;
+#endif
+}
+
+proven_sys_result_size_t proven_sys_io_pread(proven_sys_io_handle_t handle, void *buf, size_t size, uint64_t offset) {
 #if defined(_WIN32) || defined(_WIN64)
     if (!handle.handle) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
-    LARGE_INTEGER liDistanceToMove;
-    liDistanceToMove.QuadPart = offset;
-    LARGE_INTEGER liNewFilePointer;
-    if (!SetFilePointerEx((HANDLE)handle.handle, liDistanceToMove, &liNewFilePointer, FILE_CURRENT)) {
+    if (size == 0) return (proven_sys_result_size_t){ PROVEN_OK, 0 };
+    if (!buf) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
+
+    OVERLAPPED ov = {0};
+    ov.Offset = (DWORD)(offset & 0xFFFFFFFFu);
+    ov.OffsetHigh = (DWORD)(offset >> 32);
+    DWORD to_read = (size > 0x7FFFFFFF) ? 0x7FFFFFFF : (DWORD)size;
+    DWORD got = 0;
+    if (!ReadFile((HANDLE)handle.handle, buf, to_read, &got, &ov)) {
+        if (GetLastError() == ERROR_HANDLE_EOF) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
         return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
     }
-    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)liNewFilePointer.QuadPart };
-#elif defined(__linux__) && defined(__x86_64__)
-    long ret;
-    long real_fd = (long)handle.fd;
-    __asm__ volatile (
-        "syscall"
-        : "=a" (ret)
-        : "a" (8), "D" (real_fd), "S" (offset), "d" (1) // 8=sys_lseek, 1=SEEK_CUR
-        : "rcx", "r11", "memory"
-    );
-    if (ret < 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
-    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)ret };
-#elif defined(__linux__) && defined(__i386__)
-    // For i386 sys_lseek is 19. But sys_llseek is _llseek (140) to support 64-bit offsets.
-    long ret;
-    long real_fd = (long)handle.fd;
-    uint64_t result_off = 0;
-    __asm__ volatile (
-        "int $0x80"
-        : "=a" (ret)
-        : "a" (140), "b" (real_fd), "c" ((unsigned long)((unsigned long long)offset >> 32)), "d" ((unsigned long)(offset & 0xFFFFFFFF)), "S" (&result_off), "D" (1) // 1=SEEK_CUR
-        : "memory"
-    );
-    if (ret < 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
-    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)result_off };
-#elif defined(__linux__) && defined(__aarch64__)
-    register long x8 __asm__("x8") = 62; // sys_lseek
-    register long x0 __asm__("x0") = (long)handle.fd;
-    register long x1 __asm__("x1") = (long)offset;
-    register long x2 __asm__("x2") = 1; // 1=SEEK_CUR
-    __asm__ volatile (
-        "svc #0"
-        : "=r" (x0)
-        : "r" (x8), "r" (x0), "r" (x1), "r" (x2)
-        : "memory"
-    );
-    if (x0 < 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
-    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)x0 };
-#elif defined(__linux__) && defined(PROVEN_SYS_IO_ARM_RAW_SYSCALLS) && (defined(__arm__) || defined(__thumb__))
-    register long r7 __asm__("r7") = 140; // sys_llseek (often used for 64-bit seek on 32-bit ARM)
-    register long r0 __asm__("r0") = (long)handle.fd;
-    long long off64 = offset;
-    register long r1 __asm__("r1") = (long)(off64 >> 32);
-    register long r2 __asm__("r2") = (long)(off64 & 0xFFFFFFFF);
-    uint64_t result_off = 0;
-    register void *r3 __asm__("r3") = &result_off;
-    register long r4 __asm__("r4") = 1; // 1=SEEK_CUR
-    __asm__ volatile (
-        "swi #0"
-        : "=r" (r0)
-        : "r" (r7), "r" (r0), "r" (r1), "r" (r2), "r" (r3), "r" (r4)
-        : "memory"
-    );
-    if (r0 < 0) {
-        // Fallback to sys_lseek (19) if llseek isn't wrapping correctly
-        register long r7_fb __asm__("r7") = 19; 
-        register long r0_fb __asm__("r0") = (long)handle.fd;
-        register long r1_fb __asm__("r1") = (long)offset;
-        register long r2_fb __asm__("r2") = 1;
-        __asm__ volatile (
-            "swi #0"
-            : "=r" (r0_fb)
-            : "r" (r7_fb), "r" (r0_fb), "r" (r1_fb), "r" (r2_fb)
-            : "memory"
-        );
-        if (r0_fb < 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
-        return (proven_sys_result_size_t){ PROVEN_OK, (size_t)r0_fb };
-    }
-    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)result_off };
+    if (got == 0) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
+    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)got };
 #else
-    off_t ret = lseek(handle.fd, (off_t)offset, SEEK_CUR);
-    if (ret == (off_t)-1) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
+    if (handle.fd < 0) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
+    if (size == 0) return (proven_sys_result_size_t){ PROVEN_OK, 0 };
+    if (!buf) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
+
+    ssize_t ret;
+    do {
+        ret = pread(handle.fd, buf, size, (off_t)offset);
+    } while (ret < 0 && errno == EINTR);
+    if (ret < 0) {
+        if (errno == ESPIPE) return (proven_sys_result_size_t){ PROVEN_ERR_UNSUPPORTED, 0 };
+        return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
+    }
+    if (ret == 0) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
+    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)ret };
+#endif
+}
+
+proven_sys_result_size_t proven_sys_io_pwrite(proven_sys_io_handle_t handle, const void *buf, size_t size, uint64_t offset) {
+#if defined(_WIN32) || defined(_WIN64)
+    if (!handle.handle) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
+    if (size == 0) return (proven_sys_result_size_t){ PROVEN_OK, 0 };
+    if (!buf) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
+
+    OVERLAPPED ov = {0};
+    ov.Offset = (DWORD)(offset & 0xFFFFFFFFu);
+    ov.OffsetHigh = (DWORD)(offset >> 32);
+    DWORD to_write = (size > 0x7FFFFFFF) ? 0x7FFFFFFF : (DWORD)size;
+    DWORD put = 0;
+    if (!WriteFile((HANDLE)handle.handle, buf, to_write, &put, &ov)) {
+        return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
+    }
+    if (put == 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
+    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)put };
+#else
+    if (handle.fd < 0) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
+    if (size == 0) return (proven_sys_result_size_t){ PROVEN_OK, 0 };
+    if (!buf) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
+
+    ssize_t ret;
+    do {
+        ret = pwrite(handle.fd, buf, size, (off_t)offset);
+    } while (ret < 0 && errno == EINTR);
+    if (ret < 0) {
+        if (errno == ESPIPE) return (proven_sys_result_size_t){ PROVEN_ERR_UNSUPPORTED, 0 };
+        return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
+    }
+    if (ret == 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
     return (proven_sys_result_size_t){ PROVEN_OK, (size_t)ret };
 #endif
 }

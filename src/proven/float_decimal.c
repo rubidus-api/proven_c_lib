@@ -125,24 +125,45 @@ static proven_i64 proven_float_exp10_accumulate_clamped(proven_i64 current, prov
     return current * 10ll + (proven_i64)digit;
 }
 
-static proven_i64 proven_float_floor_long_double_to_i64(long double value) {
-    proven_i64 out = (proven_i64)value;
-    if ((long double)out > value) {
-        --out;
+/*
+ * floor(k * log2(10)), in integers only.
+ *
+ * This used to go through `long double`, which is the one type in C whose width
+ * is not the same on every target the library builds for: 80-bit on x86, 128-bit
+ * on aarch64, and a plain 64-bit double on armhf and MSVC. The estimate happened
+ * to come out identical on all of them - verified over the entire input range
+ * this can see, k in [-1000900, 1000900] (the exp10 clamp plus the digit cap) -
+ * so nothing was ever wrong. But a correctness-critical path had no business
+ * depending on a type whose precision varies by platform, and on a soft-float
+ * target the arithmetic pulls in libgcc routines for no reason.
+ *
+ * PROVEN_FLOAT_LOG2_10_Q40 is floor(log2(10) * 2^40). Over the full k range the
+ * result is bit-identical to the exact floor of k * log2(10) - checked against
+ * exact rational arithmetic for every k, not sampled - and |k * C| stays under
+ * 3.66e18, well inside proven_i64.
+ */
+#define PROVEN_FLOAT_LOG2_10_Q40  ((proven_i64)3652498566964ll)
+#define PROVEN_FLOAT_LOG2_10_SHIFT 40
+
+static proven_i64 proven_float_floor_mul_log2_10(proven_i64 k) {
+    const proven_i64 scale = (proven_i64)1 << PROVEN_FLOAT_LOG2_10_SHIFT;
+    proven_i64 product = k * PROVEN_FLOAT_LOG2_10_Q40;
+    if (product >= 0) {
+        return product >> PROVEN_FLOAT_LOG2_10_SHIFT;
     }
-    return out;
+    /* Floor, not truncate: C division rounds toward zero for negatives. */
+    return -((-product + scale - 1) >> PROVEN_FLOAT_LOG2_10_SHIFT);
 }
 
 static void proven_float_decimal_binary_exp_bounds(const proven_float_decimal_number_t *decimal,
                                                    proven_size_t significant_digits,
                                                    proven_i64 *min_exp2_out,
                                                    proven_i64 *max_exp2_out) {
-    const long double log2_10 = 3.321928094887362347870319429489390175864L;
     proven_i64 digits = (proven_i64)significant_digits;
     proven_i64 k_min = decimal->exp10 + digits - 1;
     proven_i64 k_max = decimal->exp10 + digits;
-    proven_i64 min_exp2 = proven_float_floor_long_double_to_i64((long double)k_min * log2_10) - 2;
-    proven_i64 max_exp2 = proven_float_floor_long_double_to_i64((long double)k_max * log2_10) + 2;
+    proven_i64 min_exp2 = proven_float_floor_mul_log2_10(k_min) - 2;
+    proven_i64 max_exp2 = proven_float_floor_mul_log2_10(k_max) + 2;
 
     if (min_exp2 < -1074) {
         min_exp2 = -1074;
@@ -1141,44 +1162,39 @@ static bool proven_float_bigint_copy_mul_factor(proven_float_bigint_t *dst, cons
  * cost grows with log(exp10) big multiplies rather than exp10 single-limb ones.
  * This matters for the formatter's scientific path at extreme exponents.
  */
+/* 5^0 .. 5^27: 5^27 is the largest power of five that fits in a u64. Multiplying by
+ * whole chunks of 27 turns a 350-step loop into thirteen single-limb multiplies. */
+static const proven_u64 proven_float_pow5_u64[28] = {
+    1ull, 5ull, 25ull, 125ull, 625ull, 3125ull, 15625ull, 78125ull, 390625ull, 1953125ull, 9765625ull, 48828125ull, 244140625ull, 1220703125ull, 6103515625ull, 30517578125ull, 152587890625ull, 762939453125ull, 3814697265625ull, 19073486328125ull, 95367431640625ull, 476837158203125ull, 2384185791015625ull, 11920928955078125ull, 59604644775390625ull, 298023223876953125ull, 1490116119384765625ull, 7450580596923828125ull
+};
+#define PROVEN_FLOAT_POW5_U64_MAX_E 27
+
 static bool proven_float_bigint_mul_pow5(proven_float_bigint_t *value, proven_i64 exp10) {
-    proven_float_bigint_t base;
-    proven_float_bigint_t acc;
-    proven_float_bigint_t tmp;
     proven_i64 e = exp10;
 
     if (e <= 0) {
         return true;
     }
-    if (e <= 64) {
-        /* For small exponents the in-place single-limb loop avoids the big-integer
-         * copies that exponentiation by squaring incurs. */
-        proven_i64 i;
-        for (i = 0; i < e; ++i) {
-            if (!proven_float_bigint_mul_u64(value, 5u)) {
-                return false;
-            }
+
+    /*
+     * Multiply by 5^27 at a time.
+     *
+     * This used to multiply by 5, one limb-multiply per unit of exponent, for e <= 64 -
+     * and above that it ran exponentiation-by-squaring over full big integers, copying
+     * the whole thing at every step. Both are unnecessary: 5^27 is the largest power of
+     * five that fits in a u64, so any exponent can be consumed 27 at a time with the same
+     * single-limb multiply. 5^350 - the top of the range the exact fallback needs - costs
+     * thirteen multiplies instead of 350, or instead of nine squarings of a growing
+     * bigint. It matters because the exact tier is on the correctness path for every
+     * boundary-adjacent decimal, and it had just become the only way to build 5^q.
+     */
+    while (e > PROVEN_FLOAT_POW5_U64_MAX_E) {
+        if (!proven_float_bigint_mul_u64(value, proven_float_pow5_u64[PROVEN_FLOAT_POW5_U64_MAX_E])) {
+            return false;
         }
-        return true;
+        e -= PROVEN_FLOAT_POW5_U64_MAX_E;
     }
-    proven_float_bigint_set_u64(&base, 5u);
-    proven_float_bigint_set_u64(&acc, 1u);
-    while (e > 0) {
-        if ((e & 1) != 0) {
-            if (!proven_float_bigint_copy_mul_factor(&tmp, &acc, &base)) {
-                return false;
-            }
-            acc = tmp;
-        }
-        e >>= 1;
-        if (e > 0) {
-            if (!proven_float_bigint_copy_mul_factor(&tmp, &base, &base)) {
-                return false;
-            }
-            base = tmp;
-        }
-    }
-    return proven_float_bigint_mul_factor(value, &acc);
+    return proven_float_bigint_mul_u64(value, proven_float_pow5_u64[e]);
 }
 
 static bool proven_float_bigint_build_pow5_cached(proven_i64 exp10, proven_float_bigint_t *out) {
@@ -1200,12 +1216,29 @@ static bool proven_float_bigint_build_pow5_cached(proven_i64 exp10, proven_float
         return true;
     }
 
-    if (q <= PROVEN_FLOAT_CACHED_POW5_SCALED_U128_MAX_Q) {
-        proven_float_cached_pow5_scaled_u128_entry_t entry = proven_float_cached_pow5_scaled_u128[q];
-        wide = (proven_u128_parts_t){ .lo = entry.lo, .hi = entry.hi };
-        proven_float_bigint_from_u128_parts(out, wide);
-        return proven_float_bigint_shl_bits(out, (proven_i64)entry.shift);
-    }
+    /*
+     * Everything above the exact table is built by multiplication, not looked up.
+     *
+     * It used to take proven_float_cached_pow5_scaled_u128[q] - the Eisel-Lemire table -
+     * and shift it left. That table holds a 128-bit mantissa ROUNDED to 128 bits, and
+     * 5^q is odd, so `entry << shift` is exactly 5^q only when shift is 0. For every
+     * 56 <= q <= 350 it was off, by about 1e-38 relative:
+     *
+     *     q=55  table ...078124   exact ...078125
+     *
+     * This is the fallback whose entire job is to be EXACT. It is the thing that decides,
+     * bit for bit, which way a decimal sitting on a rounding boundary goes - and it was
+     * comparing against a corrupted power of five. Every exact halfway value in that
+     * window rounded the same direction instead of to even (up for a negative exponent,
+     * down for a positive one), and a differential run against glibc found 2,923 of them.
+     * The library's central promise - correctly rounded, ties to even, bit-identical to a
+     * correct strtod - was false for any input with 20 or more significant digits in that
+     * exponent range.
+     *
+     * The bigint multiply below is slower. It is also right, and this path is the slow
+     * path by construction: Clinger and Eisel-Lemire already answer the common cases.
+     */
+    (void)wide;
 
     out->limbs[0] = 1u;
     out->len = 1u;

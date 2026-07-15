@@ -39,3 +39,9 @@ github-personal-access-token
 *.pem
 *api*key*
 cloudflare*.env
+
+# test fixtures created at run time
+walkroot/
+widedir/
+test_fs_perms.d/
+deeptree/
