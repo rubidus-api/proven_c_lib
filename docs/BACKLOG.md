@@ -20,7 +20,99 @@ An item with no exit condition is a complaint, not a backlog item.
 
 ## Open
 
-_Nothing open._
+All six are designed in [`docs/RFC-0002-view-vocabulary-and-splitting.md`](RFC-0002-view-vocabulary-and-splitting.md),
+which is where the measurements and the rejected alternatives live. Each item below says
+what is wrong and what closes it; the RFC says why that is the right shape.
+
+### B-018 — there is no splitter, so every caller writes one, and the natural one is wrong
+
+`docs/RFC-0001` §1 named this and it is still true: splitting a line on a separator is done
+by hand at every call site. The cost is not speed, it is correctness. The loop a competent
+person writes first — *"keep going while a separator is found"* — silently drops the tail
+after the last separator, and it is wrong on **six of six** obvious inputs including the
+common one: `"a,b,c"` yields two fields, not three. Getting it right means hoisting the last
+segment out of the loop, which is exactly the step that gets skipped. The measured
+alternative callers actually reach for — one owned `proven_u8str_t` per field — costs 3.4×
+the time and one malloc per field (1,000,000 allocations over a 6.8 MB corpus).
+
+Done when `proven_u8str_split` / `proven_u8str_split_next` exist, non-allocating, with the
+contract **`n` separators yield `n + 1` fields, always** — tested on `"a,b,c"`, `"a"`,
+`"a,"`, `",a"`, `"a,,b"` and `""` — and manual chapter 3 documents them with the wrong loop
+as a counter-example.
+
+Not done yet because the terminating condition needed a decision first, and RFC-0002 §2.3
+found the one that forbids the obvious answer: `proven_u8str_view_slice` returns `{NULL, 0}`
+for both a legitimately empty field and an out-of-range slice, so validity cannot end the
+loop. The iterator carries an explicit `done` flag instead.
+
+### B-019 — a view cannot be trimmed
+
+No `trim`, no `trim_start`, no `trim_end`, no `remove_prefix`, no `remove_suffix`. Trimming
+whitespace off a parsed field is the most ordinary thing done to a string and this library
+cannot do it without an index loop at the call site. `proven_scan_skip_whitespace` exists but
+operates on a `proven_scan_t`, so it is only available to code that has already committed to
+the scanner.
+
+Done when the five functions exist, each returning a view into the same memory, with
+"whitespace" defined as the six ASCII characters and documented as *not* Unicode-aware.
+
+Not done yet because it was never separated from B-018 — the two arrive together in practice,
+and the trim functions are the smaller half.
+
+### B-020 — search runs forwards only
+
+`proven_u8str_view_find` is the whole search surface. There is no reverse search, so "the
+extension after the last dot" and "the last path separator" are hand-written scans, and there
+is no `contains`, so membership is a comparison against `PROVEN_INDEX_NOT_FOUND` in the
+middle of an `if`.
+
+Done when `proven_u8str_view_find_last` and `_contains` exist, and `_find_last` reuses the
+existing Two-Way / shift-or machinery rather than becoming an `O(nm)` backwards scan.
+
+Not done yet because nothing forced it; the gap only became visible when RFC-0002 listed the
+view operations side by side.
+
+### B-021 — views can be compared for equality but not ordered
+
+Only `proven_u8str_view_eq` exists. Sorting an array of views, or using one as an ordered map
+key, requires the caller to write the three-way comparison — and byte signedness is one of
+the two things people get wrong when they do. `algorithm.h` has the sort and takes a
+`proven_compare_fn_t`; what does not exist is a correct string comparison to hand it.
+
+Done when `proven_u8str_view_cmp` exists, lexicographic over **unsigned** bytes,
+shorter-is-less on a common prefix, with a test that would fail under `char` signedness.
+
+Not done yet: no reason beyond nobody having needed it inside the library itself.
+
+### B-022 — an empty view and an invalid view are the same value
+
+`proven_u8str_view_slice` returns `{NULL, 0}` for a legitimately empty result and for an
+out-of-range request, and the two are bit-identical. That is defensible, but it is undocumented
+and it silently disarms the idiom that every other view library uses to end an iteration.
+
+Done when a `proven_u8str_view_is_valid` predicate exists with its meaning stated precisely
+(structurally sound, `true` for the empty view), and `u8str.h` plus manual chapter 3 record
+the ambiguity and say in words that validity must not be used as a loop terminator.
+
+Not done yet because it should land *after* B-018 — the documentation needs to point at the
+splitter as the thing to use instead, and pointing at something that does not exist is the
+failure mode the documentation gates were built to stop.
+
+### B-023 — nothing checks that a string is destroyed by the allocator that created it
+
+`proven_u8str_t` does not store its allocator, so the caller must pass the same one to
+`_create`, `_reserve`, `_append_grow` and `_destroy`. Nothing verifies it. Passing a
+different allocator is heap corruption that surfaces later, somewhere else.
+
+Storing the allocator in the struct — as the ACCU talk's `str_buf` does — is rejected in
+RFC-0002 §3: it doubles the struct from 4 words to 8 for every string in every array, and it
+breaks `proven_u8str_borrow`, which has no allocator at all.
+
+Done when a debug-only field records the identity of the creating allocator and a mismatch
+asserts at the offending call, compiled out entirely in release builds.
+
+Not done yet because it is the only item in RFC-0002 that touches the owning type, and it is
+deliberately separable from B-018 … B-022, which add only view functions.
 
 ---
 
