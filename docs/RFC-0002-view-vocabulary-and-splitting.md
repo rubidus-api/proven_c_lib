@@ -3,6 +3,14 @@
 **Status:** proposed
 **Date:** 2026-07-19
 **Tracks:** `docs/BACKLOG.md` B-018 … B-023 (open)
+**Implemented by:** [`docs/RFC-0003-implementing-the-view-vocabulary.md`](RFC-0003-implementing-the-view-vocabulary.md)
+
+> **Read RFC-0003 before writing any of this.** This document is the finding, the measurements
+> and the case for the design. RFC-0003 is the implementation specification, and it corrects two
+> things here: §4.1's sketch hangs forever on an empty separator (`_find` returns `0` for an
+> empty needle, so the iterator advances by zero), and §4.5's proposed `_is_valid` name is one
+> token from the existing `proven_u8str_is_valid` and has been renamed. The names in §4 below are
+> the sketch; the names in RFC-0003 §3 are the API.
 
 > **Source material.** This RFC came out of reading Luca Sas, *Modern C and What We Can
 > Learn From It* (ACCU 2021 — [slides](https://accu.org/conf-docs/PDFs_2021/luca_sass_modern_c_and_what_we_can_learn_from_it.pdf),
@@ -300,9 +308,14 @@ only forwards. `_contains` is a one-line wrapper whose value is entirely at the 
 `find(...) != PROVEN_INDEX_NOT_FOUND` is a comparison against a sentinel that reads as noise in
 an `if`.
 
-The existing search is good and both of these should reuse it: `_find` already picks between
-shift-or for short needles and Two-Way (Crochemore–Perrin, ported from musl's `memmem`) for
-long ones. `_find_last` should not become a naive backwards scan that is `O(nm)`.
+The existing search is good and both of these should reuse it. **Correction (RFC-0003 §1.2):**
+this paragraph originally said `_find` "picks between shift-or for short needles and Two-Way for
+long ones". That describes its *fallback*, not its dispatch. The default path is a
+rarest-needle-byte anchor plus `memchr` and verify — fast on ordinary text, `O(n·m)` in the worst
+case — and Shift-Or / Two-Way (the latter ported from musl's `memmem`) are reached only when a
+sampled entropy estimate says the anchor cannot be selective. `_find_last` should still not be a
+naive backwards scan, but the justification is not a worst-case guarantee that the forward path
+does not actually provide; see RFC-0003 §5.
 
 ### 4.4 Views need a three-way compare
 
@@ -367,8 +380,10 @@ several places it is further along.
   `_reserve`, `_reset`, `_borrow`, `_append_partial` and a three-way explicit split between
   atomic-fixed, truncating and growable mutation. The talk's `void str_buf_append(...)` cannot
   even report failure.
-- **The search is better than what the talk shows.** Two-Way with a shift-or fast path, not
-  `strstr`.
+- **The search is better than what the talk shows.** An anchored `memchr` scan on the rarest
+  needle byte, with Shift-Or and Two-Way (from musl's `memmem`) as an entropy-triggered fallback —
+  not `strstr`. (This bullet originally described the fallback as the dispatch; corrected per
+  RFC-0003 §1.2.)
 - **Allocators are already the talk's model, done more carefully.** The talk's `allocator_t` is
   one `proc` pointer plus `user_data`; ours separates alloc / realloc / free, requires alignment
   to be passed and preserved, and specifies failure atomicity. Scratch allocators are already
