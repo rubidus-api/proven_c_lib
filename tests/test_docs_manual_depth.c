@@ -101,6 +101,12 @@ static const Section SECTIONS[] = {
     { "manual-03-strings-text.md",          "## 4. Scanning",                           true,  false,
       "the scanner's worked example is ex_08_scan_recovery, quoted in chapter 8 alongside the "
       "error-code guide it demonstrates." },
+    /* Chapter 4 and 5 gap-fill (RFC-0004 phase 5, B-028). These three modules were documented
+     * only as tables - the symbols gate was satisfied by a row and nothing checked that the hard
+     * part was explained. Each now has motivation, a counter-example and a compiled program. */
+    { "manual-04-containers-algorithms.md", "## 2. Intrusive list",                     true,  true,  NULL },
+    { "manual-04-containers-algorithms.md", "## 3. Ring buffer",                        true,  true,  NULL },
+    { "manual-05-hosted-services.md",       "## 4. Time API",                           true,  true,  NULL },
     { "manual-04-containers-algorithms.md", "## 6. Hashing, by use case",              true,  true,  NULL },
     { "manual-04-containers-algorithms.md", "## 7. Bytes to text: hex and Base64",      false, true,
       "encode.h hands the caller no struct: every call takes a view and a caller-owned buffer." },

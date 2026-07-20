@@ -98,7 +98,153 @@ PROVEN_ARRAY_DESTROY(&nums);
 
 ## 2. Intrusive list
 
-`proven_list_t` is an intrusive doubly-linked circular list. It allocates no nodes. Each user object embeds a `proven_list_node_t`.
+### The problem: the list you were taught allocates a node per element
+
+```text
+struct node { struct node *next; void *data; };
+```
+
+That is the textbook linked list, and it has two costs the textbook does not mention. Every
+insertion **allocates** — a thousand items means a thousand allocations that exist only to hold
+pointers, each one able to fail and each one needing a matching free. And `data` is a `void *`, so
+the list has no idea what it holds: every read back out is a cast the compiler cannot check.
+
+### What an intrusive list does instead
+
+It turns the relationship inside out: **you own the memory, and the link lives inside it.**
+
+```text
+typedef struct {
+    int                 id;
+    proven_list_node_t  link;   /* the list's hook, inside your struct */
+} task_t;
+```
+
+Now inserting is writing two pointers. It allocates nothing, so it **cannot fail** — notice that
+`proven_list_push_back` returns `void`, which is unusual in this library and is the point.
+Removing is the same. The objects can live on the stack, in an array, in an arena, anywhere; the
+list only rearranges pointers that are already inside them.
+
+Getting from a link back to your object is `PROVEN_LIST_ENTRY(node, task_t, link)`, which subtracts
+the member's offset from the node's address. It is arithmetic the compiler checks the types of,
+not a cast you hope is right.
+
+What you give up: **an object can be in only as many lists as it has link members**, and you decide
+that when you declare the struct. If an item needs to be in a queue and an index at the same time,
+it needs two links.
+
+`proven_list_t` is an intrusive doubly-linked **circular** list — the head is a sentinel node, so
+insertion and removal never special-case the ends. It allocates no nodes.
+
+Wrong — removing while walking with the plain iterator:
+
+```text
+PROVEN_LIST_FOR_EACH(it, &queue) {
+    if (should_drop(it)) proven_list_remove(it);   /* wrong: it->next is read after unlink */
+}
+```
+
+`proven_list_remove` writes through the node's own pointers, so the loop then reads `next` from a
+node that has just been detached. `PROVEN_LIST_FOR_EACH_SAFE` takes a second variable and reads the
+next pointer *before* the body runs, which is exactly why it exists.
+
+### Worked example: a queue whose links live in the caller's structs
+
+Compiled and run by the test suite. It builds a queue of stack-allocated tasks, walks it, removes
+one from inside a safe walk, and inserts in the middle — with no allocator anywhere in the program.
+
+<!-- example: manual/examples/ex_04_list.c -->
+```c
+/*
+ * An INTRUSIVE list puts the links inside your struct instead of allocating a
+ * node to hold your data.
+ *
+ * The list you were taught looks like this:
+ *
+ *     struct node { struct node *next; void *data; };
+ *
+ * Every insertion allocates a node, so a list of a thousand items costs a
+ * thousand allocations that exist only to hold pointers, each one a chance to
+ * fail and a thing to free. Worse, `data` is a void* - the list has no idea what
+ * it holds, so every read is a cast the compiler cannot check.
+ *
+ * Intrusive lists invert it: YOU own the memory, and the link lives in it.
+ * Inserting allocates nothing and cannot fail. Removing allocates nothing and
+ * cannot fail. And because the link is a member of a known type, getting back
+ * from a link to the object is arithmetic the compiler does for you, not a cast.
+ *
+ * The trade is that an object can only be in as many lists as it has link
+ * members, and that is a decision you make when you declare the struct.
+ */
+
+/* The link is a member. This task can be in exactly one list at a time. */
+typedef struct {
+    int                 id;
+    proven_list_node_t  link;
+} task_t;
+
+int main(void) {
+    /* No allocator anywhere in this program: the tasks are on the stack, and the
+     * list only ever rearranges pointers that live inside them. */
+    task_t a = { .id = 1 };
+    task_t b = { .id = 2 };
+    task_t c = { .id = 3 };
+
+    proven_list_t queue;
+    proven_list_init(&queue);
+    EXAMPLE_REQUIRE(proven_list_is_empty(&queue), "a freshly initialised list is empty");
+
+    /* --- pushing cannot fail, because nothing is allocated ------------- */
+    proven_list_push_back(&queue, &a.link);
+    proven_list_push_back(&queue, &b.link);
+    proven_list_push_back(&queue, &c.link);
+    EXAMPLE_REQUIRE(!proven_list_is_empty(&queue), "three tasks are queued");
+
+    /* --- walking: PROVEN_LIST_ENTRY gets the object back from the link -- */
+    proven_list_node_t *it = NULL;
+    int seen[3] = {0}, n = 0;
+    PROVEN_LIST_FOR_EACH(it, &queue) {
+        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        if (n < 3) seen[n++] = t->id;
+    }
+    EXAMPLE_REQUIRE(n == 3 && seen[0] == 1 && seen[1] == 2 && seen[2] == 3,
+                    "the walk visits every task, in insertion order");
+
+    /* --- removing while walking needs the SAFE form -------------------- */
+    /* proven_list_remove writes through the node's own next/prev pointers, so a
+     * plain FOR_EACH would read `it->next` from a node that has just been
+     * unlinked. The _SAFE form reads the next pointer BEFORE the body runs. */
+    proven_list_node_t *safe = NULL;
+    PROVEN_LIST_FOR_EACH_SAFE(it, safe, &queue) {
+        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        if (t->id == 2) proven_list_remove(it);
+    }
+
+    n = 0;
+    PROVEN_LIST_FOR_EACH(it, &queue) {
+        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        if (n < 3) seen[n++] = t->id;
+    }
+    EXAMPLE_REQUIRE(n == 2 && seen[0] == 1 && seen[1] == 3, "task 2 was unlinked");
+
+    /* --- inserting in the middle is a pointer swap --------------------- */
+    task_t d = { .id = 4 };
+    proven_list_insert_after(&a.link, &d.link);
+
+    n = 0;
+    PROVEN_LIST_FOR_EACH(it, &queue) {
+        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        if (n < 3) seen[n++] = t->id;
+    }
+    EXAMPLE_REQUIRE(n == 3 && seen[0] == 1 && seen[1] == 4 && seen[2] == 3,
+                    "task 4 sits directly after task 1");
+
+    /* There is nothing to destroy. The list never owned anything: `a`, `c` and
+     * `d` are still perfectly good local variables, and their lifetime is the
+     * function's, exactly as it would be without the list. */
+    return EXAMPLE_OK();
+}
+```
 
 ### Structures
 
@@ -155,7 +301,112 @@ proven_println("total={}", PROVEN_ARG(total));   /* 3 */
 
 ## 3. Ring buffer
 
-`proven_ring_t` is a fixed-capacity FIFO. Push fails when full. It stores its allocator internally.
+### The problem: a queue that must not grow
+
+A queue between a fast producer and a slow consumer has to answer one question: what happens when
+the consumer falls behind? A growable queue answers "allocate more", which turns a temporary
+slowdown into unbounded memory growth and, eventually, into something worse than dropped work.
+
+The hand-written alternative is an array plus a head index plus a tail index plus modulo
+arithmetic — and it has one famous bug. When `head == tail`, is the buffer empty or full? Both
+states look identical unless you keep a separate count or deliberately waste one slot, and every
+generation of programmers rediscovers this.
+
+### What this library does instead
+
+`proven_ring_t` is a fixed-capacity FIFO that keeps the count, so empty and full are distinct, and
+that **refuses** rather than grows:
+
+- `proven_ring_push` on a full ring returns `PROVEN_ERR_OUT_OF_BOUNDS`. It does not overwrite the
+  oldest entry and it does not reallocate. The caller decides — wait, drop the new item, or report
+  backpressure — because only the caller knows which is right.
+- `proven_ring_pop` on an empty ring fails rather than handing back a stale slot.
+
+The capacity is chosen once, at creation, and that number *is* the policy: it says how far ahead
+the producer may get. Reach for a ring for an event queue, a log of recent items, an audio or
+sensor buffer — anywhere a bound is part of the design rather than a limitation.
+
+Unlike most types in this library, `proven_ring_t` **stores its allocator internally**, which is
+why `PROVEN_RING_DESTROY` takes only the ring.
+
+Wrong — treating a full ring as an error to retry immediately:
+
+```text
+while (PROVEN_RING_PUSH(&ring, event_t, e) != PROVEN_OK) { }   /* wrong: spins forever */
+```
+
+Nothing in that loop consumes anything, so the ring stays full. A refusal from a bounded queue is
+information about the *consumer*, and the loop that ignores it is a hang.
+
+### Worked example: pushing until full, and what refusal looks like
+
+Compiled and run by the test suite.
+
+<!-- example: manual/examples/ex_04_ring.c -->
+```c
+/*
+ * A ring buffer is a fixed-size queue that never moves its contents and never
+ * grows. You give it a capacity once; push adds at the tail, pop removes from
+ * the head, and when it is full, push REFUSES.
+ *
+ * The C you would otherwise write is an array plus two indices plus the modulo
+ * arithmetic to wrap them, and the bug is always the same: "is it full or is it
+ * empty?" - both states have head == tail unless you keep a count or waste a
+ * slot. This ring keeps the count, so the question does not arise.
+ *
+ * Use one when a producer and a consumer run at different speeds and you want a
+ * hard bound on how far ahead the producer may get: an event queue, a log ring,
+ * an audio buffer. The refusal on a full ring is the feature - it is
+ * backpressure. A growable queue would answer a burst by eating memory until
+ * something worse happens.
+ */
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* Capacity of 4 events. It will never be 5. */
+    proven_result_ring_t r = PROVEN_RING_INIT(alloc, int, 4);
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating a 4-slot ring should succeed");
+    proven_ring_t ring = r.value;
+
+    /* --- push until full ---------------------------------------------- */
+    for (int i = 1; i <= 4; ++i) {
+        proven_err_t err = PROVEN_RING_PUSH(&ring, int, i);
+        EXAMPLE_REQUIRE(proven_is_ok(err), "the first four pushes fit");
+    }
+
+    /* The fifth push is refused. It does not overwrite the oldest entry, and it
+     * does not grow: a full ring is a full ring, and the caller decides what to
+     * do about it - wait, drop the new event, or report backpressure. */
+    proven_err_t full = PROVEN_RING_PUSH(&ring, int, 5);
+    EXAMPLE_REQUIRE(full == PROVEN_ERR_OUT_OF_BOUNDS,
+                    "pushing into a full ring must be refused, not silently absorbed");
+
+    /* --- pop in the order they were pushed ----------------------------- */
+    int out = 0;
+    proven_err_t err = PROVEN_RING_POP(&ring, int, &out);
+    EXAMPLE_REQUIRE(proven_is_ok(err) && out == 1, "pop returns the oldest entry first");
+
+    /* Now there is room again, and the ring wraps around its storage without
+     * moving anything. */
+    err = PROVEN_RING_PUSH(&ring, int, 5);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "after a pop there is room for one more");
+
+    int expected[] = { 2, 3, 4, 5 };
+    for (int i = 0; i < 4; ++i) {
+        err = PROVEN_RING_POP(&ring, int, &out);
+        EXAMPLE_REQUIRE(proven_is_ok(err) && out == expected[i],
+                        "entries come out in the order they went in");
+    }
+
+    /* --- empty behaves like full: it refuses, it does not invent data --- */
+    err = PROVEN_RING_POP(&ring, int, &out);
+    EXAMPLE_REQUIRE(!proven_is_ok(err), "popping an empty ring must fail rather than return junk");
+
+    PROVEN_RING_DESTROY(&ring);
+    return EXAMPLE_OK();
+}
+```
 
 ### Structures
 
