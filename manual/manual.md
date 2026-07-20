@@ -245,6 +245,40 @@ proven_writer_t w = proven_sysio_stdout_buffered(&out,
 
 ## 5. Operation behavior classes
 
+### One operation, three honest answers
+
+"Append this text to that string" has three defensible behaviours when the text does not fit, and
+most libraries pick one and hide the choice. This library exposes all three, gives them different
+names, and puts the difference in the signature — because which one you want depends on what the
+text *is*, and only the caller knows that.
+
+Consider appending to a filesystem path:
+
+- If the path does not fit, **truncating is catastrophic.** `/home/user/documents/report.pdf`
+  becomes `/home/user/doc`, which is a different, possibly existing, file. The operation must fail
+  and change nothing.
+- Now consider appending to a log line. If it does not fit, **truncating is fine** — you would
+  rather have most of the message than none of it — as long as you are told how much was written.
+- And appending to a buffer you are building up, where you would simply like it to **grow**.
+
+The three classes below are those three answers. The one you get is decided by the function name
+and the presence of an allocator parameter, never by a flag or a global:
+
+- `proven_u8str_append(str, data)` — no allocator, so it cannot grow: **refuses**.
+- `proven_u8str_append_partial(str, data)` — returns a count: **truncates and tells you**.
+- `proven_u8str_append_grow(alloc, str, data)` — takes an allocator: **grows**.
+
+The default across the library is the first one, and [Chapter 0
+§5](manual-00-start-here.md#5-the-five-contracts-you-will-meet-on-every-page) explains why: a
+truncated path opens the wrong file, a truncated command runs the wrong command, and a truncated
+number is a different number.
+
+Wrong — ignoring the count from the truncating form:
+
+```text
+(void)proven_u8str_append_partial(&s, huge);   /* wrong: the count WAS the answer */
+```
+
 Several APIs intentionally expose three behavior classes:
 
 | Class | Example | Behavior on insufficient capacity |
@@ -312,6 +346,22 @@ Chapter 3 first; reach for Chapter 8 when you need the exact behaviour of a spec
 failure.
 
 ## 7. Public header map
+
+### Appendix C — how to find things
+
+There are 35 public headers and one umbrella. `#include "proven.h"` pulls in everything and is
+what the examples in this manual do; including individual headers is for when you care about
+compile time or want the dependency to be visible in the file.
+
+Two things this table tells you that the file names do not:
+
+- **Which chapter documents it.** Every header has exactly one chapter that explains it, and the
+  build enforces that every public function is named somewhere under `manual/` — so if a symbol is
+  not in the chapter you expect, it is in the manual somewhere and this map says where.
+- **Whether it survives a freestanding build.** The headers assigned to Chapter 5 are the hosted
+  ones: they need a filesystem, standard streams, a clock, virtual memory or threads. Everything
+  else compiles with no operating system. [The freestanding
+  guide](manual-freestanding.md) has the authoritative per-module table.
 
 | Header | Main purpose | Chapter |
 |---|---|---|
