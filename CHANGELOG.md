@@ -11,6 +11,55 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-20] — proven_c_lib-v26.07.20b
+
+The repository's non-C checks are part of the build now, and the one thing they had ever
+reported turned out to be noise.
+
+### Fixed
+
+- **`scripts/project-check.sh` runs from `./nob`, before anything is compiled, and a failure
+  fails the build.** It had been failing continuously since 2026-07-12 — through six releases,
+  v26.07.13g to v26.07.13m — and nobody found out, because it was not part of any command anyone
+  ran. This is the same lesson the documentation gates were built on, arriving from the other
+  direction: the gates work because the build runs them, and a check the build does not run is a
+  check that stops being true without telling anyone.
+
+  Four details, each one a defect found while wiring it:
+
+  - **Early, not late.** Placed after the tests, a documentation failure surfaces through
+    `test_portability_nob_std_probe` — which invokes this driver as a subprocess and reports
+    *"build driver completes with the fallback compiler standard"*. True, useless, and three
+    steps from the cause. Verified in both directions: a planted violation now stops the build
+    with **zero tests run** and names the offending file.
+  - **Skipped for `regression` and cross runs**, so the check does not run twice per build (the
+    probe above invokes `./nob regression`), and because a cross matrix links no hosted tests.
+  - **Skipped loudly, never silently.** No script, no POSIX shell, or no `python3` each log a
+    SKIP with the reason rather than passing quietly.
+  - **Logged under `[PROVEN][PROJECT_CHECK]`.** `[PROVEN][CHECK]` already belongs to the test
+    framework's assertions (`tests/proven_test.h:29`), and two things writing the same tag makes
+    both unreadable.
+
+- **The privacy scan's only finding was a false positive, and the example was wrong, not the
+  scan.** `manual/examples/ex_03_u8str.c` built a throwaway path under the host's storage-pool
+  mount prefix while demonstrating string editing. That prefix is a real private location on the
+  machine this library is developed on — it is where the development container's own root
+  overlay lives — so the scan was right to reject it and the example had no reason to use it.
+  Changed to `/srv/etc/fstab` in the example, the chapter that quotes it, and the Korean mirror.
+
+  This entry deliberately does not reproduce the old path. The first draft of it did, and **the
+  new gate failed the build on the changelog** — which is the gate working, one commit after it
+  was installed.
+
+  The pattern was **not** narrowed to make the message go away. Weakening a privacy scan to
+  silence a collision is how the real leak ships six months later; the example path was
+  arbitrary and the lesson it teaches — inserting a prefix — is unchanged.
+
+### Note
+
+No library code changed. `src/` and `include/` are identical to v26.07.20a apart from the
+version constants; the diff is `nob.c`, one example program, and two manual chapters.
+
 ## [2026-07-20] — proven_c_lib-v26.07.20a
 
 A design release. No library code changed — `src/` and `include/` are identical to v26.07.13m

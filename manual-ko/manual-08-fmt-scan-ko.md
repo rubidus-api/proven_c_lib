@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v26.07.20a)
+# Chapter 8: Formatting and Scanning (v26.07.20b)
 
 이 장은 `fmt.h`와 `scan.h`에 대한 상세 레퍼런스다.
 Chapter 3은 더 짧은 개요와 일상적인 예제를 제공한다.
