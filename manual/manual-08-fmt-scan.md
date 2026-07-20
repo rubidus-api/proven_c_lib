@@ -1,8 +1,14 @@
 # Chapter 8: Formatting and Scanning (v26.07.20b)
 
-This chapter is the detailed reference for `fmt.h` and `scan.h`.
-Chapter 3 gives the shorter overview and the everyday examples.
-This chapter focuses on exact syntax, parameter shapes, return values, and the places where callers usually make mistakes.
+**Part IV — Text in and out. Prerequisite: [Chapter 3](manual-03-strings-text.md) §3–§4.**
+**After this chapter** you can format any value, teach the formatter a type of your own, parse
+input with the cursor under your control, and recover from a partial parse.
+
+This chapter is the **reference half** of the text material; [Chapter 3](manual-03-strings-text.md)
+is the tutorial half. Chapter 3 introduces the formatter and the scanner beside the string types
+and gives you enough to be productive. This chapter gives the exact syntax, every parameter shape,
+every return value, and the places where callers usually go wrong. If you are meeting `{}` for the
+first time, read Chapter 3 first — this one assumes you have.
 
 ## Table of contents
 

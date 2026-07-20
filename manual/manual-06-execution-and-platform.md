@@ -1,6 +1,13 @@
 # Chapter 6: Execution, Aliases, PAL, Freestanding, and Cross Builds
 
-This chapter covers `coro.h`, `job.h`, `alias_xcv.h`, PAL contracts, freestanding mode, and platform build notes.
+**Part VI — Going further. Prerequisites: Parts II–V.**
+**After this chapter** you can run work on more than one thread without the memory model
+surprising you, write a state machine that reads like a loop, and build for a target that has no
+operating system.
+
+This chapter covers `coro.h`, `job.h`, `alias_xcv.h`, thread-safety and pointer provenance, PAL
+contracts, freestanding mode, and platform build notes. This is the hardest material in the
+manual, and it is last on purpose — nothing in Parts I–V depends on it.
 
 ## Table of contents
 

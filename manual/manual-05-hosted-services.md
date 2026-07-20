@@ -1,6 +1,13 @@
 # Chapter 5: Hosted Services
 
-This chapter covers `fs.h`, `sysio.h`, `mmap.h`, `time.h`, `stream.h`, and `random.h`.
+**Part V — Talking to the operating system. Prerequisite: Part II
+([1](manual-01-foundation.md), [2](manual-02-allocation.md), [3](manual-03-strings-text.md)).**
+**After this chapter** you can read and write files without losing data on a crash, read input a
+line at a time, generate randomness that suits the job, and tell wall-clock time from elapsed time.
+
+This chapter covers `fs.h`, `sysio.h`, `mmap.h`, `time.h`, `stream.h`, and `random.h`. Everything
+in it needs an operating system: this is the only part of the manual that does not apply to a
+[freestanding](manual-freestanding.md) build.
 
 These APIs require hosted platform support and are excluded from the current freestanding subset.
 

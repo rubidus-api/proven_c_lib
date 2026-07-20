@@ -1,7 +1,14 @@
 # Chapter 3: Strings, Formatting, and Scanning
 
-This chapter covers `u8str.h`, `u16str.h`, `fmt.h`, and `scan.h`.
-For the full format grammar and scanner edge cases, see `manual-08-fmt-scan.md`.
+**Part II — The vocabulary every program uses. Prerequisites:
+[Chapter 1](manual-01-foundation.md) and [Chapter 2](manual-02-allocation.md).**
+**After this chapter** you can hold text without a NUL terminator deciding your program's fate,
+build strings that refuse to overflow, and format and parse the everyday cases.
+
+This chapter covers `u8str.h`, `u16str.h`, `fmt.h`, and `scan.h`. It is the **tutorial half** of
+the text material: it introduces the formatter and the scanner with the cases you meet daily.
+[Chapter 8](manual-08-fmt-scan.md) is the reference half — the complete grammar, every argument
+constructor, and the scanner's error and recovery rules. Read this one first.
 
 ## Table of contents
 
