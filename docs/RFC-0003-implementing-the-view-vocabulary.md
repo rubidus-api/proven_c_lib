@@ -205,8 +205,11 @@ iterator — so unlike the state structs in `stream.h` it may be copied, and cop
 iteration. §6 tests that, because it is the kind of property that stays true until someone adds a
 field.
 
-`_split` does not normalise or rewrite `sep`: a caller that reads `it.sep` back gets what it
-passed. The struct is public and its fields are readable; they are not stable state to mutate.
+**Apart from that ill-formed normalisation, `_split` does not rewrite `sep`.** A caller that
+passes a well-formed separator — every case except `ptr == NULL` with `size > 0` — reads back
+exactly what it passed. The struct is public and its fields are readable; they are not stable
+state to mutate. The one exception is the safety guard above, and it is an exception rather than
+a general licence to rewrite: an ill-formed view has no bytes to preserve.
 
 ### 3.2 Trimming and affix removal
 
@@ -292,7 +295,7 @@ documentation matters more than its body.
 These are the test tables; §6 says which file each lands in.
 
 §4.1 is not only a table — it is executed. `docs/rfc-0003-spec-check.c` transcribes §3.1's four
-steps literally and runs them against every row below plus the two properties, so the
+steps literally and runs them against all thirteen rows below and all three properties, so the
 specification can be checked before any of it is implemented:
 
 ```text
@@ -300,9 +303,15 @@ gcc -std=c2x -O2 -D_GNU_SOURCE -Iinclude -Iplatform \
     -o /tmp/rfc0003 docs/rfc-0003-spec-check.c src/proven/*.c platform/*.c && /tmp/rfc0003
 ```
 
-It currently reports all twelve rows passing and 200,000 randomised cases with no count mismatch
-and no non-termination. That is what a specification should be able to say about itself, and it
-is how the `{NULL,5}` hole in §3.1 was found rather than shipped.
+It currently reports all thirteen rows passing, and 200,000 randomised cases with no count
+mismatch, no non-termination, no copy-fork divergence and no field outside its source — over
+380,000 fields and 86,000 forked iterators, printed so that a vacuous pass is visible. That is
+what a specification should be able to say about itself, and it is how the `{NULL,5}` hole in
+§3.1 was found rather than shipped.
+
+Both numbers were wrong when this paragraph was first written: the harness skipped the
+NULL-argument row and two of the three properties while the prose claimed full coverage. An
+unchecked coverage claim is the same defect as an unchecked specification, one level up.
 
 ### 4.1 `_split` / `_split_next`
 
@@ -331,14 +340,14 @@ Properties to test as properties, not rows:
 
 - **For `sep.size > 0` only:** field count equals the number of non-overlapping left-to-right
   occurrences of `sep`, plus one. The scope restriction is not decoration — an empty separator
-  "occurs" at all `size + 1` positions (§1.1), so an unscoped property predicts 4 fields for
-  `"abc"` / `""` and contradicts row 10.
+  "occurs" at all `size + 1` positions (§1.1), which for `"abc"` is 4, so an unscoped property
+  predicts **5** fields where row 10 requires 1.
 - A copied iterator continues independently of the original.
 - Every field is a sub-range of the source, or empty.
 
-Note that fields are produced by `_slice`, so an empty field is `{NULL, 0}` (§3 preamble): rows 3,
-5, 6, 7 and 12 all yield the same bit pattern for `""`, and the tests must assert on size, not on
-`ptr`.
+Note that fields are produced by `_slice`, so **every** empty field is `{NULL, 0}` (§3 preamble) —
+rows 3, 4, 5, 6, 7 and 12, including row 4's *leading* empty, which is the one a test author is
+most likely to guess points at offset 0. The tests must assert on size, never on `ptr`.
 
 ### 4.2 Trimming and affix removal
 

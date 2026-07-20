@@ -37,6 +37,11 @@ static void build_corpus(void) {
     proven_size_t rl = sizeof(rec) - 1;
     g_corpus_len = rl * RECORDS;
     g_corpus = malloc(g_corpus_len);
+    if (!g_corpus) {
+        fprintf(stderr, "rfc-0002-benchmark: could not allocate %ld bytes for the corpus\n",
+                (long)g_corpus_len);
+        exit(1);   /* say the benchmark cannot run, rather than segfault in memcpy */
+    }
     for (proven_size_t i = 0; i < RECORDS; ++i) memcpy(g_corpus + i * rl, rec, rl);
 }
 
@@ -152,6 +157,10 @@ static uint64_t run_proposed(void) {
 static uint64_t run_strtok(void) {
     uint64_t h = 0xcbf29ce484222325ULL;
     char *copy = malloc(g_corpus_len + 1);
+    if (!copy) {
+        fprintf(stderr, "rfc-0002-benchmark: could not allocate the strtok_r copy\n");
+        exit(1);
+    }
     memcpy(copy, g_corpus, g_corpus_len);
     copy[g_corpus_len] = 0;
     char *ls = NULL;

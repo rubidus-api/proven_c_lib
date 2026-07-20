@@ -14,13 +14,20 @@
  *       -o /tmp/rfc0003 docs/rfc-0003-spec-check.c src/proven/*.c platform/*.c && /tmp/rfc0003
  *
  * It checks two things:
- *   1. every row of RFC-0003 section 4.1 - the split behaviour table
- *   2. the two properties section 4.1 states: the iteration always terminates, and for a
- *      non-empty separator the field count equals non-overlapping left-to-right occurrences + 1
+ *   1. all thirteen rows of RFC-0003 section 4.1 - the split behaviour table, including the
+ *      NULL-argument row, which has no field sequence to compare and so is checked separately
+ *   2. all three properties section 4.1 states - the scoped field count, a copied iterator
+ *      continuing independently, and every field being a sub-range of the source - plus
+ *      termination, which is enforced by a step cap rather than asserted
  *
- * Writing this is what found the hole. The first draft of section 3.1 omitted the
- * construction-time normalisation, so a {NULL,5} source produced a five-byte field over a NULL
- * pointer - eleven of twelve rows passed and the twelfth was a latent crash in the caller.
+ * Both counts are stated because both have been wrong here. The first draft of section 3.1
+ * omitted the construction-time normalisation, so a {NULL,5} source produced a five-byte field
+ * over a NULL pointer - eleven of twelve rows passed and the twelfth was a latent crash in the
+ * caller. Then a review found that this harness claimed to run "every row" and "the two
+ * properties" while skipping the NULL row and two of the three properties; a coverage claim that
+ * is not itself checked is how the first hole survived a green run. The property loop now prints
+ * how many fields and how many forks it actually exercised, so a vacuous pass is visible.
+ *
  * A specification nobody executes is a specification nobody has checked.
  */
 
@@ -96,6 +103,24 @@ static int table_checks(void){
     { const char*e[]={"abc"};       bad+=check("\"abc\" / \"\"",    V("abc"),   V(""),  e,1); }
     { const char*e[]={"abc"};       bad+=check("\"abc\" / {NULL,0}",V("abc"),   NUL0,   e,1); }
     { const char*e[]={""};          bad+=check("{NULL,5} / \",\"",  NUL5,       V(","), e,1); }
+
+    /* row 13: a NULL iterator or a NULL out-parameter yields false and writes nothing.
+       This is step 1 of section 3.1 and the only row with no field sequence to compare, so it
+       is checked here rather than through check(). Without it, an implementation that drops the
+       guard would still pass a harness claiming to cover the whole table. */
+    {
+        split_t it = sp_begin(V("a,b"), V(","));
+        proven_u8str_view_t sentinel = { (const proven_byte_t*)"untouched", 9 };
+        proven_u8str_view_t out = sentinel;
+        int ok = 1;
+        if (sp_next(NULL, &out)) ok = 0;                       /* NULL iterator */
+        if (sp_next(&it, NULL))  ok = 0;                       /* NULL out */
+        if (out.ptr != sentinel.ptr || out.size != sentinel.size) ok = 0;  /* wrote nothing */
+        if (it.done || it.rest.size != 3) ok = 0;              /* did not consume */
+        printf("%-22s got: %-28s %s\n", "NULL it / NULL out", "false, nothing written",
+               ok ? "ok" : "MISMATCH");
+        bad += !ok;
+    }
     printf("\n%s\n", bad ? "SPEC DOES NOT SATISFY ITS OWN TABLE" : "spec satisfies every row of 4.1");
         return bad;
 }
@@ -103,7 +128,8 @@ static int table_checks(void){
 static int property_checks(void){
 
     proven_xoshiro256ss_t g; proven_xoshiro256ss_seed(&g,20260719);
-    char hb[33], nb[5]; int fails=0, nonterm=0;
+    char hb[33], nb[5]; int fails=0, nonterm=0, copyfork=0, subrange=0;
+    long forks=0, fields_seen=0;   /* so the coverage claim is not vacuous */
     for(long t=0;t<200000;t++){
         proven_u64 r=proven_xoshiro256ss_next(&g);
         int hl=(int)(r%17), nl=(int)((r>>8)%4);       /* needle length 0..3 exercises empty sep */
@@ -112,14 +138,42 @@ static int property_checks(void){
         proven_u8str_view_t h={(const proven_byte_t*)hb,(proven_size_t)hl};
         proven_u8str_view_t n={(const proven_byte_t*)nb,(proven_size_t)nl};
         split_t it=sp_begin(h,n); proven_u8str_view_t f; int cnt=0;
-        while(sp_next(&it,&f)){ if(++cnt>200){nonterm++;break;} }
+        /* property 2: a copied iterator continues independently. Fork at a random step and
+           require the copy to yield exactly the tail the original goes on to yield. */
+        int fork_at = (int)((r>>16)%4), step=0, forked=0, fork_tail=0;
+        split_t copy; proven_u8str_view_t cf;
+        proven_u8str_view_t orig_tail[64]; int orig_tail_n=0;
+        while(sp_next(&it,&f)){
+            if(++cnt>200){nonterm++;break;}
+            /* property 3: every field is a sub-range of the source, or empty */
+            if(f.size){
+                if(f.ptr < h.ptr || f.ptr + f.size > h.ptr + h.size) subrange++;
+            }
+            fields_seen++;
+            if(step==fork_at && !forked){ copy=it; forked=1; forks++; }   /* copy AFTER this yield */
+            else if(forked && orig_tail_n<64){ orig_tail[orig_tail_n++]=f; }
+            step++;
+        }
         if(cnt>200) continue;
+        if(forked){
+            while(sp_next(&copy,&cf)){
+                if(fork_tail>=orig_tail_n ||
+                   cf.size!=orig_tail[fork_tail].size ||
+                   (cf.size && memcmp(cf.ptr,orig_tail[fork_tail].ptr,cf.size))) { copyfork++; break; }
+                fork_tail++;
+            }
+            if(fork_tail!=orig_tail_n) copyfork++;
+        }
         int expect = (nl==0) ? 1 : occ(h,n)+1;
         if(cnt!=expect){ if(fails<3) printf("FAIL hl=%d nl=%d got=%d want=%d\n",hl,nl,cnt,expect); fails++; }
     }
-    printf("200000 random cases: %d count mismatches, %d non-terminating\n", fails, nonterm);
-    printf("%s\n", (fails||nonterm) ? "PROPERTY VIOLATED" : "properties hold");
-        return (fails||nonterm)!=0;
+    printf("200000 random cases: %d count mismatches, %d non-terminating,\n"
+           "                     %d copy-fork divergences, %d fields outside the source\n"
+           "                     (%ld fields checked for sub-range, %ld iterators actually forked)\n",
+           fails, nonterm, copyfork, subrange, fields_seen, forks);
+    int any = fails||nonterm||copyfork||subrange;
+    printf("%s\n", any ? "PROPERTY VIOLATED" : "all three properties hold, and iteration terminates");
+        return any!=0;
 }
 
 int main(void){

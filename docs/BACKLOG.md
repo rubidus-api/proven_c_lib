@@ -20,12 +20,20 @@ An item with no exit condition is a complaint, not a backlog item.
 
 ## Open
 
-All six are designed in [`docs/RFC-0002-view-vocabulary-and-splitting.md`](RFC-0002-view-vocabulary-and-splitting.md),
-which is where the measurements and the rejected alternatives live. Each item below says
-what is wrong and what closes it; the RFC says why that is the right shape.
+B-018 … B-023 are argued in [`docs/RFC-0002-view-vocabulary-and-splitting.md`](RFC-0002-view-vocabulary-and-splitting.md),
+which is where the measurements and the rejected alternatives live. Each item below says what is
+wrong and what closes it; that RFC says why it is the right shape.
 
-The implementation design for all of them — exact signatures, boundary tables, algorithms and
-commit order — is [`docs/RFC-0003-implementing-the-view-vocabulary.md`](RFC-0003-implementing-the-view-vocabulary.md).
+The implementation design — exact signatures, boundary tables, algorithms and commit order — is
+[`docs/RFC-0003-implementing-the-view-vocabulary.md`](RFC-0003-implementing-the-view-vocabulary.md),
+and it covers **B-018 … B-022 and B-024**. It deliberately excludes **B-023**, which touches the
+owning string type and shares nothing with the view functions (RFC-0003 §7, §9); B-023 has a
+rationale in RFC-0002 §4.6 but no implementation spec yet, and whoever picks it up writes one.
+
+**Where an item below and RFC-0003 disagree on a name or an exit condition, RFC-0003 wins** —
+it is newer and it was checked by execution. The exit conditions here have been reconciled with
+it once already, and the drift is worth noticing: these items were written from RFC-0002's
+sketches, and RFC-0003 renamed two functions and changed what closing B-020 means.
 
 ### B-018 — there is no splitter, so every caller writes one, and the natural one is wrong
 
@@ -38,10 +46,15 @@ segment out of the loop, which is exactly the step that gets skipped. The measur
 alternative callers actually reach for — one owned `proven_u8str_t` per field — costs 3.4×
 the time and one malloc per field (1,000,000 allocations over a 6.8 MB corpus).
 
-Done when `proven_u8str_split` / `proven_u8str_split_next` exist, non-allocating, with the
-contract **`n` separators yield `n + 1` fields, always** — tested on `"a,b,c"`, `"a"`,
-`"a,"`, `",a"`, `"a,,b"` and `""` — and manual chapter 3 documents them with the wrong loop
-as a counter-example.
+Done when `proven_u8str_view_split` / `proven_u8str_view_split_next` exist, non-allocating, with
+the contract **`n` separators yield `n + 1` fields, always** — where `n` counts non-overlapping
+left-to-right occurrences — tested against every row of RFC-0003 §4.1 including `""`, `"a,,b"`
+and the empty separator, and manual chapter 3 documents them with the wrong loop as a
+counter-example.
+
+(The names carry the `_view_` prefix, settled in RFC-0003 §2. This item originally named
+`proven_u8str_split` / `_split_next` from RFC-0002's sketch, which RFC-0003 rejected for
+consistency with the seven existing `proven_u8str_view_*` functions.)
 
 Not done yet because the terminating condition needed a decision first, and RFC-0002 §2.3
 found the one that forbids the obvious answer: `proven_u8str_view_slice` returns `{NULL, 0}`
@@ -69,8 +82,16 @@ extension after the last dot" and "the last path separator" are hand-written sca
 is no `contains`, so membership is a comparison against `PROVEN_INDEX_NOT_FOUND` in the
 middle of an `if`.
 
-Done when `proven_u8str_view_find_last` and `_contains` exist, and `_find_last` reuses the
-existing Two-Way / shift-or machinery rather than becoming an `O(nm)` backwards scan.
+Done when `proven_u8str_view_find_last` and `_contains` exist, implemented as the three paths
+RFC-0003 §5 specifies — a backward byte scan for single-byte needles, a backward Shift-Or for
+needles up to 64 bytes, and a documented fallback beyond that — and verified against the
+brute-force oracle RFC-0003 §6 requires.
+
+(This item originally required `_find_last` to "reuse the existing Two-Way / shift-or machinery
+rather than becoming an `O(nm)` backwards scan". Both halves were wrong. `proven_u8_find_shiftor`
+is forward-only, so path 2 reuses the *technique* and not the code; and the `> 64` fallback is
+knowingly quadratic, tracked as B-024 rather than forbidden here. An exit condition that the
+agreed design cannot satisfy is not a standard, it is a trap.)
 
 Not done yet because nothing forced it; the gap only became visible when RFC-0002 listed the
 view operations side by side.
@@ -93,9 +114,15 @@ Not done yet: no reason beyond nobody having needed it inside the library itself
 out-of-range request, and the two are bit-identical. That is defensible, but it is undocumented
 and it silently disarms the idiom that every other view library uses to end an iteration.
 
-Done when a `proven_u8str_view_is_valid` predicate exists with its meaning stated precisely
-(structurally sound, `true` for the empty view), and `u8str.h` plus manual chapter 3 record
-the ambiguity and say in words that validity must not be used as a loop terminator.
+Done when a `proven_u8str_view_is_well_formed` predicate exists with its meaning stated precisely
+(structurally sound — `s.size == 0 || s.ptr != NULL`, so `true` for the empty view), and
+`u8str.h` plus manual chapter 3 record the ambiguity and say in words that it must not be used as
+a loop terminator.
+
+(**Not** `_is_valid`. RFC-0003 §2 rejected that name because `proven_u8str_is_valid` already
+exists on the *owning* type with a different meaning, and two predicates separated by one token
+is a trap for a reader in a hurry — which is exactly the mistake this item's original wording
+would have caused.)
 
 Not done yet because it should land *after* B-018 — the documentation needs to point at the
 splitter as the thing to use instead, and pointing at something that does not exist is the
