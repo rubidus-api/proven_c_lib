@@ -1,4 +1,4 @@
-# Proven C Library Complete Manual (v26.07.13m)
+# Proven C Library Complete Manual (v26.07.20a)
 
 This manual is rebuilt from three sources:
 

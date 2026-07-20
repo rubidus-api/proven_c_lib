@@ -8,7 +8,7 @@
 
 빌드 드라이버는 먼저 `-std=c23`를 시도하고, 컴파일러가 아직 transitional spelling만 받아들이는 경우 `-std=c2x`로 내려갑니다. 그래서 기존 GCC와 Clang 프런트엔드도 라이브러리의 C23 기준을 바꾸지 않고 트리를 빌드할 수 있습니다.
 
-- 버전: proven_c_lib-v26.07.13m
+- 버전: proven_c_lib-v26.07.20a
 - 표준: C23
 - 라이선스: MIT
 - 저장소: https://github.com/rubidus-api/proven_c_lib

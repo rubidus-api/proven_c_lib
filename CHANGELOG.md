@@ -11,6 +11,77 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-20] — proven_c_lib-v26.07.20a
+
+A design release. No library code changed — `src/` and `include/` are identical to v26.07.13m
+apart from the version constants. What shipped is two RFCs, the work that produced them, and two
+harnesses that make them checkable rather than merely readable.
+
+### Added
+
+- **RFC-0002 — the view vocabulary, and the splitter every caller writes wrong.** Read Luca Sas's
+  *Modern C and What We Can Learn From It* (ACCU 2021) against this library. The useful result was
+  mostly negative: the talk argues for the owning/non-owning string split, values over
+  out-parameters, allocator-as-parameter, a typed formatter extension point and a freestanding
+  posture — and this library already does all of it, in several places more thoroughly than the
+  talk proposes. The gap it exposes is narrow and entirely on the **non-owning** side. Of the nine
+  view operations the talk shows, this library has three.
+
+  The centre of it is splitting, and the finding is not that splitting is slow here. It is that
+  there is no splitter, so every caller writes one, and **the loop a competent person writes first
+  is wrong on six of six inputs** — including `"a,b,c"`, which silently loses `c`. The measured
+  alternative people actually reach for, one owned string per field, costs 3.4× the time and **one
+  malloc per field**: a million allocations to read 6.8 MB.
+
+- **RFC-0003 — implementing the view vocabulary.** Exact declarations, every boundary as a table,
+  the algorithms with their real complexity, the six files a public symbol costs in this
+  repository, and a commit order. Writing it invalidated four things the design document stated
+  confidently, and each correction is recorded rather than quietly patched:
+
+  - `proven_u8str_view_find` returns `start_offset` for an empty needle, not `NOT_FOUND`, so
+    RFC-0002's sketched iterator advances by zero bytes and **hangs**.
+  - The forward search is **not** "shift-or for short needles, Two-Way for long ones" — that is
+    its entropy-triggered fallback. The default path is a rarest-byte anchored `memchr` scan,
+    `O(n·m)` in the worst case. The reverse-search design no longer rests on a worst-case
+    guarantee the library does not actually make.
+  - `_cmp` cannot inherit NULL-safety from a platform function three layers down: `{NULL, 5}` is
+    representable and would compare five bytes against a NULL pointer.
+  - The first draft's commit plan put the failing test before the header, which does not compile
+    and violates the test-first rule it cited.
+
+- **Two harnesses, so the documents can be checked instead of believed.** Neither is built by
+  `./nob`; both compile against the library directly and the command is in the file.
+
+  - `docs/rfc-0002-benchmark.c` reproduces every number in RFC-0002 §2 — the six-of-six wrong
+    table, ns/field and allocation counts for four splitting strategies, and the
+    empty-versus-invalid view demonstration. RFC-0001's measurements were never committed and are
+    now unreproducible; this is the correction.
+  - `docs/rfc-0003-spec-check.c` **executes RFC-0003's specification** against its own tables: all
+    thirteen rows and all three properties, plus 200,000 randomised cases. This is how a hole was
+    found before it shipped — an ill-formed `{NULL,5}` source was yielded as a five-byte field
+    over a NULL pointer, with eleven of twelve rows green.
+
+- **B-018 … B-024 in `docs/BACKLOG.md`**, each with an exit condition reconciled against RFC-0003.
+
+### Fixed
+
+- **RFC-0002's two descriptions of the substring search**, corrected in place with a pointer to
+  the evidence rather than silently rewritten.
+- **Three backlog exit conditions named APIs the design had already rejected**, which made them
+  unclosable — and B-022's original wording would have led a contributor to ship the exact naming
+  trap RFC-0003 exists to avoid.
+- **A coverage claim that was not itself checked.** `rfc-0003-spec-check.c` claimed to run "every
+  row" and "the two properties" while skipping the NULL-argument row and two of the three
+  properties. It now checks them, and prints how much it exercised (380,883 fields, 86,325 forked
+  iterators) so a vacuous pass is visible. An unchecked coverage claim is the same defect as an
+  unchecked specification, one level up.
+- Both `malloc` calls in the benchmark harness report failure instead of segfaulting in `memcpy`.
+
+### Note
+
+Nothing in RFC-0003 is implemented. The `n` separators → `n + 1` fields contract cannot be
+revisited once callers depend on it, so it is the decision to settle before code.
+
 ## [2026-07-15] — proven_c_lib-v26.07.13m
 
 ### Added

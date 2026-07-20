@@ -1,4 +1,4 @@
-# Proven Freestanding 모드 (v26.07.13m)
+# Proven Freestanding 모드 (v26.07.20a)
 
 이 가이드는 `nob.c`와 공개 헤더가 구현한 현재의 `PROVEN_FREESTANDING` 구성을 설명한다.
 
