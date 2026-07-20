@@ -20,7 +20,55 @@ constructor, and the scanner's error and recovery rules. Read this one first.
 
 ## 1. U8 strings and views
 
-A U8 string is an owned, NUL-terminated byte string. Length is counted in bytes, not Unicode scalar values. A U8 view is borrowed and is not guaranteed to be NUL-terminated.
+### The problem: a C string does not know how long it is
+
+A C string is a pointer, and where it ends is decided by a zero byte somewhere in memory. That one
+decision — made in 1972 to save a byte per string — is behind a remarkable amount of damage:
+
+- **Length is a search.** `strlen` walks the string. A loop that checks `strlen(s)` on each
+  iteration is quadratic, and it looks like ordinary code.
+- **Text cannot contain a zero byte.** So a C string cannot hold a UTF-16 buffer, a protocol
+  frame, a slice of a file, or any binary data — the string type and the byte type are different
+  things and the language pretends otherwise.
+- **A missing terminator is not detectable.** `strcpy` into a buffer with no room writes until it
+  finds a zero somewhere in your stack frame. Nothing reports it. This is the single most
+  exploited bug class in the language's history.
+- **You cannot cheaply refer to part of a string.** "The third field of this line" means either
+  copying those bytes out or writing a zero over the original, destroying it. `strtok` chose the
+  second, which is why it mutates its input and cannot be nested.
+
+`strncpy`, the traditional patch, does not always NUL-terminate — so the "safe" function can
+produce a string that is not a string.
+
+### What this library does instead
+
+Two types, and the difference between them is ownership:
+
+- **`proven_u8str_view_t` — borrowed.** A pointer and a size, together, pointing at bytes someone
+  else owns. Copying it is free. It allocates nothing, destroys nothing, and stops being valid
+  when its owner does. This is what you pass to functions.
+- **`proven_u8str_t` — owned.** It has its own storage, a capacity, and a NUL terminator kept for
+  you so `proven_u8str_as_cstr` can hand the bytes to a libc function that still wants one. You
+  created it with an allocator; you destroy it with the same one.
+
+Both count **bytes**, not characters. `"한"` is three bytes in UTF-8 and one character, and this
+library will tell you three, because that is what it knows. Text is a sequence of bytes here;
+interpreting those bytes as characters is a job for a Unicode layer this library does not have.
+
+Because a view carries its length, everything the NUL terminator made hard becomes ordinary:
+length is a field, text may contain zero bytes, a sub-range is a view into the same memory with no
+copy, and a write that would not fit is refused rather than performed.
+
+Wrong — treating a view as a C string:
+
+```text
+proven_u8str_view_t v = proven_u8str_view_slice(line, 4, 8);   /* a field inside a line */
+printf("%s\n", (const char *)v.ptr);   /* wrong: no terminator, prints until it finds a zero */
+```
+
+A view is deliberately *not* NUL-terminated: it usually points into the middle of someone else's
+buffer, where writing a terminator would corrupt the next field. Use `proven_println("{}",
+PROVEN_ARG(v))`, which takes the size, or copy it into an owned string first.
 
 ### Structures
 
@@ -171,7 +219,40 @@ proven_u8str_destroy(alloc, &s);
 
 ## 2. U16 strings and views
 
-U16 APIs are excluded when `PROVEN_NO_U16STR` is defined. U16 sizes are counted in `proven_u16` code units. Internally, `proven_u16str_t` uses `proven_buf_t`, which tracks bytes.
+### Why a second string type exists at all
+
+UTF-8 is the right default and this library commits to it. `proven_u16str_t` exists for one
+reason: **the Windows API is UTF-16.** Every "wide" entry point — `CreateFileW`, `GetEnvironmentVariableW`,
+the whole `W` family — takes `wchar_t *`, which on Windows is 16 bits. A library that talks to
+those APIs needs a type that holds their code units without pretending they are bytes.
+
+So this is a boundary type. You use it where you touch a UTF-16 API, and you use `proven_u8str_t`
+everywhere else. It is deliberately small — create, destroy, append, and length — because it is
+not meant to be the type your program thinks in.
+
+Two things to hold on to, because they are the source of every UTF-16 bug:
+
+- **A code unit is not a character.** UTF-16 encodes anything outside the Basic Multilingual Plane
+  as a *surrogate pair* — two `proven_u16` values that mean one character. An emoji is two code
+  units. Slicing between them produces an unpaired surrogate, which is not valid UTF-16.
+- **`size` here counts code units, not bytes.** `proven_u16str_view_t.size` is a count of
+  `proven_u16` values; the `proven_buf_t` underneath tracks bytes, which is why
+  `proven_u16str_len` divides. Mixing the two units is the most common mistake with this type.
+
+**There is no conversion between UTF-8 and UTF-16 in this library.** That is a real gap, and it is
+deliberate rather than forgotten: correct conversion means deciding what to do with invalid input,
+unpaired surrogates and overlong encodings, and that is a Unicode layer's job. Today you build a
+`proven_u16str_t` from a `u"..."` literal or from code units you already have.
+
+U16 APIs are excluded when `PROVEN_NO_U16STR` is defined, which is the default in freestanding
+builds — a bare-metal target has no Windows API to talk to.
+
+Wrong — assuming one code unit is one character:
+
+```text
+proven_u16str_view_t v = ...;                 /* text containing an emoji */
+proven_size_t chars = proven_u16str_len(&s);  /* wrong: that is code units */
+```
 
 ### Structures
 
@@ -235,7 +316,61 @@ Note: `proven_u16` is a code unit, not necessarily one full Unicode character. U
 
 ## 3. Formatting
 
+### The problem: `printf` is told the types twice
+
+`printf("%d", x)` states the type of `x` twice — once in the format string and once by passing
+`x` — and nothing checks that the two agree. Varargs erases the type, so the function reads
+whatever bytes the calling convention left, in whatever shape the format demanded:
+
+```text
+printf("%d\n", 3.0);      /* wrong: reads a double's bytes as an int */
+printf("%s\n", 42);       /* wrong: dereferences 42 as a pointer */
+printf("%d %d\n", 1);     /* wrong: reads an argument that was never passed */
+```
+
+All three compile. Modern compilers warn when the format is a literal, which helps until the
+format is a variable — and then you have a function that will read arbitrary stack memory on
+demand, which is a class of vulnerability with its own name.
+
+The second problem is where the output goes. `sprintf` writes to a buffer whose size it does not
+know. `snprintf` takes a size and then **truncates**, returning the length it *would* have
+written — so the caller who forgets to compare gets a silently shortened path, command, or
+identifier.
+
+### What this library does instead
+
+**The placeholder has no type in it.** `{}` says "a value goes here"; the type comes from the
+argument, resolved at compile time:
+
+```text
+proven_println("{} scored {}", PROVEN_ARG(name), PROVEN_ARG(score));
+```
+
+`PROVEN_ARG` is a `_Generic` dispatch — the compiler picks the right constructor for the argument's
+static type. A mismatch between the format and the argument is not possible, because the format
+never states a type. What the spec after `:` controls is *presentation* — width, fill, alignment,
+precision, base — never interpretation.
+
+**The destination is a sized object**, and the fixed-capacity form refuses rather than truncates:
+`proven_u8str_append_fmt` fails with `PROVEN_ERR_OUT_OF_BOUNDS` and writes nothing, while
+`proven_u8str_append_fmt_grow` takes an allocator and grows. Which one you called is visible in the
+call itself.
+
+**Your own types can join in.** `PROVEN_ARG_OF(&obj, render_fn)` lets a type you defined print with
+`{}` like everything else — the extension point is compile-time and typed, not a registry of
+names. [Chapter 8 §5.1](manual-08-fmt-scan.md) shows how.
+
+The cost, stated plainly: `PROVEN_ARG` around each argument is more typing than `%d`, and the
+format language is not the one in your fingers. What you buy is that the class of bug at the top of
+this section cannot be written.
+
 The formatter writes into `proven_u8str_t` or PAL-backed streams. It uses a small structural format language with `{}` placeholders, explicit indexes like `{1}`, escaped braces `{{` and `}}`, and width/alignment specs such as `{:0>5}`, `{:*^10}`, and `{:.<10}`.
+
+Wrong — assuming the spec chooses the type:
+
+```text
+proven_println("{:d}", PROVEN_ARG(3.5));   /* wrong: the spec formats, it does not convert */
+```
 
 ### Structures and enums
 
@@ -361,7 +496,53 @@ proven_u8str_destroy(alloc, &s);
 
 ## 4. Scanning
 
+### The problem: `scanf` will not tell you where it stopped
+
+Parsing input is the mirror of formatting, and libc's answer is worse. `sscanf` returns *how many
+fields it filled* and nothing else — not which one failed, not how far it got, not why:
+
+```text
+int n = sscanf(line, "%d %d %d", &a, &b, &c);
+if (n != 3) { /* wrong: which field? at what offset? was it malformed or missing? */ }
+```
+
+If the third field is malformed, you know only that you got two. You cannot report the position to
+the user, cannot skip the bad record and resume, and cannot tell "ran out of input" from "found
+something that is not a number". And `%s` into a `char *` has the same unbounded-write problem as
+`strcpy`, with the input now coming from outside your program.
+
+Then there is `strtol`, whose contract requires you to clear `errno` first, check it after, and
+compare `endptr` against the input to detect "no digits at all" — three separate things to get
+right for one conversion.
+
+### What this library does instead
+
+**The cursor is yours.** A `proven_scan_t` holds the view being parsed and an offset into it. Each
+scan reads from the cursor and moves it forward on success. Because the cursor is a field you can
+read, you always know exactly where parsing stopped — which is the position you show the user.
+
+**Each scan returns a result.** `proven_scan_i64` hands back `{err, val}`, so "not a number",
+"out of range" and "end of input" are different errors rather than one missing field.
+
+**Failure restores the cursor** for the primitive scanners: a failed `proven_scan_i64` leaves the
+cursor where it was, so you can try something else at the same position. That is what makes
+recovery possible instead of guesswork.
+
+One thing to know before you rely on it: the *structural* scan (`proven_scan_fmt`, the `{}` form)
+is **not** transactional across fields. If the third placeholder fails, the first two destinations
+have already been written. [Chapter 8 §11.1](manual-08-fmt-scan.md) covers the error codes and the
+recovery patterns in full.
+
 The scanner parses from a borrowed `proven_u8str_view_t`. A cursor tracks progress.
+
+Wrong — treating a partial structural scan as if nothing happened:
+
+```text
+proven_err_t e = proven_scan_fmt(&sc, "{} {} {}", ...);
+if (!proven_is_ok(e)) {
+    /* wrong: destinations for the fields that DID parse have already been written */
+}
+```
 
 ### Result structs
 
