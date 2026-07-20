@@ -1,6 +1,12 @@
 # 4장: 컨테이너와 알고리즘
 
-이 장은 `array.h`, `list.h`, `ring.h`, `map.h`, `algorithm.h`를 다룬다.
+**3부 — 자료구조. 선행 조건: 2부
+([1](manual-01-foundation-ko.md), [2](manual-02-allocation-ko.md), [3](manual-03-strings-text-ko.md)).**
+**이 장을 마치면** 작업에 맞는 컨테이너를 고르고, 보장된 한계 안에서 정렬하고 검색하며,
+올바른 이유로 해싱하고, 바이트를 텍스트로 또 그 반대로 바꿀 수 있다.
+
+이 장은 `array.h`, `list.h`, `ring.h`, `map.h`, `algorithm.h`, `hash.h`, `encode.h`를 다룬다.
+여기 있는 모든 컨테이너는 allocator를 받는다. 2장이 먼저 오는 이유가 그것이다.
 
 ## 목차
 
@@ -15,7 +21,57 @@
 
 ## 1. 동적 배열
 
-`proven_array_t`는 제네릭 확장 벡터다. allocator를 내부에 저장하며 연속된 원소 저장소를 소유한다.
+### 문제: 매번 손으로 다시 쓰는 그 배열
+
+확장 가능한 배열은 모든 C 프로그램이 결국 한 번은 작성하는 자료구조이며, 매번 조금씩 다르게
+작성된다:
+
+```text
+int *items = malloc(cap * sizeof(int));
+/* ... later ... */
+if (n == cap) {
+    cap *= 2;
+    items = realloc(items, cap * sizeof(int));   /* wrong on two counts */
+    items[n++] = x;
+}
+```
+
+한 줄에 버그가 둘 있고, 둘 다 고전이다. `cap * sizeof(int)`는 큰 `cap`에 대해 **랩어라운드**할 수
+있고, 그러면 거대한 개수에 대해 작은 할당이 만들어진다 — [1장 §4](manual-01-foundation-ko.md)를
+보라. 그리고 `realloc`의 결과를 곧바로 `items`에 대입하면 **NULL을 반환할 때 옛 블록이 누수된다.**
+원래 포인터가 사라졌는데 그것이 가리키던 메모리는 여전히 할당된 채로 남기 때문이다.
+
+버그를 빼고 보더라도, 손으로 쓴 버전은 원소 타입마다 다시 써야 하거나, `void *`로 제네릭하게
+만들어 타입 검사를 잃어야 한다.
+
+### 이 라이브러리는 대신 무엇을 하는가
+
+`proven_array_t`는 생성될 때의 원소 크기와 정렬을 유지하는 확장 벡터다. 그래서 템플릿 없이도,
+호출 지점에서 `void *`를 쓰지 않고도 어떤 타입에나 동작한다 — `PROVEN_ARRAY_*` 매크로가 타입을
+받아, 컴파일러가 아직 검사할 수 있는 자리에서 캐스팅을 수행한다.
+
+- 확장은 검사된 산술을 사용하므로, 위의 오버플로는 작은 할당이 아니라 `PROVEN_ERR_OVERFLOW`가
+  된다.
+- 확장은 **실패-원자적(failure-atomic)**이다: 확장할 수 없으면 기존 원소는 손대지 않은 채로
+  여전히 유효하다. 아무것도 누수되지 않고 아무것도 잃지 않는다.
+- 문자열 타입과 달리 **allocator를 내부에 저장한다** — `PROVEN_ARRAY_DESTROY`가 배열만 받는
+  이유가 그것이다.
+
+`proven_array_t`는 연속된 원소 저장소를 소유하므로, `proven_array_sort`와 §5의 검색들에
+넘기는 것도 바로 이것이다.
+
+잘못된 예 — push를 건너 포인터를 붙잡고 있기:
+
+```text
+int *first = PROVEN_ARRAY_GET(&arr, int, 0);
+(void)PROVEN_ARRAY_PUSH(&arr, int, 42);   /* may reallocate */
+*first = 7;                               /* wrong: `first` may point at freed memory */
+```
+
+이것은 타입이 제거해 줄 수 없는 유일한 위험이다. 확장은 저장소를 이동시키므로, **배열을 가리키는
+모든 포인터나 view는 확장을 유발할 수 있는 모든 연산에 의해 무효화된다.** 가리키는 대신 인덱스를
+쓰거나, push 이후에 포인터를 다시 가져오라.
+
 
 ### 구조체
 
@@ -92,7 +148,152 @@ PROVEN_ARRAY_DESTROY(&nums);
 
 ## 2. 침습적(intrusive) 리스트
 
-`proven_list_t`는 침습적 이중 연결 원형 리스트다. 노드를 할당하지 않는다. 각 사용자 객체가 `proven_list_node_t`를 내장한다.
+### 문제: 배운 대로의 리스트는 원소마다 노드를 할당한다
+
+```text
+struct node { struct node *next; void *data; };
+```
+
+이것이 교과서의 연결 리스트이며, 교과서가 언급하지 않는 두 가지 비용이 있다. 삽입할 때마다
+**할당한다** — 천 개의 항목은 곧 포인터를 담기 위해서만 존재하는 천 번의 할당이고, 각각은 실패할
+수 있으며 각각은 짝이 되는 해제를 필요로 한다. 그리고 `data`는 `void *`이므로 리스트는 자신이
+무엇을 담고 있는지 전혀 모른다: 다시 읽어낼 때마다 컴파일러가 검사할 수 없는 캐스트가 된다.
+
+### 침습적 리스트는 대신 무엇을 하는가
+
+관계를 뒤집는다: **메모리는 당신이 소유하고, 링크가 그 안에 산다.**
+
+```text
+typedef struct {
+    int                 id;
+    proven_list_node_t  link;   /* the list's hook, inside your struct */
+} task_t;
+```
+
+이제 삽입은 포인터 두 개를 쓰는 일이다. 아무것도 할당하지 않으므로 **실패할 수 없다** —
+`proven_list_push_back`이 `void`를 반환한다는 점에 주목하라. 이 라이브러리에서는 이례적인 일이고,
+바로 그것이 요점이다. 제거도 마찬가지다. 객체는 스택에도, 배열 안에도, 아레나 안에도, 어디에나
+살 수 있다. 리스트는 이미 그 안에 들어 있는 포인터들을 재배치할 뿐이다.
+
+링크에서 다시 당신의 객체로 돌아가는 것은 `PROVEN_LIST_ENTRY(node, task_t, link)`이며, 노드의
+주소에서 멤버의 오프셋을 뺀다. 이것은 맞기를 바라는 캐스트가 아니라, 컴파일러가 타입을 검사하는
+산술이다.
+
+포기하는 것: **객체는 자신이 가진 링크 멤버 수만큼의 리스트에만 속할 수 있고**, 그 수는 구조체를
+선언할 때 당신이 정한다. 어떤 항목이 큐와 인덱스에 동시에 있어야 한다면, 링크가 둘 필요하다.
+
+`proven_list_t`는 침습적 이중 연결 **원형** 리스트다 — 헤드가 sentinel 노드이므로, 삽입과 제거가
+양 끝을 특별히 취급하는 일이 없다. 노드를 할당하지 않는다.
+
+잘못된 예 — 평범한 반복자로 순회하면서 제거하기:
+
+```text
+PROVEN_LIST_FOR_EACH(it, &queue) {
+    if (should_drop(it)) proven_list_remove(it);   /* wrong: it->next is read after unlink */
+}
+```
+
+`proven_list_remove`는 노드 자신의 포인터를 통해 쓰기를 하므로, 루프는 방금 떼어낸 노드에서
+`next`를 읽게 된다. `PROVEN_LIST_FOR_EACH_SAFE`는 두 번째 변수를 받아 본문이 실행되기 *전에* 다음
+포인터를 읽는다. 그것이 바로 이 매크로가 존재하는 이유다.
+
+### 완성 예제: 링크가 호출자의 구조체 안에 사는 큐
+
+테스트 스위트가 컴파일하고 실행한다. 스택에 할당된 task들의 큐를 만들고, 순회하고, 안전한 순회
+안에서 하나를 제거하고, 중간에 삽입한다 — 프로그램 어디에도 allocator가 없다.
+
+<!-- example: manual/examples/ex_04_list.c -->
+```c
+/*
+ * An INTRUSIVE list puts the links inside your struct instead of allocating a
+ * node to hold your data.
+ *
+ * The list you were taught looks like this:
+ *
+ *     struct node { struct node *next; void *data; };
+ *
+ * Every insertion allocates a node, so a list of a thousand items costs a
+ * thousand allocations that exist only to hold pointers, each one a chance to
+ * fail and a thing to free. Worse, `data` is a void* - the list has no idea what
+ * it holds, so every read is a cast the compiler cannot check.
+ *
+ * Intrusive lists invert it: YOU own the memory, and the link lives in it.
+ * Inserting allocates nothing and cannot fail. Removing allocates nothing and
+ * cannot fail. And because the link is a member of a known type, getting back
+ * from a link to the object is arithmetic the compiler does for you, not a cast.
+ *
+ * The trade is that an object can only be in as many lists as it has link
+ * members, and that is a decision you make when you declare the struct.
+ */
+
+/* The link is a member. This task can be in exactly one list at a time. */
+typedef struct {
+    int                 id;
+    proven_list_node_t  link;
+} task_t;
+
+int main(void) {
+    /* No allocator anywhere in this program: the tasks are on the stack, and the
+     * list only ever rearranges pointers that live inside them. */
+    task_t a = { .id = 1 };
+    task_t b = { .id = 2 };
+    task_t c = { .id = 3 };
+
+    proven_list_t queue;
+    proven_list_init(&queue);
+    EXAMPLE_REQUIRE(proven_list_is_empty(&queue), "a freshly initialised list is empty");
+
+    /* --- pushing cannot fail, because nothing is allocated ------------- */
+    proven_list_push_back(&queue, &a.link);
+    proven_list_push_back(&queue, &b.link);
+    proven_list_push_back(&queue, &c.link);
+    EXAMPLE_REQUIRE(!proven_list_is_empty(&queue), "three tasks are queued");
+
+    /* --- walking: PROVEN_LIST_ENTRY gets the object back from the link -- */
+    proven_list_node_t *it = NULL;
+    int seen[3] = {0}, n = 0;
+    PROVEN_LIST_FOR_EACH(it, &queue) {
+        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        if (n < 3) seen[n++] = t->id;
+    }
+    EXAMPLE_REQUIRE(n == 3 && seen[0] == 1 && seen[1] == 2 && seen[2] == 3,
+                    "the walk visits every task, in insertion order");
+
+    /* --- removing while walking needs the SAFE form -------------------- */
+    /* proven_list_remove writes through the node's own next/prev pointers, so a
+     * plain FOR_EACH would read `it->next` from a node that has just been
+     * unlinked. The _SAFE form reads the next pointer BEFORE the body runs. */
+    proven_list_node_t *safe = NULL;
+    PROVEN_LIST_FOR_EACH_SAFE(it, safe, &queue) {
+        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        if (t->id == 2) proven_list_remove(it);
+    }
+
+    n = 0;
+    PROVEN_LIST_FOR_EACH(it, &queue) {
+        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        if (n < 3) seen[n++] = t->id;
+    }
+    EXAMPLE_REQUIRE(n == 2 && seen[0] == 1 && seen[1] == 3, "task 2 was unlinked");
+
+    /* --- inserting in the middle is a pointer swap --------------------- */
+    task_t d = { .id = 4 };
+    proven_list_insert_after(&a.link, &d.link);
+
+    n = 0;
+    PROVEN_LIST_FOR_EACH(it, &queue) {
+        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        if (n < 3) seen[n++] = t->id;
+    }
+    EXAMPLE_REQUIRE(n == 3 && seen[0] == 1 && seen[1] == 4 && seen[2] == 3,
+                    "task 4 sits directly after task 1");
+
+    /* There is nothing to destroy. The list never owned anything: `a`, `c` and
+     * `d` are still perfectly good local variables, and their lifetime is the
+     * function's, exactly as it would be without the list. */
+    return EXAMPLE_OK();
+}
+```
 
 ### 구조체
 
@@ -149,7 +350,112 @@ proven_println("total={}", PROVEN_ARG(total));   /* 3 */
 
 ## 3. 링 버퍼
 
-`proven_ring_t`는 고정 용량 FIFO다. 가득 차면 push가 실패한다. allocator를 내부에 저장한다.
+### 문제: 커져서는 안 되는 큐
+
+빠른 생산자와 느린 소비자 사이의 큐는 한 가지 질문에 답해야 한다: 소비자가 뒤처지면 무슨 일이
+일어나는가? 확장 가능한 큐는 "더 할당한다"고 답하는데, 그러면 일시적인 지연이 무한한 메모리
+증가로, 그리고 결국에는 작업을 버리는 것보다 더 나쁜 무언가로 바뀐다.
+
+손으로 쓰는 대안은 배열 하나에 head 인덱스, tail 인덱스, 그리고 모듈로 산술을 더한 것이다 —
+그리고 여기에는 유명한 버그가 하나 있다. `head == tail`일 때 버퍼는 비어 있는가, 가득 찼는가?
+별도의 개수를 유지하거나 슬롯 하나를 일부러 낭비하지 않는 한 두 상태는 똑같아 보이고, 프로그래머
+세대마다 이것을 다시 발견한다.
+
+### 이 라이브러리는 대신 무엇을 하는가
+
+`proven_ring_t`는 개수를 유지하는 고정 용량 FIFO다. 그래서 비어 있음과 가득 참이 구별되며,
+커지는 대신 **거부한다**:
+
+- 가득 찬 링에 대한 `proven_ring_push`는 `PROVEN_ERR_OUT_OF_BOUNDS`를 반환한다. 가장 오래된
+  항목을 덮어쓰지 않고, 재할당도 하지 않는다. 호출자가 결정한다 — 기다리거나, 새 항목을 버리거나,
+  배압(backpressure)을 보고하거나 — 무엇이 옳은지는 호출자만 알기 때문이다.
+- 비어 있는 링에 대한 `proven_ring_pop`은 낡은 슬롯을 되돌려주는 대신 실패한다.
+
+용량은 생성 시점에 한 번 정해지며, 그 숫자가 *곧* 정책이다: 생산자가 얼마나 앞서 나가도 되는지를
+말한다. 이벤트 큐, 최근 항목의 로그, 오디오나 센서 버퍼 — 한계가 제약이 아니라 설계의 일부인
+곳이라면 링을 꺼내라.
+
+이 라이브러리의 대부분의 타입과 달리, `proven_ring_t`는 **allocator를 내부에 저장한다.**
+`PROVEN_RING_DESTROY`가 링만 받는 이유가 그것이다.
+
+잘못된 예 — 가득 찬 링을 즉시 재시도할 오류로 취급하기:
+
+```text
+while (PROVEN_RING_PUSH(&ring, event_t, e) != PROVEN_OK) { }   /* wrong: spins forever */
+```
+
+그 루프 안의 무엇도 소비하지 않으므로 링은 계속 가득 차 있다. 한계가 있는 큐의 거부는 *소비자*에
+대한 정보이며, 그것을 무시하는 루프는 곧 멈춤(hang)이다.
+
+### 완성 예제: 가득 찰 때까지 push하기, 그리고 거부가 어떤 모습인지
+
+테스트 스위트가 컴파일하고 실행한다.
+
+<!-- example: manual/examples/ex_04_ring.c -->
+```c
+/*
+ * A ring buffer is a fixed-size queue that never moves its contents and never
+ * grows. You give it a capacity once; push adds at the tail, pop removes from
+ * the head, and when it is full, push REFUSES.
+ *
+ * The C you would otherwise write is an array plus two indices plus the modulo
+ * arithmetic to wrap them, and the bug is always the same: "is it full or is it
+ * empty?" - both states have head == tail unless you keep a count or waste a
+ * slot. This ring keeps the count, so the question does not arise.
+ *
+ * Use one when a producer and a consumer run at different speeds and you want a
+ * hard bound on how far ahead the producer may get: an event queue, a log ring,
+ * an audio buffer. The refusal on a full ring is the feature - it is
+ * backpressure. A growable queue would answer a burst by eating memory until
+ * something worse happens.
+ */
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* Capacity of 4 events. It will never be 5. */
+    proven_result_ring_t r = PROVEN_RING_INIT(alloc, int, 4);
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating a 4-slot ring should succeed");
+    proven_ring_t ring = r.value;
+
+    /* --- push until full ---------------------------------------------- */
+    for (int i = 1; i <= 4; ++i) {
+        proven_err_t err = PROVEN_RING_PUSH(&ring, int, i);
+        EXAMPLE_REQUIRE(proven_is_ok(err), "the first four pushes fit");
+    }
+
+    /* The fifth push is refused. It does not overwrite the oldest entry, and it
+     * does not grow: a full ring is a full ring, and the caller decides what to
+     * do about it - wait, drop the new event, or report backpressure. */
+    proven_err_t full = PROVEN_RING_PUSH(&ring, int, 5);
+    EXAMPLE_REQUIRE(full == PROVEN_ERR_OUT_OF_BOUNDS,
+                    "pushing into a full ring must be refused, not silently absorbed");
+
+    /* --- pop in the order they were pushed ----------------------------- */
+    int out = 0;
+    proven_err_t err = PROVEN_RING_POP(&ring, int, &out);
+    EXAMPLE_REQUIRE(proven_is_ok(err) && out == 1, "pop returns the oldest entry first");
+
+    /* Now there is room again, and the ring wraps around its storage without
+     * moving anything. */
+    err = PROVEN_RING_PUSH(&ring, int, 5);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "after a pop there is room for one more");
+
+    int expected[] = { 2, 3, 4, 5 };
+    for (int i = 0; i < 4; ++i) {
+        err = PROVEN_RING_POP(&ring, int, &out);
+        EXAMPLE_REQUIRE(proven_is_ok(err) && out == expected[i],
+                        "entries come out in the order they went in");
+    }
+
+    /* --- empty behaves like full: it refuses, it does not invent data --- */
+    err = PROVEN_RING_POP(&ring, int, &out);
+    EXAMPLE_REQUIRE(!proven_is_ok(err), "popping an empty ring must fail rather than return junk");
+
+    PROVEN_RING_DESTROY(&ring);
+    return EXAMPLE_OK();
+}
+```
 
 ### 구조체
 
