@@ -718,7 +718,7 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_is_ok(err), "append_grow must reallocate rather than fail");
 
     /* Edits in the middle. insert shifts the tail right; remove shifts it left. */
-    err = proven_u8str_insert_grow(alloc, &path, 0, PROVEN_LIT("/mnt"));
+    err = proven_u8str_insert_grow(alloc, &path, 0, PROVEN_LIT("/srv"));
     EXAMPLE_REQUIRE(proven_is_ok(err), "inserting a prefix must succeed");
 
     err = proven_u8str_remove(&path, proven_u8str_as_view(&path).size - 9, 9);  /* drop ".original" */
@@ -734,9 +734,9 @@ int main(void) {
      * call may reallocate and leave the view (and any cstr) dangling. */
     proven_u8str_view_t v = proven_u8str_as_view(&path);
 
-    EXAMPLE_REQUIRE(proven_u8str_view_eq(v, PROVEN_LIT("/mnt/etc/fstab.backup")),
-                    "the edits above should have produced /mnt/etc/fstab.backup");
-    EXAMPLE_REQUIRE(proven_u8str_view_starts_with(v, PROVEN_LIT("/mnt")),
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(v, PROVEN_LIT("/srv/etc/fstab.backup")),
+                    "the edits above should have produced /srv/etc/fstab.backup");
+    EXAMPLE_REQUIRE(proven_u8str_view_starts_with(v, PROVEN_LIT("/srv")),
                     "the inserted prefix is at the front");
 
     proven_size_t dot = proven_u8str_view_find(v, 0, PROVEN_LIT(".backup"));
@@ -744,7 +744,7 @@ int main(void) {
 
     /* A slice is a view into the SAME bytes - no allocation, no copy. */
     proven_u8str_view_t stem = proven_u8str_view_slice(v, 0, dot);
-    EXAMPLE_REQUIRE(proven_u8str_view_eq(stem, PROVEN_LIT("/mnt/etc/fstab")),
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(stem, PROVEN_LIT("/srv/etc/fstab")),
                     "slicing at the suffix leaves the stem");
 
     /* as_cstr is the escape hatch to C APIs, and it is only valid because the
@@ -771,7 +771,7 @@ int main(void) {
                                    PROVEN_LIT(" ...and a great deal more text than fits"));
     EXAMPLE_REQUIRE(err == PROVEN_ERR_OUT_OF_BOUNDS,
                     "a borrowed string reports overflow instead of reallocating caller memory");
-    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&status), PROVEN_LIT("mounted /mnt/etc/fstab")),
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&status), PROVEN_LIT("mounted /srv/etc/fstab")),
                     "the failed append must have left the string unchanged");
 
     printf("borrowed: %s\n", proven_u8str_as_cstr(&status));

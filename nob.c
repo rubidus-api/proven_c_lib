@@ -205,6 +205,54 @@ static bool command_available(const char *cmd_name) {
     return system(cmd) == 0;
 }
 
+/*
+ * scripts/project-check.sh runs the repository checks that are not C: the documentation
+ * structure rules and the privacy scan that keeps this machine's paths and any key-like
+ * pattern out of a public repository.
+ *
+ * It was not wired into the build, and the cost was not hypothetical. check-docs failed
+ * continuously from 2026-07-12 to 2026-07-20 - across six releases, v26.07.13g through
+ * v26.07.13m - because `./nob build` stayed green and nothing anybody ran reported it. It
+ * turned out to be a false positive, which is the worse outcome: the one signal the check
+ * ever produced was noise, and it produced it where nobody was listening.
+ *
+ * A check outside the build is a check nobody runs. This one costs about 0.1s, so it runs
+ * in every mode and a failure fails the build.
+ *
+ * It is skipped, loudly, when it cannot run - no POSIX shell, no python3, or no script (a
+ * source tarball). A skip says so; it never passes silently.
+ */
+static bool command_available(const char *cmd_name);
+
+static int run_project_check(void) {
+    const char *script = "scripts/project-check.sh";
+
+    if (!nob_file_exists(script)) {
+        nob_log(NOB_INFO, "[PROVEN][PROJECT_CHECK][SKIP] path=%s reason=not-present", script);
+        return 0;
+    }
+#if defined(_WIN32) || defined(_WIN64)
+    nob_log(NOB_WARNING, "[PROVEN][PROJECT_CHECK][SKIP] path=%s reason=needs-a-posix-shell", script);
+    return 0;
+#else
+    if (!command_available("python3")) {
+        nob_log(NOB_WARNING, "[PROVEN][PROJECT_CHECK][SKIP] path=%s reason=python3-not-found", script);
+        return 0;
+    }
+    nob_log(NOB_INFO, "[PROVEN][PROJECT_CHECK][RUN] path=%s", script);
+    if (system("sh scripts/project-check.sh") != 0) {
+        nob_log(NOB_ERROR, "[PROVEN][PROJECT_CHECK][FAIL] path=%s", script);
+        nob_log(NOB_ERROR, "[PROVEN][PROJECT_CHECK][FAIL_HINT] The failing check names the file above. "
+                           "A privacy hit is either a real leak - delete it - or an example string "
+                           "that collides with a host path, in which case change the example, not "
+                           "the pattern. Weakening the scan to silence it is how the leak ships.");
+        return 1;
+    }
+    nob_log(NOB_INFO, "[PROVEN][PROJECT_CHECK][PASS] path=%s", script);
+    return 0;
+#endif
+}
+
 static bool compiler_accepts_standard_flag(const char *compiler, const char *standard_flag, const char *sysroot, const char *probe_dir) {
     char src_path[768];
     char obj_path[768];
@@ -1087,6 +1135,17 @@ int main(int argc, char **argv)
 
     print_proven_build_plan(build_mode, compiler_exe, linker_exe, archiver_exe, sysroot, build_root, build_dir,
                             NOB_ARRAY_LEN(srcs), NOB_ARRAY_LEN(all_tests), cross_check, only_regression, benchmark_mode);
+
+    /* Before anything is compiled: it costs 0.1s, and failing here means the real reason is the
+     * first thing printed. Run it after the tests instead and a documentation failure surfaces
+     * through tests/test_portability_nob_std_probe, which runs this driver as a subprocess and
+     * reports "build driver completes with the fallback compiler standard" - true, useless, and
+     * three steps from the cause. Skipped for regression-only and cross runs: the former is what
+     * that probe invokes, so the check does not run twice per build; the latter links no hosted
+     * tests and is not where repository hygiene is decided. */
+    if (!only_regression && !cross_check) {
+        if (run_project_check() != 0) return 1;
+    }
 
     if (cross_check) {
         const char *cross_root = nob_temp_sprintf("%s/cross", build_root);
