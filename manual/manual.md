@@ -268,6 +268,12 @@ Wrong — assuming the truncating and the atomic form behave alike:
 
 The detailed reference is split by chapter so it can stay readable and source-grounded.
 
+**New to this library? Start with [Chapter 0](manual-00-start-here.md).** It is the only chapter
+that assumes nothing: why the library exists, argued from the C bugs it is answering; a
+hello-world program; how to build; the five contracts the rest of the manual takes for granted;
+and a glossary plus a libc-to-`proven` table. Everything below assumes it.
+
+0. [Start here: why this exists, hello world, the five contracts, glossary, libc map](manual-00-start-here.md)
 1. [Foundation: types, errors, memory, alignment, version, panic](manual-01-foundation.md)
 2. [Allocation: allocator trait, heap, arena, pool, byte buffers](manual-02-allocation.md)
 3. [Strings and text: U8, U16, formatting, scanning](manual-03-strings-text.md)

@@ -148,6 +148,7 @@ int main(void) {
     // ---------------------------------------------------------------
     static const char *chapters[] = {
         "manual/manual.md",
+        "manual/manual-00-start-here.md",
         "manual/manual-01-foundation.md",
         "manual/manual-02-allocation.md",
         "manual/manual-03-strings-text.md",
