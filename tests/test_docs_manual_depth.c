@@ -43,6 +43,16 @@ typedef struct {
 } Section;
 
 static const Section SECTIONS[] = {
+    /* Chapter 0 is the on-ramp: it is the one chapter a reader meets before they know anything,
+     * so it is the one that must not decay into a reference. Registered when it was written
+     * (RFC-0004 phase 1) rather than later, because a new chapter is at its best on the day it
+     * lands and every edit after that is a chance to lose the explanation. */
+    { "manual-00-start-here.md",            "## 2. Why this library exists",            false, false,
+      "the section argues from C's own APIs - strcpy, malloc, printf, qsort - so its code blocks "
+      "are the failing C, not proven structs; the first program is section 3." },
+    { "manual-00-start-here.md",            "## 5. The five contracts you will meet on every page", false, false,
+      "each contract is one paragraph and one counter-example; the compiled program that shows all "
+      "five together is ex_00_hello, quoted in section 3." },
     { "manual-04-containers-algorithms.md", "## 6. Hashing, by use case",              true,  true,  NULL },
     { "manual-04-containers-algorithms.md", "## 7. Bytes to text: hex and Base64",      false, true,
       "encode.h hands the caller no struct: every call takes a view and a caller-owned buffer." },
