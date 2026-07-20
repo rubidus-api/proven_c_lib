@@ -220,7 +220,7 @@ proven_arg_t arg = proven_arg_i64(123);
 | `proven_arg_identity(proven_arg_t v)` | existing argument object | `proven_arg_t` | Pass-through helper. |
 | `proven_arg_bool(bool v)` | boolean | `proven_arg_t` | Render `true` / `false` as words, not as `1` / `0`. |
 | `proven_arg_char(char v)` | a character | `proven_arg_t` | Render the **character**. This is why a `char` VARIABLE renders as a character while the literal `PROVEN_ARG('Z')` still renders `90`: in C, `'Z'` has type `int`, and no amount of `_Generic` can tell it apart from the number 90. |
-| `proven_arg_custom(const void *v, proven_fmt_custom_fn fn)` | any type at all | `proven_arg_t` | Render a type the library has never heard of, through a function you supply. See [Formatting a user-defined type](#formatting-a-user-defined-type). |
+| `proven_arg_custom(const void *v, proven_fmt_custom_fn fn)` | any type at all | `proven_arg_t` | Render a type the library has never heard of, through a function you supply. See [Formatting a user-defined type](#51-formatting-a-type-of-your-own). |
 
 ### `PROVEN_ARG(x)`
 

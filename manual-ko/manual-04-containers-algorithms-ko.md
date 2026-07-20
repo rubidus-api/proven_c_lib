@@ -10,14 +10,14 @@
 
 ## 목차
 
-1. [동적 배열](#1-dynamic-array)
-2. [침습적(intrusive) 리스트](#2-intrusive-list)
-3. [링 버퍼](#3-ring-buffer)
-4. [해시 맵](#4-hash-map)
-5. [알고리즘](#5-algorithms)
-6. [용도별 해싱](#6-hashing-by-use-case)
-7. [바이트를 텍스트로: hex와 Base64](#7-bytes-to-text-hex-and-base64)
-8. [예제와 오용 사례](#8-examples-and-misuse-cases)
+1. [동적 배열](#1-동적-배열)
+2. [침습적(intrusive) 리스트](#2-침습적intrusive-리스트)
+3. [링 버퍼](#3-링-버퍼)
+4. [해시 맵](#4-해시-맵)
+5. [알고리즘](#5-알고리즘)
+6. [용도별 해싱](#6-용도별-해싱)
+7. [바이트를 텍스트로: hex와 Base64](#7-바이트를-텍스트로-hex와-base64)
+8. [예제와 오용 사례](#8-예제와-오용-사례)
 
 ## 1. 동적 배열
 

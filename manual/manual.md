@@ -195,7 +195,7 @@ instead is a rule that owning objects do not have, and it is the one that bites:
 > it.** The handle holds a pointer into the struct. Copy the struct and the handle still
 > addresses the original; let the original go out of scope and the handle points at dead memory.
 
-They are listed in [§4.2](#42-caller-owned-state-no-destroy-do-not-copy).
+They are listed in [§4.2](#42-caller-owned-state--no-destroy-do-not-copy).
 
 ### 4.1 Owning objects — you must destroy these
 

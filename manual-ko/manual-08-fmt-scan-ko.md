@@ -193,7 +193,7 @@ proven_arg_t arg = proven_arg_i64(123);
 | `proven_arg_identity(proven_arg_t v)` | 기존 argument 객체 | `proven_arg_t` | 통과(pass-through) 헬퍼. |
 | `proven_arg_bool(bool v)` | boolean | `proven_arg_t` | `1` / `0`이 아니라 `true` / `false`를 단어로 렌더링. |
 | `proven_arg_char(char v)` | 문자 하나 | `proven_arg_t` | **문자**를 렌더링. 이것이 바로 `char` 변수는 문자로 렌더링되는데 리터럴 `PROVEN_ARG('Z')`는 여전히 `90`으로 렌더링되는 이유다. C에서 `'Z'`는 `int` 타입이며, 어떤 `_Generic`으로도 이것을 숫자 90과 구별할 수 없다. |
-| `proven_arg_custom(const void *v, proven_fmt_custom_fn fn)` | 어떤 타입이든 | `proven_arg_t` | 라이브러리가 전혀 알지 못하는 타입을, 당신이 제공하는 함수를 통해 렌더링. [Formatting a user-defined type](#formatting-a-user-defined-type) 참조. |
+| `proven_arg_custom(const void *v, proven_fmt_custom_fn fn)` | 어떤 타입이든 | `proven_arg_t` | 라이브러리가 전혀 알지 못하는 타입을, 당신이 제공하는 함수를 통해 렌더링. [Formatting a user-defined type](#51-formatting-a-type-of-your-own) 참조. |
 
 ### `PROVEN_ARG(x)`
 
