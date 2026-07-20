@@ -86,6 +86,21 @@ static const Section SECTIONS[] = {
     { "manual-02-allocation.md",            "## 4. The allocator trait",                true,  false,
       "the trait is an interface; every example in this chapter is already using it through "
       "proven_heap_allocator, proven_arena_as_allocator or proven_pool_as_allocator." },
+    /* Chapter 3 (RFC-0004 phase 4). Highest jargon density in the manual - "view" appears 288
+     * times across manual/ - so this is the chapter where the ownership vocabulary has to be
+     * taught rather than assumed. */
+    { "manual-03-strings-text.md",          "## 1. U8 strings and views",               true,  false,
+      "the owned/borrowed pair has a worked example - ex_03_u8str - quoted in section 5, where "
+      "this chapter keeps all of its runnable programs." },
+    { "manual-03-strings-text.md",          "## 2. U16 strings and views",              true,  false,
+      "u16str is a boundary type for the Windows W APIs; a runnable example would need a Windows "
+      "API call, which no other example in the manual makes." },
+    { "manual-03-strings-text.md",          "## 3. Formatting",                         true,  false,
+      "the formatter's worked examples are ex_08_fmt_scan and ex_08_fmt_custom, quoted in chapter "
+      "8, which is the reference half of this material." },
+    { "manual-03-strings-text.md",          "## 4. Scanning",                           true,  false,
+      "the scanner's worked example is ex_08_scan_recovery, quoted in chapter 8 alongside the "
+      "error-code guide it demonstrates." },
     { "manual-04-containers-algorithms.md", "## 6. Hashing, by use case",              true,  true,  NULL },
     { "manual-04-containers-algorithms.md", "## 7. Bytes to text: hex and Base64",      false, true,
       "encode.h hands the caller no struct: every call takes a view and a caller-owned buffer." },
