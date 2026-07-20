@@ -1,6 +1,12 @@
 # Chapter 2: Allocation, Arenas, Pools, and Buffers
 
-This chapter covers `allocator.h`, `heap.h`, `arena.h`, `pool.h`, and `buffer.h`.
+**Part II — The vocabulary every program uses. Prerequisite: [Chapter 1](manual-01-foundation.md).**
+**After this chapter** you can choose an allocation strategy deliberately instead of reaching for
+`malloc` by reflex, and you will know which of the three costs you are paying.
+
+This chapter covers `allocator.h`, `heap.h`, `arena.h`, `pool.h`, and `buffer.h`. The thread-safety
+and pointer-provenance material that used to live here is in
+[Chapter 6](manual-06-execution-and-platform.md), with the rest of the concurrency subject.
 
 ## Table of contents
 

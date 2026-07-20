@@ -266,22 +266,50 @@ Wrong — assuming the truncating and the atomic form behave alike:
 
 ## 6. Manual chapters
 
-The detailed reference is split by chapter so it can stay readable and source-grounded.
-
 **New to this library? Start with [Chapter 0](manual-00-start-here.md).** It is the only chapter
 that assumes nothing: why the library exists, argued from the C bugs it is answering; a
 hello-world program; how to build; the five contracts the rest of the manual takes for granted;
 and a glossary plus a libc-to-`proven` table. Everything below assumes it.
 
-0. [Start here: why this exists, hello world, the five contracts, glossary, libc map](manual-00-start-here.md)
-1. [Foundation: types, errors, memory, alignment, version, panic](manual-01-foundation.md)
-2. [Allocation: allocator trait, heap, arena, pool, byte buffers](manual-02-allocation.md)
-3. [Strings and text: U8, U16, formatting, scanning](manual-03-strings-text.md)
-4. [Containers and algorithms: array, list, ring, map, sort/search, hashing, encoding](manual-04-containers-algorithms.md)
-5. [Hosted services: filesystem, tree walk, streams, sysio, environment, randomness, mmap, time](manual-05-hosted-services.md)
-6. [Execution and platform: coroutines, jobs, aliases, PAL, freestanding, cross builds](manual-06-execution-and-platform.md)
-7. [Alias index: every `alias_xcv.h` spelling map](manual-07-alias-xcv-index.md)
-8. [Formatting and scanning: full `fmt.h` and `scan.h` reference](manual-08-fmt-scan.md)
+### The reading order
+
+The chapters are grouped into parts, and the parts are ordered so that each one only needs the
+ones before it. That order is not the same as the header dependency graph, and it is not
+arbitrary: strings need allocators, containers need allocators, and hosted services need strings,
+so the sequence below is what the material itself requires.
+
+The chapter *numbers* are stable identifiers, not a reading sequence. Two of them are out of
+order on purpose: the alias index is an appendix you look things up in, and Chapter 8 is a
+reference you read after Chapter 3 has introduced the subject.
+
+| Part | Read | Prerequisites | You can then |
+|---|---|---|---|
+| **I — Start here** | [0](manual-00-start-here.md) | One introductory C book | Build against the library and read anything below |
+| **II — The vocabulary every program uses** | [1](manual-01-foundation.md) → [2](manual-02-allocation.md) → [3](manual-03-strings-text.md) | Chapter 0 | Handle errors as values, own memory deliberately, hold text safely |
+| **III — Data structures** | [4](manual-04-containers-algorithms.md) | Part II | Arrays, maps, lists, rings, sorting, searching, hashing, encoding |
+| **IV — Text in and out** | [8](manual-08-fmt-scan.md) | Chapter 3 §3–§4 | Format and parse anything, and teach the formatter your own types |
+| **V — Talking to the operating system** | [5](manual-05-hosted-services.md) | Part II | Files, directories, streams, standard I/O, time, randomness, mapping |
+| **VI — Going further** | [6](manual-06-execution-and-platform.md) → [freestanding](manual-freestanding.md) | Parts II–V | Coroutines, jobs, thread-safety, bare metal, cross builds |
+| **Appendices** | [A](manual-07-alias-xcv-index.md), [B](manual-00-start-here.md#6-appendix-b-glossary), [C](#7-public-header-map), [D](manual-00-start-here.md#7-appendix-d-the-libc-map) | — | Look things up |
+
+### The chapters
+
+0. [**Start here**: why this exists, hello world, the five contracts, glossary, libc map](manual-00-start-here.md) — *Part I*
+1. [**Foundation**: types, errors, memory views, alignment, version, panic](manual-01-foundation.md) — *Part II*
+2. [**Allocation**: heap, arena, pool, byte buffers, and the allocator trait](manual-02-allocation.md) — *Part II*
+3. [**Strings and text**: U8, U16, and an introduction to formatting and scanning](manual-03-strings-text.md) — *Part II; the tutorial half of the text material*
+4. [**Containers and algorithms**: array, list, ring, map, sort/search, hashing, encoding](manual-04-containers-algorithms.md) — *Part III*
+5. [**Hosted services**: filesystem, tree walk, streams, sysio, environment, randomness, mmap, time](manual-05-hosted-services.md) — *Part V*
+6. [**Execution and platform**: coroutines, jobs, thread-safety, aliases, PAL, cross builds](manual-06-execution-and-platform.md) — *Part VI*
+7. [**Appendix A — Alias index**: every `alias_xcv.h` spelling](manual-07-alias-xcv-index.md) — *reference only; not reading material*
+8. [**Formatting and scanning**: the full `fmt.h` and `scan.h` reference](manual-08-fmt-scan.md) — *Part IV; the reference half of the text material*
+
+**Chapters 3 and 8 both cover the formatter and the scanner, and the division is deliberate.**
+Chapter 3 introduces them alongside strings, with the everyday cases and enough to be productive.
+Chapter 8 is the complete reference: the full format grammar, every argument constructor, the
+scanner's error codes and recovery rules, and how to teach the formatter a type of your own. Read
+Chapter 3 first; reach for Chapter 8 when you need the exact behaviour of a specifier or a
+failure.
 
 ## 7. Public header map
 

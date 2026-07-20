@@ -1,5 +1,10 @@
 # Proven Freestanding Mode (v26.07.20b)
 
+**Part VI — Going further. Prerequisites: Parts II–V, and
+[Chapter 6](manual-06-execution-and-platform.md).**
+**After this guide** you can build the library for a target with no operating system and no libc,
+and you will know exactly which modules survive that and which do not.
+
 This guide describes the current `PROVEN_FREESTANDING` configuration as implemented by `nob.c` and the public headers.
 
 Freestanding mode is for firmware, kernels, bootloaders, hypervisors, or other environments where normal hosted OS services and libc facilities are not available or should not be linked into the proven core.

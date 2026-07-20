@@ -1,6 +1,12 @@
 # Chapter 1: Foundation API
 
-This chapter covers `types.h`, `error.h`, `memory.h`, `align.h`, `version.h`, and `panic.h`.
+**Part II — The vocabulary every program uses. Prerequisite: [Chapter 0](manual-00-start-here.md).**
+**After this chapter** you can handle every failure this library reports, describe a region of
+memory without losing its size, and do arithmetic on sizes that cannot silently overflow.
+
+This chapter covers `types.h`, `error.h`, `memory.h`, `align.h`, `version.h`, and `panic.h` — the
+pieces every other chapter is built out of. Nothing here allocates, and nothing here talks to the
+operating system.
 
 ## Table of contents
 

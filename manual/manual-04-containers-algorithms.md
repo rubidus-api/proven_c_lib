@@ -1,6 +1,12 @@
 # Chapter 4: Containers and Algorithms
 
-This chapter covers `array.h`, `list.h`, `ring.h`, `map.h`, and `algorithm.h`.
+**Part III — Data structures. Prerequisite: Part II
+([1](manual-01-foundation.md), [2](manual-02-allocation.md), [3](manual-03-strings-text.md)).**
+**After this chapter** you can pick the right container for a job, sort and search with a
+guaranteed bound, hash for the right reason, and turn bytes into text and back.
+
+This chapter covers `array.h`, `list.h`, `ring.h`, `map.h`, `algorithm.h`, `hash.h`, and
+`encode.h`. Every container here takes an allocator, which is why Chapter 2 comes first.
 
 ## Table of contents
 

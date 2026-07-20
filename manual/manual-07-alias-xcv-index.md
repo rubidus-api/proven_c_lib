@@ -1,4 +1,12 @@
-# Chapter 7: `alias_xcv.h` Alias Index
+# Appendix A: `alias_xcv.h` Alias Index (Chapter 7)
+
+**This is a lookup table, not reading material.** It is the one file in the manual with no prose
+to work through: 400-odd rows mapping every `xcv_` short name to its canonical `proven_` name. Skip
+it on a first read and come back when you meet an `xcv_` spelling you do not recognise, or when
+you are deciding whether to adopt the short names in your own code.
+
+The file keeps its `manual-07` number because that number is a stable identifier used by links and
+by the build; its position in the reading order is "appendix", which is what this title says.
 
 This appendix is generated from `include/proven/alias_xcv.h`. The alias layer is optional. The canonical `proven_` and `PROVEN_` names remain the source of truth for ABI, documentation, and tests.
 
