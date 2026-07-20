@@ -259,6 +259,12 @@ proven_writer_t w = proven_sysio_stdout_buffered(&out,
 
 상세 레퍼런스는 읽기 쉽고 소스에 근거를 두도록 챕터별로 나뉩니다.
 
+**이 라이브러리가 처음이라면 [0장](manual-00-start-here-ko.md)부터 읽으십시오.** 아무것도 전제하지
+않는 유일한 장입니다: 이 라이브러리가 왜 존재하는지를 이 라이브러리가 답하려는 C의 버그들로부터
+논증하고, hello world 프로그램, 빌드 방법, 나머지 장들이 당연하게 여기는 다섯 가지 계약, 그리고
+용어집과 libc 대응표를 담고 있습니다.
+
+0. [여기서부터 시작: 왜 존재하는가, hello world, 다섯 계약, 용어집, libc 대응표](manual-00-start-here-ko.md)
 1. [Foundation: 타입, 에러, 메모리, 정렬, 버전, panic](manual-01-foundation-ko.md)
 2. [Allocation: allocator 트레잇, heap, arena, pool, byte buffer](manual-02-allocation-ko.md)
 3. [문자열과 텍스트: U8, U16, 형식화, 파싱](manual-03-strings-text-ko.md)
