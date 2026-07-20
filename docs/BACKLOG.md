@@ -35,6 +35,102 @@ it is newer and it was checked by execution. The exit conditions here have been 
 it once already, and the drift is worth noticing: these items were written from RFC-0002's
 sketches, and RFC-0003 renamed two functions and changed what closing B-020 means.
 
+B-025 … B-032 are the manual rewrite, designed in
+[`docs/RFC-0004-the-manual-as-a-book.md`](RFC-0004-the-manual-as-a-book.md). They are documentation
+work; none of them changes library code.
+
+### B-025 — the manual has no on-ramp
+
+There is no "hello world", no statement of what the library is for, no glossary, and no map from
+libc to this library. The first runnable program in the manual is at
+`manual/manual-01-foundation.md:126` — 27% of the way into chapter 1, after 125 lines of type
+tables. A reader who has finished one introductory C book has nowhere to start.
+
+The vocabulary problem is the same problem. `view` appears 288 times, `arena` 115, `trait` 29,
+`provenance` 26, `PAL` 18, `failure atomicity` 7 — and none is defined at first use. "Trait" is
+not a C word; it first appears inside a table cell in the overview document.
+
+Done when `manual/manual-00-start-here.md` exists with: why the library exists argued from
+concrete C failures, a compiled hello-world example, the build and include model, the five
+contracts that recur on every page, a glossary, and a libc → proven table. Registered in
+`tests/test_docs_manual_examples.c` and mirrored in `manual-ko/`.
+
+Not done yet because it was never anyone's chapter: every existing chapter documents a header, and
+the on-ramp documents no header at all.
+
+### B-026 — the chapter order is the header dependency graph, and nothing says so
+
+`01 foundation → 02 allocation → 03 strings → 04 containers → 05 hosted` happens to be a correct
+teaching order, since strings and containers need allocators. Nothing states it, no chapter names
+its prerequisites, and two files sit wrong: the generated 416-row alias index is chapter 7, and the
+formatting deep-dive is chapter 8, after it. Chapters 3 and 8 both document `fmt.h`/`scan.h` with no
+stated division — the header map assigns it to chapter 3 while chapter 8 calls itself the deep dive.
+
+Done when `manual.md` declares reading Parts with per-chapter prerequisites, chapter 7 is relabelled
+Appendix A, and chapters 3 and 8 each state which half of the text material they are. Renumbering
+files is explicitly rejected in RFC-0004 §5.1: it breaks nine hardcoded gate paths, seven gate
+heading strings and ten Korean mirrors, to fix something a table of contents already fixes.
+
+### B-027 — two thirds of the manual is below the standard the manual itself sets
+
+`tests/test_docs_manual_depth.c` requires 150 words of prose — outside tables, headings and fences
+— plus a reference table and a counter-example. Applied to all 88 H2 sections, **30 pass and 58
+fail**. Chapter 1, the entry point, passes **0 of 9**. The thinnest sections carry almost nothing:
+`## 3. Memory mapping` has 1 word of prose, `## 5. Alignment helpers` has 2, `## 3. Ring buffer` 15,
+`## 2. Intrusive list` 18.
+
+The split is chronological, not topical: everything written for that gate leads with the reader's
+problem, and everything older opens with a struct or a table. The style already exists here.
+
+Done when every H2 section in chapters 1–6 leads with why the thing exists and what goes wrong
+without it, and clears the 150-word floor. Per RFC-0004 §8 this is phased by chapter, not attempted
+at once.
+
+### B-028 — eight modules are documented only as tables
+
+`u16str.h`, `ring.h`, `list.h`, `buffer.h`, `mmap.h`, `time.h`, `algorithm.h` and `align.h` have no
+runnable example anywhere in the manual. They satisfy the symbols gate — every function is named in
+a table row — and a table row is the floor, not documentation. The hard parts go unexplained: the
+intrusive-node model, monotonic versus wall clock, why anyone would map a file instead of reading
+it, surrogate pairs and Windows interop for UTF-16.
+
+Done when each has a compiled example in `manual/examples/`, quoted verbatim in its chapter, plus
+the motivation prose B-027 requires. `MAX_EXAMPLES` is 64 with 18 used, so the budget holds.
+
+### B-029 — the hardest material in the book is in its second chapter
+
+Chapter 2 §7 covers pointer provenance in the C abstract machine, CAS, the ABA problem, hazard
+pointers and epoch reclamation — 130 lines arriving after six sections of ordinary allocator use,
+in a chapter a beginner reads early, and nothing later in the manual depends on it.
+
+Done when that material lives in chapter 6 (Part VI, going further), with a short plain statement
+of what is and is not thread-safe left behind in chapter 2 and a forward pointer.
+
+### B-030 — chapters 3 and 8 overlap with no stated division
+
+Both document the formatter and the scanner. A reader has two references and no rule for which to
+read. Done when chapter 3 is the tutorial half and chapter 8 the reference half, each saying so in
+its opening lines, and `manual.md`'s header map agrees with both.
+
+### B-031 — the depth gate covers 7 sections out of 88
+
+The gate that defines the manual's standard is applied to seven hand-registered sections. Every
+section rewritten under B-027 should join the register, or the new style is applied rather than
+enforced and will decay the way the 58 sections in B-027 did.
+
+Done when the register in `tests/test_docs_manual_depth.c` names every section rewritten in phases
+3–6. Deliberately last per chapter: registering a section before it is rewritten blocks the work.
+
+### B-032 — the Korean manual is mirrored by hand and gated by nothing
+
+`test_docs_manual_symbols.c` scans `manual/` only, so `manual-ko/` can drift arbitrarily without any
+build failing. It is currently in sync, and every phase of the rewrite is an opportunity for it to
+stop being so.
+
+Done when each rewritten chapter has its `-ko` mirror updated in the same release. A gate for it is
+worth considering but is not this item: the mirror is a translation, and mechanical equality is the
+wrong check.
+
 ### B-018 — there is no splitter, so every caller writes one, and the natural one is wrong
 
 `docs/RFC-0001` §1 named this and it is still true: splitting a line on a separator is done
