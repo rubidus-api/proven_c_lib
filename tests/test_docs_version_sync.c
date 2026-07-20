@@ -105,6 +105,22 @@ int main(void) {
         int n = count_in_file("manual/manual-01-foundation.md", full);
         PROVEN_TEST_ASSERT(n >= 1,
             "manual chapter 1's version.h excerpt must quote the current PROVEN_VERSION_STRING", "");
+
+        /* The string was gated and the other two macros were not, so they drifted: the excerpt
+         * claimed PROVEN_VERSION_NUM 260713 and SUFFIX "m" while version.h said 260720 and "b".
+         * A partly-checked quotation is worse than an unchecked one, because it looks verified.
+         * All three lines of the excerpt are checked now, and chapter 1 says so in prose. */
+        char num_line[64];
+        snprintf(num_line, sizeof num_line, "PROVEN_VERSION_NUM    %d", PROVEN_VERSION_NUM);
+        PROVEN_TEST_ASSERT(count_in_file("manual/manual-01-foundation.md", num_line) >= 1,
+            "chapter 1's excerpt must quote the current PROVEN_VERSION_NUM",
+            "version.h changed and the chapter's excerpt did not. Copy the whole excerpt, not one line of it.");
+
+        char suffix_line[64];
+        snprintf(suffix_line, sizeof suffix_line, "PROVEN_VERSION_SUFFIX \"%s\"", PROVEN_VERSION_SUFFIX);
+        PROVEN_TEST_ASSERT(count_in_file("manual/manual-01-foundation.md", suffix_line) >= 1,
+            "chapter 1's excerpt must quote the current PROVEN_VERSION_SUFFIX",
+            "version.h changed and the chapter's excerpt did not. Copy the whole excerpt, not one line of it.");
     }
 
     // ---------------------------------------------------------------

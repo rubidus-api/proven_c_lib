@@ -53,6 +53,26 @@ static const Section SECTIONS[] = {
     { "manual-00-start-here.md",            "## 5. The five contracts you will meet on every page", false, false,
       "each contract is one paragraph and one counter-example; the compiled program that shows all "
       "five together is ex_00_hello, quoted in section 3." },
+    /* Chapter 1 (RFC-0004 phase 3). Before the rewrite it passed 0 of its 9 sections against this
+     * gate's own prose floor, while being the first chapter anyone reads. Six of them are
+     * registered here; the three that are not are the table of contents, the version excerpt
+     * (which is deliberately three lines and a gate of its own), and the examples section, which
+     * is code by design. */
+    { "manual-01-foundation.md",            "## 1. Errors are values",                  true,  true,  NULL },
+    { "manual-01-foundation.md",            "## 2. The types, and why they are spelled differently", true, false,
+      "the types are aliases and one result struct; the compiled program that uses them is "
+      "ex_01_errors, quoted in section 1." },
+    { "manual-01-foundation.md",            "## 3. Memory views: a pointer and a length, together", true, false,
+      "views are shown in the worked slicing blocks in section 8; a separate example file would "
+      "duplicate them." },
+    { "manual-01-foundation.md",            "## 4. Size arithmetic that cannot wrap",   false, false,
+      "the checked-arithmetic macros have no struct, and the correct and wrong forms are three "
+      "lines each - a whole program would bury them." },
+    { "manual-01-foundation.md",            "## 5. Alignment",                          false, false,
+      "align.h is two macros and three functions over integers; the arena in chapter 2 is where "
+      "alignment does visible work." },
+    { "manual-01-foundation.md",            "## 6. Panic: when there is no one left to return an error to", true, false,
+      "a panic handler must not return, so an example that ran one would have to end the process." },
     { "manual-04-containers-algorithms.md", "## 6. Hashing, by use case",              true,  true,  NULL },
     { "manual-04-containers-algorithms.md", "## 7. Bytes to text: hex and Base64",      false, true,
       "encode.h hands the caller no struct: every call takes a view and a caller-owned buffer." },
