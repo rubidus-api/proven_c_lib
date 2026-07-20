@@ -91,7 +91,7 @@ static proven_i32 bad(Ctx *c) {
 
 Example (a sketch: a coroutine is a whole function, so it cannot be shown as a
 statement fragment - the compiled version of this shape is the worked example in
-[section 7](#7-examples-and-misuse-cases), `manual/examples/ex_06_coro.c`):
+[section 8](#8-examples-and-misuse-cases), `manual/examples/ex_06_coro.c`):
 
 ```text
 typedef struct Counter {
@@ -210,7 +210,7 @@ proven_job_submit(sys, work, arg);   /* [[nodiscard]]: a false return means NOT 
 
 Example (a sketch, because the job routine has to be a function of its own; the
 compiled version, with the atomics a shared counter really needs, is the worked
-example in [section 7](#7-examples-and-misuse-cases),
+example in [section 8](#8-examples-and-misuse-cases),
 `manual/examples/ex_06_job.c`):
 
 ```text
