@@ -8,7 +8,7 @@ The point is not to hide C behind a framework. The point is to make practical C 
 
 The build driver probes `-std=c23` first and falls back to `-std=c2x` when the compiler still uses the transitional spelling, so older GCC and Clang front ends can still build the tree without changing the library's C23 baseline.
 
-- Version: proven_c_lib-v26.07.20a
+- Version: proven_c_lib-v26.07.20b
 - Standard: C23
 - License: MIT
 - Repository: https://github.com/rubidus-api/proven_c_lib
