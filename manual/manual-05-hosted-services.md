@@ -334,6 +334,56 @@ if (proven_is_ok(env.err)) {
 
 ## 3. Memory mapping
 
+### The problem: reading a file you do not want to copy
+
+`proven_fs_read_all_u8str` reads a file into memory you own. For a configuration file that is
+exactly right. For a 4 GB database, a memory-mapped index, or a file two processes need to see at
+once, it is wrong in three ways: it needs 4 GB of RAM, it copies every byte whether or not you
+read them, and the copy is yours alone.
+
+A memory mapping asks the operating system to make the file's contents *appear* at an address
+instead. Nothing is copied up front. The pages you touch are read from disk on demand; the ones you
+never touch are never read. Two processes mapping the same file with `PROVEN_MMAP_SHARED` see one
+set of pages, so a write in one is visible in the other.
+
+### What this costs, and when not to use it
+
+This is the section of the manual where the trade is sharpest, because the failure modes do not
+look like errors:
+
+- **A read can fault.** With a file in memory, an I/O error is a return value. With a mapping,
+  touching a page whose disk read fails delivers a **signal** (`SIGBUS`), not an error code. There
+  is no `if` you can write around it.
+- **Truncation is a landmine.** If another process shortens the file after you map it, touching a
+  page past the new end is also `SIGBUS`. Mapping a file that anything else may truncate is unsafe
+  in a way no API can fix for you.
+- **It is not free.** Setting up a mapping is a syscall and page-table work; each first touch is a
+  page fault. For a small file, `proven_fs_read_all_u8str` is simply faster.
+- **`proven_mmap_sync` is the durability point.** Writes to a shared mapping reach the file
+  eventually; if you need them on disk *now*, ask.
+
+Use a mapping for large files you read sparsely, for read-only data shared between processes, and
+for random access into a big file. Use an ordinary read for everything else.
+
+The mapping is caller-owned state: `proven_mmap_as_view` hands you a view **into the mapping**, so
+that view is dead the moment `proven_mmap_destroy` runs.
+
+Wrong — using the view after destroying the mapping:
+
+```text
+proven_u8str_view_t data = proven_mmap_as_view(m);
+proven_err_t e = proven_mmap_destroy(&m);
+(void)e;
+parse(data);                 /* wrong: those addresses are no longer mapped - SIGSEGV */
+```
+
+Wrong — treating a mapping like a buffer you can grow:
+
+```text
+/* wrong: a mapping is a window onto a file of a fixed size at map time.
+   Appending means changing the file and mapping it again. */
+```
+
 ### Structures and enums
 
 ```text
