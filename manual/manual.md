@@ -40,6 +40,30 @@ Core design principles:
 
 ## 2. Build and include model
 
+### There is nothing to install
+
+This library has no `configure`, no CMake, no package to fetch, and no shared object to place
+somewhere. It is C source: you compile it into your program alongside your own files.
+
+That is a deliberate choice and it costs something. You do not get a system package, and updating
+means pulling new source rather than bumping a version constraint. What you get is that the library
+cannot be a different version than the one you are looking at, cannot pick up a build flag you did
+not choose, and cannot fail to link because a distribution built it with different options. For a
+library that is meant to run on hosted systems *and* on bare metal, "compile it with your program"
+is the only model that works in both places.
+
+Two directories matter. `src/proven/` is the portable library — no OS calls anywhere. `platform/`
+is the small layer that makes syscalls, and it is the only part a new target has to replace. A
+freestanding build simply leaves the hosted files out; see [the freestanding
+guide](manual-freestanding.md).
+
+The build driver, `nob.c`, is a C program rather than a build system, and you compile it the same
+way you compile everything else here. It is checked into the repository, so there is no bootstrap
+step and no version of it to install either.
+
+**A C23 compiler is required** — GCC 13+, Clang 16+, or recent MSVC. The driver probes `-std=c23`
+and falls back to `-std=c2x` for compilers that still use the transitional spelling.
+
 Build and run the hosted test suite:
 
 ```sh

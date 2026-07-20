@@ -198,6 +198,36 @@ There is no heap, so the memory comes from a static block and an arena is laid o
 it. The arena does not own that block: `alloc` bumps an offset, `free` is a no-op,
 and `reset` rewinds the whole thing at once.
 
+This is the pattern the whole library was shaped to allow, and it is worth seeing why it works.
+Every function that can allocate takes a `proven_allocator_t` as a parameter, so code written for a
+hosted build against `proven_heap_allocator()` runs here unchanged once you hand it an arena
+instead. Nothing in `u8str.h`, `array.h` or `map.h` knows or cares that the memory came from a
+`static` array in `.bss` rather than from `malloc`.
+
+Three decisions to make when you size that block, none of which the library can make for you:
+
+- **How big.** The arena cannot grow, so its size is a hard limit you are choosing at compile time.
+  Too small and allocations start returning `PROVEN_ERR_NOMEM`; too large and you have spent RAM
+  the rest of the firmware needed. This is the trade you are being asked to make explicitly rather
+  than discovering it as heap fragmentation months later.
+- **When to reset.** An arena's whole advantage is freeing everything at once. The natural points
+  are a loop iteration, a received packet, a command — anywhere a batch of work has a clear end.
+  Everything allocated during that batch dies at the reset, so **nothing may outlive it**.
+- **Alignment of the backing array.** `alignas(max_align_t)` on the declaration, as below. Without
+  it the array may start at an address that cannot hold a `double`, and the arena has nothing to
+  fix that with.
+
+Wrong — a view built in the arena that outlives the reset:
+
+```text
+proven_u8str_view_t label = build_label(arena_alloc);   /* lives in the arena */
+proven_arena_reset(&arena);
+send(label);   /* wrong: those bytes are free space now, and the next allocation takes them */
+```
+
+On a hosted build this often survives long enough to look fine in testing. Here the next allocation
+gets the same bytes immediately, so it does not.
+
 ```c
 #include "proven/types.h"
 #include "proven/memory.h"
