@@ -612,9 +612,9 @@ proven_mem_mut_t block = proven_arena_alloc_or_panic(&arena, n);
 진단용으로, 그리고 라이브러리 버전에 맞춰 적응해야 하는 코드를 위한 컴파일 타임 식별자다.
 
 ```text
-#define PROVEN_VERSION_STRING "proven_c_lib-v26.07.20c"
+#define PROVEN_VERSION_STRING "proven_c_lib-v26.07.20d"
 #define PROVEN_VERSION_NUM    260720
-#define PROVEN_VERSION_SUFFIX "c"
+#define PROVEN_VERSION_SUFFIX "d"
 ```
 
 `PROVEN_VERSION_STRING`은 빌드 보고서나 `--version` 플래그에서 출력하는 것이다.

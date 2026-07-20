@@ -1,25 +1,33 @@
-# 챕터 7: `alias_xcv.h` Alias 인덱스
+# 부록 A: `alias_xcv.h` Alias 인덱스 (7장)
 
-> 영문 [`manual/manual-07-alias-xcv-index.md`](../manual/manual-07-alias-xcv-index.md)의 한국어 번역본. 아래 매핑 표는 심볼 대응이라 원문 그대로 둡니다.
+> 영문 [`manual/manual-07-alias-xcv-index.md`](../manual/manual-07-alias-xcv-index.md)의 한국어 번역본. 아래 매핑 표는 심볼 대응이라 원문 그대로 둔다.
 
-이 부록은 `include/proven/alias_xcv.h`에서 생성됩니다. alias 계층은 선택 사항입니다. 정본 `proven_`·`PROVEN_` 이름이 ABI, 문서, 테스트의 기준으로 유지됩니다.
+**이것은 조회표이지 읽을거리가 아니다.** 매뉴얼에서 훑어 나갈 산문이 없는 유일한 파일이다: 모든
+`xcv_` 짧은 이름을 정본 `proven_` 이름으로 대응시키는 400여 행. 처음 읽을 때는 건너뛰고, 알아보지
+못하는 `xcv_` 철자를 만났을 때, 또는 자기 코드에 짧은 이름을 도입할지 정할 때 돌아오라.
+
+이 파일이 `manual-07` 번호를 유지하는 것은 그 번호가 링크와 빌드가 쓰는 안정적인 식별자이기
+때문이다. 읽기 순서에서의 위치는 "부록"이며, 이 제목이 말하는 바가 그것이다.
+
+이 부록은 `include/proven/alias_xcv.h`에서 생성된다. alias 계층은 선택 사항이다. 정본
+`proven_`·`PROVEN_` 이름이 ABI, 문서, 테스트의 기준으로 유지된다.
 
 ## 사용 규칙
 
-alias는 일반 헤더 뒤에 include하세요:
+alias는 일반 헤더 뒤에 include하라:
 
 ```c
 #include "proven.h"
 #include "proven/alias_xcv.h"
 ```
 
-alias 문서와 정본 API 문서를 섞지 마세요. 이 인덱스는 철자 맵으로만 사용하세요.
+alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵으로만 사용하라.
 
 ## Alias 표
 
-416개의 alias, 공개 이름 하나당 하나. 표는 `include/proven/alias_xcv.h`에서 생성됩니다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시키므로, 이 목록은 다시 헤더보다 조용히 뒤처질 수 없습니다.
+416개의 alias, 공개 이름 하나당 하나. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시키므로, 이 목록은 다시 헤더보다 조용히 뒤처질 수 없다.
 
-행 번호 열은 의도적으로 두지 않았습니다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했습니다.
+행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
 | Alias macro | Expands to |
 |---|---|
