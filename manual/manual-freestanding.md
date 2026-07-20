@@ -139,6 +139,29 @@ Do not add excluded hosted modules to a bare-metal build unless you also provide
 
 ## 3. Module availability
 
+### How to read this table, and what "excluded" means
+
+A module is excluded here for exactly one reason: it needs something only an operating system can
+provide. It is not that the code is untested on small targets or that somebody has not got round to
+it — `fs.h` needs a filesystem, `sysio.h` needs standard streams, `mmap.h` needs virtual memory,
+`job.h` needs threads. There is nothing to port.
+
+The interesting rows are the two that are neither available nor excluded:
+
+- **`heap.h` is a stub.** `proven_heap_allocator()` still exists and still compiles, and it returns
+  an allocator whose function pointers are null — one that `proven_alloc_is_valid` reports as
+  invalid. It does not silently allocate from somewhere else and it does not fail to link. That
+  choice matters: code written against the allocator trait keeps compiling for a bare-metal target,
+  and the place it breaks is the one line that asked for a heap, at run time, with a check you can
+  write. §4 shows what to pass instead.
+- **`time.h` is limited.** The datetime formatting is pure arithmetic over a number you supply, so
+  it compiles. What is missing is the number: reading a clock is a syscall, so `proven_time_now`
+  has no backend here. Format timestamps you got from your own hardware timer.
+
+Everything marked Available is the portable core, and "available" means the same tests that run on
+a hosted build run against it — the freestanding profile is built and checked by `./nob freestanding`
+on every release, not asserted in this table.
+
 | Module | Status in current freestanding profile | Notes |
 |---|---|---|
 | `types.h`, `error.h`, `align.h`, `memory.h` | Available | Requires fixed-width integer and `uintptr_t` support. |
@@ -313,6 +336,20 @@ rounding boundary can need up to 767 significant digits.
 
 ## 9. Avoid hosted APIs
 
+### Why this is a link error rather than a run-time surprise
+
+The hosted modules are not compiled into a freestanding build at all. Calling one is therefore a
+**link error** — an undefined symbol, at build time, naming the function you should not have used.
+
+That is the design working. The alternative, which many embedded libraries choose, is to provide
+stubs that return an error at run time; then a call to `proven_fs_open` on a microcontroller
+compiles, links, ships, and fails in the field on a path nobody exercised. Here it cannot get out
+of the build.
+
+The practical consequence for your own code: if a module is shared between a hosted tool and
+firmware, the hosted-only calls need to be behind `#ifndef PROVEN_FREESTANDING`, and the link error
+tells you exactly which ones you missed.
+
 Do not call these in the current freestanding profile:
 
 ```text
@@ -326,6 +363,25 @@ proven_job_system_init(...);
 They require hosted PAL files that are intentionally excluded.
 
 ## 10. Lifetime rules still apply
+
+### The section people skip, and why it costs more here
+
+Freestanding does not relax any of the ownership rules in
+[Chapter 0 §5](manual-00-start-here.md#5-the-five-contracts-you-will-meet-on-every-page). If anything it sharpens them, for three reasons that all
+point the same way:
+
+- **There is no allocator between you and the memory.** A dangling pointer into a heap block often
+  survives for a while because the allocator has not handed that block out again. An arena hands the
+  same bytes out on the very next allocation after a reset, so a stale view is overwritten
+  immediately and deterministically.
+- **There is nothing to catch you.** No MMU trap on a small target, no operating system to kill the
+  process, no sanitizer in the field. A use-after-reset does not crash — it reads someone else's
+  data and carries on, and the symptom appears somewhere unrelated.
+- **The consequences are physical.** The wrong byte here can be a motor command or a radio packet.
+
+The rules are the same ones you already know: a view is valid only while its owner is, an owned
+object is destroyed exactly once with the allocator that made it, and caller-owned state structs
+must not be copied. What changes is the margin for error, which is zero.
 
 Freestanding does not relax container rules.
 

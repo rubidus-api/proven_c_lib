@@ -30,6 +30,27 @@ first time, read Chapter 3 first — this one assumes you have.
 
 ## 1. Design model
 
+### Why the type is never written twice
+
+Both halves of this chapter exist to eliminate one thing: a place where the programmer states a
+type that the compiler cannot check against the value.
+
+`printf("%d", x)` states it twice — once as `%d`, once by passing `x` — and varargs erases the
+second, so nothing can compare them. `scanf("%d", &x)` is worse: the format decides both how to
+parse *and* what to write through the pointer, so a mismatch corrupts memory rather than printing
+nonsense. Both are the same defect from opposite directions, and both compile silently.
+
+Here the placeholder carries **no type at all**. `{}` marks a position; the type comes from
+`PROVEN_ARG(x)` on the formatting side and `PROVEN_SCAN_ARG(&x)` on the scanning side, both
+resolved by `_Generic` at compile time against the argument's static type. The spec after `:`
+controls presentation only — width, fill, alignment, precision, base — never interpretation. There
+is no `%d`-versus-`double` to get wrong because you never wrote a type in the string.
+
+The second design decision is that **neither side owns a buffer**. Formatting appends into a
+destination you supply and refuses when it does not fit; scanning reads from a view you supply and
+moves a cursor you can read. Nothing here allocates unless you hand it an allocator, which is what
+lets the whole chapter work in a freestanding build (§13).
+
 The formatting side and the scanning side solve opposite problems.
 
 - Formatting takes typed values and renders text.
@@ -827,7 +848,29 @@ int main(void) {
 
 ## 6. Console print helpers
 
-This section is intentionally short because the detailed I/O API lives in Chapter 5.
+### What `proven_println` is, and what it costs
+
+`proven_println("{}", PROVEN_ARG(x))` is the shortest way to get text out of a program, and it is
+the right tool for a diagnostic, a one-off tool, or a program whose output is a few lines.
+
+It is the wrong tool for a loop, and the reason is worth stating because it is invisible at the
+call site: **each call is its own write syscall.** Ten thousand `proven_println` calls are ten
+thousand syscalls, which is roughly two orders of magnitude more expensive than the formatting
+itself. `printf` hides this behind a buffer that libc flushes for you; this library does not
+buffer behind your back, because a buffer you did not ask for is a buffer that surprises you at
+exit, on a crash, or when two writers interleave.
+
+When output volume matters, take a buffered writer from `proven_sysio_stdout_buffered` and format
+into that — same argument rules, one syscall per flush instead of one per line.
+[Chapter 5](manual-05-hosted-services.md) covers the stream layer; this section is short because
+that is where the I/O API is documented.
+
+Wrong — reaching for the scanning argument constructor when printing:
+
+```text
+proven_println("{}", PROVEN_SCAN_ARG(&x));   /* wrong: that builds a scan destination */
+```
+
 The important point for formatter users is that the console helpers share the same argument rules as the string append APIs.
 
 Common mistakes:
@@ -983,6 +1026,28 @@ The `proven_scan_arg_*` constructors are public if you need to build an argument
 array by hand, but the macros are what callers use.
 
 ## 10. Structural scan grammar
+
+### Why parsing with a format string is more dangerous than printing with one
+
+Formatting with a bad format string produces wrong output. **Parsing with one corrupts memory**,
+because the format decides what to write through the pointers you passed. `sscanf("%d", &c)` where
+`c` is a `char` writes four bytes into a one-byte object, and nothing in the call says so.
+
+That asymmetry shapes this section. The structural scan uses the same `{}` grammar as the
+formatter, but the destination type comes from `PROVEN_SCAN_ARG(&x)` — the same `_Generic`
+dispatch, so the width written is the width of the object, and a value too large for it is
+`PROVEN_ERR_OVERFLOW` rather than three neighbouring bytes.
+
+The one property to internalise before using it: **the structural scan is not transactional across
+placeholders.** If the third `{}` fails, the first two destinations have already been written. That
+is a deliberate trade — buffering every destination until the whole line parsed would need
+allocation, and this scanner allocates nothing — but it means a failed `proven_scan_fmt` leaves
+your variables in a partly-updated state. Either treat them as garbage on failure, or scan into
+locals and copy out only on success. §11.1 shows both patterns.
+
+Literals in the pattern are the other half of the grammar and the part people underuse: anything
+that is not a placeholder must match the input exactly, so `"{}:{}"` on `"12-34"` fails at the
+literal rather than quietly returning one field.
 
 The scan format string is the formatter's, read backwards:
 
@@ -1380,6 +1445,22 @@ so does the word. Copy it with `proven_u8str_create_from_view()` if it has to ou
 the bytes it came from.
 
 ## 13. Freestanding and build-mode notes
+
+### Why float is the one thing that gets compiled out
+
+Everything in this chapter is portable computation except one part, and that part is unusually
+expensive.
+
+Formatting a `double` correctly — so that the shortest decimal that round-trips is what you get, on
+every input including subnormals — needs big-integer arithmetic and lookup tables. It is the
+largest single piece of code in the formatter, and most firmware never prints a `double` at all. So
+the freestanding profile sets `PROVEN_FMT_NO_FLOAT` and drops it, and a build for a microcontroller
+does not carry kilobytes of decimal-conversion tables it will never call.
+
+This is a build-time decision rather than a run-time one on purpose: the code is *absent*, not
+merely unreachable, so the linker cannot be talked into keeping it. §8a of the
+[freestanding guide](manual-freestanding.md) covers the related knob — the big-integer capacity — for
+builds that do want floats on a small target.
 
 The scanner is core: it does no I/O, allocates nothing, and touches no platform layer,
 so it is available in a freestanding build exactly as it is in a hosted one.
