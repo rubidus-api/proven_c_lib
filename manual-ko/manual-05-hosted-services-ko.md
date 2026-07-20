@@ -1,6 +1,13 @@
 # Chapter 5: Hosted Services
 
-이 장에서는 `fs.h`, `sysio.h`, `mmap.h`, `time.h`, `stream.h`, `random.h`를 다룬다.
+**5부 — 운영체제와 대화하기. 선행 조건: 2부
+([1](manual-01-foundation-ko.md), [2](manual-02-allocation-ko.md), [3](manual-03-strings-text-ko.md)).**
+**이 장을 마치면** 충돌 시에도 데이터를 잃지 않고 파일을 읽고 쓰며, 입력을 한 줄씩 읽고,
+작업에 맞는 무작위성을 생성하고, 벽시계 시간과 경과 시간을 구별할 수 있다.
+
+이 장에서는 `fs.h`, `sysio.h`, `mmap.h`, `time.h`, `stream.h`, `random.h`를 다룬다. 이 안의 모든
+것은 운영체제를 필요로 한다: 이 장은 [freestanding](manual-freestanding-ko.md) 빌드에 적용되지
+않는 매뉴얼의 유일한 부분이다.
 
 이 API들은 호스티드 플랫폼 지원이 필요하며, 현재의 freestanding 하위 집합에서는 제외된다.
 
@@ -324,6 +331,55 @@ if (proven_is_ok(env.err)) {
 
 ## 3. Memory mapping
 
+### 문제: 복사하고 싶지 않은 파일 읽기
+
+`proven_fs_read_all_u8str`는 파일을 당신이 소유하는 메모리로 읽어 들인다. 설정 파일이라면 그것이
+정확히 옳다. 하지만 4 GB짜리 데이터베이스, 메모리 매핑된 인덱스, 또는 두 프로세스가 동시에 봐야
+하는 파일이라면 세 가지 면에서 틀렸다: 4 GB의 RAM이 필요하고, 읽든 읽지 않든 모든 바이트를
+복사하며, 그 복사본은 오직 당신만의 것이다.
+
+메모리 매핑은 대신 운영체제에게 파일의 내용이 어떤 주소에 *나타나게* 해 달라고 요청한다. 미리
+복사되는 것은 없다. 당신이 건드리는 페이지만 필요할 때 디스크에서 읽히고, 결코 건드리지 않는
+페이지는 결코 읽히지 않는다. 두 프로세스가 같은 파일을 `PROVEN_MMAP_SHARED`로 매핑하면 하나의
+페이지 집합을 보게 되므로, 한쪽에서의 쓰기가 다른 쪽에서 보인다.
+
+### 이것의 비용, 그리고 쓰지 말아야 할 때
+
+실패 양상이 오류처럼 보이지 않기 때문에, 이 절은 매뉴얼에서 득실이 가장 첨예한 부분이다:
+
+- **읽기가 fault를 일으킬 수 있다.** 파일이 메모리에 있으면 I/O 오류는 반환값이다. 매핑에서는,
+  디스크 읽기가 실패하는 페이지를 건드리면 오류 코드가 아니라 **시그널**(`SIGBUS`)이 전달된다.
+  이를 우회하도록 작성할 수 있는 `if`는 없다.
+- **잘림(truncation)은 지뢰다.** 매핑한 뒤에 다른 프로세스가 파일을 줄이면, 새 끝을 넘어선
+  페이지를 건드리는 것 역시 `SIGBUS`다. 다른 무언가가 잘라낼 수 있는 파일을 매핑하는 것은 어떤
+  API도 대신 고쳐 줄 수 없는 방식으로 안전하지 않다.
+- **공짜가 아니다.** 매핑을 설정하는 것은 syscall이자 페이지 테이블 작업이며, 첫 접촉마다 페이지
+  fault가 난다. 작은 파일이라면 `proven_fs_read_all_u8str`가 그냥 더 빠르다.
+- **`proven_mmap_sync`가 지속성의 지점이다.** 공유 매핑에 대한 쓰기는 결국 파일에 도달한다.
+  *지금* 디스크에 있어야 한다면, 요청하라.
+
+큰 파일을 드문드문 읽을 때, 프로세스 간에 공유하는 읽기 전용 데이터에, 그리고 큰 파일에 대한
+임의 접근에 매핑을 쓰라. 그 밖의 모든 것에는 평범한 읽기를 쓰라.
+
+매핑은 호출자가 소유하는 상태다: `proven_mmap_as_view`는 **매핑 안을 가리키는** view를 건네주므로,
+그 view는 `proven_mmap_destroy`가 실행되는 순간 죽는다.
+
+잘못된 예 — 매핑을 파괴한 뒤에 view를 사용하기:
+
+```text
+proven_u8str_view_t data = proven_mmap_as_view(m);
+proven_err_t e = proven_mmap_destroy(&m);
+(void)e;
+parse(data);                 /* wrong: those addresses are no longer mapped - SIGSEGV */
+```
+
+잘못된 예 — 매핑을 키울 수 있는 버퍼처럼 취급하기:
+
+```text
+/* wrong: a mapping is a window onto a file of a fixed size at map time.
+   Appending means changing the file and mapping it again. */
+```
+
 ### 구조체와 열거형
 
 ```text
@@ -383,6 +439,138 @@ if (proven_is_ok(f.err)) {
 ```
 
 ## 4. Time API
+
+### 문제: 서로 다른 두 질문, 하나의 단어
+
+"시간"은 서로 닮았지만 하는 짓은 전혀 다른 두 가지를 뜻한다.
+
+**벽시계(wall clock)**는 *지금 몇 시인가?*에 답한다 — 사용자가 읽는 그것이다. 이 시계는 튀어도
+된다: NTP가 보정하고, 서머타임이 옮기고, 관리자가 설정한다. 이것으로 경과 시간을 재면 음수가 나올
+수 있는데, 이는 윤초가 있는 날에 나타나고 테스트 중인 누구의 노트북에서도 나타나지 않는 버그다.
+
+**단조(monotonic)** 시계는 *언제부터 얼마나 지났는가?*에 답한다. 앞으로만 움직이며 어떤 달력과도
+관계가 없다. 연산의 시간을 잴 때 쓰는 것이 이것이다.
+
+libc는 이 구분을 흐린다. `time()`은 벽시계의 초 단위 정수를 준다 — 무언가를 재기에는 너무 거칠다.
+`clock()`은 **CPU** 시간을 재므로, 소켓을 기다리는 프로그램은 시간이 전혀 걸리지 않은 것처럼
+보인다. 어느 이름도 자신이 어느 질문에 답하는지 말해 주지 않으며, 둘 다 서로의 용도로 흔히
+쓰인다.
+
+### 이 라이브러리는 대신 무엇을 하는가
+
+`proven_time_now()`는 **Unix epoch 이후의 나노초**를 부호 있는 64비트 값으로 반환한다. 빼면 경과
+시간이 되고, 분해하면 달력 날짜가 되는 하나의 숫자다 — 실제 작업의 시간을 잴 만큼 충분히 고운
+해상도로.
+
+`proven_time_breakdown()`은 그 숫자를 `proven_datetime_t`로 바꾸며, 그 필드는 사람이 쓰는 것들이다:
+`month`는 libc의 0-11이 아니라 **1-12**이고, `year`는 1900년 이후의 햇수가 아니라 실제 연도다.
+`struct tm`의 그 두 가지 off-by-N 관례는 의도적으로 갈라설 만큼 충분히 많은 버그를 낳았다.
+
+포맷팅은 [3장](manual-03-strings-text-ko.md)과 같은 `{}` 자리표시자를 쓴다: 이름이 필드를 고르고
+스펙이 자리를 채우므로, `{month:0>2}`는 너비 2로 0을 채운다. 월과 요일 이름은
+`proven_time_locale_t`에서 오므로, 다른 언어로 렌더링하는 것은 전역을 설정하는 것이 아니라 다른
+locale을 넘기는 일이다.
+
+잘못된 예 — 벽시계로 시간을 재고 부호를 믿기:
+
+```text
+proven_time_t t0 = proven_time_now();
+do_work();
+proven_time_t t1 = proven_time_now();
+proven_u64 ns = (proven_u64)(t1 - t0);   /* wrong: an NTP step back makes this enormous */
+```
+
+뺄셈은 괜찮다. 캐스트가 문제다. 차이를 부호 있는 값으로 유지하고, 음수 경과 시간은 지속 시간이
+아니라 "시계가 움직였다"로 취급하라.
+
+잘못된 예 — sleep이 정확하다고 가정하기:
+
+```text
+proven_time_sleep(15);
+/* wrong to assume exactly 15ms have passed: sleep guarantees AT LEAST that long,
+   and the scheduler decides when you actually run again. */
+```
+
+### 완성 예제: 경과 시간, 날짜, 그리고 포맷된 타임스탬프
+
+테스트 스위트가 컴파일하고 실행한다. 이 예제가 무엇을 단언하지 *않는지*에 주목하라 — sleep의
+상한이다. 그것을 단언하면 바쁜 기계에서 실패하는 테스트가 되기 때문이다.
+
+<!-- example: manual/examples/ex_05_time.c -->
+```c
+/*
+ * Time comes in two flavours that look identical and are not, and picking the
+ * wrong one is the classic timing bug.
+ *
+ *   - A WALL CLOCK answers "what time is it?". It is what a user wants to see,
+ *     and it is allowed to jump: NTP corrects it, daylight saving shifts it, an
+ *     administrator sets it. Measuring a duration with it can produce a negative
+ *     elapsed time, and did, famously, on leap-second days.
+ *
+ *   - A MONOTONIC clock answers "how long since?". It only moves forward, at a
+ *     steady rate, and has no relationship to any calendar. It is what you time
+ *     an operation with.
+ *
+ * libc blurs this. time() is wall clock in whole seconds - useless for
+ * measurement. clock() measures CPU time, not elapsed time, so a program that
+ * sleeps looks instantaneous. Neither name tells you which of the two questions
+ * it is answering.
+ *
+ * proven_time_now() is nanoseconds since the Unix epoch: one number that both
+ * formats as a date and subtracts as a duration, at a resolution fine enough to
+ * time real work.
+ */
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* --- as a duration ------------------------------------------------- */
+    proven_time_t start = proven_time_now();
+    proven_time_sleep(15);                 /* milliseconds */
+    proven_time_t end = proven_time_now();
+
+    proven_i64 elapsed_ns = end - start;
+    EXAMPLE_REQUIRE(elapsed_ns > 0, "time must move forward across a sleep");
+    /* Sleep guarantees AT LEAST the requested time, never at most: the scheduler
+     * decides when you actually run again. Asserting an upper bound here would
+     * be a test that fails on a busy machine, which is why this one does not. */
+    EXAMPLE_REQUIRE(elapsed_ns >= 10 * 1000 * 1000,
+                    "sleeping 15ms must take at least ~10ms of wall time");
+
+    /* --- as a date ------------------------------------------------------ */
+    proven_datetime_t dt = proven_time_breakdown(start);
+    EXAMPLE_REQUIRE(dt.year >= 2020 && dt.year < 3000, "the epoch breakdown gives a plausible year");
+    EXAMPLE_REQUIRE(dt.month >= 1 && dt.month <= 12, "month is 1-12, not 0-11 as in libc's tm");
+    EXAMPLE_REQUIRE(dt.day >= 1 && dt.day <= 31, "day is 1-31");
+    EXAMPLE_REQUIRE(dt.hour <= 23 && dt.min <= 59 && dt.sec <= 60, "sec allows 60 for leap seconds");
+    EXAMPLE_REQUIRE(dt.weekday <= 6, "weekday is 0-6 with 0 = Sunday");
+
+    /* proven_time_now_datetime() is the two calls above in one, for when you
+     * only want the calendar form. */
+    proven_datetime_t now = proven_time_now_datetime();
+    EXAMPLE_REQUIRE(now.year == dt.year, "both routes read the same clock");
+
+    /* --- formatting a timestamp ---------------------------------------- */
+    proven_result_u8str_t s = proven_u8str_create(alloc, 64);
+    EXAMPLE_REQUIRE(proven_is_ok(s.err), "a 64-byte string is enough for a timestamp");
+
+    /* The locale supplies month and weekday names; proven_time_locale_en is the
+     * built-in English one. Pass your own to render other languages. */
+    proven_err_t err = proven_time_u8_fmt(alloc, &s.value, dt, &proven_time_locale_en,
+                                          "{year}-{month:0>2}-{day:0>2} {hour:0>2}:{min:0>2}:{sec:0>2}");
+    EXAMPLE_REQUIRE(proven_is_ok(err), "formatting a datetime should succeed");
+
+    proven_u8str_view_t out = proven_u8str_as_view(&s.value);
+    EXAMPLE_REQUIRE(out.size == 19, "year-month-day hour:min:sec is exactly 19 characters");
+    EXAMPLE_REQUIRE(out.ptr[4] == '-' && out.ptr[7] == '-' && out.ptr[13] == ':',
+                    "the separators land where the pattern put them");
+
+    proven_println("formatted: {}", PROVEN_ARG(out));
+
+    proven_u8str_destroy(alloc, &s.value);
+    return EXAMPLE_OK();
+}
+```
 
 ### 타입
 
