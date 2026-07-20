@@ -73,6 +73,19 @@ static const Section SECTIONS[] = {
       "alignment does visible work." },
     { "manual-01-foundation.md",            "## 6. Panic: when there is no one left to return an error to", true, false,
       "a panic handler must not return, so an example that ran one would have to end the process." },
+    /* Chapter 2 (RFC-0004 phase 3). Reordered so the obvious case comes first: you use a heap,
+     * an arena and a pool before being shown the trait they share. */
+    { "manual-02-allocation.md",            "## 1. Why allocation is a parameter, and the heap allocator", false, false,
+      "the heap allocator is one function returning a value; the compiled programs that use it "
+      "are ex_02_arena and ex_02_pool in section 6." },
+    { "manual-02-allocation.md",            "## 2. Arena: many things, one lifetime",   true,  false,
+      "the arena's worked example is ex_02_arena, quoted in section 6 where the other worked "
+      "examples live." },
+    { "manual-02-allocation.md",            "## 3. Pool: many things, one size",        true,  false,
+      "the pool's worked example is ex_02_pool, quoted in section 6." },
+    { "manual-02-allocation.md",            "## 4. The allocator trait",                true,  false,
+      "the trait is an interface; every example in this chapter is already using it through "
+      "proven_heap_allocator, proven_arena_as_allocator or proven_pool_as_allocator." },
     { "manual-04-containers-algorithms.md", "## 6. Hashing, by use case",              true,  true,  NULL },
     { "manual-04-containers-algorithms.md", "## 7. Bytes to text: hex and Base64",      false, true,
       "encode.h hands the caller no struct: every call takes a view and a caller-owned buffer." },

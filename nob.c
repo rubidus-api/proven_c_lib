@@ -521,7 +521,22 @@ static bool check_manual_code_blocks(const char *compiler, const char *standard_
         while ((p = strstr(p, "```c\n")) != NULL) {
             const char *body = p + 5;
             const char *end = strstr(body, "\n```");
-            if (!end) break;
+            if (!end) {
+                /* An opening fence with no closing fence at column 0. This used to `break`,
+                 * which skipped this block AND every block after it in the chapter - the gate
+                 * switching itself off without saying so. It was live: an indented ```c inside
+                 * a bullet list opens a block whose indented closer this search cannot see, so
+                 * a pseudo-code sketch in chapter 2 was never compiled by anything, and nobody
+                 * knew until moving it to chapter 6 put a real closing fence after it. Fail
+                 * loudly instead: indent a fence and you get a build error, not silence. */
+                nob_log(NOB_ERROR, "[PROVEN][DOCS][FAIL] path=%s stage=unterminated-block", chapters[c]);
+                nob_log(NOB_ERROR, "[PROVEN][DOCS][FAIL_HINT] A ```c fence in this chapter is never closed at column 0. "
+                                   "The usual cause is an indented fence inside a list item: the opener is found and the "
+                                   "indented closer is not. Move the block out of the list, or fence it as ```text if it "
+                                   "is a sketch. Everything after it in this chapter was going unchecked.");
+                all_ok = false;
+                break;
+            }
 
             /* Blocks quoted from manual/examples/ are whole programs: they are
              * compiled and run elsewhere, so skip them here. The marker sits
