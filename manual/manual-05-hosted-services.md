@@ -394,6 +394,140 @@ if (proven_is_ok(f.err)) {
 
 ## 4. Time API
 
+### The problem: two different questions, one word
+
+"Time" means two things that look alike and behave nothing alike.
+
+A **wall clock** answers *what time is it?* — the thing a user reads. It is allowed to jump: NTP
+corrects it, daylight saving shifts it, an administrator sets it. Measure a duration with it and
+you can get a negative answer, which is a bug that appears on leap-second days and on nobody's
+laptop during testing.
+
+A **monotonic** clock answers *how long since?* It only moves forward and has no relationship to
+any calendar. It is what you time an operation with.
+
+libc blurs the distinction. `time()` gives whole seconds of wall clock — too coarse to measure
+anything. `clock()` measures **CPU** time, so a program that waits on a socket appears to take no
+time at all. Neither name says which question it answers, and both are routinely used for the
+other one.
+
+### What this library does instead
+
+`proven_time_now()` returns **nanoseconds since the Unix epoch** as a signed 64-bit value. One
+number that you can subtract to get a duration, or break down to get a calendar date — at a
+resolution fine enough to time real work.
+
+`proven_time_breakdown()` turns that number into `proven_datetime_t`, whose fields are the ones a
+human uses: `month` is **1-12**, not libc's 0-11, and `year` is the actual year, not years since
+1900. Those two off-by-N conventions in `struct tm` have caused enough bugs to be worth diverging
+from deliberately.
+
+Formatting uses the same `{}` placeholders as [Chapter 3](manual-03-strings-text.md): the name
+picks the field and the spec pads it, so `{month:0>2}` is zero-filled to width two. Month and
+weekday names come from a `proven_time_locale_t`, so rendering another language is passing a
+different locale rather than setting a global.
+
+Wrong — timing with a wall clock and trusting the sign:
+
+```text
+proven_time_t t0 = proven_time_now();
+do_work();
+proven_time_t t1 = proven_time_now();
+proven_u64 ns = (proven_u64)(t1 - t0);   /* wrong: an NTP step back makes this enormous */
+```
+
+The subtraction is fine; the cast is not. Keep the difference signed, and treat a negative elapsed
+time as "the clock moved", not as a duration.
+
+Wrong — assuming sleep is precise:
+
+```text
+proven_time_sleep(15);
+/* wrong to assume exactly 15ms have passed: sleep guarantees AT LEAST that long,
+   and the scheduler decides when you actually run again. */
+```
+
+### Worked example: a duration, a date, and a formatted timestamp
+
+Compiled and run by the test suite. Note what it does *not* assert — an upper bound on the sleep —
+because that would be a test that fails on a busy machine.
+
+<!-- example: manual/examples/ex_05_time.c -->
+```c
+/*
+ * Time comes in two flavours that look identical and are not, and picking the
+ * wrong one is the classic timing bug.
+ *
+ *   - A WALL CLOCK answers "what time is it?". It is what a user wants to see,
+ *     and it is allowed to jump: NTP corrects it, daylight saving shifts it, an
+ *     administrator sets it. Measuring a duration with it can produce a negative
+ *     elapsed time, and did, famously, on leap-second days.
+ *
+ *   - A MONOTONIC clock answers "how long since?". It only moves forward, at a
+ *     steady rate, and has no relationship to any calendar. It is what you time
+ *     an operation with.
+ *
+ * libc blurs this. time() is wall clock in whole seconds - useless for
+ * measurement. clock() measures CPU time, not elapsed time, so a program that
+ * sleeps looks instantaneous. Neither name tells you which of the two questions
+ * it is answering.
+ *
+ * proven_time_now() is nanoseconds since the Unix epoch: one number that both
+ * formats as a date and subtracts as a duration, at a resolution fine enough to
+ * time real work.
+ */
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* --- as a duration ------------------------------------------------- */
+    proven_time_t start = proven_time_now();
+    proven_time_sleep(15);                 /* milliseconds */
+    proven_time_t end = proven_time_now();
+
+    proven_i64 elapsed_ns = end - start;
+    EXAMPLE_REQUIRE(elapsed_ns > 0, "time must move forward across a sleep");
+    /* Sleep guarantees AT LEAST the requested time, never at most: the scheduler
+     * decides when you actually run again. Asserting an upper bound here would
+     * be a test that fails on a busy machine, which is why this one does not. */
+    EXAMPLE_REQUIRE(elapsed_ns >= 10 * 1000 * 1000,
+                    "sleeping 15ms must take at least ~10ms of wall time");
+
+    /* --- as a date ------------------------------------------------------ */
+    proven_datetime_t dt = proven_time_breakdown(start);
+    EXAMPLE_REQUIRE(dt.year >= 2020 && dt.year < 3000, "the epoch breakdown gives a plausible year");
+    EXAMPLE_REQUIRE(dt.month >= 1 && dt.month <= 12, "month is 1-12, not 0-11 as in libc's tm");
+    EXAMPLE_REQUIRE(dt.day >= 1 && dt.day <= 31, "day is 1-31");
+    EXAMPLE_REQUIRE(dt.hour <= 23 && dt.min <= 59 && dt.sec <= 60, "sec allows 60 for leap seconds");
+    EXAMPLE_REQUIRE(dt.weekday <= 6, "weekday is 0-6 with 0 = Sunday");
+
+    /* proven_time_now_datetime() is the two calls above in one, for when you
+     * only want the calendar form. */
+    proven_datetime_t now = proven_time_now_datetime();
+    EXAMPLE_REQUIRE(now.year == dt.year, "both routes read the same clock");
+
+    /* --- formatting a timestamp ---------------------------------------- */
+    proven_result_u8str_t s = proven_u8str_create(alloc, 64);
+    EXAMPLE_REQUIRE(proven_is_ok(s.err), "a 64-byte string is enough for a timestamp");
+
+    /* The locale supplies month and weekday names; proven_time_locale_en is the
+     * built-in English one. Pass your own to render other languages. */
+    proven_err_t err = proven_time_u8_fmt(alloc, &s.value, dt, &proven_time_locale_en,
+                                          "{year}-{month:0>2}-{day:0>2} {hour:0>2}:{min:0>2}:{sec:0>2}");
+    EXAMPLE_REQUIRE(proven_is_ok(err), "formatting a datetime should succeed");
+
+    proven_u8str_view_t out = proven_u8str_as_view(&s.value);
+    EXAMPLE_REQUIRE(out.size == 19, "year-month-day hour:min:sec is exactly 19 characters");
+    EXAMPLE_REQUIRE(out.ptr[4] == '-' && out.ptr[7] == '-' && out.ptr[13] == ':',
+                    "the separators land where the pattern put them");
+
+    proven_println("formatted: {}", PROVEN_ARG(out));
+
+    proven_u8str_destroy(alloc, &s.value);
+    return EXAMPLE_OK();
+}
+```
+
 ### Types
 
 ```text
