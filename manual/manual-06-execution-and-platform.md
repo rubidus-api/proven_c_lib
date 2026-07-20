@@ -402,7 +402,42 @@ to the provenance hazards above.
 
 ## 4. Alias layer
 
-`include/proven/alias_xcv.h` provides a shorter optional alias prefix. It maps canonical `proven_` and `PROVEN_` names to `xcv_` and `XCV_` names.
+### Why a second set of names exists
+
+`proven_u8str_view_slice` is 26 characters. In a file that calls twenty such functions, the prefix
+is a third of the line, and the part that varies — the part you actually read — is squeezed into
+what is left.
+
+Prefixes are not decoration in C. The language has one global namespace for functions, so a library
+that exports `slice` or `create` will eventually collide with something else the program links. The
+prefix is what makes a C library safe to combine with others, and it is why every serious C library
+has one.
+
+`alias_xcv.h` is the compromise: a shorter `xcv_` spelling for every public symbol, in a header you
+opt into. Include it and `xcv_u8str_view_slice` works; do not, and the short names do not exist to
+collide with anything.
+
+**The canonical names remain the source of truth** — for the ABI, for this manual, and for the
+tests. The alias layer is a spelling, not an API: nothing is exported under the short name that is
+not exported under the long one, and a completeness gate (`tests/test_docs_alias_completeness.c`)
+fails the build if a public function is ever added without its alias, because an alias layer with
+holes is worse than none — a caller who adopts it discovers the gaps one compile error at a time.
+
+Wrong — expecting the aliases without including the header:
+
+```text
+#include "proven.h"
+xcv_u8str_view_t v;   /* wrong: proven.h does not pull in the alias layer */
+```
+
+Wrong — mixing the two spellings for the same idea in one file:
+
+```text
+proven_result_u8str_t s = xcv_u8str_create(alloc, 32);   /* wrong: pick one and stay with it */
+```
+
+Both compile. Neither is a good idea: a reader now has to know both vocabularies to follow one
+function.
 
 Include it after the canonical headers:
 
@@ -435,7 +470,37 @@ For an exhaustive source-grounded alias table, see [Chapter 7: Alias Index](manu
 
 ## 5. PAL contract
 
-The Platform Abstraction Layer lives under `platform/`. It bridges portable library code to OS services.
+### Why the syscalls are quarantined
+
+Every library that touches an operating system has to decide where the OS-specific code goes. The
+usual answer is "wherever it is needed", with `#ifdef _WIN32` sprinkled through the source. That
+works, and it has two costs that compound: nobody can tell what the library actually requires from
+the OS, and porting means auditing every file.
+
+This library puts all of it in one directory. **`platform/` is the only place that makes a
+syscall.** Everything in `src/proven/` is portable C that calls through the PAL, which means:
+
+- **The requirement list is a file listing.** What this library needs from an operating system is
+  exactly the set of `proven_sys_*` functions — nothing hidden, nothing discovered late.
+- **Porting is bounded.** A new target reimplements `platform/`. Nothing in `src/proven/` changes,
+  and the tests that exercise the portable half keep passing.
+- **Freestanding is the same mechanism, not a special case.** Build without the hosted PAL files
+  and the portable core is what remains. That is why [the freestanding
+  guide](manual-freestanding.md) is a list of which files to leave out rather than a separate port.
+
+The PAL is **internal**. `proven_sys_*` functions are not the public API and their signatures may
+change; the public wrappers in `fs.h`, `sysio.h`, `time.h` and `random.h` are what you call. The
+symbols gate knows this — it exempts the PAL from the "must be documented" requirement precisely
+because it is not a surface you are meant to program against.
+
+Wrong — calling the PAL directly from application code:
+
+```text
+proven_sys_fs_open(path, flags);   /* wrong: internal. Use proven_fs_open. */
+```
+
+You lose the error translation, the argument validation, and any guarantee that the call keeps
+working next release.
 
 PAL areas:
 
@@ -499,6 +564,35 @@ Excluded or stubbed modules:
 See `manual-freestanding.md` for the exact source list and command examples.
 
 ## 7. Cross compilation
+
+### Why the build compiles for targets it cannot run
+
+A library that claims to be portable is making a claim that decays silently. Code that assumed
+64-bit pointers, or that `char` is signed, or that unaligned loads are fine, compiles perfectly on
+the machine it was written on and breaks on an ARM board six months later — and the commit that
+broke it looked harmless.
+
+`./nob cross` compiles the library for every target in a matrix without running anything. That
+sounds weak and is not: **most portability failures are compile-time failures.** A type that is not
+the width you assumed, a missing intrinsic, an alignment requirement the target actually enforces,
+a header that does not exist there — all of them fail the compiler, on this machine, in seconds,
+in the commit that introduced them.
+
+What a compile-only check cannot catch is behaviour: endianness bugs, alignment faults that only
+happen at run time, and anything timing-dependent. Those need real hardware or an emulator, and the
+matrix does not pretend otherwise. It is the cheap half of portability testing, run on every build,
+rather than the expensive half run never.
+
+Cross builds are also where the freestanding profile is exercised for real targets — Cortex-M and
+RISC-V among them — so the "no operating system" claim is checked by a compiler rather than by a
+paragraph in a guide.
+
+Wrong — treating a green cross matrix as proof the library runs on that target:
+
+```text
+/* wrong: ./nob cross compiles and links objects. It does not execute anything.
+   Endianness, alignment faults and real timing still need the hardware. */
+```
 
 The build driver command is:
 

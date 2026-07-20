@@ -21,7 +21,57 @@ This chapter covers `array.h`, `list.h`, `ring.h`, `map.h`, `algorithm.h`, `hash
 
 ## 1. Dynamic array
 
-`proven_array_t` is a generic growable vector. It stores its allocator internally and owns contiguous element storage.
+### The problem: the array you write by hand, every time
+
+A growable array is the data structure every C program eventually writes, and writes slightly
+differently:
+
+```text
+int *items = malloc(cap * sizeof(int));
+/* ... later ... */
+if (n == cap) {
+    cap *= 2;
+    items = realloc(items, cap * sizeof(int));   /* wrong on two counts */
+    items[n++] = x;
+}
+```
+
+Two bugs in one line, and both are classics. `cap * sizeof(int)` can **wrap** for a large `cap`,
+producing a small allocation for a huge count — see [Chapter 1 §4](manual-01-foundation.md). And
+assigning `realloc`'s result straight back to `items` **leaks the old block when it returns NULL**,
+because the original pointer is gone and the memory it named is still allocated.
+
+Beyond the bugs, the hand-written version has to be rewritten for every element type, or made
+generic with `void *` and lose type checking.
+
+### What this library does instead
+
+`proven_array_t` is a growable vector that keeps the element size and alignment it was created
+with, so it works for any type without a template and without `void *` at the call site — the
+`PROVEN_ARRAY_*` macros take the type and do the casting where the compiler can still check it.
+
+- Growth uses checked arithmetic, so the overflow above is `PROVEN_ERR_OVERFLOW`, not a small
+  allocation.
+- Growth is **failure-atomic**: if it cannot grow, your existing elements are untouched and still
+  valid. Nothing is leaked and nothing is lost.
+- It **stores its allocator internally**, unlike the string types — which is why
+  `PROVEN_ARRAY_DESTROY` takes only the array.
+
+`proven_array_t` owns contiguous element storage, so it is also what you hand to
+`proven_array_sort` and the searches in §5.
+
+Wrong — holding a pointer across a push:
+
+```text
+int *first = PROVEN_ARRAY_GET(&arr, int, 0);
+(void)PROVEN_ARRAY_PUSH(&arr, int, 42);   /* may reallocate */
+*first = 7;                               /* wrong: `first` may point at freed memory */
+```
+
+This is the one hazard the type cannot remove. Growth moves the storage, so **any pointer or view
+into the array is invalidated by any operation that can grow it**. Index instead of pointing, or
+re-fetch the pointer after the push.
+
 
 ### Structures
 

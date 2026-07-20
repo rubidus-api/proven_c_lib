@@ -7,7 +7,59 @@ and you will know exactly which modules survive that and which do not.
 
 This guide describes the current `PROVEN_FREESTANDING` configuration as implemented by `nob.c` and the public headers.
 
-Freestanding mode is for firmware, kernels, bootloaders, hypervisors, or other environments where normal hosted OS services and libc facilities are not available or should not be linked into the proven core.
+## 0. Why this mode exists, and why the whole library is shaped by it
+
+Freestanding mode is for firmware, kernels, bootloaders, hypervisors, and anywhere else that has no
+operating system underneath it — no `malloc`, no `open`, no `printf`, often no `libc` at all.
+
+The C standard has a name for this. A **hosted** implementation gives you the whole standard
+library and starts your program at `main`. A **freestanding** implementation guarantees only a
+handful of headers — `<stddef.h>`, `<stdint.h>`, `<limits.h>` and a few others — and is what a
+compiler targeting bare metal gives you. `-ffreestanding` tells the compiler to assume exactly that.
+
+Most C libraries cannot be used here at all, and the reason is rarely a big one. It is a `malloc`
+buried three calls down, or a `printf` in an error path, or a global that is initialised by
+something that never runs. One hidden dependency on the host is enough to make a library unusable
+on a microcontroller.
+
+**This is the constraint that produced most of this library's design decisions**, and it is worth
+seeing that connection, because it explains choices that otherwise look like taste:
+
+| Design decision | Read the earlier chapters as | And the reason is |
+|---|---|---|
+| The allocator is a parameter ([Ch 2](manual-02-allocation.md)) | "so you can swap the strategy" | There is no `malloc` here. An arena over a `static` array is the only allocator, and code that took one as a parameter already works. |
+| Errors are returned values ([Ch 1](manual-01-foundation.md)) | "so you cannot ignore them" | There is no `errno` and nothing to unwind to. A return value is the only mechanism that exists. |
+| Panics go through a hook ([Ch 1 §6](manual-01-foundation.md)) | "so you can override it" | There is no `abort()` and no `stderr`. The default traps because that is all it can portably do. |
+| Syscalls live only in `platform/` | "separation of concerns" | It is the only directory that has to be replaced for a new target. Everything in `src/proven/` is portable by construction. |
+| Views instead of C strings ([Ch 3](manual-03-strings-text.md)) | "so lengths cannot get lost" | `strlen` is libc. A view brings its length with it and needs nothing. |
+
+In other words: freestanding support is not a feature bolted onto the side. The rest of the manual
+has been describing a library built to survive here, and this guide is where you find out what
+survives and what does not.
+
+### What you give up
+
+Everything that needs the operating system, and nothing else:
+
+- **No heap.** `proven_heap_allocator` does not exist. You supply memory — a `static` array is
+  usual — and put an arena or a pool over it.
+- **No filesystem, no standard streams, no clock, no OS randomness.** `fs.h`, `sysio.h`, `mmap.h`,
+  `time.h` and the OS entropy source are all hosted services. `proven_chacha_rng_t` still works if
+  you seed it yourself, which is what `proven_random_set_source` is for.
+- **No float formatting by default.** `PROVEN_FMT_NO_FLOAT` drops it, because the float path is
+  the largest piece of code in the formatter and most firmware never prints a `double`. §8 says how
+  to turn it back on.
+- **No UTF-16 strings.** `PROVEN_NO_U16STR` is on; there is no Windows API here to talk to.
+
+What you keep is the whole portable core: errors, views, checked arithmetic, alignment, arenas,
+pools, buffers, strings, arrays, maps, lists, rings, sorting, searching, hashing, encoding,
+coroutines, and integer formatting and scanning.
+
+### What still bites you
+
+The lifetime rules do not relax because the target got smaller — if anything they matter more,
+because there is no operating system to notice a mistake and no allocator that will refuse to
+reuse memory you still hold. §10 is short and is the section people skip.
 
 ## 1. Build profile
 
