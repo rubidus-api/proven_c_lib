@@ -1,134 +1,164 @@
-# Chapter 2: Allocation, Arenas, Pools, and Buffers
+# Chapter 2: Allocation — Heap, Arenas, Pools, and Buffers
 
 **Part II — The vocabulary every program uses. Prerequisite: [Chapter 1](manual-01-foundation.md).**
 **After this chapter** you can choose an allocation strategy deliberately instead of reaching for
 `malloc` by reflex, and you will know which of the three costs you are paying.
 
-This chapter covers `allocator.h`, `heap.h`, `arena.h`, `pool.h`, and `buffer.h`. The thread-safety
-and pointer-provenance material that used to live here is in
-[Chapter 6](manual-06-execution-and-platform.md), with the rest of the concurrency subject.
+This chapter covers `heap.h`, `arena.h`, `pool.h`, `allocator.h`, and `buffer.h`. The
+thread-safety and pointer-provenance material that used to be section 7 here now lives in
+[Chapter 6](manual-06-execution-and-platform.md), with the rest of the concurrency subject — it
+was the hardest material in the book sitting in one of the first chapters.
 
 ## Table of contents
 
-1. [Allocator trait](#1-allocator-trait)
-2. [Heap allocator](#2-heap-allocator)
-3. [Arena allocator](#3-arena-allocator)
-4. [Pool allocator](#4-pool-allocator)
+1. [Why allocation is a parameter, and the heap allocator](#1-why-allocation-is-a-parameter-and-the-heap-allocator)
+2. [Arena: many things, one lifetime](#2-arena-many-things-one-lifetime)
+3. [Pool: many things, one size](#3-pool-many-things-one-size)
+4. [The allocator trait](#4-the-allocator-trait)
 5. [Raw byte buffer](#5-raw-byte-buffer)
 6. [Examples and misuse cases](#6-examples-and-misuse-cases)
-7. [Allocator thread-safety & provenance](#7-allocator-thread-safety--provenance)
 
-## 1. Allocator trait
+## 1. Why allocation is a parameter, and the heap allocator
 
-### Function pointer types
+### The problem with `malloc`
 
-```text
-typedef proven_result_mem_mut_t (*proven_alloc_fn_t)(
-    void *ctx,
-    proven_size_t size,
-    proven_size_t align
-);
+`malloc` is a global. Any function may call it, nothing in a signature says whether a function
+does, and every call goes to the same general-purpose allocator no matter what the memory is for.
 
-typedef proven_result_mem_mut_t (*proven_realloc_fn_t)(
-    void *ctx,
-    void *old_ptr,
-    proven_size_t old_size,
-    proven_size_t new_size,
-    proven_size_t align
-);
+That has four consequences you have probably met:
 
-typedef void (*proven_free_fn_t)(void *ctx, void *ptr);
-```
+- **You cannot tell from a signature whether a function allocates.** `char *build_message(int n)`
+  might allocate, might return a pointer into a static buffer, might return a literal. The type is
+  identical in all three cases, so the caller cannot know whether to free, and the answer lives in
+  a comment that may be wrong.
+- **You cannot change the strategy for one part of a program.** If a parser makes ten thousand
+  small allocations that all die at the end of the parse, `malloc` and `free` will do ten thousand
+  general-purpose allocations and ten thousand frees. A bump allocator would do one. There is no
+  way to say so without rewriting every call.
+- **You cannot test the failure path.** Making `malloc` fail on demand means intercepting it
+  globally — `LD_PRELOAD`, a linker trick, a `#define malloc my_malloc` that also catches the
+  library's internal calls. Meanwhile the branch you most want to test is the one that runs when
+  memory runs out.
+- **You cannot use it at all where there is no heap.** Firmware, a kernel, a bootloader: no
+  `malloc`, and every library that assumes one is unusable.
 
-Intent:
+`malloc` is not badly designed. It is a fixed policy, hardcoded into every call site by the fact
+that it takes no parameter saying otherwise.
 
-- `alloc_fn` allocates a new byte slice.
-- `realloc_fn` changes allocation size and must be failure-atomic: on failure the
-  old block is still valid and unmodified, so the caller has lost nothing.
-- A block must be reallocated and freed with the **same `align`** it was allocated
-  with. An allocator may pick a different underlying mechanism for over-aligned
-  requests than for ordinary ones, and the heap allocator does: `align <=
-  alignof(max_align_t)` — which is every string, buffer and byte array in this
-  library — goes through `malloc`/`realloc` so that growth can happen in place,
-  and anything more strictly aligned goes through an aligned allocator. Handing a
-  block back under a different alignment class is undefined.
-- `free_fn` releases memory. If an allocator needs size metadata, it must track that internally.
+### What this library does instead
 
-### `proven_allocator_t`
+**An allocator is a value, and it is a parameter.** A function that can allocate takes a
+`proven_allocator_t`; a function that cannot, does not. That is the whole idea, and every
+consequence follows from it:
 
 ```text
-typedef struct {
-    void *ctx;
-    proven_alloc_fn_t alloc_fn;
-    proven_realloc_fn_t realloc_fn;
-    proven_free_fn_t free_fn;
-} proven_allocator_t;
+proven_err_t proven_u8str_append(proven_u8str_t *str, proven_u8str_view_t data);
+proven_err_t proven_u8str_append_grow(proven_allocator_t alloc, proven_u8str_t *str, proven_u8str_view_t data);
 ```
 
-Fields:
+Read the signatures. The first cannot grow the string, so it fails when the text does not fit. The
+second can, and says so by taking the allocator. You never have to wonder which one you called.
 
-- `ctx`: allocator-specific state.
-- `alloc_fn`: allocation function.
-- `realloc_fn`: reallocation function.
-- `free_fn`: deallocation function.
+The same code now works with three different strategies, chosen by the caller:
 
-### `proven_alloc_is_valid`
+| Allocator | Get one from | Frees individually? | Use it when |
+|---|---|---|---|
+| **Heap** | `proven_heap_allocator()` | Yes | The general case. Objects with unrelated lifetimes. |
+| **Arena** | `proven_arena_create(backing)`, then `proven_arena_as_allocator(&a)` | **No** — free is a no-op; you reset or destroy the whole thing | Many allocations that all die at the same moment: one request, one frame, one parse. |
+| **Pool** | `proven_pool_init(&p, base, size, align, bin_cap)`, then `proven_pool_as_allocator(&p)` | Yes, into a free list | Many objects of **one fixed size**, allocated and freed repeatedly. |
+
+Start with the heap. Reach for the other two when you have a reason, and the reason is usually a
+measurement.
+
+### The heap allocator
 
 ```text
-static inline bool proven_alloc_is_valid(proven_allocator_t alloc);
+proven_allocator_t proven_heap_allocator(void);
 ```
 
-Purpose: check that all function pointers are non-null.
-
-Return: true if the trait can be called.
-
-Correct:
+This is `malloc`, `realloc` and `free` wearing the library's interface. It is what you should use
+unless you have a specific reason not to, and there is nothing clever about it — which is the
+point. Every example in this manual that does not have a reason to do otherwise uses it:
 
 ```c
 proven_allocator_t heap = proven_heap_allocator();
-proven_err_t err = proven_alloc_is_valid(heap) ? PROVEN_OK : PROVEN_ERR_UNSUPPORTED;
-(void)err;   /* a freestanding build hands back a zero allocator, not a valid one */
+
+proven_result_u8str_t s = proven_u8str_create(heap, 64);
+if (!proven_is_ok(s.err)) {
+    return;   /* nothing was created, so there is nothing to destroy */
+}
+(void)proven_u8str_append(&s.value, PROVEN_LIT("ready"));
+proven_u8str_destroy(heap, &s.value);   /* the SAME allocator */
 ```
 
-Wrong:
+The value is four words — a context pointer and three function pointers — and it is passed by
+value. Copying it is free, storing it in your own struct is fine, and it does not need to be
+destroyed.
+
+**In freestanding builds `proven_heap_allocator` does not exist.** There is no `malloc` to wrap.
+That is not a limitation to work around; it is the reason the whole library takes allocators as
+parameters, and it is why an arena over a static array makes the same code run on a
+microcontroller. See [freestanding mode](manual-freestanding.md).
+
+Wrong — destroying with a different allocator than you created with:
 
 ```text
-proven_allocator_t alloc = {0};
-proven_result_mem_mut_t r = alloc.alloc_fn(alloc.ctx, 64, 8); /* wrong: null call */
+proven_result_u8str_t s = proven_u8str_create(arena_alloc, 64);
+proven_u8str_destroy(heap_alloc, &s.value);   /* wrong: heap free on arena memory */
 ```
 
-## 2. Heap allocator
+The object does not remember which allocator produced it — that is what keeps it small. Nothing
+checks this today, and the failure is heap corruption that surfaces somewhere else, later. Pair
+them by construction: keep the allocator next to the object, or pass both together.
+
+## 2. Arena: many things, one lifetime
+
+### The problem: many small allocations with the same death date
+
+Consider parsing a configuration file. You allocate a string for each key, a string for each
+value, a node for each section — a few thousand small allocations. Then the parse finishes, you
+build your result, and every one of those allocations becomes garbage at the same instant.
+
+With `malloc` you pay for that twice. Each allocation searches a free list, updates bookkeeping,
+and returns memory with a header attached; each `free` returns it and possibly coalesces
+neighbours. And you must not miss one, because a leak is one forgotten `free` away.
+
+The observation an arena makes is that **all of those objects have the same lifetime**, so
+individual frees are pointless work. If they die together, they can be freed together.
+
+### How an arena works
+
+An arena is a block of memory and an offset. Allocating means rounding the offset up to the
+alignment you asked for, returning the address, and moving the offset along. That is the entire
+algorithm:
 
 ```text
-[[nodiscard]] proven_allocator_t proven_heap_allocator(void);
+[####used####|                    free                    ]
+              ^ offset
 ```
 
-Purpose: return a PAL-backed heap allocator.
+- **Allocation is a few instructions.** No search, no free list, no per-allocation header.
+- **`free` does nothing at all.** It is a no-op, deliberately.
+- **You reclaim by resetting or destroying the whole arena**, which sets the offset back to zero.
+  One operation frees ten thousand objects.
 
-Hosted behavior: returns a valid malloc-style allocator implemented through the platform memory layer.
+The memory comes from you. `proven_arena_create` takes a `proven_mem_mut_t` — a block you got
+from the heap, or a `static` array, or a region on the stack. The arena never allocates on its own,
+which is what lets it work with no heap underneath.
 
-Freestanding behavior: returns a zero allocator stub. `proven_alloc_is_valid()` returns false.
+### What you give up
 
-Example:
+An arena is not a general-purpose allocator, and the trade is real:
 
-```c
-proven_allocator_t heap = proven_heap_allocator();
-if (!proven_alloc_is_valid(heap)) {
-    return;   /* freestanding build: there is no heap to allocate from */
-}
+- **You cannot free one object.** If the lifetimes are not actually shared, an arena leaks by
+  design — memory is only reclaimed at reset.
+- **Running out is a hard limit.** The backing block is fixed. `PROVEN_ERR_NOMEM` here does not
+  mean the machine is out of memory, it means this arena is.
+- **Every pointer into it dies at reset**, all at once, with nothing to warn you. A view that
+  outlives the reset is a dangling view; see contract 2 in
+  [Chapter 0](manual-00-start-here.md#5-the-five-contracts-you-will-meet-on-every-page).
 
-proven_result_mem_mut_t r = heap.alloc_fn(heap.ctx, 256, PROVEN_DEFAULT_ALIGNMENT);
-if (!proven_is_ok(r.err)) {
-    return;
-}
-
-/* r.value.ptr is 256 writable bytes; free it through the same allocator. */
-heap.free_fn(heap.ctx, r.value.ptr);
-```
-
-## 3. Arena allocator
-
-An arena allocates linearly from caller-provided backing storage. Individual frees are no-ops. Reset discards all allocations at once.
+Use an arena when the shared lifetime is a fact about your program, not a hope.
 
 ### `proven_arena_t`
 
@@ -208,18 +238,71 @@ PROVEN_ARRAY_DESTROY(&ar.value);   /* correct, but arena free reclaims nothing *
 proven_arena_reset(&arena);        /* this is what gives the bytes back */
 ```
 
-Risky:
+Wrong — growing into an arena from a tiny initial capacity:
 
 ```text
 proven_result_array_t ar = PROVEN_ARRAY_INIT(a, int, 1);
 for (int i = 0; i < 10000; ++i) {
-    PROVEN_ARRAY_PUSH(&ar.value, int, i); /* every regrow abandons the old block */
+    PROVEN_ARRAY_PUSH(&ar.value, int, i); /* wrong: every regrow abandons the old block */
 }
 ```
 
-## 4. Pool allocator
+Each regrow asks the arena for a bigger block and then "frees" the old one — which, in an arena,
+does nothing. The array ends up correct and the arena ends up holding every intermediate size it
+ever allocated: 1, 2, 4, 8 … 8192 elements' worth of abandoned space, on top of the one buffer you
+wanted. Reserve the capacity up front, as the correct version above does.
 
-A pool recycles fixed-size blocks. It is useful when many objects have exactly the same size and alignment.
+Wrong — a view that outlives the reset:
+
+```text
+proven_u8str_view_t name = /* ... built in the arena ... */;
+proven_arena_reset(&arena);
+use(name);                 /* wrong: those bytes are now free space */
+```
+
+This is the arena's sharpest edge. Reset does not touch the memory it reclaims, so the bytes are
+usually still there and the bug usually does not show up in testing — right up until the next
+allocation writes over them.
+
+## 3. Pool: many things, one size
+
+### The problem an arena does not solve
+
+An arena assumes shared lifetimes. Plenty of workloads have the opposite shape: objects of one
+type, created and destroyed continuously, in no particular order. A linked list of events. Nodes
+in a tree that grows and shrinks. Connection records that come and go.
+
+An arena cannot do this — it never reclaims a single object, so a long-running program would grow
+without bound. The heap can, and that is exactly what it costs: every allocation searches, every
+free updates bookkeeping, and the general-purpose allocator does that general-purpose work for a
+request it already made a thousand times.
+
+The observation a pool makes is that **all these objects are the same size**. If they are the same
+size, a freed one fits a future request exactly, so it can be handed straight back out with no
+search at all.
+
+### How a pool works
+
+A pool keeps a small stack of freed blocks — the *bin* — and does the obvious thing:
+
+- **Allocate**: if the bin has anything in it, pop one and return it. That is a pointer read and a
+  decrement. Only when the bin is empty does it go to the underlying allocator.
+- **Free**: if the bin has room, push the block onto it for reuse. If the bin is full, hand the
+  memory back to the underlying allocator so the pool does not park memory forever.
+
+`bin_cap` is therefore a dial: how much memory this pool is allowed to keep in reserve.
+
+### What you give up
+
+- **One pool serves exactly one size and alignment.** A request for anything else is refused with
+  `PROVEN_ERR_INVALID_ARG` — not served from somewhere else. A stricter alignment than the pool
+  was built with is refused too; a looser one is fine, because the block already satisfies it.
+- **The pool does not track live objects.** `proven_pool_destroy` frees what is in the bin, not
+  what you are still holding. Free everything you allocated first, or you have leaked it *and* it
+  is now dangling.
+
+Arena versus pool, in one line each: an arena is for *allocate many, free all at once*; a pool is
+for *allocate and free the same size, over and over, cheaply*.
 
 ### `proven_pool_t`
 
@@ -312,9 +395,130 @@ node_alloc.alloc_fn(node_alloc.ctx, sizeof(LargerObject), alignof(LargerObject))
 /* wrong: one pool is for one fixed object size and alignment */
 ```
 
+## 4. The allocator trait
+
+### Why this section is fourth and not first
+
+You have now used three allocators without seeing the interface they share, and that was
+deliberate. The interface is the least interesting part of the idea and the hardest thing to read
+cold: three function-pointer typedefs and an alignment contract mean very little until you have
+seen a heap, an arena and a pool behind them.
+
+You need this section for two things: writing an allocator of your own, and understanding the
+rules every allocator in this library promises to follow. If you are only ever going to *use* the
+three above, `proven_heap_allocator()`, `proven_arena_as_allocator()` and
+`proven_pool_as_allocator()` are the whole API and you can skip ahead.
+
+A trait, here, is a struct of function pointers used as an interface — C's version of a virtual
+table, written out by hand. `proven_allocator_t` is the library's most important one; `stream.h`
+and `random.h` use the same shape.
+
+### Function pointer types
+
+```text
+typedef proven_result_mem_mut_t (*proven_alloc_fn_t)(
+    void *ctx,
+    proven_size_t size,
+    proven_size_t align
+);
+
+typedef proven_result_mem_mut_t (*proven_realloc_fn_t)(
+    void *ctx,
+    void *old_ptr,
+    proven_size_t old_size,
+    proven_size_t new_size,
+    proven_size_t align
+);
+
+typedef void (*proven_free_fn_t)(void *ctx, void *ptr);
+```
+
+Intent:
+
+- `alloc_fn` allocates a new byte slice.
+- `realloc_fn` changes allocation size and must be failure-atomic: on failure the
+  old block is still valid and unmodified, so the caller has lost nothing.
+- A block must be reallocated and freed with the **same `align`** it was allocated
+  with. An allocator may pick a different underlying mechanism for over-aligned
+  requests than for ordinary ones, and the heap allocator does: `align <=
+  alignof(max_align_t)` — which is every string, buffer and byte array in this
+  library — goes through `malloc`/`realloc` so that growth can happen in place,
+  and anything more strictly aligned goes through an aligned allocator. Handing a
+  block back under a different alignment class is undefined.
+- `free_fn` releases memory. If an allocator needs size metadata, it must track that internally.
+
+### `proven_allocator_t`
+
+```text
+typedef struct {
+    void *ctx;
+    proven_alloc_fn_t alloc_fn;
+    proven_realloc_fn_t realloc_fn;
+    proven_free_fn_t free_fn;
+} proven_allocator_t;
+```
+
+Fields:
+
+- `ctx`: allocator-specific state.
+- `alloc_fn`: allocation function.
+- `realloc_fn`: reallocation function.
+- `free_fn`: deallocation function.
+
+### Reference
+
+| Member / API | Shape | Contract |
+|---|---|---|
+| `ctx` | `void *` | The allocator's own state. Opaque to callers; passed back as the first argument. |
+| `alloc_fn` | `proven_alloc_fn_t` | Allocate `size` bytes at `align`. Returns `proven_result_mem_mut_t`. |
+| `realloc_fn` | `proven_realloc_fn_t` | Resize. **Failure-atomic**: on failure the old block is untouched and still valid. |
+| `free_fn` | `proven_free_fn_t` | Release. Must be given the same `align` class the block was allocated with. |
+| `proven_alloc_is_valid(alloc)` | `static inline bool` | True when every function pointer is non-null — i.e. the trait can be called. |
+
+The three rules that every allocator in this library obeys, and that yours must:
+
+1. **Same allocator, whole lifetime.** Allocate, reallocate and free a block with one allocator.
+2. **Same alignment class.** A block allocated at one alignment must be reallocated and freed at
+   that alignment; allocators may use a different mechanism for over-aligned requests.
+3. **Failure changes nothing.** A failed `realloc_fn` leaves the old block valid and unmodified.
+
+```text
+static inline bool proven_alloc_is_valid(proven_allocator_t alloc);
+```
+
+Purpose: check that all function pointers are non-null.
+
+Return: true if the trait can be called.
+
+Correct:
+
+```c
+proven_allocator_t heap = proven_heap_allocator();
+proven_err_t err = proven_alloc_is_valid(heap) ? PROVEN_OK : PROVEN_ERR_UNSUPPORTED;
+(void)err;   /* a freestanding build hands back a zero allocator, not a valid one */
+```
+
+Wrong:
+
+```text
+proven_allocator_t alloc = {0};
+proven_result_mem_mut_t r = alloc.alloc_fn(alloc.ctx, 64, 8); /* wrong: null call */
+```
+
 ## 5. Raw byte buffer
 
-`proven_buf_t` is a fixed-capacity byte buffer. It owns a byte allocation but does not store its allocator.
+### What it is for
+
+`proven_buf_t` is the plainest thing in this chapter: a pointer, a length and a capacity. It owns
+its bytes, it never grows, and it is what `proven_u8str_t` and `proven_u16str_t` are built out of.
+
+Reach for it directly when you want *bytes* rather than *text* — a record you are assembling, a
+frame you are about to write to a socket — and you know the maximum size in advance. When the
+content is text, use the string types in [Chapter 3](manual-03-strings-text.md) instead: they give
+you the same storage plus NUL-termination, views, searching and formatting.
+
+Like everything else here it does **not** store its allocator, so `proven_buf_destroy` takes the
+same one `proven_buf_create` was given.
 
 ### `proven_buf_t`
 
@@ -573,7 +777,6 @@ int main(void) {
 ### Worked example: a pool that recycles fixed-size blocks
 
 Compiled and run by the test suite. It shows a freed block coming straight back out of the recycle bin, and what the pool refuses.
-
 <!-- example: manual/examples/ex_02_pool.c -->
 ```c
 /*
@@ -660,151 +863,3 @@ int main(void) {
     return EXAMPLE_OK();
 }
 ```
-
-## 7. Allocator thread-safety & provenance
-
-The `proven_allocator_t` trait is just a `ctx` plus three function pointers; it
-contains **no synchronization of its own**. Whether concurrent use is safe depends
-entirely on the concrete allocator behind the trait, and on how you share the
-*objects* the allocator produces. This section states the guarantees, then
-explains the deeper pointer-provenance hazards and the lock-free concepts you
-would need if you build concurrent structures on top.
-
-### 7.1 What is and isn't thread-safe
-
-| Allocator | Concurrent use of one instance | Why |
-|---|---|---|
-| `proven_heap_allocator()` | **Safe** for concurrent `alloc`/`realloc`/`free` | The trait is stateless (`ctx == NULL`); it forwards to the platform `aligned_alloc`/`posix_memalign`/`_aligned_malloc`+`free`, which are thread-safe since C11. |
-| `proven_arena_t` | **Not safe** | `proven_arena_alloc_*` does a non-atomic read-modify-write of `arena->offset`. |
-| `proven_pool_t` | **Not safe** | `proven_pool_*` pop/push the free-list (`bin`, `bin_len`) non-atomically. |
-
-Two rules follow:
-
-1. **"Allocator safe" is not "object safe."** Even with the heap allocator, the
-   containers built on it (`proven_u8str_t`, `proven_array_t`, `proven_map_t`, …)
-   add no internal locks. A `proven_u8str_t` that one thread appends to while
-   another reads it is a data race regardless of how thread-safe the allocator is.
-   Shared mutable objects always need *your* synchronization.
-2. **Arena and pool must not be shared.** Concurrent `proven_arena_alloc` can tear
-   `offset` and hand the *same bytes* to two threads or drop an allocation
-   entirely; concurrent pool pop/push can hand out the same slot twice or underflow
-   `bin_len`. A data race is undefined behavior on its own — see §7.3 for why the
-   consequences are worse than "a wrong number."
-
-### 7.2 Pointer provenance in one paragraph
-
-In C's abstract machine every pointer carries **provenance**: the identity of the
-storage instance it was derived from. Two rules matter here: (a) using a pointer
-outside the lifetime or bounds of its provenance object is undefined; and (b) the
-optimizer is allowed to assume that **pointers with different provenance do not
-alias**, and to reorder or elide memory accesses on that basis. Allocation,
-reallocation, and freeing all create and destroy provenance — which is exactly why
-they interact badly with unsynchronized sharing.
-
-### 7.3 Where allocation + provenance bite under threads
-
-- **`realloc` always relocates here.** The platform `realloc` is *allocate-new +
-  copy + free-old* (an aligned block cannot be resized in place portably), so a
-  successful grow **always** returns a new object with new provenance and ends the
-  old one. Any retained copy of the old pointer — a cached element pointer, a
-  borrowed `proven_mem_view_t`/`proven_u8str_view_t` — is now dangling. In a single
-  thread you avoid this by not holding a view across a grow; under threads another
-  thread can grow a shared container at *any* instant, leaving your view pointing
-  into freed storage (rule (a): UB, plus a data race).
-- **Address reuse / ABA.** `free` then `alloc` (especially the pool's free-list
-  recycling) can return the *same address* for a *different* object with *fresh*
-  provenance. A thread still holding the old pointer assumes the old provenance; by
-  rule (b) the compiler may treat the two as non-aliasing even though the bytes
-  coincide, and without a happens-before edge the new object's writes need not be
-  visible. Same address, different provenance — still UB.
-- **`uintptr_t` round-trips + torn reads.** The arena converts `backing.ptr` to an
-  integer for alignment math. It is careful to derive the *result* pointer by
-  offsetting the original `backing.ptr` (preserving its provenance) rather than
-  fabricating a pointer from the integer — the provenance-correct technique. But if
-  `offset` is read torn under a race, the computed pointer can land *outside* the
-  backing object, i.e. an access with no valid provenance for that location. The
-  race produces not just a wrong offset but a pointer with no right to point there.
-- **Data race × provenance reasoning = miscompilation, not just wrong values.**
-  Because the compiler applies single-threaded, provenance-based non-aliasing
-  reasoning within each thread, a racy allocator can let the optimizer "prove"
-  non-aliasing that does not hold at runtime — yielding torn pointers, double
-  allocations the compiler believes cannot overlap, or dropped stores. The failure
-  mode is structural, not a flaky value.
-
-### 7.4 The lock-free toolbox (concepts, if you build concurrency on top)
-
-`proven` does **not** implement any lock-free allocator or safe-memory-reclamation
-scheme. If you build concurrent data structures over these allocators, you supply
-the following yourself (`<stdatomic.h>` is available — the job system in Chapter 6
-uses it for its queue indices). These are the standard pieces and how they relate
-to the provenance hazards above.
-
-- **CAS (compare-and-swap).** The atomic primitive behind almost all lock-free
-  code: `atomic_compare_exchange_strong(&p, &expected, desired)` atomically sets
-  `p = desired` only if `p == expected`, otherwise reports the current value. It
-  lets one thread publish a change only if no other thread changed the word first.
-
-  ```c
-  /* Treiber-stack style push (sketch) */
-  _Atomic(node_t *) head;
-  node_t *old = atomic_load(&head);
-  do { n->next = old; } while (!atomic_compare_exchange_weak(&head, &old, n));
-  ```
-
-- **The ABA problem.** CAS compares *values*, not *history*. A lock-free pop reads
-  `head == A`, plans to install `A->next`, then CASes. If, in between, other
-  threads pop `A`, pop its successor, free them, and push `A` back (its address
-  reused), the CAS still sees `head == A` and *succeeds* — installing a pointer to
-  freed memory. The value matched (A→B→A) but the world changed. The pool's
-  free-list is a textbook ABA candidate if naïvely made lock-free.
-- **Tagged pointers / version counters.** Pack a monotonically increasing tag next
-  to the pointer and CAS them together (a double-width CAS, or by stealing the
-  low alignment bits / high bits). Every successful update bumps the tag, so an
-  A→B→A sequence comes back with a *different* tag and the CAS fails — ABA detected.
-  Costs/limits: bit-stealing needs guaranteed alignment and shrinks the usable
-  address range; a full-width tag needs hardware double-word CAS (e.g. `cmpxchg16b`);
-  the tag can in principle wrap. **Crucially, a tag fixes ABA *detection* on the
-  shared word — it does not restore provenance.** The reused address is still a new
-  object; the tag only stops you from *acting* on the stale view.
-- **Hazard pointers (safe memory reclamation).** Each thread owns a few
-  single-writer/multi-reader "hazard" slots. Before dereferencing a shared pointer
-  it publishes that pointer into a slot and re-validates; a thread that wants to
-  free an object first scans every hazard slot and **defers** the free (a retire
-  list) if anyone is protecting it. This bounds memory and prevents use-after-free
-  and reclamation-ABA, at the cost of a store + fence per protected access and a
-  fixed number of simultaneously protected pointers per thread.
-- **Epoch-based reclamation (EBR).** A global epoch counter; a thread "pins" the
-  current epoch while touching shared structures, and retired memory is tagged with
-  the epoch it was retired in. Memory retired in epoch *e* is freed only once every
-  thread has been observed past *e* (a grace period of a couple of epochs). Cheaper
-  per operation than hazard pointers (just a pinned flag), but a thread that stalls
-  while pinned blocks all reclamation — unbounded memory growth. Variants:
-  quiescent-state (QSBR) and interval-based reclamation.
-- **How these tie back to provenance.** Reclamation schemes (hazard pointers, EBR)
-  exist precisely to keep a freed object's *storage alive* — its provenance valid —
-  until no thread can still reference it. CAS + a tag keep the shared *word*
-  consistent but say nothing about the lifetime of what it points to. That is why a
-  correct lock-free stack typically needs **both**: a tag (for ABA on the head word)
-  *and* an SMR scheme (for safe reclamation of popped nodes). A `proven` pool or
-  arena gives you neither, so concurrency must be layered above them, not assumed.
-
-### 7.5 Safe patterns with `proven`
-
-- **Per-thread arena/pool.** Give each thread its own `proven_arena_t` /
-  `proven_pool_t`. No sharing means no race and no cross-thread provenance — the
-  simplest correct design, and usually the fastest.
-- **Heap for cross-thread alloc/free, but synchronize the objects.** It is fine for
-  thread A to allocate and thread B to free via `proven_heap_allocator()`; it is
-  *not* fine for both to mutate the same `proven_array_t`/`proven_u8str_t` without a
-  lock.
-- **Hand off ownership with a happens-before edge.** Transfer a pointer to another
-  thread through a mutex, atomic with release/acquire ordering, or a queue (like the
-  job system) so that only one thread observes it at a time. This keeps each
-  allocation's provenance confined to a single thread and makes the producer's
-  writes visible to the consumer.
-- **Do not pass borrowed views across threads** unless the owner is guaranteed not
-  to grow/move/free for the whole duration of the borrow — and remember a grow here
-  always relocates.
-- **If you must share an arena/pool, wrap it** in your own mutex (or build a real
-  lock-free allocator with the tools in §7.4); the built-in ones assume a single
-  owner at a time.
