@@ -39,13 +39,28 @@ B-025 … B-032 are the manual rewrite, designed in
 [`docs/RFC-0004-the-manual-as-a-book.md`](RFC-0004-the-manual-as-a-book.md). They are documentation
 work; none of them changes library code.
 
-**Status after the first pass (v26.07.20b line).** All eight phases have run once. The manual went
-from 8,004 to 9,854 lines, examples from 18 to 22, and sections meeting the depth gate's own prose
-floor from 30/88 to 55/98. The gate's register grew from 7 sections to 26, so most of the new
-writing is enforced rather than merely applied. What remains open is breadth, not method:
-`manual-freestanding.md` is 1/13 because its sections are short procedural steps rather than module
-explanations, `manual-08-fmt-scan.md` is 9/14, and the Korean mirror has chapter 0 but the
-rewritten chapters 1-6 are still the older translations. Each item below says what is left of it.
+**Status: the first pass is complete (v26.07.20b line).** All eight phases have run.
+
+| | before | after |
+|---|---:|---:|
+| English manual | 8,004 lines | **10,192** |
+| Korean mirror | 8,310 lines | **9,913** |
+| Sections meeting the depth gate's prose floor | 30/88 (34%) | **67/98 (68%)** |
+| Sections registered in that gate | 7 | **26** |
+| Runnable examples | 18 | **22** |
+| Broken internal anchors | 11 (unknown at the time) | **0** |
+
+Every chapter now opens with why the thing exists and what goes wrong without it, declares its part
+and prerequisites, and the Korean mirror reflects the current English throughout — chapter 0
+included, which it never had.
+
+What is deliberately *not* at the floor, and why: the alias index is a generated table, the
+"examples and misuse cases" sections are code by design, and roughly half of the freestanding guide
+is flag lists and compile commands. Padding those to clear a word count is the failure RFC-0004 §9
+named specifically, so the guide states which of its sections are procedure and which carry a
+decision instead.
+
+The items below are kept as the record of what each phase set out to do.
 
 ### B-025 — the manual has no on-ramp
 
