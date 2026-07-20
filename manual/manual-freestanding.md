@@ -7,6 +7,14 @@ and you will know exactly which modules survive that and which do not.
 
 This guide describes the current `PROVEN_FREESTANDING` configuration as implemented by `nob.c` and the public headers.
 
+**A note on the shape of this guide.** Unlike the chapters, roughly half of it is procedure — flag
+lists, file listings, and two compile commands. Those sections are deliberately short: a compile
+command explained at length is a compile command nobody reads. The sections that carry a *decision*
+— why this mode exists (§0), what "excluded" really means (§3), what your panic handler has to do
+(§5), what you lose by dropping float (§8), why hosted calls fail at link time (§9), why the
+lifetime rules matter more here (§10), and how the claims in this guide are verified (§11) — are
+written out in full.
+
 ## 0. Why this mode exists, and why the whole library is shaped by it
 
 Freestanding mode is for firmware, kernels, bootloaders, hypervisors, and anywhere else that has no
@@ -236,6 +244,36 @@ if (!proven_alloc_is_valid(heap)) {
 
 ## 5. Panic handler override
 
+### Why installing one is not optional here
+
+On a hosted system a panic that traps is survivable: the process dies, the operating system cleans
+up, and something restarts it. On bare metal there is nothing underneath. A trap halts the core,
+and whatever the device was doing — holding a motor at speed, keeping a radio link, driving a
+heater — it is still doing when the CPU stops.
+
+So the default handler is a placeholder for the one you must write, and what yours does is a
+product decision rather than a programming one. The usual shapes:
+
+- **Put the hardware in a safe state, then halt.** Motors off, outputs to a known level, then spin
+  or wait for a debugger. Correct for anything with a physical actuator.
+- **Record and reset.** Write a reason code to a register or a reserved RAM area that survives
+  reset, then trigger the watchdog. The next boot reports why the last one ended.
+- **Halt loudly.** Blink an LED in a recognisable pattern. On a board with no console this is the
+  entire diagnostic channel, and it is worth more than it sounds.
+
+The rule from [Chapter 1 §6](manual-01-foundation.md) applies with more force here: **the handler
+must not return.** If it does, `proven_arena_alloc_or_panic` proceeds with a block that was never
+allocated, and the failure moves from "the device stopped" to "the device is writing through a
+null pointer".
+
+Wrong — a handler that logs and returns:
+
+```text
+static void my_panic(const char *msg) {
+    uart_write(msg);   /* wrong: this returns, and the caller uses a block it never got */
+}
+```
+
 `proven_arena_alloc_or_panic()` and related panic paths call `proven_panic()`, which dispatches to the handler installed with `proven_set_panic_handler()`. The default handler traps.
 
 The handler is a whole function, so this is a listing rather than a fragment:
@@ -289,6 +327,30 @@ riscv64-elf-gcc \
 If your toolchain uses the `riscv64-unknown-elf-gcc` name, use that compiler instead. The project cross matrix checks both names when available.
 
 ## 8. Formatting in freestanding mode
+
+### What is left, and why that is usually enough
+
+The formatter is portable computation — it builds bytes in a destination you supply — so almost
+all of it survives here. What is gone is one placeholder type: `double`.
+
+That sounds like a big loss and rarely is. Correct float formatting means emitting the shortest
+decimal that reads back as the same value, on every input including subnormals, and doing that
+requires big-integer arithmetic and lookup tables. It is the largest single piece of code in the
+formatter. Most firmware formats integers, string views, characters and pointers — a sensor
+reading is a scaled integer, a status line is text — so the profile drops the float path by
+default and the binary is smaller for it.
+
+What remains: `{}` for integers of every width, views, characters, booleans and pointers; the
+whole spec grammar (width, fill, alignment, base, sign); `PROVEN_ARG_OF` for your own types; and the
+scanner in full, including float *parsing*, which does not carry the same weight.
+
+If you do need floats on a small target, the switch is `PROVEN_FMT_NO_FLOAT` and §8a covers the
+capacity knob that goes with it. Measure the size change before deciding — on a part with 32 KB of
+flash it is not a rounding error.
+
+Note the other consequence: **there is no `proven_println` here.** Formatting appends into a
+`proven_u8str_t` or a buffer, and getting those bytes to a UART or an RTT channel is your platform
+code, because a freestanding build has no standard output to assume.
 
 Float formatting is disabled by `PROVEN_FMT_NO_FLOAT`. Integer and string-view formatting remain available.
 
@@ -402,6 +464,30 @@ return; /* wrong if map survives after key bytes go out of scope */
 ```
 
 ## 11. Verification
+
+### Why this guide is checked rather than believed
+
+Everything above is a claim about what compiles and links without an operating system, and claims
+like that rot quietly. One `#include <stdio.h>` added to a portable source file in an unrelated
+commit and the freestanding profile is broken — on a host build nothing would notice, because
+`stdio.h` is right there.
+
+So the profile is built on every release rather than described. `./nob freestanding` compiles the
+portable core with `-ffreestanding` and the profile's defines, links the checks below **statically**
+on the build host, and runs them. `./nob cross` then compiles the same profile for real embedded
+targets — Cortex-M and RISC-V among them — as a compile-only matrix.
+
+The two checks are chosen for what they would catch:
+
+- The **heap stub** check proves `proven_heap_allocator()` still exists and returns something
+  `proven_alloc_is_valid` rejects. If somebody made it fail to link instead, trait-based code would
+  stop compiling for bare metal — the failure §3 explains this design avoids.
+- The **compile check** builds a representative program against the profile, which is what catches
+  a hosted header sneaking into a portable file.
+
+Neither runs on the actual hardware, and this guide does not claim otherwise: alignment faults,
+endianness and timing need a board. What is verified is the part that can be, on every build,
+rather than the whole thing on no build.
 
 The project freestanding command builds and runs these local checks on the build host:
 
