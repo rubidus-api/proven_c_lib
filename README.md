@@ -2,37 +2,261 @@
 
 **English** · [한국어](README-ko.md)
 
-`proven` is a small C23 systems library for code that should stay readable over time. It gives you the everyday pieces C projects usually end up rewriting: explicit allocators, owned and borrowed strings, dynamic arrays, maps with borrowed or owned string keys (HashDoS-resistant by default), formatting and scanning, buffered streams and line input from stdin, filesystem helpers, memory mapping, time, hashing (FNV, SipHash, CRC-32, SHA-256), randomness by use case (a reproducible generator, a cryptographic one, and the OS CSPRNG), stackless coroutines, and a bounded job system.
+> A C23 systems library built on one idea: **memory should know where it came from.**
 
-The point is not to hide C behind a framework. The point is to make practical C less repetitive while still keeping ownership, errors, allocator choice, and platform boundaries visible.
+You have finished a C book. You know pointers, `malloc`, `printf`, and `char *`. And then you
+wrote your first real program and discovered the part the book did not cover — that `strcpy` has
+no idea how big your buffer is, that `malloc` returning `NULL` is something you simply have to
+remember, and that `printf("%d", 3.0)` compiles.
 
-The build driver probes `-std=c23` first and falls back to `-std=c2x` when the compiler still uses the transitional spelling, so older GCC and Clang front ends can still build the tree without changing the library's C23 baseline.
+`proven` is what those problems look like when someone answers them one at a time, in plain C,
+without a framework. It is the everyday layer C projects end up rewriting: allocators you pass in,
+strings that carry their own length, containers, formatting and scanning, files, hashing,
+randomness — with ownership and failure visible in every signature.
 
-- Version: proven_c_lib-v26.07.20c
-- Standard: C23
-- License: MIT
+**New here? Start with [Chapter 0](manual/manual-00-start-here.md).** It assumes nothing beyond
+one introductory C book, and it is the only document in this repository written to be read rather
+than looked up.
+
+- Version: proven_c_lib-v26.07.20d · Standard: C23 · License: MIT
 - Repository: https://github.com/rubidus-api/proven_c_lib
 
-## why people reach for it
+---
 
-- Ownership is explicit, so it is easier to see who allocates and who frees.
-- Fallible APIs return results instead of silently hiding failure.
-- Reallocation-style operations are designed to stay failure-atomic where documented.
-- Borrowed views are clearly separated from owning objects.
-- Decimal/float conversion is correctly rounded (bit-for-bit equal to the host `strtod`/`snprintf`) and has been checked exhaustively for `binary32`; on typical data it is faster than glibc.
-- Hosted OS access is isolated behind the PAL layer in `platform/`.
-- Freestanding builds can use the reduced core without pulling in hosted filesystem, console, thread, mmap, or environment services.
-- The build system is a single C file, `nob.c`, so there is no mandatory CMake, Meson, npm, or external test framework.
+## The name: provenance
 
-That makes the library useful for command-line tools, embedded-adjacent code, experiment code that may later need a stricter platform boundary, and C projects that want a compact support layer without giving up control.
+**Provenance** is an art-world word. It means the documented history of an object: where it came
+from, who owned it, how it got here. A painting without provenance may be genuine, but nobody can
+prove it.
 
-## quick start
+C's memory model uses the word in almost exactly that sense. In the abstract machine, **a pointer
+is not just an address** — it also carries the identity of the storage it was derived from. Two
+pointers can hold the same numeric value and still not be interchangeable, because they came from
+different objects:
 
-Build the driver and run the default hosted test/build path:
+```c
+int a[4], b[4];
+int *p = a + 4;            /* one past the end of a */
+int *q = b;                /* start of b */
+/* p and q may compare equal at run time. They are still not the same pointer:
+   *p is undefined behaviour, *q is fine. The bits are equal; the provenance is not. */
+```
+
+This is not a language-lawyer curiosity. It is why the compiler is allowed to assume that a write
+through `p` cannot disturb `b`, which is where a great deal of optimisation comes from — and why a
+program that launders a pointer through an integer can be miscompiled in ways that look like the
+compiler is broken.
+
+The formal model is real, active work: ISO WG14's provenance Technical Specification
+([N2577](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n2577.pdf) →
+[N3005](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3005.pdf), with the **PNVI-ae-udi** model
+the committee voted for). It is a TS pending publication rather than part of C23 proper, but the
+direction is settled.
+
+### Why the library is named after it
+
+**The name is `proven` because of *provenance*, not because of *prove*.**
+
+I came to these ideas late. I had written C for a while with the ordinary mental model — memory is
+bytes, a pointer is an address — and then I read about strict aliasing, and then about pointer
+provenance, and the ground moved. It was not that I had been writing subtly wrong code and got
+away with it, though I probably had been. It was the realisation that **C's rules about memory are
+considerably stricter than the model I had been carrying in my head**, and that the gap between
+the two is exactly where the bugs nobody can reproduce come from.
+
+The obvious response is to learn the rules properly and apply them by hand. I want to be honest
+about why that was not enough for me: **I do not know these rules well, and I cannot reliably keep
+them in my head while writing ordinary code.** Effective types, when a cast is laundering
+provenance, which escape hatches are blessed and which merely happen to work today — this is
+genuinely hard, and being told to "just be careful" is not a strategy.
+
+So the response became the opposite one. If I cannot hold the rules reliably, then the rules
+should live somewhere other than my attention: **in a library that makes the correct thing the
+easy thing, and in a set of conventions that are visible in every signature.** Raw bytes go
+through `proven_byte_t`, because that is the type the standard actually blesses for inspecting
+representation. Lengths travel with pointers, so there is no arithmetic to get wrong. Sizes go
+through checked macros, because silent wraparound is a rule I will forget. None of that requires
+me to be careful in the moment; it requires me to be careful once, here.
+
+That is what the name records. Not that the code is proven, but that it is built around
+*provenance* — the idea that memory should carry the history of where it came from, and that a
+library should not make you track that by hand.
+
+`proven_c_lib` was built with AI as a collaborator, which is part of the same thought: the
+explicitness that helps a person who cannot hold the whole memory model in mind is the same
+explicitness that lets a language model produce code that is correct for reasons visible in the
+call, rather than correct by accident.
+
+**And then the coincidence.** *Proven* also means tested, demonstrated, shown to be true — which
+is a better fit than anything I planned, given what the repository turned into: 170 registered
+tests, every manual example compiled and run by the build, and documentation gated so it cannot
+claim a function that does not exist. The two words are not related. *Provenance* is from Latin
+*provenire*, to come forth; *proven* is from *probare*, to test. Two different roots that happen
+to land on the same seven letters, and the accident describes the project better than the
+intention did.
+
+---
+
+## C is not portable assembly
+
+There is a way of talking about C that treats it as a thin, honest layer over the machine: bytes
+are bytes, a pointer is an address, casting is free, and the standard is a formality that gets in
+the way of people who know what the hardware does. That view produces clever code — integers and
+pointers mixed freely, aliasing tricks, unions used as reinterpret casts — and it was defensible
+in 1980, when compilers translated more or less literally.
+
+It is wrong now, and it is worth being precise about *why*, because the reason is not that
+compilers became hostile.
+
+**C's abstract machine has always been stricter than the hardware.** Three examples, all from the
+standard rather than from anyone's opinion:
+
+- **Effective types and strict aliasing.** An object's stored value may only be accessed through
+  an lvalue of compatible type — with a deliberate exception for character types. Memory in C's
+  model *has a type*. Assembly has no such concept.
+- **Provenance**, above. Hardware sees an address; C sees an address *and where it came from*.
+- **Undefined behaviour is not "whatever the machine does".** It means the standard imposes no
+  requirement at all, and optimisers are permitted to assume it never happens — which is how UB
+  can delete an `if` that was clearly written to prevent it.
+
+So the old programs did not stop being correct. They were never correct; they merely worked,
+because nothing was exploiting the freedom the standard had granted all along.
+
+The honest summary is that **C is permissive about what you can write and strict about what it
+promises.** The "portable assembly" view conflates the two. And C does provide escape hatches —
+inspecting bytes through `unsigned char`, type punning through `memcpy`, `uintptr_t` round trips —
+but they are *narrow and specified*, not a general licence.
+
+This library takes that seriously rather than working around it. Raw bytes are `proven_byte_t`
+(an alias of `unsigned char`, the one type you may legally inspect any object through). Views
+carry a pointer and a length instead of a pointer and a hope. Size arithmetic goes through checked
+macros because unsigned overflow wraps silently and legally. None of this is defensive
+programming; it is programming the language that is actually specified.
+
+---
+
+## Where systems languages are going
+
+The last decade produced a rough consensus about strings and memory, arrived at independently by
+several languages. It is worth seeing, because `proven` is C's version of the same answers.
+
+### Strings: length beside the pointer
+
+The NUL-terminated string was a 1970s decision to save one byte per string. The bill has been
+enormous: length is an *O(n)* search, text cannot contain a zero byte, and a missing terminator is
+a buffer overrun that nothing detects.
+
+Almost every alternative rediscovers the same fix — **keep the length next to the pointer**:
+
+| | Owning | Borrowed |
+|---|---|---|
+| **Pascal** (1970s) | length-prefixed string | — |
+| **C++17** | `std::string` | `std::string_view` |
+| **Rust** | `String` | `&str` |
+| **Zig** | `std.ArrayList(u8)` | `[]const u8` (a slice: pointer + length) |
+| **Go** | — | `string`, `[]byte` |
+| **`proven`** | `proven_u8str_t` | `proven_u8str_view_t` |
+
+Pascal got there first with a length prefix. C++17's `string_view` popularised the *borrowed*
+half — the observation that most functions want to *read* text, not own it, and that copying a
+string to pass it is the most common needless allocation in a program. Rust and Zig built the same
+split into the type system from day one.
+
+The second half of the idea matters as much as the first: **owned and borrowed are different
+types**. `char *` means four different things — freshly allocated, pointer into a caller's buffer,
+a string literal in read-only memory, a static buffer the next call will overwrite — and the type
+cannot tell you which. Splitting them puts the answer in the signature.
+
+### Memory: the allocator is a parameter
+
+`malloc` is a global. Nothing in a signature says whether a function allocates, you cannot change
+the strategy for one part of a program, you cannot test the failure path without intercepting it
+globally, and you cannot use it at all where there is no heap.
+
+Zig's answer — an `Allocator` interface passed explicitly to anything that allocates — is now the
+clearest statement of the alternative, and it is the one `proven` follows. Once allocation is a
+parameter, three strategies become interchangeable at the call site:
+
+| | How it works | Free | Use it when |
+|---|---|---|---|
+| **Heap** | `malloc`/`free` behind the interface | Yes | The general case. |
+| **Arena** | Bump a pointer through one block | **No** — a no-op; you reset the whole thing | Many allocations that die together: one request, one frame, one parse. |
+| **Pool** | Fixed-size slots with a free list | Yes, into the list | Many objects of one size, created and destroyed continuously. |
+
+An arena turns ten thousand `free` calls into one `reset`, and it is the reason the same code that
+runs on Linux runs on a microcontroller with no heap: put an arena over a `static` array and
+nothing else changes.
+
+### Modern C already has the tools
+
+The pieces are in the language now, and most C code has not caught up:
+
+- **C99** — designated initializers, compound literals: option structs instead of ten-parameter
+  functions.
+- **C11** — `_Generic`, which is how `{}` gets a value's type from the argument instead of from a
+  format string.
+- **C23** — `[[nodiscard]]` (used 172 times here, so the compiler refuses code that drops an
+  error), `<stdckdint.h>` for checked arithmetic, `constexpr`, `typeof`, `nullptr`.
+
+Andre Weissflog's [*Modern C for C++ Peeps*](https://floooh.github.io/2019/09/27/modern-c-for-cpp-peeps.html)
+and Luca Sas's ACCU 2021 talk **Modern C and What We Can Learn From It**
+([video](https://www.youtube.com/watch?v=QpAhX-gsHMs) ·
+[slides](https://accu.org/conf-docs/PDFs_2021/luca_sass_modern_c_and_what_we_can_learn_from_it.pdf))
+are the best short introductions to this style. This library was read against that talk in
+[`docs/RFC-0002`](docs/RFC-0002-view-vocabulary-and-splitting.md) — a useful exercise, because the
+result was mostly a list of things already done and one genuine gap.
+
+---
+
+## What this library is for
+
+**To replace the tired parts of the standard library, from the bottom up — without excluding it.**
+`strcpy`, `strtok`, `sprintf`, `errno`, `qsort`, `rand`, `atoi`: each is answered here by something
+sized, checked, and explicit. But `proven` is not a libc replacement and does not want your
+`main`. It has no global state, starts no threads, registers no `atexit` handler, and allocates
+nothing you did not hand it an allocator for. Use one module, or all of them, beside whatever else
+you already link. [Appendix D](manual/manual-00-start-here.md#7-appendix-d-the-libc-map) maps the
+libc call you know to what to use instead — and why it differs.
+
+**To be pleasant for a person and safe for a person working with an AI.** Explicit is more
+verbose, and that is the trade. What it buys is that every important fact is *local*: whether a
+call allocates is in its parameter list, whether it can fail is in its return type, and whether it
+grows is in its name. That is exactly the kind of context that neither a tired human nor a
+language model reliably reconstructs from surrounding code — and it is why the documentation is
+gated by the build rather than kept up to date by intention.
+
+**To test whether modern C actually holds up.** That is the honest third reason. This is a
+working experiment in whether C23, used deliberately and without a framework, can carry a real
+support layer — and the experiment is run in public: every design decision is an RFC in
+[`docs/`](docs/), including the ones that were wrong and got corrected.
+
+---
+
+## Why people reach for it
+
+- Ownership is explicit, so it is easy to see who allocates and who frees.
+- Fallible APIs return results instead of silently hiding failure, and the important ones are
+  `[[nodiscard]]` so the compiler will not let you drop the error.
+- Operations **refuse rather than truncate**: a path that does not fit is an error, not a shorter
+  path that opens a different file.
+- Reallocation-style operations stay failure-atomic where documented — a failed grow leaves your
+  data intact.
+- Borrowed views are a different type from owning objects.
+- Decimal/float conversion is correctly rounded (bit-for-bit equal to the host `strtod`/`snprintf`),
+  checked exhaustively for `binary32`, and on typical data faster than glibc.
+- Hosted OS access is isolated behind the PAL in `platform/`, so freestanding builds drop it
+  cleanly.
+- The build system is one C file, `nob.c`. No CMake, no Meson, no npm, no external test framework.
+
+That makes it useful for command-line tools, embedded-adjacent code, experiments that may later
+need a stricter platform boundary, and C projects that want a compact support layer without giving
+up control.
+
+## Quick start
 
 ```sh
-cc nob.c -o nob
-./nob build
+cc nob.c -o nob     # build the build driver, once
+./nob build         # compile everything and run the whole test suite
 ```
 
 Use a different compiler if needed:
@@ -56,7 +280,7 @@ Common checks:
 
 Running `./nob` without arguments prints the full command list.
 
-## a small example
+## A small example
 
 This example creates an owned UTF-8 string, appends to it with the formatter, prints it, and then destroys it with the same allocator family.
 
@@ -96,7 +320,7 @@ cc -std=c23 -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L \
   -pthread -o app
 ```
 
-## containers without hidden ownership
+## Containers without hidden ownership
 
 `proven_array_t` is a growable contiguous array. It stores the allocator trait used for growth and destruction, so the call site stays honest about memory ownership.
 
@@ -131,7 +355,7 @@ fail:
 
 The same pattern appears across strings, maps, buffers, arenas, pools, and filesystem helpers: create with an allocator, check the result, keep borrowed pointers short-lived, and destroy owned objects deliberately.
 
-## text formatting with bounded input
+## Text formatting with bounded input
 
 `PROVEN_ARG("literal")` is convenient for trusted NUL-terminated strings. For text from outside your program, prefer bounded views or bounded C-string arguments so formatting does not search past the bytes you meant to expose.
 
@@ -146,7 +370,7 @@ The formatter has three useful modes for owned strings:
 - `proven_u8str_append_fmt_trunc`: fixed-capacity and truncating.
 - `proven_u8str_append_fmt_grow`: allocator-backed and atomic.
 
-## whole files, and sorting that cannot be made quadratic
+## Whole files, and sorting that cannot be made quadratic
 
 Reading a file whole is the operation most programs actually want, so it is one call:
 
@@ -166,7 +390,7 @@ Writing is symmetric. `proven_fs_write_file` creates or truncates; `proven_fs_wr
 - **O(n log n) is a guarantee, not a typical case.** A heapsort fallback past a bounded recursion depth is what makes it one. A sort whose worst case can be reached by an adversarial ordering is a denial of service in any program that sorts data it did not author.
 - **Duplicate keys are the fast case.** Elements equal to the pivot are collected into a run that is final and never recursed into, so all-equal input costs a single pass. Low-cardinality keys - a status column, an enum, a bucket id - are what callers actually sort by, and they are exactly what a naive partition degrades on.
 
-## hashes, tokens, and text you can put in a URL
+## Hashes, tokens, and text you can put in a URL
 
 There is no single "hash" and no single "random". Which one is correct depends on what you are doing with the result, and reaching for the wrong one gives you a program that is either needlessly slow or quietly insecure. Both modules are organised so the choice is made once you name the job — and so the wrong choice is hard to make by accident.
 
@@ -196,7 +420,7 @@ if (proven_random_bytes(raw, sizeof raw) &&
 
 The generators and hashes are pure arithmetic, so they work on a bare-metal target too. On a board with no OS, hand the library its hardware entropy once (`proven_random_set_source`) and the cryptographic generator works with no operating system at all.
 
-## streams: a line from stdin, and printing without a syscall per line
+## Streams: a line from stdin, and printing without a syscall per line
 
 A writer is a byte sink; a reader is a byte source. Both are small vtables passed by value, like the allocator — so one `serialize(writer, value)` works over memory, a file, or a standard stream, and the formatter can be aimed at any of them.
 
@@ -219,7 +443,7 @@ The view points *into* your buffer and is valid until the next call — which is
 
 Buffer the output side and a thousand small prints cost one syscall instead of a thousand — but **you must flush**: there is no hidden global buffer, so there is also no destructor and no `atexit` handler to flush it behind your back. The direct calls (`proven_println`, `proven_eprintln`) stay unbuffered for exactly that reason: what they write is on its way out before they return.
 
-## correct, fast number conversion
+## Correct, fast number conversion
 
 Decimal-to-`double` parsing and `double`/`float`-to-decimal formatting are
 correctly rounded (round-to-nearest, ties to even) and produced by an
@@ -256,7 +480,7 @@ How far this is checked, stated plainly:
 Methodology, algorithms, and the full benchmark are in
 [`docs/float-correctness-and-performance.md`](docs/float-correctness-and-performance.md).
 
-## platform boundary
+## The platform boundary
 
 Portable implementation files live in `src/proven/`. OS and C runtime calls are isolated under `platform/`:
 
@@ -273,7 +497,7 @@ This split keeps the core library easier to audit and gives ports a clear place 
 
 Cross compilation shows that headers, source visibility, ABI assumptions, and compile-time platform branches line up. It does not replace runtime tests on the target machine.
 
-## main modules
+## The modules
 
 - Foundation: `types`, `error`, `memory`, `align`, `version`, `config`.
 - Allocation: `allocator`, `heap`, `arena`, `pool`.
@@ -289,7 +513,7 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 - Diagnostics: `panic`.
 - Optional short aliases: `alias_xcv`.
 
-## what it is not
+## What it is not
 
 `proven` is not a libc replacement, a garbage collector, or a framework. It does not try to own your process, your build graph, or your error policy. It is a set of C components that are meant to be easy to read, easy to test, and possible to port one boundary at a time.
 
@@ -297,7 +521,7 @@ It is also worth saying where the platform boundary **stops**, because otherwise
 
 The `hash` module does provide cryptographic and non-cryptographic hashes (SHA-256 alongside FNV, SipHash, and CRC-32) and `random` provides OS-strength bytes, but `proven` is not a cryptography library: deliberate non-goals, so you do not go looking, are signatures, key exchange, password hashing / KDFs, authenticated encryption, and TLS — along with path manipulation, argument parsing, and a logging framework.
 
-## utility in a real project
+## Using it in a real project
 
 These notes come from building a small terminal text editor (`prov`) on top of `proven`. They are one data point, recorded plainly rather than as a sales pitch.
 
@@ -314,7 +538,7 @@ What you accept, and should not expect:
 - **Pervasive coupling.** Passing the allocator and Result types everywhere is a deliberate commitment. It pays off on a long-lived, multi-platform codebase and is heavier than warranted for throwaway code.
 - **A young library has gaps.** Expect to occasionally find a missing primitive and to fill or report it. The value is concentrated in safety, testability, and portability — not in convenience or raw speed.
 
-## documentation
+## Documentation
 
 - User manual: `manual/manual.md` (chapters under `manual/`)
 - Korean manual (한국어 매뉴얼): `manual-ko/manual-ko.md`
@@ -326,7 +550,7 @@ What you accept, and should not expect:
 - Changelog: `CHANGELOG.md`
 - Contributor checklist: `CHECKLIST.md`
 
-## status
+## Status
 
 The primary verified target is Linux x86_64 with GCC or Clang in C23 mode. Sanitizer, regression, freestanding, and cross compile checks are driven by `nob.c`. Optional cross targets are checked when the corresponding toolchains are present. The build driver probes `-std=c23` first and falls back to `-std=c2x` when needed.
 
@@ -336,7 +560,7 @@ Borrowed views require caller-managed lifetime. Public structs expose layout for
 
 Strict pointer provenance is not fully claimed here. The library is designed to avoid common C undefined-behavior hazards under documented contracts on conventional hosted-systems C implementations.
 
-## author and license
+## Author and license
 
 Developed by rubidus-api.
 Email: rubidus@gmail.com

@@ -11,6 +11,61 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-20] — proven_c_lib-v26.07.20d
+
+The README explains what the library is *for*. No library code changed — `src/` and `include/`
+are identical to v26.07.20c apart from the version constants.
+
+### Changed
+
+- **`README.md` and `README-ko.md` rewritten for a reader who has just finished one C book.**
+  343 → 567 lines. The previous README opened with a feature list; this one opens with the
+  problems a beginner has already hit — `strcpy` not knowing the destination size, `malloc`'s
+  ignorable `NULL`, `printf("%d", 3.0)` compiling — and works outward from there.
+
+- **The name is explained, and it is not what it looks like.** `proven` comes from **provenance**,
+  not from *prove*. The new section explains provenance as C's memory model uses it — a pointer
+  carries the identity of the storage it came from, so two pointers can hold the same value and
+  still not be interchangeable — with a worked example and the WG14 Technical Specification
+  ([N2577](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n2577.pdf) →
+  [N3005](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3005.pdf), PNVI-ae-udi), stated
+  accurately as a TS pending publication rather than as part of C23.
+
+  It also records why the library exists at all: the author met strict aliasing and provenance
+  late, found that C's rules about memory are considerably stricter than the mental model he had
+  been carrying, and concluded — **precisely because he does not hold those rules reliably while
+  writing ordinary code** — that they belong in a library and in conventions visible in every
+  signature rather than in a programmer's attention. That `proven` also happens to mean *tested*
+  is a coincidence of two unrelated Latin roots, and the accident describes the project better
+  than the intention did.
+
+- **"C is not portable assembly" is argued rather than asserted.** Effective types and strict
+  aliasing (memory in C's model *has a type*; assembly has no such concept), provenance, and the
+  fact that undefined behaviour means the standard imposes no requirement at all — not "whatever
+  the machine does". The summary the section lands on: C is permissive about what you can write
+  and strict about what it promises, and the "portable assembly" view conflates the two.
+
+- **Where systems languages are going**, because this library is C's version of the same answers:
+  the length-beside-pointer table from Pascal's length prefix through C++17 `string_view`, Rust's
+  `&str`, and Zig's slices; why owned and borrowed must be *different types*; the allocator as a
+  parameter, with heap/arena/pool compared; and what C99, C11 and C23 already provide. Links to
+  Luca Sas's ACCU 2021 talk and Andre Weissflog's *Modern C for C++ Peeps*.
+
+- **What the library is for**, in three parts: replacing the tired parts of the standard library
+  from the bottom up **without excluding it**, being pleasant for a person and safe for a person
+  working with an AI (because every important fact is local to the call), and testing in public
+  whether modern C actually holds up.
+
+### Fixed
+
+- **`README-ko.md` now uses one register throughout.** It had been mixed — the new material in
+  평서체, the older half inconsistent within single sections. It is 합니다체 end to end, with the
+  first-person origin story kept personal rather than bureaucratic. Verified: every code fence
+  identical to the English modulo Korean comments, and zero 평서체 endings outside code.
+- **Appendix A's Korean mirror** was the one reference chapter still in 경어체; it now matches
+  chapters 1–8, and gained the "this is a lookup table, not reading material" opener the English
+  side already had.
+
 ## [2026-07-20] — proven_c_lib-v26.07.20c
 
 The manual becomes a book. No library code changed — `src/` and `include/` are identical to
