@@ -39,6 +39,14 @@ B-025 … B-032 are the manual rewrite, designed in
 [`docs/RFC-0004-the-manual-as-a-book.md`](RFC-0004-the-manual-as-a-book.md). They are documentation
 work; none of them changes library code.
 
+**Status after the first pass (v26.07.20b line).** All eight phases have run once. The manual went
+from 8,004 to 9,854 lines, examples from 18 to 22, and sections meeting the depth gate's own prose
+floor from 30/88 to 55/98. The gate's register grew from 7 sections to 26, so most of the new
+writing is enforced rather than merely applied. What remains open is breadth, not method:
+`manual-freestanding.md` is 1/13 because its sections are short procedural steps rather than module
+explanations, `manual-08-fmt-scan.md` is 9/14, and the Korean mirror has chapter 0 but the
+rewritten chapters 1-6 are still the older translations. Each item below says what is left of it.
+
 ### B-025 — the manual has no on-ramp
 
 There is no "hello world", no statement of what the library is for, no glossary, and no map from
