@@ -1,4 +1,4 @@
-# Proven Freestanding Mode (v26.07.20b)
+# Proven Freestanding Mode (v26.07.20c)
 
 **Part VI — Going further. Prerequisites: Parts II–V, and
 [Chapter 6](manual-06-execution-and-platform.md).**

@@ -11,6 +11,79 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-20] — proven_c_lib-v26.07.20c
+
+The manual becomes a book. No library code changed — `src/` and `include/` are identical to
+v26.07.20b apart from the version constants.
+
+### Added
+
+- **Chapter 0, the on-ramp that did not exist.** Until now the manual's first page was a table of
+  fixed-width type aliases and the first runnable program was 126 lines into chapter 1. A reader
+  who had finished one introductory C book had nowhere to start, and no glossary for the words the
+  manual used as if they were ordinary C — `view` appeared 288 times, `arena` 115, `trait` 29,
+  `provenance` 26, none defined at first use.
+
+  `manual/manual-00-start-here.md` states who the manual is for, argues why the library exists
+  from five C bugs the reader has already met — `strcpy` not knowing the destination size,
+  `malloc`'s ignorable `NULL`, `printf` believing the format string, `char *` meaning four
+  different ownerships, `qsort`'s untypecheckable comparator — and says what each answer **costs**.
+  It ships a compiled hello-world, the build model, the five contracts that recur on every page, a
+  glossary, and a libc → `proven` map.
+
+- **A declared reading order.** The chapter order was the header dependency graph and nothing said
+  so. `manual.md` now declares six parts with prerequisites and an outcome for each, every chapter
+  names what you should have read first, chapter 7 is relabelled Appendix A (a lookup table, not
+  reading material), and chapters 3 and 8 state which half of the text material they are.
+
+- **Four new runnable examples** — `ex_00_hello`, `ex_04_list`, `ex_04_ring`, `ex_05_time` — each
+  compiled and run by the build like the existing eighteen.
+
+### Changed
+
+- **Every chapter now leads with why the thing exists.** Measured against the manual's own standard
+  — `test_docs_manual_depth`'s 150 words of prose outside tables, headings and fences — sections
+  meeting it went from **30 of 88 to 67 of 98**. Chapter 1, the entry point, went from 0 of 9 to 6
+  of 9.
+
+  Chapter 1 opens on the error model rather than type tables. Chapter 2 opens on the heap — the
+  obvious case — and shows the allocator trait fourth, once you have used three allocators.
+  Chapter 3 opens on the 1972 decision to end a string with a zero byte. The dynamic array opens on
+  the two bugs in the resize line everyone writes by hand. Memory mapping, which had **one word**
+  of prose, now explains that its failure modes are signals rather than return values.
+
+- **The hardest material moved out of the second chapter.** Pointer provenance, CAS, ABA, hazard
+  pointers and epoch reclamation are now chapter 6 §3, where the rest of the concurrency subject
+  is, instead of arriving after six sections of ordinary allocator use.
+
+- **The depth gate's register grew from 7 sections to 26**, so most of the new writing is enforced
+  rather than merely applied.
+
+- **The Korean mirror reflects the current English throughout**, chapter 0 included — it never had
+  one. 8,310 → 9,913 lines. Chapter 0 is deliberately written in 경어체 while the reference
+  chapters keep 평서체, and says so in the text.
+
+### Fixed
+
+- **A code block that had never been compiled by anything.** An indented ```c fence inside a bullet
+  list opens a block whose indented closer the extractor cannot see, so it hit end-of-search and
+  `break` — silently skipping that block *and every block after it in the chapter*. In chapter 2 it
+  was the last section, so nothing followed and nothing showed. `nob.c` now fails on an
+  unterminated block instead of breaking out of the loop.
+- **The chapter 1 version excerpt had drifted** and only one of its three lines was checked:
+  the manual said `PROVEN_VERSION_NUM 260713` and `SUFFIX "m"` while `version.h` said `260720` and
+  `"b"`. All three lines are gated now. A partly-checked quotation is worse than an unchecked one,
+  because it looks verified.
+- **Eleven broken internal anchors**, found by auditing every `](#...)` in all 21 manual files.
+  Two were introduced by renumbering chapter 6; seven were English anchors under Korean headings in
+  the Korean chapter 4; two were pre-existing, including one where an em dash in a heading produces
+  a double hyphen in the slug. Zero remain.
+
+### Note
+
+Design work only. `docs/RFC-0004-the-manual-as-a-book.md` is the plan this executed, and
+B-025 … B-032 in `docs/BACKLOG.md` record what each phase set out to do.
+
 ## [2026-07-20] — proven_c_lib-v26.07.20b
 
 The repository's non-C checks are part of the build now, and the one thing they had ever
