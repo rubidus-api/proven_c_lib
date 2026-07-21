@@ -620,9 +620,9 @@ proven_mem_mut_t block = proven_arena_alloc_or_panic(&arena, n);
 Compile-time identification, for diagnostics and for code that must adapt to the library version.
 
 ```text
-#define PROVEN_VERSION_STRING "proven_c_lib-v26.07.20e"
+#define PROVEN_VERSION_STRING "proven_c_lib-v26.07.20f"
 #define PROVEN_VERSION_NUM    260720
-#define PROVEN_VERSION_SUFFIX "e"
+#define PROVEN_VERSION_SUFFIX "f"
 ```
 
 `PROVEN_VERSION_STRING` is what you print in a build report or a `--version` flag.

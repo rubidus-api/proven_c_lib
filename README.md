@@ -18,7 +18,7 @@ randomness — with ownership and failure visible in every signature.
 one introductory C book, and it is the only document in this repository written to be read rather
 than looked up.
 
-- Version: proven_c_lib-v26.07.20e · Standard: C23 · License: MIT
+- Version: proven_c_lib-v26.07.20f · Standard: C23 · License: MIT
 - Repository: https://github.com/rubidus-api/proven_c_lib
 
 ---
@@ -29,24 +29,44 @@ than looked up.
 from, who owned it, how it got here. A painting without provenance may be genuine, but nobody can
 prove it.
 
-C's memory model uses the word in almost exactly that sense. In the abstract machine, **a pointer
-is not just an address** — it also carries the identity of the storage it was derived from. Two
-pointers can hold the same numeric value and still not be interchangeable, because they came from
-different objects:
+C's memory model uses the word in almost exactly that sense, and it is easier to *see* than to
+define. Here is a complete program. Two `int` pointers; the only difference between them is where
+each one came from:
 
 ```c
-int a[4], b[4];
-int *p = a + 4;   /* legal: C lets you form a pointer one past the last element */
-int *q = b;       /* the start of a different array */
-/* p and q can hold the same address, and even comparing them is allowed. What
-   you may not do is use p to reach b. p carries a's identity, not b's, and the
-   compiler relies on that — it assumes a write through p cannot disturb b. The
-   address coinciding does not make the two pointers interchangeable. */
+#include <stdio.h>
+#include <string.h>
+int y = 2, x = 1;                       /* the compiler is likely to place these adjacently */
+int main(void) {
+    int *p = &x + 1;                    /* derived from x — its address is one past x */
+    int *q = &y;                        /* derived from y — a different object */
+    if (memcmp(&p, &q, sizeof p) != 0)  /* go on only when the two pointers hold the */
+        return 0;                       /* identical address, checked bit for bit */
+    *p = 11;                            /* store 11 through p */
+    printf("*p = %d, *q = %d\n", *p, *q);
+}
 ```
 
-Note what is *not* the problem here. Forming `a + 4` is fine — the standard specifically lets you
-make a pointer one past the end of an array. The subtle part is that `p` and `b` can share an
-address and still not be the same pointer, because `p` remembers it came from `a`.
+```text
+gcc -O1 :  *p = 11, *q = 11     # same address; both read back 11
+gcc -O2 :  *p = 11, *q = 2      # same address — yet *p is 11 and *q is 2
+```
+
+Read that `-O2` line again. `p` and `q` hold the **identical address** — `memcmp` compared the raw
+bytes of the two pointers and only let the program continue when they matched. You store `11`
+through `p`. Then dereferencing `p` gives `11` and dereferencing `q` gives `2`. **One address, two
+values.** It is not a race, not uninitialised memory, not undefined *output* — the program is
+deterministic and prints this every run. The compiler knows `p` was derived from `x`, assumes a
+store through it cannot reach `y`, and keeps `y` in a register; so `*p` and `*q` refer to different
+things even though the addresses are equal to the last bit.
+
+Notice what is *not* going on here. Forming `&x + 1` is perfectly legal — C specifically lets you
+make a pointer one past the end of an object. Nothing is "out of bounds" in a way you would catch
+by reading the code. The surprise is entirely in the last step: two pointers can be bit-for-bit
+the same address and still not be the same pointer, because each carries the identity of the object
+it came from. That identity is its **provenance**, and the compiler treats it as real even where
+the address does not distinguish them. (GCC does warn about the `&x + 1` store here — and then
+miscompiles it anyway.)
 
 This is not a language-lawyer curiosity. It is where a great deal of optimisation comes from, and
 it is a class of bug that a debugger cannot show you, because the miscompilation happens before
@@ -72,12 +92,12 @@ fully in force.
 | How you trip it | read memory through the wrong type (type punning) | offset or launder a pointer past its object, then use it where another object sits |
 | The blessed escape hatch | access raw bytes through `unsigned char` — this is exactly `proven_byte_t` | keep pointer arithmetic inside one object; don't rebuild pointers from integers |
 
-Both are easy to trip **without a single warning**, and both produce code that is correct at `-O0`
-and wrong at `-O2` — the worst possible failure mode, because it survives every test you ran in a
-debug build. Here is each one, small enough to run yourself.
-
-**Strict aliasing.** A byte buffer read through pointers of two different widths — the shape of
-every hand-written parser and serialiser:
+Both are easy to trip, both are correct at `-O0` and wrong at `-O2` — the worst possible failure
+mode, because it survives every test you ran in a debug build. You have already met the provenance
+one: the `*p = 11, *q = 2` program at the top of this section is exactly it — two `int *` pointers,
+no type punning, wrong only under optimisation. Its strict-aliasing twin trips **without even a
+warning**, and it is the shape of every hand-written parser and serialiser: a byte buffer read
+through pointers of two different widths.
 
 ```c
 #include <stdio.h>
@@ -98,31 +118,6 @@ int main(void) {
 gcc -O0 :  aaaa1234     # the 16-bit write shows
 gcc -O2 :  aaaaaaaa     # the write vanished — the compiler assumed h and w cannot overlap
 ```
-
-**Provenance.** No type punning at all — both pointers are `int *` — only the *origin* differs:
-
-```c
-#include <stdio.h>
-#include <string.h>
-int y = 2, x = 1;                        /* likely placed next to each other */
-int main(void) {
-    int *p = &x + 1;                     /* derived from x; address is one past x */
-    int *q = &y;                         /* derived from y */
-    if (memcmp(&p, &q, sizeof p) == 0) { /* the two pointers are bit-for-bit equal */
-        *p = 11;                         /* write to that address */
-        printf("y=%d  *p=%d  *q=%d\n", y, *p, *q);
-    }
-}
-```
-
-```text
-gcc -O1 :  y=11  *p=11  *q=11    # the write reached y
-gcc -O2 :  y=2   *p=11  *q=2     # same address, yet the write did NOT reach y
-```
-
-At `-O2` the write through `p` lands at an address that is bit-for-bit `&y`, `*p` reads back `11`,
-and `y` is still `2`. The compiler knows `p` came from `x`, assumes it cannot touch `y`, and keeps
-`y` in a register — so the same address holds two different values at once.
 
 And the detail that proves these are two rules and not one:
 
