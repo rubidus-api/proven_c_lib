@@ -11,6 +11,43 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-20] — proven_c_lib-v26.07.20e
+
+The provenance section is corrected and made honest. No library code changed — `src/` and
+`include/` are identical to v26.07.20d apart from the version constants.
+
+### Fixed
+
+- **The provenance example in the README was wrong, and it was pointed out.** It showed
+  `int *p = a + 4;` and claimed `*p` is undefined "because provenance". Forming a one-past-the-end
+  pointer is explicitly *legal*; `*p` being undefined is just an out-of-bounds read and demonstrates
+  nothing about provenance. The example now says what is actually true: `p` and `b` can hold the
+  same address and still not be the same pointer, because `p` remembers it came from `a`, and using
+  `p` to reach `b` is what the compiler assumes cannot happen.
+
+### Added
+
+- **A reproducible provenance miscompilation, verified on the build machine.** Two `int *`
+  pointers, no type punning, only the origin differs: at `-O1` a write through `&x + 1` reaches
+  `y`; at `-O2` the same write, to a bit-for-bit identical address, does *not* — the compiler keeps
+  `y` in a register because `p` came from `x`. Every number in the README was produced by compiling
+  and running the example (GCC 14.2), not asserted.
+
+- **Provenance and strict aliasing, separated and contrasted.** They are two distinct rules — one
+  asks *what type* is at an address, the other *which object* a pointer may reach — and the README
+  now proves it: `-fno-strict-aliasing` fixes a strict-aliasing miscompilation and does **nothing**
+  for the provenance one. Both bugs are shown, with the exact compiler output and the flag that
+  distinguishes them. The strict-aliasing example is also placed in
+  [manual chapter 0 §2](manual/manual-00-start-here.md) as the motivation for `proven_byte_t`.
+
+- **An honest limit.** The library does **not** claim strict-provenance purity, and the README says
+  why: the intrusive list's `container_of` — `(type *)((proven_byte_t *)ptr - offsetof(...))` —
+  recovers a whole struct from a pointer to one of its members, an idiom the strictest readings of
+  the object model have never comfortably blessed and that is nonetheless everywhere real C lives,
+  the Linux kernel included. So the library defends the settled, agreed-upon undefined behaviour and
+  treats the unsettled frontier — where a dominant technique sits at odds with the strict model — as
+  exactly that. Provenance is the direction it leans, not a finished guarantee.
+
 ## [2026-07-20] — proven_c_lib-v26.07.20d
 
 The README explains what the library is *for*. No library code changed — `src/` and `include/`
