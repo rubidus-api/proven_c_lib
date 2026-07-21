@@ -18,7 +18,7 @@ randomness — with ownership and failure visible in every signature.
 one introductory C book, and it is the only document in this repository written to be read rather
 than looked up.
 
-- Version: proven_c_lib-v26.07.20f · Standard: C23 · License: MIT
+- Version: proven_c_lib-v26.07.20g · Standard: C23 · License: MIT
 - Repository: https://github.com/rubidus-api/proven_c_lib
 
 ---
@@ -67,6 +67,69 @@ the same address and still not be the same pointer, because each carries the ide
 it came from. That identity is its **provenance**, and the compiler treats it as real even where
 the address does not distinguish them. (GCC does warn about the `&x + 1` store here — and then
 miscompiles it anyway.)
+
+### "That example is contrived" — yes, and the reason is the interesting part
+
+Every runnable provenance demonstration looks like this: two adjacent variables and a pointer that
+steps from one to the other. That is not a failure of imagination; it is forced by how the rule
+works. A compiler only exploits provenance when it can *see* where a pointer came from — and that
+visibility is exactly what a tiny example has and a realistic one hides behind a `malloc` or a
+function call. Shrink the scope until the compiler can prove the origin, and you get something that
+looks artificial precisely *because* it is small enough to miscompile on demand.
+
+So what about the realistic idioms — the ones that genuinely reconstruct pointers by arithmetic?
+Tagged pointers that stash flags in the low bits and mask them off; XOR linked lists that store one
+neighbour as `prev ^ next`; a `refcount` header reached through `data[-1]`; a pointer round-tripped
+through `uintptr_t`. I compiled all of them at `-O2` and `-O3`, and **every one produced the correct
+answer.** That is not luck. The model WG14 chose — PNVI-ae-udi, "provenance not via integers, with
+exposed addresses" — was designed on purpose to keep those idioms working, because forbidding them
+would break an enormous amount of real, load-bearing code. Casting a pointer to an integer *exposes*
+its address, and a pointer rebuilt from an integer may reach any object whose address was exposed;
+`data[-1]` stays inside the same whole allocation. The committee bent the rule around the practice.
+
+Which leaves the honest and slightly uncomfortable summary: the provenance bug you can *demonstrate*
+is the small contrived one, and the realistic idioms mostly do **not** break — today, on this
+compiler. What is dangerous is precisely that "mostly." The rule is still there; the compiler simply
+did not have enough visibility to act on it. Inline one function into another, upgrade the compiler,
+turn on LTO, and the origin it could not see becomes an origin it can — and a program that passed
+every test for years miscompiles on a build-system change that touched none of its logic.
+
+Here is one that already looks like production code, not a puzzle:
+
+```c
+static int head[64];
+static int body[192];
+
+long checksum(const int *p, int n) {   /* p is derived from head[] */
+    long s = 0;
+    for (int i = 0; i < n; i++) s += p[i];
+    return s;
+}
+
+/* "head and body sit back to back, so sum them in one pass": */
+long total = checksum(head, 64 + 192);   /* walks off the end of head[] */
+```
+
+An off-by-count loop over a buffer — the most ordinary bug there is. `checksum` is handed a pointer
+derived from `head` and a length that runs past it, and the intent is obvious: add up both arrays.
+Compile it and see what you get:
+
+```text
+gcc -O0 :  448   # reads all 256 elements, walking off head[] into whatever memory follows (undefined)
+gcc -O2 :  64    # the compiler knows p came from head[64], assumes the read stays inside it,
+                 #   and silently drops 192 of your 256 iterations — no warning
+```
+
+Neither answer is the "sum of both arrays" the author pictured, and the two disagree by optimisation
+level alone. Nothing here casts a pointer, launders it through an integer, or looks unusual; it is a
+loop with the wrong bound, and the compiler's knowledge of *where the pointer came from* turned it
+into two different programs. This is the shape a real provenance bug ships in: not a crash you can
+reproduce on demand, but a correct-looking function with an expiry date set by your toolchain.
+
+That is why this library's answer is not "write provenance-clean code by being careful," which no
+one can do reliably against a rule this subtle. It keeps the raw pointer arithmetic in one small,
+audited place — a view is a pointer *and* a length, a container knows its own extent — so
+"process both buffers as if they were one" is a thing you cannot write by accident.
 
 This is not a language-lawyer curiosity. It is where a great deal of optimisation comes from, and
 it is a class of bug that a debugger cannot show you, because the miscompilation happens before

@@ -11,6 +11,35 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-20] — proven_c_lib-v26.07.20g
+
+The provenance section answers the fair objection — "every example is contrived" — instead of
+dodging it. No library code changed; `src/` and `include/` are identical to v26.07.20f apart from
+the version constants.
+
+### Added
+
+- **An honest section on why the runnable examples look artificial**, because they have to. A
+  compiler only exploits provenance when it can *see* where a pointer came from, and that
+  visibility is exactly what a small example has and a realistic one hides behind a `malloc` or a
+  function call. Every realistic idiom that reconstructs pointers by arithmetic — tagged pointers,
+  XOR linked lists, a `refcount` header reached through `data[-1]`, a `uintptr_t` round trip — was
+  compiled at `-O2`/`-O3` and **all produced the correct answer**, because the model WG14 chose
+  (PNVI-ae-udi, exposed addresses) was designed to keep those idioms working. The dangerous part is
+  that "mostly works": the rule is still in force and only waits for enough visibility.
+
+- **A latent example that looks like production code**, not a puzzle: a `checksum(head, 64 + 192)`
+  with an off-by-count loop that walks a pointer derived from `head[]` past its end. Compiled on the
+  build machine, it prints `448` at `-O0` (reads out of bounds into adjacent memory) and `64` at
+  `-O2` (the compiler knows the pointer came from a 64-element array and silently drops 192 of the
+  256 iterations — no warning). Neither is the sum the author intended, and the two disagree by
+  optimisation level alone. This is the shape a real provenance bug ships in: not a reproducible
+  crash, but a correct-looking function with an expiry date set by the toolchain — and the argument
+  for keeping bounds *with* the data, where "process both buffers as one" cannot be written by
+  accident.
+
+Mirrored in `README-ko.md` in 합니다체.
+
 ## [2026-07-20] — proven_c_lib-v26.07.20f
 
 The provenance section now opens with the shock instead of the definition. No library code changed
