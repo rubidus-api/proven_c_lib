@@ -11,6 +11,30 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-20] — proven_c_lib-v26.07.20f
+
+The provenance section now opens with the shock instead of the definition. No library code changed
+— `src/` and `include/` are identical to v26.07.20e apart from the version constants.
+
+### Changed
+
+- **The first provenance example is now a runnable program that prints its own contradiction.** The
+  previous lead — `int *p = a + 4;` with a comment — asked the reader to take the point on faith and
+  invited the reaction "so what?". It is replaced by a complete program whose `-O2` output is
+  `*p = 11, *q = 2`: two pointers holding a bit-for-bit identical address (checked with `memcmp`),
+  where dereferencing one gives `11` and the other gives `2`. **One address, two values**,
+  deterministically, every run — because the compiler tracks that `p` came from `x` and keeps `y` in
+  a register. Verified on the build machine (GCC 14.2), stable across `-O2` and `-O3`.
+
+- **The section leads with that program and the "two rules" contrast references back to it**, rather
+  than showing the same provenance bug twice. The strict-aliasing example and the
+  `-fno-strict-aliasing` distinguishing table are unchanged.
+
+- The README is honest that GCC *warns* about the `&x + 1` store in the lead example — and
+  miscompiles it anyway, which is more unsettling than a silent one, not less.
+
+Mirrored in `README-ko.md` in 합니다체.
+
 ## [2026-07-20] — proven_c_lib-v26.07.20e
 
 The provenance section is corrected and made honest. No library code changed — `src/` and
