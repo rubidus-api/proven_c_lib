@@ -164,6 +164,35 @@ but the library documents the contract precisely, gives you working comparators 
 degrades to *O(n²)* on the input an attacker chooses. See
 [Chapter 4](manual-04-containers-algorithms.md).
 
+### The bytes have a type, even when you did not choose one
+
+You think of memory as bytes. C's abstract machine does not: it treats memory as *typed*, and
+reading the same bytes through pointers of two different types is undefined behaviour — which the
+compiler is allowed to exploit, silently, only when optimisations are on. This is called **strict
+aliasing**, and it is the trap under every hand-written parser that reads a byte buffer through
+pointers of different widths:
+
+```text
+void *buf = malloc(8);
+uint32_t *w = buf;      /* the same memory, seen as 32-bit — no cast, no warning */
+uint16_t *h = buf;      /* the same memory, seen as 16-bit */
+*w = 0xAAAAAAAAu;
+*h = 0x1234;            /* change the low half */
+printf("%08x\n", *w);   /* wrong to expect aaaa1234: at -O2 this prints aaaaaaaa */
+```
+
+Compiled at `-O0` it prints `aaaa1234`; at `-O2` it prints `aaaaaaaa`, because the compiler assumed
+a `uint16_t` write and a `uint32_t` read cannot touch the same memory and dropped the write. No
+warning is given, and the program passed every test you ran in a debug build. This is the class of
+bug the Linux kernel avoids by compiling with `-fno-strict-aliasing` — a whole flag, for one rule.
+
+**What this library does instead.** Raw memory is `proven_byte_t`, an alias of `unsigned char` —
+the one type the rule explicitly exempts, because the standard lets you inspect any object's bytes
+through it. The ordinary API never quietly reinterprets your bytes as a wider type, so the bug
+above cannot be written through it. (Strict aliasing has a subtler sibling, *provenance*, that the
+library is named after; [Chapter 6 §3](manual-06-execution-and-platform.md) and the project README
+cover it.)
+
 ### What this library is not
 
 It is not a framework, and it does not want to own your `main`. It has no global state to
@@ -178,6 +207,7 @@ system at all — see [freestanding mode](manual-freestanding.md).
 | Format mismatch | `printf` trusts the format string | `{}` with the type taken from the argument | `PROVEN_ARG` at each call |
 | Unclear ownership | `char *` means four different things | Owned and borrowed are different types | Two types instead of one |
 | Hidden allocation | Anything may call `malloc` | Only functions taking an allocator can allocate | The parameter is on the signature |
+| Bytes with a hidden type | Reinterpreting memory through a wider pointer is UB the optimiser exploits | Raw bytes go through `proven_byte_t`, the type the rule exempts | — |
 
 ---
 

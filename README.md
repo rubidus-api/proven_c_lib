@@ -18,7 +18,7 @@ randomness — with ownership and failure visible in every signature.
 one introductory C book, and it is the only document in this repository written to be read rather
 than looked up.
 
-- Version: proven_c_lib-v26.07.20d · Standard: C23 · License: MIT
+- Version: proven_c_lib-v26.07.20e · Standard: C23 · License: MIT
 - Repository: https://github.com/rubidus-api/proven_c_lib
 
 ---
@@ -36,22 +36,125 @@ different objects:
 
 ```c
 int a[4], b[4];
-int *p = a + 4;            /* one past the end of a */
-int *q = b;                /* start of b */
-/* p and q may compare equal at run time. They are still not the same pointer:
-   *p is undefined behaviour, *q is fine. The bits are equal; the provenance is not. */
+int *p = a + 4;   /* legal: C lets you form a pointer one past the last element */
+int *q = b;       /* the start of a different array */
+/* p and q can hold the same address, and even comparing them is allowed. What
+   you may not do is use p to reach b. p carries a's identity, not b's, and the
+   compiler relies on that — it assumes a write through p cannot disturb b. The
+   address coinciding does not make the two pointers interchangeable. */
 ```
 
-This is not a language-lawyer curiosity. It is why the compiler is allowed to assume that a write
-through `p` cannot disturb `b`, which is where a great deal of optimisation comes from — and why a
-program that launders a pointer through an integer can be miscompiled in ways that look like the
-compiler is broken.
+Note what is *not* the problem here. Forming `a + 4` is fine — the standard specifically lets you
+make a pointer one past the end of an array. The subtle part is that `p` and `b` can share an
+address and still not be the same pointer, because `p` remembers it came from `a`.
 
-The formal model is real, active work: ISO WG14's provenance Technical Specification
-([N2577](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n2577.pdf) →
+This is not a language-lawyer curiosity. It is where a great deal of optimisation comes from, and
+it is a class of bug that a debugger cannot show you, because the miscompilation happens before
+the debugger sees anything. The formal model is real, active work: ISO WG14's provenance Technical
+Specification ([N2577](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n2577.pdf) →
 [N3005](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3005.pdf), with the **PNVI-ae-udi** model
 the committee voted for). It is a TS pending publication rather than part of C23 proper, but the
 direction is settled.
+
+### Two rules, not one: strict aliasing and provenance
+
+It is tempting to lump provenance together with its older, more famous sibling — **strict
+aliasing** — as "the compiler being clever." They do share a root cause: C's abstract machine
+models memory more strictly than the hardware does. But they are *separate rules* that answer
+different questions, and, as we will see, the compiler flag that switches one off leaves the other
+fully in force.
+
+| | strict aliasing | provenance |
+|---|---|---|
+| The question it asks | what **type** is stored at this address? | which **object** may this pointer reach? |
+| Age | old — C89/C99 "effective types" | new — WG14 TS (N3005), pending publication |
+| What the compiler assumes | two pointers of incompatible types never refer to the same object | a pointer derived from one object cannot access another |
+| How you trip it | read memory through the wrong type (type punning) | offset or launder a pointer past its object, then use it where another object sits |
+| The blessed escape hatch | access raw bytes through `unsigned char` — this is exactly `proven_byte_t` | keep pointer arithmetic inside one object; don't rebuild pointers from integers |
+
+Both are easy to trip **without a single warning**, and both produce code that is correct at `-O0`
+and wrong at `-O2` — the worst possible failure mode, because it survives every test you ran in a
+debug build. Here is each one, small enough to run yourself.
+
+**Strict aliasing.** A byte buffer read through pointers of two different widths — the shape of
+every hand-written parser and serialiser:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+int main(void) {
+    void *buf = malloc(8);
+    uint32_t *w = buf;      /* the same memory, seen as 32-bit */
+    uint16_t *h = buf;      /* the same memory, seen as 16-bit — no cast, no warning */
+    *w = 0xAAAAAAAAu;
+    *h = 0x1234;            /* change the low half */
+    printf("%08x\n", *w);   /* did that write show up? */
+    free(buf);
+}
+```
+
+```text
+gcc -O0 :  aaaa1234     # the 16-bit write shows
+gcc -O2 :  aaaaaaaa     # the write vanished — the compiler assumed h and w cannot overlap
+```
+
+**Provenance.** No type punning at all — both pointers are `int *` — only the *origin* differs:
+
+```c
+#include <stdio.h>
+#include <string.h>
+int y = 2, x = 1;                        /* likely placed next to each other */
+int main(void) {
+    int *p = &x + 1;                     /* derived from x; address is one past x */
+    int *q = &y;                         /* derived from y */
+    if (memcmp(&p, &q, sizeof p) == 0) { /* the two pointers are bit-for-bit equal */
+        *p = 11;                         /* write to that address */
+        printf("y=%d  *p=%d  *q=%d\n", y, *p, *q);
+    }
+}
+```
+
+```text
+gcc -O1 :  y=11  *p=11  *q=11    # the write reached y
+gcc -O2 :  y=2   *p=11  *q=2     # same address, yet the write did NOT reach y
+```
+
+At `-O2` the write through `p` lands at an address that is bit-for-bit `&y`, `*p` reads back `11`,
+and `y` is still `2`. The compiler knows `p` came from `x`, assumes it cannot touch `y`, and keeps
+`y` in a register — so the same address holds two different values at once.
+
+And the detail that proves these are two rules and not one:
+
+```text
+                     -O2      -O2 -fno-strict-aliasing
+strict-aliasing bug  broken   fixed
+provenance bug       broken   STILL broken   <- this was never aliasing
+```
+
+`-fno-strict-aliasing` is the flag large C projects — the Linux kernel among them — reach for to
+make the first class of bug go away. It does nothing for the second, because provenance is a
+different rule with no such off switch. You cannot opt out of it; you can only avoid tripping it.
+
+That is the argument for the whole library in miniature: two invisible rules, no warnings, wrong
+only under optimisation, and only one of them with an escape flag. The library's answer is to make
+the correct thing the default thing. Raw bytes go through `proven_byte_t`, the one type strict
+aliasing exempts, so the first bug above cannot be written through the ordinary API. Lengths travel
+with pointers, so arithmetic has no reason to wander off the end of an object. Nothing is laundered
+through an integer.
+
+**One honest exception, and it is the reason this library aims where it does.** The intrusive list
+recovers the enclosing object from a pointer to one of its members — the classic `container_of`,
+here `(type *)((proven_byte_t *)ptr - offsetof(type, member))`. That idiom is everywhere real C
+lives, the Linux kernel most of all, and it is precisely the case the strictest readings of the
+object model have never comfortably blessed: a pointer whose origin is the *member* is used to reach
+the *whole struct*. So `proven` does **not** claim strict-provenance purity — it could not, and
+offer intrusive containers at the same time. It defends the settled, universally agreed undefined
+behaviour that every C programmer already respects and that sanitizers actually check, and it treats
+the unsettled frontier — where a dominant, battle-tested technique sits at odds with the strict
+model — honestly, as unsettled. Provenance is the direction the library leans, not a finished
+guarantee it pretends to hold. Getting that boundary right, and being plain about which side a given
+API is on, is itself part of what the project is trying to work out.
 
 ### Why the library is named after it
 

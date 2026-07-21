@@ -4,8 +4,8 @@
 #include <stdint.h>
 
 // include/proven/version.h
-#define PROVEN_VERSION_STRING "proven_c_lib-v26.07.20d"
+#define PROVEN_VERSION_STRING "proven_c_lib-v26.07.20e"
 #define PROVEN_VERSION_NUM    260720
-#define PROVEN_VERSION_SUFFIX "d"
+#define PROVEN_VERSION_SUFFIX "e"
 
 #endif // PROVEN_VERSION_H
