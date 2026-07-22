@@ -24,8 +24,8 @@ REQUIRED_TEXT = {
         "`SPEC.md` as the local current behavior, architecture, and layout contract",
         "`REQUIREMENTS.md`, when present, as the local current accepted requirements",
         "`docs/tests/test-index.md` as a compact process/TDD catalog",
-        "`BACKLOGS.md` for the compact current queue",
-        "`HANDOFF.md` for the current resume packet",
+        "`BACKLOGS.md` is the single compact queue",
+        "`CONTEXT.md` (`## Resume Packet`) is the resume state",
     ],
     "docs/tests/test-index.md": [
         "docs/tests/cases/T001-project-operations.md",
