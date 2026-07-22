@@ -9,7 +9,8 @@ remains in `README.md`, `manual/`, `CHANGELOG.md`, and public headers.
 ## Standard Flow
 
 1. Read `AGENTS.md` and `CONTEXT.md` for current local state.
-   For task selection or resume work, also read `BACKLOGS.md` and `HANDOFF.md`.
+   For task selection or resume work, also read `BACKLOGS.md` and the `## Resume Packet`
+   section of `CONTEXT.md`. `AGENTS.md` holds the single state-file role table.
 2. Identify the smallest source, test, and documentation scope.
 3. Update tests before behavior changes when practical.
 4. Run the narrowest relevant `./nob` command, then broader checks as risk grows.
@@ -25,14 +26,14 @@ remains in `README.md`, `manual/`, `CHANGELOG.md`, and public headers.
 
 ## Document Update Rules
 
-- Update `README.md` for public install, usage, build, API, or project-structure changes.
+- Update `README.md` (English) and `README-ko.md` (Korean) for public install, usage, build, API, or project-structure changes.
 - Update `CHANGELOG.md` for notable public source, test, build, or documentation changes.
 - Update `TEST.md` when verification commands or coverage expectations change.
 - Update `manual/` when public API behavior, parameters, examples, or misuse cases change.
 - Keep `SPEC.md` as the local current behavior, architecture, and layout contract. Do not use it as a chronology or rejected-ideas archive.
 - Keep `REQUIREMENTS.md`, when present, as the local current accepted requirements and constraints. Put requirement history or conflicts in a dedicated history file, not in the current requirements file.
 - Keep `docs/tests/test-index.md` as a compact process/TDD catalog. Detailed cases belong under `docs/tests/cases/`; full product verification remains in root `TEST.md` and executable tests under `tests/`.
-- Keep local planning and handoff notes in ignored files. Use `BACKLOGS.md` for the compact current queue, `HANDOFF.md` for the current resume packet, and `TODO.md` only as legacy detailed backlog input.
+- Keep local planning and resume notes in ignored files: `BACKLOGS.md` is the single compact queue and `CONTEXT.md` (`## Resume Packet`) is the resume state. The tracked, git-visible backlog is `docs/BACKLOG.md`. See the state-file table in `AGENTS.md`.
 
 ## Changelog Rules
 

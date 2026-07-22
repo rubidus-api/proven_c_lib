@@ -11,6 +11,32 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-23] — proven_c_lib-v26.07.23a
+
+Operating-convention cleanup. No library code changed; `src/` and `include/` are identical
+to v26.07.20g apart from the version constants. The change is to the project's own process
+docs, which had accumulated redundancy and one stale claim.
+
+### Changed
+
+- **The release checklist and the G7 gate description now name `README-ko.md` explicitly.**
+  `CHECKLIST.md` and `docs/DOCUMENTING.md` still said to sync "`README.md` (both language
+  halves)" — wording left over from when the README was one bilingual file. The README has
+  since been split into `README.md` (English) and `README-ko.md` (Korean), and the actual
+  gate (`test_docs_version_sync`) already checks them separately; only the prose lagged. It
+  now matches the gate. `docs/operations/README.md` likewise names both READMEs in its
+  document-update rules.
+
+- **The resume-packet model is consolidated.** `docs/operations/README.md` and
+  `scripts/check-docs.py` now describe a single local queue (`BACKLOGS.md`) and a resume
+  packet that lives in `CONTEXT.md`, replacing the previous split across separate handoff
+  and backlog files.
+
+### Removed
+
+- **Stale reference to a retired local file** in `docs/BACKLOG.md` (it named a second
+  gitignored queue that no longer exists).
+
 ## [2026-07-20] — proven_c_lib-v26.07.20g
 
 The provenance section answers the fair objection — "every example is contrived" — instead of

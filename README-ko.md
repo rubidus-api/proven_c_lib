@@ -15,7 +15,7 @@ C 책을 한 권 뗐다고 해 봅시다. 포인터도, `malloc`도, `printf`도
 **처음이라면 [0장](manual-ko/manual-00-start-here-ko.md)부터.** 입문서 한 권 외에는 아무것도
 전제하지 않으며, 이 저장소에서 찾아보는 문서가 아니라 읽으라고 쓴 유일한 문서입니다.
 
-- 버전: proven_c_lib-v26.07.20g · 표준: C23 · 라이선스: MIT
+- 버전: proven_c_lib-v26.07.23a · 표준: C23 · 라이선스: MIT
 - 저장소: https://github.com/rubidus-api/proven_c_lib
 
 ---

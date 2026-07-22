@@ -99,7 +99,7 @@ those is a proposition. So they are gates.
 | **G4** | Every public function is **named in `manual/`**. (The PAL is exempt: it is for porting, not the API a caller programs against.) | `test_docs_manual_symbols` |
 | **G5** | The manual **never documents a function that does not exist**. Writing `proven_x(...)` is a promise the reader can link it. | `test_docs_manual_symbols` |
 | **G6** | Every public function has an `xcv_` **alias**. | `test_docs_alias_completeness` |
-| **G7** | The **version string agrees with itself**: version.h, README (both halves), TEST.md, the manual headings, chapter 1's excerpt, and the CHANGELOG's newest entry. | `test_docs_version_sync` |
+| **G7** | The **version string agrees with itself**: version.h, `README.md` and `README-ko.md`, TEST.md, the manual headings, chapter 1's excerpt, and the CHANGELOG's newest entry. | `test_docs_version_sync` |
 | **G8** | Every registered module section is documented to **depth**: real prose (why, not just what), a reference table, the structures the caller declares, a runnable example, and **at least one counter-example**. | `test_docs_manual_depth` |
 | **G9** | Every **factual claim** the chapters make is **true** — the CRC check value, the standard digest, the refusal that writes nothing, the line that exactly fills the buffer. | `test_docs_manual_claims`, `test_docs_manual_ch08_contracts` |
 

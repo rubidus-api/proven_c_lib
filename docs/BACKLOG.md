@@ -2,11 +2,10 @@
 
 Work that is known, agreed, and not done yet.
 
-This file is **tracked in git**. The repository already had a `BACKLOGS.md` and a
-`TODO.md`, but both are gitignored — a private queue, invisible to anyone reading
-the repository and impossible to reference from a commit, an issue, or a code
-comment. Known work that lives only on one machine is not tracked work; it is
-work that will be rediscovered.
+This file is **tracked in git**. The repository also keeps a local `BACKLOGS.md`, but it
+is gitignored — a private queue, invisible to anyone reading the repository and impossible
+to reference from a commit, an issue, or a code comment. Known work that lives only on one
+machine is not tracked work; it is work that will be rediscovered.
 
 The rule that puts an item here: **fix it now if it is small, register it here if
 it is not.** An item is "not small" when fixing it properly would change more

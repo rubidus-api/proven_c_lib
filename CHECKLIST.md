@@ -7,7 +7,7 @@
 ## Always before committing
 
 - Update `include/proven/version.h` first.
-- Sync the visible version string in `README.md` (both language halves), `TEST.md`, `manual/` (chapter headings and the `version.h` excerpt in chapter 1), and `CHANGELOG.md`.
+- Sync the visible version string in `README.md` (English) and `README-ko.md` (Korean), `TEST.md`, `manual/` and `manual-ko/` (chapter headings and the `version.h` excerpt in chapter 1), and `CHANGELOG.md`.
 - Add a `CHANGELOG.md` entry that explains the change.
 - Keep public examples and help text on `/home/user/work/...` paths only.
 - Do not expose private host paths, share names, user names, or SSH key names in public docs or source comments.
