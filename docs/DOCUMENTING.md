@@ -180,10 +180,10 @@ This is the case that produced the worst defect, so it gets its own list. Deleti
 release.
 
 1. Delete it from the header and the source.
-2. Delete its `xcv_` alias (2.6 will fail otherwise).
+2. Delete its `xcv_` alias (G6 will fail otherwise).
 3. Delete every **signature listing** of it in `manual/`.
 4. Delete or rewrite every **present-tense** description of it.
 5. If the manual explains *why* it is gone, write that in the **past tense** — a historical note
-   is not a promise, and 2.5 only objects to `name(...)` written as a live call.
+   is not a promise, and G5 only objects to `name(...)` written as a live call.
 6. Grep the whole tree, including the examples: `grep -rn "the_name" manual/ README.md docs/`.
 7. `./nob build`.

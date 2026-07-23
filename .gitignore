@@ -11,7 +11,7 @@ coverage/
 *.exe
 nob
 /test_file.txt
-/test_sysio_scanner.txt
+/test_unit_sysio_scanner.txt
 *.tmp
 *.out
 AGENTS.md
@@ -25,7 +25,6 @@ REQUIREMENTS.md
 DECISIONS.md
 LESSONS.md
 TESTS.md
-CHECKLIST.md
 WORKLOG.md
 *.local.md
 .hermes/

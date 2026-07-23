@@ -1,4 +1,4 @@
-# Proven Freestanding Mode (v26.07.23a)
+# Proven Freestanding Mode (v26.07.23b)
 
 **Part VI — Going further. Prerequisites: Parts II–V, and
 [Chapter 6](manual-06-execution-and-platform.md).**
@@ -118,6 +118,9 @@ src/proven/algorithm.c
 src/proven/hash.c
 src/proven/encode.c
 src/proven/random.c
+src/proven/float_decimal.c
+src/proven/float_parse.c
+src/proven/float_format.c
 src/proven/time.c
 src/proven/fmt.c
 src/proven/scan.c
@@ -185,6 +188,8 @@ on every release, not asserted in this table.
 | `encode.h` | Available | Hex and Base64 — pure computation, no OS. |
 | `fmt.h` | Available without float | Current profile defines `PROVEN_FMT_NO_FLOAT`. |
 | `scan.h` | Available | Scanner for memory views. |
+| `float_parse.h` | Available | `proven_strtod`, `proven_parse_double_ascii` and `proven_parse_f64_ascii` all compile here: the decimal-to-binary64 engine is integer-only and needs no libc. The one difference is that the freestanding build does not set `errno` on overflow or underflow — the returned `proven_err_t` carries that instead, which is the value to check on a target with no `errno` at all. This is separate from `fmt.h`'s float **formatting**, which the profile does compile out. |
+| `float_format.h` | Available without `fmt.h` integration | The binary64 formatter is integer-only and compiles, but the current profile defines `PROVEN_FMT_NO_FLOAT`, so `{}` will not render a float. Call the `float_format.h` entry points directly if you need digits on a target where you have decided the code size is worth it. |
 | `time.h` | Limited | Core datetime formatting can compile; real PAL time is excluded. |
 | `heap.h` | Stub | `proven_heap_allocator()` returns an invalid allocator. |
 | `fs.h`, `stream.h`, `mmap.h`, `sysio.h`, `job.h` | Excluded | Require hosted PAL services. |

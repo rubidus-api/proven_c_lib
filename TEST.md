@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.07.23a)
+# proven Test Matrix (v26.07.23b)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -261,7 +261,7 @@ Failure tip: do not delete a regression because it feels narrow. It exists becau
 
 ### `bench-float`
 
-Intent: run the float parse path benchmark executable only and write a dated report. The reports live in maintainer-local `docs/internal/` (kept outside the published repository).
+Intent: run the three benchmark executables — the float parse path benchmark, the mixed-corpus float parse benchmark, and the primitive throughput benchmark — and write a dated report. Despite the name, this mode is not float-only. The reports live in maintainer-local `docs/internal/` (kept outside the published repository).
 
 What it checks:
 
@@ -297,22 +297,22 @@ Failure tip: identify the target name in the log, then check whether the failure
 ## Test catalog
 
 
-The hosted full run currently builds and executes 118 tests. `./nob regression` runs a 27-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 2 benchmarks.
+The hosted full run builds and executes 110 registered tests plus the 22 runnable manual examples — 132 executables in all. `./nob regression` re-runs a 28-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 120 test files: the 110 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-compile smoke tests that only `./nob cross` builds.
 
-These counts are checked against `nob.c` - `tests/test_docs_alias_completeness` exists precisely because a list nobody checks stops being true.
+These counts are checked against `nob.c` by `tests/test_docs_test_catalog`, which also fails the build if a test registered in `nob.c` has no entry in this file. It exists because both had already stopped being true: this catalog claimed 118 tests when the real number was different, and ten registered tests were missing from it entirely.
 
 Tests are named `test_<class>_<subject>`, and the name is the identifier - there are no numbers.
 Numbers rot: this catalog used to run 1..50 with `7a`, `30a`, `30b`, `30c`, `40a` wedged in wherever something new arrived, and five of its entries described files that had been deleted months earlier.
 
 The class says what kind of question the test answers:
 
-- **`unit`** — One module's public API, used the way a caller uses it. These are the tests that say what the library *does*. (59 tests)
+- **`unit`** — One module's public API, used the way a caller uses it. These are the tests that say what the library *does*. (61 tests)
 - **`contract`** — The public invariants: misuse, corrupted structs, exhausted allocators, refused input. These say what the library *refuses to do*, which is the half a caller cannot infer from the happy path. (13 tests)
 - **`regression`** — One test per defect that actually shipped. Each is named for what broke, not for a version or a number, and each was verified to FAIL against the pre-fix source. A regression test that passes before the fix is not a regression test. (19 tests)
 - **`differential`** — Correctness against an independent oracle - the host libc, or a corpus with known-good answers. These catch what a self-written expectation cannot: a wrong belief held consistently by both the code and its test. (4 tests)
-- **`portability`** — Freestanding builds, compile-only cross targets, source-level platform contracts, and the build driver's own standard probe. Most of these cannot be *run* on the host, so they check what can be checked: that the code compiles, links, and keeps its platform branches intact. (8 tests)
-- **`stress`** — Concurrency under a sanitizer, over enough iterations to make a race likely rather than theoretical. (1 tests)
-- **`docs`** — The documentation is checked by the build, not by eye: every public function has an alias and is named in the manual, the manual never documents a function that does not exist, every example the manual prints is a program that compiles and runs, no example drifts from its chapter, and the version string agrees with itself everywhere, every module section carries its intent/reference/structures/example/counter-example, and every factual claim the chapters make is true. These are the **gates** in `docs/DOCUMENTING.md` §2 — each one exists because the thing it forbids already happened. (8 tests)
+- **`portability`** — Freestanding builds, compile-only cross targets, source-level platform contracts, and the build driver's own standard probe. Most of these cannot be *run* on the host, so they check what can be checked: that the code compiles, links, and keeps its platform branches intact. (10 tests)
+- **`stress`** — Concurrency under a sanitizer, over enough iterations to make a race likely rather than theoretical. (1 test)
+- **`docs`** — The documentation is checked by the build, not by eye: every public function has an alias and is named in the manual, the manual never documents a function that does not exist, every example the manual prints is a program that compiles and runs, no example drifts from its chapter, and the version string agrees with itself everywhere, every module section carries its intent/reference/structures/example/counter-example, and every factual claim the chapters make is true. These are the **gates** in `docs/DOCUMENTING.md` §2 — each one exists because the thing it forbids already happened. (9 tests)
 - **`bench`** — Timing, not correctness. A benchmark regression is a signal to investigate; a checksum drift inside one is a correctness failure and does fail the build. (3 tests)
 
 ## Unit tests
@@ -490,6 +490,12 @@ Sub-checks:
 - Every pre-existing spelling still means what it meant.
 
 Failure tip: inspect the spec parser and `render_integer` / the float case in `src/proven/fmt.c`.
+
+### `tests/test_unit_fmt_scientific` — the `{:e}` scientific float form
+
+Intent: verify `{:e}` renders always-scientific notation (mantissa, default six fractional digits, signed two-digit-minimum exponent, half-to-even rounding) digit-for-digit like `printf %e`, that `{:.Ne}` honours a chosen precision, that it forces scientific where `{:f}`/`{:g}` would not, and that `{:e}` on a non-float is refused.
+
+Failure tip: inspect the `{:e}` branch in `src/proven/fmt.c` and `PROVEN_FLOAT_FORMAT_MODE_SCIENTIFIC` in `float_format.c`. Every expected value is exactly `printf %e`.
 
 ### `tests/test_unit_fmt_fastpath` — formatter truncation comparison
 
@@ -881,6 +887,12 @@ Sub-checks:
 
 Failure tip: inspect `platform/proven_sys_time.c` for clock conversion and `src/proven/fmt.c` for datetime formatting. Timing failures can be caused by a broken clock source or by assuming exact scheduling latency.
 
+### `tests/test_unit_time_fmt_u16_parity` — `u16` matches `u8` across the whole `fmt.h` spec grammar
+
+Intent: verify `proven_time_u16_fmt` produces the same text as `proven_time_u8_fmt` (widened to code units) for every field and every fill/align/width spec — right-align, centre, left-align, custom fill — on numeric AND named fields, plus literals and escaping, so no spec is silently dropped.
+
+Failure tip: inspect `proven_time_u16_fmt` in `src/proven/time.c`. It renders through the u8 path (which delegates each field to the `fmt.h` spec engine) and widens the result, rather than hand-rolling a u16 parser that recognised only `:0>N`.
+
 ### `tests/test_unit_u16str` — U16 strings
 
 Intent: verify optional UTF-16/code-unit string support and its append policies.
@@ -1002,6 +1014,12 @@ Intent: verify proven_u8str_borrow/_reset: fixed-capacity ops and fmt work, grow
 
 Failure tip: inspect proven_u8str_borrow/_reset and the borrowed-flag guards in reserve/append_grow/replace_at_grow/destroy.
 
+### `tests/test_unit_public_surface_gaps` — the public functions nothing had ever called
+
+Intent: exercise the shipped, documented public API that no test touched — `proven_fs_symlink` (creation, resolution, stat-follows, refusal to clobber), the bounds-checked mem slices (including `offset+size` overflow), the formatter's caller-supplied-scratch path, the mutable map/array lookups (a write through `get_mut` must be visible), `linear_search` on an UNSORTED array, `proven_u16str_create_from_view` (sealed at the right unit index), and the standard-stream bridges that shipped with only their siblings covered.
+
+Failure tip: the gap list was found by diffing every `proven_*` symbol in `include/proven` against every one named in `tests/` or `manual/examples/`. Untested public API is where bugs live, because nothing has ever disagreed with it.
+
 ## Contract and hardening tests
 
 The public invariants: misuse, corrupted structs, exhausted allocators, refused input. These say what the library *refuses to do*, which is the half a caller cannot infer from the happy path.
@@ -1046,6 +1064,12 @@ Sub-checks:
 - Checks extremely large padding specs for safe overflow handling.
 
 Failure tip: inspect `src/proven/fmt.c`. Track `written`, `required`, and destination length separately. Atomic failure must not modify the destination.
+
+### `tests/test_contract_fmt_atomic` — the fixed-capacity format is atomic on failure
+
+Intent: verify a failed fixed-capacity format leaves the string byte-for-byte as it was — after an overflow, after a format error discovered halfway through the output, and after an argument-count error — and that it still reports how many bytes it needed.
+
+Failure tip: inspect the single-pass branch of `proven_u8str_fmt_internal` in `src/proven/fmt.c`. It writes as it goes, so atomicity rests on the rollback restoring `internal.len` and resealing the NUL.
 
 ### `tests/test_contract_map_hardening` — map borrowed-key hardening
 
@@ -1153,6 +1177,12 @@ Sub-checks:
 
 Failure tip: inspect the buffer-full branch of `proven_reader_read_line` in `src/proven/stream.c`, and the `peek` / `has_peek` lookahead on `proven_reader_buffered_t`. The looked-at byte belongs to the stream: it is stashed, not dropped.
 
+### `tests/test_regression_read_line_peek_eof` — a stream byte stranded after a too-long line is not lost
+
+Intent: verify that after `proven_reader_read_line` reports `OUT_OF_BOUNDS` (stashing one lookahead byte), a following raw `proven_reader_read` reaches that byte instead of returning a spurious EOF — so a read-to-EOF loop does not silently lose the byte peeked past the over-long line.
+
+Failure tip: inspect `reader_buffered_fill` in `src/proven/stream.c`. It must report whether it made the buffer non-empty (a re-inserted peek byte is progress), not just whether the source handed over new bytes this call. `return r.value > 0` alone stranded the peek at EOF.
+
 ### `tests/test_regression_float_exact_pow5` — the exact float fallback uses an exact power of five
 
 Intent: verify an exact halfway value in the `56..350` exponent window breaks to even, and that values just below and just above a rounding boundary there land on the correct double.
@@ -1160,6 +1190,12 @@ Intent: verify an exact halfway value in the `56..350` exponent window breaks to
 Note: the exact big-integer tier is the one that makes "correctly rounded, ties-to-even, bit-identical to a correct `strtod`" true. It built `5^q` above the exact table by shifting a **rounded** Eisel-Lemire table entry, and `5^q` is odd, so the shift was never exact. A differential run against glibc found 2,923 misrounded values — all of them exact ties. The expectations here were verified with exact rational arithmetic, not against a host `strtod`, so the test states what is true rather than what this machine agrees with.
 
 Failure tip: inspect `proven_float_bigint_build_pow5_cached` in `src/proven/float_decimal.c`.
+
+### `tests/test_regression_scanner_float_split` — a float split across the scanner buffer
+
+Intent: verify a float whose exponent, sign, or mantissa lands on the buffered scanner's refill boundary still scans to its exact value (not a mantissa-only truncation, not a dropped sign that desyncs the stream), across every buffer size, and that genuine garbage is still an error rather than an endless refill.
+
+Failure tip: inspect `proven_scan_f64` in `src/proven/scan.c`. It must flag `needs_more` both when a valid float might still grow and when a FAILED parse left only a float prefix. Found by a fmt → file → scanner → float round-trip.
 
 ### `tests/test_regression_scanner_short_read` — the scanner over a pipe
 
@@ -1192,6 +1228,12 @@ Intent: verify `proven_fs_walk` reports every entry once in pre-order with the r
 Note: this test was written **from the contract, before the implementation existed** — the first feature under the rule in `docs/TESTING.md` §5.1 — and it landed red, in its own commit. It earned its keep immediately: it found the first draft of the contract ("follow symlinked directories, but stop at a cycle") quietly walking all of `/tmp`, and it found the implementation writing a NUL into the middle of a path view the caller was still holding. Neither would have been asked about by a test written afterwards to confirm code that already looked right.
 
 Failure tip: inspect `proven_fs_walk_open/_next/_close` in `src/proven/fs.c`.
+
+### `tests/test_regression_fs_walk_errors` — the walk's error branches and TOCTOU safety
+
+Intent: verify a `readdir()` that fails mid-directory is reported with the last path component as the name and the directory's own depth (not its children's), and that a directory swapped for a symlink at the moment of descent is not followed out of the tree.
+
+Failure tip: inspect the readdir-failure branch of `proven_fs_walk_next` and the fd-relative, `O_NOFOLLOW` descent (`proven_sys_fs_dir_open_at`). Both defects were found by the standing audit and are pinned here against the same fault injection.
 
 ### `tests/test_regression_fs_perms_and_types` — filesystem permissions and entry types
 
@@ -1297,6 +1339,18 @@ Sub-checks:
 Note: this suite counts comparisons, not wall-clock time. A timing threshold is a flaky test on a shared machine; the comparison count is exactly what blew up.
 
 Failure tip: inspect the partition in `src/proven/algorithm.c`. Equal elements must be collected into a run that is final and never recursed into.
+
+### `tests/test_regression_time_fmt_neg_year` — `u8` and `u16` agree on zero-filled negative years
+
+Intent: verify `proven_time_u8_fmt` and `proven_time_u16_fmt` render the same string for a zero-filled negative year — `{year:0>4}` of `-44` is `"-044"` in both, with the sign counted toward the field width like `printf %0Nd` — and that positive years still agree.
+
+Failure tip: inspect `proven_time_u16_fmt` in `src/proven/time.c`. It delegates to the u8 path and widens, so the sign counts toward the pad width. The old hand-rolled u16 path padded to full width THEN prepended the sign, one column wider than the fmt.h-based u8 path.
+
+### `tests/test_regression_base64_decoded_size` — Base64 decode sizing round-trips its own output
+
+Intent: verify `proven_base64_decoded_size` is an upper bound for UNPADDED input too (so the library can decode its own base64url output into a `decoded_size()`-sized buffer), and that `proven_base64_decode` / `proven_hex_decode` refuse a `{out=NULL, out_cap>0}` argument with `INVALID_ARG` rather than storing through NULL, matching the encoders.
+
+Failure tip: inspect `proven_base64_decoded_size` (`(n+3)/4*3`, not `(n/4)*3`) and the NULL-out guards in `src/proven/encode.c`. Found by the standing audit; the unit test missed the sizing by using one oversized buffer.
 
 ### `tests/test_regression_v26_05` — v26.05 regressions
 
@@ -1417,6 +1471,12 @@ Sub-checks:
 - Writing a name as a **call** — `proven_x(...)` — is what counts as claiming it exists. A family wildcard (`proven_fs_*`) is not a claim, and a past-tense historical note about a deleted function is not one either.
 
 Failure tip: the name is printed. It is either a function you added without documenting, or one the manual promises and the linker will refuse. See `docs/DOCUMENTING.md`.
+
+### `tests/test_docs_test_catalog` — the test catalog matches the build
+
+Intent: verify every test registered in `nob.c` has an entry in this file, and that this file carries exactly one entry per `tests/test_*.c` — no test undocumented, no entry describing a deleted file.
+
+Failure tip: a failure names the test. Add a `### \`tests/NAME\`` section under its class heading here, or remove the entry whose file is gone. Ten registered tests once had no entry at all, and the counts above named numbers that matched neither `nob.c` nor the tree, because nothing compared them.
 
 ### `tests/test_docs_version_sync` — the version string agrees with itself everywhere
 
@@ -1638,12 +1698,19 @@ Failure tip: inspect only freestanding-safe modules first: memory, arena, pool w
 
 ## Benchmarks
 
-`./nob bench-float` runs:
+`./nob bench-float` runs all three benchmarks — the name is historical; it is not float-only:
 
+- `tests/test_bench_primitives` - times the hashes, the encoders, and the two random generators.
 - `tests/test_bench_float_parse_paths` - times the shared float parser, its wrapper, and the host `strtod` on path-oriented decimal corpora, and records dated output.
 - `tests/test_bench_float_parse` - times the decimal parser against the host `strtod` on a mixed corpus. Like the round-trip test above, this file existed but was never registered; it is registered now.
 
 Benchmarks are not correctness gates. A timing regression is a signal to investigate, not a build failure; a checksum drift is a correctness signal and must be.
+
+### `tests/test_bench_primitives` — primitive throughput benchmark
+
+Intent: time the hashes (FNV-1a, CRC-32, SipHash-2-4, SHA-256), the encoders (hex, Base64), and the two random generators (xoshiro256\*\*, ChaCha20) over a fixed buffer, folding each output into a checksum so the work is not optimised away.
+
+Failure tip: if a checksum drifts the backend changed behaviour; if a timing regresses, inspect the module named by the backend label. See `docs/primitives-benchmark.md`.
 
 ### `tests/test_bench_float_parse_paths` — float parse path benchmark
 

@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v26.07.23a)
+# Chapter 8: Formatting and Scanning (v26.07.23b)
 
 **Part IV — Text in and out. Prerequisite: [Chapter 3](manual-03-strings-text.md) §3–§4.**
 **After this chapter** you can format any value, teach the formatter a type of your own, parse
@@ -859,6 +859,13 @@ thousand syscalls, which is roughly two orders of magnitude more expensive than 
 itself. `printf` hides this behind a buffer that libc flushes for you; this library does not
 buffer behind your back, because a buffer you did not ask for is a buffer that surprises you at
 exit, on a crash, or when two writers interleave.
+
+**One allocation caveat.** The line is formatted into a 512-byte stack buffer, so a typical line
+costs zero allocations. A line that does *not* fit falls back to the global heap for that call
+rather than being refused — refusing to print something because it is long would be worse. This is
+the one place in the library where a call with no allocator parameter can still allocate, and it is
+bounded to the over-long case. If you need the guarantee that nothing allocates, format into your
+own buffer and write that.
 
 When output volume matters, take a buffered writer from `proven_sysio_stdout_buffered` and format
 into that — same argument rules, one syscall per flush instead of one per line.

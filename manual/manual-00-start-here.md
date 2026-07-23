@@ -206,7 +206,7 @@ system at all — see [freestanding mode](manual-freestanding.md).
 | Unchecked failure | `NULL` returns and `errno` | Errors returned as values, `[[nodiscard]]` on the ones you must not drop | More `if`s |
 | Format mismatch | `printf` trusts the format string | `{}` with the type taken from the argument | `PROVEN_ARG` at each call |
 | Unclear ownership | `char *` means four different things | Owned and borrowed are different types | Two types instead of one |
-| Hidden allocation | Anything may call `malloc` | Only functions taking an allocator can allocate | The parameter is on the signature |
+| Hidden allocation | Anything may call `malloc` | Only functions taking an allocator can allocate (one bounded exception: `proven_println` on an over-long line) | The parameter is on the signature |
 | Bytes with a hidden type | Reinterpreting memory through a wider pointer is UB the optimiser exploits | Raw bytes go through `proven_byte_t`, the type the rule exempts | — |
 
 ---

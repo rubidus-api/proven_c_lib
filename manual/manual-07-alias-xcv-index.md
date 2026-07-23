@@ -1,7 +1,7 @@
 # Appendix A: `alias_xcv.h` Alias Index (Chapter 7)
 
 **This is a lookup table, not reading material.** It is the one file in the manual with no prose
-to work through: 400-odd rows mapping every `xcv_` short name to its canonical `proven_` name. Skip
+to work through: 500-odd rows mapping every `xcv_` short name to its canonical `proven_` name. Skip
 it on a first read and come back when you meet an `xcv_` spelling you do not recognise, or when
 you are deciding whether to adopt the short names in your own code.
 
@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-416 aliases, one per public name. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias, so this list cannot quietly fall behind the header again.
+501 aliases: 375 lowercase `xcv_` function names and 126 uppercase `XCV_` macro names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix — the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -66,9 +66,9 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_ERR_INVALID_ENCODING` | `PROVEN_ERR_INVALID_ENCODING` |
 | `XCV_ERR_INVALID_STATE` | `PROVEN_ERR_INVALID_STATE` |
 | `XCV_ERR_IO` | `PROVEN_ERR_IO` |
-| `XCV_ERR_NEED_MORE` | `PROVEN_ERR_NEED_MORE` |
 | `XCV_ERR_NOMEM` | `PROVEN_ERR_NOMEM` |
 | `XCV_ERR_NOT_FOUND` | `PROVEN_ERR_NOT_FOUND` |
+| `XCV_ERR_NEED_MORE` | `PROVEN_ERR_NEED_MORE` |
 | `XCV_ERR_OUT_OF_BOUNDS` | `PROVEN_ERR_OUT_OF_BOUNDS` |
 | `XCV_ERR_OVERFLOW` | `PROVEN_ERR_OVERFLOW` |
 | `XCV_ERR_PERMISSION` | `PROVEN_ERR_PERMISSION` |
@@ -118,9 +118,9 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_MAP_REMOVE_U8_BORROWED` | `PROVEN_MAP_REMOVE_U8_BORROWED` |
 | `XCV_MAP_REMOVE_U8_OWNED` | `PROVEN_MAP_REMOVE_U8_OWNED` |
 | `XCV_MAP_SET_INT` | `PROVEN_MAP_SET_INT` |
+| `XCV_MAP_SET_WITH_SCRATCH_INT` | `PROVEN_MAP_SET_WITH_SCRATCH_INT` |
 | `XCV_MAP_SET_U8_BORROWED` | `PROVEN_MAP_SET_U8_BORROWED` |
 | `XCV_MAP_SET_U8_OWNED` | `PROVEN_MAP_SET_U8_OWNED` |
-| `XCV_MAP_SET_WITH_SCRATCH_INT` | `PROVEN_MAP_SET_WITH_SCRATCH_INT` |
 | `XCV_MAP_SET_WITH_SCRATCH_U8_BORROWED` | `PROVEN_MAP_SET_WITH_SCRATCH_U8_BORROWED` |
 | `XCV_MAX_ALIGN` | `PROVEN_MAX_ALIGN` |
 | `XCV_MMAP_EXEC` | `PROVEN_MMAP_EXEC` |
@@ -171,8 +171,11 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_arena_realloc_trait` | `proven_arena_realloc_trait` |
 | `xcv_arena_reset` | `proven_arena_reset` |
 | `xcv_arena_t` | `proven_arena_t` |
+| `xcv_arg_bool` | `proven_arg_bool` |
+| `xcv_arg_char` | `proven_arg_char` |
 | `xcv_arg_cstr` | `proven_arg_cstr` |
 | `xcv_arg_cstr_n` | `proven_arg_cstr_n` |
+| `xcv_arg_custom` | `proven_arg_custom` |
 | `xcv_arg_datetime` | `proven_arg_datetime` |
 | `xcv_arg_f64` | `proven_arg_f64` |
 | `xcv_arg_fn` | `proven_arg_fn` |
@@ -207,6 +210,8 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_c_lib` | `proven_c_lib` |
 | `xcv_compare_fn_t` | `proven_compare_fn_t` |
 | `xcv_coro_t` | `proven_coro_t` |
+| `xcv_crc32` | `proven_crc32` |
+| `xcv_crc32_update` | `proven_crc32_update` |
 | `xcv_cstr_len` | `proven_cstr_len` |
 | `xcv_datetime_t` | `proven_datetime_t` |
 | `xcv_env_get` | `proven_env_get` |
@@ -217,11 +222,18 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_float_format_f32_policy` | `proven_float_format_f32_policy` |
 | `xcv_float_format_f64_policy` | `proven_float_format_f64_policy` |
 | `xcv_float_format_options_fixed_default` | `proven_float_format_options_fixed_default` |
+| `xcv_float_format_options_scientific` | `proven_float_format_options_scientific` |
 | `xcv_float_format_options_shortest` | `proven_float_format_options_shortest` |
+| `xcv_fmt_put` | `proven_fmt_put` |
+| `xcv_fmt_to_writer_impl` | `proven_fmt_to_writer_impl` |
+| `xcv_fprint` | `proven_fprint` |
 | `xcv_free_fn_t` | `proven_free_fn_t` |
 | `xcv_fs_chmod` | `proven_fs_chmod` |
 | `xcv_fs_close` | `proven_fs_close` |
 | `xcv_fs_copy` | `proven_fs_copy` |
+| `xcv_fs_dir_close` | `proven_fs_dir_close` |
+| `xcv_fs_dir_next` | `proven_fs_dir_next` |
+| `xcv_fs_dir_open` | `proven_fs_dir_open` |
 | `xcv_fs_entry_t` | `proven_fs_entry_t` |
 | `xcv_fs_handle_t` | `proven_fs_handle_t` |
 | `xcv_fs_is_absolute` | `proven_fs_is_absolute` |
@@ -234,21 +246,43 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_fs_mode_t` | `proven_fs_mode_t` |
 | `xcv_fs_open` | `proven_fs_open` |
 | `xcv_fs_perms_t` | `proven_fs_perms_t` |
+| `xcv_fs_pread` | `proven_fs_pread` |
+| `xcv_fs_pwrite` | `proven_fs_pwrite` |
 | `xcv_fs_read` | `proven_fs_read` |
 | `xcv_fs_read_all` | `proven_fs_read_all` |
 | `xcv_fs_read_all_u8str` | `proven_fs_read_all_u8str` |
 | `xcv_fs_remove` | `proven_fs_remove` |
 | `xcv_fs_rename` | `proven_fs_rename` |
 | `xcv_fs_rmdir` | `proven_fs_rmdir` |
+| `xcv_fs_seek` | `proven_fs_seek` |
 | `xcv_fs_size` | `proven_fs_size` |
 | `xcv_fs_stat` | `proven_fs_stat` |
 | `xcv_fs_stat_t` | `proven_fs_stat_t` |
 | `xcv_fs_symlink` | `proven_fs_symlink` |
+| `xcv_fs_sync` | `proven_fs_sync` |
+| `xcv_fs_sync_dir` | `proven_fs_sync_dir` |
+| `xcv_fs_tell` | `proven_fs_tell` |
+| `xcv_fs_truncate` | `proven_fs_truncate` |
 | `xcv_fs_type_t` | `proven_fs_type_t` |
+| `xcv_fs_walk_close` | `proven_fs_walk_close` |
+| `xcv_fs_walk_next` | `proven_fs_walk_next` |
+| `xcv_fs_walk_open` | `proven_fs_walk_open` |
 | `xcv_fs_write` | `proven_fs_write` |
 | `xcv_fs_write_all` | `proven_fs_write_all` |
 | `xcv_fs_write_file` | `proven_fs_write_file` |
 | `xcv_fs_write_file_atomic` | `proven_fs_write_file_atomic` |
+| `xcv_fs_write_file_durable` | `proven_fs_write_file_durable` |
+| `xcv_hash_bytes` | `proven_hash_bytes` |
+| `xcv_hash_keyed` | `proven_hash_keyed` |
+| `xcv_base64_decode` | `proven_base64_decode` |
+| `xcv_base64_decoded_size` | `proven_base64_decoded_size` |
+| `xcv_base64_encode` | `proven_base64_encode` |
+| `xcv_base64_encoded_size` | `proven_base64_encoded_size` |
+| `xcv_base64url_encode` | `proven_base64url_encode` |
+| `xcv_hex_decode` | `proven_hex_decode` |
+| `xcv_hex_decoded_size` | `proven_hex_decoded_size` |
+| `xcv_hex_encode` | `proven_hex_encode` |
+| `xcv_hex_encoded_size` | `proven_hex_encoded_size` |
 | `xcv_heap_allocator` | `proven_heap_allocator` |
 | `xcv_i16` | `proven_i16` |
 | `xcv_i32` | `proven_i32` |
@@ -274,10 +308,12 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_list_remove` | `proven_list_remove` |
 | `xcv_list_t` | `proven_list_t` |
 | `xcv_map_create` | `proven_map_create` |
+| `xcv_map_create_trusted` | `proven_map_create_trusted` |
 | `xcv_map_create_with_capacity` | `proven_map_create_with_capacity` |
 | `xcv_map_destroy` | `proven_map_destroy` |
 | `xcv_map_get` | `proven_map_get` |
 | `xcv_map_get_mut` | `proven_map_get_mut` |
+| `xcv_map_hash` | `proven_map_hash` |
 | `xcv_map_is_valid` | `proven_map_is_valid` |
 | `xcv_map_key_t` | `proven_map_key_t` |
 | `xcv_map_remove` | `proven_map_remove` |
@@ -317,7 +353,32 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_print` | `proven_print` |
 | `xcv_println` | `proven_println` |
 | `xcv_ptrdiff_t` | `proven_ptrdiff_t` |
+| `xcv_chacha_rng` | `proven_chacha_rng` |
+| `xcv_chacha_rng_fill` | `proven_chacha_rng_fill` |
+| `xcv_chacha_rng_next` | `proven_chacha_rng_next` |
+| `xcv_chacha_rng_seed` | `proven_chacha_rng_seed` |
+| `xcv_chacha_rng_seed_from_entropy` | `proven_chacha_rng_seed_from_entropy` |
+| `xcv_entropy_fn` | `proven_entropy_fn` |
+| `xcv_random_bytes` | `proven_random_bytes` |
+| `xcv_random_set_source` | `proven_random_set_source` |
+| `xcv_random_u64` | `proven_random_u64` |
+| `xcv_rng_below` | `proven_rng_below` |
+| `xcv_rng_f64` | `proven_rng_f64` |
+| `xcv_rng_fill` | `proven_rng_fill` |
+| `xcv_rng_is_valid` | `proven_rng_is_valid` |
+| `xcv_rng_range` | `proven_rng_range` |
+| `xcv_rng_shuffle` | `proven_rng_shuffle` |
+| `xcv_rng_u64` | `proven_rng_u64` |
+| `xcv_xoshiro256ss_next` | `proven_xoshiro256ss_next` |
+| `xcv_xoshiro256ss_rng` | `proven_xoshiro256ss_rng` |
+| `xcv_xoshiro256ss_seed` | `proven_xoshiro256ss_seed` |
 | `xcv_range_contains_ptr` | `proven_range_contains_ptr` |
+| `xcv_reader_buffered` | `proven_reader_buffered` |
+| `xcv_reader_from_file` | `proven_reader_from_file` |
+| `xcv_reader_from_view` | `proven_reader_from_view` |
+| `xcv_reader_is_valid` | `proven_reader_is_valid` |
+| `xcv_reader_read` | `proven_reader_read` |
+| `xcv_reader_read_line` | `proven_reader_read_line` |
 | `xcv_realloc_fn_t` | `proven_realloc_fn_t` |
 | `xcv_result_array_t` | `proven_result_array_t` |
 | `xcv_result_buf_t` | `proven_result_buf_t` |
@@ -375,8 +436,24 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_scan_t` | `proven_scan_t` |
 | `xcv_scan_u64` | `proven_scan_u64` |
 | `xcv_set_panic_handler` | `proven_set_panic_handler` |
+| `xcv_sha256` | `proven_sha256` |
+| `xcv_sha256_final` | `proven_sha256_final` |
+| `xcv_sha256_init` | `proven_sha256_init` |
+| `xcv_sha256_to_hex` | `proven_sha256_to_hex` |
+| `xcv_sha256_update` | `proven_sha256_update` |
 | `xcv_size_t` | `proven_size_t` |
 | `xcv_strtod` | `proven_strtod` |
+| `xcv_sysio_file_buffered` | `proven_sysio_file_buffered` |
+| `xcv_sysio_lines_open` | `proven_sysio_lines_open` |
+| `xcv_sysio_lines_t` | `proven_sysio_lines_t` |
+| `xcv_sysio_out_t` | `proven_sysio_out_t` |
+| `xcv_sysio_read_line` | `proven_sysio_read_line` |
+| `xcv_sysio_std_t` | `proven_sysio_std_t` |
+| `xcv_sysio_stderr_writer` | `proven_sysio_stderr_writer` |
+| `xcv_sysio_stdin_lines` | `proven_sysio_stdin_lines` |
+| `xcv_sysio_stdin_reader` | `proven_sysio_stdin_reader` |
+| `xcv_sysio_stdout_buffered` | `proven_sysio_stdout_buffered` |
+| `xcv_sysio_stdout_writer` | `proven_sysio_stdout_writer` |
 | `xcv_sysio_print_impl` | `proven_sysio_print_impl` |
 | `xcv_sysio_scan_chunk_impl` | `proven_sysio_scan_chunk_impl` |
 | `xcv_sysio_scanner_deinit` | `proven_sysio_scanner_deinit` |
@@ -444,28 +521,12 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_u8str_view_to_cstr` | `proven_u8str_view_to_cstr` |
 | `xcv_uintptr_align_up` | `proven_uintptr_align_up` |
 | `xcv_uintptr_t` | `proven_uintptr_t` |
-| `xcv_chacha_rng` | `proven_chacha_rng` |
-| `xcv_chacha_rng_fill` | `proven_chacha_rng_fill` |
-| `xcv_chacha_rng_next` | `proven_chacha_rng_next` |
-| `xcv_chacha_rng_seed` | `proven_chacha_rng_seed` |
-| `xcv_chacha_rng_seed_from_entropy` | `proven_chacha_rng_seed_from_entropy` |
-| `xcv_rng_below` | `proven_rng_below` |
-| `xcv_rng_f64` | `proven_rng_f64` |
-| `xcv_rng_fill` | `proven_rng_fill` |
-| `xcv_rng_is_valid` | `proven_rng_is_valid` |
-| `xcv_rng_range` | `proven_rng_range` |
-| `xcv_rng_shuffle` | `proven_rng_shuffle` |
-| `xcv_rng_u64` | `proven_rng_u64` |
-| `xcv_sysio_file_buffered` | `proven_sysio_file_buffered` |
-| `xcv_sysio_lines_open` | `proven_sysio_lines_open` |
-| `xcv_sysio_read_line` | `proven_sysio_read_line` |
-| `xcv_sysio_stderr_writer` | `proven_sysio_stderr_writer` |
-| `xcv_sysio_stdin_lines` | `proven_sysio_stdin_lines` |
-| `xcv_sysio_stdin_reader` | `proven_sysio_stdin_reader` |
-| `xcv_sysio_stdout_buffered` | `proven_sysio_stdout_buffered` |
-| `xcv_sysio_stdout_writer` | `proven_sysio_stdout_writer` |
-| `xcv_xoshiro256ss_next` | `proven_xoshiro256ss_next` |
-| `xcv_xoshiro256ss_rng` | `proven_xoshiro256ss_rng` |
-| `xcv_xoshiro256ss_seed` | `proven_xoshiro256ss_seed` |
-| `xcv_entropy_fn` | `proven_entropy_fn` |
-| `xcv_random_set_source` | `proven_random_set_source` |
+| `xcv_writer_buffered` | `proven_writer_buffered` |
+| `xcv_writer_flush` | `proven_writer_flush` |
+| `xcv_writer_from_buffer` | `proven_writer_from_buffer` |
+| `xcv_writer_from_file` | `proven_writer_from_file` |
+| `xcv_writer_from_u8str` | `proven_writer_from_u8str` |
+| `xcv_writer_is_valid` | `proven_writer_is_valid` |
+| `xcv_writer_write` | `proven_writer_write` |
+| `xcv_writer_write_partial` | `proven_writer_write_partial` |
+| `xcv_writer_write_str` | `proven_writer_write_str` |

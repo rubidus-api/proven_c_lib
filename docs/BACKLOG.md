@@ -42,8 +42,8 @@ work; none of them changes library code.
 
 | | before | after |
 |---|---:|---:|
-| English manual | 8,004 lines | **10,192** |
-| Korean mirror | 8,310 lines | **9,913** |
+| English manual | 8,004 lines | **10,211** |
+| Korean mirror | 8,310 lines | **9,939** |
 | Sections meeting the depth gate's prose floor | 30/88 (34%) | **67/98 (68%)** |
 | Sections registered in that gate | 7 | **26** |
 | Runnable examples | 18 | **22** |

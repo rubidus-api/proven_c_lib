@@ -1,4 +1,4 @@
-# Proven C 라이브러리 완전 매뉴얼 (v26.07.23a)
+# Proven C 라이브러리 완전 매뉴얼 (v26.07.23b)
 
 > 이 문서는 영문 매뉴얼([`manual/manual.md`](../manual/manual.md))의 한국어 번역본입니다. 코드와 API 계약을 빌드가 검증하는 정본은 영문 매뉴얼이며, 이 한국어본은 그 미러입니다. 두 문서가 어긋나면 영문본이 기준입니다.
 
@@ -39,6 +39,28 @@ libc 대체품이 아닙니다. allocator 기반 메모리 도구, 바이트 vie
 - 빌드 시스템은 저장소에 체크인된 단일 `nob.c` 하나이며, 테스트는 평범한 C 실행 파일입니다.
 
 ## 2. 빌드와 include 모델
+
+### 설치할 것이 없습니다
+
+이 라이브러리에는 `configure`도, CMake도, 받아올 패키지도, 어딘가에 놓아야 할 공유 오브젝트도
+없습니다. 그냥 C 소스입니다. 여러분의 파일과 나란히 놓고 프로그램에 함께 컴파일하면 됩니다.
+
+이는 의도한 선택이고, 대가가 있습니다. 시스템 패키지를 얻지 못하고, 업데이트는 버전 제약을 올리는
+것이 아니라 새 소스를 받아오는 일이 됩니다. 대신 얻는 것은 이렇습니다. 라이브러리가 지금 보고 있는
+것과 다른 버전일 수 없고, 여러분이 고르지 않은 빌드 플래그를 주워올 수 없으며, 배포판이 다른 옵션으로
+빌드했다는 이유로 링크에 실패할 수 없습니다. hosted 시스템 *과* 베어메탈 양쪽에서 돌아가야 하는
+라이브러리에게 "프로그램과 함께 컴파일한다"는 양쪽 모두에서 통하는 유일한 모델입니다.
+
+중요한 디렉터리는 둘입니다. `src/proven/`은 이식 가능한 라이브러리 본체로, 어디에서도 OS를 호출하지
+않습니다. `platform/`은 시스템 호출을 하는 얇은 계층이며, 새 타깃이 교체해야 하는 유일한 부분입니다.
+freestanding 빌드는 hosted 파일들을 그냥 빼고 빌드합니다. [freestanding
+가이드](manual-freestanding-ko.md)를 보십시오.
+
+빌드 드라이버 `nob.c`는 빌드 시스템이 아니라 C 프로그램이며, 여기의 다른 모든 것과 똑같은 방식으로
+컴파일합니다. 저장소에 함께 들어 있으므로 부트스트랩 단계도, 따로 설치할 버전도 없습니다.
+
+**C23 컴파일러가 필요합니다** — GCC 13+, Clang 16+, 또는 최근 MSVC. 드라이버가 `-std=c23`을 시험해
+보고, 아직 과도기 철자를 쓰는 컴파일러에는 `-std=c2x`로 물러납니다.
 
 hosted 테스트 스위트를 빌드하고 실행:
 
@@ -236,6 +258,39 @@ proven_writer_t w = proven_sysio_stdout_buffered(&out,
 
 ## 5. 연산 동작 클래스
 
+### 한 연산, 세 가지 정직한 대답
+
+"이 텍스트를 저 문자열에 덧붙여라"는 텍스트가 들어가지 않을 때 옹호할 만한 동작이 셋 있고, 대부분의
+라이브러리는 그중 하나를 골라 그 선택을 숨깁니다. 이 라이브러리는 셋을 모두 드러내고, 각각에 다른
+이름을 주며, 그 차이를 시그니처에 둡니다 — 어느 것을 원하는지는 그 텍스트가 *무엇인지*에 달려 있고,
+그것은 호출자만 알기 때문입니다.
+
+파일 경로에 덧붙이는 경우를 생각해 보십시오.
+
+- 경로가 들어가지 않는데 **자르는 것은 치명적입니다.** `/home/user/documents/report.pdf`가
+  `/home/user/doc`가 되는데, 이는 다른 파일이고 실제로 존재할 수도 있는 파일입니다. 이 연산은
+  실패하고 아무것도 바꾸지 않아야 합니다.
+- 이제 로그 한 줄에 덧붙이는 경우를 생각해 보십시오. 들어가지 않으면 **자르는 것이 괜찮습니다** —
+  메시지 전체를 잃느니 대부분이라도 남는 편이 낫습니다 — 얼마나 썼는지 알려주기만 한다면요.
+- 그리고 쌓아 올리는 중인 버퍼에 덧붙이는 경우, 그냥 **자라기를** 원할 것입니다.
+
+아래 세 클래스가 그 세 대답입니다. 어느 것을 받을지는 함수 이름과 allocator 매개변수의 유무가
+결정하며, 플래그나 전역 변수가 결정하는 일은 결코 없습니다.
+
+- `proven_u8str_append(str, data)` — allocator가 없으므로 자랄 수 없습니다: **거부합니다**.
+- `proven_u8str_append_partial(str, data)` — 개수를 반환합니다: **자르고 알려줍니다**.
+- `proven_u8str_append_grow(alloc, str, data)` — allocator를 받습니다: **자랍니다**.
+
+라이브러리 전반의 기본값은 첫 번째이며, [챕터 0
+§5](manual-00-start-here-ko.md#5-모든-페이지에서-만나게-될-다섯-가지-계약)가 그 이유를 설명합니다.
+잘린 경로는 엉뚱한 파일을 열고, 잘린 명령은 엉뚱한 명령을 실행하며, 잘린 숫자는 다른 숫자입니다.
+
+잘못된 예 — truncating 형태가 돌려준 개수를 무시:
+
+```text
+(void)proven_u8str_append_partial(&s, huge);   /* wrong: the count WAS the answer */
+```
+
 여러 API가 의도적으로 세 가지 동작 클래스를 드러냅니다:
 
 | 클래스 | 예 | 용량 부족 시 동작 |
@@ -264,17 +319,58 @@ proven_writer_t w = proven_sysio_stdout_buffered(&out,
 논증하고, hello world 프로그램, 빌드 방법, 나머지 장들이 당연하게 여기는 다섯 가지 계약, 그리고
 용어집과 libc 대응표를 담고 있습니다.
 
-0. [여기서부터 시작: 왜 존재하는가, hello world, 다섯 계약, 용어집, libc 대응표](manual-00-start-here-ko.md)
-1. [Foundation: 타입, 에러, 메모리, 정렬, 버전, panic](manual-01-foundation-ko.md)
-2. [Allocation: allocator 트레잇, heap, arena, pool, byte buffer](manual-02-allocation-ko.md)
-3. [문자열과 텍스트: U8, U16, 형식화, 파싱](manual-03-strings-text-ko.md)
-4. [컨테이너와 알고리즘: array, list, ring, map, 정렬/검색, 해싱, 인코딩](manual-04-containers-algorithms-ko.md)
-5. [Hosted 서비스: 파일시스템, 트리 순회, 스트림, sysio, 환경변수, 난수, mmap, 시간](manual-05-hosted-services-ko.md)
-6. [실행과 플랫폼: 코루틴, job, alias, PAL, freestanding, 크로스 빌드](manual-06-execution-and-platform-ko.md)
-7. [Alias 인덱스: `alias_xcv.h`의 모든 철자 맵](manual-07-alias-xcv-index-ko.md)
-8. [형식화와 파싱: 전체 `fmt.h`와 `scan.h` 레퍼런스](manual-08-fmt-scan-ko.md)
+### 읽는 순서
+
+챕터들은 부(Part)로 묶여 있고, 각 부는 그 앞의 부들만 필요로 하도록 배열되어 있습니다. 이 순서는
+헤더 의존 그래프와 같지 않으며, 임의로 정한 것도 아닙니다. 문자열은 allocator가 필요하고, 컨테이너도
+allocator가 필요하며, hosted 서비스는 문자열이 필요합니다. 아래 순서는 자료 자체가 요구하는 순서입니다.
+
+챕터 *번호*는 안정적인 식별자이지 읽는 순서가 아닙니다. 그중 둘은 일부러 순서를 벗어나 있습니다.
+alias 인덱스는 찾아보는 부록이고, 8장은 3장이 주제를 소개한 뒤에 읽는 레퍼런스입니다.
+
+| 부 | 읽을 것 | 선행 조건 | 그러면 할 수 있는 것 |
+|---|---|---|---|
+| **I — 여기서부터** | [0](manual-00-start-here-ko.md) | 입문용 C 책 한 권 | 라이브러리를 붙여 빌드하고, 아래 무엇이든 읽기 |
+| **II — 모든 프로그램이 쓰는 어휘** | [1](manual-01-foundation-ko.md) → [2](manual-02-allocation-ko.md) → [3](manual-03-strings-text-ko.md) | 0장 | 에러를 값으로 다루고, 메모리를 의도적으로 소유하고, 텍스트를 안전하게 담기 |
+| **III — 자료구조** | [4](manual-04-containers-algorithms-ko.md) | II부 | array, map, list, ring, 정렬, 검색, 해싱, 인코딩 |
+| **IV — 텍스트 입출력** | [8](manual-08-fmt-scan-ko.md) | 3장 §3–§4 | 무엇이든 형식화하고 파싱하며, 포매터에 내 타입 가르치기 |
+| **V — 운영체제와 대화하기** | [5](manual-05-hosted-services-ko.md) | II부 | 파일, 디렉터리, 스트림, 표준 I/O, 시간, 난수, 매핑 |
+| **VI — 더 나아가기** | [6](manual-06-execution-and-platform-ko.md) → [freestanding](manual-freestanding-ko.md) | II–V부 | 코루틴, job, 스레드 안전성, 베어메탈, 크로스 빌드 |
+| **부록** | [A](manual-07-alias-xcv-index-ko.md), [B](manual-00-start-here-ko.md#6-부록-b-용어집), [C](#7-공개-헤더-맵), [D](manual-00-start-here-ko.md#7-부록-d-libc-대응표) | — | 찾아보기 |
+
+### 챕터 목록
+
+0. [**여기서부터 시작**: 왜 존재하는가, hello world, 다섯 계약, 용어집, libc 대응표](manual-00-start-here-ko.md) — *I부*
+1. [**Foundation**: 타입, 에러, 메모리 view, 정렬, 버전, panic](manual-01-foundation-ko.md) — *II부*
+2. [**Allocation**: heap, arena, pool, byte buffer, 그리고 allocator 트레잇](manual-02-allocation-ko.md) — *II부*
+3. [**문자열과 텍스트**: U8, U16, 그리고 형식화와 파싱 입문](manual-03-strings-text-ko.md) — *II부; 텍스트 자료의 튜토리얼 절반*
+4. [**컨테이너와 알고리즘**: array, list, ring, map, 정렬/검색, 해싱, 인코딩](manual-04-containers-algorithms-ko.md) — *III부*
+5. [**Hosted 서비스**: 파일시스템, 트리 순회, 스트림, sysio, 환경변수, 난수, mmap, 시간](manual-05-hosted-services-ko.md) — *V부*
+6. [**실행과 플랫폼**: 코루틴, job, 스레드 안전성, alias, PAL, 크로스 빌드](manual-06-execution-and-platform-ko.md) — *VI부*
+7. [**부록 A — Alias 인덱스**: `alias_xcv.h`의 모든 철자](manual-07-alias-xcv-index-ko.md) — *참조 전용; 읽는 자료가 아님*
+8. [**형식화와 파싱**: 전체 `fmt.h`와 `scan.h` 레퍼런스](manual-08-fmt-scan-ko.md) — *IV부; 텍스트 자료의 레퍼런스 절반*
+
+**3장과 8장은 둘 다 포매터와 스캐너를 다루며, 이 분담은 의도적입니다.** 3장은 문자열과 나란히 이들을
+소개하며, 일상적인 경우와 생산성을 내기에 충분한 만큼을 담습니다. 8장은 완전한 레퍼런스입니다. 전체
+형식 문법, 모든 인자 생성자, 스캐너의 에러 코드와 복구 규칙, 그리고 포매터에 내 타입을 가르치는 방법을
+담습니다. 3장을 먼저 읽고, 어떤 지정자나 실패의 정확한 동작이 필요할 때 8장을 펴십시오.
 
 ## 7. 공개 헤더 맵
+
+### 부록 C — 찾는 방법
+
+공개 헤더는 35개이고 우산 헤더가 하나 있습니다. `#include "proven.h"`는 전부를 끌어오며, 이 매뉴얼의
+예제들이 하는 방식입니다. 개별 헤더를 include하는 것은 컴파일 시간이 신경 쓰이거나 의존 관계를 파일에
+드러내고 싶을 때 씁니다.
+
+이 표가 파일 이름만으로는 알 수 없는 두 가지를 알려줍니다.
+
+- **어느 챕터가 그것을 문서화하는가.** 모든 헤더에는 그것을 설명하는 챕터가 정확히 하나 있고, 빌드는
+  모든 공개 함수가 `manual/` 어딘가에 이름을 올리도록 강제합니다 — 그러니 어떤 심벌이 기대한 챕터에
+  없더라도 매뉴얼 어딘가에는 있고, 이 맵이 그 위치를 알려줍니다.
+- **freestanding 빌드에서 살아남는가.** 챕터 5에 배정된 헤더들이 hosted 쪽입니다. 파일시스템, 표준
+  스트림, 시계, 가상 메모리 또는 스레드가 필요합니다. 그 밖의 모든 것은 운영체제 없이 컴파일됩니다.
+  모듈별 권위 있는 표는 [freestanding 가이드](manual-freestanding-ko.md)에 있습니다.
 
 | 헤더 | 주요 용도 | 챕터 |
 |---|---|---|
