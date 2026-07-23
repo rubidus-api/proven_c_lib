@@ -88,8 +88,6 @@ typedef struct {
     proven_i64 exp2;
 } proven_float_eisel_lemire_candidate_plan_t;
 
-static proven_float_decimal_stats_t proven_float_decimal_stats = {0};
-
 static proven_u8 proven_float_ascii_lower(proven_u8 ch) {
     if (ch >= (proven_u8)'A' && ch <= (proven_u8)'Z') {
         return (proven_u8)(ch - (proven_u8)'A' + (proven_u8)'a');
@@ -286,16 +284,6 @@ proven_float_parse_result_t proven_float_parse_ascii_token(const proven_u8 *inpu
     out.consumed = cursor;
     out.has_nonzero_digit = has_nonzero_digit;
     return out;
-}
-
-void proven_float_decimal_reset_stats(void) {
-    proven_float_decimal_stats = (proven_float_decimal_stats_t){0};
-}
-
-void proven_float_decimal_get_stats(proven_float_decimal_stats_t *out) {
-    if (out) {
-        *out = proven_float_decimal_stats;
-    }
 }
 
 static int proven_float_clz_u64(proven_u64 value) {
@@ -2907,7 +2895,8 @@ static proven_float_fast_path_result_t proven_float_execute_eisel_lemire_plan(
     const proven_float_decimal_number_t *decimal,
     const proven_float_eisel_validate_state_t *state,
     const proven_float_eisel_lemire_candidate_plan_t *plan,
-    proven_u64 *bits_out
+    proven_u64 *bits_out,
+    proven_float_decimal_stats_t *stats
 ) {
     if (decimal == 0 || plan == 0 || bits_out == 0) {
         return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
@@ -2923,8 +2912,8 @@ static proven_float_fast_path_result_t proven_float_execute_eisel_lemire_plan(
                 plan->exp2,
                 bits_out
             );
-            if (result == PROVEN_FLOAT_FAST_PATH_SUCCESS) {
-                ++proven_float_decimal_stats.eisel_lemire_product_plan_hits;
+            if (result == PROVEN_FLOAT_FAST_PATH_SUCCESS && stats != 0) {
+                ++stats->eisel_lemire_product_plan_hits;
             }
             return result;
         }
@@ -2937,7 +2926,8 @@ static proven_float_fast_path_result_t proven_float_try_eisel_lemire_pow5_produc
     const proven_float_decimal_number_t *decimal,
     const proven_float_eisel_validate_state_t *state,
     proven_size_t q,
-    proven_u64 *bits_out
+    proven_u64 *bits_out,
+    proven_float_decimal_stats_t *stats
 ) {
     proven_float_eisel_lemire_candidate_plan_t plan;
 
@@ -2948,14 +2938,15 @@ static proven_float_fast_path_result_t proven_float_try_eisel_lemire_pow5_produc
         return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
     }
 
-    return proven_float_execute_eisel_lemire_plan(decimal, state, &plan, bits_out);
+    return proven_float_execute_eisel_lemire_plan(decimal, state, &plan, bits_out, stats);
 }
 
 static proven_float_fast_path_result_t proven_float_try_eisel_lemire_negative_q(
     const proven_float_decimal_number_t *decimal,
     const proven_float_eisel_validate_state_t *state,
     proven_size_t q,
-    proven_u64 *bits_out
+    proven_u64 *bits_out,
+    proven_float_decimal_stats_t *stats
 ) {
     proven_float_eisel_lemire_candidate_plan_t plan;
 
@@ -2964,7 +2955,7 @@ static proven_float_fast_path_result_t proven_float_try_eisel_lemire_negative_q(
     }
 
     if (proven_float_build_cached_power_product_plan(-(proven_i64)q, &plan)) {
-        return proven_float_execute_eisel_lemire_plan(decimal, state, &plan, bits_out);
+        return proven_float_execute_eisel_lemire_plan(decimal, state, &plan, bits_out, stats);
     }
     return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
 }
@@ -2981,9 +2972,10 @@ static proven_float_fast_path_result_t proven_float_try_eisel_lemire_pow5_produc
     const proven_float_decimal_number_t *decimal,
     const proven_float_eisel_validate_state_t *state,
     proven_size_t q,
-    proven_u64 *bits_out
+    proven_u64 *bits_out,
+    proven_float_decimal_stats_t *stats
 ) {
-    (void)decimal; (void)state; (void)q; (void)bits_out;
+    (void)decimal; (void)state; (void)q; (void)bits_out; (void)stats;
     return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
 }
 
@@ -2991,9 +2983,10 @@ static proven_float_fast_path_result_t proven_float_try_eisel_lemire_negative_q(
     const proven_float_decimal_number_t *decimal,
     const proven_float_eisel_validate_state_t *state,
     proven_size_t q,
-    proven_u64 *bits_out
+    proven_u64 *bits_out,
+    proven_float_decimal_stats_t *stats
 ) {
-    (void)decimal; (void)state; (void)q; (void)bits_out;
+    (void)decimal; (void)state; (void)q; (void)bits_out; (void)stats;
     return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
 }
 
@@ -3002,7 +2995,8 @@ static proven_float_fast_path_result_t proven_float_try_eisel_lemire_negative_q(
 static proven_float_fast_path_result_t proven_float_try_eisel_lemire_with_state(
     const proven_float_decimal_number_t *decimal,
     const proven_float_eisel_validate_state_t *state,
-    proven_u64 *bits_out
+    proven_u64 *bits_out,
+    proven_float_decimal_stats_t *stats
 ) {
     /*
      * RFC-0001 target: this layer grows into a full Eisel-Lemire candidate path.
@@ -3024,30 +3018,32 @@ static proven_float_fast_path_result_t proven_float_try_eisel_lemire_with_state(
     }
 
     if (decimal->exp10 > 0) {
-        return proven_float_try_eisel_lemire_pow5_product_q(decimal, state, (proven_size_t)decimal->exp10, bits_out);
+        return proven_float_try_eisel_lemire_pow5_product_q(
+            decimal, state, (proven_size_t)decimal->exp10, bits_out, stats);
     }
 
     if (decimal->exp10 < 0) {
         proven_size_t q = (proven_size_t)(-decimal->exp10);
-        return proven_float_try_eisel_lemire_negative_q(decimal, state, q, bits_out);
+        return proven_float_try_eisel_lemire_negative_q(decimal, state, q, bits_out, stats);
     }
 
     if (decimal->exp10 == 0) {
-        return proven_float_try_eisel_lemire_pow5_product_q(decimal, state, 0u, bits_out);
+        return proven_float_try_eisel_lemire_pow5_product_q(decimal, state, 0u, bits_out, stats);
     }
 
     return PROVEN_FLOAT_FAST_PATH_UNCERTAIN;
 }
 
 static proven_float_fast_path_result_t proven_float_try_eisel_lemire(const proven_float_decimal_number_t *decimal,
-                                                                     proven_u64 *bits_out) {
+                                                                     proven_u64 *bits_out,
+                                                                     proven_float_decimal_stats_t *stats) {
     proven_float_eisel_validate_state_t state;
 
     if (!proven_float_prepare_eisel_validate_state(decimal, &state)) {
         return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
     }
 
-    return proven_float_try_eisel_lemire_with_state(decimal, &state, bits_out);
+    return proven_float_try_eisel_lemire_with_state(decimal, &state, bits_out, stats);
 }
 
 /*
@@ -3148,7 +3144,8 @@ static bool proven_float_estimate_value_bits(const proven_float_decimal_number_t
     return true;
 }
 
-proven_err_t proven_float_convert_decimal(const proven_u8 *input, proven_size_t len, double *out) {
+static proven_err_t proven_float_convert_decimal_impl(const proven_u8 *input, proven_size_t len, double *out,
+                                                       proven_float_decimal_stats_t *stats) {
     const proven_u64 max_finite_bits = 0x7fefffffffffffffull;
     proven_float_bigint_t overflow_midpoint;
     proven_float_decimal_number_t decimal;
@@ -3165,29 +3162,40 @@ proven_err_t proven_float_convert_decimal(const proven_u8 *input, proven_size_t 
         return PROVEN_ERR_OUT_OF_BOUNDS;
     }
 
-    ++proven_float_decimal_stats.total_conversions;
+    if (stats != 0) {
+        ++stats->total_conversions;
+    }
 
     if (decimal.is_zero) {
-        ++proven_float_decimal_stats.exact_fallback_hits;
+        if (stats != 0) {
+            ++stats->exact_fallback_hits;
+        }
         *out = decimal.negative ? proven_float_from_bits(0x8000000000000000ull) : 0.0;
         return PROVEN_OK;
     }
 
     if (proven_float_try_clinger(&decimal, &fast) == PROVEN_OK) {
-        ++proven_float_decimal_stats.clinger_fast_path_hits;
+        if (stats != 0) {
+            ++stats->clinger_fast_path_hits;
+        }
         *out = fast;
         return PROVEN_OK;
     }
     {
-        proven_float_fast_path_result_t eisel_lemire = proven_float_try_eisel_lemire(&decimal, &eisel_lemire_bits);
+        proven_float_fast_path_result_t eisel_lemire =
+            proven_float_try_eisel_lemire(&decimal, &eisel_lemire_bits, stats);
         if (eisel_lemire == PROVEN_FLOAT_FAST_PATH_SUCCESS) {
-            ++proven_float_decimal_stats.eisel_lemire_fast_path_hits;
+            if (stats != 0) {
+                ++stats->eisel_lemire_fast_path_hits;
+            }
             *out = proven_float_from_bits(decimal.negative ? (eisel_lemire_bits | 0x8000000000000000ull) : eisel_lemire_bits);
             return PROVEN_OK;
         }
     }
 
-    ++proven_float_decimal_stats.exact_fallback_hits;
+    if (stats != 0) {
+        ++stats->exact_fallback_hits;
+    }
 
     {
         proven_size_t dropped_digits = 0;
@@ -3316,6 +3324,15 @@ proven_err_t proven_float_convert_decimal(const proven_u8 *input, proven_size_t 
     }
     *out = proven_float_from_bits(rounded_bits);
     return PROVEN_OK;
+}
+
+proven_err_t proven_float_convert_decimal(const proven_u8 *input, proven_size_t len, double *out) {
+    return proven_float_convert_decimal_impl(input, len, out, 0);
+}
+
+proven_err_t proven_float_convert_decimal_observed(const proven_u8 *input, proven_size_t len, double *out,
+                                                   proven_float_decimal_stats_t *stats) {
+    return proven_float_convert_decimal_impl(input, len, out, stats);
 }
 
 bool proven_float_normalize_scientific(double *abs_v, int *sci_exp) {

@@ -1,23 +1,27 @@
 # RFC-0004 — The manual is a reference; it needs to become a book
 
-**Status:** proposed
+**Status:** implemented (first pass); follow-up hardening is tracked in RFC-0005
 **Date:** 2026-07-20
-**Tracks:** `docs/BACKLOG.md` B-025 … B-032 (open)
+**Implemented:** 2026-07-20
+**Tracks:** `docs/BACKLOG.md` B-025 ... B-032 (first pass complete)
 
-> **What this changes.** The manual is 8,004 lines and factually correct — four build gates see
-> to that. It is also written for someone who already knows what an arena, a trait, a view, and
-> failure atomicity are, and it opens Chapter 1 with a table of type aliases. This RFC plans the
-> rewrite that makes it usable by a reader who has finished one introductory C book: every
+> **What this changed.** At proposal time the manual was 8,004 lines and factually checked by
+> several build gates. It was also written for someone who already knew what an arena, a trait, a
+> view, and failure atomicity were, and it opened Chapter 1 with a table of type aliases. This RFC
+> specified the rewrite that makes it usable by a reader who has finished one introductory C book: every
 > section leads with *why the thing exists and what goes wrong without it*, the chapters declare
 > a reading order instead of a header layout, and the on-ramp that does not exist today gets
 > written.
 >
-> No library code changes. This is a documentation plan, staged so the build is green at every
-> commit.
+> The implementation made no library code changes. It was staged so the build stayed green at
+> every commit.
+>
+> The first pass is complete. Section 8.1 records the measured result; RFC-0005 records the
+> post-implementation audit of the gates and the wider library.
 
 ---
 
-## 1. The finding
+## 1. The finding at proposal time
 
 The manual is two documents interleaved, and the split is chronological rather than topical.
 
@@ -33,8 +37,8 @@ fixed-width aliases. Chapter 2 §1 is three function-pointer typedefs. Chapter 3
 dump under a one-sentence definition. None of them says what problem the thing solves, what C or
 libc does badly here, or why the library made the choice it made.
 
-The style the rewrite needs is therefore **already in the repository, already gated, and already
-proven** — on 7 sections out of 88. The job is not to invent a voice. It is to extend one, and to
+The style the rewrite needed was therefore **already in the repository, already gated, and already
+proven** - on 7 sections out of 88. The job was not to invent a voice. It was to extend one, and to
 fix the three structural problems the extension will not touch on its own:
 
 1. **There is no on-ramp.** No "hello world", no statement of what the library is for, no
@@ -50,14 +54,14 @@ fix the three structural problems the extension will not touch on its own:
 
 ---
 
-## 2. What that costs, measured
+## 2. What that cost, measured at proposal time
 
 The repository already owns a standard for how much explanation a section must carry:
 `test_docs_manual_depth.c` requires **150 words of prose** — words outside tables, headings and
 code fences — plus a reference table and a counter-example. It applies that standard to seven
 sections.
 
-Applying the same measurement to all 88 H2 sections in `manual/`:
+Applying the same measurement to all 88 H2 sections in `manual/` at the proposal baseline:
 
 | | sections | share |
 |---|---:|---:|
@@ -249,15 +253,17 @@ Two chapters open on their hardest material and are fixed in place, without rena
 
 ---
 
-## 6. What is genuinely fine — stated plainly
+## 6. What was genuinely fine - stated plainly
 
 An audit that finds everything broken has not been reading carefully. The rewrite is an
 extension of this manual, not a replacement, and most of it needs no change:
 
-- **The facts are checked, and that is rare.** Four gates and a fifth for Chapter 8 mean the
+- **The facts are checked, and that is rare.** Five direct manual gates, compiled code-block
+  checks, and the repository policy check mean the
   manual cannot claim a function that does not exist, quote an example that does not compile, or
-  state a value that is not true. Most documentation of this size is drifting quietly; this one
-  cannot.
+  state one of the registered executable claims falsely without failing the build. The
+  post-implementation audit in RFC-0005 narrows this statement: a gate proves only the claims it
+  actually parses.
 - **The counter-example habit is already established** — roughly 150 `Wrong:` blocks across the
   chapters, several of them excellent (`proven_byte_t key[16] = { 0 };  /* wrong: a "secret"
   everyone knows */`). The rewrite spreads this, it does not introduce it.
@@ -268,20 +274,20 @@ extension of this manual, not a replacement, and most of it needs no change:
   table row, which is the complaint of §2 — but the floor exists and holds.
 - **Chapter 8 is a serious reference** for a genuinely hard subject, and its 18 executed contract
   claims are the strongest verification in the manual.
-- **The 18 examples are real programs**, compiled and run by `./nob build`, quoted verbatim under
+- **The 22 examples are real programs**, compiled and run by `./nob build`, quoted verbatim under
   a gate that fails if the chapter and the file disagree.
 
 ---
 
-## 7. What constrains the rewrite
+## 7. What constrained the rewrite
 
 The gates are permissive about structure and strict about facts. Precisely:
 
 | Gate | Enforces | What the rewrite must respect |
 |---|---|---|
 | `test_docs_manual_symbols.c` | Every public function is named in `manual/` inside backticks; every call the manual writes must exist | **Reference tables cannot simply be deleted** in favour of prose unless each symbol is still named somewhere |
-| `test_docs_manual_depth.c` | 7 registered sections: ≥150 prose words, a table, a counter-example, sometimes structs and an example | Renaming any of those 7 exact headings breaks the build unless the register is updated in the same commit |
-| `test_docs_manual_examples.c` | Marker → file exists → the next ```c fence equals the file verbatim; no unquoted example files | New chapters must be added to its **hardcoded 9-path list**; `MAX_EXAMPLES` is 64 and 18 are used, so ~46 new examples fit |
+| `test_docs_manual_depth.c` | 26 registered sections: >=150 prose words, a table, a counter-example, sometimes structs and an example | Renaming any registered exact heading breaks the build unless the register is updated in the same commit |
+| `test_docs_manual_examples.c` | Marker -> file exists -> the next ```c fence equals the file verbatim; no unquoted example files | New chapters must be added to its **hardcoded 10-path list**; `MAX_EXAMPLES` is 64 and 22 are used, so 42 new examples fit |
 | `test_docs_manual_claims.c` | Named manual sentences are executed as assertions | New factual sentences need new assertions here |
 | `test_docs_manual_ch08_contracts.c` | 18 Chapter 8 scanner claims | Chapter 8 edits must keep these true |
 | `scripts/project-check.sh` (since v26.07.20b) | Privacy scan over every tracked file | Example paths must not collide with host paths — see the `/srv` change |
@@ -292,7 +298,7 @@ so it drifts unless each phase updates it deliberately.
 
 ---
 
-## 8. Implementation plan
+## 8. Implementation plan and result
 
 Staged so each phase is independently useful and the build is green at every commit. Nothing here
 is a big-bang rewrite of 8,004 lines.
@@ -311,6 +317,35 @@ is a big-bang rewrite of 8,004 lines.
 Each phase ends with `./nob build` green, and each chapter rewrite lands with its examples and its
 claims assertions in the same commit — not as follow-up work, because follow-up work is what
 produced the 58 sections in §2.
+
+### 8.1 Measured first-pass result
+
+All eight phases completed on the v26.07.20b line. The baseline columns below are the proposal
+measurements from sections 1 and 2; the result columns were measured from the implemented tree.
+
+| Measure | Proposal baseline | First-pass result |
+|---|---:|---:|
+| English manual | 8,004 lines | 10,211 lines |
+| Korean mirror | 8,310 lines | 9,939 lines |
+| Sections meeting the prose-depth floor | 30/88 (34%) | 67/98 (68%) |
+| Sections registered in the depth gate | 7 | 26 |
+| Runnable examples | 18 | 22 |
+| Broken internal anchors | 11 discovered during implementation | 0 |
+
+The result deliberately does not force every section over a word-count threshold. Generated alias
+tables, example-only sections, flag lists, and compile procedures are reference material; padding
+them would realize the first risk in section 9. Every chapter now has a motivation-first entry,
+parts and prerequisites are explicit, Chapter 0 supplies the on-ramp and glossary, and the Korean
+mirror includes the same first-pass structure.
+
+### 8.2 Post-implementation audit
+
+The later whole-library audit found that the rewrite itself landed, but several adjacent gates
+were narrower than their prose claimed. In particular, the test catalog originally ignored
+duplicate registry entries and did not verify its printed totals, and one documentation gate
+imported a POSIX-only directory API despite the supported Windows target. Those gate defects are
+fixed in the follow-up work, while the remaining library, portability, and performance findings
+are specified in [`RFC-0005`](RFC-0005-whole-library-audit-and-hardening.md).
 
 ---
 

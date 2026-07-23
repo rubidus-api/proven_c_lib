@@ -11,6 +11,101 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-23] - proven_c_lib-v26.07.23d
+
+### Changed
+
+- **Idle job workers park instead of continuously polling.** The thread PAL now
+  provides an opaque counting semaphore: a POSIX mutex/condition-variable
+  implementation and a Windows kernel-semaphore implementation. A successful
+  submission publishes its queue slot before posting one retained permit, so a
+  wake cannot disappear when every worker is between an empty check and its
+  wait. The bounded queue still uses atomic sequence counters, but the POSIX
+  wake post may briefly acquire the semaphore mutex; documentation no longer
+  describes the complete submit operation as nonblocking.
+
+- **Job close has an explicit wake and admission protocol.** The first closer
+  stops admission, waits for submitters that already entered to finish, and
+  posts one final permit per worker. `close` may race with submitters; callers
+  must still join every producer before `destroy` can free the system.
+  Caller-driven `proven_job_execute_one` may leave a stale permit after stealing
+  a queued job, which workers now treat as an empty recheck rather than work.
+
+### Added
+
+- Job unit coverage now starts work after workers are already parked, closes an
+  entirely idle system, and deterministically exercises stale permits left by
+  an external consumer. The stress test also closes while four producer threads
+  are active and checks that every accepted job drains exactly once.
+
+### Performance
+
+- A five-run local process-CPU probe with eight workers idle for 250 ms measured
+  a mean of 2000.081 ms for the former yield loop and 0.032 ms for parked
+  workers. This establishes the idle-CPU mechanism on the measured POSIX host;
+  the 1/2/8/32-worker matrix, wake-latency distribution, and native Windows
+  runtime evidence remain tracked in RFC-0005 and B-038.
+
+## [2026-07-23] - proven_c_lib-v26.07.23c
+
+A whole-library correctness, portability, build, and performance audit. Confirmed defects that
+could be fixed and verified locally are closed here; target-specific and measured follow-up work
+is specified in RFC-0005 rather than being changed without its required platform or benchmark.
+
+### Fixed
+
+- **Concurrent decimal parsing no longer writes process-global path counters.** The internal
+  Clinger/Eisel-Lemire/fallback metrics object was non-atomic mutable global state, so otherwise
+  read-only parser calls raced in C and contended on one cache line. Production conversion now
+  collects no counters. Tests use an explicit caller-owned observation sink, and a focused
+  eight-thread TSAN regression covers the Clinger, staged, subnormal, and exact-fallback paths.
+
+- **One-chunk sysio scanning no longer returns a view into its dead stack buffer.**
+  `proven_sysio_scan_chunk_impl` used a local 4 KiB input array but accepted
+  `proven_u8str_view_t` output, whose pointer escaped after return. It now refuses that argument
+  with `PROVEN_ERR_UNSUPPORTED` before reading and leaves both the destination and cursor intact;
+  the caller-owned buffered scanner remains the API for borrowed string results.
+
+- **The test-catalog documentation gate compiles without POSIX `dirent.h`.** It now enumerates
+  `tests/` through the library's portable filesystem iterator, so registering the gate no longer
+  breaks the documented MSVC build at preprocessing.
+
+- **Five more header changes can no longer reuse stale objects or executables.** The build
+  dependency manifest now includes the float tables, the internal memory-range helper, both test
+  framework headers, and the manual-example helper. The build and gate consume one preprocessed
+  manifest with a compile-time inclusion sentinel. The gate checks both directions: every header
+  in the declared roots is listed and every listed path exists. Every build profile validates
+  declared inputs before checking outputs, and source/header contents are part of cache keys, so
+  a missing path or a same-timestamp edit cannot produce a cached false green.
+
+- **The ignore policy no longer hides arbitrary dotfiles or enumerates credential-like names.**
+  Local private material now uses the workspace directory conventions plus `.env`, avoiding
+  broad patterns that could silently hide legitimate source or configuration.
+
+### Changed
+
+- **The test catalog now enforces the numbers and memberships it prints.** The build driver and
+  gate compile the same preprocessed registry manifest, so comments and disabled source text
+  cannot masquerade as active tests. The gate rejects duplicates, requires every regression to
+  remain in the hosted suite, compares the documented regression list one-to-one, and requires
+  every test source to belong to the hosted, freestanding, benchmark, or explicit cross-only
+  registry. The current suite is 111 hosted tests plus 22 runnable examples (133 executables),
+  with a 29-test regression subset and 121 test sources. The freestanding cross smoke is resolved
+  by its stable path rather than by a fragile registry index.
+
+- **Public path examples are repository-relative.** Build-root examples now use
+  `build-out/proven_c_lib`, and the repository policy check rejects Unix home-directory paths
+  without relying on one machine's user name.
+
+- **RFC-0004 is an implementation record rather than a stale proposal.** It carries the measured
+  first-pass manual result and links its post-implementation gate findings to RFC-0005.
+
+### Added
+
+- **RFC-0005 - whole-library audit and hardening.** It separates source-proved defects,
+  verification gaps, and performance hypotheses, then assigns each a regression or measurement,
+  compatibility risk, and exit condition before implementation.
+
 ## [2026-07-23] — proven_c_lib-v26.07.23b
 
 A full source-to-documentation audit, and the fixes it produced. Two were real build defects; the

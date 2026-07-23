@@ -309,7 +309,7 @@ typedef struct {
 | `proven_scan_fmt_from_stdin(fmt, ...)` | stdin에서 고정 크기 청크 하나를 스캔. | `proven_err_t`. |
 | `proven_env_get(alloc, key)` | 환경 변수를 owned U8 문자열로 읽음. | `proven_result_u8str_t`. |
 
-`proven_sysio_scan_chunk_impl()`은 seek 가능한 파일 입력을 위한 것이다. 최대 하나의 고정 크기 청크를 읽는다. 핸들을 되감을 수 없으면, 읽기 전에 `PROVEN_ERR_UNSUPPORTED`를 반환한다. 완전한 토큰이 준비되기 전에 청크가 가득 차면, `PROVEN_ERR_OUT_OF_BOUNDS`를 반환하고 파일 커서를 청크의 시작으로 되감는다. 반복적인 버퍼드 스캔에는 `proven_sysio_scanner_t`를 사용하라.
+`proven_sysio_scan_chunk_impl()`은 seek 가능한 파일 입력을 위한 것이다. 최대 하나의 고정 크기 청크를 읽는다. 핸들을 되감을 수 없으면, 읽기 전에 `PROVEN_ERR_UNSUPPORTED`를 반환한다. 완전한 토큰이 준비되기 전에 청크가 가득 차면, `PROVEN_ERR_OUT_OF_BOUNDS`를 반환하고 파일 커서를 청크의 시작으로 되감는다. 문자열 view 목적지도 읽기 전에 `PROVEN_ERR_UNSUPPORTED`로 거부한다. 그런 view는 이 함수의 지역 청크 버퍼를 빌리므로 반환 즉시 무효가 되기 때문이다. 반복적인 버퍼드 스캔이나 빌린 문자열 결과에는 호출자가 버퍼를 소유하는 `proven_sysio_scanner_t`를 사용하라. 그 스캐너가 반환한 문자열 view는 다음 scan 호출이나 스캐너 해제 전까지만 유효하다. 어느 쪽이든 공유 버퍼를 다시 채우거나 압축하거나 해제할 수 있기 때문이다.
 
 예:
 

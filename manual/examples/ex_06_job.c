@@ -3,10 +3,11 @@
 #include <stdatomic.h>
 
 /*
- * The job system: worker threads plus a bounded lock-free queue. It orders the
- * *handoff* of work - it does not synchronize the data the work touches. That is
- * why the counter below is an atomic and not a plain int: two jobs incrementing
- * the same variable is a data race unless the caller says otherwise.
+ * The job system: worker threads plus a bounded atomic MPMC queue. Idle workers
+ * park on platform synchronization. It orders the *handoff* of work - it does
+ * not synchronize the data the work touches. That is why the counter below is
+ * an atomic and not a plain int: two jobs incrementing the same variable is a
+ * data race unless the caller says otherwise.
  *
  * The lifecycle is a straight line, and it is not optional:
  *
@@ -43,9 +44,10 @@ int main(void) {
 
     proven_size_t submitted = 0;
     for (proven_size_t i = 0; i < JOB_COUNT; ++i) {
-        /* submit returns false when the ring is full or the system is closed - it
-         * never blocks and never drops work silently. Ignoring the answer is how
-         * you lose jobs, which is why it is [[nodiscard]]. */
+        /* submit returns false when the ring is full or the system is closed. It
+         * never waits for queue capacity and never drops work silently; its wake
+         * path may briefly enter platform synchronization. Ignoring the answer is
+         * how you lose jobs, which is why it is [[nodiscard]]. */
         if (!proven_job_submit(sys, increment, &counter)) {
             /* A real caller would back off and retry, or run the job inline with
              * proven_job_execute_one. Here a full ring means the sizing above is

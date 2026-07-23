@@ -19,6 +19,116 @@ An item with no exit condition is a complaint, not a backlog item.
 
 ## Open
 
+B-033 ... B-038 are the implementation queue derived from
+[`docs/RFC-0005-whole-library-audit-and-hardening.md`](RFC-0005-whole-library-audit-and-hardening.md).
+That RFC contains the source evidence, severity, rejected shortcuts, benchmark design, phase order,
+and compatibility risks. The entries here are the closure conditions.
+
+### B-033 - make Windows filesystem and random contracts match the public API
+
+The Windows rename PAL uses a primitive that does not replace an existing destination, even
+though atomic whole-file writes promise replacement. The random PAL can narrow a request larger
+than the Windows count type and report success after a short fill. Symlink creation also lacks
+directory-link handling and can change the meaning of a relative target.
+
+Done when native Windows tests replace an existing file atomically, preserve the old destination
+on injected replacement failure, leave no temporary file, fill requests across the platform count
+boundary, and cover file, directory, and relative symlinks. The selected replacement primitive
+must have its metadata and durability semantics documented.
+
+Not done in the audit release because the affected APIs require a native Windows runtime to
+verify sharing, metadata, privilege, and failure behavior. Source inspection proves the gaps; it
+does not make an unrun platform pass.
+
+### B-034 - make freestanding mean what the guide says it means
+
+The current profile compiles with freestanding flags but links its hosted checks against a C
+runtime. With builtins disabled, the float objects retain unresolved `memcpy`, `memmove`,
+`memset`, and `strlen` references. Compile-only embedded probes therefore do not prove a no-CRT
+link.
+
+Done when the runtime contract is explicit and a no-hosted-CRT smoke program links with an
+allowlisted unresolved-symbol set. Memory/string operations must either route through a defined
+platform boundary or be named as required runtime services. Existing float differential and
+boundary behavior must remain unchanged.
+
+Not done yet because replacing compiler-recognized routines can hurt generated code, while
+retaining them narrows the public claim. That decision and the embedded link evidence belong in
+one change.
+
+### B-035 - turn target support into named compile, link, and run evidence
+
+Several full-suite tests still import POSIX-only facilities, `nob.c` emits GCC/Clang-style
+options rather than acting as an MSVC driver, all non-Windows tests receive `-ldl`, and the cross
+command can finish successfully after skipping most named targets.
+
+Done when every published target has an explicit required evidence level; the complete portable
+test tree compiles in a real MSVC or clang-cl lane; macOS links and runs natively; and cross output
+reports passed, failed, and skipped targets with mandatory release targets unable to skip green.
+If infrastructure cannot support a target, narrow the support statement instead of simulating it.
+
+Not done in the audit release because the required Windows, macOS, cross, and embedded toolchains
+were unavailable. Their absence is recorded as a verification gap, not a failure and not a pass.
+
+### B-036 - make release hardening and build dependencies explicit
+
+The named `release` mode uses `-O3` without `NDEBUG`, so pool double-free validation performs a
+linear cache scan on every free and total release work can be quadratic. The executable cache
+does not hash the exact final link command, build-root/clean behavior is not fully Windows-safe,
+and source manifests remain duplicated. The audit added a complete header gate as immediate
+containment, but that deliberately rebuilds broadly. The English-ASCII policy is also not yet
+mechanically enforced across the historical public documentation.
+
+Done when debug, release, hardened, and sanitizer profiles state their safety semantics in the
+build log; intended release pool teardown is linear while hardened mode still detects misuse;
+the exact link command is hashed; safe selected build roots are honored by clean; and compiler
+dependency files or an equivalent single manifest rebuild exactly the outputs that consumed a
+changed header. Historical English public text is normalized deliberately and a gate prevents
+new non-ASCII bytes while excluding the Korean mirrors.
+
+Not done yet because changing the optimized profile can remove diagnostics that some users may
+currently observe. The profile decision needs a benchmark, a deterministic comparison count, and
+a visible compatibility note.
+
+### B-037 - make performance claims reproducible before optimizing
+
+The three registered benchmarks are useful single-run checks, but they do not retain repeated raw
+samples, variance, a machine-readable row format, or the size/boundary matrices needed by several
+published conclusions. RFC-0005 lists the source-visible opportunities from directory metadata,
+short-read rescanning, hashing, formatting, path conversion, copying, rings, and environment
+allocation.
+
+Done when every active performance headline maps to a checked-in benchmark and raw result with
+compiler, profile, corpus checksum, warmup, at least three samples, median, and spread. Each
+accepted optimization must carry its boundary/differential test and before/after rows; unmeasured
+items remain hypotheses.
+
+Not done in the audit release because one timing on one host cannot distinguish a general
+improvement from noise or a workload-specific tradeoff.
+
+### B-038 - finish qualifying idle-worker parking
+
+The core change landed in v26.07.23d. An empty job queue now parks workers on a PAL counting
+semaphore instead of polling and yielding. Submission publishes before posting a retained permit;
+the first close waits for admitted submitters and posts one final permit per worker. Unit coverage
+starts work after every worker is idle, closes an entirely idle pool, and forces an external
+consumer to leave stale permits. Stress coverage closes while four producers are active. The
+focused tests passed 100 repeated runs, and the complete 133-executable TSAN suite passed.
+
+A five-run process-CPU probe with eight workers over a 250 ms idle window measured a
+2000.081 ms mean for the former polling loop and 0.032 ms for parking on the measured POSIX host.
+That is enough to confirm the intended idle-CPU effect on one configuration, not enough to close
+the performance and target claim.
+
+Done when a checked-in benchmark records repeated idle CPU for 1, 2, 8, and 32 workers plus
+median and p99 submit-to-start latency under idle, burst, and saturated loads. Record raw samples,
+compiler/profile, saturated multi-producer submission throughput, and a documented latency
+budget; run the wake and shutdown regressions on native Windows as well as POSIX.
+
+Still open because wake latency, scaling, and the Windows implementation have source or
+compile-contract evidence only. Do not turn the single-host CPU observation or a source-level
+Windows check into a cross-platform performance claim.
+
 B-018 … B-023 are argued in [`docs/RFC-0002-view-vocabulary-and-splitting.md`](RFC-0002-view-vocabulary-and-splitting.md),
 which is where the measurements and the rejected alternatives live. Each item below says what is
 wrong and what closes it; that RFC says why it is the right shape.
@@ -34,7 +144,7 @@ it is newer and it was checked by execution. The exit conditions here have been 
 it once already, and the drift is worth noticing: these items were written from RFC-0002's
 sketches, and RFC-0003 renamed two functions and changed what closing B-020 means.
 
-B-025 … B-032 are the manual rewrite, designed in
+B-025 through B-032 are the completed first pass of the manual rewrite, designed in
 [`docs/RFC-0004-the-manual-as-a-book.md`](RFC-0004-the-manual-as-a-book.md). They are documentation
 work; none of them changes library code.
 

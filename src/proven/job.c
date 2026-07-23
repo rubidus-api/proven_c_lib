@@ -1,5 +1,6 @@
 #include "proven/job.h"
 #include "proven/memory.h"
+#include "proven/panic.h"
 #include "../../platform/proven_sys_thread.h"
 #include <stdatomic.h>
 
@@ -18,6 +19,7 @@ typedef struct {
 struct proven_job_sys {
     proven_job_queue_t queue;
     _Atomic(proven_size_t) admission_state;
+    proven_sys_semaphore_t work_ready;
     proven_sys_thread_t* threads;
     proven_size_t num_threads;
     proven_allocator_t alloc;
@@ -46,10 +48,26 @@ static void proven_job_end_submit(proven_job_sys_t *sys) {
     (void)atomic_fetch_sub_explicit(&sys->admission_state, 1u, memory_order_release);
 }
 
-static void proven_job_close_admission(proven_job_sys_t *sys) {
-    (void)atomic_fetch_or_explicit(&sys->admission_state, PROVEN_JOB_ADMISSION_CLOSED, memory_order_acq_rel);
+static bool proven_job_close_admission(proven_job_sys_t *sys) {
+    proven_size_t old_state = atomic_fetch_or_explicit(
+        &sys->admission_state, PROVEN_JOB_ADMISSION_CLOSED,
+        memory_order_acq_rel);
     while ((atomic_load_explicit(&sys->admission_state, memory_order_acquire) & PROVEN_JOB_ADMISSION_ACTIVE_MASK) != 0) {
         proven_sys_thread_yield();
+    }
+    return (old_state & PROVEN_JOB_ADMISSION_CLOSED) == 0;
+}
+
+static void proven_job_post_work(proven_job_sys_t *sys) {
+    if (!proven_sys_semaphore_post(&sys->work_ready)) {
+        proven_panic("proven_job: failed to wake a worker");
+    }
+}
+
+static void proven_job_close_and_wake(proven_job_sys_t *sys) {
+    if (!proven_job_close_admission(sys)) return;
+    for (proven_size_t i = 0; i < sys->num_threads; ++i) {
+        proven_job_post_work(sys);
     }
 }
 
@@ -89,41 +107,25 @@ static proven_size_t proven_job_active_submitters(proven_job_sys_t *sys) {
 
 static void* worker_main(void* arg) {
     proven_job_sys_t *sys = (proven_job_sys_t*)arg;
-    while (!proven_job_is_closed(sys)) {
-        if (!proven_job_execute_one(sys)) {
-            proven_sys_thread_yield(); // Back-off to prevent 100% CPU starvation
-        }
-    }
-
-    /*
-     * Shutdown was signaled. Drain - but "the queue looks empty" is not the same
-     * as "there is nothing left to run".
-     *
-     * A submitter that got past begin_submit before the close can already have
-     * claimed its slot with the enqueue_pos CAS while not yet having published
-     * cell->sequence. To a dequeuer that slot is indistinguishable from an empty
-     * queue, so a worker that exits on the first empty read leaves that job to
-     * nobody: the submitter then publishes it and proven_job_submit returns true,
-     * having accepted a job that will never run. close_admission only waits for
-     * the active count to reach zero, which happens after the worker is already
-     * gone - and proven_job_system_destroy, documented to block until the queue
-     * is exhausted, returns with a job still sitting in it.
-     *
-     * So a worker may only leave once no submitter is in flight AND the queue is
-     * still empty when checked after observing that. This is not the disclaimed
-     * destroy-races-submit case: close() racing submit() is precisely what
-     * close() is for.
-     */
     for (;;) {
-        while (proven_job_execute_one(sys)) {}
-
-        if (proven_job_active_submitters(sys) != 0) {
-            proven_sys_thread_yield();
-            continue;
+        if (!proven_sys_semaphore_wait(&sys->work_ready)) {
+            proven_panic("proven_job: failed to park a worker");
+            return NULL;
         }
-        /* No submitter is in flight. Anything claimed before that observation is
-         * published by now, so one more empty read settles it. */
-        if (!proven_job_execute_one(sys)) break;
+        if (proven_job_execute_one(sys)) continue;
+
+        /*
+         * A permit may be stale when an external caller executed the job first.
+         * During close, an in-flight submitter may also have claimed a slot but
+         * not published it yet. Admission close waits for all such submitters
+         * before posting the final worker permits, so closed + no active
+         * submitter + one final empty read is the only safe exit condition.
+         */
+        if (proven_job_is_closed(sys) &&
+            proven_job_active_submitters(sys) == 0 &&
+            !proven_job_execute_one(sys)) {
+            break;
+        }
     }
 
     return NULL;
@@ -181,21 +183,30 @@ proven_err_t proven_job_system_init(proven_allocator_t alloc, proven_size_t num_
     atomic_init(&sys->queue.dequeue_pos, 0);
     atomic_init(&sys->admission_state, 0);
     
-    sys->num_threads = num_workers;
+    sys->num_threads = 0;
     sys->threads = (proven_sys_thread_t*)t_res.value.ptr;
+
+    if (!proven_sys_semaphore_init(&sys->work_ready)) {
+        alloc.free_fn(alloc.ctx, sys->threads);
+        alloc.free_fn(alloc.ctx, sys->queue.buffer);
+        alloc.free_fn(alloc.ctx, sys);
+        return PROVEN_ERR_IO;
+    }
     
     for (proven_size_t i = 0; i < num_workers; ++i) {
         sys->threads[i] = proven_sys_thread_create(worker_main, sys);
         if (!sys->threads[i].internal) {
-            proven_job_close_admission(sys);
-            for (proven_size_t j = 0; j < i; ++j) {
+            proven_job_close_and_wake(sys);
+            for (proven_size_t j = 0; j < sys->num_threads; ++j) {
                 proven_sys_thread_join(sys->threads[j]);
             }
+            proven_sys_semaphore_destroy(&sys->work_ready);
             alloc.free_fn(alloc.ctx, sys->threads);
             alloc.free_fn(alloc.ctx, sys->queue.buffer);
             alloc.free_fn(alloc.ctx, sys);
             return PROVEN_ERR_IO;
         }
+        sys->num_threads += 1;
     }
     
     *out_sys = sys;
@@ -231,22 +242,24 @@ bool proven_job_submit(proven_job_sys_t *sys, void (*routine)(void*), void* arg)
     cell->data.arg = arg;
     atomic_store_explicit(&cell->sequence, pos + 1, memory_order_release); // Commit to workers
     committed = true;
+    proven_job_post_work(sys);
     proven_job_end_submit(sys);
     return committed;
 }
 
 void proven_job_system_close(proven_job_sys_t *sys) {
     if (!sys) return;
-    proven_job_close_admission(sys);
+    proven_job_close_and_wake(sys);
 }
 
 void proven_job_system_destroy(proven_job_sys_t *sys) {
     if (!sys) return;
-    proven_job_close_admission(sys);
+    proven_job_close_and_wake(sys);
     
     for (proven_size_t i = 0; i < sys->num_threads; ++i) {
         proven_sys_thread_join(sys->threads[i]);
     }
+    proven_sys_semaphore_destroy(&sys->work_ready);
     
     if (sys->alloc.alloc_fn) {
         sys->alloc.free_fn(sys->alloc.ctx, sys->queue.buffer);

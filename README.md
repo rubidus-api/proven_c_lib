@@ -18,7 +18,7 @@ randomness — with ownership and failure visible in every signature.
 one introductory C book, and it is the only document in this repository written to be read rather
 than looked up.
 
-- Version: proven_c_lib-v26.07.23b · Standard: C23 · License: MIT
+- Version: proven_c_lib-v26.07.23d | Standard: C23 | License: MIT
 - Repository: https://github.com/rubidus-api/proven_c_lib
 
 ---
@@ -249,7 +249,7 @@ explicitness that lets a language model produce code that is correct for reasons
 call, rather than correct by accident.
 
 **And then the coincidence.** *Proven* also means tested, demonstrated, shown to be true — which
-is a better fit than anything I planned, given what the repository turned into: 120 test
+is a better fit than anything I planned, given what the repository turned into: 121 test
 files, every manual example compiled and run by the build, and documentation gated so it cannot
 claim a function that does not exist. The two words are not related. *Provenance* is from Latin
 *provenire*, to come forth; *proven* is from *probare*, to test. Two different roots that happen
@@ -436,7 +436,7 @@ Common checks:
 ./nob regression
 ./nob bench-float
 ./nob freestanding
-./nob cross -build-root /home/user/work/build/proven_c_lib
+./nob cross -build-root build-out/proven_c_lib
 ```
 
 Running `./nob` without arguments prints the full command list.
@@ -654,7 +654,7 @@ Portable implementation files live in `src/proven/`. OS and C runtime calls are 
 - memory mapping
 - math helpers where needed
 
-This split keeps the core library easier to audit and gives ports a clear place to work. Hosted Linux is the primary runtime target today. The build also has compile-only checks for optional targets when the toolchains are installed: Linux AArch64, Linux ARM hard-float, Linux i686, MinGW Windows x86_64/i686, ARM Cortex-M freestanding, and RISC-V ELF freestanding.
+This split keeps the core library easier to audit and gives ports a clear place to work. Hosted Linux is the primary runtime target today. When optional toolchains are installed, the build cross-compiles Linux AArch64, Linux ARM hard-float, Linux i686, MinGW Windows x86_64/i686, ARM Cortex-M freestanding, and RISC-V ELF freestanding smoke sources. MinGW lanes also link a smoke executable; no cross lane executes target code.
 
 Cross compilation shows that headers, source visibility, ABI assumptions, and compile-time platform branches line up. It does not replace runtime tests on the target machine.
 

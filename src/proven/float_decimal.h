@@ -81,8 +81,12 @@ int proven_float_shortest_digits_f32(float value, char *out, proven_size_t out_c
 
 proven_float_parse_result_t proven_float_parse_ascii_token(const proven_u8 *input, proven_size_t len);
 proven_err_t proven_float_convert_decimal(const proven_u8 *input, proven_size_t len, double *out);
-void proven_float_decimal_reset_stats(void);
-void proven_float_decimal_get_stats(proven_float_decimal_stats_t *out);
+/*
+ * Internal test seam for observing conversion paths without process-global
+ * state. When stats is non-NULL, counters accumulate into caller-owned storage.
+ */
+proven_err_t proven_float_convert_decimal_observed(const proven_u8 *input, proven_size_t len, double *out,
+                                                   proven_float_decimal_stats_t *stats);
 bool proven_float_normalize_scientific(double *abs_v, int *sci_exp);
 
 #endif /* PROVEN_FLOAT_DECIMAL_H */

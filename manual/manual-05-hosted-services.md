@@ -312,7 +312,7 @@ Purpose: buffered scanner for bounded stream input, safe for pipes and stdin as 
 | `proven_scan_fmt_from_stdin(fmt, ...)` | Scan one fixed-size chunk from stdin. | `proven_err_t`. |
 | `proven_env_get(alloc, key)` | Read environment variable into owned U8 string. | `proven_result_u8str_t`. |
 
-`proven_sysio_scan_chunk_impl()` is intended for seekable file inputs. It reads at most one fixed-size chunk. If the handle cannot be rewound, it returns `PROVEN_ERR_UNSUPPORTED` before reading. If the chunk fills before a complete token is available, it returns `PROVEN_ERR_OUT_OF_BOUNDS` and rewinds the file cursor to the start of the chunk. Use `proven_sysio_scanner_t` for repeated buffered scanning.
+`proven_sysio_scan_chunk_impl()` is intended for seekable file inputs. It reads at most one fixed-size chunk. If the handle cannot be rewound, it returns `PROVEN_ERR_UNSUPPORTED` before reading. If the chunk fills before a complete token is available, it returns `PROVEN_ERR_OUT_OF_BOUNDS` and rewinds the file cursor to the start of the chunk. It also refuses string-view destinations with `PROVEN_ERR_UNSUPPORTED` before reading: such a view would borrow the helper's local chunk buffer and dangle on return. Use the caller-owned `proven_sysio_scanner_t` for repeated buffered scanning or borrowed string results. A string view returned by that scanner remains valid only until the next scan call or scanner deinitialization, because either operation may refill, compact, or free the shared buffer.
 
 Example:
 

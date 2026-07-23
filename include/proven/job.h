@@ -10,8 +10,8 @@
  * @brief Low-overhead MPMC (Multi-Producer Multi-Consumer) Job Scheduler.
  * 
  * Submits work to a pre-allocated pool of worker threads.
- * Synchronization is handled through Atomics,
- * allowing threads to pull work smoothly.
+ * Atomic sequence counters coordinate the bounded queue. Idle workers park on
+ * a platform counting semaphore until a submission or close wakes them.
  */
 
 /**
@@ -40,13 +40,18 @@ proven_err_t proven_job_system_init(proven_allocator_t alloc, proven_size_t num_
 /**
  * @brief Signals the Job System to stop accepting new jobs.
  * Further calls to proven_job_submit() will fail.
+ *
+ * This function may race with proven_job_submit(). It waits for submissions
+ * that entered before close to finish committing or rejecting their work, then
+ * wakes every parked worker so accepted jobs drain and the workers can exit.
  */
 void proven_job_system_close(proven_job_sys_t *sys);
 
 /**
  * @brief Destroys the Job System.
  * Blocks calling thread until the queue is completely exhausted and all workers are gracefully joined.
- * Users must call `proven_job_system_close()` prior to (or implicitly via this function) stopping submissions.
+ * This closes the system if needed. It must not race with any thread that can
+ * still call proven_job_submit(); close first, join all producers, then destroy.
  */
 void proven_job_system_destroy(proven_job_sys_t *sys);
 
@@ -60,7 +65,8 @@ void proven_job_system_destroy(proven_job_sys_t *sys);
  * The job queue assumes sequence counters do not wrap beyond the signed 
  * pointer-difference range during the lifetime of a job system.
  * 
- * @return true if enqueued successfully. false if the ring buffer is completely full.
+ * @return true if enqueued successfully. false if the ring buffer is full or
+ *         the system is closed.
  */
 [[nodiscard]]
 bool proven_job_submit(proven_job_sys_t *sys, void (*routine)(void*), void* arg);

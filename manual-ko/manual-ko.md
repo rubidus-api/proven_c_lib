@@ -1,4 +1,4 @@
-# Proven C 라이브러리 완전 매뉴얼 (v26.07.23b)
+# Proven C 라이브러리 완전 매뉴얼 (v26.07.23d)
 
 > 이 문서는 영문 매뉴얼([`manual/manual.md`](../manual/manual.md))의 한국어 번역본입니다. 코드와 API 계약을 빌드가 검증하는 정본은 영문 매뉴얼이며, 이 한국어본은 그 미러입니다. 두 문서가 어긋나면 영문본이 기준입니다.
 
@@ -82,7 +82,7 @@ cc nob.c -o nob
 ./nob regression-asan
 ./nob regression-ubsan
 ./nob freestanding
-./nob cross -build-root /home/user/work/build/proven_c_lib
+./nob cross -build-root build-out/proven_c_lib
 ```
 
 전체 hosted API가 필요하면 우산(umbrella) 헤더를 사용합니다:
@@ -267,8 +267,8 @@ proven_writer_t w = proven_sysio_stdout_buffered(&out,
 
 파일 경로에 덧붙이는 경우를 생각해 보십시오.
 
-- 경로가 들어가지 않는데 **자르는 것은 치명적입니다.** `/home/user/documents/report.pdf`가
-  `/home/user/doc`가 되는데, 이는 다른 파일이고 실제로 존재할 수도 있는 파일입니다. 이 연산은
+- 경로가 들어가지 않는데 **자르는 것은 치명적입니다.** `documents/report.pdf`가
+  `documents/rep`가 되는데, 이는 다른 파일이고 실제로 존재할 수도 있는 파일입니다. 이 연산은
   실패하고 아무것도 바꾸지 않아야 합니다.
 - 이제 로그 한 줄에 덧붙이는 경우를 생각해 보십시오. 들어가지 않으면 **자르는 것이 괜찮습니다** —
   메시지 전체를 잃느니 대부분이라도 남는 편이 낫습니다 — 얼마나 썼는지 알려주기만 한다면요.

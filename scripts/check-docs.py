@@ -61,7 +61,7 @@ def main() -> None:
 
     private_pattern = re.compile(
         r"(/op" + r"t/data(?:/|$)|/m" + r"nt(?:/|$)|"
-        r"/ho" + r"me/hermes(?:/|$)|/Us" + r"ers/hermes(?:/|$)|"
+        r"/ho" + r"me(?:/|$)|/Us" + r"ers/hermes(?:/|$)|"
         r"github-personal-access-" + r"token|ssh -" + r"i|"
         r"BEGIN\s+[A-Z0-9\s]*PRI" + r"VATE\s+KEY)"
     )

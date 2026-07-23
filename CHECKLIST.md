@@ -4,12 +4,19 @@
 
 - None.
 
+The 2026-07-23 whole-library audit is complete through RFC-0005 phase 0. Seven immediate defects
+or false-green gates were fixed and verified, including shared preprocessed build/test
+manifests, content-aware cache invalidation, and privacy-safe path/ignore rules; unresolved platform, release-profile,
+scheduler, and performance work is specified in
+`docs/RFC-0005-whole-library-audit-and-hardening.md` and queued as B-033 through B-038 in
+`docs/BACKLOG.md`. Skipped cross targets remain verification gaps rather than passes.
+
 ## Always before committing
 
 - Update `include/proven/version.h` first.
 - Sync the visible version string in `README.md` (English) and `README-ko.md` (Korean), `TEST.md`, `manual/` and `manual-ko/` (chapter headings and the `version.h` excerpt in chapter 1), and `CHANGELOG.md`.
 - Add a `CHANGELOG.md` entry that explains the change.
-- Keep public examples and help text on `/home/user/work/...` paths only.
+- Keep public examples and help text on relative paths such as `build-out/proven_c_lib`.
 - Do not expose private host paths, share names, user names, or SSH key names in public docs or source comments.
 - Run the relevant build and test modes for the change.
 - **If the change touches public API, follow `docs/DOCUMENTING.md`** (survey → plan → edit → verify).
