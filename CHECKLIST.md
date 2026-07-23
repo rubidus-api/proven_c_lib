@@ -4,10 +4,11 @@
 
 - None.
 
-The 2026-07-23 whole-library audit is complete through RFC-0005 phase 0. Seven immediate defects
-or false-green gates were fixed and verified, including shared preprocessed build/test
-manifests, content-aware cache invalidation, and privacy-safe path/ignore rules; unresolved platform, release-profile,
-scheduler, and performance work is specified in
+The 2026-07-23 whole-library audit is complete through RFC-0005 phase 0, and the C-004
+idle-worker polling mechanism is fixed in v26.07.23d. Seven immediate defects or false-green
+gates were also fixed and verified, including shared preprocessed build/test manifests,
+content-aware cache invalidation, and privacy-safe path/ignore rules. Remaining platform,
+release-profile, scheduler qualification, and performance work is specified in
 `docs/RFC-0005-whole-library-audit-and-hardening.md` and queued as B-033 through B-038 in
 `docs/BACKLOG.md`. Skipped cross targets remain verification gaps rather than passes.
 
