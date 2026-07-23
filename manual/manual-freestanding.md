@@ -1,4 +1,4 @@
-# Proven Freestanding Mode (v26.07.23b)
+# Proven Freestanding Mode (v26.07.23d)
 
 **Part VI — Going further. Prerequisites: Parts II–V, and
 [Chapter 6](manual-06-execution-and-platform.md).**
@@ -89,13 +89,13 @@ Run the project freestanding check:
 
 ```sh
 cc nob.c -o nob
-./nob freestanding -build-root /home/user/work/build/proven_c_lib
+./nob freestanding -build-root build-out/proven_c_lib
 ```
 
-Run the compile-only cross matrix:
+Run the cross-build matrix:
 
 ```sh
-./nob cross -build-root /home/user/work/build/proven_c_lib
+./nob cross -build-root build-out/proven_c_lib
 ```
 
 ## 2. Available source files

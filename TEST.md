@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.07.23b)
+# proven Test Matrix (v26.07.23d)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -16,14 +16,14 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 49 |
-| `contract` | Does it *refuse* what it says it refuses? | 10 |
-| `regression` | Does a defect that actually shipped stay fixed? | 7 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 61 |
+| `contract` | Does it *refuse* what it says it refuses? | 13 |
+| `regression` | Does a defect that actually shipped stay fixed? | 20 |
 | `differential` | Does it agree with an oracle we did not write? | 4 |
 | `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 10 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
-| `docs` | Are the claims the documentation makes still true? | 4 |
-| `bench` | How fast is it? (Not a correctness gate.) | 2 |
+| `docs` | Are the claims the documentation makes still true? | 9 |
+| `bench` | How fast is it? (Not a correctness gate.) | 3 |
 
 ## Table of contents
 
@@ -39,7 +39,7 @@ The class says what kind of question the test answers:
 - [Documentation tests](#documentation-tests)
 - [Benchmarks](#benchmarks)
 - [Regression subset](#regression-subset)
-- [Cross compile-only matrix](#cross-compile-only-matrix)
+- [Cross-build matrix](#cross-build-matrix)
 - [Failure triage workflow](#failure-triage-workflow)
 - [Change policy](#change-policy)
 - [Release validation](#release-validation)
@@ -55,47 +55,47 @@ cc nob.c -o nob
 Run the full hosted debug suite:
 
 ```sh
-./nob build -build-root /home/user/work/build/proven_c_lib
+./nob build -build-root build-out/proven_c_lib
 ```
 
 Run the warnings-as-errors gate:
 
 ```sh
-./nob strict-error -build-root /home/user/work/build/proven_c_lib
+./nob strict-error -build-root build-out/proven_c_lib
 ```
 
 Run sanitizer modes:
 
 ```sh
-./nob asan -build-root /home/user/work/build/proven_c_lib
-./nob ubsan -build-root /home/user/work/build/proven_c_lib
-./nob tsan -build-root /home/user/work/build/proven_c_lib
+./nob asan -build-root build-out/proven_c_lib
+./nob ubsan -build-root build-out/proven_c_lib
+./nob tsan -build-root build-out/proven_c_lib
 ```
 
 Run focused regression modes:
 
 ```sh
-./nob regression -build-root /home/user/work/build/proven_c_lib
-./nob regression-asan -build-root /home/user/work/build/proven_c_lib
-./nob regression-ubsan -build-root /home/user/work/build/proven_c_lib
+./nob regression -build-root build-out/proven_c_lib
+./nob regression-asan -build-root build-out/proven_c_lib
+./nob regression-ubsan -build-root build-out/proven_c_lib
 ```
 
 Run the float parse path benchmark:
 
 ```sh
-./nob bench-float -build-root /home/user/work/build/proven_c_lib
+./nob bench-float -build-root build-out/proven_c_lib
 ```
 
 Run freestanding checks:
 
 ```sh
-./nob freestanding -build-root /home/user/work/build/proven_c_lib
+./nob freestanding -build-root build-out/proven_c_lib
 ```
 
-Run cross compile-only coverage:
+Run cross-build coverage:
 
 ```sh
-./nob cross -build-root /home/user/work/build/proven_c_lib
+./nob cross -build-root build-out/proven_c_lib
 ```
 
 Missing optional cross compilers are skipped. A compiler that exists but cannot build the target probe is skipped with a warning. A real compile error in an available target fails the command.
@@ -297,23 +297,28 @@ Failure tip: identify the target name in the log, then check whether the failure
 ## Test catalog
 
 
-The hosted full run builds and executes 110 registered tests plus the 22 runnable manual examples — 132 executables in all. `./nob regression` re-runs a 28-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 120 test files: the 110 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-compile smoke tests that only `./nob cross` builds.
+The hosted full run builds and executes 111 registered tests plus the 22 runnable manual examples - 133 executables in all. `./nob regression` re-runs a 29-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 121 test files: the 111 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
 
-These counts are checked against `nob.c` by `tests/test_docs_test_catalog`, which also fails the build if a test registered in `nob.c` has no entry in this file. It exists because both had already stopped being true: this catalog claimed 118 tests when the real number was different, and ten registered tests were missing from it entirely.
+These counts come from the same preprocessed registry manifest compiled by `nob.c` and
+`tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
+regression is absent from the hosted suite, a test source belongs to no hosted, freestanding,
+benchmark, or cross-only registry, or a registered test has no entry in this file. It exists
+because both sides had already stopped being true: this catalog claimed 118 tests when the real
+number was different, and ten registered tests were missing from it entirely.
 
 Tests are named `test_<class>_<subject>`, and the name is the identifier - there are no numbers.
 Numbers rot: this catalog used to run 1..50 with `7a`, `30a`, `30b`, `30c`, `40a` wedged in wherever something new arrived, and five of its entries described files that had been deleted months earlier.
 
 The class says what kind of question the test answers:
 
-- **`unit`** — One module's public API, used the way a caller uses it. These are the tests that say what the library *does*. (61 tests)
-- **`contract`** — The public invariants: misuse, corrupted structs, exhausted allocators, refused input. These say what the library *refuses to do*, which is the half a caller cannot infer from the happy path. (13 tests)
-- **`regression`** — One test per defect that actually shipped. Each is named for what broke, not for a version or a number, and each was verified to FAIL against the pre-fix source. A regression test that passes before the fix is not a regression test. (19 tests)
-- **`differential`** — Correctness against an independent oracle - the host libc, or a corpus with known-good answers. These catch what a self-written expectation cannot: a wrong belief held consistently by both the code and its test. (4 tests)
-- **`portability`** — Freestanding builds, compile-only cross targets, source-level platform contracts, and the build driver's own standard probe. Most of these cannot be *run* on the host, so they check what can be checked: that the code compiles, links, and keeps its platform branches intact. (10 tests)
-- **`stress`** — Concurrency under a sanitizer, over enough iterations to make a race likely rather than theoretical. (1 test)
-- **`docs`** — The documentation is checked by the build, not by eye: every public function has an alias and is named in the manual, the manual never documents a function that does not exist, every example the manual prints is a program that compiles and runs, no example drifts from its chapter, and the version string agrees with itself everywhere, every module section carries its intent/reference/structures/example/counter-example, and every factual claim the chapters make is true. These are the **gates** in `docs/DOCUMENTING.md` §2 — each one exists because the thing it forbids already happened. (9 tests)
-- **`bench`** — Timing, not correctness. A benchmark regression is a signal to investigate; a checksum drift inside one is a correctness failure and does fail the build. (3 tests)
+- **`unit`** - One module's public API, used the way a caller uses it. These are the tests that say what the library *does*.
+- **`contract`** - The public invariants: misuse, corrupted structs, exhausted allocators, refused input. These say what the library *refuses to do*, which is the half a caller cannot infer from the happy path.
+- **`regression`** - One test per defect that actually shipped. Each is named for what broke, not for a version or a number, and each was verified to FAIL against the pre-fix source. A regression test that passes before the fix is not a regression test.
+- **`differential`** - Correctness against an independent oracle - the host libc, or a corpus with known-good answers. These catch what a self-written expectation cannot: a wrong belief held consistently by both the code and its test.
+- **`portability`** - Freestanding builds, cross-target builds, source-level platform contracts, and the build driver's own standard probe. Most of these cannot be *run* on the host, so they check what can be checked: that the code compiles, links where configured, and keeps its platform branches intact.
+- **`stress`** - Concurrency under a sanitizer, over enough iterations to make a race likely rather than theoretical.
+- **`docs`** - The documentation is checked by the build, not by eye: every public function has an alias and is named in the manual, the manual never documents a function that does not exist, every example the manual prints is a program that compiles and runs, no example drifts from its chapter, and the version string agrees with itself everywhere, every module section carries its intent/reference/structures/example/counter-example, and every factual claim the chapters make is true. These are the **gates** in `docs/DOCUMENTING.md` Section 2 - each one exists because the thing it forbids already happened.
+- **`bench`** - Timing, not correctness. A benchmark regression is a signal to investigate; a checksum drift inside one is a correctness failure and does fail the build.
 
 ## Unit tests
 
@@ -583,15 +588,22 @@ Failure tip: inspect `src/proven/hash.c`. The algorithms are implemented from th
 
 ### `tests/test_unit_job` — job system
 
-Intent: verify the hosted worker-thread job system executes submitted jobs exactly once and shuts down cleanly.
+Intent: verify the hosted worker-thread job system retains wakes across idle
+parking, tolerates stale permits created by an external consumer, executes
+submitted jobs exactly once, and shuts down cleanly.
 
 Sub-checks:
 
 - Initializes a job system with four workers and a 1024-entry queue.
+- Lets every worker park before the first submission, then verifies later
+  submissions wake them without losing work.
 - Dispatches 1000 jobs.
 - Uses atomics to count total executed jobs.
 - Uses indexed atomics to detect duplicate or missing job execution.
-- Shuts down workers and flushes synchronization barriers.
+- Closes an empty system to prove every parked worker receives a final wake.
+- Holds the only worker inside one job while the calling thread drains four
+  later jobs, proving stale retained permits neither duplicate work nor block
+  shutdown.
 
 Failure tip: inspect `src/proven/job.c` and `platform/proven_sys_thread.c`. For races, run `./nob tsan`. Check admission state, sequence counters, queue claim/commit ordering, and shutdown wakeups.
 
@@ -1122,13 +1134,14 @@ Failure tip: inspect `src/proven/sysio.c` and make sure the one-chunk scan path 
 
 ### `tests/test_contract_sysio_scan_truncation` — chunked sysio scan truncation
 
-Intent: verify one-chunk file scanning rejects inputs that exceed the fixed buffer and leaves the stream reusable after a failed attempt.
+Intent: verify one-chunk file scanning rejects inputs that exceed the fixed buffer, refuses borrowed string outputs that would escape its local buffer, and leaves the stream reusable after a failed attempt.
 
 Sub-checks:
 
-- Checks a chunk-full string token reports the bounds error used by the one-chunk scan path.
+- Checks a chunk-full literal reports the bounds error used by the one-chunk scan path.
 - Checks the file cursor is still usable after the failure.
 - Checks the trailing integer is not consumed by the failed scan.
+- Checks a string-view destination is refused before reading, stays unchanged, and leaves the input available to a subsequent scalar scan.
 
 Failure tip: inspect `src/proven/sysio.c` and `tests/test_contract_sysio_scan_truncation.c`.
 
@@ -1190,6 +1203,19 @@ Intent: verify an exact halfway value in the `56..350` exponent window breaks to
 Note: the exact big-integer tier is the one that makes "correctly rounded, ties-to-even, bit-identical to a correct `strtod`" true. It built `5^q` above the exact table by shifting a **rounded** Eisel-Lemire table entry, and `5^q` is odd, so the shift was never exact. A differential run against glibc found 2,923 misrounded values — all of them exact ties. The expectations here were verified with exact rational arithmetic, not against a host `strtod`, so the test states what is true rather than what this machine agrees with.
 
 Failure tip: inspect `proven_float_bigint_build_pow5_cached` in `src/proven/float_decimal.c`.
+
+### `tests/test_regression_float_parse_concurrency` - concurrent float parsing
+
+Intent: verify the public decimal parser has no shared writable state across concurrent Clinger, Eisel-Lemire, subnormal, and exact-fallback conversions.
+
+Sub-checks:
+
+- Runs eight PAL threads through four fixed-bit decimal cases for 2,000 iterations each.
+- Keeps all writable result state in a separate context for each thread.
+- Checks the consumed length and exact binary64 bits on every conversion.
+- Gives TSAN a focused regression for the process-global path counters that previously raced.
+
+Failure tip: run this test under TSAN and inspect `src/proven/float_decimal.c` for global path counters or shared scratch storage.
 
 ### `tests/test_regression_scanner_float_split` — a float split across the scanner buffer
 
@@ -1391,7 +1417,7 @@ Failure tip: each section names one area - `proven_u8str_reserve` in `u8str.c`, 
 
 ## Portability tests
 
-Freestanding builds, compile-only cross targets, source-level platform contracts, and the build driver's own standard probe. Most of these cannot be *run* on the host, so they check what can be checked: that the code compiles, links, and keeps its platform branches intact.
+Freestanding builds, cross-target builds, source-level platform contracts, and the build driver's own standard probe. Most of these cannot be *run* on the host, so they check what can be checked: that the code compiles, links where configured, and keeps its platform branches intact.
 
 ### `tests/test_portability_source_contracts` — source portability contracts
 
@@ -1407,7 +1433,12 @@ Sub-checks:
 - Checks public environment lookup no longer rejects large keys through a fixed C key buffer.
 - Checks 32-bit Linux `_llseek` uses a 64-bit result buffer.
 - Checks the job system keeps a single admission state and explicit begin/end submit helpers.
+- Checks idle workers wait on the PAL counting semaphore, submission and close
+  post retained permits, POSIX uses a condition-variable wait, and Windows uses
+  a kernel semaphore.
 - Checks `nob.c` keeps structured test metadata and emits standard begin, intent, failure-hint, failure, and pass log lines.
+- Checks `nob.c` and the test share one preprocessed dependency manifest, and every header in the declared library, PAL, test, and example roots is active in it.
+- Checks the test-catalog gate uses the portable directory iterator instead of POSIX-only `dirent.h`.
 - Checks this `TEST.md` documents failure tips, sub-checks, and the log format.
 
 Failure tip: source-contract tests should stay narrow. If a source pattern changes legitimately, update the contract to the new safe pattern in the same commit as the source change and explain it in docs.
@@ -1474,9 +1505,9 @@ Failure tip: the name is printed. It is either a function you added without docu
 
 ### `tests/test_docs_test_catalog` — the test catalog matches the build
 
-Intent: verify every test registered in `nob.c` has an entry in this file, and that this file carries exactly one entry per `tests/test_*.c` — no test undocumented, no entry describing a deleted file.
+Intent: verify every test registered in `nob.c` has one entry in this file, every registry contains unique paths, `regression_tests[]` is a hosted subset with exactly the membership listed above, and all published suite, tree, and filename-class counts match the registries and test files.
 
-Failure tip: a failure names the test. Add a `### \`tests/NAME\`` section under its class heading here, or remove the entry whose file is gone. Ten registered tests once had no entry at all, and the counts above named numbers that matched neither `nob.c` nor the tree, because nothing compared them.
+Failure tip: a failure names the missing test, duplicate path, stale subset member, or stale count. Reconcile this catalog with every registry array and `tests/test_*.c`; do not update a list or total independently. Ten registered tests once had no entry, three full-suite entries were duplicated, the regression list omitted twenty members, and the headline and class counts had drifted because the old gate ignored those values.
 
 ### `tests/test_docs_version_sync` — the version string agrees with itself everywhere
 
@@ -1561,9 +1592,13 @@ Concurrency under a sanitizer, over enough iterations to make a race likely rath
 
 ### `tests/test_stress_job_concurrency` — job queue stress
 
-Intent: verify the job queue tolerates a denser concurrent producer pattern and still executes each submitted job exactly once.
+Intent: verify the job queue tolerates concurrent producers and a close racing
+active submitters, drains every accepted job exactly once, and releases every
+parked worker.
 
-Failure tip: run this under TSAN first; inspect queue admission, claim, and shutdown ordering if a slot count drifts or a producer stalls.
+Failure tip: run this under TSAN first; inspect queue admission,
+publish-before-post ordering, semaphore permit accounting, and close wakeups if
+a slot count drifts or a producer stalls.
 
 
 ## Regression subset
@@ -1571,13 +1606,33 @@ Failure tip: run this under TSAN first; inspect queue admission, claim, and shut
 `./nob regression`, `./nob regression-asan`, and `./nob regression-ubsan` currently run:
 
 - `tests/test_regression_v26_05`
-- `tests/test_regression_v26_07`
 - `tests/test_unit_map_owned_key`
+- `tests/test_contract_map_hardening`
+- `tests/test_contract_pool_misuse`
 - `tests/test_contract_public_structs`
 - `tests/test_regression_fs_copy_to_self`
 - `tests/test_regression_fs_slurp`
 - `tests/test_regression_scanner_rollback`
+- `tests/test_regression_v26_07`
 - `tests/test_regression_sort_duplicates`
+- `tests/test_regression_scanner_float_split`
+- `tests/test_regression_time_fmt_neg_year`
+- `tests/test_unit_time_fmt_u16_parity`
+- `tests/test_regression_scanner_short_read`
+- `tests/test_regression_float_exact_pow5`
+- `tests/test_regression_float_parse_concurrency`
+- `tests/test_regression_map_churn`
+- `tests/test_contract_sort_alignment`
+- `tests/test_contract_allocator_trait`
+- `tests/test_regression_fs_walk_errors`
+- `tests/test_unit_random`
+- `tests/test_unit_rng`
+- `tests/test_unit_map_keyed`
+- `tests/test_unit_hash`
+- `tests/test_unit_fs_walk`
+- `tests/test_regression_fs_perms_and_types`
+- `tests/test_regression_stream_partial_write`
+- `tests/test_regression_fmt_spec_silently_wrong`
 - `tests/test_portability_source_contracts`
 
 Intent: provide a short feedback loop for bug-fix work without running every hosted example and container test.
@@ -1586,6 +1641,8 @@ What it checks:
 
 - Historical behavioral bugs remain fixed.
 - Filesystem destructive edge cases remain protected.
+- Float parsing, scanner refill, and formatting regressions remain covered.
+- Allocator, map, sort, random, hash, and concurrency contracts stay in the short loop.
 - Source-level portability contracts and test-log/documentation contracts remain present.
 
 Failure tip: a regression failure is usually more specific than a full-suite failure. Use the sub-check name and preserve the regression unless the underlying public contract is intentionally changed and documented.
@@ -1724,7 +1781,7 @@ Intent: time the decimal parser against the host strtod on a mixed corpus and re
 
 Failure tip: inspect src/proven/float_parse.c and src/proven/float_decimal.c if a timing run regresses or a checksum drifts.
 
-## Cross compile-only matrix
+## Cross-build matrix
 
 The matrix compiles `tests/test_portability_cross_compile_smoke.c` (or `tests/test_portability_freestanding.c` for freestanding targets) and links it with `tests/test_portability_cross_link_smoke.c`, which exists to prove the objects actually link - a header-only compile check would miss a missing symbol.
 
@@ -1893,7 +1950,9 @@ Failure tip: inspect the shortest corpus tests if the tie-break cases disappear 
 
 ### 42. `tests/test_stress_job_concurrency` - job queue stress
 
-Intent: verify the hosted job queue tolerates a denser concurrent producer pattern and still executes each submitted job exactly once.
+Intent: verify the hosted job queue tolerates concurrent producers and a close
+racing active submitters, drains every accepted job exactly once, and releases
+every parked worker.
 
 Sub-checks:
 
@@ -1901,9 +1960,13 @@ Sub-checks:
 - Submits 1024 jobs per producer while yielding between retries.
 - Counts total executions with an atomic counter.
 - Uses per-slot atomics to detect duplicate or missing execution.
-- Closes and destroys the job system only after all producers have joined.
+- Runs a second phase that closes while four producers are still submitting.
+- Joins those producers before destroy, then proves every accepted job ran once
+  and no job ran twice.
 
-Failure tip: run `./nob tsan` if available and inspect `src/proven/job.c` plus `platform/proven_sys_thread.c` if counts drift or a producer stalls.
+Failure tip: run `./nob tsan` if available and inspect `src/proven/job.c` plus
+`platform/proven_sys_thread.c` if counts drift, a wake is lost, or a producer
+stalls.
 
 ### 43. `tests/test_differential_float_host_oracle_f64` - float host oracle
 
@@ -2051,15 +2114,15 @@ Recommended release gate:
 
 ```sh
 ./nob clean
-./nob strict-error -build-root /home/user/work/build/proven_c_lib
-./nob regression-asan -build-root /home/user/work/build/proven_c_lib
-./nob regression-ubsan -build-root /home/user/work/build/proven_c_lib
-./nob freestanding -build-root /home/user/work/build/proven_c_lib
-./nob cross -build-root /home/user/work/build/proven_c_lib
+./nob strict-error -build-root build-out/proven_c_lib
+./nob regression-asan -build-root build-out/proven_c_lib
+./nob regression-ubsan -build-root build-out/proven_c_lib
+./nob freestanding -build-root build-out/proven_c_lib
+./nob cross -build-root build-out/proven_c_lib
 ```
 
 Optional compiler-specific gate:
 
 ```sh
-./nob strict-error -cc clang -build-root /home/user/work/build/proven_c_lib
+./nob strict-error -cc clang -build-root build-out/proven_c_lib
 ```

@@ -15,7 +15,7 @@ C 책을 한 권 뗐다고 해 봅시다. 포인터도, `malloc`도, `printf`도
 **처음이라면 [0장](manual-ko/manual-00-start-here-ko.md)부터.** 입문서 한 권 외에는 아무것도
 전제하지 않으며, 이 저장소에서 찾아보는 문서가 아니라 읽으라고 쓴 유일한 문서입니다.
 
-- 버전: proven_c_lib-v26.07.23b · 표준: C23 · 라이선스: MIT
+- 버전: proven_c_lib-v26.07.23d · 표준: C23 · 라이선스: MIT
 - 저장소: https://github.com/rubidus-api/proven_c_lib
 
 ---
@@ -237,7 +237,7 @@ provenance는 이 라이브러리가 기우는 방향이지, 이미 완성했다
 
 **그리고 우연이 하나 있습니다.** *proven*은 "증명된, 검증된, 사실로 드러난"이라는 뜻이기도 합니다 — 이
 저장소가 결국 어떤 모습이 되었는지를 생각하면, 제가 계획한 그 무엇보다도 잘 들어맞습니다. 테스트 파일
-120개, 매뉴얼의 모든 예제를 빌드가 컴파일하고 실행하며, 문서에도 게이트가 걸려 있어 존재하지 않는
+121개, 매뉴얼의 모든 예제를 빌드가 컴파일하고 실행하며, 문서에도 게이트가 걸려 있어 존재하지 않는
 함수를 주장할 수 없습니다. 두 단어는 어원이 다릅니다. *provenance*는 라틴어 *provenire*("나오다"),
 *proven*은 *probare*("검증하다")에서 왔습니다. 뿌리가 다른 두 단어가 공교롭게 같은 일곱 글자에 도착한
 것이고, 그 우연이 의도보다 이 프로젝트를 더 잘 설명합니다.
@@ -408,7 +408,7 @@ cc nob.c -o nob     # 빌드 드라이버를 한 번 빌드
 ./nob regression
 ./nob bench-float
 ./nob freestanding
-./nob cross -build-root /home/user/work/build/proven_c_lib
+./nob cross -build-root build-out/proven_c_lib
 ```
 
 인자 없이 `./nob`을 실행하면 전체 명령 목록이 나옵니다.
@@ -625,7 +625,7 @@ portable implementation 파일은 `src/proven/`에 있습니다. OS와 C runtime
 - memory mapping
 - 필요한 경우의 math helper
 
-이 분리는 core library를 감사하기 쉽게 만들고, 포팅 작업이 들어갈 위치도 분명하게 해 줍니다. 현재 주요 런타임 대상은 hosted Linux입니다. 빌드는 toolchain이 설치되어 있을 때 선택적 대상에 대해서도 compile-only 점검을 제공합니다. 대상은 Linux AArch64, Linux ARM hard-float, Linux i686, MinGW Windows x86_64/i686, ARM Cortex-M freestanding, RISC-V ELF freestanding입니다.
+이 분리는 core library를 감사하기 쉽게 만들고, 포팅 작업이 들어갈 위치도 분명하게 해 줍니다. 현재 주요 런타임 대상은 hosted Linux입니다. 선택적 toolchain이 설치되어 있으면 빌드는 Linux AArch64, Linux ARM hard-float, Linux i686, MinGW Windows x86_64/i686, ARM Cortex-M freestanding, RISC-V ELF freestanding용 smoke source를 크로스 컴파일합니다. MinGW 경로는 smoke 실행 파일도 링크하지만, 어떤 크로스 경로도 대상 코드를 실행하지는 않습니다.
 
 Cross compilation은 header, source visibility, ABI assumption, target별 compile-time branch가 함께 맞는지 확인하는 용도입니다. 대상 머신에서의 runtime test를 대신하지는 않습니다.
 

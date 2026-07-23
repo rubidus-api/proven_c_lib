@@ -1,6 +1,7 @@
 #include "proven_test.h"
 #include "proven/job.h"
 #include "proven/heap.h"
+#include "proven/time.h"
 #include "proven_sys_thread.h"
 #include <stdint.h>
 #include <stdatomic.h>
@@ -13,6 +14,9 @@
 
 static _Atomic unsigned int g_hits[JOB_STRESS_TOTAL];
 static _Atomic unsigned int g_total;
+static _Atomic unsigned int g_race_started;
+static _Atomic unsigned int g_race_accepted;
+static _Atomic bool g_race_closing;
 
 typedef struct {
     proven_job_sys_t *sys;
@@ -34,6 +38,29 @@ static void *job_stress_producer(void *arg) {
             proven_sys_thread_yield();
         }
         if ((i & 7u) == 0u) {
+            proven_sys_thread_yield();
+        }
+    }
+    return NULL;
+}
+
+static void *job_close_race_producer(void *arg) {
+    job_stress_producer_ctx_t *ctx = (job_stress_producer_ctx_t *)arg;
+    atomic_fetch_add_explicit(&g_race_started, 1u, memory_order_release);
+
+    for (unsigned int i = 0; i < ctx->count; ++i) {
+        unsigned int idx = ctx->base + i;
+        for (;;) {
+            if (proven_job_submit(ctx->sys, job_stress_worker,
+                                  (void *)(uintptr_t)idx)) {
+                atomic_fetch_add_explicit(&g_race_accepted, 1u,
+                                          memory_order_relaxed);
+                break;
+            }
+            if (atomic_load_explicit(&g_race_closing,
+                                     memory_order_acquire)) {
+                return NULL;
+            }
             proven_sys_thread_yield();
         }
     }
@@ -89,6 +116,66 @@ int main(void) {
     for (unsigned int i = 0; i < JOB_STRESS_TOTAL; ++i) {
         unsigned int hits = atomic_load_explicit(&g_hits[i], memory_order_relaxed);
         PROVEN_TEST_ASSERT(hits == 1u, "each stressed job should run once", "Inspect the queue, worker execution, or duplicate submission handling if a slot count drifts away from one.");
+    }
+
+    PROVEN_TEST_SECTION(
+        "close racing active submitters",
+        "Close while producers are still attempting unique jobs, then prove every accepted job drains exactly once and every parked worker exits.",
+        "Inspect admission counting, publish-before-post ordering, and close wake permits if an accepted job is lost or destroy hangs."
+    );
+
+    sys = NULL;
+    err = proven_job_system_init(proven_heap_allocator(), JOB_STRESS_WORKERS,
+                                 JOB_STRESS_QUEUE_CAP, &sys);
+    PROVEN_TEST_ASSERT(err == PROVEN_OK && sys != NULL,
+                       "close-race job system init should succeed",
+                       "Inspect job system and semaphore initialization.");
+    for (unsigned int i = 0; i < JOB_STRESS_TOTAL; ++i) {
+        atomic_store_explicit(&g_hits[i], 0u, memory_order_relaxed);
+    }
+    atomic_store_explicit(&g_total, 0u, memory_order_relaxed);
+    atomic_store_explicit(&g_race_started, 0u, memory_order_relaxed);
+    atomic_store_explicit(&g_race_accepted, 0u, memory_order_relaxed);
+    atomic_store_explicit(&g_race_closing, false, memory_order_relaxed);
+
+    for (unsigned int producer = 0; producer < JOB_STRESS_PRODUCERS; ++producer) {
+        ctx[producer].sys = sys;
+        ctx[producer].base = producer * JOB_STRESS_PER_PRODUCER;
+        ctx[producer].count = JOB_STRESS_PER_PRODUCER;
+        threads[producer] =
+            proven_sys_thread_create(job_close_race_producer, &ctx[producer]);
+        PROVEN_TEST_ASSERT(threads[producer].internal != NULL,
+                           "close-race producer creation should succeed",
+                           "Inspect the thread PAL if producer creation fails.");
+    }
+    while (atomic_load_explicit(&g_race_started, memory_order_acquire) !=
+           JOB_STRESS_PRODUCERS) {
+        proven_sys_thread_yield();
+    }
+    proven_time_sleep(2);
+    atomic_store_explicit(&g_race_closing, true, memory_order_release);
+    proven_job_system_close(sys);
+    for (unsigned int producer = 0; producer < JOB_STRESS_PRODUCERS; ++producer) {
+        proven_sys_thread_join(threads[producer]);
+    }
+    proven_job_system_destroy(sys);
+
+    unsigned int accepted =
+        atomic_load_explicit(&g_race_accepted, memory_order_relaxed);
+    unsigned int executed =
+        atomic_load_explicit(&g_total, memory_order_relaxed);
+    PROVEN_TEST_ASSERT(accepted > 0u,
+                       "the close-race run should accept some work",
+                       "Give producers a chance to submit before initiating close.");
+    PROVEN_TEST_ASSERT(executed == accepted,
+                       "every job accepted before close should execute",
+                       "Inspect publish-before-wake and close drain ordering.");
+    for (unsigned int i = 0; i < JOB_STRESS_TOTAL; ++i) {
+        unsigned int hits =
+            atomic_load_explicit(&g_hits[i], memory_order_relaxed);
+        PROVEN_TEST_ASSERT(hits <= 1u,
+                           "no close-race job should execute more than once",
+                           "Inspect queue claim and semaphore permit accounting.");
     }
 
     PROVEN_TEST_PASS("job stress harness completed.");

@@ -145,8 +145,12 @@ typedef struct proven_job_sys proven_job_sys_t;
 
 Important constraints:
 
+- `proven_job_system_close()` may race with submitters. A submission admitted
+  before close either commits or returns `false` before close returns; later
+  submissions are rejected.
 - `proven_job_system_destroy()` must not race with producer threads still calling `proven_job_submit()`.
-- Callers should externally synchronize producer shutdown, then close/destroy.
+- To use close as the stop signal, call close, join every producer, and only then
+  destroy.
 - Queue sequence counters assume they do not wrap beyond signed pointer-difference range during one job-system lifetime.
 
 ### Concurrency model
@@ -157,10 +161,20 @@ do not lock the whole queue; they coordinate with **atomic sequence counters**:
 
 - A producer (`proven_job_submit`) atomically claims the next enqueue position. If
   claiming would overrun the slowest un-consumed slot, the queue is full and submit
-  returns `false` — it never blocks and never overwrites pending work.
+  returns `false` rather than waiting for capacity or overwriting pending work.
+  Posting the worker wake may briefly enter platform synchronization.
 - A consumer (a worker thread, or your own thread via `proven_job_execute_one`)
   atomically claims the next dequeue position, reads the `routine`/`arg`, marks the
   slot reusable, and runs the routine outside the claim.
+
+An idle worker blocks on a platform counting semaphore instead of repeatedly
+polling and yielding. A successful submit publishes its slot before posting one
+permit. A permit remains available when no worker is waiting, so a wake cannot
+be lost between an empty-queue observation and the wait. `close` first stops
+admission and waits for already-admitted submissions to finish, then posts one
+final permit per worker. If an external `proven_job_execute_one` consumes a job
+before a worker consumes its permit, the retained permit is merely stale: the
+worker performs an empty recheck and parks again, or exits after close.
 
 Because submit and execute are MPMC-safe, *many* threads may submit and *many* may
 consume at once. What the library does **not** do for you: it does not synchronize
@@ -179,7 +193,8 @@ init  --->  running  --(close)-->  closed  --(destroy: drain + join)-->  freed
 
 - `init` reserves `num_workers` OS threads and the slot buffer up front.
 - `close` flips a flag so every later `submit` returns `false`; already-queued and
-  in-flight jobs still run.
+  in-flight submissions settle before close returns, and every accepted job still
+  runs.
 - `destroy` closes if needed, then **blocks the calling thread until the queue is
   empty and every worker has joined**, then frees everything.
 
@@ -572,7 +587,8 @@ A library that claims to be portable is making a claim that decays silently. Cod
 the machine it was written on and breaks on an ARM board six months later — and the commit that
 broke it looked harmless.
 
-`./nob cross` compiles the library for every target in a matrix without running anything. That
+`./nob cross` compiles the library for every target in a matrix without running anything. The
+configured MinGW lanes additionally link a smoke executable. That
 sounds weak and is not: **most portability failures are compile-time failures.** A type that is not
 the width you assumed, a missing intrinsic, an alignment requirement the target actually enforces,
 a header that does not exist there — all of them fail the compiler, on this machine, in seconds,
@@ -597,7 +613,7 @@ Wrong — treating a green cross matrix as proof the library runs on that target
 The build driver command is:
 
 ```sh
-./nob cross -build-root /home/user/work/build/proven_c_lib
+./nob cross -build-root build-out/proven_c_lib
 ```
 
 Current target categories:
@@ -607,7 +623,7 @@ Current target categories:
 - Linux AArch64 hosted compile-only.
 - Linux ARM hard-float hosted compile-only.
 - Linux i686 hosted compile-only through `i686-linux-gnu-gcc` or `gcc -m32`.
-- Windows x86_64 and i686 WinAPI compile-only through MinGW.
+- Windows x86_64 and i686 WinAPI compile-and-link smoke checks through MinGW.
 - ARM Cortex-M freestanding compile-only.
 - RISC-V ELF freestanding compile-only.
 
@@ -615,7 +631,8 @@ Rules:
 
 - Missing optional compilers are skipped.
 - Real compile errors fail the command.
-- Cross compilation is compile-only; it is not runtime verification.
+- Cross builds are compile-only except for the configured MinGW compile-and-link smoke; none is
+  runtime verification.
 - Runtime behavior still needs a target runner, emulator, device, or OS environment.
 
 ## 8. Examples and misuse cases
@@ -677,9 +694,8 @@ proven_job_submit(sys, work, arg); /* wrong: external synchronization missing */
 Correct:
 
 ```text
-stop_producer_threads();
-join_producer_threads();
-proven_job_system_close(sys);
+proven_job_system_close(sys); /* may race with submit and makes it return false */
+join_producer_threads();      /* no producer can access sys after this point */
 proven_job_system_destroy(sys);
 ```
 
@@ -720,10 +736,11 @@ Compiled and run by the test suite. Note the ordering the contract requires: sub
 #include <stdatomic.h>
 
 /*
- * The job system: worker threads plus a bounded lock-free queue. It orders the
- * *handoff* of work - it does not synchronize the data the work touches. That is
- * why the counter below is an atomic and not a plain int: two jobs incrementing
- * the same variable is a data race unless the caller says otherwise.
+ * The job system: worker threads plus a bounded atomic MPMC queue. Idle workers
+ * park on platform synchronization. It orders the *handoff* of work - it does
+ * not synchronize the data the work touches. That is why the counter below is
+ * an atomic and not a plain int: two jobs incrementing the same variable is a
+ * data race unless the caller says otherwise.
  *
  * The lifecycle is a straight line, and it is not optional:
  *
@@ -760,9 +777,10 @@ int main(void) {
 
     proven_size_t submitted = 0;
     for (proven_size_t i = 0; i < JOB_COUNT; ++i) {
-        /* submit returns false when the ring is full or the system is closed - it
-         * never blocks and never drops work silently. Ignoring the answer is how
-         * you lose jobs, which is why it is [[nodiscard]]. */
+        /* submit returns false when the ring is full or the system is closed. It
+         * never waits for queue capacity and never drops work silently; its wake
+         * path may briefly enter platform synchronization. Ignoring the answer is
+         * how you lose jobs, which is why it is [[nodiscard]]. */
         if (!proven_job_submit(sys, increment, &counter)) {
             /* A real caller would back off and retry, or run the job inline with
              * proven_job_execute_one. Here a full ring means the sizing above is

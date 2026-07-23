@@ -640,6 +640,18 @@ proven_err_t proven_sysio_print_impl(proven_file_t file, const char *fmt, const 
 
 proven_err_t proven_sysio_scan_chunk_impl(proven_file_t file, const char *fmt, const proven_scan_arg_t *args, size_t args_count) {
     char buf[4096];
+
+    /* A string result is a borrowed view into the scanner input. This helper's input
+     * lives in `buf`, so returning such a view would make it dangle as soon as this
+     * function returns. Reject it before probing or reading the handle: the buffered
+     * scanner is the API for callers that need a view with a documented lifetime. */
+    if (args) {
+        for (size_t i = 0; i < args_count; ++i) {
+            if (args[i].type == PROVEN_SCAN_ARG_TYPE_STR_VIEW) {
+                return PROVEN_ERR_UNSUPPORTED;
+            }
+        }
+    }
 #if defined(_WIN32) || defined(_WIN64)
     proven_sys_io_handle_t handle = { .handle = file.internal.ptr };
 #else

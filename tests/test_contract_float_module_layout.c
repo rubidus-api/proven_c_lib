@@ -47,7 +47,9 @@ int main(void) {
     require(contains(mod_h, "proven_float_parse_ascii_token"), "float_decimal.h should declare the shared internal ASCII float token parser helper");
     require(contains(mod_h, "proven_float_convert_decimal"), "float_decimal.h should declare the shared decimal-to-double helper");
     require(contains(mod_h, "proven_float_decimal_stats_t"), "float_decimal.h should declare the internal conversion metrics type");
-    require(contains(mod_h, "proven_float_decimal_reset_stats"), "float_decimal.h should declare the internal metrics reset helper");
+    require(contains(mod_h, "proven_float_convert_decimal_observed"), "float_decimal.h should expose caller-owned path observation for tests");
+    require(!contains(mod_h, "proven_float_decimal_reset_stats"), "float metrics should not require mutable process-global state");
+    require(!contains(mod_h, "proven_float_decimal_get_stats"), "float metrics should live in a caller-owned observation sink");
     require(contains(mod_h, "eisel_lemire_fast_path_hits"), "float_decimal.h should expose an internal Eisel-Lemire hit counter for tests");
     require(contains(mod_h, "proven_float_normalize_scientific"), "float_decimal.h should declare the shared scientific normalization helper");
     free(mod_h);
@@ -58,7 +60,9 @@ int main(void) {
     require(contains(mod_c, "proven_float_convert_decimal"), "float_decimal.c should define the shared decimal-to-double helper");
     require(contains(mod_c, "proven_float_try_eisel_lemire"), "float_decimal.c should define the staged Eisel-Lemire candidate layer");
     require(contains(mod_c, "proven_float_compare_decimal_to_midpoint"), "float_decimal.c should keep the exact midpoint comparison helper in the shared module");
-    require(contains(mod_c, "proven_float_decimal_stats"), "float_decimal.c should keep internal fast-path and fallback counters");
+    require(contains(mod_c, "proven_float_convert_decimal_observed"), "float_decimal.c should define caller-owned path observation");
+    require(!contains(mod_c, "static proven_float_decimal_stats_t proven_float_decimal_stats"), "public parsing must not write process-global path counters");
+    require(!contains(mod_c, "proven_float_decimal_reset_stats"), "float_decimal.c should not expose a resettable global metrics object");
     require(contains(mod_c, "proven_float_normalize_scientific"), "float_decimal.c should define the shared scientific normalization helper");
     require(contains(mod_c, "proven_float_shortest_digits"), "float_decimal.c should define the shared shortest-digits engine");
     free(mod_c);

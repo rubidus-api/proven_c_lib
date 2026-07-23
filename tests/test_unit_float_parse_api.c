@@ -21,6 +21,21 @@ static void expect_parse_ok_bits(const char *label, const char *text, proven_siz
     PROVEN_TEST_ASSERT(double_bits(res.val) == double_bits(expected), label, "Inspect decimal-to-binary64 rounding if the parsed value drifts.");
 }
 
+static void observe_decimal_path(const char *label, const char *text, proven_float_decimal_stats_t *stats) {
+    proven_u8str_view_t input = proven_u8str_view_from_cstr(text);
+    proven_float_parse_result_t parsed = proven_float_parse_ascii_token(input.ptr, input.size);
+    double value = 0.0;
+
+    PROVEN_TEST_ASSERT(parsed.err == PROVEN_OK, label, "Inspect the internal decimal tokenizer if a valid metrics input stops parsing.");
+    PROVEN_TEST_ASSERT(parsed.kind == PROVEN_FLOAT_PARSE_KIND_DECIMAL, label, "Inspect the metrics corpus if a non-decimal token reaches decimal conversion.");
+    PROVEN_TEST_ASSERT(parsed.consumed == input.size, label, "Inspect the metrics corpus if a decimal input contains an unobserved suffix.");
+    PROVEN_TEST_ASSERT(
+        proven_float_convert_decimal_observed(input.ptr, parsed.consumed, &value, stats) == PROVEN_OK,
+        label,
+        "Inspect the caller-owned decimal observation path if a valid metrics input stops converting."
+    );
+}
+
 int main(void) {
     PROVEN_TEST_SUITE(
         "test_unit_float_parse_api",
@@ -99,121 +114,134 @@ int main(void) {
     {
         proven_float_decimal_stats_t stats = {0};
 
-        proven_float_decimal_reset_stats();
-        (void)proven_parse_double_ascii(proven_u8str_view_from_cstr("3.14"));
-        proven_float_decimal_get_stats(&stats);
+        stats = (proven_float_decimal_stats_t){0};
+        observe_decimal_path("observe clinger path", "3.14", &stats);
         PROVEN_TEST_ASSERT(stats.total_conversions == 1u, "metrics total after clinger", "Inspect conversion entry counting if a valid decimal stops incrementing the total counter.");
         PROVEN_TEST_ASSERT(stats.clinger_fast_path_hits == 1u, "metrics clinger hit", "Inspect the small exact-range fast path if a representative short decimal stops reaching it.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_fast_path_hits == 0u, "metrics no eisel-lemire on clinger", "Inspect fast-path accounting if the Eisel-Lemire layer is counted for a simple decimal.");
         PROVEN_TEST_ASSERT(stats.exact_fallback_hits == 0u, "metrics no fallback on clinger", "Inspect fallback accounting if a simple decimal stops staying on the first fast path.");
 
-        proven_float_decimal_reset_stats();
-        (void)proven_parse_double_ascii(proven_u8str_view_from_cstr("1844674407370955161e27"));
-        proven_float_decimal_get_stats(&stats);
+        stats = (proven_float_decimal_stats_t){0};
+        observe_decimal_path("observe eisel-lemire path", "1844674407370955161e27", &stats);
         PROVEN_TEST_ASSERT(stats.total_conversions == 1u, "metrics total after eisel-lemire", "Inspect conversion entry counting if an Eisel-Lemire candidate stops incrementing the total counter.");
         PROVEN_TEST_ASSERT(stats.clinger_fast_path_hits == 0u, "metrics no clinger on eisel-lemire", "Inspect Clinger gating if a large positive-exponent integer starts being misclassified as a small exact-range decimal.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_fast_path_hits == 1u, "metrics eisel-lemire hit", "Inspect the Eisel-Lemire layer if a representative large decimal integer stops reaching it.");
         PROVEN_TEST_ASSERT(stats.exact_fallback_hits == 0u, "metrics no fallback on eisel-lemire", "Inspect fast-path certainty checks if a representative Eisel-Lemire case starts falling through.");
 
-        proven_float_decimal_reset_stats();
+        stats = (proven_float_decimal_stats_t){0};
         expect_parse_ok_bits("positive exponent generated u128 subset", "1e40", 4u, strtod("1e40", NULL));
-        proven_float_decimal_get_stats(&stats);
+        observe_decimal_path("observe positive exponent generated u128 subset", "1e40", &stats);
         PROVEN_TEST_ASSERT(stats.total_conversions == 1u, "metrics total after positive-exponent u128 subset", "Inspect conversion entry counting if a generated-u128 positive exponent candidate stops incrementing the total counter.");
         PROVEN_TEST_ASSERT(stats.clinger_fast_path_hits == 0u, "metrics no clinger on positive-exponent u128 subset", "Inspect Clinger exponent limits if a wide positive exponent starts being misclassified as a small exact-range decimal.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_fast_path_hits == 1u, "metrics positive-exponent u128 eisel-lemire hit", "Inspect the generated-u128 Eisel-Lemire path if a wide positive exponent stops reaching it.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_product_plan_hits == 1u, "metrics positive-exponent product-plan hit", "Inspect cached-power product-plan routing if a representative positive exponent stops finishing through the staged product path.");
         PROVEN_TEST_ASSERT(stats.exact_fallback_hits == 0u, "metrics no fallback on positive-exponent u128 subset", "Inspect the widened positive-exponent Eisel-Lemire path if a generated-u128 case starts falling through.");
 
-        proven_float_decimal_reset_stats();
+        stats = (proven_float_decimal_stats_t){0};
         expect_parse_ok_bits("negative exponent eisel-lemire subset", "11920928955078125e-23", 21u, strtod("11920928955078125e-23", NULL));
-        proven_float_decimal_get_stats(&stats);
+        observe_decimal_path("observe negative exponent eisel-lemire subset", "11920928955078125e-23", &stats);
         PROVEN_TEST_ASSERT(stats.total_conversions == 1u, "metrics total after negative-exponent eisel-lemire", "Inspect conversion entry counting if an exact negative-exponent subset stops incrementing the total counter.");
         PROVEN_TEST_ASSERT(stats.clinger_fast_path_hits == 0u, "metrics no clinger on negative-exponent eisel-lemire", "Inspect Clinger range limits if a large negative exponent starts being misclassified as a small exact-range decimal.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_fast_path_hits == 1u, "metrics negative-exponent eisel-lemire hit", "Inspect the Eisel-Lemire layer if the exact negative-exponent subset stops reaching it.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_product_plan_hits == 1u, "metrics negative-exponent product-plan hit", "Inspect reciprocal cached-power routing if a representative negative exponent stops finishing through the staged product family.");
         PROVEN_TEST_ASSERT(stats.exact_fallback_hits == 0u, "metrics no fallback on negative-exponent eisel-lemire", "Inspect negative-exponent certainty handling if an exact power-of-two subset starts falling through.");
 
-        proven_float_decimal_reset_stats();
+        stats = (proven_float_decimal_stats_t){0};
         expect_parse_ok_bits("negative exponent rounded ratio subset", "9007199254740993e-1", 19u, strtod("9007199254740993e-1", NULL));
-        proven_float_decimal_get_stats(&stats);
+        observe_decimal_path("observe negative exponent rounded ratio subset", "9007199254740993e-1", &stats);
         PROVEN_TEST_ASSERT(stats.total_conversions == 1u, "metrics total after negative-exponent rounded ratio", "Inspect conversion entry counting if a rounded negative-exponent ratio stops incrementing the total counter.");
         PROVEN_TEST_ASSERT(stats.clinger_fast_path_hits == 0u, "metrics no clinger on negative-exponent rounded ratio", "Inspect Clinger range limits if a large negative exponent ratio starts being misclassified as a small exact-range decimal.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_fast_path_hits == 1u, "metrics negative-exponent rounded ratio eisel-lemire hit", "Inspect the Eisel-Lemire layer if the rounded negative-exponent ratio subset stops reaching it.");
         PROVEN_TEST_ASSERT(stats.exact_fallback_hits == 0u, "metrics no fallback on negative-exponent rounded ratio", "Inspect negative-exponent ratio certainty handling if a rounded subset case starts falling through.");
 
-        proven_float_decimal_reset_stats();
+        stats = (proven_float_decimal_stats_t){0};
         expect_parse_ok_bits("negative exponent wide-shift ratio subset", "1e-27", 5u, strtod("1e-27", NULL));
-        proven_float_decimal_get_stats(&stats);
+        observe_decimal_path("observe negative exponent wide-shift ratio subset", "1e-27", &stats);
         PROVEN_TEST_ASSERT(stats.total_conversions == 1u, "metrics total after negative-exponent wide shift", "Inspect conversion entry counting if a wide-shift negative exponent ratio stops incrementing the total counter.");
         PROVEN_TEST_ASSERT(stats.clinger_fast_path_hits == 0u, "metrics no clinger on negative-exponent wide shift", "Inspect Clinger range limits if a wide-shift negative exponent starts being misclassified as a small exact-range decimal.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_fast_path_hits == 1u, "metrics negative-exponent wide shift eisel-lemire hit", "Inspect the Eisel-Lemire layer if a wide-shift negative exponent ratio stops reaching it.");
         PROVEN_TEST_ASSERT(stats.exact_fallback_hits == 0u, "metrics no fallback on negative-exponent wide shift", "Inspect the __uint128_t negative-ratio path if a wide-shift normal-range case starts falling through.");
 
-        proven_float_decimal_reset_stats();
+        stats = (proven_float_decimal_stats_t){0};
         expect_parse_ok_bits("negative exponent generated u128 ratio subset", "1e-30", 5u, strtod("1e-30", NULL));
-        proven_float_decimal_get_stats(&stats);
+        observe_decimal_path("observe negative exponent generated u128 ratio subset", "1e-30", &stats);
         PROVEN_TEST_ASSERT(stats.total_conversions == 1u, "metrics total after negative-exponent u128 ratio", "Inspect conversion entry counting if a generated-u128 negative exponent candidate stops incrementing the total counter.");
         PROVEN_TEST_ASSERT(stats.clinger_fast_path_hits == 0u, "metrics no clinger on negative-exponent u128 ratio", "Inspect Clinger exponent limits if a wide negative exponent starts being misclassified as a small exact-range decimal.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_fast_path_hits == 1u, "metrics negative-exponent u128 ratio eisel-lemire hit", "Inspect the generated-u128 negative-exponent Eisel-Lemire path if a wide ratio case stops reaching it.");
         PROVEN_TEST_ASSERT(stats.exact_fallback_hits == 0u, "metrics no fallback on negative-exponent u128 ratio", "Inspect the widened negative-exponent ratio path if a generated-u128 case starts falling through.");
 
-        proven_float_decimal_reset_stats();
+        stats = (proven_float_decimal_stats_t){0};
         expect_parse_ok_bits("negative exponent deep wide-shift ratio subset", "1e-40", 5u, strtod("1e-40", NULL));
-        proven_float_decimal_get_stats(&stats);
+        observe_decimal_path("observe negative exponent deep wide-shift ratio subset", "1e-40", &stats);
         PROVEN_TEST_ASSERT(stats.total_conversions == 1u, "metrics total after negative-exponent deep wide shift", "Inspect conversion entry counting if a deep wide-shift negative exponent ratio stops incrementing the total counter.");
         PROVEN_TEST_ASSERT(stats.clinger_fast_path_hits == 0u, "metrics no clinger on negative-exponent deep wide shift", "Inspect Clinger exponent limits if a deep wide-shift negative exponent starts being misclassified as a small exact-range decimal.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_fast_path_hits == 1u, "metrics negative-exponent deep wide shift eisel-lemire hit", "Inspect the u256-backed Eisel-Lemire ratio path if a deep wide-shift negative exponent stops reaching it.");
         PROVEN_TEST_ASSERT(stats.exact_fallback_hits == 0u, "metrics no fallback on negative-exponent deep wide shift", "Inspect the u256-backed negative ratio path if a deep wide-shift case starts falling through.");
 
-        proven_float_decimal_reset_stats();
+        stats = (proven_float_decimal_stats_t){0};
         expect_parse_ok_bits("negative exponent reciprocal cache subset", "1e-100", 6u, strtod("1e-100", NULL));
-        proven_float_decimal_get_stats(&stats);
+        observe_decimal_path("observe negative exponent reciprocal cache subset", "1e-100", &stats);
         PROVEN_TEST_ASSERT(stats.total_conversions == 1u, "metrics total after reciprocal cache subset", "Inspect conversion entry counting if a wider reciprocal-cache negative exponent candidate stops incrementing the total counter.");
         PROVEN_TEST_ASSERT(stats.clinger_fast_path_hits == 0u, "metrics no clinger on reciprocal cache subset", "Inspect Clinger exponent limits if a wide reciprocal-cache negative exponent starts being misclassified as a small exact-range decimal.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_fast_path_hits == 1u, "metrics reciprocal cache eisel-lemire hit", "Inspect the generated reciprocal-cache Eisel-Lemire path if a wider negative exponent stops reaching it.");
         PROVEN_TEST_ASSERT(stats.exact_fallback_hits == 0u, "metrics no fallback on reciprocal cache subset", "Inspect the generated reciprocal-cache negative exponent path if a wider case starts falling through.");
 
-        proven_float_decimal_reset_stats();
+        stats = (proven_float_decimal_stats_t){0};
         expect_parse_ok_bits("zero exponent eisel-lemire integer", "9007199254740993", 16u, strtod("9007199254740993", NULL));
-        proven_float_decimal_get_stats(&stats);
+        observe_decimal_path("observe zero exponent eisel-lemire integer", "9007199254740993", &stats);
         PROVEN_TEST_ASSERT(stats.total_conversions == 1u, "metrics total after zero-exponent eisel-lemire", "Inspect conversion entry counting if a zero-exponent integer candidate stops incrementing the total counter.");
         PROVEN_TEST_ASSERT(stats.clinger_fast_path_hits == 0u, "metrics no clinger on zero-exponent eisel-lemire", "Inspect Clinger exactness guards if a tie-to-even boundary integer starts slipping through the small fast path.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_fast_path_hits == 1u, "metrics zero-exponent eisel-lemire hit", "Inspect the Eisel-Lemire candidate validator if a zero-exponent integer stops reaching the staged fast path.");
         PROVEN_TEST_ASSERT(stats.exact_fallback_hits == 0u, "metrics no fallback on zero-exponent eisel-lemire", "Inspect the Eisel-Lemire midpoint validator if a tie-to-even boundary integer starts falling through.");
 
-        proven_float_decimal_reset_stats();
+        stats = (proven_float_decimal_stats_t){0};
         expect_parse_ok_bits("positive exponent scaled cache subset", "1e100", 5u, strtod("1e100", NULL));
-        proven_float_decimal_get_stats(&stats);
+        observe_decimal_path("observe positive exponent scaled cache subset", "1e100", &stats);
         PROVEN_TEST_ASSERT(stats.total_conversions == 1u, "metrics total after positive scaled cache subset", "Inspect conversion entry counting if a scaled-cache positive exponent candidate stops incrementing the total counter.");
         PROVEN_TEST_ASSERT(stats.clinger_fast_path_hits == 0u, "metrics no clinger on positive scaled cache subset", "Inspect Clinger range limits if a wide positive exponent starts being misclassified as a small exact-range decimal.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_fast_path_hits == 1u, "metrics positive scaled cache eisel-lemire hit", "Inspect the generated scaled-cache Eisel-Lemire path if a wider positive exponent stops reaching it.");
         PROVEN_TEST_ASSERT(stats.exact_fallback_hits == 0u, "metrics no fallback on positive scaled cache subset", "Inspect the generated scaled-cache positive exponent path if a wider case starts falling through.");
 
-        proven_float_decimal_reset_stats();
+        stats = (proven_float_decimal_stats_t){0};
         expect_parse_ok_bits("subnormal staged eisel-lemire", "5e-324", 6u, strtod("5e-324", NULL));
-        proven_float_decimal_get_stats(&stats);
+        observe_decimal_path("observe subnormal staged eisel-lemire", "5e-324", &stats);
         PROVEN_TEST_ASSERT(stats.total_conversions == 1u, "metrics total after staged subnormal", "Inspect conversion entry counting if a staged subnormal candidate stops incrementing the total counter.");
         PROVEN_TEST_ASSERT(stats.clinger_fast_path_hits == 0u, "metrics no clinger on staged subnormal", "Inspect Clinger range limits if the true-min subnormal starts being misclassified as a small exact-range decimal.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_fast_path_hits == 1u, "metrics staged subnormal eisel-lemire hit", "Inspect cached-power candidate packing if the staged layer stops accepting the smallest subnormal.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_product_plan_hits == 1u, "metrics staged subnormal product-plan hit", "Inspect cached-power product-plan routing if the staged true-min subnormal stops finishing through the shared product family.");
         PROVEN_TEST_ASSERT(stats.exact_fallback_hits == 0u, "metrics no fallback on staged subnormal", "Inspect staged subnormal packing or midpoint validation if the smallest subnormal starts falling through.");
 
-        proven_float_decimal_reset_stats();
+        stats = (proven_float_decimal_stats_t){0};
         expect_parse_ok_bits("below-half true-min fallback", "2.4703282292062327e-324", 23u, strtod("2.4703282292062327e-324", NULL));
-        proven_float_decimal_get_stats(&stats);
+        observe_decimal_path("observe below-half true-min fallback", "2.4703282292062327e-324", &stats);
         PROVEN_TEST_ASSERT(stats.total_conversions == 1u, "metrics total after below-half true-min fallback", "Inspect conversion entry counting if a below-half true-min case stops incrementing the total counter.");
         PROVEN_TEST_ASSERT(stats.clinger_fast_path_hits == 0u, "metrics no clinger on below-half true-min fallback", "Inspect Clinger range limits if a below-half true-min case starts being misclassified as a small exact-range decimal.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_fast_path_hits == 0u, "metrics no eisel-lemire on below-half true-min fallback", "Inspect staged subnormal certainty rules if a below-half true-min case stops deferring to exact fallback.");
         PROVEN_TEST_ASSERT(stats.exact_fallback_hits == 1u, "metrics fallback on below-half true-min", "Inspect exact fallback accounting if a below-half true-min case stops reaching the bigint path.");
 
-        proven_float_decimal_reset_stats();
+        stats = (proven_float_decimal_stats_t){0};
         expect_parse_ok_bits("fallback long significand", "123456789012345678901e40", 24u, strtod("123456789012345678901e40", NULL));
-        proven_float_decimal_get_stats(&stats);
+        observe_decimal_path("observe fallback long significand", "123456789012345678901e40", &stats);
         PROVEN_TEST_ASSERT(stats.total_conversions == 1u, "metrics total after fallback", "Inspect conversion entry counting if a long-significand decimal stops incrementing the total counter.");
         PROVEN_TEST_ASSERT(stats.clinger_fast_path_hits == 0u, "metrics no clinger on fallback", "Inspect Clinger range limits if a long-significand decimal starts being misclassified as a small exact-range decimal.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_fast_path_hits == 0u, "metrics no eisel-lemire on fallback", "Inspect Eisel-Lemire gating if a long-significand decimal stops falling through.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_product_plan_hits == 0u, "metrics no product-plan hit on fallback", "Inspect staged success accounting if a long-significand fallback case is still being counted as a product-plan success.");
         PROVEN_TEST_ASSERT(stats.exact_fallback_hits == 1u, "metrics fallback hit", "Inspect exact fallback accounting if a long-significand decimal stops reaching the bigint path.");
+
+        {
+            proven_float_decimal_stats_t first = {0};
+            proven_float_decimal_stats_t second = {0};
+
+            observe_decimal_path("observe first independent sink", "3.14", &first);
+            observe_decimal_path("accumulate first independent sink", "3.14", &first);
+            observe_decimal_path("observe second independent sink", "123456789012345678901e40", &second);
+            PROVEN_TEST_ASSERT(first.total_conversions == 2u, "metrics accumulate in one sink", "Inspect caller-owned metrics accumulation if repeated observations overwrite prior counts.");
+            PROVEN_TEST_ASSERT(first.clinger_fast_path_hits == 2u, "metrics first sink clinger total", "Inspect caller-owned Clinger accounting if repeated observations do not accumulate.");
+            PROVEN_TEST_ASSERT(first.exact_fallback_hits == 0u, "metrics first sink remains independent", "Inspect caller-owned stats isolation if another sink's fallback leaks into the first sink.");
+            PROVEN_TEST_ASSERT(second.total_conversions == 1u, "metrics second sink total", "Inspect caller-owned stats isolation if another sink's observations leak into the second sink.");
+            PROVEN_TEST_ASSERT(second.clinger_fast_path_hits == 0u, "metrics second sink remains independent", "Inspect caller-owned stats isolation if the first sink's Clinger hits leak into the second sink.");
+            PROVEN_TEST_ASSERT(second.exact_fallback_hits == 1u, "metrics second sink fallback total", "Inspect caller-owned fallback accounting if the second sink does not record its own observation.");
+        }
     }
 
     PROVEN_TEST_PASS("Float parse API checks passed.");

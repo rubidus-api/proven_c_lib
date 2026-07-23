@@ -29,15 +29,11 @@ WORKLOG.md
 *.local.md
 .hermes/
 docs/internal/
-.*
-!.env.example
-
-# credentials — never track (defense in depth)
-github-personal-access-token
-*-ssh-key-*
-*.pem
-*api*key*
-cloudflare*.env
+# Local private material (directory conventions)
+*_private/
+*_internal/
+secrets/
+.env
 
 # test fixtures created at run time
 walkroot/

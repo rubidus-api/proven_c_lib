@@ -1,4 +1,4 @@
-# Proven C Library Complete Manual (v26.07.23b)
+# Proven C Library Complete Manual (v26.07.23d)
 
 This manual is rebuilt from three sources:
 
@@ -84,7 +84,7 @@ Common validation commands:
 ./nob regression-asan
 ./nob regression-ubsan
 ./nob freestanding
-./nob cross -build-root /home/user/work/build/proven_c_lib
+./nob cross -build-root build-out/proven_c_lib
 ```
 
 Use the umbrella header when you want the full hosted API:
@@ -278,8 +278,8 @@ text *is*, and only the caller knows that.
 
 Consider appending to a filesystem path:
 
-- If the path does not fit, **truncating is catastrophic.** `/home/user/documents/report.pdf`
-  becomes `/home/user/doc`, which is a different, possibly existing, file. The operation must fail
+- If the path does not fit, **truncating is catastrophic.** `documents/report.pdf`
+  becomes `documents/rep`, which is a different, possibly existing, file. The operation must fail
   and change nothing.
 - Now consider appending to a log line. If it does not fit, **truncating is fine** — you would
   rather have most of the message than none of it — as long as you are told how much was written.

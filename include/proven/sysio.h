@@ -233,6 +233,10 @@ void proven_sysio_scanner_deinit(proven_sysio_scanner_t *scanner);
  * token cannot fit within the fixed buffer after refill, it returns
  * PROVEN_ERR_OUT_OF_BOUNDS and restores the scanner state and file position on
  * seekable inputs instead of accepting a truncated token.
+ *
+ * A successful string-view destination borrows the scanner's internal buffer.
+ * The view remains valid only until the next scanner scan call or scanner
+ * deinitialization, either of which may refill, compact, or free that buffer.
  */
 [[nodiscard]]
 proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, const char *fmt, const proven_scan_arg_t *args, size_t args_count);
@@ -263,6 +267,12 @@ proven_err_t proven_sysio_print_impl(proven_file_t handle, const char *fmt, cons
  * complete token is available, the function returns PROVEN_ERR_OUT_OF_BOUNDS
  * instead of accepting a silently truncated parse, and the file cursor is restored
  * to the start of the chunk.
+ *
+ * String-view destinations are not supported and return PROVEN_ERR_UNSUPPORTED
+ * before any input is consumed. A scanned string view borrows the scanner input,
+ * but this helper's input buffer is local to the call and cannot safely escape.
+ * Use proven_sysio_scanner_t when the caller needs a borrowed string result; its
+ * result remains valid only until the next scan call or scanner deinitialization.
  */
 [[nodiscard]]
 proven_err_t proven_sysio_scan_chunk_impl(proven_file_t handle, const char *fmt, const proven_scan_arg_t *args, size_t args_count);
