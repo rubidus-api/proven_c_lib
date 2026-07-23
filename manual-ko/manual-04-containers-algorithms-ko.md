@@ -788,7 +788,7 @@ typedef struct {
 #define PROVEN_SHA256_SIZE 32   /* the digest; size your output buffer with this */
 ```
 
-`proven_sha256_t`는 아무것도 할당하지 않는다 — [호출자 소유 상태](manual-ko.md#42-caller-owned-state-no-destroy-do-not-copy)이므로 파괴할 것이 없다.
+`proven_sha256_t`는 아무것도 할당하지 않는다 — [호출자 소유 상태](manual-ko.md#42-caller-owned-state--destroy-없음-복사-금지)이므로 파괴할 것이 없다.
 
 ### 주의사항, 그리고 무엇이 잘못되는가
 

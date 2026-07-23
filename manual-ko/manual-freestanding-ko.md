@@ -1,4 +1,4 @@
-# Proven Freestanding 모드 (v26.07.23a)
+# Proven Freestanding 모드 (v26.07.23b)
 
 **6부 — 더 나아가기. 선행 조건: 2–5부, 그리고
 [6장](manual-06-execution-and-platform-ko.md).**
@@ -117,6 +117,9 @@ src/proven/algorithm.c
 src/proven/hash.c
 src/proven/encode.c
 src/proven/random.c
+src/proven/float_decimal.c
+src/proven/float_parse.c
+src/proven/float_format.c
 src/proven/time.c
 src/proven/fmt.c
 src/proven/scan.c
@@ -184,6 +187,8 @@ platform/proven_sys_mem.c
 | `encode.h` | 사용 가능 | Hex와 Base64 — 순수 계산, OS 없음. |
 | `fmt.h` | 부동소수점 없이 사용 가능 | 현재 프로파일은 `PROVEN_FMT_NO_FLOAT`를 정의한다. |
 | `scan.h` | 사용 가능 | 메모리 뷰용 스캐너. |
+| `float_parse.h` | 사용 가능 | `proven_strtod`, `proven_parse_double_ascii`, `proven_parse_f64_ascii`가 모두 여기서 컴파일된다. 십진수→binary64 엔진은 정수 연산만 쓰므로 libc가 필요 없다. 유일한 차이는 freestanding 빌드가 오버플로/언더플로에서 `errno`를 설정하지 않는다는 점이며, 대신 반환된 `proven_err_t`가 그 정보를 담는다 — `errno` 자체가 없는 타깃에서 확인해야 할 값이다. 이는 이 프로파일이 실제로 컴파일에서 제외하는 `fmt.h`의 부동소수점 **출력**과는 별개다. |
+| `float_format.h` | `fmt.h` 연동 없이 사용 가능 | binary64 포매터는 정수 연산만 쓰므로 컴파일되지만, 현재 프로파일이 `PROVEN_FMT_NO_FLOAT`를 정의하므로 `{}`는 부동소수점을 렌더링하지 않는다. 코드 크기를 감수할 가치가 있다고 판단한 타깃에서 자릿수 출력이 필요하다면 `float_format.h`의 진입점을 직접 호출할 것. |
 | `time.h` | 제한적 | 핵심 datetime 포매팅은 컴파일 가능하지만, 실제 PAL 시간은 제외된다. |
 | `heap.h` | 스텁 | `proven_heap_allocator()`는 유효하지 않은 allocator를 반환한다. |
 | `fs.h`, `stream.h`, `mmap.h`, `sysio.h`, `job.h` | 제외됨 | 호스티드 PAL 서비스가 필요하다. |

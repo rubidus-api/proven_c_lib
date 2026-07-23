@@ -18,7 +18,7 @@ Two things enforce that, and both fail the build:
 - `./nob` compiles and **runs** every `manual/examples/*.c`. They are ordinary
   programs, not test-harness code: they read like the code a caller would write,
   and they check their own results, returning non-zero if an assumption breaks.
-- `tests/test_manual_examples` re-reads the markdown and the files side by side.
+- `tests/test_docs_manual_examples` re-reads the markdown and the files side by side.
   If a chapter quotes an example that no longer matches the file — or quotes a
   file that does not exist, or a file exists that no chapter quotes — the test
   fails and names the file.

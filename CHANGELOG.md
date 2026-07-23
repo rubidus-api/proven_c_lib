@@ -11,6 +11,66 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-07-23] — proven_c_lib-v26.07.23b
+
+A full source-to-documentation audit, and the fixes it produced. Two were real build defects; the
+rest were documents asserting things about the code that had stopped being true. The library's
+behaviour is unchanged — no function was added, removed, or altered.
+
+### Fixed
+
+- **`nob.c` built and ran three tests twice.** `test_contract_map_hardening`,
+  `test_contract_pool_misuse` and `test_contract_float_module_layout` each appeared twice in
+  `all_tests[]`. Duplicated work, and a duplicated entry is a place a later edit changes one copy.
+
+- **Editing seven headers triggered no rebuild.** `config.h`, `encode.h`, `hash.h`, `panic.h`,
+  `random.h`, `stream.h` and `platform/proven_sys_random.h` were missing from the `headers[]`
+  dependency list, so a change to any of them left every dependent object stale. This is the worst
+  kind of build bug: it produces a binary that does not match the source and says nothing.
+
+- **Eight cross-file manual links pointed at an anchor that does not exist.** The heading
+  "4.2 Caller-owned state — no destroy, do not copy" contains an em dash, which GitHub renders as a
+  *double* hyphen in the slug. Four English and four Korean links used the single-hyphen form. The
+  Korean ones were doubly wrong, aiming an English slug at a Korean heading.
+
+### Changed
+
+- **The alias index (Appendix A) is regenerated and now complete.** It listed 440 rows and claimed
+  "416 aliases"; the header defines 501. Sixty-one `xcv_` names — the whole of `hash`, `encode`,
+  `stream`, most of `fs`, and the random generators — had no row. The gate that was cited as
+  preventing this compares the alias header with the public headers and never reads the appendix,
+  which is exactly why the appendix drifted. Both language versions now carry all 501 rows and say
+  where the number comes from.
+
+- **`TEST.md` describes the suite that actually runs.** It claimed 118 tests, a 27-test regression
+  subset and 2 benchmarks; the real numbers are 110 registered tests plus 22 runnable manual
+  examples, a 28-test subset and 3 benchmarks. Six of the eight per-class counts were wrong and the
+  classes did not sum to the total. Ten registered tests had no catalog entry at all and now have
+  one.
+
+- **`bench-float` no longer claims to be float-only.** It has been running `test_bench_primitives`
+  — hashes, encoders and generators — for as long as that test has existed.
+
+- **The freestanding guide lists the three float sources it compiles** (`float_decimal.c`,
+  `float_parse.c`, `float_format.c`), and the module table now has rows for `float_parse.h` and
+  `float_format.h`. A reader could not previously tell whether `proven_strtod` works on bare metal.
+  It does; the freestanding build only drops float *formatting*, and does not set `errno`.
+
+- **`proven_println`'s one allocation is documented.** A line that does not fit the 512-byte stack
+  buffer falls back to the heap for that call rather than being refused. Chapter 0's contract table
+  said only functions taking an allocator can allocate, and chapter 5's measured table showed a bare
+  `0` under `malloc()`. Both now state the bound.
+
+- **The Korean mirror carries the nine sections it was missing** — five in `manual-ko.md`, including
+  the reading-order table and the parts/prerequisites map, and four "why" sections in chapter 8.
+
+### Added
+
+- **`tests/test_docs_test_catalog` — a gate for the test catalog.** Every test registered in
+  `nob.c` must have a `TEST.md` entry, and the catalog must be one-to-one with `tests/test_*.c`.
+  `TEST.md` claimed its counts were checked against `nob.c`; nothing checked them, and they had
+  drifted in both directions. The claim is now true.
+
 ## [2026-07-23] — proven_c_lib-v26.07.23a
 
 Operating-convention cleanup. No library code changed; `src/` and `include/` are identical

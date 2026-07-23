@@ -843,7 +843,7 @@ int main(int argc, char **argv)
         printf("  regression         Run only the regression test suite (debug mode).\n");
         printf("  regression-asan    Run regression tests with AddressSanitizer.\n");
         printf("  regression-ubsan   Run regression tests with UndefinedBehaviorSanitizer.\n");
-        printf("  bench-float        Run the float parse benchmark only.\n");
+        printf("  bench-float        Run the benchmarks: float parse paths plus primitive throughput.\n");
         printf("  clean              Remove the build directory.\n");
         printf("  help, -h, --help   Show this help message.\n\n");
         printf("Options:\n");
@@ -864,7 +864,7 @@ int main(int argc, char **argv)
         printf("  ./nob -cc clang    Build using the Clang compiler.\n");
         printf("  ./nob -cflags \"-DDEBUG\"  Build with custom debug definition.\n");
         printf("  ./nob asan -f      Force rebuild and check for memory leaks with ASan.\n");
-        printf("  ./nob bench-float  Build and run the float parse benchmark.\n");
+        printf("  ./nob bench-float  Build and run the float and primitive benchmarks.\n");
         printf("  ./nob cross -build-root /home/user/work/build/proven_c_lib  Compile target matrix.\n");
         printf("  ./nob clean        Clean up all build artifacts.\n");
         return 0;
@@ -965,9 +965,12 @@ int main(int argc, char **argv)
         "include/proven/buffer.h", "include/proven/fs.h", "include/proven/sysio.h", "include/proven/align.h",
         "include/proven/u8str.h", "include/proven/u16str.h", "include/proven/job.h", "include/proven/allocator.h",
         "include/proven/pool.h", "include/proven/version.h", "include/proven/alias_xcv.h",
+        "include/proven/config.h", "include/proven/encode.h", "include/proven/hash.h",
+        "include/proven/panic.h", "include/proven/random.h", "include/proven/stream.h",
         "include/proven/float_config.h", "include/proven/float_format.h", "include/proven/float_parse.h", "src/proven/float_decimal.h",
         "platform/proven_sys_mem.h", "platform/proven_sys_fs.h", "platform/proven_sys_time.h",
-        "platform/proven_sys_env.h", "platform/proven_sys_thread.h", "platform/proven_sys_io.h", "platform/proven_sys_math.h"
+        "platform/proven_sys_env.h", "platform/proven_sys_thread.h", "platform/proven_sys_io.h", "platform/proven_sys_math.h",
+        "platform/proven_sys_random.h"
     };
 
     const Proven_Test_Case all_tests[] = {
@@ -1044,8 +1047,6 @@ int main(int argc, char **argv)
         { "tests/test_unit_sysio_scanner", "sysio-backed scanner", "Verify scanner operation over file-backed sysio data rather than only in-memory string views.", "Check file open/read wrappers, scanner buffer refill logic, and temporary file permissions." },
         { "tests/test_contract_public_structs", "public array/map/filesystem contracts", "Verify corrupted public array and map structs fail safely and filesystem append-mode requests keep write intent explicit.", "Inspect public invariant guards in array/map mutation entry points and the filesystem open-flag translation if a corrupt struct or append request slips through." },
         { "tests/test_regression_v26_05", "v26.05 regressions", "Protect previously fixed map, format, scan, array/string aliasing, and environment-value regressions.", "Read the named sub-check in TEST.md, then inspect the exact historical area before simplifying the regression." },
-        { "tests/test_contract_map_hardening", "map borrowed-key hardening", "Verify borrowed U8 keys that point into internal map storage are rejected when hardening or debug validation is enabled.", "Inspect the borrowed-key range guard if an internal pointer is accepted or if external borrowed keys stop working." },
-        { "tests/test_contract_pool_misuse", "pool double-free hardening", "Verify pool free detects a repeated free when debug validation or hardened validation is enabled.", "Inspect the pool free-trait gating if a repeated free is accepted silently or if the panic hook is not reached." },
         { "tests/test_regression_fs_copy_to_self", "filesystem self-copy regression", "Verify copy-to-self and copy-to-hardlink-self fail without truncating or corrupting the source file.", "Inspect same-file detection and open/truncate ordering; never open the destination for truncation before proving it is not the source." },
         { "tests/test_regression_fs_slurp", "filesystem whole-file read/write", "Verify read_all reads to EOF (so size-0-reporting sources like FIFOs and /proc are not silently returned empty), read_all_u8str is NUL-terminated, and write_file/write_file_atomic round-trip without leaving a temp file behind.", "Inspect internal_slurp_path and internal_read_to_eof in src/proven/fs.c; proven_fs_size reports 0 for non-regular files, so the reported size may only seed capacity, never bound the read." },
         { "tests/test_regression_scanner_rollback", "scanner rollback after a failed scan", "Verify a scan that fails on an oversized token restores the stream exactly, dropping no byte and duplicating none.", "Inspect scanner_fill compaction and the rollback in proven_sysio_scanner_scan_impl; a snapshot taken before compaction must be reconciled with how far the buffer moved." },
@@ -1073,7 +1074,6 @@ int main(int argc, char **argv)
         { "tests/test_regression_stream_partial_write", "partial writes, failed reads, and {:f}", "Verify a sink that accepts only part of a chunk receives every byte exactly once (the buffered writer used to re-send the whole buffer, duplicating the accepted prefix), that a read failure is reported as an error rather than as a clean end of file, and that {:f} forces the fixed form at any magnitude.", "Inspect writer_buffered_flush and reader_buffered_fill in src/proven/stream.c, and never_scientific in src/proven/float_format.c. All three defects looked correct against a sink that never misbehaves." },
         { "tests/test_regression_fmt_spec_silently_wrong", "formatter specs that used to be silently wrong", "Verify {:08} zero-pads instead of eating the 0 as a width digit, and that a spec the argument cannot honour (hex on a double or a string) is rejected instead of being ignored.", "Inspect the spec parser and the applicability guard in src/proven/fmt.c. A spec that is accepted and then ignored is worse than one that is rejected." },
         { "tests/test_portability_source_contracts", "source portability contracts", "Verify source-level guards for platform branches that are hard to execute on the current host.", "A failure points at a missing safety pattern or stale documentation contract; inspect the named source file and keep this narrow." },
-        { "tests/test_contract_float_module_layout", "float module scaffold", "Verify the shared float helpers live in a dedicated internal translation unit instead of being copied into fmt.c and scan.c.", "Inspect src/proven/float_decimal.c, src/proven/float_decimal.h, fmt.c, scan.c, and nob.c if the shared decimal helper scaffold regresses." },
         { "tests/test_contract_arena_panic", "arena panic path", "Verify alloc-or-panic succeeds when capacity exists and invokes the panic hook on arena exhaustion.", "Check panic hook installation/restoration and arena capacity math; a failure can hide fatal OOM paths." },
         { "tests/test_docs_alias_smoke", "alias layer smoke", "Verify public XCV alias macros continue to compile and map to the intended canonical proven APIs.", "Inspect include/proven/alias_xcv.h and TEST.md alias coverage when public symbols are renamed or added." },
         { "tests/test_docs_manual_depth", "every module section is documented to depth, not merely mentioned", "A GATE on the shape of a module section: it must carry real prose (why this exists, not just what the calls are), a reference table, the structures the caller declares, a runnable example, and at least one COUNTER-EXAMPLE. The five modules added this cycle passed every check there was and were still half-written - not one had a counter-example.", "The section and the missing element are named. This is docs/DOCUMENTING.md section 3 turned from advice into a gate; a section that is legitimately exempt from a requirement says so in the test, with a reason." },
@@ -1104,6 +1104,7 @@ int main(int argc, char **argv)
         { "manual/examples/ex_08_fmt_custom", "manual example: formatting a user-defined type", "Compile and run the custom-argument example printed in manual chapter 8.", "The manual prints this program verbatim. If it fails, the chapter is now telling readers something untrue - fix the example, then re-copy it into the chapter." },
         { "manual/examples/ex_08_scan_recovery", "manual example: scanner error codes and recovery", "Compile and run the scanner error-recovery example printed in manual chapter 8, which provokes every scan error code on purpose.", "The manual prints this program verbatim. If it fails, chapter 8 is now telling readers something untrue about the scanner - fix the example, then re-copy it into the chapter." },
         { "tests/test_docs_manual_examples", "manual examples match the manual", "Verify every example the manual prints exists in manual/examples/, matches it verbatim, and that no example file is left unquoted.", "The example file is the source of truth: it is compiled and run. Copy its body into the chapter rather than hand-editing the chapter to look right." },
+        { "tests/test_docs_test_catalog", "the test catalog matches the build", "Verify every test registered in nob.c has an entry in TEST.md, and that TEST.md carries exactly one entry per tests/test_*.c file. Ten registered tests once had no entry at all and the headline counts named numbers matching neither nob.c nor the tree.", "A failure names the test. Add a `### `tests/NAME`` section under its class heading in TEST.md, or remove the entry whose file is gone. The catalog must be one-to-one with tests/test_*.c." },
         { "tests/test_docs_manual_ch08_contracts", "manual chapter 8 scanner contracts", "Verify every behaviour manual chapter 8 states as fact about the scanner - error codes, cursor restoration, decimal-only integers, the overflow/underflow asymmetry, and the non-transactional structural scan - is actually true.", "A failing claim is named in the output. The chapter is a contract: decide which side is wrong before changing either." },
     };
 

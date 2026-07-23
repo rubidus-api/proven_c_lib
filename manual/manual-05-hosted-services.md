@@ -1247,6 +1247,9 @@ What it costs, measured over 10,000 lines to stdout:
 | `proven_println` | 10,000 | **0** (was 10,000) |
 | buffered writer, 8 KiB of caller memory | **24** | **0** |
 
+The `malloc()` column is for lines that fit the 512-byte stack buffer, which is the ordinary case.
+A line longer than that falls back to the heap for that one call rather than being refused.
+
 `proven_println` is deliberately still one syscall per line: buffering it would need
 hidden global state. A caller who wants the 24 builds a buffered writer and says so.
 
@@ -1384,7 +1387,7 @@ built on the tidier "all or nothing" lie kept its whole buffer on failure and re
 next flush — a 6000-byte payload arrived as 10,096 bytes with the first 4096 **duplicated**.
 Losing data is bad; silently doubling it is worse, because the receiver cannot tell.
 
-Everything else is [caller-owned state](manual.md#42-caller-owned-state-no-destroy-do-not-copy) —
+Everything else is [caller-owned state](manual.md#42-caller-owned-state--no-destroy-do-not-copy) —
 `proven_writer_buf_t`, `proven_writer_u8str_t`, `proven_writer_buffered_t`,
 `proven_reader_view_t`, `proven_reader_buffered_t`. They allocate nothing, they have no destroy,
 and **they must not be copied or moved** while a handle points into them.
@@ -1517,7 +1520,7 @@ typedef struct {
 } proven_sysio_lines_t;      /* a line reader over a standard stream or a file */
 ```
 
-All three are [caller-owned state](manual.md#42-caller-owned-state-no-destroy-do-not-copy).
+All three are [caller-owned state](manual.md#42-caller-owned-state--no-destroy-do-not-copy).
 
 ### Cautions, and what goes wrong
 
@@ -1632,7 +1635,7 @@ hook — and then the choice is visibly yours.
 
 ### The structures you hold
 
-All three are [caller-owned state](manual.md#42-caller-owned-state-no-destroy-do-not-copy): they
+All three are [caller-owned state](manual.md#42-caller-owned-state--no-destroy-do-not-copy): they
 allocate nothing, there is nothing to destroy, and **copying one clones its sequence**.
 
 ```text

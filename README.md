@@ -18,7 +18,7 @@ randomness — with ownership and failure visible in every signature.
 one introductory C book, and it is the only document in this repository written to be read rather
 than looked up.
 
-- Version: proven_c_lib-v26.07.23a · Standard: C23 · License: MIT
+- Version: proven_c_lib-v26.07.23b · Standard: C23 · License: MIT
 - Repository: https://github.com/rubidus-api/proven_c_lib
 
 ---
@@ -249,8 +249,8 @@ explicitness that lets a language model produce code that is correct for reasons
 call, rather than correct by accident.
 
 **And then the coincidence.** *Proven* also means tested, demonstrated, shown to be true — which
-is a better fit than anything I planned, given what the repository turned into: 170 registered
-tests, every manual example compiled and run by the build, and documentation gated so it cannot
+is a better fit than anything I planned, given what the repository turned into: 120 test
+files, every manual example compiled and run by the build, and documentation gated so it cannot
 claim a function that does not exist. The two words are not related. *Provenance* is from Latin
 *provenire*, to come forth; *proven* is from *probare*, to test. Two different roots that happen
 to land on the same seven letters, and the accident describes the project better than the

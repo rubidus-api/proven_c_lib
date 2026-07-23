@@ -793,7 +793,7 @@ typedef struct {
 #define PROVEN_SHA256_SIZE 32   /* the digest; size your output buffer with this */
 ```
 
-`proven_sha256_t` allocates nothing — it is [caller-owned state](manual.md#42-caller-owned-state-no-destroy-do-not-copy), so there is nothing to destroy.
+`proven_sha256_t` allocates nothing — it is [caller-owned state](manual.md#42-caller-owned-state--no-destroy-do-not-copy), so there is nothing to destroy.
 
 ### Cautions, and what goes wrong
 
