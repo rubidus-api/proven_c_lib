@@ -132,6 +132,28 @@ Severity is separate from evidence:
 
 No P0 was found in this audit snapshot.
 
+### 4.1 Status vocabulary for a landed change
+
+Evidence and severity describe a finding. A *change* answering that finding also needs a status,
+because this project can fix a target-specific defect long before it can run the target. Without a
+name for that state, such a fix either stalls indefinitely or gets silently recorded as verified.
+
+| Status | Meaning | What may be claimed |
+|---|---|---|
+| **implemented-verified** | The change landed and its required regression ran on the affected target | The contract holds on that target |
+| **implemented-unverified** | The change landed on E2 source evidence, and the target to prove it is unavailable here | The source defect is gone; the target claim stays open |
+| **claim-narrowed** | No code change; the documentation now promises only what has been demonstrated | Only the narrowed claim |
+| **open** | Neither fixed nor narrowed | Nothing |
+
+An **implemented-unverified** change carries three obligations, all of which must land in the same
+commit as the fix: the reproducer that the target will run once it exists; a note in the affected
+public document saying the target is unverified; and a row in the §11 acceptance matrix that stays
+open. A fix may never be promoted to verified by inspection, by an analyzer, or by a passing build
+on a different target.
+
+This status exists so that Phase 1 and Phase 2 can make real progress on a host that has no
+Windows, no macOS, and no cross toolchain, without either blocking the work or overstating it.
+
 ## 5. Commands actually exercised
 
 The following table records commands run against the final audit tree: 111 hosted tests plus
@@ -147,7 +169,7 @@ the rightmost column.
 | `./nob ubsan` | Passed, 34 sources and 133 executables | UndefinedBehaviorSanitizer on the native host |
 | `./nob freestanding` | Passed, 21 sources and 5 tests | Freestanding compile/profile check; it still links a host runtime |
 | `./nob tsan` | Passed, 34 sources and 133 executables | Includes the eight-thread float parser regression |
-| `./nob cross` | Native GCC hosted passed; Clang, AArch64, ARM hard-float, i686, MinGW/Windows, and embedded targets skipped | A successful command with skipped targets is not a matrix pass; 1 of 11 named configurations passed |
+| `./nob cross` | Native GCC hosted passed; every other target skipped for want of a toolchain **on the machine the audit used** | A successful command with skipped targets is not a matrix pass; 1 of 11 named configurations passed. **Superseded by §5.2**, which runs the same command on the build host and reaches 11 of 11 after three repairs |
 | `scripts/project-check.sh` | Passed | Repository policy and documentation checks on this tree |
 | `./nob bench-float` | All three registered benchmarks and their checksum checks passed | One timing run on one environment; not a threshold or comparative conclusion |
 | Freestanding objects built with `-ffreestanding -nostdlib -fno-builtin`, then inspected with `nm -u` | Float objects retained unresolved hosted memory/string symbols | Direct proof that compile-only cross checks do not establish a no-libc link |
@@ -190,6 +212,49 @@ An available `gcc -m32` driver could not compile against the missing multilib he
 separate i686 cross compiler and the AArch64, ARM hard-float, MinGW, embedded ARM, embedded
 RISC-V, and Clang toolchains were unavailable. These are recorded gaps, not failures and not
 passes.
+
+**Correction (2026-07-23, same day).** The list above describes the machine the audit ran on, not
+the project. All of those toolchains except native MSVC and macOS exist on the project's dedicated
+build host, and the audit did not use it. Everything in this section other than the MSVC and macOS
+rows is therefore superseded by §5.2, which records the matrix actually running. The lesson is
+kept deliberately: an audit that probes the wrong machine reports absence as if it were a property
+of the project.
+
+### 5.2 Cross matrix, executed on the build host
+
+Run after the correction above. The first run failed immediately, and each fix exposed the next
+defect, so the table below is the state after three repairs:
+
+| Target | Result |
+|---|---|
+| `native-gcc-hosted` | pass |
+| `native-clang-hosted` | pass, after X-001 |
+| `linux-aarch64-hosted` | pass |
+| `linux-armhf-hosted` | pass |
+| `linux-i686-hosted` | pass |
+| `linux-i686-multilib-hosted` | pass |
+| `windows-x86_64-winapi` | compile and link smoke pass, after X-002 and X-003 |
+| `windows-i686-winapi` | compile and link smoke pass, after X-002 and X-003 |
+| `freestanding-arm-cortex-m4` | pass |
+| `freestanding-riscv64-elf` | pass |
+| `freestanding-riscv64-unknown-elf` | pass |
+
+**11 of 11**, against the 1 of 11 recorded in §5. The build host also passed `build`,
+`strict-error`, `asan`, `ubsan`, `tsan`, and `freestanding` on GCC 16.1.1.
+
+Three defects were found by running it, all P1/E3, all previously invisible:
+
+| ID | Finding | Fix |
+|---|---|---|
+| X-001 | `map.c` and `panic.c` applied GCC's `__atomic_*` builtins to `_Atomic`-qualified objects. Clang rejects that combination outright, so **the library did not compile under Clang at all** — while the manual claims Clang 16+ support. | Both files now use C11 `<stdatomic.h>` `atomic_*_explicit`, which is what `job.c` already used. No GCC-only atomic builtin remains in the tree. |
+| X-002 | `proven_sys_mem_realloc` left `old_size` unused on the `_WIN32` branch, which `-Werror=unused-parameter` made fatal. `proven_sys_random.c` carried an unguarded MSVC `#pragma comment(lib, ...)`, which mingw rejects under `-Werror=unknown-pragmas`. | The Windows branch consumes `old_size` explicitly; the pragma is guarded to `_MSC_VER` with the mingw link requirement stated beside it. |
+| X-003 | The Windows link line named `-lwinpthread` but not `-lbcrypt`, so `BCryptGenRandom` was undefined. The Windows link had been broken since the `random` module landed. | `-lbcrypt` added to the cross link command. |
+
+X-003 is the one worth generalising. The Windows link smoke existed, was correct, and would have
+caught the regression on the day it landed — but nothing ran it, so a supported target stayed
+broken for a release line while the documentation kept claiming it. This is precisely the failure
+mode V-010 describes, observed rather than predicted, and it is why §10.0 makes running the matrix
+on the build host a standing pre-release rule rather than an option.
 
 ## 6. Immediate findings fixed in the audit tree
 
@@ -421,6 +486,55 @@ checked-in command.
 Each phase must leave the normal build green and may be committed independently. A phase is not
 complete merely because a command was attempted.
 
+### 10.0 Execution environment and phase admissibility
+
+The phase order below is by risk: correctness first, then claim accuracy, then build semantics,
+then measurement, then optimization. That ordering is not being changed. What this section adds is
+which phases can actually *start*, which depends on the toolchains available.
+
+Two machines matter, and conflating them produces wrong sequencing. Editing happens on a
+workstation that carries only the native compiler; **the cross and multi-compiler matrix is built
+on the project's dedicated build host**, which carries the toolchain set below. Availability was
+re-probed there rather than assumed:
+
+| Toolchain / target | On the build host |
+|---|---|
+| GCC, native hosted | yes |
+| Clang, native hosted | yes |
+| MinGW-w64 x86_64 and i686 | yes |
+| AArch64, ARM hard-float, i686 (cross and `-m32`) | yes |
+| ARM Cortex-M4, RISC-V 64 bare metal | yes |
+| clang-cl | yes (driver only; not a native Windows lane) |
+| MSVC `cl` on native Windows | no |
+| macOS host | no |
+
+This supersedes the earlier reading of §5.1. Those targets were unestablished because the audit
+ran where they were absent, not because the project lacks them. §5.1 is corrected accordingly, and
+the matrix result is recorded in §5.2.
+
+| Phase | Admissible | What is blocked, and on what |
+|---|---|---|
+| **0** | complete | — |
+| **1** | partial — implement only | C-001 and V-004 are Windows *runtime* behaviour. The build host compiles and links Windows objects but cannot run them, so these reach **implemented-unverified** only. V-003's chunking arithmetic is testable through an injectable backend. |
+| **2** | mostly | C-002 (no-CRT link), V-010 (pass/fail/skip accounting), V-011 (label compile-only probes) run fully. V-001 can be ported and compiled under mingw and clang. V-002's native MSVC lane and the macOS half of V-005 stay blocked. |
+| **3** | complete | C-003, V-006 … V-009, V-012 need only the native toolchain. |
+| **4** | complete | Benchmarks and deterministic counters are native work. |
+| **5** | complete | Requires Phase 4 baselines, not new infrastructure. |
+| **6** | partial | Counters, TSAN and analysis run here; the native-Windows qualification half of C-004 does not. |
+
+**Recommended order:** **3 → 2 → 4 → 5 → 1 (implement-only) → 6**, with every phase's
+compile-and-link evidence taken from the build host, not the workstation.
+
+Phase 3 leads because it is the largest block that can reach **implemented-verified** now, and
+because C-003 is a real cost on an ordinary supported build rather than a claim gap. Phase 4 must
+precede Phase 5; see that phase's entry condition. Phase 1 is sequenced late because only its
+implementation half is reachable, not because it is unimportant.
+
+**Standing rule.** The cross matrix must be run on the build host before any release and after any
+change to a platform source, a link line, or a compiler-specific construct. §5.2 records what
+happened the first time this rule was applied: three separate defects had accumulated behind a
+matrix that had not been re-run.
+
 ### Phase 0 - close and verify the audit's immediate fixes (completed in v26.07.23c)
 
 **Work**
@@ -456,11 +570,24 @@ lifetime cannot be honored.
 compile and runtime tests for replacement, failure atomicity, random-fill boundaries, file
 symlinks, directory symlinks, and relative targets.
 
-**Exit:** supported Windows lanes compile and run the complete focused set; existing destination
-replacement is atomic at the documented level; no short random fill is reported as complete.
+**Exit — two levels, because they are reachable at different times.**
+
+*Implementation exit (reachable without Windows).* Each of C-001, V-003 and V-004 has its fix
+landed, the intended Windows semantics written down rather than inferred from POSIX, its
+reproducer checked in and skipping with an explicit "requires Windows" reason on other hosts, and
+the affected public document marked unverified on Windows. Every item is then
+**implemented-unverified** per §4.1. Where a fake or injectable backend can exercise the boundary
+logic without the real API — the random-fill chunking in V-003 is the clear case — that test runs
+here and counts as ordinary coverage of the chunking arithmetic, not as Windows evidence.
+
+*Qualification exit (requires a Windows lane).* Supported Windows lanes compile and run the
+complete focused set; existing-destination replacement is atomic at the documented level; no short
+random fill is reported as complete; file and directory symlinks and relative targets behave as
+specified. Only then do these items become **implemented-verified**.
 
 **Compatibility risk:** medium. Filesystem metadata and symlink semantics must be specified
-before choosing API flags.
+before choosing API flags. The specification is part of the implementation exit, so the decision
+is reviewable before any Windows machine exists to test it.
 
 ### Phase 2 - make portability claims mechanically true
 
@@ -470,7 +597,9 @@ before choosing API flags.
 - port or branch the five remaining POSIX-only tests (V-001);
 - add a real MSVC or clang-cl lane, or narrow the support statement (V-002);
 - make `-ldl` target- and test-specific (V-005);
-- make cross output and release requirements distinguish pass, fail, and skip (V-010).
+- make cross output and release requirements distinguish pass, fail, and skip (V-010);
+- label compile-only probes as compile-only in build logs and in the freestanding guide, so a
+  compile profile is never read as a link result (V-011).
 
 **Regression/measurement:** no-CRT unresolved-symbol and smoke-link gates; complete test-tree
 compile on the Windows compiler; native macOS link/run; named cross-target result assertions.
@@ -491,7 +620,9 @@ it, but must not silently broaden one.
 - hash the exact final link command (V-006);
 - correct build-root and clean ownership rules (V-007);
 - consolidate manifests and adopt compiler dependency files where available (V-008);
-- make the umbrella header include every promised public module directly (V-009).
+- make the umbrella header include every promised public module directly (V-009);
+- normalize the remaining English public text, then gate new non-ASCII bytes in English documents
+  and comments while excluding the Korean mirrors (V-012).
 
 **Regression/measurement:** profile-definition tests, pool comparison counts, relink-on-option
 change, safe build-root fixtures, incremental header-touch tests, and standalone umbrella
@@ -522,6 +653,12 @@ every proposed optimization below has a baseline.
 automation consumes it.
 
 ### Phase 5 - land low-risk measured improvements
+
+**Entry condition.** Phase 4 has produced a checked-in baseline for the specific corpus an item
+claims to improve. This is a per-item gate, not a per-phase one: an item may start as soon as
+*its* baseline exists, and an item whose baseline does not exist yet may not be landed on the
+grounds that the mechanism is obviously cheaper. Without the baseline there is nothing to compare
+the after-row against, and §1 rule 3 makes such a change a hypothesis rather than an improvement.
 
 **Candidate order**
 
@@ -577,7 +714,7 @@ Before declaring this RFC implemented, record one line for every required cell:
 | Freestanding | compile profile plus no-hosted-CRT smoke link |
 | Windows | supported compiler build plus filesystem/runtime focused tests |
 | macOS | native compile, link, and hosted smoke run |
-| Cross targets | explicit pass/fail/skip table; all mandatory release targets pass |
+| Cross targets | explicit pass/fail/skip table from a matrix run **on the build host**; all mandatory release targets pass (see §5.2) |
 | Documentation | symbol, example, claim, catalog, version, and manual gates |
 | Performance | raw before/after samples, checksum, spread, compiler, and build mode |
 | Privacy/release | final diff and tracked-file scan contain no private environment data |
@@ -589,7 +726,10 @@ If infrastructure is unavailable, the corresponding row remains open. The releas
 
 RFC-0005 can move from `proposed` to `implemented` only when:
 
-1. C-001 through C-004 are fixed or the affected public claim is explicitly narrowed.
+1. C-001 through C-004 each reach **implemented-verified** or **claim-narrowed** as defined in
+   §4.1. **implemented-unverified** is a legitimate resting state for the work, but it does not
+   satisfy this criterion: an unverified target claim must either be verified or withdrawn before
+   the RFC is implemented.
 2. Every P0-P2 item has a focused regression, compile proof, or measurable acceptance test.
 3. The Windows, macOS, MSVC/clang-cl, cross, and freestanding rows report exact evidence rather
    than a single aggregate green status.
