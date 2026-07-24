@@ -90,6 +90,9 @@ void* proven_sys_mem_realloc(void* ptr, proven_size_t old_size, proven_size_t ne
     }
 
 #if defined(_WIN32)
+    /* _aligned_realloc knows the block's old size itself, so the caller's copy is
+     * unused on this branch only; the POSIX path below does need it. */
+    (void)old_size;
     if (align < alignof(max_align_t)) align = alignof(max_align_t);
     return _aligned_realloc(ptr, (size_t)new_size, (size_t)align);
 #else

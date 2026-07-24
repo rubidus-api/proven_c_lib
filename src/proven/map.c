@@ -8,6 +8,7 @@
 #include "proven_internal_memrange.h"
 #include "../../platform/proven_sys_mem.h"
 #include <stdalign.h>
+#include <stdatomic.h>
 
 #define BUCKET_EMPTY 0
 #define BUCKET_OCCUPIED 1
@@ -51,11 +52,11 @@ static proven_byte_t g_map_key[16];
 static _Atomic int    g_map_key_state = 0;
 
 static void map_ensure_key(void) {
-    if (__atomic_load_n(&g_map_key_state, __ATOMIC_ACQUIRE) == 2) return;
+    if (atomic_load_explicit(&g_map_key_state, memory_order_acquire) == 2) return;
 
     int expected = 0;
-    if (__atomic_compare_exchange_n(&g_map_key_state, &expected, 1, false,
-                                    __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    if (atomic_compare_exchange_strong_explicit(&g_map_key_state, &expected, 1,
+                                                memory_order_acq_rel, memory_order_acquire)) {
         if (!proven_random_bytes(g_map_key, sizeof g_map_key)) {
             /*
              * The OS CSPRNG failed - essentially impossible on a hosted platform, since it
@@ -69,9 +70,9 @@ static void map_ensure_key(void) {
             proven_u64 mix = (proven_u64)a * 0x9e3779b97f4a7c15ull + (proven_u64)b;
             for (int i = 0; i < 16; ++i) { mix ^= mix >> 29; mix *= 0xbf58476d1ce4e5b9ull; g_map_key[i] = (proven_byte_t)(mix >> 56); }
         }
-        __atomic_store_n(&g_map_key_state, 2, __ATOMIC_RELEASE);
+        atomic_store_explicit(&g_map_key_state, 2, memory_order_release);
     } else {
-        while (__atomic_load_n(&g_map_key_state, __ATOMIC_ACQUIRE) != 2) {
+        while (atomic_load_explicit(&g_map_key_state, memory_order_acquire) != 2) {
             proven_sys_thread_yield();
         }
     }

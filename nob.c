@@ -808,7 +808,10 @@ static bool run_cross_compile_matrix(const char *build_root, const char *sysroot
                 nob_cmd_append(&link,
                                nob_temp_sprintf("%s.c", cross_link_tests[i].path));
             }
-            nob_cmd_append(&link, "-o", exe_path, "-lwinpthread");
+            /* -lbcrypt: the Windows CSPRNG (BCryptGenRandom). MSVC pulls the import
+             * library in from a #pragma comment in the source; mingw-w64 does not
+             * honour that pragma, so the Windows link needs the library named here. */
+            nob_cmd_append(&link, "-o", exe_path, "-lwinpthread", "-lbcrypt");
             bool linked = nob_cmd_run_sync(link);
             nob_cmd_free(link);
             if (!linked) {

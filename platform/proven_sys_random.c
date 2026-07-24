@@ -4,7 +4,12 @@
 
 #include <windows.h>
 #include <bcrypt.h>
+#if defined(_MSC_VER)
+/* MSVC links the import library from the source. GCC-family Windows toolchains
+ * (mingw-w64) do not understand this pragma and reject it under
+ * -Werror=unknown-pragmas, so they must be given -lbcrypt at link time instead. */
 #pragma comment(lib, "bcrypt.lib")
+#endif
 
 bool proven_sys_random_bytes(void *buf, size_t len) {
     if (len == 0) return true;

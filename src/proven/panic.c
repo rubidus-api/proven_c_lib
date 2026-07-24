@@ -1,4 +1,5 @@
 #include "proven/panic.h"
+#include <stdatomic.h>
 
 /*
  * The panic handler is dispatched through a function pointer rather than an
@@ -33,10 +34,10 @@ static void proven_panic_default(const char *msg) {
 static _Atomic(proven_panic_handler_t) g_panic_handler = proven_panic_default;
 
 void proven_set_panic_handler(proven_panic_handler_t handler) {
-    __atomic_store_n(&g_panic_handler, handler ? handler : proven_panic_default, __ATOMIC_RELAXED);
+    atomic_store_explicit(&g_panic_handler, handler ? handler : proven_panic_default, memory_order_relaxed);
 }
 
 void proven_panic(const char *msg) {
-    proven_panic_handler_t h = __atomic_load_n(&g_panic_handler, __ATOMIC_RELAXED);
+    proven_panic_handler_t h = atomic_load_explicit(&g_panic_handler, memory_order_relaxed);
     h(msg);
 }
