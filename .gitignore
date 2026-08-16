@@ -28,6 +28,7 @@ TESTS.md
 WORKLOG.md
 *.local.md
 .hermes/
+.claude/
 docs/internal/
 # Local private material (directory conventions)
 *_private/
