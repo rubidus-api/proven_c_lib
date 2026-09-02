@@ -1,4 +1,4 @@
-# Proven C 라이브러리 완전 매뉴얼 (v26.07.23d)
+# Proven C 라이브러리 완전 매뉴얼 (v26.09.02a)
 
 > 이 문서는 영문 매뉴얼([`manual/manual.md`](../manual/manual.md))의 한국어 번역본입니다. 코드와 API 계약을 빌드가 검증하는 정본은 영문 매뉴얼이며, 이 한국어본은 그 미러입니다. 두 문서가 어긋나면 영문본이 기준입니다.
 
@@ -25,16 +25,16 @@
 
 `proven`은 컴팩트한 C23 시스템 기반 라이브러리입니다. 메모리 ownership, 에러 제어 흐름, 플랫폼 접근을 전역 상태 뒤에 숨기지 않으면서 실용적인 인프라를 원하는 C 프로그램을 위한 것입니다.
 
-libc 대체품이 아닙니다. allocator 기반 메모리 도구, 바이트 view, 컨테이너, 문자열, 형식화(formatting), 파싱(scanning), 해싱(FNV, SipHash, CRC-32, SHA-256), hex/Base64 인코딩, OS 강도 난수, 파일시스템 헬퍼, 버퍼드 스트림, 시간 헬퍼, 메모리 매핑, 스택리스 코루틴 매크로, bounded job system을 집중적으로 제공합니다.
+libc 대체품이 아닙니다. 할당자(allocator) 기반 메모리 도구, 바이트 뷰(view), 컨테이너, 문자열, 형식화(formatting), 파싱(scanning), 해싱(FNV, SipHash, CRC-32, SHA-256), hex/Base64 인코딩, OS 강도 난수, 파일시스템 헬퍼, 버퍼드 스트림, 시간 헬퍼, 메모리 매핑, 스택리스 코루틴 매크로, bounded 작업(job) system을 집중적으로 제공합니다.
 
 핵심 설계 원칙:
 
 - C23 우선: 빌드 드라이버는 `-std=c23`를 사용합니다.
 - 명시적 에러: 실패 가능한 함수는 `proven_err_t` 또는 `proven_result_*_t`를 반환합니다.
-- 명시적 ownership: owned 객체는 분명한 destroy 함수와 allocator 규칙을 가집니다.
+- 명시적 ownership: 소유(owned) 객체는 분명한 destroy 함수와 allocator 규칙을 가집니다.
 - Failure atomicity(실패 원자성): grow/realloc 계열 API는 문서에 달리 적지 않는 한 할당 실패 시 기존 객체를 보존합니다.
 - 포인터 provenance 규율: 원시 객체 접근은 `proven_byte_t`와 경계 있는 view를 사용합니다.
-- PAL 격리: hosted OS 서비스는 `platform/` 아래에 있고 공개 wrapper를 통해 호출됩니다.
+- PAL 격리: 호스티드(hosted) OS 서비스는 `platform/` 아래에 있고 공개 wrapper를 통해 호출됩니다.
 - 핵심 컨테이너는 숨겨진 락을 추가하지 않습니다. 공유 변경(shared mutation)은 호출자의 동기화가 필요합니다.
 - 빌드 시스템은 저장소에 체크인된 단일 `nob.c` 하나이며, 테스트는 평범한 C 실행 파일입니다.
 
@@ -53,7 +53,7 @@ libc 대체품이 아닙니다. allocator 기반 메모리 도구, 바이트 vie
 
 중요한 디렉터리는 둘입니다. `src/proven/`은 이식 가능한 라이브러리 본체로, 어디에서도 OS를 호출하지
 않습니다. `platform/`은 시스템 호출을 하는 얇은 계층이며, 새 타깃이 교체해야 하는 유일한 부분입니다.
-freestanding 빌드는 hosted 파일들을 그냥 빼고 빌드합니다. [freestanding
+프리스탠딩(freestanding) 빌드는 hosted 파일들을 그냥 빼고 빌드합니다. [freestanding
 가이드](manual-freestanding-ko.md)를 보십시오.
 
 빌드 드라이버 `nob.c`는 빌드 시스템이 아니라 C 프로그램이며, 여기의 다른 모든 것과 똑같은 방식으로
@@ -182,7 +182,7 @@ if (!proven_alloc_is_valid(heap)) {
 
 **Owning 객체**는 자신이 할당한 저장소를 쥐고 있으며, 반드시 destroy해야 합니다. 바로 아래 표가 그것입니다.
 
-**Caller-owned state 객체(호출자 소유 상태)**는 아무것도 할당하지 않습니다. 여러분이 — 보통 스택에 — 선언해 생성자에 넘기는 scratch struct이고, 생성자는 그 안을 *가리키는* 작은 값 핸들을 돌려줍니다. **destroy 함수가 없습니다.** 해제할 것이 없기 때문입니다. 대신 owning 객체에는 없는 규칙 하나가 있고, 그게 바로 발목을 잡습니다:
+**Caller-owned state 객체(호출자 소유 상태)**는 아무것도 할당하지 않습니다. 여러분이 — 보통 스택에 — 선언해 생성자에 넘기는 임시 작업용(scratch) struct이고, 생성자는 그 안을 *가리키는* 작은 값 핸들을 돌려줍니다. **destroy 함수가 없습니다.** 해제할 것이 없기 때문입니다. 대신 owning 객체에는 없는 규칙 하나가 있고, 그게 바로 발목을 잡습니다:
 
 > **핸들이 만들어진 뒤에는 caller-owned state 객체를 복사하거나 이동해서는 안 됩니다.** 핸들은 그 struct 내부를 가리키는 포인터를 쥐고 있습니다. struct를 복사하면 핸들은 여전히 원본을 가리키고, 원본이 스코프를 벗어나면 핸들은 죽은 메모리를 가리킵니다.
 
@@ -192,7 +192,7 @@ if (!proven_alloc_is_valid(heap)) {
 
 | 객체 | 저장소 소유 | allocator 보관 | Destroy 함수 | 비고 |
 |---|---:|---:|---|---|
-| `proven_arena_t` | 아니오 — 호출자가 backing slice 소유 | 아니오 | `proven_arena_destroy(&arena)` (no-op) | 호출자 메모리 위의 bump pointer: `alloc`은 오프셋을 전진시키고, `free`는 no-op, `reset`은 빈 상태로 되감음. backing 블록은 호출자가 소유·해제. |
+| `proven_arena_t` | 아니오 — 호출자가 backing 슬라이스(slice) 소유 | 아니오 | `proven_arena_destroy(&arena)` (no-op) | 호출자 메모리 위의 bump pointer: `alloc`은 오프셋을 전진시키고, `free`는 no-op, `reset`은 빈 상태로 되감음. backing 블록은 호출자가 소유·해제. |
 | `proven_pool_t` | 예 — 아이템 + recycle bin | 예 (`base_alloc`) | `proven_pool_destroy(&pool)` | 고정 아이템 크기. **allocator 트레잇을 통해**(`proven_pool_as_allocator`) 사용합니다: 트레잇의 `free_fn`은 슬롯을 해제하는 대신 재사용을 위해 recycle bin으로 되돌립니다. `proven_pool_free`는 없습니다 — 다른 allocator와 마찬가지로 해제는 트레잇을 거칩니다. |
 | `proven_buf_t` | 예 | 아니오 | `proven_buf_destroy(alloc, &buf)` | 호출자가 일치하는 allocator를 넘겨야 함. |
 | `proven_u8str_t` | 예 | 아니오 | `proven_u8str_destroy(alloc, &str)` | 유효할 때 항상 NUL 종단. |
@@ -218,7 +218,7 @@ if (!proven_alloc_is_valid(heap)) {
 | `proven_writer_buffered_t` | `proven_writer_buffered` | `proven_writer_t` | **복사 금지.** 그것이나 그 버퍼가 죽기 전에 반드시 `proven_writer_flush` 해야 함. |
 | `proven_reader_view_t` | `proven_reader_from_view` | `proven_reader_t` | **복사 금지.** |
 | `proven_reader_buffered_t` | `proven_reader_buffered` | `proven_reader_t` | **복사 금지.** `proven_reader_read_line`이 반환한 view는 이 버퍼 *안을* 가리킴. |
-| `proven_sysio_std_t` | `proven_sysio_stdout_writer` / `_stderr_writer` / `_stdin_reader` | `proven_writer_t` / `proven_reader_t` | **복사 금지.** writer가 가리키는 표준 핸들을 보관. |
+| `proven_sysio_std_t` | `proven_sysio_stdout_writer` / `_stderr_writer` / `_stdin_reader` | `proven_writer_t` / `proven_reader_t` | **복사 금지.** 쓰기 스트림(writer)가 가리키는 표준 핸들을 보관. |
 | `proven_sysio_out_t` | `proven_sysio_stdout_buffered` / `_file_buffered` | `proven_writer_t` | **복사 금지.** 반드시 flush 필요. |
 | `proven_sysio_lines_t` | `proven_sysio_lines_open` / `_stdin_lines` | (`proven_sysio_read_line`으로 사용) | 유일한 예외: `proven_sysio_read_line`이 매 호출마다 재바인딩하므로, 이것은 **이동해도** 됨. |
 | `proven_sysio_scanner_t` | `proven_sysio_scanner_init` | (직접 사용) | 반대 방향의 예외: 이것은 버퍼를 **소유**하므로 `proven_sysio_scanner_deinit`을 호출해야 함. |
@@ -341,8 +341,8 @@ alias 인덱스는 찾아보는 부록이고, 8장은 3장이 주제를 소개�
 ### 챕터 목록
 
 0. [**여기서부터 시작**: 왜 존재하는가, hello world, 다섯 계약, 용어집, libc 대응표](manual-00-start-here-ko.md) — *I부*
-1. [**Foundation**: 타입, 에러, 메모리 view, 정렬, 버전, panic](manual-01-foundation-ko.md) — *II부*
-2. [**Allocation**: heap, arena, pool, byte buffer, 그리고 allocator 트레잇](manual-02-allocation-ko.md) — *II부*
+1. [**Foundation**: 타입, 에러, 메모리 view, 정렬, 버전, 패닉(panic)](manual-01-foundation-ko.md) — *II부*
+2. [**Allocation**: 힙(heap), 아레나(arena), 풀(pool), byte buffer, 그리고 allocator 트레잇](manual-02-allocation-ko.md) — *II부*
 3. [**문자열과 텍스트**: U8, U16, 그리고 형식화와 파싱 입문](manual-03-strings-text-ko.md) — *II부; 텍스트 자료의 튜토리얼 절반*
 4. [**컨테이너와 알고리즘**: array, list, ring, map, 정렬/검색, 해싱, 인코딩](manual-04-containers-algorithms-ko.md) — *III부*
 5. [**Hosted 서비스**: 파일시스템, 트리 순회, 스트림, sysio, 환경변수, 난수, mmap, 시간](manual-05-hosted-services-ko.md) — *V부*
@@ -387,7 +387,7 @@ alias 인덱스는 찾아보는 부록이고, 8장은 3장이 주제를 소개�
 | `arena.h` | Bump allocator | 챕터 2 |
 | `pool.h` | 고정 크기 recycler allocator | 챕터 2 |
 | `buffer.h` | 고정 용량 byte buffer | 챕터 2 |
-| `u8str.h` | Owned U8 문자열과 borrowed U8 view | 챕터 3 |
+| `u8str.h` | Owned U8 문자열과 빌려 쓰는(borrowed) U8 view | 챕터 3 |
 | `u16str.h` | Owned U16 문자열과 borrowed U16 view | 챕터 3 |
 | `fmt.h` | 구조적 formatter와 format 인자 | 챕터 3 |
 | `scan.h` | 구조적 scanner와 타입 있는 scan 목적지 | 챕터 3 |
@@ -402,7 +402,7 @@ alias 인덱스는 찾아보는 부록이고, 8장은 3장이 주제를 소개�
 | `hash.h` | FNV-1a, SipHash-2-4, CRC-32, SHA-256, 용도별 | 챕터 4 |
 | `encode.h` | Hex와 Base64 (표준 + URL-safe), 바이트↔텍스트 | 챕터 4 |
 | `fs.h` | 파일, 디렉터리, 메타데이터, 링크, 락, read-all, 트리 순회 | 챕터 5 |
-| `stream.h` | 버퍼드 writer·reader와 line reader — 그리고 `sysio.h`를 통해 표준 스트림 (hosted 전용) | 챕터 5 |
+| `stream.h` | 버퍼드 writer·읽기 스트림(reader)와 line reader — 그리고 `sysio.h`를 통해 표준 스트림 (hosted 전용) | 챕터 5 |
 | `sysio.h` | 표준 스트림을 writer/reader로, stdin 줄 입력, 버퍼드 출력, 출력, 파싱, 환경변수 접근 | 챕터 5 |
 | `random.h` | 용도별 난수: xoshiro256** (재현 가능), ChaCha20 (암호학적), OS CSPRNG, 무편향 range/shuffle 헬퍼. 생성기는 freestanding에서 동작하고 OS 소스만 hosted. | 챕터 5 |
 | `mmap.h` | 메모리 매핑 파일 영역 | 챕터 5 |

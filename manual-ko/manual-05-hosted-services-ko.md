@@ -6,7 +6,7 @@
 작업에 맞는 무작위성을 생성하고, 벽시계 시간과 경과 시간을 구별할 수 있다.
 
 이 장에서는 `fs.h`, `sysio.h`, `mmap.h`, `time.h`, `stream.h`, `random.h`를 다룬다. 이 안의 모든
-것은 운영체제를 필요로 한다: 이 장은 [freestanding](manual-freestanding-ko.md) 빌드에 적용되지
+것은 운영체제를 필요로 한다: 이 장은 [프리스탠딩(freestanding)](manual-freestanding-ko.md) 빌드에 적용되지
 않는 매뉴얼의 유일한 부분이다.
 
 이 API들은 호스티드 플랫폼 지원이 필요하며, 현재의 freestanding 하위 집합에서는 제외된다.
@@ -77,7 +77,7 @@ typedef struct {
 } proven_fs_entry_t;
 ```
 
-디렉터리 엔트리는 `name`을 owned로 소유한다. `proven_fs_list()`가 반환한 배열에는 `proven_fs_list_destroy()`를 사용하라.
+디렉터리 엔트리는 `name`을 소유(owned)로 소유한다. `proven_fs_list()`가 반환한 배열에는 `proven_fs_list_destroy()`를 사용하라.
 
 ```text
 typedef struct {
@@ -203,7 +203,7 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 아니라 그 대상의 속성이며, 그것에 적응하는 코드—스캐너가 그렇다—는 둘을 구별할 수 있어야 한다.
 
 **`pread`와 `pwrite`는 위치를 이동하지 않는다.** 그것이 바로 그들의 목적이다: 하나의 핸들을
-공유하는 두 reader는 어느 쪽도 이동시키지 않는 커서를 두고 경합할 수 없다.
+공유하는 두 읽기 스트림(reader)는 어느 쪽도 이동시키지 않는 커서를 두고 경합할 수 없다.
 
 **atomic과 durable은 서로 다른 약속이며, 이 둘을 혼동하는 것이 데이터가 손실되는 방식이다.**
 
@@ -219,7 +219,7 @@ durable 형태는 저장 장치를 두 번 기다린다. 쓰기를 잃는 것이
 그렇지 않을 때는 atomic 형태를 사용하라.
 
 예전에는 여기에 `proven_sysio_flush`가 있었는데, 그것은 이 어느 것도 아니었다: 존재하지 않는
-버퍼를 flush한다고 주장했다. 그것은 **삭제되었다**. 버퍼드 writer의 바이트를 OS로 밀어 넣는 것은
+버퍼를 flush한다고 주장했다. 그것은 **삭제되었다**. 버퍼드 쓰기 스트림(writer)의 바이트를 OS로 밀어 넣는 것은
 `proven_writer_flush`이고, OS의 바이트를 디스크로 밀어 넣는 것은 `proven_fs_sync`이다. 이 둘은 서로
 다른 연산이며, 한 단어가 정직하게 둘 모두를 뜻할 수는 없었다.
 
@@ -233,7 +233,7 @@ durable 형태는 저장 장치를 두 번 기다린다. 쓰기를 잃는 것이
 - 크기 0의 읽기/쓰기 요청은 non-null 버퍼를 요구하지 않고 0바이트를 처리한 채로 성공해야 한다.
 - `proven_fs_is_absolute()`는 POSIX 절대 경로, Windows 드라이브-루트 경로, UNC 경로, 확장된 Windows 경로 형식을 인식한다.
 - `proven_fs_read_all()`은 EOF까지 읽는다. 미리 측정된 크기까지 읽는 것이 아니다. 파일이 보고한 크기는 초기 용량의 씨앗(seed)으로만 쓰이므로, 일반 파일은 여전히 한 번의 할당과 한 번의 패스로 읽힌다. 이것이 중요한 이유는 `proven_fs_size()`가 일반 파일이 아닌 모든 것에 대해 0을 보고하기 때문이다: FIFO, 캐릭터 디바이스, `/proc` 엔트리에는 미리 알 수 있는 크기가 없으며, EOF까지 읽는 것만이 그 내용을 얻는 유일한 방법이다. 또한 이는 읽히는 도중 커지는 파일이 조용히 절단되지 않음을 뜻한다. `value.size`는 언제나 실제 바이트 수이며, 빈 소스는 `PROVEN_OK`와 함께 `{ .ptr = NULL, .size = 0 }`을 낳는다.
-- `proven_fs_read_all()`과 `proven_fs_read_all_u8str()`은 소스가 보고된 크기를 초과해 커질 경우 `realloc_fn`을 가진 allocator를 필요로 한다. 그렇지 않은(non-growing) allocator는 그 경우 `PROVEN_ERR_UNSUPPORTED`를 반환한다.
+- `proven_fs_read_all()`과 `proven_fs_read_all_u8str()`은 소스가 보고된 크기를 초과해 커질 경우 `realloc_fn`을 가진 할당자(allocator)를 필요로 한다. 그렇지 않은(non-growing) allocator는 그 경우 `PROVEN_ERR_UNSUPPORTED`를 반환한다.
 - `proven_fs_read_all_u8str()`은 대부분의 호출자가 원하는 파일 전체 읽기다: 결과가 NUL로 종료되므로 `proven_u8str_as_view()`와 `proven_u8str_as_cstr()`가 두 번째 복사 없이 그 위에서 동작한다. 종료 슬롯은 미리 예약되므로 추가 할당 비용이 들지 않는다. 내용은 UTF-8로 검증되지 않는다. `proven_u8str_destroy()`로 해제하라.
 - `proven_fs_write_file()`은 atomic이 아니다: reader가 부분적으로 쓰인 파일을 관찰할 수 있고, 쓰기 도중의 실패는 파일을 절단된 채로 남긴다. `proven_fs_write_file_atomic()`은 형제 임시 파일을 쓰고 그것을 대상 위로 rename하므로, 동시 reader는 전체 이전 파일 또는 전체 새 파일 둘 중 하나를 본다. 이는 reader에 대해 atomic이지만 전원 손실에 대해 durable하지는 않다: rename이 데이터보다 먼저 디스크에 도달할 수 있다. durability가 필요할 때는 위에서 설명한 `proven_fs_write_file_durable`(또는 `proven_fs_sync`)로 명시적으로 요청하라.
 
@@ -309,7 +309,7 @@ typedef struct {
 | `proven_scan_fmt_from_stdin(fmt, ...)` | stdin에서 고정 크기 청크 하나를 스캔. | `proven_err_t`. |
 | `proven_env_get(alloc, key)` | 환경 변수를 owned U8 문자열로 읽음. | `proven_result_u8str_t`. |
 
-`proven_sysio_scan_chunk_impl()`은 seek 가능한 파일 입력을 위한 것이다. 최대 하나의 고정 크기 청크를 읽는다. 핸들을 되감을 수 없으면, 읽기 전에 `PROVEN_ERR_UNSUPPORTED`를 반환한다. 완전한 토큰이 준비되기 전에 청크가 가득 차면, `PROVEN_ERR_OUT_OF_BOUNDS`를 반환하고 파일 커서를 청크의 시작으로 되감는다. 문자열 view 목적지도 읽기 전에 `PROVEN_ERR_UNSUPPORTED`로 거부한다. 그런 view는 이 함수의 지역 청크 버퍼를 빌리므로 반환 즉시 무효가 되기 때문이다. 반복적인 버퍼드 스캔이나 빌린 문자열 결과에는 호출자가 버퍼를 소유하는 `proven_sysio_scanner_t`를 사용하라. 그 스캐너가 반환한 문자열 view는 다음 scan 호출이나 스캐너 해제 전까지만 유효하다. 어느 쪽이든 공유 버퍼를 다시 채우거나 압축하거나 해제할 수 있기 때문이다.
+`proven_sysio_scan_chunk_impl()`은 seek 가능한 파일 입력을 위한 것이다. 최대 하나의 고정 크기 청크를 읽는다. 핸들을 되감을 수 없으면, 읽기 전에 `PROVEN_ERR_UNSUPPORTED`를 반환한다. 완전한 토큰이 준비되기 전에 청크가 가득 차면, `PROVEN_ERR_OUT_OF_BOUNDS`를 반환하고 파일 커서를 청크의 시작으로 되감는다. 문자열 뷰(view) 목적지도 읽기 전에 `PROVEN_ERR_UNSUPPORTED`로 거부한다. 그런 view는 이 함수의 지역 청크 버퍼를 빌리므로 반환 즉시 무효가 되기 때문이다. 반복적인 버퍼드 스캔이나 빌린 문자열 결과에는 호출자가 버퍼를 소유하는 `proven_sysio_scanner_t`를 사용하라. 그 스캐너가 반환한 문자열 view는 다음 scan 호출이나 스캐너 해제 전까지만 유효하다. 어느 쪽이든 공유 버퍼를 다시 채우거나 압축하거나 해제할 수 있기 때문이다.
 
 예:
 
@@ -983,7 +983,7 @@ if (proven_is_ok(d.err)) {
 }
 ```
 
-**이름은 borrowed이며, 다음 호출에서 소멸한다.** 이것이 전체를 무할당으로 만드는 것—그리고 당신이
+**이름은 빌려 쓰는(borrowed)이며, 다음 호출에서 소멸한다.** 이것이 전체를 무할당으로 만드는 것—그리고 당신이
 그것을 붙들어 두는 순간 dangling 포인터로 만드는 것이다.
 
 잘못됨(Wrong):
@@ -1189,7 +1189,7 @@ int main(void) {
 | `proven_reader_buffered(&state, inner, buf)` | 버퍼드 source; 라인 읽기에 필수. |
 | `proven_reader_read_line(&state)` | 개행 없는 한 줄. |
 | `proven_writer_is_valid(w)` / `proven_reader_is_valid(r)` | 생성자가 성공했는가? 0으로 채워진 핸들은 invalid이고, 모든 생성자는 잘못된 인자에 대해 그런 것을 반환한다—따라서 NULL 검사가 아니라 이것이 그 검사다. |
-| `proven_fwrite_fmt(w, scratch, fmt, ...)` | **당신이** 크기를 정한 scratch 버퍼를 쓰는 `proven_fprint`. `proven_fprint`는 512바이트 스택 버퍼를 사용하고 더 긴 줄에 대해 `OUT_OF_BOUNDS`를 반환한다. 이것이 그런 줄을 포매팅하는 방법이다. |
+| `proven_fwrite_fmt(w, scratch, fmt, ...)` | **당신이** 크기를 정한 임시 작업용(scratch) 버퍼를 쓰는 `proven_fprint`. `proven_fprint`는 512바이트 스택 버퍼를 사용하고 더 긴 줄에 대해 `OUT_OF_BOUNDS`를 반환한다. 이것이 그런 줄을 포매팅하는 방법이다. |
 | `proven_fmt_to_writer_impl(w, scratch, fmt, args, n)` | 위의 두 매크로가 확장되는 함수. 자신만의 가변 인자 래퍼를 만드는 경우에만 직접 호출하라. 매크로는 당신이 인자를 세지 않아도 되도록 존재한다. |
 
 명확히 언급할 가치가 있는 네 가지 규칙. 각각은 이것이 잘못 설계될 수 있었던 방식이기 때문이다:
@@ -1236,7 +1236,7 @@ reader의 규칙은 그 거울상이다: **실패한 읽기는 에러이지, 결
 | 버퍼드 writer, 호출자 메모리 8 KiB | **24** | **0** |
 
 `malloc()` 열은 512바이트 스택 버퍼에 들어가는 줄, 즉 일반적인 경우에 대한 값이다. 그보다 긴 줄은
-거부되는 대신 그 한 번의 호출에 한해 heap으로 물러난다.
+거부되는 대신 그 한 번의 호출에 한해 힙(heap)으로 물러난다.
 
 `proven_println`은 의도적으로 여전히 줄당 하나의 시스템 콜이다: 그것을 버퍼링하려면 숨겨진 전역
 상태가 필요할 것이다. 24를 원하는 호출자는 버퍼드 writer를 만들고 그렇게 하겠다고 말한다.
@@ -1803,3 +1803,888 @@ int main(void) {
     return EXAMPLE_OK();
 }
 ```
+
+### 실전 예제: 정전이 나도 파일이 깨지지 않게 교체하기
+
+파일을 제자리에서 덮어쓰는 방식에는, 시험에서는 결코 보이지 않고 운영에서는 언젠가 반드시 보이는
+실패 방식이 있다. 쓰는 도중에 전원이 나가고, 남은 파일은 예전 것도 새 것도 아니게 된다. 해법은 오래된
+네 단계 절차이며, 네 단계 모두가 제 몫을 한다.
+
+1. 새 내용을 진짜 파일 옆의 **임시 파일**에 쓴다.
+2. `proven_fs_sync()` — 새 파일의 바이트가 운영체제 캐시가 아니라 저장 장치에 도달한다.
+3. `proven_fs_rename()` — 이름이 한 번의 나눌 수 없는 단계로 새 파일로 넘어간다. 읽는 쪽은 옛 파일
+   전체나 새 파일 전체를 보며, 섞인 것은 결코 보지 않는다.
+4. `proven_fs_sync_dir()` — 이름 바꾸기 자체가 저장 장치에 도달한다.
+
+2단계를 건너뛰면 내용이 도착한 적 없는 파일을 이름이 가리킬 수 있다. 4단계를 건너뛰면 내용은
+안전한데 그것을 가리키는 이름이 안전하지 않다.
+
+같은 예제가 함께 쓰이는 레코드 단위 호출들도 다룬다.
+
+| 호출 | 무엇을 위한 것인가 |
+|---|---|
+| `proven_fs_pread` / `proven_fs_pwrite` | 절대 오프셋에서 읽고 쓰되 **파일 위치를 옮기지 않는다**. 하나의 핸들을 여러 스레드가 함께 써도 안전한 이유다. |
+| `proven_fs_seek` / `proven_fs_tell` | 위치를 옮기고, 지금 어디인지 묻는다. 끝에서 음수 오프셋으로 seek하면 길이를 몰라도 마지막 레코드를 찾는다. |
+| `proven_fs_truncate` | 길이를 직접 정한다. 한 번의 호출로 파일 시스템이 숫자 하나를 고치며, 대안은 남길 부분을 복사하는 것이다. |
+| `proven_fs_lock` | **권고(advisory) 잠금**이다. 마찬가지로 잠금을 요청하는 다른 프로세스만 막고, 아예 요청하지 않는 프로그램에는 아무 영향이 없다. |
+| `proven_fs_copy` | 바이트를 복제해 독립된 두 번째 파일을 만든다. |
+| `proven_fs_link` | 같은 파일에 대한 두 번째 **이름**(하드 링크). 원본이라는 것이 없고, 마지막 이름이 사라질 때까지 데이터가 산다. 같은 파일 시스템 안에서만 된다. |
+| `proven_fs_symlink` | 경로를 담은 작은 파일(심볼릭 링크). 파일 시스템을 건너뛸 수 있고, 아무것도 가리키지 않을 수도 있다. |
+| `proven_fs_is_absolute` | 이 경로가 루트에서 시작하는가? 규칙이 플랫폼마다 달라서 함수인 것이다. |
+| `proven_fs_rmdir` | **빈** 디렉터리를 지운다. 비어 있지 않으면 거절하므로, 재귀 삭제는 명시적인 결정으로 남는다. |
+
+<!-- example: manual/examples/ex_05_fs_durable.c -->
+```c
+/*
+ * Updating a file so that a power cut cannot leave it half-written.
+ *
+ * The recipe is old and every part of it is load-bearing:
+ *
+ *   1. write the new contents to a TEMPORARY file beside the real one,
+ *   2. proven_fs_sync   - the new file's bytes are now on the device,
+ *   3. proven_fs_rename - the name flips to the new file in one step; a reader
+ *                         sees either the whole old file or the whole new one,
+ *   4. proven_fs_sync_dir - the rename itself is now on the device.
+ *
+ * Skip step 2 and the rename can publish a file whose contents never arrived.
+ * Skip step 4 and the contents are safe under a name that may not be. Neither
+ * failure shows up in testing; both show up in production, once.
+ *
+ * The same program also shows the record-level calls - seek/tell, pread/pwrite,
+ * truncate - and the advisory lock that stops two copies of the program doing
+ * all this at the same time.
+ */
+
+typedef struct {
+    proven_u32 id;
+    proven_u32 score;
+} record_t;
+
+static proven_err_t write_records(proven_file_t f, const record_t *recs, proven_size_t n) {
+    proven_mem_view_t view = { .ptr = (const proven_byte_t *)recs, .size = n * sizeof recs[0] };
+    return proven_fs_write_all(f, view);
+}
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    proven_u8str_view_t live = PROVEN_LIT("proven_example_durable.dat");
+    proven_u8str_view_t temp = PROVEN_LIT("proven_example_durable.dat.new");
+    proven_u8str_view_t here = PROVEN_LIT(".");
+
+    /* is_absolute answers a question worth asking before you join paths or
+     * resolve one against a base directory: does this path already start from
+     * the root? The rule differs per platform - a leading '/' here, a drive
+     * letter or a UNC prefix on Windows - which is exactly why it is a call and
+     * not a comparison against '/'. */
+    EXAMPLE_REQUIRE(!proven_fs_is_absolute(live), "the working paths in this example are relative");
+    EXAMPLE_REQUIRE(proven_fs_is_absolute(PROVEN_LIT("/etc/hosts")), "a leading slash is absolute on POSIX");
+
+    static const record_t initial[] = {
+        { .id = 1, .score = 10 }, { .id = 2, .score = 20 },
+        { .id = 3, .score = 30 }, { .id = 4, .score = 40 },
+    };
+
+    /* --- an ordinary first write ------------------------------------------ */
+
+    proven_result_file_t f = proven_fs_open(alloc, live, PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
+    EXAMPLE_REQUIRE(proven_is_ok(f.err), "creating the data file must succeed");
+    if (!proven_is_ok(f.err)) return 1;
+
+    proven_err_t err = write_records(f.value, initial, 4);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "writing the initial records must succeed");
+    err = proven_fs_close(f.value);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "closing after a write must succeed");
+
+    /* --- an advisory lock, so two copies do not interleave ---------------- */
+
+    proven_result_file_t rw = proven_fs_open(alloc, live, PROVEN_FS_READ | PROVEN_FS_WRITE);
+    EXAMPLE_REQUIRE(proven_is_ok(rw.err), "reopening for update must succeed");
+    if (!proven_is_ok(rw.err)) return 1;
+
+    /* An EXCLUSIVE lock keeps every other process that also asks for one out.
+     * "Advisory" means exactly that: it stops cooperating programs, and a
+     * program that never asks for the lock is not affected. `wait = false`
+     * returns immediately rather than blocking - the right choice when you have
+     * something else to do, and the only safe choice when the other holder
+     * might be waiting on you. */
+    err = proven_fs_lock(rw.value, PROVEN_FS_LOCK_EXCLUSIVE, false);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "taking the exclusive lock must succeed when nobody holds it");
+
+    /* --- reading and writing one record, by offset ------------------------ */
+
+    /* pread reads at an absolute offset and does NOT move the file position.
+     * That is what makes it safe to use from two threads sharing one handle:
+     * there is no shared cursor for them to race on. */
+    record_t third = {0};
+    proven_mem_mut_t into = { .ptr = (proven_byte_t *)&third, .size = sizeof third };
+    proven_result_size_t got = proven_fs_pread(rw.value, into, 2 * sizeof(record_t));
+    EXAMPLE_REQUIRE(proven_is_ok(got.err) && got.value == sizeof third, "reading record 2 must succeed");
+    EXAMPLE_REQUIRE(third.id == 3 && third.score == 30, "and yield the record that was written there");
+
+    /* tell reports the position; after a pread it has not moved. */
+    proven_result_u64_t pos = proven_fs_tell(rw.value);
+    EXAMPLE_REQUIRE(proven_is_ok(pos.err) && pos.val == 0, "pread must not move the file position");
+
+    /* pwrite updates that record in place, again without touching the cursor. */
+    third.score = 99;
+    proven_mem_view_t out_view = { .ptr = (const proven_byte_t *)&third, .size = sizeof third };
+    proven_result_size_t put = proven_fs_pwrite(rw.value, out_view, 2 * sizeof(record_t));
+    EXAMPLE_REQUIRE(proven_is_ok(put.err) && put.value == sizeof third, "writing record 2 back must succeed");
+
+    /* seek is the cursor-moving alternative, and it returns the position it
+     * arrived at. Seeking from the END with a negative offset is how you find
+     * the last record without knowing the file length first. */
+    proven_result_u64_t last = proven_fs_seek(rw.value, -(proven_i64)sizeof(record_t), PROVEN_FS_SEEK_END);
+    EXAMPLE_REQUIRE(proven_is_ok(last.err), "seeking to the last record must succeed");
+    EXAMPLE_REQUIRE(last.val == 3 * sizeof(record_t), "which is three records in");
+
+    pos = proven_fs_tell(rw.value);
+    EXAMPLE_REQUIRE(proven_is_ok(pos.err) && pos.val == last.val, "tell agrees with the seek result");
+
+    /* truncate sets the length directly. Dropping the last record is one call
+     * and O(1); the old way - read everything, write back the part you keep -
+     * was an O(n) copy for an operation the filesystem does by adjusting a
+     * number. */
+    err = proven_fs_truncate(rw.value, 3 * sizeof(record_t));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "truncating to three records must succeed");
+    proven_result_size_t size = proven_fs_size(rw.value);
+    EXAMPLE_REQUIRE(proven_is_ok(size.err) && size.value == 3 * sizeof(record_t),
+                    "the file is now exactly three records long");
+
+    /* Release the lock explicitly. Closing the handle would also drop it, but
+     * saying so keeps the critical section visible in the code. */
+    err = proven_fs_lock(rw.value, PROVEN_FS_LOCK_UNLOCK, false);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "releasing the lock must succeed");
+    err = proven_fs_close(rw.value);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "closing the update handle must succeed");
+
+    /* --- the durable replace ---------------------------------------------- */
+
+    static const record_t replacement[] = {
+        { .id = 1, .score = 11 }, { .id = 2, .score = 22 },
+    };
+
+    /* 1. Write the new contents beside the old file. CREATE_NEW refuses if the
+     *    temporary name already exists, which is how a leftover from a crashed
+     *    run is noticed instead of silently reused. */
+    proven_result_file_t tmp = proven_fs_open(alloc, temp,
+                                              PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
+    EXAMPLE_REQUIRE(proven_is_ok(tmp.err), "creating the temporary file must succeed");
+    if (!proven_is_ok(tmp.err)) return 1;
+
+    err = write_records(tmp.value, replacement, 2);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "writing the new contents must succeed");
+
+    /* 2. Push those bytes all the way to the storage device. This is expensive
+     *    and meant to be: you are buying the guarantee that the data exists
+     *    after a power cut, and the price is a real trip to the device. */
+    err = proven_fs_sync(tmp.value);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "syncing the new file's data must succeed");
+
+    err = proven_fs_close(tmp.value);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "closing the temporary file must succeed");
+
+    /* 3. Flip the name. A rename within one directory is atomic: any reader
+     *    sees the old file or the new one, never a partial write. */
+    err = proven_fs_rename(alloc, temp, live);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "renaming the temporary file over the live one must succeed");
+
+    /* 4. Make the rename itself durable. Until the directory reaches the device,
+     *    the new contents are safe under a name that might not be. */
+    err = proven_fs_sync_dir(alloc, here);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "syncing the directory must succeed");
+
+    proven_result_file_t check = proven_fs_open(alloc, live, PROVEN_FS_READ);
+    EXAMPLE_REQUIRE(proven_is_ok(check.err), "the live path must now open");
+    size = proven_fs_size(check.value);
+    EXAMPLE_REQUIRE(proven_is_ok(size.err) && size.value == 2 * sizeof(record_t),
+                    "and hold exactly the replacement records");
+    err = proven_fs_close(check.value);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "closing the verification handle must succeed");
+
+    /* --- copies, and the two kinds of link -------------------------------- */
+
+    /* copy duplicates the bytes: two independent files from here on. The
+     * allocator is for the temporary buffer the copy moves data through. */
+    proven_u8str_view_t backup = PROVEN_LIT("proven_example_durable.bak");
+    err = proven_fs_copy(alloc, live, backup);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "copying the file must succeed");
+
+    /* A HARD link is a second name for the same file. There is no original: the
+     * data lives until the last name is removed. Both names must be on the same
+     * filesystem, because a name and its data cannot span two. */
+    proven_u8str_view_t hard = PROVEN_LIT("proven_example_durable.hard");
+    err = proven_fs_link(alloc, live, hard);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "creating a hard link must succeed");
+
+    proven_fs_stat_t st_live = {0}, st_hard = {0};
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_stat(alloc, live, &st_live)), "stat of the live name");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_stat(alloc, hard, &st_hard)), "stat of the hard link");
+    EXAMPLE_REQUIRE(st_live.ino == st_hard.ino && st_live.dev == st_hard.dev,
+                    "both names refer to the same file, which is what a hard link means");
+
+    /* A SYMBOLIC link is a small file holding a path. It may point at something
+     * on another filesystem, and it may point at nothing at all - following it
+     * then fails, which a hard link can never do. */
+    proven_u8str_view_t soft = PROVEN_LIT("proven_example_durable.link");
+    err = proven_fs_symlink(alloc, live, soft);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "creating a symbolic link must succeed");
+
+    proven_fs_stat_t st_soft = {0};
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_stat(alloc, soft, &st_soft)),
+                    "stat follows the symbolic link to its target");
+    EXAMPLE_REQUIRE(st_soft.size == st_live.size, "so it reports the target's size");
+
+    /* --- directories, and cleaning up ------------------------------------- */
+
+    proven_u8str_view_t dir = PROVEN_LIT("proven_example_durable_dir");
+    err = proven_fs_mkdir(alloc, dir);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "creating a directory must succeed");
+
+    /* rmdir removes an EMPTY directory only. That refusal is a feature: a
+     * recursive delete is a decision the caller should have to make explicitly,
+     * not something a stray path argument can trigger. */
+    proven_u8str_view_t inside = PROVEN_LIT("proven_example_durable_dir/file.txt");
+    proven_result_file_t child = proven_fs_open(alloc, inside, PROVEN_FS_WRITE | PROVEN_FS_CREATE);
+    EXAMPLE_REQUIRE(proven_is_ok(child.err), "creating a file inside it must succeed");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_close(child.value)), "closing it must succeed");
+
+    err = proven_fs_rmdir(alloc, dir);
+    EXAMPLE_REQUIRE(err != PROVEN_OK, "removing a non-empty directory must be refused");
+
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_remove(alloc, inside)), "removing the file must succeed");
+    err = proven_fs_rmdir(alloc, dir);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "and then the empty directory can be removed");
+
+    printf("durable replace complete: %zu byte(s) live\n", (size_t)size.value);
+
+    (void)proven_fs_remove(alloc, soft);
+    (void)proven_fs_remove(alloc, hard);
+    (void)proven_fs_remove(alloc, backup);
+    (void)proven_fs_remove(alloc, live);
+    return EXAMPLE_OK();
+}
+```
+
+반례 — 이 절차가 대신하려는 제자리 덮어쓰기:
+
+```text
+proven_result_file_t f = proven_fs_open(alloc, live, PROVEN_FS_WRITE | PROVEN_FS_TRUNC);
+proven_err_t e = proven_fs_write_all(f.value, new_contents);   /* wrong */
+```
+
+자르기와 마지막 바이트 쓰기 사이에서 디스크 위의 파일은 불완전하다. 그 사이의 크래시는 갱신을 잃는
+것이 아니라 이미 있던 데이터를 잃는다.
+
+반례 — sync 없이 이름부터 바꾸는 경우:
+
+```text
+proven_err_t e = proven_fs_close(tmp.value);        /* no proven_fs_sync */
+e = proven_fs_rename(alloc, temp, live);            /* wrong */
+```
+
+파일을 닫는 것은 그 바이트를 장치에 올려놓는 일이 아니다. 이름 바꾸기는 지속되는데 그것이 가리키는
+내용은 그렇지 않을 수 있다.
+
+반례 — 잠금이 모두를 막는다고 가정하는 경우:
+
+```text
+proven_err_t e = proven_fs_lock(f.value, PROVEN_FS_LOCK_EXCLUSIVE, true);
+/* another program writes the file without ever calling proven_fs_lock */
+```
+
+권고 잠금은 그것을 모두가 쓰기로 한 프로그램들 사이의 약속이다. 접근 권한 통제가 아니다.
+
+### 실전 예제: reader와 writer, 그리고 표준 스트림
+
+**writer**는 "바이트가 가는 곳", **reader**는 "바이트가 오는 곳"이다. 각각은 포인터 둘이다. 작은
+함수 표 하나와, 그 함수들이 다루는 상태 하나. 이 구조의 값어치는 전부 여기서 나온다. writer를
+상대로 쓴 코드는 그 바이트가 파일로 가는지, 문자열로 가는지, 터미널로 가는지, 시험용 버퍼로 가는지
+알지 못하고 — reader를 상대로 쓴 코드는 디스크의 파일 대신 메모리의 문자열을 상대로 시험할 수 있다.
+
+예제는 그 조각들을 한데 놓는다.
+
+- `proven_reader_from_view()`는 이미 손에 있는 바이트 위에 reader를 만든다. 파서를 파일 없이
+  시험하는 방법이다. `proven_reader_read()`는 버퍼 크기까지 채우고 실제로 얻은 양을 알려 준다.
+  짧은 읽기는 정상이며, 입력의 끝은 0바이트 성공이 아니라 `PROVEN_ERR_EOF`다.
+- `proven_sysio_stdout_writer()`와 `proven_sysio_stderr_writer()`는 버퍼링 없는 표준 스트림이고,
+  `proven_sysio_stdin_reader()`는 표준 입력이다. `proven_writer_write()`는 "전부, 아니면 에러"를
+  뜻하고, `proven_writer_write_partial()`은 옮길 수 있는 만큼 옮기고 그 개수를 알려 준다 — 재시도나
+  배압(back-pressure)을 직접 다루는 호출자를 위한 것이다.
+- `proven_reader_is_valid()`와 `proven_writer_is_valid()`는 만들어진 적 없는 핸들을 첫 읽기·쓰기가
+  아니라 경계에서 잡는다.
+- `proven_sysio_file_buffered()`는 열린 파일을, **여러분이** 준 버퍼 위의 버퍼드 writer로 감싼다.
+  버퍼링의 메모리 비용이 여러분이 고른 숫자로 남는다는 뜻이다. 반드시 flush해야 한다. 여기서는
+  아무것도 종료 시에 대신 flush해 주지 않는다.
+- `proven_sysio_lines_open()`은 같은 방식의 호출자 제공 버퍼로 그 파일을 한 줄씩 읽는다. 예상되는
+  가장 긴 **줄**에 맞춰 크기를 잡는다. 더 긴 줄은 조용히 잘리는 대신
+  `PROVEN_ERR_OUT_OF_BOUNDS`가 된다.
+- `proven_scan_fmt_from_file()`(내부적으로 `proven_sysio_scan_chunk_impl()`을 부른다)은 입력이
+  자유 서식이 아니라 정해진 모양일 때 파일 핸들에서 타입 있는 값을 바로 뽑는다.
+
+<!-- example: manual/examples/ex_05_streams_stdio.c -->
+```c
+/*
+ * A writer is "somewhere bytes go" and a reader is "somewhere bytes come from",
+ * each of them two pointers: a small table of functions, and the state those
+ * functions work on. That is all. The value of the arrangement is that code
+ * written against a writer does not know or care whether the bytes end up in a
+ * file, in a string, on the terminal, or in a test buffer - and code written
+ * against a reader can be tested against a string in memory instead of a file
+ * on disk.
+ *
+ * This program shows both, and the standard-stream and file plumbing that hangs
+ * off them:
+ *
+ *   - a reader over a view (an in-memory string), which is how you test a
+ *     parser without touching the filesystem,
+ *   - the unbuffered stdout and stderr writers, and the difference between
+ *     "write all of this" and "write what you can",
+ *   - a buffered writer over a file, which turns many small writes into few
+ *     large ones,
+ *   - a line reader over that same file,
+ *   - reading formatted values straight out of a file handle.
+ *
+ * A note that costs people an afternoon: the state structs below must stay
+ * where they are declared. A writer holds a pointer INTO its state struct, so
+ * copying the struct leaves the copy inert and the original addressed.
+ */
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* --- 1. a reader over bytes you already have -------------------------- */
+
+    /* The parser below does not know this is a string. It would work the same
+     * over a file, a pipe or a socket - which is exactly why the test can use
+     * the cheap one. */
+    proven_reader_view_t src_state;
+    proven_reader_t src = proven_reader_from_view(&src_state, PROVEN_LIT("id=41\nid=42\n"));
+
+    /* is_valid asks whether the reader was actually built - a zero-initialised
+     * handle is not a reader, and this is the check that says so at the
+     * boundary instead of at the first read. */
+    EXAMPLE_REQUIRE(proven_reader_is_valid(src), "a reader made from a view must be usable");
+    proven_reader_t never_made = {0};
+    EXAMPLE_REQUIRE(!proven_reader_is_valid(never_made), "a zero-initialised reader handle is not");
+
+    /* read fills up to dest.size bytes and reports how many it actually got.
+     * A short read is normal - it is not end of file, and treating it as one is
+     * the classic way to lose the tail of an input. End of file has its own
+     * code, PROVEN_ERR_EOF. */
+    proven_byte_t chunk[5];
+    proven_mem_mut_t into = { .ptr = chunk, .size = sizeof chunk };
+    proven_result_size_t got = proven_reader_read(src, into);
+    EXAMPLE_REQUIRE(proven_is_ok(got.err), "the first read must succeed");
+    EXAMPLE_REQUIRE(got.value == 5, "and fill the buffer from the view");
+
+    proven_size_t total = got.value;
+    for (;;) {
+        got = proven_reader_read(src, into);
+        if (got.err == PROVEN_ERR_EOF) {
+            break;
+        }
+        EXAMPLE_REQUIRE(proven_is_ok(got.err), "reads before end of file must succeed");
+        total += got.value;
+    }
+    EXAMPLE_REQUIRE(total == 12, "the loop must consume the whole view, however it was chunked");
+
+    /* --- 2. the standard streams ------------------------------------------ */
+
+    /* The state struct holds the handle the writer points at, so it has to
+     * outlive the writer. Declaring the two next to each other is the habit
+     * that keeps that true. */
+    proven_sysio_std_t out_state;
+    proven_writer_t out = proven_sysio_stdout_writer(&out_state);
+    EXAMPLE_REQUIRE(proven_writer_is_valid(out), "the stdout writer must be usable");
+
+    /* write means "all of it, or an error". It loops internally, because a
+     * single system-level write may move fewer bytes than asked. */
+    proven_err_t err = proven_writer_write(out, proven_mem_view_from_u8(PROVEN_LIT("stream example: start\n")));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "writing a whole line to stdout must succeed");
+
+    /* write_partial is the honest low-level twin: it moves what it can and
+     * reports the count. Use it when you are managing your own retry or
+     * back-pressure; use write when you just want the bytes out. */
+    proven_result_size_t part = proven_writer_write_partial(out, proven_mem_view_from_u8(PROVEN_LIT("partial write\n")));
+    EXAMPLE_REQUIRE(proven_is_ok(part.err), "a partial write to a terminal or pipe must succeed");
+    EXAMPLE_REQUIRE(part.value > 0, "and report how many bytes it moved");
+
+    /* stderr is unbuffered on purpose: a diagnostic is out before the next line
+     * of code runs, which is what you need when the next line is the one that
+     * crashes. */
+    proven_sysio_std_t err_state;
+    proven_writer_t diag = proven_sysio_stderr_writer(&err_state);
+    EXAMPLE_REQUIRE(proven_writer_is_valid(diag), "the stderr writer must be usable");
+    err = proven_writer_write(diag, proven_mem_view_from_u8(PROVEN_LIT("stream example: diagnostics go here\n")));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "writing to stderr must succeed");
+
+    /* A reader over stdin is built the same way. This example does not read
+     * from it - a test run has no one typing - but building it shows the shape,
+     * and it is the handle a filter program would loop over. */
+    proven_sysio_std_t in_state;
+    proven_reader_t stdin_reader = proven_sysio_stdin_reader(&in_state);
+    EXAMPLE_REQUIRE(proven_reader_is_valid(stdin_reader), "the stdin reader must be usable");
+
+    /* --- 3. buffered output to a file ------------------------------------- */
+
+    proven_u8str_view_t path = PROVEN_LIT("proven_example_streams.txt");
+    proven_result_file_t f = proven_fs_open(alloc, path, PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
+    EXAMPLE_REQUIRE(proven_is_ok(f.err), "creating the output file must succeed");
+    if (!proven_is_ok(f.err)) return 1;
+
+    /* The buffer is yours: the library does not allocate one behind your back,
+     * so the memory cost of buffering is a number you chose and can see. Sixty
+     * lines through a 256-byte buffer is a handful of writes instead of sixty. */
+    proven_byte_t outbuf[256];
+    proven_sysio_out_t file_out;
+    proven_writer_t w = proven_sysio_file_buffered(&file_out, f.value,
+                                                   (proven_mem_mut_t){ .ptr = outbuf, .size = sizeof outbuf });
+    EXAMPLE_REQUIRE(proven_writer_is_valid(w), "the buffered file writer must be usable");
+
+    for (int i = 0; i < 20; ++i) {
+        proven_fmt_result_t line_out = proven_fprintln(w, "reading {} = {}",
+                                                       proven_arg_i32(i), proven_arg_i32(i * i));
+        EXAMPLE_REQUIRE(proven_is_ok(line_out.err), "writing a formatted line must succeed");
+    }
+
+    /* Buffered output that is never flushed is output that never happened.
+     * Nothing here flushes at exit on your behalf. */
+    err = proven_writer_flush(w);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "the flush is what actually writes the file");
+    err = proven_fs_close(f.value);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "closing the file must succeed");
+
+    /* --- 4. reading it back a line at a time ------------------------------ */
+
+    proven_result_file_t rf = proven_fs_open(alloc, path, PROVEN_FS_READ);
+    EXAMPLE_REQUIRE(proven_is_ok(rf.err), "reopening for reading must succeed");
+    if (!proven_is_ok(rf.err)) return 1;
+
+    /* Size the buffer for the longest LINE you expect. A longer line is
+     * reported as OUT_OF_BOUNDS - never silently cut in half, which is the
+     * failure that turns one bad record into two plausible ones. */
+    proven_byte_t linebuf[128];
+    proven_sysio_lines_t lines;
+    err = proven_sysio_lines_open(&lines, rf.value, (proven_mem_mut_t){ .ptr = linebuf, .size = sizeof linebuf });
+    EXAMPLE_REQUIRE(proven_is_ok(err), "opening a line reader over the file must succeed");
+
+    proven_size_t count = 0;
+    for (;;) {
+        proven_result_u8str_view_t line = proven_sysio_read_line(&lines);
+        if (line.err == PROVEN_ERR_EOF) {
+            break;
+        }
+        EXAMPLE_REQUIRE(proven_is_ok(line.err), "reading a line must succeed until end of file");
+        /* The view points into linebuf and is good only until the next call.
+         * That is what makes a million lines cost one buffer instead of a
+         * million allocations - and why you copy a line you want to keep. */
+        if (count == 0) {
+            EXAMPLE_REQUIRE(proven_u8str_view_eq(line.val, PROVEN_LIT("reading 0 = 0")),
+                            "the first line reads back exactly as it was written");
+        }
+        ++count;
+    }
+    EXAMPLE_REQUIRE(count == 20, "every line written must be read back");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_close(rf.value)), "closing the read handle must succeed");
+
+    /* --- 5. reading values, not lines, from a file ------------------------ */
+
+    /* When the input is a known shape rather than free text, scanning it
+     * directly saves writing the split-and-convert loop by hand. This reads one
+     * chunk from the file handle and pulls the two numbers out of it. */
+    proven_result_file_t sf = proven_fs_open(alloc, path, PROVEN_FS_READ);
+    EXAMPLE_REQUIRE(proven_is_ok(sf.err), "opening the file for scanning must succeed");
+
+    proven_i32 index = -1, square = -1;
+    err = proven_scan_fmt_from_file(sf.value, "reading {} = {}",
+                                    proven_scan_arg_i32(&index), proven_scan_arg_i32(&square));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "scanning the first record must succeed");
+    EXAMPLE_REQUIRE(index == 0 && square == 0, "and produce the values that were written");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_close(sf.value)), "closing the scan handle must succeed");
+
+    printf("streams: %zu byte(s) read from the view, %zu line(s) round-tripped\n",
+           (size_t)total, (size_t)count);
+
+    (void)proven_fs_remove(alloc, path);
+    return EXAMPLE_OK();
+}
+```
+
+반례 — writer를 만든 뒤 상태 구조체를 복사하는 경우:
+
+```text
+proven_sysio_out_t state;
+proven_writer_t w = proven_sysio_file_buffered(&state, file, buf);
+proven_sysio_out_t moved = state;    /* wrong: w still points into `state` */
+```
+
+writer는 그 구조체 **안쪽**을 가리키는 포인터를 들고 있다. writer가 사는 동안 상태는 선언한 자리에
+둔다.
+
+반례 — flush를 잊는 경우:
+
+```text
+proven_fmt_result_t r = proven_fprintln(w, "done");
+return 0;                            /* wrong: the buffer never reached the file */
+```
+
+### 실전 예제: 파일을 메모리에 매핑하고, 그 변경을 지속시키기
+
+메모리 매핑된 파일은 프로세서가 메모리처럼 읽는 파일이다. 운영체제가 그 페이지들을 어떤 주소에
+나타나게 해 주고, 읽기는 read 호출 없이 일어난다. 큰 파일에 무작위로 접근할 때, 특히 여러 프로세스가
+함께 볼 때 어울린다. 스트리밍에는 어울리지 않는다. 거기서는 버퍼드 reader가 더 단순하고, 파일 크기를
+주소 공간에 묶지도 않는다.
+
+쓰기가 살아남는지를 정하는 구분은 이것이다.
+
+| 매핑 | 쓰기가 가는 곳 | `proven_mmap_sync()` |
+|---|---|---|
+| `PROVEN_MMAP_SHARED` | 파일로 간다 | 저장 장치까지 밀어 넣는다 |
+| `PROVEN_MMAP_PRIVATE` | 사적인 사본으로 간다(기록 시 복사, copy-on-write) — 이 프로세스에만 |  되돌려 쓸 것이 없으므로 `PROVEN_ERR_UNSUPPORTED`를 돌려준다 |
+
+그 거절은 일부러 그런 것이다. 공유 매핑이라고 믿었던 호출자가, 데이터가 없어진 뒤가 아니라 sync
+자리에서 그 사실을 알게 된다.
+
+예제는 달력 형식화로 끝난다. 기록하는 레코드에 날짜가 붙기 때문이다. UTF-8 형태는
+`proven_time_u8_fmt()`, UTF-16 형태는 `proven_time_u16_fmt()`이며, 후자가 옳은 상황은 딱 하나 —
+와이드 문자열을 받는 시스템 호출에 그 텍스트를 바로 넘길 때다.
+
+<!-- example: manual/examples/ex_05_mmap.c -->
+```c
+#include <string.h>
+
+/*
+ * A memory-mapped file is a file the processor reads as memory: the operating
+ * system arranges for the pages to appear at an address, and reads happen
+ * without a read call. It is the right tool for one shape of problem - random
+ * access into a large file that several processes look at - and the wrong tool
+ * for streaming, where a buffered reader is simpler and does not tie a file's
+ * size to your address space.
+ *
+ * The part that is easy to get wrong is durability, and it is the reason this
+ * example exists:
+ *
+ *   PROVEN_MMAP_SHARED  - writes go to the file. proven_mmap_sync pushes them
+ *                         to the storage device.
+ *   PROVEN_MMAP_PRIVATE - writes are copy-on-write: they exist in this process
+ *                         and nowhere else. There is nothing to write back, and
+ *                         asking to sync one says so instead of quietly doing
+ *                         nothing.
+ *
+ * This example also shows the calendar formatter alongside it, because the
+ * record it writes carries a timestamp - and a timestamp written for a Windows
+ * API is the one place the UTF-16 formatter is the right call.
+ */
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+    proven_u8str_view_t path = PROVEN_LIT("proven_example_mmap.dat");
+
+    /* A mapping cannot extend a file, so the file has to be the size you intend
+     * to map before you map it. */
+    static const char initial[] = "record 0: pending    \n";
+    proven_result_file_t create = proven_fs_open(alloc, path,
+                                                 PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
+    EXAMPLE_REQUIRE(proven_is_ok(create.err), "creating the backing file must succeed");
+    if (!proven_is_ok(create.err)) return 1;
+
+    proven_mem_view_t seed = { .ptr = (const proven_byte_t *)initial, .size = sizeof initial - 1 };
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_write_all(create.value, seed)), "writing the record must succeed");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_close(create.value)), "closing it must succeed");
+
+    /* --- a shared mapping: writes reach the file -------------------------- */
+
+    proven_result_file_t f = proven_fs_open(alloc, path, PROVEN_FS_READ | PROVEN_FS_WRITE);
+    EXAMPLE_REQUIRE(proven_is_ok(f.err), "opening the file for mapping must succeed");
+    if (!proven_is_ok(f.err)) return 1;
+
+    /* size 0 means "to the end of the file". */
+    proven_result_mmap_t m = proven_mmap_create(f.value, 0, 0,
+                                                PROVEN_MMAP_READ | PROVEN_MMAP_WRITE,
+                                                PROVEN_MMAP_SHARED);
+    EXAMPLE_REQUIRE(proven_is_ok(m.err), "mapping the file must succeed");
+    if (!proven_is_ok(m.err)) {
+        (void)proven_fs_close(f.value);
+        return 1;
+    }
+    proven_mmap_t map = m.value;
+
+    /* Reading is just reading memory - no call, no copy. as_view hands back the
+     * whole mapping as a byte view, so the ordinary view helpers apply. */
+    proven_u8str_view_t contents = proven_mmap_as_view(map);
+    EXAMPLE_REQUIRE(contents.size == sizeof initial - 1, "the mapping covers the whole file");
+    EXAMPLE_REQUIRE(proven_u8str_view_starts_with(contents, PROVEN_LIT("record 0:")),
+                    "and shows the bytes that were written");
+
+    /* Writing is writing memory. The status field is a fixed width on purpose:
+     * a mapping cannot make the file longer, so an in-place edit has to fit the
+     * space that is already there. */
+    proven_size_t at = proven_u8str_view_find(contents, 0, PROVEN_LIT("pending"));
+    EXAMPLE_REQUIRE(at != PROVEN_SIZE_MAX, "the status field must be found");
+    memcpy((proven_byte_t *)map.ptr + at, "done   ", 7);
+
+    /* sync is the durability step: without it the change is in the page cache,
+     * where it survives this program exiting but not the machine losing power. */
+    EXAMPLE_REQUIRE(proven_is_ok(proven_mmap_sync(&map)), "syncing a shared mapping must succeed");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_mmap_destroy(&map)), "unmapping must succeed");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_close(f.value)), "closing the mapped file must succeed");
+
+    /* The edit is in the file, not merely in this process's memory. */
+    proven_result_u8str_t back = proven_fs_read_all_u8str(alloc, path);
+    EXAMPLE_REQUIRE(proven_is_ok(back.err), "reading the file back must succeed");
+    EXAMPLE_REQUIRE(proven_u8str_view_find(proven_u8str_as_view(&back.value), 0, PROVEN_LIT("done")) != PROVEN_SIZE_MAX,
+                    "the mapped write reached the file");
+    proven_u8str_destroy(alloc, &back.value);
+
+    /* --- a private mapping: writes go nowhere ----------------------------- */
+
+    proven_result_file_t pf = proven_fs_open(alloc, path, PROVEN_FS_READ);
+    EXAMPLE_REQUIRE(proven_is_ok(pf.err), "reopening for a private mapping must succeed");
+
+    proven_result_mmap_t pm = proven_mmap_create(pf.value, 0, 0, PROVEN_MMAP_READ, PROVEN_MMAP_PRIVATE);
+    EXAMPLE_REQUIRE(proven_is_ok(pm.err), "a private read mapping must succeed");
+    proven_mmap_t priv = pm.value;
+
+    /* Asking to sync a private mapping is refused rather than accepted and
+     * ignored. The refusal is the useful behaviour: a caller who believed the
+     * mapping was shared finds out here, not when the data is missing. */
+    EXAMPLE_REQUIRE(proven_mmap_sync(&priv) == PROVEN_ERR_UNSUPPORTED,
+                    "a private mapping has nothing to write back, and says so");
+
+    EXAMPLE_REQUIRE(proven_is_ok(proven_mmap_destroy(&priv)), "unmapping the private mapping must succeed");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_close(pf.value)), "closing it must succeed");
+
+    /* --- the timestamp, in both string types ------------------------------ */
+
+    proven_datetime_t now = proven_time_now_datetime();
+
+    proven_result_u8str_t stamp = proven_u8str_create(alloc, 64);
+    EXAMPLE_REQUIRE(proven_is_ok(stamp.err), "creating the timestamp string must succeed");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_time_u8_fmt(alloc, &stamp.value, now, &proven_time_locale_en,
+                                                    "{year}-{month:0>2}-{day:0>2}")),
+                    "formatting the date as UTF-8 must succeed");
+    EXAMPLE_REQUIRE(proven_u8str_as_view(&stamp.value).size == 10, "a YYYY-MM-DD date is ten characters");
+
+    /* The UTF-16 form of the same call, for the one place it is the right one:
+     * handing the text straight to a system call that takes wide strings. */
+    proven_result_u16str_t wide = proven_u16str_create(alloc, 64);
+    EXAMPLE_REQUIRE(proven_is_ok(wide.err), "creating the wide timestamp string must succeed");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_time_u16_fmt(alloc, &wide.value, now, &proven_time_locale_en,
+                                                     "{year}-{month:0>2}-{day:0>2}")),
+                    "formatting the same date as UTF-16 must succeed");
+    EXAMPLE_REQUIRE(proven_u16str_len(&wide.value) == 10, "ten code units, one per character here");
+    EXAMPLE_REQUIRE(proven_u16str_as_ptr(&wide.value)[4] == (proven_u16)'-',
+                    "and the same layout as the UTF-8 form");
+
+    printf("mapped record updated; stamped %s\n", proven_u8str_as_cstr(&stamp.value));
+
+    proven_u16str_destroy(alloc, &wide.value);
+    proven_u8str_destroy(alloc, &stamp.value);
+    (void)proven_fs_remove(alloc, path);
+    return EXAMPLE_OK();
+}
+```
+
+반례 — 매핑이 파일을 늘려 줄 것이라고 기대하는 경우:
+
+```text
+proven_result_mmap_t m = proven_mmap_create(f.value, 0, 1 << 20, ...);  /* file is 22 bytes */
+memcpy((char *)m.value.ptr + 4096, data, n);                            /* wrong */
+```
+
+파일 길이를 먼저 정하고 — `proven_fs_truncate()`가 한 번에 해 준다 — 존재하는 만큼을 매핑한다.
+
+### 실전 예제: 난수는 어디에서 오는가
+
+[위의 예제](#randomness-by-use-case)는 어떤 생성기를 고를지를 다룬다. 이것은 그 아래 계층, 곧 바이트의 출처와,
+어느 출처를 받았는지 신경 쓰지 않는 코드를 쓰는 법이다.
+
+- **`proven_rng_t`가 그 인터페이스다.** 이것을 받는 함수는 운영체제 생성기로도, ChaCha20으로도,
+  xoshiro로도, 시험용으로 여러분이 만든 가짜로도 고치지 않고 동작한다.
+  `proven_rng_is_valid()`는 출처가 실제로 만들어졌는지 말해 준다. 만들어지지 않은 것에서 뽑으면
+  숫자를 지어내는 대신 0을 돌려주므로, 뽑을 때마다 믿는 대신 경계에서 한 번 확인한다.
+  `proven_rng_u64()`는 64비트 낱말 하나를, `proven_rng_fill()`은 버퍼 전체를 한 번에 채운다.
+- **고정된 씨앗(seed)은 시험을 재현 가능하게 만든다.** `proven_chacha_rng_seed()`는 씨앗 바이트를
+  직접 받으므로 `proven_chacha_rng_next()`는 알려진 수열을 걷는다. "일주일에 한 번 실패한다"를 다시
+  돌려볼 수 있는 실패로 바꾸는 것이 바로 이것이다. 운영에서는 씨앗이 진짜 엔트로피에서 와야 한다.
+  그것을 아는 사람은 이후의 모든 바이트를 알기 때문이다.
+- **`proven_random_u64()`**는 엔트로피 출처에서 강한 낱말 하나를 바로 뽑는다. 시동 시의 해시 키나
+  식별자 같은 일회성에는 알맞고, 반복문 안에서는 그르다. 호출마다 운영체제까지 다녀오기 때문이다.
+- **`proven_random_set_source()`**는 엔트로피 출처 자체를 설치한다. 호스티드(hosted) 프로그램에는 운영체제의
+  것이 이미 있으니 그대로 두면 되고, 베어메탈 프로그램에는 없으니 그 보드의 하드웨어 출처가 여기로
+  들어간다.
+
+<!-- example: manual/examples/ex_05_random_sources.c -->
+```c
+#include <string.h>
+
+/*
+ * The other example shows which generator to pick. This one is about the layer
+ * underneath: where the randomness comes FROM, and how to write code that does
+ * not care.
+ *
+ *   proven_rng_t is a source of random bytes as a pair of pointers - a small
+ *   table of functions and the generator state they work on. Code that takes a
+ *   proven_rng_t works with the OS generator, with ChaCha20, with xoshiro, and
+ *   with a fake you wrote for a test, without a line of change.
+ *
+ *   proven_random_set_source is the layer below THAT: where the raw entropy a
+ *   generator is seeded from comes from. A hosted program already has one - the
+ *   operating system's - and should leave it alone. A bare-metal program has
+ *   none, and this is the hook where its hardware source is installed.
+ *
+ * The fixed-seed part matters more than it looks: a cryptographic generator
+ * seeded from a KNOWN seed produces a known sequence, which is what makes a
+ * test that involves randomness reproducible instead of "fails once a week".
+ */
+
+/* A source of "entropy" that is not random at all: it counts. Nothing like this
+ * belongs in a real program - see the counter-example in the chapter - but it
+ * is exactly the right shape for showing how the hook works, and for a test
+ * that must produce the same bytes every run. */
+static bool counting_entropy(void *ctx, void *buf, proven_size_t len) {
+    proven_u8 *next = (proven_u8 *)ctx;
+    proven_u8 *out = (proven_u8 *)buf;
+    for (proven_size_t i = 0; i < len; ++i) {
+        out[i] = (*next)++;
+    }
+    return true;
+}
+
+/* A function written against the trait. It never learns which generator it got. */
+static proven_u64 roll_total(proven_rng_t rng, int rolls) {
+    proven_u64 sum = 0;
+    for (int i = 0; i < rolls; ++i) {
+        sum += proven_rng_below(rng, 6) + 1;
+    }
+    return sum;
+}
+
+int main(void) {
+    /* --- 1. a source you can check before you use it ---------------------- */
+
+    proven_rng_t nothing = {0};
+    EXAMPLE_REQUIRE(!proven_rng_is_valid(nothing), "a zero-initialised source is not a generator");
+
+    /* Drawing from an invalid source does not crash and does not invent a
+     * number: it returns 0. That is a defined, boring answer - but a stream of
+     * zeros is not randomness, so check the source once when you receive it
+     * rather than trusting every draw. */
+    EXAMPLE_REQUIRE(proven_rng_u64(nothing) == 0, "an invalid source yields 0, not a fabricated value");
+
+    /* --- 2. a cryptographic generator from a KNOWN seed ------------------- */
+
+    /* proven_chacha_rng_seed takes the seed bytes directly, so the sequence is
+     * reproducible. That is what you want in a test and never in production:
+     * anyone who learns the seed knows every byte the generator will produce. */
+    proven_byte_t seed[PROVEN_CHACHA_SEED_SIZE];
+    memset(seed, 0xA5, sizeof seed);
+
+    proven_chacha_rng_t a, b;
+    proven_chacha_rng_seed(&a, seed);
+    proven_chacha_rng_seed(&b, seed);
+
+    /* next returns one 64-bit word at a time. Two generators given the same
+     * seed walk the same sequence - which is the property the test relies on. */
+    proven_u64 first = proven_chacha_rng_next(&a);
+    EXAMPLE_REQUIRE(first == proven_chacha_rng_next(&b), "the same seed replays the same sequence");
+    EXAMPLE_REQUIRE(proven_chacha_rng_next(&a) == proven_chacha_rng_next(&b), "and keeps replaying it");
+
+    /* --- 3. using it through the trait ------------------------------------ */
+
+    proven_rng_t rng = proven_chacha_rng(&a);
+    EXAMPLE_REQUIRE(proven_rng_is_valid(rng), "a seeded generator makes a valid source");
+
+    proven_u64 word = proven_rng_u64(rng);
+    (void)word;   /* any 64-bit value is a legal answer; there is nothing to assert about it */
+
+    /* fill is the bulk form: one call for a whole buffer, rather than a loop
+     * over 64-bit words that has to deal with the remainder itself. */
+    proven_byte_t nonce[12] = {0};
+    proven_rng_fill(rng, nonce, sizeof nonce);
+
+    bool all_zero = true;
+    for (proven_size_t i = 0; i < sizeof nonce; ++i) {
+        if (nonce[i] != 0) all_zero = false;
+    }
+    EXAMPLE_REQUIRE(!all_zero, "filling from a seeded generator must produce something");
+
+    /* The same function, driven by two different generators. This is the only
+     * reason the trait exists. */
+    proven_chacha_rng_t c;
+    proven_chacha_rng_seed(&c, seed);
+    proven_u64 crypto_total = roll_total(proven_chacha_rng(&c), 50);
+
+    proven_xoshiro256ss_t fast;
+    proven_xoshiro256ss_seed(&fast, 7);
+    proven_u64 fast_total = roll_total(proven_xoshiro256ss_rng(&fast), 50);
+
+    EXAMPLE_REQUIRE(crypto_total >= 50 && crypto_total <= 300, "50 dice must total between 50 and 300");
+    EXAMPLE_REQUIRE(fast_total >= 50 && fast_total <= 300, "whichever generator produced them");
+
+    /* --- 4. one strong word, without holding a generator ------------------ */
+
+    /* proven_random_u64 draws straight from the entropy source. Convenient for
+     * a one-off - a table's hash key at startup, a request id - and the wrong
+     * tool for a loop, because each call costs a trip to the operating system.
+     * For bulk output, seed a generator once and draw from that. */
+    proven_u64 one_off = proven_random_u64();
+    proven_u64 another = proven_random_u64();
+    EXAMPLE_REQUIRE(one_off != another || one_off != 0,
+                    "two draws from the OS source are essentially never the same value");
+
+    /* --- 5. installing an entropy source ---------------------------------- */
+
+    /* On a hosted target the operating system's source is already installed and
+     * you should leave it there. This hook exists for the bare-metal case,
+     * where the library cannot know that the board's entropy lives in a
+     * particular hardware register. Here it is installed with a deliberately
+     * fake source, purely to show the mechanism and to prove the switch took
+     * effect - a real one must be genuine hardware entropy. */
+    proven_u8 counter = 0;
+    proven_random_set_source(counting_entropy, &counter);
+
+    proven_byte_t drawn[4] = {0};
+    EXAMPLE_REQUIRE(proven_random_bytes(drawn, sizeof drawn), "the installed source must answer");
+    EXAMPLE_REQUIRE(drawn[0] == 0 && drawn[1] == 1 && drawn[2] == 2 && drawn[3] == 3,
+                    "and it is the source we installed that answered");
+
+    /* Put the platform default back. Leaving a test source installed is how a
+     * program ends up generating predictable keys in production. */
+    proven_random_set_source(NULL, NULL);
+
+    proven_byte_t real[8] = {0};
+    EXAMPLE_REQUIRE(proven_random_bytes(real, sizeof real), "the OS source is back and working");
+
+    printf("random: first word %llu, dice totals %llu and %llu\n",
+           (unsigned long long)first, (unsigned long long)crypto_total, (unsigned long long)fast_total);
+
+    return EXAMPLE_OK();
+}
+```
+
+반례 — 무작위처럼 보이기만 하는 것을 설치하는 경우:
+
+```text
+static bool clock_entropy(void *ctx, void *buf, proven_size_t len) {
+    proven_time_t t = proven_time_now();       /* wrong: predictable */
+    memcpy(buf, &t, len < sizeof t ? len : sizeof t);
+    return true;
+}
+proven_random_set_source(clock_entropy, NULL);
+```
+
+시계, 일련번호, 초기화되지 않은 버퍼, 의사 난수 생성기는 모두 얼핏 보아 넘어가지만 추측할 수 있는
+것을 만든다. 보드에 진짜 엔트로피가 없다면 아무것도 설치하지 않는 것으로 그 사실을 말한다. 거절은
+호출자가 대응할 수 있는 사실이고, 조용한 예측 가능성은 그렇지 않다.
+
+반례 — 시험용 출처를 설치한 채 두는 경우:
+
+```text
+proven_random_set_source(counting_entropy, &counter);
+/* ... the rest of the program, now generating predictable keys ... */
+```
+
+시험이 끝나는 즉시 `proven_random_set_source(NULL, NULL)`로 플랫폼 기본값을 되돌린다.

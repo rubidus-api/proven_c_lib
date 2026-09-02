@@ -983,3 +983,320 @@ int main(void) {
     return EXAMPLE_OK();
 }
 ```
+
+### Worked example: when the buffer is fixed and the data is not
+
+The example above grows the string whenever it runs out of room. A great deal of
+real code cannot do that: a record has a fixed field width, a log line has a hard
+limit, a string lives in an arena where every reallocation leaves the old copy
+behind until the next reset. Those callers need to know which of three answers a
+call gives when the data does not fit.
+
+| Kind of call | What it does when the data does not fit | Calls |
+|---|---|---|
+| **Atomic, fixed capacity** | Refuses with `PROVEN_ERR_OUT_OF_BOUNDS` and changes nothing. | `proven_u8str_append`, `proven_u8str_insert`, `proven_u8str_replace_at` |
+| **Best-effort (truncating)** | Writes what fits, returns `PROVEN_ERR_OUT_OF_BOUNDS` **and** the byte count it wrote. | `proven_u8str_append_partial` |
+| **Atomic, growable** | Reallocates through the allocator; on allocation failure changes nothing. | `proven_u8str_append_grow`, `proven_u8str_replace_at_grow`, `proven_u8str_append_byte` |
+
+Two supporting calls appear here as well. `proven_u8str_reserve()` raises the
+capacity once, up front, so later growth does not reallocate — on the heap that
+saves copying, and in an arena it saves the dead storage every reallocation
+leaves behind. `proven_u8str_is_valid()` checks that a string handle's own
+fields are consistent; it is worth asserting where a string arrives from other
+code, not after every edit.
+
+The program below writes a bounded log line, refuses an oversized append,
+truncates deliberately with the best-effort call, and edits a path in the middle
+with `proven_u8str_replace_at()` — first shrinking (which always fits), then
+growing (which does not, and is refused), then the same edit again through
+`proven_u8str_replace_at_grow()`. It ends by checking the file extension with
+`proven_u8str_view_ends_with()`.
+
+<!-- example: manual/examples/ex_03_fixed_edits.c -->
+```c
+/*
+ * The previous example grew a string whenever it ran out of room. This one is
+ * about the case where growing is not allowed - a fixed-size record, a log line
+ * with a hard length limit, a buffer in an arena that must not be reallocated -
+ * and about the two honest answers a call can give when the data does not fit:
+ *
+ *   "no, and I changed nothing"      - the atomic calls: append, insert,
+ *                                      replace_at. They check the capacity
+ *                                      first, so a refusal leaves the string
+ *                                      exactly as it was.
+ *   "some of it, and here is how much" - the best-effort call:
+ *                                      append_partial. It fills what it can and
+ *                                      tells you the byte count it wrote.
+ *
+ * Both are useful; picking the wrong one silently truncates a record or
+ * silently drops one. The `_grow` variants are the third answer - "yes, I found
+ * more room" - and appear at the end for contrast.
+ */
+
+#define FIELD_CAP 32u
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    proven_result_u8str_t r = proven_u8str_create(alloc, FIELD_CAP);
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating the field buffer must succeed");
+    if (!proven_is_ok(r.err)) {
+        return 1;
+    }
+    proven_u8str_t field = r.value;
+
+    /* is_valid checks the handle's own structure - a pointer with a capacity and
+     * a length that do not contradict each other. Worth asserting once at the
+     * boundary of your code when a string arrives from somewhere else; it is not
+     * a check you need after every edit, because every edit maintains it. */
+    EXAMPLE_REQUIRE(proven_u8str_is_valid(&field), "a freshly created string must be structurally valid");
+
+    /* --- reserving room up front ------------------------------------------ */
+
+    /* reserve raises the capacity now, so later growth does not reallocate. On
+     * the heap that saves copies; in an arena it saves something worse, because
+     * every reallocation there leaks the old block until the next reset. Ask for
+     * what you expect to need, once. */
+    proven_err_t err = proven_u8str_reserve(alloc, &field, 64);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "reserving 64 bytes must succeed");
+    EXAMPLE_REQUIRE(field.internal.cap >= 64, "the capacity must actually be at least what was asked for");
+
+    /* --- the atomic calls: fit, or change nothing -------------------------- */
+
+    err = proven_u8str_append(&field, PROVEN_LIT("2026-01-01 level=info "));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "the prefix fits in the reserved capacity");
+
+    /* append_byte adds one byte, which is what separators, terminators and
+     * escape characters are. It takes the allocator because it is a growing
+     * call - one byte is exactly the case where a capacity check would fail on
+     * a boundary you did not think about. */
+    err = proven_u8str_append_byte(alloc, &field, (proven_u8)'[');
+    EXAMPLE_REQUIRE(proven_is_ok(err), "appending a single separator byte must succeed");
+
+    err = proven_u8str_append(&field, PROVEN_LIT("disk full"));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "the message fits");
+
+    err = proven_u8str_append_byte(alloc, &field, (proven_u8)']');
+    EXAMPLE_REQUIRE(proven_is_ok(err), "closing the bracket must succeed");
+
+    /* Now ask for more than the capacity can hold. The atomic append refuses and
+     * - this is the property worth relying on - the string still holds exactly
+     * what it held before the call. */
+    proven_size_t before = proven_u8str_as_view(&field).size;
+    err = proven_u8str_append(&field, PROVEN_LIT(" and a very long trailing explanation that certainly does not fit"));
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_OUT_OF_BOUNDS, "an oversized atomic append must be refused");
+    EXAMPLE_REQUIRE(proven_u8str_as_view(&field).size == before, "and must leave the string untouched");
+
+    /* --- the best-effort call: as much as fits, and the count -------------- */
+
+    /* A fixed-width column in a report is the case for this one: write what
+     * fits, and know how much was written so the caller can mark the value as
+     * truncated instead of pretending it is complete. */
+    proven_result_size_t part = proven_u8str_append_partial(&field, PROVEN_LIT(" ...more text than there is room for"));
+    EXAMPLE_REQUIRE(part.err == PROVEN_ERR_OUT_OF_BOUNDS, "a partial append that truncates still reports the truncation");
+    EXAMPLE_REQUIRE(part.value > 0, "but it wrote what it could");
+    EXAMPLE_REQUIRE(proven_u8str_as_view(&field).size == before + part.value,
+                    "and the string grew by exactly the number of bytes it reports");
+    printf("partial append wrote %zu byte(s) before the buffer was full\n", (size_t)part.value);
+
+    /* --- editing in the middle without growing ----------------------------- */
+
+    proven_result_u8str_t r2 = proven_u8str_create(alloc, FIELD_CAP);
+    EXAMPLE_REQUIRE(proven_is_ok(r2.err), "creating the second buffer must succeed");
+    proven_u8str_t path = r2.value;
+    err = proven_u8str_append(&path, PROVEN_LIT("var/log/service.log"));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "the path fits");
+
+    /* insert shifts the tail right. Fixed-capacity: it fits or it refuses. */
+    err = proven_u8str_insert(&path, 0, PROVEN_LIT("/"));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "inserting a leading slash must succeed");
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&path), PROVEN_LIT("/var/log/service.log")),
+                    "the insert lands at index 0");
+
+    /* replace_at replaces old_len bytes at an index with data of any length, as
+     * long as the result still fits. Replacing "service" (7) with "daemon" (6)
+     * shrinks the string, so this cannot fail on capacity. */
+    proven_size_t at = proven_u8str_view_find(proven_u8str_as_view(&path), 0, PROVEN_LIT("service"));
+    EXAMPLE_REQUIRE(at != PROVEN_SIZE_MAX, "the substring must be found before it can be replaced");
+    err = proven_u8str_replace_at(&path, at, 7, PROVEN_LIT("daemon"));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "a shortening replacement must succeed");
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&path), PROVEN_LIT("/var/log/daemon.log")),
+                    "and produce the expected path");
+
+    /* The same edit the other way round overflows a 32-byte buffer, and the
+     * fixed-capacity call refuses it rather than truncating a path - which is
+     * the failure that silently writes to the wrong file. */
+    before = proven_u8str_as_view(&path).size;
+    err = proven_u8str_replace_at(&path, at, 6, PROVEN_LIT("a-replacement-name-far-too-long-for-this-buffer"));
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_OUT_OF_BOUNDS, "a replacement that does not fit must be refused");
+    EXAMPLE_REQUIRE(proven_u8str_as_view(&path).size == before, "and must leave the path unchanged");
+
+    /* replace_at_grow is the same edit with permission to reallocate. Use it
+     * when the buffer is heap-backed and the length is genuinely unbounded;
+     * prefer the fixed-capacity call when the limit is part of the format. */
+    err = proven_u8str_replace_at_grow(alloc, &path, at, 6, PROVEN_LIT("a-replacement-name-far-too-long-for-this-buffer"));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "the growing variant makes room instead of refusing");
+    EXAMPLE_REQUIRE(proven_u8str_view_ends_with(proven_u8str_as_view(&path), PROVEN_LIT(".log")),
+                    "the extension is still at the end after the edit");
+
+    /* ends_with answers the question an extension check actually asks. Doing it
+     * with an index computed by hand is where the off-by-one lives; doing it
+     * with strcmp on a pointer requires a NUL that a view does not have. */
+    EXAMPLE_REQUIRE(!proven_u8str_view_ends_with(proven_u8str_as_view(&path), PROVEN_LIT(".txt")),
+                    "and it is not a .txt file");
+
+    /* An empty suffix is a suffix of everything, which is the answer that keeps
+     * loops over a list of suffixes from needing a special case. */
+    EXAMPLE_REQUIRE(proven_u8str_view_ends_with(proven_u8str_as_view(&path), PROVEN_LIT("")),
+                    "every string ends with the empty suffix");
+
+    printf("log line: %s\n", proven_u8str_as_cstr(&field));
+    printf("path:     %s\n", proven_u8str_as_cstr(&path));
+
+    proven_u8str_destroy(alloc, &path);
+    proven_u8str_destroy(alloc, &field);
+    return EXAMPLE_OK();
+}
+```
+
+Wrong — treating the best-effort call as if it were atomic:
+
+```text
+(void)proven_u8str_append_partial(&line, field);   /* wrong: ignores the count */
+```
+
+The return value is the only place the truncation is reported. Discarding it
+turns "the record was cut short" into "the record looked fine".
+
+Wrong — reading the byte count as a character count:
+
+```text
+if (part.value == field.size) { /* all of it was written */ }
+```
+
+That comparison is correct, and it is correct in **bytes**. A UTF-8 character can
+be up to four of them, so a partial append can stop in the middle of one. When
+the tail must stay valid UTF-8, decide the cut point yourself rather than letting
+the capacity decide it.
+
+### Worked example: assembling a UTF-16 string for a system call
+
+`proven_u16str_t` earns its place only at the boundary where an operating system
+call demands UTF-16 — the Windows wide API being the usual reason. The pattern is
+always the same: assemble the code units, then hand
+`proven_u16str_as_ptr()` to the call.
+
+Three points decide whether this code is right:
+
+- **The unit is a code unit, not a byte and not a character.** A capacity of 32
+  is 32 code units, which is 64 bytes; a character outside the Basic Multilingual
+  Plane (BMP) — an emoji, many rarer CJK characters — occupies two of them.
+- **`proven_u16str_as_ptr()` does not copy**, and the pointer it returns is good
+  only until the next append that grows the string.
+- **The result is NUL-terminated**, including after a deliberate truncation, so
+  it is safe to pass to a system call that expects a terminator.
+
+<!-- example: manual/examples/ex_03_u16str.c -->
+```c
+/*
+ * UTF-16 exists in this library for one reason: some operating system calls
+ * take it and nothing else. The Windows "wide" API is the usual case - the file
+ * name you hand to CreateFileW is a NUL-terminated run of 16-bit code units,
+ * not bytes.
+ *
+ * So the job this type does is narrow: assemble the code units, keep the count
+ * right, and produce the pointer the system call wants. Everything else in your
+ * program should stay UTF-8.
+ *
+ * The one thing to keep straight is the unit. A capacity of 32 here means 32
+ * CODE UNITS, which is 64 bytes, and a character outside the Basic Multilingual
+ * Plane - an emoji, most of the rarer CJK characters - costs two of them. A
+ * count of code units is not a count of characters and never has been.
+ */
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* The argument is a code-unit limit, not a byte limit. */
+    proven_result_u16str_t r = proven_u16str_create(alloc, 32);
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating a 32-code-unit string must succeed");
+    if (!proven_is_ok(r.err)) {
+        return 1;
+    }
+    proven_u16str_t name = r.value;
+    EXAMPLE_REQUIRE(proven_u16str_len(&name) == 0, "a new string is empty");
+
+    /* PROVEN_U16_LIT builds a view from a u"..." literal and computes the unit
+     * count from the literal itself, so the count cannot disagree with the text. */
+    proven_err_t err = proven_u16str_append(&name, PROVEN_U16_LIT("C:\\logs\\"));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "the directory prefix fits in 32 code units");
+
+    err = proven_u16str_append(&name, PROVEN_U16_LIT("service.log"));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "the file name fits too");
+    EXAMPLE_REQUIRE(proven_u16str_len(&name) == 8 + 11, "the length is a count of code units");
+
+    /* Atomic, like its byte-string twin: too much data is refused and the string
+     * is left exactly as it was, so a path is never half-written. */
+    proven_size_t before = proven_u16str_len(&name);
+    err = proven_u16str_append(&name, PROVEN_U16_LIT(".a-suffix-long-enough-to-overflow-the-capacity"));
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_OUT_OF_BOUNDS, "an oversized append must be refused");
+    EXAMPLE_REQUIRE(proven_u16str_len(&name) == before, "and must not truncate the path");
+
+    /* --- the pointer the system call wants -------------------------------- */
+
+    /* as_ptr hands back the internal code units, NUL-terminated, without
+     * copying. It is the last step before the call, and the pointer is only
+     * valid until the next append: a growing append may move the storage. */
+    const proven_u16 *wide = proven_u16str_as_ptr(&name);
+    EXAMPLE_REQUIRE(wide != NULL, "an assembled string must yield a pointer");
+    EXAMPLE_REQUIRE(wide[0] == (proven_u16)'C', "the first code unit is the drive letter");
+    EXAMPLE_REQUIRE(wide[proven_u16str_len(&name)] == 0, "the sequence is NUL-terminated for the system call");
+    /* On Windows this is the whole point of the type:
+     *     HANDLE h = CreateFileW((LPCWSTR)wide, ...);
+     * Nothing here calls it, because this example must also run everywhere else. */
+
+    /* --- when truncation is the correct answer ---------------------------- */
+
+    /* Some system structures have a fixed-width field - a 16-unit label, say -
+     * where a name that does not fit is meant to be cut, not rejected. That is
+     * what the partial append is for: it fills what it can and reports the unit
+     * count it wrote, so the caller can mark the value as truncated. */
+    proven_result_u16str_t r2 = proven_u16str_create(alloc, 16);
+    EXAMPLE_REQUIRE(proven_is_ok(r2.err), "creating the fixed-width label must succeed");
+    proven_u16str_t label = r2.value;
+
+    proven_result_size_t wrote = proven_u16str_append_partial(&label, PROVEN_U16_LIT("a-label-that-is-longer-than-the-field"));
+    EXAMPLE_REQUIRE(wrote.err == PROVEN_ERR_OUT_OF_BOUNDS, "the truncation is reported, not hidden");
+    EXAMPLE_REQUIRE(wrote.value == 16, "it filled the field exactly");
+    EXAMPLE_REQUIRE(proven_u16str_len(&label) == wrote.value, "and the length matches what it says it wrote");
+    EXAMPLE_REQUIRE(proven_u16str_as_ptr(&label)[wrote.value] == 0,
+                    "a truncated string is still NUL-terminated, so it is still safe to pass on");
+
+    printf("assembled %zu code unit(s); label truncated to %zu\n",
+           (size_t)proven_u16str_len(&name), (size_t)wrote.value);
+
+    proven_u16str_destroy(alloc, &label);
+    proven_u16str_destroy(alloc, &name);
+    return EXAMPLE_OK();
+}
+```
+
+Wrong — sizing a UTF-16 buffer in bytes:
+
+```text
+proven_result_u16str_t r = proven_u16str_create(alloc, sizeof(buf));   /* wrong */
+```
+
+The argument is a count of code units. Passing a byte count asks for twice the
+storage you meant, or — when the byte count came from a UTF-8 string — for a
+buffer that cannot hold the conversion at all.
+
+Wrong — keeping the pointer across an append:
+
+```text
+const proven_u16 *w = proven_u16str_as_ptr(&name);
+proven_err_t e = proven_u16str_append_grow(alloc, &name, more);   /* may reallocate */
+use_wide(w);   /* wrong: w may dangle */
+```
+
+Take the pointer immediately before the call that consumes it.

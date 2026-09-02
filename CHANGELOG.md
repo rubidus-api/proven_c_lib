@@ -11,6 +11,54 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-09-02] - proven_c_lib-v26.09.02a
+
+### Added
+
+- **Every public function is now shown in working code.** 86 of the 279 public
+  functions had a reference-table row and no line of code anywhere that used
+  them. Eleven new example programs cover them, in chapters 1 through 5 and 8:
+  memory views with checked and unchecked slicing, the arena `_or_panic` calls
+  and an allocator wrapper built on the arena traits, fixed-capacity string
+  edits, UTF-16 assembly for a system call, container sizing with unsorted
+  search and a streaming CRC-32, the crash-safe file-replacement recipe
+  (`sync` → `rename` → `sync_dir`) with the record-level and link calls, readers
+  and writers with the standard streams, memory-mapped durability, the
+  randomness sources behind the `proven_rng_t` trait, wide-integer scanning with
+  locale-free float parsing, and the argument constructors by name. All are
+  compiled and executed by the build.
+
+- **Gate G10 (`tests/test_docs_manual_usage`)**: every public function must
+  appear in a runnable example or a compiled ```c block. A macro wrapper counts
+  for the function it expands to; a `_Generic` dispatch table does not, and a
+  ```text block does not, because it is not compiled.
+
+- **Gate G11 (`tests/test_docs_manual_ko`)**: the Korean edition must mirror the
+  English one — same chapters, same worked examples — and every English term a
+  Korean chapter uses must be paired at least once with its Korean word. The
+  translation had no gate at all and had fallen eleven examples behind.
+
+- **The web and PDF editions** (`scripts/build-site.sh`): the Markdown manual is
+  converted to Typst, then to one HTML page per chapter and one PDF per
+  language, into `docs/en/` and `docs/ko/`. The Markdown stays the source of
+  truth; the generated tree is output. `scripts/check-site-links.py` fails the
+  build when a cross-reference or heading anchor does not resolve.
+
+- **`scripts/sync-manual-examples.py`**: re-copies every quoted example body into
+  the chapters that quote it, in both editions, so the verbatim requirement is
+  met by running a script rather than by careful copying.
+
+### Changed
+
+- **The glossary now covers the whole vocabulary** (chapter 0, appendix B, both
+  editions): 18 entries became 62, including every abbreviation the manual uses
+  — API, EOF, BMP, CSPRNG, ASan/UBSan/TSan — and the terms the new examples
+  introduce, such as durability, advisory lock, copy-on-write, open addressing,
+  tombstone, rehash, back-pressure, locale, entropy and shortest round trip.
+
+- **The Korean chapters pair each English term with its Korean word** the first
+  time they use it — 할당자(allocator) — and say so in the glossary's opening.
+
 ## [2026-07-23] - proven_c_lib-v26.07.23d
 
 ### Changed

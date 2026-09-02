@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v26.07.23d)
+# Chapter 8: Formatting and Scanning (v26.09.02a)
 
 **Part IV — Text in and out. Prerequisite: [Chapter 3](manual-03-strings-text.md) §3–§4.**
 **After this chapter** you can format any value, teach the formatter a type of your own, parse
@@ -1483,3 +1483,501 @@ in the scanner references the float path.
 `proven_sysio_scanner_*` (Chapter 5) is a **different** thing: a buffered scanner over
 a file, hosted-only, because it does I/O. The scanner described in this chapter reads
 bytes you already have.
+
+### Worked example: wider numbers, loose text, and floating point
+
+The examples above scan rigid formats into `proven_i32`. Three things come up as
+soon as the input is real, and this example covers them together.
+
+**The destination type is the contract.** `proven_scan_arg_i64()`,
+`proven_scan_arg_u32()` and `proven_scan_arg_u64()` name the type the value is
+written into, and the scanner reports an overflow rather than wrapping. A byte
+count that needs more than 32 bits, and a value that must never be negative, are
+the two cases where the wrong destination type is a bug nobody notices until the
+numbers get big. The generic `PROVEN_SCAN_ARG()` macro chooses these from the
+pointer you hand it; the named forms are what it chooses, written out.
+
+**Not every input is a rigid format.** `proven_scan_skip_whitespace()` advances
+past spaces, tabs and newlines, and `proven_scan_skip_until_number()` runs the
+cursor forward to the next digit — or to a sign immediately followed by one, so
+a negative number keeps its sign. Neither can fail: "there was nothing to skip"
+is not an error, and at the end of the input the cursor stops instead of running
+off.
+
+**Floating point has a locale problem, and this library does not have it.**
+`strtod()` reads `"3,5"` as `3.5` under one locale and as `3` under another, so
+the same program disagrees with itself across machines.
+`proven_parse_double_ascii()` is locale-free by construction: a comma is never a
+decimal point. It reports how many bytes the number used, so a caller can carry
+on from there, and it reports unparsable text as an error rather than as a `0`
+that cannot be told from a real one. `proven_parse_f64_ascii()` is the same
+function under its earlier name, kept so existing call sites still read correctly.
+
+On the way out, `proven_arg_f64()` is how a floating-point value enters the
+formatter — both `float` and `double` go through it, so what a program prints
+does not depend on the width of the variable it was kept in. When the exact
+spelling matters, `proven_float_format_f32_policy()` and its `f64` sibling take
+the policy and options explicitly. Shortest mode asks for the fewest digits that
+read back as exactly this value, which is what a serialiser wants: an exact round
+trip without printing seventeen digits for numbers that do not need them.
+
+<!-- example: manual/examples/ex_08_numbers.c -->
+```c
+#include <string.h>
+
+/*
+ * Reading numbers out of text, and writing them back.
+ *
+ * The text here is the sort a program actually meets: a log line with mixed
+ * widths and signs, and a measurements file where the interesting number is
+ * buried in prose. That means three jobs the earlier chapter-8 examples do not
+ * cover:
+ *
+ *   - Scanning into types WIDER than int, and into unsigned ones, where the
+ *     destination type is the whole question - a byte count that does not fit in
+ *     32 bits is the classic overflow nobody notices until the file is 5 GB.
+ *   - Positioning the cursor by hand - skipping whitespace, or skipping ahead to
+ *     wherever the next number starts - when the input is not a rigid format.
+ *   - Converting a decimal string to a double and back, exactly, without going
+ *     through the C library's locale-dependent conversions.
+ *
+ * The float part matters more than it sounds. strtod reads "3,5" as 3.5 in one
+ * locale and as 3 in another, and the same program then disagrees with itself
+ * across machines. The parser used here is locale-free by construction: a comma
+ * is never a decimal point, whatever the environment says.
+ */
+
+int main(void) {
+    /* --- 1. scanning into the type the value needs ------------------------ */
+
+    /* A log line: a request id that needs 64 bits, a byte count that is never
+     * negative and can exceed 4 GB, a small status code, and a negative offset. */
+    proven_scan_t scan = proven_scan_init(
+        PROVEN_LIT("id=9007199254740993 bytes=5368709120 status=404 delta=-17"));
+
+    proven_i64 id = 0;
+    proven_u64 bytes = 0;
+    proven_u32 status = 0;
+    proven_i32 delta = 0;
+
+    /* Each argument constructor names the destination type, so the scanner
+     * writes the right width and reports an overflow instead of wrapping. The
+     * generic PROVEN_SCAN_ARG() macro picks these for you from the pointer's
+     * type; the named forms are what it picks, and what you write when you want
+     * the choice visible. */
+    proven_err_t err = proven_scan_fmt_cursor(&scan, "id={} bytes={} status={} delta={}",
+                                       proven_scan_arg_i64(&id),
+                                       proven_scan_arg_u64(&bytes),
+                                       proven_scan_arg_u32(&status),
+                                       proven_scan_arg_i32(&delta));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "scanning the log line must succeed");
+    EXAMPLE_REQUIRE(id == 9007199254740993LL, "a 64-bit id survives, which a 32-bit destination could not");
+    EXAMPLE_REQUIRE(bytes == 5368709120ULL, "and so does a byte count larger than 4 GiB");
+    EXAMPLE_REQUIRE(status == 404u, "the small unsigned value reads normally");
+    EXAMPLE_REQUIRE(delta == -17, "and a signed destination accepts the minus sign");
+
+    /* The destination type is a contract, not a hint. A negative number has no
+     * unsigned representation, and the scanner refuses rather than wrapping it
+     * to something enormous. */
+    proven_scan_t neg = proven_scan_init(PROVEN_LIT("-17"));
+    proven_u32 nowhere = 12345;
+    err = proven_scan_fmt_cursor(&neg, "{}", proven_scan_arg_u32(&nowhere));
+    EXAMPLE_REQUIRE(err != PROVEN_OK, "a negative value cannot be scanned into an unsigned destination");
+    EXAMPLE_REQUIRE(nowhere == 12345, "and the destination is left as it was");
+
+    /* --- 2. moving the cursor when the input is not rigid ----------------- */
+
+    /* Free-form text: the numbers matter, the words between them do not. */
+    proven_scan_t notes = proven_scan_init(
+        PROVEN_LIT("   sample A measured 42 units; sample B measured -8 units"));
+
+    /* skip_whitespace advances past spaces, tabs and newlines. It is what you
+     * call between fields of a format you are driving by hand - it never fails,
+     * because "there was no whitespace" is not an error. */
+    proven_scan_skip_whitespace(&notes);
+    EXAMPLE_REQUIRE(notes.cursor == 3, "the three leading spaces are consumed");
+
+    /* skip_until_number runs the cursor forward to the first digit, or to a sign
+     * immediately followed by one. It is the call that turns "find the number in
+     * this line" from a hand-written loop into one statement. */
+    proven_scan_skip_until_number(&notes);
+    proven_i32 first = 0;
+    err = proven_scan_fmt_cursor(&notes, "{}", proven_scan_arg_i32(&first));
+    EXAMPLE_REQUIRE(proven_is_ok(err) && first == 42, "the first number in the line is 42");
+
+    proven_scan_skip_until_number(&notes);
+    proven_i32 second = 0;
+    err = proven_scan_fmt_cursor(&notes, "{}", proven_scan_arg_i32(&second));
+    EXAMPLE_REQUIRE(proven_is_ok(err) && second == -8,
+                    "and the next one keeps its sign, because the sign is part of the number");
+
+    /* At the end there is nothing left to find, and the cursor stops rather than
+     * running off: the scan is over, not broken. */
+    proven_scan_skip_until_number(&notes);
+    EXAMPLE_REQUIRE(notes.cursor == notes.view.size, "with no number left, the cursor lands at the end");
+
+    /* --- 3. decimal text to double, without a locale --------------------- */
+
+    proven_parse_double_result_t d = proven_parse_double_ascii(PROVEN_LIT("3.14159 rest"));
+    EXAMPLE_REQUIRE(proven_is_ok(d.err), "parsing a decimal number must succeed");
+    EXAMPLE_REQUIRE(d.val > 3.14158 && d.val < 3.14160, "and produce the value the digits spell");
+
+    /* consumed says where the number ended, so the caller can carry on from
+     * there - which is how you parse a list without copying it into pieces. */
+    EXAMPLE_REQUIRE(d.consumed == 7, "consumed reports exactly the bytes the number used");
+
+    /* A comma is not a decimal point here and never will be, whatever locale the
+     * program is running under. The number ends at the comma. */
+    proven_parse_double_result_t comma = proven_parse_double_ascii(PROVEN_LIT("3,5"));
+    EXAMPLE_REQUIRE(proven_is_ok(comma.err) && comma.consumed == 1 && comma.val == 3.0,
+                    "a comma ends the number: the parser is locale-free by construction");
+
+    /* proven_parse_f64_ascii is the same function under its earlier name, kept
+     * for code written before the current one existed. New code should use
+     * proven_parse_double_ascii; both are here so an old call site still reads
+     * correctly. */
+    proven_parse_f64_result_t same = proven_parse_f64_ascii(PROVEN_LIT("3.14159 rest"));
+    EXAMPLE_REQUIRE(same.val == d.val && same.consumed == d.consumed,
+                    "the compatibility name is the same parser");
+
+    /* Text that is not a number at all is an error, not a silent zero - which is
+     * what atof() would have handed back with nothing to distinguish it from a
+     * genuine "0". */
+    proven_parse_double_result_t junk = proven_parse_double_ascii(PROVEN_LIT("not a number"));
+    EXAMPLE_REQUIRE(!proven_is_ok(junk.err), "unparsable text is reported, not turned into 0");
+    EXAMPLE_REQUIRE(junk.consumed == 0, "and nothing was consumed");
+
+    /* --- 4. writing a float back ------------------------------------------ */
+
+    /* proven_arg_f64 is how a floating-point value enters the formatter. Both
+     * float and double go through it, so the digits a program prints do not
+     * depend on the width of the variable it happened to be kept in. */
+    proven_allocator_t alloc = proven_heap_allocator();
+    proven_result_u8str_t line = proven_u8str_create(alloc, 64);
+    EXAMPLE_REQUIRE(proven_is_ok(line.err), "creating the output string must succeed");
+
+    proven_fmt_result_t out = proven_u8str_append_fmt(&line.value, "measured {} units",
+                                                      proven_arg_f64(d.val));
+    EXAMPLE_REQUIRE(proven_is_ok(out.err), "formatting the parsed value must succeed");
+    EXAMPLE_REQUIRE(proven_u8str_view_starts_with(proven_u8str_as_view(&line.value),
+                                                  PROVEN_LIT("measured 3.14159")),
+                    "and spell the number it was given");
+
+    /* The policy form is the explicit one, for when the caller needs a
+     * particular spelling rather than the default. SHORTEST asks for the fewest
+     * digits that read back as exactly this value - which is the property a
+     * serialiser wants, because it makes the round trip exact without printing
+     * seventeen digits for numbers that do not need them. */
+    char shortest[64];
+    proven_size_t wrote = 0;
+    float measured = 0.1f;
+    proven_err_t ferr = proven_float_format_f32_policy(shortest, sizeof shortest, measured,
+                                                       PROVEN_FLOAT_FORMAT_POLICY_RYU,
+                                                       proven_float_format_options_shortest(),
+                                                       &wrote);
+    EXAMPLE_REQUIRE(proven_is_ok(ferr), "formatting a float in shortest mode must succeed");
+    EXAMPLE_REQUIRE(wrote > 0 && shortest[wrote] == '\0', "the result is written and terminated");
+    EXAMPLE_REQUIRE(strcmp(shortest, "0.1") == 0,
+                    "0.1f prints as 0.1: the shortest text that reads back as the same float");
+
+    /* And it round-trips: the text reads back as the value it came from. That is
+     * the guarantee shortest mode exists to provide. */
+    proven_parse_double_result_t roundtrip = proven_parse_double_ascii(
+        (proven_u8str_view_t){ .ptr = (const proven_byte_t *)shortest, .size = wrote });
+    EXAMPLE_REQUIRE(proven_is_ok(roundtrip.err), "the shortest form parses back");
+    EXAMPLE_REQUIRE((float)roundtrip.val == measured, "as exactly the float it was printed from");
+
+    printf("scanned id=%lld bytes=%llu; formatted %s and %s\n",
+           (long long)id, (unsigned long long)bytes, proven_u8str_as_cstr(&line.value), shortest);
+
+    proven_u8str_destroy(alloc, &line.value);
+    return EXAMPLE_OK();
+}
+```
+
+Wrong — scanning a large value into a 32-bit destination:
+
+```text
+proven_i32 bytes = 0;
+proven_err_t e = proven_scan_fmt_cursor(&scan, "bytes={}", proven_scan_arg_i32(&bytes));
+/* input says 5368709120 */                                        /* wrong type */
+```
+
+The value does not fit. Choosing the destination type by what is convenient,
+rather than by the range the field can hold, is the same mistake as declaring a
+file offset `int`.
+
+Wrong — using `atof` or `strtod` for data that crosses machines:
+
+```text
+double v = strtod(text, NULL);   /* wrong: the decimal point depends on the locale */
+```
+
+And `atof` cannot report failure at all: unparsable text becomes `0`, which is
+indistinguishable from a genuine zero in the data.
+
+Wrong — assuming `skip_until_number` reports "not found":
+
+```text
+proven_scan_skip_until_number(&scan);
+proven_i32 n = 0;
+proven_err_t e = proven_scan_fmt_cursor(&scan, "{}", proven_scan_arg_i32(&n));  /* may fail */
+```
+
+It moves the cursor and returns nothing. When there is no number left the cursor
+lands at the end of the input, and it is the scan afterwards that tells you so —
+check that error rather than assuming a number was found.
+
+### Worked example: naming the argument type yourself
+
+`PROVEN_ARG(x)` and `PROVEN_SCAN_ARG(&x)` choose an argument constructor from the
+type of what you hand them, and most code never needs to know which one they
+chose. Two situations take the choice back:
+
+1. **The macro has no type to dispatch on that means what you mean.** A
+   `proven_u8str_view_t`, a broken-down date, a raw address printed for a
+   diagnostic — `proven_arg_str_view()`, `proven_arg_datetime()` and
+   `proven_arg_ptr()` exist because those are deliberate choices, not defaults to
+   fall into.
+2. **The argument list is built at run time.** A logging helper whose parameters
+   are already `proven_arg_t` values cannot re-wrap them — a macro that turns a
+   value into an argument has nothing to do with something that is already one.
+   `proven_arg_identity()` and `proven_scan_arg_identity()` are what let the same
+   macro-driven code path accept an argument built earlier.
+
+The example writes both sides out by name: the formatting constructors for a
+character, a boolean, unsigned 32- and 64-bit values, the three ways of passing
+text (`proven_arg_str_view()`, `proven_arg_cstr()`, `proven_arg_ucstr()`), a date
+and a pointer; and the scanning constructors for every plain C integer width
+(`short`, `int`, `long`, `long long` and their unsigned forms), a `double`, and a
+string view captured without copying.
+
+The three text constructors differ in how much they trust the caller, and the
+order is worth remembering:
+
+| Constructor | What it is given | What can go wrong |
+|---|---|---|
+| `proven_arg_str_view` | a pointer **and** a length | nothing is scanned for a terminator, so there is none to be missing — prefer this |
+| `proven_arg_cstr` | a NUL-terminated C string | the terminator must be there and the memory must be alive, or the formatter reads past the end |
+| `proven_arg_ucstr` | the same, as `unsigned char *` | exists so a byte buffer does not need a cast that silences a real warning |
+
+<!-- example: manual/examples/ex_08_arguments.c -->
+```c
+/*
+ * Every value handed to the formatter arrives as a proven_arg_t, and every value
+ * the scanner writes into arrives as a proven_scan_arg_t. Most of the time you
+ * never see either: PROVEN_ARG(x) and PROVEN_SCAN_ARG(&x) pick the right
+ * constructor from the type of what you passed, and that is the whole point of
+ * them.
+ *
+ * Two situations take the choice back off the macro, and both are ordinary:
+ *
+ *   1. The macro cannot see a type it recognises. A `proven_u8str_view_t`, a
+ *      broken-down date, a raw address printed for a diagnostic - these need the
+ *      constructor named, because there is no plain C type for the macro to
+ *      dispatch on that means what you mean.
+ *
+ *   2. You are building the argument list at RUNTIME. A logging helper that
+ *      takes "whatever the caller already assembled" receives proven_arg_t
+ *      values, not ints and strings - and a macro that turns a value into an
+ *      argument cannot be handed something that is already an argument. That is
+ *      what the identity constructors are for: they let the same macro-driven
+ *      code path accept an argument that was built earlier.
+ *
+ * So this example writes both sides out by name. The width and signedness of a
+ * destination is not decoration - it is what decides whether 70000 arrives as
+ * 70000 or as 4464.
+ */
+
+/* A logging helper that takes arguments the caller has already built. Because
+ * its parameters are proven_arg_t, PROVEN_ARG would be the wrong tool inside it
+ * - the value is already an argument, and proven_arg_identity is what says so. */
+static proven_fmt_result_t log_pair(proven_u8str_t *out, const char *fmt,
+                                    proven_arg_t a, proven_arg_t b) {
+    return proven_u8str_append_fmt(out, fmt, proven_arg_identity(a), proven_arg_identity(b));
+}
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    proven_result_u8str_t line = proven_u8str_create(alloc, 256);
+    EXAMPLE_REQUIRE(proven_is_ok(line.err), "creating the output string must succeed");
+    if (!proven_is_ok(line.err)) {
+        return 1;
+    }
+    proven_u8str_t out = line.value;
+
+    /* --- naming the formatting argument yourself -------------------------- */
+
+    /* A single character and a flag. Written by name here so it is visible that
+     * a bool prints as true/false rather than as 1/0. */
+    proven_fmt_result_t r = proven_u8str_append_fmt(&out, "flag={} mark={}",
+                                                    proven_arg_bool(true),
+                                                    proven_arg_char('!'));
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "formatting a bool and a char must succeed");
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&out), PROVEN_LIT("flag=true mark=!")),
+                    "a bool renders as a word, not as a digit");
+
+    EXAMPLE_REQUIRE(proven_is_ok(proven_u8str_reset(&out)), "clearing the line must succeed");
+
+    /* Unsigned widths. The constructor is the declaration of what the value is:
+     * an unsigned 32-bit count and an unsigned 64-bit byte total are different
+     * facts, and writing them out says which one you have. */
+    r = proven_u8str_append_fmt(&out, "files={} bytes={}",
+                                proven_arg_u32(1200u),
+                                proven_arg_u64(5368709120ULL));
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "formatting unsigned values must succeed");
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&out), PROVEN_LIT("files=1200 bytes=5368709120")),
+                    "a 64-bit total is printed in full, not truncated to 32 bits");
+
+    EXAMPLE_REQUIRE(proven_is_ok(proven_u8str_reset(&out)), "clearing the line must succeed");
+
+    /* Three ways to give the formatter text, in order of how much they trust
+     * the caller:
+     *
+     *   proven_arg_str_view  - a pointer AND a length. Nothing is scanned for a
+     *                          terminator, so there is no terminator to be
+     *                          missing. Prefer this.
+     *   proven_arg_cstr      - a NUL-terminated C string. The formatter walks it
+     *                          looking for the terminator, so it must be there,
+     *                          and the memory must still be alive.
+     *   proven_arg_ucstr     - the same, for `unsigned char *`, which is what a
+     *                          byte buffer is usually typed as. It exists so the
+     *                          caller does not have to write a cast that
+     *                          silences a real warning.
+     */
+    const char *name = "report.txt";
+    const unsigned char *tag = (const unsigned char *)"draft";
+    proven_u8str_view_t note = PROVEN_LIT("first pass");
+
+    r = proven_u8str_append_fmt(&out, "{} [{}] {}",
+                                proven_arg_cstr(name),
+                                proven_arg_ucstr(tag),
+                                proven_arg_str_view(note));
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "formatting the three text forms must succeed");
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&out),
+                                         PROVEN_LIT("report.txt [draft] first pass")),
+                    "all three produce the same kind of output from different kinds of pointer");
+
+    EXAMPLE_REQUIRE(proven_is_ok(proven_u8str_reset(&out)), "clearing the line must succeed");
+
+    /* A date, and an address. Neither has a plain C type that means what it
+     * means: a date is a struct, and an address printed for a diagnostic is a
+     * deliberate act rather than something to fall into. */
+    proven_datetime_t when = proven_time_breakdown(0);   /* the epoch: a fixed, checkable value */
+    int local = 0;
+
+    r = proven_u8str_append_fmt(&out, "at {} object {}",
+                                proven_arg_datetime(when),
+                                proven_arg_ptr(&local));
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "formatting a date and a pointer must succeed");
+    EXAMPLE_REQUIRE(proven_u8str_view_starts_with(proven_u8str_as_view(&out), PROVEN_LIT("at 1970-01-01")),
+                    "the epoch breaks down to the first of January 1970");
+    EXAMPLE_REQUIRE(proven_u8str_view_find(proven_u8str_as_view(&out), 0, PROVEN_LIT("0x")) != PROVEN_SIZE_MAX,
+                    "and an address is rendered in hexadecimal");
+
+    EXAMPLE_REQUIRE(proven_is_ok(proven_u8str_reset(&out)), "clearing the line must succeed");
+
+    /* Arguments built here, passed on, and formatted there. */
+    r = log_pair(&out, "status={} retries={}", proven_arg_cstr("ok"), proven_arg_u32(3u));
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "formatting pre-built arguments must succeed");
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&out), PROVEN_LIT("status=ok retries=3")),
+                    "an argument built by the caller formats exactly as one built in place");
+
+    /* --- naming the scanning destination yourself ------------------------- */
+
+    /* On the way in, the constructor names the destination, and the destination
+     * decides what "too big" means. These are the plain C types - short, int,
+     * long, long long and their unsigned forms - for the very common case where
+     * the variable you already have is one of them rather than a fixed-width
+     * type. */
+    proven_scan_t scan = proven_scan_init(
+        PROVEN_LIT("h=-32000 uh=65000 i=-2000000 ui=4000000000 l=-9000000 ul=9000000 "
+                   "ll=-9007199254740993 ull=18446744073709551615 f=2.5 word=alpha"));
+
+    short h = 0;
+    unsigned short uh = 0;
+    int i = 0;
+    unsigned int ui = 0;
+    long l = 0;
+    unsigned long ul = 0;
+    long long ll = 0;
+    unsigned long long ull = 0;
+    double f = 0.0;
+    proven_u8str_view_t word = {0};
+
+    proven_err_t err = proven_scan_fmt_cursor(
+        &scan, "h={} uh={} i={} ui={} l={} ul={} ll={} ull={} f={} word={}",
+        proven_scan_arg_short(&h),
+        proven_scan_arg_ushort(&uh),
+        proven_scan_arg_int(&i),
+        proven_scan_arg_uint(&ui),
+        proven_scan_arg_long(&l),
+        proven_scan_arg_ulong(&ul),
+        proven_scan_arg_llong(&ll),
+        proven_scan_arg_ullong(&ull),
+        proven_scan_arg_f64(&f),
+        proven_scan_arg_str_view(&word));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "scanning every plain integer width must succeed");
+    EXAMPLE_REQUIRE(h == -32000 && uh == 65000u, "the short forms hold their values");
+    EXAMPLE_REQUIRE(i == -2000000 && ui == 4000000000u, "and so do the int forms");
+    EXAMPLE_REQUIRE(l == -9000000L && ul == 9000000UL, "and the long forms");
+    EXAMPLE_REQUIRE(ll == -9007199254740993LL, "a value needing 64 bits arrives whole");
+    EXAMPLE_REQUIRE(ull == 18446744073709551615ULL, "including the largest unsigned 64-bit value");
+    EXAMPLE_REQUIRE(f > 2.4999 && f < 2.5001, "the floating-point destination reads a decimal");
+
+    /* A scanned string view points INTO the text being scanned. Nothing was
+     * copied and nothing was allocated, so it is valid exactly as long as that
+     * text is - copy it into a proven_u8str_t if it must outlive the scan. */
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(word, PROVEN_LIT("alpha")), "the word is captured as a view");
+
+    /* The destination's width is a promise the scanner keeps. 70000 does not fit
+     * in a short, so it is refused rather than wrapped to 4464 - which is what a
+     * cast would have produced, silently, in a file nobody looks at again. */
+    proven_scan_t narrow = proven_scan_init(PROVEN_LIT("70000"));
+    short too_small = 7;
+    err = proven_scan_fmt_cursor(&narrow, "{}", proven_scan_arg_short(&too_small));
+    EXAMPLE_REQUIRE(err != PROVEN_OK, "a value that does not fit the destination is refused");
+    EXAMPLE_REQUIRE(too_small == 7, "and the destination keeps the value it had");
+
+    /* The scanning identity constructor, for the same reason as the formatting
+     * one: a helper that receives ready-made scan arguments cannot re-wrap them. */
+    proven_scan_t again = proven_scan_init(PROVEN_LIT("41"));
+    proven_i32 answer = 0;
+    proven_scan_arg_t prebuilt = proven_scan_arg_i32(&answer);
+    err = proven_scan_fmt_cursor(&again, "{}", proven_scan_arg_identity(prebuilt));
+    EXAMPLE_REQUIRE(proven_is_ok(err) && answer == 41, "a pre-built scan argument works unchanged");
+
+    printf("arguments: %s\n", proven_u8str_as_cstr(&out));
+
+    proven_u8str_destroy(alloc, &out);
+    return EXAMPLE_OK();
+}
+```
+
+Wrong — wrapping an argument that is already an argument:
+
+```text
+static proven_fmt_result_t log_one(proven_u8str_t *out, proven_arg_t a) {
+    return proven_u8str_append_fmt(out, "{}", PROVEN_ARG(a));   /* wrong */
+}
+```
+
+Use `proven_arg_identity(a)`. `PROVEN_ARG` is for values; `a` is already an
+argument.
+
+Wrong — keeping a scanned string view after the text is gone:
+
+```text
+proven_u8str_view_t word = {0};
+{
+    proven_u8str_t line = read_a_line(alloc);
+    proven_scan_t s = proven_scan_init(proven_u8str_as_view(&line));
+    proven_err_t e = proven_scan_fmt_cursor(&s, "word={}", proven_scan_arg_str_view(&word));
+    proven_u8str_destroy(alloc, &line);     /* wrong: `word` pointed into `line` */
+}
+use(word);
+```
+
+A scanned view points into the text being scanned. Copy it into a
+`proven_u8str_t` if it has to outlive that text.

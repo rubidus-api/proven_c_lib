@@ -64,7 +64,7 @@ proven_err_t proven_u8str_append_grow(proven_allocator_t alloc, proven_u8str_t *
 | **Arena** | `proven_arena_create(backing)` 후 `proven_arena_as_allocator(&a)` | **아니오** — free는 no-op이다; 전체를 reset하거나 destroy한다 | 전부 같은 순간에 죽는 많은 할당: 요청 하나, 프레임 하나, 파싱 하나. |
 | **Pool** | `proven_pool_init(&p, base, size, align, bin_cap)` 후 `proven_pool_as_allocator(&p)` | 예, free list로 들어간다 | **하나의 고정 크기**인 객체를 반복해서 할당하고 해제할 때. |
 
-heap에서 시작하라. 이유가 있을 때 나머지 둘로 손을 뻗되, 그 이유는 대개 측정이다.
+힙(heap)에서 시작하라. 이유가 있을 때 나머지 둘로 손을 뻗되, 그 이유는 대개 측정이다.
 
 ### Heap allocator
 
@@ -90,9 +90,9 @@ proven_u8str_destroy(heap, &s.value);   /* the SAME allocator */
 값은 네 워드 — 컨텍스트 포인터 하나와 함수 포인터 셋 — 이고 값으로 전달된다. 복사는 공짜이고,
 자신의 struct에 저장해도 되며, 파괴할 필요도 없다.
 
-**freestanding 빌드에서는 `proven_heap_allocator`가 존재하지 않는다.** 감쌀 `malloc`이 없기
+**프리스탠딩(freestanding) 빌드에서는 `proven_heap_allocator`가 존재하지 않는다.** 감쌀 `malloc`이 없기
 때문이다. 이는 우회해야 할 제약이 아니라, 라이브러리 전체가 allocator를 매개변수로 받는 바로 그
-이유이며, 정적 배열 위의 arena가 같은 코드를 마이크로컨트롤러에서 돌아가게 하는 이유다.
+이유이며, 정적 배열 위의 아레나(arena)가 같은 코드를 마이크로컨트롤러에서 돌아가게 하는 이유다.
 [freestanding 모드](manual-freestanding-ko.md)를 참고하라.
 
 잘못된 예 — 생성할 때와 다른 allocator로 파괴하기:
@@ -149,7 +149,7 @@ arena는 범용 allocator가 아니며, 그 맞바꿈은 실제적이다:
 - **바닥나는 것은 단단한 한계다.** backing 블록은 고정되어 있다. 여기서의 `PROVEN_ERR_NOMEM`은
   기계의 메모리가 바닥났다는 뜻이 아니라, 이 arena가 바닥났다는 뜻이다.
 - **arena를 가리키는 모든 포인터는 reset에서 죽는다.** 한꺼번에, 아무 경고도 없이. reset보다 오래
-  사는 view는 dangling view다. [0장](manual-00-start-here-ko.md#5-모든-페이지에서-만나게-될-다섯-가지-계약)의
+  사는 뷰(view)는 dangling view다. [0장](manual-00-start-here-ko.md#5-모든-페이지에서-만나게-될-다섯-가지-계약)의
   계약 2를 보라.
 
 수명 공유가 프로그램에 대한 사실일 때 arena를 쓰라. 희망 사항일 때가 아니라.
@@ -178,7 +178,7 @@ typedef struct {
 | `proven_arena_alloc_aligned(arena, size, align)` | 명시적 정렬로 할당한다. | `arena`, 바이트 `size`, 2의 거듭제곱 `align`. | `proven_result_mem_mut_t`. |
 | `proven_arena_realloc_aligned(arena, old_ptr, old_size, new_size, align)` | 재할당; 꼬리(tail) 할당을 제자리에서 확장/축소할 수 있다. | 이전 할당 세부 정보와 새 크기. | `proven_result_mem_mut_t`. |
 | `proven_arena_alloc(arena, size)` | `PROVEN_DEFAULT_ALIGNMENT`로 할당한다. | `arena`, 바이트 `size`. | `proven_result_mem_mut_t`. |
-| `proven_arena_alloc_aligned_or_panic(arena, size, align)` | 할당하거나 panic 훅을 호출한다. | `arena`, `size`, `align`. | `proven_mem_mut_t`. |
+| `proven_arena_alloc_aligned_or_panic(arena, size, align)` | 할당하거나 패닉(panic) 훅을 호출한다. | `arena`, `size`, `align`. | `proven_mem_mut_t`. |
 | `proven_arena_alloc_or_panic(arena, size)` | 기본 정렬 panic 할당. | `arena`, `size`. | `proven_mem_mut_t`. |
 | `proven_arena_as_allocator(arena)` | arena를 `proven_allocator_t`로 노출한다. | `arena`. | allocator trait, 또는 널 arena에 대해 제로 allocator. |
 
@@ -188,7 +188,7 @@ Trait 어댑터 헬퍼:
 - `proven_arena_realloc_trait`
 - `proven_arena_free_trait`
 
-이들은 allocator trait가 함수 포인터를 필요로 하기 때문에 노출된다. 애플리케이션 코드는 보통 대신 `proven_arena_as_allocator()`를 호출한다.
+이들은 allocator 트레잇(trait)가 함수 포인터를 필요로 하기 때문에 노출된다. 애플리케이션 코드는 보통 대신 `proven_arena_as_allocator()`를 호출한다.
 
 예제:
 
@@ -269,7 +269,7 @@ arena는 이것을 할 수 없다 — 객체 하나를 결코 회수하지 않�
 것이다. 힙은 할 수 있고, 그것이 정확히 그 비용이다: 할당마다 검색하고, 해제마다 장부를 갱신하며,
 범용 allocator는 이미 천 번이나 처리한 요청에 대해 범용적인 일을 한다.
 
-pool이 하는 관찰은 **이 객체들이 전부 같은 크기**라는 것이다. 크기가 같다면, 해제된 것 하나가
+풀(pool)이 하는 관찰은 **이 객체들이 전부 같은 크기**라는 것이다. 크기가 같다면, 해제된 것 하나가
 앞으로의 요청에 정확히 들어맞으므로, 아무런 검색 없이 곧바로 다시 건네줄 수 있다.
 
 ### Pool이 동작하는 방식
@@ -854,3 +854,218 @@ int main(void) {
     return EXAMPLE_OK();
 }
 ```
+
+### 실전 예제: 시동 시 할당, 제자리에서 늘리기, 할당자 감싸기
+
+앞의 두 예제는 대부분의 코드가 쓰는 방식으로 arena와 pool을 쓴다. 이 예제는 프로그램이 실제 규모가
+되었을 때 손이 가는 세 가지를 다룬다.
+
+1. **시동(start-up) 단계의 할당.** 어떤 할당은 실패했을 때 갈 길이 없다. 프로그램이 자기 설정
+   표조차 얻지 못했다면 남은 할 일이 없다. `proven_arena_alloc_or_panic()`과
+   `proven_arena_alloc_aligned_or_panic()`은 result가 아니라 메모리 블록 자체를 돌려주고, 실패는
+   패닉 핸들러(panic handler, 회복 불가능한 실패가 났을 때 불리는 함수)로 넘긴다
+   ([1장 6절](manual-01-foundation-ko.md#6-panic-에러를-돌려줄-상대가-남지-않았을-때)).
+   그때 무슨 일이 일어날지는 `proven_set_panic_handler()`로 고른다. 예제는 메시지를 기록하는
+   핸들러를 설치해 실패를 보여 준 뒤, 기본 핸들러를 되돌린다.
+2. **마지막으로 받은 블록 늘리기.** `proven_arena_realloc_aligned()`는 그 블록을 있던 자리에서
+   늘린다. 가장 최근 블록이 곧 사용 영역의 끝에 있는 블록이기 때문이다. 그보다 앞선 블록은 끝으로
+   복사된다 — 여전히 옳지만, 더 이상 공짜는 아니다.
+3. **할당자(allocator) 감싸기.** 할당자는 함수 포인터 셋과 문맥 포인터 하나이므로, 호출을 세거나
+   기록하거나 일부러 열 번째 호출을 실패시키는 래퍼(wrapper, 감싸는 코드)는 전달 함수 세 개면
+   된다. arena 자신의 세 함수 — `proven_arena_alloc_trait()`,
+   `proven_arena_realloc_trait()`, `proven_arena_free_trait()` — 가 공개되어 있는 이유가 바로
+   이것이다. 여러분의 래퍼는 arena를 다시 구현하는 대신 이들을 부르면 된다. 그러면
+   `proven_allocator_t`를 받는 라이브러리의 모든 것이, 그 사실을 모른 채 여러분의 래퍼를 지나간다.
+
+<!-- example: manual/examples/ex_02_arena_traits.c -->
+```c
+/*
+ * Three things a program that owns its own memory eventually has to do, and the
+ * calls that do them:
+ *
+ *   - Allocate during start-up, where running out of memory is not a condition
+ *     the program can carry on from. That is what the `_or_panic` calls are
+ *     for, and installing a panic handler is how you decide what "cannot carry
+ *     on" means for your program - a log line and an exit, rather than a trap.
+ *
+ *   - Grow the block you allocated last, without copying it. An arena can do
+ *     that in place, because the block that was allocated last is the one
+ *     sitting at the end of the used region.
+ *
+ *   - Instrument the allocator - count allocations, or fail the tenth one on
+ *     purpose in a test - without changing the code being measured. An
+ *     allocator here is three function pointers and a context pointer, so
+ *     wrapping one is writing three forwarding functions. The arena's own three
+ *     are public for exactly this reason: your wrapper forwards to them.
+ */
+
+/* --- what a panic handler is for ----------------------------------------- */
+
+static int g_panics = 0;
+static char g_last_panic[128];
+
+/* A panic handler receives the message and decides the program's fate. The
+ * default one traps immediately, which is right in production and useless in a
+ * test - so this one records the message and returns. Returning is allowed ONLY
+ * when you are deliberately testing the panic path, and the memory block the
+ * panicking call returns must then not be used. */
+static void record_panic(const char *msg) {
+    ++g_panics;
+    snprintf(g_last_panic, sizeof g_last_panic, "%s", msg);
+}
+
+/* --- an allocator that counts what passes through it ---------------------- */
+
+typedef struct {
+    proven_arena_t *arena;
+    proven_size_t   live_bytes;
+    proven_size_t   alloc_calls;
+    proven_size_t   free_calls;
+} counting_ctx_t;
+
+/* Each of the three matches one field of proven_allocator_t. Each does its own
+ * bookkeeping and then forwards to the arena's public trait function, so the
+ * behaviour being measured is exactly the arena's behaviour and not a
+ * re-implementation of it. */
+static proven_result_mem_mut_t counting_alloc(void *ctx, proven_size_t size, proven_size_t align) {
+    counting_ctx_t *c = (counting_ctx_t *)ctx;
+    proven_result_mem_mut_t r = proven_arena_alloc_trait(c->arena, size, align);
+    if (proven_is_ok(r.err)) {
+        c->live_bytes += size;
+        ++c->alloc_calls;
+    }
+    return r;
+}
+
+static proven_result_mem_mut_t counting_realloc(void *ctx, void *old_ptr, proven_size_t old_size,
+                                               proven_size_t new_size, proven_size_t align) {
+    counting_ctx_t *c = (counting_ctx_t *)ctx;
+    proven_result_mem_mut_t r = proven_arena_realloc_trait(c->arena, old_ptr, old_size, new_size, align);
+    if (proven_is_ok(r.err)) {
+        c->live_bytes = c->live_bytes - old_size + new_size;
+    }
+    return r;
+}
+
+static void counting_free(void *ctx, void *ptr) {
+    counting_ctx_t *c = (counting_ctx_t *)ctx;
+    ++c->free_calls;
+    proven_arena_free_trait(c->arena, ptr);   /* an arena free is a no-op; the count is the point */
+}
+
+int main(void) {
+    alignas(max_align_t) static proven_byte_t storage[1024];
+    proven_arena_t arena = proven_arena_create((proven_mem_mut_t){ .ptr = storage, .size = sizeof storage });
+
+    /* --- 1. start-up allocation that must not fail ------------------------ */
+
+    proven_set_panic_handler(record_panic);
+
+    /* No result to unwrap: these return the block directly, because there is no
+     * error the caller could act on. That is the entire difference. */
+    proven_mem_mut_t table = proven_arena_alloc_or_panic(&arena, 256);
+    EXAMPLE_REQUIRE(table.ptr != NULL, "a 256-byte start-up allocation must succeed");
+    EXAMPLE_REQUIRE(g_panics == 0, "a successful allocation must not panic");
+
+    /* The aligned form, for a type that needs more than the default boundary -
+     * a 64-byte cache line here, the usual reason. */
+    proven_mem_mut_t cache_line = proven_arena_alloc_aligned_or_panic(&arena, 64, 64);
+    EXAMPLE_REQUIRE(((proven_uintptr_t)cache_line.ptr % 64) == 0,
+                    "the block must start on the boundary that was asked for");
+    EXAMPLE_REQUIRE(g_panics == 0, "an over-aligned allocation that fits must not panic either");
+
+    /* Now the failing case, on purpose: more than the arena could ever hold.
+     * With the recording handler installed we can observe it; with the default
+     * handler the program would stop here, which is what it is for. */
+    proven_mem_mut_t impossible = proven_arena_alloc_or_panic(&arena, sizeof storage * 2);
+    (void)impossible;   /* after a handler returns, this block means nothing */
+    EXAMPLE_REQUIRE(g_panics == 1, "exhausting the arena through _or_panic must panic");
+    EXAMPLE_REQUIRE(g_last_panic[0] != '\0', "the handler receives a message naming the call");
+    printf("panic handler saw: %s\n", g_last_panic);
+
+    /* Passing NULL puts the default trapping handler back. Leaving a test
+     * handler installed turns a real failure into silent corruption. */
+    proven_set_panic_handler(NULL);
+
+    /* --- 2. growing the most recent block in place ------------------------ */
+
+    /* A parser that reads a header, then discovers the body is longer than it
+     * guessed, wants to extend the buffer it just took - not copy it. */
+    proven_result_mem_mut_t buf = proven_arena_alloc_aligned(&arena, 32, alignof(proven_u32));
+    EXAMPLE_REQUIRE(proven_is_ok(buf.err), "the initial 32-byte buffer must fit");
+
+    proven_size_t before = arena.offset;
+    proven_result_mem_mut_t grown = proven_arena_realloc_aligned(&arena, buf.value.ptr, 32, 96, alignof(proven_u32));
+    EXAMPLE_REQUIRE(proven_is_ok(grown.err), "growing the most recent block must succeed");
+    EXAMPLE_REQUIRE(grown.value.ptr == buf.value.ptr,
+                    "the most recent block grows in place: same address, no copy");
+    EXAMPLE_REQUIRE(arena.offset == before + 64, "only the extra 64 bytes were taken");
+
+    /* The in-place path is available only for the block allocated LAST. Take
+     * another block, and the earlier one can no longer be extended where it
+     * stands - the arena copies it to the end instead, and the old bytes are
+     * dead until the next reset. Correct either way; just not free. */
+    proven_result_mem_mut_t other = proven_arena_alloc(&arena, 16);
+    EXAMPLE_REQUIRE(proven_is_ok(other.err), "a second block must fit");
+    proven_result_mem_mut_t moved = proven_arena_realloc_aligned(&arena, grown.value.ptr, 96, 128, alignof(proven_u32));
+    EXAMPLE_REQUIRE(proven_is_ok(moved.err), "growing an older block must still succeed");
+    EXAMPLE_REQUIRE(moved.value.ptr != grown.value.ptr, "but it is relocated, not extended");
+
+    /* --- 3. the arena behind a counting wrapper --------------------------- */
+
+    proven_arena_reset(&arena);
+
+    counting_ctx_t counted = { .arena = &arena };
+    proven_allocator_t alloc = {
+        .ctx        = &counted,
+        .alloc_fn   = counting_alloc,
+        .realloc_fn = counting_realloc,
+        .free_fn    = counting_free,
+    };
+    EXAMPLE_REQUIRE(proven_alloc_is_valid(alloc), "all three function pointers must be present");
+
+    /* Any part of the library that takes an allocator now runs through the
+     * wrapper, unchanged and unaware. */
+    proven_result_u8str_t s = proven_u8str_create(alloc, 16);
+    EXAMPLE_REQUIRE(proven_is_ok(s.err), "creating a string through the wrapper must succeed");
+
+    proven_err_t err = proven_u8str_append_grow(alloc, &s.value, PROVEN_LIT("a line long enough to need more room"));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "appending past the initial capacity must succeed");
+
+    proven_u8str_destroy(alloc, &s.value);
+
+    EXAMPLE_REQUIRE(counted.alloc_calls >= 1, "the wrapper saw the string being created");
+    EXAMPLE_REQUIRE(counted.free_calls >= 1, "and saw it being destroyed");
+    printf("counting allocator: %zu alloc call(s), %zu free call(s), %zu bytes handed out\n",
+           (size_t)counted.alloc_calls, (size_t)counted.free_calls, (size_t)counted.live_bytes);
+
+    proven_arena_destroy(&arena);
+    return EXAMPLE_OK();
+}
+```
+
+반례 — 시험용 패닉 핸들러를 설치한 채 두는 경우:
+
+```text
+proven_set_panic_handler(record_panic);   /* returns instead of stopping */
+/* ... the rest of the program ... */     /* wrong: no restore */
+```
+
+돌아오는 핸들러는 이후의 모든 메모리 부족 패닉을, 널 블록을 돌려주고 계속 진행하는 호출로 바꾼다.
+시험할 코드 주위에서만 설치하고, `proven_set_panic_handler(NULL)`로 기본값을 되돌린다.
+
+반례 — 돌아온 핸들러 뒤에서 그 블록을 쓰는 경우:
+
+```text
+proven_mem_mut_t m = proven_arena_alloc_or_panic(&arena, huge);
+memset(m.ptr, 0, huge);   /* wrong: m.ptr is null if the handler returned */
+```
+
+반례 — 셋 중 하나를 빠뜨린 래퍼:
+
+```text
+proven_allocator_t alloc = { .ctx = &counted, .alloc_fn = counting_alloc };  /* wrong */
+```
+
+`proven_alloc_is_valid()`는 이것에 false를 돌려주고, 이 할당자를 통한 첫 `realloc`이나 `destroy`는
+널 포인터를 호출한다. 둘은 그저 전달만 하더라도 셋을 모두 채운다.

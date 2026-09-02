@@ -15,7 +15,7 @@ C 책을 한 권 뗐다고 해 봅시다. 포인터도, `malloc`도, `printf`도
 **처음이라면 [0장](manual-ko/manual-00-start-here-ko.md)부터.** 입문서 한 권 외에는 아무것도
 전제하지 않으며, 이 저장소에서 찾아보는 문서가 아니라 읽으라고 쓴 유일한 문서입니다.
 
-- 버전: proven_c_lib-v26.07.23d · 표준: C23 · 라이선스: MIT
+- 버전: proven_c_lib-v26.09.02a · 표준: C23 · 라이선스: MIT
 - 저장소: https://github.com/rubidus-api/proven_c_lib
 
 ---
@@ -675,6 +675,8 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 - 사용자 매뉴얼: `manual/manual.md` (`manual/` 아래 챕터들)
 - 한국어 매뉴얼: `manual-ko/manual-ko.md`
 - freestanding 가이드: `manual/manual-freestanding.md`
+- 웹·PDF 판: `docs/en/`, `docs/ko/`. 위의 마크다운에서 `scripts/build-site.sh`가 생성합니다.
+  정본은 마크다운이며, `docs/en`과 `docs/ko` 아래는 전부 생성물이므로 직접 고치지 않습니다.
 - 부동소수점 정확성과 성능: `docs/float-correctness-and-performance.md`
 - 사례 연구, 언어 툴체인: `docs/case-study-lowent.md`
 - 기본 연산 처리량(해시/인코딩/난수): `docs/primitives-benchmark.md`
