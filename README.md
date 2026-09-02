@@ -2,6 +2,8 @@
 
 **English** · [한국어](README-ko.md)
 
+📖 **[Read the manual online](https://rubidus-api.github.io/proven_c_lib/en/)** · [한국어 매뉴얼](https://rubidus-api.github.io/proven_c_lib/ko/) · [PDF](https://github.com/rubidus-api/proven_c_lib/releases/latest)
+
 > A C23 systems library built on one idea: **memory should know where it came from.**
 
 You have finished a C book. You know pointers, `malloc`, `printf`, and `char *`. And then you
@@ -14,11 +16,13 @@ without a framework. It is the everyday layer C projects end up rewriting: alloc
 strings that carry their own length, containers, formatting and scanning, files, hashing,
 randomness — with ownership and failure visible in every signature.
 
-**New here? Start with [Chapter 0](manual/manual-00-start-here.md).** It assumes nothing beyond
+**New here? Start with [Chapter 0](manual/manual-00-start-here.md)** — or read it
+[on the web](https://rubidus-api.github.io/proven_c_lib/en/manual-00-start-here.html), where the
+manual is published with a searchable index of every public function. It assumes nothing beyond
 one introductory C book, and it is the only document in this repository written to be read rather
 than looked up.
 
-- Version: proven_c_lib-v26.09.02a | Standard: C23 | License: MIT
+- Version: proven_c_lib-v26.09.02b | Standard: C23 | License: MIT
 - Repository: https://github.com/rubidus-api/proven_c_lib
 
 ---

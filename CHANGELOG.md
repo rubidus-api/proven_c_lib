@@ -11,6 +11,40 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-09-02] - proven_c_lib-v26.09.02b
+
+### Fixed
+
+- **The job system deadlocked under load, and `proven_job_system_destroy`
+  never returned.** A permit on the workers' semaphore meant "take exactly one
+  job", which is sound only if a woken worker can always find the job its permit
+  announced — and it cannot. The queue hands out its slots in order, so a
+  producer that has claimed slot *n* and not yet published it hides slot *n+1*
+  from every consumer. The worker woken for *n+1* reads an empty queue, spends
+  the permit, and parks; slot *n* is published a moment later with no permit
+  left to announce it.
+
+  Lose enough of those and the queue stops draining. Because it never empties,
+  no worker reaches its exit test either, so `close` and `destroy` wait on
+  threads that will never finish. Measured under parallel load, the stress
+  harness hung in **18 runs out of 40**.
+
+  A permit now means "there may be work", and a woken worker **drains** the
+  queue instead of taking one job from it, so a spent permit cannot strand the
+  jobs behind it. A departing worker also posts one permit before it leaves, so
+  shutdown needs one permit to reach every worker rather than exactly one each.
+  The drain is what fixes the deadlock: with the baton alone the harness still
+  hung in 18 runs out of 80; with the drain, 400 runs out of 400 passed.
+
+### Added
+
+- **`tests/test_regression_job_permit_starvation`** — six rounds of 24
+  producers against a four-slot queue, each closing and destroying the system.
+  A watchdog turns a hang into a reported failure naming the round, because a
+  deadlock has no wrong answer to assert on: the process simply stops. Verified
+  to fail against the pre-fix source, five deadlocks in five runs, where the
+  existing stress harness needed heavy background load to hang at all.
+
 ## [2026-09-02] - proven_c_lib-v26.09.02a
 
 ### Added
