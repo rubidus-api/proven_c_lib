@@ -1,0 +1,1132 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4 · 컨테이너와 알고리즘 — proven_c_lib 매뉴얼</title>
+<link rel="stylesheet" href="manual.css">
+<script>(function(){try{var s=JSON.parse(localStorage.getItem('pcl-read')||'{}');var r=document.documentElement;if(s.theme&&s.theme!=='auto')r.setAttribute('data-theme',s.theme);if(s.fg)r.style.setProperty('--fg',s.fg);if(s.bg)r.style.setProperty('--bg',s.bg);if(s.link)r.style.setProperty('--link',s.link);if(s.width)r.setAttribute('data-measure','on');}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip" href="#content">본문으로 건너뛰기</a>
+<div class="bar"><strong><a href="index.html">proven_c_lib 매뉴얼</a></strong><button class="here-btn" type="button" aria-expanded="false" aria-controls="here-panel">4 · 컨테이너와 알고리즘 <span class="caret">▾</span></button><span class="bar-nav"><a href="manual-03-strings-text.html" title="이전" aria-label="이전">←</a><a href="index.html" title="목차" aria-label="목차">↑</a><a href="manual-08-fmt-scan.html" title="다음" aria-label="다음">→</a></span></div>
+<div id="here-panel" class="here-panel" hidden><div class="tools"><span class="ver">proven_c_lib-v26.09.02a</span><button class="tool" type="button" id="set-open" aria-expanded="false">⚙ 설정</button><a class="tool" href="../en/manual-04-containers-algorithms.html">English</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib/releases/download/proven_c_lib-v26.09.02a/proven_c_lib-proven_c_lib-v26.09.02a-ko-manual.pdf">⤓ PDF</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib" title="이 프로젝트의 GitHub 저장소">⌥ 저장소</a><a class="tool" href="https://rubidus-api.github.io/" title="rubidus-api.github.io — 공개된 모든 프로젝트">⌂ 전체 사이트</a><a class="tool" href="https://github.com/rubidus-api" title="github.com/rubidus-api — 모든 저장소">≡ 저장소 목록</a></div><div class="setbox" id="setbox" hidden><label class="setrow"><input type="checkbox" id="s-width"><span>가로폭 제한</span></label><div class="setrow"><span class="setlbl">테마</span><span class="seg"><button type="button" class="segb" data-theme="auto">시스템</button><button type="button" class="segb" data-theme="light">밝게</button><button type="button" class="segb" data-theme="dark">어둡게</button></span></div><div class="setrow"><span class="setlbl">색</span><label class="col"><span>글자</span><input type="color" id="s-fg"></label><label class="col"><span>배경</span><input type="color" id="s-bg"></label><label class="col"><span>링크</span><input type="color" id="s-link"></label></div><p class="setnote">설정은 이 브라우저에만 저장됩니다.</p></div><div class="search"><label class="setlbl" for="q">검색</label> <input type="search" id="q" placeholder="함수나 제목으로 찾기" autocomplete="off"><p class="hint">공개 함수 전부와 모든 제목에서 찾습니다 — 본문 전문은 아닙니다.</p><ul id="qr"></ul></div><div class="here-head"><strong>이 페이지 안에서</strong></div><div class="here-body"><a href="#목차">목차</a><a href="#1-동적-배열">1. 동적 배열</a><a href="#2-침습적intrusive-리스트">2. 침습적(intrusive) 리스트</a><a href="#3-링-버퍼">3. 링 버퍼</a><a href="#4-해시-맵">4. 해시 맵</a><a href="#5-알고리즘">5. 알고리즘</a><a href="#6-용도별-해싱">6. 용도별 해싱</a><a href="#7-바이트를-텍스트로-hex와-base64">7. 바이트를 텍스트로: hex와 Base64</a><a href="#8-예제와-오용-사례">8. 예제와 오용 사례</a></div></div>
+<div class="page">
+<nav class="toc" aria-label="목차">
+<h2>목차</h2>
+<a href="index.html">매뉴얼</a>
+<a href="manual-00-start-here.html">0 · 여기서부터</a>
+<a href="manual-01-foundation.html">1 · 기초</a>
+<a href="manual-02-allocation.html">2 · 할당</a>
+<a href="manual-03-strings-text.html">3 · 문자열과 텍스트</a>
+<a href="manual-04-containers-algorithms.html" class="here">4 · 컨테이너와 알고리즘</a>
+<a href="manual-08-fmt-scan.html">8 · 형식화와 파싱</a>
+<a href="manual-05-hosted-services.html">5 · Hosted 서비스</a>
+<a href="manual-06-execution-and-platform.html">6 · 실행과 플랫폼</a>
+<a href="manual-freestanding.html">프리스탠딩</a>
+<a href="manual-07-alias-xcv-index.html">부록 A · Alias 인덱스</a>
+<h2>이 페이지 안에서</h2>
+<a href="#목차">목차</a>
+<a href="#1-동적-배열">1. 동적 배열</a>
+<a href="#2-침습적intrusive-리스트">2. 침습적(intrusive) 리스트</a>
+<a href="#3-링-버퍼">3. 링 버퍼</a>
+<a href="#4-해시-맵">4. 해시 맵</a>
+<a href="#5-알고리즘">5. 알고리즘</a>
+<a href="#6-용도별-해싱">6. 용도별 해싱</a>
+<a href="#7-바이트를-텍스트로-hex와-base64">7. 바이트를 텍스트로: hex와 Base64</a>
+<a href="#8-예제와-오용-사례">8. 예제와 오용 사례</a>
+</nav>
+<main id="content"><div class="content">
+<div class="masthead">proven_c_lib-v26.09.02a · 마크다운 매뉴얼에서 생성됨</div>
+<h1 id="4장-컨테이너와-알고리즘">4장: 컨테이너와 알고리즘<a class="anchor" href="#4장-컨테이너와-알고리즘" aria-hidden="true">#</a></h1><p><strong>3부 — 자료구조. 선행 조건: 2부 (<a href="manual-01-foundation.html">1</a>, <a href="manual-02-allocation.html">2</a>, <a href="manual-03-strings-text.html">3</a>).</strong> <strong>이 장을 마치면</strong> 작업에 맞는 컨테이너를 고르고, 보장된 한계 안에서 정렬하고 검색하며, 올바른 이유로 해싱하고, 바이트를 텍스트로 또 그 반대로 바꿀 수 있다.</p><p>이 장은 <code>array.h</code>, <code>list.h</code>, <code>ring.h</code>, <code>map.h</code>, <code>algorithm.h</code>, <code>hash.h</code>, <code>encode.h</code>를 다룬다. 여기 있는 모든 컨테이너는 할당자(allocator)를 받는다. 2장이 먼저 오는 이유가 그것이다.</p><h2 id="목차">목차<a class="anchor" href="#목차" aria-hidden="true">#</a></h2><ol><li><a href="#1-동적-배열">동적 배열</a></li><li><a href="#2-침습적intrusive-리스트">침습적(intrusive) 리스트</a></li><li><a href="#3-링-버퍼">링 버퍼</a></li><li><a href="#4-해시-맵">해시 맵</a></li><li><a href="#5-알고리즘">알고리즘</a></li><li><a href="#6-용도별-해싱">용도별 해싱</a></li><li><a href="#7-바이트를-텍스트로-hex와-base64">바이트를 텍스트로: hex와 Base64</a></li><li><a href="#8-예제와-오용-사례">예제와 오용 사례</a></li></ol><h2 id="1-동적-배열">1. 동적 배열<a class="anchor" href="#1-동적-배열" aria-hidden="true">#</a></h2><h3 id="문제-매번-손으로-다시-쓰는-그-배열">문제: 매번 손으로 다시 쓰는 그 배열<a class="anchor" href="#문제-매번-손으로-다시-쓰는-그-배열" aria-hidden="true">#</a></h3><p>확장 가능한 배열은 모든 C 프로그램이 결국 한 번은 작성하는 자료구조이며, 매번 조금씩 다르게 작성된다:</p><pre><code data-lang="text">int *items = malloc(cap * sizeof(int));
+/* ... later ... */
+if (n == cap) {
+    cap *= 2;
+    items = realloc(items, cap * sizeof(int));   /* wrong on two counts */
+    items[n++] = x;
+}</code></pre><p>한 줄에 버그가 둘 있고, 둘 다 고전이다. <code>cap * sizeof(int)</code>는 큰 <code>cap</code>에 대해 <strong>랩어라운드</strong>할 수 있고, 그러면 거대한 개수에 대해 작은 할당이 만들어진다 — <a href="manual-01-foundation.html">1장 §4</a>를 보라. 그리고 <code>realloc</code>의 결과를 곧바로 <code>items</code>에 대입하면 <strong>NULL을 반환할 때 옛 블록이 누수된다.</strong> 원래 포인터가 사라졌는데 그것이 가리키던 메모리는 여전히 할당된 채로 남기 때문이다.</p><p>버그를 빼고 보더라도, 손으로 쓴 버전은 원소 타입마다 다시 써야 하거나, <code>void *</code>로 제네릭하게 만들어 타입 검사를 잃어야 한다.</p><h3 id="이-라이브러리는-대신-무엇을-하는가">이 라이브러리는 대신 무엇을 하는가<a class="anchor" href="#이-라이브러리는-대신-무엇을-하는가" aria-hidden="true">#</a></h3><p><code>proven_array_t</code>는 생성될 때의 원소 크기와 정렬을 유지하는 확장 벡터다. 그래서 템플릿 없이도, 호출 지점에서 <code>void *</code>를 쓰지 않고도 어떤 타입에나 동작한다 — <code>PROVEN_ARRAY_*</code> 매크로가 타입을 받아, 컴파일러가 아직 검사할 수 있는 자리에서 캐스팅을 수행한다.</p><ul><li>확장은 검사된 산술을 사용하므로, 위의 오버플로는 작은 할당이 아니라 <code>PROVEN_ERR_OVERFLOW</code>가 된다.</li><li>확장은 <strong>실패-원자적(failure-atomic)</strong>이다: 확장할 수 없으면 기존 원소는 손대지 않은 채로 여전히 유효하다. 아무것도 누수되지 않고 아무것도 잃지 않는다.</li><li>문자열 타입과 달리 <strong>allocator를 내부에 저장한다</strong> — <code>PROVEN_ARRAY_DESTROY</code>가 배열만 받는 이유가 그것이다.</li></ul><p><code>proven_array_t</code>는 연속된 원소 저장소를 소유하므로, <code>proven_array_sort</code>와 §5의 검색들에 넘기는 것도 바로 이것이다.</p><p>잘못된 예 — push를 건너 포인터를 붙잡고 있기:</p><pre><code data-lang="text">int *first = PROVEN_ARRAY_GET(&amp;arr, int, 0);
+(void)PROVEN_ARRAY_PUSH(&amp;arr, int, 42);   /* may reallocate */
+*first = 7;                               /* wrong: `first` may point at freed memory */</code></pre><p>이것은 타입이 제거해 줄 수 없는 유일한 위험이다. 확장은 저장소를 이동시키므로, <strong>배열을 가리키는 모든 포인터나 뷰(view)는 확장을 유발할 수 있는 모든 연산에 의해 무효화된다.</strong> 가리키는 대신 인덱스를 쓰거나, push 이후에 포인터를 다시 가져오라.</p><h3 id="구조체">구조체<a class="anchor" href="#구조체" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef struct {
+    proven_allocator_t alloc;
+    proven_byte_t *data;
+    proven_size_t len;
+    proven_size_t cap;
+    proven_size_t elem_size;
+    proven_size_t align;
+} proven_array_t;
+
+typedef struct {
+    proven_err_t err;
+    proven_array_t value;
+} proven_result_array_t;</code></pre><p>필드:</p><ul><li><code>alloc</code>: 성장과 파괴에 쓰이는 allocator.</li><li><code>data</code>: 원소를 위한 바이트 저장소.</li><li><code>len</code>: 현재 원소 개수.</li><li><code>cap</code>: 원소 단위 용량.</li><li><code>elem_size</code>: 각 원소의 크기.</li><li><code>align</code>: 각 원소의 정렬.</li></ul><h3 id="함수">함수<a class="anchor" href="#함수" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>API</strong></td><td><strong>의도</strong></td><td><strong>반환</strong></td></tr><tr><td><code>proven_array_create(alloc, init_cap, elem_size, align)</code></td><td>제네릭 배열을 만든다.</td><td><code>proven_result_array_t</code>.</td></tr><tr><td><code>proven_array_is_valid(arr)</code></td><td>공개 배열 불변식을 검증한다.</td><td><code>bool</code>.</td></tr><tr><td><code>proven_array_reserve(arr, new_cap)</code></td><td>최소 <code>new_cap</code>개의 원소를 보장한다.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_array_push(arr, element)</code></td><td>포인터로부터 복사하여 원소 하나를 추가한다.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_array_pop(arr, out_element)</code></td><td>마지막 원소를 꺼낸다; <code>out_element</code>가 null이면 버린다.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_array_get_mut(arr, index)</code></td><td>가변 원소 포인터를 얻는다.</td><td>포인터 또는 null.</td></tr><tr><td><code>proven_array_get(arr, index)</code></td><td>const 원소 포인터를 얻는다.</td><td>포인터 또는 null.</td></tr><tr><td><code>proven_array_destroy(arr)</code></td><td>저장소를 해제하고 상태를 비운다.</td><td>void.</td></tr></table></div><h3 id="매크로">매크로<a class="anchor" href="#매크로" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>매크로</strong></td><td><strong>의도</strong></td></tr><tr><td><code>PROVEN_ARRAY_INIT(alloc, type, init_cap)</code></td><td><code>sizeof(type)</code>와 <code>alignof(type)</code>를 사용하는 타입 안전 생성.</td></tr><tr><td><code>PROVEN_ARRAY_PUSH(arr_ptr, type, value)</code></td><td>임시 복합 리터럴로 rvalue나 lvalue를 push한다.</td></tr><tr><td><code>PROVEN_ARRAY_POP(arr_ptr, type, out_ptr)</code></td><td>출력 포인터로 pop하거나 null로 버린다.</td></tr><tr><td><code>PROVEN_ARRAY_GET(arr_ptr, type, index)</code></td><td>타입이 지정된 const 원소 포인터.</td></tr><tr><td><code>PROVEN_ARRAY_GET_MUT(arr_ptr, type, index)</code></td><td>타입이 지정된 가변 원소 포인터.</td></tr><tr><td><code>PROVEN_ARRAY_DESTROY(arr_ptr)</code></td><td>배열을 파괴한다.</td></tr></table></div><p>예제:</p><pre><code data-lang="c">proven_result_array_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_ARRAY_INIT</span>(alloc, <span style="color: #d73948">int</span>, <span style="color: #b60157">4</span>);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+    <span style="color: #d73948">return</span>;
+}
+proven_array_t nums <span style="color: #d73948">=</span> r.value;
+
+(<span style="color: #d73948">void</span>)<span style="color: #4b69c6">PROVEN_ARRAY_PUSH</span>(<span style="color: #d73948">&amp;</span>nums, <span style="color: #d73948">int</span>, <span style="color: #b60157">10</span>);
+(<span style="color: #d73948">void</span>)<span style="color: #4b69c6">PROVEN_ARRAY_PUSH</span>(<span style="color: #d73948">&amp;</span>nums, <span style="color: #d73948">int</span>, <span style="color: #b60157">20</span>);
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> GET points into the array's own storage, and returns NULL out of range. </span><span style="color: #74747c">*/</span>
+<span style="color: #d73948">const</span> <span style="color: #d73948">int</span> <span style="color: #d73948">*</span>first <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_ARRAY_GET</span>(<span style="color: #d73948">&amp;</span>nums, <span style="color: #d73948">int</span>, <span style="color: #b60157">0</span>);
+<span style="color: #d73948">if</span> (first) {
+    <span style="color: #4b69c6">proven_println</span>(<span style="color: #198810">"</span><span style="color: #198810">first={}</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">PROVEN_ARG</span>(<span style="color: #d73948">*</span>first));
+}
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> The array stores its allocator, so destroy needs nothing but the array. </span><span style="color: #74747c">*/</span>
+<span style="color: #4b69c6">PROVEN_ARRAY_DESTROY</span>(<span style="color: #d73948">&amp;</span>nums);</code></pre><h2 id="2-침습적intrusive-리스트">2. 침습적(intrusive) 리스트<a class="anchor" href="#2-침습적intrusive-리스트" aria-hidden="true">#</a></h2><h3 id="문제-배운-대로의-리스트는-원소마다-노드를-할당한다">문제: 배운 대로의 리스트는 원소마다 노드를 할당한다<a class="anchor" href="#문제-배운-대로의-리스트는-원소마다-노드를-할당한다" aria-hidden="true">#</a></h3><pre><code data-lang="text">struct node { struct node *next; void *data; };</code></pre><p>이것이 교과서의 연결 리스트이며, 교과서가 언급하지 않는 두 가지 비용이 있다. 삽입할 때마다 <strong>할당한다</strong> — 천 개의 항목은 곧 포인터를 담기 위해서만 존재하는 천 번의 할당이고, 각각은 실패할 수 있으며 각각은 짝이 되는 해제를 필요로 한다. 그리고 <code>data</code>는 <code>void *</code>이므로 리스트는 자신이 무엇을 담고 있는지 전혀 모른다: 다시 읽어낼 때마다 컴파일러가 검사할 수 없는 캐스트가 된다.</p><h3 id="침습적-리스트는-대신-무엇을-하는가">침습적 리스트는 대신 무엇을 하는가<a class="anchor" href="#침습적-리스트는-대신-무엇을-하는가" aria-hidden="true">#</a></h3><p>관계를 뒤집는다: <strong>메모리는 당신이 소유하고, 링크가 그 안에 산다.</strong></p><pre><code data-lang="text">typedef struct {
+    int                 id;
+    proven_list_node_t  link;   /* the list's hook, inside your struct */
+} task_t;</code></pre><p>이제 삽입은 포인터 두 개를 쓰는 일이다. 아무것도 할당하지 않으므로 <strong>실패할 수 없다</strong> — <code>proven_list_push_back</code>이 <code>void</code>를 반환한다는 점에 주목하라. 이 라이브러리에서는 이례적인 일이고, 바로 그것이 요점이다. 제거도 마찬가지다. 객체는 스택에도, 배열 안에도, 아레나 안에도, 어디에나 살 수 있다. 리스트는 이미 그 안에 들어 있는 포인터들을 재배치할 뿐이다.</p><p>링크에서 다시 당신의 객체로 돌아가는 것은 <code>PROVEN_LIST_ENTRY(node, task_t, link)</code>이며, 노드의 주소에서 멤버의 오프셋을 뺀다. 이것은 맞기를 바라는 캐스트가 아니라, 컴파일러가 타입을 검사하는 산술이다.</p><p>포기하는 것: <strong>객체는 자신이 가진 링크 멤버 수만큼의 리스트에만 속할 수 있고</strong>, 그 수는 구조체를 선언할 때 당신이 정한다. 어떤 항목이 큐와 인덱스에 동시에 있어야 한다면, 링크가 둘 필요하다.</p><p><code>proven_list_t</code>는 침습적 이중 연결 <strong>원형</strong> 리스트다 — 헤드가 sentinel 노드이므로, 삽입과 제거가 양 끝을 특별히 취급하는 일이 없다. 노드를 할당하지 않는다.</p><p>잘못된 예 — 평범한 반복자로 순회하면서 제거하기:</p><pre><code data-lang="text">PROVEN_LIST_FOR_EACH(it, &amp;queue) {
+    if (should_drop(it)) proven_list_remove(it);   /* wrong: it->next is read after unlink */
+}</code></pre><p><code>proven_list_remove</code>는 노드 자신의 포인터를 통해 쓰기를 하므로, 루프는 방금 떼어낸 노드에서 <code>next</code>를 읽게 된다. <code>PROVEN_LIST_FOR_EACH_SAFE</code>는 두 번째 변수를 받아 본문이 실행되기 <em>전에</em> 다음 포인터를 읽는다. 그것이 바로 이 매크로가 존재하는 이유다.</p><h3 id="완성-예제-링크가-호출자의-구조체-안에-사는-큐">완성 예제: 링크가 호출자의 구조체 안에 사는 큐<a class="anchor" href="#완성-예제-링크가-호출자의-구조체-안에-사는-큐" aria-hidden="true">#</a></h3><p>테스트 스위트가 컴파일하고 실행한다. 스택에 할당된 task들의 큐를 만들고, 순회하고, 안전한 순회 안에서 하나를 제거하고, 중간에 삽입한다 — 프로그램 어디에도 allocator가 없다.</p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> An INTRUSIVE list puts the links inside your struct instead of allocating a</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> node to hold your data.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> The list you were taught looks like this:</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">     struct node { struct node *next; void *data; };</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Every insertion allocates a node, so a list of a thousand items costs a</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> thousand allocations that exist only to hold pointers, each one a chance to</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> fail and a thing to free. Worse, `data` is a void* - the list has no idea what</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> it holds, so every read is a cast the compiler cannot check.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Intrusive lists invert it: YOU own the memory, and the link lives in it.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Inserting allocates nothing and cannot fail. Removing allocates nothing and</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> cannot fail. And because the link is a member of a known type, getting back</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> from a link to the object is arithmetic the compiler does for you, not a cast.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> The trade is that an object can only be in as many lists as it has link</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> members, and that is a decision you make when you declare the struct.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> The link is a member. This task can be in exactly one list at a time. </span><span style="color: #74747c">*/</span>
+<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> {
+    <span style="color: #d73948">int</span>                 id;
+    proven_list_node_t  link;
+} <span style="color: #4b69c6">task_t</span>;
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> No allocator anywhere in this program: the tasks are on the stack, and the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> list only ever rearranges pointers that live inside them. </span><span style="color: #74747c">*/</span>
+    task_t a <span style="color: #d73948">=</span> { .id <span style="color: #d73948">=</span> <span style="color: #b60157">1</span> };
+    task_t b <span style="color: #d73948">=</span> { .id <span style="color: #d73948">=</span> <span style="color: #b60157">2</span> };
+    task_t c <span style="color: #d73948">=</span> { .id <span style="color: #d73948">=</span> <span style="color: #b60157">3</span> };
+
+    proven_list_t queue;
+    <span style="color: #4b69c6">proven_list_init</span>(<span style="color: #d73948">&amp;</span>queue);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_list_is_empty</span>(<span style="color: #d73948">&amp;</span>queue), <span style="color: #198810">"</span><span style="color: #198810">a freshly initialised list is empty</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- pushing cannot fail, because nothing is allocated ------------- </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">proven_list_push_back</span>(<span style="color: #d73948">&amp;</span>queue, <span style="color: #d73948">&amp;</span>a.link);
+    <span style="color: #4b69c6">proven_list_push_back</span>(<span style="color: #d73948">&amp;</span>queue, <span style="color: #d73948">&amp;</span>b.link);
+    <span style="color: #4b69c6">proven_list_push_back</span>(<span style="color: #d73948">&amp;</span>queue, <span style="color: #d73948">&amp;</span>c.link);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_list_is_empty</span>(<span style="color: #d73948">&amp;</span>queue), <span style="color: #198810">"</span><span style="color: #198810">three tasks are queued</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- walking: PROVEN_LIST_ENTRY gets the object back from the link -- </span><span style="color: #74747c">*/</span>
+    proven_list_node_t <span style="color: #d73948">*</span>it <span style="color: #d73948">=</span> <span style="color: #d73948">NULL</span>;
+    <span style="color: #d73948">int</span> seen[<span style="color: #b60157">3</span>] <span style="color: #d73948">=</span> {<span style="color: #b60157">0</span>}, n <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+    <span style="color: #4b69c6">PROVEN_LIST_FOR_EACH</span>(it, <span style="color: #d73948">&amp;</span>queue) {
+        task_t <span style="color: #d73948">*</span>t <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_LIST_ENTRY</span>(it, task_t, link);
+        <span style="color: #d73948">if</span> (n <span style="color: #d73948">&lt;</span> <span style="color: #b60157">3</span>) seen[n<span style="color: #d73948">++</span>] <span style="color: #d73948">=</span> t->id;
+    }
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(n <span style="color: #d73948">==</span> <span style="color: #b60157">3</span> <span style="color: #d73948">&amp;&amp;</span> seen[<span style="color: #b60157">0</span>] <span style="color: #d73948">==</span> <span style="color: #b60157">1</span> <span style="color: #d73948">&amp;&amp;</span> seen[<span style="color: #b60157">1</span>] <span style="color: #d73948">==</span> <span style="color: #b60157">2</span> <span style="color: #d73948">&amp;&amp;</span> seen[<span style="color: #b60157">2</span>] <span style="color: #d73948">==</span> <span style="color: #b60157">3</span>,
+                    <span style="color: #198810">"</span><span style="color: #198810">the walk visits every task, in insertion order</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- removing while walking needs the SAFE form -------------------- </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> proven_list_remove writes through the node's own next/prev pointers, so a</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> plain FOR_EACH would read `it->next` from a node that has just been</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> unlinked. The _SAFE form reads the next pointer BEFORE the body runs. </span><span style="color: #74747c">*/</span>
+    proven_list_node_t <span style="color: #d73948">*</span>safe <span style="color: #d73948">=</span> <span style="color: #d73948">NULL</span>;
+    <span style="color: #4b69c6">PROVEN_LIST_FOR_EACH_SAFE</span>(it, safe, <span style="color: #d73948">&amp;</span>queue) {
+        task_t <span style="color: #d73948">*</span>t <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_LIST_ENTRY</span>(it, task_t, link);
+        <span style="color: #d73948">if</span> (t->id <span style="color: #d73948">==</span> <span style="color: #b60157">2</span>) <span style="color: #4b69c6">proven_list_remove</span>(it);
+    }
+
+    n <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+    <span style="color: #4b69c6">PROVEN_LIST_FOR_EACH</span>(it, <span style="color: #d73948">&amp;</span>queue) {
+        task_t <span style="color: #d73948">*</span>t <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_LIST_ENTRY</span>(it, task_t, link);
+        <span style="color: #d73948">if</span> (n <span style="color: #d73948">&lt;</span> <span style="color: #b60157">3</span>) seen[n<span style="color: #d73948">++</span>] <span style="color: #d73948">=</span> t->id;
+    }
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(n <span style="color: #d73948">==</span> <span style="color: #b60157">2</span> <span style="color: #d73948">&amp;&amp;</span> seen[<span style="color: #b60157">0</span>] <span style="color: #d73948">==</span> <span style="color: #b60157">1</span> <span style="color: #d73948">&amp;&amp;</span> seen[<span style="color: #b60157">1</span>] <span style="color: #d73948">==</span> <span style="color: #b60157">3</span>, <span style="color: #198810">"</span><span style="color: #198810">task 2 was unlinked</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- inserting in the middle is a pointer swap --------------------- </span><span style="color: #74747c">*/</span>
+    task_t d <span style="color: #d73948">=</span> { .id <span style="color: #d73948">=</span> <span style="color: #b60157">4</span> };
+    <span style="color: #4b69c6">proven_list_insert_after</span>(<span style="color: #d73948">&amp;</span>a.link, <span style="color: #d73948">&amp;</span>d.link);
+
+    n <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+    <span style="color: #4b69c6">PROVEN_LIST_FOR_EACH</span>(it, <span style="color: #d73948">&amp;</span>queue) {
+        task_t <span style="color: #d73948">*</span>t <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_LIST_ENTRY</span>(it, task_t, link);
+        <span style="color: #d73948">if</span> (n <span style="color: #d73948">&lt;</span> <span style="color: #b60157">3</span>) seen[n<span style="color: #d73948">++</span>] <span style="color: #d73948">=</span> t->id;
+    }
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(n <span style="color: #d73948">==</span> <span style="color: #b60157">3</span> <span style="color: #d73948">&amp;&amp;</span> seen[<span style="color: #b60157">0</span>] <span style="color: #d73948">==</span> <span style="color: #b60157">1</span> <span style="color: #d73948">&amp;&amp;</span> seen[<span style="color: #b60157">1</span>] <span style="color: #d73948">==</span> <span style="color: #b60157">4</span> <span style="color: #d73948">&amp;&amp;</span> seen[<span style="color: #b60157">2</span>] <span style="color: #d73948">==</span> <span style="color: #b60157">3</span>,
+                    <span style="color: #198810">"</span><span style="color: #198810">task 4 sits directly after task 1</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> There is nothing to destroy. The list never owned anything: `a`, `c` and</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> `d` are still perfectly good local variables, and their lifetime is the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> function's, exactly as it would be without the list. </span><span style="color: #74747c">*/</span>
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><h3 id="구조체-1">구조체<a class="anchor" href="#구조체-1" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef struct proven_list_node_t {
+    struct proven_list_node_t *next;
+    struct proven_list_node_t *prev;
+} proven_list_node_t;
+
+typedef struct {
+    proven_list_node_t head;
+} proven_list_t;</code></pre><h3 id="함수와-매크로">함수와 매크로<a class="anchor" href="#함수와-매크로" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>API</strong></td><td><strong>의도</strong></td><td><strong>반환</strong></td></tr><tr><td><code>proven_list_init(list)</code></td><td>원형 센티넬을 초기화한다.</td><td>void.</td></tr><tr><td><code>proven_list_insert_after(target, node)</code></td><td><code>target</code> 뒤에 <code>node</code>를 삽입한다.</td><td>void.</td></tr><tr><td><code>proven_list_push_back(list, node)</code></td><td>꼬리에 삽입한다.</td><td>void.</td></tr><tr><td><code>proven_list_remove(node)</code></td><td>노드를 떼어내고 링크를 null로 오염(poison)시킨다.</td><td>void.</td></tr><tr><td><code>proven_list_is_empty(list)</code></td><td>빈 리스트 또는 null 리스트인지 검사한다.</td><td>int 진리값.</td></tr><tr><td><code>PROVEN_CONTAINER_OF(ptr, type, member)</code></td><td>멤버 포인터를 부모 객체 포인터로 변환한다.</td><td>포인터.</td></tr><tr><td><code>PROVEN_LIST_FOR_EACH(iter, list)</code></td><td>노드를 순회한다.</td><td>루프 매크로.</td></tr><tr><td><code>PROVEN_LIST_FOR_EACH_SAFE(iter, safe_next, list)</code></td><td>현재 노드를 제거하면서 안전하게 순회한다.</td><td>루프 매크로.</td></tr><tr><td><code>PROVEN_LIST_ENTRY(ptr, type, member)</code></td><td>리스트 노드를 담고 있는 객체로 변환한다.</td><td>포인터.</td></tr></table></div><p>예제:</p><pre><code data-lang="c"><span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> Item {
+    <span style="color: #d73948">int</span> value;
+    proven_list_node_t link;   <span style="color: #74747c">/*</span><span style="color: #74747c"> the list lives inside the object; it allocates nothing </span><span style="color: #74747c">*/</span>
+} <span style="color: #4b69c6">Item</span>;
+
+proven_list_t list;
+<span style="color: #4b69c6">proven_list_init</span>(<span style="color: #d73948">&amp;</span>list);
+
+Item a <span style="color: #d73948">=</span> { .value <span style="color: #d73948">=</span> <span style="color: #b60157">1</span> };
+Item b <span style="color: #d73948">=</span> { .value <span style="color: #d73948">=</span> <span style="color: #b60157">2</span> };
+<span style="color: #4b69c6">proven_list_push_back</span>(<span style="color: #d73948">&amp;</span>list, <span style="color: #d73948">&amp;</span>a.link);
+<span style="color: #4b69c6">proven_list_push_back</span>(<span style="color: #d73948">&amp;</span>list, <span style="color: #d73948">&amp;</span>b.link);
+
+<span style="color: #d73948">int</span> total <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+proven_list_node_t <span style="color: #d73948">*</span>it <span style="color: #d73948">=</span> <span style="color: #d73948">NULL</span>;
+<span style="color: #4b69c6">PROVEN_LIST_FOR_EACH</span>(it, <span style="color: #d73948">&amp;</span>list) {
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The iterator walks nodes; ENTRY converts a node back to its owner. </span><span style="color: #74747c">*/</span>
+    Item <span style="color: #d73948">*</span>item <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_LIST_ENTRY</span>(it, Item, link);
+    total <span style="color: #d73948">+=</span> item->value;
+}
+<span style="color: #4b69c6">proven_println</span>(<span style="color: #198810">"</span><span style="color: #198810">total={}</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">PROVEN_ARG</span>(total));   <span style="color: #74747c">/*</span><span style="color: #74747c"> 3 </span><span style="color: #74747c">*/</span></code></pre><h2 id="3-링-버퍼">3. 링 버퍼<a class="anchor" href="#3-링-버퍼" aria-hidden="true">#</a></h2><h3 id="문제-커져서는-안-되는-큐">문제: 커져서는 안 되는 큐<a class="anchor" href="#문제-커져서는-안-되는-큐" aria-hidden="true">#</a></h3><p>빠른 생산자와 느린 소비자 사이의 큐는 한 가지 질문에 답해야 한다: 소비자가 뒤처지면 무슨 일이 일어나는가? 확장 가능한 큐는 "더 할당한다"고 답하는데, 그러면 일시적인 지연이 무한한 메모리 증가로, 그리고 결국에는 작업을 버리는 것보다 더 나쁜 무언가로 바뀐다.</p><p>손으로 쓰는 대안은 배열 하나에 head 인덱스, tail 인덱스, 그리고 모듈로 산술을 더한 것이다 — 그리고 여기에는 유명한 버그가 하나 있다. <code>head == tail</code>일 때 버퍼는 비어 있는가, 가득 찼는가? 별도의 개수를 유지하거나 슬롯 하나를 일부러 낭비하지 않는 한 두 상태는 똑같아 보이고, 프로그래머 세대마다 이것을 다시 발견한다.</p><h3 id="이-라이브러리는-대신-무엇을-하는가-1">이 라이브러리는 대신 무엇을 하는가<a class="anchor" href="#이-라이브러리는-대신-무엇을-하는가-1" aria-hidden="true">#</a></h3><p><code>proven_ring_t</code>는 개수를 유지하는 고정 용량 FIFO다. 그래서 비어 있음과 가득 참이 구별되며, 커지는 대신 <strong>거부한다</strong>:</p><ul><li>가득 찬 링에 대한 <code>proven_ring_push</code>는 <code>PROVEN_ERR_OUT_OF_BOUNDS</code>를 반환한다. 가장 오래된 항목을 덮어쓰지 않고, 재할당도 하지 않는다. 호출자가 결정한다 — 기다리거나, 새 항목을 버리거나, 배압(backpressure)을 보고하거나 — 무엇이 옳은지는 호출자만 알기 때문이다.</li><li>비어 있는 링에 대한 <code>proven_ring_pop</code>은 낡은 슬롯을 되돌려주는 대신 실패한다.</li></ul><p>용량은 생성 시점에 한 번 정해지며, 그 숫자가 <em>곧</em> 정책이다: 생산자가 얼마나 앞서 나가도 되는지를 말한다. 이벤트 큐, 최근 항목의 로그, 오디오나 센서 버퍼 — 한계가 제약이 아니라 설계의 일부인 곳이라면 링을 꺼내라.</p><p>이 라이브러리의 대부분의 타입과 달리, <code>proven_ring_t</code>는 <strong>allocator를 내부에 저장한다.</strong> <code>PROVEN_RING_DESTROY</code>가 링만 받는 이유가 그것이다.</p><p>잘못된 예 — 가득 찬 링을 즉시 재시도할 오류로 취급하기:</p><pre><code data-lang="text">while (PROVEN_RING_PUSH(&amp;ring, event_t, e) != PROVEN_OK) { }   /* wrong: spins forever */</code></pre><p>그 루프 안의 무엇도 소비하지 않으므로 링은 계속 가득 차 있다. 한계가 있는 큐의 거부는 *소비자*에 대한 정보이며, 그것을 무시하는 루프는 곧 멈춤(hang)이다.</p><h3 id="완성-예제-가득-찰-때까지-push하기-그리고-거부가-어떤-모습인지">완성 예제: 가득 찰 때까지 push하기, 그리고 거부가 어떤 모습인지<a class="anchor" href="#완성-예제-가득-찰-때까지-push하기-그리고-거부가-어떤-모습인지" aria-hidden="true">#</a></h3><p>테스트 스위트가 컴파일하고 실행한다.</p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> A ring buffer is a fixed-size queue that never moves its contents and never</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> grows. You give it a capacity once; push adds at the tail, pop removes from</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> the head, and when it is full, push REFUSES.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> The C you would otherwise write is an array plus two indices plus the modulo</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> arithmetic to wrap them, and the bug is always the same: "is it full or is it</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> empty?" - both states have head == tail unless you keep a count or waste a</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> slot. This ring keeps the count, so the question does not arise.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Use one when a producer and a consumer run at different speeds and you want a</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> hard bound on how far ahead the producer may get: an event queue, a log ring,</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> an audio buffer. The refusal on a full ring is the feature - it is</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> backpressure. A growable queue would answer a burst by eating memory until</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> something worse happens.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    proven_allocator_t alloc <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Capacity of 4 events. It will never be 5. </span><span style="color: #74747c">*/</span>
+    proven_result_ring_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_RING_INIT</span>(alloc, <span style="color: #d73948">int</span>, <span style="color: #b60157">4</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(r.err), <span style="color: #198810">"</span><span style="color: #198810">creating a 4-slot ring should succeed</span><span style="color: #198810">"</span>);
+    proven_ring_t ring <span style="color: #d73948">=</span> r.value;
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- push until full ---------------------------------------------- </span><span style="color: #74747c">*/</span>
+    <span style="color: #d73948">for</span> (<span style="color: #d73948">int</span> i <span style="color: #d73948">=</span> <span style="color: #b60157">1</span>; i <span style="color: #d73948">&lt;=</span> <span style="color: #b60157">4</span>; <span style="color: #d73948">++</span>i) {
+        proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_RING_PUSH</span>(<span style="color: #d73948">&amp;</span>ring, <span style="color: #d73948">int</span>, i);
+        <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">the first four pushes fit</span><span style="color: #198810">"</span>);
+    }
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The fifth push is refused. It does not overwrite the oldest entry, and it</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> does not grow: a full ring is a full ring, and the caller decides what to</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> do about it - wait, drop the new event, or report backpressure. </span><span style="color: #74747c">*/</span>
+    proven_err_t full <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_RING_PUSH</span>(<span style="color: #d73948">&amp;</span>ring, <span style="color: #d73948">int</span>, <span style="color: #b60157">5</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(full <span style="color: #d73948">==</span> PROVEN_ERR_OUT_OF_BOUNDS,
+                    <span style="color: #198810">"</span><span style="color: #198810">pushing into a full ring must be refused, not silently absorbed</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- pop in the order they were pushed ----------------------------- </span><span style="color: #74747c">*/</span>
+    <span style="color: #d73948">int</span> out <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+    proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_RING_POP</span>(<span style="color: #d73948">&amp;</span>ring, <span style="color: #d73948">int</span>, <span style="color: #d73948">&amp;</span>out);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err) <span style="color: #d73948">&amp;&amp;</span> out <span style="color: #d73948">==</span> <span style="color: #b60157">1</span>, <span style="color: #198810">"</span><span style="color: #198810">pop returns the oldest entry first</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Now there is room again, and the ring wraps around its storage without</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> moving anything. </span><span style="color: #74747c">*/</span>
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_RING_PUSH</span>(<span style="color: #d73948">&amp;</span>ring, <span style="color: #d73948">int</span>, <span style="color: #b60157">5</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">after a pop there is room for one more</span><span style="color: #198810">"</span>);
+
+    <span style="color: #d73948">int</span> expected[] <span style="color: #d73948">=</span> { <span style="color: #b60157">2</span>, <span style="color: #b60157">3</span>, <span style="color: #b60157">4</span>, <span style="color: #b60157">5</span> };
+    <span style="color: #d73948">for</span> (<span style="color: #d73948">int</span> i <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>; i <span style="color: #d73948">&lt;</span> <span style="color: #b60157">4</span>; <span style="color: #d73948">++</span>i) {
+        err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_RING_POP</span>(<span style="color: #d73948">&amp;</span>ring, <span style="color: #d73948">int</span>, <span style="color: #d73948">&amp;</span>out);
+        <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err) <span style="color: #d73948">&amp;&amp;</span> out <span style="color: #d73948">==</span> expected[i],
+                        <span style="color: #198810">"</span><span style="color: #198810">entries come out in the order they went in</span><span style="color: #198810">"</span>);
+    }
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- empty behaves like full: it refuses, it does not invent data --- </span><span style="color: #74747c">*/</span>
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_RING_POP</span>(<span style="color: #d73948">&amp;</span>ring, <span style="color: #d73948">int</span>, <span style="color: #d73948">&amp;</span>out);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">popping an empty ring must fail rather than return junk</span><span style="color: #198810">"</span>);
+
+    <span style="color: #4b69c6">PROVEN_RING_DESTROY</span>(<span style="color: #d73948">&amp;</span>ring);
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><h3 id="구조체-2">구조체<a class="anchor" href="#구조체-2" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef struct {
+    proven_allocator_t alloc;
+    proven_mem_mut_t internal;
+    proven_size_t head;
+    proven_size_t tail;
+    proven_size_t len;
+    proven_size_t cap;
+    proven_size_t elem_size;
+    proven_size_t align;
+} proven_ring_t;
+
+typedef struct {
+    proven_err_t err;
+    proven_ring_t value;
+} proven_result_ring_t;</code></pre><h3 id="함수와-매크로-1">함수와 매크로<a class="anchor" href="#함수와-매크로-1" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>API</strong></td><td><strong>의도</strong></td><td><strong>반환</strong></td></tr><tr><td><code>proven_ring_create(alloc, cap, elem_size, align)</code></td><td>고정 용량 링을 만든다.</td><td><code>proven_result_ring_t</code>.</td></tr><tr><td><code>proven_ring_is_valid(ring)</code></td><td>링 불변식을 검증한다.</td><td><code>bool</code>.</td></tr><tr><td><code>proven_ring_push(ring, element)</code></td><td>원소 하나를 push한다; 가득 차면 실패한다.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_ring_pop(ring, out_element)</code></td><td>원소 하나를 pop한다; null 출력이면 버린다.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_ring_destroy(ring)</code></td><td>저장소를 해제한다.</td><td>void.</td></tr><tr><td><code>PROVEN_RING_INIT(alloc, type, cap)</code></td><td>타입 안전 생성.</td><td><code>proven_result_ring_t</code>.</td></tr><tr><td><code>PROVEN_RING_PUSH(ring_ptr, type, value)</code></td><td>타입 안전 push.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>PROVEN_RING_POP(ring_ptr, type, out_ptr)</code></td><td>타입 안전 pop.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>PROVEN_RING_DESTROY(ring_ptr)</code></td><td>링을 파괴한다.</td><td>void.</td></tr></table></div><p>예제:</p><pre><code data-lang="c">proven_result_ring_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_RING_INIT</span>(alloc, <span style="color: #d73948">int</span>, <span style="color: #b60157">8</span>);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+    <span style="color: #d73948">return</span>;
+}
+proven_ring_t q <span style="color: #d73948">=</span> r.value;
+
+proven_err_t e <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_RING_PUSH</span>(<span style="color: #d73948">&amp;</span>q, <span style="color: #d73948">int</span>, <span style="color: #b60157">7</span>);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(e)) {
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The ring is fixed-capacity: a full ring is PROVEN_ERR_OUT_OF_BOUNDS,</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> never a silent grow. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">PROVEN_RING_DESTROY</span>(<span style="color: #d73948">&amp;</span>q);
+    <span style="color: #d73948">return</span>;
+}
+
+<span style="color: #d73948">int</span> out <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+e <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_RING_POP</span>(<span style="color: #d73948">&amp;</span>q, <span style="color: #d73948">int</span>, <span style="color: #d73948">&amp;</span>out);   <span style="color: #74747c">/*</span><span style="color: #74747c"> FIFO: out == 7. Empty ring is OUT_OF_BOUNDS. </span><span style="color: #74747c">*/</span>
+(<span style="color: #d73948">void</span>)e;
+
+<span style="color: #4b69c6">PROVEN_RING_DESTROY</span>(<span style="color: #d73948">&amp;</span>q);</code></pre><h2 id="4-해시-맵">4. 해시 맵<a class="anchor" href="#4-해시-맵" aria-hidden="true">#</a></h2><p><code>proven_map_t</code>는 tombstone을 갖는 open-addressing 해시 맵이다. 정수 키와 빌려 쓰는(borrowed) 또는 소유(owned) U8 문자열 키를 지원한다. allocator를 내부에 저장한다.</p><h3 id="구조체-3">구조체<a class="anchor" href="#구조체-3" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef enum {
+    PROVEN_KEY_TYPE_INT,          /* keys are proven_size_t integers */
+    PROVEN_KEY_TYPE_U8_BORROWED,  /* keys are u8 views; caller keeps the bytes alive */
+    PROVEN_KEY_TYPE_U8_OWNED      /* keys are u8 views; the map copies and frees the bytes */
+} proven_key_type_t;
+
+typedef union {
+    proven_size_t id;             /* used when key_type == PROVEN_KEY_TYPE_INT */
+    proven_u8str_view_t str;      /* used for the two U8 key modes */
+} proven_map_key_t;
+
+typedef struct {
+    proven_allocator_t alloc;     /* allocator for the bucket array and owned keys */
+    proven_mem_mut_t internal;    /* the single contiguous bucket array (ptr + size) */
+    proven_size_t len;            /* live entries */
+    proven_size_t used;           /* live entries + tombstones (drives the load factor) */
+    proven_size_t cap;            /* number of buckets, always a power of two */
+    proven_size_t elem_size;      /* size of one stored value */
+    proven_size_t align;          /* alignment requested for the value */
+    proven_size_t bucket_stride;  /* bytes per bucket: align_up(header + elem_size) */
+    proven_size_t payload_offset; /* bytes from a bucket start to its value payload */
+    proven_key_type_t key_type;   /* key mode chosen at create time */
+} proven_map_t;
+
+typedef struct {
+    proven_err_t err;
+    proven_map_t value;
+} proven_result_map_t;</code></pre><h3 id="내부-동작-원리">내부 동작 원리<a class="anchor" href="#내부-동작-원리" aria-hidden="true">#</a></h3><p>맵은 <code>cap</code>개의 버킷으로 이루어진 단일 평면 배열이다 — 값에 대해 항목별 할당이 없다(그리고 INT/BORROWED 모드에서는 키에 대해서도 없다). 그래서 조회가 캐시 친화적으로 유지된다. 각 버킷은 다음과 같이 배치된다:</p><pre><code data-lang="txt">[ header: state + key ][ padding to the value's alignment ][ value payload ]
+^ bucket start                                              ^ payload_offset
+|&lt;------------------------- bucket_stride ------------------------------------>|</code></pre><p>헤더의 <code>state</code>는 <strong>EMPTY</strong>(한 번도 사용 안 함), <strong>OCCUPIED</strong>(살아 있는 키+값을 보유), <strong>TOMBSTONE</strong>(제거된 항목) 중 하나다. <code>payload_offset</code>과 <code>bucket_stride</code>는 생성 시점에 <code>elem_size</code>/<code>align</code>으로부터 한 번 계산되므로, 버킷 <code>i</code>의 값 주소는 그냥 <code>internal.ptr + i*bucket_stride + payload_offset</code>이다.</p><ul><li><strong>해싱, 그리고 기본값이 왜 안전한 쪽인가.</strong> 정수 키는 SplitMix/Murmur 스타일의 비트 혼합 finaliser를 거친다(그래서 순차 id가 버킷 전체에 퍼진다). <strong>문자열 키는 OS CSPRNG에서 한 번 뽑은 프로세스별 비밀 아래에서 keyed SipHash-2-4로 해싱된다</strong> — 왜냐하면 <em>신뢰할 수 없는</em> 키를 예측 가능한 함수로 해싱하는 맵은 터지기를 기다리는 서비스 거부(DoS)이기 때문이다: 키를 통제하는 공격자는 오프라인에서 충돌을 계산해 그 전부를 한 버킷에 몰아넣고, 모든 조회를 선형 스캔으로 바꾼다. 그들이 볼 수 없는 비밀로 해시를 키잉하는 것이 그것을 막으며, 이는 Python, Rust, Linux 커널이 자기네 테이블에 대해 내린 것과 같은 선택이다. 키가 전부 여러분 자신의 프로그램에서 온다면, <code>proven_map_create_trusted</code>가 빠른 unkeyed FNV-1a를 대신 선택한다. <code>proven_map_hash</code>는 주어진 맵이 실제로 어느 함수를 쓰는지 알려준다. (CSPRNG도 공격자 모델도 없는 프리스탠딩(freestanding) 타깃에서는 문자열 키가 FNV로 후퇴한다.)</li><li><strong>탐사(Probing).</strong> 선형 open addressing: 시작 버킷은 <code>hash &amp; (cap - 1)</code>이며(<code>cap</code>이 2의 거듭제곱이라 저렴하다), 그다음 검색은 한 번에 한 버킷씩 앞으로 걸어가며 감싸고, 키(같은 키를 가진 OCCUPIED)나 EMPTY 버킷(키가 없음을 증명함)을 찾을 때까지 계속한다. 선형 탐사는 걸어가는 버킷들을 메모리 상에서 연속되게 유지한다.</li><li><strong>제거와 tombstone.</strong> <code>proven_map_remove</code>는 버킷을 그냥 비울 수 없다 — 그러면 탐사 체인이 끊겨 나중 키들이 숨겨진다. 대신 버킷을 TOMBSTONE으로 표시한다. Tombstone은 조회에서 건너뛰어지지만 여전히 슬롯을 차지하므로, <code>len</code>이 아니라 <code>used</code>(살아 있는 것 + tombstone)가 성장을 견인한다.</li><li><strong>부하율(load factor)과 리사이즈.</strong> <code>used >= cap * 3/4</code>이 되면, 맵은 다음 2의 거듭제곱 크기의 새 버킷 배열을 할당하고 모든 OCCUPIED 항목을 그리로 <strong>재해싱</strong>하며, 그 과정에서 모든 tombstone을 버린다. 용량은 커지기만 하고, 결코 줄어들지 않는다. <code>proven_map_reserve</code>로 미리 예약하라(특히 아레나 allocator에서는, 뒤에 죽은 배열을 남기지 않기 위해).</li></ul><h3 id="키-모드--하나-고르기">키 모드 — 하나 고르기<a class="anchor" href="#키-모드--하나-고르기" aria-hidden="true">#</a></h3><ul><li><code>PROVEN_KEY_TYPE_INT</code>: 키는 <code>proven_size_t</code>다. 키 저장소 없음.</li><li><code>PROVEN_KEY_TYPE_U8_BORROWED</code>: 버킷이 <em>view</em>(포인터 + 길이)를 저장한다. <strong>맵은 바이트를 절대 복사하지 않으므로</strong>, 호출자는 항목이 존재하는 동안 내내 그 정확한 바이트를 살아 있고 옮겨지지 않은 채로 유지해야 한다. 이미 안정된 어딘가에 사는 키(문자열 리터럴, interned 문자열)에 가장 저렴하다.</li><li><code>PROVEN_KEY_TYPE_U8_OWNED</code>: 삽입 시(<code>proven_map_set_u8_owned</code> / <code>PROVEN_MAP_SET_U8_OWNED</code>) 맵이 키 바이트를 자기 저장소로 <strong>복제</strong>하고 remove/destroy 시 해제하므로, 호출 직후 원본 버퍼를 해제하거나 재사용해도 된다.</li></ul><h3 id="set_with_scratch--별칭alias-사례"><code>set_with_scratch</code> / 별칭(alias) 사례<a class="anchor" href="#set_with_scratch--별칭alias-사례" aria-hidden="true">#</a></h3><p><code>proven_map_set</code>에 넘기는 <code>element</code>가 *맵 자신의 버킷 배열 안*을 가리킨다면(예를 들어 <code>proven_map_get</code>이 반환한 포인터를 통해 한 키에서 다른 키로 값을 복사하는 경우), 바로 그 삽입이 유발하는 재해싱이 여러분이 읽고 있는 바이트를 옮기거나 해제할 수 있다. <code>proven_map_set_with_scratch</code>(그리고 <code>*_WITH_SCRATCH_*</code> 매크로)는 원본 바이트를 먼저 임시 작업용(scratch) allocator의 임시 버퍼로 담아두므로 삽입이 별칭 안전(alias-safe)해진다. 영구 저장소는 여전히 <code>map->alloc</code>을 쓴다. scratch allocator는 그 일시적 복사에만 쓰인다.</p><h3 id="함수-1">함수<a class="anchor" href="#함수-1" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>API</strong></td><td><strong>의도</strong></td><td><strong>반환</strong></td></tr><tr><td><code>proven_map_create(alloc, init_cap, key_type, elem_size, align)</code></td><td>맵을 만든다.</td><td><code>proven_result_map_t</code>.</td></tr><tr><td><code>proven_map_is_valid(map)</code></td><td>맵 불변식을 검증한다.</td><td><code>bool</code>.</td></tr><tr><td><code>proven_map_reserve(map, new_cap)</code></td><td>용량을 보장한다.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_map_set_with_scratch(map, key, element, scratch)</code></td><td>임시 별칭 안전 복사에 scratch를 써서 삽입/갱신한다.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_map_set(map, key, element)</code></td><td>삽입/갱신한다.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_map_set_u8_owned(map, key, element)</code></td><td>맵이 소유하는 U8 키 저장소로 삽입/갱신한다.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_map_get_mut(map, key)</code></td><td>가변 값을 조회한다.</td><td>포인터 또는 null.</td></tr><tr><td><code>proven_map_get(map, key)</code></td><td>const 값을 조회한다.</td><td>포인터 또는 null.</td></tr><tr><td><code>proven_map_remove(map, key)</code></td><td>키가 있으면 제거한다.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_map_destroy(map)</code></td><td>맵 저장소를 해제한다.</td><td>void.</td></tr></table></div><h3 id="매크로-1">매크로<a class="anchor" href="#매크로-1" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>매크로</strong></td><td><strong>의도</strong></td></tr><tr><td><code>proven_map_create_with_capacity(...)</code></td><td>용량 할당을 강조하는 별칭.</td></tr><tr><td><code>PROVEN_MAP_INIT_INT(alloc, type, init_cap)</code></td><td>정수 키 타입 맵을 만든다.</td></tr><tr><td><code>PROVEN_MAP_INIT_U8_BORROWED(alloc, type, init_cap)</code></td><td>borrowed 문자열 키 타입 맵을 만든다.</td></tr><tr><td><code>PROVEN_MAP_INIT_U8_OWNED(alloc, type, init_cap)</code></td><td>owned 문자열 키 타입 맵을 만든다.</td></tr><tr><td><code>PROVEN_MAP_SET_INT(map_ptr, int_key, type, value)</code></td><td>정수 키를 설정한다.</td></tr><tr><td><code>PROVEN_MAP_SET_WITH_SCRATCH_INT(map_ptr, int_key, type, value, scratch)</code></td><td>scratch allocator를 써서 정수 키를 설정한다.</td></tr><tr><td><code>PROVEN_MAP_SET_U8_BORROWED(map_ptr, u8_view, type, value)</code></td><td>borrowed U8 키를 설정한다.</td></tr><tr><td><code>PROVEN_MAP_SET_U8_OWNED(map_ptr, u8_view, type, value)</code></td><td>owned U8 키를 설정한다.</td></tr><tr><td><code>PROVEN_MAP_SET_WITH_SCRATCH_U8_BORROWED(map_ptr, u8_view, type, value, scratch)</code></td><td>scratch allocator를 써서 borrowed U8 키를 설정한다.</td></tr><tr><td><code>PROVEN_MAP_GET_INT(map_ptr, type, int_key)</code></td><td>정수 키로 const 값을 얻는다.</td></tr><tr><td><code>PROVEN_MAP_GET_U8_BORROWED(map_ptr, type, u8_view)</code></td><td>borrowed U8 키로 const 값을 얻는다.</td></tr><tr><td><code>PROVEN_MAP_GET_U8_OWNED(map_ptr, type, u8_view)</code></td><td>owned U8 키로 const 값을 얻는다.</td></tr><tr><td><code>PROVEN_MAP_GET_MUT_INT(map_ptr, type, int_key)</code></td><td>정수 키로 가변 값을 얻는다.</td></tr><tr><td><code>PROVEN_MAP_GET_MUT_U8_BORROWED(map_ptr, type, u8_view)</code></td><td>borrowed U8 키로 가변 값을 얻는다.</td></tr><tr><td><code>PROVEN_MAP_GET_MUT_U8_OWNED(map_ptr, type, u8_view)</code></td><td>owned U8 키로 가변 값을 얻는다.</td></tr><tr><td><code>PROVEN_MAP_REMOVE_INT(map_ptr, int_key)</code></td><td>정수 키를 제거한다.</td></tr><tr><td><code>PROVEN_MAP_REMOVE_U8_BORROWED(map_ptr, u8_view)</code></td><td>U8 키를 제거한다.</td></tr><tr><td><code>PROVEN_MAP_REMOVE_U8_OWNED(map_ptr, u8_view)</code></td><td>owned U8 키를 제거한다.</td></tr><tr><td><code>PROVEN_MAP_DESTROY(map_ptr)</code></td><td>맵을 파괴한다.</td></tr></table></div><p>owned 키 경로:</p><p><code>PROVEN_KEY_TYPE_U8_OWNED</code>는 키 바이트의 복제본을 맵 내부에 저장한다. 원본 버퍼가 삽입 후 옮겨지거나 해제될 수 있을 때 사용하라. owned 바이트는 remove와 destroy 시 해제되며, 재해싱 동안 항목과 함께 이동한다.</p><p><code>PROVEN_HARDENED</code>와 디버그 검증은 맵 자신의 내부 저장소 안에 들어가는 일부 borrowed 키 포인터를 거부할 수 있다. 그 검사는 방어적일 뿐이며, borrowed 키를 자기 소유(self-owning)로 만들지는 않는다.</p><p>예제:</p><pre><code data-lang="c"><span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> UserInfo {
+    <span style="color: #d73948">int</span> level;
+    <span style="color: #d73948">double</span> budget;
+} <span style="color: #4b69c6">UserInfo</span>;
+
+proven_result_map_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_INIT_INT</span>(alloc, UserInfo, <span style="color: #b60157">8</span>);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+    <span style="color: #d73948">return</span>;
+}
+proven_map_t users <span style="color: #d73948">=</span> r.value;
+
+UserInfo u <span style="color: #d73948">=</span> { .level <span style="color: #d73948">=</span> <span style="color: #b60157">3</span>, .budget <span style="color: #d73948">=</span> <span style="color: #b60157">99</span><span style="color: #b60157">.</span><span style="color: #b60157">0</span> };
+(<span style="color: #d73948">void</span>)<span style="color: #4b69c6">PROVEN_MAP_SET_INT</span>(<span style="color: #d73948">&amp;</span>users, <span style="color: #b60157">404</span>, UserInfo, u);
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> GET returns a pointer into the bucket array, or NULL when absent. Any insert</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> that rehashes invalidates it: look it up, use it, drop it. </span><span style="color: #74747c">*/</span>
+<span style="color: #d73948">const</span> UserInfo <span style="color: #d73948">*</span>found <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_GET_INT</span>(<span style="color: #d73948">&amp;</span>users, UserInfo, <span style="color: #b60157">404</span>);
+<span style="color: #d73948">if</span> (found) {
+    <span style="color: #4b69c6">proven_println</span>(<span style="color: #198810">"</span><span style="color: #198810">level={}</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">PROVEN_ARG</span>(found->level));
+}
+
+<span style="color: #4b69c6">PROVEN_MAP_DESTROY</span>(<span style="color: #d73948">&amp;</span>users);</code></pre><h2 id="5-알고리즘">5. 알고리즘<a class="anchor" href="#5-알고리즘" aria-hidden="true">#</a></h2><p>배열 알고리즘은 <code>proven_array_t</code>와 비교 콜백에 대해 동작한다.</p><h3 id="비교-함수">비교 함수<a class="anchor" href="#비교-함수" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef int (*proven_compare_fn_t)(const void *a, const void *b);</code></pre><p><code>a &lt; b</code>이면 음수, 같으면 0, <code>a > b</code>이면 양수를 반환한다.</p><h3 id="함수-2">함수<a class="anchor" href="#함수-2" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>API</strong></td><td><strong>의도</strong></td><td><strong>반환</strong></td></tr><tr><td><code>proven_array_sort(arr, cmp)</code></td><td>배열을 제자리(in place) 정렬한다.</td><td>void.</td></tr><tr><td><code>proven_array_binary_search(arr, key, cmp)</code></td><td>정렬된 배열을 검색한다.</td><td>원소 포인터 또는 null.</td></tr><tr><td><code>proven_array_linear_search(arr, key, cmp)</code></td><td>임의의 배열을 스캔하며 검색한다.</td><td>원소 포인터 또는 null.</td></tr></table></div><p><code>proven_array_sort</code>는 introsort다: Bentley-McIlroy 3방향 분할, 작은 범위에 대한 insertion-sort 컷오프, 그리고 재귀가 <code>2*log2(n)</code> 레벨을 넘으면 쓰이는 heapsort fallback으로 이루어진다.</p><p>명시할 만한 성질이 둘 있다. 실제로 발목을 잡는 것들이기 때문이다:</p><ul><li><strong>O(n log n)은 전형적인 경우가 아니라 보장이다.</strong> heapsort fallback이 그것을 보장으로 만든다. 적대적 순서로 최악의 경우에 도달할 수 있는 정렬은, 자기가 작성하지 않은 데이터를 정렬하는 어떤 프로그램에서도 서비스 거부다.</li><li><strong>중복 키는 느린 경우가 아니라 빠른 경우다.</strong> 피벗과 같은 원소들은 최종적이며 결코 재귀되지 않는 런(run)으로 모이므로, 전부-같은 입력은 한 번의 패스로 끝난다. 이것이 중요한 이유는 저기수성(low-cardinality) 키 — 상태 열, enum, 버킷 id — 가 실제로 호출자들이 정렬 기준으로 삼는 것이고, 그것들이 바로 순진한 2방향 분할이 퇴화하는 대상이기 때문이다.</li></ul><p>정렬은 안정(stable)하지 않다: 같은 원소들은 재배열될 수 있다.</p><p>비교자는 평범한 파일 스코프 함수이므로, 형태는 이렇다:</p><pre><code data-lang="text">static int cmp_int(const void *a, const void *b) {
+    int x = *(const int *)a;
+    int y = *(const int *)b;
+    return (x > y) - (x &lt; y);   /* not (x - y): that overflows */
+}
+
+proven_array_sort(&amp;nums, cmp_int);
+int key = 20;
+int *hit = proven_array_binary_search(&amp;nums, &amp;key, cmp_int);</code></pre><p>이 장 끝의 완성 예제(<code>manual/examples/ex_04_array.c</code>)가 바로 이것을 컴파일하고 실행한 버전이다.</p><h2 id="6-용도별-해싱">6. 용도별 해싱<a class="anchor" href="#6-용도별-해싱" aria-hidden="true">#</a></h2><p>단 하나의 "해시"란 없다. 어느 함수가 올바른지는 그 결과로 무엇을 하려는지에 전적으로 달려 있으며, 잘못된 것을 집으면 쓸데없이 느린 프로그램이나 조용히 안전하지 않은 프로그램을 얻는다. <code>proven/hash.h</code>는 작업당 정확히 하나의 primitive를 제공하므로, 작업 이름을 대는 순간 선택이 끝난다:</p><div class="tblwrap"><table><tr><td><strong>여러분이…</strong></td><td><strong>사용</strong></td><td><strong>그리고 결정적으로</strong></td></tr><tr><td><strong>여러분 자신의</strong> 테이블에 키를 해싱, <strong>신뢰된</strong> 입력</td><td><code>proven_hash_bytes</code> (FNV-1a)</td><td>빠르다; 여기서 crypto 해시는 이득 없이 ~50배 느리다</td></tr><tr><td><strong>신뢰할 수 없는</strong> 입력의 키를 테이블에 해싱</td><td><code>proven_hash_keyed</code> (SipHash-2-4)</td><td>FNV는 공격자가 모든 키를 한 버킷에 충돌시켜 O(1) 테이블을 O(n²)로 바꾸게 한다</td></tr><tr><td>데이터가 전송/디스크에서 <strong>손상</strong>되지 않았는지 확인</td><td><code>proven_crc32</code></td><td>체크섬; gzip/zlib/PNG와 상호운용된다</td></tr><tr><td>콘텐츠 <strong>지문 채취</strong>: 중복 제거, 콘텐츠 주소 지정, "같은 파일?"</td><td><code>proven_sha256</code></td><td><em>고의로</em> 위조된 일치에 대해 안전한 유일한 것</td></tr></table></div><p>기억할 한 줄: <strong>CRC-32와 FNV는 사고를 탐지하지 공격을 탐지하지 않는다.</strong> 누군가 여러분을 속여서 이득을 볼 수 있을 때 두 가지가 "같은지"를 결정하는 데 이것들을 쓰지 말라 — 그것이 <code>proven_sha256</code>이 있는 이유다. 그리고 keyed 해시는 키가 진짜 무작위성에서 한 번 고른 진짜 비밀일 때에만 안전하다; 고정 키는 키가 아닌 것이나 마찬가지다.</p><p>모든 함수는 바이트 단위로 정확하며 엔디안에 독립적이다: 같은 입력은 어떤 타깃에서든 같은 출력을 준다. 왜냐하면 기계에 따라 바뀌는 지문은 콘텐츠의 지문이 아니라 기계의 지문일 것이기 때문이다. 넷 모두 로열티 없는 알고리즘이며(FNV, CRC-32: public domain; SipHash: CC0; SHA-256: FIPS 180-4, 특허 없음), 각 명세로부터 구현되었고 각각의 공식 알려진 답(known-answer) 벡터에 대해 검증되었다.</p><h3 id="참조">참조<a class="anchor" href="#참조" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>API</strong></td><td><strong>의도</strong></td><td><strong>반환</strong></td></tr><tr><td><code>proven_hash_bytes(view)</code></td><td>FNV-1a 64. 여러분이 직접 고른 키를 위한 해시 테이블 해시.</td><td><code>proven_u64</code>.</td></tr><tr><td><code>proven_hash_keyed(view, key[16])</code></td><td>16바이트 비밀 아래의 SipHash-2-4. 같은 작업이되, 공격자가 공급하는 키를 위한 것.</td><td><code>proven_u64</code>.</td></tr><tr><td><code>proven_crc32(view)</code></td><td>한 번에 하는 CRC-32(IEEE, reflected) — gzip/zlib/PNG가 지니는 그것.</td><td><code>proven_u32</code>.</td></tr><tr><td><code>proven_crc32_update(crc, view)</code></td><td>청크 스트림에 대한 같은 CRC. <code>0</code>에서 시작하라; 호출 사이에 여러분이 쥐고 있는 값이 진짜 CRC이므로, 저장하고, 기록하고, 재개할 수 있다.</td><td><code>proven_u32</code>.</td></tr><tr><td><code>proven_sha256(view, out[32])</code></td><td>한 번에 하는 SHA-256.</td><td>void; <code>PROVEN_SHA256_SIZE</code> 바이트를 쓴다.</td></tr><tr><td><code>proven_sha256_init/_update/_final</code></td><td>한 번에 메모리에 담을 수 없는 콘텐츠에 대한 같은 다이제스트. 다이제스트는 오직 바이트에만 의존하며, 어떻게 청크되었는지에는 결코 의존하지 않는다.</td><td>void.</td></tr><tr><td><code>proven_sha256_to_hex(digest, out[65])</code></td><td><code>sha256sum</code>과 <code>git</code>이 출력하는 64자 소문자 표기. NUL 종료.</td><td>void.</td></tr></table></div><p>여러분이 쥐는 유일한 구조체:</p><pre><code data-lang="text">typedef struct {
+    /* Opaque. A running SHA-256: the 8-word chain value, a 64-byte block being
+       filled, and the message length. Declare one, init it, update it, finalise it. */
+} proven_sha256_t;
+
+#define PROVEN_SHA256_SIZE 32   /* the digest; size your output buffer with this */</code></pre><p><code>proven_sha256_t</code>는 아무것도 할당하지 않는다 — <a href="index.html#42-caller-owned-state--destroy-없음-복사-금지">호출자 소유 상태</a>이므로 파괴할 것이 없다.</p><h3 id="주의사항-그리고-무엇이-잘못되는가">주의사항, 그리고 무엇이 잘못되는가<a class="anchor" href="#주의사항-그리고-무엇이-잘못되는가" aria-hidden="true">#</a></h3><p><strong>고정 키를 가진 keyed 해시는 keyed 해시가 아니다.</strong> <code>proven_hash_keyed</code>의 보안은 전적으로 키가 진짜 무작위성에서 한 번 뽑은 비밀이라는 데 달려 있다. 이것이 <code>proven_map_create</code>가 그것을 대신 해주는 이유이자, 테이블을 위해 여러분이 직접 <code>proven_hash_keyed</code>를 호출하는 일이 거의 없어야 하는 이유다.</p><p>잘못된 예:</p><pre><code data-lang="text">proven_byte_t key[16] = { 0 };            /* wrong: a "secret" everyone knows */
+proven_u64 h = proven_hash_keyed(user_input, key);</code></pre><pre><code data-lang="text">proven_byte_t key[16];
+memcpy(key, &amp;timestamp, sizeof timestamp); /* wrong: guessable, and mostly zero */</code></pre><p>올바른 예 — 시작 시점에 OS에서 한 번 뽑아라:</p><pre><code data-lang="c">proven_byte_t key[<span style="color: #b60157">16</span>];
+<span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_random_bytes</span>(key, <span style="color: #d73948">sizeof</span> key)) {
+    proven_u64 h <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_hash_keyed</span>(
+        <span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">session-token</span><span style="color: #198810">"</span>)), key);
+    (<span style="color: #d73948">void</span>)h;
+}</code></pre><p><strong>두 가지가 "같다"고 결정하는 데 CRC-32나 FNV를 쓰지 말라</strong> — 누군가 여러분을 속여서 이득을 볼 수 있을 때는. 둘 다 사소하게 위조할 수 있다: 같은 CRC-32를 갖는 두 번째 입력을 만드는 것은 교과서 수준의 산수다.</p><p>잘못된 예 — 공격자가 오염시킬 수 있는 콘텐츠 주소 지정 저장소:</p><pre><code data-lang="text">if (proven_crc32(incoming) == stored_crc) {
+    accept_as_identical(incoming);   /* wrong: a forged collision costs seconds */
+}</code></pre><p>올바른 예 — 속일 수 없어야 하는 지문은 <code>proven_sha256</code>이며, 32바이트 전체에 걸쳐 비교한다.</p><p><strong><code>PROVEN_SHA256_SIZE</code>가 아닌 다이제스트 버퍼는 버퍼 오버플로다.</strong> <code>proven_sha256</code>은 정확히 32바이트를 쓰며, 여러분의 배열이 얼마나 큰지 알지 못한다.</p><pre><code data-lang="text">proven_byte_t digest[16];        /* wrong: SHA-256 is 32 bytes */
+proven_sha256(data, digest);     /* writes 32 into a 16-byte buffer */</code></pre><p>테스트 스위트가 컴파일하고 실행한다:</p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Hashing, by use case. The module gives you exactly one function per job, so the only</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> decision is which job you have - and getting THAT wrong is the whole danger.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    proven_mem_view_t data <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">the quick brown fox</span><span style="color: #198810">"</span>));
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Job 1: hash a key into your own table, trusted input. Fast, non-cryptographic. </span><span style="color: #74747c">*/</span>
+    proven_u64 table_hash <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_hash_bytes</span>(data);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(table_hash <span style="color: #d73948">!=</span> <span style="color: #b60157">0</span>, <span style="color: #198810">"</span><span style="color: #198810">FNV-1a produces a spread-out 64-bit value</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Job 2: hash a key from UNTRUSTED input. Same purpose, but an attacker who picks the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> input still cannot make everything collide, because they do not have the key. Pick</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> the key once at startup from real randomness; a fixed key defeats the point. </span><span style="color: #74747c">*/</span>
+    proven_byte_t key[<span style="color: #b60157">16</span>] <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };   <span style="color: #74747c">/*</span><span style="color: #74747c"> in real code: fill from a random source, once </span><span style="color: #74747c">*/</span>
+    proven_u64 safe_hash <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_hash_keyed</span>(data, key);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(safe_hash <span style="color: #d73948">!=</span> table_hash, <span style="color: #198810">"</span><span style="color: #198810">a keyed hash is a different function</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Job 3: did these bytes get corrupted? A checksum, not a hash. Interoperates with</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> gzip/zlib/PNG, which all carry this exact CRC-32. </span><span style="color: #74747c">*/</span>
+    proven_u32 checksum <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_crc32</span>(data);
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The canonical CRC-32 sanity value, so you can see it is the real one: </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_crc32</span>(<span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">123456789</span><span style="color: #198810">"</span>))) <span style="color: #d73948">==</span> <span style="color: #b60157">0x</span><span style="color: #b60157">cbf43926</span><span style="color: #d73948">u</span>,
+                    <span style="color: #198810">"</span><span style="color: #198810">CRC-32 of </span><span style="color: #1d6c76">\"</span><span style="color: #198810">123456789</span><span style="color: #1d6c76">\"</span><span style="color: #198810"> is the shared check value</span><span style="color: #198810">"</span>);
+    (<span style="color: #d73948">void</span>)checksum;
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Job 4: fingerprint content - dedup, content-addressing, "are these the same file",</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> answered safely even against someone trying to forge a match. This is the one you</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> reach for when the answer must not be foolable. </span><span style="color: #74747c">*/</span>
+    proven_byte_t digest[PROVEN_SHA256_SIZE];
+    <span style="color: #4b69c6">proven_sha256</span>(data, digest);
+
+    <span style="color: #d73948">char</span> hex[<span style="color: #b60157">65</span>];
+    <span style="color: #4b69c6">proven_sha256_to_hex</span>(digest, hex);
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The same spelling sha256sum and git print, so it interoperates: </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(hex[<span style="color: #b60157">64</span>] <span style="color: #d73948">==</span> <span style="color: #198810">'</span><span style="color: #1d6c76">\0</span><span style="color: #198810">'</span> <span style="color: #d73948">&amp;&amp;</span> <span style="color: #4b69c6">proven_cstr_len</span>(hex) <span style="color: #d73948">==</span> <span style="color: #b60157">64</span>,
+                    <span style="color: #198810">"</span><span style="color: #198810">a SHA-256 fingerprint is 64 lowercase hex characters</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> SHA-256 streams, for content you cannot hold in memory at once - the digest depends</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> only on the bytes, never on how they were chunked. </span><span style="color: #74747c">*/</span>
+    proven_sha256_t ctx;
+    <span style="color: #4b69c6">proven_sha256_init</span>(<span style="color: #d73948">&amp;</span>ctx);
+    <span style="color: #4b69c6">proven_sha256_update</span>(<span style="color: #d73948">&amp;</span>ctx, <span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">the quick </span><span style="color: #198810">"</span>)));
+    <span style="color: #4b69c6">proven_sha256_update</span>(<span style="color: #d73948">&amp;</span>ctx, <span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">brown fox</span><span style="color: #198810">"</span>)));
+    proven_byte_t streamed[PROVEN_SHA256_SIZE];
+    <span style="color: #4b69c6">proven_sha256_final</span>(<span style="color: #d73948">&amp;</span>ctx, streamed);
+
+    <span style="color: #d73948">bool</span> same <span style="color: #d73948">=</span> <span style="color: #d73948">true</span>;
+    <span style="color: #d73948">for</span> (proven_size_t i <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>; i <span style="color: #d73948">&lt;</span> PROVEN_SHA256_SIZE; <span style="color: #d73948">++</span>i) {
+        <span style="color: #d73948">if</span> (streamed[i] <span style="color: #d73948">!=</span> digest[i]) same <span style="color: #d73948">=</span> <span style="color: #d73948">false</span>;
+    }
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(same, <span style="color: #198810">"</span><span style="color: #198810">two updates of the halves equal one hash of the whole</span><span style="color: #198810">"</span>);
+
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><h2 id="7-바이트를-텍스트로-hex와-base64">7. 바이트를 텍스트로: hex와 Base64<a class="anchor" href="#7-바이트를-텍스트로-hex와-base64" aria-hidden="true">#</a></h2><p>일단 어떤 것을 해싱할 수 있고(위) 무작위 토큰을 뽑을 수 있으면(<code>random.h</code>), 그 바이트를 텍스트만 담는 곳 — URL, HTTP 헤더, 로그 줄, JSON 문자열 — 에 써야 한다. 그것이 <code>encode.h</code>다. 암호도, 압축도 없다; 이미 모두가 합의한 두 인코딩을, 숨은 할당 없이, 그리고 보통 잘못되는 두 가지 방식 없이 해낸다.</p><div class="tblwrap"><table><tr><td><strong>원하는 것</strong></td><td><strong>사용</strong></td><td><strong>알파벳</strong></td></tr><tr><td>사람이 읽는 다이제스트나 몇 바이트</td><td><code>proven_hex_encode</code></td><td>소문자 hex, <code>sha256sum</code>과 <code>git</code>이 출력하는 것</td></tr><tr><td>URL, 쿠키, 파일명 안의 바이트</td><td><code>proven_base64url_encode</code></td><td><code>-</code> <code>_</code>, 패딩 <strong>없음</strong> — 이스케이프할 것도, 망가뜨릴 <code>=</code>도 없음</td></tr><tr><td>HTTP 헤더, MIME, JSON 안의 바이트</td><td><code>proven_base64_encode</code></td><td>표준 <code>+</code> <code>/</code>, <code>=</code> 패딩</td></tr></table></div><p>핵심은 두 가지 거부다:</p><ul><li><strong>디코더는 한 바이트를 쓰기 전에 입력 전체를 검증한다.</strong> 프로그램 바깥에서 온 텍스트는 유효하다고 보장되지 않는다; 엉뚱한 문자, 잘못된 길이, 잘못된 패딩, 끼어든 공백은 아무것도 커밋하지 않은 채 <code>PROVEN_ERR_INVALID_ENCODING</code>이다 — 끝을 넘어선 읽기도 아니고, 호출자가 한 바이트 들어가서 손상을 발견하게 되는 조용히 짧은 결과도 아니다. <code>proven_base64_decode</code>는 알파벳 <strong>둘 다</strong>와 패딩 있음/없음을 받아들인다. 자기가 방출하는 것만 받는 디코더는 세상의 Base64의 절반을 거부하기 때문이다.</li><li><strong>출력 크기는 추측이 아니라 호출이다</strong> — <code>proven_hex_encoded_size</code>, <code>proven_base64_encoded_size</code>, 그리고 그들의 디코드 짝. 한 바이트 모자란 버퍼는 아무것도 쓰지 않은 채 <code>PROVEN_ERR_OUT_OF_BOUNDS</code>이며, 결코 잘린 접두사가 아니다.</li></ul><p>이것은 순수 계산이다 — 할당도, OS도 없다 — 그리고 freestanding에서 이용 가능하다.</p><h3 id="참조-1">참조<a class="anchor" href="#참조-1" aria-hidden="true">#</a></h3><p>모든 호출은 입력, 호출자 소유 출력 버퍼와 그 용량, 그리고 선택적 <code>written_out</code>을 받는다. 그 어느 것도 할당하지 않는다.</p><div class="tblwrap"><table><tr><td><strong>API</strong></td><td><strong>의도</strong></td><td><strong>반환</strong></td></tr><tr><td><code>proven_hex_encoded_size(n)</code></td><td><code>n</code> 바이트에 대해 <code>proven_hex_encode</code>가 쓸 문자 수: <code>n * 2</code>, NUL 없음.</td><td><code>proven_size_t</code>.</td></tr><tr><td><code>proven_hex_decoded_size(n)</code></td><td><code>n</code> 문자에 대해 <code>proven_hex_decode</code>가 쓸 바이트 수: <code>n / 2</code>.</td><td><code>proven_size_t</code>.</td></tr><tr><td><code>proven_hex_encode(data, out, cap, &amp;w)</code></td><td>소문자 hex.</td><td><code>PROVEN_OK</code>; <code>cap</code>이 모자라면 <code>OUT_OF_BOUNDS</code>(<strong>아무것도 쓰지 않음</strong>); NULL out이나 <code>{NULL, >0}</code> view에는 <code>INVALID_ARG</code>.</td></tr><tr><td><code>proven_hex_decode(text, out, cap, &amp;w)</code></td><td>hex를 디코드; 대문자와 소문자 둘 다 허용.</td><td>홀수 길이나 hex가 아닌 바이트에는 <code>INVALID_ENCODING</code>(<strong>아무것도 커밋하지 않음</strong>).</td></tr><tr><td><code>proven_base64_encoded_size(n)</code></td><td>두 Base64 형식 모두에 대한 상한: <code>4 * ceil(n/3)</code>.</td><td><code>proven_size_t</code>.</td></tr><tr><td><code>proven_base64_decoded_size(n)</code></td><td><strong>패딩 있는 것과 없는</strong> 텍스트에 대한 상한: <code>3 * ceil(n/4)</code>.</td><td><code>proven_size_t</code>.</td></tr><tr><td><code>proven_base64_encode(data, out, cap, &amp;w)</code></td><td>표준 알파벳(<code>+</code> <code>/</code>), <code>=</code> 패딩.</td><td>위와 같음.</td></tr><tr><td><code>proven_base64url_encode(data, out, cap, &amp;w)</code></td><td>URL-안전 알파벳(<code>-</code> <code>_</code>), 패딩 <strong>없음</strong>.</td><td>위와 같음.</td></tr><tr><td><code>proven_base64_decode(text, out, cap, &amp;w)</code></td><td>디코드. 알파벳 <strong>둘 다</strong>, 패딩 있음/없음을 받아들인다.</td><td>엉뚱한 바이트, 잘못된 길이, 잘못된 패딩에는 <code>INVALID_ENCODING</code>.</td></tr></table></div><p><code>written_out</code>은 NULL이어도 된다. 진입 시와 모든 오류 경로에서 <code>0</code>으로 설정되므로, 결코 낡은 값이 아니다.</p><h3 id="주의사항-그리고-무엇이-잘못되는가-1">주의사항, 그리고 무엇이 잘못되는가<a class="anchor" href="#주의사항-그리고-무엇이-잘못되는가-1" aria-hidden="true">#</a></h3><p><strong>출력 크기는 눈대중이 아니라 크기 함수로 잡아라.</strong> 인코더는 잘라내는 대신 모자란 버퍼를 거부한다 — 즉 손으로 계산한 크기에서 얻는 실패는 조용한 손상이 아니라 여러분이 처리해야 하는 오류다. 그것이 좋은 결과다; 요점은 여러분이 여전히 그것을 처리해야 한다는 것이다.</p><p>잘못된 예 — 고전적인 하나 차이(off-by-one) 실수이며, 이제 오버플로 대신 *실패*한다:</p><pre><code data-lang="text">proven_byte_t out[16];                       /* wrong: 12 bytes of hex needs 24 chars */
+proven_hex_encode(twelve_bytes, out, sizeof out, &amp;w);   /* OUT_OF_BOUNDS, nothing written */</code></pre><p>올바른 예:</p><pre><code data-lang="c">proven_mem_view_t data <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">twelve bytes</span><span style="color: #198810">"</span>));
+proven_byte_t out[<span style="color: #b60157">64</span>];
+proven_size_t w <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+<span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_hex_encoded_size</span>(data.size) <span style="color: #d73948">&lt;=</span> <span style="color: #d73948">sizeof</span> out <span style="color: #d73948">&amp;&amp;</span>
+    <span style="color: #4b69c6">proven_is_ok</span>(<span style="color: #4b69c6">proven_hex_encode</span>(data, out, <span style="color: #d73948">sizeof</span> out, <span style="color: #d73948">&amp;</span>w))) {
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> `w` characters of lowercase hex in `out` - not NUL-terminated </span><span style="color: #74747c">*/</span>
+}</code></pre><p><strong>Base64URL은 패딩을 방출하지 않으며, 디코더는 그것을 받아들인다.</strong> <code>proven_base64_decoded_size</code>는 *올림*하므로 패딩 없는 텍스트에 대해서도 올바른 상한이다. 그것을 <code>3 * (n / 4)</code>로 "개선"하지 말라 — 그것은 패딩 없는 꼬리가 실어 나르는 1~2바이트를 버림하며, 여러분은 이 라이브러리 자신의 URL-안전 출력을 디코드하는 데 실패할 것이다. (실제로 한 번 그런 일이 있었고, 감사(audit)가 그것을 잡아냈다.)</p><pre><code data-lang="text">proven_size_t cap = 3 * (text_len / 4);   /* wrong: 0 for "QQ", which decodes to 1 byte */</code></pre><p><strong>디코더를 직접 손으로 만들지 말라.</strong> 이것들이 존재하는 이유는 바로, 디코드가 여러분의 프로그램 바깥에서 텍스트를 읽고, 모두가 작성하는 두 줄짜리 루프가 그것을 신뢰하기 때문이다.</p><p>잘못된 예 — 홀수 입력에서 끝을 넘어 읽고, 쓰레기를 데이터로 받아들인다:</p><pre><code data-lang="text">for (size_t i = 0; i &lt; len; i += 2)               /* wrong: no length check */
+    out[i/2] = (hexval(text[i]) &lt;&lt; 4) | hexval(text[i+1]);   /* wrong: no validation */</code></pre><p><code>proven_hex_decode</code>는 한 바이트를 쓰기 전에 입력 <strong>전체</strong>를 검증하므로, 끝 근처의 엉뚱한 문자 하나가 여러분이 완전하다고 믿는 절반만 디코드된 접두사를 쥐게 만들 수 없다.</p><p><strong>공백은 일부러 건너뛰지 않는다.</strong> 붙여넣은, 줄바꿈된 Base64 덩어리는 <code>INVALID_ENCODING</code>이지 조용히 다른 결과가 아니다. 줄바꿈된 입력을 <em>받아들이고</em> 싶다면, 공백을 직접 제거하라 — 의도적으로, 여러분이 볼 수 있는 곳에서.</p><p><strong>목적지 크기는 손으로 짐작하지 말고 크기 함수로 구한다.</strong> 인코딩마다 짝이 하나씩 있고 — <code>proven_hex_encoded_size()</code> / <code>proven_hex_decoded_size()</code>, 그리고 <code>proven_base64_encoded_size()</code> / <code>proven_base64_decoded_size()</code> — 둘이 약속하는 것이 다르다.</p><div class="tblwrap"><table><tr><td><strong>방향</strong></td><td><strong>그 수의 의미</strong></td><td><strong>쓰는 법</strong></td></tr><tr><td>인코딩</td><td>hex와 표준 Base64에서는 <strong>정확한 값</strong>. Base64URL은 패딩을 빼므로 결과가 더 짧을 수 있으나, 이 값은 여전히 안전한 상한이다.</td><td>이만큼 할당한다. 호출이 실제로 쓴 양을 알려 준다.</td></tr><tr><td>디코딩</td><td><strong>상한</strong>이다. 패딩과 쓰인 알파벳은 텍스트를 읽기 전에는 알 수 없다.</td><td>상한만큼 할당한 뒤, 길이로는 상한이 아니라 보고된 개수를 쓴다.</td></tr></table></div><p>아래 예제는 그것으로 끝맺는다. <code>proven_base64_encoded_size()</code>로 크기를 잡아 목적지를 할당하고, 거기에 인코딩하고, <code>proven_base64_decoded_size()</code>로 역방향 버퍼 크기를 잡아 디코딩하고, 같은 바이트를 <code>proven_hex_decode()</code>로도 왕복시킨다 — 실제 도구들이 내놓는 대문자 입력과, 온전한 바이트 수가 될 수 없는 홀수 길이 입력까지 포함해서다.</p><p>테스트 스위트가 컴파일하고 실행한다:</p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Bytes to text, by use case. The rule is the same one hashing follows: one function per job,</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> and the danger is picking the wrong job. Hex for something a human reads; Base64URL for</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> something that goes in a URL; standard Base64 for something that goes on the wire.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    proven_mem_view_t data <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">the quick brown fox</span><span style="color: #198810">"</span>));
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Job 1: a digest a human will read or paste - hex, the spelling sha256sum and git use. </span><span style="color: #74747c">*/</span>
+    proven_byte_t hex[<span style="color: #b60157">64</span>];   <span style="color: #74747c">/*</span><span style="color: #74747c"> proven_hex_encoded_size(19) = 38 </span><span style="color: #74747c">*/</span>
+    proven_size_t hn <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(<span style="color: #4b69c6">proven_hex_encode</span>(data, hex, <span style="color: #d73948">sizeof</span> hex, <span style="color: #d73948">&amp;</span>hn)),
+                    <span style="color: #198810">"</span><span style="color: #198810">hex encode into a buffer sized by proven_hex_encoded_size</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(hn <span style="color: #d73948">==</span> <span style="color: #4b69c6">proven_hex_encoded_size</span>(data.size), <span style="color: #198810">"</span><span style="color: #198810">two hex chars per byte</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Job 2: a token that goes in a URL - Base64URL, so nothing needs percent-escaping and</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> there is no '=' padding for a parser to trip over. </span><span style="color: #74747c">*/</span>
+    proven_byte_t token_bytes[<span style="color: #b60157">16</span>] <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };   <span style="color: #74747c">/*</span><span style="color: #74747c"> in real code: proven_random_bytes(token_bytes, 16) </span><span style="color: #74747c">*/</span>
+    proven_byte_t url[<span style="color: #b60157">32</span>];
+    proven_size_t un <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(<span style="color: #4b69c6">proven_base64url_encode</span>(
+                        (proven_mem_view_t){ token_bytes, <span style="color: #d73948">sizeof</span> token_bytes }, url, <span style="color: #d73948">sizeof</span> url, <span style="color: #d73948">&amp;</span>un)),
+                    <span style="color: #198810">"</span><span style="color: #198810">base64url encode a token</span><span style="color: #198810">"</span>);
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> No '=' in a URL-safe token. </span><span style="color: #74747c">*/</span>
+    <span style="color: #d73948">bool</span> has_pad <span style="color: #d73948">=</span> <span style="color: #d73948">false</span>;
+    <span style="color: #d73948">for</span> (proven_size_t i <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>; i <span style="color: #d73948">&lt;</span> un; <span style="color: #d73948">++</span>i) <span style="color: #d73948">if</span> (url[i] <span style="color: #d73948">==</span> <span style="color: #198810">'</span><span style="color: #198810">=</span><span style="color: #198810">'</span>) has_pad <span style="color: #d73948">=</span> <span style="color: #d73948">true</span>;
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #d73948">!</span>has_pad, <span style="color: #198810">"</span><span style="color: #198810">the URL form emits no padding</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Job 3: bytes on the wire - standard Base64, the +/= alphabet HTTP and MIME expect. </span><span style="color: #74747c">*/</span>
+    proven_byte_t b64[<span style="color: #b60157">64</span>];
+    proven_size_t bn <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(<span style="color: #4b69c6">proven_base64_encode</span>(data, b64, <span style="color: #d73948">sizeof</span> b64, <span style="color: #d73948">&amp;</span>bn)),
+                    <span style="color: #198810">"</span><span style="color: #198810">standard base64 encode</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> And it round-trips: decode gives back exactly the bytes. A decoder that accepts both</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> alphabets and padded-or-not is deliberate - real input comes in every shape. </span><span style="color: #74747c">*/</span>
+    proven_byte_t back[<span style="color: #b60157">32</span>];
+    proven_size_t dn <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(<span style="color: #4b69c6">proven_base64_decode</span>(
+                        (proven_mem_view_t){ b64, bn }, back, <span style="color: #d73948">sizeof</span> back, <span style="color: #d73948">&amp;</span>dn)),
+                    <span style="color: #198810">"</span><span style="color: #198810">decode the base64 back</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(dn <span style="color: #d73948">==</span> data.size <span style="color: #d73948">&amp;&amp;</span> <span style="color: #4b69c6">proven_memcmp</span>(back, data.ptr, dn) <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>,
+                    <span style="color: #198810">"</span><span style="color: #198810">what comes back is exactly what went in</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The point of a validating decoder: junk is refused, not guessed. A caller who fed this</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> to a two-line loop would read past the end or get a silently short result. </span><span style="color: #74747c">*/</span>
+    proven_err_t bad <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_base64_decode</span>(
+        <span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">not valid base64!!</span><span style="color: #198810">"</span>)), back, <span style="color: #d73948">sizeof</span> back, <span style="color: #d73948">&amp;</span>dn);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(bad <span style="color: #d73948">==</span> PROVEN_ERR_INVALID_ENCODING,
+                    <span style="color: #198810">"</span><span style="color: #198810">a stray character is INVALID_ENCODING, with nothing committed</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> And a buffer one byte too small is refused, never truncated. </span><span style="color: #74747c">*/</span>
+    proven_byte_t tiny[<span style="color: #b60157">4</span>];
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_hex_encode</span>(data, tiny, <span style="color: #d73948">sizeof</span> tiny, <span style="color: #d73948">&amp;</span>hn) <span style="color: #d73948">==</span> PROVEN_ERR_OUT_OF_BOUNDS,
+                    <span style="color: #198810">"</span><span style="color: #198810">a too-small output buffer is OUT_OF_BOUNDS, not a truncated prefix</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- sizing the destination buffer, instead of guessing ---------------- </span><span style="color: #74747c">*/</span>
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Every encode and decode above wrote into a fixed array that was obviously</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> big enough. Real code allocates the destination, and then the size has to</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> be computed rather than remembered. That is what the four size functions</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> are for - one per direction, per encoding. </span><span style="color: #74747c">*/</span>
+    proven_allocator_t alloc <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
+
+    proven_size_t need <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_base64_encoded_size</span>(data.size);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(need <span style="color: #d73948">></span> <span style="color: #b60157">0</span>, <span style="color: #198810">"</span><span style="color: #198810">an encoded size must be computed, not guessed</span><span style="color: #198810">"</span>);
+
+    proven_result_mem_mut_t out <span style="color: #d73948">=</span> alloc.<span style="color: #4b69c6">alloc_fn</span>(alloc.ctx, need, <span style="color: #b60157">1</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(out.err), <span style="color: #198810">"</span><span style="color: #198810">allocating exactly the encoded size must succeed</span><span style="color: #198810">"</span>);
+
+    proven_size_t wrote <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(<span style="color: #4b69c6">proven_base64_encode</span>(data, out.value.ptr, out.value.size, <span style="color: #d73948">&amp;</span>wrote)),
+                    <span style="color: #198810">"</span><span style="color: #198810">encoding into a buffer sized by the size function must fit exactly</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(wrote <span style="color: #d73948">==</span> need, <span style="color: #198810">"</span><span style="color: #198810">and use all of it: this size is exact for standard base64</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The decode direction is an UPPER BOUND, not an exact count: base64 text</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> may carry padding, so the decoder reports how many bytes it really wrote.</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> Size the buffer with the bound; use the reported count afterwards. </span><span style="color: #74747c">*/</span>
+    proven_size_t bound <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_base64_decoded_size</span>(wrote);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(bound <span style="color: #d73948">>=</span> data.size, <span style="color: #198810">"</span><span style="color: #198810">the decoded bound must cover the real output</span><span style="color: #198810">"</span>);
+
+    proven_result_mem_mut_t plain <span style="color: #d73948">=</span> alloc.<span style="color: #4b69c6">alloc_fn</span>(alloc.ctx, bound, <span style="color: #b60157">1</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(plain.err), <span style="color: #198810">"</span><span style="color: #198810">allocating the decode bound must succeed</span><span style="color: #198810">"</span>);
+
+    proven_size_t got <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(<span style="color: #4b69c6">proven_base64_decode</span>(
+                        (proven_mem_view_t){ out.value.ptr, wrote }, plain.value.ptr, plain.value.size, <span style="color: #d73948">&amp;</span>got)),
+                    <span style="color: #198810">"</span><span style="color: #198810">decoding back must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(got <span style="color: #d73948">==</span> data.size <span style="color: #d73948">&amp;&amp;</span> <span style="color: #4b69c6">proven_memcmp</span>(plain.value.ptr, data.ptr, got) <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>,
+                    <span style="color: #198810">"</span><span style="color: #198810">and reproduce the original bytes exactly</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Hex has the same pair. Its decoded bound is exact when the input length is</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> even, which valid hex always is - an odd length is malformed input, and</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> the decoder says so rather than dropping the last digit. </span><span style="color: #74747c">*/</span>
+    proven_size_t hex_len <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(<span style="color: #4b69c6">proven_hex_encode</span>(data, hex, <span style="color: #d73948">sizeof</span> hex, <span style="color: #d73948">&amp;</span>hex_len)),
+                    <span style="color: #198810">"</span><span style="color: #198810">re-encode to hex, since the refused call above left its count unusable</span><span style="color: #198810">"</span>);
+
+    proven_size_t hex_bound <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_hex_decoded_size</span>(hex_len);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(hex_bound <span style="color: #d73948">==</span> data.size, <span style="color: #198810">"</span><span style="color: #198810">two hex characters decode to one byte</span><span style="color: #198810">"</span>);
+
+    proven_byte_t from_hex[<span style="color: #b60157">32</span>];
+    proven_size_t hex_got <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(<span style="color: #4b69c6">proven_hex_decode</span>(
+                        (proven_mem_view_t){ hex, hex_len }, from_hex, <span style="color: #d73948">sizeof</span> from_hex, <span style="color: #d73948">&amp;</span>hex_got)),
+                    <span style="color: #198810">"</span><span style="color: #198810">hex decodes back to the original bytes</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(hex_got <span style="color: #d73948">==</span> data.size <span style="color: #d73948">&amp;&amp;</span> <span style="color: #4b69c6">proven_memcmp</span>(from_hex, data.ptr, hex_got) <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>,
+                    <span style="color: #198810">"</span><span style="color: #198810">and the round trip is exact</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Hex is case-insensitive on the way in, which matters because different</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> tools print different cases of the same digest. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(<span style="color: #4b69c6">proven_hex_decode</span>(
+                        <span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">DEADBEEF</span><span style="color: #198810">"</span>)), from_hex, <span style="color: #d73948">sizeof</span> from_hex, <span style="color: #d73948">&amp;</span>hex_got)),
+                    <span style="color: #198810">"</span><span style="color: #198810">uppercase hex decodes too</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(hex_got <span style="color: #d73948">==</span> <span style="color: #b60157">4</span>, <span style="color: #198810">"</span><span style="color: #198810">and yields one byte per two characters</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> An odd number of characters cannot be a whole number of bytes. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_hex_decode</span>(<span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">abc</span><span style="color: #198810">"</span>)),
+                                      from_hex, <span style="color: #d73948">sizeof</span> from_hex, <span style="color: #d73948">&amp;</span>hex_got) <span style="color: #d73948">==</span> PROVEN_ERR_INVALID_ENCODING,
+                    <span style="color: #198810">"</span><span style="color: #198810">an odd-length hex string is malformed, not silently truncated</span><span style="color: #198810">"</span>);
+
+    alloc.<span style="color: #4b69c6">free_fn</span>(alloc.ctx, plain.value.ptr);
+    alloc.<span style="color: #4b69c6">free_fn</span>(alloc.ctx, out.value.ptr);
+
+    (<span style="color: #d73948">void</span>)url; (<span style="color: #d73948">void</span>)un;
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><h2 id="8-예제와-오용-사례">8. 예제와 오용 사례<a class="anchor" href="#8-예제와-오용-사례" aria-hidden="true">#</a></h2><h3 id="배열-안을-가리키는-포인터는-낡을-수-있다">배열 안을 가리키는 포인터는 낡을 수 있다<a class="anchor" href="#배열-안을-가리키는-포인터는-낡을-수-있다" aria-hidden="true">#</a></h3><p>잘못된 예:</p><pre><code data-lang="text">int *p = PROVEN_ARRAY_GET_MUT(&amp;nums, int, 0);
+PROVEN_ARRAY_PUSH(&amp;nums, int, 30);
+*p = 99; /* wrong: push may have reallocated the array */</code></pre><p>올바른 예:</p><pre><code data-lang="c">proven_result_array_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_ARRAY_INIT</span>(alloc, <span style="color: #d73948">int</span>, <span style="color: #b60157">2</span>);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+    <span style="color: #d73948">return</span>;
+}
+proven_array_t nums <span style="color: #d73948">=</span> r.value;
+(<span style="color: #d73948">void</span>)<span style="color: #4b69c6">PROVEN_ARRAY_PUSH</span>(<span style="color: #d73948">&amp;</span>nums, <span style="color: #d73948">int</span>, <span style="color: #b60157">10</span>);
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> Push first, then take the pointer. A pointer fetched before a push may point</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> at a block the array has already reallocated away. </span><span style="color: #74747c">*/</span>
+(<span style="color: #d73948">void</span>)<span style="color: #4b69c6">PROVEN_ARRAY_PUSH</span>(<span style="color: #d73948">&amp;</span>nums, <span style="color: #d73948">int</span>, <span style="color: #b60157">30</span>);
+<span style="color: #d73948">int</span> <span style="color: #d73948">*</span>p <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_ARRAY_GET_MUT</span>(<span style="color: #d73948">&amp;</span>nums, <span style="color: #d73948">int</span>, <span style="color: #b60157">0</span>);
+<span style="color: #d73948">if</span> (p) {
+    <span style="color: #d73948">*</span>p <span style="color: #d73948">=</span> <span style="color: #b60157">99</span>;
+}
+
+<span style="color: #4b69c6">PROVEN_ARRAY_DESTROY</span>(<span style="color: #d73948">&amp;</span>nums);</code></pre><h3 id="하나의-침습적-노드는-한-번에-하나의-리스트에-속한다">하나의 침습적 노드는 한 번에 하나의 리스트에 속한다<a class="anchor" href="#하나의-침습적-노드는-한-번에-하나의-리스트에-속한다" aria-hidden="true">#</a></h3><p>잘못된 예:</p><pre><code data-lang="text">proven_list_push_back(&amp;list_a, &amp;item.link);
+proven_list_push_back(&amp;list_b, &amp;item.link); /* wrong */</code></pre><p>멤버십마다 내장 노드를 하나씩 써라.</p><h3 id="안전-매크로로-순회-중-제거하기">안전 매크로로 순회 중 제거하기<a class="anchor" href="#안전-매크로로-순회-중-제거하기" aria-hidden="true">#</a></h3><p>올바른 예:</p><pre><code data-lang="c"><span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> Item {
+    <span style="color: #d73948">int</span> value;
+    proven_list_node_t link;
+} <span style="color: #4b69c6">Item</span>;
+
+proven_list_t list;
+<span style="color: #4b69c6">proven_list_init</span>(<span style="color: #d73948">&amp;</span>list);
+Item a <span style="color: #d73948">=</span> { .value <span style="color: #d73948">=</span> <span style="color: #b60157">1</span> };
+Item b <span style="color: #d73948">=</span> { .value <span style="color: #d73948">=</span> <span style="color: #b60157">2</span> };
+<span style="color: #4b69c6">proven_list_push_back</span>(<span style="color: #d73948">&amp;</span>list, <span style="color: #d73948">&amp;</span>a.link);
+<span style="color: #4b69c6">proven_list_push_back</span>(<span style="color: #d73948">&amp;</span>list, <span style="color: #d73948">&amp;</span>b.link);
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> The SAFE form reads `it->next` into `next` before the body runs, so removing</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> `it` (which nulls its links) cannot strand the loop. </span><span style="color: #74747c">*/</span>
+proven_list_node_t <span style="color: #d73948">*</span>it <span style="color: #d73948">=</span> <span style="color: #d73948">NULL</span>;
+proven_list_node_t <span style="color: #d73948">*</span>next <span style="color: #d73948">=</span> <span style="color: #d73948">NULL</span>;
+<span style="color: #4b69c6">PROVEN_LIST_FOR_EACH_SAFE</span>(it, next, <span style="color: #d73948">&amp;</span>list) {
+    Item <span style="color: #d73948">*</span>item <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_LIST_ENTRY</span>(it, Item, link);
+    <span style="color: #d73948">if</span> (item->value <span style="color: #d73948">%</span> <span style="color: #b60157">2</span> <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>) {
+        <span style="color: #4b69c6">proven_list_remove</span>(it);
+    }
+}</code></pre><h3 id="링-push는-커지지-않는다">링 push는 커지지 않는다<a class="anchor" href="#링-push는-커지지-않는다" aria-hidden="true">#</a></h3><p>잘못된 예:</p><pre><code data-lang="text">PROVEN_RING_PUSH(&amp;q, int, value); /* wrong if you ignore full-ring errors */</code></pre><p>올바른 예:</p><pre><code data-lang="c">proven_result_ring_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_RING_INIT</span>(alloc, <span style="color: #d73948">int</span>, <span style="color: #b60157">2</span>);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+    <span style="color: #d73948">return</span>;
+}
+proven_ring_t q <span style="color: #d73948">=</span> r.value;
+
+<span style="color: #d73948">int</span> value <span style="color: #d73948">=</span> <span style="color: #b60157">7</span>;
+<span style="color: #d73948">for</span> (<span style="color: #d73948">int</span> i <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>; i <span style="color: #d73948">&lt;</span> <span style="color: #b60157">3</span>; <span style="color: #d73948">++</span>i) {
+    proven_err_t e <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_RING_PUSH</span>(<span style="color: #d73948">&amp;</span>q, <span style="color: #d73948">int</span>, value);
+    <span style="color: #d73948">if</span> (e <span style="color: #d73948">==</span> PROVEN_ERR_OUT_OF_BOUNDS) {
+        <span style="color: #74747c">/*</span><span style="color: #74747c"> The ring is full. Drop the item, or drain one first - but decide. </span><span style="color: #74747c">*/</span>
+        <span style="color: #d73948">int</span> drop <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+        (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">PROVEN_RING_POP</span>(<span style="color: #d73948">&amp;</span>q, <span style="color: #d73948">int</span>, <span style="color: #d73948">&amp;</span>drop);
+        e <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_RING_PUSH</span>(<span style="color: #d73948">&amp;</span>q, <span style="color: #d73948">int</span>, value);
+    }
+    (<span style="color: #d73948">void</span>)e;
+}
+
+<span style="color: #4b69c6">PROVEN_RING_DESTROY</span>(<span style="color: #d73948">&amp;</span>q);</code></pre><h3 id="borrowed-맵-키는-항목보다-오래-살아야-한다">borrowed 맵 키는 항목보다 오래 살아야 한다<a class="anchor" href="#borrowed-맵-키는-항목보다-오래-살아야-한다" aria-hidden="true">#</a></h3><p>잘못된 예:</p><pre><code data-lang="text">proven_u8str_t key = make_key(alloc);
+PROVEN_MAP_SET_U8_BORROWED(&amp;m, proven_u8str_as_view(&amp;key), int, 1);
+proven_u8str_destroy(alloc, &amp;key);
+/* wrong: map still points at freed key bytes */</code></pre><p>올바른 선택지:</p><ul><li>borrowed 키에는 문자열 리터럴이나 다른 안정된 저장소를 사용하라.</li><li>owned 키 객체를 다른 곳에 저장하고, 맵 항목을 제거한 뒤 그것들을 파괴하라.</li><li>맵이 키 저장소를 소유해야 한다면 <code>PROVEN_KEY_TYPE_U8_OWNED</code>와 <code>proven_map_set_u8_owned()</code>를 사용하라.</li></ul><h3 id="같은-맵에서-borrow한-값을-삽입할-때는-scratch를-써라">같은 맵에서 borrow한 값을 삽입할 때는 scratch를 써라<a class="anchor" href="#같은-맵에서-borrow한-값을-삽입할-때는-scratch를-써라" aria-hidden="true">#</a></h3><p><code>element</code>가 맵 저장소 안을 가리키고 삽입이 재해싱할 수 있다면, <code>proven_map_set_with_scratch()</code>나 scratch 매크로를 사용하라.</p><pre><code data-lang="c">proven_result_map_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_INIT_INT</span>(alloc, <span style="color: #d73948">int</span>, <span style="color: #b60157">4</span>);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+    <span style="color: #d73948">return</span>;
+}
+proven_map_t m <span style="color: #d73948">=</span> r.value;
+(<span style="color: #d73948">void</span>)<span style="color: #4b69c6">PROVEN_MAP_SET_INT</span>(<span style="color: #d73948">&amp;</span>m, <span style="color: #b60157">1</span>, <span style="color: #d73948">int</span>, <span style="color: #b60157">42</span>);
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> `src` points into the map's own bucket array. Passing it straight to</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> proven_map_set would be an alias: a rehash triggered by that same insert can</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> free the bytes it is still reading from. The scratch form captures the source</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> bytes into a temporary from `scratch` first, so the insert is alias-safe. </span><span style="color: #74747c">*/</span>
+<span style="color: #d73948">const</span> <span style="color: #d73948">int</span> <span style="color: #d73948">*</span>src <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_GET_INT</span>(<span style="color: #d73948">&amp;</span>m, <span style="color: #d73948">int</span>, <span style="color: #b60157">1</span>);
+<span style="color: #d73948">if</span> (src) {
+    (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_map_set_with_scratch</span>(<span style="color: #d73948">&amp;</span>m, (proven_map_key_t){ .id <span style="color: #d73948">=</span> <span style="color: #b60157">2</span> }, src, scratch);
+}
+
+<span style="color: #4b69c6">PROVEN_MAP_DESTROY</span>(<span style="color: #d73948">&amp;</span>m);</code></pre><h3 id="이진-검색은-정렬된-입력을-요구한다">이진 검색은 정렬된 입력을 요구한다<a class="anchor" href="#이진-검색은-정렬된-입력을-요구한다" aria-hidden="true">#</a></h3><p>잘못된 예:</p><pre><code data-lang="text">int *hit = proven_array_binary_search(&amp;nums, &amp;key, cmp_int);
+/* wrong if nums was not sorted by cmp_int */</code></pre><h3 id="완성-예제-배열-정렬-이진-검색">완성 예제: 배열, 정렬, 이진 검색<a class="anchor" href="#완성-예제-배열-정렬-이진-검색" aria-hidden="true">#</a></h3><p>테스트 스위트가 컴파일하고 실행한다. 중복 키에 대한 정렬의 동작에 주목하라: 그것들은 <em>빠른</em> 경우이지, 이차(quadratic)인 경우가 아니다.</p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> proven_array_t is a growable vector of one element type. It stores the</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> allocator you created it with, so push can grow and destroy can free without</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> you passing the allocator back in - which also means the array must be</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> destroyed with nothing but itself.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> The PROVEN_ARRAY_* macros are the type-safe face of the void* core: they</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> derive sizeof/alignof from the type and hand the element to the array by</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> pointer, so pushing an int into an array of records will not compile.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> A task queue keyed by priority. Real data is low-cardinality: three</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> priorities, many tasks. That matters for the sort - see below. </span><span style="color: #74747c">*/</span>
+<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> {
+    <span style="color: #d73948">int</span> priority;
+    <span style="color: #d73948">int</span> id;
+} <span style="color: #4b69c6">task_t</span>;
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> The comparator is the array's ordering. The same one MUST be used for the</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> sort and for the binary search - a search under a different order is a bug</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> the compiler cannot see.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> The (x > y) - (x &lt; y) form is deliberate: subtracting the two ints would</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> overflow for large values and hand back a nonsense sign. </span><span style="color: #74747c">*/</span>
+<span style="color: #d73948">static</span> <span style="color: #d73948">int</span> <span style="color: #4b69c6">cmp_priority</span>(<span style="color: #d73948">const</span> <span style="color: #d73948">void</span> <span style="color: #d73948">*</span>a, <span style="color: #d73948">const</span> <span style="color: #d73948">void</span> <span style="color: #d73948">*</span>b) {
+    <span style="color: #d73948">int</span> x <span style="color: #d73948">=</span> ((<span style="color: #d73948">const</span> task_t <span style="color: #d73948">*</span>)a)->priority;
+    <span style="color: #d73948">int</span> y <span style="color: #d73948">=</span> ((<span style="color: #d73948">const</span> task_t <span style="color: #d73948">*</span>)b)->priority;
+    <span style="color: #d73948">return</span> (x <span style="color: #d73948">></span> y) <span style="color: #d73948">-</span> (x <span style="color: #d73948">&lt;</span> y);
+}
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    proven_allocator_t alloc <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- push / get / pop --------------------------------------------------- </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> init_cap is a hint, not a limit: push grows past it. Sizing it right just</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> avoids the reallocations. </span><span style="color: #74747c">*/</span>
+    proven_result_array_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_ARRAY_INIT</span>(alloc, task_t, <span style="color: #b60157">4</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(r.err), <span style="color: #198810">"</span><span style="color: #198810">creating an array of task_t must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+        <span style="color: #d73948">return</span> <span style="color: #b60157">1</span>;
+    }
+    proven_array_t tasks <span style="color: #d73948">=</span> r.value;
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Deliberately duplicate-heavy, because that is what real keys look like:</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> a status column, an enum, a bucket id. </span><span style="color: #74747c">*/</span>
+    <span style="color: #d73948">static</span> <span style="color: #d73948">const</span> task_t seed[] <span style="color: #d73948">=</span> {
+        { .priority <span style="color: #d73948">=</span> <span style="color: #b60157">2</span>, .id <span style="color: #d73948">=</span> <span style="color: #b60157">10</span> }, { .priority <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>, .id <span style="color: #d73948">=</span> <span style="color: #b60157">11</span> },
+        { .priority <span style="color: #d73948">=</span> <span style="color: #b60157">2</span>, .id <span style="color: #d73948">=</span> <span style="color: #b60157">12</span> }, { .priority <span style="color: #d73948">=</span> <span style="color: #b60157">1</span>, .id <span style="color: #d73948">=</span> <span style="color: #b60157">13</span> },
+        { .priority <span style="color: #d73948">=</span> <span style="color: #b60157">2</span>, .id <span style="color: #d73948">=</span> <span style="color: #b60157">14</span> }, { .priority <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>, .id <span style="color: #d73948">=</span> <span style="color: #b60157">15</span> },
+        { .priority <span style="color: #d73948">=</span> <span style="color: #b60157">1</span>, .id <span style="color: #d73948">=</span> <span style="color: #b60157">16</span> }, { .priority <span style="color: #d73948">=</span> <span style="color: #b60157">2</span>, .id <span style="color: #d73948">=</span> <span style="color: #b60157">17</span> },
+    };
+
+    <span style="color: #d73948">for</span> (proven_size_t i <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>; i <span style="color: #d73948">&lt;</span> <span style="color: #d73948">sizeof</span> seed <span style="color: #d73948">/</span> <span style="color: #d73948">sizeof</span> seed[<span style="color: #b60157">0</span>]; <span style="color: #d73948">++</span>i) {
+        proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_ARRAY_PUSH</span>(<span style="color: #d73948">&amp;</span>tasks, task_t, seed[i]);
+        <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">pushing into a growable array must succeed</span><span style="color: #198810">"</span>);
+        <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(err)) {
+            <span style="color: #4b69c6">PROVEN_ARRAY_DESTROY</span>(<span style="color: #d73948">&amp;</span>tasks);
+            <span style="color: #d73948">return</span> <span style="color: #b60157">1</span>;
+        }
+    }
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(tasks.len <span style="color: #d73948">==</span> <span style="color: #b60157">8</span>, <span style="color: #198810">"</span><span style="color: #198810">eight pushes give eight elements</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> get returns a pointer INTO the array's storage - it is not a copy, and the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> next push may reallocate and leave it dangling. Fetch it after the pushes,</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> use it, do not store it. </span><span style="color: #74747c">*/</span>
+    <span style="color: #d73948">const</span> task_t <span style="color: #d73948">*</span>front <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_ARRAY_GET</span>(<span style="color: #d73948">&amp;</span>tasks, task_t, <span style="color: #b60157">0</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(front <span style="color: #d73948">&amp;&amp;</span> front->id <span style="color: #d73948">==</span> <span style="color: #b60157">10</span>, <span style="color: #198810">"</span><span style="color: #198810">element 0 is the first one pushed</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Out of range is a null pointer, not a crash and not UB. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">PROVEN_ARRAY_GET</span>(<span style="color: #d73948">&amp;</span>tasks, task_t, <span style="color: #b60157">99</span>) <span style="color: #d73948">==</span> <span style="color: #d73948">NULL</span>, <span style="color: #198810">"</span><span style="color: #198810">an out-of-range index yields NULL</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> pop copies the last element out (pass NULL to just discard it). </span><span style="color: #74747c">*/</span>
+    task_t last <span style="color: #d73948">=</span> {<span style="color: #b60157">0</span>};
+    proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_ARRAY_POP</span>(<span style="color: #d73948">&amp;</span>tasks, task_t, <span style="color: #d73948">&amp;</span>last);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">popping a non-empty array must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(last.id <span style="color: #d73948">==</span> <span style="color: #b60157">17</span> <span style="color: #d73948">&amp;&amp;</span> tasks.len <span style="color: #d73948">==</span> <span style="color: #b60157">7</span>, <span style="color: #198810">"</span><span style="color: #198810">pop returns the last element and shrinks the array</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Put it back: the rest of the example wants all eight. </span><span style="color: #74747c">*/</span>
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_ARRAY_PUSH</span>(<span style="color: #d73948">&amp;</span>tasks, task_t, last);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">pushing the popped element back must succeed</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- sort --------------------------------------------------------------- </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> An introsort: O(n log n) is a guarantee, not an average - the heapsort</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> fallback rules out the quadratic case an adversary could otherwise steer</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> you into. And equal keys are the FAST path here: everything equal to the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> pivot is partitioned into a run that is never recursed into, so the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> duplicate priorities above cost less than distinct ones would, not more.</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> It is not stable: task 10 and task 12 may come out in either order. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">proven_array_sort</span>(<span style="color: #d73948">&amp;</span>tasks, cmp_priority);
+
+    <span style="color: #d73948">for</span> (proven_size_t i <span style="color: #d73948">=</span> <span style="color: #b60157">1</span>; i <span style="color: #d73948">&lt;</span> tasks.len; <span style="color: #d73948">++</span>i) {
+        <span style="color: #d73948">const</span> task_t <span style="color: #d73948">*</span>prev <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_ARRAY_GET</span>(<span style="color: #d73948">&amp;</span>tasks, task_t, i <span style="color: #d73948">-</span> <span style="color: #b60157">1</span>);
+        <span style="color: #d73948">const</span> task_t <span style="color: #d73948">*</span>cur  <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_ARRAY_GET</span>(<span style="color: #d73948">&amp;</span>tasks, task_t, i);
+        <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(prev <span style="color: #d73948">&amp;&amp;</span> cur <span style="color: #d73948">&amp;&amp;</span> prev->priority <span style="color: #d73948">&lt;=</span> cur->priority,
+                        <span style="color: #198810">"</span><span style="color: #198810">after sorting, priorities must be non-decreasing</span><span style="color: #198810">"</span>);
+    }
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- binary search ------------------------------------------------------ </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Only legal because the array is sorted by this exact comparator. The key</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> is a whole element, but only the fields the comparator reads matter. </span><span style="color: #74747c">*/</span>
+    task_t key <span style="color: #d73948">=</span> { .priority <span style="color: #d73948">=</span> <span style="color: #b60157">1</span>, .id <span style="color: #d73948">=</span> <span style="color: #b60157">0</span> };
+    <span style="color: #d73948">const</span> task_t <span style="color: #d73948">*</span>hit <span style="color: #d73948">=</span> (<span style="color: #d73948">const</span> task_t <span style="color: #d73948">*</span>)<span style="color: #4b69c6">proven_array_binary_search</span>(<span style="color: #d73948">&amp;</span>tasks, <span style="color: #d73948">&amp;</span>key, cmp_priority);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(hit <span style="color: #d73948">!=</span> <span style="color: #d73948">NULL</span>, <span style="color: #198810">"</span><span style="color: #198810">priority 1 is present, so the search must find it</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(hit <span style="color: #d73948">&amp;&amp;</span> hit->priority <span style="color: #d73948">==</span> <span style="color: #b60157">1</span>, <span style="color: #198810">"</span><span style="color: #198810">the hit must be an element with the searched key</span><span style="color: #198810">"</span>);
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> With duplicate keys it finds SOME element with that key, not the first one.</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> If you need the first, scan backwards from the hit. </span><span style="color: #74747c">*/</span>
+
+    task_t absent <span style="color: #d73948">=</span> { .priority <span style="color: #d73948">=</span> <span style="color: #b60157">9</span>, .id <span style="color: #d73948">=</span> <span style="color: #b60157">0</span> };
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_array_binary_search</span>(<span style="color: #d73948">&amp;</span>tasks, <span style="color: #d73948">&amp;</span>absent, cmp_priority) <span style="color: #d73948">==</span> <span style="color: #d73948">NULL</span>,
+                    <span style="color: #198810">"</span><span style="color: #198810">a key that is not there must return NULL</span><span style="color: #198810">"</span>);
+
+    <span style="color: #4b69c6">printf</span>(<span style="color: #198810">"</span><span style="color: #198810">tasks: </span><span style="color: #b60157">%zu</span><span style="color: #198810"> sorted, found priority </span><span style="color: #b60157">%d</span><span style="color: #198810"> (id </span><span style="color: #b60157">%d</span><span style="color: #198810">)</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>,
+           (<span style="color: #4b69c6">size_t</span>)tasks.len, hit <span style="color: #d73948">?</span> hit->priority <span style="color: #d73948">:</span> <span style="color: #d73948">-</span><span style="color: #b60157">1</span>, hit <span style="color: #d73948">?</span> hit->id <span style="color: #d73948">:</span> <span style="color: #d73948">-</span><span style="color: #b60157">1</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The array owns its element storage; destroy returns it through the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> allocator the array was created with. Elements are plain data here - if</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> they owned anything, you would have to destroy each one first. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">PROVEN_ARRAY_DESTROY</span>(<span style="color: #d73948">&amp;</span>tasks);
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><h3 id="완성-예제-정수-키-맵과-owned-문자열-키-맵">완성 예제: 정수 키 맵과 owned 문자열 키 맵<a class="anchor" href="#완성-예제-정수-키-맵과-owned-문자열-키-맵" aria-hidden="true">#</a></h3><p>테스트 스위트가 컴파일하고 실행한다. owned 키 절반이 잘못 이해하기 쉬운 요점을 증명한다: 맵이 키를 복사하므로, 그것을 만든 버퍼는 즉시 재사용해도 되는 여러분의 것이다.</p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> proven_map_t is a flat open-addressing hash map. The value type is fixed at</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> create time and stored inline in the bucket array - there is no per-entry</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> allocation for values, and get hands back a pointer straight into that array.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> The interesting decision is the KEY:</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   PROVEN_KEY_TYPE_INT          - the key is a proven_size_t. Nothing to own.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   PROVEN_KEY_TYPE_U8_BORROWED  - the bucket stores your pointer and length.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">                                  The map never copies the bytes, so YOU must</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">                                  keep them alive and unmoved for as long as</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">                                  the entry exists. Right for string literals.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   PROVEN_KEY_TYPE_U8_OWNED     - the map copies the key bytes into its own</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">                                  storage and frees them again. Right for keys</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">                                  built at runtime, which is most of them.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> The second half of this example is the reason OWNED exists.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> {
+    <span style="color: #d73948">int</span>  level;
+    <span style="color: #d73948">long</span> score;
+} <span style="color: #4b69c6">player_t</span>;
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    proven_allocator_t alloc <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- integer keys ------------------------------------------------------- </span><span style="color: #74747c">*/</span>
+    proven_result_map_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_INIT_INT</span>(alloc, player_t, <span style="color: #b60157">8</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(r.err), <span style="color: #198810">"</span><span style="color: #198810">creating an int-keyed map must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+        <span style="color: #d73948">return</span> <span style="color: #b60157">1</span>;
+    }
+    proven_map_t by_id <span style="color: #d73948">=</span> r.value;
+
+    proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_SET_INT</span>(<span style="color: #d73948">&amp;</span>by_id, <span style="color: #b60157">404</span>, player_t, ((player_t){ .level <span style="color: #d73948">=</span> <span style="color: #b60157">3</span>, .score <span style="color: #d73948">=</span> <span style="color: #b60157">990</span> }));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">inserting into the map must succeed</span><span style="color: #198810">"</span>);
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_SET_INT</span>(<span style="color: #d73948">&amp;</span>by_id, <span style="color: #b60157">7</span>, player_t, ((player_t){ .level <span style="color: #d73948">=</span> <span style="color: #b60157">1</span>, .score <span style="color: #d73948">=</span> <span style="color: #b60157">10</span> }));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">inserting a second key must succeed</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> set on an existing key replaces the value; it does not add an entry. </span><span style="color: #74747c">*/</span>
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_SET_INT</span>(<span style="color: #d73948">&amp;</span>by_id, <span style="color: #b60157">7</span>, player_t, ((player_t){ .level <span style="color: #d73948">=</span> <span style="color: #b60157">2</span>, .score <span style="color: #d73948">=</span> <span style="color: #b60157">40</span> }));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">re-setting an existing key must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(by_id.len <span style="color: #d73948">==</span> <span style="color: #b60157">2</span>, <span style="color: #198810">"</span><span style="color: #198810">re-setting a key replaces its value rather than adding an entry</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> get returns a pointer into the bucket array, or NULL when absent. It is</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> invalidated by any insert that rehashes - look it up, use it, drop it. </span><span style="color: #74747c">*/</span>
+    <span style="color: #d73948">const</span> player_t <span style="color: #d73948">*</span>p <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_GET_INT</span>(<span style="color: #d73948">&amp;</span>by_id, player_t, <span style="color: #b60157">7</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(p <span style="color: #d73948">&amp;&amp;</span> p->level <span style="color: #d73948">==</span> <span style="color: #b60157">2</span> <span style="color: #d73948">&amp;&amp;</span> p->score <span style="color: #d73948">==</span> <span style="color: #b60157">40</span>, <span style="color: #198810">"</span><span style="color: #198810">get must see the replaced value</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">PROVEN_MAP_GET_INT</span>(<span style="color: #d73948">&amp;</span>by_id, player_t, <span style="color: #b60157">999</span>) <span style="color: #d73948">==</span> <span style="color: #d73948">NULL</span>, <span style="color: #198810">"</span><span style="color: #198810">a missing key yields NULL</span><span style="color: #198810">"</span>);
+
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_REMOVE_INT</span>(<span style="color: #d73948">&amp;</span>by_id, <span style="color: #b60157">7</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">removing a present key must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">PROVEN_MAP_GET_INT</span>(<span style="color: #d73948">&amp;</span>by_id, player_t, <span style="color: #b60157">7</span>) <span style="color: #d73948">==</span> <span style="color: #d73948">NULL</span>, <span style="color: #198810">"</span><span style="color: #198810">a removed key is gone</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(by_id.len <span style="color: #d73948">==</span> <span style="color: #b60157">1</span>, <span style="color: #198810">"</span><span style="color: #198810">removal decrements the live entry count</span><span style="color: #198810">"</span>);
+
+    <span style="color: #4b69c6">PROVEN_MAP_DESTROY</span>(<span style="color: #d73948">&amp;</span>by_id);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- owned string keys --------------------------------------------------- </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Same map, keyed by a name that we build at runtime - the case where a</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> borrowed key would be a dangling pointer waiting to happen. </span><span style="color: #74747c">*/</span>
+    proven_result_map_t rm <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_INIT_U8_OWNED</span>(alloc, player_t, <span style="color: #b60157">8</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(rm.err), <span style="color: #198810">"</span><span style="color: #198810">creating an owned-string-keyed map must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(rm.err)) {
+        <span style="color: #d73948">return</span> <span style="color: #b60157">1</span>;
+    }
+    proven_map_t by_name <span style="color: #d73948">=</span> rm.value;
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> A scratch buffer we intend to reuse for every key. With a BORROWED map</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> that plan is fatal: every entry would point at these same bytes. </span><span style="color: #74747c">*/</span>
+    proven_byte_t scratch[<span style="color: #b60157">32</span>];
+    proven_u8str_t name <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_borrow</span>(scratch, <span style="color: #d73948">sizeof</span> scratch);
+
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>name, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">ada</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">building the first key must succeed</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> set_u8_owned COPIES the key bytes into map storage. After it returns, the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> map's key no longer has anything to do with `scratch`. </span><span style="color: #74747c">*/</span>
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_SET_U8_OWNED</span>(<span style="color: #d73948">&amp;</span>by_name, <span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>name), player_t,
+                                  ((player_t){ .level <span style="color: #d73948">=</span> <span style="color: #b60157">9</span>, .score <span style="color: #d73948">=</span> <span style="color: #b60157">5000</span> }));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">inserting with an owned key must succeed</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> So the buffer is immediately free to be reused for the next key... </span><span style="color: #74747c">*/</span>
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_reset</span>(<span style="color: #d73948">&amp;</span>name);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">the key buffer is ours again the moment set returns</span><span style="color: #198810">"</span>);
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>name, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">grace</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">overwriting the buffer with the next key must succeed</span><span style="color: #198810">"</span>);
+
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_SET_U8_OWNED</span>(<span style="color: #d73948">&amp;</span>by_name, <span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>name), player_t,
+                                  ((player_t){ .level <span style="color: #d73948">=</span> <span style="color: #b60157">4</span>, .score <span style="color: #d73948">=</span> <span style="color: #b60157">700</span> }));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">inserting the second owned key must succeed</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> ...and the first entry is untouched by that overwrite. This is the whole</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> point: the map holds its own copy of "ada", not a view of a buffer that</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> now says "grace". A BORROWED map would report two entries both keyed</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> "grace" - or worse, one keyed by freed memory. </span><span style="color: #74747c">*/</span>
+    <span style="color: #d73948">const</span> player_t <span style="color: #d73948">*</span>ada <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_GET_U8_OWNED</span>(<span style="color: #d73948">&amp;</span>by_name, player_t, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">ada</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(ada <span style="color: #d73948">&amp;&amp;</span> ada->score <span style="color: #d73948">==</span> <span style="color: #b60157">5000</span>, <span style="color: #198810">"</span><span style="color: #198810">the copied key survives the caller reusing its buffer</span><span style="color: #198810">"</span>);
+
+    <span style="color: #d73948">const</span> player_t <span style="color: #d73948">*</span>grace <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_GET_U8_OWNED</span>(<span style="color: #d73948">&amp;</span>by_name, player_t, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">grace</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(grace <span style="color: #d73948">&amp;&amp;</span> grace->score <span style="color: #d73948">==</span> <span style="color: #b60157">700</span>, <span style="color: #198810">"</span><span style="color: #198810">the second key is a separate entry</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(by_name.len <span style="color: #d73948">==</span> <span style="color: #b60157">2</span>, <span style="color: #198810">"</span><span style="color: #198810">two distinct keys means two entries</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Remove frees the key copy the map made - you never free it yourself. </span><span style="color: #74747c">*/</span>
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_REMOVE_U8_OWNED</span>(<span style="color: #d73948">&amp;</span>by_name, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">ada</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">removing an owned key must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">PROVEN_MAP_GET_U8_OWNED</span>(<span style="color: #d73948">&amp;</span>by_name, player_t, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">ada</span><span style="color: #198810">"</span>)) <span style="color: #d73948">==</span> <span style="color: #d73948">NULL</span>,
+                    <span style="color: #198810">"</span><span style="color: #198810">the removed entry is gone</span><span style="color: #198810">"</span>);
+
+    <span style="color: #4b69c6">printf</span>(<span style="color: #198810">"</span><span style="color: #198810">map: </span><span style="color: #b60157">%zu</span><span style="color: #198810"> name(s) left, grace at level </span><span style="color: #b60157">%d</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>,
+           (<span style="color: #4b69c6">size_t</span>)by_name.len, grace <span style="color: #d73948">?</span> grace->level <span style="color: #d73948">:</span> <span style="color: #d73948">-</span><span style="color: #b60157">1</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> destroy frees the bucket array AND every key copy still in it ("grace"</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> here). `scratch` is ours and outlives the map; the borrowed `name` handle</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> has nothing to free. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">PROVEN_MAP_DESTROY</span>(<span style="color: #d73948">&amp;</span>by_name);
+    <span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>name);
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><h3 id="실전-예제-컨테이너-크기-잡기-정렬되지-않은-데이터-찾기-흘러가는-데이터-검사합-구하기">실전 예제: 컨테이너 크기 잡기, 정렬되지 않은 데이터 찾기, 흘러가는 데이터 검사합 구하기<a class="anchor" href="#실전-예제-컨테이너-크기-잡기-정렬되지-않은-데이터-찾기-흘러가는-데이터-검사합-구하기" aria-hidden="true">#</a></h3><p>앞의 실전 예제들은 컨테이너를 하나씩 다룬다. 이 예제는 그 조각들이 들어가 있는 프로그램 — 작은 이벤트 수집기 — 이고, 컨테이너가 여럿 얽히고 나서야 생기는 질문들에 답한다.</p><ul><li><strong>채우는 도중에 컨테이너가 재할당하지 않게 한다.</strong> <code>proven_array_reserve()</code>와 <code>proven_map_reserve()</code>는 용량을 한 번에 정한다. 힙에서는 복사를 아끼고, 아레나(arena) 뒤에서는 재할당이 다음 reset까지 남기는 죽은 저장 공간을 아낀다. map에서는 포인터의 정확성 문제이기도 하다. 리해시(rehash, 버킷 배열을 다시 만드는 일)는 앞서 <code>get_mut</code>이 돌려준 모든 포인터를 무효로 만든다.</li><li><strong>내가 만들지 않은 핸들을 확인한다.</strong> <code>proven_array_is_valid()</code>, <code>proven_ring_is_valid()</code>, <code>proven_map_is_valid()</code>는 핸들 자체의 필드가 서로 맞는지 묻는다. 0으로만 초기화된, 혹은 아예 만든 적 없는 컨테이너를 첫 push가 아니라 내 코드의 경계에서 잡아내는 검사다.</li><li><strong>정렬되지 않은 데이터를 찾는다.</strong> 이벤트 로그는 도착 순서로 둔다. 그 순서 자체가 기록하려는 대상이기 때문이다. 그래서 이진 탐색(binary search)은 쓸 수 없다 — 정렬되지 않은 입력에서 그것은 "없음"을 돌려주지 않고 틀린 답을 돌려준다. 올바른 호출은 <code>proven_array_linear_search()</code>이고, 순서상 <strong>첫 번째</strong> 일치를 돌려준다.</li><li><strong>map에 이미 있는 값을 한 번의 조회로 고친다.</strong> <code>proven_map_get_mut()</code>은 map 자신의 저장 공간을 가리키는 포인터를 돌려주므로, 카운터는 읽고 고쳐 다시 쓰는 대신 있는 자리에서 증가한다.</li><li><strong>키에 어떤 해시가 어울리는지 고른다.</strong> <code>proven_map_create()</code>는 문자열 키를 키가 있는 SipHash로 해싱하므로, 키를 고르는 공격자가 모든 키를 한 버킷에 몰아넣을 수 없다. <code>proven_map_create_trusted()</code>는 빠른 FNV-1a를 쓰며, 모든 키를 내 코드가 고를 때만 옳다. <code>proven_map_hash()</code>는 map이 실제로 키를 놓는 데 쓴 값을 돌려주므로, 둘의 차이는 주장이 아니라 관찰할 수 있는 사실이 된다.</li><li><strong>조각으로 도착하는 데이터의 검사합을 구한다.</strong> <code>proven_crc32_update()</code>는 각 조각을 진행 중인 값에 접어 넣는다. 조각 경계를 어떻게 나누었든 결과는 전체에 대한 <code>proven_crc32()</code>와 같다.</li></ul><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> The container chapters show each structure on its own. A real program uses</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> several at once, and the questions that come up then are not about any single</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> container:</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   - How do I stop a container reallocating while it fills?  reserve.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   - How do I check a container somebody handed me is usable?  is_valid.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   - How do I search when the data is NOT sorted?  linear search - and knowing</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">     why binary search would give a wrong answer here.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   - How do I update a value already in a map without looking it up twice?</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">     get_mut.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   - Do I need the attack-resistant hash, or the fast one?  it depends on who</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">     chooses the keys, and map_hash lets you see the difference.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   - How do I checksum data that arrives in pieces?  crc32_update.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> The program is a small event intake: events arrive, are counted per client,</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> the most recent few are kept for a diagnostic dump, and the batch is</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> checksummed as it streams past.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> {
+    proven_u32 client;
+    proven_u32 code;      <span style="color: #74747c">/*</span><span style="color: #74747c"> an event code; 0 means "connection closed" </span><span style="color: #74747c">*/</span>
+} <span style="color: #4b69c6">event_t</span>;
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> Search by client id: this is the comparison for finding an event, not for</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> sorting them. The array below is in ARRIVAL order and stays that way. </span><span style="color: #74747c">*/</span>
+<span style="color: #d73948">static</span> <span style="color: #d73948">int</span> <span style="color: #4b69c6">by_client</span>(<span style="color: #d73948">const</span> <span style="color: #d73948">void</span> <span style="color: #d73948">*</span>a, <span style="color: #d73948">const</span> <span style="color: #d73948">void</span> <span style="color: #d73948">*</span>b) {
+    <span style="color: #d73948">const</span> event_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> (<span style="color: #d73948">const</span> event_t <span style="color: #d73948">*</span>)a;
+    <span style="color: #d73948">const</span> event_t <span style="color: #d73948">*</span>y <span style="color: #d73948">=</span> (<span style="color: #d73948">const</span> event_t <span style="color: #d73948">*</span>)b;
+    <span style="color: #d73948">return</span> (x->client <span style="color: #d73948">></span> y->client) <span style="color: #d73948">-</span> (x->client <span style="color: #d73948">&lt;</span> y->client);
+}
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    proven_allocator_t alloc <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- 1. reserve: decide the capacity once ----------------------------- </span><span style="color: #74747c">*/</span>
+
+    proven_result_array_t ar <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_ARRAY_INIT</span>(alloc, event_t, <span style="color: #b60157">4</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(ar.err), <span style="color: #198810">"</span><span style="color: #198810">creating the event log must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(ar.err)) {
+        <span style="color: #d73948">return</span> <span style="color: #b60157">1</span>;
+    }
+    proven_array_t events <span style="color: #d73948">=</span> ar.value;
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> We know the batch size before we start, so ask for the room once. Without</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> this the array doubles as it fills, copying its contents each time; behind</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> an arena allocator each of those copies also leaves the old block behind</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> until the arena is reset. </span><span style="color: #74747c">*/</span>
+    proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_array_reserve</span>(<span style="color: #d73948">&amp;</span>events, <span style="color: #b60157">16</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">reserving room for the whole batch must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(events.cap <span style="color: #d73948">>=</span> <span style="color: #b60157">16</span>, <span style="color: #198810">"</span><span style="color: #198810">the capacity is now at least what was asked for</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> is_valid asks whether the handle itself is structurally sound - a pointer,</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> a length and a capacity that agree. Assert it where a container arrives</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> from other code, or after a zero-initialised handle might have escaped;</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> it is not something to repeat after every push. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_array_is_valid</span>(<span style="color: #d73948">&amp;</span>events), <span style="color: #198810">"</span><span style="color: #198810">a created array must be structurally valid</span><span style="color: #198810">"</span>);
+
+    proven_array_t never_created <span style="color: #d73948">=</span> {<span style="color: #b60157">0</span>};
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_array_is_valid</span>(<span style="color: #d73948">&amp;</span>never_created),
+                    <span style="color: #198810">"</span><span style="color: #198810">a zero-initialised handle is not a usable array</span><span style="color: #198810">"</span>);
+
+    <span style="color: #d73948">static</span> <span style="color: #d73948">const</span> event_t batch[] <span style="color: #d73948">=</span> {
+        { .client <span style="color: #d73948">=</span> <span style="color: #b60157">7</span>, .code <span style="color: #d73948">=</span> <span style="color: #b60157">200</span> }, { .client <span style="color: #d73948">=</span> <span style="color: #b60157">3</span>, .code <span style="color: #d73948">=</span> <span style="color: #b60157">200</span> },
+        { .client <span style="color: #d73948">=</span> <span style="color: #b60157">7</span>, .code <span style="color: #d73948">=</span> <span style="color: #b60157">404</span> }, { .client <span style="color: #d73948">=</span> <span style="color: #b60157">9</span>, .code <span style="color: #d73948">=</span> <span style="color: #b60157">200</span> },
+        { .client <span style="color: #d73948">=</span> <span style="color: #b60157">3</span>, .code <span style="color: #d73948">=</span> <span style="color: #b60157">500</span> }, { .client <span style="color: #d73948">=</span> <span style="color: #b60157">7</span>, .code <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>   },
+    };
+    proven_size_t batch_len <span style="color: #d73948">=</span> <span style="color: #d73948">sizeof</span> batch <span style="color: #d73948">/</span> <span style="color: #d73948">sizeof</span> batch[<span style="color: #b60157">0</span>];
+
+    proven_size_t cap_before <span style="color: #d73948">=</span> events.cap;
+    <span style="color: #d73948">for</span> (proven_size_t i <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>; i <span style="color: #d73948">&lt;</span> batch_len; <span style="color: #d73948">++</span>i) {
+        err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_ARRAY_PUSH</span>(<span style="color: #d73948">&amp;</span>events, event_t, batch[i]);
+        <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">pushing an event must succeed</span><span style="color: #198810">"</span>);
+    }
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(events.cap <span style="color: #d73948">==</span> cap_before, <span style="color: #198810">"</span><span style="color: #198810">the reserve was enough: nothing reallocated while filling</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- 2. searching data that is not sorted ----------------------------- </span><span style="color: #74747c">*/</span>
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The log is in arrival order, which is the order we want to keep: it is the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> thing being recorded. Binary search would be faster and WRONG here, since</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> it may only be used on a sorted range - on unsorted data it does not</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> return "not found", it returns nonsense. Linear search is the correct</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> tool, and O(n) over a batch this size is nothing. </span><span style="color: #74747c">*/</span>
+    event_t key <span style="color: #d73948">=</span> { .client <span style="color: #d73948">=</span> <span style="color: #b60157">9</span>, .code <span style="color: #d73948">=</span> <span style="color: #b60157">0</span> };
+    <span style="color: #d73948">const</span> event_t <span style="color: #d73948">*</span>found <span style="color: #d73948">=</span> (<span style="color: #d73948">const</span> event_t <span style="color: #d73948">*</span>)<span style="color: #4b69c6">proven_array_linear_search</span>(<span style="color: #d73948">&amp;</span>events, <span style="color: #d73948">&amp;</span>key, by_client);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(found <span style="color: #d73948">!=</span> <span style="color: #d73948">NULL</span>, <span style="color: #198810">"</span><span style="color: #198810">client 9 appears in the batch</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(found->code <span style="color: #d73948">==</span> <span style="color: #b60157">200</span>, <span style="color: #198810">"</span><span style="color: #198810">and linear search returns the FIRST match in order</span><span style="color: #198810">"</span>);
+
+    event_t absent <span style="color: #d73948">=</span> { .client <span style="color: #d73948">=</span> <span style="color: #b60157">42</span>, .code <span style="color: #d73948">=</span> <span style="color: #b60157">0</span> };
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_array_linear_search</span>(<span style="color: #d73948">&amp;</span>events, <span style="color: #d73948">&amp;</span>absent, by_client) <span style="color: #d73948">==</span> <span style="color: #d73948">NULL</span>,
+                    <span style="color: #198810">"</span><span style="color: #198810">a client that never appeared is reported as not found</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- 3. a ring for the most recent events ----------------------------- </span><span style="color: #74747c">*/</span>
+
+    proven_result_ring_t rr <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_RING_INIT</span>(alloc, event_t, <span style="color: #b60157">4</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(rr.err), <span style="color: #198810">"</span><span style="color: #198810">creating the recent-events ring must succeed</span><span style="color: #198810">"</span>);
+    proven_ring_t recent <span style="color: #d73948">=</span> rr.value;
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_ring_is_valid</span>(<span style="color: #d73948">&amp;</span>recent), <span style="color: #198810">"</span><span style="color: #198810">a created ring must be structurally valid</span><span style="color: #198810">"</span>);
+
+    proven_ring_t unset <span style="color: #d73948">=</span> {<span style="color: #b60157">0</span>};
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_ring_is_valid</span>(<span style="color: #d73948">&amp;</span>unset), <span style="color: #198810">"</span><span style="color: #198810">a zero-initialised ring handle is not usable</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> This ring refuses when full rather than overwriting, so "keep the most</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> recent four" means dropping the oldest ourselves before pushing. </span><span style="color: #74747c">*/</span>
+    <span style="color: #d73948">for</span> (proven_size_t i <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>; i <span style="color: #d73948">&lt;</span> batch_len; <span style="color: #d73948">++</span>i) {
+        <span style="color: #d73948">if</span> (recent.len <span style="color: #d73948">==</span> recent.cap) {
+            event_t dropped;
+            err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_RING_POP</span>(<span style="color: #d73948">&amp;</span>recent, event_t, <span style="color: #d73948">&amp;</span>dropped);
+            <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">a full ring must yield its oldest element</span><span style="color: #198810">"</span>);
+        }
+        err <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_RING_PUSH</span>(<span style="color: #d73948">&amp;</span>recent, event_t, batch[i]);
+        <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">pushing after making room must succeed</span><span style="color: #198810">"</span>);
+    }
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(recent.len <span style="color: #d73948">==</span> <span style="color: #b60157">4</span>, <span style="color: #198810">"</span><span style="color: #198810">the ring holds the four most recent events</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- 4. counting per client, with one lookup per update --------------- </span><span style="color: #74747c">*/</span>
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> create_with_capacity is proven_map_create under a name that says why the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> capacity argument is there: sizing it now avoids rehashing later, and a</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> rehash both copies every bucket and invalidates every pointer previously</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> returned by get_mut. </span><span style="color: #74747c">*/</span>
+    proven_result_map_t mr <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_map_create_with_capacity</span>(alloc, <span style="color: #b60157">8</span>, PROVEN_KEY_TYPE_INT,
+                                                            <span style="color: #d73948">sizeof</span>(proven_u32), <span style="color: #4b69c6">alignof</span>(proven_u32));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(mr.err), <span style="color: #198810">"</span><span style="color: #198810">creating the counter map must succeed</span><span style="color: #198810">"</span>);
+    proven_map_t counts <span style="color: #d73948">=</span> mr.value;
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_map_is_valid</span>(<span style="color: #d73948">&amp;</span>counts), <span style="color: #198810">"</span><span style="color: #198810">a created map must be structurally valid</span><span style="color: #198810">"</span>);
+
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_map_reserve</span>(<span style="color: #d73948">&amp;</span>counts, <span style="color: #b60157">32</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">reserving map capacity must succeed</span><span style="color: #198810">"</span>);
+
+    <span style="color: #d73948">for</span> (proven_size_t i <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>; i <span style="color: #d73948">&lt;</span> batch_len; <span style="color: #d73948">++</span>i) {
+        proven_map_key_t k <span style="color: #d73948">=</span> { .id <span style="color: #d73948">=</span> batch[i].client };
+
+        <span style="color: #74747c">/*</span><span style="color: #74747c"> get_mut returns a pointer INTO the map's storage, so the counter is</span>
+<span style="color: #74747c">         </span><span style="color: #74747c">*</span><span style="color: #74747c"> incremented where it lives: one lookup, no copy back. The pointer is</span>
+<span style="color: #74747c">         </span><span style="color: #74747c">*</span><span style="color: #74747c"> good only until the next insert - which is another reason the capacity</span>
+<span style="color: #74747c">         </span><span style="color: #74747c">*</span><span style="color: #74747c"> was reserved above. </span><span style="color: #74747c">*/</span>
+        proven_u32 <span style="color: #d73948">*</span>seen <span style="color: #d73948">=</span> (proven_u32 <span style="color: #d73948">*</span>)<span style="color: #4b69c6">proven_map_get_mut</span>(<span style="color: #d73948">&amp;</span>counts, k);
+        <span style="color: #d73948">if</span> (seen) {
+            <span style="color: #d73948">*</span>seen <span style="color: #d73948">+=</span> <span style="color: #b60157">1</span>;
+        } <span style="color: #d73948">else</span> {
+            proven_u32 one <span style="color: #d73948">=</span> <span style="color: #b60157">1</span>;
+            err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_map_set</span>(<span style="color: #d73948">&amp;</span>counts, k, <span style="color: #d73948">&amp;</span>one);
+            <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">inserting a new client must succeed</span><span style="color: #198810">"</span>);
+        }
+    }
+
+    <span style="color: #d73948">const</span> proven_u32 <span style="color: #d73948">*</span>seven <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_GET_INT</span>(<span style="color: #d73948">&amp;</span>counts, proven_u32, <span style="color: #b60157">7</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(seven <span style="color: #d73948">!=</span> <span style="color: #d73948">NULL</span> <span style="color: #d73948">&amp;&amp;</span> <span style="color: #d73948">*</span>seven <span style="color: #d73948">==</span> <span style="color: #b60157">3</span>, <span style="color: #198810">"</span><span style="color: #198810">client 7 sent three events</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> A closing event (code 0) means the client is gone: drop its counter. </span><span style="color: #74747c">*/</span>
+    <span style="color: #d73948">for</span> (proven_size_t i <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>; i <span style="color: #d73948">&lt;</span> batch_len; <span style="color: #d73948">++</span>i) {
+        <span style="color: #d73948">if</span> (batch[i].code <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>) {
+            err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_map_remove</span>(<span style="color: #d73948">&amp;</span>counts, (proven_map_key_t){ .id <span style="color: #d73948">=</span> batch[i].client });
+            <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">removing a present key must succeed</span><span style="color: #198810">"</span>);
+        }
+    }
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">PROVEN_MAP_GET_INT</span>(<span style="color: #d73948">&amp;</span>counts, proven_u32, <span style="color: #b60157">7</span>) <span style="color: #d73948">==</span> <span style="color: #d73948">NULL</span>, <span style="color: #198810">"</span><span style="color: #198810">the closed client is gone</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- 5. which hash, and how to see the difference --------------------- </span><span style="color: #74747c">*/</span>
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Two string-key maps over the same keys. The default one hashes with keyed</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> SipHash, so an attacker who chooses the keys cannot force them all into</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> one bucket. The trusted one uses fast FNV-1a and is the right choice ONLY</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> when your own code chooses every key. </span><span style="color: #74747c">*/</span>
+    proven_result_map_t untrusted <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_MAP_INIT_U8_BORROWED</span>(alloc, proven_u32, <span style="color: #b60157">8</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(untrusted.err), <span style="color: #198810">"</span><span style="color: #198810">creating the default string-key map must succeed</span><span style="color: #198810">"</span>);
+    proven_map_t from_network <span style="color: #d73948">=</span> untrusted.value;
+
+    proven_result_map_t tr <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_map_create_trusted</span>(alloc, <span style="color: #b60157">8</span>, PROVEN_KEY_TYPE_U8_BORROWED,
+                                                       <span style="color: #d73948">sizeof</span>(proven_u32), <span style="color: #4b69c6">alignof</span>(proven_u32));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(tr.err), <span style="color: #198810">"</span><span style="color: #198810">creating the trusted-key map must succeed</span><span style="color: #198810">"</span>);
+    proven_map_t internal <span style="color: #d73948">=</span> tr.value;
+
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(from_network.trusted_keys <span style="color: #d73948">==</span> <span style="color: #d73948">false</span>, <span style="color: #198810">"</span><span style="color: #198810">the default map defends against chosen keys</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(internal.trusted_keys <span style="color: #d73948">==</span> <span style="color: #d73948">true</span>, <span style="color: #198810">"</span><span style="color: #198810">the trusted map opts out of that defence</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> map_hash exposes the value the map actually places a key by, so the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> choice is observable rather than something you take on faith. </span><span style="color: #74747c">*/</span>
+    proven_map_key_t name <span style="color: #d73948">=</span> { .str <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">user-agent</span><span style="color: #198810">"</span>) };
+    proven_u64 keyed <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_map_hash</span>(<span style="color: #d73948">&amp;</span>from_network, name);
+    proven_u64 fast  <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_map_hash</span>(<span style="color: #d73948">&amp;</span>internal, name);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(keyed <span style="color: #d73948">!=</span> fast, <span style="color: #198810">"</span><span style="color: #198810">the same key hashes differently under the two functions</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_map_hash</span>(<span style="color: #d73948">&amp;</span>internal, name) <span style="color: #d73948">==</span> fast, <span style="color: #198810">"</span><span style="color: #198810">and each function is deterministic</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Keys that live in memory the map does not own are BORROWED: the bytes must</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> outlive the map. These are string literals, so they do. When the key comes</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> from a buffer you are about to reuse, use an owned-key map instead</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> (PROVEN_MAP_INIT_U8_OWNED / proven_map_set_u8_owned), which copies. </span><span style="color: #74747c">*/</span>
+    proven_u32 hits <span style="color: #d73948">=</span> <span style="color: #b60157">1</span>;
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_map_set</span>(<span style="color: #d73948">&amp;</span>from_network, name, <span style="color: #d73948">&amp;</span>hits);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">inserting a borrowed string key must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">PROVEN_MAP_GET_U8_BORROWED</span>(<span style="color: #d73948">&amp;</span>from_network, proven_u32, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">user-agent</span><span style="color: #198810">"</span>)) <span style="color: #d73948">!=</span> <span style="color: #d73948">NULL</span>,
+                    <span style="color: #198810">"</span><span style="color: #198810">and it can be looked up by an equal view, not the same pointer</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- 6. checksumming a stream in chunks ------------------------------- </span><span style="color: #74747c">*/</span>
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The batch is checksummed as it goes past, which is what a program reading</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> a file or a socket has to do: it never holds the whole thing. Start the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> running value at 0, feed each chunk in, and the final value is the same</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> one a single call over the concatenation would produce. </span><span style="color: #74747c">*/</span>
+    proven_u32 running <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+    <span style="color: #d73948">for</span> (proven_size_t i <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>; i <span style="color: #d73948">&lt;</span> batch_len; <span style="color: #d73948">++</span>i) {
+        proven_mem_view_t chunk <span style="color: #d73948">=</span> { .ptr <span style="color: #d73948">=</span> (<span style="color: #d73948">const</span> proven_byte_t <span style="color: #d73948">*</span>)<span style="color: #d73948">&amp;</span>batch[i], .size <span style="color: #d73948">=</span> <span style="color: #d73948">sizeof</span> batch[i] };
+        running <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_crc32_update</span>(running, chunk);
+    }
+    proven_mem_view_t whole <span style="color: #d73948">=</span> { .ptr <span style="color: #d73948">=</span> (<span style="color: #d73948">const</span> proven_byte_t <span style="color: #d73948">*</span>)batch, .size <span style="color: #d73948">=</span> <span style="color: #d73948">sizeof</span> batch };
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(running <span style="color: #d73948">==</span> <span style="color: #4b69c6">proven_crc32</span>(whole),
+                    <span style="color: #198810">"</span><span style="color: #198810">chunked and whole-buffer CRC-32 must agree, whatever the chunking</span><span style="color: #198810">"</span>);
+
+    <span style="color: #4b69c6">printf</span>(<span style="color: #198810">"</span><span style="color: #198810">events=</span><span style="color: #b60157">%zu</span><span style="color: #198810"> recent=</span><span style="color: #b60157">%zu</span><span style="color: #198810"> crc32=</span><span style="color: #b60157">%08x</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>,
+           (<span style="color: #4b69c6">size_t</span>)events.len, (<span style="color: #4b69c6">size_t</span>)recent.len, (<span style="color: #d73948">unsigned</span>)running);
+
+    <span style="color: #4b69c6">proven_map_destroy</span>(<span style="color: #d73948">&amp;</span>internal);
+    <span style="color: #4b69c6">proven_map_destroy</span>(<span style="color: #d73948">&amp;</span>from_network);
+    <span style="color: #4b69c6">proven_map_destroy</span>(<span style="color: #d73948">&amp;</span>counts);
+    <span style="color: #4b69c6">PROVEN_RING_DESTROY</span>(<span style="color: #d73948">&amp;</span>recent);
+    <span style="color: #4b69c6">PROVEN_ARRAY_DESTROY</span>(<span style="color: #d73948">&amp;</span>events);
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><p>반례 — 도착 순서 로그에 이진 탐색을 쓰는 경우:</p><pre><code data-lang="text">const event_t *e = proven_array_binary_search(&amp;events, &amp;key, by_client);   /* wrong */</code></pre><p><code>proven_array_binary_search()</code>는 같은 비교 함수로 정렬된 구간에서만 쓸 수 있다. 정렬되지 않은 입력에서 이 함수는 실패하지 않는다. 반씩 좁혀 가다 그 자리에 있던 원소를 답이라고 내놓거나, 찾는 원소가 두 칸 옆에 있는데도 없다고 말한다.</p><p>반례 — 삽입을 사이에 두고 <code>get_mut</code> 포인터를 붙들고 있는 경우:</p><pre><code data-lang="text">proven_u32 *seen = proven_map_get_mut(&amp;counts, k);
+proven_err_t e = proven_map_set(&amp;counts, other_key, &amp;one);   /* may rehash */
+*seen += 1;                                                  /* wrong: may dangle */</code></pre><p>삽입할 수 있는 무언가를 사이에 두고 붙들 것은 포인터가 아니라 키다.</p><p>반례 — 프로그램 밖에서 온 키에 빠른 해시를 쓰는 경우:</p><pre><code data-lang="text">proven_result_map_t m = proven_map_create_trusted(alloc, 64, PROVEN_KEY_TYPE_U8_BORROWED,
+                                                  sizeof(session_t), alignof(session_t));
+/* keys are HTTP header names taken from the request */   /* wrong */</code></pre><p>그것이 바로 키가 있는 해시가 막으려는 경우다. 키를 나 아닌 누군가가 고른다면 <code>proven_map_create()</code>를 쓴다.</p>
+<div class="nav"><a href="manual-03-strings-text.html">← 3 · 문자열과 텍스트</a><a href="manual-08-fmt-scan.html">8 · 형식화와 파싱 →</a></div>
+</div></main>
+</div>
+<script>(function(){var b=document.querySelector('.here-btn'),p=document.getElementById('here-panel');function open(o){if(!p)return;p.hidden=!o;if(b)b.setAttribute('aria-expanded',o);}if(b)b.addEventListener('click',function(){open(p.hidden);});if(p)p.addEventListener('click',function(e){if(e.target.tagName==='A'&&(e.target.getAttribute('href')||'').charAt(0)==='#')open(false);});document.addEventListener('keydown',function(e){if(e.key==='Escape')open(false);});var box=document.getElementById('setbox'),so=document.getElementById('set-open');if(!box||!so)return;var r=document.documentElement;function load(){try{return JSON.parse(localStorage.getItem('pcl-read')||'{}');}catch(e){return {};}}function save(s){try{localStorage.setItem('pcl-read',JSON.stringify(s));}catch(e){}}function css(n){return getComputedStyle(r).getPropertyValue(n).trim();}function hex(v){var m=v.match(/^rgba?\((\d+)[ ,]+(\d+)[ ,]+(\d+)/);if(!m)return v.charAt(0)==='#'?v:'#000000';return '#'+[1,2,3].map(function(i){return ('0'+parseInt(m[i],10).toString(16)).slice(-2);}).join('');}function paint(){var s=load();document.getElementById('s-width').checked=!!s.width;var t=s.theme||'auto';[].forEach.call(box.querySelectorAll('.segb'),function(x){x.setAttribute('aria-pressed',x.dataset.theme===t);});document.getElementById('s-fg').value=s.fg||hex(css('--fg'));document.getElementById('s-bg').value=s.bg||hex(css('--bg'));document.getElementById('s-link').value=s.link||hex(css('--link'));}so.addEventListener('click',function(){box.hidden=!box.hidden;so.setAttribute('aria-expanded',!box.hidden);if(!box.hidden)paint();});document.getElementById('s-width').addEventListener('change',function(){var s=load();s.width=this.checked;save(s);if(s.width)r.setAttribute('data-measure','on');else r.removeAttribute('data-measure');});[].forEach.call(box.querySelectorAll('.segb'),function(x){x.addEventListener('click',function(){var s=load();s.theme=x.dataset.theme;delete s.fg;delete s.bg;delete s.link;save(s);['--fg','--bg','--link'].forEach(function(n){r.style.removeProperty(n);});if(s.theme==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',s.theme);setTimeout(paint,0);});});[['s-fg','--fg','fg'],['s-bg','--bg','bg'],['s-link','--link','link']].forEach(function(a){document.getElementById(a[0]).addEventListener('input',function(){var s=load();s[a[2]]=this.value;save(s);r.style.setProperty(a[1],this.value);});});})();</script>
+<script>
+(function(){
+  var q=document.getElementById('q'), out=document.getElementById('qr');
+  if(!q||!out) return;
+  var data=null, NONE="\ucc3e\uc740 \uac83\uc774 \uc5c6\uc2b5\ub2c8\ub2e4";
+  function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+  function run(){
+    var v=q.value.trim().toLowerCase();
+    out.innerHTML='';
+    if(!v||!data) return;
+    var exact=[], starts=[], rest=[];
+    for(var i=0;i<data.length;i++){
+      var name=data[i][0].toLowerCase(), at=name.indexOf(v);
+      if(at<0) continue;
+      if(name===v) exact.push(data[i]);
+      else if(at===0) starts.push(data[i]);
+      else rest.push(data[i]);
+    }
+    var hits=exact.concat(starts,rest).slice(0,40);
+    if(!hits.length){ out.innerHTML='<li>'+NONE+'</li>'; return; }
+    out.innerHTML=hits.map(function(h){
+      var label=h[3]==='fn' ? '<code>'+esc(h[0])+'</code>' : esc(h[0]);
+      return '<li><a href="'+h[1]+'">'+label+'</a>'+
+             (h[2]?'<span class="where">'+esc(h[2])+'</span>':'')+'</li>';
+    }).join('');
+  }
+  q.addEventListener('input',function(){
+    if(data){ run(); return; }
+    fetch('search-index.json').then(function(r){return r.json();})
+      .then(function(j){ data=j; run(); })
+      .catch(function(){ out.innerHTML='<li>'+NONE+'</li>'; });
+  });
+})();
+</script>
+</body>
+</html>

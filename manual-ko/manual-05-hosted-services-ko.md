@@ -13,18 +13,17 @@
 
 ## 목차
 
-1. [파일시스템 API](#1-filesystem-api)
-2. [시스템 I/O와 환경](#2-system-io-and-environment)
-3. [메모리 매핑](#3-memory-mapping)
-4. [Time API](#4-time-api)
-5. [예제와 오용 사례](#5-examples-and-misuse-cases)
-6. [트리 순회](#walking-a-tree)
-7. [스트림: writer와 reader](#streams-writers-and-readers)
-8. [표준 스트림](#the-standard-streams)
-9. [용도별 무작위성](#randomness-by-use-case)
+1. [파일시스템 API](#1-파일시스템-api)
+2. [시스템 I/O와 환경](#2-시스템-입출력과-환경변수)
+3. [메모리 매핑](#3-메모리-매핑)
+4. [Time API](#4-시간-api)
+5. [예제와 오용 사례](#5-예제와-오용-사례)
+6. [트리 순회](#트리-순회)
+7. [스트림: writer와 reader](#스트림-writer와-reader)
+8. [표준 스트림](#표준-스트림)
+9. [용도별 무작위성](#난수-용도별)
 
-## 1. Filesystem API
-
+## 1. 파일시스템 API
 파일시스템 계층은 플랫폼 파일 핸들, 경로, 디렉터리 목록, 메타데이터, 권한, 링크, 잠금을 감싼다.
 
 원시 파일시스템 헬퍼는 신뢰할 수 없는 경로를 정제하지 않고, 루트 감금(root confinement)을 강제하지 않으며, symlink-race TOCTOU를 방어하지 않는다. 신뢰할 수 없는 경로를 받아들이는 호출자는 API를 사용하기 전에 그것을 검증해야 한다.
@@ -261,8 +260,7 @@ if (proven_is_ok(of.err)) {
 }
 ```
 
-## 2. System I/O and environment
-
+## 2. 시스템 입출력과 환경변수
 ### 표준 스트림
 
 ```text
@@ -272,7 +270,7 @@ proven_file_t proven_sysio_stderr(void);
 ```
 
 목적: 표준 스트림을 `proven_file_t` 핸들로 노출한다. 이들은 또한 writer와 reader이기도 하다—
-아래 [표준 스트림](#the-standard-streams)을 보라. 그것이 stdin을 한 줄씩 읽고, stdout을 버퍼링하며,
+아래 [표준 스트림](#표준-스트림)을 보라. 그것이 stdin을 한 줄씩 읽고, stdout을 버퍼링하며,
 둘 중 어느 쪽으로든 직접 포매팅할 수 있게 해준다.
 
 ### `proven_sysio_scanner_t`
@@ -329,8 +327,7 @@ if (proven_is_ok(env.err)) {
 }
 ```
 
-## 3. Memory mapping
-
+## 3. 메모리 매핑
 ### 문제: 복사하고 싶지 않은 파일 읽기
 
 `proven_fs_read_all_u8str`는 파일을 당신이 소유하는 메모리로 읽어 들인다. 설정 파일이라면 그것이
@@ -438,8 +435,7 @@ if (proven_is_ok(f.err)) {
 }
 ```
 
-## 4. Time API
-
+## 4. 시간 API
 ### 문제: 서로 다른 두 질문, 하나의 단어
 
 "시간"은 서로 닮았지만 하는 짓은 전혀 다른 두 가지를 뜻한다.
@@ -654,8 +650,7 @@ if (proven_is_ok(r.err)) {
 }
 ```
 
-## 5. Examples and misuse cases
-
+## 5. 예제와 오용 사례
 ### 단일 쓰기는 부분적일 수 있다
 
 잘못됨(Wrong):
@@ -1009,8 +1004,7 @@ while (proven_is_ok(proven_fs_dir_next(&dir, &entry))) { ... }
    and you cannot tell whether you saw everything. */
 ```
 
-## Walking a tree
-
+## 트리 순회
 `proven_fs_dir_*`는 디렉터리 하나를 순회한다. `proven_fs_walk`는 트리를 순회한다—그리고
 그것이 하기를 *거부하는* 것을 정확히 말할 가치가 있다. 그 거부들이 곧 기능이기 때문이다:
 
@@ -1166,8 +1160,7 @@ int main(void) {
 }
 ```
 
-## Streams: writers and readers
-
+## 스트림: writer와 reader
 포매터의 유일한 sink는 예전에 `proven_u8str_t`였다. 파일은 `proven_file_t`였다. 인메모리
 스캐너는 view를 읽었고, 파일 스캐너는 또 다른 무언가를 읽었다. **네 개의 타입, 네 개의 함수
 계열, 공통 인터페이스 없음**—그래서 메모리와 파일 양쪽에서 동작하는 하나의
@@ -1436,8 +1429,7 @@ for (int i = 0; i < 100; ++i) {
 *정확히 채우는* 줄은 괜찮다: 개행이 함께 들어가지 않아도 되고, 개행이 전혀 없는 마지막 줄도
 마찬가지다.)
 
-## The standard streams
-
+## 표준 스트림
 `stream.h`에는 writer, reader, 버퍼드 writer, 그리고 라인 reader가 있다. `sysio.h`에는 stdin,
 stdout, stderr가 있다. 이 둘이 서로 소개되기 전까지는, 두 가지가 그저 불가능했다—그리고 한
 호출은 거짓말이었다.
@@ -1545,8 +1537,7 @@ proven_writer_t w = proven_sysio_file_buffered(&out, f, buf);   /* writes to fd 
 당신의 버퍼에 앉아 있는 동안 stderr는 곧장 나간다. 당신의 출력 뒤에 나타나야 하는 에러를
 출력하기 전에 flush하라.
 
-## Randomness, by use case
-
+## 난수, 용도별
 단일한 "random"은 없다. 동일해 보이지만 그렇지 않은 두 가지 작업이 있다:
 
 | 당신의 작업 | 사용 | 이유 |
@@ -2498,7 +2489,7 @@ memcpy((char *)m.value.ptr + 4096, data, n);                            /* wrong
 
 ### 실전 예제: 난수는 어디에서 오는가
 
-[위의 예제](#randomness-by-use-case)는 어떤 생성기를 고를지를 다룬다. 이것은 그 아래 계층, 곧 바이트의 출처와,
+[위의 예제](#난수-용도별)는 어떤 생성기를 고를지를 다룬다. 이것은 그 아래 계층, 곧 바이트의 출처와,
 어느 출처를 받았는지 신경 쓰지 않는 코드를 쓰는 법이다.
 
 - **`proven_rng_t`가 그 인터페이스다.** 이것을 받는 함수는 운영체제 생성기로도, ChaCha20으로도,
