@@ -25,6 +25,10 @@ fonts=${TYPST_FONT_PATHS:-$root/../usr/toolchains/fonts}
 
 version=$(sed -n 's/^#define PROVEN_VERSION_STRING "\(.*\)"$/\1/p' "$root/include/proven/version.h")
 [ -n "$version" ] || { echo "build-site: cannot read the version" >&2; exit 1; }
+# The release tag drops the project prefix the version string carries: the tags in this
+# repository are v26.07.23b, not proven_c_lib-v26.07.23b. The PDF link is built from the tag,
+# so getting this wrong publishes a download link that 404s.
+tag=${version#proven_c_lib-}
 
 langs=${*:-"en ko"}
 
@@ -67,7 +71,7 @@ build_lang() {
     #    The PDF link points at the release asset, not at a copy in the site: a published PDF
     #    belongs to a version, and a reader who downloads it should get the one they were
     #    reading. The local copy beside the pages is what the release uploads.
-    pdf_url="https://github.com/rubidus-api/proven_c_lib/releases/download/$version/proven_c_lib-$version-$lang-manual.pdf"
+    pdf_url="https://github.com/rubidus-api/proven_c_lib/releases/download/$tag/$version-$lang-manual.pdf"
     python3 "$root/scripts/site_pages.py" "$lang" "$work/$lang/frag" "$out/$lang" "$version" "$pdf_url"
     cp -f "$root/site/manual.css" "$out/$lang/manual.css"
 

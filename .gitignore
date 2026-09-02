@@ -44,3 +44,7 @@ deeptree/
 
 # agy-only customization layer (local; see rootsator RFC-0001)
 /.agents/
+
+# Release artefacts are uploaded, not tracked: the PDFs are 4 MB each and the tag they belong
+# to already carries them.
+/dist/
