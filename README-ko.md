@@ -2,6 +2,8 @@
 
 [English](README.md) · **한국어**
 
+📖 **[매뉴얼 웹으로 읽기](https://rubidus-api.github.io/proven_c_lib/ko/)** · [English manual](https://rubidus-api.github.io/proven_c_lib/en/) · [PDF](https://github.com/rubidus-api/proven_c_lib/releases/latest)
+
 > 하나의 생각 위에 세운 C23 시스템 라이브러리: **메모리는 자기가 어디서 왔는지 알아야 합니다.**
 
 C 책을 한 권 뗐다고 해 봅시다. 포인터도, `malloc`도, `printf`도, `char *`도 압니다. 그리고 처음으로 진짜
@@ -12,10 +14,12 @@ C 책을 한 권 뗐다고 해 봅시다. 포인터도, `malloc`도, `printf`도
 결국 매번 다시 짜게 되는 그 계층입니다 — 넘겨받는 allocator, 자기 길이를 들고 다니는 문자열, 컨테이너,
 포맷팅과 스캐닝, 파일, 해시, 난수 — 소유권과 실패가 모든 시그니처에 드러난 채로.
 
-**처음이라면 [0장](manual-ko/manual-00-start-here-ko.md)부터.** 입문서 한 권 외에는 아무것도
+**처음이라면 [0장](manual-ko/manual-00-start-here-ko.md)부터** — 또는
+[웹 판](https://rubidus-api.github.io/proven_c_lib/ko/manual-00-start-here.html)으로 읽으십시오.
+공개 함수 전부를 이름으로 찾을 수 있는 검색이 함께 있습니다. 입문서 한 권 외에는 아무것도
 전제하지 않으며, 이 저장소에서 찾아보는 문서가 아니라 읽으라고 쓴 유일한 문서입니다.
 
-- 버전: proven_c_lib-v26.09.02a · 표준: C23 · 라이선스: MIT
+- 버전: proven_c_lib-v26.09.02b · 표준: C23 · 라이선스: MIT
 - 저장소: https://github.com/rubidus-api/proven_c_lib
 
 ---

@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.09.02a)
+# proven Test Matrix (v26.09.02b)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 |---|---|---|
 | `unit` | Does this module do what it says, used the way a caller uses it? | 61 |
 | `contract` | Does it *refuse* what it says it refuses? | 13 |
-| `regression` | Does a defect that actually shipped stay fixed? | 20 |
+| `regression` | Does a defect that actually shipped stay fixed? | 21 |
 | `differential` | Does it agree with an oracle we did not write? | 4 |
 | `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 10 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
@@ -297,7 +297,7 @@ Failure tip: identify the target name in the log, then check whether the failure
 ## Test catalog
 
 
-The hosted full run builds and executes 113 registered tests plus the 33 runnable manual examples - 146 executables in all. `./nob regression` re-runs a 29-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 123 test files: the 113 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
+The hosted full run builds and executes 114 registered tests plus the 33 runnable manual examples - 147 executables in all. `./nob regression` re-runs a 30-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 124 test files: the 114 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1204,6 +1204,23 @@ Note: the exact big-integer tier is the one that makes "correctly rounded, ties-
 
 Failure tip: inspect `proven_float_bigint_build_pow5_cached` in `src/proven/float_decimal.c`.
 
+### `tests/test_regression_job_permit_starvation` - job permit starvation deadlock
+
+Intent: verify a permit spent on an empty queue cannot strand the jobs behind it.
+
+A permit on the workers' semaphore used to mean "take exactly one job". That is sound only if a woken worker can always find the job its permit announced, and it cannot: the queue hands out slots in order, so a producer that has claimed slot *n* and not yet published it hides slot *n+1* from every consumer. The worker woken for *n+1* reads an empty queue, spends the permit, and parks — and when *n* is published a moment later there is no permit left to announce the work. Lose enough of those and the queue stops draining; because it never empties, no worker reaches its exit test either, so `close` and `destroy` wait on threads that never finish.
+
+Sub-checks:
+
+- Six rounds of 24 producers — far more than the machine has cores — against a **four-slot** queue, so the window between claiming a slot and publishing it is hit constantly.
+- Each round closes and destroys the system, which is where the hang appeared.
+- Every accepted job must have run by the time `destroy` returns.
+- A watchdog thread turns a deadlock into a reported failure naming the round. Without it the failure has no assertion to fail — the process simply stops, and the whole suite stops with it.
+
+Note: verified to FAIL against the pre-fix source — five deadlocks in five runs, where the stress harness needed heavy background load to hang in 18 runs out of 40. The fix is that a permit now means "there may be work" and a woken worker drains the queue rather than taking one job from it.
+
+Failure tip: a worker is parked while the queue still holds work. Check that the worker loop drains rather than taking a single job per permit.
+
 ### `tests/test_regression_float_parse_concurrency` - concurrent float parsing
 
 Intent: verify the public decimal parser has no shared writable state across concurrent Clinger, Eisel-Lemire, subnormal, and exact-fallback conversions.
@@ -1650,6 +1667,7 @@ a slot count drifts or a producer stalls.
 - `tests/test_unit_time_fmt_u16_parity`
 - `tests/test_regression_scanner_short_read`
 - `tests/test_regression_float_exact_pow5`
+- `tests/test_regression_job_permit_starvation`
 - `tests/test_regression_float_parse_concurrency`
 - `tests/test_regression_map_churn`
 - `tests/test_contract_sort_alignment`
