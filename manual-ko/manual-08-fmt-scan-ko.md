@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v26.07.23d)
+# Chapter 8: Formatting and Scanning (v26.09.02a)
 
 이 장은 `fmt.h`와 `scan.h`에 대한 상세 레퍼런스다.
 Chapter 3은 더 짧은 개요와 일상적인 예제를 제공한다.
@@ -41,9 +41,9 @@ Chapter 3은 더 짧은 개요와 일상적인 예제를 제공한다.
 여지가 없다.
 
 두 번째 설계 결정은 **어느 쪽도 버퍼를 소유하지 않는다**는 것이다. 포매팅은 여러분이 제공한 목적지에
-덧붙이고 들어가지 않으면 거부한다. 스캐닝은 여러분이 제공한 view에서 읽고 여러분이 읽을 수 있는 커서를
-옮긴다. allocator를 건네지 않는 한 여기서는 아무것도 할당하지 않으며, 바로 그 점이 이 장 전체가
-freestanding 빌드에서 동작하게 만든다(§13).
+덧붙이고 들어가지 않으면 거부한다. 스캐닝은 여러분이 제공한 뷰(view)에서 읽고 여러분이 읽을 수 있는 커서를
+옮긴다. 할당자(allocator)를 건네지 않는 한 여기서는 아무것도 할당하지 않으며, 바로 그 점이 이 장 전체가
+프리스탠딩(freestanding) 빌드에서 동작하게 만든다(§13).
 
 포매팅 측면과 스캐닝 측면은 정반대의 문제를 해결한다.
 
@@ -149,7 +149,7 @@ PROVEN_ARG_FN,
 - unsigned 64비트 정수
 - 부동소수점 값 (`PROVEN_FMT_NO_FLOAT`가 정의되지 않은 경우)
 - 신뢰할 수 있는 C 문자열
-- 빌려온(borrowed) U8 문자열 뷰
+- 빌려 쓰는(borrowed) U8 문자열 뷰
 - datetime
 - 객체 포인터
 - 함수 포인터
@@ -604,7 +604,7 @@ proven_size_t args_count
 - `args_count`는 플레이스홀더 개수에 숨겨진 sentinel을 더한 값과 일치해야 한다
 - 사용되지 않는 여분의 argument는 오류다
 - 누락된 argument는 오류다
-- 엔진이 목적지 문자열과 빌려온 뷰 argument 사이의 aliasing을 감지하면, 실패 atomicity를 보존하기 위해 scratch 할당자를 사용할 수 있다
+- 엔진이 목적지 문자열과 빌려온 뷰 argument 사이의 aliasing을 감지하면, 실패 atomicity를 보존하기 위해 임시 작업용(scratch) 할당자를 사용할 수 있다
 
 ### `proven_u8str_append_fmt(str, fmt, ...)`
 
@@ -634,7 +634,7 @@ Best-effort 포매팅.
 argument 목록에 목적지 버퍼와 alias할 수 있는 문자열 뷰가 있어 임시 패칭이 필요할 때 유용하다.
 
 `alloc`과 `scratch` 모두에 실제 할당자를 사용하라.
-호출에 충분할 만큼 수명이 길지 않은 한, 죽은 arena나 일회용 임시 버퍼를 넘기지 마라.
+호출에 충분할 만큼 수명이 길지 않은 한, 죽은 아레나(arena)나 일회용 임시 버퍼를 넘기지 마라.
 
 ### Float format policy seam
 
@@ -848,12 +848,12 @@ int main(void) {
 기록자가 뒤섞일 때 여러분을 놀라게 하는 버퍼이기 때문이다.
 
 **할당에 관한 주의 하나.** 줄은 512바이트 스택 버퍼에 포매팅되므로 일반적인 줄은 할당 비용이 0이다.
-들어가지 *않는* 줄은 거부되는 대신 그 호출에 한해 전역 heap으로 물러난다 — 길다는 이유로 출력을
+들어가지 *않는* 줄은 거부되는 대신 그 호출에 한해 전역 힙(heap)으로 물러난다 — 길다는 이유로 출력을
 거부하는 편이 더 나쁘기 때문이다. 이는 allocator 매개변수가 없는 호출이 그래도 할당할 수 있는
 라이브러리 내 유일한 지점이며, 과도하게 긴 경우로 한정된다. 아무것도 할당하지 않는다는 보장이
 필요하다면 직접 버퍼에 포매팅한 뒤 그것을 기록할 것.
 
-출력량이 문제가 될 때는 `proven_sysio_stdout_buffered`에서 버퍼드 writer를 받아 거기에 포매팅한다 —
+출력량이 문제가 될 때는 `proven_sysio_stdout_buffered`에서 버퍼드 쓰기 스트림(writer)를 받아 거기에 포매팅한다 —
 argument 규칙은 동일하고, 줄마다 한 번이 아니라 flush마다 한 번의 시스템 콜이 된다.
 [Chapter 5](manual-05-hosted-services-ko.md)가 스트림 계층을 다룬다.
 
@@ -982,7 +982,7 @@ target으로 옮긴다 - 그것을 얼마나 소비할지는 당신이 결정한
 
 `proven_scan_skip_until_number`는 첫 숫자에서, 또는 바로 뒤에 숫자가 따라오는
 부호에서 멈춘다. 숫자가 없으면 커서를 입력의 끝까지 몰아간다 - 따라서 읽을 것이
-있다고 가정하기 전에 `scan.cursor < scan.view.size`를 검사하라.
+있다고 가정하기 전에 커서(cursor), 곧 스캐너가 지금까지 읽어 온 위치를 `scan.cursor < scan.view.size`로 검사하라.
 
 ## 9. Scan argument model
 
@@ -1446,7 +1446,7 @@ hex가 필요하면, 그 자릿수 루프는 당신이 직접 작성하는 것�
 큰 정수 용량 — 는 [freestanding 가이드](manual-freestanding-ko.md) §8a가 다룬다.
 
 스캐너는 코어다: I/O를 하지 않고, 아무것도 할당하지 않으며, 어떤 플랫폼 레이어도
-건드리지 않는다. 따라서 freestanding 빌드에서도 hosted 빌드에서와 정확히 똑같이
+건드리지 않는다. 따라서 freestanding 빌드에서도 호스티드(hosted) 빌드에서와 정확히 똑같이
 사용할 수 있다.
 
 유일한 빌드 모드 의존성은 float다. Freestanding 빌드는 `PROVEN_FMT_NO_FLOAT`(float
@@ -1459,3 +1459,483 @@ hex가 필요하면, 그 자릿수 루프는 당신이 직접 작성하는 것�
 `proven_sysio_scanner_*`(Chapter 5)는 **다른** 것이다: 파일 위의 버퍼드 스캐너로,
 I/O를 하기 때문에 hosted 전용이다. 이 장에서 설명한 스캐너는 당신이 이미 가지고
 있는 바이트를 읽는다.
+
+### 실전 예제: 더 넓은 수, 자유로운 텍스트, 부동소수점
+
+앞의 예제들은 정해진 서식을 `proven_i32`로 읽어 들인다. 입력이 실제 데이터가 되는 순간 세 가지가
+따라오며, 이 예제는 그것들을 한꺼번에 다룬다.
+
+**목적지 타입이 곧 계약이다.** `proven_scan_arg_i64()`, `proven_scan_arg_u32()`,
+`proven_scan_arg_u64()`는 값이 들어갈 타입을 이름으로 말하고, 스캐너는 감기는 대신 넘침을 보고한다.
+32비트로는 모자란 바이트 수와, 결코 음수일 수 없는 값 — 이 둘이 목적지 타입을 잘못 고른 것이 숫자가
+커지기 전까지 아무도 모르는 버그가 되는 경우다. 일반 매크로 `PROVEN_SCAN_ARG()`는 넘겨받은 포인터로
+이들 중 하나를 골라 주며, 이름 있는 형태는 그 매크로가 고르는 것을 손으로 적은 것이다.
+
+**모든 입력이 정해진 서식인 것은 아니다.** `proven_scan_skip_whitespace()`는 공백·탭·줄바꿈을
+지나가고, `proven_scan_skip_until_number()`는 다음 숫자 자리까지, 또는 바로 뒤에 숫자가 붙은 부호
+자리까지 커서를 옮긴다. 음수가 부호를 잃지 않는 이유다. 둘 다 실패할 수 없다. "건너뛸 것이 없었다"는
+에러가 아니며, 입력의 끝에서 커서는 넘어가지 않고 멈춘다.
+
+**부동소수점에는 로케일(locale) 문제가 있고, 이 라이브러리에는 없다.** `strtod()`는 `"3,5"`를 어떤
+로케일에서는 `3.5`로, 다른 로케일에서는 `3`으로 읽으므로 같은 프로그램이 기계마다 다른 말을 한다.
+`proven_parse_double_ascii()`는 구조적으로 로케일에서 자유롭다. 쉼표는 결코 소수점이 아니다. 이
+함수는 숫자가 쓴 바이트 수를 알려 주어 호출자가 그 지점부터 이어 갈 수 있게 하고, 해석할 수 없는
+텍스트를 진짜 `0`과 구분되지 않는 `0`이 아니라 에러로 보고한다. `proven_parse_f64_ascii()`는 같은
+함수의 예전 이름이며, 기존 호출 자리가 그대로 읽히도록 남아 있다.
+
+내보내는 쪽에서는 `proven_arg_f64()`가 부동소수점 값이 형식화기로 들어가는 통로다. `float`도
+`double`도 이것을 지나므로, 출력이 그 값을 담아 둔 변수의 폭에 좌우되지 않는다. 정확한 표기가
+중요할 때는 `proven_float_format_f32_policy()`와 그 `f64` 짝이 정책과 옵션을 명시적으로 받는다.
+최단(shortest) 모드는 다시 읽었을 때 정확히 같은 값이 되는 가장 짧은 자릿수를 요구한다. 직렬화기가
+원하는 성질이 이것이다. 필요 없는 수에까지 열일곱 자리를 찍지 않으면서 왕복을 정확하게 만든다.
+
+<!-- example: manual/examples/ex_08_numbers.c -->
+```c
+#include <string.h>
+
+/*
+ * Reading numbers out of text, and writing them back.
+ *
+ * The text here is the sort a program actually meets: a log line with mixed
+ * widths and signs, and a measurements file where the interesting number is
+ * buried in prose. That means three jobs the earlier chapter-8 examples do not
+ * cover:
+ *
+ *   - Scanning into types WIDER than int, and into unsigned ones, where the
+ *     destination type is the whole question - a byte count that does not fit in
+ *     32 bits is the classic overflow nobody notices until the file is 5 GB.
+ *   - Positioning the cursor by hand - skipping whitespace, or skipping ahead to
+ *     wherever the next number starts - when the input is not a rigid format.
+ *   - Converting a decimal string to a double and back, exactly, without going
+ *     through the C library's locale-dependent conversions.
+ *
+ * The float part matters more than it sounds. strtod reads "3,5" as 3.5 in one
+ * locale and as 3 in another, and the same program then disagrees with itself
+ * across machines. The parser used here is locale-free by construction: a comma
+ * is never a decimal point, whatever the environment says.
+ */
+
+int main(void) {
+    /* --- 1. scanning into the type the value needs ------------------------ */
+
+    /* A log line: a request id that needs 64 bits, a byte count that is never
+     * negative and can exceed 4 GB, a small status code, and a negative offset. */
+    proven_scan_t scan = proven_scan_init(
+        PROVEN_LIT("id=9007199254740993 bytes=5368709120 status=404 delta=-17"));
+
+    proven_i64 id = 0;
+    proven_u64 bytes = 0;
+    proven_u32 status = 0;
+    proven_i32 delta = 0;
+
+    /* Each argument constructor names the destination type, so the scanner
+     * writes the right width and reports an overflow instead of wrapping. The
+     * generic PROVEN_SCAN_ARG() macro picks these for you from the pointer's
+     * type; the named forms are what it picks, and what you write when you want
+     * the choice visible. */
+    proven_err_t err = proven_scan_fmt_cursor(&scan, "id={} bytes={} status={} delta={}",
+                                       proven_scan_arg_i64(&id),
+                                       proven_scan_arg_u64(&bytes),
+                                       proven_scan_arg_u32(&status),
+                                       proven_scan_arg_i32(&delta));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "scanning the log line must succeed");
+    EXAMPLE_REQUIRE(id == 9007199254740993LL, "a 64-bit id survives, which a 32-bit destination could not");
+    EXAMPLE_REQUIRE(bytes == 5368709120ULL, "and so does a byte count larger than 4 GiB");
+    EXAMPLE_REQUIRE(status == 404u, "the small unsigned value reads normally");
+    EXAMPLE_REQUIRE(delta == -17, "and a signed destination accepts the minus sign");
+
+    /* The destination type is a contract, not a hint. A negative number has no
+     * unsigned representation, and the scanner refuses rather than wrapping it
+     * to something enormous. */
+    proven_scan_t neg = proven_scan_init(PROVEN_LIT("-17"));
+    proven_u32 nowhere = 12345;
+    err = proven_scan_fmt_cursor(&neg, "{}", proven_scan_arg_u32(&nowhere));
+    EXAMPLE_REQUIRE(err != PROVEN_OK, "a negative value cannot be scanned into an unsigned destination");
+    EXAMPLE_REQUIRE(nowhere == 12345, "and the destination is left as it was");
+
+    /* --- 2. moving the cursor when the input is not rigid ----------------- */
+
+    /* Free-form text: the numbers matter, the words between them do not. */
+    proven_scan_t notes = proven_scan_init(
+        PROVEN_LIT("   sample A measured 42 units; sample B measured -8 units"));
+
+    /* skip_whitespace advances past spaces, tabs and newlines. It is what you
+     * call between fields of a format you are driving by hand - it never fails,
+     * because "there was no whitespace" is not an error. */
+    proven_scan_skip_whitespace(&notes);
+    EXAMPLE_REQUIRE(notes.cursor == 3, "the three leading spaces are consumed");
+
+    /* skip_until_number runs the cursor forward to the first digit, or to a sign
+     * immediately followed by one. It is the call that turns "find the number in
+     * this line" from a hand-written loop into one statement. */
+    proven_scan_skip_until_number(&notes);
+    proven_i32 first = 0;
+    err = proven_scan_fmt_cursor(&notes, "{}", proven_scan_arg_i32(&first));
+    EXAMPLE_REQUIRE(proven_is_ok(err) && first == 42, "the first number in the line is 42");
+
+    proven_scan_skip_until_number(&notes);
+    proven_i32 second = 0;
+    err = proven_scan_fmt_cursor(&notes, "{}", proven_scan_arg_i32(&second));
+    EXAMPLE_REQUIRE(proven_is_ok(err) && second == -8,
+                    "and the next one keeps its sign, because the sign is part of the number");
+
+    /* At the end there is nothing left to find, and the cursor stops rather than
+     * running off: the scan is over, not broken. */
+    proven_scan_skip_until_number(&notes);
+    EXAMPLE_REQUIRE(notes.cursor == notes.view.size, "with no number left, the cursor lands at the end");
+
+    /* --- 3. decimal text to double, without a locale --------------------- */
+
+    proven_parse_double_result_t d = proven_parse_double_ascii(PROVEN_LIT("3.14159 rest"));
+    EXAMPLE_REQUIRE(proven_is_ok(d.err), "parsing a decimal number must succeed");
+    EXAMPLE_REQUIRE(d.val > 3.14158 && d.val < 3.14160, "and produce the value the digits spell");
+
+    /* consumed says where the number ended, so the caller can carry on from
+     * there - which is how you parse a list without copying it into pieces. */
+    EXAMPLE_REQUIRE(d.consumed == 7, "consumed reports exactly the bytes the number used");
+
+    /* A comma is not a decimal point here and never will be, whatever locale the
+     * program is running under. The number ends at the comma. */
+    proven_parse_double_result_t comma = proven_parse_double_ascii(PROVEN_LIT("3,5"));
+    EXAMPLE_REQUIRE(proven_is_ok(comma.err) && comma.consumed == 1 && comma.val == 3.0,
+                    "a comma ends the number: the parser is locale-free by construction");
+
+    /* proven_parse_f64_ascii is the same function under its earlier name, kept
+     * for code written before the current one existed. New code should use
+     * proven_parse_double_ascii; both are here so an old call site still reads
+     * correctly. */
+    proven_parse_f64_result_t same = proven_parse_f64_ascii(PROVEN_LIT("3.14159 rest"));
+    EXAMPLE_REQUIRE(same.val == d.val && same.consumed == d.consumed,
+                    "the compatibility name is the same parser");
+
+    /* Text that is not a number at all is an error, not a silent zero - which is
+     * what atof() would have handed back with nothing to distinguish it from a
+     * genuine "0". */
+    proven_parse_double_result_t junk = proven_parse_double_ascii(PROVEN_LIT("not a number"));
+    EXAMPLE_REQUIRE(!proven_is_ok(junk.err), "unparsable text is reported, not turned into 0");
+    EXAMPLE_REQUIRE(junk.consumed == 0, "and nothing was consumed");
+
+    /* --- 4. writing a float back ------------------------------------------ */
+
+    /* proven_arg_f64 is how a floating-point value enters the formatter. Both
+     * float and double go through it, so the digits a program prints do not
+     * depend on the width of the variable it happened to be kept in. */
+    proven_allocator_t alloc = proven_heap_allocator();
+    proven_result_u8str_t line = proven_u8str_create(alloc, 64);
+    EXAMPLE_REQUIRE(proven_is_ok(line.err), "creating the output string must succeed");
+
+    proven_fmt_result_t out = proven_u8str_append_fmt(&line.value, "measured {} units",
+                                                      proven_arg_f64(d.val));
+    EXAMPLE_REQUIRE(proven_is_ok(out.err), "formatting the parsed value must succeed");
+    EXAMPLE_REQUIRE(proven_u8str_view_starts_with(proven_u8str_as_view(&line.value),
+                                                  PROVEN_LIT("measured 3.14159")),
+                    "and spell the number it was given");
+
+    /* The policy form is the explicit one, for when the caller needs a
+     * particular spelling rather than the default. SHORTEST asks for the fewest
+     * digits that read back as exactly this value - which is the property a
+     * serialiser wants, because it makes the round trip exact without printing
+     * seventeen digits for numbers that do not need them. */
+    char shortest[64];
+    proven_size_t wrote = 0;
+    float measured = 0.1f;
+    proven_err_t ferr = proven_float_format_f32_policy(shortest, sizeof shortest, measured,
+                                                       PROVEN_FLOAT_FORMAT_POLICY_RYU,
+                                                       proven_float_format_options_shortest(),
+                                                       &wrote);
+    EXAMPLE_REQUIRE(proven_is_ok(ferr), "formatting a float in shortest mode must succeed");
+    EXAMPLE_REQUIRE(wrote > 0 && shortest[wrote] == '\0', "the result is written and terminated");
+    EXAMPLE_REQUIRE(strcmp(shortest, "0.1") == 0,
+                    "0.1f prints as 0.1: the shortest text that reads back as the same float");
+
+    /* And it round-trips: the text reads back as the value it came from. That is
+     * the guarantee shortest mode exists to provide. */
+    proven_parse_double_result_t roundtrip = proven_parse_double_ascii(
+        (proven_u8str_view_t){ .ptr = (const proven_byte_t *)shortest, .size = wrote });
+    EXAMPLE_REQUIRE(proven_is_ok(roundtrip.err), "the shortest form parses back");
+    EXAMPLE_REQUIRE((float)roundtrip.val == measured, "as exactly the float it was printed from");
+
+    printf("scanned id=%lld bytes=%llu; formatted %s and %s\n",
+           (long long)id, (unsigned long long)bytes, proven_u8str_as_cstr(&line.value), shortest);
+
+    proven_u8str_destroy(alloc, &line.value);
+    return EXAMPLE_OK();
+}
+```
+
+반례 — 큰 값을 32비트 목적지로 읽는 경우:
+
+```text
+proven_i32 bytes = 0;
+proven_err_t e = proven_scan_fmt_cursor(&scan, "bytes={}", proven_scan_arg_i32(&bytes));
+/* input says 5368709120 */                                        /* wrong type */
+```
+
+값이 들어가지 않는다. 필드가 담을 수 있는 범위가 아니라 손에 익은 것으로 목적지 타입을 고르는 일은,
+파일 오프셋을 `int`로 선언하는 것과 같은 실수다.
+
+반례 — 기계를 건너다니는 데이터에 `atof`나 `strtod`를 쓰는 경우:
+
+```text
+double v = strtod(text, NULL);   /* wrong: the decimal point depends on the locale */
+```
+
+게다가 `atof`는 실패를 보고할 방법이 아예 없다. 해석할 수 없는 텍스트가 `0`이 되고, 그것은 데이터
+안의 진짜 0과 구분되지 않는다.
+
+반례 — `skip_until_number`가 "없음"을 알려 준다고 가정하는 경우:
+
+```text
+proven_scan_skip_until_number(&scan);
+proven_i32 n = 0;
+proven_err_t e = proven_scan_fmt_cursor(&scan, "{}", proven_scan_arg_i32(&n));  /* may fail */
+```
+
+이 함수는 커서를 옮길 뿐 아무것도 돌려주지 않는다. 남은 숫자가 없으면 커서는 입력의 끝에 놓이고, 그
+사실을 알려 주는 것은 뒤따르는 스캔이다. 숫자를 찾았다고 가정하는 대신 그 에러를 확인한다.
+
+### 실전 예제: 인자 타입을 손으로 이름 붙이기
+
+`PROVEN_ARG(x)`와 `PROVEN_SCAN_ARG(&x)`는 넘겨받은 것의 타입에서 인자 생성자를 골라 주며, 대부분의
+코드는 무엇이 골라졌는지 알 필요가 없다. 그 선택을 도로 가져와야 하는 상황이 둘 있다.
+
+1. **매크로가 판단할 타입이 내 의도를 담고 있지 않을 때.** `proven_u8str_view_t`, 분해된 날짜,
+   진단용으로 찍는 주소 — `proven_arg_str_view()`, `proven_arg_datetime()`, `proven_arg_ptr()`가
+   있는 이유는 이들이 얼떨결에 빠지는 기본값이 아니라 의도적인 선택이기 때문이다.
+2. **인자 목록을 실행 중에 만들 때.** 매개변수가 이미 `proven_arg_t`인 로그 헬퍼는 그것을 다시 감쌀
+   수 없다. 값을 인자로 바꾸는 매크로는 이미 인자인 것과는 상관이 없다.
+   `proven_arg_identity()`와 `proven_scan_arg_identity()`가 바로 그 자리에서, 매크로로 굴러가는
+   같은 코드 경로가 미리 만들어진 인자를 받아들이게 해 준다.
+
+예제는 양쪽을 이름으로 적는다. 형식화 쪽은 문자 하나, 불(bool) 값, 부호 없는 32·64비트 값, 텍스트를
+넘기는 세 가지 방법(`proven_arg_str_view()`, `proven_arg_cstr()`, `proven_arg_ucstr()`), 날짜와
+포인터. 스캔 쪽은 C의 모든 기본 정수 폭(`short`, `int`, `long`, `long long`과 그 부호 없는 형태),
+`double`, 그리고 복사 없이 붙잡는 문자열 view.
+
+텍스트 생성자 셋은 호출자를 얼마나 믿는가에서 갈리며, 그 순서를 기억해 둘 값어치가 있다.
+
+| 생성자 | 무엇을 받는가 | 무엇이 잘못될 수 있는가 |
+|---|---|---|
+| `proven_arg_str_view` | 포인터 **와** 길이 | 종결자를 찾아 훑는 일이 없으니 빠질 종결자도 없다 — 기본으로 이것을 쓴다 |
+| `proven_arg_cstr` | NUL로 끝나는 C 문자열 | 종결자가 있어야 하고 메모리가 살아 있어야 한다. 아니면 형식화기가 끝을 넘어 읽는다 |
+| `proven_arg_ucstr` | 같은 것을 `unsigned char *`로 | 바이트 버퍼에 진짜 경고를 지우는 캐스트를 붙이지 않아도 되도록 존재한다 |
+
+<!-- example: manual/examples/ex_08_arguments.c -->
+```c
+/*
+ * Every value handed to the formatter arrives as a proven_arg_t, and every value
+ * the scanner writes into arrives as a proven_scan_arg_t. Most of the time you
+ * never see either: PROVEN_ARG(x) and PROVEN_SCAN_ARG(&x) pick the right
+ * constructor from the type of what you passed, and that is the whole point of
+ * them.
+ *
+ * Two situations take the choice back off the macro, and both are ordinary:
+ *
+ *   1. The macro cannot see a type it recognises. A `proven_u8str_view_t`, a
+ *      broken-down date, a raw address printed for a diagnostic - these need the
+ *      constructor named, because there is no plain C type for the macro to
+ *      dispatch on that means what you mean.
+ *
+ *   2. You are building the argument list at RUNTIME. A logging helper that
+ *      takes "whatever the caller already assembled" receives proven_arg_t
+ *      values, not ints and strings - and a macro that turns a value into an
+ *      argument cannot be handed something that is already an argument. That is
+ *      what the identity constructors are for: they let the same macro-driven
+ *      code path accept an argument that was built earlier.
+ *
+ * So this example writes both sides out by name. The width and signedness of a
+ * destination is not decoration - it is what decides whether 70000 arrives as
+ * 70000 or as 4464.
+ */
+
+/* A logging helper that takes arguments the caller has already built. Because
+ * its parameters are proven_arg_t, PROVEN_ARG would be the wrong tool inside it
+ * - the value is already an argument, and proven_arg_identity is what says so. */
+static proven_fmt_result_t log_pair(proven_u8str_t *out, const char *fmt,
+                                    proven_arg_t a, proven_arg_t b) {
+    return proven_u8str_append_fmt(out, fmt, proven_arg_identity(a), proven_arg_identity(b));
+}
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    proven_result_u8str_t line = proven_u8str_create(alloc, 256);
+    EXAMPLE_REQUIRE(proven_is_ok(line.err), "creating the output string must succeed");
+    if (!proven_is_ok(line.err)) {
+        return 1;
+    }
+    proven_u8str_t out = line.value;
+
+    /* --- naming the formatting argument yourself -------------------------- */
+
+    /* A single character and a flag. Written by name here so it is visible that
+     * a bool prints as true/false rather than as 1/0. */
+    proven_fmt_result_t r = proven_u8str_append_fmt(&out, "flag={} mark={}",
+                                                    proven_arg_bool(true),
+                                                    proven_arg_char('!'));
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "formatting a bool and a char must succeed");
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&out), PROVEN_LIT("flag=true mark=!")),
+                    "a bool renders as a word, not as a digit");
+
+    EXAMPLE_REQUIRE(proven_is_ok(proven_u8str_reset(&out)), "clearing the line must succeed");
+
+    /* Unsigned widths. The constructor is the declaration of what the value is:
+     * an unsigned 32-bit count and an unsigned 64-bit byte total are different
+     * facts, and writing them out says which one you have. */
+    r = proven_u8str_append_fmt(&out, "files={} bytes={}",
+                                proven_arg_u32(1200u),
+                                proven_arg_u64(5368709120ULL));
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "formatting unsigned values must succeed");
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&out), PROVEN_LIT("files=1200 bytes=5368709120")),
+                    "a 64-bit total is printed in full, not truncated to 32 bits");
+
+    EXAMPLE_REQUIRE(proven_is_ok(proven_u8str_reset(&out)), "clearing the line must succeed");
+
+    /* Three ways to give the formatter text, in order of how much they trust
+     * the caller:
+     *
+     *   proven_arg_str_view  - a pointer AND a length. Nothing is scanned for a
+     *                          terminator, so there is no terminator to be
+     *                          missing. Prefer this.
+     *   proven_arg_cstr      - a NUL-terminated C string. The formatter walks it
+     *                          looking for the terminator, so it must be there,
+     *                          and the memory must still be alive.
+     *   proven_arg_ucstr     - the same, for `unsigned char *`, which is what a
+     *                          byte buffer is usually typed as. It exists so the
+     *                          caller does not have to write a cast that
+     *                          silences a real warning.
+     */
+    const char *name = "report.txt";
+    const unsigned char *tag = (const unsigned char *)"draft";
+    proven_u8str_view_t note = PROVEN_LIT("first pass");
+
+    r = proven_u8str_append_fmt(&out, "{} [{}] {}",
+                                proven_arg_cstr(name),
+                                proven_arg_ucstr(tag),
+                                proven_arg_str_view(note));
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "formatting the three text forms must succeed");
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&out),
+                                         PROVEN_LIT("report.txt [draft] first pass")),
+                    "all three produce the same kind of output from different kinds of pointer");
+
+    EXAMPLE_REQUIRE(proven_is_ok(proven_u8str_reset(&out)), "clearing the line must succeed");
+
+    /* A date, and an address. Neither has a plain C type that means what it
+     * means: a date is a struct, and an address printed for a diagnostic is a
+     * deliberate act rather than something to fall into. */
+    proven_datetime_t when = proven_time_breakdown(0);   /* the epoch: a fixed, checkable value */
+    int local = 0;
+
+    r = proven_u8str_append_fmt(&out, "at {} object {}",
+                                proven_arg_datetime(when),
+                                proven_arg_ptr(&local));
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "formatting a date and a pointer must succeed");
+    EXAMPLE_REQUIRE(proven_u8str_view_starts_with(proven_u8str_as_view(&out), PROVEN_LIT("at 1970-01-01")),
+                    "the epoch breaks down to the first of January 1970");
+    EXAMPLE_REQUIRE(proven_u8str_view_find(proven_u8str_as_view(&out), 0, PROVEN_LIT("0x")) != PROVEN_SIZE_MAX,
+                    "and an address is rendered in hexadecimal");
+
+    EXAMPLE_REQUIRE(proven_is_ok(proven_u8str_reset(&out)), "clearing the line must succeed");
+
+    /* Arguments built here, passed on, and formatted there. */
+    r = log_pair(&out, "status={} retries={}", proven_arg_cstr("ok"), proven_arg_u32(3u));
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "formatting pre-built arguments must succeed");
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&out), PROVEN_LIT("status=ok retries=3")),
+                    "an argument built by the caller formats exactly as one built in place");
+
+    /* --- naming the scanning destination yourself ------------------------- */
+
+    /* On the way in, the constructor names the destination, and the destination
+     * decides what "too big" means. These are the plain C types - short, int,
+     * long, long long and their unsigned forms - for the very common case where
+     * the variable you already have is one of them rather than a fixed-width
+     * type. */
+    proven_scan_t scan = proven_scan_init(
+        PROVEN_LIT("h=-32000 uh=65000 i=-2000000 ui=4000000000 l=-9000000 ul=9000000 "
+                   "ll=-9007199254740993 ull=18446744073709551615 f=2.5 word=alpha"));
+
+    short h = 0;
+    unsigned short uh = 0;
+    int i = 0;
+    unsigned int ui = 0;
+    long l = 0;
+    unsigned long ul = 0;
+    long long ll = 0;
+    unsigned long long ull = 0;
+    double f = 0.0;
+    proven_u8str_view_t word = {0};
+
+    proven_err_t err = proven_scan_fmt_cursor(
+        &scan, "h={} uh={} i={} ui={} l={} ul={} ll={} ull={} f={} word={}",
+        proven_scan_arg_short(&h),
+        proven_scan_arg_ushort(&uh),
+        proven_scan_arg_int(&i),
+        proven_scan_arg_uint(&ui),
+        proven_scan_arg_long(&l),
+        proven_scan_arg_ulong(&ul),
+        proven_scan_arg_llong(&ll),
+        proven_scan_arg_ullong(&ull),
+        proven_scan_arg_f64(&f),
+        proven_scan_arg_str_view(&word));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "scanning every plain integer width must succeed");
+    EXAMPLE_REQUIRE(h == -32000 && uh == 65000u, "the short forms hold their values");
+    EXAMPLE_REQUIRE(i == -2000000 && ui == 4000000000u, "and so do the int forms");
+    EXAMPLE_REQUIRE(l == -9000000L && ul == 9000000UL, "and the long forms");
+    EXAMPLE_REQUIRE(ll == -9007199254740993LL, "a value needing 64 bits arrives whole");
+    EXAMPLE_REQUIRE(ull == 18446744073709551615ULL, "including the largest unsigned 64-bit value");
+    EXAMPLE_REQUIRE(f > 2.4999 && f < 2.5001, "the floating-point destination reads a decimal");
+
+    /* A scanned string view points INTO the text being scanned. Nothing was
+     * copied and nothing was allocated, so it is valid exactly as long as that
+     * text is - copy it into a proven_u8str_t if it must outlive the scan. */
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(word, PROVEN_LIT("alpha")), "the word is captured as a view");
+
+    /* The destination's width is a promise the scanner keeps. 70000 does not fit
+     * in a short, so it is refused rather than wrapped to 4464 - which is what a
+     * cast would have produced, silently, in a file nobody looks at again. */
+    proven_scan_t narrow = proven_scan_init(PROVEN_LIT("70000"));
+    short too_small = 7;
+    err = proven_scan_fmt_cursor(&narrow, "{}", proven_scan_arg_short(&too_small));
+    EXAMPLE_REQUIRE(err != PROVEN_OK, "a value that does not fit the destination is refused");
+    EXAMPLE_REQUIRE(too_small == 7, "and the destination keeps the value it had");
+
+    /* The scanning identity constructor, for the same reason as the formatting
+     * one: a helper that receives ready-made scan arguments cannot re-wrap them. */
+    proven_scan_t again = proven_scan_init(PROVEN_LIT("41"));
+    proven_i32 answer = 0;
+    proven_scan_arg_t prebuilt = proven_scan_arg_i32(&answer);
+    err = proven_scan_fmt_cursor(&again, "{}", proven_scan_arg_identity(prebuilt));
+    EXAMPLE_REQUIRE(proven_is_ok(err) && answer == 41, "a pre-built scan argument works unchanged");
+
+    printf("arguments: %s\n", proven_u8str_as_cstr(&out));
+
+    proven_u8str_destroy(alloc, &out);
+    return EXAMPLE_OK();
+}
+```
+
+반례 — 이미 인자인 것을 다시 감싸는 경우:
+
+```text
+static proven_fmt_result_t log_one(proven_u8str_t *out, proven_arg_t a) {
+    return proven_u8str_append_fmt(out, "{}", PROVEN_ARG(a));   /* wrong */
+}
+```
+
+`proven_arg_identity(a)`를 쓴다. `PROVEN_ARG`는 값을 위한 것이고, `a`는 이미 인자다.
+
+반례 — 텍스트가 사라진 뒤에도 스캔한 view를 들고 있는 경우:
+
+```text
+proven_u8str_view_t word = {0};
+{
+    proven_u8str_t line = read_a_line(alloc);
+    proven_scan_t s = proven_scan_init(proven_u8str_as_view(&line));
+    proven_err_t e = proven_scan_fmt_cursor(&s, "word={}", proven_scan_arg_str_view(&word));
+    proven_u8str_destroy(alloc, &line);     /* wrong: `word` pointed into `line` */
+}
+use(word);
+```
+
+스캔한 view는 스캔 대상 텍스트 안쪽을 가리킨다. 그 텍스트보다 오래 살아야 한다면
+`proven_u8str_t`로 복사한다.

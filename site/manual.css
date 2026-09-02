@@ -1,0 +1,74 @@
+/* The published manual. One stylesheet for both languages and every page. */
+:root {
+  --ink: #1b1b1d;
+  --dim: #5b5f66;
+  --rule: #dcdfe4;
+  --bg: #ffffff;
+  --panel: #f6f7f9;
+  --accent: #1f5fa8;
+  --code-bg: #f6f7f9;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e6e6e6; --dim: #a5aab3; --rule: #33373d; --bg: #16181c;
+    --panel: #1e2126; --accent: #74a9ec; --code-bg: #1e2126;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR",
+               "Apple SD Gothic Neo", "Malgun Gothic", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 17px;
+  line-height: 1.72;
+}
+.wrap { display: flex; align-items: flex-start; max-width: 1180px; margin: 0 auto; }
+nav.toc {
+  position: sticky; top: 0; align-self: flex-start;
+  width: 250px; min-width: 250px; max-height: 100vh; overflow-y: auto;
+  padding: 28px 18px 40px; border-right: 1px solid var(--rule); font-size: 14px;
+}
+nav.toc h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); margin: 22px 0 8px; }
+nav.toc a { display: block; padding: 3px 0; color: var(--ink); text-decoration: none; }
+nav.toc a:hover { color: var(--accent); text-decoration: underline; }
+nav.toc a.here { color: var(--accent); font-weight: 600; }
+nav.toc .lang { margin-bottom: 14px; font-size: 13px; color: var(--dim); }
+nav.toc .lang a { display: inline; padding: 0 6px 0 0; }
+main { flex: 1; min-width: 0; padding: 28px 32px 96px; }
+main h1, main h2, main h3, main h4 { line-height: 1.3; margin: 1.8em 0 .6em; }
+main h1 { font-size: 1.9rem; margin-top: .2em; padding-bottom: .2em; }
+main h2 { font-size: 1.45rem; padding-bottom: .25em; border-bottom: 1px solid var(--rule); }
+main h3 { font-size: 1.15rem; }
+main h4 { font-size: 1.02rem; color: var(--dim); }
+main p { margin: 0 0 1em; }
+main a { color: var(--accent); }
+main ul, main ol { margin: 0 0 1em; padding-left: 1.4em; }
+main li { margin: .3em 0; }
+main blockquote {
+  margin: 1.2em 0; padding: .6em 1em; border-left: 3px solid var(--accent);
+  background: var(--panel); color: var(--dim);
+}
+main table { border-collapse: collapse; width: 100%; margin: 1.2em 0; font-size: .93em; display: block; overflow-x: auto; }
+main table td { border: 1px solid var(--rule); padding: .5em .7em; vertical-align: top; }
+main table tr:first-child td { background: var(--panel); }
+code, pre, kbd { font-family: "D2Coding", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+main :not(pre) > code { background: var(--code-bg); padding: .12em .35em; border-radius: 3px; font-size: .9em; }
+main pre {
+  background: var(--code-bg); border: 1px solid var(--rule); border-radius: 6px;
+  padding: 14px 16px; overflow-x: auto; font-size: .88em; line-height: 1.55;
+}
+main pre code { background: none; padding: 0; }
+.page-nav { display: flex; justify-content: space-between; gap: 16px; margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--rule); font-size: .95em; }
+.page-nav a { color: var(--accent); text-decoration: none; }
+.masthead { font-size: 13px; color: var(--dim); margin-bottom: 6px; }
+.masthead a { color: var(--dim); text-decoration: none; }
+.anchor { color: var(--dim); text-decoration: none; opacity: 0; padding-left: .35em; font-weight: 400; }
+h2:hover .anchor, h3:hover .anchor, h4:hover .anchor { opacity: 1; }
+@media (max-width: 860px) {
+  .wrap { display: block; }
+  nav.toc { position: static; width: auto; min-width: 0; max-height: none; border-right: 0; border-bottom: 1px solid var(--rule); }
+  main { padding: 20px 18px 64px; }
+}

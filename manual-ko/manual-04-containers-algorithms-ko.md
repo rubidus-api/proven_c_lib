@@ -6,7 +6,7 @@
 올바른 이유로 해싱하고, 바이트를 텍스트로 또 그 반대로 바꿀 수 있다.
 
 이 장은 `array.h`, `list.h`, `ring.h`, `map.h`, `algorithm.h`, `hash.h`, `encode.h`를 다룬다.
-여기 있는 모든 컨테이너는 allocator를 받는다. 2장이 먼저 오는 이유가 그것이다.
+여기 있는 모든 컨테이너는 할당자(allocator)를 받는다. 2장이 먼저 오는 이유가 그것이다.
 
 ## 목차
 
@@ -69,7 +69,7 @@ int *first = PROVEN_ARRAY_GET(&arr, int, 0);
 ```
 
 이것은 타입이 제거해 줄 수 없는 유일한 위험이다. 확장은 저장소를 이동시키므로, **배열을 가리키는
-모든 포인터나 view는 확장을 유발할 수 있는 모든 연산에 의해 무효화된다.** 가리키는 대신 인덱스를
+모든 포인터나 뷰(view)는 확장을 유발할 수 있는 모든 연산에 의해 무효화된다.** 가리키는 대신 인덱스를
 쓰거나, push 이후에 포인터를 다시 가져오라.
 
 
@@ -517,7 +517,7 @@ PROVEN_RING_DESTROY(&q);
 
 ## 4. 해시 맵
 
-`proven_map_t`는 tombstone을 갖는 open-addressing 해시 맵이다. 정수 키와 borrowed 또는 owned U8 문자열 키를 지원한다. allocator를 내부에 저장한다.
+`proven_map_t`는 tombstone을 갖는 open-addressing 해시 맵이다. 정수 키와 빌려 쓰는(borrowed) 또는 소유(owned) U8 문자열 키를 지원한다. allocator를 내부에 저장한다.
 
 ### 구조체
 
@@ -579,7 +579,7 @@ typedef struct {
   자기네 테이블에 대해 내린 것과 같은 선택이다. 키가 전부 여러분 자신의 프로그램에서
   온다면, `proven_map_create_trusted`가 빠른 unkeyed FNV-1a를 대신 선택한다.
   `proven_map_hash`는 주어진 맵이 실제로 어느 함수를 쓰는지 알려준다. (CSPRNG도
-  공격자 모델도 없는 freestanding 타깃에서는 문자열 키가 FNV로 후퇴한다.)
+  공격자 모델도 없는 프리스탠딩(freestanding) 타깃에서는 문자열 키가 FNV로 후퇴한다.)
 - **탐사(Probing).** 선형 open addressing: 시작 버킷은 `hash & (cap - 1)`이며(`cap`이
   2의 거듭제곱이라 저렴하다), 그다음 검색은 한 번에 한 버킷씩 앞으로 걸어가며 감싸고,
   키(같은 키를 가진 OCCUPIED)나 EMPTY 버킷(키가 없음을 증명함)을 찾을 때까지 계속한다.
@@ -611,7 +611,7 @@ typedef struct {
 `proven_map_get`이 반환한 포인터를 통해 한 키에서 다른 키로 값을 복사하는 경우), 바로
 그 삽입이 유발하는 재해싱이 여러분이 읽고 있는 바이트를 옮기거나 해제할 수 있다.
 `proven_map_set_with_scratch`(그리고 `*_WITH_SCRATCH_*` 매크로)는 원본 바이트를 먼저
-scratch allocator의 임시 버퍼로 담아두므로 삽입이 별칭 안전(alias-safe)해진다. 영구
+임시 작업용(scratch) allocator의 임시 버퍼로 담아두므로 삽입이 별칭 안전(alias-safe)해진다. 영구
 저장소는 여전히 `map->alloc`을 쓴다. scratch allocator는 그 일시적 복사에만 쓰인다.
 
 ### 함수
@@ -1006,6 +1006,20 @@ for (size_t i = 0; i < len; i += 2)               /* wrong: no length check */
 `INVALID_ENCODING`이지 조용히 다른 결과가 아니다. 줄바꿈된 입력을 *받아들이고* 싶다면,
 공백을 직접 제거하라 — 의도적으로, 여러분이 볼 수 있는 곳에서.
 
+**목적지 크기는 손으로 짐작하지 말고 크기 함수로 구한다.** 인코딩마다 짝이 하나씩 있고 —
+`proven_hex_encoded_size()` / `proven_hex_decoded_size()`, 그리고
+`proven_base64_encoded_size()` / `proven_base64_decoded_size()` — 둘이 약속하는 것이 다르다.
+
+| 방향 | 그 수의 의미 | 쓰는 법 |
+|---|---|---|
+| 인코딩 | hex와 표준 Base64에서는 **정확한 값**. Base64URL은 패딩을 빼므로 결과가 더 짧을 수 있으나, 이 값은 여전히 안전한 상한이다. | 이만큼 할당한다. 호출이 실제로 쓴 양을 알려 준다. |
+| 디코딩 | **상한**이다. 패딩과 쓰인 알파벳은 텍스트를 읽기 전에는 알 수 없다. | 상한만큼 할당한 뒤, 길이로는 상한이 아니라 보고된 개수를 쓴다. |
+
+아래 예제는 그것으로 끝맺는다. `proven_base64_encoded_size()`로 크기를 잡아 목적지를 할당하고,
+거기에 인코딩하고, `proven_base64_decoded_size()`로 역방향 버퍼 크기를 잡아 디코딩하고, 같은
+바이트를 `proven_hex_decode()`로도 왕복시킨다 — 실제 도구들이 내놓는 대문자 입력과, 온전한 바이트
+수가 될 수 없는 홀수 길이 입력까지 포함해서다.
+
 테스트 스위트가 컴파일하고 실행한다:
 
 <!-- example: manual/examples/ex_04_encode.c -->
@@ -1067,7 +1081,75 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_hex_encode(data, tiny, sizeof tiny, &hn) == PROVEN_ERR_OUT_OF_BOUNDS,
                     "a too-small output buffer is OUT_OF_BOUNDS, not a truncated prefix");
 
-    (void)hex; (void)url; (void)un;
+    /* --- sizing the destination buffer, instead of guessing ---------------- */
+
+    /* Every encode and decode above wrote into a fixed array that was obviously
+     * big enough. Real code allocates the destination, and then the size has to
+     * be computed rather than remembered. That is what the four size functions
+     * are for - one per direction, per encoding. */
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    proven_size_t need = proven_base64_encoded_size(data.size);
+    EXAMPLE_REQUIRE(need > 0, "an encoded size must be computed, not guessed");
+
+    proven_result_mem_mut_t out = alloc.alloc_fn(alloc.ctx, need, 1);
+    EXAMPLE_REQUIRE(proven_is_ok(out.err), "allocating exactly the encoded size must succeed");
+
+    proven_size_t wrote = 0;
+    EXAMPLE_REQUIRE(proven_is_ok(proven_base64_encode(data, out.value.ptr, out.value.size, &wrote)),
+                    "encoding into a buffer sized by the size function must fit exactly");
+    EXAMPLE_REQUIRE(wrote == need, "and use all of it: this size is exact for standard base64");
+
+    /* The decode direction is an UPPER BOUND, not an exact count: base64 text
+     * may carry padding, so the decoder reports how many bytes it really wrote.
+     * Size the buffer with the bound; use the reported count afterwards. */
+    proven_size_t bound = proven_base64_decoded_size(wrote);
+    EXAMPLE_REQUIRE(bound >= data.size, "the decoded bound must cover the real output");
+
+    proven_result_mem_mut_t plain = alloc.alloc_fn(alloc.ctx, bound, 1);
+    EXAMPLE_REQUIRE(proven_is_ok(plain.err), "allocating the decode bound must succeed");
+
+    proven_size_t got = 0;
+    EXAMPLE_REQUIRE(proven_is_ok(proven_base64_decode(
+                        (proven_mem_view_t){ out.value.ptr, wrote }, plain.value.ptr, plain.value.size, &got)),
+                    "decoding back must succeed");
+    EXAMPLE_REQUIRE(got == data.size && proven_memcmp(plain.value.ptr, data.ptr, got) == 0,
+                    "and reproduce the original bytes exactly");
+
+    /* Hex has the same pair. Its decoded bound is exact when the input length is
+     * even, which valid hex always is - an odd length is malformed input, and
+     * the decoder says so rather than dropping the last digit. */
+    proven_size_t hex_len = 0;
+    EXAMPLE_REQUIRE(proven_is_ok(proven_hex_encode(data, hex, sizeof hex, &hex_len)),
+                    "re-encode to hex, since the refused call above left its count unusable");
+
+    proven_size_t hex_bound = proven_hex_decoded_size(hex_len);
+    EXAMPLE_REQUIRE(hex_bound == data.size, "two hex characters decode to one byte");
+
+    proven_byte_t from_hex[32];
+    proven_size_t hex_got = 0;
+    EXAMPLE_REQUIRE(proven_is_ok(proven_hex_decode(
+                        (proven_mem_view_t){ hex, hex_len }, from_hex, sizeof from_hex, &hex_got)),
+                    "hex decodes back to the original bytes");
+    EXAMPLE_REQUIRE(hex_got == data.size && proven_memcmp(from_hex, data.ptr, hex_got) == 0,
+                    "and the round trip is exact");
+
+    /* Hex is case-insensitive on the way in, which matters because different
+     * tools print different cases of the same digest. */
+    EXAMPLE_REQUIRE(proven_is_ok(proven_hex_decode(
+                        proven_mem_view_from_u8(PROVEN_LIT("DEADBEEF")), from_hex, sizeof from_hex, &hex_got)),
+                    "uppercase hex decodes too");
+    EXAMPLE_REQUIRE(hex_got == 4, "and yields one byte per two characters");
+
+    /* An odd number of characters cannot be a whole number of bytes. */
+    EXAMPLE_REQUIRE(proven_hex_decode(proven_mem_view_from_u8(PROVEN_LIT("abc")),
+                                      from_hex, sizeof from_hex, &hex_got) == PROVEN_ERR_INVALID_ENCODING,
+                    "an odd-length hex string is malformed, not silently truncated");
+
+    alloc.free_fn(alloc.ctx, plain.value.ptr);
+    alloc.free_fn(alloc.ctx, out.value.ptr);
+
+    (void)url; (void)un;
     return EXAMPLE_OK();
 }
 ```
@@ -1482,3 +1564,285 @@ int main(void) {
     return EXAMPLE_OK();
 }
 ```
+
+### 실전 예제: 컨테이너 크기 잡기, 정렬되지 않은 데이터 찾기, 흘러가는 데이터 검사합 구하기
+
+앞의 실전 예제들은 컨테이너를 하나씩 다룬다. 이 예제는 그 조각들이 들어가 있는 프로그램 — 작은
+이벤트 수집기 — 이고, 컨테이너가 여럿 얽히고 나서야 생기는 질문들에 답한다.
+
+- **채우는 도중에 컨테이너가 재할당하지 않게 한다.** `proven_array_reserve()`와
+  `proven_map_reserve()`는 용량을 한 번에 정한다. 힙에서는 복사를 아끼고, 아레나(arena) 뒤에서는 재할당이
+  다음 reset까지 남기는 죽은 저장 공간을 아낀다. map에서는 포인터의 정확성 문제이기도 하다.
+  리해시(rehash, 버킷 배열을 다시 만드는 일)는 앞서 `get_mut`이 돌려준 모든 포인터를 무효로 만든다.
+- **내가 만들지 않은 핸들을 확인한다.** `proven_array_is_valid()`, `proven_ring_is_valid()`,
+  `proven_map_is_valid()`는 핸들 자체의 필드가 서로 맞는지 묻는다. 0으로만 초기화된, 혹은 아예 만든
+  적 없는 컨테이너를 첫 push가 아니라 내 코드의 경계에서 잡아내는 검사다.
+- **정렬되지 않은 데이터를 찾는다.** 이벤트 로그는 도착 순서로 둔다. 그 순서 자체가 기록하려는
+  대상이기 때문이다. 그래서 이진 탐색(binary search)은 쓸 수 없다 — 정렬되지 않은 입력에서 그것은
+  "없음"을 돌려주지 않고 틀린 답을 돌려준다. 올바른 호출은
+  `proven_array_linear_search()`이고, 순서상 **첫 번째** 일치를 돌려준다.
+- **map에 이미 있는 값을 한 번의 조회로 고친다.** `proven_map_get_mut()`은 map 자신의 저장 공간을
+  가리키는 포인터를 돌려주므로, 카운터는 읽고 고쳐 다시 쓰는 대신 있는 자리에서 증가한다.
+- **키에 어떤 해시가 어울리는지 고른다.** `proven_map_create()`는 문자열 키를 키가 있는
+  SipHash로 해싱하므로, 키를 고르는 공격자가 모든 키를 한 버킷에 몰아넣을 수 없다.
+  `proven_map_create_trusted()`는 빠른 FNV-1a를 쓰며, 모든 키를 내 코드가 고를 때만 옳다.
+  `proven_map_hash()`는 map이 실제로 키를 놓는 데 쓴 값을 돌려주므로, 둘의 차이는 주장이 아니라
+  관찰할 수 있는 사실이 된다.
+- **조각으로 도착하는 데이터의 검사합을 구한다.** `proven_crc32_update()`는 각 조각을 진행 중인
+  값에 접어 넣는다. 조각 경계를 어떻게 나누었든 결과는 전체에 대한 `proven_crc32()`와 같다.
+
+<!-- example: manual/examples/ex_04_growth_and_lookup.c -->
+```c
+/*
+ * The container chapters show each structure on its own. A real program uses
+ * several at once, and the questions that come up then are not about any single
+ * container:
+ *
+ *   - How do I stop a container reallocating while it fills?  reserve.
+ *   - How do I check a container somebody handed me is usable?  is_valid.
+ *   - How do I search when the data is NOT sorted?  linear search - and knowing
+ *     why binary search would give a wrong answer here.
+ *   - How do I update a value already in a map without looking it up twice?
+ *     get_mut.
+ *   - Do I need the attack-resistant hash, or the fast one?  it depends on who
+ *     chooses the keys, and map_hash lets you see the difference.
+ *   - How do I checksum data that arrives in pieces?  crc32_update.
+ *
+ * The program is a small event intake: events arrive, are counted per client,
+ * the most recent few are kept for a diagnostic dump, and the batch is
+ * checksummed as it streams past.
+ */
+
+typedef struct {
+    proven_u32 client;
+    proven_u32 code;      /* an event code; 0 means "connection closed" */
+} event_t;
+
+/* Search by client id: this is the comparison for finding an event, not for
+ * sorting them. The array below is in ARRIVAL order and stays that way. */
+static int by_client(const void *a, const void *b) {
+    const event_t *x = (const event_t *)a;
+    const event_t *y = (const event_t *)b;
+    return (x->client > y->client) - (x->client < y->client);
+}
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* --- 1. reserve: decide the capacity once ----------------------------- */
+
+    proven_result_array_t ar = PROVEN_ARRAY_INIT(alloc, event_t, 4);
+    EXAMPLE_REQUIRE(proven_is_ok(ar.err), "creating the event log must succeed");
+    if (!proven_is_ok(ar.err)) {
+        return 1;
+    }
+    proven_array_t events = ar.value;
+
+    /* We know the batch size before we start, so ask for the room once. Without
+     * this the array doubles as it fills, copying its contents each time; behind
+     * an arena allocator each of those copies also leaves the old block behind
+     * until the arena is reset. */
+    proven_err_t err = proven_array_reserve(&events, 16);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "reserving room for the whole batch must succeed");
+    EXAMPLE_REQUIRE(events.cap >= 16, "the capacity is now at least what was asked for");
+
+    /* is_valid asks whether the handle itself is structurally sound - a pointer,
+     * a length and a capacity that agree. Assert it where a container arrives
+     * from other code, or after a zero-initialised handle might have escaped;
+     * it is not something to repeat after every push. */
+    EXAMPLE_REQUIRE(proven_array_is_valid(&events), "a created array must be structurally valid");
+
+    proven_array_t never_created = {0};
+    EXAMPLE_REQUIRE(!proven_array_is_valid(&never_created),
+                    "a zero-initialised handle is not a usable array");
+
+    static const event_t batch[] = {
+        { .client = 7, .code = 200 }, { .client = 3, .code = 200 },
+        { .client = 7, .code = 404 }, { .client = 9, .code = 200 },
+        { .client = 3, .code = 500 }, { .client = 7, .code = 0   },
+    };
+    proven_size_t batch_len = sizeof batch / sizeof batch[0];
+
+    proven_size_t cap_before = events.cap;
+    for (proven_size_t i = 0; i < batch_len; ++i) {
+        err = PROVEN_ARRAY_PUSH(&events, event_t, batch[i]);
+        EXAMPLE_REQUIRE(proven_is_ok(err), "pushing an event must succeed");
+    }
+    EXAMPLE_REQUIRE(events.cap == cap_before, "the reserve was enough: nothing reallocated while filling");
+
+    /* --- 2. searching data that is not sorted ----------------------------- */
+
+    /* The log is in arrival order, which is the order we want to keep: it is the
+     * thing being recorded. Binary search would be faster and WRONG here, since
+     * it may only be used on a sorted range - on unsorted data it does not
+     * return "not found", it returns nonsense. Linear search is the correct
+     * tool, and O(n) over a batch this size is nothing. */
+    event_t key = { .client = 9, .code = 0 };
+    const event_t *found = (const event_t *)proven_array_linear_search(&events, &key, by_client);
+    EXAMPLE_REQUIRE(found != NULL, "client 9 appears in the batch");
+    EXAMPLE_REQUIRE(found->code == 200, "and linear search returns the FIRST match in order");
+
+    event_t absent = { .client = 42, .code = 0 };
+    EXAMPLE_REQUIRE(proven_array_linear_search(&events, &absent, by_client) == NULL,
+                    "a client that never appeared is reported as not found");
+
+    /* --- 3. a ring for the most recent events ----------------------------- */
+
+    proven_result_ring_t rr = PROVEN_RING_INIT(alloc, event_t, 4);
+    EXAMPLE_REQUIRE(proven_is_ok(rr.err), "creating the recent-events ring must succeed");
+    proven_ring_t recent = rr.value;
+    EXAMPLE_REQUIRE(proven_ring_is_valid(&recent), "a created ring must be structurally valid");
+
+    proven_ring_t unset = {0};
+    EXAMPLE_REQUIRE(!proven_ring_is_valid(&unset), "a zero-initialised ring handle is not usable");
+
+    /* This ring refuses when full rather than overwriting, so "keep the most
+     * recent four" means dropping the oldest ourselves before pushing. */
+    for (proven_size_t i = 0; i < batch_len; ++i) {
+        if (recent.len == recent.cap) {
+            event_t dropped;
+            err = PROVEN_RING_POP(&recent, event_t, &dropped);
+            EXAMPLE_REQUIRE(proven_is_ok(err), "a full ring must yield its oldest element");
+        }
+        err = PROVEN_RING_PUSH(&recent, event_t, batch[i]);
+        EXAMPLE_REQUIRE(proven_is_ok(err), "pushing after making room must succeed");
+    }
+    EXAMPLE_REQUIRE(recent.len == 4, "the ring holds the four most recent events");
+
+    /* --- 4. counting per client, with one lookup per update --------------- */
+
+    /* create_with_capacity is proven_map_create under a name that says why the
+     * capacity argument is there: sizing it now avoids rehashing later, and a
+     * rehash both copies every bucket and invalidates every pointer previously
+     * returned by get_mut. */
+    proven_result_map_t mr = proven_map_create_with_capacity(alloc, 8, PROVEN_KEY_TYPE_INT,
+                                                            sizeof(proven_u32), alignof(proven_u32));
+    EXAMPLE_REQUIRE(proven_is_ok(mr.err), "creating the counter map must succeed");
+    proven_map_t counts = mr.value;
+    EXAMPLE_REQUIRE(proven_map_is_valid(&counts), "a created map must be structurally valid");
+
+    err = proven_map_reserve(&counts, 32);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "reserving map capacity must succeed");
+
+    for (proven_size_t i = 0; i < batch_len; ++i) {
+        proven_map_key_t k = { .id = batch[i].client };
+
+        /* get_mut returns a pointer INTO the map's storage, so the counter is
+         * incremented where it lives: one lookup, no copy back. The pointer is
+         * good only until the next insert - which is another reason the capacity
+         * was reserved above. */
+        proven_u32 *seen = (proven_u32 *)proven_map_get_mut(&counts, k);
+        if (seen) {
+            *seen += 1;
+        } else {
+            proven_u32 one = 1;
+            err = proven_map_set(&counts, k, &one);
+            EXAMPLE_REQUIRE(proven_is_ok(err), "inserting a new client must succeed");
+        }
+    }
+
+    const proven_u32 *seven = PROVEN_MAP_GET_INT(&counts, proven_u32, 7);
+    EXAMPLE_REQUIRE(seven != NULL && *seven == 3, "client 7 sent three events");
+
+    /* A closing event (code 0) means the client is gone: drop its counter. */
+    for (proven_size_t i = 0; i < batch_len; ++i) {
+        if (batch[i].code == 0) {
+            err = proven_map_remove(&counts, (proven_map_key_t){ .id = batch[i].client });
+            EXAMPLE_REQUIRE(proven_is_ok(err), "removing a present key must succeed");
+        }
+    }
+    EXAMPLE_REQUIRE(PROVEN_MAP_GET_INT(&counts, proven_u32, 7) == NULL, "the closed client is gone");
+
+    /* --- 5. which hash, and how to see the difference --------------------- */
+
+    /* Two string-key maps over the same keys. The default one hashes with keyed
+     * SipHash, so an attacker who chooses the keys cannot force them all into
+     * one bucket. The trusted one uses fast FNV-1a and is the right choice ONLY
+     * when your own code chooses every key. */
+    proven_result_map_t untrusted = PROVEN_MAP_INIT_U8_BORROWED(alloc, proven_u32, 8);
+    EXAMPLE_REQUIRE(proven_is_ok(untrusted.err), "creating the default string-key map must succeed");
+    proven_map_t from_network = untrusted.value;
+
+    proven_result_map_t tr = proven_map_create_trusted(alloc, 8, PROVEN_KEY_TYPE_U8_BORROWED,
+                                                       sizeof(proven_u32), alignof(proven_u32));
+    EXAMPLE_REQUIRE(proven_is_ok(tr.err), "creating the trusted-key map must succeed");
+    proven_map_t internal = tr.value;
+
+    EXAMPLE_REQUIRE(from_network.trusted_keys == false, "the default map defends against chosen keys");
+    EXAMPLE_REQUIRE(internal.trusted_keys == true, "the trusted map opts out of that defence");
+
+    /* map_hash exposes the value the map actually places a key by, so the
+     * choice is observable rather than something you take on faith. */
+    proven_map_key_t name = { .str = PROVEN_LIT("user-agent") };
+    proven_u64 keyed = proven_map_hash(&from_network, name);
+    proven_u64 fast  = proven_map_hash(&internal, name);
+    EXAMPLE_REQUIRE(keyed != fast, "the same key hashes differently under the two functions");
+    EXAMPLE_REQUIRE(proven_map_hash(&internal, name) == fast, "and each function is deterministic");
+
+    /* Keys that live in memory the map does not own are BORROWED: the bytes must
+     * outlive the map. These are string literals, so they do. When the key comes
+     * from a buffer you are about to reuse, use an owned-key map instead
+     * (PROVEN_MAP_INIT_U8_OWNED / proven_map_set_u8_owned), which copies. */
+    proven_u32 hits = 1;
+    err = proven_map_set(&from_network, name, &hits);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "inserting a borrowed string key must succeed");
+    EXAMPLE_REQUIRE(PROVEN_MAP_GET_U8_BORROWED(&from_network, proven_u32, PROVEN_LIT("user-agent")) != NULL,
+                    "and it can be looked up by an equal view, not the same pointer");
+
+    /* --- 6. checksumming a stream in chunks ------------------------------- */
+
+    /* The batch is checksummed as it goes past, which is what a program reading
+     * a file or a socket has to do: it never holds the whole thing. Start the
+     * running value at 0, feed each chunk in, and the final value is the same
+     * one a single call over the concatenation would produce. */
+    proven_u32 running = 0;
+    for (proven_size_t i = 0; i < batch_len; ++i) {
+        proven_mem_view_t chunk = { .ptr = (const proven_byte_t *)&batch[i], .size = sizeof batch[i] };
+        running = proven_crc32_update(running, chunk);
+    }
+    proven_mem_view_t whole = { .ptr = (const proven_byte_t *)batch, .size = sizeof batch };
+    EXAMPLE_REQUIRE(running == proven_crc32(whole),
+                    "chunked and whole-buffer CRC-32 must agree, whatever the chunking");
+
+    printf("events=%zu recent=%zu crc32=%08x\n",
+           (size_t)events.len, (size_t)recent.len, (unsigned)running);
+
+    proven_map_destroy(&internal);
+    proven_map_destroy(&from_network);
+    proven_map_destroy(&counts);
+    PROVEN_RING_DESTROY(&recent);
+    PROVEN_ARRAY_DESTROY(&events);
+    return EXAMPLE_OK();
+}
+```
+
+반례 — 도착 순서 로그에 이진 탐색을 쓰는 경우:
+
+```text
+const event_t *e = proven_array_binary_search(&events, &key, by_client);   /* wrong */
+```
+
+`proven_array_binary_search()`는 같은 비교 함수로 정렬된 구간에서만 쓸 수 있다. 정렬되지 않은
+입력에서 이 함수는 실패하지 않는다. 반씩 좁혀 가다 그 자리에 있던 원소를 답이라고 내놓거나, 찾는
+원소가 두 칸 옆에 있는데도 없다고 말한다.
+
+반례 — 삽입을 사이에 두고 `get_mut` 포인터를 붙들고 있는 경우:
+
+```text
+proven_u32 *seen = proven_map_get_mut(&counts, k);
+proven_err_t e = proven_map_set(&counts, other_key, &one);   /* may rehash */
+*seen += 1;                                                  /* wrong: may dangle */
+```
+
+삽입할 수 있는 무언가를 사이에 두고 붙들 것은 포인터가 아니라 키다.
+
+반례 — 프로그램 밖에서 온 키에 빠른 해시를 쓰는 경우:
+
+```text
+proven_result_map_t m = proven_map_create_trusted(alloc, 64, PROVEN_KEY_TYPE_U8_BORROWED,
+                                                  sizeof(session_t), alignof(session_t));
+/* keys are HTTP header names taken from the request */   /* wrong */
+```
+
+그것이 바로 키가 있는 해시가 막으려는 경우다. 키를 나 아닌 누군가가 고른다면
+`proven_map_create()`를 쓴다.

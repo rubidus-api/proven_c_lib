@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.07.23d)
+# proven Test Matrix (v26.09.02a)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -22,7 +22,7 @@ The class says what kind of question the test answers:
 | `differential` | Does it agree with an oracle we did not write? | 4 |
 | `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 10 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
-| `docs` | Are the claims the documentation makes still true? | 9 |
+| `docs` | Are the claims the documentation makes still true? | 11 |
 | `bench` | How fast is it? (Not a correctness gate.) | 3 |
 
 ## Table of contents
@@ -297,7 +297,7 @@ Failure tip: identify the target name in the log, then check whether the failure
 ## Test catalog
 
 
-The hosted full run builds and executes 111 registered tests plus the 22 runnable manual examples - 133 executables in all. `./nob regression` re-runs a 29-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 121 test files: the 111 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
+The hosted full run builds and executes 113 registered tests plus the 33 runnable manual examples - 146 executables in all. `./nob regression` re-runs a 29-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 123 test files: the 113 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1502,6 +1502,36 @@ Sub-checks:
 - Writing a name as a **call** — `proven_x(...)` — is what counts as claiming it exists. A family wildcard (`proven_fs_*`) is not a claim, and a past-tense historical note about a deleted function is not one either.
 
 Failure tip: the name is printed. It is either a function you added without documenting, or one the manual promises and the linker will refuse. See `docs/DOCUMENTING.md`.
+
+### `tests/test_docs_manual_usage` — every public function is shown in working code
+
+Intent: verify the manual **demonstrates** every public function, not merely that it names one.
+
+`tests/test_docs_manual_symbols` is satisfied by a reference-table row, which gives a reader the spelling of a call and nothing else: not when to reach for it, not what its arguments have to be true of, not what its failure means. That is how half the API was documented — 86 of 279 public functions had a table row and no line of code anywhere that used them, `proven_fs_sync_dir` among them, without which the atomic-replace recipe the chapter describes is not actually durable.
+
+Sub-checks:
+
+- Every public function appears in a `manual/examples/*.c` program — each of which the build **compiles and runs** — or in a ```` ```c ```` block, all of which `check_manual_code_blocks` compiles.
+- A ```` ```text ```` block does not count. Those are the signature listings and the deliberate counter-examples, and neither demonstrates anything.
+- A **macro wrapper counts for the function it expands to**: `PROVEN_ARRAY_PUSH` is how a caller is meant to write `proven_array_push`. The macro bodies are read out of the public headers and followed.
+- A **`_Generic` dispatch table does not count**. `PROVEN_ARG` names every argument constructor there is, so following it would mark twenty-one functions as demonstrated by an example that formats one integer. It lists alternatives rather than calling them.
+- The PAL (`proven_sys_*`) is exempt, as it is for the naming gate: it is the porting layer, not the API a caller programs against.
+
+Failure tip: the unshown function is named. Put the call in an example where it belongs — or write one — next to the sentence saying why a reader would want it.
+
+### `tests/test_docs_manual_ko` — the Korean edition mirrors the English one
+
+Intent: verify the translation has not quietly fallen behind, and that it keeps the vocabulary promise chapter 0 makes.
+
+`manual-ko/` was checked by nothing. Six gates guard the English chapters — their examples are compiled and run, their symbols matched against the headers, their claims asserted — and the translation beside them was guarded by nobody. So a chapter could gain a whole worked example on one side and not the other and the build would still pass, which is exactly what happened: eleven examples existed in English and in no Korean chapter.
+
+Sub-checks:
+
+- **Structure:** every `manual/x.md` has a `manual-ko/x-ko.md`.
+- **Coverage:** every `<!-- example: -->` marker appears in both editions, in either direction. The bodies themselves are checked verbatim by `test_docs_manual_examples`, which reads both directories.
+- **Vocabulary:** a Korean chapter that uses an English term must write it at least once paired with its Korean word — `할당자(allocator)`, or the reverse order the glossary rows use. The pairing is required once per chapter, not per occurrence: after the introduction, the bare word is the ordinary way to write it.
+
+Failure tip: the failure names the missing chapter, the example only one edition prints, or the chapter and the exact pair to write. `scripts/sync-manual-examples.py` copies example bodies into both editions.
 
 ### `tests/test_docs_test_catalog` — the test catalog matches the build
 

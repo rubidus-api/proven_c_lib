@@ -62,6 +62,11 @@ split into pieces small enough to verify one at a time. The order that has worke
 
 ### Step 3 — Edit, one piece per turn, verifying each.
 
+`scripts/sync-manual-examples.py` re-copies every quoted example body into the chapters that
+quote it, in `manual/` and `manual-ko/` alike, so the verbatim requirement (**G2**) is met by
+running a script rather than by careful copying. Run it after editing any `manual/examples/*.c`.
+
+
 After **every** piece, run `./nob build`. It compiles every ```c block in the manual, so a
 correct example that stops compiling stops the build. That is the point: the examples are
 checked, and the counter-examples are fenced as ```text precisely because they must *not*
@@ -79,6 +84,39 @@ can tell whether the intent explains anything and whether the counter-example is
 reader would actually make.
 
 ---
+
+## 1b. The published editions
+
+The Markdown is the source of truth. The web and PDF editions are **generated from it**, by one
+command:
+
+```sh
+scripts/build-site.sh          # both languages
+scripts/build-site.sh en       # one
+```
+
+The pipeline is deliberately short, and each step does one thing:
+
+| Step | What it does | Where |
+|---|---|---|
+| Markdown → Typst | Converts the subset the manual uses — headings, lists, pipe tables, fenced code, quotes, inline code/bold/italic/links — and rewrites `x.md` links into `x.html` links. | `scripts/md2typst.py` |
+| Typst → HTML fragment | Typst's HTML export. It produces the markup, including syntax-highlighted code and real tables, and nothing else. | `typst --features html --format html` |
+| Fragment → page | Adds GitHub-shaped heading anchors, the chapter navigation, the language switch, and the stylesheet. | `scripts/site_pages.py`, `site/manual.css` |
+| Typst → PDF | The same Typst files, concatenated with an outline, one PDF per language. | `typst compile` |
+| Check | Every link that stays inside the generated tree must resolve — page **and** heading anchor. | `scripts/check-site-links.py` |
+
+Two traps this pipeline is built around, both of which have cost a sibling project a release:
+
+- **A missing font does not fail a Typst build.** It warns and substitutes, and the Korean
+  substitutes look almost right. The PDF step greps its own log for `unknown font family` and
+  fails the build.
+- **A heading anchor is a promise.** The chapters link to each other by GitHub anchor
+  (`#5-alignment`), so the generated pages reproduce GitHub's slug rule exactly — including that
+  it does not collapse the double dash an em dash leaves behind. `check-site-links.py` is what
+  keeps that true; it caught eleven broken cross-references the first time it ran.
+
+Everything under `docs/en/` and `docs/ko/` is output. Editing it by hand is editing something the
+next build overwrites.
 
 ## 2. The gates
 
@@ -102,6 +140,8 @@ those is a proposition. So they are gates.
 | **G7** | The **version string agrees with itself**: version.h, `README.md` and `README-ko.md`, TEST.md, the manual headings, chapter 1's excerpt, and the CHANGELOG's newest entry. | `test_docs_version_sync` |
 | **G8** | Every registered module section is documented to **depth**: real prose (why, not just what), a reference table, the structures the caller declares, a runnable example, and **at least one counter-example**. | `test_docs_manual_depth` |
 | **G9** | Every **factual claim** the chapters make is **true** — the CRC check value, the standard digest, the refusal that writes nothing, the line that exactly fills the buffer. | `test_docs_manual_claims`, `test_docs_manual_ch08_contracts` |
+| **G10** | Every public function is **shown in working code** — used in a `manual/examples/*.c` program the build runs, or in a compiled ```` ```c ```` block. Being named in a reference table is not being shown. | `test_docs_manual_usage` |
+| **G11** | The **Korean edition mirrors the English one**: same chapters, same worked examples, and every English term paired once per chapter with its Korean word. | `test_docs_manual_ko` |
 
 ### Why these, and not a style guide
 
@@ -120,6 +160,17 @@ Each gate exists because the thing it forbids **already happened**:
 - **G8** — the five modules added in the v26.07.13 line each had an intent paragraph and a table,
   and **not one had a counter-example**. They passed every check that existed and were still
   half-written.
+- **G11** — `manual-ko/` was checked by nothing at all. The English chapters had six gates and
+  the translation beside them had none, so it fell eleven worked examples behind in a single
+  change and the build stayed green. A mirror nobody checks is a mirror that stops being one.
+
+- **G10** — G4 is satisfied by a table row, and half the API was documented exactly that way: 86
+  of 279 public functions had a row giving the spelling of the call and no line of code anywhere
+  that used them. Among them was `proven_fs_sync_dir`, without which the atomic-replace recipe
+  the chapter describes is not durable at all — a reader could follow the manual, write the
+  rename, and still lose the file to a power cut. A table teaches the spelling; only code
+  teaches the use.
+
 - **G9** — the README asserted "`proven` exposes no fsync" for a month after `proven_fs_sync`
   shipped. Nobody had written down what that sentence was asserting, so nothing could object.
 

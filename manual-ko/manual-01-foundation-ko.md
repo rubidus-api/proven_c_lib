@@ -254,7 +254,7 @@ C의 내장 타입은 모호하기로 유명하다. `int`는 최소 16비트, `l
 C99는 `<stdint.h>`(`int32_t`, `uint64_t` 등)로 폭 문제를 해결했다. 이 라이브러리는 그 아래에서
 그것들을 사용하되 자기만의 이름을 붙인다. 이유는 하나다: **라이브러리가 지원하는 모든 대상에서
 같은 것을 뜻하는 단 하나의 표기**가 필요하기 때문이다. `<stdint.h>`가 유일하게 쓸 수 있는 헤더일지도
-모르는 freestanding 환경까지 포함해서 말이다.
+모르는 프리스탠딩(freestanding) 환경까지 포함해서 말이다.
 
 두 번째의, 더 미묘한 이유가 있고 실전에서 중요한 것은 그쪽이다: `proven_u8`과 `proven_byte_t`는
 둘 다 8비트지만 서로 다른 것을 뜻한다.
@@ -340,10 +340,10 @@ view는 남의 것인 바이트를 가리키며, 그 바이트가 무효가 되�
 
 세 가지 표기는 의도만 다르며, 그 의도가 핵심이다:
 
-- `proven_mem_view_t` — **borrowed, 읽기 전용.** `const`가 가리켜지는 바이트에 붙어 있으므로
+- `proven_mem_view_t` — **빌려 쓰는(borrowed), 읽기 전용.** `const`가 가리켜지는 바이트에 붙어 있으므로
   컴파일러가 강제한다.
 - `proven_mem_mut_t` — **borrowed, 쓰기 가능.** 이를 통해 쓸 수 있지만, 여전히 소유하지는 않는다.
-- `proven_mem_t` — **owned.** 누군가는 이것을 만들어 낸 allocator로 해제해야 한다. 타입이 그것을
+- `proven_mem_t` — **owned.** 누군가는 이것을 만들어 낸 할당자(allocator)로 해제해야 한다. 타입이 그것을
   강제하지는 않는다. 알릴 뿐이다.
 
 그리고 실패할 수 있는 연산을 위한 result 래퍼 두 개가 있다:
@@ -363,7 +363,7 @@ view의 부분 범위를 취하는 것은 view로 하게 될 가장 흔한 일�
 
 | API | 목적 | 반환 |
 |---|---|---|
-| `proven_mem_view_from_owned(mem)` | owned 블록에 대한 읽기 전용 view. | `proven_mem_view_t`. |
+| `proven_mem_view_from_owned(mem)` | 소유(owned) 블록에 대한 읽기 전용 view. | `proven_mem_view_t`. |
 | `proven_mem_mut_from_owned(mem)` | owned 블록에 대한 쓰기 가능 view. | `proven_mem_mut_t`. |
 | `proven_mem_view_slice_checked(view, offset, size)` | 서브뷰, 검증함. | `proven_result_mem_view_t`. |
 | `proven_mem_view_slice_unchecked(view, offset, size)` | 서브뷰, 검증하지 **않음**. | `proven_mem_view_t`. |
@@ -500,7 +500,7 @@ C의 모든 타입에는 정렬이 있다. 하드웨어가 효율적으로, 또�
 
 여러분이 이것을 생각할 필요가 없었던 이유는 `malloc`이 무엇에나 알맞게 정렬된 메모리를 반환하기
 때문이다. 그 보장은 여러분이 직접 메모리를 나눠 주기 시작하는 순간 정확히 사라진다 — 그리고 직접
-메모리를 나눠 주는 일이 바로 [2장](manual-02-allocation-ko.md)의 arena와 pool이 하는 일이다.
+메모리를 나눠 주는 일이 바로 [2장](manual-02-allocation-ko.md)의 아레나(arena)와 풀(pool)이 하는 일이다.
 포인터를 13바이트 밀고 그 결과를 건네주는 arena는 방금 여러분에게 정렬되지 않은 `double`을 준 것이다.
 
 그래서 여기의 헬퍼들은 allocator를 위해, 그리고 allocator를 직접 쓰는 여러분을 위해 존재한다.
@@ -542,11 +542,195 @@ proven_size_t aligned = (size + align - 1) & ~(align - 1);   /* wrong: may overf
 옳다. 그 근처에서는 `size + align - 1`이 작은 수로 감기고, 결과는 시작한 곳보다 *낮은* 주소가
 된다.
 
+### 실전 예제: view·슬라이싱·정렬을 한자리에서
+
+이 장의 세 가지 생각 — 길이를 스스로 지니고 다니는 뷰(view), 잘라 내기 전에 범위를 검사하는
+슬라이스(slice), 2의 거듭제곱이어야만 하는 정렬 경계(alignment boundary) — 은 프로그램이 이들을
+한꺼번에 쓸 때 비로소 요점이 드러난다. 아래 프로그램은 고정 크기 레코드(record, 같은 크기의 자료
+한 칸) 표를 자기가 소유한 메모리 한 덩이에 담고, 그런 프로그램이라면 반드시 해야 하는 네 가지 일을
+한다. 표를 고쳐 쓰면 안 되는 코드에 넘기기, 한 행(row)만 고칠 수 있게 넘기기, 뒤쪽 행들을 앞으로
+당겨 한 행을 지우기, 그리고 다른 데서 건네받은 포인터가 애초에 이 표를 가리키기는 하는지 판단하기.
+
+이 중 둘은 C가 조용히 틀리기 가장 쉬운 자리다. 겹치는(overlapping) 영역을 옮기는 것은
+`proven_mem_copy`가 약속한 일이 아니어서 `proven_mem_move`라는 별도의 호출이 있다. 그리고 서로
+다른 객체에 속할 수도 있는 두 포인터를 `<`로 비교하는 것은 미정의 동작(undefined behaviour,
+컴파일러가 "그런 일은 절대 없다"고 가정해도 되는 상황)이므로, "이 포인터가 내 버퍼 안에 있는가"는
+`>=`와 `<`가 아니라 `proven_range_contains_ptr`로 묻는다.
+
+이 프로그램은 테스트 스위트가 컴파일하고 실행하므로 낡을 수 없다.
+
+<!-- example: manual/examples/ex_01_views.c -->
+```c
+#include <string.h>
+
+/*
+ * One owned buffer, three ways of talking about it.
+ *
+ * The program holds a small table of fixed-size records in a single block of
+ * memory it owns, and then does the four things every such program has to do:
+ *
+ *   1. hand the table to a reader that must not modify it (a read-only view),
+ *   2. hand one row to a writer that may modify only that row (a slice),
+ *   3. delete a row by moving the rows after it down over it (an overlapping
+ *      copy, which plain copying is not allowed to do),
+ *   4. take a pointer somebody else returned and decide whether it even points
+ *      into the table before using it as a row index.
+ *
+ * Every step is a place where a bare `char *` loses the length and the program
+ * finds out later. The types here carry the length with the pointer, so the
+ * bounds question is answered where the mistake would be made.
+ */
+
+#define ROW_SIZE  8u
+#define ROW_COUNT 4u
+
+/* A reader gets a view: it can read every byte and write none of them. The
+ * const in the type is not advice - assigning through it does not compile. */
+static proven_size_t count_nonzero(proven_mem_view_t table) {
+    proven_size_t n = 0;
+    for (proven_size_t i = 0; i < table.size; ++i) {
+        if (table.ptr[i] != 0) {
+            ++n;
+        }
+    }
+    return n;
+}
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* Allocate the table. The allocator returns a read-write slice, which is
+     * what an owner holds: a pointer and the size that goes with it. */
+    proven_result_mem_mut_t got = alloc.alloc_fn(alloc.ctx, ROW_SIZE * ROW_COUNT, alignof(proven_u32));
+    EXAMPLE_REQUIRE(proven_is_ok(got.err), "allocating the record table must succeed");
+    if (!proven_is_ok(got.err)) {
+        return 1;
+    }
+
+    /* proven_mem_t is the "I own this" type. Keeping the owned block in one
+     * variable, and handing out views and slices derived from it, is the whole
+     * ownership discipline this library asks for. */
+    proven_mem_t owned = { .ptr = got.value.ptr, .size = got.value.size };
+    proven_mem_mut_t table = proven_mem_mut_from_owned(owned);
+
+    /* Fill row i with the byte value i + 1, so a moved row is recognisable. */
+    for (proven_u32 row = 0; row < ROW_COUNT; ++row) {
+        proven_result_mem_mut_t slot = proven_mem_mut_slice_checked(table, row * ROW_SIZE, ROW_SIZE);
+        EXAMPLE_REQUIRE(proven_is_ok(slot.err), "every row of the table must be in bounds");
+        if (!proven_is_ok(slot.err)) {
+            alloc.free_fn(alloc.ctx, owned.ptr);
+            return 1;
+        }
+        memset(slot.value.ptr, (int)(row + 1), slot.value.size);
+    }
+
+    /* 1. Read-only use. The reader cannot modify the table and cannot run off
+     *    the end of it, because it was handed both facts at once. */
+    proven_mem_view_t read_only = proven_mem_view_from_owned(owned);
+    EXAMPLE_REQUIRE(count_nonzero(read_only) == ROW_SIZE * ROW_COUNT,
+                    "every byte of every row was written");
+
+    /* 2. Asking for a row that does not exist is an error you can handle, not a
+     *    crash you have to debug. Row 4 of a 4-row table starts one row past
+     *    the end. */
+    proven_result_mem_mut_t past_end = proven_mem_mut_slice_checked(table, ROW_COUNT * ROW_SIZE, ROW_SIZE);
+    EXAMPLE_REQUIRE(past_end.err == PROVEN_ERR_OUT_OF_BOUNDS,
+                    "slicing past the end must report OUT_OF_BOUNDS, not return a bad slice");
+
+    /* 3. Delete row 1 by moving rows 2 and 3 down one row. Source and
+     *    destination overlap, so this is the one case plain copying is not
+     *    allowed to handle: proven_mem_copy documents non-overlapping regions,
+     *    proven_mem_move is the one that accepts them. */
+    proven_mem_view_t tail = {
+        .ptr  = table.ptr + 2 * ROW_SIZE,
+        .size = 2 * ROW_SIZE
+    };
+    proven_err_t moved = proven_mem_move(table.ptr + 1 * ROW_SIZE, table.size - 1 * ROW_SIZE, tail);
+    EXAMPLE_REQUIRE(proven_is_ok(moved), "moving the tail of the table down must succeed");
+    EXAMPLE_REQUIRE(table.ptr[1 * ROW_SIZE] == 3, "row 2 moved into row 1's place");
+    EXAMPLE_REQUIRE(table.ptr[2 * ROW_SIZE] == 4, "row 3 moved into row 2's place");
+
+    /* The move is bounded like everything else: a destination too small to hold
+     * the source is refused, and nothing is written. */
+    proven_err_t refused = proven_mem_move(table.ptr, ROW_SIZE, tail);
+    EXAMPLE_REQUIRE(refused == PROVEN_ERR_OUT_OF_BOUNDS,
+                    "a move that would not fit must be refused before it writes");
+
+    /* 4. A pointer from elsewhere. Comparing unrelated pointers with < is
+     *    undefined behaviour in C - the compiler is allowed to assume it never
+     *    happens - so the question "does this pointer point into my buffer?"
+     *    has to be asked with a function that does the comparison correctly. */
+    proven_size_t offset = 0;
+    const proven_byte_t *from_elsewhere = table.ptr + 2 * ROW_SIZE;
+    bool inside = proven_range_contains_ptr(table.ptr, table.size, from_elsewhere, ROW_SIZE, &offset);
+    EXAMPLE_REQUIRE(inside, "a pointer to row 2 is inside the table");
+    EXAMPLE_REQUIRE(offset / ROW_SIZE == 2, "and its offset recovers the row index");
+
+    proven_u8 unrelated[ROW_SIZE] = { 0 };
+    EXAMPLE_REQUIRE(!proven_range_contains_ptr(table.ptr, table.size, unrelated, ROW_SIZE, NULL),
+                    "a pointer into a different object is not inside the table");
+
+    /* A row that starts inside but ends outside is also outside: the check is
+     * about the whole range, not just where it begins. */
+    EXAMPLE_REQUIRE(!proven_range_contains_ptr(table.ptr, table.size,
+                                               table.ptr + table.size - 1, ROW_SIZE, NULL),
+                    "a range that starts inside but runs past the end is refused");
+
+    /* 5. Once the range check has proved the row is in bounds, the unchecked
+     *    slice is the right call: it does no work, and the proof is the line
+     *    above it rather than a comment. Never write it without that proof. */
+    proven_mem_mut_t row2 = proven_mem_mut_slice_unchecked(table, offset, ROW_SIZE);
+    EXAMPLE_REQUIRE(row2.size == ROW_SIZE && row2.ptr[0] == 4,
+                    "the unchecked slice names the row the checked test just proved");
+
+    /* 6. Alignment, in the one place a caller meets it: laying two differently
+     *    aligned things out inside one block. The address of the second one has
+     *    to be rounded up, and rounding up is only defined for a power-of-two
+     *    boundary - so the boundary is checked first. */
+    proven_size_t want_align = alignof(proven_u32);
+    EXAMPLE_REQUIRE(proven_is_pow2(want_align), "an alignment boundary must be a power of two");
+    EXAMPLE_REQUIRE(!proven_is_pow2(24u), "24 is not a power of two, so it is not a valid boundary");
+
+    proven_uintptr_t raw     = (proven_uintptr_t)(table.ptr + 1);   /* deliberately odd */
+    proven_uintptr_t aligned = proven_uintptr_align_up(raw, want_align);
+    EXAMPLE_REQUIRE(aligned >= raw, "aligning up never moves backwards");
+    EXAMPLE_REQUIRE(aligned % want_align == 0, "and the result is on the boundary asked for");
+    EXAMPLE_REQUIRE(aligned - raw < want_align, "the padding is never more than one boundary");
+
+    /* A boundary that is not a power of two returns 0 rather than a plausible
+     * wrong address, so the mistake stops here instead of downstream. */
+    EXAMPLE_REQUIRE(proven_uintptr_align_up(raw, 24u) == 0,
+                    "aligning to a non-power-of-two returns 0, not a wrong address");
+
+    alloc.free_fn(alloc.ctx, owned.ptr);
+    return EXAMPLE_OK();
+}
+```
+
+반례 — 겹침을 금지하는 복사로 같은 삭제를 쓴 경우:
+
+```text
+/* rows 2..3 moved down onto row 1: source and destination overlap */
+proven_mem_copy(table.ptr + ROW_SIZE, table.size - ROW_SIZE, tail);   /* wrong */
+```
+
+`proven_mem_copy`는 겹치지 않는 영역을 문서로 약속한다. 이 호출은 그 위반을 보고하지 않는다. 그저
+가장 빠른 순서로 복사할 자유를 가질 뿐이고, 그 순서가 바뀌는 날 표에는 같은 행이 조용히 두 벌
+들어간다.
+
+반례 — 범위 질문을 평범한 포인터 비교로 물은 경우:
+
+```text
+if (ptr >= table.ptr && ptr + size <= table.ptr + table.size) { /* wrong */ }
+```
+
+`ptr`이 다른 할당에서 왔다면 이 비교는 "답이 틀린 비교"가 아니라 미정의 동작이다.
+
 ## 6. Panic: 에러를 돌려줄 상대가 남지 않았을 때
 
 ### 에러를 반환하는 라이브러리에 panic이 왜 있는가
 
-이 장의 모든 내용은 실패가 들여다볼 수 있는 값이어야 한다고 주장해 왔다. panic은 그것이 항상
+이 장의 모든 내용은 실패가 들여다볼 수 있는 값이어야 한다고 주장해 왔다. 패닉(panic)은 그것이 항상
 가능하지는 않다는 인정이다.
 
 어떤 API는 구조상 에러 채널이 없다. `proven_arena_alloc_or_panic()`은 result가 아니라 메모리
@@ -612,7 +796,7 @@ proven_mem_mut_t block = proven_arena_alloc_or_panic(&arena, n);
 진단용으로, 그리고 라이브러리 버전에 맞춰 적응해야 하는 코드를 위한 컴파일 타임 식별자다.
 
 ```text
-#define PROVEN_VERSION_STRING "proven_c_lib-v26.07.23d"
+#define PROVEN_VERSION_STRING "proven_c_lib-v26.09.02a"
 #define PROVEN_VERSION_NUM    260723
 #define PROVEN_VERSION_SUFFIX "d"
 ```

@@ -453,6 +453,17 @@ Wrong — assuming the two behave alike:
 Terms this manual uses as if they were ordinary words. They are not ordinary C words, and every
 one of them is load-bearing.
 
+Two rules the chapters follow, so that nothing here has to be guessed at:
+
+- **No private vocabulary.** Where a widely used word exists for an idea, the manual uses that
+  word. Where the library has invented something, it is defined here.
+- **Every abbreviation is written out the first time it appears in a chapter**, and every one of
+  them is listed below as well.
+
+The Korean edition adds one more: an English term appears with its original spelling in
+parentheses the first time each chapter uses it — 뷰(view) — so a reader who learned the idea in
+English can find it, and a reader who did not is never handed an untranslated word.
+
 | Term | Meaning here |
 |---|---|
 | **owned** | You are responsible for destroying it. Comes from a `_create`, goes to a `_destroy`, exactly once. |
@@ -473,6 +484,50 @@ one of them is load-bearing.
 | **CSPRNG** | Cryptographically secure pseudo-random number generator: output an attacker cannot predict even after seeing earlier output. |
 | **intrusive** | The list's links live *inside* your struct rather than in separately allocated nodes. No allocation per element. |
 | **code unit** | One element of an encoding: a byte in UTF-8, a 16-bit value in UTF-16. Not a character — one character can take several. |
+| **code point** | One character's number in Unicode. A code point takes one to four bytes in UTF-8, and one or two code units in UTF-16 — which is why counting either one is not counting characters. |
+| **API** (application programming interface) | The set of functions and types a library exposes for other programs to call. In this library, everything declared in `include/proven/`. |
+| **hosted** | A build that has an operating system and a C standard library under it — the opposite of *freestanding*. |
+| **heap** | The general-purpose pool of memory `malloc` hands out from. `proven_heap_allocator()` is the allocator that uses it. |
+| **slice** | A borrowed pointer + length pair you may **write** through, e.g. `proven_mem_mut_t`. A *view* is the read-only form of the same idea. |
+| **result** | A small struct carrying an error code and a value together, e.g. `proven_result_u8str_t`. The value means nothing until the error beside it has been checked. |
+| **panic** | The deliberate stop taken when a failure has no caller to return to. `proven_set_panic_handler()` chooses what happens; the default stops the program. |
+| **reserve** | Raise a container's capacity **now**, so later growth does not reallocate. Saves copying on the heap, and dead storage in an arena. |
+| **dangling** | A pointer to memory that has been freed or moved. Using one is undefined behaviour; the usual cause here is holding a pointer across a call that may reallocate. |
+| **use-after-free** | Reading or writing through a dangling pointer. The sanitizers below detect it. |
+| **sanitizer** | A compiler mode that adds run-time checks: **ASan** (AddressSanitizer) finds memory errors, **UBSan** (UndefinedBehaviorSanitizer) finds undefined behaviour, **TSan** (ThreadSanitizer) finds data races. `./nob asan`, `./nob ubsan`, `./nob tsan`. |
+| **partial write / short read** | A single write or read that moved *fewer* bytes than asked for. Normal, not an error — and treating a short read as end of input is the classic way to lose the tail of a file. |
+| **EOF** (end of file) | There is no more input. Reported as `PROVEN_ERR_EOF`, never as a zero-byte success, so it cannot be confused with "nothing arrived yet". |
+| **flush** | Push a buffered writer's accumulated bytes onward. Nothing in this library flushes on your behalf at exit. |
+| **back-pressure** | Slowing a producer down because the consumer cannot keep up. `proven_writer_write_partial()` is the call that lets you notice and react. |
+| **durability** | The guarantee that data survives a power cut. Reaching the operating system is not enough: `proven_fs_sync()` puts a file's bytes on the storage device, and `proven_fs_sync_dir()` does the same for a rename. |
+| **atomic rename** | Replacing a file by renaming a finished temporary over it. A reader sees the whole old file or the whole new one, never a half-written mixture. |
+| **advisory lock** | A lock that excludes only the processes that also ask for it (`proven_fs_lock()`). It is a convention between cooperating programs, not access control. |
+| **hard link** | A second **name** for the same file. There is no original; the data lives until the last name is removed. Same filesystem only. |
+| **symbolic link** | A small file that holds a path. It may cross filesystems, and it may point at nothing — following it then fails. |
+| **memory mapping** | Making a file's contents appear at an address, so the processor reads it as memory (`mmap.h`). **SHARED** mappings write back to the file; **PRIVATE** ones are *copy-on-write*: the writes exist in your process and nowhere else. |
+| **copy-on-write** | Sharing memory until somebody writes, at which point that writer gets a private copy. What `PROVEN_MMAP_PRIVATE` does. |
+| **cursor** | The scanner's position in the text it is reading (`proven_scan_t.cursor`). Scanning advances it; `proven_scan_skip_*` moves it deliberately. |
+| **locale** | The system's idea of local conventions — including whether the decimal separator is `.` or `,`. This library's number parsing is **locale-free**: a comma is never a decimal point, on any machine. |
+| **entropy** | Genuinely unpredictable bits, from the operating system or from hardware. A generator is *seeded* from entropy; a clock or a counter is not entropy, however random it looks. |
+| **seed** | The starting value of a generator. The same seed replays the same sequence — essential for a reproducible test, and fatal for a key. |
+| **PRNG / CSPRNG** | A pseudo-random number generator computes a sequence from a seed. A **C**ryptographically **S**ecure one (CSPRNG) is additionally unpredictable to an attacker who has seen earlier output. |
+| **HashDoS** | An attack that feeds a hash table keys chosen to collide, turning *O(1)* lookups into *O(n²)*. `proven_map_create()` defends against it with a keyed hash; `proven_map_create_trusted()` opts out for keys you choose yourself. |
+| **open addressing** | The map's layout: entries live in one flat bucket array and a collision moves to the next slot, rather than following a chain of separately allocated nodes. |
+| **tombstone** | The marker left where a map entry was removed, so lookups keep probing past it. Tombstones count towards the load factor, which is why heavy remove traffic still triggers a rehash. |
+| **rehash** | Rebuilding the bucket array at a new size. It invalidates every pointer a previous `get_mut` returned, which is why you hold the key rather than the pointer. |
+| **checksum** | A short value that detects accidental corruption — `proven_crc32()`. It detects accidents, never tampering. |
+| **digest / hash** | A fixed-size value computed from data. **SHA-256** is a cryptographic digest (tamper-evident); **FNV-1a** and **SipHash-2-4** are table hashes, and only SipHash is keyed. |
+| **hex / Base64 / Base64URL** | Ways to write bytes as text. Hex is two characters per byte; Base64 packs three bytes into four characters with `+ / =`; Base64URL uses `- _` and no padding, so it is safe in a URL or filename. |
+| **padding** | The `=` characters Base64 adds so the output length is a multiple of four. Base64URL leaves them out. |
+| **BMP** (Basic Multilingual Plane) | The first 65,536 Unicode code points. A character outside it — an emoji, many rarer CJK characters — needs two UTF-16 code units. |
+| **NUL terminator** | The zero byte that marks the end of a C string. A *view* does not have one, which is exactly why it carries a length instead. |
+| **shortest round trip** | Printing the fewest digits that read back as exactly the same floating-point value. `PROVEN_FLOAT_FORMAT_MODE_SHORTEST` asks for it; it is what a serialiser wants. |
+| **dispatch macro** | A macro built on C11 `_Generic` that picks a function from an argument's type — `PROVEN_ARG(x)` and `PROVEN_SCAN_ARG(&x)`. It chooses among the named constructors; it is not itself one. |
+| **identity constructor** | `proven_arg_identity()` / `proven_scan_arg_identity()`: they take an argument that has already been built and pass it through, so macro-driven code can accept one. |
+| **scratch allocator** | An allocator passed for temporary working memory only, separate from the one that owns the result — e.g. the `scratch` parameter of `proven_map_set_with_scratch()`. |
+| **stackless coroutine** | A function that can suspend and resume without a stack of its own: its state lives in a struct you hold. `coro.h` implements it with a switch, so it costs no thread and no allocation. |
+| **bounded queue** | A queue with a fixed capacity that refuses when full rather than growing. The job system uses one, so a producer that outruns the workers is told so instead of exhausting memory. |
+| **monotonic clock** | A clock that only moves forward, for measuring how long something took. Distinct from the wall clock, which can jump when the system time is corrected — measuring a duration with the wall clock is how a negative elapsed time happens. |
 
 ---
 

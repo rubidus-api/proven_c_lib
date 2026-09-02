@@ -18,7 +18,7 @@ randomness — with ownership and failure visible in every signature.
 one introductory C book, and it is the only document in this repository written to be read rather
 than looked up.
 
-- Version: proven_c_lib-v26.07.23d | Standard: C23 | License: MIT
+- Version: proven_c_lib-v26.09.02a | Standard: C23 | License: MIT
 - Repository: https://github.com/rubidus-api/proven_c_lib
 
 ---
@@ -704,6 +704,9 @@ What you accept, and should not expect:
 - User manual: `manual/manual.md` (chapters under `manual/`)
 - Korean manual (한국어 매뉴얼): `manual-ko/manual-ko.md`
 - Freestanding guide: `manual/manual-freestanding.md`
+- Web and PDF editions: `docs/en/`, `docs/ko/`, built from the Markdown above by
+  `scripts/build-site.sh`. The Markdown is the source; everything under `docs/en` and
+  `docs/ko` is generated and should never be edited by hand.
 - Float correctness and performance: `docs/float-correctness-and-performance.md`
 - Case study, language toolchain: `docs/case-study-lowent.md`
 - Primitive throughput (hash/encode/random): `docs/primitives-benchmark.md`
