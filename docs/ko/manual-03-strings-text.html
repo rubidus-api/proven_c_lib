@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3 · 문자열과 텍스트 — proven_c_lib 매뉴얼</title>
+<link rel="stylesheet" href="manual.css">
+<script>(function(){try{var s=JSON.parse(localStorage.getItem('pcl-read')||'{}');var r=document.documentElement;if(s.theme&&s.theme!=='auto')r.setAttribute('data-theme',s.theme);if(s.fg)r.style.setProperty('--fg',s.fg);if(s.bg)r.style.setProperty('--bg',s.bg);if(s.link)r.style.setProperty('--link',s.link);if(s.width)r.setAttribute('data-measure','on');}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip" href="#content">본문으로 건너뛰기</a>
+<div class="bar"><strong><a href="index.html">proven_c_lib 매뉴얼</a></strong><button class="here-btn" type="button" aria-expanded="false" aria-controls="here-panel">3 · 문자열과 텍스트 <span class="caret">▾</span></button><span class="bar-nav"><a href="manual-02-allocation.html" title="이전" aria-label="이전">←</a><a href="index.html" title="목차" aria-label="목차">↑</a><a href="manual-04-containers-algorithms.html" title="다음" aria-label="다음">→</a></span></div>
+<div id="here-panel" class="here-panel" hidden><div class="tools"><span class="ver">proven_c_lib-v26.09.02a</span><button class="tool" type="button" id="set-open" aria-expanded="false">⚙ 설정</button><a class="tool" href="../en/manual-03-strings-text.html">English</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib/releases/download/proven_c_lib-v26.09.02a/proven_c_lib-proven_c_lib-v26.09.02a-ko-manual.pdf">⤓ PDF</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib" title="이 프로젝트의 GitHub 저장소">⌥ 저장소</a><a class="tool" href="https://rubidus-api.github.io/" title="rubidus-api.github.io — 공개된 모든 프로젝트">⌂ 전체 사이트</a><a class="tool" href="https://github.com/rubidus-api" title="github.com/rubidus-api — 모든 저장소">≡ 저장소 목록</a></div><div class="setbox" id="setbox" hidden><label class="setrow"><input type="checkbox" id="s-width"><span>가로폭 제한</span></label><div class="setrow"><span class="setlbl">테마</span><span class="seg"><button type="button" class="segb" data-theme="auto">시스템</button><button type="button" class="segb" data-theme="light">밝게</button><button type="button" class="segb" data-theme="dark">어둡게</button></span></div><div class="setrow"><span class="setlbl">색</span><label class="col"><span>글자</span><input type="color" id="s-fg"></label><label class="col"><span>배경</span><input type="color" id="s-bg"></label><label class="col"><span>링크</span><input type="color" id="s-link"></label></div><p class="setnote">설정은 이 브라우저에만 저장됩니다.</p></div><div class="search"><label class="setlbl" for="q">검색</label> <input type="search" id="q" placeholder="함수나 제목으로 찾기" autocomplete="off"><p class="hint">공개 함수 전부와 모든 제목에서 찾습니다 — 본문 전문은 아닙니다.</p><ul id="qr"></ul></div><div class="here-head"><strong>이 페이지 안에서</strong></div><div class="here-body"><a href="#목차">목차</a><a href="#1-u8-문자열과-view">1. U8 문자열과 view</a><a href="#2-u16-문자열과-view">2. U16 문자열과 view</a><a href="#3-포매팅">3. 포매팅</a><a href="#4-스캐닝">4. 스캐닝</a><a href="#5-예제와-오용-사례">5. 예제와 오용 사례</a></div></div>
+<div class="page">
+<nav class="toc" aria-label="목차">
+<h2>목차</h2>
+<a href="index.html">매뉴얼</a>
+<a href="manual-00-start-here.html">0 · 여기서부터</a>
+<a href="manual-01-foundation.html">1 · 기초</a>
+<a href="manual-02-allocation.html">2 · 할당</a>
+<a href="manual-03-strings-text.html" class="here">3 · 문자열과 텍스트</a>
+<a href="manual-04-containers-algorithms.html">4 · 컨테이너와 알고리즘</a>
+<a href="manual-08-fmt-scan.html">8 · 형식화와 파싱</a>
+<a href="manual-05-hosted-services.html">5 · Hosted 서비스</a>
+<a href="manual-06-execution-and-platform.html">6 · 실행과 플랫폼</a>
+<a href="manual-freestanding.html">프리스탠딩</a>
+<a href="manual-07-alias-xcv-index.html">부록 A · Alias 인덱스</a>
+<h2>이 페이지 안에서</h2>
+<a href="#목차">목차</a>
+<a href="#1-u8-문자열과-view">1. U8 문자열과 view</a>
+<a href="#2-u16-문자열과-view">2. U16 문자열과 view</a>
+<a href="#3-포매팅">3. 포매팅</a>
+<a href="#4-스캐닝">4. 스캐닝</a>
+<a href="#5-예제와-오용-사례">5. 예제와 오용 사례</a>
+</nav>
+<main id="content"><div class="content">
+<div class="masthead">proven_c_lib-v26.09.02a · 마크다운 매뉴얼에서 생성됨</div>
+<h1 id="3장-문자열-포매팅-스캐닝">3장: 문자열, 포매팅, 스캐닝<a class="anchor" href="#3장-문자열-포매팅-스캐닝" aria-hidden="true">#</a></h1><p><strong>Part II — 모든 프로그램이 쓰는 어휘. 선행 장: <a href="manual-01-foundation.html">1장</a>과 <a href="manual-02-allocation.html">2장</a>.</strong> <strong>이 장을 마치면</strong> NUL 종료자가 프로그램의 운명을 결정하지 않는 방식으로 텍스트를 담을 수 있고, 오버플로를 거부하는 문자열을 만들 수 있으며, 일상적인 경우의 포매팅과 파싱을 할 수 있다.</p><p>이 장은 <code>u8str.h</code>, <code>u16str.h</code>, <code>fmt.h</code>, <code>scan.h</code>를 다룬다. 텍스트 자료의 <strong>튜토리얼 절반</strong>으로서, 매일 만나는 사례로 포매터와 스캐너를 소개한다. <a href="manual-08-fmt-scan.html">8장</a>이 레퍼런스 절반이다 — 전체 문법, 모든 인자 생성자, 스캐너의 에러와 복구 규칙을 담는다. 이 장을 먼저 읽으라.</p><h2 id="목차">목차<a class="anchor" href="#목차" aria-hidden="true">#</a></h2><ol><li><a href="#1-u8-문자열과-view">U8 문자열과 view</a></li><li><a href="#2-u16-문자열과-view">U16 문자열과 view</a></li><li><a href="#3-포매팅">포매팅</a></li><li><a href="#4-스캐닝">스캐닝</a></li><li><a href="#5-예제와-오용-사례">예제와 오용 사례</a></li></ol><h2 id="1-u8-문자열과-view">1. U8 문자열과 view<a class="anchor" href="#1-u8-문자열과-view" aria-hidden="true">#</a></h2><h3 id="문제-c-문자열은-자기-길이를-모른다">문제: C 문자열은 자기 길이를 모른다<a class="anchor" href="#문제-c-문자열은-자기-길이를-모른다" aria-hidden="true">#</a></h3><p>C 문자열은 포인터이고, 어디서 끝나는지는 메모리 어딘가의 0 바이트가 결정한다. 문자열당 1바이트를 아끼려고 1972년에 내린 그 결정 하나가 놀랄 만큼 많은 피해의 배후에 있다:</p><ul><li><strong>길이 구하기가 검색이다.</strong> <code>strlen</code>은 문자열을 훑는다. 반복마다 <code>strlen(s)</code>를 검사하는 루프는 제곱 시간이고, 겉보기에는 평범한 코드처럼 보인다.</li><li><strong>텍스트가 0 바이트를 담을 수 없다.</strong> 그래서 C 문자열은 UTF-16 버퍼도, 프로토콜 프레임도, 파일의 일부도, 어떤 이진 데이터도 담을 수 없다 — 문자열 타입과 바이트 타입은 다른 것인데도 언어는 아닌 척한다.</li><li><strong>종료자가 없는 것은 탐지할 수 없다.</strong> 자리가 없는 버퍼로 <code>strcpy</code>하면 스택 프레임 어딘가에서 0을 찾을 때까지 써 나간다. 아무것도 그것을 보고하지 않는다. 이는 이 언어 역사상 가장 많이 악용된 버그 부류다.</li><li><strong>문자열의 일부를 저렴하게 가리킬 수 없다.</strong> "이 줄의 세 번째 필드"라는 말은 그 바이트를 복사해 내거나, 원본 위에 0을 써서 원본을 망가뜨리거나 둘 중 하나를 뜻한다. <code>strtok</code>은 두 번째를 골랐고, 그래서 입력을 변형시키며 중첩할 수 없다.</li></ul><p>전통적인 땜질인 <code>strncpy</code>는 항상 NUL로 종료해 주지는 않는다 — 그러니 그 "안전한" 함수가 문자열이 아닌 문자열을 만들어 낼 수 있다.</p><h3 id="이-라이브러리가-대신-하는-것">이 라이브러리가 대신 하는 것<a class="anchor" href="#이-라이브러리가-대신-하는-것" aria-hidden="true">#</a></h3><p>두 개의 타입이 있고, 그 둘의 차이는 소유권이다:</p><ul><li><strong><code>proven_u8str_view_t</code> — borrowed.</strong> 포인터와 크기가 함께, 다른 누군가가 소유한 바이트를 가리킨다. 복사는 공짜다. 아무것도 할당하지 않고 아무것도 파괴하지 않으며, 소유자가 사라지면 함께 유효하지 않게 된다. 함수에 전달하는 것이 이것이다.</li><li><strong><code>proven_u8str_t</code> — owned.</strong> 자기 저장소와 용량을 가지고, NUL 종료자를 대신 유지해 주므로 <code>proven_u8str_as_cstr</code>이 여전히 NUL을 원하는 libc 함수에 바이트를 건네줄 수 있다. 할당자(allocator)로 만들었으니, 같은 것으로 파괴한다.</li></ul><p>둘 다 문자가 아니라 <strong>바이트</strong>를 센다. <code>"한"</code>은 UTF-8에서 3바이트이고 1문자인데, 이 라이브러리는 3이라고 말할 것이다. 그것이 라이브러리가 아는 것이기 때문이다. 여기서 텍스트는 바이트의 나열이며, 그 바이트를 문자로 해석하는 일은 이 라이브러리에 없는 Unicode 계층의 몫이다.</p><p>뷰(view)는 자기 길이를 지니고 다니므로, NUL 종료자가 어렵게 만들었던 모든 것이 평범해진다: 길이는 필드이고, 텍스트가 0 바이트를 담을 수 있으며, 부분 범위는 복사 없이 같은 메모리를 가리키는 view이고, 들어가지 않을 쓰기는 수행되는 대신 거부된다.</p><p>잘못된 예 — view를 C 문자열처럼 다루기:</p><pre><code data-lang="text">proven_u8str_view_t v = proven_u8str_view_slice(line, 4, 8);   /* a field inside a line */
+printf("%s\n", (const char *)v.ptr);   /* wrong: no terminator, prints until it finds a zero */</code></pre><p>view는 의도적으로 NUL 종료되지 <em>않는다</em>: 보통 다른 누군가의 버퍼 한가운데를 가리키며, 거기에 종료자를 쓰면 다음 필드를 손상시킬 것이다. 크기를 받는 <code>proven_println("{}", PROVEN_ARG(v))</code>를 쓰거나, 먼저 소유(owned) 문자열로 복사하라.</p><h3 id="구조체">구조체<a class="anchor" href="#구조체" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef struct {
+    const proven_byte_t *ptr;
+    proven_size_t size;
+} proven_u8str_view_t;
+
+typedef struct {
+    proven_byte_t *ptr;
+    proven_size_t size;
+} proven_u8str_mut_t;
+
+typedef struct {
+    proven_buf_t internal;
+    bool         borrowed;
+} proven_u8str_t;
+
+typedef struct {
+    proven_err_t err;
+    proven_u8str_t value;
+} proven_result_u8str_t;
+
+typedef struct {
+    proven_err_t err;
+    const char *value;
+} proven_result_cstr_t;</code></pre><p>의도:</p><ul><li><code>proven_u8str_view_t</code>: 빌려 쓰는(borrowed) 읽기 전용 바이트 문자열 view.</li><li><code>proven_u8str_mut_t</code>: borrowed 가변 바이트 문자열 view.</li><li><code>proven_u8str_t</code>: NUL로 종료되는 owned 문자열.</li><li><code>proven_result_u8str_t</code>: owned 문자열용 result 래퍼.</li><li><code>proven_result_cstr_t</code>: 할당된 NUL 종료 C 문자열용 result 래퍼.</li></ul><h3 id="내부-레이아웃">내부 레이아웃<a class="anchor" href="#내부-레이아웃" aria-hidden="true">#</a></h3><p>view는 보이는 그대로다 — 포인터 하나와 바이트 개수 하나:</p><pre><code data-lang="text">typedef struct { const proven_byte_t *ptr; proven_size_t size; } proven_u8str_view_t;
+typedef struct { proven_byte_t *ptr;       proven_size_t size; } proven_u8str_mut_t;</code></pre><p>owned 문자열은 <code>proven_buf_t</code>(2장의 고정 용량 바이트 버퍼)에 플래그 하나를 더해 감싼다:</p><pre><code data-lang="text">typedef struct {
+    proven_buf_t internal;   /* the bytes + length + capacity; always keeps room for a NUL */
+    bool         borrowed;   /* false = allocator-owned (default); true = wraps caller memory */
+} proven_u8str_t;</code></pre><ul><li><code>internal.len</code>이 바이트 길이다(<code>proven_buf_t</code>는 <code>ptr</code> / <code>len</code> / <code>cap</code>이며 — <code>size</code> 멤버는 없다). 문자열이 유효한 동안 <code>internal.len</code> 위치의 바이트는 항상 NUL 종료자이므로, <code>proven_u8str_as_cstr()</code>은 O(1)이다.</li><li><code>borrowed</code>는 0으로 초기화된 핸들에서 <code>false</code>이므로, allocator가 소유하는 문자열이 안전한 기본값이다. 이 값은 여러분이 소유한 <code>[buf, buf+cap)</code>을 감싸는 <code>proven_u8str_borrow</code>에 의해서만 <code>true</code>가 된다: 그때는 성장 연산이 재할당을 거부하고(<code>PROVEN_ERR_OUT_OF_BOUNDS</code>), <code>proven_u8str_destroy</code>는 no-op이 된다.</li><li>문자열을 바꾸려고 이 필드들을 직접 읽거나 쓰지 <strong>말라</strong>. 아래의 함수를 사용하라. 길이를 얻으려고 <code>internal.len</code>을 읽는 것은 괜찮지만, <code>proven_u8str_as_view()</code>를 선호하라.</li></ul><p>반례 — borrowed 문자열을 owned 문자열처럼 다루기:</p><pre><code data-lang="c">proven_byte_t stack[<span style="color: #b60157">8</span>];
+proven_u8str_t s <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_borrow</span>(stack, <span style="color: #d73948">sizeof</span> stack);   <span style="color: #74747c">/*</span><span style="color: #74747c"> borrowed </span><span style="color: #74747c">*/</span>
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> This would have to reallocate caller memory, so it refuses: the call returns</span>
+<span style="color: #74747c">   PROVEN_ERR_OUT_OF_BOUNDS and `stack` is left exactly as it was. A borrowed</span>
+<span style="color: #74747c">   string never silently escapes to the heap. </span><span style="color: #74747c">*/</span>
+proven_err_t e <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append_grow</span>(alloc, <span style="color: #d73948">&amp;</span>s, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">far too long for eight bytes</span><span style="color: #198810">"</span>));
+(<span style="color: #d73948">void</span>)e;   <span style="color: #74747c">/*</span><span style="color: #74747c"> == PROVEN_ERR_OUT_OF_BOUNDS </span><span style="color: #74747c">*/</span>
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> destroy is a no-op here: `stack` is yours, and the library will not free it.</span>
+<span style="color: #74747c">   Writing it anyway is correct, and it keeps teardown code uniform. </span><span style="color: #74747c">*/</span>
+<span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>s);</code></pre><h3 id="매크로">매크로<a class="anchor" href="#매크로" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>매크로</strong></td><td><strong>의도</strong></td><td><strong>비고</strong></td></tr><tr><td><code>PROVEN_LIT(s)</code></td><td>문자열 리터럴로부터 <code>proven_u8str_view_t</code>를 만든다.</td><td>문자열 리터럴에만 사용하라.</td></tr><tr><td><code>PROVEN_LIT_INIT(s)</code></td><td>리터럴 view의 초기화자 형태.</td><td>집합체 초기화에 사용하라.</td></tr><tr><td><code>PROVEN_INDEX_NOT_FOUND</code></td><td>find 함수가 반환하는 센티널.</td><td><code>(proven_size_t)-1</code>과 같다.</td></tr></table></div><h3 id="u8-함수">U8 함수<a class="anchor" href="#u8-함수" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>API</strong></td><td><strong>의도</strong></td><td><strong>반환</strong></td></tr><tr><td><code>proven_u8str_create(alloc, limit)</code></td><td><code>limit</code> 바이트에 NUL을 더한 용량을 가진 빈 owned 문자열을 만든다.</td><td><code>proven_result_u8str_t</code>.</td></tr><tr><td><code>proven_u8str_create_from_view(alloc, view)</code></td><td>view를 새 owned 문자열로 복사한다.</td><td><code>proven_result_u8str_t</code>.</td></tr><tr><td><code>proven_u8str_borrow(buf, cap)</code></td><td>호출자가 소유한 <code>[buf, buf+cap)</code>을 고정 용량 문자열로 감싼다(할당 없음). 고정 용량 연산과 <code>append_fmt</code>는 동작하고, 성장 연산은 호출자 메모리 재할당을 거부하며, destroy는 no-op이다. <code>cap</code>은 NUL을 포함한다.</td><td><code>proven_u8str_t</code>.</td></tr><tr><td><code>proven_u8str_reset(str)</code></td><td>버퍼/용량은 재사용을 위해 유지한 채 빈 상태로 자른다(owned든 borrowed든).</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_u8str_is_valid(str)</code></td><td>공개 문자열 불변식을 검증한다.</td><td><code>bool</code>.</td></tr><tr><td><code>proven_u8str_reserve(alloc, str, new_cap)</code></td><td>내부 용량이 최소 <code>new_cap</code> 바이트가 되도록 보장한다. (borrowed 문자열은 성장할 수 없다.)</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_u8str_append(str, data)</code></td><td>원자적 고정 용량 append.</td><td><code>PROVEN_OK</code> 또는 <code>PROVEN_ERR_OUT_OF_BOUNDS</code>.</td></tr><tr><td><code>proven_u8str_append_partial(str, data)</code></td><td>잘라내는 append.</td><td><code>proven_result_size_t</code>; <code>value</code>는 쓰인 바이트 수.</td></tr><tr><td><code>proven_u8str_append_grow(alloc, str, data)</code></td><td>원자적 성장 가능 append.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_u8str_append_byte(alloc, str, b)</code></td><td>바이트 하나를 append하며, 필요하면 성장한다.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_u8str_replace_at(str, index, old_len, data)</code></td><td>정확한 바이트 범위를 고정 용량 의미로 치환한다.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_u8str_replace_at_grow(alloc, str, index, old_len, data)</code></td><td><code>replace_at</code>과 같지만, 편집이 들어가지 않을 때 실패하는 대신 버퍼를 성장시킨다(2배씩).</td><td><code>proven_err_t</code>; 할당 실패 시 문자열은 변경되지 않는다.</td></tr><tr><td><code>proven_u8str_insert(str, index, data)</code></td><td>고정 용량 의미로 <code>index</code>에 바이트를 삽입한다.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_u8str_insert_grow(alloc, str, index, data)</code></td><td><code>insert</code>와 같지만 필요할 때 버퍼를 성장시킨다. 수동 <code>reserve</code>가 필요 없다.</td><td><code>proven_err_t</code>; 할당 실패 시 문자열은 변경되지 않는다.</td></tr><tr><td><code>proven_u8str_remove(str, index, len)</code></td><td>바이트 범위를 제거한다.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_u8str_replace_first(str, start_offset, target, replacement)</code></td><td>start 이후 처음 일치하는 target을 치환한다.</td><td>찾지 못해도 <code>PROVEN_OK</code>.</td></tr><tr><td><code>proven_u8str_view_find(haystack, start_offset, needle)</code></td><td>바이트 부분 문자열의 첫 등장을 찾는다(어떤 바이트 값이든 올바르게 처리하며, NUL 종료를 요구하지 않는다).</td><td>인덱스 또는 <code>PROVEN_INDEX_NOT_FOUND</code>.</td></tr><tr><td><code>proven_u8str_view_starts_with(str, prefix)</code></td><td>접두사 검사.</td><td>int 진리값.</td></tr><tr><td><code>proven_u8str_view_ends_with(str, suffix)</code></td><td>접미사 검사.</td><td>int 진리값.</td></tr><tr><td><code>proven_u8str_view_slice(str, index, len)</code></td><td>잘라 맞춘(clamped) 부분 view를 반환한다.</td><td><code>proven_u8str_view_t</code>.</td></tr><tr><td><code>proven_u8str_as_cstr(str)</code></td><td>내부의 NUL 종료 포인터를 반환한다.</td><td><code>const char *</code>; 성장/파괴에 의해 무효화된다.</td></tr><tr><td><code>proven_mem_view_from_u8(view)</code></td><td>U8 view를 바이트 view로 변환한다.</td><td><code>proven_mem_view_t</code>.</td></tr><tr><td><code>proven_u8str_view_to_cstr(view, alloc)</code></td><td>임의의 view로부터 NUL 종료 C 문자열을 할당한다.</td><td><code>proven_result_cstr_t</code>; 호출자가 allocator로 해제한다.</td></tr><tr><td><code>proven_cstr_len(s)</code></td><td>NUL까지의 바이트를 센다.</td><td><code>proven_size_t</code>.</td></tr><tr><td><code>proven_u8str_view_from_cstr(s)</code></td><td>신뢰할 수 있는 NUL 종료 문자열로부터 view를 만든다.</td><td>널 포인터에는 빈 view.</td></tr><tr><td><code>proven_u8str_view_eq(a, b)</code></td><td>바이트 동등성 검사.</td><td>int 진리값.</td></tr><tr><td><code>proven_u8str_destroy(alloc, str)</code></td><td>일치하는 allocator로 owned 저장소를 해제한다.</td><td>void.</td></tr><tr><td><code>proven_u8str_as_view(str)</code></td><td>현재 내용을 borrow한다.</td><td><code>proven_u8str_view_t</code>.</td></tr></table></div><h3 id="기본-u8-예제">기본 U8 예제<a class="anchor" href="#기본-u8-예제" aria-hidden="true">#</a></h3><pre><code data-lang="c">proven_result_u8str_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_create_from_view</span>(alloc, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">log</span><span style="color: #198810">"</span>));
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+    <span style="color: #d73948">return</span>;
+}
+proven_u8str_t s <span style="color: #d73948">=</span> r.value;
+
+proven_err_t e <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append_grow</span>(alloc, <span style="color: #d73948">&amp;</span>s, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">: ready</span><span style="color: #198810">"</span>));
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(e)) {
+    <span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>s);
+    <span style="color: #d73948">return</span>;
+}
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> Valid until the next growing call: as_cstr points into the string's storage. </span><span style="color: #74747c">*/</span>
+<span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>cstr <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_as_cstr</span>(<span style="color: #d73948">&amp;</span>s);
+(<span style="color: #d73948">void</span>)cstr;
+
+<span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>s);</code></pre><h2 id="2-u16-문자열과-view">2. U16 문자열과 view<a class="anchor" href="#2-u16-문자열과-view" aria-hidden="true">#</a></h2><h3 id="두-번째-문자열-타입이-아예-존재하는-이유">두 번째 문자열 타입이 아예 존재하는 이유<a class="anchor" href="#두-번째-문자열-타입이-아예-존재하는-이유" aria-hidden="true">#</a></h3><p>UTF-8이 옳은 기본값이고 이 라이브러리는 거기에 전념한다. <code>proven_u16str_t</code>는 단 하나의 이유로 존재한다: <strong>Windows API가 UTF-16이기 때문이다.</strong> 모든 "와이드" 진입점 — <code>CreateFileW</code>, <code>GetEnvironmentVariableW</code>, <code>W</code> 계열 전체 — 은 <code>wchar_t *</code>를 받고, Windows에서 그것은 16비트다. 그 API들과 대화하는 라이브러리에는 그들의 코드 유닛을 바이트인 척하지 않고 담을 타입이 필요하다.</p><p>그러니 이것은 경계 타입이다. UTF-16 API에 닿는 곳에서 이것을 쓰고, 그 밖의 모든 곳에서는 <code>proven_u8str_t</code>를 쓴다. 이 타입은 의도적으로 작다 — create, destroy, append, 길이 — 프로그램이 이 타입으로 사고하도록 만든 것이 아니기 때문이다.</p><p>붙들어 둘 것이 둘 있다. 모든 UTF-16 버그의 근원이기 때문이다:</p><ul><li><strong>코드 유닛은 문자가 아니다.</strong> UTF-16은 Basic Multilingual Plane 밖의 것을 *서로게이트 쌍*으로 인코딩한다 — 한 문자를 뜻하는 두 개의 <code>proven_u16</code> 값이다. 이모지는 코드 유닛 두 개다. 그 사이를 잘라내면 짝 없는 서로게이트가 나오고, 그것은 유효한 UTF-16이 아니다.</li><li><strong>여기서 <code>size</code>는 바이트가 아니라 코드 유닛을 센다.</strong> <code>proven_u16str_view_t.size</code>는 <code>proven_u16</code> 값의 개수다. 밑에 깔린 <code>proven_buf_t</code>는 바이트를 추적하며, 그래서 <code>proven_u16str_len</code>이 나눗셈을 한다. 이 두 단위를 섞는 것이 이 타입에서 가장 흔한 실수다.</li></ul><p><strong>이 라이브러리에는 UTF-8과 UTF-16 사이의 변환이 없다.</strong> 이는 진짜 빈틈이며, 잊어버린 것이 아니라 의도적이다: 올바른 변환이란 유효하지 않은 입력, 짝 없는 서로게이트, 과장 인코딩을 어떻게 할지 결정하는 일이고, 그것은 Unicode 계층의 몫이다. 오늘날 <code>proven_u16str_t</code>는 <code>u"..."</code> 리터럴이나 이미 가지고 있는 코드 유닛으로부터 만든다.</p><p><code>PROVEN_NO_U16STR</code>이 정의되면 U16 API는 제외되며, 이는 프리스탠딩(freestanding) 빌드의 기본값이다 — 베어메탈 타깃에는 대화할 Windows API가 없다.</p><p>잘못된 예 — 코드 유닛 하나가 문자 하나라고 가정하기:</p><pre><code data-lang="text">proven_u16str_view_t v = ...;                 /* text containing an emoji */
+proven_size_t chars = proven_u16str_len(&amp;s);  /* wrong: that is code units */</code></pre><h3 id="구조체-1">구조체<a class="anchor" href="#구조체-1" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef struct {
+    const proven_u16 *ptr;
+    proven_size_t size;
+} proven_u16str_view_t;
+
+typedef struct {
+    proven_buf_t internal;
+} proven_u16str_t;
+
+typedef struct {
+    proven_err_t err;
+    proven_u16str_t value;
+} proven_result_u16str_t;</code></pre><h3 id="매크로-1">매크로<a class="anchor" href="#매크로-1" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>매크로</strong></td><td><strong>의도</strong></td></tr><tr><td><code>PROVEN_U16_LIT(s)</code></td><td>UTF-16 리터럴 표현식 <code>u"..."</code>로부터 <code>proven_u16str_view_t</code>를 만든다.</td></tr></table></div><h3 id="u16-함수">U16 함수<a class="anchor" href="#u16-함수" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>API</strong></td><td><strong>의도</strong></td><td><strong>반환</strong></td></tr><tr><td><code>proven_u16str_create(alloc, unit_limit)</code></td><td>빈 owned U16 문자열을 만든다.</td><td><code>proven_result_u16str_t</code>.</td></tr><tr><td><code>proven_u16str_create_from_view(alloc, view)</code></td><td>U16 view를 owned 문자열로 복사한다.</td><td><code>proven_result_u16str_t</code>.</td></tr><tr><td><code>proven_u16str_destroy(alloc, str)</code></td><td>owned U16 저장소를 해제한다.</td><td>void.</td></tr><tr><td><code>proven_u16str_append(str, data)</code></td><td>원자적 고정 용량 append.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_u16str_append_partial(str, data)</code></td><td>잘라내는 append.</td><td><code>proven_result_size_t</code>.</td></tr><tr><td><code>proven_u16str_append_grow(alloc, str, data)</code></td><td>원자적 성장 가능 append.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_u16str_as_ptr(str)</code></td><td>내부 <code>proven_u16</code> 포인터를 반환한다.</td><td><code>const proven_u16 *</code>.</td></tr><tr><td><code>proven_u16str_len(str)</code></td><td>코드 유닛 단위 길이를 반환한다.</td><td><code>proven_size_t</code>.</td></tr></table></div><p>예제:</p><pre><code data-lang="c"><span style="color: #d73948">#ifndef</span> PROVEN_NO_U16STR
+proven_result_u16str_t r <span style="color: #d73948">=</span>
+    <span style="color: #4b69c6">proven_u16str_create_from_view</span>(alloc, <span style="color: #4b69c6">PROVEN_U16_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">hello</span><span style="color: #198810">"</span>));
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+    <span style="color: #d73948">return</span>;
+}
+proven_u16str_t s <span style="color: #d73948">=</span> r.value;
+
+(<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_u16str_append_grow</span>(alloc, <span style="color: #d73948">&amp;</span>s, <span style="color: #4b69c6">PROVEN_U16_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810"> world</span><span style="color: #198810">"</span>));
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> Length is in code units, not characters: "hello world" is 11 units. </span><span style="color: #74747c">*/</span>
+proven_size_t units <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u16str_len</span>(<span style="color: #d73948">&amp;</span>s);
+(<span style="color: #d73948">void</span>)units;
+
+<span style="color: #4b69c6">proven_u16str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>s);
+<span style="color: #d73948">#endif</span></code></pre><p>참고: <code>proven_u16</code>은 코드 유닛이지, 반드시 하나의 완전한 Unicode 문자인 것은 아니다. UTF-16 서로게이트 쌍은 코드 유닛 두 개를 쓴다.</p><h2 id="3-포매팅">3. 포매팅<a class="anchor" href="#3-포매팅" aria-hidden="true">#</a></h2><h3 id="문제-printf는-타입을-두-번-듣는다">문제: <code>printf</code>는 타입을 두 번 듣는다<a class="anchor" href="#문제-printf는-타입을-두-번-듣는다" aria-hidden="true">#</a></h3><p><code>printf("%d", x)</code>는 <code>x</code>의 타입을 두 번 말한다 — 한 번은 포맷 문자열에서, 한 번은 <code>x</code>를 전달하면서 — 그리고 그 둘이 일치하는지는 아무것도 검사하지 않는다. 가변 인자는 타입을 지우므로, 함수는 호출 규약이 남긴 바이트가 무엇이든 포맷이 요구한 모양으로 읽는다:</p><pre><code data-lang="text">printf("%d\n", 3.0);      /* wrong: reads a double's bytes as an int */
+printf("%s\n", 42);       /* wrong: dereferences 42 as a pointer */
+printf("%d %d\n", 1);     /* wrong: reads an argument that was never passed */</code></pre><p>셋 다 컴파일된다. 현대 컴파일러는 포맷이 리터럴일 때 경고해 주는데, 그건 포맷이 변수가 되기 전까지의 이야기다 — 그리고 그때 여러분에게는 요청만 하면 임의의 스택 메모리를 읽어 주는 함수가 생기며, 이는 자기 이름까지 붙은 취약점 부류다.</p><p>두 번째 문제는 출력이 어디로 가느냐다. <code>sprintf</code>는 자기가 크기를 모르는 버퍼에 쓴다. <code>snprintf</code>는 크기를 받고 나서 <strong>잘라내며</strong>, 썼을 <em>뻔한</em> 길이를 반환한다 — 그러니 비교하는 것을 잊은 호출자는 조용히 짧아진 경로나 명령이나 식별자를 얻는다.</p><h3 id="이-라이브러리가-대신-하는-것-1">이 라이브러리가 대신 하는 것<a class="anchor" href="#이-라이브러리가-대신-하는-것-1" aria-hidden="true">#</a></h3><p><strong>자리표시자 안에는 타입이 없다.</strong> <code>{}</code>는 "여기에 값이 온다"고 말하고, 타입은 인자에서 오며 컴파일 시간에 결정된다:</p><pre><code data-lang="text">proven_println("{} scored {}", PROVEN_ARG(name), PROVEN_ARG(score));</code></pre><p><code>PROVEN_ARG</code>는 <code>_Generic</code> 디스패치다 — 컴파일러가 인자의 정적 타입에 맞는 생성자를 고른다. 포맷은 결코 타입을 말하지 않으므로 포맷과 인자가 어긋나는 일은 애초에 불가능하다. <code>:</code> 뒤의 스펙이 제어하는 것은 <em>표현</em> — 폭, 채움, 정렬, 정밀도, 진법 — 이지 결코 해석이 아니다.</p><p><strong>목적지는 크기를 아는 객체이며</strong>, 고정 용량 형태는 잘라내는 대신 거부한다: <code>proven_u8str_append_fmt</code>은 <code>PROVEN_ERR_OUT_OF_BOUNDS</code>로 실패하고 아무것도 쓰지 않으며, <code>proven_u8str_append_fmt_grow</code>는 allocator를 받아 성장한다. 어느 쪽을 호출했는지는 호출 그 자체에 드러난다.</p><p><strong>여러분의 타입도 여기에 참여할 수 있다.</strong> <code>PROVEN_ARG_OF(&amp;obj, render_fn)</code>은 여러분이 정의한 타입이 다른 모든 것처럼 <code>{}</code>로 출력되게 해 준다 — 확장 지점은 이름 레지스트리가 아니라 컴파일 시간의 타입 있는 지점이다. <a href="manual-08-fmt-scan.html">8장 §5.1</a>이 방법을 보여준다.</p><p>비용을 그대로 말하자면: 인자마다 <code>PROVEN_ARG</code>를 두르는 것은 <code>%d</code>보다 타이핑이 많고, 이 포맷 언어는 손에 익은 그 언어가 아니다. 그 대가로 사는 것은 이 절 첫머리의 버그 부류를 아예 쓸 수 없게 된다는 것이다.</p><p>포매터는 <code>proven_u8str_t</code>나 PAL 기반 스트림에 쓴다. <code>{}</code> 자리표시자, <code>{1}</code> 같은 명시적 인덱스, 이스케이프된 중괄호 <code>{{</code>와 <code>}}</code>, 그리고 <code>{:0>5}</code>, <code>{:*^10}</code>, <code>{:.&lt;10}</code> 같은 폭/정렬 스펙을 갖춘 작은 구조적 포맷 언어를 사용한다.</p><p>잘못된 예 — 스펙이 타입을 고른다고 가정하기:</p><pre><code data-lang="text">proven_println("{:d}", PROVEN_ARG(3.5));   /* wrong: the spec formats, it does not convert */</code></pre><h3 id="구조체와-열거형">구조체와 열거형<a class="anchor" href="#구조체와-열거형" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef struct {
+    proven_err_t err;
+    proven_size_t written;
+    proven_size_t required;
+} proven_fmt_result_t;</code></pre><p>필드:</p><ul><li><code>err</code>: 결과 코드.</li><li><code>written</code>: 실제로 쓰인 바이트.</li><li><code>required</code>: 전체 출력에 필요한 바이트.</li></ul><p><code>proven_arg_type_t</code> 변종:</p><ul><li><code>PROVEN_ARG_NONE</code></li><li><code>PROVEN_ARG_I32</code></li><li><code>PROVEN_ARG_U32</code></li><li><code>PROVEN_ARG_I64</code></li><li><code>PROVEN_ARG_U64</code></li><li><code>PROVEN_ARG_F64</code> — <code>PROVEN_FMT_NO_FLOAT</code>가 정의되지 않은 경우</li><li><code>PROVEN_ARG_CSTR</code></li><li><code>PROVEN_ARG_STR_VIEW</code></li><li><code>PROVEN_ARG_DATETIME</code></li><li><code>PROVEN_ARG_PTR</code></li><li><code>PROVEN_ARG_FN</code></li></ul><pre><code data-lang="text">typedef struct {
+    proven_arg_type_t type;
+    union {
+        proven_i32 i32;
+        proven_u32 u32;
+        proven_i64 i64;
+        proven_u64 u64;
+        double f64;
+        const char *cstr;
+        proven_u8str_view_t str_view;
+        proven_datetime_t datetime;
+        const void *ptr;
+        void (*fn)(void);
+    } value;
+} proven_arg_t;</code></pre><h3 id="포맷-인자-생성자">포맷 인자 생성자<a class="anchor" href="#포맷-인자-생성자" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>API</strong></td><td><strong>의도</strong></td></tr><tr><td><code>proven_arg_none()</code></td><td>내부 센티널 값.</td></tr><tr><td><code>proven_arg_i32(v)</code>, <code>proven_arg_u32(v)</code></td><td>정수 인자.</td></tr><tr><td><code>proven_arg_i64(v)</code>, <code>proven_arg_u64(v)</code></td><td>넓은 정수 인자.</td></tr><tr><td><code>proven_arg_f64(v)</code></td><td>부동소수점 인자 — float 포매팅이 비활성화되지 않은 경우.</td></tr><tr><td><code>proven_arg_cstr(v)</code></td><td>신뢰할 수 있고 살아 있는 NUL 종료 C 문자열.</td></tr><tr><td><code>proven_arg_cstr_n(v, max_len)</code></td><td>경계가 있는 C 문자열 인자; <code>max_len</code>까지만 NUL을 탐색한다.</td></tr><tr><td><code>proven_arg_str_view(v)</code></td><td>borrowed 문자열 view 인자.</td></tr><tr><td><code>proven_arg_datetime(v)</code></td><td>datetime 인자.</td></tr><tr><td><code>proven_arg_ptr(v)</code></td><td>객체 포인터 인자.</td></tr><tr><td><code>proven_arg_fn(v)</code></td><td>함수 포인터 인자.</td></tr><tr><td><code>proven_arg_ucstr(v)</code></td><td>unsigned char C 문자열 헬퍼.</td></tr><tr><td><code>proven_arg_identity(v)</code></td><td>기존 <code>proven_arg_t</code>를 그대로 통과시킨다.</td></tr></table></div><h3 id="포맷-매크로">포맷 매크로<a class="anchor" href="#포맷-매크로" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>매크로</strong></td><td><strong>의도</strong></td></tr><tr><td><code>PROVEN_ARG(x)</code></td><td>지원되는 인자 타입에 대한 <code>_Generic</code> 선택자.</td></tr><tr><td><code>PROVEN_ARG_FN(f)</code></td><td>함수 포인터 포매팅 헬퍼.</td></tr><tr><td><code>PROVEN_ARG_CSTR_N(v, max_len)</code></td><td>경계가 있는 C 문자열 헬퍼.</td></tr><tr><td><code>proven_u8str_append_fmt(str, fmt, ...)</code></td><td>원자적 고정 용량 포매팅.</td></tr><tr><td><code>proven_u8str_append_fmt_trunc(str, fmt, ...)</code></td><td>최선을 다하는 잘라내기 포매팅.</td></tr><tr><td><code>proven_u8str_append_fmt_grow(alloc, str, fmt, ...)</code></td><td>원자적 성장 가능 포매팅.</td></tr><tr><td><code>proven_u8str_append_fmt_with_scratch(alloc, str, fmt, scratch, ...)</code></td><td>임시 패치 할당에 임시 작업용(scratch) allocator를 쓰는 성장 가능 포매팅.</td></tr><tr><td><code>PROVEN_FMT_IS_OK(res)</code></td><td><code>proven_fmt_result_t</code>를 검사한다.</td></tr></table></div><h3 id="포매팅-엔진">포매팅 엔진<a class="anchor" href="#포매팅-엔진" aria-hidden="true">#</a></h3><pre><code data-lang="text">proven_fmt_result_t proven_u8str_fmt_internal(
+    proven_allocator_t alloc,
+    proven_u8str_t *str,
+    bool trunc,
+    const char *fmt,
+    proven_allocator_t scratch,
+    const proven_arg_t *args,
+    proven_size_t args_count
+);</code></pre><p>일반 사용자 코드는 이 내부 엔진 대신 매크로를 호출해야 한다. 엔진은 인덱스 0에 선두 <code>proven_arg_none()</code> 센티널이 있을 것을 기대한다.</p><p>사용되지 않는 여분의 포맷 인자는 <code>PROVEN_ERR_INVALID_ARG</code>를 반환한다.</p><p>예제:</p><pre><code data-lang="c">proven_result_u8str_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_create</span>(alloc, <span style="color: #b60157">8</span>);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+    <span style="color: #d73948">return</span>;
+}
+proven_u8str_t s <span style="color: #d73948">=</span> r.value;
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> The target is only 8 bytes; the _grow form reallocates rather than truncate. </span><span style="color: #74747c">*/</span>
+proven_fmt_result_t fr <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append_fmt_grow</span>(
+    alloc,
+    <span style="color: #d73948">&amp;</span>s,
+    <span style="color: #198810">"</span><span style="color: #198810">name={} score={:0>4}</span><span style="color: #198810">"</span>,
+    <span style="color: #4b69c6">PROVEN_ARG</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">ada</span><span style="color: #198810">"</span>)),
+    <span style="color: #4b69c6">PROVEN_ARG</span>(<span style="color: #b60157">42</span>)
+);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">PROVEN_FMT_IS_OK</span>(fr)) {
+    <span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>s);
+    <span style="color: #d73948">return</span>;
+}
+<span style="color: #74747c">/*</span><span style="color: #74747c"> s == "name=ada score=0042" </span><span style="color: #74747c">*/</span>
+
+<span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>s);</code></pre><h2 id="4-스캐닝">4. 스캐닝<a class="anchor" href="#4-스캐닝" aria-hidden="true">#</a></h2><h3 id="문제-scanf는-어디서-멈췄는지-말해-주지-않는다">문제: <code>scanf</code>는 어디서 멈췄는지 말해 주지 않는다<a class="anchor" href="#문제-scanf는-어디서-멈췄는지-말해-주지-않는다" aria-hidden="true">#</a></h3><p>입력을 파싱하는 것은 포매팅의 거울이고, libc의 답은 더 나쁘다. <code>sscanf</code>는 *몇 개의 필드를 채웠는지*만 반환하고 그 외에는 아무것도 주지 않는다 — 어느 것이 실패했는지도, 어디까지 갔는지도, 왜인지도:</p><pre><code data-lang="text">int n = sscanf(line, "%d %d %d", &amp;a, &amp;b, &amp;c);
+if (n != 3) { /* wrong: which field? at what offset? was it malformed or missing? */ }</code></pre><p>세 번째 필드가 잘못된 형식이라면, 여러분이 아는 것은 둘을 얻었다는 것뿐이다. 사용자에게 위치를 보고할 수 없고, 잘못된 레코드를 건너뛰고 재개할 수 없으며, "입력이 떨어졌다"와 "숫자가 아닌 무언가를 찾았다"를 구별할 수 없다. 그리고 <code>char *</code>로의 <code>%s</code>는 <code>strcpy</code>와 똑같은 무경계 쓰기 문제를 가지며, 이번에는 입력이 프로그램 바깥에서 온다.</p><p>그리고 <code>strtol</code>이 있는데, 그 계약은 먼저 <code>errno</code>를 지우고, 나중에 검사하고, "숫자가 하나도 없음"을 탐지하려고 <code>endptr</code>을 입력과 비교할 것을 요구한다 — 변환 하나에 제대로 해내야 할 것이 셋이다.</p><h3 id="이-라이브러리가-대신-하는-것-2">이 라이브러리가 대신 하는 것<a class="anchor" href="#이-라이브러리가-대신-하는-것-2" aria-hidden="true">#</a></h3><p><strong>커서는 여러분의 것이다.</strong> <code>proven_scan_t</code>는 파싱 중인 view와 그 안의 오프셋을 담는다. 각 스캔은 커서에서 읽고 성공하면 커서를 앞으로 옮긴다. 커서는 여러분이 읽을 수 있는 필드이므로, 파싱이 정확히 어디서 멈췄는지 항상 알 수 있다 — 그것이 사용자에게 보여줄 위치다.</p><p><strong>각 스캔은 result를 반환한다.</strong> <code>proven_scan_i64</code>는 <code>{err, val}</code>을 돌려주므로, "숫자가 아님", "범위를 벗어남", "입력의 끝"이 하나의 빠진 필드가 아니라 서로 다른 에러가 된다.</p><p><strong>실패는 커서를 되돌린다</strong> — 원시 스캐너들에 한해서. 실패한 <code>proven_scan_i64</code>는 커서를 있던 자리에 남기므로, 같은 위치에서 다른 것을 시도할 수 있다. 그것이 짐작 대신 복구를 가능하게 하는 것이다.</p><p>이것에 기대기 전에 알아 둘 것 하나: <em>구조적</em> 스캔(<code>proven_scan_fmt</code>, <code>{}</code> 형태)은 필드 전체에 걸쳐 트랜잭션적이지 <strong>않다</strong>. 세 번째 자리표시자가 실패하면 앞의 두 목적지에는 이미 쓰여 있다. <a href="manual-08-fmt-scan.html">8장 §11.1</a>이 에러 코드와 복구 패턴을 온전히 다룬다.</p><p>스캐너는 borrow된 <code>proven_u8str_view_t</code>로부터 파싱한다. 커서가 진행 상황을 추적한다.</p><p>잘못된 예 — 부분적인 구조적 스캔을 아무 일도 없었던 것처럼 다루기:</p><pre><code data-lang="text">proven_err_t e = proven_scan_fmt(&amp;sc, "{} {} {}", ...);
+if (!proven_is_ok(e)) {
+    /* wrong: destinations for the fields that DID parse have already been written */
+}</code></pre><h3 id="result-구조체">Result 구조체<a class="anchor" href="#result-구조체" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef struct { proven_err_t err; proven_i64 val; } proven_result_i64_t;
+typedef struct { proven_err_t err; proven_u64 val; } proven_result_u64_t;
+typedef struct { proven_err_t err; double val; } proven_result_f64_t;
+typedef struct { proven_err_t err; proven_u8str_view_t val; } proven_result_u8str_view_t;</code></pre><h3 id="proven_scan_t"><code>proven_scan_t</code><a class="anchor" href="#proven_scan_t" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef struct {
+    proven_u8str_view_t view;
+    proven_size_t cursor;
+} proven_scan_t;</code></pre><p>목적: 입력과 현재 파싱 위치를 담는다. <code>proven_scan_init()</code>은 유효하지 않은 비어 있지 않은 널 view를 빈 view로 정규화한다.</p><h3 id="스캐너-함수">스캐너 함수<a class="anchor" href="#스캐너-함수" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>API</strong></td><td><strong>의도</strong></td><td><strong>반환</strong></td></tr><tr><td><code>proven_scan_init(view)</code></td><td>view로부터 스캐너를 만든다.</td><td><code>proven_scan_t</code>.</td></tr><tr><td><code>proven_scan_skip_whitespace(scan)</code></td><td>공백을 지나 진행한다.</td><td>void.</td></tr><tr><td><code>proven_scan_i64(scan)</code></td><td>부호 있는 64비트 정수를 파싱한다.</td><td><code>proven_result_i64_t</code>.</td></tr><tr><td><code>proven_scan_u64(scan)</code></td><td>부호 없는 64비트 정수를 파싱한다.</td><td><code>proven_result_u64_t</code>.</td></tr><tr><td><code>proven_scan_f64(scan)</code></td><td>부동소수점 값을 파싱한다.</td><td><code>proven_result_f64_t</code>.</td></tr><tr><td><code>proven_parse_double_ascii(view)</code></td><td>공백을 건너뛰지 않고 로케일 독립적인 ASCII float 토큰 하나를 파싱한다.</td><td><code>proven_parse_double_result_t</code>.</td></tr><tr><td><code>proven_parse_f64_ascii(view)</code></td><td>같은 로케일 독립 binary64 파서에 대한 호환 별칭.</td><td><code>proven_parse_f64_result_t</code>.</td></tr><tr><td><code>proven_strtod(nptr, endptr)</code></td><td>공백 건너뛰기와 <code>endptr</code> 보고를 갖춘 <code>strtod</code> 스타일 토큰 하나를 파싱한다.</td><td><code>double</code>.</td></tr><tr><td><code>proven_scan_str(scan)</code></td><td>공백으로 구분된 토큰을 입력에 대한 view로 파싱한다.</td><td><code>proven_result_u8str_view_t</code>.</td></tr><tr><td><code>proven_scan_skip_until(scan, target)</code></td><td>target을 찾으면 커서를 그쪽으로 옮긴다.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_scan_skip_until_number(scan)</code></td><td>다음으로 숫자처럼 보이는 위치로 커서를 옮긴다.</td><td>void.</td></tr></table></div><h3 id="스캔-인자-타입">스캔 인자 타입<a class="anchor" href="#스캔-인자-타입" aria-hidden="true">#</a></h3><p><code>proven_scan_arg_type_t</code>는 <code>proven_scan_arg_t</code>에 저장된 목적지 종류를 식별한다. <code>PROVEN_SCAN_ARG(&amp;x)</code>는 다음에 대한 포인터를 지원한다:</p><ul><li><code>short</code>, <code>unsigned short</code></li><li><code>int</code>, <code>unsigned int</code></li><li><code>long</code>, <code>unsigned long</code></li><li><code>long long</code>, <code>unsigned long long</code></li><li><code>double</code></li><li><code>proven_u8str_view_t</code></li></ul><p>네이티브 목적지 생성자:</p><ul><li><code>proven_scan_arg_short</code>, <code>proven_scan_arg_ushort</code></li><li><code>proven_scan_arg_int</code>, <code>proven_scan_arg_uint</code></li><li><code>proven_scan_arg_long</code>, <code>proven_scan_arg_ulong</code></li><li><code>proven_scan_arg_llong</code>, <code>proven_scan_arg_ullong</code></li></ul><p>명시적 고정 폭 및 유틸리티 헬퍼:</p><ul><li><code>proven_scan_arg_i32</code>, <code>proven_scan_arg_u32</code></li><li><code>proven_scan_arg_i64</code>, <code>proven_scan_arg_u64</code></li><li><code>proven_scan_arg_f64</code></li><li><code>proven_scan_arg_str_view</code></li><li><code>proven_scan_arg_none</code></li><li><code>proven_scan_arg_identity</code></li></ul><p>Long 별칭:</p><pre><code data-lang="text">#define PROVEN_SCAN_ARG_LONG(ptr)  proven_scan_arg_long(ptr)
+#define PROVEN_SCAN_ARG_ULONG(ptr) proven_scan_arg_ulong(ptr)</code></pre><h3 id="포맷-스캐닝-매크로">포맷 스캐닝 매크로<a class="anchor" href="#포맷-스캐닝-매크로" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>매크로</strong></td><td><strong>의도</strong></td></tr><tr><td><code>PROVEN_SCAN_ARG(x)</code></td><td><code>_Generic</code> 목적지 선택자.</td></tr><tr><td><code>proven_scan_fmt_cursor(scan_ptr, fmt, ...)</code></td><td>기존 커서에서 스캔한다.</td></tr><tr><td><code>proven_scan_fmt(view, fmt, ...)</code></td><td>임시 커서로 view에서 스캔한다.</td></tr></table></div><h3 id="스캔-엔진">스캔 엔진<a class="anchor" href="#스캔-엔진" aria-hidden="true">#</a></h3><pre><code data-lang="text">proven_err_t proven_scan_fmt_internal(
+    proven_scan_t *scan,
+    const char *fmt,
+    const proven_scan_arg_t *args,
+    proven_size_t args_count
+);</code></pre><div class="tblwrap"><table><tr><td><strong>API</strong></td><td><strong>의도</strong></td><td><strong>반환</strong></td></tr><tr><td><code>proven_scan_fmt_internal(scan, fmt, args, args_count)</code></td><td>기존 커서 위에서 동작하는 구조적 스캐너 엔진.</td><td><code>proven_err_t</code>.</td></tr><tr><td><code>proven_scan_fmt_internal_view(view, fmt, args, count)</code></td><td>view 위에 임시 스캐너를 만드는 편의 래퍼.</td><td><code>proven_err_t</code>.</td></tr></table></div><p>일반 사용자 코드는 매크로를 호출해야 한다. 엔진은 선두 센티널 인자를 기대한다.</p><p>중요한 동작: <code>proven_scan_fmt_internal()</code>은 뒤쪽에서 리터럴 불일치가 일어나면 에러를 반환하기 전에 커서를 진행시키고 앞선 목적지에 써 넣었을 수 있다. 트랜잭션 같은 파싱이 필요하다면 커서와 목적지 값을 먼저 저장하라.</p><p>예제:</p><pre><code data-lang="c">proven_scan_t scan <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_scan_init</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">ID: 402 SCORE: 99.5 ada</span><span style="color: #198810">"</span>));
+<span style="color: #d73948">int</span> id <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+<span style="color: #d73948">double</span> score <span style="color: #d73948">=</span> <span style="color: #b60157">0</span><span style="color: #b60157">.</span><span style="color: #b60157">0</span>;
+proven_u8str_view_t user <span style="color: #d73948">=</span> {<span style="color: #b60157">0</span>};
+
+proven_err_t e <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_scan_fmt_cursor</span>(
+    <span style="color: #d73948">&amp;</span>scan,
+    <span style="color: #198810">"</span><span style="color: #198810">ID: {} SCORE: {} {}</span><span style="color: #198810">"</span>,
+    <span style="color: #4b69c6">PROVEN_SCAN_ARG</span>(<span style="color: #d73948">&amp;</span>id),
+    <span style="color: #4b69c6">PROVEN_SCAN_ARG</span>(<span style="color: #d73948">&amp;</span>score),
+    <span style="color: #4b69c6">PROVEN_SCAN_ARG</span>(<span style="color: #d73948">&amp;</span>user)
+);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(e)) {
+    <span style="color: #d73948">return</span>;
+}
+<span style="color: #74747c">/*</span><span style="color: #74747c"> id == 402, score == 99.5, user borrows "ada" out of the input - it is not a</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> copy, so it is only valid while the scanned bytes are. </span><span style="color: #74747c">*/</span></code></pre><h3 id="float-파싱-관련-사항">Float 파싱 관련 사항<a class="anchor" href="#float-파싱-관련-사항" aria-hidden="true">#</a></h3><ul><li><code>proven_scan_f64()</code>와 <code>proven_parse_double_ascii()</code>는 공유된 decimal-to-binary64 백엔드를 거친다.</li><li>유한한 십진 입력은 round-to-nearest, ties-to-even 동작으로 IEEE-754 binary64로 반올림된다.</li><li>현재 변환 스택은 <code>Clinger fast path -> staged Eisel-Lemire layer -> exact bigint fallback</code>이며, 대표적인 입력이 어느 경로를 탔는지 테스트가 확인할 수 있도록 내부 카운터를 둔다.</li><li>staged Eisel-Lemire 계층은 현재 생성된 <code>5^q</code> 양수 지수 경우와, 십진 유효숫자가 요구되는 <code>5^q</code>를 깔끔하게 상쇄하는 정확한 음수 지수 경우를 받아들인다.</li><li><code>__uint128_t</code>가 있는 컴파일러에서는 같은 계층이 정상 범위 경우에 대해 보수적으로 반올림된 음수 지수 비율 부분집합도 받아들이며, 원래의 좁은 프로토타입이 허용하던 것보다 더 넓은 좌시프트 정규화를 포함한다.</li><li>넓혀진 캐시된 거듭제곱 곱 경로는 이제 <code>5e-324</code>를 포함한 일부 비정규(subnormal) 경우도 단계적으로 처리하지만, true-min에 대한 절반 임계값 아래의 값들은 여전히 정확한 bigint fallback으로 넘긴다.</li><li>체크인된 캐시 <code>5^q</code> 상수들은 <code>scripts/generate_float_decimal_tables.py</code>로 로컬에서 생성된다.</li><li><code>proven_parse_double_ascii()</code>는 선행 공백을 건너뛰지 않는다.</li><li><code>proven_strtod()</code>는 선행 ASCII 공백을 건너뛰고, <code>endptr</code>을 갱신하며, 오버플로 시 부호 있는 무한대를 반환하고, 언더플로 시 부호 있는 0을 보존한다.</li></ul><h2 id="5-예제와-오용-사례">5. 예제와 오용 사례<a class="anchor" href="#5-예제와-오용-사례" aria-hidden="true">#</a></h2><h3 id="view는-c-문자열이-아니다">view는 C 문자열이 아니다<a class="anchor" href="#view는-c-문자열이-아니다" aria-hidden="true">#</a></h3><p>잘못된 예:</p><pre><code data-lang="text">proven_u8str_view_t view = get_view();
+printf("%s\n", (const char *)view.ptr); /* wrong: view may not be NUL-terminated */</code></pre><p>올바른 예:</p><pre><code data-lang="c">proven_u8str_view_t view <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_view_slice</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">/etc/hosts</span><span style="color: #198810">"</span>), <span style="color: #b60157">5</span>, <span style="color: #b60157">5</span>);
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> A view is a pointer and a length into somebody else's bytes. To hand it to a</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> C API that wants a NUL, allocate a real C string from it. </span><span style="color: #74747c">*/</span>
+proven_result_cstr_t c <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_view_to_cstr</span>(view, alloc);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(c.err)) {
+    <span style="color: #d73948">return</span>;
+}
+<span style="color: #74747c">/*</span><span style="color: #74747c"> c.value is "hosts", NUL-terminated. It is yours, so free it. </span><span style="color: #74747c">*/</span>
+alloc.<span style="color: #4b69c6">free_fn</span>(alloc.ctx, (<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>)c.value);</code></pre><h3 id="proven_lit은-리터럴을-위한-것이다"><code>PROVEN_LIT</code>은 리터럴을 위한 것이다<a class="anchor" href="#proven_lit은-리터럴을-위한-것이다" aria-hidden="true">#</a></h3><p>올바른 예:</p><pre><code data-lang="c">proven_u8str_view_t a <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">abc</span><span style="color: #198810">"</span>);
+(<span style="color: #d73948">void</span>)a;</code></pre><p>잘못된 예:</p><pre><code data-lang="text">const char *runtime = getenv("NAME");
+proven_u8str_view_t a = PROVEN_LIT(runtime); /* wrong: macro requires literal syntax */</code></pre><p>이렇게 하라:</p><pre><code data-lang="c"><span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>runtime <span style="color: #d73948">=</span> <span style="color: #198810">"</span><span style="color: #198810">NAME=value</span><span style="color: #198810">"</span>;   <span style="color: #74747c">/*</span><span style="color: #74747c"> any trusted NUL-terminated string </span><span style="color: #74747c">*/</span>
+proven_u8str_view_t a <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_view_from_cstr</span>(runtime);
+(<span style="color: #d73948">void</span>)a;</code></pre><h3 id="찾지-못한-것과-치환된-것을-구별하라">찾지 못한 것과 치환된 것을 구별하라<a class="anchor" href="#찾지-못한-것과-치환된-것을-구별하라" aria-hidden="true">#</a></h3><p><code>proven_u8str_replace_first()</code>는 target을 찾지 못했을 때 <code>PROVEN_OK</code>를 반환한다. 그 차이가 중요하다면 먼저 검색하라.</p><pre><code data-lang="c">proven_result_u8str_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_create_from_view</span>(alloc, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">the old way</span><span style="color: #198810">"</span>));
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+    <span style="color: #d73948">return</span>;
+}
+proven_u8str_t s <span style="color: #d73948">=</span> r.value;
+
+proven_size_t at <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_view_find</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>s), <span style="color: #b60157">0</span>, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">old</span><span style="color: #198810">"</span>));
+<span style="color: #d73948">if</span> (at <span style="color: #d73948">!=</span> PROVEN_INDEX_NOT_FOUND) {
+    (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_u8str_replace_first</span>(<span style="color: #d73948">&amp;</span>s, <span style="color: #b60157">0</span>, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">old</span><span style="color: #198810">"</span>), <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">new</span><span style="color: #198810">"</span>));
+}
+
+<span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>s);</code></pre><h3 id="경계가-있는-포맷-입력">경계가 있는 포맷 입력<a class="anchor" href="#경계가-있는-포맷-입력" aria-hidden="true">#</a></h3><p>잘못된 예:</p><pre><code data-lang="text">char *untrusted = get_untrusted_pointer();
+proven_println("{}", PROVEN_ARG(untrusted));
+/* wrong: C-string formatting scans until NUL */</code></pre><p>올바른 예:</p><pre><code data-lang="c"><span style="color: #d73948">char</span> untrusted[<span style="color: #b60157">16</span>] <span style="color: #d73948">=</span> { <span style="color: #198810">'</span><span style="color: #198810">n</span><span style="color: #198810">'</span>, <span style="color: #198810">'</span><span style="color: #198810">o</span><span style="color: #198810">'</span>, <span style="color: #198810">'</span><span style="color: #198810"> </span><span style="color: #198810">'</span>, <span style="color: #198810">'</span><span style="color: #198810">n</span><span style="color: #198810">'</span>, <span style="color: #198810">'</span><span style="color: #198810">u</span><span style="color: #198810">'</span>, <span style="color: #198810">'</span><span style="color: #198810">l</span><span style="color: #198810">'</span>, <span style="color: #198810">'</span><span style="color: #198810"> </span><span style="color: #198810">'</span>, <span style="color: #198810">'</span><span style="color: #198810">h</span><span style="color: #198810">'</span>, <span style="color: #198810">'</span><span style="color: #198810">e</span><span style="color: #198810">'</span>, <span style="color: #198810">'</span><span style="color: #198810">r</span><span style="color: #198810">'</span>, <span style="color: #198810">'</span><span style="color: #198810">e</span><span style="color: #198810">'</span>, <span style="color: #198810">'</span><span style="color: #198810">!</span><span style="color: #198810">'</span>, <span style="color: #198810">'</span><span style="color: #198810">!</span><span style="color: #198810">'</span>, <span style="color: #198810">'</span><span style="color: #198810">!</span><span style="color: #198810">'</span>, <span style="color: #198810">'</span><span style="color: #198810">!</span><span style="color: #198810">'</span>, <span style="color: #198810">'</span><span style="color: #198810">!</span><span style="color: #198810">'</span> };
+proven_size_t max_len <span style="color: #d73948">=</span> <span style="color: #d73948">sizeof</span> untrusted;
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> The bounded form stops looking for a NUL after max_len bytes. </span><span style="color: #74747c">*/</span>
+<span style="color: #4b69c6">proven_println</span>(<span style="color: #198810">"</span><span style="color: #198810">{}</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">PROVEN_ARG_CSTR_N</span>(untrusted, max_len));</code></pre><h3 id="borrow된-고정-용량-문자열">Borrow된 고정 용량 문자열<a class="anchor" href="#borrow된-고정-용량-문자열" aria-hidden="true">#</a></h3><p><code>proven_u8str_borrow</code>를 사용하면 아무 할당 없이 스택이나 정적 버퍼에 포매팅할 수 있다 — allocator가 없는 코드와 뜨거운 경로에서 유용하다. 고정 용량 연산(그리고 <code>proven_u8str_append_fmt</code>)을 사용하고, <code>proven_u8str_reset</code>으로 재사용하며, 성장 연산이나 <code>proven_u8str_destroy</code>는 호출하지 말라(메모리는 호출자가 소유한다).</p><pre><code data-lang="c"><span style="color: #d73948">int</span> cur <span style="color: #d73948">=</span> <span style="color: #b60157">3</span>;
+<span style="color: #d73948">int</span> total <span style="color: #d73948">=</span> <span style="color: #b60157">10</span>;
+
+proven_byte_t line[<span style="color: #b60157">64</span>];
+proven_u8str_t s <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_borrow</span>(line, <span style="color: #d73948">sizeof</span> line);   <span style="color: #74747c">/*</span><span style="color: #74747c"> cap includes NUL </span><span style="color: #74747c">*/</span>
+
+proven_fmt_result_t fr <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append_fmt</span>(<span style="color: #d73948">&amp;</span>s, <span style="color: #198810">"</span><span style="color: #198810">L{}/{}</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">PROVEN_ARG</span>(cur), <span style="color: #4b69c6">PROVEN_ARG</span>(total));
+<span style="color: #d73948">if</span> (<span style="color: #4b69c6">PROVEN_FMT_IS_OK</span>(fr)) {
+    <span style="color: #4b69c6">proven_println</span>(<span style="color: #198810">"</span><span style="color: #198810">{}</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">PROVEN_ARG</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>s)));
+}
+
+(<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_u8str_reset</span>(<span style="color: #d73948">&amp;</span>s);   <span style="color: #74747c">/*</span><span style="color: #74747c"> reuse next frame, no allocation </span><span style="color: #74747c">*/</span></code></pre><p>오용: borrow된 용량을 넘길 성장 호출은 호출자 메모리를 재할당하는 대신 <code>PROVEN_ERR_OUT_OF_BOUNDS</code>를 반환한다.</p><pre><code data-lang="c">proven_byte_t small[<span style="color: #b60157">4</span>];
+proven_u8str_t t <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_borrow</span>(small, <span style="color: #d73948">sizeof</span> small);
+proven_err_t e <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append_grow</span>(alloc, <span style="color: #d73948">&amp;</span>t, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">toolong</span><span style="color: #198810">"</span>));
+(<span style="color: #d73948">void</span>)e;   <span style="color: #74747c">/*</span><span style="color: #74747c"> e == PROVEN_ERR_OUT_OF_BOUNDS; small[] is untouched </span><span style="color: #74747c">*/</span></code></pre><h3 id="자기-참조-포매팅">자기 참조 포매팅<a class="anchor" href="#자기-참조-포매팅" aria-hidden="true">#</a></h3><p>잘못된 예:</p><pre><code data-lang="text">const char *inside = proven_u8str_as_cstr(&amp;s);
+proven_u8str_append_fmt_grow(alloc, &amp;s, "{}", PROVEN_ARG(inside));
+/* wrong: self-aliasing C-string arguments are rejected */</code></pre><p>올바른 예:</p><pre><code data-lang="c">proven_result_u8str_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_create_from_view</span>(alloc, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">ab</span><span style="color: #198810">"</span>));
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+    <span style="color: #d73948">return</span>;
+}
+proven_u8str_t s <span style="color: #d73948">=</span> r.value;
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> A view carries a length, so the formatter knows exactly which bytes to snapshot. </span><span style="color: #74747c">*/</span>
+proven_u8str_view_t before <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>s);
+proven_fmt_result_t fr <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append_fmt_grow</span>(alloc, <span style="color: #d73948">&amp;</span>s, <span style="color: #198810">"</span><span style="color: #198810">{}</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">PROVEN_ARG</span>(before));
+(<span style="color: #d73948">void</span>)fr;   <span style="color: #74747c">/*</span><span style="color: #74747c"> s == "abab" </span><span style="color: #74747c">*/</span>
+
+<span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>s);</code></pre><h3 id="트랜잭션적-스캐닝">트랜잭션적 스캐닝<a class="anchor" href="#트랜잭션적-스캐닝" aria-hidden="true">#</a></h3><p>잘못된 가정:</p><pre><code data-lang="text">proven_err_t e = proven_scan_fmt_cursor(&amp;scan, "{} suffix", PROVEN_SCAN_ARG(&amp;x));
+/* if suffix mismatches, x and scan.cursor may already have changed */</code></pre><p>올바른 패턴:</p><pre><code data-lang="c">proven_scan_t scan <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_scan_init</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">42 prefix</span><span style="color: #198810">"</span>));
+<span style="color: #d73948">int</span> x <span style="color: #d73948">=</span> <span style="color: #d73948">-</span><span style="color: #b60157">1</span>;
+
+proven_size_t old_cursor <span style="color: #d73948">=</span> scan.cursor;
+<span style="color: #d73948">int</span> old_x <span style="color: #d73948">=</span> x;
+
+proven_err_t e <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_scan_fmt_cursor</span>(<span style="color: #d73948">&amp;</span>scan, <span style="color: #198810">"</span><span style="color: #198810">{} suffix</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">PROVEN_SCAN_ARG</span>(<span style="color: #d73948">&amp;</span>x));
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(e)) {
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The literal "suffix" did not match, but 42 was already written into x and</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> the cursor already moved. Put both back yourself. </span><span style="color: #74747c">*/</span>
+    scan.cursor <span style="color: #d73948">=</span> old_cursor;
+    x <span style="color: #d73948">=</span> old_x;
+}</code></pre><h3 id="실전-예제-owned-문자열과-borrow된-문자열">실전 예제: owned 문자열과 borrow된 문자열<a class="anchor" href="#실전-예제-owned-문자열과-borrow된-문자열" aria-hidden="true">#</a></h3><p>테스트 스위트에서 컴파일되고 실행된다. 중요한 구분은 이것이다: owned 문자열은 재할당될 수 있고 반드시 파괴해야 한다; borrow된 문자열은 호출자 메모리를 감싸고, 결코 재할당하지 않으며, 여러분이 준 버퍼를 넘어 성장하는 대신 그것을 조용히 옮기지 않고 거부한다.</p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> There are two string handles here and the difference is ownership, not size:</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   proven_u8str_t      - a byte string you can edit. It either owns an</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">                         allocation (create) or borrows one of yours (borrow).</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   proven_u8str_view_t - a pointer and a length into somebody else's bytes.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">                         It owns nothing, it is not NUL-terminated, and it is</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">                         only valid while those bytes are.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> A view is what you pass to a function that reads. A u8str is what you keep.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    proven_allocator_t alloc <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- an OWNED string: the allocator's memory, yours to destroy ---------- </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The capacity argument is content bytes; the NUL is extra, so as_cstr is</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> always O(1) and always safe. </span><span style="color: #74747c">*/</span>
+    proven_result_u8str_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_create</span>(alloc, <span style="color: #b60157">16</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(r.err), <span style="color: #198810">"</span><span style="color: #198810">creating a 16-byte string must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+        <span style="color: #d73948">return</span> <span style="color: #b60157">1</span>;
+    }
+    proven_u8str_t path <span style="color: #d73948">=</span> r.value;
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> append is fixed-capacity: it fits or it fails, and on failure it has not</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> touched the string. It never reallocates, so it needs no allocator. </span><span style="color: #74747c">*/</span>
+    proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>path, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">/etc/hosts</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">10 bytes fit in a 16-byte string</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> append_grow is the growable twin: give it the allocator the string was</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> created with and it reallocates when needed. Still failure-atomic - if the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> allocation fails, the string is exactly as it was. </span><span style="color: #74747c">*/</span>
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append_grow</span>(alloc, <span style="color: #d73948">&amp;</span>path, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">.backup.original</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">append_grow must reallocate rather than fail</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Edits in the middle. insert shifts the tail right; remove shifts it left. </span><span style="color: #74747c">*/</span>
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_insert_grow</span>(alloc, <span style="color: #d73948">&amp;</span>path, <span style="color: #b60157">0</span>, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">/srv</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">inserting a prefix must succeed</span><span style="color: #198810">"</span>);
+
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_remove</span>(<span style="color: #d73948">&amp;</span>path, <span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>path).size <span style="color: #d73948">-</span> <span style="color: #b60157">9</span>, <span style="color: #b60157">9</span>);  <span style="color: #74747c">/*</span><span style="color: #74747c"> drop ".original" </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">removing the trailing suffix must succeed</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> replace_first returns PROVEN_OK when the target is absent - "nothing to do"</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> is not an error. Search first when the difference matters to you. </span><span style="color: #74747c">*/</span>
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_replace_first</span>(<span style="color: #d73948">&amp;</span>path, <span style="color: #b60157">0</span>, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">hosts</span><span style="color: #198810">"</span>), <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">fstab</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">replacing an existing substring must succeed</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- reading it: borrow a view, do not copy ----------------------------- </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> as_view is free. The view is only good until the next edit: any growing</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> call may reallocate and leave the view (and any cstr) dangling. </span><span style="color: #74747c">*/</span>
+    proven_u8str_view_t v <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>path);
+
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_view_eq</span>(v, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">/srv/etc/fstab.backup</span><span style="color: #198810">"</span>)),
+                    <span style="color: #198810">"</span><span style="color: #198810">the edits above should have produced /srv/etc/fstab.backup</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_view_starts_with</span>(v, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">/srv</span><span style="color: #198810">"</span>)),
+                    <span style="color: #198810">"</span><span style="color: #198810">the inserted prefix is at the front</span><span style="color: #198810">"</span>);
+
+    proven_size_t dot <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_view_find</span>(v, <span style="color: #b60157">0</span>, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">.backup</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(dot <span style="color: #d73948">!=</span> PROVEN_INDEX_NOT_FOUND, <span style="color: #198810">"</span><span style="color: #198810">the suffix must be found</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> A slice is a view into the SAME bytes - no allocation, no copy. </span><span style="color: #74747c">*/</span>
+    proven_u8str_view_t stem <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_view_slice</span>(v, <span style="color: #b60157">0</span>, dot);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_view_eq</span>(stem, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">/srv/etc/fstab</span><span style="color: #198810">"</span>)),
+                    <span style="color: #198810">"</span><span style="color: #198810">slicing at the suffix leaves the stem</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> as_cstr is the escape hatch to C APIs, and it is only valid because the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> owned string keeps a NUL past its length. Do NOT do this with a view:</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> `stem.ptr` is not NUL-terminated - it just points into `path`. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">printf</span>(<span style="color: #198810">"</span><span style="color: #198810">owned:  </span><span style="color: #b60157">%s</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">proven_u8str_as_cstr</span>(<span style="color: #d73948">&amp;</span>path));
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- a BORROWED string: your memory, no allocation at all --------------- </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Same type, same operations - but the bytes are this stack buffer. `cap`</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> includes the NUL, so this holds 31 content bytes. </span><span style="color: #74747c">*/</span>
+    proven_byte_t line[<span style="color: #b60157">32</span>];
+    proven_u8str_t status <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_borrow</span>(line, <span style="color: #d73948">sizeof</span> line);
+
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>status, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">mounted </span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">appending into a borrowed buffer needs no allocator</span><span style="color: #198810">"</span>);
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>status, stem);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">a view can be appended just like a literal</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The growing calls exist for a borrowed string, but they refuse to</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> reallocate memory they do not own: too much data is OUT_OF_BOUNDS, and</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> `line` is left untouched. A borrowed string cannot silently escape to the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> heap behind your back. </span><span style="color: #74747c">*/</span>
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append_grow</span>(alloc, <span style="color: #d73948">&amp;</span>status,
+                                   <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810"> ...and a great deal more text than fits</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(err <span style="color: #d73948">==</span> PROVEN_ERR_OUT_OF_BOUNDS,
+                    <span style="color: #198810">"</span><span style="color: #198810">a borrowed string reports overflow instead of reallocating caller memory</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_view_eq</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>status), <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">mounted /srv/etc/fstab</span><span style="color: #198810">"</span>)),
+                    <span style="color: #198810">"</span><span style="color: #198810">the failed append must have left the string unchanged</span><span style="color: #198810">"</span>);
+
+    <span style="color: #4b69c6">printf</span>(<span style="color: #198810">"</span><span style="color: #198810">borrowed: </span><span style="color: #b60157">%s</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">proven_u8str_as_cstr</span>(<span style="color: #d73948">&amp;</span>status));
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> reset truncates to empty and keeps the buffer, so the next frame reuses</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> the same 32 bytes with no allocation. </span><span style="color: #74747c">*/</span>
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_reset</span>(<span style="color: #d73948">&amp;</span>status);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">reset must succeed on a borrowed string</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>status).size <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>, <span style="color: #198810">"</span><span style="color: #198810">reset empties the string</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- destroy: the ownership rule, spelled out --------------------------- </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> destroy on the borrowed string is a no-op - `line` is not the library's to</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> free. Calling it anyway is correct and costs nothing, and it means the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> teardown code does not have to know which kind of string it holds. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>status);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> destroy on the owned string frees the allocation, and it must be given the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> allocator the string was created with. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>path);
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><h3 id="실전-예제-버퍼는-고정인데-데이터는-그렇지-않을-때">실전 예제: 버퍼는 고정인데 데이터는 그렇지 않을 때<a class="anchor" href="#실전-예제-버퍼는-고정인데-데이터는-그렇지-않을-때" aria-hidden="true">#</a></h3><p>앞의 예제는 자리가 모자라면 문자열을 늘린다. 실제 코드의 상당 부분은 그럴 수 없다. 레코드에는 고정 폭 필드가 있고, 로그 한 줄에는 상한이 있으며, 아레나(arena) 위에 놓인 문자열은 재할당할 때마다 옛 사본을 다음 reset까지 남긴다. 그런 호출자는 데이터가 들어가지 않을 때 호출이 주는 세 가지 답 중 어느 것인지를 알아야 한다.</p><div class="tblwrap"><table><tr><td><strong>호출의 종류</strong></td><td><strong>데이터가 들어가지 않을 때 하는 일</strong></td><td><strong>해당 호출</strong></td></tr><tr><td><strong>원자적(atomic), 고정 용량</strong></td><td><code>PROVEN_ERR_OUT_OF_BOUNDS</code>로 거절하고 아무것도 바꾸지 않는다.</td><td><code>proven_u8str_append</code>, <code>proven_u8str_insert</code>, <code>proven_u8str_replace_at</code></td></tr><tr><td><strong>최선 노력(best-effort, 잘라 쓰기)</strong></td><td>들어가는 만큼 쓰고, <code>PROVEN_ERR_OUT_OF_BOUNDS</code>와 <strong>함께</strong> 실제로 쓴 바이트 수를 돌려준다.</td><td><code>proven_u8str_append_partial</code></td></tr><tr><td><strong>원자적, 확장 가능</strong></td><td>allocator를 통해 재할당한다. 할당이 실패하면 아무것도 바꾸지 않는다.</td><td><code>proven_u8str_append_grow</code>, <code>proven_u8str_replace_at_grow</code>, <code>proven_u8str_append_byte</code></td></tr></table></div><p>보조 호출 둘도 여기 나온다. <code>proven_u8str_reserve()</code>는 용량을 미리 한 번에 올려 두어 이후의 증가가 재할당을 부르지 않게 한다. 힙(heap)에서는 복사를 아끼고, arena에서는 재할당이 남기는 죽은 저장 공간을 아낀다. <code>proven_u8str_is_valid()</code>는 문자열 핸들 자체의 필드가 서로 모순되지 않는지 본다. 문자열이 다른 코드에서 넘어오는 경계에서 한 번 확인할 값어치가 있고, 편집할 때마다 되풀이할 검사는 아니다.</p><p>아래 프로그램은 상한이 있는 로그 한 줄을 쓰고, 넘치는 append를 거절당하고, 최선 노력 호출로 일부러 잘라 내고, <code>proven_u8str_replace_at()</code>으로 경로 가운데를 고친다 — 먼저 짧아지는 방향(언제나 들어간다), 다음에 길어지는 방향(들어가지 않아 거절된다), 그리고 같은 편집을 <code>proven_u8str_replace_at_grow()</code>로 다시 한다. 마지막은 <code>proven_u8str_view_ends_with()</code>로 파일 확장자를 확인하는 것이다.</p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> The previous example grew a string whenever it ran out of room. This one is</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> about the case where growing is not allowed - a fixed-size record, a log line</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> with a hard length limit, a buffer in an arena that must not be reallocated -</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> and about the two honest answers a call can give when the data does not fit:</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   "no, and I changed nothing"      - the atomic calls: append, insert,</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">                                      replace_at. They check the capacity</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">                                      first, so a refusal leaves the string</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">                                      exactly as it was.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   "some of it, and here is how much" - the best-effort call:</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">                                      append_partial. It fills what it can and</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">                                      tells you the byte count it wrote.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Both are useful; picking the wrong one silently truncates a record or</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> silently drops one. The `_grow` variants are the third answer - "yes, I found</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> more room" - and appear at the end for contrast.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #d73948">#define</span> <span style="color: #4b69c6">FIELD_CAP</span> <span style="color: #b60157">32</span><span style="color: #d73948">u</span>
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    proven_allocator_t alloc <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
+
+    proven_result_u8str_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_create</span>(alloc, FIELD_CAP);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(r.err), <span style="color: #198810">"</span><span style="color: #198810">creating the field buffer must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+        <span style="color: #d73948">return</span> <span style="color: #b60157">1</span>;
+    }
+    proven_u8str_t field <span style="color: #d73948">=</span> r.value;
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> is_valid checks the handle's own structure - a pointer with a capacity and</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> a length that do not contradict each other. Worth asserting once at the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> boundary of your code when a string arrives from somewhere else; it is not</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> a check you need after every edit, because every edit maintains it. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_is_valid</span>(<span style="color: #d73948">&amp;</span>field), <span style="color: #198810">"</span><span style="color: #198810">a freshly created string must be structurally valid</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- reserving room up front ------------------------------------------ </span><span style="color: #74747c">*/</span>
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> reserve raises the capacity now, so later growth does not reallocate. On</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> the heap that saves copies; in an arena it saves something worse, because</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> every reallocation there leaks the old block until the next reset. Ask for</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> what you expect to need, once. </span><span style="color: #74747c">*/</span>
+    proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_reserve</span>(alloc, <span style="color: #d73948">&amp;</span>field, <span style="color: #b60157">64</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">reserving 64 bytes must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(field.internal.cap <span style="color: #d73948">>=</span> <span style="color: #b60157">64</span>, <span style="color: #198810">"</span><span style="color: #198810">the capacity must actually be at least what was asked for</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- the atomic calls: fit, or change nothing -------------------------- </span><span style="color: #74747c">*/</span>
+
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>field, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">2026-01-01 level=info </span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">the prefix fits in the reserved capacity</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> append_byte adds one byte, which is what separators, terminators and</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> escape characters are. It takes the allocator because it is a growing</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> call - one byte is exactly the case where a capacity check would fail on</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> a boundary you did not think about. </span><span style="color: #74747c">*/</span>
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append_byte</span>(alloc, <span style="color: #d73948">&amp;</span>field, (proven_u8)<span style="color: #198810">'</span><span style="color: #198810">[</span><span style="color: #198810">'</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">appending a single separator byte must succeed</span><span style="color: #198810">"</span>);
+
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>field, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">disk full</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">the message fits</span><span style="color: #198810">"</span>);
+
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append_byte</span>(alloc, <span style="color: #d73948">&amp;</span>field, (proven_u8)<span style="color: #198810">'</span><span style="color: #198810">]</span><span style="color: #198810">'</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">closing the bracket must succeed</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Now ask for more than the capacity can hold. The atomic append refuses and</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> - this is the property worth relying on - the string still holds exactly</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> what it held before the call. </span><span style="color: #74747c">*/</span>
+    proven_size_t before <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>field).size;
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>field, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810"> and a very long trailing explanation that certainly does not fit</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(err <span style="color: #d73948">==</span> PROVEN_ERR_OUT_OF_BOUNDS, <span style="color: #198810">"</span><span style="color: #198810">an oversized atomic append must be refused</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>field).size <span style="color: #d73948">==</span> before, <span style="color: #198810">"</span><span style="color: #198810">and must leave the string untouched</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- the best-effort call: as much as fits, and the count -------------- </span><span style="color: #74747c">*/</span>
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> A fixed-width column in a report is the case for this one: write what</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> fits, and know how much was written so the caller can mark the value as</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> truncated instead of pretending it is complete. </span><span style="color: #74747c">*/</span>
+    proven_result_size_t part <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append_partial</span>(<span style="color: #d73948">&amp;</span>field, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810"> ...more text than there is room for</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(part.err <span style="color: #d73948">==</span> PROVEN_ERR_OUT_OF_BOUNDS, <span style="color: #198810">"</span><span style="color: #198810">a partial append that truncates still reports the truncation</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(part.value <span style="color: #d73948">></span> <span style="color: #b60157">0</span>, <span style="color: #198810">"</span><span style="color: #198810">but it wrote what it could</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>field).size <span style="color: #d73948">==</span> before <span style="color: #d73948">+</span> part.value,
+                    <span style="color: #198810">"</span><span style="color: #198810">and the string grew by exactly the number of bytes it reports</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">printf</span>(<span style="color: #198810">"</span><span style="color: #198810">partial append wrote </span><span style="color: #b60157">%zu</span><span style="color: #198810"> byte(s) before the buffer was full</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>, (<span style="color: #4b69c6">size_t</span>)part.value);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- editing in the middle without growing ----------------------------- </span><span style="color: #74747c">*/</span>
+
+    proven_result_u8str_t r2 <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_create</span>(alloc, FIELD_CAP);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(r2.err), <span style="color: #198810">"</span><span style="color: #198810">creating the second buffer must succeed</span><span style="color: #198810">"</span>);
+    proven_u8str_t path <span style="color: #d73948">=</span> r2.value;
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>path, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">var/log/service.log</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">the path fits</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> insert shifts the tail right. Fixed-capacity: it fits or it refuses. </span><span style="color: #74747c">*/</span>
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_insert</span>(<span style="color: #d73948">&amp;</span>path, <span style="color: #b60157">0</span>, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">/</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">inserting a leading slash must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_view_eq</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>path), <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">/var/log/service.log</span><span style="color: #198810">"</span>)),
+                    <span style="color: #198810">"</span><span style="color: #198810">the insert lands at index 0</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> replace_at replaces old_len bytes at an index with data of any length, as</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> long as the result still fits. Replacing "service" (7) with "daemon" (6)</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> shrinks the string, so this cannot fail on capacity. </span><span style="color: #74747c">*/</span>
+    proven_size_t at <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_view_find</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>path), <span style="color: #b60157">0</span>, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">service</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(at <span style="color: #d73948">!=</span> PROVEN_SIZE_MAX, <span style="color: #198810">"</span><span style="color: #198810">the substring must be found before it can be replaced</span><span style="color: #198810">"</span>);
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_replace_at</span>(<span style="color: #d73948">&amp;</span>path, at, <span style="color: #b60157">7</span>, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">daemon</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">a shortening replacement must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_view_eq</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>path), <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">/var/log/daemon.log</span><span style="color: #198810">"</span>)),
+                    <span style="color: #198810">"</span><span style="color: #198810">and produce the expected path</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The same edit the other way round overflows a 32-byte buffer, and the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> fixed-capacity call refuses it rather than truncating a path - which is</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> the failure that silently writes to the wrong file. </span><span style="color: #74747c">*/</span>
+    before <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>path).size;
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_replace_at</span>(<span style="color: #d73948">&amp;</span>path, at, <span style="color: #b60157">6</span>, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">a-replacement-name-far-too-long-for-this-buffer</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(err <span style="color: #d73948">==</span> PROVEN_ERR_OUT_OF_BOUNDS, <span style="color: #198810">"</span><span style="color: #198810">a replacement that does not fit must be refused</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>path).size <span style="color: #d73948">==</span> before, <span style="color: #198810">"</span><span style="color: #198810">and must leave the path unchanged</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> replace_at_grow is the same edit with permission to reallocate. Use it</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> when the buffer is heap-backed and the length is genuinely unbounded;</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> prefer the fixed-capacity call when the limit is part of the format. </span><span style="color: #74747c">*/</span>
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_replace_at_grow</span>(alloc, <span style="color: #d73948">&amp;</span>path, at, <span style="color: #b60157">6</span>, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">a-replacement-name-far-too-long-for-this-buffer</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">the growing variant makes room instead of refusing</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_view_ends_with</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>path), <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">.log</span><span style="color: #198810">"</span>)),
+                    <span style="color: #198810">"</span><span style="color: #198810">the extension is still at the end after the edit</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> ends_with answers the question an extension check actually asks. Doing it</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> with an index computed by hand is where the off-by-one lives; doing it</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> with strcmp on a pointer requires a NUL that a view does not have. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_u8str_view_ends_with</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>path), <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">.txt</span><span style="color: #198810">"</span>)),
+                    <span style="color: #198810">"</span><span style="color: #198810">and it is not a .txt file</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> An empty suffix is a suffix of everything, which is the answer that keeps</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> loops over a list of suffixes from needing a special case. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_view_ends_with</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>path), <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">"</span>)),
+                    <span style="color: #198810">"</span><span style="color: #198810">every string ends with the empty suffix</span><span style="color: #198810">"</span>);
+
+    <span style="color: #4b69c6">printf</span>(<span style="color: #198810">"</span><span style="color: #198810">log line: </span><span style="color: #b60157">%s</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">proven_u8str_as_cstr</span>(<span style="color: #d73948">&amp;</span>field));
+    <span style="color: #4b69c6">printf</span>(<span style="color: #198810">"</span><span style="color: #198810">path:     </span><span style="color: #b60157">%s</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">proven_u8str_as_cstr</span>(<span style="color: #d73948">&amp;</span>path));
+
+    <span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>path);
+    <span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>field);
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><p>반례 — 최선 노력 호출을 원자적 호출처럼 다루는 경우:</p><pre><code data-lang="text">(void)proven_u8str_append_partial(&amp;line, field);   /* wrong: ignores the count */</code></pre><p>잘렸다는 사실이 보고되는 곳은 반환값뿐이다. 그것을 버리면 "레코드가 잘렸다"가 "레코드가 멀쩡해 보인다"로 바뀐다.</p><p>반례 — 바이트 수를 글자 수로 읽는 경우:</p><pre><code data-lang="text">if (part.value == field.size) { /* all of it was written */ }</code></pre><p>이 비교는 옳고, <strong>바이트</strong> 단위로 옳다. UTF-8 한 글자는 최대 4바이트이므로 최선 노력 append는 글자 중간에서 멈출 수 있다. 뒤끝이 유효한 UTF-8이어야 한다면 자를 지점을 용량이 아니라 여러분이 정한다.</p><h3 id="실전-예제-시스템-호출에-넘길-utf-16-문자열-조립하기">실전 예제: 시스템 호출에 넘길 UTF-16 문자열 조립하기<a class="anchor" href="#실전-예제-시스템-호출에-넘길-utf-16-문자열-조립하기" aria-hidden="true">#</a></h3><p><code>proven_u16str_t</code>가 제 몫을 하는 곳은 운영체제 호출이 UTF-16을 요구하는 경계뿐이다. 보통은 윈도의 와이드(wide) API가 그 이유다. 방식은 언제나 같다. 코드 단위(code unit)를 모은 다음 <code>proven_u16str_as_ptr()</code>를 그 호출에 넘긴다.</p><p>이 코드가 옳은지는 세 가지가 정한다.</p><ul><li><strong>단위는 코드 단위이지 바이트도 글자도 아니다.</strong> 용량 32는 코드 단위 32개, 곧 64바이트다. 기본 다국어 평면(Basic Multilingual Plane, BMP) 밖의 글자 — 이모지, 드문 한중일 한자 다수 — 는 두 개를 차지한다.</li><li><strong><code>proven_u16str_as_ptr()</code>는 복사하지 않는다.</strong> 그 포인터는 문자열을 늘리는 다음 append 전까지만 유효하다.</li><li><strong>결과는 NUL로 끝난다.</strong> 일부러 잘라 낸 뒤에도 그렇기 때문에, 종결자를 기대하는 시스템 호출에 그대로 넘겨도 안전하다.</li></ul><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> UTF-16 exists in this library for one reason: some operating system calls</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> take it and nothing else. The Windows "wide" API is the usual case - the file</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> name you hand to CreateFileW is a NUL-terminated run of 16-bit code units,</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> not bytes.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> So the job this type does is narrow: assemble the code units, keep the count</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> right, and produce the pointer the system call wants. Everything else in your</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> program should stay UTF-8.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> The one thing to keep straight is the unit. A capacity of 32 here means 32</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> CODE UNITS, which is 64 bytes, and a character outside the Basic Multilingual</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Plane - an emoji, most of the rarer CJK characters - costs two of them. A</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> count of code units is not a count of characters and never has been.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    proven_allocator_t alloc <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The argument is a code-unit limit, not a byte limit. </span><span style="color: #74747c">*/</span>
+    proven_result_u16str_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u16str_create</span>(alloc, <span style="color: #b60157">32</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(r.err), <span style="color: #198810">"</span><span style="color: #198810">creating a 32-code-unit string must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+        <span style="color: #d73948">return</span> <span style="color: #b60157">1</span>;
+    }
+    proven_u16str_t name <span style="color: #d73948">=</span> r.value;
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u16str_len</span>(<span style="color: #d73948">&amp;</span>name) <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>, <span style="color: #198810">"</span><span style="color: #198810">a new string is empty</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> PROVEN_U16_LIT builds a view from a u"..." literal and computes the unit</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> count from the literal itself, so the count cannot disagree with the text. </span><span style="color: #74747c">*/</span>
+    proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u16str_append</span>(<span style="color: #d73948">&amp;</span>name, <span style="color: #4b69c6">PROVEN_U16_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">C:</span><span style="color: #1d6c76">\\</span><span style="color: #198810">logs</span><span style="color: #1d6c76">\\</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">the directory prefix fits in 32 code units</span><span style="color: #198810">"</span>);
+
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u16str_append</span>(<span style="color: #d73948">&amp;</span>name, <span style="color: #4b69c6">PROVEN_U16_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">service.log</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">the file name fits too</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u16str_len</span>(<span style="color: #d73948">&amp;</span>name) <span style="color: #d73948">==</span> <span style="color: #b60157">8</span> <span style="color: #d73948">+</span> <span style="color: #b60157">11</span>, <span style="color: #198810">"</span><span style="color: #198810">the length is a count of code units</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Atomic, like its byte-string twin: too much data is refused and the string</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> is left exactly as it was, so a path is never half-written. </span><span style="color: #74747c">*/</span>
+    proven_size_t before <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u16str_len</span>(<span style="color: #d73948">&amp;</span>name);
+    err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u16str_append</span>(<span style="color: #d73948">&amp;</span>name, <span style="color: #4b69c6">PROVEN_U16_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">.a-suffix-long-enough-to-overflow-the-capacity</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(err <span style="color: #d73948">==</span> PROVEN_ERR_OUT_OF_BOUNDS, <span style="color: #198810">"</span><span style="color: #198810">an oversized append must be refused</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u16str_len</span>(<span style="color: #d73948">&amp;</span>name) <span style="color: #d73948">==</span> before, <span style="color: #198810">"</span><span style="color: #198810">and must not truncate the path</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- the pointer the system call wants -------------------------------- </span><span style="color: #74747c">*/</span>
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> as_ptr hands back the internal code units, NUL-terminated, without</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> copying. It is the last step before the call, and the pointer is only</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> valid until the next append: a growing append may move the storage. </span><span style="color: #74747c">*/</span>
+    <span style="color: #d73948">const</span> proven_u16 <span style="color: #d73948">*</span>wide <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u16str_as_ptr</span>(<span style="color: #d73948">&amp;</span>name);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(wide <span style="color: #d73948">!=</span> <span style="color: #d73948">NULL</span>, <span style="color: #198810">"</span><span style="color: #198810">an assembled string must yield a pointer</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(wide[<span style="color: #b60157">0</span>] <span style="color: #d73948">==</span> (proven_u16)<span style="color: #198810">'</span><span style="color: #198810">C</span><span style="color: #198810">'</span>, <span style="color: #198810">"</span><span style="color: #198810">the first code unit is the drive letter</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(wide[<span style="color: #4b69c6">proven_u16str_len</span>(<span style="color: #d73948">&amp;</span>name)] <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>, <span style="color: #198810">"</span><span style="color: #198810">the sequence is NUL-terminated for the system call</span><span style="color: #198810">"</span>);
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> On Windows this is the whole point of the type:</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c">     HANDLE h = CreateFileW((LPCWSTR)wide, ...);</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> Nothing here calls it, because this example must also run everywhere else. </span><span style="color: #74747c">*/</span>
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- when truncation is the correct answer ---------------------------- </span><span style="color: #74747c">*/</span>
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Some system structures have a fixed-width field - a 16-unit label, say -</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> where a name that does not fit is meant to be cut, not rejected. That is</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> what the partial append is for: it fills what it can and reports the unit</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> count it wrote, so the caller can mark the value as truncated. </span><span style="color: #74747c">*/</span>
+    proven_result_u16str_t r2 <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u16str_create</span>(alloc, <span style="color: #b60157">16</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(r2.err), <span style="color: #198810">"</span><span style="color: #198810">creating the fixed-width label must succeed</span><span style="color: #198810">"</span>);
+    proven_u16str_t label <span style="color: #d73948">=</span> r2.value;
+
+    proven_result_size_t wrote <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u16str_append_partial</span>(<span style="color: #d73948">&amp;</span>label, <span style="color: #4b69c6">PROVEN_U16_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">a-label-that-is-longer-than-the-field</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(wrote.err <span style="color: #d73948">==</span> PROVEN_ERR_OUT_OF_BOUNDS, <span style="color: #198810">"</span><span style="color: #198810">the truncation is reported, not hidden</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(wrote.value <span style="color: #d73948">==</span> <span style="color: #b60157">16</span>, <span style="color: #198810">"</span><span style="color: #198810">it filled the field exactly</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u16str_len</span>(<span style="color: #d73948">&amp;</span>label) <span style="color: #d73948">==</span> wrote.value, <span style="color: #198810">"</span><span style="color: #198810">and the length matches what it says it wrote</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u16str_as_ptr</span>(<span style="color: #d73948">&amp;</span>label)[wrote.value] <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>,
+                    <span style="color: #198810">"</span><span style="color: #198810">a truncated string is still NUL-terminated, so it is still safe to pass on</span><span style="color: #198810">"</span>);
+
+    <span style="color: #4b69c6">printf</span>(<span style="color: #198810">"</span><span style="color: #198810">assembled </span><span style="color: #b60157">%zu</span><span style="color: #198810"> code unit(s); label truncated to </span><span style="color: #b60157">%zu</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>,
+           (<span style="color: #4b69c6">size_t</span>)<span style="color: #4b69c6">proven_u16str_len</span>(<span style="color: #d73948">&amp;</span>name), (<span style="color: #4b69c6">size_t</span>)wrote.value);
+
+    <span style="color: #4b69c6">proven_u16str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>label);
+    <span style="color: #4b69c6">proven_u16str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>name);
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><p>반례 — UTF-16 버퍼 크기를 바이트로 잡는 경우:</p><pre><code data-lang="text">proven_result_u16str_t r = proven_u16str_create(alloc, sizeof(buf));   /* wrong */</code></pre><p>인자는 코드 단위의 개수다. 바이트 수를 넘기면 의도한 것의 두 배를 요구하게 되고, 그 바이트 수가 UTF-8 문자열에서 왔다면 변환 결과를 담지도 못하는 버퍼를 요구하게 된다.</p><p>반례 — append를 사이에 두고 포인터를 붙들고 있는 경우:</p><pre><code data-lang="text">const proven_u16 *w = proven_u16str_as_ptr(&amp;name);
+proven_err_t e = proven_u16str_append_grow(alloc, &amp;name, more);   /* may reallocate */
+use_wide(w);   /* wrong: w may dangle */</code></pre><p>포인터는 그것을 소비하는 호출 바로 앞에서 얻는다.</p>
+<div class="nav"><a href="manual-02-allocation.html">← 2 · 할당</a><a href="manual-04-containers-algorithms.html">4 · 컨테이너와 알고리즘 →</a></div>
+</div></main>
+</div>
+<script>(function(){var b=document.querySelector('.here-btn'),p=document.getElementById('here-panel');function open(o){if(!p)return;p.hidden=!o;if(b)b.setAttribute('aria-expanded',o);}if(b)b.addEventListener('click',function(){open(p.hidden);});if(p)p.addEventListener('click',function(e){if(e.target.tagName==='A'&&(e.target.getAttribute('href')||'').charAt(0)==='#')open(false);});document.addEventListener('keydown',function(e){if(e.key==='Escape')open(false);});var box=document.getElementById('setbox'),so=document.getElementById('set-open');if(!box||!so)return;var r=document.documentElement;function load(){try{return JSON.parse(localStorage.getItem('pcl-read')||'{}');}catch(e){return {};}}function save(s){try{localStorage.setItem('pcl-read',JSON.stringify(s));}catch(e){}}function css(n){return getComputedStyle(r).getPropertyValue(n).trim();}function hex(v){var m=v.match(/^rgba?\((\d+)[ ,]+(\d+)[ ,]+(\d+)/);if(!m)return v.charAt(0)==='#'?v:'#000000';return '#'+[1,2,3].map(function(i){return ('0'+parseInt(m[i],10).toString(16)).slice(-2);}).join('');}function paint(){var s=load();document.getElementById('s-width').checked=!!s.width;var t=s.theme||'auto';[].forEach.call(box.querySelectorAll('.segb'),function(x){x.setAttribute('aria-pressed',x.dataset.theme===t);});document.getElementById('s-fg').value=s.fg||hex(css('--fg'));document.getElementById('s-bg').value=s.bg||hex(css('--bg'));document.getElementById('s-link').value=s.link||hex(css('--link'));}so.addEventListener('click',function(){box.hidden=!box.hidden;so.setAttribute('aria-expanded',!box.hidden);if(!box.hidden)paint();});document.getElementById('s-width').addEventListener('change',function(){var s=load();s.width=this.checked;save(s);if(s.width)r.setAttribute('data-measure','on');else r.removeAttribute('data-measure');});[].forEach.call(box.querySelectorAll('.segb'),function(x){x.addEventListener('click',function(){var s=load();s.theme=x.dataset.theme;delete s.fg;delete s.bg;delete s.link;save(s);['--fg','--bg','--link'].forEach(function(n){r.style.removeProperty(n);});if(s.theme==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',s.theme);setTimeout(paint,0);});});[['s-fg','--fg','fg'],['s-bg','--bg','bg'],['s-link','--link','link']].forEach(function(a){document.getElementById(a[0]).addEventListener('input',function(){var s=load();s[a[2]]=this.value;save(s);r.style.setProperty(a[1],this.value);});});})();</script>
+<script>
+(function(){
+  var q=document.getElementById('q'), out=document.getElementById('qr');
+  if(!q||!out) return;
+  var data=null, NONE="\ucc3e\uc740 \uac83\uc774 \uc5c6\uc2b5\ub2c8\ub2e4";
+  function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+  function run(){
+    var v=q.value.trim().toLowerCase();
+    out.innerHTML='';
+    if(!v||!data) return;
+    var exact=[], starts=[], rest=[];
+    for(var i=0;i<data.length;i++){
+      var name=data[i][0].toLowerCase(), at=name.indexOf(v);
+      if(at<0) continue;
+      if(name===v) exact.push(data[i]);
+      else if(at===0) starts.push(data[i]);
+      else rest.push(data[i]);
+    }
+    var hits=exact.concat(starts,rest).slice(0,40);
+    if(!hits.length){ out.innerHTML='<li>'+NONE+'</li>'; return; }
+    out.innerHTML=hits.map(function(h){
+      var label=h[3]==='fn' ? '<code>'+esc(h[0])+'</code>' : esc(h[0]);
+      return '<li><a href="'+h[1]+'">'+label+'</a>'+
+             (h[2]?'<span class="where">'+esc(h[2])+'</span>':'')+'</li>';
+    }).join('');
+  }
+  q.addEventListener('input',function(){
+    if(data){ run(); return; }
+    fetch('search-index.json').then(function(r){return r.json();})
+      .then(function(j){ data=j; run(); })
+      .catch(function(){ out.innerHTML='<li>'+NONE+'</li>'; });
+  });
+})();
+</script>
+</body>
+</html>

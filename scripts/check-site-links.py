@@ -11,6 +11,20 @@ import re
 import sys
 
 
+SCRIPT = re.compile(r'<script\b[^>]*>.*?</script>', re.S | re.I)
+
+
+def linkable(text):
+    """Every id in the page - not only the headings.
+
+    The skip link points at <main id="content">, so collecting heading ids alone reports a
+    link that works perfectly well. What must be excluded instead is <script>: an href built
+    inside JavaScript is a string, not a link, and reporting it wastes the reader's attention
+    on a link that does not exist.
+    """
+    return set(re.findall(r'\bid="([^"]+)"', SCRIPT.sub('', text)))
+
+
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else 'docs'
     broken, checked = [], 0
@@ -18,14 +32,14 @@ def main():
         d = os.path.join(root, lang)
         if not os.path.isdir(d):
             continue
-        pages = {n: open(os.path.join(d, n), encoding='utf-8').read()
+        pages = {n: SCRIPT.sub('', open(os.path.join(d, n), encoding='utf-8').read())
                  for n in os.listdir(d) if n.endswith('.html')}
-        ids = {n: set(re.findall(r'<h[1-6] id="([^"]+)"', t)) for n, t in pages.items()}
+        ids = {n: linkable(t) for n, t in pages.items()}
         for name, text in sorted(pages.items()):
             for href in re.findall(r'href="([^"]+)"', text):
                 if href.startswith(('http://', 'https://', 'mailto:', '..')):
                     continue
-                if href.endswith(('.css', '.pdf')):
+                if href.endswith(('.css', '.pdf', '.json', '.woff2')):
                     continue
                 checked += 1
                 page, _, anchor = href.partition('#')

@@ -63,8 +63,12 @@ build_lang() {
                  cat "$work/$lang/frag/$name.log" >&2; exit 1; }
     done
 
-    # 3. Fragments -> published pages, with anchors, navigation and the stylesheet.
-    python3 "$root/scripts/site_pages.py" "$lang" "$work/$lang/frag" "$out/$lang" "$version"
+    # 3. Fragments -> published pages, with anchors, navigation, settings and the search index.
+    #    The PDF link points at the release asset, not at a copy in the site: a published PDF
+    #    belongs to a version, and a reader who downloads it should get the one they were
+    #    reading. The local copy beside the pages is what the release uploads.
+    pdf_url="https://github.com/rubidus-api/proven_c_lib/releases/download/$version/proven_c_lib-$version-$lang-manual.pdf"
+    python3 "$root/scripts/site_pages.py" "$lang" "$work/$lang/frag" "$out/$lang" "$version" "$pdf_url"
     cp -f "$root/site/manual.css" "$out/$lang/manual.css"
 
     # 4. One PDF per language, from the same Typst files.
@@ -134,6 +138,9 @@ HTML
 # Every link the manual makes between chapters and to its own sections must resolve in the
 # generated site. A cross-reference that works in Markdown and 404s on the web is the failure
 # this check exists to catch, and it is mechanical, so the build does it.
+# The fonts are subset from the characters the generated pages use, so they are built last.
+sh "$root/scripts/make-webfonts.sh"
+
 python3 "$root/scripts/check-site-links.py" "$out" || exit 1
 
 echo "build-site: done -> docs/"

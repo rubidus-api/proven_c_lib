@@ -4,26 +4,24 @@
 Chapter 3은 더 짧은 개요와 일상적인 예제를 제공한다.
 이 장은 정확한 문법, 파라미터 형태, 반환값, 그리고 호출자가 흔히 실수하는 지점에 초점을 맞춘다.
 
-## Table of contents
+## 목차
+1. [Design model](#1-설계-모델)
+2. [Formatter data model](#2-포매터-데이터-모델)
+3. [Formatter constructors and selectors](#3-포매터-생성자와-선택자)
+4. [Format string grammar](#4-형식-문자열-문법)
+5. [Formatting APIs](#5-형식화-api)
+5.1. [Formatting a type of your own](#51-내가-만든-타입-형식화하기)
+6. [Console print helpers](#6-콘솔-출력-헬퍼)
+7. [Scanner data model](#7-스캐너-데이터-모델)
+8. [Scanner primitive APIs](#8-스캐너-기본-api)
+9. [Scan argument model](#9-스캔-인자-모델)
+10. [Structural scan grammar](#10-구조적-스캔-문법)
+11. [Scan formatting APIs](#11-스캔-형식화-api)
+11.1. [Scan error code guide and recovery](#111-스캔-에러-코드-안내와-복구)
+12. [Examples and misuse cases](#12-예제와-오용-사례)
+13. [Freestanding and build-mode notes](#13-프리스탠딩과-빌드-모드-참고)
 
-1. [Design model](#1-design-model)
-2. [Formatter data model](#2-formatter-data-model)
-3. [Formatter constructors and selectors](#3-formatter-constructors-and-selectors)
-4. [Format string grammar](#4-format-string-grammar)
-5. [Formatting APIs](#5-formatting-apis)
-5.1. [Formatting a type of your own](#51-formatting-a-type-of-your-own)
-6. [Console print helpers](#6-console-print-helpers)
-7. [Scanner data model](#7-scanner-data-model)
-8. [Scanner primitive APIs](#8-scanner-primitive-apis)
-9. [Scan argument model](#9-scan-argument-model)
-10. [Structural scan grammar](#10-structural-scan-grammar)
-11. [Scan formatting APIs](#11-scan-formatting-apis)
-11.1. [Scan error code guide and recovery](#111-scan-error-code-guide-and-recovery)
-12. [Examples and misuse cases](#12-examples-and-misuse-cases)
-13. [Freestanding and build-mode notes](#13-freestanding-and-build-mode-notes)
-
-## 1. Design model
-
+## 1. 설계 모델
 ### 타입을 두 번 쓰지 않는 이유
 
 이 장의 두 절반은 모두 한 가지를 없애기 위해 존재한다. 프로그래머가 타입을 말하는데 컴파일러가 그것을
@@ -58,8 +56,7 @@ Chapter 3은 더 짧은 개요와 일상적인 예제를 제공한다.
 
 실용적인 결과로, 이 API들은 대규모 범용 포맷 엔진보다 추론하기 쉬우면서도, 문법은 일반적인 시스템 코드 작업에 충분히 표현력이 있다.
 
-## 2. Formatter data model
-
+## 2. 포매터 데이터 모델
 ### `proven_fmt_result_t`
 
 ```text
@@ -192,10 +189,8 @@ proven_arg_t arg = proven_arg_i64(123);
 (void)arg;   /* pass it to a formatting macro; PROVEN_ARG(arg) accepts it as-is */
 ```
 
-## 3. Formatter constructors and selectors
-
-### Constructor summary
-
+## 3. 포매터 생성자와 선택자
+### 생성자 요약
 | API | 파라미터 | 반환 | 의도 |
 |---|---|---|---|
 | `proven_arg_none(void)` | 없음 | `proven_arg_t` | 내부 sentinel 값. |
@@ -214,7 +209,7 @@ proven_arg_t arg = proven_arg_i64(123);
 | `proven_arg_identity(proven_arg_t v)` | 기존 argument 객체 | `proven_arg_t` | 통과(pass-through) 헬퍼. |
 | `proven_arg_bool(bool v)` | boolean | `proven_arg_t` | `1` / `0`이 아니라 `true` / `false`를 단어로 렌더링. |
 | `proven_arg_char(char v)` | 문자 하나 | `proven_arg_t` | **문자**를 렌더링. 이것이 바로 `char` 변수는 문자로 렌더링되는데 리터럴 `PROVEN_ARG('Z')`는 여전히 `90`으로 렌더링되는 이유다. C에서 `'Z'`는 `int` 타입이며, 어떤 `_Generic`으로도 이것을 숫자 90과 구별할 수 없다. |
-| `proven_arg_custom(const void *v, proven_fmt_custom_fn fn)` | 어떤 타입이든 | `proven_arg_t` | 라이브러리가 전혀 알지 못하는 타입을, 당신이 제공하는 함수를 통해 렌더링. [Formatting a user-defined type](#51-formatting-a-type-of-your-own) 참조. |
+| `proven_arg_custom(const void *v, proven_fmt_custom_fn fn)` | 어떤 타입이든 | `proven_arg_t` | 라이브러리가 전혀 알지 못하는 타입을, 당신이 제공하는 함수를 통해 렌더링. [Formatting a user-defined type](#51-내가-만든-타입-형식화하기) 참조. |
 
 ### `PROVEN_ARG(x)`
 
@@ -322,8 +317,7 @@ const char *buf = get_network_buffer();
 proven_u8str_append_fmt_grow(alloc, &s, "{}", PROVEN_ARG(buf)); /* wrong if buf is not trusted */
 ```
 
-### Float formatting note
-
+### 부동소수점 형식화 참고
 `PROVEN_FMT_NO_FLOAT`가 정의되면 float 지원은 제네릭 셀렉터에서 제거되고 float 생성자는 사용할 수 없다.
 이는 런타임 토글이 아니라 컴파일 시점의 구성 선택이다.
 
@@ -335,8 +329,7 @@ proven_u8str_append_fmt_grow(alloc, &s, "{}", PROVEN_ARG(buf)); /* wrong if buf 
 라운드트립 형식이나 6이 아닌 다른 precision이 필요하면 아래에 설명하는
 `proven_float_format_*` 정책 API를 사용하라.
 
-### Accuracy and limits
-
+### 정확도와 한계
 - 기본 `{}` float 출력은 소수점 이하 6자리를 사용하며, 가장 가까운 값으로
   정확히 반올림하되 동점(tie)은 짝수로 처리한다(glibc `%.6f`/`%.6e`와 일치). 어떤
   크기에서도 정확하며, 구성 가능한 큰 정수(big-integer) 용량을 넘어서는
@@ -360,8 +353,7 @@ proven_u8str_append_fmt_grow(alloc, &s, "{}", PROVEN_ARG(buf)); /* wrong if buf 
   불일치가 하나도 없었다. 알고리즘, 방법론, glibc와의 벤치마크는
   `docs/float-correctness-and-performance.md`를 참조하라.
 
-### Inside the engine (conceptual)
-
+### 엔진 내부(개념적으로)
 API를 사용하는 데 이 내용이 전혀 필요하지 않다. 이는 출력이 왜 신뢰할 수 있는지
 알고 싶은 독자를 위한 것이다. 전체 내용은
 `docs/float-correctness-and-performance.md`에 있다.
@@ -395,8 +387,7 @@ API를 사용하는 데 이 내용이 전혀 필요하지 않다. 이는 출력�
   glibc와 일치하며, `2^64`/precision 한계가 없다. 극단적인 지수는 실제
   임의정밀도(arbitrary-precision) 연산을 하며 그만큼 느리다(실무에서는 드물다).
 
-### Public float parsing APIs
-
+### 공개 부동소수점 파싱 API
 세 진입점이 하나의 정확히 반올림되는 백엔드를 공유한다.
 
 - `proven_scan_f64(scan)` — `proven_scan_t` 커서로부터 파싱하며, 실패 시 커서를
@@ -406,8 +397,7 @@ API를 사용하는 데 이 내용이 전혀 필요하지 않다. 이는 출력�
 - `proven_strtod(nptr, endptr)` — C 문자열 위의 `strtod` 스타일 편의 래퍼로, 선행
   ASCII 공백을 건너뛰고 `endptr`을 보고한다.
 
-#### Worked example: parsing
-
+#### 실전 예제: 파싱
 ```c
 #include "proven/scan.h"
 #include "proven/float_parse.h"
@@ -430,8 +420,7 @@ double v = proven_strtod("  -0.5\t", &end);   /* v == -0.5, *end == '\t' */
    exponents are still rounded correctly via the exact fallback. */
 ```
 
-#### Worked example: formatting with the policy API
-
+#### 실전 예제: 정책 API로 형식화하기
 `proven_float_format_f64_policy` / `_f32_policy`는 호출자 버퍼에 직접 기록하고 기록한
 바이트 수를 보고한다. 이들은 절대 할당하지 않는다.
 
@@ -471,12 +460,10 @@ sci.precision = 2;
 - 제네릭 `{}` 포매터(`proven_u8str_append_fmt*`)는 내부적으로 `DEFAULT` 정책을
   사용하므로, 일상적인 로깅에서는 이 API를 직접 호출할 필요가 없다.
 
-## 4. Format string grammar
-
+## 4. 형식 문자열 문법
 포매터는 의도적으로 작은 문법을 받아들인다.
 
-### Replacement fields
-
+### 치환 필드
 지원되는 형식:
 
 - `{}`: 다음 positional argument
@@ -488,13 +475,11 @@ sci.precision = 2;
 번호 매김은 사용자 대상이며 0부터 시작한다.
 구현은 인덱스 0에 숨겨진 sentinel을 저장하고, 사용자 인덱스 `0`을 내부 argument 슬롯 `1`로 매핑한다.
 
-### Escaped braces
-
+### 중괄호 이스케이프
 - `{{`는 리터럴 `{`가 된다
 - `}}`는 리터럴 `}`가 된다
 
-### The layout spec
-
+### 레이아웃 명세
 ```text
 {:[[fill]align][sign][#][0][width][.precision][type]}
 ```
@@ -522,8 +507,7 @@ Rust에서 복사한 스펙은 여기서도 그곳과 같은 의미를 가진다
   `+0000042`이며, `0000+42`가 아니다. 패딩은 숫자의 일부이고, 숫자의 부호가 먼저
   온다.
 
-### Floats
-
+### 부동소수점
 `{}`는 정확히 반올림된 소수점 이하 6자리를 준다. `{:.3}`은 3자리, `{:.0}`은 0자리를
 주고, `{:e}`는 과학적 표기를 강제한다 - 가수(mantissa), `precision` 소수 자릿수(기본
 6자리), 부호 있는 최소 두 자리 지수, 정확히 반올림, 정확히 printf의 `%e`와 같다 -
@@ -542,8 +526,7 @@ proven_u8str_t line = proven_u8str_borrow(buf, sizeof buf);
 (void)proven_u8str_append_fmt(&line, "{:>9.2}", PROVEN_ARG(12.5));    /* "    12.50" */
 ```
 
-### A spec the argument cannot honour is an error
-
+### 인자가 지킬 수 없는 명세는 에러다
 double에 대한 `{:x}`, 정수에 대한 `{:.2}`, 정수에 대한 `{:f}`, 문자열에 대한 `{:#}`:
 모두 `PROVEN_ERR_INVALID_FORMAT`.
 
@@ -566,8 +549,7 @@ unsigned char byte = 0xde;
 (void)proven_u8str_append_fmt(&hexline, "{}", PROVEN_ARG((char)'.'));
 ```
 
-## 5. Formatting APIs
-
+## 5. 형식화 API
 ### `proven_u8str_fmt_internal(...)`
 
 ```text
@@ -636,8 +618,7 @@ argument 목록에 목적지 버퍼와 alias할 수 있는 문자열 뷰가 있�
 `alloc`과 `scratch` 모두에 실제 할당자를 사용하라.
 호출에 충분할 만큼 수명이 길지 않은 한, 죽은 아레나(arena)나 일회용 임시 버퍼를 넘기지 마라.
 
-### Float format policy seam
-
+### 부동소수점 형식화 정책 이음매
 공개 float 정책 헤더는 float 포매팅을 위한 명시적 정책 레이어를 제공한다.
 의도적으로 작으며, 정확한 고정 precision 포매터를 기본 경로로 유지한다.
 
@@ -702,8 +683,7 @@ if (proven_is_ok(rs.err)) {
 }
 ```
 
-### Console-style helpers
-
+### 콘솔식 헬퍼
 `sysio` 레이어는 같은 포매터 기계를 사용하는 print 헬퍼들을 제공한다.
 
 - `proven_print(fmt, ...)`
@@ -723,8 +703,7 @@ if (!proven_is_ok(proven_println("hello {}", PROVEN_ARG("world")))) {
 }
 ```
 
-### 5.1. Formatting a type of your own
-
+### 5.1. 내가 만든 타입 형식화하기
 `PROVEN_ARG`는 `_Generic` 위에 세워졌고, `_Generic`은 컴파일 시점에 알려준 타입에
 대해서만 디스패치할 수 있다. 당신의 타입은 알려줄 수 없다. 그래서 포매터의 argument
 집합 — 정수, float, 문자열, 포인터, datetime — 은 **닫힌** 집합이었다: `rect_t`,
@@ -834,8 +813,7 @@ int main(void) {
 }
 ```
 
-## 6. Console print helpers
-
+## 6. 콘솔 출력 헬퍼
 ### `proven_println`은 무엇이고, 비용은 얼마인가
 
 `proven_println("{}", PROVEN_ARG(x))`는 프로그램에서 텍스트를 내보내는 가장 짧은 방법이며, 진단
@@ -872,8 +850,7 @@ proven_println("{}", PROVEN_SCAN_ARG(&x));   /* wrong: that builds a scan destin
 - 모든 포맷 문자열에 `PROVEN_LIT`이 필요하다고 가정하기
 - 출력 함수도 여전히 실패할 수 있다는 것을 잊기
 
-## 7. Scanner data model
-
+## 7. 스캐너 데이터 모델
 스캐너는 당신이 이미 가지고 있는 바이트 위의 커서다. 텍스트를 소유하지 않고,
 복사하지 않으며, 어디에서도 읽지 않는다 - `proven_scan_t`는 뷰에 오프셋을 더한
 것이며, 그것이 전부다.
@@ -905,8 +882,7 @@ typedef struct {
 스캐너는 실패를 뜻하는 sentinel 값을 사용하지 않는데, 모든 sentinel은 동시에
 정당한 입력이기도 하기 때문이다.
 
-## 8. Scanner primitive APIs
-
+## 8. 스캐너 기본 API
 ```text
 void                       proven_scan_skip_whitespace(proven_scan_t *scan);
 proven_result_i64_t        proven_scan_i64(proven_scan_t *scan);
@@ -919,8 +895,7 @@ void                       proven_scan_skip_until_number(proven_scan_t *scan);
 
 값을 반환하는 것들은 `[[nodiscard]]`다: 결과를 버리는 스캔은 애초에 할 필요가 없던 스캔이다.
 
-### Shared behaviour
-
+### 공통 동작
 - **선행 공백은 건너뛴다** — 모든 값 스캐너가 그렇게 한다. 먼저
   `proven_scan_skip_whitespace()`를 호출할 필요가 없다. 그 함수는 커서를 직접
   위치시키고 싶을 때를 위해 존재한다.
@@ -930,8 +905,7 @@ void                       proven_scan_skip_until_number(proven_scan_t *scan);
 - **실패 시 커서는 복원된다.** 따라서 실패한 스캔은 비사건(non-event)이다: 돌아서서
   같은 위치를 다른 것으로 파싱할 수 있다. §12가 이렇게 한다.
 
-### The integer scanners
-
+### 정수 스캐너
 | 입력 | `proven_scan_i64` | 이유 |
 |---|---|---|
 | `"42"`, `"+42"`, `"-42"` | `OK` - 42, 42, -42 | 부호는 숫자의 일부다 |
@@ -947,8 +921,7 @@ void                       proven_scan_skip_until_number(proven_scan_t *scan);
 아니라 `PROVEN_ERR_INVALID_ARG`다. 음수를 조용히 거대한 양수로 바꾸는 스캐너는
 경계 검사가 무력화되는 방식이다.
 
-### The float scanner
-
+### 부동소수점 스캐너
 `proven_scan_f64`는 라이브러리의 나머지와 같은 정확히 반올림되는 십진 엔진을 거친다:
 가장 가까운 값으로 반올림, 동점은 짝수로, 그 어디에도 `long double` 없음. `nan`과
 `inf`를 받아들인다.
@@ -961,8 +934,7 @@ void                       proven_scan_skip_until_number(proven_scan_t *scan);
   정확히 반올림된 답 *그 자체*다. 그것을 오류로 보고하는 것은 올바른 산술을 실패로
   보고하는 것이 될 것이다.
 
-### Words and navigation
-
+### 낱말과 커서 이동
 `proven_scan_str`은 다음 공백으로 구분된 구간을 입력 안을 가리키는 뷰로 반환한다.
 공백 외에 아무것도 남지 않은 경우는 `PROVEN_ERR_INVALID_ARG`다.
 
@@ -984,8 +956,7 @@ target으로 옮긴다 - 그것을 얼마나 소비할지는 당신이 결정한
 부호에서 멈춘다. 숫자가 없으면 커서를 입력의 끝까지 몰아간다 - 따라서 읽을 것이
 있다고 가정하기 전에 커서(cursor), 곧 스캐너가 지금까지 읽어 온 위치를 `scan.cursor < scan.view.size`로 검사하라.
 
-## 9. Scan argument model
-
+## 9. 스캔 인자 모델
 스캔 argument는 컴파일러가 선택하는 **당신의 목적지를 가리키는 타입 있는 포인터**다.
 
 ```text
@@ -1012,8 +983,7 @@ PROVEN_SCAN_ARG(&x)     /* _Generic on the pointer type */
 `proven_scan_arg_*` 생성자들은 argument 배열을 손으로 만들어야 할 때를 위해
 공개되어 있지만, 호출자가 사용하는 것은 매크로다.
 
-## 10. Structural scan grammar
-
+## 10. 구조적 스캔 문법
 ### 포맷 문자열로 파싱하는 것이 출력하는 것보다 위험한 이유
 
 잘못된 포맷 문자열로 포매팅하면 잘못된 출력이 나온다. **그것으로 파싱하면 메모리가 망가진다.** 포맷이
@@ -1050,8 +1020,7 @@ PROVEN_SCAN_ARG(&x)     /* _Generic on the pointer type */
 플레이스홀더의 수는 argument의 수와 같아야 한다. 입력의 값이 너무 적은 것은 오류다.
 **너무 많은 것은 오류가 아니다**(§11.1).
 
-## 11. Scan formatting APIs
-
+## 11. 스캔 형식화 API
 ```text
 proven_scan_fmt(view, fmt, ...)            /* scan a view from the beginning */
 proven_scan_fmt_cursor(&scan, fmt, ...)    /* continue from an existing cursor */
@@ -1062,8 +1031,7 @@ proven_err_t proven_scan_fmt_internal(...) /* what the macros expand to */
 긴 여정의 한 단계일 때는 `proven_scan_fmt_cursor`를 사용하라: 이것은 당신이 소유한
 커서를 진행시키므로, §8의 primitive들과 자유롭게 섞인다.
 
-### 11.1. Scan error code guide and recovery
-
+### 11.1. 스캔 에러 코드 안내와 복구
 | 코드 | 실제로 일어난 일 | 할 일 |
 |---|---|---|
 | `PROVEN_OK` | 모든 플레이스홀더가 채워졌고 모든 리터럴이 일치했다. | 값들을 발행(publish)하라. |
@@ -1101,10 +1069,8 @@ proven_err_t err = proven_scan_fmt(line, "id={} XXX={}",
 if (scan.cursor != scan.view.size) { /* there is unparsed input left */ }
 ```
 
-## 12. Examples and misuse cases
-
-### Worked example: formatting a line and scanning it back
-
+## 12. 예제와 오용 사례
+### 실전 예제: 한 줄을 형식화하고 다시 읽어 들이기
 테스트 스위트가 컴파일하고 실행함. 스택에서 빌린 문자열(오버플로 시 atomic)과
 할당자 기반 문자열(성장함)로 포매팅하고, 신뢰할 수 없는 바이트에 경계 argument를
 사용한 뒤, 그 줄을 다시 파싱한다 - float은 정확히 라운드트립된다.
@@ -1228,8 +1194,7 @@ int main(void) {
 }
 ```
 
-### Worked example: the scanner's error codes, and recovering from them
-
+### 실전 예제: 스캐너의 에러 코드와 그로부터의 복구
 테스트 스위트가 컴파일하고 실행함. 위 표의 모든 코드를 여기서 일부러 유발한다.
 비-트랜잭션 실패까지 포함하는데 - 읽기만 한 계약은 배우지 못한 계약이기 때문이다.
 
@@ -1409,28 +1374,23 @@ int main(void) {
 }
 ```
 
-### Misuse: assuming `0x10` is sixteen
-
+### 오용: `0x10`이 16이라고 가정하기
 그것은 0이다. 정수 스캐너들은 십진수 전용이며, `x10`은 여전히 입력에 남아 있다.
 hex가 필요하면, 그 자릿수 루프는 당신이 직접 작성하는 것이다.
 
-### Misuse: treating trailing input as an error
-
+### 오용: 남은 입력을 에러로 다루기
 그것은 오류가 아니다. `"7 8"`에 대한 플레이스홀더 하나는 성공한다. 신경 쓰인다면
 커서를 검사하라.
 
-### Misuse: trusting destinations after a failed scan
-
+### 오용: 실패한 스캔 뒤의 목적지를 믿기
 그것들은 오염되었다. §11.1을 참조하라.
 
-### Misuse: keeping a scanned word after its input is gone
-
+### 오용: 입력이 사라진 뒤에도 스캔한 낱말을 들고 있기
 `proven_scan_str`은 복사본이 아니라 **입력 안을 가리키는 뷰**를 반환한다. 버퍼가
 사라지면, 그 단어도 사라진다. 그것이 온 바이트보다 오래 살아야 한다면
 `proven_u8str_create_from_view()`로 복사하라.
 
-## 13. Freestanding and build-mode notes
-
+## 13. 프리스탠딩과 빌드 모드 참고
 ### float만 컴파일에서 빠지는 이유
 
 이 장의 모든 것은 이식 가능한 계산이지만 한 부분만 예외이고, 그 부분은 유난히 비싸다.

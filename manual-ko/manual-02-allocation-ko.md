@@ -14,7 +14,7 @@
 1. [할당이 매개변수인 이유, 그리고 heap allocator](#1-할당이-매개변수인-이유-그리고-heap-allocator)
 2. [Arena: 여러 객체, 하나의 수명](#2-arena-여러-객체-하나의-수명)
 3. [Pool: 여러 객체, 하나의 크기](#3-pool-여러-객체-하나의-크기)
-4. [Allocator trait](#4-allocator-trait)
+4. [Allocator trait](#4-allocator-트레잇)
 5. [원시 바이트 버퍼](#5-원시-바이트-버퍼)
 6. [예제와 오용 사례](#6-예제와-오용-사례)
 
@@ -66,8 +66,7 @@ proven_err_t proven_u8str_append_grow(proven_allocator_t alloc, proven_u8str_t *
 
 힙(heap)에서 시작하라. 이유가 있을 때 나머지 둘로 손을 뻗되, 그 이유는 대개 측정이다.
 
-### Heap allocator
-
+### Heap allocator(힙 할당자)
 ```text
 proven_allocator_t proven_heap_allocator(void);
 ```
@@ -386,8 +385,7 @@ node_alloc.alloc_fn(node_alloc.ctx, sizeof(LargerObject), alignof(LargerObject))
 /* wrong: one pool is for one fixed object size and alignment */
 ```
 
-## 4. Allocator trait
-
+## 4. Allocator 트레잇
 ### 이 절이 첫 번째가 아니라 네 번째인 이유
 
 여러분은 세 가지 allocator를 그들이 공유하는 인터페이스를 보지 않고 이미 써 보았고, 그것은

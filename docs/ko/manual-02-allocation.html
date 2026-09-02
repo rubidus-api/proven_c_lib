@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2 · 할당 — proven_c_lib 매뉴얼</title>
+<link rel="stylesheet" href="manual.css">
+<script>(function(){try{var s=JSON.parse(localStorage.getItem('pcl-read')||'{}');var r=document.documentElement;if(s.theme&&s.theme!=='auto')r.setAttribute('data-theme',s.theme);if(s.fg)r.style.setProperty('--fg',s.fg);if(s.bg)r.style.setProperty('--bg',s.bg);if(s.link)r.style.setProperty('--link',s.link);if(s.width)r.setAttribute('data-measure','on');}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip" href="#content">본문으로 건너뛰기</a>
+<div class="bar"><strong><a href="index.html">proven_c_lib 매뉴얼</a></strong><button class="here-btn" type="button" aria-expanded="false" aria-controls="here-panel">2 · 할당 <span class="caret">▾</span></button><span class="bar-nav"><a href="manual-01-foundation.html" title="이전" aria-label="이전">←</a><a href="index.html" title="목차" aria-label="목차">↑</a><a href="manual-03-strings-text.html" title="다음" aria-label="다음">→</a></span></div>
+<div id="here-panel" class="here-panel" hidden><div class="tools"><span class="ver">proven_c_lib-v26.09.02a</span><button class="tool" type="button" id="set-open" aria-expanded="false">⚙ 설정</button><a class="tool" href="../en/manual-02-allocation.html">English</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib/releases/download/proven_c_lib-v26.09.02a/proven_c_lib-proven_c_lib-v26.09.02a-ko-manual.pdf">⤓ PDF</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib" title="이 프로젝트의 GitHub 저장소">⌥ 저장소</a><a class="tool" href="https://rubidus-api.github.io/" title="rubidus-api.github.io — 공개된 모든 프로젝트">⌂ 전체 사이트</a><a class="tool" href="https://github.com/rubidus-api" title="github.com/rubidus-api — 모든 저장소">≡ 저장소 목록</a></div><div class="setbox" id="setbox" hidden><label class="setrow"><input type="checkbox" id="s-width"><span>가로폭 제한</span></label><div class="setrow"><span class="setlbl">테마</span><span class="seg"><button type="button" class="segb" data-theme="auto">시스템</button><button type="button" class="segb" data-theme="light">밝게</button><button type="button" class="segb" data-theme="dark">어둡게</button></span></div><div class="setrow"><span class="setlbl">색</span><label class="col"><span>글자</span><input type="color" id="s-fg"></label><label class="col"><span>배경</span><input type="color" id="s-bg"></label><label class="col"><span>링크</span><input type="color" id="s-link"></label></div><p class="setnote">설정은 이 브라우저에만 저장됩니다.</p></div><div class="search"><label class="setlbl" for="q">검색</label> <input type="search" id="q" placeholder="함수나 제목으로 찾기" autocomplete="off"><p class="hint">공개 함수 전부와 모든 제목에서 찾습니다 — 본문 전문은 아닙니다.</p><ul id="qr"></ul></div><div class="here-head"><strong>이 페이지 안에서</strong></div><div class="here-body"><a href="#목차">목차</a><a href="#1-할당이-매개변수인-이유-그리고-heap-allocator">1. 할당이 매개변수인 이유, 그리고 heap allocator</a><a href="#2-arena-여러-객체-하나의-수명">2. Arena: 여러 객체, 하나의 수명</a><a href="#3-pool-여러-객체-하나의-크기">3. Pool: 여러 객체, 하나의 크기</a><a href="#4-allocator-트레잇">4. Allocator 트레잇</a><a href="#5-원시-바이트-버퍼">5. 원시 바이트 버퍼</a><a href="#6-예제와-오용-사례">6. 예제와 오용 사례</a></div></div>
+<div class="page">
+<nav class="toc" aria-label="목차">
+<h2>목차</h2>
+<a href="index.html">매뉴얼</a>
+<a href="manual-00-start-here.html">0 · 여기서부터</a>
+<a href="manual-01-foundation.html">1 · 기초</a>
+<a href="manual-02-allocation.html" class="here">2 · 할당</a>
+<a href="manual-03-strings-text.html">3 · 문자열과 텍스트</a>
+<a href="manual-04-containers-algorithms.html">4 · 컨테이너와 알고리즘</a>
+<a href="manual-08-fmt-scan.html">8 · 형식화와 파싱</a>
+<a href="manual-05-hosted-services.html">5 · Hosted 서비스</a>
+<a href="manual-06-execution-and-platform.html">6 · 실행과 플랫폼</a>
+<a href="manual-freestanding.html">프리스탠딩</a>
+<a href="manual-07-alias-xcv-index.html">부록 A · Alias 인덱스</a>
+<h2>이 페이지 안에서</h2>
+<a href="#목차">목차</a>
+<a href="#1-할당이-매개변수인-이유-그리고-heap-allocator">1. 할당이 매개변수인 이유, 그리고 heap allocator</a>
+<a href="#2-arena-여러-객체-하나의-수명">2. Arena: 여러 객체, 하나의 수명</a>
+<a href="#3-pool-여러-객체-하나의-크기">3. Pool: 여러 객체, 하나의 크기</a>
+<a href="#4-allocator-트레잇">4. Allocator 트레잇</a>
+<a href="#5-원시-바이트-버퍼">5. 원시 바이트 버퍼</a>
+<a href="#6-예제와-오용-사례">6. 예제와 오용 사례</a>
+</nav>
+<main id="content"><div class="content">
+<div class="masthead">proven_c_lib-v26.09.02a · 마크다운 매뉴얼에서 생성됨</div>
+<h1 id="2장-할당--힙-아레나-풀-버퍼">2장: 할당 — 힙, 아레나, 풀, 버퍼<a class="anchor" href="#2장-할당--힙-아레나-풀-버퍼" aria-hidden="true">#</a></h1><p><strong>Part II — 모든 프로그램이 쓰는 어휘. 선행 장: <a href="manual-01-foundation.html">1장</a>.</strong> <strong>이 장을 마치면</strong> 반사적으로 <code>malloc</code>을 집어드는 대신 할당 전략을 의도적으로 고를 수 있고, 세 가지 비용 중 어느 것을 치르고 있는지 알게 된다.</p><p>이 장은 <code>heap.h</code>, <code>arena.h</code>, <code>pool.h</code>, <code>allocator.h</code>, <code>buffer.h</code>를 다룬다. 예전에 이 장의 7절이었던 스레드 안전성과 포인터 provenance 자료는 이제 나머지 동시성 주제와 함께 <a href="manual-06-execution-and-platform.html">6장</a>에 있다 — 책에서 가장 어려운 자료가 맨 앞쪽 장 중 하나에 들어앉아 있었기 때문이다.</p><h2 id="목차">목차<a class="anchor" href="#목차" aria-hidden="true">#</a></h2><ol><li><a href="#1-할당이-매개변수인-이유-그리고-heap-allocator">할당이 매개변수인 이유, 그리고 heap allocator</a></li><li><a href="#2-arena-여러-객체-하나의-수명">Arena: 여러 객체, 하나의 수명</a></li><li><a href="#3-pool-여러-객체-하나의-크기">Pool: 여러 객체, 하나의 크기</a></li><li><a href="#4-allocator-트레잇">Allocator trait</a></li><li><a href="#5-원시-바이트-버퍼">원시 바이트 버퍼</a></li><li><a href="#6-예제와-오용-사례">예제와 오용 사례</a></li></ol><h2 id="1-할당이-매개변수인-이유-그리고-heap-allocator">1. 할당이 매개변수인 이유, 그리고 heap allocator<a class="anchor" href="#1-할당이-매개변수인-이유-그리고-heap-allocator" aria-hidden="true">#</a></h2><h3 id="malloc의-문제"><code>malloc</code>의 문제<a class="anchor" href="#malloc의-문제" aria-hidden="true">#</a></h3><p><code>malloc</code>은 전역이다. 어떤 함수든 호출할 수 있고, 시그니처의 그 무엇도 함수가 호출하는지 아닌지를 말해 주지 않으며, 메모리가 무엇에 쓰이든 모든 호출은 똑같은 범용 allocator로 간다.</p><p>여기서 따라 나오는 결과가 넷이고, 아마 이미 겪어 봤을 것이다:</p><ul><li><strong>시그니처만 보고는 함수가 할당하는지 알 수 없다.</strong> <code>char *build_message(int n)</code>은 할당할 수도, 정적 버퍼 안의 포인터를 반환할 수도, 리터럴을 반환할 수도 있다. 세 경우 모두 타입이 같으므로 호출자는 해제해야 하는지 알 수 없고, 답은 틀렸을지도 모르는 주석 속에 있다.</li><li><strong>프로그램의 한 부분만 전략을 바꿀 수 없다.</strong> 파서가 파싱이 끝날 때 전부 죽는 작은 할당을 만 번 한다면, <code>malloc</code>과 <code>free</code>는 만 번의 범용 할당과 만 번의 해제를 한다. bump allocator라면 한 번이면 된다. 모든 호출 지점을 다시 쓰지 않고는 그렇게 하겠다고 말할 방법이 없다.</li><li><strong>실패 경로를 테스트할 수 없다.</strong> <code>malloc</code>을 원할 때 실패시키려면 전역으로 가로채야 한다 — <code>LD_PRELOAD</code>, 링커 트릭, 라이브러리 내부 호출까지 잡아채는 <code>#define malloc my_malloc</code>. 그런데 정작 가장 테스트하고 싶은 분기는 메모리가 바닥났을 때 실행되는 그 분기다.</li><li><strong>힙이 없는 곳에서는 아예 쓸 수 없다.</strong> 펌웨어, 커널, 부트로더: <code>malloc</code>이 없고, 그것을 전제하는 모든 라이브러리는 쓸 수 없다.</li></ul><p><code>malloc</code>은 잘못 설계된 것이 아니다. 그것은 고정된 정책이며, 다르게 하라고 말할 매개변수를 받지 않는다는 사실 때문에 모든 호출 지점에 하드코딩되어 있는 것이다.</p><h3 id="이-라이브러리가-대신-하는-것">이 라이브러리가 대신 하는 것<a class="anchor" href="#이-라이브러리가-대신-하는-것" aria-hidden="true">#</a></h3><p><strong>allocator는 값이고, 매개변수다.</strong> 할당할 수 있는 함수는 <code>proven_allocator_t</code>를 받고, 할당할 수 없는 함수는 받지 않는다. 발상은 그게 전부이고, 모든 결과가 여기서 따라 나온다:</p><pre><code data-lang="text">proven_err_t proven_u8str_append(proven_u8str_t *str, proven_u8str_view_t data);
+proven_err_t proven_u8str_append_grow(proven_allocator_t alloc, proven_u8str_t *str, proven_u8str_view_t data);</code></pre><p>시그니처를 읽어 보라. 첫 번째는 문자열을 키울 수 없으므로 텍스트가 들어가지 않으면 실패한다. 두 번째는 키울 수 있고, allocator를 받음으로써 그렇다고 말한다. 어느 쪽을 호출했는지 궁금해할 일이 결코 없다.</p><p>이제 같은 코드가 호출자가 고르는 세 가지 서로 다른 전략과 함께 동작한다:</p><div class="tblwrap"><table><tr><td><strong>Allocator</strong></td><td><strong>얻는 방법</strong></td><td><strong>개별 해제?</strong></td><td><strong>쓸 때</strong></td></tr><tr><td><strong>Heap</strong></td><td><code>proven_heap_allocator()</code></td><td>예</td><td>일반적인 경우. 서로 무관한 수명을 가진 객체들.</td></tr><tr><td><strong>Arena</strong></td><td><code>proven_arena_create(backing)</code> 후 <code>proven_arena_as_allocator(&amp;a)</code></td><td><strong>아니오</strong> — free는 no-op이다; 전체를 reset하거나 destroy한다</td><td>전부 같은 순간에 죽는 많은 할당: 요청 하나, 프레임 하나, 파싱 하나.</td></tr><tr><td><strong>Pool</strong></td><td><code>proven_pool_init(&amp;p, base, size, align, bin_cap)</code> 후 <code>proven_pool_as_allocator(&amp;p)</code></td><td>예, free list로 들어간다</td><td><strong>하나의 고정 크기</strong>인 객체를 반복해서 할당하고 해제할 때.</td></tr></table></div><p>힙(heap)에서 시작하라. 이유가 있을 때 나머지 둘로 손을 뻗되, 그 이유는 대개 측정이다.</p><h3 id="heap-allocator힙-할당자">Heap allocator(힙 할당자)<a class="anchor" href="#heap-allocator힙-할당자" aria-hidden="true">#</a></h3><pre><code data-lang="text">proven_allocator_t proven_heap_allocator(void);</code></pre><p>이것은 라이브러리의 인터페이스를 입은 <code>malloc</code>, <code>realloc</code>, <code>free</code>다. 그러지 않을 구체적인 이유가 없다면 이것을 써야 하며, 여기에 영리한 구석은 전혀 없다 — 그게 요점이다. 이 매뉴얼에서 달리 할 이유가 없는 모든 예제는 이것을 쓴다:</p><pre><code data-lang="c">proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
+
+proven_result_u8str_t s <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_create</span>(heap, <span style="color: #b60157">64</span>);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(s.err)) {
+    <span style="color: #d73948">return</span>;   <span style="color: #74747c">/*</span><span style="color: #74747c"> nothing was created, so there is nothing to destroy </span><span style="color: #74747c">*/</span>
+}
+(<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>s.value, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">ready</span><span style="color: #198810">"</span>));
+<span style="color: #4b69c6">proven_u8str_destroy</span>(heap, <span style="color: #d73948">&amp;</span>s.value);   <span style="color: #74747c">/*</span><span style="color: #74747c"> the SAME allocator </span><span style="color: #74747c">*/</span></code></pre><p>값은 네 워드 — 컨텍스트 포인터 하나와 함수 포인터 셋 — 이고 값으로 전달된다. 복사는 공짜이고, 자신의 struct에 저장해도 되며, 파괴할 필요도 없다.</p><p><strong>프리스탠딩(freestanding) 빌드에서는 <code>proven_heap_allocator</code>가 존재하지 않는다.</strong> 감쌀 <code>malloc</code>이 없기 때문이다. 이는 우회해야 할 제약이 아니라, 라이브러리 전체가 allocator를 매개변수로 받는 바로 그 이유이며, 정적 배열 위의 아레나(arena)가 같은 코드를 마이크로컨트롤러에서 돌아가게 하는 이유다. <a href="manual-freestanding.html">freestanding 모드</a>를 참고하라.</p><p>잘못된 예 — 생성할 때와 다른 allocator로 파괴하기:</p><pre><code data-lang="text">proven_result_u8str_t s = proven_u8str_create(arena_alloc, 64);
+proven_u8str_destroy(heap_alloc, &amp;s.value);   /* wrong: heap free on arena memory */</code></pre><p>객체는 자신을 만든 allocator를 기억하지 않는다 — 그것이 객체를 작게 유지하는 요인이다. 오늘날 이것을 검사하는 것은 없으며, 실패는 다른 어딘가에서 나중에 드러나는 힙 손상이다. 구조적으로 짝을 지어라: allocator를 객체 옆에 두거나, 둘을 함께 전달하라.</p><h2 id="2-arena-여러-객체-하나의-수명">2. Arena: 여러 객체, 하나의 수명<a class="anchor" href="#2-arena-여러-객체-하나의-수명" aria-hidden="true">#</a></h2><h3 id="문제-사망-시점이-같은-수많은-작은-할당">문제: 사망 시점이 같은 수많은 작은 할당<a class="anchor" href="#문제-사망-시점이-같은-수많은-작은-할당" aria-hidden="true">#</a></h3><p>설정 파일을 파싱한다고 하자. 키마다 문자열 하나, 값마다 문자열 하나, 섹션마다 노드 하나를 할당한다 — 작은 할당 수천 개다. 그리고 파싱이 끝나면 결과를 만들고, 그 할당 하나하나는 모두 같은 순간에 쓰레기가 된다.</p><p><code>malloc</code>으로는 그 대가를 두 번 치른다. 할당마다 free list를 검색하고, 장부를 갱신하고, 헤더가 붙은 메모리를 반환한다; <code>free</code>마다 메모리를 돌려주고 어쩌면 이웃과 병합한다. 그리고 하나도 빠뜨려선 안 된다. 잊어버린 <code>free</code> 하나면 누수이기 때문이다.</p><p>arena가 하는 관찰은 <strong>그 객체들이 전부 같은 수명을 가진다</strong>는 것이며, 따라서 개별 해제는 무의미한 작업이라는 것이다. 함께 죽는다면, 함께 해제될 수 있다.</p><h3 id="arena가-동작하는-방식">Arena가 동작하는 방식<a class="anchor" href="#arena가-동작하는-방식" aria-hidden="true">#</a></h3><p>arena는 메모리 블록 하나와 오프셋 하나다. 할당한다는 것은 요청받은 정렬에 맞게 오프셋을 올림하고, 그 주소를 반환하고, 오프셋을 앞으로 옮기는 것이다. 알고리즘 전체가 이게 전부다:</p><pre><code data-lang="text">[####used####|                    free                    ]
+              ^ offset</code></pre><ul><li><strong>할당은 명령어 몇 개다.</strong> 검색도, free list도, 할당마다 붙는 헤더도 없다.</li><li><strong><code>free</code>는 아무 일도 하지 않는다.</strong> 의도적으로 no-op이다.</li><li><strong>회수는 arena 전체를 reset하거나 destroy해서 한다.</strong> 오프셋을 0으로 되돌리는 것이다. 연산 하나가 객체 만 개를 해제한다.</li></ul><p>메모리는 여러분이 준다. <code>proven_arena_create</code>는 <code>proven_mem_mut_t</code>를 받는다 — 힙에서 받아 온 블록이든, <code>static</code> 배열이든, 스택 위의 영역이든 상관없다. arena는 스스로 할당하지 않으며, 그것이 밑에 힙이 없어도 동작하게 하는 요인이다.</p><h3 id="포기하는-것">포기하는 것<a class="anchor" href="#포기하는-것" aria-hidden="true">#</a></h3><p>arena는 범용 allocator가 아니며, 그 맞바꿈은 실제적이다:</p><ul><li><strong>객체 하나를 해제할 수 없다.</strong> 수명이 실제로 공유되지 않는다면, arena는 설계상 누수한다 — 메모리는 reset에서만 회수된다.</li><li><strong>바닥나는 것은 단단한 한계다.</strong> backing 블록은 고정되어 있다. 여기서의 <code>PROVEN_ERR_NOMEM</code>은 기계의 메모리가 바닥났다는 뜻이 아니라, 이 arena가 바닥났다는 뜻이다.</li><li><strong>arena를 가리키는 모든 포인터는 reset에서 죽는다.</strong> 한꺼번에, 아무 경고도 없이. reset보다 오래 사는 뷰(view)는 dangling view다. <a href="manual-00-start-here.html#5-모든-페이지에서-만나게-될-다섯-가지-계약">0장</a>의 계약 2를 보라.</li></ul><p>수명 공유가 프로그램에 대한 사실일 때 arena를 쓰라. 희망 사항일 때가 아니라.</p><h3 id="proven_arena_t"><code>proven_arena_t</code><a class="anchor" href="#proven_arena_t" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef struct {
+    proven_mem_mut_t backing;
+    proven_size_t offset;
+} proven_arena_t;</code></pre><p>필드:</p><ul><li><code>backing</code>: 호출자가 소유하는 가변 메모리 범위.</li><li><code>offset</code>: <code>backing</code> 내에서 다음 할당 위치.</li></ul><h3 id="arena-함수와-헬퍼">Arena 함수와 헬퍼<a class="anchor" href="#arena-함수와-헬퍼" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>API</strong></td><td><strong>의도</strong></td><td><strong>매개변수</strong></td><td><strong>반환</strong></td></tr><tr><td><code>proven_arena_create(backing)</code></td><td>backing 슬라이스 위에 arena를 초기화한다.</td><td><code>backing</code>: 호출자 소유 메모리.</td><td><code>proven_arena_t</code>.</td></tr><tr><td><code>proven_arena_reset(arena)</code></td><td>arena의 모든 할당을 버린다.</td><td><code>arena</code>.</td><td>void.</td></tr><tr><td><code>proven_arena_destroy(arena)</code></td><td>형식적 정리.</td><td><code>arena</code>.</td><td>void; 호출자 backing arena에는 no-op.</td></tr><tr><td><code>proven_arena_alloc_aligned(arena, size, align)</code></td><td>명시적 정렬로 할당한다.</td><td><code>arena</code>, 바이트 <code>size</code>, 2의 거듭제곱 <code>align</code>.</td><td><code>proven_result_mem_mut_t</code>.</td></tr><tr><td><code>proven_arena_realloc_aligned(arena, old_ptr, old_size, new_size, align)</code></td><td>재할당; 꼬리(tail) 할당을 제자리에서 확장/축소할 수 있다.</td><td>이전 할당 세부 정보와 새 크기.</td><td><code>proven_result_mem_mut_t</code>.</td></tr><tr><td><code>proven_arena_alloc(arena, size)</code></td><td><code>PROVEN_DEFAULT_ALIGNMENT</code>로 할당한다.</td><td><code>arena</code>, 바이트 <code>size</code>.</td><td><code>proven_result_mem_mut_t</code>.</td></tr><tr><td><code>proven_arena_alloc_aligned_or_panic(arena, size, align)</code></td><td>할당하거나 패닉(panic) 훅을 호출한다.</td><td><code>arena</code>, <code>size</code>, <code>align</code>.</td><td><code>proven_mem_mut_t</code>.</td></tr><tr><td><code>proven_arena_alloc_or_panic(arena, size)</code></td><td>기본 정렬 panic 할당.</td><td><code>arena</code>, <code>size</code>.</td><td><code>proven_mem_mut_t</code>.</td></tr><tr><td><code>proven_arena_as_allocator(arena)</code></td><td>arena를 <code>proven_allocator_t</code>로 노출한다.</td><td><code>arena</code>.</td><td>allocator trait, 또는 널 arena에 대해 제로 allocator.</td></tr></table></div><p>Trait 어댑터 헬퍼:</p><ul><li><code>proven_arena_alloc_trait</code></li><li><code>proven_arena_realloc_trait</code></li><li><code>proven_arena_free_trait</code></li></ul><p>이들은 allocator 트레잇(trait)가 함수 포인터를 필요로 하기 때문에 노출된다. 애플리케이션 코드는 보통 대신 <code>proven_arena_as_allocator()</code>를 호출한다.</p><p>예제:</p><pre><code data-lang="c"><span style="color: #4b69c6">alignas</span>(max_align_t) proven_byte_t storage[<span style="color: #b60157">4096</span>];
+proven_arena_t arena <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_create</span>((proven_mem_mut_t){
+    .ptr <span style="color: #d73948">=</span> storage,
+    .size <span style="color: #d73948">=</span> <span style="color: #d73948">sizeof</span> storage,
+});
+
+proven_result_mem_mut_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_alloc</span>(<span style="color: #d73948">&amp;</span>arena, <span style="color: #b60157">64</span>);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+    <span style="color: #d73948">return</span>;   <span style="color: #74747c">/*</span><span style="color: #74747c"> the arena cannot grow: it reports NOMEM instead </span><span style="color: #74747c">*/</span>
+}
+
+<span style="color: #4b69c6">proven_arena_reset</span>(<span style="color: #d73948">&amp;</span>arena);   <span style="color: #74747c">/*</span><span style="color: #74747c"> reclaims r and everything else at once </span><span style="color: #74747c">*/</span>
+<span style="color: #4b69c6">proven_arena_destroy</span>(<span style="color: #d73948">&amp;</span>arena);</code></pre><h3 id="성장-가능한-컨테이너와-함께-쓰는-arena">성장 가능한 컨테이너와 함께 쓰는 arena<a class="anchor" href="#성장-가능한-컨테이너와-함께-쓰는-arena" aria-hidden="true">#</a></h3><p>성장 가능한 컨테이너는 arena allocator를 사용할 수 있지만, arena의 <code>free</code>가 no-op이므로 성장이 이전 블록을 버릴 수 있다. 가능하면 용량을 미리 확보(reserve)하라.</p><p>올바른 예:</p><pre><code data-lang="c"><span style="color: #4b69c6">alignas</span>(max_align_t) proven_byte_t storage[<span style="color: #b60157">4096</span>];
+proven_arena_t arena <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_create</span>((proven_mem_mut_t){
+    .ptr <span style="color: #d73948">=</span> storage,
+    .size <span style="color: #d73948">=</span> <span style="color: #d73948">sizeof</span> storage,
+});
+proven_allocator_t a <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_as_allocator</span>(<span style="color: #d73948">&amp;</span>arena);
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> Ask for the capacity up front, so growth never has to abandon a block. </span><span style="color: #74747c">*/</span>
+proven_result_array_t ar <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_ARRAY_INIT</span>(a, <span style="color: #d73948">int</span>, <span style="color: #b60157">128</span>);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(ar.err)) {
+    <span style="color: #d73948">return</span>;
+}
+(<span style="color: #d73948">void</span>)<span style="color: #4b69c6">PROVEN_ARRAY_PUSH</span>(<span style="color: #d73948">&amp;</span>ar.value, <span style="color: #d73948">int</span>, <span style="color: #b60157">10</span>);
+<span style="color: #4b69c6">PROVEN_ARRAY_DESTROY</span>(<span style="color: #d73948">&amp;</span>ar.value);   <span style="color: #74747c">/*</span><span style="color: #74747c"> correct, but arena free reclaims nothing </span><span style="color: #74747c">*/</span>
+<span style="color: #4b69c6">proven_arena_reset</span>(<span style="color: #d73948">&amp;</span>arena);        <span style="color: #74747c">/*</span><span style="color: #74747c"> this is what gives the bytes back </span><span style="color: #74747c">*/</span></code></pre><p>잘못된 예 — 아주 작은 초기 용량에서 arena 안으로 성장시키기:</p><pre><code data-lang="text">proven_result_array_t ar = PROVEN_ARRAY_INIT(a, int, 1);
+for (int i = 0; i &lt; 10000; ++i) {
+    PROVEN_ARRAY_PUSH(&amp;ar.value, int, i); /* wrong: every regrow abandons the old block */
+}</code></pre><p>재성장할 때마다 arena에 더 큰 블록을 요청하고 이전 것을 "해제"하는데 — arena에서 그것은 아무 일도 하지 않는다. 배열 자체는 올바르게 끝나지만, arena는 지금까지 할당한 모든 중간 크기를 그대로 쥔 채 끝난다: 원하던 버퍼 하나 위에 1, 2, 4, 8 … 8192개 원소어치의 버려진 공간이 얹힌다. 위의 올바른 예처럼 용량을 미리 확보하라.</p><p>잘못된 예 — reset보다 오래 사는 view:</p><pre><code data-lang="text">proven_u8str_view_t name = /* ... built in the arena ... */;
+proven_arena_reset(&amp;arena);
+use(name);                 /* wrong: those bytes are now free space */</code></pre><p>이것이 arena의 가장 날카로운 모서리다. reset은 회수하는 메모리를 건드리지 않으므로 바이트는 보통 아직 그대로 있고, 버그는 보통 테스트에서 드러나지 않는다 — 다음 할당이 그 위에 덮어쓰기 직전까지는.</p><h2 id="3-pool-여러-객체-하나의-크기">3. Pool: 여러 객체, 하나의 크기<a class="anchor" href="#3-pool-여러-객체-하나의-크기" aria-hidden="true">#</a></h2><h3 id="arena가-풀지-못하는-문제">arena가 풀지 못하는 문제<a class="anchor" href="#arena가-풀지-못하는-문제" aria-hidden="true">#</a></h3><p>arena는 수명이 공유된다고 가정한다. 정반대 모양을 한 작업 부하도 많다: 한 타입의 객체가 특별한 순서 없이 계속 만들어지고 파괴되는 경우다. 이벤트의 연결 리스트. 커졌다 작아졌다 하는 트리의 노드들. 생겼다 사라지는 연결 레코드들.</p><p>arena는 이것을 할 수 없다 — 객체 하나를 결코 회수하지 않으므로, 오래 도는 프로그램은 한없이 커질 것이다. 힙은 할 수 있고, 그것이 정확히 그 비용이다: 할당마다 검색하고, 해제마다 장부를 갱신하며, 범용 allocator는 이미 천 번이나 처리한 요청에 대해 범용적인 일을 한다.</p><p>풀(pool)이 하는 관찰은 <strong>이 객체들이 전부 같은 크기</strong>라는 것이다. 크기가 같다면, 해제된 것 하나가 앞으로의 요청에 정확히 들어맞으므로, 아무런 검색 없이 곧바로 다시 건네줄 수 있다.</p><h3 id="pool이-동작하는-방식">Pool이 동작하는 방식<a class="anchor" href="#pool이-동작하는-방식" aria-hidden="true">#</a></h3><p>pool은 해제된 블록들의 작은 스택 — <em>bin</em> — 을 유지하고, 뻔한 일을 한다:</p><ul><li><strong>할당</strong>: bin에 뭔가 있으면 하나를 pop해서 반환한다. 포인터 읽기 하나와 감소 하나다. bin이 비어 있을 때만 하위 allocator로 간다.</li><li><strong>해제</strong>: bin에 자리가 있으면 재사용을 위해 블록을 push한다. bin이 꽉 찼으면 pool이 메모리를 영원히 세워 두지 않도록 하위 allocator로 되돌려준다.</li></ul><p>따라서 <code>bin_cap</code>은 다이얼이다: 이 pool이 예비로 쥐고 있어도 되는 메모리의 양이다.</p><h3 id="포기하는-것-1">포기하는 것<a class="anchor" href="#포기하는-것-1" aria-hidden="true">#</a></h3><ul><li><strong>하나의 pool은 정확히 하나의 크기와 정렬만 처리한다.</strong> 그 밖의 요청은 다른 데서 처리되는 것이 아니라 <code>PROVEN_ERR_INVALID_ARG</code>로 거부된다. pool이 만들어질 때보다 더 엄격한 정렬도 거부되고, 더 느슨한 것은 블록이 이미 그것을 충족하므로 괜찮다.</li><li><strong>pool은 살아 있는 객체를 추적하지 않는다.</strong> <code>proven_pool_destroy</code>는 bin에 있는 것을 해제하지, 여러분이 아직 쥐고 있는 것을 해제하지 않는다. 할당한 것을 먼저 전부 해제하라. 그러지 않으면 누수인 <em>데다가</em> 이제 dangling이다.</li></ul><p>arena 대 pool을 한 줄씩으로: arena는 *많이 할당하고 한 번에 전부 해제*를 위한 것이고, pool은 *같은 크기를 몇 번이고 저렴하게 할당하고 해제*하기 위한 것이다.</p><h3 id="proven_pool_t"><code>proven_pool_t</code><a class="anchor" href="#proven_pool_t" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef struct {
+    proven_allocator_t base_alloc;
+    proven_size_t item_size;
+    proven_size_t item_align;
+    void **bin;
+    proven_size_t bin_cap;
+    proven_size_t bin_len;
+} proven_pool_t;</code></pre><p>필드:</p><ul><li><code>base_alloc</code>: 새 블록과 재활용 bin에 사용되는 allocator.</li><li><code>item_size</code>: pool이 받아들이는 정확한 객체 크기. 그 외 크기는 <code>PROVEN_ERR_INVALID_ARG</code>로 거부된다.</li><li><code>item_align</code>: 모든 블록이 할당되는 정렬. <em>더 엄격한</em> 정렬 요청은 <code>PROVEN_ERR_INVALID_ARG</code>로 거부되고, 더 느슨한 요청은 블록이 이미 그것을 충족하므로 처리된다.</li><li><code>bin</code>: 캐시된 free-list 배열.</li><li><code>bin_cap</code>: 최대 캐시 블록 개수.</li><li><code>bin_len</code>: 현재 캐시 블록 개수.</li></ul><h3 id="재활용이-작동하는-방식">재활용이 작동하는 방식<a class="anchor" href="#재활용이-작동하는-방식" aria-hidden="true">#</a></h3><p>pool은 하나의 큰 슬랩(slab)을 소유하지 않는다. 각 항목을 <code>base_alloc</code>에서 개별적으로 할당하고, 해제된 블록들의 작은 <strong>스택</strong>(<code>bin</code>, 최대 <code>bin_cap</code>개의 포인터로 이루어진 배열)을 유지한다:</p><ul><li><strong>할당.</strong> <code>bin_len > 0</code>이면 맨 위 포인터를 pop한다(O(1), <code>base_alloc</code> 호출 없음) — 이것이 pool의 전체 요점이다. 그렇지 않으면 <code>base_alloc</code>로 넘어간다.</li><li><strong>해제.</strong> <code>bin_len &lt; bin_cap</code>이면 재사용을 위해 포인터를 bin에 push한다; 그렇지 않으면(bin이 꽉 참) <code>base_alloc</code>로 곧바로 되돌려 해제한다. 따라서 bin은 pool이 재사용을 위해 세워둘 수 있는 메모리의 양을 제한한다.</li><li><strong>파괴.</strong> <code>proven_pool_destroy</code>는 bin에 아직 남아 있는 모든 포인터와 bin 배열 자체를 해제한다 — 하지만 살아 있는(넘겨준) 항목은 추적하지 <strong>않으므로</strong>, pool을 파괴하기 전에 할당한 모든 것을 해제해야 한다.</li></ul><p>이는 pool을 지역(region) allocator가 아니라 수명이 짧은 동일 타입 객체(노드, 이벤트)를 위한 churn 최적화기(optimizer)로 만든다. "많이 할당하고 한 번에 전부 해제"하고 싶으면 <code>arena</code>를 사용하라; "같은 크기를 몇 번이고 저렴하게 할당/해제"하고 싶으면 <code>pool</code>을 사용하라.</p><h4 id="반례">반례<a class="anchor" href="#반례" aria-hidden="true">#</a></h4><pre><code data-lang="text">/* WRONG: the pool only handles its configured size/alignment. */
+proven_allocator_t a = proven_pool_as_allocator(&amp;pool);   /* item_size == sizeof(Node) */
+a.alloc_fn(a.ctx, sizeof(BigThing), alignof(BigThing));   /* not the pool's item -> rejected */
+
+/* WRONG: destroying while items are still live leaks (and dangles) them. */
+void *p = a.alloc_fn(a.ctx, sizeof(Node), alignof(Node)).value.ptr;
+proven_pool_destroy(&amp;pool);   /* `p` is NOT freed and is now dangling */
+/* RIGHT: free every handed-out item first, then destroy. */</code></pre><h3 id="pool-함수">Pool 함수<a class="anchor" href="#pool-함수" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>API</strong></td><td><strong>의도</strong></td><td><strong>반환</strong></td></tr><tr><td><code>proven_pool_init(pool, base_alloc, item_size, item_align, bin_cap)</code></td><td>고정 크기 pool을 초기화한다.</td><td><code>PROVEN_OK</code> 또는 에러.</td></tr><tr><td><code>proven_pool_as_allocator(pool)</code></td><td>pool이 뒷받침하는 allocator trait를 반환한다.</td><td><code>proven_allocator_t</code>.</td></tr><tr><td><code>proven_pool_destroy(pool)</code></td><td>캐시된 블록과 bin 저장소를 해제한다.</td><td>void.</td></tr></table></div><p>예제:</p><pre><code data-lang="c"><span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> Node { <span style="color: #d73948">int</span> value; } <span style="color: #4b69c6">Node</span>;
+
+proven_pool_t pool <span style="color: #d73948">=</span> {<span style="color: #b60157">0</span>};
+proven_err_t e <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_pool_init</span>(<span style="color: #d73948">&amp;</span>pool, alloc, <span style="color: #d73948">sizeof</span>(Node), <span style="color: #4b69c6">alignof</span>(Node), <span style="color: #b60157">64</span>);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(e)) {
+    <span style="color: #d73948">return</span>;
+}
+
+proven_allocator_t node_alloc <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_pool_as_allocator</span>(<span style="color: #d73948">&amp;</span>pool);
+proven_result_mem_mut_t n <span style="color: #d73948">=</span> node_alloc.<span style="color: #4b69c6">alloc_fn</span>(node_alloc.ctx, <span style="color: #d73948">sizeof</span>(Node), <span style="color: #4b69c6">alignof</span>(Node));
+<span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_is_ok</span>(n.err)) {
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Hand it back before destroy: the pool does not track live items. </span><span style="color: #74747c">*/</span>
+    node_alloc.<span style="color: #4b69c6">free_fn</span>(node_alloc.ctx, n.value.ptr);
+}
+
+<span style="color: #4b69c6">proven_pool_destroy</span>(<span style="color: #d73948">&amp;</span>pool);</code></pre><p>잘못된 예:</p><pre><code data-lang="text">node_alloc.alloc_fn(node_alloc.ctx, sizeof(LargerObject), alignof(LargerObject));
+/* wrong: one pool is for one fixed object size and alignment */</code></pre><h2 id="4-allocator-트레잇">4. Allocator 트레잇<a class="anchor" href="#4-allocator-트레잇" aria-hidden="true">#</a></h2><h3 id="이-절이-첫-번째가-아니라-네-번째인-이유">이 절이 첫 번째가 아니라 네 번째인 이유<a class="anchor" href="#이-절이-첫-번째가-아니라-네-번째인-이유" aria-hidden="true">#</a></h3><p>여러분은 세 가지 allocator를 그들이 공유하는 인터페이스를 보지 않고 이미 써 보았고, 그것은 의도적이었다. 인터페이스는 이 발상에서 가장 재미없는 부분이고 아무 맥락 없이 읽기에 가장 어려운 것이다: 함수 포인터 typedef 셋과 정렬 계약은, 그 뒤에 있는 heap과 arena와 pool을 보기 전까지는 거의 아무 의미도 없다.</p><p>이 절이 필요한 이유는 둘이다: 자신만의 allocator를 작성하는 것, 그리고 이 라이브러리의 모든 allocator가 지키기로 약속한 규칙을 이해하는 것. 위의 셋을 <em>쓰기만</em> 할 생각이라면 <code>proven_heap_allocator()</code>, <code>proven_arena_as_allocator()</code>, <code>proven_pool_as_allocator()</code>가 API 전부이니 건너뛰어도 된다.</p><p>여기서 trait란 인터페이스로 쓰이는 함수 포인터 struct를 말한다 — 손으로 써 낸, C 버전의 가상 테이블이다. <code>proven_allocator_t</code>는 라이브러리에서 가장 중요한 trait이고, <code>stream.h</code>와 <code>random.h</code>도 같은 모양을 쓴다.</p><h3 id="함수-포인터-타입">함수 포인터 타입<a class="anchor" href="#함수-포인터-타입" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef proven_result_mem_mut_t (*proven_alloc_fn_t)(
+    void *ctx,
+    proven_size_t size,
+    proven_size_t align
+);
+
+typedef proven_result_mem_mut_t (*proven_realloc_fn_t)(
+    void *ctx,
+    void *old_ptr,
+    proven_size_t old_size,
+    proven_size_t new_size,
+    proven_size_t align
+);
+
+typedef void (*proven_free_fn_t)(void *ctx, void *ptr);</code></pre><p>의도:</p><ul><li><code>alloc_fn</code>은 새로운 바이트 슬라이스를 할당한다.</li><li><code>realloc_fn</code>은 할당 크기를 변경하며 failure-atomic이어야 한다: 실패 시 이전 블록은 여전히 유효하고 변경되지 않으므로, 호출자는 아무것도 잃지 않는다.</li><li>블록은 할당될 때와 <strong>같은 <code>align</code></strong>으로 재할당되고 해제되어야 한다. allocator는 과도하게 정렬된(over-aligned) 요청에 대해 일반 요청과는 다른 하위 메커니즘을 선택할 수 있으며, heap allocator가 실제로 그렇게 한다: <code>align &lt;= alignof(max_align_t)</code> — 이 라이브러리의 모든 문자열, 버퍼, 바이트 배열이 여기에 해당한다 — 는 제자리(in place)에서 성장이 일어날 수 있도록 <code>malloc</code>/<code>realloc</code>을 거치고, 그보다 더 엄격하게 정렬된 것은 정렬된 allocator를 거친다. 블록을 다른 정렬 클래스로 되돌려주는 것은 정의되지 않은 동작이다.</li><li><code>free_fn</code>은 메모리를 해제한다. allocator가 크기 메타데이터를 필요로 한다면, 내부적으로 그것을 추적해야 한다.</li></ul><h3 id="proven_allocator_t"><code>proven_allocator_t</code><a class="anchor" href="#proven_allocator_t" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef struct {
+    void *ctx;
+    proven_alloc_fn_t alloc_fn;
+    proven_realloc_fn_t realloc_fn;
+    proven_free_fn_t free_fn;
+} proven_allocator_t;</code></pre><p>필드:</p><ul><li><code>ctx</code>: allocator별 상태.</li><li><code>alloc_fn</code>: 할당 함수.</li><li><code>realloc_fn</code>: 재할당 함수.</li><li><code>free_fn</code>: 해제 함수.</li></ul><h3 id="레퍼런스">레퍼런스<a class="anchor" href="#레퍼런스" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>멤버 / API</strong></td><td><strong>형태</strong></td><td><strong>계약</strong></td></tr><tr><td><code>ctx</code></td><td><code>void *</code></td><td>allocator 자신의 상태. 호출자에게는 불투명하며, 첫 번째 인자로 되돌아온다.</td></tr><tr><td><code>alloc_fn</code></td><td><code>proven_alloc_fn_t</code></td><td><code>align</code> 정렬로 <code>size</code> 바이트를 할당한다. <code>proven_result_mem_mut_t</code>를 반환한다.</td></tr><tr><td><code>realloc_fn</code></td><td><code>proven_realloc_fn_t</code></td><td>크기를 바꾼다. <strong>failure-atomic</strong>: 실패 시 이전 블록은 손대지 않은 채 여전히 유효하다.</td></tr><tr><td><code>free_fn</code></td><td><code>proven_free_fn_t</code></td><td>해제한다. 블록이 할당될 때와 같은 <code>align</code> 클래스를 주어야 한다.</td></tr><tr><td><code>proven_alloc_is_valid(alloc)</code></td><td><code>static inline bool</code></td><td>모든 함수 포인터가 널이 아닐 때, 즉 trait를 호출할 수 있을 때 true.</td></tr></table></div><p>이 라이브러리의 모든 allocator가 지키며, 여러분의 것도 지켜야 하는 세 가지 규칙:</p><ol><li><strong>같은 allocator, 전체 수명 동안.</strong> 한 블록의 할당, 재할당, 해제는 하나의 allocator로 하라.</li><li><strong>같은 정렬 클래스.</strong> 어떤 정렬로 할당된 블록은 그 정렬로 재할당되고 해제되어야 한다. allocator는 과도하게 정렬된 요청에 다른 메커니즘을 쓸 수 있다.</li><li><strong>실패는 아무것도 바꾸지 않는다.</strong> 실패한 <code>realloc_fn</code>은 이전 블록을 유효하고 변경되지 않은 채로 남긴다.</li></ol><pre><code data-lang="text">static inline bool proven_alloc_is_valid(proven_allocator_t alloc);</code></pre><p>목적: 모든 함수 포인터가 널이 아닌지 확인한다.</p><p>반환: trait를 호출할 수 있으면 true.</p><p>올바른 예:</p><pre><code data-lang="c">proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
+proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_alloc_is_valid</span>(heap) <span style="color: #d73948">?</span> PROVEN_OK <span style="color: #d73948">:</span> PROVEN_ERR_UNSUPPORTED;
+(<span style="color: #d73948">void</span>)err;   <span style="color: #74747c">/*</span><span style="color: #74747c"> a freestanding build hands back a zero allocator, not a valid one </span><span style="color: #74747c">*/</span></code></pre><p>잘못된 예:</p><pre><code data-lang="text">proven_allocator_t alloc = {0};
+proven_result_mem_mut_t r = alloc.alloc_fn(alloc.ctx, 64, 8); /* wrong: null call */</code></pre><h2 id="5-원시-바이트-버퍼">5. 원시 바이트 버퍼<a class="anchor" href="#5-원시-바이트-버퍼" aria-hidden="true">#</a></h2><h3 id="무엇을-위한-것인가">무엇을 위한 것인가<a class="anchor" href="#무엇을-위한-것인가" aria-hidden="true">#</a></h3><p><code>proven_buf_t</code>는 이 장에서 가장 단순한 것이다: 포인터 하나, 길이 하나, 용량 하나. 자기 바이트를 소유하고, 결코 성장하지 않으며, <code>proven_u8str_t</code>와 <code>proven_u16str_t</code>가 이것으로 만들어져 있다.</p><p>*텍스트*가 아니라 *바이트*를 원할 때 — 조립 중인 레코드, 소켓에 곧 써 넣을 프레임 — 그리고 최대 크기를 미리 알 때 직접 손을 뻗어라. 내용이 텍스트라면 대신 <a href="manual-03-strings-text.html">3장</a>의 문자열 타입을 쓰라. 같은 저장소에 더해 NUL 종료, view, 검색, 포매팅까지 준다.</p><p>여기 있는 다른 모든 것과 마찬가지로 allocator를 저장하지 <strong>않으므로</strong>, <code>proven_buf_destroy</code>는 <code>proven_buf_create</code>에 주었던 것과 같은 것을 받는다.</p><h3 id="proven_buf_t"><code>proven_buf_t</code><a class="anchor" href="#proven_buf_t" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef struct {
+    proven_byte_t *ptr;
+    proven_size_t len;
+    proven_size_t cap;
+} proven_buf_t;</code></pre><p>필드:</p><ul><li><code>ptr</code>: 저장소 포인터.</li><li><code>len</code>: 현재 사용 중인 바이트.</li><li><code>cap</code>: 할당된 바이트.</li></ul><h3 id="proven_result_buf_t"><code>proven_result_buf_t</code><a class="anchor" href="#proven_result_buf_t" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef struct {
+    proven_err_t err;
+    proven_buf_t value;
+} proven_result_buf_t;</code></pre><h3 id="버퍼-함수">버퍼 함수<a class="anchor" href="#버퍼-함수" aria-hidden="true">#</a></h3><div class="tblwrap"><table><tr><td><strong>API</strong></td><td><strong>의도</strong></td><td><strong>반환</strong></td></tr><tr><td><code>proven_buf_create(alloc, cap)</code></td><td>용량이 0이 아닌 버퍼를 할당한다.</td><td><code>proven_result_buf_t</code>; 유효하지 않은 allocator 또는 용량 0은 <code>PROVEN_ERR_INVALID_ARG</code>를 반환한다.</td></tr><tr><td><code>proven_buf_append(buf, data)</code></td><td>원시 바이트가 들어맞으면 추가한다.</td><td><code>PROVEN_OK</code> 또는 에러.</td></tr><tr><td><code>proven_buf_destroy(alloc, buf)</code></td><td>일치하는 allocator로 버퍼 저장소를 해제한다.</td><td>void.</td></tr></table></div><p>예제:</p><pre><code data-lang="c">proven_result_buf_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_buf_create</span>(alloc, <span style="color: #b60157">64</span>);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+    <span style="color: #d73948">return</span>;
+}
+proven_buf_t buf <span style="color: #d73948">=</span> r.value;
+
+proven_err_t e <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_buf_append</span>(<span style="color: #d73948">&amp;</span>buf, (proven_mem_view_t){
+    .ptr <span style="color: #d73948">=</span> (<span style="color: #d73948">const</span> proven_byte_t <span style="color: #d73948">*</span>)<span style="color: #198810">"</span><span style="color: #198810">abc</span><span style="color: #198810">"</span>,
+    .size <span style="color: #d73948">=</span> <span style="color: #b60157">3</span>,
+});
+(<span style="color: #d73948">void</span>)e;   <span style="color: #74747c">/*</span><span style="color: #74747c"> PROVEN_ERR_OUT_OF_BOUNDS if it would not fit: the buffer never grows </span><span style="color: #74747c">*/</span>
+
+<span style="color: #4b69c6">proven_buf_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>buf);</code></pre><h2 id="6-예제와-오용-사례">6. 예제와 오용 사례<a class="anchor" href="#6-예제와-오용-사례" aria-hidden="true">#</a></h2><h3 id="파괴-시-allocator-일치시키기">파괴 시 allocator 일치시키기<a class="anchor" href="#파괴-시-allocator-일치시키기" aria-hidden="true">#</a></h3><p>올바른 예:</p><pre><code data-lang="c">proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
+
+proven_result_buf_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_buf_create</span>(heap, <span style="color: #b60157">128</span>);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+    <span style="color: #d73948">return</span>;
+}
+<span style="color: #4b69c6">proven_buf_destroy</span>(heap, <span style="color: #d73948">&amp;</span>r.value);   <span style="color: #74747c">/*</span><span style="color: #74747c"> the same allocator that created it </span><span style="color: #74747c">*/</span></code></pre><p>잘못된 예:</p><pre><code data-lang="text">proven_result_buf_t r = proven_buf_create(heap, 128);
+proven_buf_destroy(other_alloc, &amp;r.value); /* wrong: allocator mismatch */</code></pre><h3 id="arena의-free는-no-op이다">Arena의 free는 no-op이다<a class="anchor" href="#arena의-free는-no-op이다" aria-hidden="true">#</a></h3><pre><code data-lang="c"><span style="color: #4b69c6">alignas</span>(max_align_t) proven_byte_t storage[<span style="color: #b60157">1024</span>];
+proven_arena_t arena <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_create</span>((proven_mem_mut_t){
+    .ptr <span style="color: #d73948">=</span> storage,
+    .size <span style="color: #d73948">=</span> <span style="color: #d73948">sizeof</span> storage,
+});
+proven_allocator_t a <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_as_allocator</span>(<span style="color: #d73948">&amp;</span>arena);
+
+proven_result_mem_mut_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_alloc</span>(<span style="color: #d73948">&amp;</span>arena, <span style="color: #b60157">32</span>);
+<span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Legal, and correct to write - but it intentionally reclaims nothing. </span><span style="color: #74747c">*/</span>
+    a.<span style="color: #4b69c6">free_fn</span>(a.ctx, r.value.ptr);
+}
+<span style="color: #4b69c6">proven_arena_reset</span>(<span style="color: #d73948">&amp;</span>arena);   <span style="color: #74747c">/*</span><span style="color: #74747c"> only this gives the 32 bytes back </span><span style="color: #74747c">*/</span></code></pre><h3 id="pool-크기-계약">Pool 크기 계약<a class="anchor" href="#pool-크기-계약" aria-hidden="true">#</a></h3><p>올바른 예:</p><pre><code data-lang="c"><span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> Node { <span style="color: #d73948">int</span> value; } <span style="color: #4b69c6">Node</span>;
+
+proven_pool_t pool <span style="color: #d73948">=</span> {<span style="color: #b60157">0</span>};
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(<span style="color: #4b69c6">proven_pool_init</span>(<span style="color: #d73948">&amp;</span>pool, alloc, <span style="color: #d73948">sizeof</span>(Node), <span style="color: #4b69c6">alignof</span>(Node), <span style="color: #b60157">8</span>))) {
+    <span style="color: #d73948">return</span>;
+}
+proven_allocator_t node_alloc <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_pool_as_allocator</span>(<span style="color: #d73948">&amp;</span>pool);
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> The pool serves exactly the size and alignment it was configured with. </span><span style="color: #74747c">*/</span>
+proven_result_mem_mut_t n <span style="color: #d73948">=</span> node_alloc.<span style="color: #4b69c6">alloc_fn</span>(node_alloc.ctx, <span style="color: #d73948">sizeof</span>(Node), <span style="color: #4b69c6">alignof</span>(Node));
+<span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_is_ok</span>(n.err)) {
+    node_alloc.<span style="color: #4b69c6">free_fn</span>(node_alloc.ctx, n.value.ptr);
+}
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> Anything else is refused with PROVEN_ERR_INVALID_ARG rather than served. </span><span style="color: #74747c">*/</span>
+proven_result_mem_mut_t wrong <span style="color: #d73948">=</span> node_alloc.<span style="color: #4b69c6">alloc_fn</span>(node_alloc.ctx, <span style="color: #d73948">sizeof</span>(Node) <span style="color: #d73948">*</span> <span style="color: #b60157">2</span>, <span style="color: #4b69c6">alignof</span>(Node));
+(<span style="color: #d73948">void</span>)wrong;
+
+<span style="color: #4b69c6">proven_pool_destroy</span>(<span style="color: #d73948">&amp;</span>pool);</code></pre><p>잘못된 예:</p><pre><code data-lang="text">node_alloc.alloc_fn(node_alloc.ctx, sizeof(Other), alignof(Other));
+/* wrong: PROVEN_ERR_INVALID_ARG - a pool is for one size and one alignment */</code></pre><h3 id="버퍼-append는-성장하지-않는다">버퍼 append는 성장하지 않는다<a class="anchor" href="#버퍼-append는-성장하지-않는다" aria-hidden="true">#</a></h3><p>잘못된 예:</p><pre><code data-lang="text">proven_buf_append(&amp;buf, huge_data); /* returns out-of-bounds; no automatic growth */</code></pre><p>성장이 필요하면 <code>proven_u8str_append_grow()</code>나 배열을 사용하라.</p><h3 id="버퍼-append는-겹침을-허용한다">버퍼 append는 겹침을 허용한다<a class="anchor" href="#버퍼-append는-겹침을-허용한다" aria-hidden="true">#</a></h3><p>올바른 예:</p><pre><code data-lang="c">proven_result_buf_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_buf_create</span>(alloc, <span style="color: #b60157">64</span>);
+<span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+    <span style="color: #d73948">return</span>;
+}
+proven_buf_t buf <span style="color: #d73948">=</span> r.value;
+
+proven_err_t e <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_buf_append</span>(<span style="color: #d73948">&amp;</span>buf, (proven_mem_view_t){
+    .ptr <span style="color: #d73948">=</span> (<span style="color: #d73948">const</span> proven_byte_t <span style="color: #d73948">*</span>)<span style="color: #198810">"</span><span style="color: #198810">abcdefgh</span><span style="color: #198810">"</span>,
+    .size <span style="color: #d73948">=</span> <span style="color: #b60157">8</span>,
+});
+<span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_is_ok</span>(e)) {
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The source view points back into the buffer's own bytes. That is allowed:</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> append moves rather than copies, so the overlap is well defined. </span><span style="color: #74747c">*/</span>
+    e <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_buf_append</span>(<span style="color: #d73948">&amp;</span>buf, (proven_mem_view_t){
+        .ptr <span style="color: #d73948">=</span> buf.ptr <span style="color: #d73948">+</span> <span style="color: #b60157">2</span>,
+        .size <span style="color: #d73948">=</span> <span style="color: #b60157">4</span>,
+    });
+}
+(<span style="color: #d73948">void</span>)e;
+
+<span style="color: #4b69c6">proven_buf_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>buf);</code></pre><p>잘못된 예:</p><pre><code data-lang="text">proven_sys_mem_copy(buf.ptr + buf.len, buf.ptr + 2, 4); /* copy is not the public contract here */</code></pre><h3 id="실전-예제-호출자가-제공한-메모리-위의-arena">실전 예제: 호출자가 제공한 메모리 위의 arena<a class="anchor" href="#실전-예제-호출자가-제공한-메모리-위의-arena" aria-hidden="true">#</a></h3><p>테스트 스위트에서 컴파일되고 실행된다. arena를 손 뻗어 쓸 가치가 있게 만드는 bump-and-drop 수명을 보여준다: 할당은 거의 공짜이고, 개별적으로 해제되는 것은 없으며, <code>proven_arena_reset</code>이 전체 영역을 한 번에 회수한다.</p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> An arena does not own memory: it bumps a pointer through memory YOU own. That</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> is the whole trade. Allocation is an add, individual frees do not exist, and</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> you get everything back at once with a reset.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> The shape that makes it worth using is bump-then-drop: a phase allocates</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> freely, the phase ends, one reset reclaims the lot. No per-object bookkeeping</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> to get wrong, and nothing to leak - the backing storage below is a plain</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> array with automatic storage duration.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The backing store is the caller's. Over-align it so the arena can satisfy</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> any alignment a caller asks for out of the first byte. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">alignas</span>(max_align_t) <span style="color: #d73948">static</span> proven_byte_t storage[<span style="color: #b60157">4096</span>];
+
+    proven_arena_t arena <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_create</span>((proven_mem_mut_t){
+        .ptr <span style="color: #d73948">=</span> storage,
+        .size <span style="color: #d73948">=</span> <span style="color: #d73948">sizeof</span> storage,
+    });
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- bump ------------------------------------------------------------- </span><span style="color: #74747c">*/</span>
+    proven_result_mem_mut_t a <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_alloc</span>(<span style="color: #d73948">&amp;</span>arena, <span style="color: #b60157">64</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(a.err), <span style="color: #198810">"</span><span style="color: #198810">64 bytes must fit in a 4 KiB arena</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(a.value.ptr <span style="color: #d73948">==</span> storage, <span style="color: #198810">"</span><span style="color: #198810">the first allocation starts at the backing store</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Explicit alignment when the type demands more than PROVEN_DEFAULT_ALIGNMENT.</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> The arena pads to reach it, so the bytes it skips are simply gone until reset. </span><span style="color: #74747c">*/</span>
+    proven_result_mem_mut_t b <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_alloc_aligned</span>(<span style="color: #d73948">&amp;</span>arena, <span style="color: #b60157">32</span>, <span style="color: #b60157">64</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(b.err), <span style="color: #198810">"</span><span style="color: #198810">an over-aligned block must still fit</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(((<span style="color: #4b69c6">uintptr_t</span>)b.value.ptr <span style="color: #d73948">%</span> <span style="color: #b60157">64</span>) <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>, <span style="color: #198810">"</span><span style="color: #198810">the block must honour the requested alignment</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- the arena as an allocator for another API ------------------------- </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Anything in proven that takes a proven_allocator_t can be driven by the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> arena. The string below therefore lives inside `storage`. </span><span style="color: #74747c">*/</span>
+    proven_allocator_t arena_alloc <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_as_allocator</span>(<span style="color: #d73948">&amp;</span>arena);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_alloc_is_valid</span>(arena_alloc), <span style="color: #198810">"</span><span style="color: #198810">the arena must expose a usable allocator</span><span style="color: #198810">"</span>);
+
+    proven_result_u8str_t s <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_create</span>(arena_alloc, <span style="color: #b60157">32</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(s.err), <span style="color: #198810">"</span><span style="color: #198810">the arena should be able to back a 32-byte string</span><span style="color: #198810">"</span>);
+
+    proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append_grow</span>(arena_alloc, <span style="color: #d73948">&amp;</span>s.value, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">scratch line</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">appending into an arena-backed string must succeed</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Destroying it is still correct and still required by the ownership rules -</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> but arena free is a no-op, so it reclaims nothing. That is not a leak: the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> bytes belong to `storage`, and the reset below is what returns them. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">proven_u8str_destroy</span>(arena_alloc, <span style="color: #d73948">&amp;</span>s.value);
+
+    proven_size_t used <span style="color: #d73948">=</span> arena.offset;
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(used <span style="color: #d73948">></span> <span style="color: #b60157">64</span>, <span style="color: #198810">"</span><span style="color: #198810">every allocation above came out of the same backing store</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- drop -------------------------------------------------------------- </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> One statement frees the 64-byte block, the aligned block and the string.</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> Reset costs the same whether ten objects were allocated or ten thousand. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">proven_arena_reset</span>(<span style="color: #d73948">&amp;</span>arena);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(arena.offset <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>, <span style="color: #198810">"</span><span style="color: #198810">reset must reclaim every allocation at once</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Proof that the storage really is reusable: the next allocation lands back</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> at the start. Every pointer handed out before the reset is dangling now -</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> that is the price of the reset being free. </span><span style="color: #74747c">*/</span>
+    proven_result_mem_mut_t c <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_alloc</span>(<span style="color: #d73948">&amp;</span>arena, <span style="color: #b60157">64</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(c.err), <span style="color: #198810">"</span><span style="color: #198810">allocation after reset must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(c.value.ptr <span style="color: #d73948">==</span> storage, <span style="color: #198810">"</span><span style="color: #198810">after reset the arena bumps from the beginning again</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- exhaustion is an error, not a crash -------------------------------- </span><span style="color: #74747c">*/</span>
+    proven_result_mem_mut_t too_big <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_alloc</span>(<span style="color: #d73948">&amp;</span>arena, <span style="color: #d73948">sizeof</span> storage);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(too_big.err <span style="color: #d73948">==</span> PROVEN_ERR_NOMEM, <span style="color: #198810">"</span><span style="color: #198810">an arena cannot grow: it reports NOMEM instead</span><span style="color: #198810">"</span>);
+
+    <span style="color: #4b69c6">printf</span>(<span style="color: #198810">"</span><span style="color: #198810">arena: </span><span style="color: #b60157">%zu</span><span style="color: #198810"> bytes used before reset, </span><span style="color: #b60157">%zu</span><span style="color: #198810"> in use now</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>,
+           (<span style="color: #4b69c6">size_t</span>)used, (<span style="color: #4b69c6">size_t</span>)arena.offset);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Formal cleanup. A no-op for a caller-backed arena, but writing it keeps</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> the lifetime obvious if the backing store later becomes heap memory. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">proven_arena_destroy</span>(<span style="color: #d73948">&amp;</span>arena);
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><h3 id="실전-예제-고정-크기-블록을-재활용하는-pool">실전 예제: 고정 크기 블록을 재활용하는 pool<a class="anchor" href="#실전-예제-고정-크기-블록을-재활용하는-pool" aria-hidden="true">#</a></h3><p>테스트 스위트에서 컴파일되고 실행된다. 해제된 블록이 재활용 bin에서 곧장 다시 나오는 것과, pool이 무엇을 거부하는지를 보여준다.</p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> A pool is a churn optimizer, not a region. It is for one type: allocate and</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> free the same fixed-size block over and over - list nodes, events, particles -</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> without paying malloc every time.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> It keeps a small stack of freed blocks (the "bin"). Freeing pushes a block</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> onto the bin instead of returning it to the base allocator; allocating pops</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> one back off. Both are O(1) and neither touches the heap. That recycling is</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> the entire point, and the check below proves it happens.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Ownership: the pool caches freed blocks, but it does NOT track the blocks it</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> has handed out. Every block you take, you must give back before destroy - the</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> pool cannot free what it does not know about.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> {
+    <span style="color: #d73948">int</span> id;
+    <span style="color: #d73948">int</span> score;
+} <span style="color: #4b69c6">node_t</span>;
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_alloc_is_valid</span>(heap), <span style="color: #198810">"</span><span style="color: #198810">hosted builds have a heap allocator</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The pool takes a base allocator for the blocks it cannot serve from the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> bin, plus the exact size and alignment of the one type it manages. The</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> last argument caps how many freed blocks are parked for reuse. </span><span style="color: #74747c">*/</span>
+    proven_pool_t pool <span style="color: #d73948">=</span> {<span style="color: #b60157">0</span>};
+    proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_pool_init</span>(<span style="color: #d73948">&amp;</span>pool, heap, <span style="color: #d73948">sizeof</span>(node_t), <span style="color: #4b69c6">alignof</span>(node_t), <span style="color: #b60157">4</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">initializing a pool of node_t must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(err)) {
+        <span style="color: #d73948">return</span> <span style="color: #b60157">1</span>;
+    }
+
+    proven_allocator_t nodes <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_pool_as_allocator</span>(<span style="color: #d73948">&amp;</span>pool);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- first block: nothing in the bin, so it comes from the heap --------- </span><span style="color: #74747c">*/</span>
+    proven_result_mem_mut_t first <span style="color: #d73948">=</span> nodes.<span style="color: #4b69c6">alloc_fn</span>(nodes.ctx, <span style="color: #d73948">sizeof</span>(node_t), <span style="color: #4b69c6">alignof</span>(node_t));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(first.err), <span style="color: #198810">"</span><span style="color: #198810">the pool must be able to serve its own item type</span><span style="color: #198810">"</span>);
+    <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(first.err)) {
+        <span style="color: #4b69c6">proven_pool_destroy</span>(<span style="color: #d73948">&amp;</span>pool);
+        <span style="color: #d73948">return</span> <span style="color: #b60157">1</span>;
+    }
+
+    node_t <span style="color: #d73948">*</span>n <span style="color: #d73948">=</span> (node_t <span style="color: #d73948">*</span>)first.value.ptr;
+    <span style="color: #d73948">*</span>n <span style="color: #d73948">=</span> (node_t){ .id <span style="color: #d73948">=</span> <span style="color: #b60157">1</span>, .score <span style="color: #d73948">=</span> <span style="color: #b60157">100</span> };
+    <span style="color: #d73948">void</span> <span style="color: #d73948">*</span>first_addr <span style="color: #d73948">=</span> n;
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- hand it back: it lands in the bin, not back on the heap ------------ </span><span style="color: #74747c">*/</span>
+    nodes.<span style="color: #4b69c6">free_fn</span>(nodes.ctx, n);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(pool.bin_len <span style="color: #d73948">==</span> <span style="color: #b60157">1</span>, <span style="color: #198810">"</span><span style="color: #198810">a freed block is cached for reuse, not returned to the heap</span><span style="color: #198810">"</span>);
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> `n` is dangling from here on. The pool owns those bytes again. </span><span style="color: #74747c">*/</span>
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- second block: the freed one is handed straight back ---------------- </span><span style="color: #74747c">*/</span>
+    proven_result_mem_mut_t second <span style="color: #d73948">=</span> nodes.<span style="color: #4b69c6">alloc_fn</span>(nodes.ctx, <span style="color: #d73948">sizeof</span>(node_t), <span style="color: #4b69c6">alignof</span>(node_t));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(second.err), <span style="color: #198810">"</span><span style="color: #198810">allocating from a non-empty bin must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(second.value.ptr <span style="color: #d73948">==</span> first_addr, <span style="color: #198810">"</span><span style="color: #198810">the recycled block is the one that was freed</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(pool.bin_len <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>, <span style="color: #198810">"</span><span style="color: #198810">taking it back out empties the bin</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Recycled memory is NOT zeroed for you - it is whatever the pool left there.</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> Initialize every field, exactly as you would for a fresh malloc. </span><span style="color: #74747c">*/</span>
+    node_t <span style="color: #d73948">*</span>m <span style="color: #d73948">=</span> (node_t <span style="color: #d73948">*</span>)second.value.ptr;
+    <span style="color: #d73948">*</span>m <span style="color: #d73948">=</span> (node_t){ .id <span style="color: #d73948">=</span> <span style="color: #b60157">2</span>, .score <span style="color: #d73948">=</span> <span style="color: #b60157">50</span> };
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(m->id <span style="color: #d73948">==</span> <span style="color: #b60157">2</span>, <span style="color: #198810">"</span><span style="color: #198810">the recycled block is ours to overwrite</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- one pool serves one size and one alignment ------------------------- </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> A request for anything else is refused: this is not a general allocator, and it will</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> not silently hand you a block of the wrong size. The code is PROVEN_ERR_UNSUPPORTED -</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> "not my job" - and not INVALID_ARG, which would read as "you passed me garbage" and</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> send you hunting for a bug in your own code. </span><span style="color: #74747c">*/</span>
+    proven_result_mem_mut_t wrong <span style="color: #d73948">=</span> nodes.<span style="color: #4b69c6">alloc_fn</span>(nodes.ctx, <span style="color: #d73948">sizeof</span>(node_t) <span style="color: #d73948">*</span> <span style="color: #b60157">2</span>, <span style="color: #4b69c6">alignof</span>(node_t));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(wrong.err <span style="color: #d73948">==</span> PROVEN_ERR_UNSUPPORTED, <span style="color: #198810">"</span><span style="color: #198810">the pool only serves its configured item size</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- return every live block before destroying -------------------------- </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> proven_pool_destroy frees what is in the bin and the bin itself. `m` is</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> still handed out, so if we skipped this free it would leak. </span><span style="color: #74747c">*/</span>
+    nodes.<span style="color: #4b69c6">free_fn</span>(nodes.ctx, m);
+
+    <span style="color: #4b69c6">printf</span>(<span style="color: #198810">"</span><span style="color: #198810">pool: </span><span style="color: #b60157">%zu</span><span style="color: #198810"> block(s) cached for reuse at teardown</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>, (<span style="color: #4b69c6">size_t</span>)pool.bin_len);
+
+    <span style="color: #4b69c6">proven_pool_destroy</span>(<span style="color: #d73948">&amp;</span>pool);
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><h3 id="실전-예제-시동-시-할당-제자리에서-늘리기-할당자-감싸기">실전 예제: 시동 시 할당, 제자리에서 늘리기, 할당자 감싸기<a class="anchor" href="#실전-예제-시동-시-할당-제자리에서-늘리기-할당자-감싸기" aria-hidden="true">#</a></h3><p>앞의 두 예제는 대부분의 코드가 쓰는 방식으로 arena와 pool을 쓴다. 이 예제는 프로그램이 실제 규모가 되었을 때 손이 가는 세 가지를 다룬다.</p><ol><li><strong>시동(start-up) 단계의 할당.</strong> 어떤 할당은 실패했을 때 갈 길이 없다. 프로그램이 자기 설정 표조차 얻지 못했다면 남은 할 일이 없다. <code>proven_arena_alloc_or_panic()</code>과 <code>proven_arena_alloc_aligned_or_panic()</code>은 result가 아니라 메모리 블록 자체를 돌려주고, 실패는 패닉 핸들러(panic handler, 회복 불가능한 실패가 났을 때 불리는 함수)로 넘긴다 (<a href="manual-01-foundation.html#6-panic-에러를-돌려줄-상대가-남지-않았을-때">1장 6절</a>). 그때 무슨 일이 일어날지는 <code>proven_set_panic_handler()</code>로 고른다. 예제는 메시지를 기록하는 핸들러를 설치해 실패를 보여 준 뒤, 기본 핸들러를 되돌린다.</li><li><strong>마지막으로 받은 블록 늘리기.</strong> <code>proven_arena_realloc_aligned()</code>는 그 블록을 있던 자리에서 늘린다. 가장 최근 블록이 곧 사용 영역의 끝에 있는 블록이기 때문이다. 그보다 앞선 블록은 끝으로 복사된다 — 여전히 옳지만, 더 이상 공짜는 아니다.</li><li><strong>할당자(allocator) 감싸기.</strong> 할당자는 함수 포인터 셋과 문맥 포인터 하나이므로, 호출을 세거나 기록하거나 일부러 열 번째 호출을 실패시키는 래퍼(wrapper, 감싸는 코드)는 전달 함수 세 개면 된다. arena 자신의 세 함수 — <code>proven_arena_alloc_trait()</code>, <code>proven_arena_realloc_trait()</code>, <code>proven_arena_free_trait()</code> — 가 공개되어 있는 이유가 바로 이것이다. 여러분의 래퍼는 arena를 다시 구현하는 대신 이들을 부르면 된다. 그러면 <code>proven_allocator_t</code>를 받는 라이브러리의 모든 것이, 그 사실을 모른 채 여러분의 래퍼를 지나간다.</li></ol><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Three things a program that owns its own memory eventually has to do, and the</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> calls that do them:</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   - Allocate during start-up, where running out of memory is not a condition</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">     the program can carry on from. That is what the `_or_panic` calls are</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">     for, and installing a panic handler is how you decide what "cannot carry</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">     on" means for your program - a log line and an exit, rather than a trap.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   - Grow the block you allocated last, without copying it. An arena can do</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">     that in place, because the block that was allocated last is the one</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">     sitting at the end of the used region.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   - Instrument the allocator - count allocations, or fail the tenth one on</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">     purpose in a test - without changing the code being measured. An</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">     allocator here is three function pointers and a context pointer, so</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">     wrapping one is writing three forwarding functions. The arena's own three</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">     are public for exactly this reason: your wrapper forwards to them.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> --- what a panic handler is for ----------------------------------------- </span><span style="color: #74747c">*/</span>
+
+<span style="color: #d73948">static</span> <span style="color: #d73948">int</span> g_panics <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
+<span style="color: #d73948">static</span> <span style="color: #d73948">char</span> g_last_panic[<span style="color: #b60157">128</span>];
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> A panic handler receives the message and decides the program's fate. The</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> default one traps immediately, which is right in production and useless in a</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> test - so this one records the message and returns. Returning is allowed ONLY</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> when you are deliberately testing the panic path, and the memory block the</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> panicking call returns must then not be used. </span><span style="color: #74747c">*/</span>
+<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">record_panic</span>(<span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>msg) {
+    <span style="color: #d73948">++</span>g_panics;
+    <span style="color: #4b69c6">snprintf</span>(g_last_panic, <span style="color: #d73948">sizeof</span> g_last_panic, <span style="color: #198810">"</span><span style="color: #b60157">%s</span><span style="color: #198810">"</span>, msg);
+}
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> --- an allocator that counts what passes through it ---------------------- </span><span style="color: #74747c">*/</span>
+
+<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> {
+    proven_arena_t <span style="color: #d73948">*</span>arena;
+    proven_size_t   live_bytes;
+    proven_size_t   alloc_calls;
+    proven_size_t   free_calls;
+} <span style="color: #4b69c6">counting_ctx_t</span>;
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> Each of the three matches one field of proven_allocator_t. Each does its own</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> bookkeeping and then forwards to the arena's public trait function, so the</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> behaviour being measured is exactly the arena's behaviour and not a</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> re-implementation of it. </span><span style="color: #74747c">*/</span>
+<span style="color: #d73948">static</span> proven_result_mem_mut_t <span style="color: #4b69c6">counting_alloc</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_size_t size, proven_size_t align) {
+    counting_ctx_t <span style="color: #d73948">*</span>c <span style="color: #d73948">=</span> (counting_ctx_t <span style="color: #d73948">*</span>)ctx;
+    proven_result_mem_mut_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_alloc_trait</span>(c->arena, size, align);
+    <span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+        c->live_bytes <span style="color: #d73948">+=</span> size;
+        <span style="color: #d73948">++</span>c->alloc_calls;
+    }
+    <span style="color: #d73948">return</span> r;
+}
+
+<span style="color: #d73948">static</span> proven_result_mem_mut_t <span style="color: #4b69c6">counting_realloc</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, <span style="color: #d73948">void</span> <span style="color: #d73948">*</span>old_ptr, proven_size_t old_size,
+                                               proven_size_t new_size, proven_size_t align) {
+    counting_ctx_t <span style="color: #d73948">*</span>c <span style="color: #d73948">=</span> (counting_ctx_t <span style="color: #d73948">*</span>)ctx;
+    proven_result_mem_mut_t r <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_realloc_trait</span>(c->arena, old_ptr, old_size, new_size, align);
+    <span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_is_ok</span>(r.err)) {
+        c->live_bytes <span style="color: #d73948">=</span> c->live_bytes <span style="color: #d73948">-</span> old_size <span style="color: #d73948">+</span> new_size;
+    }
+    <span style="color: #d73948">return</span> r;
+}
+
+<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">counting_free</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, <span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ptr) {
+    counting_ctx_t <span style="color: #d73948">*</span>c <span style="color: #d73948">=</span> (counting_ctx_t <span style="color: #d73948">*</span>)ctx;
+    <span style="color: #d73948">++</span>c->free_calls;
+    <span style="color: #4b69c6">proven_arena_free_trait</span>(c->arena, ptr);   <span style="color: #74747c">/*</span><span style="color: #74747c"> an arena free is a no-op; the count is the point </span><span style="color: #74747c">*/</span>
+}
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    <span style="color: #4b69c6">alignas</span>(max_align_t) <span style="color: #d73948">static</span> proven_byte_t storage[<span style="color: #b60157">1024</span>];
+    proven_arena_t arena <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_create</span>((proven_mem_mut_t){ .ptr <span style="color: #d73948">=</span> storage, .size <span style="color: #d73948">=</span> <span style="color: #d73948">sizeof</span> storage });
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- 1. start-up allocation that must not fail ------------------------ </span><span style="color: #74747c">*/</span>
+
+    <span style="color: #4b69c6">proven_set_panic_handler</span>(record_panic);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> No result to unwrap: these return the block directly, because there is no</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> error the caller could act on. That is the entire difference. </span><span style="color: #74747c">*/</span>
+    proven_mem_mut_t table <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_alloc_or_panic</span>(<span style="color: #d73948">&amp;</span>arena, <span style="color: #b60157">256</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(table.ptr <span style="color: #d73948">!=</span> <span style="color: #d73948">NULL</span>, <span style="color: #198810">"</span><span style="color: #198810">a 256-byte start-up allocation must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(g_panics <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>, <span style="color: #198810">"</span><span style="color: #198810">a successful allocation must not panic</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The aligned form, for a type that needs more than the default boundary -</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> a 64-byte cache line here, the usual reason. </span><span style="color: #74747c">*/</span>
+    proven_mem_mut_t cache_line <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_alloc_aligned_or_panic</span>(<span style="color: #d73948">&amp;</span>arena, <span style="color: #b60157">64</span>, <span style="color: #b60157">64</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(((proven_uintptr_t)cache_line.ptr <span style="color: #d73948">%</span> <span style="color: #b60157">64</span>) <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>,
+                    <span style="color: #198810">"</span><span style="color: #198810">the block must start on the boundary that was asked for</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(g_panics <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>, <span style="color: #198810">"</span><span style="color: #198810">an over-aligned allocation that fits must not panic either</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Now the failing case, on purpose: more than the arena could ever hold.</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> With the recording handler installed we can observe it; with the default</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> handler the program would stop here, which is what it is for. </span><span style="color: #74747c">*/</span>
+    proven_mem_mut_t impossible <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_alloc_or_panic</span>(<span style="color: #d73948">&amp;</span>arena, <span style="color: #d73948">sizeof</span> storage <span style="color: #d73948">*</span> <span style="color: #b60157">2</span>);
+    (<span style="color: #d73948">void</span>)impossible;   <span style="color: #74747c">/*</span><span style="color: #74747c"> after a handler returns, this block means nothing </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(g_panics <span style="color: #d73948">==</span> <span style="color: #b60157">1</span>, <span style="color: #198810">"</span><span style="color: #198810">exhausting the arena through _or_panic must panic</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(g_last_panic[<span style="color: #b60157">0</span>] <span style="color: #d73948">!=</span> <span style="color: #198810">'</span><span style="color: #1d6c76">\0</span><span style="color: #198810">'</span>, <span style="color: #198810">"</span><span style="color: #198810">the handler receives a message naming the call</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">printf</span>(<span style="color: #198810">"</span><span style="color: #198810">panic handler saw: </span><span style="color: #b60157">%s</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>, g_last_panic);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Passing NULL puts the default trapping handler back. Leaving a test</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> handler installed turns a real failure into silent corruption. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">proven_set_panic_handler</span>(<span style="color: #d73948">NULL</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- 2. growing the most recent block in place ------------------------ </span><span style="color: #74747c">*/</span>
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> A parser that reads a header, then discovers the body is longer than it</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> guessed, wants to extend the buffer it just took - not copy it. </span><span style="color: #74747c">*/</span>
+    proven_result_mem_mut_t buf <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_alloc_aligned</span>(<span style="color: #d73948">&amp;</span>arena, <span style="color: #b60157">32</span>, <span style="color: #4b69c6">alignof</span>(proven_u32));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(buf.err), <span style="color: #198810">"</span><span style="color: #198810">the initial 32-byte buffer must fit</span><span style="color: #198810">"</span>);
+
+    proven_size_t before <span style="color: #d73948">=</span> arena.offset;
+    proven_result_mem_mut_t grown <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_realloc_aligned</span>(<span style="color: #d73948">&amp;</span>arena, buf.value.ptr, <span style="color: #b60157">32</span>, <span style="color: #b60157">96</span>, <span style="color: #4b69c6">alignof</span>(proven_u32));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(grown.err), <span style="color: #198810">"</span><span style="color: #198810">growing the most recent block must succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(grown.value.ptr <span style="color: #d73948">==</span> buf.value.ptr,
+                    <span style="color: #198810">"</span><span style="color: #198810">the most recent block grows in place: same address, no copy</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(arena.offset <span style="color: #d73948">==</span> before <span style="color: #d73948">+</span> <span style="color: #b60157">64</span>, <span style="color: #198810">"</span><span style="color: #198810">only the extra 64 bytes were taken</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The in-place path is available only for the block allocated LAST. Take</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> another block, and the earlier one can no longer be extended where it</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> stands - the arena copies it to the end instead, and the old bytes are</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> dead until the next reset. Correct either way; just not free. </span><span style="color: #74747c">*/</span>
+    proven_result_mem_mut_t other <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_alloc</span>(<span style="color: #d73948">&amp;</span>arena, <span style="color: #b60157">16</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(other.err), <span style="color: #198810">"</span><span style="color: #198810">a second block must fit</span><span style="color: #198810">"</span>);
+    proven_result_mem_mut_t moved <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_realloc_aligned</span>(<span style="color: #d73948">&amp;</span>arena, grown.value.ptr, <span style="color: #b60157">96</span>, <span style="color: #b60157">128</span>, <span style="color: #4b69c6">alignof</span>(proven_u32));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(moved.err), <span style="color: #198810">"</span><span style="color: #198810">growing an older block must still succeed</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(moved.value.ptr <span style="color: #d73948">!=</span> grown.value.ptr, <span style="color: #198810">"</span><span style="color: #198810">but it is relocated, not extended</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- 3. the arena behind a counting wrapper --------------------------- </span><span style="color: #74747c">*/</span>
+
+    <span style="color: #4b69c6">proven_arena_reset</span>(<span style="color: #d73948">&amp;</span>arena);
+
+    counting_ctx_t counted <span style="color: #d73948">=</span> { .arena <span style="color: #d73948">=</span> <span style="color: #d73948">&amp;</span>arena };
+    proven_allocator_t alloc <span style="color: #d73948">=</span> {
+        .ctx        <span style="color: #d73948">=</span> <span style="color: #d73948">&amp;</span>counted,
+        .alloc_fn   <span style="color: #d73948">=</span> counting_alloc,
+        .realloc_fn <span style="color: #d73948">=</span> counting_realloc,
+        .free_fn    <span style="color: #d73948">=</span> counting_free,
+    };
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_alloc_is_valid</span>(alloc), <span style="color: #198810">"</span><span style="color: #198810">all three function pointers must be present</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Any part of the library that takes an allocator now runs through the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> wrapper, unchanged and unaware. </span><span style="color: #74747c">*/</span>
+    proven_result_u8str_t s <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_create</span>(alloc, <span style="color: #b60157">16</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(s.err), <span style="color: #198810">"</span><span style="color: #198810">creating a string through the wrapper must succeed</span><span style="color: #198810">"</span>);
+
+    proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append_grow</span>(alloc, <span style="color: #d73948">&amp;</span>s.value, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">a line long enough to need more room</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">appending past the initial capacity must succeed</span><span style="color: #198810">"</span>);
+
+    <span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>s.value);
+
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(counted.alloc_calls <span style="color: #d73948">>=</span> <span style="color: #b60157">1</span>, <span style="color: #198810">"</span><span style="color: #198810">the wrapper saw the string being created</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(counted.free_calls <span style="color: #d73948">>=</span> <span style="color: #b60157">1</span>, <span style="color: #198810">"</span><span style="color: #198810">and saw it being destroyed</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">printf</span>(<span style="color: #198810">"</span><span style="color: #198810">counting allocator: </span><span style="color: #b60157">%zu</span><span style="color: #198810"> alloc call(s), </span><span style="color: #b60157">%zu</span><span style="color: #198810"> free call(s), </span><span style="color: #b60157">%zu</span><span style="color: #198810"> bytes handed out</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>,
+           (<span style="color: #4b69c6">size_t</span>)counted.alloc_calls, (<span style="color: #4b69c6">size_t</span>)counted.free_calls, (<span style="color: #4b69c6">size_t</span>)counted.live_bytes);
+
+    <span style="color: #4b69c6">proven_arena_destroy</span>(<span style="color: #d73948">&amp;</span>arena);
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><p>반례 — 시험용 패닉 핸들러를 설치한 채 두는 경우:</p><pre><code data-lang="text">proven_set_panic_handler(record_panic);   /* returns instead of stopping */
+/* ... the rest of the program ... */     /* wrong: no restore */</code></pre><p>돌아오는 핸들러는 이후의 모든 메모리 부족 패닉을, 널 블록을 돌려주고 계속 진행하는 호출로 바꾼다. 시험할 코드 주위에서만 설치하고, <code>proven_set_panic_handler(NULL)</code>로 기본값을 되돌린다.</p><p>반례 — 돌아온 핸들러 뒤에서 그 블록을 쓰는 경우:</p><pre><code data-lang="text">proven_mem_mut_t m = proven_arena_alloc_or_panic(&amp;arena, huge);
+memset(m.ptr, 0, huge);   /* wrong: m.ptr is null if the handler returned */</code></pre><p>반례 — 셋 중 하나를 빠뜨린 래퍼:</p><pre><code data-lang="text">proven_allocator_t alloc = { .ctx = &amp;counted, .alloc_fn = counting_alloc };  /* wrong */</code></pre><p><code>proven_alloc_is_valid()</code>는 이것에 false를 돌려주고, 이 할당자를 통한 첫 <code>realloc</code>이나 <code>destroy</code>는 널 포인터를 호출한다. 둘은 그저 전달만 하더라도 셋을 모두 채운다.</p>
+<div class="nav"><a href="manual-01-foundation.html">← 1 · 기초</a><a href="manual-03-strings-text.html">3 · 문자열과 텍스트 →</a></div>
+</div></main>
+</div>
+<script>(function(){var b=document.querySelector('.here-btn'),p=document.getElementById('here-panel');function open(o){if(!p)return;p.hidden=!o;if(b)b.setAttribute('aria-expanded',o);}if(b)b.addEventListener('click',function(){open(p.hidden);});if(p)p.addEventListener('click',function(e){if(e.target.tagName==='A'&&(e.target.getAttribute('href')||'').charAt(0)==='#')open(false);});document.addEventListener('keydown',function(e){if(e.key==='Escape')open(false);});var box=document.getElementById('setbox'),so=document.getElementById('set-open');if(!box||!so)return;var r=document.documentElement;function load(){try{return JSON.parse(localStorage.getItem('pcl-read')||'{}');}catch(e){return {};}}function save(s){try{localStorage.setItem('pcl-read',JSON.stringify(s));}catch(e){}}function css(n){return getComputedStyle(r).getPropertyValue(n).trim();}function hex(v){var m=v.match(/^rgba?\((\d+)[ ,]+(\d+)[ ,]+(\d+)/);if(!m)return v.charAt(0)==='#'?v:'#000000';return '#'+[1,2,3].map(function(i){return ('0'+parseInt(m[i],10).toString(16)).slice(-2);}).join('');}function paint(){var s=load();document.getElementById('s-width').checked=!!s.width;var t=s.theme||'auto';[].forEach.call(box.querySelectorAll('.segb'),function(x){x.setAttribute('aria-pressed',x.dataset.theme===t);});document.getElementById('s-fg').value=s.fg||hex(css('--fg'));document.getElementById('s-bg').value=s.bg||hex(css('--bg'));document.getElementById('s-link').value=s.link||hex(css('--link'));}so.addEventListener('click',function(){box.hidden=!box.hidden;so.setAttribute('aria-expanded',!box.hidden);if(!box.hidden)paint();});document.getElementById('s-width').addEventListener('change',function(){var s=load();s.width=this.checked;save(s);if(s.width)r.setAttribute('data-measure','on');else r.removeAttribute('data-measure');});[].forEach.call(box.querySelectorAll('.segb'),function(x){x.addEventListener('click',function(){var s=load();s.theme=x.dataset.theme;delete s.fg;delete s.bg;delete s.link;save(s);['--fg','--bg','--link'].forEach(function(n){r.style.removeProperty(n);});if(s.theme==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',s.theme);setTimeout(paint,0);});});[['s-fg','--fg','fg'],['s-bg','--bg','bg'],['s-link','--link','link']].forEach(function(a){document.getElementById(a[0]).addEventListener('input',function(){var s=load();s[a[2]]=this.value;save(s);r.style.setProperty(a[1],this.value);});});})();</script>
+<script>
+(function(){
+  var q=document.getElementById('q'), out=document.getElementById('qr');
+  if(!q||!out) return;
+  var data=null, NONE="\ucc3e\uc740 \uac83\uc774 \uc5c6\uc2b5\ub2c8\ub2e4";
+  function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+  function run(){
+    var v=q.value.trim().toLowerCase();
+    out.innerHTML='';
+    if(!v||!data) return;
+    var exact=[], starts=[], rest=[];
+    for(var i=0;i<data.length;i++){
+      var name=data[i][0].toLowerCase(), at=name.indexOf(v);
+      if(at<0) continue;
+      if(name===v) exact.push(data[i]);
+      else if(at===0) starts.push(data[i]);
+      else rest.push(data[i]);
+    }
+    var hits=exact.concat(starts,rest).slice(0,40);
+    if(!hits.length){ out.innerHTML='<li>'+NONE+'</li>'; return; }
+    out.innerHTML=hits.map(function(h){
+      var label=h[3]==='fn' ? '<code>'+esc(h[0])+'</code>' : esc(h[0]);
+      return '<li><a href="'+h[1]+'">'+label+'</a>'+
+             (h[2]?'<span class="where">'+esc(h[2])+'</span>':'')+'</li>';
+    }).join('');
+  }
+  q.addEventListener('input',function(){
+    if(data){ run(); return; }
+    fetch('search-index.json').then(function(r){return r.json();})
+      .then(function(j){ data=j; run(); })
+      .catch(function(){ out.innerHTML='<li>'+NONE+'</li>'; });
+  });
+})();
+</script>
+</body>
+</html>
