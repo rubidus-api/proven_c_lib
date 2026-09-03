@@ -114,13 +114,46 @@ PY
     echo "release: created release $rel_id"
 fi
 
+# An upload that is refused must say so. The first version of this printed "uploaded" with the
+# status code beside it and carried on, so a 422 - the code GitHub returns when an asset of that
+# name is already there - read as success. A release that silently kept an older artefact than
+# the one just built is exactly the failure the gates above exist to prevent.
+upload_failed=0
 for f in "$dist/$version-en-manual.pdf" "$dist/$version-ko-manual.pdf" "$dist/$version.zip"; do
     name=$(basename "$f")
-    curl -sS -X POST -H "Authorization: token $tok" \
-         -H "Content-Type: application/octet-stream" \
-         --data-binary @"$f" \
-         "https://uploads.github.com/repos/$repo/releases/$rel_id/assets?name=$name" \
-         -o /dev/null -w "  uploaded $name (%{http_code})\n"
+    code=$(curl -sS -X POST -H "Authorization: token $tok" \
+                -H "Content-Type: application/octet-stream" \
+                --data-binary @"$f" \
+                "https://uploads.github.com/repos/$repo/releases/$rel_id/assets?name=$name" \
+                -o /dev/null -w "%{http_code}")
+    case "$code" in
+        201) echo "  uploaded $name" ;;
+        422)
+            # Already present. Same name is not the same bytes, so say which it is rather than
+            # assuming: an asset from an earlier build of the same tag has to be replaced.
+            existing=$(api "https://api.github.com/repos/$repo/releases/$rel_id/assets" |
+                python3 -c "import json,sys
+name=sys.argv[1]
+for a in json.load(sys.stdin):
+    if a['name'] == name:
+        print(a['id'], a['size']); break" "$name")
+            set -- $existing
+            if [ "${2:-}" = "$(wc -c < "$f")" ]; then
+                echo "  already present, same size: $name"
+            else
+                echo "  replacing $name (uploaded ${2:-?} bytes, built $(wc -c < "$f"))"
+                api -X DELETE "https://api.github.com/repos/$repo/releases/assets/${1:-0}" >/dev/null
+                code=$(curl -sS -X POST -H "Authorization: token $tok" \
+                            -H "Content-Type: application/octet-stream" \
+                            --data-binary @"$f" \
+                            "https://uploads.github.com/repos/$repo/releases/$rel_id/assets?name=$name" \
+                            -o /dev/null -w "%{http_code}")
+                [ "$code" = "201" ] || { echo "  FAILED to replace $name ($code)" >&2; upload_failed=1; }
+            fi
+            ;;
+        *) echo "  FAILED $name ($code)" >&2; upload_failed=1 ;;
+    esac
 done
+[ "$upload_failed" = "0" ] || { echo "release: an asset did not upload - the release is incomplete" >&2; exit 1; }
 
 echo "release: https://github.com/$repo/releases/tag/$tag"
