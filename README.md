@@ -380,7 +380,7 @@ result was mostly a list of things already done and one genuine gap.
 sized, checked, and explicit. But `proven` is not a libc replacement and does not want your
 `main`. It has no global state, starts no threads, registers no `atexit` handler, and allocates
 nothing you did not hand it an allocator for. Use one module, or all of them, beside whatever else
-you already link. [Appendix D](manual/manual-00-start-here.md#7-appendix-d-the-libc-map) maps the
+you already link. [Appendix D](manual/manual-00-start-here.md#15-appendix-d-the-libc-map) maps the
 libc call you know to what to use instead — and why it differs.
 
 **To be pleasant for a person and safe for a person working with an AI.** Explicit is more
@@ -705,7 +705,7 @@ What you accept, and should not expect:
 
 ## Documentation
 
-- User manual: `manual/manual.md` (chapters under `manual/`)
+- User manual: `manual/manual.md` (the contents page; the chapters are the files beside it under `manual/`)
 - Korean manual (한국어 매뉴얼): `manual-ko/manual-ko.md`
 - Freestanding guide: `manual/manual-freestanding.md`
 - Web and PDF editions: `docs/en/`, `docs/ko/`, built from the Markdown above by
