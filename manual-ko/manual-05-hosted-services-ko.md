@@ -1821,23 +1821,22 @@ int main(void) {
 <!-- example: manual/examples/ko/ex_05_fs_durable.c -->
 ```c
 /*
- * Updating a file so that a power cut cannot leave it half-written.
+ * 정전이 파일을 반쯤 쓰인 채로 남겨 두지 못하게 하며 파일을 고치기.
  *
- * The recipe is old and every part of it is load-bearing:
+ * 조리법은 오래되었고, 그 모든 걸음이 하중을 받는다.
  *
- *   1. write the new contents to a TEMPORARY file beside the real one,
- *   2. proven_fs_sync   - the new file's bytes are now on the device,
- *   3. proven_fs_rename - the name flips to the new file in one step; a reader
- *                         sees either the whole old file or the whole new one,
- *   4. proven_fs_sync_dir - the rename itself is now on the device.
+ *   1. 새 내용을 진짜 파일 옆의 *임시* 파일에 쓴다,
+ *   2. proven_fs_sync   - 이제 새 파일의 바이트가 장치에 있다,
+ *   3. proven_fs_rename - 이름이 한 걸음에 새 파일로 넘어간다. 읽는 쪽은 옛 파일 전체나
+ *                         새 파일 전체를 보지, 그 사이를 보지 않는다,
+ *   4. proven_fs_sync_dir - 이제 그 이름 바꾸기 자체가 장치에 있다.
  *
- * Skip step 2 and the rename can publish a file whose contents never arrived.
- * Skip step 4 and the contents are safe under a name that may not be. Neither
- * failure shows up in testing; both show up in production, once.
+ * 2를 건너뛰면 내용이 도착한 적 없는 파일을 이름이 공표할 수 있다. 4를 건너뛰면 내용은
+ * 안전한데 그 이름이 안전하지 않을 수 있다. 둘 다 시험에서는 드러나지 않는다. 둘 다
+ * 운영에서, 한 번, 드러난다.
  *
- * The same program also shows the record-level calls - seek/tell, pread/pwrite,
- * truncate - and the advisory lock that stops two copies of the program doing
- * all this at the same time.
+ * 이 프로그램은 레코드 단위 호출들 - seek/tell, pread/pwrite, truncate - 과, 이 모든
+ * 일을 두 벌의 프로그램이 동시에 하지 못하게 막는 권고 잠금도 함께 보인다.
  */
 
 typedef struct {
@@ -1857,11 +1856,10 @@ int main(void) {
     proven_u8str_view_t temp = PROVEN_LIT("proven_example_durable.dat.new");
     proven_u8str_view_t here = PROVEN_LIT(".");
 
-    /* is_absolute answers a question worth asking before you join paths or
-     * resolve one against a base directory: does this path already start from
-     * the root? The rule differs per platform - a leading '/' here, a drive
-     * letter or a UNC prefix on Windows - which is exactly why it is a call and
-     * not a comparison against '/'. */
+    /* is_absolute 는 경로를 잇거나 기준 디렉터리에 대고 풀기 전에 물어 둘 값어치가 있는
+     * 물음에 답한다 - 이 경로가 이미 뿌리에서 시작하는가? 규칙은 플랫폼마다 다르다 -
+     * 여기서는 앞의 '/', 윈도에서는 드라이브 문자나 UNC 접두사 - 그리고 바로 그 때문에
+     * 이것은 '/' 와의 비교가 아니라 호출이다. */
     EXAMPLE_REQUIRE(!proven_fs_is_absolute(live), "the working paths in this example are relative");
     EXAMPLE_REQUIRE(proven_fs_is_absolute(PROVEN_LIT("/etc/hosts")), "a leading slash is absolute on POSIX");
 
@@ -1870,7 +1868,7 @@ int main(void) {
         { .id = 3, .score = 30 }, { .id = 4, .score = 40 },
     };
 
-    /* --- an ordinary first write ------------------------------------------ */
+    /* --- 평범한 첫 쓰기 ---------------------------------------------------- */
 
     proven_result_file_t f = proven_fs_open(alloc, live, PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
     EXAMPLE_REQUIRE(proven_is_ok(f.err), "creating the data file must succeed");
@@ -1881,45 +1879,42 @@ int main(void) {
     err = proven_fs_close(f.value);
     EXAMPLE_REQUIRE(proven_is_ok(err), "closing after a write must succeed");
 
-    /* --- an advisory lock, so two copies do not interleave ---------------- */
+    /* --- 두 벌이 서로 끼어들지 못하게 하는 권고 잠금 ----------------------- */
 
     proven_result_file_t rw = proven_fs_open(alloc, live, PROVEN_FS_READ | PROVEN_FS_WRITE);
     EXAMPLE_REQUIRE(proven_is_ok(rw.err), "reopening for update must succeed");
     if (!proven_is_ok(rw.err)) return 1;
 
-    /* An EXCLUSIVE lock keeps every other process that also asks for one out.
-     * "Advisory" means exactly that: it stops cooperating programs, and a
-     * program that never asks for the lock is not affected. `wait = false`
-     * returns immediately rather than blocking - the right choice when you have
-     * something else to do, and the only safe choice when the other holder
-     * might be waiting on you. */
+    /* *배타* 잠금은 같은 것을 청하는 다른 모든 프로세스를 밖에 세운다. "권고" 는 말
+     * 그대로다. 협조하는 프로그램을 막을 뿐, 잠금을 아예 청하지 않는 프로그램에는 아무
+     * 영향이 없다. `wait = false` 는 막지 않고 곧바로 돌아온다 - 달리 할 일이 있을 때
+     * 옳은 선택이고, 잠금을 쥔 쪽이 여러분을 기다리고 있을 수 있을 때는 유일하게 안전한
+     * 선택이다. */
     err = proven_fs_lock(rw.value, PROVEN_FS_LOCK_EXCLUSIVE, false);
     EXAMPLE_REQUIRE(proven_is_ok(err), "taking the exclusive lock must succeed when nobody holds it");
 
-    /* --- reading and writing one record, by offset ------------------------ */
+    /* --- 레코드 하나를, 위치를 지정해 읽고 쓰기 --------------------------- */
 
-    /* pread reads at an absolute offset and does NOT move the file position.
-     * That is what makes it safe to use from two threads sharing one handle:
-     * there is no shared cursor for them to race on. */
+    /* pread 는 절대 위치에서 읽고 파일 위치를 옮기지 *않는다*. 그래서 손잡이 하나를
+     * 나눠 쓰는 두 스레드에서도 안전하다 - 그들이 다툴 공유 커서가 없다. */
     record_t third = {0};
     proven_mem_mut_t into = { .ptr = (proven_byte_t *)&third, .size = sizeof third };
     proven_result_size_t got = proven_fs_pread(rw.value, into, 2 * sizeof(record_t));
     EXAMPLE_REQUIRE(proven_is_ok(got.err) && got.value == sizeof third, "reading record 2 must succeed");
     EXAMPLE_REQUIRE(third.id == 3 && third.score == 30, "and yield the record that was written there");
 
-    /* tell reports the position; after a pread it has not moved. */
+    /* tell 은 위치를 알려 준다. pread 뒤에도 그것은 움직이지 않았다. */
     proven_result_u64_t pos = proven_fs_tell(rw.value);
     EXAMPLE_REQUIRE(proven_is_ok(pos.err) && pos.val == 0, "pread must not move the file position");
 
-    /* pwrite updates that record in place, again without touching the cursor. */
+    /* pwrite 는 그 레코드를 제자리에서 고친다. 이번에도 커서는 건드리지 않는다. */
     third.score = 99;
     proven_mem_view_t out_view = { .ptr = (const proven_byte_t *)&third, .size = sizeof third };
     proven_result_size_t put = proven_fs_pwrite(rw.value, out_view, 2 * sizeof(record_t));
     EXAMPLE_REQUIRE(proven_is_ok(put.err) && put.value == sizeof third, "writing record 2 back must succeed");
 
-    /* seek is the cursor-moving alternative, and it returns the position it
-     * arrived at. Seeking from the END with a negative offset is how you find
-     * the last record without knowing the file length first. */
+    /* seek 은 커서를 옮기는 쪽이고, 도착한 위치를 돌려준다. 음수 오프셋으로 *끝*에서
+     * seek 하는 것이 파일 길이를 먼저 알지 않고 마지막 레코드를 찾는 방법이다. */
     proven_result_u64_t last = proven_fs_seek(rw.value, -(proven_i64)sizeof(record_t), PROVEN_FS_SEEK_END);
     EXAMPLE_REQUIRE(proven_is_ok(last.err), "seeking to the last record must succeed");
     EXAMPLE_REQUIRE(last.val == 3 * sizeof(record_t), "which is three records in");
@@ -1927,32 +1922,30 @@ int main(void) {
     pos = proven_fs_tell(rw.value);
     EXAMPLE_REQUIRE(proven_is_ok(pos.err) && pos.val == last.val, "tell agrees with the seek result");
 
-    /* truncate sets the length directly. Dropping the last record is one call
-     * and O(1); the old way - read everything, write back the part you keep -
-     * was an O(n) copy for an operation the filesystem does by adjusting a
-     * number. */
+    /* truncate 는 길이를 곧장 정한다. 마지막 레코드를 버리는 것이 호출 하나에 O(1) 이다.
+     * 옛날 방식 - 전부 읽고 남길 부분을 다시 쓰기 - 은 파일 시스템이 수 하나를 고쳐서
+     * 하는 일에 O(n) 복사를 치르는 것이었다. */
     err = proven_fs_truncate(rw.value, 3 * sizeof(record_t));
     EXAMPLE_REQUIRE(proven_is_ok(err), "truncating to three records must succeed");
     proven_result_size_t size = proven_fs_size(rw.value);
     EXAMPLE_REQUIRE(proven_is_ok(size.err) && size.value == 3 * sizeof(record_t),
                     "the file is now exactly three records long");
 
-    /* Release the lock explicitly. Closing the handle would also drop it, but
-     * saying so keeps the critical section visible in the code. */
+    /* 잠금을 명시적으로 푼다. 손잡이를 닫아도 풀리지만, 그렇다고 적어 두면 임계 구역이
+     * 코드에 눈에 보인 채로 남는다. */
     err = proven_fs_lock(rw.value, PROVEN_FS_LOCK_UNLOCK, false);
     EXAMPLE_REQUIRE(proven_is_ok(err), "releasing the lock must succeed");
     err = proven_fs_close(rw.value);
     EXAMPLE_REQUIRE(proven_is_ok(err), "closing the update handle must succeed");
 
-    /* --- the durable replace ---------------------------------------------- */
+    /* --- 견디는 바꿔치기 --------------------------------------------------- */
 
     static const record_t replacement[] = {
         { .id = 1, .score = 11 }, { .id = 2, .score = 22 },
     };
 
-    /* 1. Write the new contents beside the old file. CREATE_NEW refuses if the
-     *    temporary name already exists, which is how a leftover from a crashed
-     *    run is noticed instead of silently reused. */
+    /* 1. 새 내용을 옛 파일 옆에 쓴다. CREATE_NEW 는 임시 이름이 이미 있으면 거부하고,
+     *    그것이 죽어 버린 실행이 남긴 찌꺼기를 조용히 재사용하지 않고 알아채는 방법이다. */
     proven_result_file_t tmp = proven_fs_open(alloc, temp,
                                               PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
     EXAMPLE_REQUIRE(proven_is_ok(tmp.err), "creating the temporary file must succeed");
@@ -1961,22 +1954,22 @@ int main(void) {
     err = write_records(tmp.value, replacement, 2);
     EXAMPLE_REQUIRE(proven_is_ok(err), "writing the new contents must succeed");
 
-    /* 2. Push those bytes all the way to the storage device. This is expensive
-     *    and meant to be: you are buying the guarantee that the data exists
-     *    after a power cut, and the price is a real trip to the device. */
+    /* 2. 그 바이트를 저장 장치까지 끝까지 밀어 준다. 값이 비싸고, 비싸야 마땅하다.
+     *    정전 뒤에도 자료가 있다는 보장을 사는 것이고, 그 값은 장치까지 실제로 다녀오는
+     *    일이다. */
     err = proven_fs_sync(tmp.value);
     EXAMPLE_REQUIRE(proven_is_ok(err), "syncing the new file's data must succeed");
 
     err = proven_fs_close(tmp.value);
     EXAMPLE_REQUIRE(proven_is_ok(err), "closing the temporary file must succeed");
 
-    /* 3. Flip the name. A rename within one directory is atomic: any reader
-     *    sees the old file or the new one, never a partial write. */
+    /* 3. 이름을 넘긴다. 한 디렉터리 안의 rename 은 원자적이다. 읽는 쪽은 옛 파일이나 새
+     *    파일을 보지, 반쯤 쓰인 것을 보지 않는다. */
     err = proven_fs_rename(alloc, temp, live);
     EXAMPLE_REQUIRE(proven_is_ok(err), "renaming the temporary file over the live one must succeed");
 
-    /* 4. Make the rename itself durable. Until the directory reaches the device,
-     *    the new contents are safe under a name that might not be. */
+    /* 4. 그 이름 바꾸기 자체를 견디게 만든다. 디렉터리가 장치에 닿기 전까지는, 새 내용이
+     *    안전하지 않을 수도 있는 이름 아래에 안전하게 있는 것이다. */
     err = proven_fs_sync_dir(alloc, here);
     EXAMPLE_REQUIRE(proven_is_ok(err), "syncing the directory must succeed");
 
@@ -1988,17 +1981,17 @@ int main(void) {
     err = proven_fs_close(check.value);
     EXAMPLE_REQUIRE(proven_is_ok(err), "closing the verification handle must succeed");
 
-    /* --- copies, and the two kinds of link -------------------------------- */
+    /* --- 복사, 그리고 두 가지 링크 ---------------------------------------- */
 
-    /* copy duplicates the bytes: two independent files from here on. The
-     * allocator is for the temporary buffer the copy moves data through. */
+    /* copy 는 바이트를 복제한다. 이제부터는 서로 독립인 파일 둘이다. 할당자는 복사가
+     * 자료를 옮겨 가는 임시 버퍼를 위한 것이다. */
     proven_u8str_view_t backup = PROVEN_LIT("proven_example_durable.bak");
     err = proven_fs_copy(alloc, live, backup);
     EXAMPLE_REQUIRE(proven_is_ok(err), "copying the file must succeed");
 
-    /* A HARD link is a second name for the same file. There is no original: the
-     * data lives until the last name is removed. Both names must be on the same
-     * filesystem, because a name and its data cannot span two. */
+    /* *하드* 링크는 같은 파일의 두 번째 이름이다. 원본이라는 것이 없다. 자료는 마지막
+     * 이름이 지워질 때까지 산다. 두 이름은 같은 파일 시스템에 있어야 한다. 이름과 그
+     * 자료가 둘에 걸칠 수는 없기 때문이다. */
     proven_u8str_view_t hard = PROVEN_LIT("proven_example_durable.hard");
     err = proven_fs_link(alloc, live, hard);
     EXAMPLE_REQUIRE(proven_is_ok(err), "creating a hard link must succeed");
@@ -2009,9 +2002,9 @@ int main(void) {
     EXAMPLE_REQUIRE(st_live.ino == st_hard.ino && st_live.dev == st_hard.dev,
                     "both names refer to the same file, which is what a hard link means");
 
-    /* A SYMBOLIC link is a small file holding a path. It may point at something
-     * on another filesystem, and it may point at nothing at all - following it
-     * then fails, which a hard link can never do. */
+    /* *심볼릭* 링크는 경로를 담은 작은 파일이다. 다른 파일 시스템의 무언가를 가리킬 수도
+     * 있고, 아무것도 아닌 것을 가리킬 수도 있다 - 그때 따라가기는 실패하는데, 하드 링크는
+     * 결코 그럴 수 없다. */
     proven_u8str_view_t soft = PROVEN_LIT("proven_example_durable.link");
     err = proven_fs_symlink(alloc, live, soft);
     EXAMPLE_REQUIRE(proven_is_ok(err), "creating a symbolic link must succeed");
@@ -2021,15 +2014,15 @@ int main(void) {
                     "stat follows the symbolic link to its target");
     EXAMPLE_REQUIRE(st_soft.size == st_live.size, "so it reports the target's size");
 
-    /* --- directories, and cleaning up ------------------------------------- */
+    /* --- 디렉터리, 그리고 뒷정리 ------------------------------------------ */
 
     proven_u8str_view_t dir = PROVEN_LIT("proven_example_durable_dir");
     err = proven_fs_mkdir(alloc, dir);
     EXAMPLE_REQUIRE(proven_is_ok(err), "creating a directory must succeed");
 
-    /* rmdir removes an EMPTY directory only. That refusal is a feature: a
-     * recursive delete is a decision the caller should have to make explicitly,
-     * not something a stray path argument can trigger. */
+    /* rmdir 은 *빈* 디렉터리만 지운다. 그 거부가 기능이다. 재귀 삭제는 부르는 쪽이
+     * 명시적으로 내려야 하는 결정이지, 잘못 들어온 경로 인자 하나가 일으킬 수 있는 일이
+     * 아니다. */
     proven_u8str_view_t inside = PROVEN_LIT("proven_example_durable_dir/file.txt");
     proven_result_file_t child = proven_fs_open(alloc, inside, PROVEN_FS_WRITE | PROVEN_FS_CREATE);
     EXAMPLE_REQUIRE(proven_is_ok(child.err), "creating a file inside it must succeed");
@@ -2499,29 +2492,27 @@ memcpy((char *)m.value.ptr + 4096, data, n);                            /* wrong
 #include <string.h>
 
 /*
- * The other example shows which generator to pick. This one is about the layer
- * underneath: where the randomness comes FROM, and how to write code that does
- * not care.
+ * 다른 예제는 어느 생성기를 고를지를 보인다. 이것은 그 밑의 층에 대한 것이다. 난수가
+ * *어디서* 오는가, 그리고 그것을 신경 쓰지 않는 코드를 어떻게 쓰는가.
  *
- *   proven_rng_t is a source of random bytes as a pair of pointers - a small
- *   table of functions and the generator state they work on. Code that takes a
- *   proven_rng_t works with the OS generator, with ChaCha20, with xoshiro, and
- *   with a fake you wrote for a test, without a line of change.
+ *   proven_rng_t 는 난수 바이트의 원천을 포인터 한 쌍으로 나타낸 것이다 - 작은 함수
+ *   표와 그 함수들이 다룰 생성기 상태. proven_rng_t 를 받는 코드는 OS 생성기에서도,
+ *   ChaCha20 에서도, xoshiro 에서도, 시험용으로 여러분이 지어낸 가짜에서도 한 줄도
+ *   고치지 않고 돈다.
  *
- *   proven_random_set_source is the layer below THAT: where the raw entropy a
- *   generator is seeded from comes from. A hosted program already has one - the
- *   operating system's - and should leave it alone. A bare-metal program has
- *   none, and this is the hook where its hardware source is installed.
+ *   proven_random_set_source 는 *그보다* 아래 층이다. 생성기가 씨를 받는 날 엔트로피가
+ *   어디서 오는가. 호스트가 있는 프로그램에는 이미 하나가 있고 - 운영체제의 것 - 그대로
+ *   두어야 한다. 베어메탈 프로그램에는 없고, 그 기계의 하드웨어 원천을 다는 자리가
+ *   이 고리다.
  *
- * The fixed-seed part matters more than it looks: a cryptographic generator
- * seeded from a KNOWN seed produces a known sequence, which is what makes a
- * test that involves randomness reproducible instead of "fails once a week".
+ * 고정된 씨앗 부분은 보기보다 중요하다. *알려진* 씨앗으로 씨를 뿌린 암호용 생성기는
+ * 알려진 수열을 내놓고, 그것이 난수가 끼는 시험을 "일주일에 한 번 실패" 가 아니라
+ * 재현 가능한 것으로 만든다.
  */
 
-/* A source of "entropy" that is not random at all: it counts. Nothing like this
- * belongs in a real program - see the counter-example in the chapter - but it
- * is exactly the right shape for showing how the hook works, and for a test
- * that must produce the same bytes every run. */
+/* 전혀 무작위가 아닌 "엔트로피" 원천이다. 그냥 센다. 이런 것이 실제 프로그램에 들어갈
+ * 자리는 없고 - 장의 반례를 볼 것 - 다만 이 고리가 어떻게 도는지 보이기에, 그리고 돌
+ * 때마다 같은 바이트를 내야 하는 시험에 딱 맞는 모양이다. */
 static bool counting_entropy(void *ctx, void *buf, proven_size_t len) {
     proven_u8 *next = (proven_u8 *)ctx;
     proven_u8 *out = (proven_u8 *)buf;
@@ -2531,7 +2522,7 @@ static bool counting_entropy(void *ctx, void *buf, proven_size_t len) {
     return true;
 }
 
-/* A function written against the trait. It never learns which generator it got. */
+/* 특성에 기대어 쓴 함수. 자기가 어느 생성기를 받았는지 끝내 알지 못한다. */
 static proven_u64 roll_total(proven_rng_t rng, int rolls) {
     proven_u64 sum = 0;
     for (int i = 0; i < rolls; ++i) {
@@ -2541,22 +2532,21 @@ static proven_u64 roll_total(proven_rng_t rng, int rolls) {
 }
 
 int main(void) {
-    /* --- 1. a source you can check before you use it ---------------------- */
+    /* --- 1. 쓰기 전에 확인할 수 있는 원천 --------------------------------- */
 
     proven_rng_t nothing = {0};
     EXAMPLE_REQUIRE(!proven_rng_is_valid(nothing), "a zero-initialised source is not a generator");
 
-    /* Drawing from an invalid source does not crash and does not invent a
-     * number: it returns 0. That is a defined, boring answer - but a stream of
-     * zeros is not randomness, so check the source once when you receive it
-     * rather than trusting every draw. */
+    /* 잘못된 원천에서 뽑아도 죽지 않고 수를 지어내지도 않는다. 0 을 돌려준다. 정의된,
+     * 심심한 답이다 - 그런데 0 의 연속은 난수가 아니므로, 뽑을 때마다 믿는 대신 받을 때
+     * 한 번 원천을 확인할 것. */
     EXAMPLE_REQUIRE(proven_rng_u64(nothing) == 0, "an invalid source yields 0, not a fabricated value");
 
-    /* --- 2. a cryptographic generator from a KNOWN seed ------------------- */
+    /* --- 2. *알려진* 씨앗에서 나온 암호용 생성기 --------------------------- */
 
-    /* proven_chacha_rng_seed takes the seed bytes directly, so the sequence is
-     * reproducible. That is what you want in a test and never in production:
-     * anyone who learns the seed knows every byte the generator will produce. */
+    /* proven_chacha_rng_seed 는 씨앗 바이트를 곧장 받으므로 수열이 재현된다. 시험에서는
+     * 그것이 원하는 바이고 운영에서는 결코 아니다. 씨앗을 알아낸 사람은 그 생성기가
+     * 내놓을 모든 바이트를 안다. */
     proven_byte_t seed[PROVEN_CHACHA_SEED_SIZE];
     memset(seed, 0xA5, sizeof seed);
 
@@ -2564,22 +2554,22 @@ int main(void) {
     proven_chacha_rng_seed(&a, seed);
     proven_chacha_rng_seed(&b, seed);
 
-    /* next returns one 64-bit word at a time. Two generators given the same
-     * seed walk the same sequence - which is the property the test relies on. */
+    /* next 는 한 번에 64비트 낱말 하나를 돌려준다. 같은 씨앗을 받은 생성기 둘은 같은
+     * 수열을 걷는다 - 시험이 기대는 성질이 그것이다. */
     proven_u64 first = proven_chacha_rng_next(&a);
     EXAMPLE_REQUIRE(first == proven_chacha_rng_next(&b), "the same seed replays the same sequence");
     EXAMPLE_REQUIRE(proven_chacha_rng_next(&a) == proven_chacha_rng_next(&b), "and keeps replaying it");
 
-    /* --- 3. using it through the trait ------------------------------------ */
+    /* --- 3. 특성을 통해 쓰기 ---------------------------------------------- */
 
     proven_rng_t rng = proven_chacha_rng(&a);
     EXAMPLE_REQUIRE(proven_rng_is_valid(rng), "a seeded generator makes a valid source");
 
     proven_u64 word = proven_rng_u64(rng);
-    (void)word;   /* any 64-bit value is a legal answer; there is nothing to assert about it */
+    (void)word;   /* 어떤 64비트 값이든 옳은 답이다. 단언할 것이 없다 */
 
-    /* fill is the bulk form: one call for a whole buffer, rather than a loop
-     * over 64-bit words that has to deal with the remainder itself. */
+    /* fill 은 무더기로 하는 꼴이다. 나머지를 스스로 처리해야 하는 64비트 낱말 반복문
+     * 대신, 버퍼 하나를 한 번의 호출로 채운다. */
     proven_byte_t nonce[12] = {0};
     proven_rng_fill(rng, nonce, sizeof nonce);
 
@@ -2589,8 +2579,7 @@ int main(void) {
     }
     EXAMPLE_REQUIRE(!all_zero, "filling from a seeded generator must produce something");
 
-    /* The same function, driven by two different generators. This is the only
-     * reason the trait exists. */
+    /* 같은 함수를, 서로 다른 생성기 둘이 굴린다. 이 특성이 존재하는 이유는 이것 하나다. */
     proven_chacha_rng_t c;
     proven_chacha_rng_seed(&c, seed);
     proven_u64 crypto_total = roll_total(proven_chacha_rng(&c), 50);
@@ -2602,25 +2591,24 @@ int main(void) {
     EXAMPLE_REQUIRE(crypto_total >= 50 && crypto_total <= 300, "50 dice must total between 50 and 300");
     EXAMPLE_REQUIRE(fast_total >= 50 && fast_total <= 300, "whichever generator produced them");
 
-    /* --- 4. one strong word, without holding a generator ------------------ */
+    /* --- 4. 생성기를 쥐지 않고 강한 낱말 하나 ----------------------------- */
 
-    /* proven_random_u64 draws straight from the entropy source. Convenient for
-     * a one-off - a table's hash key at startup, a request id - and the wrong
-     * tool for a loop, because each call costs a trip to the operating system.
-     * For bulk output, seed a generator once and draw from that. */
+    /* proven_random_u64 는 엔트로피 원천에서 곧장 뽑는다. 한 번뿐인 일에는 편하고 -
+     * 시작할 때 잡는 표의 해시 키, 요청 번호 - 반복문에는 틀린 도구다. 호출마다 운영체제로
+     * 다녀오는 값이 들기 때문이다. 무더기로 뽑을 때는 생성기에 한 번 씨를 뿌리고 거기서
+     * 뽑을 것. */
     proven_u64 one_off = proven_random_u64();
     proven_u64 another = proven_random_u64();
     EXAMPLE_REQUIRE(one_off != another || one_off != 0,
                     "two draws from the OS source are essentially never the same value");
 
-    /* --- 5. installing an entropy source ---------------------------------- */
+    /* --- 5. 엔트로피 원천 달기 -------------------------------------------- */
 
-    /* On a hosted target the operating system's source is already installed and
-     * you should leave it there. This hook exists for the bare-metal case,
-     * where the library cannot know that the board's entropy lives in a
-     * particular hardware register. Here it is installed with a deliberately
-     * fake source, purely to show the mechanism and to prove the switch took
-     * effect - a real one must be genuine hardware entropy. */
+    /* 호스트가 있는 대상에서는 운영체제의 원천이 이미 달려 있고 그대로 두어야 한다. 이
+     * 고리는 베어메탈을 위한 것이다. 거기서는 그 보드의 엔트로피가 어느 하드웨어
+     * 레지스터에 사는지 라이브러리가 알 길이 없다. 여기서는 일부러 가짜 원천을 달았다.
+     * 오직 그 장치를 보이고 갈아 끼우기가 먹혔음을 증명하기 위해서다 - 진짜는 진짜
+     * 하드웨어 엔트로피여야 한다. */
     proven_u8 counter = 0;
     proven_random_set_source(counting_entropy, &counter);
 
@@ -2629,8 +2617,8 @@ int main(void) {
     EXAMPLE_REQUIRE(drawn[0] == 0 && drawn[1] == 1 && drawn[2] == 2 && drawn[3] == 3,
                     "and it is the source we installed that answered");
 
-    /* Put the platform default back. Leaving a test source installed is how a
-     * program ends up generating predictable keys in production. */
+    /* 플랫폼 기본값을 되돌려 놓는다. 시험용 원천을 그대로 둔 채로 두는 것이, 프로그램이
+     * 운영에서 예측 가능한 키를 만들어 내게 되는 방법이다. */
     proven_random_set_source(NULL, NULL);
 
     proven_byte_t real[8] = {0};
