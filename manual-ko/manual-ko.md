@@ -1,4 +1,4 @@
-# Proven C 라이브러리 완전 매뉴얼 (v26.09.03a)
+# Proven C 라이브러리 완전 매뉴얼 (v26.09.04a)
 
 C23 시스템 라이브러리 `proven`의 매뉴얼입니다. 각 장은 `manual-ko/` 아래 파일 하나이며,
 영문판([`manual/`](../manual/manual.md))의 미러입니다. 코드와 API 계약을 빌드가 검증하는
@@ -22,7 +22,7 @@ C23 시스템 라이브러리 `proven`의 매뉴얼입니다. 각 장은 `manual
 
 - 지은이: rubidus — [rubidus@gmail.com](mailto:rubidus@gmail.com)
 - 저장소: [github.com/rubidus-api/proven_c_lib](https://github.com/rubidus-api/proven_c_lib)
-- 판: v26.09.03a
+- 판: v26.09.04a
 - 라이선스: MIT — Copyright (c) 2026 rubidus-api. 라이브러리와 이 매뉴얼은 같은 라이선스를
   따르며, 전문은 저장소 루트의 `LICENSE`에 있습니다.
 - 이 매뉴얼의 모든 코드 예제는 빌드가 컴파일하고, 인용된 예제는 실행까지 합니다.
