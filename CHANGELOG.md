@@ -11,6 +11,27 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [2026-09-04] - proven_c_lib-v26.09.04a
+
+### Changed
+
+- **The manual's front page is the contents and the copyright, nothing else.**
+  Each edition's index used to be the spine — intent, build model, global
+  contracts, the ownership matrix, behaviour classes, header map, platform
+  support — with the table of contents underneath. Now, like the book, the
+  index is the full contents (every chapter and every section) followed by the
+  copyright, and the ↑ button in every chapter lands there. The spine moved
+  into Chapter 0 as §6–§15, after the plain-language sections that always
+  referred to it as "the formal versions"; appendices B, C and D sit side by
+  side. Chapter 0's glossary, libc map and closing section renumber to 13, 15
+  and 16, and every link to the old anchors follows. Chapter 0 joins the
+  code-block gate in `nob.c` so the five blocks that moved stay checked.
+- **`docs/index.html`, the landing page above both editions, carries the full
+  contents of both** — every chapter and every section, linked into the
+  edition — instead of two bare language links. `scripts/site_root.py` writes
+  it from the contents each edition's build leaves behind; the link checker
+  follows its links and the web-font subset includes its characters.
+
 ## [2026-09-03] - proven_c_lib-v26.09.03a
 
 ### Added
