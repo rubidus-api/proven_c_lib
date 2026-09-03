@@ -77,6 +77,27 @@ static char *read_text_file(const char *path) {
 
 static bool word_char(char c) { return isalnum((unsigned char)c) || c == '_' || c == '-'; }
 
+/*
+ * The two editions quote the SAME program from different trees: the English
+ * chapters print manual/examples/en/X.c and the Korean ones print
+ * manual/examples/ko/X.c, so that each edition's comments are in its own
+ * language. Comparing the markers therefore compares the file NAME, not the
+ * whole path - what must match is which examples are shown, not which tree
+ * they came from.
+ */
+static const char *mark_basename(const char *mark) {
+    const char *slash = strrchr(mark, '/');
+    return slash ? slash + 1 : mark;
+}
+
+static bool have_mark_named(char marks[][MAX_MARK], int n, const char *mark) {
+    const char *want = mark_basename(mark);
+    for (int i = 0; i < n; ++i) {
+        if (strcmp(mark_basename(marks[i]), want) == 0) return true;
+    }
+    return false;
+}
+
 static bool have_mark(char list[][MAX_MARK], int n, const char *m) {
     for (int i = 0; i < n; ++i) if (strcmp(list[i], m) == 0) return true;
     return false;
@@ -193,13 +214,13 @@ int main(void) {
 
         int only_en = 0, only_ko = 0;
         for (int i = 0; i < g_en_mark_n; ++i) {
-            if (!have_mark(g_ko_marks, g_ko_mark_n, g_en_marks[i])) {
+            if (!have_mark_named(g_ko_marks, g_ko_mark_n, g_en_marks[i])) {
                 PROVEN_TEST_INFO("the Korean edition does not print {}", PROVEN_ARG(g_en_marks[i]));
                 ++only_en;
             }
         }
         for (int i = 0; i < g_ko_mark_n; ++i) {
-            if (!have_mark(g_en_marks, g_en_mark_n, g_ko_marks[i])) {
+            if (!have_mark_named(g_en_marks, g_en_mark_n, g_ko_marks[i])) {
                 PROVEN_TEST_INFO("the English edition does not print {}", PROVEN_ARG(g_ko_marks[i]));
                 ++only_ko;
             }

@@ -203,7 +203,7 @@ next pointer *before* the body runs, which is exactly why it exists.
 Compiled and run by the test suite. It builds a queue of stack-allocated tasks, walks it, removes
 one from inside a safe walk, and inserts in the middle — with no allocator anywhere in the program.
 
-<!-- example: manual/examples/ex_04_list.c -->
+<!-- example: manual/examples/en/ex_04_list.c -->
 ```c
 /*
  * An INTRUSIVE list puts the links inside your struct instead of allocating a
@@ -392,7 +392,7 @@ information about the *consumer*, and the loop that ignores it is a hang.
 
 Compiled and run by the test suite.
 
-<!-- example: manual/examples/ex_04_ring.c -->
+<!-- example: manual/examples/en/ex_04_ring.c -->
 ```c
 /*
  * A ring buffer is a fixed-size queue that never moves its contents and never
@@ -850,7 +850,7 @@ proven_sha256(data, digest);     /* writes 32 into a 16-byte buffer */
 
 Compiled and run by the test suite:
 
-<!-- example: manual/examples/ex_04_hash.c -->
+<!-- example: manual/examples/en/ex_04_hash.c -->
 ```c
 /*
  * Hashing, by use case. The module gives you exactly one function per job, so the only
@@ -1027,7 +1027,7 @@ odd-length input that cannot be a whole number of bytes.
 
 Compiled and run by the test suite:
 
-<!-- example: manual/examples/ex_04_encode.c -->
+<!-- example: manual/examples/en/ex_04_encode.c -->
 ```c
 /*
  * Bytes to text, by use case. The rule is the same one hashing follows: one function per job,
@@ -1318,7 +1318,7 @@ int *hit = proven_array_binary_search(&nums, &key, cmp_int);
 
 Compiled and run by the test suite. Note the sort's behaviour on duplicate keys: they are the *fast* case, not the quadratic one.
 
-<!-- example: manual/examples/ex_04_array.c -->
+<!-- example: manual/examples/en/ex_04_array.c -->
 ```c
 /*
  * proven_array_t is a growable vector of one element type. It stores the
@@ -1447,7 +1447,7 @@ int main(void) {
 
 Compiled and run by the test suite. The owned-key half proves the point that is easy to get wrong: the map copies the key, so the buffer you built it in is yours to reuse immediately.
 
-<!-- example: manual/examples/ex_04_map.c -->
+<!-- example: manual/examples/en/ex_04_map.c -->
 ```c
 /*
  * proven_map_t is a flat open-addressing hash map. The value type is fixed at
@@ -1605,7 +1605,7 @@ that only come up once several containers are in play:
   chunk into a running value; the result equals `proven_crc32()` over the whole,
   whatever the chunk boundaries were.
 
-<!-- example: manual/examples/ex_04_growth_and_lookup.c -->
+<!-- example: manual/examples/en/ex_04_growth_and_lookup.c -->
 ```c
 /*
  * The container chapters show each structure on its own. A real program uses

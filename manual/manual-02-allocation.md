@@ -693,7 +693,7 @@ proven_sys_mem_copy(buf.ptr + buf.len, buf.ptr + 2, 4); /* copy is not the publi
 
 Compiled and run by the test suite. It shows the bump-and-drop lifetime that makes an arena worth reaching for: allocations are nearly free, nothing is individually freed, and `proven_arena_reset` reclaims the whole region at once.
 
-<!-- example: manual/examples/ex_02_arena.c -->
+<!-- example: manual/examples/en/ex_02_arena.c -->
 ```c
 /*
  * An arena does not own memory: it bumps a pointer through memory YOU own. That
@@ -777,7 +777,7 @@ int main(void) {
 ### Worked example: a pool that recycles fixed-size blocks
 
 Compiled and run by the test suite. It shows a freed block coming straight back out of the recycle bin, and what the pool refuses.
-<!-- example: manual/examples/ex_02_pool.c -->
+<!-- example: manual/examples/en/ex_02_pool.c -->
 ```c
 /*
  * A pool is a churn optimizer, not a region. It is for one type: allocate and
@@ -890,7 +890,7 @@ covers the three things you reach for once the program is real:
    instead of re-implementing the arena. Everything in the library that takes a
    `proven_allocator_t` then runs through your wrapper without knowing it.
 
-<!-- example: manual/examples/ex_02_arena_traits.c -->
+<!-- example: manual/examples/en/ex_02_arena_traits.c -->
 ```c
 /*
  * Three things a program that owns its own memory eventually has to do, and the

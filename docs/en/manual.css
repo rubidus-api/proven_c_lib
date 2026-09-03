@@ -121,17 +121,19 @@ body { margin:0; background:var(--bg); color:var(--fg); line-height:1.72;
 #qr code { font-size:.92em; }
 #qr .where { color:var(--muted); font-size:.85em; margin-left:.4rem; }
 
-/* ── The page. A wide screen keeps the chapter list visible; a narrow one drops it, because
-   the same list is one press away in the panel above. */
-.page { display:flex; align-items:flex-start; gap:0; }
-nav.toc { position:sticky; top:3.4rem; align-self:flex-start; width:250px; min-width:250px;
-  max-height:calc(100vh - 3.6rem); overflow-y:auto; padding:1.2rem 1rem 3rem;
-  border-right:1px solid var(--rule); font-size:.9rem; }
-nav.toc h2 { font-size:.76rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted);
-  margin:1.1rem 0 .35rem; border:0; padding:0; }
-nav.toc a { display:block; padding:.12rem 0; color:var(--fg); text-decoration:none; }
-nav.toc a:hover { color:var(--link); text-decoration:underline; }
-nav.toc a.here { color:var(--link); font-weight:700; }
+/* ── The page. Chapters carry no side rail: the whole table of contents lives on the index,
+   and jumping about inside a chapter is what the panel above is for. */
+.page { display:block; }
+
+/* ── The index's table of contents: every chapter, and every section within it. */
+nav.contents { margin:2.4rem 0 0; }
+nav.contents h2 { font-size:1.05rem; margin:1.6rem 0 .3rem; border:0; padding:0; }
+nav.contents h2 a { text-decoration:none; }
+nav.contents ul { margin:.2rem 0 0; padding-left:1.1rem; columns:2; column-gap:2rem; }
+@media (max-width:52rem) { nav.contents ul { columns:1; } }
+nav.contents li { margin:.1rem 0; break-inside:avoid; }
+nav.contents li a { color:var(--fg); text-decoration:none; }
+nav.contents li a:hover { color:var(--link); text-decoration:underline; }
 main { flex:1; min-width:0; padding:1.4rem clamp(.9rem,3vw,2.4rem) 5rem; }
 :root[data-measure="on"] main .content { max-width:44rem; margin:0 auto; }
 

@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>T · Tutorial — proven_c_lib manual</title>
+<link rel="stylesheet" href="manual.css">
+<script>(function(){try{var s=JSON.parse(localStorage.getItem('pcl-read')||'{}');var r=document.documentElement;if(s.theme&&s.theme!=='auto')r.setAttribute('data-theme',s.theme);if(s.fg)r.style.setProperty('--fg',s.fg);if(s.bg)r.style.setProperty('--bg',s.bg);if(s.link)r.style.setProperty('--link',s.link);if(s.width)r.setAttribute('data-measure','on');}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<div class="bar"><strong><a href="index.html">proven_c_lib manual</a></strong><button class="here-btn" type="button" aria-expanded="false" aria-controls="here-panel">T · Tutorial <span class="caret">▾</span></button><span class="bar-nav"><a href="index.html" title="Previous" aria-label="Previous">←</a><a href="index.html" title="Contents" aria-label="Contents">↑</a><a href="manual-00-start-here.html" title="Next" aria-label="Next">→</a></span></div>
+<div id="here-panel" class="here-panel" hidden><div class="tools"><span class="ver">proven_c_lib-v26.09.02b</span><button class="tool" type="button" id="set-open" aria-expanded="false">⚙ Settings</button><a class="tool" href="../ko/manual-t-tutorial.html">한국어</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib/releases/download/v26.09.02b/proven_c_lib-v26.09.02b-en-manual.pdf">⤓ PDF</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib" title="This project on GitHub">⌥ Repo</a><a class="tool" href="https://rubidus-api.github.io/" title="rubidus-api.github.io — every published project">⌂ All projects</a><a class="tool" href="https://github.com/rubidus-api" title="github.com/rubidus-api — every repository">≡ All repos</a></div><div class="setbox" id="setbox" hidden><label class="setrow"><input type="checkbox" id="s-width"><span>Limit line width</span></label><div class="setrow"><span class="setlbl">Theme</span><span class="seg"><button type="button" class="segb" data-theme="auto">System</button><button type="button" class="segb" data-theme="light">Light</button><button type="button" class="segb" data-theme="dark">Dark</button></span></div><div class="setrow"><span class="setlbl">Colours</span><label class="col"><span>Text</span><input type="color" id="s-fg"></label><label class="col"><span>Background</span><input type="color" id="s-bg"></label><label class="col"><span>Link</span><input type="color" id="s-link"></label></div><p class="setnote">Settings are kept in this browser only.</p></div><div class="search"><label class="setlbl" for="q">Search</label> <input type="search" id="q" placeholder="Find a function or a heading" autocomplete="off"><p class="hint">Searches every public function and every heading — not the full text.</p><ul id="qr"></ul></div><div class="here-head"><strong>On this page</strong></div><div class="here-body"><a href="#why-this-exists">Why this exists</a><a href="#table-of-contents">Table of contents</a><a href="#lesson-1--printing-and-a-build-that-works">Lesson 1 — printing, and a build that works</a><a href="#lesson-2--text-that-knows-how-long-it-is">Lesson 2 — text that knows how long it is</a><a href="#lesson-3--a-call-that-can-fail-says-so">Lesson 3 — a call that can fail says so</a><a href="#lesson-4--the-value-and-the-error-arrive-together">Lesson 4 — the value and the error arrive together</a><a href="#lesson-5--who-gives-out-the-memory-is-an-argument">Lesson 5 — who gives out the memory is an argument</a><a href="#lesson-6--the-chapter-0-program-read-line-by-line">Lesson 6 — the Chapter 0 program, read line by line</a><a href="#where-to-go-next">Where to go next</a></div></div>
+<div class="page">
+<main id="content"><div class="content">
+<div class="masthead">proven_c_lib-v26.09.02b · generated from the Markdown manual</div>
+<h1 id="tutorial-the-library-in-six-short-programs">Tutorial: the library in six short programs<a class="anchor" href="#tutorial-the-library-in-six-short-programs" aria-hidden="true">#</a></h1><p><strong>Part I — Start here.</strong> No prerequisites beyond one introductory C book. <strong>After this tutorial</strong> you can read the greeting program in <a href="manual-00-start-here.html">Chapter 0</a> line by line, and the reference chapters stop looking like a wall of new words.</p><h2 id="why-this-exists">Why this exists<a class="anchor" href="#why-this-exists" aria-hidden="true">#</a></h2><p>Chapter 0 shows a working program on its first page. That program is thirty lines long and every one of them is a new idea: an allocator you pass in, a result you have to check, a view that carries its length, an append that refuses rather than truncates, a destroy paired with the allocator that created it. If you have finished one C book and no more, five new ideas arriving together is four too many.</p><p>So this tutorial takes them one at a time. Six programs, each a few lines longer than the last, each introducing exactly one thing. Every one of them is a real file under <code>manual/examples/</code> that the build compiles and runs, so what you read here is what actually ran.</p><p>Build any of them the way you build any C program — the library is source you compile with your own code, so there is nothing to install:</p><pre><code data-lang="text">cc -std=c23 -Iinclude your_program.c src/proven/*.c platform/*.c -o your_program</code></pre><p>If that line is unfamiliar, read <a href="manual-00-start-here.html#4-building-and-including">Chapter 0 §4</a> first and come back.</p><h2 id="table-of-contents">Table of contents<a class="anchor" href="#table-of-contents" aria-hidden="true">#</a></h2><ol><li><a href="#lesson-1--printing-and-a-build-that-works">Lesson 1 — printing, and a build that works</a></li><li><a href="#lesson-2--text-that-knows-how-long-it-is">Lesson 2 — text that knows how long it is</a></li><li><a href="#lesson-3--a-call-that-can-fail-says-so">Lesson 3 — a call that can fail says so</a></li><li><a href="#lesson-4--the-value-and-the-error-arrive-together">Lesson 4 — the value and the error arrive together</a></li><li><a href="#lesson-5--who-gives-out-the-memory-is-an-argument">Lesson 5 — who gives out the memory is an argument</a></li><li><a href="#lesson-6--the-chapter-0-program-read-line-by-line">Lesson 6 — the Chapter 0 program, read line by line</a></li><li><a href="#where-to-go-next">Where to go next</a></li></ol><h2 id="lesson-1--printing-and-a-build-that-works">Lesson 1 — printing, and a build that works<a class="anchor" href="#lesson-1--printing-and-a-build-that-works" aria-hidden="true">#</a></h2><p><strong>The one new thing:</strong> <code>proven_println</code>, and the fact that its arguments are checked.</p><p><code>printf("%d", 3.5)</code> compiles. It is wrong, and on a bad day it prints garbage or crashes, because the format string is a <em>string</em> — nothing connects it to the arguments that follow. <code>proven_println</code> uses <code>{}</code> as the placeholder and wraps each argument in <code>PROVEN_ARG</code>, which records the argument's type. The two cannot disagree, because the type travels with the value.</p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Lesson 1 - get one line to build and run.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Nothing here is about the library's ideas yet. The only question this program</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> answers is "does my build command work?", and it is worth answering on its</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> own, because every later lesson assumes it.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> printf(fmt, ...) is not checked: the compiler cannot tell you that "%d" was</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> handed a double. proven_println checks, because every argument is wrapped by</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> PROVEN_ARG and carries its own type.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    <span style="color: #4b69c6">proven_println</span>(<span style="color: #198810">"</span><span style="color: #198810">hello from proven</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> {} is the placeholder. The value goes through PROVEN_ARG, which records</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> what type it is, so the format string and the argument cannot disagree. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">proven_println</span>(<span style="color: #198810">"</span><span style="color: #198810">one number: {}</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">PROVEN_ARG</span>(<span style="color: #b60157">42</span>));
+    <span style="color: #4b69c6">proven_println</span>(<span style="color: #198810">"</span><span style="color: #198810">two of them: {} and {}</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">PROVEN_ARG</span>(<span style="color: #b60157">1</span>), <span style="color: #4b69c6">PROVEN_ARG</span>(<span style="color: #b60157">2</span>));
+
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><p>Running it prints three lines. If it built and ran, your include path and your source list are right, and everything after this is about the library rather than about your build.</p><p><strong>Common first stumble.</strong> <code>{}</code> is not <code>%s</code>. There is no letter to get wrong, and there is nothing to remember about <code>long</code> versus <code>int</code>: <code>PROVEN_ARG</code> knows.</p><h2 id="lesson-2--text-that-knows-how-long-it-is">Lesson 2 — text that knows how long it is<a class="anchor" href="#lesson-2--text-that-knows-how-long-it-is" aria-hidden="true">#</a></h2><p><strong>The one new thing:</strong> the <em>view</em> — a pointer and a size that travel together.</p><p>In the C you know, a string is a pointer, and its length is wherever the first zero byte happens to be. Every function that touches it has to walk the bytes to find out how much there is; if the zero is missing, it walks off the end. That single design decision is behind a large share of the security advisories in the language's history.</p><p>A view makes the missing half explicit. It does not own the bytes — it borrows them, and it never frees anything.</p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Lesson 2 - text that knows how long it is.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> In the C you already know, a string is a pointer and the length is wherever</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> the first zero byte happens to be. Every function has to walk the bytes to</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> find out how much there is, and if the zero is missing it walks off the end.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> A view is the pair that C leaves implicit: a pointer AND a size, travelling</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> together. It borrows - it does not own the bytes and never frees them.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> PROVEN_LIT makes a view from a literal. The size is computed at compile</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> time, so no scan happens here - unlike strlen. </span><span style="color: #74747c">*/</span>
+    proven_u8str_view_t hello <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">hello</span><span style="color: #198810">"</span>);
+
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(hello.size <span style="color: #d73948">==</span> <span style="color: #b60157">5</span>, <span style="color: #198810">"</span><span style="color: #198810">the view already knows its own length</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(hello.ptr <span style="color: #d73948">!=</span> <span style="color: #d73948">NULL</span>, <span style="color: #198810">"</span><span style="color: #198810">and it points at the literal's bytes</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Because the length travels with the pointer, comparing is a size check</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> plus a memcmp. No walking, and no way to run off the end. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_view_eq</span>(hello, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">hello</span><span style="color: #198810">"</span>)), <span style="color: #198810">"</span><span style="color: #198810">same text</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_u8str_view_eq</span>(hello, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">hell</span><span style="color: #198810">"</span>)), <span style="color: #198810">"</span><span style="color: #198810">shorter text differs</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> A view can name PART of something without copying it. Here is the middle</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> of the literal - still borrowed, still no allocation. </span><span style="color: #74747c">*/</span>
+    proven_u8str_view_t ell <span style="color: #d73948">=</span> { .ptr <span style="color: #d73948">=</span> hello.ptr <span style="color: #d73948">+</span> <span style="color: #b60157">1</span>, .size <span style="color: #d73948">=</span> <span style="color: #b60157">3</span> };
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_view_eq</span>(ell, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">ell</span><span style="color: #198810">"</span>)), <span style="color: #198810">"</span><span style="color: #198810">a window onto the same bytes</span><span style="color: #198810">"</span>);
+
+    <span style="color: #4b69c6">proven_println</span>(<span style="color: #198810">"</span><span style="color: #198810">whole: {} (size {})</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">PROVEN_ARG</span>(hello), <span style="color: #4b69c6">PROVEN_ARG</span>(hello.size));
+    <span style="color: #4b69c6">proven_println</span>(<span style="color: #198810">"</span><span style="color: #198810">part : {} (size {})</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">PROVEN_ARG</span>(ell), <span style="color: #4b69c6">PROVEN_ARG</span>(ell.size));
+
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><p><strong>What to notice.</strong> <code>PROVEN_LIT</code> computes the size at compile time, so it is not <code>strlen</code>. And the third view in the program names the <em>middle</em> of the literal without copying it: a view can describe part of something, which is why splitting and parsing in this library allocate nothing.</p><p><strong>Common first stumble.</strong> A view is borrowed. If the bytes it points at go away — a local buffer that leaves scope, a string you destroyed — the view is dangling, exactly like any other C pointer. The library never extends a lifetime behind your back.</p><h2 id="lesson-3--a-call-that-can-fail-says-so">Lesson 3 — a call that can fail says so<a class="anchor" href="#lesson-3--a-call-that-can-fail-says-so" aria-hidden="true">#</a></h2><p><strong>The one new thing:</strong> <code>proven_err_t</code>, and refusal instead of truncation.</p><p>C reports failure in three unrelated ways: a magic return value, a null pointer, or the global <code>errno</code> that the next call overwrites. All three are easy not to look at, and nothing complains when you do not. Here, a call that can fail returns an error <em>value</em> — and these functions are marked <code>[[nodiscard]]</code>, so throwing it away is a compiler warning rather than a habit.</p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Lesson 3 - a call that can fail says so, in its return value.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> The C you know reports failure in three different ways: a magic return value</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> (-1), a null pointer, or a global called errno that the next call overwrites.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> All three are easy to not look at, and nothing complains when you don't.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Here a fallible call returns proven_err_t. It is an ordinary value: you can</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> store it, compare it, and pass it upward. And [[nodiscard]] on these</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> functions means ignoring it is a compiler warning, not a habit.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    proven_allocator_t alloc <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Room for exactly 8 bytes. (Chapter 2 is about where that room comes</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> from; for now, notice only that we said how much.) </span><span style="color: #74747c">*/</span>
+    proven_result_u8str_t s <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_create</span>(alloc, <span style="color: #b60157">8</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(s.err), <span style="color: #198810">"</span><span style="color: #198810">8 bytes should be available</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> This fits. </span><span style="color: #74747c">*/</span>
+    proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>s.value, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">12345678</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(err), <span style="color: #198810">"</span><span style="color: #198810">eight bytes into eight bytes fits exactly</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> This does not - and the library REFUSES it. It does not append the part</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> that would fit, because half a word is not a shorter word, it is a</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> different one. </span><span style="color: #74747c">*/</span>
+    proven_err_t too_much <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>s.value, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">9</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(too_much), <span style="color: #198810">"</span><span style="color: #198810">one byte more than capacity must fail</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(too_much <span style="color: #d73948">==</span> PROVEN_ERR_OUT_OF_BOUNDS, <span style="color: #198810">"</span><span style="color: #198810">and it says why: out of bounds</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The refusal changed nothing. The string is exactly as it was, which is</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> what "failure-atomic" means: a failed call leaves no half-done state. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_view_eq</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>s.value), <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">12345678</span><span style="color: #198810">"</span>)),
+                    <span style="color: #198810">"</span><span style="color: #198810">the refused append must not have written anything</span><span style="color: #198810">"</span>);
+
+    <span style="color: #4b69c6">proven_println</span>(<span style="color: #198810">"</span><span style="color: #198810">after the refusal, the string is still: {}</span><span style="color: #198810">"</span>,
+                   <span style="color: #4b69c6">PROVEN_ARG</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>s.value)));
+
+    <span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>s.value);
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><p><strong>What to notice.</strong> The append that does not fit changes <em>nothing</em>. It does not store the part that would have fit. This is called failure atomicity, and the reason for it is that a truncated string is not a shorter message, it is a different one — a truncated path names a different file, and a truncated command is a different command.</p><p><strong>Common first stumble.</strong> <code>proven_is_ok(err)</code> is the check; <code>err == PROVEN_OK</code> says the same thing. What you must not do is ignore it and read the value anyway.</p><h2 id="lesson-4--the-value-and-the-error-arrive-together">Lesson 4 — the value and the error arrive together<a class="anchor" href="#lesson-4--the-value-and-the-error-arrive-together" aria-hidden="true">#</a></h2><p><strong>The one new thing:</strong> result structs — <code>.err</code> and <code>.value</code> in one return.</p><p>When a call has nothing to give back, an error code is enough. When it does have something, the library returns both in one small struct, and the rule is one sentence: <strong><code>value</code> means nothing until you have looked at <code>err</code>.</strong></p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Lesson 4 - when the call has a value to give back, the value and the error</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> arrive together.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> proven_err_t alone is enough when there is nothing to return. When there IS</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> something, you get a small struct with two fields: `err` and `value`. The</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> rule is one sentence: `value` means nothing until you have looked at `err`.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> This is the same discipline as checking malloc for NULL, except the checking</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> place is part of the type instead of a convention you have to remember.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> A function of your own can return one too. Nothing in the library is magic. </span><span style="color: #74747c">*/</span>
+<span style="color: #d73948">static</span> proven_result_size_t <span style="color: #4b69c6">safe_div</span>(proven_size_t a, proven_size_t b) {
+    proven_result_size_t res <span style="color: #d73948">=</span> {<span style="color: #b60157">0</span>};
+    <span style="color: #d73948">if</span> (b <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>) {
+        res.err <span style="color: #d73948">=</span> PROVEN_ERR_INVALID_ARG;    <span style="color: #74747c">/*</span><span style="color: #74747c"> value stays 0 - and means nothing </span><span style="color: #74747c">*/</span>
+        <span style="color: #d73948">return</span> res;
+    }
+    res.err <span style="color: #d73948">=</span> PROVEN_OK;
+    res.value <span style="color: #d73948">=</span> a <span style="color: #d73948">/</span> b;
+    <span style="color: #d73948">return</span> res;
+}
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    proven_result_size_t ok <span style="color: #d73948">=</span> <span style="color: #4b69c6">safe_div</span>(<span style="color: #b60157">10</span>, <span style="color: #b60157">2</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(ok.err), <span style="color: #198810">"</span><span style="color: #198810">dividing by 2 is fine</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(ok.value <span style="color: #d73948">==</span> <span style="color: #b60157">5</span>, <span style="color: #198810">"</span><span style="color: #198810">and only now may we read the value</span><span style="color: #198810">"</span>);
+
+    proven_result_size_t bad <span style="color: #d73948">=</span> <span style="color: #4b69c6">safe_div</span>(<span style="color: #b60157">10</span>, <span style="color: #b60157">0</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(bad.err), <span style="color: #198810">"</span><span style="color: #198810">dividing by zero must fail</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(bad.err <span style="color: #d73948">==</span> PROVEN_ERR_INVALID_ARG, <span style="color: #198810">"</span><span style="color: #198810">and say which rule was broken</span><span style="color: #198810">"</span>);
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> bad.value is 0, but that is not an answer. It is the absence of one. </span><span style="color: #74747c">*/</span>
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> The library's own calls have the same shape. proven_u8str_create hands</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> back the string it made together with the error that guards it. </span><span style="color: #74747c">*/</span>
+    proven_allocator_t alloc <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
+    proven_result_u8str_t s <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_create</span>(alloc, <span style="color: #b60157">16</span>);
+    <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(s.err)) <span style="color: #d73948">return</span> <span style="color: #b60157">1</span>;      <span style="color: #74747c">/*</span><span style="color: #74747c"> nothing was created; nothing to destroy </span><span style="color: #74747c">*/</span>
+
+    <span style="color: #4b69c6">proven_println</span>(<span style="color: #198810">"</span><span style="color: #198810">10 / 2 = {}</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">PROVEN_ARG</span>(ok.value));
+
+    <span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>s.value);
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><p><strong>What to notice.</strong> <code>safe_div</code> is <em>your</em> function, not the library's. The pattern is a plain struct return; there is no machinery underneath, which is why you can use it in your own code the moment you have read this page.</p><p><strong>Common first stumble.</strong> On failure the <code>value</code> field usually holds a zero. That zero is not an answer — it is the absence of one. Checking <code>err</code> is what tells them apart.</p><h2 id="lesson-5--who-gives-out-the-memory-is-an-argument">Lesson 5 — who gives out the memory is an argument<a class="anchor" href="#lesson-5--who-gives-out-the-memory-is-an-argument" aria-hidden="true">#</a></h2><p><strong>The one new thing:</strong> <code>proven_allocator_t</code>, passed in rather than assumed.</p><p><code>malloc</code> is a decision made for you: one heap, one strategy, and nothing at the call site says so. In this library, anything that needs memory takes an allocator and uses only that one. Two things follow, and both are the point: you can always answer "who allocated this?" by reading the call, and you can hand the same code a different allocator without changing it.</p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Lesson 5 - who gives out the memory is an argument, not a global.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> malloc is a global decision made for you: one heap, one strategy, invisible</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> at the call site. Here, anything that needs memory takes a</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> proven_allocator_t and uses only that. Two consequences follow, and both are</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> the point.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   - You can always answer "who allocated this?" by looking at the call.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c">   - You can hand a different allocator to the same code without changing it.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #74747c">/*</span><span style="color: #74747c"> This function does not know or care where the memory comes from. </span><span style="color: #74747c">*/</span>
+<span style="color: #d73948">static</span> proven_result_u8str_t <span style="color: #4b69c6">make_greeting</span>(proven_allocator_t alloc,
+                                           proven_u8str_view_t name) {
+    proven_result_u8str_t out <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_create</span>(alloc, <span style="color: #b60157">64</span>);
+    <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(out.err)) <span style="color: #d73948">return</span> out;
+
+    proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>out.value, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">hello, </span><span style="color: #198810">"</span>));
+    <span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_is_ok</span>(err)) err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>out.value, name);
+    <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(err)) {
+        <span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>out.value);   <span style="color: #74747c">/*</span><span style="color: #74747c"> undo what we made </span><span style="color: #74747c">*/</span>
+        out.err <span style="color: #d73948">=</span> err;
+        out.value <span style="color: #d73948">=</span> (proven_u8str_t){<span style="color: #b60157">0</span>};
+    }
+    <span style="color: #d73948">return</span> out;
+}
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> (a) the ordinary heap - malloc and free underneath </span><span style="color: #74747c">*/</span>
+    proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
+
+    proven_result_u8str_t a <span style="color: #d73948">=</span> <span style="color: #4b69c6">make_greeting</span>(heap, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">world</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(a.err), <span style="color: #198810">"</span><span style="color: #198810">the heap should be able to give 64 bytes</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">proven_println</span>(<span style="color: #198810">"</span><span style="color: #198810">from the heap : {}</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">PROVEN_ARG</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>a.value)));
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> Destroyed with the SAME allocator that created it. That pairing is the</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> whole ownership rule of this library. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">proven_u8str_destroy</span>(heap, <span style="color: #d73948">&amp;</span>a.value);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> (b) an arena - one block of memory handed out in order, freed all at once.</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c">     Note that make_greeting above did not change at all. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">alignas</span>(PROVEN_MAX_ALIGN) proven_byte_t backing[<span style="color: #b60157">512</span>];
+    proven_arena_t arena <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_create</span>((proven_mem_mut_t){
+        .ptr <span style="color: #d73948">=</span> backing, .size <span style="color: #d73948">=</span> <span style="color: #d73948">sizeof</span> backing });
+    proven_allocator_t from_arena <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_arena_as_allocator</span>(<span style="color: #d73948">&amp;</span>arena);
+
+    proven_result_u8str_t b <span style="color: #d73948">=</span> <span style="color: #4b69c6">make_greeting</span>(from_arena, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">arena</span><span style="color: #198810">"</span>));
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(b.err), <span style="color: #198810">"</span><span style="color: #198810">the arena has room for this too</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">proven_println</span>(<span style="color: #198810">"</span><span style="color: #198810">from an arena : {}</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">PROVEN_ARG</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>b.value)));
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> No destroy loop here: an arena frees everything by being reset. That is</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> lesson 7's subject; the point now is only that the caller chose. </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">proven_arena_reset</span>(<span style="color: #d73948">&amp;</span>arena);
+
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><p><strong>What to notice.</strong> <code>make_greeting</code> is written once and runs against the heap and against an arena — a block of memory you own, handed out by bumping a pointer, and released all at once. The function did not change, and nothing global was configured.</p><p><strong>The ownership rule, in one line:</strong> whatever created it destroys it, with the <em>same</em> allocator.</p><p><strong>Common first stumble.</strong> With an arena, <code>destroy</code> reclaims nothing — an arena frees by being reset. Call it anyway: the pairing is what makes the code correct when the allocator later changes.</p><h2 id="lesson-6--the-chapter-0-program-read-line-by-line">Lesson 6 — the Chapter 0 program, read line by line<a class="anchor" href="#lesson-6--the-chapter-0-program-read-line-by-line" aria-hidden="true">#</a></h2><p><strong>The one new thing:</strong> nothing. That is the exercise.</p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Lesson 6 - the program from Chapter 0, read line by line.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Nothing new is introduced here. This is the same greeting program the manual</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> opens with, and the point of the lesson is that you can now name every part</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> of it: the allocator you pass in (lesson 5), the result you must check</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> (lesson 4), the error a refusal returns (lesson 3), the view that carries its</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> own length (lesson 2), and the printing that checks its arguments (lesson 1).</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> If that reads as ordinary now, the tutorial has done its job and the</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> reference chapters are open to you.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
+
+<span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> lesson 5 - the caller decides where memory comes from </span><span style="color: #74747c">*/</span>
+    proven_allocator_t alloc <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> lesson 4 - the string and the error that guards it, together </span><span style="color: #74747c">*/</span>
+    proven_result_u8str_t greeting <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_create</span>(alloc, <span style="color: #b60157">64</span>);
+    <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(greeting.err)) <span style="color: #d73948">return</span> <span style="color: #b60157">1</span>;
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> lesson 2 - borrowed text that knows its own size </span><span style="color: #74747c">*/</span>
+    proven_u8str_view_t name <span style="color: #d73948">=</span> <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">world</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> lesson 3 - each append either fits or refuses; none of them truncates </span><span style="color: #74747c">*/</span>
+    proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>greeting.value, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">hello, </span><span style="color: #198810">"</span>));
+    <span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_is_ok</span>(err)) err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>greeting.value, name);
+    <span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_is_ok</span>(err)) err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>greeting.value, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">!</span><span style="color: #198810">"</span>));
+
+    <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(err)) {
+        <span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>greeting.value);
+        <span style="color: #d73948">return</span> <span style="color: #b60157">1</span>;
+    }
+
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_view_eq</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>greeting.value),
+                                         <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">hello, world!</span><span style="color: #198810">"</span>)),
+                    <span style="color: #198810">"</span><span style="color: #198810">the three appends should have built the whole greeting</span><span style="color: #198810">"</span>);
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> lesson 1 - the format string and the argument cannot disagree </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">proven_println</span>(<span style="color: #198810">"</span><span style="color: #198810">{}</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">PROVEN_ARG</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>greeting.value)));
+
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> lesson 5 again - destroyed with the allocator that created it </span><span style="color: #74747c">*/</span>
+    <span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>greeting.value);
+    <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
+}</code></pre><p>If those comments now read as labels for things you know rather than as new information, you are ready for the reference chapters.</p><h2 id="where-to-go-next">Where to go next<a class="anchor" href="#where-to-go-next" aria-hidden="true">#</a></h2><div class="tblwrap"><table><tr><td><strong>If you want to</strong></td><td><strong>Read</strong></td></tr><tr><td>the full version of everything above</td><td><a href="manual-00-start-here.html">Chapter 0</a></td></tr><tr><td>the types, errors and contracts in detail</td><td><a href="manual-01-foundation.html">Chapter 1</a></td></tr><tr><td>arenas, pools and buffers properly</td><td><a href="manual-02-allocation.html">Chapter 2</a></td></tr><tr><td>owned strings, splitting, encodings</td><td><a href="manual-03-strings-text.html">Chapter 3</a></td></tr><tr><td>arrays, maps, lists, hashing</td><td><a href="manual-04-containers-algorithms.html">Chapter 4</a></td></tr><tr><td>files, streams, time, randomness</td><td><a href="manual-05-hosted-services.html">Chapter 5</a></td></tr><tr><td>a word you do not recognise</td><td><a href="manual-00-start-here.html#6-appendix-b-glossary">the glossary</a></td></tr></table></div>
+
+<div class="nav"><a href="index.html">← The manual</a><a href="manual-00-start-here.html">0 · Start here →</a></div>
+</div></main>
+</div>
+<script>(function(){var b=document.querySelector('.here-btn'),p=document.getElementById('here-panel');function open(o){if(!p)return;p.hidden=!o;if(b)b.setAttribute('aria-expanded',o);}if(b)b.addEventListener('click',function(){open(p.hidden);});if(p)p.addEventListener('click',function(e){if(e.target.tagName==='A'&&(e.target.getAttribute('href')||'').charAt(0)==='#')open(false);});document.addEventListener('keydown',function(e){if(e.key==='Escape')open(false);});var box=document.getElementById('setbox'),so=document.getElementById('set-open');if(!box||!so)return;var r=document.documentElement;function load(){try{return JSON.parse(localStorage.getItem('pcl-read')||'{}');}catch(e){return {};}}function save(s){try{localStorage.setItem('pcl-read',JSON.stringify(s));}catch(e){}}function css(n){return getComputedStyle(r).getPropertyValue(n).trim();}function hex(v){var m=v.match(/^rgba?\((\d+)[ ,]+(\d+)[ ,]+(\d+)/);if(!m)return v.charAt(0)==='#'?v:'#000000';return '#'+[1,2,3].map(function(i){return ('0'+parseInt(m[i],10).toString(16)).slice(-2);}).join('');}function paint(){var s=load();document.getElementById('s-width').checked=!!s.width;var t=s.theme||'auto';[].forEach.call(box.querySelectorAll('.segb'),function(x){x.setAttribute('aria-pressed',x.dataset.theme===t);});document.getElementById('s-fg').value=s.fg||hex(css('--fg'));document.getElementById('s-bg').value=s.bg||hex(css('--bg'));document.getElementById('s-link').value=s.link||hex(css('--link'));}so.addEventListener('click',function(){box.hidden=!box.hidden;so.setAttribute('aria-expanded',!box.hidden);if(!box.hidden)paint();});document.getElementById('s-width').addEventListener('change',function(){var s=load();s.width=this.checked;save(s);if(s.width)r.setAttribute('data-measure','on');else r.removeAttribute('data-measure');});[].forEach.call(box.querySelectorAll('.segb'),function(x){x.addEventListener('click',function(){var s=load();s.theme=x.dataset.theme;delete s.fg;delete s.bg;delete s.link;save(s);['--fg','--bg','--link'].forEach(function(n){r.style.removeProperty(n);});if(s.theme==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',s.theme);setTimeout(paint,0);});});[['s-fg','--fg','fg'],['s-bg','--bg','bg'],['s-link','--link','link']].forEach(function(a){document.getElementById(a[0]).addEventListener('input',function(){var s=load();s[a[2]]=this.value;save(s);r.style.setProperty(a[1],this.value);});});})();</script>
+<script>
+(function(){
+  var q=document.getElementById('q'), out=document.getElementById('qr');
+  if(!q||!out) return;
+  var data=null, NONE="Nothing found";
+  function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+  function run(){
+    var v=q.value.trim().toLowerCase();
+    out.innerHTML='';
+    if(!v||!data) return;
+    var exact=[], starts=[], rest=[];
+    for(var i=0;i<data.length;i++){
+      var name=data[i][0].toLowerCase(), at=name.indexOf(v);
+      if(at<0) continue;
+      if(name===v) exact.push(data[i]);
+      else if(at===0) starts.push(data[i]);
+      else rest.push(data[i]);
+    }
+    var hits=exact.concat(starts,rest).slice(0,40);
+    if(!hits.length){ out.innerHTML='<li>'+NONE+'</li>'; return; }
+    out.innerHTML=hits.map(function(h){
+      var label=h[3]==='fn' ? '<code>'+esc(h[0])+'</code>' : esc(h[0]);
+      return '<li><a href="'+h[1]+'">'+label+'</a>'+
+             (h[2]?'<span class="where">'+esc(h[2])+'</span>':'')+'</li>';
+    }).join('');
+  }
+  q.addEventListener('input',function(){
+    if(data){ run(); return; }
+    fetch('search-index.json').then(function(r){return r.json();})
+      .then(function(j){ data=j; run(); })
+      .catch(function(){ out.innerHTML='<li>'+NONE+'</li>'; });
+  });
+})();
+</script>
+</body>
+</html>

@@ -314,7 +314,9 @@ proven_writer_t w = proven_sysio_stdout_buffered(&out,
 
 상세 레퍼런스는 읽기 쉽고 소스에 근거를 두도록 챕터별로 나뉩니다.
 
-**이 라이브러리가 처음이라면 [0장](manual-00-start-here-ko.md)부터 읽으십시오.** 아무것도 전제하지
+**입문용 C 책을 막 뗐다면 [따라 하며 익히기](manual-t-tutorial-ko.md)부터 보세요.** 짧은 프로그램 여섯 개로 개념을 하나씩만 더해 가다가, 마지막에 0장의 인사말 프로그램을 한 줄씩 읽습니다.
+
+**그 밖의 경우 [0장](manual-00-start-here-ko.md)부터 읽으십시오.** 아무것도 전제하지
 않는 유일한 장입니다: 이 라이브러리가 왜 존재하는지를 이 라이브러리가 답하려는 C의 버그들로부터
 논증하고, hello world 프로그램, 빌드 방법, 나머지 장들이 당연하게 여기는 다섯 가지 계약, 그리고
 용어집과 libc 대응표를 담고 있습니다.
@@ -330,7 +332,7 @@ alias 인덱스는 찾아보는 부록이고, 8장은 3장이 주제를 소개�
 
 | 부 | 읽을 것 | 선행 조건 | 그러면 할 수 있는 것 |
 |---|---|---|---|
-| **I — 여기서부터** | [0](manual-00-start-here-ko.md) | 입문용 C 책 한 권 | 라이브러리를 붙여 빌드하고, 아래 무엇이든 읽기 |
+| **I — 여기서부터** | [따라 하며 익히기](manual-t-tutorial-ko.md) → [0](manual-00-start-here-ko.md) | 입문용 C 책 한 권 | 라이브러리를 붙여 빌드하고, 아래 무엇이든 읽기 |
 | **II — 모든 프로그램이 쓰는 어휘** | [1](manual-01-foundation-ko.md) → [2](manual-02-allocation-ko.md) → [3](manual-03-strings-text-ko.md) | 0장 | 에러를 값으로 다루고, 메모리를 의도적으로 소유하고, 텍스트를 안전하게 담기 |
 | **III — 자료구조** | [4](manual-04-containers-algorithms-ko.md) | II부 | array, map, list, ring, 정렬, 검색, 해싱, 인코딩 |
 | **IV — 텍스트 입출력** | [8](manual-08-fmt-scan-ko.md) | 3장 §3–§4 | 무엇이든 형식화하고 파싱하며, 포매터에 내 타입 가르치기 |
@@ -340,6 +342,7 @@ alias 인덱스는 찾아보는 부록이고, 8장은 3장이 주제를 소개�
 
 ### 챕터 목록
 
+- [**따라 하며 익히기**: 짧은 프로그램 여섯 개, 한 번에 개념 하나](manual-t-tutorial-ko.md) — *Part I, 선택 입구*
 0. [**여기서부터 시작**: 왜 존재하는가, hello world, 다섯 계약, 용어집, libc 대응표](manual-00-start-here-ko.md) — *I부*
 1. [**Foundation**: 타입, 에러, 메모리 view, 정렬, 버전, 패닉(panic)](manual-01-foundation-ko.md) — *II부*
 2. [**Allocation**: 힙(heap), 아레나(arena), 풀(pool), byte buffer, 그리고 allocator 트레잇](manual-02-allocation-ko.md) — *II부*

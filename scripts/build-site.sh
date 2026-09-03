@@ -90,7 +90,7 @@ build_lang() {
         printf '#show link: set text(fill: rgb("#1f5fa8"))\n'
         printf '#show heading: set block(above: 1.4em, below: 0.7em)\n'
         printf '#outline(depth: 2)\n#pagebreak()\n'
-        for name in index manual-00-start-here manual-01-foundation manual-02-allocation \
+        for name in index manual-t-tutorial manual-00-start-here manual-01-foundation manual-02-allocation \
                     manual-03-strings-text manual-04-containers-algorithms manual-08-fmt-scan \
                     manual-05-hosted-services manual-06-execution-and-platform \
                     manual-freestanding manual-07-alias-xcv-index; do

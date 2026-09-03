@@ -12,35 +12,6 @@
 <div class="bar"><strong><a href="index.html">proven_c_lib 매뉴얼</a></strong><button class="here-btn" type="button" aria-expanded="false" aria-controls="here-panel">8 · 형식화와 파싱 <span class="caret">▾</span></button><span class="bar-nav"><a href="manual-04-containers-algorithms.html" title="이전" aria-label="이전">←</a><a href="index.html" title="목차" aria-label="목차">↑</a><a href="manual-05-hosted-services.html" title="다음" aria-label="다음">→</a></span></div>
 <div id="here-panel" class="here-panel" hidden><div class="tools"><span class="ver">proven_c_lib-v26.09.02b</span><button class="tool" type="button" id="set-open" aria-expanded="false">⚙ 설정</button><a class="tool" href="../en/manual-08-fmt-scan.html">English</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib/releases/download/v26.09.02b/proven_c_lib-v26.09.02b-ko-manual.pdf">⤓ PDF</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib" title="이 프로젝트의 GitHub 저장소">⌥ 저장소</a><a class="tool" href="https://rubidus-api.github.io/" title="rubidus-api.github.io — 공개된 모든 프로젝트">⌂ 전체 사이트</a><a class="tool" href="https://github.com/rubidus-api" title="github.com/rubidus-api — 모든 저장소">≡ 저장소 목록</a></div><div class="setbox" id="setbox" hidden><label class="setrow"><input type="checkbox" id="s-width"><span>가로폭 제한</span></label><div class="setrow"><span class="setlbl">테마</span><span class="seg"><button type="button" class="segb" data-theme="auto">시스템</button><button type="button" class="segb" data-theme="light">밝게</button><button type="button" class="segb" data-theme="dark">어둡게</button></span></div><div class="setrow"><span class="setlbl">색</span><label class="col"><span>글자</span><input type="color" id="s-fg"></label><label class="col"><span>배경</span><input type="color" id="s-bg"></label><label class="col"><span>링크</span><input type="color" id="s-link"></label></div><p class="setnote">설정은 이 브라우저에만 저장됩니다.</p></div><div class="search"><label class="setlbl" for="q">검색</label> <input type="search" id="q" placeholder="함수나 제목으로 찾기" autocomplete="off"><p class="hint">공개 함수 전부와 모든 제목에서 찾습니다 — 본문 전문은 아닙니다.</p><ul id="qr"></ul></div><div class="here-head"><strong>이 페이지 안에서</strong></div><div class="here-body"><a href="#목차">목차</a><a href="#1-설계-모델">1. 설계 모델</a><a href="#2-포매터-데이터-모델">2. 포매터 데이터 모델</a><a href="#3-포매터-생성자와-선택자">3. 포매터 생성자와 선택자</a><a href="#4-형식-문자열-문법">4. 형식 문자열 문법</a><a href="#5-형식화-api">5. 형식화 API</a><a href="#6-콘솔-출력-헬퍼">6. 콘솔 출력 헬퍼</a><a href="#7-스캐너-데이터-모델">7. 스캐너 데이터 모델</a><a href="#8-스캐너-기본-api">8. 스캐너 기본 API</a><a href="#9-스캔-인자-모델">9. 스캔 인자 모델</a><a href="#10-구조적-스캔-문법">10. 구조적 스캔 문법</a><a href="#11-스캔-형식화-api">11. 스캔 형식화 API</a><a href="#12-예제와-오용-사례">12. 예제와 오용 사례</a><a href="#13-프리스탠딩과-빌드-모드-참고">13. 프리스탠딩과 빌드 모드 참고</a></div></div>
 <div class="page">
-<nav class="toc" aria-label="목차">
-<h2>목차</h2>
-<a href="index.html">매뉴얼</a>
-<a href="manual-00-start-here.html">0 · 여기서부터</a>
-<a href="manual-01-foundation.html">1 · 기초</a>
-<a href="manual-02-allocation.html">2 · 할당</a>
-<a href="manual-03-strings-text.html">3 · 문자열과 텍스트</a>
-<a href="manual-04-containers-algorithms.html">4 · 컨테이너와 알고리즘</a>
-<a href="manual-08-fmt-scan.html" class="here">8 · 형식화와 파싱</a>
-<a href="manual-05-hosted-services.html">5 · Hosted 서비스</a>
-<a href="manual-06-execution-and-platform.html">6 · 실행과 플랫폼</a>
-<a href="manual-freestanding.html">프리스탠딩</a>
-<a href="manual-07-alias-xcv-index.html">부록 A · Alias 인덱스</a>
-<h2>이 페이지 안에서</h2>
-<a href="#목차">목차</a>
-<a href="#1-설계-모델">1. 설계 모델</a>
-<a href="#2-포매터-데이터-모델">2. 포매터 데이터 모델</a>
-<a href="#3-포매터-생성자와-선택자">3. 포매터 생성자와 선택자</a>
-<a href="#4-형식-문자열-문법">4. 형식 문자열 문법</a>
-<a href="#5-형식화-api">5. 형식화 API</a>
-<a href="#6-콘솔-출력-헬퍼">6. 콘솔 출력 헬퍼</a>
-<a href="#7-스캐너-데이터-모델">7. 스캐너 데이터 모델</a>
-<a href="#8-스캐너-기본-api">8. 스캐너 기본 API</a>
-<a href="#9-스캔-인자-모델">9. 스캔 인자 모델</a>
-<a href="#10-구조적-스캔-문법">10. 구조적 스캔 문법</a>
-<a href="#11-스캔-형식화-api">11. 스캔 형식화 API</a>
-<a href="#12-예제와-오용-사례">12. 예제와 오용 사례</a>
-<a href="#13-프리스탠딩과-빌드-모드-참고">13. 프리스탠딩과 빌드 모드 참고</a>
-</nav>
 <main id="content"><div class="content">
 <div class="masthead">proven_c_lib-v26.09.02b · 마크다운 매뉴얼에서 생성됨</div>
 <h1 id="chapter-8-formatting-and-scanning-v260902b">Chapter 8: Formatting and Scanning (v26.09.02b)<a class="anchor" href="#chapter-8-formatting-and-scanning-v260902b" aria-hidden="true">#</a></h1><p>이 장은 <code>fmt.h</code>와 <code>scan.h</code>에 대한 상세 레퍼런스다. Chapter 3은 더 짧은 개요와 일상적인 예제를 제공한다. 이 장은 정확한 문법, 파라미터 형태, 반환값, 그리고 호출자가 흔히 실수하는 지점에 초점을 맞춘다.</p><h2 id="목차">목차<a class="anchor" href="#목차" aria-hidden="true">#</a></h2><ol><li><a href="#1-설계-모델">Design model</a></li><li><a href="#2-포매터-데이터-모델">Formatter data model</a></li><li><a href="#3-포매터-생성자와-선택자">Formatter constructors and selectors</a></li><li><a href="#4-형식-문자열-문법">Format string grammar</a></li><li><a href="#5-형식화-api">Formatting APIs</a></li></ol><p>5.1. <a href="#51-내가-만든-타입-형식화하기">Formatting a type of your own</a></p><ol><li><a href="#6-콘솔-출력-헬퍼">Console print helpers</a></li><li><a href="#7-스캐너-데이터-모델">Scanner data model</a></li><li><a href="#8-스캐너-기본-api">Scanner primitive APIs</a></li><li><a href="#9-스캔-인자-모델">Scan argument model</a></li><li><a href="#10-구조적-스캔-문법">Structural scan grammar</a></li><li><a href="#11-스캔-형식화-api">Scan formatting APIs</a></li></ol><p>11.1. <a href="#111-스캔-에러-코드-안내와-복구">Scan error code guide and recovery</a></p><ol><li><a href="#12-예제와-오용-사례">Examples and misuse cases</a></li><li><a href="#13-프리스탠딩과-빌드-모드-참고">Freestanding and build-mode notes</a></li></ol><h2 id="1-설계-모델">1. 설계 모델<a class="anchor" href="#1-설계-모델" aria-hidden="true">#</a></h2><h3 id="타입을-두-번-쓰지-않는-이유">타입을 두 번 쓰지 않는 이유<a class="anchor" href="#타입을-두-번-쓰지-않는-이유" aria-hidden="true">#</a></h3><p>이 장의 두 절반은 모두 한 가지를 없애기 위해 존재한다. 프로그래머가 타입을 말하는데 컴파일러가 그것을 값과 대조해 볼 수 없는 자리다.</p><p><code>printf("%d", x)</code>는 타입을 두 번 말한다 — 한 번은 <code>%d</code>로, 한 번은 <code>x</code>를 넘기면서 — 그리고 varargs가 두 번째를 지워버리므로 아무것도 둘을 비교할 수 없다. <code>scanf("%d", &amp;x)</code>는 더 나쁘다. 포맷이 어떻게 파싱할지 <em>그리고</em> 포인터를 통해 무엇을 쓸지를 둘 다 결정하므로, 불일치는 헛소리를 출력하는 대신 메모리를 망가뜨린다. 둘은 반대 방향에서 온 같은 결함이고, 둘 다 조용히 컴파일된다.</p><p>여기서 플레이스홀더는 <strong>타입을 전혀 담지 않는다</strong>. <code>{}</code>는 위치를 표시할 뿐이고, 타입은 포매팅 쪽에서는 <code>PROVEN_ARG(x)</code>, 스캐닝 쪽에서는 <code>PROVEN_SCAN_ARG(&amp;x)</code>에서 오며, 둘 다 인자의 정적 타입에 대해 컴파일 시점에 <code>_Generic</code>으로 결정된다. <code>:</code> 뒤의 spec은 표현만 제어한다 — width, fill, 정렬, 정밀도, 진법 — 결코 해석을 제어하지 않는다. 문자열에 타입을 쓴 적이 없으므로 <code>%d</code>냐 <code>double</code>이냐를 틀릴 여지가 없다.</p><p>두 번째 설계 결정은 <strong>어느 쪽도 버퍼를 소유하지 않는다</strong>는 것이다. 포매팅은 여러분이 제공한 목적지에 덧붙이고 들어가지 않으면 거부한다. 스캐닝은 여러분이 제공한 뷰(view)에서 읽고 여러분이 읽을 수 있는 커서를 옮긴다. 할당자(allocator)를 건네지 않는 한 여기서는 아무것도 할당하지 않으며, 바로 그 점이 이 장 전체가 프리스탠딩(freestanding) 빌드에서 동작하게 만든다(§13).</p><p>포매팅 측면과 스캐닝 측면은 정반대의 문제를 해결한다.</p><ul><li>포매팅은 타입이 있는 값을 받아 텍스트로 렌더링한다.</li><li>스캐닝은 텍스트를 받아 타입이 있는 값을 기록한다.</li></ul><p>이 프로젝트는 양쪽 모두 의도적으로 작게 유지한다.</p><ul><li>포매팅은 간결한 플레이스홀더 언어, positional 재사용, 단순한 정렬(alignment), width, 그리고 숫자 값에 대한 hex 렌더링을 지원한다.</li><li>스캐닝은 타입이 있는 목적지 포인터, 엄격한 플레이스홀더 개수 검사, 그리고 공백 축약(whitespace collapsing)을 포함한 리터럴 매칭을 지원한다.</li><li>어느 쪽도 완전한 <code>printf</code>나 <code>scanf</code> 복제를 목표로 하지 않는다.</li></ul><p>실용적인 결과로, 이 API들은 대규모 범용 포맷 엔진보다 추론하기 쉬우면서도, 문법은 일반적인 시스템 코드 작업에 충분히 표현력이 있다.</p><h2 id="2-포매터-데이터-모델">2. 포매터 데이터 모델<a class="anchor" href="#2-포매터-데이터-모델" aria-hidden="true">#</a></h2><h3 id="proven_fmt_result_t"><code>proven_fmt_result_t</code><a class="anchor" href="#proven_fmt_result_t" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef struct {
@@ -973,6 +944,7 @@ proven_err_t e = proven_scan_fmt_cursor(&amp;scan, "{}", proven_scan_arg_i32(&am
     proven_u8str_destroy(alloc, &amp;line);     /* wrong: `word` pointed into `line` */
 }
 use(word);</code></pre><p>스캔한 view는 스캔 대상 텍스트 안쪽을 가리킨다. 그 텍스트보다 오래 살아야 한다면 <code>proven_u8str_t</code>로 복사한다.</p>
+
 <div class="nav"><a href="manual-04-containers-algorithms.html">← 4 · 컨테이너와 알고리즘</a><a href="manual-05-hosted-services.html">5 · Hosted 서비스 →</a></div>
 </div></main>
 </div>

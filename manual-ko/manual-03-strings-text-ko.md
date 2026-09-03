@@ -861,7 +861,7 @@ if (!proven_is_ok(e)) {
 
 테스트 스위트에서 컴파일되고 실행된다. 중요한 구분은 이것이다: owned 문자열은 재할당될 수 있고 반드시 파괴해야 한다; borrow된 문자열은 호출자 메모리를 감싸고, 결코 재할당하지 않으며, 여러분이 준 버퍼를 넘어 성장하는 대신 그것을 조용히 옮기지 않고 거부한다.
 
-<!-- example: manual/examples/ex_03_u8str.c -->
+<!-- example: manual/examples/ko/ex_03_u8str.c -->
 ```c
 /*
  * There are two string handles here and the difference is ownership, not size:
@@ -1002,7 +1002,7 @@ int main(void) {
 `proven_u8str_replace_at_grow()`로 다시 한다. 마지막은 `proven_u8str_view_ends_with()`로 파일
 확장자를 확인하는 것이다.
 
-<!-- example: manual/examples/ex_03_fixed_edits.c -->
+<!-- example: manual/examples/ko/ex_03_fixed_edits.c -->
 ```c
 /*
  * The previous example grew a string whenever it ran out of room. This one is
@@ -1183,7 +1183,7 @@ if (part.value == field.size) { /* all of it was written */ }
 - **결과는 NUL로 끝난다.** 일부러 잘라 낸 뒤에도 그렇기 때문에, 종결자를 기대하는 시스템 호출에
   그대로 넘겨도 안전하다.
 
-<!-- example: manual/examples/ex_03_u16str.c -->
+<!-- example: manual/examples/ko/ex_03_u16str.c -->
 ```c
 /*
  * UTF-16 exists in this library for one reason: some operating system calls

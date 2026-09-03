@@ -12,30 +12,6 @@
 <div class="bar"><strong><a href="index.html">proven_c_lib 매뉴얼</a></strong><button class="here-btn" type="button" aria-expanded="false" aria-controls="here-panel">4 · 컨테이너와 알고리즘 <span class="caret">▾</span></button><span class="bar-nav"><a href="manual-03-strings-text.html" title="이전" aria-label="이전">←</a><a href="index.html" title="목차" aria-label="목차">↑</a><a href="manual-08-fmt-scan.html" title="다음" aria-label="다음">→</a></span></div>
 <div id="here-panel" class="here-panel" hidden><div class="tools"><span class="ver">proven_c_lib-v26.09.02b</span><button class="tool" type="button" id="set-open" aria-expanded="false">⚙ 설정</button><a class="tool" href="../en/manual-04-containers-algorithms.html">English</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib/releases/download/v26.09.02b/proven_c_lib-v26.09.02b-ko-manual.pdf">⤓ PDF</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib" title="이 프로젝트의 GitHub 저장소">⌥ 저장소</a><a class="tool" href="https://rubidus-api.github.io/" title="rubidus-api.github.io — 공개된 모든 프로젝트">⌂ 전체 사이트</a><a class="tool" href="https://github.com/rubidus-api" title="github.com/rubidus-api — 모든 저장소">≡ 저장소 목록</a></div><div class="setbox" id="setbox" hidden><label class="setrow"><input type="checkbox" id="s-width"><span>가로폭 제한</span></label><div class="setrow"><span class="setlbl">테마</span><span class="seg"><button type="button" class="segb" data-theme="auto">시스템</button><button type="button" class="segb" data-theme="light">밝게</button><button type="button" class="segb" data-theme="dark">어둡게</button></span></div><div class="setrow"><span class="setlbl">색</span><label class="col"><span>글자</span><input type="color" id="s-fg"></label><label class="col"><span>배경</span><input type="color" id="s-bg"></label><label class="col"><span>링크</span><input type="color" id="s-link"></label></div><p class="setnote">설정은 이 브라우저에만 저장됩니다.</p></div><div class="search"><label class="setlbl" for="q">검색</label> <input type="search" id="q" placeholder="함수나 제목으로 찾기" autocomplete="off"><p class="hint">공개 함수 전부와 모든 제목에서 찾습니다 — 본문 전문은 아닙니다.</p><ul id="qr"></ul></div><div class="here-head"><strong>이 페이지 안에서</strong></div><div class="here-body"><a href="#목차">목차</a><a href="#1-동적-배열">1. 동적 배열</a><a href="#2-침습적intrusive-리스트">2. 침습적(intrusive) 리스트</a><a href="#3-링-버퍼">3. 링 버퍼</a><a href="#4-해시-맵">4. 해시 맵</a><a href="#5-알고리즘">5. 알고리즘</a><a href="#6-용도별-해싱">6. 용도별 해싱</a><a href="#7-바이트를-텍스트로-hex와-base64">7. 바이트를 텍스트로: hex와 Base64</a><a href="#8-예제와-오용-사례">8. 예제와 오용 사례</a></div></div>
 <div class="page">
-<nav class="toc" aria-label="목차">
-<h2>목차</h2>
-<a href="index.html">매뉴얼</a>
-<a href="manual-00-start-here.html">0 · 여기서부터</a>
-<a href="manual-01-foundation.html">1 · 기초</a>
-<a href="manual-02-allocation.html">2 · 할당</a>
-<a href="manual-03-strings-text.html">3 · 문자열과 텍스트</a>
-<a href="manual-04-containers-algorithms.html" class="here">4 · 컨테이너와 알고리즘</a>
-<a href="manual-08-fmt-scan.html">8 · 형식화와 파싱</a>
-<a href="manual-05-hosted-services.html">5 · Hosted 서비스</a>
-<a href="manual-06-execution-and-platform.html">6 · 실행과 플랫폼</a>
-<a href="manual-freestanding.html">프리스탠딩</a>
-<a href="manual-07-alias-xcv-index.html">부록 A · Alias 인덱스</a>
-<h2>이 페이지 안에서</h2>
-<a href="#목차">목차</a>
-<a href="#1-동적-배열">1. 동적 배열</a>
-<a href="#2-침습적intrusive-리스트">2. 침습적(intrusive) 리스트</a>
-<a href="#3-링-버퍼">3. 링 버퍼</a>
-<a href="#4-해시-맵">4. 해시 맵</a>
-<a href="#5-알고리즘">5. 알고리즘</a>
-<a href="#6-용도별-해싱">6. 용도별 해싱</a>
-<a href="#7-바이트를-텍스트로-hex와-base64">7. 바이트를 텍스트로: hex와 Base64</a>
-<a href="#8-예제와-오용-사례">8. 예제와 오용 사례</a>
-</nav>
 <main id="content"><div class="content">
 <div class="masthead">proven_c_lib-v26.09.02b · 마크다운 매뉴얼에서 생성됨</div>
 <h1 id="4장-컨테이너와-알고리즘">4장: 컨테이너와 알고리즘<a class="anchor" href="#4장-컨테이너와-알고리즘" aria-hidden="true">#</a></h1><p><strong>3부 — 자료구조. 선행 조건: 2부 (<a href="manual-01-foundation.html">1</a>, <a href="manual-02-allocation.html">2</a>, <a href="manual-03-strings-text.html">3</a>).</strong> <strong>이 장을 마치면</strong> 작업에 맞는 컨테이너를 고르고, 보장된 한계 안에서 정렬하고 검색하며, 올바른 이유로 해싱하고, 바이트를 텍스트로 또 그 반대로 바꿀 수 있다.</p><p>이 장은 <code>array.h</code>, <code>list.h</code>, <code>ring.h</code>, <code>map.h</code>, <code>algorithm.h</code>, <code>hash.h</code>, <code>encode.h</code>를 다룬다. 여기 있는 모든 컨테이너는 할당자(allocator)를 받는다. 2장이 먼저 오는 이유가 그것이다.</p><h2 id="목차">목차<a class="anchor" href="#목차" aria-hidden="true">#</a></h2><ol><li><a href="#1-동적-배열">동적 배열</a></li><li><a href="#2-침습적intrusive-리스트">침습적(intrusive) 리스트</a></li><li><a href="#3-링-버퍼">링 버퍼</a></li><li><a href="#4-해시-맵">해시 맵</a></li><li><a href="#5-알고리즘">알고리즘</a></li><li><a href="#6-용도별-해싱">용도별 해싱</a></li><li><a href="#7-바이트를-텍스트로-hex와-base64">바이트를 텍스트로: hex와 Base64</a></li><li><a href="#8-예제와-오용-사례">예제와 오용 사례</a></li></ol><h2 id="1-동적-배열">1. 동적 배열<a class="anchor" href="#1-동적-배열" aria-hidden="true">#</a></h2><h3 id="문제-매번-손으로-다시-쓰는-그-배열">문제: 매번 손으로 다시 쓰는 그 배열<a class="anchor" href="#문제-매번-손으로-다시-쓰는-그-배열" aria-hidden="true">#</a></h3><p>확장 가능한 배열은 모든 C 프로그램이 결국 한 번은 작성하는 자료구조이며, 매번 조금씩 다르게 작성된다:</p><pre><code data-lang="text">int *items = malloc(cap * sizeof(int));
@@ -361,46 +337,46 @@ memcpy(key, &amp;timestamp, sizeof timestamp); /* wrong: guessable, and mostly z
     accept_as_identical(incoming);   /* wrong: a forged collision costs seconds */
 }</code></pre><p>올바른 예 — 속일 수 없어야 하는 지문은 <code>proven_sha256</code>이며, 32바이트 전체에 걸쳐 비교한다.</p><p><strong><code>PROVEN_SHA256_SIZE</code>가 아닌 다이제스트 버퍼는 버퍼 오버플로다.</strong> <code>proven_sha256</code>은 정확히 32바이트를 쓰며, 여러분의 배열이 얼마나 큰지 알지 못한다.</p><pre><code data-lang="text">proven_byte_t digest[16];        /* wrong: SHA-256 is 32 bytes */
 proven_sha256(data, digest);     /* writes 32 into a 16-byte buffer */</code></pre><p>테스트 스위트가 컴파일하고 실행한다:</p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
-<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Hashing, by use case. The module gives you exactly one function per job, so the only</span>
-<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> decision is which job you have - and getting THAT wrong is the whole danger.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> 쓰임새로 나눈 해시. 이 모듈은 할 일마다 함수를 정확히 하나씩 준다. 그러니 고를 것은</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> "내가 할 일이 무엇인가" 하나뿐이고, *그것*을 틀리는 것이 위험의 전부다.</span>
 <span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
 
 <span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
     proven_mem_view_t data <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">the quick brown fox</span><span style="color: #198810">"</span>));
 
-    <span style="color: #74747c">/*</span><span style="color: #74747c"> Job 1: hash a key into your own table, trusted input. Fast, non-cryptographic. </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> 할 일 1: 믿을 수 있는 입력을 내 표의 자리로. 빠르고, 암호용이 아니다. </span><span style="color: #74747c">*/</span>
     proven_u64 table_hash <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_hash_bytes</span>(data);
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(table_hash <span style="color: #d73948">!=</span> <span style="color: #b60157">0</span>, <span style="color: #198810">"</span><span style="color: #198810">FNV-1a produces a spread-out 64-bit value</span><span style="color: #198810">"</span>);
 
-    <span style="color: #74747c">/*</span><span style="color: #74747c"> Job 2: hash a key from UNTRUSTED input. Same purpose, but an attacker who picks the</span>
-<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> input still cannot make everything collide, because they do not have the key. Pick</span>
-<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> the key once at startup from real randomness; a fixed key defeats the point. </span><span style="color: #74747c">*/</span>
-    proven_byte_t key[<span style="color: #b60157">16</span>] <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };   <span style="color: #74747c">/*</span><span style="color: #74747c"> in real code: fill from a random source, once </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> 할 일 2: *믿을 수 없는* 입력을 표의 자리로. 목적은 같지만, 입력을 고르는 공격자도</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> 모두를 충돌시킬 수 없다. 키를 모르기 때문이다. 키는 시작할 때 진짜 난수로 한 번</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> 고른다. 고정된 키를 쓰면 이 방법의 뜻이 사라진다. </span><span style="color: #74747c">*/</span>
+    proven_byte_t key[<span style="color: #b60157">16</span>] <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };   <span style="color: #74747c">/*</span><span style="color: #74747c"> 실제 코드에서는 난수원에서 한 번 채운다 </span><span style="color: #74747c">*/</span>
     proven_u64 safe_hash <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_hash_keyed</span>(data, key);
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(safe_hash <span style="color: #d73948">!=</span> table_hash, <span style="color: #198810">"</span><span style="color: #198810">a keyed hash is a different function</span><span style="color: #198810">"</span>);
 
-    <span style="color: #74747c">/*</span><span style="color: #74747c"> Job 3: did these bytes get corrupted? A checksum, not a hash. Interoperates with</span>
-<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> gzip/zlib/PNG, which all carry this exact CRC-32. </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> 할 일 3: 이 바이트들이 상했는가? 해시가 아니라 검사합이다. gzip/zlib/PNG 와</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> 그대로 맞물린다 - 셋 다 정확히 이 CRC-32 를 쓴다. </span><span style="color: #74747c">*/</span>
     proven_u32 checksum <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_crc32</span>(data);
-    <span style="color: #74747c">/*</span><span style="color: #74747c"> The canonical CRC-32 sanity value, so you can see it is the real one: </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> 널리 쓰이는 CRC-32 확인값이다. 진짜 그 함수라는 것을 눈으로 볼 수 있다. </span><span style="color: #74747c">*/</span>
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_crc32</span>(<span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">123456789</span><span style="color: #198810">"</span>))) <span style="color: #d73948">==</span> <span style="color: #b60157">0x</span><span style="color: #b60157">cbf43926</span><span style="color: #d73948">u</span>,
                     <span style="color: #198810">"</span><span style="color: #198810">CRC-32 of </span><span style="color: #1d6c76">\"</span><span style="color: #198810">123456789</span><span style="color: #1d6c76">\"</span><span style="color: #198810"> is the shared check value</span><span style="color: #198810">"</span>);
     (<span style="color: #d73948">void</span>)checksum;
 
-    <span style="color: #74747c">/*</span><span style="color: #74747c"> Job 4: fingerprint content - dedup, content-addressing, "are these the same file",</span>
-<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> answered safely even against someone trying to forge a match. This is the one you</span>
-<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> reach for when the answer must not be foolable. </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> 할 일 4: 내용의 지문 - 중복 제거, 내용 주소화, "이 둘이 같은 파일인가". 일치를</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> 위조하려는 상대 앞에서도 안전하게 답한다. 답이 속아 넘어가면 안 되는 자리에서</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> 집는 것이 이것이다. </span><span style="color: #74747c">*/</span>
     proven_byte_t digest[PROVEN_SHA256_SIZE];
     <span style="color: #4b69c6">proven_sha256</span>(data, digest);
 
     <span style="color: #d73948">char</span> hex[<span style="color: #b60157">65</span>];
     <span style="color: #4b69c6">proven_sha256_to_hex</span>(digest, hex);
-    <span style="color: #74747c">/*</span><span style="color: #74747c"> The same spelling sha256sum and git print, so it interoperates: </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> sha256sum 과 git 이 찍는 것과 같은 표기라, 그대로 맞물린다. </span><span style="color: #74747c">*/</span>
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(hex[<span style="color: #b60157">64</span>] <span style="color: #d73948">==</span> <span style="color: #198810">'</span><span style="color: #1d6c76">\0</span><span style="color: #198810">'</span> <span style="color: #d73948">&amp;&amp;</span> <span style="color: #4b69c6">proven_cstr_len</span>(hex) <span style="color: #d73948">==</span> <span style="color: #b60157">64</span>,
                     <span style="color: #198810">"</span><span style="color: #198810">a SHA-256 fingerprint is 64 lowercase hex characters</span><span style="color: #198810">"</span>);
 
-    <span style="color: #74747c">/*</span><span style="color: #74747c"> SHA-256 streams, for content you cannot hold in memory at once - the digest depends</span>
-<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> only on the bytes, never on how they were chunked. </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> SHA-256 은 흘려 넣을 수도 있다. 한 번에 기억에 담을 수 없는 내용을 위해서다 -</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> 다이제스트는 바이트에만 달렸지, 몇 토막으로 나눠 넣었는지에는 달리지 않는다. </span><span style="color: #74747c">*/</span>
     proven_sha256_t ctx;
     <span style="color: #4b69c6">proven_sha256_init</span>(<span style="color: #d73948">&amp;</span>ctx);
     <span style="color: #4b69c6">proven_sha256_update</span>(<span style="color: #d73948">&amp;</span>ctx, <span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">the quick </span><span style="color: #198810">"</span>)));
@@ -1090,6 +1066,7 @@ proven_err_t e = proven_map_set(&amp;counts, other_key, &amp;one);   /* may reha
 *seen += 1;                                                  /* wrong: may dangle */</code></pre><p>삽입할 수 있는 무언가를 사이에 두고 붙들 것은 포인터가 아니라 키다.</p><p>반례 — 프로그램 밖에서 온 키에 빠른 해시를 쓰는 경우:</p><pre><code data-lang="text">proven_result_map_t m = proven_map_create_trusted(alloc, 64, PROVEN_KEY_TYPE_U8_BORROWED,
                                                   sizeof(session_t), alignof(session_t));
 /* keys are HTTP header names taken from the request */   /* wrong */</code></pre><p>그것이 바로 키가 있는 해시가 막으려는 경우다. 키를 나 아닌 누군가가 고른다면 <code>proven_map_create()</code>를 쓴다.</p>
+
 <div class="nav"><a href="manual-03-strings-text.html">← 3 · 문자열과 텍스트</a><a href="manual-08-fmt-scan.html">8 · 형식화와 파싱 →</a></div>
 </div></main>
 </div>

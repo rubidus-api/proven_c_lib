@@ -731,7 +731,7 @@ Correct: document canonical `proven_` API first, then mention aliases as optiona
 
 Compiled and run by the test suite. Note the ordering the contract requires: submit, then close, then destroy. `proven_job_system_destroy` must not race with `proven_job_submit`.
 
-<!-- example: manual/examples/ex_06_job.c -->
+<!-- example: manual/examples/en/ex_06_job.c -->
 ```c
 #include <stdatomic.h>
 
@@ -815,7 +815,7 @@ int main(void) {
 
 Compiled and run by the test suite. The rule that catches everyone: locals do not survive a yield, so every piece of state the coroutine needs across a suspension has to live in its struct.
 
-<!-- example: manual/examples/ex_06_coro.c -->
+<!-- example: manual/examples/en/ex_06_coro.c -->
 ```c
 /*
  * A stackless coroutine is a switch statement in disguise: BEGIN opens a

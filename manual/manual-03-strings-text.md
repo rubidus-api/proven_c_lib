@@ -868,7 +868,7 @@ if (!proven_is_ok(e)) {
 
 Compiled and run by the test suite. The distinction that matters: an owned string may reallocate and must be destroyed; a borrowed one wraps caller memory, never reallocates, and refuses to grow past the buffer you gave it rather than quietly moving it.
 
-<!-- example: manual/examples/ex_03_u8str.c -->
+<!-- example: manual/examples/en/ex_03_u8str.c -->
 ```c
 /*
  * There are two string handles here and the difference is ownership, not size:
@@ -1012,7 +1012,7 @@ growing (which does not, and is refused), then the same edit again through
 `proven_u8str_replace_at_grow()`. It ends by checking the file extension with
 `proven_u8str_view_ends_with()`.
 
-<!-- example: manual/examples/ex_03_fixed_edits.c -->
+<!-- example: manual/examples/en/ex_03_fixed_edits.c -->
 ```c
 /*
  * The previous example grew a string whenever it ran out of room. This one is
@@ -1196,7 +1196,7 @@ Three points decide whether this code is right:
 - **The result is NUL-terminated**, including after a deliberate truncation, so
   it is safe to pass to a system call that expects a terminator.
 
-<!-- example: manual/examples/ex_03_u16str.c -->
+<!-- example: manual/examples/en/ex_03_u16str.c -->
 ```c
 /*
  * UTF-16 exists in this library for one reason: some operating system calls

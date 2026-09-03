@@ -12,30 +12,6 @@
 <div class="bar"><strong><a href="index.html">proven_c_lib 매뉴얼</a></strong><button class="here-btn" type="button" aria-expanded="false" aria-controls="here-panel">1 · 기초 <span class="caret">▾</span></button><span class="bar-nav"><a href="manual-00-start-here.html" title="이전" aria-label="이전">←</a><a href="index.html" title="목차" aria-label="목차">↑</a><a href="manual-02-allocation.html" title="다음" aria-label="다음">→</a></span></div>
 <div id="here-panel" class="here-panel" hidden><div class="tools"><span class="ver">proven_c_lib-v26.09.02b</span><button class="tool" type="button" id="set-open" aria-expanded="false">⚙ 설정</button><a class="tool" href="../en/manual-01-foundation.html">English</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib/releases/download/v26.09.02b/proven_c_lib-v26.09.02b-ko-manual.pdf">⤓ PDF</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib" title="이 프로젝트의 GitHub 저장소">⌥ 저장소</a><a class="tool" href="https://rubidus-api.github.io/" title="rubidus-api.github.io — 공개된 모든 프로젝트">⌂ 전체 사이트</a><a class="tool" href="https://github.com/rubidus-api" title="github.com/rubidus-api — 모든 저장소">≡ 저장소 목록</a></div><div class="setbox" id="setbox" hidden><label class="setrow"><input type="checkbox" id="s-width"><span>가로폭 제한</span></label><div class="setrow"><span class="setlbl">테마</span><span class="seg"><button type="button" class="segb" data-theme="auto">시스템</button><button type="button" class="segb" data-theme="light">밝게</button><button type="button" class="segb" data-theme="dark">어둡게</button></span></div><div class="setrow"><span class="setlbl">색</span><label class="col"><span>글자</span><input type="color" id="s-fg"></label><label class="col"><span>배경</span><input type="color" id="s-bg"></label><label class="col"><span>링크</span><input type="color" id="s-link"></label></div><p class="setnote">설정은 이 브라우저에만 저장됩니다.</p></div><div class="search"><label class="setlbl" for="q">검색</label> <input type="search" id="q" placeholder="함수나 제목으로 찾기" autocomplete="off"><p class="hint">공개 함수 전부와 모든 제목에서 찾습니다 — 본문 전문은 아닙니다.</p><ul id="qr"></ul></div><div class="here-head"><strong>이 페이지 안에서</strong></div><div class="here-body"><a href="#목차">목차</a><a href="#1-에러는-값이다">1. 에러는 값이다</a><a href="#2-타입-그리고-왜-표기가-다른가">2. 타입, 그리고 왜 표기가 다른가</a><a href="#3-메모리-view-포인터와-길이를-하나로">3. 메모리 view: 포인터와 길이를 하나로</a><a href="#4-감길-수-없는-크기-산술">4. 감길 수 없는 크기 산술</a><a href="#5-정렬">5. 정렬</a><a href="#6-panic-에러를-돌려줄-상대가-남지-않았을-때">6. Panic: 에러를 돌려줄 상대가 남지 않았을 때</a><a href="#7-버전-매크로">7. 버전 매크로</a><a href="#8-예제와-오용-사례">8. 예제와 오용 사례</a></div></div>
 <div class="page">
-<nav class="toc" aria-label="목차">
-<h2>목차</h2>
-<a href="index.html">매뉴얼</a>
-<a href="manual-00-start-here.html">0 · 여기서부터</a>
-<a href="manual-01-foundation.html" class="here">1 · 기초</a>
-<a href="manual-02-allocation.html">2 · 할당</a>
-<a href="manual-03-strings-text.html">3 · 문자열과 텍스트</a>
-<a href="manual-04-containers-algorithms.html">4 · 컨테이너와 알고리즘</a>
-<a href="manual-08-fmt-scan.html">8 · 형식화와 파싱</a>
-<a href="manual-05-hosted-services.html">5 · Hosted 서비스</a>
-<a href="manual-06-execution-and-platform.html">6 · 실행과 플랫폼</a>
-<a href="manual-freestanding.html">프리스탠딩</a>
-<a href="manual-07-alias-xcv-index.html">부록 A · Alias 인덱스</a>
-<h2>이 페이지 안에서</h2>
-<a href="#목차">목차</a>
-<a href="#1-에러는-값이다">1. 에러는 값이다</a>
-<a href="#2-타입-그리고-왜-표기가-다른가">2. 타입, 그리고 왜 표기가 다른가</a>
-<a href="#3-메모리-view-포인터와-길이를-하나로">3. 메모리 view: 포인터와 길이를 하나로</a>
-<a href="#4-감길-수-없는-크기-산술">4. 감길 수 없는 크기 산술</a>
-<a href="#5-정렬">5. 정렬</a>
-<a href="#6-panic-에러를-돌려줄-상대가-남지-않았을-때">6. Panic: 에러를 돌려줄 상대가 남지 않았을 때</a>
-<a href="#7-버전-매크로">7. 버전 매크로</a>
-<a href="#8-예제와-오용-사례">8. 예제와 오용 사례</a>
-</nav>
 <main id="content"><div class="content">
 <div class="masthead">proven_c_lib-v26.09.02b · 마크다운 매뉴얼에서 생성됨</div>
 <h1 id="1장-기초--에러-타입-메모리-view">1장: 기초 — 에러, 타입, 메모리 view<a class="anchor" href="#1장-기초--에러-타입-메모리-view" aria-hidden="true">#</a></h1><p><strong>2부 — 모든 프로그램이 사용하는 어휘. 선행 조건: <a href="manual-00-start-here.html">0장</a>.</strong> <strong>이 장을 마치면</strong> 이 라이브러리가 보고하는 모든 실패를 처리할 수 있고, 크기를 잃어버리지 않으면서 메모리 영역을 기술할 수 있으며, 조용히 감기지 않는 크기 산술을 할 수 있다.</p><p>이 장은 <code>types.h</code>, <code>error.h</code>, <code>memory.h</code>, <code>align.h</code>, <code>version.h</code>, <code>panic.h</code>를 다룬다 — 다른 모든 장이 그 위에 세워지는 조각들이다. 여기에는 할당하는 것이 아무것도 없고, 운영체제와 이야기하는 것도 아무것도 없다. 그러면서도 진짜로 반드시 읽어야 하는, 가장 짧은 장이다.</p><h2 id="목차">목차<a class="anchor" href="#목차" aria-hidden="true">#</a></h2><ol><li><a href="#1-에러는-값이다">에러는 값이다</a></li><li><a href="#2-타입-그리고-왜-표기가-다른가">타입, 그리고 왜 표기가 다른가</a></li><li><a href="#3-메모리-view-포인터와-길이를-하나로">메모리 view: 포인터와 길이를 하나로</a></li><li><a href="#4-감길-수-없는-크기-산술">감길 수 없는 크기 산술</a></li><li><a href="#5-정렬">정렬</a></li><li><a href="#6-panic-에러를-돌려줄-상대가-남지-않았을-때">Panic: 에러를 돌려줄 상대가 남지 않았을 때</a></li><li><a href="#7-버전-매크로">버전 매크로</a></li><li><a href="#8-예제와-오용-사례">예제와 오용 사례</a></li></ol><h2 id="1-에러는-값이다">1. 에러는 값이다<a class="anchor" href="#1-에러는-값이다" aria-hidden="true">#</a></h2><h3 id="왜-이것이-맨-앞에-오는가">왜 이것이 맨 앞에 오는가<a class="anchor" href="#왜-이것이-맨-앞에-오는가" aria-hidden="true">#</a></h3><p>이 매뉴얼의 나머지 모든 페이지는 여기서 실패가 어떻게 보고되는지 여러분이 안다고 가정한다. 그러니 이 절은 건너뛸 수 없는 유일한 절이다.</p><p>C는 함수가 실패를 어떻게 보고해야 하는지에 대해 스스로와 합의한 적이 한 번도 없다. <code>malloc</code>은 <code>NULL</code>을 반환한다. <code>fopen</code>도 <code>NULL</code>을 반환한다. <code>read</code>는 <code>-1</code>을 반환한다. <code>strtol</code>은 <code>0</code>을 반환하고 <em>어쩌면</em> <code>errno</code>를 설정하는데, 그것도 여러분이 먼저 <code>errno</code>를 지웠을 때에만 그렇다. 성공한 호출도 거기에 쓰레기를 남겨 두는 것이 허용되기 때문이다. <code>printf</code>는 거의 아무도 확인하지 않는 음수를 반환한다. 네 가지 관례가 있고, 이들이 공유하는 유일한 성질은 <strong>무시해도 조용하고 합법이라는 것</strong>이다:</p><pre><code data-lang="text">char *p = malloc(n);
@@ -77,22 +53,21 @@ if (s.err) {
 }</code></pre><p>반례 — 이 설계 전체가 막으려고 존재하는 바로 그 실수:</p><pre><code data-lang="text">proven_result_u8str_t s = proven_u8str_create(alloc, 32);
 (void)proven_u8str_append(&amp;s.value, text);   /* wrong: s.value may be garbage */
 proven_u8str_destroy(alloc, &amp;s.value);       /* wrong: destroying what was never created */</code></pre><p><code>.err</code>를 확인하기 전에 <code>.value</code>를 읽는 것은 이 관례가 여러분 대신 잡아 줄 수 없는 유일한 에러다. 구조체는 어느 쪽이든 존재하므로 컴파일러는 불평하지 않는다 — 그러니 호출 바로 다음 줄에 확인을 적는 습관을 들일 가치가 있다.</p><h3 id="실전-예제-값으로서의-에러">실전 예제: 값으로서의 에러<a class="anchor" href="#실전-예제-값으로서의-에러" aria-hidden="true">#</a></h3><p>이 프로그램은 테스트 스위트가 컴파일하고 실행하므로 낡을 수 없다. 실패 가능한 호출이 취하는 두 가지 형태 — 돌려줄 것이 없을 때의 맨 <code>proven_err_t</code>와, 돌려줄 것이 있을 때의 <code>proven_result_*_t</code> — 을 보여주고, result 안의 값이 그 옆의 에러를 확인하기 전까지는 아무 의미도 없는 이유를 보여준다.</p><pre><code data-lang="c"><span style="color: #74747c">/*</span>
-<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> Errors are values in proven: a fallible call hands back either an error or a</span>
-<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> result, and the compiler makes you look at it. There is nothing to unwind and</span>
-<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> nothing global to consult.</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> proven 에서 오류는 값이다. 실패할 수 있는 호출은 오류나 result 를 돌려주고,</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> 컴파일러가 그것을 보게 만든다. 풀어 되돌릴 것도 없고, 찾아볼 전역도 없다.</span>
 <span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
 
-<span style="color: #74747c">/*</span><span style="color: #74747c"> A fallible operation returns proven_err_t when it has no value to give back. </span><span style="color: #74747c">*/</span>
+<span style="color: #74747c">/*</span><span style="color: #74747c"> 돌려줄 값이 없는 실패 가능 연산은 proven_err_t 를 돌려준다. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> proven_err_t <span style="color: #4b69c6">write_greeting</span>(proven_u8str_t <span style="color: #d73948">*</span>out) {
     <span style="color: #d73948">return</span> <span style="color: #4b69c6">proven_u8str_append</span>(out, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">hello</span><span style="color: #198810">"</span>));
 }
 
-<span style="color: #74747c">/*</span><span style="color: #74747c"> When there IS a value, it comes wrapped with the error that guards it. The</span>
-<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> value is only meaningful once you have checked `err`. </span><span style="color: #74747c">*/</span>
+<span style="color: #74747c">/*</span><span style="color: #74747c"> 돌려줄 값이 *있으면* 그것을 지키는 오류와 함께 싸여 온다. 값은 `err` 를 확인한</span>
+<span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> 뒤에야 뜻을 갖는다. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> proven_result_size_t <span style="color: #4b69c6">half</span>(proven_size_t n) {
     proven_result_size_t res <span style="color: #d73948">=</span> {<span style="color: #b60157">0</span>};
     <span style="color: #d73948">if</span> (n <span style="color: #d73948">%</span> <span style="color: #b60157">2</span> <span style="color: #d73948">!=</span> <span style="color: #b60157">0</span>) {
-        res.err <span style="color: #d73948">=</span> PROVEN_ERR_INVALID_ARG;   <span style="color: #74747c">/*</span><span style="color: #74747c"> leave res.value at 0: it means nothing </span><span style="color: #74747c">*/</span>
+        res.err <span style="color: #d73948">=</span> PROVEN_ERR_INVALID_ARG;   <span style="color: #74747c">/*</span><span style="color: #74747c"> res.value 는 0 그대로 둔다: 아무 뜻도 없다 </span><span style="color: #74747c">*/</span>
         <span style="color: #d73948">return</span> res;
     }
     res.err <span style="color: #d73948">=</span> PROVEN_OK;
@@ -103,36 +78,36 @@ proven_u8str_destroy(alloc, &amp;s.value);       /* wrong: destroying what was n
 <span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
     proven_allocator_t alloc <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
 
-    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- checking a plain proven_err_t ------------------------------------ </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- 맨 proven_err_t 를 확인하기 ------------------------------------- </span><span style="color: #74747c">*/</span>
     proven_result_u8str_t s <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_u8str_create</span>(alloc, <span style="color: #b60157">32</span>);
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(s.err), <span style="color: #198810">"</span><span style="color: #198810">creating a 32-byte string should succeed</span><span style="color: #198810">"</span>);
 
     proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">write_greeting</span>(<span style="color: #d73948">&amp;</span>s.value);
     <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">proven_is_ok</span>(err)) {
-        <span style="color: #74747c">/*</span><span style="color: #74747c"> Nothing was appended, and the string is still valid: proven's</span>
-<span style="color: #74747c">         </span><span style="color: #74747c">*</span><span style="color: #74747c"> grow-style operations are failure-atomic. </span><span style="color: #74747c">*/</span>
+        <span style="color: #74747c">/*</span><span style="color: #74747c"> 아무것도 붙지 않았고 문자열은 여전히 온전하다. proven 의 늘리는 연산은</span>
+<span style="color: #74747c">         </span><span style="color: #74747c">*</span><span style="color: #74747c"> 실패 원자적이다. </span><span style="color: #74747c">*/</span>
         <span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>s.value);
         <span style="color: #d73948">return</span> <span style="color: #b60157">1</span>;
     }
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_u8str_view_eq</span>(<span style="color: #4b69c6">proven_u8str_as_view</span>(<span style="color: #d73948">&amp;</span>s.value), <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">hello</span><span style="color: #198810">"</span>)),
                     <span style="color: #198810">"</span><span style="color: #198810">the greeting should have been appended</span><span style="color: #198810">"</span>);
 
-    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- checking a result struct ----------------------------------------- </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- result 구조체를 확인하기 ---------------------------------------- </span><span style="color: #74747c">*/</span>
     proven_result_size_t ok <span style="color: #d73948">=</span> <span style="color: #4b69c6">half</span>(<span style="color: #b60157">10</span>);
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_is_ok</span>(ok.err), <span style="color: #198810">"</span><span style="color: #198810">10 is even, so halving it must succeed</span><span style="color: #198810">"</span>);
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(ok.value <span style="color: #d73948">==</span> <span style="color: #b60157">5</span>, <span style="color: #198810">"</span><span style="color: #198810">half of 10 is 5</span><span style="color: #198810">"</span>);
 
     proven_result_size_t bad <span style="color: #d73948">=</span> <span style="color: #4b69c6">half</span>(<span style="color: #b60157">7</span>);
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(bad.err <span style="color: #d73948">==</span> PROVEN_ERR_INVALID_ARG, <span style="color: #198810">"</span><span style="color: #198810">7 is odd, so halving it must fail</span><span style="color: #198810">"</span>);
-    <span style="color: #74747c">/*</span><span style="color: #74747c"> bad.value is NOT to be read. It is 0 here, but that is an implementation</span>
-<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> detail of this function, not a promise of the result type. </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> bad.value 는 읽으면 안 된다. 여기서는 0 이지만 그것은 이 함수의 구현 사정일</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> 뿐, result 타입의 약속이 아니다. </span><span style="color: #74747c">*/</span>
 
-    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- the error is impossible to drop by accident ----------------------- </span><span style="color: #74747c">*/</span>
-    <span style="color: #74747c">/*</span><span style="color: #74747c"> proven_u8str_append is [[nodiscard]], so this would be a compile error:</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> --- 오류를 실수로 흘릴 수는 없다 ------------------------------------ </span><span style="color: #74747c">*/</span>
+    <span style="color: #74747c">/*</span><span style="color: #74747c"> proven_u8str_append 에는 [[nodiscard]] 가 붙어 있어 이렇게 쓰면 컴파일 오류다.</span>
 <span style="color: #74747c">     </span><span style="color: #74747c">*</span>
 <span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c">     proven_u8str_append(&amp;s.value, PROVEN_LIT("!"));</span>
 <span style="color: #74747c">     </span><span style="color: #74747c">*</span>
-<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> If you really do want to ignore a failure, you have to say so: </span><span style="color: #74747c">*/</span>
+<span style="color: #74747c">     </span><span style="color: #74747c">*</span><span style="color: #74747c"> 실패를 정말로 무시하겠다면, 무시한다고 적어야 한다. </span><span style="color: #74747c">*/</span>
     (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_u8str_append</span>(<span style="color: #d73948">&amp;</span>s.value, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">!</span><span style="color: #198810">"</span>));
 
     <span style="color: #4b69c6">printf</span>(<span style="color: #198810">"</span><span style="color: #198810">greeting: </span><span style="color: #b60157">%s</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>, <span style="color: #4b69c6">proven_u8str_as_cstr</span>(<span style="color: #d73948">&amp;</span>s.value));
@@ -368,6 +343,7 @@ proven_err_t err <span style="color: #d73948">=</span> PROVEN_OK;
     err <span style="color: #d73948">=</span> PROVEN_ERR_INVALID_ARG;   <span style="color: #74747c">/*</span><span style="color: #74747c"> only a null pointer with bytes behind it is a bug </span><span style="color: #74747c">*/</span>
 }
 (<span style="color: #d73948">void</span>)err;</code></pre><h3 id="다음으로-갈-곳">다음으로 갈 곳<a class="anchor" href="#다음으로-갈-곳" aria-hidden="true">#</a></h3><p><a href="manual-02-allocation.html">2장</a>은 이 타입들이 일을 시작하는 곳이다. allocator는 <code>proven_mem_mut_t</code>를 만들어 내고, arena는 §5의 정렬 헬퍼를 사용하며, 라이브러리의 모든 확장 가능 컨테이너는 allocator를 매개변수로 받는다. §1이 에러를 반환값으로 받는 이유로 든 것과 같은 이유 때문이다 — 비용은 시그니처에 보여야 한다.</p>
+
 <div class="nav"><a href="manual-00-start-here.html">← 0 · 여기서부터</a><a href="manual-02-allocation.html">2 · 할당 →</a></div>
 </div></main>
 </div>
