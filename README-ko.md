@@ -358,7 +358,7 @@ Luca Sas의 ACCU 2021 발표 **Modern C and What We Can Learn From It**
 있습니다. 그러나 `proven`은 libc 대체물이 아니며 당신의 `main`을 차지하려 하지 않습니다. 전역 상태가
 없고, 스레드를 띄우지 않으며, `atexit` 핸들러를 등록하지 않고, 당신이 allocator를 건네지 않은 것은
 아무것도 할당하지 않습니다. 모듈 하나만 써도 되고, 이미 링크하고 있는 무엇과든 나란히 쓰면 됩니다.
-[부록 D](manual-ko/manual-00-start-here-ko.md#7-부록-d-libc-대응표)가 당신이 아는 libc 호출을 무엇으로
+[부록 D](manual-ko/manual-00-start-here-ko.md#15-부록-d-libc-대응표)가 당신이 아는 libc 호출을 무엇으로
 바꿔 쓸지, 그리고 왜 다른지를 대응시켜 줍니다.
 
 **사람이 쓰기에 편하고, 사람이 AI와 함께 쓸 때 안전하도록.** 명시적인 쪽이 더 장황하며, 그것이
@@ -676,8 +676,8 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 
 ## 문서
 
-- 사용자 매뉴얼: `manual/manual.md` (`manual/` 아래 챕터들)
-- 한국어 매뉴얼: `manual-ko/manual-ko.md`
+- 사용자 매뉴얼: `manual/manual.md` (차례 페이지; 각 장은 `manual/` 아래 옆 파일들)
+- 한국어 매뉴얼: `manual-ko/manual-ko.md` (차례 페이지; 각 장은 `manual-ko/` 아래)
 - freestanding 가이드: `manual/manual-freestanding.md`
 - 웹·PDF 판: `docs/en/`, `docs/ko/`. 위의 마크다운에서 `scripts/build-site.sh`가 생성합니다.
   정본은 마크다운이며, `docs/en`과 `docs/ko` 아래는 전부 생성물이므로 직접 고치지 않습니다.
