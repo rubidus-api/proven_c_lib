@@ -11,6 +11,45 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+## [Unreleased]
+
+### Added
+
+- **A tutorial track for readers who have just finished one C book.**
+  `manual/manual-t-tutorial.md` and `manual-ko/manual-t-tutorial-ko.md` teach the
+  library in six short programs, each introducing exactly one idea — printing,
+  views, errors, results, allocators — and ending with the Chapter 0 greeting
+  program read line by line. Chapter 0 shows that program on its first page and
+  it carries five new ideas at once; the tutorial hands them over one at a time.
+  All six are real programs the build compiles and runs.
+- **`scripts/check-example-parity.py`** — the two example trees may differ in
+  their comments and in nothing else. It strips comments and string bodies and
+  compares what is left, and `scripts/project-check.sh` runs it.
+
+### Changed
+
+- **The manual's examples are now two trees, one per language.**
+  `manual/examples/en/` is quoted by the English chapters and `manual/examples/ko/`
+  by the Korean ones, so a reader of the Korean manual is not made to read English
+  comments to follow the code the Korean prose is explaining. The code is identical
+  in both; only the comments differ. `./nob build` compiles and runs both trees —
+  78 example executables where there were 33.
+- **The web edition carries its table of contents in one place.** The per-chapter
+  left sidebar is gone; the index page now lists every chapter *and* every section
+  within it. Jumping about inside a chapter is what the panel at the top is for.
+- `tests/test_docs_manual_examples.c` reads the chapter list from the manual
+  directories instead of a hand-written array. Six examples had become invisible to
+  it because a chapter added later was never added to that array.
+- The same gate's quoted-example cap was 64 and silently dropped everything past it;
+  it is now 512 and overflowing fails the test. A cap that truncates in silence turns
+  a gate into decoration.
+
+### Fixed
+
+- `.gitattributes` marks `*.pdf` and `*.zip` binary. Regenerating the site made
+  `git diff --check` — and therefore `scripts/project-check.sh` — fail on the
+  published PDFs.
+
 ## [2026-09-02] - proven_c_lib-v26.09.02b
 
 ### Fixed

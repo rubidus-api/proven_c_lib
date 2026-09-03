@@ -502,7 +502,7 @@ proven_time_sleep(15);
 Compiled and run by the test suite. Note what it does *not* assert — an upper bound on the sleep —
 because that would be a test that fails on a busy machine.
 
-<!-- example: manual/examples/ex_05_time.c -->
+<!-- example: manual/examples/en/ex_05_time.c -->
 ```c
 /*
  * Time comes in two flavours that look identical and are not, and picking the
@@ -750,7 +750,7 @@ if (proven_is_ok(env.err)) {
 
 Compiled and run by the test suite. This is the whole-file API most callers actually want, including the atomic rewrite that preserves the target's permissions.
 
-<!-- example: manual/examples/ex_05_fs_wholefile.c -->
+<!-- example: manual/examples/en/ex_05_fs_wholefile.c -->
 ```c
 /*
  * The whole-file API: one call in, one call out. It exists because the
@@ -851,7 +851,7 @@ int main(void) {
 
 Compiled and run by the test suite. Note the read loop: a read at end-of-file returns `PROVEN_ERR_EOF`, not a zero-byte success, so a loop that only checks for zero bytes never terminates the way its author expected.
 
-<!-- example: manual/examples/ex_05_fs_stream.c -->
+<!-- example: manual/examples/en/ex_05_fs_stream.c -->
 ```c
 /*
  * The open/read/write/close path, for when the whole-file API (ex_05_fs_wholefile)
@@ -1071,7 +1071,7 @@ Two limits, both of which say so rather than going quiet:
 
 Compiled and run by the test suite:
 
-<!-- example: manual/examples/ex_05_fs_walk.c -->
+<!-- example: manual/examples/en/ex_05_fs_walk.c -->
 ```c
 /*
  * Walking a tree.
@@ -1258,7 +1258,7 @@ hidden global state. A caller who wants the 24 builds a buffered writer and says
 Compiled and run by the test suite. Note that `render_row` does not know where its
 bytes are going — that is the entire point.
 
-<!-- example: manual/examples/ex_05_stream.c -->
+<!-- example: manual/examples/en/ex_05_stream.c -->
 ```c
 /*
  * Writers and readers: one interface for "where bytes go" and one for "where bytes
@@ -1741,7 +1741,7 @@ simulation and a catastrophe for issuing two tokens.
 
 Compiled and run by the test suite:
 
-<!-- example: manual/examples/ex_05_random.c -->
+<!-- example: manual/examples/en/ex_05_random.c -->
 ```c
 /*
  * Randomness, by use case. There is no single "random": there are two jobs that look
@@ -1851,7 +1851,7 @@ The same example covers the record-level calls that go with it:
 | `proven_fs_is_absolute` | Does this path start from the root? The rule differs per platform, which is why it is a call. |
 | `proven_fs_rmdir` | Remove an **empty** directory. A non-empty one is refused, so a recursive delete stays an explicit decision. |
 
-<!-- example: manual/examples/ex_05_fs_durable.c -->
+<!-- example: manual/examples/en/ex_05_fs_durable.c -->
 ```c
 /*
  * Updating a file so that a power cut cannot leave it half-written.
@@ -2149,7 +2149,7 @@ The example puts the pieces together:
   pulls typed values straight out of a file handle when the input has a known
   shape rather than being free text.
 
-<!-- example: manual/examples/ex_05_streams_stdio.c -->
+<!-- example: manual/examples/en/ex_05_streams_stdio.c -->
 ```c
 /*
  * A writer is "somewhere bytes go" and a reader is "somewhere bytes come from",
@@ -2379,7 +2379,7 @@ carries a date: `proven_time_u8_fmt()` for the UTF-8 form, and
 `proven_time_u16_fmt()` for the UTF-16 form — the latter being right in exactly
 one situation, handing text to a system call that takes wide strings.
 
-<!-- example: manual/examples/ex_05_mmap.c -->
+<!-- example: manual/examples/en/ex_05_mmap.c -->
 ```c
 #include <string.h>
 
@@ -2550,7 +2550,7 @@ not care which source it got.
   program already has the operating system's and should leave it alone; a
   bare-metal program has none, and this is where its hardware source goes.
 
-<!-- example: manual/examples/ex_05_random_sources.c -->
+<!-- example: manual/examples/en/ex_05_random_sources.c -->
 ```c
 #include <string.h>
 

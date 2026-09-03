@@ -776,7 +776,7 @@ not better than an error.
 
 Compiled and run by the test suite:
 
-<!-- example: manual/examples/ex_08_fmt_custom.c -->
+<!-- example: manual/examples/en/ex_08_fmt_custom.c -->
 ```c
 /*
  * Formatting a type the library has never heard of.
@@ -1131,7 +1131,7 @@ Compiled and run by the test suite. It formats into a stack-borrowed string (ato
 overflow) and into an allocator-backed one (grows), uses a bounded argument for
 untrusted bytes, and then parses the line back - with the float round-tripping exactly.
 
-<!-- example: manual/examples/ex_08_fmt_scan.c -->
+<!-- example: manual/examples/en/ex_08_fmt_scan.c -->
 ```c
 /*
  * Formatting and scanning are the two halves of the same idea: `{}` renders typed
@@ -1256,7 +1256,7 @@ Compiled and run by the test suite. Every code in the table above is provoked on
 purpose here, including the non-transactional failure - because a contract you have
 only read is a contract you have not learned.
 
-<!-- example: manual/examples/ex_08_scan_recovery.c -->
+<!-- example: manual/examples/en/ex_08_scan_recovery.c -->
 ```c
 /*
  * The scanner's error codes, and how to recover from them.
@@ -1521,7 +1521,7 @@ the policy and options explicitly. Shortest mode asks for the fewest digits that
 read back as exactly this value, which is what a serialiser wants: an exact round
 trip without printing seventeen digits for numbers that do not need them.
 
-<!-- example: manual/examples/ex_08_numbers.c -->
+<!-- example: manual/examples/en/ex_08_numbers.c -->
 ```c
 #include <string.h>
 
@@ -1761,7 +1761,7 @@ order is worth remembering:
 | `proven_arg_cstr` | a NUL-terminated C string | the terminator must be there and the memory must be alive, or the formatter reads past the end |
 | `proven_arg_ucstr` | the same, as `unsigned char *` | exists so a byte buffer does not need a cast that silences a real warning |
 
-<!-- example: manual/examples/ex_08_arguments.c -->
+<!-- example: manual/examples/en/ex_08_arguments.c -->
 ```c
 /*
  * Every value handed to the formatter arrives as a proven_arg_t, and every value

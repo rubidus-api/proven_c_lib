@@ -216,7 +216,7 @@ system at all — see [freestanding mode](manual-freestanding.md).
 This is the whole of it. Every line is one of the contracts in §5, and the build compiles and runs
 this exact file, so it cannot quietly stop being true.
 
-<!-- example: manual/examples/ex_00_hello.c -->
+<!-- example: manual/examples/en/ex_00_hello.c -->
 ```c
 /*
  * The first program. It is deliberately small, and every line of it is one of

@@ -12,30 +12,6 @@
 <div class="bar"><strong><a href="index.html">proven_c_lib manual</a></strong><button class="here-btn" type="button" aria-expanded="false" aria-controls="here-panel">6 · Execution and platform <span class="caret">▾</span></button><span class="bar-nav"><a href="manual-05-hosted-services.html" title="Previous" aria-label="Previous">←</a><a href="index.html" title="Contents" aria-label="Contents">↑</a><a href="manual-freestanding.html" title="Next" aria-label="Next">→</a></span></div>
 <div id="here-panel" class="here-panel" hidden><div class="tools"><span class="ver">proven_c_lib-v26.09.02b</span><button class="tool" type="button" id="set-open" aria-expanded="false">⚙ Settings</button><a class="tool" href="../ko/manual-06-execution-and-platform.html">한국어</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib/releases/download/v26.09.02b/proven_c_lib-v26.09.02b-en-manual.pdf">⤓ PDF</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib" title="This project on GitHub">⌥ Repo</a><a class="tool" href="https://rubidus-api.github.io/" title="rubidus-api.github.io — every published project">⌂ All projects</a><a class="tool" href="https://github.com/rubidus-api" title="github.com/rubidus-api — every repository">≡ All repos</a></div><div class="setbox" id="setbox" hidden><label class="setrow"><input type="checkbox" id="s-width"><span>Limit line width</span></label><div class="setrow"><span class="setlbl">Theme</span><span class="seg"><button type="button" class="segb" data-theme="auto">System</button><button type="button" class="segb" data-theme="light">Light</button><button type="button" class="segb" data-theme="dark">Dark</button></span></div><div class="setrow"><span class="setlbl">Colours</span><label class="col"><span>Text</span><input type="color" id="s-fg"></label><label class="col"><span>Background</span><input type="color" id="s-bg"></label><label class="col"><span>Link</span><input type="color" id="s-link"></label></div><p class="setnote">Settings are kept in this browser only.</p></div><div class="search"><label class="setlbl" for="q">Search</label> <input type="search" id="q" placeholder="Find a function or a heading" autocomplete="off"><p class="hint">Searches every public function and every heading — not the full text.</p><ul id="qr"></ul></div><div class="here-head"><strong>On this page</strong></div><div class="here-body"><a href="#table-of-contents">Table of contents</a><a href="#1-stackless-coroutines">1. Stackless coroutines</a><a href="#2-job-system">2. Job system</a><a href="#3-threads-allocators-and-pointer-provenance">3. Threads, allocators, and pointer provenance</a><a href="#4-alias-layer">4. Alias layer</a><a href="#5-pal-contract">5. PAL contract</a><a href="#6-freestanding-subset">6. Freestanding subset</a><a href="#7-cross-compilation">7. Cross compilation</a><a href="#8-examples-and-misuse-cases">8. Examples and misuse cases</a></div></div>
 <div class="page">
-<nav class="toc" aria-label="Contents">
-<h2>Contents</h2>
-<a href="index.html">The manual</a>
-<a href="manual-00-start-here.html">0 · Start here</a>
-<a href="manual-01-foundation.html">1 · Foundation</a>
-<a href="manual-02-allocation.html">2 · Allocation</a>
-<a href="manual-03-strings-text.html">3 · Strings and text</a>
-<a href="manual-04-containers-algorithms.html">4 · Containers and algorithms</a>
-<a href="manual-08-fmt-scan.html">8 · Formatting and scanning</a>
-<a href="manual-05-hosted-services.html">5 · Hosted services</a>
-<a href="manual-06-execution-and-platform.html" class="here">6 · Execution and platform</a>
-<a href="manual-freestanding.html">Freestanding</a>
-<a href="manual-07-alias-xcv-index.html">A · Alias index</a>
-<h2>On this page</h2>
-<a href="#table-of-contents">Table of contents</a>
-<a href="#1-stackless-coroutines">1. Stackless coroutines</a>
-<a href="#2-job-system">2. Job system</a>
-<a href="#3-threads-allocators-and-pointer-provenance">3. Threads, allocators, and pointer provenance</a>
-<a href="#4-alias-layer">4. Alias layer</a>
-<a href="#5-pal-contract">5. PAL contract</a>
-<a href="#6-freestanding-subset">6. Freestanding subset</a>
-<a href="#7-cross-compilation">7. Cross compilation</a>
-<a href="#8-examples-and-misuse-cases">8. Examples and misuse cases</a>
-</nav>
 <main id="content"><div class="content">
 <div class="masthead">proven_c_lib-v26.09.02b · generated from the Markdown manual</div>
 <h1 id="chapter-6-execution-aliases-pal-freestanding-and-cross-builds">Chapter 6: Execution, Aliases, PAL, Freestanding, and Cross Builds<a class="anchor" href="#chapter-6-execution-aliases-pal-freestanding-and-cross-builds" aria-hidden="true">#</a></h1><p><strong>Part VI — Going further. Prerequisites: Parts II–V.</strong> <strong>After this chapter</strong> you can run work on more than one thread without the memory model surprising you, write a state machine that reads like a loop, and build for a target that has no operating system.</p><p>This chapter covers <code>coro.h</code>, <code>job.h</code>, <code>alias_xcv.h</code>, thread-safety and pointer provenance, PAL contracts, freestanding mode, and platform build notes. This is the hardest material in the manual, and it is last on purpose — nothing in Parts I–V depends on it.</p><h2 id="table-of-contents">Table of contents<a class="anchor" href="#table-of-contents" aria-hidden="true">#</a></h2><ol><li><a href="#1-stackless-coroutines">Stackless coroutines</a></li><li><a href="#2-job-system">Job system</a></li><li><a href="#3-threads-allocators-and-pointer-provenance">Threads, allocators, and pointer provenance</a></li><li><a href="#4-alias-layer">Alias layer</a></li><li><a href="#5-pal-contract">PAL contract</a></li><li><a href="#6-freestanding-subset">Freestanding subset</a></li><li><a href="#7-cross-compilation">Cross compilation</a></li><li><a href="#8-examples-and-misuse-cases">Examples and misuse cases</a></li></ol><h2 id="1-stackless-coroutines">1. Stackless coroutines<a class="anchor" href="#1-stackless-coroutines" aria-hidden="true">#</a></h2><p>The coroutine macros implement stackless state machines using <code>__LINE__</code> labels inside a switch. A coroutine function should return <code>proven_i32</code>: <code>0</code> means yielded or waiting, <code>1</code> means done.</p><h3 id="structure">Structure<a class="anchor" href="#structure" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef struct {
@@ -310,6 +286,7 @@ proven_job_submit(sys, work_and_free_data, data);</code></pre><h3 id="alias-laye
     <span style="color: #4b69c6">proven_u8str_destroy</span>(alloc, <span style="color: #d73948">&amp;</span>out.value);
     <span style="color: #d73948">return</span> <span style="color: #4b69c6">EXAMPLE_OK</span>();
 }</code></pre>
+
 <div class="nav"><a href="manual-05-hosted-services.html">← 5 · Hosted services</a><a href="manual-freestanding.html">Freestanding →</a></div>
 </div></main>
 </div>

@@ -175,25 +175,24 @@ proven_u8str_destroy(alloc, &s.value);       /* wrong: destroying what was never
 돌려줄 것이 있을 때의 `proven_result_*_t` — 을 보여주고, result 안의 값이 그 옆의
 에러를 확인하기 전까지는 아무 의미도 없는 이유를 보여준다.
 
-<!-- example: manual/examples/ex_01_errors.c -->
+<!-- example: manual/examples/ko/ex_01_errors.c -->
 ```c
 /*
- * Errors are values in proven: a fallible call hands back either an error or a
- * result, and the compiler makes you look at it. There is nothing to unwind and
- * nothing global to consult.
+ * proven 에서 오류는 값이다. 실패할 수 있는 호출은 오류나 result 를 돌려주고,
+ * 컴파일러가 그것을 보게 만든다. 풀어 되돌릴 것도 없고, 찾아볼 전역도 없다.
  */
 
-/* A fallible operation returns proven_err_t when it has no value to give back. */
+/* 돌려줄 값이 없는 실패 가능 연산은 proven_err_t 를 돌려준다. */
 static proven_err_t write_greeting(proven_u8str_t *out) {
     return proven_u8str_append(out, PROVEN_LIT("hello"));
 }
 
-/* When there IS a value, it comes wrapped with the error that guards it. The
- * value is only meaningful once you have checked `err`. */
+/* 돌려줄 값이 *있으면* 그것을 지키는 오류와 함께 싸여 온다. 값은 `err` 를 확인한
+ * 뒤에야 뜻을 갖는다. */
 static proven_result_size_t half(proven_size_t n) {
     proven_result_size_t res = {0};
     if (n % 2 != 0) {
-        res.err = PROVEN_ERR_INVALID_ARG;   /* leave res.value at 0: it means nothing */
+        res.err = PROVEN_ERR_INVALID_ARG;   /* res.value 는 0 그대로 둔다: 아무 뜻도 없다 */
         return res;
     }
     res.err = PROVEN_OK;
@@ -204,36 +203,36 @@ static proven_result_size_t half(proven_size_t n) {
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
-    /* --- checking a plain proven_err_t ------------------------------------ */
+    /* --- 맨 proven_err_t 를 확인하기 ------------------------------------- */
     proven_result_u8str_t s = proven_u8str_create(alloc, 32);
     EXAMPLE_REQUIRE(proven_is_ok(s.err), "creating a 32-byte string should succeed");
 
     proven_err_t err = write_greeting(&s.value);
     if (!proven_is_ok(err)) {
-        /* Nothing was appended, and the string is still valid: proven's
-         * grow-style operations are failure-atomic. */
+        /* 아무것도 붙지 않았고 문자열은 여전히 온전하다. proven 의 늘리는 연산은
+         * 실패 원자적이다. */
         proven_u8str_destroy(alloc, &s.value);
         return 1;
     }
     EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&s.value), PROVEN_LIT("hello")),
                     "the greeting should have been appended");
 
-    /* --- checking a result struct ----------------------------------------- */
+    /* --- result 구조체를 확인하기 ---------------------------------------- */
     proven_result_size_t ok = half(10);
     EXAMPLE_REQUIRE(proven_is_ok(ok.err), "10 is even, so halving it must succeed");
     EXAMPLE_REQUIRE(ok.value == 5, "half of 10 is 5");
 
     proven_result_size_t bad = half(7);
     EXAMPLE_REQUIRE(bad.err == PROVEN_ERR_INVALID_ARG, "7 is odd, so halving it must fail");
-    /* bad.value is NOT to be read. It is 0 here, but that is an implementation
-     * detail of this function, not a promise of the result type. */
+    /* bad.value 는 읽으면 안 된다. 여기서는 0 이지만 그것은 이 함수의 구현 사정일
+     * 뿐, result 타입의 약속이 아니다. */
 
-    /* --- the error is impossible to drop by accident ----------------------- */
-    /* proven_u8str_append is [[nodiscard]], so this would be a compile error:
+    /* --- 오류를 실수로 흘릴 수는 없다 ------------------------------------ */
+    /* proven_u8str_append 에는 [[nodiscard]] 가 붙어 있어 이렇게 쓰면 컴파일 오류다.
      *
      *     proven_u8str_append(&s.value, PROVEN_LIT("!"));
      *
-     * If you really do want to ignore a failure, you have to say so: */
+     * 실패를 정말로 무시하겠다면, 무시한다고 적어야 한다. */
     (void)proven_u8str_append(&s.value, PROVEN_LIT("!"));
 
     printf("greeting: %s\n", proven_u8str_as_cstr(&s.value));
@@ -559,7 +558,7 @@ proven_size_t aligned = (size + align - 1) & ~(align - 1);   /* wrong: may overf
 
 이 프로그램은 테스트 스위트가 컴파일하고 실행하므로 낡을 수 없다.
 
-<!-- example: manual/examples/ex_01_views.c -->
+<!-- example: manual/examples/ko/ex_01_views.c -->
 ```c
 #include <string.h>
 

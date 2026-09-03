@@ -1,6 +1,19 @@
 # Manual examples
 
-Every example printed in `manual/` lives here as a real program.
+Every example printed in `manual/` and `manual-ko/` lives here as a real program.
+
+## Two trees, one program
+
+    manual/examples/en/   quoted by manual/       - comments in English
+    manual/examples/ko/   quoted by manual-ko/    - comments in Korean
+    manual/examples/example.h                     - shared by both
+
+A reader of the Korean manual should not have to read English comments to follow
+the code that the Korean prose is explaining, so each edition prints the copy
+commented in its own language. The **code** must be identical in both:
+`scripts/check-example-parity.py` strips the comments and compares what is left,
+and `./nob build` compiles and runs *both* trees. A bug fixed in one tree and
+not the other therefore fails the build rather than shipping to one audience.
 
 The manual used to carry ~190 fenced C blocks and **only four of them could be
 compiled at all** — the rest were sketches that referenced imaginary helpers

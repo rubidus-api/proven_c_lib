@@ -28,6 +28,7 @@ import unicodedata
 TITLES = {
     'en': {
         'index': 'The manual',
+        'manual-t-tutorial': 'T · Tutorial',
         'manual-00-start-here': '0 · Start here',
         'manual-01-foundation': '1 · Foundation',
         'manual-02-allocation': '2 · Allocation',
@@ -41,6 +42,7 @@ TITLES = {
     },
     'ko': {
         'index': '매뉴얼',
+        'manual-t-tutorial': 'T · 따라 하며 익히기',
         'manual-00-start-here': '0 · 여기서부터',
         'manual-01-foundation': '1 · 기초',
         'manual-02-allocation': '2 · 할당',
@@ -56,7 +58,7 @@ TITLES = {
 
 # Reading order. The formatting reference sits next to the chapter that introduces it, and the
 # alias index last, because it is a lookup table rather than something anyone reads through.
-ORDER = ['index', 'manual-00-start-here', 'manual-01-foundation', 'manual-02-allocation',
+ORDER = ['index', 'manual-t-tutorial', 'manual-00-start-here', 'manual-01-foundation', 'manual-02-allocation',
          'manual-03-strings-text', 'manual-04-containers-algorithms', 'manual-08-fmt-scan',
          'manual-05-hosted-services', 'manual-06-execution-and-platform',
          'manual-freestanding', 'manual-07-alias-xcv-index']
@@ -383,17 +385,25 @@ def panel(lang, name, outline, version, pdf_url):
             % (tools, settings, search, here))
 
 
-def sidebar(lang, name, pages, outline):
+def full_contents(lang, pages, outlines):
+    """index 한 쪽에 실리는 *전체* 목차.
+
+    ★ 예전에는 이 목록이 장마다 왼쪽에 붙어 있었다(저자 지시로 걷었다). 목차는 한 자리에
+      두고, 각 장은 본문만 싣는다 --- 읽는 자리에서 눈이 갈 곳을 하나로 만든다.
+      장 안에서 절로 뛰는 길은 위쪽 ☰ 패널의 「이 쪽에서」가 그대로 해 준다.
+    """
     s = STR[lang]
-    out = ['<nav class="toc" aria-label="%s">' % s['contents'], '<h2>%s</h2>' % s['contents']]
+    out = ['<nav class="contents" aria-label="%s">' % s['contents']]
     for p in pages:
-        cls = ' class="here"' if p == name else ''
-        out.append('<a href="%s.html"%s>%s</a>' % (p, cls, html.escape(TITLES[lang][p])))
-    rows = [o for o in outline if o[0] == 2]
-    if rows:
-        out.append('<h2>%s</h2>' % s['here'])
-        for _lv, a, t in rows:
-            out.append('<a href="#%s">%s</a>' % (a, html.escape(t)))
+        if p == 'index':
+            continue
+        out.append('<h2><a href="%s.html">%s</a></h2>' % (p, html.escape(TITLES[lang][p])))
+        rows = [o for o in outlines.get(p, []) if o[0] == 2]
+        if rows:
+            out.append('<ul>')
+            for _lv, a, tx in rows:
+                out.append('<li><a href="%s.html#%s">%s</a></li>' % (p, a, html.escape(tx)))
+            out.append('</ul>')
     out.append('</nav>')
     return '\n'.join(out)
 
@@ -433,10 +443,10 @@ def build(lang, srcdir, outdir, version, pdf_url, root):
 {bar(lang, name, pages, version)}
 {panel(lang, name, outlines[name], version, pdf_url)}
 <div class="page">
-{sidebar(lang, name, pages, outlines[name])}
 <main id="content"><div class="content">
 <div class="masthead">{html.escape(version)} · {s['source']}</div>
 {bodies[name]}
+{full_contents(lang, pages, outlines) if name == 'index' else ''}
 {page_nav(lang, pages, name)}
 </div></main>
 </div>

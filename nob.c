@@ -1075,7 +1075,8 @@ int main(int argc, char **argv)
     if (!mkdir_p_safe(build_dir)) return 1;
 
     // Subdirs
-    static const char *subdirs[] = {"src", "src/proven", "platform", "tests", "manual", "manual/examples"};
+    static const char *subdirs[] = {"src", "src/proven", "platform", "tests", "manual", "manual/examples",
+                                    "manual/examples/en", "manual/examples/ko"};
     for (size_t i = 0; i < NOB_ARRAY_LEN(subdirs); ++i) {
         char buf[256];
         if (!format_path(buf, sizeof(buf), "%s/%s", build_dir, subdirs[i])) return 1;

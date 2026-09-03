@@ -743,7 +743,7 @@ proven_err_t render(proven_fmt_sink_t out, const void *obj);
 
 테스트 스위트가 컴파일하고 실행함:
 
-<!-- example: manual/examples/ex_08_fmt_custom.c -->
+<!-- example: manual/examples/ko/ex_08_fmt_custom.c -->
 ```c
 /*
  * Formatting a type the library has never heard of.
@@ -1075,7 +1075,7 @@ if (scan.cursor != scan.view.size) { /* there is unparsed input left */ }
 할당자 기반 문자열(성장함)로 포매팅하고, 신뢰할 수 없는 바이트에 경계 argument를
 사용한 뒤, 그 줄을 다시 파싱한다 - float은 정확히 라운드트립된다.
 
-<!-- example: manual/examples/ex_08_fmt_scan.c -->
+<!-- example: manual/examples/ko/ex_08_fmt_scan.c -->
 ```c
 /*
  * Formatting and scanning are the two halves of the same idea: `{}` renders typed
@@ -1198,7 +1198,7 @@ int main(void) {
 테스트 스위트가 컴파일하고 실행함. 위 표의 모든 코드를 여기서 일부러 유발한다.
 비-트랜잭션 실패까지 포함하는데 - 읽기만 한 계약은 배우지 못한 계약이기 때문이다.
 
-<!-- example: manual/examples/ex_08_scan_recovery.c -->
+<!-- example: manual/examples/ko/ex_08_scan_recovery.c -->
 ```c
 /*
  * The scanner's error codes, and how to recover from them.
@@ -1449,7 +1449,7 @@ I/O를 하기 때문에 hosted 전용이다. 이 장에서 설명한 스캐너�
 최단(shortest) 모드는 다시 읽었을 때 정확히 같은 값이 되는 가장 짧은 자릿수를 요구한다. 직렬화기가
 원하는 성질이 이것이다. 필요 없는 수에까지 열일곱 자리를 찍지 않으면서 왕복을 정확하게 만든다.
 
-<!-- example: manual/examples/ex_08_numbers.c -->
+<!-- example: manual/examples/ko/ex_08_numbers.c -->
 ```c
 #include <string.h>
 
@@ -1680,7 +1680,7 @@ proven_err_t e = proven_scan_fmt_cursor(&scan, "{}", proven_scan_arg_i32(&n));  
 | `proven_arg_cstr` | NUL로 끝나는 C 문자열 | 종결자가 있어야 하고 메모리가 살아 있어야 한다. 아니면 형식화기가 끝을 넘어 읽는다 |
 | `proven_arg_ucstr` | 같은 것을 `unsigned char *`로 | 바이트 버퍼에 진짜 경고를 지우는 캐스트를 붙이지 않아도 되도록 존재한다 |
 
-<!-- example: manual/examples/ex_08_arguments.c -->
+<!-- example: manual/examples/ko/ex_08_arguments.c -->
 ```c
 /*
  * Every value handed to the formatter arrives as a proven_arg_t, and every value

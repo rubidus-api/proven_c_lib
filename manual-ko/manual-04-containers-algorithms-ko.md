@@ -202,7 +202,7 @@ PROVEN_LIST_FOR_EACH(it, &queue) {
 테스트 스위트가 컴파일하고 실행한다. 스택에 할당된 task들의 큐를 만들고, 순회하고, 안전한 순회
 안에서 하나를 제거하고, 중간에 삽입한다 — 프로그램 어디에도 allocator가 없다.
 
-<!-- example: manual/examples/ex_04_list.c -->
+<!-- example: manual/examples/ko/ex_04_list.c -->
 ```c
 /*
  * An INTRUSIVE list puts the links inside your struct instead of allocating a
@@ -391,7 +391,7 @@ while (PROVEN_RING_PUSH(&ring, event_t, e) != PROVEN_OK) { }   /* wrong: spins f
 
 테스트 스위트가 컴파일하고 실행한다.
 
-<!-- example: manual/examples/ex_04_ring.c -->
+<!-- example: manual/examples/ko/ex_04_ring.c -->
 ```c
 /*
  * A ring buffer is a fixed-size queue that never moves its contents and never
@@ -845,49 +845,49 @@ proven_sha256(data, digest);     /* writes 32 into a 16-byte buffer */
 
 테스트 스위트가 컴파일하고 실행한다:
 
-<!-- example: manual/examples/ex_04_hash.c -->
+<!-- example: manual/examples/ko/ex_04_hash.c -->
 ```c
 /*
- * Hashing, by use case. The module gives you exactly one function per job, so the only
- * decision is which job you have - and getting THAT wrong is the whole danger.
+ * 쓰임새로 나눈 해시. 이 모듈은 할 일마다 함수를 정확히 하나씩 준다. 그러니 고를 것은
+ * "내가 할 일이 무엇인가" 하나뿐이고, *그것*을 틀리는 것이 위험의 전부다.
  */
 
 int main(void) {
     proven_mem_view_t data = proven_mem_view_from_u8(PROVEN_LIT("the quick brown fox"));
 
-    /* Job 1: hash a key into your own table, trusted input. Fast, non-cryptographic. */
+    /* 할 일 1: 믿을 수 있는 입력을 내 표의 자리로. 빠르고, 암호용이 아니다. */
     proven_u64 table_hash = proven_hash_bytes(data);
     EXAMPLE_REQUIRE(table_hash != 0, "FNV-1a produces a spread-out 64-bit value");
 
-    /* Job 2: hash a key from UNTRUSTED input. Same purpose, but an attacker who picks the
-     * input still cannot make everything collide, because they do not have the key. Pick
-     * the key once at startup from real randomness; a fixed key defeats the point. */
-    proven_byte_t key[16] = { 0 };   /* in real code: fill from a random source, once */
+    /* 할 일 2: *믿을 수 없는* 입력을 표의 자리로. 목적은 같지만, 입력을 고르는 공격자도
+     * 모두를 충돌시킬 수 없다. 키를 모르기 때문이다. 키는 시작할 때 진짜 난수로 한 번
+     * 고른다. 고정된 키를 쓰면 이 방법의 뜻이 사라진다. */
+    proven_byte_t key[16] = { 0 };   /* 실제 코드에서는 난수원에서 한 번 채운다 */
     proven_u64 safe_hash = proven_hash_keyed(data, key);
     EXAMPLE_REQUIRE(safe_hash != table_hash, "a keyed hash is a different function");
 
-    /* Job 3: did these bytes get corrupted? A checksum, not a hash. Interoperates with
-     * gzip/zlib/PNG, which all carry this exact CRC-32. */
+    /* 할 일 3: 이 바이트들이 상했는가? 해시가 아니라 검사합이다. gzip/zlib/PNG 와
+     * 그대로 맞물린다 - 셋 다 정확히 이 CRC-32 를 쓴다. */
     proven_u32 checksum = proven_crc32(data);
-    /* The canonical CRC-32 sanity value, so you can see it is the real one: */
+    /* 널리 쓰이는 CRC-32 확인값이다. 진짜 그 함수라는 것을 눈으로 볼 수 있다. */
     EXAMPLE_REQUIRE(proven_crc32(proven_mem_view_from_u8(PROVEN_LIT("123456789"))) == 0xcbf43926u,
                     "CRC-32 of \"123456789\" is the shared check value");
     (void)checksum;
 
-    /* Job 4: fingerprint content - dedup, content-addressing, "are these the same file",
-     * answered safely even against someone trying to forge a match. This is the one you
-     * reach for when the answer must not be foolable. */
+    /* 할 일 4: 내용의 지문 - 중복 제거, 내용 주소화, "이 둘이 같은 파일인가". 일치를
+     * 위조하려는 상대 앞에서도 안전하게 답한다. 답이 속아 넘어가면 안 되는 자리에서
+     * 집는 것이 이것이다. */
     proven_byte_t digest[PROVEN_SHA256_SIZE];
     proven_sha256(data, digest);
 
     char hex[65];
     proven_sha256_to_hex(digest, hex);
-    /* The same spelling sha256sum and git print, so it interoperates: */
+    /* sha256sum 과 git 이 찍는 것과 같은 표기라, 그대로 맞물린다. */
     EXAMPLE_REQUIRE(hex[64] == '\0' && proven_cstr_len(hex) == 64,
                     "a SHA-256 fingerprint is 64 lowercase hex characters");
 
-    /* SHA-256 streams, for content you cannot hold in memory at once - the digest depends
-     * only on the bytes, never on how they were chunked. */
+    /* SHA-256 은 흘려 넣을 수도 있다. 한 번에 기억에 담을 수 없는 내용을 위해서다 -
+     * 다이제스트는 바이트에만 달렸지, 몇 토막으로 나눠 넣었는지에는 달리지 않는다. */
     proven_sha256_t ctx;
     proven_sha256_init(&ctx);
     proven_sha256_update(&ctx, proven_mem_view_from_u8(PROVEN_LIT("the quick ")));
@@ -1022,7 +1022,7 @@ for (size_t i = 0; i < len; i += 2)               /* wrong: no length check */
 
 테스트 스위트가 컴파일하고 실행한다:
 
-<!-- example: manual/examples/ex_04_encode.c -->
+<!-- example: manual/examples/ko/ex_04_encode.c -->
 ```c
 /*
  * Bytes to text, by use case. The rule is the same one hashing follows: one function per job,
@@ -1313,7 +1313,7 @@ int *hit = proven_array_binary_search(&nums, &key, cmp_int);
 
 테스트 스위트가 컴파일하고 실행한다. 중복 키에 대한 정렬의 동작에 주목하라: 그것들은 *빠른* 경우이지, 이차(quadratic)인 경우가 아니다.
 
-<!-- example: manual/examples/ex_04_array.c -->
+<!-- example: manual/examples/ko/ex_04_array.c -->
 ```c
 /*
  * proven_array_t is a growable vector of one element type. It stores the
@@ -1442,7 +1442,7 @@ int main(void) {
 
 테스트 스위트가 컴파일하고 실행한다. owned 키 절반이 잘못 이해하기 쉬운 요점을 증명한다: 맵이 키를 복사하므로, 그것을 만든 버퍼는 즉시 재사용해도 되는 여러분의 것이다.
 
-<!-- example: manual/examples/ex_04_map.c -->
+<!-- example: manual/examples/ko/ex_04_map.c -->
 ```c
 /*
  * proven_map_t is a flat open-addressing hash map. The value type is fixed at
@@ -1591,7 +1591,7 @@ int main(void) {
 - **조각으로 도착하는 데이터의 검사합을 구한다.** `proven_crc32_update()`는 각 조각을 진행 중인
   값에 접어 넣는다. 조각 경계를 어떻게 나누었든 결과는 전체에 대한 `proven_crc32()`와 같다.
 
-<!-- example: manual/examples/ex_04_growth_and_lookup.c -->
+<!-- example: manual/examples/ko/ex_04_growth_and_lookup.c -->
 ```c
 /*
  * The container chapters show each structure on its own. A real program uses

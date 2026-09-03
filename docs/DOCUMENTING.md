@@ -238,3 +238,17 @@ release.
    is not a promise, and G5 only objects to `name(...)` written as a live call.
 6. Grep the whole tree, including the examples: `grep -rn "the_name" manual/ README.md docs/`.
 7. `./nob build`.
+
+## The two example trees
+
+`manual/examples/en/` and `manual/examples/ko/` hold the same programs with comments in
+different languages; the English chapters quote the first and the Korean chapters the second.
+Two things keep that honest and both fail the build:
+
+- `./nob build` compiles and **runs** every program in *both* trees, so a translation that
+  breaks the code stops the build.
+- `scripts/check-example-parity.py` strips comments and string bodies from each pair and
+  compares the rest. The two editions may differ in comments and in nothing else.
+
+`scripts/sync-manual-examples.py` copies each tree's bodies into the chapters that quote it, so
+translating a comment is one edit followed by one command.

@@ -492,7 +492,7 @@ proven_time_sleep(15);
 테스트 스위트가 컴파일하고 실행한다. 이 예제가 무엇을 단언하지 *않는지*에 주목하라 — sleep의
 상한이다. 그것을 단언하면 바쁜 기계에서 실패하는 테스트가 되기 때문이다.
 
-<!-- example: manual/examples/ex_05_time.c -->
+<!-- example: manual/examples/ko/ex_05_time.c -->
 ```c
 /*
  * Time comes in two flavours that look identical and are not, and picking the
@@ -739,7 +739,7 @@ if (proven_is_ok(env.err)) {
 
 테스트 스위트에 의해 컴파일되고 실행됨. 이것은 대부분의 호출자가 실제로 원하는 파일 전체 API이며, 대상의 권한을 보존하는 atomic 재작성을 포함한다.
 
-<!-- example: manual/examples/ex_05_fs_wholefile.c -->
+<!-- example: manual/examples/ko/ex_05_fs_wholefile.c -->
 ```c
 /*
  * The whole-file API: one call in, one call out. It exists because the
@@ -840,7 +840,7 @@ int main(void) {
 
 테스트 스위트에 의해 컴파일되고 실행됨. read 루프에 주목하라: 파일 끝에서의 읽기는 0바이트 성공이 아니라 `PROVEN_ERR_EOF`를 반환하므로, 0바이트만 검사하는 루프는 작성자가 기대한 방식으로 결코 종료되지 않는다.
 
-<!-- example: manual/examples/ex_05_fs_stream.c -->
+<!-- example: manual/examples/ko/ex_05_fs_stream.c -->
 ```c
 /*
  * The open/read/write/close path, for when the whole-file API (ex_05_fs_wholefile)
@@ -1060,7 +1060,7 @@ while (proven_is_ok(proven_fs_walk_next(&walk, &entry)))
 
 테스트 스위트에 의해 컴파일되고 실행됨:
 
-<!-- example: manual/examples/ex_05_fs_walk.c -->
+<!-- example: manual/examples/ko/ex_05_fs_walk.c -->
 ```c
 /*
  * Walking a tree.
@@ -1239,7 +1239,7 @@ reader의 규칙은 그 거울상이다: **실패한 읽기는 에러이지, 결
 테스트 스위트에 의해 컴파일되고 실행됨. `render_row`가 자신의 바이트가 어디로 가는지 모른다는
 점에 주목하라—그것이 바로 요점 전부다.
 
-<!-- example: manual/examples/ex_05_stream.c -->
+<!-- example: manual/examples/ko/ex_05_stream.c -->
 ```c
 /*
  * Writers and readers: one interface for "where bytes go" and one for "where bytes
@@ -1716,7 +1716,7 @@ proven_u64 die = proven_rng_u64(rng) % 6 + 1;   /* wrong: 1 and 2 are slightly l
 
 테스트 스위트에 의해 컴파일되고 실행됨:
 
-<!-- example: manual/examples/ex_05_random.c -->
+<!-- example: manual/examples/ko/ex_05_random.c -->
 ```c
 /*
  * Randomness, by use case. There is no single "random": there are two jobs that look
@@ -1824,7 +1824,7 @@ int main(void) {
 | `proven_fs_is_absolute` | 이 경로가 루트에서 시작하는가? 규칙이 플랫폼마다 달라서 함수인 것이다. |
 | `proven_fs_rmdir` | **빈** 디렉터리를 지운다. 비어 있지 않으면 거절하므로, 재귀 삭제는 명시적인 결정으로 남는다. |
 
-<!-- example: manual/examples/ex_05_fs_durable.c -->
+<!-- example: manual/examples/ko/ex_05_fs_durable.c -->
 ```c
 /*
  * Updating a file so that a power cut cannot leave it half-written.
@@ -2114,7 +2114,7 @@ proven_err_t e = proven_fs_lock(f.value, PROVEN_FS_LOCK_EXCLUSIVE, true);
 - `proven_scan_fmt_from_file()`(내부적으로 `proven_sysio_scan_chunk_impl()`을 부른다)은 입력이
   자유 서식이 아니라 정해진 모양일 때 파일 핸들에서 타입 있는 값을 바로 뽑는다.
 
-<!-- example: manual/examples/ex_05_streams_stdio.c -->
+<!-- example: manual/examples/ko/ex_05_streams_stdio.c -->
 ```c
 /*
  * A writer is "somewhere bytes go" and a reader is "somewhere bytes come from",
@@ -2342,7 +2342,7 @@ return 0;                            /* wrong: the buffer never reached the file
 `proven_time_u8_fmt()`, UTF-16 형태는 `proven_time_u16_fmt()`이며, 후자가 옳은 상황은 딱 하나 —
 와이드 문자열을 받는 시스템 호출에 그 텍스트를 바로 넘길 때다.
 
-<!-- example: manual/examples/ex_05_mmap.c -->
+<!-- example: manual/examples/ko/ex_05_mmap.c -->
 ```c
 #include <string.h>
 
@@ -2507,7 +2507,7 @@ memcpy((char *)m.value.ptr + 4096, data, n);                            /* wrong
   것이 이미 있으니 그대로 두면 되고, 베어메탈 프로그램에는 없으니 그 보드의 하드웨어 출처가 여기로
   들어간다.
 
-<!-- example: manual/examples/ex_05_random_sources.c -->
+<!-- example: manual/examples/ko/ex_05_random_sources.c -->
 ```c
 #include <string.h>
 

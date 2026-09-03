@@ -713,7 +713,7 @@ proven_job_submit(sys, work_and_free_data, data);
 
 테스트 스위트가 컴파일하고 실행한다. 계약이 요구하는 순서에 주목하라: submit, 그다음 close, 그다음 destroy. `proven_job_system_destroy`는 `proven_job_submit`과 경쟁해서는 안 된다.
 
-<!-- example: manual/examples/ex_06_job.c -->
+<!-- example: manual/examples/ko/ex_06_job.c -->
 ```c
 #include <stdatomic.h>
 
@@ -797,7 +797,7 @@ int main(void) {
 
 테스트 스위트가 컴파일하고 실행한다. 모두를 잡는 규칙: 지역 변수는 yield를 넘어 살아남지 못하므로, 코루틴이 서스펜션을 넘어 필요로 하는 모든 상태는 자신의 구조체 안에 있어야 한다.
 
-<!-- example: manual/examples/ex_06_coro.c -->
+<!-- example: manual/examples/ko/ex_06_coro.c -->
 ```c
 /*
  * A stackless coroutine is a switch statement in disguise: BEGIN opens a

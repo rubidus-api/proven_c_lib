@@ -174,7 +174,7 @@ It shows the two shapes a fallible call takes — a bare `proven_err_t` when the
 is nothing to hand back, and a `proven_result_*_t` when there is — and why the
 value inside a result means nothing until you have checked the error beside it.
 
-<!-- example: manual/examples/ex_01_errors.c -->
+<!-- example: manual/examples/en/ex_01_errors.c -->
 ```c
 /*
  * Errors are values in proven: a fallible call hands back either an error or a
@@ -569,7 +569,7 @@ never happens — so "is this pointer inside my buffer?" is asked with
 
 This program is compiled and run by the test suite, so it cannot fall out of date.
 
-<!-- example: manual/examples/ex_01_views.c -->
+<!-- example: manual/examples/en/ex_01_views.c -->
 ```c
 #include <string.h>
 

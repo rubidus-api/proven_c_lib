@@ -324,7 +324,12 @@ Wrong — assuming the truncating and the atomic form behave alike:
 
 ## 6. Manual chapters
 
-**New to this library? Start with [Chapter 0](manual-00-start-here.md).** It is the only chapter
+**Just finished an introductory C book? Start with the
+[tutorial](manual-t-tutorial.md).** It is six short programs, each introducing exactly one idea,
+ending with the greeting program from Chapter 0 read line by line. Chapter 0 shows that program on
+its first page and it carries five new ideas at once; the tutorial hands them over one at a time.
+
+**Otherwise start with [Chapter 0](manual-00-start-here.md).** It is the only chapter
 that assumes nothing: why the library exists, argued from the C bugs it is answering; a
 hello-world program; how to build; the five contracts the rest of the manual takes for granted;
 and a glossary plus a libc-to-`proven` table. Everything below assumes it.
@@ -342,7 +347,7 @@ reference you read after Chapter 3 has introduced the subject.
 
 | Part | Read | Prerequisites | You can then |
 |---|---|---|---|
-| **I — Start here** | [0](manual-00-start-here.md) | One introductory C book | Build against the library and read anything below |
+| **I — Start here** | [tutorial](manual-t-tutorial.md) → [0](manual-00-start-here.md) | One introductory C book | Build against the library and read anything below |
 | **II — The vocabulary every program uses** | [1](manual-01-foundation.md) → [2](manual-02-allocation.md) → [3](manual-03-strings-text.md) | Chapter 0 | Handle errors as values, own memory deliberately, hold text safely |
 | **III — Data structures** | [4](manual-04-containers-algorithms.md) | Part II | Arrays, maps, lists, rings, sorting, searching, hashing, encoding |
 | **IV — Text in and out** | [8](manual-08-fmt-scan.md) | Chapter 3 §3–§4 | Format and parse anything, and teach the formatter your own types |
@@ -352,6 +357,7 @@ reference you read after Chapter 3 has introduced the subject.
 
 ### The chapters
 
+- [**Tutorial**: the library in six short programs, one new idea at a time](manual-t-tutorial.md) — *Part I, optional on-ramp*
 0. [**Start here**: why this exists, hello world, the five contracts, glossary, libc map](manual-00-start-here.md) — *Part I*
 1. [**Foundation**: types, errors, memory views, alignment, version, panic](manual-01-foundation.md) — *Part II*
 2. [**Allocation**: heap, arena, pool, byte buffers, and the allocator trait](manual-02-allocation.md) — *Part II*

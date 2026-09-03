@@ -12,32 +12,6 @@
 <div class="bar"><strong><a href="index.html">proven_c_lib manual</a></strong><button class="here-btn" type="button" aria-expanded="false" aria-controls="here-panel">5 · Hosted services <span class="caret">▾</span></button><span class="bar-nav"><a href="manual-08-fmt-scan.html" title="Previous" aria-label="Previous">←</a><a href="index.html" title="Contents" aria-label="Contents">↑</a><a href="manual-06-execution-and-platform.html" title="Next" aria-label="Next">→</a></span></div>
 <div id="here-panel" class="here-panel" hidden><div class="tools"><span class="ver">proven_c_lib-v26.09.02b</span><button class="tool" type="button" id="set-open" aria-expanded="false">⚙ Settings</button><a class="tool" href="../ko/manual-05-hosted-services.html">한국어</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib/releases/download/v26.09.02b/proven_c_lib-v26.09.02b-en-manual.pdf">⤓ PDF</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib" title="This project on GitHub">⌥ Repo</a><a class="tool" href="https://rubidus-api.github.io/" title="rubidus-api.github.io — every published project">⌂ All projects</a><a class="tool" href="https://github.com/rubidus-api" title="github.com/rubidus-api — every repository">≡ All repos</a></div><div class="setbox" id="setbox" hidden><label class="setrow"><input type="checkbox" id="s-width"><span>Limit line width</span></label><div class="setrow"><span class="setlbl">Theme</span><span class="seg"><button type="button" class="segb" data-theme="auto">System</button><button type="button" class="segb" data-theme="light">Light</button><button type="button" class="segb" data-theme="dark">Dark</button></span></div><div class="setrow"><span class="setlbl">Colours</span><label class="col"><span>Text</span><input type="color" id="s-fg"></label><label class="col"><span>Background</span><input type="color" id="s-bg"></label><label class="col"><span>Link</span><input type="color" id="s-link"></label></div><p class="setnote">Settings are kept in this browser only.</p></div><div class="search"><label class="setlbl" for="q">Search</label> <input type="search" id="q" placeholder="Find a function or a heading" autocomplete="off"><p class="hint">Searches every public function and every heading — not the full text.</p><ul id="qr"></ul></div><div class="here-head"><strong>On this page</strong></div><div class="here-body"><a href="#table-of-contents">Table of contents</a><a href="#1-filesystem-api">1. Filesystem API</a><a href="#2-system-io-and-environment">2. System I/O and environment</a><a href="#3-memory-mapping">3. Memory mapping</a><a href="#4-time-api">4. Time API</a><a href="#5-examples-and-misuse-cases">5. Examples and misuse cases</a><a href="#reading-a-directory-one-entry-at-a-time">Reading a directory one entry at a time</a><a href="#walking-a-tree">Walking a tree</a><a href="#streams-writers-and-readers">Streams: writers and readers</a><a href="#the-standard-streams">The standard streams</a><a href="#randomness-by-use-case">Randomness, by use case</a></div></div>
 <div class="page">
-<nav class="toc" aria-label="Contents">
-<h2>Contents</h2>
-<a href="index.html">The manual</a>
-<a href="manual-00-start-here.html">0 · Start here</a>
-<a href="manual-01-foundation.html">1 · Foundation</a>
-<a href="manual-02-allocation.html">2 · Allocation</a>
-<a href="manual-03-strings-text.html">3 · Strings and text</a>
-<a href="manual-04-containers-algorithms.html">4 · Containers and algorithms</a>
-<a href="manual-08-fmt-scan.html">8 · Formatting and scanning</a>
-<a href="manual-05-hosted-services.html" class="here">5 · Hosted services</a>
-<a href="manual-06-execution-and-platform.html">6 · Execution and platform</a>
-<a href="manual-freestanding.html">Freestanding</a>
-<a href="manual-07-alias-xcv-index.html">A · Alias index</a>
-<h2>On this page</h2>
-<a href="#table-of-contents">Table of contents</a>
-<a href="#1-filesystem-api">1. Filesystem API</a>
-<a href="#2-system-io-and-environment">2. System I/O and environment</a>
-<a href="#3-memory-mapping">3. Memory mapping</a>
-<a href="#4-time-api">4. Time API</a>
-<a href="#5-examples-and-misuse-cases">5. Examples and misuse cases</a>
-<a href="#reading-a-directory-one-entry-at-a-time">Reading a directory one entry at a time</a>
-<a href="#walking-a-tree">Walking a tree</a>
-<a href="#streams-writers-and-readers">Streams: writers and readers</a>
-<a href="#the-standard-streams">The standard streams</a>
-<a href="#randomness-by-use-case">Randomness, by use case</a>
-</nav>
 <main id="content"><div class="content">
 <div class="masthead">proven_c_lib-v26.09.02b · generated from the Markdown manual</div>
 <h1 id="chapter-5-hosted-services">Chapter 5: Hosted Services<a class="anchor" href="#chapter-5-hosted-services" aria-hidden="true">#</a></h1><p><strong>Part V — Talking to the operating system. Prerequisite: Part II (<a href="manual-01-foundation.html">1</a>, <a href="manual-02-allocation.html">2</a>, <a href="manual-03-strings-text.html">3</a>).</strong> <strong>After this chapter</strong> you can read and write files without losing data on a crash, read input a line at a time, generate randomness that suits the job, and tell wall-clock time from elapsed time.</p><p>This chapter covers <code>fs.h</code>, <code>sysio.h</code>, <code>mmap.h</code>, <code>time.h</code>, <code>stream.h</code>, and <code>random.h</code>. Everything in it needs an operating system: this is the only part of the manual that does not apply to a <a href="manual-freestanding.html">freestanding</a> build.</p><p>These APIs require hosted platform support and are excluded from the current freestanding subset.</p><h2 id="table-of-contents">Table of contents<a class="anchor" href="#table-of-contents" aria-hidden="true">#</a></h2><ol><li><a href="#1-filesystem-api">Filesystem API</a></li><li><a href="#2-system-io-and-environment">System I/O and environment</a></li><li><a href="#3-memory-mapping">Memory mapping</a></li><li><a href="#4-time-api">Time API</a></li><li><a href="#5-examples-and-misuse-cases">Examples and misuse cases</a></li><li><a href="#walking-a-tree">Walking a tree</a></li><li><a href="#streams-writers-and-readers">Streams: writers and readers</a></li><li><a href="#the-standard-streams">The standard streams</a></li><li><a href="#randomness-by-use-case">Randomness, by use case</a></li></ol><h2 id="1-filesystem-api">1. Filesystem API<a class="anchor" href="#1-filesystem-api" aria-hidden="true">#</a></h2><p>The filesystem layer wraps platform file handles, paths, directory listing, metadata, permissions, links, and locks.</p><p>Raw filesystem helpers do not sanitize untrusted paths, enforce root confinement, or defend against symlink-race TOCTOU. Callers that accept untrusted paths must validate them before using the API.</p><h3 id="structures-and-enums">Structures and enums<a class="anchor" href="#structures-and-enums" aria-hidden="true">#</a></h3><pre><code data-lang="text">typedef struct {
@@ -1591,6 +1565,7 @@ memcpy((char *)m.value.ptr + 4096, data, n);                            /* wrong
 }
 proven_random_set_source(clock_entropy, NULL);</code></pre><p>A clock, a serial number, an uninitialised buffer or a pseudo-random generator all produce something that passes a glance and is guessable. If a board has no real entropy, install nothing: a refusal is a fact the caller can act on, and silent predictability is not.</p><p>Wrong — leaving a test source installed:</p><pre><code data-lang="text">proven_random_set_source(counting_entropy, &amp;counter);
 /* ... the rest of the program, now generating predictable keys ... */</code></pre><p>Restore the platform default with <code>proven_random_set_source(NULL, NULL)</code> as soon as the test is over.</p>
+
 <div class="nav"><a href="manual-08-fmt-scan.html">← 8 · Formatting and scanning</a><a href="manual-06-execution-and-platform.html">6 · Execution and platform →</a></div>
 </div></main>
 </div>
