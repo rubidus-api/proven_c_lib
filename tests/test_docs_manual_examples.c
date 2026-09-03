@@ -160,7 +160,7 @@ int main(void) {
      *   by nobody the gate could see. Read the directories instead: a new chapter
      *   is covered the moment it exists.
      */
-    static char chapter_store[64][256];
+    static char chapter_store[64][512];
     static const char *chapters[64];
     int chapter_n = 0;
     static const char *manual_dirs[] = { "manual", "manual-ko" };
