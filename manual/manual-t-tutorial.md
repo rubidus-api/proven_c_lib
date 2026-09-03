@@ -421,4 +421,4 @@ ready for the reference chapters.
 | owned strings, splitting, encodings | [Chapter 3](manual-03-strings-text.md) |
 | arrays, maps, lists, hashing | [Chapter 4](manual-04-containers-algorithms.md) |
 | files, streams, time, randomness | [Chapter 5](manual-05-hosted-services.md) |
-| a word you do not recognise | [the glossary](manual-00-start-here.md#6-appendix-b-glossary) |
+| a word you do not recognise | [the glossary](manual-00-start-here.md#13-appendix-b-glossary) |

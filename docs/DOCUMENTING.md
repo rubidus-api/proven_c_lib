@@ -53,8 +53,9 @@ Then ask the three questions the mechanical checks cannot:
 Not in your head. A table of *what is missing where*, and then the order you will fix it in,
 split into pieces small enough to verify one at a time. The order that has worked:
 
-1. `manual.md` — the spine (ownership matrix, behaviour classes, header map). Everything else
-   references it.
+1. `manual-00-start-here.md` §6–§15 — the spine (ownership matrix, behaviour classes, header
+   map). Everything else references it. `manual.md` itself is only the front page: contents and
+   copyright.
 2. The module chapters, one module per step.
 3. The functions nothing documents (the mechanical check prints them).
 4. `README.md` — last, because it is a summary of the manual and cannot be written before it.

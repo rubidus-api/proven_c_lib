@@ -426,6 +426,19 @@ def build(lang, srcdir, outdir, version, pdf_url, root):
         fragment = open(os.path.join(srcdir, name + '.html'), encoding='utf-8').read()
         bodies[name], outlines[name] = add_anchors(body_of(fragment))
 
+    # The index is the front door, and it carries nothing but the contents and the copyright.
+    # Its Markdown lists the chapters so that a reader on GitHub has a contents too; on the web
+    # that list is replaced by the *full* contents - every chapter and every section - which
+    # only this step, having read every chapter, can write.
+    if 'index' in pages:
+        h2 = list(re.finditer(r'<h2 id="([^"]+)">', bodies['index']))
+        if len(h2) >= 2:
+            dropped = h2[0].group(1)
+            bodies['index'] = (bodies['index'][:h2[0].start()]
+                               + full_contents(lang, pages, outlines)
+                               + '\n' + bodies['index'][h2[1].start():])
+            outlines['index'] = [o for o in outlines['index'] if o[1] != dropped]
+
     search_js = SEARCH_JS.replace('__NONE__', json.dumps(s['search_none']))
     for name in pages:
         title = TITLES[lang][name]
@@ -446,7 +459,6 @@ def build(lang, srcdir, outdir, version, pdf_url, root):
 <main id="content"><div class="content">
 <div class="masthead">{html.escape(version)} · {s['source']}</div>
 {bodies[name]}
-{full_contents(lang, pages, outlines) if name == 'index' else ''}
 {page_nav(lang, pages, name)}
 </div></main>
 </div>

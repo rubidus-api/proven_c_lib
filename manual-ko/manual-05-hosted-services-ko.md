@@ -1363,7 +1363,7 @@ flush에 다시 보냈다—6000바이트 페이로드가 처음 4096바이트�
 도착했다. 데이터를 잃는 것은 나쁘다; 조용히 두 배로 만드는 것은 더 나쁘다. 수신자가 알 수 없기
 때문이다.
 
-그 밖의 모든 것은 [호출자 소유 상태](manual-ko.md#42-caller-owned-state--destroy-없음-복사-금지)다—
+그 밖의 모든 것은 [호출자 소유 상태](manual-00-start-here-ko.md#92-caller-owned-state--destroy-없음-복사-금지)다—
 `proven_writer_buf_t`, `proven_writer_u8str_t`, `proven_writer_buffered_t`,
 `proven_reader_view_t`, `proven_reader_buffered_t`. 이들은 아무것도 할당하지 않고, destroy가
 없으며, 핸들이 그 안을 가리키고 있는 동안 **복사되거나 이동되어서는 안 된다**.
@@ -1494,7 +1494,7 @@ typedef struct {
 } proven_sysio_lines_t;      /* a line reader over a standard stream or a file */
 ```
 
-셋 모두 [호출자 소유 상태](manual-ko.md#42-caller-owned-state--destroy-없음-복사-금지)다.
+셋 모두 [호출자 소유 상태](manual-00-start-here-ko.md#92-caller-owned-state--destroy-없음-복사-금지)다.
 
 ### 주의사항, 그리고 무엇이 잘못되는가
 
@@ -1606,7 +1606,7 @@ if (!proven_chacha_rng_seed_from_entropy(&g)) {
 
 ### 당신이 보유하는 구조체
 
-셋 모두 [호출자 소유 상태](manual-ko.md#42-caller-owned-state--destroy-없음-복사-금지)다: 아무것도
+셋 모두 [호출자 소유 상태](manual-00-start-here-ko.md#92-caller-owned-state--destroy-없음-복사-금지)다: 아무것도
 할당하지 않고, 파괴할 것이 없으며, **하나를 복사하면 그 시퀀스를 복제한다**.
 
 ```text

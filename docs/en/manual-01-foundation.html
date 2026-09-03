@@ -344,7 +344,6 @@ proven_err_t err <span style="color: #d73948">=</span> PROVEN_OK;
     err <span style="color: #d73948">=</span> PROVEN_ERR_INVALID_ARG;   <span style="color: #74747c">/*</span><span style="color: #74747c"> only a null pointer with bytes behind it is a bug </span><span style="color: #74747c">*/</span>
 }
 (<span style="color: #d73948">void</span>)err;</code></pre><h3 id="where-to-go-next">Where to go next<a class="anchor" href="#where-to-go-next" aria-hidden="true">#</a></h3><p><a href="manual-02-allocation.html">Chapter 2</a> is where these types start doing work: allocators produce <code>proven_mem_mut_t</code>, arenas use the alignment helpers from §5, and every growable container in the library takes the allocator as a parameter for the reasons §1 gave for taking the error as a return value — the cost should be visible in the signature.</p>
-
 <div class="nav"><a href="manual-00-start-here.html">← 0 · Start here</a><a href="manual-02-allocation.html">2 · Allocation →</a></div>
 </div></main>
 </div>

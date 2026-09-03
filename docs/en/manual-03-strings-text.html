@@ -584,7 +584,6 @@ proven_err_t e <span style="color: #d73948">=</span> <span style="color: #4b69c6
 }</code></pre><p>Wrong — sizing a UTF-16 buffer in bytes:</p><pre><code data-lang="text">proven_result_u16str_t r = proven_u16str_create(alloc, sizeof(buf));   /* wrong */</code></pre><p>The argument is a count of code units. Passing a byte count asks for twice the storage you meant, or — when the byte count came from a UTF-8 string — for a buffer that cannot hold the conversion at all.</p><p>Wrong — keeping the pointer across an append:</p><pre><code data-lang="text">const proven_u16 *w = proven_u16str_as_ptr(&amp;name);
 proven_err_t e = proven_u16str_append_grow(alloc, &amp;name, more);   /* may reallocate */
 use_wide(w);   /* wrong: w may dangle */</code></pre><p>Take the pointer immediately before the call that consumes it.</p>
-
 <div class="nav"><a href="manual-02-allocation.html">← 2 · Allocation</a><a href="manual-04-containers-algorithms.html">4 · Containers and algorithms →</a></div>
 </div></main>
 </div>
