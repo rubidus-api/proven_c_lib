@@ -460,6 +460,18 @@ def build(lang, srcdir, outdir, version, pdf_url, root):
     index = search_index(lang, pages, bodies, outlines, public_symbols(root))
     with open(os.path.join(outdir, 'search-index.json'), 'w', encoding='utf-8') as f:
         json.dump(index, f, ensure_ascii=False, separators=(',', ':'))
+
+    # The same contents, as data, for the landing page one level up (site_root.py). It goes
+    # beside the fragments - in the build tree, not the site - because it is an input to the
+    # next step, not something a reader fetches. The index page's own sections are included:
+    # the landing page has no "on this page" panel to carry them, so here they have to be
+    # listed like everyone else's.
+    contents = dict(lang=lang, pages=[
+        dict(name=n, title=TITLES[lang][n],
+             sections=[[a, t] for lv, a, t in outlines[n] if lv == 2])
+        for n in pages])
+    with open(os.path.join(srcdir, 'contents.json'), 'w', encoding='utf-8') as f:
+        json.dump(contents, f, ensure_ascii=False, indent=1)
     return pages, index
 
 

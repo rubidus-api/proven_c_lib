@@ -115,29 +115,12 @@ for lang in $langs; do
     build_lang "$lang"
 done
 
-# The landing page sends a reader to a language. Nothing else lives at the root.
+# The landing page is the front door, and it shows the whole house: the complete contents of
+# both editions, every chapter and every section, so a reader lands and goes straight to the
+# paragraph they want. The contents are what the per-language build just wrote.
 : > "$out/.nojekyll"
-cat > "$out/index.html" <<HTML
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>proven_c_lib — manual</title>
-<link rel="stylesheet" href="en/manual.css">
-</head>
-<body>
-<div class="wrap"><main>
-<h1>proven_c_lib</h1>
-<p>$version — the manual, generated from the Markdown sources in the repository.</p>
-<ul>
-<li><a href="en/index.html">English</a> · <a href="en/manual.pdf">PDF</a></li>
-<li><a href="ko/index.html">한국어</a> · <a href="ko/manual.pdf">PDF</a></li>
-</ul>
-</main></div>
-</body>
-</html>
-HTML
+python3 "$root/scripts/site_root.py" "$out" "$version" \
+    "$work/en/frag/contents.json" "$work/ko/frag/contents.json"
 
 # Every link the manual makes between chapters and to its own sections must resolve in the
 # generated site. A cross-reference that works in Markdown and 404s on the web is the failure

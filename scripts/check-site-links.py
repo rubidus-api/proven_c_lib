@@ -48,6 +48,28 @@ def main():
                     broken.append('%s/%s -> %s (no such page)' % (lang, name, href))
                 elif anchor and anchor not in ids[page]:
                     broken.append('%s/%s -> %s (no such heading)' % (lang, name, href))
+    # The landing page links into every edition: <lang>/<page>.html#<anchor>. Its links are
+    # generated from the same outlines, so a broken one means the two steps disagree.
+    landing = os.path.join(root, 'index.html')
+    if os.path.exists(landing):
+        text = SCRIPT.sub('', open(landing, encoding='utf-8').read())
+        for href in re.findall(r'href="([^"]+)"', text):
+            if href.startswith(('http://', 'https://', 'mailto:', '..')):
+                continue
+            if href.endswith(('.css', '.pdf', '.json', '.woff2')):
+                continue
+            checked += 1
+            target, _, anchor = href.partition('#')
+            if not target:
+                if anchor not in linkable(text):
+                    broken.append('index.html -> %s (no such id)' % href)
+                continue
+            lang, _, page = target.partition('/')
+            path = os.path.join(root, lang, page)
+            if not page or not os.path.exists(path):
+                broken.append('index.html -> %s (no such page)' % href)
+            elif anchor and anchor not in linkable(open(path, encoding='utf-8').read()):
+                broken.append('index.html -> %s (no such heading)' % href)
     for b in broken:
         print('check-site-links: broken: %s' % b, file=sys.stderr)
     print('check-site-links: %d internal link(s), %d broken' % (checked, len(broken)))
