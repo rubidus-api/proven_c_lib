@@ -1,30 +1,30 @@
 #include "example.h"
 
 /*
- * Walking a tree.
+ * 나무 훑기.
  *
- * The three things a recursive walker gets wrong, and what this one does instead:
+ * 재귀 훑기가 틀리는 세 가지, 그리고 이것이 대신 하는 일.
  *
- *   It loops.       A symlink pointing at an ancestor is a cycle. This walk never descends
- *                   THROUGH a symlink - the symlinked directory is still reported, it is
- *                   simply not entered - so a cycle is impossible, and so is walking out of
- *                   the tree you asked about and into the rest of the filesystem.
+ *   맴돈다.       조상을 가리키는 심링크는 순환이다. 이 훑기는 심링크를 *지나* 내려가지
+ *                 않는다 - 심링크된 디렉터리도 보고는 되고, 다만 들어가지 않을 뿐이다 -
+ *                 그래서 순환이 불가능하고, 물어본 나무를 벗어나 나머지 파일 시스템으로
+ *                 걸어 나가는 일도 없다.
  *
- *   It lies.        A directory it cannot read gets skipped, and the walk reports success.
- *                   That is how a backup misses a subtree. Here the error comes back from
- *                   proven_fs_walk_next, with the entry naming the directory, and the walk
- *                   carries on from the next sibling. You decide what to do about it.
+ *   거짓말한다.   읽을 수 없는 디렉터리를 건너뛰고는 성공했다고 보고한다. 백업이 하위
+ *                 나무 하나를 통째로 놓치는 방식이 그것이다. 여기서는 오류가
+ *                 proven_fs_walk_next 에서 돌아오고, 그 항목이 어느 디렉터리인지 말해
+ *                 주며, 훑기는 다음 형제부터 이어 간다. 어떻게 할지는 여러분이 정한다.
  *
- *   It bloats.      Reading a whole directory into memory before yielding anything makes a
- *                   walk of a big tree cost a big allocation. This one holds one open handle
- *                   per LEVEL of the current path and one reused path buffer - so its memory
- *                   is a function of depth, not of how many files there are.
+ *   부푼다.       하나라도 내주기 전에 디렉터리 전체를 기억에 읽어 들이면, 큰 나무를
+ *                 훑는 데 큰 할당이 든다. 이것은 지금 경로의 *층*마다 열린 손잡이 하나와
+ *                 다시 쓰는 경로 버퍼 하나만 쥔다 - 그래서 기억 사용량은 파일이 몇
+ *                 개인가가 아니라 깊이의 함수다.
  */
 
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
-    /* A small tree to walk: a file, a directory, a file inside it. */
+    /* 훑어 볼 작은 나무: 파일 하나, 디렉터리 하나, 그 안의 파일 하나. */
     EXAMPLE_REQUIRE(proven_is_ok(proven_fs_mkdir(alloc, PROVEN_LIT("ex_walk"))), "mkdir");
     EXAMPLE_REQUIRE(proven_is_ok(proven_fs_mkdir(alloc, PROVEN_LIT("ex_walk/inner"))), "mkdir inner");
     EXAMPLE_REQUIRE(proven_is_ok(proven_fs_write_file(alloc, PROVEN_LIT("ex_walk/top.txt"),
@@ -48,16 +48,16 @@ int main(void) {
         if (err == PROVEN_ERR_EOF) break;
 
         if (!proven_is_ok(err)) {
-            /* A directory that could not be read, or one deeper than the walk's stack. It is
-             * REPORTED, not skipped - `entry.path` says which one - and the walk goes on. A
-             * tool that copies a tree should fail here; one that reports on a tree should
-             * count it and say so. What it must not do is pretend it did not happen. */
+            /* 읽을 수 없었던 디렉터리이거나, 훑기의 스택보다 깊은 것이다. 건너뛰는 것이
+             * 아니라 *보고된다* - `entry.path` 가 어느 것인지 말해 준다 - 그리고 훑기는
+             * 계속된다. 나무를 복사하는 도구라면 여기서 실패해야 하고, 나무를 보고하는
+             * 도구라면 세어서 알려야 한다. 하지 말아야 할 것은 없던 일로 하는 것이다. */
             unreadable++;
             continue;
         }
 
-        /* `entry.path` and `entry.name` are borrowed: they point into the walk's one reused
-         * buffer and are valid until the next call. Copy them if you need them longer. */
+        /* `entry.path` 와 `entry.name` 은 빌린 것이다. 훑기가 다시 쓰는 버퍼 하나를
+         * 가리키고 다음 호출 전까지만 쓸 수 있다. 더 오래 필요하면 복사할 것. */
         if (entry.type == PROVEN_FS_TYPE_DIR) {
             dirs++;
         } else if (entry.type == PROVEN_FS_TYPE_FILE) {
@@ -73,8 +73,8 @@ int main(void) {
     EXAMPLE_REQUIRE(unreadable == 0, "and nothing in this tree is unreadable");
     EXAMPLE_REQUIRE(total_bytes == 7, "three bytes plus four");
 
-    /* Depth-limited: max_depth 0 reports what is directly inside the root and descends
-     * nowhere. The directory at the limit is still an entry, so it is still reported. */
+    /* 깊이 제한: max_depth 0 은 뿌리 바로 안에 있는 것을 보고하고 아무 데도 내려가지
+     * 않는다. 한계에 걸린 디렉터리도 여전히 항목이므로 여전히 보고된다. */
     walk = proven_fs_walk_open(alloc, PROVEN_LIT("ex_walk"), 0);
     EXAMPLE_REQUIRE(proven_is_ok(walk.err), "the shallow walk should open");
 

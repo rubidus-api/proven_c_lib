@@ -495,45 +495,41 @@ proven_time_sleep(15);
 <!-- example: manual/examples/ko/ex_05_time.c -->
 ```c
 /*
- * Time comes in two flavours that look identical and are not, and picking the
- * wrong one is the classic timing bug.
+ * 시간에는 똑같이 생겼지만 같지 않은 두 갈래가 있고, 잘못 고르는 것이 시간 재기의
+ * 고전적 버그다.
  *
- *   - A WALL CLOCK answers "what time is it?". It is what a user wants to see,
- *     and it is allowed to jump: NTP corrects it, daylight saving shifts it, an
- *     administrator sets it. Measuring a duration with it can produce a negative
- *     elapsed time, and did, famously, on leap-second days.
+ *   - *벽시계*는 "지금 몇 시인가" 에 답한다. 사용자가 보고 싶어 하는 것이고, 뛰는 것이
+ *     허용된다 - NTP 가 고치고, 서머타임이 옮기고, 관리자가 맞춘다. 그것으로 기간을
+ *     재면 음수 경과 시간이 나올 수 있고, 윤초가 있던 날에 실제로 유명하게 그랬다.
  *
- *   - A MONOTONIC clock answers "how long since?". It only moves forward, at a
- *     steady rate, and has no relationship to any calendar. It is what you time
- *     an operation with.
+ *   - *단조* 시계는 "그때로부터 얼마나" 에 답한다. 앞으로만, 고른 속도로 가고, 어떤
+ *     달력과도 관계가 없다. 어떤 작업의 시간을 잴 때 쓰는 것이 이것이다.
  *
- * libc blurs this. time() is wall clock in whole seconds - useless for
- * measurement. clock() measures CPU time, not elapsed time, so a program that
- * sleeps looks instantaneous. Neither name tells you which of the two questions
- * it is answering.
+ * libc 는 이 구분을 흐린다. time() 은 초 단위 벽시계라 재는 데는 쓸모없다. clock() 은
+ * 경과 시간이 아니라 CPU 시간을 재므로, 잠든 프로그램은 즉시 끝난 것처럼 보인다. 어느
+ * 이름도 자기가 둘 중 어느 물음에 답하는지 말해 주지 않는다.
  *
- * proven_time_now() is nanoseconds since the Unix epoch: one number that both
- * formats as a date and subtracts as a duration, at a resolution fine enough to
- * time real work.
+ * proven_time_now() 는 유닉스 기점부터의 나노초다. 날짜로 형식화되기도 하고 기간으로
+ * 빼지기도 하는 수 하나이며, 실제 작업의 시간을 재기에 충분히 고운 해상도를 갖는다.
  */
 
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
-    /* --- as a duration ------------------------------------------------- */
+    /* --- 기간으로 쓰기 -------------------------------------------------- */
     proven_time_t start = proven_time_now();
-    proven_time_sleep(15);                 /* milliseconds */
+    proven_time_sleep(15);                 /* 밀리초 */
     proven_time_t end = proven_time_now();
 
     proven_i64 elapsed_ns = end - start;
     EXAMPLE_REQUIRE(elapsed_ns > 0, "time must move forward across a sleep");
-    /* Sleep guarantees AT LEAST the requested time, never at most: the scheduler
-     * decides when you actually run again. Asserting an upper bound here would
-     * be a test that fails on a busy machine, which is why this one does not. */
+    /* sleep 은 청한 시간 *이상*을 보장하지, 이하를 보장하지 않는다. 언제 다시 돌지는
+     * 스케줄러가 정한다. 여기서 상한을 단언하면 바쁜 기계에서 실패하는 시험이 되고,
+     * 그래서 이 예제는 그러지 않는다. */
     EXAMPLE_REQUIRE(elapsed_ns >= 10 * 1000 * 1000,
                     "sleeping 15ms must take at least ~10ms of wall time");
 
-    /* --- as a date ------------------------------------------------------ */
+    /* --- 날짜로 쓰기 ---------------------------------------------------- */
     proven_datetime_t dt = proven_time_breakdown(start);
     EXAMPLE_REQUIRE(dt.year >= 2020 && dt.year < 3000, "the epoch breakdown gives a plausible year");
     EXAMPLE_REQUIRE(dt.month >= 1 && dt.month <= 12, "month is 1-12, not 0-11 as in libc's tm");
@@ -541,17 +537,17 @@ int main(void) {
     EXAMPLE_REQUIRE(dt.hour <= 23 && dt.min <= 59 && dt.sec <= 60, "sec allows 60 for leap seconds");
     EXAMPLE_REQUIRE(dt.weekday <= 6, "weekday is 0-6 with 0 = Sunday");
 
-    /* proven_time_now_datetime() is the two calls above in one, for when you
-     * only want the calendar form. */
+    /* proven_time_now_datetime() 은 위의 두 호출을 하나로 합친 것이다. 달력 꼴만
+     * 필요할 때 쓴다. */
     proven_datetime_t now = proven_time_now_datetime();
     EXAMPLE_REQUIRE(now.year == dt.year, "both routes read the same clock");
 
-    /* --- formatting a timestamp ---------------------------------------- */
+    /* --- 시각을 글자로 ------------------------------------------------- */
     proven_result_u8str_t s = proven_u8str_create(alloc, 64);
     EXAMPLE_REQUIRE(proven_is_ok(s.err), "a 64-byte string is enough for a timestamp");
 
-    /* The locale supplies month and weekday names; proven_time_locale_en is the
-     * built-in English one. Pass your own to render other languages. */
+    /* 달 이름과 요일 이름은 로케일이 준다. proven_time_locale_en 이 내장된 영어
+     * 로케일이다. 다른 언어로 찍으려면 여러분의 것을 건넨다. */
     proven_err_t err = proven_time_u8_fmt(alloc, &s.value, dt, &proven_time_locale_en,
                                           "{year}-{month:0>2}-{day:0>2} {hour:0>2}:{min:0>2}:{sec:0>2}");
     EXAMPLE_REQUIRE(proven_is_ok(err), "formatting a datetime should succeed");
@@ -742,43 +738,43 @@ if (proven_is_ok(env.err)) {
 <!-- example: manual/examples/ko/ex_05_fs_wholefile.c -->
 ```c
 /*
- * The whole-file API: one call in, one call out. It exists because the
- * open/read-loop/close dance is where most file-handling bugs live - a forgotten
- * close, a partial read treated as EOF, a truncated file left behind by a failed
- * write. If you are reading or writing a file in its entirety, this is the API.
+ * 파일 통째 API: 한 번 부르면 들어가고, 한 번 부르면 나온다. 이것이 있는 이유는 열고 -
+ * 읽는 반복문 - 닫는 그 춤사위가 파일 다루기 버그 대부분이 사는 자리이기 때문이다.
+ * 잊은 close, EOF 로 오해한 부분 읽기, 실패한 쓰기가 남긴 잘린 파일. 파일을 통째로 읽거나
+ * 쓰는 것이라면 이것이 그 API 다.
  */
 
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
-    /* A relative path in the current directory: the example must not depend on a
-     * writable /tmp, and it removes what it creates before returning. */
+    /* 지금 디렉터리의 상대 경로다. 이 예제가 쓸 수 있는 /tmp 에 기대면 안 되고, 만든
+     * 것은 돌아가기 전에 지운다. */
     proven_u8str_view_t path = PROVEN_LIT("proven_example_wholefile.tmp");
     proven_u8str_view_t text = PROVEN_LIT("first line\nsecond line\n");
 
-    /* --- write it in one call ---------------------------------------------- */
-    /* Not atomic: a concurrent reader can see this file half-written. Fine here,
-     * because nobody else is looking at it yet. */
+    /* --- 한 번의 호출로 쓰기 ------------------------------------------------ */
+    /* 원자적이지 않다. 동시에 읽는 쪽은 이 파일이 반쯤 쓰인 것을 볼 수 있다. 여기서는
+     * 괜찮다. 아직 아무도 이 파일을 보고 있지 않기 때문이다. */
     proven_err_t err = proven_fs_write_file(alloc, path, proven_mem_view_from_u8(text));
     EXAMPLE_REQUIRE(proven_is_ok(err), "writing the whole file should succeed");
     if (!proven_is_ok(err)) return 1;
 
-    /* --- read it back as raw bytes ----------------------------------------- */
-    /* proven_fs_read_all reads to EOF rather than to a pre-measured size, so it
-     * also works on a pipe or a /proc entry, whose size cannot be known up front. */
+    /* --- 날바이트로 되읽기 -------------------------------------------------- */
+    /* proven_fs_read_all 은 미리 잰 크기까지가 아니라 EOF 까지 읽는다. 그래서 크기를
+     * 미리 알 수 없는 파이프나 /proc 항목에서도 돈다. */
     proven_result_mem_mut_t raw = proven_fs_read_all(alloc, path);
     EXAMPLE_REQUIRE(proven_is_ok(raw.err), "reading the whole file should succeed");
     if (proven_is_ok(raw.err)) {
         EXAMPLE_REQUIRE(raw.value.size == text.size, "read_all should return every byte written");
-        /* The block is plain allocator memory - hand it back to the allocator that
-         * produced it. There is no proven_fs_read_all_destroy. */
+        /* 그 덩이는 그냥 할당자의 기억이다 - 그것을 내준 할당자에게 돌려줄 것.
+         * proven_fs_read_all_destroy 같은 것은 없다. */
         alloc.free_fn(alloc.ctx, raw.value.ptr);
     }
 
-    /* --- read it back as a string ------------------------------------------ */
-    /* This is the one most callers want: the result is NUL-terminated, so it can
-     * be handed to a view, to as_cstr, or to the scanner with no second copy. The
-     * terminator slot is reserved up front, so it costs no extra allocation. */
+    /* --- 문자열로 되읽기 ---------------------------------------------------- */
+    /* 대개의 부르는 쪽이 원하는 것이 이것이다. 결과가 NUL 로 끝나므로 뷰에도, as_cstr
+     * 에도, 스캐너에도 두 번째 복사 없이 건넬 수 있다. 종결자 자리는 미리 잡아 두므로
+     * 할당이 더 들지 않는다. */
     proven_result_u8str_t s = proven_fs_read_all_u8str(alloc, path);
     EXAMPLE_REQUIRE(proven_is_ok(s.err), "reading the whole file as a string should succeed");
     if (!proven_is_ok(s.err)) {
@@ -791,29 +787,29 @@ int main(void) {
            proven_u8str_as_cstr(&s.value));
     proven_u8str_destroy(alloc, &s.value);
 
-    /* --- stat, and the perms round-trip ------------------------------------ */
+    /* --- stat, 그리고 권한의 왕복 ------------------------------------------ */
     proven_fs_stat_t st = {0};
     err = proven_fs_stat(alloc, path, &st);
     EXAMPLE_REQUIRE(proven_is_ok(err), "stat on a file we just wrote should succeed");
     EXAMPLE_REQUIRE(st.type == PROVEN_FS_TYPE_FILE, "a regular file should stat as a FILE");
     EXAMPLE_REQUIRE(st.size == text.size, "stat should report the size we wrote");
 
-    /* `perms` carries the nine permission bits and nothing else, so it can be fed
-     * straight back to chmod. That is the whole point of the field: read a file's
-     * mode, and later restore it. (It used to carry the raw POSIX st_mode, whose
-     * file-type bits chmod rejects - so this obvious round-trip failed.) */
+    /* `perms` 는 권한 비트 아홉 개만 담고 그 밖의 것은 담지 않는다. 그래서 그대로
+     * chmod 에 도로 먹일 수 있다. 이 필드의 요점이 그것이다 - 파일의 모드를 읽어 두었다가
+     * 나중에 되돌리는 것. (예전에는 날 POSIX st_mode 를 담았는데, 그 파일 종류 비트를
+     * chmod 가 거부해서 이 뻔한 왕복이 실패했다.) */
     err = proven_fs_chmod(alloc, path, st.perms);
     EXAMPLE_REQUIRE(proven_is_ok(err), "a stat's perms must be accepted back by chmod");
 
-    /* Now make the file owner-only, so the next check has something to prove. */
+    /* 이제 파일을 소유자 전용으로 바꾼다. 그래야 다음 검사가 증명할 것이 생긴다. */
     proven_fs_perms_t private_perms = PROVEN_FS_PERM_OWNER_R | PROVEN_FS_PERM_OWNER_W;
     err = proven_fs_chmod(alloc, path, private_perms);
     EXAMPLE_REQUIRE(proven_is_ok(err), "restricting the file to its owner should succeed");
 
-    /* --- rewrite it atomically --------------------------------------------- */
-    /* A sibling temp file plus a rename: a concurrent reader sees either the whole
-     * old file or the whole new one, never a half-written mix. Atomic for readers,
-     * not durable across power loss. When it must be, proven_fs_write_file_durable asks. */
+    /* --- 원자적으로 다시 쓰기 ----------------------------------------------- */
+    /* 형제 임시 파일 하나에 rename 하나. 동시에 읽는 쪽은 옛 파일 전체이거나 새 파일
+     * 전체를 보지, 반쯤 섞인 것을 보지 않는다. 읽는 쪽에게 원자적이지, 전원이 나가도
+     * 견디는 것은 아니다. 그래야 할 때는 proven_fs_write_file_durable 이 그것을 청한다. */
     proven_u8str_view_t text2 = PROVEN_LIT("replacement\n");
     err = proven_fs_write_file_atomic(alloc, path, proven_mem_view_from_u8(text2));
     EXAMPLE_REQUIRE(proven_is_ok(err), "the atomic rewrite should succeed");
@@ -822,13 +818,12 @@ int main(void) {
     err = proven_fs_stat(alloc, path, &st2);
     EXAMPLE_REQUIRE(proven_is_ok(err), "stat after the atomic rewrite should succeed");
     EXAMPLE_REQUIRE(st2.size == text2.size, "the file should now hold the replacement text");
-    /* The rename writes a *new* inode over the old name, so the permissions would
-     * be lost unless they were copied across. They are: rewriting a 0600 file does
-     * not republish it as 0644. */
+    /* rename 은 옛 이름 위에 *새* 아이노드를 씌우므로, 권한을 옮겨 주지 않으면 잃는다.
+     * 옮겨 준다 - 0600 파일을 다시 써도 0644 로 다시 공개되지 않는다. */
     EXAMPLE_REQUIRE(st2.perms == private_perms,
                     "the atomic rewrite must preserve the target's permissions");
 
-    /* --- clean up ----------------------------------------------------------- */
+    /* --- 뒷정리 -------------------------------------------------------------- */
     err = proven_fs_remove(alloc, path);
     EXAMPLE_REQUIRE(proven_is_ok(err), "removing the temp file should succeed");
 
@@ -843,12 +838,12 @@ int main(void) {
 <!-- example: manual/examples/ko/ex_05_fs_stream.c -->
 ```c
 /*
- * The open/read/write/close path, for when the whole-file API (ex_05_fs_wholefile)
- * is not enough: you are streaming, or you want to own the buffer.
+ * 열고-읽고-쓰고-닫는 길. 파일 통째 API(ex_05_fs_wholefile)로는 모자랄 때 쓴다.
+ * 흘려 보내고 있거나, 버퍼를 여러분이 소유하고 싶을 때다.
  *
- * The one thing to get right here: a single read or write moves *up to* the
- * requested number of bytes, not exactly that many. Treating one short read as
- * end-of-file is the classic way to silently lose the tail of a file.
+ * 여기서 반드시 맞춰야 할 하나: 읽기나 쓰기 한 번은 청한 바이트 수 *만큼까지*를 옮기지,
+ * 정확히 그만큼을 옮기지 않는다. 짧은 읽기 한 번을 파일 끝으로 여기는 것이 파일의 꼬리를
+ * 조용히 잃는 고전적인 방법이다.
  */
 
 int main(void) {
@@ -857,22 +852,22 @@ int main(void) {
     proven_u8str_view_t path = PROVEN_LIT("proven_example_stream.tmp");
     proven_u8str_view_t text = PROVEN_LIT("streamed bytes, read back in chunks\n");
 
-    /* --- write ------------------------------------------------------------- */
-    /* CREATE makes the file if it is absent; TRUNC empties it if it is not. The
-     * allocator is only used to convert the path for the platform call. */
+    /* --- 쓰기 --------------------------------------------------------------- */
+    /* CREATE 는 없으면 만들고, TRUNC 는 있으면 비운다. 할당자는 플랫폼 호출을 위해 경로를
+     * 변환하는 데만 쓰인다. */
     proven_result_file_t out = proven_fs_open(alloc, path,
                                               PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
     EXAMPLE_REQUIRE(proven_is_ok(out.err), "opening the file for writing should succeed");
     if (!proven_is_ok(out.err)) return 1;
 
-    /* write_all loops for us. proven_fs_write does one attempt and may write less,
-     * which is almost never what a caller means. */
+    /* write_all 이 우리 대신 반복해 준다. proven_fs_write 는 한 번만 시도하고 더 적게 쓸
+     * 수도 있는데, 그것은 부르는 쪽이 뜻한 바가 거의 아니다. */
     proven_err_t err = proven_fs_write_all(out.value, proven_mem_view_from_u8(text));
 
-    /* The close is part of the write, and on a network or quota-enforced filesystem it is
-     * the ONLY place the failure appears: the bytes were buffered, write() said yes, and
-     * close() is where the disk finally says no. Close on the failure path too - the
-     * handle is ours either way - but do not throw the answer away. */
+    /* close 는 쓰기의 일부이고, 네트워크나 할당량이 걸린 파일 시스템에서는 실패가 드러나는
+     * *유일한* 자리다. 바이트는 버퍼에 담겼고 write() 는 그렇다고 했으며, 디스크가 마침내
+     * 아니라고 말하는 자리가 close() 다. 실패 경로에서도 닫을 것 - 손잡이는 어느 쪽이든
+     * 우리 것이다 - 다만 그 답을 버리지는 말 것. */
     proven_err_t cerr = proven_fs_close(out.value);
     if (proven_is_ok(err)) err = cerr;
 
@@ -882,7 +877,7 @@ int main(void) {
         return 1;
     }
 
-    /* --- read -------------------------------------------------------------- */
+    /* --- 읽기 --------------------------------------------------------------- */
     proven_result_file_t in = proven_fs_open(alloc, path, PROVEN_FS_READ);
     EXAMPLE_REQUIRE(proven_is_ok(in.err), "opening the file for reading should succeed");
     if (!proven_is_ok(in.err)) {
@@ -890,9 +885,9 @@ int main(void) {
         return 1;
     }
 
-    /* size is a hint for sizing the buffer, not a promise about how many bytes any
-     * one read will hand over - and it is 0 for anything that is not a regular
-     * file (a pipe, a device, a /proc entry). The loop below does not rely on it. */
+    /* size 는 버퍼 크기를 잡는 힌트이지, 읽기 한 번이 몇 바이트를 건넬지에 대한 약속이
+     * 아니다 - 그리고 보통 파일이 아닌 것(파이프, 장치, /proc 항목)에서는 0 이다. 아래
+     * 반복문은 그것에 기대지 않는다. */
     proven_result_size_t sz = proven_fs_size(in.value);
     EXAMPLE_REQUIRE(proven_is_ok(sz.err), "querying the size of an open file should succeed");
     EXAMPLE_REQUIRE(sz.value == text.size, "the file should be as long as what we wrote");
@@ -900,14 +895,13 @@ int main(void) {
     proven_byte_t buf[128];
     proven_size_t total = 0;
 
-    /* The partial-read loop. Each pass asks for whatever is left of the buffer and
-     * advances by however much actually arrived: a short read is normal, not the
-     * end of the file. The end of the file is a distinct status - PROVEN_ERR_EOF
-     * with zero bytes - so the loop terminates on that, and on nothing else. The
-     * loop also stops if the source outgrows the buffer; noticing that is the
-     * caller's business (here it cannot happen, but a growing file could). */
+    /* 부분 읽기 반복문. 한 바퀴마다 버퍼에 남은 만큼을 청하고 실제로 온 만큼 나아간다.
+     * 짧은 읽기는 파일의 끝이 아니라 정상이다. 파일의 끝은 따로 있는 상태 -
+     * 바이트 0 과 함께 오는 PROVEN_ERR_EOF - 이므로 반복문은 그것으로만 끝난다. 원본이
+     * 버퍼보다 커져도 반복문은 멈추는데, 그것을 알아채는 일은 부르는 쪽의 몫이다(여기서는
+     * 일어날 수 없지만, 자라나는 파일이라면 그럴 수 있다). */
     for (;;) {
-        if (total == sizeof buf) break;   /* buffer full: caller decides what to do */
+        if (total == sizeof buf) break;   /* 버퍼가 가득 찼다: 어떻게 할지는 부르는 쪽이 정한다 */
 
         proven_mem_mut_t dest = { .ptr = buf + total, .size = sizeof buf - total };
         proven_result_size_t r = proven_fs_read(in.value, dest);
@@ -929,7 +923,7 @@ int main(void) {
 
     printf("read %zu bytes in chunks: %.*s", (size_t)total, (int)total, (const char *)buf);
 
-    /* --- clean up ----------------------------------------------------------- */
+    /* --- 뒷정리 -------------------------------------------------------------- */
     err = proven_fs_remove(alloc, path);
     EXAMPLE_REQUIRE(proven_is_ok(err), "removing the temp file should succeed");
 
@@ -1063,30 +1057,30 @@ while (proven_is_ok(proven_fs_walk_next(&walk, &entry)))
 <!-- example: manual/examples/ko/ex_05_fs_walk.c -->
 ```c
 /*
- * Walking a tree.
+ * 나무 훑기.
  *
- * The three things a recursive walker gets wrong, and what this one does instead:
+ * 재귀 훑기가 틀리는 세 가지, 그리고 이것이 대신 하는 일.
  *
- *   It loops.       A symlink pointing at an ancestor is a cycle. This walk never descends
- *                   THROUGH a symlink - the symlinked directory is still reported, it is
- *                   simply not entered - so a cycle is impossible, and so is walking out of
- *                   the tree you asked about and into the rest of the filesystem.
+ *   맴돈다.       조상을 가리키는 심링크는 순환이다. 이 훑기는 심링크를 *지나* 내려가지
+ *                 않는다 - 심링크된 디렉터리도 보고는 되고, 다만 들어가지 않을 뿐이다 -
+ *                 그래서 순환이 불가능하고, 물어본 나무를 벗어나 나머지 파일 시스템으로
+ *                 걸어 나가는 일도 없다.
  *
- *   It lies.        A directory it cannot read gets skipped, and the walk reports success.
- *                   That is how a backup misses a subtree. Here the error comes back from
- *                   proven_fs_walk_next, with the entry naming the directory, and the walk
- *                   carries on from the next sibling. You decide what to do about it.
+ *   거짓말한다.   읽을 수 없는 디렉터리를 건너뛰고는 성공했다고 보고한다. 백업이 하위
+ *                 나무 하나를 통째로 놓치는 방식이 그것이다. 여기서는 오류가
+ *                 proven_fs_walk_next 에서 돌아오고, 그 항목이 어느 디렉터리인지 말해
+ *                 주며, 훑기는 다음 형제부터 이어 간다. 어떻게 할지는 여러분이 정한다.
  *
- *   It bloats.      Reading a whole directory into memory before yielding anything makes a
- *                   walk of a big tree cost a big allocation. This one holds one open handle
- *                   per LEVEL of the current path and one reused path buffer - so its memory
- *                   is a function of depth, not of how many files there are.
+ *   부푼다.       하나라도 내주기 전에 디렉터리 전체를 기억에 읽어 들이면, 큰 나무를
+ *                 훑는 데 큰 할당이 든다. 이것은 지금 경로의 *층*마다 열린 손잡이 하나와
+ *                 다시 쓰는 경로 버퍼 하나만 쥔다 - 그래서 기억 사용량은 파일이 몇
+ *                 개인가가 아니라 깊이의 함수다.
  */
 
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
-    /* A small tree to walk: a file, a directory, a file inside it. */
+    /* 훑어 볼 작은 나무: 파일 하나, 디렉터리 하나, 그 안의 파일 하나. */
     EXAMPLE_REQUIRE(proven_is_ok(proven_fs_mkdir(alloc, PROVEN_LIT("ex_walk"))), "mkdir");
     EXAMPLE_REQUIRE(proven_is_ok(proven_fs_mkdir(alloc, PROVEN_LIT("ex_walk/inner"))), "mkdir inner");
     EXAMPLE_REQUIRE(proven_is_ok(proven_fs_write_file(alloc, PROVEN_LIT("ex_walk/top.txt"),
@@ -1110,16 +1104,16 @@ int main(void) {
         if (err == PROVEN_ERR_EOF) break;
 
         if (!proven_is_ok(err)) {
-            /* A directory that could not be read, or one deeper than the walk's stack. It is
-             * REPORTED, not skipped - `entry.path` says which one - and the walk goes on. A
-             * tool that copies a tree should fail here; one that reports on a tree should
-             * count it and say so. What it must not do is pretend it did not happen. */
+            /* 읽을 수 없었던 디렉터리이거나, 훑기의 스택보다 깊은 것이다. 건너뛰는 것이
+             * 아니라 *보고된다* - `entry.path` 가 어느 것인지 말해 준다 - 그리고 훑기는
+             * 계속된다. 나무를 복사하는 도구라면 여기서 실패해야 하고, 나무를 보고하는
+             * 도구라면 세어서 알려야 한다. 하지 말아야 할 것은 없던 일로 하는 것이다. */
             unreadable++;
             continue;
         }
 
-        /* `entry.path` and `entry.name` are borrowed: they point into the walk's one reused
-         * buffer and are valid until the next call. Copy them if you need them longer. */
+        /* `entry.path` 와 `entry.name` 은 빌린 것이다. 훑기가 다시 쓰는 버퍼 하나를
+         * 가리키고 다음 호출 전까지만 쓸 수 있다. 더 오래 필요하면 복사할 것. */
         if (entry.type == PROVEN_FS_TYPE_DIR) {
             dirs++;
         } else if (entry.type == PROVEN_FS_TYPE_FILE) {
@@ -1135,8 +1129,8 @@ int main(void) {
     EXAMPLE_REQUIRE(unreadable == 0, "and nothing in this tree is unreadable");
     EXAMPLE_REQUIRE(total_bytes == 7, "three bytes plus four");
 
-    /* Depth-limited: max_depth 0 reports what is directly inside the root and descends
-     * nowhere. The directory at the limit is still an entry, so it is still reported. */
+    /* 깊이 제한: max_depth 0 은 뿌리 바로 안에 있는 것을 보고하고 아무 데도 내려가지
+     * 않는다. 한계에 걸린 디렉터리도 여전히 항목이므로 여전히 보고된다. */
     walk = proven_fs_walk_open(alloc, PROVEN_LIT("ex_walk"), 0);
     EXAMPLE_REQUIRE(proven_is_ok(walk.err), "the shallow walk should open");
 
@@ -1242,15 +1236,15 @@ reader의 규칙은 그 거울상이다: **실패한 읽기는 에러이지, 결
 <!-- example: manual/examples/ko/ex_05_stream.c -->
 ```c
 /*
- * Writers and readers: one interface for "where bytes go" and one for "where bytes
- * come from".
+ * 쓰는 쪽과 읽는 쪽. "바이트가 어디로 가는가" 를 위한 인터페이스 하나와 "바이트가
+ * 어디서 오는가" 를 위한 인터페이스 하나.
  *
- * The point is that the code below - render_row - does not know and does not care
- * whether it is writing to a string, to a fixed buffer, or to a file. That was
- * impossible before: the formatter's only sink was a proven_u8str_t.
+ * 요점은 아래 코드 - render_row - 가 자기가 문자열로 쓰는지, 고정 버퍼로 쓰는지, 파일로
+ * 쓰는지 모르고 신경도 쓰지 않는다는 것이다. 예전에는 그럴 수 없었다. 형식화기가 받는
+ * 그릇은 proven_u8str_t 하나뿐이었다.
  */
 
-/* One serializer. It takes a sink, not a destination. */
+/* 직렬화기 하나. 목적지가 아니라 그릇을 받는다. */
 static proven_err_t render_row(proven_writer_t w, int id, const char *name) {
     proven_fmt_result_t r = proven_fprintln(w, "{:>4} | {}", PROVEN_ARG(id), PROVEN_ARG(name));
     return r.err;
@@ -1259,7 +1253,7 @@ static proven_err_t render_row(proven_writer_t w, int id, const char *name) {
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
-    /* --- the same code, into a growing string ----------------------------- */
+    /* --- 같은 코드로, 늘어나는 문자열에 ------------------------------------ */
     proven_result_u8str_t s = proven_u8str_create(alloc, 16);
     EXAMPLE_REQUIRE(proven_is_ok(s.err), "string create");
 
@@ -1270,15 +1264,15 @@ int main(void) {
     printf("into a string:\n%s", proven_u8str_as_cstr(&s.value));
     proven_u8str_destroy(alloc, &s.value);
 
-    /* --- the same code, into memory you own: zero allocations ------------- */
+    /* --- 같은 코드로, 여러분이 소유한 기억에: 할당은 0 -------------------- */
     proven_byte_t fixed[64];
     proven_writer_buf_t b_state = { .buf = { .ptr = fixed, .size = sizeof fixed } };
     proven_writer_t to_buffer = proven_writer_from_buffer(&b_state);
     EXAMPLE_REQUIRE(proven_is_ok(render_row(to_buffer, 8, "grace")), "render into a buffer");
     EXAMPLE_REQUIRE(b_state.len > 0, "the buffer received the row");
 
-    /* A full buffer REFUSES; it does not truncate. A sink that silently drops the
-     * end of your data is worse than one that says it cannot take it. */
+    /* 가득 찬 버퍼는 *거부한다*. 자르지 않는다. 여러분 자료의 끝을 조용히 버리는 그릇은
+     * 받을 수 없다고 말하는 그릇보다 나쁘다. */
     proven_byte_t tiny[4];
     proven_writer_buf_t t_state = { .buf = { .ptr = tiny, .size = sizeof tiny } };
     proven_writer_t to_tiny = proven_writer_from_buffer(&t_state);
@@ -1286,13 +1280,13 @@ int main(void) {
                     "a full buffer refuses rather than truncating");
     EXAMPLE_REQUIRE(t_state.overflowed, "and it records that it did");
 
-    /* --- the same code, into a file, buffered ------------------------------ */
+    /* --- 같은 코드로, 파일에, 버퍼를 두고 ---------------------------------- */
     /*
-     * The buffer is memory YOU supply, exactly like an arena's. This library has no
-     * hidden global state, so it cannot flush for you at exit - which is why you must
-     * flush before the buffer goes out of scope. In exchange, your logging path never
-     * allocates: ten thousand lines here cost 0 mallocs and a couple of dozen write
-     * syscalls, where ten thousand proven_println calls cost 10,000 syscalls.
+     * 버퍼는 아레나에서와 똑같이 *여러분이* 대는 기억이다. 이 라이브러리에는 숨은 전역
+     * 상태가 없으므로 종료 시점에 대신 흘려 줄 수 없다 - 그래서 버퍼가 스코프를 벗어나기
+     * 전에 반드시 flush 해야 한다. 그 대가로 로그 경로에서는 할당이 전혀 일어나지 않는다.
+     * 여기서 만 줄은 malloc 0 번에 write 시스템 호출 스물 몇 번이지만, proven_println 을
+     * 만 번 부르면 시스템 호출 10,000 번이다.
      */
     proven_u8str_view_t path = PROVEN_LIT("example_stream_rows.txt");
     proven_result_file_t f = proven_fs_open(alloc, path,
@@ -1311,12 +1305,12 @@ int main(void) {
     }
     EXAMPLE_REQUIRE(proven_is_ok(proven_writer_flush(to_file)),
                     "flush: nothing is written until you say so");
-    /* And the close, which is the last thing that can tell you the write did not land. */
+    /* 그리고 close - 쓰기가 도착하지 못했다고 알려 줄 수 있는 마지막 자리다. */
     EXAMPLE_REQUIRE(proven_is_ok(proven_fs_close(file)), "closing the written file");
 
-    /* --- reading it back, a line at a time -------------------------------- */
-    /* Reading a file line by line was simply not possible before: the only route was
-     * loading the entire file into memory and splitting it by hand. */
+    /* --- 한 줄씩 되읽기 ---------------------------------------------------- */
+    /* 파일을 한 줄씩 읽는 것은 예전에는 아예 되지 않았다. 길은 파일 전체를 기억에 올려
+     * 손으로 자르는 것뿐이었다. */
     proven_result_file_t rf = proven_fs_open(alloc, path, PROVEN_FS_READ);
     EXAMPLE_REQUIRE(proven_is_ok(rf.err), "reopen for reading");
     proven_file_t rfile = rf.value;
@@ -1331,8 +1325,8 @@ int main(void) {
         proven_result_u8str_view_t line = proven_reader_read_line(&r_state);
         if (line.err == PROVEN_ERR_EOF) break;
         EXAMPLE_REQUIRE(proven_is_ok(line.err), "read a line");
-        /* The view points INTO the reader's buffer, and is valid only until the next
-         * call. Copy it if it has to outlive that. */
+        /* 그 뷰는 읽는 쪽의 버퍼 *안*을 가리키고, 다음 호출 전까지만 쓸 수 있다. 그보다
+         * 오래 살아야 한다면 복사할 것. */
         printf("line %d: %.*s\n", lines, (int)line.val.size, (const char *)line.val.ptr);
         ++lines;
     }
@@ -1719,36 +1713,36 @@ proven_u64 die = proven_rng_u64(rng) % 6 + 1;   /* wrong: 1 and 2 are slightly l
 <!-- example: manual/examples/ko/ex_05_random.c -->
 ```c
 /*
- * Randomness, by use case. There is no single "random": there are two jobs that look
- * identical and are not, and picking the wrong one is the whole danger.
+ * 쓰임새로 나눈 난수. "난수" 하나는 없다. 똑같이 생겼지만 같지 않은 할 일이 둘 있고,
+ * 잘못 고르는 것이 위험의 전부다.
  *
- *   A key, a token, a nonce - anything an attacker must not guess - needs a CRYPTOGRAPHIC
- *   source. A simulation, a test, a game needs a REPRODUCIBLE one, because a failing run you
- *   cannot replay is a failing run you cannot debug. The two requirements are in direct
- *   opposition: reproducible means predictable, and predictable is exactly what a token must
- *   not be. So the library gives them different names, and the choice is visible here at the
- *   call site rather than buried in how something was seeded.
+ *   키, 토큰, 논스 - 공격자가 알아맞히면 안 되는 것 - 에는 *암호용* 난수원이 필요하다.
+ *   시뮬레이션, 시험, 게임에는 *재현 가능한* 것이 필요하다. 다시 돌려 볼 수 없는 실패한
+ *   실행은 디버깅할 수 없는 실패한 실행이기 때문이다. 두 요구는 정면으로 부딪친다.
+ *   재현 가능하다는 것은 예측 가능하다는 뜻이고, 예측 가능한 것이야말로 토큰이 되어서는
+ *   안 되는 것이다. 그래서 라이브러리는 둘에 다른 이름을 주고, 선택은 씨앗을 어떻게
+ *   뿌렸는지에 묻히는 대신 여기 호출 자리에서 눈에 보인다.
  */
 
 int main(void) {
-    /* ---- Job 1: a secret. The OS CSPRNG - and the one place randomness can fail. ---- */
+    /* ---- 할 일 1: 비밀. OS 의 CSPRNG - 그리고 난수가 실패할 수 있는 유일한 자리. ---- */
     proven_byte_t key[32];
     EXAMPLE_REQUIRE(proven_random_bytes(key, sizeof key),
                     "the OS must give us strong bytes on a hosted platform");
 
-    /* ---- Job 2: lots of cryptographic bytes, or any at all on a board with no OS.
-     * ChaCha20 is pure arithmetic: seed it once from real entropy and it needs nothing from
-     * the operating system afterwards - no syscall per draw, and it works on bare metal.
-     * Seeding is the ONLY step that can fail, so it is the only one you have to check. ---- */
+    /* ---- 할 일 2: 암호용 바이트를 아주 많이, 또는 OS 가 없는 보드에서 조금이라도.
+     * ChaCha20 은 순수한 산술이다. 진짜 엔트로피로 한 번 씨를 뿌리면 그 뒤로는 운영체제가
+     * 필요 없다 - 뽑을 때마다 시스템 호출을 하지 않고, 베어메탈에서도 돈다.
+     * 씨 뿌리기가 실패할 수 있는 *유일한* 걸음이므로, 확인해야 할 것도 그것 하나다. ---- */
     proven_chacha_rng_t crypto;
     EXAMPLE_REQUIRE(proven_chacha_rng_seed_from_entropy(&crypto), "seed the CSPRNG from the OS, once");
 
     proven_byte_t token[16];
-    proven_chacha_rng_fill(&crypto, token, sizeof token);   /* cannot fail: it is seeded */
+    proven_chacha_rng_fill(&crypto, token, sizeof token);   /* 실패할 수 없다: 이미 씨가 뿌려져 있다 */
 
-    /* ---- Job 3: a REPRODUCIBLE run. xoshiro256** is fast and replays exactly from its seed,
-     * which is what makes a failing simulation debuggable. It is NOT secret-grade: a few of
-     * its outputs reveal its whole state. Never hand it a token to generate. ---- */
+    /* ---- 할 일 3: *재현되는* 실행. xoshiro256** 은 빠르고 씨앗에서 똑같이 다시
+     * 재생된다. 그것이 실패한 시뮬레이션을 디버깅할 수 있게 만든다. 비밀급이 *아니다* -
+     * 출력 몇 개면 상태 전체가 드러난다. 토큰을 만들라고 건네는 일은 절대 없어야 한다. ---- */
     proven_xoshiro256ss_t sim;
     proven_xoshiro256ss_seed(&sim, 12345);
 
@@ -1757,11 +1751,11 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_xoshiro256ss_next(&sim) == proven_xoshiro256ss_next(&replay),
                     "the same seed replays the same run - that is the whole point");
 
-    /* ---- The helpers work over ANY source, through the proven_rng_t trait. ---- */
+    /* ---- 도우미들은 proven_rng_t 특성을 통해 *어떤* 난수원 위에서도 돈다. ---- */
     proven_rng_t rng = proven_xoshiro256ss_rng(&sim);
 
-    /* A number in a range. `rng_u64() % 6` is what everyone writes, and it is BIASED unless
-     * the bound divides 2^64 - the low values come up more often. This one is not. */
+    /* 범위 안의 수. `rng_u64() % 6` 은 모두가 쓰는 것이고, 상한이 2^64 를 나누어떨어지게
+     * 하지 않는 한 *치우쳐* 있다 - 작은 값이 더 자주 나온다. 이것은 그렇지 않다. */
     for (int i = 0; i < 100; ++i) {
         proven_u64 die = proven_rng_below(rng, 6) + 1;
         EXAMPLE_REQUIRE(die >= 1 && die <= 6, "a die roll is 1..6, uniformly");
@@ -1773,8 +1767,8 @@ int main(void) {
     double p = proven_rng_f64(rng);
     EXAMPLE_REQUIRE(p >= 0.0 && p < 1.0, "a double in [0, 1) - never 1.0");
 
-    /* An unbiased shuffle: Fisher-Yates over the unbiased index above. The `% n` version of
-     * this loop measurably favours some orderings. */
+    /* 치우치지 않은 섞기: 위의 치우치지 않은 인덱스 위에서 도는 피셔-예이츠. 이 반복문의
+     * `% n` 판은 어떤 순서를 눈에 띄게 더 좋아한다. */
     int deck[10];
     for (int i = 0; i < 10; ++i) deck[i] = i;
     proven_rng_shuffle(rng, deck, 10, sizeof deck[0]);
@@ -1783,8 +1777,8 @@ int main(void) {
     for (int i = 0; i < 10; ++i) sum += deck[i];
     EXAMPLE_REQUIRE(sum == 45, "a shuffle is a permutation: every card is still there, once");
 
-    /* The cryptographic generator satisfies the same trait, so the same helpers work over it
-     * when the choice must be unguessable rather than merely uniform. */
+    /* 암호용 생성기도 같은 특성을 만족하므로, 고르기만 하면 되는 것이 아니라 알아맞힐 수
+     * 없어야 할 때 같은 도우미를 그대로 쓸 수 있다. */
     proven_rng_t secure = proven_chacha_rng(&crypto);
     proven_u64 unguessable_index = proven_rng_below(secure, 1000);
     EXAMPLE_REQUIRE(unguessable_index < 1000, "the helpers do not care which source they draw from");
@@ -2347,34 +2341,29 @@ return 0;                            /* wrong: the buffer never reached the file
 #include <string.h>
 
 /*
- * A memory-mapped file is a file the processor reads as memory: the operating
- * system arranges for the pages to appear at an address, and reads happen
- * without a read call. It is the right tool for one shape of problem - random
- * access into a large file that several processes look at - and the wrong tool
- * for streaming, where a buffered reader is simpler and does not tie a file's
- * size to your address space.
+ * 기억에 사상된 파일은 프로세서가 기억처럼 읽는 파일이다. 운영체제가 그 쪽들을 어떤
+ * 주소에 나타나게 해 주고, 읽기는 read 호출 없이 일어난다. 한 모양의 문제에는 옳은
+ * 도구다 - 여러 프로세스가 함께 보는 큰 파일에 무작위로 접근하는 일 - 그리고 흘려 읽기에는
+ * 틀린 도구다. 거기서는 버퍼를 둔 읽기 쪽이 더 단순하고, 파일 크기를 여러분의 주소 공간에
+ * 묶지도 않는다.
  *
- * The part that is easy to get wrong is durability, and it is the reason this
- * example exists:
+ * 틀리기 쉬운 자리는 지속성이고, 이 예제가 있는 이유가 그것이다.
  *
- *   PROVEN_MMAP_SHARED  - writes go to the file. proven_mmap_sync pushes them
- *                         to the storage device.
- *   PROVEN_MMAP_PRIVATE - writes are copy-on-write: they exist in this process
- *                         and nowhere else. There is nothing to write back, and
- *                         asking to sync one says so instead of quietly doing
- *                         nothing.
+ *   PROVEN_MMAP_SHARED  - 쓰기가 파일로 간다. proven_mmap_sync 가 그것을 저장 장치까지
+ *                         밀어 준다.
+ *   PROVEN_MMAP_PRIVATE - 쓰기가 복사-후-쓰기다. 이 프로세스 안에만 있고 다른 어디에도
+ *                         없다. 되쓸 것이 없으므로, sync 를 청하면 조용히 아무 일도 하지
+ *                         않는 대신 그렇다고 말한다.
  *
- * This example also shows the calendar formatter alongside it, because the
- * record it writes carries a timestamp - and a timestamp written for a Windows
- * API is the one place the UTF-16 formatter is the right call.
+ * 이 예제는 달력 형식화기도 나란히 보인다. 여기서 쓰는 레코드가 시각을 싣기 때문이고,
+ * 윈도 API 를 위해 쓰는 시각이야말로 UTF-16 형식화기가 옳은 호출인 유일한 자리다.
  */
 
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
     proven_u8str_view_t path = PROVEN_LIT("proven_example_mmap.dat");
 
-    /* A mapping cannot extend a file, so the file has to be the size you intend
-     * to map before you map it. */
+    /* 사상은 파일을 늘릴 수 없다. 그러니 파일은 사상하기 전에 사상하려는 크기여야 한다. */
     static const char initial[] = "record 0: pending    \n";
     proven_result_file_t create = proven_fs_open(alloc, path,
                                                  PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
@@ -2385,13 +2374,13 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_is_ok(proven_fs_write_all(create.value, seed)), "writing the record must succeed");
     EXAMPLE_REQUIRE(proven_is_ok(proven_fs_close(create.value)), "closing it must succeed");
 
-    /* --- a shared mapping: writes reach the file -------------------------- */
+    /* --- 공유 사상: 쓰기가 파일에 닿는다 ---------------------------------- */
 
     proven_result_file_t f = proven_fs_open(alloc, path, PROVEN_FS_READ | PROVEN_FS_WRITE);
     EXAMPLE_REQUIRE(proven_is_ok(f.err), "opening the file for mapping must succeed");
     if (!proven_is_ok(f.err)) return 1;
 
-    /* size 0 means "to the end of the file". */
+    /* size 0 은 "파일 끝까지" 라는 뜻이다. */
     proven_result_mmap_t m = proven_mmap_create(f.value, 0, 0,
                                                 PROVEN_MMAP_READ | PROVEN_MMAP_WRITE,
                                                 PROVEN_MMAP_SHARED);
@@ -2402,34 +2391,33 @@ int main(void) {
     }
     proven_mmap_t map = m.value;
 
-    /* Reading is just reading memory - no call, no copy. as_view hands back the
-     * whole mapping as a byte view, so the ordinary view helpers apply. */
+    /* 읽기는 그냥 기억을 읽는 것이다 - 호출도 복사도 없다. as_view 는 사상 전체를 바이트
+     * 뷰로 돌려주므로, 보통의 뷰 도우미들이 그대로 먹는다. */
     proven_u8str_view_t contents = proven_mmap_as_view(map);
     EXAMPLE_REQUIRE(contents.size == sizeof initial - 1, "the mapping covers the whole file");
     EXAMPLE_REQUIRE(proven_u8str_view_starts_with(contents, PROVEN_LIT("record 0:")),
                     "and shows the bytes that were written");
 
-    /* Writing is writing memory. The status field is a fixed width on purpose:
-     * a mapping cannot make the file longer, so an in-place edit has to fit the
-     * space that is already there. */
+    /* 쓰기는 기억에 쓰는 것이다. 상태 필드를 일부러 폭 고정으로 두었다. 사상은 파일을
+     * 길게 만들 수 없으므로, 제자리 편집은 이미 있는 자리에 들어가야 한다. */
     proven_size_t at = proven_u8str_view_find(contents, 0, PROVEN_LIT("pending"));
     EXAMPLE_REQUIRE(at != PROVEN_SIZE_MAX, "the status field must be found");
     memcpy((proven_byte_t *)map.ptr + at, "done   ", 7);
 
-    /* sync is the durability step: without it the change is in the page cache,
-     * where it survives this program exiting but not the machine losing power. */
+    /* sync 가 지속성의 걸음이다. 그것 없이는 바뀐 내용이 페이지 캐시에 있고, 거기서는 이
+     * 프로그램이 끝나는 것은 견디지만 기계가 전원을 잃는 것은 견디지 못한다. */
     EXAMPLE_REQUIRE(proven_is_ok(proven_mmap_sync(&map)), "syncing a shared mapping must succeed");
     EXAMPLE_REQUIRE(proven_is_ok(proven_mmap_destroy(&map)), "unmapping must succeed");
     EXAMPLE_REQUIRE(proven_is_ok(proven_fs_close(f.value)), "closing the mapped file must succeed");
 
-    /* The edit is in the file, not merely in this process's memory. */
+    /* 편집이 이 프로세스의 기억에만이 아니라 파일에 들어가 있다. */
     proven_result_u8str_t back = proven_fs_read_all_u8str(alloc, path);
     EXAMPLE_REQUIRE(proven_is_ok(back.err), "reading the file back must succeed");
     EXAMPLE_REQUIRE(proven_u8str_view_find(proven_u8str_as_view(&back.value), 0, PROVEN_LIT("done")) != PROVEN_SIZE_MAX,
                     "the mapped write reached the file");
     proven_u8str_destroy(alloc, &back.value);
 
-    /* --- a private mapping: writes go nowhere ----------------------------- */
+    /* --- 사적 사상: 쓰기가 아무 데도 가지 않는다 -------------------------- */
 
     proven_result_file_t pf = proven_fs_open(alloc, path, PROVEN_FS_READ);
     EXAMPLE_REQUIRE(proven_is_ok(pf.err), "reopening for a private mapping must succeed");
@@ -2438,16 +2426,15 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_is_ok(pm.err), "a private read mapping must succeed");
     proven_mmap_t priv = pm.value;
 
-    /* Asking to sync a private mapping is refused rather than accepted and
-     * ignored. The refusal is the useful behaviour: a caller who believed the
-     * mapping was shared finds out here, not when the data is missing. */
+    /* 사적 사상에 sync 를 청하면 받아 놓고 무시하는 대신 거부된다. 그 거부가 쓸모 있는
+     * 동작이다. 사상이 공유라고 믿고 있던 쪽이 자료가 사라진 뒤가 아니라 여기서 알게 된다. */
     EXAMPLE_REQUIRE(proven_mmap_sync(&priv) == PROVEN_ERR_UNSUPPORTED,
                     "a private mapping has nothing to write back, and says so");
 
     EXAMPLE_REQUIRE(proven_is_ok(proven_mmap_destroy(&priv)), "unmapping the private mapping must succeed");
     EXAMPLE_REQUIRE(proven_is_ok(proven_fs_close(pf.value)), "closing it must succeed");
 
-    /* --- the timestamp, in both string types ------------------------------ */
+    /* --- 시각을, 두 문자열 타입 모두로 ------------------------------------ */
 
     proven_datetime_t now = proven_time_now_datetime();
 
@@ -2458,8 +2445,8 @@ int main(void) {
                     "formatting the date as UTF-8 must succeed");
     EXAMPLE_REQUIRE(proven_u8str_as_view(&stamp.value).size == 10, "a YYYY-MM-DD date is ten characters");
 
-    /* The UTF-16 form of the same call, for the one place it is the right one:
-     * handing the text straight to a system call that takes wide strings. */
+    /* 같은 호출의 UTF-16 꼴이다. 그것이 옳은 유일한 자리를 위한 것 - 와이드 문자열을 받는
+     * 시스템 호출에 글을 곧장 건네는 자리다. */
     proven_result_u16str_t wide = proven_u16str_create(alloc, 64);
     EXAMPLE_REQUIRE(proven_is_ok(wide.err), "creating the wide timestamp string must succeed");
     EXAMPLE_REQUIRE(proven_is_ok(proven_time_u16_fmt(alloc, &wide.value, now, &proven_time_locale_en,

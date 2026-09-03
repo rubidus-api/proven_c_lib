@@ -864,23 +864,23 @@ if (!proven_is_ok(e)) {
 <!-- example: manual/examples/ko/ex_03_u8str.c -->
 ```c
 /*
- * There are two string handles here and the difference is ownership, not size:
+ * 여기 문자열 손잡이가 둘 있고, 둘을 가르는 것은 크기가 아니라 소유다.
  *
- *   proven_u8str_t      - a byte string you can edit. It either owns an
- *                         allocation (create) or borrows one of yours (borrow).
- *   proven_u8str_view_t - a pointer and a length into somebody else's bytes.
- *                         It owns nothing, it is not NUL-terminated, and it is
- *                         only valid while those bytes are.
+ *   proven_u8str_t      - 고칠 수 있는 바이트 문자열. 할당을 소유하거나(create)
+ *                         여러분의 것을 빌린다(borrow).
+ *   proven_u8str_view_t - 남의 바이트를 가리키는 포인터와 길이. 아무것도 소유하지
+ *                         않고, NUL 로 끝나지 않으며, 그 바이트가 살아 있는 동안에만
+ *                         쓸 수 있다.
  *
- * A view is what you pass to a function that reads. A u8str is what you keep.
+ * 읽기만 하는 함수에 건네는 것이 뷰이고, 손에 쥐고 있는 것이 u8str 다.
  */
 
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
-    /* --- an OWNED string: the allocator's memory, yours to destroy ---------- */
-    /* The capacity argument is content bytes; the NUL is extra, so as_cstr is
-     * always O(1) and always safe. */
+    /* --- *소유하는* 문자열: 할당자의 기억, 여러분이 지울 것 ---------------- */
+    /* 용량 인자는 내용 바이트 수다. NUL 은 그 밖에 따로 있어서, as_cstr 은 언제나
+     * O(1) 이고 언제나 안전하다. */
     proven_result_u8str_t r = proven_u8str_create(alloc, 16);
     EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating a 16-byte string must succeed");
     if (!proven_is_ok(r.err)) {
@@ -888,32 +888,31 @@ int main(void) {
     }
     proven_u8str_t path = r.value;
 
-    /* append is fixed-capacity: it fits or it fails, and on failure it has not
-     * touched the string. It never reallocates, so it needs no allocator. */
+    /* append 는 용량이 고정이다. 들어가거나 실패하고, 실패했다면 문자열에 손도 대지
+     * 않았다. 재할당하지 않으므로 할당자도 필요 없다. */
     proven_err_t err = proven_u8str_append(&path, PROVEN_LIT("/etc/hosts"));
     EXAMPLE_REQUIRE(proven_is_ok(err), "10 bytes fit in a 16-byte string");
 
-    /* append_grow is the growable twin: give it the allocator the string was
-     * created with and it reallocates when needed. Still failure-atomic - if the
-     * allocation fails, the string is exactly as it was. */
+    /* append_grow 는 늘어나는 쌍둥이다. 문자열을 만들 때 쓴 할당자를 주면 필요할 때
+     * 재할당한다. 여전히 실패 원자적이다 - 할당이 실패하면 문자열은 그대로다. */
     err = proven_u8str_append_grow(alloc, &path, PROVEN_LIT(".backup.original"));
     EXAMPLE_REQUIRE(proven_is_ok(err), "append_grow must reallocate rather than fail");
 
-    /* Edits in the middle. insert shifts the tail right; remove shifts it left. */
+    /* 가운데를 고치기. insert 는 꼬리를 오른쪽으로, remove 는 왼쪽으로 민다. */
     err = proven_u8str_insert_grow(alloc, &path, 0, PROVEN_LIT("/srv"));
     EXAMPLE_REQUIRE(proven_is_ok(err), "inserting a prefix must succeed");
 
-    err = proven_u8str_remove(&path, proven_u8str_as_view(&path).size - 9, 9);  /* drop ".original" */
+    err = proven_u8str_remove(&path, proven_u8str_as_view(&path).size - 9, 9);  /* ".original" 을 떼어 낸다 */
     EXAMPLE_REQUIRE(proven_is_ok(err), "removing the trailing suffix must succeed");
 
-    /* replace_first returns PROVEN_OK when the target is absent - "nothing to do"
-     * is not an error. Search first when the difference matters to you. */
+    /* 찾는 것이 없으면 replace_first 는 PROVEN_OK 를 돌려준다 - "할 일이 없다" 는
+     * 오류가 아니다. 그 차이가 중요하면 먼저 찾아볼 것. */
     err = proven_u8str_replace_first(&path, 0, PROVEN_LIT("hosts"), PROVEN_LIT("fstab"));
     EXAMPLE_REQUIRE(proven_is_ok(err), "replacing an existing substring must succeed");
 
-    /* --- reading it: borrow a view, do not copy ----------------------------- */
-    /* as_view is free. The view is only good until the next edit: any growing
-     * call may reallocate and leave the view (and any cstr) dangling. */
+    /* --- 읽기: 복사하지 말고 뷰를 빌릴 것 ---------------------------------- */
+    /* as_view 는 공짜다. 그 뷰는 다음 편집 전까지만 쓸 수 있다. 늘리는 호출은 재할당할
+     * 수 있고, 그러면 뷰(그리고 cstr)는 매달린 포인터가 된다. */
     proven_u8str_view_t v = proven_u8str_as_view(&path);
 
     EXAMPLE_REQUIRE(proven_u8str_view_eq(v, PROVEN_LIT("/srv/etc/fstab.backup")),
@@ -924,19 +923,19 @@ int main(void) {
     proven_size_t dot = proven_u8str_view_find(v, 0, PROVEN_LIT(".backup"));
     EXAMPLE_REQUIRE(dot != PROVEN_INDEX_NOT_FOUND, "the suffix must be found");
 
-    /* A slice is a view into the SAME bytes - no allocation, no copy. */
+    /* 슬라이스는 *같은* 바이트를 가리키는 뷰다 - 할당도 복사도 없다. */
     proven_u8str_view_t stem = proven_u8str_view_slice(v, 0, dot);
     EXAMPLE_REQUIRE(proven_u8str_view_eq(stem, PROVEN_LIT("/srv/etc/fstab")),
                     "slicing at the suffix leaves the stem");
 
-    /* as_cstr is the escape hatch to C APIs, and it is only valid because the
-     * owned string keeps a NUL past its length. Do NOT do this with a view:
-     * `stem.ptr` is not NUL-terminated - it just points into `path`. */
+    /* as_cstr 은 C API 로 나가는 비상구이고, 소유한 문자열이 길이 뒤에 NUL 을 지키기
+     * 때문에만 옳다. 뷰로는 이렇게 하지 *말 것*. `stem.ptr` 은 NUL 로 끝나지 않는다 -
+     * 그냥 `path` 안을 가리킬 뿐이다. */
     printf("owned:  %s\n", proven_u8str_as_cstr(&path));
 
-    /* --- a BORROWED string: your memory, no allocation at all --------------- */
-    /* Same type, same operations - but the bytes are this stack buffer. `cap`
-     * includes the NUL, so this holds 31 content bytes. */
+    /* --- *빌린* 문자열: 여러분의 기억, 할당은 전혀 없다 -------------------- */
+    /* 타입도 연산도 같다 - 다만 바이트가 이 스택 버퍼다. `cap` 은 NUL 을 포함하므로
+     * 내용은 31 바이트까지 담긴다. */
     proven_byte_t line[32];
     proven_u8str_t status = proven_u8str_borrow(line, sizeof line);
 
@@ -945,10 +944,9 @@ int main(void) {
     err = proven_u8str_append(&status, stem);
     EXAMPLE_REQUIRE(proven_is_ok(err), "a view can be appended just like a literal");
 
-    /* The growing calls exist for a borrowed string, but they refuse to
-     * reallocate memory they do not own: too much data is OUT_OF_BOUNDS, and
-     * `line` is left untouched. A borrowed string cannot silently escape to the
-     * heap behind your back. */
+    /* 빌린 문자열에도 늘리는 호출은 있지만, 자기 것이 아닌 기억을 재할당하지는
+     * 않는다. 자료가 넘치면 OUT_OF_BOUNDS 이고 `line` 은 손대지 않은 채로 남는다.
+     * 빌린 문자열이 등 뒤에서 조용히 힙으로 달아나는 일은 없다. */
     err = proven_u8str_append_grow(alloc, &status,
                                    PROVEN_LIT(" ...and a great deal more text than fits"));
     EXAMPLE_REQUIRE(err == PROVEN_ERR_OUT_OF_BOUNDS,
@@ -958,20 +956,20 @@ int main(void) {
 
     printf("borrowed: %s\n", proven_u8str_as_cstr(&status));
 
-    /* reset truncates to empty and keeps the buffer, so the next frame reuses
-     * the same 32 bytes with no allocation. */
+    /* reset 은 비어 있는 상태로 자르고 버퍼는 그대로 둔다. 그래서 다음 프레임이 같은
+     * 32 바이트를 할당 없이 다시 쓴다. */
     err = proven_u8str_reset(&status);
     EXAMPLE_REQUIRE(proven_is_ok(err), "reset must succeed on a borrowed string");
     EXAMPLE_REQUIRE(proven_u8str_as_view(&status).size == 0, "reset empties the string");
 
-    /* --- destroy: the ownership rule, spelled out --------------------------- */
-    /* destroy on the borrowed string is a no-op - `line` is not the library's to
-     * free. Calling it anyway is correct and costs nothing, and it means the
-     * teardown code does not have to know which kind of string it holds. */
+    /* --- destroy: 소유 규칙을 그대로 적어 보면 ------------------------------ */
+    /* 빌린 문자열에 대한 destroy 는 아무 일도 하지 않는다 - `line` 은 라이브러리가
+     * 해제할 것이 아니다. 그래도 부르는 것이 옳고 값도 들지 않으며, 덕분에 뒷정리 코드는
+     * 자기가 쥔 문자열이 어느 쪽인지 몰라도 된다. */
     proven_u8str_destroy(alloc, &status);
 
-    /* destroy on the owned string frees the allocation, and it must be given the
-     * allocator the string was created with. */
+    /* 소유한 문자열에 대한 destroy 는 할당을 해제한다. 그리고 반드시 그 문자열을 만들
+     * 때 쓴 할당자를 주어야 한다. */
     proven_u8str_destroy(alloc, &path);
     return EXAMPLE_OK();
 }
@@ -1005,22 +1003,20 @@ int main(void) {
 <!-- example: manual/examples/ko/ex_03_fixed_edits.c -->
 ```c
 /*
- * The previous example grew a string whenever it ran out of room. This one is
- * about the case where growing is not allowed - a fixed-size record, a log line
- * with a hard length limit, a buffer in an arena that must not be reallocated -
- * and about the two honest answers a call can give when the data does not fit:
+ * 앞의 예제는 자리가 모자라면 문자열을 늘렸다. 이번 것은 늘리는 것이 허용되지 않는
+ * 경우 - 크기가 고정된 레코드, 길이 상한이 단단한 로그 줄, 재할당하면 안 되는 아레나
+ * 속 버퍼 - 그리고 자료가 들어가지 않을 때 호출이 줄 수 있는 두 가지 정직한 답에 대한
+ * 것이다.
  *
- *   "no, and I changed nothing"      - the atomic calls: append, insert,
- *                                      replace_at. They check the capacity
- *                                      first, so a refusal leaves the string
- *                                      exactly as it was.
- *   "some of it, and here is how much" - the best-effort call:
- *                                      append_partial. It fills what it can and
- *                                      tells you the byte count it wrote.
+ *   "안 됩니다, 그리고 아무것도 바꾸지 않았습니다" - 원자적 호출들: append, insert,
+ *                                      replace_at. 먼저 용량을 검사하므로, 거부는
+ *                                      문자열을 그대로 남긴다.
+ *   "일부만 했고, 얼마나 했는지 알려 드립니다" - 최선 노력 호출: append_partial.
+ *                                      담을 수 있는 만큼 담고 몇 바이트를 썼는지
+ *                                      알려 준다.
  *
- * Both are useful; picking the wrong one silently truncates a record or
- * silently drops one. The `_grow` variants are the third answer - "yes, I found
- * more room" - and appear at the end for contrast.
+ * 둘 다 쓸모가 있다. 잘못 고르면 레코드를 조용히 자르거나 조용히 버린다. `_grow` 짝은
+ * 세 번째 답 - "네, 자리를 더 찾았습니다" - 이고, 견주어 보라고 끝에 실었다.
  */
 
 #define FIELD_CAP 32u
@@ -1035,31 +1031,28 @@ int main(void) {
     }
     proven_u8str_t field = r.value;
 
-    /* is_valid checks the handle's own structure - a pointer with a capacity and
-     * a length that do not contradict each other. Worth asserting once at the
-     * boundary of your code when a string arrives from somewhere else; it is not
-     * a check you need after every edit, because every edit maintains it. */
+    /* is_valid 는 손잡이 자신의 구조를 검사한다 - 포인터와, 서로 어긋나지 않는 용량과
+     * 길이. 문자열이 다른 데서 넘어올 때 여러분 코드의 경계에서 한 번 단언해 둘 값어치가
+     * 있다. 편집할 때마다 할 검사는 아니다. 모든 편집이 그 성질을 지키기 때문이다. */
     EXAMPLE_REQUIRE(proven_u8str_is_valid(&field), "a freshly created string must be structurally valid");
 
-    /* --- reserving room up front ------------------------------------------ */
+    /* --- 미리 자리를 잡아 두기 -------------------------------------------- */
 
-    /* reserve raises the capacity now, so later growth does not reallocate. On
-     * the heap that saves copies; in an arena it saves something worse, because
-     * every reallocation there leaks the old block until the next reset. Ask for
-     * what you expect to need, once. */
+    /* reserve 는 용량을 지금 올려 두어 나중의 성장이 재할당하지 않게 한다. 힙에서는
+     * 복사를 아끼고, 아레나에서는 더 나쁜 것을 아낀다. 거기서는 재할당마다 옛 블록이
+     * 다음 reset 까지 새기 때문이다. 필요할 만큼을, 한 번에 청할 것. */
     proven_err_t err = proven_u8str_reserve(alloc, &field, 64);
     EXAMPLE_REQUIRE(proven_is_ok(err), "reserving 64 bytes must succeed");
     EXAMPLE_REQUIRE(field.internal.cap >= 64, "the capacity must actually be at least what was asked for");
 
-    /* --- the atomic calls: fit, or change nothing -------------------------- */
+    /* --- 원자적 호출: 들어가거나, 아무것도 바꾸지 않거나 -------------------- */
 
     err = proven_u8str_append(&field, PROVEN_LIT("2026-01-01 level=info "));
     EXAMPLE_REQUIRE(proven_is_ok(err), "the prefix fits in the reserved capacity");
 
-    /* append_byte adds one byte, which is what separators, terminators and
-     * escape characters are. It takes the allocator because it is a growing
-     * call - one byte is exactly the case where a capacity check would fail on
-     * a boundary you did not think about. */
+    /* append_byte 는 한 바이트를 더한다. 구분자, 종결자, 이스케이프 문자가 그런
+     * 것들이다. 늘리는 호출이라 할당자를 받는다 - 한 바이트야말로 생각지 못한 경계에서
+     * 용량 검사가 걸리는 바로 그 경우다. */
     err = proven_u8str_append_byte(alloc, &field, (proven_u8)'[');
     EXAMPLE_REQUIRE(proven_is_ok(err), "appending a single separator byte must succeed");
 
@@ -1069,19 +1062,18 @@ int main(void) {
     err = proven_u8str_append_byte(alloc, &field, (proven_u8)']');
     EXAMPLE_REQUIRE(proven_is_ok(err), "closing the bracket must succeed");
 
-    /* Now ask for more than the capacity can hold. The atomic append refuses and
-     * - this is the property worth relying on - the string still holds exactly
-     * what it held before the call. */
+    /* 이제 용량이 담을 수 있는 것보다 많이 청해 본다. 원자적 append 는 거부하고 -
+     * 이것이 믿고 기댈 값어치가 있는 성질이다 - 문자열은 호출 전에 담고 있던 것을
+     * 그대로 담고 있다. */
     proven_size_t before = proven_u8str_as_view(&field).size;
     err = proven_u8str_append(&field, PROVEN_LIT(" and a very long trailing explanation that certainly does not fit"));
     EXAMPLE_REQUIRE(err == PROVEN_ERR_OUT_OF_BOUNDS, "an oversized atomic append must be refused");
     EXAMPLE_REQUIRE(proven_u8str_as_view(&field).size == before, "and must leave the string untouched");
 
-    /* --- the best-effort call: as much as fits, and the count -------------- */
+    /* --- 최선 노력 호출: 들어가는 만큼, 그리고 그 개수 --------------------- */
 
-    /* A fixed-width column in a report is the case for this one: write what
-     * fits, and know how much was written so the caller can mark the value as
-     * truncated instead of pretending it is complete. */
+    /* 보고서의 폭 고정 열이 이것을 쓰는 경우다. 들어가는 만큼 쓰고, 얼마나 썼는지 알아
+     * 두어 부르는 쪽이 그 값을 온전한 척하는 대신 잘렸다고 표시할 수 있게 한다. */
     proven_result_size_t part = proven_u8str_append_partial(&field, PROVEN_LIT(" ...more text than there is room for"));
     EXAMPLE_REQUIRE(part.err == PROVEN_ERR_OUT_OF_BOUNDS, "a partial append that truncates still reports the truncation");
     EXAMPLE_REQUIRE(part.value > 0, "but it wrote what it could");
@@ -1089,7 +1081,7 @@ int main(void) {
                     "and the string grew by exactly the number of bytes it reports");
     printf("partial append wrote %zu byte(s) before the buffer was full\n", (size_t)part.value);
 
-    /* --- editing in the middle without growing ----------------------------- */
+    /* --- 늘리지 않고 가운데를 고치기 --------------------------------------- */
 
     proven_result_u8str_t r2 = proven_u8str_create(alloc, FIELD_CAP);
     EXAMPLE_REQUIRE(proven_is_ok(r2.err), "creating the second buffer must succeed");
@@ -1097,15 +1089,15 @@ int main(void) {
     err = proven_u8str_append(&path, PROVEN_LIT("var/log/service.log"));
     EXAMPLE_REQUIRE(proven_is_ok(err), "the path fits");
 
-    /* insert shifts the tail right. Fixed-capacity: it fits or it refuses. */
+    /* insert 는 꼬리를 오른쪽으로 민다. 용량 고정이다 - 들어가거나 거부한다. */
     err = proven_u8str_insert(&path, 0, PROVEN_LIT("/"));
     EXAMPLE_REQUIRE(proven_is_ok(err), "inserting a leading slash must succeed");
     EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&path), PROVEN_LIT("/var/log/service.log")),
                     "the insert lands at index 0");
 
-    /* replace_at replaces old_len bytes at an index with data of any length, as
-     * long as the result still fits. Replacing "service" (7) with "daemon" (6)
-     * shrinks the string, so this cannot fail on capacity. */
+    /* replace_at 은 어떤 자리의 old_len 바이트를 길이에 상관없는 자료로 바꾼다.
+     * 결과가 여전히 들어가기만 하면 된다. "service"(7)를 "daemon"(6)으로 바꾸면 문자열이
+     * 짧아지므로 용량 때문에 실패할 수 없다. */
     proven_size_t at = proven_u8str_view_find(proven_u8str_as_view(&path), 0, PROVEN_LIT("service"));
     EXAMPLE_REQUIRE(at != PROVEN_SIZE_MAX, "the substring must be found before it can be replaced");
     err = proven_u8str_replace_at(&path, at, 7, PROVEN_LIT("daemon"));
@@ -1113,30 +1105,28 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&path), PROVEN_LIT("/var/log/daemon.log")),
                     "and produce the expected path");
 
-    /* The same edit the other way round overflows a 32-byte buffer, and the
-     * fixed-capacity call refuses it rather than truncating a path - which is
-     * the failure that silently writes to the wrong file. */
+    /* 같은 편집을 거꾸로 하면 32바이트 버퍼를 넘치고, 용량 고정 호출은 경로를 자르는
+     * 대신 거부한다 - 자르는 쪽이 바로 엉뚱한 파일에 조용히 쓰게 되는 그 실패다. */
     before = proven_u8str_as_view(&path).size;
     err = proven_u8str_replace_at(&path, at, 6, PROVEN_LIT("a-replacement-name-far-too-long-for-this-buffer"));
     EXAMPLE_REQUIRE(err == PROVEN_ERR_OUT_OF_BOUNDS, "a replacement that does not fit must be refused");
     EXAMPLE_REQUIRE(proven_u8str_as_view(&path).size == before, "and must leave the path unchanged");
 
-    /* replace_at_grow is the same edit with permission to reallocate. Use it
-     * when the buffer is heap-backed and the length is genuinely unbounded;
-     * prefer the fixed-capacity call when the limit is part of the format. */
+    /* replace_at_grow 는 재할당을 허락받은 같은 편집이다. 버퍼가 힙에 있고 길이가 정말
+     * 한정되지 않았을 때 쓸 것. 한계가 형식의 일부라면 용량 고정 호출을 고를 것. */
     err = proven_u8str_replace_at_grow(alloc, &path, at, 6, PROVEN_LIT("a-replacement-name-far-too-long-for-this-buffer"));
     EXAMPLE_REQUIRE(proven_is_ok(err), "the growing variant makes room instead of refusing");
     EXAMPLE_REQUIRE(proven_u8str_view_ends_with(proven_u8str_as_view(&path), PROVEN_LIT(".log")),
                     "the extension is still at the end after the edit");
 
-    /* ends_with answers the question an extension check actually asks. Doing it
-     * with an index computed by hand is where the off-by-one lives; doing it
-     * with strcmp on a pointer requires a NUL that a view does not have. */
+    /* ends_with 는 확장자 검사가 실제로 던지는 물음에 답한다. 손으로 셈한 인덱스로 하면
+     * off-by-one 이 사는 자리가 되고, 포인터에 strcmp 로 하면 뷰에는 없는 NUL 이
+     * 필요해진다. */
     EXAMPLE_REQUIRE(!proven_u8str_view_ends_with(proven_u8str_as_view(&path), PROVEN_LIT(".txt")),
                     "and it is not a .txt file");
 
-    /* An empty suffix is a suffix of everything, which is the answer that keeps
-     * loops over a list of suffixes from needing a special case. */
+    /* 빈 접미사는 무엇의 접미사이기도 하다. 접미사 목록을 도는 반복문이 특별한 경우를
+     * 두지 않아도 되게 해 주는 답이다. */
     EXAMPLE_REQUIRE(proven_u8str_view_ends_with(proven_u8str_as_view(&path), PROVEN_LIT("")),
                     "every string ends with the empty suffix");
 
@@ -1186,25 +1176,22 @@ if (part.value == field.size) { /* all of it was written */ }
 <!-- example: manual/examples/ko/ex_03_u16str.c -->
 ```c
 /*
- * UTF-16 exists in this library for one reason: some operating system calls
- * take it and nothing else. The Windows "wide" API is the usual case - the file
- * name you hand to CreateFileW is a NUL-terminated run of 16-bit code units,
- * not bytes.
+ * UTF-16 이 이 라이브러리에 있는 이유는 하나다. 어떤 운영체제 호출은 그것만 받는다.
+ * 윈도의 "와이드" API 가 늘 그 경우다 - CreateFileW 에 건네는 파일 이름은 바이트가
+ * 아니라 NUL 로 끝나는 16비트 코드 단위의 줄이다.
  *
- * So the job this type does is narrow: assemble the code units, keep the count
- * right, and produce the pointer the system call wants. Everything else in your
- * program should stay UTF-8.
+ * 그래서 이 타입이 하는 일은 좁다. 코드 단위를 모으고, 개수를 맞게 지키고, 시스템
+ * 호출이 원하는 포인터를 내주는 것. 프로그램의 나머지는 UTF-8 로 두어야 한다.
  *
- * The one thing to keep straight is the unit. A capacity of 32 here means 32
- * CODE UNITS, which is 64 bytes, and a character outside the Basic Multilingual
- * Plane - an emoji, most of the rarer CJK characters - costs two of them. A
- * count of code units is not a count of characters and never has been.
+ * 하나만 헷갈리지 말 것 - 단위다. 여기서 용량 32 는 코드 단위 32개, 곧 64 바이트이고,
+ * 기본 다국어 평면 밖의 문자는 - 이모지, 드문 한자 대부분 - 두 개를 쓴다. 코드 단위의
+ * 개수는 문자의 개수가 아니고, 한 번도 그랬던 적이 없다.
  */
 
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
-    /* The argument is a code-unit limit, not a byte limit. */
+    /* 인자는 바이트 한계가 아니라 코드 단위 한계다. */
     proven_result_u16str_t r = proven_u16str_create(alloc, 32);
     EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating a 32-code-unit string must succeed");
     if (!proven_is_ok(r.err)) {
@@ -1213,8 +1200,8 @@ int main(void) {
     proven_u16str_t name = r.value;
     EXAMPLE_REQUIRE(proven_u16str_len(&name) == 0, "a new string is empty");
 
-    /* PROVEN_U16_LIT builds a view from a u"..." literal and computes the unit
-     * count from the literal itself, so the count cannot disagree with the text. */
+    /* PROVEN_U16_LIT 은 u"..." 리터럴에서 뷰를 만들고 단위 개수를 리터럴 자체에서
+     * 계산한다. 그래서 개수가 글과 어긋날 수 없다. */
     proven_err_t err = proven_u16str_append(&name, PROVEN_U16_LIT("C:\\logs\\"));
     EXAMPLE_REQUIRE(proven_is_ok(err), "the directory prefix fits in 32 code units");
 
@@ -1222,32 +1209,32 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_is_ok(err), "the file name fits too");
     EXAMPLE_REQUIRE(proven_u16str_len(&name) == 8 + 11, "the length is a count of code units");
 
-    /* Atomic, like its byte-string twin: too much data is refused and the string
-     * is left exactly as it was, so a path is never half-written. */
+    /* 바이트 문자열 쌍둥이처럼 원자적이다. 자료가 넘치면 거부되고 문자열은 그대로
+     * 남는다. 그래서 경로가 반쯤 적히는 일이 없다. */
     proven_size_t before = proven_u16str_len(&name);
     err = proven_u16str_append(&name, PROVEN_U16_LIT(".a-suffix-long-enough-to-overflow-the-capacity"));
     EXAMPLE_REQUIRE(err == PROVEN_ERR_OUT_OF_BOUNDS, "an oversized append must be refused");
     EXAMPLE_REQUIRE(proven_u16str_len(&name) == before, "and must not truncate the path");
 
-    /* --- the pointer the system call wants -------------------------------- */
+    /* --- 시스템 호출이 원하는 포인터 -------------------------------------- */
 
-    /* as_ptr hands back the internal code units, NUL-terminated, without
-     * copying. It is the last step before the call, and the pointer is only
-     * valid until the next append: a growing append may move the storage. */
+    /* as_ptr 은 내부의 코드 단위를 NUL 로 끝난 채로, 복사 없이 돌려준다. 호출 직전의
+     * 마지막 걸음이고, 그 포인터는 다음 append 전까지만 쓸 수 있다. 늘리는 append 는
+     * 저장소를 옮길 수 있다. */
     const proven_u16 *wide = proven_u16str_as_ptr(&name);
     EXAMPLE_REQUIRE(wide != NULL, "an assembled string must yield a pointer");
     EXAMPLE_REQUIRE(wide[0] == (proven_u16)'C', "the first code unit is the drive letter");
     EXAMPLE_REQUIRE(wide[proven_u16str_len(&name)] == 0, "the sequence is NUL-terminated for the system call");
-    /* On Windows this is the whole point of the type:
+    /* 윈도에서는 이것이 이 타입의 존재 이유 전부다.
      *     HANDLE h = CreateFileW((LPCWSTR)wide, ...);
-     * Nothing here calls it, because this example must also run everywhere else. */
+     * 여기서는 부르지 않는다. 이 예제는 다른 모든 곳에서도 돌아야 하기 때문이다. */
 
-    /* --- when truncation is the correct answer ---------------------------- */
+    /* --- 자르는 것이 옳은 답일 때 ----------------------------------------- */
 
-    /* Some system structures have a fixed-width field - a 16-unit label, say -
-     * where a name that does not fit is meant to be cut, not rejected. That is
-     * what the partial append is for: it fills what it can and reports the unit
-     * count it wrote, so the caller can mark the value as truncated. */
+    /* 어떤 시스템 구조체에는 폭이 고정된 필드가 있다 - 이를테면 16 단위짜리 이름표 -
+     * 거기서는 들어가지 않는 이름을 거부하는 것이 아니라 자르는 것이 뜻이다. 부분
+     * append 가 그것을 위한 것이다. 담을 수 있는 만큼 담고 몇 단위를 썼는지 알려 주어,
+     * 부르는 쪽이 그 값을 잘렸다고 표시할 수 있게 한다. */
     proven_result_u16str_t r2 = proven_u16str_create(alloc, 16);
     EXAMPLE_REQUIRE(proven_is_ok(r2.err), "creating the fixed-width label must succeed");
     proven_u16str_t label = r2.value;
