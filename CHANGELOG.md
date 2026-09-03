@@ -11,7 +11,7 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
-## [Unreleased]
+## [2026-09-03] - proven_c_lib-v26.09.03a
 
 ### Added
 
@@ -50,7 +50,7 @@ The format follows Keep a Changelog:
   `git diff --check` — and therefore `scripts/project-check.sh` — fail on the
   published PDFs.
 
-## [2026-09-02] - proven_c_lib-v26.09.02b
+## [2026-09-02] - proven_c_lib-v26.09.03a
 
 ### Fixed
 

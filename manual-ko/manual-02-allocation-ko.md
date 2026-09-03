@@ -767,18 +767,17 @@ int main(void) {
 <!-- example: manual/examples/ko/ex_02_pool.c -->
 ```c
 /*
- * A pool is a churn optimizer, not a region. It is for one type: allocate and
- * free the same fixed-size block over and over - list nodes, events, particles -
- * without paying malloc every time.
+ * 풀(pool)은 구역이 아니라 잦은 교체를 위한 최적화다. 타입 하나를 위한 것으로,
+ * 같은 크기의 블록을 몇 번이고 할당하고 해제하는 자리 - 리스트 노드, 이벤트, 파티클 -
+ * 에서 매번 malloc 값을 치르지 않게 한다.
  *
- * It keeps a small stack of freed blocks (the "bin"). Freeing pushes a block
- * onto the bin instead of returning it to the base allocator; allocating pops
- * one back off. Both are O(1) and neither touches the heap. That recycling is
- * the entire point, and the check below proves it happens.
+ * 풀은 해제된 블록을 담아 두는 작은 스택("bin")을 갖는다. 해제하면 바탕 할당자로
+ * 돌려보내는 대신 bin 에 얹고, 할당하면 거기서 하나를 꺼낸다. 둘 다 O(1) 이고 힙을
+ * 건드리지 않는다. 그 재활용이 존재 이유 전부이고, 아래 검사가 그것이 실제로
+ * 일어남을 보인다.
  *
- * Ownership: the pool caches freed blocks, but it does NOT track the blocks it
- * has handed out. Every block you take, you must give back before destroy - the
- * pool cannot free what it does not know about.
+ * 소유: 풀은 해제된 블록을 캐시하지만, 자기가 *내준* 블록은 추적하지 않는다. 가져간
+ * 블록은 destroy 전에 모두 돌려주어야 한다 - 풀은 자기가 모르는 것을 해제할 수 없다.
  */
 
 typedef struct {
@@ -790,9 +789,9 @@ int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
     EXAMPLE_REQUIRE(proven_alloc_is_valid(heap), "hosted builds have a heap allocator");
 
-    /* The pool takes a base allocator for the blocks it cannot serve from the
-     * bin, plus the exact size and alignment of the one type it manages. The
-     * last argument caps how many freed blocks are parked for reuse. */
+    /* 풀은 bin 으로 감당 못 하는 블록을 위한 바탕 할당자를 받고, 자기가 다루는 그 한
+     * 타입의 정확한 크기와 정렬을 받는다. 마지막 인자는 재사용을 위해 세워 둘 해제된
+     * 블록의 최대 개수다. */
     proven_pool_t pool = {0};
     proven_err_t err = proven_pool_init(&pool, heap, sizeof(node_t), alignof(node_t), 4);
     EXAMPLE_REQUIRE(proven_is_ok(err), "initializing a pool of node_t must succeed");
@@ -802,7 +801,7 @@ int main(void) {
 
     proven_allocator_t nodes = proven_pool_as_allocator(&pool);
 
-    /* --- first block: nothing in the bin, so it comes from the heap --------- */
+    /* --- 첫 블록: bin 이 비어 있으니 힙에서 온다 --------------------------- */
     proven_result_mem_mut_t first = nodes.alloc_fn(nodes.ctx, sizeof(node_t), alignof(node_t));
     EXAMPLE_REQUIRE(proven_is_ok(first.err), "the pool must be able to serve its own item type");
     if (!proven_is_ok(first.err)) {
@@ -814,34 +813,34 @@ int main(void) {
     *n = (node_t){ .id = 1, .score = 100 };
     void *first_addr = n;
 
-    /* --- hand it back: it lands in the bin, not back on the heap ------------ */
+    /* --- 돌려주기: 힙이 아니라 bin 으로 들어간다 --------------------------- */
     nodes.free_fn(nodes.ctx, n);
     EXAMPLE_REQUIRE(pool.bin_len == 1, "a freed block is cached for reuse, not returned to the heap");
-    /* `n` is dangling from here on. The pool owns those bytes again. */
+    /* 여기서부터 `n` 은 매달린 포인터다. 그 바이트는 다시 풀의 것이다. */
 
-    /* --- second block: the freed one is handed straight back ---------------- */
+    /* --- 두 번째 블록: 방금 해제한 것이 곧바로 돌아온다 -------------------- */
     proven_result_mem_mut_t second = nodes.alloc_fn(nodes.ctx, sizeof(node_t), alignof(node_t));
     EXAMPLE_REQUIRE(proven_is_ok(second.err), "allocating from a non-empty bin must succeed");
     EXAMPLE_REQUIRE(second.value.ptr == first_addr, "the recycled block is the one that was freed");
     EXAMPLE_REQUIRE(pool.bin_len == 0, "taking it back out empties the bin");
 
-    /* Recycled memory is NOT zeroed for you - it is whatever the pool left there.
-     * Initialize every field, exactly as you would for a fresh malloc. */
+    /* 재활용된 기억은 0 으로 채워지지 *않는다* - 풀이 남겨 둔 그대로다.
+     * 갓 받은 malloc 에 하듯 모든 필드를 초기화할 것. */
     node_t *m = (node_t *)second.value.ptr;
     *m = (node_t){ .id = 2, .score = 50 };
     EXAMPLE_REQUIRE(m->id == 2, "the recycled block is ours to overwrite");
 
-    /* --- one pool serves one size and one alignment ------------------------- */
-    /* A request for anything else is refused: this is not a general allocator, and it will
-     * not silently hand you a block of the wrong size. The code is PROVEN_ERR_UNSUPPORTED -
-     * "not my job" - and not INVALID_ARG, which would read as "you passed me garbage" and
-     * send you hunting for a bug in your own code. */
+    /* --- 풀 하나는 크기 하나와 정렬 하나만 감당한다 ------------------------ */
+    /* 그 밖의 요청은 거부된다. 이것은 범용 할당자가 아니고, 크기가 다른 블록을 조용히
+     * 내주지도 않는다. 코드는 PROVEN_ERR_UNSUPPORTED - "내 일이 아니다" - 이지 INVALID_ARG
+     * 가 아니다. 후자였다면 "쓰레기를 건넸다"로 읽혀 여러분이 자기 코드에서 버그를 찾아
+     * 헤매게 만들었을 것이다. */
     proven_result_mem_mut_t wrong = nodes.alloc_fn(nodes.ctx, sizeof(node_t) * 2, alignof(node_t));
     EXAMPLE_REQUIRE(wrong.err == PROVEN_ERR_UNSUPPORTED, "the pool only serves its configured item size");
 
-    /* --- return every live block before destroying -------------------------- */
-    /* proven_pool_destroy frees what is in the bin and the bin itself. `m` is
-     * still handed out, so if we skipped this free it would leak. */
+    /* --- 지우기 전에 살아 있는 블록을 모두 돌려준다 ------------------------ */
+    /* proven_pool_destroy 는 bin 에 있는 것과 bin 자체를 해제한다. `m` 은 아직 나가
+     * 있으므로, 이 free 를 건너뛰면 그대로 누수가 된다. */
     nodes.free_fn(nodes.ctx, m);
 
     printf("pool: %zu block(s) cached for reuse at teardown\n", (size_t)pool.bin_len);
@@ -876,41 +875,38 @@ int main(void) {
 <!-- example: manual/examples/ko/ex_02_arena_traits.c -->
 ```c
 /*
- * Three things a program that owns its own memory eventually has to do, and the
- * calls that do them:
+ * 자기 기억을 소유하는 프로그램이 언젠가 반드시 하게 되는 세 가지, 그리고 그것을 하는
+ * 호출들.
  *
- *   - Allocate during start-up, where running out of memory is not a condition
- *     the program can carry on from. That is what the `_or_panic` calls are
- *     for, and installing a panic handler is how you decide what "cannot carry
- *     on" means for your program - a log line and an exit, rather than a trap.
+ *   - 시작할 때 할당하기. 이때 기억이 바닥나는 것은 프로그램이 이어서 갈 수 있는
+ *     상황이 아니다. `_or_panic` 계열이 그것을 위한 것이고, 패닉 처리기를 다는 것이
+ *     "이어서 갈 수 없다" 가 이 프로그램에서 무슨 뜻인지 정하는 방법이다 - 덫에
+ *     걸리는 대신 로그 한 줄과 종료 같은 것으로.
  *
- *   - Grow the block you allocated last, without copying it. An arena can do
- *     that in place, because the block that was allocated last is the one
- *     sitting at the end of the used region.
+ *   - 마지막에 할당한 블록을, 복사 없이 늘리기. 아레나는 그것을 제자리에서 할 수
+ *     있다. 마지막에 할당된 블록이 곧 쓰인 구역의 끝에 앉아 있는 그 블록이기 때문이다.
  *
- *   - Instrument the allocator - count allocations, or fail the tenth one on
- *     purpose in a test - without changing the code being measured. An
- *     allocator here is three function pointers and a context pointer, so
- *     wrapping one is writing three forwarding functions. The arena's own three
- *     are public for exactly this reason: your wrapper forwards to them.
+ *   - 할당자를 계측하기 - 할당 횟수를 세거나, 시험에서 열 번째를 일부러 실패시키거나 -
+ *     재는 대상 코드는 건드리지 않고서. 여기서 할당자는 함수 포인터 셋과 문맥 포인터
+ *     하나이므로, 감싸는 일은 전달 함수 셋을 쓰는 일이다. 아레나 자신의 셋이 공개되어
+ *     있는 이유가 바로 이것이다 - 여러분의 껍데기가 그것으로 전달한다.
  */
 
-/* --- what a panic handler is for ----------------------------------------- */
+/* --- 패닉 처리기는 무엇을 위한 것인가 ------------------------------------ */
 
 static int g_panics = 0;
 static char g_last_panic[128];
 
-/* A panic handler receives the message and decides the program's fate. The
- * default one traps immediately, which is right in production and useless in a
- * test - so this one records the message and returns. Returning is allowed ONLY
- * when you are deliberately testing the panic path, and the memory block the
- * panicking call returns must then not be used. */
+/* 패닉 처리기는 메시지를 받아 프로그램의 운명을 정한다. 기본 처리기는 즉시 덫에
+ * 걸리는데, 그것이 운영에서는 옳고 시험에서는 쓸모없다 - 그래서 이 처리기는 메시지를
+ * 적어 두고 돌아온다. 돌아오는 것은 패닉 경로를 *일부러 시험할 때만* 허용되고, 그때
+ * 패닉한 호출이 돌려준 기억 블록은 써서는 안 된다. */
 static void record_panic(const char *msg) {
     ++g_panics;
     snprintf(g_last_panic, sizeof g_last_panic, "%s", msg);
 }
 
-/* --- an allocator that counts what passes through it ---------------------- */
+/* --- 자기를 지나가는 것을 세는 할당자 ------------------------------------- */
 
 typedef struct {
     proven_arena_t *arena;
@@ -919,10 +915,9 @@ typedef struct {
     proven_size_t   free_calls;
 } counting_ctx_t;
 
-/* Each of the three matches one field of proven_allocator_t. Each does its own
- * bookkeeping and then forwards to the arena's public trait function, so the
- * behaviour being measured is exactly the arena's behaviour and not a
- * re-implementation of it. */
+/* 셋 각각이 proven_allocator_t 의 필드 하나에 대응한다. 각자 제 장부를 적은 뒤 아레나의
+ * 공개된 특성 함수로 전달하므로, 재는 대상이 되는 동작은 아레나를 다시 구현한 것이
+ * 아니라 정확히 아레나의 동작이다. */
 static proven_result_mem_mut_t counting_alloc(void *ctx, proven_size_t size, proven_size_t align) {
     counting_ctx_t *c = (counting_ctx_t *)ctx;
     proven_result_mem_mut_t r = proven_arena_alloc_trait(c->arena, size, align);
@@ -946,47 +941,47 @@ static proven_result_mem_mut_t counting_realloc(void *ctx, void *old_ptr, proven
 static void counting_free(void *ctx, void *ptr) {
     counting_ctx_t *c = (counting_ctx_t *)ctx;
     ++c->free_calls;
-    proven_arena_free_trait(c->arena, ptr);   /* an arena free is a no-op; the count is the point */
+    proven_arena_free_trait(c->arena, ptr);   /* 아레나의 free 는 아무 일도 하지 않는다. 세는 것이 요점이다 */
 }
 
 int main(void) {
     alignas(max_align_t) static proven_byte_t storage[1024];
     proven_arena_t arena = proven_arena_create((proven_mem_mut_t){ .ptr = storage, .size = sizeof storage });
 
-    /* --- 1. start-up allocation that must not fail ------------------------ */
+    /* --- 1. 실패하면 안 되는 시작 시점 할당 -------------------------------- */
 
     proven_set_panic_handler(record_panic);
 
-    /* No result to unwrap: these return the block directly, because there is no
-     * error the caller could act on. That is the entire difference. */
+    /* 풀어 볼 result 가 없다. 이들은 블록을 곧바로 돌려준다. 부르는 쪽이 손쓸 수 있는
+     * 오류가 없기 때문이다. 차이는 그것이 전부다. */
     proven_mem_mut_t table = proven_arena_alloc_or_panic(&arena, 256);
     EXAMPLE_REQUIRE(table.ptr != NULL, "a 256-byte start-up allocation must succeed");
     EXAMPLE_REQUIRE(g_panics == 0, "a successful allocation must not panic");
 
-    /* The aligned form, for a type that needs more than the default boundary -
-     * a 64-byte cache line here, the usual reason. */
+    /* 기본 경계보다 큰 정렬이 필요한 타입을 위한 정렬 지정 꼴 - 여기서는 64바이트
+     * 캐시 줄이고, 그것이 흔한 이유다. */
     proven_mem_mut_t cache_line = proven_arena_alloc_aligned_or_panic(&arena, 64, 64);
     EXAMPLE_REQUIRE(((proven_uintptr_t)cache_line.ptr % 64) == 0,
                     "the block must start on the boundary that was asked for");
     EXAMPLE_REQUIRE(g_panics == 0, "an over-aligned allocation that fits must not panic either");
 
-    /* Now the failing case, on purpose: more than the arena could ever hold.
-     * With the recording handler installed we can observe it; with the default
-     * handler the program would stop here, which is what it is for. */
+    /* 이제 일부러 실패하는 경우다. 아레나가 결코 담을 수 없는 크기를 청한다. 기록하는
+     * 처리기를 달아 두었으니 그것을 지켜볼 수 있다. 기본 처리기였다면 프로그램은 여기서
+     * 멈췄을 것이고, 그것이 기본 처리기의 목적이다. */
     proven_mem_mut_t impossible = proven_arena_alloc_or_panic(&arena, sizeof storage * 2);
-    (void)impossible;   /* after a handler returns, this block means nothing */
+    (void)impossible;   /* 처리기가 돌아온 뒤, 이 블록은 아무 뜻도 없다 */
     EXAMPLE_REQUIRE(g_panics == 1, "exhausting the arena through _or_panic must panic");
     EXAMPLE_REQUIRE(g_last_panic[0] != '\0', "the handler receives a message naming the call");
     printf("panic handler saw: %s\n", g_last_panic);
 
-    /* Passing NULL puts the default trapping handler back. Leaving a test
-     * handler installed turns a real failure into silent corruption. */
+    /* NULL 을 건네면 덫에 거는 기본 처리기가 되돌아온다. 시험용 처리기를 그대로 두면
+     * 진짜 실패가 조용한 오염으로 바뀐다. */
     proven_set_panic_handler(NULL);
 
-    /* --- 2. growing the most recent block in place ------------------------ */
+    /* --- 2. 가장 최근 블록을 제자리에서 늘리기 ----------------------------- */
 
-    /* A parser that reads a header, then discovers the body is longer than it
-     * guessed, wants to extend the buffer it just took - not copy it. */
+    /* 머리말을 읽고 나서 본문이 짐작보다 길다는 것을 알게 된 파서는, 방금 받은 버퍼를
+     * 복사하는 것이 아니라 늘리고 싶어 한다. */
     proven_result_mem_mut_t buf = proven_arena_alloc_aligned(&arena, 32, alignof(proven_u32));
     EXAMPLE_REQUIRE(proven_is_ok(buf.err), "the initial 32-byte buffer must fit");
 
@@ -997,17 +992,17 @@ int main(void) {
                     "the most recent block grows in place: same address, no copy");
     EXAMPLE_REQUIRE(arena.offset == before + 64, "only the extra 64 bytes were taken");
 
-    /* The in-place path is available only for the block allocated LAST. Take
-     * another block, and the earlier one can no longer be extended where it
-     * stands - the arena copies it to the end instead, and the old bytes are
-     * dead until the next reset. Correct either way; just not free. */
+    /* 제자리 경로는 *마지막에* 할당된 블록에만 열려 있다. 다른 블록을 하나 더 받고 나면
+     * 앞의 것은 있던 자리에서 더 늘릴 수 없다 - 아레나는 대신 그것을 끝으로 복사하고,
+     * 옛 바이트는 다음 reset 까지 죽은 자리가 된다. 어느 쪽이든 옳다. 다만 공짜가 아닐
+     * 뿐이다. */
     proven_result_mem_mut_t other = proven_arena_alloc(&arena, 16);
     EXAMPLE_REQUIRE(proven_is_ok(other.err), "a second block must fit");
     proven_result_mem_mut_t moved = proven_arena_realloc_aligned(&arena, grown.value.ptr, 96, 128, alignof(proven_u32));
     EXAMPLE_REQUIRE(proven_is_ok(moved.err), "growing an older block must still succeed");
     EXAMPLE_REQUIRE(moved.value.ptr != grown.value.ptr, "but it is relocated, not extended");
 
-    /* --- 3. the arena behind a counting wrapper --------------------------- */
+    /* --- 3. 세는 껍데기 뒤의 아레나 --------------------------------------- */
 
     proven_arena_reset(&arena);
 
@@ -1020,8 +1015,8 @@ int main(void) {
     };
     EXAMPLE_REQUIRE(proven_alloc_is_valid(alloc), "all three function pointers must be present");
 
-    /* Any part of the library that takes an allocator now runs through the
-     * wrapper, unchanged and unaware. */
+    /* 이제 할당자를 받는 라이브러리의 어느 부분이든 그 껍데기를 지나 돈다. 그것을 알지도
+     * 못한 채, 바뀐 것도 없이. */
     proven_result_u8str_t s = proven_u8str_create(alloc, 16);
     EXAMPLE_REQUIRE(proven_is_ok(s.err), "creating a string through the wrapper must succeed");
 

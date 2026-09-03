@@ -718,27 +718,26 @@ proven_job_submit(sys, work_and_free_data, data);
 #include <stdatomic.h>
 
 /*
- * The job system: worker threads plus a bounded atomic MPMC queue. Idle workers
- * park on platform synchronization. It orders the *handoff* of work - it does
- * not synchronize the data the work touches. That is why the counter below is
- * an atomic and not a plain int: two jobs incrementing the same variable is a
- * data race unless the caller says otherwise.
+ * 작업 시스템: 일꾼 스레드와 경계가 있는 원자적 MPMC 큐. 놀고 있는 일꾼은 플랫폼
+ * 동기화에 세워 둔다. 이것이 순서를 정해 주는 것은 일의 *넘김*이지, 그 일이 건드리는
+ * 자료가 아니다. 아래 계수기가 그냥 int 가 아니라 atomic 인 이유가 그것이다 - 두 작업이
+ * 같은 변수를 올리는 것은 부르는 쪽이 달리 말하지 않는 한 자료 경합이다.
  *
- * The lifecycle is a straight line, and it is not optional:
+ * 수명은 곧은 한 줄이고, 선택 사항이 아니다.
  *
  *     init -> submit... -> close -> destroy
  *
- * destroy must not race with submit. Nothing in the library enforces that; the
- * caller has to stop its producers first. Here there is only one producer - this
- * thread - so "stop the producers" means "finish the submit loop before closing".
+ * destroy 는 submit 과 경합해서는 안 된다. 라이브러리 안의 어느 것도 그것을 강제하지
+ * 않는다. 부르는 쪽이 먼저 생산자를 멈춰야 한다. 여기서는 생산자가 이 스레드 하나뿐이라,
+ * "생산자를 멈춘다" 는 것은 "닫기 전에 submit 반복문을 끝낸다" 는 뜻이다.
  */
 
 #define JOB_COUNT 64
 
 static void increment(void *arg) {
     atomic_int *counter = arg;
-    /* relaxed is enough: we only need the total to be right, not to order anything
-     * against it. The join inside destroy is what publishes the result to us. */
+    /* relaxed 로 충분하다. 우리는 합계가 맞기만 하면 되지, 그것에 맞춰 무엇의 순서를
+     * 정할 필요가 없다. 결과를 우리에게 공표하는 것은 destroy 안의 join 이다. */
     atomic_fetch_add_explicit(counter, 1, memory_order_relaxed);
 }
 
@@ -746,41 +745,40 @@ int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
     proven_job_sys_t *sys = NULL;
-    /* Queue capacity must be a power of two - the ring maps a sequence number to a
-     * slot with a mask. Sized above JOB_COUNT so a submit cannot find the ring
-     * full even if every worker is still starting up. */
+    /* 큐 용량은 2의 거듭제곱이어야 한다 - 고리가 마스크로 순번을 칸에 대응시킨다.
+     * JOB_COUNT 보다 크게 잡아, 일꾼이 모두 아직 뜨는 중이어도 submit 이 고리가 가득 찬
+     * 것을 만나지 않게 했다. */
     proven_err_t err = proven_job_system_init(alloc, 4, 128, &sys);
     EXAMPLE_REQUIRE(proven_is_ok(err), "starting a job system with 4 workers should succeed");
     if (!proven_is_ok(err)) return 1;
 
-    /* Lives until after destroy: a job's arg must outlive the job, and jobs run
-     * until destroy has drained the queue. */
+    /* destroy 뒤까지 산다. 작업의 인자는 작업보다 오래 살아야 하고, 작업은 destroy 가
+     * 큐를 비울 때까지 돈다. */
     atomic_int counter = 0;
 
     proven_size_t submitted = 0;
     for (proven_size_t i = 0; i < JOB_COUNT; ++i) {
-        /* submit returns false when the ring is full or the system is closed. It
-         * never waits for queue capacity and never drops work silently; its wake
-         * path may briefly enter platform synchronization. Ignoring the answer is
-         * how you lose jobs, which is why it is [[nodiscard]]. */
+        /* submit 은 고리가 가득 찼거나 시스템이 닫혔을 때 false 를 돌려준다. 큐에 자리가
+         * 나기를 기다리는 일도, 일을 조용히 버리는 일도 없다. 깨우는 경로에서 잠깐 플랫폼
+         * 동기화에 들어갈 수는 있다. 그 답을 무시하는 것이 작업을 잃는 방법이고, 그래서
+         * [[nodiscard]] 가 붙어 있다. */
         if (!proven_job_submit(sys, increment, &counter)) {
-            /* A real caller would back off and retry, or run the job inline with
-             * proven_job_execute_one. Here a full ring means the sizing above is
-             * wrong, so say so rather than paper over it. */
+            /* 실제 부르는 쪽이라면 물러났다 다시 시도하거나 proven_job_execute_one 으로
+             * 그 자리에서 돌릴 것이다. 여기서 고리가 가득 찼다는 것은 위의 크기 잡기가
+             * 틀렸다는 뜻이므로, 덮어 두지 말고 그렇다고 말한다. */
             EXAMPLE_REQUIRE(false, "the queue was sized to hold every job");
             break;
         }
         ++submitted;
     }
 
-    /* This thread is the only producer, and it is done submitting - so it is safe
-     * to close. close makes every later submit fail; jobs already queued still run. */
+    /* 이 스레드가 유일한 생산자이고 submit 을 마쳤다 - 그러니 닫아도 안전하다. close 는
+     * 그 뒤의 submit 을 모두 실패시킨다. 이미 줄에 선 작업은 그대로 돈다. */
     proven_job_system_close(sys);
 
-    /* destroy blocks until the queue is empty and every worker has been joined.
-     * That join is the synchronization point: after destroy returns, every memory
-     * effect of every job is visible to this thread. Reading `counter` before this
-     * line would be reading a value the workers are still writing. */
+    /* destroy 는 큐가 비고 모든 일꾼이 join 될 때까지 막는다. 그 join 이 동기화 지점이다.
+     * destroy 가 돌아온 뒤에는 모든 작업의 모든 기억 효과가 이 스레드에 보인다. 이 줄
+     * 앞에서 `counter` 를 읽는 것은 일꾼들이 아직 쓰고 있는 값을 읽는 것이다. */
     proven_job_system_destroy(sys);
 
     int ran = atomic_load(&counter);
@@ -800,35 +798,31 @@ int main(void) {
 <!-- example: manual/examples/ko/ex_06_coro.c -->
 ```c
 /*
- * A stackless coroutine is a switch statement in disguise: BEGIN opens a
- * switch on the saved state, each YIELD records __LINE__ as a resume label and
- * *returns*, and the next call re-enters the function from the top and jumps
- * straight back to that label.
+ * 스택 없는 코루틴은 사실 switch 문이다. BEGIN 이 저장된 상태를 두고 switch 를 열고,
+ * YIELD 마다 __LINE__ 을 재개 표지로 적고 *돌아간다*. 다음 호출은 함수를 위에서부터 다시
+ * 들어와 그 표지로 곧장 뛴다.
  *
- * Everything that follows comes from that one fact:
+ * 뒤따르는 모든 것이 그 사실 하나에서 나온다.
  *
- *   - Locals do NOT survive a yield. The function returned; its stack frame is
- *     gone. Anything that must persist lives in the coroutine's own struct - which
- *     is what `value` and `remaining` are doing below.
- *   - Two coroutine macros must not share a source line (they would collide on
- *     __LINE__).
- *   - It cannot yield from a helper it calls: there is no stack to suspend.
+ *   - 지역 변수는 yield 를 넘겨 살아남지 *못한다*. 함수가 돌아갔고 그 스택 프레임은
+ *     사라졌다. 남아 있어야 할 것은 코루틴 자신의 구조체에 산다 - 아래의 `value` 와
+ *     `remaining` 이 하는 일이 그것이다.
+ *   - 코루틴 매크로 둘이 같은 소스 줄에 있으면 안 된다(__LINE__ 이 부딪친다).
+ *   - 자기가 부른 도우미 안에서 yield 할 수 없다. 멈춰 둘 스택이 없기 때문이다.
  *
- * The payoff is that a suspended coroutine costs exactly its struct - four bytes
- * of state plus whatever you put next to it - and no thread, no stack, no context
- * switch.
+ * 그 대가로, 멈춰 있는 코루틴은 정확히 자기 구조체만큼의 값이 든다 - 상태 4바이트에
+ * 여러분이 곁에 둔 것 - 그리고 스레드도, 스택도, 문맥 전환도 없다.
  */
 
 typedef struct {
     proven_coro_t coro;
-    /* The generator's state. These would be `int i` locals in a normal loop; here
-     * they have to be fields, or they would be reset to their initial values on
-     * every resume and the loop would never end. */
+    /* 생성기의 상태. 보통의 반복문이라면 `int i` 같은 지역 변수였을 것들이다. 여기서는
+     * 필드여야 한다. 아니면 재개할 때마다 처음 값으로 되돌아가 반복문이 끝나지 않는다. */
     int value;
     int remaining;
 } squares_t;
 
-/* A coroutine returns proven_i32: 0 = suspended (call me again), 1 = done. */
+/* 코루틴은 proven_i32 를 돌려준다. 0 = 멈췄음(다시 불러 달라), 1 = 끝. */
 static proven_i32 squares_next(squares_t *g) {
     PROVEN_CORO_BEGIN(&g->coro);
 
@@ -837,8 +831,8 @@ static proven_i32 squares_next(squares_t *g) {
 
     while (g->remaining > 0) {
         g->value = g->value * g->value;
-        PROVEN_CORO_YIELD(&g->coro);      /* the caller reads g->value here */
-        g->value = g->value + 1;          /* resumes exactly on this line */
+        PROVEN_CORO_YIELD(&g->coro);      /* 부르는 쪽이 여기서 g->value 를 읽는다 */
+        g->value = g->value + 1;          /* 정확히 이 줄에서 재개한다 */
         g->remaining -= 1;
     }
 
@@ -848,21 +842,20 @@ static proven_i32 squares_next(squares_t *g) {
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
-    /* The coroutine owns no memory, so there is nothing to destroy - but the values
-     * it produces have to go somewhere, and that string does have an owner. */
+    /* 코루틴은 기억을 소유하지 않으므로 지울 것이 없다 - 다만 그것이 내놓는 값들은
+     * 어딘가로 가야 하고, 그 문자열에는 소유자가 있다. */
     proven_result_u8str_t out = proven_u8str_create(alloc, 32);
     EXAMPLE_REQUIRE(proven_is_ok(out.err), "creating the output string should succeed");
     if (!proven_is_ok(out.err)) return 1;
 
     squares_t gen = {0};
-    PROVEN_CORO_INIT(&gen.coro);   /* unconditional, exactly once, before the first call */
+    PROVEN_CORO_INIT(&gen.coro);   /* 조건 없이, 첫 호출 전에, 정확히 한 번 */
 
     int produced = 0;
     int last = 0;
 
-    /* Drive it to completion. squares_next returns 1 on the call that runs off the
-     * end of the body - that call produces no value, so the loop body only runs
-     * while it returned 0. */
+    /* 끝까지 굴린다. squares_next 는 본문의 끝을 지나 달리는 호출에서 1 을 돌려준다 -
+     * 그 호출은 값을 내놓지 않으므로, 반복문 본문은 0 을 돌려준 동안에만 돈다. */
     while (!squares_next(&gen)) {
         proven_fmt_result_t r = proven_u8str_append_fmt_grow(alloc, &out.value, "{} ",
                                                              PROVEN_ARG(gen.value));
@@ -871,12 +864,12 @@ int main(void) {
         ++produced;
     }
 
-    /* Done is sticky: the state is -1 and stays there. Calling it again would just
-     * return 1 without re-running the body. */
+    /* 끝난 상태는 들러붙는다. 상태는 -1 이고 그대로 있다. 다시 불러도 본문을 다시 돌리지
+     * 않고 1 만 돌려준다. */
     EXAMPLE_REQUIRE(PROVEN_CORO_IS_DONE(&gen.coro), "the generator should have finished");
     EXAMPLE_REQUIRE(squares_next(&gen) == 1, "a finished coroutine stays finished");
 
-    /* 1, then (1+1)^2 = 4, then (4+1)^2 = 25, then 676, then 458329. */
+    /* 1, 그다음 (1+1)^2 = 4, 그다음 (4+1)^2 = 25, 그다음 676, 그다음 458329. */
     EXAMPLE_REQUIRE(produced == 5, "the generator yields once per iteration");
     EXAMPLE_REQUIRE(last == 458329, "the state carried across every yield");
     EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&out.value),

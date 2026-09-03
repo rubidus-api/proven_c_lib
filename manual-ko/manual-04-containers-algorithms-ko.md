@@ -205,36 +205,36 @@ PROVEN_LIST_FOR_EACH(it, &queue) {
 <!-- example: manual/examples/ko/ex_04_list.c -->
 ```c
 /*
- * An INTRUSIVE list puts the links inside your struct instead of allocating a
- * node to hold your data.
+ * *침입형*(intrusive) 리스트는 여러분의 자료를 담을 노드를 따로 할당하는 대신, 연결
+ * 고리를 여러분의 구조체 *안에* 둔다.
  *
- * The list you were taught looks like this:
+ * 배울 때 본 리스트는 이렇게 생겼다.
  *
  *     struct node { struct node *next; void *data; };
  *
- * Every insertion allocates a node, so a list of a thousand items costs a
- * thousand allocations that exist only to hold pointers, each one a chance to
- * fail and a thing to free. Worse, `data` is a void* - the list has no idea what
- * it holds, so every read is a cast the compiler cannot check.
+ * 넣을 때마다 노드를 할당하므로 항목 천 개짜리 리스트는 포인터를 담자고 존재하는 할당
+ * 천 번이 되고, 하나하나가 실패할 기회이자 해제할 거리다. 더 나쁜 것은 `data` 가
+ * void* 라는 점이다 - 리스트는 자기가 무엇을 담았는지 모르므로 읽을 때마다 컴파일러가
+ * 검사할 수 없는 형변환을 한다.
  *
- * Intrusive lists invert it: YOU own the memory, and the link lives in it.
- * Inserting allocates nothing and cannot fail. Removing allocates nothing and
- * cannot fail. And because the link is a member of a known type, getting back
- * from a link to the object is arithmetic the compiler does for you, not a cast.
+ * 침입형 리스트는 그것을 뒤집는다. 기억은 *여러분*이 소유하고 고리는 그 안에 산다.
+ * 넣는 데 할당이 없으니 실패할 수 없다. 빼는 데도 할당이 없으니 실패할 수 없다. 그리고
+ * 고리가 알려진 타입의 멤버이므로, 고리에서 물건으로 돌아오는 것은 형변환이 아니라
+ * 컴파일러가 대신 해 주는 산술이다.
  *
- * The trade is that an object can only be in as many lists as it has link
- * members, and that is a decision you make when you declare the struct.
+ * 대가는 물건 하나가 자기가 가진 고리 멤버 수만큼의 리스트에만 들어갈 수 있다는 것이고,
+ * 그것은 구조체를 선언할 때 여러분이 내리는 결정이다.
  */
 
-/* The link is a member. This task can be in exactly one list at a time. */
+/* 고리가 멤버다. 이 작업은 한 번에 정확히 한 리스트에만 들어갈 수 있다. */
 typedef struct {
     int                 id;
     proven_list_node_t  link;
 } task_t;
 
 int main(void) {
-    /* No allocator anywhere in this program: the tasks are on the stack, and the
-     * list only ever rearranges pointers that live inside them. */
+    /* 이 프로그램에는 할당자가 아예 없다. 작업들은 스택에 있고, 리스트는 그 안에 사는
+     * 포인터들을 다시 이어 줄 뿐이다. */
     task_t a = { .id = 1 };
     task_t b = { .id = 2 };
     task_t c = { .id = 3 };
@@ -243,13 +243,13 @@ int main(void) {
     proven_list_init(&queue);
     EXAMPLE_REQUIRE(proven_list_is_empty(&queue), "a freshly initialised list is empty");
 
-    /* --- pushing cannot fail, because nothing is allocated ------------- */
+    /* --- 넣기는 실패할 수 없다. 할당하는 것이 없으므로 ----------------- */
     proven_list_push_back(&queue, &a.link);
     proven_list_push_back(&queue, &b.link);
     proven_list_push_back(&queue, &c.link);
     EXAMPLE_REQUIRE(!proven_list_is_empty(&queue), "three tasks are queued");
 
-    /* --- walking: PROVEN_LIST_ENTRY gets the object back from the link -- */
+    /* --- 훑기: PROVEN_LIST_ENTRY 가 고리에서 물건을 되찾아 준다 -------- */
     proven_list_node_t *it = NULL;
     int seen[3] = {0}, n = 0;
     PROVEN_LIST_FOR_EACH(it, &queue) {
@@ -259,10 +259,10 @@ int main(void) {
     EXAMPLE_REQUIRE(n == 3 && seen[0] == 1 && seen[1] == 2 && seen[2] == 3,
                     "the walk visits every task, in insertion order");
 
-    /* --- removing while walking needs the SAFE form -------------------- */
-    /* proven_list_remove writes through the node's own next/prev pointers, so a
-     * plain FOR_EACH would read `it->next` from a node that has just been
-     * unlinked. The _SAFE form reads the next pointer BEFORE the body runs. */
+    /* --- 훑으면서 빼려면 *안전한* 꼴이 필요하다 ------------------------ */
+    /* proven_list_remove 는 노드 자신의 next/prev 포인터를 통해 쓴다. 그래서 그냥
+     * FOR_EACH 를 쓰면 방금 떼어 낸 노드에서 `it->next` 를 읽게 된다. _SAFE 꼴은 본문이
+     * 돌기 *전에* 다음 포인터를 읽어 둔다. */
     proven_list_node_t *safe = NULL;
     PROVEN_LIST_FOR_EACH_SAFE(it, safe, &queue) {
         task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
@@ -276,7 +276,7 @@ int main(void) {
     }
     EXAMPLE_REQUIRE(n == 2 && seen[0] == 1 && seen[1] == 3, "task 2 was unlinked");
 
-    /* --- inserting in the middle is a pointer swap --------------------- */
+    /* --- 가운데에 끼워 넣기는 포인터 바꿔 끼우기다 --------------------- */
     task_t d = { .id = 4 };
     proven_list_insert_after(&a.link, &d.link);
 
@@ -288,9 +288,8 @@ int main(void) {
     EXAMPLE_REQUIRE(n == 3 && seen[0] == 1 && seen[1] == 4 && seen[2] == 3,
                     "task 4 sits directly after task 1");
 
-    /* There is nothing to destroy. The list never owned anything: `a`, `c` and
-     * `d` are still perfectly good local variables, and their lifetime is the
-     * function's, exactly as it would be without the list. */
+    /* 지울 것이 없다. 리스트는 아무것도 소유한 적이 없다. `a`, `c`, `d` 는 여전히
+     * 멀쩡한 지역 변수이고, 그 수명은 리스트가 없었을 때와 똑같이 이 함수의 것이다. */
     return EXAMPLE_OK();
 }
 ```
@@ -394,50 +393,47 @@ while (PROVEN_RING_PUSH(&ring, event_t, e) != PROVEN_OK) { }   /* wrong: spins f
 <!-- example: manual/examples/ko/ex_04_ring.c -->
 ```c
 /*
- * A ring buffer is a fixed-size queue that never moves its contents and never
- * grows. You give it a capacity once; push adds at the tail, pop removes from
- * the head, and when it is full, push REFUSES.
+ * 고리 버퍼는 내용을 옮기지도, 늘어나지도 않는 고정 크기 큐다. 용량을 한 번 정해 주면
+ * push 는 꼬리에 넣고 pop 은 머리에서 빼며, 가득 차면 push 는 *거부한다*.
  *
- * The C you would otherwise write is an array plus two indices plus the modulo
- * arithmetic to wrap them, and the bug is always the same: "is it full or is it
- * empty?" - both states have head == tail unless you keep a count or waste a
- * slot. This ring keeps the count, so the question does not arise.
+ * 이것이 없으면 여러분이 쓰게 될 C 는 배열 하나에 인덱스 둘, 그리고 그것을 감아 주는
+ * 나머지 연산이고, 버그는 언제나 같다 - "지금 가득 찬 것인가 빈 것인가?" 개수를 따로
+ * 세거나 칸 하나를 버리지 않는 한 두 상태 모두 head == tail 이다. 이 고리는 개수를
+ * 세므로 그 물음이 생기지 않는다.
  *
- * Use one when a producer and a consumer run at different speeds and you want a
- * hard bound on how far ahead the producer may get: an event queue, a log ring,
- * an audio buffer. The refusal on a full ring is the feature - it is
- * backpressure. A growable queue would answer a burst by eating memory until
- * something worse happens.
+ * 만드는 쪽과 쓰는 쪽의 속도가 다르고 만드는 쪽이 얼마나 앞서 나갈지에 단단한 한계를
+ * 두고 싶을 때 쓴다 - 이벤트 큐, 로그 고리, 오디오 버퍼. 가득 찼을 때의 거부가 바로
+ * 그 기능이다 - 역압(backpressure)이다. 늘어나는 큐는 몰려드는 입력에 기억을 먹어
+ * 치우는 것으로 답하다가 더 나쁜 일을 맞는다.
  */
 
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
-    /* Capacity of 4 events. It will never be 5. */
+    /* 이벤트 4개짜리 용량. 5가 되는 일은 없다. */
     proven_result_ring_t r = PROVEN_RING_INIT(alloc, int, 4);
     EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating a 4-slot ring should succeed");
     proven_ring_t ring = r.value;
 
-    /* --- push until full ---------------------------------------------- */
+    /* --- 가득 찰 때까지 push ------------------------------------------- */
     for (int i = 1; i <= 4; ++i) {
         proven_err_t err = PROVEN_RING_PUSH(&ring, int, i);
         EXAMPLE_REQUIRE(proven_is_ok(err), "the first four pushes fit");
     }
 
-    /* The fifth push is refused. It does not overwrite the oldest entry, and it
-     * does not grow: a full ring is a full ring, and the caller decides what to
-     * do about it - wait, drop the new event, or report backpressure. */
+    /* 다섯 번째 push 는 거부된다. 가장 오래된 항목을 덮어쓰지도, 늘어나지도 않는다.
+     * 가득 찬 고리는 가득 찬 고리이고, 어떻게 할지는 부르는 쪽이 정한다 - 기다리든,
+     * 새 이벤트를 버리든, 역압을 알리든. */
     proven_err_t full = PROVEN_RING_PUSH(&ring, int, 5);
     EXAMPLE_REQUIRE(full == PROVEN_ERR_OUT_OF_BOUNDS,
                     "pushing into a full ring must be refused, not silently absorbed");
 
-    /* --- pop in the order they were pushed ----------------------------- */
+    /* --- 넣은 차례대로 pop --------------------------------------------- */
     int out = 0;
     proven_err_t err = PROVEN_RING_POP(&ring, int, &out);
     EXAMPLE_REQUIRE(proven_is_ok(err) && out == 1, "pop returns the oldest entry first");
 
-    /* Now there is room again, and the ring wraps around its storage without
-     * moving anything. */
+    /* 이제 자리가 다시 생겼고, 고리는 아무것도 옮기지 않은 채 저장소를 감아 돈다. */
     err = PROVEN_RING_PUSH(&ring, int, 5);
     EXAMPLE_REQUIRE(proven_is_ok(err), "after a pop there is room for one more");
 
@@ -448,7 +444,7 @@ int main(void) {
                         "entries come out in the order they went in");
     }
 
-    /* --- empty behaves like full: it refuses, it does not invent data --- */
+    /* --- 빈 상태도 가득 찬 상태처럼 군다: 거부할 뿐 자료를 지어내지 않는다 --- */
     err = PROVEN_RING_POP(&ring, int, &out);
     EXAMPLE_REQUIRE(!proven_is_ok(err), "popping an empty ring must fail rather than return junk");
 
@@ -1025,42 +1021,42 @@ for (size_t i = 0; i < len; i += 2)               /* wrong: no length check */
 <!-- example: manual/examples/ko/ex_04_encode.c -->
 ```c
 /*
- * Bytes to text, by use case. The rule is the same one hashing follows: one function per job,
- * and the danger is picking the wrong job. Hex for something a human reads; Base64URL for
- * something that goes in a URL; standard Base64 for something that goes on the wire.
+ * 바이트를 글자로, 쓰임새별로. 규칙은 해시와 같다. 할 일마다 함수 하나, 그리고 위험은
+ * 할 일을 잘못 고르는 것. 사람이 읽을 것에는 hex, URL 에 들어갈 것에는 Base64URL,
+ * 선로로 나갈 것에는 표준 Base64.
  */
 
 int main(void) {
     proven_mem_view_t data = proven_mem_view_from_u8(PROVEN_LIT("the quick brown fox"));
 
-    /* Job 1: a digest a human will read or paste - hex, the spelling sha256sum and git use. */
+    /* 할 일 1: 사람이 읽거나 붙여 넣을 다이제스트 - hex, sha256sum 과 git 이 쓰는 표기. */
     proven_byte_t hex[64];   /* proven_hex_encoded_size(19) = 38 */
     proven_size_t hn = 0;
     EXAMPLE_REQUIRE(proven_is_ok(proven_hex_encode(data, hex, sizeof hex, &hn)),
                     "hex encode into a buffer sized by proven_hex_encoded_size");
     EXAMPLE_REQUIRE(hn == proven_hex_encoded_size(data.size), "two hex chars per byte");
 
-    /* Job 2: a token that goes in a URL - Base64URL, so nothing needs percent-escaping and
-     * there is no '=' padding for a parser to trip over. */
-    proven_byte_t token_bytes[16] = { 0 };   /* in real code: proven_random_bytes(token_bytes, 16) */
+    /* 할 일 2: URL 에 들어갈 토큰 - Base64URL. 퍼센트 이스케이프가 필요 없고, 파서가
+     * 걸려 넘어질 '=' 채움도 없다. */
+    proven_byte_t token_bytes[16] = { 0 };   /* 실제 코드에서는: proven_random_bytes(token_bytes, 16) */
     proven_byte_t url[32];
     proven_size_t un = 0;
     EXAMPLE_REQUIRE(proven_is_ok(proven_base64url_encode(
                         (proven_mem_view_t){ token_bytes, sizeof token_bytes }, url, sizeof url, &un)),
                     "base64url encode a token");
-    /* No '=' in a URL-safe token. */
+    /* URL 안전 토큰에는 '=' 가 없다. */
     bool has_pad = false;
     for (proven_size_t i = 0; i < un; ++i) if (url[i] == '=') has_pad = true;
     EXAMPLE_REQUIRE(!has_pad, "the URL form emits no padding");
 
-    /* Job 3: bytes on the wire - standard Base64, the +/= alphabet HTTP and MIME expect. */
+    /* 할 일 3: 선로로 나가는 바이트 - 표준 Base64, HTTP 와 MIME 이 기대하는 +/= 문자표. */
     proven_byte_t b64[64];
     proven_size_t bn = 0;
     EXAMPLE_REQUIRE(proven_is_ok(proven_base64_encode(data, b64, sizeof b64, &bn)),
                     "standard base64 encode");
 
-    /* And it round-trips: decode gives back exactly the bytes. A decoder that accepts both
-     * alphabets and padded-or-not is deliberate - real input comes in every shape. */
+    /* 그리고 왕복한다. 디코드는 바이트를 그대로 되돌려 준다. 두 문자표와 채움이 있든
+     * 없든 받아 주는 디코더는 일부러 그렇게 만든 것이다 - 실제 입력은 온갖 모양으로 온다. */
     proven_byte_t back[32];
     proven_size_t dn = 0;
     EXAMPLE_REQUIRE(proven_is_ok(proven_base64_decode(
@@ -1069,24 +1065,23 @@ int main(void) {
     EXAMPLE_REQUIRE(dn == data.size && proven_memcmp(back, data.ptr, dn) == 0,
                     "what comes back is exactly what went in");
 
-    /* The point of a validating decoder: junk is refused, not guessed. A caller who fed this
-     * to a two-line loop would read past the end or get a silently short result. */
+    /* 검증하는 디코더의 요점: 쓰레기는 추측하지 않고 거부한다. 이것을 두 줄짜리 반복문에
+     * 먹였다면 끝을 넘어 읽거나 조용히 짧은 결과를 얻었을 것이다. */
     proven_err_t bad = proven_base64_decode(
         proven_mem_view_from_u8(PROVEN_LIT("not valid base64!!")), back, sizeof back, &dn);
     EXAMPLE_REQUIRE(bad == PROVEN_ERR_INVALID_ENCODING,
                     "a stray character is INVALID_ENCODING, with nothing committed");
 
-    /* And a buffer one byte too small is refused, never truncated. */
+    /* 그리고 한 바이트 모자란 버퍼는 거부된다. 잘리는 일은 없다. */
     proven_byte_t tiny[4];
     EXAMPLE_REQUIRE(proven_hex_encode(data, tiny, sizeof tiny, &hn) == PROVEN_ERR_OUT_OF_BOUNDS,
                     "a too-small output buffer is OUT_OF_BOUNDS, not a truncated prefix");
 
-    /* --- sizing the destination buffer, instead of guessing ---------------- */
+    /* --- 짐작하지 말고 목적지 버퍼의 크기를 셈하기 ------------------------ */
 
-    /* Every encode and decode above wrote into a fixed array that was obviously
-     * big enough. Real code allocates the destination, and then the size has to
-     * be computed rather than remembered. That is what the four size functions
-     * are for - one per direction, per encoding. */
+    /* 위의 인코드와 디코드는 모두 넉넉한 것이 뻔한 고정 배열에 썼다. 실제 코드는
+     * 목적지를 할당하고, 그러면 크기는 기억해 내는 것이 아니라 셈해야 한다. 크기 함수
+     * 넷이 그것을 위한 것이다 - 인코딩마다, 방향마다 하나씩. */
     proven_allocator_t alloc = proven_heap_allocator();
 
     proven_size_t need = proven_base64_encoded_size(data.size);
@@ -1100,9 +1095,9 @@ int main(void) {
                     "encoding into a buffer sized by the size function must fit exactly");
     EXAMPLE_REQUIRE(wrote == need, "and use all of it: this size is exact for standard base64");
 
-    /* The decode direction is an UPPER BOUND, not an exact count: base64 text
-     * may carry padding, so the decoder reports how many bytes it really wrote.
-     * Size the buffer with the bound; use the reported count afterwards. */
+    /* 디코드 방향은 정확한 개수가 아니라 *상한*이다. base64 글에는 채움이 있을 수
+     * 있으므로, 디코더가 실제로 몇 바이트를 썼는지 알려 준다. 버퍼는 상한으로 잡고,
+     * 그다음에는 알려 준 개수를 쓸 것. */
     proven_size_t bound = proven_base64_decoded_size(wrote);
     EXAMPLE_REQUIRE(bound >= data.size, "the decoded bound must cover the real output");
 
@@ -1116,9 +1111,9 @@ int main(void) {
     EXAMPLE_REQUIRE(got == data.size && proven_memcmp(plain.value.ptr, data.ptr, got) == 0,
                     "and reproduce the original bytes exactly");
 
-    /* Hex has the same pair. Its decoded bound is exact when the input length is
-     * even, which valid hex always is - an odd length is malformed input, and
-     * the decoder says so rather than dropping the last digit. */
+    /* hex 도 같은 짝을 갖는다. 입력 길이가 짝수일 때 디코드 상한은 정확하고, 올바른
+     * hex 는 언제나 짝수다 - 홀수 길이는 잘못된 입력이고, 디코더는 마지막 자리를
+     * 버리는 대신 그렇다고 말한다. */
     proven_size_t hex_len = 0;
     EXAMPLE_REQUIRE(proven_is_ok(proven_hex_encode(data, hex, sizeof hex, &hex_len)),
                     "re-encode to hex, since the refused call above left its count unusable");
@@ -1134,14 +1129,14 @@ int main(void) {
     EXAMPLE_REQUIRE(hex_got == data.size && proven_memcmp(from_hex, data.ptr, hex_got) == 0,
                     "and the round trip is exact");
 
-    /* Hex is case-insensitive on the way in, which matters because different
-     * tools print different cases of the same digest. */
+    /* hex 는 들어올 때 대소문자를 가리지 않는다. 도구마다 같은 다이제스트를 다른
+     * 대소문자로 찍기 때문에 중요하다. */
     EXAMPLE_REQUIRE(proven_is_ok(proven_hex_decode(
                         proven_mem_view_from_u8(PROVEN_LIT("DEADBEEF")), from_hex, sizeof from_hex, &hex_got)),
                     "uppercase hex decodes too");
     EXAMPLE_REQUIRE(hex_got == 4, "and yields one byte per two characters");
 
-    /* An odd number of characters cannot be a whole number of bytes. */
+    /* 글자 수가 홀수면 온전한 바이트 수가 될 수 없다. */
     EXAMPLE_REQUIRE(proven_hex_decode(proven_mem_view_from_u8(PROVEN_LIT("abc")),
                                       from_hex, sizeof from_hex, &hex_got) == PROVEN_ERR_INVALID_ENCODING,
                     "an odd-length hex string is malformed, not silently truncated");
@@ -1316,29 +1311,27 @@ int *hit = proven_array_binary_search(&nums, &key, cmp_int);
 <!-- example: manual/examples/ko/ex_04_array.c -->
 ```c
 /*
- * proven_array_t is a growable vector of one element type. It stores the
- * allocator you created it with, so push can grow and destroy can free without
- * you passing the allocator back in - which also means the array must be
- * destroyed with nothing but itself.
+ * proven_array_t 는 원소 타입 하나짜리 늘어나는 벡터다. 만들 때 쓴 할당자를 스스로
+ * 담아 두므로 push 는 늘릴 수 있고 destroy 는 할당자를 다시 받지 않고도 해제할 수
+ * 있다 - 뒤집어 말하면 배열은 *자기 자신만으로* 지워져야 한다는 뜻이다.
  *
- * The PROVEN_ARRAY_* macros are the type-safe face of the void* core: they
- * derive sizeof/alignof from the type and hand the element to the array by
- * pointer, so pushing an int into an array of records will not compile.
+ * PROVEN_ARRAY_* 매크로는 void* 로 된 속을 타입 안전하게 감싼 얼굴이다. 타입에서
+ * sizeof/alignof 를 뽑고 원소를 포인터로 건네므로, 레코드 배열에 int 를 밀어 넣는
+ * 코드는 컴파일되지 않는다.
  */
 
-/* A task queue keyed by priority. Real data is low-cardinality: three
- * priorities, many tasks. That matters for the sort - see below. */
+/* 우선순위를 키로 하는 작업 큐. 실제 자료는 값의 가짓수가 적다 - 우선순위 셋에 작업은
+ * 여럿. 그 사실이 정렬에서 중요하다. 아래를 볼 것. */
 typedef struct {
     int priority;
     int id;
 } task_t;
 
-/* The comparator is the array's ordering. The same one MUST be used for the
- * sort and for the binary search - a search under a different order is a bug
- * the compiler cannot see.
+/* 비교자가 곧 배열의 순서다. 정렬과 이진 탐색에는 *반드시* 같은 것을 써야 한다 -
+ * 다른 순서로 찾는 것은 컴파일러가 볼 수 없는 버그다.
  *
- * The (x > y) - (x < y) form is deliberate: subtracting the two ints would
- * overflow for large values and hand back a nonsense sign. */
+ * (x > y) - (x < y) 꼴은 일부러 쓴 것이다. 두 int 를 빼면 큰 값에서 넘쳐 엉뚱한
+ * 부호를 돌려준다. */
 static int cmp_priority(const void *a, const void *b) {
     int x = ((const task_t *)a)->priority;
     int y = ((const task_t *)b)->priority;
@@ -1349,8 +1342,8 @@ int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
     /* --- push / get / pop --------------------------------------------------- */
-    /* init_cap is a hint, not a limit: push grows past it. Sizing it right just
-     * avoids the reallocations. */
+    /* init_cap 은 한계가 아니라 힌트다. push 는 그것을 넘어 늘어난다. 잘 잡아 두면
+     * 재할당을 피할 뿐이다. */
     proven_result_array_t r = PROVEN_ARRAY_INIT(alloc, task_t, 4);
     EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating an array of task_t must succeed");
     if (!proven_is_ok(r.err)) {
@@ -1358,8 +1351,8 @@ int main(void) {
     }
     proven_array_t tasks = r.value;
 
-    /* Deliberately duplicate-heavy, because that is what real keys look like:
-     * a status column, an enum, a bucket id. */
+    /* 일부러 중복이 많게 했다. 실제 키가 그렇게 생겼기 때문이다 - 상태 열, enum,
+     * 버킷 번호. */
     static const task_t seed[] = {
         { .priority = 2, .id = 10 }, { .priority = 0, .id = 11 },
         { .priority = 2, .id = 12 }, { .priority = 1, .id = 13 },
@@ -1377,33 +1370,32 @@ int main(void) {
     }
     EXAMPLE_REQUIRE(tasks.len == 8, "eight pushes give eight elements");
 
-    /* get returns a pointer INTO the array's storage - it is not a copy, and the
-     * next push may reallocate and leave it dangling. Fetch it after the pushes,
-     * use it, do not store it. */
+    /* get 은 배열 저장소 *안*을 가리키는 포인터를 돌려준다 - 사본이 아니고, 다음
+     * push 가 재할당하면 매달린 포인터가 된다. push 를 다 한 뒤에 얻어 쓰고, 담아
+     * 두지는 말 것. */
     const task_t *front = PROVEN_ARRAY_GET(&tasks, task_t, 0);
     EXAMPLE_REQUIRE(front && front->id == 10, "element 0 is the first one pushed");
 
-    /* Out of range is a null pointer, not a crash and not UB. */
+    /* 범위를 벗어나면 널 포인터다. 죽는 것도, 미정의 동작도 아니다. */
     EXAMPLE_REQUIRE(PROVEN_ARRAY_GET(&tasks, task_t, 99) == NULL, "an out-of-range index yields NULL");
 
-    /* pop copies the last element out (pass NULL to just discard it). */
+    /* pop 은 마지막 원소를 복사해 내보낸다(그냥 버리려면 NULL 을 건넨다). */
     task_t last = {0};
     proven_err_t err = PROVEN_ARRAY_POP(&tasks, task_t, &last);
     EXAMPLE_REQUIRE(proven_is_ok(err), "popping a non-empty array must succeed");
     EXAMPLE_REQUIRE(last.id == 17 && tasks.len == 7, "pop returns the last element and shrinks the array");
 
-    /* Put it back: the rest of the example wants all eight. */
+    /* 도로 넣는다. 이 예제의 나머지가 여덟 개를 모두 필요로 한다. */
     err = PROVEN_ARRAY_PUSH(&tasks, task_t, last);
     EXAMPLE_REQUIRE(proven_is_ok(err), "pushing the popped element back must succeed");
 
-    /* --- sort --------------------------------------------------------------- */
-    /* An introsort: O(n log n) is a guarantee, not an average - the heapsort
-     * fallback rules out the quadratic case an adversary could otherwise steer
-     * you into. And equal keys are the FAST path here: everything equal to the
-     * pivot is partitioned into a run that is never recursed into, so the
-     * duplicate priorities above cost less than distinct ones would, not more.
+    /* --- 정렬 -------------------------------------------------------------- */
+    /* 인트로소트다. O(n log n) 은 평균이 아니라 보장이다 - 힙소트로 물러나는 길이
+     * 있어, 상대가 유도할 수 있는 제곱 시간 경우를 배제한다. 그리고 여기서는 같은 키가
+     * *빠른* 쪽이다. 피벗과 같은 것은 모두 한 구간으로 갈라 두고 다시 들어가지 않으므로,
+     * 위의 중복된 우선순위는 서로 다른 값보다 값이 덜 든다.
      *
-     * It is not stable: task 10 and task 12 may come out in either order. */
+     * 안정 정렬은 아니다. 작업 10 과 12 는 어느 쪽이 먼저 나올지 정해져 있지 않다. */
     proven_array_sort(&tasks, cmp_priority);
 
     for (proven_size_t i = 1; i < tasks.len; ++i) {
@@ -1413,15 +1405,15 @@ int main(void) {
                         "after sorting, priorities must be non-decreasing");
     }
 
-    /* --- binary search ------------------------------------------------------ */
-    /* Only legal because the array is sorted by this exact comparator. The key
-     * is a whole element, but only the fields the comparator reads matter. */
+    /* --- 이진 탐색 --------------------------------------------------------- */
+    /* 바로 이 비교자로 정렬해 두었기 때문에만 옳다. 키는 원소 하나 통째지만, 비교자가
+     * 읽는 필드만 뜻이 있다. */
     task_t key = { .priority = 1, .id = 0 };
     const task_t *hit = (const task_t *)proven_array_binary_search(&tasks, &key, cmp_priority);
     EXAMPLE_REQUIRE(hit != NULL, "priority 1 is present, so the search must find it");
     EXAMPLE_REQUIRE(hit && hit->priority == 1, "the hit must be an element with the searched key");
-    /* With duplicate keys it finds SOME element with that key, not the first one.
-     * If you need the first, scan backwards from the hit. */
+    /* 키가 중복되면 그 키를 가진 *어떤* 원소를 찾지, 첫 번째를 찾지는 않는다. 첫
+     * 번째가 필요하면 찾은 자리에서 뒤로 훑을 것. */
 
     task_t absent = { .priority = 9, .id = 0 };
     EXAMPLE_REQUIRE(proven_array_binary_search(&tasks, &absent, cmp_priority) == NULL,
@@ -1430,9 +1422,9 @@ int main(void) {
     printf("tasks: %zu sorted, found priority %d (id %d)\n",
            (size_t)tasks.len, hit ? hit->priority : -1, hit ? hit->id : -1);
 
-    /* The array owns its element storage; destroy returns it through the
-     * allocator the array was created with. Elements are plain data here - if
-     * they owned anything, you would have to destroy each one first. */
+    /* 배열은 원소 저장소를 소유한다. destroy 는 배열을 만들 때 쓴 할당자로 그것을
+     * 돌려준다. 여기 원소는 그냥 자료다 - 원소가 무언가를 소유했다면 하나씩 먼저
+     * 지워야 했을 것이다. */
     PROVEN_ARRAY_DESTROY(&tasks);
     return EXAMPLE_OK();
 }
@@ -1445,22 +1437,22 @@ int main(void) {
 <!-- example: manual/examples/ko/ex_04_map.c -->
 ```c
 /*
- * proven_map_t is a flat open-addressing hash map. The value type is fixed at
- * create time and stored inline in the bucket array - there is no per-entry
- * allocation for values, and get hands back a pointer straight into that array.
+ * proven_map_t 는 납작한 개방 주소법 해시 맵이다. 값 타입은 만들 때 정해지고 버킷
+ * 배열 안에 그대로 담긴다 - 값을 위한 항목별 할당이 없고, get 은 그 배열 속을 곧장
+ * 가리키는 포인터를 돌려준다.
  *
- * The interesting decision is the KEY:
+ * 재미있는 결정은 *키* 쪽이다.
  *
- *   PROVEN_KEY_TYPE_INT          - the key is a proven_size_t. Nothing to own.
- *   PROVEN_KEY_TYPE_U8_BORROWED  - the bucket stores your pointer and length.
- *                                  The map never copies the bytes, so YOU must
- *                                  keep them alive and unmoved for as long as
- *                                  the entry exists. Right for string literals.
- *   PROVEN_KEY_TYPE_U8_OWNED     - the map copies the key bytes into its own
- *                                  storage and frees them again. Right for keys
- *                                  built at runtime, which is most of them.
+ *   PROVEN_KEY_TYPE_INT          - 키가 proven_size_t 다. 소유할 것이 없다.
+ *   PROVEN_KEY_TYPE_U8_BORROWED  - 버킷이 여러분의 포인터와 길이를 담는다. 맵은
+ *                                  바이트를 복사하지 않으므로, 항목이 살아 있는
+ *                                  동안 *여러분*이 그 바이트를 살아 있고 움직이지
+ *                                  않게 지켜야 한다. 문자열 리터럴에 알맞다.
+ *   PROVEN_KEY_TYPE_U8_OWNED     - 맵이 키 바이트를 제 저장소로 복사하고 나중에
+ *                                  해제한다. 실행 중에 만든 키에 알맞고, 대개의
+ *                                  키가 그렇다.
  *
- * The second half of this example is the reason OWNED exists.
+ * 이 예제의 뒷부분이 OWNED 가 존재하는 이유다.
  */
 
 typedef struct {
@@ -1471,7 +1463,7 @@ typedef struct {
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
-    /* --- integer keys ------------------------------------------------------- */
+    /* --- 정수 키 ------------------------------------------------------------ */
     proven_result_map_t r = PROVEN_MAP_INIT_INT(alloc, player_t, 8);
     EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating an int-keyed map must succeed");
     if (!proven_is_ok(r.err)) {
@@ -1484,13 +1476,13 @@ int main(void) {
     err = PROVEN_MAP_SET_INT(&by_id, 7, player_t, ((player_t){ .level = 1, .score = 10 }));
     EXAMPLE_REQUIRE(proven_is_ok(err), "inserting a second key must succeed");
 
-    /* set on an existing key replaces the value; it does not add an entry. */
+    /* 이미 있는 키에 set 하면 값을 바꾼다. 항목을 더하지 않는다. */
     err = PROVEN_MAP_SET_INT(&by_id, 7, player_t, ((player_t){ .level = 2, .score = 40 }));
     EXAMPLE_REQUIRE(proven_is_ok(err), "re-setting an existing key must succeed");
     EXAMPLE_REQUIRE(by_id.len == 2, "re-setting a key replaces its value rather than adding an entry");
 
-    /* get returns a pointer into the bucket array, or NULL when absent. It is
-     * invalidated by any insert that rehashes - look it up, use it, drop it. */
+    /* get 은 버킷 배열 속을 가리키는 포인터를, 없으면 NULL 을 돌려준다. 다시 해싱하는
+     * 삽입이 일어나면 무효가 된다 - 찾고, 쓰고, 버릴 것. */
     const player_t *p = PROVEN_MAP_GET_INT(&by_id, player_t, 7);
     EXAMPLE_REQUIRE(p && p->level == 2 && p->score == 40, "get must see the replaced value");
     EXAMPLE_REQUIRE(PROVEN_MAP_GET_INT(&by_id, player_t, 999) == NULL, "a missing key yields NULL");
@@ -1502,9 +1494,9 @@ int main(void) {
 
     PROVEN_MAP_DESTROY(&by_id);
 
-    /* --- owned string keys --------------------------------------------------- */
-    /* Same map, keyed by a name that we build at runtime - the case where a
-     * borrowed key would be a dangling pointer waiting to happen. */
+    /* --- 소유하는 문자열 키 -------------------------------------------------- */
+    /* 같은 맵인데, 실행 중에 지어낸 이름을 키로 쓴다 - 빌린 키였다면 매달린 포인터가
+     * 되기를 기다리는 자리다. */
     proven_result_map_t rm = PROVEN_MAP_INIT_U8_OWNED(alloc, player_t, 8);
     EXAMPLE_REQUIRE(proven_is_ok(rm.err), "creating an owned-string-keyed map must succeed");
     if (!proven_is_ok(rm.err)) {
@@ -1512,21 +1504,21 @@ int main(void) {
     }
     proven_map_t by_name = rm.value;
 
-    /* A scratch buffer we intend to reuse for every key. With a BORROWED map
-     * that plan is fatal: every entry would point at these same bytes. */
+    /* 키마다 다시 쓸 작정인 임시 버퍼. BORROWED 맵에서 그 작정은 치명적이다. 모든
+     * 항목이 바로 이 같은 바이트를 가리키게 된다. */
     proven_byte_t scratch[32];
     proven_u8str_t name = proven_u8str_borrow(scratch, sizeof scratch);
 
     err = proven_u8str_append(&name, PROVEN_LIT("ada"));
     EXAMPLE_REQUIRE(proven_is_ok(err), "building the first key must succeed");
 
-    /* set_u8_owned COPIES the key bytes into map storage. After it returns, the
-     * map's key no longer has anything to do with `scratch`. */
+    /* set_u8_owned 는 키 바이트를 맵 저장소로 *복사한다*. 돌아온 뒤로 맵의 키는
+     * `scratch` 와 아무 상관이 없다. */
     err = PROVEN_MAP_SET_U8_OWNED(&by_name, proven_u8str_as_view(&name), player_t,
                                   ((player_t){ .level = 9, .score = 5000 }));
     EXAMPLE_REQUIRE(proven_is_ok(err), "inserting with an owned key must succeed");
 
-    /* So the buffer is immediately free to be reused for the next key... */
+    /* 그래서 버퍼는 곧바로 다음 키에 다시 쓸 수 있고... */
     err = proven_u8str_reset(&name);
     EXAMPLE_REQUIRE(proven_is_ok(err), "the key buffer is ours again the moment set returns");
     err = proven_u8str_append(&name, PROVEN_LIT("grace"));
@@ -1536,10 +1528,10 @@ int main(void) {
                                   ((player_t){ .level = 4, .score = 700 }));
     EXAMPLE_REQUIRE(proven_is_ok(err), "inserting the second owned key must succeed");
 
-    /* ...and the first entry is untouched by that overwrite. This is the whole
-     * point: the map holds its own copy of "ada", not a view of a buffer that
-     * now says "grace". A BORROWED map would report two entries both keyed
-     * "grace" - or worse, one keyed by freed memory. */
+    /* ...첫 항목은 그 덮어쓰기에 조금도 다치지 않는다. 이것이 요점 전부다. 맵은
+     * 지금 "grace" 라고 적힌 버퍼의 뷰가 아니라 "ada" 의 제 사본을 쥐고 있다. BORROWED
+     * 맵이었다면 둘 다 "grace" 로 키가 잡힌 항목 둘을 보고했을 것이다 - 아니면 더 나쁘게,
+     * 해제된 기억이 키인 항목 하나를. */
     const player_t *ada = PROVEN_MAP_GET_U8_OWNED(&by_name, player_t, PROVEN_LIT("ada"));
     EXAMPLE_REQUIRE(ada && ada->score == 5000, "the copied key survives the caller reusing its buffer");
 
@@ -1547,7 +1539,7 @@ int main(void) {
     EXAMPLE_REQUIRE(grace && grace->score == 700, "the second key is a separate entry");
     EXAMPLE_REQUIRE(by_name.len == 2, "two distinct keys means two entries");
 
-    /* Remove frees the key copy the map made - you never free it yourself. */
+    /* remove 는 맵이 만든 키 사본을 해제한다 - 여러분이 직접 해제하는 일은 없다. */
     err = PROVEN_MAP_REMOVE_U8_OWNED(&by_name, PROVEN_LIT("ada"));
     EXAMPLE_REQUIRE(proven_is_ok(err), "removing an owned key must succeed");
     EXAMPLE_REQUIRE(PROVEN_MAP_GET_U8_OWNED(&by_name, player_t, PROVEN_LIT("ada")) == NULL,
@@ -1556,9 +1548,8 @@ int main(void) {
     printf("map: %zu name(s) left, grace at level %d\n",
            (size_t)by_name.len, grace ? grace->level : -1);
 
-    /* destroy frees the bucket array AND every key copy still in it ("grace"
-     * here). `scratch` is ours and outlives the map; the borrowed `name` handle
-     * has nothing to free. */
+    /* destroy 는 버킷 배열과 그 안에 남은 키 사본을 모두 해제한다(여기서는 "grace").
+     * `scratch` 는 우리 것이고 맵보다 오래 살며, 빌린 `name` 손잡이는 해제할 것이 없다. */
     PROVEN_MAP_DESTROY(&by_name);
     proven_u8str_destroy(alloc, &name);
     return EXAMPLE_OK();
