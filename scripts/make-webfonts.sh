@@ -35,6 +35,10 @@ for lang in ("ko", "en"):
         continue
     for f in d.glob("*.html"):
         chars.update(html.unescape(re.sub(r"<[^>]+>", " ", f.read_text(encoding="utf-8"))))
+# The landing page sits above the editions and uses the same fonts.
+landing = docs / "index.html"
+if landing.exists():
+    chars.update(html.unescape(re.sub(r"<[^>]+>", " ", landing.read_text(encoding="utf-8"))))
 chars = {c for c in chars if ord(c) >= 0x20}
 out.parent.mkdir(parents=True, exist_ok=True)
 out.write_text("".join(sorted(chars)), encoding="utf-8")

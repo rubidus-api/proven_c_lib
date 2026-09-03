@@ -5,15 +5,314 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>proven_c_lib — manual</title>
 <link rel="stylesheet" href="en/manual.css">
+<style>
+/* Landing-page only: two editions on one page, each a full table of contents. */
+.edition { margin-top:2.6rem; }
+.edition-title { display:flex; flex-wrap:wrap; align-items:baseline; gap:.4rem 1.2rem; }
+.edition-links { font-size:.85rem; font-weight:normal; }
+.switch { margin:.2rem 0 0; color:var(--muted); }
+nav.contents { margin-top:1.2rem; }
+</style>
 </head>
 <body>
-<div class="wrap"><main>
+<div class="page"><main id="content"><div class="content">
 <h1>proven_c_lib</h1>
-<p>proven_c_lib-v26.09.03a — the manual, generated from the Markdown sources in the repository.</p>
+<div class="masthead">proven_c_lib-v26.09.03a · the manual, generated from the Markdown sources in the repository</div>
+<p class="switch"><a href="#en">English</a> · <a href="#ko">한국어</a></p>
+<section class="edition" id="en" lang="en"><h2 class="edition-title">English<span class="edition-links"><a href="en/index.html">Read the English manual</a> · <a href="en/manual.pdf">PDF</a></span></h2>
+<nav class="contents" aria-label="English — Contents">
+<h2><a href="en/index.html">The manual</a></h2>
 <ul>
-<li><a href="en/index.html">English</a> · <a href="en/manual.pdf">PDF</a></li>
-<li><a href="ko/index.html">한국어</a> · <a href="ko/manual.pdf">PDF</a></li>
+<li><a href="en/index.html#table-of-contents">Table of contents</a></li>
+<li><a href="en/index.html#1-intent-and-design-philosophy">1. Intent and design philosophy</a></li>
+<li><a href="en/index.html#2-build-and-include-model">2. Build and include model</a></li>
+<li><a href="en/index.html#3-global-contracts">3. Global contracts</a></li>
+<li><a href="en/index.html#4-ownership-and-destruction-matrix">4. Ownership and destruction matrix</a></li>
+<li><a href="en/index.html#5-operation-behavior-classes">5. Operation behavior classes</a></li>
+<li><a href="en/index.html#6-manual-chapters">6. Manual chapters</a></li>
+<li><a href="en/index.html#7-public-header-map">7. Public header map</a></li>
+<li><a href="en/index.html#8-platform-support-and-verification">8. Platform support and verification</a></li>
 </ul>
-</main></div>
+<h2><a href="en/manual-t-tutorial.html">T · Tutorial</a></h2>
+<ul>
+<li><a href="en/manual-t-tutorial.html#why-this-exists">Why this exists</a></li>
+<li><a href="en/manual-t-tutorial.html#table-of-contents">Table of contents</a></li>
+<li><a href="en/manual-t-tutorial.html#lesson-1--printing-and-a-build-that-works">Lesson 1 — printing, and a build that works</a></li>
+<li><a href="en/manual-t-tutorial.html#lesson-2--text-that-knows-how-long-it-is">Lesson 2 — text that knows how long it is</a></li>
+<li><a href="en/manual-t-tutorial.html#lesson-3--a-call-that-can-fail-says-so">Lesson 3 — a call that can fail says so</a></li>
+<li><a href="en/manual-t-tutorial.html#lesson-4--the-value-and-the-error-arrive-together">Lesson 4 — the value and the error arrive together</a></li>
+<li><a href="en/manual-t-tutorial.html#lesson-5--who-gives-out-the-memory-is-an-argument">Lesson 5 — who gives out the memory is an argument</a></li>
+<li><a href="en/manual-t-tutorial.html#lesson-6--the-chapter-0-program-read-line-by-line">Lesson 6 — the Chapter 0 program, read line by line</a></li>
+<li><a href="en/manual-t-tutorial.html#where-to-go-next">Where to go next</a></li>
+</ul>
+<h2><a href="en/manual-00-start-here.html">0 · Start here</a></h2>
+<ul>
+<li><a href="en/manual-00-start-here.html#table-of-contents">Table of contents</a></li>
+<li><a href="en/manual-00-start-here.html#1-who-this-manual-is-for">1. Who this manual is for</a></li>
+<li><a href="en/manual-00-start-here.html#2-why-this-library-exists">2. Why this library exists</a></li>
+<li><a href="en/manual-00-start-here.html#3-your-first-program">3. Your first program</a></li>
+<li><a href="en/manual-00-start-here.html#4-building-and-including">4. Building and including</a></li>
+<li><a href="en/manual-00-start-here.html#5-the-five-contracts-you-will-meet-on-every-page">5. The five contracts you will meet on every page</a></li>
+<li><a href="en/manual-00-start-here.html#6-appendix-b-glossary">6. Appendix B: glossary</a></li>
+<li><a href="en/manual-00-start-here.html#7-appendix-d-the-libc-map">7. Appendix D: the libc map</a></li>
+<li><a href="en/manual-00-start-here.html#8-where-to-go-next">8. Where to go next</a></li>
+</ul>
+<h2><a href="en/manual-01-foundation.html">1 · Foundation</a></h2>
+<ul>
+<li><a href="en/manual-01-foundation.html#table-of-contents">Table of contents</a></li>
+<li><a href="en/manual-01-foundation.html#1-errors-are-values">1. Errors are values</a></li>
+<li><a href="en/manual-01-foundation.html#2-the-types-and-why-they-are-spelled-differently">2. The types, and why they are spelled differently</a></li>
+<li><a href="en/manual-01-foundation.html#3-memory-views-a-pointer-and-a-length-together">3. Memory views: a pointer and a length, together</a></li>
+<li><a href="en/manual-01-foundation.html#4-size-arithmetic-that-cannot-wrap">4. Size arithmetic that cannot wrap</a></li>
+<li><a href="en/manual-01-foundation.html#5-alignment">5. Alignment</a></li>
+<li><a href="en/manual-01-foundation.html#6-panic-when-there-is-no-one-left-to-return-an-error-to">6. Panic: when there is no one left to return an error to</a></li>
+<li><a href="en/manual-01-foundation.html#7-version-macros">7. Version macros</a></li>
+<li><a href="en/manual-01-foundation.html#8-examples-and-misuse-cases">8. Examples and misuse cases</a></li>
+</ul>
+<h2><a href="en/manual-02-allocation.html">2 · Allocation</a></h2>
+<ul>
+<li><a href="en/manual-02-allocation.html#table-of-contents">Table of contents</a></li>
+<li><a href="en/manual-02-allocation.html#1-why-allocation-is-a-parameter-and-the-heap-allocator">1. Why allocation is a parameter, and the heap allocator</a></li>
+<li><a href="en/manual-02-allocation.html#2-arena-many-things-one-lifetime">2. Arena: many things, one lifetime</a></li>
+<li><a href="en/manual-02-allocation.html#3-pool-many-things-one-size">3. Pool: many things, one size</a></li>
+<li><a href="en/manual-02-allocation.html#4-the-allocator-trait">4. The allocator trait</a></li>
+<li><a href="en/manual-02-allocation.html#5-raw-byte-buffer">5. Raw byte buffer</a></li>
+<li><a href="en/manual-02-allocation.html#6-examples-and-misuse-cases">6. Examples and misuse cases</a></li>
+</ul>
+<h2><a href="en/manual-03-strings-text.html">3 · Strings and text</a></h2>
+<ul>
+<li><a href="en/manual-03-strings-text.html#table-of-contents">Table of contents</a></li>
+<li><a href="en/manual-03-strings-text.html#1-u8-strings-and-views">1. U8 strings and views</a></li>
+<li><a href="en/manual-03-strings-text.html#2-u16-strings-and-views">2. U16 strings and views</a></li>
+<li><a href="en/manual-03-strings-text.html#3-formatting">3. Formatting</a></li>
+<li><a href="en/manual-03-strings-text.html#4-scanning">4. Scanning</a></li>
+<li><a href="en/manual-03-strings-text.html#5-examples-and-misuse-cases">5. Examples and misuse cases</a></li>
+</ul>
+<h2><a href="en/manual-04-containers-algorithms.html">4 · Containers and algorithms</a></h2>
+<ul>
+<li><a href="en/manual-04-containers-algorithms.html#table-of-contents">Table of contents</a></li>
+<li><a href="en/manual-04-containers-algorithms.html#1-dynamic-array">1. Dynamic array</a></li>
+<li><a href="en/manual-04-containers-algorithms.html#2-intrusive-list">2. Intrusive list</a></li>
+<li><a href="en/manual-04-containers-algorithms.html#3-ring-buffer">3. Ring buffer</a></li>
+<li><a href="en/manual-04-containers-algorithms.html#4-hash-map">4. Hash map</a></li>
+<li><a href="en/manual-04-containers-algorithms.html#5-algorithms">5. Algorithms</a></li>
+<li><a href="en/manual-04-containers-algorithms.html#6-hashing-by-use-case">6. Hashing, by use case</a></li>
+<li><a href="en/manual-04-containers-algorithms.html#7-bytes-to-text-hex-and-base64">7. Bytes to text: hex and Base64</a></li>
+<li><a href="en/manual-04-containers-algorithms.html#8-examples-and-misuse-cases">8. Examples and misuse cases</a></li>
+</ul>
+<h2><a href="en/manual-08-fmt-scan.html">8 · Formatting and scanning</a></h2>
+<ul>
+<li><a href="en/manual-08-fmt-scan.html#table-of-contents">Table of contents</a></li>
+<li><a href="en/manual-08-fmt-scan.html#1-design-model">1. Design model</a></li>
+<li><a href="en/manual-08-fmt-scan.html#2-formatter-data-model">2. Formatter data model</a></li>
+<li><a href="en/manual-08-fmt-scan.html#3-formatter-constructors-and-selectors">3. Formatter constructors and selectors</a></li>
+<li><a href="en/manual-08-fmt-scan.html#4-format-string-grammar">4. Format string grammar</a></li>
+<li><a href="en/manual-08-fmt-scan.html#5-formatting-apis">5. Formatting APIs</a></li>
+<li><a href="en/manual-08-fmt-scan.html#6-console-print-helpers">6. Console print helpers</a></li>
+<li><a href="en/manual-08-fmt-scan.html#7-scanner-data-model">7. Scanner data model</a></li>
+<li><a href="en/manual-08-fmt-scan.html#8-scanner-primitive-apis">8. Scanner primitive APIs</a></li>
+<li><a href="en/manual-08-fmt-scan.html#9-scan-argument-model">9. Scan argument model</a></li>
+<li><a href="en/manual-08-fmt-scan.html#10-structural-scan-grammar">10. Structural scan grammar</a></li>
+<li><a href="en/manual-08-fmt-scan.html#11-scan-formatting-apis">11. Scan formatting APIs</a></li>
+<li><a href="en/manual-08-fmt-scan.html#12-examples-and-misuse-cases">12. Examples and misuse cases</a></li>
+<li><a href="en/manual-08-fmt-scan.html#13-freestanding-and-build-mode-notes">13. Freestanding and build-mode notes</a></li>
+</ul>
+<h2><a href="en/manual-05-hosted-services.html">5 · Hosted services</a></h2>
+<ul>
+<li><a href="en/manual-05-hosted-services.html#table-of-contents">Table of contents</a></li>
+<li><a href="en/manual-05-hosted-services.html#1-filesystem-api">1. Filesystem API</a></li>
+<li><a href="en/manual-05-hosted-services.html#2-system-io-and-environment">2. System I/O and environment</a></li>
+<li><a href="en/manual-05-hosted-services.html#3-memory-mapping">3. Memory mapping</a></li>
+<li><a href="en/manual-05-hosted-services.html#4-time-api">4. Time API</a></li>
+<li><a href="en/manual-05-hosted-services.html#5-examples-and-misuse-cases">5. Examples and misuse cases</a></li>
+<li><a href="en/manual-05-hosted-services.html#reading-a-directory-one-entry-at-a-time">Reading a directory one entry at a time</a></li>
+<li><a href="en/manual-05-hosted-services.html#walking-a-tree">Walking a tree</a></li>
+<li><a href="en/manual-05-hosted-services.html#streams-writers-and-readers">Streams: writers and readers</a></li>
+<li><a href="en/manual-05-hosted-services.html#the-standard-streams">The standard streams</a></li>
+<li><a href="en/manual-05-hosted-services.html#randomness-by-use-case">Randomness, by use case</a></li>
+</ul>
+<h2><a href="en/manual-06-execution-and-platform.html">6 · Execution and platform</a></h2>
+<ul>
+<li><a href="en/manual-06-execution-and-platform.html#table-of-contents">Table of contents</a></li>
+<li><a href="en/manual-06-execution-and-platform.html#1-stackless-coroutines">1. Stackless coroutines</a></li>
+<li><a href="en/manual-06-execution-and-platform.html#2-job-system">2. Job system</a></li>
+<li><a href="en/manual-06-execution-and-platform.html#3-threads-allocators-and-pointer-provenance">3. Threads, allocators, and pointer provenance</a></li>
+<li><a href="en/manual-06-execution-and-platform.html#4-alias-layer">4. Alias layer</a></li>
+<li><a href="en/manual-06-execution-and-platform.html#5-pal-contract">5. PAL contract</a></li>
+<li><a href="en/manual-06-execution-and-platform.html#6-freestanding-subset">6. Freestanding subset</a></li>
+<li><a href="en/manual-06-execution-and-platform.html#7-cross-compilation">7. Cross compilation</a></li>
+<li><a href="en/manual-06-execution-and-platform.html#8-examples-and-misuse-cases">8. Examples and misuse cases</a></li>
+</ul>
+<h2><a href="en/manual-freestanding.html">Freestanding</a></h2>
+<ul>
+<li><a href="en/manual-freestanding.html#0-why-this-mode-exists-and-why-the-whole-library-is-shaped-by-it">0. Why this mode exists, and why the whole library is shaped by it</a></li>
+<li><a href="en/manual-freestanding.html#1-build-profile">1. Build profile</a></li>
+<li><a href="en/manual-freestanding.html#2-available-source-files">2. Available source files</a></li>
+<li><a href="en/manual-freestanding.html#3-module-availability">3. Module availability</a></li>
+<li><a href="en/manual-freestanding.html#4-minimal-static-arena-setup">4. Minimal static arena setup</a></li>
+<li><a href="en/manual-freestanding.html#5-panic-handler-override">5. Panic handler override</a></li>
+<li><a href="en/manual-freestanding.html#6-example-cortex-m-compile-command">6. Example Cortex-M compile command</a></li>
+<li><a href="en/manual-freestanding.html#7-example-risc-v-elf-compile-command">7. Example RISC-V ELF compile command</a></li>
+<li><a href="en/manual-freestanding.html#8-formatting-in-freestanding-mode">8. Formatting in freestanding mode</a></li>
+<li><a href="en/manual-freestanding.html#8a-tuning-the-float-big-integer-capacity">8a. Tuning the float big-integer capacity</a></li>
+<li><a href="en/manual-freestanding.html#9-avoid-hosted-apis">9. Avoid hosted APIs</a></li>
+<li><a href="en/manual-freestanding.html#10-lifetime-rules-still-apply">10. Lifetime rules still apply</a></li>
+<li><a href="en/manual-freestanding.html#11-verification">11. Verification</a></li>
+</ul>
+<h2><a href="en/manual-07-alias-xcv-index.html">A · Alias index</a></h2>
+<ul>
+<li><a href="en/manual-07-alias-xcv-index.html#usage-rule">Usage rule</a></li>
+<li><a href="en/manual-07-alias-xcv-index.html#alias-table">Alias table</a></li>
+</ul>
+</nav>
+</section>
+<section class="edition" id="ko" lang="ko"><h2 class="edition-title">한국어<span class="edition-links"><a href="ko/index.html">한국어 매뉴얼 읽기</a> · <a href="ko/manual.pdf">PDF</a></span></h2>
+<nav class="contents" aria-label="한국어 — 목차">
+<h2><a href="ko/index.html">매뉴얼</a></h2>
+<ul>
+<li><a href="ko/index.html#목차">목차</a></li>
+<li><a href="ko/index.html#1-의도와-설계-철학">1. 의도와 설계 철학</a></li>
+<li><a href="ko/index.html#2-빌드와-include-모델">2. 빌드와 include 모델</a></li>
+<li><a href="ko/index.html#3-전역-계약global-contracts">3. 전역 계약(Global contracts)</a></li>
+<li><a href="ko/index.html#4-소유권과-파괴-매트릭스">4. 소유권과 파괴 매트릭스</a></li>
+<li><a href="ko/index.html#5-연산-동작-클래스">5. 연산 동작 클래스</a></li>
+<li><a href="ko/index.html#6-매뉴얼-챕터">6. 매뉴얼 챕터</a></li>
+<li><a href="ko/index.html#7-공개-헤더-맵">7. 공개 헤더 맵</a></li>
+<li><a href="ko/index.html#8-플랫폼-지원과-검증">8. 플랫폼 지원과 검증</a></li>
+</ul>
+<h2><a href="ko/manual-t-tutorial.html">T · 따라 하며 익히기</a></h2>
+<ul>
+<li><a href="ko/manual-t-tutorial.html#이-글이-있는-이유">이 글이 있는 이유</a></li>
+<li><a href="ko/manual-t-tutorial.html#목차">목차</a></li>
+<li><a href="ko/manual-t-tutorial.html#1과--출력-그리고-되는-빌드">1과 — 출력, 그리고 되는 빌드</a></li>
+<li><a href="ko/manual-t-tutorial.html#2과--자기-길이를-아는-텍스트">2과 — 자기 길이를 아는 텍스트</a></li>
+<li><a href="ko/manual-t-tutorial.html#3과--실패할-수-있는-호출은-그렇다고-말한다">3과 — 실패할 수 있는 호출은 그렇다고 말한다</a></li>
+<li><a href="ko/manual-t-tutorial.html#4과--값과-오류는-함께-온다">4과 — 값과 오류는 함께 온다</a></li>
+<li><a href="ko/manual-t-tutorial.html#5과--기억을-누가-주는가는-인자다">5과 — 기억을 누가 주는가는 인자다</a></li>
+<li><a href="ko/manual-t-tutorial.html#6과--0장의-프로그램을-한-줄씩">6과 — 0장의 프로그램을 한 줄씩</a></li>
+<li><a href="ko/manual-t-tutorial.html#다음에-읽을-것">다음에 읽을 것</a></li>
+</ul>
+<h2><a href="ko/manual-00-start-here.html">0 · 여기서부터</a></h2>
+<ul>
+<li><a href="ko/manual-00-start-here.html#목차">목차</a></li>
+<li><a href="ko/manual-00-start-here.html#1-이-매뉴얼은-누구를-위한-것인가">1. 이 매뉴얼은 누구를 위한 것인가</a></li>
+<li><a href="ko/manual-00-start-here.html#2-이-라이브러리가-존재하는-이유">2. 이 라이브러리가 존재하는 이유</a></li>
+<li><a href="ko/manual-00-start-here.html#3-첫-프로그램">3. 첫 프로그램</a></li>
+<li><a href="ko/manual-00-start-here.html#4-빌드와-include">4. 빌드와 include</a></li>
+<li><a href="ko/manual-00-start-here.html#5-모든-페이지에서-만나게-될-다섯-가지-계약">5. 모든 페이지에서 만나게 될 다섯 가지 계약</a></li>
+<li><a href="ko/manual-00-start-here.html#6-부록-b-용어집">6. 부록 B: 용어집</a></li>
+<li><a href="ko/manual-00-start-here.html#7-부록-d-libc-대응표">7. 부록 D: libc 대응표</a></li>
+<li><a href="ko/manual-00-start-here.html#8-다음에-읽을-것">8. 다음에 읽을 것</a></li>
+</ul>
+<h2><a href="ko/manual-01-foundation.html">1 · 기초</a></h2>
+<ul>
+<li><a href="ko/manual-01-foundation.html#목차">목차</a></li>
+<li><a href="ko/manual-01-foundation.html#1-에러는-값이다">1. 에러는 값이다</a></li>
+<li><a href="ko/manual-01-foundation.html#2-타입-그리고-왜-표기가-다른가">2. 타입, 그리고 왜 표기가 다른가</a></li>
+<li><a href="ko/manual-01-foundation.html#3-메모리-view-포인터와-길이를-하나로">3. 메모리 view: 포인터와 길이를 하나로</a></li>
+<li><a href="ko/manual-01-foundation.html#4-감길-수-없는-크기-산술">4. 감길 수 없는 크기 산술</a></li>
+<li><a href="ko/manual-01-foundation.html#5-정렬">5. 정렬</a></li>
+<li><a href="ko/manual-01-foundation.html#6-panic-에러를-돌려줄-상대가-남지-않았을-때">6. Panic: 에러를 돌려줄 상대가 남지 않았을 때</a></li>
+<li><a href="ko/manual-01-foundation.html#7-버전-매크로">7. 버전 매크로</a></li>
+<li><a href="ko/manual-01-foundation.html#8-예제와-오용-사례">8. 예제와 오용 사례</a></li>
+</ul>
+<h2><a href="ko/manual-02-allocation.html">2 · 할당</a></h2>
+<ul>
+<li><a href="ko/manual-02-allocation.html#목차">목차</a></li>
+<li><a href="ko/manual-02-allocation.html#1-할당이-매개변수인-이유-그리고-heap-allocator">1. 할당이 매개변수인 이유, 그리고 heap allocator</a></li>
+<li><a href="ko/manual-02-allocation.html#2-arena-여러-객체-하나의-수명">2. Arena: 여러 객체, 하나의 수명</a></li>
+<li><a href="ko/manual-02-allocation.html#3-pool-여러-객체-하나의-크기">3. Pool: 여러 객체, 하나의 크기</a></li>
+<li><a href="ko/manual-02-allocation.html#4-allocator-트레잇">4. Allocator 트레잇</a></li>
+<li><a href="ko/manual-02-allocation.html#5-원시-바이트-버퍼">5. 원시 바이트 버퍼</a></li>
+<li><a href="ko/manual-02-allocation.html#6-예제와-오용-사례">6. 예제와 오용 사례</a></li>
+</ul>
+<h2><a href="ko/manual-03-strings-text.html">3 · 문자열과 텍스트</a></h2>
+<ul>
+<li><a href="ko/manual-03-strings-text.html#목차">목차</a></li>
+<li><a href="ko/manual-03-strings-text.html#1-u8-문자열과-view">1. U8 문자열과 view</a></li>
+<li><a href="ko/manual-03-strings-text.html#2-u16-문자열과-view">2. U16 문자열과 view</a></li>
+<li><a href="ko/manual-03-strings-text.html#3-포매팅">3. 포매팅</a></li>
+<li><a href="ko/manual-03-strings-text.html#4-스캐닝">4. 스캐닝</a></li>
+<li><a href="ko/manual-03-strings-text.html#5-예제와-오용-사례">5. 예제와 오용 사례</a></li>
+</ul>
+<h2><a href="ko/manual-04-containers-algorithms.html">4 · 컨테이너와 알고리즘</a></h2>
+<ul>
+<li><a href="ko/manual-04-containers-algorithms.html#목차">목차</a></li>
+<li><a href="ko/manual-04-containers-algorithms.html#1-동적-배열">1. 동적 배열</a></li>
+<li><a href="ko/manual-04-containers-algorithms.html#2-침습적intrusive-리스트">2. 침습적(intrusive) 리스트</a></li>
+<li><a href="ko/manual-04-containers-algorithms.html#3-링-버퍼">3. 링 버퍼</a></li>
+<li><a href="ko/manual-04-containers-algorithms.html#4-해시-맵">4. 해시 맵</a></li>
+<li><a href="ko/manual-04-containers-algorithms.html#5-알고리즘">5. 알고리즘</a></li>
+<li><a href="ko/manual-04-containers-algorithms.html#6-용도별-해싱">6. 용도별 해싱</a></li>
+<li><a href="ko/manual-04-containers-algorithms.html#7-바이트를-텍스트로-hex와-base64">7. 바이트를 텍스트로: hex와 Base64</a></li>
+<li><a href="ko/manual-04-containers-algorithms.html#8-예제와-오용-사례">8. 예제와 오용 사례</a></li>
+</ul>
+<h2><a href="ko/manual-08-fmt-scan.html">8 · 형식화와 파싱</a></h2>
+<ul>
+<li><a href="ko/manual-08-fmt-scan.html#목차">목차</a></li>
+<li><a href="ko/manual-08-fmt-scan.html#1-설계-모델">1. 설계 모델</a></li>
+<li><a href="ko/manual-08-fmt-scan.html#2-포매터-데이터-모델">2. 포매터 데이터 모델</a></li>
+<li><a href="ko/manual-08-fmt-scan.html#3-포매터-생성자와-선택자">3. 포매터 생성자와 선택자</a></li>
+<li><a href="ko/manual-08-fmt-scan.html#4-형식-문자열-문법">4. 형식 문자열 문법</a></li>
+<li><a href="ko/manual-08-fmt-scan.html#5-형식화-api">5. 형식화 API</a></li>
+<li><a href="ko/manual-08-fmt-scan.html#6-콘솔-출력-헬퍼">6. 콘솔 출력 헬퍼</a></li>
+<li><a href="ko/manual-08-fmt-scan.html#7-스캐너-데이터-모델">7. 스캐너 데이터 모델</a></li>
+<li><a href="ko/manual-08-fmt-scan.html#8-스캐너-기본-api">8. 스캐너 기본 API</a></li>
+<li><a href="ko/manual-08-fmt-scan.html#9-스캔-인자-모델">9. 스캔 인자 모델</a></li>
+<li><a href="ko/manual-08-fmt-scan.html#10-구조적-스캔-문법">10. 구조적 스캔 문법</a></li>
+<li><a href="ko/manual-08-fmt-scan.html#11-스캔-형식화-api">11. 스캔 형식화 API</a></li>
+<li><a href="ko/manual-08-fmt-scan.html#12-예제와-오용-사례">12. 예제와 오용 사례</a></li>
+<li><a href="ko/manual-08-fmt-scan.html#13-프리스탠딩과-빌드-모드-참고">13. 프리스탠딩과 빌드 모드 참고</a></li>
+</ul>
+<h2><a href="ko/manual-05-hosted-services.html">5 · Hosted 서비스</a></h2>
+<ul>
+<li><a href="ko/manual-05-hosted-services.html#목차">목차</a></li>
+<li><a href="ko/manual-05-hosted-services.html#1-파일시스템-api">1. 파일시스템 API</a></li>
+<li><a href="ko/manual-05-hosted-services.html#2-시스템-입출력과-환경변수">2. 시스템 입출력과 환경변수</a></li>
+<li><a href="ko/manual-05-hosted-services.html#3-메모리-매핑">3. 메모리 매핑</a></li>
+<li><a href="ko/manual-05-hosted-services.html#4-시간-api">4. 시간 API</a></li>
+<li><a href="ko/manual-05-hosted-services.html#5-예제와-오용-사례">5. 예제와 오용 사례</a></li>
+<li><a href="ko/manual-05-hosted-services.html#디렉터리를-한-번에-한-엔트리씩-읽기">디렉터리를 한 번에 한 엔트리씩 읽기</a></li>
+<li><a href="ko/manual-05-hosted-services.html#트리-순회">트리 순회</a></li>
+<li><a href="ko/manual-05-hosted-services.html#스트림-writer와-reader">스트림: writer와 reader</a></li>
+<li><a href="ko/manual-05-hosted-services.html#표준-스트림-1">표준 스트림</a></li>
+<li><a href="ko/manual-05-hosted-services.html#난수-용도별">난수, 용도별</a></li>
+</ul>
+<h2><a href="ko/manual-06-execution-and-platform.html">6 · 실행과 플랫폼</a></h2>
+<ul>
+<li><a href="ko/manual-06-execution-and-platform.html#목차">목차</a></li>
+<li><a href="ko/manual-06-execution-and-platform.html#1-스택리스-코루틴">1. 스택리스 코루틴</a></li>
+<li><a href="ko/manual-06-execution-and-platform.html#2-job-시스템">2. Job 시스템</a></li>
+<li><a href="ko/manual-06-execution-and-platform.html#3-스레드-allocator-포인터-프로버넌스">3. 스레드, allocator, 포인터 프로버넌스</a></li>
+<li><a href="ko/manual-06-execution-and-platform.html#4-별칭-계층">4. 별칭 계층</a></li>
+<li><a href="ko/manual-06-execution-and-platform.html#5-pal-계약">5. PAL 계약</a></li>
+<li><a href="ko/manual-06-execution-and-platform.html#6-freestanding-부분집합">6. Freestanding 부분집합</a></li>
+<li><a href="ko/manual-06-execution-and-platform.html#7-크로스-컴파일">7. 크로스 컴파일</a></li>
+<li><a href="ko/manual-06-execution-and-platform.html#8-예제와-오용-사례">8. 예제와 오용 사례</a></li>
+</ul>
+<h2><a href="ko/manual-freestanding.html">프리스탠딩</a></h2>
+<ul>
+<li><a href="ko/manual-freestanding.html#0-이-모드가-존재하는-이유-그리고-라이브러리-전체가-이-제약에-의해-빚어진-이유">0. 이 모드가 존재하는 이유, 그리고 라이브러리 전체가 이 제약에 의해 빚어진 이유</a></li>
+<li><a href="ko/manual-freestanding.html#1-빌드-프로파일">1. 빌드 프로파일</a></li>
+<li><a href="ko/manual-freestanding.html#2-사용-가능한-소스-파일">2. 사용 가능한 소스 파일</a></li>
+<li><a href="ko/manual-freestanding.html#3-모듈-사용-가능성">3. 모듈 사용 가능성</a></li>
+<li><a href="ko/manual-freestanding.html#4-최소-정적-arena-설정">4. 최소 정적 arena 설정</a></li>
+<li><a href="ko/manual-freestanding.html#5-panic-핸들러-오버라이드">5. Panic 핸들러 오버라이드</a></li>
+<li><a href="ko/manual-freestanding.html#6-cortex-m-컴파일-명령-예제">6. Cortex-M 컴파일 명령 예제</a></li>
+<li><a href="ko/manual-freestanding.html#7-risc-v-elf-컴파일-명령-예제">7. RISC-V ELF 컴파일 명령 예제</a></li>
+<li><a href="ko/manual-freestanding.html#8-freestanding-모드에서의-포매팅">8. Freestanding 모드에서의 포매팅</a></li>
+<li><a href="ko/manual-freestanding.html#8a-float-큰-정수-용량-조정">8a. Float 큰 정수 용량 조정</a></li>
+<li><a href="ko/manual-freestanding.html#9-호스티드-api-피하기">9. 호스티드 API 피하기</a></li>
+<li><a href="ko/manual-freestanding.html#10-수명-규칙은-여전히-적용된다">10. 수명 규칙은 여전히 적용된다</a></li>
+<li><a href="ko/manual-freestanding.html#11-검증">11. 검증</a></li>
+</ul>
+<h2><a href="ko/manual-07-alias-xcv-index.html">부록 A · Alias 인덱스</a></h2>
+<ul>
+<li><a href="ko/manual-07-alias-xcv-index.html#사용-규칙">사용 규칙</a></li>
+<li><a href="ko/manual-07-alias-xcv-index.html#alias-표">Alias 표</a></li>
+</ul>
+</nav>
+</section>
+</div></main></div>
 </body>
 </html>
