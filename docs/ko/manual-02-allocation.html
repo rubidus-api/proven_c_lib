@@ -503,7 +503,6 @@ proven_err_t e <span style="color: #d73948">=</span> <span style="color: #4b69c6
 }</code></pre><p>반례 — 시험용 패닉 핸들러를 설치한 채 두는 경우:</p><pre><code data-lang="text">proven_set_panic_handler(record_panic);   /* returns instead of stopping */
 /* ... the rest of the program ... */     /* wrong: no restore */</code></pre><p>돌아오는 핸들러는 이후의 모든 메모리 부족 패닉을, 널 블록을 돌려주고 계속 진행하는 호출로 바꾼다. 시험할 코드 주위에서만 설치하고, <code>proven_set_panic_handler(NULL)</code>로 기본값을 되돌린다.</p><p>반례 — 돌아온 핸들러 뒤에서 그 블록을 쓰는 경우:</p><pre><code data-lang="text">proven_mem_mut_t m = proven_arena_alloc_or_panic(&amp;arena, huge);
 memset(m.ptr, 0, huge);   /* wrong: m.ptr is null if the handler returned */</code></pre><p>반례 — 셋 중 하나를 빠뜨린 래퍼:</p><pre><code data-lang="text">proven_allocator_t alloc = { .ctx = &amp;counted, .alloc_fn = counting_alloc };  /* wrong */</code></pre><p><code>proven_alloc_is_valid()</code>는 이것에 false를 돌려주고, 이 할당자를 통한 첫 <code>realloc</code>이나 <code>destroy</code>는 널 포인터를 호출한다. 둘은 그저 전달만 하더라도 셋을 모두 채운다.</p>
-
 <div class="nav"><a href="manual-01-foundation.html">← 1 · 기초</a><a href="manual-03-strings-text.html">3 · 문자열과 텍스트 →</a></div>
 </div></main>
 </div>

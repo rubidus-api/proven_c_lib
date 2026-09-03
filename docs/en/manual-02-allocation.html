@@ -510,7 +510,6 @@ proven_err_t e <span style="color: #d73948">=</span> <span style="color: #4b69c6
 }</code></pre><p>Wrong — leaving a test panic handler installed:</p><pre><code data-lang="text">proven_set_panic_handler(record_panic);   /* returns instead of stopping */
 /* ... the rest of the program ... */     /* wrong: no restore */</code></pre><p>A handler that returns turns every later out-of-memory panic into a call that hands back a null block and carries on. Install one only around the code you are testing, and restore the default with <code>proven_set_panic_handler(NULL)</code>.</p><p>Wrong — using the block after a handler that returned:</p><pre><code data-lang="text">proven_mem_mut_t m = proven_arena_alloc_or_panic(&amp;arena, huge);
 memset(m.ptr, 0, huge);   /* wrong: m.ptr is null if the handler returned */</code></pre><p>Wrong — a wrapper that forgets one of the three:</p><pre><code data-lang="text">proven_allocator_t alloc = { .ctx = &amp;counted, .alloc_fn = counting_alloc };  /* wrong */</code></pre><p><code>proven_alloc_is_valid()</code> returns false for this, and the first <code>realloc</code> or <code>destroy</code> through it calls a null pointer. Fill in all three, even when two of them only forward.</p>
-
 <div class="nav"><a href="manual-01-foundation.html">← 1 · Foundation</a><a href="manual-03-strings-text.html">3 · Strings and text →</a></div>
 </div></main>
 </div>

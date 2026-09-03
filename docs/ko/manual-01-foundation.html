@@ -339,7 +339,6 @@ proven_err_t err <span style="color: #d73948">=</span> PROVEN_OK;
     err <span style="color: #d73948">=</span> PROVEN_ERR_INVALID_ARG;   <span style="color: #74747c">/*</span><span style="color: #74747c"> only a null pointer with bytes behind it is a bug </span><span style="color: #74747c">*/</span>
 }
 (<span style="color: #d73948">void</span>)err;</code></pre><h3 id="다음으로-갈-곳">다음으로 갈 곳<a class="anchor" href="#다음으로-갈-곳" aria-hidden="true">#</a></h3><p><a href="manual-02-allocation.html">2장</a>은 이 타입들이 일을 시작하는 곳이다. allocator는 <code>proven_mem_mut_t</code>를 만들어 내고, arena는 §5의 정렬 헬퍼를 사용하며, 라이브러리의 모든 확장 가능 컨테이너는 allocator를 매개변수로 받는다. §1이 에러를 반환값으로 받는 이유로 든 것과 같은 이유 때문이다 — 비용은 시그니처에 보여야 한다.</p>
-
 <div class="nav"><a href="manual-00-start-here.html">← 0 · 여기서부터</a><a href="manual-02-allocation.html">2 · 할당 →</a></div>
 </div></main>
 </div>

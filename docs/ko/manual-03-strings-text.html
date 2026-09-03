@@ -571,7 +571,6 @@ proven_err_t e <span style="color: #d73948">=</span> <span style="color: #4b69c6
 }</code></pre><p>반례 — UTF-16 버퍼 크기를 바이트로 잡는 경우:</p><pre><code data-lang="text">proven_result_u16str_t r = proven_u16str_create(alloc, sizeof(buf));   /* wrong */</code></pre><p>인자는 코드 단위의 개수다. 바이트 수를 넘기면 의도한 것의 두 배를 요구하게 되고, 그 바이트 수가 UTF-8 문자열에서 왔다면 변환 결과를 담지도 못하는 버퍼를 요구하게 된다.</p><p>반례 — append를 사이에 두고 포인터를 붙들고 있는 경우:</p><pre><code data-lang="text">const proven_u16 *w = proven_u16str_as_ptr(&amp;name);
 proven_err_t e = proven_u16str_append_grow(alloc, &amp;name, more);   /* may reallocate */
 use_wide(w);   /* wrong: w may dangle */</code></pre><p>포인터는 그것을 소비하는 호출 바로 앞에서 얻는다.</p>
-
 <div class="nav"><a href="manual-02-allocation.html">← 2 · 할당</a><a href="manual-04-containers-algorithms.html">4 · 컨테이너와 알고리즘 →</a></div>
 </div></main>
 </div>

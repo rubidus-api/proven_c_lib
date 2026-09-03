@@ -411,4 +411,4 @@ int main(void) {
 | 소유하는 문자열, 자르기, 인코딩 | [3장](manual-03-strings-text-ko.md) |
 | 배열·맵·리스트·해시 | [4장](manual-04-containers-algorithms-ko.md) |
 | 파일·스트림·시간·난수 | [5장](manual-05-hosted-services-ko.md) |
-| 모르는 낱말 | [용어집](manual-00-start-here-ko.md#6-부록-b-용어집) |
+| 모르는 낱말 | [용어집](manual-00-start-here-ko.md#13-부록-b-용어집) |

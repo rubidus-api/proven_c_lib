@@ -132,7 +132,6 @@ tests/test_portability_compile_nou16str
 tests/test_portability_freestanding</code></pre><p>The cross command performs compile-only checks for available embedded compilers:</p><pre><code data-lang="text">freestanding-arm-cortex-m4        arm-none-eabi-gcc -mcpu=cortex-m4 -mthumb
 freestanding-riscv64-elf          riscv64-elf-gcc
 freestanding-riscv64-unknown-elf  riscv64-unknown-elf-gcc</code></pre><p>Missing toolchains are skipped. Real compile failures fail the command. Runtime behavior still needs validation on the target or emulator.</p>
-
 <div class="nav"><a href="manual-06-execution-and-platform.html">← 6 · Execution and platform</a><a href="manual-07-alias-xcv-index.html">A · Alias index →</a></div>
 </div></main>
 </div>

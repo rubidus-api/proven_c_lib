@@ -944,7 +944,6 @@ proven_err_t e = proven_scan_fmt_cursor(&amp;scan, "{}", proven_scan_arg_i32(&am
     proven_u8str_destroy(alloc, &amp;line);     /* wrong: `word` pointed into `line` */
 }
 use(word);</code></pre><p>A scanned view points into the text being scanned. Copy it into a <code>proven_u8str_t</code> if it has to outlive that text.</p>
-
 <div class="nav"><a href="manual-04-containers-algorithms.html">← 4 · Containers and algorithms</a><a href="manual-05-hosted-services.html">5 · Hosted services →</a></div>
 </div></main>
 </div>

@@ -922,7 +922,6 @@ proven_err_t e = proven_scan_fmt_cursor(&amp;scan, "{}", proven_scan_arg_i32(&am
     proven_u8str_destroy(alloc, &amp;line);     /* wrong: `word` pointed into `line` */
 }
 use(word);</code></pre><p>스캔한 view는 스캔 대상 텍스트 안쪽을 가리킨다. 그 텍스트보다 오래 살아야 한다면 <code>proven_u8str_t</code>로 복사한다.</p>
-
 <div class="nav"><a href="manual-04-containers-algorithms.html">← 4 · 컨테이너와 알고리즘</a><a href="manual-05-hosted-services.html">5 · Hosted 서비스 →</a></div>
 </div></main>
 </div>
