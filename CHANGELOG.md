@@ -31,9 +31,11 @@ The format follows Keep a Changelog:
 - **The manual's examples are now two trees, one per language.**
   `manual/examples/en/` is quoted by the English chapters and `manual/examples/ko/`
   by the Korean ones, so a reader of the Korean manual is not made to read English
-  comments to follow the code the Korean prose is explaining. The code is identical
-  in both; only the comments differ. `./nob build` compiles and runs both trees —
-  78 example executables where there were 33.
+  comments to follow the code the Korean prose is explaining. **All 39 programs are
+  translated**: roughly 1,400 lines of comments, with the code identical in both
+  trees — `scripts/check-example-parity.py` proves that mechanically, and
+  `./nob build` compiles and runs both trees (78 example executables where there
+  were 33).
 - **The web edition carries its table of contents in one place.** The per-chapter
   left sidebar is gone; the index page now lists every chapter *and* every section
   within it. Jumping about inside a chapter is what the panel at the top is for.
