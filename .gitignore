@@ -15,6 +15,7 @@ nob
 *.tmp
 *.out
 AGENTS.md
+CLAUDE.md
 CONTEXT.md
 MEMORY.md
 TODO.md
