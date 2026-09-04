@@ -1,4 +1,4 @@
-# proven Test Matrix (v26.09.04a)
+# proven Test Matrix (v0.0.1)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -1558,7 +1558,7 @@ Failure tip: a failure names the missing test, duplicate path, stale subset memb
 
 ### `tests/test_docs_version_sync` — the version string agrees with itself everywhere
 
-Intent: verify `PROVEN_VERSION_STRING` — the source of truth — matches the README (both language halves), TEST.md, the manual headings, chapter 1's `version.h` excerpt, and the CHANGELOG's newest entry.
+Intent: verify `PROVEN_VERSION_STRING` — the source of truth — is `proven_c_lib-v<MAJOR>.<MINOR>.<PATCH>` built from the three number macros, and matches the README (both language halves), TEST.md, the manual headings, chapter 1's `version.h` excerpt (string and all three numbers), and the CHANGELOG's newest `## [x.y.z]` entry. Versions are semantic from v0.0.1 (2026-09-04); the date-based numbers before it are history.
 
 `CHECKLIST.md` has always required these to be updated together, and nothing checked: `version.h` once sat five releases behind the CHANGELOG while the README claimed a third value that matched neither. That is not cosmetic — it is the number a downstream project pins, the number a bug report quotes, and the number that decides whether a fix is in the copy someone is holding.
 

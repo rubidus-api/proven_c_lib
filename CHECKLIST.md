@@ -14,7 +14,9 @@ release-profile, scheduler qualification, and performance work is specified in
 
 ## Always before committing
 
-- Update `include/proven/version.h` first.
+- Update `include/proven/version.h` first. The version is semantic (`MAJOR.MINOR.PATCH`, from v0.0.1):
+  bump PATCH for fixes and documentation, MINOR for compatible additions, MAJOR for a break; the three
+  numbers and `PROVEN_VERSION_STRING` must agree, and the tag is `v<MAJOR>.<MINOR>.<PATCH>`.
 - Sync the visible version string in `README.md` (English) and `README-ko.md` (Korean), `TEST.md`, `manual/` and `manual-ko/` (chapter headings and the `version.h` excerpt in chapter 1), and `CHANGELOG.md`.
 - Add a `CHANGELOG.md` entry that explains the change.
 - Keep public examples and help text on relative paths such as `build-out/proven_c_lib`.

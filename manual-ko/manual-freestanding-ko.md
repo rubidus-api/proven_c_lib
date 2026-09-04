@@ -1,4 +1,4 @@
-# Proven Freestanding 모드 (v26.09.04a)
+# Proven Freestanding 모드 (v0.0.1)
 
 **6부 — 더 나아가기. 선행 조건: 2–5부, 그리고
 [6장](manual-06-execution-and-platform-ko.md).**

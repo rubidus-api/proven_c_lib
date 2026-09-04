@@ -153,7 +153,11 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_SCAN_ARG_TYPE_USHORT` | `PROVEN_SCAN_ARG_TYPE_USHORT` |
 | `XCV_SCAN_ARG_ULONG` | `PROVEN_SCAN_ARG_ULONG(ptr)` |
 | `XCV_U16_LIT` | `PROVEN_U16_LIT` |
+| `XCV_VERSION_ENCODE` | `PROVEN_VERSION_ENCODE(major, minor, patch)` |
+| `XCV_VERSION_MAJOR` | `PROVEN_VERSION_MAJOR` |
+| `XCV_VERSION_MINOR` | `PROVEN_VERSION_MINOR` |
 | `XCV_VERSION_NUM` | `PROVEN_VERSION_NUM` |
+| `XCV_VERSION_PATCH` | `PROVEN_VERSION_PATCH` |
 | `XCV_VERSION_STRING` | `PROVEN_VERSION_STRING` |
 | `xcv_alloc_fn_t` | `proven_alloc_fn_t` |
 | `xcv_alloc_is_valid` | `proven_alloc_is_valid` |

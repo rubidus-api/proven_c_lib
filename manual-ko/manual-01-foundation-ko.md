@@ -791,18 +791,30 @@ proven_mem_mut_t block = proven_arena_alloc_or_panic(&arena, n);
 진단용으로, 그리고 라이브러리 버전에 맞춰 적응해야 하는 코드를 위한 컴파일 타임 식별자다.
 
 ```text
-#define PROVEN_VERSION_STRING "proven_c_lib-v26.09.04a"
-#define PROVEN_VERSION_NUM    260723
-#define PROVEN_VERSION_SUFFIX "d"
+#define PROVEN_VERSION_MAJOR  0
+#define PROVEN_VERSION_MINOR  0
+#define PROVEN_VERSION_PATCH  1
+#define PROVEN_VERSION_STRING "proven_c_lib-v0.0.1"
+#define PROVEN_VERSION_ENCODE(major, minor, patch) ((major) * 1000000L + (minor) * 1000L + (patch))
+#define PROVEN_VERSION_NUM    PROVEN_VERSION_ENCODE(PROVEN_VERSION_MAJOR, PROVEN_VERSION_MINOR, PROVEN_VERSION_PATCH)
 ```
 
-`PROVEN_VERSION_STRING`은 빌드 보고서나 `--version` 플래그에서 출력하는 것이다.
-`PROVEN_VERSION_NUM`은 수치 비교를 위한 정수 형태의 `YYMMDD`다 — `#if PROVEN_VERSION_NUM
->= 260720`처럼 쓴다. `PROVEN_VERSION_SUFFIX`는 같은 날 낸 릴리스를 구분한다.
+버전은 시맨틱 버전 — `MAJOR.MINOR.PATCH` — 이고 v0.0.1부터 시작한다. PATCH 릴리스는 고치거나
+문서화할 뿐 호출자가 바꿔야 할 것이 없다. MINOR 릴리스는 기존 호출을 깨지 않고 더한다. MAJOR
+릴리스는 기존 호출을 깰 수 있다. MAJOR가 0인 동안은 MINOR 사이에서도 API가 움직일 수 있다.
 
-이 셋은 빌드가 `include/proven/version.h`와 대조해 검사하므로, 매뉴얼이 헤더로부터 어긋날 수 없다.
-(한 번 어긋난 적이 있고, 이 문장이 다시는 그러지 않을 이유다: 문자열에는 게이트가 걸려 있었고 나머지
-둘에는 없었다.)
+`PROVEN_VERSION_STRING`은 빌드 보고서나 `--version` 플래그에서 출력하는 것이다. 숫자 셋은
+라이브러리 버전에 맞춰 적응해야 하는 코드를 위한 것이고, `PROVEN_VERSION_NUM`은 그 셋을 `#if`용
+정수 하나로 접은 것이다 — 리터럴이 아니라 `PROVEN_VERSION_ENCODE`와 비교한다:
+`#if PROVEN_VERSION_NUM >= PROVEN_VERSION_ENCODE(0, 1, 0)`.
+
+v0.0.1 이전의 릴리스는 날짜로 번호를 붙였고(`v26.MM.DDx`), `PROVEN_VERSION_NUM`은 그 날짜였다.
+번호는 체계와 함께 처음부터 다시 시작했으므로, 옛 날짜 값과의 비교는 지금의 모든 릴리스에서
+틀린다. `PROVEN_VERSION_ENCODE`로 다시 쓰라.
+
+숫자와 문자열은 빌드가 `include/proven/version.h`와 대조해 검사하고, 문자열은 숫자와도 대조하므로,
+매뉴얼이 헤더로부터 어긋날 수 없다. (한 번 어긋난 적이 있고, 이 문장이 다시는 그러지 않을 이유다:
+문자열에는 게이트가 걸려 있었고 나머지에는 없었다.)
 
 ## 8. 예제와 오용 사례
 

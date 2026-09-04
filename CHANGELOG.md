@@ -11,6 +11,32 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
+Versions are semantic — `MAJOR.MINOR.PATCH` — from v0.0.1 (2026-09-04), and a release
+section is `## [x.y.z] - YYYY-MM-DD`. The entries below v0.0.1 carry the date-based
+numbers those releases were published under (`proven_c_lib-v26.MM.DDx`) and are left as
+written; their tags still exist.
+
+## [0.0.1] - 2026-09-04
+
+### Changed
+
+- **Semantic versioning, from v0.0.1.** Releases were numbered by date
+  (`v26.09.04a`); they are now `MAJOR.MINOR.PATCH`, and the numbering restarts at
+  v0.0.1 with the library as it is today. `include/proven/version.h` gains
+  `PROVEN_VERSION_MAJOR`, `PROVEN_VERSION_MINOR` and `PROVEN_VERSION_PATCH`, and
+  `PROVEN_VERSION_ENCODE(major, minor, patch)` for `#if` comparisons;
+  `PROVEN_VERSION_NUM` is now that encoding of the three numbers, and
+  `PROVEN_VERSION_SUFFIX` is gone. The `xcv_` alias layer follows.
+- **Breaking for one kind of caller:** a comparison such as
+  `#if PROVEN_VERSION_NUM >= 260720` is wrong on every release from here on,
+  because the number restarted. Rewrite it as
+  `#if PROVEN_VERSION_NUM >= PROVEN_VERSION_ENCODE(0, 0, 1)`.
+- The version gate (`test_docs_version_sync`) now also checks that the string
+  agrees with the three numbers, and reads the changelog's `[x.y.z]` heading;
+  `scripts/release.sh` takes the release notes from that heading. The rules in
+  `CHECKLIST.md`, `AGENTS.md`, `CONTEXT.md`, `docs/DOCUMENTING.md` and `TEST.md`
+  say the same.
+
 ## [2026-09-04] - proven_c_lib-v26.09.04a
 
 ### Changed
@@ -2299,3 +2325,5 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
 
 - Corrected the float scan underflow edge.
 - Fixed scientific exponent padding and shortest-float candidate selection.
+
+[0.0.1]: https://github.com/rubidus-api/proven_c_lib/releases/tag/v0.0.1

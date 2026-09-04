@@ -22,7 +22,7 @@ publish=no
 
 version=$(sed -n 's/^#define PROVEN_VERSION_STRING "\(.*\)"$/\1/p' "$root/include/proven/version.h")
 [ -n "$version" ] || { echo "release: cannot read the version" >&2; exit 1; }
-tag=${version#proven_c_lib-}          # the tags here are v26.09.02a, not proven_c_lib-v26...
+tag=${version#proven_c_lib-}          # the tags here are v0.0.1, not proven_c_lib-v0.0.1
 repo=rubidus-api/proven_c_lib
 
 echo "release: $version (tag $tag)"
@@ -93,8 +93,10 @@ python3 - "$root/CHANGELOG.md" "$version" > "$notes_file" <<'PY'
 import re, sys
 text = open(sys.argv[1], encoding='utf-8').read()
 version = sys.argv[2]
-# The release notes are the changelog entry for this version - one source, not two.
-m = re.search(r'\n## \[[^\]]*\][^\n]*' + re.escape(version) + r'[^\n]*\n(.*?)(?=\n## \[)', text, re.S)
+# The release notes are the changelog entry for this version - one source, not two. The
+# heading is Keep-a-Changelog style, `## [x.y.z] - YYYY-MM-DD`, so it is found by the bare number.
+number = version.split('-v')[-1]
+m = re.search(r'\n## \[' + re.escape(number) + r'\][^\n]*\n(.*?)(?=\n## \[|\n\[)', text, re.S)
 print((m.group(1).strip() if m else 'See CHANGELOG.md.'))
 PY
 

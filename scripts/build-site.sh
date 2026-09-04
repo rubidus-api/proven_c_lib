@@ -26,7 +26,7 @@ fonts=${TYPST_FONT_PATHS:-$root/../usr/toolchains/fonts}
 version=$(sed -n 's/^#define PROVEN_VERSION_STRING "\(.*\)"$/\1/p' "$root/include/proven/version.h")
 [ -n "$version" ] || { echo "build-site: cannot read the version" >&2; exit 1; }
 # The release tag drops the project prefix the version string carries: the tags in this
-# repository are v26.07.23b, not proven_c_lib-v26.07.23b. The PDF link is built from the tag,
+# repository are v0.0.1, not proven_c_lib-v0.0.1. The PDF link is built from the tag,
 # so getting this wrong publishes a download link that 404s.
 tag=${version#proven_c_lib-}
 
