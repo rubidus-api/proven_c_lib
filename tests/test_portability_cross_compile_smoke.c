@@ -1,6 +1,6 @@
 #include <proven.h>
 
-_Static_assert(PROVEN_VERSION_NUM >= 260518, "version macro must be available");
+_Static_assert(PROVEN_VERSION_NUM >= PROVEN_VERSION_ENCODE(0, 0, 1), "version macro must be available");
 _Static_assert(sizeof(proven_byte_t) == 1, "byte type must be one byte");
 _Static_assert(sizeof(proven_mem_view_t) >= sizeof(void *) + sizeof(proven_size_t), "memory view must expose pointer and size storage");
 

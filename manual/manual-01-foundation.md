@@ -808,18 +808,30 @@ proven_mem_mut_t block = proven_arena_alloc_or_panic(&arena, n);
 Compile-time identification, for diagnostics and for code that must adapt to the library version.
 
 ```text
-#define PROVEN_VERSION_STRING "proven_c_lib-v26.09.04a"
-#define PROVEN_VERSION_NUM    260723
-#define PROVEN_VERSION_SUFFIX "d"
+#define PROVEN_VERSION_MAJOR  0
+#define PROVEN_VERSION_MINOR  0
+#define PROVEN_VERSION_PATCH  1
+#define PROVEN_VERSION_STRING "proven_c_lib-v0.0.1"
+#define PROVEN_VERSION_ENCODE(major, minor, patch) ((major) * 1000000L + (minor) * 1000L + (patch))
+#define PROVEN_VERSION_NUM    PROVEN_VERSION_ENCODE(PROVEN_VERSION_MAJOR, PROVEN_VERSION_MINOR, PROVEN_VERSION_PATCH)
 ```
 
-`PROVEN_VERSION_STRING` is what you print in a build report or a `--version` flag.
-`PROVEN_VERSION_NUM` is `YYMMDD` as an integer, for numeric comparison — `#if PROVEN_VERSION_NUM
->= 260720`. `PROVEN_VERSION_SUFFIX` distinguishes releases made on the same day.
+The version is semantic — `MAJOR.MINOR.PATCH`, from v0.0.1. A PATCH release fixes or documents
+and changes nothing a caller has to; a MINOR release adds without breaking an existing call; a
+MAJOR release may break one. While MAJOR is 0 the API may still move between minors.
 
-These three are checked against `include/proven/version.h` by the build, so the manual cannot drift
-from the header. (It did, once, and this sentence is why it will not again: the string was gated
-and the other two were not.)
+`PROVEN_VERSION_STRING` is what you print in a build report or a `--version` flag. The three
+numbers are for code that must adapt to the library version, and `PROVEN_VERSION_NUM` folds them
+into one integer for `#if` — compare it with `PROVEN_VERSION_ENCODE`, never with a literal:
+`#if PROVEN_VERSION_NUM >= PROVEN_VERSION_ENCODE(0, 1, 0)`.
+
+Releases before v0.0.1 were numbered by date (`v26.MM.DDx`), and `PROVEN_VERSION_NUM` was that
+date. The number restarted with the scheme, so a comparison against an old date value is wrong
+on every current release; rewrite it with `PROVEN_VERSION_ENCODE`.
+
+The numbers and the string are checked against `include/proven/version.h` by the build, and the
+string is checked against the numbers, so the manual cannot drift from the header. (It did,
+once, and this sentence is why it will not again: the string was gated and the rest was not.)
 
 ## 8. Examples and misuse cases
 

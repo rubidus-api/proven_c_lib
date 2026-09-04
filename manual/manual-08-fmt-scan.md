@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v26.09.04a)
+# Chapter 8: Formatting and Scanning (v0.0.1)
 
 **Part IV — Text in and out. Prerequisite: [Chapter 3](manual-03-strings-text.md) §3–§4.**
 **After this chapter** you can format any value, teach the formatter a type of your own, parse

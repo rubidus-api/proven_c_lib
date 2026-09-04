@@ -22,7 +22,9 @@ manual is published with a searchable index of every public function. It assumes
 one introductory C book, and it is the only document in this repository written to be read rather
 than looked up.
 
-- Version: proven_c_lib-v26.09.04a | Standard: C23 | License: MIT
+- Version: proven_c_lib-v0.0.1 | Standard: C23 | License: MIT
+- Versions are semantic, `MAJOR.MINOR.PATCH`, from v0.0.1 (2026-09-04); the releases before it carry
+  date-based numbers (`v26.MM.DDx`) and stay as they were published.
 - Repository: https://github.com/rubidus-api/proven_c_lib
 
 ---

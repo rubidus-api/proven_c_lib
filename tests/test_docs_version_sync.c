@@ -15,7 +15,9 @@
  * project pins, the number a bug report quotes, and the number that decides whether a fix is in
  * the copy someone is holding.
  *
- * PROVEN_VERSION_STRING is the source of truth. Everything else must agree with it.
+ * PROVEN_VERSION_STRING is the source of truth. Everything else must agree with it - and the
+ * string itself must agree with the three numbers it is built from: versions are semantic,
+ * MAJOR.MINOR.PATCH, from v0.0.1 (2026-09-04). The date-based numbers before that are history.
  */
 
 static char *read_text_file(const char *path) {
@@ -48,13 +50,30 @@ int main(void) {
         "PROVEN_VERSION_STRING is the source of truth; the README (README.md English + README-ko.md Korean), TEST.md, the manual headings and the CHANGELOG's newest entry must all carry the same version.",
         "CHECKLIST.md says to update these together. Nothing checked, and version.h once sat five releases behind the CHANGELOG while the README claimed a third value.");
 
-    /* The string the library itself reports. Strip the "proven_c_lib-" prefix to get "v26.07.13x",
-     * which is the form the manual headings and TEST.md use. */
-    const char *full = PROVEN_VERSION_STRING;           /* proven_c_lib-v26.07.13l */
+    /* The string the library itself reports. Strip the "proven_c_lib-" prefix to get "v0.0.1",
+     * which is the form the manual headings, TEST.md and the release tag use. */
+    const char *full = PROVEN_VERSION_STRING;           /* proven_c_lib-v0.0.1 */
     const char *dash = strrchr(full, '-');
     PROVEN_TEST_ASSERT(dash != NULL && dash[1] == 'v',
-        "PROVEN_VERSION_STRING must look like proven_c_lib-vYY.MM.DDx", "");
-    const char *v = dash + 1;                            /* v26.07.13l */
+        "PROVEN_VERSION_STRING must look like proven_c_lib-vMAJOR.MINOR.PATCH", "");
+    const char *v = dash + 1;                            /* v0.0.1 */
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("the string is built from the three numbers",
+        "MAJOR, MINOR and PATCH are what a caller compares against; the string is what a reader sees. They are one version, stated twice.",
+        "");
+    // ---------------------------------------------------------------
+    {
+        char expect[64];
+        snprintf(expect, sizeof expect, "proven_c_lib-v%d.%d.%d",
+                 PROVEN_VERSION_MAJOR, PROVEN_VERSION_MINOR, PROVEN_VERSION_PATCH);
+        PROVEN_TEST_ASSERT(strcmp(full, expect) == 0,
+            "PROVEN_VERSION_STRING must equal proven_c_lib-v<MAJOR>.<MINOR>.<PATCH>",
+            "The numbers were bumped and the string was not, or the other way round. Change all four lines of version.h together.");
+        PROVEN_TEST_INFO("{} == {}", PROVEN_ARG(full), PROVEN_ARG(expect));
+        PROVEN_TEST_ASSERT(PROVEN_VERSION_NUM == PROVEN_VERSION_ENCODE(PROVEN_VERSION_MAJOR, PROVEN_VERSION_MINOR, PROVEN_VERSION_PATCH),
+            "PROVEN_VERSION_NUM must be the encoding of the three numbers", "");
+    }
 
     PROVEN_TEST_INFO("version.h says {} (short form {})", PROVEN_ARG(full), PROVEN_ARG(v));
 
@@ -106,21 +125,27 @@ int main(void) {
         PROVEN_TEST_ASSERT(n >= 1,
             "manual chapter 1's version.h excerpt must quote the current PROVEN_VERSION_STRING", "");
 
-        /* The string was gated and the other two macros were not, so they drifted: the excerpt
-         * claimed PROVEN_VERSION_NUM 260713 and SUFFIX "m" while version.h said 260720 and "b".
-         * A partly-checked quotation is worse than an unchecked one, because it looks verified.
-         * All three lines of the excerpt are checked now, and chapter 1 says so in prose. */
-        char num_line[64];
-        snprintf(num_line, sizeof num_line, "PROVEN_VERSION_NUM    %d", PROVEN_VERSION_NUM);
-        PROVEN_TEST_ASSERT(count_in_file("manual/manual-01-foundation.md", num_line) >= 1,
-            "chapter 1's excerpt must quote the current PROVEN_VERSION_NUM",
-            "version.h changed and the chapter's excerpt did not. Copy the whole excerpt, not one line of it.");
-
-        char suffix_line[64];
-        snprintf(suffix_line, sizeof suffix_line, "PROVEN_VERSION_SUFFIX \"%s\"", PROVEN_VERSION_SUFFIX);
-        PROVEN_TEST_ASSERT(count_in_file("manual/manual-01-foundation.md", suffix_line) >= 1,
-            "chapter 1's excerpt must quote the current PROVEN_VERSION_SUFFIX",
-            "version.h changed and the chapter's excerpt did not. Copy the whole excerpt, not one line of it.");
+        /* The string was gated and the other macros were not, so they drifted: the excerpt once
+         * claimed a version number two releases behind version.h. A partly-checked quotation is
+         * worse than an unchecked one, because it looks verified. Every numbered line of the
+         * excerpt is checked now, in both editions, and chapter 1 says so in prose. */
+        struct { const char *name; int value; } nums[] = {
+            { "PROVEN_VERSION_MAJOR", PROVEN_VERSION_MAJOR },
+            { "PROVEN_VERSION_MINOR", PROVEN_VERSION_MINOR },
+            { "PROVEN_VERSION_PATCH", PROVEN_VERSION_PATCH },
+        };
+        for (size_t i = 0; i < sizeof nums / sizeof nums[0]; ++i) {
+            char line[80];
+            snprintf(line, sizeof line, "#define %s  %d", nums[i].name, nums[i].value);
+            PROVEN_TEST_ASSERT(count_in_file("manual/manual-01-foundation.md", line) >= 1,
+                "chapter 1's excerpt must quote the current MAJOR, MINOR and PATCH",
+                "version.h changed and the chapter's excerpt did not. Copy the whole excerpt, not one line of it.");
+            PROVEN_TEST_ASSERT(count_in_file("manual-ko/manual-01-foundation-ko.md", line) >= 1,
+                "the Korean chapter 1 excerpt must quote the same numbers",
+                "The English excerpt was updated and the Korean one was not.");
+        }
+        PROVEN_TEST_ASSERT(count_in_file("manual-ko/manual-01-foundation-ko.md", full) >= 1,
+            "the Korean chapter 1 excerpt must quote the current PROVEN_VERSION_STRING", "");
     }
 
     // ---------------------------------------------------------------
@@ -144,8 +169,12 @@ int main(void) {
                 heading[len] = '\0';
 
                 PROVEN_TEST_INFO("newest CHANGELOG entry: {}", PROVEN_ARG(heading));
-                PROVEN_TEST_ASSERT(strstr(heading, full) != NULL,
-                    "the newest CHANGELOG entry must name the current version",
+                /* Keep-a-Changelog style: `## [x.y.z] - YYYY-MM-DD`. The bracket holds the bare
+                 * number, which is the tag without its v. */
+                char bracket[64];
+                snprintf(bracket, sizeof bracket, "## [%s]", v + 1);
+                PROVEN_TEST_ASSERT(strncmp(heading, bracket, strlen(bracket)) == 0,
+                    "the newest CHANGELOG entry must be `## [MAJOR.MINOR.PATCH] - date` for the current version",
                     "Either the version was bumped without a changelog entry, or an entry was written for a version that was never bumped to.");
             }
             free(s);
