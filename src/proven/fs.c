@@ -40,7 +40,15 @@ static void internal_cstr_free(proven_allocator_t scratch, char *buf) {
     }
 }
 
-proven_result_file_t proven_fs_open(proven_allocator_t scratch, proven_u8str_view_t path, proven_fs_mode_t mode) {
+/*
+ * The body of proven_fs_open, plus PAL-only flags the public mode word cannot carry.
+ *
+ * PROVEN_SYS_FS_PRIVATE is one of those: it is an internal staging concern, not a new
+ * public open mode, and proven_fs_open's own flag validation still rejects anything the
+ * public enum does not name.
+ */
+static proven_result_file_t internal_fs_open_with(proven_allocator_t scratch, proven_u8str_view_t path,
+                                                  proven_fs_mode_t mode, int extra_pal_flags) {
     proven_result_file_t res = {0};
     internal_result_cstr_t path_res = internal_view_to_cstr(scratch, path);
     if (!proven_is_ok(path_res.err)) {
@@ -71,7 +79,7 @@ proven_result_file_t proven_fs_open(proven_allocator_t scratch, proven_u8str_vie
         pal_flags |= PROVEN_FS_READ;
     }
 
-    proven_sys_file_handle_t sh = proven_sys_fs_open(path_buf, pal_flags);
+    proven_sys_file_handle_t sh = proven_sys_fs_open(path_buf, pal_flags | extra_pal_flags);
     internal_cstr_free(scratch, path_buf);
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -90,6 +98,22 @@ proven_result_file_t proven_fs_open(proven_allocator_t scratch, proven_u8str_vie
 
     res.err = PROVEN_OK;
     return res;
+}
+
+proven_result_file_t proven_fs_open(proven_allocator_t scratch, proven_u8str_view_t path, proven_fs_mode_t mode) {
+    return internal_fs_open_with(scratch, path, mode, 0);
+}
+
+/* Permissions through the OPEN HANDLE. The pathname form has to resolve the name a second
+ * time, and a staging file's name is exactly the kind of name that can come to mean
+ * something else in between. */
+static proven_err_t internal_fchmod(proven_file_t file, proven_fs_perms_t perms) {
+#if defined(_WIN32) || defined(_WIN64)
+    proven_sys_file_handle_t h = { .handle = file.internal.ptr };
+#else
+    proven_sys_file_handle_t h = { .fd = file.internal.fd };
+#endif
+    return proven_sys_fs_fchmod(h, (unsigned int)perms) ? PROVEN_OK : PROVEN_ERR_IO;
 }
 
 proven_err_t proven_fs_close(proven_file_t file) {
@@ -368,7 +392,24 @@ proven_err_t proven_fs_copy(proven_allocator_t temp_alloc, proven_u8str_view_t s
         }
     }
 
-    proven_result_file_t w_res = proven_fs_open(temp_alloc, dest, PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
+    /*
+     * Learn the source's mode BEFORE the destination is created, because whether the
+     * destination has to be created private depends on it.
+     *
+     * A destination that does not exist yet used to be created with the process umask and
+     * narrowed to 0600 immediately afterwards - and a descriptor opened in between stays
+     * readable no matter what the mode becomes later. The narrowing was already the
+     * intent; this makes it true from the first instant. An existing destination keeps
+     * whatever mode it has: creation flags do not apply to it, and its existing readers
+     * are not something this library can revoke.
+     */
+    proven_fs_stat_t src_stat = {0};
+    bool have_src_perms = proven_is_ok(proven_fs_stat(temp_alloc, src, &src_stat)) &&
+                          src_stat.type == PROVEN_FS_TYPE_FILE;
+
+    proven_result_file_t w_res = internal_fs_open_with(temp_alloc, dest,
+        (proven_fs_mode_t)(PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC),
+        have_src_perms ? PROVEN_SYS_FS_PRIVATE : 0);
     if (!proven_is_ok(w_res.err)) {
         (void)proven_fs_close(r_res.value);
         return w_res.err;
@@ -385,10 +426,9 @@ proven_err_t proven_fs_copy(proven_allocator_t temp_alloc, proven_u8str_view_t s
      * a wider mode than the original had, not even briefly, AND the file stays writable
      * while we are writing it.
      */
-    proven_fs_stat_t src_stat = {0};
-    bool have_src_perms = proven_is_ok(proven_fs_stat(temp_alloc, src, &src_stat)) &&
-                          src_stat.type == PROVEN_FS_TYPE_FILE;
     if (have_src_perms) {
+        /* An EXISTING destination was not created by the open above, so it still carries
+         * its old mode and still needs narrowing here. */
         proven_err_t merr = proven_fs_chmod(temp_alloc, dest, (proven_fs_perms_t)0600u);
         if (!proven_is_ok(merr) && merr != PROVEN_ERR_UNSUPPORTED) {
             (void)proven_fs_close(r_res.value);
@@ -797,6 +837,11 @@ proven_err_t proven_fs_write_file(proven_allocator_t scratch, proven_u8str_view_
     return err;
 }
 
+/* Defined further down, next to proven_fs_stat, which is the same lookup without the
+ * missing/failed distinction. */
+static proven_err_t internal_stat_impl(proven_allocator_t scratch, proven_u8str_view_t path,
+                                       proven_fs_stat_t *out_stat, bool *out_missing);
+
 /* Longest basename most filesystems accept. The temp sibling has to fit too. */
 #define INTERNAL_NAME_MAX ((proven_size_t)255)
 #define INTERNAL_TMP_SUFFIX_LEN ((proven_size_t)8)   /* ".pvtmpNN", no NUL */
@@ -865,10 +910,22 @@ static proven_err_t internal_write_file_atomic(proven_allocator_t scratch, prove
 
     /* Read the target's permissions before we create anything, so we can carry
      * them across. A missing target is fine: then the temp's own fresh mode is
-     * the right answer, exactly as it would be for write_file. */
+     * the right answer, exactly as it would be for write_file.
+     *
+     * A FAILED lookup is not fine, and it is not the same thing. If we cannot tell what
+     * we are about to overwrite, we do not know whether the bytes we are about to write
+     * need protecting - so we stop here, before creating anything, rather than guess a
+     * default mode for a file that may well be private. */
     proven_fs_stat_t target = {0};
-    bool have_target_perms = proven_is_ok(proven_fs_stat(scratch, path, &target)) &&
-                             target.type == PROVEN_FS_TYPE_FILE;
+    bool target_missing = false;
+    {
+        proven_err_t serr = internal_stat_impl(scratch, path, &target, &target_missing);
+        if (!proven_is_ok(serr)) {
+            scratch.free_fn(scratch.ctx, tmp);
+            return serr;
+        }
+    }
+    bool have_target_perms = !target_missing && target.type == PROVEN_FS_TYPE_FILE;
 
     proven_result_file_t f_res = {0};
     f_res.err = PROVEN_ERR_BUSY;
@@ -885,8 +942,21 @@ static proven_err_t internal_write_file_atomic(proven_allocator_t scratch, prove
         s[7] = (proven_byte_t)('0' + (attempt % 10));
         s[8] = 0;
 
-        f_res = proven_fs_open(scratch, tmp_view,
-            (proven_fs_mode_t)(PROVEN_FS_WRITE | PROVEN_FS_CREATE_NEW));
+        /*
+         * PRIVATE when we are carrying an existing target's mode across: the staging file
+         * then holds the payload under 0600 from its first instant, and the target's own
+         * mode goes on through the open handle further down. Without it the file is born
+         * 0666 & ~umask - 0644 under the usual umask - and a chmod a moment later cannot
+         * revoke a descriptor another user opened in between. That is the whole defect:
+         * open descriptors are not re-checked against the mode.
+         *
+         * For a target that does not exist there is nothing to protect that the finished
+         * file will not publish anyway, so the default creation mode stays what it has
+         * always been. Changing THAT is a permissions-policy decision, not a bug fix.
+         */
+        int private_flag = have_target_perms ? PROVEN_SYS_FS_PRIVATE : 0;
+        f_res = internal_fs_open_with(scratch, tmp_view,
+            (proven_fs_mode_t)(PROVEN_FS_WRITE | PROVEN_FS_CREATE_NEW), private_flag);
         if (proven_is_ok(f_res.err)) break;
     }
     if (!proven_is_ok(f_res.err)) {
@@ -895,18 +965,25 @@ static proven_err_t internal_write_file_atomic(proven_allocator_t scratch, prove
     }
 
     /*
-     * Put the mode on the temp BEFORE writing a single byte of the payload.
+     * Put the mode on the temp BEFORE writing a single byte of the payload, and put it on
+     * through the OPEN HANDLE.
      *
-     * It used to be chmod'd after the write, at the very end - which meant the entire new
-     * contents of a 0600 file sat in a world-readable 0644 temp for the whole duration of
-     * the write. A watcher thread stat'ing the temp during a 64 MiB rewrite saw exactly
-     * that. The end state was right and the window was wide open, and a window is all a
-     * secret needs. If there is no target, the temp's fresh mode is the right answer, the
-     * same as for write_file.
+     * Two different windows, and they need both halves. Creating the file private (see the
+     * open above) closes the instant between creation and the first mode change - the one
+     * a chmod can never close afterwards, because an already-open descriptor is not
+     * re-checked against the mode. Setting the target's mode before the payload closes the
+     * duration of the write itself: on a filesystem whose inherited ACLs widen every new
+     * file regardless of the mode asked for, the creation flag alone does not hold, and a
+     * 64 MiB rewrite would sit group-readable for as long as it took.
+     *
+     * Through the handle rather than the pathname because the name would have to be
+     * resolved a second time, and a staging name is exactly the kind of name a concurrent
+     * writer can make mean something else. If there is no target, the temp keeps its fresh
+     * default mode, the same as for write_file.
      */
     proven_err_t err = PROVEN_OK;
     if (have_target_perms) {
-        err = proven_fs_chmod(scratch, tmp_view, target.perms);
+        err = internal_fchmod(f_res.value, target.perms);
     }
 
     if (proven_is_ok(err)) {
@@ -1054,18 +1131,31 @@ proven_err_t proven_fs_lock(proven_file_t file, proven_fs_lock_type_t type, bool
 #endif
 }
 
-proven_err_t proven_fs_stat(proven_allocator_t scratch, proven_u8str_view_t path, proven_fs_stat_t *out_stat) {
+/*
+ * The same lookup proven_fs_stat does, but it says which kind of "no" it got.
+ *
+ * A caller that is about to replace a file needs "there is nothing there" and "I could
+ * not find out" apart: the first means there is no mode to carry across, the second means
+ * it does not know what it is about to overwrite. The public proven_fs_stat keeps
+ * collapsing both into PROVEN_ERR_IO, because that is what its callers already expect.
+ */
+static proven_err_t internal_stat_impl(proven_allocator_t scratch, proven_u8str_view_t path,
+                                       proven_fs_stat_t *out_stat, bool *out_missing) {
     if (!out_stat) return PROVEN_ERR_INVALID_ARG;
-    
+
     internal_result_cstr_t p_res = internal_view_to_cstr(scratch, path);
     if (!proven_is_ok(p_res.err)) return p_res.err;
-    
+
     proven_sys_fs_stat_t se;
-    bool stat_ok = proven_sys_fs_stat(p_res.value, &se);
+    proven_sys_fs_stat_result_t kind = proven_sys_fs_stat_checked(p_res.value, &se);
     internal_cstr_free(scratch, p_res.value);
-    
-    if (!stat_ok) return PROVEN_ERR_IO;
-    
+
+    if (kind == PROVEN_SYS_FS_STAT_NOT_FOUND) {
+        if (out_missing) { *out_missing = true; return PROVEN_OK; }
+        return PROVEN_ERR_IO;
+    }
+    if (kind != PROVEN_SYS_FS_STAT_OK) return PROVEN_ERR_IO;
+
     out_stat->size = se.size;
     out_stat->type = se.is_dir ? PROVEN_FS_TYPE_DIR
                    : se.is_regular ? PROVEN_FS_TYPE_FILE
@@ -1085,6 +1175,10 @@ proven_err_t proven_fs_stat(proven_allocator_t scratch, proven_u8str_view_t path
     out_stat->gid = se.gid;
 
     return PROVEN_OK;
+}
+
+proven_err_t proven_fs_stat(proven_allocator_t scratch, proven_u8str_view_t path, proven_fs_stat_t *out_stat) {
+    return internal_stat_impl(scratch, path, out_stat, NULL);
 }
 
 proven_err_t proven_fs_symlink(proven_allocator_t scratch, proven_u8str_view_t target, proven_u8str_view_t linkpath) {

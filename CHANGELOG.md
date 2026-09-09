@@ -16,6 +16,35 @@ section is `## [x.y.z] - YYYY-MM-DD`. The entries below v0.0.1 carry the date-ba
 numbers those releases were published under (`proven_c_lib-v26.MM.DDx`) and are left as
 written; their tags still exist.
 
+## [Unreleased]
+
+### Security
+
+- **A staging file is now created private, not narrowed afterwards** (RFC-0006 H-002).
+  Replacing a 0600 file with `proven_fs_write_file_atomic` or `proven_fs_write_file_durable`
+  wrote the new contents into a `.pvtmpNN` sibling that was *created* with `0666 & ~umask`
+  and narrowed a moment later. A `chmod` does not reach a descriptor another local user
+  opened during that moment: that descriptor stays open, stays readable, and then reads the
+  private payload. The staging file is now created owner-only by the creating call itself,
+  and the target's mode is applied through the open handle rather than by re-resolving the
+  staging name. A new destination of `proven_fs_copy` is created the same way. The process
+  umask is not touched - it is shared mutable state.
+- **A failed metadata lookup no longer reads as "no such file"** (RFC-0006 H-002).
+  `internal_write_file_atomic` treated any `stat` failure as a missing target and carried
+  on with default permissions. It now stops before creating anything unless the target is
+  genuinely absent. The platform layer gained `proven_sys_fs_stat_checked`, which
+  distinguishes the two; the public `proven_fs_stat` is unchanged and still answers
+  `PROVEN_ERR_IO` for both.
+
+### Changed
+
+- Unchanged on purpose: a brand-new atomic target still gets `0666 & ~umask`. Restrictive
+  creation carries an existing target's mode across; it is not a new default-permissions
+  policy, which would be an owner decision.
+- `tests/test_docs_version_sync` skips an `## [Unreleased]` section when it looks for the
+  newest released entry. The gate and `docs/operations/README.md` had been asking for
+  opposite things.
+
 ## [0.0.1] - 2026-09-04
 
 ### Changed
