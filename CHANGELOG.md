@@ -44,8 +44,22 @@ written; their tags still exist.
   fixing the helpers alone would not have protected them: a wrapped `need` passed
   `need > out_cap` and the loop then wrote past the caller's buffer.
 
+- **The job queue no longer compares positions with a signed subtraction** (RFC-0006 H-004).
+  `proven_job_submit` and `proven_job_execute_one` computed
+  `(proven_ptrdiff_t)seq - (proven_ptrdiff_t)pos`. The queue's counters run forward for
+  ever and wrap; only their distance is small. At the sign boundary those two casts can
+  produce `PTRDIFF_MAX` and `PTRDIFF_MIN`, and subtracting them is signed overflow -
+  undefined behaviour, reached by a legitimately full queue with no concurrency involved.
+  The distance is now taken in the unsigned counter type, where wrapping is defined and is
+  the modular arithmetic the algorithm wants, through one shared helper used by both sides.
+  Memory ordering, admission, wake permits and drain behaviour are untouched.
+
 ### Changed
 
+- **A job queue capacity at or past half the counter range is refused** (RFC-0006 H-004).
+  `proven_job_system_init` answers `PROVEN_ERR_INVALID_ARG` before it allocates anything.
+  Past that limit "ahead" and "behind" stop being distinguishable, so it is a correctness
+  condition rather than a resource one. No reachable capacity is affected.
 - **The encoded-size helpers answer `PROVEN_SIZE_MAX` for a size that cannot be
   represented** (RFC-0006 H-001). They return a size and have nowhere to put an error. A
   valid hex output is always even and a valid padded Base64 output is always a multiple of
