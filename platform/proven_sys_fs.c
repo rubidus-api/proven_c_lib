@@ -615,10 +615,16 @@ proven_sys_fs_stat_result_t proven_sys_fs_stat_checked(const char *path, proven_
     // FILE_FLAG_BACKUP_SEMANTICS is required to open directories
     HANDLE h = CreateFileW(wpath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 
                            NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    /* Read the error BEFORE the free. HeapFree can overwrite the thread's last-error value,
+     * and "the file is not there" would then be indistinguishable from "the lookup failed" -
+     * which is the whole distinction this function exists to make. A missing target
+     * misreported as a failed lookup makes internal_write_file_atomic refuse to create a
+     * file it should have created. */
+    DWORD open_error = (h == INVALID_HANDLE_VALUE) ? GetLastError() : 0;
     HeapFree(GetProcessHeap(), 0, wpath);
     if (h == INVALID_HANDLE_VALUE) {
-        DWORD e = GetLastError();
-        return (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND || e == ERROR_INVALID_NAME)
+        return (open_error == ERROR_FILE_NOT_FOUND || open_error == ERROR_PATH_NOT_FOUND ||
+                open_error == ERROR_INVALID_NAME)
             ? PROVEN_SYS_FS_STAT_NOT_FOUND : PROVEN_SYS_FS_STAT_ERROR;
     }
 
