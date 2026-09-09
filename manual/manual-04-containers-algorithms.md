@@ -944,11 +944,11 @@ Every call takes the input, a caller-owned output buffer and its capacity, and a
 
 | API | Intent | Return |
 |---|---|---|
-| `proven_hex_encoded_size(n)` | The characters `proven_hex_encode` will write for `n` bytes: `n * 2`, no NUL. | `proven_size_t`. |
+| `proven_hex_encoded_size(n)` | The characters `proven_hex_encode` will write for `n` bytes: `n * 2`, no NUL. | `proven_size_t`; `PROVEN_SIZE_MAX` when `n * 2` does not fit. |
 | `proven_hex_decoded_size(n)` | The bytes `proven_hex_decode` will write for `n` characters: `n / 2`. | `proven_size_t`. |
-| `proven_hex_encode(data, out, cap, &w)` | Lowercase hex. | `PROVEN_OK`; `OUT_OF_BOUNDS` if `cap` is short (**nothing written**); `INVALID_ARG` for a NULL out or a `{NULL, >0}` view. |
+| `proven_hex_encode(data, out, cap, &w)` | Lowercase hex. | `PROVEN_OK`; `OUT_OF_BOUNDS` if `cap` is short (**nothing written**); `OVERFLOW` if the output size does not fit at all; `INVALID_ARG` for a NULL out or a `{NULL, >0}` view. |
 | `proven_hex_decode(text, out, cap, &w)` | Decode hex; upper and lower case both accepted. | `INVALID_ENCODING` for an odd length or any non-hex byte (**nothing committed**). |
-| `proven_base64_encoded_size(n)` | An upper bound for both Base64 forms: `4 * ceil(n/3)`. | `proven_size_t`. |
+| `proven_base64_encoded_size(n)` | An upper bound for both Base64 forms: `4 * ceil(n/3)`. | `proven_size_t`; `PROVEN_SIZE_MAX` when that does not fit. |
 | `proven_base64_decoded_size(n)` | An upper bound for **padded and unpadded** text: `3 * ceil(n/4)`. | `proven_size_t`. |
 | `proven_base64_encode(data, out, cap, &w)` | Standard alphabet (`+` `/`), `=`-padded. | as above. |
 | `proven_base64url_encode(data, out, cap, &w)` | URL-safe alphabet (`-` `_`), **no padding**. | as above. |
