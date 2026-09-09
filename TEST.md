@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 |---|---|---|
 | `unit` | Does this module do what it says, used the way a caller uses it? | 61 |
 | `contract` | Does it *refuse* what it says it refuses? | 13 |
-| `regression` | Does a defect that actually shipped stay fixed? | 22 |
+| `regression` | Does a defect that actually shipped stay fixed? | 23 |
 | `differential` | Does it agree with an oracle we did not write? | 4 |
 | `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 10 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
@@ -297,7 +297,7 @@ Failure tip: identify the target name in the log, then check whether the failure
 ## Test catalog
 
 
-The hosted full run builds and executes 115 registered tests plus the 78 runnable manual examples - 193 executables in all. `./nob regression` re-runs a 31-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 125 test files: the 115 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
+The hosted full run builds and executes 116 registered tests plus the 78 runnable manual examples - 194 executables in all. `./nob regression` re-runs a 32-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 126 test files: the 116 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1278,6 +1278,23 @@ Intent: verify a `readdir()` that fails mid-directory is reported with the last 
 
 Failure tip: inspect the readdir-failure branch of `proven_fs_walk_next` and the fd-relative, `O_NOFOLLOW` descent (`proven_sys_fs_dir_open_at`). Both defects were found by the standing audit and are pinned here against the same fault injection.
 
+### `tests/test_regression_job_seq_wrap` — queue sequence comparison at the sign boundary (RFC-0006 H-004)
+
+Intent: verify the job queue decides what to do with a cell by **modular** distance in the unsigned counter type, and that it is unambiguous everywhere the counters can be.
+
+Sub-checks:
+
+- The classifier at the exact state the RFC reproduces: capacity two, an enqueue position at `PTRDIFF_MAX + 1`, a cell one lap behind it. The old code wrote that comparison as `(proven_ptrdiff_t)seq - (proven_ptrdiff_t)pos`, and those two positions cast to `PTRDIFF_MAX` and `PTRDIFF_MIN` — whose difference does not exist in the type, even though the distance being asked about is −1. UBSan reports it, and no concurrency is involved: a legitimately full queue at that boundary is enough.
+- Distances of −1, 0 and +1 taken at nine positions, including 0, the sign boundary, and `SIZE_MAX`, so the wrap to zero and the wrap across the sign are both covered.
+- The far edges: the largest AHEAD distance is one below half the counter range, and half the range itself already reads as BEHIND. An off-by-one in the sign-bit test shows up here and nowhere else.
+- A queue capacity at half the counter range is `PROVEN_ERR_INVALID_ARG` **before** anything is allocated. Past that limit ahead and behind stop being distinguishable, so the limit is a correctness condition, not a resource one. The existing power-of-two and minimum-size guards still hold.
+- A source check that neither queue path computes a signed difference again, and that both go through the one shared helper. Two copies of a comparison this easy to get wrong are two chances to get it wrong differently.
+- An ordinary capacity-two queue with one worker still accepts work, runs every accepted job exactly once, and shuts down.
+
+Note: the test reads the classifier from `src/proven/proven_internal_jobseq.h` rather than seeding a live queue. Seeding one means compiling a second copy of `job.c` into the test executable, and one implementation compiled twice is a thing that can disagree with itself. The RFC's Appendix B probe does exactly that on purpose, as a one-off reproduction under UBSan; it is not what a registered test should be built on.
+
+Failure tip: inspect `src/proven/proven_internal_jobseq.h` and the two call sites in `src/proven/job.c`.
+
 ### `tests/test_regression_fs_private_staging` — staging files are created private (RFC-0006 H-002)
 
 Intent: verify that replacing a 0600 file — atomically or durably — stages the new contents in a file that is *created* 0600, and that a new copy destination is created the same way.
@@ -1696,6 +1713,7 @@ a slot count drifts or a producer stalls.
 - `tests/test_unit_map_keyed`
 - `tests/test_unit_hash`
 - `tests/test_unit_fs_walk`
+- `tests/test_regression_job_seq_wrap`
 - `tests/test_regression_fs_private_staging`
 - `tests/test_regression_fs_perms_and_types`
 - `tests/test_regression_stream_partial_write`
