@@ -864,16 +864,49 @@ static proven_err_t internal_stat_impl(proven_allocator_t scratch, proven_u8str_
  * currently offers.
  */
 
+/*
+ * Does this byte separate path components ON THIS PLATFORM?
+ *
+ * POSIX says one thing and Windows says another, and the difference is not cosmetic. On
+ * POSIX a backslash is an ordinary character in a filename: "a\\b" is one name, not "b"
+ * inside "a". Treating it as a separator made a durable write to that file sync
+ * "<dir>/a" - which is not its parent. If that name does not exist the write returns an
+ * I/O error AFTER the rename has already published the new contents; if it happens to be
+ * a directory, the wrong directory is synced and the call reports a durability it did not
+ * achieve. Both are worse than not trying.
+ *
+ * proven_fs_is_absolute deliberately still accepts Windows spellings everywhere: it
+ * CLASSIFIES a path that may have come from elsewhere, rather than resolving one on this
+ * machine. That is a different question and it keeps its own answer.
+ */
+static bool internal_is_separator(proven_byte_t c) {
+#if defined(_WIN32) || defined(_WIN64)
+    return c == (proven_byte_t)'/' || c == (proven_byte_t)'\\';
+#else
+    return c == (proven_byte_t)'/';
+#endif
+}
+
 /* The directory a path lives in - "." when the path has no separator. Used to sync
  * the directory after a rename, which is the only thing that makes the rename
  * itself survive a power cut. */
 static proven_u8str_view_t internal_parent_dir(proven_u8str_view_t path) {
     proven_size_t cut = PROVEN_INDEX_NOT_FOUND;
     for (proven_size_t i = 0; i < path.size; ++i) {
-        if (path.ptr[i] == (proven_byte_t)'/' || path.ptr[i] == (proven_byte_t)'\\') cut = i;
+        if (internal_is_separator(path.ptr[i])) cut = i;
     }
     if (cut == PROVEN_INDEX_NOT_FOUND) return PROVEN_LIT(".");
     if (cut == 0) return PROVEN_LIT("/");           /* "/foo" -> the root */
+#if defined(_WIN32) || defined(_WIN64)
+    /* "C:\\foo" -> "C:\\": the separator after a drive letter IS the root and cannot be
+     * trimmed away, or the parent becomes the drive-relative current directory, which is a
+     * different place. UNC and extended-length prefixes are not modelled here; on Windows
+     * proven_fs_sync_dir is PROVEN_ERR_UNSUPPORTED, so this feeds only the staging-name
+     * basename, where a too-long name is refused rather than mis-resolved. */
+    if (cut == 2 && path.ptr[1] == (proven_byte_t)':') {
+        return (proven_u8str_view_t){ .ptr = path.ptr, .size = 3 };
+    }
+#endif
     return (proven_u8str_view_t){ .ptr = path.ptr, .size = cut };
 }
 
@@ -891,7 +924,7 @@ static proven_err_t internal_write_file_atomic(proven_allocator_t scratch, prove
     proven_size_t stem = path.size;
     proven_size_t name_start = 0;
     for (proven_size_t i = 0; i < path.size; ++i) {
-        if (path.ptr[i] == (proven_byte_t)'/' || path.ptr[i] == (proven_byte_t)'\\') name_start = i + 1;
+        if (internal_is_separator(path.ptr[i])) name_start = i + 1;
     }
     proven_size_t name_len = path.size - name_start;
     if (name_len + INTERNAL_TMP_SUFFIX_LEN > INTERNAL_NAME_MAX) {

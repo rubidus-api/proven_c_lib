@@ -44,6 +44,18 @@ written; their tags still exist.
   fixing the helpers alone would not have protected them: a wrapped `need` passed
   `need > out_cap` and the loop then wrote past the caller's buffer.
 
+- **A durable write syncs the directory the file is actually in** (RFC-0006 H-003).
+  `internal_parent_dir` treated `/` and `\` as separators on every platform. On POSIX a
+  backslash is an ordinary character in a filename, so a durable write to `d/a\b` - one
+  file called `a\b` inside `d` - tried to sync `d/a`. When that name does not exist the
+  call returned an I/O error *after* the rename had already published the new contents;
+  when it happened to be a directory, the wrong directory was synced and the call reported
+  a durability it had not achieved. The separator rule is now the platform's own, and the
+  same rule measures the basename the staging name is derived from - a long name full of
+  backslashes used to be measured as a short one, so the staging name was never trimmed to
+  fit. `proven_fs_is_absolute` is unchanged: it classifies a path that may have come from
+  elsewhere rather than resolving one here, which is a different question.
+
 - **The job queue no longer compares positions with a signed subtraction** (RFC-0006 H-004).
   `proven_job_submit` and `proven_job_execute_one` computed
   `(proven_ptrdiff_t)seq - (proven_ptrdiff_t)pos`. The queue's counters run forward for

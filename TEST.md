@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 |---|---|---|
 | `unit` | Does this module do what it says, used the way a caller uses it? | 61 |
 | `contract` | Does it *refuse* what it says it refuses? | 13 |
-| `regression` | Does a defect that actually shipped stay fixed? | 23 |
+| `regression` | Does a defect that actually shipped stay fixed? | 24 |
 | `differential` | Does it agree with an oracle we did not write? | 4 |
 | `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 10 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
@@ -297,7 +297,7 @@ Failure tip: identify the target name in the log, then check whether the failure
 ## Test catalog
 
 
-The hosted full run builds and executes 116 registered tests plus the 78 runnable manual examples - 194 executables in all. `./nob regression` re-runs a 32-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 126 test files: the 116 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
+The hosted full run builds and executes 117 registered tests plus the 78 runnable manual examples - 195 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 127 test files: the 117 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1278,6 +1278,23 @@ Intent: verify a `readdir()` that fails mid-directory is reported with the last 
 
 Failure tip: inspect the readdir-failure branch of `proven_fs_walk_next` and the fd-relative, `O_NOFOLLOW` descent (`proven_sys_fs_dir_open_at`). Both defects were found by the standing audit and are pinned here against the same fault injection.
 
+### `tests/test_regression_fs_backslash_parent` — a backslash in a POSIX filename is not a separator (RFC-0006 H-003)
+
+Intent: verify a durable write syncs the directory the file is actually in, when the filename legally contains a backslash.
+
+Sub-checks:
+
+- A durable write to `<dir>/a\b` succeeds and holds the new contents. It used to return an I/O error — *after* the rename had already published them, so the caller was told the write failed while looking at a file that had been replaced. The parent of that file is `<dir>`; the old rule computed `<dir>/a`, which does not exist.
+- The decoy: with `<dir>/a` created as a real directory, the write must still sync `<dir>` and never `<dir>/a`. This is the case a `PROVEN_OK` assertion cannot see at all — the old code returns success and has synced the wrong directory — so the test records which directories were opened and names the one that was synced.
+- Ordinary paths are unchanged: a plain slash path syncs the directory before the last slash, and a bare filename syncs `.`.
+- A 250-character basename made of `x` and `\` is written atomically. The staging file is `<path>.pvtmpNN` and the basename is trimmed so that name still fits in `NAME_MAX`; under the old rule the basename was measured from the last backslash, so a long name measured as a short one, no trim happened, and the filesystem was handed a name too long to create.
+
+Note: POSIX-only; compiles to a skip on Windows, where a backslash *is* a separator and `proven_fs_sync_dir` is `PROVEN_ERR_UNSUPPORTED` anyway. The observation seam is a definition of `open()` in the test, bound to the platform layer's call by the linker, forwarding to the real `openat` syscall — `proven_fs_sync_dir` opens the directory read-only to fsync it, so the record says what was synced.
+
+What it does not prove: the Windows path rules — drive roots, UNC shares, extended-length paths — have no result here. `proven_fs_is_absolute` is deliberately left accepting Windows spellings everywhere; it classifies a path that may have come from elsewhere rather than resolving one on this machine.
+
+Failure tip: inspect `internal_is_separator` and `internal_parent_dir` in `src/proven/fs.c`.
+
 ### `tests/test_regression_job_seq_wrap` — queue sequence comparison at the sign boundary (RFC-0006 H-004)
 
 Intent: verify the job queue decides what to do with a cell by **modular** distance in the unsigned counter type, and that it is unambiguous everywhere the counters can be.
@@ -1713,6 +1730,7 @@ a slot count drifts or a producer stalls.
 - `tests/test_unit_map_keyed`
 - `tests/test_unit_hash`
 - `tests/test_unit_fs_walk`
+- `tests/test_regression_fs_backslash_parent`
 - `tests/test_regression_job_seq_wrap`
 - `tests/test_regression_fs_private_staging`
 - `tests/test_regression_fs_perms_and_types`
