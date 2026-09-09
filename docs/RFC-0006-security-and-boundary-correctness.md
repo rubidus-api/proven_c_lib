@@ -1,6 +1,8 @@
 # RFC-0006 - Security and boundary correctness follow-up
 
-**Status:** proposed; implementation requires owner approval
+**Status:** implemented on branch `rfc-0006`, except the two Windows runtime rows.
+The two decisions the RFC reserved for the owner were taken as the RFC's own first option
+and are marked below; both are one-line reversals. See section 8 for the closure table.
 **Date:** 2026-09-09
 **Baseline:** `7d6b46729d8e501ac5935b2ac6859152d6b33ecd` (public version `0.0.1`)
 **Related:** [RFC-0005](RFC-0005-whole-library-audit-and-hardening.md),
@@ -344,14 +346,41 @@ successful OS entropy call; fake-backend and native evidence remain separate.
    before/after result, and implementing commit. If native Windows cannot run,
    label a source fix implemented-unverified and keep its runtime row open.
 
-| Work item | Regression present | Fix landed | Native/target evidence | Status |
+Closed against baseline `7d6b46729d8e501ac5935b2ac6859152d6b33ecd`, on branch `rfc-0006`,
+gcc 14.2.0 / Linux / x86-64. Every row's regression was seen to FAIL before its fix.
+
+| Work item | Registered regression | Fix | Evidence | Status |
 |---|---|---|---|---|
-| H-001 | Appendix observer only; registered regression needed | No | Helper failures reproduced; giant allocation not tested | Open |
-| H-002 | Appendix observer only; registered regression needed | No | POSIX fd-retention reproduced | Open |
-| H-003 | Appendix observer only; registered regression needed | No | Linux wrong-parent failure reproduced | Open |
-| H-004 | Appendix seeded harness only; registered regression needed | No | Native UBSan reproduced | Open |
-| H-005 | Follow RFC-0005/B-033 | No | Native Windows not run | Open |
-| H-006 | Follow RFC-0005/B-033 | No | Native Windows not run | Open |
+| H-001 | `tests/test_unit_encode`, two new sections | `ffcc04b` | Before: helpers answered 0 at `M/2+1` and `M`; the encoder section died with SIGSEGV. After: `PROVEN_SIZE_MAX` and `PROVEN_ERR_OVERFLOW`. `build` · `strict-error` · `asan` · `ubsan` · `freestanding` | Closed on this target |
+| H-002 | `tests/test_regression_fs_private_staging` | `7c22299` | Before: staging mode 0644. After: 0600, and the Appendix A observer agrees where modes are honoured. `build` · `strict-error` · `asan` · `ubsan` | Closed on POSIX |
+| H-003 | `tests/test_regression_fs_backslash_parent` | `91370a0` | Before: the durable write returned an error after publishing. After: succeeds and syncs the real parent, decoy directory untouched. `build` · `strict-error` · `asan` · `ubsan` | Closed on POSIX |
+| H-004 | `tests/test_regression_job_seq_wrap` | `dd6f20d` | Appendix B under UBSan: before, signed overflow at `job.c:262`; after, exit 0 with no diagnostic. `build` · `strict-error` · `asan` · `ubsan` · `tsan` | Closed on this target |
+| H-005 | `tests/test_portability_source_contracts` (source contract only) | `57aecc0` | `./nob cross` compiles `windows-x86_64-winapi` and `windows-i686-winapi`. **No native run.** | Implemented, unverified |
+| H-006 | `tests/test_portability_source_contracts` + planner boundaries | `57aecc0` | Planner checked at 0, 1, limit-1, limit, limit+1, 2*limit+1 and over a whole plan. `./nob cross` passes. **No native run.** | Implemented, unverified |
+
+### The two decisions the RFC reserved, and how to reverse them
+
+1. **Size-helper overflow policy** (section 3, proposal 4). Taken: the helpers answer
+   `PROVEN_SIZE_MAX`. It is one line each in `src/proven/encode.c`; the alternative -
+   result-returning helpers plus aliases, examples and legacy wrappers - is a larger public
+   surface and was not built without a decision. Either way the encoders refuse
+   independently, so a caller who passes the sentinel back as a capacity is refused rather
+   than trusted.
+2. **New-file permission policy** (section 4, proposal 3). Taken: unchanged. Restrictive
+   creation carries an EXISTING target's mode across; a brand-new atomic target still gets
+   `0666 & ~umask`, and `tests/test_regression_fs_private_staging` pins that so a change to
+   it cannot happen by accident. Making new files restrictive by default is a policy
+   decision, not a bug fix.
+
+### What is still open
+
+- Native Windows for H-005 and H-006, and for the Windows half of H-002 (ACLs, not mode
+  bits). macOS, 32-bit and embedded targets are unverified as before.
+- A second-user lane for H-002. The observer runs as one user; the cross-user argument
+  rests on the observed mode and ordinary POSIX open-fd semantics.
+- Everything section 2 lists as deferred: RFC-0005 C-002/C-003, V-001/V-002,
+  V-004..V-012, B-034..B-038, the file-copy identity race, Windows path-conversion races,
+  map entropy fallback policy, and semaphore permit accumulation.
 
 ## Appendix A. Reproduce three baseline observations
 
@@ -435,6 +464,20 @@ sizes hex=0 b64enc=0 b64dec=0
 temp initial_mode=644 atomic_ok=1 held_fd_payload=NEW
 backslash durable_ok=0 payload=NEW
 ```
+
+After the fixes, on a filesystem that honours creation modes:
+
+```text
+sizes hex=18446744073709551615 b64enc=18446744073709551615 b64dec=13835058055282163712
+temp initial_mode=600 atomic_ok=1 held_fd_payload=NEW
+backslash durable_ok=1 payload=NEW
+```
+
+The retained descriptor still reads the payload, exactly as this section predicted: it
+belongs to the same user and was opened before the mode was ever narrow. What changed is
+that a DIFFERENT user can no longer open it at all. Run the observer somewhere modes are
+honoured - a share with inherited ACLs can force a wider mode on every new file whatever
+the creating call asks for, and this workstation's own checkout is such a share.
 
 This is deliberately a before-fix observer. In particular, its same-user held-fd
 read can still succeed after restrictive creation; the post-fix security test

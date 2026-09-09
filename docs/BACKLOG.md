@@ -40,6 +40,19 @@ Not done in the audit release because the affected APIs require a native Windows
 verify sharing, metadata, privilege, and failure behavior. Source inspection proves the gaps; it
 does not make an unrun platform pass.
 
+Partly addressed 2026-09-09 on branch `rfc-0006`, as RFC-0006 H-005 and H-006. The rename now
+uses `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING` - no delete-first, no cross-volume copy
+fallback - and the entropy request is made in chunks the Windows count type accepts, with a
+failed chunk failing the whole call. Both compile for `windows-x86_64-winapi` and
+`windows-i686-winapi` and are pinned by source contracts in
+`tests/test_portability_source_contracts`, with the chunk planner checked at its boundaries.
+
+This item stays OPEN. Nothing above is a native run, and the closure conditions written here
+are runtime conditions: replacing an existing file atomically, preserving the old destination on
+an injected failure, leaving no temporary behind, filling requests across the count boundary, and
+the symlink cases - which RFC-0006 did not touch at all. A native Windows session should start
+here.
+
 ### B-034 - make freestanding mean what the guide says it means
 
 The current profile compiles with freestanding flags but links its hosted checks against a C
