@@ -2,7 +2,8 @@
 
 **Status:** proposed
 **Date:** 2026-07-23
-**Related:** [RFC-0004](RFC-0004-the-manual-as-a-book.md)
+**Related:** [RFC-0004](RFC-0004-the-manual-as-a-book.md),
+[RFC-0006 - security and boundary follow-up](RFC-0006-security-and-boundary-correctness.md)
 
 > **What this changes.** The library has broad tests and unusually detailed public
 > documentation, but those assets do not by themselves prove every target, release profile,
