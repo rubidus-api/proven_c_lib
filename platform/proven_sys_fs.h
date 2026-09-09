@@ -65,6 +65,22 @@ proven_sys_result_size_t proven_sys_fs_write(proven_sys_file_handle_t handle, co
 proven_sys_result_size_t proven_sys_fs_size(proven_sys_file_handle_t handle);
 
 [[nodiscard]]
+/**
+ * @brief Rename `src` to `dest`, REPLACING `dest` if it already exists.
+ *
+ * Replacement is required, not incidental: the whole-file atomic writes rename a staging
+ * file over their target, and a rename that refuses an existing destination makes the
+ * second write to any name fail.
+ *
+ * Same volume only. On Windows this is MoveFileExW with MOVEFILE_REPLACE_EXISTING and
+ * without MOVEFILE_COPY_ALLOWED, so a cross-volume move fails rather than silently
+ * degrading into a copy-and-delete that is not atomic. The destination is never deleted
+ * first: that would open an interval in which the name does not exist.
+ *
+ * Not established by any test result here: the behaviour against a read-only destination,
+ * ACL and metadata handling, sharing modes, and symlinks. Those are native Windows
+ * questions and this workstation has never run a Windows binary.
+ */
 bool proven_sys_fs_rename(const char *src, const char *dest);
 
 [[nodiscard]]

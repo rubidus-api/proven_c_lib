@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include "../platform/proven_sys_random_chunk.h"
 
 static const char *const build_header_manifest[] = {
 #undef PROVEN_BUILD_HEADERS_MANIFEST_INCLUDED
@@ -275,6 +276,63 @@ int main(void) {
     require(contains(catalog, "proven_fs_dir_close"),
             "the catalog gate closes the portable directory iterator");
     free(catalog);
+
+    /*
+     * RFC-0006 H-005 and H-006 are Windows defects. This workstation has never run a
+     * Windows binary, so the strongest evidence available here is: the Windows sources
+     * compile for both Windows targets (./nob cross), and they say what they must say.
+     * Neither is a runtime result and neither is offered as one.
+     */
+    char *pal_fs = read_text_file("platform/proven_sys_fs.c");
+    require(pal_fs != NULL, "platform/proven_sys_fs.c must be readable");
+    require(!contains(pal_fs, "MoveFileW("),
+            "H-005: the Windows rename must not use MoveFileW, which fails when the destination exists - so the second atomic write to any name failed");
+    require(contains(pal_fs, "MoveFileExW(wsrc, wdest, MOVEFILE_REPLACE_EXISTING)"),
+            "H-005: the Windows rename replaces an existing destination, which is what an atomic whole-file write needs");
+    require(!contains(pal_fs, "MOVEFILE_COPY_ALLOWED)") && !contains(pal_fs, "MOVEFILE_COPY_ALLOWED,"),
+            "H-005: no cross-volume copy fallback in the call itself - that is not atomic, and a caller asking for an atomic replacement is not asking for it (the name may still appear in the comment that says why)");
+    require(!contains(pal_fs, "DeleteFileW(wdest)"),
+            "H-005: the destination is not deleted first, which would open an interval in which the name does not exist");
+    free(pal_fs);
+
+    /* The planner is arithmetic and can be checked here for real, at the boundaries the
+     * defect lived at, with a reduced artificial limit - no gigabytes allocated and no
+     * pointer constructed outside a real object. */
+    {
+        const size_t L = 64;   /* stands in for ULONG_MAX */
+        require(proven_sys_random_chunk(0, L) == 0, "H-006: nothing left to fill asks for nothing");
+        require(proven_sys_random_chunk(1, L) == 1, "H-006: a single byte is one call for one byte");
+        require(proven_sys_random_chunk(L - 1, L) == L - 1, "H-006: just under the limit is one call");
+        require(proven_sys_random_chunk(L, L) == L, "H-006: exactly the limit is one call, not two");
+        require(proven_sys_random_chunk(L + 1, L) == L, "H-006: one past the limit asks for the limit, leaving one byte");
+        require(proven_sys_random_chunk(2 * L + 1, L) == L, "H-006: a long request starts with a full chunk");
+
+        /* Walk a whole plan and check it covers the buffer exactly: no gap, no overlap. */
+        size_t remaining = 2 * L + 1;
+        size_t offset = 0;
+        int calls = 0;
+        while (remaining > 0 && calls < 100) {
+            size_t chunk = proven_sys_random_chunk(remaining, L);
+            require(chunk > 0, "H-006: a plan that asks for zero bytes would never finish");
+            require(chunk <= remaining, "H-006: a chunk never runs past the end of the buffer");
+            offset += chunk;
+            remaining -= chunk;
+            calls++;
+        }
+        require(remaining == 0, "H-006: the plan terminates");
+        require(offset == 2 * L + 1, "H-006: the chunks cover the buffer exactly - no gap and no overlap");
+        require(calls == 3, "H-006: 2*limit+1 bytes take three calls");
+    }
+
+    char *pal_random = read_text_file("platform/proven_sys_random.c");
+    require(pal_random != NULL, "platform/proven_sys_random.c must be readable");
+    require(!contains(pal_random, "(ULONG)len"),
+            "H-006: the Windows entropy length must not be cast whole to ULONG - above ULONG_MAX that narrows silently, and a short request reported as success leaves untouched bytes to be read as entropy");
+    require(contains(pal_random, "proven_sys_random_chunk(remaining"),
+            "H-006: the request is planned in chunks the backend can actually accept");
+    require(contains(pal_random, "if (s != 0) return false;"),
+            "H-006: a failed chunk fails the whole call - never a fallback to a PRNG");
+    free(pal_random);
 
     return 0;
 }

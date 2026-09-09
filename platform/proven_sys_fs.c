@@ -266,9 +266,28 @@ bool proven_sys_fs_rename(const char *src, const char *dest) {
         if (wdest) HeapFree(GetProcessHeap(), 0, wdest);
         return false;
     }
-    bool success = MoveFileW(wsrc, wdest) != 0;
+    /*
+     * MOVEFILE_REPLACE_EXISTING, because MoveFileW fails outright when the destination
+     * exists - and both whole-file atomic writes rename over their target, so on Windows
+     * the FIRST write to a name succeeded and every write after it failed.
+     *
+     * Deliberately NOT fixed by deleting the destination first: that opens an interval
+     * where the name does not exist at all, which is the one thing an atomic replacement
+     * exists to prevent, and it destroys the old file if the rename then fails.
+     *
+     * Deliberately WITHOUT MOVEFILE_COPY_ALLOWED: that flag lets Windows fall back to a
+     * copy-and-delete across volumes, which is not atomic and not what a caller asking for
+     * an atomic replacement is asking for. Same-volume semantics stay, and a cross-volume
+     * move keeps failing rather than silently becoming something weaker.
+     *
+     * The Windows error is preserved for diagnosis: HeapFree can overwrite the thread's
+     * last-error value, so it is saved before the frees and restored after them.
+     */
+    bool success = MoveFileExW(wsrc, wdest, MOVEFILE_REPLACE_EXISTING) != 0;
+    DWORD saved_error = success ? 0 : GetLastError();
     HeapFree(GetProcessHeap(), 0, wsrc);
     HeapFree(GetProcessHeap(), 0, wdest);
+    if (!success) SetLastError(saved_error);
     return success;
 #else
     return rename(src, dest) == 0;
