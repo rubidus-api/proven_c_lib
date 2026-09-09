@@ -935,11 +935,11 @@ int main(void) {
 
 | API | 의도 | 반환 |
 |---|---|---|
-| `proven_hex_encoded_size(n)` | `n` 바이트에 대해 `proven_hex_encode`가 쓸 문자 수: `n * 2`, NUL 없음. | `proven_size_t`. |
+| `proven_hex_encoded_size(n)` | `n` 바이트에 대해 `proven_hex_encode`가 쓸 문자 수: `n * 2`, NUL 없음. | `proven_size_t`. `n * 2`가 들어가지 않으면 `PROVEN_SIZE_MAX`. |
 | `proven_hex_decoded_size(n)` | `n` 문자에 대해 `proven_hex_decode`가 쓸 바이트 수: `n / 2`. | `proven_size_t`. |
 | `proven_hex_encode(data, out, cap, &w)` | 소문자 hex. | `PROVEN_OK`; `cap`이 모자라면 `OUT_OF_BOUNDS`(**아무것도 쓰지 않음**); NULL out이나 `{NULL, >0}` view에는 `INVALID_ARG`. |
 | `proven_hex_decode(text, out, cap, &w)` | hex를 디코드; 대문자와 소문자 둘 다 허용. | 홀수 길이나 hex가 아닌 바이트에는 `INVALID_ENCODING`(**아무것도 커밋하지 않음**). |
-| `proven_base64_encoded_size(n)` | 두 Base64 형식 모두에 대한 상한: `4 * ceil(n/3)`. | `proven_size_t`. |
+| `proven_base64_encoded_size(n)` | 두 Base64 형식 모두에 대한 상한: `4 * ceil(n/3)`. | `proven_size_t`. 그 값이 들어가지 않으면 `PROVEN_SIZE_MAX`. |
 | `proven_base64_decoded_size(n)` | **패딩 있는 것과 없는** 텍스트에 대한 상한: `3 * ceil(n/4)`. | `proven_size_t`. |
 | `proven_base64_encode(data, out, cap, &w)` | 표준 알파벳(`+` `/`), `=` 패딩. | 위와 같음. |
 | `proven_base64url_encode(data, out, cap, &w)` | URL-안전 알파벳(`-` `_`), 패딩 **없음**. | 위와 같음. |

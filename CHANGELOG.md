@@ -36,8 +36,26 @@ written; their tags still exist.
   distinguishes the two; the public `proven_fs_stat` is unchanged and still answers
   `PROVEN_ERR_IO` for both.
 
+- **Encoding sizes are computed with checked arithmetic** (RFC-0006 H-001).
+  `proven_hex_encoded_size`, `proven_base64_encoded_size` and `proven_base64_decoded_size`
+  multiplied and added in `proven_size_t` and wrapped at the top of the range - all three
+  answered 0 for the inputs where they should have said "that does not fit", and 0 passes
+  every capacity check there is. The encoders repeated the same arithmetic internally, so
+  fixing the helpers alone would not have protected them: a wrapped `need` passed
+  `need > out_cap` and the loop then wrote past the caller's buffer.
+
 ### Changed
 
+- **The encoded-size helpers answer `PROVEN_SIZE_MAX` for a size that cannot be
+  represented** (RFC-0006 H-001). They return a size and have nowhere to put an error. A
+  valid hex output is always even and a valid padded Base64 output is always a multiple of
+  four, so neither can be `PROVEN_SIZE_MAX` by accident; zero was not usable as the
+  sentinel because zero is the honest answer for empty input. `proven_base64_decoded_size`
+  needs no sentinel - its largest value fits - and now reaches it without wrapping on the
+  way. The encoders make the same judgement independently and answer the new
+  `PROVEN_ERR_OVERFLOW`, which is a different answer from `PROVEN_ERR_OUT_OF_BOUNDS`: the
+  size does not exist, rather than the buffer being smaller than it. Nothing is read or
+  written on either refusal.
 - Unchanged on purpose: a brand-new atomic target still gets `0666 & ~umask`. Restrictive
   creation carries an existing target's mode across; it is not a new default-permissions
   policy, which would be an owner decision.

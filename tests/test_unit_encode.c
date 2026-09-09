@@ -180,6 +180,98 @@ int main(void) {
             "a NULL view with a nonzero size is INVALID_ARG", "");
     }
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a size that cannot be represented is reported, not wrapped (RFC-0006 H-001)",
+        "The size helpers multiply and add in size_t. At the top of the range those operations wrap, and a wrapped size is a small number: it passes a capacity check it should have failed, and the encoder then writes past what the caller reserved.",
+        "The helpers answer SIZE_MAX for an output size that cannot be represented. Valid hex output is always even and valid padded Base64 output is always a multiple of four, so neither can be SIZE_MAX by accident. Zero cannot be the sentinel: it is the honest answer for empty input.");
+    // ---------------------------------------------------------------
+    {
+        const proven_size_t M = PROVEN_SIZE_MAX;
+
+        /* Ordinary values first: the sentinel must not have moved anything real. */
+        PROVEN_TEST_ASSERT(proven_hex_encoded_size(0) == 0, "hex: no input, no output", "");
+        for (proven_size_t n = 1; n <= 6; ++n) {
+            PROVEN_TEST_ASSERT(proven_hex_encoded_size(n) == n * 2, "hex: two characters per byte", "");
+        }
+        PROVEN_TEST_ASSERT(proven_hex_encoded_size(M / 2) == (M / 2) * 2,
+            "hex: the largest representable input still answers exactly", "M/2 bytes encode to M-1 characters, which fits.");
+        PROVEN_TEST_ASSERT(proven_hex_encoded_size(M / 2 + 1) == M,
+            "hex: one byte more cannot be represented and says so",
+            "This used to answer 0 - and 0 passes every capacity check there is.");
+        PROVEN_TEST_ASSERT(proven_hex_encoded_size(M) == M, "hex: and so does the largest size_t", "");
+
+        PROVEN_TEST_ASSERT(proven_base64_encoded_size(0) == 0, "base64: no input, no output", "");
+        PROVEN_TEST_ASSERT(proven_base64_encoded_size(1) == 4 && proven_base64_encoded_size(3) == 4 &&
+                           proven_base64_encoded_size(4) == 8 && proven_base64_encoded_size(6) == 8,
+            "base64: four characters per three-byte group, padded", "");
+        PROVEN_TEST_ASSERT(proven_base64_encoded_size(M) == M,
+            "base64: the largest size_t cannot be represented and says so",
+            "The old form computed (n + 2) / 3, and n + 2 wrapped to 1 - so the answer was 0.");
+        PROVEN_TEST_ASSERT(proven_base64_encoded_size(M - 1) == M && proven_base64_encoded_size(M - 2) == M,
+            "base64: and neither can the two below it", "");
+
+        /* The decoded bound is a different shape: its largest value fits, so it needs no
+         * sentinel - only arithmetic that does not wrap on the way there. */
+        PROVEN_TEST_ASSERT(proven_base64_decoded_size(0) == 0, "base64 decode bound: nothing decodes to nothing", "");
+        PROVEN_TEST_ASSERT(proven_base64_decoded_size(4) == 3 && proven_base64_decoded_size(5) == 6 &&
+                           proven_base64_decoded_size(8) == 6,
+            "base64 decode bound: three bytes per four characters, rounded up for an unpadded tail", "");
+        PROVEN_TEST_ASSERT(proven_base64_decoded_size(M) == (M / 4) * 3 + 3,
+            "base64 decode bound: the largest size_t is answered exactly, not wrapped",
+            "The old form rounded n up to a multiple of four first, and n + 3 wrapped.");
+        PROVEN_TEST_ASSERT(proven_hex_decoded_size(M) == M / 2, "hex decode bound: n / 2 cannot overflow", "");
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("an encoder refuses an impossible size before it touches memory (RFC-0006 H-001)",
+        "Fixing the helpers is not enough: the encoders computed their own capacity, with the same wrapping arithmetic, and a wrapped `need` passes `need > out_cap` and is then written past.",
+        "The view below is SYNTHETIC - a deliberately impossible size over a small real buffer. It is an early-validation probe and nothing else: the check is precisely that the call returns before reading or writing a byte, which is why it is safe to run under a sanitizer. It is not a claim that a process can allocate an object this large.");
+    // ---------------------------------------------------------------
+    {
+        const proven_size_t M = PROVEN_SIZE_MAX;
+        proven_byte_t small_in[8] = {0};
+        proven_byte_t small_out[8];
+        proven_size_t written = 12345;
+
+        /* An input whose hex output cannot be represented. */
+        proven_mem_view_t impossible_hex = { small_in, M / 2 + 1 };
+        memset(small_out, 0xAB, sizeof small_out);
+        PROVEN_TEST_ASSERT(proven_hex_encode(impossible_hex, small_out, M, &written) == PROVEN_ERR_OVERFLOW,
+            "hex: an unrepresentable output size is PROVEN_ERR_OVERFLOW",
+            "Even with the largest capacity a caller could name, the size itself does not exist. That is a different answer from OUT_OF_BOUNDS, which means the size exists and the buffer is smaller.");
+        PROVEN_TEST_ASSERT(written == 0, "hex: nothing is reported as written on refusal", "");
+        PROVEN_TEST_ASSERT(small_out[0] == 0xAB && small_out[7] == 0xAB,
+            "hex: the output buffer is untouched on refusal", "A refusal that writes is not a refusal.");
+
+        proven_mem_view_t impossible_b64 = { small_in, M };
+        memset(small_out, 0xAB, sizeof small_out);
+        written = 12345;
+        PROVEN_TEST_ASSERT(proven_base64_encode(impossible_b64, small_out, M, &written) == PROVEN_ERR_OVERFLOW,
+            "base64: an unrepresentable output size is PROVEN_ERR_OVERFLOW", "");
+        PROVEN_TEST_ASSERT(written == 0 && small_out[0] == 0xAB,
+            "base64: nothing written, nothing reported", "");
+        written = 12345;
+        PROVEN_TEST_ASSERT(proven_base64url_encode(impossible_b64, small_out, M, &written) == PROVEN_ERR_OVERFLOW,
+            "base64url: the unpadded form refuses the same way", "Both forms share one implementation; both must refuse.");
+        PROVEN_TEST_ASSERT(written == 0, "base64url: nothing reported as written", "");
+
+        /* A size that IS representable but does not fit stays OUT_OF_BOUNDS - the two
+         * refusals must not collapse into one. */
+        written = 12345;
+        PROVEN_TEST_ASSERT(proven_hex_encode(vv("abcd"), small_out, 4, &written) == PROVEN_ERR_OUT_OF_BOUNDS,
+            "a representable size that does not fit is still OUT_OF_BOUNDS", "");
+        PROVEN_TEST_ASSERT(written == 0, "and reports nothing written", "");
+
+        /* Exact capacity still succeeds: the new arithmetic must not be off by one. */
+        proven_byte_t exact[8];
+        written = 0;
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_hex_encode(vv("abcd"), exact, 8, &written)) && written == 8,
+            "an output buffer of exactly the right size is accepted", "");
+        written = 0;
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_base64_encode(vv("abcde"), exact, 8, &written)) && written == 8,
+            "and so is an exactly-sized Base64 output", "");
+    }
+
     PROVEN_TEST_PASS("hex and Base64 encode to the standard, decode as the inverse, and refuse what they cannot honestly represent.");
     return 0;
 }
