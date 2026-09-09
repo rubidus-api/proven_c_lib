@@ -44,6 +44,26 @@ written; their tags still exist.
   fixing the helpers alone would not have protected them: a wrapped `need` passed
   `need > out_cap` and the loop then wrote past the caller's buffer.
 
+- **Windows: an atomic write can replace a file that already exists** (RFC-0006 H-005,
+  first recorded as RFC-0005 C-001). `proven_sys_fs_rename` used `MoveFileW`, which fails
+  outright when the destination exists - and both whole-file atomic writes rename a staging
+  file over their target, so on Windows the first write to a name succeeded and every write
+  after it failed. Now `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`, without
+  `MOVEFILE_COPY_ALLOWED` (a cross-volume copy-and-delete is not atomic) and without
+  deleting the destination first (that opens an interval in which the name does not exist).
+  Implemented and cross-compiled for both Windows targets; **not run natively**, so the
+  behaviour against a read-only destination, ACLs, sharing modes and symlinks has no result.
+- **Windows: every requested entropy byte is actually requested** (RFC-0006 H-006, first
+  recorded as RFC-0005 V-003). `proven_sys_random_bytes` cast its `size_t` length once to
+  the `ULONG` that `BCryptGenRandom` takes. On 64-bit Windows a length above `ULONG_MAX`
+  narrowed silently - a request for exactly 2^32 bytes asked the OS for **zero** - and the
+  success of that short request was returned as success for the whole buffer, so a caller
+  read bytes nothing had written as fresh entropy. The request is now made in chunks the
+  backend accepts, the pointer advances only after the OS reports success, and a failed
+  chunk fails the whole call; there is no fallback to a PRNG. Failure may leave a filled
+  prefix, which the boolean API cannot report, so a caller must discard the whole buffer.
+  Implemented and cross-compiled; **not run natively**.
+
 - **A durable write syncs the directory the file is actually in** (RFC-0006 H-003).
   `internal_parent_dir` treated `/` and `\` as separators on every platform. On POSIX a
   backslash is an ordinary character in a filename, so a durable write to `d/a\b` - one

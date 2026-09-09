@@ -1509,6 +1509,11 @@ Sub-checks:
 - Checks `nob.c` and the test share one preprocessed dependency manifest, and every header in the declared library, PAL, test, and example roots is active in it.
 - Checks the test-catalog gate uses the portable directory iterator instead of POSIX-only `dirent.h`.
 - Checks this `TEST.md` documents failure tips, sub-checks, and the log format.
+- **RFC-0006 H-005**: the Windows rename replaces an existing destination (`MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`), does not fall back to a cross-volume copy, and does not delete the destination first. `MoveFileW` fails outright when the destination exists, so on Windows the *first* whole-file atomic write to a name succeeded and every write after it failed. Deleting first would open an interval in which the name does not exist, which is the one thing an atomic replacement exists to prevent.
+- **RFC-0006 H-006**: the Windows entropy length is planned in chunks the backend accepts instead of being cast whole to `ULONG`, and a failed chunk fails the whole call rather than falling back to a PRNG. Above `ULONG_MAX` that cast narrowed silently — a request for exactly 2^32 bytes asked the OS for **zero** — and success for the short request was returned as success for the whole buffer, leaving untouched bytes to be read as fresh entropy.
+- The chunk planner itself is exercised, not just grepped: 0, 1, limit−1, limit, limit+1 and 2·limit+1 against a reduced artificial limit, plus a whole plan walked to check it covers the buffer with no gap and no overlap. A reduced limit is what makes those boundaries testable without allocating gigabytes or constructing a pointer outside a real object.
+
+Note on the two Windows rows: neither is a runtime result. This host has never run a Windows binary. What it has is `./nob cross`, which compiles both Windows targets, and these source contracts. Both defects stay open for native verification.
 
 Failure tip: source-contract tests should stay narrow. If a source pattern changes legitimately, update the contract to the new safe pattern in the same commit as the source change and explain it in docs.
 
