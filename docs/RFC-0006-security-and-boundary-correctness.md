@@ -1,6 +1,7 @@
 # RFC-0006 - Security and boundary correctness follow-up
 
-**Status:** implemented on branch `rfc-0006`, except the two Windows runtime rows.
+**Status:** implemented on branch `rfc-0006`, pending owner review and merge. The two Windows
+rows have no runtime result.
 The two decisions the RFC reserved for the owner were taken as the RFC's own first option
 and are marked below; both are one-line reversals. See section 8 for the closure table.
 **Date:** 2026-09-09
@@ -352,8 +353,8 @@ gcc 14.2.0 / Linux / x86-64. Every row's regression was seen to FAIL before its 
 | Work item | Registered regression | Fix | Evidence | Status |
 |---|---|---|---|---|
 | H-001 | `tests/test_unit_encode`, two new sections | `ffcc04b` | Before: helpers answered 0 at `M/2+1` and `M`; the encoder section died with SIGSEGV. After: `PROVEN_SIZE_MAX` and `PROVEN_ERR_OVERFLOW`. `build` · `strict-error` · `asan` · `ubsan` · `freestanding` | Closed on this target |
-| H-002 | `tests/test_regression_fs_private_staging` | `7c22299` | Before: staging mode 0644. After: 0600, and the Appendix A observer agrees where modes are honoured. `build` · `strict-error` · `asan` · `ubsan` | Closed on POSIX |
-| H-003 | `tests/test_regression_fs_backslash_parent` | `91370a0` | Before: the durable write returned an error after publishing. After: succeeds and syncs the real parent, decoy directory untouched. `build` · `strict-error` · `asan` · `ubsan` | Closed on POSIX |
+| H-002 | `tests/test_regression_fs_private_staging` | `7c22299` | Before: staging mode 0644. After: 0600, and the Appendix A observer agrees where modes are honoured. `build` · `strict-error` · `asan` · `ubsan` | Closed for the reproduced cases |
+| H-003 | `tests/test_regression_fs_backslash_parent` | `91370a0` | Before: the durable write returned an error after publishing. After: succeeds and syncs the real parent, decoy directory untouched. `build` · `strict-error` · `asan` · `ubsan` | Closed for the reproduced cases |
 | H-004 | `tests/test_regression_job_seq_wrap` | `dd6f20d` | Appendix B under UBSan: before, signed overflow at `job.c:262`; after, exit 0 with no diagnostic. `build` · `strict-error` · `asan` · `ubsan` · `tsan` | Closed on this target |
 | H-005 | `tests/test_portability_source_contracts` (source contract only) | `57aecc0` | `./nob cross` compiles `windows-x86_64-winapi` and `windows-i686-winapi`. **No native run.** | Implemented, unverified |
 | H-006 | `tests/test_portability_source_contracts` + planner boundaries | `57aecc0` | Planner checked at 0, 1, limit-1, limit, limit+1, 2*limit+1 and over a whole plan. `./nob cross` passes. **No native run.** | Implemented, unverified |
@@ -371,6 +372,26 @@ gcc 14.2.0 / Linux / x86-64. Every row's regression was seen to FAIL before its 
    `0666 & ~umask`, and `tests/test_regression_fs_private_staging` pins that so a change to
    it cannot happen by accident. Making new files restrictive by default is a policy
    decision, not a bug fix.
+
+### Exit criteria this branch did NOT meet
+
+The sections above ask for more than the reproduced cases. What was fixed and pinned is the
+defect each section describes; these remain unwritten, and neither row should be read as
+satisfying its own section 4 or 5 in full.
+
+- **H-002.** Not covered: umask 0077; injected failures of open, chmod, write, sync and close;
+  staging-name collisions; a second-user lane. Covered: initial staging mode under umasks 0022
+  and 0000, atomic and durable replacement of a 0600 target, a new copy destination, the
+  unchanged default for a brand-new target, and the finished public modes.
+- **H-003.** Not covered: a root parent (`/name`), and the file-sync -> rename ->
+  directory-sync ORDERING is not recorded - the test names which directory was synced, not
+  when. Covered: a literal backslash basename, the decoy directory, a plain slash path, a
+  bare filename, and a 250-character basename full of backslashes.
+- **H-001.** Not covered: a 32-bit lane run, where a real allocation large enough to reach
+  these boundaries is plausible. Covered: the helper boundaries, encoder refusal, and that
+  the two refusals stay distinct.
+- **H-004.** Not covered: a live queue seeded at the boundary inside a registered test - only
+  the RFC's own Appendix B probe does that, once, under UBSan.
 
 ### What is still open
 

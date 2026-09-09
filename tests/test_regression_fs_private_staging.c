@@ -91,6 +91,24 @@ int open(const char *path, int flags, ...) {
     return fd;
 }
 
+/*
+ * Large-file glibc renames open() to open64() when _FILE_OFFSET_BITS is 64, and the
+ * platform layer's call would then bind to a symbol this test never defined - the
+ * observation would silently record nothing and the failure would read as a library defect.
+ * The build does not ask for that today; this is insurance against the day it does, and
+ * against a 32-bit lane where it is the default.
+ */
+int open64(const char *path, int flags, ...) {
+    mode_t mode = 0;
+    if (flags & O_CREAT) {
+        va_list ap;
+        va_start(ap, flags);
+        mode = (mode_t)va_arg(ap, int);
+        va_end(ap);
+    }
+    return open(path, flags, (int)mode);
+}
+
 static char dir_buf[256];
 static char path_buf[512];
 static char path_buf2[512];

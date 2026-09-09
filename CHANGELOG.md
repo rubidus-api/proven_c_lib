@@ -64,6 +64,8 @@ written; their tags still exist.
   prefix, which the boolean API cannot report, so a caller must discard the whole buffer.
   Implemented and cross-compiled; **not run natively**.
 
+### Fixed
+
 - **A durable write syncs the directory the file is actually in** (RFC-0006 H-003).
   `internal_parent_dir` treated `/` and `\` as separators on every platform. On POSIX a
   backslash is an ordinary character in a filename, so a durable write to `d/a\b` - one
