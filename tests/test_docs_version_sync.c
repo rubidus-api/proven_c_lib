@@ -157,9 +157,18 @@ int main(void) {
         char *s = read_text_file("CHANGELOG.md");
         PROVEN_TEST_ASSERT(s != NULL, "CHANGELOG.md must be readable", "");
         if (s) {
-            /* The newest entry is the first "## [" heading in the file. */
+            /* The newest RELEASED entry is the first "## [" heading that is not
+             * `## [Unreleased]`. docs/operations/README.md asks for an Unreleased section
+             * while work is in flight, and this check used to read that section as the
+             * newest release and fail - so the two rules could not both be obeyed, and the
+             * one that gave way was the changelog policy. Skipping it here keeps the check
+             * that matters: the newest *released* entry names the version the library
+             * reports. */
             const char *first = strstr(s, "\n## [");
-            PROVEN_TEST_ASSERT(first != NULL, "CHANGELOG.md must have at least one entry", "");
+            while (first != NULL && strncmp(first + 1, "## [Unreleased]", 15) == 0) {
+                first = strstr(first + 1, "\n## [");
+            }
+            PROVEN_TEST_ASSERT(first != NULL, "CHANGELOG.md must have at least one released entry", "");
             if (first) {
                 const char *eol = strchr(first + 1, '\n');
                 size_t len = eol ? (size_t)(eol - first - 1) : strlen(first + 1);

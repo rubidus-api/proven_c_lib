@@ -138,7 +138,11 @@ proven_sys_file_handle_t proven_sys_fs_open(const char *path, int flags) {
     
     if (flags & PROVEN_SYS_FS_TRUNC)  o_flags |= O_TRUNC;
     
-    int fd = open(path, o_flags, 0666);
+    /* The mode argument only matters when this call CREATES the file. PRIVATE means the
+     * file is owner-only from its first instant - not created wide and narrowed after,
+     * which leaves a window a descriptor can be opened in and never closes again. */
+    const int create_mode = (flags & PROVEN_SYS_FS_PRIVATE) ? 0600 : 0666;
+    int fd = open(path, o_flags, create_mode);
     if (fd < 0) return (proven_sys_file_handle_t){ .fd = -1 };
     return (proven_sys_file_handle_t){ .fd = fd };
 #endif
@@ -537,6 +541,26 @@ bool proven_sys_fs_chmod(const char *path, unsigned int perms) {
 #endif
 }
 
+bool proven_sys_fs_fchmod(proven_sys_file_handle_t handle, unsigned int perms) {
+#if defined(_WIN32) || defined(_WIN64)
+    if (!handle.handle) return false;
+    HANDLE h = (HANDLE)handle.handle;
+    FILE_BASIC_INFO info;
+    if (!GetFileInformationByHandleEx(h, FileBasicInfo, &info, sizeof info)) return false;
+
+    /* Same mapping as the pathname form: the owner-write bit is the only one Windows
+     * has anywhere to put. This is not an ACL and does not pretend to be one. */
+    if (!(perms & 0200u)) info.FileAttributes |= FILE_ATTRIBUTE_READONLY;
+    else info.FileAttributes &= (DWORD)~((DWORD)FILE_ATTRIBUTE_READONLY);
+    if (info.FileAttributes == 0) info.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+
+    return SetFileInformationByHandle(h, FileBasicInfo, &info, sizeof info) != 0;
+#else
+    if (handle.fd < 0) return false;
+    return fchmod(handle.fd, (mode_t)perms) == 0;
+#endif
+}
+
 bool proven_sys_fs_lock(proven_sys_file_handle_t handle, int type, bool wait) {
 #if defined(_WIN32) || defined(_WIN64)
     if (!handle.handle) return false;
@@ -562,23 +586,27 @@ bool proven_sys_fs_lock(proven_sys_file_handle_t handle, int type, bool wait) {
 #endif
 }
 
-bool proven_sys_fs_stat(const char *path, proven_sys_fs_stat_t *out_stat) {
-    if (!path || !out_stat) return false;
+proven_sys_fs_stat_result_t proven_sys_fs_stat_checked(const char *path, proven_sys_fs_stat_t *out_stat) {
+    if (!path || !out_stat) return PROVEN_SYS_FS_STAT_ERROR;
 #if defined(_WIN32) || defined(_WIN64)
     wchar_t *wpath = utf8_to_wide_alloc(path);
-    if (!wpath) return false;
+    if (!wpath) return PROVEN_SYS_FS_STAT_ERROR;
     
     // We use CreateFileW + GetFileInformationByHandle to get Volume/File ID for identity
     // FILE_FLAG_BACKUP_SEMANTICS is required to open directories
     HANDLE h = CreateFileW(wpath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 
                            NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS, NULL);
     HeapFree(GetProcessHeap(), 0, wpath);
-    if (h == INVALID_HANDLE_VALUE) return false;
+    if (h == INVALID_HANDLE_VALUE) {
+        DWORD e = GetLastError();
+        return (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND || e == ERROR_INVALID_NAME)
+            ? PROVEN_SYS_FS_STAT_NOT_FOUND : PROVEN_SYS_FS_STAT_ERROR;
+    }
 
     BY_HANDLE_FILE_INFORMATION info;
     if (!GetFileInformationByHandle(h, &info)) {
         CloseHandle(h);
-        return false;
+        return PROVEN_SYS_FS_STAT_ERROR;
     }
     CloseHandle(h);
 
@@ -589,7 +617,7 @@ bool proven_sys_fs_stat(const char *path, proven_sys_fs_stat_t *out_stat) {
         out_stat->size = 0;
     } else {
         uint64_t sz = ((uint64_t)info.nFileSizeHigh << 32) | info.nFileSizeLow;
-        if (sz > (uint64_t)PROVEN_SIZE_MAX) return false;
+        if (sz > (uint64_t)PROVEN_SIZE_MAX) return PROVEN_SYS_FS_STAT_ERROR;
         out_stat->size = (size_t)sz;
     }
     out_stat->mode = out_stat->is_dir ? 0755u : 0644u;
@@ -610,14 +638,19 @@ bool proven_sys_fs_stat(const char *path, proven_sys_fs_stat_t *out_stat) {
     out_stat->ino = ((unsigned long long)info.nFileIndexHigh << 32) | (unsigned long long)info.nFileIndexLow;
     out_stat->uid = 0;   /* Windows has no POSIX uid/gid; see proven_fs_stat_t docs */
     out_stat->gid = 0;
-    return true;
+    return PROVEN_SYS_FS_STAT_OK;
 #else
     struct stat st;
-    if (stat(path, &st) != 0) return false;
+    if (stat(path, &st) != 0) {
+        /* "It is not there" and "I could not find out" are different answers, and a caller
+         * about to overwrite a file needs them apart. */
+        return (errno == ENOENT || errno == ENOTDIR)
+            ? PROVEN_SYS_FS_STAT_NOT_FOUND : PROVEN_SYS_FS_STAT_ERROR;
+    }
     
     if (S_ISREG(st.st_mode)) {
-        if (st.st_size < 0) return false;
-        if ((uintmax_t)st.st_size > (uintmax_t)PROVEN_SIZE_MAX) return false;
+        if (st.st_size < 0) return PROVEN_SYS_FS_STAT_ERROR;
+        if ((uintmax_t)st.st_size > (uintmax_t)PROVEN_SIZE_MAX) return PROVEN_SYS_FS_STAT_ERROR;
         out_stat->size = (size_t)st.st_size;
     } else {
         out_stat->size = 0;
@@ -631,8 +664,12 @@ bool proven_sys_fs_stat(const char *path, proven_sys_fs_stat_t *out_stat) {
     out_stat->ino = (unsigned long long)st.st_ino;
     out_stat->uid = (unsigned long long)st.st_uid;
     out_stat->gid = (unsigned long long)st.st_gid;
-    return true;
+    return PROVEN_SYS_FS_STAT_OK;
 #endif
+}
+
+bool proven_sys_fs_stat(const char *path, proven_sys_fs_stat_t *out_stat) {
+    return proven_sys_fs_stat_checked(path, out_stat) == PROVEN_SYS_FS_STAT_OK;
 }
 
 bool proven_sys_fs_link(const char *oldpath, const char *newpath) {

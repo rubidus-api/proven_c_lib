@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 |---|---|---|
 | `unit` | Does this module do what it says, used the way a caller uses it? | 61 |
 | `contract` | Does it *refuse* what it says it refuses? | 13 |
-| `regression` | Does a defect that actually shipped stay fixed? | 21 |
+| `regression` | Does a defect that actually shipped stay fixed? | 22 |
 | `differential` | Does it agree with an oracle we did not write? | 4 |
 | `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 10 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
@@ -297,7 +297,7 @@ Failure tip: identify the target name in the log, then check whether the failure
 ## Test catalog
 
 
-The hosted full run builds and executes 114 registered tests plus the 78 runnable manual examples - 192 executables in all. `./nob regression` re-runs a 30-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 124 test files: the 114 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
+The hosted full run builds and executes 115 registered tests plus the 78 runnable manual examples - 193 executables in all. `./nob regression` re-runs a 31-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 125 test files: the 115 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1278,6 +1278,24 @@ Intent: verify a `readdir()` that fails mid-directory is reported with the last 
 
 Failure tip: inspect the readdir-failure branch of `proven_fs_walk_next` and the fd-relative, `O_NOFOLLOW` descent (`proven_sys_fs_dir_open_at`). Both defects were found by the standing audit and are pinned here against the same fault injection.
 
+### `tests/test_regression_fs_private_staging` — staging files are created private (RFC-0006 H-002)
+
+Intent: verify that replacing a 0600 file — atomically or durably — stages the new contents in a file that is *created* 0600, and that a new copy destination is created the same way.
+
+Sub-checks:
+
+- Rewrites a 0600 file with `proven_fs_write_file_atomic` and requires the `.pvtmpNN` staging file to have carried no group or other bits at the instant it was created. It used to be created with `0666 & ~umask` — 0644 under the usual umask — and narrowed a moment later. A `chmod` cannot revoke a descriptor another user opened in that moment, and the private payload is then written through the file that descriptor still points at.
+- Repeats it through `proven_fs_write_file_durable`, which shares the implementation.
+- Copies a 0600 source to a name that does not exist yet and requires the destination to be created private too, then to end up 0600.
+- Pins the unchanged default: a brand-new atomic target is still `0666 & ~umask`. Restrictive creation is for carrying an existing target's mode across, not a new default-permissions policy.
+- Repeats the first case under `umask 0000`, where the default creation mode is 0666. A staging file that is still private there proves the mode came from the creating call and not from the process umask, which is shared mutable state the library must not touch.
+
+Note: POSIX-only; compiles to a skip on Windows, whose confidentiality story is ACLs and needs a native test. The observation seam is a definition of `open()` in the test itself, which the linker binds the platform layer's call to; it forwards to the real `openat` syscall and records the mode each created file was born with. That makes the check deterministic — unlike the watcher thread in `test_regression_fs_perms_and_types`, there is no race to win. The test works under the system temporary directory and skips itself, with a reason, on a filesystem whose inherited ACLs do not honour creation modes at all.
+
+What it does not prove: nothing here addresses a hostile writer in the directory, readers who already held the old file open, ACL preservation, or secure erasure.
+
+Failure tip: inspect `internal_write_file_atomic` and `proven_fs_copy` in `src/proven/fs.c`, and the private-create flag in `platform/proven_sys_fs.c`.
+
 ### `tests/test_regression_fs_perms_and_types` — filesystem permissions and entry types
 
 Intent: verify a copy carries the source's mode, that an atomic write never exposes its contents under a wider mode, that a symlink and a FIFO are `PROVEN_FS_TYPE_OTHER`, and that syncing a PRIVATE mapping is `PROVEN_ERR_UNSUPPORTED`.
@@ -1678,6 +1696,7 @@ a slot count drifts or a producer stalls.
 - `tests/test_unit_map_keyed`
 - `tests/test_unit_hash`
 - `tests/test_unit_fs_walk`
+- `tests/test_regression_fs_private_staging`
 - `tests/test_regression_fs_perms_and_types`
 - `tests/test_regression_stream_partial_write`
 - `tests/test_regression_fmt_spec_silently_wrong`
