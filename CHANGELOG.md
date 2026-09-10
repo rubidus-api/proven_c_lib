@@ -44,6 +44,15 @@ written; their tags still exist.
   fixing the helpers alone would not have protected them: a wrapped `need` passed
   `need > out_cap` and the loop then wrote past the caller's buffer.
 
+- **A failed atomic write no longer leaves its staging file behind on Windows** (RFC-0006
+  H-005 follow-up, found by the first native run on 2026-09-10). The staging file carries
+  the target's mode; when that target is read-only, the mode is the READONLY attribute, and
+  Windows will not delete a read-only file - so the cleanup after a refused replacement
+  failed silently and the debris stayed. Owner-write is now held back until the payload is
+  written (it is not a read permission, so nothing about confidentiality changes), the exact
+  target mode goes on before the rename that publishes the file, and the cleanup path
+  restores write permission before removing. Found by running the code, not by reading it.
+
 - **Windows: an atomic write can replace a file that already exists** (RFC-0006 H-005,
   first recorded as RFC-0005 C-001). `proven_sys_fs_rename` used `MoveFileW`, which fails
   outright when the destination exists - and both whole-file atomic writes rename a staging
