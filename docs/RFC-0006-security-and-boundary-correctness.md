@@ -356,7 +356,7 @@ gcc 14.2.0 / Linux / x86-64. Every row's regression was seen to FAIL before its 
 | H-002 | `tests/test_regression_fs_private_staging` | `7c22299` | Before: staging mode 0644. After: 0600, and the Appendix A observer agrees where modes are honoured. `build` · `strict-error` · `asan` · `ubsan` | Closed for the reproduced cases |
 | H-003 | `tests/test_regression_fs_backslash_parent` | `91370a0` | Before: the durable write returned an error after publishing. After: succeeds and syncs the real parent, decoy directory untouched. `build` · `strict-error` · `asan` · `ubsan` | Closed for the reproduced cases |
 | H-004 | `tests/test_regression_job_seq_wrap` | `dd6f20d` | Appendix B under UBSan: before, signed overflow at `job.c:262`; after, exit 0 with no diagnostic. `build` · `strict-error` · `asan` · `ubsan` · `tsan` | Closed on this target |
-| H-005 | `tests/test_portability_source_contracts` + `docs/rfc-0006-runtime-check.c` | `57aecc0` | **Run on native Windows x86-64, 2026-09-10**: A3, the second atomic write over an existing name - the failure itself - PASSES. A7 no debris, A8 non-ASCII name, A9 200-character name, B2 old contents survive a failed replacement, D5 rename onto an existing name: all pass. | **Verified on native Windows** |
+| H-005 | `tests/test_portability_source_contracts` + `docs/rfc-0006-runtime-check.c` | `57aecc0` | **Run on native Windows x86-64, 2026-09-10, twice**: A3, the second atomic write over an existing name - the failure itself - PASSES. A7 no debris, A8 non-ASCII name, A9 200-character name, B2 old contents survive a failed replacement, B3/B6 no debris after either kind of failure, D5 rename onto an existing name: all pass, 31 checks, none failed. | **Verified on native Windows** |
 | H-006 | `tests/test_portability_source_contracts` + planner boundaries + `docs/rfc-0006-runtime-check.c` | `57aecc0` | **Run on native Windows x86-64, 2026-09-10**: C1 fills 1 B to 1 MiB with no improbable zero run, C2 zero-length, C3/C4 the planner. The 4 GiB boundary itself is still not asked for. | **Verified for reachable sizes** |
 
 ### The two decisions the RFC reserved, and how to reverse them
@@ -419,6 +419,32 @@ And it found something no amount of reading here had:
   Fixed: owner-write is now held back until the payload is written, and the cleanup path
   restores it before removing. B6 is no longer an observation but a check, because debris
   is not a matter of opinion.
+
+### The confirming run, 2026-09-10
+
+The owner ran the rebuilt `dist/rfc-0006-check-win64.exe` on the same Windows x86-64
+machine. **31 checks, none failed**, and five observations.
+
+Two things it settles at once.
+
+- **`S1` reported `1 removed before starting`.** There really was one staging file left in
+  the work directory from the first run, and it really was what the intervening two runs
+  were counting. The three failures they reported - `A7`, `B3`, `B6` - were the verifier
+  blaming the code under test for its own debris, not a regression. That diagnosis is now
+  evidence rather than an argument.
+- **`B6` passes.** A failed replacement over a read-only destination cleans up after itself
+  on native Windows. The fix - hold owner-write back until the payload is written, restore
+  it before removing - works on the platform it was written for, which is the only place it
+  could be tested.
+
+`A7`, `B3` and every other check pass. `B4`/`B5` still record that Windows refuses the
+replacement and keeps the old contents, which is the decision below.
+
+The lesson, which cost two runs of the owner's time: **a verifier that does not clean up
+after itself will blame the code under test.** Its first version counted every staging file
+in a directory it never emptied, so one leftover made every later run fail three checks at
+once - and the checks it failed were whichever ones ran nearest, not the one that caused it.
+Each phase now starts from an empty directory and a leftover is named, not counted.
 
 ### An open question the run turned into a decision, ready for the owner
 

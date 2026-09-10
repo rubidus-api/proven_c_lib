@@ -53,22 +53,26 @@ self-contained console executable for both Windows word sizes. Running it answer
 replacement, failed-replacement, read-only-destination and entropy questions in one go and
 leaves a report file to send back.
 
-**A native Windows run happened on 2026-09-10** (Windows x86-64, `dist/rfc-0006-check-win64.exe`):
-30 checks, none failed. Replacement works, a failed replacement preserves the old destination
-and leaves no temporary, entropy fills every reachable size. It also found one defect - a failed
-replacement over a READ-ONLY destination left its staging file behind, because Windows will not
-delete a read-only file - which is fixed.
+**Native Windows runs happened on 2026-09-10** (Windows x86-64, `dist/rfc-0006-check-win64.exe`).
+The first found a defect: a failed replacement over a READ-ONLY destination left its staging file
+behind, because Windows will not delete a read-only file. After the fix, the confirming run
+reports **31 checks, none failed** - replacement works, a failed replacement preserves the old
+destination and leaves no temporary behind, and entropy fills every reachable size.
+
+Three of this item's closure conditions are therefore met by an actual run: replacing an existing
+file atomically, preserving the old destination on an injected failure (the destination held open
+under no sharing), and leaving no temporary behind.
 
 This item still stays OPEN, for what that run did not cover: the entropy count boundary itself
 (4 GiB, deliberately not asked for), the symlink cases - file, directory and relative - which
-RFC-0006 did not touch at all, and 32-bit Windows, where only the 64-bit executable was run.
+RFC-0006 did not touch at all, and 32-bit Windows. The 32-bit executable WAS run, and reported
+only the three failures the stale staging file explains; it has not been re-run since that was
+fixed, so it is explained rather than confirmed.
 The read-only-destination divergence between POSIX and Windows is recorded in RFC-0006 as a
 decision waiting for the owner.
 
-Nothing above is a native run, and the closure conditions written here
-are runtime conditions. Three of them are now met by the 2026-09-10 run: replacing an existing
-file atomically, preserving the old destination on an injected failure, and leaving no temporary
-behind. Two are not: filling requests across the count boundary, and the symlink cases.
+Two closure conditions remain unmet: filling entropy requests across the platform
+count boundary, and the symlink cases.
 
 ### B-034 - make freestanding mean what the guide says it means
 
