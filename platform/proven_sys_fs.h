@@ -125,6 +125,18 @@ proven_sys_fs_rename_result_t proven_sys_fs_rename_checked(const char *src, cons
 bool proven_sys_fs_rename(const char *src, const char *dest);
 /* ^ convenience wrapper over proven_sys_fs_rename_checked; it cannot say why. */
 
+/**
+ * @brief Remove a name, saying WHY when it fails.
+ *
+ * Deleting is a DIRECTORY operation, and the two platforms disagree about whether the
+ * file's own mode has a say: POSIX unlink never consulted it, Windows DeleteFile refuses a
+ * read-only file outright. The library does not paper over that - it reports it, so a
+ * caller sees PROVEN_ERR_PERMISSION rather than a bare I/O error and can clear the mark.
+ */
+[[nodiscard]]
+proven_sys_fs_open_result_t proven_sys_fs_remove_checked(const char *path);
+
+/** @brief Convenience wrapper over proven_sys_fs_remove_checked; it cannot say why. */
 [[nodiscard]]
 bool proven_sys_fs_remove(const char *path);
 

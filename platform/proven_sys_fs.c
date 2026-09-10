@@ -344,16 +344,31 @@ bool proven_sys_fs_rename(const char *src, const char *dest) {
     return proven_sys_fs_rename_checked(src, dest) == PROVEN_SYS_FS_RENAME_OK;
 }
 
-bool proven_sys_fs_remove(const char *path) {
+proven_sys_fs_open_result_t proven_sys_fs_remove_checked(const char *path) {
 #if defined(_WIN32) || defined(_WIN64)
     wchar_t *wpath = utf8_to_wide_alloc(path);
-    if (!wpath) return false;
+    if (!wpath) return PROVEN_SYS_FS_OPEN_ERROR;
     bool success = DeleteFileW(wpath) != 0;
+    DWORD e = success ? 0 : GetLastError();   /* before the free: HeapFree clobbers it */
     HeapFree(GetProcessHeap(), 0, wpath);
-    return success;
+    if (success) return PROVEN_SYS_FS_OPEN_OK;
+    SetLastError(e);
+    /* A read-only file is ACCESS_DENIED here, and that is the case POSIX does not have. */
+    if (e == ERROR_ACCESS_DENIED) return PROVEN_SYS_FS_OPEN_DENIED;
+    if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) return PROVEN_SYS_FS_OPEN_NOT_FOUND;
+    if (e == ERROR_SHARING_VIOLATION || e == ERROR_LOCK_VIOLATION) return PROVEN_SYS_FS_OPEN_BUSY;
+    return PROVEN_SYS_FS_OPEN_ERROR;
 #else
-    return remove(path) == 0;
+    if (remove(path) == 0) return PROVEN_SYS_FS_OPEN_OK;
+    if (errno == ENOENT || errno == ENOTDIR) return PROVEN_SYS_FS_OPEN_NOT_FOUND;
+    if (errno == EACCES || errno == EPERM || errno == EROFS) return PROVEN_SYS_FS_OPEN_DENIED;
+    if (errno == EBUSY || errno == ETXTBSY) return PROVEN_SYS_FS_OPEN_BUSY;
+    return PROVEN_SYS_FS_OPEN_ERROR;
 #endif
+}
+
+bool proven_sys_fs_remove(const char *path) {
+    return proven_sys_fs_remove_checked(path) == PROVEN_SYS_FS_OPEN_OK;
 }
 
 bool proven_sys_fs_mkdir(const char *path) {

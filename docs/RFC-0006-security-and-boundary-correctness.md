@@ -494,6 +494,35 @@ can lift the mark.
 `B4`/`B5` on both platforms, `D10`-`D12` through the other two doors - so the next native
 run confirms it there too.
 
+### The audit that followed the decision
+
+A rule is only a rule if every door obeys it, and that is not something reading establishes.
+Every public function that touches a file was run against a `0444` file holding `KEEP`:
+
+| door | before the audit | after |
+|---|---|---|
+| `open(WRITE)`, `open(WRITE\|TRUNC)`, `open(APPEND)` | `PERMISSION`, file intact | unchanged |
+| `write_file`, `write_file_atomic`, `write_file_durable` | `PERMISSION`, file intact | unchanged |
+| `copy` (destination) | `PERMISSION`, file intact | unchanged |
+| **`rename` (destination)** | **`OK` - contents AND mode replaced** | `PERMISSION`, file intact |
+| **`remove`** | **`OK` - file deleted** | `OK` on POSIX, `PERMISSION` on Windows - reported, not hidden |
+
+`proven_fs_rename` was the hole the rule could not survive: it is what
+`proven_fs_write_file_atomic` is BUILT ON, so a caller refused by the one got exactly the
+result they were refused from the other, and only on POSIX, because Windows refuses it at
+the syscall. One line of caller code was all the rule was worth. It obeys the rule now.
+
+`proven_fs_remove` is left deliberately outside it, and that is written down rather than
+left to be discovered. Deleting a name is a directory operation and POSIX has never let the
+file's own mode have a say in it; refusing there would break ordinary cleanup of read-only
+files for a rule about writing. What was fixed is the silence: Windows refuses to delete a
+read-only file and used to say only `PROVEN_ERR_IO`, which a caller cannot tell from a
+failing disk. It says `PROVEN_ERR_PERMISSION` now.
+
+`tests/test_contract_protected_destination` is that table, as a gate. A door added to the
+public API without a row here is a build failure rather than something someone notices
+later.
+
 ### The question as it was posed, before it was decided
 
 **A read-only destination behaves differently on the two platforms**, and RFC section 7

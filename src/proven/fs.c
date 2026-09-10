@@ -327,7 +327,14 @@ proven_err_t proven_fs_sync_dir(proven_allocator_t scratch, proven_u8str_view_t 
 #endif
 }
 
-proven_err_t proven_fs_rename(proven_allocator_t scratch, proven_u8str_view_t src, proven_u8str_view_t dest) {
+/*
+ * The rename itself, with no policy attached.
+ *
+ * internal_write_file_atomic uses this one because it has already refused a protected
+ * target - before creating anything - and re-asking here would be a second stat on the
+ * hot path for an answer it holds.
+ */
+static proven_err_t internal_rename_raw(proven_allocator_t scratch, proven_u8str_view_t src, proven_u8str_view_t dest) {
     internal_result_cstr_t s_res = internal_view_to_cstr(scratch, src);
     if (!proven_is_ok(s_res.err)) return s_res.err;
     
@@ -352,13 +359,45 @@ proven_err_t proven_fs_rename(proven_allocator_t scratch, proven_u8str_view_t sr
     }
 }
 
+proven_err_t proven_fs_rename(proven_allocator_t scratch, proven_u8str_view_t src, proven_u8str_view_t dest) {
+    /*
+     * A rename REPLACES the destination, so it is a whole-file replacement and it obeys the
+     * same rule as the other four. Without this it was the hole straight through them: a
+     * caller refused by proven_fs_write_file_atomic got the same result from the rename that
+     * function is built on - the protected file replaced, contents and mode both gone - and
+     * on POSIX only, because Windows refuses it at the syscall. One line of caller code was
+     * all the rule was worth.
+     */
+    proven_err_t perr = internal_refuse_if_protected(scratch, dest);
+    if (!proven_is_ok(perr)) return perr;
+    return internal_rename_raw(scratch, src, dest);
+}
+
 proven_err_t proven_fs_remove(proven_allocator_t scratch, proven_u8str_view_t path) {
     internal_result_cstr_t p_res = internal_view_to_cstr(scratch, path);
     if (!proven_is_ok(p_res.err)) return p_res.err;
     
-    bool success = proven_sys_fs_remove(p_res.value);
+    proven_sys_fs_open_result_t why = proven_sys_fs_remove_checked(p_res.value);
     internal_cstr_free(scratch, p_res.value);
-    return success ? PROVEN_OK : PROVEN_ERR_IO;
+
+    /*
+     * Removing is NOT covered by the protected-destination rule above, and that is
+     * deliberate: deleting a name is a directory operation, and POSIX has never let the
+     * file's own mode have a say in it. Refusing here would break ordinary cleanup - a
+     * read-only vendored file, a build output - for a rule about writing.
+     *
+     * The platforms do disagree, and the disagreement is reported rather than hidden:
+     * Windows refuses to delete a read-only file, and that comes back as
+     * PROVEN_ERR_PERMISSION, not as a bare I/O error a caller cannot act on. A caller who
+     * wants the file gone clears the mark first, and now knows to.
+     */
+    switch (why) {
+        case PROVEN_SYS_FS_OPEN_OK:        return PROVEN_OK;
+        case PROVEN_SYS_FS_OPEN_NOT_FOUND: return PROVEN_ERR_NOT_FOUND;
+        case PROVEN_SYS_FS_OPEN_DENIED:    return PROVEN_ERR_PERMISSION;
+        case PROVEN_SYS_FS_OPEN_BUSY:      return PROVEN_ERR_BUSY;
+        default:                           return PROVEN_ERR_IO;
+    }
 }
 
 proven_err_t proven_fs_mkdir(proven_allocator_t scratch, proven_u8str_view_t path) {
@@ -1137,7 +1176,8 @@ static proven_err_t internal_write_file_atomic(proven_allocator_t scratch, prove
     }
 
     if (proven_is_ok(err)) {
-        err = proven_fs_rename(scratch, tmp_view, path);
+        /* The protected-target question was answered before anything was created. */
+        err = internal_rename_raw(scratch, tmp_view, path);
     }
 
     if (proven_is_ok(err) && durable) {
