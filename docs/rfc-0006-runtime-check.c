@@ -136,22 +136,70 @@ static bool file_is(proven_allocator_t a, const char *path, const char *expect) 
     return same;
 }
 
-/* Any staging file left behind is debris: a failed replacement must clean up after
- * itself, and a successful one has renamed its temp away. */
-static int count_staging_files(proven_allocator_t a) {
+/*
+ * Any staging file left behind is debris: a failed replacement must clean up after itself,
+ * and a successful one has renamed its temp away.
+ *
+ * Collect the names FIRST and act afterwards. Removing entries while a directory is being
+ * iterated is not something a directory iterator promises to survive, and the first version
+ * of this file also had a worse problem: it counted whatever was in the directory, so one
+ * leftover file from an earlier run made every later run fail three checks at once and
+ * blame the code under test. Each phase now starts from an empty directory, and a leftover
+ * is named rather than merely counted.
+ */
+#define STAGING_MAX 32
+static char staging_names[STAGING_MAX][256];
+static int staging_count;
+static char staging_summary[512];
+
+static void collect_staging(proven_allocator_t a) {
+    staging_count = 0;
+    staging_summary[0] = '\0';
     proven_result_dir_t d = proven_fs_dir_open(a, V(work_dir));
-    if (!proven_is_ok(d.err)) return -1;
-    int found = 0;
+    if (!proven_is_ok(d.err)) { staging_count = -1; return; }
     proven_fs_dir_entry_t e;
-    while (proven_is_ok(proven_fs_dir_next(&d.value, &e))) {
-        if (e.name.size >= 6) {
-            for (proven_size_t i = 0; i + 6 <= e.name.size; ++i) {
-                if (memcmp(e.name.ptr + i, ".pvtmp", 6) == 0) { found++; break; }
-            }
+    while (proven_is_ok(proven_fs_dir_next(&d.value, &e)) && staging_count < STAGING_MAX) {
+        bool is_staging = false;
+        for (proven_size_t i = 0; e.name.size >= 6 && i + 6 <= e.name.size; ++i) {
+            if (memcmp(e.name.ptr + i, ".pvtmp", 6) == 0) { is_staging = true; break; }
+        }
+        if (is_staging && e.name.size < sizeof staging_names[0]) {
+            memcpy(staging_names[staging_count], e.name.ptr, e.name.size);
+            staging_names[staging_count][e.name.size] = '\0';
+            staging_count++;
         }
     }
     proven_fs_dir_close(&d.value);
-    return found;
+
+    /* Name them. "SOME" told us nothing; a name says which operation left it. */
+    size_t used = 0;
+    for (int i = 0; i < staging_count && i < 3; ++i) {
+        int n = snprintf(staging_summary + used, sizeof staging_summary - used,
+                         "%s%s", used ? ", " : "", staging_names[i]);
+        if (n < 0) break;
+        used += (size_t)n;
+        if (used >= sizeof staging_summary - 1) break;
+    }
+}
+
+static int count_staging_files(proven_allocator_t a) {
+    collect_staging(a);
+    return staging_count;
+}
+
+/* Empty the directory of staging files so the next phase is judged on its own work.
+ * chmod first: on Windows a read-only file cannot be deleted, which is the very defect
+ * this program is here to catch, and the cleanup must not fall over the same way. */
+static int purge_staging(proven_allocator_t a) {
+    collect_staging(a);
+    int removed = 0;
+    for (int i = 0; i < staging_count; ++i) {
+        char full[1024];
+        snprintf(full, sizeof full, "%.511s/%.255s", work_dir, staging_names[i]);
+        (void)proven_fs_chmod(a, V(full), (proven_fs_perms_t)0600u);
+        if (proven_is_ok(proven_fs_remove(a, V(full)))) removed++;
+    }
+    return removed;
 }
 
 /* ------------------------------------------------------------------ the checks */
@@ -182,7 +230,7 @@ static void check_h005(proven_allocator_t a) {
 
     int debris = count_staging_files(a);
     check("A7", "no staging file left behind", debris == 0,
-          debris < 0 ? "could not list the directory" : "");
+          debris < 0 ? "could not list the directory" : staging_summary);
 
     /* A name that is not ASCII, and a long one. Windows stores names as UTF-16 and the
      * platform layer converts; a conversion that loses bytes shows up here. */
@@ -234,6 +282,7 @@ static void check_h005_failure_path(proven_allocator_t a) {
     if (held == INVALID_HANDLE_VALUE) {
         note("B1", "could not hold the destination open", "skipped");
     } else {
+        (void)purge_staging(a);   /* judge this phase on its own work */
         proven_err_t blocked = proven_fs_write_file_atomic(a, V(target), B("NEW"));
         note("B1", "atomic write while the target is held open", err_name(blocked));
         CloseHandle(held);
@@ -241,7 +290,7 @@ static void check_h005_failure_path(proven_allocator_t a) {
               blocked != PROVEN_OK ? file_is(a, target, "OLD") : file_is(a, target, "NEW"),
               blocked == PROVEN_OK ? "it succeeded, so NEW is correct" : "");
         int debris = count_staging_files(a);
-        check("B3", "  no staging file left behind", debris == 0, "");
+        check("B3", "  no staging file left behind", debris == 0, staging_summary);
     }
 
     /* A read-only destination. RFC-0006 asks for this behaviour to be DEFINED, and
@@ -251,6 +300,7 @@ static void check_h005_failure_path(proven_allocator_t a) {
     (void)proven_fs_remove(a, V(ro));
     (void)proven_fs_write_file(a, V(ro), B("OLD"));
     (void)proven_fs_chmod(a, V(ro), (proven_fs_perms_t)0444u);
+    (void)purge_staging(a);   /* judge this phase on its own work */
     proven_err_t ro_err = proven_fs_write_file_atomic(a, V(ro), B("NEW"));
     note("B4", "atomic write over a READ-ONLY destination", err_name(ro_err));
     note("B5", "  contents afterwards",
@@ -262,7 +312,7 @@ static void check_h005_failure_path(proven_allocator_t a) {
      * because the answer is no longer open to opinion - debris is debris. */
     int ro_debris = count_staging_files(a);
     check("B6", "  no staging file left behind after that failure", ro_debris == 0,
-          ro_debris > 0 ? "staging file NOT cleaned up" : "");
+          ro_debris > 0 ? staging_summary : "");
     (void)proven_fs_chmod(a, V(ro), (proven_fs_perms_t)0644u);
     (void)proven_fs_remove(a, V(ro));
 #else
@@ -275,13 +325,14 @@ static void check_h005_failure_path(proven_allocator_t a) {
     (void)proven_fs_remove(a, V(ro));
     (void)proven_fs_write_file(a, V(ro), B("OLD"));
     (void)proven_fs_chmod(a, V(ro), (proven_fs_perms_t)0444u);
+    (void)purge_staging(a);   /* judge this phase on its own work */
     proven_err_t ro_err = proven_fs_write_file_atomic(a, V(ro), B("NEW"));
     note("B4", "atomic write over a READ-ONLY destination", err_name(ro_err));
     note("B5", "  contents afterwards",
          file_is(a, ro, "NEW") ? "NEW" : (file_is(a, ro, "OLD") ? "OLD" : "neither"));
     int ro_debris = count_staging_files(a);
     check("B6", "  no staging file left behind after that call", ro_debris == 0,
-          ro_debris > 0 ? "staging file NOT cleaned up" : "");
+          ro_debris > 0 ? staging_summary : "");
     (void)proven_fs_chmod(a, V(ro), (proven_fs_perms_t)0644u);
     (void)proven_fs_remove(a, V(ro));
 #endif
@@ -417,17 +468,50 @@ int main(void) {
     }
     (void)proven_fs_remove(a, V(path_a));
 
+    /*
+     * Start from an empty directory, and SAY SO if it was not empty.
+     *
+     * The first version did not do this, and the second run of it failed three checks that
+     * had passed the first time - all of them counting one file the first run had left
+     * behind. A verifier that blames the code under test for its own leftovers is worse
+     * than no verifier, because it is believed.
+     */
+    int stale = purge_staging(a);
+    if (stale > 0) {
+        char detail[128];
+        snprintf(detail, sizeof detail, "%d removed before starting", stale);
+        note("S1", "staging files left by an EARLIER run", detail);
+        emit("       (that is this program's own leftover, not a failure of the library.\n");
+        emit("        The checks below start from an empty directory.)\n");
+    }
+
     check_h005(a);
     check_h005_failure_path(a);
     check_h006(a);
     check_general(a);
 
-    /* Leave nothing behind except the report. */
-    (void)proven_fs_remove(a, V(joined(path_a, sizeof path_a, "replace-me.txt")));
-    (void)proven_fs_remove(a, V(joined(path_a, sizeof path_a, "basic.txt")));
-    (void)proven_fs_remove(a, V(joined(path_a, sizeof path_a, "basic-copy.txt")));
-    (void)proven_fs_remove(a, V(joined(path_a, sizeof path_a, "held-open.txt")));
-    (void)proven_fs_rmdir(a, V(work_dir));
+    /*
+     * Leave nothing behind except the report - and check that it worked, because the
+     * failure to do this is what made the second run of the first version lie.
+     */
+    {
+        const char *names[] = { "replace-me.txt", "basic.txt", "basic-copy.txt",
+                                "held-open.txt", "read-only.txt", "probe" };
+        for (size_t i = 0; i < sizeof names / sizeof names[0]; ++i) {
+            const char *f = joined(path_a, sizeof path_a, names[i]);
+            (void)proven_fs_chmod(a, V(f), (proven_fs_perms_t)0600u);
+            (void)proven_fs_remove(a, V(f));
+        }
+        (void)purge_staging(a);
+        proven_err_t rd = proven_fs_rmdir(a, V(work_dir));
+        if (!proven_is_ok(rd)) {
+            collect_staging(a);
+            note("S2", "the work directory could not be removed",
+                 staging_count > 0 ? staging_summary : "something else is in it");
+            emit("       (remove the folder \"%s\" by hand before running this again,\n", work_dir);
+            emit("        or the next run will start with leftovers.)\n");
+        }
+    }
 
     emit("\n");
     emit("=================================================================\n");
