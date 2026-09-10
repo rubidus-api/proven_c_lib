@@ -605,6 +605,16 @@ proven_result_u8str_t proven_fs_read_all_u8str(proven_allocator_t alloc, proven_
  * visible. The refusal is deliberately the recoverable direction: replacing a protected
  * file by accident is not.
  *
+ * proven_fs_rename obeys it too, and has to: it REPLACES the destination, and it is what
+ * the atomic write is built on - so without it a caller refused by one function got the
+ * same result from the other, and the rule was one line of caller code from being void.
+ *
+ * proven_fs_remove is deliberately NOT covered. Deleting a name is a directory operation
+ * and POSIX has never let the file's own mode have a say in it; refusing there would break
+ * ordinary cleanup of read-only files for a rule about writing. The platforms do differ -
+ * Windows will not delete a read-only file - so remove reports that difference as
+ * PROVEN_ERR_PERMISSION rather than hiding it behind an I/O error.
+ *
  * What this is NOT: a security boundary. The mode is read before the work and acted on
  * after it, so a mode that changes in between is not caught, and anyone who can chmod the
  * file can lift the mark. It is a guard against destroying protected data by accident,

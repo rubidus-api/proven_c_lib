@@ -17,7 +17,7 @@ The class says what kind of question the test answers:
 | Class | Question | Count |
 |---|---|---|
 | `unit` | Does this module do what it says, used the way a caller uses it? | 61 |
-| `contract` | Does it *refuse* what it says it refuses? | 13 |
+| `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 24 |
 | `differential` | Does it agree with an oracle we did not write? | 4 |
 | `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 10 |
@@ -297,7 +297,7 @@ Failure tip: identify the target name in the log, then check whether the failure
 ## Test catalog
 
 
-The hosted full run builds and executes 117 registered tests plus the 78 runnable manual examples - 195 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 127 test files: the 117 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
+The hosted full run builds and executes 118 registered tests plus the 78 runnable manual examples - 196 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 128 test files: the 118 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1277,6 +1277,23 @@ Failure tip: inspect `proven_fs_walk_open/_next/_close` in `src/proven/fs.c`.
 Intent: verify a `readdir()` that fails mid-directory is reported with the last path component as the name and the directory's own depth (not its children's), and that a directory swapped for a symlink at the moment of descent is not followed out of the tree.
 
 Failure tip: inspect the readdir-failure branch of `proven_fs_walk_next` and the fd-relative, `O_NOFOLLOW` descent (`proven_sys_fs_dir_open_at`). Both defects were found by the standing audit and are pinned here against the same fault injection.
+
+### `tests/test_contract_protected_destination` — one rule, every door
+
+Intent: verify that a destination whose owner-write bit is clear is refused by **every** public function that replaces a file, with the same error, leaving the file exactly as it was.
+
+Sub-checks:
+
+- Eight doors, one by one: `proven_fs_open` for WRITE, for WRITE|TRUNC and for APPEND; `proven_fs_write_file`, `_atomic` and `_durable`; `proven_fs_copy`'s destination; and `proven_fs_rename`'s destination. Each must answer `PROVEN_ERR_PERMISSION`, and after each the file must still hold its contents **and** its mode.
+- Clearing the mark lets the write through. A refusal that cannot be recovered from is a wall, not a rule.
+- `proven_fs_remove` is deliberately **not** covered — deleting a name is a directory operation and POSIX has never let the file's mode have a say in it — but it must still answer `PROVEN_OK` or `PROVEN_ERR_PERMISSION`, never a bare `PROVEN_ERR_IO`.
+- A refusal names itself: a missing name is `PROVEN_ERR_NOT_FOUND`, a protected one is `PROVEN_ERR_PERMISSION`.
+
+Note: the list of doors is the point. This test exists because the rule was true of some functions and not others, and no one could see that by reading. Measured before it was one rule, on one platform: `write_file` refused, `write_file_atomic` succeeded, and `copy` succeeded **and left a 0444 file as 0664**. `proven_fs_rename` was the worst of them — it is what the atomic write is built on, so a caller refused by one got the result from the other, and the rule was one line of caller code away from being void.
+
+Skipped as root (file modes refuse root nothing) and on a filesystem that does not honour a `0444` chmod, each with its reason printed.
+
+Failure tip: inspect `internal_refuse_if_protected` in `src/proven/fs.c` and its call sites. Adding a public function that replaces a file means adding a door here.
 
 ### `tests/test_regression_fs_backslash_parent` — a backslash in a POSIX filename is not a separator (RFC-0006 H-003)
 

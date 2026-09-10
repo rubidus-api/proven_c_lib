@@ -100,13 +100,25 @@ written; their tags still exist.
 
 ### Changed
 
-- **`proven_fs_open` and `proven_fs_rename` say WHICH failure it was.**
+- **`proven_fs_rename` obeys the protected-destination rule, and `proven_fs_remove` does
+  not.** An audit of every public door against a `0444` file found two that did not follow
+  the rule the rest do. `proven_fs_rename` replaced the protected file outright - contents
+  and mode both - and it is what the atomic write is built on, so a caller refused by
+  `proven_fs_write_file_atomic` got the result from `proven_fs_rename` instead. It refuses
+  now. `proven_fs_remove` still deletes: a name is removed from a directory, and POSIX has
+  never let the file's own mode have a say in that; refusing there would break ordinary
+  cleanup of read-only files for a rule about writing. Windows does refuse it, and that
+  difference is now reported as `PROVEN_ERR_PERMISSION` instead of hidden behind an I/O
+  error. `tests/test_contract_protected_destination` checks every door one by one, so a
+  door added to the public API without one is a build failure rather than a discovery.
+
+- **`proven_fs_open`, `proven_fs_rename` and `proven_fs_remove` say WHICH failure it was.**
   `PROVEN_ERR_NOT_FOUND` when the name is not there, `PROVEN_ERR_PERMISSION` when the caller
   may not, `PROVEN_ERR_BUSY` when something else holds it; everything else stays
   `PROVEN_ERR_IO`. They used to answer `PROVEN_ERR_IO` for all of it, and one code for
   "ask the user", "retry" and "give up" is a code a caller cannot act on. The platform layer
   gained `proven_sys_fs_open_checked` and `proven_sys_fs_rename_checked` to carry the
-  distinction; the boolean wrappers remain.
+  distinction, and `proven_sys_fs_remove_checked` with them; the boolean wrappers remain.
 
 ### Fixed
 

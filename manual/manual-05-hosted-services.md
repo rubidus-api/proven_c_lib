@@ -259,6 +259,19 @@ by accident is not. It is a guard against accidents, not a security boundary: th
 read before the work and acted on after it, and anyone who can `chmod` the file can lift
 the mark.
 
+`proven_fs_rename` is on that list, and has to be: it replaces the destination, and it is
+what the atomic write is built on — without it, a caller refused by one function got the
+same result from the other. `proven_fs_remove` is deliberately **not** on it: deleting a
+name is a directory operation and POSIX has never let the file's own mode have a say. The
+platforms differ there — Windows will not delete a read-only file — so `proven_fs_remove`
+reports that as `PROVEN_ERR_PERMISSION` rather than hiding it behind an I/O error.
+
+A refusal now says *which* refusal it is. `proven_fs_open`, `proven_fs_rename` and
+`proven_fs_remove` answer `PROVEN_ERR_NOT_FOUND`, `PROVEN_ERR_PERMISSION` or
+`PROVEN_ERR_BUSY` where they used to answer `PROVEN_ERR_IO` for all of it. Asking the user,
+retrying, and giving up are three different answers, and one error code supports none of
+them.
+
 Example:
 
 ```c

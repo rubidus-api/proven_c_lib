@@ -257,6 +257,18 @@ durable 형태는 저장 장치를 두 번 기다린다. 쓰기를 잃는 것이
 예:
 
 ```c
+
+`proven_fs_rename`도 그 목록에 있고, 있어야 한다. 대상을 대체하는 함수이고, atomic 쓰기가
+바로 그 위에 지어져 있다 — 이것이 빠지면 한 함수에서 거절당한 호출자가 다른 함수로 같은
+결과를 얻는다. `proven_fs_remove`는 일부러 **빠져 있다**: 이름을 지우는 것은 디렉터리
+연산이고, POSIX는 파일 자신의 모드에 발언권을 준 적이 없다. 이 지점에서 두 플랫폼은 실제로
+다르다 — Windows는 읽기 전용 파일을 지우지 않는다 — 그래서 `proven_fs_remove`는 그 차이를
+입출력 오류 뒤에 숨기지 않고 `PROVEN_ERR_PERMISSION`으로 보고한다.
+
+거절은 이제 *어떤* 거절인지 말한다. `proven_fs_open`, `proven_fs_rename`,
+`proven_fs_remove`는 예전에 전부 `PROVEN_ERR_IO`로 답하던 자리에서 `PROVEN_ERR_NOT_FOUND`,
+`PROVEN_ERR_PERMISSION`, `PROVEN_ERR_BUSY`를 답한다. 사용자에게 묻기, 다시 시도하기,
+포기하기는 서로 다른 세 가지 답이고, 오류 코드 하나로는 그중 어느 것도 할 수 없다.
 proven_result_file_t of = proven_fs_open(
     alloc,
     PROVEN_LIT("out.txt"),
