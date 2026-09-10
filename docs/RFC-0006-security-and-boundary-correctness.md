@@ -393,6 +393,24 @@ satisfying its own section 4 or 5 in full.
 - **H-004.** Not covered: a live queue seeded at the boundary inside a registered test - only
   the RFC's own Appendix B probe does that, once, under UBSan.
 
+### How the two Windows rows get closed
+
+`docs/rfc-0006-runtime-check.c` is a program built to be RUN by a person on a machine this
+project cannot reach. `scripts/build-rfc-0006-check.sh` builds it into `dist/` for Windows
+64-bit and 32-bit (statically, so it needs nothing beside itself but `KERNEL32`, `bcrypt`
+and `msvcrt`) and for the host.
+
+It asks exactly what these rows leave unanswered: a second atomic write over an existing
+name, what a failed replacement leaves behind when the destination is held open with no
+sharing, what a read-only destination does (recorded, not asserted - RFC section 7 asks for
+that behaviour to be DEFINED, and defining it needs someone to see it), whether entropy
+buffers are filled, and whether the library works on that platform at all. It writes its
+report to `proven-windows-check-report.txt` beside itself, and that file is the evidence.
+
+It also runs on the host, and does: a verifier nobody has executed is not a verifier. On
+POSIX it reports 28 checks passed. That proves the harness and nothing about Windows -
+`rename` has always replaced there, so the check that matters cannot fail on this machine.
+
 ### What is still open
 
 - Native Windows for H-005 and H-006, and for the Windows half of H-002 (ACLs, not mode

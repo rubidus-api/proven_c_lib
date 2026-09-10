@@ -47,6 +47,12 @@ failed chunk failing the whole call. Both compile for `windows-x86_64-winapi` an
 `windows-i686-winapi` and are pinned by source contracts in
 `tests/test_portability_source_contracts`, with the chunk planner checked at its boundaries.
 
+To make the native run cheap for whoever has a Windows machine:
+`scripts/build-rfc-0006-check.sh` builds `docs/rfc-0006-runtime-check.c` into `dist/` as a
+self-contained console executable for both Windows word sizes. Running it answers the
+replacement, failed-replacement, read-only-destination and entropy questions in one go and
+leaves a report file to send back.
+
 This item stays OPEN. Nothing above is a native run, and the closure conditions written here
 are runtime conditions: replacing an existing file atomically, preserving the old destination on
 an injected failure, leaving no temporary behind, filling requests across the count boundary, and
