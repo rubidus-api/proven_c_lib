@@ -356,8 +356,8 @@ gcc 14.2.0 / Linux / x86-64. Every row's regression was seen to FAIL before its 
 | H-002 | `tests/test_regression_fs_private_staging` | `7c22299` | Before: staging mode 0644. After: 0600, and the Appendix A observer agrees where modes are honoured. `build` · `strict-error` · `asan` · `ubsan` | Closed for the reproduced cases |
 | H-003 | `tests/test_regression_fs_backslash_parent` | `91370a0` | Before: the durable write returned an error after publishing. After: succeeds and syncs the real parent, decoy directory untouched. `build` · `strict-error` · `asan` · `ubsan` | Closed for the reproduced cases |
 | H-004 | `tests/test_regression_job_seq_wrap` | `dd6f20d` | Appendix B under UBSan: before, signed overflow at `job.c:262`; after, exit 0 with no diagnostic. `build` · `strict-error` · `asan` · `ubsan` · `tsan` | Closed on this target |
-| H-005 | `tests/test_portability_source_contracts` (source contract only) | `57aecc0` | `./nob cross` compiles `windows-x86_64-winapi` and `windows-i686-winapi`. **No native run.** | Implemented, unverified |
-| H-006 | `tests/test_portability_source_contracts` + planner boundaries | `57aecc0` | Planner checked at 0, 1, limit-1, limit, limit+1, 2*limit+1 and over a whole plan. `./nob cross` passes. **No native run.** | Implemented, unverified |
+| H-005 | `tests/test_portability_source_contracts` + `docs/rfc-0006-runtime-check.c` | `57aecc0` | **Run on native Windows x86-64, 2026-09-10**: A3, the second atomic write over an existing name - the failure itself - PASSES. A7 no debris, A8 non-ASCII name, A9 200-character name, B2 old contents survive a failed replacement, D5 rename onto an existing name: all pass. | **Verified on native Windows** |
+| H-006 | `tests/test_portability_source_contracts` + planner boundaries + `docs/rfc-0006-runtime-check.c` | `57aecc0` | **Run on native Windows x86-64, 2026-09-10**: C1 fills 1 B to 1 MiB with no improbable zero run, C2 zero-length, C3/C4 the planner. The 4 GiB boundary itself is still not asked for. | **Verified for reachable sizes** |
 
 ### The two decisions the RFC reserved, and how to reverse them
 
@@ -392,6 +392,61 @@ satisfying its own section 4 or 5 in full.
   the two refusals stay distinct.
 - **H-004.** Not covered: a live queue seeded at the boundary inside a registered test - only
   the RFC's own Appendix B probe does that, once, under UBSan.
+
+### The first native Windows run, 2026-09-10
+
+The owner ran `dist/rfc-0006-check-win64.exe` on a Windows x86-64 machine.
+**30 checks, none failed**, and five observations. What that settles:
+
+- **H-005 is fixed on the target it was broken on.** A3 - a second atomic write over a name
+  that already exists - passes. That call used to fail outright, so the first write to any
+  name worked and every write after it did not. A7 leaves no debris, A8 replaces a
+  non-ASCII name, A9 a 200-character one, D5 renames onto an existing name.
+- **A failed replacement preserves the old file.** With the destination held open under no
+  sharing at all, the write is refused with `PROVEN_ERR_IO` (B1) and the OLD contents
+  survive (B2), with nothing left behind (B3).
+- **H-006 fills every byte for every size that can actually be asked for** (C1-C4). The
+  4 GiB boundary is still not asked for, and still should not be: it would need 4 GiB, and
+  a failure would not distinguish the defect from the machine.
+- **`sync_dir` is `PROVEN_ERR_UNSUPPORTED` there** (D7), which is what the documentation
+  says and what a durable write is written to tolerate.
+
+And it found something no amount of reading here had:
+
+- **B6: a failed replacement over a READ-ONLY destination left its staging file behind.**
+  The staging file carries the target's mode, that mode is the READONLY attribute on
+  Windows, and Windows will not delete a read-only file - so the cleanup failed silently.
+  Fixed: owner-write is now held back until the payload is written, and the cleanup path
+  restores it before removing. B6 is no longer an observation but a check, because debris
+  is not a matter of opinion.
+
+### An open question the run turned into a decision, ready for the owner
+
+**A read-only destination behaves differently on the two platforms**, and RFC section 7
+asked for exactly this to be defined once someone had seen it:
+
+| | POSIX | Windows |
+|---|---|---|
+| `proven_fs_write_file_atomic` over a `0444` file | **succeeds**, contents replaced, mode stays `0444` | **refused**, `PROVEN_ERR_IO`, contents stay OLD |
+
+Neither is a bug. POSIX `rename` needs write permission on the DIRECTORY, not on the file,
+so replacing a read-only file is ordinary there; Windows treats the attribute as a refusal.
+The library currently inherits whichever answer the platform gives, and says so nowhere.
+
+Three ways to close it, and this is the owner's call, not an implementation detail:
+
+1. **Document the divergence and leave it.** Cheapest, honest, and the caller who cares has
+   to ask `proven_fs_stat` first. The public contract gains a paragraph.
+2. **Refuse everywhere.** Check the target's write bit before staging anything and return
+   `PROVEN_ERR_PERMISSION` on both platforms. Predictable, and it BREAKS existing POSIX
+   callers who replace read-only files today - including anything that treats `0444` as
+   "published, replace on next build".
+3. **Succeed everywhere.** Clear the READONLY attribute on Windows before the rename and
+   restore it after. Matches POSIX, and it makes the library override a mode the user set,
+   which is a thing a library should be very reluctant to do.
+
+Nothing was decided here. The behaviour is recorded as observed, and the verifier prints it
+on both platforms so the divergence stays visible.
 
 ### How the two Windows rows get closed
 

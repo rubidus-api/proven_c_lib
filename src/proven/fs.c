@@ -1014,13 +1014,34 @@ static proven_err_t internal_write_file_atomic(proven_allocator_t scratch, prove
      * writer can make mean something else. If there is no target, the temp keeps its fresh
      * default mode, the same as for write_file.
      */
+    /*
+     * One bit is held back until the end: OWNER-WRITE.
+     *
+     * A target that is read-only carries a mode we must not hand to the staging file while
+     * we still own it. On Windows that mode is the READONLY attribute, and a read-only file
+     * cannot be deleted - so a replacement that failed left its staging file behind, which
+     * a native run found and no amount of reading the code here did. proven_fs_copy already
+     * reasoned this way about its destination; this is the same reasoning one function over.
+     *
+     * Holding 0200 back costs nothing in confidentiality: owner-write is not a read
+     * permission, and every bit that lets somebody else READ the payload is applied here,
+     * before the payload exists.
+     */
+    proven_fs_perms_t staging_perms = (proven_fs_perms_t)(target.perms | 0200u);
+
     proven_err_t err = PROVEN_OK;
     if (have_target_perms) {
-        err = internal_fchmod(f_res.value, target.perms);
+        err = internal_fchmod(f_res.value, staging_perms);
     }
 
     if (proven_is_ok(err)) {
         err = proven_fs_write_all(f_res.value, data);
+    }
+
+    /* The exact mode goes on once the payload is in, and still before the rename that
+     * publishes it - so the file is never VISIBLE under the wrong mode. */
+    if (proven_is_ok(err) && have_target_perms && staging_perms != target.perms) {
+        err = internal_fchmod(f_res.value, target.perms);
     }
 
     if (proven_is_ok(err) && durable) {
@@ -1059,7 +1080,15 @@ static proven_err_t internal_write_file_atomic(proven_allocator_t scratch, prove
     }
 
     if (!proven_is_ok(err)) {
-        /* Leave no debris behind; the remove itself cannot rescue the error. */
+        /*
+         * Leave no debris behind; the remove itself cannot rescue the error.
+         *
+         * Make it removable first. By this point the staging file may be carrying the
+         * target's exact mode, and on Windows a read-only file cannot be deleted at all -
+         * so the cleanup silently failed and the debris stayed. Restoring owner-write is
+         * the whole fix, and it is harmless: the file is about to stop existing.
+         */
+        (void)proven_fs_chmod(scratch, tmp_view, (proven_fs_perms_t)0600u);
         (void)proven_fs_remove(scratch, tmp_view);
     }
 

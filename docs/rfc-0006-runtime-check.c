@@ -255,13 +255,35 @@ static void check_h005_failure_path(proven_allocator_t a) {
     note("B4", "atomic write over a READ-ONLY destination", err_name(ro_err));
     note("B5", "  contents afterwards",
          file_is(a, ro, "NEW") ? "NEW" : (file_is(a, ro, "OLD") ? "OLD" : "neither"));
+
+    /* This one WAS an observation, and the first native run turned it into a defect: the
+     * staging file was left behind. It carried the target's read-only mode, and Windows
+     * will not delete a read-only file, so the cleanup failed silently. Now it is a check,
+     * because the answer is no longer open to opinion - debris is debris. */
     int ro_debris = count_staging_files(a);
-    note("B6", "  staging files left behind", ro_debris == 0 ? "none" : "SOME");
+    check("B6", "  no staging file left behind after that failure", ro_debris == 0,
+          ro_debris > 0 ? "staging file NOT cleaned up" : "");
     (void)proven_fs_chmod(a, V(ro), (proven_fs_perms_t)0644u);
     (void)proven_fs_remove(a, V(ro));
 #else
     note("B1", "holding the target open blocks nothing here", "not applicable on POSIX");
-    note("B4", "read-only destination behaviour", "Windows question; not asked here");
+
+    /* The same question POSIX-side, so the two platforms can be compared rather than
+     * guessed at. They do NOT agree: rename here needs write permission on the DIRECTORY,
+     * not on the file, so replacing a read-only file simply works. */
+    const char *ro = joined(path_b, sizeof path_b, "read-only.txt");
+    (void)proven_fs_remove(a, V(ro));
+    (void)proven_fs_write_file(a, V(ro), B("OLD"));
+    (void)proven_fs_chmod(a, V(ro), (proven_fs_perms_t)0444u);
+    proven_err_t ro_err = proven_fs_write_file_atomic(a, V(ro), B("NEW"));
+    note("B4", "atomic write over a READ-ONLY destination", err_name(ro_err));
+    note("B5", "  contents afterwards",
+         file_is(a, ro, "NEW") ? "NEW" : (file_is(a, ro, "OLD") ? "OLD" : "neither"));
+    int ro_debris = count_staging_files(a);
+    check("B6", "  no staging file left behind after that call", ro_debris == 0,
+          ro_debris > 0 ? "staging file NOT cleaned up" : "");
+    (void)proven_fs_chmod(a, V(ro), (proven_fs_perms_t)0644u);
+    (void)proven_fs_remove(a, V(ro));
 #endif
 
     (void)proven_fs_remove(a, V(target));
