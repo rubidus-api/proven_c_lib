@@ -74,6 +74,40 @@ written; their tags still exist.
   prefix, which the boolean API cannot report, so a caller must discard the whole buffer.
   Implemented and cross-compiled; **not run natively**.
 
+- **A protected destination is refused, by every whole-file replacement** (RFC-0006
+  follow-up; the owner's decision, 2026-09-10). `proven_fs_write_file`,
+  `proven_fs_write_file_atomic`, `proven_fs_write_file_durable` and `proven_fs_copy` now
+  return `PROVEN_ERR_PERMISSION` when the destination's owner-write bit is clear, and leave
+  the file exactly as it was. That bit is where both platforms record "do not write this
+  file": mode `0200` on POSIX, the READONLY attribute on Windows.
+
+  It had been three answers to one question on ONE platform, measured: `write_file` refused
+  (it opens the destination for writing), `write_file_atomic` succeeded (`rename` asks the
+  DIRECTORY for permission, so the file's mode was never consulted), and `copy` succeeded
+  **and left a 0444 file as 0664** - a protection the caller had set, gone, with nothing
+  saying so. The Windows/POSIX divergence RFC-0006 recorded was the fourth face of the same
+  unresolved question, not a portability wart.
+
+  **This is a behaviour change.** Code that replaced a read-only file through
+  `write_file_atomic`, `write_file_durable` or `copy` now gets `PROVEN_ERR_PERMISSION`; the
+  caller lifts the mark first, which is one line and visible. In particular the backup loop
+  in `tests/test_regression_fs_perms_and_types` - copying a read-only source onto the same
+  destination twice - now fails on the second run. That behaviour was deliberately added
+  once, and is deliberately reversed here: the failure it produced then was
+  `PROVEN_ERR_IO`, which a caller cannot act on, and the cure was stripping the
+  destination's protection without saying so. It is not a security boundary: the mode is
+  read before the work and acted on after it, and anyone who can `chmod` can lift the mark.
+
+### Changed
+
+- **`proven_fs_open` and `proven_fs_rename` say WHICH failure it was.**
+  `PROVEN_ERR_NOT_FOUND` when the name is not there, `PROVEN_ERR_PERMISSION` when the caller
+  may not, `PROVEN_ERR_BUSY` when something else holds it; everything else stays
+  `PROVEN_ERR_IO`. They used to answer `PROVEN_ERR_IO` for all of it, and one code for
+  "ask the user", "retry" and "give up" is a code a caller cannot act on. The platform layer
+  gained `proven_sys_fs_open_checked` and `proven_sys_fs_rename_checked` to carry the
+  distinction; the boolean wrappers remain.
+
 ### Fixed
 
 - **A durable write syncs the directory the file is actually in** (RFC-0006 H-003).
