@@ -51,7 +51,8 @@ written; their tags still exist.
   failed silently and the debris stayed. Owner-write is now held back until the payload is
   written (it is not a read permission, so nothing about confidentiality changes), the exact
   target mode goes on before the rename that publishes the file, and the cleanup path
-  restores write permission before removing. Found by running the code, not by reading it.
+  restores write permission before removing. Found by running the code, not by reading it, and
+  confirmed by a second native run on the same machine: 31 checks, none failed.
 
 - **Windows: an atomic write can replace a file that already exists** (RFC-0006 H-005,
   first recorded as RFC-0005 C-001). `proven_sys_fs_rename` used `MoveFileW`, which fails
