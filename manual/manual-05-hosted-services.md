@@ -240,6 +240,25 @@ Important behavior:
 - `proven_fs_read_all_u8str()` is the whole-file read most callers want: the result is NUL-terminated, so `proven_u8str_as_view()` and `proven_u8str_as_cstr()` work on it with no second copy. The terminator slot is reserved up front, so it costs no extra allocation. Contents are not validated as UTF-8. Release it with `proven_u8str_destroy()`.
 - `proven_fs_write_file()` is not atomic: a reader can observe a partially written file, and a failure mid-write leaves the file truncated. `proven_fs_write_file_atomic()` writes a sibling temp file and renames it over the target, so a concurrent reader sees either the entire old file or the entire new one. It is atomic with respect to readers, not durable across power loss: the rename may reach the disk before the data. When you need durability, ask for it explicitly with `proven_fs_write_file_durable` (or `proven_fs_sync`), described above.
 
+**A read-only destination is refused, by all of them.** `proven_fs_write_file`,
+`proven_fs_write_file_atomic`, `proven_fs_write_file_durable` and `proven_fs_copy` all
+return `PROVEN_ERR_PERMISSION` when the destination's owner-write bit is clear, and leave
+the file exactly as it was. That bit is where both platforms record "do not write this
+file" — mode `0200` on POSIX, the READONLY attribute on Windows.
+
+It is one rule because it used to be three answers to one question, on one platform:
+`write_file` refused, because it opens the destination for writing; `write_file_atomic`
+succeeded, because `rename` asks the *directory* for permission and never consults the
+file's mode; and `copy` succeeded **and left the file writable afterwards**, because it
+carries the source's mode across. A protection the caller had set disappeared and nothing
+said so. Which function a caller reaches for is not a decision about permissions.
+
+A caller who means to replace a protected file lifts the mark first — one line, and
+visible. The refusal is deliberately the recoverable direction; replacing a protected file
+by accident is not. It is a guard against accidents, not a security boundary: the mode is
+read before the work and acted on after it, and anyone who can `chmod` the file can lift
+the mark.
+
 Example:
 
 ```c

@@ -446,7 +446,55 @@ in a directory it never emptied, so one leftover made every later run fail three
 once - and the checks it failed were whichever ones ran nearest, not the one that caused it.
 Each phase now starts from an empty directory and a leftover is named, not counted.
 
-### An open question the run turned into a decision, ready for the owner
+### DECIDED, 2026-09-10: a protected destination is refused everywhere
+
+The owner's decision, and it went further than the question as posed. The question had been
+framed as a Windows/POSIX divergence. Measuring it first showed that the library already
+contradicted itself on POSIX alone, three ways, for one request - "make this file hold these
+bytes":
+
+| on a `0444` file, POSIX, before | answer | the file afterwards |
+|---|---|---|
+| `proven_fs_write_file` | refused (`PROVEN_ERR_IO`) | `OLD`, mode `444` |
+| `proven_fs_write_file_atomic` | **succeeded** | `NEW`, mode `444` |
+| `proven_fs_copy` | **succeeded** | `NEW`, mode **`664`** |
+
+The third row is why this is a refusal and not a documented difference: a protection the
+caller had set was gone, and nothing said so. The Windows divergence was the fourth face of
+the same unresolved question.
+
+One rule now, in `include/proven/fs.h` beside the functions it governs: all four
+whole-file replacements refuse a destination whose owner-write bit is clear, with
+`PROVEN_ERR_PERMISSION`, leaving the file exactly as it was. Measured after:
+
+| on a `0444` file, POSIX, after | answer | the file afterwards |
+|---|---|---|
+| `proven_fs_write_file` | `PROVEN_ERR_PERMISSION` | `OLD`, mode `444` |
+| `proven_fs_write_file_atomic` | `PROVEN_ERR_PERMISSION` | `OLD`, mode `444` |
+| `proven_fs_copy` | `PROVEN_ERR_PERMISSION` | `OLD`, mode `444` |
+
+What it cost, stated plainly. `proven_fs_copy` used to make an unwritable destination
+writable and carry on, so a backup loop copying a read-only source kept working; it now
+fails on the second run. That behaviour was added deliberately once and is reversed
+deliberately now, and the difference that makes it acceptable is the error: it used to fail
+with `PROVEN_ERR_IO`, which a caller cannot tell from a broken disk and cannot act on. The
+refusal is the recoverable direction - lifting the mark is one line and visible - and
+replacing a protected file by accident is not recoverable at all.
+
+Refusals are legible now for the same reason: `proven_fs_open` and `proven_fs_rename`
+answer `PROVEN_ERR_NOT_FOUND`, `PROVEN_ERR_PERMISSION` or `PROVEN_ERR_BUSY` where they used
+to answer `PROVEN_ERR_IO` for everything. `PROVEN_ERR_IO` remains for what is genuinely
+neither.
+
+This is a guard against accidents, not a security boundary, and it is documented as that:
+the mode is read before the work and acted on after it, and anyone who can `chmod` the file
+can lift the mark.
+
+`docs/rfc-0006-runtime-check.c` now checks the rule instead of recording the behaviour -
+`B4`/`B5` on both platforms, `D10`-`D12` through the other two doors - so the next native
+run confirms it there too.
+
+### The question as it was posed, before it was decided
 
 **A read-only destination behaves differently on the two platforms**, and RFC section 7
 asked for exactly this to be defined once someone had seen it:

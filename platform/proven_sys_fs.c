@@ -81,8 +81,11 @@ static wchar_t *utf8_to_wide_alloc(const char *src) {
 }
 #endif
 
-proven_sys_file_handle_t proven_sys_fs_open(const char *path, int flags) {
+proven_sys_file_handle_t proven_sys_fs_open_checked(const char *path, int flags,
+                                                    proven_sys_fs_open_result_t *out_reason) {
+    proven_sys_fs_open_result_t reason = PROVEN_SYS_FS_OPEN_OK;
     if (!path) {
+        if (out_reason) *out_reason = PROVEN_SYS_FS_OPEN_ERROR;
 #if defined(_WIN32) || defined(_WIN64)
         return (proven_sys_file_handle_t){ .handle = NULL };
 #else
@@ -116,9 +119,25 @@ proven_sys_file_handle_t proven_sys_fs_open(const char *path, int flags) {
     DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 
     HANDLE h = CreateFileW(wpath, access, share, NULL, disposition, FILE_ATTRIBUTE_NORMAL, NULL);
+    /* Read the error BEFORE the free: HeapFree can overwrite the thread's last-error value. */
+    DWORD open_error = (h == INVALID_HANDLE_VALUE) ? GetLastError() : 0;
     HeapFree(GetProcessHeap(), 0, wpath);
-    if (h == INVALID_HANDLE_VALUE) return (proven_sys_file_handle_t){ .handle = NULL };
-    
+    if (h == INVALID_HANDLE_VALUE) {
+        if (open_error == ERROR_FILE_NOT_FOUND || open_error == ERROR_PATH_NOT_FOUND) {
+            reason = PROVEN_SYS_FS_OPEN_NOT_FOUND;
+        } else if (open_error == ERROR_ACCESS_DENIED) {
+            reason = PROVEN_SYS_FS_OPEN_DENIED;
+        } else if (open_error == ERROR_SHARING_VIOLATION || open_error == ERROR_LOCK_VIOLATION) {
+            reason = PROVEN_SYS_FS_OPEN_BUSY;
+        } else {
+            reason = PROVEN_SYS_FS_OPEN_ERROR;
+        }
+        if (out_reason) *out_reason = reason;
+        SetLastError(open_error);
+        return (proven_sys_file_handle_t){ .handle = NULL };
+    }
+
+    if (out_reason) *out_reason = PROVEN_SYS_FS_OPEN_OK;
     return (proven_sys_file_handle_t){ .handle = (void*)h };
 #else
     int o_flags = 0;
@@ -143,9 +162,21 @@ proven_sys_file_handle_t proven_sys_fs_open(const char *path, int flags) {
      * which leaves a window a descriptor can be opened in and never closes again. */
     const int create_mode = (flags & PROVEN_SYS_FS_PRIVATE) ? 0600 : 0666;
     int fd = open(path, o_flags, create_mode);
-    if (fd < 0) return (proven_sys_file_handle_t){ .fd = -1 };
+    if (fd < 0) {
+        if (errno == ENOENT || errno == ENOTDIR) reason = PROVEN_SYS_FS_OPEN_NOT_FOUND;
+        else if (errno == EACCES || errno == EPERM || errno == EROFS) reason = PROVEN_SYS_FS_OPEN_DENIED;
+        else if (errno == EBUSY || errno == ETXTBSY) reason = PROVEN_SYS_FS_OPEN_BUSY;
+        else reason = PROVEN_SYS_FS_OPEN_ERROR;   /* EEXIST from an exclusive create lands here */
+        if (out_reason) *out_reason = reason;
+        return (proven_sys_file_handle_t){ .fd = -1 };
+    }
+    if (out_reason) *out_reason = PROVEN_SYS_FS_OPEN_OK;
     return (proven_sys_file_handle_t){ .fd = fd };
 #endif
+}
+
+proven_sys_file_handle_t proven_sys_fs_open(const char *path, int flags) {
+    return proven_sys_fs_open_checked(path, flags, NULL);
 }
 
 bool proven_sys_fs_close(proven_sys_file_handle_t handle) {
@@ -257,7 +288,7 @@ proven_sys_result_size_t proven_sys_fs_size(proven_sys_file_handle_t handle) {
 #endif
 }
 
-bool proven_sys_fs_rename(const char *src, const char *dest) {
+proven_sys_fs_rename_result_t proven_sys_fs_rename_checked(const char *src, const char *dest) {
 #if defined(_WIN32) || defined(_WIN64)
     wchar_t *wsrc = utf8_to_wide_alloc(src);
     wchar_t *wdest = utf8_to_wide_alloc(dest);
@@ -287,11 +318,30 @@ bool proven_sys_fs_rename(const char *src, const char *dest) {
     DWORD saved_error = success ? 0 : GetLastError();
     HeapFree(GetProcessHeap(), 0, wsrc);
     HeapFree(GetProcessHeap(), 0, wdest);
-    if (!success) SetLastError(saved_error);
-    return success;
+    if (success) return PROVEN_SYS_FS_RENAME_OK;
+
+    SetLastError(saved_error);
+    /* The two refusals a caller can do something about. A read-only destination is
+     * ACCESS_DENIED here - that is Windows refusing to replace a file the user marked
+     * as protected - and a destination another process holds is a sharing violation,
+     * which is not a permission question at all and may succeed on the next try. */
+    if (saved_error == ERROR_ACCESS_DENIED) return PROVEN_SYS_FS_RENAME_DENIED;
+    if (saved_error == ERROR_SHARING_VIOLATION || saved_error == ERROR_LOCK_VIOLATION) {
+        return PROVEN_SYS_FS_RENAME_BUSY;
+    }
+    return PROVEN_SYS_FS_RENAME_ERROR;
 #else
-    return rename(src, dest) == 0;
+    if (rename(src, dest) == 0) return PROVEN_SYS_FS_RENAME_OK;
+    /* POSIX refuses on the DIRECTORY's permissions, not the file's - replacing a
+     * read-only file is ordinary here and does not reach this branch at all. */
+    if (errno == EACCES || errno == EPERM || errno == EROFS) return PROVEN_SYS_FS_RENAME_DENIED;
+    if (errno == EBUSY || errno == ETXTBSY) return PROVEN_SYS_FS_RENAME_BUSY;
+    return PROVEN_SYS_FS_RENAME_ERROR;
 #endif
+}
+
+bool proven_sys_fs_rename(const char *src, const char *dest) {
+    return proven_sys_fs_rename_checked(src, dest) == PROVEN_SYS_FS_RENAME_OK;
 }
 
 bool proven_sys_fs_remove(const char *path) {

@@ -79,18 +79,31 @@ static proven_result_file_t internal_fs_open_with(proven_allocator_t scratch, pr
         pal_flags |= PROVEN_FS_READ;
     }
 
-    proven_sys_file_handle_t sh = proven_sys_fs_open(path_buf, pal_flags | extra_pal_flags);
+    proven_sys_fs_open_result_t why = PROVEN_SYS_FS_OPEN_OK;
+    proven_sys_file_handle_t sh = proven_sys_fs_open_checked(path_buf, pal_flags | extra_pal_flags, &why);
     internal_cstr_free(scratch, path_buf);
+
+    /* "It went wrong" is not an answer a caller can act on. These three are: the name is not
+     * there, the caller may not, or something else holds it right now. Everything else stays
+     * PROVEN_ERR_IO, including an exclusive-create collision, which has no error of its own
+     * and is not worth inventing one for. */
+    proven_err_t open_err = PROVEN_ERR_IO;
+    switch (why) {
+        case PROVEN_SYS_FS_OPEN_NOT_FOUND: open_err = PROVEN_ERR_NOT_FOUND; break;
+        case PROVEN_SYS_FS_OPEN_DENIED:    open_err = PROVEN_ERR_PERMISSION; break;
+        case PROVEN_SYS_FS_OPEN_BUSY:      open_err = PROVEN_ERR_BUSY; break;
+        default: break;
+    }
 
 #if defined(_WIN32) || defined(_WIN64)
     if (!sh.handle) {
-        res.err = PROVEN_ERR_IO;
+        res.err = open_err;
         return res;
     }
     res.value.internal.ptr = sh.handle;
 #else
     if (sh.fd < 0) {
-        res.err = PROVEN_ERR_IO;
+        res.err = open_err;
         return res;
     }
     res.value.internal.fd = sh.fd;
@@ -115,6 +128,13 @@ static proven_err_t internal_fchmod(proven_file_t file, proven_fs_perms_t perms)
 #endif
     return proven_sys_fs_fchmod(h, (unsigned int)perms) ? PROVEN_OK : PROVEN_ERR_IO;
 }
+
+/* Both are defined further down, next to proven_fs_stat. Declared here because the whole-file
+ * replacements above use them, and one rule about protected destinations has to be reachable
+ * from every one of them. */
+static proven_err_t internal_stat_impl(proven_allocator_t scratch, proven_u8str_view_t path,
+                                       proven_fs_stat_t *out_stat, bool *out_missing);
+static proven_err_t internal_refuse_if_protected(proven_allocator_t scratch, proven_u8str_view_t path);
 
 proven_err_t proven_fs_close(proven_file_t file) {
 #if defined(_WIN32) || defined(_WIN64)
@@ -317,10 +337,19 @@ proven_err_t proven_fs_rename(proven_allocator_t scratch, proven_u8str_view_t sr
         return d_res.err;
     }
 
-    bool success = proven_sys_fs_rename(s_res.value, d_res.value);
+    proven_sys_fs_rename_result_t kind = proven_sys_fs_rename_checked(s_res.value, d_res.value);
     internal_cstr_free(scratch, s_res.value);
     internal_cstr_free(scratch, d_res.value);
-    return success ? PROVEN_OK : PROVEN_ERR_IO;
+    /* "No" is not one answer. A caller who is told PROVEN_ERR_IO cannot tell a protected
+     * destination from a broken disk, so it cannot ask the user about the first or retry
+     * the second - and on Windows a read-only destination is a refusal a caller runs into
+     * routinely, because that platform treats the attribute as one. */
+    switch (kind) {
+        case PROVEN_SYS_FS_RENAME_OK:     return PROVEN_OK;
+        case PROVEN_SYS_FS_RENAME_DENIED: return PROVEN_ERR_PERMISSION;
+        case PROVEN_SYS_FS_RENAME_BUSY:   return PROVEN_ERR_BUSY;
+        default:                          return PROVEN_ERR_IO;
+    }
 }
 
 proven_err_t proven_fs_remove(proven_allocator_t scratch, proven_u8str_view_t path) {
@@ -374,21 +403,26 @@ proven_err_t proven_fs_copy(proven_allocator_t temp_alloc, proven_u8str_view_t s
     if (!proven_is_ok(r_res.err)) return r_res.err;
     
     /*
-     * An existing destination we cannot WRITE to has to be made writable first.
+     * A destination the caller marked as not-to-be-written is refused, like every other
+     * whole-file replacement here. See internal_refuse_if_protected.
      *
-     * The copy carries the source's mode onto the destination (see below), so copying a
-     * 0400 file leaves a 0400 file - and the NEXT copy onto it could not even open it:
-     * open(O_WRONLY) on a 0400 file fails, so a backup loop worked once and failed forever
-     * after, with the destination silently keeping its old contents. We are about to
-     * overwrite the file anyway; making it writable first is the honest thing, and the
-     * final mode goes back on at the end.
+     * This used to do the opposite: it made an unwritable destination writable and carried
+     * on, because the copy carries the SOURCE's mode across, so copying a 0400 file left a
+     * 0400 file and the next copy onto it could not open it - a backup loop that worked
+     * once and failed forever after. That was a real problem and this is a real change to
+     * how it is solved: the loop now fails on the second run with PROVEN_ERR_PERMISSION
+     * instead of the first run silently stripping the destination's protection.
+     *
+     * Loud and recoverable beats quiet and not. Measured before this changed: copying onto
+     * a 0444 file succeeded and left it 0664 - the mark the user set was gone, and nothing
+     * anywhere said so. A caller who means to replace a protected file can lift the mark;
+     * a caller who did not mean to cannot get the file back.
      */
     {
-        proven_fs_stat_t d_stat = {0};
-        if (proven_is_ok(proven_fs_stat(temp_alloc, dest, &d_stat)) &&
-            d_stat.type == PROVEN_FS_TYPE_FILE &&
-            (d_stat.perms & 0200u) == 0u) {
-            (void)proven_fs_chmod(temp_alloc, dest, (proven_fs_perms_t)(d_stat.perms | 0600u));
+        proven_err_t perr = internal_refuse_if_protected(temp_alloc, dest);
+        if (!proven_is_ok(perr)) {
+            (void)proven_fs_close(r_res.value);
+            return perr;
         }
     }
 
@@ -837,10 +871,43 @@ proven_err_t proven_fs_write_file(proven_allocator_t scratch, proven_u8str_view_
     return err;
 }
 
-/* Defined further down, next to proven_fs_stat, which is the same lookup without the
- * missing/failed distinction. */
-static proven_err_t internal_stat_impl(proven_allocator_t scratch, proven_u8str_view_t path,
-                                       proven_fs_stat_t *out_stat, bool *out_missing);
+/*
+ * Is this destination one the caller has said not to write?
+ *
+ * The owner-write bit is the only place either platform records that intent: on POSIX it is
+ * mode 0200, and on Windows the READONLY attribute is reported through the same bit. A
+ * destination without it is protected, and every whole-file replacement in this file
+ * refuses one, with PROVEN_ERR_PERMISSION.
+ *
+ * That rule exists because the three ways of saying "make this file hold these bytes" used
+ * to give three different answers on ONE platform, and only one of them respected the mark:
+ *
+ *   proven_fs_write_file        refused - it opens the destination for writing
+ *   proven_fs_write_file_atomic succeeded - rename asks the DIRECTORY for permission,
+ *                               not the file, so the mark was never consulted
+ *   proven_fs_copy              succeeded AND left the file writable afterwards, because
+ *                               it carried the source's mode across
+ *
+ * The last one is the reason this is a refusal rather than a documented difference: a
+ * protection the user set disappeared, and nothing said so. Which of the three a caller
+ * happened to use is not a decision about permissions.
+ *
+ * What this is NOT: a security boundary. The mode is read before the work and acted on
+ * after, so a mode that changes in between is not caught, and a caller who owns the file
+ * can lift the mark and try again - which is exactly what they should do when they mean it.
+ * It is a guard against destroying protected data by accident, and it is honest about
+ * being only that.
+ */
+static proven_err_t internal_refuse_if_protected(proven_allocator_t scratch, proven_u8str_view_t path) {
+    proven_fs_stat_t st = {0};
+    bool missing = false;
+    proven_err_t err = internal_stat_impl(scratch, path, &st, &missing);
+    if (!proven_is_ok(err)) return err;
+    if (missing) return PROVEN_OK;                       /* nothing there to protect */
+    if (st.type != PROVEN_FS_TYPE_FILE) return PROVEN_OK; /* not our business here */
+    if ((st.perms & 0200u) == 0u) return PROVEN_ERR_PERMISSION;
+    return PROVEN_OK;
+}
 
 /* Longest basename most filesystems accept. The temp sibling has to fit too. */
 #define INTERNAL_NAME_MAX ((proven_size_t)255)
@@ -952,6 +1019,15 @@ static proven_err_t internal_write_file_atomic(proven_allocator_t scratch, prove
     proven_fs_stat_t target = {0};
     bool target_missing = false;
     {
+        /* Before ANY of this: if the caller marked the destination as not to be written,
+         * that is the answer. Refusing here means no staging file is created, nothing is
+         * renamed, and the protected file is untouched. */
+        proven_err_t perr = internal_refuse_if_protected(scratch, path);
+        if (!proven_is_ok(perr)) {
+            scratch.free_fn(scratch.ctx, tmp);
+            return perr;
+        }
+
         proven_err_t serr = internal_stat_impl(scratch, path, &target, &target_missing);
         if (!proven_is_ok(serr)) {
             scratch.free_fn(scratch.ctx, tmp);

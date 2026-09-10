@@ -236,6 +236,24 @@ durable 형태는 저장 장치를 두 번 기다린다. 쓰기를 잃는 것이
 - `proven_fs_read_all_u8str()`은 대부분의 호출자가 원하는 파일 전체 읽기다: 결과가 NUL로 종료되므로 `proven_u8str_as_view()`와 `proven_u8str_as_cstr()`가 두 번째 복사 없이 그 위에서 동작한다. 종료 슬롯은 미리 예약되므로 추가 할당 비용이 들지 않는다. 내용은 UTF-8로 검증되지 않는다. `proven_u8str_destroy()`로 해제하라.
 - `proven_fs_write_file()`은 atomic이 아니다: reader가 부분적으로 쓰인 파일을 관찰할 수 있고, 쓰기 도중의 실패는 파일을 절단된 채로 남긴다. `proven_fs_write_file_atomic()`은 형제 임시 파일을 쓰고 그것을 대상 위로 rename하므로, 동시 reader는 전체 이전 파일 또는 전체 새 파일 둘 중 하나를 본다. 이는 reader에 대해 atomic이지만 전원 손실에 대해 durable하지는 않다: rename이 데이터보다 먼저 디스크에 도달할 수 있다. durability가 필요할 때는 위에서 설명한 `proven_fs_write_file_durable`(또는 `proven_fs_sync`)로 명시적으로 요청하라.
 
+**읽기 전용 대상은 넷 다 거절한다.** `proven_fs_write_file`,
+`proven_fs_write_file_atomic`, `proven_fs_write_file_durable`, `proven_fs_copy`는 대상의
+소유자 쓰기 비트가 꺼져 있으면 `PROVEN_ERR_PERMISSION`을 돌려주고 파일을 그대로 둔다. 그
+비트가 두 플랫폼이 "이 파일에 쓰지 말라"를 기록하는 유일한 자리다 — POSIX에서는 모드
+`0200`, Windows에서는 READONLY 속성이 같은 비트로 보고된다.
+
+하나의 규칙인 이유는, 한 플랫폼 안에서 같은 질문에 세 가지 답이 나왔기 때문이다.
+`write_file`은 거절했다. 대상을 쓰기로 열기 때문이다. `write_file_atomic`은 성공했다.
+`rename`은 파일이 아니라 *디렉터리*에 권한을 묻기 때문에 파일의 모드를 아예 보지 않는다.
+`copy`는 성공했고 **그 뒤 파일을 쓰기 가능한 상태로 남겼다**. 원본의 모드를 옮겨 오기
+때문이다. 호출자가 걸어 둔 보호가 사라졌는데 아무것도 그 사실을 말하지 않았다. 어느 함수를
+골랐는지는 권한에 대한 결정이 아니다.
+
+보호된 파일을 정말로 바꾸려는 호출자는 표시를 먼저 푼다 — 한 줄이고, 눈에 보인다. 거절은
+되돌릴 수 있는 쪽이고, 실수로 덮어쓴 것은 되돌릴 수 없다. 보안 경계가 아니라 사고 방지
+장치다: 모드는 작업 전에 읽고 작업 후에 반영되며, `chmod`를 할 수 있는 사람은 표시를 풀 수
+있다.
+
 예:
 
 ```c

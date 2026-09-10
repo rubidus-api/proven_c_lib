@@ -302,9 +302,14 @@ static void check_h005_failure_path(proven_allocator_t a) {
     (void)proven_fs_chmod(a, V(ro), (proven_fs_perms_t)0444u);
     (void)purge_staging(a);   /* judge this phase on its own work */
     proven_err_t ro_err = proven_fs_write_file_atomic(a, V(ro), B("NEW"));
-    note("B4", "atomic write over a READ-ONLY destination", err_name(ro_err));
-    note("B5", "  contents afterwards",
-         file_is(a, ro, "NEW") ? "NEW" : (file_is(a, ro, "OLD") ? "OLD" : "neither"));
+    /* This WAS an observation - the RFC asked for the behaviour to be defined and it took a
+     * native run to see what there was to define. It is now a rule: a destination the caller
+     * marked as not-to-be-written is refused, on every platform, by every whole-file
+     * replacement, with the same error. */
+    check("B4", "atomic write over a READ-ONLY destination is refused",
+          ro_err == PROVEN_ERR_PERMISSION, err_name(ro_err));
+    check("B5", "  and the old contents are untouched", file_is(a, ro, "OLD"),
+          file_is(a, ro, "NEW") ? "it was REPLACED" : "");
 
     /* This one WAS an observation, and the first native run turned it into a defect: the
      * staging file was left behind. It carried the target's read-only mode, and Windows
@@ -327,9 +332,10 @@ static void check_h005_failure_path(proven_allocator_t a) {
     (void)proven_fs_chmod(a, V(ro), (proven_fs_perms_t)0444u);
     (void)purge_staging(a);   /* judge this phase on its own work */
     proven_err_t ro_err = proven_fs_write_file_atomic(a, V(ro), B("NEW"));
-    note("B4", "atomic write over a READ-ONLY destination", err_name(ro_err));
-    note("B5", "  contents afterwards",
-         file_is(a, ro, "NEW") ? "NEW" : (file_is(a, ro, "OLD") ? "OLD" : "neither"));
+    check("B4", "atomic write over a READ-ONLY destination is refused",
+          ro_err == PROVEN_ERR_PERMISSION, err_name(ro_err));
+    check("B5", "  and the old contents are untouched", file_is(a, ro, "OLD"),
+          file_is(a, ro, "NEW") ? "it was REPLACED" : "");
     int ro_debris = count_staging_files(a);
     check("B6", "  no staging file left behind after that call", ro_debris == 0,
           ro_debris > 0 ? staging_summary : "");
@@ -420,6 +426,25 @@ static void check_general(proven_allocator_t a) {
      * success. Recorded so the answer is on the record for both platforms. */
     proven_err_t sd = proven_fs_sync_dir(a, V(work_dir));
     note("D7", "sync_dir on this platform", err_name(sd));
+
+    /* The rule is only a rule if every door obeys it. */
+    {
+        const char *prot = joined(path_b, sizeof path_b, "protected.txt");
+        (void)proven_fs_chmod(a, V(prot), (proven_fs_perms_t)0600u);
+        (void)proven_fs_remove(a, V(prot));
+        (void)proven_fs_write_file(a, V(prot), B("KEEP"));
+        (void)proven_fs_chmod(a, V(prot), (proven_fs_perms_t)0444u);
+        check("D10", "plain write over a protected file is refused",
+              proven_fs_write_file(a, V(prot), B("NEW")) == PROVEN_ERR_PERMISSION, "");
+        const char *any = joined(path_a, sizeof path_a, "any-src.txt");
+        (void)proven_fs_write_file(a, V(any), B("SRC"));
+        check("D11", "copy over a protected file is refused",
+              proven_fs_copy(a, V(any), V(prot)) == PROVEN_ERR_PERMISSION, "");
+        check("D12", "  and it still holds what it held", file_is(a, prot, "KEEP"), "");
+        (void)proven_fs_chmod(a, V(prot), (proven_fs_perms_t)0600u);
+        (void)proven_fs_remove(a, V(prot));
+        (void)proven_fs_remove(a, V(any));
+    }
 
     proven_byte_t enc[64];
     proven_size_t written = 0;

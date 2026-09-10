@@ -42,6 +42,27 @@ typedef enum {
     PROVEN_SYS_FS_PRIVATE = 1 << 6
 } proven_sys_fs_mode_t;
 
+/** @brief Why an open did not happen. The three a caller can actually act on, and everything else. */
+typedef enum {
+    PROVEN_SYS_FS_OPEN_OK = 0,
+    PROVEN_SYS_FS_OPEN_NOT_FOUND,  /**< the name is not there */
+    PROVEN_SYS_FS_OPEN_DENIED,     /**< permission refused it */
+    PROVEN_SYS_FS_OPEN_BUSY,       /**< something else holds it right now */
+    PROVEN_SYS_FS_OPEN_ERROR       /**< anything else, including an exclusive-create collision */
+} proven_sys_fs_open_result_t;
+
+/**
+ * @brief Open, saying WHY when it fails.
+ *
+ * "Not there", "you may not", and "not right now" are three different problems with three
+ * different answers, and a caller told only that something went wrong can act on none of
+ * them. `out_reason` may be NULL.
+ */
+[[nodiscard]]
+proven_sys_file_handle_t proven_sys_fs_open_checked(const char *path, int flags,
+                                                    proven_sys_fs_open_result_t *out_reason);
+
+/** @brief Convenience wrapper over proven_sys_fs_open_checked; it cannot say why. */
 [[nodiscard]]
 proven_sys_file_handle_t proven_sys_fs_open(const char *path, int flags);
 
@@ -64,7 +85,26 @@ proven_sys_result_size_t proven_sys_fs_write(proven_sys_file_handle_t handle, co
 [[nodiscard]]
 proven_sys_result_size_t proven_sys_fs_size(proven_sys_file_handle_t handle);
 
+/** @brief Why a rename did not happen. "No" has more than one meaning and callers need them apart. */
+typedef enum {
+    PROVEN_SYS_FS_RENAME_OK = 0,
+    PROVEN_SYS_FS_RENAME_DENIED,   /**< permission refused it: the target is protected */
+    PROVEN_SYS_FS_RENAME_BUSY,     /**< something else holds it open right now */
+    PROVEN_SYS_FS_RENAME_ERROR     /**< anything else */
+} proven_sys_fs_rename_result_t;
+
+/**
+ * @brief Rename, saying WHY when it fails.
+ *
+ * A single boolean collapses "you may not" and "not right now" and "the disk is broken"
+ * into one answer, and a caller can act on all three differently: ask the user, retry,
+ * give up. The two the platforms actually produce here are a protected destination
+ * (a read-only file on Windows, a directory without write permission on POSIX) and a
+ * destination another process is holding open.
+ */
 [[nodiscard]]
+proven_sys_fs_rename_result_t proven_sys_fs_rename_checked(const char *src, const char *dest);
+
 /**
  * @brief Rename `src` to `dest`, REPLACING `dest` if it already exists.
  *
@@ -81,7 +121,9 @@ proven_sys_result_size_t proven_sys_fs_size(proven_sys_file_handle_t handle);
  * ACL and metadata handling, sharing modes, and symlinks. Those are native Windows
  * questions and this workstation has never run a Windows binary.
  */
+[[nodiscard]]
 bool proven_sys_fs_rename(const char *src, const char *dest);
+/* ^ convenience wrapper over proven_sys_fs_rename_checked; it cannot say why. */
 
 [[nodiscard]]
 bool proven_sys_fs_remove(const char *path);

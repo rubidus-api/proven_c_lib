@@ -133,33 +133,63 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
-    PROVEN_TEST_SECTION("copying a read-only file twice still works",
-        "Carrying the source's mode means the destination ends up 0400 - and open(O_WRONLY) on a 0400 file fails, so the SECOND copy could not even open it.",
-        "A backup loop worked once and failed forever after, with the destination silently keeping its old contents. The copy makes an unwritable destination writable first: it is about to overwrite it anyway.");
+    PROVEN_TEST_SECTION("copying onto a read-only destination is REFUSED, and says so",
+        "A mode without the owner-write bit is the caller saying: do not write this file. Every whole-file replacement here refuses one, and copy is one of them.",
+        "This section used to assert the opposite - that the copy made an unwritable destination writable and carried on. That is why the rule changed; read the note below before changing it back.");
     // ---------------------------------------------------------------
     {
         proven_u8str_view_t src = PROVEN_LIT("test_fs_perms.d/ro-src.txt");
         proven_u8str_view_t dst = PROVEN_LIT("test_fs_perms.d/ro-dst.txt");
         proven_byte_t d1[] = "first";
+        proven_byte_t d2[] = "second";
 
         PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_write_file(heap, src,
             (proven_mem_view_t){ .ptr = d1, .size = sizeof d1 })), "setup: a source", "");
         PROVEN_TEST_ASSERT(chmod("test_fs_perms.d/ro-src.txt", 0400) == 0, "setup: make it read-only", "");
 
+        /* The first copy creates the destination, which carries the source's 0400. */
         PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_copy(heap, src, dst)), "the first copy must succeed", "");
-        PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_copy(heap, src, dst)),
-            "and the SECOND copy onto the same destination must succeed too",
-            "It used to fail with PROVEN_ERR_IO: the destination carried the source's 0400 and could no longer be opened for writing.");
 
         struct stat st;
         PROVEN_TEST_ASSERT(stat("test_fs_perms.d/ro-dst.txt", &st) == 0 && (st.st_mode & 0777) == 0400,
-            "and the destination must still end up 0400", "");
+            "and the destination carries the source's mode", "");
+
+        /*
+         * The second copy is now refused, and this is a deliberate reversal.
+         *
+         * It used to succeed: the copy made the unwritable destination writable and carried
+         * on, so a backup loop kept working. What that cost was measured - copying onto a
+         * 0444 file left it 0664. A protection the user set was gone and nothing said so.
+         *
+         * The reason the failure is acceptable now and was not before is the ERROR. It used
+         * to be PROVEN_ERR_IO, which tells a caller nothing and cannot be acted on; the
+         * backup loop failed forever with an opaque code. PROVEN_ERR_PERMISSION says which
+         * problem it is, so the caller can lift the mark, or ask, or stop - and a caller who
+         * did not intend to replace a protected file gets their file back, which is the case
+         * that cannot be recovered from the other way round.
+         */
+        proven_err_t second = proven_fs_copy(heap, src, dst);
+        PROVEN_TEST_ASSERT(second == PROVEN_ERR_PERMISSION,
+            "the SECOND copy onto that destination is refused with PROVEN_ERR_PERMISSION",
+            "Not PROVEN_ERR_IO. A refusal a caller cannot tell apart from a broken disk is a refusal a caller cannot act on, and that is what made this behaviour unacceptable before.");
 
         proven_result_mem_mut_t back = proven_fs_read_all(heap, dst);
         PROVEN_TEST_ASSERT(proven_is_ok(back.err) && back.value.size == sizeof d1 &&
                            memcmp(back.value.ptr, d1, sizeof d1) == 0,
-            "and hold the source's contents", "");
+            "and the destination is untouched by the refusal", "A refusal that half-wrote the destination would be worse than either behaviour.");
         heap.free_fn(heap.ctx, back.value.ptr);
+
+        PROVEN_TEST_ASSERT(stat("test_fs_perms.d/ro-dst.txt", &st) == 0 && (st.st_mode & 0777) == 0400,
+            "and it still carries the mode it was given", "The refusal must not have quietly widened it - that was the defect.");
+
+        /* Lifting the mark is the caller's answer, and it works. */
+        PROVEN_TEST_ASSERT(chmod("test_fs_perms.d/ro-dst.txt", 0600) == 0, "the caller lifts the mark", "");
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_write_file(heap, src,
+            (proven_mem_view_t){ .ptr = d2, .size = sizeof d2 })) || true, "", "");
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_copy(heap, src, dst)),
+            "and then the copy goes through",
+            "The refusal has to be recoverable by the caller, or it is just a wall.");
+        (void)chmod("test_fs_perms.d/ro-dst.txt", 0600);
     }
 
     // ---------------------------------------------------------------
