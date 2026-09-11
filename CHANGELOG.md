@@ -31,8 +31,10 @@ written; their tags still exist.
   blocks it on every Windows: BUSY. Verified on the Windows 11 VM, x86-64 and i686, plus a
   test build that forces the fallback: 41 checks each, none failed. On FAT32 and exFAT
   disks attached to the VM the POSIX rename answers `ERROR_INVALID_PARAMETER`, the
-  fallback runs, and all three builds pass there too (nine runs in all). Pre-1809 Windows
-  and network volumes were not available to run on.
+  fallback runs, and all three builds pass there too (nine runs in all). The same holds on
+  a Windows SMB network drive (a share on the VM mapped back to it): INVALID_PARAMETER,
+  fallback, 41 checks each for all three builds. Pre-1809 Windows and a Samba server were
+  not available to run on.
 
 ### Fixed
 
