@@ -127,6 +127,23 @@ static const char *joined(char *dst, size_t cap, const char *name) {
 
 /* Reads a whole file and compares it with `expect`. Missing or unreadable counts as a
  * mismatch, which is what the caller means by asking. */
+#if defined(_WIN32) || defined(_WIN64)
+/* Does the volume holding `path` offer the POSIX-semantics rename? FAT32 and exFAT do not
+ * (measured on the VM: they answer ERROR_INVALID_PARAMETER), and there the library is meant
+ * to fall back to MoveFileExW - so the expected answer depends on the volume, not only on
+ * the build. FILE_SUPPORTS_POSIX_UNLINK_RENAME is 0x400; older headers lack the name. */
+static bool volume_has_posix_rename(const wchar_t *path, char *fs_name, size_t fs_cap) {
+    wchar_t root[MAX_PATH];
+    wchar_t wfs[64] = {0};
+    DWORD flags = 0;
+    fs_name[0] = 0;
+    if (!GetVolumePathNameW(path, root, MAX_PATH)) return false;
+    if (!GetVolumeInformationW(root, NULL, 0, NULL, NULL, &flags, wfs, 64)) return false;
+    WideCharToMultiByte(CP_UTF8, 0, wfs, -1, fs_name, (int)fs_cap, NULL, NULL);
+    return (flags & 0x400u) != 0;
+}
+#endif
+
 static bool file_is(proven_allocator_t a, const char *path, const char *expect) {
     proven_result_mem_mut_t r = proven_fs_read_all(a, V(path));
     if (!proven_is_ok(r.err)) return false;
@@ -318,15 +335,24 @@ static void check_h005_failure_path(proven_allocator_t a) {
         SetFilePointerEx(held, zero, NULL, FILE_BEGIN);
         (void)ReadFile(held, seen, (DWORD)sizeof seen - 1, &got, NULL);
         CloseHandle(held);
+        char fs_name[64];
+        bool posix_volume = volume_has_posix_rename(wpath, fs_name, sizeof fs_name);
 #if defined(PROVEN_WIN_RENAME_LEGACY_ONLY)
-        check("B7", "atomic write under a delete-sharing reader is BUSY (pre-1809 path)",
-              shared == PROVEN_ERR_BUSY, err_name(shared));
-        check("B8", "  and the file still holds the OLD contents", file_is(a, target, "OLD"), "");
+        bool expect_replace = false;   /* this build acts as Windows before 1809 */
 #else
-        check("B7", "atomic write under a delete-sharing reader REPLACES it, as on POSIX",
-              shared == PROVEN_OK, err_name(shared));
-        check("B8", "  and the name now holds the new contents", file_is(a, target, "NEW2"), "");
+        bool expect_replace = posix_volume;
 #endif
+        note("B7v", posix_volume ? "volume offers the POSIX rename" : "volume lacks the POSIX rename",
+             fs_name[0] ? fs_name : "unknown file system");
+        if (expect_replace) {
+            check("B7", "atomic write under a delete-sharing reader REPLACES it, as on POSIX",
+                  shared == PROVEN_OK, err_name(shared));
+            check("B8", "  and the name now holds the new contents", file_is(a, target, "NEW2"), "");
+        } else {
+            check("B7", "atomic write under a delete-sharing reader is BUSY (MoveFileExW fallback)",
+                  shared == PROVEN_ERR_BUSY, err_name(shared));
+            check("B8", "  and the file still holds the OLD contents", file_is(a, target, "OLD"), "");
+        }
         check("B9", "  and the reader's open handle still sees the OLD contents",
               strcmp(seen, "OLD") == 0, seen);
         int shared_debris = count_staging_files(a);

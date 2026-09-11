@@ -13,6 +13,8 @@
 #   PROVEN_BUILD_DIR   the repository path on that host
 #   PROVEN_WIN_HOST    ssh alias of the Windows VM (default: win11kd)
 #   PROVEN_WIN_DIR     working folder on the VM, forward slashes
+#   PROVEN_WIN_VOLUMES optional, e.g. "P: Q:" - also run every build on these volumes
+#                      (a FAT32/exFAT disk attached for the test), reports named by drive
 # Traps already paid for:
 #   - the VM's default shell IS cmd. Do not prefix with `cmd /c`: the outer cmd splits
 #     on `&`, the `cd` does not carry over, and the rest runs in the home directory.
@@ -39,5 +41,17 @@ for w in 64 32 64-legacy; do
     scp -o BatchMode=yes -q "$win:$remote_dir/run$w/proven-windows-check-report.txt" "$out/report-win$w.txt"
     printf 'win%s: ' "$w"
     grep -E '^checks:|^VERDICT|FAIL' "$out/report-win$w.txt" || echo "(no verdict line - read $out/report-win$w.txt)"
+done
+win_dir_bs=$(printf '%s' "$remote_dir" | tr '/' '\\')   # cmd reads a leading /x as a switch
+for vol in ${PROVEN_WIN_VOLUMES:-}; do
+    d=$(printf '%s' "$vol" | tr -d ':')
+    for w in 64 32 64-legacy; do
+        ssh -o BatchMode=yes "$win" \
+            "(if exist ${d}:\\run$w rmdir /s /q ${d}:\\run$w) & mkdir ${d}:\\run$w && cd /d ${d}:\\run$w && ${win_dir_bs}\\rfc-0006-check-win$w.exe < nul > nul & exit 0" \
+            | iconv -f CP949 -t UTF-8 || true
+        scp -o BatchMode=yes -q "$win:${d}:/run$w/proven-windows-check-report.txt" "$out/report-$d-win$w.txt"
+        printf '%s: win%s: ' "$d" "$w"
+        grep -E '^checks:|^VERDICT|FAIL' "$out/report-$d-win$w.txt" || echo "(no verdict line)"
+    done
 done
 echo "reports: $out"

@@ -72,8 +72,9 @@ failed.
 Found by that run and fixed: a replacement refused because the destination was IN USE came back
 as `PROVEN_ERR_PERMISSION`. Decided and done (RFC-0006 Decision 2 (b)): on Windows 10 1809+
 an atomic write replaces a file a delete-sharing reader holds, as on POSIX; below that it falls
-back to `MoveFileExW` and answers BUSY. Still unmeasured: a real pre-1809 Windows and a
-FAT/exFAT or network volume - the fallback was run only through a test build that forces it.
+back to `MoveFileExW` and answers BUSY. The fallback was run on real FAT32 and exFAT volumes
+(the POSIX rename answers INVALID_PARAMETER there) and through a test build that forces it.
+Still unmeasured: a real pre-1809 Windows and a network volume.
 
 Not started: the full hosted test suite on Windows. The VM has no compiler, and the docs tests
 read the repository tree, so it needs either a compiler there or a build-only mode plus a copy
