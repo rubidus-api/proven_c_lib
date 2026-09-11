@@ -18,6 +18,15 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-11
+
+The RFC-0006 release: six security and boundary defects fixed, a rule for protected
+destinations, errors a caller can act on, and native Windows verified on 64 and 32 bit.
+MINOR, not PATCH, because behaviour changes: an atomic write, copy or rename over a
+read-only destination is now refused, and several failures that were `PROVEN_ERR_IO` now
+name themselves. `v0.0.1` was set on 2026-09-04 and tagged only now, at its own commit; it
+was never published as a GitHub release.
+
 ### Changed
 
 - **Windows: an atomic write replaces a file someone is reading, as on POSIX** (RFC-0006
@@ -51,6 +60,9 @@ written; their tags still exist.
   failure path returned `false`, which is 0, which is `PROVEN_SYS_FS_RENAME_OK`.
 - Verified on the VM, **x86-64 and i686**, gcc 16.2 mingw static builds: 38 checks each, none
   failed. 32-bit Windows is now confirmed rather than explained.
+- **The job-system deadlock fix now has a Windows run.** `tests/test_regression_job_permit_starvation`
+  was proven on the POSIX semaphore path only; built statically for x86-64 and i686 and run on
+  the Windows 11 test VM (the `CreateSemaphoreW` path), it passes on both.
 
 ### Security
 
