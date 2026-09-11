@@ -29,9 +29,10 @@ written; their tags still exist.
   FAT/exFAT, many network shares) it falls back to `MoveFileExW`, and there the write is
   refused with `PROVEN_ERR_BUSY` as before. A reader that did NOT allow delete sharing
   blocks it on every Windows: BUSY. Verified on the Windows 11 VM, x86-64 and i686, plus a
-  test build that forces the fallback: 41 checks each, none failed. Pre-1809 Windows
-  itself was not available to run on; the fallback is triggered by the answers Windows
-  documents for an unknown information class.
+  test build that forces the fallback: 41 checks each, none failed. On FAT32 and exFAT
+  disks attached to the VM the POSIX rename answers `ERROR_INVALID_PARAMETER`, the
+  fallback runs, and all three builds pass there too (nine runs in all). Pre-1809 Windows
+  and network volumes were not available to run on.
 
 ### Fixed
 
