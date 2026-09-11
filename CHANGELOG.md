@@ -18,6 +18,22 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows: a replacement blocked by a file in use now says BUSY, not PERMISSION.** Found by
+  the first run on the Windows 11 test VM (2026-09-11): `MoveFileExW` answers
+  `ERROR_ACCESS_DENIED` both for a read-only destination and for one another process holds
+  open - with any sharing mode, delete sharing included - and never a sharing violation. The
+  platform layer mapped that straight to "denied", so an atomic write over a file someone was
+  merely reading told the caller the file was protected. The Windows rename now asks the file
+  after a refusal (read-only attribute, then an open for DELETE) and answers
+  `PROVEN_ERR_BUSY` for the in-use case. The branch that expected a sharing violation from
+  `MoveFileExW` never fired; it is kept but documented as such.
+- **Windows: a failed path conversion in rename no longer reports success.** The allocation
+  failure path returned `false`, which is 0, which is `PROVEN_SYS_FS_RENAME_OK`.
+- Verified on the VM, **x86-64 and i686**, gcc 16.2 mingw static builds: 38 checks each, none
+  failed. 32-bit Windows is now confirmed rather than explained.
+
 ### Security
 
 - **A staging file is now created private, not narrowed afterwards** (RFC-0006 H-002).
