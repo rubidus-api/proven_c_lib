@@ -615,6 +615,13 @@ proven_result_u8str_t proven_fs_read_all_u8str(proven_allocator_t alloc, proven_
  * Windows will not delete a read-only file - so remove reports that difference as
  * PROVEN_ERR_PERMISSION rather than hiding it behind an I/O error.
  *
+ * A destination another process holds open is PROVEN_ERR_BUSY, not PROVEN_ERR_PERMISSION -
+ * it is in use, not protected, and may work on the next try. On Windows this includes a
+ * holder that allowed delete sharing (as proven_fs_open does): Windows' rename refuses a
+ * replacement while ANY handle is open, where POSIX replaces and the reader keeps the old
+ * bytes. Windows reports both cases as "access denied"; the library asks the file which
+ * one it was, so the answer is a best reading of the moment after the refusal.
+ *
  * What this is NOT: a security boundary. The mode is read before the work and acted on
  * after it, so a mode that changes in between is not caught, and anyone who can chmod the
  * file can lift the mark. It is a guard against destroying protected data by accident,

@@ -65,9 +65,18 @@ under no sharing), and leaving no temporary behind.
 
 This item still stays OPEN, for what that run did not cover: the entropy count boundary itself
 (4 GiB, deliberately not asked for), the symlink cases - file, directory and relative - which
-RFC-0006 did not touch at all, and 32-bit Windows. The 32-bit executable WAS run, and reported
-only the three failures the stale staging file explains; it has not been re-run since that was
-fixed, so it is explained rather than confirmed.
+RFC-0006 did not touch at all. 32-bit Windows is no longer on this list: the Windows 11 test VM
+(`scripts/win11kd-rfc-0006-check.sh`, 2026-09-11) ran both word sizes, 38 checks each, none
+failed.
+
+Found by that run and fixed: a replacement refused because the destination was IN USE came back
+as `PROVEN_ERR_PERMISSION`. Open, for the owner: on Windows an atomic write fails (now as BUSY)
+whenever anyone has the target open, even a reader using this library's own `proven_fs_open`,
+where POSIX replaces and the reader keeps the old bytes - see RFC-0006 "Decision 2".
+
+Not started: the full hosted test suite on Windows. The VM has no compiler, and the docs tests
+read the repository tree, so it needs either a compiler there or a build-only mode plus a copy
+of the tree.
 The read-only-destination divergence between POSIX and Windows is recorded in RFC-0006 as a
 decision waiting for the owner.
 

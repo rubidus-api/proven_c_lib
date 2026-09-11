@@ -356,7 +356,7 @@ gcc 14.2.0 / Linux / x86-64. Every row's regression was seen to FAIL before its 
 | H-002 | `tests/test_regression_fs_private_staging` | `7c22299` | Before: staging mode 0644. After: 0600, and the Appendix A observer agrees where modes are honoured. `build` · `strict-error` · `asan` · `ubsan` | Closed for the reproduced cases |
 | H-003 | `tests/test_regression_fs_backslash_parent` | `91370a0` | Before: the durable write returned an error after publishing. After: succeeds and syncs the real parent, decoy directory untouched. `build` · `strict-error` · `asan` · `ubsan` | Closed for the reproduced cases |
 | H-004 | `tests/test_regression_job_seq_wrap` | `dd6f20d` | Appendix B under UBSan: before, signed overflow at `job.c:262`; after, exit 0 with no diagnostic. `build` · `strict-error` · `asan` · `ubsan` · `tsan` | Closed on this target |
-| H-005 | `tests/test_portability_source_contracts` + `docs/rfc-0006-runtime-check.c` | `57aecc0` | **Run on native Windows x86-64, 2026-09-10, twice**: A3, the second atomic write over an existing name - the failure itself - PASSES. A7 no debris, A8 non-ASCII name, A9 200-character name, B2 old contents survive a failed replacement, B3/B6 no debris after either kind of failure, D5 rename onto an existing name: all pass, 31 checks, none failed. | **Verified on native Windows** |
+| H-005 | `tests/test_portability_source_contracts` + `docs/rfc-0006-runtime-check.c` | `57aecc0` | **Run on native Windows x86-64, 2026-09-10, twice**: A3, the second atomic write over an existing name - the failure itself - PASSES. A7 no debris, A8 non-ASCII name, A9 200-character name, B2 old contents survive a failed replacement, B3/B6 no debris after either kind of failure, D5 rename onto an existing name: all pass, 31 checks, none failed. **VM run 2026-09-11, x86-64 and i686: 38 checks each, none failed.** | **Verified on native Windows, 64 and 32 bit** |
 | H-006 | `tests/test_portability_source_contracts` + planner boundaries + `docs/rfc-0006-runtime-check.c` | `57aecc0` | **Run on native Windows x86-64, 2026-09-10**: C1 fills 1 B to 1 MiB with no improbable zero run, C2 zero-length, C3/C4 the planner. The 4 GiB boundary itself is still not asked for. | **Verified for reachable sizes** |
 
 ### The two decisions the RFC reserved, and how to reverse them
@@ -569,10 +569,55 @@ It also runs on the host, and does: a verifier nobody has executed is not a veri
 POSIX it reports 28 checks passed. That proves the harness and nothing about Windows -
 `rename` has always replaced there, so the check that matters cannot fail on this machine.
 
+### The VM run, 2026-09-11, and what it corrected
+
+Windows runs now go to the Windows 11 test VM (build 26200), through
+`scripts/win11kd-rfc-0006-check.sh`: built on arch-dev with mingw gcc 16.2, static, run in a
+fresh directory. **x86-64 and i686 both: 38 checks, none failed.** H-005 and H-006 are now
+verified on both Windows word sizes.
+
+The first VM run (36 checks, none failed) still showed a wrong answer in an observation:
+B1, a replacement over a destination another process holds open, said
+`PROVEN_ERR_PERMISSION` - "protected" for a file that was only in use. (The owner's run of
+2026-09-10 said `PROVEN_ERR_IO` there; the error mapping added after it turned that into the
+wrong specific answer.) A pure Win32 probe on the VM measured why:
+
+| # | destination | `MoveFileExW(REPLACE_EXISTING)` | open for DELETE | POSIX-semantics rename | holder then reads |
+|---|---|---|---|---|---|
+| 1 | held, share none | ACCESS_DENIED | SHARING_VIOLATION | SHARING_VIOLATION | OLD |
+| 2 | held, share read+write | ACCESS_DENIED | SHARING_VIOLATION | SHARING_VIOLATION | OLD |
+| 3 | held, share read+write+delete | ACCESS_DENIED | OK | **OK** (name now NEW) | **OLD** |
+| 4 | READONLY, not held | ACCESS_DENIED | OK | ACCESS_DENIED | - |
+| 5 | deny-DELETE ACE on the file only | OK (replaced) | - | - | - |
+
+`MoveFileExW` cannot tell busy from protected. The fix asks the file after the refusal:
+READONLY attribute set -> PERMISSION; otherwise an open for DELETE that hits a sharing
+violation, or succeeds, -> BUSY. B1 is now a check and passes. Case 5 means an ACL-denied
+replacement was not reproduced (the directory's delete-child right won), so that branch is
+reasoned, not measured.
+
+### Decision 2 (for the owner): a reader that allows delete sharing
+
+Row 3 is the larger finding. `proven_fs_open` opens with read, write AND delete sharing, and
+still `MoveFileExW` refuses to replace the file under it. So on Windows an atomic write fails -
+now honestly as BUSY - whenever anyone has the target open, including a reader using this
+library. POSIX replaces it and the reader keeps the old bytes. The verifier records it as B7
+(BUSY), and B8 checks the file is whole either way.
+
+- (a) Keep `MoveFileExW`. Document: on Windows, an atomic write under a concurrent reader
+  fails with BUSY; retry is the caller's.
+- (b) Use the POSIX-semantics rename (`SetFileInformationByHandle`, `FileRenameInfoEx`,
+  REPLACE_IF_EXISTS | POSIX_SEMANTICS; Windows 10 1809+) and fall back to `MoveFileExW` where
+  it is unsupported. Row 3 shows it gives POSIX behaviour for delete-sharing readers; rows 1
+  and 2 stay refused. Costs: a newer API, and a second path to test.
+
+Not implemented either way; it changes what the library promises on Windows.
+
 ### What is still open
 
-- Native Windows for H-005 and H-006, and for the Windows half of H-002 (ACLs, not mode
-  bits). macOS, 32-bit and embedded targets are unverified as before.
+- Decision 2 above. The Windows half of H-002 (ACLs, not mode bits). The full hosted test
+  suite on Windows (the VM has no compiler). macOS and embedded targets are unverified as
+  before.
 - A second-user lane for H-002. The observer runs as one user; the cross-user argument
   rests on the observed mode and ordinary POSIX open-fd semantics.
 - Everything section 2 lists as deferred: RFC-0005 C-002/C-003, V-001/V-002,

@@ -30,7 +30,7 @@ for pair in "x86_64-w64-mingw32-gcc rfc-0006-check-win64.exe" \
     out_name=${pair##* }
     if command -v "$cc_exe" >/dev/null 2>&1; then
         # shellcheck disable=SC2086
-        "$cc_exe" $CFLAGS -static -o "$OUT/$out_name" \
+        "$cc_exe" $CFLAGS -static -Wl,--no-insert-timestamp -o "$OUT/$out_name" \
             "$SRC" src/proven/*.c platform/*.c -lbcrypt
         built="$built $out_name"
     else

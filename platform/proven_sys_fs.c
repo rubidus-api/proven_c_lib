@@ -288,6 +288,45 @@ proven_sys_result_size_t proven_sys_fs_size(proven_sys_file_handle_t handle) {
 #endif
 }
 
+#if defined(_WIN32) || defined(_WIN64)
+/*
+ * MoveFileExW answers ERROR_ACCESS_DENIED to every refusal of a replacement - measured on
+ * Windows 11 (2026-09-11): a read-only destination, AND a destination another process holds
+ * open with any sharing mode, FILE_SHARE_DELETE included. It never reported a sharing
+ * violation. So its error cannot tell "protected" from "busy", and mapping it straight to
+ * DENIED told a caller to give up on a file that was merely in use.
+ *
+ * This asks the destination itself, after the fact. It is a HEURISTIC - the state can
+ * change between the failed rename and this probe - but each answer is what the file
+ * says now:
+ *   - READONLY attribute set                   -> DENIED (the user protected it)
+ *   - opening it for DELETE hits a sharing
+ *     violation                                -> BUSY   (someone holds it without DELETE sharing)
+ *   - that open is itself ACCESS_DENIED        -> DENIED (an ACL, not a holder)
+ *   - that open succeeds                       -> BUSY   (deletable yet not replaceable: a holder
+ *                                                          that allowed DELETE sharing - measured)
+ *   - anything else (gone, path trouble)       -> DENIED (the original answer, unrefined)
+ * ACL-denied cases were not reproduced on the test machine: a deny-DELETE entry on the file
+ * alone did not stop the replacement there (the directory's delete-child right won).
+ */
+static proven_sys_fs_rename_result_t rename_denied_reason(const wchar_t *wdest) {
+    DWORD attrs = GetFileAttributesW(wdest);
+    if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_READONLY)) {
+        return PROVEN_SYS_FS_RENAME_DENIED;
+    }
+    HANDLE probe = CreateFileW(wdest, DELETE,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               NULL, OPEN_EXISTING, 0, NULL);
+    if (probe != INVALID_HANDLE_VALUE) {
+        CloseHandle(probe);
+        return PROVEN_SYS_FS_RENAME_BUSY;
+    }
+    DWORD e = GetLastError();
+    if (e == ERROR_SHARING_VIOLATION || e == ERROR_LOCK_VIOLATION) return PROVEN_SYS_FS_RENAME_BUSY;
+    return PROVEN_SYS_FS_RENAME_DENIED;
+}
+#endif
+
 proven_sys_fs_rename_result_t proven_sys_fs_rename_checked(const char *src, const char *dest) {
 #if defined(_WIN32) || defined(_WIN64)
     wchar_t *wsrc = utf8_to_wide_alloc(src);
@@ -295,7 +334,8 @@ proven_sys_fs_rename_result_t proven_sys_fs_rename_checked(const char *src, cons
     if (!wsrc || !wdest) {
         if (wsrc) HeapFree(GetProcessHeap(), 0, wsrc);
         if (wdest) HeapFree(GetProcessHeap(), 0, wdest);
-        return false;
+        /* Not `false`: that is 0, and 0 is RENAME_OK - a failed conversion reported success. */
+        return PROVEN_SYS_FS_RENAME_ERROR;
     }
     /*
      * MOVEFILE_REPLACE_EXISTING, because MoveFileW fails outright when the destination
@@ -316,20 +356,19 @@ proven_sys_fs_rename_result_t proven_sys_fs_rename_checked(const char *src, cons
      */
     bool success = MoveFileExW(wsrc, wdest, MOVEFILE_REPLACE_EXISTING) != 0;
     DWORD saved_error = success ? 0 : GetLastError();
+    proven_sys_fs_rename_result_t result = PROVEN_SYS_FS_RENAME_OK;
+    if (!success) {
+        result = (saved_error == ERROR_ACCESS_DENIED)
+            ? rename_denied_reason(wdest)
+            : PROVEN_SYS_FS_RENAME_ERROR;
+        if (saved_error == ERROR_SHARING_VIOLATION || saved_error == ERROR_LOCK_VIOLATION) {
+            result = PROVEN_SYS_FS_RENAME_BUSY;   /* not seen from MoveFileExW; kept for safety */
+        }
+    }
     HeapFree(GetProcessHeap(), 0, wsrc);
     HeapFree(GetProcessHeap(), 0, wdest);
-    if (success) return PROVEN_SYS_FS_RENAME_OK;
-
-    SetLastError(saved_error);
-    /* The two refusals a caller can do something about. A read-only destination is
-     * ACCESS_DENIED here - that is Windows refusing to replace a file the user marked
-     * as protected - and a destination another process holds is a sharing violation,
-     * which is not a permission question at all and may succeed on the next try. */
-    if (saved_error == ERROR_ACCESS_DENIED) return PROVEN_SYS_FS_RENAME_DENIED;
-    if (saved_error == ERROR_SHARING_VIOLATION || saved_error == ERROR_LOCK_VIOLATION) {
-        return PROVEN_SYS_FS_RENAME_BUSY;
-    }
-    return PROVEN_SYS_FS_RENAME_ERROR;
+    if (!success) SetLastError(saved_error);
+    return result;
 #else
     if (rename(src, dest) == 0) return PROVEN_SYS_FS_RENAME_OK;
     /* POSIX refuses on the DIRECTORY's permissions, not the file's - replacing a

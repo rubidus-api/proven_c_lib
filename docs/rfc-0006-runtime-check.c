@@ -284,13 +284,34 @@ static void check_h005_failure_path(proven_allocator_t a) {
     } else {
         (void)purge_staging(a);   /* judge this phase on its own work */
         proven_err_t blocked = proven_fs_write_file_atomic(a, V(target), B("NEW"));
-        note("B1", "atomic write while the target is held open", err_name(blocked));
         CloseHandle(held);
+        /* This WAS a note. The VM run of 2026-09-11 showed it said PERMISSION - telling the
+         * caller the file was protected when it was only in use. Windows' rename does not
+         * distinguish the two; the library now asks the file, and in use means BUSY. */
+        check("B1", "atomic write while the target is held open is BUSY, not PERMISSION",
+              blocked == PROVEN_ERR_BUSY, err_name(blocked));
         check("B2", "  the OLD contents survive a failed replacement",
               blocked != PROVEN_OK ? file_is(a, target, "OLD") : file_is(a, target, "NEW"),
               blocked == PROVEN_OK ? "it succeeded, so NEW is correct" : "");
         int debris = count_staging_files(a);
         check("B3", "  no staging file left behind", debris == 0, staging_summary);
+    }
+
+    /* The same, but held the way this library's own proven_fs_open holds a file: with
+     * read, write AND delete sharing. POSIX replaces a file that a reader has open and the
+     * reader keeps the old bytes; MoveFileExW refuses it. Recorded, not asserted: whether
+     * Windows should do what POSIX does here is the owner's decision (RFC-0006 decision 2). */
+    held = (wn > 0) ? CreateFileW(wpath, GENERIC_READ,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL)
+                    : INVALID_HANDLE_VALUE;
+    if (held != INVALID_HANDLE_VALUE) {
+        (void)purge_staging(a);
+        proven_err_t shared = proven_fs_write_file_atomic(a, V(target), B("NEW2"));
+        CloseHandle(held);
+        note("B7", "atomic write while a reader holds it with delete sharing", err_name(shared));
+        check("B8", "  and whatever happened, the file is whole (old or new)",
+              file_is(a, target, "OLD") || file_is(a, target, "NEW2"), "");
     }
 
     /* A read-only destination. RFC-0006 asks for this behaviour to be DEFINED, and
