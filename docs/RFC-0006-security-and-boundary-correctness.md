@@ -619,8 +619,15 @@ contents stay. The verifier now reads the volume's `FILE_SUPPORTS_POSIX_UNLINK_R
 to know which answer to expect (B7v records the file system). All three builds on NTFS, FAT32
 and exFAT - nine runs - 41 checks each, none failed.
 
-Not measured: an actual pre-1809 Windows, and a network volume. For those the fallback
-condition rests on the documented answers and on the forced-fallback build.
+A network volume, measured the same day: an SMB share on the VM mapped back to it as a
+network drive (`\\127.0.0.1\...`, Microsoft Windows Network - the SMB client redirector,
+server side NTFS). It reports NTFS but not `FILE_SUPPORTS_POSIX_UNLINK_RENAME`, and the
+POSIX-semantics rename answers `ERROR_INVALID_PARAMETER` for every probe case, as on FAT. The
+fallback runs; all three builds, 41 checks each, none failed. Not covered by this: an SMB
+server that is not Windows (Samba) - none was reachable without installing one.
+
+Not measured: an actual pre-1809 Windows. For it the fallback condition rests on the
+documented answers and on the forced-fallback build.
 
 The question as it was posed:
 
@@ -643,7 +650,7 @@ Not implemented either way; it changes what the library promises on Windows.
 
 ### What is still open
 
-- Decision 2's fallback on a real pre-1809 Windows or a network volume (FAT32/exFAT: measured). The Windows half of H-002 (ACLs, not mode bits). The full hosted test
+- Decision 2's fallback on a real pre-1809 Windows or a Samba share (FAT32, exFAT and a Windows SMB share: measured). The Windows half of H-002 (ACLs, not mode bits). The full hosted test
   suite on Windows (the VM has no compiler). macOS and embedded targets are unverified as
   before.
 - A second-user lane for H-002. The observer runs as one user; the cross-user argument
