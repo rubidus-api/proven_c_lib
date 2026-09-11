@@ -13,6 +13,7 @@
 #if defined(_WIN32) || defined(_WIN64)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <string.h>
 #include <direct.h>
 #include <io.h>
 #else
@@ -309,6 +310,63 @@ proven_sys_result_size_t proven_sys_fs_size(proven_sys_file_handle_t handle) {
  * ACL-denied cases were not reproduced on the test machine: a deny-DELETE entry on the file
  * alone did not stop the replacement there (the directory's delete-child right won).
  */
+/*
+ * FILE_RENAME_INFO with the Flags member (the header calls the class FileRenameInfoEx).
+ * Declared here because older mingw headers carry neither the class nor the flags.
+ */
+typedef struct {
+    DWORD flags;
+    HANDLE root_directory;
+    DWORD file_name_length;
+    WCHAR file_name[1];
+} proven_rename_info_ex_t;
+#define PROVEN_FILE_RENAME_INFO_EX_CLASS     22
+#define PROVEN_FILE_RENAME_REPLACE_IF_EXISTS 0x1u
+#define PROVEN_FILE_RENAME_POSIX_SEMANTICS   0x2u
+
+/* 0 on success, else the Windows error. Renames through a handle on the SOURCE. */
+static DWORD posix_rename_w(const wchar_t *wsrc, const wchar_t *wdest) {
+#if defined(PROVEN_WIN_RENAME_LEGACY_ONLY)
+    /* Test build: behave as Windows before 1809 does, so the fallback path gets run. */
+    (void)wsrc; (void)wdest;
+    return ERROR_INVALID_PARAMETER;
+#else
+    size_t name_bytes = wcslen(wdest) * sizeof(WCHAR);
+    if (name_bytes > (DWORD)-1 - sizeof(proven_rename_info_ex_t)) return ERROR_FILENAME_EXCED_RANGE;
+    DWORD info_size = (DWORD)(sizeof(proven_rename_info_ex_t) + name_bytes);
+    proven_rename_info_ex_t *info = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, info_size);
+    if (!info) return ERROR_NOT_ENOUGH_MEMORY;
+    info->flags = PROVEN_FILE_RENAME_REPLACE_IF_EXISTS | PROVEN_FILE_RENAME_POSIX_SEMANTICS;
+    info->root_directory = NULL;
+    info->file_name_length = (DWORD)name_bytes;
+    memcpy(info->file_name, wdest, name_bytes);
+
+    DWORD e = 0;
+    HANDLE h = CreateFileW(wsrc, DELETE | SYNCHRONIZE,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        e = GetLastError();
+    } else {
+        if (!SetFileInformationByHandle(h, (FILE_INFO_BY_HANDLE_CLASS)PROVEN_FILE_RENAME_INFO_EX_CLASS,
+                                        info, info_size)) {
+            e = GetLastError();
+        }
+        CloseHandle(h);
+    }
+    HeapFree(GetProcessHeap(), 0, info);
+    return e;
+#endif
+}
+
+/* The answers that mean "this Windows or this volume does not know the POSIX rename" -
+ * the ones, and the only ones, after which MoveFileExW is tried. */
+static bool posix_rename_unsupported(DWORD e) {
+    return e == ERROR_INVALID_PARAMETER || e == ERROR_INVALID_FUNCTION ||
+           e == ERROR_NOT_SUPPORTED || e == ERROR_CALL_NOT_IMPLEMENTED ||
+           e == ERROR_INVALID_LEVEL;
+}
+
 static proven_sys_fs_rename_result_t rename_denied_reason(const wchar_t *wdest) {
     DWORD attrs = GetFileAttributesW(wdest);
     if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_READONLY)) {
@@ -354,20 +412,35 @@ proven_sys_fs_rename_result_t proven_sys_fs_rename_checked(const char *src, cons
      * The Windows error is preserved for diagnosis: HeapFree can overwrite the thread's
      * last-error value, so it is saved before the frees and restored after them.
      */
-    bool success = MoveFileExW(wsrc, wdest, MOVEFILE_REPLACE_EXISTING) != 0;
-    DWORD saved_error = success ? 0 : GetLastError();
+    /*
+     * First the POSIX-semantics rename (Windows 10 1809+): it replaces a destination that a
+     * reader holds open with delete sharing - as proven_fs_open does - and the reader keeps
+     * the old bytes, which is what POSIX rename does. MoveFileExW refuses that case outright
+     * (measured on Windows 11, 2026-09-11), so without this an atomic write failed whenever
+     * anyone had the file open. Owner's decision: RFC-0006 Decision 2, option (b).
+     *
+     * Older Windows, and file systems that lack the semantics (FAT, exFAT, many network
+     * shares), answer "unsupported" to it - and only then is MoveFileExW tried. Any other
+     * answer is the real one and is not retried with a weaker primitive.
+     */
+    DWORD saved_error = posix_rename_w(wsrc, wdest);
+    if (posix_rename_unsupported(saved_error)) {
+        saved_error = MoveFileExW(wsrc, wdest, MOVEFILE_REPLACE_EXISTING) ? 0 : GetLastError();
+    }
     proven_sys_fs_rename_result_t result = PROVEN_SYS_FS_RENAME_OK;
-    if (!success) {
-        result = (saved_error == ERROR_ACCESS_DENIED)
-            ? rename_denied_reason(wdest)
-            : PROVEN_SYS_FS_RENAME_ERROR;
-        if (saved_error == ERROR_SHARING_VIOLATION || saved_error == ERROR_LOCK_VIOLATION) {
-            result = PROVEN_SYS_FS_RENAME_BUSY;   /* not seen from MoveFileExW; kept for safety */
-        }
+    if (saved_error == ERROR_SHARING_VIOLATION || saved_error == ERROR_LOCK_VIOLATION) {
+        /* The POSIX rename says this plainly when the holder did not allow delete sharing. */
+        result = PROVEN_SYS_FS_RENAME_BUSY;
+    } else if (saved_error == ERROR_ACCESS_DENIED) {
+        /* MoveFileExW says ACCESS_DENIED for "in use" too; the POSIX rename says it for a
+         * read-only target. Asking the file settles both. */
+        result = rename_denied_reason(wdest);
+    } else if (saved_error != 0) {
+        result = PROVEN_SYS_FS_RENAME_ERROR;
     }
     HeapFree(GetProcessHeap(), 0, wsrc);
     HeapFree(GetProcessHeap(), 0, wdest);
-    if (!success) SetLastError(saved_error);
+    if (saved_error != 0) SetLastError(saved_error);
     return result;
 #else
     if (rename(src, dest) == 0) return PROVEN_SYS_FS_RENAME_OK;
