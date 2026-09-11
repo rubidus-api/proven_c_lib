@@ -254,10 +254,6 @@ durable 형태는 저장 장치를 두 번 기다린다. 쓰기를 잃는 것이
 장치다: 모드는 작업 전에 읽고 작업 후에 반영되며, `chmod`를 할 수 있는 사람은 표시를 풀 수
 있다.
 
-예:
-
-```c
-
 `proven_fs_rename`도 그 목록에 있고, 있어야 한다. 대상을 대체하는 함수이고, atomic 쓰기가
 바로 그 위에 지어져 있다 — 이것이 빠지면 한 함수에서 거절당한 호출자가 다른 함수로 같은
 결과를 얻는다. `proven_fs_remove`는 일부러 **빠져 있다**: 이름을 지우는 것은 디렉터리
@@ -269,6 +265,18 @@ durable 형태는 저장 장치를 두 번 기다린다. 쓰기를 잃는 것이
 `proven_fs_remove`는 예전에 전부 `PROVEN_ERR_IO`로 답하던 자리에서 `PROVEN_ERR_NOT_FOUND`,
 `PROVEN_ERR_PERMISSION`, `PROVEN_ERR_BUSY`를 답한다. 사용자에게 묻기, 다시 시도하기,
 포기하기는 서로 다른 세 가지 답이고, 오류 코드 하나로는 그중 어느 것도 할 수 없다.
+
+**누가 읽고 있는 파일도 바꿔 넣는다.** 다른 프로세스가 대상을 열어 두고 있어도 그 프로세스가
+삭제 공유(delete sharing)를 허용했다면 — `proven_fs_open`이 그렇게 연다 — atomic 쓰기는 성공하고,
+읽던 쪽은 열어 둔 핸들로 옛 내용을 끝까지 읽는다. POSIX가 원래 그렇고, Windows 10 1809 이후에서는
+POSIX 방식 rename으로 같은 동작을 한다. 그 rename을 모르는 곳 — 1809 이전 Windows, FAT32·exFAT,
+네트워크 드라이브 — 에서는 `MoveFileExW`로 물러서며, 거기서는 누가 열어 두기만 해도 교체가
+거절되고 `PROVEN_ERR_BUSY`가 온다. 삭제 공유를 허용하지 않고 연 파일은 어느 Windows에서든
+`PROVEN_ERR_BUSY`다. 보호가 아니라 사용 중이므로, 다시 시도하면 될 수 있다.
+
+예:
+
+```c
 proven_result_file_t of = proven_fs_open(
     alloc,
     PROVEN_LIT("out.txt"),

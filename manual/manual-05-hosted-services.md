@@ -272,6 +272,16 @@ A refusal now says *which* refusal it is. `proven_fs_open`, `proven_fs_rename` a
 retrying, and giving up are three different answers, and one error code supports none of
 them.
 
+**A file someone is reading is still replaced.** When another process holds the
+destination open but allowed delete sharing — `proven_fs_open` does — the atomic write
+succeeds, and the reader keeps reading the old contents through the handle it already has.
+POSIX has always done this; Windows 10 1809 and later do the same through the
+POSIX-semantics rename. Where that rename is unknown — Windows before 1809, FAT32, exFAT,
+network drives — the library falls back to `MoveFileExW`, which refuses the replacement
+while anyone has the file open, and the answer is `PROVEN_ERR_BUSY`. A holder that did not
+allow delete sharing gets the same `PROVEN_ERR_BUSY` on every Windows. It is in use, not
+protected: a retry may succeed.
+
 Example:
 
 ```c

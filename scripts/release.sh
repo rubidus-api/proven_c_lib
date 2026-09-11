@@ -67,7 +67,13 @@ for item in include src platform tests manual manual-ko scripts site nob.c nob.h
             THIRD_PARTY_NOTICES.md CHANGELOG.md TEST.md; do
     [ -e "$root/$item" ] && cp -r "$root/$item" "$stage/"
 done
-( cd "$root/build/release" && zip -qr "$dist/$version.zip" "$version" )
+# zip where it exists; Python's zipfile where it does not (same archive layout).
+if command -v zip >/dev/null 2>&1; then
+    ( cd "$root/build/release" && zip -qr "$dist/$version.zip" "$version" )
+else
+    rm -f "$dist/$version.zip"
+    ( cd "$root/build/release" && python3 -m zipfile -c "$dist/$version.zip" "$version" )
+fi
 rm -rf "$root/build/release"
 
 ls -la "$dist"/$version* | awk '{print "  " $9 "  " $5 " bytes"}'
