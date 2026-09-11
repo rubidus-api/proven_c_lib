@@ -63,7 +63,7 @@ with, so it works for any type without a template and without `void *` at the ca
 Wrong — holding a pointer across a push:
 
 ```text
-int *first = PROVEN_ARRAY_GET(&arr, int, 0);
+int *first = PROVEN_ARRAY_GET_MUT(&arr, int, 0);
 (void)PROVEN_ARRAY_PUSH(&arr, int, 42);   /* may reallocate */
 *first = 7;                               /* wrong: `first` may point at freed memory */
 ```
