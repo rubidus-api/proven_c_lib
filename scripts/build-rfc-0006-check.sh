@@ -25,12 +25,17 @@ skipped=""
 # Windows, 64-bit and 32-bit. -static so the person running it needs no mingw runtime DLLs
 # beside the executable; -lbcrypt is the CSPRNG the entropy path calls.
 for pair in "x86_64-w64-mingw32-gcc rfc-0006-check-win64.exe" \
-            "i686-w64-mingw32-gcc rfc-0006-check-win32.exe"; do
-    cc_exe=${pair%% *}
-    out_name=${pair##* }
+            "i686-w64-mingw32-gcc rfc-0006-check-win32.exe" \
+            "x86_64-w64-mingw32-gcc rfc-0006-check-win64-legacy.exe -DPROVEN_WIN_RENAME_LEGACY_ONLY"; do
+    # The third acts as Windows before 1809, so the MoveFileExW fallback is run, not just compiled.
+    # shellcheck disable=SC2086
+    set -- $pair
+    cc_exe=$1
+    out_name=$2
+    extra=${3:-}
     if command -v "$cc_exe" >/dev/null 2>&1; then
         # shellcheck disable=SC2086
-        "$cc_exe" $CFLAGS -static -Wl,--no-insert-timestamp -o "$OUT/$out_name" \
+        "$cc_exe" $CFLAGS $extra -static -Wl,--no-insert-timestamp -o "$OUT/$out_name" \
             "$SRC" src/proven/*.c platform/*.c -lbcrypt
         built="$built $out_name"
     else

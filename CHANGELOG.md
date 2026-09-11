@@ -18,6 +18,21 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **Windows: an atomic write replaces a file someone is reading, as on POSIX** (RFC-0006
+  Decision 2, option (b), the owner's choice). The rename now tries the POSIX-semantics
+  rename first (`SetFileInformationByHandle` with `FileRenameInfoEx`,
+  REPLACE_IF_EXISTS | POSIX_SEMANTICS, Windows 10 1809+): a reader that allowed delete
+  sharing - which `proven_fs_open` does - no longer blocks the write, and its open handle
+  keeps the old bytes. Where Windows or the volume answers "unsupported" (older Windows,
+  FAT/exFAT, many network shares) it falls back to `MoveFileExW`, and there the write is
+  refused with `PROVEN_ERR_BUSY` as before. A reader that did NOT allow delete sharing
+  blocks it on every Windows: BUSY. Verified on the Windows 11 VM, x86-64 and i686, plus a
+  test build that forces the fallback: 41 checks each, none failed. Pre-1809 Windows
+  itself was not available to run on; the fallback is triggered by the answers Windows
+  documents for an unknown information class.
+
 ### Fixed
 
 - **Windows: a replacement blocked by a file in use now says BUSY, not PERMISSION.** Found by

@@ -616,11 +616,15 @@ proven_result_u8str_t proven_fs_read_all_u8str(proven_allocator_t alloc, proven_
  * PROVEN_ERR_PERMISSION rather than hiding it behind an I/O error.
  *
  * A destination another process holds open is PROVEN_ERR_BUSY, not PROVEN_ERR_PERMISSION -
- * it is in use, not protected, and may work on the next try. On Windows this includes a
- * holder that allowed delete sharing (as proven_fs_open does): Windows' rename refuses a
- * replacement while ANY handle is open, where POSIX replaces and the reader keeps the old
- * bytes. Windows reports both cases as "access denied"; the library asks the file which
- * one it was, so the answer is a best reading of the moment after the refusal.
+ * it is in use, not protected, and may work on the next try.
+ *
+ * A reader that allowed delete sharing (as proven_fs_open does) does NOT block it: the
+ * file is replaced and the reader keeps the old bytes, on POSIX and on Windows 10 1809 or
+ * later (the POSIX-semantics rename). Where that rename is unsupported - older Windows,
+ * FAT/exFAT and many network volumes - the library falls back to MoveFileExW, which refuses
+ * while ANY handle is open; that refusal is PROVEN_ERR_BUSY. Windows reports "busy" and
+ * "protected" alike as "access denied" there, so the library asks the file which it was:
+ * a best reading of the moment after the refusal.
  *
  * What this is NOT: a security boundary. The mode is read before the work and acted on
  * after it, so a mode that changes in between is not caught, and anyone who can chmod the

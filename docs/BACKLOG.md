@@ -70,9 +70,10 @@ RFC-0006 did not touch at all. 32-bit Windows is no longer on this list: the Win
 failed.
 
 Found by that run and fixed: a replacement refused because the destination was IN USE came back
-as `PROVEN_ERR_PERMISSION`. Open, for the owner: on Windows an atomic write fails (now as BUSY)
-whenever anyone has the target open, even a reader using this library's own `proven_fs_open`,
-where POSIX replaces and the reader keeps the old bytes - see RFC-0006 "Decision 2".
+as `PROVEN_ERR_PERMISSION`. Decided and done (RFC-0006 Decision 2 (b)): on Windows 10 1809+
+an atomic write replaces a file a delete-sharing reader holds, as on POSIX; below that it falls
+back to `MoveFileExW` and answers BUSY. Still unmeasured: a real pre-1809 Windows and a
+FAT/exFAT or network volume - the fallback was run only through a test build that forces it.
 
 Not started: the full hosted test suite on Windows. The VM has no compiler, and the docs tests
 read the repository tree, so it needs either a compiler there or a build-only mode plus a copy

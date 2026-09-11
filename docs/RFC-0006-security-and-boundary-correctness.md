@@ -596,7 +596,27 @@ violation, or succeeds, -> BUSY. B1 is now a check and passes. Case 5 means an A
 replacement was not reproduced (the directory's delete-child right won), so that branch is
 reasoned, not measured.
 
-### Decision 2 (for the owner): a reader that allows delete sharing
+### DECIDED, 2026-09-11: Decision 2 is (b), with a fallback below 1809
+
+The owner chose (b) and asked that Windows before 1809 still be served. Implemented in
+`proven_sys_fs_rename_checked`: the POSIX-semantics rename first; only an "unsupported"
+answer (`ERROR_INVALID_PARAMETER`, `INVALID_FUNCTION`, `NOT_SUPPORTED`,
+`CALL_NOT_IMPLEMENTED`, `INVALID_LEVEL`) falls back to `MoveFileExW`. Any other answer is
+final and is not retried with the weaker primitive. A sharing violation is BUSY; access
+denied goes through the file probe above.
+
+Verified on the VM (41 checks, none failed, each): x86-64 and i686 replace under a
+delete-sharing reader (B7), the name holds the new bytes (B8), the reader's handle still
+reads the old bytes (B9), no debris (B10). A third build, `PROVEN_WIN_RENAME_LEGACY_ONLY`,
+makes the POSIX rename answer "unsupported" as pre-1809 Windows would: the fallback runs,
+B7 is BUSY, the old contents stay, and every other check still passes.
+
+Not measured: an actual pre-1809 Windows, and a FAT/exFAT or network volume. The fallback
+condition rests on the documented answers, not on a run.
+
+The question as it was posed:
+
+### Decision 2 (as posed): a reader that allows delete sharing
 
 Row 3 is the larger finding. `proven_fs_open` opens with read, write AND delete sharing, and
 still `MoveFileExW` refuses to replace the file under it. So on Windows an atomic write fails -
@@ -615,7 +635,7 @@ Not implemented either way; it changes what the library promises on Windows.
 
 ### What is still open
 
-- Decision 2 above. The Windows half of H-002 (ACLs, not mode bits). The full hosted test
+- Decision 2's fallback on a real pre-1809 Windows or a FAT/exFAT/network volume. The Windows half of H-002 (ACLs, not mode bits). The full hosted test
   suite on Windows (the VM has no compiler). macOS and embedded targets are unverified as
   before.
 - A second-user lane for H-002. The observer runs as one user; the cross-user argument

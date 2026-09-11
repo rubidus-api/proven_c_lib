@@ -3,7 +3,7 @@
 #
 #   build   on arch-dev (mingw; it shares this storage, so no transfer step)
 #   copy    to $PROVEN_WIN_HOST:$PROVEN_WIN_DIR/
-#   run     win64 and win32, each in a FRESH subdirectory, stdin from nul
+#   run     win64, win32 and win64-legacy (acts as pre-1809 Windows), each in a FRESH subdirectory, stdin from nul
 #           (the verifier waits for Enter on Windows)
 #   fetch   both reports into build/rfc-0006/win11kd-<date>/ and print the verdicts
 #
@@ -29,10 +29,10 @@ mkdir -p "$out"
 ssh -o BatchMode=yes $PROVEN_BUILD_SSH \
     "cd $PROVEN_BUILD_DIR && sh scripts/build-rfc-0006-check.sh >/dev/null && sha256sum dist/rfc-0006-check-win64.exe dist/rfc-0006-check-win32.exe"
 
-scp -o BatchMode=yes -q "$here/dist/rfc-0006-check-win64.exe" "$here/dist/rfc-0006-check-win32.exe" \
+scp -o BatchMode=yes -q "$here/dist/rfc-0006-check-win64.exe" "$here/dist/rfc-0006-check-win32.exe" "$here/dist/rfc-0006-check-win64-legacy.exe" \
     "$win:$remote_dir/"
 
-for w in 64 32; do
+for w in 64 32 64-legacy; do
     ssh -o BatchMode=yes "$win" \
         "cd /d ${remote_dir} && (if exist run$w rmdir /s /q run$w) & mkdir run$w && cd run$w && ..\\rfc-0006-check-win$w.exe < nul > nul & exit 0" \
         | iconv -f CP949 -t UTF-8 || true

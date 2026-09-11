@@ -298,20 +298,39 @@ static void check_h005_failure_path(proven_allocator_t a) {
     }
 
     /* The same, but held the way this library's own proven_fs_open holds a file: with
-     * read, write AND delete sharing. POSIX replaces a file that a reader has open and the
-     * reader keeps the old bytes; MoveFileExW refuses it. Recorded, not asserted: whether
-     * Windows should do what POSIX does here is the owner's decision (RFC-0006 decision 2). */
+     * read, write AND delete sharing. POSIX replaces a file a reader has open and the
+     * reader keeps the old bytes. Windows does the same through the POSIX-semantics rename
+     * (1809+), which the library now uses - RFC-0006 Decision 2 (b). A build with
+     * PROVEN_WIN_RENAME_LEGACY_ONLY acts as older Windows, where only MoveFileExW exists
+     * and the honest answer is BUSY. */
     held = (wn > 0) ? CreateFileW(wpath, GENERIC_READ,
                                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                   NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL)
                     : INVALID_HANDLE_VALUE;
-    if (held != INVALID_HANDLE_VALUE) {
+    if (held == INVALID_HANDLE_VALUE) {
+        note("B7", "could not hold the destination open with delete sharing", "skipped");
+    } else {
         (void)purge_staging(a);
         proven_err_t shared = proven_fs_write_file_atomic(a, V(target), B("NEW2"));
+        char seen[16] = {0};
+        DWORD got = 0;
+        LARGE_INTEGER zero = {0};
+        SetFilePointerEx(held, zero, NULL, FILE_BEGIN);
+        (void)ReadFile(held, seen, (DWORD)sizeof seen - 1, &got, NULL);
         CloseHandle(held);
-        note("B7", "atomic write while a reader holds it with delete sharing", err_name(shared));
-        check("B8", "  and whatever happened, the file is whole (old or new)",
-              file_is(a, target, "OLD") || file_is(a, target, "NEW2"), "");
+#if defined(PROVEN_WIN_RENAME_LEGACY_ONLY)
+        check("B7", "atomic write under a delete-sharing reader is BUSY (pre-1809 path)",
+              shared == PROVEN_ERR_BUSY, err_name(shared));
+        check("B8", "  and the file still holds the OLD contents", file_is(a, target, "OLD"), "");
+#else
+        check("B7", "atomic write under a delete-sharing reader REPLACES it, as on POSIX",
+              shared == PROVEN_OK, err_name(shared));
+        check("B8", "  and the name now holds the new contents", file_is(a, target, "NEW2"), "");
+#endif
+        check("B9", "  and the reader's open handle still sees the OLD contents",
+              strcmp(seen, "OLD") == 0, seen);
+        int shared_debris = count_staging_files(a);
+        check("B10", "  no staging file left behind", shared_debris == 0, staging_summary);
     }
 
     /* A read-only destination. RFC-0006 asks for this behaviour to be DEFINED, and
