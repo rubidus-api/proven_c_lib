@@ -766,8 +766,9 @@ Wrong — assuming the truncating and the atomic form behave alike:
 ## 11. Manual chapters
 
 **Just finished an introductory C book? Start with the
-[tutorial](manual-t-tutorial.md).** It is six short programs, each introducing exactly one idea,
-ending with the greeting program from this chapter read line by line. This chapter shows that program
+[tutorial](manual-t-tutorial.md).** It is nine short programs, each introducing exactly one idea:
+the sixth is the greeting program from this chapter read line by line, and the last three go on to
+arenas, containers and files. This chapter shows that program
 on its first page and it carries five new ideas at once; the tutorial hands them over one at a time.
 
 **Otherwise start with this chapter.** It is the only chapter
@@ -798,7 +799,7 @@ reference you read after Chapter 3 has introduced the subject.
 
 ### The chapters
 
-- [**Tutorial**: the library in six short programs, one new idea at a time](manual-t-tutorial.md) — *Part I, optional on-ramp*
+- [**Tutorial**: the library in nine short programs, one new idea at a time](manual-t-tutorial.md) — *Part I, optional on-ramp*
 0. [**Start here**: why this exists, hello world, the five contracts, glossary, libc map](manual-00-start-here.md) — *Part I*
 1. [**Foundation**: types, errors, memory views, alignment, version, panic](manual-01-foundation.md) — *Part II*
 2. [**Allocation**: heap, arena, pool, byte buffers, and the allocator trait](manual-02-allocation.md) — *Part II*

@@ -1,9 +1,10 @@
-# Tutorial: the library in six short programs
+# Tutorial: the library in nine short programs
 
 **Part I — Start here.** No prerequisites beyond one introductory C book.
-**After this tutorial** you can read the greeting program in
+**After lesson 6** you can read the greeting program in
 [Chapter 0](manual-00-start-here.md) line by line, and the reference chapters stop looking like a
-wall of new words.
+wall of new words. **After lesson 9** you have used an arena, a growable container and a file - the
+first things most programs need once they can handle text.
 
 ## Why this exists
 
@@ -13,8 +14,9 @@ carries its length, an append that refuses rather than truncates, a destroy pair
 allocator that created it. If you have finished one C book and no more, five new ideas arriving
 together is four too many.
 
-So this tutorial takes them one at a time. Six programs, each a few lines longer than the last,
-each introducing exactly one thing. Every one of them is a real file under `manual/examples/`
+So this tutorial takes them one at a time. Nine programs, each introducing exactly one thing. The
+first six lead up to the Chapter 0 program; the last three go past it, into arenas, containers and
+files. Every one of them is a real file under `manual/examples/`
 that the build compiles and runs, so what you read here is what actually ran.
 
 Build any of them the way you build any C program — the library is source you compile with your
@@ -35,7 +37,10 @@ first and come back.
 4. [Lesson 4 — the value and the error arrive together](#lesson-4--the-value-and-the-error-arrive-together)
 5. [Lesson 5 — who gives out the memory is an argument](#lesson-5--who-gives-out-the-memory-is-an-argument)
 6. [Lesson 6 — the Chapter 0 program, read line by line](#lesson-6--the-chapter-0-program-read-line-by-line)
-7. [Where to go next](#where-to-go-next)
+7. [Lesson 7 — memory that is freed all at once](#lesson-7--memory-that-is-freed-all-at-once)
+8. [Lesson 8 — a container remembers its allocator](#lesson-8--a-container-remembers-its-allocator)
+9. [Lesson 9 — the outside world fails too, and says so the same way](#lesson-9--the-outside-world-fails-too-and-says-so-the-same-way)
+10. [Where to go next](#where-to-go-next)
 
 ---
 
@@ -407,7 +412,257 @@ int main(void) {
 ```
 
 If those comments now read as labels for things you know rather than as new information, you are
-ready for the reference chapters.
+ready for the reference chapters. The next three lessons take the first steps into them - arenas,
+containers and files - in the same shape: one new idea each.
+
+---
+
+## Lesson 7 — memory that is freed all at once
+
+**The one new thing:** `proven_arena_reset` — one call that gives back everything an arena handed
+out.
+
+Lesson 5 passed an arena to `make_greeting` and reset it at the end without saying what the reset
+did. Here is the whole idea. An arena hands out pieces of a block of memory you own by moving a
+pointer forward. It has no way to give back one piece - `destroy` on an arena reclaims nothing. It
+gives back *all* of them, at once, when you reset it.
+
+That fits a shape most programs have: a loop where each round builds some temporary text, uses it,
+and is finished with it. Allocate freely during the round, reset at the end, and there is nothing
+to track and nothing to leak.
+
+<!-- example: manual/examples/en/tut_07_arena.c -->
+```c
+/*
+ * Lesson 7 - memory that is freed all at once.
+ *
+ * Lesson 5 handed an arena to make_greeting and then reset it, without saying
+ * what the reset was. This lesson is about that one call.
+ *
+ * An arena bumps a pointer through a block of memory you own. There is no
+ * per-object free: destroy on an arena reclaims nothing. Everything comes back
+ * at once, with proven_arena_reset. That sounds like a restriction, and it is
+ * the reason to use one - a loop that builds scratch text for each piece of
+ * work can drop all of it with one statement, however many strings it made.
+ */
+
+int main(void) {
+    /* The arena does not own this array - we do. It only hands out pieces. */
+    alignas(PROVEN_MAX_ALIGN) proven_byte_t backing[256];
+    proven_arena_t arena = proven_arena_create((proven_mem_mut_t){
+        .ptr = backing, .size = sizeof backing });
+    proven_allocator_t scratch = proven_arena_as_allocator(&arena);
+
+    static const proven_u8str_view_t names[] = {
+        PROVEN_LIT("ada"), PROVEN_LIT("grace"), PROVEN_LIT("barbara"),
+    };
+
+    for (proven_size_t i = 0; i < sizeof names / sizeof names[0]; ++i) {
+        /* Two strings per round, both out of the arena. */
+        proven_result_u8str_t line = proven_u8str_create(scratch, 32);
+        proven_result_u8str_t note = proven_u8str_create(scratch, 32);
+        EXAMPLE_REQUIRE(proven_is_ok(line.err) && proven_is_ok(note.err),
+                        "each round fits easily in 256 bytes");
+        if (!proven_is_ok(line.err) || !proven_is_ok(note.err)) return 1;
+
+        proven_err_t err = proven_u8str_append(&line.value, PROVEN_LIT("hello, "));
+        if (proven_is_ok(err)) err = proven_u8str_append(&line.value, names[i]);
+        if (proven_is_ok(err)) err = proven_u8str_append(&note.value, PROVEN_LIT("(scratch)"));
+        EXAMPLE_REQUIRE(proven_is_ok(err), "the appends fit their capacity");
+
+        /* The first allocation of every round lands at the start of `backing`:
+         * the reset at the end of the previous round gave all of it back. */
+        EXAMPLE_REQUIRE((const void *)proven_u8str_as_view(&line.value).ptr == (const void *)backing,
+                        "each round starts again at the beginning of the block");
+
+        proven_println("round {}: {} {} ({} bytes in use)",
+                       PROVEN_ARG(i), PROVEN_ARG(proven_u8str_as_view(&line.value)),
+                       PROVEN_ARG(proven_u8str_as_view(&note.value)),
+                       PROVEN_ARG(arena.offset));
+
+        /* One statement, and both strings are gone. No destroy loop, nothing to
+         * forget. `line` and `note` point at reclaimed memory from here on. */
+        proven_arena_reset(&arena);
+        EXAMPLE_REQUIRE(arena.offset == 0, "reset reclaims everything the round allocated");
+    }
+
+    /* An arena cannot grow. Asking for more than the block holds is an error
+     * value, the same kind lesson 3 showed - not a crash, and not a silent
+     * fallback to malloc. */
+    proven_result_u8str_t too_big = proven_u8str_create(scratch, 1024);
+    EXAMPLE_REQUIRE(too_big.err == PROVEN_ERR_NOMEM, "a 256-byte arena refuses 1 KiB");
+
+    proven_arena_destroy(&arena);
+    return EXAMPLE_OK();
+}
+```
+
+**What to notice.** Every round reports the same number of bytes in use, and the first string of
+every round lands at the start of `backing` - the program checks that. The reset did not free two
+strings; it moved one number back to zero, which costs the same whether the round made two strings
+or two thousand. And when the arena is too small the answer is `PROVEN_ERR_NOMEM`, an error value
+like lesson 3's, not a crash.
+
+**Common first stumble.** After the reset, `line` and `note` still hold their old pointers, and
+those pointers now point at memory the next round will overwrite. A reset leaves every pointer the
+arena ever gave out dangling, all at once. Keep nothing from a round that you have not copied out
+of the arena first.
+
+---
+
+## Lesson 8 — a container remembers its allocator
+
+**The one new thing:** a container takes the allocator once, at creation, and keeps it.
+
+The string in lesson 3 had a fixed room, and you passed the allocator both to `create` and to
+`destroy`. A growable array cannot work like that: a push that outgrows its room must allocate
+again, at a moment the caller did not plan for. So the array keeps the allocator it was created
+with. You hand it over once; after that, push, get and destroy take only the array.
+
+<!-- example: manual/examples/en/tut_08_containers.c -->
+```c
+/*
+ * Lesson 8 - a container remembers its allocator.
+ *
+ * A string is created with an allocator and destroyed with the same one; you
+ * pass it both times. A growable array has to allocate again later, whenever a
+ * push outgrows its storage, so it keeps the allocator it was created with.
+ * That is the one new thing: you hand the allocator over once, at creation,
+ * and after that push, get and destroy take nothing but the array.
+ *
+ * The PROVEN_ARRAY_* macros take the element type as an argument, so they can
+ * check it: pushing a double into an array of int does not compile.
+ */
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* 2 is a starting capacity, not a limit. */
+    proven_result_array_t made = PROVEN_ARRAY_INIT(alloc, int, 2);
+    EXAMPLE_REQUIRE(proven_is_ok(made.err), "creating an empty array must succeed");
+    if (!proven_is_ok(made.err)) return 1;
+    proven_array_t squares = made.value;
+
+    /* Ten pushes into room for two. Each push that does not fit grows the
+     * storage through the allocator the array remembered - no allocator here. */
+    for (int i = 1; i <= 10; ++i) {
+        proven_err_t err = PROVEN_ARRAY_PUSH(&squares, int, i * i);
+        EXAMPLE_REQUIRE(proven_is_ok(err), "the heap can grow a ten-int array");
+        if (!proven_is_ok(err)) {
+            PROVEN_ARRAY_DESTROY(&squares);
+            return 1;
+        }
+    }
+    EXAMPLE_REQUIRE(squares.len == 10, "ten pushes, ten elements");
+
+    /* get returns a pointer to the element, or NULL when the index is past the
+     * end. An index out of range is an answer you can test, not a wild read. */
+    const int *third = PROVEN_ARRAY_GET(&squares, int, 2);
+    EXAMPLE_REQUIRE(third && *third == 9, "element 2 is 3 * 3");
+    EXAMPLE_REQUIRE(PROVEN_ARRAY_GET(&squares, int, 10) == NULL, "index 10 is past the end");
+
+    int sum = 0;
+    for (proven_size_t i = 0; i < squares.len; ++i) {
+        sum += *PROVEN_ARRAY_GET(&squares, int, i);
+    }
+    EXAMPLE_REQUIRE(sum == 385, "1 + 4 + 9 + ... + 100");
+    proven_println("{} squares, sum {}", PROVEN_ARG(squares.len), PROVEN_ARG(sum));
+
+    /* Destroy takes only the array: it frees through the allocator it kept. */
+    PROVEN_ARRAY_DESTROY(&squares);
+    return EXAMPLE_OK();
+}
+```
+
+**What to notice.** The array was created with room for two and took ten pushes, and not one of
+them mentions an allocator. `PROVEN_ARRAY_GET` past the end is `NULL` - an answer you can check,
+not a read of whatever lies beyond the storage. The macros take the element type (`int`) as an
+argument, so the compiler can check that too.
+
+**Common first stumble.** The pointer `PROVEN_ARRAY_GET` returns points *into* the array's storage.
+The next push may move that storage to a bigger block, and the old pointer then dangles. Fetch it,
+use it, and do not keep it across a push; [Chapter 4](manual-04-containers-algorithms.md) shows the
+mistake in full. It is lesson 7's stumble again, for the same reason: something other than your
+pointer decides when that memory moves.
+
+---
+
+## Lesson 9 — the outside world fails too, and says so the same way
+
+**The one new thing:** failures that are not your program's fault arrive as the same error values.
+
+Until now every failure had a cause inside the program - not enough room, a bad argument. Files
+bring failures from outside: a name that does not exist, a directory you may not write to, a full
+disk. None of them is a bug, and all of them happen to working programs. The library reports them
+with the same `proven_err_t` values as before, so there is no second error system to learn.
+
+The calls are the whole-file ones: `proven_fs_write_file_atomic` writes a file in one call, and
+`proven_fs_read_all_u8str` reads one back as an owned string. There is no open, no read loop, and
+no close to forget.
+
+<!-- example: manual/examples/en/tut_09_files.c -->
+```c
+/*
+ * Lesson 9 - the outside world fails too, and says so the same way.
+ *
+ * Everything so far could only fail for reasons inside the program: not enough
+ * room, a bad argument. A file can be missing, unreadable, or on a full disk,
+ * and none of that is a bug in your code. The library reports those failures
+ * with the same error values as before, so the checking you already learned
+ * is all the checking there is.
+ *
+ * The calls here are the whole-file ones: one call writes a file, one call
+ * reads it back. No open, no read loop, no close to forget.
+ */
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* A name in the current directory; the program removes it before it ends. */
+    proven_u8str_view_t path = PROVEN_LIT("proven_tutorial_notes.tmp");
+    proven_u8str_view_t text = PROVEN_LIT("buy milk\ncall home\n");
+
+    /* Atomic: a reader sees the old file or the new one, never half of it.
+     * The allocator is scratch space the call may need for the path. */
+    proven_err_t err = proven_fs_write_file_atomic(alloc, path, proven_mem_view_from_u8(text));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "writing a small file in the current directory should work");
+    if (!proven_is_ok(err)) return 1;
+
+    /* Reading gives back an owned string - lesson 4's shape, lesson 5's rule:
+     * it was made with `alloc`, so it is destroyed with `alloc`. */
+    proven_result_u8str_t back = proven_fs_read_all_u8str(alloc, path);
+    EXAMPLE_REQUIRE(proven_is_ok(back.err), "the file we just wrote can be read");
+    if (proven_is_ok(back.err)) {
+        EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&back.value), text),
+                        "the bytes come back exactly as written");
+        proven_println("read {} bytes back", PROVEN_ARG(proven_u8str_as_view(&back.value).size));
+        proven_u8str_destroy(alloc, &back.value);
+    }
+
+    err = proven_fs_remove(alloc, path);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "removing the file we created should work");
+
+    /* Now it is gone, and reading it is a failure from outside the program.
+     * It arrives as an ordinary value, and it says which failure it is. */
+    proven_result_u8str_t missing = proven_fs_read_all_u8str(alloc, path);
+    EXAMPLE_REQUIRE(missing.err == PROVEN_ERR_NOT_FOUND, "a removed file reads as NOT_FOUND");
+    if (proven_is_ok(missing.err)) proven_u8str_destroy(alloc, &missing.value);
+    proven_println("reading it again: not found, as expected");
+
+    return EXAMPLE_OK();
+}
+```
+
+**What to notice.** The string `proven_fs_read_all_u8str` returns is owned: made with `alloc`,
+destroyed with `alloc` - lesson 5's rule, unchanged. Reading the file after removing it gives
+`PROVEN_ERR_NOT_FOUND`, the same kind of value as lesson 3's refusal, and it names what went wrong.
+*Atomic* in the write's name means a reader sees the old file or the new one and never a mix;
+[Chapter 5](manual-05-hosted-services.md) says what it does not promise, such as surviving a power
+cut.
+
+**Common first stumble.** The allocator handed to the write and to `proven_fs_remove` is scratch
+space for handling the path, not the owner of anything: those calls give back whatever they took
+before they return. Only the read, which hands you a string, gives you something to destroy.
 
 ---
 

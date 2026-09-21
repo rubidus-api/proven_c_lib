@@ -750,7 +750,7 @@ proven_writer_t w = proven_sysio_stdout_buffered(&out,
 
 상세 레퍼런스는 읽기 쉽고 소스에 근거를 두도록 챕터별로 나뉩니다.
 
-**입문용 C 책을 막 뗐다면 [따라 하며 익히기](manual-t-tutorial-ko.md)부터 보세요.** 짧은 프로그램 여섯 개로 개념을 하나씩만 더해 가다가, 마지막에 이 장의 인사말 프로그램을 한 줄씩 읽습니다.
+**입문용 C 책을 막 뗐다면 [따라 하며 익히기](manual-t-tutorial-ko.md)부터 보세요.** 짧은 프로그램 아홉 개로 개념을 하나씩만 더해 갑니다. 여섯 번째에서 이 장의 인사말 프로그램을 한 줄씩 읽고, 마지막 셋은 아레나·컨테이너·파일로 나아갑니다.
 
 **그 밖의 경우 이 장부터 읽으십시오.** 아무것도 전제하지
 않는 유일한 장입니다: 이 라이브러리가 왜 존재하는지를 이 라이브러리가 답하려는 C의 버그들로부터
@@ -778,7 +778,7 @@ alias 인덱스는 찾아보는 부록이고, 8장은 3장이 주제를 소개�
 
 ### 챕터 목록
 
-- [**따라 하며 익히기**: 짧은 프로그램 여섯 개, 한 번에 개념 하나](manual-t-tutorial-ko.md) — *Part I, 선택 입구*
+- [**따라 하며 익히기**: 짧은 프로그램 아홉 개, 한 번에 개념 하나](manual-t-tutorial-ko.md) — *Part I, 선택 입구*
 0. [**여기서부터 시작**: 왜 존재하는가, hello world, 다섯 계약, 용어집, libc 대응표](manual-00-start-here-ko.md) — *I부*
 1. [**Foundation**: 타입, 에러, 메모리 view, 정렬, 버전, 패닉(panic)](manual-01-foundation-ko.md) — *II부*
 2. [**Allocation**: 힙(heap), 아레나(arena), 풀(pool), byte buffer, 그리고 allocator 트레잇](manual-02-allocation-ko.md) — *II부*

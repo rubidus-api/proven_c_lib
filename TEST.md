@@ -297,7 +297,7 @@ Failure tip: identify the target name in the log, then check whether the failure
 ## Test catalog
 
 
-The hosted full run builds and executes 118 registered tests plus the 78 runnable manual examples - 196 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 128 test files: the 118 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
+The hosted full run builds and executes 118 registered tests plus the 84 runnable manual examples - 202 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 128 test files: the 118 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
