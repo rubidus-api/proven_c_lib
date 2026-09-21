@@ -18,6 +18,17 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **Tutorial lessons 7-9** (`manual/manual-t-tutorial.md` and the Korean edition): memory freed
+  all at once (`proven_arena_reset` in a per-round loop, and `PROVEN_ERR_NOMEM` when the arena
+  is too small), a container that keeps its allocator (`PROVEN_ARRAY_*` growing past its
+  starting capacity), and failures from outside the program (a whole-file write and read, then
+  `PROVEN_ERR_NOT_FOUND` for the removed file). Lesson 5 already pointed at lesson 7 for the
+  arena reset; it now exists. Each lesson is a runnable program in both example trees
+  (`tut_07_arena`, `tut_08_containers`, `tut_09_files`), so the full run is 84 manual examples
+  and 202 executables.
+
 ### Fixed
 
 - **The hand build the manual prints now compiles on GCC 14 with glibc.** The tutorial and

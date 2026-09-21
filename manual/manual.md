@@ -5,7 +5,7 @@ the Korean edition mirrors it under [`manual-ko/`](../manual-ko/manual-ko.md).
 
 ## Contents
 
-- [Tutorial — the library in six short programs](manual-t-tutorial.md)
+- [Tutorial — the library in nine short programs](manual-t-tutorial.md)
 - [Chapter 0 — Start here](manual-00-start-here.md)
 - [Chapter 1 — Foundation](manual-01-foundation.md)
 - [Chapter 2 — Allocation](manual-02-allocation.md)

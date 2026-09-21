@@ -6,7 +6,7 @@ C23 시스템 라이브러리 `proven`의 매뉴얼입니다. 각 장은 `manual
 
 ## 목차
 
-- [따라 하며 익히기 — 짧은 프로그램 여섯 개](manual-t-tutorial-ko.md)
+- [따라 하며 익히기 — 짧은 프로그램 아홉 개](manual-t-tutorial-ko.md)
 - [0장 — 여기서부터](manual-00-start-here-ko.md)
 - [1장 — 기초](manual-01-foundation-ko.md)
 - [2장 — 할당](manual-02-allocation-ko.md)
