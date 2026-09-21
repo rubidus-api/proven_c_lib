@@ -1,7 +1,8 @@
 # RFC-0006 - Security and boundary correctness follow-up
 
-**Status:** implemented on branch `rfc-0006`, pending owner review and merge. The two Windows
-rows have no runtime result.
+**Status:** implemented, merged into `main` and released in v0.1.0 (2026-09-11); the `rfc-0006`
+branch has since been deleted. The two Windows rows were run on native Windows, 64 and 32 bit -
+see section 8. What stays open is tracked as B-033 in the [backlog](BACKLOG.md).
 The two decisions the RFC reserved for the owner were taken as the RFC's own first option
 and are marked below; both are one-line reversals. See section 8 for the closure table.
 **Date:** 2026-09-09
