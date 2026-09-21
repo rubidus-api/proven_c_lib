@@ -18,6 +18,11 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-21
+
+A PATCH release: the tutorial gains three lessons, and the hand build the manual prints works
+on GCC 14 with glibc. No public API changes.
+
 ### Added
 
 - **Tutorial lessons 7-9** (`manual/manual-t-tutorial.md` and the Korean edition): memory freed
