@@ -9,8 +9,10 @@
  * That is the one new thing: you hand the allocator over once, at creation,
  * and after that push, get and destroy take nothing but the array.
  *
- * The PROVEN_ARRAY_* macros take the element type as an argument, so they can
- * check it: pushing a double into an array of int does not compile.
+ * The PROVEN_ARRAY_* macros take the element type as an argument and build the
+ * value as that type, so a value with no conversion to it - a struct pushed
+ * into an array of int - does not compile. They cannot tell whether the type
+ * you name is the one the array was created with: name the same one each time.
  */
 
 int main(void) {
