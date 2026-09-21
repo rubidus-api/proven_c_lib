@@ -530,8 +530,10 @@ with. You hand it over once; after that, push, get and destroy take only the arr
  * That is the one new thing: you hand the allocator over once, at creation,
  * and after that push, get and destroy take nothing but the array.
  *
- * The PROVEN_ARRAY_* macros take the element type as an argument, so they can
- * check it: pushing a double into an array of int does not compile.
+ * The PROVEN_ARRAY_* macros take the element type as an argument and build the
+ * value as that type, so a value with no conversion to it - a struct pushed
+ * into an array of int - does not compile. They cannot tell whether the type
+ * you name is the one the array was created with: name the same one each time.
  */
 
 int main(void) {
@@ -577,7 +579,8 @@ int main(void) {
 **What to notice.** The array was created with room for two and took ten pushes, and not one of
 them mentions an allocator. `PROVEN_ARRAY_GET` past the end is `NULL` - an answer you can check,
 not a read of whatever lies beyond the storage. The macros take the element type (`int`) as an
-argument, so the compiler can check that too.
+argument, so a value that cannot convert to it, such as a struct, does not compile; naming the same
+type the array was created with is still your job.
 
 **Common first stumble.** The pointer `PROVEN_ARRAY_GET` returns points *into* the array's storage.
 The next push may move that storage to a bigger block, and the old pointer then dangles. Fetch it,
