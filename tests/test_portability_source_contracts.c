@@ -334,5 +334,31 @@ int main(void) {
             "H-006: a failed chunk fails the whole call - never a fallback to a PRNG");
     free(pal_random);
 
+    /* The manual prints a hand build with no -D flags at all: cc -std=c23 -Iinclude, the
+     * program, and every .c file under src/proven and platform. Under a strict -std, glibc hides the
+     * POSIX declarations the PAL calls (pread, clock_gettime, O_CLOEXEC ...), so that
+     * line failed on GCC 14, where an implicit declaration is an error. nob.c passes the
+     * feature macros itself, which is why no build here ever noticed. Each PAL source
+     * therefore asks for them before its first include, as proven_sys_fs.c always did. */
+    {
+        static const char *const pal_sources[] = {
+            "platform/proven_sys_env.c", "platform/proven_sys_fs.c",
+            "platform/proven_sys_io.c", "platform/proven_sys_math.c",
+            "platform/proven_sys_mem.c", "platform/proven_sys_random.c",
+            "platform/proven_sys_thread.c", "platform/proven_sys_time.c",
+        };
+        for (size_t i = 0; i < sizeof pal_sources / sizeof pal_sources[0]; ++i) {
+            char *src = read_text_file(pal_sources[i]);
+            const char *def = strstr(src, "#define _POSIX_C_SOURCE");
+            const char *inc = strstr(src, "#include");
+            if (def == NULL || inc == NULL || def > inc) {
+                fprintf(stderr, "[PROVEN][CHECK][FILE] %s\n", pal_sources[i]);
+            }
+            require(def != NULL && inc != NULL && def < inc,
+                    "every PAL source defines _POSIX_C_SOURCE before its first #include, so the manual's hand build with no -D flags compiles");
+            free(src);
+        }
+    }
+
     return 0;
 }

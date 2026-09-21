@@ -18,6 +18,18 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The hand build the manual prints now compiles on GCC 14 with glibc.** The tutorial and
+  Chapter 0 give `cc -std=c23 -Iinclude your_program.c src/proven/*.c platform/*.c` with no
+  `-D` flags. Under a strict `-std`, glibc hides the POSIX declarations the PAL uses
+  (`pread`, `pwrite`, `ftruncate`, `clock_gettime`, `nanosleep`, `O_CLOEXEC`), and GCC 14
+  treats an implicit declaration as an error, so `proven_sys_io.c`, `proven_sys_random.c`
+  and `proven_sys_time.c` failed. Nothing here noticed because `nob.c` passes
+  `-D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L` itself. Every PAL source now requests them
+  before its first include, as `proven_sys_fs.c` already did; `-D` flags given on the
+  command line still win. `tests/test_portability_source_contracts` checks all eight.
+
 ## [0.1.0] - 2026-09-11
 
 The RFC-0006 release: six security and boundary defects fixed, a rule for protected
