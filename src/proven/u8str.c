@@ -774,11 +774,38 @@ bool proven_u8str_view_contains(proven_u8str_view_t haystack, proven_u8str_view_
 }
 
 proven_u8str_view_split_t proven_u8str_view_split(proven_u8str_view_t src, proven_u8str_view_t sep) {
-    (void)src; (void)sep;
-    return (proven_u8str_view_split_t){ .done = true };   /* stub */
+    /* Normalise at construction. Without it an ill-formed `rest` makes find answer NOT_FOUND
+     * and step 3 hands the caller {NULL, 5} AS A FIELD - executing the RFC's table against its
+     * own first draft caught exactly that. */
+    return (proven_u8str_view_split_t){ .rest = view_or_empty(src), .sep = view_or_empty(sep), .done = false };
 }
 
+/* The four steps of RFC-0003 §3.1, in that order. The termination argument depends on the
+ * order: after step 2, sep.size >= 1, so step 4 shrinks `rest` by at least a byte and every
+ * other path sets `done`. */
 bool proven_u8str_view_split_next(proven_u8str_view_split_t *it, proven_u8str_view_t *out) {
-    (void)it; (void)out;
-    return false;   /* stub */
+    /* 1 */
+    if (!it || !out || it->done) return false;
+
+    /* 2 - an empty separator: one field, the whole input. It looks redundant; it is not. find
+     * matches an empty needle where it starts, so without this the iterator never advances and
+     * yields empty fields for ever (RFC-0003 §1.1, tests/test_regression_split_empty_sep). */
+    if (it->sep.size == 0) {
+        *out = it->rest;
+        it->done = true;
+        return true;
+    }
+
+    /* 3 - no separator left: the rest is the last field, even when it is empty. */
+    proven_size_t at = proven_u8str_view_find(it->rest, 0, it->sep);
+    if (at == PROVEN_INDEX_NOT_FOUND) {
+        *out = it->rest;
+        it->done = true;
+        return true;
+    }
+
+    /* 4 */
+    *out = view_sub(it->rest, 0, at);
+    it->rest = view_sub(it->rest, at + it->sep.size, it->rest.size);
+    return true;
 }
