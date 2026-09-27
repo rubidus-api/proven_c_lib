@@ -719,12 +719,56 @@ proven_u8str_view_t proven_u8str_view_remove_suffix(proven_u8str_view_t s, prove
     return view_sub(s, 0, s.size - suffix.size);
 }
 
+/*
+ * Backward Shift-Or: the forward recurrence of proven_u8_find_shiftor, run over the haystack from
+ * its end with masks built from the REVERSED needle. The first match it meets is the one that
+ * starts furthest right - the last occurrence - and when it completes at haystack byte i, that
+ * occurrence starts at i. O(n) whatever the input; needle length 2..64.
+ */
+static proven_size_t proven_u8_find_last_shiftor(const proven_byte_t *h, proven_size_t n,
+                                                 const proven_byte_t *ndl, proven_size_t m) {
+    proven_u64 mask[256];
+    proven_u64 all_ones = ~(proven_u64)0;
+    proven_u64 state = all_ones;
+    proven_u64 match_bit = (proven_u64)1 << (m - 1u);
+    for (proven_size_t j = 0; j < 256u; ++j) mask[j] = all_ones;
+    for (proven_size_t j = 0; j < m; ++j) mask[ndl[m - 1u - j]] &= ~((proven_u64)1 << j);
+    for (proven_size_t i = n; i-- > 0;) {
+        state = (state << 1) | mask[h[i]];
+        if ((state & match_bit) == 0u) return i;
+    }
+    return PROVEN_INDEX_NOT_FOUND;
+}
+
 proven_size_t proven_u8str_view_find_last(proven_u8str_view_t haystack, proven_u8str_view_t needle) {
-    (void)haystack; (void)needle;
-    return PROVEN_INDEX_NOT_FOUND;   /* stub */
+    haystack = view_or_empty(haystack);
+    needle = view_or_empty(needle);
+    if (needle.size == 0) return haystack.size;   /* a position, as _find answers for empty */
+    if (needle.size > haystack.size) return PROVEN_INDEX_NOT_FOUND;
+
+    if (needle.size == 1u) {
+        proven_byte_t c = needle.ptr[0];
+        for (proven_size_t i = haystack.size; i-- > 0;) {
+            if (haystack.ptr[i] == c) return i;
+        }
+        return PROVEN_INDEX_NOT_FOUND;
+    }
+    if (needle.size <= 64u) {
+        return proven_u8_find_last_shiftor(haystack.ptr, haystack.size, needle.ptr, needle.size);
+    }
+
+    /* Beyond 64 bytes: the forward search, resumed one byte past each match. Quadratic on
+     * periodic input, and the header says so (B-024). */
+    proven_size_t last = PROVEN_INDEX_NOT_FOUND;
+    proven_size_t from = 0;
+    for (;;) {
+        proven_size_t at = proven_u8str_view_find(haystack, from, needle);
+        if (at == PROVEN_INDEX_NOT_FOUND) return last;
+        last = at;
+        from = at + 1u;
+    }
 }
 
 bool proven_u8str_view_contains(proven_u8str_view_t haystack, proven_u8str_view_t needle) {
-    (void)haystack; (void)needle;
-    return false;   /* stub */
+    return proven_u8str_view_find(haystack, 0, needle) != PROVEN_INDEX_NOT_FOUND;
 }
