@@ -139,17 +139,27 @@ for f in "$dist/$version-en-manual.pdf" "$dist/$version-ko-manual.pdf" "$dist/$v
         422)
             # Already present. Same name is not the same bytes, so say which it is rather than
             # assuming: an asset from an earlier build of the same tag has to be replaced.
+            # Compared by SHA-256, not size: build-site.sh makes the PDFs reproducible, so the same
+            # commit gives the same bytes - and two builds of one source used to differ at the same
+            # length, which a size check cannot see. GitHub reports an asset's digest; if it does
+            # not, fetch the asset and hash it.
             existing=$(api "https://api.github.com/repos/$repo/releases/$rel_id/assets" |
                 python3 -c "import json,sys
 name=sys.argv[1]
 for a in json.load(sys.stdin):
     if a['name'] == name:
-        print(a['id'], a['size']); break" "$name")
+        print(a['id'], a['size'], (a.get('digest') or 'sha256:-').split(':', 1)[1]); break" "$name")
             set -- $existing
-            if [ "${2:-}" = "$(wc -c < "$f")" ]; then
-                echo "  already present, same size: $name"
+            built_sha=$(sha256sum "$f" | cut -d' ' -f1)
+            up_sha=${3:--}
+            if [ "$up_sha" = "-" ] && [ -n "${1:-}" ]; then
+                up_sha=$(curl -sSL -H "Authorization: token $tok" -H "Accept: application/octet-stream" \
+                              "https://api.github.com/repos/$repo/releases/assets/$1" | sha256sum | cut -d' ' -f1)
+            fi
+            if [ "$up_sha" = "$built_sha" ]; then
+                echo "  already present, same SHA-256: $name"
             else
-                echo "  replacing $name (uploaded ${2:-?} bytes, built $(wc -c < "$f"))"
+                echo "  replacing $name (uploaded sha256 $(printf '%.12s' "$up_sha"), built $(printf '%.12s' "$built_sha"))"
                 api -X DELETE "https://api.github.com/repos/$repo/releases/assets/${1:-0}" >/dev/null
                 code=$(curl -sS -X POST -H "Authorization: token $tok" \
                             -H "Content-Type: application/octet-stream" \

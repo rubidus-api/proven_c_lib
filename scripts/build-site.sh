@@ -29,6 +29,19 @@ version=$(sed -n 's/^#define PROVEN_VERSION_STRING "\(.*\)"$/\1/p' "$root/includ
 # repository are v0.0.1, not proven_c_lib-v0.0.1. The PDF link is built from the tag,
 # so getting this wrong publishes a download link that 404s.
 tag=${version#proven_c_lib-}
+# Reproducible PDFs. Typst stamps the document's creation date, so two builds of the same source
+# had the same size and different hashes (measured 2026-09-27 on typst 0.15.1), and a release
+# asset could only be compared with its source by size. Typst honours SOURCE_DATE_EPOCH; take it
+# from the commit being built, so the same commit always gives the same bytes. A caller that sets
+# it keeps its own value.
+if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+    SOURCE_DATE_EPOCH=$(git -C "$root" log -1 --format=%ct 2>/dev/null || true)
+fi
+if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+    export SOURCE_DATE_EPOCH
+else
+    echo "build-site: no git history and no SOURCE_DATE_EPOCH - the PDFs will not be reproducible" >&2
+fi
 
 langs=${*:-"en ko"}
 

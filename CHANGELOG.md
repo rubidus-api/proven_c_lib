@@ -69,6 +69,12 @@ where it was wrong.
 - `proven_sysio_std_t` gains `console` and `carry` (`proven_sysio_carry_t`);
   `proven_sysio_scanner_t` gains the same two fields. Layout change for code that declares them.
 
+- **The manual PDFs are reproducible.** `scripts/build-site.sh` sets `SOURCE_DATE_EPOCH` from the
+  commit being built (a caller's own value wins), so the same commit gives byte-identical PDFs -
+  two full builds matched by SHA-256 for both editions; before, they matched only in size.
+  `scripts/release.sh` now compares an existing release asset with the built one by SHA-256
+  (GitHub's asset digest, or the downloaded asset), not by size.
+
 ### Fixed
 
 - **`proven_time_u16_fmt` widened each UTF-8 byte into a code unit.** A caller-supplied locale
