@@ -674,8 +674,47 @@ int proven_u8str_view_cmp_ptr(const void *a, const void *b) {
     return proven_u8str_view_cmp(*(const proven_u8str_view_t *)a, *(const proven_u8str_view_t *)b);
 }
 
-proven_u8str_view_t proven_u8str_view_trim_start(proven_u8str_view_t s) { return s; /* stub */ }
-proven_u8str_view_t proven_u8str_view_trim_end(proven_u8str_view_t s) { return s; /* stub */ }
-proven_u8str_view_t proven_u8str_view_trim(proven_u8str_view_t s) { return s; /* stub */ }
-proven_u8str_view_t proven_u8str_view_remove_prefix(proven_u8str_view_t s, proven_u8str_view_t prefix) { (void)prefix; return s; /* stub */ }
-proven_u8str_view_t proven_u8str_view_remove_suffix(proven_u8str_view_t s, proven_u8str_view_t suffix) { (void)suffix; return s; /* stub */ }
+/* Exactly these six bytes, and the header says so: a trim that is vague about its character set
+ * is how a locale or Unicode dependency arrives by implication. */
+static bool view_is_space(proven_byte_t c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r';
+}
+
+/* The one spelling of empty: {NULL, 0}. */
+static proven_u8str_view_t view_sub(proven_u8str_view_t s, proven_size_t from, proven_size_t to) {
+    if (to <= from) return (proven_u8str_view_t){ (const proven_byte_t *)0, 0 };
+    return (proven_u8str_view_t){ s.ptr + from, to - from };
+}
+
+proven_u8str_view_t proven_u8str_view_trim_start(proven_u8str_view_t s) {
+    s = view_or_empty(s);
+    proven_size_t i = 0;
+    while (i < s.size && view_is_space(s.ptr[i])) ++i;
+    return view_sub(s, i, s.size);
+}
+
+proven_u8str_view_t proven_u8str_view_trim_end(proven_u8str_view_t s) {
+    s = view_or_empty(s);
+    proven_size_t end = s.size;
+    while (end > 0 && view_is_space(s.ptr[end - 1])) --end;
+    return view_sub(s, 0, end);
+}
+
+proven_u8str_view_t proven_u8str_view_trim(proven_u8str_view_t s) {
+    return proven_u8str_view_trim_end(proven_u8str_view_trim_start(s));
+}
+
+/* One definition of "is a prefix": starts_with. */
+proven_u8str_view_t proven_u8str_view_remove_prefix(proven_u8str_view_t s, proven_u8str_view_t prefix) {
+    s = view_or_empty(s);
+    prefix = view_or_empty(prefix);
+    if (!proven_u8str_view_starts_with(s, prefix)) return s;
+    return view_sub(s, prefix.size, s.size);
+}
+
+proven_u8str_view_t proven_u8str_view_remove_suffix(proven_u8str_view_t s, proven_u8str_view_t suffix) {
+    s = view_or_empty(s);
+    suffix = view_or_empty(suffix);
+    if (!proven_u8str_view_ends_with(s, suffix)) return s;
+    return view_sub(s, 0, s.size - suffix.size);
+}
