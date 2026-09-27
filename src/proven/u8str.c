@@ -772,3 +772,13 @@ proven_size_t proven_u8str_view_find_last(proven_u8str_view_t haystack, proven_u
 bool proven_u8str_view_contains(proven_u8str_view_t haystack, proven_u8str_view_t needle) {
     return proven_u8str_view_find(haystack, 0, needle) != PROVEN_INDEX_NOT_FOUND;
 }
+
+proven_u8str_view_split_t proven_u8str_view_split(proven_u8str_view_t src, proven_u8str_view_t sep) {
+    (void)src; (void)sep;
+    return (proven_u8str_view_split_t){ .done = true };   /* stub */
+}
+
+bool proven_u8str_view_split_next(proven_u8str_view_split_t *it, proven_u8str_view_t *out) {
+    (void)it; (void)out;
+    return false;   /* stub */
+}

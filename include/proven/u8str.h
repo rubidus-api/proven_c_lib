@@ -251,6 +251,37 @@ typedef struct {
 [[nodiscard]] bool proven_u8str_view_contains(proven_u8str_view_t haystack, proven_u8str_view_t needle);
 
 /**
+ * @brief An iterator over the fields of a view split on a separator. Copyable: it points into
+ *        the SOURCE, never into itself, so a copy continues independently of the original.
+ *
+ * The fields are readable but are not state to rewrite.
+ */
+typedef struct {
+    proven_u8str_view_t rest;  /**< not yet yielded; points into the caller's source bytes */
+    proven_u8str_view_t sep;
+    bool                done;  /**< set once the final field has been yielded */
+} proven_u8str_view_split_t;
+
+/**
+ * @brief Begin splitting `src` on `sep`. No allocation; the fields are views into `src`.
+ *
+ * The contract, which is permanent: **n separators yield n + 1 fields**, n counting
+ * non-overlapping occurrences found left to right. So "a,b,c" is three fields, "a," is "a" and
+ * an empty field, "a,,b" keeps its empty field (unlike strtok), and "" is ONE empty field, not
+ * zero. An empty separator yields exactly one field, the whole input - never an endless run of
+ * empty ones. Ill-formed `src` or `sep` are stored as empty.
+ */
+[[nodiscard]] proven_u8str_view_split_t proven_u8str_view_split(proven_u8str_view_t src, proven_u8str_view_t sep);
+
+/**
+ * @brief Write the next field to `*out` and return true, or return false when there are none.
+ *
+ * Returns false without writing if `it` or `out` is NULL. Every empty field is {NULL, 0}: test a
+ * field by its size, and end the loop on the return value - never on the field.
+ */
+[[nodiscard]] bool proven_u8str_view_split_next(proven_u8str_view_split_t *it, proven_u8str_view_t *out);
+
+/**
  * @brief Zero-cost extraction of a standard C string pointer inherently guaranteed by internal structure.
  */
 static inline const char* proven_u8str_as_cstr(const proven_u8str_t *str) {
