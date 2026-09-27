@@ -1369,10 +1369,15 @@ proven_err_t proven_fs_symlink(proven_allocator_t scratch, proven_u8str_view_t t
         return l_res.err;
     }
     
-    bool success = proven_sys_fs_symlink(t_res.value, l_res.value);
+    proven_sys_fs_open_result_t why = proven_sys_fs_symlink_checked(t_res.value, l_res.value);
     internal_cstr_free(scratch, t_res.value);
     internal_cstr_free(scratch, l_res.value);
-    return success ? PROVEN_OK : PROVEN_ERR_IO;
+    switch (why) {
+        case PROVEN_SYS_FS_OPEN_OK:        return PROVEN_OK;
+        case PROVEN_SYS_FS_OPEN_NOT_FOUND: return PROVEN_ERR_NOT_FOUND;   /* the link's directory */
+        case PROVEN_SYS_FS_OPEN_DENIED:    return PROVEN_ERR_PERMISSION;  /* Windows: no Developer Mode or privilege */
+        default:                           return PROVEN_ERR_IO;
+    }
 }
 
 proven_err_t proven_fs_link(proven_allocator_t scratch, proven_u8str_view_t oldpath, proven_u8str_view_t newpath) {

@@ -77,6 +77,16 @@ where it was wrong.
 
 ### Fixed
 
+- **Windows symlinks (B-033).** `proven_fs_symlink` created a link to a directory as a file
+  link, which cannot be listed or entered, and made every relative target absolute against the
+  current directory (`sub/rel -> t` pointed at `./t`), because the target went through the
+  helper that calls `GetFullPathNameW`. The target is now stored as written (with `/` as `\`),
+  the directory flag follows the target as the link resolves it, older Windows without
+  `ALLOW_UNPRIVILEGED_CREATE` is retried, and failures are `PROVEN_ERR_PERMISSION` or
+  `PROVEN_ERR_NOT_FOUND` where they can be told apart (POSIX too), not always `PROVEN_ERR_IO`.
+  Measured on the Win11 VM before (7 of 12 failed) and after (win64 12/12, win32 11/11) with
+  `docs/b033-windows-check.c`, which also filled a 4 GiB + 4 KiB entropy request across the
+  32-bit count boundary.
 - **`proven_time_u16_fmt` widened each UTF-8 byte into a code unit.** A caller-supplied locale
   with non-ASCII names produced three meaningless units per Hangul syllable; it now transcodes.
   Reproduced red first in `tests/test_unit_time_fmt_u16_parity`.

@@ -274,6 +274,20 @@ bool proven_sys_fs_link(const char *oldpath, const char *newpath);
 [[nodiscard]]
 bool proven_sys_fs_symlink(const char *target, const char *linkpath);
 
+/**
+ * @brief Create a symbolic link, and say why not.
+ *
+ * Windows makes two kinds of symlink and must be told which: a link to a directory created as a
+ * file link cannot be entered. The kind is decided from the target as the LINK will see it - a
+ * relative target is resolved against the link's own directory, never the current directory,
+ * which is what a symlink means on every platform. A target that does not exist yet gets a file
+ * link. '/' in the target is written as '\', which is the only separator a Windows reparse
+ * point resolves. Creating a symlink needs Developer Mode or the symlink privilege there; without
+ * either the answer is DENIED, not a bare error.
+ */
+[[nodiscard]]
+proven_sys_fs_open_result_t proven_sys_fs_symlink_checked(const char *target, const char *linkpath);
+
 // --- Memory Mapping PAL ---
 typedef struct {
     void *ptr;

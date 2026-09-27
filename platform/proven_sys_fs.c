@@ -30,6 +30,25 @@
 
 // Internal helper for UTF-8 to Wide conversion on Windows
 #if defined(_WIN32) || defined(_WIN64)
+/*
+ * UTF-8 to UTF-16 and nothing else: no GetFullPathNameW. For text that is not a path to open
+ * now - a symlink's TARGET, which the link resolves later from its own directory. Passing it
+ * through utf8_to_wide_alloc made every relative target absolute against the CURRENT directory,
+ * so "sub/rel -> t" pointed at ./t instead of sub/t (B-033, measured on Windows 11).
+ */
+static wchar_t *utf8_to_wide_plain(const char *src) {
+    if (!src) return NULL;
+    int len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, src, -1, NULL, 0);
+    if (len <= 0) return NULL;
+    wchar_t *dst = HeapAlloc(GetProcessHeap(), 0, (size_t)len * sizeof(wchar_t));
+    if (!dst) return NULL;
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, src, -1, dst, len) <= 0) {
+        HeapFree(GetProcessHeap(), 0, dst);
+        return NULL;
+    }
+    return dst;
+}
+
 static wchar_t *utf8_to_wide_alloc(const char *src) {
     if (!src) return NULL;
     int len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, src, -1, NULL, 0);
@@ -892,24 +911,68 @@ bool proven_sys_fs_link(const char *oldpath, const char *newpath) {
 #endif
 }
 
-bool proven_sys_fs_symlink(const char *target, const char *linkpath) {
+proven_sys_fs_open_result_t proven_sys_fs_symlink_checked(const char *target, const char *linkpath) {
 #if defined(_WIN32) || defined(_WIN64)
-    wchar_t *wtarget = utf8_to_wide_alloc(target);
+    wchar_t *wtarget = utf8_to_wide_plain(target);   /* stored as written, never made absolute */
     wchar_t *wlink = utf8_to_wide_alloc(linkpath);
     if (!wtarget || !wlink) {
         if (wtarget) HeapFree(GetProcessHeap(), 0, wtarget);
         if (wlink) HeapFree(GetProcessHeap(), 0, wlink);
-        return false;
+        return PROVEN_SYS_FS_OPEN_ERROR;
     }
-    DWORD flags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
-    // Note: requires checking if target is a directory for the flag
-    bool success = CreateSymbolicLinkW(wlink, wtarget, flags) != 0;
+    for (wchar_t *p = wtarget; *p; ++p) {
+        if (*p == L'/') *p = L'\\';
+    }
+
+    /* Where the link will look: an absolute target (drive, UNC or rooted) as it is; a relative
+     * one from the directory that will hold the link. */
+    bool absolute = (wtarget[0] == L'\\') || (wtarget[0] && wtarget[1] == L':');
+    wchar_t *probe = wtarget;
+    wchar_t *joined = NULL;
+    if (!absolute) {
+        size_t link_len = wcslen(wlink), dir_len = link_len;
+        while (dir_len > 0 && wlink[dir_len - 1] != L'\\' && wlink[dir_len - 1] != L'/' && wlink[dir_len - 1] != L':') --dir_len;
+        size_t t_len = wcslen(wtarget);
+        joined = (wchar_t *)HeapAlloc(GetProcessHeap(), 0, (dir_len + t_len + 1) * sizeof(wchar_t));
+        if (!joined) {
+            HeapFree(GetProcessHeap(), 0, wtarget);
+            HeapFree(GetProcessHeap(), 0, wlink);
+            return PROVEN_SYS_FS_OPEN_ERROR;
+        }
+        for (size_t i = 0; i < dir_len; ++i) joined[i] = wlink[i];
+        for (size_t i = 0; i <= t_len; ++i) joined[dir_len + i] = wtarget[i];
+        probe = joined;
+    }
+    DWORD attrs = GetFileAttributesW(probe);
+    DWORD flags = (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY))
+                      ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0;
+
+    /* ALLOW_UNPRIVILEGED_CREATE lets Developer Mode create links without elevation. Windows
+     * before 10 1703 rejects the flag itself as an invalid parameter; retry without it. */
+    bool ok = CreateSymbolicLinkW(wlink, wtarget, flags | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0;
+    DWORD e = ok ? 0 : GetLastError();
+    if (!ok && e == ERROR_INVALID_PARAMETER) {
+        ok = CreateSymbolicLinkW(wlink, wtarget, flags) != 0;
+        e = ok ? 0 : GetLastError();
+    }
+    if (joined) HeapFree(GetProcessHeap(), 0, joined);
     HeapFree(GetProcessHeap(), 0, wtarget);
     HeapFree(GetProcessHeap(), 0, wlink);
-    return success;
+    if (ok) return PROVEN_SYS_FS_OPEN_OK;
+    SetLastError(e);
+    if (e == ERROR_PRIVILEGE_NOT_HELD || e == ERROR_ACCESS_DENIED) return PROVEN_SYS_FS_OPEN_DENIED;
+    if (e == ERROR_PATH_NOT_FOUND) return PROVEN_SYS_FS_OPEN_NOT_FOUND;
+    return PROVEN_SYS_FS_OPEN_ERROR;
 #else
-    return symlink(target, linkpath) == 0;
+    if (symlink(target, linkpath) == 0) return PROVEN_SYS_FS_OPEN_OK;
+    if (errno == ENOENT || errno == ENOTDIR) return PROVEN_SYS_FS_OPEN_NOT_FOUND;
+    if (errno == EACCES || errno == EPERM || errno == EROFS) return PROVEN_SYS_FS_OPEN_DENIED;
+    return PROVEN_SYS_FS_OPEN_ERROR;
 #endif
+}
+
+bool proven_sys_fs_symlink(const char *target, const char *linkpath) {
+    return proven_sys_fs_symlink_checked(target, linkpath) == PROVEN_SYS_FS_OPEN_OK;
 }
 
 #if !defined(_WIN32) && !defined(_WIN64)

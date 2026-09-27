@@ -293,6 +293,11 @@ int main(void) {
             "H-005: no cross-volume copy fallback in the call itself - that is not atomic, and a caller asking for an atomic replacement is not asking for it (the name may still appear in the comment that says why)");
     require(!contains(pal_fs, "DeleteFileW(wdest)"),
             "H-005: the destination is not deleted first, which would open an interval in which the name does not exist");
+    /* B-033 symlinks, measured wrong on Windows 11 before these (docs/b033-windows-check.c). */
+    require(contains(pal_fs, "wchar_t *wtarget = utf8_to_wide_plain(target);"),
+            "B-033: a symlink target is converted without GetFullPathNameW, or a relative target is made absolute against the current directory");
+    require(contains(pal_fs, "SYMBOLIC_LINK_FLAG_DIRECTORY"),
+            "B-033: a link to a directory is created as a directory link, or it cannot be entered");
     free(pal_fs);
 
     /* The planner is arithmetic and can be checked here for real, at the boundaries the

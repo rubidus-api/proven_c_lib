@@ -67,6 +67,11 @@ int main(void) {
         PROVEN_TEST_ASSERT(!proven_is_ok(again),
             "symlinking over an existing name is an error, not a silent replace", "");
 
+        /* The documented failure answers (fs.h): a link in a missing directory is NOT_FOUND,
+         * not a bare I/O error. */
+        proven_err_t nodir = proven_fs_symlink(heap, PROVEN_LIT("psg_target.txt"), PROVEN_LIT("psg_no_such_dir/l"));
+        PROVEN_TEST_ASSERT(nodir == PROVEN_ERR_NOT_FOUND, "a link in a missing directory is PROVEN_ERR_NOT_FOUND", "");
+
         (void)proven_fs_remove(heap, PROVEN_LIT("psg_link"));
         (void)proven_fs_remove(heap, PROVEN_LIT("psg_target.txt"));
     }

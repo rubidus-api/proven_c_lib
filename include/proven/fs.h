@@ -520,7 +520,17 @@ typedef struct {
 proven_err_t proven_fs_stat(proven_allocator_t scratch, proven_u8str_view_t path, proven_fs_stat_t *out_stat);
 
 /**
- * @brief Create a symbolic link.
+ * @brief Create a symbolic link at `linkpath` that points to `target`.
+ *
+ * A relative `target` is relative to the directory that holds the link, not to the current
+ * directory - on every platform, because that is how the link is followed.
+ *
+ * @note Windows: a link to a directory is created as a directory link (a file link to a
+ *       directory cannot be entered). The kind is fixed at creation from the target as the link
+ *       sees it; a target that does not exist yet gets a file link. '/' in the target is stored
+ *       as '\\'. Creating symlinks needs Developer Mode or the symlink privilege.
+ * @return PROVEN_ERR_PERMISSION when the platform refuses the privilege, PROVEN_ERR_NOT_FOUND
+ *         when the link's directory does not exist, PROVEN_ERR_IO otherwise.
  */
 [[nodiscard]]
 proven_err_t proven_fs_symlink(proven_allocator_t scratch, proven_u8str_view_t target, proven_u8str_view_t linkpath);
