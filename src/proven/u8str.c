@@ -673,3 +673,9 @@ int proven_u8str_view_cmp(proven_u8str_view_t a, proven_u8str_view_t b) {
 int proven_u8str_view_cmp_ptr(const void *a, const void *b) {
     return proven_u8str_view_cmp(*(const proven_u8str_view_t *)a, *(const proven_u8str_view_t *)b);
 }
+
+proven_u8str_view_t proven_u8str_view_trim_start(proven_u8str_view_t s) { return s; /* stub */ }
+proven_u8str_view_t proven_u8str_view_trim_end(proven_u8str_view_t s) { return s; /* stub */ }
+proven_u8str_view_t proven_u8str_view_trim(proven_u8str_view_t s) { return s; /* stub */ }
+proven_u8str_view_t proven_u8str_view_remove_prefix(proven_u8str_view_t s, proven_u8str_view_t prefix) { (void)prefix; return s; /* stub */ }
+proven_u8str_view_t proven_u8str_view_remove_suffix(proven_u8str_view_t s, proven_u8str_view_t suffix) { (void)suffix; return s; /* stub */ }

@@ -204,6 +204,30 @@ typedef struct {
 [[nodiscard]] int proven_u8str_view_cmp_ptr(const void *a, const void *b);
 
 /**
+ * @brief Drop leading and trailing whitespace.
+ *
+ * Whitespace is exactly six ASCII bytes: ' ', '\t', '\n', '\v', '\f', '\r'. Not locale-dependent
+ * and not Unicode - a no-break space or an ideographic space is NOT trimmed. Interior whitespace
+ * is untouched. The result points into `s`, or is {NULL, 0} when nothing is left.
+ */
+[[nodiscard]] proven_u8str_view_t proven_u8str_view_trim(proven_u8str_view_t s);
+/** @brief proven_u8str_view_trim, leading whitespace only. */
+[[nodiscard]] proven_u8str_view_t proven_u8str_view_trim_start(proven_u8str_view_t s);
+/** @brief proven_u8str_view_trim, trailing whitespace only. */
+[[nodiscard]] proven_u8str_view_t proven_u8str_view_trim_end(proven_u8str_view_t s);
+
+/**
+ * @brief `s` without `prefix`, if it starts with it; otherwise `s` unchanged.
+ *
+ * Absence is not an error and there is no way to ask whether it fired: call
+ * proven_u8str_view_starts_with first if you need to know. Removing the whole of `s` gives
+ * {NULL, 0}.
+ */
+[[nodiscard]] proven_u8str_view_t proven_u8str_view_remove_prefix(proven_u8str_view_t s, proven_u8str_view_t prefix);
+/** @brief `s` without `suffix`, if it ends with it; otherwise `s` unchanged. */
+[[nodiscard]] proven_u8str_view_t proven_u8str_view_remove_suffix(proven_u8str_view_t s, proven_u8str_view_t suffix);
+
+/**
  * @brief Zero-cost extraction of a standard C string pointer inherently guaranteed by internal structure.
  */
 static inline const char* proven_u8str_as_cstr(const proven_u8str_t *str) {
