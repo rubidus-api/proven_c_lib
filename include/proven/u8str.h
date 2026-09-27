@@ -173,6 +173,36 @@ typedef struct {
 [[nodiscard]] int proven_u8str_view_ends_with(proven_u8str_view_t str, proven_u8str_view_t suffix);
 [[nodiscard]] proven_u8str_view_t proven_u8str_view_slice(proven_u8str_view_t str, proven_size_t index, proven_size_t len);
 
+// -------------------------------------------------------------
+// The view vocabulary (RFC-0003): order, trim, reverse search, split, well-formedness.
+//
+// Every function below is a pure function of its arguments: no allocation, no hidden state,
+// freestanding-available. One rule governs all of them: an ILL-FORMED view - ptr == NULL with
+// size > 0 - is treated as empty, by an explicit guard in each function. And there is one
+// spelling of empty: every empty result is {NULL, 0}, as proven_u8str_view_slice returns, so
+// an empty result carries no position. Test results by size, never by ptr.
+// -------------------------------------------------------------
+
+/**
+ * @brief Order two views: bytewise, unsigned, and a proper prefix sorts first.
+ *
+ * Compares the first min(a.size, b.size) bytes as unsigned char; if those are equal, the shorter
+ * view is less. Embedded NUL bytes are data. "\xFF" sorts AFTER "a".
+ *
+ * @return a negative value, zero, or a positive value - NOT necessarily -1, 0 or 1. Test the
+ *         sign; `== -1` is a bug.
+ * @note Ill-formed views compare as empty, so this is a total order over every view value.
+ */
+[[nodiscard]] int proven_u8str_view_cmp(proven_u8str_view_t a, proven_u8str_view_t b);
+
+/**
+ * @brief proven_u8str_view_cmp shaped for proven_array_sort and binary search.
+ *
+ * Receives POINTERS TO ELEMENTS, each a `const proven_u8str_view_t *`, as every qsort-shaped
+ * comparator does. Undefined for anything else.
+ */
+[[nodiscard]] int proven_u8str_view_cmp_ptr(const void *a, const void *b);
+
 /**
  * @brief Zero-cost extraction of a standard C string pointer inherently guaranteed by internal structure.
  */

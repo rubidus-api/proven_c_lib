@@ -646,3 +646,23 @@ void proven_u8str_destroy(proven_allocator_t alloc, proven_u8str_t *str) {
     }
     proven_buf_destroy(alloc, &str->internal);
 }
+
+// -------------------------------------------------------------
+// The view vocabulary (RFC-0003)
+// -------------------------------------------------------------
+
+/* The one guard every function here starts with: an ill-formed view is empty. */
+static proven_u8str_view_t view_or_empty(proven_u8str_view_t v) {
+    if (v.size > 0 && !v.ptr) return (proven_u8str_view_t){ (const proven_byte_t *)0, 0 };
+    return v;
+}
+
+int proven_u8str_view_cmp(proven_u8str_view_t a, proven_u8str_view_t b) {
+    (void)a; (void)b;
+    return 0;   /* stub: RFC-0003 commit 1 */
+}
+
+int proven_u8str_view_cmp_ptr(const void *a, const void *b) {
+    (void)a; (void)b;
+    return 0;   /* stub */
+}
