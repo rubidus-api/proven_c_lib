@@ -658,11 +658,18 @@ static proven_u8str_view_t view_or_empty(proven_u8str_view_t v) {
 }
 
 int proven_u8str_view_cmp(proven_u8str_view_t a, proven_u8str_view_t b) {
-    (void)a; (void)b;
-    return 0;   /* stub: RFC-0003 commit 1 */
+    /* Guard here, not three layers down: {NULL, 3} is representable, and memcmp on it is
+     * undefined whatever the platform layer happens to do today (RFC-0003 §1.3). */
+    a = view_or_empty(a);
+    b = view_or_empty(b);
+    proven_size_t n = a.size < b.size ? a.size : b.size;
+    if (n > 0) {
+        int c = proven_sys_mem_cmp(a.ptr, b.ptr, n);   /* memcmp: unsigned char, by definition */
+        if (c != 0) return c;
+    }
+    return (a.size > b.size) - (a.size < b.size);
 }
 
 int proven_u8str_view_cmp_ptr(const void *a, const void *b) {
-    (void)a; (void)b;
-    return 0;   /* stub */
+    return proven_u8str_view_cmp(*(const proven_u8str_view_t *)a, *(const proven_u8str_view_t *)b);
 }
