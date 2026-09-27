@@ -954,6 +954,7 @@ Two things this table tells you that the file names do not:
 | `buffer.h` | Fixed-capacity byte buffer | Chapter 2 |
 | `u8str.h` | Owned U8 string and borrowed U8 views | Chapter 3 |
 | `u16str.h` | Owned U16 string and borrowed U16 views | Chapter 3 |
+| `utf.h` | Strict UTF-8 <-> UTF-16 transcoding: measure, convert, convert in pieces, grow | Chapter 3 |
 | `fmt.h` | Structural formatter and format arguments | Chapter 3 |
 | `scan.h` | Structural scanner and typed scan destinations | Chapter 3 |
 | `float_parse.h` | Locale-free decimal → `double`/`float` parser (`proven_strtod`, `proven_parse_double_ascii`) | Chapter 8 |

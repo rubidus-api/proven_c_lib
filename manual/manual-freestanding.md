@@ -186,6 +186,7 @@ on every release, not asserted in this table.
 | `algorithm.h` | Available | Sort/search helpers for arrays. |
 | `hash.h` | Available | FNV-1a, SipHash-2-4, CRC-32, SHA-256 — byte-exact, no OS dependency. |
 | `encode.h` | Available | Hex and Base64 — pure computation, no OS. |
+| `utf.h` | Available | Strict UTF-8 <-> UTF-16 transcoding — pure computation, no OS. `proven_utf8_append_to_u16str` is excluded with `PROVEN_NO_U16STR`; the rest works on raw `proven_u16` arrays. |
 | `fmt.h` | Available without float | Current profile defines `PROVEN_FMT_NO_FLOAT`. |
 | `scan.h` | Available | Scanner for memory views. |
 | `float_parse.h` | Available | `proven_strtod`, `proven_parse_double_ascii` and `proven_parse_f64_ascii` all compile here: the decimal-to-binary64 engine is integer-only and needs no libc. The one difference is that the freestanding build does not set `errno` on overflow or underflow — the returned `proven_err_t` carries that instead, which is the value to check on a target with no `errno` at all. This is separate from `fmt.h`'s float **formatting**, which the profile does compile out. |

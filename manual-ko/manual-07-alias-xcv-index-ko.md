@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 501개: 소문자 `xcv_` 함수 이름 375개와 대문자 `XCV_` 매크로 이름 126개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 528개: 소문자 `xcv_` 함수 이름 397개와 대문자 `XCV_` 매크로 이름 131개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -41,6 +41,7 @@ alias 501개: 소문자 `xcv_` 함수 이름 375개와 대문자 `XCV_` 매크�
 | `XCV_ARG_NONE` | `proven_arg_none` |
 | `XCV_ARG_PTR` | `proven_arg_ptr` |
 | `XCV_ARG_STR_VIEW` | `proven_arg_str_view` |
+| `XCV_ARG_U16` | `proven_arg_u16` |
 | `XCV_ARG_U32` | `proven_arg_u32` |
 | `XCV_ARG_U64` | `proven_arg_u64` |
 | `XCV_ARRAY_DESTROY` | `PROVEN_ARRAY_DESTROY` |
@@ -193,6 +194,7 @@ alias 501개: 소문자 `xcv_` 함수 이름 375개와 대문자 `XCV_` 매크�
 | `xcv_arg_str_view` | `proven_arg_str_view` |
 | `xcv_arg_t` | `proven_arg_t` |
 | `xcv_arg_type_t` | `proven_arg_type_t` |
+| `xcv_arg_u16` | `proven_arg_u16` |
 | `xcv_arg_u32` | `proven_arg_u32` |
 | `xcv_arg_u64` | `proven_arg_u64` |
 | `xcv_arg_ucstr` | `proven_arg_ucstr` |
@@ -368,6 +370,7 @@ alias 501개: 소문자 `xcv_` 함수 이름 375개와 대문자 `XCV_` 매크�
 | `xcv_random_bytes` | `proven_random_bytes` |
 | `xcv_random_set_source` | `proven_random_set_source` |
 | `xcv_random_u64` | `proven_random_u64` |
+| `xcv_result_u16str_view_t` | `proven_result_u16str_view_t` |
 | `xcv_rng_below` | `proven_rng_below` |
 | `xcv_rng_f64` | `proven_rng_f64` |
 | `xcv_rng_fill` | `proven_rng_fill` |
@@ -375,6 +378,26 @@ alias 501개: 소문자 `xcv_` 함수 이름 375개와 대문자 `XCV_` 매크�
 | `xcv_rng_range` | `proven_rng_range` |
 | `xcv_rng_shuffle` | `proven_rng_shuffle` |
 | `xcv_rng_u64` | `proven_rng_u64` |
+| `xcv_sysio_read_u16_line` | `proven_sysio_read_u16_line` |
+| `xcv_sysio_stdin_u16_lines` | `proven_sysio_stdin_u16_lines` |
+| `xcv_sysio_u16_lines_open` | `proven_sysio_u16_lines_open` |
+| `xcv_sysio_u16_lines_t` | `proven_sysio_u16_lines_t` |
+| `xcv_text_encoding_t` | `proven_text_encoding_t` |
+| `xcv_u16_reader_init` | `proven_u16_reader_init` |
+| `xcv_u16_reader_read` | `proven_u16_reader_read` |
+| `xcv_u16_reader_read_line` | `proven_u16_reader_read_line` |
+| `xcv_u16_reader_t` | `proven_u16_reader_t` |
+| `xcv_utf16_append_to_u8str` | `proven_utf16_append_to_u8str` |
+| `xcv_utf16_to_utf8` | `proven_utf16_to_utf8` |
+| `xcv_utf16_to_utf8_partial` | `proven_utf16_to_utf8_partial` |
+| `xcv_utf16_to_utf8_size` | `proven_utf16_to_utf8_size` |
+| `xcv_utf8_append_to_u16str` | `proven_utf8_append_to_u16str` |
+| `xcv_utf8_to_utf16` | `proven_utf8_to_utf16` |
+| `xcv_utf8_to_utf16_partial` | `proven_utf8_to_utf16_partial` |
+| `xcv_utf8_to_utf16_size` | `proven_utf8_to_utf16_size` |
+| `xcv_utf_step_t` | `proven_utf_step_t` |
+| `xcv_writer_write_bom` | `proven_writer_write_bom` |
+| `xcv_writer_write_u16` | `proven_writer_write_u16` |
 | `xcv_xoshiro256ss_next` | `proven_xoshiro256ss_next` |
 | `xcv_xoshiro256ss_rng` | `proven_xoshiro256ss_rng` |
 | `xcv_xoshiro256ss_seed` | `proven_xoshiro256ss_seed` |

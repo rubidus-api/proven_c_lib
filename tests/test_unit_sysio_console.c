@@ -124,6 +124,17 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_is_ok(proven_writer_flush(w)), "flush", "");
         PROVEN_TEST_ASSERT(f.out_len == TEXT16_N && memcmp(f.out, TEXT16, sizeof TEXT16) == 0,
             "the console receives the text exactly", "");
+
+        /* Chapter 5: "a buffered writer whose text ends inside a character reports it at
+         * proven_writer_flush" - the buffered flush must reach the console writer's finish. */
+        fake_console_t g = { .fail_after = 1000 };
+        fake_std_t t = { .f = &g };
+        proven_writer_buffered_t bt;
+        proven_writer_t wt = proven_writer_buffered(&bt, (proven_writer_t){ &t, fake_std_write, fake_std_flush },
+                                                    (proven_mem_mut_t){ buf, sizeof buf });
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_writer_write(wt, (proven_mem_view_t){ B("ok\xEA\xB0"), 4 })), "write", "");
+        PROVEN_TEST_ASSERT(proven_writer_flush(wt) == PROVEN_ERR_INVALID_ENCODING && g.out_len == 2,
+            "a text ending inside a character is reported by the flush, after 'ok' went out", "");
     }
 
     // ---------------------------------------------------------------

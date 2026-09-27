@@ -928,6 +928,7 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | `buffer.h` | 고정 용량 byte buffer | 챕터 2 |
 | `u8str.h` | Owned U8 문자열과 빌려 쓰는(borrowed) U8 view | 챕터 3 |
 | `u16str.h` | Owned U16 문자열과 borrowed U16 view | 챕터 3 |
+| `utf.h` | 엄격한 UTF-8 <-> UTF-16 변환: 재기, 변환, 조각 단위 변환, 늘리기 | 챕터 3 |
 | `fmt.h` | 구조적 formatter와 format 인자 | 챕터 3 |
 | `scan.h` | 구조적 scanner와 타입 있는 scan 목적지 | 챕터 3 |
 | `float_parse.h` | 로케일 없는 십진수 → `double`/`float` 파서 (`proven_strtod`, `proven_parse_double_ascii`) | 챕터 8 |

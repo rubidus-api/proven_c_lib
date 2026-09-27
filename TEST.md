@@ -1902,6 +1902,7 @@ Intent: verify `PROVEN_NO_U16STR` removes optional U16 string support without br
 Sub-checks:
 
 - Builds the umbrella header and reduced object set with U16 support disabled.
+- `utf.h` converts UTF-8 to raw `proven_u16` units there, as the freestanding guide says it does.
 - Links successfully without `src/proven/u16str.c`.
 
 Failure tip: inspect `include/proven.h`, `include/proven/u16str.h`, aliases, and the `nob.c` freestanding source list.

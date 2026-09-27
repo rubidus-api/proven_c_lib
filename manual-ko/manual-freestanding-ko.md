@@ -185,6 +185,7 @@ platform/proven_sys_mem.c
 | `algorithm.h` | 사용 가능 | 배열용 정렬/검색 헬퍼. |
 | `hash.h` | 사용 가능 | FNV-1a, SipHash-2-4, CRC-32, SHA-256 — 바이트 단위로 정확, OS 의존성 없음. |
 | `encode.h` | 사용 가능 | Hex와 Base64 — 순수 계산, OS 없음. |
+| `utf.h` | 사용 가능 | 엄격한 UTF-8 <-> UTF-16 변환 — 순수 계산, OS 없음. `proven_utf8_append_to_u16str`는 `PROVEN_NO_U16STR`와 함께 제외되고, 나머지는 `proven_u16` 배열 위에서 동작한다. |
 | `fmt.h` | 부동소수점 없이 사용 가능 | 현재 프로파일은 `PROVEN_FMT_NO_FLOAT`를 정의한다. |
 | `scan.h` | 사용 가능 | 메모리 뷰용 스캐너. |
 | `float_parse.h` | 사용 가능 | `proven_strtod`, `proven_parse_double_ascii`, `proven_parse_f64_ascii`가 모두 여기서 컴파일된다. 십진수→binary64 엔진은 정수 연산만 쓰므로 libc가 필요 없다. 유일한 차이는 freestanding 빌드가 오버플로/언더플로에서 `errno`를 설정하지 않는다는 점이며, 대신 반환된 `proven_err_t`가 그 정보를 담는다 — `errno` 자체가 없는 타깃에서 확인해야 할 값이다. 이는 이 프로파일이 실제로 컴파일에서 제외하는 `fmt.h`의 부동소수점 **출력**과는 별개다. |

@@ -92,9 +92,8 @@ static const Section SECTIONS[] = {
     { "manual-03-strings-text.md",          "## 1. U8 strings and views",               true,  false,
       "the owned/borrowed pair has a worked example - ex_03_u8str - quoted in section 5, where "
       "this chapter keeps all of its runnable programs." },
-    { "manual-03-strings-text.md",          "## 2. U16 strings and views",              true,  false,
-      "u16str is a boundary type for the Windows W APIs; a runnable example would need a Windows "
-      "API call, which no other example in the manual makes." },
+    /* No longer exempt from an example: B-039 gave the section utf.h and ex_03_utf. */
+    { "manual-03-strings-text.md",          "## 2. U16 strings and views",              true,  true,  NULL },
     { "manual-03-strings-text.md",          "## 3. Formatting",                         true,  false,
       "the formatter's worked examples are ex_08_fmt_scan and ex_08_fmt_custom, quoted in chapter "
       "8, which is the reference half of this material." },
@@ -117,6 +116,7 @@ static const Section SECTIONS[] = {
     { "manual-05-hosted-services.md",       "## Reading a directory one entry at a time", true, false,
       "the worked loop is a compiled fragment; a separate example file would duplicate ex_05_fs_walk." },
     { "manual-05-hosted-services.md",       "## Walking a tree",                        true,  true,  NULL },
+    { "manual-05-hosted-services.md",       "## UTF-16 text in and out, and the Windows console", true, true, NULL },
 };
 
 static char *read_text_file(const char *path) {
