@@ -247,6 +247,55 @@ int main(void) {
             "and so must the reader side", "");
     }
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("chapters 3 and 5, UTF-16 text",
+        "The sentences about utf.h and u16 I/O a reader would act on: the refusal writes nothing, pieces are NEED_MORE and wholes are malformed, width counts UTF-8 bytes, an explicit encoding delivers a BOM as U+FEFF, a trailing high surrogate is refused by the writer.",
+        "Each assertion quotes its sentence. If one fails, the chapter or the library is wrong - decide which, and fix that one.");
+    // ---------------------------------------------------------------
+    {
+        /* CLAIM (ch3): "the forms that write into your memory write nothing when they refuse." */
+        proven_u16 w16[8] = { 0x5A5A };
+        proven_size_t n = 99;
+        proven_err_t e = proven_utf8_to_utf16((proven_u8str_view_t){ (const proven_byte_t *)"a\xC0\x80", 3 }, w16, 8, &n);
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_INVALID_ENCODING && n == 0 && w16[0] == 0x5A5A,
+            "an overlong form is refused and nothing is written", "");
+
+        /* CLAIM (ch3): "The partial forms stop there with PROVEN_ERR_NEED_MORE ... for [the whole
+         * forms] a text that ends mid-character is malformed." */
+        proven_u8str_view_t cut = { (const proven_byte_t *)"x\xED\x95", 3 };
+        proven_utf_step_t st = proven_utf8_to_utf16_partial(cut, w16, 8);
+        PROVEN_TEST_ASSERT(st.err == PROVEN_ERR_NEED_MORE && st.consumed == 1, "a piece cut mid-character is NEED_MORE", "");
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16_size(cut).err == PROVEN_ERR_INVALID_ENCODING, "a whole text cut there is malformed", "");
+
+        /* CLAIM (ch5): "{:>10} around a u16 argument pads to ten UTF-8 bytes ... a Hangul syllable
+         * is three bytes." */
+        proven_byte_t fb[32];
+        proven_u8str_t fs = proven_u8str_borrow(fb, sizeof fb);
+        const proven_u16 han[] = { 0xD55C };
+        proven_u16str_view_t hv = { han, 1 };
+        proven_fmt_result_t fr = proven_u8str_append_fmt(&fs, "{:>10}", PROVEN_ARG(hv));
+        PROVEN_TEST_ASSERT(proven_is_ok(fr.err) && fs.internal.len == 10 && fb[6] == (proven_byte_t)' ' && fb[7] == 0xED,
+            "width 10 around one syllable is seven spaces and its three bytes", "");
+
+        /* CLAIM (ch5): "Opened as PROVEN_TEXT_UTF16LE, a file that starts with FF FE delivers the
+         * character U+FEFF as the first unit of its first line." */
+        proven_reader_view_t rv;
+        proven_u16 lb[8];
+        proven_u16_reader_t rd;
+        (void)proven_u16_reader_init(&rd, proven_reader_from_view(&rv, (proven_u8str_view_t){ (const proven_byte_t *)"\xFF\xFE" "a\0", 4 }),
+                                     PROVEN_TEXT_UTF16LE, lb, 8);
+        proven_result_u16str_view_t l = proven_u16_reader_read_line(&rd);
+        PROVEN_TEST_ASSERT(proven_is_ok(l.err) && l.val.size == 2 && l.val.ptr[0] == 0xFEFF && l.val.ptr[1] == 'a',
+            "an explicit encoding does not strip the BOM", "");
+
+        /* CLAIM (ch5): "proven_writer_write_u16 refuses a text that ends with the high half of a
+         * pair" and "Validated first: malformed text writes nothing." */
+        proven_writer_buf_t wb = { .buf = { fb, sizeof fb } };
+        const proven_u16 half[] = { 'o', 'k', 0xD83D };
+        e = proven_writer_write_u16(proven_writer_from_buffer(&wb), (proven_u16str_view_t){ half, 3 }, PROVEN_TEXT_UTF8);
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_INVALID_ENCODING && wb.len == 0, "a trailing high surrogate writes nothing", "");
+    }
+
     PROVEN_TEST_PASS("every claim these chapters make, that a reader could act on, is true.");
     return 0;
 }

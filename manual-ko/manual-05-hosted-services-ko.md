@@ -21,7 +21,8 @@
 6. [트리 순회](#트리-순회)
 7. [스트림: writer와 reader](#스트림-writer와-reader)
 8. [표준 스트림](#표준-스트림)
-9. [용도별 무작위성](#난수-용도별)
+9. [UTF-16 텍스트 입출력과 윈도 콘솔](#utf-16-텍스트-입출력과-윈도-콘솔)
+10. [용도별 무작위성](#난수-용도별)
 
 ## 1. 파일시스템 API
 파일시스템 계층은 플랫폼 파일 핸들, 경로, 디렉터리 목록, 메타데이터, 권한, 링크, 잠금을 감싼다.
@@ -1516,7 +1517,11 @@ flush한다고 주장했다: POSIX에서는 no-op, Windows에서는 *디스크 s
 ### 당신이 보유하는 구조체
 
 ```text
-typedef struct { proven_file_t file; } proven_sysio_std_t;
+typedef struct {
+    proven_file_t        file;
+    bool                 console;   /* a Windows console: see the next section */
+    proven_sysio_carry_t carry;     /* text in flight at the console edge; not yours to touch */
+} proven_sysio_std_t;
     /* Storage for a standard handle, so a writer or reader has something stable to
        point at. proven_writer_from_file takes a proven_file_t * and the file must
        outlive the writer - so it cannot be a temporary. This is that storage. */
@@ -1568,6 +1573,235 @@ proven_writer_t w = proven_sysio_file_buffered(&out, f, buf);   /* writes to fd 
 **버퍼드 stdout과 언버퍼드 stderr는 당신이 쓴 순서대로 뒤섞이지 않는다.** 당신이 버퍼링하는 것은
 당신의 버퍼에 앉아 있는 동안 stderr는 곧장 나간다. 당신의 출력 뒤에 나타나야 하는 에러를
 출력하기 전에 flush하라.
+
+## UTF-16 텍스트 입출력과 윈도 콘솔
+
+두 문제가 이 절을 함께 쓰는 것은 원인이 같아서다: 텍스트가 어디서나 바이트인 것은 아니다.
+
+**UTF-16 텍스트는 들어오고 나갈 길이 없었다.** `proven_u16str_t` - 윈도 와이드 API가 돌려주는
+이름, UTF-16 파일에서 온 텍스트 - 를 출력할 수도, 파일에 쓸 수도, 한 줄씩 읽을 수도 없었다. 이제
+u16 텍스트는 u8 텍스트가 다니는 모든 통로로 다닌다. 출력은 포매터를 거치므로 `proven_u16str_view_t`에
+대한 `PROVEN_ARG`가 `proven_println`, `proven_eprintln`, 파일이나 다른 어떤 쓰기 스트림(writer)으로의
+`proven_fprintln`, `proven_u8str_append_fmt`에서 동작하고, UTF-8로 쓴다. 받는 쪽이 UTF-16 *바이트*를
+원하면 - UTF-16LE 파일을 읽는 윈도 도구 같은 - `proven_writer_write_u16`이 지정한 바이트 순서로 쓰고,
+바이트 순서 표시(BOM)는 `proven_writer_write_bom`으로 요청할 때만 쓴다.
+
+입력은 `proven_u16_reader_t`다: 어떤 바이트 원본 위에서든 UTF-8, UTF-16LE, UTF-16BE를 내 코드 유닛
+버퍼로 해독하는 읽기 스트림(reader)으로, 한 줄씩 또는 한 덩어리씩 읽는다. `PROVEN_TEXT_AUTO`는 앞머리의
+바이트 순서 표시가 정하게 하고 그것을 소비한다. 표시가 없으면 UTF-8이다. 원본을 두 번 읽는 사이에
+잘린 문자를 이어 붙이고, 바이트 줄 리더의 규칙을 지킨다: `"\r\n"`은 `'\r'`을 잃고, 마지막 줄은 개행이
+없어도 되며, 버퍼보다 긴 줄은 `PROVEN_ERR_OUT_OF_BOUNDS`다. [`utf.h`](manual-03-strings-text-ko.md#utf-8과-utf-16-사이의-변환-utfh)처럼
+엄격하다: 잘못된 입력은 그 앞의 올바른 텍스트를 넘겨준 뒤 `PROVEN_ERR_INVALID_ENCODING`으로 리더를
+멈추고, 문자 한가운데서 끝나는 원본도 마찬가지다.
+
+**윈도 콘솔은 파일이 아니다.** 콘솔은 `WriteFile`이 건넨 바이트를 자기 코드 페이지 - 한국어 윈도에서는
+949 - 로 해독하므로, 누군가 `chcp 65001`을 실행해 두지 않은 한 UTF-8을 쓰면 글자가 깨졌고, 콘솔에 대한
+`ReadFile`은 UTF-8이 아니라 코드 페이지 바이트를 돌려주었다. 라이브러리 안에서 콘솔의 코드 페이지를
+바꾸면, 이 프로그램이 끝난 뒤에도 그 콘솔을 함께 쓰는 다른 모든 프로그램의 코드 페이지가 바뀐다. 그래서
+sysio 계층은 다른 길을 택한다: 표준 핸들이 콘솔이면(`GetConsoleMode`가 받아들이면) 그 쓰기·읽기
+스트림은 `WriteConsoleW`와 `ReadConsoleW`로 UTF-16을 주고받으며 경계에서 변환한다. `proven_print`와
+`proven_eprint`, stdout·stderr 쓰기 스트림, 버퍼 쓰기 스트림, u8·u16 줄 리더, 토큰 스캐너가 모두
+여기에 해당한다. 두 번의 쓰기에 걸쳐 잘린 UTF-8 문자 - 버퍼 쓰기 스트림은 문자 경계가 아니라 버퍼
+크기에서 플러시한다 - 는 상태 구조체에 담아 두었다가 다음 쓰기로 완성한다. 콘솔 줄 맨 앞의 Ctrl+Z는
+모든 윈도 콘솔 프로그램에서처럼 입력의 끝이다. 파일, 파이프, 리디렉션된 스트림은 콘솔이 아니므로
+여전히 정확한 바이트를 받고, POSIX에서는 어떤 것도 콘솔이 아니다.
+
+stdin을 UTF-16으로, 한 줄씩 읽기:
+
+```c
+#ifndef PROVEN_NO_U16STR
+proven_u16 wbuf[512];
+proven_sysio_u16_lines_t in;
+if (proven_is_ok(proven_sysio_stdin_u16_lines(&in, wbuf, 512))) {   /* stdin is read as UTF-8 */
+    for (;;) {
+        proven_result_u16str_view_t line = proven_sysio_read_u16_line(&in);
+        if (line.err == PROVEN_ERR_EOF) break;
+        if (!proven_is_ok(line.err)) break;   /* OUT_OF_BOUNDS, or INVALID_ENCODING */
+        /* `line.val` points INTO `wbuf` until the next call - e.g. hand it to a wide API. */
+        (void)proven_eprintln("{} code units", PROVEN_ARG(line.val.size));
+    }
+}
+#endif
+```
+
+| | |
+|---|---|
+| `proven_arg_u16(view)` / `PROVEN_ARG(view)` | 포매터 인자로서의 u16 텍스트, UTF-8로 쓰인다. |
+| `proven_writer_write_u16(w, text, enc)` | u16 텍스트를 어떤 쓰기 스트림으로든 UTF-8, UTF-16LE, UTF-16BE로. 먼저 검증한다: 잘못된 텍스트는 아무것도 쓰지 않는다. |
+| `proven_writer_write_bom(w, enc)` | `enc`의 바이트 순서 표시, 요청할 때만. |
+| `proven_u16_reader_init(&st, reader, enc, buf, cap)` | 어떤 읽기 스트림 위의 u16 리더, 내 코드 유닛 `cap`개(최소 2) 버퍼를 거친다. |
+| `proven_u16_reader_read_line(&st)` | 다음 줄을, 내 버퍼 안을 가리키는 u16 뷰로. |
+| `proven_u16_reader_read(&st, dest, cap)` | 코드 유닛 최대 `cap`개, 서로게이트 쌍의 반쪽은 절대 없이. |
+| `proven_sysio_u16_lines_open(&st, file, enc, buf, cap)` | 같은 리더를 파일이나 표준 스트림 위에. |
+| `proven_sysio_stdin_u16_lines(&st, buf, cap)` | stdin 위에, UTF-8로 읽는다(콘솔은 UTF-16으로 읽는다). |
+| `proven_sysio_read_u16_line(&st)` | 다음 줄; 호출 사이에 구조체를 옮겨도 된다. |
+
+### 당신이 들고 있는 구조체
+
+```text
+typedef struct {
+    proven_reader_t inner;  proven_text_encoding_t enc;   /* AUTO resolved from the BOM */
+    proven_u16 *buf;  proven_size_t cap, len, cursor;     /* your buffer, in code units */
+    proven_byte_t raw[64];  proven_size_t raw_len;        /* bytes read, not yet decoded */
+    proven_u16 peek[2];  proven_size_t peek_len;          /* one character of lookahead */
+    bool bom_checked, eof;  proven_err_t err;             /* err is sticky */
+} proven_u16_reader_t;
+
+typedef struct {
+    proven_sysio_std_t  std;
+    proven_u16_reader_t reader;
+} proven_sysio_u16_lines_t;   /* a u16 line reader over a standard stream or a file */
+```
+
+둘 다 [호출자 소유 상태](manual-00-start-here-ko.md#92-caller-owned-state--destroy-없음-복사-금지)다.
+아무것도 할당하지 않는다: 원시 바이트는 구조체 안에, 해독된 텍스트는 내 버퍼에 놓인다.
+
+### 주의할 점, 그리고 무엇이 잘못되는가
+
+**콘솔 핸들에 대한 `proven_writer_from_file`은 변환하지 않는다.** 그것은 파일 쓰기 스트림이라 바이트를
+있는 그대로 쓴다 - UTF-8이 아닌 코드 페이지의 윈도 콘솔에서는 깨진 글자다. 콘솔을 감지하는
+`proven_sysio_*` 호출로 콘솔 쓰기·읽기 스트림을 만들어라.
+
+```text
+proven_file_t out = proven_sysio_stdout();
+proven_writer_t w = proven_writer_from_file(&out);   /* wrong for a console: bytes, not text */
+proven_sysio_std_t st;
+proven_writer_t ok = proven_sysio_stdout_writer(&st); /* right: converts on a console */
+```
+
+**엄격은 콘솔에서도 엄격이다.** 콘솔로 보낸 잘못된 UTF-8은 그 앞의 올바른 텍스트를 보여 준 뒤
+`PROVEN_ERR_INVALID_ENCODING`으로 거부된다. 텍스트가 문자 한가운데서 끝나는 버퍼 쓰기 스트림은
+`proven_writer_flush`에서 그것을 알린다. 무엇도 물음표로 바뀌지 않는다.
+
+**명시한 인코딩은 바이트 순서 표시를 벗기지 않는다.** `PROVEN_TEXT_UTF16LE`로 연 파일이 `FF FE`로
+시작하면 첫 줄의 첫 유닛으로 문자 U+FEFF가 전달된다. 누가 썼는지 통제할 수 없는 파일은
+`PROVEN_TEXT_AUTO`로 열어라.
+
+**서로게이트 쌍은 한 문자다.** `proven_writer_write_u16`은 쌍의 상위 반쪽으로 끝나는 텍스트를, 다음
+호출이 하위 반쪽을 줄 예정이었더라도 거부한다 - 쌍은 한 호출 안에 두어라. 같은 이유로
+`proven_u16_reader_read`는 유닛 두 개의 자리가 필요하다.
+
+**너비는 UTF-8 바이트로 센다.** u16 인자를 감싼 `{:>10}`은 u8 뷰(view)에서와 똑같이 UTF-8 열 바이트로
+채운다 - 열 문자가 아니고, 터미널 열 칸도 아니다. 한글 한 음절은 세 바이트이고 두 칸이다.
+
+### 예제: u16 텍스트를 표준 스트림으로, UTF-16LE 파일로, 그리고 다시 안으로
+
+<!-- example: manual/examples/ko/ex_05_u16_io.c -->
+```c
+#include <string.h>
+
+/*
+ * UTF-16 텍스트의 입출력: 표준 스트림으로, 읽을 쪽이 기대하는 인코딩의 파일로, 그리고
+ * 한 줄씩 다시 안으로.
+ *
+ * 출력은 포매터를 거치므로, u8 텍스트를 받는 모든 곳이 u16 텍스트도 받는다: PROVEN_ARG 는
+ * proven_u16str_view_t 에 u16 렌더러를 골라 UTF-8 로 쓴다. 받는 쪽이 UTF-16 바이트를
+ * 원하면 - UTF-16LE 파일을 읽는 윈도 도구 같은 - 쓰기 스트림이 지정한 바이트 순서로 쓴다.
+ *
+ * 입력은 세 인코딩 중 어느 것이든 내 u16 버퍼로 해독하는 읽기 스트림이다. 원본을 두 번
+ * 읽는 사이에 잘린 문자를 이어 붙이고, 바이트 줄 리더의 규칙을 그대로 지킨다: "\r\n" 은
+ * '\r' 을 잃고, 마지막 줄은 개행이 없어도 되며, 버퍼보다 긴 줄은 잘린 줄이 아니라 오류다.
+ */
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* "안녕 🙂" - 한글과, 서로게이트 쌍인 이모지. */
+    static const proven_u16 hello[] = { 0xC548, 0xB155, ' ', 0xD83D, 0xDE42 };
+    proven_u16str_view_t text = { hello, 5 };
+
+    /* --- 표준 스트림으로 ----------------------------------------------- */
+
+    /* stdout 과 stderr 에는 UTF-8. 윈도 콘솔이면 sysio 계층이 UTF-16 으로 넘기므로,
+     * 코드 페이지가 무엇이든 올바르게 보인다. */
+    proven_err_t err = proven_println("stdout: {}", PROVEN_ARG(text));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "u16 text prints like u8 text");
+    err = proven_eprintln("stderr: {}", proven_arg_u16(text));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "and to stderr");
+
+    /* 버퍼 쓰기 스트림도 받는다. 플러시하라, 안 하면 없었던 일이다. */
+    proven_sysio_out_t out;
+    proven_byte_t buf[256];
+    proven_writer_t w = proven_sysio_stdout_buffered(&out, (proven_mem_mut_t){ buf, sizeof buf });
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fprintln(w, "buffered: {}", PROVEN_ARG(text)).err), "fprintln takes u16");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_writer_flush(w)), "and the flush sends it");
+
+    /* 엄격: 짝 없는 서로게이트는 쓰레기를 찍는 대신 줄 전체를 실패시킨다. */
+    static const proven_u16 torn_units[] = { 'o', 'k', 0xD83D };
+    proven_u16str_view_t torn = { torn_units, 3 };
+    err = proven_println("{}", PROVEN_ARG(torn));
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_INVALID_ENCODING, "half a surrogate pair is refused");
+
+    /* --- 파일로, BOM 을 붙인 UTF-16LE 로 ----------------------------------- */
+
+    proven_u8str_view_t path = PROVEN_LIT("proven_example_u16.txt");
+    proven_result_file_t f = proven_fs_open(alloc, path, PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
+    EXAMPLE_REQUIRE(proven_is_ok(f.err), "creating the file must succeed");
+    if (!proven_is_ok(f.err)) return EXAMPLE_OK();
+
+    proven_sysio_out_t fout;
+    proven_writer_t fw = proven_sysio_file_buffered(&fout, f.value, (proven_mem_mut_t){ buf, sizeof buf });
+    /* BOM 은 요청했기 때문에만 쓰인다. */
+    err = proven_writer_write_bom(fw, PROVEN_TEXT_UTF16LE);
+    for (int i = 0; i < 2 && proven_is_ok(err); ++i) {
+        err = proven_writer_write_u16(fw, text, PROVEN_TEXT_UTF16LE);
+        if (proven_is_ok(err)) err = proven_writer_write_u16(fw, (proven_u16str_view_t){ u"\r\n", 2 }, PROVEN_TEXT_UTF16LE);
+    }
+    if (proven_is_ok(err)) err = proven_writer_flush(fw);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "two lines of UTF-16LE are written");
+    (void)proven_fs_close(f.value);
+
+    /* --- 다시 안으로, 한 줄씩 --------------------------------------------- */
+
+    f = proven_fs_open(alloc, path, PROVEN_FS_READ);
+    EXAMPLE_REQUIRE(proven_is_ok(f.err), "opening the file again must succeed");
+    if (proven_is_ok(f.err)) {
+        /* AUTO: BOM 이 UTF-16LE 라고 알려 주고, 소비된다. 버퍼는 코드 단위이고
+         * 가장 긴 줄을 담아야 한다. */
+        proven_u16 line_buf[64];
+        proven_sysio_u16_lines_t lines;
+        err = proven_sysio_u16_lines_open(&lines, f.value, PROVEN_TEXT_AUTO, line_buf, 64);
+        EXAMPLE_REQUIRE(proven_is_ok(err), "the line reader opens");
+        int n = 0;
+        for (;;) {
+            proven_result_u16str_view_t line = proven_sysio_read_u16_line(&lines);
+            if (line.err == PROVEN_ERR_EOF) break;
+            EXAMPLE_REQUIRE(proven_is_ok(line.err), "each line reads");
+            if (!proven_is_ok(line.err)) break;
+            /* 뷰는 다음 호출 전까지 line_buf 안을 가리킨다. */
+            EXAMPLE_REQUIRE(line.val.size == 5 && memcmp(line.val.ptr, hello, sizeof hello) == 0,
+                            "each line is the text, without its CR LF");
+            ++n;
+        }
+        EXAMPLE_REQUIRE(n == 2 && lines.reader.enc == PROVEN_TEXT_UTF16LE, "two lines, read as UTF-16LE");
+        (void)proven_fs_close(f.value);
+    }
+    (void)proven_fs_remove(alloc, path);
+
+    /* --- 어떤 읽기 스트림이든, 어떤 인코딩이든 ------------------------------ */
+
+    /* 이미 메모리에 있는 바이트 - 여기서는 UTF-8 - 위의 같은 리더. read() 는 어느 줄에
+     * 속하든 코드 단위를 내주고, 쌍의 반쪽은 절대 내주지 않는다. */
+    proven_reader_view_t src;
+    proven_u16 rbuf[16];
+    proven_u16_reader_t rd;
+    err = proven_u16_reader_init(&rd, proven_reader_from_view(&src, PROVEN_LIT("A\xF0\x9F\x99\x82\nB")),
+                                 PROVEN_TEXT_UTF8, rbuf, 16);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "a u16 reader over UTF-8 bytes");
+    proven_result_u16str_view_t first = proven_u16_reader_read_line(&rd);
+    EXAMPLE_REQUIRE(proven_is_ok(first.err) && first.val.size == 3, "'A' and the emoji's two units");
+    proven_u16 rest[4];
+    proven_result_size_t got = proven_u16_reader_read(&rd, rest, 4);
+    EXAMPLE_REQUIRE(proven_is_ok(got.err) && got.value == 1 && rest[0] == 'B', "the last line, without a newline");
+    EXAMPLE_REQUIRE(proven_u16_reader_read(&rd, rest, 4).err == PROVEN_ERR_EOF, "then the end");
+
+    return EXAMPLE_OK();
+}
+```
+
+콘솔 경로는 리눅스에서도 도는 프로그램으로는 보여 줄 수 없다. 그것은 윈도 11에서
+`docs/b039-console-check.c`로 확인했다. 이 프로그램은 코드 페이지 949의 자기 콘솔을 만들고, 각 sysio
+경로로 쓴 뒤 화면 버퍼를 다시 읽으며, 콘솔 입력 버퍼에 키 이벤트를 넣어 줄 리더와 스캐너로 읽는다.
 
 ## 난수, 용도별
 단일한 "random"은 없다. 동일해 보이지만 그렇지 않은 두 가지 작업이 있다:

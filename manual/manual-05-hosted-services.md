@@ -21,7 +21,8 @@ These APIs require hosted platform support and are excluded from the current fre
 6. [Walking a tree](#walking-a-tree)
 7. [Streams: writers and readers](#streams-writers-and-readers)
 8. [The standard streams](#the-standard-streams)
-9. [Randomness, by use case](#randomness-by-use-case)
+9. [UTF-16 text in and out, and the Windows console](#utf-16-text-in-and-out-and-the-windows-console)
+10. [Randomness, by use case](#randomness-by-use-case)
 
 ## 1. Filesystem API
 
@@ -1546,7 +1547,11 @@ is `proven_fs_sync`. They are different operations and now say so.
 ### The structures you hold
 
 ```text
-typedef struct { proven_file_t file; } proven_sysio_std_t;
+typedef struct {
+    proven_file_t        file;
+    bool                 console;   /* a Windows console: see the next section */
+    proven_sysio_carry_t carry;     /* text in flight at the console edge; not yours to touch */
+} proven_sysio_std_t;
     /* Storage for a standard handle, so a writer or reader has something stable to
        point at. proven_writer_from_file takes a proven_file_t * and the file must
        outlive the writer - so it cannot be a temporary. This is that storage. */
@@ -1599,6 +1604,244 @@ proven_writer_t w = proven_sysio_file_buffered(&out, f, buf);   /* writes to fd 
 **Buffered stdout and unbuffered stderr do not interleave in the order you wrote them.** Anything
 you buffer sits in your buffer while stderr goes straight out. Flush before you print an error
 that is supposed to appear after your output.
+
+## UTF-16 text in and out, and the Windows console
+
+Two problems share this section because they share a cause: text is not bytes everywhere.
+
+**UTF-16 text had no way in or out.** A `proven_u16str_t` - the names a Windows wide API hands
+back, text from a UTF-16 file - could not be printed, written to a file, or read a line at a
+time. Now u16 text goes through every channel u8 text does. Output goes through the formatter,
+so `PROVEN_ARG` on a `proven_u16str_view_t` works in `proven_println`, `proven_eprintln`,
+`proven_fprintln` into a file or any other writer, and `proven_u8str_append_fmt`, and writes
+UTF-8. When the consumer wants UTF-16 *bytes* - a Windows tool that reads UTF-16LE files, say -
+`proven_writer_write_u16` writes them in the byte order you name, and a byte order mark only
+when you ask with `proven_writer_write_bom`.
+
+Input is `proven_u16_reader_t`: a reader over any byte source that decodes UTF-8, UTF-16LE or
+UTF-16BE into your buffer of code units, a line or a chunk at a time. `PROVEN_TEXT_AUTO` lets a
+leading byte order mark decide and consumes it; with no mark the text is UTF-8. It carries a
+character split between two reads of the source, and it keeps the byte line reader's rules:
+`"\r\n"` loses its `'\r'`, a final line needs no newline, a line longer than the buffer is
+`PROVEN_ERR_OUT_OF_BOUNDS`. It is strict, like [`utf.h`](manual-03-strings-text.md#converting-between-utf-8-and-utf-16-utfh):
+malformed input stops it with `PROVEN_ERR_INVALID_ENCODING` after the valid text before it has
+been delivered, and so does a source that ends inside a character.
+
+**A Windows console is not a file.** It decodes the bytes `WriteFile` gives it in its code page -
+949 on Korean Windows - so UTF-8 written to it was mojibake unless someone had run `chcp 65001`,
+and `ReadFile` on it returned code-page bytes, not UTF-8. Changing the console's code page from
+inside a library would change it for every other program sharing that console, after this one
+exits. So the sysio layer does the other thing: when a standard handle is a console
+(`GetConsoleMode` accepts it), its writers and readers talk to it in UTF-16 through
+`WriteConsoleW` and `ReadConsoleW`, converting at the edge. That covers `proven_print` and
+`proven_eprint`, the stdout and stderr writers, the buffered writers, the u8 and u16 line
+readers and the token scanner. A UTF-8 character split across two writes - a buffered writer
+flushes at its buffer size, not at a character boundary - is carried in the state struct and
+completed by the next write. Ctrl+Z at the start of a console line is end of input, as it is for
+every Windows console program. Files, pipes and redirected streams are not consoles and still
+receive the exact bytes, and on POSIX nothing is a console.
+
+Reading stdin as UTF-16, a line at a time:
+
+```c
+#ifndef PROVEN_NO_U16STR
+proven_u16 wbuf[512];
+proven_sysio_u16_lines_t in;
+if (proven_is_ok(proven_sysio_stdin_u16_lines(&in, wbuf, 512))) {   /* stdin is read as UTF-8 */
+    for (;;) {
+        proven_result_u16str_view_t line = proven_sysio_read_u16_line(&in);
+        if (line.err == PROVEN_ERR_EOF) break;
+        if (!proven_is_ok(line.err)) break;   /* OUT_OF_BOUNDS, or INVALID_ENCODING */
+        /* `line.val` points INTO `wbuf` until the next call - e.g. hand it to a wide API. */
+        (void)proven_eprintln("{} code units", PROVEN_ARG(line.val.size));
+    }
+}
+#endif
+```
+
+| | |
+|---|---|
+| `proven_arg_u16(view)` / `PROVEN_ARG(view)` | u16 text as a formatter argument, written as UTF-8. |
+| `proven_writer_write_u16(w, text, enc)` | u16 text to any writer as UTF-8, UTF-16LE or UTF-16BE. Validated first: malformed text writes nothing. |
+| `proven_writer_write_bom(w, enc)` | The byte order mark for `enc`, only when you ask. |
+| `proven_u16_reader_init(&st, reader, enc, buf, cap)` | A u16 reader over any reader, through `cap` code units of yours (at least 2). |
+| `proven_u16_reader_read_line(&st)` | The next line as a u16 view into your buffer. |
+| `proven_u16_reader_read(&st, dest, cap)` | Up to `cap` code units, never half a surrogate pair. |
+| `proven_sysio_u16_lines_open(&st, file, enc, buf, cap)` | The same reader over a file or a standard stream. |
+| `proven_sysio_stdin_u16_lines(&st, buf, cap)` | Over stdin, read as UTF-8 (a console is read as UTF-16). |
+| `proven_sysio_read_u16_line(&st)` | The next line; the struct may be moved between calls. |
+
+### The structures you hold
+
+```text
+typedef struct {
+    proven_reader_t inner;  proven_text_encoding_t enc;   /* AUTO resolved from the BOM */
+    proven_u16 *buf;  proven_size_t cap, len, cursor;     /* your buffer, in code units */
+    proven_byte_t raw[64];  proven_size_t raw_len;        /* bytes read, not yet decoded */
+    proven_u16 peek[2];  proven_size_t peek_len;          /* one character of lookahead */
+    bool bom_checked, eof;  proven_err_t err;             /* err is sticky */
+} proven_u16_reader_t;
+
+typedef struct {
+    proven_sysio_std_t  std;
+    proven_u16_reader_t reader;
+} proven_sysio_u16_lines_t;   /* a u16 line reader over a standard stream or a file */
+```
+
+Both are [caller-owned state](manual-00-start-here.md#92-caller-owned-state--no-destroy-do-not-copy).
+Nothing is allocated: the raw bytes are staged in the struct, the decoded text in your buffer.
+
+### Cautions, and what goes wrong
+
+**`proven_writer_from_file` on a console handle does not convert.** It is a file writer and
+writes the bytes as they are - mojibake on a Windows console in a non-UTF-8 code page. Make
+console writers and readers with the `proven_sysio_*` calls, which detect the console.
+
+```text
+proven_file_t out = proven_sysio_stdout();
+proven_writer_t w = proven_writer_from_file(&out);   /* wrong for a console: bytes, not text */
+proven_sysio_std_t st;
+proven_writer_t ok = proven_sysio_stdout_writer(&st); /* right: converts on a console */
+```
+
+**Strict means strict on the console too.** Malformed UTF-8 sent to a console is refused with
+`PROVEN_ERR_INVALID_ENCODING` after the valid text before it has been shown; a buffered writer
+whose text ends inside a character reports it at `proven_writer_flush`. Nothing is replaced with
+a question mark.
+
+**An explicit encoding does not strip a byte order mark.** Opened as `PROVEN_TEXT_UTF16LE`, a
+file that starts with `FF FE` delivers the character U+FEFF as the first unit of its first
+line. Open it as `PROVEN_TEXT_AUTO` when you do not control who wrote it.
+
+**A surrogate pair is one character.** `proven_writer_write_u16` refuses a text that ends with
+the high half of a pair even if the next call would have supplied the low half - keep a pair in
+one call. `proven_u16_reader_read` needs room for two units for the same reason.
+
+**Width counts UTF-8 bytes.** `{:>10}` around a u16 argument pads to ten UTF-8 bytes, exactly as
+it does for a u8 view - not ten characters, and not ten terminal columns; a Hangul syllable is
+three bytes and two columns.
+
+### Worked example: u16 text to the standard streams, to a UTF-16LE file, and back
+
+<!-- example: manual/examples/en/ex_05_u16_io.c -->
+```c
+#include <string.h>
+
+/*
+ * UTF-16 text in and out: to the standard streams, to a file in the encoding
+ * its reader expects, and back in a line at a time.
+ *
+ * Output goes through the formatter, so every sink that takes u8 text takes u16
+ * text too: PROVEN_ARG picks the u16 renderer for a proven_u16str_view_t and
+ * writes UTF-8. When a consumer wants UTF-16 bytes - a Windows tool that reads
+ * UTF-16LE files, say - a writer writes them in the byte order you name.
+ *
+ * Input is a reader that decodes any of the three encodings into your u16
+ * buffer. It carries a character split between two reads of the source, and it
+ * keeps the byte line reader's rules: "\r\n" loses its '\r', the last line needs
+ * no newline, and a line too long for the buffer is an error, not a cut line.
+ */
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* Two Hangul syllables ("hello"), a space, and an emoji - which is a surrogate pair. */
+    static const proven_u16 hello[] = { 0xC548, 0xB155, ' ', 0xD83D, 0xDE42 };
+    proven_u16str_view_t text = { hello, 5 };
+
+    /* --- to the standard streams --------------------------------------- */
+
+    /* UTF-8 on stdout and stderr. On a Windows console the sysio layer hands
+     * it to the console as UTF-16, so it shows correctly whatever the code page. */
+    proven_err_t err = proven_println("stdout: {}", PROVEN_ARG(text));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "u16 text prints like u8 text");
+    err = proven_eprintln("stderr: {}", proven_arg_u16(text));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "and to stderr");
+
+    /* A buffered writer takes it too; flush it, or it never happened. */
+    proven_sysio_out_t out;
+    proven_byte_t buf[256];
+    proven_writer_t w = proven_sysio_stdout_buffered(&out, (proven_mem_mut_t){ buf, sizeof buf });
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fprintln(w, "buffered: {}", PROVEN_ARG(text)).err), "fprintln takes u16");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_writer_flush(w)), "and the flush sends it");
+
+    /* Strict: an unpaired surrogate fails the whole line instead of printing junk. */
+    static const proven_u16 torn_units[] = { 'o', 'k', 0xD83D };
+    proven_u16str_view_t torn = { torn_units, 3 };
+    err = proven_println("{}", PROVEN_ARG(torn));
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_INVALID_ENCODING, "half a surrogate pair is refused");
+
+    /* --- to a file, as UTF-16LE with a BOM --------------------------------- */
+
+    proven_u8str_view_t path = PROVEN_LIT("proven_example_u16.txt");
+    proven_result_file_t f = proven_fs_open(alloc, path, PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
+    EXAMPLE_REQUIRE(proven_is_ok(f.err), "creating the file must succeed");
+    if (!proven_is_ok(f.err)) return EXAMPLE_OK();
+
+    proven_sysio_out_t fout;
+    proven_writer_t fw = proven_sysio_file_buffered(&fout, f.value, (proven_mem_mut_t){ buf, sizeof buf });
+    /* The BOM is written only because it is asked for. */
+    err = proven_writer_write_bom(fw, PROVEN_TEXT_UTF16LE);
+    for (int i = 0; i < 2 && proven_is_ok(err); ++i) {
+        err = proven_writer_write_u16(fw, text, PROVEN_TEXT_UTF16LE);
+        if (proven_is_ok(err)) err = proven_writer_write_u16(fw, (proven_u16str_view_t){ u"\r\n", 2 }, PROVEN_TEXT_UTF16LE);
+    }
+    if (proven_is_ok(err)) err = proven_writer_flush(fw);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "two lines of UTF-16LE are written");
+    (void)proven_fs_close(f.value);
+
+    /* --- back in, a line at a time ----------------------------------------- */
+
+    f = proven_fs_open(alloc, path, PROVEN_FS_READ);
+    EXAMPLE_REQUIRE(proven_is_ok(f.err), "opening the file again must succeed");
+    if (proven_is_ok(f.err)) {
+        /* AUTO: the BOM says UTF-16LE, and is consumed. The buffer is in code
+         * units and must hold the longest line. */
+        proven_u16 line_buf[64];
+        proven_sysio_u16_lines_t lines;
+        err = proven_sysio_u16_lines_open(&lines, f.value, PROVEN_TEXT_AUTO, line_buf, 64);
+        EXAMPLE_REQUIRE(proven_is_ok(err), "the line reader opens");
+        int n = 0;
+        for (;;) {
+            proven_result_u16str_view_t line = proven_sysio_read_u16_line(&lines);
+            if (line.err == PROVEN_ERR_EOF) break;
+            EXAMPLE_REQUIRE(proven_is_ok(line.err), "each line reads");
+            if (!proven_is_ok(line.err)) break;
+            /* The view points into line_buf until the next call. */
+            EXAMPLE_REQUIRE(line.val.size == 5 && memcmp(line.val.ptr, hello, sizeof hello) == 0,
+                            "each line is the text, without its CR LF");
+            ++n;
+        }
+        EXAMPLE_REQUIRE(n == 2 && lines.reader.enc == PROVEN_TEXT_UTF16LE, "two lines, read as UTF-16LE");
+        (void)proven_fs_close(f.value);
+    }
+    (void)proven_fs_remove(alloc, path);
+
+    /* --- any reader, any encoding ------------------------------------------ */
+
+    /* The same reader over bytes already in memory, here UTF-8. read() hands out
+     * code units whatever lines they belong to, and never half a pair. */
+    proven_reader_view_t src;
+    proven_u16 rbuf[16];
+    proven_u16_reader_t rd;
+    err = proven_u16_reader_init(&rd, proven_reader_from_view(&src, PROVEN_LIT("A\xF0\x9F\x99\x82\nB")),
+                                 PROVEN_TEXT_UTF8, rbuf, 16);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "a u16 reader over UTF-8 bytes");
+    proven_result_u16str_view_t first = proven_u16_reader_read_line(&rd);
+    EXAMPLE_REQUIRE(proven_is_ok(first.err) && first.val.size == 3, "'A' and the emoji's two units");
+    proven_u16 rest[4];
+    proven_result_size_t got = proven_u16_reader_read(&rd, rest, 4);
+    EXAMPLE_REQUIRE(proven_is_ok(got.err) && got.value == 1 && rest[0] == 'B', "the last line, without a newline");
+    EXAMPLE_REQUIRE(proven_u16_reader_read(&rd, rest, 4).err == PROVEN_ERR_EOF, "then the end");
+
+    return EXAMPLE_OK();
+}
+```
+
+The console path cannot be shown by a program that also runs on Linux. It was checked on
+Windows 11 by `docs/b039-console-check.c`, which makes its own console in code page 949, writes
+through each sysio path and reads the screen buffer back, and places key events in the console's
+input buffer to read them through the line readers and the scanner.
 
 ## Randomness, by use case
 

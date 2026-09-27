@@ -52,7 +52,7 @@ static proven_console_io_t io_of(fake_console_t *f) {
     return (proven_console_io_t){ f, fake_write, fake_read };
 }
 
-/* "A가😀b\r\n" */
+/* "A", U+AC00, U+1F600, "b", CR LF */
 static const char TEXT8[] = "A\xEA\xB0\x80\xF0\x9F\x98\x80" "b\r\n";
 static const proven_u16 TEXT16[] = { 'A', 0xAC00, 0xD83D, 0xDE00, 'b', '\r', '\n' };
 #define TEXT8_N (sizeof TEXT8 - 1)

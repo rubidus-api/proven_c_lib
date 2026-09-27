@@ -29,7 +29,7 @@ static bool line_is(proven_result_u16str_view_t r, const proven_u16 *want, prove
     return proven_is_ok(r.err) && r.val.size == n && (n == 0 || memcmp(r.val.ptr, want, n * sizeof(proven_u16)) == 0);
 }
 
-/* "가\r\nA😀\n끝" - Hangul, CRLF, a surrogate pair, a final line with no newline. */
+/* U+AC00 CR LF, "A" U+1F600 LF, U+B05D - Hangul, CRLF, a surrogate pair, a final line with no newline. */
 static const proven_u16 L1[] = { 0xAC00 };
 static const proven_u16 L2[] = { 'A', 0xD83D, 0xDE00 };
 static const proven_u16 L3[] = { 0xB05D };

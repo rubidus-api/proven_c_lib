@@ -107,7 +107,7 @@ int main(void) {
         "");
     // ---------------------------------------------------------------
     {
-        const char *s = "A\xC3\xA9\xED\x95\x9C\xF0\x9F\x98\x80";   /* A é 한 😀 */
+        const char *s = "A\xC3\xA9\xED\x95\x9C\xF0\x9F\x98\x80";   /* A, e-acute, a Hangul syllable, an emoji */
         const proven_u16 want[] = { 0x0041, 0x00E9, 0xD55C, 0xD83D, 0xDE00 };
         proven_err_t e = proven_utf8_to_utf16(bv(s, strlen(s)), u16, 64, &w);
         PROVEN_TEST_ASSERT(proven_is_ok(e) && w == 5 && memcmp(u16, want, sizeof want) == 0,

@@ -18,6 +18,73 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+UTF-16 text gets a way in and out, and UTF-8 text shows correctly on a Windows console
+(`docs/BACKLOG.md` B-039). New public API; existing behaviour changes only on a Windows console,
+where it was wrong.
+
+### Added
+
+- **`utf.h`: strict UTF-8 <-> UTF-16 transcoding.** Measuring (`proven_utf8_to_utf16_size`,
+  `proven_utf16_to_utf8_size`), fixed-capacity all-or-nothing (`proven_utf8_to_utf16`,
+  `proven_utf16_to_utf8`), partial for text read in pieces (`proven_utf8_to_utf16_partial`,
+  `proven_utf16_to_utf8_partial`, reporting `proven_utf_step_t`), and growable all-or-nothing
+  (`proven_utf8_append_to_u16str`, `proven_utf16_append_to_u8str`). Malformed input is always
+  `PROVEN_ERR_INVALID_ENCODING` - overlongs, encoded surrogates, values above U+10FFFF, stray
+  continuations, unpaired surrogates - and nothing is repaired. Input cut mid-character is
+  `PROVEN_ERR_NEED_MORE` in the partial forms, malformed in the whole forms.
+- **u16 text through the formatter.** `proven_arg_u16`, and `PROVEN_ARG` on a
+  `proven_u16str_view_t`, render UTF-8 into every formatter sink: `proven_println`,
+  `proven_eprintln`, `proven_fprintln` into any writer, `proven_u8str_append_fmt*`. Width counts
+  UTF-8 bytes as for a u8 view; an unpaired surrogate fails the format.
+- **u16 text through writers and readers** (`stream.h`). `proven_writer_write_u16` writes UTF-8,
+  UTF-16LE or UTF-16BE (`proven_text_encoding_t`), validated before anything is written;
+  `proven_writer_write_bom` writes a byte order mark only on request. `proven_u16_reader_t`
+  (`proven_u16_reader_init`, `_read_line`, `_read`) decodes any of the three encodings from any
+  reader into a caller-owned buffer of code units, with `PROVEN_TEXT_AUTO` choosing by BOM,
+  carrying a character split across reads, and keeping the byte line reader's newline, full-buffer
+  and last-line rules.
+- **sysio u16 line input**: `proven_sysio_u16_lines_open`, `proven_sysio_stdin_u16_lines`,
+  `proven_sysio_read_u16_line`, with `proven_sysio_u16_lines_t`. `proven_result_u16str_view_t` in
+  `u16str.h`.
+- **PAL**: `proven_sys_io_is_console`, `proven_sys_io_console_write_u16`,
+  `proven_sys_io_console_read_u16` (Windows; POSIX answers "not a console" / unsupported).
+- Manual: chapter 3 "Converting between UTF-8 and UTF-16", chapter 5 "UTF-16 text in and out,
+  and the Windows console", both editions, with runnable examples `ex_03_utf` and `ex_05_u16_io`.
+- `docs/b039-console-check.c` and `scripts/build-b039-check.sh`: a native Windows check that
+  makes its own console in code page 949 and verifies output by reading the screen buffer back
+  and input by injecting key events.
+
+### Changed
+
+- **On a Windows console, sysio writes and reads UTF-16.** `proven_print`/`proven_eprint`, the
+  stdout/stderr writers, the stdin reader, `proven_sysio_*_buffered`, the u8 and u16 line
+  readers and `proven_sysio_scanner_t` detect a console once (`GetConsoleMode`) and use
+  `WriteConsoleW`/`ReadConsoleW`, converting at the edge. Before, UTF-8 was handed to the
+  console with `WriteFile` and shown in the console's code page - mojibake under 949 unless
+  `chcp 65001` had been run - and console input came back in that code page. The console's code
+  page is not changed. Malformed UTF-8 sent to a console is refused after the valid part; a
+  character split across buffered flushes is carried in the state struct; Ctrl+Z at the start of
+  a console line is end of input. Files, pipes and redirected streams stay byte-exact; POSIX is
+  unchanged. `proven_writer_from_file` on a console handle stays byte-exact, as documented.
+- `proven_sysio_std_t` gains `console` and `carry` (`proven_sysio_carry_t`);
+  `proven_sysio_scanner_t` gains the same two fields. Layout change for code that declares them.
+
+### Fixed
+
+- **`proven_time_u16_fmt` widened each UTF-8 byte into a code unit.** A caller-supplied locale
+  with non-ASCII names produced three meaningless units per Hangul syllable; it now transcodes.
+  Reproduced red first in `tests/test_unit_time_fmt_u16_parity`.
+
+### Verification
+
+- New tests: `test_unit_utf` (every scalar value; UTF-8 validity against an independent
+  formulation over every 1-3 byte input; planted defects caught), `test_unit_stream_u16`,
+  `test_unit_sysio_console` (a fake console at every split offset and read size). Debug build:
+  209 executables. Windows 11 VM, 2026-09-27: `b039-check-win64.exe` and `-win32.exe` 17/17
+  each - console output under code page 949, injected console input, pipes and files. `./nob
+  cross` on arch-dev: all 11 targets. Not measured: console input typed through an IME by a
+  person; a legacy (pre-Windows 10) console host.
+
 ## [0.1.1] - 2026-09-21
 
 A PATCH release: the tutorial gains three lessons, and the hand build the manual prints works

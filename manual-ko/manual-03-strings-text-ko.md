@@ -5,7 +5,7 @@
 **이 장을 마치면** NUL 종료자가 프로그램의 운명을 결정하지 않는 방식으로 텍스트를 담을 수 있고,
 오버플로를 거부하는 문자열을 만들 수 있으며, 일상적인 경우의 포매팅과 파싱을 할 수 있다.
 
-이 장은 `u8str.h`, `u16str.h`, `fmt.h`, `scan.h`를 다룬다. 텍스트 자료의 **튜토리얼 절반**으로서,
+이 장은 `u8str.h`, `u16str.h`, `utf.h`, `fmt.h`, `scan.h`를 다룬다. 텍스트 자료의 **튜토리얼 절반**으로서,
 매일 만나는 사례로 포매터와 스캐너를 소개한다. [8장](manual-08-fmt-scan-ko.md)이 레퍼런스 절반이다
 — 전체 문법, 모든 인자 생성자, 스캐너의 에러와 복구 규칙을 담는다. 이 장을 먼저 읽으라.
 
@@ -238,10 +238,8 @@ API들과 대화하는 라이브러리에는 그들의 코드 유닛을 바이�
   값의 개수다. 밑에 깔린 `proven_buf_t`는 바이트를 추적하며, 그래서 `proven_u16str_len`이 나눗셈을
   한다. 이 두 단위를 섞는 것이 이 타입에서 가장 흔한 실수다.
 
-**이 라이브러리에는 UTF-8과 UTF-16 사이의 변환이 없다.** 이는 진짜 빈틈이며, 잊어버린 것이 아니라
-의도적이다: 올바른 변환이란 유효하지 않은 입력, 짝 없는 서로게이트, 과장 인코딩을 어떻게 할지
-결정하는 일이고, 그것은 Unicode 계층의 몫이다. 오늘날 `proven_u16str_t`는 `u"..."` 리터럴이나 이미
-가지고 있는 코드 유닛으로부터 만든다.
+`proven_u16str_t`는 `u"..."` 리터럴이나 이미 가지고 있는 코드 유닛으로부터 만들거나 - 흔한 경우로 -
+프로그램이 들고 있는 UTF-8을 `utf.h`로 변환해서 만든다(다음 소절).
 
 `PROVEN_NO_U16STR`이 정의되면 U16 API는 제외되며, 이는 프리스탠딩(freestanding) 빌드의 기본값이다 — 베어메탈
 타깃에는 대화할 Windows API가 없다.
@@ -312,6 +310,178 @@ proven_u16str_destroy(alloc, &s);
 ```
 
 참고: `proven_u16`은 코드 유닛이지, 반드시 하나의 완전한 Unicode 문자인 것은 아니다. UTF-16 서로게이트 쌍은 코드 유닛 두 개를 쓴다.
+
+### UTF-8과 UTF-16 사이의 변환 (`utf.h`)
+
+프로그램은 UTF-8을 들고 있고, 윈도 와이드 API는 UTF-16을 원하며, 그 API가 돌려주는 이름과 텍스트는
+UTF-16인데 프로그램의 나머지는 그것을 UTF-8로 원한다. 이 경계를 넘는 프로그램은 모두 변환기가
+필요하고, 변환기는 올바르지 않은 텍스트를 어떻게 할지 정해야 한다: 홀로 남은 연속 바이트, 과장
+인코딩(overlong encoding), 인코딩된 서로게이트, UTF-16 쪽의 짝 없는 서로게이트. 고쳐 주고 싶은
+유혹이 있다 - U+FFFD로 바꾸고 계속 가는 것 - 그러나 운영체제에 파일 이름을 건네는 라이브러리에게는
+틀린 답이다. 고쳐진 이름은 다른 이름이고, 프로그램은 열라고 한 적 없는 파일을 연다.
+
+**그래서 `utf.h`는 어디서나 엄격하다.** 잘못된 입력은 `PROVEN_ERR_INVALID_ENCODING`이고, 내 메모리에
+쓰는 형태들은 거부할 때 아무것도 쓰지 않는다. 손실 모드는 없다.
+
+**잘못된 것과 덜 온 것은 다른 답이다.** 조각으로 읽는 텍스트 - 파이프, 버퍼 쓰기 스트림(writer),
+콘솔에서 오는 - 는 다음 조각이 완성할 문자의 한가운데서 끝날 수 있다. 부분 변환 형태는 거기서
+`PROVEN_ERR_NEED_MORE`로 멈추고 입력을 얼마나 썼는지 알려 주므로, 꼬리를 간직했다가 더 받아 다시
+시도하면 된다. 텍스트 전체를 받는 형태에는 기다릴 "다음"이 없으므로, 그쪽에서 문자 중간에 끝나는
+텍스트는 잘못된 텍스트다.
+
+세 가지 모양은 라이브러리의 나머지가 쓰는 그대로다: 재고 나서 내 버퍼로 변환(전부 아니면 전무),
+소유(owned) 문자열을 늘리며 덧붙이기(전부 아니면 전무), 그리고 입력이나 출력이나 올바른 텍스트가
+다할 때까지 온전한 문자만 변환하는 부분 변환. 부분 변환은 서로게이트 쌍의 반쪽이나 UTF-8 시퀀스의
+일부를 절대 쓰지 않는다.
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_utf8_to_utf16_size(src)` | `src`가 변환될 코드 유닛 수; 검증을 겸한다. | `proven_result_size_t` |
+| `proven_utf16_to_utf8_size(src, n)` | 코드 유닛 `n`개가 변환될 UTF-8 바이트 수; 검증을 겸한다. | `proven_result_size_t` |
+| `proven_utf8_to_utf16(src, out, out_cap, &written)` | `src` 전부를 `out`으로, 아니면 아무것도. 종결자 없음. | `proven_err_t` |
+| `proven_utf16_to_utf8(src, n, out, out_cap, &written)` | 반대 방향으로 같은 일. | `proven_err_t` |
+| `proven_utf8_to_utf16_partial(src, out, out_cap)` | 무언가가 멈출 때까지 온전한 문자만. | `proven_utf_step_t` |
+| `proven_utf16_to_utf8_partial(src, n, out, out_cap)` | 반대 방향; 끝의 상위 서로게이트는 `NEED_MORE`. | `proven_utf_step_t` |
+| `proven_utf8_append_to_u16str(alloc, dst, src)` | `src`의 UTF-16을 덧붙이며 `dst`를 늘린다; 전부 아니면 전무. | `proven_err_t` |
+| `proven_utf16_append_to_u8str(alloc, dst, src, n)` | 코드 유닛 `n`개의 UTF-8을 덧붙이며 `dst`를 늘린다; 전부 아니면 전무. | `proven_err_t` |
+
+```text
+typedef struct {
+    proven_err_t  err;       /* OK, OUT_OF_BOUNDS (output full), NEED_MORE (input ends
+                                mid-character), INVALID_ENCODING (malformed at `consumed`) */
+    proven_size_t consumed;  /* input units used: bytes for UTF-8, code units for UTF-16 */
+    proven_size_t written;   /* output units written */
+} proven_utf_step_t;
+
+typedef enum {
+    PROVEN_TEXT_UTF8, PROVEN_TEXT_UTF16LE, PROVEN_TEXT_UTF16BE,
+    PROVEN_TEXT_AUTO         /* readers only: decided by a byte order mark */
+} proven_text_encoding_t;    /* for the u16 writers and readers in stream.h (chapter 5) */
+```
+
+반례 - 바이트 하나를 코드 유닛 하나로 넓히는 경우. ASCII에서는 맞기 때문에 테스트를 통과해
+살아남고, 다른 모든 문자는 의미 없는 유닛 두세 개가 된다. 라이브러리 자신의 `proven_time_u16_fmt`가
+`utf.h`가 생기기 전까지 호출자의 비 ASCII 요일 이름에 정확히 이렇게 했다:
+
+```text
+for (size_t i = 0; i < text.size; ++i) {
+    proven_u16 unit = (proven_u16)text.ptr[i];        /* wrong: a byte is not a code unit */
+    (void)proven_u16str_append_grow(alloc, &wide, (proven_u16str_view_t){ &unit, 1 });
+}
+```
+
+반례 - 조각을 전체 텍스트 형태로 변환하는 경우. 문자 한가운데서 끝나는 조각은 텍스트가 멀쩡한데도
+잘못된 것으로 거부된다. 부분 변환 형태를 쓰고 꼬리를 이어 가져가라:
+
+```text
+proven_utf8_to_utf16(piece, out, cap, &n);   /* wrong for pieces: a split character is INVALID */
+```
+
+예제는 한국어 파일 이름을 와이드 API용으로 변환했다가 되돌리고, 아무것도 쓰지 않는 거부를 보이고,
+소유 문자열을 양방향으로 늘리며, 두 조각 사이에서 잘린 문자를 이어 붙인다:
+
+<!-- example: manual/examples/ko/ex_03_utf.c -->
+```c
+#include <string.h>
+
+/*
+ * 프로그램은 UTF-8 로 생각하고, 윈도의 "와이드" 호출은 UTF-16 을 원한다. utf.h 가
+ * 양방향의 건널목이고, 엄격하다 - 올바른 UTF-8 이나 UTF-16 이 아닌 텍스트는 고쳐지지
+ * 않고 거부된다. 잘못된 바이트를 슬쩍 물음표로 바꾸는 변환기는, 막 열려던 파일 이름을
+ * 바꿔 버린 것이다.
+ *
+ * 이 라이브러리 어디서나처럼 세 가지 모양이 있다: 재고 나서 내 버퍼로 변환(전부 아니면
+ * 전무), 소유 문자열을 늘리며 덧붙이기(전부 아니면 전무), 조각으로 도착하는 텍스트를
+ * 위한 부분 변환.
+ */
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* "보고서.txt" - 프로그램의 나머지가 들고 있는 모양 그대로의 파일 이름. */
+    proven_u8str_view_t name = PROVEN_LIT("\xEB\xB3\xB4\xEA\xB3\xA0\xEC\x84\x9C.txt");
+
+    /* --- 재고 나서, 내 버퍼로 변환 ------------------------------------------ */
+
+    /* 먼저 묻는다: 답은 코드 단위이고, 검증도 겸한다. 한글 아홉 바이트는 여기서
+     * 코드 단위 아홉 개가 아니라 세 개다. */
+    proven_result_size_t need = proven_utf8_to_utf16_size(name);
+    EXAMPLE_REQUIRE(proven_is_ok(need.err) && need.value == 7, "3 syllables + \".txt\" are 7 code units");
+
+    /* 와이드 API 가 기대하는 NUL 자리로 하나 더; 변환기는 NUL 을 쓰지 않는다. */
+    proven_u16 wide[16];
+    proven_size_t units = 0;
+    proven_err_t err = proven_utf8_to_utf16(name, wide, 15, &units);
+    EXAMPLE_REQUIRE(proven_is_ok(err) && units == 7, "the name converts whole");
+    wide[units] = 0;
+    EXAMPLE_REQUIRE(wide[0] == 0xBCF4, "the first code unit is the syllable, not its first byte");
+    /* 윈도라면: CreateFileW((LPCWSTR)wide, ...). 어디서나 돌도록 여기서는 부르지 않는다. */
+
+    /* 그리고 되돌리기: 와이드 API 가 돌려준 이름을, 나머지 모두를 위해 UTF-8 로. */
+    proven_result_size_t back = proven_utf16_to_utf8_size(wide, units);
+    EXAMPLE_REQUIRE(proven_is_ok(back.err) && back.value == name.size, "the reverse size is the original byte count");
+    proven_byte_t bytes[32];
+    proven_size_t nbytes = 0;
+    err = proven_utf16_to_utf8(wide, units, bytes, sizeof bytes, &nbytes);
+    EXAMPLE_REQUIRE(proven_is_ok(err) && nbytes == name.size && memcmp(bytes, name.ptr, nbytes) == 0,
+                    "the round trip gives the same bytes");
+
+    /* --- 엄격: 잘못된 텍스트는 거부되고, 아무것도 쓰이지 않는다 -------- */
+
+    /* 잘렸거나 잘못 해독된 이름에 있을 법한, 홀로 남은 연속 바이트. */
+    proven_u8str_view_t broken = PROVEN_LIT("bad\x80.txt");
+    wide[0] = 0x1234;
+    err = proven_utf8_to_utf16(broken, wide, 15, &units);
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_INVALID_ENCODING, "a stray continuation byte is refused");
+    EXAMPLE_REQUIRE(units == 0 && wide[0] == 0x1234, "and the output is untouched");
+
+    /* --- 소유 문자열 늘리기 ------------------------------------------------ */
+
+    proven_result_u16str_t r = proven_u16str_create(alloc, 4);
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating the wide path must succeed");
+    proven_u16str_t path = r.value;
+    err = proven_utf8_append_to_u16str(alloc, &path, PROVEN_LIT("C:\\reports\\"));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "the directory appends");
+    err = proven_utf8_append_to_u16str(alloc, &path, name);
+    EXAMPLE_REQUIRE(proven_is_ok(err) && proven_u16str_len(&path) == 11 + 7, "and the name, growing the string");
+    EXAMPLE_REQUIRE(proven_u16str_as_ptr(&path)[18] == 0, "still NUL-terminated for the system call");
+
+    /* 실패한 덧붙이기는 아무것도 바꾸지 않는다: 반쯤 변환된 꼬리가 없다. */
+    err = proven_utf8_append_to_u16str(alloc, &path, broken);
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_INVALID_ENCODING && proven_u16str_len(&path) == 18, "a refused append leaves the path as it was");
+
+    proven_result_u8str_t r8 = proven_u8str_create(alloc, 8);
+    EXAMPLE_REQUIRE(proven_is_ok(r8.err), "creating the UTF-8 copy must succeed");
+    proven_u8str_t copy = r8.value;
+    err = proven_utf16_append_to_u8str(alloc, &copy, proven_u16str_as_ptr(&path), proven_u16str_len(&path));
+    EXAMPLE_REQUIRE(proven_is_ok(err) && copy.internal.len == 11 + name.size, "the whole path comes back as UTF-8");
+
+    /* --- 부분 변환: 조각으로 도착하는 텍스트 ------------------------------- */
+
+    /* 읽기 스트림이 4 바이트씩 넘겨 주고, "고" 는 첫 바이트 뒤에서 잘린다. 부분 변환은
+     * 온전한 것만 변환하고 NEED_MORE 로 멈추며, 얼마나 썼는지 알려 준다. 호출자는
+     * 나머지를 간직했다가 다음 조각을 붙인다. */
+    proven_u16 out[8];
+    proven_utf_step_t st = proven_utf8_to_utf16_partial((proven_u8str_view_t){ name.ptr, 4 }, out, 8);
+    EXAMPLE_REQUIRE(st.err == PROVEN_ERR_NEED_MORE && st.consumed == 3 && st.written == 1,
+                    "one whole syllable, and the start of the next kept back");
+    st = proven_utf8_to_utf16_partial((proven_u8str_view_t){ name.ptr + st.consumed, 6 }, out + 1, 7);
+    EXAMPLE_REQUIRE(proven_is_ok(st.err) && st.written == 2 && out[1] == 0xACE0, "with the next piece it completes");
+
+    /* 반대 방향에서도 같은 구분이다: 끝의 상위 서로게이트는, 나머지 반쪽이 다음
+     * 조각에 있는 쌍의 반쪽일 수 있다. */
+    const proven_u16 emoji_half[] = { 'o', 'k', 0xD83D };
+    proven_byte_t u8out[16];
+    st = proven_utf16_to_utf8_partial(emoji_half, 3, u8out, sizeof u8out);
+    EXAMPLE_REQUIRE(st.err == PROVEN_ERR_NEED_MORE && st.consumed == 2, "a trailing high surrogate waits");
+
+    printf("converted a %zu-byte name to %zu code units and back\n", (size_t)name.size, (size_t)need.value);
+
+    proven_u8str_destroy(alloc, &copy);
+    proven_u16str_destroy(alloc, &path);
+    return EXAMPLE_OK();
+}
+```
 
 ## 3. 포매팅
 
@@ -428,6 +598,7 @@ typedef struct {
 | `proven_arg_cstr(v)` | 신뢰할 수 있고 살아 있는 NUL 종료 C 문자열. |
 | `proven_arg_cstr_n(v, max_len)` | 경계가 있는 C 문자열 인자; `max_len`까지만 NUL을 탐색한다. |
 | `proven_arg_str_view(v)` | borrowed 문자열 view 인자. |
+| `proven_arg_u16(v)` | borrowed UTF-16 view, UTF-8로 렌더링된다. 엄격: 짝 없는 서로게이트는 포맷 전체를 실패시킨다. 너비는 u8 view와 같이 UTF-8 바이트로 센다. `PROVEN_ARG`는 `proven_u16str_view_t`에 이것을 고른다. |
 | `proven_arg_datetime(v)` | datetime 인자. |
 | `proven_arg_ptr(v)` | 객체 포인터 인자. |
 | `proven_arg_fn(v)` | 함수 포인터 인자. |

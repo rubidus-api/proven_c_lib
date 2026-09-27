@@ -5,7 +5,7 @@
 **After this chapter** you can hold text without a NUL terminator deciding your program's fate,
 build strings that refuse to overflow, and format and parse the everyday cases.
 
-This chapter covers `u8str.h`, `u16str.h`, `fmt.h`, and `scan.h`. It is the **tutorial half** of
+This chapter covers `u8str.h`, `u16str.h`, `utf.h`, `fmt.h`, and `scan.h`. It is the **tutorial half** of
 the text material: it introduces the formatter and the scanner with the cases you meet daily.
 [Chapter 8](manual-08-fmt-scan.md) is the reference half — the complete grammar, every argument
 constructor, and the scanner's error and recovery rules. Read this one first.
@@ -239,10 +239,8 @@ Two things to hold on to, because they are the source of every UTF-16 bug:
   `proven_u16` values; the `proven_buf_t` underneath tracks bytes, which is why
   `proven_u16str_len` divides. Mixing the two units is the most common mistake with this type.
 
-**There is no conversion between UTF-8 and UTF-16 in this library.** That is a real gap, and it is
-deliberate rather than forgotten: correct conversion means deciding what to do with invalid input,
-unpaired surrogates and overlong encodings, and that is a Unicode layer's job. Today you build a
-`proven_u16str_t` from a `u"..."` literal or from code units you already have.
+You build a `proven_u16str_t` from a `u"..."` literal, from code units you already have, or -
+the usual case - by converting the UTF-8 your program holds, with `utf.h` (next subsection).
 
 U16 APIs are excluded when `PROVEN_NO_U16STR` is defined, which is the default in freestanding
 builds — a bare-metal target has no Windows API to talk to.
@@ -313,6 +311,181 @@ proven_u16str_destroy(alloc, &s);
 ```
 
 Note: `proven_u16` is a code unit, not necessarily one full Unicode character. UTF-16 surrogate pairs use two code units.
+
+### Converting between UTF-8 and UTF-16 (`utf.h`)
+
+The program holds UTF-8; the Windows wide API wants UTF-16; the names and text that API hands
+back are UTF-16 and the rest of the program wants them as UTF-8. Every program that crosses that
+line needs a converter, and a converter has to decide what to do with text that is not valid:
+a stray continuation byte, an overlong encoding, an encoded surrogate, a lone surrogate on the
+UTF-16 side. The tempting answer is to repair it - swap in U+FFFD and carry on - and it is the
+wrong one for a library that hands file names to the operating system: a repaired name is a
+different name, and the program opens a file it was never asked to open.
+
+**So `utf.h` is strict everywhere.** Malformed input is `PROVEN_ERR_INVALID_ENCODING`, and the
+forms that write into your memory write nothing when they refuse. There is no lossy mode.
+
+**Malformed and incomplete are different answers.** Text read in pieces - from a pipe, a
+buffered writer, a console - can end in the middle of a character that the next piece
+completes. The partial forms stop there with `PROVEN_ERR_NEED_MORE` and report how much input
+they used, so you keep the tail and try again with more. The whole-text forms have no "more" to
+wait for, so for them a text that ends mid-character is malformed.
+
+The three shapes are the ones the rest of the library uses: measure then convert into a buffer
+you own, all or nothing; grow an owned string, all or nothing; and a partial form that converts
+whole characters until the input, the output or the valid text runs out. A partial conversion
+never writes half a surrogate pair or half a UTF-8 sequence.
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_utf8_to_utf16_size(src)` | Code units `src` converts to; validates. | `proven_result_size_t` |
+| `proven_utf16_to_utf8_size(src, n)` | UTF-8 bytes `n` code units convert to; validates. | `proven_result_size_t` |
+| `proven_utf8_to_utf16(src, out, out_cap, &written)` | All of `src` into `out`, or nothing. No terminator. | `proven_err_t` |
+| `proven_utf16_to_utf8(src, n, out, out_cap, &written)` | The same, the other way. | `proven_err_t` |
+| `proven_utf8_to_utf16_partial(src, out, out_cap)` | Whole characters until something stops it. | `proven_utf_step_t` |
+| `proven_utf16_to_utf8_partial(src, n, out, out_cap)` | The same, the other way; a trailing high surrogate is `NEED_MORE`. | `proven_utf_step_t` |
+| `proven_utf8_append_to_u16str(alloc, dst, src)` | Append the UTF-16 of `src`, growing `dst`; all or nothing. | `proven_err_t` |
+| `proven_utf16_append_to_u8str(alloc, dst, src, n)` | Append the UTF-8 of `n` code units, growing `dst`; all or nothing. | `proven_err_t` |
+
+```text
+typedef struct {
+    proven_err_t  err;       /* OK, OUT_OF_BOUNDS (output full), NEED_MORE (input ends
+                                mid-character), INVALID_ENCODING (malformed at `consumed`) */
+    proven_size_t consumed;  /* input units used: bytes for UTF-8, code units for UTF-16 */
+    proven_size_t written;   /* output units written */
+} proven_utf_step_t;
+
+typedef enum {
+    PROVEN_TEXT_UTF8, PROVEN_TEXT_UTF16LE, PROVEN_TEXT_UTF16BE,
+    PROVEN_TEXT_AUTO         /* readers only: decided by a byte order mark */
+} proven_text_encoding_t;    /* for the u16 writers and readers in stream.h (chapter 5) */
+```
+
+Wrong - widening each byte into a code unit. It is right for ASCII, which is why it survives
+testing, and it turns every other character into two or three meaningless units. The library's
+own `proven_time_u16_fmt` did exactly this with a caller's non-ASCII day names until `utf.h`
+existed:
+
+```text
+for (size_t i = 0; i < text.size; ++i) {
+    proven_u16 unit = (proven_u16)text.ptr[i];        /* wrong: a byte is not a code unit */
+    (void)proven_u16str_append_grow(alloc, &wide, (proven_u16str_view_t){ &unit, 1 });
+}
+```
+
+Wrong - converting pieces with the whole-text form. The piece that ends inside a character is
+refused as malformed, although the text is fine; use the partial form and carry the tail:
+
+```text
+proven_utf8_to_utf16(piece, out, cap, &n);   /* wrong for pieces: a split character is INVALID */
+```
+
+The worked example converts a Korean file name for a wide API and back, shows the refusal that
+writes nothing, grows owned strings both ways, and carries a character split between two pieces:
+
+<!-- example: manual/examples/en/ex_03_utf.c -->
+```c
+#include <string.h>
+
+/*
+ * The program thinks in UTF-8; a Windows "wide" call wants UTF-16. utf.h is the
+ * crossing, in both directions, and it is strict: text that is not valid UTF-8
+ * or UTF-16 is refused, never repaired. A converter that quietly swaps a bad
+ * byte for a question mark has changed a file name you were about to open.
+ *
+ * Three shapes, as everywhere in this library: measure-then-convert into a
+ * buffer you own (all or nothing), grow an owned string (all or nothing), and a
+ * partial form for text that arrives in pieces.
+ */
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* A Korean file name ("report.txt": three Hangul syllables and ".txt"), as the rest
+     * of the program holds it: UTF-8. */
+    proven_u8str_view_t name = PROVEN_LIT("\xEB\xB3\xB4\xEA\xB3\xA0\xEC\x84\x9C.txt");
+
+    /* --- measure, then convert into your own buffer ------------------------ */
+
+    /* Ask first: the answer is in code units, and it also validates. Nine bytes
+     * of Hangul are three code units here, not nine. */
+    proven_result_size_t need = proven_utf8_to_utf16_size(name);
+    EXAMPLE_REQUIRE(proven_is_ok(need.err) && need.value == 7, "3 syllables + \".txt\" are 7 code units");
+
+    /* One more unit for the NUL a wide API expects; the converter writes none. */
+    proven_u16 wide[16];
+    proven_size_t units = 0;
+    proven_err_t err = proven_utf8_to_utf16(name, wide, 15, &units);
+    EXAMPLE_REQUIRE(proven_is_ok(err) && units == 7, "the name converts whole");
+    wide[units] = 0;
+    EXAMPLE_REQUIRE(wide[0] == 0xBCF4, "the first code unit is the syllable, not its first byte");
+    /* On Windows: CreateFileW((LPCWSTR)wide, ...). Not called here, so this runs everywhere. */
+
+    /* And back: a name a wide API returned, as UTF-8 for everything else. */
+    proven_result_size_t back = proven_utf16_to_utf8_size(wide, units);
+    EXAMPLE_REQUIRE(proven_is_ok(back.err) && back.value == name.size, "the reverse size is the original byte count");
+    proven_byte_t bytes[32];
+    proven_size_t nbytes = 0;
+    err = proven_utf16_to_utf8(wide, units, bytes, sizeof bytes, &nbytes);
+    EXAMPLE_REQUIRE(proven_is_ok(err) && nbytes == name.size && memcmp(bytes, name.ptr, nbytes) == 0,
+                    "the round trip gives the same bytes");
+
+    /* --- strict: malformed text is refused, and nothing is written ------- */
+
+    /* A lone continuation byte, as a truncated or mis-decoded name would have. */
+    proven_u8str_view_t broken = PROVEN_LIT("bad\x80.txt");
+    wide[0] = 0x1234;
+    err = proven_utf8_to_utf16(broken, wide, 15, &units);
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_INVALID_ENCODING, "a stray continuation byte is refused");
+    EXAMPLE_REQUIRE(units == 0 && wide[0] == 0x1234, "and the output is untouched");
+
+    /* --- grow an owned string ---------------------------------------------- */
+
+    proven_result_u16str_t r = proven_u16str_create(alloc, 4);
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating the wide path must succeed");
+    proven_u16str_t path = r.value;
+    err = proven_utf8_append_to_u16str(alloc, &path, PROVEN_LIT("C:\\reports\\"));
+    EXAMPLE_REQUIRE(proven_is_ok(err), "the directory appends");
+    err = proven_utf8_append_to_u16str(alloc, &path, name);
+    EXAMPLE_REQUIRE(proven_is_ok(err) && proven_u16str_len(&path) == 11 + 7, "and the name, growing the string");
+    EXAMPLE_REQUIRE(proven_u16str_as_ptr(&path)[18] == 0, "still NUL-terminated for the system call");
+
+    /* A failed append changes nothing: no half-converted tail. */
+    err = proven_utf8_append_to_u16str(alloc, &path, broken);
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_INVALID_ENCODING && proven_u16str_len(&path) == 18, "a refused append leaves the path as it was");
+
+    proven_result_u8str_t r8 = proven_u8str_create(alloc, 8);
+    EXAMPLE_REQUIRE(proven_is_ok(r8.err), "creating the UTF-8 copy must succeed");
+    proven_u8str_t copy = r8.value;
+    err = proven_utf16_append_to_u8str(alloc, &copy, proven_u16str_as_ptr(&path), proven_u16str_len(&path));
+    EXAMPLE_REQUIRE(proven_is_ok(err) && copy.internal.len == 11 + name.size, "the whole path comes back as UTF-8");
+
+    /* --- partial: text that arrives in pieces ------------------------------ */
+
+    /* A reader hands over 4 bytes at a time, and the second syllable is split after its first
+     * byte. The partial form converts what is whole, stops with NEED_MORE, and
+     * says how much it used; the caller keeps the rest and adds the next piece. */
+    proven_u16 out[8];
+    proven_utf_step_t st = proven_utf8_to_utf16_partial((proven_u8str_view_t){ name.ptr, 4 }, out, 8);
+    EXAMPLE_REQUIRE(st.err == PROVEN_ERR_NEED_MORE && st.consumed == 3 && st.written == 1,
+                    "one whole syllable, and the start of the next kept back");
+    st = proven_utf8_to_utf16_partial((proven_u8str_view_t){ name.ptr + st.consumed, 6 }, out + 1, 7);
+    EXAMPLE_REQUIRE(proven_is_ok(st.err) && st.written == 2 && out[1] == 0xACE0, "with the next piece it completes");
+
+    /* The same distinction in the other direction: a high surrogate at the end
+     * may be half of a pair whose other half is in the next piece. */
+    const proven_u16 emoji_half[] = { 'o', 'k', 0xD83D };
+    proven_byte_t u8out[16];
+    st = proven_utf16_to_utf8_partial(emoji_half, 3, u8out, sizeof u8out);
+    EXAMPLE_REQUIRE(st.err == PROVEN_ERR_NEED_MORE && st.consumed == 2, "a trailing high surrogate waits");
+
+    printf("converted a %zu-byte name to %zu code units and back\n", (size_t)name.size, (size_t)need.value);
+
+    proven_u8str_destroy(alloc, &copy);
+    proven_u16str_destroy(alloc, &path);
+    return EXAMPLE_OK();
+}
+```
 
 ## 3. Formatting
 
@@ -431,6 +604,7 @@ typedef struct {
 | `proven_arg_cstr(v)` | Trusted live NUL-terminated C string. |
 | `proven_arg_cstr_n(v, max_len)` | Bounded C-string argument; scans for NUL only up to `max_len`. |
 | `proven_arg_str_view(v)` | Borrowed string view argument. |
+| `proven_arg_u16(v)` | Borrowed UTF-16 view, rendered as UTF-8. Strict: an unpaired surrogate fails the format. Width counts UTF-8 bytes, as for a u8 view. `PROVEN_ARG` picks it for a `proven_u16str_view_t`. |
 | `proven_arg_datetime(v)` | Datetime argument. |
 | `proven_arg_ptr(v)` | Object pointer argument. |
 | `proven_arg_fn(v)` | Function pointer argument. |

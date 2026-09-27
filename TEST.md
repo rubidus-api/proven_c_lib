@@ -16,7 +16,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 61 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 64 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 24 |
 | `differential` | Does it agree with an oracle we did not write? | 4 |
@@ -297,7 +297,7 @@ Failure tip: identify the target name in the log, then check whether the failure
 ## Test catalog
 
 
-The hosted full run builds and executes 118 registered tests plus the 84 runnable manual examples - 202 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 128 test files: the 118 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
+The hosted full run builds and executes 121 registered tests plus the 88 runnable manual examples - 209 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 131 test files: the 121 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -825,6 +825,35 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/stream.c`. Buffering uses caller-supplied memory: there is no hidden global state and no allocation the caller did not ask for.
 
+### `tests/test_unit_stream_u16` — UTF-16 text through writers, readers and the formatter
+
+Intent: verify u16 text goes out through every formatter sink and any writer in each encoding, and comes back line by line from each encoding, with a character split across reads carried.
+
+Sub-checks:
+
+- `PROVEN_ARG` on a `proven_u16str_view_t` renders UTF-8 into a string, a writer and stdout; width counts UTF-8 bytes; an unpaired surrogate fails the format.
+- `proven_writer_write_u16` writes UTF-8, UTF-16LE and UTF-16BE byte-exact regardless of host byte order, with the BOM only on request; malformed text writes nothing; `PROVEN_TEXT_AUTO` is refused for writing.
+- `proven_u16_reader_t` reads all three encodings through a source that returns one byte per read, explicitly and through `AUTO` with each BOM; no BOM reads as UTF-8; an explicit encoding delivers a BOM as U+FEFF.
+- A line that exactly fills the buffer is a line; one unit longer is `OUT_OF_BOUNDS` and stays so; a surrogate pair is never split at the buffer edge; `read` never ends on a high surrogate.
+- Malformed input, a lone surrogate, an odd trailing byte and a source ending mid-character each stop the reader with `INVALID_ENCODING` after the valid first line.
+- A file round-trips in each encoding through `proven_sysio_u16_lines_open(AUTO)`, and the wrapper may be moved between calls.
+
+Failure tip: inspect the UTF-16 section of `src/proven/stream.c` (`u16r_decode`, `proven_u16_reader_read_line`) and `render_u16` in `src/proven/fmt.c`. A failure only with the one-byte source is the carry between reads.
+
+### `tests/test_unit_sysio_console` — UTF-8 text through a UTF-16 console
+
+Intent: verify the Windows console edge (`src/proven/proven_internal_console.h`) against a fake UTF-16 console, on every host.
+
+Sub-checks:
+
+- A text written as two writes split at every byte offset, one byte at a time, and through a 5-byte buffered writer arrives as exactly the right code units.
+- Malformed UTF-8 stops the write after the valid part; a character still open when the text ends is reported by finish (the flush); a failed console write reports the input bytes that went out, not the units.
+- Console reads of 1, 2 or 3 units into destinations of 1 to 10 bytes return exactly the UTF-8 of the console text, and so does the line reader over it, with CR LF removed.
+- Ctrl+Z as the first unit of a read is end of input; a lone low surrogate, and a high surrogate followed by the end, are refused after the valid text before them.
+- On POSIX the standard streams are never consoles.
+
+Failure tip: inspect `src/proven/proven_internal_console.h`. A failure at one split offset is the write carry; at one destination size, the read carry; at one-unit chunks, the pending high surrogate. The real console is checked on Windows by `docs/b039-console-check.c`.
+
 ### `tests/test_unit_sysio_streams` — the standard streams are writers and readers
 
 Intent: verify stdin can be read a line at a time, that a buffered stdout holds its bytes until it is flushed and then emits them in order, and that an unbuffered standard-stream writer is out immediately.
@@ -918,6 +947,22 @@ Sub-checks:
 - Confirms growable append reallocates and completes the write.
 
 Failure tip: inspect `src/proven/u16str.c` and `include/proven/u16str.h`. Treat U16 values as UTF-16 code units, not Unicode scalar values. Check `PROVEN_NO_U16STR` guards if the failure is compile-time.
+
+### `tests/test_unit_utf` — UTF-8 and UTF-16 transcoding
+
+Intent: verify `utf.h` converts every scalar value exactly in both directions, refuses malformed input without writing, and tells input cut mid-character apart from malformed input.
+
+Sub-checks:
+
+- Known text (ASCII, a two-byte letter, Hangul, an emoji that becomes a surrogate pair) converts to the expected units and back, with the size functions agreeing.
+- Every scalar value U+0000..U+10FFFF (minus the surrogates) round-trips against a reference encoding.
+- UTF-8 validity agrees with an independent code-point formulation over every 1-, 2- and 3-byte input and a sweep of 4-byte inputs; UTF-16 validity agrees with the surrogate rules over every unit alone and before every kind of neighbour. Planted defects in the lead-byte table and the surrogate checks were each caught before the test was trusted.
+- The malformed forms the standard names (overlong, encoded surrogate, above U+10FFFF, stray continuation, bad lead, bad continuation) stop the conversion exactly where they start.
+- Input cut mid-character is `PROVEN_ERR_NEED_MORE` in the partial forms and `PROVEN_ERR_INVALID_ENCODING` in the whole forms; a trailing high surrogate likewise.
+- A full output never receives half a character; the atomic forms write nothing on refusal.
+- The grow forms append, and roll back length and terminator on malformed input, aliasing input, and an allocator that fails mid-way.
+
+Failure tip: inspect `src/proven/utf.c`. A validity mismatch is a hole in the lead-byte range table (Unicode table 3-7); a rollback failure leaves the destination longer or unterminated.
 
 ### `tests/test_unit_u8str_mutation` — U8 string mutation
 
