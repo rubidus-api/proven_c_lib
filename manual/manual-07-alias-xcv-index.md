@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-528 aliases: 397 lowercase `xcv_` function names and 131 uppercase `XCV_` macro names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix — the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+541 aliases: 410 lowercase `xcv_` function names and 131 uppercase `XCV_` macro names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix — the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -541,6 +541,19 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_u8str_view_ends_with` | `proven_u8str_view_ends_with` |
 | `xcv_u8str_view_eq` | `proven_u8str_view_eq` |
 | `xcv_u8str_view_find` | `proven_u8str_view_find` |
+| `xcv_u8str_view_cmp` | `proven_u8str_view_cmp` |
+| `xcv_u8str_view_cmp_ptr` | `proven_u8str_view_cmp_ptr` |
+| `xcv_u8str_view_trim` | `proven_u8str_view_trim` |
+| `xcv_u8str_view_trim_start` | `proven_u8str_view_trim_start` |
+| `xcv_u8str_view_trim_end` | `proven_u8str_view_trim_end` |
+| `xcv_u8str_view_remove_prefix` | `proven_u8str_view_remove_prefix` |
+| `xcv_u8str_view_remove_suffix` | `proven_u8str_view_remove_suffix` |
+| `xcv_u8str_view_find_last` | `proven_u8str_view_find_last` |
+| `xcv_u8str_view_contains` | `proven_u8str_view_contains` |
+| `xcv_u8str_view_split` | `proven_u8str_view_split` |
+| `xcv_u8str_view_split_next` | `proven_u8str_view_split_next` |
+| `xcv_u8str_view_split_t` | `proven_u8str_view_split_t` |
+| `xcv_u8str_view_is_well_formed` | `proven_u8str_view_is_well_formed` |
 | `xcv_u8str_view_from_cstr` | `proven_u8str_view_from_cstr` |
 | `xcv_u8str_view_slice` | `proven_u8str_view_slice` |
 | `xcv_u8str_view_starts_with` | `proven_u8str_view_starts_with` |

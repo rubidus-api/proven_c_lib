@@ -54,6 +54,21 @@ where it was wrong.
   makes its own console in code page 949 and verifies output by reading the screen buffer back
   and input by injecting key events.
 
+- **The view vocabulary (RFC-0003; B-018 to B-022).** In `u8str.h`, all pure and non-allocating,
+  ill-formed views treated as empty, every empty result `{NULL, 0}`:
+  `proven_u8str_view_split` / `_split_next` with `proven_u8str_view_split_t` (n separators yield
+  n + 1 fields; an empty separator yields the input once; the iterator is copyable);
+  `proven_u8str_view_trim`, `_trim_start`, `_trim_end` (exactly six ASCII whitespace bytes);
+  `proven_u8str_view_remove_prefix` / `_remove_suffix` (unchanged when absent);
+  `proven_u8str_view_find_last` (last start position, overlaps counted; size for an empty needle;
+  byte scan / backward Shift-Or / repeated forward search by needle length) and
+  `proven_u8str_view_contains`; `proven_u8str_view_cmp` / `_cmp_ptr` (bytewise unsigned, prefix
+  first, sign only); `proven_u8str_view_is_well_formed`. Tests `test_unit_u8str_view_cmp`,
+  `test_unit_u8str_view_ops`, `test_unit_u8str_split`, `test_regression_split_empty_sep`,
+  `test_differential_find_last_oracle` (60,000 cases; planted defects caught). Manual chapter 3
+  section 1 in both editions with `ex_03_view_ops`. The RFC-0002 benchmark now measures the
+  shipped iterator: 18.1 ns/field against 16.5 for a correct hand-rolled loop (median of three).
+
 ### Changed
 
 - **On a Windows console, sysio writes and reads UTF-16.** `proven_print`/`proven_eprint`, the

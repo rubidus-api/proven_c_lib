@@ -296,6 +296,30 @@ int main(void) {
         PROVEN_TEST_ASSERT(e == PROVEN_ERR_INVALID_ENCODING && wb.len == 0, "a trailing high surrogate writes nothing", "");
     }
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("chapter 3, the view vocabulary",
+        "n separators yield n + 1 fields; \"\" is one field; an empty separator yields the input once; trim knows six bytes; find_last counts overlaps and answers size for an empty needle; \"\\xFF\" sorts after \"a\".",
+        "Each assertion quotes its sentence in chapter 3 section 1.");
+    // ---------------------------------------------------------------
+    {
+        int counts[3] = {0};
+        const char *srcs[3] = { "a,b,c", "", "abc" };
+        const char *seps[3] = { ",", ",", "" };
+        for (int i = 0; i < 3; ++i) {
+            proven_u8str_view_split_t it = proven_u8str_view_split(proven_u8str_view_from_cstr(srcs[i]), proven_u8str_view_from_cstr(seps[i]));
+            proven_u8str_view_t f;
+            while (counts[i] < 100 && proven_u8str_view_split_next(&it, &f)) ++counts[i];
+        }
+        PROVEN_TEST_ASSERT(counts[0] == 3, "\"a,b,c\" is three fields", "");
+        PROVEN_TEST_ASSERT(counts[1] == 1, "\"\" is one empty field, not zero", "");
+        PROVEN_TEST_ASSERT(counts[2] == 1, "an empty separator yields the whole input once", "");
+        PROVEN_TEST_ASSERT(proven_u8str_view_trim(PROVEN_LIT("\xC2\xA0x")).size == 3, "a no-break space is not whitespace here", "");
+        PROVEN_TEST_ASSERT(proven_u8str_view_find_last(PROVEN_LIT("aaa"), PROVEN_LIT("aa")) == 1, "find_last(\"aaa\", \"aa\") is 1", "");
+        PROVEN_TEST_ASSERT(proven_u8str_view_find_last(PROVEN_LIT("abc"), PROVEN_LIT("")) == 3, "an empty needle answers size", "");
+        PROVEN_TEST_ASSERT(proven_u8str_view_cmp(PROVEN_LIT("\xFF"), PROVEN_LIT("a")) > 0, "\"\\xFF\" sorts after \"a\"", "");
+        PROVEN_TEST_ASSERT(proven_u8str_view_cmp(PROVEN_LIT("app"), PROVEN_LIT("apple")) < 0, "\"app\" before \"apple\"", "");
+    }
+
     PROVEN_TEST_PASS("every claim these chapters make, that a reader could act on, is true.");
     return 0;
 }

@@ -216,6 +216,188 @@ const char *cstr = proven_u8str_as_cstr(&s);
 proven_u8str_destroy(alloc, &s);
 ```
 
+### 뷰 나누기, 다듬기, 끝에서 찾기, 정렬하기
+
+뷰(view)는 그 안에서 찾고, 슬라이스(slice)로 잘라 내고, 같은지 비교할 수 있었고, 그게 전부였다. 프로그램이 텍스트
+한 줄로 하는 나머지 일 - 필드로 자르고, 필드를 다듬고, 마지막 점을 찾고, 결과를 정렬하는 일 - 은 모든
+호출자가 손으로 썼고, 손으로 쓴 판본들은 같은 곳에서 틀렸다. 나누기가 가장 분명한 경우다. 유능한 사람이
+처음 쓰는 루프는 *"구분자가 발견되는 동안 계속"*이다:
+
+```text
+proven_size_t off = 0, at;
+while ((at = proven_u8str_view_find(s, off, sep)) != PROVEN_INDEX_NOT_FOUND) {
+    emit(proven_u8str_view_slice(s, off, at - off));   /* wrong: the tail is never emitted */
+    off = at + sep.size;
+}
+```
+
+이 루프는 마지막 구분자 뒤의 텍스트를 잃고, 그것도 *흔한* 경우에서 틀린다: `"a,b,c"`는 필드 두 개,
+`"a"`는 없음, `""`도 없음. 바로잡으려면 마지막 필드를 루프 밖으로 끌어내야 하는데, 마감에 쫓길 때
+빠뜨리는 게 바로 그 단계다. 호출자들이 실제로 택한 대안 - 필드마다 소유(owned) 문자열 하나 - 는 3.4배
+느리고 필드마다 할당 한 번이었다(RFC-0002 2.2절).
+
+그래서 뷰 어휘에 나머지 낱말이 생겼다. 모두 뷰 위의 순수 함수이고 할당하지 않는다. 두 규칙이 전부에
+적용된다. **잘못 만들어진 뷰** - `ptr == NULL`이면서 `size > 0` - **는 빈 뷰로 취급한다**, 함수마다
+있는 가드로. 그리고 **빈 결과는 언제나 `{NULL, 0}`**이다. `proven_u8str_view_slice`가 이미 쓰던 표기라서,
+빈 결과는 위치를 담지 않는다: 뷰는 포인터가 아니라 크기로 검사하라.
+
+**나누기는 영구적인 계약을 지킨다: 구분자 n개는 필드 n + 1개가 된다.** 왼쪽부터 겹치지 않게 센다.
+`"a,"`는 `"a"`와 빈 필드, `",a"`는 빈 필드와 `"a"`, `"a,,b"`는 가운데 빈 필드를 지키며(`strtok`와 다르다),
+`""`는 필드 0개가 아니라 빈 필드 하나다. 빈 구분자는 입력 전체를 한 번 내준다 - 빈 필드를 끝없이 내지
+않는다. 뻔한 구현은 그렇게 되는데, 빈 needle 검색이 시작한 자리에서 일치하기 때문이다. 반복자는 자기
+자신이 아니라 원본을 가리키므로 복사할 수 있고, 복사본은 따로 계속된다.
+
+**다듬기는 정확히 여섯 바이트만 안다**: 공백, `\t`, `\n`, `\v`, `\f`, `\r`. 로케일도 유니코드도 아니다 -
+줄 바꿈 없는 공백(no-break space)은 여기서 공백이 아니다. 접두사·접미사 제거는 그것이 없으면 뷰를
+그대로 둔다. 오류가 아니며, 적용됐는지 알아야 하면 `proven_u8str_view_starts_with`로 먼저 물어라.
+
+**`proven_u8str_view_find_last`는 위치를 돌려준다**: 마지막 출현의 시작이고, 출현은 겹칠 수 있다.
+`find_last("aaa", "aa")`는 1이다. 빈 needle이면 위치는 `size`다 - `_find`와 같은 답 - 그리고 이것이
+올바른 바이트 인덱스가 아닌 유일한 결과다. 한 바이트 needle은 뒤에서부터 훑기, 64바이트까지는 어떤
+입력에도 선형인 역방향 Shift-Or, 더 긴 needle은 앞방향 검색을 반복하는데, 이는 주기적인 입력에서
+이차 시간이며 헤더가 그렇다고 말한다.
+
+**`proven_u8str_view_cmp`는 바이트를 부호 없이 비교하고 접두사를 먼저 둔다.** 그래서 `"\xFF"`는 `"a"`
+뒤에, `"app"`은 `"apple"` 앞에 온다. 뷰 안의 NUL은 데이터다. 답은 부호로 한다 - 반드시 -1, 0, 1은
+아니다. `proven_u8str_view_cmp_ptr`는 같은 비교를 `proven_array_sort`에 맞춘 모양으로, 원소를 가리키는
+포인터를 받는다.
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_u8str_view_split(src, sep)` | 나누기 시작; 필드는 `src` 안을 가리키는 뷰. | `proven_u8str_view_split_t` |
+| `proven_u8str_view_split_next(&it, &field)` | 다음 필드, 더 없으면 `false`. | `bool` |
+| `proven_u8str_view_trim(s)` | 양 끝에서 공백 여섯 바이트를 뗀다. | `proven_u8str_view_t` |
+| `proven_u8str_view_trim_start(s)`, `proven_u8str_view_trim_end(s)` | 한쪽 끝만. | `proven_u8str_view_t` |
+| `proven_u8str_view_remove_prefix(s, prefix)` | `prefix`를 뗀 `s`, 아니면 그대로의 `s`. | `proven_u8str_view_t` |
+| `proven_u8str_view_remove_suffix(s, suffix)` | `suffix`를 뗀 `s`, 아니면 그대로의 `s`. | `proven_u8str_view_t` |
+| `proven_u8str_view_find_last(haystack, needle)` | 마지막 출현의 시작, 또는 `PROVEN_INDEX_NOT_FOUND`. | `proven_size_t` |
+| `proven_u8str_view_contains(haystack, needle)` | 0부터의 `find`가 `NOT_FOUND`가 아님. | `bool` |
+| `proven_u8str_view_cmp(a, b)` | 바이트 단위 부호 없는 순서, 접두사 먼저; 부호만. | `int` |
+| `proven_u8str_view_cmp_ptr(pa, pb)` | `proven_array_sort`용 `cmp`: 뷰를 가리키는 포인터. | `int` |
+| `proven_u8str_view_is_well_formed(s)` | `{NULL, n > 0}`에서만 거짓. | `bool` |
+
+```text
+typedef struct {
+    proven_u8str_view_t rest;  /* not yet yielded; points into the caller's source bytes */
+    proven_u8str_view_t sep;
+    bool                done;  /* set once the final field has been yielded */
+} proven_u8str_view_split_t;   /* copyable: a copy continues independently */
+```
+
+반례 - 필드나 `_is_well_formed`로 루프를 끝내는 경우. 빈 필드는 `{NULL, 0}`이고, 텍스트 끝을 넘은
+슬라이스도 그렇다. 둘 다 well formed다. `_is_well_formed`는 뷰를 읽어도 안전하다는 것만 말한다.
+나누기는 `split_next`의 반환값으로, 검색은 `PROVEN_INDEX_NOT_FOUND`로 끝내라:
+
+```text
+while (proven_u8str_view_split_next(&it, &f) && f.ptr != NULL) { ... }  /* wrong: stops at the first empty field */
+while (proven_u8str_view_is_well_formed(rest)) { ... }                 /* wrong: never false for a slice */
+```
+
+반례 - needle을 확인하지 않고 `find_last`의 답 자리의 바이트를 읽는 경우. 빈 needle이면 답은
+`size`다:
+
+```text
+proven_size_t at = proven_u8str_view_find_last(s, needle);
+char c = (char)s.ptr[at];   /* wrong when needle is empty: at == s.size, one past the end */
+```
+
+예제는 끝과 가운데에 구분자가 겹친 레코드를 나누고, 필드마다 다듬고, 마지막 점을 찾고, 이중 접미사를
+떼고, 이름들을 정렬한다:
+
+<!-- example: manual/examples/ko/ex_03_view_ops.c -->
+```c
+#include <string.h>
+
+/*
+ * 매일 하는 텍스트 일을 뷰 위에서: 한 줄을 필드로 나누고, 다듬고, 알려진 접두사나
+ * 접미사를 떼고, 마지막 점을 찾고, 얻은 것을 정렬한다. 정렬에 쓰는 배열 말고는 아무것도
+ * 할당하지 않는다. 모든 결과는 처음 받은 텍스트 안을 가리킨다.
+ *
+ * 두 규칙이 내내 지켜진다. 빈 결과는 {NULL, 0} 이므로, 뷰는 포인터가 아니라 크기로
+ * 검사한다. 그리고 분할 루프는 split_next 의 반환값으로 끝낸다 - 구분자 n 개는 빈 필드를
+ * 포함해 언제나 n + 1 개의 필드가 된다.
+ */
+
+static bool is(proven_u8str_view_t v, const char *want) {
+    return v.size == strlen(want) && (v.size == 0 || memcmp(v.ptr, want, v.size) == 0);
+}
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* --- 나누고, 필드마다 다듬기 -------------------------------------------- */
+
+    /* 끝에 구분자가 있고 빈 필드가 있는 레코드: 구분자 다섯 개, 그래서 필드 여섯 개 -
+     * 마지막은 빈 필드다. 사람이 처음 쓰는 루프("구분자가 발견되는 동안")는 다섯 개를
+     * 내고 꼬리를 잃는다. */
+    proven_u8str_view_t record = PROVEN_LIT(" report.tar.gz , draft.txt,,notes.md ,\tREADME ,");
+    proven_u8str_view_t fields[8];
+    int n = 0;
+    proven_u8str_view_split_t it = proven_u8str_view_split(record, PROVEN_LIT(","));
+    proven_u8str_view_t f;
+    while (n < 8 && proven_u8str_view_split_next(&it, &f)) {
+        fields[n++] = proven_u8str_view_trim(f);   /* ' ', \t, \n, \v, \f, \r - 그 밖에는 없다 */
+    }
+    EXAMPLE_REQUIRE(n == 6, "five separators give six fields");
+    EXAMPLE_REQUIRE(is(fields[0], "report.tar.gz") && is(fields[3], "notes.md") && is(fields[4], "README"),
+                    "each field is trimmed on both ends");
+    EXAMPLE_REQUIRE(fields[2].size == 0 && fields[5].size == 0, "the empty fields are kept, and tested by size");
+
+    /* 한쪽 끝이 의미 있는 텍스트를 위한 한쪽 다듬기. */
+    EXAMPLE_REQUIRE(is(proven_u8str_view_trim_start(PROVEN_LIT("  indented  ")), "indented  "), "trim_start");
+    EXAMPLE_REQUIRE(is(proven_u8str_view_trim_end(PROVEN_LIT("  indented  ")), "  indented"), "trim_end");
+
+    /* --- 접두사, 접미사, 그리고 마지막 점 ----------------------------------- */
+
+    proven_u8str_view_t name = fields[0];
+    /* 확장자는 마지막 점 뒤에 있다: find 가 아니라 find_last. */
+    proven_size_t dot = proven_u8str_view_find_last(name, PROVEN_LIT("."));
+    EXAMPLE_REQUIRE(dot == 10, "the last dot in report.tar.gz is at 10");
+    EXAMPLE_REQUIRE(is(proven_u8str_view_slice(name, dot + 1, name.size), "gz"), "so the extension is gz");
+
+    /* remove_suffix 는 접미사가 없으면 뷰를 그대로 둔다 - 오류가 아니므로, 알아야 할
+     * 때는 starts_with/ends_with 로 먼저 물어라. */
+    EXAMPLE_REQUIRE(is(proven_u8str_view_remove_suffix(name, PROVEN_LIT(".tar.gz")), "report"), "the double suffix goes");
+    EXAMPLE_REQUIRE(is(proven_u8str_view_remove_suffix(name, PROVEN_LIT(".zip")), "report.tar.gz"),
+                    "an absent suffix changes nothing");
+    EXAMPLE_REQUIRE(is(proven_u8str_view_remove_prefix(PROVEN_LIT("# heading"), PROVEN_LIT("# ")), "heading"),
+                    "a known prefix goes");
+    EXAMPLE_REQUIRE(proven_u8str_view_contains(fields[1], PROVEN_LIT("draft")), "contains is find != NOT_FOUND");
+
+    /* --- 비어 있지 않은 필드 정렬 ------------------------------------------ */
+
+    proven_result_array_t ra = proven_array_create(alloc, 8, sizeof(proven_u8str_view_t), alignof(proven_u8str_view_t));
+    EXAMPLE_REQUIRE(proven_is_ok(ra.err), "creating the array must succeed");
+    if (!proven_is_ok(ra.err)) return EXAMPLE_OK();
+    proven_array_t names = ra.value;
+    for (int i = 0; i < n; ++i) {
+        if (fields[i].size > 0) (void)proven_array_push(&names, &fields[i]);
+    }
+    /* cmp_ptr 는 정렬용 모양의 cmp 다: 뷰를 가리키는 포인터를 받는다. 바이트는 부호 없이
+     * 비교되고, 접두사가 먼저 온다. ASCII 에서 'R' 이 'd' 보다 작으므로 "README" 가
+     * 소문자 이름들보다 앞선다. */
+    proven_array_sort(&names, proven_u8str_view_cmp_ptr);
+    const proven_u8str_view_t *first = proven_array_get(&names, 0);
+    const proven_u8str_view_t *last = proven_array_get(&names, 3);
+    EXAMPLE_REQUIRE(first && is(*first, "README") && last && is(*last, "report.tar.gz"), "sorted bytewise");
+    EXAMPLE_REQUIRE(proven_u8str_view_cmp(PROVEN_LIT("app"), PROVEN_LIT("apple")) < 0,
+                    "cmp answers by sign - never compare it with -1");
+
+    /* --- well-formed 는 "찾았다" 도 "비어 있지 않다" 도 아니다 ---------------- */
+
+    /* 끝을 넘은 슬라이스는 {NULL, 0} 이고, 이는 well formed 다 - 그래서 이 술어로는
+     * 루프를 끝낼 수도, "비었다" 와 "끝을 넘었다" 를 가를 수도 없다. 뷰를 읽어도
+     * 안전하다는 것만 말한다. */
+    proven_u8str_view_t past = proven_u8str_view_slice(name, 100, 5);
+    EXAMPLE_REQUIRE(proven_u8str_view_is_well_formed(past) && past.size == 0, "past the end: empty and well formed");
+    EXAMPLE_REQUIRE(!proven_u8str_view_is_well_formed((proven_u8str_view_t){ NULL, 3 }), "only {NULL, n > 0} is not");
+
+    printf("%d fields, %zu names sorted\n", n, (size_t)names.len);
+    proven_array_destroy(&names);
+    return EXAMPLE_OK();
+}
+```
+
 ## 2. U16 문자열과 view
 
 ### 두 번째 문자열 타입이 아예 존재하는 이유

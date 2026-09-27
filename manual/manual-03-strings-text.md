@@ -217,6 +217,197 @@ const char *cstr = proven_u8str_as_cstr(&s);
 proven_u8str_destroy(alloc, &s);
 ```
 
+### Splitting, trimming, searching from the end, and ordering views
+
+Views could be found in, sliced, and compared for equality, and that was all. Everything else a
+program does with a line of text - cut it into fields, trim the fields, find the last dot, sort
+the results - every caller wrote by hand, and the hand-written versions were wrong in the same
+places. Splitting is the clearest case. The loop a competent person writes first is *"keep going
+while a separator is found"*:
+
+```text
+proven_size_t off = 0, at;
+while ((at = proven_u8str_view_find(s, off, sep)) != PROVEN_INDEX_NOT_FOUND) {
+    emit(proven_u8str_view_slice(s, off, at - off));   /* wrong: the tail is never emitted */
+    off = at + sep.size;
+}
+```
+
+It loses the text after the last separator, and that is wrong on the *common* case: `"a,b,c"`
+gives two fields, `"a"` gives none, `""` gives none. Getting it right means hoisting the last
+field out of the loop, which is exactly the step that gets skipped under a deadline. The
+alternative callers actually reached for - one owned string per field - measured 3.4x slower
+and one allocation per field (RFC-0002 section 2.2).
+
+So the view vocabulary now has the rest of the words, all pure functions over views with no
+allocation. Two rules hold for every one of them. **An ill-formed view** - `ptr == NULL` with
+`size > 0` - **is treated as empty**, by a guard in each function. And **every empty result is
+`{NULL, 0}`**, the spelling `proven_u8str_view_slice` already used, so an empty result carries no
+position: test a view by its size, never by its pointer.
+
+**Splitting keeps a permanent contract: n separators yield n + 1 fields**, counting
+non-overlapping occurrences from the left. `"a,"` is `"a"` and an empty field; `",a"` is an
+empty field and `"a"`; `"a,,b"` keeps its empty middle field, unlike `strtok`; `""` is one empty
+field, not zero. An empty separator yields the whole input once - never an endless run of empty
+fields, which is what the obvious implementation does, because a search for an empty needle
+matches where it starts. The iterator points into your source, never into itself, so it can be
+copied, and the copy continues on its own.
+
+**Trimming knows exactly six bytes**: space, `\t`, `\n`, `\v`, `\f`, `\r`. Not the locale, and
+not Unicode - a no-break space is not whitespace here. Prefix and suffix removal leave the view
+unchanged when the affix is absent; that is not an error, and if you need to know whether it
+fired, ask `proven_u8str_view_starts_with` first.
+
+**`proven_u8str_view_find_last` returns a position**, the start of the last occurrence, and
+occurrences may overlap: `find_last("aaa", "aa")` is 1. For an empty needle the position is
+`size` - the same answer `_find` gives - which is the one result that is not a valid byte index.
+A one-byte needle is a backward scan, up to 64 bytes a backward Shift-Or that is linear on any
+input, and longer needles repeat the forward search, which is quadratic on periodic input and
+says so in the header.
+
+**`proven_u8str_view_cmp` orders bytes unsigned, with a prefix first**, so `"\xFF"` sorts after
+`"a"` and `"app"` before `"apple"`; a NUL inside a view is data. It answers by sign - not
+necessarily -1, 0 or 1. `proven_u8str_view_cmp_ptr` is the same comparison shaped for
+`proven_array_sort`, which passes pointers to the elements.
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_u8str_view_split(src, sep)` | Start splitting; the fields are views into `src`. | `proven_u8str_view_split_t` |
+| `proven_u8str_view_split_next(&it, &field)` | The next field, or `false` when there are none. | `bool` |
+| `proven_u8str_view_trim(s)` | Drop the six whitespace bytes from both ends. | `proven_u8str_view_t` |
+| `proven_u8str_view_trim_start(s)`, `proven_u8str_view_trim_end(s)` | One end only. | `proven_u8str_view_t` |
+| `proven_u8str_view_remove_prefix(s, prefix)` | `s` without `prefix`, or `s` unchanged. | `proven_u8str_view_t` |
+| `proven_u8str_view_remove_suffix(s, suffix)` | `s` without `suffix`, or `s` unchanged. | `proven_u8str_view_t` |
+| `proven_u8str_view_find_last(haystack, needle)` | Start of the last occurrence, or `PROVEN_INDEX_NOT_FOUND`. | `proven_size_t` |
+| `proven_u8str_view_contains(haystack, needle)` | `find` from 0 is not `NOT_FOUND`. | `bool` |
+| `proven_u8str_view_cmp(a, b)` | Bytewise unsigned order, prefix first; sign only. | `int` |
+| `proven_u8str_view_cmp_ptr(pa, pb)` | `cmp` for `proven_array_sort`: pointers to views. | `int` |
+| `proven_u8str_view_is_well_formed(s)` | False only for `{NULL, n > 0}`. | `bool` |
+
+```text
+typedef struct {
+    proven_u8str_view_t rest;  /* not yet yielded; points into the caller's source bytes */
+    proven_u8str_view_t sep;
+    bool                done;  /* set once the final field has been yielded */
+} proven_u8str_view_split_t;   /* copyable: a copy continues independently */
+```
+
+Wrong - ending a loop on the field, or on `_is_well_formed`. An empty field is `{NULL, 0}`, and so
+is a slice past the end of the text; both are well formed. `_is_well_formed` says only that a
+view is safe to read. End a split on `split_next`'s return value and a search on
+`PROVEN_INDEX_NOT_FOUND`:
+
+```text
+while (proven_u8str_view_split_next(&it, &f) && f.ptr != NULL) { ... }  /* wrong: stops at the first empty field */
+while (proven_u8str_view_is_well_formed(rest)) { ... }                 /* wrong: never false for a slice */
+```
+
+Wrong - reading the byte at `find_last`'s answer without checking the needle. For an empty
+needle the answer is `size`:
+
+```text
+proven_size_t at = proven_u8str_view_find_last(s, needle);
+char c = (char)s.ptr[at];   /* wrong when needle is empty: at == s.size, one past the end */
+```
+
+The worked example splits a record with trailing and doubled separators, trims each field, finds
+the last dot, strips a double suffix, and sorts the names:
+
+<!-- example: manual/examples/en/ex_03_view_ops.c -->
+```c
+#include <string.h>
+
+/*
+ * The everyday text jobs, done on views: split a line into fields, trim them,
+ * strip a known prefix or suffix, find the last dot, and sort what you got.
+ * Nothing here allocates except the array the sort works on; every result
+ * points into the text you started with.
+ *
+ * Two rules hold throughout. An empty result is {NULL, 0}, so test a view by
+ * its size, never its pointer. And a split loop ends on the return value of
+ * split_next - n separators always give n + 1 fields, empty ones included.
+ */
+
+static bool is(proven_u8str_view_t v, const char *want) {
+    return v.size == strlen(want) && (v.size == 0 || memcmp(v.ptr, want, v.size) == 0);
+}
+
+int main(void) {
+    proven_allocator_t alloc = proven_heap_allocator();
+
+    /* --- split, then trim each field --------------------------------------- */
+
+    /* A record with a trailing separator and an empty field: five separators,
+     * so six fields - the last one empty. The loop a person writes first
+     * ("while a separator is found") would give five and lose the tail. */
+    proven_u8str_view_t record = PROVEN_LIT(" report.tar.gz , draft.txt,,notes.md ,\tREADME ,");
+    proven_u8str_view_t fields[8];
+    int n = 0;
+    proven_u8str_view_split_t it = proven_u8str_view_split(record, PROVEN_LIT(","));
+    proven_u8str_view_t f;
+    while (n < 8 && proven_u8str_view_split_next(&it, &f)) {
+        fields[n++] = proven_u8str_view_trim(f);   /* ' ', \t, \n, \v, \f, \r - nothing else */
+    }
+    EXAMPLE_REQUIRE(n == 6, "five separators give six fields");
+    EXAMPLE_REQUIRE(is(fields[0], "report.tar.gz") && is(fields[3], "notes.md") && is(fields[4], "README"),
+                    "each field is trimmed on both ends");
+    EXAMPLE_REQUIRE(fields[2].size == 0 && fields[5].size == 0, "the empty fields are kept, and tested by size");
+
+    /* One-sided trims, for text where one end is significant. */
+    EXAMPLE_REQUIRE(is(proven_u8str_view_trim_start(PROVEN_LIT("  indented  ")), "indented  "), "trim_start");
+    EXAMPLE_REQUIRE(is(proven_u8str_view_trim_end(PROVEN_LIT("  indented  ")), "  indented"), "trim_end");
+
+    /* --- prefixes, suffixes, and the last dot ------------------------------- */
+
+    proven_u8str_view_t name = fields[0];
+    /* The extension is after the LAST dot: find_last, not find. */
+    proven_size_t dot = proven_u8str_view_find_last(name, PROVEN_LIT("."));
+    EXAMPLE_REQUIRE(dot == 10, "the last dot in report.tar.gz is at 10");
+    EXAMPLE_REQUIRE(is(proven_u8str_view_slice(name, dot + 1, name.size), "gz"), "so the extension is gz");
+
+    /* remove_suffix leaves the view unchanged when the suffix is absent - no
+     * error, so ask starts_with/ends_with first when you need to know. */
+    EXAMPLE_REQUIRE(is(proven_u8str_view_remove_suffix(name, PROVEN_LIT(".tar.gz")), "report"), "the double suffix goes");
+    EXAMPLE_REQUIRE(is(proven_u8str_view_remove_suffix(name, PROVEN_LIT(".zip")), "report.tar.gz"),
+                    "an absent suffix changes nothing");
+    EXAMPLE_REQUIRE(is(proven_u8str_view_remove_prefix(PROVEN_LIT("# heading"), PROVEN_LIT("# ")), "heading"),
+                    "a known prefix goes");
+    EXAMPLE_REQUIRE(proven_u8str_view_contains(fields[1], PROVEN_LIT("draft")), "contains is find != NOT_FOUND");
+
+    /* --- sort the non-empty fields ------------------------------------------ */
+
+    proven_result_array_t ra = proven_array_create(alloc, 8, sizeof(proven_u8str_view_t), alignof(proven_u8str_view_t));
+    EXAMPLE_REQUIRE(proven_is_ok(ra.err), "creating the array must succeed");
+    if (!proven_is_ok(ra.err)) return EXAMPLE_OK();
+    proven_array_t names = ra.value;
+    for (int i = 0; i < n; ++i) {
+        if (fields[i].size > 0) (void)proven_array_push(&names, &fields[i]);
+    }
+    /* cmp_ptr is cmp shaped for a sort: it receives pointers to the views. Bytes
+     * compare unsigned, and a prefix sorts first; "README" sorts before
+     * lowercase names because 'R' is below 'd' in ASCII. */
+    proven_array_sort(&names, proven_u8str_view_cmp_ptr);
+    const proven_u8str_view_t *first = proven_array_get(&names, 0);
+    const proven_u8str_view_t *last = proven_array_get(&names, 3);
+    EXAMPLE_REQUIRE(first && is(*first, "README") && last && is(*last, "report.tar.gz"), "sorted bytewise");
+    EXAMPLE_REQUIRE(proven_u8str_view_cmp(PROVEN_LIT("app"), PROVEN_LIT("apple")) < 0,
+                    "cmp answers by sign - never compare it with -1");
+
+    /* --- well-formed is not "found" or "not empty" --------------------------- */
+
+    /* A slice past the end is {NULL, 0}, which is well formed - so this
+     * predicate cannot end a loop or tell "empty" from "past the end". It only
+     * says the view is safe to read. */
+    proven_u8str_view_t past = proven_u8str_view_slice(name, 100, 5);
+    EXAMPLE_REQUIRE(proven_u8str_view_is_well_formed(past) && past.size == 0, "past the end: empty and well formed");
+    EXAMPLE_REQUIRE(!proven_u8str_view_is_well_formed((proven_u8str_view_t){ NULL, 3 }), "only {NULL, n > 0} is not");
+
+    printf("%d fields, %zu names sorted\n", n, (size_t)names.len);
+    proven_array_destroy(&names);
+    return EXAMPLE_OK();
+}
+```
+
 ## 2. U16 strings and views
 
 ### Why a second string type exists at all

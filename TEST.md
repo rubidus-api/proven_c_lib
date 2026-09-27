@@ -16,10 +16,10 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 64 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 67 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
-| `regression` | Does a defect that actually shipped stay fixed? | 24 |
-| `differential` | Does it agree with an oracle we did not write? | 4 |
+| `regression` | Does a defect that actually shipped stay fixed? | 25 |
+| `differential` | Does it agree with an oracle we did not write? | 5 |
 | `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 10 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
 | `docs` | Are the claims the documentation makes still true? | 11 |
@@ -297,7 +297,7 @@ Failure tip: identify the target name in the log, then check whether the failure
 ## Test catalog
 
 
-The hosted full run builds and executes 121 registered tests plus the 88 runnable manual examples - 209 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 131 test files: the 121 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
+The hosted full run builds and executes 126 registered tests plus the 90 runnable manual examples - 216 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 136 test files: the 126 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -981,6 +981,42 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/u8str.c`. For failures after a reallocation path, assume saved views or C-string pointers are stale unless proven otherwise. For fixed-capacity failures, check whether the operation is documented as atomic or partial.
 
+### `tests/test_unit_u8str_split` — splitting a view
+
+Intent: verify `proven_u8str_view_split` / `_split_next` against RFC-0003 table 4.1 and its properties.
+
+Sub-checks:
+
+- Every row of table 4.1: `"a,b,c"` is three fields; no separator is one field; leading, trailing and doubled separators keep empty fields; `""` and a null view are one empty field; a multi-byte separator; leftmost non-overlapping matching (`"aXXXb"` on `"XX"`); empty and null separators yield the whole input once; an ill-formed source is one empty field; NULL arguments yield nothing and consume nothing; a well-formed separator reads back as passed.
+- Over 50,000 random inputs: field count equals non-overlapping occurrences + 1 (for a non-empty separator), every field lies inside the source, and an iterator copied part-way continues exactly as the original. Case, field and fork counts are printed so a vacuous pass is visible.
+
+Failure tip: inspect `proven_u8str_view_split_next`; its four steps must stay in RFC-0003's order. A count one short is the dropped tail; a count at the cap is a non-terminating iterator.
+
+### `tests/test_unit_u8str_view_cmp` — view ordering
+
+Intent: verify `proven_u8str_view_cmp` is the order RFC-0003 section 3.4 defines, and `_cmp_ptr` sorts with it.
+
+Sub-checks:
+
+- Table 4.4 and each row's mirror: bytewise, unsigned (`"\xFF"` after `"a"`), a prefix first, embedded NUL as data, ill-formed views as empty.
+- Over every string of length 0-3 on `{00, 'a', FF}`: antisymmetric, transitive, and zero exactly when `proven_u8str_view_eq` says equal.
+- `proven_array_sort` with `proven_u8str_view_cmp_ptr` sorts an array of views into that order.
+
+Failure tip: a wrong sign on the `\xFF` row is signed comparison; on the prefix rows, the length tie-break.
+
+### `tests/test_unit_u8str_view_ops` — view trim, affixes, reverse search and well-formedness
+
+Intent: verify RFC-0003 tables 4.2, 4.3 and 4.5 row for row, asserting empty results by size, never by pointer.
+
+Sub-checks:
+
+- Trim removes exactly the six ASCII whitespace bytes from the chosen ends, leaves interior whitespace, does not treat a UTF-8 no-break space as whitespace, and treats ill-formed input as empty.
+- Prefix and suffix removal return the view unchanged when the affix is absent or longer, and empty when it is the whole view.
+- `find_last` counts overlapping occurrences (`"aaa"`/`"aa"` is 1), answers `size` for an empty needle and `NOT_FOUND` otherwise; `contains` equals `find != NOT_FOUND` on every row.
+- `is_well_formed` is false only for `{NULL, n > 0}`, and true for an out-of-range slice.
+
+Failure tip: inspect the view vocabulary at the end of `src/proven/u8str.c`. `find_last` at scale is `test_differential_find_last_oracle`.
+
 ### `tests/test_unit_float_bits` — float bit extraction
 
 Intent: verify the internal float bit helpers preserve raw IEEE-754 bit patterns for f32 and f64 values, including signed zero, infinities, and NaN payloads.
@@ -1240,6 +1276,16 @@ Failure tip: inspect the buffer-full branch of `proven_reader_read_line` in `src
 Intent: verify that after `proven_reader_read_line` reports `OUT_OF_BOUNDS` (stashing one lookahead byte), a following raw `proven_reader_read` reaches that byte instead of returning a spurious EOF — so a read-to-EOF loop does not silently lose the byte peeked past the over-long line.
 
 Failure tip: inspect `reader_buffered_fill` in `src/proven/stream.c`. It must report whether it made the buffer non-empty (a re-inserted peek byte is progress), not just whether the source handed over new bytes this call. `return r.value > 0` alone stranded the peek at EOF.
+
+### `tests/test_regression_split_empty_sep` — an empty separator ends the split
+
+Intent: pin RFC-0003 section 1.1: a split on an empty or null separator yields exactly one field, the whole input.
+
+Sub-checks:
+
+- For sources `"abc"`, `""` and `",,"`, and for an empty and a null separator, the iterator yields one field. Fields are counted up to a cap, so the hang is reported, not reproduced.
+
+Failure tip: step 2 of `proven_u8str_view_split_next` (the empty-separator case, before any search) is missing or has moved after the search. With it removed, this test fails in bounded time.
 
 ### `tests/test_regression_float_exact_pow5` — the exact float fallback uses an exact power of five
 
@@ -1755,6 +1801,17 @@ Failure tip: inspect src/proven/scan.c and src/proven/float_format.c if the host
 ## Stress tests
 
 Concurrency under a sanitizer, over enough iterations to make a race likely rather than theoretical.
+
+### `tests/test_differential_find_last_oracle` — find_last against a brute-force oracle
+
+Intent: verify `proven_u8str_view_find_last` against a memcmp-at-every-position oracle across all three of its paths.
+
+Sub-checks:
+
+- 60,000 fixed-seed cases: dense 1-4 symbol alphabets, single-byte runs, the periodic `"aab"` haystack and arbitrary bytes; needles of 1, 64 and 65 bytes (the path boundaries) and random lengths; needles copied from the haystack so matches occur. The share of cases with a match is printed and must exceed a quarter.
+- Planted defects - unreversed Shift-Or masks, skipping a whole needle past a match, a 65-byte needle sent to Shift-Or - each failed it before the test was trusted.
+
+Failure tip: inspect `proven_u8str_view_find_last`; the printed needle length names the path (1 byte scan, 2-64 backward Shift-Or, 65+ repeated forward search).
 
 ### `tests/test_stress_job_concurrency` — job queue stress
 

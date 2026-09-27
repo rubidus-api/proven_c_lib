@@ -89,9 +89,8 @@ static const Section SECTIONS[] = {
     /* Chapter 3 (RFC-0004 phase 4). Highest jargon density in the manual - "view" appears 288
      * times across manual/ - so this is the chapter where the ownership vocabulary has to be
      * taught rather than assumed. */
-    { "manual-03-strings-text.md",          "## 1. U8 strings and views",               true,  false,
-      "the owned/borrowed pair has a worked example - ex_03_u8str - quoted in section 5, where "
-      "this chapter keeps all of its runnable programs." },
+    /* No longer exempt from an example: RFC-0003 gave the section ex_03_view_ops. */
+    { "manual-03-strings-text.md",          "## 1. U8 strings and views",               true,  true,  NULL },
     /* No longer exempt from an example: B-039 gave the section utf.h and ex_03_utf. */
     { "manual-03-strings-text.md",          "## 2. U16 strings and views",              true,  true,  NULL },
     { "manual-03-strings-text.md",          "## 3. Formatting",                         true,  false,
