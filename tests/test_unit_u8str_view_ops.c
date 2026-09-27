@@ -53,6 +53,39 @@ int main(void) {
     PROVEN_TEST_ASSERT(empty(proven_u8str_view_remove_suffix(z("foo"), z("foo"))), "whole string removed: empty", "");
     PROVEN_TEST_ASSERT(empty(proven_u8str_view_remove_prefix(b(NULL, 4), z("a"))), "ill-formed input: empty", "");
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("RFC-0003 table 4.3: find_last, and contains", "", "");
+    // ---------------------------------------------------------------
+    {
+        const proven_size_t NF = PROVEN_INDEX_NOT_FOUND;
+        struct { proven_u8str_view_t h, n; proven_size_t want; } rows[] = {
+            { z("abcabc"), z("abc"), 3 },
+            { z("abcabc"), z("z"), NF },
+            { z("aaa"), z("aa"), 1 },
+            { z("abc"), z("abc"), 0 },
+            { z("abc"), z("abcd"), NF },
+            { z("a/b/c"), z("/"), 3 },
+            { z("abc"), z(""), 3 },
+            { z(""), z(""), 0 },
+            { b(NULL, 0), b(NULL, 0), 0 },
+            { z(""), z("a"), NF },
+            { b(NULL, 0), z("a"), NF },
+            { b(NULL, 5), z("a"), NF },
+        };
+        for (size_t i = 0; i < sizeof rows / sizeof rows[0]; ++i) {
+            proven_size_t got = proven_u8str_view_find_last(rows[i].h, rows[i].n);
+            if (got != rows[i].want) {
+                PROVEN_TEST_INFO("row {} got {}", PROVEN_ARG((int)i), PROVEN_ARG((unsigned long long)got));
+                PROVEN_TEST_ASSERT(false, "find_last must match table 4.3", "");
+            }
+            bool c = proven_u8str_view_contains(rows[i].h, rows[i].n);
+            PROVEN_TEST_ASSERT(c == (proven_u8str_view_find(rows[i].h, 0, rows[i].n) != NF),
+                "contains is exactly find != NOT_FOUND", "");
+        }
+        PROVEN_TEST_ASSERT(proven_u8str_view_contains(z("hello"), z("ll")) && !proven_u8str_view_contains(z("hello"), z("lo!")),
+            "contains, plainly", "");
+    }
+
     PROVEN_TEST_PASS("view trim, affixes, reverse search and well-formedness");
     return 0;
 }

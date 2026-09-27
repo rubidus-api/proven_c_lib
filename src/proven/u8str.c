@@ -718,3 +718,13 @@ proven_u8str_view_t proven_u8str_view_remove_suffix(proven_u8str_view_t s, prove
     if (!proven_u8str_view_ends_with(s, suffix)) return s;
     return view_sub(s, 0, s.size - suffix.size);
 }
+
+proven_size_t proven_u8str_view_find_last(proven_u8str_view_t haystack, proven_u8str_view_t needle) {
+    (void)haystack; (void)needle;
+    return PROVEN_INDEX_NOT_FOUND;   /* stub */
+}
+
+bool proven_u8str_view_contains(proven_u8str_view_t haystack, proven_u8str_view_t needle) {
+    (void)haystack; (void)needle;
+    return false;   /* stub */
+}

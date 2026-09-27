@@ -228,6 +228,29 @@ typedef struct {
 [[nodiscard]] proven_u8str_view_t proven_u8str_view_remove_suffix(proven_u8str_view_t s, proven_u8str_view_t suffix);
 
 /**
+ * @brief The start POSITION of the last occurrence of `needle` in `haystack`, or
+ *        PROVEN_INDEX_NOT_FOUND. Occurrences may overlap: find_last("aaa", "aa") is 1.
+ *
+ * A position, in [0, haystack.size]: for an EMPTY needle the answer is haystack.size - matching
+ * proven_u8str_view_find, which returns its start offset for an empty needle - and that is the
+ * one answer that is not a valid byte index. `s.ptr[find_last(s, needle)]` reads past the end
+ * when `needle` is empty.
+ *
+ * No end limit parameter: search a prefix by slicing first.
+ *
+ * @note Cost. A one-byte needle is a backward byte scan, O(n). Needles up to 64 bytes use a
+ *       backward Shift-Or, O(n) always - never quadratic, but it touches every byte, so on
+ *       ordinary text it is slower than the forward search, which skips. Longer needles repeat
+ *       the forward search past each match and are QUADRATIC on periodic input; the needle's
+ *       length is the caller's choice, so a haystack alone cannot force it (docs/BACKLOG.md
+ *       B-024 tracks a backward Two-Way).
+ */
+[[nodiscard]] proven_size_t proven_u8str_view_find_last(proven_u8str_view_t haystack, proven_u8str_view_t needle);
+
+/** @brief Whether `needle` occurs in `haystack`: proven_u8str_view_find from 0 != NOT_FOUND. */
+[[nodiscard]] bool proven_u8str_view_contains(proven_u8str_view_t haystack, proven_u8str_view_t needle);
+
+/**
  * @brief Zero-cost extraction of a standard C string pointer inherently guaranteed by internal structure.
  */
 static inline const char* proven_u8str_as_cstr(const proven_u8str_t *str) {
