@@ -26,6 +26,7 @@
 #include "proven/algorithm.h"
 #include "proven/hash.h"
 #include "proven/encode.h"
+#include "proven/utf.h"
 #include "proven/random.h"
 #include "proven/fs.h"
 #include "proven/time.h"

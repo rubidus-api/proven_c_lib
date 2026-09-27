@@ -13,8 +13,8 @@
  * is exactly the "quiet wrong answer" this library exists to refuse.
  *
  * The contract, stated as a property: for every datetime and every format string, the two
- * formatters must produce the SAME text (u16 being u8 widened to code units, since all time
- * output - digits, ASCII locale names, fill characters - is single-byte). This test drives a
+ * formatters must produce the SAME text (u16 being the u8 text transcoded to UTF-16; for the
+ * ASCII output this matrix uses, one code unit per byte). This test drives a
  * broad matrix of specs through both and asserts byte-for-byte equality. The non-zero-fill
  * rows are the ones that land red against the hand-rolled parser.
  */
@@ -112,6 +112,34 @@ int main(void) {
         for (size_t d = 0; d < 3; ++d)
             for (size_t i = 0; i < sizeof specs / sizeof specs[0]; ++i)
                 check(heap, dts[d], specs[i]);
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a locale with non-ASCII names comes out as UTF-16, not widened bytes",
+        "A Korean weekday name is three UTF-8 bytes per syllable. The u16 formatter used to widen each BYTE into a code unit, so \"\xEC\x9B\x94\" came out as three units EC 9B 94 instead of the one unit U+C6D4.",
+        "Inspect proven_time_u16_fmt in src/proven/time.c: the u8 result must be transcoded (utf.h), not widened.");
+    // ---------------------------------------------------------------
+    {
+        static const proven_u8str_view_t ko_wday[7] = {
+            PROVEN_LIT("\xEC\x9D\xBC"), PROVEN_LIT("\xEC\x9B\x94"), PROVEN_LIT("\xED\x99\x94"),
+            PROVEN_LIT("\xEC\x88\x98"), PROVEN_LIT("\xEB\xAA\xA9"), PROVEN_LIT("\xEA\xB8\x88"),
+            PROVEN_LIT("\xED\x86\xA0"),
+        };
+        proven_time_locale_t ko = proven_time_locale_en;
+        ko.weekday_names = ko_wday;
+        ko.weekday_short_names = ko_wday;
+        proven_datetime_t monday = dts[0];
+        monday.weekday = 1;
+
+        proven_result_u16str_t r16 = proven_u16str_create(heap, 16);
+        PROVEN_TEST_ASSERT(proven_is_ok(r16.err), "setup", "");
+        proven_u16str_t s16 = r16.value;
+        proven_err_t e = proven_time_u16_fmt(heap, &s16, monday, &ko, "[{Weekday}]");
+        const proven_u16 want[] = { '[', 0xC6D4, ']' };
+        PROVEN_TEST_ASSERT(proven_is_ok(e) && proven_u16str_len(&s16) == 3 &&
+                           memcmp(proven_u16str_as_ptr(&s16), want, sizeof want) == 0,
+            "the Korean name for Monday must be the single code unit U+C6D4", "");
+        proven_u16str_destroy(heap, &s16);
     }
 
     PROVEN_TEST_PASS("u16 time formatting matches u8 across the whole spec grammar, for numeric and named fields alike.");
