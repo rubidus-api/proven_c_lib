@@ -86,6 +86,17 @@ int main(void) {
             "contains, plainly", "");
     }
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("RFC-0003 table 4.5: is_well_formed",
+        "True for every view except {NULL, n > 0} - including {NULL, 0}, which is why it cannot end a loop.", "");
+    // ---------------------------------------------------------------
+    PROVEN_TEST_ASSERT(proven_u8str_view_is_well_formed(z("abc")), "a real view", "");
+    PROVEN_TEST_ASSERT(proven_u8str_view_is_well_formed(b(NULL, 0)), "the empty view is well formed", "");
+    PROVEN_TEST_ASSERT(proven_u8str_view_is_well_formed(z("")), "so is a zero-length view with a pointer", "");
+    PROVEN_TEST_ASSERT(!proven_u8str_view_is_well_formed(b(NULL, 5)), "{NULL, 5} is the only false case", "");
+    PROVEN_TEST_ASSERT(proven_u8str_view_is_well_formed(proven_u8str_view_slice(z("abc"), 10, 2)),
+        "an out-of-range slice is well formed too - so this cannot tell 'empty' from 'past the end'", "");
+
     PROVEN_TEST_PASS("view trim, affixes, reverse search and well-formedness");
     return 0;
 }

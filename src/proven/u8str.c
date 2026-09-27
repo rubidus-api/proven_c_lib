@@ -809,3 +809,7 @@ bool proven_u8str_view_split_next(proven_u8str_view_split_t *it, proven_u8str_vi
     it->rest = view_sub(it->rest, at + it->sep.size, it->rest.size);
     return true;
 }
+
+bool proven_u8str_view_is_well_formed(proven_u8str_view_t s) {
+    return s.size == 0 || s.ptr != (const proven_byte_t *)0;
+}

@@ -282,6 +282,16 @@ typedef struct {
 [[nodiscard]] bool proven_u8str_view_split_next(proven_u8str_view_split_t *it, proven_u8str_view_t *out);
 
 /**
+ * @brief Whether `s` could be read safely: true unless `ptr` is NULL with a non-zero `size`.
+ *
+ * That is ALL it answers. It is **not** an end-of-iteration or "found" test, and a loop that
+ * stops on it is wrong: proven_u8str_view_slice returns {NULL, 0} both for a legitimately empty
+ * result and for an out-of-range request, and both are well formed. End a split loop on
+ * proven_u8str_view_split_next's return value and a search on PROVEN_INDEX_NOT_FOUND.
+ */
+[[nodiscard]] bool proven_u8str_view_is_well_formed(proven_u8str_view_t s);
+
+/**
  * @brief Zero-cost extraction of a standard C string pointer inherently guaranteed by internal structure.
  */
 static inline const char* proven_u8str_as_cstr(const proven_u8str_t *str) {
