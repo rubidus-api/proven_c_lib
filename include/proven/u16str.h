@@ -38,6 +38,14 @@ typedef struct {
     proven_u16str_t value;
 } proven_result_u16str_t;
 
+/**
+ * @brief A borrowed u16 view, or the error that stopped it (the u16 line readers return this).
+ */
+typedef struct {
+    proven_err_t         err;
+    proven_u16str_view_t val;
+} proven_result_u16str_view_t;
+
 #define PROVEN_U16_LIT(s) ((proven_u16str_view_t){ u##s, (sizeof(u##s) / sizeof((u##s)[0])) - 1 })
 
 [[nodiscard]] proven_result_u16str_t proven_u16str_create(proven_allocator_t alloc, proven_size_t unit_limit);

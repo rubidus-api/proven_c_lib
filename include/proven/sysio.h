@@ -154,6 +154,38 @@ typedef struct {
  */
 [[nodiscard]] proven_result_u8str_view_t proven_sysio_read_line(proven_sysio_lines_t *st);
 
+#ifndef PROVEN_NO_U16STR
+/**
+ * @brief A UTF-16 line reader over a standard stream or a file.
+ *
+ * The u16 twin of proven_sysio_lines_t: lines come back as `proven_u16str_view_t`, decoded
+ * from `enc` (stream.h's proven_u16_reader_t does the work). For the text a person types or
+ * pipes in, that is PROVEN_TEXT_UTF8; for a file whose encoding you do not control,
+ * PROVEN_TEXT_AUTO lets a byte order mark decide.
+ */
+typedef struct {
+    proven_sysio_std_t  std;
+    proven_u16_reader_t reader;
+} proven_sysio_u16_lines_t;
+
+/**
+ * @brief Open a UTF-16 line reader over `file`, reading `enc`, through `buf` of `cap` units.
+ * @return PROVEN_ERR_INVALID_ARG for a null state, a buffer under 2 units, or a bad encoding.
+ */
+[[nodiscard]] proven_err_t proven_sysio_u16_lines_open(proven_sysio_u16_lines_t *st, proven_file_t file,
+                                                       proven_text_encoding_t enc, proven_u16 *buf, proven_size_t cap);
+
+/** @brief Open a UTF-16 line reader over stdin, which is read as UTF-8. */
+[[nodiscard]] proven_err_t proven_sysio_stdin_u16_lines(proven_sysio_u16_lines_t *st, proven_u16 *buf, proven_size_t cap);
+
+/**
+ * @brief The next line as UTF-16, without its newline. PROVEN_ERR_EOF when the input is done.
+ * @note The view points into `buf` and lasts until the next call. The struct may be moved
+ *       between calls: its reader is re-bound to it each time, as proven_sysio_read_line does.
+ */
+[[nodiscard]] proven_result_u16str_view_t proven_sysio_read_u16_line(proven_sysio_u16_lines_t *st);
+#endif /* PROVEN_NO_U16STR */
+
 // -----------------------------------------------------------------------------
 // Buffered Scanner for sysio (Safe for pipes/stdin)
 // -----------------------------------------------------------------------------

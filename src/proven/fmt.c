@@ -1,3 +1,4 @@
+#include "proven/utf.h"
 #include "proven/fmt.h"
 #include "float_decimal.h"
 #include "proven/float_format.h"
@@ -338,6 +339,45 @@ static void render_custom(proven_fmt_ctx_t *ctx, proven_arg_custom_t c, proven_f
     append_padding(ctx, spec.fill, right);
 }
 
+/*
+ * UTF-16 text is transcoded as it is emitted, through a small stack buffer, so a long wide
+ * string costs no allocation. It is measured first - which also validates it - so that width
+ * and alignment can be applied, and so that a malformed string fails before any of it is
+ * written rather than half-way through the field.
+ */
+static void render_u16(proven_fmt_ctx_t *ctx, const proven_u16 *p, proven_size_t n, proven_fmt_spec_t spec) {
+    proven_result_size_t need = proven_utf16_to_utf8_size(p, n);
+    if (!proven_is_ok(need.err)) {
+        ctx->err = need.err;
+        return;
+    }
+
+    int total_padding = 0;
+    if (spec.width > 0 && (proven_size_t)spec.width > need.value) {
+        total_padding = spec.width - (int)need.value;
+    }
+    int left = 0, right = 0;
+    if (total_padding > 0) {
+        if (spec.align == '>')      { left = total_padding; }
+        else if (spec.align == '<') { right = total_padding; }
+        else                        { left = total_padding / 2; right = total_padding - left; }
+    }
+
+    append_padding(ctx, spec.fill, left);
+    proven_byte_t chunk[128];
+    proven_size_t done = 0;
+    while (done < n && proven_is_ok(ctx->err)) {
+        proven_utf_step_t st = proven_utf16_to_utf8_partial(p + done, n - done, chunk, sizeof chunk);
+        if (st.err != PROVEN_OK && st.err != PROVEN_ERR_OUT_OF_BOUNDS) {
+            ctx->err = st.err;
+            return;
+        }
+        fmt_append_view(ctx, (proven_u8str_view_t){ chunk, st.written });
+        done += st.consumed;
+    }
+    append_padding(ctx, spec.fill, right);
+}
+
 static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fmt_spec_t spec) {
     if (!proven_is_ok(ctx->err)) return;
 
@@ -531,6 +571,9 @@ static void render_arg(proven_fmt_ctx_t *ctx, const proven_arg_t *arg, proven_fm
             break;
         case PROVEN_ARG_STR_VIEW:
             render_with_spec(ctx, (const char*)arg->value.str_view.ptr, arg->value.str_view.size, spec);
+            break;
+        case PROVEN_ARG_U16_VIEW:
+            render_u16(ctx, arg->value.u16_view.ptr, arg->value.u16_view.size, spec);
             break;
         case PROVEN_ARG_DATETIME: {
             proven_datetime_t dt = arg->value.datetime;
@@ -914,6 +957,22 @@ proven_fmt_result_t proven_u8str_fmt_internal(proven_allocator_t alloc, proven_u
     for (proven_size_t i = 0; i < args_count; i++) {
         if (args[i].type == PROVEN_ARG_CSTR) {
             proven_bufref_t alias_ref = proven_bufref_capture(str->internal.ptr, str->internal.cap, args[i].value.cstr, 0);
+            if (alias_ref.valid) {
+                res.err = PROVEN_ERR_INVALID_ARG;
+                return res;
+            }
+        }
+        /* A UTF-16 view into the output would have to be rebased as a u16 range after a
+         * realloc; nothing legitimate formats a string's own bytes back as UTF-16, so it is
+         * refused, like a C string, instead of being given that machinery. */
+        if (args[i].type == PROVEN_ARG_U16_VIEW) {
+            proven_size_t u16_bytes = 0;
+            if (PROVEN_CKD_MUL(&u16_bytes, args[i].value.u16_view.size, sizeof(proven_u16))) {
+                res.err = PROVEN_ERR_OVERFLOW;
+                return res;
+            }
+            proven_bufref_t alias_ref = proven_bufref_capture(str->internal.ptr, str->internal.cap,
+                                                              args[i].value.u16_view.ptr, u16_bytes);
             if (alias_ref.valid) {
                 res.err = PROVEN_ERR_INVALID_ARG;
                 return res;

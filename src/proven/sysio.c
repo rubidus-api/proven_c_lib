@@ -123,6 +123,26 @@ proven_result_u8str_view_t proven_sysio_read_line(proven_sysio_lines_t *st) {
     return proven_reader_read_line(&st->buffered);
 }
 
+#ifndef PROVEN_NO_U16STR
+proven_err_t proven_sysio_u16_lines_open(proven_sysio_u16_lines_t *st, proven_file_t file,
+                                         proven_text_encoding_t enc, proven_u16 *buf, proven_size_t cap) {
+    if (!st) return PROVEN_ERR_INVALID_ARG;
+    st->std.file = file;
+    return proven_u16_reader_init(&st->reader, proven_reader_from_file(&st->std.file), enc, buf, cap);
+}
+
+proven_err_t proven_sysio_stdin_u16_lines(proven_sysio_u16_lines_t *st, proven_u16 *buf, proven_size_t cap) {
+    return proven_sysio_u16_lines_open(st, proven_sysio_stdin(), PROVEN_TEXT_UTF8, buf, cap);
+}
+
+proven_result_u16str_view_t proven_sysio_read_u16_line(proven_sysio_u16_lines_t *st) {
+    if (!st) return (proven_result_u16str_view_t){ .err = PROVEN_ERR_INVALID_ARG };
+    /* Same self-pointer as proven_sysio_read_line, same one-line cure. */
+    st->reader.inner = proven_reader_from_file(&st->std.file);
+    return proven_u16_reader_read_line(&st->reader);
+}
+#endif /* PROVEN_NO_U16STR */
+
 // -----------------------------------------------------------------------------
 // Buffered Scanner for sysio (Safe for pipes/stdin)
 // -----------------------------------------------------------------------------

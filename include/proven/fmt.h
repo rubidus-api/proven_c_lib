@@ -2,6 +2,7 @@
 #define PROVEN_FMT_H
 
 #include "u8str.h"
+#include "u16str.h"
 #include "time.h"
 
 /**
@@ -33,6 +34,7 @@ typedef enum {
     PROVEN_ARG_CHAR,
     PROVEN_ARG_BOOL,
     PROVEN_ARG_CUSTOM,
+    PROVEN_ARG_U16_VIEW,
 } proven_arg_type_t;
 
 /**
@@ -88,6 +90,7 @@ typedef struct {
         char c;
         bool b;
         proven_arg_custom_t custom;
+        struct { const proven_u16 *ptr; proven_size_t size; } u16_view;
     } value;
 } proven_arg_t;
 
@@ -254,6 +257,33 @@ static inline proven_arg_t proven_arg_str_view(proven_u8str_view_t v) {
     arg.value.str_view = v;
     return arg;
 }
+#ifndef PROVEN_NO_U16STR
+/**
+ * @brief UTF-16 text, rendered as UTF-8.
+ *
+ * With this, every sink the formatter reaches takes u16 text: `proven_println`,
+ * `proven_eprintln`, `proven_fprintln` into a file or any other writer, and
+ * `proven_u8str_append_fmt` into a
+ * string. `PROVEN_ARG` picks it for a `proven_u16str_view_t`.
+ *
+ * @note Strict: an unpaired surrogate fails the whole format with PROVEN_ERR_INVALID_ENCODING
+ *       (utf.h). Width and fill count UTF-8 bytes, exactly as they do for a u8 view - not
+ *       characters, and not terminal columns.
+ * @note The view must not point into the string being formatted into
+ *       (PROVEN_ERR_INVALID_ARG): growing that string would move the text being read.
+ */
+static inline proven_arg_t proven_arg_u16(proven_u16str_view_t v) {
+    proven_arg_t arg = {0};
+    arg.type = PROVEN_ARG_U16_VIEW;
+    arg.value.u16_view.ptr = v.ptr;
+    arg.value.u16_view.size = v.size;
+    return arg;
+}
+#define PROVEN_FMT_GENERIC_U16_ proven_u16str_view_t: proven_arg_u16,
+#else
+#define PROVEN_FMT_GENERIC_U16_
+#endif
+
 static inline proven_arg_t proven_arg_datetime(proven_datetime_t v) {
     proven_arg_t arg = {0};
     arg.type = PROVEN_ARG_DATETIME;
@@ -335,6 +365,7 @@ static inline proven_arg_t proven_arg_identity(proven_arg_t v) { return v; }
     void*: proven_arg_ptr, \
     const void*: proven_arg_ptr, \
     proven_u8str_view_t: proven_arg_str_view, \
+    PROVEN_FMT_GENERIC_U16_ \
     proven_datetime_t: proven_arg_datetime, \
     proven_arg_t: proven_arg_identity \
 )(x)
@@ -359,6 +390,7 @@ static inline proven_arg_t proven_arg_identity(proven_arg_t v) { return v; }
     void*: proven_arg_ptr, \
     const void*: proven_arg_ptr, \
     proven_u8str_view_t: proven_arg_str_view, \
+    PROVEN_FMT_GENERIC_U16_ \
     proven_datetime_t: proven_arg_datetime, \
     proven_arg_t: proven_arg_identity \
 )(x)
