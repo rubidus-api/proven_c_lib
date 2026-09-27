@@ -65,8 +65,40 @@
  *          (`proven_sysio_lines_t` is the exception — `proven_sysio_read_line` re-binds it on
  *          every call, so a line reader may be moved.)
  */
+/**
+ * @brief Text in flight at a Windows console edge. Not for the caller to touch.
+ *
+ * Writing: the first bytes of a UTF-8 character whose rest is in the next write - a buffered
+ * writer flushes at its buffer size, not at a character boundary. Reading: UTF-8 bytes
+ * converted but not yet handed out, a high surrogate waiting for its low half, and whether the
+ * console has already produced malformed text that the next read must report.
+ */
+typedef struct {
+    proven_byte_t bytes[4];
+    proven_u8     len;
+    proven_u16    high;
+    bool          has_high;
+    bool          broken;
+} proven_sysio_carry_t;
+
 typedef struct {
     proven_file_t file;
+
+    /**
+     * @brief Set when `file` is a Windows console; always false on POSIX.
+     *
+     * A console decodes the bytes it is given in its own code page, so UTF-8 written to it
+     * with WriteFile is mojibake unless someone ran `chcp 65001` - and reading it with
+     * ReadFile returns code-page bytes, not UTF-8. So the writers and readers made from this
+     * struct talk to a console in UTF-16 (WriteConsoleW / ReadConsoleW), converting at the
+     * edge, and the rest of the program never sees anything but UTF-8. Files, pipes and
+     * redirected streams are not consoles and keep getting the bytes exactly as written.
+     *
+     * `proven_writer_from_file` / `proven_reader_from_file` on a console handle are byte-exact
+     * and do NOT convert: make console writers and readers here.
+     */
+    bool console;
+    proven_sysio_carry_t carry;
 } proven_sysio_std_t;
 
 /** @brief An unbuffered writer over stdout. Every write is a write syscall. */
@@ -229,6 +261,8 @@ typedef struct {
     proven_size_t cursor;
     proven_size_t length;
     bool eof;
+    bool console;               /**< a Windows console: read as UTF-16, handed out as UTF-8 */
+    proven_sysio_carry_t carry; /**< see proven_sysio_std_t; not for the caller to touch */
 } proven_sysio_scanner_t;
 
 /**

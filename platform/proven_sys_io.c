@@ -110,6 +110,57 @@ proven_sys_result_size_t proven_sys_io_write_all(proven_sys_io_handle_t handle, 
     return (proven_sys_result_size_t){ PROVEN_OK, total_written };
 }
 
+bool proven_sys_io_is_console(proven_sys_io_handle_t handle) {
+#if defined(_WIN32) || defined(_WIN64)
+    DWORD mode = 0;
+    return handle.handle != NULL && handle.handle != INVALID_HANDLE_VALUE &&
+           GetConsoleMode((HANDLE)handle.handle, &mode) != 0;
+#else
+    (void)handle;
+    return false;
+#endif
+}
+
+proven_sys_result_size_t proven_sys_io_console_write_u16(proven_sys_io_handle_t handle, const proven_u16 *units, size_t count) {
+    if (count == 0) return (proven_sys_result_size_t){ PROVEN_OK, 0 };
+    if (!units) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
+#if defined(_WIN32) || defined(_WIN64)
+    if (!proven_sys_io_is_console(handle)) return (proven_sys_result_size_t){ PROVEN_ERR_UNSUPPORTED, 0 };
+    /* Bounded per call: older console hosts refuse one very large write outright. */
+    size_t done = 0;
+    while (done < count) {
+        DWORD ask = (count - done > 8192) ? 8192 : (DWORD)(count - done);
+        DWORD wrote = 0;
+        if (!WriteConsoleW((HANDLE)handle.handle, units + done, ask, &wrote, NULL) || wrote == 0) {
+            return (proven_sys_result_size_t){ PROVEN_ERR_IO, done };
+        }
+        done += wrote;
+    }
+    return (proven_sys_result_size_t){ PROVEN_OK, done };
+#else
+    (void)handle;
+    return (proven_sys_result_size_t){ PROVEN_ERR_UNSUPPORTED, 0 };
+#endif
+}
+
+proven_sys_result_size_t proven_sys_io_console_read_u16(proven_sys_io_handle_t handle, proven_u16 *units, size_t cap) {
+    if (cap == 0) return (proven_sys_result_size_t){ PROVEN_OK, 0 };
+    if (!units) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
+#if defined(_WIN32) || defined(_WIN64)
+    if (!proven_sys_io_is_console(handle)) return (proven_sys_result_size_t){ PROVEN_ERR_UNSUPPORTED, 0 };
+    DWORD ask = (cap > 8192) ? 8192 : (DWORD)cap;
+    DWORD got = 0;
+    if (!ReadConsoleW((HANDLE)handle.handle, units, ask, &got, NULL)) {
+        return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
+    }
+    if (got == 0) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
+    return (proven_sys_result_size_t){ PROVEN_OK, (size_t)got };
+#else
+    (void)handle;
+    return (proven_sys_result_size_t){ PROVEN_ERR_UNSUPPORTED, 0 };
+#endif
+}
+
 proven_sys_result_size_t proven_sys_io_read_once(proven_sys_io_handle_t handle, void *buf, size_t size) {
 #if defined(_WIN32) || defined(_WIN64)
     if (!handle.handle) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
