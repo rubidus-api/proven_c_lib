@@ -93,7 +93,20 @@ static inline proven_result_size_t proven_console_write_utf8(proven_console_io_t
     return (proven_result_size_t){ PROVEN_OK, n };
 }
 
-/* The text is over. A character still open is a character that never arrived. */
+/*
+ * A writer's flush is NOT the end of the text: a buffered writer drains at its buffer size, and a
+ * caller may flush between any two bytes. So flush keeps a character that is still open, and the
+ * next write completes it - or refuses it, if what follows cannot. (It used to call finish, and
+ * valid UTF-8 split across a buffer boundary came back INVALID_ENCODING with the carried bytes
+ * dropped; found by code review, reproduced in tests/test_unit_sysio_console.)
+ */
+static inline proven_err_t proven_console_flush(proven_sysio_carry_t *c) {
+    (void)c;
+    return PROVEN_OK;
+}
+
+/* The text is over - a whole formatted string has been written. A character still open is a
+ * character that never arrived. */
 static inline proven_err_t proven_console_finish(proven_sysio_carry_t *c) {
     if (c->len == 0) return PROVEN_OK;
     c->len = 0;

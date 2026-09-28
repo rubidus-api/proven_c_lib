@@ -1670,8 +1670,11 @@ proven_writer_t ok = proven_sysio_stdout_writer(&st); /* right: converts on a co
 ```
 
 **엄격은 콘솔에서도 엄격이다.** 콘솔로 보낸 잘못된 UTF-8은 그 앞의 올바른 텍스트를 보여 준 뒤
-`PROVEN_ERR_INVALID_ENCODING`으로 거부된다. 텍스트가 문자 한가운데서 끝나는 버퍼 쓰기 스트림은
-`proven_writer_flush`에서 그것을 알린다. 무엇도 물음표로 바뀌지 않는다.
+`PROVEN_ERR_INVALID_ENCODING`으로 거부된다. 무엇도 물음표로 바뀌지 않는다. 플러시는 텍스트의 끝이
+아니다 - 버퍼 쓰기 스트림은 버퍼 크기에서 비우고, 당신은 어느 두 바이트 사이에서든 플러시할 수 있다 -
+그래서 플러시 때 아직 열려 있는 문자의 바이트는 간직되고, 다음 쓰기가 그것을 완성하거나, 완성할 수
+없으면 거부된다. `proven_print`와 `proven_eprint`는 포맷된 텍스트 전체를 쓰므로, 이들에게 문자
+한가운데서 끝나는 텍스트는 그대로 거부된다.
 
 **명시한 인코딩은 바이트 순서 표시를 벗기지 않는다.** `PROVEN_TEXT_UTF16LE`로 연 파일이 `FF FE`로
 시작하면 첫 줄의 첫 유닛으로 문자 U+FEFF가 전달된다. 누가 썼는지 통제할 수 없는 파일은

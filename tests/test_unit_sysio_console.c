@@ -66,7 +66,7 @@ static proven_result_size_t fake_std_write(void *ctx, proven_mem_view_t chunk) {
 }
 static proven_err_t fake_std_flush(void *ctx) {
     fake_std_t *s = ctx;
-    return proven_console_finish(&s->carry);
+    return proven_console_flush(&s->carry);   /* exactly what sysio.c's console writer does */
 }
 
 static proven_result_size_t fake_std_read(void *ctx, proven_mem_mut_t dest) {
@@ -125,16 +125,38 @@ int main(void) {
         PROVEN_TEST_ASSERT(f.out_len == TEXT16_N && memcmp(f.out, TEXT16, sizeof TEXT16) == 0,
             "the console receives the text exactly", "");
 
-        /* Chapter 5: "a buffered writer whose text ends inside a character reports it at
-         * proven_writer_flush" - the buffered flush must reach the console writer's finish. */
+        /* The code review's reproduction: an 8-byte buffer, 8 bytes that end inside a
+         * character, then 8 more. Every automatic drain used to call the console writer's
+         * flush, which treated it as the end of the text: the second write failed with
+         * INVALID_ENCODING and the carried bytes were dropped. Valid text split at a buffer
+         * boundary must arrive whole, and so must text flushed by the caller mid-character. */
+        static const char han8[] = "\xEA\xB0\x80\xEA\xB0\x80\xEA\xB0\x80\xEA\xB0\x80\xEA\xB0\x80\xEA";
         fake_console_t g = { .fail_after = 1000 };
         fake_std_t t = { .f = &g };
         proven_writer_buffered_t bt;
+        proven_byte_t b8[8];
         proven_writer_t wt = proven_writer_buffered(&bt, (proven_writer_t){ &t, fake_std_write, fake_std_flush },
+                                                    (proven_mem_mut_t){ b8, sizeof b8 });
+        proven_err_t e1 = proven_writer_write(wt, (proven_mem_view_t){ B(han8), 8 });
+        proven_err_t e2 = proven_writer_write(wt, (proven_mem_view_t){ B(han8) + 8, 8 });
+        proven_err_t e3 = proven_writer_write(wt, (proven_mem_view_t){ B("\xB0\x80"), 2 });
+        proven_err_t e4 = proven_writer_flush(wt);
+        bool all_ga = g.out_len == 6;
+        for (size_t i = 0; i < g.out_len; ++i) all_ga = all_ga && g.out[i] == 0xAC00;
+        PROVEN_TEST_ASSERT(proven_is_ok(e1) && proven_is_ok(e2) && proven_is_ok(e3) && proven_is_ok(e4) && all_ga,
+            "text split at buffer boundaries arrives whole: six syllables", "");
+
+        fake_console_t h = { .fail_after = 1000 };
+        fake_std_t u = { .f = &h };
+        proven_writer_buffered_t bu;
+        proven_writer_t wu = proven_writer_buffered(&bu, (proven_writer_t){ &u, fake_std_write, fake_std_flush },
                                                     (proven_mem_mut_t){ buf, sizeof buf });
-        PROVEN_TEST_ASSERT(proven_is_ok(proven_writer_write(wt, (proven_mem_view_t){ B("ok\xEA\xB0"), 4 })), "write", "");
-        PROVEN_TEST_ASSERT(proven_writer_flush(wt) == PROVEN_ERR_INVALID_ENCODING && g.out_len == 2,
-            "a text ending inside a character is reported by the flush, after 'ok' went out", "");
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_writer_write(wu, (proven_mem_view_t){ B("ok\xEA\xB0"), 4 })) &&
+                           proven_is_ok(proven_writer_flush(wu)) && h.out_len == 2,
+            "a flush mid-character sends what is whole and keeps the rest", "");
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_writer_write(wu, (proven_mem_view_t){ B("\x80"), 1 })) &&
+                           proven_is_ok(proven_writer_flush(wu)) && h.out_len == 3 && h.out[2] == 0xAC00,
+            "and the next write completes it", "");
     }
 
     // ---------------------------------------------------------------

@@ -80,7 +80,7 @@ static proven_result_size_t std_console_write(void *ctx, proven_mem_view_t chunk
 
 static proven_err_t std_console_flush(void *ctx) {
     proven_sysio_std_t *st = ctx;
-    return proven_console_finish(&st->carry);
+    return proven_console_flush(&st->carry);
 }
 
 static proven_result_size_t std_console_read(void *ctx, proven_mem_mut_t dest) {

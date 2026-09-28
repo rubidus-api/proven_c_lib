@@ -1705,9 +1705,12 @@ proven_writer_t ok = proven_sysio_stdout_writer(&st); /* right: converts on a co
 ```
 
 **Strict means strict on the console too.** Malformed UTF-8 sent to a console is refused with
-`PROVEN_ERR_INVALID_ENCODING` after the valid text before it has been shown; a buffered writer
-whose text ends inside a character reports it at `proven_writer_flush`. Nothing is replaced with
-a question mark.
+`PROVEN_ERR_INVALID_ENCODING` after the valid text before it has been shown. Nothing is replaced
+with a question mark. A flush is not the end of a text - a buffered writer drains at its buffer
+size, and you may flush between any two bytes - so the bytes of a character still open at a flush
+are kept and the next write completes it, or is refused if it cannot. `proven_print` and
+`proven_eprint` write a whole formatted text, so for them a text that ends inside a character is
+refused outright.
 
 **An explicit encoding does not strip a byte order mark.** Opened as `PROVEN_TEXT_UTF16LE`, a
 file that starts with `FF FE` delivers the character U+FEFF as the first unit of its first
