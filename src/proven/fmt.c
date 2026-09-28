@@ -162,26 +162,25 @@ static void append_padding(proven_fmt_ctx_t *ctx, char fill, int count) {
     ctx->written += to_write;
 }
 
-static void render_with_spec(proven_fmt_ctx_t *ctx, const char *val, proven_size_t val_len, proven_fmt_spec_t spec) {
-    if (spec.width == 0 || (proven_size_t)spec.width <= val_len) {
-        fmt_append_view(ctx, (proven_u8str_view_t){(const proven_u8*)val, val_len});
-        return;
-    }
+/* Fill before and after a field of `len` bytes, from the spec's width and alignment ('>' right,
+ * '<' left, anything else centred). The one place these rules live: plain strings, custom
+ * renderers and UTF-16 arguments all pad through it. */
+static void spec_padding(proven_fmt_spec_t spec, proven_size_t len, int *left, int *right) {
+    *left = 0;
+    *right = 0;
+    if (spec.width <= 0 || (proven_size_t)spec.width <= len) return;
+    int total = spec.width - (int)len;
+    if (spec.align == '>')      *left = total;
+    else if (spec.align == '<') *right = total;
+    else                        { *left = total / 2; *right = total - *left; }
+}
 
-    int total_padding = spec.width - (int)val_len;
-    if (spec.align == '>') {
-        append_padding(ctx, spec.fill, total_padding);
-        fmt_append_view(ctx, (proven_u8str_view_t){(const proven_u8*)val, (proven_size_t)val_len});
-    } else if (spec.align == '<') {
-        fmt_append_view(ctx, (proven_u8str_view_t){(const proven_u8*)val, (proven_size_t)val_len});
-        append_padding(ctx, spec.fill, total_padding);
-    } else { // '^'
-        int left = total_padding / 2;
-        int right = total_padding - left;
-        append_padding(ctx, spec.fill, left);
-        fmt_append_view(ctx, (proven_u8str_view_t){(const proven_u8*)val, (proven_size_t)val_len});
-        append_padding(ctx, spec.fill, right);
-    }
+static void render_with_spec(proven_fmt_ctx_t *ctx, const char *val, proven_size_t val_len, proven_fmt_spec_t spec) {
+    int left, right;
+    spec_padding(spec, val_len, &left, &right);
+    append_padding(ctx, spec.fill, left);
+    fmt_append_view(ctx, (proven_u8str_view_t){(const proven_u8*)val, val_len});
+    append_padding(ctx, spec.fill, right);
 }
 
 
@@ -308,16 +307,8 @@ static void render_custom(proven_fmt_ctx_t *ctx, proven_arg_custom_t c, proven_f
         return;
     }
 
-    int total_padding = 0;
-    if (spec.width > 0 && (proven_size_t)spec.width > count.len) {
-        total_padding = spec.width - (int)count.len;
-    }
-    int left = 0, right = 0;
-    if (total_padding > 0) {
-        if (spec.align == '>')      { left = total_padding; }
-        else if (spec.align == '<') { right = total_padding; }
-        else                        { left = total_padding / 2; right = total_padding - left; }
-    }
+    int left, right;
+    spec_padding(spec, count.len, &left, &right);
 
     append_padding(ctx, spec.fill, left);
 
@@ -352,16 +343,8 @@ static void render_u16(proven_fmt_ctx_t *ctx, const proven_u16 *p, proven_size_t
         return;
     }
 
-    int total_padding = 0;
-    if (spec.width > 0 && (proven_size_t)spec.width > need.value) {
-        total_padding = spec.width - (int)need.value;
-    }
-    int left = 0, right = 0;
-    if (total_padding > 0) {
-        if (spec.align == '>')      { left = total_padding; }
-        else if (spec.align == '<') { right = total_padding; }
-        else                        { left = total_padding / 2; right = total_padding - left; }
-    }
+    int left, right;
+    spec_padding(spec, need.value, &left, &right);
 
     append_padding(ctx, spec.fill, left);
     proven_byte_t chunk[128];
