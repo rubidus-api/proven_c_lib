@@ -20,6 +20,12 @@ written; their tags still exist.
 
 ### Changed
 
+- **The freestanding runtime contract is explicit and linked (B-034).** A freestanding build needs
+  `memcpy`, `memmove`, `memset`, `memcmp` and the compiler support library, nothing else - stated
+  in the freestanding guide and proven by a new `./nob cross` stage that links every freestanding
+  object with a program supplying only those four (`-nostdlib -nostartfiles -static -lgcc`) for
+  Cortex-M4 and RISC-V. `float_format.c` no longer calls `strlen`, which was the one dependency
+  outside that set.
 - **`proven_u8str_view_find_last` makes the forward search's choices (B-024).** The same entropy
   sample; an anchored backward scan over a new portable `proven_sys_mem_rchr` on ordinary input;
   backward Shift-Or (<= 64 bytes) or a new reverse Two-Way (> 64) on low-entropy input. Measured

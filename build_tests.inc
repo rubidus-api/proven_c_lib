@@ -289,5 +289,11 @@ static const Proven_Test_Case cross_link_tests[] = {
     { "tests/test_portability_cross_link_smoke", "cross link smoke", "Link the cross-compiled library into a target executable so object-format and symbol-resolution failures are visible.", "Inspect the undefined symbol and target runtime libraries when compilation succeeds but cross linking fails." },
 };
 
+/* Linked for every freestanding cross target with -nostdlib -nostartfiles -lgcc: the no-CRT
+ * runtime contract of docs/BACKLOG.md B-034. Never run. */
+static const Proven_Test_Case freestanding_link_tests[] = {
+    { "tests/test_portability_freestanding_nocrt_link", "freestanding no-CRT link", "Link every freestanding object with a program that supplies only memcpy, memmove, memset and memcmp, using -nostdlib -nostartfiles and the compiler support library, so that any other runtime dependency is an unresolved symbol and fails the link.", "The undefined reference named by the linker is a runtime dependency the freestanding contract does not allow: route it through the platform layer or name it as a required service (B-034)." },
+};
+
 /* The cross matrix resolves this normal freestanding registry entry by path. */
 #define PROVEN_FREESTANDING_CROSS_SMOKE_PATH "tests/test_portability_freestanding"

@@ -32,6 +32,7 @@ static const test_registry_t test_registries[] = {
     { "benchmark_tests[]", benchmark_tests, ARRAY_LEN(benchmark_tests) },
     { "cross_compile_tests[]", cross_compile_tests, ARRAY_LEN(cross_compile_tests) },
     { "cross_link_tests[]", cross_link_tests, ARRAY_LEN(cross_link_tests) },
+    { "freestanding_link_tests[]", freestanding_link_tests, ARRAY_LEN(freestanding_link_tests) },
 };
 
 static const test_registry_t primary_test_registries[] = {
@@ -40,6 +41,7 @@ static const test_registry_t primary_test_registries[] = {
     { "benchmark_tests[]", benchmark_tests, ARRAY_LEN(benchmark_tests) },
     { "cross_compile_tests[]", cross_compile_tests, ARRAY_LEN(cross_compile_tests) },
     { "cross_link_tests[]", cross_link_tests, ARRAY_LEN(cross_link_tests) },
+    { "freestanding_link_tests[]", freestanding_link_tests, ARRAY_LEN(freestanding_link_tests) },
 };
 
 /*
@@ -294,8 +296,12 @@ int main(void) {
     const int cross_link_test_count =
         registry_count_prefix(cross_link_tests, ARRAY_LEN(cross_link_tests),
                               "tests/test_");
+    const int freestanding_link_test_count =
+        registry_count_prefix(freestanding_link_tests, ARRAY_LEN(freestanding_link_tests),
+                              "tests/test_");
     PROVEN_TEST_ASSERT(
         hosted_test_count + manual_example_count == (int)ARRAY_LEN(all_tests) &&
+        freestanding_link_test_count == (int)ARRAY_LEN(freestanding_link_tests) &&
         regression_test_count == (int)ARRAY_LEN(regression_tests) &&
         freestanding_test_count == (int)ARRAY_LEN(freestanding_tests) &&
         benchmark_test_count == (int)ARRAY_LEN(benchmark_tests) &&

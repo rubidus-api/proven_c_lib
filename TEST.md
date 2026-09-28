@@ -20,7 +20,7 @@ The class says what kind of question the test answers:
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 25 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
-| `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 10 |
+| `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 11 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
 | `docs` | Are the claims the documentation makes still true? | 11 |
 | `bench` | How fast is it? (Not a correctness gate.) | 3 |
@@ -297,7 +297,7 @@ Failure tip: identify the target name in the log, then check whether the failure
 ## Test catalog
 
 
-The hosted full run builds and executes 128 registered tests plus the 92 runnable manual examples - 220 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 138 test files: the 128 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
+The hosted full run builds and executes 128 registered tests plus the 92 runnable manual examples - 220 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 139 test files: the 128 above, the 5 freestanding-only and 3 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1653,6 +1653,12 @@ Failure tip: source-contract tests should stay narrow. If a source pattern chang
 
 ### `tests/test_portability_cross_link_smoke` — cross link smoke
 
+### `tests/test_portability_freestanding_nocrt_link` — freestanding no-CRT link
+
+Intent: prove the freestanding runtime contract (B-034) by linking, for every freestanding cross target, all freestanding library objects with a program that supplies only `memcpy`, `memmove`, `memset` and `memcmp`, using `-nostdlib -nostartfiles -static` and the compiler support library (`-lgcc`). A static link fails on any unresolved symbol, so success means nothing else is needed. The executable is never run.
+
+Failure tip: the linker names the undefined symbol. Route it through the platform layer, or name it as a required service in the freestanding guide - not both silently.
+
 ### `tests/test_portability_float` — float portability
 
 Intent: verify scan and format float conversion paths stay double-only and keep target-deterministic behavior without long double dependence.
@@ -2035,7 +2041,7 @@ Failure tip: inspect src/proven/float_parse.c and src/proven/float_decimal.c if 
 
 ## Cross-build matrix
 
-The matrix compiles `tests/test_portability_cross_compile_smoke.c` (or `tests/test_portability_freestanding.c` for freestanding targets) and links it with `tests/test_portability_cross_link_smoke.c`, which exists to prove the objects actually link - a header-only compile check would miss a missing symbol.
+The matrix compiles `tests/test_portability_cross_compile_smoke.c` (or `tests/test_portability_freestanding.c` for freestanding targets) and links it with `tests/test_portability_cross_link_smoke.c`, which exists to prove the objects actually link - a header-only compile check would miss a missing symbol. Freestanding targets are also linked with no C runtime at all (`tests/test_portability_freestanding_nocrt_link.c`, stage `nocrt-link`).
 
 `./nob cross` builds object files and smoke tests for available target compilers. The matrix currently includes:
 

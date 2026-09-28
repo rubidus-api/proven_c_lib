@@ -461,6 +461,21 @@ proven_job_system_init(...);
 
 They require hosted PAL files that are intentionally excluded.
 
+### What your environment must provide
+
+Exactly what any freestanding C program compiled by GCC or Clang needs, and nothing else:
+**`memcpy`, `memmove`, `memset` and `memcmp`**, which the compiler may call for copies and zeroing
+whatever the source says, and the compiler's own support library (`libgcc`: on Cortex-M the
+`__aeabi_*` division and soft-float helpers). Your newlib, picolibc or vendor HAL already has the
+four; if you have none, they are a few lines each. No `strlen`, no `malloc`, no stdio, no startup
+files.
+
+That is checked, not hoped for: `./nob cross` links every freestanding object of the library,
+for Cortex-M4 and RISC-V, with a program that supplies only those four functions, using
+`-nostdlib -nostartfiles -static -lgcc` (`tests/test_portability_freestanding_nocrt_link.c`). A
+static link fails on any unresolved symbol, so a clean link is the evidence. It is not run - there
+is no board here - so behaviour on the target is still yours to test.
+
 ## 10. Lifetime rules still apply
 
 ### The section people skip, and why it costs more here

@@ -457,6 +457,20 @@ proven_job_system_init(...);
 
 이들은 의도적으로 제외된 호스티드 PAL 파일을 필요로 한다.
 
+### 환경이 제공해야 하는 것
+
+GCC나 Clang으로 컴파일한 모든 프리스탠딩 C 프로그램이 필요로 하는 것, 그 이상은 없다:
+**`memcpy`, `memmove`, `memset`, `memcmp`** - 소스가 무엇이라 하든 컴파일러가 복사와 0 채우기에 부를 수
+있다 - 그리고 컴파일러 자신의 지원 라이브러리(`libgcc`: Cortex-M에서는 `__aeabi_*` 나눗셈과 소프트
+부동소수점 헬퍼). newlib, picolibc, 벤더 HAL에는 이미 이 넷이 있고, 없다면 각각 몇 줄이다. `strlen`도,
+`malloc`도, stdio도, 시작 파일도 필요 없다.
+
+바란 것이 아니라 검사한 것이다: `./nob cross`는 Cortex-M4와 RISC-V에 대해 라이브러리의 모든 프리스탠딩
+오브젝트를 그 네 함수만 제공하는 프로그램과 `-nostdlib -nostartfiles -static -lgcc`로
+링크한다(`tests/test_portability_freestanding_nocrt_link.c`). 정적 링크는 해결되지 않은 심볼이 하나라도
+있으면 실패하므로, 깨끗한 링크가 곧 증거다. 실행하지는 않는다 - 여기에는 보드가 없다 - 그래서 타깃에서의
+동작은 여전히 당신이 시험해야 한다.
+
 ## 10. 수명 규칙은 여전히 적용된다
 
 ### 사람들이 건너뛰는 절, 그리고 여기서 그 대가가 더 큰 이유

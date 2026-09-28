@@ -786,6 +786,35 @@ static bool run_cross_compile_matrix(const char *build_root, const char *sysroot
             }
         }
 
+        if (target->freestanding) {
+            /* B-034: the no-CRT link. Every freestanding object plus a program that supplies only
+             * memcpy/memmove/memset/memcmp, linked static with no C library and no startup files.
+             * A static link fails on any unresolved symbol, so success is the evidence that the
+             * library needs nothing else from its environment but the compiler's support library. */
+            const char *nocrt_src = nob_temp_sprintf("%s.c", freestanding_link_tests[0].path);
+            char elf_path[768];
+            if (!format_path(elf_path, sizeof(elf_path), "%s/nocrt-link.elf", target_dir)) return false;
+            Nob_Cmd link = {0};
+            nob_cmd_append(&link, target->compiler);
+            append_cross_cflags(&link, target, standard_flag, sysroot);
+            nob_cmd_append(&link, "-nostartfiles", "-static", "-Wl,-e,proven_nocrt_entry");
+            for (size_t i = 0; i < srcs_count; ++i) {
+                if (!cross_source_is_freestanding(srcs[i])) continue;
+                char link_obj[256];
+                sanitize_name(link_obj, sizeof link_obj, srcs[i]);
+                nob_cmd_append(&link, nob_temp_sprintf("%s/%s.o", target_dir, link_obj));
+            }
+            nob_cmd_append(&link, nocrt_src, "-lgcc", "-o", elf_path);
+            bool linked = nob_cmd_run_sync(link);
+            nob_cmd_free(link);
+            if (!linked) {
+                nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL] path=cross/%s stage=nocrt-link", target->name);
+                nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL_HINT] %s", freestanding_link_tests[0].failure_hint);
+                return false;
+            }
+            nob_log(NOB_INFO, "[PROVEN][TEST][INFO] path=cross/%s stage=nocrt-link linked with only memcpy, memmove, memset, memcmp and -lgcc", target->name);
+        }
+
         if (target_links_smoke(target)) {
             char exe_path[768];
             if (!format_path(exe_path, sizeof(exe_path), "%s/link-smoke", target_dir)) return false;
