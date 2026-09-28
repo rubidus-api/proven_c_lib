@@ -681,6 +681,150 @@ static bool check_manual_code_blocks(const char *compiler, const char *standard_
     return all_ok;
 }
 
+/* Build one cross target: its library objects, its smoke program, and whatever link that
+ * target's evidence requires. False on the first failure, after logging it. */
+static bool run_cross_target(const Proven_Cross_Target *target, const char *standard_flag,
+                             const char *build_root, const char *sysroot,
+                             const char **srcs, size_t srcs_count) {
+    char target_dir[512];
+    if (!format_path(target_dir, sizeof(target_dir), "%s/%s", build_root, target->name)) return false;
+    if (!mkdir_p_safe(target_dir)) return false;
+
+    nob_log(NOB_INFO, "[PROVEN][TEST][BEGIN] path=cross/%s title=cross compile target", target->name);
+    nob_log(NOB_INFO, "[PROVEN][TEST][INTENT] Compile proven sources and the smoke translation unit for target %s using %s.", target->name, target->compiler);
+    nob_log(NOB_INFO, "[PROVEN][TEST][FAIL_HINT] If this target fails, check the compiler/sysroot for %s first; otherwise inspect the source file named in the compiler diagnostic.", target->name);
+    nob_log(NOB_INFO, "Cross compile target: %s (%s)", target->name, target->compiler);
+
+    for (size_t i = 0; i < srcs_count; ++i) {
+        if (target->freestanding && !cross_source_is_freestanding(srcs[i])) continue;
+
+        char obj_name[256];
+        sanitize_name(obj_name, sizeof obj_name, srcs[i]);
+
+        char obj_path[768];
+        if (!format_path(obj_path, sizeof(obj_path), "%s/%s.o", target_dir, obj_name)) return false;
+
+        Nob_Cmd cmd = {0};
+        nob_cmd_append(&cmd, target->compiler);
+        append_cross_cflags(&cmd, target, standard_flag, sysroot);
+        nob_cmd_append(&cmd, "-c", srcs[i], "-o", obj_path);
+        bool ok = nob_cmd_run_sync(cmd);
+        nob_cmd_free(cmd);
+        if (!ok) {
+            nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL] path=cross/%s stage=compile-source source=%s", target->name, srcs[i]);
+            nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL_HINT] Check the diagnostic above for the exact source portability issue on this target.");
+            return false;
+        }
+    }
+
+    const Proven_Test_Case *smoke_tests = cross_compile_tests;
+    size_t smoke_count = NOB_ARRAY_LEN(cross_compile_tests);
+    if (target->freestanding) {
+        smoke_tests = find_test_case(
+            freestanding_tests, NOB_ARRAY_LEN(freestanding_tests),
+            PROVEN_FREESTANDING_CROSS_SMOKE_PATH);
+        if (!smoke_tests) {
+            nob_log(NOB_ERROR,
+                    "[PROVEN][TEST][FAIL] path=cross/%s stage=manifest",
+                    target->name);
+            nob_log(NOB_ERROR,
+                    "[PROVEN][TEST][FAIL_HINT] The named freestanding cross smoke path is absent from freestanding_tests[].");
+            return false;
+        }
+        smoke_count = 1;
+    }
+    const char *smoke_obj_paths[NOB_ARRAY_LEN(cross_compile_tests)];
+    for (size_t i = 0; i < smoke_count; ++i) {
+        const char *smoke_source = nob_temp_sprintf("%s.c", smoke_tests[i].path);
+        const char *smoke_obj =
+            nob_temp_sprintf("%s/smoke-%zu.o", target_dir, i);
+        smoke_obj_paths[i] = smoke_obj;
+
+        Nob_Cmd cmd = {0};
+        nob_cmd_append(&cmd, target->compiler);
+        append_cross_cflags(&cmd, target, standard_flag, sysroot);
+        nob_cmd_append(&cmd, "-c", smoke_source, "-o", smoke_obj);
+        bool ok = nob_cmd_run_sync(cmd);
+        nob_cmd_free(cmd);
+        if (!ok) {
+            nob_log(NOB_ERROR,
+                    "[PROVEN][TEST][FAIL] path=cross/%s stage=compile-smoke source=%s",
+                    target->name, smoke_source);
+            nob_log(NOB_ERROR,
+                    "[PROVEN][TEST][FAIL_HINT] Check public header feature guards and target-specific compiler diagnostics above.");
+            return false;
+        }
+    }
+
+    if (target->freestanding) {
+        /* B-034: the no-CRT link. Every freestanding object plus a program that supplies only
+         * memcpy/memmove/memset/memcmp, linked static with no C library and no startup files.
+         * A static link fails on any unresolved symbol, so success is the evidence that the
+         * library needs nothing else from its environment but the compiler's support library. */
+        const char *nocrt_src = nob_temp_sprintf("%s.c", freestanding_link_tests[0].path);
+        char elf_path[768];
+        if (!format_path(elf_path, sizeof(elf_path), "%s/nocrt-link.elf", target_dir)) return false;
+        Nob_Cmd link = {0};
+        nob_cmd_append(&link, target->compiler);
+        append_cross_cflags(&link, target, standard_flag, sysroot);
+        nob_cmd_append(&link, "-nostartfiles", "-static", "-Wl,-e,proven_nocrt_entry");
+        for (size_t i = 0; i < srcs_count; ++i) {
+            if (!cross_source_is_freestanding(srcs[i])) continue;
+            char link_obj[256];
+            sanitize_name(link_obj, sizeof link_obj, srcs[i]);
+            nob_cmd_append(&link, nob_temp_sprintf("%s/%s.o", target_dir, link_obj));
+        }
+        nob_cmd_append(&link, nocrt_src, "-lgcc", "-o", elf_path);
+        bool linked = nob_cmd_run_sync(link);
+        nob_cmd_free(link);
+        if (!linked) {
+            nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL] path=cross/%s stage=nocrt-link", target->name);
+            nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL_HINT] %s", freestanding_link_tests[0].failure_hint);
+            return false;
+        }
+        nob_log(NOB_INFO, "[PROVEN][TEST][INFO] path=cross/%s stage=nocrt-link linked with only memcpy, memmove, memset, memcmp and -lgcc", target->name);
+    }
+
+    if (target_links_smoke(target)) {
+        char exe_path[768];
+        if (!format_path(exe_path, sizeof(exe_path), "%s/link-smoke", target_dir)) return false;
+        Nob_Cmd link = {0};
+        nob_cmd_append(&link, target->compiler);
+        append_cross_cflags(&link, target, standard_flag, sysroot);
+        for (size_t i = 0; i < srcs_count; ++i) {
+            char link_obj[256];
+            sanitize_name(link_obj, sizeof link_obj, srcs[i]);
+            char link_obj_path[768];
+            if (!format_path(link_obj_path, sizeof(link_obj_path), "%s/%s.o", target_dir, link_obj)) {
+                nob_cmd_free(link);
+                return false;
+            }
+            nob_cmd_append(&link, nob_temp_sprintf("%s", link_obj_path));
+        }
+        for (size_t i = 0; i < smoke_count; ++i) {
+            nob_cmd_append(&link, smoke_obj_paths[i]);
+        }
+        for (size_t i = 0; i < NOB_ARRAY_LEN(cross_link_tests); ++i) {
+            nob_cmd_append(&link,
+                           nob_temp_sprintf("%s.c", cross_link_tests[i].path));
+        }
+        /* -lbcrypt: the Windows CSPRNG (BCryptGenRandom). MSVC pulls the import
+         * library in from a #pragma comment in the source; mingw-w64 does not
+         * honour that pragma, so the Windows link needs the library named here. */
+        nob_cmd_append(&link, "-o", exe_path, "-lwinpthread", "-lbcrypt");
+        bool linked = nob_cmd_run_sync(link);
+        nob_cmd_free(link);
+        if (!linked) {
+            nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL] path=cross/%s stage=link", target->name);
+            nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL_HINT] A symbol resolved on ELF but not on this target's object format (e.g. a PE/COFF weak symbol). Inspect the undefined reference above.");
+            return false;
+        }
+        nob_log(NOB_INFO, "[PROVEN][TEST][INFO] path=cross/%s stage=link linked smoke executable", target->name);
+    }
+
+    return true;
+}
+
 static bool run_cross_compile_matrix(const char *build_root, const char *sysroot,
                                      const char **srcs, size_t srcs_count,
                                      const char **headers, size_t headers_count) {
@@ -703,162 +847,52 @@ static bool run_cross_compile_matrix(const char *build_root, const char *sysroot
 
     if (!mkdir_p_safe(build_root)) return false;
 
-    size_t available = 0;
+    /*
+     * Every target ends as PASS, FAIL or SKIP, and all three are reported (B-035). A missing
+     * toolchain is a SKIP - a verification gap, not a pass - and the four targets a release
+     * depends on (the native host compilers and both Windows word sizes; owner decision
+     * 2026-09-28) may not be skipped: a matrix that skipped one of them does not finish green.
+     */
+    static const char *const mandatory[] = {
+        "native-gcc-hosted", "native-clang-hosted", "windows-x86_64-winapi", "windows-i686-winapi",
+    };
+    enum { CROSS_PASS, CROSS_FAIL, CROSS_SKIP } result[NOB_ARRAY_LEN(targets)];
+    const char *why[NOB_ARRAY_LEN(targets)];
+    size_t passed = 0, failed = 0, skipped = 0;
+    bool mandatory_missing = false;
+
     for (size_t t = 0; t < NOB_ARRAY_LEN(targets); ++t) {
         const Proven_Cross_Target *target = &targets[t];
         const char *standard_flag = NULL;
+        why[t] = "";
         if (!command_available(target->compiler)) {
             nob_log(NOB_WARNING, "Skipping %s: compiler not found: %s", target->name, target->compiler);
-            continue;
+            result[t] = CROSS_SKIP; why[t] = "compiler not found"; ++skipped;
+        } else if (!cross_target_toolchain_usable(build_root, target, sysroot, &standard_flag)) {
+            result[t] = CROSS_SKIP; why[t] = "target flags or sysroot not usable"; ++skipped;
+        } else if (run_cross_target(target, standard_flag, build_root, sysroot, srcs, srcs_count)) {
+            nob_log(NOB_INFO, "[PROVEN][TEST][PASS] path=cross/%s", target->name);
+            result[t] = CROSS_PASS; ++passed;
+        } else {
+            result[t] = CROSS_FAIL; ++failed;
         }
-        if (!cross_target_toolchain_usable(build_root, target, sysroot, &standard_flag)) {
-            continue;
-        }
-        available += 1;
-
-        char target_dir[512];
-        if (!format_path(target_dir, sizeof(target_dir), "%s/%s", build_root, target->name)) return false;
-        if (!mkdir_p_safe(target_dir)) return false;
-
-        nob_log(NOB_INFO, "[PROVEN][TEST][BEGIN] path=cross/%s title=cross compile target", target->name);
-        nob_log(NOB_INFO, "[PROVEN][TEST][INTENT] Compile proven sources and the smoke translation unit for target %s using %s.", target->name, target->compiler);
-        nob_log(NOB_INFO, "[PROVEN][TEST][FAIL_HINT] If this target fails, check the compiler/sysroot for %s first; otherwise inspect the source file named in the compiler diagnostic.", target->name);
-        nob_log(NOB_INFO, "Cross compile target: %s (%s)", target->name, target->compiler);
-
-        for (size_t i = 0; i < srcs_count; ++i) {
-            if (target->freestanding && !cross_source_is_freestanding(srcs[i])) continue;
-
-            char obj_name[256];
-            sanitize_name(obj_name, sizeof obj_name, srcs[i]);
-
-            char obj_path[768];
-            if (!format_path(obj_path, sizeof(obj_path), "%s/%s.o", target_dir, obj_name)) return false;
-
-            Nob_Cmd cmd = {0};
-            nob_cmd_append(&cmd, target->compiler);
-            append_cross_cflags(&cmd, target, standard_flag, sysroot);
-            nob_cmd_append(&cmd, "-c", srcs[i], "-o", obj_path);
-            bool ok = nob_cmd_run_sync(cmd);
-            nob_cmd_free(cmd);
-            if (!ok) {
-                nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL] path=cross/%s stage=compile-source source=%s", target->name, srcs[i]);
-                nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL_HINT] Check the diagnostic above for the exact source portability issue on this target.");
-                return false;
+        if (result[t] == CROSS_SKIP) {
+            for (size_t k = 0; k < NOB_ARRAY_LEN(mandatory); ++k) {
+                if (strcmp(mandatory[k], target->name) == 0) { mandatory_missing = true; why[t] = nob_temp_sprintf("%s - MANDATORY", why[t]); }
             }
         }
-
-        const Proven_Test_Case *smoke_tests = cross_compile_tests;
-        size_t smoke_count = NOB_ARRAY_LEN(cross_compile_tests);
-        if (target->freestanding) {
-            smoke_tests = find_test_case(
-                freestanding_tests, NOB_ARRAY_LEN(freestanding_tests),
-                PROVEN_FREESTANDING_CROSS_SMOKE_PATH);
-            if (!smoke_tests) {
-                nob_log(NOB_ERROR,
-                        "[PROVEN][TEST][FAIL] path=cross/%s stage=manifest",
-                        target->name);
-                nob_log(NOB_ERROR,
-                        "[PROVEN][TEST][FAIL_HINT] The named freestanding cross smoke path is absent from freestanding_tests[].");
-                return false;
-            }
-            smoke_count = 1;
-        }
-        const char *smoke_obj_paths[NOB_ARRAY_LEN(cross_compile_tests)];
-        for (size_t i = 0; i < smoke_count; ++i) {
-            const char *smoke_source = nob_temp_sprintf("%s.c", smoke_tests[i].path);
-            const char *smoke_obj =
-                nob_temp_sprintf("%s/smoke-%zu.o", target_dir, i);
-            smoke_obj_paths[i] = smoke_obj;
-
-            Nob_Cmd cmd = {0};
-            nob_cmd_append(&cmd, target->compiler);
-            append_cross_cflags(&cmd, target, standard_flag, sysroot);
-            nob_cmd_append(&cmd, "-c", smoke_source, "-o", smoke_obj);
-            bool ok = nob_cmd_run_sync(cmd);
-            nob_cmd_free(cmd);
-            if (!ok) {
-                nob_log(NOB_ERROR,
-                        "[PROVEN][TEST][FAIL] path=cross/%s stage=compile-smoke source=%s",
-                        target->name, smoke_source);
-                nob_log(NOB_ERROR,
-                        "[PROVEN][TEST][FAIL_HINT] Check public header feature guards and target-specific compiler diagnostics above.");
-                return false;
-            }
-        }
-
-        if (target->freestanding) {
-            /* B-034: the no-CRT link. Every freestanding object plus a program that supplies only
-             * memcpy/memmove/memset/memcmp, linked static with no C library and no startup files.
-             * A static link fails on any unresolved symbol, so success is the evidence that the
-             * library needs nothing else from its environment but the compiler's support library. */
-            const char *nocrt_src = nob_temp_sprintf("%s.c", freestanding_link_tests[0].path);
-            char elf_path[768];
-            if (!format_path(elf_path, sizeof(elf_path), "%s/nocrt-link.elf", target_dir)) return false;
-            Nob_Cmd link = {0};
-            nob_cmd_append(&link, target->compiler);
-            append_cross_cflags(&link, target, standard_flag, sysroot);
-            nob_cmd_append(&link, "-nostartfiles", "-static", "-Wl,-e,proven_nocrt_entry");
-            for (size_t i = 0; i < srcs_count; ++i) {
-                if (!cross_source_is_freestanding(srcs[i])) continue;
-                char link_obj[256];
-                sanitize_name(link_obj, sizeof link_obj, srcs[i]);
-                nob_cmd_append(&link, nob_temp_sprintf("%s/%s.o", target_dir, link_obj));
-            }
-            nob_cmd_append(&link, nocrt_src, "-lgcc", "-o", elf_path);
-            bool linked = nob_cmd_run_sync(link);
-            nob_cmd_free(link);
-            if (!linked) {
-                nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL] path=cross/%s stage=nocrt-link", target->name);
-                nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL_HINT] %s", freestanding_link_tests[0].failure_hint);
-                return false;
-            }
-            nob_log(NOB_INFO, "[PROVEN][TEST][INFO] path=cross/%s stage=nocrt-link linked with only memcpy, memmove, memset, memcmp and -lgcc", target->name);
-        }
-
-        if (target_links_smoke(target)) {
-            char exe_path[768];
-            if (!format_path(exe_path, sizeof(exe_path), "%s/link-smoke", target_dir)) return false;
-            Nob_Cmd link = {0};
-            nob_cmd_append(&link, target->compiler);
-            append_cross_cflags(&link, target, standard_flag, sysroot);
-            for (size_t i = 0; i < srcs_count; ++i) {
-                char link_obj[256];
-                sanitize_name(link_obj, sizeof link_obj, srcs[i]);
-                char link_obj_path[768];
-                if (!format_path(link_obj_path, sizeof(link_obj_path), "%s/%s.o", target_dir, link_obj)) {
-                    nob_cmd_free(link);
-                    return false;
-                }
-                nob_cmd_append(&link, nob_temp_sprintf("%s", link_obj_path));
-            }
-            for (size_t i = 0; i < smoke_count; ++i) {
-                nob_cmd_append(&link, smoke_obj_paths[i]);
-            }
-            for (size_t i = 0; i < NOB_ARRAY_LEN(cross_link_tests); ++i) {
-                nob_cmd_append(&link,
-                               nob_temp_sprintf("%s.c", cross_link_tests[i].path));
-            }
-            /* -lbcrypt: the Windows CSPRNG (BCryptGenRandom). MSVC pulls the import
-             * library in from a #pragma comment in the source; mingw-w64 does not
-             * honour that pragma, so the Windows link needs the library named here. */
-            nob_cmd_append(&link, "-o", exe_path, "-lwinpthread", "-lbcrypt");
-            bool linked = nob_cmd_run_sync(link);
-            nob_cmd_free(link);
-            if (!linked) {
-                nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL] path=cross/%s stage=link", target->name);
-                nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL_HINT] A symbol resolved on ELF but not on this target's object format (e.g. a PE/COFF weak symbol). Inspect the undefined reference above.");
-                return false;
-            }
-            nob_log(NOB_INFO, "[PROVEN][TEST][INFO] path=cross/%s stage=link linked smoke executable", target->name);
-        }
-
-        nob_log(NOB_INFO, "[PROVEN][TEST][PASS] path=cross/%s", target->name);
     }
 
-    if (available == 0) {
-        nob_log(NOB_WARNING, "No cross compilers were available. Install target toolchains and rerun `./nob cross`.");
+    for (size_t t = 0; t < NOB_ARRAY_LEN(targets); ++t) {
+        const char *r = result[t] == CROSS_PASS ? "PASS" : result[t] == CROSS_FAIL ? "FAIL" : "SKIP";
+        nob_log(result[t] == CROSS_PASS ? NOB_INFO : NOB_WARNING, "[PROVEN][CROSS][RESULT] target=%s result=%s%s%s",
+                targets[t].name, r, *why[t] ? " reason=" : "", why[t]);
     }
-    return true;
+    nob_log(NOB_INFO, "[PROVEN][CROSS][SUMMARY] passed=%zu failed=%zu skipped=%zu", passed, failed, skipped);
+    if (mandatory_missing) {
+        nob_log(NOB_ERROR, "[PROVEN][CROSS][FAIL] a mandatory target was skipped: install its toolchain, or the matrix is not evidence for it");
+    }
+    return failed == 0 && !mandatory_missing;
 }
 
 int main(int argc, char **argv)

@@ -98,7 +98,7 @@ Run cross-build coverage:
 ./nob cross -build-root build-out/proven_c_lib
 ```
 
-Missing optional cross compilers are skipped. A compiler that exists but cannot build the target probe is skipped with a warning. A real compile error in an available target fails the command.
+Every target ends as PASS, FAIL or SKIP, and the run prints one `[PROVEN][CROSS][RESULT]` line per target and a `[PROVEN][CROSS][SUMMARY]`. A missing compiler, or one that cannot build the target probe, is a SKIP - a verification gap, not a pass. The mandatory targets - `native-gcc-hosted`, `native-clang-hosted`, `windows-x86_64-winapi`, `windows-i686-winapi` - may not be skipped: if one is, the run fails. A real compile or link error fails the run, after every other target has still been tried.
 
 Clean generated output:
 
@@ -290,7 +290,7 @@ Intent: compile the library and smoke tests for every available target compiler.
 What it checks:
 
 - Public headers are portable across hosted Linux, Windows MinGW, and freestanding embedded targets that exist on the build server.
-- Missing optional compilers are skipped; real compile failures fail the run.
+- Every target is reported PASS, FAIL or SKIP; a skipped mandatory target (native gcc/clang, both Windows word sizes) or any real failure fails the run.
 
 Failure tip: identify the target name in the log, then check whether the failure is from compiler availability, sysroot usability, or actual source incompatibility. Cross compilation does not replace runtime testing on the target.
 

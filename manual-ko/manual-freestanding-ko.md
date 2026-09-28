@@ -554,4 +554,4 @@ freestanding-riscv64-elf          riscv64-elf-gcc
 freestanding-riscv64-unknown-elf  riscv64-unknown-elf-gcc
 ```
 
-없는 툴체인은 건너뛴다. 실제 컴파일 실패는 명령을 실패시킨다. 런타임 동작은 여전히 대상 또는 에뮬레이터에서의 검증이 필요하다.
+모든 타깃은 PASS, FAIL, SKIP으로 보고된다. 없는 툴체인은 SKIP이다 - 통과가 아니라 증거의 빈자리다. 프리스탠딩 타깃은 건너뛸 수 있지만, 네이티브 호스트 컴파일러와 두 Windows 타깃은 건너뛸 수 없다. 실제 컴파일이나 링크 실패는 명령을 실패시킨다. 런타임 동작은 여전히 대상 또는 에뮬레이터에서의 검증이 필요하다.

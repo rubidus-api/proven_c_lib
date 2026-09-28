@@ -559,4 +559,4 @@ freestanding-riscv64-elf          riscv64-elf-gcc
 freestanding-riscv64-unknown-elf  riscv64-unknown-elf-gcc
 ```
 
-Missing toolchains are skipped. Real compile failures fail the command. Runtime behavior still needs validation on the target or emulator.
+Every target is reported as PASS, FAIL or SKIP. A missing toolchain is a SKIP - a gap in the evidence, not a pass; the freestanding targets may be skipped, the native host compilers and both Windows targets may not. Real compile or link failures fail the command. Runtime behavior still needs validation on the target or emulator.

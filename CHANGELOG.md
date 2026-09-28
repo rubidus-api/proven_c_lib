@@ -20,6 +20,11 @@ written; their tags still exist.
 
 ### Changed
 
+- **`./nob cross` reports every target and cannot skip the ones a release needs (B-035).** Each
+  target ends PASS, FAIL or SKIP with a reason, a failure no longer stops the other targets, and a
+  summary is printed. Skipping `native-gcc-hosted`, `native-clang-hosted`, `windows-x86_64-winapi`
+  or `windows-i686-winapi` fails the run; before, a run that skipped nine of eleven targets
+  finished green.
 - **The freestanding runtime contract is explicit and linked (B-034).** A freestanding build needs
   `memcpy`, `memmove`, `memset`, `memcmp` and the compiler support library, nothing else - stated
   in the freestanding guide and proven by a new `./nob cross` stage that links every freestanding
