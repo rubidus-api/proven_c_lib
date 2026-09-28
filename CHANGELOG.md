@@ -18,9 +18,14 @@ written; their tags still exist.
 
 ## [Unreleased]
 
-UTF-16 text gets a way in and out, and UTF-8 text shows correctly on a Windows console
-(`docs/BACKLOG.md` B-039). New public API; existing behaviour changes only on a Windows console,
-where it was wrong.
+## [0.2.0] - 2026-09-28
+
+A MINOR release: new public API, nothing removed. UTF-16 text gets a way in and out and UTF-8
+shows correctly on a Windows console (B-039); the view vocabulary - split, trim, affixes,
+find_last, contains, ordering (RFC-0003, B-018 to B-022); an allocator wrapper that catches the
+wrong allocator at the call (B-040); Windows symlinks and the 4 GiB entropy boundary measured and
+fixed (B-033); reproducible manual PDFs. Existing behaviour changes only where it was wrong: on a
+Windows console, for Windows symlinks, and in `proven_time_u16_fmt` with non-ASCII locales.
 
 ### Added
 
