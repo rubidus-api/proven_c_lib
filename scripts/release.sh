@@ -153,10 +153,20 @@ for a in json.load(sys.stdin):
             built_sha=$(sha256sum "$f" | cut -d' ' -f1)
             up_sha=${3:--}
             if [ "$up_sha" = "-" ] && [ -n "${1:-}" ]; then
-                up_sha=$(curl -sSL -H "Authorization: token $tok" -H "Accept: application/octet-stream" \
-                              "https://api.github.com/repos/$repo/releases/assets/$1" | sha256sum | cut -d' ' -f1)
+                # -f, and into a file: an error body or an interrupted download must not be
+                # hashed as if it were the asset - that would read as "different" and delete a
+                # correct asset. A fetch that fails leaves the hash unknown.
+                fetched=$(mktemp)
+                if curl -fsSL -H "Authorization: token $tok" -H "Accept: application/octet-stream" \
+                        "https://api.github.com/repos/$repo/releases/assets/$1" -o "$fetched"; then
+                    up_sha=$(sha256sum "$fetched" | cut -d' ' -f1)
+                fi
+                rm -f "$fetched"
             fi
-            if [ "$up_sha" = "$built_sha" ]; then
+            if [ "$up_sha" = "-" ]; then
+                echo "  FAILED to read the uploaded $name to compare it; leaving it in place" >&2
+                upload_failed=1
+            elif [ "$up_sha" = "$built_sha" ]; then
                 echo "  already present, same SHA-256: $name"
             else
                 echo "  replacing $name (uploaded sha256 $(printf '%.12s' "$up_sha"), built $(printf '%.12s' "$built_sha"))"
