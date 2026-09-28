@@ -1,6 +1,6 @@
-# Proven C library
+[한국어](README-ko.md) | **English** — **Proven C library v0.2.0** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.2.0/proven_c_lib-v0.2.0.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.2.0/proven_c_lib-v0.2.0-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.2.0/proven_c_lib-v0.2.0-ko-manual.pdf)
 
-**English** · [한국어](README-ko.md)
+# Proven C library
 
 📖 **[Read the manual online](https://rubidus-api.github.io/proven_c_lib/en/)** · [한국어 매뉴얼](https://rubidus-api.github.io/proven_c_lib/ko/) · [PDF](https://github.com/rubidus-api/proven_c_lib/releases/latest)
 
