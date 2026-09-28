@@ -96,6 +96,25 @@ where it was wrong.
 
 ### Fixed
 
+- **Code review of the unreleased work (2026-09-28), ten findings:**
+  - A buffered writer's automatic drain flushed the inner writer, and on a Windows console that
+    flush ended the text: valid UTF-8 split at a buffer boundary came back INVALID_ENCODING with
+    bytes lost. Drains no longer flush the inner writer, and the console writer's flush keeps an
+    open character for the next write. Reproduced on the Win11 VM before (FAIL) and fixed after
+    (win64/win32 18/18).
+  - A non-NULL empty view passed through `remove_prefix`, `remove_suffix` and `split` as `{p, 0}`;
+    every empty result is now `{NULL, 0}` as documented.
+  - The Windows symlink kind is decided from a path normalised before any `\\?\` prefix.
+    Defensive: the long-path case the review predicted did not fail on Windows 11 before the fix.
+  - `proven_u16_reader_t` stages 1 KiB with a cursor: about one source read per KiB instead of
+    one per 64 bytes.
+  - `utf.h`'s append functions grow once and convert in place (no chunk copy, no rollback).
+  - One overlap rule (`proven_range_overlaps`) for u16 input in `utf.h` and the formatter; the
+    formatter used to accept a view running into its output from below.
+  - One padding rule (`spec_padding`) for plain, custom and UTF-16 fields.
+  - `build-b033-check.sh` prints its report and cleans up when the check fails; `release.sh`
+    never deletes an asset because a digest download failed.
+  - New comments are ASCII.
 - **Windows symlinks (B-033).** `proven_fs_symlink` created a link to a directory as a file
   link, which cannot be listed or entered, and made every relative target absolute against the
   current directory (`sub/rel -> t` pointed at `./t`), because the target went through the
