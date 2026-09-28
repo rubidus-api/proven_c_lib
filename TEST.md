@@ -23,7 +23,7 @@ The class says what kind of question the test answers:
 | `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 11 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
 | `docs` | Are the claims the documentation makes still true? | 11 |
-| `bench` | How fast is it? (Not a correctness gate.) | 3 |
+| `bench` | How fast is it? (Not a correctness gate.) | 5 |
 
 ## Table of contents
 
@@ -297,7 +297,7 @@ Failure tip: identify the target name in the log, then check whether the failure
 ## Test catalog
 
 
-The hosted full run builds and executes 128 registered tests plus the 92 runnable manual examples - 220 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 139 test files: the 128 above, the 5 freestanding-only and 3 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 128 registered tests plus the 92 runnable manual examples - 220 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 141 test files: the 128 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -2032,6 +2032,26 @@ Failure tip: if a checksum drifts the backend changed behaviour; if a timing reg
 Intent: compare the shared float parser, wrapper, and host strtod on separate path-oriented decimal corpora and record dated docs output.
 
 Failure tip: inspect src/proven/float_parse.c, src/proven/float_decimal.c, and the path-specific corpus split if the timing harness fails or any checksum drifts.
+
+### `tests/test_bench_float_host` - float engine against the host C library
+
+Intent: time parsing and formatting against `strtod`/`snprintf` on fixed-seed corpora, and check every result against the host in the same run.
+
+- Parse: `%.6g`, shortest (~16 digit) and `%.17g` spellings of a normal-magnitude corpus; bits must equal `strtod`'s.
+- Format: shortest (timed against `%.17g`), `%f` with 6 digits, `%e` with 16, on normal-magnitude and uniform-bit-pattern corpora; `%f`/`%e` bytes must equal `snprintf`'s and shortest must round-trip. Every call's result is checked and the buffer cleared first - the first draft scored a failed call by the previous call's output.
+- Rows in the shared benchmark format (`tests/proven_bench.h`) plus a proven/host ratio line per case.
+
+Failure tip: any mismatch fails the run and is a correctness defect in `src/proven/float_*.c`; timing is recorded, not judged (`docs/benchmarks/`).
+
+### `tests/test_bench_job` - job system idle cost and latency
+
+Intent: record the job system's idle cost and wake latency (B-038) in the shared benchmark format.
+
+- Idle CPU over 250 ms for 1, 2, 8 and 32 parked workers.
+- Median and p99 submit-to-start latency: every worker parked, a 64-job burst, and saturated by four producers; saturated four-producer throughput.
+- Ten thousand no-op jobs are counted; a lost job fails the run.
+
+Failure tip: timings are compared with the budget in `docs/benchmarks/README.md`, not asserted; a lost job is a defect in `src/proven/job.c`.
 
 ### `tests/test_bench_float_parse` - float parse benchmark
 

@@ -1,6 +1,7 @@
 #include "proven/float_parse.h"
 #include "proven/time.h"
 #include "proven_test.h"
+#include "proven_bench.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -72,25 +73,28 @@ static uint64_t mix_checksum(uint64_t acc, uint64_t value) {
 static void run_benchmark_row(const char *group_name, const char *label, float_parse_bench_fn_t fn,
                               const float_parse_bench_sample_t *samples, size_t sample_count,
                               size_t rounds) {
-    uint64_t checksum = 0xcbf29ce484222325ULL;
-    proven_time_t start = proven_time_now();
-
-    for (size_t round = 0; round < rounds; ++round) {
-        for (size_t i = 0; i < sample_count; ++i) {
-            float_parse_bench_result_t res = fn(samples[i].text);
-            checksum = mix_checksum(checksum, res.bits);
-            checksum = mix_checksum(checksum, (uint64_t)res.consumed);
-        }
-    }
-
-    proven_time_t end = proven_time_now();
-    proven_i64 elapsed_ns = end - start;
-    if (elapsed_ns <= 0) {
-        elapsed_ns = 1;
-    }
-
+    /* One warmup and five samples, as a shared benchmark row (tests/proven_bench.h). */
+    uint64_t checksum = 0;
+    double s[5];
     uint64_t total_calls = (uint64_t)sample_count * (uint64_t)rounds;
-    double ns_per_call = (double)elapsed_ns / (double)total_calls;
+    for (int k = -1; k < 5; ++k) {
+        checksum = 0xcbf29ce484222325ULL;
+        double t0 = proven_bench_now_ns();
+        for (size_t round = 0; round < rounds; ++round) {
+            for (size_t i = 0; i < sample_count; ++i) {
+                float_parse_bench_result_t res = fn(samples[i].text);
+                checksum = mix_checksum(checksum, res.bits);
+                checksum = mix_checksum(checksum, (uint64_t)res.consumed);
+            }
+        }
+        double t1 = proven_bench_now_ns();
+        if (k >= 0) s[k] = (t1 - t0) / (double)total_calls;
+    }
+    char casename[96];
+    snprintf(casename, sizeof casename, "%s/%s", group_name, label);
+    proven_bench_row("float_parse_paths", casename, "ns_per_call", 1, s, 5, (unsigned long long)checksum);
+    proven_i64 elapsed_ns = (proven_i64)(s[2] * (double)total_calls);
+    double ns_per_call = s[2];
     PROVEN_TEST_INFO("group={} backend={} total_calls={} total_ns={} ns_per_call={} checksum={}",
                      PROVEN_ARG(group_name),
                      PROVEN_ARG(label),

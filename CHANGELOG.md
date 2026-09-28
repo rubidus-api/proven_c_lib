@@ -18,8 +18,23 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **One benchmark row format, and the benchmarks behind the published numbers (B-037, B-038).**
+  `tests/proven_bench.h`: warmup, five samples on a monotonic clock, median, spread, raw samples,
+  checksum, compiler and profile on one line; every registered benchmark uses it. New
+  `tests/test_bench_float_host.c` (the float-vs-glibc comparison, now checked in, with accuracy
+  asserted in the same run) and `tests/test_bench_job.c` (idle CPU for 1-32 workers, idle / burst
+  / saturated wake latency, throughput). Raw results and a claim-to-row map in
+  `docs/benchmarks/`, with the job system's latency budget.
+
 ### Changed
 
+- **Published float speed claims follow the checked-in benchmark.** Re-measured: parsing is
+  faster than glibc on short numbers, level at ~16 digits, ~1.1x slower at 17; shortest formatting
+  ~3.6x faster than `%.17g`; `%f`/`%e` faster at every magnitude measured - the June claim that
+  they were 3-5x slower at extreme magnitudes did not reproduce. README (both), the float doc and
+  `docs/primitives-benchmark.md` updated.
 - **English public text is ASCII, and stays so (B-036).** README.md, TEST.md, CHANGELOG.md, the
   English manual and examples, and all C sources and build files were normalised (em dashes,
   section signs, arrows and the like; 48 files), with the Markdown anchors of changed headings

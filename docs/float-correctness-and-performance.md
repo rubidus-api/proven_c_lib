@@ -15,7 +15,8 @@ parser and formatter are trustworthy and fast enough for production use.
   every input tested; and on realistic data the library is **faster than glibc** at
   almost everything it does. Full numbers and methodology are below.
 - **Environment for the measurements in this document:** x86-64, GCC 14.2.0,
-  glibc 2.41, single-threaded benchmarks, 16-thread exhaustive sweep.
+  glibc, single-threaded benchmarks (section 3, re-measured 2026-09-28 with the checked-in
+  `tests/test_bench_float_host.c`), 16-thread exhaustive sweep.
 
 ---
 
@@ -198,63 +199,61 @@ parameterised only by the significand width and exponent range.
 
 ## 3. Performance vs the host C library
 
-Single-threaded, GCC 14.2.0 `-O2`, glibc 2.41, 200,000-value corpora, 8
-repetitions. `ratio` is proven ÷ host, so **< 1.0 means the library is faster**.
-Accuracy is measured in the same run.
+**Re-measured 2026-09-28 with a checked-in harness**, `tests/test_bench_float_host.c`, run by
+`./nob bench-float` (release profile, GCC 14.2, glibc, x86-64, single thread). Fixed-seed corpora
+of 100,000 values; one warmup pass, then the median of five samples, each in the shared row
+format with its spread (raw rows: `docs/benchmarks/2026-09-28-x86_64-linux.txt`). `ratio` is
+proven / host, so **< 1.0 means the library is faster**. Accuracy is checked in the same run and
+a single mismatch fails the benchmark: parse results bit-for-bit against `strtod`, `%f` and `%e`
+byte-for-byte against `snprintf`, shortest output round-tripping through `strtod`. On this run:
+0 mismatches in 300,000 parses, 400,000 fixed/scientific formats and 200,000 shortest formats.
 
-### 3.1 Parsing (decimal → binary64), bit-exact vs `strtod`
+The June 2026 tables this replaces came from a harness kept outside the repository, on another
+machine; they cannot be re-run, which is why they are gone. The one conclusion that moved: they
+reported `%f`/`%e` 3-5x SLOWER than glibc at extreme magnitudes, and the checked-in harness
+measures them faster there too (table 3.3). Read that as "not reproduced here", not as a
+guarantee for other machines.
 
-| input corpus | proven | host `strtod` | ratio | mismatches |
-|---|---:|---:|---:|---:|
-| short human decimals (`%.6g`) | 95.2 ns | 135.2 ns | **0.70×** | 0 |
-| shortest round-trip (~16 dig) | 372.3 ns | 281.8 ns | 1.32× | 0 |
-| hardest 17-digit (`%.17g`) | 365.4 ns | 283.9 ns | 1.29× | 0 |
+### 3.1 Parsing (decimal -> binary64), bit-exact vs `strtod`
 
-The parser is **bit-for-bit identical to glibc** on every corpus. It is *faster*
-than glibc on short, human-sized numbers (the common case) and about 1.3× slower
-on adversarial 16–17 significant-digit inputs, where glibc's hand-tuned big-integer
-path is still ahead. There is no accuracy cost anywhere.
+| input corpus | proven | host `strtod` | ratio |
+|---|---:|---:|---:|
+| short human decimals (`%.6g`) | 82.8 ns | 134.2 ns | **0.62x** |
+| shortest round-trip (~16 digits) | 186.2 ns | 193.7 ns | 0.96x |
+| hardest 17-digit (`%.17g`) | 223.5 ns | 197.1 ns | 1.13x |
 
-### 3.2 Formatting — normal magnitudes (1e-6 … 1e6)
+Faster than glibc on short, human-sized numbers - the common case - level at ~16 digits, and
+about 1.1x slower on 17-digit inputs.
 
-This is the corpus that reflects ordinary application data.
+### 3.2 Formatting - normal magnitudes (1e-6 ... 1e6)
 
-| operation | proven | host | ratio | accuracy |
-|---|---:|---:|---:|---|
-| shortest | 142.5 ns | 542.7 ns (`%.17g`) | **0.26×** | 0 round-trip failures; avg 16.93 vs 17.66 digits |
-| `%f` precision 6 | 282.9 ns | 380.7 ns | **0.74×** | 0 / 200000 mismatch |
-| `%e` precision 16 | 462.5 ns | 596.0 ns | **0.78×** | 0 / 200000 mismatch |
+| operation | proven | host | ratio |
+|---|---:|---:|---:|
+| shortest | 144.6 ns | 518.2 ns (`%.17g`) | **0.28x** |
+| `%f` precision 6 | 205.3 ns | 345.1 ns | **0.59x** |
+| `%e` precision 16 | 308.3 ns | 529.6 ns | **0.58x** |
 
-On realistic data the library **beats glibc on every formatting operation**, while
-being exact. For shortest output glibc has no real equivalent — the closest is
-`%.17g`, which is ~3.8× slower, produces *longer* strings on average, and is not
+For shortest output glibc has no equivalent; the nearest, `%.17g`, is ~3.6x slower and not
 minimal.
 
-### 3.3 Formatting — uniform bit patterns (extreme-magnitude heavy)
+### 3.3 Formatting - uniform bit patterns (extreme-magnitude heavy)
 
-Random `binary64` bit patterns are dominated by huge/tiny exponents that are rare
-in real data; this corpus stresses the exact big-integer path.
+Random `binary64` bit patterns are dominated by huge and tiny exponents that are rare in real
+data; this corpus stresses the exact big-integer path.
 
-| operation | proven | host | ratio | accuracy |
-|---|---:|---:|---:|---|
-| shortest | 164.4 ns | 878.6 ns (`%.17g`) | **0.19×** | 0 round-trip failures; avg 16.42 vs 16.90 digits |
-| `%f` precision 6 | 2695.1 ns | 635.1 ns | 4.24× | 0 / 200000 mismatch |
-| `%e` precision 16 | 2828.4 ns | 881.9 ns | 3.21× | 0 / 200000 mismatch |
-
-Shortest stays ~5× faster than glibc even here (Grisu3 is table-driven, not
-magnitude-sensitive). Fixed `%f`/`%e` at extreme magnitudes is the one place the
-library is slower: it does genuine arbitrary-precision arithmetic to be *exact*,
-where glibc takes approximating shortcuts. The output is still bit-identical to
-glibc on these cases, and such magnitudes are uncommon in practice.
+| operation | proven | host | ratio |
+|---|---:|---:|---:|
+| shortest | 169.5 ns | 908.7 ns (`%.17g`) | **0.19x** |
+| `%f` precision 6 | 1652 ns | 4663 ns | **0.35x** |
+| `%e` precision 16 | 731.9 ns | 907.1 ns | **0.81x** |
 
 ### 3.4 Summary of the trade-off
 
-- **Correctness is never traded away.** Parser bit-identical to `strtod`;
-  `%f`/`%e` bit-identical to `snprintf`; shortest always round-trips and is minimal.
-- **Faster than glibc** at: parsing typical numbers, shortest formatting (by 4–5×),
-  and `%f`/`%e` at normal magnitudes.
-- **Slower than glibc** at: parsing 16–17-digit numbers (~1.3×) and `%f`/`%e` at
-  extreme magnitudes (3–4×), the price of being exact with no `long double`.
+- **Correctness is never traded away.** Parser bit-identical to `strtod`; `%f`/`%e`
+  bit-identical to `snprintf`; shortest always round-trips and is minimal.
+- **Faster than glibc** here at: parsing short numbers, and every formatting operation at every
+  magnitude measured.
+- **Slower than glibc** here at: parsing 17-digit numbers (~1.1x).
 
 ---
 
@@ -278,11 +277,10 @@ glibc on these cases, and such magnitudes are uncommon in practice.
 
 ## 5. Reproducing the results
 
-The exhaustive sweep and the benchmark are standalone C programs that link the
-library sources and the host C library as the oracle. The dated raw outputs are
-kept in maintainer-local `docs/internal/` (kept outside the published repository)
-(`*-f32-exhaustive-validation.md`, `*-f64-differential-validation.md`, and
-`*-float-vs-host-benchmark.md`). To
-re-run: compile the library sources at `-O2`, link the harness, and run — the
-exhaustive sweep prints the failure table above (all zeros), and the benchmark
-prints the tables in §3.
+The benchmark in section 3 is checked in (`tests/test_bench_float_host.c`) and runs with
+`./nob bench-float`; its raw rows are under `docs/benchmarks/`. The exhaustive sweeps are
+standalone programs that link the library sources and the host C library as the oracle; their
+dated raw outputs are kept in maintainer-local `docs/internal/` (outside the published repository)
+(`*-f32-exhaustive-validation.md`, `*-f64-differential-validation.md`). To re-run a sweep: compile
+the library sources at `-O2`, link the harness, and run - it prints the failure table above (all
+zeros).

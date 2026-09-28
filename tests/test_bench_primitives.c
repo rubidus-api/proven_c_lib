@@ -1,6 +1,7 @@
 #include "proven.h"
 #include "proven/time.h"
 #include "proven_test.h"
+#include "proven_bench.h"
 #include <stdint.h>
 #include <string.h>
 
@@ -33,21 +34,19 @@ static void fill_payload(void) {
     }
 }
 
+/* One warmup and five samples, reported as a shared benchmark row (tests/proven_bench.h). */
 static void bench_throughput(const char *label, uint64_t (*run)(proven_mem_view_t), proven_size_t nbytes, size_t rounds) {
     proven_mem_view_t v = { g_data, nbytes };
-    uint64_t checksum = 0xcbf29ce484222325ULL;
-    proven_time_t start = proven_time_now();
-    for (size_t r = 0; r < rounds; ++r) checksum = mix(checksum, run(v));
-    proven_time_t end = proven_time_now();
-
-    proven_i64 ns = end - start; if (ns <= 0) ns = 1;
-    double per_byte = (double)ns / ((double)nbytes * (double)rounds);
-    double mb_s = 1000.0 / per_byte;   /* bytes/ns == GB/s; *1000 -> MB/s per ns/byte inverse */
-    PROVEN_TEST_INFO("backend={} bytes={} rounds={} ns_per_byte={} MB_per_s={} checksum={}",
-                     PROVEN_ARG(label), PROVEN_ARG((unsigned long long)nbytes),
-                     PROVEN_ARG((unsigned long long)rounds),
-                     PROVEN_ARG(per_byte), PROVEN_ARG(mb_s),
-                     PROVEN_ARG((unsigned long long)checksum));
+    double s[5];
+    uint64_t checksum = 0;
+    for (int k = -1; k < 5; ++k) {
+        checksum = 0xcbf29ce484222325ULL;
+        double t0 = proven_bench_now_ns();
+        for (size_t r = 0; r < rounds; ++r) checksum = mix(checksum, run(v));
+        double t1 = proven_bench_now_ns();
+        if (k >= 0) s[k] = (t1 - t0) / ((double)nbytes * (double)rounds);
+    }
+    proven_bench_row("primitives", label, "ns_per_byte", 1, s, 5, (unsigned long long)checksum);
 }
 
 /* ---- hash backends ---- */
@@ -96,24 +95,27 @@ int main(void) {
     {
         proven_xoshiro256ss_t x; proven_xoshiro256ss_seed(&x, 7);
         proven_rng_t xr = proven_xoshiro256ss_rng(&x);
-        uint64_t cs = 0; const size_t R2 = 100000;
-        proven_time_t s = proven_time_now();
-        for (size_t r = 0; r < R2; ++r) { proven_rng_fill(xr, g_data, N); cs = mix(cs, g_data[N-1]); }
-        proven_time_t e = proven_time_now(); proven_i64 ns = e - s; if (ns<=0) ns=1;
-        PROVEN_TEST_INFO("backend={} bytes={} rounds={} ns_per_byte={} MB_per_s={} checksum={}",
-            PROVEN_ARG("random_xoshiro"), PROVEN_ARG((unsigned long long)N), PROVEN_ARG((unsigned long long)R2),
-            PROVEN_ARG((double)ns/((double)N*(double)R2)), PROVEN_ARG(1000.0/((double)ns/((double)N*(double)R2))),
-            PROVEN_ARG((unsigned long long)cs));
-
         proven_chacha_rng_t c; proven_byte_t seed[32]; memset(seed, 0x42, sizeof seed);
         proven_chacha_rng_seed(&c, seed);
-        cs = 0; s = proven_time_now();
-        for (size_t r = 0; r < R2; ++r) { proven_chacha_rng_fill(&c, g_data, N); cs = mix(cs, g_data[N-1]); }
-        e = proven_time_now(); ns = e - s; if (ns<=0) ns=1;
-        PROVEN_TEST_INFO("backend={} bytes={} rounds={} ns_per_byte={} MB_per_s={} checksum={}",
-            PROVEN_ARG("random_chacha20"), PROVEN_ARG((unsigned long long)N), PROVEN_ARG((unsigned long long)R2),
-            PROVEN_ARG((double)ns/((double)N*(double)R2)), PROVEN_ARG(1000.0/((double)ns/((double)N*(double)R2))),
-            PROVEN_ARG((unsigned long long)cs));
+        const size_t R2 = 100000;
+        double sx[5], sc[5];
+        uint64_t cs = 0;
+        for (int k = -1; k < 5; ++k) {
+            cs = 0;
+            double t0 = proven_bench_now_ns();
+            for (size_t r = 0; r < R2; ++r) { proven_rng_fill(xr, g_data, N); cs = mix(cs, g_data[N-1]); }
+            double t1 = proven_bench_now_ns();
+            if (k >= 0) sx[k] = (t1 - t0) / ((double)N * (double)R2);
+        }
+        proven_bench_row("primitives", "random_xoshiro", "ns_per_byte", 1, sx, 5, (unsigned long long)cs);
+        for (int k = -1; k < 5; ++k) {
+            cs = 0;
+            double t0 = proven_bench_now_ns();
+            for (size_t r = 0; r < R2; ++r) { proven_chacha_rng_fill(&c, g_data, N); cs = mix(cs, g_data[N-1]); }
+            double t1 = proven_bench_now_ns();
+            if (k >= 0) sc[k] = (t1 - t0) / ((double)N * (double)R2);
+        }
+        proven_bench_row("primitives", "random_chacha20", "ns_per_byte", 1, sc, 5, (unsigned long long)cs);
     }
 
     PROVEN_TEST_PASS("primitive throughput measured.");
