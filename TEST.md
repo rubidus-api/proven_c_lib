@@ -1828,14 +1828,14 @@ Concurrency under a sanitizer, over enough iterations to make a race likely rath
 
 ### `tests/test_differential_find_last_oracle` — find_last against a brute-force oracle
 
-Intent: verify `proven_u8str_view_find_last` against a memcmp-at-every-position oracle across all three of its paths.
+Intent: verify `proven_u8str_view_find_last` against a memcmp-at-every-position oracle across all of its paths.
 
 Sub-checks:
 
-- 60,000 fixed-seed cases: dense 1-4 symbol alphabets, single-byte runs, the periodic `"aab"` haystack and arbitrary bytes; needles of 1, 64 and 65 bytes (the path boundaries) and random lengths; needles copied from the haystack so matches occur. The share of cases with a match is printed and must exceed a quarter.
-- Planted defects - unreversed Shift-Or masks, skipping a whole needle past a match, a 65-byte needle sent to Shift-Or - each failed it before the test was trusted.
+- 120,000 fixed-seed cases: dense 1-4 symbol alphabets, single-byte runs, the periodic `"aab"` haystack and arbitrary bytes; needles of 1, 64 and 65 bytes (the path boundaries), 65-214 bytes (the reverse Two-Way range) and random lengths; needles copied from the haystack so matches occur. The share of cases with a match is printed and must exceed a quarter.
+- Planted defects each failed it before it was trusted: unreversed Shift-Or masks, skipping a whole needle past a match, a 65-byte needle sent to Shift-Or (RFC-0003), and for B-024 an inverted Two-Way periodicity flag, a Two-Way result off by one, and an anchored scan that stops at its first failed candidate.
 
-Failure tip: inspect `proven_u8str_view_find_last`; the printed needle length names the path (1 byte scan, 2-64 backward Shift-Or, 65+ repeated forward search).
+Failure tip: inspect `proven_u8str_view_find_last`. The printed needle length and shape name the path: 1 byte scan; 2-64 on shapes 0-2 backward Shift-Or, on shape 3 the anchored scan; 65+ on shapes 0-2 reverse Two-Way.
 
 ### `tests/test_stress_job_concurrency` — job queue stress
 

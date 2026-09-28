@@ -6,9 +6,10 @@
  * proven_u8str_view_find_last against a brute-force oracle (docs/RFC-0003 §5).
  *
  * The oracle tries every start position from the end with memcmp: obviously correct and slow.
- * The implementation has three paths - a backward byte scan for one-byte needles, a backward
- * Shift-Or up to 64 bytes (the one piece of new algorithm in RFC-0003, which is why a table of
- * hand-picked rows is not enough), and repeated forward search beyond. Every path is driven here
+ * The implementation has several paths - a backward byte scan for one-byte needles, a backward
+ * Shift-Or up to 64 bytes on low-entropy input (new algorithm, which is why a table of
+ * hand-picked rows is not enough), an anchored backward scan on ordinary input, and a reverse
+ * Two-Way for long needles on low-entropy input (B-024). Every path is driven here
  * over randomised haystacks and needles with a fixed seed, so a failure reproduces: small
  * alphabets so matches are dense, runs of one byte, the periodic "aab" pattern, needles taken
  * from the haystack itself so they are found, and needles of exactly 1, 64 and 65 bytes, the
@@ -32,15 +33,15 @@ static unsigned rnd(unsigned bound) {
 
 int main(void) {
     PROVEN_TEST_SUITE("find_last against a brute-force oracle",
-        "Randomised with a fixed seed across all three paths and their boundaries (needle length 1, 64, 65), dense alphabets, single-byte runs and periodic haystacks: the answer must equal the oracle's every time.",
-        "Inspect proven_u8str_view_find_last in src/proven/u8str.c. The printed case names the path by needle length: 1 is the byte scan, 2-64 backward Shift-Or, 65+ repeated forward search.");
+        "Randomised with a fixed seed across every path and its boundaries (needle length 1, 64, 65, up to 214), dense alphabets, single-byte runs and periodic haystacks: the answer must equal the oracle's every time.",
+        "Inspect proven_u8str_view_find_last in src/proven/u8str.c. The printed needle length and shape name the path: 1 byte scan; 2-64 on shapes 0-2 backward Shift-Or, on shape 3 the anchored scan; 65+ on shapes 0-2 reverse Two-Way.");
 
-    static unsigned char hay[600];
-    static unsigned char nd[80];
+    static unsigned char hay[1100];
+    static unsigned char nd[220];
     unsigned long cases = 0, found = 0, mismatches = 0;
 
-    for (int iter = 0; iter < 60000; ++iter) {
-        size_t n = rnd(300) + (iter % 7 == 0 ? 300 : 0);
+    for (int iter = 0; iter < 120000; ++iter) {
+        size_t n = rnd(300) + (iter % 7 == 0 ? 300 : 0) + (iter % 11 == 0 ? 500 : 0);
         unsigned alpha = 1 + rnd(4);                  /* 1..4 symbols: matches are dense */
         int shape = rnd(4);
         for (size_t i = 0; i < n; ++i) {
@@ -54,7 +55,8 @@ int main(void) {
         if (pick == 0) m = 1;
         else if (pick == 1) m = 64;
         else if (pick == 2) m = 65;
-        else m = 1 + rnd(pick < 6 ? 8 : 70);
+        else if (pick == 3) m = 65 + rnd(150);          /* the reverse Two-Way range */
+        else m = 1 + rnd(pick < 7 ? 8 : 70);
         if (m > sizeof nd) m = sizeof nd;
         if (n >= m && rnd(2) == 0) {
             memcpy(nd, hay + rnd((unsigned)(n - m + 1)), m);                   /* present */

@@ -277,9 +277,10 @@ fired, ask `proven_u8str_view_starts_with` first.
 **`proven_u8str_view_find_last` returns a position**, the start of the last occurrence, and
 occurrences may overlap: `find_last("aaa", "aa")` is 1. For an empty needle the position is
 `size` - the same answer `_find` gives - which is the one result that is not a valid byte index.
-A one-byte needle is a backward scan, up to 64 bytes a backward Shift-Or that is linear on any
-input, and longer needles repeat the forward search, which is quadratic on periodic input and
-says so in the header.
+It makes the same choices the forward search makes, from the same sample of the haystack: on
+ordinary text it finds the rarest needle byte from the end and verifies around it, and on a
+low-entropy haystack - long runs, a small alphabet - it switches to an algorithm that is linear
+whatever the input (backward Shift-Or up to 64 bytes, a reverse Two-Way beyond).
 
 **`proven_u8str_view_cmp` orders bytes unsigned, with a prefix first**, so `"\xFF"` sorts after
 `"a"` and `"app"` before `"apple"`; a NUL inside a view is data. It answers by sign - not

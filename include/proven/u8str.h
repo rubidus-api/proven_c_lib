@@ -247,12 +247,14 @@ typedef struct {
  *
  * No end limit parameter: search a prefix by slicing first.
  *
- * @note Cost. A one-byte needle is a backward byte scan, O(n). Needles up to 64 bytes use a
- *       backward Shift-Or, O(n) always - never quadratic, but it touches every byte, so on
- *       ordinary text it is slower than the forward search, which skips. Longer needles repeat
- *       the forward search past each match and are QUADRATIC on periodic input; the needle's
- *       length is the caller's choice, so a haystack alone cannot force it (docs/BACKLOG.md
- *       B-024 tracks a backward Two-Way).
+ * @note Cost. The mirror of proven_u8str_view_find (docs/BACKLOG.md B-024): a one-byte needle
+ *       is a backward word-at-a-time scan; otherwise, on ordinary input, the rarest needle byte
+ *       is found from the end and the needle verified around it, and on a low-entropy haystack
+ *       (the same sample find takes) a linear algorithm runs instead - backward Shift-Or up to
+ *       64 bytes, a reverse Two-Way beyond. Like find, the anchored path is O(n*m) in the worst
+ *       case and the fallbacks are O(n). The backward scan is portable rather than libc's
+ *       memchr, so on ordinary text find_last is a few times slower than find
+ *       (docs/b024-find-last-benchmark.c).
  */
 [[nodiscard]] proven_size_t proven_u8str_view_find_last(proven_u8str_view_t haystack, proven_u8str_view_t needle);
 

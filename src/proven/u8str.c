@@ -389,6 +389,36 @@ static proven_size_t proven_u8_find_twoway(const proven_byte_t *h0, proven_size_
     }
 }
 
+/* Pick the anchor for a search: the rarest-looking needle byte, from a spread-out sample of
+   the haystack span. Returns whether even that rarest byte is common (a low-entropy haystack,
+   where an anchored scan thrashes and the linear fallbacks should run). Shared by find and
+   find_last, so the two directions make the same choice on the same input. `*anchor` is left
+   as the caller set it for spans too short to sample. */
+static int find_pick_anchor(const proven_byte_t *h, proven_size_t span,
+                            const proven_byte_t *ndl, proven_size_t m, proven_size_t *anchor) {
+    if (span < 16u) return 0;
+    unsigned short cnt[256];
+    proven_sys_mem_zero(cnt, sizeof cnt);
+    proven_size_t cap = span < 256u ? span : 256u;
+    proven_size_t step = span / cap;
+    if (step == 0u) step = 1u;
+    step |= 1u; /* odd stride: avoid aliasing a periodic haystack (e.g. strict
+                   "abab...") to a single phase, which would hide a common byte */
+    proven_size_t taken = 0;
+    for (proven_size_t pos = 0; pos < span && taken < 256u; pos += step) {
+        cnt[h[pos]]++;
+        ++taken;
+    }
+    unsigned best = 0xffffffffu;
+    for (proven_size_t i = 0; i < m; ++i) {
+        unsigned ch = (unsigned)ndl[i];
+        if ((unsigned)cnt[ch] <= best) { best = (unsigned)cnt[ch]; *anchor = i; }
+    }
+    /* rarest needle byte still in > ~1/8 of the sample => memchr+verify will
+       thrash; use the alphabet-independent linear fallback instead. */
+    return best * 8u > (unsigned)taken;
+}
+
 proven_size_t proven_u8str_view_find(proven_u8str_view_t haystack, proven_size_t start_offset, proven_u8str_view_t needle) {
     if (start_offset > haystack.size) return PROVEN_INDEX_NOT_FOUND;
     if (needle.size == 0) return start_offset; // Empty needle always matches at offset
@@ -415,32 +445,8 @@ proven_size_t proven_u8str_view_find(proven_u8str_view_t haystack, proven_size_t
         return (r == PROVEN_INDEX_NOT_FOUND) ? r : start_offset + r;
     }
 #else
-    /* Pick the anchor: the rarest-looking needle byte, from a spread-out sample.
-       Also learn whether even that rarest byte is common (low-entropy haystack). */
     proven_size_t anchor = needle.size - 1u;
-    int low_entropy = 0;
-    if (span >= 16u) {
-        unsigned short cnt[256];
-        proven_sys_mem_zero(cnt, sizeof cnt);
-        proven_size_t cap = span < 256u ? span : 256u;
-        proven_size_t step = span / cap;
-        if (step == 0u) step = 1u;
-        step |= 1u; /* odd stride: avoid aliasing a periodic haystack (e.g. strict
-                       "abab…") to a single phase, which would hide a common byte */
-        proven_size_t taken = 0;
-        for (proven_size_t pos = start_offset; pos < haystack.size && taken < 256u; pos += step) {
-            cnt[base[pos]]++;
-            ++taken;
-        }
-        unsigned best = 0xffffffffu;
-        for (proven_size_t i = 0; i < needle.size; ++i) {
-            unsigned ch = (unsigned)needle.ptr[i];
-            if ((unsigned)cnt[ch] <= best) { best = (unsigned)cnt[ch]; anchor = i; }
-        }
-        /* rarest needle byte still in > ~1/8 of the sample => memchr+verify will
-           thrash; use the alphabet-independent linear fallback instead. */
-        low_entropy = (best * 8u > (unsigned)taken);
-    }
+    int low_entropy = find_pick_anchor(base + start_offset, span, needle.ptr, needle.size, &anchor);
 
 #if PROVEN_U8STR_FIND_FORCE != 3
     if (low_entropy) {
@@ -743,33 +749,117 @@ static proven_size_t proven_u8_find_last_shiftor(const proven_byte_t *h, proven_
     return PROVEN_INDEX_NOT_FOUND;
 }
 
+/*
+ * Two-Way run backwards: proven_u8_find_twoway over the reversed haystack and the reversed
+ * needle, read through index macros so nothing is copied. The first match it meets in the
+ * reversed text is the last occurrence in the real one. O(n) for any needle length and any
+ * input - the linear fallback for long needles on low-entropy haystacks (B-024), where the
+ * previous "repeat the forward search past each match" was quadratic.
+ */
+#define RN(x) ndl[l - 1u - (x)]
+#define RH(x) hay[hn - 1u - (x)]
+static proven_size_t proven_u8_find_last_twoway(const proven_byte_t *hay, proven_size_t hn,
+                                                const proven_byte_t *ndl, proven_size_t l) {
+    proven_size_t o = 0;   /* offset into the reversed haystack */
+    proven_size_t i, ip, jp, k, p, ms, p0, mem, mem0;
+    proven_size_t byteset[32 / sizeof(proven_size_t)] = { 0 };
+    proven_size_t shift[256];
+
+    for (i = 0; i < l; ++i) {
+        PROVEN_FIND_BITOP(byteset, RN(i), |=);
+        shift[RN(i)] = i + 1u;
+    }
+    ip = (proven_size_t)-1; jp = 0; k = p = 1;
+    while (jp + k < l) {
+        if (RN(ip + k) == RN(jp + k)) { if (k == p) { jp += p; k = 1; } else ++k; }
+        else if (RN(ip + k) > RN(jp + k)) { jp += k; k = 1; p = jp - ip; }
+        else { ip = jp++; k = 1; p = 1; }
+    }
+    ms = ip; p0 = p;
+    ip = (proven_size_t)-1; jp = 0; k = p = 1;
+    while (jp + k < l) {
+        if (RN(ip + k) == RN(jp + k)) { if (k == p) { jp += p; k = 1; } else ++k; }
+        else if (RN(ip + k) < RN(jp + k)) { jp += k; k = 1; p = jp - ip; }
+        else { ip = jp++; k = 1; p = 1; }
+    }
+    if (ip + 1u > ms + 1u) ms = ip; else p = p0;
+
+    bool periodic = true;
+    for (i = 0; i < ms + 1u; ++i) {
+        if (RN(i) != RN(i + p)) { periodic = false; break; }
+    }
+    if (!periodic) {
+        mem0 = 0;
+        p = ((ms > l - ms - 1u) ? ms : (l - ms - 1u)) + 1u;
+    } else {
+        mem0 = l - p;
+    }
+    mem = 0;
+
+    for (;;) {
+        if (hn - o < l) return PROVEN_INDEX_NOT_FOUND;
+        if (PROVEN_FIND_BITOP(byteset, RH(o + l - 1u), &)) {
+            k = l - shift[RH(o + l - 1u)];
+            if (k) {
+                if (k < mem) k = mem;
+                o += k; mem = 0; continue;
+            }
+        } else {
+            o += l; mem = 0; continue;
+        }
+        for (k = (ms + 1u > mem ? ms + 1u : mem); k < l && RN(k) == RH(o + k); ++k) { }
+        if (k < l) { o += k - ms; mem = 0; continue; }
+        for (k = ms + 1u; k > mem && RN(k - 1u) == RH(o + k - 1u); --k) { }
+        if (k <= mem) return hn - o - l;   /* reversed [o, o + l) is original [hn - o - l, hn - o) */
+        o += p; mem = mem0;
+    }
+}
+#undef RN
+#undef RH
+
+/* The anchored backward scan: find the anchor byte from the end with proven_sys_mem_rchr, then
+ * verify the whole needle around it. Fast on ordinary text; O(n*m) worst case, like the
+ * forward default path, which is why low-entropy input goes to the linear fallbacks. */
+static proven_size_t proven_u8_find_last_anchored(const proven_byte_t *h, proven_size_t n,
+                                                  const proven_byte_t *ndl, proven_size_t m,
+                                                  proven_size_t anchor) {
+    proven_byte_t c = ndl[anchor];
+    /* The anchor of a match starting at s is h[s + anchor], s in [0, n - m]. */
+    const proven_byte_t *lo = h + anchor;
+    proven_size_t span = n - m + 1u;
+    while (span > 0u) {
+        const proven_byte_t *hit = (const proven_byte_t *)proven_sys_mem_rchr(lo, c, span);
+        if (!hit) break;
+        const proven_byte_t *start = hit - anchor;
+        if (proven_sys_mem_cmp(start, ndl, m) == 0) return (proven_size_t)(start - h);
+        span = (proven_size_t)(hit - lo);   /* keep looking strictly before this hit */
+    }
+    return PROVEN_INDEX_NOT_FOUND;
+}
+
 proven_size_t proven_u8str_view_find_last(proven_u8str_view_t haystack, proven_u8str_view_t needle) {
     haystack = view_or_empty(haystack);
     needle = view_or_empty(needle);
     if (needle.size == 0) return haystack.size;   /* a position, as _find answers for empty */
     if (needle.size > haystack.size) return PROVEN_INDEX_NOT_FOUND;
 
-    if (needle.size == 1u) {
-        proven_byte_t c = needle.ptr[0];
-        for (proven_size_t i = haystack.size; i-- > 0;) {
-            if (haystack.ptr[i] == c) return i;
-        }
-        return PROVEN_INDEX_NOT_FOUND;
-    }
-    if (needle.size <= 64u) {
-        return proven_u8_find_last_shiftor(haystack.ptr, haystack.size, needle.ptr, needle.size);
+    const proven_byte_t *h = haystack.ptr;
+    proven_size_t n = haystack.size, m = needle.size;
+    if (m == 1u) {
+        const void *hit = proven_sys_mem_rchr(h, needle.ptr[0], n);
+        return hit ? (proven_size_t)((const proven_byte_t *)hit - h) : PROVEN_INDEX_NOT_FOUND;
     }
 
-    /* Beyond 64 bytes: the forward search, resumed one byte past each match. Quadratic on
-     * periodic input, and the header says so (B-024). */
-    proven_size_t last = PROVEN_INDEX_NOT_FOUND;
-    proven_size_t from = 0;
-    for (;;) {
-        proven_size_t at = proven_u8str_view_find(haystack, from, needle);
-        if (at == PROVEN_INDEX_NOT_FOUND) return last;
-        last = at;
-        from = at + 1u;
+    /* The same choice the forward search makes, from the same sample (B-024): anchor on the
+     * rarest needle byte when the haystack is ordinary, and fall back to a linear algorithm
+     * that does not care about the alphabet when it is not. */
+    proven_size_t anchor = m - 1u;
+    int low_entropy = find_pick_anchor(h, n, needle.ptr, m, &anchor);
+    if (low_entropy) {
+        if (m <= 64u) return proven_u8_find_last_shiftor(h, n, needle.ptr, m);
+        return proven_u8_find_last_twoway(h, n, needle.ptr, m);
     }
+    return proven_u8_find_last_anchored(h, n, needle.ptr, m, anchor);
 }
 
 bool proven_u8str_view_contains(proven_u8str_view_t haystack, proven_u8str_view_t needle) {

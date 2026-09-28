@@ -18,6 +18,16 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **`proven_u8str_view_find_last` makes the forward search's choices (B-024).** The same entropy
+  sample; an anchored backward scan over a new portable `proven_sys_mem_rchr` on ordinary input;
+  backward Shift-Or (<= 64 bytes) or a new reverse Two-Way (> 64) on low-entropy input. Measured
+  with `docs/b024-find-last-benchmark.c`: about 5x faster on ordinary text for 2-64 byte needles
+  (0.30 -> 0.055 ns/byte), and the long-needle quadratic tail is gone (a 256-byte needle on a dense
+  run: 1,994 -> 0.002 ns/byte). Long needles on ordinary text are slower (0.022 -> 0.055), the price
+  of a portable backward scan. Results unchanged: the oracle agrees on 120,000 cases.
+
 ## [0.2.0] - 2026-09-28
 
 A MINOR release: new public API, nothing removed. UTF-16 text gets a way in and out and UTF-8
