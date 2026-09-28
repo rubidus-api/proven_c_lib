@@ -97,6 +97,27 @@ int main(void) {
     PROVEN_TEST_ASSERT(proven_u8str_view_is_well_formed(proven_u8str_view_slice(z("abc"), 10, 2)),
         "an out-of-range slice is well formed too - so this cannot tell 'empty' from 'past the end'", "");
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("the one spelling of empty holds for a non-NULL empty input",
+        "An empty result is {NULL, 0} even when the input was {p, 0} with p != NULL - the header promises one spelling. Found by code review: remove_prefix/_suffix and split passed {p, 0} through.",
+        "view_or_empty must map every empty view, not only the ill-formed ones, to {NULL, 0}.");
+    // ---------------------------------------------------------------
+    {
+        proven_u8str_view_t pe = { (const proven_byte_t *)"xyz", 0 };   /* empty, pointer set */
+        proven_u8str_view_t r1 = proven_u8str_view_remove_prefix(pe, z("a"));
+        proven_u8str_view_t r2 = proven_u8str_view_remove_suffix(pe, z("a"));
+        proven_u8str_view_t r3 = proven_u8str_view_trim(pe);
+        PROVEN_TEST_ASSERT(r1.size == 0 && r1.ptr == NULL, "remove_prefix of {p, 0} is {NULL, 0}", "");
+        PROVEN_TEST_ASSERT(r2.size == 0 && r2.ptr == NULL, "remove_suffix of {p, 0} is {NULL, 0}", "");
+        PROVEN_TEST_ASSERT(r3.size == 0 && r3.ptr == NULL, "trim of {p, 0} is {NULL, 0}", "");
+        proven_u8str_view_split_t it = proven_u8str_view_split(pe, z(","));
+        proven_u8str_view_t f = { (const proven_byte_t *)"q", 1 };
+        PROVEN_TEST_ASSERT(proven_u8str_view_split_next(&it, &f) && f.size == 0 && f.ptr == NULL,
+            "splitting {p, 0} yields one field, {NULL, 0}", "");
+        it = proven_u8str_view_split(z("abc"), pe);
+        PROVEN_TEST_ASSERT(proven_u8str_view_split_next(&it, &f) && f.size == 3, "an empty separator {p, 0} yields the input", "");
+    }
+
     PROVEN_TEST_PASS("view trim, affixes, reverse search and well-formedness");
     return 0;
 }
