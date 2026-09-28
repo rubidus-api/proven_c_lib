@@ -1,6 +1,6 @@
 # Chapter 0: Start Here
 
-**Part I — Start here.** No prerequisites beyond one introductory C book.
+**Part I - Start here.** No prerequisites beyond one introductory C book.
 **After this chapter** you can build a program against `proven`, read any other chapter, and look
 up a term you do not recognise.
 
@@ -36,7 +36,7 @@ It does **not** assume you have met ownership as a discipline, borrowed versus o
 or pools, function-pointer tables used as an interface, C23 attributes, undefined behaviour as
 something a compiler actively exploits, alignment beyond "it works", atomics, or the idea that a
 library might *refuse* an operation instead of doing its best. Every one of those is explained
-where it is first used, and every one is in the glossary in §13.
+where it is first used, and every one is in the glossary in section 13.
 
 This is not a C tutorial. It will not explain what a pointer is. It will explain, at length, why
 this library hands you a `struct` containing an error instead of setting `errno`, because that is
@@ -47,8 +47,8 @@ nobody explained.
 
 ## 2. Why this library exists
 
-C gives you almost nothing and trusts you completely. That is its great strength — there is no
-runtime, no hidden allocation, no cost you did not write — and it is why C is still the language
+C gives you almost nothing and trusts you completely. That is its great strength - there is no
+runtime, no hidden allocation, no cost you did not write - and it is why C is still the language
 of operating systems, embedded devices and everything that has to be small and predictable.
 
 It is also why the same five bugs have been shipping for fifty years. This library is a set of
@@ -64,7 +64,7 @@ strcat(buf, ", welcome!");    /* wrong: and how much room is left now? */
 
 `strcpy` receives a destination pointer and a source pointer. Nothing in that signature carries
 the size of the destination, so nothing can check it. The function will happily write the 200th
-byte into a 64-byte buffer, and what it corrupts is whatever the compiler happened to put next —
+byte into a 64-byte buffer, and what it corrupts is whatever the compiler happened to put next --
 often the return address. This is not a rare mistake by careless people; it is the single most
 exploited class of bug in the history of the language, and the API makes it the *default*
 behaviour.
@@ -74,7 +74,7 @@ so the "safe" version silently produces a string that is not a string.
 
 **What this library does instead.** A string carries its length. `proven_u8str_view_t` is a
 pointer *and* a size, together, always. An append checks the destination's capacity because it
-knows the capacity, and when the text does not fit it **returns an error and writes nothing** —
+knows the capacity, and when the text does not fit it **returns an error and writes nothing** --
 it does not truncate, because a truncated path is a wrong path and a truncated command is a
 different command. See [Chapter 3](manual-03-strings-text.md).
 
@@ -105,8 +105,8 @@ if (!proven_is_ok(s.err)) return 1;      /* s.value means nothing until you chec
 ```
 
 Functions whose only job can fail are marked `[[nodiscard]]`, which means the compiler refuses to
-build code that throws the error away. You can still ignore it deliberately — `(void)` in front
-of the call — and having to type that is the point. See [Chapter 1](manual-01-foundation.md).
+build code that throws the error away. You can still ignore it deliberately - `(void)` in front
+of the call - and having to type that is the point. See [Chapter 1](manual-01-foundation.md).
 
 **What it costs.** More `if`s. There is no exception mechanism to jump you out of a deep failure,
 so error paths are visible in the shape of the code. That visibility is the feature.
@@ -130,7 +130,7 @@ proven_println("{} is {}", PROVEN_ARG(name), PROVEN_ARG(count));
 ```
 
 There is no `%d`-versus-`double` mismatch available, because you never wrote the type twice. See
-[Chapter 3 §3](manual-03-strings-text.md) for the tutorial and [Chapter 8](manual-08-fmt-scan.md)
+[Chapter 3 section 3](manual-03-strings-text.md) for the tutorial and [Chapter 8](manual-08-fmt-scan.md)
 for the full grammar.
 
 **What it costs.** `PROVEN_ARG` around each argument, and a format language that is not the one
@@ -148,13 +148,13 @@ that the next call will overwrite. The type is identical in all four cases. The 
 documentation, and documentation drifts.
 
 **What this library does instead.** Ownership is in the type name and in the signature. A
-`proven_u8str_t` is **owned** — you got it from a `_create`, and you must `_destroy` it with the
-same allocator. A `proven_u8str_view_t` is **borrowed** — it points at bytes someone else owns,
+`proven_u8str_t` is **owned** - you got it from a `_create`, and you must `_destroy` it with the
+same allocator. A `proven_u8str_view_t` is **borrowed** - it points at bytes someone else owns,
 you never destroy it, and it stops being valid when the owner does. Any function that might
 allocate takes the allocator as a parameter, so a signature without an allocator cannot allocate.
 
 **What it costs.** Two types where C has one, and the discipline of asking "who owns this?" at
-every boundary — which you were paying anyway, just later and in a debugger.
+every boundary - which you were paying anyway, just later and in a debugger.
 
 ### The comparison function nobody can typecheck
 
@@ -166,23 +166,23 @@ qsort(a, n, sizeof *a, cmp);  /* cmp takes const void*; get it wrong and it is U
 types still compiles. The classic version of this bug is comparing the pointers instead of what
 they point at, and it produces a program that runs, sorts nothing correctly, and never crashes.
 
-**What this library does instead.** The same `void *` shape — this is C, there is no other way —
+**What this library does instead.** The same `void *` shape - this is C, there is no other way --
 but the library documents the contract precisely, gives you working comparators to copy, and
 `proven_array_sort` is an introsort with an *O(n log n)* guarantee rather than a quicksort that
-degrades to *O(n²)* on the input an attacker chooses. See
+degrades to *O(n^2)* on the input an attacker chooses. See
 [Chapter 4](manual-04-containers-algorithms.md).
 
 ### The bytes have a type, even when you did not choose one
 
 You think of memory as bytes. C's abstract machine does not: it treats memory as *typed*, and
-reading the same bytes through pointers of two different types is undefined behaviour — which the
+reading the same bytes through pointers of two different types is undefined behaviour - which the
 compiler is allowed to exploit, silently, only when optimisations are on. This is called **strict
 aliasing**, and it is the trap under every hand-written parser that reads a byte buffer through
 pointers of different widths:
 
 ```text
 void *buf = malloc(8);
-uint32_t *w = buf;      /* the same memory, seen as 32-bit — no cast, no warning */
+uint32_t *w = buf;      /* the same memory, seen as 32-bit - no cast, no warning */
 uint16_t *h = buf;      /* the same memory, seen as 16-bit */
 *w = 0xAAAAAAAAu;
 *h = 0x1234;            /* change the low half */
@@ -192,13 +192,13 @@ printf("%08x\n", *w);   /* wrong to expect aaaa1234: at -O2 this prints aaaaaaaa
 Compiled at `-O0` it prints `aaaa1234`; at `-O2` it prints `aaaaaaaa`, because the compiler assumed
 a `uint16_t` write and a `uint32_t` read cannot touch the same memory and dropped the write. No
 warning is given, and the program passed every test you ran in a debug build. This is the class of
-bug the Linux kernel avoids by compiling with `-fno-strict-aliasing` — a whole flag, for one rule.
+bug the Linux kernel avoids by compiling with `-fno-strict-aliasing` - a whole flag, for one rule.
 
-**What this library does instead.** Raw memory is `proven_byte_t`, an alias of `unsigned char` —
+**What this library does instead.** Raw memory is `proven_byte_t`, an alias of `unsigned char` --
 the one type the rule explicitly exempts, because the standard lets you inspect any object's bytes
 through it. The ordinary API never quietly reinterprets your bytes as a wider type, so the bug
 above cannot be written through it. (Strict aliasing has a subtler sibling, *provenance*, that the
-library is named after; [Chapter 6 §3](manual-06-execution-and-platform.md) and the project README
+library is named after; [Chapter 6 section 3](manual-06-execution-and-platform.md) and the project README
 cover it.)
 
 ### What this library is not
@@ -206,22 +206,22 @@ cover it.)
 It is not a framework, and it does not want to own your `main`. It has no global state to
 initialise, starts no threads, registers no `atexit` handler, and allocates nothing you did not
 hand it an allocator for. Every module is usable on its own. Most of it runs with no operating
-system at all — see [freestanding mode](manual-freestanding.md).
+system at all - see [freestanding mode](manual-freestanding.md).
 
 | The problem | What C gives you | What `proven` gives you | Cost |
 |---|---|---|---|
-| Buffer overruns | `strcpy`, `strcat` — no size anywhere | Views carry a length; writes refuse rather than truncate | Two words per string |
+| Buffer overruns | `strcpy`, `strcat` - no size anywhere | Views carry a length; writes refuse rather than truncate | Two words per string |
 | Unchecked failure | `NULL` returns and `errno` | Errors returned as values, `[[nodiscard]]` on the ones you must not drop | More `if`s |
 | Format mismatch | `printf` trusts the format string | `{}` with the type taken from the argument | `PROVEN_ARG` at each call |
 | Unclear ownership | `char *` means four different things | Owned and borrowed are different types | Two types instead of one |
 | Hidden allocation | Anything may call `malloc` | Only functions taking an allocator can allocate (one bounded exception: `proven_println` on an over-long line) | The parameter is on the signature |
-| Bytes with a hidden type | Reinterpreting memory through a wider pointer is UB the optimiser exploits | Raw bytes go through `proven_byte_t`, the type the rule exempts | — |
+| Bytes with a hidden type | Reinterpreting memory through a wider pointer is UB the optimiser exploits | Raw bytes go through `proven_byte_t`, the type the rule exempts | - |
 
 ---
 
 ## 3. Your first program
 
-This is the whole of it. Every line is one of the contracts in §5, and the build compiles and runs
+This is the whole of it. Every line is one of the contracts in section 5, and the build compiles and runs
 this exact file, so it cannot quietly stop being true.
 
 <!-- example: manual/examples/en/ex_00_hello.c -->
@@ -286,7 +286,7 @@ int main(void) {
 }
 ```
 
-`EXAMPLE_REQUIRE` and `EXAMPLE_OK` are not part of the library — they come from
+`EXAMPLE_REQUIRE` and `EXAMPLE_OK` are not part of the library - they come from
 `manual/examples/example.h` and exist so the build can check that every example in this manual
 still does what the text says it does. Your own program would use neither.
 
@@ -299,11 +299,11 @@ Three details worth pausing on, because they recur everywhere:
   one you are using.
 - **`PROVEN_LIT("hello, ")` costs nothing at runtime.** It is a compile-time `sizeof` on a string
   literal. `proven_u8str_view_from_cstr(s)` exists for the case where the text comes from
-  elsewhere, and that one really does scan for the NUL — the two are spelled differently because
+  elsewhere, and that one really does scan for the NUL - the two are spelled differently because
   one is free and the other is *O(n)*.
 - **The `destroy` takes the allocator again.** The string does not remember which allocator made
   it; you must pass the same one. That keeps the string small and makes the dependency visible,
-  and it is a real hazard — see §5.
+  and it is a real hazard - see section 5.
 
 ---
 
@@ -316,8 +316,8 @@ There is one header for everything:
 ```
 
 It pulls in the whole public API. If you prefer to include only what you use, every module has its
-own header under `include/proven/` — `#include "proven/u8str.h"`, `#include "proven/fs.h"` and so
-on — and §14 below maps every header to the chapter that documents it.
+own header under `include/proven/` - `#include "proven/u8str.h"`, `#include "proven/fs.h"` and so
+on - and section 14 below maps every header to the chapter that documents it.
 
 Compiling by hand, which is all this library needs:
 
@@ -326,7 +326,7 @@ gcc -std=c2x -Iinclude -Iplatform your_program.c src/proven/*.c platform/*.c -o 
 ```
 
 `src/proven/` is the portable library. `platform/` is the small layer that talks to the operating
-system — the **PAL**, or platform abstraction layer. Everything that makes a syscall lives there
+system - the **PAL**, or platform abstraction layer. Everything that makes a syscall lives there
 and nowhere else, which is why the rest of the library can be compiled for a target with no
 operating system at all.
 
@@ -338,7 +338,7 @@ cc -std=c2x -o nob nob.c     # build the build driver, once
 ./nob release                # the same, optimised
 ```
 
-`./nob` with no arguments lists the other modes — sanitizers, freestanding, cross-compilation and
+`./nob` with no arguments lists the other modes - sanitizers, freestanding, cross-compilation and
 the benchmark. There is no `make`, no CMake, and nothing to install.
 
 **A C23 compiler is required.** The library uses C23 features deliberately, `[[nodiscard]]` most
@@ -350,7 +350,7 @@ falls back to `-std=c2x` for slightly older compilers.
 ## 5. The five contracts you will meet on every page
 
 These five rules explain most of the library's shape. Each is stated once here and assumed
-everywhere else. §8 below gives the formal versions; these are the plain-language ones.
+everywhere else. section 8 below gives the formal versions; these are the plain-language ones.
 
 | # | Contract | In one line | Chapter |
 |---|---|---|---|
@@ -367,7 +367,7 @@ Every fallible function hands the error back. When there is nothing else to retu
 meaningless until you have checked the error. `PROVEN_OK` is zero, and `proven_is_ok(err)` reads
 better than `err == 0`.
 
-Wrong — reading the value before the error:
+Wrong - reading the value before the error:
 
 ```text
 proven_result_u8str_t s = proven_u8str_create(alloc, 64);
@@ -380,9 +380,9 @@ every time.
 ### 2. Views are borrowed
 
 `proven_u8str_view_t` is a pointer and a size. It owns nothing, allocates nothing, and is free to
-copy — but it stops being valid the moment the thing it points into is destroyed or moved.
+copy - but it stops being valid the moment the thing it points into is destroyed or moved.
 
-Wrong — a view that outlives what it points at:
+Wrong - a view that outlives what it points at:
 
 ```text
 proven_u8str_view_t name;
@@ -408,7 +408,7 @@ arena, in a pool, or on a device with no heap.
 The corollary is the hazard: **you must destroy with the allocator you created with.** The object
 does not remember.
 
-Wrong — mismatched allocators:
+Wrong - mismatched allocators:
 
 ```text
 proven_result_u8str_t s = proven_u8str_create(arena_alloc, 64);
@@ -419,25 +419,25 @@ Nothing checks this today. It is heap corruption that surfaces later, somewhere 
 
 ### 4. Caller-owned state must not be copied
 
-Some objects are structs you own and pass by pointer — buffered writers, line readers, directory
+Some objects are structs you own and pass by pointer - buffered writers, line readers, directory
 iterators. Several of them contain a pointer to one of their own fields, so copying the struct
 copies a pointer that still points at the *original*.
 
-Wrong — copying a state struct:
+Wrong - copying a state struct:
 
 ```text
 proven_writer_buf_t a = ...;
 proven_writer_buf_t b = a;          /* wrong: b's internals still point into a */
 ```
 
-§9.2 below lists all sixteen of these types. The rule is simple: create it where it lives,
+section 9.2 below lists all sixteen of these types. The rule is simple: create it where it lives,
 pass `&it`, and do not assign it.
 
 ### 5. Refuse, never truncate
 
 When a result does not fit, this library fails the operation and leaves the destination unchanged.
 It does not write "as much as fits". A truncated path opens the wrong file, a truncated command
-runs the wrong command, and a truncated number is a different number — and every one of those is
+runs the wrong command, and a truncated number is a different number - and every one of those is
 worse than an error you can see.
 
 Where truncation genuinely is what you want, there is a separate, differently named function that
@@ -448,7 +448,7 @@ proven_result_size_t r = proven_u8str_append_partial(&s, huge);
 /* r.value is how many bytes were actually appended. Reading it is the point. */
 ```
 
-Wrong — assuming the two behave alike:
+Wrong - assuming the two behave alike:
 
 ```text
 (void)proven_u8str_append_partial(&s, huge);   /* wrong: the count WAS the result */
@@ -493,7 +493,7 @@ not choose, and cannot fail to link because a distribution built it with differe
 library that is meant to run on hosted systems *and* on bare metal, "compile it with your program"
 is the only model that works in both places.
 
-Two directories matter. `src/proven/` is the portable library — no OS calls anywhere. `platform/`
+Two directories matter. `src/proven/` is the portable library - no OS calls anywhere. `platform/`
 is the small layer that makes syscalls, and it is the only part a new target has to replace. A
 freestanding build simply leaves the hosted files out; see [the freestanding
 guide](manual-freestanding.md).
@@ -502,7 +502,7 @@ The build driver, `nob.c`, is a C program rather than a build system, and you co
 way you compile everything else here. It is checked into the repository, so there is no bootstrap
 step and no version of it to install either.
 
-**A C23 compiler is required** — GCC 13+, Clang 16+, or recent MSVC. The driver probes `-std=c23`
+**A C23 compiler is required** - GCC 13+, Clang 16+, or recent MSVC. The driver probes `-std=c23`
 and falls back to `-std=c2x` for compilers that still use the transitional spelling.
 
 Build and run the hosted test suite:
@@ -627,8 +627,8 @@ with them.
 **Owning objects** hold storage they allocated, and you must destroy them. They are the table
 immediately below.
 
-**Caller-owned state objects** allocate nothing. They are scratch structs you declare — usually
-on the stack — and hand to a constructor, which returns a small by-value handle that points
+**Caller-owned state objects** allocate nothing. They are scratch structs you declare - usually
+on the stack - and hand to a constructor, which returns a small by-value handle that points
 *into* them. They have **no destroy function**, because there is nothing to free. What they have
 instead is a rule that owning objects do not have, and it is the one that bites:
 
@@ -636,14 +636,14 @@ instead is a rule that owning objects do not have, and it is the one that bites:
 > it.** The handle holds a pointer into the struct. Copy the struct and the handle still
 > addresses the original; let the original go out of scope and the handle points at dead memory.
 
-They are listed in [§4.2](#92-caller-owned-state--no-destroy-do-not-copy).
+They are listed in [section 4.2](#92-caller-owned-state---no-destroy-do-not-copy).
 
-### 9.1 Owning objects — you must destroy these
+### 9.1 Owning objects - you must destroy these
 
 | Object | Owns storage | Stores allocator | Destroy function | Notes |
 |---|---:|---:|---|---|
-| `proven_arena_t` | no — caller owns the backing slice | no | `proven_arena_destroy(&arena)` (no-op) | Bump pointer over caller memory: `alloc` advances an offset, `free` is a no-op, `reset` rewinds to empty. The caller owns/frees the backing block. |
-| `proven_pool_t` | yes — items + recycle bin | yes (`base_alloc`) | `proven_pool_destroy(&pool)` | Fixed item size. You use it **through the allocator trait** (`proven_pool_as_allocator`): the trait's `free_fn` returns a slot to the recycle bin for reuse rather than freeing it. There is no `proven_pool_free` — freeing goes through the trait, like every other allocator. |
+| `proven_arena_t` | no - caller owns the backing slice | no | `proven_arena_destroy(&arena)` (no-op) | Bump pointer over caller memory: `alloc` advances an offset, `free` is a no-op, `reset` rewinds to empty. The caller owns/frees the backing block. |
+| `proven_pool_t` | yes - items + recycle bin | yes (`base_alloc`) | `proven_pool_destroy(&pool)` | Fixed item size. You use it **through the allocator trait** (`proven_pool_as_allocator`): the trait's `free_fn` returns a slot to the recycle bin for reuse rather than freeing it. There is no `proven_pool_free` - freeing goes through the trait, like every other allocator. |
 | `proven_buf_t` | yes | no | `proven_buf_destroy(alloc, &buf)` | Caller must pass the matching allocator. |
 | `proven_u8str_t` | yes | no | `proven_u8str_destroy(alloc, &str)` | Always NUL-terminated when valid. |
 | `proven_u16str_t` | yes | no | `proven_u16str_destroy(alloc, &str)` | Tracks byte length internally; API length is in `proven_u16` units. |
@@ -654,7 +654,7 @@ They are listed in [§4.2](#92-caller-owned-state--no-destroy-do-not-copy).
 | `proven_mmap_t` | OS mapping | OS handle state | `proven_mmap_destroy(&map)` | Views into the mapping die with the mapping. |
 | `proven_job_sys_t *` | yes | internal | `proven_job_system_close(sys)` then `proven_job_system_destroy(sys)` | Destroy must not race with producers. |
 
-### 9.2 Caller-owned state — no destroy, do not copy
+### 9.2 Caller-owned state - no destroy, do not copy
 
 These allocate nothing and free nothing. You declare one, pass its address to a constructor, and
 use the small handle you get back. The struct must **outlive the handle**, and must **not be
@@ -663,7 +663,7 @@ copied or moved** while the handle is alive.
 | State object | Constructed by | The handle it backs | Notes |
 |---|---|---|---|
 | `proven_sha256_t` | `proven_sha256_init` | (used directly) | A hashing context. Safe to copy *before* you start, meaningless to copy mid-stream unless you intend to fork the hash. |
-| `proven_xoshiro256ss_t` | `proven_xoshiro256ss_seed` | `proven_rng_t` | Copying it **clones the sequence** — deliberate and useful for a replay, a bug anywhere else. |
+| `proven_xoshiro256ss_t` | `proven_xoshiro256ss_seed` | `proven_rng_t` | Copying it **clones the sequence** - deliberate and useful for a replay, a bug anywhere else. |
 | `proven_chacha_rng_t` | `proven_chacha_rng_seed` / `_seed_from_entropy` | `proven_rng_t` | Copying it clones the keystream: two "independent" tokens become the same token. |
 | `proven_writer_buf_t` | `proven_writer_from_buffer` | `proven_writer_t` | **Do not copy.** |
 | `proven_writer_u8str_t` | `proven_writer_from_u8str` | `proven_writer_t` | **Do not copy.** The string and allocator must also outlive it. |
@@ -675,7 +675,7 @@ copied or moved** while the handle is alive.
 | `proven_sysio_lines_t` | `proven_sysio_lines_open` / `_stdin_lines` | (used via `proven_sysio_read_line`) | The one exception: `proven_sysio_read_line` re-binds it on every call, so this one **may** be moved. |
 | `proven_sysio_scanner_t` | `proven_sysio_scanner_init` | (used directly) | The exception in the other direction: this one **does** own a buffer, and you must call `proven_sysio_scanner_deinit`. |
 
-Wrong — the copy looks harmless and is a use-after-free:
+Wrong - the copy looks harmless and is a use-after-free:
 
 ```text
 proven_sysio_out_t out;
@@ -685,7 +685,7 @@ proven_sysio_out_t saved = out;   /* wrong: `w` still points into `out`, not `sa
 use_elsewhere(&saved);            /* and if `out` goes out of scope, `w` is dangling */
 ```
 
-Wrong — returning the state by value from a factory function does the same thing:
+Wrong - returning the state by value from a factory function does the same thing:
 
 ```text
 proven_sysio_out_t make_logger(void) {
@@ -696,7 +696,7 @@ proven_sysio_out_t make_logger(void) {
 }
 ```
 
-Correct — the state stays put, and the handle travels:
+Correct - the state stays put, and the handle travels:
 
 ```c
 proven_byte_t buf[512];
@@ -714,7 +714,7 @@ proven_writer_t w = proven_sysio_stdout_buffered(&out,
 
 "Append this text to that string" has three defensible behaviours when the text does not fit, and
 most libraries pick one and hide the choice. This library exposes all three, gives them different
-names, and puts the difference in the signature — because which one you want depends on what the
+names, and puts the difference in the signature - because which one you want depends on what the
 text *is*, and only the caller knows that.
 
 Consider appending to a filesystem path:
@@ -722,23 +722,23 @@ Consider appending to a filesystem path:
 - If the path does not fit, **truncating is catastrophic.** `documents/report.pdf`
   becomes `documents/rep`, which is a different, possibly existing, file. The operation must fail
   and change nothing.
-- Now consider appending to a log line. If it does not fit, **truncating is fine** — you would
-  rather have most of the message than none of it — as long as you are told how much was written.
+- Now consider appending to a log line. If it does not fit, **truncating is fine** - you would
+  rather have most of the message than none of it - as long as you are told how much was written.
 - And appending to a buffer you are building up, where you would simply like it to **grow**.
 
 The three classes below are those three answers. The one you get is decided by the function name
 and the presence of an allocator parameter, never by a flag or a global:
 
-- `proven_u8str_append(str, data)` — no allocator, so it cannot grow: **refuses**.
-- `proven_u8str_append_partial(str, data)` — returns a count: **truncates and tells you**.
-- `proven_u8str_append_grow(alloc, str, data)` — takes an allocator: **grows**.
+- `proven_u8str_append(str, data)` - no allocator, so it cannot grow: **refuses**.
+- `proven_u8str_append_partial(str, data)` - returns a count: **truncates and tells you**.
+- `proven_u8str_append_grow(alloc, str, data)` - takes an allocator: **grows**.
 
 The default across the library is the first one, and [Chapter 0
-§5](#5-the-five-contracts-you-will-meet-on-every-page) explains why: a
+section 5](#5-the-five-contracts-you-will-meet-on-every-page) explains why: a
 truncated path opens the wrong file, a truncated command runs the wrong command, and a truncated
 number is a different number.
 
-Wrong — ignoring the count from the truncating form:
+Wrong - ignoring the count from the truncating form:
 
 ```text
 (void)proven_u8str_append_partial(&s, huge);   /* wrong: the count WAS the answer */
@@ -751,11 +751,11 @@ Several APIs intentionally expose three behavior classes:
 | Atomic fixed-capacity | `proven_u8str_append`, `proven_u16str_append`, `proven_u8str_append_fmt` | Return an error and leave the old object unchanged. |
 | Best-effort truncating | `proven_u8str_append_partial`, `proven_u16str_append_partial`, `proven_u8str_append_fmt_trunc` | Write as much as fits, preserve a valid object, report how much was written. |
 | Atomic growable | `proven_u8str_append_grow`, `proven_u16str_append_grow`, `proven_u8str_append_fmt_grow` | Grow with an allocator; on allocation failure, leave the old object unchanged. |
-| **Refuse, never truncate** | `proven_hex_encode`, `proven_base64_encode`, `proven_base64_decode`, `proven_reader_read_line` | Write **nothing** and return `PROVEN_ERR_OUT_OF_BOUNDS`. A half-encoded string or a shortened line is a wrong answer that looks like a right one, so these do not produce one. Size the buffer with the module's own size function (`proven_base64_encoded_size`, …), not by eye. |
+| **Refuse, never truncate** | `proven_hex_encode`, `proven_base64_encode`, `proven_base64_decode`, `proven_reader_read_line` | Write **nothing** and return `PROVEN_ERR_OUT_OF_BOUNDS`. A half-encoded string or a shortened line is a wrong answer that looks like a right one, so these do not produce one. Size the buffer with the module's own size function (`proven_base64_encoded_size`, ...), not by eye. |
 
 Choose the class deliberately. Do not treat a truncating function as an all-or-nothing function.
 
-Wrong — assuming the truncating and the atomic form behave alike:
+Wrong - assuming the truncating and the atomic form behave alike:
 
 ```text
 /* `_partial` wrote what fit and told you so; the error you did not read is the
@@ -789,26 +789,26 @@ reference you read after Chapter 3 has introduced the subject.
 
 | Part | Read | Prerequisites | You can then |
 |---|---|---|---|
-| **I — Start here** | [tutorial](manual-t-tutorial.md) → [0](manual-00-start-here.md) | One introductory C book | Build against the library and read anything below |
-| **II — The vocabulary every program uses** | [1](manual-01-foundation.md) → [2](manual-02-allocation.md) → [3](manual-03-strings-text.md) | Chapter 0 | Handle errors as values, own memory deliberately, hold text safely |
-| **III — Data structures** | [4](manual-04-containers-algorithms.md) | Part II | Arrays, maps, lists, rings, sorting, searching, hashing, encoding |
-| **IV — Text in and out** | [8](manual-08-fmt-scan.md) | Chapter 3 §3–§4 | Format and parse anything, and teach the formatter your own types |
-| **V — Talking to the operating system** | [5](manual-05-hosted-services.md) | Part II | Files, directories, streams, standard I/O, time, randomness, mapping |
-| **VI — Going further** | [6](manual-06-execution-and-platform.md) → [freestanding](manual-freestanding.md) | Parts II–V | Coroutines, jobs, thread-safety, bare metal, cross builds |
-| **Appendices** | [A](manual-07-alias-xcv-index.md), [B](#13-appendix-b-glossary), [C](#14-appendix-c-public-header-map), [D](#15-appendix-d-the-libc-map) | — | Look things up |
+| **I - Start here** | [tutorial](manual-t-tutorial.md) -> [0](manual-00-start-here.md) | One introductory C book | Build against the library and read anything below |
+| **II - The vocabulary every program uses** | [1](manual-01-foundation.md) -> [2](manual-02-allocation.md) -> [3](manual-03-strings-text.md) | Chapter 0 | Handle errors as values, own memory deliberately, hold text safely |
+| **III - Data structures** | [4](manual-04-containers-algorithms.md) | Part II | Arrays, maps, lists, rings, sorting, searching, hashing, encoding |
+| **IV - Text in and out** | [8](manual-08-fmt-scan.md) | Chapter 3 section 3-section 4 | Format and parse anything, and teach the formatter your own types |
+| **V - Talking to the operating system** | [5](manual-05-hosted-services.md) | Part II | Files, directories, streams, standard I/O, time, randomness, mapping |
+| **VI - Going further** | [6](manual-06-execution-and-platform.md) -> [freestanding](manual-freestanding.md) | Parts II-V | Coroutines, jobs, thread-safety, bare metal, cross builds |
+| **Appendices** | [A](manual-07-alias-xcv-index.md), [B](#13-appendix-b-glossary), [C](#14-appendix-c-public-header-map), [D](#15-appendix-d-the-libc-map) | - | Look things up |
 
 ### The chapters
 
-- [**Tutorial**: the library in nine short programs, one new idea at a time](manual-t-tutorial.md) — *Part I, optional on-ramp*
-0. [**Start here**: why this exists, hello world, the five contracts, glossary, libc map](manual-00-start-here.md) — *Part I*
-1. [**Foundation**: types, errors, memory views, alignment, version, panic](manual-01-foundation.md) — *Part II*
-2. [**Allocation**: heap, arena, pool, byte buffers, and the allocator trait](manual-02-allocation.md) — *Part II*
-3. [**Strings and text**: U8, U16, and an introduction to formatting and scanning](manual-03-strings-text.md) — *Part II; the tutorial half of the text material*
-4. [**Containers and algorithms**: array, list, ring, map, sort/search, hashing, encoding](manual-04-containers-algorithms.md) — *Part III*
-5. [**Hosted services**: filesystem, tree walk, streams, sysio, environment, randomness, mmap, time](manual-05-hosted-services.md) — *Part V*
-6. [**Execution and platform**: coroutines, jobs, thread-safety, aliases, PAL, cross builds](manual-06-execution-and-platform.md) — *Part VI*
-7. [**Appendix A — Alias index**: every `alias_xcv.h` spelling](manual-07-alias-xcv-index.md) — *reference only; not reading material*
-8. [**Formatting and scanning**: the full `fmt.h` and `scan.h` reference](manual-08-fmt-scan.md) — *Part IV; the reference half of the text material*
+- [**Tutorial**: the library in nine short programs, one new idea at a time](manual-t-tutorial.md) - *Part I, optional on-ramp*
+0. [**Start here**: why this exists, hello world, the five contracts, glossary, libc map](manual-00-start-here.md) - *Part I*
+1. [**Foundation**: types, errors, memory views, alignment, version, panic](manual-01-foundation.md) - *Part II*
+2. [**Allocation**: heap, arena, pool, byte buffers, and the allocator trait](manual-02-allocation.md) - *Part II*
+3. [**Strings and text**: U8, U16, and an introduction to formatting and scanning](manual-03-strings-text.md) - *Part II; the tutorial half of the text material*
+4. [**Containers and algorithms**: array, list, ring, map, sort/search, hashing, encoding](manual-04-containers-algorithms.md) - *Part III*
+5. [**Hosted services**: filesystem, tree walk, streams, sysio, environment, randomness, mmap, time](manual-05-hosted-services.md) - *Part V*
+6. [**Execution and platform**: coroutines, jobs, thread-safety, aliases, PAL, cross builds](manual-06-execution-and-platform.md) - *Part VI*
+7. [**Appendix A - Alias index**: every `alias_xcv.h` spelling](manual-07-alias-xcv-index.md) - *reference only; not reading material*
+8. [**Formatting and scanning**: the full `fmt.h` and `scan.h` reference](manual-08-fmt-scan.md) - *Part IV; the reference half of the text material*
 
 **Chapters 3 and 8 both cover the formatter and the scanner, and the division is deliberate.**
 Chapter 3 introduces them alongside strings, with the everyday cases and enough to be productive.
@@ -849,7 +849,7 @@ Two rules the chapters follow, so that nothing here has to be guessed at:
   them is listed below as well.
 
 The Korean edition adds one more: an English term appears with its original spelling in
-parentheses the first time each chapter uses it — 뷰(view) — so a reader who learned the idea in
+parentheses the first time each chapter uses it - 뷰(view) - so a reader who learned the idea in
 English can find it, and a reader who did not is never handed an untranslated word.
 
 | Term | Meaning here |
@@ -860,21 +860,21 @@ English can find it, and a reader who did not is never handed an untranslated wo
 | **allocator** | A value carrying four things: a context pointer and three function pointers (alloc, realloc, free). Passed by value into anything that may allocate. |
 | **arena** | An allocator that hands out memory by bumping a pointer through one block. Individual frees do nothing; you reset or destroy the whole arena at once. Fast, and perfect for "many small things with the same lifetime". |
 | **pool** | An allocator for many objects of one fixed size, with a free list, so freeing really does recycle a slot. |
-| **trait** | A struct of function pointers used as an interface — C's answer to a virtual table. `proven_allocator_t`, `proven_writer_t` and `proven_rng_t` are traits. Not a C keyword; borrowed terminology. |
+| **trait** | A struct of function pointers used as an interface - C's answer to a virtual table. `proven_allocator_t`, `proven_writer_t` and `proven_rng_t` are traits. Not a C keyword; borrowed terminology. |
 | **PAL** | Platform abstraction layer: the code under `platform/` that makes actual syscalls. The only OS-dependent part. |
-| **freestanding** | A build with no operating system and no libc — bare metal. `PROVEN_FREESTANDING` selects it. |
+| **freestanding** | A build with no operating system and no libc - bare metal. `PROVEN_FREESTANDING` selects it. |
 | **failure atomicity** | If an operation fails, it changes nothing. A failed grow leaves your old data intact and valid. |
 | **provenance** | Which allocation a pointer came from. C's optimizer assumes pointers from different allocations never overlap; violating that is undefined behaviour, not merely surprising. Chapter 6 covers it. |
-| **UB** (undefined behaviour) | Not "unpredictable output" — the standard imposes no requirement at all, and optimizers are allowed to assume it never happens. This is why UB can delete your `if`. |
+| **UB** (undefined behaviour) | Not "unpredictable output" - the standard imposes no requirement at all, and optimizers are allowed to assume it never happens. This is why UB can delete your `if`. |
 | **`[[nodiscard]]`** | A C23 attribute. The compiler errors if you throw the return value away. Used on every function whose error you must not drop. |
 | **fixed-capacity** | Will not grow. Fails when full. Takes no allocator. |
 | **growable** | Will reallocate when full. Takes an allocator. Always spelled `_grow` in the name. |
 | **CSPRNG** | Cryptographically secure pseudo-random number generator: output an attacker cannot predict even after seeing earlier output. |
 | **intrusive** | The list's links live *inside* your struct rather than in separately allocated nodes. No allocation per element. |
-| **code unit** | One element of an encoding: a byte in UTF-8, a 16-bit value in UTF-16. Not a character — one character can take several. |
-| **code point** | One character's number in Unicode. A code point takes one to four bytes in UTF-8, and one or two code units in UTF-16 — which is why counting either one is not counting characters. |
+| **code unit** | One element of an encoding: a byte in UTF-8, a 16-bit value in UTF-16. Not a character - one character can take several. |
+| **code point** | One character's number in Unicode. A code point takes one to four bytes in UTF-8, and one or two code units in UTF-16 - which is why counting either one is not counting characters. |
 | **API** (application programming interface) | The set of functions and types a library exposes for other programs to call. In this library, everything declared in `include/proven/`. |
-| **hosted** | A build that has an operating system and a C standard library under it — the opposite of *freestanding*. |
+| **hosted** | A build that has an operating system and a C standard library under it - the opposite of *freestanding*. |
 | **heap** | The general-purpose pool of memory `malloc` hands out from. `proven_heap_allocator()` is the allocator that uses it. |
 | **slice** | A borrowed pointer + length pair you may **write** through, e.g. `proven_mem_mut_t`. A *view* is the read-only form of the same idea. |
 | **result** | A small struct carrying an error code and a value together, e.g. `proven_result_u8str_t`. The value means nothing until the error beside it has been checked. |
@@ -883,7 +883,7 @@ English can find it, and a reader who did not is never handed an untranslated wo
 | **dangling** | A pointer to memory that has been freed or moved. Using one is undefined behaviour; the usual cause here is holding a pointer across a call that may reallocate. |
 | **use-after-free** | Reading or writing through a dangling pointer. The sanitizers below detect it. |
 | **sanitizer** | A compiler mode that adds run-time checks: **ASan** (AddressSanitizer) finds memory errors, **UBSan** (UndefinedBehaviorSanitizer) finds undefined behaviour, **TSan** (ThreadSanitizer) finds data races. `./nob asan`, `./nob ubsan`, `./nob tsan`. |
-| **partial write / short read** | A single write or read that moved *fewer* bytes than asked for. Normal, not an error — and treating a short read as end of input is the classic way to lose the tail of a file. |
+| **partial write / short read** | A single write or read that moved *fewer* bytes than asked for. Normal, not an error - and treating a short read as end of input is the classic way to lose the tail of a file. |
 | **EOF** (end of file) | There is no more input. Reported as `PROVEN_ERR_EOF`, never as a zero-byte success, so it cannot be confused with "nothing arrived yet". |
 | **flush** | Push a buffered writer's accumulated bytes onward. Nothing in this library flushes on your behalf at exit. |
 | **back-pressure** | Slowing a producer down because the consumer cannot keep up. `proven_writer_write_partial()` is the call that lets you notice and react. |
@@ -891,31 +891,31 @@ English can find it, and a reader who did not is never handed an untranslated wo
 | **atomic rename** | Replacing a file by renaming a finished temporary over it. A reader sees the whole old file or the whole new one, never a half-written mixture. |
 | **advisory lock** | A lock that excludes only the processes that also ask for it (`proven_fs_lock()`). It is a convention between cooperating programs, not access control. |
 | **hard link** | A second **name** for the same file. There is no original; the data lives until the last name is removed. Same filesystem only. |
-| **symbolic link** | A small file that holds a path. It may cross filesystems, and it may point at nothing — following it then fails. |
+| **symbolic link** | A small file that holds a path. It may cross filesystems, and it may point at nothing - following it then fails. |
 | **memory mapping** | Making a file's contents appear at an address, so the processor reads it as memory (`mmap.h`). **SHARED** mappings write back to the file; **PRIVATE** ones are *copy-on-write*: the writes exist in your process and nowhere else. |
 | **copy-on-write** | Sharing memory until somebody writes, at which point that writer gets a private copy. What `PROVEN_MMAP_PRIVATE` does. |
 | **cursor** | The scanner's position in the text it is reading (`proven_scan_t.cursor`). Scanning advances it; `proven_scan_skip_*` moves it deliberately. |
-| **locale** | The system's idea of local conventions — including whether the decimal separator is `.` or `,`. This library's number parsing is **locale-free**: a comma is never a decimal point, on any machine. |
+| **locale** | The system's idea of local conventions - including whether the decimal separator is `.` or `,`. This library's number parsing is **locale-free**: a comma is never a decimal point, on any machine. |
 | **entropy** | Genuinely unpredictable bits, from the operating system or from hardware. A generator is *seeded* from entropy; a clock or a counter is not entropy, however random it looks. |
-| **seed** | The starting value of a generator. The same seed replays the same sequence — essential for a reproducible test, and fatal for a key. |
+| **seed** | The starting value of a generator. The same seed replays the same sequence - essential for a reproducible test, and fatal for a key. |
 | **PRNG / CSPRNG** | A pseudo-random number generator computes a sequence from a seed. A **C**ryptographically **S**ecure one (CSPRNG) is additionally unpredictable to an attacker who has seen earlier output. |
-| **HashDoS** | An attack that feeds a hash table keys chosen to collide, turning *O(1)* lookups into *O(n²)*. `proven_map_create()` defends against it with a keyed hash; `proven_map_create_trusted()` opts out for keys you choose yourself. |
+| **HashDoS** | An attack that feeds a hash table keys chosen to collide, turning *O(1)* lookups into *O(n^2)*. `proven_map_create()` defends against it with a keyed hash; `proven_map_create_trusted()` opts out for keys you choose yourself. |
 | **open addressing** | The map's layout: entries live in one flat bucket array and a collision moves to the next slot, rather than following a chain of separately allocated nodes. |
 | **tombstone** | The marker left where a map entry was removed, so lookups keep probing past it. Tombstones count towards the load factor, which is why heavy remove traffic still triggers a rehash. |
 | **rehash** | Rebuilding the bucket array at a new size. It invalidates every pointer a previous `get_mut` returned, which is why you hold the key rather than the pointer. |
-| **checksum** | A short value that detects accidental corruption — `proven_crc32()`. It detects accidents, never tampering. |
+| **checksum** | A short value that detects accidental corruption - `proven_crc32()`. It detects accidents, never tampering. |
 | **digest / hash** | A fixed-size value computed from data. **SHA-256** is a cryptographic digest (tamper-evident); **FNV-1a** and **SipHash-2-4** are table hashes, and only SipHash is keyed. |
 | **hex / Base64 / Base64URL** | Ways to write bytes as text. Hex is two characters per byte; Base64 packs three bytes into four characters with `+ / =`; Base64URL uses `- _` and no padding, so it is safe in a URL or filename. |
 | **padding** | The `=` characters Base64 adds so the output length is a multiple of four. Base64URL leaves them out. |
-| **BMP** (Basic Multilingual Plane) | The first 65,536 Unicode code points. A character outside it — an emoji, many rarer CJK characters — needs two UTF-16 code units. |
+| **BMP** (Basic Multilingual Plane) | The first 65,536 Unicode code points. A character outside it - an emoji, many rarer CJK characters - needs two UTF-16 code units. |
 | **NUL terminator** | The zero byte that marks the end of a C string. A *view* does not have one, which is exactly why it carries a length instead. |
 | **shortest round trip** | Printing the fewest digits that read back as exactly the same floating-point value. `PROVEN_FLOAT_FORMAT_MODE_SHORTEST` asks for it; it is what a serialiser wants. |
-| **dispatch macro** | A macro built on C11 `_Generic` that picks a function from an argument's type — `PROVEN_ARG(x)` and `PROVEN_SCAN_ARG(&x)`. It chooses among the named constructors; it is not itself one. |
+| **dispatch macro** | A macro built on C11 `_Generic` that picks a function from an argument's type - `PROVEN_ARG(x)` and `PROVEN_SCAN_ARG(&x)`. It chooses among the named constructors; it is not itself one. |
 | **identity constructor** | `proven_arg_identity()` / `proven_scan_arg_identity()`: they take an argument that has already been built and pass it through, so macro-driven code can accept one. |
-| **scratch allocator** | An allocator passed for temporary working memory only, separate from the one that owns the result — e.g. the `scratch` parameter of `proven_map_set_with_scratch()`. |
+| **scratch allocator** | An allocator passed for temporary working memory only, separate from the one that owns the result - e.g. the `scratch` parameter of `proven_map_set_with_scratch()`. |
 | **stackless coroutine** | A function that can suspend and resume without a stack of its own: its state lives in a struct you hold. `coro.h` implements it with a switch, so it costs no thread and no allocation. |
 | **bounded queue** | A queue with a fixed capacity that refuses when full rather than growing. The job system uses one, so a producer that outruns the workers is told so instead of exhausting memory. |
-| **monotonic clock** | A clock that only moves forward, for measuring how long something took. Distinct from the wall clock, which can jump when the system time is corrected — measuring a duration with the wall clock is how a negative elapsed time happens. |
+| **monotonic clock** | A clock that only moves forward, for measuring how long something took. Distinct from the wall clock, which can jump when the system time is corrected - measuring a duration with the wall clock is how a negative elapsed time happens. |
 
 ---
 
@@ -930,7 +930,7 @@ compile time or want the dependency to be visible in the file.
 Two things this table tells you that the file names do not:
 
 - **Which chapter documents it.** Every header has exactly one chapter that explains it, and the
-  build enforces that every public function is named somewhere under `manual/` — so if a symbol is
+  build enforces that every public function is named somewhere under `manual/` - so if a symbol is
   not in the chapter you expect, it is in the manual somewhere and this map says where.
 - **Whether it survives a freestanding build.** The headers assigned to Chapter 5 are the hosted
   ones: they need a filesystem, standard streams, a clock, virtual memory or threads. Everything
@@ -946,7 +946,7 @@ Two things this table tells you that the file names do not:
 | `align.h` | Alignment constants and align-up helpers | Chapter 1 |
 | `version.h` | Version macros | Chapter 1 |
 | `panic.h` | Registerable panic handler | Chapter 1 |
-| `config.h` | Compile-time feature toggles (`PROVEN_FREESTANDING`, `PROVEN_FMT_NO_FLOAT`, `PROVEN_NO_U16STR`, …) | Chapters 1 and 6 |
+| `config.h` | Compile-time feature toggles (`PROVEN_FREESTANDING`, `PROVEN_FMT_NO_FLOAT`, `PROVEN_NO_U16STR`, ...) | Chapters 1 and 6 |
 | `allocator.h` | Allocator trait | Chapter 2 |
 | `heap.h` | PAL-backed heap allocator | Chapter 2 |
 | `alloc_check.h` | An allocator wrapper that knows its own blocks: catches a foreign free, a double free and a wrong realloc at the call (tests and debugging; off unless `PROVEN_ALLOC_CHECK`) | Chapter 2 |
@@ -958,8 +958,8 @@ Two things this table tells you that the file names do not:
 | `utf.h` | Strict UTF-8 <-> UTF-16 transcoding: measure, convert, convert in pieces, grow | Chapter 3 |
 | `fmt.h` | Structural formatter and format arguments | Chapter 3 |
 | `scan.h` | Structural scanner and typed scan destinations | Chapter 3 |
-| `float_parse.h` | Locale-free decimal → `double`/`float` parser (`proven_strtod`, `proven_parse_double_ascii`) | Chapter 8 |
-| `float_format.h` | `double`/`float` → decimal formatter (fixed `%f`/`%e`, shortest) | Chapter 8 |
+| `float_parse.h` | Locale-free decimal -> `double`/`float` parser (`proven_strtod`, `proven_parse_double_ascii`) | Chapter 8 |
+| `float_format.h` | `double`/`float` -> decimal formatter (fixed `%f`/`%e`, shortest) | Chapter 8 |
 | `float_config.h` | Float-engine tuning (`PROVEN_FLOAT_BIGINT_LIMBS`, precision caps) | Chapters 6 and 8 |
 | `array.h` | Generic growable vector | Chapter 4 |
 | `list.h` | Intrusive doubly-linked list | Chapter 4 |
@@ -969,7 +969,7 @@ Two things this table tells you that the file names do not:
 | `hash.h` | FNV-1a, SipHash-2-4, CRC-32, SHA-256, by use case | Chapter 4 |
 | `encode.h` | Hex and Base64 (standard + URL-safe), bytes to text and back | Chapter 4 |
 | `fs.h` | Files, directories, metadata, links, locks, read-all, tree walk | Chapter 5 |
-| `stream.h` | Buffered writers, readers, and a line reader — and, through `sysio.h`, the standard streams (hosted-only) | Chapter 5 |
+| `stream.h` | Buffered writers, readers, and a line reader - and, through `sysio.h`, the standard streams (hosted-only) | Chapter 5 |
 | `sysio.h` | Standard streams as writers/readers, line input from stdin, buffered output, printing, scanning, environment access | Chapter 5 |
 | `random.h` | Randomness by use case: xoshiro256** (reproducible), ChaCha20 (cryptographic), the OS CSPRNG, and unbiased range/shuffle helpers. The generators work freestanding; only the OS source is hosted. | Chapter 5 |
 | `mmap.h` | Memory-mapped file regions | Chapter 5 |
@@ -999,7 +999,7 @@ the trade.
 | `fgets` | `proven_sysio_read_line`, `proven_reader_read_line` | A line that exactly fills the buffer is returned, not lost. [Ch 5](manual-05-hosted-services.md) |
 | `qsort` | `proven_array_sort` | Introsort: *O(n log n)* guaranteed, not quicksort's worst case. [Ch 4](manual-04-containers-algorithms.md) |
 | `bsearch` | `proven_array_binary_search` | Same shape, same comparator contract. [Ch 4](manual-04-containers-algorithms.md) |
-| `rand` | `proven_xoshiro256ss_*` or `proven_random_bytes` | Reproducible and fast, or unpredictable and secure — you pick, deliberately. [Ch 5](manual-05-hosted-services.md) |
+| `rand` | `proven_xoshiro256ss_*` or `proven_random_bytes` | Reproducible and fast, or unpredictable and secure - you pick, deliberately. [Ch 5](manual-05-hosted-services.md) |
 | `time` / `clock` | `proven_time_now`, `proven_time_breakdown` | Nanoseconds, explicit about wall clock versus monotonic. [Ch 5](manual-05-hosted-services.md) |
 | `assert` | `proven_panic` + a panic hook | Works in freestanding builds and is overridable. [Ch 1](manual-01-foundation.md) |
 
@@ -1012,13 +1012,13 @@ The chapters are ordered so that each one only needs the ones before it.
 | Part | Read | For |
 |---|---|---|
 | **I** | This chapter | The contracts and the vocabulary |
-| **II** | [1](manual-01-foundation.md) → [2](manual-02-allocation.md) → [3](manual-03-strings-text.md) | Errors, memory, and text: what every program uses |
+| **II** | [1](manual-01-foundation.md) -> [2](manual-02-allocation.md) -> [3](manual-03-strings-text.md) | Errors, memory, and text: what every program uses |
 | **III** | [4](manual-04-containers-algorithms.md) | Arrays, maps, lists, rings, sorting, hashing, encoding |
 | **IV** | [8](manual-08-fmt-scan.md) | Formatting and scanning in full, once Chapter 3 has introduced them |
 | **V** | [5](manual-05-hosted-services.md) | Files, streams, standard I/O, time, randomness, mapping |
-| **VI** | [6](manual-06-execution-and-platform.md) → [freestanding](manual-freestanding.md) | Coroutines, jobs, thread-safety, bare metal, cross builds |
+| **VI** | [6](manual-06-execution-and-platform.md) -> [freestanding](manual-freestanding.md) | Coroutines, jobs, thread-safety, bare metal, cross builds |
 | **Appendices** | [A: alias index](manual-07-alias-xcv-index.md), B and D above | Looking things up |
 
-If you are an experienced C programmer in a hurry, read §15 above, then
+If you are an experienced C programmer in a hurry, read section 15 above, then
 [Chapter 1](manual-01-foundation.md), then whichever chapter covers the thing you need. If you are
-newer, read Parts I and II in order — they are short, and everything later assumes them.
+newer, read Parts I and II in order - they are short, and everything later assumes them.

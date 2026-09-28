@@ -1,28 +1,28 @@
 # Proven Freestanding Mode (v0.2.0)
 
-**Part VI — Going further. Prerequisites: Parts II–V, and
+**Part VI - Going further. Prerequisites: Parts II-V, and
 [Chapter 6](manual-06-execution-and-platform.md).**
 **After this guide** you can build the library for a target with no operating system and no libc,
 and you will know exactly which modules survive that and which do not.
 
 This guide describes the current `PROVEN_FREESTANDING` configuration as implemented by `nob.c` and the public headers.
 
-**A note on the shape of this guide.** Unlike the chapters, roughly half of it is procedure — flag
+**A note on the shape of this guide.** Unlike the chapters, roughly half of it is procedure - flag
 lists, file listings, and two compile commands. Those sections are deliberately short: a compile
 command explained at length is a compile command nobody reads. The sections that carry a *decision*
-— why this mode exists (§0), what "excluded" really means (§3), what your panic handler has to do
-(§5), what you lose by dropping float (§8), why hosted calls fail at link time (§9), why the
-lifetime rules matter more here (§10), and how the claims in this guide are verified (§11) — are
+-- why this mode exists (section 0), what "excluded" really means (section 3), what your panic handler has to do
+(section 5), what you lose by dropping float (section 8), why hosted calls fail at link time (section 9), why the
+lifetime rules matter more here (section 10), and how the claims in this guide are verified (section 11) - are
 written out in full.
 
 ## 0. Why this mode exists, and why the whole library is shaped by it
 
 Freestanding mode is for firmware, kernels, bootloaders, hypervisors, and anywhere else that has no
-operating system underneath it — no `malloc`, no `open`, no `printf`, often no `libc` at all.
+operating system underneath it - no `malloc`, no `open`, no `printf`, often no `libc` at all.
 
 The C standard has a name for this. A **hosted** implementation gives you the whole standard
 library and starts your program at `main`. A **freestanding** implementation guarantees only a
-handful of headers — `<stddef.h>`, `<stdint.h>`, `<limits.h>` and a few others — and is what a
+handful of headers - `<stddef.h>`, `<stdint.h>`, `<limits.h>` and a few others - and is what a
 compiler targeting bare metal gives you. `-ffreestanding` tells the compiler to assume exactly that.
 
 Most C libraries cannot be used here at all, and the reason is rarely a big one. It is a `malloc`
@@ -37,7 +37,7 @@ seeing that connection, because it explains choices that otherwise look like tas
 |---|---|---|
 | The allocator is a parameter ([Ch 2](manual-02-allocation.md)) | "so you can swap the strategy" | There is no `malloc` here. An arena over a `static` array is the only allocator, and code that took one as a parameter already works. |
 | Errors are returned values ([Ch 1](manual-01-foundation.md)) | "so you cannot ignore them" | There is no `errno` and nothing to unwind to. A return value is the only mechanism that exists. |
-| Panics go through a hook ([Ch 1 §6](manual-01-foundation.md)) | "so you can override it" | There is no `abort()` and no `stderr`. The default traps because that is all it can portably do. |
+| Panics go through a hook ([Ch 1 section 6](manual-01-foundation.md)) | "so you can override it" | There is no `abort()` and no `stderr`. The default traps because that is all it can portably do. |
 | Syscalls live only in `platform/` | "separation of concerns" | It is the only directory that has to be replaced for a new target. Everything in `src/proven/` is portable by construction. |
 | Views instead of C strings ([Ch 3](manual-03-strings-text.md)) | "so lengths cannot get lost" | `strlen` is libc. A view brings its length with it and needs nothing. |
 
@@ -49,13 +49,13 @@ survives and what does not.
 
 Everything that needs the operating system, and nothing else:
 
-- **No heap.** `proven_heap_allocator` does not exist. You supply memory — a `static` array is
-  usual — and put an arena or a pool over it.
+- **No heap.** `proven_heap_allocator` does not exist. You supply memory - a `static` array is
+  usual - and put an arena or a pool over it.
 - **No filesystem, no standard streams, no clock, no OS randomness.** `fs.h`, `sysio.h`, `mmap.h`,
   `time.h` and the OS entropy source are all hosted services. `proven_chacha_rng_t` still works if
   you seed it yourself, which is what `proven_random_set_source` is for.
 - **No float formatting by default.** `PROVEN_FMT_NO_FLOAT` drops it, because the float path is
-  the largest piece of code in the formatter and most firmware never prints a `double`. §8 says how
+  the largest piece of code in the formatter and most firmware never prints a `double`. section 8 says how
   to turn it back on.
 - **No UTF-16 strings.** `PROVEN_NO_U16STR` is on; there is no Windows API here to talk to.
 
@@ -65,9 +65,9 @@ coroutines, and integer formatting and scanning.
 
 ### What still bites you
 
-The lifetime rules do not relax because the target got smaller — if anything they matter more,
+The lifetime rules do not relax because the target got smaller - if anything they matter more,
 because there is no operating system to notice a mistake and no allocator that will refuse to
-reuse memory you still hold. §10 is short and is the section people skip.
+reuse memory you still hold. section 10 is short and is the section people skip.
 
 ## 1. Build profile
 
@@ -154,23 +154,23 @@ Do not add excluded hosted modules to a bare-metal build unless you also provide
 
 A module is excluded here for exactly one reason: it needs something only an operating system can
 provide. It is not that the code is untested on small targets or that somebody has not got round to
-it — `fs.h` needs a filesystem, `sysio.h` needs standard streams, `mmap.h` needs virtual memory,
+it - `fs.h` needs a filesystem, `sysio.h` needs standard streams, `mmap.h` needs virtual memory,
 `job.h` needs threads. There is nothing to port.
 
 The interesting rows are the two that are neither available nor excluded:
 
 - **`heap.h` is a stub.** `proven_heap_allocator()` still exists and still compiles, and it returns
-  an allocator whose function pointers are null — one that `proven_alloc_is_valid` reports as
+  an allocator whose function pointers are null - one that `proven_alloc_is_valid` reports as
   invalid. It does not silently allocate from somewhere else and it does not fail to link. That
   choice matters: code written against the allocator trait keeps compiling for a bare-metal target,
   and the place it breaks is the one line that asked for a heap, at run time, with a check you can
-  write. §4 shows what to pass instead.
+  write. section 4 shows what to pass instead.
 - **`time.h` is limited.** The datetime formatting is pure arithmetic over a number you supply, so
   it compiles. What is missing is the number: reading a clock is a syscall, so `proven_time_now`
   has no backend here. Format timestamps you got from your own hardware timer.
 
 Everything marked Available is the portable core, and "available" means the same tests that run on
-a hosted build run against it — the freestanding profile is built and checked by `./nob freestanding`
+a hosted build run against it - the freestanding profile is built and checked by `./nob freestanding`
 on every release, not asserted in this table.
 
 | Module | Status in current freestanding profile | Notes |
@@ -185,17 +185,17 @@ on every release, not asserted in this table.
 | `u16str.h` | Excluded | Current profile defines `PROVEN_NO_U16STR`. |
 | `array.h`, `list.h`, `ring.h`, `map.h` | Available | No hidden OS dependency. |
 | `algorithm.h` | Available | Sort/search helpers for arrays. |
-| `hash.h` | Available | FNV-1a, SipHash-2-4, CRC-32, SHA-256 — byte-exact, no OS dependency. |
-| `encode.h` | Available | Hex and Base64 — pure computation, no OS. |
-| `utf.h` | Available | Strict UTF-8 <-> UTF-16 transcoding — pure computation, no OS. `proven_utf8_append_to_u16str` is excluded with `PROVEN_NO_U16STR`; the rest works on raw `proven_u16` arrays. |
+| `hash.h` | Available | FNV-1a, SipHash-2-4, CRC-32, SHA-256 - byte-exact, no OS dependency. |
+| `encode.h` | Available | Hex and Base64 - pure computation, no OS. |
+| `utf.h` | Available | Strict UTF-8 <-> UTF-16 transcoding - pure computation, no OS. `proven_utf8_append_to_u16str` is excluded with `PROVEN_NO_U16STR`; the rest works on raw `proven_u16` arrays. |
 | `fmt.h` | Available without float | Current profile defines `PROVEN_FMT_NO_FLOAT`. |
 | `scan.h` | Available | Scanner for memory views. |
-| `float_parse.h` | Available | `proven_strtod`, `proven_parse_double_ascii` and `proven_parse_f64_ascii` all compile here: the decimal-to-binary64 engine is integer-only and needs no libc. The one difference is that the freestanding build does not set `errno` on overflow or underflow — the returned `proven_err_t` carries that instead, which is the value to check on a target with no `errno` at all. This is separate from `fmt.h`'s float **formatting**, which the profile does compile out. |
+| `float_parse.h` | Available | `proven_strtod`, `proven_parse_double_ascii` and `proven_parse_f64_ascii` all compile here: the decimal-to-binary64 engine is integer-only and needs no libc. The one difference is that the freestanding build does not set `errno` on overflow or underflow - the returned `proven_err_t` carries that instead, which is the value to check on a target with no `errno` at all. This is separate from `fmt.h`'s float **formatting**, which the profile does compile out. |
 | `float_format.h` | Available without `fmt.h` integration | The binary64 formatter is integer-only and compiles, but the current profile defines `PROVEN_FMT_NO_FLOAT`, so `{}` will not render a float. Call the `float_format.h` entry points directly if you need digits on a target where you have decided the code size is worth it. |
 | `time.h` | Limited | Core datetime formatting can compile; real PAL time is excluded. |
 | `heap.h` | Stub | `proven_heap_allocator()` returns an invalid allocator. |
 | `fs.h`, `stream.h`, `mmap.h`, `sysio.h`, `job.h` | Excluded | Require hosted PAL services. |
-| `random.h` | Available | The generators and helpers are pure arithmetic. `proven_random_bytes` works here too, but only once you install an entropy source with `proven_random_set_source` — a board's TRNG, ring oscillator, or ADC noise floor. With none installed it returns **false** rather than falling back to a clock-seeded PRNG, which would look like success and be a security hole nothing reports. `proven_chacha_rng_seed_from_entropy` then turns the board's entropy into an endless cryptographic stream. |
+| `random.h` | Available | The generators and helpers are pure arithmetic. `proven_random_bytes` works here too, but only once you install an entropy source with `proven_random_set_source` - a board's TRNG, ring oscillator, or ADC noise floor. With none installed it returns **false** rather than falling back to a clock-seeded PRNG, which would look like success and be a security hole nothing reports. `proven_chacha_rng_seed_from_entropy` then turns the board's entropy into an endless cryptographic stream. |
 | `coro.h` | Available | Macro-only stackless coroutine support. |
 | `panic.h` | Available | Override for target-specific trap/reset behavior. |
 
@@ -218,13 +218,13 @@ Three decisions to make when you size that block, none of which the library can 
   the rest of the firmware needed. This is the trade you are being asked to make explicitly rather
   than discovering it as heap fragmentation months later.
 - **When to reset.** An arena's whole advantage is freeing everything at once. The natural points
-  are a loop iteration, a received packet, a command — anywhere a batch of work has a clear end.
+  are a loop iteration, a received packet, a command - anywhere a batch of work has a clear end.
   Everything allocated during that batch dies at the reset, so **nothing may outlive it**.
 - **Alignment of the backing array.** `alignas(max_align_t)` on the declaration, as below. Without
   it the array may start at an address that cannot hold a `double`, and the arena has nothing to
   fix that with.
 
-Wrong — a view built in the arena that outlives the reset:
+Wrong - a view built in the arena that outlives the reset:
 
 ```text
 proven_u8str_view_t label = build_label(arena_alloc);   /* lives in the arena */
@@ -285,8 +285,8 @@ if (!proven_alloc_is_valid(heap)) {
 
 On a hosted system a panic that traps is survivable: the process dies, the operating system cleans
 up, and something restarts it. On bare metal there is nothing underneath. A trap halts the core,
-and whatever the device was doing — holding a motor at speed, keeping a radio link, driving a
-heater — it is still doing when the CPU stops.
+and whatever the device was doing - holding a motor at speed, keeping a radio link, driving a
+heater - it is still doing when the CPU stops.
 
 So the default handler is a placeholder for the one you must write, and what yours does is a
 product decision rather than a programming one. The usual shapes:
@@ -298,12 +298,12 @@ product decision rather than a programming one. The usual shapes:
 - **Halt loudly.** Blink an LED in a recognisable pattern. On a board with no console this is the
   entire diagnostic channel, and it is worth more than it sounds.
 
-The rule from [Chapter 1 §6](manual-01-foundation.md) applies with more force here: **the handler
+The rule from [Chapter 1 section 6](manual-01-foundation.md) applies with more force here: **the handler
 must not return.** If it does, `proven_arena_alloc_or_panic` proceeds with a block that was never
 allocated, and the failure moves from "the device stopped" to "the device is writing through a
 null pointer".
 
-Wrong — a handler that logs and returns:
+Wrong - a handler that logs and returns:
 
 ```text
 static void my_panic(const char *msg) {
@@ -367,22 +367,22 @@ If your toolchain uses the `riscv64-unknown-elf-gcc` name, use that compiler ins
 
 ### What is left, and why that is usually enough
 
-The formatter is portable computation — it builds bytes in a destination you supply — so almost
+The formatter is portable computation - it builds bytes in a destination you supply - so almost
 all of it survives here. What is gone is one placeholder type: `double`.
 
 That sounds like a big loss and rarely is. Correct float formatting means emitting the shortest
 decimal that reads back as the same value, on every input including subnormals, and doing that
 requires big-integer arithmetic and lookup tables. It is the largest single piece of code in the
-formatter. Most firmware formats integers, string views, characters and pointers — a sensor
-reading is a scaled integer, a status line is text — so the profile drops the float path by
+formatter. Most firmware formats integers, string views, characters and pointers - a sensor
+reading is a scaled integer, a status line is text - so the profile drops the float path by
 default and the binary is smaller for it.
 
 What remains: `{}` for integers of every width, views, characters, booleans and pointers; the
 whole spec grammar (width, fill, alignment, base, sign); `PROVEN_ARG_OF` for your own types; and the
 scanner in full, including float *parsing*, which does not carry the same weight.
 
-If you do need floats on a small target, the switch is `PROVEN_FMT_NO_FLOAT` and §8a covers the
-capacity knob that goes with it. Measure the size change before deciding — on a part with 32 KB of
+If you do need floats on a small target, the switch is `PROVEN_FMT_NO_FLOAT` and section 8a covers the
+capacity knob that goes with it. Measure the size change before deciding - on a part with 32 KB of
 flash it is not a rounding error.
 
 Note the other consequence: **there is no `proven_println` here.** Formatting appends into a
@@ -438,7 +438,7 @@ rounding boundary can need up to 767 significant digits.
 ### Why this is a link error rather than a run-time surprise
 
 The hosted modules are not compiled into a freestanding build at all. Calling one is therefore a
-**link error** — an undefined symbol, at build time, naming the function you should not have used.
+**link error** - an undefined symbol, at build time, naming the function you should not have used.
 
 That is the design working. The alternative, which many embedded libraries choose, is to provide
 stubs that return an error at run time; then a call to `proven_fs_open` on a microcontroller
@@ -481,7 +481,7 @@ is no board here - so behaviour on the target is still yours to test.
 ### The section people skip, and why it costs more here
 
 Freestanding does not relax any of the ownership rules in
-[Chapter 0 §5](manual-00-start-here.md#5-the-five-contracts-you-will-meet-on-every-page). If anything it sharpens them, for three reasons that all
+[Chapter 0 section 5](manual-00-start-here.md#5-the-five-contracts-you-will-meet-on-every-page). If anything it sharpens them, for three reasons that all
 point the same way:
 
 - **There is no allocator between you and the memory.** A dangling pointer into a heap block often
@@ -489,7 +489,7 @@ point the same way:
   same bytes out on the very next allocation after a reset, so a stale view is overwritten
   immediately and deterministically.
 - **There is nothing to catch you.** No MMU trap on a small target, no operating system to kill the
-  process, no sanitizer in the field. A use-after-reset does not crash — it reads someone else's
+  process, no sanitizer in the field. A use-after-reset does not crash - it reads someone else's
   data and carries on, and the symptom appears somewhere unrelated.
 - **The consequences are physical.** The wrong byte here can be a motor command or a radio packet.
 
@@ -521,19 +521,19 @@ return; /* wrong if map survives after key bytes go out of scope */
 
 Everything above is a claim about what compiles and links without an operating system, and claims
 like that rot quietly. One `#include <stdio.h>` added to a portable source file in an unrelated
-commit and the freestanding profile is broken — on a host build nothing would notice, because
+commit and the freestanding profile is broken - on a host build nothing would notice, because
 `stdio.h` is right there.
 
 So the profile is built on every release rather than described. `./nob freestanding` compiles the
 portable core with `-ffreestanding` and the profile's defines, links the checks below **statically**
 on the build host, and runs them. `./nob cross` then compiles the same profile for real embedded
-targets — Cortex-M and RISC-V among them — as a compile-only matrix.
+targets - Cortex-M and RISC-V among them - as a compile-only matrix.
 
 The two checks are chosen for what they would catch:
 
 - The **heap stub** check proves `proven_heap_allocator()` still exists and returns something
   `proven_alloc_is_valid` rejects. If somebody made it fail to link instead, trait-based code would
-  stop compiling for bare metal — the failure §3 explains this design avoids.
+  stop compiling for bare metal - the failure section 3 explains this design avoids.
 - The **compile check** builds a representative program against the profile, which is what catches
   a hosted header sneaking into a portable file.
 

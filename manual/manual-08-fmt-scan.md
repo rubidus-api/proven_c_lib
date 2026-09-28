@@ -1,6 +1,6 @@
 # Chapter 8: Formatting and Scanning (v0.2.0)
 
-**Part IV — Text in and out. Prerequisite: [Chapter 3](manual-03-strings-text.md) §3–§4.**
+**Part IV - Text in and out. Prerequisite: [Chapter 3](manual-03-strings-text.md) section 3-section 4.**
 **After this chapter** you can format any value, teach the formatter a type of your own, parse
 input with the cursor under your control, and recover from a partial parse.
 
@@ -8,7 +8,7 @@ This chapter is the **reference half** of the text material; [Chapter 3](manual-
 is the tutorial half. Chapter 3 introduces the formatter and the scanner beside the string types
 and gives you enough to be productive. This chapter gives the exact syntax, every parameter shape,
 every return value, and the places where callers usually go wrong. If you are meeting `{}` for the
-first time, read Chapter 3 first — this one assumes you have.
+first time, read Chapter 3 first - this one assumes you have.
 
 ## Table of contents
 
@@ -35,7 +35,7 @@ first time, read Chapter 3 first — this one assumes you have.
 Both halves of this chapter exist to eliminate one thing: a place where the programmer states a
 type that the compiler cannot check against the value.
 
-`printf("%d", x)` states it twice — once as `%d`, once by passing `x` — and varargs erases the
+`printf("%d", x)` states it twice - once as `%d`, once by passing `x` - and varargs erases the
 second, so nothing can compare them. `scanf("%d", &x)` is worse: the format decides both how to
 parse *and* what to write through the pointer, so a mismatch corrupts memory rather than printing
 nonsense. Both are the same defect from opposite directions, and both compile silently.
@@ -43,13 +43,13 @@ nonsense. Both are the same defect from opposite directions, and both compile si
 Here the placeholder carries **no type at all**. `{}` marks a position; the type comes from
 `PROVEN_ARG(x)` on the formatting side and `PROVEN_SCAN_ARG(&x)` on the scanning side, both
 resolved by `_Generic` at compile time against the argument's static type. The spec after `:`
-controls presentation only — width, fill, alignment, precision, base — never interpretation. There
+controls presentation only - width, fill, alignment, precision, base - never interpretation. There
 is no `%d`-versus-`double` to get wrong because you never wrote a type in the string.
 
 The second design decision is that **neither side owns a buffer**. Formatting appends into a
 destination you supply and refuses when it does not fit; scanning reads from a view you supply and
 moves a cursor you can read. Nothing here allocates unless you hand it an allocator, which is what
-lets the whole chapter work in a freestanding build (§13).
+lets the whole chapter work in a freestanding build (section 13).
 
 The formatting side and the scanning side solve opposite problems.
 
@@ -346,7 +346,7 @@ shortest round-trippable form, or for a precision other than six, use the
 
 - The default `{}` float output uses six fractional digits, correctly rounded to
   nearest with ties to even (matching glibc `%.6f`/`%.6e`). It is exact at any
-  magnitude — there is no `long double` and no precision/magnitude ceiling beyond
+  magnitude - there is no `long double` and no precision/magnitude ceiling beyond
   the configurable big-integer capacity.
 - For round-trip serialization use the **shortest** policy
   (`proven_float_format_options_shortest()`), which emits the shortest decimal
@@ -370,11 +370,11 @@ shortest round-trippable form, or for a precision other than six, use the
 
 ### Inside the engine (conceptual)
 
-You do not need any of this to use the API — it is here for readers who want to
+You do not need any of this to use the API - it is here for readers who want to
 know why the output is trustworthy. Full detail is in
 `docs/float-correctness-and-performance.md`.
 
-**Parsing (decimal → binary64), three tiers, fastest first.** The result is always
+**Parsing (decimal -> binary64), three tiers, fastest first.** The result is always
 correctly rounded; the tiers are purely a speed staircase, each one only taken when
 it can guarantee the exact answer:
 
@@ -382,27 +382,27 @@ it can guarantee the exact answer:
    exponent, both the significand and `10^exp` are exactly representable as
    `double`, so a single rounded multiply/divide is provably correct. Covers most
    everyday numbers.
-2. *Eisel-Lemire.* A 64×128-bit fixed-point multiply by a cached power of ten,
+2. *Eisel-Lemire.* A 64x128-bit fixed-point multiply by a cached power of ten,
    with a check that the result is far enough from a rounding boundary to be
    certain. If the check is inconclusive (the value sits on a halfway tie), it
    falls through.
 3. *Exact big-integer fallback.* Builds the value as a ratio of big integers
    (`significand` and `5^q`/`2^q`) and compares against the candidate `double` and
-   its neighbor exactly — this is the arbiter that makes ties and subnormals
-   correct. A seeded ±16-ULP window keeps the search to a few comparisons. The
+   its neighbor exactly - this is the arbiter that makes ties and subnormals
+   correct. A seeded +/-16-ULP window keeps the search to a few comparisons. The
    big-integer capacity is bounded by `PROVEN_FLOAT_BIGINT_LIMBS`; the tier is the
    only one that allocates limbs (on the stack), and the fast paths never reach it.
 
-**Formatting (binary64/32 → decimal).** Two engines, no `long double` anywhere:
+**Formatting (binary64/32 -> decimal).** Two engines, no `long double` anywhere:
 
 - *Shortest* (`proven_float_format_options_shortest()`): a **Grisu3** fast path
   produces the minimal round-trippable digits for almost all inputs in ~90 ns; the
   rare cases where Grisu3 cannot prove minimality fall back to an exact **Dragon4**
-  (Burger–Dybvig, round-to-even) core. The result is the unique shortest decimal
+  (Burger-Dybvig, round-to-even) core. The result is the unique shortest decimal
   that parses back to the same bits.
 - *Fixed `%f` / scientific `%e`* (the default `{}` and the fixed options): an exact
   integer engine scales the value by `10^precision` with big-integer
-  `mul_pow5`/shift, does an integer `divmod`, and rounds half-to-even — so it
+  `mul_pow5`/shift, does an integer `divmod`, and rounds half-to-even - so it
   matches glibc at any precision and magnitude, with no `2^64`/precision ceiling.
   Extreme exponents do real arbitrary-precision work and are correspondingly slower
   (rare in practice).
@@ -411,11 +411,11 @@ it can guarantee the exact answer:
 
 Three entry points, sharing one correctly-rounded backend:
 
-- `proven_scan_f64(scan)` — parse from a `proven_scan_t` cursor; restores the
+- `proven_scan_f64(scan)` - parse from a `proven_scan_t` cursor; restores the
   cursor on failure. The native, length-bounded path (no NUL terminator needed).
-- `proven_parse_double_ascii(view)` — parse one locale-free ASCII token from a
+- `proven_parse_double_ascii(view)` - parse one locale-free ASCII token from a
   `proven_u8str_view_t` and report the consumed length.
-- `proven_strtod(nptr, endptr)` — a `strtod`-style convenience wrapper over a C
+- `proven_strtod(nptr, endptr)` - a `strtod`-style convenience wrapper over a C
   string: skips leading ASCII whitespace and reports `endptr`.
 
 #### Worked example: parsing
@@ -528,7 +528,7 @@ spec copied from Python or Rust means here what it means there.
 Two things are worth knowing because they used to be false:
 
 - **A leading `0` is zero-fill, not the first digit of the width.** `{:08}` produced
-  `"      42"` — space-padded, no error — until v26.07.12f. An explicit fill still
+  `"      42"` - space-padded, no error - until v26.07.12f. An explicit fill still
   wins: `{:*>08}` pads with `*`.
 - **Zero-padding goes between the sign and the digits.** `{:+08}` on 42 is
   `+0000042`, never `0000+42`. Padding is part of the number, and a number's sign
@@ -544,7 +544,7 @@ uses one only when it is shorter. `{:f}` forces the fixed form, and `{:g}` gives
 round-trips.
 
 Until v26.07.12i **none of these existed**: every float came out with exactly six
-decimals, forever. The exact engine could always do all of it — the `{}` grammar
+decimals, forever. The exact engine could always do all of it - the `{}` grammar
 simply could not reach it. The visible cost was that a float column could not be
 aligned, because `12.5` rendered nine characters wide and `100.0` rendered ten:
 
@@ -559,7 +559,7 @@ proven_u8str_t line = proven_u8str_borrow(buf, sizeof buf);
 `{:x}` on a double, `{:.2}` on an integer, `{:f}` on an integer, `{:#}` on a string:
 all `PROVEN_ERR_INVALID_FORMAT`.
 
-They used to be *ignored* — `{:x}` on a double printed `3.500000` and reported
+They used to be *ignored* - `{:x}` on a double printed `3.500000` and reported
 success. The caller asked for something, got something else, and was told it had
 worked. That is the worst available outcome, and it is worse than refusing.
 
@@ -567,7 +567,7 @@ worked. That is the worst available outcome, and it is worse than refusing.
 
 `PROVEN_ARG('Z')` renders `Z`, and a `bool` renders `true` or `false`. Both used to
 go through the integer path, so a character printed as `90` and there was no way to
-emit one at all — the ASCII column of a hex dump had to be built by hand in a
+emit one at all - the ASCII column of a hex dump had to be built by hand in a
 separate buffer and passed as a string. An uppercase hex dump is now one loop:
 
 ```c
@@ -739,7 +739,7 @@ if (!proven_is_ok(proven_println("hello {}", PROVEN_ARG("world")))) {
 
 `PROVEN_ARG` is built on `_Generic`, and `_Generic` can only dispatch on types it was
 told about at compile time. It cannot be told about yours. So the formatter's argument
-set — integers, floats, strings, pointers, datetimes — was a **closed** one: a `rect_t`,
+set - integers, floats, strings, pointers, datetimes - was a **closed** one: a `rect_t`,
 a `uuid_t`, a `vec3_t` could not be passed to `{}` at all.
 
 The two ways around it were both bad. Pre-format the value into a scratch string and
@@ -757,19 +757,19 @@ Three things follow from the shape of that signature:
 
 - **The renderer gets a sink, not a buffer.** It does not need to know how much room
   there is, and it cannot overflow anything. It emits with `proven_fmt_put`.
-- **It composes.** The renderer may call the formatter again — into a stack buffer,
-  with no allocator — and hand the result to the sink. A type whose fields are
+- **It composes.** The renderer may call the formatter again - into a stack buffer,
+  with no allocator - and hand the result to the sink. A type whose fields are
   themselves user types nests naturally.
 - **Width, fill and alignment work.** The formatter runs the renderer **twice**: once
   against a counting sink to learn how wide the output is, then once for real, with the
   padding applied around it. This is why `{:>10}` lines up a column of your type exactly
-  as it lines up a column of ints — and it is why the renderer must be **deterministic**
+  as it lines up a column of ints - and it is why the renderer must be **deterministic**
   and must not mutate `obj`. If the two passes disagree, the formatter returns
   `PROVEN_ERR_INVALID_ARG` rather than emit a field of the wrong width into an aligned
   column and let you find out later.
 
 What the formatter will **not** do is guess. `{:x}` on a rectangle, `{:.2}` on a UUID,
-`{:+}` on a matrix — the library has no idea what those would mean for your type, and
+`{:+}` on a matrix - the library has no idea what those would mean for your type, and
 so it refuses them with `PROVEN_ERR_INVALID_FORMAT`. Inventing a plausible answer and
 reporting success is how a formatter starts lying; a type letter you did not ask for is
 not better than an error.
@@ -862,17 +862,17 @@ exit, on a crash, or when two writers interleave.
 
 **One allocation caveat.** The line is formatted into a 512-byte stack buffer, so a typical line
 costs zero allocations. A line that does *not* fit falls back to the global heap for that call
-rather than being refused — refusing to print something because it is long would be worse. This is
+rather than being refused - refusing to print something because it is long would be worse. This is
 the one place in the library where a call with no allocator parameter can still allocate, and it is
 bounded to the over-long case. If you need the guarantee that nothing allocates, format into your
 own buffer and write that.
 
 When output volume matters, take a buffered writer from `proven_sysio_stdout_buffered` and format
-into that — same argument rules, one syscall per flush instead of one per line.
+into that - same argument rules, one syscall per flush instead of one per line.
 [Chapter 5](manual-05-hosted-services.md) covers the stream layer; this section is short because
 that is where the I/O API is documented.
 
-Wrong — reaching for the scanning argument constructor when printing:
+Wrong - reaching for the scanning argument constructor when printing:
 
 ```text
 proven_println("{}", PROVEN_SCAN_ARG(&x));   /* wrong: that builds a scan destination */
@@ -907,7 +907,7 @@ Two consequences worth stating, because they are what make this different from
   valid exactly as long as those bytes are, and no longer. If it must outlive them,
   copy it with `proven_u8str_create_from_view()`.
 - **The cursor is yours.** It is a plain field. You may save it, restore it, or step
-  it by hand (§12 does exactly that after `proven_scan_skip_until`). Nothing in the
+  it by hand (section 12 does exactly that after `proven_scan_skip_until`). Nothing in the
   scanner is hidden from you, so nothing has to be undone for you.
 
 `proven_scan_init()` normalizes a malformed view (`size > 0` with a null pointer) to
@@ -944,7 +944,7 @@ a scan you did not need to make.
   yields `12` and leaves the cursor on the `a`. That is not an error - the scanner
   answered the question you asked and left the rest for whoever asks next.
 - **On failure the cursor is restored**, so a failed scan is a non-event: you can
-  turn around and parse the same position as something else. §12 does this.
+  turn around and parse the same position as something else. section 12 does this.
 
 ### The integer scanners
 
@@ -1041,16 +1041,16 @@ because the format decides what to write through the pointers you passed. `sscan
 `c` is a `char` writes four bytes into a one-byte object, and nothing in the call says so.
 
 That asymmetry shapes this section. The structural scan uses the same `{}` grammar as the
-formatter, but the destination type comes from `PROVEN_SCAN_ARG(&x)` — the same `_Generic`
+formatter, but the destination type comes from `PROVEN_SCAN_ARG(&x)` - the same `_Generic`
 dispatch, so the width written is the width of the object, and a value too large for it is
 `PROVEN_ERR_OVERFLOW` rather than three neighbouring bytes.
 
 The one property to internalise before using it: **the structural scan is not transactional across
 placeholders.** If the third `{}` fails, the first two destinations have already been written. That
-is a deliberate trade — buffering every destination until the whole line parsed would need
-allocation, and this scanner allocates nothing — but it means a failed `proven_scan_fmt` leaves
+is a deliberate trade - buffering every destination until the whole line parsed would need
+allocation, and this scanner allocates nothing - but it means a failed `proven_scan_fmt` leaves
 your variables in a partly-updated state. Either treat them as garbage on failure, or scan into
-locals and copy out only on success. §11.1 shows both patterns.
+locals and copy out only on success. section 11.1 shows both patterns.
 
 Literals in the pattern are the other half of the grammar and the part people underuse: anything
 that is not a placeholder must match the input exactly, so `"{}:{}"` on `"12-34"` fails at the
@@ -1070,7 +1070,7 @@ themselves, so a format with a space between two placeholders and one without pa
 it not been there, the second scanner would have skipped it anyway.
 
 The number of placeholders must equal the number of arguments. Too few values in the
-input is an error; **too many is not** (§11.1).
+input is an error; **too many is not** (section 11.1).
 
 ## 11. Scan formatting APIs
 
@@ -1082,7 +1082,7 @@ proven_err_t proven_scan_fmt_internal(...) /* what the macros expand to */
 
 Use `proven_scan_fmt` for a self-contained line. Use `proven_scan_fmt_cursor` when
 the scan is one step in a longer walk over the same input: it advances the cursor you
-own, so it mixes freely with the primitives of §8.
+own, so it mixes freely with the primitives of section 8.
 
 ### 11.1. Scan error code guide and recovery
 
@@ -1111,7 +1111,7 @@ proven_err_t err = proven_scan_fmt(line, "id={} XXX={}",
 
 So: **on failure, treat every destination as clobbered.** If you need all-or-nothing,
 scan into locals and publish them only once the call has succeeded - the worked
-example in §12 shows the shape. Alternatively, save `scan.cursor` before the call and
+example in section 12 shows the shape. Alternatively, save `scan.cursor` before the call and
 restore it afterwards. The cursor is a plain field, and that is deliberate.
 
 **Trailing input is not an error.** Scanning one placeholder against `"7 8"` succeeds
@@ -1443,7 +1443,7 @@ It is not one. One placeholder against `"7 8"` succeeds. Check the cursor if you
 
 ### Misuse: trusting destinations after a failed scan
 
-They are clobbered. See §11.1.
+They are clobbered. See section 11.1.
 
 ### Misuse: keeping a scanned word after its input is gone
 
@@ -1458,15 +1458,15 @@ the bytes it came from.
 Everything in this chapter is portable computation except one part, and that part is unusually
 expensive.
 
-Formatting a `double` correctly — so that the shortest decimal that round-trips is what you get, on
-every input including subnormals — needs big-integer arithmetic and lookup tables. It is the
+Formatting a `double` correctly - so that the shortest decimal that round-trips is what you get, on
+every input including subnormals - needs big-integer arithmetic and lookup tables. It is the
 largest single piece of code in the formatter, and most firmware never prints a `double` at all. So
 the freestanding profile sets `PROVEN_FMT_NO_FLOAT` and drops it, and a build for a microcontroller
 does not carry kilobytes of decimal-conversion tables it will never call.
 
 This is a build-time decision rather than a run-time one on purpose: the code is *absent*, not
-merely unreachable, so the linker cannot be talked into keeping it. §8a of the
-[freestanding guide](manual-freestanding.md) covers the related knob — the big-integer capacity — for
+merely unreachable, so the linker cannot be talked into keeping it. section 8a of the
+[freestanding guide](manual-freestanding.md) covers the related knob - the big-integer capacity - for
 builds that do want floats on a small target.
 
 The scanner is core: it does no I/O, allocates nothing, and touches no platform layer,
@@ -1499,7 +1499,7 @@ pointer you hand it; the named forms are what it chooses, written out.
 
 **Not every input is a rigid format.** `proven_scan_skip_whitespace()` advances
 past spaces, tabs and newlines, and `proven_scan_skip_until_number()` runs the
-cursor forward to the next digit — or to a sign immediately followed by one, so
+cursor forward to the next digit - or to a sign immediately followed by one, so
 a negative number keeps its sign. Neither can fail: "there was nothing to skip"
 is not an error, and at the end of the input the cursor stops instead of running
 off.
@@ -1514,7 +1514,7 @@ that cannot be told from a real one. `proven_parse_f64_ascii()` is the same
 function under its earlier name, kept so existing call sites still read correctly.
 
 On the way out, `proven_arg_f64()` is how a floating-point value enters the
-formatter — both `float` and `double` go through it, so what a program prints
+formatter - both `float` and `double` go through it, so what a program prints
 does not depend on the width of the variable it was kept in. When the exact
 spelling matters, `proven_float_format_f32_policy()` and its `f64` sibling take
 the policy and options explicitly. Shortest mode asks for the fewest digits that
@@ -1695,7 +1695,7 @@ int main(void) {
 }
 ```
 
-Wrong — scanning a large value into a 32-bit destination:
+Wrong - scanning a large value into a 32-bit destination:
 
 ```text
 proven_i32 bytes = 0;
@@ -1707,7 +1707,7 @@ The value does not fit. Choosing the destination type by what is convenient,
 rather than by the range the field can hold, is the same mistake as declaring a
 file offset `int`.
 
-Wrong — using `atof` or `strtod` for data that crosses machines:
+Wrong - using `atof` or `strtod` for data that crosses machines:
 
 ```text
 double v = strtod(text, NULL);   /* wrong: the decimal point depends on the locale */
@@ -1716,7 +1716,7 @@ double v = strtod(text, NULL);   /* wrong: the decimal point depends on the loca
 And `atof` cannot report failure at all: unparsable text becomes `0`, which is
 indistinguishable from a genuine zero in the data.
 
-Wrong — assuming `skip_until_number` reports "not found":
+Wrong - assuming `skip_until_number` reports "not found":
 
 ```text
 proven_scan_skip_until_number(&scan);
@@ -1725,7 +1725,7 @@ proven_err_t e = proven_scan_fmt_cursor(&scan, "{}", proven_scan_arg_i32(&n));  
 ```
 
 It moves the cursor and returns nothing. When there is no number left the cursor
-lands at the end of the input, and it is the scan afterwards that tells you so —
+lands at the end of the input, and it is the scan afterwards that tells you so --
 check that error rather than assuming a number was found.
 
 ### Worked example: naming the argument type yourself
@@ -1736,11 +1736,11 @@ chose. Two situations take the choice back:
 
 1. **The macro has no type to dispatch on that means what you mean.** A
    `proven_u8str_view_t`, a broken-down date, a raw address printed for a
-   diagnostic — `proven_arg_str_view()`, `proven_arg_datetime()` and
+   diagnostic - `proven_arg_str_view()`, `proven_arg_datetime()` and
    `proven_arg_ptr()` exist because those are deliberate choices, not defaults to
    fall into.
 2. **The argument list is built at run time.** A logging helper whose parameters
-   are already `proven_arg_t` values cannot re-wrap them — a macro that turns a
+   are already `proven_arg_t` values cannot re-wrap them - a macro that turns a
    value into an argument has nothing to do with something that is already one.
    `proven_arg_identity()` and `proven_scan_arg_identity()` are what let the same
    macro-driven code path accept an argument built earlier.
@@ -1757,7 +1757,7 @@ order is worth remembering:
 
 | Constructor | What it is given | What can go wrong |
 |---|---|---|
-| `proven_arg_str_view` | a pointer **and** a length | nothing is scanned for a terminator, so there is none to be missing — prefer this |
+| `proven_arg_str_view` | a pointer **and** a length | nothing is scanned for a terminator, so there is none to be missing - prefer this |
 | `proven_arg_cstr` | a NUL-terminated C string | the terminator must be there and the memory must be alive, or the formatter reads past the end |
 | `proven_arg_ucstr` | the same, as `unsigned char *` | exists so a byte buffer does not need a cast that silences a real warning |
 
@@ -1955,7 +1955,7 @@ int main(void) {
 }
 ```
 
-Wrong — wrapping an argument that is already an argument:
+Wrong - wrapping an argument that is already an argument:
 
 ```text
 static proven_fmt_result_t log_one(proven_u8str_t *out, proven_arg_t a) {
@@ -1966,7 +1966,7 @@ static proven_fmt_result_t log_one(proven_u8str_t *out, proven_arg_t a) {
 Use `proven_arg_identity(a)`. `PROVEN_ARG` is for values; `a` is already an
 argument.
 
-Wrong — keeping a scanned string view after the text is gone:
+Wrong - keeping a scanned string view after the text is gone:
 
 ```text
 proven_u8str_view_t word = {0};

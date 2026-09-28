@@ -3,7 +3,7 @@
 #include <string.h>
 
 /*
- * proven_u8str_view_find_last against a brute-force oracle (docs/RFC-0003 §5).
+ * proven_u8str_view_find_last against a brute-force oracle (docs/RFC-0003 section 5).
  *
  * The oracle tries every start position from the end with memcmp: obviously correct and slow.
  * The implementation has several paths - a backward byte scan for one-byte needles, a backward

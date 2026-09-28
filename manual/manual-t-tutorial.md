@@ -1,6 +1,6 @@
 # Tutorial: the library in nine short programs
 
-**Part I — Start here.** No prerequisites beyond one introductory C book.
+**Part I - Start here.** No prerequisites beyond one introductory C book.
 **After lesson 6** you can read the greeting program in
 [Chapter 0](manual-00-start-here.md) line by line, and the reference chapters stop looking like a
 wall of new words. **After lesson 9** you have used an arena, a growable container and a file - the
@@ -19,37 +19,37 @@ first six lead up to the Chapter 0 program; the last three go past it, into aren
 files. Every one of them is a real file under `manual/examples/`
 that the build compiles and runs, so what you read here is what actually ran.
 
-Build any of them the way you build any C program — the library is source you compile with your
+Build any of them the way you build any C program - the library is source you compile with your
 own code, so there is nothing to install:
 
 ```text
 cc -std=c23 -Iinclude your_program.c src/proven/*.c platform/*.c -o your_program
 ```
 
-If that line is unfamiliar, read [Chapter 0 §4](manual-00-start-here.md#4-building-and-including)
+If that line is unfamiliar, read [Chapter 0 section 4](manual-00-start-here.md#4-building-and-including)
 first and come back.
 
 ## Table of contents
 
-1. [Lesson 1 — printing, and a build that works](#lesson-1--printing-and-a-build-that-works)
-2. [Lesson 2 — text that knows how long it is](#lesson-2--text-that-knows-how-long-it-is)
-3. [Lesson 3 — a call that can fail says so](#lesson-3--a-call-that-can-fail-says-so)
-4. [Lesson 4 — the value and the error arrive together](#lesson-4--the-value-and-the-error-arrive-together)
-5. [Lesson 5 — who gives out the memory is an argument](#lesson-5--who-gives-out-the-memory-is-an-argument)
-6. [Lesson 6 — the Chapter 0 program, read line by line](#lesson-6--the-chapter-0-program-read-line-by-line)
-7. [Lesson 7 — memory that is freed all at once](#lesson-7--memory-that-is-freed-all-at-once)
-8. [Lesson 8 — a container remembers its allocator](#lesson-8--a-container-remembers-its-allocator)
-9. [Lesson 9 — the outside world fails too, and says so the same way](#lesson-9--the-outside-world-fails-too-and-says-so-the-same-way)
+1. [Lesson 1 - printing, and a build that works](#lesson-1---printing-and-a-build-that-works)
+2. [Lesson 2 - text that knows how long it is](#lesson-2---text-that-knows-how-long-it-is)
+3. [Lesson 3 - a call that can fail says so](#lesson-3---a-call-that-can-fail-says-so)
+4. [Lesson 4 - the value and the error arrive together](#lesson-4---the-value-and-the-error-arrive-together)
+5. [Lesson 5 - who gives out the memory is an argument](#lesson-5---who-gives-out-the-memory-is-an-argument)
+6. [Lesson 6 - the Chapter 0 program, read line by line](#lesson-6---the-chapter-0-program-read-line-by-line)
+7. [Lesson 7 - memory that is freed all at once](#lesson-7---memory-that-is-freed-all-at-once)
+8. [Lesson 8 - a container remembers its allocator](#lesson-8---a-container-remembers-its-allocator)
+9. [Lesson 9 - the outside world fails too, and says so the same way](#lesson-9---the-outside-world-fails-too-and-says-so-the-same-way)
 10. [Where to go next](#where-to-go-next)
 
 ---
 
-## Lesson 1 — printing, and a build that works
+## Lesson 1 - printing, and a build that works
 
 **The one new thing:** `proven_println`, and the fact that its arguments are checked.
 
 `printf("%d", 3.5)` compiles. It is wrong, and on a bad day it prints garbage or crashes, because
-the format string is a *string* — nothing connects it to the arguments that follow. `proven_println`
+the format string is a *string* - nothing connects it to the arguments that follow. `proven_println`
 uses `{}` as the placeholder and wraps each argument in `PROVEN_ARG`, which records the argument's
 type. The two cannot disagree, because the type travels with the value.
 
@@ -87,16 +87,16 @@ to remember about `long` versus `int`: `PROVEN_ARG` knows.
 
 ---
 
-## Lesson 2 — text that knows how long it is
+## Lesson 2 - text that knows how long it is
 
-**The one new thing:** the *view* — a pointer and a size that travel together.
+**The one new thing:** the *view* - a pointer and a size that travel together.
 
 In the C you know, a string is a pointer, and its length is wherever the first zero byte happens
 to be. Every function that touches it has to walk the bytes to find out how much there is; if the
 zero is missing, it walks off the end. That single design decision is behind a large share of the
 security advisories in the language's history.
 
-A view makes the missing half explicit. It does not own the bytes — it borrows them, and it never
+A view makes the missing half explicit. It does not own the bytes - it borrows them, and it never
 frees anything.
 
 <!-- example: manual/examples/en/tut_02_view.c -->
@@ -141,19 +141,19 @@ int main(void) {
 third view in the program names the *middle* of the literal without copying it: a view can describe
 part of something, which is why splitting and parsing in this library allocate nothing.
 
-**Common first stumble.** A view is borrowed. If the bytes it points at go away — a local buffer
-that leaves scope, a string you destroyed — the view is dangling, exactly like any other C pointer.
+**Common first stumble.** A view is borrowed. If the bytes it points at go away - a local buffer
+that leaves scope, a string you destroyed - the view is dangling, exactly like any other C pointer.
 The library never extends a lifetime behind your back.
 
 ---
 
-## Lesson 3 — a call that can fail says so
+## Lesson 3 - a call that can fail says so
 
 **The one new thing:** `proven_err_t`, and refusal instead of truncation.
 
 C reports failure in three unrelated ways: a magic return value, a null pointer, or the global
 `errno` that the next call overwrites. All three are easy not to look at, and nothing complains
-when you do not. Here, a call that can fail returns an error *value* — and these functions are
+when you do not. Here, a call that can fail returns an error *value* - and these functions are
 marked `[[nodiscard]]`, so throwing it away is a compiler warning rather than a habit.
 
 <!-- example: manual/examples/en/tut_03_error.c -->
@@ -204,7 +204,7 @@ int main(void) {
 
 **What to notice.** The append that does not fit changes *nothing*. It does not store the part that
 would have fit. This is called failure atomicity, and the reason for it is that a truncated string
-is not a shorter message, it is a different one — a truncated path names a different file, and a
+is not a shorter message, it is a different one - a truncated path names a different file, and a
 truncated command is a different command.
 
 **Common first stumble.** `proven_is_ok(err)` is the check; `err == PROVEN_OK` says the same thing.
@@ -212,9 +212,9 @@ What you must not do is ignore it and read the value anyway.
 
 ---
 
-## Lesson 4 — the value and the error arrive together
+## Lesson 4 - the value and the error arrive together
 
-**The one new thing:** result structs — `.err` and `.value` in one return.
+**The one new thing:** result structs - `.err` and `.value` in one return.
 
 When a call has nothing to give back, an error code is enough. When it does have something, the
 library returns both in one small struct, and the rule is one sentence: **`value` means nothing
@@ -274,11 +274,11 @@ return; there is no machinery underneath, which is why you can use it in your ow
 you have read this page.
 
 **Common first stumble.** On failure the `value` field usually holds a zero. That zero is not an
-answer — it is the absence of one. Checking `err` is what tells them apart.
+answer - it is the absence of one. Checking `err` is what tells them apart.
 
 ---
 
-## Lesson 5 — who gives out the memory is an argument
+## Lesson 5 - who gives out the memory is an argument
 
 **The one new thing:** `proven_allocator_t`, passed in rather than assumed.
 
@@ -348,17 +348,17 @@ int main(void) {
 ```
 
 **What to notice.** `make_greeting` is written once and runs against the heap and against an arena
-— a block of memory you own, handed out by bumping a pointer, and released all at once. The
+-- a block of memory you own, handed out by bumping a pointer, and released all at once. The
 function did not change, and nothing global was configured.
 
 **The ownership rule, in one line:** whatever created it destroys it, with the *same* allocator.
 
-**Common first stumble.** With an arena, `destroy` reclaims nothing — an arena frees by being
+**Common first stumble.** With an arena, `destroy` reclaims nothing - an arena frees by being
 reset. Call it anyway: the pairing is what makes the code correct when the allocator later changes.
 
 ---
 
-## Lesson 6 — the Chapter 0 program, read line by line
+## Lesson 6 - the Chapter 0 program, read line by line
 
 **The one new thing:** nothing. That is the exercise.
 
@@ -417,9 +417,9 @@ containers and files - in the same shape: one new idea each.
 
 ---
 
-## Lesson 7 — memory that is freed all at once
+## Lesson 7 - memory that is freed all at once
 
-**The one new thing:** `proven_arena_reset` — one call that gives back everything an arena handed
+**The one new thing:** `proven_arena_reset` - one call that gives back everything an arena handed
 out.
 
 Lesson 5 passed an arena to `make_greeting` and reset it at the end without saying what the reset
@@ -510,7 +510,7 @@ of the arena first.
 
 ---
 
-## Lesson 8 — a container remembers its allocator
+## Lesson 8 - a container remembers its allocator
 
 **The one new thing:** a container takes the allocator once, at creation, and keeps it.
 
@@ -590,7 +590,7 @@ pointer decides when that memory moves.
 
 ---
 
-## Lesson 9 — the outside world fails too, and says so the same way
+## Lesson 9 - the outside world fails too, and says so the same way
 
 **The one new thing:** failures that are not your program's fault arrive as the same error values.
 

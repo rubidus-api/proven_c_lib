@@ -56,7 +56,7 @@ static inline void mul64x64(proven_u64 a, proven_u64 b, proven_u64 *hi, proven_u
 }
 
 // -------------------------------------------------------------
-// SplitMix64 — used only to expand a seed
+// SplitMix64 - used only to expand a seed
 // -------------------------------------------------------------
 
 /*
@@ -74,7 +74,7 @@ static inline proven_u64 splitmix64(proven_u64 *x) {
 }
 
 // -------------------------------------------------------------
-// xoshiro256** — fast, reproducible, NOT secret-grade
+// xoshiro256** - fast, reproducible, NOT secret-grade
 // -------------------------------------------------------------
 
 void proven_xoshiro256ss_seed(proven_xoshiro256ss_t *g, proven_u64 seed) {
@@ -131,7 +131,7 @@ proven_rng_t proven_xoshiro256ss_rng(proven_xoshiro256ss_t *g) {
 }
 
 // -------------------------------------------------------------
-// ChaCha20 — cryptographic, and OS-free once seeded
+// ChaCha20 - cryptographic, and OS-free once seeded
 // -------------------------------------------------------------
 
 /* Set in `seeded` by seeding, and by nothing else. A zero-initialised generator - the shape of

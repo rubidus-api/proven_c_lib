@@ -2,7 +2,7 @@
 #include "proven_test.h"
 
 /*
- * docs/RFC-0003 §1.1: proven_u8str_view_find matches an empty needle at the position it is asked
+ * docs/RFC-0003 section 1.1: proven_u8str_view_find matches an empty needle at the position it is asked
  * to start from, so a split iterator that advances by `at + sep.size` never advances when the
  * separator is empty, and yields empty fields for ever. RFC-0002's sketch did exactly that. A
  * separator computed at runtime reaches it with a one-character mistake, and the failure is a

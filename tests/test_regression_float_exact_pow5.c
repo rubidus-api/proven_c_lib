@@ -59,8 +59,8 @@ int main(void) {
         expect_bits("1.1032184967161746799744147340198131380055836595066587335622898535802960"
                     "39581298828125e-13",
                     0x3d3f0d86ed37a97cull,
-                    "an exact tie at exp10=-97 must round to even (…97c)",
-                    "It used to give …97d: the tie was decided against a 5^97 that was off by 4.5e-39.");
+                    "an exact tie at exp10=-97 must round to even (...97c)",
+                    "It used to give ...97d: the tie was decided against a 5^97 that was off by 4.5e-39.");
     }
 
     // ---------------------------------------------------------------
@@ -72,13 +72,13 @@ int main(void) {
         expect_bits("0.0000000000000581831502950741840306488936917509682239632758105063459197"
                     "4812792614102363586425781249999999999999999999999999999999",
                     0x3d306089aed23bd4ull,
-                    "a value below the midpoint at exp10=-130 must round down (…bd4)",
-                    "It used to round up to …bd5.");
+                    "a value below the midpoint at exp10=-130 must round down (...bd4)",
+                    "It used to round up to ...bd5.");
 
         expect_bits("34014179048958869370763083896833775022593e60",
                     0x54cf1a2b3c4d5e61ull,
-                    "a value above the midpoint at exp10=+60 must round up (…e61)",
-                    "It used to round down to …e60. Forty-one digits and an exponent of 60 is not an exotic input.");
+                    "a value above the midpoint at exp10=+60 must round up (...e61)",
+                    "It used to round down to ...e60. Forty-one digits and an exponent of 60 is not an exotic input.");
     }
 
     // ---------------------------------------------------------------

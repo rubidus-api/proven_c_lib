@@ -13,16 +13,16 @@
  * @file sysio.h
  * @brief The standard streams, and the console I/O that replaces <stdio.h>.
  *
- * stdin, stdout and stderr are files, and — since this header met `stream.h` — they are also
+ * stdin, stdout and stderr are files, and - since this header met `stream.h` - they are also
  * writers and readers. That is the whole point of the bridge below: everything `stream.h` can
  * do to a byte sink or a byte source, it can now do to a standard stream. You can
  * `proven_fprintln` to stderr, wrap stdout in a buffered writer so a thousand small prints
- * cost one syscall instead of a thousand, and read stdin a line at a time — which, until this
+ * cost one syscall instead of a thousand, and read stdin a line at a time - which, until this
  * bridge existed, there was no way to do at all.
  *
  * The direct calls (`proven_print`, `proven_println`, `proven_eprint`) are unchanged and
  * remain unbuffered: what they write is on its way out before they return, so nothing is lost
- * if the program dies. Buffering is opt-in precisely because it is not free of consequence —
+ * if the program dies. Buffering is opt-in precisely because it is not free of consequence --
  * buffered output that is never flushed is output that never happened.
  */
 
@@ -53,16 +53,16 @@
  * @brief Somewhere to keep a standard handle, so a writer or reader can point at it.
  *
  * `proven_writer_from_file` takes a `proven_file_t *`, and the file has to outlive the
- * writer — so it cannot be a temporary. This struct is that storage, and it is yours: declare
+ * writer - so it cannot be a temporary. This struct is that storage, and it is yours: declare
  * one on the stack next to the writer that uses it.
  *
  * @warning **Do not copy or move these state structs once a writer or reader has been made
  *          from one.** The writer holds a pointer INTO the struct, so a copy leaves the
- *          original addressed and the copy inert — and if the original goes out of scope, the
+ *          original addressed and the copy inert - and if the original goes out of scope, the
  *          writer is left pointing at dead storage. This is the same rule that governs
  *          `stream.h`'s own state structs (`proven_writer_buffered_t` and friends): the state
  *          stays where you declared it, for as long as the writer or reader lives.
- *          (`proven_sysio_lines_t` is the exception — `proven_sysio_read_line` re-binds it on
+ *          (`proven_sysio_lines_t` is the exception - `proven_sysio_read_line` re-binds it on
  *          every call, so a line reader may be moved.)
  */
 /**
@@ -104,7 +104,7 @@ typedef struct {
 /** @brief An unbuffered writer over stdout. Every write is a write syscall. */
 [[nodiscard]] proven_writer_t proven_sysio_stdout_writer(proven_sysio_std_t *st);
 
-/** @brief An unbuffered writer over stderr. Every write is a write syscall — which is what
+/** @brief An unbuffered writer over stderr. Every write is a write syscall - which is what
  *         you want for an error: it is out before the next line of code runs. */
 [[nodiscard]] proven_writer_t proven_sysio_stderr_writer(proven_sysio_std_t *st);
 
@@ -131,7 +131,7 @@ typedef struct {
  *
  * @warning **You must flush it.** Nothing reaches the terminal until the buffer fills or you
  *          call `proven_writer_flush`. Buffered output that is never flushed is output that
- *          never happened — and unlike C's `stdout`, nothing here flushes behind your back at
+ *          never happened - and unlike C's `stdout`, nothing here flushes behind your back at
  *          exit, because a library that registers an atexit handler you did not ask for is a
  *          library that owns your process. Flush before you return, and flush before you
  *          print anything to stderr that is supposed to appear after it.
@@ -170,7 +170,7 @@ typedef struct {
 /**
  * @brief Open a line reader over stdin.
  *
- * Reading stdin a line at a time — the single most common thing a program does with it — had
+ * Reading stdin a line at a time - the single most common thing a program does with it - had
  * no route through this library: the choices were the token scanner, or reading the whole of
  * a stream that may never end. This is the missing one.
  */

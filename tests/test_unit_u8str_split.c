@@ -3,8 +3,8 @@
 #include <string.h>
 
 /*
- * Written from docs/RFC-0003 §3.1 and table §4.1 before the implementation (docs/TESTING.md
- * §5.1). The contract is permanent once callers exist: n separators yield n + 1 fields. Every
+ * Written from docs/RFC-0003 section 3.1 and table section 4.1 before the implementation (docs/TESTING.md
+ * section 5.1). The contract is permanent once callers exist: n separators yield n + 1 fields. Every
  * empty field is {NULL, 0}, including a LEADING empty field that a test author would guess
  * points at offset 0 - so fields are compared by size and content, never by pointer.
  */

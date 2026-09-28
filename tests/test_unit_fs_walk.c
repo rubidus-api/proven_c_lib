@@ -20,7 +20,7 @@ int main(void) {
 
 /*
  * Written from the contract in include/proven/fs.h, BEFORE proven_fs_walk existed - which is
- * the point (docs/TESTING.md §5.1). Every assertion below is a sentence the header makes:
+ * the point (docs/TESTING.md section 5.1). Every assertion below is a sentence the header makes:
  *
  *   - pre-order: a directory is reported before its contents;
  *   - depth: 0 for an entry directly inside the root;

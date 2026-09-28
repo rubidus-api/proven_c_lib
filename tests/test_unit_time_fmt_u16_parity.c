@@ -5,7 +5,7 @@
 
 /*
  * Written from the contract in include/proven/time.h, which says both formatters support
- * "formatting specifiers matching fmt.h" (docs/TESTING.md §5.1). proven_time_u8_fmt honours
+ * "formatting specifiers matching fmt.h" (docs/TESTING.md section 5.1). proven_time_u8_fmt honours
  * the whole {} grammar because it delegates each field to fmt.h; proven_time_u16_fmt hand-
  * rolled its own parser that recognised only zero-fill ":0>N" and SILENTLY DROPPED every
  * other fill/align/width spec - so {month:>4} came back as "3", not "   3", and {Weekday:>12}

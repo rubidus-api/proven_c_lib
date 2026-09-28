@@ -15,7 +15,7 @@
  *
  * You cannot TDD prose. What you CAN do is state, for each thing a section must contain, a
  * proposition that is either true or false of the text - and then let the build decide. That is
- * what this is: the depth checklist in docs/DOCUMENTING.md §3, turned from advice into a gate.
+ * what this is: the depth checklist in docs/DOCUMENTING.md section 3, turned from advice into a gate.
  *
  * For every module section registered below, the section must contain:
  *
@@ -224,7 +224,7 @@ static int prose_word_count(const char *body) {
 
 int main(void) {
     PROVEN_TEST_SUITE("every module section is documented to depth, not merely mentioned",
-        "A section must carry its intent, a reference table, the structures the caller declares, a runnable example, and at least one COUNTER-EXAMPLE. This is docs/DOCUMENTING.md §3 turned from advice into a gate.",
+        "A section must carry its intent, a reference table, the structures the caller declares, a runnable example, and at least one COUNTER-EXAMPLE. This is docs/DOCUMENTING.md section 3 turned from advice into a gate.",
         "You cannot TDD prose - but you can state, for each thing a section must contain, a proposition that is either true or false of the text, and let the build decide. The five modules added this cycle passed every check there was and were still half-written: not one had a counter-example.");
 
     for (size_t i = 0; i < sizeof SECTIONS / sizeof SECTIONS[0]; ++i) {

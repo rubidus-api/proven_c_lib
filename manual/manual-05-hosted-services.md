@@ -1,6 +1,6 @@
 # Chapter 5: Hosted Services
 
-**Part V — Talking to the operating system. Prerequisite: Part II
+**Part V - Talking to the operating system. Prerequisite: Part II
 ([1](manual-01-foundation.md), [2](manual-02-allocation.md), [3](manual-03-strings-text.md)).**
 **After this chapter** you can read and write files without losing data on a crash, read input a
 line at a time, generate randomness that suits the job, and tell wall-clock time from elapsed time.
@@ -120,7 +120,7 @@ typedef struct {
     proven_i64 modified_at;      /* last-modification time, seconds since the Unix epoch */
     unsigned long long dev;      /* device id (POSIX st_dev; 0 where unavailable) */
     unsigned long long ino;      /* inode number (POSIX st_ino; 0 where unavailable) */
-    unsigned long long uid;      /* owner id  (POSIX st_uid; 0 on Windows — no uid/gid) */
+    unsigned long long uid;      /* owner id  (POSIX st_uid; 0 on Windows - no uid/gid) */
     unsigned long long gid;      /* group id  (POSIX st_gid; 0 on Windows) */
 } proven_fs_stat_t;
 ```
@@ -134,13 +134,13 @@ One field is narrower than it looks, and one has a sharp edge:
 - `created_at` is **always 0**. Plain `stat()` has no portable birth time, and the
   PAL does not ask for one. Only `modified_at` carries a real timestamp.
 - `type` is `FILE` for a regular file, `DIR` for a directory, and
-  **`PROVEN_FS_TYPE_OTHER`** for everything else — a FIFO, a socket, a device, a dangling
+  **`PROVEN_FS_TYPE_OTHER`** for everything else - a FIFO, a socket, a device, a dangling
   symlink. (Until v26.07.13a all of those stat'd as `FILE`, which told a caller it could
   open them and read bytes out of them. A dangling symlink cannot be opened at all.)
 
   `type` **follows symlinks**, here and in the directory walk, which is what makes the two
   agree: a symlink to a regular file is `FILE`, and a symlink to a directory is `DIR`. The
-  edge that follows is real — **a recursive walker can loop**, because a symlink pointing
+  edge that follows is real - **a recursive walker can loop**, because a symlink pointing
   at an ancestor is a cycle and its type says `DIR`. Carry a depth limit, or remember
   `(dev, ino)` pairs and refuse to descend into one you have seen.
 
@@ -201,8 +201,8 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 
 **A handle that cannot seek says so.** A pipe, a FIFO or a terminal returns
 `PROVEN_ERR_UNSUPPORTED` from `proven_fs_seek`, not `PROVEN_ERR_IO`. Not being seekable
-is a property of the thing, not a failure of the call, and code that adapts to it — the
-scanner does — has to be able to tell them apart.
+is a property of the thing, not a failure of the call, and code that adapts to it - the
+scanner does - has to be able to tell them apart.
 
 **`pread` and `pwrite` do not move the position.** That is what they are for: two
 readers sharing one handle cannot race on a cursor that neither of them moves.
@@ -216,7 +216,7 @@ lost.**
 - `proven_fs_write_file_durable` closes that window, in the only order that works:
   fsync the temp file, **then** rename, **then** fsync the directory. Syncing the file
   but not the directory leaves a crash window in which the bytes are safe and the name
-  that points at them is not — which is exactly the corruption an atomic write exists
+  that points at them is not - which is exactly the corruption an atomic write exists
   to prevent.
 
 The durable form waits for the storage device twice. Use it when losing the write would
@@ -245,7 +245,7 @@ Important behavior:
 `proven_fs_write_file_atomic`, `proven_fs_write_file_durable` and `proven_fs_copy` all
 return `PROVEN_ERR_PERMISSION` when the destination's owner-write bit is clear, and leave
 the file exactly as it was. That bit is where both platforms record "do not write this
-file" — mode `0200` on POSIX, the READONLY attribute on Windows.
+file" - mode `0200` on POSIX, the READONLY attribute on Windows.
 
 It is one rule because it used to be three answers to one question, on one platform:
 `write_file` refused, because it opens the destination for writing; `write_file_atomic`
@@ -254,17 +254,17 @@ file's mode; and `copy` succeeded **and left the file writable afterwards**, bec
 carries the source's mode across. A protection the caller had set disappeared and nothing
 said so. Which function a caller reaches for is not a decision about permissions.
 
-A caller who means to replace a protected file lifts the mark first — one line, and
+A caller who means to replace a protected file lifts the mark first - one line, and
 visible. The refusal is deliberately the recoverable direction; replacing a protected file
 by accident is not. It is a guard against accidents, not a security boundary: the mode is
 read before the work and acted on after it, and anyone who can `chmod` the file can lift
 the mark.
 
 `proven_fs_rename` is on that list, and has to be: it replaces the destination, and it is
-what the atomic write is built on — without it, a caller refused by one function got the
+what the atomic write is built on - without it, a caller refused by one function got the
 same result from the other. `proven_fs_remove` is deliberately **not** on it: deleting a
 name is a directory operation and POSIX has never let the file's own mode have a say. The
-platforms differ there — Windows will not delete a read-only file — so `proven_fs_remove`
+platforms differ there - Windows will not delete a read-only file - so `proven_fs_remove`
 reports that as `PROVEN_ERR_PERMISSION` rather than hiding it behind an I/O error.
 
 A refusal now says *which* refusal it is. `proven_fs_open`, `proven_fs_rename` and
@@ -274,11 +274,11 @@ retrying, and giving up are three different answers, and one error code supports
 them.
 
 **A file someone is reading is still replaced.** When another process holds the
-destination open but allowed delete sharing — `proven_fs_open` does — the atomic write
+destination open but allowed delete sharing - `proven_fs_open` does - the atomic write
 succeeds, and the reader keeps reading the old contents through the handle it already has.
 POSIX has always done this; Windows 10 1809 and later do the same through the
-POSIX-semantics rename. Where that rename is unknown — Windows before 1809, FAT32, exFAT,
-network drives — the library falls back to `MoveFileExW`, which refuses the replacement
+POSIX-semantics rename. Where that rename is unknown - Windows before 1809, FAT32, exFAT,
+network drives - the library falls back to `MoveFileExW`, which refuses the replacement
 while anyone has the file open, and the answer is `PROVEN_ERR_BUSY`. A holder that did not
 allow delete sharing gets the same `PROVEN_ERR_BUSY` on every Windows. It is in use, not
 protected: a retry may succeed.
@@ -318,7 +318,7 @@ proven_file_t proven_sysio_stderr(void);
 ```
 
 Purpose: expose the standard streams as `proven_file_t` handles. They are also writers and
-readers — see [The standard streams](#the-standard-streams) below, which is what lets you read
+readers - see [The standard streams](#the-standard-streams) below, which is what lets you read
 stdin a line at a time, buffer stdout, and format straight into either.
 
 ### `proven_sysio_scanner_t`
@@ -411,7 +411,7 @@ for random access into a big file. Use an ordinary read for everything else.
 The mapping is caller-owned state: `proven_mmap_as_view` hands you a view **into the mapping**, so
 that view is dead the moment `proven_mmap_destroy` runs.
 
-Wrong — using the view after destroying the mapping:
+Wrong - using the view after destroying the mapping:
 
 ```text
 proven_u8str_view_t data = proven_mmap_as_view(m);
@@ -420,7 +420,7 @@ proven_err_t e = proven_mmap_destroy(&m);
 parse(data);                 /* wrong: those addresses are no longer mapped - SIGSEGV */
 ```
 
-Wrong — treating a mapping like a buffer you can grow:
+Wrong - treating a mapping like a buffer you can grow:
 
 ```text
 /* wrong: a mapping is a window onto a file of a fixed size at map time.
@@ -491,7 +491,7 @@ if (proven_is_ok(f.err)) {
 
 "Time" means two things that look alike and behave nothing alike.
 
-A **wall clock** answers *what time is it?* — the thing a user reads. It is allowed to jump: NTP
+A **wall clock** answers *what time is it?* - the thing a user reads. It is allowed to jump: NTP
 corrects it, daylight saving shifts it, an administrator sets it. Measure a duration with it and
 you can get a negative answer, which is a bug that appears on leap-second days and on nobody's
 laptop during testing.
@@ -499,7 +499,7 @@ laptop during testing.
 A **monotonic** clock answers *how long since?* It only moves forward and has no relationship to
 any calendar. It is what you time an operation with.
 
-libc blurs the distinction. `time()` gives whole seconds of wall clock — too coarse to measure
+libc blurs the distinction. `time()` gives whole seconds of wall clock - too coarse to measure
 anything. `clock()` measures **CPU** time, so a program that waits on a socket appears to take no
 time at all. Neither name says which question it answers, and both are routinely used for the
 other one.
@@ -507,7 +507,7 @@ other one.
 ### What this library does instead
 
 `proven_time_now()` returns **nanoseconds since the Unix epoch** as a signed 64-bit value. One
-number that you can subtract to get a duration, or break down to get a calendar date — at a
+number that you can subtract to get a duration, or break down to get a calendar date - at a
 resolution fine enough to time real work.
 
 `proven_time_breakdown()` turns that number into `proven_datetime_t`, whose fields are the ones a
@@ -520,7 +520,7 @@ picks the field and the spec pads it, so `{month:0>2}` is zero-filled to width t
 weekday names come from a `proven_time_locale_t`, so rendering another language is passing a
 different locale rather than setting a global.
 
-Wrong — timing with a wall clock and trusting the sign:
+Wrong - timing with a wall clock and trusting the sign:
 
 ```text
 proven_time_t t0 = proven_time_now();
@@ -532,7 +532,7 @@ proven_u64 ns = (proven_u64)(t1 - t0);   /* wrong: an NTP step back makes this e
 The subtraction is fine; the cast is not. Keep the difference signed, and treat a negative elapsed
 time as "the clock moved", not as a duration.
 
-Wrong — assuming sleep is precise:
+Wrong - assuming sleep is precise:
 
 ```text
 proven_time_sleep(15);
@@ -542,7 +542,7 @@ proven_time_sleep(15);
 
 ### Worked example: a duration, a date, and a formatted timestamp
 
-Compiled and run by the test suite. Note what it does *not* assert — an upper bound on the sleep —
+Compiled and run by the test suite. Note what it does *not* assert - an upper bound on the sleep --
 because that would be a test that fails on a busy machine.
 
 <!-- example: manual/examples/en/ex_05_time.c -->
@@ -1033,7 +1033,7 @@ if (proven_is_ok(d.err)) {
 ```
 
 **The name is borrowed, and it dies at the next call.** This is what makes the whole thing cost
-no allocations — and a dangling pointer the moment you keep it.
+no allocations - and a dangling pointer the moment you keep it.
 
 Wrong:
 
@@ -1046,7 +1046,7 @@ while (proven_is_ok(proven_fs_dir_next(&dir, &entry)))
                                    whatever the last entry happened to be. */
 ```
 
-Correct: copy the bytes (`proven_u8str_create_from_view`) for the ones you need to keep — or use
+Correct: copy the bytes (`proven_u8str_create_from_view`) for the ones you need to keep - or use
 `proven_fs_list`, which does exactly that for every entry and charges you for it.
 
 **`PROVEN_ERR_EOF` is the end; anything else is a failure.** A loop that stops on "not OK" treats
@@ -1060,7 +1060,7 @@ while (proven_is_ok(proven_fs_dir_next(&dir, &entry))) { ... }
 
 ## Walking a tree
 
-`proven_fs_dir_*` walks ONE directory. `proven_fs_walk` walks a tree — and it is worth
+`proven_fs_dir_*` walks ONE directory. `proven_fs_walk` walks a tree - and it is worth
 saying exactly what it refuses to do, because those refusals are the feature:
 
 | | |
@@ -1070,8 +1070,8 @@ saying exactly what it refuses to do, because those refusals are the feature:
 | It cannot **lie** | A directory it cannot read comes back as an *error* naming that directory, and the walk goes on. A tree walker that silently skips an unreadable subtree is how a backup misses files and reports success. |
 | It cannot **bloat** | One open handle per *level* of the current path, plus one reused path buffer. Memory is a function of depth, not of how many files there are. |
 
-A symlinked directory is still **reported** — it exists, `type` is `DIR`, `is_symlink` is
-true — it is simply not entered. Hiding it would be its own kind of lie. If you *want* to
+A symlinked directory is still **reported** - it exists, `type` is `DIR`, `is_symlink` is
+true - it is simply not entered. Hiding it would be its own kind of lie. If you *want* to
 follow it, you have the path: open a second walk on it, and you own the cycle question.
 
 ### The structure you receive
@@ -1095,7 +1095,7 @@ typedef struct {
 **until the next call**. Copy them if you need them to outlive the step; that is the price
 of a walk of a million entries costing one allocation instead of a million.
 
-Wrong — the same trap the directory iterator has, for the same reason:
+Wrong - the same trap the directory iterator has, for the same reason:
 
 ```text
 proven_u8str_view_t found[100];
@@ -1107,9 +1107,9 @@ while (proven_is_ok(proven_fs_walk_next(&walk, &entry)))
 
 Two limits, both of which say so rather than going quiet:
 
-- `max_depth` — how far to descend. A directory *at* the limit is still reported (it is an
+- `max_depth` - how far to descend. A directory *at* the limit is still reported (it is an
   entry); it is not entered.
-- `PROVEN_FS_WALK_DEPTH_LIMIT` (256) — how deep the walk's own stack goes, ever. A directory
+- `PROVEN_FS_WALK_DEPTH_LIMIT` (256) - how deep the walk's own stack goes, ever. A directory
   past it comes back as `PROVEN_ERR_OUT_OF_BOUNDS`, naming the directory.
 
 Compiled and run by the test suite:
@@ -1218,7 +1218,7 @@ int main(void) {
 
 The formatter's only sink used to be a `proven_u8str_t`. A file was a
 `proven_file_t`. The in-memory scanner read a view; the file scanner read something
-else again. **Four types, four function families, no common interface** — so you
+else again. **Four types, four function families, no common interface** - so you
 could not write one `serialize(sink, value)` that worked over both memory and a
 file, you could not format into a file at all, and there was no way to read a file
 line by line.
@@ -1237,7 +1237,7 @@ caller decides where the bytes go, and nothing is hidden.
 | `proven_reader_from_file(&file)` / `_from_view(&state, view)` | Byte sources. |
 | `proven_reader_buffered(&state, inner, buf)` | Buffered source; required for line reading. |
 | `proven_reader_read_line(&state)` | One line, without the newline. |
-| `proven_writer_is_valid(w)` / `proven_reader_is_valid(r)` | Did the constructor succeed? A zeroed handle is invalid, and every constructor returns one on bad arguments — so this is the check, not a NULL test. |
+| `proven_writer_is_valid(w)` / `proven_reader_is_valid(r)` | Did the constructor succeed? A zeroed handle is invalid, and every constructor returns one on bad arguments - so this is the check, not a NULL test. |
 | `proven_fwrite_fmt(w, scratch, fmt, ...)` | `proven_fprint` with a scratch buffer **you** size. `proven_fprint` uses a 512-byte stack buffer and returns `OUT_OF_BOUNDS` for a longer line; this is how you format one. |
 | `proven_fmt_to_writer_impl(w, scratch, fmt, args, n)` | The function the two macros above expand to. Call it directly only if you are building your own variadic wrapper; the macros exist so you do not have to count arguments. |
 
@@ -1246,7 +1246,7 @@ been designed badly:
 
 - **Buffering uses memory you supply.** `proven_writer_buffered` takes a
   `proven_mem_mut_t`, the way `proven_arena_create` does. There is no hidden global
-  buffer, which means there is also no destructor to flush it for you — **you must
+  buffer, which means there is also no destructor to flush it for you - **you must
   flush before the buffer goes out of scope.** In exchange, your logging path never
   allocates, and a program logging its way out of an out-of-memory condition can
   still log.
@@ -1263,23 +1263,23 @@ been designed badly:
   such a sink impossible to write correctly. `proven_writer_write` still means
   all-or-nothing (it loops); `proven_writer_write_partial` is there when you need to
   see how far you got. The buffered writer keeps only the tail the sink did **not**
-  take — the first version kept the whole buffer and re-sent it, so a failing sink
+  take - the first version kept the whole buffer and re-sent it, so a failing sink
   received the accepted prefix twice.
 
-- **A writer that has failed stays failed.** Once a writer has lost bytes — a buffered
-  writer whose sink died, a fixed buffer that overflowed — the stream it was producing has
+- **A writer that has failed stays failed.** Once a writer has lost bytes - a buffered
+  writer whose sink died, a fixed buffer that overflowed - the stream it was producing has
   a hole in it that the receiver cannot see, so every later write and flush returns the
   error. A shorter chunk that *would* fit is refused too: writing it would put it after the
   hole, and the result would look like complete output. There is no `clear()`: if you have a
   recovery story it involves a new writer over a new sink, not pretending this one is
-  fine. (Before this, `flush` answered `PROVEN_OK` after a failed write — the buffer was
-  empty, so there was nothing left to fail on — and "write, write, write, check the
+  fine. (Before this, `flush` answered `PROVEN_OK` after a failed write - the buffer was
+  empty, so there was nothing left to fail on - and "write, write, write, check the
   flush", which is how almost everyone uses a buffered writer, reported success on a
   full disk.)
 
 A reader's rule is the mirror image: **a read that fails is an error, never an end of
 file.** `proven_reader_read` returns `PROVEN_ERR_IO`, not a clean zero-byte EOF, when
-the source breaks — because a file cut short by a disk error and a file that simply
+the source breaks - because a file cut short by a disk error and a file that simply
 ended are the same thing to a caller who cannot tell them apart, and only one of them
 is safe to act on.
 
@@ -1299,7 +1299,7 @@ hidden global state. A caller who wants the 24 builds a buffered writer and says
 ### Worked example: one serializer, three destinations, and reading it back
 
 Compiled and run by the test suite. Note that `render_row` does not know where its
-bytes are going — that is the entire point.
+bytes are going - that is the entire point.
 
 <!-- example: manual/examples/en/ex_05_stream.c -->
 ```c
@@ -1427,10 +1427,10 @@ typedef struct {
 `write_fn` reports **how much went out even when it then fails**, and that is not a nicety: a
 write to a pipe or a full disk really does put some bytes out and then fail. A buffered writer
 built on the tidier "all or nothing" lie kept its whole buffer on failure and re-sent it on the
-next flush — a 6000-byte payload arrived as 10,096 bytes with the first 4096 **duplicated**.
+next flush - a 6000-byte payload arrived as 10,096 bytes with the first 4096 **duplicated**.
 Losing data is bad; silently doubling it is worse, because the receiver cannot tell.
 
-Everything else is [caller-owned state](manual-00-start-here.md#92-caller-owned-state--no-destroy-do-not-copy) —
+Everything else is [caller-owned state](manual-00-start-here.md#92-caller-owned-state---no-destroy-do-not-copy) --
 `proven_writer_buf_t`, `proven_writer_u8str_t`, `proven_writer_buffered_t`,
 `proven_reader_view_t`, `proven_reader_buffered_t`. They allocate nothing, they have no destroy,
 and **they must not be copied or moved** while a handle points into them.
@@ -1438,7 +1438,7 @@ and **they must not be copied or moved** while a handle points into them.
 ### Cautions, and what goes wrong
 
 **A buffered writer that is never flushed is output that never happened.** There is no hidden
-state, so there is no destructor to flush it for you — and nothing here registers an `atexit`
+state, so there is no destructor to flush it for you - and nothing here registers an `atexit`
 handler, because a library that owns your process is a library you cannot reason about.
 
 Wrong:
@@ -1450,7 +1450,7 @@ proven_writer_t w = proven_writer_buffered(&st, inner, buf);
 return;                       /* wrong: the buffer dies with the frame, and so does the line */
 ```
 
-Correct — flush before the buffer or the inner sink goes away:
+Correct - flush before the buffer or the inner sink goes away:
 
 ```c
 proven_byte_t buf[256];
@@ -1462,7 +1462,7 @@ proven_writer_t w = proven_sysio_stdout_buffered(&out,
 ```
 
 **The line a reader hands you points into its buffer.** It is valid only until the next call.
-That is what makes reading a million lines cost one buffer instead of a million allocations — and
+That is what makes reading a million lines cost one buffer instead of a million allocations - and
 it is a dangling pointer the moment you keep it.
 
 Wrong:
@@ -1481,10 +1481,10 @@ you call again.
 
 **A flush is not a durability barrier.** `proven_writer_flush` pushes a buffered writer's bytes
 to the thing behind it; getting a *file's* bytes onto the disk is `proven_fs_sync`. They are
-different operations, and one word could not honestly mean both — which is why the old
+different operations, and one word could not honestly mean both - which is why the old
 `proven_sysio_flush`, which claimed to be both and was neither, is gone.
 
-**A line longer than the buffer is refused, not truncated.** `PROVEN_ERR_OUT_OF_BOUNDS` — and the
+**A line longer than the buffer is refused, not truncated.** `PROVEN_ERR_OUT_OF_BOUNDS` - and the
 reader then stays wedged on that line: there is no resync, because a line you cannot hold is not
 a line you can skip past without deciding what to do with the bytes. Size the buffer for the
 input you expect. (A line that *exactly fills* the buffer is fine: the newline does not have to
@@ -1494,7 +1494,7 @@ fit too, and neither does a final line with no newline at all.)
 
 `stream.h` has writers, readers, buffered writers and a line reader. `sysio.h` has stdin,
 stdout and stderr. Until they were introduced to each other, two things were simply not
-possible — and one call was a lie.
+possible - and one call was a lie.
 
 **Reading stdin a line at a time had no route.** The most common thing a program does with
 stdin, and the choices were the token scanner or reading the whole of a stream that may never
@@ -1517,17 +1517,17 @@ if (proven_is_ok(proven_sysio_stdin_lines(&lines, (proven_mem_mut_t){ .ptr = buf
 
 It inherits the line reader's properties, which is the point of not writing a second one: the
 view costs no allocation, `"\r\n"` is handled, a final line with no trailing newline is still
-returned, and a line longer than your buffer is `PROVEN_ERR_OUT_OF_BOUNDS` — never a silently
+returned, and a line longer than your buffer is `PROVEN_ERR_OUT_OF_BOUNDS` - never a silently
 truncated line.
 
 **The formatter could not be aimed at a standard stream.** `proven_fprintln` takes a writer;
-stdout was not one. Now it is, and it can be a *buffered* one — so a thousand small lines cost
+stdout was not one. Now it is, and it can be a *buffered* one - so a thousand small lines cost
 one syscall instead of a thousand.
 
 | | |
 |---|---|
 | `proven_sysio_stdout_writer(&st)` | An unbuffered writer over stdout. Every write is a write syscall. |
-| `proven_sysio_stderr_writer(&st)` | The same for stderr — which is what you want for an error: it is out before the next line of code runs. |
+| `proven_sysio_stderr_writer(&st)` | The same for stderr - which is what you want for an error: it is out before the next line of code runs. |
 | `proven_sysio_stdin_reader(&st)` | A reader over stdin. |
 | `proven_sysio_stdout_buffered(&out, buf)` | stdout behind a buffered writer over a buffer you own. |
 | `proven_sysio_file_buffered(&out, file, buf)` | The same over any open file. |
@@ -1539,7 +1539,7 @@ is `proven_fs_sync`. They are different operations and now say so.
 
 > **You must flush a buffered writer.** Nothing reaches the terminal until the buffer fills or
 > you flush it, and nothing in this library registers an `atexit` handler to do it behind your
-> back — a library that owns your process is a library you cannot reason about. Buffered output
+> back - a library that owns your process is a library you cannot reason about. Buffered output
 > that is never flushed is output that never happened. The direct calls (`proven_print`,
 > `proven_println`, `proven_eprint`) remain unbuffered for exactly this reason: what they write
 > is on its way out before they return.
@@ -1567,15 +1567,15 @@ typedef struct {
 } proven_sysio_lines_t;      /* a line reader over a standard stream or a file */
 ```
 
-All three are [caller-owned state](manual-00-start-here.md#92-caller-owned-state--no-destroy-do-not-copy).
+All three are [caller-owned state](manual-00-start-here.md#92-caller-owned-state---no-destroy-do-not-copy).
 
 ### Cautions, and what goes wrong
 
 **These state structs contain a pointer to themselves.** The writer you get back addresses
 `&st->std.file` *inside* the struct you passed. Copy the struct, or return it by value, and the
-writer still points at the original — which may be a dead frame.
+writer still points at the original - which may be a dead frame.
 
-Wrong — and an audit reproduced exactly this as a heap-use-after-free:
+Wrong - and an audit reproduced exactly this as a heap-use-after-free:
 
 ```text
 proven_sysio_out_t out;
@@ -1588,10 +1588,10 @@ proven_sysio_out_t copy = out;      /* wrong: `w` still points into `out` */
 
 The one exception is `proven_sysio_lines_t`: `proven_sysio_read_line` re-binds it on every call,
 so a line reader **may** be moved. That is a deliberate courtesy, because it takes its state by
-pointer — the shape that says "relocatable" — and the library should not lay a trap in the shape
+pointer - the shape that says "relocatable" - and the library should not lay a trap in the shape
 of a promise.
 
-**A zero-initialised `proven_file_t` is not an invalid handle — on POSIX it is fd 0, which is
+**A zero-initialised `proven_file_t` is not an invalid handle - on POSIX it is fd 0, which is
 stdin.** The library cannot tell a handle you forgot to fill in from one that legitimately refers
 to fd 0.
 
@@ -1688,7 +1688,7 @@ typedef struct {
 } proven_sysio_u16_lines_t;   /* a u16 line reader over a standard stream or a file */
 ```
 
-Both are [caller-owned state](manual-00-start-here.md#92-caller-owned-state--no-destroy-do-not-copy).
+Both are [caller-owned state](manual-00-start-here.md#92-caller-owned-state---no-destroy-do-not-copy).
 Nothing is allocated: the raw bytes are staged in the struct, the decoded text in your buffer.
 
 ### Cautions, and what goes wrong
@@ -1852,22 +1852,22 @@ There is no single "random". There are two jobs that look identical and are not:
 
 | Your job | Use | Why |
 |---|---|---|
-| A key, a token, a nonce — anything an attacker must not guess. | `proven_random_bytes`, or a `proven_chacha_rng_t` seeded from it. | Only a cryptographic source is unguessable. |
+| A key, a token, a nonce - anything an attacker must not guess. | `proven_random_bytes`, or a `proven_chacha_rng_t` seeded from it. | Only a cryptographic source is unguessable. |
 | The same, on a target with no OS. | `proven_chacha_rng_t`, seeded from the board's own entropy. | ChaCha20 is pure arithmetic; it needs no OS. It is only as unguessable as its seed. |
 | A simulation, a test, a game, a sample. | `proven_xoshiro256ss_t`. | Fast, and **reproducible**: the same seed replays the same run, which is what makes a failing test debuggable. |
-| A number in a range, a shuffle, a float in [0,1). | `proven_rng_below`, `proven_rng_range`, `proven_rng_f64`, `proven_rng_shuffle` — over any source. | `% n` is biased, and everyone writes it anyway. These are not. |
+| A number in a range, a shuffle, a float in [0,1). | `proven_rng_below`, `proven_rng_range`, `proven_rng_f64`, `proven_rng_shuffle` - over any source. | `% n` is biased, and everyone writes it anyway. These are not. |
 
 The two requirements are in direct opposition. Reproducible means predictable, and predictable
 is exactly what a token must not be: a few outputs of `proven_xoshiro256ss_t` reveal its entire
 state and therefore every number it will ever produce. That is a feature for a simulation you
-need to replay and a catastrophe for a session token — so the two carry names that cannot be
+need to replay and a catastrophe for a session token - so the two carry names that cannot be
 confused, and the choice is visible at the call site rather than buried in how something was
 seeded.
 
 **The trait is infallible.** `proven_rng_t` is a source of random bytes, and drawing from a
 valid one cannot fail. That is not a simplification; it is where the failure went. Asking an
-operating system for entropy *can* fail, so that failure is confined to exactly one place —
-seeding — which you check once, at startup. Every draw downstream is total.
+operating system for entropy *can* fail, so that failure is confined to exactly one place --
+seeding - which you check once, at startup. Every draw downstream is total.
 
 | | |
 |---|---|
@@ -1875,20 +1875,20 @@ seeding — which you check once, at startup. Every draw downstream is total.
 | `proven_random_u64()` | One strong word from the OS, or `0` on failure. |
 | `proven_chacha_rng_seed_from_entropy(&g)` | Seed the cryptographic generator from the entropy source. **This is the call that can fail.** |
 | `proven_random_set_source(fn, ctx)` | Install the entropy source. The OS is already installed on a hosted target; a bare-metal target installs its board's TRNG. |
-| `proven_chacha_rng_seed(&g, seed32)` | Seed it from 32 bytes you supply — a hardware entropy source on a board. Never the clock. |
+| `proven_chacha_rng_seed(&g, seed32)` | Seed it from 32 bytes you supply - a hardware entropy source on a board. Never the clock. |
 | `proven_xoshiro256ss_seed(&g, seed)` | Seed the reproducible generator. Even seed 0 is fine: it is expanded through SplitMix64. |
 
 ### Where entropy comes from
 
-Everything above is pure arithmetic — the generators, the helpers, and `proven_random_bytes`
+Everything above is pure arithmetic - the generators, the helpers, and `proven_random_bytes`
 itself. What differs by platform is the **entropy source** behind it, because that is the one
 thing a program cannot compute for itself.
 
-- **Hosted:** the OS CSPRNG is installed for you — `getrandom` on Linux, `getentropy` on the
+- **Hosted:** the OS CSPRNG is installed for you - `getrandom` on Linux, `getentropy` on the
   BSDs and macOS, `BCryptGenRandom` on Windows, and `/dev/urandom` where none of those exist.
   You call nothing.
-- **Bare metal:** there is no source until you install one. A board *has* real entropy — an
-  on-chip TRNG, a ring oscillator, an ADC's noise floor — and the library cannot know where.
+- **Bare metal:** there is no source until you install one. A board *has* real entropy - an
+  on-chip TRNG, a ring oscillator, an ADC's noise floor - and the library cannot know where.
 
 ```text
 /* On a board: hand the library its hardware entropy, once, at startup.
@@ -1912,18 +1912,18 @@ if (!proven_chacha_rng_seed_from_entropy(&g)) {
 ```
 
 With no source installed, `proven_random_bytes` returns **false**. It does not fall back to a
-clock-seeded PRNG, because that looks like success and is a security hole nothing reports — a
+clock-seeded PRNG, because that looks like success and is a security hole nothing reports - a
 refusal is a fact a caller can act on.
 
 There is deliberately **no built-in `RDRAND` / `RNDR` backend.** On a hosted target the OS
 already mixes the CPU's instruction into its own pool, so calling it directly buys nothing and
 costs you that mixing; and a raw hardware instruction used as the *sole* source is exactly the
 arrangement people have argued about for a decade. If you want it, it is four lines behind this
-hook — and then the choice is visibly yours.
+hook - and then the choice is visibly yours.
 
 ### The structures you hold
 
-All three are [caller-owned state](manual-00-start-here.md#92-caller-owned-state--no-destroy-do-not-copy): they
+All three are [caller-owned state](manual-00-start-here.md#92-caller-owned-state---no-destroy-do-not-copy): they
 allocate nothing, there is nothing to destroy, and **copying one clones its sequence**.
 
 ```text
@@ -1949,15 +1949,15 @@ typedef struct {
 | API | Intent | Return |
 |---|---|---|
 | `proven_random_bytes(buf, len)` | Fill from the entropy source (the OS by default). **The one call that can fail.** | `bool`. On `false`, `buf` is unspecified and must not be used. `len == 0` succeeds. |
-| `proven_random_u64()` | One strong word from the same source. | `proven_u64`, or `0` on failure — which is also a valid draw, so use `proven_random_bytes` when you must tell them apart. |
+| `proven_random_u64()` | One strong word from the same source. | `proven_u64`, or `0` on failure - which is also a valid draw, so use `proven_random_bytes` when you must tell them apart. |
 | `proven_random_set_source(fn, ctx)` | Install the entropy source. Not needed on a hosted target; this is how a board hands over its TRNG. | void. |
-| `proven_xoshiro256ss_seed(&g, seed)` | Seed the reproducible generator. Any seed is fine — even 0; it is expanded through SplitMix64. | void. |
+| `proven_xoshiro256ss_seed(&g, seed)` | Seed the reproducible generator. Any seed is fine - even 0; it is expanded through SplitMix64. | void. |
 | `proven_xoshiro256ss_next(&g)` | The next word. The hot path: call it directly, not through the trait. | `proven_u64`. |
 | `proven_xoshiro256ss_rng(&g)` | View it as a `proven_rng_t`, for the helpers. | `proven_rng_t`. |
 | `proven_chacha_rng_seed(&g, seed32)` | Seed the cryptographic generator from 32 bytes of **real entropy** you supply. | void. |
-| `proven_chacha_rng_seed_from_entropy(&g)` | Seed it from the installed source. **Check this.** | `bool`. On `false` the generator is left INERT — it yields zeros and an invalid trait. |
+| `proven_chacha_rng_seed_from_entropy(&g)` | Seed it from the installed source. **Check this.** | `bool`. On `false` the generator is left INERT - it yields zeros and an invalid trait. |
 | `proven_chacha_rng_next/_fill` | Draw. Cannot fail once seeded. | `proven_u64` / void. |
-| `proven_chacha_rng(&g)` | View it as a `proven_rng_t`. | `proven_rng_t` — **invalid** if the generator was never successfully seeded. |
+| `proven_chacha_rng(&g)` | View it as a `proven_rng_t`. | `proven_rng_t` - **invalid** if the generator was never successfully seeded. |
 | `proven_rng_u64(rng)` / `proven_rng_fill(rng, buf, len)` | Draw through the trait, from whichever generator. | `proven_u64` / void. `0` / no-op for an invalid source. |
 | `proven_rng_below(rng, bound)` | Uniform in `[0, bound)`, **unbiased**. | `proven_u64`; `0` when `bound == 0`. |
 | `proven_rng_range(rng, lo, hi)` | Uniform in `[lo, hi]`, inclusive. The full `INT64_MIN..INT64_MAX` span does not overflow. | `proven_i64`; `lo` if `hi < lo`. |
@@ -1971,7 +1971,7 @@ predictable: a handful of its outputs reveal its entire 256-bit state, and from 
 number it will ever produce. The two generators carry names that cannot be confused for exactly
 this reason.
 
-Wrong — a session token an attacker can compute after watching a few:
+Wrong - a session token an attacker can compute after watching a few:
 
 ```text
 proven_xoshiro256ss_t g;
@@ -1981,7 +1981,7 @@ proven_u64 session_token = proven_xoshiro256ss_next(&g);   /* wrong: predictable
 
 **Never seed the cryptographic generator from the clock, a counter, or a serial number.**
 ChaCha20 is exactly as unguessable as its seed. A clock-derived seed produces a stream that
-looks perfectly random and is not — which is worse than an obvious failure, because nothing
+looks perfectly random and is not - which is worse than an obvious failure, because nothing
 reports it.
 
 ```text
@@ -1991,7 +1991,7 @@ proven_chacha_rng_seed(&g, seed);
 ```
 
 **Check the seeding.** It is the only thing here that can fail, which is precisely why ignoring
-it is tempting. If you do, the generator is inert and hands you zeros — a visibly dead value,
+it is tempting. If you do, the generator is inert and hands you zeros - a visibly dead value,
 by design, rather than a plausible one.
 
 Wrong:
@@ -2015,7 +2015,7 @@ if (!proven_chacha_rng_seed_from_entropy(&g)) {
 ```
 
 **`% n` is biased, and everyone writes it anyway.** Unless `n` divides 2^64 the low values come
-up more often — invisible in a spot check, real in a shuffle or a sample.
+up more often - invisible in a spot check, real in a shuffle or a sample.
 
 ```text
 proven_u64 die = proven_rng_u64(rng) % 6 + 1;   /* wrong: 1 and 2 are slightly likelier */
@@ -2024,7 +2024,7 @@ proven_u64 die = proven_rng_u64(rng) % 6 + 1;   /* wrong: 1 and 2 are slightly l
 Correct: `proven_rng_below(rng, 6) + 1`.
 
 **Do not copy a seeded generator** unless you mean to clone its stream. Two "independent"
-generators copied from one produce identical output — which is a feature for replaying a
+generators copied from one produce identical output - which is a feature for replaying a
 simulation and a catastrophe for issuing two tokens.
 
 Compiled and run by the test suite:
@@ -2116,11 +2116,11 @@ that remains is neither the old one nor the new one. The fix is a four-step
 recipe, and every step of it is load-bearing:
 
 1. Write the new contents to a **temporary file** beside the real one.
-2. `proven_fs_sync()` — the new file's bytes are now on the storage device, not
+2. `proven_fs_sync()` - the new file's bytes are now on the storage device, not
    merely in the operating system's cache.
-3. `proven_fs_rename()` — the name flips to the new file in one indivisible step.
+3. `proven_fs_rename()` - the name flips to the new file in one indivisible step.
    A reader sees the whole old file or the whole new one, never a mixture.
-4. `proven_fs_sync_dir()` — the rename itself is now on the device.
+4. `proven_fs_sync_dir()` - the rename itself is now on the device.
 
 Skip step 2 and the rename can publish a file whose contents never arrived. Skip
 step 4 and the contents are safe under a name that is not.
@@ -2129,7 +2129,7 @@ The same example covers the record-level calls that go with it:
 
 | Call | What it is for |
 |---|---|
-| `proven_fs_pread` / `proven_fs_pwrite` | Read or write at an absolute offset **without moving the file position** — which is what makes one handle safe to share between threads. |
+| `proven_fs_pread` / `proven_fs_pwrite` | Read or write at an absolute offset **without moving the file position** - which is what makes one handle safe to share between threads. |
 | `proven_fs_seek` / `proven_fs_tell` | Move the position, and ask where it is. Seeking from the end with a negative offset finds the last record without knowing the length. |
 | `proven_fs_truncate` | Set the length directly. One call, and the filesystem adjusts a number; the alternative is copying the part you keep. |
 | `proven_fs_lock` | An **advisory** lock: it excludes other processes that also ask for one, and does not affect a program that never asks. |
@@ -2373,7 +2373,7 @@ int main(void) {
 }
 ```
 
-Wrong — the in-place rewrite the recipe exists to replace:
+Wrong - the in-place rewrite the recipe exists to replace:
 
 ```text
 proven_result_file_t f = proven_fs_open(alloc, live, PROVEN_FS_WRITE | PROVEN_FS_TRUNC);
@@ -2384,7 +2384,7 @@ Between the truncate and the last byte of the write, the file on disk is
 incomplete. A crash there does not lose the update; it loses the data that was
 already there.
 
-Wrong — renaming without syncing first:
+Wrong - renaming without syncing first:
 
 ```text
 proven_err_t e = proven_fs_close(tmp.value);        /* no proven_fs_sync */
@@ -2394,7 +2394,7 @@ e = proven_fs_rename(alloc, temp, live);            /* wrong */
 Closing a file does not put its bytes on the device. The rename can be durable
 while the contents it points at are not.
 
-Wrong — assuming the lock stops everyone:
+Wrong - assuming the lock stops everyone:
 
 ```text
 proven_err_t e = proven_fs_lock(f.value, PROVEN_FS_LOCK_EXCLUSIVE, true);
@@ -2410,7 +2410,7 @@ A **writer** is "somewhere bytes go" and a **reader** is "somewhere bytes come
 from". Each is two pointers: a small table of functions, and the state those
 functions work on. The whole value of the arrangement is that code written
 against a writer does not know whether the bytes end up in a file, in a string,
-on the terminal, or in a test buffer — and code written against a reader can be
+on the terminal, or in a test buffer - and code written against a reader can be
 tested against a string in memory instead of a file on disk.
 
 The example puts the pieces together:
@@ -2432,7 +2432,7 @@ The example puts the pieces together:
   It must be flushed: nothing here flushes on your behalf at exit.
 - `proven_sysio_lines_open()` reads that file back one line at a time, through
   the same kind of caller-supplied buffer. Size it for the longest line you
-  expect — a longer one is `PROVEN_ERR_OUT_OF_BOUNDS`, never a silently cut line.
+  expect - a longer one is `PROVEN_ERR_OUT_OF_BOUNDS`, never a silently cut line.
 - `proven_scan_fmt_from_file()` (which calls `proven_sysio_scan_chunk_impl()`)
   pulls typed values straight out of a file handle when the input has a known
   shape rather than being free text.
@@ -2626,7 +2626,7 @@ int main(void) {
 }
 ```
 
-Wrong — copying a state struct after making a writer from it:
+Wrong - copying a state struct after making a writer from it:
 
 ```text
 proven_sysio_out_t state;
@@ -2637,7 +2637,7 @@ proven_sysio_out_t moved = state;    /* wrong: w still points into `state` */
 The writer holds a pointer **into** the struct. Leave the state where you
 declared it, for as long as the writer lives.
 
-Wrong — forgetting the flush:
+Wrong - forgetting the flush:
 
 ```text
 proven_fmt_result_t r = proven_fprintln(w, "done");
@@ -2657,14 +2657,14 @@ The distinction that decides whether your writes survive:
 | Mapping | Writes go | `proven_mmap_sync()` |
 |---|---|---|
 | `PROVEN_MMAP_SHARED` | to the file | pushes them to the storage device |
-| `PROVEN_MMAP_PRIVATE` | to a private copy (copy-on-write) — this process only | returns `PROVEN_ERR_UNSUPPORTED`, because there is nothing to write back |
+| `PROVEN_MMAP_PRIVATE` | to a private copy (copy-on-write) - this process only | returns `PROVEN_ERR_UNSUPPORTED`, because there is nothing to write back |
 
 That refusal is deliberate. A caller who believed the mapping was shared finds
 out at the sync, rather than when the data turns out to be missing.
 
 The example ends with the calendar formatter, because the record it writes
 carries a date: `proven_time_u8_fmt()` for the UTF-8 form, and
-`proven_time_u16_fmt()` for the UTF-16 form — the latter being right in exactly
+`proven_time_u16_fmt()` for the UTF-16 form - the latter being right in exactly
 one situation, handing text to a system call that takes wide strings.
 
 <!-- example: manual/examples/en/ex_05_mmap.c -->
@@ -2803,14 +2803,14 @@ int main(void) {
 }
 ```
 
-Wrong — expecting a mapping to extend the file:
+Wrong - expecting a mapping to extend the file:
 
 ```text
 proven_result_mmap_t m = proven_mmap_create(f.value, 0, 1 << 20, ...);  /* file is 22 bytes */
 memcpy((char *)m.value.ptr + 4096, data, n);                            /* wrong */
 ```
 
-Set the file's length first — `proven_fs_truncate()` does it in one call — and
+Set the file's length first - `proven_fs_truncate()` does it in one call - and
 map what exists.
 
 ### Worked example: where randomness comes from
@@ -2827,12 +2827,12 @@ not care which source it got.
   `proven_rng_u64()` draws one 64-bit word and `proven_rng_fill()` fills a whole
   buffer in one call.
 - **A fixed seed makes a test reproducible.** `proven_chacha_rng_seed()` takes
-  the seed bytes directly, so `proven_chacha_rng_next()` walks a known sequence —
+  the seed bytes directly, so `proven_chacha_rng_next()` walks a known sequence --
   which is what turns "fails once a week" into a failure you can replay. In
   production the seed must come from real entropy, because anyone who learns it
   knows every byte that follows.
 - **`proven_random_u64()`** draws a single strong word straight from the entropy
-  source. Right for a one-off — a hash key at start-up, an identifier — and wrong
+  source. Right for a one-off - a hash key at start-up, an identifier - and wrong
   in a loop, where each call costs a trip to the operating system.
 - **`proven_random_set_source()`** installs the entropy source itself. A hosted
   program already has the operating system's and should leave it alone; a
@@ -2987,7 +2987,7 @@ int main(void) {
 }
 ```
 
-Wrong — installing something that merely looks random:
+Wrong - installing something that merely looks random:
 
 ```text
 static bool clock_entropy(void *ctx, void *buf, proven_size_t len) {
@@ -3003,7 +3003,7 @@ all produce something that passes a glance and is guessable. If a board has no
 real entropy, install nothing: a refusal is a fact the caller can act on, and
 silent predictability is not.
 
-Wrong — leaving a test source installed:
+Wrong - leaving a test source installed:
 
 ```text
 proven_random_set_source(counting_entropy, &counter);

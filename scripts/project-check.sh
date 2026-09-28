@@ -29,6 +29,7 @@ for path in sorted(Path("scripts").glob("*.py")):
 PY
 PYTHONDONTWRITEBYTECODE=1 python3 scripts/check-docs.py
 PYTHONDONTWRITEBYTECODE=1 python3 scripts/check-example-parity.py --check
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/ascii_policy.py check
 
 
 # 이 기계의 절대 경로·인증서가 저장소에 들어갔는가 (작업공간 공용 검사).

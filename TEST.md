@@ -2,7 +2,7 @@
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
-For the **policy** — how tests are named, what each class is for, the rules a new test has to satisfy, and an honest account of how this project actually develops — see [`docs/TESTING.md`](docs/TESTING.md).
+For the **policy** - how tests are named, what each class is for, the rules a new test has to satisfy, and an honest account of how this project actually develops - see [`docs/TESTING.md`](docs/TESTING.md).
 
 ## Naming
 
@@ -10,7 +10,7 @@ For the **policy** — how tests are named, what each class is for, the rules a 
 tests/test_<class>_<subject>.c
 ```
 
-The filename is the identifier. **There are no numbers.** Numbers were tried and they rotted: this catalog once ran `1..50` with `7a`, `30a`, `30b`, `30c`, `40a` wedged in wherever something new arrived, and five of its entries described files that had been deleted months earlier. The tests themselves were named `test_phase1` … `test_phase22` — the development order, which is the one fact about a test that nobody ever needs.
+The filename is the identifier. **There are no numbers.** Numbers were tried and they rotted: this catalog once ran `1..50` with `7a`, `30a`, `30b`, `30c`, `40a` wedged in wherever something new arrived, and five of its entries described files that had been deleted months earlier. The tests themselves were named `test_phase1` ... `test_phase22` - the development order, which is the one fact about a test that nobody ever needs.
 
 The class says what kind of question the test answers:
 
@@ -261,7 +261,7 @@ Failure tip: do not delete a regression because it feels narrow. It exists becau
 
 ### `bench-float`
 
-Intent: run the three benchmark executables — the float parse path benchmark, the mixed-corpus float parse benchmark, and the primitive throughput benchmark — and write a dated report. Despite the name, this mode is not float-only. The reports live in maintainer-local `docs/internal/` (kept outside the published repository).
+Intent: run the three benchmark executables - the float parse path benchmark, the mixed-corpus float parse benchmark, and the primitive throughput benchmark - and write a dated report. Despite the name, this mode is not float-only. The reports live in maintainer-local `docs/internal/` (kept outside the published repository).
 
 What it checks:
 
@@ -324,7 +324,7 @@ The class says what kind of question the test answers:
 
 One module's public API, used the way a caller uses it. These are the tests that say what the library *does*.
 
-### `tests/test_unit_algorithm` — algorithms
+### `tests/test_unit_algorithm` - algorithms
 
 Intent: verify generic sort and binary search helpers using both scalar and struct comparators.
 
@@ -337,7 +337,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/algorithm.c`. Comparator return convention must stay consistent: callers expect negative, zero, and positive values to drive ordering.
 
-### `tests/test_unit_alloc_check` — an allocator that knows its own blocks
+### `tests/test_unit_alloc_check` - an allocator that knows its own blocks
 
 Intent: verify the `alloc_check.h` wrapper (B-040) passes correct use through and refuses misuse at the call, without ever forwarding a refused pointer.
 
@@ -351,7 +351,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/alloc_check.c`.
 
-### `tests/test_unit_alloc_check_on` — alloc_check switched on by its macro
+### `tests/test_unit_alloc_check_on` - alloc_check switched on by its macro
 
 Intent: verify that `PROVEN_ALLOC_CHECK`, defined before the first proven header, makes `proven_alloc_checked` wrap.
 
@@ -361,7 +361,7 @@ Sub-checks:
 
 Failure tip: the `#ifdef` in `proven_alloc_checked`, or a define placed after an include - the manual's first draft of its example did exactly that and the checks were silently off.
 
-### `tests/test_unit_arena` — arena allocator
+### `tests/test_unit_arena` - arena allocator
 
 Intent: verify bump-allocation behavior, alignment, exhaustion, reset, realloc, and zero-copy semantics for the arena allocator.
 
@@ -375,7 +375,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/arena.c`, especially offset rounding, overflow checks, and reset behavior. Under ASan, any failure is likely a true bounds or lifetime bug.
 
-### `tests/test_unit_array` — growable array
+### `tests/test_unit_array` - growable array
 
 Intent: verify generic array allocation, validation, push/pop, growth, migration, element access, and arena-backed use.
 
@@ -391,7 +391,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/array.c`. Growth failures usually mean element-size multiplication, capacity doubling, or realloc failure-atomic behavior changed. Remember that pointers into array storage are invalid after growth.
 
-### `tests/test_unit_buffer_u8str_basics` — buffer and U8 string basics
+### `tests/test_unit_buffer_u8str_basics` - buffer and U8 string basics
 
 Intent: verify fixed-capacity buffers, U8 string views, literal construction, append behavior, C-string conversion, and bounds defense.
 
@@ -406,7 +406,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/buffer.c` and `src/proven/u8str.c`. Off-by-one capacity mistakes usually show up here first, especially around the extra NUL byte for C-string compatibility.
 
-### `tests/test_unit_coro` — stackless coroutine
+### `tests/test_unit_coro` - stackless coroutine
 
 Intent: verify coroutine macros preserve caller-owned state across yields and complete after multiple resume calls.
 
@@ -419,21 +419,21 @@ Sub-checks:
 
 Failure tip: inspect `include/proven/coro.h`. Coroutine state must live in caller-owned storage and must not be reset between resumes.
 
-### `tests/test_unit_encode` — hex and Base64 by use case
+### `tests/test_unit_encode` - hex and Base64 by use case
 
 Intent: verify the encodings match RFC 4648's own vectors, that decode is the exact inverse, and that the decoders refuse malformed input and undersized buffers rather than guessing.
 
 Sub-checks:
 
-- Hex, standard Base64, and Base64URL encode the RFC 4648 progression ("", "f", "fo", "foo", "foob", "fooba", "foobar") to the known values — lowercase hex, `=`-padded standard, unpadded `-`/`_` URL form. The vectors were verified against Python's base64/binascii before being trusted.
+- Hex, standard Base64, and Base64URL encode the RFC 4648 progression ("", "f", "fo", "foo", "foob", "fooba", "foobar") to the known values - lowercase hex, `=`-padded standard, unpadded `-`/`_` URL form. The vectors were verified against Python's base64/binascii before being trusted.
 - Decode inverts encode for both alphabets and padded-or-not; UPPERCASE hex decodes the same; the standard and URL forms of the same bytes decode identically.
 - Malformed input is `PROVEN_ERR_INVALID_ENCODING` with nothing committed: odd-length hex, a non-hex or non-Base64 character, embedded whitespace (NOT skipped), bad padding, all-padding.
 - An output buffer one byte too small is `PROVEN_ERR_OUT_OF_BOUNDS`, and the refused call writes no partial prefix.
 - All 256 byte values round-trip through both hex and Base64.
 
-Failure tip: inspect `src/proven/encode.c`. An encoding mismatch is a wrong alphabet or padding; a decoder that accepts junk is the memory bug the module exists to prevent — it validates the whole input before writing a byte.
+Failure tip: inspect `src/proven/encode.c`. An encoding mismatch is a wrong alphabet or padding; a decoder that accepts junk is the memory bug the module exists to prevent - it validates the whole input before writing a byte.
 
-### `tests/test_unit_entropy_source` — the entropy source is a thing you can install
+### `tests/test_unit_entropy_source` - the entropy source is a thing you can install
 
 Intent: verify the OS CSPRNG is the default on a hosted target, that a caller can replace it, and that a source which *fails* leaves the cryptographic generator inert rather than plausible.
 
@@ -441,15 +441,15 @@ Entropy is the one thing a program cannot compute for itself, so it is a hook ra
 
 Sub-checks:
 
-- With nothing installed, `proven_random_bytes` already works — that is what "hosted" means — and actually produces bytes.
-- An installed source replaces it, and the bytes provably come from *there* (the stand-in counts, so 0,1,…,7 is unmistakable). It feeds `proven_random_u64` too.
+- With nothing installed, `proven_random_bytes` already works - that is what "hosted" means - and actually produces bytes.
+- An installed source replaces it, and the bytes provably come from *there* (the stand-in counts, so 0,1,...,7 is unmistakable). It feeds `proven_random_u64` too.
 - `proven_random_set_source(NULL, NULL)` puts the platform default back: installing a source is not a one-way door.
-- `proven_chacha_rng_seed_from_entropy` draws its seed from whatever source is installed, **exactly once** — not per byte — and the resulting keystream is ChaCha over the seed, not the seed echoed back.
-- A source that FAILS: `proven_random_bytes` reports the failure rather than papering over it, seeding returns false, and the generator is inert — zeros for every byte well *past* the first block, where a zeroed ChaCha state would otherwise start emitting a fixed, publicly derivable keystream — and its trait is invalid.
+- `proven_chacha_rng_seed_from_entropy` draws its seed from whatever source is installed, **exactly once** - not per byte - and the resulting keystream is ChaCha over the seed, not the seed echoed back.
+- A source that FAILS: `proven_random_bytes` reports the failure rather than papering over it, seeding returns false, and the generator is inert - zeros for every byte well *past* the first block, where a zeroed ChaCha state would otherwise start emitting a fixed, publicly derivable keystream - and its trait is invalid.
 
 Failure tip: inspect `proven_random_set_source` and the source dispatch in `src/proven/random.c`. With no source installed a freestanding build must return `false`, never fall back to a clock-seeded PRNG: that looks like success and is a hole nothing reports.
 
-### `tests/test_unit_error_results` — error and result primitives
+### `tests/test_unit_error_results` - error and result primitives
 
 Intent: verify the explicit error/result style has stable semantics and no hidden control flow.
 
@@ -462,13 +462,13 @@ Sub-checks:
 
 Failure tip: inspect `include/proven/error.h` and generated/result typedefs. Do not change enum values or result layouts without updating every call site, alias, manual, and test that relies on them.
 
-### `tests/test_unit_float_bigint_divmod` — float big-integer division
+### `tests/test_unit_float_bigint_divmod` - float big-integer division
 
 Intent: verify the big-integer divide/modulo used by the exact float fallback.
 
 Failure tip: inspect `src/proven/float_decimal.c`; a wrong quotient or remainder here silently corrupts the exact arbiter that decides ties.
 
-### `tests/test_unit_float_shortest_format_roundtrip` — shortest formatter round-trip
+### `tests/test_unit_float_shortest_format_roundtrip` - shortest formatter round-trip
 
 Intent: verify values formatted by the shortest formatter parse back to the identical bits.
 
@@ -476,7 +476,7 @@ Note: this test existed on disk but was never registered in `nob.c`, so it had n
 
 Failure tip: inspect `src/proven/float_format.c` and the Grisu3/Dragon4 shortest-digit engines if a value fails to round-trip.
 
-### `tests/test_unit_fmt_f64_accuracy` — float formatter accuracy
+### `tests/test_unit_fmt_f64_accuracy` - float formatter accuracy
 
 Intent: verify fixed-point rounding, scientific carry, and special-value text for floating-point formatting.
 
@@ -489,13 +489,13 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/fmt.c` and `tests/test_unit_fmt_f64_accuracy.c`.
 
-### `tests/test_unit_fmt_custom` — formatting a user-defined type
+### `tests/test_unit_fmt_custom` - formatting a user-defined type
 
 Intent: verify `PROVEN_ARG_OF(&obj, render)` renders a type the library has never heard of, that width/fill/alignment apply to the rendered result, that a spec the library cannot interpret for that type is refused, that the renderer's own error reaches the caller, and that a non-deterministic renderer is caught.
 
 Sub-checks:
 
-- A `point_t` renders as `(3, -7)` through a renderer that composes — it calls the formatter again, into a stack buffer, with no allocator.
+- A `point_t` renders as `(3, -7)` through a renderer that composes - it calls the formatter again, into a stack buffer, with no allocator.
 - `{:>12}`, `{:<12}` and `{:*^11}` align it. This is what the measuring pass exists for: the formatter runs the renderer once against a counting sink to learn its width, so a column of user types lines up like any other column, with no scratch allocation.
 - `{:x}`, `{:.2}` and `{:+}` on a user type are `PROVEN_ERR_INVALID_FORMAT`. The library has no idea what they would mean; inventing an answer and reporting success is how a formatter starts lying.
 - A renderer that returns `PROVEN_ERR_IO` makes the format call return `PROVEN_ERR_IO`; a NULL renderer is `PROVEN_ERR_INVALID_ARG`, not a crash.
@@ -503,30 +503,30 @@ Sub-checks:
 
 Failure tip: inspect `render_custom` and the counting/emitting sinks in `src/proven/fmt.c`.
 
-### `tests/test_unit_fmt_spec` — format spec grammar
+### `tests/test_unit_fmt_spec` - format spec grammar
 
-Intent: verify precision, bases, case, alternate form, sign, `char` and `bool` — and that a spec the argument cannot honour is refused rather than ignored.
+Intent: verify precision, bases, case, alternate form, sign, `char` and `bool` - and that a spec the argument cannot honour is refused rather than ignored.
 
 Sub-checks:
 
-- `{:.3}`, `{:.0}` (no decimals — the engine used to silently rewrite precision 0 to 6), `{:.3f}`, `{:g}`.
+- `{:.3}`, `{:.0}` (no decimals - the engine used to silently rewrite precision 0 to 6), `{:.3f}`, `{:g}`.
 - A float column actually lines up: `{:>9.2}` on 12.5, 100.0 and -3.125.
 - `{:x}` `{:X}` `{:#x}` `{:o}` `{:b}` `{:#b}` `{:08x}` `{:#010x}`.
 - `{:+}`, `{: }`, and that zero-padding lands **between** the sign and the digits.
 - `char` renders as a character (it used to print 90) and `bool` as `true`/`false`.
 - Eight specs that must be **refused**, not ignored.
-- A width of 200 produces exactly 200 characters — the first version of the renderer assembled the padded number in a 128-byte buffer and silently produced 127 while returning OK.
+- A width of 200 produces exactly 200 characters - the first version of the renderer assembled the padded number in a 128-byte buffer and silently produced 127 while returning OK.
 - Every pre-existing spelling still means what it meant.
 
 Failure tip: inspect the spec parser and `render_integer` / the float case in `src/proven/fmt.c`.
 
-### `tests/test_unit_fmt_scientific` — the `{:e}` scientific float form
+### `tests/test_unit_fmt_scientific` - the `{:e}` scientific float form
 
 Intent: verify `{:e}` renders always-scientific notation (mantissa, default six fractional digits, signed two-digit-minimum exponent, half-to-even rounding) digit-for-digit like `printf %e`, that `{:.Ne}` honours a chosen precision, that it forces scientific where `{:f}`/`{:g}` would not, and that `{:e}` on a non-float is refused.
 
 Failure tip: inspect the `{:e}` branch in `src/proven/fmt.c` and `PROVEN_FLOAT_FORMAT_MODE_SCIENTIFIC` in `float_format.c`. Every expected value is exactly `printf %e`.
 
-### `tests/test_unit_fmt_fastpath` — formatter truncation comparison
+### `tests/test_unit_fmt_fastpath` - formatter truncation comparison
 
 Intent: compare truncating fixed-capacity formatting against the growable reference path for exact-fit, truncation, malformed format, and excess-argument cases.
 
@@ -539,7 +539,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/fmt.c` and `tests/test_unit_fmt_fastpath.c`.
 
-### `tests/test_unit_foundation` — foundation primitives
+### `tests/test_unit_foundation` - foundation primitives
 
 Intent: verify the core error and checked-arithmetic assumptions used by all higher-level modules.
 
@@ -553,7 +553,7 @@ Sub-checks:
 
 Failure tip: inspect `include/proven/error.h` and the `PROVEN_CKD_*` definitions in `include/proven/types.h`. If this test fails, avoid debugging later modules until the foundation behavior is fixed.
 
-### `tests/test_unit_fs_advanced` — advanced filesystem
+### `tests/test_unit_fs_advanced` - advanced filesystem
 
 Intent: verify directory lifecycle, nested file creation, rename/move, listing, sorting expectations, and cleanup.
 
@@ -569,7 +569,7 @@ Sub-checks:
 
 Failure tip: inspect `platform/proven_sys_fs.c` for directory iteration and path handling. On failure, check whether cleanup from a previous run left permissions or stale entries behind.
 
-### `tests/test_unit_fs_basic` — basic filesystem
+### `tests/test_unit_fs_basic` - basic filesystem
 
 Intent: verify hosted file open, write, read-all, size queries, and absolute-path classification.
 
@@ -583,7 +583,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/fs.c` and `platform/proven_sys_fs.c`. If only Windows path cases fail, check path-prefix parsing rather than POSIX filesystem behavior.
 
-### `tests/test_unit_fs_metadata_perms` — filesystem metadata and permissions
+### `tests/test_unit_fs_metadata_perms` - filesystem metadata and permissions
 
 Intent: verify hosted permission and locking-related filesystem behavior stays explicit and isolated behind the PAL.
 
@@ -596,9 +596,9 @@ Sub-checks:
 
 Failure tip: inspect `platform/proven_sys_fs.c`. Permission and locking semantics are OS-dependent; keep differences in PAL code and avoid assuming POSIX behavior on every target.
 
-### `tests/test_unit_hash` — hashing by use case
+### `tests/test_unit_hash` - hashing by use case
 
-Intent: verify each hash does what its use case requires — FNV-1a spreads and is order-sensitive, keyed SipHash is a different function under a different key, CRC-32 matches the shared check value, and SHA-256 matches the official vectors and is chunking-independent.
+Intent: verify each hash does what its use case requires - FNV-1a spreads and is order-sensitive, keyed SipHash is a different function under a different key, CRC-32 matches the shared check value, and SHA-256 matches the official vectors and is chunking-independent.
 
 Sub-checks:
 
@@ -610,7 +610,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/hash.c`. The algorithms are implemented from their specifications; a KAT mismatch means a rotation, round count, or endianness is off.
 
-### `tests/test_unit_job` — job system
+### `tests/test_unit_job` - job system
 
 Intent: verify the hosted worker-thread job system retains wakes across idle
 parking, tolerates stale permits created by an external consumer, executes
@@ -631,14 +631,14 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/job.c` and `platform/proven_sys_thread.c`. For races, run `./nob tsan`. Check admission state, sequence counters, queue claim/commit ordering, and shutdown wakeups.
 
-### `tests/test_unit_fs_position_and_sync` — file position, positional I/O, and durability
+### `tests/test_unit_fs_position_and_sync` - file position, positional I/O, and durability
 
 Intent: verify `seek` / `tell` / `truncate` / `pread` / `pwrite` / `sync`, and the contracts around them.
 
 Sub-checks:
 
 - `SEEK_SET` / `SEEK_CUR` / `SEEK_END` land where arithmetic says, and a read afterwards sees the right byte.
-- `pread` and `pwrite` do **not** move the file position — the whole point of positional I/O.
+- `pread` and `pwrite` do **not** move the file position - the whole point of positional I/O.
 - `pread` past the end is `PROVEN_ERR_EOF`, not a zero-byte success.
 - `truncate` shortens and grows (zero-filling), and does not move the position either.
 - `proven_fs_sync` succeeds on a writable file; `sync_dir` either works or returns `PROVEN_ERR_UNSUPPORTED` rather than silently returning OK where it does nothing.
@@ -647,7 +647,7 @@ Sub-checks:
 
 Failure tip: inspect `proven_fs_seek` and friends in `src/proven/fs.c`, and the libc calls behind them in `platform/proven_sys_io.c`.
 
-### `tests/test_unit_list` — intrusive list
+### `tests/test_unit_list` - intrusive list
 
 Intent: verify zero-allocation intrusive list behavior and container-of usage.
 
@@ -661,7 +661,7 @@ Sub-checks:
 
 Failure tip: inspect `include/proven/list.h`. Intrusive lists do not own node storage. A failure usually means `next`/`prev` linkage was corrupted or a detached node was reused incorrectly.
 
-### `tests/test_unit_map` — hash map
+### `tests/test_unit_map` - hash map
 
 Intent: verify open-addressing map behavior for integer and U8 string keys, including tombstones, growth, and scratch allocation.
 
@@ -676,7 +676,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/map.c`. Check hash/equality callbacks, tombstone reuse, threshold calculation, and whether borrowed keys or value pointers are being used after rehash.
 
-### `tests/test_unit_map_owned_key` — map owned-key storage
+### `tests/test_unit_map_owned_key` - map owned-key storage
 
 Intent: verify owned U8 keys are duplicated into map storage, survive source-buffer mutation, and free their copied bytes on remove and destroy.
 
@@ -690,20 +690,20 @@ Sub-checks:
 
 Failure tip: inspect the owned-key duplication, cleanup, and rehash migration paths in `src/proven/map.c` if a key is lost, leaks, or follows a mutated source buffer.
 
-### `tests/test_unit_map_keyed` — HashDoS-resistant string keys
+### `tests/test_unit_map_keyed` - HashDoS-resistant string keys
 
 Intent: verify a default string-key map hashes with a keyed function an attacker cannot predict, that a trusted map keeps the fast unkeyed FNV on purpose, and that both place and find keys correctly.
 
 Sub-checks:
 
-- A default (`proven_map_create`) string-key map has `trusted_keys == false`, and `proven_map_hash` differs from unkeyed `proven_hash_bytes` for essentially every key — a keyed hash agreeing with FNV on one key is coincidence, on all of them is FNV.
+- A default (`proven_map_create`) string-key map has `trusted_keys == false`, and `proven_map_hash` differs from unkeyed `proven_hash_bytes` for essentially every key - a keyed hash agreeing with FNV on one key is coincidence, on all of them is FNV.
 - A trusted map (`proven_map_create_trusted`) has `trusted_keys == true` and `proven_map_hash` equals FNV-1a, which is the fast path it opts into.
-- Both kinds insert 500 distinct string keys, read them all back, remove half, and still resolve the survivors — a keyed hash that broke lookups would be safe and useless.
+- Both kinds insert 500 distinct string keys, read them all back, remove half, and still resolve the survivors - a keyed hash that broke lookups would be safe and useless.
 - A malformed `{NULL, size>0}` key is hashed as empty on both kinds rather than dereferenced (the trusted path once used a duplicate internal FNV that read through the NULL).
 
 Failure tip: inspect the hash selection and the per-process key in `src/proven/map.c`. The written-first assertion is that the default must NOT equal FNV; a stub that still uses FNV lands it red.
 
-### `tests/test_unit_memory_slicing` — memory slicing
+### `tests/test_unit_memory_slicing` - memory slicing
 
 Intent: verify owned memory can be exposed as immutable and mutable views and sliced without losing pointer or length identity.
 
@@ -716,7 +716,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/memory.c` and `include/proven/memory.h`. Most failures here are offset arithmetic mistakes, accidental copies instead of views, or unchecked slice preconditions used with the wrong ranges.
 
-### `tests/test_unit_memory_views` — memory byte views
+### `tests/test_unit_memory_views` - memory byte views
 
 Intent: verify the fixed-width integer aliases, semantic pointer/offset types, alignment helpers, and the first memory slice/view contracts.
 
@@ -729,7 +729,7 @@ Sub-checks:
 
 Failure tip: start in `include/proven/types.h`, `include/proven/align.h`, and `include/proven/memory.h`. A width failure usually means a typedef or platform feature branch changed. An alignment failure usually means the helper no longer implements power-of-two alignment correctly.
 
-### `tests/test_unit_mmap` — memory mapped files
+### `tests/test_unit_mmap` - memory mapped files
 
 Intent: verify hosted memory mapping rejects invalid flags and exposes file bytes through mapped memory.
 
@@ -744,7 +744,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/mmap.c` and `platform/proven_sys_fs.c`. Pay special attention to offset alignment, map length, file handle lifetime, and unmap ownership.
 
-### `tests/test_unit_pool` — pool allocator
+### `tests/test_unit_pool` - pool allocator
 
 Intent: verify the fixed-size pool allocator enforces item-size constraints and recycles freed blocks through a bounded LIFO bin.
 
@@ -760,9 +760,9 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/pool.c`. Wrong-size requests should not be silently accepted. Bin overflow must never lose ownership of the block being freed.
 
-### `tests/test_unit_random` — OS randomness
+### `tests/test_unit_random` - OS randomness
 
-Intent: verify the OS CSPRNG is actually wired up — it succeeds on a hosted platform, fills every byte the caller asked for, does not repeat, and is not trivially structured. None of these prove cryptographic strength (nothing a unit test does could), but each catches a real, shipped failure mode.
+Intent: verify the OS CSPRNG is actually wired up - it succeeds on a hosted platform, fills every byte the caller asked for, does not repeat, and is not trivially structured. None of these prove cryptographic strength (nothing a unit test does could), but each catches a real, shipped failure mode.
 
 Sub-checks:
 
@@ -770,25 +770,25 @@ Sub-checks:
 - Two draws differ (a fixed or unseeded generator repeats), and the bytes are neither all-equal (a memset) nor a simple counter.
 - `len == 0` is a successful no-op, and two `proven_random_u64` draws differ.
 
-Failure tip: inspect `platform/proven_sys_random.c`. A failure here is a missing or wrong OS entropy call — the `getrandom` guard keys on `GRND_NONBLOCK` from `<sys/random.h>`, not on a syscall number that was never included.
+Failure tip: inspect `platform/proven_sys_random.c`. A failure here is a missing or wrong OS entropy call - the `getrandom` guard keys on `GRND_NONBLOCK` from `<sys/random.h>`, not on a syscall number that was never included.
 
-### `tests/test_unit_rng` — randomness by use case
+### `tests/test_unit_rng` - randomness by use case
 
-Intent: verify the two generators against the standard each is judged by — xoshiro256** on being reproducible and non-degenerate, ChaCha20 on being *actually ChaCha20* — and the helpers on being unbiased where `% n` is not.
+Intent: verify the two generators against the standard each is judged by - xoshiro256** on being reproducible and non-degenerate, ChaCha20 on being *actually ChaCha20* - and the helpers on being unbiased where `% n` is not.
 
 Sub-checks:
 
-- xoshiro256**: the same seed replays the same 1000 words; a different seed does not. The seeds callers actually pass (0, 1, 2) are not degenerate — the bit balance over 512 output bits is near half, which a raw-counter seed fails badly. The first state word for seed 0 is SplitMix64(0), the published constant, so the expansion is checked against something the library did not invent.
-- ChaCha20: the first 64 bytes of keystream match the standard byte for byte. The expected block came from OpenSSL, which was itself first verified to reproduce RFC 8439 §2.4.2's official ciphertext — a property test cannot establish that something *is* ChaCha20, and this is the generator that guards secrets. The keystream is also chunking-independent: drawn in pieces of 1, 7, 64, 3, 61 it equals the same bytes drawn at once, which is where a block-boundary bug hides.
+- xoshiro256**: the same seed replays the same 1000 words; a different seed does not. The seeds callers actually pass (0, 1, 2) are not degenerate - the bit balance over 512 output bits is near half, which a raw-counter seed fails badly. The first state word for seed 0 is SplitMix64(0), the published constant, so the expansion is checked against something the library did not invent.
+- ChaCha20: the first 64 bytes of keystream match the standard byte for byte. The expected block came from OpenSSL, which was itself first verified to reproduce RFC 8439 section 2.4.2's official ciphertext - a property test cannot establish that something *is* ChaCha20, and this is the generator that guards secrets. The keystream is also chunking-independent: drawn in pieces of 1, 7, 64, 3, 61 it equals the same bytes drawn at once, which is where a block-boundary bug hides.
 - `proven_rng_below`: every draw is strictly below the bound, and 70,000 draws over 7 buckets land near a seventh each. Bound 0 is 0; bound 1 is 0.
 - `proven_rng_range`: inside [lo, hi] inclusive; INT64_MIN..INT64_MAX (a span of 2^64-1) neither overflows nor hangs; an inverted range returns `lo`.
 - `proven_rng_f64`: always in [0, 1), never 1.0.
 - `proven_rng_shuffle`: a permutation at several sizes and element widths (including a 200-byte element, which catches a swap that assumes a word); count 0 and 1 are no-ops; all six orderings of three elements come up, which a biased shuffle cannot manage.
 - The trait: a zero-initialised `proven_rng_t` is inert (0, and a fill that fills nothing) rather than a crash; a valid one fills the tail of a length that is not a multiple of 8.
 
-Failure tip: inspect `src/proven/random.c`. A ChaCha keystream mismatch means a rotation, round count, or word order is wrong — it is not ChaCha20 and must not hold a key.
+Failure tip: inspect `src/proven/random.c`. A ChaCha keystream mismatch means a rotation, round count, or word order is wrong - it is not ChaCha20 and must not hold a key.
 
-### `tests/test_unit_ring` — bounded ring
+### `tests/test_unit_ring` - bounded ring
 
 Intent: verify fixed-capacity FIFO semantics, wraparound, full/empty detection, and overflow guards.
 
@@ -803,7 +803,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/ring.c`. The first suspects are head/tail modulo math, `len` updates, and full-vs-empty boundary handling.
 
-### `tests/test_unit_scan` — scanner
+### `tests/test_unit_scan` - scanner
 
 Intent: verify scanner parsing for integers, floats, tokens, skip-until operations, format scanning, and fixed-width integer destinations.
 
@@ -819,7 +819,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/scan.c`. The most common bugs are cursor advancement on failure, overflow detection, and accepting invalid trailing characters.
 
-### `tests/test_unit_scan_f64_accuracy` — float scanner accuracy
+### `tests/test_unit_scan_f64_accuracy` - float scanner accuracy
 
 Intent: verify float scanning preserves exact small values, signed zero, a round-trip style decimal token, exponent extremes, and cursor restoration on malformed input.
 
@@ -834,14 +834,14 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/scan.c`, especially the decimal mantissa accumulation, exponent scaling, and final finite-value check. If a malformed token leaves the cursor advanced, inspect the failure-atomic rollback path first.
 
-### `tests/test_unit_stream` — writers and readers
+### `tests/test_unit_stream` - writers and readers
 
 Intent: verify one piece of code can move bytes without knowing where they go, and that the sinks refuse rather than truncate.
 
 Sub-checks:
 
 - The same serializer writes into an owned string, a fixed caller buffer, and a file, and all three agree byte for byte.
-- A full fixed buffer returns `PROVEN_ERR_OUT_OF_BOUNDS` and records `overflowed` — it does **not** truncate, and a refused write is not partially applied.
+- A full fixed buffer returns `PROVEN_ERR_OUT_OF_BOUNDS` and records `overflowed` - it does **not** truncate, and a refused write is not partially applied.
 - A buffered writer holds bytes until flushed, auto-flushes when it wraps without losing any, and passes a chunk larger than the whole buffer straight through.
 - `proven_reader_read_line` handles `\r\n`, empty lines, and **returns the final line even with no trailing newline**.
 - A line longer than the reader's buffer is `PROVEN_ERR_OUT_OF_BOUNDS`, not a silently truncated line.
@@ -849,7 +849,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/stream.c`. Buffering uses caller-supplied memory: there is no hidden global state and no allocation the caller did not ask for.
 
-### `tests/test_unit_stream_u16` — UTF-16 text through writers, readers and the formatter
+### `tests/test_unit_stream_u16` - UTF-16 text through writers, readers and the formatter
 
 Intent: verify u16 text goes out through every formatter sink and any writer in each encoding, and comes back line by line from each encoding, with a character split across reads carried.
 
@@ -864,7 +864,7 @@ Sub-checks:
 
 Failure tip: inspect the UTF-16 section of `src/proven/stream.c` (`u16r_decode`, `proven_u16_reader_read_line`) and `render_u16` in `src/proven/fmt.c`. A failure only with the one-byte source is the carry between reads.
 
-### `tests/test_unit_sysio_console` — UTF-8 text through a UTF-16 console
+### `tests/test_unit_sysio_console` - UTF-8 text through a UTF-16 console
 
 Intent: verify the Windows console edge (`src/proven/proven_internal_console.h`) against a fake UTF-16 console, on every host.
 
@@ -878,16 +878,16 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/proven_internal_console.h`. A failure at one split offset is the write carry; at one destination size, the read carry; at one-unit chunks, the pending high surrogate. The real console is checked on Windows by `docs/b039-console-check.c`.
 
-### `tests/test_unit_sysio_streams` — the standard streams are writers and readers
+### `tests/test_unit_sysio_streams` - the standard streams are writers and readers
 
 Intent: verify stdin can be read a line at a time, that a buffered stdout holds its bytes until it is flushed and then emits them in order, and that an unbuffered standard-stream writer is out immediately.
 
-The test dup2's pipes over the **real fd 0 and fd 1**, so a pass means `proven_sysio_stdin()` / `proven_sysio_stdout()` themselves work — not a stand-in — including the short reads a pipe actually delivers.
+The test dup2's pipes over the **real fd 0 and fd 1**, so a pass means `proven_sysio_stdin()` / `proven_sysio_stdout()` themselves work - not a stand-in - including the short reads a pipe actually delivers.
 
 Sub-checks:
 
 - Lines from stdin: `first\n`, `second\r\n`, a line with spaces, and a final line with no trailing newline all come back without their newline and without a stray `\r`; the end of input is `PROVEN_ERR_EOF`, not an empty line forever.
-- A buffered stdout writes **nothing** to the pipe before `proven_writer_flush`, and after it every buffered byte is out, in order. This assertion is the whole point: `proven_sysio_flush` used to claim to flush a buffer that did not exist, and this is the first time the claim could be tested — because there is finally something to flush.
+- A buffered stdout writes **nothing** to the pipe before `proven_writer_flush`, and after it every buffered byte is out, in order. This assertion is the whole point: `proven_sysio_flush` used to claim to flush a buffer that did not exist, and this is the first time the claim could be tested - because there is finally something to flush.
 - The formatter is aimed straight at a standard stream (`proven_fprintln` into the buffered writer), which could not be done before: `proven_fprint` takes a writer, and stdout was not one.
 - An unbuffered standard-stream writer is in the pipe with no flush at all.
 - A line longer than the buffer is `PROVEN_ERR_OUT_OF_BOUNDS`, never a silently truncated line.
@@ -895,7 +895,7 @@ Sub-checks:
 
 Failure tip: inspect the standard-stream bridge in `src/proven/sysio.c`. It composes `stream.h`'s writer/reader over a handle parked in caller-owned storage; it re-implements nothing, because a second buffered reader would be a second place for the same bug.
 
-### `tests/test_unit_sysio_env` — sysio and environment
+### `tests/test_unit_sysio_env` - sysio and environment
 
 Intent: verify standard stream access, formatter-backed console output, environment lookup, missing-variable errors, and long environment-key handling.
 
@@ -909,7 +909,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/sysio.c` and `platform/proven_sys_env.c`. Long-key failures usually mean a fixed-size C-string conversion path returned. Windows failures may involve UTF-8 to UTF-16 conversion and allocator ownership.
 
-### `tests/test_unit_sysio_scanner` — sysio-backed scanner
+### `tests/test_unit_sysio_scanner` - sysio-backed scanner
 
 Intent: verify scanner behavior over file-backed sysio data instead of only in-memory string views.
 
@@ -924,7 +924,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/sysio.c`, `src/proven/scan.c`, and file read wrappers. If in-memory scan tests pass but this fails, suspect buffer refill or file-position behavior, especially at the current-buffer boundary.
 
-### `tests/test_unit_sysio_scanner_init` — sysio scanner init allocator validation
+### `tests/test_unit_sysio_scanner_init` - sysio scanner init allocator validation
 
 Intent: verify buffered scanner initialization rejects partial allocators and leaves the scanner zero-safe on failure.
 
@@ -937,7 +937,7 @@ Sub-checks:
 
 Failure tip: inspect `proven_sysio_scanner_init` in `src/proven/sysio.c`. If a partial allocator is accepted, the full allocator trait check is missing; if the scanner keeps non-zero state after failure, the failure path is not zero-safe.
 
-### `tests/test_unit_time_fmt` — time and formatting integration
+### `tests/test_unit_time_fmt` - time and formatting integration
 
 Intent: verify time measurement, sleep duration, modern format syntax, datetime formatting, and escaped braces.
 
@@ -952,13 +952,13 @@ Sub-checks:
 
 Failure tip: inspect `platform/proven_sys_time.c` for clock conversion and `src/proven/fmt.c` for datetime formatting. Timing failures can be caused by a broken clock source or by assuming exact scheduling latency.
 
-### `tests/test_unit_time_fmt_u16_parity` — `u16` matches `u8` across the whole `fmt.h` spec grammar
+### `tests/test_unit_time_fmt_u16_parity` - `u16` matches `u8` across the whole `fmt.h` spec grammar
 
-Intent: verify `proven_time_u16_fmt` produces the same text as `proven_time_u8_fmt` (widened to code units) for every field and every fill/align/width spec — right-align, centre, left-align, custom fill — on numeric AND named fields, plus literals and escaping, so no spec is silently dropped.
+Intent: verify `proven_time_u16_fmt` produces the same text as `proven_time_u8_fmt` (widened to code units) for every field and every fill/align/width spec - right-align, centre, left-align, custom fill - on numeric AND named fields, plus literals and escaping, so no spec is silently dropped.
 
 Failure tip: inspect `proven_time_u16_fmt` in `src/proven/time.c`. It renders through the u8 path (which delegates each field to the `fmt.h` spec engine) and widens the result, rather than hand-rolling a u16 parser that recognised only `:0>N`.
 
-### `tests/test_unit_u16str` — U16 strings
+### `tests/test_unit_u16str` - U16 strings
 
 Intent: verify optional UTF-16/code-unit string support and its append policies.
 
@@ -972,7 +972,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/u16str.c` and `include/proven/u16str.h`. Treat U16 values as UTF-16 code units, not Unicode scalar values. Check `PROVEN_NO_U16STR` guards if the failure is compile-time.
 
-### `tests/test_unit_utf` — UTF-8 and UTF-16 transcoding
+### `tests/test_unit_utf` - UTF-8 and UTF-16 transcoding
 
 Intent: verify `utf.h` converts every scalar value exactly in both directions, refuses malformed input without writing, and tells input cut mid-character apart from malformed input.
 
@@ -988,7 +988,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/utf.c`. A validity mismatch is a hole in the lead-byte range table (Unicode table 3-7); a rollback failure leaves the destination longer or unterminated.
 
-### `tests/test_unit_u8str_mutation` — U8 string mutation
+### `tests/test_unit_u8str_mutation` - U8 string mutation
 
 Intent: verify U8 string search, slicing, replacement, insertion, removal, and the three append policies: atomic fixed-capacity, partial fixed-capacity, and growable.
 
@@ -1005,7 +1005,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/u8str.c`. For failures after a reallocation path, assume saved views or C-string pointers are stale unless proven otherwise. For fixed-capacity failures, check whether the operation is documented as atomic or partial.
 
-### `tests/test_unit_u8str_split` — splitting a view
+### `tests/test_unit_u8str_split` - splitting a view
 
 Intent: verify `proven_u8str_view_split` / `_split_next` against RFC-0003 table 4.1 and its properties.
 
@@ -1016,7 +1016,7 @@ Sub-checks:
 
 Failure tip: inspect `proven_u8str_view_split_next`; its four steps must stay in RFC-0003's order. A count one short is the dropped tail; a count at the cap is a non-terminating iterator.
 
-### `tests/test_unit_u8str_view_cmp` — view ordering
+### `tests/test_unit_u8str_view_cmp` - view ordering
 
 Intent: verify `proven_u8str_view_cmp` is the order RFC-0003 section 3.4 defines, and `_cmp_ptr` sorts with it.
 
@@ -1028,7 +1028,7 @@ Sub-checks:
 
 Failure tip: a wrong sign on the `\xFF` row is signed comparison; on the prefix rows, the length tie-break.
 
-### `tests/test_unit_u8str_view_ops` — view trim, affixes, reverse search and well-formedness
+### `tests/test_unit_u8str_view_ops` - view trim, affixes, reverse search and well-formedness
 
 Intent: verify RFC-0003 tables 4.2, 4.3 and 4.5 row for row, asserting empty results by size, never by pointer.
 
@@ -1041,99 +1041,99 @@ Sub-checks:
 
 Failure tip: inspect the view vocabulary at the end of `src/proven/u8str.c`. `find_last` at scale is `test_differential_find_last_oracle`.
 
-### `tests/test_unit_float_bits` — float bit extraction
+### `tests/test_unit_float_bits` - float bit extraction
 
 Intent: verify the internal float bit helpers preserve raw IEEE-754 bit patterns for f32 and f64 values, including signed zero, infinities, and NaN payloads.
 
 Failure tip: inspect src/proven/float_decimal.c if the raw byte-copy helpers stop matching the object representation.
 
-### `tests/test_unit_float_exact_range` — float exact-range backend
+### `tests/test_unit_float_exact_range` - float exact-range backend
 
 Intent: verify representative exact-range decimal spellings keep their documented bit patterns without the host strtod fallback.
 
 Failure tip: inspect src/proven/scan.c and the shared float decimal helper if the exact-range backend falls back to host strtod or the corpus drifts.
 
-### `tests/test_unit_float_f32_boundaries` — float32 boundary neighbors
+### `tests/test_unit_float_f32_boundaries` - float32 boundary neighbors
 
 Intent: verify the float32 upgrade and shortest corpora pin the ULP-adjacent neighbors around FLT_MIN and FLT_TRUE_MIN so the parser-driven backend keeps the documented boundary spellings.
 
 Failure tip: inspect tests/test_differential_float_corpus_f64.c and tests/test_unit_float_shortest_roundtrip.c if a float32 boundary-neighbor corpus value disappears or changes spelling.
 
-### `tests/test_unit_float_format_policy` — float format policy scaffold
+### `tests/test_unit_float_format_policy` - float format policy scaffold
 
 Intent: verify the new float format policy seam preserves the current simple formatter behavior, rejects unsupported shortest-mode requests, and reports invalid inputs clearly.
 
 Failure tip: inspect src/proven/float_format.c and include/proven/float_format.h if the policy dispatch or fixed formatter helper regresses.
 
-### `tests/test_unit_float_parse_api` — float parse API
+### `tests/test_unit_float_parse_api` - float parse API
 
 Intent: verify the public ASCII float parser and strtod-like wrapper expose consumed-length, endptr, and range signaling over the shared exact backend.
 
 Failure tip: inspect include/proven/float_parse.h, src/proven/float_parse.c, and src/proven/float_decimal.c if the public parser seam or wrapper contract drifts.
 
-### `tests/test_unit_float_rfc_0001_cases` — RFC-0001 parse audit
+### `tests/test_unit_float_rfc_0001_cases` - RFC-0001 parse audit
 
 Intent: verify the decimal-to-binary64 rewrite still satisfies the explicit named cases from docs/proposals/rfc-0001.
 
 Failure tip: inspect docs/proposals/rfc-0001, include/proven/float_parse.h, src/proven/float_parse.c, and src/proven/float_decimal.c if a named RFC audit case fails.
 
-### `tests/test_unit_float_shortest_known` — float shortest known values
+### `tests/test_unit_float_shortest_known` - float shortest known values
 
 Intent: verify the shortest float formatting policy emits the documented exact spellings for representative f64 and f32 values.
 
 Failure tip: inspect src/proven/float_format.c if the shortest-policy output drifts or if RYU requests stop reaching the active backend.
 
-### `tests/test_unit_float_shortest_roundtrip` — float shortest round-trip
+### `tests/test_unit_float_shortest_roundtrip` - float shortest round-trip
 
 Intent: verify shortest float formatting round-trips through host strtod for representative f64 and f32 values.
 
 Failure tip: inspect src/proven/float_format.c if the shortest output stops round-tripping, and keep the host strtod oracle limited to tests.
 
-### `tests/test_unit_float_shortest_scientific_guard` — float shortest scientific guard
+### `tests/test_unit_float_shortest_scientific_guard` - float shortest scientific guard
 
 Intent: verify the shortest float formatter handles very small finite values by producing a valid shortest candidate instead of an invalid scientific normalization result.
 
 Failure tip: inspect src/proven/float_decimal.c and src/proven/float_format.c if the shortest formatter rejects a tiny finite value or emits an invalid scientific spelling.
 
-### `tests/test_unit_float_shortest_tie_break` — float shortest tie-break corpus
+### `tests/test_unit_float_shortest_tie_break` - float shortest tie-break corpus
 
 Intent: verify the shortest corpus keeps the 0.001 fixed-versus-scientific tie-break cases pinned for both widths.
 
 Failure tip: inspect tests/test_unit_float_shortest_roundtrip.c and tests/test_differential_float_corpus_f64.c if the tie-break corpus disappears or is renamed.
 
-### `tests/test_unit_mem_copy` — bounded memory copy
+### `tests/test_unit_mem_copy` - bounded memory copy
 
 Intent: verify proven_mem_copy copies within capacity, rejects overflow without writing, treats a zero-size source as a no-op, and rejects null pointers.
 
 Failure tip: inspect proven_mem_copy in src/proven/memory.c if a copy overflows, writes on rejection, or mishandles empty/null inputs.
 
-### `tests/test_unit_scan_f64_bounds` — float scanner boundary behavior
+### `tests/test_unit_scan_f64_bounds` - float scanner boundary behavior
 
 Intent: verify float scanning treats underflow as signed zero, reports overflow deterministically, and preserves cursor rollback at the true boundary cases.
 
 Failure tip: inspect proven_scan_f64 exponent-to-value handling and final finite checks if a boundary token returns the wrong error or wrong sign.
 
-### `tests/test_unit_sysio_scanner_boundary` — sysio scanner boundary refill
+### `tests/test_unit_sysio_scanner_boundary` - sysio scanner boundary refill
 
 Intent: verify buffered sysio scanning resumes across a chunk boundary, refills as needed, and only reports EOF after the final token is consumed.
 
 Failure tip: inspect proven_sysio_scanner_scan_impl staging, refill handling, and EOF transition behavior when a token reaches the end of the buffer.
 
-### `tests/test_unit_u128_mul` — wide multiply helper
+### `tests/test_unit_u128_mul` - wide multiply helper
 
 Intent: verify the shared 64x64 to 128-bit multiply helper returns exact high and low halves for representative operands.
 
 Failure tip: inspect src/proven/float_decimal.c if the wide multiply helper stops matching the reference product.
 
-### `tests/test_unit_u8str_borrow` — U8 string borrow (fixed-capacity over caller memory)
+### `tests/test_unit_u8str_borrow` - U8 string borrow (fixed-capacity over caller memory)
 
 Intent: verify proven_u8str_borrow/_reset: fixed-capacity ops and fmt work, growing ops refuse to reallocate caller memory, and destroy is a no-op.
 
 Failure tip: inspect proven_u8str_borrow/_reset and the borrowed-flag guards in reserve/append_grow/replace_at_grow/destroy.
 
-### `tests/test_unit_public_surface_gaps` — the public functions nothing had ever called
+### `tests/test_unit_public_surface_gaps` - the public functions nothing had ever called
 
-Intent: exercise the shipped, documented public API that no test touched — `proven_fs_symlink` (creation, resolution, stat-follows, refusal to clobber), the bounds-checked mem slices (including `offset+size` overflow), the formatter's caller-supplied-scratch path, the mutable map/array lookups (a write through `get_mut` must be visible), `linear_search` on an UNSORTED array, `proven_u16str_create_from_view` (sealed at the right unit index), and the standard-stream bridges that shipped with only their siblings covered.
+Intent: exercise the shipped, documented public API that no test touched - `proven_fs_symlink` (creation, resolution, stat-follows, refusal to clobber), the bounds-checked mem slices (including `offset+size` overflow), the formatter's caller-supplied-scratch path, the mutable map/array lookups (a write through `get_mut` must be visible), `linear_search` on an UNSORTED array, `proven_u16str_create_from_view` (sealed at the right unit index), and the standard-stream bridges that shipped with only their siblings covered.
 
 Failure tip: the gap list was found by diffing every `proven_*` symbol in `include/proven` against every one named in `tests/` or `manual/examples/`. Untested public API is where bugs live, because nothing has ever disagreed with it.
 
@@ -1141,7 +1141,7 @@ Failure tip: the gap list was found by diffing every `proven_*` symbol in `inclu
 
 The public invariants: misuse, corrupted structs, exhausted allocators, refused input. These say what the library *refuses to do*, which is the half a caller cannot infer from the happy path.
 
-### `tests/test_contract_allocator_dealloc` — allocator deallocation policies
+### `tests/test_contract_allocator_dealloc` - allocator deallocation policies
 
 Intent: document and verify the different deallocation policies exposed through the allocator trait.
 
@@ -1154,7 +1154,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/arena.c`, `src/proven/heap.c`, and the allocator trait definition. Do not make arena `free` reclaim individual blocks; that would break the arena lifetime model.
 
-### `tests/test_contract_arena_panic` — arena panic path
+### `tests/test_contract_arena_panic` - arena panic path
 
 Intent: verify panic-on-allocation-failure behavior is deterministic and does not fire on successful arena allocation.
 
@@ -1167,7 +1167,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/arena.c` and `src/proven/panic.c`. Restore the panic hook carefully in tests so later tests are not affected.
 
-### `tests/test_contract_fmt_failure_policy` — formatter failure policy
+### `tests/test_contract_fmt_failure_policy` - formatter failure policy
 
 Intent: verify formatting append policies are explicit: fixed-capacity atomic, fixed-capacity truncating, and allocator-backed growable.
 
@@ -1182,13 +1182,13 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/fmt.c`. Track `written`, `required`, and destination length separately. Atomic failure must not modify the destination.
 
-### `tests/test_contract_fmt_atomic` — the fixed-capacity format is atomic on failure
+### `tests/test_contract_fmt_atomic` - the fixed-capacity format is atomic on failure
 
-Intent: verify a failed fixed-capacity format leaves the string byte-for-byte as it was — after an overflow, after a format error discovered halfway through the output, and after an argument-count error — and that it still reports how many bytes it needed.
+Intent: verify a failed fixed-capacity format leaves the string byte-for-byte as it was - after an overflow, after a format error discovered halfway through the output, and after an argument-count error - and that it still reports how many bytes it needed.
 
 Failure tip: inspect the single-pass branch of `proven_u8str_fmt_internal` in `src/proven/fmt.c`. It writes as it goes, so atomicity rests on the rollback restoring `internal.len` and resealing the NUL.
 
-### `tests/test_contract_map_hardening` — map borrowed-key hardening
+### `tests/test_contract_map_hardening` - map borrowed-key hardening
 
 Intent: verify borrowed U8 keys that point into internal map storage are rejected when debug validation or `PROVEN_HARDENED` is enabled.
 
@@ -1200,7 +1200,7 @@ Sub-checks:
 
 Failure tip: inspect the borrowed-key range guard in `src/proven/map.c` if an internal pointer is accepted or if ordinary borrowed keys stop working.
 
-### `tests/test_contract_pool_misuse` — pool double-free hardening
+### `tests/test_contract_pool_misuse` - pool double-free hardening
 
 Intent: verify the pool free trait catches repeated frees when debug validation or `PROVEN_HARDENED` is enabled.
 
@@ -1213,7 +1213,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/pool.c`. The repeated-free check must remain gated on debug validation or `PROVEN_HARDENED`, and the test should only require the panic path when that gate is active.
 
-### `tests/test_contract_scan_f64_overflow` — float scanner overflow
+### `tests/test_contract_scan_f64_overflow` - float scanner overflow
 
 Intent: verify a very large floating-point token reports `PROVEN_ERR_OVERFLOW` instead of silently accepting infinity.
 
@@ -1225,7 +1225,7 @@ Sub-checks:
 
 Failure tip: inspect `proven_scan_f64` in `src/proven/scan.c` and math helper behavior in the PAL. Do not accept `inf` as a successful parsed finite value.
 
-### `tests/test_contract_sysio_scan_nonseekable` — non-seekable sysio rejection
+### `tests/test_contract_sysio_scan_nonseekable` - non-seekable sysio rejection
 
 Intent: verify one-chunk file scanning rejects pipe/stdin-like inputs before consuming data.
 
@@ -1237,7 +1237,7 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/sysio.c` and make sure the one-chunk scan path probes seekability before reading.
 
-### `tests/test_contract_sysio_scan_truncation` — chunked sysio scan truncation
+### `tests/test_contract_sysio_scan_truncation` - chunked sysio scan truncation
 
 Intent: verify one-chunk file scanning rejects inputs that exceed the fixed buffer, refuses borrowed string outputs that would escape its local buffer, and leaves the stream reusable after a failed attempt.
 
@@ -1250,13 +1250,13 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/sysio.c` and `tests/test_contract_sysio_scan_truncation.c`.
 
-### `tests/test_contract_float_module_layout` — float module scaffold
+### `tests/test_contract_float_module_layout` - float module scaffold
 
 Intent: verify the shared float helpers live in a dedicated internal translation unit instead of being copied into fmt.c and scan.c.
 
 Failure tip: inspect src/proven/float_decimal.c, src/proven/float_decimal.h, fmt.c, scan.c, and nob.c if the shared decimal helper scaffold regresses.
 
-### `tests/test_contract_public_structs` — public array/map/filesystem contracts
+### `tests/test_contract_public_structs` - public array/map/filesystem contracts
 
 Intent: verify corrupted public array and map structs fail safely and filesystem append-mode requests keep write intent explicit.
 
@@ -1266,42 +1266,42 @@ Failure tip: inspect public invariant guards in array/map mutation entry points 
 
 One test per defect that actually shipped. Each is named for what broke, not for a version or a number, and each was verified to FAIL against the pre-fix source. A regression test that passes before the fix is not a regression test.
 
-### `tests/test_regression_rng_unseeded` — an unseeded or failed generator is inert
+### `tests/test_regression_rng_unseeded` - an unseeded or failed generator is inert
 
 Intent: verify a ChaCha generator that was never usable never hands back bytes that *look* usable. Three defects, found by the standing audit, all with that shape.
 
 Sub-checks:
 
-- `proven_chacha_rng_next(NULL)` is 0. It used to declare an 8-byte scratch, call `_fill` (which returns immediately for a NULL generator, touching nothing), and read the scratch anyway — returning the caller's own stack as randomness. It was the only entry point in the module without a NULL guard.
-- A never-seeded, stack-declared generator yields zeros and an **invalid trait**. `used == 0` is exactly what a zero-initialised struct holds, and the fill path read that as "a full block of fresh keystream is ready" — and copied its own uninitialised `block[]` out. A silent stack disclosure.
-- A generator whose seeding FAILED stays inert **past the first block**. Zeroing the state was not enough: ChaCha over an all-zero state emits an all-zero *first* block, so "the caller gets zeros" was true for exactly 64 bytes — and then the counter advanced and block 1 was a normal-looking, fixed, publicly derivable keystream.
+- `proven_chacha_rng_next(NULL)` is 0. It used to declare an 8-byte scratch, call `_fill` (which returns immediately for a NULL generator, touching nothing), and read the scratch anyway - returning the caller's own stack as randomness. It was the only entry point in the module without a NULL guard.
+- A never-seeded, stack-declared generator yields zeros and an **invalid trait**. `used == 0` is exactly what a zero-initialised struct holds, and the fill path read that as "a full block of fresh keystream is ready" - and copied its own uninitialised `block[]` out. A silent stack disclosure.
+- A generator whose seeding FAILED stays inert **past the first block**. Zeroing the state was not enough: ChaCha over an all-zero state emits an all-zero *first* block, so "the caller gets zeros" was true for exactly 64 bytes - and then the counter advanced and block 1 was a normal-looking, fixed, publicly derivable keystream.
 - The control: a properly seeded generator is valid, produces a real keystream, and is still ChaCha20 byte for byte. The guard changed nothing about the maths.
 
 Failure tip: inspect the `seeded` marker in `proven_chacha_rng_t`. `used` alone cannot encode usability, because a zero-initialised struct is the shape of "never seeded".
 
-### `tests/test_regression_read_line_exact_fit` — a line that fits the buffer is a line, not an error
+### `tests/test_regression_read_line_exact_fit` - a line that fits the buffer is a line, not an error
 
-Intent: verify the reader enforces the rule it documents. It said "a line **longer** than the buffer is `PROVEN_ERR_OUT_OF_BOUNDS`" and enforced something stricter — it refused any line that *filled* the buffer.
+Intent: verify the reader enforces the rule it documents. It said "a line **longer** than the buffer is `PROVEN_ERR_OUT_OF_BOUNDS`" and enforced something stricter - it refused any line that *filled* the buffer.
 
-It had to, because it asked the wrong question first: it answered "too long" before attempting a fill, since a fill cannot tell "buffer full" from "source ended". But a full buffer means one of three things and only one is an error — the next byte is the newline that ends the line; the source has ended and what is held IS the final line; or the line really is too long. One byte of lookahead tells them apart.
+It had to, because it asked the wrong question first: it answered "too long" before attempting a fill, since a fill cannot tell "buffer full" from "source ended". But a full buffer means one of three things and only one is an error - the next byte is the newline that ends the line; the source has ended and what is held IS the final line; or the line really is too long. One byte of lookahead tells them apart.
 
 Sub-checks:
 
 - **The data-loss case:** a 4-byte file with no trailing newline, read through a 4-byte buffer, returns its 4 bytes. It used to return `OUT_OF_BOUNDS`, with the entire contents of the file unreachable through this API.
-- A line exactly the size of the buffer, terminated by the next byte, is returned — and the stream carries on.
+- A line exactly the size of the buffer, terminated by the next byte, is returned - and the stream carries on.
 - A CRLF split at the boundary yields the line without its `\r`.
-- A line *genuinely* longer than the buffer is still `OUT_OF_BOUNDS`, never a truncated line returned as a success — that is the corruption the check existed to prevent, and the fix must not trade one for the other.
+- A line *genuinely* longer than the buffer is still `OUT_OF_BOUNDS`, never a truncated line returned as a success - that is the corruption the check existed to prevent, and the fix must not trade one for the other.
 - The ordinary cases keep working at every buffer size that fits them.
 
 Failure tip: inspect the buffer-full branch of `proven_reader_read_line` in `src/proven/stream.c`, and the `peek` / `has_peek` lookahead on `proven_reader_buffered_t`. The looked-at byte belongs to the stream: it is stashed, not dropped.
 
-### `tests/test_regression_read_line_peek_eof` — a stream byte stranded after a too-long line is not lost
+### `tests/test_regression_read_line_peek_eof` - a stream byte stranded after a too-long line is not lost
 
-Intent: verify that after `proven_reader_read_line` reports `OUT_OF_BOUNDS` (stashing one lookahead byte), a following raw `proven_reader_read` reaches that byte instead of returning a spurious EOF — so a read-to-EOF loop does not silently lose the byte peeked past the over-long line.
+Intent: verify that after `proven_reader_read_line` reports `OUT_OF_BOUNDS` (stashing one lookahead byte), a following raw `proven_reader_read` reaches that byte instead of returning a spurious EOF - so a read-to-EOF loop does not silently lose the byte peeked past the over-long line.
 
 Failure tip: inspect `reader_buffered_fill` in `src/proven/stream.c`. It must report whether it made the buffer non-empty (a re-inserted peek byte is progress), not just whether the source handed over new bytes this call. `return r.value > 0` alone stranded the peek at EOF.
 
-### `tests/test_regression_split_empty_sep` — an empty separator ends the split
+### `tests/test_regression_split_empty_sep` - an empty separator ends the split
 
 Intent: pin RFC-0003 section 1.1: a split on an empty or null separator yields exactly one field, the whole input.
 
@@ -1311,11 +1311,11 @@ Sub-checks:
 
 Failure tip: step 2 of `proven_u8str_view_split_next` (the empty-separator case, before any search) is missing or has moved after the search. With it removed, this test fails in bounded time.
 
-### `tests/test_regression_float_exact_pow5` — the exact float fallback uses an exact power of five
+### `tests/test_regression_float_exact_pow5` - the exact float fallback uses an exact power of five
 
 Intent: verify an exact halfway value in the `56..350` exponent window breaks to even, and that values just below and just above a rounding boundary there land on the correct double.
 
-Note: the exact big-integer tier is the one that makes "correctly rounded, ties-to-even, bit-identical to a correct `strtod`" true. It built `5^q` above the exact table by shifting a **rounded** Eisel-Lemire table entry, and `5^q` is odd, so the shift was never exact. A differential run against glibc found 2,923 misrounded values — all of them exact ties. The expectations here were verified with exact rational arithmetic, not against a host `strtod`, so the test states what is true rather than what this machine agrees with.
+Note: the exact big-integer tier is the one that makes "correctly rounded, ties-to-even, bit-identical to a correct `strtod`" true. It built `5^q` above the exact table by shifting a **rounded** Eisel-Lemire table entry, and `5^q` is odd, so the shift was never exact. A differential run against glibc found 2,923 misrounded values - all of them exact ties. The expectations here were verified with exact rational arithmetic, not against a host `strtod`, so the test states what is true rather than what this machine agrees with.
 
 Failure tip: inspect `proven_float_bigint_build_pow5_cached` in `src/proven/float_decimal.c`.
 
@@ -1323,16 +1323,16 @@ Failure tip: inspect `proven_float_bigint_build_pow5_cached` in `src/proven/floa
 
 Intent: verify a permit spent on an empty queue cannot strand the jobs behind it.
 
-A permit on the workers' semaphore used to mean "take exactly one job". That is sound only if a woken worker can always find the job its permit announced, and it cannot: the queue hands out slots in order, so a producer that has claimed slot *n* and not yet published it hides slot *n+1* from every consumer. The worker woken for *n+1* reads an empty queue, spends the permit, and parks — and when *n* is published a moment later there is no permit left to announce the work. Lose enough of those and the queue stops draining; because it never empties, no worker reaches its exit test either, so `close` and `destroy` wait on threads that never finish.
+A permit on the workers' semaphore used to mean "take exactly one job". That is sound only if a woken worker can always find the job its permit announced, and it cannot: the queue hands out slots in order, so a producer that has claimed slot *n* and not yet published it hides slot *n+1* from every consumer. The worker woken for *n+1* reads an empty queue, spends the permit, and parks - and when *n* is published a moment later there is no permit left to announce the work. Lose enough of those and the queue stops draining; because it never empties, no worker reaches its exit test either, so `close` and `destroy` wait on threads that never finish.
 
 Sub-checks:
 
-- Six rounds of 24 producers — far more than the machine has cores — against a **four-slot** queue, so the window between claiming a slot and publishing it is hit constantly.
+- Six rounds of 24 producers - far more than the machine has cores - against a **four-slot** queue, so the window between claiming a slot and publishing it is hit constantly.
 - Each round closes and destroys the system, which is where the hang appeared.
 - Every accepted job must have run by the time `destroy` returns.
-- A watchdog thread turns a deadlock into a reported failure naming the round. Without it the failure has no assertion to fail — the process simply stops, and the whole suite stops with it.
+- A watchdog thread turns a deadlock into a reported failure naming the round. Without it the failure has no assertion to fail - the process simply stops, and the whole suite stops with it.
 
-Note: verified to FAIL against the pre-fix source — five deadlocks in five runs, where the stress harness needed heavy background load to hang in 18 runs out of 40. The fix is that a permit now means "there may be work" and a woken worker drains the queue rather than taking one job from it.
+Note: verified to FAIL against the pre-fix source - five deadlocks in five runs, where the stress harness needed heavy background load to hang in 18 runs out of 40. The fix is that a permit now means "there may be work" and a woken worker drains the queue rather than taking one job from it.
 
 Failure tip: a worker is parked while the queue still holds work. Check that the worker loop drains rather than taking a single job per permit.
 
@@ -1349,13 +1349,13 @@ Sub-checks:
 
 Failure tip: run this test under TSAN and inspect `src/proven/float_decimal.c` for global path counters or shared scratch storage.
 
-### `tests/test_regression_scanner_float_split` — a float split across the scanner buffer
+### `tests/test_regression_scanner_float_split` - a float split across the scanner buffer
 
 Intent: verify a float whose exponent, sign, or mantissa lands on the buffered scanner's refill boundary still scans to its exact value (not a mantissa-only truncation, not a dropped sign that desyncs the stream), across every buffer size, and that genuine garbage is still an error rather than an endless refill.
 
-Failure tip: inspect `proven_scan_f64` in `src/proven/scan.c`. It must flag `needs_more` both when a valid float might still grow and when a FAILED parse left only a float prefix. Found by a fmt → file → scanner → float round-trip.
+Failure tip: inspect `proven_scan_f64` in `src/proven/scan.c`. It must flag `needs_more` both when a valid float might still grow and when a FAILED parse left only a float prefix. Found by a fmt -> file -> scanner -> float round-trip.
 
-### `tests/test_regression_scanner_short_read` — the scanner over a pipe
+### `tests/test_regression_scanner_short_read` - the scanner over a pipe
 
 Intent: verify a token split across two pipe writes scans whole, that the rest of the stream stays readable, and that a failed read is `PROVEN_ERR_IO` rather than a clean end of input.
 
@@ -1363,15 +1363,15 @@ Note: POSIX-only (needs `pipe()` and a writer thread); it compiles to a skip on 
 
 Failure tip: inspect `scanner_fill` in `src/proven/sysio.c`.
 
-### `tests/test_regression_map_churn` — a map with churn does not grow without bound
+### `tests/test_regression_map_churn` - a map with churn does not grow without bound
 
 Intent: verify a bounded live set with endless insert/remove keeps the capacity bounded, that live keys survive an in-place rehash, that removed keys stay removed, and that a genuinely growing map still grows.
 
-Note: `used` counts tombstones and never falls on its own, so an unconditional doubling grew a steady-state cache forever — 100 live entries reached 33 MB. Not a leak, which is why nothing caught it.
+Note: `used` counts tombstones and never falls on its own, so an unconditional doubling grew a steady-state cache forever - 100 live entries reached 33 MB. Not a leak, which is why nothing caught it.
 
 Failure tip: inspect `map_rehash` in `src/proven/map.c`.
 
-### `tests/test_contract_sort_alignment` — the sort never hands the comparator a misaligned element
+### `tests/test_contract_sort_alignment` - the sort never hands the comparator a misaligned element
 
 Intent: verify sorting over-aligned elements passes only correctly-aligned pointers to the caller's comparator, and still sorts.
 
@@ -1379,21 +1379,21 @@ Note: the check lives in the comparator, so it fails in **every** build mode, no
 
 Failure tip: inspect `insertion_sort` in `src/proven/algorithm.c`.
 
-### `tests/test_unit_fs_walk` — the recursive walk
+### `tests/test_unit_fs_walk` - the recursive walk
 
 Intent: verify `proven_fs_walk` reports every entry once in pre-order with the right depth, reports a symlinked directory without descending into it, REPORTS an unreadable directory as an error rather than skipping it, honours `max_depth` while still reporting the boundary directory, and streams a wide directory rather than buffering it.
 
-Note: this test was written **from the contract, before the implementation existed** — the first feature under the rule in `docs/TESTING.md` §5.1 — and it landed red, in its own commit. It earned its keep immediately: it found the first draft of the contract ("follow symlinked directories, but stop at a cycle") quietly walking all of `/tmp`, and it found the implementation writing a NUL into the middle of a path view the caller was still holding. Neither would have been asked about by a test written afterwards to confirm code that already looked right.
+Note: this test was written **from the contract, before the implementation existed** - the first feature under the rule in `docs/TESTING.md` section 5.1 - and it landed red, in its own commit. It earned its keep immediately: it found the first draft of the contract ("follow symlinked directories, but stop at a cycle") quietly walking all of `/tmp`, and it found the implementation writing a NUL into the middle of a path view the caller was still holding. Neither would have been asked about by a test written afterwards to confirm code that already looked right.
 
 Failure tip: inspect `proven_fs_walk_open/_next/_close` in `src/proven/fs.c`.
 
-### `tests/test_regression_fs_walk_errors` — the walk's error branches and TOCTOU safety
+### `tests/test_regression_fs_walk_errors` - the walk's error branches and TOCTOU safety
 
 Intent: verify a `readdir()` that fails mid-directory is reported with the last path component as the name and the directory's own depth (not its children's), and that a directory swapped for a symlink at the moment of descent is not followed out of the tree.
 
 Failure tip: inspect the readdir-failure branch of `proven_fs_walk_next` and the fd-relative, `O_NOFOLLOW` descent (`proven_sys_fs_dir_open_at`). Both defects were found by the standing audit and are pinned here against the same fault injection.
 
-### `tests/test_contract_protected_destination` — one rule, every door
+### `tests/test_contract_protected_destination` - one rule, every door
 
 Intent: verify that a destination whose owner-write bit is clear is refused by **every** public function that replaces a file, with the same error, leaving the file exactly as it was.
 
@@ -1401,40 +1401,40 @@ Sub-checks:
 
 - Eight doors, one by one: `proven_fs_open` for WRITE, for WRITE|TRUNC and for APPEND; `proven_fs_write_file`, `_atomic` and `_durable`; `proven_fs_copy`'s destination; and `proven_fs_rename`'s destination. Each must answer `PROVEN_ERR_PERMISSION`, and after each the file must still hold its contents **and** its mode.
 - Clearing the mark lets the write through. A refusal that cannot be recovered from is a wall, not a rule.
-- `proven_fs_remove` is deliberately **not** covered — deleting a name is a directory operation and POSIX has never let the file's mode have a say in it — but it must still answer `PROVEN_OK` or `PROVEN_ERR_PERMISSION`, never a bare `PROVEN_ERR_IO`.
+- `proven_fs_remove` is deliberately **not** covered - deleting a name is a directory operation and POSIX has never let the file's mode have a say in it - but it must still answer `PROVEN_OK` or `PROVEN_ERR_PERMISSION`, never a bare `PROVEN_ERR_IO`.
 - A refusal names itself: a missing name is `PROVEN_ERR_NOT_FOUND`, a protected one is `PROVEN_ERR_PERMISSION`.
 
-Note: the list of doors is the point. This test exists because the rule was true of some functions and not others, and no one could see that by reading. Measured before it was one rule, on one platform: `write_file` refused, `write_file_atomic` succeeded, and `copy` succeeded **and left a 0444 file as 0664**. `proven_fs_rename` was the worst of them — it is what the atomic write is built on, so a caller refused by one got the result from the other, and the rule was one line of caller code away from being void.
+Note: the list of doors is the point. This test exists because the rule was true of some functions and not others, and no one could see that by reading. Measured before it was one rule, on one platform: `write_file` refused, `write_file_atomic` succeeded, and `copy` succeeded **and left a 0444 file as 0664**. `proven_fs_rename` was the worst of them - it is what the atomic write is built on, so a caller refused by one got the result from the other, and the rule was one line of caller code away from being void.
 
 Skipped as root (file modes refuse root nothing) and on a filesystem that does not honour a `0444` chmod, each with its reason printed.
 
 Failure tip: inspect `internal_refuse_if_protected` in `src/proven/fs.c` and its call sites. Adding a public function that replaces a file means adding a door here.
 
-### `tests/test_regression_fs_backslash_parent` — a backslash in a POSIX filename is not a separator (RFC-0006 H-003)
+### `tests/test_regression_fs_backslash_parent` - a backslash in a POSIX filename is not a separator (RFC-0006 H-003)
 
 Intent: verify a durable write syncs the directory the file is actually in, when the filename legally contains a backslash.
 
 Sub-checks:
 
-- A durable write to `<dir>/a\b` succeeds and holds the new contents. It used to return an I/O error — *after* the rename had already published them, so the caller was told the write failed while looking at a file that had been replaced. The parent of that file is `<dir>`; the old rule computed `<dir>/a`, which does not exist.
-- The decoy: with `<dir>/a` created as a real directory, the write must still sync `<dir>` and never `<dir>/a`. This is the case a `PROVEN_OK` assertion cannot see at all — the old code returns success and has synced the wrong directory — so the test records which directories were opened and names the one that was synced.
+- A durable write to `<dir>/a\b` succeeds and holds the new contents. It used to return an I/O error - *after* the rename had already published them, so the caller was told the write failed while looking at a file that had been replaced. The parent of that file is `<dir>`; the old rule computed `<dir>/a`, which does not exist.
+- The decoy: with `<dir>/a` created as a real directory, the write must still sync `<dir>` and never `<dir>/a`. This is the case a `PROVEN_OK` assertion cannot see at all - the old code returns success and has synced the wrong directory - so the test records which directories were opened and names the one that was synced.
 - Ordinary paths are unchanged: a plain slash path syncs the directory before the last slash, and a bare filename syncs `.`.
 - A 250-character basename made of `x` and `\` is written atomically. The staging file is `<path>.pvtmpNN` and the basename is trimmed so that name still fits in `NAME_MAX`; under the old rule the basename was measured from the last backslash, so a long name measured as a short one, no trim happened, and the filesystem was handed a name too long to create.
 
-Note: POSIX-only; compiles to a skip on Windows, where a backslash *is* a separator and `proven_fs_sync_dir` is `PROVEN_ERR_UNSUPPORTED` anyway. The observation seam is a definition of `open()` in the test, bound to the platform layer's call by the linker, forwarding to the real `openat` syscall — `proven_fs_sync_dir` opens the directory read-only to fsync it, so the record says what was synced.
+Note: POSIX-only; compiles to a skip on Windows, where a backslash *is* a separator and `proven_fs_sync_dir` is `PROVEN_ERR_UNSUPPORTED` anyway. The observation seam is a definition of `open()` in the test, bound to the platform layer's call by the linker, forwarding to the real `openat` syscall - `proven_fs_sync_dir` opens the directory read-only to fsync it, so the record says what was synced.
 
-What it does not prove: the Windows path rules — drive roots, UNC shares, extended-length paths — have no result here. `proven_fs_is_absolute` is deliberately left accepting Windows spellings everywhere; it classifies a path that may have come from elsewhere rather than resolving one on this machine.
+What it does not prove: the Windows path rules - drive roots, UNC shares, extended-length paths - have no result here. `proven_fs_is_absolute` is deliberately left accepting Windows spellings everywhere; it classifies a path that may have come from elsewhere rather than resolving one on this machine.
 
 Failure tip: inspect `internal_is_separator` and `internal_parent_dir` in `src/proven/fs.c`.
 
-### `tests/test_regression_job_seq_wrap` — queue sequence comparison at the sign boundary (RFC-0006 H-004)
+### `tests/test_regression_job_seq_wrap` - queue sequence comparison at the sign boundary (RFC-0006 H-004)
 
 Intent: verify the job queue decides what to do with a cell by **modular** distance in the unsigned counter type, and that it is unambiguous everywhere the counters can be.
 
 Sub-checks:
 
-- The classifier at the exact state the RFC reproduces: capacity two, an enqueue position at `PTRDIFF_MAX + 1`, a cell one lap behind it. The old code wrote that comparison as `(proven_ptrdiff_t)seq - (proven_ptrdiff_t)pos`, and those two positions cast to `PTRDIFF_MAX` and `PTRDIFF_MIN` — whose difference does not exist in the type, even though the distance being asked about is −1. UBSan reports it, and no concurrency is involved: a legitimately full queue at that boundary is enough.
-- Distances of −1, 0 and +1 taken at nine positions, including 0, the sign boundary, and `SIZE_MAX`, so the wrap to zero and the wrap across the sign are both covered.
+- The classifier at the exact state the RFC reproduces: capacity two, an enqueue position at `PTRDIFF_MAX + 1`, a cell one lap behind it. The old code wrote that comparison as `(proven_ptrdiff_t)seq - (proven_ptrdiff_t)pos`, and those two positions cast to `PTRDIFF_MAX` and `PTRDIFF_MIN` - whose difference does not exist in the type, even though the distance being asked about is -1. UBSan reports it, and no concurrency is involved: a legitimately full queue at that boundary is enough.
+- Distances of -1, 0 and +1 taken at nine positions, including 0, the sign boundary, and `SIZE_MAX`, so the wrap to zero and the wrap across the sign are both covered.
 - The far edges: the largest AHEAD distance is one below half the counter range, and half the range itself already reads as BEHIND. An off-by-one in the sign-bit test shows up here and nowhere else.
 - A queue capacity at half the counter range is `PROVEN_ERR_INVALID_ARG` **before** anything is allocated. Past that limit ahead and behind stop being distinguishable, so the limit is a correctness condition, not a resource one. The existing power-of-two and minimum-size guards still hold.
 - A source check that neither queue path computes a signed difference again, and that both go through the one shared helper. Two copies of a comparison this easy to get wrong are two chances to get it wrong differently.
@@ -1444,25 +1444,25 @@ Note: the test reads the classifier from `src/proven/proven_internal_jobseq.h` r
 
 Failure tip: inspect `src/proven/proven_internal_jobseq.h` and the two call sites in `src/proven/job.c`.
 
-### `tests/test_regression_fs_private_staging` — staging files are created private (RFC-0006 H-002)
+### `tests/test_regression_fs_private_staging` - staging files are created private (RFC-0006 H-002)
 
-Intent: verify that replacing a 0600 file — atomically or durably — stages the new contents in a file that is *created* 0600, and that a new copy destination is created the same way.
+Intent: verify that replacing a 0600 file - atomically or durably - stages the new contents in a file that is *created* 0600, and that a new copy destination is created the same way.
 
 Sub-checks:
 
-- Rewrites a 0600 file with `proven_fs_write_file_atomic` and requires the `.pvtmpNN` staging file to have carried no group or other bits at the instant it was created. It used to be created with `0666 & ~umask` — 0644 under the usual umask — and narrowed a moment later. A `chmod` cannot revoke a descriptor another user opened in that moment, and the private payload is then written through the file that descriptor still points at.
+- Rewrites a 0600 file with `proven_fs_write_file_atomic` and requires the `.pvtmpNN` staging file to have carried no group or other bits at the instant it was created. It used to be created with `0666 & ~umask` - 0644 under the usual umask - and narrowed a moment later. A `chmod` cannot revoke a descriptor another user opened in that moment, and the private payload is then written through the file that descriptor still points at.
 - Repeats it through `proven_fs_write_file_durable`, which shares the implementation.
 - Copies a 0600 source to a name that does not exist yet and requires the destination to be created private too, then to end up 0600.
 - Pins the unchanged default: a brand-new atomic target is still `0666 & ~umask`. Restrictive creation is for carrying an existing target's mode across, not a new default-permissions policy.
 - Repeats the first case under `umask 0000`, where the default creation mode is 0666. A staging file that is still private there proves the mode came from the creating call and not from the process umask, which is shared mutable state the library must not touch.
 
-Note: POSIX-only; compiles to a skip on Windows, whose confidentiality story is ACLs and needs a native test. The observation seam is a definition of `open()` in the test itself, which the linker binds the platform layer's call to; it forwards to the real `openat` syscall and records the mode each created file was born with. That makes the check deterministic — unlike the watcher thread in `test_regression_fs_perms_and_types`, there is no race to win. The test works under the system temporary directory and skips itself, with a reason, on a filesystem whose inherited ACLs do not honour creation modes at all.
+Note: POSIX-only; compiles to a skip on Windows, whose confidentiality story is ACLs and needs a native test. The observation seam is a definition of `open()` in the test itself, which the linker binds the platform layer's call to; it forwards to the real `openat` syscall and records the mode each created file was born with. That makes the check deterministic - unlike the watcher thread in `test_regression_fs_perms_and_types`, there is no race to win. The test works under the system temporary directory and skips itself, with a reason, on a filesystem whose inherited ACLs do not honour creation modes at all.
 
 What it does not prove: nothing here addresses a hostile writer in the directory, readers who already held the old file open, ACL preservation, or secure erasure.
 
 Failure tip: inspect `internal_write_file_atomic` and `proven_fs_copy` in `src/proven/fs.c`, and the private-create flag in `platform/proven_sys_fs.c`.
 
-### `tests/test_regression_fs_perms_and_types` — filesystem permissions and entry types
+### `tests/test_regression_fs_perms_and_types` - filesystem permissions and entry types
 
 Intent: verify a copy carries the source's mode, that an atomic write never exposes its contents under a wider mode, that a symlink and a FIFO are `PROVEN_FS_TYPE_OTHER`, and that syncing a PRIVATE mapping is `PROVEN_ERR_UNSUPPORTED`.
 
@@ -1470,22 +1470,22 @@ Sub-checks:
 
 - Copies a 0600 file and checks the destination is 0600. It used to be 0644: the destination was created with the process umask and the source's mode was never carried across.
 - Runs a watcher thread that stats every temp file *that already holds bytes* during a 16 MiB atomic rewrite of a 0600 target. If any of them is group- or world-readable, the window is open. The temp used to be chmod'd at the end, so the whole payload sat in a 0644 file for the duration of the write.
-- Walks a directory holding a dangling symlink, a FIFO and a regular file, and checks the first two are `PROVEN_FS_TYPE_OTHER`. They used to be reported as regular files — files a caller cannot open, or that block forever on a writer who never comes.
+- Walks a directory holding a dangling symlink, a FIFO and a regular file, and checks the first two are `PROVEN_FS_TYPE_OTHER`. They used to be reported as regular files - files a caller cannot open, or that block forever on a writer who never comes.
 - Writes through a PRIVATE mapping, syncs, and requires `PROVEN_ERR_UNSUPPORTED`; then does the same through a SHARED mapping and requires the bytes to be on disk.
 
-Note: POSIX-only; compiles to a skip on Windows. The `close()`-failure defect from the same audit cannot be provoked without an `LD_PRELOAD`, so it is pinned by the `[[nodiscard]]` on `proven_fs_close` instead — the compiler now refuses to let a write path ignore it.
+Note: POSIX-only; compiles to a skip on Windows. The `close()`-failure defect from the same audit cannot be provoked without an `LD_PRELOAD`, so it is pinned by the `[[nodiscard]]` on `proven_fs_close` instead - the compiler now refuses to let a write path ignore it.
 
 Failure tip: inspect `proven_fs_copy` and `internal_write_file_atomic` in `src/proven/fs.c`, the `is_regular` mapping in `platform/proven_sys_fs.c`, and `proven_mmap_sync`.
 
-### `tests/test_contract_allocator_trait` — the trait means the same thing for every allocator
+### `tests/test_contract_allocator_trait` - the trait means the same thing for every allocator
 
 Intent: verify `alloc(0)`, `realloc(ptr, 0)` and over-aligned allocations answer identically for the heap and the arena, and that shrinking a non-tail block in a *full* arena still succeeds.
 
-Note: the same function body runs against both allocators, which is the whole point of a trait. Before this, `alloc(0)` was `NOMEM` on the heap (a lie — nothing was out of memory) and `PROVEN_OK` with a live pointer on the arena; `realloc(ptr, 0)` returned NULL on one and a live pointer on the other, though the trait documents NULL; and asking an arena to make a block *smaller* could fail with `NOMEM`.
+Note: the same function body runs against both allocators, which is the whole point of a trait. Before this, `alloc(0)` was `NOMEM` on the heap (a lie - nothing was out of memory) and `PROVEN_OK` with a live pointer on the arena; `realloc(ptr, 0)` returned NULL on one and a live pointer on the other, though the trait documents NULL; and asking an arena to make a block *smaller* could fail with `NOMEM`.
 
 Failure tip: inspect `src/proven/heap.c`, `src/proven/arena.c`, and the contract in `include/proven/allocator.h`.
 
-### `tests/test_regression_stream_partial_write` — partial writes, failed reads, and `{:f}`
+### `tests/test_regression_stream_partial_write` - partial writes, failed reads, and `{:f}`
 
 Intent: verify a sink that accepts only part of a chunk receives every byte exactly once; that a read failure reaches the caller as `PROVEN_ERR_IO` rather than as a clean end of file; and that `{:f}` forces the fixed form at any magnitude.
 
@@ -1496,19 +1496,19 @@ Sub-checks:
 - Drives a buffered reader over a source that yields 4 bytes and then fails, and checks the second read reports `PROVEN_ERR_IO`. It used to report a clean EOF, making a file truncated by a disk error indistinguishable from a complete one.
 - Checks `{:.1f}` on `1e20` and `{:.8f}` on `1e-7` contain no exponent, and that plain `{}` on `1e20` still chooses the shorter scientific spelling.
 
-Note: all three defects were in code written the same day, and all three passed every test that existed — because every sink the tests used behaved perfectly. The bug in each case was a contract that only a well-behaved sink could honour.
+Note: all three defects were in code written the same day, and all three passed every test that existed - because every sink the tests used behaved perfectly. The bug in each case was a contract that only a well-behaved sink could honour.
 
 Failure tip: inspect `writer_buffered_flush` and `reader_buffered_fill` in `src/proven/stream.c`, and `never_scientific` in `src/proven/float_format.c`.
 
-### `tests/test_regression_fmt_spec_silently_wrong` — formatter specs that used to be silently wrong
+### `tests/test_regression_fmt_spec_silently_wrong` - formatter specs that used to be silently wrong
 
 Intent: verify `{:08}` zero-pads instead of eating the `0` as a width digit, and that a spec the argument cannot honour (hex on a double or a string) is rejected rather than ignored.
 
-Note: both defects failed the worst way available — silently. `{:08}` on 42 produced `"      42"` and returned OK; `{:x}` on a double printed `3.500000` and returned OK. A spelling that is accepted and quietly does the wrong thing is worse than one that is rejected.
+Note: both defects failed the worst way available - silently. `{:08}` on 42 produced `"      42"` and returned OK; `{:x}` on a double printed `3.500000` and returned OK. A spelling that is accepted and quietly does the wrong thing is worse than one that is rejected.
 
 Failure tip: inspect the spec parser and the applicability guard in `src/proven/fmt.c`.
 
-### `tests/test_regression_fs_copy_to_self` — filesystem self-copy regression
+### `tests/test_regression_fs_copy_to_self` - filesystem self-copy regression
 
 Intent: verify copy-to-self and copy-to-hardlink-self fail without truncating or corrupting the file.
 
@@ -1522,7 +1522,7 @@ Sub-checks:
 
 Failure tip: inspect same-file detection and open/truncate ordering in filesystem copy code. The destination must not be opened with truncation before proving it is not the same file as the source.
 
-### `tests/test_regression_fs_slurp` — filesystem whole-file read/write
+### `tests/test_regression_fs_slurp` - filesystem whole-file read/write
 
 Intent: verify whole-file reads go to EOF rather than to a pre-measured size, and that the whole-file write entry points round-trip.
 
@@ -1538,7 +1538,7 @@ Sub-checks:
 
 Failure tip: `proven_fs_size` reports 0 for anything that is not a regular file, so the reported size may only seed the read capacity - never bound the read. Inspect `internal_slurp_path` and `internal_read_to_eof` in `src/proven/fs.c`.
 
-### `tests/test_regression_scanner_rollback` — scanner rollback after a failed scan
+### `tests/test_regression_scanner_rollback` - scanner rollback after a failed scan
 
 Intent: verify a scan that fails on an oversized token restores the stream exactly - dropping no byte and duplicating none.
 
@@ -1552,7 +1552,7 @@ Sub-checks:
 
 Failure tip: `scanner_fill` compacts the buffer (it memmoves unconsumed bytes to the front and resets the cursor). A snapshot taken before compaction cannot be written back afterwards without accounting for how far the contents moved. Inspect the rollback in `proven_sysio_scanner_scan_impl`.
 
-### `tests/test_regression_sort_duplicates` — sort on duplicate keys
+### `tests/test_regression_sort_duplicates` - sort on duplicate keys
 
 Intent: verify `proven_array_sort` stays sub-quadratic on duplicate and degenerate input.
 
@@ -1567,19 +1567,19 @@ Note: this suite counts comparisons, not wall-clock time. A timing threshold is 
 
 Failure tip: inspect the partition in `src/proven/algorithm.c`. Equal elements must be collected into a run that is final and never recursed into.
 
-### `tests/test_regression_time_fmt_neg_year` — `u8` and `u16` agree on zero-filled negative years
+### `tests/test_regression_time_fmt_neg_year` - `u8` and `u16` agree on zero-filled negative years
 
-Intent: verify `proven_time_u8_fmt` and `proven_time_u16_fmt` render the same string for a zero-filled negative year — `{year:0>4}` of `-44` is `"-044"` in both, with the sign counted toward the field width like `printf %0Nd` — and that positive years still agree.
+Intent: verify `proven_time_u8_fmt` and `proven_time_u16_fmt` render the same string for a zero-filled negative year - `{year:0>4}` of `-44` is `"-044"` in both, with the sign counted toward the field width like `printf %0Nd` - and that positive years still agree.
 
 Failure tip: inspect `proven_time_u16_fmt` in `src/proven/time.c`. It delegates to the u8 path and widens, so the sign counts toward the pad width. The old hand-rolled u16 path padded to full width THEN prepended the sign, one column wider than the fmt.h-based u8 path.
 
-### `tests/test_regression_base64_decoded_size` — Base64 decode sizing round-trips its own output
+### `tests/test_regression_base64_decoded_size` - Base64 decode sizing round-trips its own output
 
 Intent: verify `proven_base64_decoded_size` is an upper bound for UNPADDED input too (so the library can decode its own base64url output into a `decoded_size()`-sized buffer), and that `proven_base64_decode` / `proven_hex_decode` refuse a `{out=NULL, out_cap>0}` argument with `INVALID_ARG` rather than storing through NULL, matching the encoders.
 
 Failure tip: inspect `proven_base64_decoded_size` (`(n+3)/4*3`, not `(n/4)*3`) and the NULL-out guards in `src/proven/encode.c`. Found by the standing audit; the unit test missed the sizing by using one oversized buffer.
 
-### `tests/test_regression_v26_05` — v26.05 regressions
+### `tests/test_regression_v26_05` - v26.05 regressions
 
 Intent: protect historically fixed issues in map rehashing, formatting, scanning, aliasing, and environment handling.
 
@@ -1601,7 +1601,7 @@ Sub-checks:
 
 Failure tip: this file is intentionally a set of historical tripwires. Do not collapse it into broad smoke coverage. Read the failing sub-check name printed in the log and inspect the corresponding source module.
 
-### `tests/test_regression_v26_07` — v26.07 regressions
+### `tests/test_regression_v26_07` - v26.07 regressions
 
 Intent: protect the fixed `u8str` NUL-seal, datetime formatting, and pool init defects.
 
@@ -1620,7 +1620,7 @@ Failure tip: each section names one area - `proven_u8str_reserve` in `u8str.c`, 
 
 Freestanding builds, cross-target builds, source-level platform contracts, and the build driver's own standard probe. Most of these cannot be *run* on the host, so they check what can be checked: that the code compiles, links where configured, and keeps its platform branches intact.
 
-### `tests/test_portability_source_contracts` — source portability contracts
+### `tests/test_portability_source_contracts` - source portability contracts
 
 Intent: guard platform branches and documentation/test-output contracts that may not be executable on the current host.
 
@@ -1642,30 +1642,30 @@ Sub-checks:
 - Checks the test-catalog gate uses the portable directory iterator instead of POSIX-only `dirent.h`.
 - Checks this `TEST.md` documents failure tips, sub-checks, and the log format.
 - **RFC-0006 H-005**: the Windows rename replaces an existing destination (`MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`), does not fall back to a cross-volume copy, and does not delete the destination first. `MoveFileW` fails outright when the destination exists, so on Windows the *first* whole-file atomic write to a name succeeded and every write after it failed. Deleting first would open an interval in which the name does not exist, which is the one thing an atomic replacement exists to prevent.
-- **RFC-0006 H-006**: the Windows entropy length is planned in chunks the backend accepts instead of being cast whole to `ULONG`, and a failed chunk fails the whole call rather than falling back to a PRNG. Above `ULONG_MAX` that cast narrowed silently — a request for exactly 2^32 bytes asked the OS for **zero** — and success for the short request was returned as success for the whole buffer, leaving untouched bytes to be read as fresh entropy.
-- The chunk planner itself is exercised, not just grepped: 0, 1, limit−1, limit, limit+1 and 2·limit+1 against a reduced artificial limit, plus a whole plan walked to check it covers the buffer with no gap and no overlap. A reduced limit is what makes those boundaries testable without allocating gigabytes or constructing a pointer outside a real object.
+- **RFC-0006 H-006**: the Windows entropy length is planned in chunks the backend accepts instead of being cast whole to `ULONG`, and a failed chunk fails the whole call rather than falling back to a PRNG. Above `ULONG_MAX` that cast narrowed silently - a request for exactly 2^32 bytes asked the OS for **zero** - and success for the short request was returned as success for the whole buffer, leaving untouched bytes to be read as fresh entropy.
+- The chunk planner itself is exercised, not just grepped: 0, 1, limit-1, limit, limit+1 and 2*limit+1 against a reduced artificial limit, plus a whole plan walked to check it covers the buffer with no gap and no overlap. A reduced limit is what makes those boundaries testable without allocating gigabytes or constructing a pointer outside a real object.
 
 Note on the two Windows rows: neither is a runtime result. This host has never run a Windows binary. What it has is `./nob cross`, which compiles both Windows targets, and these source contracts. Both defects stay open for native verification.
 
 Failure tip: source-contract tests should stay narrow. If a source pattern changes legitimately, update the contract to the new safe pattern in the same commit as the source change and explain it in docs.
 
-### `tests/test_portability_cross_compile_smoke` — cross compile smoke
+### `tests/test_portability_cross_compile_smoke` - cross compile smoke
 
-### `tests/test_portability_cross_link_smoke` — cross link smoke
+### `tests/test_portability_cross_link_smoke` - cross link smoke
 
-### `tests/test_portability_freestanding_nocrt_link` — freestanding no-CRT link
+### `tests/test_portability_freestanding_nocrt_link` - freestanding no-CRT link
 
 Intent: prove the freestanding runtime contract (B-034) by linking, for every freestanding cross target, all freestanding library objects with a program that supplies only `memcpy`, `memmove`, `memset` and `memcmp`, using `-nostdlib -nostartfiles -static` and the compiler support library (`-lgcc`). A static link fails on any unresolved symbol, so success means nothing else is needed. The executable is never run.
 
 Failure tip: the linker names the undefined symbol. Route it through the platform layer, or name it as a required service in the freestanding guide - not both silently.
 
-### `tests/test_portability_float` — float portability
+### `tests/test_portability_float` - float portability
 
 Intent: verify scan and format float conversion paths stay double-only and keep target-deterministic behavior without long double dependence.
 
 Failure tip: inspect src/proven/scan.c and src/proven/fmt.c if long double returns, casts, or target-specific float drift reappear.
 
-### `tests/test_portability_nob_std_probe` — build driver standard probe
+### `tests/test_portability_nob_std_probe` - build driver standard probe
 
 Intent: verify nob probes -std=c23 first and falls back to -std=c2x when the compiler rejects c23.
 
@@ -1675,91 +1675,91 @@ Failure tip: inspect nob.c standard-flag selection and toolchain probing if the 
 
 The documentation is checked by the build, not by eye: every public function has an alias, every example the manual prints is a program that compiles and runs, and no example drifts from its chapter.
 
-### `tests/test_docs_manual_depth` — every module section is documented to depth, not merely mentioned
+### `tests/test_docs_manual_depth` - every module section is documented to depth, not merely mentioned
 
-Intent: a **gate on the shape of a section**. The symbol checks prove a module is *mentioned*; they cannot prove it is *documented*, and that is exactly where the manual failed — the five modules added in the v26.07.13 line each had an intent paragraph and a table, and **not one had a counter-example**. They passed every check that existed and were still half-written.
+Intent: a **gate on the shape of a section**. The symbol checks prove a module is *mentioned*; they cannot prove it is *documented*, and that is exactly where the manual failed - the five modules added in the v26.07.13 line each had an intent paragraph and a table, and **not one had a counter-example**. They passed every check that existed and were still half-written.
 
 For each module section registered in the test, it must carry:
 
-- **real prose** — enough words outside the tables and the code fences to actually explain *why* this exists, not just *what* the calls are. Why is the half a reader cannot reconstruct from the header file.
-- **a reference table** — what each call does, what it returns, and which one can *fail*.
-- **the structures the caller declares** — a `text` listing with the role of each field (and, for caller-owned state, the rule that it must not be copied).
-- **a runnable example** — an `<!-- example: -->` marker, so the build compiles and runs it.
-- **at least one counter-example** — a `text` block showing the code a reader would actually write and should not.
+- **real prose** - enough words outside the tables and the code fences to actually explain *why* this exists, not just *what* the calls are. Why is the half a reader cannot reconstruct from the header file.
+- **a reference table** - what each call does, what it returns, and which one can *fail*.
+- **the structures the caller declares** - a `text` listing with the role of each field (and, for caller-owned state, the rule that it must not be copied).
+- **a runnable example** - an `<!-- example: -->` marker, so the build compiles and runs it.
+- **at least one counter-example** - a `text` block showing the code a reader would actually write and should not.
 
 A section that is legitimately exempt from *structures* or *an example* declares that **in the test, in code, with a reason**. A gate that cannot be argued with is a gate people route around; an exemption that has to be written down is one that has to survive being written down.
 
-Failure tip: the section and the missing element are named. This is `docs/DOCUMENTING.md` §3 turned from advice into a gate.
+Failure tip: the section and the missing element are named. This is `docs/DOCUMENTING.md` section 3 turned from advice into a gate.
 
-### `tests/test_docs_manual_claims` — every factual claim the new chapters make is true
+### `tests/test_docs_manual_claims` - every factual claim the new chapters make is true
 
 Intent: the manual makes **claims**, and each is a proposition that is either true or false. Prose cannot be test-driven; a claim can be *tested*. You write the assertion the sentence implies, and the build decides whether the sentence is still true.
 
-This is what `test_docs_manual_ch08_contracts` does for the scanner chapter, done for the modules added this cycle. It exists because prose ages worst of anything in a repository: the README said "`proven` exposes no fsync" for a month after `proven_fs_sync` shipped, and nothing objected — because nobody had written down what that sentence was asserting.
+This is what `test_docs_manual_ch08_contracts` does for the scanner chapter, done for the modules added this cycle. It exists because prose ages worst of anything in a repository: the README said "`proven` exposes no fsync" for a month after `proven_fs_sync` shipped, and nothing objected - because nobody had written down what that sentence was asserting.
 
 Sub-checks (each quotes the claim it tests): the CRC-32 check value the chapter's interoperability promise rests on; chained `crc32_update` equalling the one-shot, because the chapter tells readers they may store the intermediate value and resume; `PROVEN_SHA256_SIZE`; the standard SHA-256 of `"abc"` and its 64-character hex; the streaming digest equalling the one-shot ("depends only on the bytes, never on how they were chunked"); base64url emitting no padding; both alphabets decoding, padded or not; `decoded_size` being an upper bound for unpadded text; a refused encode writing **nothing**; whitespace being `INVALID_ENCODING` rather than skipped; a stray character committing nothing; seed 0 not being degenerate; an unseeded generator presenting an **invalid** trait and yielding zeros; `rng_below` respecting its bound; `rng_f64` never returning 1.0; an inverted range returning `lo`; a line that **exactly fills** the buffer being returned while a longer one is refused.
 
-**The rule for adding to this file:** when you write a sentence a reader could act on — a value, a boundary, a refusal, a guarantee — write the assertion for it here. If you cannot state the assertion, the sentence is too vague to be in the manual.
+**The rule for adding to this file:** when you write a sentence a reader could act on - a value, a boundary, a refusal, a guarantee - write the assertion for it here. If you cannot state the assertion, the sentence is too vague to be in the manual.
 
-Failure tip: the claim is named. Either the code changed and the manual did not, or the manual was wrong when it was written — decide which before changing either.
+Failure tip: the claim is named. Either the code changed and the manual did not, or the manual was wrong when it was written - decide which before changing either.
 
-### `tests/test_docs_manual_symbols` — the manual and the headers name the same functions
+### `tests/test_docs_manual_symbols` - the manual and the headers name the same functions
 
 Intent: verify the two agree in **both** directions, because each direction fails differently and each has already happened here.
 
 Sub-checks:
 
-- **Headers → manual:** every public function is named somewhere in `manual/`. A function nothing documents is a feature nobody can find — `proven_fs_dir_open/_next/_close`, the streaming directory API and the answer to `proven_fs_list` reading a 50,000-entry directory into 4.2 MB before you see any of it, went undocumented for months and nothing noticed. (The PAL, `proven_sys_*`, is exempt: it is an internal layer for porting, not the API a caller programs against.)
-- **Manual → headers:** the manual does not document a function that does not exist. This is the worse direction — the reader writes the call and the *linker* tells them, which is the moment they stop trusting the manual. Two were live: `proven_sysio_flush`, deleted while the manual went on declaring it as public API in the present tense; and `proven_pool_free`, which never existed at all (the real symbol is a static `proven_pool_free_trait`, and freeing a pool slot goes through the allocator trait).
-- Writing a name as a **call** — `proven_x(...)` — is what counts as claiming it exists. A family wildcard (`proven_fs_*`) is not a claim, and a past-tense historical note about a deleted function is not one either.
+- **Headers -> manual:** every public function is named somewhere in `manual/`. A function nothing documents is a feature nobody can find - `proven_fs_dir_open/_next/_close`, the streaming directory API and the answer to `proven_fs_list` reading a 50,000-entry directory into 4.2 MB before you see any of it, went undocumented for months and nothing noticed. (The PAL, `proven_sys_*`, is exempt: it is an internal layer for porting, not the API a caller programs against.)
+- **Manual -> headers:** the manual does not document a function that does not exist. This is the worse direction - the reader writes the call and the *linker* tells them, which is the moment they stop trusting the manual. Two were live: `proven_sysio_flush`, deleted while the manual went on declaring it as public API in the present tense; and `proven_pool_free`, which never existed at all (the real symbol is a static `proven_pool_free_trait`, and freeing a pool slot goes through the allocator trait).
+- Writing a name as a **call** - `proven_x(...)` - is what counts as claiming it exists. A family wildcard (`proven_fs_*`) is not a claim, and a past-tense historical note about a deleted function is not one either.
 
 Failure tip: the name is printed. It is either a function you added without documenting, or one the manual promises and the linker will refuse. See `docs/DOCUMENTING.md`.
 
-### `tests/test_docs_manual_usage` — every public function is shown in working code
+### `tests/test_docs_manual_usage` - every public function is shown in working code
 
 Intent: verify the manual **demonstrates** every public function, not merely that it names one.
 
-`tests/test_docs_manual_symbols` is satisfied by a reference-table row, which gives a reader the spelling of a call and nothing else: not when to reach for it, not what its arguments have to be true of, not what its failure means. That is how half the API was documented — 86 of 279 public functions had a table row and no line of code anywhere that used them, `proven_fs_sync_dir` among them, without which the atomic-replace recipe the chapter describes is not actually durable.
+`tests/test_docs_manual_symbols` is satisfied by a reference-table row, which gives a reader the spelling of a call and nothing else: not when to reach for it, not what its arguments have to be true of, not what its failure means. That is how half the API was documented - 86 of 279 public functions had a table row and no line of code anywhere that used them, `proven_fs_sync_dir` among them, without which the atomic-replace recipe the chapter describes is not actually durable.
 
 Sub-checks:
 
-- Every public function appears in a `manual/examples/*.c` program — each of which the build **compiles and runs** — or in a ```` ```c ```` block, all of which `check_manual_code_blocks` compiles.
+- Every public function appears in a `manual/examples/*.c` program - each of which the build **compiles and runs** - or in a ```` ```c ```` block, all of which `check_manual_code_blocks` compiles.
 - A ```` ```text ```` block does not count. Those are the signature listings and the deliberate counter-examples, and neither demonstrates anything.
 - A **macro wrapper counts for the function it expands to**: `PROVEN_ARRAY_PUSH` is how a caller is meant to write `proven_array_push`. The macro bodies are read out of the public headers and followed.
 - A **`_Generic` dispatch table does not count**. `PROVEN_ARG` names every argument constructor there is, so following it would mark twenty-one functions as demonstrated by an example that formats one integer. It lists alternatives rather than calling them.
 - The PAL (`proven_sys_*`) is exempt, as it is for the naming gate: it is the porting layer, not the API a caller programs against.
 
-Failure tip: the unshown function is named. Put the call in an example where it belongs — or write one — next to the sentence saying why a reader would want it.
+Failure tip: the unshown function is named. Put the call in an example where it belongs - or write one - next to the sentence saying why a reader would want it.
 
-### `tests/test_docs_manual_ko` — the Korean edition mirrors the English one
+### `tests/test_docs_manual_ko` - the Korean edition mirrors the English one
 
 Intent: verify the translation has not quietly fallen behind, and that it keeps the vocabulary promise chapter 0 makes.
 
-`manual-ko/` was checked by nothing. Six gates guard the English chapters — their examples are compiled and run, their symbols matched against the headers, their claims asserted — and the translation beside them was guarded by nobody. So a chapter could gain a whole worked example on one side and not the other and the build would still pass, which is exactly what happened: eleven examples existed in English and in no Korean chapter.
+`manual-ko/` was checked by nothing. Six gates guard the English chapters - their examples are compiled and run, their symbols matched against the headers, their claims asserted - and the translation beside them was guarded by nobody. So a chapter could gain a whole worked example on one side and not the other and the build would still pass, which is exactly what happened: eleven examples existed in English and in no Korean chapter.
 
 Sub-checks:
 
 - **Structure:** every `manual/x.md` has a `manual-ko/x-ko.md`.
 - **Coverage:** every `<!-- example: -->` marker appears in both editions, in either direction. The bodies themselves are checked verbatim by `test_docs_manual_examples`, which reads both directories.
-- **Vocabulary:** a Korean chapter that uses an English term must write it at least once paired with its Korean word — `할당자(allocator)`, or the reverse order the glossary rows use. The pairing is required once per chapter, not per occurrence: after the introduction, the bare word is the ordinary way to write it.
+- **Vocabulary:** a Korean chapter that uses an English term must write it at least once paired with its Korean word - `할당자(allocator)`, or the reverse order the glossary rows use. The pairing is required once per chapter, not per occurrence: after the introduction, the bare word is the ordinary way to write it.
 
 Failure tip: the failure names the missing chapter, the example only one edition prints, or the chapter and the exact pair to write. `scripts/sync-manual-examples.py` copies example bodies into both editions.
 
-### `tests/test_docs_test_catalog` — the test catalog matches the build
+### `tests/test_docs_test_catalog` - the test catalog matches the build
 
 Intent: verify every test registered in `nob.c` has one entry in this file, every registry contains unique paths, `regression_tests[]` is a hosted subset with exactly the membership listed above, and all published suite, tree, and filename-class counts match the registries and test files.
 
 Failure tip: a failure names the missing test, duplicate path, stale subset member, or stale count. Reconcile this catalog with every registry array and `tests/test_*.c`; do not update a list or total independently. Ten registered tests once had no entry, three full-suite entries were duplicated, the regression list omitted twenty members, and the headline and class counts had drifted because the old gate ignored those values.
 
-### `tests/test_docs_version_sync` — the version string agrees with itself everywhere
+### `tests/test_docs_version_sync` - the version string agrees with itself everywhere
 
-Intent: verify `PROVEN_VERSION_STRING` — the source of truth — is `proven_c_lib-v<MAJOR>.<MINOR>.<PATCH>` built from the three number macros, and matches the README (both language halves), TEST.md, the manual headings, chapter 1's `version.h` excerpt (string and all three numbers), and the CHANGELOG's newest `## [x.y.z]` entry. Versions are semantic from v0.0.1 (2026-09-04); the date-based numbers before it are history.
+Intent: verify `PROVEN_VERSION_STRING` - the source of truth - is `proven_c_lib-v<MAJOR>.<MINOR>.<PATCH>` built from the three number macros, and matches the README (both language halves), TEST.md, the manual headings, chapter 1's `version.h` excerpt (string and all three numbers), and the CHANGELOG's newest `## [x.y.z]` entry. Versions are semantic from v0.0.1 (2026-09-04); the date-based numbers before it are history.
 
-`CHECKLIST.md` has always required these to be updated together, and nothing checked: `version.h` once sat five releases behind the CHANGELOG while the README claimed a third value that matched neither. That is not cosmetic — it is the number a downstream project pins, the number a bug report quotes, and the number that decides whether a fix is in the copy someone is holding.
+`CHECKLIST.md` has always required these to be updated together, and nothing checked: `version.h` once sat five releases behind the CHANGELOG while the README claimed a third value that matched neither. That is not cosmetic - it is the number a downstream project pins, the number a bug report quotes, and the number that decides whether a fix is in the copy someone is holding.
 
 Failure tip: bump the version in every place CHECKLIST.md lists.
 
-### `tests/test_docs_alias_completeness` — alias layer completeness
+### `tests/test_docs_alias_completeness` - alias layer completeness
 
 Intent: verify every public `proven_*` function has an `xcv_*` alias in `include/proven/alias_xcv.h`.
 
@@ -1772,7 +1772,7 @@ Note: `tests/test_docs_alias_smoke` only checks that a hand-picked subset of ali
 
 Failure tip: add `#define xcv_<name> proven_<name>` to `include/proven/alias_xcv.h`, keeping the file alphabetical. A half-covered alias layer fails at the caller's call site, not here.
 
-### `tests/test_docs_alias_smoke` — alias layer smoke
+### `tests/test_docs_alias_smoke` - alias layer smoke
 
 Intent: verify the public XCV alias layer compiles and maps representative aliases to canonical proven APIs.
 
@@ -1785,15 +1785,15 @@ Sub-checks:
 
 Failure tip: inspect `include/proven/alias_xcv.h` and `tests/test_docs_alias_smoke.c`. When public symbols are added, renamed, or removed, update the alias header and this smoke test together.
 
-### `tests/test_docs_manual_ch08_contracts` — manual chapter 8 scanner contracts
+### `tests/test_docs_manual_ch08_contracts` - manual chapter 8 scanner contracts
 
-Intent: verify every behaviour manual chapter 8 states as fact about the scanner is actually true — error codes, cursor restoration on failure, decimal-only integers (`0x10` is zero), the overflow/underflow asymmetry, and the non-transactional structural scan.
+Intent: verify every behaviour manual chapter 8 states as fact about the scanner is actually true - error codes, cursor restoration on failure, decimal-only integers (`0x10` is zero), the overflow/underflow asymmetry, and the non-transactional structural scan.
 
 Note: prose is where a contract goes to drift. Chapter 8 makes 18 factual claims about the scanner; this test makes each one executable. A false claim fails the build and names itself.
 
 Failure tip: find the named claim in `manual/manual-08-fmt-scan.md` and decide which side is wrong before changing either.
 
-### `tests/test_docs_manual_examples` — manual examples match the manual
+### `tests/test_docs_manual_examples` - manual examples match the manual
 
 Intent: verify every example the manual prints exists in manual/examples/, matches it verbatim, and that no example file is left unquoted.
 
@@ -1803,25 +1803,25 @@ Failure tip: the example file is the source of truth: it is compiled and run. Co
 
 Correctness against an independent oracle - the host libc, or a corpus with known-good answers. These catch what a self-written expectation cannot: a wrong belief held consistently by both the code and its test.
 
-### `tests/test_differential_float_corpus_f32` — float upgrade corpus float32 coverage
+### `tests/test_differential_float_corpus_f32` - float upgrade corpus float32 coverage
 
 Intent: verify the upgrade corpus source also keeps the documented float32 shortest literals pinned alongside the existing float64 cases.
 
 Failure tip: inspect tests/test_differential_float_corpus_f64.c if the float32 corpus section disappears or drifts from the documented literals.
 
-### `tests/test_differential_float_corpus_f64` — float upgrade corpus
+### `tests/test_differential_float_corpus_f64` - float upgrade corpus
 
 Intent: verify the representative exact-range, subnormal-boundary, and shortest-format corpus stays pinned to the documented spellings while the float upgrade remains staged.
 
 Failure tip: inspect src/proven/scan.c and src/proven/float_format.c if a representative corpus value changes bit pattern or shortest spelling.
 
-### `tests/test_differential_float_host_oracle_f32` — float host oracle float32
+### `tests/test_differential_float_host_oracle_f32` - float host oracle float32
 
 Intent: verify representative finite float32 fixed-format rendering matches the platform C library on the same inputs without sharing implementation code.
 
 Failure tip: inspect src/proven/float_format.c if the float32 fixed formatter stops matching the host oracle corpus.
 
-### `tests/test_differential_float_host_oracle_f64` — float host oracle
+### `tests/test_differential_float_host_oracle_f64` - float host oracle
 
 Intent: verify representative finite float parsing and simple fixed-format rendering match the platform C library on the same inputs without sharing implementation code.
 
@@ -1832,7 +1832,7 @@ Failure tip: inspect src/proven/scan.c and src/proven/float_format.c if the host
 
 Concurrency under a sanitizer, over enough iterations to make a race likely rather than theoretical.
 
-### `tests/test_differential_find_last_oracle` — find_last against a brute-force oracle
+### `tests/test_differential_find_last_oracle` - find_last against a brute-force oracle
 
 Intent: verify `proven_u8str_view_find_last` against a memcmp-at-every-position oracle across all of its paths.
 
@@ -1843,7 +1843,7 @@ Sub-checks:
 
 Failure tip: inspect `proven_u8str_view_find_last`. The printed needle length and shape name the path: 1 byte scan; 2-64 on shapes 0-2 backward Shift-Or, on shape 3 the anchored scan; 65+ on shapes 0-2 reverse Two-Way.
 
-### `tests/test_stress_job_concurrency` — job queue stress
+### `tests/test_stress_job_concurrency` - job queue stress
 
 Intent: verify the job queue tolerates concurrent producers and a close racing
 active submitters, drains every accepted job exactly once, and releases every
@@ -2013,7 +2013,7 @@ Failure tip: inspect only freestanding-safe modules first: memory, arena, pool w
 
 ## Benchmarks
 
-`./nob bench-float` runs all three benchmarks — the name is historical; it is not float-only:
+`./nob bench-float` runs all three benchmarks - the name is historical; it is not float-only:
 
 - `tests/test_bench_primitives` - times the hashes, the encoders, and the two random generators.
 - `tests/test_bench_float_parse_paths` - times the shared float parser, its wrapper, and the host `strtod` on path-oriented decimal corpora, and records dated output.
@@ -2021,19 +2021,19 @@ Failure tip: inspect only freestanding-safe modules first: memory, arena, pool w
 
 Benchmarks are not correctness gates. A timing regression is a signal to investigate, not a build failure; a checksum drift is a correctness signal and must be.
 
-### `tests/test_bench_primitives` — primitive throughput benchmark
+### `tests/test_bench_primitives` - primitive throughput benchmark
 
 Intent: time the hashes (FNV-1a, CRC-32, SipHash-2-4, SHA-256), the encoders (hex, Base64), and the two random generators (xoshiro256\*\*, ChaCha20) over a fixed buffer, folding each output into a checksum so the work is not optimised away.
 
 Failure tip: if a checksum drifts the backend changed behaviour; if a timing regresses, inspect the module named by the backend label. See `docs/primitives-benchmark.md`.
 
-### `tests/test_bench_float_parse_paths` — float parse path benchmark
+### `tests/test_bench_float_parse_paths` - float parse path benchmark
 
 Intent: compare the shared float parser, wrapper, and host strtod on separate path-oriented decimal corpora and record dated docs output.
 
 Failure tip: inspect src/proven/float_parse.c, src/proven/float_decimal.c, and the path-specific corpus split if the timing harness fails or any checksum drifts.
 
-### `tests/test_bench_float_parse` — float parse benchmark
+### `tests/test_bench_float_parse` - float parse benchmark
 
 Intent: time the decimal parser against the host strtod on a mixed corpus and record the result.
 

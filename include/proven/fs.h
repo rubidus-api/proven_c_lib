@@ -281,7 +281,7 @@ typedef struct {
      *
      * You need both facts, and they are different facts. `type` follows the link so that a
      * listing and proven_fs_stat agree about what a thing is. `is_symlink` says how you got
-     * there — and a tree walker has to know, because following a symlinked directory can
+     * there - and a tree walker has to know, because following a symlinked directory can
      * walk it straight out of the tree it was asked about.
      */
     bool is_symlink;
@@ -305,7 +305,7 @@ proven_result_dir_t proven_fs_dir_open(proven_allocator_t scratch, proven_u8str_
  *
  * @note The returned name is borrowed; see proven_fs_dir_entry_t.
  *
- * @note `type` FOLLOWS symlinks, exactly as proven_fs_stat does — a symlink to a regular
+ * @note `type` FOLLOWS symlinks, exactly as proven_fs_stat does - a symlink to a regular
  *       file is PROVEN_FS_TYPE_FILE, and a symlink to a directory is PROVEN_FS_TYPE_DIR.
  *       That consistency is deliberate: the walk used to report a perfectly ordinary file
  *       as PROVEN_FS_TYPE_OTHER because it was reached through a link, while `stat` on the
@@ -314,7 +314,7 @@ proven_result_dir_t proven_fs_dir_open(proven_allocator_t scratch, proven_u8str_
  *
  *       The consequence you must handle: **a recursive walker can loop.** A symlink
  *       pointing at an ancestor directory is a cycle, and the type says DIR. Guard it the
- *       way every tree walker does — carry a depth limit, or remember (dev, ino) pairs
+ *       way every tree walker does - carry a depth limit, or remember (dev, ino) pairs
  *       from proven_fs_stat and refuse to descend into one you have already seen.
  *
  *       A DANGLING symlink, and anything else that is neither a regular file nor a
@@ -385,22 +385,22 @@ typedef struct {
  * The walk that proven_fs_dir_* deliberately does not give you, with the three things a
  * recursive walker gets wrong:
  *
- * - **It cannot loop, and it cannot escape — even under a race.** The walk never descends
+ * - **It cannot loop, and it cannot escape - even under a race.** The walk never descends
  *   THROUGH a symlink. A symlinked directory is still REPORTED (it exists, `type` is DIR,
- *   `is_symlink` is true, and hiding it would be its own lie) — it is simply not entered.
+ *   `is_symlink` is true, and hiding it would be its own lie) - it is simply not entered.
  *   That one rule buys both guarantees: a link pointing at an ancestor cannot loop the walk,
  *   and a link pointing anywhere else cannot walk you out of the tree you asked about.
  *
  *   The descent is fd-relative and refuses to follow a symlink (`openat(parent, name,
  *   O_NOFOLLOW)` where the platform has it), so this holds even against a TOCTOU attacker:
  *   an entry that is a real directory when it is listed and a symlink when it is entered
- *   makes the descent FAIL — reported as that directory's error — rather than following the
+ *   makes the descent FAIL - reported as that directory's error - rather than following the
  *   swapped link out of the tree. (Both this and the "follow, but stop at a cycle" first
  *   draft that quietly walked all of /tmp were found by the contract's own audit.)
  *
  *   Belt and braces: the walk also carries the (dev, ino) of every directory on the current
  *   path and refuses to descend into one it is already inside, which covers the loops a
- *   symlink is not needed for — bind mounts, and the hardlinked directories some
+ *   symlink is not needed for - bind mounts, and the hardlinked directories some
  *   filesystems still allow.
  *
  * - **It does not hide what it could not read.** A directory the walk cannot open is

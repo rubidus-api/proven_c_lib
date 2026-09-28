@@ -4,7 +4,7 @@
 
 /*
  * Written from the contract in include/proven/encode.h before any of it existed
- * (docs/TESTING.md §5.1). Hex and Base64 are standards, so the encoding half is judged against
+ * (docs/TESTING.md section 5.1). Hex and Base64 are standards, so the encoding half is judged against
  * the STANDARD'S OWN vectors - RFC 4648's "", "f", "fo", "foo", "foob", "fooba", "foobar",
  * whose Base64 is the canonical example every implementation is checked against, verified here
  * against Python's base64/binascii before being trusted. A round-trip test proves the two
@@ -15,7 +15,7 @@
  * bug or a silent truncation waiting to happen, and refusing is the whole value.
  */
 
-/* the RFC 4648 §10 progression */
+/* the RFC 4648 section 10 progression */
 static const char *RFC_IN[]  = { "",  "f",    "fo",   "foo",  "foob",     "fooba",     "foobar"     };
 static const char *RFC_B64[] = { "",  "Zg==", "Zm8=", "Zm9v", "Zm9vYg==", "Zm9vYmE=",  "Zm9vYmFy"   };
 static const char *RFC_URL[] = { "",  "Zg",   "Zm8",  "Zm9v", "Zm9vYg",   "Zm9vYmE",   "Zm9vYmFy"   };

@@ -31,7 +31,7 @@ int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---------------------------------------------------------------
-    PROVEN_TEST_SECTION("proven_fs_symlink — a public filesystem call with no test",
+    PROVEN_TEST_SECTION("proven_fs_symlink - a public filesystem call with no test",
         "It converts a path and makes a syscall; the tests that needed a symlink built theirs with POSIX directly and never went through this.",
         "");
     // ---------------------------------------------------------------
@@ -77,7 +77,7 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
-    PROVEN_TEST_SECTION("proven_mem_view_slice_checked / _mut_slice_checked — the bounds are the whole point",
+    PROVEN_TEST_SECTION("proven_mem_view_slice_checked / _mut_slice_checked - the bounds are the whole point",
         "A slice helper whose bounds check nothing has ever tried to break.",
         "");
     // ---------------------------------------------------------------
@@ -111,7 +111,7 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
-    PROVEN_TEST_SECTION("proven_u8str_append_fmt_with_scratch — the formatter's caller-scratch path",
+    PROVEN_TEST_SECTION("proven_u8str_append_fmt_with_scratch - the formatter's caller-scratch path",
         "The formatter can be handed a scratch allocator instead of allocating one. Nothing had ever passed it one.",
         "");
     // ---------------------------------------------------------------
@@ -137,7 +137,7 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
-    PROVEN_TEST_SECTION("proven_map_get_mut and proven_array_get_mut — the mutable lookups",
+    PROVEN_TEST_SECTION("proven_map_get_mut and proven_array_get_mut - the mutable lookups",
         "The const forms are covered everywhere; the mutable ones, which hand out a pointer INTO the storage, were not.",
         "");
     // ---------------------------------------------------------------
@@ -197,7 +197,7 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
-    PROVEN_TEST_SECTION("proven_u16str_create_from_view — the U16 constructor nothing built with",
+    PROVEN_TEST_SECTION("proven_u16str_create_from_view - the U16 constructor nothing built with",
         "The u16 seal bug lived one function away from this one.",
         "");
     // ---------------------------------------------------------------

@@ -1,13 +1,13 @@
 # Chapter 3: Strings, Formatting, and Scanning
 
-**Part II — The vocabulary every program uses. Prerequisites:
+**Part II - The vocabulary every program uses. Prerequisites:
 [Chapter 1](manual-01-foundation.md) and [Chapter 2](manual-02-allocation.md).**
 **After this chapter** you can hold text without a NUL terminator deciding your program's fate,
 build strings that refuse to overflow, and format and parse the everyday cases.
 
 This chapter covers `u8str.h`, `u16str.h`, `utf.h`, `fmt.h`, and `scan.h`. It is the **tutorial half** of
 the text material: it introduces the formatter and the scanner with the cases you meet daily.
-[Chapter 8](manual-08-fmt-scan.md) is the reference half — the complete grammar, every argument
+[Chapter 8](manual-08-fmt-scan.md) is the reference half - the complete grammar, every argument
 constructor, and the scanner's error and recovery rules. Read this one first.
 
 ## Table of contents
@@ -23,12 +23,12 @@ constructor, and the scanner's error and recovery rules. Read this one first.
 ### The problem: a C string does not know how long it is
 
 A C string is a pointer, and where it ends is decided by a zero byte somewhere in memory. That one
-decision — made in 1972 to save a byte per string — is behind a remarkable amount of damage:
+decision - made in 1972 to save a byte per string - is behind a remarkable amount of damage:
 
 - **Length is a search.** `strlen` walks the string. A loop that checks `strlen(s)` on each
   iteration is quadratic, and it looks like ordinary code.
 - **Text cannot contain a zero byte.** So a C string cannot hold a UTF-16 buffer, a protocol
-  frame, a slice of a file, or any binary data — the string type and the byte type are different
+  frame, a slice of a file, or any binary data - the string type and the byte type are different
   things and the language pretends otherwise.
 - **A missing terminator is not detectable.** `strcpy` into a buffer with no room writes until it
   finds a zero somewhere in your stack frame. Nothing reports it. This is the single most
@@ -37,17 +37,17 @@ decision — made in 1972 to save a byte per string — is behind a remarkable a
   copying those bytes out or writing a zero over the original, destroying it. `strtok` chose the
   second, which is why it mutates its input and cannot be nested.
 
-`strncpy`, the traditional patch, does not always NUL-terminate — so the "safe" function can
+`strncpy`, the traditional patch, does not always NUL-terminate - so the "safe" function can
 produce a string that is not a string.
 
 ### What this library does instead
 
 Two types, and the difference between them is ownership:
 
-- **`proven_u8str_view_t` — borrowed.** A pointer and a size, together, pointing at bytes someone
+- **`proven_u8str_view_t` - borrowed.** A pointer and a size, together, pointing at bytes someone
   else owns. Copying it is free. It allocates nothing, destroys nothing, and stops being valid
   when its owner does. This is what you pass to functions.
-- **`proven_u8str_t` — owned.** It has its own storage, a capacity, and a NUL terminator kept for
+- **`proven_u8str_t` - owned.** It has its own storage, a capacity, and a NUL terminator kept for
   you so `proven_u8str_as_cstr` can hand the bytes to a libc function that still wants one. You
   created it with an allocator; you destroy it with the same one.
 
@@ -75,7 +75,7 @@ Because a view carries its length, everything the NUL terminator made hard becom
 length is a field, text may contain zero bytes, a sub-range is a view into the same memory with no
 copy, and a write that would not fit is refused rather than performed.
 
-Wrong — treating a view as a C string:
+Wrong - treating a view as a C string:
 
 ```text
 proven_u8str_view_t v = proven_u8str_view_slice(line, 4, 8);   /* a field inside a line */
@@ -125,7 +125,7 @@ Intent:
 
 ### Internal layout
 
-The views are exactly what they look like — a pointer and a byte count:
+The views are exactly what they look like - a pointer and a byte count:
 
 ```text
 typedef struct { const proven_byte_t *ptr; proven_size_t size; } proven_u8str_view_t;
@@ -153,7 +153,7 @@ typedef struct {
   functions below. Reading `internal.len` for length is fine, but prefer
   `proven_u8str_as_view()`.
 
-Counter-example — treating a borrowed string like an owned one:
+Counter-example - treating a borrowed string like an owned one:
 
 ```c
 proven_byte_t stack[8];
@@ -430,18 +430,18 @@ int main(void) {
 ### Why a second string type exists at all
 
 UTF-8 is the right default and this library commits to it. `proven_u16str_t` exists for one
-reason: **the Windows API is UTF-16.** Every "wide" entry point — `CreateFileW`, `GetEnvironmentVariableW`,
-the whole `W` family — takes `wchar_t *`, which on Windows is 16 bits. A library that talks to
+reason: **the Windows API is UTF-16.** Every "wide" entry point - `CreateFileW`, `GetEnvironmentVariableW`,
+the whole `W` family - takes `wchar_t *`, which on Windows is 16 bits. A library that talks to
 those APIs needs a type that holds their code units without pretending they are bytes.
 
 So this is a boundary type. You use it where you touch a UTF-16 API, and you use `proven_u8str_t`
-everywhere else. It is deliberately small — create, destroy, append, and length — because it is
+everywhere else. It is deliberately small - create, destroy, append, and length - because it is
 not meant to be the type your program thinks in.
 
 Two things to hold on to, because they are the source of every UTF-16 bug:
 
 - **A code unit is not a character.** UTF-16 encodes anything outside the Basic Multilingual Plane
-  as a *surrogate pair* — two `proven_u16` values that mean one character. An emoji is two code
+  as a *surrogate pair* - two `proven_u16` values that mean one character. An emoji is two code
   units. Slicing between them produces an unpaired surrogate, which is not valid UTF-16.
 - **`size` here counts code units, not bytes.** `proven_u16str_view_t.size` is a count of
   `proven_u16` values; the `proven_buf_t` underneath tracks bytes, which is why
@@ -451,9 +451,9 @@ You build a `proven_u16str_t` from a `u"..."` literal, from code units you alrea
 the usual case - by converting the UTF-8 your program holds, with `utf.h` (next subsection).
 
 U16 APIs are excluded when `PROVEN_NO_U16STR` is defined, which is the default in freestanding
-builds — a bare-metal target has no Windows API to talk to.
+builds - a bare-metal target has no Windows API to talk to.
 
-Wrong — assuming one code unit is one character:
+Wrong - assuming one code unit is one character:
 
 ```text
 proven_u16str_view_t v = ...;                 /* text containing an emoji */
@@ -699,8 +699,8 @@ int main(void) {
 
 ### The problem: `printf` is told the types twice
 
-`printf("%d", x)` states the type of `x` twice — once in the format string and once by passing
-`x` — and nothing checks that the two agree. Varargs erases the type, so the function reads
+`printf("%d", x)` states the type of `x` twice - once in the format string and once by passing
+`x` - and nothing checks that the two agree. Varargs erases the type, so the function reads
 whatever bytes the calling convention left, in whatever shape the format demanded:
 
 ```text
@@ -710,12 +710,12 @@ printf("%d %d\n", 1);     /* wrong: reads an argument that was never passed */
 ```
 
 All three compile. Modern compilers warn when the format is a literal, which helps until the
-format is a variable — and then you have a function that will read arbitrary stack memory on
+format is a variable - and then you have a function that will read arbitrary stack memory on
 demand, which is a class of vulnerability with its own name.
 
 The second problem is where the output goes. `sprintf` writes to a buffer whose size it does not
 know. `snprintf` takes a size and then **truncates**, returning the length it *would* have
-written — so the caller who forgets to compare gets a silently shortened path, command, or
+written - so the caller who forgets to compare gets a silently shortened path, command, or
 identifier.
 
 ### What this library does instead
@@ -727,10 +727,10 @@ argument, resolved at compile time:
 proven_println("{} scored {}", PROVEN_ARG(name), PROVEN_ARG(score));
 ```
 
-`PROVEN_ARG` is a `_Generic` dispatch — the compiler picks the right constructor for the argument's
+`PROVEN_ARG` is a `_Generic` dispatch - the compiler picks the right constructor for the argument's
 static type. A mismatch between the format and the argument is not possible, because the format
-never states a type. What the spec after `:` controls is *presentation* — width, fill, alignment,
-precision, base — never interpretation.
+never states a type. What the spec after `:` controls is *presentation* - width, fill, alignment,
+precision, base - never interpretation.
 
 **The destination is a sized object**, and the fixed-capacity form refuses rather than truncates:
 `proven_u8str_append_fmt` fails with `PROVEN_ERR_OUT_OF_BOUNDS` and writes nothing, while
@@ -738,8 +738,8 @@ precision, base — never interpretation.
 call itself.
 
 **Your own types can join in.** `PROVEN_ARG_OF(&obj, render_fn)` lets a type you defined print with
-`{}` like everything else — the extension point is compile-time and typed, not a registry of
-names. [Chapter 8 §5.1](manual-08-fmt-scan.md) shows how.
+`{}` like everything else - the extension point is compile-time and typed, not a registry of
+names. [Chapter 8 section 5.1](manual-08-fmt-scan.md) shows how.
 
 The cost, stated plainly: `PROVEN_ARG` around each argument is more typing than `%d`, and the
 format language is not the one in your fingers. What you buy is that the class of bug at the top of
@@ -747,7 +747,7 @@ this section cannot be written.
 
 The formatter writes into `proven_u8str_t` or PAL-backed streams. It uses a small structural format language with `{}` placeholders, explicit indexes like `{1}`, escaped braces `{{` and `}}`, and width/alignment specs such as `{:0>5}`, `{:*^10}`, and `{:.<10}`.
 
-Wrong — assuming the spec chooses the type:
+Wrong - assuming the spec chooses the type:
 
 ```text
 proven_println("{:d}", PROVEN_ARG(3.5));   /* wrong: the spec formats, it does not convert */
@@ -881,7 +881,7 @@ proven_u8str_destroy(alloc, &s);
 ### The problem: `scanf` will not tell you where it stopped
 
 Parsing input is the mirror of formatting, and libc's answer is worse. `sscanf` returns *how many
-fields it filled* and nothing else — not which one failed, not how far it got, not why:
+fields it filled* and nothing else - not which one failed, not how far it got, not why:
 
 ```text
 int n = sscanf(line, "%d %d %d", &a, &b, &c);
@@ -894,14 +894,14 @@ something that is not a number". And `%s` into a `char *` has the same unbounded
 `strcpy`, with the input now coming from outside your program.
 
 Then there is `strtol`, whose contract requires you to clear `errno` first, check it after, and
-compare `endptr` against the input to detect "no digits at all" — three separate things to get
+compare `endptr` against the input to detect "no digits at all" - three separate things to get
 right for one conversion.
 
 ### What this library does instead
 
 **The cursor is yours.** A `proven_scan_t` holds the view being parsed and an offset into it. Each
 scan reads from the cursor and moves it forward on success. Because the cursor is a field you can
-read, you always know exactly where parsing stopped — which is the position you show the user.
+read, you always know exactly where parsing stopped - which is the position you show the user.
 
 **Each scan returns a result.** `proven_scan_i64` hands back `{err, val}`, so "not a number",
 "out of range" and "end of input" are different errors rather than one missing field.
@@ -912,12 +912,12 @@ recovery possible instead of guesswork.
 
 One thing to know before you rely on it: the *structural* scan (`proven_scan_fmt`, the `{}` form)
 is **not** transactional across fields. If the third placeholder fails, the first two destinations
-have already been written. [Chapter 8 §11.1](manual-08-fmt-scan.md) covers the error codes and the
+have already been written. [Chapter 8 section 11.1](manual-08-fmt-scan.md) covers the error codes and the
 recovery patterns in full.
 
 The scanner parses from a borrowed `proven_u8str_view_t`. A cursor tracks progress.
 
-Wrong — treating a partial structural scan as if nothing happened:
+Wrong - treating a partial structural scan as if nothing happened:
 
 ```text
 proven_err_t e = proven_scan_fmt(&sc, "{} {} {}", ...);
@@ -1162,7 +1162,7 @@ proven_println("{}", PROVEN_ARG_CSTR_N(untrusted, max_len));
 ### Borrowed fixed-capacity strings
 
 Use `proven_u8str_borrow` to format into a stack or static buffer without any
-allocation — useful in allocator-free code and on hot paths. Use the
+allocation - useful in allocator-free code and on hot paths. Use the
 fixed-capacity operations (and `proven_u8str_append_fmt`), reuse with
 `proven_u8str_reset`, and do not call growing operations or `proven_u8str_destroy`
 on it (the caller owns the memory).
@@ -1381,7 +1381,7 @@ call gives when the data does not fit.
 | **Atomic, growable** | Reallocates through the allocator; on allocation failure changes nothing. | `proven_u8str_append_grow`, `proven_u8str_replace_at_grow`, `proven_u8str_append_byte` |
 
 Two supporting calls appear here as well. `proven_u8str_reserve()` raises the
-capacity once, up front, so later growth does not reallocate — on the heap that
+capacity once, up front, so later growth does not reallocate - on the heap that
 saves copying, and in an arena it saves the dead storage every reallocation
 leaves behind. `proven_u8str_is_valid()` checks that a string handle's own
 fields are consistent; it is worth asserting where a string arrives from other
@@ -1389,7 +1389,7 @@ code, not after every edit.
 
 The program below writes a bounded log line, refuses an oversized append,
 truncates deliberately with the best-effort call, and edits a path in the middle
-with `proven_u8str_replace_at()` — first shrinking (which always fits), then
+with `proven_u8str_replace_at()` - first shrinking (which always fits), then
 growing (which does not, and is refused), then the same edit again through
 `proven_u8str_replace_at_grow()`. It ends by checking the file extension with
 `proven_u8str_view_ends_with()`.
@@ -1541,7 +1541,7 @@ int main(void) {
 }
 ```
 
-Wrong — treating the best-effort call as if it were atomic:
+Wrong - treating the best-effort call as if it were atomic:
 
 ```text
 (void)proven_u8str_append_partial(&line, field);   /* wrong: ignores the count */
@@ -1550,7 +1550,7 @@ Wrong — treating the best-effort call as if it were atomic:
 The return value is the only place the truncation is reported. Discarding it
 turns "the record was cut short" into "the record looked fine".
 
-Wrong — reading the byte count as a character count:
+Wrong - reading the byte count as a character count:
 
 ```text
 if (part.value == field.size) { /* all of it was written */ }
@@ -1564,7 +1564,7 @@ the capacity decide it.
 ### Worked example: assembling a UTF-16 string for a system call
 
 `proven_u16str_t` earns its place only at the boundary where an operating system
-call demands UTF-16 — the Windows wide API being the usual reason. The pattern is
+call demands UTF-16 - the Windows wide API being the usual reason. The pattern is
 always the same: assemble the code units, then hand
 `proven_u16str_as_ptr()` to the call.
 
@@ -1572,7 +1572,7 @@ Three points decide whether this code is right:
 
 - **The unit is a code unit, not a byte and not a character.** A capacity of 32
   is 32 code units, which is 64 bytes; a character outside the Basic Multilingual
-  Plane (BMP) — an emoji, many rarer CJK characters — occupies two of them.
+  Plane (BMP) - an emoji, many rarer CJK characters - occupies two of them.
 - **`proven_u16str_as_ptr()` does not copy**, and the pointer it returns is good
   only until the next append that grows the string.
 - **The result is NUL-terminated**, including after a deliberate truncation, so
@@ -1663,17 +1663,17 @@ int main(void) {
 }
 ```
 
-Wrong — sizing a UTF-16 buffer in bytes:
+Wrong - sizing a UTF-16 buffer in bytes:
 
 ```text
 proven_result_u16str_t r = proven_u16str_create(alloc, sizeof(buf));   /* wrong */
 ```
 
 The argument is a count of code units. Passing a byte count asks for twice the
-storage you meant, or — when the byte count came from a UTF-8 string — for a
+storage you meant, or - when the byte count came from a UTF-8 string - for a
 buffer that cannot hold the conversion at all.
 
-Wrong — keeping the pointer across an append:
+Wrong - keeping the pointer across an append:
 
 ```text
 const proven_u16 *w = proven_u16str_as_ptr(&name);

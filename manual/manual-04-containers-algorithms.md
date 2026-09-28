@@ -1,6 +1,6 @@
 # Chapter 4: Containers and Algorithms
 
-**Part III — Data structures. Prerequisite: Part II
+**Part III - Data structures. Prerequisite: Part II
 ([1](manual-01-foundation.md), [2](manual-02-allocation.md), [3](manual-03-strings-text.md)).**
 **After this chapter** you can pick the right container for a job, sort and search with a
 guaranteed bound, hash for the right reason, and turn bytes into text and back.
@@ -37,7 +37,7 @@ if (n == cap) {
 ```
 
 Two bugs in one line, and both are classics. `cap * sizeof(int)` can **wrap** for a large `cap`,
-producing a small allocation for a huge count — see [Chapter 1 §4](manual-01-foundation.md). And
+producing a small allocation for a huge count - see [Chapter 1 section 4](manual-01-foundation.md). And
 assigning `realloc`'s result straight back to `items` **leaks the old block when it returns NULL**,
 because the original pointer is gone and the memory it named is still allocated.
 
@@ -47,20 +47,20 @@ generic with `void *` and lose type checking.
 ### What this library does instead
 
 `proven_array_t` is a growable vector that keeps the element size and alignment it was created
-with, so it works for any type without a template and without `void *` at the call site — the
+with, so it works for any type without a template and without `void *` at the call site - the
 `PROVEN_ARRAY_*` macros take the type and do the casting where the compiler can still check it.
 
 - Growth uses checked arithmetic, so the overflow above is `PROVEN_ERR_OVERFLOW`, not a small
   allocation.
 - Growth is **failure-atomic**: if it cannot grow, your existing elements are untouched and still
   valid. Nothing is leaked and nothing is lost.
-- It **stores its allocator internally**, unlike the string types — which is why
+- It **stores its allocator internally**, unlike the string types - which is why
   `PROVEN_ARRAY_DESTROY` takes only the array.
 
 `proven_array_t` owns contiguous element storage, so it is also what you hand to
-`proven_array_sort` and the searches in §5.
+`proven_array_sort` and the searches in section 5.
 
-Wrong — holding a pointer across a push:
+Wrong - holding a pointer across a push:
 
 ```text
 int *first = PROVEN_ARRAY_GET_MUT(&arr, int, 0);
@@ -155,7 +155,7 @@ struct node { struct node *next; void *data; };
 ```
 
 That is the textbook linked list, and it has two costs the textbook does not mention. Every
-insertion **allocates** — a thousand items means a thousand allocations that exist only to hold
+insertion **allocates** - a thousand items means a thousand allocations that exist only to hold
 pointers, each one able to fail and each one needing a matching free. And `data` is a `void *`, so
 the list has no idea what it holds: every read back out is a cast the compiler cannot check.
 
@@ -170,7 +170,7 @@ typedef struct {
 } task_t;
 ```
 
-Now inserting is writing two pointers. It allocates nothing, so it **cannot fail** — notice that
+Now inserting is writing two pointers. It allocates nothing, so it **cannot fail** - notice that
 `proven_list_push_back` returns `void`, which is unusual in this library and is the point.
 Removing is the same. The objects can live on the stack, in an array, in an arena, anywhere; the
 list only rearranges pointers that are already inside them.
@@ -183,10 +183,10 @@ What you give up: **an object can be in only as many lists as it has link member
 that when you declare the struct. If an item needs to be in a queue and an index at the same time,
 it needs two links.
 
-`proven_list_t` is an intrusive doubly-linked **circular** list — the head is a sentinel node, so
+`proven_list_t` is an intrusive doubly-linked **circular** list - the head is a sentinel node, so
 insertion and removal never special-case the ends. It allocates no nodes.
 
-Wrong — removing while walking with the plain iterator:
+Wrong - removing while walking with the plain iterator:
 
 ```text
 PROVEN_LIST_FOR_EACH(it, &queue) {
@@ -201,7 +201,7 @@ next pointer *before* the body runs, which is exactly why it exists.
 ### Worked example: a queue whose links live in the caller's structs
 
 Compiled and run by the test suite. It builds a queue of stack-allocated tasks, walks it, removes
-one from inside a safe walk, and inserts in the middle — with no allocator anywhere in the program.
+one from inside a safe walk, and inserts in the middle - with no allocator anywhere in the program.
 
 <!-- example: manual/examples/en/ex_04_list.c -->
 ```c
@@ -358,7 +358,7 @@ the consumer falls behind? A growable queue answers "allocate more", which turns
 slowdown into unbounded memory growth and, eventually, into something worse than dropped work.
 
 The hand-written alternative is an array plus a head index plus a tail index plus modulo
-arithmetic — and it has one famous bug. When `head == tail`, is the buffer empty or full? Both
+arithmetic - and it has one famous bug. When `head == tail`, is the buffer empty or full? Both
 states look identical unless you keep a separate count or deliberately waste one slot, and every
 generation of programmers rediscovers this.
 
@@ -368,18 +368,18 @@ generation of programmers rediscovers this.
 that **refuses** rather than grows:
 
 - `proven_ring_push` on a full ring returns `PROVEN_ERR_OUT_OF_BOUNDS`. It does not overwrite the
-  oldest entry and it does not reallocate. The caller decides — wait, drop the new item, or report
-  backpressure — because only the caller knows which is right.
+  oldest entry and it does not reallocate. The caller decides - wait, drop the new item, or report
+  backpressure - because only the caller knows which is right.
 - `proven_ring_pop` on an empty ring fails rather than handing back a stale slot.
 
 The capacity is chosen once, at creation, and that number *is* the policy: it says how far ahead
 the producer may get. Reach for a ring for an event queue, a log of recent items, an audio or
-sensor buffer — anywhere a bound is part of the design rather than a limitation.
+sensor buffer - anywhere a bound is part of the design rather than a limitation.
 
 Unlike most types in this library, `proven_ring_t` **stores its allocator internally**, which is
 why `PROVEN_RING_DESTROY` takes only the ring.
 
-Wrong — treating a full ring as an error to retry immediately:
+Wrong - treating a full ring as an error to retry immediately:
 
 ```text
 while (PROVEN_RING_PUSH(&ring, event_t, e) != PROVEN_OK) { }   /* wrong: spins forever */
@@ -555,7 +555,7 @@ typedef struct {
 
 ### How it works internally
 
-The map is a single flat array of `cap` buckets — there are no per-entry
+The map is a single flat array of `cap` buckets - there are no per-entry
 allocations for values (and none for keys in INT/BORROWED mode), so lookups stay
 cache-friendly. Each bucket is laid out as:
 
@@ -573,7 +573,7 @@ addressing bucket `i`'s value is just `internal.ptr + i*bucket_stride + payload_
 - **Hashing, and why the default is the safe one.** Integer keys go through a
   SplitMix/Murmur-style bit-mix finaliser (so sequential ids spread across buckets).
   **String keys are hashed with keyed SipHash-2-4 under a per-process secret** drawn once
-  from the OS CSPRNG — because a map that hashes *untrusted* keys with a predictable function
+  from the OS CSPRNG - because a map that hashes *untrusted* keys with a predictable function
   is a denial of service waiting to happen: an attacker who controls the keys computes
   collisions offline, floods them all into one bucket, and turns every lookup into a linear
   scan. Keying the hash with a secret they cannot see is what closes that, and it is the same
@@ -586,17 +586,17 @@ addressing bucket `i`'s value is just `internal.ptr + i*bucket_stride + payload_
   bucket at a time, wrapping around, until it finds the key (OCCUPIED with an
   equal key) or an EMPTY bucket (which proves the key is absent). Linear probing
   keeps the walked buckets contiguous in memory.
-- **Removal and tombstones.** `proven_map_remove` cannot just blank a bucket —
+- **Removal and tombstones.** `proven_map_remove` cannot just blank a bucket --
   that would cut a probe chain and hide later keys. It marks the bucket TOMBSTONE
   instead. Tombstones are skipped by lookups but still consume a slot, which is
-  why `used` (live + tombstones) — not `len` — drives growth.
+  why `used` (live + tombstones) - not `len` - drives growth.
 - **Load factor and resize.** When `used >= cap * 3/4`, the map allocates a new
   bucket array of the next power of two and **rehashes** every OCCUPIED entry into
   it, dropping all tombstones in the process. Capacity only grows; it never shrinks.
   Reserve ahead with `proven_map_reserve` (especially with arena allocators, to
   avoid leaving dead arrays behind).
 
-### Key modes — choosing one
+### Key modes - choosing one
 
 - `PROVEN_KEY_TYPE_INT`: keys are `proven_size_t`. No key storage.
 - `PROVEN_KEY_TYPE_U8_BORROWED`: the bucket stores the *view* (pointer + length).
@@ -754,13 +754,13 @@ primitive per job so the choice is made once you name the job:
 
 | You are... | Use | And crucially |
 |---|---|---|
-| hashing keys into **your own** table, **trusted** input | `proven_hash_bytes` (FNV-1a) | fast; a crypto hash here is ~50× slower for no gain |
-| hashing keys from **untrusted** input into a table | `proven_hash_keyed` (SipHash-2-4) | FNV lets an attacker collide every key into one bucket and turn your O(1) table into O(n²) |
+| hashing keys into **your own** table, **trusted** input | `proven_hash_bytes` (FNV-1a) | fast; a crypto hash here is ~50x slower for no gain |
+| hashing keys from **untrusted** input into a table | `proven_hash_keyed` (SipHash-2-4) | FNV lets an attacker collide every key into one bucket and turn your O(1) table into O(n^2) |
 | checking data was not **corrupted** in transit or on disk | `proven_crc32` | a checksum; interoperates with gzip/zlib/PNG |
 | **fingerprinting** content: dedup, content-addressing, "same file?" | `proven_sha256` | the only one safe against a *deliberately* forged match |
 
 The one line to remember: **CRC-32 and FNV detect accident, not attack.** Do not use them
-to decide whether two things are "the same" when someone might benefit from fooling you —
+to decide whether two things are "the same" when someone might benefit from fooling you --
 that is what `proven_sha256` is for. And a keyed hash is only safe if the key is a real
 secret chosen once from real randomness; a fixed key is no key at all.
 
@@ -776,7 +776,7 @@ their specifications and checked against each one's official known-answer vector
 |---|---|---|
 | `proven_hash_bytes(view)` | FNV-1a 64. A hash-table hash for keys you chose yourself. | `proven_u64`. |
 | `proven_hash_keyed(view, key[16])` | SipHash-2-4 under a 16-byte secret. The same job, for keys an attacker supplies. | `proven_u64`. |
-| `proven_crc32(view)` | One-shot CRC-32 (IEEE, reflected) — the one gzip/zlib/PNG carry. | `proven_u32`. |
+| `proven_crc32(view)` | One-shot CRC-32 (IEEE, reflected) - the one gzip/zlib/PNG carry. | `proven_u32`. |
 | `proven_crc32_update(crc, view)` | The same CRC over a stream of chunks. Start from `0`; the value you hold between calls is the real CRC, so you can store it, log it, and resume. | `proven_u32`. |
 | `proven_sha256(view, out[32])` | One-shot SHA-256. | void; writes `PROVEN_SHA256_SIZE` bytes. |
 | `proven_sha256_init/_update/_final` | The same digest over content you cannot hold in memory at once. The digest depends only on the bytes, never on how they were chunked. | void. |
@@ -793,7 +793,7 @@ typedef struct {
 #define PROVEN_SHA256_SIZE 32   /* the digest; size your output buffer with this */
 ```
 
-`proven_sha256_t` allocates nothing — it is [caller-owned state](manual-00-start-here.md#92-caller-owned-state--no-destroy-do-not-copy), so there is nothing to destroy.
+`proven_sha256_t` allocates nothing - it is [caller-owned state](manual-00-start-here.md#92-caller-owned-state---no-destroy-do-not-copy), so there is nothing to destroy.
 
 ### Cautions, and what goes wrong
 
@@ -814,7 +814,7 @@ proven_byte_t key[16];
 memcpy(key, &timestamp, sizeof timestamp); /* wrong: guessable, and mostly zero */
 ```
 
-Correct — draw it once, at startup, from the OS:
+Correct - draw it once, at startup, from the OS:
 
 ```c
 proven_byte_t key[16];
@@ -829,7 +829,7 @@ if (proven_random_bytes(key, sizeof key)) {
 fooling you. Both are trivially forgeable: producing a second input with the same CRC-32 is
 schoolbook arithmetic.
 
-Wrong — a content-addressed store an attacker can poison:
+Wrong - a content-addressed store an attacker can poison:
 
 ```text
 if (proven_crc32(incoming) == stored_crc) {
@@ -837,7 +837,7 @@ if (proven_crc32(incoming) == stored_crc) {
 }
 ```
 
-Correct — a fingerprint that must not be foolable is `proven_sha256`, compared over all 32
+Correct - a fingerprint that must not be foolable is `proven_sha256`, compared over all 32
 bytes.
 
 **A digest buffer that is not `PROVEN_SHA256_SIZE` is a buffer overflow.** `proven_sha256`
@@ -913,29 +913,29 @@ int main(void) {
 ## 7. Bytes to text: hex and Base64
 
 Once you can hash a thing (above) and draw a random token (`random.h`), you need to write those
-bytes somewhere that only holds text — a URL, an HTTP header, a log line, a JSON string. That is
+bytes somewhere that only holds text - a URL, an HTTP header, a log line, a JSON string. That is
 `encode.h`. No cryptography, no compression; the two encodings everything already agrees on,
 done without hidden allocation and without the two ways they are usually got wrong.
 
 | You want | Use | Alphabet |
 |---|---|---|
 | A digest or a few bytes a human reads | `proven_hex_encode` | lowercase hex, what `sha256sum` and `git` print |
-| Bytes in a URL, a cookie, a filename | `proven_base64url_encode` | `-` `_`, **no** padding — nothing to escape, no `=` to mangle |
+| Bytes in a URL, a cookie, a filename | `proven_base64url_encode` | `-` `_`, **no** padding - nothing to escape, no `=` to mangle |
 | Bytes in an HTTP header, MIME, JSON | `proven_base64_encode` | standard `+` `/`, `=`-padded |
 
 Two refusals are the point:
 
 - **A decoder validates its whole input before writing a byte.** Text from outside the program
   is not guaranteed to be valid; a stray character, a bad length, bad padding, or embedded
-  whitespace is `PROVEN_ERR_INVALID_ENCODING` with nothing committed — not a read past the end,
+  whitespace is `PROVEN_ERR_INVALID_ENCODING` with nothing committed - not a read past the end,
   and not a silently short result one byte into which the caller finds the corruption.
   `proven_base64_decode` accepts **both** alphabets and padded-or-not, because a decoder that
   only takes what it emits rejects half the Base64 in the world.
-- **The output size is a call, not a guess** — `proven_hex_encoded_size`,
+- **The output size is a call, not a guess** - `proven_hex_encoded_size`,
   `proven_base64_encoded_size`, and their decode counterparts. A buffer one byte too small is
   `PROVEN_ERR_OUT_OF_BOUNDS` with nothing written, never a truncated prefix.
 
-It is pure computation — no allocation, no OS — and available freestanding.
+It is pure computation - no allocation, no OS - and available freestanding.
 
 ### Reference
 
@@ -960,11 +960,11 @@ stale.
 ### Cautions, and what goes wrong
 
 **Size the output with the size function, not by eye.** The encoders refuse a short buffer
-rather than truncating — which means the failure you get from a hand-computed size is an error
+rather than truncating - which means the failure you get from a hand-computed size is an error
 you have to handle, not a silent corruption. That is the good outcome; the point is you will
 still have to handle it.
 
-Wrong — the classic off-by-one, and it now *fails* instead of overflowing:
+Wrong - the classic off-by-one, and it now *fails* instead of overflowing:
 
 ```text
 proven_byte_t out[16];                       /* wrong: 12 bytes of hex needs 24 chars */
@@ -985,7 +985,7 @@ if (proven_hex_encoded_size(data.size) <= sizeof out &&
 
 **Base64URL emits no padding, and the decoder accepts that.** `proven_base64_decoded_size`
 rounds *up* so it is a correct upper bound for unpadded text too. Do not "improve" on it with
-`3 * (n / 4)` — that floors away the 1-2 bytes an unpadded tail carries, and you will fail to
+`3 * (n / 4)` - that floors away the 1-2 bytes an unpadded tail carries, and you will fail to
 decode this library's own URL-safe output. (It did exactly that, once, and an audit caught it.)
 
 ```text
@@ -995,7 +995,7 @@ proven_size_t cap = 3 * (text_len / 4);   /* wrong: 0 for "QQ", which decodes to
 **Never hand-roll the decoder.** The whole reason these exist is that a decode reads text from
 outside your program, and the two-line loop everyone writes trusts it.
 
-Wrong — reads past the end on odd input, and accepts junk as data:
+Wrong - reads past the end on odd input, and accepts junk as data:
 
 ```text
 for (size_t i = 0; i < len; i += 2)               /* wrong: no length check */
@@ -1007,22 +1007,22 @@ character near the end cannot leave you holding a half-decoded prefix you believ
 
 **Whitespace is not skipped, on purpose.** A pasted, line-wrapped Base64 blob is
 `INVALID_ENCODING`, not a silently different result. If you *want* to accept wrapped input,
-strip the whitespace yourself — deliberately, where you can see it.
+strip the whitespace yourself - deliberately, where you can see it.
 
 **Size the destination with the size functions, never by hand.** Each encoding has a
-pair — `proven_hex_encoded_size()` / `proven_hex_decoded_size()` and
-`proven_base64_encoded_size()` / `proven_base64_decoded_size()` — and they differ in
+pair - `proven_hex_encoded_size()` / `proven_hex_decoded_size()` and
+`proven_base64_encoded_size()` / `proven_base64_decoded_size()` - and they differ in
 what they promise:
 
 | Direction | What the number is | How to use it |
 |---|---|---|
-| Encoding | **Exact** for hex and standard Base64. Base64URL omits padding, so its output can be shorter — the number is still a safe upper bound. | Allocate this many bytes; the call reports what it wrote. |
+| Encoding | **Exact** for hex and standard Base64. Base64URL omits padding, so its output can be shorter - the number is still a safe upper bound. | Allocate this many bytes; the call reports what it wrote. |
 | Decoding | An **upper bound**, because padding and the alphabet in use are not known until the text is read. | Allocate the bound, then use the reported count, not the bound, as the length. |
 
 The example below ends with that: it allocates a destination sized by
 `proven_base64_encoded_size()`, encodes into it, sizes the reverse buffer with
 `proven_base64_decoded_size()`, decodes, and round-trips the same bytes through
-`proven_hex_decode()` — including the uppercase input real tools produce, and the
+`proven_hex_decode()` - including the uppercase input real tools produce, and the
 odd-length input that cannot be a whole number of bytes.
 
 Compiled and run by the test suite:
@@ -1573,7 +1573,7 @@ int main(void) {
 ### Worked example: sizing containers, searching unsorted data, and streaming a checksum
 
 The worked examples above take one container at a time. This one is the program
-those pieces end up inside — a small event intake — and it answers the questions
+those pieces end up inside - a small event intake - and it answers the questions
 that only come up once several containers are in play:
 
 - **Stop a container reallocating while it fills.** `proven_array_reserve()` and
@@ -1583,12 +1583,12 @@ that only come up once several containers are in play:
   pointers: a rehash invalidates every pointer a previous `get_mut` returned.
 - **Check a handle you did not create.** `proven_array_is_valid()`,
   `proven_ring_is_valid()` and `proven_map_is_valid()` ask whether the handle's
-  own fields are consistent — the check that catches a zero-initialised or
+  own fields are consistent - the check that catches a zero-initialised or
   never-created container at the boundary of your code, rather than at the first
   push.
 - **Search data that is not sorted.** The event log is kept in arrival order,
   because that order is the thing being recorded, so binary search may not be
-  used on it — on unsorted input it does not return "not found", it returns a
+  used on it - on unsorted input it does not return "not found", it returns a
   wrong answer. `proven_array_linear_search()` is the correct call, and it
   returns the *first* match in order.
 - **Update a value already in a map, with one lookup.**
@@ -1830,7 +1830,7 @@ int main(void) {
 }
 ```
 
-Wrong — binary search on the arrival-ordered log:
+Wrong - binary search on the arrival-ordered log:
 
 ```text
 const event_t *e = proven_array_binary_search(&events, &key, by_client);   /* wrong */
@@ -1841,7 +1841,7 @@ comparison. On unsorted input it does not fail; it halves its way to whatever
 element happens to be there and reports it, or reports nothing while the element
 is present two slots away.
 
-Wrong — holding a `get_mut` pointer across an insert:
+Wrong - holding a `get_mut` pointer across an insert:
 
 ```text
 proven_u32 *seen = proven_map_get_mut(&counts, k);
@@ -1851,7 +1851,7 @@ proven_err_t e = proven_map_set(&counts, other_key, &one);   /* may rehash */
 
 Hold the key, not the pointer, across anything that can insert.
 
-Wrong — the fast hash on keys from outside the program:
+Wrong - the fast hash on keys from outside the program:
 
 ```text
 proven_result_map_t m = proven_map_create_trusted(alloc, 64, PROVEN_KEY_TYPE_U8_BORROWED,

@@ -5,7 +5,7 @@
 
 /*
  * Written from the contract in include/proven/random.h before the generators existed
- * (docs/TESTING.md §5.1). The module answers two different questions with two different
+ * (docs/TESTING.md section 5.1). The module answers two different questions with two different
  * generators, and the tests have to hold each to ITS OWN standard:
  *
  *   - xoshiro256** is judged on being REPRODUCIBLE (the same seed replays the same run - the
@@ -108,12 +108,12 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("ChaCha20 produces the standard's keystream, byte for byte",
         "This is the generator that guards secrets. A property test cannot establish that it IS ChaCha20; only the standard's own bytes can.",
-        "The expected block is the ChaCha20 keystream for key 00..1f at counter 0 with an all-zero nonce - the exact construction proven_chacha_rng_seed sets up - taken from an independent implementation (OpenSSL) that was first checked against RFC 8439's own §2.4.2 vector.");
+        "The expected block is the ChaCha20 keystream for key 00..1f at counter 0 with an all-zero nonce - the exact construction proven_chacha_rng_seed sets up - taken from an independent implementation (OpenSSL) that was first checked against RFC 8439's own section 2.4.2 vector.");
     // ---------------------------------------------------------------
     {
         /* key = 00 01 02 ... 1f, nonce = all zero, counter = 0: the state proven_chacha_rng_seed
          * builds. The 64 keystream bytes below come from OpenSSL's ChaCha20, which was verified
-         * to reproduce RFC 8439 §2.4.2's official ciphertext exactly before being trusted here. */
+         * to reproduce RFC 8439 section 2.4.2's official ciphertext exactly before being trusted here. */
         proven_byte_t key[32];
         for (int i = 0; i < 32; ++i) key[i] = (proven_byte_t)i;
 

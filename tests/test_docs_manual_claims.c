@@ -5,7 +5,7 @@
 /*
  * The manual makes CLAIMS. Each one is a proposition about the library that is either true or
  * false, and the reader is entitled to assume every one of them holds. Prose cannot be
- * test-driven, but a claim can be TESTED — you write the assertion the sentence implies, and the
+ * test-driven, but a claim can be TESTED - you write the assertion the sentence implies, and the
  * build decides whether the sentence is still true.
  *
  * This is the same thing test_docs_manual_ch08_contracts does for the scanner chapter, done for
@@ -14,7 +14,7 @@
  * shipped, and nothing objected, because nobody had written down what that sentence was asserting.
  *
  * The rule for adding to this file: when you write a sentence in the manual that a reader could
- * act on — a value, a boundary, a refusal, a guarantee — write the assertion for it here. If you
+ * act on - a value, a boundary, a refusal, a guarantee - write the assertion for it here. If you
  * cannot state the assertion, the sentence is too vague to be in the manual.
  *
  * Each check below quotes the claim it is testing.

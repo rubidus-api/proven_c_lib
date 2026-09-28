@@ -266,7 +266,7 @@ proven_result_map_t proven_map_create(proven_allocator_t alloc, proven_size_t in
 }
 
 /*
- * Contract first, implementation next (docs/TESTING.md §5.1). These are the stubs the
+ * Contract first, implementation next (docs/TESTING.md section 5.1). These are the stubs the
  * keyed-hash test was written against; proven_map_create_trusted is real (it only flips a
  * flag), but the default create still hashes strings with FNV, so the test's assertion that
  * a default map's hash differs from FNV lands RED here and goes green in the next commit.

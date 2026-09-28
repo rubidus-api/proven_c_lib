@@ -44,7 +44,7 @@ typedef struct {
      *
      * false (the default from proven_map_create): string keys are hashed with SipHash-2-4
      * under a per-process random key, so an attacker who controls the keys cannot compute
-     * collisions and flood one bucket - the HashDoS attack that turns O(1) into O(n²).
+     * collisions and flood one bucket - the HashDoS attack that turns O(1) into O(n^2).
      *
      * true (from proven_map_create_trusted): string keys use FNV-1a, which is faster and
      * needs no randomness, and is the right choice when every key comes from your own code.

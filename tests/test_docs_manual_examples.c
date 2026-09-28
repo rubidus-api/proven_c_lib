@@ -67,7 +67,7 @@ static bool text_eq_loose(const char *a, const char *b) {
 }
 
 /* Two editions quote the same programs from two trees, so this must hold both.
- * ★ It used to be 64 and silently dropped the rest - a cap that truncates in
+ * * It used to be 64 and silently dropped the rest - a cap that truncates in
  *   silence turns a gate into decoration. Overflow now fails the test. */
 #define MAX_EXAMPLES 512
 static char g_quoted[MAX_EXAMPLES][256];
@@ -155,7 +155,7 @@ int main(void) {
         "Re-copy the example's body into the chapter, or fix the example. Do not hand-edit the chapter to make it look right.");
     // ---------------------------------------------------------------
     /*
-     * ★ The chapter list used to be written out here by hand, and a chapter added
+     * * The chapter list used to be written out here by hand, and a chapter added
      *   later was simply not checked - which is how six examples came to be quoted
      *   by nobody the gate could see. Read the directories instead: a new chapter
      *   is covered the moment it exists.

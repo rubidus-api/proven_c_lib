@@ -11,7 +11,7 @@ The format follows Keep a Changelog:
   `Fixed`, and `Security` when they apply
 - avoid dumping raw commit history into the file
 
-Versions are semantic — `MAJOR.MINOR.PATCH` — from v0.0.1 (2026-09-04), and a release
+Versions are semantic - `MAJOR.MINOR.PATCH` - from v0.0.1 (2026-09-04), and a release
 section is `## [x.y.z] - YYYY-MM-DD`. The entries below v0.0.1 carry the date-based
 numbers those releases were published under (`proven_c_lib-v26.MM.DDx`) and are left as
 written; their tags still exist.
@@ -20,6 +20,11 @@ written; their tags still exist.
 
 ### Changed
 
+- **English public text is ASCII, and stays so (B-036).** README.md, TEST.md, CHANGELOG.md, the
+  English manual and examples, and all C sources and build files were normalised (em dashes,
+  section signs, arrows and the like; 48 files), with the Markdown anchors of changed headings
+  updated. `scripts/ascii_policy.py check`, run by `project-check`, fails on any new non-ASCII byte
+  in that scope; Hangul is exempt, and the Korean mirrors are out of scope.
 - **`./nob cross` reports every target and cannot skip the ones a release needs (B-035).** Each
   target ends PASS, FAIL or SKIP with a reason, a failure no longer stops the other targets, and a
   summary is printed. Skipping `native-gcc-hosted`, `native-clang-hosted`, `windows-x86_64-winapi`
@@ -423,19 +428,19 @@ was never published as a GitHub release.
 ### Changed
 
 - **The manual's front page is the contents and the copyright, nothing else.**
-  Each edition's index used to be the spine — intent, build model, global
+  Each edition's index used to be the spine - intent, build model, global
   contracts, the ownership matrix, behaviour classes, header map, platform
-  support — with the table of contents underneath. Now, like the book, the
+  support - with the table of contents underneath. Now, like the book, the
   index is the full contents (every chapter and every section) followed by the
-  copyright, and the ↑ button in every chapter lands there. The spine moved
-  into Chapter 0 as §6–§15, after the plain-language sections that always
+  copyright, and the up-arrow button in every chapter lands there. The spine moved
+  into Chapter 0 as section 6-section 15, after the plain-language sections that always
   referred to it as "the formal versions"; appendices B, C and D sit side by
   side. Chapter 0's glossary, libc map and closing section renumber to 13, 15
   and 16, and every link to the old anchors follows. Chapter 0 joins the
   code-block gate in `nob.c` so the five blocks that moved stay checked.
 - **`docs/index.html`, the landing page above both editions, carries the full
-  contents of both** — every chapter and every section, linked into the
-  edition — instead of two bare language links. `scripts/site_root.py` writes
+  contents of both** - every chapter and every section, linked into the
+  edition - instead of two bare language links. `scripts/site_root.py` writes
   it from the contents each edition's build leaves behind; the link checker
   follows its links and the web-font subset includes its characters.
 
@@ -445,12 +450,12 @@ was never published as a GitHub release.
 
 - **A tutorial track for readers who have just finished one C book.**
   `manual/manual-t-tutorial.md` and `manual-ko/manual-t-tutorial-ko.md` teach the
-  library in six short programs, each introducing exactly one idea — printing,
-  views, errors, results, allocators — and ending with the Chapter 0 greeting
+  library in six short programs, each introducing exactly one idea - printing,
+  views, errors, results, allocators - and ending with the Chapter 0 greeting
   program read line by line. Chapter 0 shows that program on its first page and
   it carries five new ideas at once; the tutorial hands them over one at a time.
   All six are real programs the build compiles and runs.
-- **`scripts/check-example-parity.py`** — the two example trees may differ in
+- **`scripts/check-example-parity.py`** - the two example trees may differ in
   their comments and in nothing else. It strips comments and string bodies and
   compares what is left, and `scripts/project-check.sh` runs it.
 
@@ -461,7 +466,7 @@ was never published as a GitHub release.
   by the Korean ones, so a reader of the Korean manual is not made to read English
   comments to follow the code the Korean prose is explaining. **All 39 programs are
   translated**: roughly 1,400 lines of comments, with the code identical in both
-  trees — `scripts/check-example-parity.py` proves that mechanically, and
+  trees - `scripts/check-example-parity.py` proves that mechanically, and
   `./nob build` compiles and runs both trees (78 example executables where there
   were 33).
 - **The web edition carries its table of contents in one place.** The per-chapter
@@ -477,7 +482,7 @@ was never published as a GitHub release.
 ### Fixed
 
 - `.gitattributes` marks `*.pdf` and `*.zip` binary. Regenerating the site made
-  `git diff --check` — and therefore `scripts/project-check.sh` — fail on the
+  `git diff --check` - and therefore `scripts/project-check.sh` - fail on the
   published PDFs.
 
 ## [2026-09-02] - proven_c_lib-v26.09.03a
@@ -487,7 +492,7 @@ was never published as a GitHub release.
 - **The job system deadlocked under load, and `proven_job_system_destroy`
   never returned.** A permit on the workers' semaphore meant "take exactly one
   job", which is sound only if a woken worker can always find the job its permit
-  announced — and it cannot. The queue hands out its slots in order, so a
+  announced - and it cannot. The queue hands out its slots in order, so a
   producer that has claimed slot *n* and not yet published it hides slot *n+1*
   from every consumer. The worker woken for *n+1* reads an empty queue, spends
   the permit, and parks; slot *n* is published a moment later with no permit
@@ -507,7 +512,7 @@ was never published as a GitHub release.
 
 ### Added
 
-- **`tests/test_regression_job_permit_starvation`** — six rounds of 24
+- **`tests/test_regression_job_permit_starvation`** - six rounds of 24
   producers against a four-slot queue, each closing and destroying the system.
   A watchdog turns a hang into a reported failure naming the round, because a
   deadlock has no wrong answer to assert on: the process simply stops. Verified
@@ -525,7 +530,7 @@ was never published as a GitHub release.
   and an allocator wrapper built on the arena traits, fixed-capacity string
   edits, UTF-16 assembly for a system call, container sizing with unsorted
   search and a streaming CRC-32, the crash-safe file-replacement recipe
-  (`sync` → `rename` → `sync_dir`) with the record-level and link calls, readers
+  (`sync` -> `rename` -> `sync_dir`) with the record-level and link calls, readers
   and writers with the standard streams, memory-mapped durability, the
   randomness sources behind the `proven_rng_t` trait, wide-integer scanning with
   locale-free float parsing, and the argument constructors by name. All are
@@ -537,7 +542,7 @@ was never published as a GitHub release.
   ```text block does not, because it is not compiled.
 
 - **Gate G11 (`tests/test_docs_manual_ko`)**: the Korean edition must mirror the
-  English one — same chapters, same worked examples — and every English term a
+  English one - same chapters, same worked examples - and every English term a
   Korean chapter uses must be paired at least once with its Korean word. The
   translation had no gate at all and had fallen eleven examples behind.
 
@@ -555,12 +560,12 @@ was never published as a GitHub release.
 
 - **The glossary now covers the whole vocabulary** (chapter 0, appendix B, both
   editions): 18 entries became 62, including every abbreviation the manual uses
-  — API, EOF, BMP, CSPRNG, ASan/UBSan/TSan — and the terms the new examples
+  - API, EOF, BMP, CSPRNG, ASan/UBSan/TSan - and the terms the new examples
   introduce, such as durability, advisory lock, copy-on-write, open addressing,
   tombstone, rehash, back-pressure, locale, entropy and shortest round trip.
 
 - **The Korean chapters pair each English term with its Korean word** the first
-  time they use it — 할당자(allocator) — and say so in the glossary's opening.
+  time they use it - 할당자(allocator) - and say so in the glossary's opening.
 
 ## [2026-07-23] - proven_c_lib-v26.07.23d
 
@@ -657,11 +662,11 @@ is specified in RFC-0005 rather than being changed without its required platform
   verification gaps, and performance hypotheses, then assigns each a regression or measurement,
   compatibility risk, and exit condition before implementation.
 
-## [2026-07-23] — proven_c_lib-v26.07.23b
+## [2026-07-23] - proven_c_lib-v26.07.23b
 
 A full source-to-documentation audit, and the fixes it produced. Two were real build defects; the
 rest were documents asserting things about the code that had stopped being true. The library's
-behaviour is unchanged — no function was added, removed, or altered.
+behaviour is unchanged - no function was added, removed, or altered.
 
 ### Fixed
 
@@ -675,15 +680,15 @@ behaviour is unchanged — no function was added, removed, or altered.
   kind of build bug: it produces a binary that does not match the source and says nothing.
 
 - **Eight cross-file manual links pointed at an anchor that does not exist.** The heading
-  "4.2 Caller-owned state — no destroy, do not copy" contains an em dash, which GitHub renders as a
+  "4.2 Caller-owned state - no destroy, do not copy" contains an em dash, which GitHub renders as a
   *double* hyphen in the slug. Four English and four Korean links used the single-hyphen form. The
   Korean ones were doubly wrong, aiming an English slug at a Korean heading.
 
 ### Changed
 
 - **The alias index (Appendix A) is regenerated and now complete.** It listed 440 rows and claimed
-  "416 aliases"; the header defines 501. Sixty-one `xcv_` names — the whole of `hash`, `encode`,
-  `stream`, most of `fs`, and the random generators — had no row. The gate that was cited as
+  "416 aliases"; the header defines 501. Sixty-one `xcv_` names - the whole of `hash`, `encode`,
+  `stream`, most of `fs`, and the random generators - had no row. The gate that was cited as
   preventing this compares the alias header with the public headers and never reads the appendix,
   which is exactly why the appendix drifted. Both language versions now carry all 501 rows and say
   where the number comes from.
@@ -695,7 +700,7 @@ behaviour is unchanged — no function was added, removed, or altered.
   one.
 
 - **`bench-float` no longer claims to be float-only.** It has been running `test_bench_primitives`
-  — hashes, encoders and generators — for as long as that test has existed.
+  - hashes, encoders and generators - for as long as that test has existed.
 
 - **The freestanding guide lists the three float sources it compiles** (`float_decimal.c`,
   `float_parse.c`, `float_format.c`), and the module table now has rows for `float_parse.h` and
@@ -707,17 +712,17 @@ behaviour is unchanged — no function was added, removed, or altered.
   said only functions taking an allocator can allocate, and chapter 5's measured table showed a bare
   `0` under `malloc()`. Both now state the bound.
 
-- **The Korean mirror carries the nine sections it was missing** — five in `manual-ko.md`, including
+- **The Korean mirror carries the nine sections it was missing** - five in `manual-ko.md`, including
   the reading-order table and the parts/prerequisites map, and four "why" sections in chapter 8.
 
 ### Added
 
-- **`tests/test_docs_test_catalog` — a gate for the test catalog.** Every test registered in
+- **`tests/test_docs_test_catalog` - a gate for the test catalog.** Every test registered in
   `nob.c` must have a `TEST.md` entry, and the catalog must be one-to-one with `tests/test_*.c`.
   `TEST.md` claimed its counts were checked against `nob.c`; nothing checked them, and they had
   drifted in both directions. The claim is now true.
 
-## [2026-07-23] — proven_c_lib-v26.07.23a
+## [2026-07-23] - proven_c_lib-v26.07.23a
 
 Operating-convention cleanup. No library code changed; `src/` and `include/` are identical
 to v26.07.20g apart from the version constants. The change is to the project's own process
@@ -727,7 +732,7 @@ docs, which had accumulated redundancy and one stale claim.
 
 - **The release checklist and the G7 gate description now name `README-ko.md` explicitly.**
   `CHECKLIST.md` and `docs/DOCUMENTING.md` still said to sync "`README.md` (both language
-  halves)" — wording left over from when the README was one bilingual file. The README has
+  halves)" - wording left over from when the README was one bilingual file. The README has
   since been split into `README.md` (English) and `README-ko.md` (Korean), and the actual
   gate (`test_docs_version_sync`) already checks them separately; only the prose lagged. It
   now matches the gate. `docs/operations/README.md` likewise names both READMEs in its
@@ -743,9 +748,9 @@ docs, which had accumulated redundancy and one stale claim.
 - **Stale reference to a retired local file** in `docs/BACKLOG.md` (it named a second
   gitignored queue that no longer exists).
 
-## [2026-07-20] — proven_c_lib-v26.07.20g
+## [2026-07-20] - proven_c_lib-v26.07.20g
 
-The provenance section answers the fair objection — "every example is contrived" — instead of
+The provenance section answers the fair objection - "every example is contrived" - instead of
 dodging it. No library code changed; `src/` and `include/` are identical to v26.07.20f apart from
 the version constants.
 
@@ -754,8 +759,8 @@ the version constants.
 - **An honest section on why the runnable examples look artificial**, because they have to. A
   compiler only exploits provenance when it can *see* where a pointer came from, and that
   visibility is exactly what a small example has and a realistic one hides behind a `malloc` or a
-  function call. Every realistic idiom that reconstructs pointers by arithmetic — tagged pointers,
-  XOR linked lists, a `refcount` header reached through `data[-1]`, a `uintptr_t` round trip — was
+  function call. Every realistic idiom that reconstructs pointers by arithmetic - tagged pointers,
+  XOR linked lists, a `refcount` header reached through `data[-1]`, a `uintptr_t` round trip - was
   compiled at `-O2`/`-O3` and **all produced the correct answer**, because the model WG14 chose
   (PNVI-ae-udi, exposed addresses) was designed to keep those idioms working. The dangerous part is
   that "mostly works": the rule is still in force and only waits for enough visibility.
@@ -764,41 +769,41 @@ the version constants.
   with an off-by-count loop that walks a pointer derived from `head[]` past its end. Compiled on the
   build machine, it prints `448` at `-O0` (reads out of bounds into adjacent memory) and `64` at
   `-O2` (the compiler knows the pointer came from a 64-element array and silently drops 192 of the
-  256 iterations — no warning). Neither is the sum the author intended, and the two disagree by
+  256 iterations - no warning). Neither is the sum the author intended, and the two disagree by
   optimisation level alone. This is the shape a real provenance bug ships in: not a reproducible
-  crash, but a correct-looking function with an expiry date set by the toolchain — and the argument
+  crash, but a correct-looking function with an expiry date set by the toolchain - and the argument
   for keeping bounds *with* the data, where "process both buffers as one" cannot be written by
   accident.
 
 Mirrored in `README-ko.md` in 합니다체.
 
-## [2026-07-20] — proven_c_lib-v26.07.20f
+## [2026-07-20] - proven_c_lib-v26.07.20f
 
 The provenance section now opens with the shock instead of the definition. No library code changed
-— `src/` and `include/` are identical to v26.07.20e apart from the version constants.
+-- `src/` and `include/` are identical to v26.07.20e apart from the version constants.
 
 ### Changed
 
 - **The first provenance example is now a runnable program that prints its own contradiction.** The
-  previous lead — `int *p = a + 4;` with a comment — asked the reader to take the point on faith and
+  previous lead - `int *p = a + 4;` with a comment - asked the reader to take the point on faith and
   invited the reaction "so what?". It is replaced by a complete program whose `-O2` output is
   `*p = 11, *q = 2`: two pointers holding a bit-for-bit identical address (checked with `memcmp`),
   where dereferencing one gives `11` and the other gives `2`. **One address, two values**,
-  deterministically, every run — because the compiler tracks that `p` came from `x` and keeps `y` in
+  deterministically, every run - because the compiler tracks that `p` came from `x` and keeps `y` in
   a register. Verified on the build machine (GCC 14.2), stable across `-O2` and `-O3`.
 
 - **The section leads with that program and the "two rules" contrast references back to it**, rather
   than showing the same provenance bug twice. The strict-aliasing example and the
   `-fno-strict-aliasing` distinguishing table are unchanged.
 
-- The README is honest that GCC *warns* about the `&x + 1` store in the lead example — and
+- The README is honest that GCC *warns* about the `&x + 1` store in the lead example - and
   miscompiles it anyway, which is more unsettling than a silent one, not less.
 
 Mirrored in `README-ko.md` in 합니다체.
 
-## [2026-07-20] — proven_c_lib-v26.07.20e
+## [2026-07-20] - proven_c_lib-v26.07.20e
 
-The provenance section is corrected and made honest. No library code changed — `src/` and
+The provenance section is corrected and made honest. No library code changed - `src/` and
 `include/` are identical to v26.07.20d apart from the version constants.
 
 ### Fixed
@@ -814,56 +819,56 @@ The provenance section is corrected and made honest. No library code changed —
 
 - **A reproducible provenance miscompilation, verified on the build machine.** Two `int *`
   pointers, no type punning, only the origin differs: at `-O1` a write through `&x + 1` reaches
-  `y`; at `-O2` the same write, to a bit-for-bit identical address, does *not* — the compiler keeps
+  `y`; at `-O2` the same write, to a bit-for-bit identical address, does *not* - the compiler keeps
   `y` in a register because `p` came from `x`. Every number in the README was produced by compiling
   and running the example (GCC 14.2), not asserted.
 
-- **Provenance and strict aliasing, separated and contrasted.** They are two distinct rules — one
-  asks *what type* is at an address, the other *which object* a pointer may reach — and the README
+- **Provenance and strict aliasing, separated and contrasted.** They are two distinct rules - one
+  asks *what type* is at an address, the other *which object* a pointer may reach - and the README
   now proves it: `-fno-strict-aliasing` fixes a strict-aliasing miscompilation and does **nothing**
   for the provenance one. Both bugs are shown, with the exact compiler output and the flag that
   distinguishes them. The strict-aliasing example is also placed in
-  [manual chapter 0 §2](manual/manual-00-start-here.md) as the motivation for `proven_byte_t`.
+  [manual chapter 0 section 2](manual/manual-00-start-here.md) as the motivation for `proven_byte_t`.
 
 - **An honest limit.** The library does **not** claim strict-provenance purity, and the README says
-  why: the intrusive list's `container_of` — `(type *)((proven_byte_t *)ptr - offsetof(...))` —
+  why: the intrusive list's `container_of` - `(type *)((proven_byte_t *)ptr - offsetof(...))` --
   recovers a whole struct from a pointer to one of its members, an idiom the strictest readings of
   the object model have never comfortably blessed and that is nonetheless everywhere real C lives,
   the Linux kernel included. So the library defends the settled, agreed-upon undefined behaviour and
-  treats the unsettled frontier — where a dominant technique sits at odds with the strict model — as
+  treats the unsettled frontier - where a dominant technique sits at odds with the strict model - as
   exactly that. Provenance is the direction it leans, not a finished guarantee.
 
-## [2026-07-20] — proven_c_lib-v26.07.20d
+## [2026-07-20] - proven_c_lib-v26.07.20d
 
-The README explains what the library is *for*. No library code changed — `src/` and `include/`
+The README explains what the library is *for*. No library code changed - `src/` and `include/`
 are identical to v26.07.20c apart from the version constants.
 
 ### Changed
 
 - **`README.md` and `README-ko.md` rewritten for a reader who has just finished one C book.**
-  343 → 567 lines. The previous README opened with a feature list; this one opens with the
-  problems a beginner has already hit — `strcpy` not knowing the destination size, `malloc`'s
-  ignorable `NULL`, `printf("%d", 3.0)` compiling — and works outward from there.
+  343 -> 567 lines. The previous README opened with a feature list; this one opens with the
+  problems a beginner has already hit - `strcpy` not knowing the destination size, `malloc`'s
+  ignorable `NULL`, `printf("%d", 3.0)` compiling - and works outward from there.
 
 - **The name is explained, and it is not what it looks like.** `proven` comes from **provenance**,
-  not from *prove*. The new section explains provenance as C's memory model uses it — a pointer
+  not from *prove*. The new section explains provenance as C's memory model uses it - a pointer
   carries the identity of the storage it came from, so two pointers can hold the same value and
-  still not be interchangeable — with a worked example and the WG14 Technical Specification
-  ([N2577](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n2577.pdf) →
+  still not be interchangeable - with a worked example and the WG14 Technical Specification
+  ([N2577](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n2577.pdf) ->
   [N3005](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3005.pdf), PNVI-ae-udi), stated
   accurately as a TS pending publication rather than as part of C23.
 
   It also records why the library exists at all: the author met strict aliasing and provenance
   late, found that C's rules about memory are considerably stricter than the mental model he had
-  been carrying, and concluded — **precisely because he does not hold those rules reliably while
-  writing ordinary code** — that they belong in a library and in conventions visible in every
+  been carrying, and concluded - **precisely because he does not hold those rules reliably while
+  writing ordinary code** - that they belong in a library and in conventions visible in every
   signature rather than in a programmer's attention. That `proven` also happens to mean *tested*
   is a coincidence of two unrelated Latin roots, and the accident describes the project better
   than the intention did.
 
 - **"C is not portable assembly" is argued rather than asserted.** Effective types and strict
   aliasing (memory in C's model *has a type*; assembly has no such concept), provenance, and the
-  fact that undefined behaviour means the standard imposes no requirement at all — not "whatever
+  fact that undefined behaviour means the standard imposes no requirement at all - not "whatever
   the machine does". The summary the section lands on: C is permissive about what you can write
   and strict about what it promises, and the "portable assembly" view conflates the two.
 
@@ -880,17 +885,17 @@ are identical to v26.07.20c apart from the version constants.
 
 ### Fixed
 
-- **`README-ko.md` now uses one register throughout.** It had been mixed — the new material in
+- **`README-ko.md` now uses one register throughout.** It had been mixed - the new material in
   평서체, the older half inconsistent within single sections. It is 합니다체 end to end, with the
   first-person origin story kept personal rather than bureaucratic. Verified: every code fence
   identical to the English modulo Korean comments, and zero 평서체 endings outside code.
 - **Appendix A's Korean mirror** was the one reference chapter still in 경어체; it now matches
-  chapters 1–8, and gained the "this is a lookup table, not reading material" opener the English
+  chapters 1-8, and gained the "this is a lookup table, not reading material" opener the English
   side already had.
 
-## [2026-07-20] — proven_c_lib-v26.07.20c
+## [2026-07-20] - proven_c_lib-v26.07.20c
 
-The manual becomes a book. No library code changed — `src/` and `include/` are identical to
+The manual becomes a book. No library code changed - `src/` and `include/` are identical to
 v26.07.20b apart from the version constants.
 
 ### Added
@@ -898,53 +903,53 @@ v26.07.20b apart from the version constants.
 - **Chapter 0, the on-ramp that did not exist.** Until now the manual's first page was a table of
   fixed-width type aliases and the first runnable program was 126 lines into chapter 1. A reader
   who had finished one introductory C book had nowhere to start, and no glossary for the words the
-  manual used as if they were ordinary C — `view` appeared 288 times, `arena` 115, `trait` 29,
+  manual used as if they were ordinary C - `view` appeared 288 times, `arena` 115, `trait` 29,
   `provenance` 26, none defined at first use.
 
   `manual/manual-00-start-here.md` states who the manual is for, argues why the library exists
-  from five C bugs the reader has already met — `strcpy` not knowing the destination size,
+  from five C bugs the reader has already met - `strcpy` not knowing the destination size,
   `malloc`'s ignorable `NULL`, `printf` believing the format string, `char *` meaning four
-  different ownerships, `qsort`'s untypecheckable comparator — and says what each answer **costs**.
+  different ownerships, `qsort`'s untypecheckable comparator - and says what each answer **costs**.
   It ships a compiled hello-world, the build model, the five contracts that recur on every page, a
-  glossary, and a libc → `proven` map.
+  glossary, and a libc -> `proven` map.
 
 - **A declared reading order.** The chapter order was the header dependency graph and nothing said
   so. `manual.md` now declares six parts with prerequisites and an outcome for each, every chapter
   names what you should have read first, chapter 7 is relabelled Appendix A (a lookup table, not
   reading material), and chapters 3 and 8 state which half of the text material they are.
 
-- **Four new runnable examples** — `ex_00_hello`, `ex_04_list`, `ex_04_ring`, `ex_05_time` — each
+- **Four new runnable examples** - `ex_00_hello`, `ex_04_list`, `ex_04_ring`, `ex_05_time` - each
   compiled and run by the build like the existing eighteen.
 
 ### Changed
 
 - **Every chapter now leads with why the thing exists.** Measured against the manual's own standard
-  — `test_docs_manual_depth`'s 150 words of prose outside tables, headings and fences — sections
+  - `test_docs_manual_depth`'s 150 words of prose outside tables, headings and fences - sections
   meeting it went from **30 of 88 to 67 of 98**. Chapter 1, the entry point, went from 0 of 9 to 6
   of 9.
 
-  Chapter 1 opens on the error model rather than type tables. Chapter 2 opens on the heap — the
-  obvious case — and shows the allocator trait fourth, once you have used three allocators.
+  Chapter 1 opens on the error model rather than type tables. Chapter 2 opens on the heap - the
+  obvious case - and shows the allocator trait fourth, once you have used three allocators.
   Chapter 3 opens on the 1972 decision to end a string with a zero byte. The dynamic array opens on
   the two bugs in the resize line everyone writes by hand. Memory mapping, which had **one word**
   of prose, now explains that its failure modes are signals rather than return values.
 
 - **The hardest material moved out of the second chapter.** Pointer provenance, CAS, ABA, hazard
-  pointers and epoch reclamation are now chapter 6 §3, where the rest of the concurrency subject
+  pointers and epoch reclamation are now chapter 6 section 3, where the rest of the concurrency subject
   is, instead of arriving after six sections of ordinary allocator use.
 
 - **The depth gate's register grew from 7 sections to 26**, so most of the new writing is enforced
   rather than merely applied.
 
-- **The Korean mirror reflects the current English throughout**, chapter 0 included — it never had
-  one. 8,310 → 9,913 lines. Chapter 0 is deliberately written in 경어체 while the reference
+- **The Korean mirror reflects the current English throughout**, chapter 0 included - it never had
+  one. 8,310 -> 9,913 lines. Chapter 0 is deliberately written in 경어체 while the reference
   chapters keep 평서체, and says so in the text.
 
 ### Fixed
 
 - **A code block that had never been compiled by anything.** An indented ```c fence inside a bullet
   list opens a block whose indented closer the extractor cannot see, so it hit end-of-search and
-  `break` — silently skipping that block *and every block after it in the chapter*. In chapter 2 it
+  `break` - silently skipping that block *and every block after it in the chapter*. In chapter 2 it
   was the last section, so nothing followed and nothing showed. `nob.c` now fails on an
   unterminated block instead of breaking out of the loop.
 - **The chapter 1 version excerpt had drifted** and only one of its three lines was checked:
@@ -959,9 +964,9 @@ v26.07.20b apart from the version constants.
 ### Note
 
 Design work only. `docs/RFC-0004-the-manual-as-a-book.md` is the plan this executed, and
-B-025 … B-032 in `docs/BACKLOG.md` record what each phase set out to do.
+B-025 ... B-032 in `docs/BACKLOG.md` record what each phase set out to do.
 
-## [2026-07-20] — proven_c_lib-v26.07.20b
+## [2026-07-20] - proven_c_lib-v26.07.20b
 
 The repository's non-C checks are part of the build now, and the one thing they had ever
 reported turned out to be noise.
@@ -969,8 +974,8 @@ reported turned out to be noise.
 ### Fixed
 
 - **`scripts/project-check.sh` runs from `./nob`, before anything is compiled, and a failure
-  fails the build.** It had been failing continuously since 2026-07-12 — through six releases,
-  v26.07.13g to v26.07.13m — and nobody found out, because it was not part of any command anyone
+  fails the build.** It had been failing continuously since 2026-07-12 - through six releases,
+  v26.07.13g to v26.07.13m - and nobody found out, because it was not part of any command anyone
   ran. This is the same lesson the documentation gates were built on, arriving from the other
   direction: the gates work because the build runs them, and a check the build does not run is a
   check that stops being true without telling anyone.
@@ -978,7 +983,7 @@ reported turned out to be noise.
   Four details, each one a defect found while wiring it:
 
   - **Early, not late.** Placed after the tests, a documentation failure surfaces through
-    `test_portability_nob_std_probe` — which invokes this driver as a subprocess and reports
+    `test_portability_nob_std_probe` - which invokes this driver as a subprocess and reports
     *"build driver completes with the fallback compiler standard"*. True, useless, and three
     steps from the cause. Verified in both directions: a planted violation now stops the build
     with **zero tests run** and names the offending file.
@@ -993,55 +998,55 @@ reported turned out to be noise.
 - **The privacy scan's only finding was a false positive, and the example was wrong, not the
   scan.** `manual/examples/ex_03_u8str.c` built a throwaway path under the host's storage-pool
   mount prefix while demonstrating string editing. That prefix is a real private location on the
-  machine this library is developed on — it is where the development container's own root
-  overlay lives — so the scan was right to reject it and the example had no reason to use it.
+  machine this library is developed on - it is where the development container's own root
+  overlay lives - so the scan was right to reject it and the example had no reason to use it.
   Changed to `/srv/etc/fstab` in the example, the chapter that quotes it, and the Korean mirror.
 
   This entry deliberately does not reproduce the old path. The first draft of it did, and **the
-  new gate failed the build on the changelog** — which is the gate working, one commit after it
+  new gate failed the build on the changelog** - which is the gate working, one commit after it
   was installed.
 
   The pattern was **not** narrowed to make the message go away. Weakening a privacy scan to
   silence a collision is how the real leak ships six months later; the example path was
-  arbitrary and the lesson it teaches — inserting a prefix — is unchanged.
+  arbitrary and the lesson it teaches - inserting a prefix - is unchanged.
 
 ### Note
 
 No library code changed. `src/` and `include/` are identical to v26.07.20a apart from the
 version constants; the diff is `nob.c`, one example program, and two manual chapters.
 
-## [2026-07-20] — proven_c_lib-v26.07.20a
+## [2026-07-20] - proven_c_lib-v26.07.20a
 
-A design release. No library code changed — `src/` and `include/` are identical to v26.07.13m
+A design release. No library code changed - `src/` and `include/` are identical to v26.07.13m
 apart from the version constants. What shipped is two RFCs, the work that produced them, and two
 harnesses that make them checkable rather than merely readable.
 
 ### Added
 
-- **RFC-0002 — the view vocabulary, and the splitter every caller writes wrong.** Read Luca Sas's
+- **RFC-0002 - the view vocabulary, and the splitter every caller writes wrong.** Read Luca Sas's
   *Modern C and What We Can Learn From It* (ACCU 2021) against this library. The useful result was
   mostly negative: the talk argues for the owning/non-owning string split, values over
   out-parameters, allocator-as-parameter, a typed formatter extension point and a freestanding
-  posture — and this library already does all of it, in several places more thoroughly than the
+  posture - and this library already does all of it, in several places more thoroughly than the
   talk proposes. The gap it exposes is narrow and entirely on the **non-owning** side. Of the nine
   view operations the talk shows, this library has three.
 
   The centre of it is splitting, and the finding is not that splitting is slow here. It is that
   there is no splitter, so every caller writes one, and **the loop a competent person writes first
-  is wrong on six of six inputs** — including `"a,b,c"`, which silently loses `c`. The measured
-  alternative people actually reach for, one owned string per field, costs 3.4× the time and **one
+  is wrong on six of six inputs** - including `"a,b,c"`, which silently loses `c`. The measured
+  alternative people actually reach for, one owned string per field, costs 3.4x the time and **one
   malloc per field**: a million allocations to read 6.8 MB.
 
-- **RFC-0003 — implementing the view vocabulary.** Exact declarations, every boundary as a table,
+- **RFC-0003 - implementing the view vocabulary.** Exact declarations, every boundary as a table,
   the algorithms with their real complexity, the six files a public symbol costs in this
   repository, and a commit order. Writing it invalidated four things the design document stated
   confidently, and each correction is recorded rather than quietly patched:
 
   - `proven_u8str_view_find` returns `start_offset` for an empty needle, not `NOT_FOUND`, so
     RFC-0002's sketched iterator advances by zero bytes and **hangs**.
-  - The forward search is **not** "shift-or for short needles, Two-Way for long ones" — that is
+  - The forward search is **not** "shift-or for short needles, Two-Way for long ones" - that is
     its entropy-triggered fallback. The default path is a rarest-byte anchored `memchr` scan,
-    `O(n·m)` in the worst case. The reverse-search design no longer rests on a worst-case
+    `O(n*m)` in the worst case. The reverse-search design no longer rests on a worst-case
     guarantee the library does not actually make.
   - `_cmp` cannot inherit NULL-safety from a platform function three layers down: `{NULL, 5}` is
     representable and would compare five bytes against a NULL pointer.
@@ -1051,23 +1056,23 @@ harnesses that make them checkable rather than merely readable.
 - **Two harnesses, so the documents can be checked instead of believed.** Neither is built by
   `./nob`; both compile against the library directly and the command is in the file.
 
-  - `docs/rfc-0002-benchmark.c` reproduces every number in RFC-0002 §2 — the six-of-six wrong
+  - `docs/rfc-0002-benchmark.c` reproduces every number in RFC-0002 section 2 - the six-of-six wrong
     table, ns/field and allocation counts for four splitting strategies, and the
     empty-versus-invalid view demonstration. RFC-0001's measurements were never committed and are
     now unreproducible; this is the correction.
   - `docs/rfc-0003-spec-check.c` **executes RFC-0003's specification** against its own tables: all
     thirteen rows and all three properties, plus 200,000 randomised cases. This is how a hole was
-    found before it shipped — an ill-formed `{NULL,5}` source was yielded as a five-byte field
+    found before it shipped - an ill-formed `{NULL,5}` source was yielded as a five-byte field
     over a NULL pointer, with eleven of twelve rows green.
 
-- **B-018 … B-024 in `docs/BACKLOG.md`**, each with an exit condition reconciled against RFC-0003.
+- **B-018 ... B-024 in `docs/BACKLOG.md`**, each with an exit condition reconciled against RFC-0003.
 
 ### Fixed
 
 - **RFC-0002's two descriptions of the substring search**, corrected in place with a pointer to
   the evidence rather than silently rewritten.
 - **Three backlog exit conditions named APIs the design had already rejected**, which made them
-  unclosable — and B-022's original wording would have led a contributor to ship the exact naming
+  unclosable - and B-022's original wording would have led a contributor to ship the exact naming
   trap RFC-0003 exists to avoid.
 - **A coverage claim that was not itself checked.** `rfc-0003-spec-check.c` claimed to run "every
   row" and "the two properties" while skipping the NULL-argument row and two of the three
@@ -1078,15 +1083,15 @@ harnesses that make them checkable rather than merely readable.
 
 ### Note
 
-Nothing in RFC-0003 is implemented. The `n` separators → `n + 1` fields contract cannot be
+Nothing in RFC-0003 is implemented. The `n` separators -> `n + 1` fields contract cannot be
 revisited once callers depend on it, so it is the decision to settle before code.
 
-## [2026-07-15] — proven_c_lib-v26.07.13m
+## [2026-07-15] - proven_c_lib-v26.07.13m
 
 ### Added
 
 - **The documentation rules are gates now, and the manual's claims are assertions.** You cannot
-  test-drive prose — but almost nothing that has gone wrong in this manual was a matter of taste.
+  test-drive prose - but almost nothing that has gone wrong in this manual was a matter of taste.
   It was a claim that had stopped being true, a symbol that no longer existed, a number that
   disagreed with itself, a section that was listed instead of explained. Each of those is a
   *proposition*, and a proposition can be checked by the build. Five new gates, each one
@@ -1094,8 +1099,8 @@ revisited once callers depend on it, so it is the decision to settle before code
 
   - **A function the manual documents must exist.** `proven_sysio_flush` was deleted and the
     manual went on declaring it as public API, in the present tense. **`proven_pool_free` never
-    existed at all** — the real symbol is a static `proven_pool_free_trait`, and freeing a pool
-    slot goes through the allocator trait — and the manual described it as a callable function for
+    existed at all** - the real symbol is a static `proven_pool_free_trait`, and freeing a pool
+    slot goes through the allocator trait - and the manual described it as a callable function for
     as long as the manual has existed. Fixed, and guarded. A reader who follows the manual and
     gets a *linker* error stops believing the rest of it.
   - **Every public function must be named in the manual** (the streaming directory API went
@@ -1104,13 +1109,13 @@ revisited once callers depend on it, so it is the decision to settle before code
     TEST.md, the manual headings, chapter 1's excerpt and the CHANGELOG's newest entry.
     `CHECKLIST.md` always required it; nothing checked, and `version.h` once sat five releases
     behind the CHANGELOG.
-  - **Every module section must be documented to depth** — real prose, a reference table, the
+  - **Every module section must be documented to depth** - real prose, a reference table, the
     structures the caller declares, a runnable example, and **at least one counter-example**. The
     five modules added this cycle each had an intent paragraph and a table and *not one had a
     counter-example*; they passed every check that existed and were still half-written. The gate
     found two more gaps the moment it existed (the tree walk's entry struct, and its
     borrowed-view trap), both now filled.
-  - **Every factual claim must be true** — the oracle. Twenty assertions drawn straight from
+  - **Every factual claim must be true** - the oracle. Twenty assertions drawn straight from
     sentences the chapters state as fact: the CRC check value the interoperability promise rests
     on, the standard digest, chunk-independence, base64url's missing padding, a refused call
     writing *nothing*, an unseeded generator being inert, a line that exactly fills the buffer
@@ -1120,7 +1125,7 @@ revisited once callers depend on it, so it is the decision to settle before code
   reader could act on, write the assertion for it.** If you cannot state the assertion, the
   sentence is too vague to be in the manual.
 
-- **`docs/DOCUMENTING.md`** — the process (survey → plan → edit → verify) and the gate table, with
+- **`docs/DOCUMENTING.md`** - the process (survey -> plan -> edit -> verify) and the gate table, with
   the failure that motivated each gate. `CHECKLIST.md` points at it.
 
 ### Fixed
@@ -1128,10 +1133,10 @@ revisited once callers depend on it, so it is the decision to settle before code
 - **`proven_pool_free`, a function the manual documented and which does not exist.** Freeing a
   pool slot goes through the allocator trait (`proven_pool_as_allocator`), like every other
   allocator.
-- The tree walk's `proven_fs_walk_entry_t` was never listed, and its borrowed-`path` trap — every
-  entry aliases one reused buffer — had no counter-example.
+- The tree walk's `proven_fs_walk_entry_t` was never listed, and its borrowed-`path` trap - every
+  entry aliases one reused buffer - had no counter-example.
 
-## [2026-07-15] — proven_c_lib-v26.07.13l
+## [2026-07-15] - proven_c_lib-v26.07.13l
 
 A documentation release. The library grew five modules this cycle and the manual had kept up
 only in the sense that it *mentioned* them; this brings them to the depth of the chapters
@@ -1140,17 +1145,17 @@ around them, and finishes the job.
 ### Changed
 
 - **The ownership matrix has a second class.** It used to be a list of things you must destroy,
-  and the sixteen public structs added this cycle destroy nothing — they are a different kind of
+  and the sixteen public structs added this cycle destroy nothing - they are a different kind of
   object, and it needed a name: **caller-owned state**. You declare one, hand its address to a
   constructor, and use the handle you get back. The rule owning objects do not have is now
   stated where a reader meets it before they hit it: *a caller-owned state object must not be
-  copied or moved once a handle has been made from it — the handle holds a pointer into the
+  copied or moved once a handle has been made from it - the handle holds a pointer into the
   struct.* All sixteen are tabulated with what constructs them and their individual sharp edge
   (copying a seeded generator clones the keystream: two "independent" tokens become one token).
 
 - **The new modules got their depth.** Hashing, encoding, randomness, streams and the standard
   streams each gained the three things the older chapters have and they lacked: the structures
-  the caller holds, an API reference table, and — the gap that mattered most — **counter-examples**.
+  the caller holds, an API reference table, and - the gap that mattered most - **counter-examples**.
   The older chapters teach as much through their `Wrong:` blocks as through their prose. Now
   these do too: a keyed hash with a fixed key; CRC-32 used to decide two things are "the same"
   where someone gains by fooling you; a session token from the *reproducible* generator; a
@@ -1160,12 +1165,12 @@ around them, and finishes the job.
 
 - **README** showcases the two capabilities that previously only had a name in the module list:
   hashes/tokens/encoding (with the by-use-case table that is the point of those modules), and
-  streams — reading stdin a line at a time, and printing without a syscall per line. Both
+  streams - reading stdin a line at a time, and printing without a syscall per line. Both
   language halves; both snippets compiled against the library before being pasted.
 
 ### Added
 
-- **`proven_fs_dir_open` / `_next` / `_close` is documented at last** — a whole API that had no
+- **`proven_fs_dir_open` / `_next` / `_close` is documented at last** - a whole API that had no
   section. It is the answer to a real problem (`proven_fs_list` reads the entire directory before
   you see any of it and allocates a string per name: 50,000 entries cost 189 ms, +4.2 MB and
   50,008 allocations), and a reader who never learns it exists reaches for the wrong call on a
@@ -1173,11 +1178,11 @@ around them, and finishes the job.
 - The last eleven functions nothing had ever documented. **Every public function in
   `include/proven/` is now named somewhere in `manual/`.**
 
-## [2026-07-15] — proven_c_lib-v26.07.13k
+## [2026-07-15] - proven_c_lib-v26.07.13k
 
 ### Added
 
-- **`encode.h` — hex and Base64, by use case (RFC 4648).** Once you can hash a thing and draw a
+- **`encode.h` - hex and Base64, by use case (RFC 4648).** Once you can hash a thing and draw a
   random token, you need to write those bytes somewhere that only holds text - a URL, a header,
   a log line. The library had no general encoding; the only bytes-to-text it owned was SHA-256's
   own `to_hex`. Now: `proven_hex_encode`/`_decode` (lowercase, what sha256sum and git print);
@@ -1198,10 +1203,10 @@ around them, and finishes the job.
 
 ### Changed
 
-- **CRC-32 is ~4.2× faster.** The benchmark put it at ~104 MB/s - four times slower than FNV -
+- **CRC-32 is ~4.2x faster.** The benchmark put it at ~104 MB/s - four times slower than FNV -
   because it was the textbook bitwise form (eight shift-and-xor iterations per byte, no table).
   Replaced with the standard 256-entry reflected table, turning eight iterations into one lookup:
-  ~104 → ~432 MB/s, for 1 KiB of `.rodata`. Byte-identical output: the table's `"123456789" →
+  ~104 -> ~432 MB/s, for 1 KiB of `.rodata`. Byte-identical output: the table's `"123456789" ->
   0xcbf43926` check value is verified against it, and it still matches `zlib.crc32`.
 
 ### Fixed (found by the standing adversarial audit of the new encode module)
@@ -1215,10 +1220,10 @@ around them, and finishes the job.
 - **The decoders lacked the `{out == NULL, out_cap > 0}` guard the encoders have**, so that shape
   stored through NULL (SEGV). Both now return `PROVEN_ERR_INVALID_ARG`, matching the encoders.
 
-## [2026-07-15] — proven_c_lib-v26.07.13j
+## [2026-07-15] - proven_c_lib-v26.07.13j
 
-Two regressions the standing audit found in the previous release's own fixes — the place the
-process says the next bugs are (docs/TESTING.md §5.2) — plus a sweep of long-standing doc debt.
+Two regressions the standing audit found in the previous release's own fixes - the place the
+process says the next bugs are (docs/TESTING.md section 5.2) - plus a sweep of long-standing doc debt.
 
 ### Fixed
 
@@ -1231,14 +1236,14 @@ process says the next bugs are (docs/TESTING.md §5.2) — plus a sweep of long-
   Confirmed clean over 2,000,000 rounds of read_line/raw-read interleaving vs a reference.
 
 - **The ChaCha seed scrub compiled to nothing.** `seed_from_entropy` cleared its 32-byte seed
-  with a plain loop, under a comment saying not to leave key material on the stack — but nothing
+  with a plain loop, under a comment saying not to leave key material on the stack - but nothing
   reads the seed afterward, so the stores were dead and the optimiser removed them (at -O1
   entirely). The raw OS entropy persisted in the frame. Replaced with a `secure_zero` that
   writes through a volatile pointer (an observable side effect the optimiser must keep, and
   freestanding-safe, unlike `explicit_bzero`/`memset_s`). Verified in the -O2 disassembly.
 
-- **Documentation debt, swept.** The manual still *declared* `proven_sysio_flush` — deleted a
-  release ago — as public API, and described it in the present tense. "`proven` exposes no
+- **Documentation debt, swept.** The manual still *declared* `proven_sysio_flush` - deleted a
+  release ago - as public API, and described it in the present tense. "`proven` exposes no
   fsync" was still asserted in the manual and an example, false since v26.07.12g. The
   `proven_rng_t` trait's obligation (a degenerate hand-written source makes `proven_rng_below`
   spin) was undocumented. And nothing said why sysio has both a line reader and a token scanner.
@@ -1252,13 +1257,13 @@ process says the next bugs are (docs/TESTING.md §5.2) — plus a sweep of long-
   `linear_search`, `proven_u16str_create_from_view`, and the standard-stream bridges left
   uncovered). No defect surfaced; the surface is no longer unexercised.
 
-## [2026-07-14] — proven_c_lib-v26.07.13i
+## [2026-07-14] - proven_c_lib-v26.07.13i
 
 ### Added
 
 - **The entropy source is a thing you can install.** `random.h` could get entropy from an
   operating system and from nowhere else. That is fine until the target has no operating system
-  — which is precisely the target the ChaCha generator was added for. The bare-metal story
+  - which is precisely the target the ChaCha generator was added for. The bare-metal story
   stopped one step short of being usable: the generator ran anywhere, and there was no way to
   seed it, because `proven_random_bytes` was compiled out of a freestanding build entirely.
 
@@ -1266,8 +1271,8 @@ process says the next bugs are (docs/TESTING.md §5.2) — plus a sweep of long-
   a hard-coded call. `proven_random_set_source(fn, ctx)` installs it:
 
   - **Hosted:** the OS CSPRNG is already installed. You call nothing.
-  - **Bare metal:** a board *has* real entropy — an on-chip TRNG, a ring oscillator, an ADC's
-    noise floor — and the library cannot know where. Hand it over once at startup, and
+  - **Bare metal:** a board *has* real entropy - an on-chip TRNG, a ring oscillator, an ADC's
+    noise floor - and the library cannot know where. Hand it over once at startup, and
     `proven_random_bytes` and `proven_chacha_rng_seed_from_entropy` work unchanged: a few hundred
     bytes of hardware entropy become an endless cryptographic stream that needs nothing further.
 
@@ -1276,7 +1281,7 @@ process says the next bugs are (docs/TESTING.md §5.2) — plus a sweep of long-
 
   There is deliberately **no built-in `RDRAND` / `RNDR` backend**: on a hosted target the OS
   already mixes the CPU's instruction into its own pool, so calling it directly buys nothing and
-  costs you that mixing — and a raw hardware instruction used as the sole source is the
+  costs you that mixing - and a raw hardware instruction used as the sole source is the
   arrangement people have argued about for a decade. It is four lines behind this hook, and then
   the choice is visibly yours.
 
@@ -1284,7 +1289,7 @@ process says the next bugs are (docs/TESTING.md §5.2) — plus a sweep of long-
 
 - **`getentropy` was documented and never called.** The header claimed the OS backend was
   "`getrandom` on Linux, `getentropy` on the BSDs and macOS, `BCryptGenRandom` on Windows". The
-  BSDs and macOS quietly fell through to `/dev/urandom` — which works, but is not what the
+  BSDs and macOS quietly fell through to `/dev/urandom` - which works, but is not what the
   documentation said, and needs a file descriptor that an fd-exhausted process cannot open,
   which is not a moment at which a key derivation should start failing. `getentropy` is now
   actually called there, in 256-byte chunks, with `/dev/urandom` kept as the last resort for
@@ -1296,56 +1301,56 @@ process says the next bugs are (docs/TESTING.md §5.2) — plus a sweep of long-
   board there is no "OS" to seed from, and the old name said there was. The call is otherwise
   unchanged. (Breaking, one release after it was introduced; the library is pre-1.0 and says so.)
 
-## [2026-07-14] — proven_c_lib-v26.07.13h
+## [2026-07-14] - proven_c_lib-v26.07.13h
 
 Two modules that each offered one answer to a question that has several.
 
 ### Added
 
-- **Randomness, by use case — a reproducible generator, a cryptographic one, and the OS.**
+- **Randomness, by use case - a reproducible generator, a cryptographic one, and the OS.**
   `random.h` offered exactly one thing, the OS CSPRNG, and said in its own header that this was
   deliberate: a fast PRNG and a secure one are different tools, and shipping one under a name
   that suggests the other is how insecure tokens get written. The reasoning was right; the
-  conclusion — offer neither — was wrong. A caller who needs a reproducible sequence does not
+  conclusion - offer neither - was wrong. A caller who needs a reproducible sequence does not
   stop needing one. They write `rand()`, or a hand-rolled LCG, and end up with something worse
   than what the library declined to give them. And a bare-metal target, which has no OS CSPRNG
   at all, was left with nothing.
 
   The module is now organised by use case, the way `hash.h` is:
 
-  - `proven_xoshiro256ss_t` — fast and **reproducible**, for simulations, tests, games. The
+  - `proven_xoshiro256ss_t` - fast and **reproducible**, for simulations, tests, games. The
     same seed replays the same run, which is what makes a failing test debuggable. Explicitly
     not secret-grade, and named so it cannot be mistaken for one. Seeded through SplitMix64, so
-    seed 0 — or 1, or 2, which is what callers actually pass — lands on a well-distributed state
+    seed 0 - or 1, or 2, which is what callers actually pass - lands on a well-distributed state
     instead of the all-zero state xoshiro can never leave.
-  - `proven_chacha_rng_t` — cryptographic, and pure arithmetic: it needs no OS once seeded,
+  - `proven_chacha_rng_t` - cryptographic, and pure arithmetic: it needs no OS once seeded,
     which makes it the answer on a bare-metal target and the fast answer for bulk random data
     on a hosted one (no syscall per draw). Verified byte for byte against the standard's
-    keystream, over six random keys and streams of 140 blocks, using OpenSSL as the oracle —
+    keystream, over six random keys and streams of 140 blocks, using OpenSSL as the oracle --
     which was itself first checked against RFC 8439's own vector.
-  - `proven_rng_below` / `_range` / `_f64` / `_shuffle` — unbiased, over any source.
+  - `proven_rng_below` / `_range` / `_f64` / `_shuffle` - unbiased, over any source.
     `x % n` is biased whenever `n` does not divide 2^64, and everyone writes it anyway; these
     use Lemire's multiply-and-reject and an unbiased Fisher-Yates.
 
-  The trait, `proven_rng_t`, is **infallible** by design. That is not a simplification — it is
+  The trait, `proven_rng_t`, is **infallible** by design. That is not a simplification - it is
   where the failure went: asking an operating system for entropy can fail, so that failure is
   confined to seeding, checked once, and every draw downstream is total.
 
   The generators are pure computation, so **`random.h` now works freestanding**; only the OS
   entropy source stays hosted. A board with no OS gets ChaCha20 seeded from its own hardware
-  entropy — not a clock-seeded PRNG pretending to be a CSPRNG.
+  entropy - not a clock-seeded PRNG pretending to be a CSPRNG.
 
 - **The standard streams are writers and readers.** `stream.h` had writers, readers, buffered
   writers and a line reader; `sysio.h` had stdin, stdout and stderr; the two had never been
-  introduced. The cost was concrete: **there was no way to read stdin a line at a time** — the
-  most common thing a program does with it — and the formatter could not be aimed at a standard
+  introduced. The cost was concrete: **there was no way to read stdin a line at a time** - the
+  most common thing a program does with it - and the formatter could not be aimed at a standard
   stream at all, so every `proven_print` was its own write syscall.
 
   `proven_sysio_stdin_lines` + `proven_sysio_read_line` read stdin a line at a time;
   `proven_sysio_stdout_buffered` puts stdout behind a buffered writer, so a thousand small
   prints cost one syscall instead of a thousand, and `proven_fprintln` can finally be aimed at a
   standard stream; `proven_sysio_stdout_writer` / `_stderr_writer` / `_stdin_reader` are the
-  unbuffered bridge. Nothing re-implements what `stream.c` already does — a second buffered
+  unbuffered bridge. Nothing re-implements what `stream.c` already does - a second buffered
   reader would be a second place for the same bug.
 
   Buffering stays opt-in, and nothing registers an `atexit` handler to flush behind your back.
@@ -1353,10 +1358,10 @@ Two modules that each offered one answer to a question that has several.
 
 ### Fixed (found by the standing adversarial audit of both new modules)
 
-The maths came back clean — ChaCha20 byte-identical to OpenSSL over 12 random keys and 10 KB
+The maths came back clean - ChaCha20 byte-identical to OpenSSL over 12 random keys and 10 KB
 streams, xoshiro identical to the upstream reference over 2.56M outputs, Lemire's accept/reject
-exact over 1M cases, the portable 64×64→128 fallback exact over 8M pairs, every chi-square
-inside 2σ. The defects were all in the *failure* paths, and every one handed the caller bytes
+exact over 1M cases, the portable 64x64->128 fallback exact over 8M pairs, every chi-square
+inside 2 sigma. The defects were all in the *failure* paths, and every one handed the caller bytes
 that looked fine.
 
 - **A ChaCha generator that was never usable handed back plausible bytes.** Three defects, two
@@ -1364,26 +1369,26 @@ that looked fine.
   frame's stack as randomness (it was the only entry point in the module without a NULL guard);
   a never-seeded, stack-declared generator has `used == 0`, which the fill path read as "a full
   block of fresh keystream is ready" and copied its own uninitialised `block[]` out; and a
-  generator whose `seed_from_os` *failed* was left zeroed — which produces an all-zero first
+  generator whose `seed_from_os` *failed* was left zeroed - which produces an all-zero first
   block, so the claim "you get zeros, not plausible garbage" was true for exactly 64 bytes, and
   then the counter advanced and block 1 was a normal-looking, **fixed, publicly derivable**
   keystream. `used` alone could not encode usability, because a zero-initialised struct is the
   shape of "never seeded". The generator now carries an explicit seeded marker: unseeded or
-  failed, it is inert — invalid trait, `next()` of 0, `fill()` of zeros.
+  failed, it is inert - invalid trait, `next()` of 0, `fill()` of zeros.
 
 - **`proven_reader_read_line` refused a line that fit.** It documented "a line LONGER than the
-  buffer is `PROVEN_ERR_OUT_OF_BOUNDS`" and enforced something stricter — it rejected any line
+  buffer is `PROVEN_ERR_OUT_OF_BOUNDS`" and enforced something stricter - it rejected any line
   that *filled* the buffer. It had to, because it answered "too long" before attempting a fill,
   and a fill cannot tell "buffer full" from "source ended". But a full buffer means one of three
   things and only one is an error: the next byte is the newline that ends the line; the source
   has ended and what is held IS the final line; or the line really is too long. The middle case
-  was data loss, and not exotic — **a 4-byte file with no trailing newline, read through a
+  was data loss, and not exotic - **a 4-byte file with no trailing newline, read through a
   4-byte buffer, came back `OUT_OF_BOUNDS` with its entire contents unreachable.** One byte of
   lookahead tells the three apart, so the documented rule is now the enforced one.
 
 - **`proven_sysio_out_t` / `_lines_t` contained a pointer to themselves**, so copying one
-  dangled (ASan: heap-use-after-free). `proven_sysio_read_line` takes its state *by pointer* —
-  the shape that says "relocatable" — so it now re-binds the inner reader on every call, making
+  dangled (ASan: heap-use-after-free). `proven_sysio_read_line` takes its state *by pointer* --
+  the shape that says "relocatable" - so it now re-binds the inner reader on every call, making
   the implied contract true. The writer states cannot do that, and the header now says plainly
   that they must not be copied or moved once a writer has been made from one.
 
@@ -1400,7 +1405,7 @@ that looked fine.
 - **The README claimed `proven` exposes no fsync.** It has since v26.07.12g
   (`proven_fs_sync`, `proven_fs_write_file_durable`). Corrected in both language halves.
 
-## [2026-07-13] — proven_c_lib-v26.07.13g
+## [2026-07-13] - proven_c_lib-v26.07.13g
 
 The time formatter's two encodings were quietly disagreeing, found and closed by the standing
 adversarial audit, which otherwise came back clean across every remaining module.
@@ -1429,7 +1434,7 @@ adversarial audit, which otherwise came back clean across every remaining module
 
 - **Documentation: the `hash` and `random` modules are now surfaced in `README.md`** (both language
   halves): the module index lists them, the intro sentence names hashing and OS randomness, and the
-  "what it is not" section no longer claims "no cryptographic hashing" — it now scopes the real
+  "what it is not" section no longer claims "no cryptographic hashing" - it now scopes the real
   non-goals (signatures, key exchange, KDFs, authenticated encryption, TLS) around the hash/CSPRNG
   primitives that do exist. The `stream` module is listed too.
 - **`ring.h` and `pool.h` gained contract notes** raised as non-defect observations by the audit:
@@ -1437,14 +1442,14 @@ adversarial audit, which otherwise came back clean across every remaining module
   always threads consistent values), and pool blocks must be freed exactly once and only through
   the owning pool (a double-free is trapped only in debug / `PROVEN_HARDENED` builds).
 
-## [2026-07-13] — proven_c_lib-v26.07.13f
+## [2026-07-13] - proven_c_lib-v26.07.13f
 
 ### Added
 
-- **`{:e}` — scientific float formatting, completing the printf trio.** `{:f}` gives fixed and
+- **`{:e}` - scientific float formatting, completing the printf trio.** `{:f}` gives fixed and
   `{:g}` gives shortest, but neither is `%e`: `{:f}` never shows an exponent and `{:g}` uses one
   only when it is shorter, so there was no way to ask for "always scientific, N digits after the
-  point" — the form you want for an aligned column of magnitudes or to match existing `%e`
+  point" - the form you want for an aligned column of magnitudes or to match existing `%e`
   output. `{:e}` / `{:.Ne}` now render exactly what printf does: mantissa, a signed
   two-digit-minimum exponent, correctly rounded (half-to-even), at any magnitude including the
   smallest subnormal. The correctly-rounded scientific core was already there (the default form
@@ -1462,7 +1467,7 @@ adversarial audit, which otherwise came back clean across every remaining module
   common. The sign is lifted out and the zeros placed after it now, matching printf: `-0003.14`,
   `+0003.14`, `-03.14e+00`.
 
-## [2026-07-13] — proven_c_lib-v26.07.13e
+## [2026-07-13] - proven_c_lib-v26.07.13e
 
 Two defects found while exercising the modules together rather than one at a time - a
 fmt -> file -> scanner -> float round-trip over 20,000 lines, and a fresh audit of the
@@ -1471,7 +1476,7 @@ string modules.
 ### Fixed
 
 - **A float split across the buffered scanner's refill boundary was scanned wrong** - in two
-  invisible ways. If the boundary fell on the exponent, "-3.0448…e" parsed as a valid float
+  invisible ways. If the boundary fell on the exponent, "-3.0448...e" parsed as a valid float
   (the mantissa) and silently dropped the "e-222" that had not arrived: a truncated value
   committed as a success. If it fell on the sign, "-" alone is a parse FAILURE, and the
   scanner dropped the byte and desynced every later scan instead of asking for the rest. An
@@ -1490,9 +1495,9 @@ string modules.
   growth becomes exact-fit. Found by the u16str audit's poisoned-allocator repro; the invariant
   is pinned in tests/test_regression_v26_07.
 
-## [2026-07-13] — proven_c_lib-v26.07.13a
+## [2026-07-13] - proven_c_lib-v26.07.13a
 
-An adversarial audit of the modules that had never had one — the scanner and the float
+An adversarial audit of the modules that had never had one - the scanner and the float
 engine, the containers, and the platform layer. Everything below was **reproduced** before
 it was fixed, and every fix has a regression test that was checked to fail against the
 unfixed source.
@@ -1506,14 +1511,14 @@ Pointing the audit at the code the previous audit had just produced found three 
 in it. That is the point of B-011, made twice in one day.
 
 - **Copying a read-only file worked once and failed forever after.** Carrying the source's
-  mode meant a 0400 destination — and `open(O_WRONLY)` on a 0400 file fails, so the *second*
+  mode meant a 0400 destination - and `open(O_WRONLY)` on a 0400 file fails, so the *second*
   copy could not even open it, returned `PROVEN_ERR_IO`, and left the destination holding its
   old contents. An unwritable destination is made writable first (we are about to overwrite it
-  anyway), the payload is written under 0600, and the real mode goes on at the end — so the
+  anyway), the payload is written under 0600, and the real mode goes on at the end - so the
   contents are still never exposed under a wider mode than the original's.
 
 - **The buffered writer remembered an inner *error* but not an inner *stall*.** A sink that
-  takes nothing and reports no error — every wedged sink looks like this — made
+  takes nothing and reports no error - every wedged sink looks like this - made
   `proven_writer_write` return `PROVEN_ERR_IO` while leaving the writer thinking it was
   healthy, so it went on accepting writes: the receiver got `ABC`, a 27-byte hole, and `XYZ`,
   with the second write reporting success. The flush path had always treated `{OK, 0}` as a
@@ -1523,17 +1528,17 @@ in it. That is the point of B-011, made twice in one day.
   `PROVEN_FS_TYPE_FILE` from `stat`.** The walk stat'd with `AT_SYMLINK_NOFOLLOW`. Two answers
   to the same question is worse than either answer, and a caller filtering a listing on
   `type == FILE` skipped files it could open and read. The walk follows now, exactly as `stat`
-  does; a *dangling* link fails the follow and is still `OTHER`, which is honest — it cannot be
+  does; a *dangling* link fails the follow and is still `OTHER`, which is honest - it cannot be
   opened at all.
 
 - **`proven_writer_from_u8str` had no flush**, so a render that ran out of memory halfway left
-  the string holding a valid, NUL-terminated *prefix* of the output — and `proven_writer_flush`
+  the string holding a valid, NUL-terminated *prefix* of the output - and `proven_writer_flush`
   answered `PROVEN_OK` on it. Found by asking whether every writer implementation keeps the same
   contract, which is the same question that found the pool refusing to free a block.
 
 ### Fixed (second audit round: the new code, the allocators, the filesystem)
 
-- **`close()` failures were thrown away** — and `close()` is the last chance a filesystem
+- **`close()` failures were thrown away** - and `close()` is the last chance a filesystem
   has to say a write did not land. On NFS, CIFS and quota-enforcing filesystems it is the
   *only* chance: the bytes were buffered, `write()` said yes, and the refusal surfaces
   there or nowhere. `proven_fs_write_file` returned `PROVEN_OK` for a file the filesystem
@@ -1547,7 +1552,7 @@ in it. That is the point of B-011, made twice in one day.
   world-readable temp for as long as the write took. A watcher thread stat'ing the temp
   during a 64 MiB rewrite saw `0644`. The mode goes on before the first byte does.
 
-- **`proven_fs_copy` widened permissions.** Copying a 0600 file produced a 0644 one — `cp`
+- **`proven_fs_copy` widened permissions.** Copying a 0600 file produced a 0644 one - `cp`
   does not do that. The source's mode is carried across, and set before the contents go in.
 
 - **A symlink, a FIFO, a socket or a device was reported as `PROVEN_FS_TYPE_FILE`**, which
@@ -1557,7 +1562,7 @@ in it. That is the point of B-011, made twice in one day.
 - **`proven_mmap_sync` on a PRIVATE mapping returned `PROVEN_OK` and persisted nothing.**
   A copy-on-write mapping has nothing to write back. It is `PROVEN_ERR_UNSUPPORTED`.
 
-- **The scanner's rollback wrapped `cursor` and `length` to ~2^64** — a defect introduced by
+- **The scanner's rollback wrapped `cursor` and `length` to ~2^64** - a defect introduced by
   the pipe fix earlier the same day, and the worst kind: the whitespace refill moved the
   cursor *before* the fill that compacts the buffer, so the reported shift exceeded the
   snapshot the rollback subtracts it from. Both indices wrapped by the same amount, so every
@@ -1566,13 +1571,13 @@ in it. That is the point of B-011, made twice in one day.
   whitespace is now stepped over *before* the snapshot, where there is nothing to roll back
   to yet.
 
-- **`{:f}` refused any double above ~1e121** with `PROVEN_ERR_INVALID_FORMAT` — a *bad format
-  string* — because the fixed form was rendered into a 128-byte scratch. The number was fine;
+- **`{:f}` refused any double above ~1e121** with `PROVEN_ERR_INVALID_FORMAT` - a *bad format
+  string* - because the fixed form was rendered into a 128-byte scratch. The number was fine;
   the scratch was not, and no output buffer the caller supplied could help. `{:.60f}` on
   1e308 (370 characters) now renders whole.
 
 - **The buffered reader dropped the bytes of an EOF that carried them.** A reader may return
-  `{PROVEN_ERR_EOF, N}` with N nonzero — the library's own `read_all` does — and the last N
+  `{PROVEN_ERR_EOF, N}` with N nonzero - the library's own `read_all` does - and the last N
   bytes of a file are still bytes. The final line of a file vanished whenever the source
   reported its end and its last bytes in the same breath.
 
@@ -1584,7 +1589,7 @@ in it. That is the point of B-011, made twice in one day.
   is. A size the pool does not serve is `UNSUPPORTED` for the same reason.
 
 - **The allocator trait meant different things per allocator**: `alloc(0)` was `NOMEM` on the
-  heap (a lie — nothing was out of memory) and `PROVEN_OK` with a live pointer on the arena;
+  heap (a lie - nothing was out of memory) and `PROVEN_OK` with a live pointer on the arena;
   `realloc(ptr, 0)` returned NULL on the heap and a non-NULL pointer on the arena, though the
   trait documents NULL; and a pure *shrink* of a non-tail arena block failed with `NOMEM` on a
   full arena, which is an absurd answer to "please use less". All three now answer identically,
@@ -1596,50 +1601,50 @@ in it. That is the point of B-011, made twice in one day.
 ### Fixed
 
 - **The "correctly rounded" float parser was not correctly rounded.** The exact
-  big-integer fallback — the tier whose entire job is to decide, bit for bit, which way a
-  decimal sitting on a rounding boundary goes — built `5^q` for `56 <= q <= 350` by taking
+  big-integer fallback - the tier whose entire job is to decide, bit for bit, which way a
+  decimal sitting on a rounding boundary goes - built `5^q` for `56 <= q <= 350` by taking
   the *Eisel-Lemire* table entry and shifting it left. That entry is a 128-bit mantissa
   **rounded** to 128 bits, and `5^q` is odd, so the shift can never be exact (`q=55`: the
-  table says `…078124`, the truth is `…078125`). The exactness tier was comparing against a
+  table says `...078124`, the truth is `...078125`). The exactness tier was comparing against a
   corrupted power of five. Every exact halfway value in that exponent window broke the tie
   in a fixed direction instead of to even, and any value within ~1e-38 of a boundary came
-  out one ULP wrong — with `PROVEN_OK`. A differential run against glibc found **2,923**
+  out one ULP wrong - with `PROVEN_OK`. A differential run against glibc found **2,923**
   of them. `scan.h` and manual chapter 8 both promise ties-to-even, bit-identical to a
   correct `strtod`; for any input with 20+ significant digits in that range, that promise
   was false. Above the exact table, `5^q` is now multiplied, not looked up.
 
-- **The buffered scanner could not read a pipe** — the one thing it exists for. `read()`
+- **The buffered scanner could not read a pipe** - the one thing it exists for. `read()`
   on a pipe returns whatever has arrived so far; `scanner_fill` treated *any* short read as
   end-of-input and **latched** it. So a token straddling the boundary was committed
   **truncated** (a writer sending `"123"`, a pause, then `"456 789\n"` produced the integer
   **123**, reported as a successful scan), and every later scan returned `PROVEN_ERR_EOF`
   while the rest of the stream sat unread in the pipe forever. Only a zero-byte read is an
-  end of input now — which is what `read()` itself has always meant by it. Regular files hid
+  end of input now - which is what `read()` itself has always meant by it. Regular files hid
   the bug completely: a file read is short only at real EOF.
 
 - **A failed read was reported as a clean end of input** (scanner). `proven_sys_io_read_once`
   reports a failed `read()` as `{PROVEN_ERR_IO, 0}`, and the end-of-input test accepted any
-  zero-byte result — so every `EBADF`, `EIO` and `ECONNRESET` became a tidy EOF. A stream
+  zero-byte result - so every `EBADF`, `EIO` and `ECONNRESET` became a tidy EOF. A stream
   that broke halfway through was indistinguishable from one that finished.
 
-- **A map with churn grew forever.** `remove()` cannot free a bucket — an open-addressed
-  table needs the tombstone — so `used` only ever rises, and the rehash it triggers doubled
+- **A map with churn grew forever.** `remove()` cannot free a bucket - an open-addressed
+  table needs the tombstone - so `used` only ever rises, and the rehash it triggers doubled
   the capacity **unconditionally**, even when the live count had not moved. That is every
   cache, every session table, every work queue. Measured: 100 live entries, two million
-  operations, capacity **1,048,576**, **33 MB** held. Not a leak — every byte reachable,
-  every byte freed at destroy — which is precisely why no leak checker ever mentioned it.
+  operations, capacity **1,048,576**, **33 MB** held. Not a leak - every byte reachable,
+  every byte freed at destroy - which is precisely why no leak checker ever mentioned it.
   The rehash now grows only when the *live* set needs the room, and otherwise reclaims
   tombstones at the same capacity (same walk, same cost). The 33 MB is now 8 KB.
 
 - **`proven_u8str_append_grow` of an empty view left the string unterminated.** The grow
-  allocated the block, then delegated to `append`, which returns early on an empty view —
+  allocated the block, then delegated to `append`, which returns early on an empty view --
   before sealing the NUL. `as_cstr()` is documented as always terminated, and it read
   straight off the end of a fresh heap block (ASan confirms). `proven_u16str_append_grow`
   had the identical bug. The seal now happens where the block is allocated, as `reserve()`
   has always done.
 
 - **The sort handed the comparator a misaligned element.** `insertion_sort` held the moving
-  element in a `proven_byte_t[128]` — alignment **1** — and passed its address to the
+  element in a `proven_byte_t[128]` - alignment **1** - and passed its address to the
   caller's comparator, which reads it as the element type. For any over-aligned element that
   is a misaligned typed access: UB, flagged by UBSan at every optimisation level, and a fault
   on a strict-alignment target. It never crashed on x86, which is why it survived. The scratch
@@ -1647,14 +1652,14 @@ in it. That is the point of B-011, made twice in one day.
   which only ever shows the comparator real array elements.
 
 - **A fixed-buffer writer that had overflowed reported success on flush**, because it had no
-  flush function at all — `proven_writer_flush` returned `PROVEN_OK` for it. "Render, render,
+  flush function at all - `proven_writer_flush` returned `PROVEN_OK` for it. "Render, render,
   render, check the flush" is what every caller does, and it was told a buffer that had refused
   half the output was fine. It reports the overflow now, and a later chunk that *would* fit is
   refused as well: writing it would land it after the hole.
 
 - **A buffered writer that had failed reported success on the next flush.** The failing
   write emptied nothing into the buffer, so `flush` found nothing to fail on and answered
-  `PROVEN_OK` — and "write, write, write, check the flush", which is how almost everyone
+  `PROVEN_OK` - and "write, write, write, check the flush", which is how almost everyone
   uses a buffered writer, reported success on a stream missing every byte. Reproduced
   against `/dev/full`. The writer is sticky now: once it has lost bytes, every later write
   and flush returns the original error.
@@ -1667,26 +1672,26 @@ in it. That is the point of B-011, made twice in one day.
 
 - **The scan engine can say "I ran out of input" (`proven_scan_t::needs_more`).** On a
   complete view, "the input ran out" and "the input is wrong" are the same fact, so the
-  engine reported both as a malformed input — and the buffered scanner on top of it had no
+  engine reported both as a malformed input - and the buffered scanner on top of it had no
   way to tell them apart. Over a stream they are *opposite* facts: a pipe that delivered
   `-` and then, 150 ms later, `12` produced `PROVEN_ERR_INVALID_ARG`, and `key=` against a
   pipe that had so far sent `ke` produced `PROVEN_ERR_NOT_FOUND`. Both are now refilled and
-  retried. A wrong byte that is actually present is still an error — the scanner does not
+  retried. A wrong byte that is actually present is still an error - the scanner does not
   wait for input that cannot fix it.
 
 - **`5^q` is built 27 exponents at a time.** The exact fallback multiplied by 5 once per
   unit of exponent below 64, and ran exponentiation-by-squaring over full big integers above
   it. `5^27` is the largest power of five that fits in a `u64`, so `5^350` now costs thirteen
   single-limb multiplies. It matters because the (now correct) exact tier is the only way to
-  build `5^q`: the hard-input parse went 3,117 ns → **1,945 ns**, i.e. correctness cost about
+  build `5^q`: the hard-input parse went 3,117 ns -> **1,945 ns**, i.e. correctness cost about
   6% over the old *wrong* answer rather than 70%.
 
 - **`proven_u8str_append_fmt` renders each argument once, not twice.** The allocation-free
-  fixed-capacity path measured the whole output and then formatted it all over again — for a
+  fixed-capacity path measured the whole output and then formatted it all over again - for a
   double, that is the correctly-rounded decimal engine run twice with the first answer thrown
   away. It writes as it goes now and restores the original length if it fails, so "atomic"
-  still means what it said. Measured: an int/string/int line **254 ns → 155 ns**; a double
-  **545 ns → 277 ns**. Pinned by `tests/test_contract_fmt_atomic`, because atomicity now rests
+  still means what it said. Measured: an int/string/int line **254 ns -> 155 ns**; a double
+  **545 ns -> 277 ns**. Pinned by `tests/test_contract_fmt_atomic`, because atomicity now rests
   on a rollback rather than on never having written.
 
 - **Interior pointers are documented as perishable.** `proven_array_get(_mut)`,
@@ -1703,7 +1708,7 @@ in it. That is the point of B-011, made twice in one day.
 
 - **`map` is HashDoS-resistant by default (B-015).** `map` hashed untrusted string keys with
   non-keyed FNV-1a, so an attacker who controls the keys could compute collisions offline and
-  flood one bucket — turning the map's O(1) into O(n²) on demand. It now hashes string keys
+  flood one bucket - turning the map's O(1) into O(n^2) on demand. It now hashes string keys
   with **keyed SipHash-2-4 under a per-process secret** drawn once from the OS CSPRNG, exactly
   the switch Python, Rust and the Linux kernel made for their built-in tables. `proven_map_create`
   gives you this safe default; `proven_map_create_trusted` opts into fast FNV for keys your own
@@ -1714,16 +1719,16 @@ in it. That is the point of B-011, made twice in one day.
   a map created in one process hashes a given key differently from the same map in another,
   which is the unpredictability the defence rests on.
 
-- **`proven/random.h` — cryptographically strong OS randomness.** `proven_random_bytes` fills a
+- **`proven/random.h` - cryptographically strong OS randomness.** `proven_random_bytes` fills a
   buffer from the OS CSPRNG (getrandom / getentropy / BCryptGenRandom), returning false where
   there is none rather than handing back weak bytes. No user-visible PRNG: a fast reproducible
   generator and a secure one are different tools, and offering one under the other's name is how
   insecure tokens ship. It is what seeds map's keyed hash, and what any caller needing a key, a
   token, or a nonce should use.
 
-- **`proven/hash.h` — hashing, organised by use case.** lowent's case study needed a
+- **`proven/hash.h` - hashing, organised by use case.** lowent's case study needed a
   content-addressing digest, found proven had no hash of any kind, and hand-wrote BLAKE3-256
-  — "exactly the kind of code that should not be hand-rolled". There is no single "hash", so
+  - "exactly the kind of code that should not be hand-rolled". There is no single "hash", so
   the module gives one primitive per job and names the job: `proven_hash_bytes` (FNV-1a) for
   your own table on trusted input; `proven_hash_keyed` (SipHash-2-4) for a table on *untrusted*
   input, where a non-keyed hash lets an attacker collide every key into one bucket;
@@ -1733,27 +1738,27 @@ in it. That is the point of B-011, made twice in one day.
   all are royalty-free, all are implemented from their specifications rather than copied, and
   each is checked against its standard's own known-answer vectors (`tests/test_unit_hash`) and
   differentially against Python's hashlib/zlib and an independent SipHash over every length to
-  300. The second feature written test-first (`docs/TESTING.md` §5.1).
+  300. The second feature written test-first (`docs/TESTING.md` section 5.1).
 
-- **`proven_fs_walk`** — recursive, pre-order directory iteration that **cannot loop and cannot
+- **`proven_fs_walk`** - recursive, pre-order directory iteration that **cannot loop and cannot
   escape**. The manual had been telling callers to guard against symlink cycles themselves ever
   since the walk learned to follow links; this is the guard. It never descends *through* a
-  symlink (the symlinked directory is still reported — it exists — it is simply not entered),
+  symlink (the symlinked directory is still reported - it exists - it is simply not entered),
   which buys both guarantees at once: a link to an ancestor cannot loop it, and a link anywhere
   else cannot walk it out of the tree you asked about. It also carries the `(dev, ino)` of every
   directory on the current path, for the loops a symlink is not needed for. A directory it cannot
-  read is **reported** — `proven_fs_walk_next` returns that directory's error with the entry
-  naming it, and the walk goes on — because a tree walker that silently skips an unreadable
+  read is **reported** - `proven_fs_walk_next` returns that directory's error with the entry
+  naming it, and the walk goes on - because a tree walker that silently skips an unreadable
   subtree is how a backup misses files and reports success. Memory is bounded by **depth**, not
   breadth: one handle and one `(dev, ino)` per level, plus a single reused path buffer.
 
-  This is the first feature written under the test-first rule (`docs/TESTING.md` §5.1): the
+  This is the first feature written under the test-first rule (`docs/TESTING.md` section 5.1): the
   contract and a failing test in one commit, the implementation in the next, and then the
-  standing adversarial audit (§5.2). Between them they caught, before and after it shipped: the
+  standing adversarial audit (section 5.2). Between them they caught, before and after it shipped: the
   first draft of the contract ("follow, but stop at a cycle") quietly walking all of `/tmp`; a
   300-level tree silently truncated at 256 and reported as a clean end-of-walk; a `readdir()`
   failure reporting the whole path instead of the directory name and a depth one too high; and
-  a **TOCTOU escape** — a directory swapped for a symlink between being listed and being
+  a **TOCTOU escape** - a directory swapped for a symlink between being listed and being
   entered was followed out of the tree, until the descent was made fd-relative and
   `O_NOFOLLOW`. Every one is pinned by a regression test verified to fail against the code
   before its fix.
@@ -1763,7 +1768,7 @@ in it. That is the point of B-011, made twice in one day.
   `tests/test_contract_fmt_atomic`, and an empty-view NUL-seal section in
   `tests/test_regression_v26_07`.
 
-## [2026-07-12] — proven_c_lib-v26.07.12i
+## [2026-07-12] - proven_c_lib-v26.07.12i
 
 Closes `docs/BACKLOG.md` B-005, B-009 and B-010.
 
@@ -1862,7 +1867,7 @@ Closes `docs/BACKLOG.md` B-005, B-009 and B-010.
   characters and returned PROVEN_OK**. The padding is now emitted through the same path
   that already knows how to write N of something without holding N of it.
 
-## [2026-07-12] — proven_c_lib-v26.07.12h
+## [2026-07-12] - proven_c_lib-v26.07.12h
 
 Steps 4-6 of `docs/RFC-0001-streams-and-io.md`: the keystone. Closes B-007 and B-008.
 
@@ -1871,7 +1876,7 @@ Steps 4-6 of `docs/RFC-0001-streams-and-io.md`: the keystone. Closes B-007 and B
 - **`proven_writer_t` and `proven_reader_t`** (`include/proven/stream.h`). There was no
   stream abstraction at all. The formatter's only sink was a `proven_u8str_t`; a file
   was a `proven_file_t`; the two scanners read two other things again. Four types, four
-  function families, no common interface — so you could not write one
+  function families, no common interface - so you could not write one
   `serialize(sink, value)` that worked over both memory and a file, and you could not
   format into a file at all.
 
@@ -1880,12 +1885,12 @@ Steps 4-6 of `docs/RFC-0001-streams-and-io.md`: the keystone. Closes B-007 and B
   bytes you already have; and buffered adapters for each.
 
   **Buffering uses memory you supply**, exactly like `proven_arena_create`. There is no
-  hidden global buffer — which means there is no destructor to flush it for you, and
+  hidden global buffer - which means there is no destructor to flush it for you, and
   you must flush before it goes out of scope. In exchange, the logging path never
   allocates, and a program logging its way out of an out-of-memory condition can still
   log.
 
-- **`proven_fmt_to_writer_impl`, `proven_fprint`, `proven_fprintln`** — format straight
+- **`proven_fmt_to_writer_impl`, `proven_fprint`, `proven_fprintln`** - format straight
   into a writer, through a stack scratch buffer. No allocation.
 
 - **`proven_reader_read_line`.** Reading a file line by line was impossible: the only
@@ -1896,7 +1901,7 @@ Steps 4-6 of `docs/RFC-0001-streams-and-io.md`: the keystone. Closes B-007 and B
   line** (a truncated line handed back as if it were whole is a corruption the caller
   cannot detect).
 
-- `tests/test_unit_stream`, and `manual/examples/ex_05_stream.c` — one serializer
+- `tests/test_unit_stream`, and `manual/examples/ex_05_stream.c` - one serializer
   writing into a string, a fixed buffer and a file, then reading it back line by line.
   Compiled and run by the build.
 
@@ -1904,11 +1909,11 @@ Steps 4-6 of `docs/RFC-0001-streams-and-io.md`: the keystone. Closes B-007 and B
 
 - **`proven_print` no longer allocates.** It built a fresh heap `proven_u8str_t` for
   *every* call: ten thousand log lines meant ten thousand mallocs and ten thousand
-  frees, on the logging path — the one place an allocation is least welcome. It now
+  frees, on the logging path - the one place an allocation is least welcome. It now
   formats into a stack buffer and only reaches for the heap if the line will not fit.
 
-  Measured, 10,000 lines: `malloc()` **10,000 → 0**. A buffered writer over 8 KiB of
-  caller memory takes it further: `write()` **10,000 → 24**, `malloc()` **0**.
+  Measured, 10,000 lines: `malloc()` **10,000 -> 0**. A buffered writer over 8 KiB of
+  caller memory takes it further: `write()` **10,000 -> 24**, `malloc()` **0**.
 
   `proven_print` remains one syscall per line by design. Buffering it would require
   hidden global state, which this library does not have; a caller who wants the 24
@@ -1916,9 +1921,9 @@ Steps 4-6 of `docs/RFC-0001-streams-and-io.md`: the keystone. Closes B-007 and B
 
 ### Changed
 
-- `stream.h` is hosted-only — it sits on `fs`. The freestanding build excludes it.
+- `stream.h` is hosted-only - it sits on `fs`. The freestanding build excludes it.
 
-## [2026-07-12] — proven_c_lib-v26.07.12g
+## [2026-07-12] - proven_c_lib-v26.07.12g
 
 Steps 1-3 of `docs/RFC-0001-streams-and-io.md`. Subtraction first, then the two things
 the library simply could not do.
@@ -1927,14 +1932,14 @@ the library simply could not do.
 
 - **The hand-written syscall assembly.** `platform/proven_sys_io.c` implemented read,
   write and seek in inline assembly, one raw-syscall path per architecture: x86_64,
-  i386, aarch64, plus an opt-in ARM32 path. It bought nothing — `proven_sys_fs.c` in
+  i386, aarch64, plus an opt-in ARM32 path. It bought nothing - `proven_sys_fs.c` in
   the same library already called libc's `open`, `read`, `write` and `close`, so libc
   was always linked and always doing file I/O.
 
   What it cost was real. Three of the four paths could not be verified on a machine
   without the cross-toolchains, which is most machines. And because the console path
   issued raw `syscall` instructions, **standard tracing tooling was blind to every one
-  of this library's console writes** — an LD_PRELOAD interposer counted zero of
+  of this library's console writes** - an LD_PRELOAD interposer counted zero of
   `proven_println`'s ten thousand. It now counts all of them.
 
   Removing it changed no behaviour: forcing every branch into the POSIX fallback passed
@@ -1946,9 +1951,9 @@ the library simply could not do.
 
 - **`proven_fs_seek`, `proven_fs_tell`, `proven_fs_truncate`, `proven_fs_pread`,
   `proven_fs_pwrite`.** None of these existed. Truncating a file meant reading all of
-  it and rewriting the part you kept — an O(n) copy for an O(1) operation.
+  it and rewriting the part you kept - an O(n) copy for an O(1) operation.
 
-  A handle that cannot seek — a pipe, a FIFO, a terminal — returns
+  A handle that cannot seek - a pipe, a FIFO, a terminal - returns
   `PROVEN_ERR_UNSUPPORTED`, **not** `PROVEN_ERR_IO`. Not being seekable is a property
   of the thing, not a failure of the call, and code that adapts to it has to be able to
   tell them apart.
@@ -1957,7 +1962,7 @@ the library simply could not do.
   readers sharing a handle cannot race on a cursor that neither of them moves.
 
 - **`proven_fs_sync`, `proven_fs_sync_dir`, `proven_fs_write_file_durable`.** The
-  library imported no `fsync` and no `fdatasync` — a caller who wanted their bytes on
+  library imported no `fsync` and no `fdatasync` - a caller who wanted their bytes on
   the disk could not ask **at any price**.
 
   `write_file_durable` does the three steps in the only order that works: fsync the
@@ -1965,12 +1970,12 @@ the library simply could not do.
   durability are different promises, and conflating them is how data gets lost:
   `write_file_atomic` guarantees a reader never sees a half-written file, and says
   nothing about a power cut. Syncing the file but not the *directory* leaves a window
-  in which the bytes are safe and the name that points at them is not — which is
+  in which the bytes are safe and the name that points at them is not - which is
   exactly the corruption an atomic write exists to prevent.
 
   It is slow, and it is meant to be. It waits for the storage device, twice.
 
-- `tests/test_unit_fs_position_and_sync` — covers all of it, including the contracts
+- `tests/test_unit_fs_position_and_sync` - covers all of it, including the contracts
   that are easy to get wrong: a FIFO seek is `UNSUPPORTED`, `pread`/`pwrite`/`truncate`
   leave the position alone, growing a file zero-fills, and a durable rewrite still
   preserves the target's permissions and leaves no temp debris.
@@ -1982,17 +1987,17 @@ the library simply could not do.
   what "flush" promised. It now does nothing everywhere, and durability is its own
   explicit call that a caller pays for knowingly.
 
-## [2026-07-12] — proven_c_lib-v26.07.12f
+## [2026-07-12] - proven_c_lib-v26.07.12f
 
 Two audits went looking for weakness in the formatter and the I/O layer. They found
-several things that were quietly wrong — fixed here — and one thing that is missing,
+several things that were quietly wrong - fixed here - and one thing that is missing,
 which is now designed rather than patched: see `docs/RFC-0001-streams-and-io.md`.
 
 ### Fixed
 
 - **`{:08}` was accepted and silently wrong.** The `0` was eaten as the first digit of
-  the width, so `{:08}` on 42 produced `"      42"` — space-padded, eight wide, no
-  error — and `{:08x}` produced `"      2a"`. That is the spelling every C, Python and
+  the width, so `{:08}` on 42 produced `"      42"` - space-padded, eight wide, no
+  error - and `{:08x}` produced `"      2a"`. That is the spelling every C, Python and
   Rust programmer reaches for. A near-miss that is accepted and quietly does the wrong
   thing is worse than one that is rejected. A leading zero now means zero-fill; an
   explicit fill still wins.
@@ -2002,7 +2007,7 @@ which is now designed rather than patched: see `docs/RFC-0001-streams-and-io.md`
   `PROVEN_ERR_INVALID_FORMAT`.
 - **`proven_sysio_flush`'s documentation was a lie.** It claimed to flush an internal
   buffer to the OS. There is no buffer: on POSIX it is a single `ret` instruction, and
-  on Windows it is `FlushFileBuffers` — a full disk sync. One API, two meanings,
+  on Windows it is `FlushFileBuffers` - a full disk sync. One API, two meanings,
   neither of them the promised one. The header now says exactly that, and says not to
   use it.
 - **`proven_arg_f64`'s documentation was wrong twice.** It is not round-half-up (it is
@@ -2017,16 +2022,16 @@ which is now designed rather than patched: see `docs/RFC-0001-streams-and-io.md`
 
 ### Added
 
-- **`docs/RFC-0001-streams-and-io.md`** — the design for what is missing, with the
+- **`docs/RFC-0001-streams-and-io.md`** - the design for what is missing, with the
   measurements behind it. The short version: **there is no stream abstraction.** No
   `proven_writer_t`, no `proven_reader_t`. The formatter's only sink is
   `proven_u8str_t`, so you cannot format into a file; there is no line reader, so you
   cannot read a file line by line without loading all of it; and `proven_println`
   issues **10,000 `write()` syscalls and 10,000 mallocs for 10,000 lines** (stdio: 47
-  syscalls, 0). The logging path allocates — the one place an allocation is least
-  welcome. Seven backlog items (B-004 … B-010) and a ten-step plan, ordered so that
+  syscalls, 0). The logging path allocates - the one place an allocation is least
+  welcome. Seven backlog items (B-004 ... B-010) and a ten-step plan, ordered so that
   each step is useful on its own.
-- `tests/test_regression_fmt_spec_silently_wrong` — pins both silent formatter
+- `tests/test_regression_fmt_spec_silently_wrong` - pins both silent formatter
   defects. Verified to fail against the pre-fix source.
 - **The build now compiles every code block in the manual.** `nob` extracts each `c`
   block, wraps it in a function body, and syntax-checks it. A chapter whose code stops
@@ -2040,11 +2045,11 @@ which is now designed rather than patched: see `docs/RFC-0001-streams-and-io.md`
   the things that are not runnable code (signature listings, struct listings,
   deliberate counter-examples). Closes `docs/BACKLOG.md` B-002.
 
-## [2026-07-12] — proven_c_lib-v26.07.12e
+## [2026-07-12] - proven_c_lib-v26.07.12e
 
 ### Added
 
-- **Manual chapter 8, sections 7-13** — the scanner half of the chapter, which had
+- **Manual chapter 8, sections 7-13** - the scanner half of the chapter, which had
   never been written. The chapter listed thirteen sections and ended at a bare
   `## 7. Scanner data model` heading. Closes `docs/BACKLOG.md` **B-001**.
 
@@ -2065,45 +2070,45 @@ which is now designed rather than patched: see `docs/RFC-0001-streams-and-io.md`
   - Trailing input is **not** an error. The scanner matches what you asked for and
     stops; it does not police what you did not ask about.
 
-- `manual/examples/ex_08_scan_recovery.c` — provokes every scan error code on
+- `manual/examples/ex_08_scan_recovery.c` - provokes every scan error code on
   purpose, including the non-transactional failure. Compiled and run by the build.
-- `tests/test_docs_manual_ch08_contracts` — asserts each of the 18 behaviours
+- `tests/test_docs_manual_ch08_contracts` - asserts each of the 18 behaviours
   chapter 8 states as fact. Prose is where a contract goes to drift; this one
   cannot. A false claim fails the build and names itself.
 
-## [2026-07-12] — proven_c_lib-v26.07.12d
+## [2026-07-12] - proven_c_lib-v26.07.12d
 
 The manual's examples are now programs, the tests are named for what they check,
 and the testing policy says out loud how this project actually develops.
 
 ### Added
 
-- `manual/examples/` — eleven complete programs, one per topic the manual teaches.
+- `manual/examples/` - eleven complete programs, one per topic the manual teaches.
   The build driver compiles and **runs** every one of them, under every sanitizer
   mode. They are written the way a caller writes code: explicit allocator, real
   error handling, a destroy for everything owned.
-- `tests/test_docs_manual_examples` — requires every example the manual prints to
+- `tests/test_docs_manual_examples` - requires every example the manual prints to
   be one of those programs, quoted verbatim; fails the build if a chapter and its
   example disagree, if a chapter quotes an example that does not exist, or if an
   example exists that no chapter shows.
-- `docs/TESTING.md` — the testing policy: the naming scheme, what each test class
+- `docs/TESTING.md` - the testing policy: the naming scheme, what each test class
   is *for*, the rules a new test must satisfy, and an honest account of how this
   project develops. It records plainly that this is not TDD: every commit that
   adds a test also changes source in the same commit, and there is not one where a
   failing test lands first.
-- `docs/BACKLOG.md` — a **tracked** backlog. The repository had `BACKLOGS.md` and
+- `docs/BACKLOG.md` - a **tracked** backlog. The repository had `BACKLOGS.md` and
   `TODO.md`, but both are gitignored: a private queue nobody else can read and no
   commit can reference. Known work that lives on one machine is not tracked work.
 
 ### Changed
 
-- **Tests are renamed for what they check.** `test_phase1` … `test_phase22` encoded
+- **Tests are renamed for what they check.** `test_phase1` ... `test_phase22` encoded
   the order they were written in, which is the one fact about a test nobody needs.
   Every test is now `test_<class>_<subject>`, where the class is one of `unit`,
   `contract`, `regression`, `differential`, `portability`, `stress`, `docs`,
   `bench`. 75 files renamed.
 - **The test catalog has no numbers.** It ran `1..50` with `7a`, `30a`, `30b`,
-  `30c`, `40a` wedged in wherever something new arrived — and five of its entries
+  `30c`, `40a` wedged in wherever something new arrived - and five of its entries
   described files deleted months earlier. The filename is the identifier now, and
   the catalog is grouped by class.
 
@@ -2125,15 +2130,15 @@ and the testing policy says out loud how this project actually develops.
 
 Two items are registered in `docs/BACKLOG.md` rather than rushed:
 
-- **B-001** — manual chapter 8 ends mid-chapter at a bare `## 7. Scanner data
+- **B-001** - manual chapter 8 ends mid-chapter at a bare `## 7. Scanner data
   model` heading. Sections 7-13 are in the table of contents and absent from the
   document: roughly half the chapter, and the half covering the scanner.
-- **B-002** — of the manual's ~190 fenced code blocks, four could be compiled
+- **B-002** - of the manual's ~190 fenced code blocks, four could be compiled
   before this release. Eleven are now real programs; the rest are still sketches
   that reference imaginary helpers. They are being converted chapter by chapter,
   with the mechanism already in place to keep each finished chapter finished.
 
-## [2026-07-12] — proven_c_lib-v26.07.12c
+## [2026-07-12] - proven_c_lib-v26.07.12c
 
 A documentation-currency release, plus the API-surface gap that the sweep turned up.
 
@@ -2203,7 +2208,7 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
   guarantees, in both language halves; the Korean quick start now matches the
   English one.
 
-## [2026-07-12] — proven_c_lib-v26.07.12b
+## [2026-07-12] - proven_c_lib-v26.07.12b
 
 ### Fixed
 
@@ -2275,7 +2280,7 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
   16 bytes instead of swapping a byte at a time. 100k 48-byte structs:
   59.2 ms -> 16.2 ms.
 
-## [2026-07-12] — proven_c_lib-v26.07.12a
+## [2026-07-12] - proven_c_lib-v26.07.12a
 
 ### Fixed
 
@@ -2290,21 +2295,21 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
   correctly, and a regular file that grows mid-read is no longer truncated.
 - Stack buffer overflow formatting a `proven_datetime_t` with a negative year.
   `year` is `proven_i32`, but it was cast to `unsigned long long` before
-  conversion, so `-1` became `18446744073709551615` — twenty digits plus a NUL
+  conversion, so `-1` became `18446744073709551615` - twenty digits plus a NUL
   into a twenty-byte scratch buffer (ASan: stack-buffer-overflow in `itoa_raw`).
   The year now renders with its sign, and the scratch holds any 64-bit value.
 - `proven_sysio_scanner_scan_impl` corrupted the stream when it rolled back a
   failed scan. `scanner_fill` compacts the buffer, but the rollback restored the
   cursor and length captured *before* that compaction, so the restored indices
   described different bytes: one byte was dropped from the front of the stream
-  and one byte — already returned to the file by the rewind — was read twice.
+  and one byte - already returned to the file by the rewind - was read twice.
   The rollback now accounts for how far the buffer moved. On a non-seekable
   input, where the rewind cannot succeed, the bytes already read are kept
   buffered instead of being discarded.
 - `proven_u8str_reserve` and the growth path of the formatter left `ptr[len]`
   uninitialized. Both allocate, and allocators do not return zeroed memory, so
-  reserving on a zero-initialized string — or formatting something that produces
-  no output — broke the NUL seal that `proven_u8str_as_cstr` is documented to
+  reserving on a zero-initialized string - or formatting something that produces
+  no output - broke the NUL seal that `proven_u8str_as_cstr` is documented to
   rely on, and `proven_u8str_is_valid` rejected the result. Both paths now seal
   the terminator.
 - `proven_pool_init` published `bin_cap` before allocating the bin behind it, so
@@ -2325,7 +2330,7 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
   of the API that was missing next to `read_all`.
 - `proven_fs_write_file_atomic`: writes through a sibling temp file and renames
   it over the target, so a concurrent reader never observes a half-written file.
-  Atomic with respect to readers, not durable across power loss — proven exposes
+  Atomic with respect to readers, not durable across power loss - proven exposes
   no fsync, and the header says so.
 - `[[nodiscard]]` on `proven_sysio_scanner_scan_impl` and
   `proven_sysio_scan_chunk_impl`. `proven_sysio_print_impl` is deliberately left
@@ -2336,7 +2341,7 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
 - `proven_sys_mem_realloc` can now grow a block in place. Every allocation used
   to go through `posix_memalign` / `_aligned_malloc`, which cannot be handed to
   `realloc()`, so growth always paid a full copy. Requests at or below
-  `alignof(max_align_t)` — every string, buffer, and byte array in the library —
+  `alignof(max_align_t)` - every string, buffer, and byte array in the library --
   now come from `malloc` and grow through `realloc`, which for large blocks
   remaps pages instead of copying them. Over-aligned requests keep the aligned
   path. Windows keeps every block on the aligned family (`free` and
@@ -2346,7 +2351,7 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
   doubling went from 0.69s to 0.32s (2.1x); 200k small allocations with six
   reallocs each went from 0.05s to 0.035s (1.4x).
 
-## [2026-06-24] — proven_c_lib-v26.06.24b
+## [2026-06-24] - proven_c_lib-v26.06.24b
 
 ### Fixed
 
@@ -2367,7 +2372,7 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
   under `-std=c11` (where it is not a keyword); full gcc build, `strict-error`, and
   `freestanding` gates pass.
 
-## [2026-06-24] — proven_c_lib-v26.06.24a
+## [2026-06-24] - proven_c_lib-v26.06.24a
 
 ### Changed
 
@@ -2392,7 +2397,7 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
 - Moved the internal-only docs (`docs/internal/`: benchmarks, RFC drafts, overhaul
   plans) out of the repository into the private workspace and gitignored the path.
 
-## [2026-06-22] — proven_c_lib-v26.06.22a
+## [2026-06-22] - proven_c_lib-v26.06.22a
 
 ### Added
 
@@ -2404,7 +2409,7 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
   owner/group columns. Verified in `tests/test_phase14_fs_advanced.c` (uid/gid
   equal `getuid()`/`getgid()` for a just-created file on POSIX).
 
-## [2026-06-21] — proven_c_lib-v26.06.21a
+## [2026-06-21] - proven_c_lib-v26.06.21a
 
 ### Fixed
 
@@ -2421,17 +2426,17 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
   chapters. Also corrected the `manual-01` version-macro example, whose
   `STRING`/`NUM`/`SUFFIX` lines had drifted out of sync with each other.
 
-## [2026-06-18] — proven_c_lib-v26.06.18b
+## [2026-06-18] - proven_c_lib-v26.06.18b
 
 ### Added
 
 - `proven_mem_move(dst, dst_cap, src_view)` (`memory.h`): a bounded,
-  overlap-safe byte move with the same guards as `proven_mem_copy` (overflow →
-  `PROVEN_ERR_OUT_OF_BOUNDS` without writing, null with size → `INVALID_ARG`,
-  zero size → no-op). Lets downstream code drop libc `memmove` for overlapping
+  overlap-safe byte move with the same guards as `proven_mem_copy` (overflow ->
+  `PROVEN_ERR_OUT_OF_BOUNDS` without writing, null with size -> `INVALID_ARG`,
+  zero size -> no-op). Lets downstream code drop libc `memmove` for overlapping
   array-element shifts. XCV alias `xcv_mem_move`.
 
-## [2026-06-18] — proven_c_lib-v26.06.18a
+## [2026-06-18] - proven_c_lib-v26.06.18a
 
 ### Added
 
@@ -2465,7 +2470,7 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
   previously-masked result (significand stays 0) without the UB; no change on
   any non-zero input, so formatter output is unchanged.
 
-## [2026-06-17] — proven_c_lib-v26.06.17a
+## [2026-06-17] - proven_c_lib-v26.06.17a
 
 ### Fixed
 
@@ -2483,7 +2488,7 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
   targets with `__int128` (x86-64 output is unchanged). `./nob cross` now passes
   every target, including both Windows link smokes.
 
-## [2026-06-16] — proven_c_lib-v26.06.16x
+## [2026-06-16] - proven_c_lib-v26.06.16x
 
 ### Fixed
 
@@ -2514,7 +2519,7 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
 - Bumped the version to `proven_c_lib-v26.06.16x` and synced the version string
   across `include/proven/version.h`, `README.md`, `TEST.md`, and `manual/`.
 
-## [2026-06-16] — proven_c_lib-v26.06.16w
+## [2026-06-16] - proven_c_lib-v26.06.16w
 
 ### Changed
 
@@ -2527,9 +2532,9 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
 
 ### Changed
 
-- Rewrote `proven_u8str_view_find` from a naive O(n·m) byte loop to a multi-algorithm search that is self-contained (does not rely exclusively on `memchr`) and behaves identically under freestanding. The fast path samples the haystack, anchors on the rarest needle byte, scans with `proven_sys_mem_chr`, and verifies — fast on real text because a typical needle has a rare or absent byte. When the sample shows a low-entropy haystack (small effective alphabet: DNA, binary, long runs), it falls back to a linear, alphabet-independent algorithm: **Shift-Or / bitap** for needles up to 64 bytes, and **Two-Way (Crochemore-Perrin)** for longer needles. The long-needle fallback is compile-time selectable via `PROVEN_U8STR_FIND_LONG` (1 = Two-Way default, 2 = memchr-adaptive); Two-Way was chosen by benchmark (0.97× vs glibc `memmem` on a long-needle/long-verify input where memchr-adaptive is 3.1×). On realistic text the search is 4–30× faster than glibc `memmem`; single-byte search equals `memchr`; low-entropy cases stay at or below `memmem`. Validated for first-match equivalence against host `memmem` over 3,000,000 cases per alphabet (2/4/26 symbols, needles 0–139 bytes) for the dispatch and each forced algorithm, with zero mismatches; ASan/UBSan clean. Benchmark: `docs/internal/benchmarks/20260616-152810-u8str-find-multi-algorithm.md`.
+- Rewrote `proven_u8str_view_find` from a naive O(n*m) byte loop to a multi-algorithm search that is self-contained (does not rely exclusively on `memchr`) and behaves identically under freestanding. The fast path samples the haystack, anchors on the rarest needle byte, scans with `proven_sys_mem_chr`, and verifies - fast on real text because a typical needle has a rare or absent byte. When the sample shows a low-entropy haystack (small effective alphabet: DNA, binary, long runs), it falls back to a linear, alphabet-independent algorithm: **Shift-Or / bitap** for needles up to 64 bytes, and **Two-Way (Crochemore-Perrin)** for longer needles. The long-needle fallback is compile-time selectable via `PROVEN_U8STR_FIND_LONG` (1 = Two-Way default, 2 = memchr-adaptive); Two-Way was chosen by benchmark (0.97x vs glibc `memmem` on a long-needle/long-verify input where memchr-adaptive is 3.1x). On realistic text the search is 4-30x faster than glibc `memmem`; single-byte search equals `memchr`; low-entropy cases stay at or below `memmem`. Validated for first-match equivalence against host `memmem` over 3,000,000 cases per alphabet (2/4/26 symbols, needles 0-139 bytes) for the dispatch and each forced algorithm, with zero mismatches; ASan/UBSan clean. Benchmark: `docs/internal/benchmarks/20260616-152810-u8str-find-multi-algorithm.md`.
 
-## [2026-06-16] — proven_c_lib-v26.06.16v
+## [2026-06-16] - proven_c_lib-v26.06.16v
 
 ### Changed
 
@@ -2545,7 +2550,7 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
 
 ### Fixed
 
-- Canonicalized shortest float output for values just below a power of ten. The digit generators (both Grisu3 and Dragon4) could leave a spurious leading zero with the decimal exponent one too high — e.g. `9.995442674871462e-265` was emitted as `0.9995442674871462e-264` — which round-tripped correctly but was non-canonical and inflated the reported significant-digit count by one. `proven_float_shortest_digits`/`_f32` now strip leading zeros and lower the decimal exponent. Found by a 2.56-billion-value `binary64` differential check against host `strtod` (93 affected values, all near a power of ten); the value, round-trip property, and minimal length are unchanged. The exhaustive `binary32` sweep was unaffected (it had no such cases) and still passes.
+- Canonicalized shortest float output for values just below a power of ten. The digit generators (both Grisu3 and Dragon4) could leave a spurious leading zero with the decimal exponent one too high - e.g. `9.995442674871462e-265` was emitted as `0.9995442674871462e-264` - which round-tripped correctly but was non-canonical and inflated the reported significant-digit count by one. `proven_float_shortest_digits`/`_f32` now strip leading zeros and lower the decimal exponent. Found by a 2.56-billion-value `binary64` differential check against host `strtod` (93 affected values, all near a power of ten); the value, round-trip property, and minimal length are unchanged. The exhaustive `binary32` sweep was unaffected (it had no such cases) and still passes.
 - Made fixed-precision float formatting (`%f`/`%e` via `proven_float_format_f64_policy` and the `{}` formatter) exact and correctly rounded. The previous path used `double`/`long double` arithmetic capped at 18 fractional digits and produced wrong digits for high precision, values at or above 2^64, subnormals, and boundary cases; a differential check against host `snprintf` went from roughly 20% mismatches to zero across 4,000,000 value/precision pairs. The new path is integer-only (no long double), correctly rounds to nearest-even, and supports arbitrary precision up to the big-integer capacity.
 - Fixed an out-of-bounds read in `proven_float_bigint_cmp_shift_left` when the shift was a multiple of 64: the low zero-padding limbs were not compared and the index underflowed. This helper is shared with the decimal parser's exact comparison; the parser's differential fuzz remains at zero mismatches after the fix.
 - Corrected the shortest float formatter to emit the true minimal round-tripping form. The shortest search now generates candidates with the exact digit engine and no longer consults the hand-maintained literal table, several of whose entries were non-minimal (for example the largest subnormal and `FLT_MIN`).

@@ -1,10 +1,10 @@
-# Chapter 1: Foundation — Errors, Types, and Memory Views
+# Chapter 1: Foundation - Errors, Types, and Memory Views
 
-**Part II — The vocabulary every program uses. Prerequisite: [Chapter 0](manual-00-start-here.md).**
+**Part II - The vocabulary every program uses. Prerequisite: [Chapter 0](manual-00-start-here.md).**
 **After this chapter** you can handle every failure this library reports, describe a region of
 memory without losing track of its size, and do arithmetic on sizes that cannot silently wrap.
 
-This chapter covers `types.h`, `error.h`, `memory.h`, `align.h`, `version.h`, and `panic.h` — the
+This chapter covers `types.h`, `error.h`, `memory.h`, `align.h`, `version.h`, and `panic.h` - the
 pieces every other chapter is built out of. Nothing here allocates, and nothing here talks to the
 operating system. It is the shortest chapter that is genuinely required reading.
 
@@ -43,8 +43,8 @@ long v = strtol(s, NULL, 10);  /* wrong: 0 could be the value or the failure */
 ```
 
 The deeper problem is not that these are easy to get wrong. It is that **the type does not say
-anything is possible.** `char *` is the same type whether or not it can be `NULL`, so nothing —
-not the compiler, not a reviewer skimming, not you at 2 a.m. — is prompted to check.
+anything is possible.** `char *` is the same type whether or not it can be `NULL`, so nothing --
+not the compiler, not a reviewer skimming, not you at 2 a.m. - is prompted to check.
 
 `errno` makes it worse by making the error *global and temporary*. It must be read at exactly the
 right moment; any intervening library call may overwrite it; and it is per-thread, so the fix for
@@ -54,7 +54,7 @@ one bug class opened another.
 
 The error is a return value, and it has a type of its own.
 
-When a function's only outcome is success or failure, it returns `proven_err_t` — a plain enum
+When a function's only outcome is success or failure, it returns `proven_err_t` - a plain enum
 where `PROVEN_OK` is `0`:
 
 ```text
@@ -71,14 +71,14 @@ if (!proven_is_ok(s.err)) return;      /* s.value is not a string; do not touch 
 ```
 
 This is the same idea as `Result` in Rust or `std::expected` in C++23, expressed in the only way C
-allows — a struct returned by value. There is no allocation, no indirection, and no hidden control
+allows - a struct returned by value. There is no allocation, no indirection, and no hidden control
 flow. What you give up is the ability to skip error handling silently, which is the point.
 
 Three properties are worth stating explicitly because the rest of the library relies on them:
 
 - **`PROVEN_OK` is zero**, so a result struct zero-initialised with `{0}` starts out meaning
   "success, empty".
-- **Fallible functions are `[[nodiscard]]`** — a C23 attribute that makes the compiler reject code
+- **Fallible functions are `[[nodiscard]]`** - a C23 attribute that makes the compiler reject code
   that throws the return value away. You can still ignore an error, but you have to write
   `(void)` in front of the call and thereby say that you meant it.
 - **Failure is failure-atomic** unless a function documents otherwise: if an operation fails, it
@@ -110,19 +110,19 @@ typedef enum {
 |---|---|---|
 | `PROVEN_OK` | Success. | Carrying on. |
 | `PROVEN_ERR_NOMEM` | The allocator could not provide memory. | Giving up on this operation; the object is unchanged. |
-| `PROVEN_ERR_OUT_OF_BOUNDS` | An index, size, capacity, or range is invalid — including "this does not fit". | Growing the destination, or refusing the input. |
+| `PROVEN_ERR_OUT_OF_BOUNDS` | An index, size, capacity, or range is invalid - including "this does not fit". | Growing the destination, or refusing the input. |
 | `PROVEN_ERR_INVALID_ENCODING` | Encoded text failed validation (hex, Base64). | Rejecting the input as malformed. |
-| `PROVEN_ERR_INVALID_ARG` | A null pointer, an invalid allocator, an impossible mode, a wrong argument count. | Fixing the call — this one usually means a bug in your code, not bad data. |
+| `PROVEN_ERR_INVALID_ARG` | A null pointer, an invalid allocator, an impossible mode, a wrong argument count. | Fixing the call - this one usually means a bug in your code, not bad data. |
 | `PROVEN_ERR_IO` | The OS or device failed the operation. | Retrying, or reporting to the user. |
 | `PROVEN_ERR_NOT_FOUND` | A file, key, substring, or resource does not exist. | Taking the "absent" branch; often not an error at all. |
 | `PROVEN_ERR_INVALID_STATE` | The object's state does not allow this operation. | Fixing the sequence of calls. |
-| `PROVEN_ERR_OVERFLOW` | Integer conversion or size arithmetic overflowed. | Refusing the size; see §4. |
+| `PROVEN_ERR_OVERFLOW` | Integer conversion or size arithmetic overflowed. | Refusing the size; see section 4. |
 | `PROVEN_ERR_UNSUPPORTED` | Unavailable on this platform or build profile. | Taking a different route (e.g. a pipe cannot seek). |
 | `PROVEN_ERR_AGAIN` | Not now; retry later. | Retrying, usually after waiting. |
-| `PROVEN_ERR_EOF` | End of input. | Stopping the read loop — expected, not exceptional. |
+| `PROVEN_ERR_EOF` | End of input. | Stopping the read loop - expected, not exceptional. |
 | `PROVEN_ERR_BUSY` | A queue, lock, or resource is busy. | Backing off. |
 | `PROVEN_ERR_PERMISSION` | Access denied. | Reporting; retrying will not help. |
-| `PROVEN_ERR_INVALID_FORMAT` | A format or scan template is itself malformed. | Fixing the format string — a bug, not bad data. |
+| `PROVEN_ERR_INVALID_FORMAT` | A format or scan template is itself malformed. | Fixing the format string - a bug, not bad data. |
 
 ```text
 static inline int proven_is_ok(proven_err_t err);
@@ -143,7 +143,7 @@ if (!proven_is_ok(s.err)) {
 proven_u8str_destroy(alloc, &s.value);
 ```
 
-Wrong — testing the error as a bare truth value:
+Wrong - testing the error as a bare truth value:
 
 ```text
 proven_result_u8str_t s = proven_u8str_create(alloc, 32);
@@ -155,7 +155,7 @@ if (s.err) {
 }
 ```
 
-Wrong — the mistake this whole design exists to prevent:
+Wrong - the mistake this whole design exists to prevent:
 
 ```text
 proven_result_u8str_t s = proven_u8str_create(alloc, 32);
@@ -164,14 +164,14 @@ proven_u8str_destroy(alloc, &s.value);       /* wrong: destroying what was never
 ```
 
 Reading `.value` before checking `.err` is the one error this convention cannot catch for you. The
-compiler will not complain — the struct exists either way — so it is worth making a habit of
+compiler will not complain - the struct exists either way - so it is worth making a habit of
 writing the check on the line immediately after the call.
 
 ### Worked example: errors as values
 
 This program is compiled and run by the test suite, so it cannot fall out of date.
-It shows the two shapes a fallible call takes — a bare `proven_err_t` when there
-is nothing to hand back, and a `proven_result_*_t` when there is — and why the
+It shows the two shapes a fallible call takes - a bare `proven_err_t` when there
+is nothing to hand back, and a `proven_result_*_t` when there is - and why the
 value inside a result means nothing until you have checked the error beside it.
 
 <!-- example: manual/examples/en/ex_01_errors.c -->
@@ -276,7 +276,7 @@ exactly that reason.
 | `proven_u8`, `proven_u32`, `proven_u64` | Unsigned fixed-width integers | `proven_u8` is **numeric**; use `proven_byte_t` for raw object bytes. |
 | `proven_u16` | 16-bit code unit type | Uses `char16_t` when `<uchar.h>` is available, otherwise `uint_least16_t`. The U16 string APIs use it for UTF-16 code units. |
 | `proven_byte_t` | Byte-level object representation | Alias of `unsigned char`; the type you may legally inspect any object's bytes through. |
-| `proven_size_t` | Size and index type | Alias of `size_t`. Unsigned — see §4 before you subtract two of them. |
+| `proven_size_t` | Size and index type | Alias of `size_t`. Unsigned - see section 4 before you subtract two of them. |
 | `proven_ptrdiff_t` | Pointer difference, signed offset | Alias of `ptrdiff_t`. |
 | `proven_intptr_t`, `proven_uintptr_t` | Pointer-sized integers | Only for explicit pointer-to-integer work, such as the arena's range checks. |
 
@@ -289,9 +289,9 @@ typedef struct {
 
 `proven_result_size_t` returns either a size or an error; `value` is valid only when
 `err == PROVEN_OK`. It is what you get back from partial appends, file reads and writes, and size
-queries — anywhere the answer is "how many", and the operation could fail.
+queries - anywhere the answer is "how many", and the operation could fail.
 
-Wrong — treating a byte as a small number's storage:
+Wrong - treating a byte as a small number's storage:
 
 ```text
 proven_u8 *raw = (proven_u8 *)&some_struct;   /* wrong type for raw inspection */
@@ -309,10 +309,10 @@ are looking at representation rather than at a number.
 A pointer says where something starts and nothing else. Everything C has ever done about the
 "where does it end" half has been a convention layered on top:
 
-- **A NUL terminator**, for strings — which costs an *O(n)* scan every time you want the length,
+- **A NUL terminator**, for strings - which costs an *O(n)* scan every time you want the length,
   cannot represent text containing a zero byte, and produces a buffer overrun the moment the
   terminator is missing.
-- **A separate length parameter**, for everything else — which works right up until someone passes
+- **A separate length parameter**, for everything else - which works right up until someone passes
   the wrong one, because nothing ties the two arguments together.
 
 ```text
@@ -342,10 +342,10 @@ invalid the moment they do. That rule is contract 2 from [Chapter 0](manual-00-s
 
 The three spellings differ only in intent, and the intent is the point:
 
-- `proven_mem_view_t` — **borrowed, read-only.** The `const` is on the pointed-to bytes, so the
+- `proven_mem_view_t` - **borrowed, read-only.** The `const` is on the pointed-to bytes, so the
   compiler enforces it.
-- `proven_mem_mut_t` — **borrowed, writable.** You may write through it; you still do not own it.
-- `proven_mem_t` — **owned.** Somebody must free this with the allocator that produced it. The
+- `proven_mem_mut_t` - **borrowed, writable.** You may write through it; you still do not own it.
+- `proven_mem_t` - **owned.** Somebody must free this with the allocator that produced it. The
   type does not enforce that; it announces it.
 
 And two result wrappers, for the operations that can fail:
@@ -373,21 +373,21 @@ forms on purpose:
 | `proven_mem_mut_slice_unchecked(mut, offset, size)` | Writable sub-slice, **not** validated. | `proven_mem_mut_t`. |
 | `proven_range_contains_ptr(base, cap, ptr, size, out_offset)` | Is this pointer range inside that allocation? Integer address comparison, no pointer arithmetic on unrelated pointers. | `_Bool`. |
 | `proven_memcmp(s1, s2, size)` | Compare raw memory. | Zero if equal; sign by byte order (unsigned). |
-| `proven_mem_copy(dst, dst_cap, src)` | Bounded copy of a view into `dst`. | `PROVEN_OK`; `PROVEN_ERR_OUT_OF_BOUNDS` if it would not fit — **and nothing is written**; `PROVEN_ERR_INVALID_ARG` on a null pointer with a non-zero size. Regions must not overlap. |
+| `proven_mem_copy(dst, dst_cap, src)` | Bounded copy of a view into `dst`. | `PROVEN_OK`; `PROVEN_ERR_OUT_OF_BOUNDS` if it would not fit - **and nothing is written**; `PROVEN_ERR_INVALID_ARG` on a null pointer with a non-zero size. Regions must not overlap. |
 | `proven_mem_move(dst, dst_cap, src)` | As `proven_mem_copy`, but the regions may overlap. | As above. |
 
 The checked form's exact behaviour:
 
-- `view.size > 0 && view.ptr == NULL` → `PROVEN_ERR_INVALID_ARG` (a size with no memory behind it
+- `view.size > 0 && view.ptr == NULL` -> `PROVEN_ERR_INVALID_ARG` (a size with no memory behind it
   is a bug, not an empty view).
-- The requested range falls outside the view → `PROVEN_ERR_OUT_OF_BOUNDS`.
-- `size == 0` → an empty view (`ptr == NULL`, `size == 0`) with `PROVEN_OK`.
+- The requested range falls outside the view -> `PROVEN_ERR_OUT_OF_BOUNDS`.
+- `size == 0` -> an empty view (`ptr == NULL`, `size == 0`) with `PROVEN_OK`.
 
 **Use the checked form by default.** The unchecked form exists for the case where you have already
-proved the range in the lines above — inside a loop whose bounds you computed, for instance — and
+proved the range in the lines above - inside a loop whose bounds you computed, for instance - and
 the second check would be pure cost. That is a real case, and it is narrower than it feels.
 
-Wrong — unchecked slicing on numbers that came from outside:
+Wrong - unchecked slicing on numbers that came from outside:
 
 ```text
 proven_mem_view_t part = proven_mem_view_slice_unchecked(view, user_offset, user_size);
@@ -395,7 +395,7 @@ proven_mem_view_t part = proven_mem_view_slice_unchecked(view, user_offset, user
    overrun from the top of section 3, reintroduced through a safer-looking API. */
 ```
 
-Wrong — rejecting the empty view:
+Wrong - rejecting the empty view:
 
 ```text
 if (!view.ptr) return PROVEN_ERR_INVALID_ARG;   /* wrong: {NULL, 0} is legal */
@@ -418,7 +418,7 @@ if (view.size > 0 && !view.ptr) {
 
 ### Why a multiplication needs a function call
 
-`proven_size_t` is unsigned, and unsigned arithmetic in C does not overflow — it *wraps*, silently
+`proven_size_t` is unsigned, and unsigned arithmetic in C does not overflow - it *wraps*, silently
 and legally, modulo 2^64. That single rule is behind a large fraction of the industry's
 allocation bugs:
 
@@ -430,7 +430,7 @@ items[count - 1] = x;                           /* writes way past the end */
 
 With `count = 2^61` and a 16-byte item, `total` is `0`. `malloc(0)` succeeds. Every subsequent
 write is out of bounds, and nothing anywhere reported an error. The same shape appears whenever a
-size is computed from data that came from outside the program — a file header, a network packet,
+size is computed from data that came from outside the program - a file header, a network packet,
 a user-supplied count.
 
 Subtraction has the mirror problem, and it is easier to hit:
@@ -454,7 +454,7 @@ Three macros that do the arithmetic and tell you whether it fit.
 | `PROVEN_CKD_ADD(res, a, b)` | `a + b` | **true on overflow**, false on success | Only when it fits |
 | `PROVEN_CKD_SUB(res, a, b)` | `a - b` | **true on overflow** (including unsigned underflow) | Only when it fits |
 | `PROVEN_CKD_MUL(res, a, b)` | `a * b` | **true on overflow** | Only when it fits |
-| `PROVEN_SIZE_MAX` | — | The largest value a `proven_size_t` can hold | — |
+| `PROVEN_SIZE_MAX` | - | The largest value a `proven_size_t` can hold | - |
 
 - `res` is a **pointer** to where the answer goes.
 - They return **true on overflow**, false on success. That reads backwards the first time; the
@@ -492,7 +492,7 @@ proven_size_t total = count * sizeof(item_t);   /* wrong: may wrap silently */
 ```
 
 You do not need these for every arithmetic expression in your program. You need them wherever a
-size is **computed from a value you did not choose yourself** — and that is precisely where the
+size is **computed from a value you did not choose yourself** - and that is precisely where the
 bugs are.
 
 ## 5. Alignment
@@ -505,7 +505,7 @@ fault on a misaligned load; x86 merely makes it slow; and either way, C says acc
 through a misaligned pointer is undefined behaviour.
 
 You have not had to think about this, because `malloc` returns memory suitably aligned for
-anything. That guarantee is exactly what disappears the moment you hand out memory yourself — and
+anything. That guarantee is exactly what disappears the moment you hand out memory yourself - and
 handing out memory yourself is what [Chapter 2](manual-02-allocation.md)'s arenas and pools do. An
 arena that bumps a pointer by 13 bytes and hands you the result has just given you a misaligned
 `double`.
@@ -517,7 +517,7 @@ So the helpers here exist for the allocators, and for you if you write one.
 | Macro | Meaning |
 |---|---|
 | `PROVEN_DEFAULT_ALIGNMENT` | The default the library uses when you do not say otherwise. Currently 8. |
-| `PROVEN_MAX_ALIGN` | `alignof(max_align_t)` — enough for any built-in type. |
+| `PROVEN_MAX_ALIGN` | `alignof(max_align_t)` - enough for any built-in type. |
 
 | Function | Purpose | Return |
 |---|---|---|
@@ -539,7 +539,7 @@ proven_err_t err = (aligned == 0) ? PROVEN_ERR_OVERFLOW : PROVEN_OK;
 (void)err;
 ```
 
-Wrong — the classic bit-twiddling version:
+Wrong - the classic bit-twiddling version:
 
 ```text
 proven_size_t aligned = (size + align - 1) & ~(align - 1);   /* wrong: may overflow */
@@ -551,8 +551,8 @@ address *below* where you started.
 
 ### Worked example: views, slicing, and alignment together
 
-The three ideas in this chapter — a view that carries its own length, a slice that
-is checked before it is taken, and a boundary that has to be a power of two —
+The three ideas in this chapter - a view that carries its own length, a slice that
+is checked before it is taken, and a boundary that has to be a power of two --
 only show their point when a program uses them at once. This one keeps a small
 table of fixed-size records in a single block it owns, and then does the four
 things any such program has to do: hand the table to a reader that must not
@@ -563,8 +563,8 @@ from somewhere else even points into the table.
 Two of those are the places C is most often quietly wrong. Moving overlapping
 bytes is not what `proven_mem_copy` promises, so it has a separate call,
 `proven_mem_move`. And comparing two pointers with `<` when they may belong to
-different objects is undefined behaviour — the compiler is entitled to assume it
-never happens — so "is this pointer inside my buffer?" is asked with
+different objects is undefined behaviour - the compiler is entitled to assume it
+never happens - so "is this pointer inside my buffer?" is asked with
 `proven_range_contains_ptr` rather than with `>=` and `<`.
 
 This program is compiled and run by the test suite, so it cannot fall out of date.
@@ -717,7 +717,7 @@ int main(void) {
 }
 ```
 
-Wrong — the same deletion written with the copy that forbids overlap:
+Wrong - the same deletion written with the copy that forbids overlap:
 
 ```text
 /* rows 2..3 moved down onto row 1: source and destination overlap */
@@ -728,7 +728,7 @@ proven_mem_copy(table.ptr + ROW_SIZE, table.size - ROW_SIZE, tail);   /* wrong *
 will simply be free to copy in whatever order is fastest, and on the day that
 order changes the table quietly ends up holding two copies of one row.
 
-Wrong — the bounds question asked with plain pointer comparison:
+Wrong - the bounds question asked with plain pointer comparison:
 
 ```text
 if (ptr >= table.ptr && ptr + size <= table.ptr + table.size) { /* wrong */ }
@@ -762,7 +762,7 @@ void proven_set_panic_handler(proven_panic_handler_t handler);
 | API | Purpose | Notes |
 |---|---|---|
 | `proven_panic(msg)` | Raise a panic. Dispatches to the installed handler. | Called by the library's `_or_panic` APIs; you can call it too. |
-| `proven_set_panic_handler(handler)` | Install a handler. | Pass `NULL` to restore the default. Not thread-safe — install it during start-up, before other threads exist. |
+| `proven_set_panic_handler(handler)` | Install a handler. | Pass `NULL` to restore the default. Not thread-safe - install it during start-up, before other threads exist. |
 | `proven_panic_handler_t` | `void (*)(const char *msg)` | The handler must not return. |
 
 The default handler traps: `__builtin_trap()` on GCC and Clang, and an infinite loop on any other
@@ -786,7 +786,7 @@ proven_set_panic_handler(my_panic);   /* pass NULL to restore the default */
 **A panic handler must not return.** If it does, the `_or_panic` family has nothing to give back
 and the validity of its result is not guaranteed.
 
-Wrong — a handler that returns:
+Wrong - a handler that returns:
 
 ```text
 static void my_panic(const char *msg) {
@@ -795,7 +795,7 @@ static void my_panic(const char *msg) {
 }
 ```
 
-Wrong — reaching for `_or_panic` in ordinary code:
+Wrong - reaching for `_or_panic` in ordinary code:
 
 ```text
 proven_mem_mut_t block = proven_arena_alloc_or_panic(&arena, n);
@@ -816,13 +816,13 @@ Compile-time identification, for diagnostics and for code that must adapt to the
 #define PROVEN_VERSION_NUM    PROVEN_VERSION_ENCODE(PROVEN_VERSION_MAJOR, PROVEN_VERSION_MINOR, PROVEN_VERSION_PATCH)
 ```
 
-The version is semantic — `MAJOR.MINOR.PATCH`, from v0.0.1. A PATCH release fixes or documents
+The version is semantic - `MAJOR.MINOR.PATCH`, from v0.0.1. A PATCH release fixes or documents
 and changes nothing a caller has to; a MINOR release adds without breaking an existing call; a
 MAJOR release may break one. While MAJOR is 0 the API may still move between minors.
 
 `PROVEN_VERSION_STRING` is what you print in a build report or a `--version` flag. The three
 numbers are for code that must adapt to the library version, and `PROVEN_VERSION_NUM` folds them
-into one integer for `#if` — compare it with `PROVEN_VERSION_ENCODE`, never with a literal:
+into one integer for `#if` - compare it with `PROVEN_VERSION_ENCODE`, never with a literal:
 `#if PROVEN_VERSION_NUM >= PROVEN_VERSION_ENCODE(0, 1, 0)`.
 
 Releases before v0.0.1 were numbered by date (`v26.MM.DDx`), and `PROVEN_VERSION_NUM` was that
@@ -868,7 +868,7 @@ if (offset <= view.size && size <= view.size - offset) {
 ```
 
 Note the shape of that test. `size <= view.size - offset` is written that way, rather than the more
-natural `offset + size <= view.size`, precisely because of §4: the sum can wrap and the difference
+natural `offset + size <= view.size`, precisely because of section 4: the sum can wrap and the difference
 cannot, given the `offset <= view.size` check that precedes it.
 
 Wrong:
@@ -903,6 +903,6 @@ if (view.size > 0 && !view.ptr) {
 ### Where to go next
 
 [Chapter 2](manual-02-allocation.md) is where these types start doing work: allocators produce
-`proven_mem_mut_t`, arenas use the alignment helpers from §5, and every growable container in the
-library takes the allocator as a parameter for the reasons §1 gave for taking the error as a
-return value — the cost should be visible in the signature.
+`proven_mem_mut_t`, arenas use the alignment helpers from section 5, and every growable container in the
+library takes the allocator as a parameter for the reasons section 1 gave for taking the error as a
+return value - the cost should be visible in the signature.

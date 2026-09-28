@@ -1,12 +1,12 @@
-# Chapter 2: Allocation — Heap, Arenas, Pools, and Buffers
+# Chapter 2: Allocation - Heap, Arenas, Pools, and Buffers
 
-**Part II — The vocabulary every program uses. Prerequisite: [Chapter 1](manual-01-foundation.md).**
+**Part II - The vocabulary every program uses. Prerequisite: [Chapter 1](manual-01-foundation.md).**
 **After this chapter** you can choose an allocation strategy deliberately instead of reaching for
 `malloc` by reflex, and you will know which of the three costs you are paying.
 
 This chapter covers `heap.h`, `arena.h`, `pool.h`, `allocator.h`, and `buffer.h`. The
 thread-safety and pointer-provenance material that used to be section 7 here now lives in
-[Chapter 6](manual-06-execution-and-platform.md), with the rest of the concurrency subject — it
+[Chapter 6](manual-06-execution-and-platform.md), with the rest of the concurrency subject - it
 was the hardest material in the book sitting in one of the first chapters.
 
 ## Table of contents
@@ -37,7 +37,7 @@ That has four consequences you have probably met:
   general-purpose allocations and ten thousand frees. A bump allocator would do one. There is no
   way to say so without rewriting every call.
 - **You cannot test the failure path.** Making `malloc` fail on demand means intercepting it
-  globally — `LD_PRELOAD`, a linker trick, a `#define malloc my_malloc` that also catches the
+  globally - `LD_PRELOAD`, a linker trick, a `#define malloc my_malloc` that also catches the
   library's internal calls. Meanwhile the branch you most want to test is the one that runs when
   memory runs out.
 - **You cannot use it at all where there is no heap.** Firmware, a kernel, a bootloader: no
@@ -65,7 +65,7 @@ The same code now works with three different strategies, chosen by the caller:
 | Allocator | Get one from | Frees individually? | Use it when |
 |---|---|---|---|
 | **Heap** | `proven_heap_allocator()` | Yes | The general case. Objects with unrelated lifetimes. |
-| **Arena** | `proven_arena_create(backing)`, then `proven_arena_as_allocator(&a)` | **No** — free is a no-op; you reset or destroy the whole thing | Many allocations that all die at the same moment: one request, one frame, one parse. |
+| **Arena** | `proven_arena_create(backing)`, then `proven_arena_as_allocator(&a)` | **No** - free is a no-op; you reset or destroy the whole thing | Many allocations that all die at the same moment: one request, one frame, one parse. |
 | **Pool** | `proven_pool_init(&p, base, size, align, bin_cap)`, then `proven_pool_as_allocator(&p)` | Yes, into a free list | Many objects of **one fixed size**, allocated and freed repeatedly. |
 
 Start with the heap. Reach for the other two when you have a reason, and the reason is usually a
@@ -78,7 +78,7 @@ proven_allocator_t proven_heap_allocator(void);
 ```
 
 This is `malloc`, `realloc` and `free` wearing the library's interface. It is what you should use
-unless you have a specific reason not to, and there is nothing clever about it — which is the
+unless you have a specific reason not to, and there is nothing clever about it - which is the
 point. Every example in this manual that does not have a reason to do otherwise uses it:
 
 ```c
@@ -92,7 +92,7 @@ if (!proven_is_ok(s.err)) {
 proven_u8str_destroy(heap, &s.value);   /* the SAME allocator */
 ```
 
-The value is four words — a context pointer and three function pointers — and it is passed by
+The value is four words - a context pointer and three function pointers - and it is passed by
 value. Copying it is free, storing it in your own struct is fine, and it does not need to be
 destroyed.
 
@@ -101,14 +101,14 @@ That is not a limitation to work around; it is the reason the whole library take
 parameters, and it is why an arena over a static array makes the same code run on a
 microcontroller. See [freestanding mode](manual-freestanding.md).
 
-Wrong — destroying with a different allocator than you created with:
+Wrong - destroying with a different allocator than you created with:
 
 ```text
 proven_result_u8str_t s = proven_u8str_create(arena_alloc, 64);
 proven_u8str_destroy(heap_alloc, &s.value);   /* wrong: heap free on arena memory */
 ```
 
-The object does not remember which allocator produced it — that is what keeps it small. Nothing
+The object does not remember which allocator produced it - that is what keeps it small. Nothing
 checks this today, and the failure is heap corruption that surfaces somewhere else, later. Pair
 them by construction: keep the allocator next to the object, or pass both together.
 
@@ -117,7 +117,7 @@ them by construction: keep the allocator next to the object, or pass both togeth
 ### The problem: many small allocations with the same death date
 
 Consider parsing a configuration file. You allocate a string for each key, a string for each
-value, a node for each section — a few thousand small allocations. Then the parse finishes, you
+value, a node for each section - a few thousand small allocations. Then the parse finishes, you
 build your result, and every one of those allocations becomes garbage at the same instant.
 
 With `malloc` you pay for that twice. Each allocation searches a free list, updates bookkeeping,
@@ -143,7 +143,7 @@ algorithm:
 - **You reclaim by resetting or destroying the whole arena**, which sets the offset back to zero.
   One operation frees ten thousand objects.
 
-The memory comes from you. `proven_arena_create` takes a `proven_mem_mut_t` — a block you got
+The memory comes from you. `proven_arena_create` takes a `proven_mem_mut_t` - a block you got
 from the heap, or a `static` array, or a region on the stack. The arena never allocates on its own,
 which is what lets it work with no heap underneath.
 
@@ -152,7 +152,7 @@ which is what lets it work with no heap underneath.
 An arena is not a general-purpose allocator, and the trade is real:
 
 - **You cannot free one object.** If the lifetimes are not actually shared, an arena leaks by
-  design — memory is only reclaimed at reset.
+  design - memory is only reclaimed at reset.
 - **Running out is a hard limit.** The backing block is fixed. `PROVEN_ERR_NOMEM` here does not
   mean the machine is out of memory, it means this arena is.
 - **Every pointer into it dies at reset**, all at once, with nothing to warn you. A view that
@@ -239,7 +239,7 @@ PROVEN_ARRAY_DESTROY(&ar.value);   /* correct, but arena free reclaims nothing *
 proven_arena_reset(&arena);        /* this is what gives the bytes back */
 ```
 
-Wrong — growing into an arena from a tiny initial capacity:
+Wrong - growing into an arena from a tiny initial capacity:
 
 ```text
 proven_result_array_t ar = PROVEN_ARRAY_INIT(a, int, 1);
@@ -248,12 +248,12 @@ for (int i = 0; i < 10000; ++i) {
 }
 ```
 
-Each regrow asks the arena for a bigger block and then "frees" the old one — which, in an arena,
+Each regrow asks the arena for a bigger block and then "frees" the old one - which, in an arena,
 does nothing. The array ends up correct and the arena ends up holding every intermediate size it
-ever allocated: 1, 2, 4, 8 … 8192 elements' worth of abandoned space, on top of the one buffer you
+ever allocated: 1, 2, 4, 8 ... 8192 elements' worth of abandoned space, on top of the one buffer you
 wanted. Reserve the capacity up front, as the correct version above does.
 
-Wrong — a view that outlives the reset:
+Wrong - a view that outlives the reset:
 
 ```text
 proven_u8str_view_t name = /* ... built in the arena ... */;
@@ -262,7 +262,7 @@ use(name);                 /* wrong: those bytes are now free space */
 ```
 
 This is the arena's sharpest edge. Reset does not touch the memory it reclaims, so the bytes are
-usually still there and the bug usually does not show up in testing — right up until the next
+usually still there and the bug usually does not show up in testing - right up until the next
 allocation writes over them.
 
 ## 3. Pool: many things, one size
@@ -273,7 +273,7 @@ An arena assumes shared lifetimes. Plenty of workloads have the opposite shape: 
 type, created and destroyed continuously, in no particular order. A linked list of events. Nodes
 in a tree that grows and shrinks. Connection records that come and go.
 
-An arena cannot do this — it never reclaims a single object, so a long-running program would grow
+An arena cannot do this - it never reclaims a single object, so a long-running program would grow
 without bound. The heap can, and that is exactly what it costs: every allocation searches, every
 free updates bookkeeping, and the general-purpose allocator does that general-purpose work for a
 request it already made a thousand times.
@@ -284,7 +284,7 @@ search at all.
 
 ### How a pool works
 
-A pool keeps a small stack of freed blocks — the *bin* — and does the obvious thing:
+A pool keeps a small stack of freed blocks - the *bin* - and does the obvious thing:
 
 - **Allocate**: if the bin has anything in it, pop one and return it. That is a pointer read and a
   decrement. Only when the bin is empty does it go to the underlying allocator.
@@ -296,7 +296,7 @@ A pool keeps a small stack of freed blocks — the *bin* — and does the obviou
 ### What you give up
 
 - **One pool serves exactly one size and alignment.** A request for anything else is refused with
-  `PROVEN_ERR_INVALID_ARG` — not served from somewhere else. A stricter alignment than the pool
+  `PROVEN_ERR_INVALID_ARG` - not served from somewhere else. A stricter alignment than the pool
   was built with is refused too; a looser one is fine, because the block already satisfies it.
 - **The pool does not track live objects.** `proven_pool_destroy` frees what is in the bin, not
   what you are still holding. Free everything you allocated first, or you have leaked it *and* it
@@ -333,13 +333,13 @@ The pool does not own one big slab; it allocates each item individually from
 `base_alloc` and keeps a small **stack of freed blocks** (the `bin`, an array of up
 to `bin_cap` pointers):
 
-- **Allocate.** If `bin_len > 0`, pop the top pointer (O(1), no `base_alloc` call) —
+- **Allocate.** If `bin_len > 0`, pop the top pointer (O(1), no `base_alloc` call) --
   this is the whole point of the pool. Otherwise fall through to `base_alloc`.
 - **Free.** If `bin_len < bin_cap`, push the pointer onto the bin for reuse;
   otherwise (bin full) free it straight back to `base_alloc`. So the bin caps how
   much memory the pool keeps parked for reuse.
 - **Destroy.** `proven_pool_destroy` frees every pointer still in the bin and the
-  bin array itself — but it does **not** track live (handed-out) items, so you must
+  bin array itself - but it does **not** track live (handed-out) items, so you must
   free everything you allocated before destroying the pool.
 
 This makes the pool a churn optimizer for short-lived same-type objects (nodes,
@@ -410,7 +410,7 @@ rules every allocator in this library promises to follow. If you are only ever g
 three above, `proven_heap_allocator()`, `proven_arena_as_allocator()` and
 `proven_pool_as_allocator()` are the whole API and you can skip ahead.
 
-A trait, here, is a struct of function pointers used as an interface — C's version of a virtual
+A trait, here, is a struct of function pointers used as an interface - C's version of a virtual
 table, written out by hand. `proven_allocator_t` is the library's most important one; `stream.h`
 and `random.h` use the same shape.
 
@@ -442,8 +442,8 @@ Intent:
 - A block must be reallocated and freed with the **same `align`** it was allocated
   with. An allocator may pick a different underlying mechanism for over-aligned
   requests than for ordinary ones, and the heap allocator does: `align <=
-  alignof(max_align_t)` — which is every string, buffer and byte array in this
-  library — goes through `malloc`/`realloc` so that growth can happen in place,
+  alignof(max_align_t)` - which is every string, buffer and byte array in this
+  library - goes through `malloc`/`realloc` so that growth can happen in place,
   and anything more strictly aligned goes through an aligned allocator. Handing a
   block back under a different alignment class is undefined.
 - `free_fn` releases memory. If an allocator needs size metadata, it must track that internally.
@@ -474,7 +474,7 @@ Fields:
 | `alloc_fn` | `proven_alloc_fn_t` | Allocate `size` bytes at `align`. Returns `proven_result_mem_mut_t`. |
 | `realloc_fn` | `proven_realloc_fn_t` | Resize. **Failure-atomic**: on failure the old block is untouched and still valid. |
 | `free_fn` | `proven_free_fn_t` | Release. Must be given the same `align` class the block was allocated with. |
-| `proven_alloc_is_valid(alloc)` | `static inline bool` | True when every function pointer is non-null — i.e. the trait can be called. |
+| `proven_alloc_is_valid(alloc)` | `static inline bool` | True when every function pointer is non-null - i.e. the trait can be called. |
 
 The three rules that every allocator in this library obeys, and that yours must:
 
@@ -513,8 +513,8 @@ proven_result_mem_mut_t r = alloc.alloc_fn(alloc.ctx, 64, 8); /* wrong: null cal
 `proven_buf_t` is the plainest thing in this chapter: a pointer, a length and a capacity. It owns
 its bytes, it never grows, and it is what `proven_u8str_t` and `proven_u16str_t` are built out of.
 
-Reach for it directly when you want *bytes* rather than *text* — a record you are assembling, a
-frame you are about to write to a socket — and you know the maximum size in advance. When the
+Reach for it directly when you want *bytes* rather than *text* - a record you are assembling, a
+frame you are about to write to a socket - and you know the maximum size in advance. When the
 content is text, use the string types in [Chapter 3](manual-03-strings-text.md) instead: they give
 you the same storage plus NUL-termination, views, searching and formatting.
 
@@ -879,18 +879,18 @@ covers the three things you reach for once the program is real:
    `proven_arena_alloc_aligned_or_panic()` return the block itself instead of a
    result, and hand the failure to the panic handler
    ([Chapter 1 section 6](manual-01-foundation.md#6-panic-when-there-is-no-one-left-to-return-an-error-to)).
-   `proven_set_panic_handler()` is how you choose what happens then — the
+   `proven_set_panic_handler()` is how you choose what happens then - the
    example installs one that records the message so the failure can be shown
    here, and puts the default back afterwards.
 2. **Growing the block you took last.** `proven_arena_realloc_aligned()` extends
    it where it stands, because the most recent block is the one at the end of
-   the used region. Any earlier block is copied to the end instead — still
+   the used region. Any earlier block is copied to the end instead - still
    correct, no longer free.
 3. **Wrapping an allocator.** An allocator is three function pointers and a
    context pointer, so a wrapper that counts, logs, or fails the tenth call on
-   purpose is three forwarding functions. The arena's own three —
+   purpose is three forwarding functions. The arena's own three --
    `proven_arena_alloc_trait()`, `proven_arena_realloc_trait()` and
-   `proven_arena_free_trait()` — are public so your wrapper can call them
+   `proven_arena_free_trait()` - are public so your wrapper can call them
    instead of re-implementing the arena. Everything in the library that takes a
    `proven_allocator_t` then runs through your wrapper without knowing it.
 
@@ -1061,7 +1061,7 @@ int main(void) {
 }
 ```
 
-Wrong — leaving a test panic handler installed:
+Wrong - leaving a test panic handler installed:
 
 ```text
 proven_set_panic_handler(record_panic);   /* returns instead of stopping */
@@ -1072,14 +1072,14 @@ A handler that returns turns every later out-of-memory panic into a call that
 hands back a null block and carries on. Install one only around the code you are
 testing, and restore the default with `proven_set_panic_handler(NULL)`.
 
-Wrong — using the block after a handler that returned:
+Wrong - using the block after a handler that returned:
 
 ```text
 proven_mem_mut_t m = proven_arena_alloc_or_panic(&arena, huge);
 memset(m.ptr, 0, huge);   /* wrong: m.ptr is null if the handler returned */
 ```
 
-Wrong — a wrapper that forgets one of the three:
+Wrong - a wrapper that forgets one of the three:
 
 ```text
 proven_allocator_t alloc = { .ctx = &counted, .alloc_fn = counting_alloc };  /* wrong */

@@ -1,22 +1,22 @@
-[한국어](README-ko.md) | **English** — **Proven C library v0.2.0** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.2.0/proven_c_lib-v0.2.0.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.2.0/proven_c_lib-v0.2.0-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.2.0/proven_c_lib-v0.2.0-ko-manual.pdf)
+[한국어](README-ko.md) | **English** - **Proven C library v0.2.0** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.2.0/proven_c_lib-v0.2.0.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.2.0/proven_c_lib-v0.2.0-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.2.0/proven_c_lib-v0.2.0-ko-manual.pdf)
 
 # Proven C library
 
-📖 **[Read the manual online](https://rubidus-api.github.io/proven_c_lib/en/)** · [한국어 매뉴얼](https://rubidus-api.github.io/proven_c_lib/ko/) · [PDF](https://github.com/rubidus-api/proven_c_lib/releases/latest)
+**[Read the manual online](https://rubidus-api.github.io/proven_c_lib/en/)** | [한국어 매뉴얼](https://rubidus-api.github.io/proven_c_lib/ko/) | [PDF](https://github.com/rubidus-api/proven_c_lib/releases/latest)
 
 > A C23 systems library built on one idea: **memory should know where it came from.**
 
 You have finished a C book. You know pointers, `malloc`, `printf`, and `char *`. And then you
-wrote your first real program and discovered the part the book did not cover — that `strcpy` has
+wrote your first real program and discovered the part the book did not cover - that `strcpy` has
 no idea how big your buffer is, that `malloc` returning `NULL` is something you simply have to
 remember, and that `printf("%d", 3.0)` compiles.
 
 `proven` is what those problems look like when someone answers them one at a time, in plain C,
 without a framework. It is the everyday layer C projects end up rewriting: allocators you pass in,
 strings that carry their own length, containers, formatting and scanning, files, hashing,
-randomness — with ownership and failure visible in every signature.
+randomness - with ownership and failure visible in every signature.
 
-**New here? Start with [Chapter 0](manual/manual-00-start-here.md)** — or read it
+**New here? Start with [Chapter 0](manual/manual-00-start-here.md)** - or read it
 [on the web](https://rubidus-api.github.io/proven_c_lib/en/manual-00-start-here.html), where the
 manual is published with a searchable index of every public function. It assumes nothing beyond
 one introductory C book, and it is the only document in this repository written to be read rather
@@ -44,8 +44,8 @@ each one came from:
 #include <string.h>
 int y = 2, x = 1;                       /* the compiler is likely to place these adjacently */
 int main(void) {
-    int *p = &x + 1;                    /* derived from x — its address is one past x */
-    int *q = &y;                        /* derived from y — a different object */
+    int *p = &x + 1;                    /* derived from x - its address is one past x */
+    int *q = &y;                        /* derived from y - a different object */
     if (memcmp(&p, &q, sizeof p) != 0)  /* go on only when the two pointers hold the */
         return 0;                       /* identical address, checked bit for bit */
     *p = 11;                            /* store 11 through p */
@@ -55,49 +55,49 @@ int main(void) {
 
 ```text
 gcc -O1 :  *p = 11, *q = 11     # same address; both read back 11
-gcc -O2 :  *p = 11, *q = 2      # same address — yet *p is 11 and *q is 2
+gcc -O2 :  *p = 11, *q = 2      # same address - yet *p is 11 and *q is 2
 ```
 
-Read that `-O2` line again. `p` and `q` hold the **identical address** — `memcmp` compared the raw
+Read that `-O2` line again. `p` and `q` hold the **identical address** - `memcmp` compared the raw
 bytes of the two pointers and only let the program continue when they matched. You store `11`
 through `p`. Then dereferencing `p` gives `11` and dereferencing `q` gives `2`. **One address, two
-values.** It is not a race, not uninitialised memory, not undefined *output* — the program is
+values.** It is not a race, not uninitialised memory, not undefined *output* - the program is
 deterministic and prints this every run. The compiler knows `p` was derived from `x`, assumes a
 store through it cannot reach `y`, and keeps `y` in a register; so `*p` and `*q` refer to different
 things even though the addresses are equal to the last bit.
 
-Notice what is *not* going on here. Forming `&x + 1` is perfectly legal — C specifically lets you
+Notice what is *not* going on here. Forming `&x + 1` is perfectly legal - C specifically lets you
 make a pointer one past the end of an object. Nothing is "out of bounds" in a way you would catch
 by reading the code. The surprise is entirely in the last step: two pointers can be bit-for-bit
 the same address and still not be the same pointer, because each carries the identity of the object
 it came from. That identity is its **provenance**, and the compiler treats it as real even where
-the address does not distinguish them. (GCC does warn about the `&x + 1` store here — and then
+the address does not distinguish them. (GCC does warn about the `&x + 1` store here - and then
 miscompiles it anyway.)
 
-### "That example is contrived" — yes, and the reason is the interesting part
+### "That example is contrived" - yes, and the reason is the interesting part
 
 Every runnable provenance demonstration looks like this: two adjacent variables and a pointer that
 steps from one to the other. That is not a failure of imagination; it is forced by how the rule
-works. A compiler only exploits provenance when it can *see* where a pointer came from — and that
+works. A compiler only exploits provenance when it can *see* where a pointer came from - and that
 visibility is exactly what a tiny example has and a realistic one hides behind a `malloc` or a
 function call. Shrink the scope until the compiler can prove the origin, and you get something that
 looks artificial precisely *because* it is small enough to miscompile on demand.
 
-So what about the realistic idioms — the ones that genuinely reconstruct pointers by arithmetic?
+So what about the realistic idioms - the ones that genuinely reconstruct pointers by arithmetic?
 Tagged pointers that stash flags in the low bits and mask them off; XOR linked lists that store one
 neighbour as `prev ^ next`; a `refcount` header reached through `data[-1]`; a pointer round-tripped
 through `uintptr_t`. I compiled all of them at `-O2` and `-O3`, and **every one produced the correct
-answer.** That is not luck. The model WG14 chose — PNVI-ae-udi, "provenance not via integers, with
-exposed addresses" — was designed on purpose to keep those idioms working, because forbidding them
+answer.** That is not luck. The model WG14 chose - PNVI-ae-udi, "provenance not via integers, with
+exposed addresses" - was designed on purpose to keep those idioms working, because forbidding them
 would break an enormous amount of real, load-bearing code. Casting a pointer to an integer *exposes*
 its address, and a pointer rebuilt from an integer may reach any object whose address was exposed;
 `data[-1]` stays inside the same whole allocation. The committee bent the rule around the practice.
 
 Which leaves the honest and slightly uncomfortable summary: the provenance bug you can *demonstrate*
-is the small contrived one, and the realistic idioms mostly do **not** break — today, on this
+is the small contrived one, and the realistic idioms mostly do **not** break - today, on this
 compiler. What is dangerous is precisely that "mostly." The rule is still there; the compiler simply
 did not have enough visibility to act on it. Inline one function into another, upgrade the compiler,
-turn on LTO, and the origin it could not see becomes an origin it can — and a program that passed
+turn on LTO, and the origin it could not see becomes an origin it can - and a program that passed
 every test for years miscompiles on a build-system change that touched none of its logic.
 
 Here is one that already looks like production code, not a puzzle:
@@ -116,14 +116,14 @@ long checksum(const int *p, int n) {   /* p is derived from head[] */
 long total = checksum(head, 64 + 192);   /* walks off the end of head[] */
 ```
 
-An off-by-count loop over a buffer — the most ordinary bug there is. `checksum` is handed a pointer
+An off-by-count loop over a buffer - the most ordinary bug there is. `checksum` is handed a pointer
 derived from `head` and a length that runs past it, and the intent is obvious: add up both arrays.
 Compile it and see what you get:
 
 ```text
 gcc -O0 :  448   # reads all 256 elements, walking off head[] into whatever memory follows (undefined)
 gcc -O2 :  64    # the compiler knows p came from head[64], assumes the read stays inside it,
-                 #   and silently drops 192 of your 256 iterations — no warning
+                 #   and silently drops 192 of your 256 iterations - no warning
 ```
 
 Neither answer is the "sum of both arrays" the author pictured, and the two disagree by optimisation
@@ -134,21 +134,21 @@ reproduce on demand, but a correct-looking function with an expiry date set by y
 
 That is why this library's answer is not "write provenance-clean code by being careful," which no
 one can do reliably against a rule this subtle. It keeps the raw pointer arithmetic in one small,
-audited place — a view is a pointer *and* a length, a container knows its own extent — so
+audited place - a view is a pointer *and* a length, a container knows its own extent - so
 "process both buffers as if they were one" is a thing you cannot write by accident.
 
 This is not a language-lawyer curiosity. It is where a great deal of optimisation comes from, and
 it is a class of bug that a debugger cannot show you, because the miscompilation happens before
 the debugger sees anything. The formal model is real, active work: ISO WG14's provenance Technical
-Specification ([N2577](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n2577.pdf) →
+Specification ([N2577](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n2577.pdf) ->
 [N3005](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3005.pdf), with the **PNVI-ae-udi** model
 the committee voted for). It is a TS pending publication rather than part of C23 proper, but the
 direction is settled.
 
 ### Two rules, not one: strict aliasing and provenance
 
-It is tempting to lump provenance together with its older, more famous sibling — **strict
-aliasing** — as "the compiler being clever." They do share a root cause: C's abstract machine
+It is tempting to lump provenance together with its older, more famous sibling - **strict
+aliasing** - as "the compiler being clever." They do share a root cause: C's abstract machine
 models memory more strictly than the hardware does. But they are *separate rules* that answer
 different questions, and, as we will see, the compiler flag that switches one off leaves the other
 fully in force.
@@ -156,14 +156,14 @@ fully in force.
 | | strict aliasing | provenance |
 |---|---|---|
 | The question it asks | what **type** is stored at this address? | which **object** may this pointer reach? |
-| Age | old — C89/C99 "effective types" | new — WG14 TS (N3005), pending publication |
+| Age | old - C89/C99 "effective types" | new - WG14 TS (N3005), pending publication |
 | What the compiler assumes | two pointers of incompatible types never refer to the same object | a pointer derived from one object cannot access another |
 | How you trip it | read memory through the wrong type (type punning) | offset or launder a pointer past its object, then use it where another object sits |
-| The blessed escape hatch | access raw bytes through `unsigned char` — this is exactly `proven_byte_t` | keep pointer arithmetic inside one object; don't rebuild pointers from integers |
+| The blessed escape hatch | access raw bytes through `unsigned char` - this is exactly `proven_byte_t` | keep pointer arithmetic inside one object; don't rebuild pointers from integers |
 
-Both are easy to trip, both are correct at `-O0` and wrong at `-O2` — the worst possible failure
+Both are easy to trip, both are correct at `-O0` and wrong at `-O2` - the worst possible failure
 mode, because it survives every test you ran in a debug build. You have already met the provenance
-one: the `*p = 11, *q = 2` program at the top of this section is exactly it — two `int *` pointers,
+one: the `*p = 11, *q = 2` program at the top of this section is exactly it - two `int *` pointers,
 no type punning, wrong only under optimisation. Its strict-aliasing twin trips **without even a
 warning**, and it is the shape of every hand-written parser and serialiser: a byte buffer read
 through pointers of two different widths.
@@ -175,7 +175,7 @@ through pointers of two different widths.
 int main(void) {
     void *buf = malloc(8);
     uint32_t *w = buf;      /* the same memory, seen as 32-bit */
-    uint16_t *h = buf;      /* the same memory, seen as 16-bit — no cast, no warning */
+    uint16_t *h = buf;      /* the same memory, seen as 16-bit - no cast, no warning */
     *w = 0xAAAAAAAAu;
     *h = 0x1234;            /* change the low half */
     printf("%08x\n", *w);   /* did that write show up? */
@@ -185,7 +185,7 @@ int main(void) {
 
 ```text
 gcc -O0 :  aaaa1234     # the 16-bit write shows
-gcc -O2 :  aaaaaaaa     # the write vanished — the compiler assumed h and w cannot overlap
+gcc -O2 :  aaaaaaaa     # the write vanished - the compiler assumed h and w cannot overlap
 ```
 
 And the detail that proves these are two rules and not one:
@@ -196,7 +196,7 @@ strict-aliasing bug  broken   fixed
 provenance bug       broken   STILL broken   <- this was never aliasing
 ```
 
-`-fno-strict-aliasing` is the flag large C projects — the Linux kernel among them — reach for to
+`-fno-strict-aliasing` is the flag large C projects - the Linux kernel among them - reach for to
 make the first class of bug go away. It does nothing for the second, because provenance is a
 different rule with no such off switch. You cannot opt out of it; you can only avoid tripping it.
 
@@ -208,15 +208,15 @@ with pointers, so arithmetic has no reason to wander off the end of an object. N
 through an integer.
 
 **One honest exception, and it is the reason this library aims where it does.** The intrusive list
-recovers the enclosing object from a pointer to one of its members — the classic `container_of`,
+recovers the enclosing object from a pointer to one of its members - the classic `container_of`,
 here `(type *)((proven_byte_t *)ptr - offsetof(type, member))`. That idiom is everywhere real C
 lives, the Linux kernel most of all, and it is precisely the case the strictest readings of the
 object model have never comfortably blessed: a pointer whose origin is the *member* is used to reach
-the *whole struct*. So `proven` does **not** claim strict-provenance purity — it could not, and
+the *whole struct*. So `proven` does **not** claim strict-provenance purity - it could not, and
 offer intrusive containers at the same time. It defends the settled, universally agreed undefined
 behaviour that every C programmer already respects and that sanitizers actually check, and it treats
-the unsettled frontier — where a dominant, battle-tested technique sits at odds with the strict
-model — honestly, as unsettled. Provenance is the direction the library leans, not a finished
+the unsettled frontier - where a dominant, battle-tested technique sits at odds with the strict
+model - honestly, as unsettled. Provenance is the direction the library leans, not a finished
 guarantee it pretends to hold. Getting that boundary right, and being plain about which side a given
 API is on, is itself part of what the project is trying to work out.
 
@@ -224,8 +224,8 @@ API is on, is itself part of what the project is trying to work out.
 
 **The name is `proven` because of *provenance*, not because of *prove*.**
 
-I came to these ideas late. I had written C for a while with the ordinary mental model — memory is
-bytes, a pointer is an address — and then I read about strict aliasing, and then about pointer
+I came to these ideas late. I had written C for a while with the ordinary mental model - memory is
+bytes, a pointer is an address - and then I read about strict aliasing, and then about pointer
 provenance, and the ground moved. It was not that I had been writing subtly wrong code and got
 away with it, though I probably had been. It was the realisation that **C's rules about memory are
 considerably stricter than the model I had been carrying in my head**, and that the gap between
@@ -234,7 +234,7 @@ the two is exactly where the bugs nobody can reproduce come from.
 The obvious response is to learn the rules properly and apply them by hand. I want to be honest
 about why that was not enough for me: **I do not know these rules well, and I cannot reliably keep
 them in my head while writing ordinary code.** Effective types, when a cast is laundering
-provenance, which escape hatches are blessed and which merely happen to work today — this is
+provenance, which escape hatches are blessed and which merely happen to work today - this is
 genuinely hard, and being told to "just be careful" is not a strategy.
 
 So the response became the opposite one. If I cannot hold the rules reliably, then the rules
@@ -246,7 +246,7 @@ through checked macros, because silent wraparound is a rule I will forget. None 
 me to be careful in the moment; it requires me to be careful once, here.
 
 That is what the name records. Not that the code is proven, but that it is built around
-*provenance* — the idea that memory should carry the history of where it came from, and that a
+*provenance* - the idea that memory should carry the history of where it came from, and that a
 library should not make you track that by hand.
 
 `proven_c_lib` was built with AI as a collaborator, which is part of the same thought: the
@@ -254,7 +254,7 @@ explicitness that helps a person who cannot hold the whole memory model in mind 
 explicitness that lets a language model produce code that is correct for reasons visible in the
 call, rather than correct by accident.
 
-**And then the coincidence.** *Proven* also means tested, demonstrated, shown to be true — which
+**And then the coincidence.** *Proven* also means tested, demonstrated, shown to be true - which
 is a better fit than anything I planned, given what the repository turned into: 121 test
 files, every manual example compiled and run by the build, and documentation gated so it cannot
 claim a function that does not exist. The two words are not related. *Provenance* is from Latin
@@ -268,8 +268,8 @@ intention did.
 
 There is a way of talking about C that treats it as a thin, honest layer over the machine: bytes
 are bytes, a pointer is an address, casting is free, and the standard is a formality that gets in
-the way of people who know what the hardware does. That view produces clever code — integers and
-pointers mixed freely, aliasing tricks, unions used as reinterpret casts — and it was defensible
+the way of people who know what the hardware does. That view produces clever code - integers and
+pointers mixed freely, aliasing tricks, unions used as reinterpret casts - and it was defensible
 in 1980, when compilers translated more or less literally.
 
 It is wrong now, and it is worth being precise about *why*, because the reason is not that
@@ -279,19 +279,19 @@ compilers became hostile.
 standard rather than from anyone's opinion:
 
 - **Effective types and strict aliasing.** An object's stored value may only be accessed through
-  an lvalue of compatible type — with a deliberate exception for character types. Memory in C's
+  an lvalue of compatible type - with a deliberate exception for character types. Memory in C's
   model *has a type*. Assembly has no such concept.
 - **Provenance**, above. Hardware sees an address; C sees an address *and where it came from*.
 - **Undefined behaviour is not "whatever the machine does".** It means the standard imposes no
-  requirement at all, and optimisers are permitted to assume it never happens — which is how UB
+  requirement at all, and optimisers are permitted to assume it never happens - which is how UB
   can delete an `if` that was clearly written to prevent it.
 
 So the old programs did not stop being correct. They were never correct; they merely worked,
 because nothing was exploiting the freedom the standard had granted all along.
 
 The honest summary is that **C is permissive about what you can write and strict about what it
-promises.** The "portable assembly" view conflates the two. And C does provide escape hatches —
-inspecting bytes through `unsigned char`, type punning through `memcpy`, `uintptr_t` round trips —
+promises.** The "portable assembly" view conflates the two. And C does provide escape hatches --
+inspecting bytes through `unsigned char`, type punning through `memcpy`, `uintptr_t` round trips --
 but they are *narrow and specified*, not a general licence.
 
 This library takes that seriously rather than working around it. Raw bytes are `proven_byte_t`
@@ -313,25 +313,25 @@ The NUL-terminated string was a 1970s decision to save one byte per string. The 
 enormous: length is an *O(n)* search, text cannot contain a zero byte, and a missing terminator is
 a buffer overrun that nothing detects.
 
-Almost every alternative rediscovers the same fix — **keep the length next to the pointer**:
+Almost every alternative rediscovers the same fix - **keep the length next to the pointer**:
 
 | | Owning | Borrowed |
 |---|---|---|
-| **Pascal** (1970s) | length-prefixed string | — |
+| **Pascal** (1970s) | length-prefixed string | - |
 | **C++17** | `std::string` | `std::string_view` |
 | **Rust** | `String` | `&str` |
 | **Zig** | `std.ArrayList(u8)` | `[]const u8` (a slice: pointer + length) |
-| **Go** | — | `string`, `[]byte` |
+| **Go** | - | `string`, `[]byte` |
 | **`proven`** | `proven_u8str_t` | `proven_u8str_view_t` |
 
 Pascal got there first with a length prefix. C++17's `string_view` popularised the *borrowed*
-half — the observation that most functions want to *read* text, not own it, and that copying a
+half - the observation that most functions want to *read* text, not own it, and that copying a
 string to pass it is the most common needless allocation in a program. Rust and Zig built the same
 split into the type system from day one.
 
 The second half of the idea matters as much as the first: **owned and borrowed are different
-types**. `char *` means four different things — freshly allocated, pointer into a caller's buffer,
-a string literal in read-only memory, a static buffer the next call will overwrite — and the type
+types**. `char *` means four different things - freshly allocated, pointer into a caller's buffer,
+a string literal in read-only memory, a static buffer the next call will overwrite - and the type
 cannot tell you which. Splitting them puts the answer in the signature.
 
 ### Memory: the allocator is a parameter
@@ -340,14 +340,14 @@ cannot tell you which. Splitting them puts the answer in the signature.
 the strategy for one part of a program, you cannot test the failure path without intercepting it
 globally, and you cannot use it at all where there is no heap.
 
-Zig's answer — an `Allocator` interface passed explicitly to anything that allocates — is now the
+Zig's answer - an `Allocator` interface passed explicitly to anything that allocates - is now the
 clearest statement of the alternative, and it is the one `proven` follows. Once allocation is a
 parameter, three strategies become interchangeable at the call site:
 
 | | How it works | Free | Use it when |
 |---|---|---|---|
 | **Heap** | `malloc`/`free` behind the interface | Yes | The general case. |
-| **Arena** | Bump a pointer through one block | **No** — a no-op; you reset the whole thing | Many allocations that die together: one request, one frame, one parse. |
+| **Arena** | Bump a pointer through one block | **No** - a no-op; you reset the whole thing | Many allocations that die together: one request, one frame, one parse. |
 | **Pool** | Fixed-size slots with a free list | Yes, into the list | Many objects of one size, created and destroyed continuously. |
 
 An arena turns ten thousand `free` calls into one `reset`, and it is the reason the same code that
@@ -358,43 +358,43 @@ nothing else changes.
 
 The pieces are in the language now, and most C code has not caught up:
 
-- **C99** — designated initializers, compound literals: option structs instead of ten-parameter
+- **C99** - designated initializers, compound literals: option structs instead of ten-parameter
   functions.
-- **C11** — `_Generic`, which is how `{}` gets a value's type from the argument instead of from a
+- **C11** - `_Generic`, which is how `{}` gets a value's type from the argument instead of from a
   format string.
-- **C23** — `[[nodiscard]]` (used 172 times here, so the compiler refuses code that drops an
+- **C23** - `[[nodiscard]]` (used 172 times here, so the compiler refuses code that drops an
   error), `<stdckdint.h>` for checked arithmetic, `constexpr`, `typeof`, `nullptr`.
 
 Andre Weissflog's [*Modern C for C++ Peeps*](https://floooh.github.io/2019/09/27/modern-c-for-cpp-peeps.html)
 and Luca Sas's ACCU 2021 talk **Modern C and What We Can Learn From It**
-([video](https://www.youtube.com/watch?v=QpAhX-gsHMs) ·
+([video](https://www.youtube.com/watch?v=QpAhX-gsHMs) *
 [slides](https://accu.org/conf-docs/PDFs_2021/luca_sass_modern_c_and_what_we_can_learn_from_it.pdf))
 are the best short introductions to this style. This library was read against that talk in
-[`docs/RFC-0002`](docs/RFC-0002-view-vocabulary-and-splitting.md) — a useful exercise, because the
+[`docs/RFC-0002`](docs/RFC-0002-view-vocabulary-and-splitting.md) - a useful exercise, because the
 result was mostly a list of things already done and one genuine gap.
 
 ---
 
 ## What this library is for
 
-**To replace the tired parts of the standard library, from the bottom up — without excluding it.**
+**To replace the tired parts of the standard library, from the bottom up - without excluding it.**
 `strcpy`, `strtok`, `sprintf`, `errno`, `qsort`, `rand`, `atoi`: each is answered here by something
 sized, checked, and explicit. But `proven` is not a libc replacement and does not want your
 `main`. It has no global state, starts no threads, registers no `atexit` handler, and allocates
 nothing you did not hand it an allocator for. Use one module, or all of them, beside whatever else
 you already link. [Appendix D](manual/manual-00-start-here.md#15-appendix-d-the-libc-map) maps the
-libc call you know to what to use instead — and why it differs.
+libc call you know to what to use instead - and why it differs.
 
 **To be pleasant for a person and safe for a person working with an AI.** Explicit is more
 verbose, and that is the trade. What it buys is that every important fact is *local*: whether a
 call allocates is in its parameter list, whether it can fail is in its return type, and whether it
 grows is in its name. That is exactly the kind of context that neither a tired human nor a
-language model reliably reconstructs from surrounding code — and it is why the documentation is
+language model reliably reconstructs from surrounding code - and it is why the documentation is
 gated by the build rather than kept up to date by intention.
 
 **To test whether modern C actually holds up.** That is the honest third reason. This is a
 working experiment in whether C23, used deliberately and without a framework, can carry a real
-support layer — and the experiment is run in public: every design decision is an RFC in
+support layer - and the experiment is run in public: every design decision is an RFC in
 [`docs/`](docs/), including the ones that were wrong and got corrected.
 
 ---
@@ -406,7 +406,7 @@ support layer — and the experiment is run in public: every design decision is 
   `[[nodiscard]]` so the compiler will not let you drop the error.
 - Operations **refuse rather than truncate**: a path that does not fit is an error, not a shorter
   path that opens a different file.
-- Reallocation-style operations stay failure-atomic where documented — a failed grow leaves your
+- Reallocation-style operations stay failure-atomic where documented - a failed grow leaves your
   data intact.
 - Borrowed views are a different type from owning objects.
 - Decimal/float conversion is correctly rounded (bit-for-bit equal to the host `strtod`/`snprintf`),
@@ -559,16 +559,16 @@ Writing is symmetric. `proven_fs_write_file` creates or truncates; `proven_fs_wr
 
 ## Hashes, tokens, and text you can put in a URL
 
-There is no single "hash" and no single "random". Which one is correct depends on what you are doing with the result, and reaching for the wrong one gives you a program that is either needlessly slow or quietly insecure. Both modules are organised so the choice is made once you name the job — and so the wrong choice is hard to make by accident.
+There is no single "hash" and no single "random". Which one is correct depends on what you are doing with the result, and reaching for the wrong one gives you a program that is either needlessly slow or quietly insecure. Both modules are organised so the choice is made once you name the job - and so the wrong choice is hard to make by accident.
 
 | Your job | Use |
 |---|---|
-| Hash keys into **your own** table (trusted input) | `proven_hash_bytes` — FNV-1a, fast |
-| Hash keys from **untrusted** input | `proven_hash_keyed` — SipHash. (`proven_map` already does this for you: string-key maps are HashDoS-resistant by default.) |
-| Detect **corruption** on disk or in transit | `proven_crc32` — interoperates with gzip/zlib/PNG |
-| **Fingerprint** content — dedup, "same file?" | `proven_sha256` — the only one safe against a *deliberately* forged match |
+| Hash keys into **your own** table (trusted input) | `proven_hash_bytes` - FNV-1a, fast |
+| Hash keys from **untrusted** input | `proven_hash_keyed` - SipHash. (`proven_map` already does this for you: string-key maps are HashDoS-resistant by default.) |
+| Detect **corruption** on disk or in transit | `proven_crc32` - interoperates with gzip/zlib/PNG |
+| **Fingerprint** content - dedup, "same file?" | `proven_sha256` - the only one safe against a *deliberately* forged match |
 | A key, a token, a nonce | `proven_random_bytes` (the OS CSPRNG), or a `proven_chacha_rng_t` seeded from it |
-| A **reproducible** run — a simulation, a test | `proven_xoshiro256ss_t`. Fast, replays exactly from its seed, and **never** for a secret |
+| A **reproducible** run - a simulation, a test | `proven_xoshiro256ss_t`. Fast, replays exactly from its seed, and **never** for a secret |
 
 ```c
 /* A URL-safe session token: strong bytes, then text that needs no escaping. */
@@ -583,13 +583,13 @@ if (proven_random_bytes(raw, sizeof raw) &&
 }
 ```
 
-`encode.h` is the other half of this: `hex`, `base64`, and `base64url` (no padding, nothing to escape). The decoders **validate the whole input before writing a byte** — a stray character is `PROVEN_ERR_INVALID_ENCODING`, never a read past the end or a silently short result — and the output size is a function you call, not a number you remember.
+`encode.h` is the other half of this: `hex`, `base64`, and `base64url` (no padding, nothing to escape). The decoders **validate the whole input before writing a byte** - a stray character is `PROVEN_ERR_INVALID_ENCODING`, never a read past the end or a silently short result - and the output size is a function you call, not a number you remember.
 
 The generators and hashes are pure arithmetic, so they work on a bare-metal target too. On a board with no OS, hand the library its hardware entropy once (`proven_random_set_source`) and the cryptographic generator works with no operating system at all.
 
 ## Streams: a line from stdin, and printing without a syscall per line
 
-A writer is a byte sink; a reader is a byte source. Both are small vtables passed by value, like the allocator — so one `serialize(writer, value)` works over memory, a file, or a standard stream, and the formatter can be aimed at any of them.
+A writer is a byte sink; a reader is a byte source. Both are small vtables passed by value, like the allocator - so one `serialize(writer, value)` works over memory, a file, or a standard stream, and the formatter can be aimed at any of them.
 
 ```c
 /* Read stdin a line at a time. One buffer, no allocation per line. */
@@ -606,15 +606,15 @@ if (proven_is_ok(proven_sysio_stdin_lines(&lines,
 }
 ```
 
-The view points *into* your buffer and is valid until the next call — which is what makes a million lines cost one buffer instead of a million allocations. Copy it if you need to keep it.
+The view points *into* your buffer and is valid until the next call - which is what makes a million lines cost one buffer instead of a million allocations. Copy it if you need to keep it.
 
-Buffer the output side and a thousand small prints cost one syscall instead of a thousand — but **you must flush**: there is no hidden global buffer, so there is also no destructor and no `atexit` handler to flush it behind your back. The direct calls (`proven_println`, `proven_eprintln`) stay unbuffered for exactly that reason: what they write is on its way out before they return.
+Buffer the output side and a thousand small prints cost one syscall instead of a thousand - but **you must flush**: there is no hidden global buffer, so there is also no destructor and no `atexit` handler to flush it behind your back. The direct calls (`proven_println`, `proven_eprintln`) stay unbuffered for exactly that reason: what they write is on its way out before they return.
 
 ## Correct, fast number conversion
 
 Decimal-to-`double` parsing and `double`/`float`-to-decimal formatting are
 correctly rounded (round-to-nearest, ties to even) and produced by an
-integer-only engine — no `long double`. The parser is bit-for-bit identical to
+integer-only engine - no `long double`. The parser is bit-for-bit identical to
 the host `strtod`; fixed `%f`/`%e` output matches the host `snprintf`; and a
 shortest mode emits the minimal round-trippable string.
 
@@ -639,7 +639,7 @@ How far this is checked, stated plainly:
 - Exhaustive: all 4,278,190,080 finite `binary32` values, zero mismatches against
   the host C library (shortest round-trip + minimality, parser vs `strtod`).
 - Large-scale: 2,560,000,000 random `binary64` values, zero mismatches (this sweep
-  found and fixed one real formatting defect — see the doc).
+  found and fixed one real formatting defect - see the doc).
 - Speed vs glibc 2.41 on this machine (x86-64): faster at parsing typical numbers
   and at shortest formatting (~4-5x); `%f`/`%e` are faster at normal magnitudes and
   slower at extreme magnitudes, where the engine does exact arbitrary-precision work.
@@ -674,7 +674,7 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 - Text: `fmt`, `scan`.
 - Numbers: `float_parse`, `float_format`.
 - Hashing and encoding: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256), `encode` (hex, Base64, Base64URL), `utf` (strict UTF-8 <-> UTF-16).
-- Randomness: `random` (xoshiro256** reproducible, ChaCha20 cryptographic, unbiased range/shuffle helpers, and a pluggable entropy source — the OS CSPRNG by default, a board's hardware TRNG on bare metal).
+- Randomness: `random` (xoshiro256** reproducible, ChaCha20 cryptographic, unbiased range/shuffle helpers, and a pluggable entropy source - the OS CSPRNG by default, a board's hardware TRNG on bare metal).
 - Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
 - Execution: `coro`, `job`.
 - Diagnostics: `panic`.
@@ -684,9 +684,9 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 
 `proven` is not a libc replacement, a garbage collector, or a framework. It does not try to own your process, your build graph, or your error policy. It is a set of C components that are meant to be easy to read, easy to test, and possible to port one boundary at a time.
 
-It is also worth saying where the platform boundary **stops**, because otherwise you find out by running into it. The PAL covers memory, the filesystem, time, memory mapping, environment variables, console I/O and threads. It does **not** cover process control (`fork` / `exec` / pipes), terminal control (raw mode, job control), or networking — a program whose substance is one of those will reach for POSIX or Win32 directly, and the "no platform `#ifdef`s" property does not extend to it.
+It is also worth saying where the platform boundary **stops**, because otherwise you find out by running into it. The PAL covers memory, the filesystem, time, memory mapping, environment variables, console I/O and threads. It does **not** cover process control (`fork` / `exec` / pipes), terminal control (raw mode, job control), or networking - a program whose substance is one of those will reach for POSIX or Win32 directly, and the "no platform `#ifdef`s" property does not extend to it.
 
-The `hash` module does provide cryptographic and non-cryptographic hashes (SHA-256 alongside FNV, SipHash, and CRC-32) and `random` provides OS-strength bytes, but `proven` is not a cryptography library: deliberate non-goals, so you do not go looking, are signatures, key exchange, password hashing / KDFs, authenticated encryption, and TLS — along with path manipulation, argument parsing, and a logging framework.
+The `hash` module does provide cryptographic and non-cryptographic hashes (SHA-256 alongside FNV, SipHash, and CRC-32) and `random` provides OS-strength bytes, but `proven` is not a cryptography library: deliberate non-goals, so you do not go looking, are signatures, key exchange, password hashing / KDFs, authenticated encryption, and TLS - along with path manipulation, argument parsing, and a logging framework.
 
 ## Using it in a real project
 
@@ -700,10 +700,10 @@ What it bought:
 
 What you accept, and should not expect:
 
-- **It is not a performance win.** Replacing libc `memmove` with `proven_mem_move` was benchmark-neutral; the editor's 5–50× edit speedups came entirely from its own data structures (incremental line index, piece coalescing), not from the library.
+- **It is not a performance win.** Replacing libc `memmove` with `proven_mem_move` was benchmark-neutral; the editor's 5-50x edit speedups came entirely from its own data structures (incremental line index, piece coalescing), not from the library.
 - **Vendoring discipline.** A copy-only, do-not-patch integration means library gaps are filed upstream rather than fixed in place. Early editor work hit three such gaps (a Windows panic-symbol link failure, a missing fixed-capacity string constructor, and absent owner/group in `fs` stat); they were resolved or deferred upstream, not patched downstream.
 - **Pervasive coupling.** Passing the allocator and Result types everywhere is a deliberate commitment. It pays off on a long-lived, multi-platform codebase and is heavier than warranted for throwaway code.
-- **A young library has gaps.** Expect to occasionally find a missing primitive and to fill or report it. The value is concentrated in safety, testability, and portability — not in convenience or raw speed.
+- **A young library has gaps.** Expect to occasionally find a missing primitive and to fill or report it. The value is concentrated in safety, testability, and portability - not in convenience or raw speed.
 
 ## Documentation
 

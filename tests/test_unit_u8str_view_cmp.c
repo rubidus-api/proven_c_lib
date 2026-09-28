@@ -3,7 +3,7 @@
 #include <string.h>
 
 /*
- * Written from docs/RFC-0003 §3.4 and §4.4 before the implementation (docs/TESTING.md §5.1).
+ * Written from docs/RFC-0003 section 3.4 and section 4.4 before the implementation (docs/TESTING.md section 5.1).
  * The table is the RFC's, row for row. Two rows carry more weight than they look: "\xFF" after
  * "a" pins unsigned comparison, and "a\0b" before "a\0c" says that a NUL inside a view is data -
  * the property that separates these strings from C strings.

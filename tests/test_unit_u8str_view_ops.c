@@ -3,8 +3,8 @@
 #include <string.h>
 
 /*
- * Written from docs/RFC-0003 §3.2, §3.3, §3.5 and tables §4.2, §4.3, §4.5, before the
- * implementations (docs/TESTING.md §5.1). Every empty result is {NULL, 0} by the RFC's single
+ * Written from docs/RFC-0003 section 3.2, section 3.3, section 3.5 and tables section 4.2, section 4.3, section 4.5, before the
+ * implementations (docs/TESTING.md section 5.1). Every empty result is {NULL, 0} by the RFC's single
  * spelling of empty, so these tests compare sizes and contents, never pointers.
  */
 

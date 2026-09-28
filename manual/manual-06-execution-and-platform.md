@@ -1,13 +1,13 @@
 # Chapter 6: Execution, Aliases, PAL, Freestanding, and Cross Builds
 
-**Part VI — Going further. Prerequisites: Parts II–V.**
+**Part VI - Going further. Prerequisites: Parts II-V.**
 **After this chapter** you can run work on more than one thread without the memory model
 surprising you, write a state machine that reads like a loop, and build for a target that has no
 operating system.
 
 This chapter covers `coro.h`, `job.h`, `alias_xcv.h`, thread-safety and pointer provenance, PAL
 contracts, freestanding mode, and platform build notes. This is the hardest material in the
-manual, and it is last on purpose — nothing in Parts I–V depends on it.
+manual, and it is last on purpose - nothing in Parts I-V depends on it.
 
 ## Table of contents
 
@@ -62,7 +62,7 @@ proven_i32 f(Ctx *c) {
 ```
 
 The function **returns** at each yield and is **re-entered from the top**, jumping
-straight to the resume `case`. The consequence — the single rule to remember:
+straight to the resume `case`. The consequence - the single rule to remember:
 
 > **Local (stack) variables do NOT survive a yield.** Anything whose value must
 > persist across a `YIELD`/`AWAIT` must live in the coroutine's own struct (or be
@@ -71,10 +71,10 @@ straight to the resume `case`. The consequence — the single rule to remember:
 Other constraints that follow from the expansion: two coroutine macros must not
 share a source line (they'd collide on `__LINE__`), and a `YIELD`/`AWAIT` must not
 sit inside a `switch` of your own (it would land in the wrong `case`). The
-coroutine has no stack, so it cannot yield from a helper function it calls — only
+coroutine has no stack, so it cannot yield from a helper function it calls - only
 from its own body.
 
-#### Counter-example — a local across a yield
+#### Counter-example - a local across a yield
 
 ```text
 static proven_i32 bad(Ctx *c) {
@@ -179,10 +179,10 @@ worker performs an empty recheck and parks again, or exits after close.
 Because submit and execute are MPMC-safe, *many* threads may submit and *many* may
 consume at once. What the library does **not** do for you: it does not synchronize
 the *data your jobs touch*. Two jobs that write the same variable still need their
-own locking/atomics — the queue only orders the handoff, not the work. For the
+own locking/atomics - the queue only orders the handoff, not the work. For the
 thread-safety of the allocators those jobs use, the pointer-provenance hazards of
 sharing allocations, and the lock-free toolbox (CAS, ABA, tagged pointers, hazard
-pointers, epoch-based reclamation), see Chapter 2 §7 "Allocator thread-safety &
+pointers, epoch-based reclamation), see Chapter 2 section 7 "Allocator thread-safety &
 provenance".
 
 Lifecycle state machine (drive it in this order):
@@ -201,7 +201,7 @@ init  --->  running  --(close)-->  closed  --(destroy: drain + join)-->  freed
 **Memory visibility.** A worker joining inside `destroy` is a synchronization
 point: every memory effect of every job is visible to the thread that called
 `destroy` *after `destroy` returns*. So the safe pattern for collecting results is
-"submit all → close → destroy → read results". Reading a job's output from another
+"submit all -> close -> destroy -> read results". Reading a job's output from another
 thread *before* that join needs your own synchronization.
 
 #### Counter-examples
@@ -286,14 +286,14 @@ would need if you build concurrent structures on top.
 Two rules follow:
 
 1. **"Allocator safe" is not "object safe."** Even with the heap allocator, the
-   containers built on it (`proven_u8str_t`, `proven_array_t`, `proven_map_t`, …)
+   containers built on it (`proven_u8str_t`, `proven_array_t`, `proven_map_t`, ...)
    add no internal locks. A `proven_u8str_t` that one thread appends to while
    another reads it is a data race regardless of how thread-safe the allocator is.
    Shared mutable objects always need *your* synchronization.
 2. **Arena and pool must not be shared.** Concurrent `proven_arena_alloc` can tear
    `offset` and hand the *same bytes* to two threads or drop an allocation
    entirely; concurrent pool pop/push can hand out the same slot twice or underflow
-   `bin_len`. A data race is undefined behavior on its own — see §7.3 for why the
+   `bin_len`. A data race is undefined behavior on its own - see section 7.3 for why the
    consequences are worse than "a wrong number."
 
 ### 3.2 Pointer provenance in one paragraph
@@ -303,7 +303,7 @@ storage instance it was derived from. Two rules matter here: (a) using a pointer
 outside the lifetime or bounds of its provenance object is undefined; and (b) the
 optimizer is allowed to assume that **pointers with different provenance do not
 alias**, and to reorder or elide memory accesses on that basis. Allocation,
-reallocation, and freeing all create and destroy provenance — which is exactly why
+reallocation, and freeing all create and destroy provenance - which is exactly why
 they interact badly with unsynchronized sharing.
 
 ### 3.3 Where allocation + provenance bite under threads
@@ -311,8 +311,8 @@ they interact badly with unsynchronized sharing.
 - **`realloc` always relocates here.** The platform `realloc` is *allocate-new +
   copy + free-old* (an aligned block cannot be resized in place portably), so a
   successful grow **always** returns a new object with new provenance and ends the
-  old one. Any retained copy of the old pointer — a cached element pointer, a
-  borrowed `proven_mem_view_t`/`proven_u8str_view_t` — is now dangling. In a single
+  old one. Any retained copy of the old pointer - a cached element pointer, a
+  borrowed `proven_mem_view_t`/`proven_u8str_view_t` - is now dangling. In a single
   thread you avoid this by not holding a view across a grow; under threads another
   thread can grow a shared container at *any* instant, leaving your view pointing
   into freed storage (rule (a): UB, plus a data race).
@@ -321,18 +321,18 @@ they interact badly with unsynchronized sharing.
   provenance. A thread still holding the old pointer assumes the old provenance; by
   rule (b) the compiler may treat the two as non-aliasing even though the bytes
   coincide, and without a happens-before edge the new object's writes need not be
-  visible. Same address, different provenance — still UB.
+  visible. Same address, different provenance - still UB.
 - **`uintptr_t` round-trips + torn reads.** The arena converts `backing.ptr` to an
   integer for alignment math. It is careful to derive the *result* pointer by
   offsetting the original `backing.ptr` (preserving its provenance) rather than
-  fabricating a pointer from the integer — the provenance-correct technique. But if
+  fabricating a pointer from the integer - the provenance-correct technique. But if
   `offset` is read torn under a race, the computed pointer can land *outside* the
   backing object, i.e. an access with no valid provenance for that location. The
   race produces not just a wrong offset but a pointer with no right to point there.
-- **Data race × provenance reasoning = miscompilation, not just wrong values.**
+- **Data race x provenance reasoning = miscompilation, not just wrong values.**
   Because the compiler applies single-threaded, provenance-based non-aliasing
   reasoning within each thread, a racy allocator can let the optimizer "prove"
-  non-aliasing that does not hold at runtime — yielding torn pointers, double
+  non-aliasing that does not hold at runtime - yielding torn pointers, double
   allocations the compiler believes cannot overlap, or dropped stores. The failure
   mode is structural, not a flaky value.
 
@@ -340,7 +340,7 @@ they interact badly with unsynchronized sharing.
 
 `proven` does **not** implement any lock-free allocator or safe-memory-reclamation
 scheme. If you build concurrent data structures over these allocators, you supply
-the following yourself (`<stdatomic.h>` is available — the job system in Chapter 6
+the following yourself (`<stdatomic.h>` is available - the job system in Chapter 6
 uses it for its queue indices). These are the standard pieces and how they relate
 to the provenance hazards above.
 
@@ -360,17 +360,17 @@ to the provenance hazards above.
 - **The ABA problem.** CAS compares *values*, not *history*. A lock-free pop reads
   `head == A`, plans to install `A->next`, then CASes. If, in between, other
   threads pop `A`, pop its successor, free them, and push `A` back (its address
-  reused), the CAS still sees `head == A` and *succeeds* — installing a pointer to
-  freed memory. The value matched (A→B→A) but the world changed. The pool's
-  free-list is a textbook ABA candidate if naïvely made lock-free.
+  reused), the CAS still sees `head == A` and *succeeds* - installing a pointer to
+  freed memory. The value matched (A->B->A) but the world changed. The pool's
+  free-list is a textbook ABA candidate if naively made lock-free.
 - **Tagged pointers / version counters.** Pack a monotonically increasing tag next
   to the pointer and CAS them together (a double-width CAS, or by stealing the
   low alignment bits / high bits). Every successful update bumps the tag, so an
-  A→B→A sequence comes back with a *different* tag and the CAS fails — ABA detected.
+  A->B->A sequence comes back with a *different* tag and the CAS fails - ABA detected.
   Costs/limits: bit-stealing needs guaranteed alignment and shrinks the usable
   address range; a full-width tag needs hardware double-word CAS (e.g. `cmpxchg16b`);
   the tag can in principle wrap. **Crucially, a tag fixes ABA *detection* on the
-  shared word — it does not restore provenance.** The reused address is still a new
+  shared word - it does not restore provenance.** The reused address is still a new
   object; the tag only stops you from *acting* on the stale view.
 - **Hazard pointers (safe memory reclamation).** Each thread owns a few
   single-writer/multi-reader "hazard" slots. Before dereferencing a shared pointer
@@ -384,10 +384,10 @@ to the provenance hazards above.
   the epoch it was retired in. Memory retired in epoch *e* is freed only once every
   thread has been observed past *e* (a grace period of a couple of epochs). Cheaper
   per operation than hazard pointers (just a pinned flag), but a thread that stalls
-  while pinned blocks all reclamation — unbounded memory growth. Variants:
+  while pinned blocks all reclamation - unbounded memory growth. Variants:
   quiescent-state (QSBR) and interval-based reclamation.
 - **How these tie back to provenance.** Reclamation schemes (hazard pointers, EBR)
-  exist precisely to keep a freed object's *storage alive* — its provenance valid —
+  exist precisely to keep a freed object's *storage alive* - its provenance valid --
   until no thread can still reference it. CAS + a tag keep the shared *word*
   consistent but say nothing about the lifetime of what it points to. That is why a
   correct lock-free stack typically needs **both**: a tag (for ABA on the head word)
@@ -397,7 +397,7 @@ to the provenance hazards above.
 ### 3.5 Safe patterns with `proven`
 
 - **Per-thread arena/pool.** Give each thread its own `proven_arena_t` /
-  `proven_pool_t`. No sharing means no race and no cross-thread provenance — the
+  `proven_pool_t`. No sharing means no race and no cross-thread provenance - the
   simplest correct design, and usually the fastest.
 - **Heap for cross-thread alloc/free, but synchronize the objects.** It is fine for
   thread A to allocate and thread B to free via `proven_heap_allocator()`; it is
@@ -409,10 +409,10 @@ to the provenance hazards above.
   allocation's provenance confined to a single thread and makes the producer's
   writes visible to the consumer.
 - **Do not pass borrowed views across threads** unless the owner is guaranteed not
-  to grow/move/free for the whole duration of the borrow — and remember a grow here
+  to grow/move/free for the whole duration of the borrow - and remember a grow here
   always relocates.
 - **If you must share an arena/pool, wrap it** in your own mutex (or build a real
-  lock-free allocator with the tools in §7.4); the built-in ones assume a single
+  lock-free allocator with the tools in section 7.4); the built-in ones assume a single
   owner at a time.
 
 ## 4. Alias layer
@@ -420,7 +420,7 @@ to the provenance hazards above.
 ### Why a second set of names exists
 
 `proven_u8str_view_slice` is 26 characters. In a file that calls twenty such functions, the prefix
-is a third of the line, and the part that varies — the part you actually read — is squeezed into
+is a third of the line, and the part that varies - the part you actually read - is squeezed into
 what is left.
 
 Prefixes are not decoration in C. The language has one global namespace for functions, so a library
@@ -432,20 +432,20 @@ has one.
 opt into. Include it and `xcv_u8str_view_slice` works; do not, and the short names do not exist to
 collide with anything.
 
-**The canonical names remain the source of truth** — for the ABI, for this manual, and for the
+**The canonical names remain the source of truth** - for the ABI, for this manual, and for the
 tests. The alias layer is a spelling, not an API: nothing is exported under the short name that is
 not exported under the long one, and a completeness gate (`tests/test_docs_alias_completeness.c`)
 fails the build if a public function is ever added without its alias, because an alias layer with
-holes is worse than none — a caller who adopts it discovers the gaps one compile error at a time.
+holes is worse than none - a caller who adopts it discovers the gaps one compile error at a time.
 
-Wrong — expecting the aliases without including the header:
+Wrong - expecting the aliases without including the header:
 
 ```text
 #include "proven.h"
 xcv_u8str_view_t v;   /* wrong: proven.h does not pull in the alias layer */
 ```
 
-Wrong — mixing the two spellings for the same idea in one file:
+Wrong - mixing the two spellings for the same idea in one file:
 
 ```text
 proven_result_u8str_t s = xcv_u8str_create(alloc, 32);   /* wrong: pick one and stay with it */
@@ -496,7 +496,7 @@ This library puts all of it in one directory. **`platform/` is the only place th
 syscall.** Everything in `src/proven/` is portable C that calls through the PAL, which means:
 
 - **The requirement list is a file listing.** What this library needs from an operating system is
-  exactly the set of `proven_sys_*` functions — nothing hidden, nothing discovered late.
+  exactly the set of `proven_sys_*` functions - nothing hidden, nothing discovered late.
 - **Porting is bounded.** A new target reimplements `platform/`. Nothing in `src/proven/` changes,
   and the tests that exercise the portable half keep passing.
 - **Freestanding is the same mechanism, not a special case.** Build without the hosted PAL files
@@ -505,10 +505,10 @@ syscall.** Everything in `src/proven/` is portable C that calls through the PAL,
 
 The PAL is **internal**. `proven_sys_*` functions are not the public API and their signatures may
 change; the public wrappers in `fs.h`, `sysio.h`, `time.h` and `random.h` are what you call. The
-symbols gate knows this — it exempts the PAL from the "must be documented" requirement precisely
+symbols gate knows this - it exempts the PAL from the "must be documented" requirement precisely
 because it is not a surface you are meant to program against.
 
-Wrong — calling the PAL directly from application code:
+Wrong - calling the PAL directly from application code:
 
 ```text
 proven_sys_fs_open(path, flags);   /* wrong: internal. Use proven_fs_open. */
@@ -584,14 +584,14 @@ See `manual-freestanding.md` for the exact source list and command examples.
 
 A library that claims to be portable is making a claim that decays silently. Code that assumed
 64-bit pointers, or that `char` is signed, or that unaligned loads are fine, compiles perfectly on
-the machine it was written on and breaks on an ARM board six months later — and the commit that
+the machine it was written on and breaks on an ARM board six months later - and the commit that
 broke it looked harmless.
 
 `./nob cross` compiles the library for every target in a matrix without running anything. The
 configured MinGW lanes additionally link a smoke executable. That
 sounds weak and is not: **most portability failures are compile-time failures.** A type that is not
 the width you assumed, a missing intrinsic, an alignment requirement the target actually enforces,
-a header that does not exist there — all of them fail the compiler, on this machine, in seconds,
+a header that does not exist there - all of them fail the compiler, on this machine, in seconds,
 in the commit that introduced them.
 
 What a compile-only check cannot catch is behaviour: endianness bugs, alignment faults that only
@@ -599,11 +599,11 @@ happen at run time, and anything timing-dependent. Those need real hardware or a
 matrix does not pretend otherwise. It is the cheap half of portability testing, run on every build,
 rather than the expensive half run never.
 
-Cross builds are also where the freestanding profile is exercised for real targets — Cortex-M and
-RISC-V among them — so the "no operating system" claim is checked by a compiler rather than by a
+Cross builds are also where the freestanding profile is exercised for real targets - Cortex-M and
+RISC-V among them - so the "no operating system" claim is checked by a compiler rather than by a
 paragraph in a guide.
 
-Wrong — treating a green cross matrix as proof the library runs on that target:
+Wrong - treating a green cross matrix as proof the library runs on that target:
 
 ```text
 /* wrong: ./nob cross compiles and links objects. It does not execute anything.
