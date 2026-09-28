@@ -100,6 +100,17 @@ int main(void) {
         PROVEN_TEST_ASSERT(f.err == PROVEN_ERR_INVALID_ENCODING, "an unpaired surrogate fails the format", "");
         proven_u8str_destroy(heap, &s);
 
+        /* A u16 view that starts BEFORE the output's storage and runs into it: refused like one
+         * that starts inside (code review: the formatter only checked the start). */
+        {
+            _Alignas(8) proven_byte_t area[64] = {0};
+            for (int k = 0; k < 8; k += 2) { area[k] = 'a'; area[k + 1] = 0; }
+            proven_u8str_t out = proven_u8str_borrow(area + 4, 32);
+            proven_u16str_view_t straddle = { (const proven_u16 *)(void *)area, 4 };   /* bytes 0..8, output from 4 */
+            proven_fmt_result_t fr = proven_u8str_append_fmt(&out, "{}", PROVEN_ARG(straddle));
+            PROVEN_TEST_ASSERT(fr.err == PROVEN_ERR_INVALID_ARG, "a u16 view overlapping the output from below is refused", "");
+        }
+
         proven_writer_buf_t wb = { .buf = { bytes, sizeof bytes } };
         proven_writer_t w = proven_writer_from_buffer(&wb);
         PROVEN_TEST_ASSERT(proven_is_ok(proven_fprintln(w, "u16: {}", PROVEN_ARG(han)).err), "fprintln takes it", "");

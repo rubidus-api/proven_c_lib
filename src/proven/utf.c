@@ -1,4 +1,6 @@
 #include "proven/utf.h"
+#include "proven/align.h"
+#include "proven_internal_memrange.h"
 
 /*
  * UTF-8 <-> UTF-16, strict (RFC 3629, Unicode 15 chapter 3 table 3-7). Pure computation.
@@ -232,18 +234,23 @@ proven_err_t proven_utf16_to_utf8(const proven_u16 *src, proven_size_t n, proven
 // Growable, atomic
 // -------------------------------------------------------------
 
-/* Whether [p, p + bytes) touches [base, base + cap). Compared as integers: the two ranges may
- * belong to different objects, and relational operators on unrelated pointers are undefined. */
-static bool ranges_touch(const void *p, proven_size_t bytes, const void *base, proven_size_t cap) {
-    if (!p || !base || bytes == 0 || cap == 0) return false;
-    uintptr_t a = (uintptr_t)p, b = (uintptr_t)base;
-    return a < b + cap && b < a + bytes;
+/*
+ * Growable, atomic. The exact output size is known after validation, so the string is grown
+ * ONCE (doubling, as the strings' own _grow calls do) and the text is converted straight into
+ * its storage. After the grow nothing can fail, so there is nothing to roll back: on any failure
+ * the string has not been touched. (It used to convert through a 256-unit stack chunk and
+ * append_grow each chunk - every byte copied twice, possibly several reallocations, and a
+ * hand-written rollback for an allocation failing half-way; code review.)
+ *
+ * Input overlapping the string's storage is refused: the grow may move it.
+ */
+static proven_size_t grow_cap(proven_size_t cap, proven_size_t required, proven_size_t min_start) {
+    proven_size_t c = cap ? cap : min_start;
+    while (c < required) {
+        if (PROVEN_CKD_MUL(&c, c, (proven_size_t)2)) return required;
+    }
+    return c;
 }
-
-/* Chunked through a stack buffer, so a long text costs no scratch allocation. The input is
- * validated first; after that the only failure left is the allocator, and that one is undone
- * by restoring the old length - the terminator is rewritten because a chunk overwrote it. */
-#define UTF_CHUNK 256
 
 proven_err_t proven_utf16_append_to_u8str(proven_allocator_t alloc, proven_u8str_t *dst,
                                           const proven_u16 *src, proven_size_t n) {
@@ -251,31 +258,27 @@ proven_err_t proven_utf16_append_to_u8str(proven_allocator_t alloc, proven_u8str
     if (n > 0 && !src) return PROVEN_ERR_INVALID_ARG;
     proven_size_t src_bytes;
     if (PROVEN_CKD_MUL(&src_bytes, n, sizeof(proven_u16))) return PROVEN_ERR_OVERFLOW;
-    if (ranges_touch(src, src_bytes, dst->internal.ptr, dst->internal.cap)) {
-        return PROVEN_ERR_INVALID_ARG;
-    }
+    if (proven_range_overlaps(dst->internal.ptr, dst->internal.cap, src, src_bytes)) return PROVEN_ERR_INVALID_ARG;
 
     proven_result_size_t need = proven_utf16_to_utf8_size(src, n);
     if (!proven_is_ok(need.err)) return need.err;
     if (need.value == 0) return proven_u8str_append_grow(alloc, dst, (proven_u8str_view_t){ 0 });
 
-    proven_size_t old_len = dst->internal.len;
-    proven_byte_t chunk[UTF_CHUNK];
-    proven_size_t done = 0;
-    while (done < n) {
-        proven_utf_step_t st = proven_utf16_to_utf8_partial(src + done, n - done, chunk, sizeof chunk);
-        /* OUT_OF_BOUNDS only means the chunk is full; anything else after validation is a bug. */
-        proven_err_t e = st.err;
-        if (e == PROVEN_OK || e == PROVEN_ERR_OUT_OF_BOUNDS) {
-            e = proven_u8str_append_grow(alloc, dst, (proven_u8str_view_t){ chunk, st.written });
-        }
-        if (!proven_is_ok(e)) {
-            dst->internal.len = old_len;
-            if (dst->internal.ptr) dst->internal.ptr[old_len] = 0;
-            return e;
-        }
-        done += st.consumed;
+    proven_size_t required;   /* old length + text + terminator */
+    if (PROVEN_CKD_ADD(&required, dst->internal.len, need.value) || PROVEN_CKD_ADD(&required, required, 1)) {
+        return PROVEN_ERR_OVERFLOW;
     }
+    if (required > dst->internal.cap) {
+        proven_size_t new_cap = grow_cap(dst->internal.cap, required, 16);
+        proven_err_t e = proven_u8str_reserve(alloc, dst, new_cap);
+        if (!proven_is_ok(e)) return e;
+    }
+
+    proven_byte_t *at = dst->internal.ptr + dst->internal.len;
+    proven_utf_step_t st = proven_utf16_to_utf8_partial(src, n, at, need.value);
+    if (st.err != PROVEN_OK || st.written != need.value) return PROVEN_ERR_INVALID_STATE;   /* validated above */
+    dst->internal.len += need.value;
+    dst->internal.ptr[dst->internal.len] = 0;
     return PROVEN_OK;
 }
 
@@ -284,31 +287,33 @@ proven_err_t proven_utf8_append_to_u16str(proven_allocator_t alloc, proven_u16st
                                           proven_u8str_view_t src) {
     if (!dst) return PROVEN_ERR_INVALID_ARG;
     if (src.size > 0 && !src.ptr) return PROVEN_ERR_INVALID_ARG;
-    if (ranges_touch(src.ptr, src.size, dst->internal.ptr, dst->internal.cap)) {
-        return PROVEN_ERR_INVALID_ARG;
-    }
+    if (proven_range_overlaps(dst->internal.ptr, dst->internal.cap, src.ptr, src.size)) return PROVEN_ERR_INVALID_ARG;
 
     proven_result_size_t need = proven_utf8_to_utf16_size(src);
     if (!proven_is_ok(need.err)) return need.err;
     if (need.value == 0) return proven_u16str_append_grow(alloc, dst, (proven_u16str_view_t){ 0 });
 
-    proven_size_t old_len = dst->internal.len;
-    proven_u16 chunk[UTF_CHUNK];
-    proven_size_t done = 0;
-    while (done < src.size) {
-        proven_utf_step_t st = proven_utf8_to_utf16_partial(
-            (proven_u8str_view_t){ src.ptr + done, src.size - done }, chunk, UTF_CHUNK);
-        proven_err_t e = st.err;
-        if (e == PROVEN_OK || e == PROVEN_ERR_OUT_OF_BOUNDS) {
-            e = proven_u16str_append_grow(alloc, dst, (proven_u16str_view_t){ chunk, st.written });
-        }
-        if (!proven_is_ok(e)) {
-            dst->internal.len = old_len;
-            if (dst->internal.ptr) ((proven_u16 *)(void *)dst->internal.ptr)[old_len / sizeof(proven_u16)] = 0;
-            return e;
-        }
-        done += st.consumed;
+    proven_size_t old_units = dst->internal.len / sizeof(proven_u16);
+    proven_size_t required_units, required_bytes;   /* old + text + terminator */
+    if (PROVEN_CKD_ADD(&required_units, old_units, need.value) || PROVEN_CKD_ADD(&required_units, required_units, 1) ||
+        PROVEN_CKD_MUL(&required_bytes, required_units, sizeof(proven_u16))) {
+        return PROVEN_ERR_OVERFLOW;
     }
+    if (required_bytes > dst->internal.cap) {
+        if (!proven_alloc_is_valid(alloc)) return PROVEN_ERR_INVALID_ARG;
+        proven_size_t new_cap = grow_cap(dst->internal.cap, required_bytes, 16 * sizeof(proven_u16));
+        proven_result_mem_mut_t m = alloc.realloc_fn(alloc.ctx, dst->internal.ptr, dst->internal.cap, new_cap,
+                                                     PROVEN_DEFAULT_ALIGNMENT);
+        if (!proven_is_ok(m.err)) return m.err;
+        dst->internal.ptr = (proven_byte_t *)m.value.ptr;
+        dst->internal.cap = new_cap;
+    }
+
+    proven_u16 *units = (proven_u16 *)(void *)dst->internal.ptr;
+    proven_utf_step_t st = proven_utf8_to_utf16_partial(src, units + old_units, need.value);
+    if (st.err != PROVEN_OK || st.written != need.value) return PROVEN_ERR_INVALID_STATE;   /* validated above */
+    dst->internal.len += need.value * sizeof(proven_u16);
+    units[old_units + need.value] = 0;
     return PROVEN_OK;
 }
 #endif

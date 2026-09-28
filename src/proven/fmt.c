@@ -971,9 +971,8 @@ proven_fmt_result_t proven_u8str_fmt_internal(proven_allocator_t alloc, proven_u
                 res.err = PROVEN_ERR_OVERFLOW;
                 return res;
             }
-            proven_bufref_t alias_ref = proven_bufref_capture(str->internal.ptr, str->internal.cap,
-                                                              args[i].value.u16_view.ptr, u16_bytes);
-            if (alias_ref.valid) {
+            /* Any overlap, not only a view that starts inside: the same rule utf.h applies. */
+            if (proven_range_overlaps(str->internal.ptr, str->internal.cap, args[i].value.u16_view.ptr, u16_bytes)) {
                 res.err = PROVEN_ERR_INVALID_ARG;
                 return res;
             }

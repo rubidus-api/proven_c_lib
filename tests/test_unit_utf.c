@@ -325,16 +325,22 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_utf8_append_to_u16str(g_heap, &s16, bv("ok\xFF", 3)) == PROVEN_ERR_INVALID_ENCODING &&
                            proven_u16str_len(&s16) == 3, "malformed input changes nothing", "");
 
-        /* A long text through a starved allocator: the second growth fails, and the string
-         * must come back as it was, even though the first chunk had already been appended. */
+        /* A long text through an allocator that refuses: the string must come back exactly as
+         * it was, length and terminator. (The grow now happens once, before any conversion, so
+         * there is no half-appended state to undo - this pins that no state is left either.) */
         static char big[3 * 600];
         for (size_t i = 0; i < 600; ++i) memcpy(big + 3 * i, "\xED\x95\x9C", 3);
-        budget_ctx_t budget = { 1 };
+        budget_ctx_t budget = { 0 };
         proven_allocator_t starved = { &budget, b_alloc, b_realloc, b_free };
         proven_err_t e = proven_utf8_append_to_u16str(starved, &s16, bv(big, sizeof big));
         const proven_u16 *p = proven_u16str_as_ptr(&s16);
         PROVEN_TEST_ASSERT(e == PROVEN_ERR_NOMEM && proven_u16str_len(&s16) == 3 && p[3] == 0,
-            "a failed allocation mid-way leaves the old length and terminator", "");
+            "a refused allocation leaves the old length and terminator", "");
+        budget.budget = 1;
+        e = proven_utf8_append_to_u16str(starved, &s16, bv(big, sizeof big));
+        PROVEN_TEST_ASSERT(proven_is_ok(e) && proven_u16str_len(&s16) == 603 && proven_u16str_as_ptr(&s16)[603] == 0 &&
+                           proven_u16str_as_ptr(&s16)[602] == 0xD55C,
+            "and one allocation is all a 600-syllable append needs", "");
         proven_u16str_destroy(g_heap, &s16);
 
         proven_result_u8str_t r8 = proven_u8str_create(g_heap, 4);
