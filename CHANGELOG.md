@@ -30,6 +30,12 @@ written; their tags still exist.
 
 ### Changed
 
+- **The job system's wake-latency budget states its condition (B-041).** The Windows idle-wake p99
+  of ~8.9 ms was traced with `docs/b041-wake-probe.c`: a bare OS semaphore shows the same tail
+  whenever CPUs are scarce (the 2-vCPU VM; Linux pinned to 2 CPUs), and neither shows it on a
+  quiet 16-CPU host. The job system adds ~1 us at the median. No library change; the budget in
+  `docs/benchmarks/README.md` now says it assumes free CPUs, and `test_bench_job` prints the
+  host's logical CPU count.
 - **`./nob release` defines `NDEBUG`; new `./nob hardened` keeps the checks (B-036).**
   Compatibility note: a release build no longer traps a pool double free or a foreign pointer, or
   the map's key-overlap misuse - those checks are for debug and hardened builds. They made pool

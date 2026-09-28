@@ -4,6 +4,9 @@
 #include "proven_sys_thread.h"
 #include "proven_bench.h"
 #include <stdatomic.h>
+#if !defined(_WIN32) && !defined(_WIN64)
+#include <unistd.h>
+#endif
 
 /*
  * The job system's idle and latency behaviour, measured (docs/BACKLOG.md B-038).
@@ -165,6 +168,14 @@ int main(void) {
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("latency and throughput", "8 workers; microseconds from an accepted submit to the job starting.", "");
+    /* The wake tail is the OS scheduler's when the host has fewer free CPUs than parked workers
+     * plus this spin-waiting thread (B-041), so every run says how many it had. */
+#if defined(_WIN32) || defined(_WIN64)
+    SYSTEM_INFO si; GetSystemInfo(&si);
+    printf("[PROVEN][BENCH][HOST] bench=job logical_cpus=%lu\n", (unsigned long)si.dwNumberOfProcessors);
+#else
+    printf("[PROVEN][BENCH][HOST] bench=job logical_cpus=%ld\n", sysconf(_SC_NPROCESSORS_ONLN));
+#endif
     // ---------------------------------------------------------------
     double ip50[ROUNDS], ip99[ROUNDS], bp50[ROUNDS], bp99[ROUNDS], sp50[ROUNDS], sp99[ROUNDS], tput[ROUNDS];
     for (int r = -1; r < ROUNDS; ++r) {
