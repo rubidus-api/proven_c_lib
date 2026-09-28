@@ -318,7 +318,8 @@ typedef struct {
     proven_size_t          cap;          /**< in code units */
     proven_size_t          len;          /**< units decoded and held */
     proven_size_t          cursor;       /**< units already handed out */
-    proven_byte_t          raw[64];      /**< bytes read from `inner`, not yet decoded */
+    proven_byte_t          raw[1024];    /**< bytes read from `inner`; raw[raw_pos..raw_len) not yet decoded */
+    proven_size_t          raw_pos;
     proven_size_t          raw_len;
     proven_u16             peek[2];      /**< one character of lookahead for a full buffer */
     proven_size_t          peek_len;

@@ -624,9 +624,20 @@ proven_err_t proven_u16_reader_init(proven_u16_reader_t *st, proven_reader_t inn
     return PROVEN_OK;
 }
 
-/* Top up the raw staging area. False when the source is exhausted or broke (st->err says). */
+/* Top up the raw staging area. False when the source is exhausted or broke (st->err says).
+ *
+ * 1 KiB, and consumed bytes are skipped with a cursor rather than moved after every decode: a
+ * 64-byte area cost one read of the source per 64 bytes - some 16,000 read() calls for a 1 MiB
+ * file through sysio, against 256 for the byte line reader (code review). The tail is moved to
+ * the front only here, once per refill. */
 static bool u16r_read_raw(proven_u16_reader_t *st) {
     if (st->eof) return false;
+    if (st->raw_pos > 0) {
+        proven_size_t keep = st->raw_len - st->raw_pos;
+        if (keep > 0) proven_sys_mem_move(st->raw, st->raw + st->raw_pos, keep);
+        st->raw_len = keep;
+        st->raw_pos = 0;
+    }
     if (st->raw_len == sizeof st->raw) return true;
     proven_result_size_t r = proven_reader_read(st->inner,
         (proven_mem_mut_t){ st->raw + st->raw_len, sizeof st->raw - st->raw_len });
@@ -646,14 +657,16 @@ static bool u16r_read_raw(proven_u16_reader_t *st) {
  * reasons are utf.h's. */
 static proven_utf_step_t u16r_decode_raw(proven_u16_reader_t *st, proven_u16 *dest, proven_size_t cap) {
     if (st->enc == PROVEN_TEXT_UTF8) {
-        return proven_utf8_to_utf16_partial((proven_u8str_view_t){ st->raw, st->raw_len }, dest, cap);
+        return proven_utf8_to_utf16_partial((proven_u8str_view_t){ st->raw + st->raw_pos, st->raw_len - st->raw_pos }, dest, cap);
     }
 
     proven_utf_step_t out = { PROVEN_OK, 0, 0 };
     proven_u16 units[sizeof ((proven_u16_reader_t *)0)->raw / 2];
-    proven_size_t n = st->raw_len / 2;
+    const proven_byte_t *raw = st->raw + st->raw_pos;
+    proven_size_t raw_n = st->raw_len - st->raw_pos;
+    proven_size_t n = raw_n / 2;
     for (proven_size_t i = 0; i < n; ++i) {
-        proven_byte_t a = st->raw[2 * i], b = st->raw[2 * i + 1];
+        proven_byte_t a = raw[2 * i], b = raw[2 * i + 1];
         units[i] = (st->enc == PROVEN_TEXT_UTF16LE) ? (proven_u16)(a | (b << 8)) : (proven_u16)((a << 8) | b);
     }
     /* Validate as whole characters by converting to UTF-8 into scratch nobody reads: this is
@@ -667,7 +680,7 @@ static proven_utf_step_t u16r_decode_raw(proven_u16_reader_t *st, proven_u16 *de
         out.err = PROVEN_ERR_OUT_OF_BOUNDS;
     } else if (v.err == PROVEN_ERR_INVALID_ENCODING) {
         out.err = PROVEN_ERR_INVALID_ENCODING;
-    } else if (v.consumed < n || (st->raw_len & 1u)) {
+    } else if (v.consumed < n || (raw_n & 1u)) {
         out.err = PROVEN_ERR_NEED_MORE;   /* a trailing high surrogate, or an odd byte */
     }
     for (proven_size_t i = 0; i < take; ++i) dest[i] = units[i];
@@ -677,17 +690,15 @@ static proven_utf_step_t u16r_decode_raw(proven_u16_reader_t *st, proven_u16 *de
 }
 
 static void u16r_check_bom(proven_u16_reader_t *st) {
-    while (st->raw_len < 3 && u16r_read_raw(st)) {}
-    const proven_byte_t *r = st->raw;
+    while (st->raw_len - st->raw_pos < 3 && u16r_read_raw(st)) {}
+    const proven_byte_t *r = st->raw + st->raw_pos;
+    proven_size_t avail = st->raw_len - st->raw_pos;
     proven_size_t skip = 0;
-    if (st->raw_len >= 3 && r[0] == 0xEF && r[1] == 0xBB && r[2] == 0xBF) { st->enc = PROVEN_TEXT_UTF8; skip = 3; }
-    else if (st->raw_len >= 2 && r[0] == 0xFF && r[1] == 0xFE)            { st->enc = PROVEN_TEXT_UTF16LE; skip = 2; }
-    else if (st->raw_len >= 2 && r[0] == 0xFE && r[1] == 0xFF)            { st->enc = PROVEN_TEXT_UTF16BE; skip = 2; }
+    if (avail >= 3 && r[0] == 0xEF && r[1] == 0xBB && r[2] == 0xBF) { st->enc = PROVEN_TEXT_UTF8; skip = 3; }
+    else if (avail >= 2 && r[0] == 0xFF && r[1] == 0xFE)            { st->enc = PROVEN_TEXT_UTF16LE; skip = 2; }
+    else if (avail >= 2 && r[0] == 0xFE && r[1] == 0xFF)            { st->enc = PROVEN_TEXT_UTF16BE; skip = 2; }
     else                                                                  { st->enc = PROVEN_TEXT_UTF8; }
-    if (skip) {
-        proven_sys_mem_move(st->raw, st->raw + skip, st->raw_len - skip);
-        st->raw_len -= skip;
-    }
+    st->raw_pos += skip;
     st->bom_checked = true;
 }
 
@@ -713,10 +724,7 @@ static proven_result_size_t u16r_decode(proven_u16_reader_t *st, proven_u16 *des
 
     for (;;) {
         proven_utf_step_t d = u16r_decode_raw(st, dest, cap);
-        if (d.consumed > 0) {
-            proven_sys_mem_move(st->raw, st->raw + d.consumed, st->raw_len - d.consumed);
-            st->raw_len -= d.consumed;
-        }
+        st->raw_pos += d.consumed;
         if (d.written > 0) { res.value = d.written; return res; }
         if (d.err == PROVEN_ERR_INVALID_ENCODING) {
             st->err = PROVEN_ERR_INVALID_ENCODING;
@@ -728,7 +736,7 @@ static proven_result_size_t u16r_decode(proven_u16_reader_t *st, proven_u16 *des
         /* Nothing decodable is staged: fetch more, or finish. */
         if (!u16r_read_raw(st)) {
             if (!proven_is_ok(st->err)) { res.err = st->err; return res; }
-            if (st->raw_len > 0) {
+            if (st->raw_len > st->raw_pos) {
                 /* The source ended inside a character. */
                 st->err = PROVEN_ERR_INVALID_ENCODING;
                 res.err = st->err;

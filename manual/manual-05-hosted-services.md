@@ -1677,7 +1677,7 @@ if (proven_is_ok(proven_sysio_stdin_u16_lines(&in, wbuf, 512))) {   /* stdin is 
 typedef struct {
     proven_reader_t inner;  proven_text_encoding_t enc;   /* AUTO resolved from the BOM */
     proven_u16 *buf;  proven_size_t cap, len, cursor;     /* your buffer, in code units */
-    proven_byte_t raw[64];  proven_size_t raw_len;        /* bytes read, not yet decoded */
+    proven_byte_t raw[1024];  proven_size_t raw_pos, raw_len;   /* bytes read; [raw_pos, raw_len) not yet decoded */
     proven_u16 peek[2];  proven_size_t peek_len;          /* one character of lookahead */
     bool bom_checked, eof;  proven_err_t err;             /* err is sticky */
 } proven_u16_reader_t;

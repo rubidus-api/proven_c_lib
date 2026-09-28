@@ -25,6 +25,19 @@ static proven_result_size_t drip_read(void *ctx, proven_mem_mut_t dest) {
     return (proven_result_size_t){ PROVEN_OK, 1 };
 }
 
+/* A source that counts how often it is asked, and gives as much as it is asked for. */
+typedef struct { const proven_byte_t *p; proven_size_t n, at; unsigned long reads; } counted_t;
+static proven_result_size_t counted_read(void *ctx, proven_mem_mut_t dest) {
+    counted_t *c = ctx;
+    c->reads++;
+    if (c->at >= c->n) return (proven_result_size_t){ PROVEN_ERR_EOF, 0 };
+    proven_size_t k = c->n - c->at;
+    if (k > dest.size) k = dest.size;
+    memcpy(dest.ptr, c->p + c->at, k);
+    c->at += k;
+    return (proven_result_size_t){ PROVEN_OK, k };
+}
+
 static bool line_is(proven_result_u16str_view_t r, const proven_u16 *want, proven_size_t n) {
     return proven_is_ok(r.err) && r.val.size == n && (n == 0 || memcmp(r.val.ptr, want, n * sizeof(proven_u16)) == 0);
 }
@@ -269,6 +282,29 @@ int main(void) {
             PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_close(f.value)), "close", "");
         }
         PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_remove(heap, path)), "cleanup", "");
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("the reader asks its source for large pieces",
+        "100 KiB of UTF-8 lines is read in about one request per KiB, not one per 64 bytes (code review: some 16,000 read() calls for a 1 MiB file through sysio).",
+        "Inspect u16r_read_raw: the staging area and the cursor that avoids moving it after every decode.");
+    // ---------------------------------------------------------------
+    {
+        static proven_byte_t big[100 * 1024];
+        for (size_t i = 0; i < sizeof big; ++i) big[i] = (i % 50 == 49) ? '\n' : (proven_byte_t)('a' + i % 26);
+        counted_t c = { big, sizeof big, 0, 0 };
+        proven_u16_reader_t r;
+        proven_u16 lb2[128];
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_u16_reader_init(&r, (proven_reader_t){ &c, counted_read }, PROVEN_TEXT_UTF8, lb2, 128)), "init", "");
+        unsigned long lines = 0;
+        for (;;) {
+            proven_result_u16str_view_t l = proven_u16_reader_read_line(&r);
+            if (l.err == PROVEN_ERR_EOF) break;
+            PROVEN_TEST_ASSERT(proven_is_ok(l.err) && l.val.size == 49, "every line is 49 units", "");
+            ++lines;
+        }
+        PROVEN_TEST_INFO("{} lines in {} source reads", PROVEN_ARG(lines), PROVEN_ARG(c.reads));
+        PROVEN_TEST_ASSERT(lines == sizeof big / 50 && c.reads <= sizeof big / 1024 + 3, "about one read per KiB", "");
     }
 
     PROVEN_TEST_PASS("UTF-16 text through writers, readers and the formatter");
