@@ -16,7 +16,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 67 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 69 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 25 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -297,7 +297,7 @@ Failure tip: identify the target name in the log, then check whether the failure
 ## Test catalog
 
 
-The hosted full run builds and executes 126 registered tests plus the 90 runnable manual examples - 216 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 136 test files: the 126 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
+The hosted full run builds and executes 128 registered tests plus the 92 runnable manual examples - 220 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 3 benchmarks. The tree holds 138 test files: the 128 above, the 5 freestanding-only and 3 benchmark entries, and 2 cross-only smoke sources that only `./nob cross` builds.
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -336,6 +336,30 @@ Sub-checks:
 - Verifies comparator tie-breaking order.
 
 Failure tip: inspect `src/proven/algorithm.c`. Comparator return convention must stay consistent: callers expect negative, zero, and positive values to drive ordering.
+
+### `tests/test_unit_alloc_check` — an allocator that knows its own blocks
+
+Intent: verify the `alloc_check.h` wrapper (B-040) passes correct use through and refuses misuse at the call, without ever forwarding a refused pointer.
+
+Sub-checks:
+
+- Correct alloc, realloc (the record moves with the block), realloc to 0 and free pass through; live, live-byte and peak counts are exact; bad arguments give an invalid allocator.
+- A foreign free, a double free, a realloc of a foreign pointer, a realloc with the wrong old size or alignment, and an allocation past the record each panic (observed through a returning handler), are counted in `faults`, and leave the inner allocator untouched - under ASan a forwarded pointer would be a report.
+- The B-023 mistake: a string made through a checked arena and destroyed through a checked heap is refused at the destroy; the right allocator then frees it.
+- Without `PROVEN_ALLOC_CHECK`, `proven_alloc_checked` returns the inner allocator itself.
+- Planted defects - forwarding a refused free, dropping the old-size check, leaking the block when the record is full - each failed it.
+
+Failure tip: inspect `src/proven/alloc_check.c`.
+
+### `tests/test_unit_alloc_check_on` — alloc_check switched on by its macro
+
+Intent: verify that `PROVEN_ALLOC_CHECK`, defined before the first proven header, makes `proven_alloc_checked` wrap.
+
+Sub-checks:
+
+- The returned allocator is the checker, and it refuses a foreign free.
+
+Failure tip: the `#ifdef` in `proven_alloc_checked`, or a define placed after an include - the manual's first draft of its example did exactly that and the checks were silently off.
 
 ### `tests/test_unit_arena` — arena allocator
 

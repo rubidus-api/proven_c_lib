@@ -17,6 +17,7 @@ was the hardest material in the book sitting in one of the first chapters.
 4. [The allocator trait](#4-the-allocator-trait)
 5. [Raw byte buffer](#5-raw-byte-buffer)
 6. [Examples and misuse cases](#6-examples-and-misuse-cases)
+7. [Catching the wrong allocator: `alloc_check.h`](#7-catching-the-wrong-allocator-alloc_checkh)
 
 ## 1. Why allocation is a parameter, and the heap allocator
 
@@ -594,6 +595,9 @@ proven_result_buf_t r = proven_buf_create(heap, 128);
 proven_buf_destroy(other_alloc, &r.value); /* wrong: allocator mismatch */
 ```
 
+Nothing reports this at the call. To catch it in a test, put the allocators behind
+`alloc_check.h` ([section 7](#7-catching-the-wrong-allocator-alloc_checkh)).
+
 ### Arena free is a no-op
 
 ```c
@@ -1084,3 +1088,162 @@ proven_allocator_t alloc = { .ctx = &counted, .alloc_fn = counting_alloc };  /* 
 `proven_alloc_is_valid()` returns false for this, and the first `realloc` or
 `destroy` through it calls a null pointer. Fill in all three, even when two of
 them only forward.
+
+## 7. Catching the wrong allocator: `alloc_check.h`
+
+### The problem: a mistake that fails somewhere else
+
+Every owner in this library - a string, a buffer, an array - is freed through an allocator the
+caller passes, and nothing records which allocator the memory came from. Destroying an arena
+string through the heap, freeing a block twice, or growing a block with an old size it was not
+allocated with does not fail where it happens. The heap is handed memory it never gave out, its
+bookkeeping is corrupted, and the crash comes later, in code that did nothing wrong. Storing the
+allocator in every owner would double the size of every string for a check most programs never
+need, so the library does not (docs/BACKLOG.md B-023). The check belongs on the other side: in
+the allocator, which can know exactly which blocks are its own.
+
+### What `alloc_check.h` does
+
+`proven_alloc_check_wrap` puts a checker in front of any allocator - heap, arena, pool, or one of
+your own - and returns an allocator you use in its place. The checker keeps a record of every
+block it hands out, in memory you supply, and refuses anything else: a free or realloc of a block
+that is not in the record (another allocator's block, or one already freed), and a realloc whose
+old size or alignment is not the one the block was allocated with. A refusal is a
+`proven_panic` at the call that made the mistake, and the refused pointer is never passed on, so
+the underlying allocator is not corrupted even when a test's panic handler returns. At the end of
+a test, `proven_alloc_check_live` is a leak check.
+
+**It is for tests and bug hunts, not for production.** Every free and realloc searches the record,
+linearly. Write `proven_alloc_checked` where you create the allocator and leave it there: it wraps
+only when `PROVEN_ALLOC_CHECK` is defined, and otherwise returns the allocator it was given, at no
+cost. Define the macro on the build (`-DPROVEN_ALLOC_CHECK`) for tests and debug runs. It must be
+defined before the first proven header a file includes - the switch is read with the header, so
+a `#define` after `#include "proven.h"` leaves the checks silently off.
+
+```c
+proven_alloc_check_t heap_chk;
+proven_alloc_check_entry_t heap_rec[256];   /* up to 256 live blocks */
+proven_allocator_t checked = proven_alloc_checked(&heap_chk, proven_heap_allocator(), heap_rec, 256);
+/* ... the whole program or test uses `checked` ... */
+(void)checked;
+if (proven_alloc_check_live(&heap_chk) != 0) { /* a leak, when the checks are on */ }
+```
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_alloc_check_wrap(&st, inner, entries, cap)` | Wrap `inner`, recording up to `cap` live blocks. Always checks. | `proven_allocator_t` (invalid on bad arguments) |
+| `proven_alloc_checked(&st, inner, entries, cap)` | The same when `PROVEN_ALLOC_CHECK` is defined; otherwise `inner` unchanged. | `proven_allocator_t` |
+| `proven_alloc_check_owns(&st, ptr)` | Whether `ptr` is a live block from this checker. | `bool` |
+| `proven_alloc_check_live(&st)` | Live blocks: 0 at the end of a test means no leak. | `proven_size_t` |
+
+### The structures you hold
+
+```text
+typedef struct { void *ptr; proven_size_t size; proven_size_t align; } proven_alloc_check_entry_t;
+
+typedef struct {
+    proven_allocator_t          inner;
+    proven_alloc_check_entry_t *entries;   /* your record storage */
+    proven_size_t               cap, live, live_bytes, peak_live;
+    proven_size_t               faults;    /* refused operations, each also a panic */
+} proven_alloc_check_t;   /* caller-owned; outlives the allocator; do not copy once wrapped */
+```
+
+### Cautions, and what goes wrong
+
+**It only checks the allocators you wrap.** Destroying an arena string through an unwrapped heap
+is still unchecked: the heap is not asked. Wrap every allocator the test uses.
+
+**A full record is a panic, not a pass.** A record that quietly stopped recording would report the
+next free of an unrecorded block as foreign. Size `cap` for the most blocks the test holds at
+once; `peak_live` tells you what that was. Wrong - a record too small for the test:
+
+```text
+proven_alloc_check_entry_t rec[4];
+proven_allocator_t a = proven_alloc_check_wrap(&st, heap, rec, 4);
+/* wrong: a fifth live block panics "the record is full" - enlarge rec, do not ignore it */
+```
+
+Wrong - switching it on after the include. The switch is read with the header, so this file runs
+with the checks off and nothing says so:
+
+```text
+#include "proven.h"
+#define PROVEN_ALLOC_CHECK        /* wrong: too late - use -DPROVEN_ALLOC_CHECK */
+```
+
+**Leaving it on in a hot path is a slowdown you chose.** The search is linear in the live blocks.
+
+### Worked example: a string destroyed through the wrong allocator
+
+<!-- example: manual/examples/en/ex_02_alloc_check.c -->
+```c
+#include <string.h>
+
+/*
+ * Catching the wrong allocator where the mistake is made.
+ *
+ * Nothing in this library remembers which allocator a block came from: the caller
+ * passes one to create and one to destroy, and if they differ the allocator's
+ * bookkeeping is corrupted and the program breaks later, somewhere else. The
+ * alloc_check wrapper goes in front of any allocator, keeps a record of the
+ * blocks it handed out, and refuses - with a panic, at the call - anything else.
+ *
+ * It is for tests and bug hunts. In your own code, write proven_alloc_checked()
+ * and switch it with -DPROVEN_ALLOC_CHECK: without the macro it returns the
+ * allocator it was given and costs nothing. (A #define after the first proven
+ * #include is too late - the switch is read with the header.) This example
+ * calls proven_alloc_check_wrap(), which checks unconditionally, so it shows
+ * the checks whatever the build flags.
+ */
+
+/* A panic handler that returns, so this example can show a refusal and go on. A
+ * real program keeps the default, which stops at the mistake. */
+static int g_refused;
+static void note_panic(const char *msg) {
+    ++g_refused;
+    printf("refused: %s\n", msg);
+}
+
+int main(void) {
+    proven_set_panic_handler(note_panic);
+
+    /* Two allocators, each behind its own checker with room to record 16 blocks. */
+    static proven_byte_t arena_mem[2048];
+    proven_arena_t arena = proven_arena_create((proven_mem_mut_t){ arena_mem, sizeof arena_mem });
+    proven_alloc_check_t arena_chk, heap_chk;
+    proven_alloc_check_entry_t arena_rec[16], heap_rec[16];
+    proven_allocator_t scratch = proven_alloc_check_wrap(&arena_chk, proven_arena_as_allocator(&arena), arena_rec, 16);
+    proven_allocator_t heap = proven_alloc_check_wrap(&heap_chk, proven_heap_allocator(), heap_rec, 16);
+
+    /* --- correct use passes straight through --------------------------------- */
+
+    proven_result_u8str_t name = proven_u8str_create_from_view(heap, PROVEN_LIT("report"));
+    EXAMPLE_REQUIRE(proven_is_ok(name.err), "a string from the checked heap");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_u8str_append_grow(heap, &name.value, PROVEN_LIT(".txt"))), "grown by the same allocator");
+    EXAMPLE_REQUIRE(proven_alloc_check_owns(&heap_chk, name.value.internal.ptr), "the heap checker owns its block");
+
+    /* --- the mistake, caught at the call ------------------------------------ */
+
+    /* A temporary built in the scratch arena... */
+    proven_result_u8str_t tmp = proven_u8str_create(scratch, 64);
+    EXAMPLE_REQUIRE(proven_is_ok(tmp.err), "a temporary in the arena");
+    proven_u8str_t t = tmp.value;
+    /* ...and destroyed through the heap. Unchecked, the heap would free arena memory. */
+    proven_u8str_destroy(heap, &t);
+    EXAMPLE_REQUIRE(g_refused == 1 && heap_chk.faults == 1, "the heap refuses a block it never gave out");
+    EXAMPLE_REQUIRE(proven_alloc_check_live(&arena_chk) == 1, "and the arena block is untouched");
+    t = tmp.value;
+    proven_u8str_destroy(scratch, &t);   /* the right one */
+
+    /* --- a leak check at the end of a test ---------------------------------- */
+
+    proven_u8str_destroy(heap, &name.value);
+    EXAMPLE_REQUIRE(proven_alloc_check_live(&heap_chk) == 0 && proven_alloc_check_live(&arena_chk) == 0,
+                    "nothing is left live");
+    printf("peak %zu live block(s) on the heap, %zu refusal(s)\n", (size_t)heap_chk.peak_live, (size_t)heap_chk.faults);
+
+    proven_set_panic_handler(NULL);
+    return EXAMPLE_OK();
+}
+```

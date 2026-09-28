@@ -54,6 +54,15 @@ where it was wrong.
   makes its own console in code page 949 and verifies output by reading the screen buffer back
   and input by injecting key events.
 
+- **`alloc_check.h`: an allocator that knows its own blocks (B-040).** `proven_alloc_check_wrap`
+  puts a checker in front of any allocator and records the blocks it hands out in caller-supplied
+  memory; a foreign free, a double free, a realloc of a foreign block or with the wrong old size or
+  alignment, and an allocation past the record are refused with `proven_panic` at the call, and the
+  refused pointer never reaches the inner allocator. `proven_alloc_checked` wraps only where
+  `PROVEN_ALLOC_CHECK` is defined (before the first proven header, e.g. `-D`) and is otherwise the
+  identity - it is a testing and debugging tool, and the lookup is linear. `proven_alloc_check_owns`,
+  `proven_alloc_check_live` (a leak check). Tests `test_unit_alloc_check`, `test_unit_alloc_check_on`;
+  manual chapter 2 section 7 with `ex_02_alloc_check`, both editions.
 - **The view vocabulary (RFC-0003; B-018 to B-022).** In `u8str.h`, all pure and non-allocating,
   ill-formed views treated as empty, every empty result `{NULL, 0}`:
   `proven_u8str_view_split` / `_split_next` with `proven_u8str_view_split_t` (n separators yield

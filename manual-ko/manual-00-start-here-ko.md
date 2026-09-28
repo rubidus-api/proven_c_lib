@@ -923,6 +923,7 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | `config.h` | 컴파일 타임 기능 토글 (`PROVEN_FREESTANDING`, `PROVEN_FMT_NO_FLOAT`, `PROVEN_NO_U16STR` 등) | 챕터 1, 6 |
 | `allocator.h` | Allocator 트레잇 | 챕터 2 |
 | `heap.h` | PAL 기반 heap allocator | 챕터 2 |
+| `alloc_check.h` | 자기 블록을 아는 할당자 래퍼: 남의 블록 해제, 이중 해제, 잘못된 realloc을 그 호출에서 잡는다(테스트와 디버깅용; `PROVEN_ALLOC_CHECK` 없으면 꺼짐) | 챕터 2 |
 | `arena.h` | Bump allocator | 챕터 2 |
 | `pool.h` | 고정 크기 recycler allocator | 챕터 2 |
 | `buffer.h` | 고정 용량 byte buffer | 챕터 2 |

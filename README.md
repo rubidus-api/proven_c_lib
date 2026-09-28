@@ -667,7 +667,7 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 ## The modules
 
 - Foundation: `types`, `error`, `memory`, `align`, `version`, `config`.
-- Allocation: `allocator`, `heap`, `arena`, `pool`.
+- Allocation: `allocator`, `heap`, `arena`, `pool`, `alloc_check` (a checking wrapper for tests).
 - Buffers and strings: `buffer`, `u8str`, `u16str`.
 - Containers: `array`, `list`, `ring`, `map`.
 - Algorithms: `algorithm`.

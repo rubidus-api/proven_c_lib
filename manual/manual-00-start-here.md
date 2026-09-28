@@ -949,6 +949,7 @@ Two things this table tells you that the file names do not:
 | `config.h` | Compile-time feature toggles (`PROVEN_FREESTANDING`, `PROVEN_FMT_NO_FLOAT`, `PROVEN_NO_U16STR`, …) | Chapters 1 and 6 |
 | `allocator.h` | Allocator trait | Chapter 2 |
 | `heap.h` | PAL-backed heap allocator | Chapter 2 |
+| `alloc_check.h` | An allocator wrapper that knows its own blocks: catches a foreign free, a double free and a wrong realloc at the call (tests and debugging; off unless `PROVEN_ALLOC_CHECK`) | Chapter 2 |
 | `arena.h` | Bump allocator | Chapter 2 |
 | `pool.h` | Fixed-size recycler allocator | Chapter 2 |
 | `buffer.h` | Fixed-capacity byte buffer | Chapter 2 |

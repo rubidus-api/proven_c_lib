@@ -116,6 +116,7 @@ static const Section SECTIONS[] = {
       "the worked loop is a compiled fragment; a separate example file would duplicate ex_05_fs_walk." },
     { "manual-05-hosted-services.md",       "## Walking a tree",                        true,  true,  NULL },
     { "manual-05-hosted-services.md",       "## UTF-16 text in and out, and the Windows console", true, true, NULL },
+    { "manual-02-allocation.md",            "## 7. Catching the wrong allocator: `alloc_check.h`", true, true, NULL },
 };
 
 static char *read_text_file(const char *path) {

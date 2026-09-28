@@ -17,6 +17,7 @@
 4. [Allocator trait](#4-allocator-트레잇)
 5. [원시 바이트 버퍼](#5-원시-바이트-버퍼)
 6. [예제와 오용 사례](#6-예제와-오용-사례)
+7. [잘못된 할당자 잡기: `alloc_check.h`](#7-잘못된-할당자-잡기-alloc_checkh)
 
 ## 1. 할당이 매개변수인 이유, 그리고 heap allocator
 
@@ -583,6 +584,9 @@ proven_result_buf_t r = proven_buf_create(heap, 128);
 proven_buf_destroy(other_alloc, &r.value); /* wrong: allocator mismatch */
 ```
 
+이것은 그 호출에서 아무것도 알리지 않는다. 테스트에서 잡으려면 할당자들을 `alloc_check.h` 뒤에 두라
+([7절](#7-잘못된-할당자-잡기-alloc_checkh)).
+
 ### Arena의 free는 no-op이다
 
 ```c
@@ -1060,3 +1064,155 @@ proven_allocator_t alloc = { .ctx = &counted, .alloc_fn = counting_alloc };  /* 
 
 `proven_alloc_is_valid()`는 이것에 false를 돌려주고, 이 할당자를 통한 첫 `realloc`이나 `destroy`는
 널 포인터를 호출한다. 둘은 그저 전달만 하더라도 셋을 모두 채운다.
+
+## 7. 잘못된 할당자 잡기: `alloc_check.h`
+
+### 문제: 다른 곳에서 터지는 실수
+
+이 라이브러리의 모든 소유(owned) 객체 - 문자열, 버퍼, 배열 - 는 호출자가 넘기는 할당자(allocator)로 해제되고,
+메모리가 어느 할당자에서 왔는지는 아무것도 기록하지 않는다. 아레나(arena) 문자열을 힙(heap)으로 파괴하거나,
+블록을 두 번 해제하거나, 할당 때와 다른 이전 크기로 블록을 늘려도 그 자리에서 실패하지 않는다. 힙은
+자기가 준 적 없는 메모리를 받아 장부가 망가지고, 충돌은 나중에, 잘못한 것이 없는 코드에서 일어난다.
+모든 소유자에 할당자를 담으면 대부분의 프로그램이 쓰지도 않을 검사를 위해 모든 문자열이 두 배가
+되므로 라이브러리는 그렇게 하지 않는다(docs/BACKLOG.md B-023). 검사는 반대편에 있어야 한다: 자기
+블록이 무엇인지 정확히 알 수 있는 할당자 쪽에.
+
+### `alloc_check.h`가 하는 일
+
+`proven_alloc_check_wrap`은 어떤 할당자 - 힙, 아레나, 풀(pool), 또는 당신의 것 - 앞에든 검사기를 두고,
+대신 쓸 할당자를 돌려준다. 검사기는 자기가 내준 모든 블록을 당신이 준 메모리에 기록하고, 그 밖의 것을
+거부한다: 기록에 없는 블록(다른 할당자의 것, 또는 이미 해제된 것)의 해제나 realloc, 그리고 할당 때와
+다른 이전 크기나 정렬로 하는 realloc. 거부는 실수를 한 그 호출에서의 `proven_panic`이고, 거부된
+포인터는 절대 넘겨지지 않으므로 테스트의 panic 핸들러가 돌아와도 밑의 할당자는 망가지지 않는다.
+테스트 끝에서 `proven_alloc_check_live`는 누수 검사다.
+
+**테스트와 버그 추적용이지, 운영용이 아니다.** 모든 해제와 realloc이 기록을 선형으로 찾는다. 할당자를
+만드는 자리에 `proven_alloc_checked`를 쓰고 그대로 두라: `PROVEN_ALLOC_CHECK`가 정의되었을 때만 감싸고,
+아니면 받은 할당자를 비용 없이 그대로 돌려준다. 테스트와 디버그 실행에서는 빌드에 매크로를
+정의하라(`-DPROVEN_ALLOC_CHECK`). 파일이 포함하는 첫 proven 헤더보다 먼저 정의되어야 한다 - 스위치는
+헤더와 함께 읽히므로, `#include "proven.h"` 뒤의 `#define`은 검사를 조용히 꺼 둔 채로 둔다.
+
+```c
+proven_alloc_check_t heap_chk;
+proven_alloc_check_entry_t heap_rec[256];   /* up to 256 live blocks */
+proven_allocator_t checked = proven_alloc_checked(&heap_chk, proven_heap_allocator(), heap_rec, 256);
+/* ... the whole program or test uses `checked` ... */
+(void)checked;
+if (proven_alloc_check_live(&heap_chk) != 0) { /* a leak, when the checks are on */ }
+```
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_alloc_check_wrap(&st, inner, entries, cap)` | `inner`를 감싸고 살아 있는 블록을 `cap`개까지 기록. 늘 검사한다. | `proven_allocator_t` (잘못된 인자면 invalid) |
+| `proven_alloc_checked(&st, inner, entries, cap)` | `PROVEN_ALLOC_CHECK`가 정의되면 같은 일; 아니면 `inner` 그대로. | `proven_allocator_t` |
+| `proven_alloc_check_owns(&st, ptr)` | `ptr`이 이 검사기의 살아 있는 블록인지. | `bool` |
+| `proven_alloc_check_live(&st)` | 살아 있는 블록 수: 테스트 끝에 0이면 누수 없음. | `proven_size_t` |
+
+### 당신이 들고 있는 구조체
+
+```text
+typedef struct { void *ptr; proven_size_t size; proven_size_t align; } proven_alloc_check_entry_t;
+
+typedef struct {
+    proven_allocator_t          inner;
+    proven_alloc_check_entry_t *entries;   /* your record storage */
+    proven_size_t               cap, live, live_bytes, peak_live;
+    proven_size_t               faults;    /* refused operations, each also a panic */
+} proven_alloc_check_t;   /* caller-owned; outlives the allocator; do not copy once wrapped */
+```
+
+### 주의할 점, 그리고 무엇이 잘못되는가
+
+**감싼 할당자만 검사한다.** 감싸지 않은 힙으로 아레나 문자열을 파괴하는 것은 여전히 검사되지 않는다:
+힙에게는 묻지 않으니까. 테스트가 쓰는 모든 할당자를 감싸라.
+
+**기록이 가득 차면 통과가 아니라 panic이다.** 조용히 기록을 멈춘 기록은 기록되지 않은 블록의 다음
+해제를 남의 것으로 보고할 것이다. 테스트가 한꺼번에 들고 있는 최대 블록 수에 맞게 `cap`을 잡아라;
+`peak_live`가 그 값을 알려 준다. 반례(wrong) - 테스트에 비해 너무 작은 기록:
+
+```text
+proven_alloc_check_entry_t rec[4];
+proven_allocator_t a = proven_alloc_check_wrap(&st, heap, rec, 4);
+/* wrong: a fifth live block panics "the record is full" - enlarge rec, do not ignore it */
+```
+
+반례 - include 뒤에서 켜는 경우. 스위치는 헤더와 함께 읽히므로, 이 파일은 검사가 꺼진 채 돌고 아무것도
+그렇다고 말하지 않는다:
+
+```text
+#include "proven.h"
+#define PROVEN_ALLOC_CHECK        /* wrong: too late - use -DPROVEN_ALLOC_CHECK */
+```
+
+**뜨거운 경로에서 켜 두는 것은 스스로 고른 속도 저하다.** 검색은 살아 있는 블록 수에 선형이다.
+
+### 예제: 잘못된 할당자로 파괴된 문자열
+
+<!-- example: manual/examples/ko/ex_02_alloc_check.c -->
+```c
+#include <string.h>
+
+/*
+ * 잘못된 할당자를, 실수가 일어난 자리에서 잡기.
+ *
+ * 이 라이브러리의 어떤 것도 블록이 어느 할당자에서 왔는지 기억하지 않는다: 호출자가
+ * 만들 때 하나, 파괴할 때 하나를 넘기고, 둘이 다르면 할당자의 장부가 망가져 프로그램은
+ * 나중에 엉뚱한 곳에서 깨진다. alloc_check 래퍼는 어떤 할당자 앞에든 놓여, 자기가 내준
+ * 블록을 기록하고, 그 밖의 것은 - panic 으로, 그 호출에서 - 거부한다.
+ *
+ * 테스트와 버그 추적용이다. 당신의 코드에서는 proven_alloc_checked() 를 쓰고
+ * -DPROVEN_ALLOC_CHECK 로 켜고 끈다: 매크로가 없으면 받은 할당자를 그대로 돌려주어 비용이
+ * 없다. (첫 proven #include 뒤의 #define 은 늦다 - 스위치는 헤더와 함께 읽힌다.) 이 예제는
+ * 무조건 검사하는 proven_alloc_check_wrap() 을 불러, 빌드 플래그와 상관없이 검사를 보여 준다.
+ */
+
+/* 돌아오는 panic 핸들러 - 이 예제가 거부를 보여 주고 계속 가도록. 실제 프로그램은 실수에서
+ * 멈추는 기본 핸들러를 그대로 둔다. */
+static int g_refused;
+static void note_panic(const char *msg) {
+    ++g_refused;
+    printf("refused: %s\n", msg);
+}
+
+int main(void) {
+    proven_set_panic_handler(note_panic);
+
+    /* 할당자 둘, 각자 블록 16개를 기록할 자리가 있는 검사기 뒤에. */
+    static proven_byte_t arena_mem[2048];
+    proven_arena_t arena = proven_arena_create((proven_mem_mut_t){ arena_mem, sizeof arena_mem });
+    proven_alloc_check_t arena_chk, heap_chk;
+    proven_alloc_check_entry_t arena_rec[16], heap_rec[16];
+    proven_allocator_t scratch = proven_alloc_check_wrap(&arena_chk, proven_arena_as_allocator(&arena), arena_rec, 16);
+    proven_allocator_t heap = proven_alloc_check_wrap(&heap_chk, proven_heap_allocator(), heap_rec, 16);
+
+    /* --- 올바른 사용은 그대로 통과한다 --------------------------------------- */
+
+    proven_result_u8str_t name = proven_u8str_create_from_view(heap, PROVEN_LIT("report"));
+    EXAMPLE_REQUIRE(proven_is_ok(name.err), "a string from the checked heap");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_u8str_append_grow(heap, &name.value, PROVEN_LIT(".txt"))), "grown by the same allocator");
+    EXAMPLE_REQUIRE(proven_alloc_check_owns(&heap_chk, name.value.internal.ptr), "the heap checker owns its block");
+
+    /* --- 실수를 그 호출에서 잡는다 ------------------------------------------ */
+
+    /* 임시 작업용 아레나에서 만든 임시 문자열을... */
+    proven_result_u8str_t tmp = proven_u8str_create(scratch, 64);
+    EXAMPLE_REQUIRE(proven_is_ok(tmp.err), "a temporary in the arena");
+    proven_u8str_t t = tmp.value;
+    /* ...힙으로 파괴한다. 검사가 없으면 힙이 아레나 메모리를 해제할 것이다. */
+    proven_u8str_destroy(heap, &t);
+    EXAMPLE_REQUIRE(g_refused == 1 && heap_chk.faults == 1, "the heap refuses a block it never gave out");
+    EXAMPLE_REQUIRE(proven_alloc_check_live(&arena_chk) == 1, "and the arena block is untouched");
+    t = tmp.value;
+    proven_u8str_destroy(scratch, &t);   /* 올바른 쪽 */
+
+    /* --- 테스트 끝의 누수 검사 --------------------------------------------- */
+
+    proven_u8str_destroy(heap, &name.value);
+    EXAMPLE_REQUIRE(proven_alloc_check_live(&heap_chk) == 0 && proven_alloc_check_live(&arena_chk) == 0,
+                    "nothing is left live");
+    printf("peak %zu live block(s) on the heap, %zu refusal(s)\n", (size_t)heap_chk.peak_live, (size_t)heap_chk.faults);
+
+    proven_set_panic_handler(NULL);
+    return EXAMPLE_OK();
+}
+```

@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 541개: 소문자 `xcv_` 함수 이름 410개와 대문자 `XCV_` 매크로 이름 131개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 547개: 소문자 `xcv_` 함수 이름 416개와 대문자 `XCV_` 매크로 이름 131개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -162,6 +162,12 @@ alias 541개: 소문자 `xcv_` 함수 이름 410개와 대문자 `XCV_` 매크�
 | `XCV_VERSION_NUM` | `PROVEN_VERSION_NUM` |
 | `XCV_VERSION_PATCH` | `PROVEN_VERSION_PATCH` |
 | `XCV_VERSION_STRING` | `PROVEN_VERSION_STRING` |
+| `xcv_alloc_check_entry_t` | `proven_alloc_check_entry_t` |
+| `xcv_alloc_check_t` | `proven_alloc_check_t` |
+| `xcv_alloc_check_wrap` | `proven_alloc_check_wrap` |
+| `xcv_alloc_check_owns` | `proven_alloc_check_owns` |
+| `xcv_alloc_check_live` | `proven_alloc_check_live` |
+| `xcv_alloc_checked` | `proven_alloc_checked` |
 | `xcv_alloc_fn_t` | `proven_alloc_fn_t` |
 | `xcv_alloc_is_valid` | `proven_alloc_is_valid` |
 | `xcv_allocator_t` | `proven_allocator_t` |

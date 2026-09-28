@@ -14,6 +14,7 @@
 #include "proven/align.h"
 #include "proven/allocator.h"
 #include "proven/heap.h"
+#include "proven/alloc_check.h"
 #include "proven/arena.h"
 #include "proven/pool.h"
 #include "proven/buffer.h"

@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-541 aliases: 410 lowercase `xcv_` function names and 131 uppercase `XCV_` macro names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix — the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+547 aliases: 416 lowercase `xcv_` function names and 131 uppercase `XCV_` macro names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix — the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -160,6 +160,12 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_VERSION_NUM` | `PROVEN_VERSION_NUM` |
 | `XCV_VERSION_PATCH` | `PROVEN_VERSION_PATCH` |
 | `XCV_VERSION_STRING` | `PROVEN_VERSION_STRING` |
+| `xcv_alloc_check_entry_t` | `proven_alloc_check_entry_t` |
+| `xcv_alloc_check_t` | `proven_alloc_check_t` |
+| `xcv_alloc_check_wrap` | `proven_alloc_check_wrap` |
+| `xcv_alloc_check_owns` | `proven_alloc_check_owns` |
+| `xcv_alloc_check_live` | `proven_alloc_check_live` |
+| `xcv_alloc_checked` | `proven_alloc_checked` |
 | `xcv_alloc_fn_t` | `proven_alloc_fn_t` |
 | `xcv_alloc_is_valid` | `proven_alloc_is_valid` |
 | `xcv_allocator_t` | `proven_allocator_t` |

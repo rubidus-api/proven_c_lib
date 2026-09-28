@@ -176,6 +176,7 @@ platform/proven_sys_mem.c
 |---|---|---|
 | `types.h`, `error.h`, `align.h`, `memory.h` | 사용 가능 | 고정 폭 정수와 `uintptr_t` 지원이 필요하다. |
 | `allocator.h` | 사용 가능 | 트레이트만 제공. 호출자가 뒷받침 allocator를 제공한다. |
+| `alloc_check.h` | 사용 가능 | 호출자가 준 기록 위의 순수한 장부 관리; `proven_panic`으로 보고한다. |
 | `arena.h` | 사용 가능 | 정적 메모리 영역을 위한 주 allocator. |
 | `pool.h` | 사용 가능 | 호출자가 제공하는 기반 allocator(흔히 arena)를 사용한다. |
 | `buffer.h` | 사용 가능 | 고정 용량 바이트 버퍼. |

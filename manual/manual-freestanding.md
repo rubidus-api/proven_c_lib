@@ -177,6 +177,7 @@ on every release, not asserted in this table.
 |---|---|---|
 | `types.h`, `error.h`, `align.h`, `memory.h` | Available | Requires fixed-width integer and `uintptr_t` support. |
 | `allocator.h` | Available | Trait only. Caller supplies backing allocators. |
+| `alloc_check.h` | Available | Pure bookkeeping over a caller-supplied record; reports through `proven_panic`. |
 | `arena.h` | Available | Primary allocator for static memory regions. |
 | `pool.h` | Available | Uses a caller-provided base allocator, often an arena. |
 | `buffer.h` | Available | Fixed-capacity byte buffer. |

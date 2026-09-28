@@ -140,6 +140,12 @@
 #define XCV_VERSION_NUM PROVEN_VERSION_NUM
 #define XCV_VERSION_PATCH PROVEN_VERSION_PATCH
 #define XCV_VERSION_STRING PROVEN_VERSION_STRING
+#define xcv_alloc_check_entry_t proven_alloc_check_entry_t
+#define xcv_alloc_check_t proven_alloc_check_t
+#define xcv_alloc_check_wrap proven_alloc_check_wrap
+#define xcv_alloc_check_owns proven_alloc_check_owns
+#define xcv_alloc_check_live proven_alloc_check_live
+#define xcv_alloc_checked proven_alloc_checked
 #define xcv_alloc_fn_t proven_alloc_fn_t
 #define xcv_alloc_is_valid proven_alloc_is_valid
 #define xcv_allocator_t proven_allocator_t

@@ -638,7 +638,7 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 ## 주요 모듈
 
 - Foundation: `types`, `error`, `memory`, `align`, `version`, `config`.
-- Allocation: `allocator`, `heap`, `arena`, `pool`.
+- Allocation: `allocator`, `heap`, `arena`, `pool`, `alloc_check` (테스트용 검사 래퍼).
 - Buffers and strings: `buffer`, `u8str`, `u16str`.
 - Containers: `array`, `list`, `ring`, `map`.
 - Algorithms: `algorithm`.
