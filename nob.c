@@ -143,7 +143,11 @@ static bool checked_needs_rebuild(const char *output_path, const char **input_pa
 
 static void append_mode_cflags(Nob_Cmd *cmd, const char *mode, const char *standard_flag, const char *sysroot) {
     nob_cmd_append(cmd, "-D_DEFAULT_SOURCE", "-D_POSIX_C_SOURCE=200809L");
-    if (strcmp(mode, "release") == 0) nob_cmd_append(cmd, "-O3");
+    /* release: optimised, NDEBUG - the library's debug validation (pool double-free scan, map
+     * overlap check) is compiled out; it made pool teardown quadratic (B-036).
+     * hardened: optimised, NDEBUG, and PROVEN_HARDENED=1 - that validation kept in. */
+    if (strcmp(mode, "release") == 0) nob_cmd_append(cmd, "-O3", "-DNDEBUG");
+    else if (strcmp(mode, "hardened") == 0) nob_cmd_append(cmd, "-O2", "-DNDEBUG", "-DPROVEN_HARDENED=1");
     else if (strcmp(mode, "asan") == 0) nob_cmd_append(cmd, "-g", "-O0", "-fsanitize=address");
     else if (strcmp(mode, "ubsan") == 0) nob_cmd_append(cmd, "-g", "-O0", "-fsanitize=undefined");
     else if (strcmp(mode, "tsan") == 0) nob_cmd_append(cmd, "-g", "-O0", "-fsanitize=thread");
@@ -443,6 +447,16 @@ static void print_proven_build_plan(const char *build_mode, const char *compiler
                                     size_t test_count, bool cross_check, bool only_regression, bool benchmark_mode) {
     nob_log(NOB_INFO, "[PROVEN][BUILD][BEGIN] mode=%s cc=%s ld=%s build_root=%s build_dir=%s",
             build_mode, compiler_exe, linker_exe, build_root, build_dir);
+    /* Say what the profile checks, so a log is never read as more (or less) than it was (B-036). */
+    const char *safety =
+        strcmp(build_mode, "release") == 0  ? "optimised; NDEBUG: library misuse validation (pool double free, map key overlap) compiled OUT" :
+        strcmp(build_mode, "hardened") == 0 ? "optimised; PROVEN_HARDENED: library misuse validation compiled IN" :
+        strcmp(build_mode, "asan") == 0     ? "debug validation IN; AddressSanitizer" :
+        strcmp(build_mode, "ubsan") == 0    ? "debug validation IN; UndefinedBehaviorSanitizer" :
+        strcmp(build_mode, "tsan") == 0     ? "debug validation IN; ThreadSanitizer" :
+        strcmp(build_mode, "freestanding") == 0 ? "debug validation IN; freestanding profile" :
+                                               "unoptimised; debug validation IN";
+    nob_log(NOB_INFO, "[PROVEN][BUILD][PROFILE] mode=%s safety=%s", build_mode, safety);
     nob_log(NOB_INFO, "[PROVEN][BUILD][ENV] runtime=%s platform=%s", detect_runtime_profile(),
 #if defined(_WIN32) || defined(_WIN64)
             "windows"
@@ -921,6 +935,9 @@ int main(int argc, char **argv)
         if (strcmp(argv[0], "release") == 0) {
             build_mode = "release";
             nob_shift_args(&argc, &argv);
+        } else if (strcmp(argv[0], "hardened") == 0) {
+            build_mode = "hardened";
+            nob_shift_args(&argc, &argv);
         } else if (strcmp(argv[0], "debug") == 0 || strcmp(argv[0], "build") == 0) {
             build_mode = "debug";
             nob_shift_args(&argc, &argv);
@@ -1031,7 +1048,8 @@ int main(int argc, char **argv)
         printf("Usage: ./nob [command] [options]\n\n");
         printf("Commands:\n");
         printf("  build, debug       Default build mode (-g -O0). [Default]\n");
-        printf("  release            Optimized build (-O3).\n");
+        printf("  release            Optimized build (-O3 -DNDEBUG): library misuse validation compiled out.\n");
+        printf("  hardened           Optimized build (-O2 -DNDEBUG -DPROVEN_HARDENED=1): validation kept in.\n");
         printf("  freestanding       Bare-metal MCU build without libc/OS.\n");
         printf("  cross              Compile-only matrix for hosted, WinAPI, ARM, and freestanding targets.\n");
         printf("  asan               Build and run tests with AddressSanitizer.\n");
@@ -1117,7 +1135,8 @@ int main(int argc, char **argv)
     if (user_ldflags) nob_sb_append_cstr(&hash_src, user_ldflags);
     
     // Include important flags in hash to detect configuration shifts
-    if (strcmp(build_mode, "release") == 0) nob_sb_append_cstr(&hash_src, "-O3");
+    if (strcmp(build_mode, "release") == 0) nob_sb_append_cstr(&hash_src, "-O3-DNDEBUG");
+    if (strcmp(build_mode, "hardened") == 0) nob_sb_append_cstr(&hash_src, "-O2-DNDEBUG-DPROVEN_HARDENED=1");
     if (strcmp(build_mode, "strict-error") == 0) nob_sb_append_cstr(&hash_src, "-Wall-Wextra-Werror-g-O0");
     if (strcmp(build_mode, "asan") == 0) nob_sb_append_cstr(&hash_src, "-fsanitize=address-g-O0");
     if (strcmp(build_mode, "ubsan") == 0) nob_sb_append_cstr(&hash_src, "-fsanitize=undefined-g-O0");

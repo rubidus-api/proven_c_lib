@@ -335,7 +335,8 @@ The repository builds itself with a C program rather than a build system:
 ```text
 cc -std=c2x -o nob nob.c     # build the build driver, once
 ./nob build                  # compile everything and run the whole test suite
-./nob release                # the same, optimised
+./nob release                # the same, optimised (NDEBUG: misuse checks compiled out)
+./nob hardened               # optimised, misuse checks kept in
 ```
 
 `./nob` with no arguments lists the other modes - sanitizers, freestanding, cross-compilation and

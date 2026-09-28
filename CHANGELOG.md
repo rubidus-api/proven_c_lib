@@ -30,6 +30,13 @@ written; their tags still exist.
 
 ### Changed
 
+- **`./nob release` defines `NDEBUG`; new `./nob hardened` keeps the checks (B-036).**
+  Compatibility note: a release build no longer traps a pool double free or a foreign pointer, or
+  the map's key-overlap misuse - those checks are for debug and hardened builds. They made pool
+  teardown quadratic: 20,000 frees took 59.6 ms with the check, 0.05 ms without
+  (`docs/b036-pool-teardown-benchmark.c`). Build with `hardened` (`-O2 -DNDEBUG
+  -DPROVEN_HARDENED=1`) to keep them in an optimised build, and use `alloc_check.h` in tests.
+  Every build now logs its safety profile.
 - **Published float speed claims follow the checked-in benchmark.** Re-measured: parsing is
   faster than glibc on short numbers, level at ~16 digits, ~1.1x slower at 17; shortest formatting
   ~3.6x faster than `%.17g`; `%f`/`%e` faster at every magnitude measured - the June claim that

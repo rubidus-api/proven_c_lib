@@ -332,7 +332,8 @@ gcc -std=c2x -Iinclude -Iplatform your_program.c src/proven/*.c platform/*.c -o 
 ```text
 cc -std=c2x -o nob nob.c     # build the build driver, once
 ./nob build                  # compile everything and run the whole test suite
-./nob release                # the same, optimised
+./nob release                # the same, optimised (NDEBUG: misuse checks compiled out)
+./nob hardened               # optimised, misuse checks kept in
 ```
 
 인자 없이 `./nob`을 실행하면 나머지 모드를 보여줍니다 — 새니타이저, freestanding, 크로스 컴파일,

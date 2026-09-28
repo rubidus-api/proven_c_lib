@@ -182,13 +182,23 @@ Failure tip: start from the first `[PROVEN][TEST][FAIL]` line. If the stage is `
 
 ### `release`
 
-Intent: compile the hosted library with optimization and run the complete hosted runtime suite.
+Intent: compile the hosted library with optimization and `NDEBUG` (`-O3 -DNDEBUG`) and run the complete hosted runtime suite.
 
 What it checks:
 
 - Optimized builds do not rely on debug-only initialization or timing.
 - Undefined behavior that is hidden in debug mode is less likely to survive optimization.
 - Public headers and implementation still agree under `-O3`.
+- The library's misuse validation (pool double-free scan, map key overlap check) is compiled out, as a release build intends; the contract tests for it skip their trap assertions. It was compiled in until B-036 and made pool teardown quadratic: 20,000 frees took 59.6 ms against 0.05 ms (`docs/b036-pool-teardown-benchmark.c`).
+
+### `hardened`
+
+Intent: the optimized build with the misuse validation kept in (`-O2 -DNDEBUG -DPROVEN_HARDENED=1`), running the complete hosted suite.
+
+What it checks:
+
+- The validation that `release` compiles out still works under optimization: the pool and map contract tests exercise their trap paths here.
+- Every build logs `[PROVEN][BUILD][PROFILE]` saying which validation it contains, so a log is never read as more than it was.
 
 Failure tip: compare with `./nob build`. A failure only in release mode often means undefined behavior, invalid aliasing, stale borrowed views after reallocation, or missing initialization.
 
