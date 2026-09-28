@@ -81,6 +81,10 @@ where it was wrong.
   character split across buffered flushes is carried in the state struct; Ctrl+Z at the start of
   a console line is end of input. Files, pipes and redirected streams stay byte-exact; POSIX is
   unchanged. `proven_writer_from_file` on a console handle stays byte-exact, as documented.
+- **The allocator pairing of owned strings is now stated as a warning** (B-023, owner decision
+  2026-09-28): `u8str.h`/`u16str.h` and manual chapter 3 say that the string does not remember its
+  allocator and nothing checks it, with a counter-example. No field was added; an allocator-side
+  ownership check is proposed as B-040.
 - `proven_sysio_std_t` gains `console` and `carry` (`proven_sysio_carry_t`);
   `proven_sysio_scanner_t` gains the same two fields. Layout change for code that declares them.
 

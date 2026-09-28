@@ -51,6 +51,22 @@ Two types, and the difference between them is ownership:
   you so `proven_u8str_as_cstr` can hand the bytes to a libc function that still wants one. You
   created it with an allocator; you destroy it with the same one.
 
+**The owned string does not remember that allocator, and nothing checks it.** Every call that
+may allocate or free - `_create`, `_reserve`, the `_grow` family, `_destroy` - takes the
+allocator as an argument, and it must be the one the string was created with. Pass a different
+one and there is no error to return: the other allocator is handed memory it never gave out, its
+bookkeeping is corrupted, and the crash comes later and somewhere else. Keeping the allocator in
+every string would make each one twice the size and would mean nothing for a borrowed string, so
+the library does not; keep the pairing in your own code - one allocator per owner, passed from
+the same place.
+
+Wrong - a string made in an arena and destroyed through the heap:
+
+```text
+proven_u8str_t s = proven_u8str_create(arena, 64).value;
+proven_u8str_destroy(proven_heap_allocator(), &s);   /* wrong: the heap frees arena memory */
+```
+
 Both count **bytes**, not characters. `"한"` is three bytes in UTF-8 and one character, and this
 library will tell you three, because that is what it knows. Text is a sequence of bytes here;
 interpreting those bytes as characters is a job for a Unicode layer this library does not have.

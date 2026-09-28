@@ -25,6 +25,15 @@ typedef struct {
 
 /**
  * @brief Managed U16 string structure.
+ *
+ * @warning **The string does not remember its allocator, and nothing checks that you pass the
+ *          same one.** create, reserve, append_grow and destroy must all be given the
+ *          allocator the string was created with. Passing another - destroying an arena string
+ *          through the heap, growing a heap string through an arena - is not an error this
+ *          library can report: it corrupts the allocator's state, and the damage surfaces
+ *          later, somewhere else. Keep a string and its allocator together in your own code.
+ *          (Storing the allocator in every string was rejected - it doubles the struct and has
+ *          no meaning for a borrowed string; see docs/BACKLOG.md B-023.)
  */
 typedef struct {
     proven_buf_t internal; /**< Capacity and length are tracked in bytes */
@@ -50,6 +59,7 @@ typedef struct {
 
 [[nodiscard]] proven_result_u16str_t proven_u16str_create(proven_allocator_t alloc, proven_size_t unit_limit);
 [[nodiscard]] proven_result_u16str_t proven_u16str_create_from_view(proven_allocator_t alloc, proven_u16str_view_t view);
+/** @brief Free an owned string. `alloc` MUST be the allocator it was created with - unchecked. */
 void proven_u16str_destroy(proven_allocator_t alloc, proven_u16str_t *str);
 
 /**

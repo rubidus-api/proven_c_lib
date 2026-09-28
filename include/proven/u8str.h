@@ -39,6 +39,15 @@ typedef struct {
  * owned by default. It is set true only by proven_u8str_borrow, which wraps
  * caller-owned memory: for a borrowed string the growing operations refuse to
  * reallocate and proven_u8str_destroy is a no-op.
+ *
+ * @warning **The string does not remember its allocator, and nothing checks that you pass the
+ *          same one.** create, reserve, every *_grow call and destroy must all be given the
+ *          allocator the string was created with. Passing another - destroying an arena string
+ *          through the heap, growing a heap string through an arena - is not an error this
+ *          library can report: it corrupts the allocator's state, and the damage surfaces
+ *          later, somewhere else. Keep a string and its allocator together in your own code.
+ *          (Storing the allocator in every string was rejected - it doubles the struct and has
+ *          no meaning for a borrowed string; see docs/BACKLOG.md B-023.)
  */
 typedef struct {
     proven_buf_t internal;
@@ -320,6 +329,7 @@ static inline proven_mem_view_t proven_mem_view_from_u8(proven_u8str_view_t view
 
 [[nodiscard]] int proven_u8str_view_eq(proven_u8str_view_t a, proven_u8str_view_t b);
 
+/** @brief Free an owned string. `alloc` MUST be the allocator it was created with - unchecked. */
 void proven_u8str_destroy(proven_allocator_t alloc, proven_u8str_t *str);
 
 /**
