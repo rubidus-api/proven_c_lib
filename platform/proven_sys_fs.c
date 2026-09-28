@@ -924,26 +924,31 @@ proven_sys_fs_open_result_t proven_sys_fs_symlink_checked(const char *target, co
         if (*p == L'/') *p = L'\\';
     }
 
-    /* Where the link will look: an absolute target (drive, UNC or rooted) as it is; a relative
-     * one from the directory that will hold the link. */
-    bool absolute = (wtarget[0] == L'\\') || (wtarget[0] && wtarget[1] == L':');
-    wchar_t *probe = wtarget;
-    wchar_t *joined = NULL;
+    /* Where the link will look: an absolute target as it is; a relative one from the directory
+     * that will hold the link. The probe is built in UTF-8 and handed to utf8_to_wide_alloc,
+     * which normalises it with GetFullPathNameW BEFORE adding any \\?\ prefix - a \\?\ path
+     * is taken literally, so joining a relative "..\\dir" onto an already-prefixed long link
+     * path made the probe fail and a directory get a FILE link (code review). */
+    bool absolute = target[0] == '\\' || target[0] == '/' || (target[0] && target[1] == ':');
+    char *joined = NULL;
+    const char *probe8 = target;
     if (!absolute) {
-        size_t link_len = wcslen(wlink), dir_len = link_len;
-        while (dir_len > 0 && wlink[dir_len - 1] != L'\\' && wlink[dir_len - 1] != L'/' && wlink[dir_len - 1] != L':') --dir_len;
-        size_t t_len = wcslen(wtarget);
-        joined = (wchar_t *)HeapAlloc(GetProcessHeap(), 0, (dir_len + t_len + 1) * sizeof(wchar_t));
+        size_t dir_len = strlen(linkpath);
+        while (dir_len > 0 && linkpath[dir_len - 1] != '\\' && linkpath[dir_len - 1] != '/' && linkpath[dir_len - 1] != ':') --dir_len;
+        size_t t_len = strlen(target);
+        joined = (char *)HeapAlloc(GetProcessHeap(), 0, dir_len + t_len + 1);
         if (!joined) {
             HeapFree(GetProcessHeap(), 0, wtarget);
             HeapFree(GetProcessHeap(), 0, wlink);
             return PROVEN_SYS_FS_OPEN_ERROR;
         }
-        for (size_t i = 0; i < dir_len; ++i) joined[i] = wlink[i];
-        for (size_t i = 0; i <= t_len; ++i) joined[dir_len + i] = wtarget[i];
-        probe = joined;
+        memcpy(joined, linkpath, dir_len);
+        memcpy(joined + dir_len, target, t_len + 1);
+        probe8 = joined;
     }
-    DWORD attrs = GetFileAttributesW(probe);
+    wchar_t *probe = utf8_to_wide_alloc(probe8);
+    DWORD attrs = probe ? GetFileAttributesW(probe) : INVALID_FILE_ATTRIBUTES;
+    if (probe) HeapFree(GetProcessHeap(), 0, probe);
     DWORD flags = (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY))
                       ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0;
 
