@@ -18,6 +18,7 @@ int main(void) {
 #include <sys/stat.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <dirent.h>
 #include <fcntl.h>
 
@@ -43,7 +44,7 @@ typedef struct { _Atomic int stop; _Atomic int leaked; _Atomic int widest; } wat
 
 static void *watch_temps(void *arg) {
     watcher_t *w = (watcher_t *)arg;
-    while (__atomic_load_n(&w->stop, __ATOMIC_RELAXED) == 0) {
+    while (atomic_load_explicit(&w->stop, memory_order_relaxed) == 0) {
         DIR *d = opendir("test_fs_perms.d");
         if (!d) continue;
         struct dirent *e;
@@ -55,10 +56,10 @@ static void *watch_temps(void *arg) {
             /* Only a temp that already HOLDS bytes can leak anything. */
             if (stat(p, &st) == 0 && st.st_size > 0) {
                 int m = (int)(st.st_mode & 0777);
-                if (m > __atomic_load_n(&w->widest, __ATOMIC_RELAXED)) {
-                    __atomic_store_n(&w->widest, m, __ATOMIC_RELAXED);
+                if (m > atomic_load_explicit(&w->widest, memory_order_relaxed)) {
+                    atomic_store_explicit(&w->widest, m, memory_order_relaxed);
                 }
-                if (m & 0077) __atomic_store_n(&w->leaked, 1, __ATOMIC_RELAXED);
+                if (m & 0077) atomic_store_explicit(&w->leaked, 1, memory_order_relaxed);
             }
         }
         closedir(d);
@@ -118,7 +119,7 @@ int main(void) {
 
         proven_err_t e = proven_fs_write_file_atomic(heap, path,
             (proven_mem_view_t){ .ptr = buf.value.ptr, .size = n });
-        __atomic_store_n(&w.stop, 1, __ATOMIC_RELAXED);
+        atomic_store_explicit(&w.stop, 1, memory_order_relaxed);
         (void)pthread_join(th, NULL);
         heap.free_fn(heap.ctx, buf.value.ptr);
 
@@ -127,7 +128,7 @@ int main(void) {
         struct stat st;
         PROVEN_TEST_ASSERT(stat("test_fs_perms.d/secret.txt", &st) == 0 && (st.st_mode & 0777) == 0600,
             "the final file must still be 0600", "");
-        PROVEN_TEST_ASSERT(__atomic_load_n(&w.leaked, __ATOMIC_RELAXED) == 0,
+        PROVEN_TEST_ASSERT(atomic_load_explicit(&w.leaked, memory_order_relaxed) == 0,
             "the temp must never hold the new contents under a group- or world-readable mode",
             "It used to be created with the umask and chmod'd only at the end - so the entire payload of a 0600 file was readable by anyone for as long as the write took.");
     }

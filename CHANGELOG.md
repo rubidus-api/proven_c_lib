@@ -30,6 +30,25 @@ written; their tags still exist.
 
 ### Changed
 
+- **The build rebuilds exactly what a change touched (B-036).** Objects and test executables are
+  built with compiler dependency files (`-MMD`); the cache key is the exact compile or link command
+  plus the contents of every file the dependency file names. Editing `include/proven/job.h` now
+  recompiles `job.c` alone (1 of 36 objects; the tests relink because they link every object), and
+  editing `manual/examples/example.h` relinks the 92 examples that include it and nothing else -
+  before, any header edit rebuilt everything. A missing dependency file means a rebuild, never a
+  stale cache hit. The test cache hash is now taken from the exact link command (it used to be a
+  hand-kept copy that differed from it), and `-ldl` is linked only into the test that interposes
+  libc with `dlsym(RTLD_NEXT, ...)` instead of every POSIX test (B-035). The first build after
+  updating rebuilds everything once.
+- **`./nob clean` removes the selected build root, safely (B-036).** It honours `-build-root` and
+  `PROVEN_BUILD_ROOT` instead of always running `rm -rf build` / `rmdir /s /q build` through the
+  shell, deletes without following symlinks or junctions, refuses `.`, `/`, any `..` component
+  and unusual characters, and removes a root other than the default `build` only when it carries
+  the `.proven-build-root` marker nob now writes into every build root it creates. Compatibility
+  note: a custom build root created by an older `nob` has no marker, so `clean` refuses it once
+  with a hint; remove it by hand or build into it again first. As for building, a root with a
+  drive letter or backslashes (`C:\...`) is refused; on Windows use a relative root. The Windows
+  deletion path is compiled with mingw-w64 (x86-64, i686) but not yet run on Windows.
 - **The job system's wake-latency budget states its condition (B-041).** The Windows idle-wake p99
   of ~8.9 ms was traced with `docs/b041-wake-probe.c`: a bare OS semaphore shows the same tail
   whenever CPUs are scarce (the 2-vCPU VM; Linux pinned to 2 CPUs), and neither shows it on a
@@ -72,6 +91,12 @@ written; their tags still exist.
   run: 1,994 -> 0.002 ns/byte). Long needles on ordinary text are slower (0.022 -> 0.055), the price
   of a portable backward scan. Results unchanged: the oracle agrees on 120,000 cases.
 
+
+### Fixed
+
+- **`tests/test_regression_fs_perms_and_types` builds with clang.** It passed `_Atomic int`
+  objects to the GCC `__atomic_*_n` builtins, which clang rejects; it now uses `<stdatomic.h>`
+  `atomic_load_explicit` / `atomic_store_explicit`. The full hosted suite passes under clang.
 ## [0.2.0] - 2026-09-28
 
 A MINOR release: new public API, nothing removed. UTF-16 text gets a way in and out and UTF-8

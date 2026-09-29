@@ -20,7 +20,7 @@ The class says what kind of question the test answers:
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 25 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
-| `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 11 |
+| `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 12 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
 | `docs` | Are the claims the documentation makes still true? | 11 |
 | `bench` | How fast is it? (Not a correctness gate.) | 5 |
@@ -103,8 +103,13 @@ Every target ends as PASS, FAIL or SKIP, and the run prints one `[PROVEN][CROSS]
 Clean generated output:
 
 ```sh
-./nob clean
+./nob clean                                   # the default build root, build/
+./nob clean -build-root build-out/proven_c_lib
 ```
+
+`clean` removes the selected build root without following symlinks. It refuses `.`, `/` and any path with `..`, and removes a root other than `build` only when it carries the `.proven-build-root` marker that nob writes into every build root it creates.
+
+Rebuilds are header-precise: every object and test executable is built with a compiler dependency file (`-MMD`), and its cache key is the exact command plus the contents of every file that dependency file names. `build_headers.inc` remains the list of headers the build validates, not what triggers a rebuild.
 
 ## Log format
 
@@ -307,7 +312,7 @@ Failure tip: identify the target name in the log, then check whether the failure
 ## Test catalog
 
 
-The hosted full run builds and executes 128 registered tests plus the 92 runnable manual examples - 220 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 141 test files: the 128 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 129 registered tests plus the 92 runnable manual examples - 221 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 142 test files: the 129 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1681,6 +1686,12 @@ Intent: verify nob probes -std=c23 first and falls back to -std=c2x when the com
 
 Failure tip: inspect nob.c standard-flag selection and toolchain probing if the fallback does not trigger.
 
+### `tests/test_portability_nob_clean` - build driver clean
+
+Intent: verify `./nob clean` removes the selected build root and nothing else: `.`, `/`, a path with `..` and a directory without the `.proven-build-root` marker are refused with nothing deleted, and a symlink inside a marked root is removed without its target being entered.
+
+Failure tip: inspect `clean_build_root`, `build_root_path_is_safe` and `remove_tree_no_follow` in nob.c; a surviving target means links are removed, never followed.
+
 ## Documentation tests
 
 The documentation is checked by the build, not by eye: every public function has an alias, every example the manual prints is a program that compiles and runs, and no example drifts from its chapter.
@@ -2401,7 +2412,7 @@ When behavior changes:
 Recommended release gate:
 
 ```sh
-./nob clean
+./nob clean -build-root build-out/proven_c_lib
 ./nob strict-error -build-root build-out/proven_c_lib
 ./nob regression-asan -build-root build-out/proven_c_lib
 ./nob regression-ubsan -build-root build-out/proven_c_lib

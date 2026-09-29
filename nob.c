@@ -60,10 +60,6 @@ static bool hash_paths_contents(const char **paths, size_t count,
     return true;
 }
 
-static void hash_mix_u32(uint32_t *hash, uint32_t value) {
-    hash_bytes(hash, &value, sizeof(value));
-}
-
 static uint32_t hash_cmd(Nob_Cmd *cmd) {
     Nob_String_Builder sb = {0};
     for (size_t i = 0; i < cmd->count; ++i) {
@@ -159,52 +155,120 @@ static void append_mode_cflags(Nob_Cmd *cmd, const char *mode, const char *stand
     nob_cmd_append(cmd, "-I./include", "-I./platform", "-I./manual/examples");
 }
 
-static bool compile_object_tmp(const char *compiler, const char *src, const char *obj_tmp, const char *mode, const char *extra_cflags, const char *standard_flag, const char *sysroot, uint32_t *out_hash) {
-    Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, compiler);
-    append_mode_cflags(&cmd, mode, standard_flag, sysroot);
-    if (extra_cflags) nob_cmd_append(&cmd, extra_cflags);
-    nob_cmd_append(&cmd, "-c", src, "-o", obj_tmp);
-    
-    if (out_hash) *out_hash = hash_cmd(&cmd);
-    bool success = nob_cmd_run_sync(cmd);
-    nob_cmd_free(cmd);
-    return success;
+/* The one place a library object's compile command is built: the cache hash and the compile use
+ * it, so the hash is the exact command that runs. -MMD -MF writes the compiler's dependency file. */
+static void build_compile_cmd(Nob_Cmd *cmd, const char *compiler, const char *src, const char *obj_tmp, const char *dep_tmp, const char *mode, const char *extra_cflags, const char *standard_flag, const char *sysroot) {
+    nob_cmd_append(cmd, compiler);
+    append_mode_cflags(cmd, mode, standard_flag, sysroot);
+    if (extra_cflags) nob_cmd_append(cmd, extra_cflags);
+    nob_cmd_append(cmd, "-MMD", "-MF", dep_tmp);
+    nob_cmd_append(cmd, "-c", src, "-o", obj_tmp);
 }
 
-static bool link_executable_tmp(const char *compiler, const char *src, Nob_File_Paths obj_files, const char *exec_tmp, const char *mode, const char *extra_cflags, const char *extra_ldflags, const char *standard_flag, const char *sysroot, uint32_t *out_hash) {
-    Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, compiler);
-    append_mode_cflags(&cmd, mode, standard_flag, sysroot);
+/*
+ * Compiler dependency files (B-036). Each object and test executable is built with -MMD, so its
+ * `.d` file names the source and every non-system header that translation unit actually
+ * included. The cache key is the exact command plus the contents of those files: editing a
+ * header rebuilds exactly the outputs that consumed it, and nothing else.
+ */
+static bool depfile_is_space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
+
+static bool read_depfile(const char *path, Nob_File_Paths *out) {
+    if (nob_file_exists(path) != 1) return false;
+    Nob_String_Builder sb = {0};
+    if (!nob_read_entire_file(path, &sb)) return false;
+    const char *d = sb.items;
+    size_t n = sb.count, i = 0;
+    /* Skip the target: up to the first ':' followed by whitespace (a drive letter's ':' is not). */
+    while (i < n && !(d[i] == ':' && (i + 1 == n || depfile_is_space(d[i + 1])))) ++i;
+    if (i >= n) { nob_sb_free(sb); return false; }
+    ++i;
+    while (i < n) {
+        if (depfile_is_space(d[i])) { ++i; continue; }
+        if (d[i] == '\\' && i + 1 < n && (d[i + 1] == '\n' || d[i + 1] == '\r')) { ++i; continue; }
+        size_t start = i;
+        while (i < n && !depfile_is_space(d[i])) ++i;
+        size_t len = i - start;
+        if (d[start + len - 1] == ':') break;          /* a second rule (-MP phony targets) */
+        nob_da_append(out, nob_temp_sprintf("%.*s", (int)len, d + start));
+    }
+    nob_sb_free(sb);
+    return out->count > 0;
+}
+
+/* The state an output was built from: its exact command plus the contents of every file its
+ * depfile names. False when that is unknown - no depfile yet, or a file it names is gone - and
+ * the output must then be rebuilt. */
+static bool depfile_state_hash(Nob_Cmd *cmd, const char *depfile, uint32_t *out_hash) {
+    Nob_File_Paths deps = {0};
+    bool ok = read_depfile(depfile, &deps);
+    uint32_t h = ok ? hash_cmd(cmd) : 0;
+    for (size_t i = 0; ok && i < deps.count; ++i) {
+        struct stat st;
+        ok = stat(deps.items[i], &st) == 0 && hash_file_contents(&h, deps.items[i]);
+    }
+    nob_da_free(deps);
+    if (ok) *out_hash = h;
+    return ok;
+}
+
+/* After a successful build: install the fresh depfile and record the hash taken from it (never
+ * the pre-build one, which came from the previous depfile). No depfile means the next build
+ * rebuilds this output again - correct, only slower. */
+static void record_build_state(Nob_Cmd *cmd, const char *dep_tmp, const char *dep_path, const char *hash_path) {
+    uint32_t h = 0;
+    if (nob_file_exists(dep_tmp) == 1 && nob_rename(dep_tmp, dep_path) && depfile_state_hash(cmd, dep_path, &h)) {
+        write_cmdhash(hash_path, h);
+    } else {
+        nob_log(NOB_WARNING, "[PROVEN][BUILD][DEPFILE][MISSING] path=%s - the compiler wrote no usable dependency file; this output will rebuild every time", dep_path);
+        if (nob_file_exists(hash_path) == 1) nob_delete_file(hash_path);
+    }
+}
+
+#if !defined(_WIN32) && !defined(_WIN64)
+/* True when a test interposes libc functions with dlsym(RTLD_NEXT, ...) to inject faults an
+ * ordinary run cannot produce (a readdir() that fails mid-directory, an opendir() that swaps a
+ * directory for a symlink). Only those tests link -ldl. */
+static bool test_source_needs_libdl(const char *src) {
+    Nob_String_Builder sb = {0};
+    if (!nob_read_entire_file(src, &sb)) return false;
+    Nob_String_View sv = nob_sb_to_sv(sb);
+    bool found = false;
+    static const char needle[] = "RTLD_NEXT";
+    size_t n = sizeof needle - 1;
+    for (size_t i = 0; i + n <= sv.count && !found; ++i) found = memcmp(sv.data + i, needle, n) == 0;
+    nob_sb_free(sb);
+    return found;
+}
+#endif
+
+/* The one place a test link command is built: the cache hash and the link both use it, so the
+ * hash is the exact command that runs. */
+static void build_test_link_cmd(Nob_Cmd *cmd, const char *compiler, const char *src, Nob_File_Paths obj_files, const char *exec_tmp, const char *dep_tmp, const char *mode, const char *extra_cflags, const char *extra_ldflags, const char *standard_flag, const char *sysroot) {
+    nob_cmd_append(cmd, compiler);
+    append_mode_cflags(cmd, mode, standard_flag, sysroot);
     /* Mirror the user -cflags onto test compilation so config macros that affect
      * public headers stay consistent with the library objects. */
-    if (extra_cflags) nob_cmd_append(&cmd, extra_cflags);
-    if (strcmp(mode, "asan") == 0) nob_cmd_append(&cmd, "-fsanitize=address");
-    else if (strcmp(mode, "ubsan") == 0) nob_cmd_append(&cmd, "-fsanitize=undefined");
-    else if (strcmp(mode, "tsan") == 0) nob_cmd_append(&cmd, "-fsanitize=thread");
-    
+    if (extra_cflags) nob_cmd_append(cmd, extra_cflags);
+    if (strcmp(mode, "asan") == 0) nob_cmd_append(cmd, "-fsanitize=address");
+    else if (strcmp(mode, "ubsan") == 0) nob_cmd_append(cmd, "-fsanitize=undefined");
+    else if (strcmp(mode, "tsan") == 0) nob_cmd_append(cmd, "-fsanitize=thread");
+
     if (strcmp(mode, "freestanding") != 0) {
-        nob_cmd_append(&cmd, "-pthread");
+        nob_cmd_append(cmd, "-pthread");
     } else {
         // Enforce static linking for freestanding tests to ensure no dynamic libc bleed
-        nob_cmd_append(&cmd, "-static");
+        nob_cmd_append(cmd, "-static");
     }
-    
-    nob_cmd_append(&cmd, src);
-    for (size_t i = 0; i < obj_files.count; ++i) nob_cmd_append(&cmd, obj_files.items[i]);
-    if (extra_ldflags) nob_cmd_append(&cmd, extra_ldflags);
+
+    nob_cmd_append(cmd, "-MMD", "-MF", dep_tmp);
+    nob_cmd_append(cmd, src);
+    for (size_t i = 0; i < obj_files.count; ++i) nob_cmd_append(cmd, obj_files.items[i]);
+    if (extra_ldflags) nob_cmd_append(cmd, extra_ldflags);
 #if !defined(_WIN32) && !defined(_WIN64)
-    /* -ldl for the tests that interpose libc functions with dlsym(RTLD_NEXT, ...) to
-     * inject faults an ordinary run cannot produce - a readdir() that fails mid-directory,
-     * an opendir() that swaps a directory for a symlink. Harmless where unused. */
-    if (strcmp(mode, "freestanding") != 0) nob_cmd_append(&cmd, "-ldl");
+    if (strcmp(mode, "freestanding") != 0 && test_source_needs_libdl(src)) nob_cmd_append(cmd, "-ldl");
 #endif
-    nob_cmd_append(&cmd, "-o", exec_tmp);
-    
-    if (out_hash) *out_hash = hash_cmd(&cmd);
-    bool success = nob_cmd_run_sync(cmd);
-    nob_cmd_free(cmd);
-    return success;
+    nob_cmd_append(cmd, "-o", exec_tmp);
 }
 
 static void sanitize_name(char *dst, size_t cap, const char *src) {
@@ -273,6 +337,91 @@ static bool mkdir_p_safe(const char *path) {
         }
     }
     return nob_mkdir_if_not_exists(tmp);
+}
+
+/* A build root nob created carries this marker; `clean` removes only a root that has it (or the
+ * default `build`), so a mistyped -build-root or PROVEN_BUILD_ROOT cannot delete a source tree. */
+#define PROVEN_BUILD_ROOT_MARKER ".proven-build-root"
+
+static bool build_root_path_is_safe(const char *root) {
+    if (!shell_token_is_safe(root)) return false;
+    const char *p = root;
+    bool any_component = false;
+    while (*p) {
+        while (*p == '/') ++p;
+        const char *start = p;
+        while (*p && *p != '/') ++p;
+        size_t n = (size_t)(p - start);
+        if (n == 0) continue;
+        if (n == 2 && start[0] == '.' && start[1] == '.') return false;
+        if (!(n == 1 && start[0] == '.')) any_component = true;
+    }
+    return any_component;                               /* ".", "./" or "/" alone is never a build root */
+}
+
+/* Delete a tree without following links: a symlink (or a Windows junction) is removed, never
+ * entered, so clean cannot reach outside the build root. */
+static bool remove_tree_no_follow(const char *path) {
+#if defined(_WIN32) || defined(_WIN64)
+    DWORD attr = GetFileAttributesA(path);
+    if (attr == INVALID_FILE_ATTRIBUTES) return false;
+    bool is_dir = (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    bool is_link = (attr & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+    if (attr & FILE_ATTRIBUTE_READONLY) SetFileAttributesA(path, attr & ~(DWORD)FILE_ATTRIBUTE_READONLY);
+    if (is_link) return is_dir ? RemoveDirectoryA(path) != 0 : DeleteFileA(path) != 0;
+#else
+    Nob_File_Type type = nob_get_file_type(path);
+    if (type == (Nob_File_Type)-1) return false;
+    bool is_dir = type == NOB_FILE_DIRECTORY;
+#endif
+    if (!is_dir) return nob_delete_file(path);
+    Nob_File_Paths children = {0};
+    if (!nob_read_entire_dir(path, &children)) return false;
+    bool ok = true;
+    for (size_t i = 0; i < children.count && ok; ++i) {
+        const char *name = children.items[i];
+        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+        Nob_String_Builder child = {0};
+        nob_sb_appendf(&child, "%s/%s", path, name);
+        nob_sb_append_null(&child);
+        ok = remove_tree_no_follow(child.items);
+        nob_sb_free(child);
+    }
+    nob_da_free(children);
+    return ok && nob_delete_file(path);
+}
+
+static bool clean_build_root(const char *root) {
+    if (!build_root_path_is_safe(root)) {
+        nob_log(NOB_ERROR, "[PROVEN][CLEAN][REFUSE] build_root=%s reason=unsafe-path", root);
+        nob_log(NOB_ERROR, "[PROVEN][CLEAN][FAIL_HINT] clean refuses '.', '/', any '..' component, and characters outside [A-Za-z0-9_./+-].");
+        return false;
+    }
+    int root_exists = nob_file_exists(root);
+    if (root_exists < 0) return false;
+    if (root_exists == 0) {
+        nob_log(NOB_INFO, "[PROVEN][CLEAN][NOTHING] build_root=%s", root);
+        return true;
+    }
+    const char *marker = nob_temp_sprintf("%s/%s", root, PROVEN_BUILD_ROOT_MARKER);
+    if (strcmp(root, "build") != 0 && nob_file_exists(marker) != 1) {
+        nob_log(NOB_ERROR, "[PROVEN][CLEAN][REFUSE] build_root=%s reason=no-marker", root);
+        nob_log(NOB_ERROR, "[PROVEN][CLEAN][FAIL_HINT] %s has no %s file, so nob did not create it; remove it by hand if it really is a build root.", root, PROVEN_BUILD_ROOT_MARKER);
+        return false;
+    }
+    if (!remove_tree_no_follow(root)) {
+        nob_log(NOB_ERROR, "[PROVEN][CLEAN][FAIL] build_root=%s", root);
+        return false;
+    }
+    nob_log(NOB_INFO, "[PROVEN][CLEAN][PASS] build_root=%s", root);
+    return true;
+}
+
+static bool mkdir_build_root(const char *root) {
+    if (!mkdir_p_safe(root)) return false;
+    const char *marker = nob_temp_sprintf("%s/%s", root, PROVEN_BUILD_ROOT_MARKER);
+    if (nob_file_exists(marker)) return true;
+    return nob_write_entire_file(marker, "proven_c_lib build root; ./nob clean may remove this directory\n", 63);
 }
 
 static bool command_available(const char *cmd_name) {
@@ -925,6 +1074,7 @@ int main(int argc, char **argv)
     bool benchmark_mode = false;
     bool cross_check = false;
     const char *build_root = NULL;
+    bool clean_requested = false;
 
     if (argc == 0) {
         show_help = true;
@@ -979,13 +1129,8 @@ int main(int argc, char **argv)
             build_mode = "strict-error";
             nob_shift_args(&argc, &argv);
         } else if (strcmp(argv[0], "clean") == 0) {
-            nob_log(NOB_INFO, "Cleaning build directory...");
-#if defined(_WIN32) || defined(_WIN64)
-            system("rmdir /s /q build");
-#else
-            system("rm -rf build");
-#endif
-            return 0;
+            clean_requested = true;
+            nob_shift_args(&argc, &argv);
         } else if (strcmp(argv[0], "-f") == 0) {
             force_rebuild = true;
             nob_shift_args(&argc, &argv);
@@ -1061,7 +1206,7 @@ int main(int argc, char **argv)
         printf("  regression-asan    Run regression tests with AddressSanitizer.\n");
         printf("  regression-ubsan   Run regression tests with UndefinedBehaviorSanitizer.\n");
         printf("  bench-float        Run the benchmarks: float parse paths plus primitive throughput.\n");
-        printf("  clean              Remove the build directory.\n");
+        printf("  clean              Remove the build root (-build-root or build); refuses unsafe or unmarked roots.\n");
         printf("  help, -h, --help   Show this help message.\n\n");
         printf("Options:\n");
         printf("  -f                 Force a full rebuild of the project.\n");
@@ -1089,6 +1234,7 @@ int main(int argc, char **argv)
 
     if (build_root == NULL) build_root = getenv("PROVEN_BUILD_ROOT");
     if (build_root == NULL) build_root = "build";
+    if (clean_requested) return clean_build_root(build_root) ? 0 : 1;
 
     if (cc == NULL) cc = getenv("CC");
     if (cc == NULL) cc = getenv("NOB_COMPILER");
@@ -1154,7 +1300,7 @@ int main(int argc, char **argv)
     char build_dir[512];
     if (!format_path(build_dir, sizeof(build_dir), "%s/%s-%s-%08x", build_root, compiler_name, build_mode, flag_hash)) return 1;
     
-    if (!mkdir_p_safe(build_root)) return 1;
+    if (!mkdir_build_root(build_root)) return 1;
     if (!mkdir_p_safe(build_dir)) return 1;
 
     // Subdirs
@@ -1188,16 +1334,16 @@ int main(int argc, char **argv)
     _Static_assert(NOB_ARRAY_LEN(headers) > 1, "build header manifest is unexpectedly small");
 
     /*
-     * Hash manifest contents once. Timestamp comparison remains a fast rebuild
-     * hint; this fingerprint catches edits made within one filesystem tick or
-     * with a restored mtime, and validates every declared path before any mode
-     * can return a clean-build false green.
+     * Validate every declared header before any mode runs, so a missing manifest entry cannot
+     * pass as a clean build. Rebuild decisions do not use the manifest: each output's own
+     * compiler dependency file names the headers it consumed (B-036).
      */
     uint32_t headers_content_hash = 0;
     if (!hash_paths_contents(headers, NOB_ARRAY_LEN(headers),
                              &headers_content_hash)) {
         return 1;
     }
+    (void)headers_content_hash;
 
     print_proven_build_plan(build_mode, compiler_exe, linker_exe, archiver_exe, sysroot, build_root, build_dir,
                             NOB_ARRAY_LEN(srcs), NOB_ARRAY_LEN(all_tests), cross_check, only_regression, benchmark_mode);
@@ -1271,40 +1417,24 @@ int main(int argc, char **argv)
 
         nob_da_append(&obj_files, final_obj_path);
 
-        const char **inputs = nob_temp_alloc(sizeof(const char *) * (1 + NOB_ARRAY_LEN(headers)));
-        inputs[0] = srcs[i];
-        for (size_t j = 0; j < NOB_ARRAY_LEN(headers); ++j) inputs[j + 1] = headers[j];
-
         const char *obj_tmp = nob_temp_sprintf("%s.tmp", final_obj_path);
         const char *hash_path = nob_temp_sprintf("%s.cmdhash", final_obj_path);
+        const char *dep_path = nob_temp_sprintf("%s.d", final_obj_path);
+        const char *dep_tmp = nob_temp_sprintf("%s.d.tmp", final_obj_path);
 
-        uint32_t current_hash = 0;
-        {
-            Nob_Cmd mock = {0};
-            nob_cmd_append(&mock, compiler_exe);
-            append_mode_cflags(&mock, build_mode, standard_flag, sysroot);
-            if (user_cflags) nob_cmd_append(&mock, user_cflags);
-            nob_cmd_append(&mock, "-c", srcs[i], "-o", obj_tmp);
-            current_hash = hash_cmd(&mock);
-            nob_cmd_free(mock);
-        }
-        hash_mix_u32(&current_hash, headers_content_hash);
-        if (!hash_file_contents(&current_hash, srcs[i])) return 1;
-
-        uint32_t old_hash = 0;
-        bool hash_differs = !read_cmdhash(hash_path, &old_hash) || old_hash != current_hash;
-        bool rebuild = false;
-        if (!checked_needs_rebuild(final_obj_path, inputs,
-                                   1 + NOB_ARRAY_LEN(headers), &rebuild)) {
-            return 1;
-        }
-        bool should_rebuild = rebuild || hash_differs || !output_file_valid(final_obj_path, false) || force_rebuild;
+        Nob_Cmd compile = {0};
+        build_compile_cmd(&compile, compiler_exe, srcs[i], obj_tmp, dep_tmp, build_mode, user_cflags, standard_flag, sysroot);
+        uint32_t current_hash = 0, old_hash = 0;
+        bool state_known = depfile_state_hash(&compile, dep_path, &current_hash);
+        bool hash_differs = !state_known || !read_cmdhash(hash_path, &old_hash) || old_hash != current_hash;
+        bool should_rebuild = hash_differs || !output_file_valid(final_obj_path, false) || force_rebuild;
         if (should_rebuild) {
             nob_log(NOB_INFO, "[PROVEN][BUILD][SOURCE][REBUILD] path=%s", srcs[i]);
-            if (!compile_object_tmp(compiler_exe, srcs[i], obj_tmp, build_mode, user_cflags, standard_flag, sysroot, NULL)) {
+            if (!nob_cmd_run_sync(compile)) {
                 nob_log(NOB_ERROR, "[PROVEN][BUILD][FAIL] stage=compile-source path=%s", srcs[i]);
                 nob_log(NOB_ERROR, "[PROVEN][BUILD][FAIL_HINT] Read the compiler diagnostic above and inspect the portability contract for this source file.");
                 if (nob_file_exists(obj_tmp)) nob_delete_file(obj_tmp);
+                if (nob_file_exists(dep_tmp)) nob_delete_file(dep_tmp);
                 return 1;
             }
             if (!nob_rename(obj_tmp, final_obj_path)) {
@@ -1313,12 +1443,13 @@ int main(int argc, char **argv)
                 if (nob_file_exists(obj_tmp)) nob_delete_file(obj_tmp);
                 return 1;
             }
-            write_cmdhash(hash_path, current_hash);
+            record_build_state(&compile, dep_tmp, dep_path, hash_path);
             library_rebuilt += 1;
         } else {
             nob_log(NOB_INFO, "[PROVEN][BUILD][SOURCE][CACHED] path=%s", srcs[i]);
             library_cached += 1;
         }
+        nob_cmd_free(compile);
     }
 
     // Manual code-block check (hosted builds only: the fragments use the hosted API)
@@ -1340,49 +1471,19 @@ int main(int argc, char **argv)
 
         print_proven_test_begin(test);
 
-        size_t input_count = 1 + NOB_ARRAY_LEN(headers) + obj_files.count;
-        const char **inputs = nob_temp_alloc(sizeof(const char *) * input_count);
-        size_t idx = 0;
-        inputs[idx++] = src_path;
-        for (size_t j = 0; j < NOB_ARRAY_LEN(headers); ++j) inputs[idx++] = headers[j];
-        for (size_t j = 0; j < obj_files.count; ++j) inputs[idx++] = obj_files.items[j];
-
         const char *hash_path = nob_temp_sprintf("%s.cmdhash", exec_path);
         const char *exec_tmp = nob_temp_sprintf("%s.tmp", exec_path);
+        const char *dep_path = nob_temp_sprintf("%s.d", exec_path);
+        const char *dep_tmp = nob_temp_sprintf("%s.d.tmp", exec_path);
 
-        uint32_t current_hash = 0;
-        {
-            Nob_Cmd mock = {0};
-            nob_cmd_append(&mock, linker_exe);
-            append_mode_cflags(&mock, build_mode, standard_flag, sysroot);
-            /* Pass user -cflags to test compilation too, so config macros that
-             * affect public headers (e.g. PROVEN_FLOAT_BIGINT_LIMBS) stay
-             * consistent between the library objects and the test sources. */
-            if (user_cflags) nob_cmd_append(&mock, user_cflags);
-            if (strcmp(build_mode, "asan") == 0) nob_cmd_append(&mock, "-fsanitize=address");
-            else if (strcmp(build_mode, "ubsan") == 0) nob_cmd_append(&mock, "-fsanitize=undefined");
-            else if (strcmp(build_mode, "tsan") == 0) nob_cmd_append(&mock, "-fsanitize=thread");
-
-            if (strcmp(build_mode, "freestanding") != 0) {
-                nob_cmd_append(&mock, "-pthread");
-            } else {
-                nob_cmd_append(&mock, "-static");
-            }
-
-            nob_cmd_append(&mock, src_path);
-            for (size_t j = 0; j < obj_files.count; ++j) nob_cmd_append(&mock, obj_files.items[j]);
-            if (user_ldflags) nob_cmd_append(&mock, user_ldflags);
-            nob_cmd_append(&mock, "-o", exec_tmp);
-            current_hash = hash_cmd(&mock);
-            nob_cmd_free(mock);
-        }
-        hash_mix_u32(&current_hash, headers_content_hash);
-        if (!hash_file_contents(&current_hash, src_path)) return 1;
-
-        uint32_t old_hash = 0;
-        bool hash_differs = !read_cmdhash(hash_path, &old_hash) || old_hash != current_hash;
+        Nob_Cmd link = {0};
+        build_test_link_cmd(&link, linker_exe, src_path, obj_files, exec_tmp, dep_tmp, build_mode, user_cflags, user_ldflags, standard_flag, sysroot);
+        uint32_t current_hash = 0, old_hash = 0;
+        bool state_known = depfile_state_hash(&link, dep_path, &current_hash);
+        bool hash_differs = !state_known || !read_cmdhash(hash_path, &old_hash) || old_hash != current_hash;
+        /* The library objects are inputs too; their contents are not in the hash, their times are. */
         bool needs_link = false;
-        if (!checked_needs_rebuild(exec_path, inputs, idx, &needs_link)) {
+        if (!checked_needs_rebuild(exec_path, obj_files.items, obj_files.count, &needs_link)) {
             return 1;
         }
         needs_link = needs_link || !output_file_valid(exec_path, true);
@@ -1391,9 +1492,10 @@ int main(int argc, char **argv)
         if (should_link) {
             tests_rebuilt += 1;
             nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][REBUILD] path=%s", test->path);
-            if (!link_executable_tmp(linker_exe, src_path, obj_files, exec_tmp, build_mode, user_cflags, user_ldflags, standard_flag, sysroot, NULL)) {
+            if (!nob_cmd_run_sync(link)) {
                 print_proven_test_fail(test, "link", "The test executable did not link. Read the compiler diagnostics above, then check source/header/API drift.");
                 if (nob_file_exists(exec_tmp)) nob_delete_file(exec_tmp);
+                if (nob_file_exists(dep_tmp)) nob_delete_file(dep_tmp);
                 return 1;
             }
             if (!nob_rename(exec_tmp, exec_path)) {
@@ -1401,11 +1503,12 @@ int main(int argc, char **argv)
                 if (nob_file_exists(exec_tmp)) nob_delete_file(exec_tmp);
                 return 1;
             }
-            write_cmdhash(hash_path, current_hash);
+            record_build_state(&link, dep_tmp, dep_path, hash_path);
         } else {
             tests_cached += 1;
             nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][CACHED] path=%s", test->path);
         }
+        nob_cmd_free(link);
 
         cmd.count = 0;
         nob_cmd_append(&cmd, exec_path);

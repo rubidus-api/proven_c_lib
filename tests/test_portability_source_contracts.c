@@ -223,11 +223,15 @@ int main(void) {
     require(contains(nob, "checked_needs_rebuild"),
             "nob.c checks the tri-state dependency timestamp result");
     require(contains(nob, "hash_paths_contents"),
-            "nob.c fingerprints shared dependency contents once per build");
-    require(contains(nob, "hash_file_contents(&current_hash, srcs[i])"),
-            "object cache keys include source contents, not only coarse timestamps");
-    require(contains(nob, "hash_file_contents(&current_hash, src_path)"),
-            "test cache keys include test-source contents, not only coarse timestamps");
+            "nob.c validates every declared header once per build");
+    require(contains(nob, "\"-MMD\", \"-MF\""),
+            "objects and tests are built with compiler dependency files");
+    require(contains(nob, "depfile_state_hash(&compile, dep_path, &current_hash)"),
+            "object cache keys are the exact compile command plus the contents of every file its depfile names");
+    require(contains(nob, "depfile_state_hash(&link, dep_path, &current_hash)"),
+            "test cache keys are the exact link command plus the contents of every file its depfile names");
+    require(contains(nob, "hash_file_contents(&h, deps.items[i])"),
+            "cache keys hash dependency contents, not only coarse timestamps");
     require(contains(nob, "PROVEN_FREESTANDING_CROSS_SMOKE_PATH"),
             "freestanding cross coverage resolves a stable named path");
     require(!contains(nob, "PROVEN_FREESTANDING_CROSS_SMOKE_TEST"),
