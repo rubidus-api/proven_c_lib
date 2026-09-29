@@ -18,6 +18,18 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-29
+
+A MINOR release: nothing public removed, one build profile added, and one profile's behaviour
+changed on purpose. `./nob release` now defines `NDEBUG`, so pool and map misuse checks are out
+of release builds (pool teardown was quadratic with them), and the new `./nob hardened` keeps them
+in an optimised build (B-036). `find_last` makes the forward search's choices, and its quadratic
+tail is gone (B-024). The freestanding runtime contract is stated and link-proven (B-034). `./nob
+cross` reports every target and cannot skip the mandatory ones (B-035). Benchmarks share one row
+format and back the published numbers (B-037, B-038). The build rebuilds exactly what a header
+change touched, and `./nob clean` removes the selected build root safely (B-036). English public
+text is ASCII, and a gate keeps it that way.
+
 ### Added
 
 - **One benchmark row format, and the benchmarks behind the published numbers (B-037, B-038).**
