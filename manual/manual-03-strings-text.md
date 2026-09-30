@@ -1052,9 +1052,14 @@ if (!proven_is_ok(e)) {
   decimal-to-binary64 backend.
 - Finite decimal inputs are rounded to IEEE-754 binary64 with
   round-to-nearest, ties-to-even behavior.
-- The current conversion stack is `Clinger fast path -> staged
-  Eisel-Lemire layer -> exact bigint fallback`, with internal counters used by
+- The current conversion stack is `Clinger fast path -> direct Eisel-Lemire ->
+  staged Eisel-Lemire layer -> exact bigint fallback`, with internal counters used by
   tests to confirm which path took a representative input.
+- The direct Eisel-Lemire layer multiplies the significand by a truncated 128-bit
+  power of five and proves the rounding from the product's low bits; it declines
+  anything it cannot prove (a possible tie, a subnormal or overflowing result). A
+  significand longer than 19 digits is bounded by its first 19 digits and the same
+  plus one, and taken when both bounds round alike.
 - The staged Eisel-Lemire layer currently accepts generated-`5^q` positive
   exponent cases and exact negative-exponent cases where the decimal
   significand cleanly cancels the required `5^q`.

@@ -13,8 +13,9 @@
  *
  * Corpora, fixed-seed: NORMAL magnitudes (log-uniform in 1e-6..1e6, both signs) and UNIFORM bit
  * patterns (every finite binary64 bit pattern equally likely - extreme exponents dominate).
- * Parsing is timed on three spellings of the normal corpus: %.6g (short, human-sized), the
- * library's shortest round-trip form (~16 digits), and %.17g. Formatting is timed as shortest
+ * Parsing is timed on four spellings of the normal corpus: %.6g (short, human-sized), the
+ * library's shortest round-trip form (~16 digits), %.17g, and %.25g (past the 19 digits a 64-bit
+ * mantissa holds, so the bounded long-input path). Formatting is timed as shortest
  * (against the host's %.17g, the nearest thing it has), %f with 6 digits and %e with 16.
  *
  * Accuracy is checked in the same run, and a mismatch FAILS the benchmark - a fast wrong answer
@@ -26,7 +27,7 @@
 #define ROUNDS 5
 
 static double g_normal[N], g_uniform[N];
-static char g_txt[3][N][32];
+static char g_txt[4][N][40];
 static unsigned long long g_sink;
 
 static unsigned long long bits_of(double d) { unsigned long long b; memcpy(&b, &d, 8); return b; }
@@ -44,12 +45,13 @@ static void build_corpora(void) {
         unsigned long long b;
         do { b = proven_xoshiro256ss_next(&g); } while (((b >> 52) & 0x7ff) == 0x7ff);
         memcpy(&g_uniform[i], &b, 8);
-        snprintf(g_txt[0][i], 32, "%.6g", g_normal[i]);
+        snprintf(g_txt[0][i], 40, "%.6g", g_normal[i]);
         proven_size_t w = 0;
-        proven_err_t e = proven_float_format_f64_policy(g_txt[1][i], 32, g_normal[i], PROVEN_FLOAT_FORMAT_POLICY_RYU,
+        proven_err_t e = proven_float_format_f64_policy(g_txt[1][i], 40, g_normal[i], PROVEN_FLOAT_FORMAT_POLICY_RYU,
                                                         proven_float_format_options_shortest(), &w);
         PROVEN_TEST_ASSERT(proven_is_ok(e) && w > 0, "the shortest corpus is built from real shortest output", "");
-        snprintf(g_txt[2][i], 32, "%.17g", g_normal[i]);
+        snprintf(g_txt[2][i], 40, "%.17g", g_normal[i]);
+        snprintf(g_txt[3][i], 40, "%.25g", g_normal[i]);   /* past 19 digits: the long-input path */
     }
 }
 
@@ -105,7 +107,7 @@ int main(void) {
     PROVEN_TEST_SECTION("accuracy against the host", "Every value of every corpus, before any timing.", "");
     // ---------------------------------------------------------------
     unsigned long parse_bad = 0, fixed_bad = 0, sci_bad = 0, rt_bad = 0;
-    for (int c = 0; c < 3; ++c)
+    for (int c = 0; c < 4; ++c)
         for (int i = 0; i < N; ++i)
             if (bits_of(proven_strtod(g_txt[c][i], NULL)) != bits_of(strtod(g_txt[c][i], NULL))) ++parse_bad;
     char host[512];
@@ -133,8 +135,8 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("speed", "ns per call, median of five after a warmup pass.", "");
     // ---------------------------------------------------------------
-    static const char *parse_names[3] = { "short_6g", "shortest_16dig", "hard_17g" };
-    for (int c = 0; c < 3; ++c) {
+    static const char *parse_names[4] = { "short_6g", "shortest_16dig", "hard_17g", "long_25g" };
+    for (int c = 0; c < 4; ++c) {
         g_corpus_txt = c;
         char a[64], b[64];
         snprintf(a, sizeof a, "parse_%s_proven", parse_names[c]);

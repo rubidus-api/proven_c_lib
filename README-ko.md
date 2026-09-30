@@ -612,8 +612,9 @@ proven_float_format_f64_policy(buf, sizeof buf, 0.1,
 - 대규모: 무작위 `binary64` 값 2,560,000,000개, 0 불일치(이 검증이 실제 포매팅
   결함 1건을 찾아 고쳤습니다 — 문서 참고).
 - glibc 대비 속도(x86-64 머신 한 대, `tests/test_bench_float_host.c`, 원본 결과는
-  `docs/benchmarks/`): 짧은 숫자 파싱은 더 빠르고, ~16자리는 비슷하며, 17자리는 ~1.1배 느립니다.
-  shortest 포매팅은 `%.17g`보다 ~3.6배 빠르고, `%f`/`%e`는 측정한 모든 크기에서 더 빠릅니다.
+  `docs/benchmarks/`): 파싱은 측정한 모든 길이에서 더 빠릅니다 - 짧은 숫자 ~1.7배, 16~17자리
+  ~1.3배, 25자리 ~1.15배. shortest 포매팅은 `%.17g`보다 ~3.7배 빠르고, `%f`/`%e`는 측정한 모든
+  크기에서 더 빠릅니다.
 
 방법론·알고리즘·전체 벤치마크는
 [`docs/float-correctness-and-performance.md`](docs/float-correctness-and-performance.md)에 있습니다.

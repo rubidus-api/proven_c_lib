@@ -641,8 +641,9 @@ How far this is checked, stated plainly:
 - Large-scale: 2,560,000,000 random `binary64` values, zero mismatches (this sweep
   found and fixed one real formatting defect - see the doc).
 - Speed vs glibc on one x86-64 machine (`tests/test_bench_float_host.c`, raw rows in
-  `docs/benchmarks/`): faster at parsing short numbers, level at ~16 digits, ~1.1x slower at 17;
-  shortest formatting ~3.6x faster than `%.17g`, and `%f`/`%e` faster at every magnitude measured.
+  `docs/benchmarks/`): parsing faster at every length measured - ~1.7x on short numbers, ~1.3x
+  at 16-17 digits, ~1.15x at 25; shortest formatting ~3.7x faster than `%.17g`, and `%f`/`%e`
+  faster at every magnitude measured.
 
 Methodology, algorithms, and the benchmark tables are in
 [`docs/float-correctness-and-performance.md`](docs/float-correctness-and-performance.md).

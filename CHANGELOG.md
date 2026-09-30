@@ -32,6 +32,19 @@ written; their tags still exist.
 
 ### Changed
 
+- **Float parsing is faster than glibc at every length measured (B-043).** Three changes, each
+  exact: a direct Eisel-Lemire layer (Lemire 2021) proves most results from a 64x128-bit product
+  with a truncated power of five, where the staged layer validated every candidate with big-
+  integer arithmetic; a significand past 19 digits is bounded by its first 19 digits and the same
+  plus one, instead of going to the exact path; and one pass reads the digits, where a digit-by-
+  digit builder kept pending-zero bookkeeping. `test_bench_float_host`, x86-64, against glibc
+  `strtod`: `%.6g` 83 -> 81 ns (0.58x), ~16 digits 186 -> 145 ns (0.72x), `%.17g` 224 -> 152 ns
+  (0.75x, was 1.13x), 25 digits ~640 -> 197 ns (0.86x, a new corpus). Results are unchanged:
+  every row is checked against `strtod` in the same run, and 60 million generated inputs - random
+  significands and exponents, `%.15g`-`%.40g` of random doubles, integers above 2^53, subnormal
+  and overflow edges - matched `strtod` bit for bit, with and without 128-bit integers. The
+  cached powers come from `scripts/generate_float_decimal_tables.py`, which checks its exponent
+  estimate against exact integer arithmetic.
 - **The Eisel-Lemire float-parsing fast path is used on 32-bit targets too (B-042).** It was
   compiled only where the compiler has `unsigned __int128`, although the code needs none - it
   goes through the portable 64x64 multiply. Without it a 32-bit target sent every decimal past

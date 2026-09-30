@@ -107,6 +107,30 @@ int main(void) {
 #endif
 
     PROVEN_TEST_SECTION(
+        "every digit shape the one-pass builder reads, against strtod",
+        "The builder keeps 19 digits in a u64, takes the 20th apart, and only counts past that; the u64 edge, zeros on every side, points and exponents must all give strtod's bits.",
+        "Inspect proven_float_decimal_build_number in src/proven/float_decimal.c: mantissa, significant digits and exp10 for this spelling."
+    );
+    {
+        static const char *shapes[] = {
+            "18446744073709551615", "18446744073709551616", "18446744073709551610", "18446744073709551619",
+            "1844674407370955161.5", "1844674407370955162e1", "9999999999999999999", "99999999999999999999",
+            "10000000000000000000", "1000000000000000000000", "12345678901234567890", "12345678901234567890123",
+            "0.00000000000000000000001234567890123456789012", "000000123.456000000", "-0.000100", "+5.",
+            ".25e3", "1.e-5", "100000000000000000000000000000000000001e-38", "9007199254740993",
+            "9007199254740993.00000000000000000001", "9007199254740992.99999999999999999999",
+            "2.2250738585072011e-308", "4.9406564584124654e-324", "1.7976931348623157e308",
+            "123456789012345678901234567890e-330", "0.1000000000000000055511151231257827",
+        };
+        for (size_t i = 0; i < sizeof shapes / sizeof *shapes; ++i) {
+            proven_parse_double_result_t r = proven_parse_double_ascii(proven_u8str_view_from_cstr(shapes[i]));
+            PROVEN_TEST_ASSERT(r.err == PROVEN_OK && r.consumed == strlen(shapes[i]) &&
+                               double_bits(r.val) == double_bits(strtod(shapes[i], NULL)),
+                shapes[i], "Compare mantissa, significant digits and exp10 with the spelling.");
+        }
+    }
+
+    PROVEN_TEST_SECTION(
         "backend path metrics",
         "Confirm representative inputs can be observed hitting the small Clinger path, the Eisel-Lemire layer, and the exact bigint fallback.",
         "Inspect src/proven/float_decimal.c if the decimal conversion counters stop distinguishing fast paths from the exact fallback."
@@ -219,9 +243,19 @@ int main(void) {
         PROVEN_TEST_ASSERT(stats.eisel_lemire_fast_path_hits == 0u, "metrics no eisel-lemire on below-half true-min fallback", "Inspect staged subnormal certainty rules if a below-half true-min case stops deferring to exact fallback.");
         PROVEN_TEST_ASSERT(stats.exact_fallback_hits == 1u, "metrics fallback on below-half true-min", "Inspect exact fallback accounting if a below-half true-min case stops reaching the bigint path.");
 
+        /* More than 19 digits: the first 19 and the first 19 plus one bound the value; when
+         * both round to the same double, that is the answer without the exact layer. */
         stats = (proven_float_decimal_stats_t){0};
-        expect_parse_ok_bits("fallback long significand", "123456789012345678901e40", 24u, strtod("123456789012345678901e40", NULL));
-        observe_decimal_path("observe fallback long significand", "123456789012345678901e40", &stats);
+        expect_parse_ok_bits("long significand, bounded", "123456789012345678901e40", 24u, strtod("123456789012345678901e40", NULL));
+        observe_decimal_path("observe long significand, bounded", "123456789012345678901e40", &stats);
+        PROVEN_TEST_ASSERT(stats.eisel_lemire_fast_path_hits == 1u && stats.exact_fallback_hits == 0u,
+            "a long significand whose 19-digit bounds agree takes the fast path", "Inspect proven_float_try_eisel_lemire_truncated.");
+
+        /* Just above the midpoint 2^53 + 1: the 19-digit lower bound IS the tie and the upper
+         * bound rounds up, so they disagree and only the exact layer can decide (up). */
+        stats = (proven_float_decimal_stats_t){0};
+        expect_parse_ok_bits("fallback long significand", "9007199254740993.00000000000000000001", 37u, strtod("9007199254740993.00000000000000000001", NULL));
+        observe_decimal_path("observe fallback long significand", "9007199254740993.00000000000000000001", &stats);
         PROVEN_TEST_ASSERT(stats.total_conversions == 1u, "metrics total after fallback", "Inspect conversion entry counting if a long-significand decimal stops incrementing the total counter.");
         PROVEN_TEST_ASSERT(stats.clinger_fast_path_hits == 0u, "metrics no clinger on fallback", "Inspect Clinger range limits if a long-significand decimal starts being misclassified as a small exact-range decimal.");
         PROVEN_TEST_ASSERT(stats.eisel_lemire_fast_path_hits == 0u, "metrics no eisel-lemire on fallback", "Inspect Eisel-Lemire gating if a long-significand decimal stops falling through.");
@@ -234,7 +268,7 @@ int main(void) {
 
             observe_decimal_path("observe first independent sink", "3.14", &first);
             observe_decimal_path("accumulate first independent sink", "3.14", &first);
-            observe_decimal_path("observe second independent sink", "123456789012345678901e40", &second);
+            observe_decimal_path("observe second independent sink", "9007199254740993.00000000000000000001", &second);
             PROVEN_TEST_ASSERT(first.total_conversions == 2u, "metrics accumulate in one sink", "Inspect caller-owned metrics accumulation if repeated observations overwrite prior counts.");
             PROVEN_TEST_ASSERT(first.clinger_fast_path_hits == 2u, "metrics first sink clinger total", "Inspect caller-owned Clinger accounting if repeated observations do not accumulate.");
             PROVEN_TEST_ASSERT(first.exact_fallback_hits == 0u, "metrics first sink remains independent", "Inspect caller-owned stats isolation if another sink's fallback leaks into the first sink.");

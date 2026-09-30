@@ -2071,7 +2071,7 @@ Failure tip: inspect src/proven/float_parse.c, src/proven/float_decimal.c, and t
 
 Intent: time parsing and formatting against `strtod`/`snprintf` on fixed-seed corpora, and check every result against the host in the same run.
 
-- Parse: `%.6g`, shortest (~16 digit) and `%.17g` spellings of a normal-magnitude corpus; bits must equal `strtod`'s.
+- Parse: `%.6g`, shortest (~16 digit), `%.17g` and `%.25g` spellings of a normal-magnitude corpus; bits must equal `strtod`'s. The 25-digit spelling is past what a 64-bit mantissa holds, so it times the bounded long-input path.
 - Format: shortest (timed against `%.17g`), `%f` with 6 digits, `%e` with 16, on normal-magnitude and uniform-bit-pattern corpora; `%f`/`%e` bytes must equal `snprintf`'s and shortest must round-trip. Every call's result is checked and the buffer cleared first - the first draft scored a failed call by the previous call's output.
 - Rows in the shared benchmark format (`tests/proven_bench.h`) plus a proven/host ratio line per case.
 
@@ -2194,6 +2194,8 @@ Sub-checks:
 - Confirms hosted overflow and underflow cases report `ERANGE` while preserving signed infinity and signed zero behavior.
 - Confirms internal conversion counters distinguish a Clinger hit, staged Eisel-Lemire hits across positive-exponent, negative-exponent, and subnormal representative inputs, and exact bigint fallback hits for representative uncertain inputs.
 - Confirms the documented representative staged inputs currently finish through the shared cached-power product plan, while uncertain negative cases defer straight to the exact fallback.
+- Confirms a significand longer than 19 digits whose 19-digit bounds round alike takes the fast path, and one whose bounds straddle a tie (`9007199254740993.00000000000000000001`) reaches the exact path and rounds up.
+- Compares, bit for bit with `strtod`, every digit shape the one-pass reader handles: the 20-digit `u64` edge (`18446744073709551615` and `...616`), zeros before, inside and after the digits, a point at either end, long fractions and extreme exponents.
 
 Failure tip: inspect `include/proven/float_parse.h`, `src/proven/float_parse.c`, and `src/proven/float_decimal.c` if the public parser seam or wrapper contract drifts.
 

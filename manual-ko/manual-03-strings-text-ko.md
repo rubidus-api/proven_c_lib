@@ -1033,9 +1033,13 @@ if (!proven_is_ok(e)) {
   decimal-to-binary64 백엔드를 거친다.
 - 유한한 십진 입력은 round-to-nearest, ties-to-even 동작으로 IEEE-754 binary64로
   반올림된다.
-- 현재 변환 스택은 `Clinger fast path -> staged
+- 현재 변환 스택은 `Clinger fast path -> direct Eisel-Lemire -> staged
   Eisel-Lemire layer -> exact bigint fallback`이며, 대표적인 입력이 어느 경로를
   탔는지 테스트가 확인할 수 있도록 내부 카운터를 둔다.
+- direct Eisel-Lemire 계층은 유효숫자에 128비트로 자른 5의 거듭제곱을 곱하고, 곱의
+  하위 비트로 반올림을 증명한다. 증명할 수 없는 것(동률일 수 있는 값, 비정규 또는
+  오버플로 결과)은 넘긴다. 19자리보다 긴 유효숫자는 앞 19자리와 거기에 1을 더한 값으로
+  위아래를 묶고, 두 경계가 같게 반올림될 때 그 값을 쓴다.
 - staged Eisel-Lemire 계층은 현재 생성된 `5^q` 양수 지수 경우와, 십진 유효숫자가
   요구되는 `5^q`를 깔끔하게 상쇄하는 정확한 음수 지수 경우를 받아들인다.
 - 모든 대상에서(128비트 정수 타입이 필요 없다) 같은 계층이 정상 범위 경우에 대해 보수적으로
