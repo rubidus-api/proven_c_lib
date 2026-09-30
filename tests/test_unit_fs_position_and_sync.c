@@ -2,10 +2,14 @@
 #include "proven/heap.h"
 #include "proven_test.h"
 #include <stdbool.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#if defined(_WIN32) || defined(_WIN64)
+#include <windows.h>
+#endif
 
 /*
  * seek, tell, truncate, pread, pwrite, sync.
@@ -164,36 +168,63 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a thing that cannot seek says UNSUPPORTED, not IO",
         "Not being seekable is a property of a pipe, not a failure of the call. Code that adapts to it must be able to tell them apart.",
-        "Inspect the ESPIPE branch in platform/proven_sys_io.c.");
+        "Inspect the ESPIPE branch (POSIX) and the handle-type check (Windows) in platform/proven_sys_io.c.");
     // ---------------------------------------------------------------
     {
+#if defined(_WIN32) || defined(_WIN64)
+        /* An anonymous pipe. SetFilePointerEx is documented not to work on one, so the PAL has
+         * to know the handle is not a disk file rather than trust the call. */
+        HANDLE rd = NULL, wr = NULL;
+        PROVEN_TEST_ASSERT(CreatePipe(&rd, &wr, NULL, 0), "setup: an anonymous pipe", "");
+        DWORD put = 0;
+        (void)WriteFile(wr, "abcd", 4, &put, NULL);     /* bytes a wrong pread could take */
+        proven_file_t pipe_file = {0};
+        pipe_file.internal.ptr = rd;
+#else
         /* /proc/self/status reports size 0 and is not seekable the way a file is;
          * a FIFO is the clean case, so make one. */
         proven_u8str_view_t fifo = PROVEN_LIT("test_fs_position.fifo");
         (void)proven_fs_remove(heap, fifo);
+        int fd = -1;
         if (mkfifo("test_fs_position.fifo", 0600) == 0) {
             /* Open non-blocking for read so the open does not wait for a writer. */
-            int fd = open("test_fs_position.fifo", O_RDONLY | O_NONBLOCK);
-            if (fd >= 0) {
-                proven_file_t pipe_file = {0};
-                pipe_file.internal.fd = fd;
-
-                proven_result_u64_t s = proven_fs_seek(pipe_file, 0, PROVEN_FS_SEEK_CUR);
-                PROVEN_TEST_ASSERT(s.err == PROVEN_ERR_UNSUPPORTED,
-                    "seeking a FIFO must be PROVEN_ERR_UNSUPPORTED",
-                    "PROVEN_ERR_IO here would tell the caller the pipe is broken when it is merely a pipe.");
-
-                proven_byte_t tmp[4];
-                proven_result_size_t pp = proven_fs_pread(pipe_file, (proven_mem_mut_t){ .ptr = tmp, .size = 4 }, 0);
-                PROVEN_TEST_ASSERT(pp.err == PROVEN_ERR_UNSUPPORTED || pp.err == PROVEN_ERR_EOF || pp.err == PROVEN_ERR_IO,
-                    "pread on a FIFO must fail rather than invent data", "");
-
-                close(fd);
-            }
+            fd = open("test_fs_position.fifo", O_RDONLY | O_NONBLOCK);
+        }
+        if (fd < 0) {
+            PROVEN_TEST_INFO("mkfifo unavailable; skipping the non-seekable check");
             (void)proven_fs_remove(heap, fifo);
         } else {
-            PROVEN_TEST_INFO("mkfifo unavailable; skipping the non-seekable check");
+            proven_file_t pipe_file = {0};
+            pipe_file.internal.fd = fd;
+#endif
+            proven_result_u64_t s = proven_fs_seek(pipe_file, 0, PROVEN_FS_SEEK_CUR);
+            PROVEN_TEST_ASSERT(s.err == PROVEN_ERR_UNSUPPORTED,
+                "seeking a pipe must be PROVEN_ERR_UNSUPPORTED",
+                "PROVEN_ERR_IO here would tell the caller the pipe is broken when it is merely a pipe; PROVEN_OK would invent a position.");
+
+            proven_byte_t tmp[4];
+            proven_result_size_t pp = proven_fs_pread(pipe_file, (proven_mem_mut_t){ .ptr = tmp, .size = 4 }, 0);
+            PROVEN_TEST_ASSERT(pp.err == PROVEN_ERR_UNSUPPORTED || pp.err == PROVEN_ERR_EOF || pp.err == PROVEN_ERR_IO,
+                "pread on a pipe must fail rather than invent data or consume the stream", "");
+#if defined(_WIN32) || defined(_WIN64)
+            /* The four bytes are still there (the positioned calls took none), and once the
+             * writer closes, the end of the pipe is EOF - Windows says BROKEN_PIPE, read(2)
+             * says 0, and a `producer | program` reader must see the same answer. */
+            CloseHandle(wr);
+            proven_byte_t got[8];
+            proven_result_size_t r1 = proven_fs_read(pipe_file, (proven_mem_mut_t){ .ptr = got, .size = sizeof got });
+            PROVEN_TEST_ASSERT(proven_is_ok(r1.err) && r1.value == 4 && memcmp(got, "abcd", 4) == 0,
+                "the pipe's bytes are intact after the refused positioned calls", "");
+            proven_result_size_t r2 = proven_fs_read(pipe_file, (proven_mem_mut_t){ .ptr = got, .size = sizeof got });
+            PROVEN_TEST_ASSERT(r2.err == PROVEN_ERR_EOF,
+                "a pipe whose writer closed reads as EOF, not an I/O error",
+                "Map ERROR_BROKEN_PIPE to EOF in the Windows read paths of platform/proven_sys_fs.c and proven_sys_io.c.");
+            CloseHandle(rd);
+#else
+            close(fd);
+            (void)proven_fs_remove(heap, fifo);
         }
+#endif
     }
 
     // ---------------------------------------------------------------
@@ -215,12 +246,15 @@ int main(void) {
         /* And it still preserves the target's permissions, like the atomic one. */
         PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_chmod(heap, dpath, PROVEN_FS_PERM_OWNER_R | PROVEN_FS_PERM_OWNER_W)),
             "chmod 0600 failed", "");
+        /* What the platform kept: 0600 on POSIX; on Windows only the owner-write bit exists. */
+        proven_fs_stat_t before = {0};
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_stat(heap, dpath, &before)), "stat after chmod failed", "");
         d = proven_fs_write_file_durable(heap, dpath, proven_mem_view_from_u8(PROVEN_LIT("second")));
         PROVEN_TEST_ASSERT(proven_is_ok(d), "a durable rewrite must succeed", "");
 
         proven_fs_stat_t st = {0};
         PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_stat(heap, dpath, &st)), "stat failed", "");
-        PROVEN_TEST_ASSERT(st.perms == (PROVEN_FS_PERM_OWNER_R | PROVEN_FS_PERM_OWNER_W),
+        PROVEN_TEST_ASSERT(st.perms == before.perms,
             "a durable rewrite must not widen permissions either", "");
 
         /* No temp debris. */

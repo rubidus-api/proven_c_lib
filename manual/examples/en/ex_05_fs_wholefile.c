@@ -69,6 +69,12 @@ int main(void) {
     err = proven_fs_chmod(alloc, path, private_perms);
     EXAMPLE_REQUIRE(proven_is_ok(err), "restricting the file to its owner should succeed");
 
+    /* What the platform keeps of that: all nine bits on POSIX, only the owner-write
+     * bit (the READONLY attribute) on Windows. The rewrite must keep exactly this. */
+    proven_fs_stat_t st1 = {0};
+    err = proven_fs_stat(alloc, path, &st1);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "stat after chmod should succeed");
+
     /* --- rewrite it atomically --------------------------------------------- */
     /* A sibling temp file plus a rename: a concurrent reader sees either the whole
      * old file or the whole new one, never a half-written mix. Atomic for readers,
@@ -84,7 +90,7 @@ int main(void) {
     /* The rename writes a *new* inode over the old name, so the permissions would
      * be lost unless they were copied across. They are: rewriting a 0600 file does
      * not republish it as 0644. */
-    EXAMPLE_REQUIRE(st2.perms == private_perms,
+    EXAMPLE_REQUIRE(st2.perms == st1.perms,
                     "the atomic rewrite must preserve the target's permissions");
 
     /* --- clean up ----------------------------------------------------------- */

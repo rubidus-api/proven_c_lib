@@ -158,7 +158,10 @@ int main(void) {
     /* 4. Make the rename itself durable. Until the directory reaches the device,
      *    the new contents are safe under a name that might not be. */
     err = proven_fs_sync_dir(alloc, here);
-    EXAMPLE_REQUIRE(proven_is_ok(err), "syncing the directory must succeed");
+    /* Windows has no directory handle to flush, and says so: UNSUPPORTED, not a
+     * false OK. There the rename's durability is the file system's to decide. */
+    EXAMPLE_REQUIRE(proven_is_ok(err) || err == PROVEN_ERR_UNSUPPORTED,
+                    "syncing the directory must succeed, or say it cannot");
 
     proven_result_file_t check = proven_fs_open(alloc, live, PROVEN_FS_READ);
     EXAMPLE_REQUIRE(proven_is_ok(check.err), "the live path must now open");

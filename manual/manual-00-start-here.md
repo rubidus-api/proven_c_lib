@@ -343,8 +343,9 @@ cc -std=c2x -o nob nob.c     # build the build driver, once
 the benchmark. There is no `make`, no CMake, and nothing to install.
 
 **A C23 compiler is required.** The library uses C23 features deliberately, `[[nodiscard]]` most
-visibly. GCC 13+, Clang 16+ and recent MSVC all work; the build driver probes for `-std=c23` and
-falls back to `-std=c2x` for slightly older compilers.
+visibly. GCC 13+ and Clang 16+ are verified, and on Windows mingw-w64 GCC (x86-64 and i686, the
+full suite run natively); MSVC and clang-cl are not yet verified. The build driver probes for
+`-std=c23` and falls back to `-std=c2x` for slightly older compilers.
 
 ---
 
@@ -503,7 +504,8 @@ The build driver, `nob.c`, is a C program rather than a build system, and you co
 way you compile everything else here. It is checked into the repository, so there is no bootstrap
 step and no version of it to install either.
 
-**A C23 compiler is required** - GCC 13+, Clang 16+, or recent MSVC. The driver probes `-std=c23`
+**A C23 compiler is required** - GCC 13+ or Clang 16+ (mingw-w64 GCC on Windows; MSVC not yet
+verified). The driver probes `-std=c23`
 and falls back to `-std=c2x` for compilers that still use the transitional spelling.
 
 Build and run the hosted test suite:

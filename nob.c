@@ -225,7 +225,6 @@ static void record_build_state(Nob_Cmd *cmd, const char *dep_tmp, const char *de
     }
 }
 
-#if !defined(_WIN32) && !defined(_WIN64)
 /* True when a test interposes libc functions with dlsym(RTLD_NEXT, ...) to inject faults an
  * ordinary run cannot produce (a readdir() that fails mid-directory, an opendir() that swaps a
  * directory for a symlink). Only those tests link -ldl. */
@@ -240,11 +239,10 @@ static bool test_source_needs_libdl(const char *src) {
     nob_sb_free(sb);
     return found;
 }
-#endif
 
 /* The one place a test link command is built: the cache hash and the link both use it, so the
  * hash is the exact command that runs. */
-static void build_test_link_cmd(Nob_Cmd *cmd, const char *compiler, const char *src, Nob_File_Paths obj_files, const char *exec_tmp, const char *dep_tmp, const char *mode, const char *extra_cflags, const char *extra_ldflags, const char *standard_flag, const char *sysroot) {
+static void build_test_link_cmd(Nob_Cmd *cmd, const char *compiler, const char *src, Nob_File_Paths obj_files, const char *exec_tmp, const char *dep_tmp, const char *mode, const char *extra_cflags, const char *extra_ldflags, const char *standard_flag, const char *sysroot, bool target_windows) {
     nob_cmd_append(cmd, compiler);
     append_mode_cflags(cmd, mode, standard_flag, sysroot);
     /* Mirror the user -cflags onto test compilation so config macros that affect
@@ -256,6 +254,8 @@ static void build_test_link_cmd(Nob_Cmd *cmd, const char *compiler, const char *
 
     if (strcmp(mode, "freestanding") != 0) {
         nob_cmd_append(cmd, "-pthread");
+        /* A Windows test runs where no mingw-w64 runtime DLL is installed (the test VM). */
+        if (target_windows) nob_cmd_append(cmd, "-static");
     } else {
         // Enforce static linking for freestanding tests to ensure no dynamic libc bleed
         nob_cmd_append(cmd, "-static");
@@ -265,10 +265,37 @@ static void build_test_link_cmd(Nob_Cmd *cmd, const char *compiler, const char *
     nob_cmd_append(cmd, src);
     for (size_t i = 0; i < obj_files.count; ++i) nob_cmd_append(cmd, obj_files.items[i]);
     if (extra_ldflags) nob_cmd_append(cmd, extra_ldflags);
-#if !defined(_WIN32) && !defined(_WIN64)
-    if (strcmp(mode, "freestanding") != 0 && test_source_needs_libdl(src)) nob_cmd_append(cmd, "-ldl");
-#endif
+    if (target_windows) {
+        /* The Windows CSPRNG (BCryptGenRandom): mingw-w64 ignores the #pragma comment that
+         * names the import library for MSVC, as in the cross smoke link. */
+        if (strcmp(mode, "freestanding") != 0) nob_cmd_append(cmd, "-lbcrypt");
+    } else if (strcmp(mode, "freestanding") != 0 && test_source_needs_libdl(src)) {
+        nob_cmd_append(cmd, "-ldl");
+    }
     nob_cmd_append(cmd, "-o", exec_tmp);
+}
+
+/* Whether the compiler builds for Windows, whatever the host: a mingw-w64 cross compiler on
+ * Linux builds Windows test executables (.exe, static, -lbcrypt, never -ldl) for a Windows
+ * machine to run (-no-run here). Asked of the compiler with -dumpmachine. */
+static bool compiler_targets_windows(const char *compiler, const char *probe_dir) {
+    const char *out = nob_temp_sprintf("%s/dumpmachine.txt", probe_dir);
+    Nob_Cmd cmd = {0};
+    nob_cmd_append(&cmd, compiler, "-dumpmachine");
+    bool ran = nob_cmd_run(&cmd, .stdout_path = out);
+    nob_cmd_free(cmd);
+    bool windows = false;
+    Nob_String_Builder sb = {0};
+    if (ran && nob_read_entire_file(out, &sb)) {
+        nob_sb_append_null(&sb);
+        windows = strstr(sb.items, "mingw") || strstr(sb.items, "windows") || strstr(sb.items, "cygwin");
+    } else {
+#if defined(_WIN32) || defined(_WIN64)
+        windows = true;                                 /* no answer: assume the host */
+#endif
+    }
+    nob_sb_free(sb);
+    return windows;
 }
 
 static void sanitize_name(char *dst, size_t cap, const char *src) {
@@ -1064,6 +1091,7 @@ int main(int argc, char **argv)
     nob_shift_args(&argc, &argv);
 
     bool force_rebuild = false;
+    bool no_run = false;
     const char *build_mode = "debug";
     const char *cc = NULL;
     const char *user_ld = NULL;
@@ -1133,6 +1161,9 @@ int main(int argc, char **argv)
             nob_shift_args(&argc, &argv);
         } else if (strcmp(argv[0], "-f") == 0) {
             force_rebuild = true;
+            nob_shift_args(&argc, &argv);
+        } else if (strcmp(argv[0], "-no-run") == 0) {
+            no_run = true;
             nob_shift_args(&argc, &argv);
         } else if (strcmp(argv[0], "-cc") == 0) {
             nob_shift_args(&argc, &argv);
@@ -1210,6 +1241,7 @@ int main(int argc, char **argv)
         printf("  help, -h, --help   Show this help message.\n\n");
         printf("Options:\n");
         printf("  -f                 Force a full rebuild of the project.\n");
+        printf("  -no-run            Build every test executable but run none (e.g. a mingw-w64 build for Windows).\n");
         printf("  -cc <compiler>     Specify the C compiler to use (e.g., clang, gcc).\n");
         printf("  -ld <linker>       Specify the linker to use (defaults to compiler).\n");
         printf("  -cflags <flags>    Additional compiler flags (e.g., -DDEBUG).\n");
@@ -1376,11 +1408,9 @@ int main(int argc, char **argv)
     }
 
     const char *obj_ext = ".o";
-#if defined(_WIN32) || defined(_WIN64)
-    const char *exe_ext = ".exe";
-#else
-    const char *exe_ext = "";
-#endif
+    bool target_windows = compiler_targets_windows(compiler_exe, build_dir);
+    const char *exe_ext = target_windows ? ".exe" : "";
+    if (target_windows) nob_log(NOB_INFO, "[PROVEN][BUILD][TARGET] windows=1 exe_ext=.exe link=-static,-lbcrypt");
     
     Nob_Cmd cmd = {0};
     Nob_File_Paths obj_files = {0};
@@ -1477,7 +1507,7 @@ int main(int argc, char **argv)
         const char *dep_tmp = nob_temp_sprintf("%s.d.tmp", exec_path);
 
         Nob_Cmd link = {0};
-        build_test_link_cmd(&link, linker_exe, src_path, obj_files, exec_tmp, dep_tmp, build_mode, user_cflags, user_ldflags, standard_flag, sysroot);
+        build_test_link_cmd(&link, linker_exe, src_path, obj_files, exec_tmp, dep_tmp, build_mode, user_cflags, user_ldflags, standard_flag, sysroot, target_windows);
         uint32_t current_hash = 0, old_hash = 0;
         bool state_known = depfile_state_hash(&link, dep_path, &current_hash);
         bool hash_differs = !state_known || !read_cmdhash(hash_path, &old_hash) || old_hash != current_hash;
@@ -1510,6 +1540,11 @@ int main(int argc, char **argv)
         }
         nob_cmd_free(link);
 
+        if (no_run) {
+            nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][BUILT] path=%s exe=%s", test->path, exec_path);
+            nob_temp_reset();
+            continue;
+        }
         cmd.count = 0;
         nob_cmd_append(&cmd, exec_path);
         nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][RUN] path=%s", test->path);

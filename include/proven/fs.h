@@ -223,7 +223,10 @@ proven_err_t proven_fs_sync_dir(proven_allocator_t scratch, proven_u8str_view_t 
 proven_err_t proven_fs_rename(proven_allocator_t scratch, proven_u8str_view_t src, proven_u8str_view_t dest);
 
 /**
- * @brief Deletes a file at the specified path.
+ * @brief Deletes a file, or an empty directory, at the specified path.
+ *
+ * Like POSIX remove(): an empty directory goes too, on Windows as well. A non-empty one is
+ * PROVEN_ERR_IO. A symlink is removed, never what it points to.
  */
 [[nodiscard]]
 proven_err_t proven_fs_remove(proven_allocator_t scratch, proven_u8str_view_t path);

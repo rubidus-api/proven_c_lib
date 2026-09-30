@@ -26,7 +26,22 @@ static proven_u128_parts_t ref_mul(proven_u64 a, proven_u64 b) {
     out.hi = (proven_u64)(prod >> 64);
     return out;
 #else
-#error "This test expects unsigned __int128 support on the host compiler"
+    /* No 128-bit type (32-bit targets): schoolbook on 16-bit digits - a different split from
+     * the helper's 32-bit halves, so the reference does not share its carry logic. */
+    proven_u64 r[8] = {0};
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            r[i + j] += ((a >> (16 * i)) & 0xFFFFu) * ((b >> (16 * j)) & 0xFFFFu);
+        }
+    }
+    for (int k = 0; k < 7; ++k) {
+        r[k + 1] += r[k] >> 16;
+        r[k] &= 0xFFFFu;
+    }
+    proven_u128_parts_t out;
+    out.lo = r[0] | (r[1] << 16) | (r[2] << 32) | (r[3] << 48);
+    out.hi = r[4] | (r[5] << 16) | (r[6] << 32) | (r[7] << 48);
+    return out;
 #endif
 }
 

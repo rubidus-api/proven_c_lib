@@ -151,7 +151,10 @@ int main(void) {
     /* 4. 그 이름 바꾸기 자체를 견디게 만든다. 디렉터리가 장치에 닿기 전까지는, 새 내용이
      *    안전하지 않을 수도 있는 이름 아래에 안전하게 있는 것이다. */
     err = proven_fs_sync_dir(alloc, here);
-    EXAMPLE_REQUIRE(proven_is_ok(err), "syncing the directory must succeed");
+    /* Windows 에는 flush 할 디렉터리 핸들이 없고, 그렇다고 말한다: 거짓 OK 가 아니라
+     * UNSUPPORTED. 거기서는 rename 의 지속성을 파일 시스템이 정한다. */
+    EXAMPLE_REQUIRE(proven_is_ok(err) || err == PROVEN_ERR_UNSUPPORTED,
+                    "syncing the directory must succeed, or say it cannot");
 
     proven_result_file_t check = proven_fs_open(alloc, live, PROVEN_FS_READ);
     EXAMPLE_REQUIRE(proven_is_ok(check.err), "the live path must now open");

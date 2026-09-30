@@ -168,7 +168,7 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 | `proven_fs_write_all(file, src)` | 모든 바이트가 쓰이거나 에러가 발생할 때까지 재시도. | `proven_err_t`. |
 | `proven_fs_size(file)` | 열린 파일의 크기를 조회. | `proven_result_size_t`. |
 | `proven_fs_rename(scratch, src, dest)` | 경로 이름 변경 또는 이동. | `proven_err_t`. |
-| `proven_fs_remove(scratch, path)` | 파일 제거. | `proven_err_t`. |
+| `proven_fs_remove(scratch, path)` | 파일, 또는 빈 디렉터리 제거(POSIX `remove()` 처럼, Windows 에서도). | `proven_err_t`. |
 | `proven_fs_copy(temp_alloc, src, dest)` | 임시 버퍼 할당을 사용해 파일 복사. | `proven_err_t`. |
 | `proven_fs_mkdir(scratch, path)` | 디렉터리 생성. | `proven_err_t`. |
 | `proven_fs_rmdir(scratch, path)` | 빈 디렉터리 제거. | `proven_err_t`. |
@@ -845,6 +845,12 @@ int main(void) {
     err = proven_fs_chmod(alloc, path, private_perms);
     EXAMPLE_REQUIRE(proven_is_ok(err), "restricting the file to its owner should succeed");
 
+    /* 플랫폼이 그중 무엇을 간직하는가: POSIX 에서는 아홉 비트 모두, Windows 에서는
+     * 소유자 쓰기 비트(READONLY 속성)뿐이다. 다시 쓰기는 바로 이것을 지켜야 한다. */
+    proven_fs_stat_t st1 = {0};
+    err = proven_fs_stat(alloc, path, &st1);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "stat after chmod should succeed");
+
     /* --- 원자적으로 다시 쓰기 ----------------------------------------------- */
     /* 형제 임시 파일 하나에 rename 하나. 동시에 읽는 쪽은 옛 파일 전체이거나 새 파일
      * 전체를 보지, 반쯤 섞인 것을 보지 않는다. 읽는 쪽에게 원자적이지, 전원이 나가도
@@ -859,7 +865,7 @@ int main(void) {
     EXAMPLE_REQUIRE(st2.size == text2.size, "the file should now hold the replacement text");
     /* rename 은 옛 이름 위에 *새* 아이노드를 씌우므로, 권한을 옮겨 주지 않으면 잃는다.
      * 옮겨 준다 - 0600 파일을 다시 써도 0644 로 다시 공개되지 않는다. */
-    EXAMPLE_REQUIRE(st2.perms == private_perms,
+    EXAMPLE_REQUIRE(st2.perms == st1.perms,
                     "the atomic rewrite must preserve the target's permissions");
 
     /* --- 뒷정리 -------------------------------------------------------------- */
@@ -2246,7 +2252,10 @@ int main(void) {
     /* 4. 그 이름 바꾸기 자체를 견디게 만든다. 디렉터리가 장치에 닿기 전까지는, 새 내용이
      *    안전하지 않을 수도 있는 이름 아래에 안전하게 있는 것이다. */
     err = proven_fs_sync_dir(alloc, here);
-    EXAMPLE_REQUIRE(proven_is_ok(err), "syncing the directory must succeed");
+    /* Windows 에는 flush 할 디렉터리 핸들이 없고, 그렇다고 말한다: 거짓 OK 가 아니라
+     * UNSUPPORTED. 거기서는 rename 의 지속성을 파일 시스템이 정한다. */
+    EXAMPLE_REQUIRE(proven_is_ok(err) || err == PROVEN_ERR_UNSUPPORTED,
+                    "syncing the directory must succeed, or say it cannot");
 
     proven_result_file_t check = proven_fs_open(alloc, live, PROVEN_FS_READ);
     EXAMPLE_REQUIRE(proven_is_ok(check.err), "the live path must now open");

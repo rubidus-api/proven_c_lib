@@ -17,6 +17,7 @@ static proven_size_t drain_pipe_into_buffer(proven_file_t file, char *buffer, pr
     while (total < capacity) {
         DWORD read_count = 0;
         if (!ReadFile(handle, buffer + total, (DWORD)(capacity - total), &read_count, NULL)) {
+            if (GetLastError() == ERROR_BROKEN_PIPE) break;   /* the writer closed: end of stream */
             return (proven_size_t)-1;
         }
         if (read_count == 0) {

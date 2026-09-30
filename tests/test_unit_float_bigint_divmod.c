@@ -30,17 +30,36 @@ static size_t trim(const uint64_t *a, size_t n) {
     return n;
 }
 
-/* dst[0..*dn) = a[0..an) * b[0..bn)  (schoolbook, base 2^64 via __uint128_t) */
+/* hi:lo = a * b. The 128-bit type where the compiler has one; 32-bit halves where it does not
+ * (32-bit targets, where this test must still run). */
+static void mul64(uint64_t a, uint64_t b, uint64_t *hi, uint64_t *lo) {
+#if defined(__SIZEOF_INT128__)
+    unsigned __int128 p = (unsigned __int128)a * b;
+    *lo = (uint64_t)p;
+    *hi = (uint64_t)(p >> 64);
+#else
+    uint64_t al = a & 0xFFFFFFFFu, ah = a >> 32, bl = b & 0xFFFFFFFFu, bh = b >> 32;
+    uint64_t ll = al * bl, lh = al * bh, hl = ah * bl, hh = ah * bh;
+    uint64_t mid = (ll >> 32) + (lh & 0xFFFFFFFFu) + (hl & 0xFFFFFFFFu);
+    *lo = (ll & 0xFFFFFFFFu) | (mid << 32);
+    *hi = hh + (lh >> 32) + (hl >> 32) + (mid >> 32);
+#endif
+}
+
+/* dst[0..*dn) = a[0..an) * b[0..bn)  (schoolbook, base 2^64) */
 static size_t ref_mul(const uint64_t *a, size_t an, const uint64_t *b, size_t bn, uint64_t *dst) {
     for (size_t i = 0; i < an + bn; ++i) dst[i] = 0;
     for (size_t i = 0; i < an; ++i) {
-        unsigned __int128 carry = 0;
+        uint64_t carry = 0;
         for (size_t j = 0; j < bn; ++j) {
-            unsigned __int128 cur = (unsigned __int128)a[i] * b[j] + dst[i + j] + carry;
-            dst[i + j] = (uint64_t)cur;
-            carry = cur >> 64;
+            uint64_t hi, lo;
+            mul64(a[i], b[j], &hi, &lo);
+            lo += dst[i + j]; hi += lo < dst[i + j];   /* cannot overflow: (2^64-1)^2 + 2(2^64-1) < 2^128 */
+            lo += carry;      hi += lo < carry;
+            dst[i + j] = lo;
+            carry = hi;
         }
-        dst[i + bn] += (uint64_t)carry;
+        dst[i + bn] += carry;
     }
     return trim(dst, an + bn);
 }
@@ -48,15 +67,16 @@ static size_t ref_mul(const uint64_t *a, size_t an, const uint64_t *b, size_t bn
 /* dst[0..*dn) = a + b  (a has an limbs, b has bn limbs) */
 static size_t ref_add(const uint64_t *a, size_t an, const uint64_t *b, size_t bn, uint64_t *dst) {
     size_t n = an > bn ? an : bn;
-    unsigned __int128 carry = 0;
+    uint64_t carry = 0;
     for (size_t i = 0; i < n; ++i) {
-        unsigned __int128 cur = carry;
-        if (i < an) cur += a[i];
-        if (i < bn) cur += b[i];
-        dst[i] = (uint64_t)cur;
-        carry = cur >> 64;
+        uint64_t x = i < an ? a[i] : 0, y = i < bn ? b[i] : 0;
+        uint64_t sum = x + y;
+        uint64_t c1 = sum < x;
+        sum += carry;
+        carry = c1 | (sum < carry);
+        dst[i] = sum;
     }
-    if (carry) dst[n++] = (uint64_t)carry;
+    if (carry) dst[n++] = carry;
     return trim(dst, n);
 }
 

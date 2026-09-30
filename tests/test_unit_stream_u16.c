@@ -272,7 +272,7 @@ int main(void) {
         "");
     // ---------------------------------------------------------------
     {
-        proven_u8str_view_t path = PROVEN_LIT("build/test_unit_stream_u16.tmp");
+        proven_u8str_view_t path = PROVEN_LIT("test_unit_stream_u16.tmp");
         for (int e = 0; e < 3; ++e) {
             proven_result_file_t f = proven_fs_open(heap, path, PROVEN_FS_WRITE | PROVEN_FS_CREATE | PROVEN_FS_TRUNC);
             PROVEN_TEST_ASSERT(proven_is_ok(f.err), "open for writing", "");

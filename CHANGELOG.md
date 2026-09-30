@@ -18,6 +18,40 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **The full test suite runs on Windows (B-035).** `./nob build -no-run` builds every test
+  executable and runs none; the build driver asks the compiler for its target, so a mingw-w64
+  cross compiler produces static `.exe` tests (with `-lbcrypt`, without `-ldl`).
+  `scripts/win11kd-full-suite.sh` and `scripts/win11kd-run-suite.ps1` build both word sizes and
+  run them natively, reporting PASS / FAIL / SKIP / TIMEOUT per test. First run on the Windows 11
+  test VM found the six defects below; after the fixes, x86-64 and i686 each pass 211 with 0
+  failures and 10 POSIX-only skips.
+
+### Fixed
+
+- **Windows: `proven_fs_remove` deletes an empty directory,** as POSIX `remove()` does. It called
+  `DeleteFileW` only, which refuses a directory, and reported PERMISSION.
+- **Windows: `proven_fs_pread` and `proven_fs_pwrite` no longer move the file position.** A
+  positioned `ReadFile`/`WriteFile` on a synchronous handle leaves the pointer after the bytes;
+  the position is now restored.
+- **Windows: positioned calls on a pipe are UNSUPPORTED.** `proven_fs_seek`, `pread` and `pwrite`
+  used `SetFilePointerEx` / an OVERLAPPED offset on a pipe, which Windows does not support, and
+  `proven_sysio_scan_chunk` therefore accepted a pipe it must refuse. The handle type is now
+  checked first (`FILE_TYPE_DISK`), matching POSIX `ESPIPE`.
+- **Windows: the end of a pipe is EOF.** `ReadFile` reports a closed writer as `ERROR_BROKEN_PIPE`,
+  which came back as `PROVEN_ERR_IO` - so `producer | program` ended in an error. Both read paths
+  now map it to `PROVEN_ERR_EOF`, as `read(2)` returning 0 does.
+- **Tests and examples that assumed POSIX or a 64-bit target.** Permission checks compare with the
+  mode read back after `chmod` (Windows keeps only the owner-write bit); the durable-write example
+  accepts `sync_dir`'s documented UNSUPPORTED on Windows; `test_unit_u128_mul` and
+  `test_unit_float_bigint_divmod` have references without `__int128`; `test_unit_float_parse_api`
+  expects the exact path where Eisel-Lemire is compiled out (32-bit); a fixture no longer needs a
+  `build/` directory.
+- **`scripts/release.sh` builds a release's PDFs with one date.** The site is built at the release
+  commit and again by `--publish` at the site commit; both now take the date of the commit that
+  last set the version, so the uploaded PDFs equal the committed ones without a re-publish.
+
 ## [0.3.0] - 2026-09-29
 
 A MINOR release: nothing public removed, one build profile added, and one profile's behaviour

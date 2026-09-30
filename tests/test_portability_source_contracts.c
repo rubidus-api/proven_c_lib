@@ -112,6 +112,12 @@ int main(void) {
     require(contains(fs, "off_t mmap_offset"), "POSIX mmap stores offset in an off_t temporary");
     require(contains(fs, "(size_t)mmap_offset != offset"), "POSIX mmap rejects size_t to off_t truncation");
     require(contains(fs, "FILE_APPEND_DATA"), "Windows append opens with FILE_APPEND_DATA");
+    /* Found by the first native Windows run of the full suite (B-035, 2026-09-30). Linux never
+     * compiles these branches, so their shape is pinned here. */
+    require(contains(fs, "success = RemoveDirectoryW(wpath) != 0;"),
+            "Windows remove deletes an empty directory, as POSIX remove() does");
+    require(contains(fs, "err == ERROR_BROKEN_PIPE"),
+            "Windows file read maps a closed pipe writer to EOF");
     /* readdir() returns NULL for BOTH "the directory ended" and "the read failed", and
      * only errno tells them apart - so it must be cleared first. A listing cut short by
      * a failing disk or a vanished NFS mount used to look exactly like a complete one,
@@ -154,6 +160,12 @@ int main(void) {
     require(!contains(io, "__asm__ volatile"), "the PAL uses libc, not hand-written syscall assembly");
     require(contains(io, "lseek("), "seek goes through libc lseek");
     require(contains(io, "fsync("), "durability goes through libc fsync");
+    require(contains(io, "GetFileType(h) == FILE_TYPE_DISK"),
+            "Windows positioned I/O refuses a pipe or console (POSIX ESPIPE)");
+    require(contains(io, "e == ERROR_BROKEN_PIPE"),
+            "Windows stream read maps a closed pipe writer to EOF");
+    require(contains(io, "(void)SetFilePointerEx(h, saved, NULL, FILE_BEGIN);"),
+            "Windows pread/pwrite restore the file position");
     free(io);
 
     char *job = read_text_file("src/proven/job.c");

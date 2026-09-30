@@ -249,13 +249,16 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_is_ok(w), "failed to write the secret fixture", "");
         proven_err_t ce = proven_fs_chmod(heap, secret, PROVEN_FS_PERM_OWNER_R | PROVEN_FS_PERM_OWNER_W);
         PROVEN_TEST_ASSERT(proven_is_ok(ce), "chmod 0600 failed", "");
+        /* What the platform kept: 0600 on POSIX; on Windows only the owner-write bit exists. */
+        proven_fs_stat_t before = {0};
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_stat(heap, secret, &before)), "stat after chmod failed", "");
 
         w = proven_fs_write_file_atomic(heap, secret, proven_mem_view_from_u8(replaced));
         PROVEN_TEST_ASSERT(proven_is_ok(w), "atomic rewrite of a 0600 file failed", "");
 
         proven_fs_stat_t st = {0};
         PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_stat(heap, secret, &st)), "stat after atomic rewrite failed", "");
-        PROVEN_TEST_ASSERT(st.perms == (PROVEN_FS_PERM_OWNER_R | PROVEN_FS_PERM_OWNER_W),
+        PROVEN_TEST_ASSERT(st.perms == before.perms,
             "an atomic rewrite widened the file's permissions",
             "the target's mode must be copied onto the temp file before the rename");
         (void)proven_fs_remove(heap, secret);

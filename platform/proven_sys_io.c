@@ -174,6 +174,10 @@ proven_sys_result_size_t proven_sys_io_read_once(proven_sys_io_handle_t handle, 
     DWORD to_read = (size > 0x7FFFFFFF) ? 0x7FFFFFFF : (DWORD)size;
     DWORD read_bytes = 0;
     if (!ReadFile((HANDLE)handle.handle, buf, to_read, &read_bytes, NULL)) {
+        /* A pipe whose writer has closed - the end of `producer | program` - says
+         * BROKEN_PIPE where read(2) returns 0. That is EOF, not an I/O fault. */
+        DWORD e = GetLastError();
+        if (e == ERROR_BROKEN_PIPE || e == ERROR_HANDLE_EOF) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
         return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
     }
     if (read_bytes == 0) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
@@ -238,9 +242,20 @@ proven_err_t proven_sys_io_sync(proven_sys_io_handle_t handle) {
 #endif
 }
 
+#if defined(_WIN32) || defined(_WIN64)
+/* A position belongs to a disk file. SetFilePointerEx is documented not to work on a pipe or
+ * a console, and ReadFile/WriteFile ignore an OVERLAPPED offset there - so a positioned call
+ * on one would read the stream, not the offset. POSIX answers ESPIPE; this is the same
+ * answer, asked of the handle type up front. */
+static bool win_handle_is_disk(HANDLE h) {
+    return GetFileType(h) == FILE_TYPE_DISK;
+}
+#endif
+
 proven_sys_result_u64_t proven_sys_io_seek(proven_sys_io_handle_t handle, int64_t offset, int whence) {
 #if defined(_WIN32) || defined(_WIN64)
     if (!handle.handle) return (proven_sys_result_u64_t){ PROVEN_ERR_INVALID_ARG, 0 };
+    if (!win_handle_is_disk((HANDLE)handle.handle)) return (proven_sys_result_u64_t){ PROVEN_ERR_UNSUPPORTED, 0 };
     DWORD method;
     switch (whence) {
         case PROVEN_SYS_IO_SEEK_SET: method = FILE_BEGIN;   break;
@@ -318,13 +333,26 @@ proven_sys_result_size_t proven_sys_io_pread(proven_sys_io_handle_t handle, void
     if (size == 0) return (proven_sys_result_size_t){ PROVEN_OK, 0 };
     if (!buf) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
 
+    HANDLE h = (HANDLE)handle.handle;
+    if (!win_handle_is_disk(h)) return (proven_sys_result_size_t){ PROVEN_ERR_UNSUPPORTED, 0 };
+    /* On a handle opened without FILE_FLAG_OVERLAPPED, ReadFile at an OVERLAPPED offset
+     * leaves the file pointer AFTER the bytes it read - pread(2) must not move it. Put it
+     * back. (Not atomic against another thread moving the same handle's position; POSIX
+     * pread is, and a caller sharing one handle across threads should not rely on the
+     * position on either platform.) */
+    LARGE_INTEGER zero, saved;
+    zero.QuadPart = 0;
+    if (!SetFilePointerEx(h, zero, &saved, FILE_CURRENT)) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
     OVERLAPPED ov = {0};
     ov.Offset = (DWORD)(offset & 0xFFFFFFFFu);
     ov.OffsetHigh = (DWORD)(offset >> 32);
     DWORD to_read = (size > 0x7FFFFFFF) ? 0x7FFFFFFF : (DWORD)size;
     DWORD got = 0;
-    if (!ReadFile((HANDLE)handle.handle, buf, to_read, &got, &ov)) {
-        if (GetLastError() == ERROR_HANDLE_EOF) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
+    BOOL ok = ReadFile(h, buf, to_read, &got, &ov);
+    DWORD e = ok ? 0 : GetLastError();
+    (void)SetFilePointerEx(h, saved, NULL, FILE_BEGIN);
+    if (!ok) {
+        if (e == ERROR_HANDLE_EOF) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
         return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
     }
     if (got == 0) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
@@ -353,12 +381,20 @@ proven_sys_result_size_t proven_sys_io_pwrite(proven_sys_io_handle_t handle, con
     if (size == 0) return (proven_sys_result_size_t){ PROVEN_OK, 0 };
     if (!buf) return (proven_sys_result_size_t){ PROVEN_ERR_INVALID_ARG, 0 };
 
+    HANDLE h = (HANDLE)handle.handle;
+    if (!win_handle_is_disk(h)) return (proven_sys_result_size_t){ PROVEN_ERR_UNSUPPORTED, 0 };
+    /* As in pread: the OVERLAPPED write moves the file pointer; pwrite(2) does not. */
+    LARGE_INTEGER zero, saved;
+    zero.QuadPart = 0;
+    if (!SetFilePointerEx(h, zero, &saved, FILE_CURRENT)) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
     OVERLAPPED ov = {0};
     ov.Offset = (DWORD)(offset & 0xFFFFFFFFu);
     ov.OffsetHigh = (DWORD)(offset >> 32);
     DWORD to_write = (size > 0x7FFFFFFF) ? 0x7FFFFFFF : (DWORD)size;
     DWORD put = 0;
-    if (!WriteFile((HANDLE)handle.handle, buf, to_write, &put, &ov)) {
+    BOOL ok = WriteFile(h, buf, to_write, &put, &ov);
+    (void)SetFilePointerEx(h, saved, NULL, FILE_BEGIN);
+    if (!ok) {
         return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
     }
     if (put == 0) return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };

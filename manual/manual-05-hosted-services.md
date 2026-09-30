@@ -169,7 +169,7 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 | `proven_fs_write_all(file, src)` | Retry until all bytes are written or an error occurs. | `proven_err_t`. |
 | `proven_fs_size(file)` | Query open file size. | `proven_result_size_t`. |
 | `proven_fs_rename(scratch, src, dest)` | Rename or move path. | `proven_err_t`. |
-| `proven_fs_remove(scratch, path)` | Remove file. | `proven_err_t`. |
+| `proven_fs_remove(scratch, path)` | Remove a file, or an empty directory (as POSIX `remove()`, on Windows too). | `proven_err_t`. |
 | `proven_fs_copy(temp_alloc, src, dest)` | Copy file using temporary buffer allocation. | `proven_err_t`. |
 | `proven_fs_mkdir(scratch, path)` | Create directory. | `proven_err_t`. |
 | `proven_fs_rmdir(scratch, path)` | Remove empty directory. | `proven_err_t`. |
@@ -864,6 +864,12 @@ int main(void) {
     err = proven_fs_chmod(alloc, path, private_perms);
     EXAMPLE_REQUIRE(proven_is_ok(err), "restricting the file to its owner should succeed");
 
+    /* What the platform keeps of that: all nine bits on POSIX, only the owner-write
+     * bit (the READONLY attribute) on Windows. The rewrite must keep exactly this. */
+    proven_fs_stat_t st1 = {0};
+    err = proven_fs_stat(alloc, path, &st1);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "stat after chmod should succeed");
+
     /* --- rewrite it atomically --------------------------------------------- */
     /* A sibling temp file plus a rename: a concurrent reader sees either the whole
      * old file or the whole new one, never a half-written mix. Atomic for readers,
@@ -879,7 +885,7 @@ int main(void) {
     /* The rename writes a *new* inode over the old name, so the permissions would
      * be lost unless they were copied across. They are: rewriting a 0600 file does
      * not republish it as 0644. */
-    EXAMPLE_REQUIRE(st2.perms == private_perms,
+    EXAMPLE_REQUIRE(st2.perms == st1.perms,
                     "the atomic rewrite must preserve the target's permissions");
 
     /* --- clean up ----------------------------------------------------------- */
@@ -2299,7 +2305,10 @@ int main(void) {
     /* 4. Make the rename itself durable. Until the directory reaches the device,
      *    the new contents are safe under a name that might not be. */
     err = proven_fs_sync_dir(alloc, here);
-    EXAMPLE_REQUIRE(proven_is_ok(err), "syncing the directory must succeed");
+    /* Windows has no directory handle to flush, and says so: UNSUPPORTED, not a
+     * false OK. There the rename's durability is the file system's to decide. */
+    EXAMPLE_REQUIRE(proven_is_ok(err) || err == PROVEN_ERR_UNSUPPORTED,
+                    "syncing the directory must succeed, or say it cannot");
 
     proven_result_file_t check = proven_fs_open(alloc, live, PROVEN_FS_READ);
     EXAMPLE_REQUIRE(proven_is_ok(check.err), "the live path must now open");

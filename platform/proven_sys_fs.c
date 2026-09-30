@@ -232,7 +232,9 @@ proven_sys_result_size_t proven_sys_fs_read(proven_sys_file_handle_t handle, voi
         return (proven_sys_result_size_t){ PROVEN_OK, (size_t)read_bytes };
     } else {
         DWORD err = GetLastError();
-        if (err == ERROR_HANDLE_EOF) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
+        /* A pipe whose writer has closed says BROKEN_PIPE where read(2) returns 0: that is
+         * the end of the stream, not a fault. */
+        if (err == ERROR_HANDLE_EOF || err == ERROR_BROKEN_PIPE) return (proven_sys_result_size_t){ PROVEN_ERR_EOF, 0 };
         return (proven_sys_result_size_t){ PROVEN_ERR_IO, 0 };
     }
 #else
@@ -481,6 +483,16 @@ proven_sys_fs_open_result_t proven_sys_fs_remove_checked(const char *path) {
     if (!wpath) return PROVEN_SYS_FS_OPEN_ERROR;
     bool success = DeleteFileW(wpath) != 0;
     DWORD e = success ? 0 : GetLastError();   /* before the free: HeapFree clobbers it */
+    if (!success && e == ERROR_ACCESS_DENIED) {
+        /* A directory is ACCESS_DENIED to DeleteFileW. POSIX remove() deletes an empty
+         * directory, and so does this: RemoveDirectoryW, which also removes a directory
+         * symlink or junction itself rather than what it points to. */
+        DWORD attr = GetFileAttributesW(wpath);
+        if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
+            success = RemoveDirectoryW(wpath) != 0;
+            e = success ? 0 : GetLastError();
+        }
+    }
     HeapFree(GetProcessHeap(), 0, wpath);
     if (success) return PROVEN_SYS_FS_OPEN_OK;
     SetLastError(e);

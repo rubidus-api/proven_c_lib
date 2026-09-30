@@ -309,6 +309,18 @@ What it checks:
 
 Failure tip: identify the target name in the log, then check whether the failure is from compiler availability, sysroot usability, or actual source incompatibility. Cross compilation does not replace runtime testing on the target.
 
+### The full suite on Windows
+
+The whole hosted suite also runs natively on Windows, cross-built with mingw-w64:
+
+```sh
+./nob build -no-run -cc x86_64-w64-mingw32-gcc -build-root build/win    # or i686-w64-mingw32-gcc
+```
+
+`-no-run` builds and installs every test executable and runs none. The build driver asks the compiler for its target (`-dumpmachine`); for a Windows target the executables are `.exe`, linked `-static` with `-lbcrypt`, and never `-ldl`. `scripts/win11kd-full-suite.sh` builds both word sizes, sends the tracked tree and the executables to a Windows machine, and runs them there with `scripts/win11kd-run-suite.ps1`, which records PASS, FAIL, SKIP (a POSIX-only test that skipped itself - counted apart, since it proves nothing on Windows) and TIMEOUT per test.
+
+Last run, 2026-09-30, Windows 11 test VM: x86-64 211 PASS, 0 FAIL, 10 SKIP; i686 the same. The ten skips are POSIX-only fixtures: `test_portability_nob_std_probe`, `test_portability_nob_clean`, `test_unit_sysio_streams`, `test_regression_scanner_float_split`, `test_regression_scanner_short_read`, `test_regression_fs_walk_errors`, `test_unit_fs_walk`, `test_regression_fs_backslash_parent`, `test_regression_fs_private_staging`, `test_regression_fs_perms_and_types`.
+
 ## Test catalog
 
 
@@ -1645,6 +1657,7 @@ Sub-checks:
 - Checks Windows `FILETIME` to Unix time conversion uses the correct epoch delta and underflow guard.
 - Checks POSIX mmap stores offsets in `off_t` and rejects truncation.
 - Checks Windows append mode uses `FILE_APPEND_DATA` rather than a one-time seek-to-end emulation.
+- Checks the Windows fixes from the first native full-suite run (B-035): remove falls back to `RemoveDirectoryW` for an empty directory, both read paths map `ERROR_BROKEN_PIPE` to EOF, positioned I/O requires `FILE_TYPE_DISK`, and pread/pwrite restore the file position.
 - Checks Windows environment key conversion sizes the wide buffer dynamically rather than using a fixed 255-byte stack buffer.
 - Checks public environment lookup no longer rejects large keys through a fixed C key buffer.
 - Checks 32-bit Linux `_llseek` uses a 64-bit result buffer.

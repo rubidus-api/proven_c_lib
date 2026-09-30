@@ -4,6 +4,13 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#if defined(_WIN32) || defined(_WIN64)
+int main(void) {
+    PROVEN_TEST_SUITE("test_portability_nob_std_probe", "POSIX host only: the fixture is a /bin/sh wrapper compiler.", "");
+    PROVEN_TEST_PASS("Skipped on Windows: the fixture needs a POSIX shell (B-035).");
+    return 0;
+}
+#else
 #include <sys/stat.h>
 #include <sys/wait.h>
 
@@ -94,3 +101,4 @@ int main(void) {
     PROVEN_TEST_PASS("Build driver standard-flag probe and fallback behavior passed.");
     return 0;
 }
+#endif
