@@ -45,6 +45,16 @@ echo "release: project-check passed"
 
 # The site is part of what is released: the PDFs come from it, and its links must resolve
 # before the pages that carry them are published.
+#
+# One date for every build of this release. build-site.sh stamps the PDFs with the date of the
+# commit being built, and a release is built twice: at the release commit, whose site output is
+# then committed, and again by --publish at that site commit. With HEAD's date the two PDFs
+# differed, so the uploaded assets did not match the committed ones (v0.3.0 had to be
+# re-published). The commit that last set the version is the same for both builds.
+if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+    SOURCE_DATE_EPOCH=$(git -C "$root" log -1 --format=%ct -- include/proven/version.h 2>/dev/null || true)
+    [ -n "$SOURCE_DATE_EPOCH" ] && export SOURCE_DATE_EPOCH
+fi
 sh "$root/scripts/build-site.sh" >/dev/null || {
     echo "release: the site did not build - not releasing" >&2; exit 1; }
 python3 "$root/scripts/check-site-links.py" "$root/docs" >/dev/null || {
