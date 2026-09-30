@@ -18,6 +18,17 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-30
+
+A MINOR release: nothing public removed. The whole test suite now runs natively on Windows
+(`./nob build -no-run`, a mingw-w64 build for x86-64 and i686), and its first run found six
+Windows defects, all fixed - an empty directory could not be removed, pread/pwrite moved the file
+position, positioned calls on a pipe were not refused, and the end of a pipe read as an I/O error
+(B-035). Float parsing is faster than glibc at every length measured (B-043), and 32-bit targets
+use the Eisel-Lemire fast path (B-042). MSVC and clang-cl are stated as not supported. Behaviour
+changes only where it was wrong: `proven_fs_remove` on an empty directory on Windows, and the
+Windows pipe and position cases above.
+
 ### Added
 
 - **The full test suite runs on Windows (B-035).** `./nob build -no-run` builds every test
