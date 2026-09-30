@@ -28,6 +28,12 @@ written; their tags still exist.
   test VM found the six defects below; after the fixes, x86-64 and i686 each pass 211 with 0
   failures and 10 POSIX-only skips.
 
+### Changed
+
+- **MSVC and clang-cl are not supported (owner decision; possibly later).** Their C23 support is
+  incomplete. The manual used to say recent MSVC worked, which was never verified; it now names
+  what is: GCC 13+, Clang 16+, and on Windows mingw-w64 GCC (x86-64 and i686).
+
 ### Fixed
 
 - **Windows: `proven_fs_remove` deletes an empty directory,** as POSIX `remove()` does. It called

@@ -95,8 +95,8 @@ typedef uintptr_t      proven_uintptr_t;
 #else
     // Fallback: If neither built-ins nor C23 are available, the core library 
     // explicitly fails to guard against unsafe overflow behavior on legacy or 
-    // restricted compilers. MSVC support is experimental and requires modern versions 
-    // with appropriate intrinsics if this path is to be bypassed.
+    // restricted compilers. MSVC is not supported (incomplete C23); it may be later,
+    // which would need its overflow intrinsics wired in here.
     #error "proven requires C23 <stdckdint.h> or compiler overflow builtins (__builtin_*_overflow)."
 #endif
 
