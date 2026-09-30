@@ -1058,7 +1058,7 @@ if (!proven_is_ok(e)) {
 - The staged Eisel-Lemire layer currently accepts generated-`5^q` positive
   exponent cases and exact negative-exponent cases where the decimal
   significand cleanly cancels the required `5^q`.
-- On compilers with `__uint128_t`, the same layer also accepts a conservative
+- On every target (it needs no 128-bit integer type), the same layer also accepts a conservative
   rounded negative-exponent ratio subset in normal-range cases, including
   wider left-shift normalization than the original narrow prototype allowed.
 - The widened cached-power product path now also stages some subnormal cases,

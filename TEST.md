@@ -319,7 +319,7 @@ The whole hosted suite also runs natively on Windows, cross-built with mingw-w64
 
 `-no-run` builds and installs every test executable and runs none. The build driver asks the compiler for its target (`-dumpmachine`); for a Windows target the executables are `.exe`, linked `-static` with `-lbcrypt`, and never `-ldl`. `scripts/win11kd-full-suite.sh` builds both word sizes, sends the tracked tree and the executables to a Windows machine, and runs them there with `scripts/win11kd-run-suite.ps1`, which records PASS, FAIL, SKIP (a POSIX-only test that skipped itself - counted apart, since it proves nothing on Windows) and TIMEOUT per test.
 
-Last run, 2026-09-30, Windows 11 test VM: x86-64 211 PASS, 0 FAIL, 10 SKIP; i686 the same. The ten skips are POSIX-only fixtures: `test_portability_nob_std_probe`, `test_portability_nob_clean`, `test_unit_sysio_streams`, `test_regression_scanner_float_split`, `test_regression_scanner_short_read`, `test_regression_fs_walk_errors`, `test_unit_fs_walk`, `test_regression_fs_backslash_parent`, `test_regression_fs_private_staging`, `test_regression_fs_perms_and_types`.
+Last run, 2026-09-30, Windows 11 test VM: x86-64 214 PASS, 0 FAIL, 7 SKIP; i686 the same. The seven skips are fixtures whose subject is POSIX: `test_portability_nob_std_probe` and `test_portability_nob_clean` (they drive `./nob` through a POSIX shell), `test_regression_fs_walk_errors` (libc interposition with `dlsym`), `test_unit_fs_walk` (chmod 000 and `ln -s` cycles), `test_regression_fs_backslash_parent` (a backslash as an ordinary byte), `test_regression_fs_private_staging` and `test_regression_fs_perms_and_types` (POSIX modes). `test_unit_sysio_streams`, `test_regression_scanner_float_split` and `test_regression_scanner_short_read` run on Windows too.
 
 ## Test catalog
 
@@ -909,7 +909,7 @@ Failure tip: inspect `src/proven/proven_internal_console.h`. A failure at one sp
 
 Intent: verify stdin can be read a line at a time, that a buffered stdout holds its bytes until it is flushed and then emits them in order, and that an unbuffered standard-stream writer is out immediately.
 
-The test dup2's pipes over the **real fd 0 and fd 1**, so a pass means `proven_sysio_stdin()` / `proven_sysio_stdout()` themselves work - not a stand-in - including the short reads a pipe actually delivers.
+The test puts pipes in place of the **real standard streams** - `dup2` over fd 0 and fd 1 on POSIX, `SetStdHandle` on Windows - so a pass means `proven_sysio_stdin()` / `proven_sysio_stdout()` themselves work - not a stand-in - including the short reads a pipe actually delivers.
 
 Sub-checks:
 
@@ -1386,7 +1386,7 @@ Failure tip: inspect `proven_scan_f64` in `src/proven/scan.c`. It must flag `nee
 
 Intent: verify a token split across two pipe writes scans whole, that the rest of the stream stays readable, and that a failed read is `PROVEN_ERR_IO` rather than a clean end of input.
 
-Note: POSIX-only (needs `pipe()` and a writer thread); it compiles to a skip on Windows. `read()` on a pipe returns whatever has arrived; treating that as EOF truncated the token *and* discarded the rest of the stream. Regular files hide the bug entirely, which is why the whole suite passed.
+Note: runs on both platforms - an anonymous pipe (`pipe()` or `CreatePipe`) fed by a writer thread. `read()` on a pipe returns whatever has arrived; treating that as EOF truncated the token *and* discarded the rest of the stream. Regular files hide the bug entirely, which is why the whole suite passed.
 
 Failure tip: inspect `scanner_fill` in `src/proven/sysio.c`.
 

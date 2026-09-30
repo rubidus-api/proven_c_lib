@@ -25,11 +25,20 @@ written; their tags still exist.
   cross compiler produces static `.exe` tests (with `-lbcrypt`, without `-ldl`).
   `scripts/win11kd-full-suite.sh` and `scripts/win11kd-run-suite.ps1` build both word sizes and
   run them natively, reporting PASS / FAIL / SKIP / TIMEOUT per test. First run on the Windows 11
-  test VM found the six defects below; after the fixes, x86-64 and i686 each pass 211 with 0
-  failures and 10 POSIX-only skips.
+  test VM found the six defects below. Three tests that skipped on Windows now run there
+  (`test_unit_sysio_streams`, `test_regression_scanner_short_read`,
+  `test_regression_scanner_float_split`). x86-64 and i686 each pass 214 with 0 failures; 7
+  fixtures whose subject is POSIX skip.
 
 ### Changed
 
+- **The Eisel-Lemire float-parsing fast path is used on 32-bit targets too (B-042).** It was
+  compiled only where the compiler has `unsigned __int128`, although the code needs none - it
+  goes through the portable 64x64 multiply. Without it a 32-bit target sent every decimal past
+  the Clinger path to the exact big-integer path. Measured with 128-bit integers disabled on
+  x86-64 (`test_bench_float_host`, release): 16-digit parsing 287 -> 183 ns, 17-digit 473 -> 222 ns;
+  the results are checked against the host `strtod` in the same run, and the Windows i686 run
+  passes the differential corpora and expects the fast path in `test_unit_float_parse_api`.
 - **MSVC and clang-cl are not supported (owner decision; possibly later).** Their C23 support is
   incomplete. The manual used to say recent MSVC worked, which was never verified; it now names
   what is: GCC 13+, Clang 16+, and on Windows mingw-w64 GCC (x86-64 and i686).
@@ -51,9 +60,9 @@ written; their tags still exist.
 - **Tests and examples that assumed POSIX or a 64-bit target.** Permission checks compare with the
   mode read back after `chmod` (Windows keeps only the owner-write bit); the durable-write example
   accepts `sync_dir`'s documented UNSUPPORTED on Windows; `test_unit_u128_mul` and
-  `test_unit_float_bigint_divmod` have references without `__int128`; `test_unit_float_parse_api`
-  expects the exact path where Eisel-Lemire is compiled out (32-bit); a fixture no longer needs a
-  `build/` directory.
+  `test_unit_float_bigint_divmod` have references without `__int128`; a float comparison
+  uses a stored `double`, not a literal that x87 evaluates in long double; a fixture no longer
+  needs a `build/` directory.
 - **`scripts/release.sh` builds a release's PDFs with one date.** The site is built at the release
   commit and again by `--publish` at the site commit; both now take the date of the commit that
   last set the version, so the uploaded PDFs equal the committed ones without a re-publish.

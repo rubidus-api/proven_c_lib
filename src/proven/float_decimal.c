@@ -2703,7 +2703,6 @@ static proven_err_t proven_float_try_clinger(const proven_float_decimal_number_t
     return PROVEN_OK;
 }
 
-#if defined(__SIZEOF_INT128__)
 typedef struct proven_u256_parts_t {
     proven_u64 limb0;
     proven_u64 limb1;
@@ -2960,37 +2959,6 @@ static proven_float_fast_path_result_t proven_float_try_eisel_lemire_negative_q(
     return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
 }
 
-#else  /* !defined(__SIZEOF_INT128__) */
-
-/*
- * Without 128-bit integers the Eisel-Lemire fast path is unavailable. These
- * stubs let `proven_float_try_eisel_lemire_with_state` (compiled unconditionally)
- * resolve its calls and report "unsupported", so parsing falls through to the
- * scalar exact path. The big-integer multiply has its own scalar fallback.
- */
-static proven_float_fast_path_result_t proven_float_try_eisel_lemire_pow5_product_q(
-    const proven_float_decimal_number_t *decimal,
-    const proven_float_eisel_validate_state_t *state,
-    proven_size_t q,
-    proven_u64 *bits_out,
-    proven_float_decimal_stats_t *stats
-) {
-    (void)decimal; (void)state; (void)q; (void)bits_out; (void)stats;
-    return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
-}
-
-static proven_float_fast_path_result_t proven_float_try_eisel_lemire_negative_q(
-    const proven_float_decimal_number_t *decimal,
-    const proven_float_eisel_validate_state_t *state,
-    proven_size_t q,
-    proven_u64 *bits_out,
-    proven_float_decimal_stats_t *stats
-) {
-    (void)decimal; (void)state; (void)q; (void)bits_out; (void)stats;
-    return PROVEN_FLOAT_FAST_PATH_UNSUPPORTED;
-}
-
-#endif
 
 static proven_float_fast_path_result_t proven_float_try_eisel_lemire_with_state(
     const proven_float_decimal_number_t *decimal,

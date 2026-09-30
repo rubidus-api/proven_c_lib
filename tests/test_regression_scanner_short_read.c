@@ -1,21 +1,48 @@
 #include "proven.h"
 #include "proven_test.h"
 
-#if defined(_WIN32) || defined(_WIN64)
-int main(void) {
-    PROVEN_TEST_SUITE("scanner over a pipe",
-        "A short read is not an end of input.",
-        "This check needs POSIX pipe() and pthreads; it is skipped on Windows.");
-    PROVEN_TEST_INFO("POSIX-only; skipped on this platform");
-    PROVEN_TEST_PASS("skipped");
-    return 0;
-}
-#else
-
-#include <unistd.h>
-#include <pthread.h>
-#include <time.h>
+#include "proven_sys_thread.h"
 #include <string.h>
+#include <stdbool.h>
+
+/* A pipe, a writer thread and a pause, on either platform: an anonymous pipe is CreatePipe on
+ * Windows and pipe() on POSIX, and it delivers short reads the same way on both. */
+#if defined(_WIN32) || defined(_WIN64)
+#include <windows.h>
+typedef HANDLE wend_t;
+static bool make_pipe(proven_file_t *rd, wend_t *wr) {
+    HANDLE r = NULL, w = NULL;
+    if (!CreatePipe(&r, &w, NULL, 0)) return false;
+    rd->internal.ptr = r;
+    *wr = w;
+    return true;
+}
+static void wend_write(wend_t w, const char *p, size_t n) { DWORD k = 0; (void)WriteFile(w, p, (DWORD)n, &k, NULL); }
+static void wend_close(wend_t w) { CloseHandle(w); }
+static void rd_close(proven_file_t f) { CloseHandle((HANDLE)f.internal.ptr); }
+/* The write end, read from: ReadFile fails (ACCESS_DENIED), as read() on it fails on POSIX. */
+static proven_file_t wend_as_file(wend_t w) { proven_file_t f = {0}; f.internal.ptr = w; return f; }
+static void pause_ms(unsigned ms) { Sleep(ms ? ms : 1); }
+#else
+#include <unistd.h>
+#include <time.h>
+typedef int wend_t;
+static bool make_pipe(proven_file_t *rd, wend_t *wr) {
+    int fds[2];
+    if (pipe(fds) != 0) return false;
+    rd->internal.fd = fds[0];
+    *wr = fds[1];
+    return true;
+}
+static void wend_write(wend_t w, const char *p, size_t n) { ssize_t k = write(w, p, n); (void)k; }
+static void wend_close(wend_t w) { close(w); }
+static void rd_close(proven_file_t f) { close(f.internal.fd); }
+static proven_file_t wend_as_file(wend_t w) { proven_file_t f = {0}; f.internal.fd = w; return f; }
+static void pause_ms(unsigned ms) {
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = (long)(ms ? ms : 1) * 1000 * 1000 };
+    nanosleep(&ts, NULL);
+}
+#endif
 
 /*
  * The buffered scanner exists FOR pipes - the header says so: "safe scanning for both
@@ -37,47 +64,39 @@ int main(void) {
  */
 
 /* A writer that sends `first`, pauses, then `second` - i.e. every pipe. */
-typedef struct { int fd; const char *first; const char *second; } split_writer_t;
+typedef struct { wend_t fd; const char *first; const char *second; } split_writer_t;
 
 static void *split_writer(void *arg) {
     split_writer_t *w = (split_writer_t *)arg;
-    ssize_t n = write(w->fd, w->first, strlen(w->first));
-    (void)n;
-    struct timespec ts = { .tv_sec = 0, .tv_nsec = 120 * 1000 * 1000 };
-    nanosleep(&ts, NULL);
-    n = write(w->fd, w->second, strlen(w->second));
-    (void)n;
-    close(w->fd);
+    wend_write(w->fd, w->first, strlen(w->first));
+    pause_ms(120);
+    wend_write(w->fd, w->second, strlen(w->second));
+    wend_close(w->fd);
     return NULL;
 }
 
 /* A writer that dribbles its message one byte at a time. */
-typedef struct { int fd; const char *msg; } byte_writer_t;
+typedef struct { wend_t fd; const char *msg; } byte_writer_t;
 
 static void *byte_writer(void *arg) {
     byte_writer_t *w = (byte_writer_t *)arg;
     for (const char *p = w->msg; *p; ++p) {
-        ssize_t n = write(w->fd, p, 1);
-        (void)n;
-        struct timespec ts = { .tv_sec = 0, .tv_nsec = 200 * 1000 };  /* 0.2 ms */
-        nanosleep(&ts, NULL);
+        wend_write(w->fd, p, 1);
+        pause_ms(1);
     }
-    close(w->fd);
+    wend_close(w->fd);
     return NULL;
 }
 
 /* Scan one int from a pipe fed in two pieces. */
 static proven_err_t scan_split(proven_allocator_t heap, const char *first, const char *second,
                                const char *fmt, proven_i32 *out) {
-    int fds[2];
-    if (pipe(fds) != 0) return PROVEN_ERR_IO;
-
-    split_writer_t w = { .fd = fds[1], .first = first, .second = second };
-    pthread_t th;
-    if (pthread_create(&th, NULL, split_writer, &w) != 0) { close(fds[0]); close(fds[1]); return PROVEN_ERR_IO; }
-
     proven_file_t pf = {0};
-    pf.internal.fd = fds[0];
+    wend_t wr;
+    if (!make_pipe(&pf, &wr)) return PROVEN_ERR_IO;
+
+    split_writer_t w = { .fd = wr, .first = first, .second = second };
+    proven_sys_thread_t th = proven_sys_thread_create(split_writer, &w);
 
     proven_sysio_scanner_t sc;
     proven_err_t e = proven_sysio_scanner_init(&sc, pf, heap, 64);
@@ -85,22 +104,17 @@ static proven_err_t scan_split(proven_allocator_t heap, const char *first, const
         e = proven_sysio_scanner_scan(&sc, fmt, PROVEN_SCAN_ARG(out));
         proven_sysio_scanner_deinit(&sc);
     }
-    (void)pthread_join(th, NULL);
-    close(fds[0]);
+    proven_sys_thread_join(th);
+    rd_close(pf);
     return e;
 }
 
 static void *slow_writer(void *arg) {
-    int fd = *(int *)arg;
-    ssize_t n = write(fd, "123", 3);
-    (void)n;
-
-    struct timespec ts = { .tv_sec = 0, .tv_nsec = 150 * 1000 * 1000 };  /* 150 ms */
-    nanosleep(&ts, NULL);
-
-    n = write(fd, "456 789\n", 8);
-    (void)n;
-    close(fd);
+    wend_t fd = *(wend_t *)arg;
+    wend_write(fd, "123", 3);
+    pause_ms(150);
+    wend_write(fd, "456 789\n", 8);
+    wend_close(fd);
     return NULL;
 }
 
@@ -117,15 +131,10 @@ int main(void) {
         "If this reads 123, scanner_fill latched eof on a short read and the scan committed a truncated token as a success.");
     // ---------------------------------------------------------------
     {
-        int fds[2];
-        PROVEN_TEST_ASSERT(pipe(fds) == 0, "setup: a pipe", "");
-
-        pthread_t th;
-        int wfd = fds[1];
-        PROVEN_TEST_ASSERT(pthread_create(&th, NULL, slow_writer, &wfd) == 0, "setup: a writer thread", "");
-
         proven_file_t pf = {0};
-        pf.internal.fd = fds[0];
+        static wend_t wfd;
+        PROVEN_TEST_ASSERT(make_pipe(&pf, &wfd), "setup: a pipe", "");
+        proven_sys_thread_t th = proven_sys_thread_create(slow_writer, &wfd);
 
         proven_sysio_scanner_t sc;
         proven_err_t e = proven_sysio_scanner_init(&sc, pf, heap, 64);
@@ -150,8 +159,8 @@ int main(void) {
             "A zero-byte read - the writer closed - is what an end of input actually is.");
 
         proven_sysio_scanner_deinit(&sc);
-        (void)pthread_join(th, NULL);
-        close(fds[0]);
+        proven_sys_thread_join(th);
+        rd_close(pf);
     }
 
     // ---------------------------------------------------------------
@@ -160,13 +169,13 @@ int main(void) {
         "A stream that broke halfway through was indistinguishable from one that finished.");
     // ---------------------------------------------------------------
     {
-        /* A write-only pipe end: every read() on it fails with EBADF. */
-        int fds[2];
-        PROVEN_TEST_ASSERT(pipe(fds) == 0, "setup: a pipe", "");
-        close(fds[0]);
+        /* A write-only pipe end: every read on it fails (EBADF; ACCESS_DENIED on Windows). */
+        proven_file_t rd = {0};
+        wend_t wr;
+        PROVEN_TEST_ASSERT(make_pipe(&rd, &wr), "setup: a pipe", "");
+        rd_close(rd);
 
-        proven_file_t pf = {0};
-        pf.internal.fd = fds[1];   /* the WRITE end - reading it is an error */
+        proven_file_t pf = wend_as_file(wr);   /* the WRITE end - reading it is an error */
 
         proven_sysio_scanner_t sc;
         proven_err_t e = proven_sysio_scanner_init(&sc, pf, heap, 64);
@@ -179,7 +188,7 @@ int main(void) {
             "It used to be PROVEN_ERR_EOF: the caller was told the stream ended cleanly when in fact it never opened.");
 
         proven_sysio_scanner_deinit(&sc);
-        close(fds[1]);
+        wend_close(wr);
     }
 
     // ---------------------------------------------------------------
@@ -230,18 +239,11 @@ int main(void) {
         "If this hangs, the refill loop has a state it cannot leave. If a value is wrong, a token was committed across a compaction that moved it.");
     // ---------------------------------------------------------------
     {
-        int fds[2];
-        PROVEN_TEST_ASSERT(pipe(fds) == 0, "setup: a pipe", "");
-
-        pthread_t th;
-        static const char *msg = "  -12345 key=678   9.5\n";
-        static byte_writer_t bw;
-        bw.fd = fds[1];
-        bw.msg = msg;
-        PROVEN_TEST_ASSERT(pthread_create(&th, NULL, byte_writer, &bw) == 0, "setup: a dribbling writer", "");
-
         proven_file_t pf = {0};
-        pf.internal.fd = fds[0];
+        static byte_writer_t bw;
+        PROVEN_TEST_ASSERT(make_pipe(&pf, &bw.fd), "setup: a pipe", "");
+        bw.msg = "  -12345 key=678   9.5\n";
+        proven_sys_thread_t th = proven_sys_thread_create(byte_writer, &bw);
 
         proven_sysio_scanner_t sc;
         proven_err_t e = proven_sysio_scanner_init(&sc, pf, heap, 8);   /* barely a token wide */
@@ -268,8 +270,8 @@ int main(void) {
         PROVEN_TEST_ASSERT(e == PROVEN_ERR_EOF, "and then the stream ends", "");
 
         proven_sysio_scanner_deinit(&sc);
-        (void)pthread_join(th, NULL);
-        close(fds[0]);
+        proven_sys_thread_join(th);
+        rd_close(pf);
     }
 
     // ---------------------------------------------------------------
@@ -278,18 +280,12 @@ int main(void) {
         "scanner_fill returns PROVEN_ERR_OUT_OF_BOUNDS once the buffer is full and the token still is not finished. The buffer is the caller's; size it for the input.");
     // ---------------------------------------------------------------
     {
-        int fds[2];
-        PROVEN_TEST_ASSERT(pipe(fds) == 0, "setup: a pipe", "");
-
-        pthread_t th;
+        proven_file_t pf = {0};
         static split_writer_t w2;
-        w2.fd = fds[1];
+        PROVEN_TEST_ASSERT(make_pipe(&pf, &w2.fd), "setup: a pipe", "");
         w2.first = "123456789012345678 ";
         w2.second = "42\n";
-        PROVEN_TEST_ASSERT(pthread_create(&th, NULL, split_writer, &w2) == 0, "setup: a writer", "");
-
-        proven_file_t pf = {0};
-        pf.internal.fd = fds[0];
+        proven_sys_thread_t th = proven_sys_thread_create(split_writer, &w2);
 
         proven_sysio_scanner_t sc;
         proven_err_t e = proven_sysio_scanner_init(&sc, pf, heap, 8);
@@ -302,11 +298,10 @@ int main(void) {
             "If this test hangs instead, the refill loop is waiting for input that cannot help.");
 
         proven_sysio_scanner_deinit(&sc);
-        (void)pthread_join(th, NULL);
-        close(fds[0]);
+        proven_sys_thread_join(th);
+        rd_close(pf);
     }
 
     PROVEN_TEST_PASS("the scanner reads pipes the way pipes actually behave.");
     return 0;
 }
-#endif

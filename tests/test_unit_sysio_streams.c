@@ -2,20 +2,6 @@
 #include "proven_test.h"
 #include <string.h>
 
-#if defined(_WIN32) || defined(_WIN64)
-int main(void) {
-    PROVEN_TEST_SUITE("the standard streams as writers and readers",
-        "stdin/stdout/stderr bridged onto the stream layer.",
-        "Skipped on Windows: the test drives the real fd 0 and fd 1 through pipes, which is POSIX.");
-    PROVEN_TEST_INFO("skipped on Windows");
-    PROVEN_TEST_PASS("skipped");
-    return 0;
-}
-#else
-
-#include <unistd.h>
-#include <fcntl.h>
-
 /*
  * Written from the contract in include/proven/sysio.h before the bridge existed
  * (docs/TESTING.md section 5.1). Two things were missing, and one thing was a lie:
@@ -38,8 +24,52 @@ int main(void) {
  * exercised is proven_sysio_stdin()/stdout() themselves, not a stand-in.
  */
 
-/* Replace fd `target` with the read/write end of a fresh pipe; give back the other end. */
-static int hijack(int target, int *other_end, int *saved) {
+/*
+ * Replace standard stream `target` (0 = stdin, 1 = stdout) with one end of a fresh pipe and give
+ * back the other end. POSIX: dup2 over the fd. Windows: SetStdHandle, which is what
+ * GetStdHandle - and so proven_sysio_stdin()/stdout() - reads.
+ */
+#if defined(_WIN32) || defined(_WIN64)
+#include <windows.h>
+typedef HANDLE end_t;
+typedef HANDLE saved_t;
+static int hijack(int target, end_t *other_end, saved_t *saved) {
+    HANDLE r = NULL, w = NULL;
+    if (!CreatePipe(&r, &w, NULL, 1 << 16)) return -1;   /* room for the long line below */
+    DWORD which = target == 0 ? STD_INPUT_HANDLE : STD_OUTPUT_HANDLE;
+    *saved = GetStdHandle(which);
+    if (!SetStdHandle(which, target == 0 ? r : w)) return -1;
+    *other_end = target == 0 ? w : r;
+    return 0;
+}
+static void restore(int target, saved_t saved) {
+    DWORD which = target == 0 ? STD_INPUT_HANDLE : STD_OUTPUT_HANDLE;
+    HANDLE ours = GetStdHandle(which);
+    SetStdHandle(which, saved);
+    CloseHandle(ours);
+}
+static long end_write(end_t e, const void *p, size_t n) { DWORD k = 0; return WriteFile(e, p, (DWORD)n, &k, NULL) ? (long)k : -1; }
+static void end_close(end_t e) { CloseHandle(e); }
+/* Read whatever is currently readable, without blocking. */
+static proven_size_t drain(end_t e, char *out, proven_size_t cap) {
+    proven_size_t total = 0;
+    for (;;) {
+        DWORD avail = 0;
+        if (!PeekNamedPipe(e, NULL, 0, NULL, &avail, NULL) || avail == 0) break;
+        DWORD want = (DWORD)(cap - total < avail ? cap - total : avail), got = 0;
+        if (!ReadFile(e, out + total, want, &got, NULL) || got == 0) break;
+        total += got;
+        if (total >= cap) break;
+    }
+    out[total] = 0;
+    return total;
+}
+#else
+#include <unistd.h>
+#include <fcntl.h>
+typedef int end_t;
+typedef int saved_t;
+static int hijack(int target, end_t *other_end, saved_t *saved) {
     int fds[2];
     if (pipe(fds) != 0) return -1;
     *saved = dup(target);
@@ -57,13 +87,16 @@ static int hijack(int target, int *other_end, int *saved) {
     return 0;
 }
 
-static void restore(int target, int saved) {
+static void restore(int target, saved_t saved) {
     dup2(saved, target);
     close(saved);
 }
 
+static long end_write(end_t e, const void *p, size_t n) { return (long)write(e, p, n); }
+static void end_close(end_t e) { close(e); }
+
 /* Read whatever is currently readable, without blocking. */
-static proven_size_t drain(int fd, char *out, proven_size_t cap) {
+static proven_size_t drain(end_t fd, char *out, proven_size_t cap) {
     int fl = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, fl | O_NONBLOCK);
     proven_size_t total = 0;
@@ -77,11 +110,12 @@ static proven_size_t drain(int fd, char *out, proven_size_t cap) {
     out[total] = 0;
     return total;
 }
+#endif
 
 int main(void) {
     PROVEN_TEST_SUITE("the standard streams are writers and readers",
         "stdin, stdout and stderr bridged onto stream.h: a line reader over stdin, a buffered writer over stdout, and a flush that finally means something.",
-        "Inspect the bridge in src/proven/sysio.c. The test drives the real fd 0 and fd 1 through pipes, so a pass means the standard streams themselves work, not a stand-in.");
+        "Inspect the bridge in src/proven/sysio.c. The test drives the real standard streams through pipes, so a pass means the standard streams themselves work, not a stand-in.");
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("reading stdin a line at a time",
@@ -89,12 +123,12 @@ int main(void) {
         "A pipe is dup2'd over fd 0, so this is proven_sysio_stdin() for real - including the short reads a pipe delivers.");
     // ---------------------------------------------------------------
     {
-        int w = -1, saved = -1;
+        end_t w; saved_t saved;
         PROVEN_TEST_ASSERT(hijack(0, &w, &saved) == 0, "setup: hijack fd 0", "");
 
         const char *input = "first\nsecond\r\nthird line with spaces\nno trailing newline";
-        PROVEN_TEST_ASSERT(write(w, input, strlen(input)) == (ssize_t)strlen(input), "setup: write the input", "");
-        close(w);   /* EOF for the reader */
+        PROVEN_TEST_ASSERT(end_write(w, input, strlen(input)) == (long)strlen(input), "setup: write the input", "");
+        end_close(w);   /* EOF for the reader */
 
         proven_byte_t buf[128];
         proven_sysio_lines_t lines;
@@ -124,7 +158,7 @@ int main(void) {
         "The bytes must NOT be in the pipe before the flush, and they MUST be after it.");
     // ---------------------------------------------------------------
     {
-        int r = -1, saved = -1;
+        end_t r; saved_t saved;
         PROVEN_TEST_ASSERT(hijack(1, &r, &saved) == 0, "setup: hijack fd 1", "");
 
         proven_byte_t obuf[256];
@@ -164,7 +198,7 @@ int main(void) {
         "");
     // ---------------------------------------------------------------
     {
-        int r = -1, saved = -1;
+        end_t r; saved_t saved;
         PROVEN_TEST_ASSERT(hijack(1, &r, &saved) == 0, "setup: hijack fd 1", "");
 
         proven_sysio_std_t st;
@@ -189,14 +223,14 @@ int main(void) {
         "");
     // ---------------------------------------------------------------
     {
-        int w = -1, saved = -1;
+        end_t w; saved_t saved;
         PROVEN_TEST_ASSERT(hijack(0, &w, &saved) == 0, "setup: hijack fd 0", "");
 
         char big[200];
         memset(big, 'x', sizeof big);
         big[sizeof big - 1] = '\n';
-        PROVEN_TEST_ASSERT(write(w, big, sizeof big) == (ssize_t)sizeof big, "setup: write a long line", "");
-        close(w);
+        PROVEN_TEST_ASSERT(end_write(w, big, sizeof big) == (long)sizeof big, "setup: write a long line", "");
+        end_close(w);
 
         proven_byte_t small[32];
         proven_sysio_lines_t lines;
@@ -227,4 +261,3 @@ int main(void) {
     PROVEN_TEST_PASS("the standard streams are writers and readers, and flush finally means something.");
     return 0;
 }
-#endif

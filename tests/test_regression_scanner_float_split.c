@@ -3,16 +3,6 @@
 #include <string.h>
 #include <stdio.h>
 
-#if defined(_WIN32) || defined(_WIN64)
-int main(void) {
-    PROVEN_TEST_SUITE("a float split across the scanner buffer",
-        "A float whose exponent or sign lands on a refill boundary must still scan whole.",
-        "Uses a temp file; the logic is platform-independent but the fixture path handling is kept POSIX-simple.");
-    PROVEN_TEST_INFO("skipped on Windows for fixture simplicity");
-    PROVEN_TEST_PASS("skipped");
-    return 0;
-}
-#else
 
 /*
  * A float cut in half by the buffered scanner's refill boundary used to be scanned WRONG in
@@ -99,6 +89,9 @@ int main(void) {
     // ---------------------------------------------------------------
     {
         write_file("scanfloat.tmp", "814537981 -7.860948551957922e45\n");
+        /* A stored double, not the literal: where FLT_EVAL_METHOD is 2 (x87, i686) a floating
+         * constant is evaluated in long double and never equals the parsed double. */
+        static const double want = -7.860948551957922e45;
         for (proven_size_t cap = 12; cap <= 40; ++cap) {
             proven_result_file_t rf = proven_fs_open(heap, PROVEN_LIT("scanfloat.tmp"), PROVEN_FS_READ);
             proven_sysio_scanner_t sc;
@@ -114,11 +107,11 @@ int main(void) {
             if (cap >= 23) {
                 PROVEN_TEST_ASSERT(proven_is_ok(e1) && gi == 814537981,
                     "the int must scan", "");
-                PROVEN_TEST_ASSERT(proven_is_ok(e2) && gd == -7.860948551957922e45,
+                PROVEN_TEST_ASSERT(proven_is_ok(e2) && gd == want,
                     "and the float straddling the boundary must scan to its exact value",
                     "This is the exact round-trip failure: the float came back as an error and desynced the stream.");
             } else {
-                PROVEN_TEST_ASSERT(e2 == PROVEN_ERR_OUT_OF_BOUNDS || (proven_is_ok(e1) && proven_is_ok(e2) && gd == -7.860948551957922e45),
+                PROVEN_TEST_ASSERT(e2 == PROVEN_ERR_OUT_OF_BOUNDS || (proven_is_ok(e1) && proven_is_ok(e2) && gd == want),
                     "a buffer too small is OUT_OF_BOUNDS, never a wrong value", "");
             }
             proven_sysio_scanner_deinit(&sc);
@@ -150,4 +143,3 @@ int main(void) {
     PROVEN_TEST_PASS("a float survives every buffer boundary, and garbage is still garbage.");
     return 0;
 }
-#endif
