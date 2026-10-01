@@ -233,7 +233,19 @@ proven_err_t proven_fs_rename(proven_allocator_t scratch, proven_u8str_view_t sr
 proven_err_t proven_fs_remove(proven_allocator_t scratch, proven_u8str_view_t path);
 
 /**
- * @brief Copies a file from src to dest using custom memory buffers for efficiency.
+ * @brief Copies the bytes of the file at `src` to `dest`, creating or truncating `dest`.
+ *
+ * @note Not staged: the copy writes `dest` in place, so a failure part way through (a full
+ *       disk, a read error) leaves `dest` holding part of the source. Copy into a name of
+ *       your own and proven_fs_rename it over `dest` when a reader must never see that.
+ * @note Symbolic links are followed at both ends: a symlinked `src` copies the file it points
+ *       to, and a symlinked `dest` is written through to its target.
+ * @note `dest` gets the source's permission bits. A `src` and `dest` that are the same file
+ *       (the same path, or two hard links to one file) are PROVEN_ERR_INVALID_ARG and nothing
+ *       is touched.
+ * @note A read-only `dest` is refused with PROVEN_ERR_PERMISSION - see "ONE RULE FOR ALL THREE
+ *       WHOLE-FILE REPLACEMENTS" below, which covers this function too.
+ * @param temp_alloc Allocator for the path conversions and the 64 KiB copy buffer.
  */
 [[nodiscard]]
 proven_err_t proven_fs_copy(proven_allocator_t temp_alloc, proven_u8str_view_t src, proven_u8str_view_t dest);
@@ -604,15 +616,6 @@ proven_result_mem_mut_t proven_fs_read_all(proven_allocator_t alloc, proven_u8st
 [[nodiscard]]
 proven_result_u8str_t proven_fs_read_all_u8str(proven_allocator_t alloc, proven_u8str_view_t path);
 
-/**
- * @brief Writes a buffer to a path in one call, creating or truncating the file.
- *
- * @note Not atomic: a reader can observe a partially written file, and a failure
- *       mid-write leaves the file truncated. Use proven_fs_write_file_atomic
- *       when a concurrent reader must never see a half-written file.
- */
-[[nodiscard]]
-
 /*
  * ONE RULE FOR ALL THREE WHOLE-FILE REPLACEMENTS
  * ----------------------------------------------
@@ -660,6 +663,15 @@ proven_result_u8str_t proven_fs_read_all_u8str(proven_allocator_t alloc, proven_
  * file can lift the mark. It is a guard against destroying protected data by accident,
  * and it is only that.
  */
+
+/**
+ * @brief Writes a buffer to a path in one call, creating or truncating the file.
+ *
+ * @note Not atomic: a reader can observe a partially written file, and a failure
+ *       mid-write leaves the file truncated. Use proven_fs_write_file_atomic
+ *       when a concurrent reader must never see a half-written file.
+ */
+[[nodiscard]]
 proven_err_t proven_fs_write_file(proven_allocator_t scratch, proven_u8str_view_t path, proven_mem_view_t data);
 
 /**

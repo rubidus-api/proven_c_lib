@@ -54,6 +54,12 @@ written; their tags still exist.
   (RFC-0009 D-002). `GetEnvironmentVariableW` returns 0 both for failure and for "stored 0
   characters"; `GetLastError` now tells them apart, so the value is an empty string as on POSIX.
   A value that grows between the sizing call and the read is re-sized instead of failing.
+- **`fs.h`: `proven_fs_copy` states its contract, and `proven_fs_write_file`'s `[[nodiscard]]`
+  sits on its declaration again** (RFC-0009 X-007). The copy's whole documentation was one line;
+  it now says the copy is not staged (a failure leaves `dest` partly written), that symbolic
+  links are followed at both ends, that `dest` takes the source's permission bits, and that the
+  read-only rule covers it. The attribute had been separated from its declaration by a long
+  block comment.
 
 ## [0.5.0] - 2026-10-01
 
