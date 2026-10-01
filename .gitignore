@@ -49,3 +49,20 @@ deeptree/
 # Release artefacts are uploaded, not tracked: the PDFs are 4 MB each and the tag they belong
 # to already carries them.
 /dist/
+
+# ── Private layout (links into the private sibling; kit 0.10.0) ──
+/scripts/project-check.sh
+/scripts/gate.sh
+/scripts/gate.conf
+/scripts/context-budget.sh
+/scripts/brief.sh
+/scripts/worklog.sh
+/docs/agents
+/docs/rfc
+/docs/research
+/docs/benchmark
+/docs/backlogs
+/docs/plans
+/docs/requirements
+/docs/resources
+/docs/tests
