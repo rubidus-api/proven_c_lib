@@ -1146,6 +1146,7 @@ int main(int argc, char **argv)
 
     bool force_rebuild = false;
     bool no_run = false;
+    bool keep_going = false;
     const char *build_mode = "debug";
     const char *cc = NULL;
     const char *user_ld = NULL;
@@ -1218,6 +1219,9 @@ int main(int argc, char **argv)
             nob_shift_args(&argc, &argv);
         } else if (strcmp(argv[0], "-no-run") == 0) {
             no_run = true;
+            nob_shift_args(&argc, &argv);
+        } else if (strcmp(argv[0], "-keep-going") == 0) {
+            keep_going = true;
             nob_shift_args(&argc, &argv);
         } else if (strcmp(argv[0], "-cc") == 0) {
             nob_shift_args(&argc, &argv);
@@ -1296,6 +1300,7 @@ int main(int argc, char **argv)
         printf("Options:\n");
         printf("  -f                 Force a full rebuild of the project.\n");
         printf("  -no-run            Build every test executable but run none (e.g. a mingw-w64 build for Windows).\n");
+        printf("  -keep-going        Run every test even after one fails, then list the failures; still exits 1.\n");
         printf("  -cc <compiler>     Specify the C compiler to use (e.g., clang, gcc).\n");
         printf("  -ld <linker>       Specify the linker to use (defaults to compiler).\n");
         printf("  -cflags <flags>    Additional compiler flags (e.g., -DDEBUG).\n");
@@ -1609,6 +1614,7 @@ int main(int argc, char **argv)
     free(inflight);
 
     int result = spawn_failed ? 1 : 0;
+    Nob_File_Paths failed_tests = {0};
     for (size_t i = 0; i < tests_count && result == 0; ++i) {
         Test_Link_Job *j = &jobs[i];
         if (!j->exec_path) break;
@@ -1641,11 +1647,21 @@ int main(int argc, char **argv)
         nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][RUN] path=%s", test->path);
         if (!nob_cmd_run_sync(cmd)) {
             print_proven_test_fail(test, "run", test->failure_hint);
+            /* RFC-0009 X-006: one failure used to hide every later one. */
+            if (keep_going) { nob_da_append(&failed_tests, test->path); continue; }
             result = 1;
             break;
         }
         print_proven_test_pass(test);
     }
+    if (failed_tests.count > 0) {
+        nob_log(NOB_ERROR, "[PROVEN][BUILD][KEEP_GOING][SUMMARY] failed=%zu of %zu", failed_tests.count, tests_count);
+        for (size_t f = 0; f < failed_tests.count; ++f) {
+            nob_log(NOB_ERROR, "[PROVEN][BUILD][KEEP_GOING][FAILED] path=%s", failed_tests.items[f]);
+        }
+        result = 1;
+    }
+    nob_da_free(failed_tests);
     for (size_t i = 0; i < tests_count; ++i) free_test_link_job(&jobs[i]);
     free(jobs);
     nob_temp_reset();

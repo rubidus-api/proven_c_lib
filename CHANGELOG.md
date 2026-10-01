@@ -63,6 +63,10 @@ written; their tags still exist.
 
 ### Changed
 
+- **`./nob build -keep-going` runs every test and lists the failures** (RFC-0009 X-006, first part).
+  A run stopped at the first failing test, so one failure hid every other. With the flag, each
+  test still runs once and the run ends with a summary and exit status 1. Per-test scratch
+  directories, which parallel test runs need, are not done yet.
 - **A clean `./nob build` takes 14 s instead of 36 on a 16-CPU host** (RFC-0009 P-108). The test
   executables were compiled and linked one at a time - 20 of the 31 seconds a clean build spent
   outside the tests themselves. They are now linked in parallel, up to one per CPU, and then run

@@ -74,6 +74,16 @@ Run sanitizer modes:
 ./nob tsan -build-root build-out/proven_c_lib
 ```
 
+A run stops at the first test that fails. To see every failure in one run, add `-keep-going`:
+each test still runs once, in registry order, and the run ends with a
+`[PROVEN][BUILD][KEEP_GOING][SUMMARY]` line and one `[PROVEN][BUILD][KEEP_GOING][FAILED]` line per
+failing test, and exits 1. Test executables are linked in parallel, one per CPU, and run one at a
+time.
+
+```sh
+./nob build -keep-going -build-root build-out/proven_c_lib
+```
+
 Run focused regression modes:
 
 ```sh
