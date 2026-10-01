@@ -18,6 +18,14 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-01
+
+A MINOR release: nothing public removed, no behaviour changed. Three additions requested by
+Pnakotic (B-044): one-character UTF-8 decoding, hexadecimal scanning, and a stated ceiling on the
+error-code space. The repository now carries only the library, its tests, the manual and the
+public documents; design records, benchmark archives and process notes are kept outside it, and
+the public history was rewritten to match.
+
 ### Added
 
 - **One-character UTF-8 decoding: `proven_utf8_decode_next(s, pos)`.** For code that walks text a
@@ -36,6 +44,14 @@ written; their tags still exist.
   `PROVEN_ERR_LAST` names today's highest code; a build-time assertion holds the ceiling and a
   source contract keeps the macro on the enum's real last value. Aliases `XCV_ERR_LAST`,
   `XCV_ERR_RESERVED_END`, and the missing `XCV_ERR_INVALID_FORMAT`.
+
+### Changed
+
+- **The repository history was rewritten to drop the design records, benchmark archives, process
+  notes and private verification scripts** that earlier commits carried under `docs/` and
+  `scripts/`. Every commit hash changed, and every tag was moved to its rewritten commit with the
+  same library sources; a checkout that pinned an old hash should re-pin by tag. Public documents
+  cite the moved records by label only (`RFC-0007`, `B-043`).
 
 ### Fixed
 

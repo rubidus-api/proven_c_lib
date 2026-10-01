@@ -1,4 +1,4 @@
-[한국어](README-ko.md) | **English** - **Proven C library v0.4.0** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.4.0/proven_c_lib-v0.4.0.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.4.0/proven_c_lib-v0.4.0-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.4.0/proven_c_lib-v0.4.0-ko-manual.pdf)
+[한국어](README-ko.md) | **English** - **Proven C library v0.5.0** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.5.0/proven_c_lib-v0.5.0.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.5.0/proven_c_lib-v0.5.0-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.5.0/proven_c_lib-v0.5.0-ko-manual.pdf)
 
 # Proven C library
 
@@ -22,7 +22,7 @@ manual is published with a searchable index of every public function. It assumes
 one introductory C book, and it is the only document in this repository written to be read rather
 than looked up.
 
-- Version: proven_c_lib-v0.4.0 | Standard: C23 | License: MIT
+- Version: proven_c_lib-v0.5.0 | Standard: C23 | License: MIT
 - Versions are semantic, `MAJOR.MINOR.PATCH`, from v0.0.1 (2026-09-04); the releases before it carry
   date-based numbers (`v26.MM.DDx`) and stay as they were published.
 - Repository: https://github.com/rubidus-api/proven_c_lib
