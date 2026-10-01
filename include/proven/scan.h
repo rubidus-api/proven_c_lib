@@ -264,7 +264,12 @@ static inline proven_err_t proven_scan_fmt_internal_view(proven_u8str_view_t vie
 
 /**
  * @brief Variadic macro to scan strings into strictly-typed out-pointers from a view.
- * Usage: proven_scan_fmt(view, "Hello {}", PROVEN_SCAN_ARG(&num));
+ * Usage: proven_scan_fmt(view, "Hello {}", PROVEN_SCAN_ARG(&num)); *
+ * MACRO ARGUMENTS AND COMPOUND LITERALS (RFC-0009 X-008). These are function-like macros, and
+ * the preprocessor splits arguments at every top-level comma - including the one inside a
+ * compound literal's braces. `(proven_u8str_view_t){ p, n }` passed as an argument becomes two
+ * arguments, and the error names a macro you did not write. Pass a variable or a PROVEN_LIT,
+ * or put the compound literal in parentheses: `((proven_u8str_view_t){ p, n })`.
  */
 #define proven_scan_fmt(view, fmt, ...) \
     proven_scan_fmt_internal_view(view, fmt, \

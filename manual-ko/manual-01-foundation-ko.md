@@ -433,6 +433,21 @@ if (view.size > 0 && !view.ptr) {
 (void)err;
 ```
 
+### 매크로에 view 넘기기
+
+여러 진입점이 함수형 매크로다: `PROVEN_ARG`, `proven_scan_fmt`, print와 `append_fmt` 계열,
+`PROVEN_MAP_*_U8_*` 래퍼. 전처리기는 괄호 안에 있지 않은 모든 쉼표에서 매크로 인수를 나누는데,
+복합 리터럴의 중괄호 안 쉼표는 괄호 안이 아니다. 그래서 `(proven_u8str_view_t){ p, n }`을 넘기면
+매크로는 인수 두 개를 받고, 컴파일러 오류는 호출한 적도 없는 내부 함수 이름을 댄다. 변수나
+`PROVEN_LIT`을 넘기거나, 복합 리터럴을 괄호로 감싼다:
+
+```c
+const proven_byte_t bytes[] = { '4', '2' };
+proven_u8str_view_t digits = { bytes, sizeof bytes };
+proven_println("{}", PROVEN_ARG(digits));                                  /* a variable */
+proven_println("{}", PROVEN_ARG(((proven_u8str_view_t){ bytes, 1 })));     /* parentheses */
+```
+
 ## 4. 감길 수 없는 크기 산술
 
 ### 왜 곱셈 하나에 함수 호출이 필요한가

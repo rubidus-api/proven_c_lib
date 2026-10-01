@@ -437,6 +437,19 @@ int main(void) {
                            lo == 10 && hi == 0x1F, "decimal and hex in one format", "");
     }
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a compound-literal view in parentheses passes through the scan macro",
+        "RFC-0009 X-008: the preprocessor splits a bare compound literal at its comma; the documented form - the literal in parentheses - must compile and scan.",
+        "If this stops compiling, the macro's first parameter is no longer passed through as one expression.");
+    // ---------------------------------------------------------------
+    {
+        const proven_byte_t src[] = { '4', '2', ' ', '7' };
+        int a = 0, b = 0;
+        proven_err_t e = proven_scan_fmt(((proven_u8str_view_t){ src, sizeof src }), "{} {}",
+                                         PROVEN_SCAN_ARG(&a), PROVEN_SCAN_ARG(&b));
+        PROVEN_TEST_ASSERT(e == PROVEN_OK && a == 42 && b == 7, "the parenthesised literal scans", "");
+    }
+
     PROVEN_TEST_INFO("Test Phase 21: Scan logic passed.");
     return 0;
 }

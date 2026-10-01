@@ -85,6 +85,12 @@ written; their tags still exist.
 
 ### Fixed
 
+- **The view-taking macros say how to pass a compound literal** (RFC-0009 X-008).
+  `PROVEN_ARG((proven_u8str_view_t){ p, n })` and the same in `proven_scan_fmt`, the print and
+  `append_fmt` macros and the `PROVEN_MAP_*_U8_*` wrappers do not compile - the preprocessor splits
+  the literal at its comma - and the error names an internal function. The headers and manual
+  chapter 1 (EN/KO) now say to pass a variable, a `PROVEN_LIT`, or the literal in parentheses; a
+  test pins the parenthesised form.
 - **`proven_random_set_source` is no longer a data race when called while other threads draw**
   (RFC-0009 S-004). The hook was two plain globals, so a late install was undefined behaviour and
   a draw could pair one source's function with the other's context. The pair is now published

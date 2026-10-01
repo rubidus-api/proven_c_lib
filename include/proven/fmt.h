@@ -340,7 +340,16 @@ static inline proven_arg_t proven_arg_identity(proven_arg_t v) { return v; }
 #define PROVEN_ARG_OF(objptr, renderfn) proven_arg_custom((const void *)(objptr), (renderfn))
 
 /**
- * @brief Type-safe argument selection using C11 _Generic.
+ * @brief Type-safe argument selection using C11 _Generic. *
+ * MACRO ARGUMENTS AND COMPOUND LITERALS (RFC-0009 X-008). These are function-like macros, and
+ * the preprocessor splits arguments at every top-level comma - including the one inside a
+ * compound literal's braces. `(proven_u8str_view_t){ p, n }` passed as an argument becomes two
+ * arguments, and the error names a macro you did not write. Pass a variable or a PROVEN_LIT,
+ * or put the compound literal in parentheses: `((proven_u8str_view_t){ p, n })`.
+ *
+ * The same holds for every formatting and printing macro that takes PROVEN_ARG(...) lists:
+ * proven_u8str_append_fmt and its forms, proven_print / proven_println / proven_eprint /
+ * proven_eprintln, and the scan macros.
  */
 #ifndef PROVEN_FMT_NO_FLOAT
 #define PROVEN_ARG(x) _Generic((x), \

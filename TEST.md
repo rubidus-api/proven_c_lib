@@ -851,6 +851,7 @@ Sub-checks:
 - Confirms not-found behavior.
 - Scans using `{}` and spec-style format patterns.
 - Scans native and fixed-width integer aliases.
+- A compound-literal view wrapped in parentheses passes through `proven_scan_fmt` as one argument and scans (the form the headers and manual chapter 1 document for every view-taking macro, RFC-0009 X-008).
 
 Failure tip: inspect `src/proven/scan.c`. The most common bugs are cursor advancement on failure, overflow detection, and accepting invalid trailing characters.
 

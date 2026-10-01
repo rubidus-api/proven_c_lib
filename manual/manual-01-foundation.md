@@ -437,6 +437,22 @@ if (view.size > 0 && !view.ptr) {
 (void)err;
 ```
 
+### Passing a view to a macro
+
+Several entry points are function-like macros: `PROVEN_ARG`, `proven_scan_fmt`, the print and
+`append_fmt` families, and the `PROVEN_MAP_*_U8_*` wrappers. The preprocessor splits macro
+arguments at every comma that is not inside parentheses - and the comma inside a compound
+literal's braces is not. Passing `(proven_u8str_view_t){ p, n }` therefore hands the macro two
+arguments, and the compiler's error names an internal function you never called. Pass a
+variable, a `PROVEN_LIT`, or wrap the compound literal in parentheses:
+
+```c
+const proven_byte_t bytes[] = { '4', '2' };
+proven_u8str_view_t digits = { bytes, sizeof bytes };
+proven_println("{}", PROVEN_ARG(digits));                                  /* a variable */
+proven_println("{}", PROVEN_ARG(((proven_u8str_view_t){ bytes, 1 })));     /* parentheses */
+```
+
 ## 4. Size arithmetic that cannot wrap
 
 ### Why a multiplication needs a function call
