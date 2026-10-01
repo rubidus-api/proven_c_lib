@@ -73,9 +73,10 @@ proven_result_file_t proven_fs_open(proven_allocator_t scratch, proven_u8str_vie
 /*
  * @note A failure says WHICH failure: PROVEN_ERR_NOT_FOUND when the name is not there,
  *       PROVEN_ERR_PERMISSION when the caller may not, PROVEN_ERR_BUSY when something else
- *       holds it. Everything else, including an exclusive-create collision, is
- *       PROVEN_ERR_IO. These used to be one code, and one code is one a caller cannot act
- *       on: asking the user, retrying, and giving up are three different answers.
+ *       holds it, PROVEN_ERR_EXISTS when PROVEN_FS_CREATE_NEW found the name already
+ *       there. Everything else is PROVEN_ERR_IO. These used to be one code, and one code is
+ *       one a caller cannot act on: asking the user, retrying, choosing another name and
+ *       giving up are different answers.
  */
 
 /**

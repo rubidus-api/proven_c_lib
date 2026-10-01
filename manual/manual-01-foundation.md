@@ -103,10 +103,11 @@ typedef enum {
     PROVEN_ERR_EOF,
     PROVEN_ERR_BUSY,
     PROVEN_ERR_PERMISSION,
-    PROVEN_ERR_INVALID_FORMAT
+    PROVEN_ERR_INVALID_FORMAT,
+    PROVEN_ERR_EXISTS
 } proven_err_t;
 
-#define PROVEN_ERR_LAST         PROVEN_ERR_INVALID_FORMAT   /* moves when a code is added */
+#define PROVEN_ERR_LAST         PROVEN_ERR_EXISTS           /* moves when a code is added */
 #define PROVEN_ERR_RESERVED_END 0x1000                      /* never reached, in any version */
 ```
 
@@ -128,6 +129,7 @@ typedef enum {
 | `PROVEN_ERR_BUSY` | A queue, lock, or resource is busy. | Backing off. |
 | `PROVEN_ERR_PERMISSION` | Access denied. | Reporting; retrying will not help. |
 | `PROVEN_ERR_INVALID_FORMAT` | A format or scan template is itself malformed. | Fixing the format string - a bug, not bad data. |
+| `PROVEN_ERR_EXISTS` | An exclusive create found the name already there (`PROVEN_FS_CREATE_NEW`). | Choosing another name, or opening the existing one. |
 
 **Room for your own codes.** Every `proven_err_t` value is below `PROVEN_ERR_RESERVED_END`
 (0x1000), and that is a promise for every later version, not a description of this one: proven

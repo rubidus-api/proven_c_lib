@@ -83,15 +83,15 @@ static proven_result_file_t internal_fs_open_with(proven_allocator_t scratch, pr
     proven_sys_file_handle_t sh = proven_sys_fs_open_checked(path_buf, pal_flags | extra_pal_flags, &why);
     internal_cstr_free(scratch, path_buf);
 
-    /* "It went wrong" is not an answer a caller can act on. These three are: the name is not
-     * there, the caller may not, or something else holds it right now. Everything else stays
-     * PROVEN_ERR_IO, including an exclusive-create collision, which has no error of its own
-     * and is not worth inventing one for. */
+    /* "It went wrong" is not an answer a caller can act on. These four are: the name is not
+     * there, the caller may not, something else holds it right now, or an exclusive create
+     * found the name taken. Everything else stays PROVEN_ERR_IO. */
     proven_err_t open_err = PROVEN_ERR_IO;
     switch (why) {
         case PROVEN_SYS_FS_OPEN_NOT_FOUND: open_err = PROVEN_ERR_NOT_FOUND; break;
         case PROVEN_SYS_FS_OPEN_DENIED:    open_err = PROVEN_ERR_PERMISSION; break;
         case PROVEN_SYS_FS_OPEN_BUSY:      open_err = PROVEN_ERR_BUSY; break;
+        case PROVEN_SYS_FS_OPEN_EXISTS:    open_err = PROVEN_ERR_EXISTS; break;
         default: break;
     }
 

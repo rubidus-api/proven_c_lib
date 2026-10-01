@@ -49,6 +49,19 @@ int main() {
     
     (void)proven_fs_close(file);
 
+    // 3b. A failed open says which failure (RFC-0009 X-009): an exclusive create over a name
+    //     that is there is PROVEN_ERR_EXISTS - not the PROVEN_ERR_IO it used to share with
+    //     every other failure - and a missing name for reading is PROVEN_ERR_NOT_FOUND.
+    PROVEN_TEST_INFO("Testing that open failures carry their reason...");
+    open_res = proven_fs_open(heap, path, PROVEN_FS_WRITE | PROVEN_FS_CREATE_NEW);
+    PROVEN_TEST_ASSERT(open_res.err == PROVEN_ERR_EXISTS,
+        "CREATE_NEW over an existing name is PROVEN_ERR_EXISTS",
+        "Check the EEXIST / ERROR_FILE_EXISTS mapping in proven_sys_fs_open_checked and the switch in internal_fs_open_with");
+    open_res = proven_fs_open(heap, PROVEN_LIT("test_file_absent.txt"), PROVEN_FS_READ);
+    PROVEN_TEST_ASSERT(open_res.err == PROVEN_ERR_NOT_FOUND,
+        "opening a missing name for reading is PROVEN_ERR_NOT_FOUND",
+        "Check the ENOENT / ERROR_FILE_NOT_FOUND mapping in proven_sys_fs_open_checked");
+
     // 4. Absolute path classifier should recognize Windows absolute forms too.
     PROVEN_TEST_INFO("Testing absolute path classifier edge cases...");
     PROVEN_TEST_ASSERT(proven_fs_is_absolute(PROVEN_LIT("/usr/bin")),

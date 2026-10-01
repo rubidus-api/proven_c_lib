@@ -104,10 +104,11 @@ typedef enum {
     PROVEN_ERR_EOF,
     PROVEN_ERR_BUSY,
     PROVEN_ERR_PERMISSION,
-    PROVEN_ERR_INVALID_FORMAT
+    PROVEN_ERR_INVALID_FORMAT,
+    PROVEN_ERR_EXISTS
 } proven_err_t;
 
-#define PROVEN_ERR_LAST         PROVEN_ERR_INVALID_FORMAT   /* moves when a code is added */
+#define PROVEN_ERR_LAST         PROVEN_ERR_EXISTS           /* moves when a code is added */
 #define PROVEN_ERR_RESERVED_END 0x1000                      /* never reached, in any version */
 ```
 
@@ -129,6 +130,7 @@ typedef enum {
 | `PROVEN_ERR_BUSY` | 큐, 락, 또는 리소스가 사용 중이다. | 물러나서 기다린다. |
 | `PROVEN_ERR_PERMISSION` | 접근이 거부되었다. | 보고한다. 재시도해도 소용없다. |
 | `PROVEN_ERR_INVALID_FORMAT` | 포맷이나 스캔 템플릿 자체가 잘못되었다. | 포맷 문자열을 고친다 — 잘못된 데이터가 아니라 버그다. |
+| `PROVEN_ERR_EXISTS` | 배타적 생성이 이미 있는 이름을 만났다(`PROVEN_FS_CREATE_NEW`). | 다른 이름을 고르거나, 있는 것을 연다. |
 
 **여러분 자신의 코드를 위한 자리.** 모든 `proven_err_t` 값은 `PROVEN_ERR_RESERVED_END`(0x1000)보다
 작다. 이것은 이번 판의 모습이 아니라 이후 모든 판에 대한 약속이다: proven은 그 이상의 코드를 결코 정의하지

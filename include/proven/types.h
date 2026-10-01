@@ -119,7 +119,8 @@ typedef enum {
     PROVEN_ERR_EOF,
     PROVEN_ERR_BUSY,
     PROVEN_ERR_PERMISSION,
-    PROVEN_ERR_INVALID_FORMAT
+    PROVEN_ERR_INVALID_FORMAT,
+    PROVEN_ERR_EXISTS
 } proven_err_t;
 
 /**
@@ -128,7 +129,7 @@ typedef enum {
  * Compare against this, not against a code you happened to know was last: a range check
  * written against `PROVEN_ERR_INVALID_FORMAT` silently stops covering the next code added.
  */
-#define PROVEN_ERR_LAST PROVEN_ERR_INVALID_FORMAT
+#define PROVEN_ERR_LAST PROVEN_ERR_EXISTS
 
 /**
  * @brief Every proven_err_t value is below this, in this version and every later one.

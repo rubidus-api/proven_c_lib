@@ -608,6 +608,7 @@ Sub-checks:
 - Writes known content and checks byte count.
 - Reads the whole file and checks size and byte equality.
 - Reopens the file and queries its size.
+- Verifies an exclusive create over the existing file is `PROVEN_ERR_EXISTS` and a missing name opened for reading is `PROVEN_ERR_NOT_FOUND` (RFC-0009 X-009).
 - Verifies absolute path classification for POSIX, drive-letter Windows paths, UNC paths, and extended Windows paths.
 
 Failure tip: inspect `src/proven/fs.c` and `platform/proven_sys_fs.c`. If only Windows path cases fail, check path-prefix parsing rather than POSIX filesystem behavior.

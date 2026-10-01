@@ -48,7 +48,8 @@ typedef enum {
     PROVEN_SYS_FS_OPEN_NOT_FOUND,  /**< the name is not there */
     PROVEN_SYS_FS_OPEN_DENIED,     /**< permission refused it */
     PROVEN_SYS_FS_OPEN_BUSY,       /**< something else holds it right now */
-    PROVEN_SYS_FS_OPEN_ERROR       /**< anything else, including an exclusive-create collision */
+    PROVEN_SYS_FS_OPEN_EXISTS,     /**< an exclusive create found the name already there */
+    PROVEN_SYS_FS_OPEN_ERROR       /**< anything else */
 } proven_sys_fs_open_result_t;
 
 /**

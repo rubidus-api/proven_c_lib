@@ -149,6 +149,8 @@ proven_sys_file_handle_t proven_sys_fs_open_checked(const char *path, int flags,
             reason = PROVEN_SYS_FS_OPEN_DENIED;
         } else if (open_error == ERROR_SHARING_VIOLATION || open_error == ERROR_LOCK_VIOLATION) {
             reason = PROVEN_SYS_FS_OPEN_BUSY;
+        } else if (open_error == ERROR_FILE_EXISTS || open_error == ERROR_ALREADY_EXISTS) {
+            reason = PROVEN_SYS_FS_OPEN_EXISTS;
         } else {
             reason = PROVEN_SYS_FS_OPEN_ERROR;
         }
@@ -186,7 +188,8 @@ proven_sys_file_handle_t proven_sys_fs_open_checked(const char *path, int flags,
         if (errno == ENOENT || errno == ENOTDIR) reason = PROVEN_SYS_FS_OPEN_NOT_FOUND;
         else if (errno == EACCES || errno == EPERM || errno == EROFS) reason = PROVEN_SYS_FS_OPEN_DENIED;
         else if (errno == EBUSY || errno == ETXTBSY) reason = PROVEN_SYS_FS_OPEN_BUSY;
-        else reason = PROVEN_SYS_FS_OPEN_ERROR;   /* EEXIST from an exclusive create lands here */
+        else if (errno == EEXIST) reason = PROVEN_SYS_FS_OPEN_EXISTS;
+        else reason = PROVEN_SYS_FS_OPEN_ERROR;
         if (out_reason) *out_reason = reason;
         return (proven_sys_file_handle_t){ .fd = -1 };
     }

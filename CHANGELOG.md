@@ -18,6 +18,15 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **`PROVEN_ERR_EXISTS`: an exclusive create found the name already there** (RFC-0009 X-009).
+  `proven_fs_open` with `PROVEN_FS_CREATE_NEW` over an existing name returned `PROVEN_ERR_IO`,
+  the same code as every unclassified failure, so a caller could not tell "choose another name"
+  from "the disk failed". It now returns the new code, on POSIX (`EEXIST`) and Windows
+  (`ERROR_FILE_EXISTS`). `PROVEN_ERR_LAST` moves to it; alias `XCV_ERR_EXISTS`. Code that
+  compared that case against `PROVEN_ERR_IO` must compare against `PROVEN_ERR_EXISTS`.
+
 ## [0.5.0] - 2026-10-01
 
 A MINOR release: nothing public removed, no behaviour changed. Three additions requested by
