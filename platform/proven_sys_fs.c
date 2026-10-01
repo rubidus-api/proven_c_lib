@@ -669,9 +669,22 @@ int proven_sys_fs_dir_step(proven_sys_dir_handle_t handle, proven_sys_dir_entry_
         break;
     }
 
-    // Convert back from Wide to UTF-8
-    int required_size = WideCharToMultiByte(CP_UTF8, 0, wd->fd.cFileName, -1, NULL, 0, NULL, NULL);
+    out_entry->is_symlink = (wd->fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+    out_entry->is_dir = (wd->fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    out_entry->is_regular = !out_entry->is_dir && !out_entry->is_symlink;
+    uint64_t sz = ((uint64_t)wd->fd.nFileSizeHigh << 32) | wd->fd.nFileSizeLow;
+    if (sz > (uint64_t)PROVEN_SIZE_MAX) out_entry->size = PROVEN_SIZE_MAX;
+    else out_entry->size = (size_t)sz;
+
+    /* Convert back from UTF-16 to UTF-8. WC_ERR_INVALID_CHARS: NTFS allows a lone surrogate
+     * in a name, and without the flag it became U+FFFD - a name that, opened, reaches a
+     * different file or none (RFC-0009 D-003). Such an entry is reported, not renamed. */
+    int required_size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wd->fd.cFileName, -1, NULL, 0, NULL, NULL);
     if (required_size <= 0) {
+        if (GetLastError() == ERROR_NO_UNICODE_TRANSLATION) {
+            out_entry->name = NULL;
+            return 2;
+        }
         return -1; // Conversion failed
     } else {
         if (!wd->utf8_name || wd->utf8_cap < (size_t)required_size) {
@@ -680,7 +693,7 @@ int proven_sys_fs_dir_step(proven_sys_dir_handle_t handle, proven_sys_dir_entry_
             wd->utf8_cap = (size_t)required_size;
         }
         if (wd->utf8_name) {
-            int n = WideCharToMultiByte(CP_UTF8, 0, wd->fd.cFileName, -1, wd->utf8_name, required_size, NULL, NULL);
+            int n = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wd->fd.cFileName, -1, wd->utf8_name, required_size, NULL, NULL);
             if (n <= 0) {
                 return -1;
             } else {
@@ -690,12 +703,6 @@ int proven_sys_fs_dir_step(proven_sys_dir_handle_t handle, proven_sys_dir_entry_
             return -1; // Allocation failed
         }
     }
-    out_entry->is_symlink = (wd->fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-    out_entry->is_dir = (wd->fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-    out_entry->is_regular = !out_entry->is_dir && !out_entry->is_symlink;
-    uint64_t sz = ((uint64_t)wd->fd.nFileSizeHigh << 32) | wd->fd.nFileSizeLow;
-    if (sz > (uint64_t)PROVEN_SIZE_MAX) out_entry->size = PROVEN_SIZE_MAX;
-    else out_entry->size = (size_t)sz;
     return 1;
 #else
     DIR *d = (DIR*)handle.internal;

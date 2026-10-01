@@ -251,8 +251,10 @@ proven_result_dir_t dir = proven_fs_dir_open(scratch, PROVEN_LIT("."));
 if (proven_is_ok(dir.err)) {
     proven_size_t leftovers = 0;
     proven_fs_dir_entry_t entry;
-    while (proven_is_ok(proven_fs_dir_next(&dir.value, &entry))) {
-        if (proven_fs_is_staging_name(entry.name)) ++leftovers;
+    proven_err_t e;
+    while ((e = proven_fs_dir_next(&dir.value, &entry)) != PROVEN_ERR_EOF) {
+        if (proven_is_ok(e) && proven_fs_is_staging_name(entry.name)) ++leftovers;
+        else if (e != PROVEN_OK && e != PROVEN_ERR_INVALID_ENCODING) break;
     }
     proven_fs_dir_close(&dir.value);
     proven_println("staging leftovers: {}", PROVEN_ARG(leftovers));
@@ -382,7 +384,11 @@ proven_println("answer={}", PROVEN_ARG(42));
 proven_eprintln("warning: {}", PROVEN_ARG(PROVEN_LIT("low memory")));
 ```
 
-Environment example. `proven_env_get` hands back an owned string, so it has to be destroyed:
+Environment example. `proven_env_get` hands back an owned string, so it has to be destroyed. A
+variable set to the empty string is an empty string, not an error, and a value that is not valid
+text (bytes that are not UTF-8 on POSIX, a lone surrogate on Windows) is
+`PROVEN_ERR_INVALID_ENCODING` - nothing is substituted. The same rule holds for directory entry
+names:
 
 ```c
 proven_result_u8str_t env = proven_env_get(alloc, PROVEN_LIT("PATH"));
@@ -1028,7 +1034,7 @@ directory and useless for a mail spool.
 | API | Intent | Return |
 |---|---|---|
 | `proven_fs_dir_open(scratch, path)` | Open a streaming iterator. `scratch` is for the path conversion only. | `proven_result_dir_t`. |
-| `proven_fs_dir_next(&dir, &entry)` | The next entry. `PROVEN_ERR_EOF` when there are no more. | `proven_err_t`. |
+| `proven_fs_dir_next(&dir, &entry)` | The next entry. `PROVEN_ERR_EOF` when there are no more; `PROVEN_ERR_INVALID_ENCODING` for one entry whose name is not valid text, and the next call goes on. | `proven_err_t`. |
 | `proven_fs_dir_close(&dir)` | Release the iterator. | void. |
 
 ```text
@@ -1049,6 +1055,7 @@ if (proven_is_ok(d.err)) {
     for (;;) {
         proven_err_t e = proven_fs_dir_next(&dir, &entry);
         if (e == PROVEN_ERR_EOF) break;
+        if (e == PROVEN_ERR_INVALID_ENCODING) continue;   /* a name that is not text: skip it */
         if (!proven_is_ok(e)) break;               /* a real error: report it */
         proven_println("{}", PROVEN_ARG(entry.name));
     }

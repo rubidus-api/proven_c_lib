@@ -30,6 +30,16 @@ written; their tags still exist.
   atomic or durable write leaves behind when killed mid-write (today's and the old one), for a
   cleanup job. The library itself never removes one it did not just create (RFC-0009 D-001).
 
+### Changed
+
+- **Text from the platform is strict, like all other text** (RFC-0009 D-003). An environment value
+  or a directory entry name that is not valid text - bytes that are not UTF-8 on POSIX, a lone
+  surrogate on Windows - is now `PROVEN_ERR_INVALID_ENCODING`. Before, POSIX returned the raw
+  bytes as `PROVEN_OK` and Windows silently substituted U+FFFD, which in a listing named a
+  different file, or none. `proven_fs_dir_next` and `proven_fs_walk_next` report such an entry
+  once (empty `name`, other fields filled in) and go on; `proven_fs_list` refuses the whole
+  listing rather than leave a file out.
+
 ### Fixed
 
 - **Eight leftover staging files no longer block every later atomic write of a path**
@@ -40,6 +50,10 @@ written; their tags still exist.
   a name collision is retried, any other failure is returned at once with its own code, and
   sixteen collisions in a row are `PROVEN_ERR_EXISTS`. Confidentiality was never affected: the
   staging file is created exclusively, so a planted name was refused, not written through.
+- **An environment variable set to the empty string read as `PROVEN_ERR_IO` on Windows**
+  (RFC-0009 D-002). `GetEnvironmentVariableW` returns 0 both for failure and for "stored 0
+  characters"; `GetLastError` now tells them apart, so the value is an empty string as on POSIX.
+  A value that grows between the sizing call and the read is re-sized instead of failing.
 
 ## [0.5.0] - 2026-10-01
 

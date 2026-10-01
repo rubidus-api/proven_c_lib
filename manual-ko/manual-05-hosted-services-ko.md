@@ -247,8 +247,10 @@ proven_result_dir_t dir = proven_fs_dir_open(scratch, PROVEN_LIT("."));
 if (proven_is_ok(dir.err)) {
     proven_size_t leftovers = 0;
     proven_fs_dir_entry_t entry;
-    while (proven_is_ok(proven_fs_dir_next(&dir.value, &entry))) {
-        if (proven_fs_is_staging_name(entry.name)) ++leftovers;
+    proven_err_t e;
+    while ((e = proven_fs_dir_next(&dir.value, &entry)) != PROVEN_ERR_EOF) {
+        if (proven_is_ok(e) && proven_fs_is_staging_name(entry.name)) ++leftovers;
+        else if (e != PROVEN_OK && e != PROVEN_ERR_INVALID_ENCODING) break;
     }
     proven_fs_dir_close(&dir.value);
     proven_println("staging leftovers: {}", PROVEN_ARG(leftovers));
@@ -373,7 +375,10 @@ proven_println("answer={}", PROVEN_ARG(42));
 proven_eprintln("warning: {}", PROVEN_ARG(PROVEN_LIT("low memory")));
 ```
 
-환경 변수 예. `proven_env_get`은 owned 문자열을 돌려주므로 반드시 파괴해야 한다:
+환경 변수 예. `proven_env_get`은 owned 문자열을 돌려주므로 반드시 파괴해야 한다. 빈 문자열로 설정된
+변수는 오류가 아니라 빈 문자열이고, 올바른 텍스트가 아닌 값(POSIX의 UTF-8이 아닌 바이트, Windows의 짝
+없는 서로게이트)은 `PROVEN_ERR_INVALID_ENCODING`이다 - 무엇도 대신 넣지 않는다. 디렉터리 엔트리 이름도
+같은 규칙을 따른다:
 
 ```c
 proven_result_u8str_t env = proven_env_get(alloc, PROVEN_LIT("PATH"));
@@ -1007,7 +1012,7 @@ int main(void) {
 | API | 의도 | 반환 |
 |---|---|---|
 | `proven_fs_dir_open(scratch, path)` | 스트리밍 반복자를 연다. `scratch`는 경로 변환에만 쓰인다. | `proven_result_dir_t`. |
-| `proven_fs_dir_next(&dir, &entry)` | 다음 엔트리. 더 이상 없으면 `PROVEN_ERR_EOF`. | `proven_err_t`. |
+| `proven_fs_dir_next(&dir, &entry)` | 다음 엔트리. 더 이상 없으면 `PROVEN_ERR_EOF`. 이름이 올바른 텍스트가 아닌 엔트리 하나에는 `PROVEN_ERR_INVALID_ENCODING`이며, 다음 호출은 이어서 읽는다. | `proven_err_t`. |
 | `proven_fs_dir_close(&dir)` | 반복자를 해제. | void. |
 
 ```text
@@ -1028,6 +1033,7 @@ if (proven_is_ok(d.err)) {
     for (;;) {
         proven_err_t e = proven_fs_dir_next(&dir, &entry);
         if (e == PROVEN_ERR_EOF) break;
+        if (e == PROVEN_ERR_INVALID_ENCODING) continue;   /* a name that is not text: skip it */
         if (!proven_is_ok(e)) break;               /* a real error: report it */
         proven_println("{}", PROVEN_ARG(entry.name));
     }

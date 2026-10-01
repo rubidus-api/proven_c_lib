@@ -401,6 +401,13 @@ proven_err_t proven_sysio_scan_chunk_impl(proven_file_t handle, const char *fmt,
  * @param alloc The allocator to securely hold the resulting string.
  * @param key The environment variable name view.
  * @return An error if not found, or a dynamically allocated string containing the value.
+ *
+ * @note PROVEN_ERR_NOT_FOUND when the variable is not set. A variable set to the empty string
+ *       is PROVEN_OK with an empty string, on every platform.
+ * @note PROVEN_ERR_INVALID_ENCODING when the value is not valid text: bytes that are not
+ *       UTF-8 on POSIX, a lone surrogate on Windows. Nothing is substituted - the strict rule
+ *       of the rest of the library. A program that must pass such a value through untouched
+ *       has to read it with the platform's own call.
  */
 [[nodiscard]] proven_result_u8str_t proven_env_get(proven_allocator_t alloc, proven_u8str_view_t key);
 

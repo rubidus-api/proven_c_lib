@@ -202,7 +202,10 @@ void proven_sys_fs_dir_close(proven_sys_dir_handle_t handle);
 /**
  * @brief One step of a directory walk, with end-of-directory told apart from failure.
  *
- * @return 1 an entry was produced, 0 the directory ended, -1 the OS failed.
+ * @return 1 an entry was produced, 0 the directory ended, -1 the OS failed, 2 an entry is there
+ *         but its name is not valid text (Windows: a lone surrogate; `name` is then NULL and
+ *         the other fields describe the entry). The next step continues after it. POSIX never
+ *         returns 2: it hands back the kernel's bytes, and fs.c checks them.
  *
  * readdir() returns NULL for both "no more entries" and "the read failed", and the
  * only thing that tells them apart is errno. Collapsing the two makes a truncated

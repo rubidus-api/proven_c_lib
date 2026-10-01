@@ -1,5 +1,6 @@
 #include "proven/sysio.h"
 #include "proven/heap.h"
+#include "proven/utf.h"
 #include "proven_internal_console.h"
 #include "../../platform/proven_sys_io.h"
 #include "../../platform/proven_sys_env.h"
@@ -916,6 +917,15 @@ proven_result_u8str_t proven_env_get(proven_allocator_t alloc, proven_u8str_view
         }
     } else {
         result = (proven_result_u8str_t){ .err = pal_err };
+    }
+
+    /* Strict text (B-039, RFC-0009 D-003): a value that is not UTF-8 is an error, on POSIX
+     * as on Windows, where the PAL already refuses a lone surrogate. getenv hands back
+     * whatever bytes were put there. */
+    if (proven_is_ok(result.err) &&
+        proven_utf8_to_utf16_size(proven_u8str_as_view(&result.value)).err != PROVEN_OK) {
+        proven_u8str_destroy(alloc, &result.value);
+        result = (proven_result_u8str_t){ .err = PROVEN_ERR_INVALID_ENCODING };
     }
 
 cleanup_key:

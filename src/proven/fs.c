@@ -4,6 +4,7 @@
 #include "proven/array.h"
 #include "proven/algorithm.h"
 #include "proven/random.h"
+#include "proven/utf.h"
 #include "../../platform/proven_sys_time.h"
 #include <stdatomic.h>
 
@@ -578,6 +579,24 @@ static int compare_fs_entries(const void *a, const void *b) {
     return 0;
 }
 
+/*
+ * One directory step with the strict-text rule applied (RFC-0009 D-003): an entry whose name
+ * is not valid text is step 2, on every platform. Windows' PAL reports it itself (a lone
+ * surrogate); POSIX hands back the kernel's bytes, checked here. Nothing is substituted - a
+ * listed name that is not the real one opens a different file, or none.
+ */
+static int internal_dir_step_text(proven_sys_dir_handle_t dh, proven_sys_dir_entry_t *se) {
+    int step = proven_sys_fs_dir_step(dh, se);
+    if (step == 1) {
+        proven_u8str_view_t name = proven_u8str_view_from_cstr(se->name);
+        if (proven_utf8_to_utf16_size(name).err != PROVEN_OK) {
+            se->name = NULL;
+            return 2;
+        }
+    }
+    return step;
+}
+
 proven_result_array_t proven_fs_list(proven_allocator_t alloc, proven_u8str_view_t path) {
     proven_result_array_t res = {0};
     internal_result_cstr_t p_res = internal_view_to_cstr(alloc, path);
@@ -602,7 +621,7 @@ proven_result_array_t proven_fs_list(proven_allocator_t alloc, proven_u8str_view
 
     proven_sys_dir_entry_t se;
     int step;
-    while ((step = proven_sys_fs_dir_step(dh, &se)) == 1) {
+    while ((step = internal_dir_step_text(dh, &se)) == 1) {
         proven_fs_entry_t entry = {0};
         entry.type = se.is_dir ? PROVEN_FS_TYPE_DIR
                   : se.is_regular ? PROVEN_FS_TYPE_FILE
@@ -631,10 +650,12 @@ proven_result_array_t proven_fs_list(proven_allocator_t alloc, proven_u8str_view
         }
     }
     proven_sys_fs_dir_close(dh);
-    if (step < 0) {
-        /* Half a listing reported as a whole one is how a backup silently skips files. */
+    if (step != 0) {
+        /* Half a listing reported as a whole one is how a backup silently skips files. That
+         * includes leaving out an entry whose name is not valid text: the whole list is
+         * refused, and proven_fs_dir_next reports such an entry on its own and goes on. */
         proven_fs_list_destroy(alloc, &a_res.value);
-        res.err = PROVEN_ERR_IO;
+        res.err = step == 2 ? PROVEN_ERR_INVALID_ENCODING : PROVEN_ERR_IO;
         return res;
     }
 
@@ -1310,13 +1331,16 @@ proven_err_t proven_fs_dir_next(proven_fs_dir_t *dir, proven_fs_dir_entry_t *out
 
     proven_sys_dir_entry_t se = {0};
     proven_sys_dir_handle_t dh = { .internal = dir->internal };
-    int step = proven_sys_fs_dir_step(dh, &se);
+    int step = internal_dir_step_text(dh, &se);
     if (step == 0) return PROVEN_ERR_EOF;
     if (step < 0) return PROVEN_ERR_IO;   /* a failed read is not an empty directory */
 
     /* Borrowed: the name points into the iterator's own storage, which is what lets a
-     * huge directory be walked without an allocation per entry. */
-    out_entry->name = proven_u8str_view_from_cstr(se.name);
+     * huge directory be walked without an allocation per entry. An entry whose name is not
+     * valid text is reported with an empty name and PROVEN_ERR_INVALID_ENCODING; the next
+     * call goes on with the next entry. */
+    out_entry->name = step == 2 ? (proven_u8str_view_t){ .ptr = (const proven_u8 *)"", .size = 0 }
+                                : proven_u8str_view_from_cstr(se.name);
     /* A symlink, FIFO, socket or device is neither. It used to be reported as a regular
      * file, which told the caller it could open it and read bytes out of it - and a
      * dangling symlink cannot even be opened. */
@@ -1325,7 +1349,7 @@ proven_err_t proven_fs_dir_next(proven_fs_dir_t *dir, proven_fs_dir_entry_t *out
                     : PROVEN_FS_TYPE_OTHER;
     out_entry->is_symlink = se.is_symlink;
     out_entry->size = se.size;
-    return PROVEN_OK;
+    return step == 2 ? PROVEN_ERR_INVALID_ENCODING : PROVEN_OK;
 }
 
 void proven_fs_dir_close(proven_fs_dir_t *dir) {
@@ -1766,6 +1790,19 @@ proven_err_t proven_fs_walk_next(proven_fs_walk_t *walk, proven_fs_walk_entry_t 
             walk_truncate(s, top->path_len);
             s->depth--;
             continue;
+        }
+        if (e == PROVEN_ERR_INVALID_ENCODING) {
+            /* An entry whose name is not valid text (RFC-0009 D-003). Report it - with the
+             * directory it is in as `path` and an empty `name`, since it has no name the
+             * library can give - and keep reading this directory: the read itself did not
+             * fail. Not descended into, whatever it is. */
+            out_entry->path = walk_path(s);
+            out_entry->name = de.name;
+            out_entry->type = de.type;
+            out_entry->size = de.size;
+            out_entry->depth = s->depth - 1;
+            out_entry->is_symlink = de.is_symlink;
+            return e;
         }
         if (!proven_is_ok(e)) {
             /*

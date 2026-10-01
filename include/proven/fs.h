@@ -328,6 +328,12 @@ proven_result_dir_t proven_fs_dir_open(proven_allocator_t scratch, proven_u8str_
  */
 [[nodiscard]]
 proven_err_t proven_fs_dir_next(proven_fs_dir_t *dir, proven_fs_dir_entry_t *out_entry);
+/*
+ * @note Names are text, strictly: an entry whose name is not valid UTF-8 (POSIX) or holds a
+ *       lone surrogate (Windows) is PROVEN_ERR_INVALID_ENCODING, with an empty `name` and the
+ *       other fields filled in. Nothing is substituted - a U+FFFD in its place would name a
+ *       different file, or none - and the next call goes on with the next entry.
+ */
 
 void proven_fs_dir_close(proven_fs_dir_t *dir);
 
@@ -435,6 +441,10 @@ proven_result_walk_t proven_fs_walk_open(proven_allocator_t alloc, proven_u8str_
  * A directory is reported BEFORE its contents. On an error that belongs to one directory
  * (it could not be opened, or its read failed), the error is returned and `out_entry`
  * describes that directory; call again to continue with the rest of the tree.
+ *
+ * An entry whose name is not valid text is PROVEN_ERR_INVALID_ENCODING with `path` naming
+ * the directory it is in and an empty `name`; it is not descended into, and the next call
+ * continues in the same directory.
  */
 [[nodiscard]]
 proven_err_t proven_fs_walk_next(proven_fs_walk_t *walk, proven_fs_walk_entry_t *out_entry);
@@ -445,6 +455,11 @@ void proven_fs_walk_close(proven_fs_walk_t *walk);
  * @brief Lists the contents of a directory into an array of proven_fs_entry_t.
  * @note This uses the provided allocator to store strings for entry names.
  *       Entries should be sorted by name by default.
+ * @note All or nothing: a failed read is PROVEN_ERR_IO, and an entry whose name is not valid
+ *       text (bytes that are not UTF-8 on POSIX, a lone surrogate on Windows) makes the whole
+ *       call PROVEN_ERR_INVALID_ENCODING - leaving it out would be a listing that hides a
+ *       file. To list such a directory anyway, use proven_fs_dir_next, which reports that
+ *       one entry and goes on.
  */
 [[nodiscard]]
 proven_result_array_t proven_fs_list(proven_allocator_t alloc, proven_u8str_view_t path);
