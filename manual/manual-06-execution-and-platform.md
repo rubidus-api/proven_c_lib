@@ -142,6 +142,35 @@ typedef struct proven_job_sys proven_job_sys_t;
 | `proven_job_system_destroy(sys)` | Close if needed, drain queue, join workers, free resources. | void. |
 | `proven_job_submit(sys, routine, arg)` | Submit one job. Thread-safe with other submitters. | true if queued, false if full or closed. |
 | `proven_job_execute_one(sys)` | Let the calling thread execute one available job. | true if a job ran. |
+| `proven_job_submit_ex(sys, routine, arg)` | Submit, saying why a refusal happened. | `PROVEN_OK`; `PROVEN_ERR_AGAIN` when full (retry or help); `PROVEN_ERR_INVALID_STATE` when closed (stop). |
+| `proven_job_group_init(&group)` | Start counting a batch of jobs. | void. |
+| `proven_job_group_submit(sys, &group, routine, arg)` | Submit a job the group counts. A refused job is not counted. | as `submit_ex`. |
+| `proven_job_group_pending(&group)` | Jobs of the group not finished yet. | `proven_size_t`. |
+| `proven_job_group_wait(sys, &group)` | Return when every counted job has run; the caller runs queued jobs while it waits. What the jobs wrote is visible afterwards. | void. |
+
+```c
+/* Render 16 tiles on the pool and wait for all of them. render_tile is the
+ * program's own job routine; the wait runs queued tiles itself while it waits. */
+void render_tile(void *tile);
+static int tiles[16];
+proven_job_sys_t *pool = NULL;
+if (proven_is_ok(proven_job_system_init(alloc, 4, 64, &pool))) {
+    proven_job_group_t frame;
+    proven_job_group_init(&frame);
+    for (int i = 0; i < 16; ++i) {
+        proven_err_t e = proven_job_group_submit(pool, &frame, render_tile, &tiles[i]);
+        if (e == PROVEN_ERR_AGAIN) { (void)proven_job_execute_one(pool); --i; continue; }   /* full: help, retry */
+        if (e != PROVEN_OK) break;                                                          /* closed */
+    }
+    proven_job_group_wait(pool, &frame);
+    proven_println("{} tiles still pending", PROVEN_ARG(proven_job_group_pending(&frame)));
+    proven_job_system_close(pool);
+    if (proven_job_submit_ex(pool, render_tile, &tiles[0]) == PROVEN_ERR_INVALID_STATE) {
+        proven_println("closed: no more work is taken");   /* not "full - try again" */
+    }
+    proven_job_system_destroy(pool);
+}
+```
 
 Important constraints:
 

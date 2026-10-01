@@ -318,7 +318,13 @@ alias 554개: 소문자 `xcv_` 함수 이름 420개와 대문자 `XCV_` 매크�
 | `xcv_is_ok` | `proven_is_ok` |
 | `xcv_is_pow2` | `proven_is_pow2` |
 | `xcv_job_execute_one` | `proven_job_execute_one` |
+| `xcv_job_group_init` | `proven_job_group_init` |
+| `xcv_job_group_pending` | `proven_job_group_pending` |
+| `xcv_job_group_submit` | `proven_job_group_submit` |
+| `xcv_job_group_t` | `proven_job_group_t` |
+| `xcv_job_group_wait` | `proven_job_group_wait` |
 | `xcv_job_submit` | `proven_job_submit` |
+| `xcv_job_submit_ex` | `proven_job_submit_ex` |
 | `xcv_job_sys` | `proven_job_sys` |
 | `xcv_job_sys_t` | `proven_job_sys_t` |
 | `xcv_job_system_close` | `proven_job_system_close` |

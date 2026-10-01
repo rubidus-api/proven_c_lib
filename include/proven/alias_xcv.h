@@ -296,7 +296,13 @@
 #define xcv_is_ok proven_is_ok
 #define xcv_is_pow2 proven_is_pow2
 #define xcv_job_execute_one proven_job_execute_one
+#define xcv_job_group_init proven_job_group_init
+#define xcv_job_group_pending proven_job_group_pending
+#define xcv_job_group_submit proven_job_group_submit
+#define xcv_job_group_t proven_job_group_t
+#define xcv_job_group_wait proven_job_group_wait
 #define xcv_job_submit proven_job_submit
+#define xcv_job_submit_ex proven_job_submit_ex
 #define xcv_job_sys proven_job_sys
 #define xcv_job_sys_t proven_job_sys_t
 #define xcv_job_system_close proven_job_system_close

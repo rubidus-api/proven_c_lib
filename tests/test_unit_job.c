@@ -38,6 +38,29 @@ static void stale_permit_job(void *arg) {
     atomic_fetch_add_explicit(&stale_jobs_executed, 1u, memory_order_relaxed);
 }
 
+/* RFC-0009 X-003: one worker held busy, so the group's jobs can only run on the waiting thread. */
+static _Atomic(bool) x3_hold = false;
+static _Atomic(bool) x3_holding = false;
+static _Atomic(int)  x3_done = 0;
+static int x3_results[65];
+static void x3_blocker(void *arg) {
+    (void)arg;
+    atomic_store(&x3_holding, true);
+    while (atomic_load(&x3_hold)) proven_sys_thread_yield();
+}
+static int x3_many[2000];
+static void x3_slow(void *arg) {
+    int i = (int)(proven_uintptr_t)arg;
+    volatile int spin = 0;
+    for (int k = 0; k < 2000; ++k) spin += k;   /* long enough that workers, not the waiter, finish most */
+    x3_many[i] = i + 1;                          /* a plain write the wait must publish */
+}
+static void x3_job(void *arg) {
+    int i = (int)(proven_uintptr_t)arg;
+    x3_results[i] = i * i;   /* a plain write: the group wait must make it visible */
+    atomic_fetch_add(&x3_done, 1);
+}
+
 int main(void) {
     PROVEN_TEST_INFO("Running Phase 20: Multicore Job Pool Scheduler...");
 
@@ -131,6 +154,64 @@ int main(void) {
         atomic_load_explicit(&stale_jobs_executed, memory_order_relaxed) == 4u,
         "externally drained jobs should execute exactly once",
         "Inspect stale semaphore permit handling and queue claims.");
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("submit says why, and a group can be waited on",
+        "RFC-0009 X-003: proven_job_submit_ex tells a full queue (AGAIN) from a closed system (INVALID_STATE); a job group's wait returns only when every job it counted has run - and the waiting thread runs them itself when the workers are busy.",
+        "Inspect job_submit, proven_job_group_submit and proven_job_group_wait in src/proven/job.c. Run under ./nob tsan: the group's release/acquire is what makes x3_results visible.");
+    // ---------------------------------------------------------------
+    {
+        proven_job_sys_t *js = NULL;
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_job_system_init(proven_heap_allocator(), 1, 64, &js)), "one worker, 64 slots", "");
+        atomic_store(&x3_hold, true);
+        PROVEN_TEST_ASSERT(proven_job_submit_ex(js, x3_blocker, NULL) == PROVEN_OK, "the blocker is queued", "");
+        while (!atomic_load(&x3_holding)) proven_sys_thread_yield();   /* the only worker is now busy */
+
+        proven_job_group_t g;
+        proven_job_group_init(&g);
+        for (int i = 0; i < 65; ++i) x3_results[i] = -1;
+        int queued = 0;
+        proven_err_t e = PROVEN_OK;
+        while (queued < 65 && (e = proven_job_group_submit(js, &g, x3_job, (void *)(proven_uintptr_t)queued)) == PROVEN_OK) ++queued;
+        PROVEN_TEST_ASSERT(queued == 64 && e == PROVEN_ERR_AGAIN,
+            "the 64-slot queue (the blocker already taken off it) fills, and then says AGAIN, not false", "");
+        PROVEN_TEST_ASSERT(proven_job_group_pending(&g) == (proven_size_t)queued, "a refused job is not counted", "");
+
+        /* The worker is held: only this thread can run them. */
+        proven_job_group_wait(js, &g);
+        PROVEN_TEST_ASSERT(proven_job_group_pending(&g) == 0 && atomic_load(&x3_done) == queued, "the wait returned after all of them", "");
+        bool all = true;
+        for (int i = 0; i < queued; ++i) all = all && x3_results[i] == i * i;
+        PROVEN_TEST_ASSERT(all, "and everything they wrote is visible", "");
+
+        atomic_store(&x3_hold, false);
+
+        /* Now with the worker free and three more: jobs finish on OTHER threads, and the wait's
+         * acquire must pair with each job's release (TSan reports the plain writes otherwise). */
+        proven_job_sys_t *js4 = NULL;
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_job_system_init(proven_heap_allocator(), 4, 256, &js4)), "four workers", "");
+        proven_job_group_t g4;
+        proven_job_group_init(&g4);
+        for (int i = 0; i < 2000; ++i) {
+            proven_err_t se;
+            while ((se = proven_job_group_submit(js4, &g4, x3_slow, (void *)(proven_uintptr_t)i)) == PROVEN_ERR_AGAIN) {
+                (void)proven_job_execute_one(js4);
+            }
+            PROVEN_TEST_ASSERT(se == PROVEN_OK, "queued", "");
+        }
+        proven_job_group_wait(js4, &g4);
+        bool every = true;
+        for (int i = 0; i < 2000; ++i) every = every && x3_many[i] == i + 1;
+        PROVEN_TEST_ASSERT(every, "after the wait, every job's write is there", "");
+        proven_job_system_destroy(js4);
+
+        proven_job_system_close(js);
+        PROVEN_TEST_ASSERT(proven_job_submit_ex(js, x3_job, NULL) == PROVEN_ERR_INVALID_STATE, "a closed system says INVALID_STATE", "");
+        PROVEN_TEST_ASSERT(proven_job_group_submit(js, &g, x3_job, NULL) == PROVEN_ERR_INVALID_STATE &&
+                           proven_job_group_pending(&g) == 0, "and a refused group submit leaves the count alone", "");
+        PROVEN_TEST_ASSERT(proven_job_submit_ex(NULL, x3_job, NULL) == PROVEN_ERR_INVALID_ARG, "a NULL system is INVALID_ARG", "");
+        proven_job_system_destroy(js);
+    }
 
     PROVEN_TEST_PASS("All Phase 20 Job Processor Tests Passed Successfully!");
     return 0;

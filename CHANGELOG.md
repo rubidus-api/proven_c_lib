@@ -53,6 +53,13 @@ written; their tags still exist.
   of `get_mut` and `len`. Each changes nothing when it fails; `insert` and `extend` accept
   elements taken from the array itself (a source that only partly overlaps it is refused), and
   `extend` reallocates at most once. Aliases `xcv_array_*`.
+- **Jobs: `proven_job_submit_ex` says why a submit was refused, and job groups can be waited on**
+  (RFC-0009 X-003). `proven_job_submit` returns `false` both for a full queue and for a closed
+  system, which call for opposite responses; `_ex` returns `PROVEN_ERR_AGAIN` or
+  `PROVEN_ERR_INVALID_STATE`. `proven_job_group_t` counts submitted jobs
+  (`proven_job_group_init`, `_submit`, `_pending`); `proven_job_group_wait` returns when all have
+  run, running queued jobs itself while it waits, with what they wrote visible afterwards.
+  Aliases `xcv_job_submit_ex`, `xcv_job_group_*`.
 
 ### Changed
 

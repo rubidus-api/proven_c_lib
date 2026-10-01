@@ -139,6 +139,35 @@ typedef struct proven_job_sys proven_job_sys_t;
 | `proven_job_system_destroy(sys)` | 필요하면 닫고, 큐를 비우고, 워커를 join하고, 자원을 해제한다. | void. |
 | `proven_job_submit(sys, routine, arg)` | 작업 하나를 제출한다. 다른 제출자와 스레드 안전하다. | 큐에 들어가면 true, 가득 차거나 닫혀 있으면 false. |
 | `proven_job_execute_one(sys)` | 호출 스레드가 사용 가능한 작업 하나를 실행하게 한다. | 작업이 실행되었으면 true. |
+| `proven_job_submit_ex(sys, routine, arg)` | 제출하되, 거절되면 이유를 말한다. | `PROVEN_OK`. 가득 차면 `PROVEN_ERR_AGAIN`(재시도하거나 거든다), 닫혔으면 `PROVEN_ERR_INVALID_STATE`(멈춘다). |
+| `proven_job_group_init(&group)` | 작업 묶음을 세기 시작한다. | void. |
+| `proven_job_group_submit(sys, &group, routine, arg)` | 그룹이 세는 작업을 제출한다. 거절된 작업은 세지 않는다. | `submit_ex`와 같다. |
+| `proven_job_group_pending(&group)` | 그룹에서 아직 끝나지 않은 작업 수. | `proven_size_t`. |
+| `proven_job_group_wait(sys, &group)` | 센 작업이 모두 실행되면 돌아온다. 기다리는 동안 호출자가 큐의 작업을 직접 실행한다. 작업이 쓴 내용은 돌아온 뒤에 보인다. | void. |
+
+```c
+/* Render 16 tiles on the pool and wait for all of them. render_tile is the
+ * program's own job routine; the wait runs queued tiles itself while it waits. */
+void render_tile(void *tile);
+static int tiles[16];
+proven_job_sys_t *pool = NULL;
+if (proven_is_ok(proven_job_system_init(alloc, 4, 64, &pool))) {
+    proven_job_group_t frame;
+    proven_job_group_init(&frame);
+    for (int i = 0; i < 16; ++i) {
+        proven_err_t e = proven_job_group_submit(pool, &frame, render_tile, &tiles[i]);
+        if (e == PROVEN_ERR_AGAIN) { (void)proven_job_execute_one(pool); --i; continue; }   /* full: help, retry */
+        if (e != PROVEN_OK) break;                                                          /* closed */
+    }
+    proven_job_group_wait(pool, &frame);
+    proven_println("{} tiles still pending", PROVEN_ARG(proven_job_group_pending(&frame)));
+    proven_job_system_close(pool);
+    if (proven_job_submit_ex(pool, render_tile, &tiles[0]) == PROVEN_ERR_INVALID_STATE) {
+        proven_println("closed: no more work is taken");   /* not "full - try again" */
+    }
+    proven_job_system_destroy(pool);
+}
+```
 
 중요한 제약:
 

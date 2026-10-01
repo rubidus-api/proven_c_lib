@@ -660,6 +660,7 @@ Sub-checks:
 - Holds the only worker inside one job while the calling thread drains four
   later jobs, proving stale retained permits neither duplicate work nor block
   shutdown.
+- RFC-0009 X-003: with the only worker held busy, a 64-slot queue takes 64 group jobs and then `proven_job_group_submit` says `PROVEN_ERR_AGAIN` (not `false`) without counting the refused job; `proven_job_group_wait` returns only after the waiting thread has run all 64 itself, and their plain writes are visible; then, with four free workers, 2,000 group jobs finish on other threads and every plain write is visible after the wait (under `./nob tsan`, a decrement placed before the job runs is reported as a race); after close, `submit_ex` and `group_submit` say `PROVEN_ERR_INVALID_STATE` and the count is unchanged; a NULL system is `PROVEN_ERR_INVALID_ARG`.
 
 Failure tip: inspect `src/proven/job.c` and `platform/proven_sys_thread.c`. For races, run `./nob tsan`. Check admission state, sequence counters, queue claim/commit ordering, and shutdown wakeups.
 
