@@ -17,8 +17,10 @@
  * malformed at once (E0 must be followed by A0..BF) rather than reported as incomplete.
  */
 
-static int utf8_decode(const proven_byte_t *s, proven_size_t n, proven_u32 *cp_out) {
+static int utf8_decode_span(const proven_byte_t *s, proven_size_t n, proven_u32 *cp_out,
+                            proven_size_t *bad_span) {
     proven_byte_t b0 = s[0];
+    *bad_span = 1;
     if (b0 < 0x80) {
         *cp_out = b0;
         return 1;
@@ -48,11 +50,42 @@ static int utf8_decode(const proven_byte_t *s, proven_size_t n, proven_u32 *cp_o
         proven_byte_t b = s[i];
         proven_byte_t min = (i == 1) ? lo : 0x80;
         proven_byte_t max = (i == 1) ? hi : 0xBF;
-        if (b < min || b > max) return -1;
+        if (b < min || b > max) {
+            *bad_span = (proven_size_t)i;    /* the maximal subpart: everything before this byte */
+            return -1;
+        }
         cp = (cp << 6) | (b & 0x3Fu);
     }
     *cp_out = cp;
     return len;
+}
+
+static int utf8_decode(const proven_byte_t *s, proven_size_t n, proven_u32 *cp_out) {
+    proven_size_t unused;
+    return utf8_decode_span(s, n, cp_out, &unused);
+}
+
+proven_utf8_char_t proven_utf8_decode_next(proven_u8str_view_t s, proven_size_t pos) {
+    proven_utf8_char_t out = { PROVEN_ERR_INVALID_ARG, 0, 0 };
+    if (s.size > 0 && !s.ptr) return out;
+    if (pos > s.size) { out.err = PROVEN_ERR_OUT_OF_BOUNDS; return out; }
+    if (pos == s.size) { out.err = PROVEN_ERR_EOF; return out; }
+
+    proven_size_t bad = 1;
+    proven_u32 cp = 0;
+    int r = utf8_decode_span(s.ptr + pos, s.size - pos, &cp, &bad);
+    if (r > 0) {
+        out.err = PROVEN_OK;
+        out.cp = cp;
+        out.len = (proven_size_t)r;
+    } else if (r == 0) {
+        out.err = PROVEN_ERR_NEED_MORE;   /* a valid start the view ends inside */
+        out.len = s.size - pos;
+    } else {
+        out.err = PROVEN_ERR_INVALID_ENCODING;
+        out.len = bad;
+    }
+    return out;
 }
 
 static int utf16_decode(const proven_u16 *s, proven_size_t n, proven_u32 *cp_out) {

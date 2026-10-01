@@ -837,6 +837,7 @@ Intent: verify scanner parsing for integers, floats, tokens, skip-until operatio
 Sub-checks:
 
 - Scans unsigned and signed integers.
+- Scans hexadecimal integers with `proven_scan_u64_hex` / `proven_scan_i64_hex` and `{:x}` / `{:X}` in a format: both cases, `0x` taken only before a digit, overflow at 2^64 and at the signed limits with the cursor restored, a sign or a `0x` at the end of the view flagged as needing more input, integer widths range-checked, and `{:x}` on a double refused with `PROVEN_ERR_INVALID_FORMAT`.
 - Scans positive, negative, and exponent-style floating-point values.
 - Scans tokens and string views.
 - Skips until substrings and numbers.
@@ -1008,6 +1009,7 @@ Sub-checks:
 - Known text (ASCII, a two-byte letter, Hangul, an emoji that becomes a surrogate pair) converts to the expected units and back, with the size functions agreeing.
 - Every scalar value U+0000..U+10FFFF (minus the surrogates) round-trips against a reference encoding.
 - UTF-8 validity agrees with an independent code-point formulation over every 1-, 2- and 3-byte input and a sweep of 4-byte inputs; UTF-16 validity agrees with the surrogate rules over every unit alone and before every kind of neighbour. Planted defects in the lead-byte table and the surrogate checks were each caught before the test was trusted.
+- `proven_utf8_decode_next` agrees with the same reference over the same inputs: its verdict, its step length (the maximal subpart for malformed input, computed by the reference as the longest prefix it still calls a valid start) and, for a character, a code point whose reference encoding is exactly the bytes consumed. A walk through mixed text visits every byte once and ends exactly at the end. A planted off-by-one in the maximal subpart was caught.
 - The malformed forms the standard names (overlong, encoded surrogate, above U+10FFFF, stray continuation, bad lead, bad continuation) stop the conversion exactly where they start.
 - Input cut mid-character is `PROVEN_ERR_NEED_MORE` in the partial forms and `PROVEN_ERR_INVALID_ENCODING` in the whole forms; a trailing high surrogate likewise.
 - A full output never receives half a character; the atomic forms write nothing on refusal.
@@ -1385,6 +1387,8 @@ Failure tip: inspect `proven_scan_f64` in `src/proven/scan.c`. It must flag `nee
 ### `tests/test_regression_scanner_short_read` - the scanner over a pipe
 
 Intent: verify a token split across two pipe writes scans whole, that the rest of the stream stays readable, and that a failed read is `PROVEN_ERR_IO` rather than a clean end of input.
+
+Also: a hexadecimal `0x` that arrives before its digits, and hex digits split across two writes, scan whole through `{:x}` (a planted removal of the `0x` stream signal was caught).
 
 Note: runs on both platforms - an anonymous pipe (`pipe()` or `CreatePipe`) fed by a writer thread. `read()` on a pipe returns whatever has arrived; treating that as EOF truncated the token *and* discarded the rest of the stream. Regular files hide the bug entirely, which is why the whole suite passed.
 

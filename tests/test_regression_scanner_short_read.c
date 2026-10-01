@@ -213,6 +213,16 @@ int main(void) {
         e = scan_split(heap, "12", "34 ", "{}", &v);
         PROVEN_TEST_ASSERT(proven_is_ok(e) && v == 1234,
             "and digits split across the boundary still join up", "");
+
+        /* The same for hexadecimal: a "0x" that arrives before its digits, and digits split. */
+        v = -999;
+        e = scan_split(heap, "0x", "1F ", "{:x}", &v);
+        PROVEN_TEST_ASSERT(proven_is_ok(e) && v == 0x1F,
+            "a 0x that arrives before its digits must scan as 0x1F",
+            "scan_hex_magnitude must flag needs_more for a 0x at the end of the buffer, or the 0 is committed alone.");
+        v = -999;
+        e = scan_split(heap, "1", "F ", "{:x}", &v);
+        PROVEN_TEST_ASSERT(proven_is_ok(e) && v == 0x1F, "and hex digits split across the boundary join up", "");
     }
 
     // ---------------------------------------------------------------

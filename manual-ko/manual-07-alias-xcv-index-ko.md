@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 547개: 소문자 `xcv_` 함수 이름 416개와 대문자 `XCV_` 매크로 이름 131개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 554개: 소문자 `xcv_` 함수 이름 420개와 대문자 `XCV_` 매크로 이름 134개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -67,14 +67,17 @@ alias 547개: 소문자 `xcv_` 함수 이름 416개와 대문자 `XCV_` 매크�
 | `XCV_ERR_EOF` | `PROVEN_ERR_EOF` |
 | `XCV_ERR_INVALID_ARG` | `PROVEN_ERR_INVALID_ARG` |
 | `XCV_ERR_INVALID_ENCODING` | `PROVEN_ERR_INVALID_ENCODING` |
+| `XCV_ERR_INVALID_FORMAT` | `PROVEN_ERR_INVALID_FORMAT` |
 | `XCV_ERR_INVALID_STATE` | `PROVEN_ERR_INVALID_STATE` |
 | `XCV_ERR_IO` | `PROVEN_ERR_IO` |
+| `XCV_ERR_LAST` | `PROVEN_ERR_LAST` |
 | `XCV_ERR_NOMEM` | `PROVEN_ERR_NOMEM` |
 | `XCV_ERR_NOT_FOUND` | `PROVEN_ERR_NOT_FOUND` |
 | `XCV_ERR_NEED_MORE` | `PROVEN_ERR_NEED_MORE` |
 | `XCV_ERR_OUT_OF_BOUNDS` | `PROVEN_ERR_OUT_OF_BOUNDS` |
 | `XCV_ERR_OVERFLOW` | `PROVEN_ERR_OVERFLOW` |
 | `XCV_ERR_PERMISSION` | `PROVEN_ERR_PERMISSION` |
+| `XCV_ERR_RESERVED_END` | `PROVEN_ERR_RESERVED_END` |
 | `XCV_ERR_UNSUPPORTED` | `PROVEN_ERR_UNSUPPORTED` |
 | `XCV_FS_APPEND` | `PROVEN_FS_APPEND` |
 | `XCV_FS_CREATE` | `PROVEN_FS_CREATE` |
@@ -398,6 +401,8 @@ alias 547개: 소문자 `xcv_` 함수 이름 416개와 대문자 `XCV_` 매크�
 | `xcv_utf16_to_utf8_partial` | `proven_utf16_to_utf8_partial` |
 | `xcv_utf16_to_utf8_size` | `proven_utf16_to_utf8_size` |
 | `xcv_utf8_append_to_u16str` | `proven_utf8_append_to_u16str` |
+| `xcv_utf8_char_t` | `proven_utf8_char_t` |
+| `xcv_utf8_decode_next` | `proven_utf8_decode_next` |
 | `xcv_utf8_to_utf16` | `proven_utf8_to_utf16` |
 | `xcv_utf8_to_utf16_partial` | `proven_utf8_to_utf16_partial` |
 | `xcv_utf8_to_utf16_size` | `proven_utf8_to_utf16_size` |
@@ -463,6 +468,7 @@ alias 547개: 소문자 `xcv_` 함수 이름 416개와 대문자 `XCV_` 매크�
 | `xcv_scan_fmt_internal` | `proven_scan_fmt_internal` |
 | `xcv_scan_fmt_internal_view` | `proven_scan_fmt_internal_view` |
 | `xcv_scan_i64` | `proven_scan_i64` |
+| `xcv_scan_i64_hex` | `proven_scan_i64_hex` |
 | `xcv_scan_init` | `proven_scan_init` |
 | `xcv_scan_skip_until` | `proven_scan_skip_until` |
 | `xcv_scan_skip_until_number` | `proven_scan_skip_until_number` |
@@ -470,6 +476,7 @@ alias 547개: 소문자 `xcv_` 함수 이름 416개와 대문자 `XCV_` 매크�
 | `xcv_scan_str` | `proven_scan_str` |
 | `xcv_scan_t` | `proven_scan_t` |
 | `xcv_scan_u64` | `proven_scan_u64` |
+| `xcv_scan_u64_hex` | `proven_scan_u64_hex` |
 | `xcv_set_panic_handler` | `proven_set_panic_handler` |
 | `xcv_sha256` | `proven_sha256` |
 | `xcv_sha256_final` | `proven_sha256_final` |

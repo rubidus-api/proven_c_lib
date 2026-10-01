@@ -18,6 +18,30 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **One-character UTF-8 decoding: `proven_utf8_decode_next(s, pos)`.** For code that walks text a
+  character at a time (requested by Pnakotic, which carried a stand-in). Same strict rules as the
+  rest of `utf.h`; the returned `len` is always the step to take - the character, the maximal
+  subpart of malformed input (where Unicode says to resynchronise), or the bytes left when the
+  text ends mid-character (`NEED_MORE`). Nothing is substituted. Freestanding-available.
+- **Hexadecimal scanning: `proven_scan_u64_hex`, `proven_scan_i64_hex`, and `{:x}` / `{:X}` in a
+  scan format** for any integer argument, mirroring the formatter's spec (requested by Pnakotic for
+  `0041..005A`-style ranges). `0x` is taken only before a digit, as `strtoul` takes it; overflow,
+  cursor restore and the stream signal behave as for decimal, including a `0x` that arrives before
+  its digits. Before, every format placeholder had to be `{}`.
+- **The error-code space is a promise: `PROVEN_ERR_RESERVED_END` (0x1000) and `PROVEN_ERR_LAST`.**
+  proven will never define a code at or above 0x1000, so a program can carry `proven_err_t` values
+  unchanged in a wider type and number its own codes from there (requested by Pnakotic).
+  `PROVEN_ERR_LAST` names today's highest code; a build-time assertion holds the ceiling and a
+  source contract keeps the macro on the enum's real last value. Aliases `XCV_ERR_LAST`,
+  `XCV_ERR_RESERVED_END`, and the missing `XCV_ERR_INVALID_FORMAT`.
+
+### Fixed
+
+- **Chapter 1 listed `proven_err_t` without `PROVEN_ERR_NEED_MORE`,** in both the enum listing and
+  the meaning table (English and Korean). Both now carry it.
+
 ## [0.4.0] - 2026-09-30
 
 A MINOR release: nothing public removed. The whole test suite now runs natively on Windows

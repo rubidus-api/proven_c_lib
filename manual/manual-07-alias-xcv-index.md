@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-547 aliases: 416 lowercase `xcv_` function names and 131 uppercase `XCV_` macro names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+554 aliases: 420 lowercase `xcv_` function names and 134 uppercase `XCV_` macro names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -65,14 +65,17 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_ERR_EOF` | `PROVEN_ERR_EOF` |
 | `XCV_ERR_INVALID_ARG` | `PROVEN_ERR_INVALID_ARG` |
 | `XCV_ERR_INVALID_ENCODING` | `PROVEN_ERR_INVALID_ENCODING` |
+| `XCV_ERR_INVALID_FORMAT` | `PROVEN_ERR_INVALID_FORMAT` |
 | `XCV_ERR_INVALID_STATE` | `PROVEN_ERR_INVALID_STATE` |
 | `XCV_ERR_IO` | `PROVEN_ERR_IO` |
+| `XCV_ERR_LAST` | `PROVEN_ERR_LAST` |
 | `XCV_ERR_NOMEM` | `PROVEN_ERR_NOMEM` |
 | `XCV_ERR_NOT_FOUND` | `PROVEN_ERR_NOT_FOUND` |
 | `XCV_ERR_NEED_MORE` | `PROVEN_ERR_NEED_MORE` |
 | `XCV_ERR_OUT_OF_BOUNDS` | `PROVEN_ERR_OUT_OF_BOUNDS` |
 | `XCV_ERR_OVERFLOW` | `PROVEN_ERR_OVERFLOW` |
 | `XCV_ERR_PERMISSION` | `PROVEN_ERR_PERMISSION` |
+| `XCV_ERR_RESERVED_END` | `PROVEN_ERR_RESERVED_END` |
 | `XCV_ERR_UNSUPPORTED` | `PROVEN_ERR_UNSUPPORTED` |
 | `XCV_FS_APPEND` | `PROVEN_FS_APPEND` |
 | `XCV_FS_CREATE` | `PROVEN_FS_CREATE` |
@@ -396,6 +399,8 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_utf16_to_utf8_partial` | `proven_utf16_to_utf8_partial` |
 | `xcv_utf16_to_utf8_size` | `proven_utf16_to_utf8_size` |
 | `xcv_utf8_append_to_u16str` | `proven_utf8_append_to_u16str` |
+| `xcv_utf8_char_t` | `proven_utf8_char_t` |
+| `xcv_utf8_decode_next` | `proven_utf8_decode_next` |
 | `xcv_utf8_to_utf16` | `proven_utf8_to_utf16` |
 | `xcv_utf8_to_utf16_partial` | `proven_utf8_to_utf16_partial` |
 | `xcv_utf8_to_utf16_size` | `proven_utf8_to_utf16_size` |
@@ -461,6 +466,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_scan_fmt_internal` | `proven_scan_fmt_internal` |
 | `xcv_scan_fmt_internal_view` | `proven_scan_fmt_internal_view` |
 | `xcv_scan_i64` | `proven_scan_i64` |
+| `xcv_scan_i64_hex` | `proven_scan_i64_hex` |
 | `xcv_scan_init` | `proven_scan_init` |
 | `xcv_scan_skip_until` | `proven_scan_skip_until` |
 | `xcv_scan_skip_until_number` | `proven_scan_skip_until_number` |
@@ -468,6 +474,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_scan_str` | `proven_scan_str` |
 | `xcv_scan_t` | `proven_scan_t` |
 | `xcv_scan_u64` | `proven_scan_u64` |
+| `xcv_scan_u64_hex` | `proven_scan_u64_hex` |
 | `xcv_set_panic_handler` | `proven_set_panic_handler` |
 | `xcv_sha256` | `proven_sha256` |
 | `xcv_sha256_final` | `proven_sha256_final` |

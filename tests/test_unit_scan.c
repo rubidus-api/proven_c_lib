@@ -5,6 +5,7 @@
 
 #include <math.h>
 #include <limits.h>
+#include <stdint.h>
 
 int main(void) {
     // Test 1: Simple Integer Scanning
@@ -372,6 +373,68 @@ int main(void) {
         proven_result_f64_t res3 = proven_scan_f64(&scan3);
         PROVEN_TEST_ASSERT(res3.err == PROVEN_OK && res3.val > 99999.0 && res3.val < 100001.0, 
                            "Valid exponent parsed correctly", "Fix e parsing");
+    }
+
+    PROVEN_TEST_SECTION("hexadecimal integers, on their own and as {:x} in a format",
+        "Digits in either case, an optional 0x taken only before a digit, overflow at 2^64, a sign for the signed form, and the stream signal at the end of what has arrived.",
+        "Inspect scan_hex_magnitude and placeholder_len in src/proven/scan.c.");
+    {
+        proven_scan_t s1 = proven_scan_init(PROVEN_LIT("  1F 0x1f 0XaB ffffffffffffffff"));
+        proven_result_u64_t a = proven_scan_u64_hex(&s1);
+        PROVEN_TEST_ASSERT(a.err == PROVEN_OK && a.val == 0x1F, "1F after whitespace", "");
+        a = proven_scan_u64_hex(&s1);
+        PROVEN_TEST_ASSERT(a.err == PROVEN_OK && a.val == 0x1F, "0x1f", "");
+        a = proven_scan_u64_hex(&s1);
+        PROVEN_TEST_ASSERT(a.err == PROVEN_OK && a.val == 0xAB, "0XaB", "");
+        a = proven_scan_u64_hex(&s1);
+        PROVEN_TEST_ASSERT(a.err == PROVEN_OK && a.val == 0xFFFFFFFFFFFFFFFFull, "the largest value", "");
+
+        proven_scan_t s2 = proven_scan_init(PROVEN_LIT("10000000000000000"));
+        a = proven_scan_u64_hex(&s2);
+        PROVEN_TEST_ASSERT(a.err == PROVEN_ERR_OVERFLOW && s2.cursor == 0, "2^64 is OVERFLOW and the cursor stays", "");
+
+        proven_scan_t s3 = proven_scan_init(PROVEN_LIT("0xg"));
+        a = proven_scan_u64_hex(&s3);
+        PROVEN_TEST_ASSERT(a.err == PROVEN_OK && a.val == 0 && s3.cursor == 1, "0x before a non-digit: the 0 alone, as strtoul", "");
+
+        proven_scan_t s4 = proven_scan_init(PROVEN_LIT("g1"));
+        a = proven_scan_u64_hex(&s4);
+        PROVEN_TEST_ASSERT(a.err == PROVEN_ERR_INVALID_ARG && !s4.needs_more && s4.cursor == 0, "a non-digit is INVALID_ARG, not a wait", "");
+
+        proven_scan_t s5 = proven_scan_init(PROVEN_LIT("0x"));
+        a = proven_scan_u64_hex(&s5);
+        PROVEN_TEST_ASSERT(a.err == PROVEN_OK && a.val == 0 && s5.needs_more, "0x at the end: 0, and more may come", "");
+
+        proven_scan_t s6 = proven_scan_init(PROVEN_LIT("-8000000000000000 7fffffffffffffff 8000000000000000"));
+        proven_result_i64_t b = proven_scan_i64_hex(&s6);
+        PROVEN_TEST_ASSERT(b.err == PROVEN_OK && b.val == INT64_MIN, "the smallest signed value", "");
+        b = proven_scan_i64_hex(&s6);
+        PROVEN_TEST_ASSERT(b.err == PROVEN_OK && b.val == INT64_MAX, "the largest signed value", "");
+        b = proven_scan_i64_hex(&s6);
+        PROVEN_TEST_ASSERT(b.err == PROVEN_ERR_OVERFLOW, "one past it is OVERFLOW", "");
+        proven_scan_t s7 = proven_scan_init(PROVEN_LIT("-"));
+        b = proven_scan_i64_hex(&s7);
+        PROVEN_TEST_ASSERT(b.err == PROVEN_ERR_INVALID_ARG && s7.needs_more && s7.cursor == 0, "a sign at the end: more may come", "");
+
+        /* The format form: a UnicodeData-style range, both cases, and the integer widths. */
+        proven_u32 lo = 0, hi = 0;
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_scan_fmt(PROVEN_LIT("0041..005A"), "{:x}..{:X}", PROVEN_SCAN_ARG(&lo), PROVEN_SCAN_ARG(&hi))) &&
+                           lo == 0x41 && hi == 0x5A, "{:x}..{:X} reads a code point range", "");
+        int si = 0;
+        PROVEN_TEST_ASSERT(proven_scan_fmt(PROVEN_LIT("80000000"), "{:x}", PROVEN_SCAN_ARG(&si)) == PROVEN_ERR_OVERFLOW,
+                           "an int is range-checked after a hex read too", "");
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_scan_fmt(PROVEN_LIT("-7fffffff"), "{:x}", PROVEN_SCAN_ARG(&si))) && si == -0x7fffffff,
+                           "a signed int takes a sign", "");
+        unsigned long long ull = 0;
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_scan_fmt(PROVEN_LIT("x=DEADbeef;"), "x={:x};", PROVEN_SCAN_ARG(&ull))) && ull == 0xDEADBEEFull,
+                           "{:x} between literals", "");
+        double d = 0;
+        PROVEN_TEST_ASSERT(proven_scan_fmt(PROVEN_LIT("1F"), "{:x}", PROVEN_SCAN_ARG(&d)) == PROVEN_ERR_INVALID_FORMAT,
+                           "{:x} for a double is INVALID_FORMAT, as in the formatter", "");
+        PROVEN_TEST_ASSERT(proven_scan_fmt(PROVEN_LIT("1F"), "{:y}", PROVEN_SCAN_ARG(&ull)) == PROVEN_ERR_INVALID_ARG,
+                           "any other spec is refused", "");
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_scan_fmt(PROVEN_LIT("10 1F"), "{} {:x}", PROVEN_SCAN_ARG(&lo), PROVEN_SCAN_ARG(&hi))) &&
+                           lo == 10 && hi == 0x1F, "decimal and hex in one format", "");
     }
 
     PROVEN_TEST_INFO("Test Phase 21: Scan logic passed.");

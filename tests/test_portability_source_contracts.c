@@ -168,6 +168,23 @@ int main(void) {
             "Windows pread/pwrite restore the file position");
     free(io);
 
+    /* PROVEN_ERR_LAST must name the enum's real last code, or a range check written against it
+     * (the PROVEN_ERR_RESERVED_END promise) silently stops covering a code added later. */
+    {
+        char *types = read_text_file("include/proven/types.h");
+        const char *end = strstr(types, "} proven_err_t;");
+        require(end != NULL, "types.h declares proven_err_t");
+        const char *q = end;
+        while (q > types && (q[-1] == ' ' || q[-1] == '\n' || q[-1] == ',' || q[-1] == '\r')) --q;
+        const char *id_end = q;
+        while (q > types && (q[-1] == '_' || (q[-1] >= 'A' && q[-1] <= 'Z') || (q[-1] >= '0' && q[-1] <= '9'))) --q;
+        char want[96];
+        snprintf(want, sizeof want, "#define PROVEN_ERR_LAST %.*s", (int)(id_end - q), q);
+        require(contains(types, want), "PROVEN_ERR_LAST names the last proven_err_t enumerator");
+        require(contains(types, "#define PROVEN_ERR_RESERVED_END 0x1000"), "the error-code ceiling is 0x1000, as promised");
+        free(types);
+    }
+
     char *job = read_text_file("src/proven/job.c");
     require(contains(job, "admission_state"), "job system has a single admission state");
     require(contains(job, "proven_job_begin_submit"), "job submit claims admission before queue slot claim");

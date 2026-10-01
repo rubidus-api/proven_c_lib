@@ -51,7 +51,7 @@ Chapter 3은 더 짧은 개요와 일상적인 예제를 제공한다.
 이 프로젝트는 양쪽 모두 의도적으로 작게 유지한다.
 
 - 포매팅은 간결한 플레이스홀더 언어, positional 재사용, 단순한 정렬(alignment), width, 그리고 숫자 값에 대한 hex 렌더링을 지원한다.
-- 스캐닝은 타입이 있는 목적지 포인터, 엄격한 플레이스홀더 개수 검사, 그리고 공백 축약(whitespace collapsing)을 포함한 리터럴 매칭을 지원한다.
+- 스캐닝은 타입이 있는 목적지 포인터, 엄격한 플레이스홀더 개수 검사, 16진 정수를 위한 `{:x}`, 그리고 공백 축약(whitespace collapsing)을 포함한 리터럴 매칭을 지원한다.
 - 어느 쪽도 완전한 `printf`나 `scanf` 복제를 목표로 하지 않는다.
 
 실용적인 결과로, 이 API들은 대규모 범용 포맷 엔진보다 추론하기 쉬우면서도, 문법은 일반적인 시스템 코드 작업에 충분히 표현력이 있다.
@@ -885,6 +885,8 @@ typedef struct {
 void                       proven_scan_skip_whitespace(proven_scan_t *scan);
 proven_result_i64_t        proven_scan_i64(proven_scan_t *scan);
 proven_result_u64_t        proven_scan_u64(proven_scan_t *scan);
+proven_result_i64_t        proven_scan_i64_hex(proven_scan_t *scan);
+proven_result_u64_t        proven_scan_u64_hex(proven_scan_t *scan);
 proven_result_f64_t        proven_scan_f64(proven_scan_t *scan);
 proven_result_u8str_view_t proven_scan_str(proven_scan_t *scan);
 proven_err_t               proven_scan_skip_until(proven_scan_t *scan, proven_u8str_view_t target);
@@ -912,8 +914,27 @@ void                       proven_scan_skip_until_number(proven_scan_t *scan);
 | `"0x10"` | `OK` - **0**, 커서는 1에 | **십진수만**: 0, 그 뒤에 텍스트 |
 
 마지막 행이 사람들을 놀라게 하는 것이다. `proven_scan_i64`와 `proven_scan_u64`는
-십진수를 읽는다. hex도, 8진수도, 기수 접두어도 없다. `0x10`은 정수 0이고, `x10`은
-여전히 입력에 남아 있다.
+십진수를 읽는다: 8진수도, 기수 접두어도 없다. `0x10`은 정수 0이고, `x10`은 여전히
+입력에 남아 있다.
+
+16진수는 따로, 명시적으로 요청한다. `proven_scan_u64_hex`는 대소문자 16진 숫자를 읽으며, `0x`는 뒤에
+숫자가 올 때만 받아들인다(`strtoul`과 같아서 `"0xg"`는 0 다음에 `"xg"`). `proven_scan_i64_hex`는 부호를
+더한다. 포맷 문자열에서는 `{:x}`(또는 `{:X}`)가 어떤 정수 인자든 같은 방식으로 읽는다 - 16진 출력을 위한
+포매터의 spec을 거꾸로 읽은 것이다. 오버플로, 커서 복원, 스트림 신호는 십진수와 같다.
+
+```c
+/* A UnicodeData-style range, "0041..005A", read as two hexadecimal numbers. */
+proven_u32 first = 0, last = 0;
+proven_err_t e = proven_scan_fmt(PROVEN_LIT("0041..005A"), "{:x}..{:x}", PROVEN_SCAN_ARG(&first), PROVEN_SCAN_ARG(&last));
+/* e == PROVEN_OK, first == 0x41, last == 0x5A */
+
+/* The primitive, for a hand-written loop: */
+proven_scan_t s = proven_scan_init(PROVEN_LIT("0x1F rest"));
+proven_result_u64_t h = proven_scan_u64_hex(&s);   /* h.val == 0x1F, cursor on " rest" */
+proven_scan_t t = proven_scan_init(PROVEN_LIT("-7f"));
+proven_result_i64_t g = proven_scan_i64_hex(&t);   /* g.val == -0x7F: the signed form takes a sign */
+(void)e; (void)h; (void)g;
+```
 
 `proven_scan_u64`는 unsigned를 뜻한다: `"-1"`은 `18446744073709551615`로 랩하는 것이
 아니라 `PROVEN_ERR_INVALID_ARG`다. 음수를 조용히 거대한 양수로 바꾸는 스캐너는
@@ -1007,7 +1028,8 @@ PROVEN_SCAN_ARG(&x)     /* _Generic on the pointer type */
 - 플레이스홀더는 argument 하나를 순서대로 소비한다.
 - 그 외의 모든 것은 **입력과 정확히 일치해야 하는 리터럴**이다.
 
-스캐닝 측에서는 플레이스홀더 안에 스펙이 없다. Width, fill, alignment는 포매팅의
+스캐닝 측의 스펙은 하나뿐이다: `{:x}`(또는 `{:X}`)는 정수 인자를 16진수로 읽는다(8절). 실수나 문자열
+인자에 붙으면 포매터와 마찬가지로 `PROVEN_ERR_INVALID_FORMAT`이다. Width, fill, alignment는 포매팅의
 관심사이며, 스캐너는 거기 있는 것을 읽는다.
 
 포맷 안의 공백은 특별하지 않다. 값 스캐너들이 스스로 선행 공백을 건너뛰므로, 두
@@ -1370,8 +1392,8 @@ int main(void) {
 ```
 
 ### 오용: `0x10`이 16이라고 가정하기
-그것은 0이다. 정수 스캐너들은 십진수 전용이며, `x10`은 여전히 입력에 남아 있다.
-hex가 필요하면, 그 자릿수 루프는 당신이 직접 작성하는 것이다.
+그것은 0이다. 십진 스캐너들은 십진수 전용이며, `x10`은 여전히 입력에 남아 있다.
+입력이 16진이면 그렇다고 말하라: `proven_scan_u64_hex`, 또는 포맷의 `{:x}`.
 
 ### 오용: 남은 입력을 에러로 다루기
 그것은 오류가 아니다. `"7 8"`에 대한 플레이스홀더 하나는 성공한다. 신경 쓰인다면

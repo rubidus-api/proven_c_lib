@@ -59,7 +59,7 @@ The formatting side and the scanning side solve opposite problems.
 The project keeps both sides intentionally small:
 
 - formatting supports a compact placeholder language, positional reuse, simple alignment, width, and hex rendering for numeric values;
-- scanning supports typed destination pointers, strict placeholder counting, and literal matching with whitespace collapsing;
+- scanning supports typed destination pointers, strict placeholder counting, `{:x}` for hexadecimal integers, and literal matching with whitespace collapsing;
 - neither side tries to become a full `printf` or `scanf` clone.
 
 The practical result is that the APIs are easier to reason about than large general-purpose format engines, but the syntax is still expressive enough for common systems-code tasks.
@@ -926,6 +926,8 @@ every sentinel is also a legitimate input.
 void                       proven_scan_skip_whitespace(proven_scan_t *scan);
 proven_result_i64_t        proven_scan_i64(proven_scan_t *scan);
 proven_result_u64_t        proven_scan_u64(proven_scan_t *scan);
+proven_result_i64_t        proven_scan_i64_hex(proven_scan_t *scan);
+proven_result_u64_t        proven_scan_u64_hex(proven_scan_t *scan);
 proven_result_f64_t        proven_scan_f64(proven_scan_t *scan);
 proven_result_u8str_view_t proven_scan_str(proven_scan_t *scan);
 proven_err_t               proven_scan_skip_until(proven_scan_t *scan, proven_u8str_view_t target);
@@ -956,8 +958,29 @@ a scan you did not need to make.
 | `"0x10"` | `OK` - **0**, cursor at 1 | **decimal only**: a zero, followed by text |
 
 That last row is the one that surprises people. `proven_scan_i64` and
-`proven_scan_u64` read decimal. There is no hex, no octal, no base prefix. `0x10` is
-the integer zero, and `x10` is still in the input.
+`proven_scan_u64` read decimal: no octal, no base prefix. `0x10` is the integer zero,
+and `x10` is still in the input.
+
+Hexadecimal is a separate, explicit request. `proven_scan_u64_hex` reads hex digits in
+either case, with an optional `0x` taken only when a digit follows it (as `strtoul` takes
+it, so `"0xg"` is zero followed by `"xg"`); `proven_scan_i64_hex` adds a sign. In a format
+string, `{:x}` (or `{:X}`) reads any integer argument the same way - the formatter's spec
+for writing hex, read backwards. Overflow, cursor restore and the stream signal behave as
+for decimal.
+
+```c
+/* A UnicodeData-style range, "0041..005A", read as two hexadecimal numbers. */
+proven_u32 first = 0, last = 0;
+proven_err_t e = proven_scan_fmt(PROVEN_LIT("0041..005A"), "{:x}..{:x}", PROVEN_SCAN_ARG(&first), PROVEN_SCAN_ARG(&last));
+/* e == PROVEN_OK, first == 0x41, last == 0x5A */
+
+/* The primitive, for a hand-written loop: */
+proven_scan_t s = proven_scan_init(PROVEN_LIT("0x1F rest"));
+proven_result_u64_t h = proven_scan_u64_hex(&s);   /* h.val == 0x1F, cursor on " rest" */
+proven_scan_t t = proven_scan_init(PROVEN_LIT("-7f"));
+proven_result_i64_t g = proven_scan_i64_hex(&t);   /* g.val == -0x7F: the signed form takes a sign */
+(void)e; (void)h; (void)g;
+```
 
 `proven_scan_u64` means unsigned: `"-1"` is `PROVEN_ERR_INVALID_ARG`, not a wrap to
 `18446744073709551615`. A scanner that quietly turns a negative number into a huge
@@ -1061,8 +1084,10 @@ The scan format string is the formatter's, read backwards:
 - a placeholder consumes one argument, in order;
 - anything else is a **literal that must match the input exactly**.
 
-There are no specs inside a placeholder on the scanning side. Width, fill and
-alignment are formatting concerns; the scanner reads what is there.
+One spec exists on the scanning side: `{:x}` (or `{:X}`) reads an integer argument
+as hexadecimal (section 8); on a float or string argument it is
+`PROVEN_ERR_INVALID_FORMAT`, as in the formatter. Width, fill and alignment are
+formatting concerns; the scanner reads what is there.
 
 Whitespace in the format is not special. The value scanners skip leading whitespace
 themselves, so a format with a space between two placeholders and one without parse
@@ -1434,8 +1459,8 @@ int main(void) {
 
 ### Misuse: assuming `0x10` is sixteen
 
-It is zero. The integer scanners are decimal only, and `x10` is still in the input. If
-you need hex, you are writing that digit loop yourself.
+It is zero. The decimal scanners are decimal only, and `x10` is still in the input. If
+the input is hex, say so: `proven_scan_u64_hex`, or `{:x}` in the format.
 
 ### Misuse: treating trailing input as an error
 

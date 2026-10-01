@@ -73,6 +73,23 @@ void proven_scan_skip_whitespace(proven_scan_t *scan);
 [[nodiscard]] proven_result_u64_t proven_scan_u64(proven_scan_t *scan);
 
 /**
+ * @brief Extract a 64-bit unsigned integer written in hexadecimal.
+ *
+ * Digits 0-9, a-f and A-F, with an optional "0x" or "0X" in front - taken only when a hex digit
+ * follows it, as strtoul takes it, so "0xg" scans as 0 and leaves "xg". No sign. Leading
+ * whitespace is skipped; a value above 2^64 - 1 is PROVEN_ERR_OVERFLOW; anything else that is
+ * not a hex digit is PROVEN_ERR_INVALID_ARG. Failure leaves the cursor after the whitespace.
+ * In a format string, `{:x}` (or `{:X}`) reads any integer argument this way.
+ */
+[[nodiscard]] proven_result_u64_t proven_scan_u64_hex(proven_scan_t *scan);
+
+/**
+ * @brief Extract a 64-bit signed integer written in hexadecimal: an optional sign, then what
+ *        proven_scan_u64_hex reads. "-8000000000000000" is the smallest value.
+ */
+[[nodiscard]] proven_result_i64_t proven_scan_i64_hex(proven_scan_t *scan);
+
+/**
  * @brief Extract a 64-bit floating point number.
  * Failure restores the cursor to its original position.
  *

@@ -45,14 +45,17 @@
 #define XCV_ERR_EOF PROVEN_ERR_EOF
 #define XCV_ERR_INVALID_ARG PROVEN_ERR_INVALID_ARG
 #define XCV_ERR_INVALID_ENCODING PROVEN_ERR_INVALID_ENCODING
+#define XCV_ERR_INVALID_FORMAT PROVEN_ERR_INVALID_FORMAT
 #define XCV_ERR_INVALID_STATE PROVEN_ERR_INVALID_STATE
 #define XCV_ERR_IO PROVEN_ERR_IO
+#define XCV_ERR_LAST PROVEN_ERR_LAST
 #define XCV_ERR_NOMEM PROVEN_ERR_NOMEM
 #define XCV_ERR_NOT_FOUND PROVEN_ERR_NOT_FOUND
 #define XCV_ERR_NEED_MORE PROVEN_ERR_NEED_MORE
 #define XCV_ERR_OUT_OF_BOUNDS PROVEN_ERR_OUT_OF_BOUNDS
 #define XCV_ERR_OVERFLOW PROVEN_ERR_OVERFLOW
 #define XCV_ERR_PERMISSION PROVEN_ERR_PERMISSION
+#define XCV_ERR_RESERVED_END PROVEN_ERR_RESERVED_END
 #define XCV_ERR_UNSUPPORTED PROVEN_ERR_UNSUPPORTED
 #define XCV_FS_APPEND PROVEN_FS_APPEND
 #define XCV_FS_CREATE PROVEN_FS_CREATE
@@ -376,6 +379,8 @@
 #define xcv_utf16_to_utf8_partial proven_utf16_to_utf8_partial
 #define xcv_utf16_to_utf8_size proven_utf16_to_utf8_size
 #define xcv_utf8_append_to_u16str proven_utf8_append_to_u16str
+#define xcv_utf8_char_t proven_utf8_char_t
+#define xcv_utf8_decode_next proven_utf8_decode_next
 #define xcv_utf8_to_utf16 proven_utf8_to_utf16
 #define xcv_utf8_to_utf16_partial proven_utf8_to_utf16_partial
 #define xcv_utf8_to_utf16_size proven_utf8_to_utf16_size
@@ -441,6 +446,7 @@
 #define xcv_scan_fmt_internal proven_scan_fmt_internal
 #define xcv_scan_fmt_internal_view proven_scan_fmt_internal_view
 #define xcv_scan_i64 proven_scan_i64
+#define xcv_scan_i64_hex proven_scan_i64_hex
 #define xcv_scan_init proven_scan_init
 #define xcv_scan_skip_until proven_scan_skip_until
 #define xcv_scan_skip_until_number proven_scan_skip_until_number
@@ -448,6 +454,7 @@
 #define xcv_scan_str proven_scan_str
 #define xcv_scan_t proven_scan_t
 #define xcv_scan_u64 proven_scan_u64
+#define xcv_scan_u64_hex proven_scan_u64_hex
 #define xcv_set_panic_handler proven_set_panic_handler
 #define xcv_sha256 proven_sha256
 #define xcv_sha256_final proven_sha256_final

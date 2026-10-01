@@ -72,6 +72,40 @@ typedef struct {
 // -------------------------------------------------------------
 
 /**
+ * @brief One step of decoding: a character, or what is in the way of one.
+ */
+typedef struct {
+    proven_err_t  err;  /**< OK, INVALID_ENCODING, NEED_MORE, EOF, OUT_OF_BOUNDS or INVALID_ARG */
+    proven_u32    cp;   /**< The Unicode scalar value when err is OK; 0 otherwise */
+    proven_size_t len;  /**< Bytes this step covers - see proven_utf8_decode_next */
+} proven_utf8_char_t;
+
+/**
+ * @brief Decode the one character that starts at byte `pos` of `s`.
+ *
+ * The step for code that walks text a character at a time - a segmenter, a shaper, a lexer -
+ * with the same strict rules as every other function here. `len` always says how far to move:
+ *
+ * - **PROVEN_OK:** `cp` is the character and `len` its byte length, 1 to 4.
+ * - **PROVEN_ERR_INVALID_ENCODING:** the bytes at `pos` are not a character and no later byte
+ *   can make them one. `len` (at least 1) is the *maximal subpart* - the longest prefix that
+ *   was still a valid start - so stepping by it resynchronises exactly where Unicode says to.
+ *   Nothing is substituted: a caller that displays text puts one U+FFFD per such step, which is
+ *   Unicode's recommended practice (chapter 3, "U+FFFD substitution of maximal subparts").
+ * - **PROVEN_ERR_NEED_MORE:** the view ends inside a character that could still be valid.
+ *   `len` is the bytes left. Text read in pieces keeps them for the next piece; a complete text
+ *   treats them as malformed.
+ * - **PROVEN_ERR_EOF:** `pos` is the end of `s`; `len` is 0.
+ * - **PROVEN_ERR_OUT_OF_BOUNDS:** `pos` is past the end; **PROVEN_ERR_INVALID_ARG:** `s` has a
+ *   NULL pointer with a nonzero size. `len` is 0 for both.
+ *
+ * So `for (pos = 0; pos < s.size; pos += c.len) { c = proven_utf8_decode_next(s, pos); ... }`
+ * always advances, and visits every byte exactly once. Pure computation, freestanding-available.
+ */
+[[nodiscard]]
+proven_utf8_char_t proven_utf8_decode_next(proven_u8str_view_t s, proven_size_t pos);
+
+/**
  * @brief The number of UTF-16 code units `src` converts to.
  * @return PROVEN_ERR_INVALID_ENCODING for malformed input or input that ends mid-character.
  */

@@ -96,6 +96,7 @@ typedef enum {
     PROVEN_ERR_IO,
     PROVEN_ERR_NOT_FOUND,
     PROVEN_ERR_INVALID_STATE,
+    PROVEN_ERR_NEED_MORE,
     PROVEN_ERR_OVERFLOW,
     PROVEN_ERR_UNSUPPORTED,
     PROVEN_ERR_AGAIN,
@@ -104,6 +105,9 @@ typedef enum {
     PROVEN_ERR_PERMISSION,
     PROVEN_ERR_INVALID_FORMAT
 } proven_err_t;
+
+#define PROVEN_ERR_LAST         PROVEN_ERR_INVALID_FORMAT   /* moves when a code is added */
+#define PROVEN_ERR_RESERVED_END 0x1000                      /* never reached, in any version */
 ```
 
 | Error | Typical meaning | You usually respond by |
@@ -116,6 +120,7 @@ typedef enum {
 | `PROVEN_ERR_IO` | The OS or device failed the operation. | Retrying, or reporting to the user. |
 | `PROVEN_ERR_NOT_FOUND` | A file, key, substring, or resource does not exist. | Taking the "absent" branch; often not an error at all. |
 | `PROVEN_ERR_INVALID_STATE` | The object's state does not allow this operation. | Fixing the sequence of calls. |
+| `PROVEN_ERR_NEED_MORE` | The input ends inside something more input would complete - a split UTF-8 character, a number cut by a read. | Keeping what you have and reading more; for a complete text it is malformed. |
 | `PROVEN_ERR_OVERFLOW` | Integer conversion or size arithmetic overflowed. | Refusing the size; see section 4. |
 | `PROVEN_ERR_UNSUPPORTED` | Unavailable on this platform or build profile. | Taking a different route (e.g. a pipe cannot seek). |
 | `PROVEN_ERR_AGAIN` | Not now; retry later. | Retrying, usually after waiting. |
@@ -123,6 +128,22 @@ typedef enum {
 | `PROVEN_ERR_BUSY` | A queue, lock, or resource is busy. | Backing off. |
 | `PROVEN_ERR_PERMISSION` | Access denied. | Reporting; retrying will not help. |
 | `PROVEN_ERR_INVALID_FORMAT` | A format or scan template is itself malformed. | Fixing the format string - a bug, not bad data. |
+
+**Room for your own codes.** Every `proven_err_t` value is below `PROVEN_ERR_RESERVED_END`
+(0x1000), and that is a promise for every later version, not a description of this one: proven
+will never define a code at or above it. `PROVEN_ERR_LAST` names the highest code today and moves
+when one is added - compare against it, never against whichever code you happen to know is last.
+A program with failures of its own can therefore carry proven's codes unchanged in a wider
+integer and number its own from 0x1000 up: no remapping table, and a proven code it passes on
+still means exactly what the table above says.
+
+```c
+/* An application's own codes, above everything proven will ever use. */
+enum { APP_ERR_FIRST = PROVEN_ERR_RESERVED_END, APP_ERR_BAD_GLYPH = APP_ERR_FIRST, APP_ERR_TOO_DEEP };
+_Static_assert(PROVEN_ERR_LAST < APP_ERR_FIRST, "proven's codes stay below ours");
+int app_err = APP_ERR_TOO_DEEP;   /* a proven_err_t converts into the same int unchanged */
+(void)app_err;
+```
 
 ```text
 static inline int proven_is_ok(proven_err_t err);

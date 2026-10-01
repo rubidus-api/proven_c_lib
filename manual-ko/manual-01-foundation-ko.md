@@ -97,6 +97,7 @@ typedef enum {
     PROVEN_ERR_IO,
     PROVEN_ERR_NOT_FOUND,
     PROVEN_ERR_INVALID_STATE,
+    PROVEN_ERR_NEED_MORE,
     PROVEN_ERR_OVERFLOW,
     PROVEN_ERR_UNSUPPORTED,
     PROVEN_ERR_AGAIN,
@@ -105,6 +106,9 @@ typedef enum {
     PROVEN_ERR_PERMISSION,
     PROVEN_ERR_INVALID_FORMAT
 } proven_err_t;
+
+#define PROVEN_ERR_LAST         PROVEN_ERR_INVALID_FORMAT   /* moves when a code is added */
+#define PROVEN_ERR_RESERVED_END 0x1000                      /* never reached, in any version */
 ```
 
 | 에러 | 일반적인 의미 | 보통의 대응 |
@@ -117,6 +121,7 @@ typedef enum {
 | `PROVEN_ERR_IO` | OS 또는 장치가 연산을 실패시켰다. | 재시도하거나, 사용자에게 보고한다. |
 | `PROVEN_ERR_NOT_FOUND` | 파일, 키, 부분 문자열, 또는 리소스가 존재하지 않는다. | "없음" 분기를 탄다. 흔히 에러조차 아니다. |
 | `PROVEN_ERR_INVALID_STATE` | 객체의 상태가 이 연산을 허용하지 않는다. | 호출 순서를 고친다. |
+| `PROVEN_ERR_NEED_MORE` | 입력이 더 들어오면 완성될 무언가의 한가운데서 끝났다 - 잘린 UTF-8 문자, 읽기에 잘린 숫자. | 가진 것을 두고 더 읽는다. 완전한 텍스트라면 잘못된 입력이다. |
 | `PROVEN_ERR_OVERFLOW` | 정수 변환이나 크기 산술이 오버플로했다. | 그 크기를 거부한다. §4를 보라. |
 | `PROVEN_ERR_UNSUPPORTED` | 이 플랫폼이나 빌드 프로파일에서는 사용할 수 없다. | 다른 경로를 택한다(예: 파이프는 seek할 수 없다). |
 | `PROVEN_ERR_AGAIN` | 지금은 안 된다. 나중에 다시 시도하라. | 보통 기다린 뒤 재시도한다. |
@@ -124,6 +129,21 @@ typedef enum {
 | `PROVEN_ERR_BUSY` | 큐, 락, 또는 리소스가 사용 중이다. | 물러나서 기다린다. |
 | `PROVEN_ERR_PERMISSION` | 접근이 거부되었다. | 보고한다. 재시도해도 소용없다. |
 | `PROVEN_ERR_INVALID_FORMAT` | 포맷이나 스캔 템플릿 자체가 잘못되었다. | 포맷 문자열을 고친다 — 잘못된 데이터가 아니라 버그다. |
+
+**여러분 자신의 코드를 위한 자리.** 모든 `proven_err_t` 값은 `PROVEN_ERR_RESERVED_END`(0x1000)보다
+작다. 이것은 이번 판의 모습이 아니라 이후 모든 판에 대한 약속이다: proven은 그 이상의 코드를 결코 정의하지
+않는다. `PROVEN_ERR_LAST`는 지금 가장 큰 코드를 가리키며 코드가 추가되면 함께 움직인다 - 마지막이라고
+알고 있는 코드가 아니라 이것과 비교하라. 그러므로 자기 실패를 가진 프로그램은 proven의 코드를 더 넓은
+정수에 그대로 실어 나르고 자기 코드는 0x1000부터 매길 수 있다: 다시 매기는 표가 필요 없고, 넘겨받은
+proven 코드는 위 표가 말하는 뜻 그대로다.
+
+```c
+/* An application's own codes, above everything proven will ever use. */
+enum { APP_ERR_FIRST = PROVEN_ERR_RESERVED_END, APP_ERR_BAD_GLYPH = APP_ERR_FIRST, APP_ERR_TOO_DEEP };
+_Static_assert(PROVEN_ERR_LAST < APP_ERR_FIRST, "proven's codes stay below ours");
+int app_err = APP_ERR_TOO_DEEP;   /* a proven_err_t converts into the same int unchanged */
+(void)app_err;
+```
 
 ```text
 static inline int proven_is_ok(proven_err_t err);

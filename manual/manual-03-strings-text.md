@@ -554,6 +554,7 @@ never writes half a surrogate pair or half a UTF-8 sequence.
 | `proven_utf16_to_utf8_partial(src, n, out, out_cap)` | The same, the other way; a trailing high surrogate is `NEED_MORE`. | `proven_utf_step_t` |
 | `proven_utf8_append_to_u16str(alloc, dst, src)` | Append the UTF-16 of `src`, growing `dst`; all or nothing. | `proven_err_t` |
 | `proven_utf16_append_to_u8str(alloc, dst, src, n)` | Append the UTF-8 of `n` code units, growing `dst`; all or nothing. | `proven_err_t` |
+| `proven_utf8_decode_next(s, pos)` | The one character at byte `pos`, or why not; `len` is always the step to take. | `proven_utf8_char_t` |
 
 ```text
 typedef struct {
@@ -567,6 +568,13 @@ typedef enum {
     PROVEN_TEXT_UTF8, PROVEN_TEXT_UTF16LE, PROVEN_TEXT_UTF16BE,
     PROVEN_TEXT_AUTO         /* readers only: decided by a byte order mark */
 } proven_text_encoding_t;    /* for the u16 writers and readers in stream.h (chapter 5) */
+
+typedef struct {
+    proven_err_t  err;       /* OK, INVALID_ENCODING, NEED_MORE, EOF, OUT_OF_BOUNDS, INVALID_ARG */
+    proven_u32    cp;        /* the scalar value when err is OK; 0 otherwise */
+    proven_size_t len;       /* bytes this step covers: the character, the maximal subpart of
+                                malformed input, or the bytes left when the text ends mid-character */
+} proven_utf8_char_t;
 ```
 
 Wrong - widening each byte into a code unit. It is right for ASCII, which is why it survives
@@ -586,6 +594,27 @@ refused as malformed, although the text is fine; use the partial form and carry 
 
 ```text
 proven_utf8_to_utf16(piece, out, cap, &n);   /* wrong for pieces: a split character is INVALID */
+```
+
+**One character at a time.** A segmenter, a shaper or a lexer walks text a character at a time,
+and wants a malformed byte reported where it is rather than the whole text refused.
+`proven_utf8_decode_next` decodes the one character at a byte offset under the same strict rules,
+and its `len` is always the step to take: the character's length, or for malformed input the
+*maximal subpart* - the longest prefix that was still a valid start - which is where Unicode says
+to resynchronise. Nothing is substituted. A program that draws text puts one U+FFFD per malformed
+step, which is Unicode's recommended practice; one that validates stops at the first.
+
+```c
+proven_u8str_view_t text = PROVEN_LIT("a\xC3\xA9\xFF" "z\xE2\x82");
+proven_size_t chars = 0, malformed = 0;
+for (proven_size_t pos = 0; pos < text.size;) {
+    proven_utf8_char_t c = proven_utf8_decode_next(text, pos);
+    if (c.err == PROVEN_OK) ++chars;                             /* c.cp: 'a', U+00E9, 'z' */
+    else if (c.err == PROVEN_ERR_INVALID_ENCODING) ++malformed;  /* the FF: one step */
+    /* PROVEN_ERR_NEED_MORE: E2 82 start a character this text never finished */
+    pos += c.len;                                                /* at least 1 inside the text */
+}
+(void)chars; (void)malformed;
 ```
 
 The worked example converts a Korean file name for a wide API and back, shows the refusal that

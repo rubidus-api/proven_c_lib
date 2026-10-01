@@ -64,6 +64,21 @@ static int ref_utf8_valid(const unsigned char *s, size_t n) {
     return 1;
 }
 
+/* Reference for proven_utf8_decode_next at the start of s[0..n): the step the standard defines,
+ * built from ref_utf8_one alone. A malformed step covers the maximal subpart - the longest
+ * prefix that is still an incomplete-but-valid start - or one byte when there is none. */
+typedef struct { int kind; size_t len; } ref_step_t;   /* kind: 1 ok, 0 need more, -1 malformed */
+static ref_step_t ref_decode_step(const unsigned char *s, size_t n) {
+    int r = ref_utf8_one(s, n);
+    if (r > 0) return (ref_step_t){ 1, (size_t)r };
+    if (r == 0) return (ref_step_t){ 0, n };
+    size_t span = 1;
+    for (size_t k = 1; k < n && k < 4; ++k) {
+        if (ref_utf8_one(s, k) == 0) span = k;
+    }
+    return (ref_step_t){ -1, span };
+}
+
 static size_t ref_utf8_encode(unsigned long cp, unsigned char *o) {
     if (cp < 0x80) { o[0] = (unsigned char)cp; return 1; }
     if (cp < 0x800) { o[0] = (unsigned char)(0xC0 | (cp >> 6)); o[1] = (unsigned char)(0x80 | (cp & 0x3F)); return 2; }
@@ -193,6 +208,71 @@ int main(void) {
             }
         }
         PROVEN_TEST_ASSERT(mismatches == 0, "the implementation and the reference must agree on every input", "");
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("decoding one character at a time agrees with the reference over every short input",
+        "proven_utf8_decode_next on all 1-, 2- and 3-byte inputs and the same four-byte sweep: its verdict, its step length - the maximal subpart for malformed input - and, for a character, a code point whose reference encoding is exactly the bytes it consumed.",
+        "A wrong length for malformed input resynchronises in the wrong place: compare the step with the longest prefix the reference still calls a valid start.");
+    // ---------------------------------------------------------------
+    {
+        unsigned char s[4];
+        unsigned long mismatches = 0;
+        for (size_t len = 1; len <= 4; ++len) {
+            unsigned long total = (len <= 3) ? (1UL << (8 * len)) : 16UL * 256UL * 7UL * 9UL;
+            for (unsigned long v = 0; v < total; ++v) {
+                if (len <= 3) {
+                    for (size_t i = 0; i < len; ++i) s[i] = (unsigned char)(v >> (8 * i));
+                } else {
+                    unsigned long w = v;
+                    s[3] = (unsigned char)(0x70 + (w % 9) * 0x0B); w /= 9;
+                    s[2] = (unsigned char)(0x70 + (w % 7) * 0x0F); w /= 7;
+                    s[1] = (unsigned char)(w % 256); w /= 256;
+                    s[0] = (unsigned char)(0xF0 + w);
+                }
+                ref_step_t ref = ref_decode_step(s, len);
+                proven_utf8_char_t c = proven_utf8_decode_next(bv(s, len), 0);
+                bool ok = c.len == ref.len &&
+                          ((ref.kind == 1 && c.err == PROVEN_OK) ||
+                           (ref.kind == 0 && c.err == PROVEN_ERR_NEED_MORE) ||
+                           (ref.kind == -1 && c.err == PROVEN_ERR_INVALID_ENCODING && c.cp == 0));
+                if (ok && ref.kind == 1) {
+                    unsigned char e[4];
+                    ok = ref_utf8_encode(c.cp, e) == c.len && memcmp(e, s, c.len) == 0;
+                }
+                if (!ok && mismatches++ < 5) {
+                    PROVEN_TEST_INFO("len {} bytes {:x} {:x} {:x} {:x}: ref kind {} len {}, got err {} len {} cp {:x}",
+                        PROVEN_ARG((int)len), PROVEN_ARG((unsigned)s[0]), PROVEN_ARG((unsigned)s[1]), PROVEN_ARG((unsigned)s[2]),
+                        PROVEN_ARG((unsigned)s[3]), PROVEN_ARG(ref.kind), PROVEN_ARG((int)ref.len), PROVEN_ARG((int)c.err),
+                        PROVEN_ARG((int)c.len), PROVEN_ARG((unsigned)c.cp));
+                }
+            }
+        }
+        PROVEN_TEST_ASSERT(mismatches == 0, "every one-character step must match the reference", "");
+
+        /* Walking text by `len` visits every byte once and stops exactly at the end, through
+         * characters, malformed bytes and a cut-off tail alike. */
+        static const unsigned char text[] = "a\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80\xC0\x80\xED\xA0\x80\xF4\x90z\xE2\x82";
+        proven_u8str_view_t tv = bv(text, sizeof text - 1);
+        proven_size_t pos = 0, steps = 0, chars = 0, bad = 0, more = 0;
+        while (pos < tv.size) {
+            proven_utf8_char_t c = proven_utf8_decode_next(tv, pos);
+            PROVEN_TEST_ASSERT(c.len >= 1, "a step inside the text always advances", "");
+            if (c.err == PROVEN_OK) ++chars;
+            else if (c.err == PROVEN_ERR_INVALID_ENCODING) ++bad;
+            else if (c.err == PROVEN_ERR_NEED_MORE) ++more;
+            pos += c.len;
+            ++steps;
+        }
+        PROVEN_TEST_ASSERT(pos == tv.size, "the walk ends exactly at the end", "");
+        /* a, e-acute, euro, emoji, z = 5 characters; C0 / 80 / ED / A0 / 80 / F4 / 90 = 7 maximal
+         * subparts of one byte each; E2 82 = one cut-off character. */
+        PROVEN_TEST_ASSERT(chars == 5 && bad == 7 && more == 1, "the walk sees five characters, seven malformed steps and one cut-off tail", "");
+        PROVEN_TEST_ASSERT(proven_utf8_decode_next(tv, tv.size).err == PROVEN_ERR_EOF, "at the end: EOF", "");
+        PROVEN_TEST_ASSERT(proven_utf8_decode_next(tv, tv.size + 1).err == PROVEN_ERR_OUT_OF_BOUNDS, "past the end: OUT_OF_BOUNDS", "");
+        PROVEN_TEST_ASSERT(proven_utf8_decode_next((proven_u8str_view_t){ NULL, 3 }, 0).err == PROVEN_ERR_INVALID_ARG,
+            "a NULL view with a size: INVALID_ARG", "");
+        (void)steps;
     }
 
     // ---------------------------------------------------------------

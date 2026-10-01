@@ -541,6 +541,7 @@ UTF-16인데 프로그램의 나머지는 그것을 UTF-8로 원한다. 이 경�
 | `proven_utf16_to_utf8_partial(src, n, out, out_cap)` | 반대 방향; 끝의 상위 서로게이트는 `NEED_MORE`. | `proven_utf_step_t` |
 | `proven_utf8_append_to_u16str(alloc, dst, src)` | `src`의 UTF-16을 덧붙이며 `dst`를 늘린다; 전부 아니면 전무. | `proven_err_t` |
 | `proven_utf16_append_to_u8str(alloc, dst, src, n)` | 코드 유닛 `n`개의 UTF-8을 덧붙이며 `dst`를 늘린다; 전부 아니면 전무. | `proven_err_t` |
+| `proven_utf8_decode_next(s, pos)` | 바이트 `pos`에서 시작하는 문자 하나, 또는 그렇지 못한 이유; `len`은 언제나 나아갈 거리다. | `proven_utf8_char_t` |
 
 ```text
 typedef struct {
@@ -554,6 +555,13 @@ typedef enum {
     PROVEN_TEXT_UTF8, PROVEN_TEXT_UTF16LE, PROVEN_TEXT_UTF16BE,
     PROVEN_TEXT_AUTO         /* readers only: decided by a byte order mark */
 } proven_text_encoding_t;    /* for the u16 writers and readers in stream.h (chapter 5) */
+
+typedef struct {
+    proven_err_t  err;       /* OK, INVALID_ENCODING, NEED_MORE, EOF, OUT_OF_BOUNDS, INVALID_ARG */
+    proven_u32    cp;        /* the scalar value when err is OK; 0 otherwise */
+    proven_size_t len;       /* bytes this step covers: the character, the maximal subpart of
+                                malformed input, or the bytes left when the text ends mid-character */
+} proven_utf8_char_t;
 ```
 
 반례 - 바이트 하나를 코드 유닛 하나로 넓히는 경우. ASCII에서는 맞기 때문에 테스트를 통과해
@@ -572,6 +580,26 @@ for (size_t i = 0; i < text.size; ++i) {
 
 ```text
 proven_utf8_to_utf16(piece, out, cap, &n);   /* wrong for pieces: a split character is INVALID */
+```
+
+**한 번에 문자 하나.** 분할기, 셰이퍼, 렉서는 텍스트를 문자 하나씩 걷는다. 그리고 텍스트 전체를
+거부하기보다 잘못된 바이트를 그 자리에서 알려 주기를 원한다. `proven_utf8_decode_next`는 바이트
+오프셋 하나에서 시작하는 문자 하나를 같은 엄격한 규칙으로 디코드하고, 그 `len`은 언제나 나아갈 거리다:
+문자의 길이, 또는 잘못된 입력이면 *최대 부분 시퀀스(maximal subpart)* - 아직 올바른 시작이었던 가장 긴
+앞부분 - 이며, 이것이 유니코드가 다시 맞추라고 말하는 자리다. 아무것도 대신 넣지 않는다. 텍스트를 그리는
+프로그램은 잘못된 걸음마다 U+FFFD 하나를 넣고(유니코드 권장 방식), 검증하는 프로그램은 처음에서 멈춘다.
+
+```c
+proven_u8str_view_t text = PROVEN_LIT("a\xC3\xA9\xFF" "z\xE2\x82");
+proven_size_t chars = 0, malformed = 0;
+for (proven_size_t pos = 0; pos < text.size;) {
+    proven_utf8_char_t c = proven_utf8_decode_next(text, pos);
+    if (c.err == PROVEN_OK) ++chars;                             /* c.cp: 'a', U+00E9, 'z' */
+    else if (c.err == PROVEN_ERR_INVALID_ENCODING) ++malformed;  /* the FF: one step */
+    /* PROVEN_ERR_NEED_MORE: E2 82 start a character this text never finished */
+    pos += c.len;                                                /* at least 1 inside the text */
+}
+(void)chars; (void)malformed;
 ```
 
 예제는 한국어 파일 이름을 와이드 API용으로 변환했다가 되돌리고, 아무것도 쓰지 않는 거부를 보이고,
