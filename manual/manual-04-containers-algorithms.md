@@ -112,6 +112,34 @@ Fields:
 | `proven_array_get_mut(arr, index)` | Get mutable element pointer. | pointer or null. |
 | `proven_array_get(arr, index)` | Get const element pointer. | pointer or null. |
 | `proven_array_destroy(arr)` | Free storage and clear state. | void. |
+| `proven_array_clear(arr)` | Remove every element; capacity stays. | void. |
+| `proven_array_truncate(arr, new_len)` | Shorten to `new_len`. | `proven_err_t`; `OUT_OF_BOUNDS` if longer. |
+| `proven_array_insert(arr, index, element)` | Insert at `index` (0..len), moving the rest up. `element` may point into the array. | `proven_err_t`. |
+| `proven_array_remove_at(arr, index, out_element)` | Remove at `index`, keeping order. | `proven_err_t`. |
+| `proven_array_swap_remove(arr, index, out_element)` | Remove at `index` in O(1) by moving the last element in; order is not kept. | `proven_err_t`. |
+| `proven_array_extend(arr, elements, count)` | Append `count` elements, one reallocation at most; may be the array's own elements. | `proven_err_t`. |
+
+The editing operations change nothing when they fail, refuse an index past the end with
+`PROVEN_ERR_OUT_OF_BOUNDS`, and - for the two that can grow the array - invalidate pointers into it
+as `push` does.
+
+```c
+/* A to-do list: insert at the front, take one out from the middle keeping order, drop
+ * finished items in O(1) when order does not matter, and append a batch at once. */
+proven_result_array_t todo = PROVEN_ARRAY_INIT(alloc, int, 4);
+if (proven_is_ok(todo.err)) {
+    const int batch[] = { 10, 20, 30, 40 };
+    int first = 5, taken = 0;
+    proven_err_t e = proven_array_extend(&todo.value, batch, 4);                /* 10 20 30 40 */
+    if (proven_is_ok(e)) e = proven_array_insert(&todo.value, 0, &first);      /* 5 10 20 30 40 */
+    if (proven_is_ok(e)) e = proven_array_remove_at(&todo.value, 2, &taken);   /* 5 10 30 40, took 20 */
+    if (proven_is_ok(e)) e = proven_array_swap_remove(&todo.value, 0, NULL);   /* 40 10 30 */
+    if (proven_is_ok(e)) e = proven_array_truncate(&todo.value, 2);            /* 40 10 */
+    proven_println("{} items, took {}", PROVEN_ARG(todo.value.len), PROVEN_ARG(taken));
+    proven_array_clear(&todo.value);                                           /* empty, capacity kept */
+    proven_array_destroy(&todo.value);
+}
+```
 
 ### Macros
 

@@ -3,12 +3,26 @@
 #include "proven/sysio.h"
 
 #include <stdalign.h>
+#include <string.h>
 
 
 typedef struct {
     int id;
     float score;
 } test_player_t;
+
+/* RFC-0009 X-002 model check: an allocator that can be told to refuse, so a failed grow can be
+ * shown to leave the array exactly as it was. */
+static bool g_refuse_grow;
+static proven_result_mem_mut_t x2_alloc(void *ctx, proven_size_t size, proven_size_t align) {
+    (void)ctx; proven_allocator_t h = proven_heap_allocator(); return h.alloc_fn(h.ctx, size, align);
+}
+static proven_result_mem_mut_t x2_realloc(void *ctx, void *p, proven_size_t o, proven_size_t n, proven_size_t align) {
+    (void)ctx;
+    if (g_refuse_grow && n > o) return (proven_result_mem_mut_t){ .err = PROVEN_ERR_NOMEM };
+    proven_allocator_t h = proven_heap_allocator(); return h.realloc_fn(h.ctx, p, o, n, align);
+}
+static void x2_free(void *ctx, void *p) { (void)ctx; proven_allocator_t h = proven_heap_allocator(); h.free_fn(h.ctx, p); }
 
 int main() {
     PROVEN_TEST_INFO("Running Phase 8 Dynamic Array Tests...");
@@ -115,6 +129,80 @@ int main() {
     // And here is the magic trait. Calling destroy invokes arena's No-Op free! 
     PROVEN_ARRAY_DESTROY(&int_arr); 
     
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("editing in place agrees with a plain array",
+        "RFC-0009 X-002: clear, truncate, insert, remove_at, swap_remove and extend, against a hand-written model over 20,000 random operations - with elements taken from the array itself, and with growth refused part of the time.",
+        "Inspect the new functions at the end of src/proven/array.c; a mismatch prints the operation number.");
+    // ---------------------------------------------------------------
+    {
+        proven_allocator_t a = { .ctx = NULL, .alloc_fn = x2_alloc, .realloc_fn = x2_realloc, .free_fn = x2_free };
+        proven_result_array_t ar = PROVEN_ARRAY_INIT(a, int, 0);
+        PROVEN_TEST_ASSERT(proven_is_ok(ar.err), "created", "");
+        proven_array_t *arr = &ar.value;
+        static int model[4096];
+        size_t n = 0;
+        proven_u64 s = 0x9e3779b97f4a7c15ull;
+        for (int op = 0; op < 20000; ++op) {
+            s ^= s << 13; s ^= s >> 7; s ^= s << 17;
+            unsigned kind = (unsigned)(s % 7u);
+            size_t r = (size_t)(s >> 16);
+            g_refuse_grow = ((s >> 40) % 10u) == 0;   /* one grow in ten is refused */
+            proven_err_t e = PROVEN_OK;
+            if (kind == 0 && n < 4000) {                       /* insert a fresh value */
+                size_t at = r % (n + 1); int v = op;
+                e = proven_array_insert(arr, at, &v);
+                if (proven_is_ok(e)) { memmove(model + at + 1, model + at, (n - at) * sizeof(int)); model[at] = v; ++n; }
+            } else if (kind == 1 && n > 0 && n < 4000) {       /* insert one of its own elements */
+                size_t at = r % (n + 1), from = (r >> 12) % n;
+                int v = model[from];
+                e = proven_array_insert(arr, at, proven_array_get(arr, from));
+                if (proven_is_ok(e)) { memmove(model + at + 1, model + at, (n - at) * sizeof(int)); model[at] = v; ++n; }
+            } else if (kind == 2 && n > 0) {
+                size_t at = r % n; int got = -1;
+                e = proven_array_remove_at(arr, at, &got);
+                PROVEN_TEST_ASSERT(proven_is_ok(e) && got == model[at], "remove_at hands back the element", "");
+                memmove(model + at, model + at + 1, (n - at - 1) * sizeof(int)); --n;
+            } else if (kind == 3 && n > 0) {
+                size_t at = r % n; int got = -1;
+                e = proven_array_swap_remove(arr, at, &got);
+                PROVEN_TEST_ASSERT(proven_is_ok(e) && got == model[at], "swap_remove hands back the element", "");
+                model[at] = model[n - 1]; --n;
+            } else if (kind == 4 && n > 0 && 2 * n <= 4000) {  /* extend with a slice of itself */
+                size_t from = r % n, cnt = 1 + (r >> 12) % (n - from);
+                e = proven_array_extend(arr, proven_array_get(arr, from), cnt);
+                if (proven_is_ok(e)) { memmove(model + n, model + from, cnt * sizeof(int)); n += cnt; }
+            } else if (kind == 5) {
+                size_t to = n ? r % (n + 1) : 0;
+                e = proven_array_truncate(arr, to);
+                PROVEN_TEST_ASSERT(proven_is_ok(e), "truncate to a shorter length", "");
+                n = to;
+            } else if (kind == 6 && (r % 50u) == 0) {
+                proven_array_clear(arr); n = 0;
+            }
+            PROVEN_TEST_ASSERT(proven_is_ok(e) || e == PROVEN_ERR_NOMEM, "only a refused grow may fail", "");
+            PROVEN_TEST_ASSERT(arr->len == n, "the length follows the model", "");
+            bool same = n == 0 || memcmp(arr->data, model, n * sizeof(int)) == 0;
+            if (!same) PROVEN_TEST_INFO("first mismatch after operation {}", PROVEN_ARG(op));
+            PROVEN_TEST_ASSERT(same, "the contents follow the model, including after a refused grow", "");
+        }
+        g_refuse_grow = false;
+        int v = 0;
+        PROVEN_TEST_ASSERT(proven_array_truncate(arr, arr->len + 1) == PROVEN_ERR_OUT_OF_BOUNDS, "truncate cannot lengthen", "");
+        PROVEN_TEST_ASSERT(proven_array_insert(arr, arr->len + 1, &v) == PROVEN_ERR_OUT_OF_BOUNDS, "insert past the end", "");
+        PROVEN_TEST_ASSERT(proven_array_remove_at(arr, arr->len, NULL) == PROVEN_ERR_OUT_OF_BOUNDS, "remove_at past the end", "");
+        PROVEN_TEST_ASSERT(proven_array_swap_remove(arr, arr->len, NULL) == PROVEN_ERR_OUT_OF_BOUNDS, "swap_remove past the end", "");
+        PROVEN_TEST_ASSERT(proven_array_extend(arr, NULL, 1) == PROVEN_ERR_INVALID_ARG, "extend from NULL", "");
+        PROVEN_TEST_ASSERT(proven_array_extend(arr, NULL, 0) == PROVEN_OK, "extend by nothing", "");
+        if (arr->len >= 2) {
+            /* a source that starts inside the array and runs past its storage */
+            const int *last = proven_array_get(arr, arr->len - 1);
+            size_t past = arr->cap - arr->len + 2;
+            PROVEN_TEST_ASSERT(proven_array_extend(arr, last, past) == PROVEN_ERR_INVALID_ARG,
+                "a source that only partly overlaps the array is refused", "");
+        }
+        proven_array_destroy(arr);
+    }
+
     PROVEN_TEST_PASS("All Phase 8 Dynamic Array Tests Passed Successfully!");
     return 0;
 }

@@ -112,6 +112,33 @@ typedef struct {
 | `proven_array_get_mut(arr, index)` | 가변 원소 포인터를 얻는다. | 포인터 또는 null. |
 | `proven_array_get(arr, index)` | const 원소 포인터를 얻는다. | 포인터 또는 null. |
 | `proven_array_destroy(arr)` | 저장소를 해제하고 상태를 비운다. | void. |
+| `proven_array_clear(arr)` | 모든 원소를 지운다. 용량은 남는다. | void. |
+| `proven_array_truncate(arr, new_len)` | `new_len`으로 줄인다. | `proven_err_t`. 더 길면 `OUT_OF_BOUNDS`. |
+| `proven_array_insert(arr, index, element)` | `index`(0..len)에 넣고 나머지를 뒤로 민다. `element`는 배열 안을 가리켜도 된다. | `proven_err_t`. |
+| `proven_array_remove_at(arr, index, out_element)` | `index`의 원소를 순서를 지키며 뺀다. | `proven_err_t`. |
+| `proven_array_swap_remove(arr, index, out_element)` | 마지막 원소를 그 자리로 옮겨 O(1)에 뺀다. 순서는 지키지 않는다. | `proven_err_t`. |
+| `proven_array_extend(arr, elements, count)` | 원소 `count`개를 덧붙인다. 재할당은 많아야 한 번. 배열 자신의 원소여도 된다. | `proven_err_t`. |
+
+편집 연산은 실패하면 아무것도 바꾸지 않고, 끝을 넘는 index는 `PROVEN_ERR_OUT_OF_BOUNDS`로
+거부하며, 배열을 키울 수 있는 두 연산은 `push`처럼 배열 안을 가리키던 포인터를 무효로 만든다.
+
+```c
+/* A to-do list: insert at the front, take one out from the middle keeping order, drop
+ * finished items in O(1) when order does not matter, and append a batch at once. */
+proven_result_array_t todo = PROVEN_ARRAY_INIT(alloc, int, 4);
+if (proven_is_ok(todo.err)) {
+    const int batch[] = { 10, 20, 30, 40 };
+    int first = 5, taken = 0;
+    proven_err_t e = proven_array_extend(&todo.value, batch, 4);                /* 10 20 30 40 */
+    if (proven_is_ok(e)) e = proven_array_insert(&todo.value, 0, &first);      /* 5 10 20 30 40 */
+    if (proven_is_ok(e)) e = proven_array_remove_at(&todo.value, 2, &taken);   /* 5 10 30 40, took 20 */
+    if (proven_is_ok(e)) e = proven_array_swap_remove(&todo.value, 0, NULL);   /* 40 10 30 */
+    if (proven_is_ok(e)) e = proven_array_truncate(&todo.value, 2);            /* 40 10 */
+    proven_println("{} items, took {}", PROVEN_ARG(todo.value.len), PROVEN_ARG(taken));
+    proven_array_clear(&todo.value);                                           /* empty, capacity kept */
+    proven_array_destroy(&todo.value);
+}
+```
 
 ### 매크로
 

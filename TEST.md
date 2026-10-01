@@ -417,6 +417,7 @@ Sub-checks:
 - Pops values and checks boundary rejection on empty pop.
 - Checks invalid get/set ranges.
 - Creates an arena-backed array to ensure allocator independence.
+- Editing in place (RFC-0009 X-002): 20,000 random `insert` (fresh values and elements of the array itself), `remove_at`, `swap_remove`, `extend` (with a slice of itself), `truncate` and `clear` operations agree with a plain-array model after every step, while one grow in ten is refused by the allocator (a refused grow must leave the array unchanged); indexes past the end are `OUT_OF_BOUNDS`, `truncate` cannot lengthen, and an `extend` source that only partly overlaps the array is `INVALID_ARG`.
 
 Failure tip: inspect `src/proven/array.c`. Growth failures usually mean element-size multiplication, capacity doubling, or realloc failure-atomic behavior changed. Remember that pointers into array storage are invalid after growth.
 

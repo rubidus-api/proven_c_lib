@@ -48,6 +48,11 @@ written; their tags still exist.
   reserve that rehashes the map makes the next step `PROVEN_ERR_INVALID_STATE` instead of skipping
   or repeating entries. Aliases `xcv_map_iter_t`, `xcv_map_iter_init`, `xcv_map_iter_next`,
   `xcv_map_len`.
+- **Arrays can be edited in place: `proven_array_clear`, `_truncate`, `_insert`, `_remove_at`,
+  `_swap_remove` and `_extend`** (RFC-0009 X-002) - the operations callers wrote by hand on top
+  of `get_mut` and `len`. Each changes nothing when it fails; `insert` and `extend` accept
+  elements taken from the array itself (a source that only partly overlaps it is refused), and
+  `extend` reallocates at most once. Aliases `xcv_array_*`.
 
 ### Changed
 
