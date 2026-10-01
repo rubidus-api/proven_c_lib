@@ -799,6 +799,7 @@ Sub-checks:
 - `proven_random_bytes` succeeds on a hosted platform, and neither the whole buffer nor its tail is left zero (a stub, a wrong length, or an ignored error leaves zeros).
 - Two draws differ (a fixed or unseeded generator repeats), and the bytes are neither all-equal (a memset) nor a simple counter.
 - `len == 0` is a successful no-op, and two `proven_random_u64` draws differ.
+- Three job workers make 300,000 draws while the main thread keeps installing one of two sources, each of which checks it was handed its own context: no draw sees a mismatched pair, and under `./nob tsan` there is no race report (RFC-0009 S-004). Installing `NULL` restores the platform default.
 
 Failure tip: inspect `platform/proven_sys_random.c`. A failure here is a missing or wrong OS entropy call - the `getrandom` guard keys on `GRND_NONBLOCK` from `<sys/random.h>`, not on a syscall number that was never included.
 

@@ -1,6 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include <string.h>
+#include <stdatomic.h>
 
 /*
  * Written from the contract in include/proven/random.h before the OS call was wired up
@@ -18,6 +19,29 @@
  * one catches a real, shipped failure mode, and together they are the difference between
  * "the OS RNG" and "a buffer someone forgot to fill".
  */
+
+/* S-004: two sources whose context says which source it belongs to. A draw that pairs one
+ * source's function with the other's context is the torn read the old two globals allowed. */
+static int ctx_a = 'a', ctx_b = 'b';
+static atomic_int torn;
+static atomic_int draws_left;
+static atomic_int workers_done;
+static bool source_a(void *ctx, void *buf, proven_size_t len) {
+    if (ctx != &ctx_a) atomic_fetch_add(&torn, 1);
+    memset(buf, 0xA5, len);
+    return true;
+}
+static bool source_b(void *ctx, void *buf, proven_size_t len) {
+    if (ctx != &ctx_b) atomic_fetch_add(&torn, 1);
+    memset(buf, 0x5A, len);
+    return true;
+}
+static void drawer(void *arg) {
+    (void)arg;
+    proven_byte_t b[8];
+    while (atomic_fetch_sub(&draws_left, 1) > 0) (void)proven_random_bytes(b, sizeof b);
+    atomic_fetch_add(&workers_done, 1);
+}
 
 int main(void) {
     PROVEN_TEST_SUITE("OS randomness",
@@ -89,6 +113,32 @@ int main(void) {
         proven_u64 x = proven_random_u64();
         proven_u64 y = proven_random_u64();
         PROVEN_TEST_ASSERT(x != y, "two random u64 draws must differ", "");
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("installing a source while others draw is not a torn read",
+        "RFC-0009 S-004: the hook was two plain globals, so a late install raced every draw and could pair one source's function with the other's context. Every draw now sees a matching pair; under TSan, no race.",
+        "Inspect proven_random_set_source and entropy_source in src/proven/random.c: the pair is published under a sequence count.");
+    // ---------------------------------------------------------------
+    {
+        proven_job_sys_t *sys = NULL;
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_job_system_init(proven_heap_allocator(), 3, 8, &sys)),
+            "a three-worker job system starts", "");
+        atomic_store(&draws_left, 300000);
+        for (int i = 0; i < 3; ++i) {
+            PROVEN_TEST_ASSERT(proven_job_submit(sys, drawer, NULL), "a drawer is submitted", "");
+        }
+        int installs = 0;
+        while (atomic_load(&workers_done) < 3) {
+            proven_random_set_source((installs & 1) ? source_b : source_a, (installs & 1) ? &ctx_b : &ctx_a);
+            ++installs;
+        }
+        proven_job_system_destroy(sys);
+        proven_random_set_source(NULL, NULL);
+        PROVEN_TEST_INFO("{} installs raced 300000 draws", PROVEN_ARG(installs));
+        PROVEN_TEST_ASSERT(atomic_load(&torn) == 0, "no draw saw one source's function with the other's context", "");
+        proven_byte_t b[4];
+        PROVEN_TEST_ASSERT(proven_random_bytes(b, sizeof b), "the platform default is back after installing NULL", "");
     }
 
     PROVEN_TEST_PASS("the OS randomness source behaves like one.");

@@ -42,6 +42,11 @@ written; their tags still exist.
 
 ### Fixed
 
+- **`proven_random_set_source` is no longer a data race when called while other threads draw**
+  (RFC-0009 S-004). The hook was two plain globals, so a late install was undefined behaviour and
+  a draw could pair one source's function with the other's context. The pair is now published
+  under a sequence count; a draw always sees a function with its own context. Installing once at
+  startup is still the advice.
 - **Eight leftover staging files no longer block every later atomic write of a path**
   (RFC-0009 D-001). `proven_fs_write_file_atomic` and `_durable` staged into the fixed names
   `<path>.pvtmp00` .. `07` and gave up after them, so eight writers killed mid-write - or anyone

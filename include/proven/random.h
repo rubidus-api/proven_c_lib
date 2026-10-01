@@ -256,9 +256,10 @@ typedef bool (*proven_entropy_fn)(void *ctx, void *buf, proven_size_t len);
  * @param fn  the source, or NULL to go back to the platform default (none, freestanding).
  * @param ctx passed to `fn` unchanged; may be NULL.
  *
- * @warning Install exactly one, once, before any thread draws from it. This is a global, and
- *          it is deliberately not synchronised: a program that swaps its entropy source while
- *          another thread is drawing a key has a problem that a mutex here would only hide.
+ * @warning Install exactly one, once, before any thread draws from it. Installing later is not
+ *          a data race - a draw always sees a function together with the context installed
+ *          with it - but a program that swaps its entropy source while another thread is
+ *          drawing a key cannot say which source that key came from.
  * @warning **Do not install a clock, a serial number, an uninitialised buffer, or a PRNG.**
  *          Those produce something that looks random and is not, which is worse than an
  *          obvious failure because nothing reports it. If the board has no real entropy, say
