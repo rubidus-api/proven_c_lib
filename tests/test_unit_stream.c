@@ -24,6 +24,20 @@ static proven_err_t emit_report(proven_writer_t w) {
     return r.err;
 }
 
+/* A source that hands over at most one byte per read: the shape that made the line reader
+ * rescan everything it held after every arrival (RFC-0009 P-104). */
+typedef struct { const char *p; size_t n, at; const size_t *chunks; size_t next; } trickle_t;
+static proven_result_size_t trickle_read(void *ctx, proven_mem_mut_t dst) {
+    trickle_t *s = ctx;
+    if (s->at == s->n) return (proven_result_size_t){ .err = PROVEN_ERR_EOF };
+    size_t want = s->chunks ? s->chunks[s->next++] : 1;   /* scripted chunk sizes, or one byte */
+    if (want > dst.size) want = dst.size;
+    if (want > s->n - s->at) want = s->n - s->at;
+    memcpy(dst.ptr, s->p + s->at, want);
+    s->at += want;
+    return (proven_result_size_t){ .err = PROVEN_OK, .value = want };
+}
+
 int main(void) {
     PROVEN_TEST_SUITE("writers and readers",
         "One piece of code must be able to move bytes without knowing where they go, and a sink must refuse rather than truncate.",
@@ -223,6 +237,60 @@ int main(void) {
     }
 
     (void)proven_fs_remove(heap, path);
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("lines arriving a byte at a time, with raw reads in between",
+        "RFC-0009 P-104: the reader remembers how far it has searched, so a refill searches only new bytes. That memory must survive compaction, a CR split from its LF, and raw reads that move the cursor.",
+        "Inspect `scanned` in proven_reader_read_line and reader_buffered_read: a lost or duplicated line means the frontier was not moved with the cursor.");
+    // ---------------------------------------------------------------
+    {
+        static const char text[] = "alpha\r\nbeta\n\nXYZgamma-delta-epsilon\r\nlast";
+        trickle_t src = { text, sizeof text - 1, 0, NULL, 0 };
+        proven_reader_t inner = { .ctx = &src, .read_fn = trickle_read };
+        proven_byte_t buf[24];
+        proven_reader_buffered_t st;
+        proven_reader_t r = proven_reader_buffered(&st, inner, (proven_mem_mut_t){ buf, sizeof buf });
+        PROVEN_TEST_ASSERT(proven_reader_is_valid(r), "the buffered reader is created", "");
+        proven_result_u8str_view_t l = proven_reader_read_line(&st);
+        PROVEN_TEST_ASSERT(l.err == PROVEN_OK && proven_u8str_view_eq(l.val, PROVEN_LIT("alpha")), "CRLF across two arrivals", "");
+        l = proven_reader_read_line(&st);
+        PROVEN_TEST_ASSERT(l.err == PROVEN_OK && proven_u8str_view_eq(l.val, PROVEN_LIT("beta")), "the next line", "");
+        l = proven_reader_read_line(&st);
+        PROVEN_TEST_ASSERT(l.err == PROVEN_OK && l.val.size == 0, "an empty line", "");
+        proven_byte_t three[3];
+        proven_result_size_t rr = proven_reader_read(r, (proven_mem_mut_t){ three, 3 });
+        PROVEN_TEST_ASSERT(proven_is_ok(rr.err) && rr.value >= 1 && three[0] == 'X', "a raw read in between takes bytes from the front", "");
+        size_t took = rr.value;
+        while (took < 3) {
+            rr = proven_reader_read(r, (proven_mem_mut_t){ three + took, 3 - took });
+            PROVEN_TEST_ASSERT(proven_is_ok(rr.err) && rr.value >= 1, "and more of them", "");
+            took += rr.value;
+        }
+        PROVEN_TEST_ASSERT(memcmp(three, "XYZ", 3) == 0, "exactly XYZ", "");
+        l = proven_reader_read_line(&st);
+        PROVEN_TEST_ASSERT(l.err == PROVEN_OK && proven_u8str_view_eq(l.val, PROVEN_LIT("gamma-delta-epsilon")),
+            "the rest of the line after the raw read, through a compaction", "");
+        l = proven_reader_read_line(&st);
+        PROVEN_TEST_ASSERT(l.err == PROVEN_OK && proven_u8str_view_eq(l.val, PROVEN_LIT("last")), "a final unterminated line", "");
+        l = proven_reader_read_line(&st);
+        PROVEN_TEST_ASSERT(l.err == PROVEN_ERR_EOF, "then EOF", "");
+
+        /* A search that found nothing, then one arrival bringing the newline AND the next
+         * lines: the search position must start over with the next line, or the newline at
+         * the start of what is left is skipped and two lines come back as one. */
+        static const char text2[] = "abcd\nef\ng\n";
+        static const size_t chunks2[] = { 4, 7 };
+        trickle_t src2 = { text2, sizeof text2 - 1, 0, chunks2, 0 };
+        proven_reader_buffered_t st2;
+        (void)proven_reader_buffered(&st2, (proven_reader_t){ .ctx = &src2, .read_fn = trickle_read },
+                                     (proven_mem_mut_t){ buf, sizeof buf });
+        l = proven_reader_read_line(&st2);
+        PROVEN_TEST_ASSERT(l.err == PROVEN_OK && proven_u8str_view_eq(l.val, PROVEN_LIT("abcd")), "abcd", "");
+        l = proven_reader_read_line(&st2);
+        PROVEN_TEST_ASSERT(l.err == PROVEN_OK && proven_u8str_view_eq(l.val, PROVEN_LIT("ef")), "ef, not ef\\ng", "");
+        l = proven_reader_read_line(&st2);
+        PROVEN_TEST_ASSERT(l.err == PROVEN_OK && proven_u8str_view_eq(l.val, PROVEN_LIT("g")), "g", "");
+    }
+
     PROVEN_TEST_PASS("writers and readers behave.");
     return 0;
 }

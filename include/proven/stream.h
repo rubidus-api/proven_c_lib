@@ -230,6 +230,11 @@ typedef struct {
      * from a genuinely over-long line without looking at one more byte. */
     proven_byte_t    peek;
     bool             has_peek;
+
+    /* How many bytes after `cursor` the line reader has already searched without finding a
+     * newline. A refill appends; the search resumes here instead of from `cursor`, so a long
+     * line arriving a byte at a time is scanned once, not once per arrival. */
+    proven_size_t    scanned;
 } proven_reader_buffered_t;
 
 /**

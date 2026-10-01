@@ -414,6 +414,7 @@ static proven_result_size_t reader_buffered_read(void *ctx, proven_mem_mut_t des
     proven_size_t n = have < dest.size ? have : dest.size;
     proven_sys_mem_copy(dest.ptr, s->buf.ptr + s->cursor, n);
     s->cursor += n;
+    s->scanned = s->scanned > n ? s->scanned - n : 0;   /* still relative to the cursor */
     res.err = PROVEN_OK;
     res.value = n;
     return res;
@@ -431,6 +432,7 @@ proven_reader_t proven_reader_buffered(proven_reader_buffered_t *state, proven_r
     state->err = PROVEN_OK;
     state->peek = 0;
     state->has_peek = false;   /* a stack-declared state holds garbage here otherwise */
+    state->scanned = 0;
     return (proven_reader_t){ .ctx = state, .read_fn = reader_buffered_read };
 }
 
@@ -442,18 +444,24 @@ proven_result_u8str_view_t proven_reader_read_line(proven_reader_buffered_t *s) 
     }
 
     for (;;) {
-        /* Is there a newline in what we already hold? */
-        for (proven_size_t i = s->cursor; i < s->len; ++i) {
-            if (s->buf.ptr[i] != (proven_byte_t)'\n') continue;
-
+        /* Is there a newline in what we already hold? Search only the bytes not searched
+         * before (RFC-0009 P-104): the byte loop restarted at the cursor after every refill,
+         * so a 16 KB line arriving a byte at a time cost 4.8 us per byte. */
+        proven_size_t from = s->cursor + s->scanned;
+        if (from > s->len) from = s->len;   /* a caller-zeroed or older state */
+        const proven_byte_t *nl = (const proven_byte_t *)proven_sys_mem_chr(s->buf.ptr + from, '\n', s->len - from);
+        if (nl) {
+            proven_size_t i = (proven_size_t)(nl - s->buf.ptr);
             proven_size_t end = i;
             if (end > s->cursor && s->buf.ptr[end - 1] == (proven_byte_t)'\r') --end;
 
             res.err = PROVEN_OK;
             res.val = (proven_u8str_view_t){ .ptr = s->buf.ptr + s->cursor, .size = end - s->cursor };
             s->cursor = i + 1;   /* step over the newline */
+            s->scanned = 0;
             return res;
         }
+        s->scanned = s->len - s->cursor;   /* all of it searched; compaction keeps this valid */
 
         /* No newline yet.
          *
@@ -506,6 +514,7 @@ proven_result_u8str_view_t proven_reader_read_line(proven_reader_buffered_t *s) 
                 res.err = PROVEN_OK;
                 res.val = (proven_u8str_view_t){ .ptr = s->buf.ptr, .size = s->len };
                 s->cursor = s->len;
+                s->scanned = 0;
                 return res;
             }
 
@@ -517,6 +526,7 @@ proven_result_u8str_view_t proven_reader_read_line(proven_reader_buffered_t *s) 
                 res.err = PROVEN_OK;
                 res.val = (proven_u8str_view_t){ .ptr = s->buf.ptr, .size = end };
                 s->cursor = s->len;   /* the newline itself is consumed, not stored */
+                s->scanned = 0;
                 s->has_peek = false;
                 return res;
             }
@@ -543,6 +553,7 @@ proven_result_u8str_view_t proven_reader_read_line(proven_reader_buffered_t *s) 
                 res.err = PROVEN_OK;
                 res.val = (proven_u8str_view_t){ .ptr = s->buf.ptr + s->cursor, .size = s->len - s->cursor };
                 s->cursor = s->len;
+                s->scanned = 0;
                 return res;
             }
             res.err = PROVEN_ERR_EOF;

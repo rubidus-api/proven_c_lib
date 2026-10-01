@@ -45,6 +45,12 @@ written; their tags still exist.
 
 ### Changed
 
+- **`proven_reader_read_line` searches each byte once** (RFC-0009 P-104). It searched from the
+  start of the pending line, one byte at a time, after every refill, so a long line arriving in
+  small pieces cost time quadratic in its length: 4.8 us per byte for a 16,000-byte line read a
+  byte at a time. It now remembers how far it has searched and uses the platform `memchr`: 21-25 ns
+  per byte for that case, and 0.27 ns per byte from 1.33 for 80-byte lines read from a file.
+  `proven_reader_buffered_t` gains a field, `scanned`, set by `proven_reader_buffered`.
 - **Listing a directory on POSIX costs one metadata call per entry, or none** (RFC-0009 P-102).
   `proven_fs_dir_next` (and so `proven_fs_list` and the walk) asked for every entry's type twice,
   following and not following symlinks. `readdir`'s `d_type` already says what most entries are:

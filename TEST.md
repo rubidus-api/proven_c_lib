@@ -881,6 +881,7 @@ Sub-checks:
 - `proven_reader_read_line` handles `\r\n`, empty lines, and **returns the final line even with no trailing newline**.
 - A line longer than the reader's buffer is `PROVEN_ERR_OUT_OF_BOUNDS`, not a silently truncated line.
 - End of input is `PROVEN_ERR_EOF`, never a zero-byte success.
+- Lines arriving one byte per read (RFC-0009 P-104): a CRLF split across arrivals, an empty line, a raw read of three bytes between lines, a line that is completed after a compaction, and a final unterminated line - each exactly once. Then a source whose second read brings a newline and the next two lines at once: each comes back separately (a search position not reset after a line merged them).
 
 Failure tip: inspect `src/proven/stream.c`. Buffering uses caller-supplied memory: there is no hidden global state and no allocation the caller did not ask for.
 
