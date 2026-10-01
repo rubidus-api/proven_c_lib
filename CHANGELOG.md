@@ -18,6 +18,17 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-01
+
+A MINOR release: nothing public removed. It carries the whole-library review (RFC-0009): defects
+fixed, four security changes, faster CRC-32, SHA-256, directory listing and stream readers, map
+iteration, in-place array editing, job groups, and a build that links its tests in parallel.
+Behaviour changes, each where the old behaviour was wrong or unsafe: an exclusive create over an
+existing name is `PROVEN_ERR_EXISTS` instead of `PROVEN_ERR_IO`; environment values and directory
+entry names that are not valid text are `PROVEN_ERR_INVALID_ENCODING` on POSIX too (they were
+returned as raw bytes; Windows substituted U+FFFD); `proven_map_hash` values for default
+integer-key maps change and now differ per process; and `proven_reader_buffered_t` gains a field.
+
 ### Added
 
 - **`PROVEN_ERR_EXISTS`: an exclusive create found the name already there** (RFC-0009 X-009).
