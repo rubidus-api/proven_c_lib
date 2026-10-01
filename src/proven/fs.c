@@ -1020,7 +1020,7 @@ static proven_err_t internal_refuse_if_protected(proven_allocator_t scratch, pro
 
 /* Lower case only: on a case-insensitive filesystem two suffixes that differ only in case would
  * be one name, and the 64 bits would quietly be fewer. */
-static const char internal_tmp_alphabet[32] = "0123456789abcdefghijklmnopqrstuv";
+static const char internal_tmp_alphabet[] = "0123456789abcdefghijklmnopqrstuv";   /* 32 + NUL */
 
 static bool internal_is_tmp_char(proven_byte_t c) {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'v');
