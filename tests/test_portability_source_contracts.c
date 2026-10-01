@@ -227,7 +227,7 @@ int main(void) {
                                 back--;
                                 while (back > text && back[-1] != '\n') back--;
                             }
-                            char *mark = strstr(back, "MACRO SUPPORT");
+                            const char *mark = strstr(back, "MACRO SUPPORT");
                             require(mark != NULL && mark < line, "each one is marked MACRO SUPPORT right above its declaration");
                             ++found;
                         }

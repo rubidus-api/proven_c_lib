@@ -53,7 +53,7 @@ static void x3_slow(void *arg) {
     int i = (int)(proven_uintptr_t)arg;
     volatile int spin = 0;
     for (int k = 0; k < 2000; ++k) spin += k;   /* long enough that workers, not the waiter, finish most */
-    x3_many[i] = i + 1;                          /* a plain write the wait must publish */
+    x3_many[i] = i + 1 + (spin < 0);             /* a plain write the wait must publish (spin is never negative) */
 }
 static void x3_job(void *arg) {
     int i = (int)(proven_uintptr_t)arg;
