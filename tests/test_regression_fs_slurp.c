@@ -2,6 +2,7 @@
 #include "proven/heap.h"
 #include "proven_test.h"
 #include <stdbool.h>
+#include <string.h>
 
 /*
  * Whole-file read and whole-file write.
@@ -59,6 +60,23 @@ static bool bytes_eq(proven_mem_mut_t got, proven_u8str_view_t want) {
         if (got.ptr[i] != want.ptr[i]) return false;
     }
     return true;
+}
+
+
+/* True when the working directory holds a staging file for `stem` (RFC-0009 D-001: the
+ * staging names are random, so look for the shape, not for one name). */
+static bool staging_left_for(const char *stem) {
+    proven_allocator_t h = proven_heap_allocator();
+    proven_result_dir_t d = proven_fs_dir_open(h, PROVEN_LIT("."));
+    if (!proven_is_ok(d.err)) return true;
+    size_t n = strlen(stem);
+    bool found = false;
+    proven_fs_dir_entry_t e;
+    while (!found && proven_is_ok(proven_fs_dir_next(&d.value, &e))) {
+        found = e.name.size > n && memcmp(e.name.ptr, stem, n) == 0 && proven_fs_is_staging_name(e.name);
+    }
+    proven_fs_dir_close(&d.value);
+    return found;
 }
 
 int main(void) {
@@ -171,9 +189,7 @@ int main(void) {
     heap.free_fn(heap.ctx, r.value.ptr);
 
     /* The temp sibling must be gone: the rename consumed it. */
-    proven_u8str_view_t tmp0 = PROVEN_LIT("test_slurp.txt.pvtmp00");
-    proven_result_file_t leftover = proven_fs_open(heap, tmp0, PROVEN_FS_READ);
-    PROVEN_TEST_ASSERT(!proven_is_ok(leftover.err),
+    PROVEN_TEST_ASSERT(!staging_left_for("test_slurp.txt"),
         "atomic write left its temp file behind",
         "the rename should have consumed the temp file");
 

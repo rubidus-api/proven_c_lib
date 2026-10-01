@@ -26,6 +26,20 @@ written; their tags still exist.
   from "the disk failed". It now returns the new code, on POSIX (`EEXIST`) and Windows
   (`ERROR_FILE_EXISTS`). `PROVEN_ERR_LAST` moves to it; alias `XCV_ERR_EXISTS`. Code that
   compared that case against `PROVEN_ERR_IO` must compare against `PROVEN_ERR_EXISTS`.
+- **`proven_fs_is_staging_name(name)`**: true for a name with the shape of the temp file an
+  atomic or durable write leaves behind when killed mid-write (today's and the old one), for a
+  cleanup job. The library itself never removes one it did not just create (RFC-0009 D-001).
+
+### Fixed
+
+- **Eight leftover staging files no longer block every later atomic write of a path**
+  (RFC-0009 D-001). `proven_fs_write_file_atomic` and `_durable` staged into the fixed names
+  `<path>.pvtmp00` .. `07` and gave up after them, so eight writers killed mid-write - or anyone
+  who could write the directory - made the path unwritable through the library for good, with
+  `PROVEN_ERR_IO`. The suffix is now 13 random characters (64 bits from the entropy source), only
+  a name collision is retried, any other failure is returned at once with its own code, and
+  sixteen collisions in a row are `PROVEN_ERR_EXISTS`. Confidentiality was never affected: the
+  staging file is created exclusively, so a planted name was refused, not written through.
 
 ## [0.5.0] - 2026-10-01
 

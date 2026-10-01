@@ -233,6 +233,7 @@
 #define xcv_fs_entry_t proven_fs_entry_t
 #define xcv_fs_handle_t proven_fs_handle_t
 #define xcv_fs_is_absolute proven_fs_is_absolute
+#define xcv_fs_is_staging_name proven_fs_is_staging_name
 #define xcv_fs_link proven_fs_link
 #define xcv_fs_list proven_fs_list
 #define xcv_fs_list_destroy proven_fs_list_destroy

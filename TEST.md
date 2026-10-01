@@ -20,7 +20,7 @@ The class says what kind of question the test answers:
 |---|---|---|
 | `unit` | Does this module do what it says, used the way a caller uses it? | 69 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
-| `regression` | Does a defect that actually shipped stay fixed? | 25 |
+| `regression` | Does a defect that actually shipped stay fixed? | 26 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
 | `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 12 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
@@ -326,7 +326,7 @@ Last run, 2026-09-30, Windows 11 test VM: x86-64 214 PASS, 0 FAIL, 7 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 129 registered tests plus the 92 runnable manual examples - 221 executables in all. `./nob regression` re-runs a 33-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 142 test files: the 129 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 130 registered tests plus the 92 runnable manual examples - 222 executables in all. `./nob regression` re-runs a 34-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 143 test files: the 130 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1572,6 +1572,20 @@ Sub-checks:
 
 Failure tip: `proven_fs_size` reports 0 for anything that is not a regular file, so the reported size may only seed the read capacity - never bound the read. Inspect `internal_slurp_path` and `internal_read_to_eof` in `src/proven/fs.c`.
 
+### `tests/test_regression_fs_staging_names` - random staging names
+
+Intent: verify that leftover or planted staging files never block an atomic or durable whole-file write (RFC-0009 D-001).
+
+Sub-checks:
+
+- `proven_fs_is_staging_name` accepts `.pvtmp` plus 13 characters from `0-9a-v` and the old `.pvtmp` plus two digits, and refuses a character outside the alphabet, upper case, a wrong length, a bare suffix and an ordinary name.
+- With the eight old fixed names `<path>.pvtmp00` .. `07` present (the reproducer), both `proven_fs_write_file_atomic` and `proven_fs_write_file_durable` succeed.
+- With 64 more names of the new shape planted, 32 atomic writes in a row succeed, and the planted files keep their contents.
+- Afterwards exactly the 72 planted names have the staging shape: no write left its own.
+- A write into a missing directory is `PROVEN_ERR_NOT_FOUND` at once, not retried.
+
+Failure tip: inspect `internal_write_file_atomic` and `internal_tmp_bits` in `src/proven/fs.c`. A failure past the planted names means the suffix is predictable again; a higher staging count means a rename or cleanup path lost its temp file.
+
 ### `tests/test_regression_scanner_rollback` - scanner rollback after a failed scan
 
 Intent: verify a scan that fails on an oversized token restores the stream exactly - dropping no byte and duplicating none.
@@ -1906,6 +1920,7 @@ a slot count drifts or a producer stalls.
 - `tests/test_contract_public_structs`
 - `tests/test_regression_fs_copy_to_self`
 - `tests/test_regression_fs_slurp`
+- `tests/test_regression_fs_staging_names`
 - `tests/test_regression_scanner_rollback`
 - `tests/test_regression_v26_07`
 - `tests/test_regression_sort_duplicates`

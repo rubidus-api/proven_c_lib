@@ -189,6 +189,7 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 | `proven_fs_write_file(scratch, path, data)` | Create-or-truncate whole-file write. | `proven_err_t`. |
 | `proven_fs_write_file_atomic(scratch, path, data)` | Whole-file write via temp file + rename. | `proven_err_t`. |
 | `proven_fs_write_file_durable(scratch, path, data)` | Same, and on the disk before it returns. | `proven_err_t`. |
+| `proven_fs_is_staging_name(name)` | Does a name have the shape of a staging file the two calls above leave behind if killed mid-write? | bool. |
 | `proven_fs_seek(file, offset, whence)` | Move the file position. | `proven_result_u64_t` (new offset). |
 | `proven_fs_tell(file)` | Current position. | `proven_result_u64_t`. |
 | `proven_fs_truncate(file, length)` | Set the file's length. O(1). | `proven_err_t`. |
@@ -240,6 +241,23 @@ Important behavior:
 - `proven_fs_read_all()` and `proven_fs_read_all_u8str()` need an allocator with a `realloc_fn` if the source outgrows its reported size; a non-growing allocator returns `PROVEN_ERR_UNSUPPORTED` in that case.
 - `proven_fs_read_all_u8str()` is the whole-file read most callers want: the result is NUL-terminated, so `proven_u8str_as_view()` and `proven_u8str_as_cstr()` work on it with no second copy. The terminator slot is reserved up front, so it costs no extra allocation. Contents are not validated as UTF-8. Release it with `proven_u8str_destroy()`.
 - `proven_fs_write_file()` is not atomic: a reader can observe a partially written file, and a failure mid-write leaves the file truncated. `proven_fs_write_file_atomic()` writes a sibling temp file and renames it over the target, so a concurrent reader sees either the entire old file or the entire new one. It is atomic with respect to readers, not durable across power loss: the rename may reach the disk before the data. When you need durability, ask for it explicitly with `proven_fs_write_file_durable` (or `proven_fs_sync`), described above.
+- The temp file is `<path>.pvtmp` plus 13 random characters, so it cannot be predicted: leftovers and names planted by another user never block the write, and a taken name is skipped (`PROVEN_ERR_EXISTS` only after sixteen in a row). A writer killed between creating and renaming it leaves the temp file behind, and proven never deletes one it did not just create - it cannot tell an abandoned file from a write in progress. A long-running service can list the directory and remove old entries for which `proven_fs_is_staging_name()` is true.
+
+```c
+/* A cleanup pass a service might run at startup: count the staging files the atomic
+ * writes of an earlier, killed run left in its state directory. Removing them is the
+ * caller's decision - only the caller knows no writer is still filling one. */
+proven_result_dir_t dir = proven_fs_dir_open(scratch, PROVEN_LIT("."));
+if (proven_is_ok(dir.err)) {
+    proven_size_t leftovers = 0;
+    proven_fs_dir_entry_t entry;
+    while (proven_is_ok(proven_fs_dir_next(&dir.value, &entry))) {
+        if (proven_fs_is_staging_name(entry.name)) ++leftovers;
+    }
+    proven_fs_dir_close(&dir.value);
+    proven_println("staging leftovers: {}", PROVEN_ARG(leftovers));
+}
+```
 
 **A read-only destination is refused, by all of them.** `proven_fs_write_file`,
 `proven_fs_write_file_atomic`, `proven_fs_write_file_durable` and `proven_fs_copy` all

@@ -220,7 +220,7 @@ int main(void) {
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a long basename full of backslashes is measured as one name",
-        "The staging file is \"<path>.pvtmpNN\", and the basename is trimmed so that name still fits in NAME_MAX. The trim counts from the last separator.",
+        "The staging file is \"<path>.pvtmp\" plus 13 random characters, and the basename is trimmed so that name still fits in NAME_MAX. The trim counts from the last separator.",
         "Under the old rule the basename was measured from the last BACKSLASH, so a 250-character name was measured as a short one, no trim happened, and the staging name the filesystem was asked for was too long.");
     // ---------------------------------------------------------------
     {

@@ -2,7 +2,7 @@
  * RFC-0008 H-002: a staging file must never exist, even briefly, in a mode that lets
  * another local user open it.
  *
- * proven_fs_write_file_atomic writes the new contents to a sibling ".pvtmpNN" file and
+ * proven_fs_write_file_atomic writes the new contents to a sibling ".pvtmp<random>" file and
  * renames it over the target. That temp used to be CREATED with 0666 & ~umask - so with
  * the usual umask 0022 it was 0644 for the instant between creation and the chmod that
  * narrowed it. Narrowing it afterwards does not help: a descriptor another user opened

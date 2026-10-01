@@ -31,6 +31,23 @@ static bool bytes_eq(const proven_byte_t *a, const char *b, proven_size_t n) {
     return true;
 }
 
+
+/* True when the working directory holds a staging file for `stem` (RFC-0009 D-001: the
+ * staging names are random, so look for the shape, not for one name). */
+static bool staging_left_for(const char *stem) {
+    proven_allocator_t h = proven_heap_allocator();
+    proven_result_dir_t d = proven_fs_dir_open(h, PROVEN_LIT("."));
+    if (!proven_is_ok(d.err)) return true;
+    size_t n = strlen(stem);
+    bool found = false;
+    proven_fs_dir_entry_t e;
+    while (!found && proven_is_ok(proven_fs_dir_next(&d.value, &e))) {
+        found = e.name.size > n && memcmp(e.name.ptr, stem, n) == 0 && proven_fs_is_staging_name(e.name);
+    }
+    proven_fs_dir_close(&d.value);
+    return found;
+}
+
 int main(void) {
     PROVEN_TEST_SUITE("file position, positional I/O, and durability",
         "seek/tell/truncate/pread/pwrite/sync must behave, and must say UNSUPPORTED rather than IO on a thing that cannot seek.",
@@ -258,8 +275,7 @@ int main(void) {
             "a durable rewrite must not widen permissions either", "");
 
         /* No temp debris. */
-        proven_result_file_t leftover = proven_fs_open(heap, PROVEN_LIT("test_fs_durable.txt.pvtmp00"), PROVEN_FS_READ);
-        PROVEN_TEST_ASSERT(!proven_is_ok(leftover.err), "the durable write left its temp file behind", "");
+        PROVEN_TEST_ASSERT(!staging_left_for("test_fs_durable.txt"), "the durable write left its temp file behind", "");
 
         (void)proven_fs_remove(heap, dpath);
     }

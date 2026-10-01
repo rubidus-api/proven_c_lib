@@ -188,6 +188,7 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 | `proven_fs_write_file(scratch, path, data)` | 생성-또는-절단(create-or-truncate) 방식의 파일 전체 쓰기. | `proven_err_t`. |
 | `proven_fs_write_file_atomic(scratch, path, data)` | 임시 파일 + rename을 통한 파일 전체 쓰기. | `proven_err_t`. |
 | `proven_fs_write_file_durable(scratch, path, data)` | 같지만, 반환 전에 디스크에 기록됨. | `proven_err_t`. |
+| `proven_fs_is_staging_name(name)` | 위의 두 호출이 쓰는 도중 죽었을 때 남기는 임시 파일의 모양을 가진 이름인가? | bool. |
 | `proven_fs_seek(file, offset, whence)` | 파일 위치를 이동. | `proven_result_u64_t`(새 오프셋). |
 | `proven_fs_tell(file)` | 현재 위치. | `proven_result_u64_t`. |
 | `proven_fs_truncate(file, length)` | 파일의 길이를 설정. O(1). | `proven_err_t`. |
@@ -236,6 +237,23 @@ durable 형태는 저장 장치를 두 번 기다린다. 쓰기를 잃는 것이
 - `proven_fs_read_all()`과 `proven_fs_read_all_u8str()`은 소스가 보고된 크기를 초과해 커질 경우 `realloc_fn`을 가진 할당자(allocator)를 필요로 한다. 그렇지 않은(non-growing) allocator는 그 경우 `PROVEN_ERR_UNSUPPORTED`를 반환한다.
 - `proven_fs_read_all_u8str()`은 대부분의 호출자가 원하는 파일 전체 읽기다: 결과가 NUL로 종료되므로 `proven_u8str_as_view()`와 `proven_u8str_as_cstr()`가 두 번째 복사 없이 그 위에서 동작한다. 종료 슬롯은 미리 예약되므로 추가 할당 비용이 들지 않는다. 내용은 UTF-8로 검증되지 않는다. `proven_u8str_destroy()`로 해제하라.
 - `proven_fs_write_file()`은 atomic이 아니다: reader가 부분적으로 쓰인 파일을 관찰할 수 있고, 쓰기 도중의 실패는 파일을 절단된 채로 남긴다. `proven_fs_write_file_atomic()`은 형제 임시 파일을 쓰고 그것을 대상 위로 rename하므로, 동시 reader는 전체 이전 파일 또는 전체 새 파일 둘 중 하나를 본다. 이는 reader에 대해 atomic이지만 전원 손실에 대해 durable하지는 않다: rename이 데이터보다 먼저 디스크에 도달할 수 있다. durability가 필요할 때는 위에서 설명한 `proven_fs_write_file_durable`(또는 `proven_fs_sync`)로 명시적으로 요청하라.
+- 임시 파일 이름은 `<path>.pvtmp`에 무작위 문자 13개를 붙인 것이라 예측할 수 없다. 남은 파일이나 다른 사용자가 미리 만든 이름이 쓰기를 막지 못하고, 이미 있는 이름은 건너뛴다(`PROVEN_ERR_EXISTS`는 열여섯 번 연속으로 이름이 있을 때만). 만든 뒤 rename하기 전에 죽은 writer는 임시 파일을 남기며, proven은 방금 자신이 만든 것이 아닌 임시 파일을 지우지 않는다 - 버려진 파일과 진행 중인 쓰기를 구별할 수 없기 때문이다. 오래 도는 서비스는 디렉터리를 나열해 `proven_fs_is_staging_name()`이 참인 오래된 항목을 지울 수 있다.
+
+```c
+/* A cleanup pass a service might run at startup: count the staging files the atomic
+ * writes of an earlier, killed run left in its state directory. Removing them is the
+ * caller's decision - only the caller knows no writer is still filling one. */
+proven_result_dir_t dir = proven_fs_dir_open(scratch, PROVEN_LIT("."));
+if (proven_is_ok(dir.err)) {
+    proven_size_t leftovers = 0;
+    proven_fs_dir_entry_t entry;
+    while (proven_is_ok(proven_fs_dir_next(&dir.value, &entry))) {
+        if (proven_fs_is_staging_name(entry.name)) ++leftovers;
+    }
+    proven_fs_dir_close(&dir.value);
+    proven_println("staging leftovers: {}", PROVEN_ARG(leftovers));
+}
+```
 
 **읽기 전용 대상은 넷 다 거절한다.** `proven_fs_write_file`,
 `proven_fs_write_file_atomic`, `proven_fs_write_file_durable`, `proven_fs_copy`는 대상의

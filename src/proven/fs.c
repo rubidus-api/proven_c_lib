@@ -3,6 +3,9 @@
 #include "../../platform/proven_sys_io.h"
 #include "proven/array.h"
 #include "proven/algorithm.h"
+#include "proven/random.h"
+#include "../../platform/proven_sys_time.h"
+#include <stdatomic.h>
 
 /* Starting capacity when the source reports no usable size (streams, /proc). */
 #define INTERNAL_SLURP_CHUNK ((proven_size_t)65536)
@@ -950,7 +953,61 @@ static proven_err_t internal_refuse_if_protected(proven_allocator_t scratch, pro
 
 /* Longest basename most filesystems accept. The temp sibling has to fit too. */
 #define INTERNAL_NAME_MAX ((proven_size_t)255)
-#define INTERNAL_TMP_SUFFIX_LEN ((proven_size_t)8)   /* ".pvtmpNN", no NUL */
+#define INTERNAL_TMP_TAG_LEN ((proven_size_t)6)      /* ".pvtmp" */
+#define INTERNAL_TMP_RAND_LEN ((proven_size_t)13)    /* 64 bits in base 32 (5 bits a character) */
+#define INTERNAL_TMP_SUFFIX_LEN (INTERNAL_TMP_TAG_LEN + INTERNAL_TMP_RAND_LEN)   /* no NUL */
+#define INTERNAL_TMP_ATTEMPTS 16
+
+/* Lower case only: on a case-insensitive filesystem two suffixes that differ only in case would
+ * be one name, and the 64 bits would quietly be fewer. */
+static const char internal_tmp_alphabet[32] = "0123456789abcdefghijklmnopqrstuv";
+
+static bool internal_is_tmp_char(proven_byte_t c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'v');
+}
+
+/*
+ * 64 bits for one staging name. They come from the library's entropy source, so the name
+ * cannot be predicted - a fixed list of names (".pvtmp00" .. ".pvtmp07" until RFC-0009 D-001)
+ * let eight crashed writers, or anyone who could write the directory, block every later
+ * replacement of the path. A process-wide counter, the clock and an address are mixed in so
+ * two attempts still differ if the entropy source fails; the names are then guessable, but a
+ * collision costs one more attempt, never a write through someone else's file (CREATE_NEW).
+ */
+static proven_u64 internal_tmp_bits(const void *salt) {
+    static _Atomic proven_u64 counter;
+    proven_u64 r = 0;
+    if (!proven_random_bytes(&r, sizeof r)) r = 0;
+    proven_u64 x = atomic_fetch_add_explicit(&counter, 1, memory_order_relaxed)
+                 ^ ((proven_u64)proven_sys_time_now_ns() << 20)
+                 ^ (proven_u64)(proven_uintptr_t)salt;
+    /* splitmix64 finaliser: spreads the counter and clock over all 64 bits. */
+    x += 0x9E3779B97F4A7C15ull;
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+    x ^= x >> 31;
+    return r ^ x;
+}
+
+bool proven_fs_is_staging_name(proven_u8str_view_t name) {
+    if (name.size > 0 && !name.ptr) return false;
+    static const proven_byte_t tag[6] = { '.', 'p', 'v', 't', 'm', 'p' };
+    /* Earlier versions used ".pvtmp" and two decimal digits; their leftovers are still ours. */
+    for (int form = 0; form < 2; ++form) {
+        proven_size_t rand_len = form == 0 ? INTERNAL_TMP_RAND_LEN : 2;
+        proven_size_t suffix = INTERNAL_TMP_TAG_LEN + rand_len;
+        if (name.size <= suffix) continue;
+        const proven_byte_t *s = name.ptr + (name.size - suffix);
+        bool ok = true;
+        for (proven_size_t i = 0; i < INTERNAL_TMP_TAG_LEN && ok; ++i) ok = s[i] == tag[i];
+        for (proven_size_t i = 0; i < rand_len && ok; ++i) {
+            proven_byte_t c = s[INTERNAL_TMP_TAG_LEN + i];
+            ok = form == 0 ? internal_is_tmp_char(c) : (c >= '0' && c <= '9');
+        }
+        if (ok) return true;
+    }
+    return false;
+}
 
 /*
  * Writes `data` to a sibling temp file and renames it over `path`.
@@ -1022,7 +1079,7 @@ static proven_err_t internal_write_file_atomic(proven_allocator_t scratch, prove
     if (path.size == 0 || !path.ptr) return PROVEN_ERR_INVALID_ARG;
     if (view_has_nul(path)) return PROVEN_ERR_INVALID_ARG;
 
-    /* The temp name is "<path>.pvtmpNN". A basename may legally run right up to
+    /* The temp name is "<path>.pvtmp" and 13 random characters. A basename may legally run right up to
      * NAME_MAX, and write_file would accept it - so trim the copied basename by
      * however much the suffix needs rather than producing a name the filesystem
      * will reject. The trimmed stem is only ever a temp file, and CREATE_NEW
@@ -1076,19 +1133,22 @@ static proven_err_t internal_write_file_atomic(proven_allocator_t scratch, prove
     bool have_target_perms = !target_missing && target.type == PROVEN_FS_TYPE_FILE;
 
     proven_result_file_t f_res = {0};
-    f_res.err = PROVEN_ERR_BUSY;
+    f_res.err = PROVEN_ERR_EXISTS;
 
-    /* A handful of attempts, not a hundred: this loop exists to step over a temp
-     * name a concurrent writer already holds, and every attempt costs an open()
-     * and a path allocation. proven_fs_open collapses errno, so a persistent
-     * failure (no write permission on the directory, say) looks the same as a
-     * collision - and there is no point paying for it a hundred times. */
-    for (int attempt = 0; attempt < 8; ++attempt) {
+    /* Only a collision is worth another attempt: a random name that is taken is someone
+     * else's staging file (or a planted one), and the next random name will not be. Any
+     * other failure - no write permission on the directory, a missing directory - would
+     * fail the same way every time, so it is returned at once. Sixteen collisions in a row
+     * on 64 random bits do not happen by chance; that is PROVEN_ERR_EXISTS. */
+    for (int attempt = 0; attempt < INTERNAL_TMP_ATTEMPTS; ++attempt) {
         proven_byte_t *s = tmp + stem;
         s[0] = '.'; s[1] = 'p'; s[2] = 'v'; s[3] = 't'; s[4] = 'm'; s[5] = 'p';
-        s[6] = (proven_byte_t)('0' + (attempt / 10));
-        s[7] = (proven_byte_t)('0' + (attempt % 10));
-        s[8] = 0;
+        proven_u64 bits = internal_tmp_bits(tmp);
+        for (proven_size_t i = 0; i < INTERNAL_TMP_RAND_LEN; ++i) {
+            s[INTERNAL_TMP_TAG_LEN + i] = (proven_byte_t)internal_tmp_alphabet[bits & 31u];
+            bits >>= 5;
+        }
+        s[INTERNAL_TMP_SUFFIX_LEN] = 0;
 
         /*
          * PRIVATE when we are carrying an existing target's mode across: the staging file
@@ -1105,7 +1165,7 @@ static proven_err_t internal_write_file_atomic(proven_allocator_t scratch, prove
         int private_flag = have_target_perms ? PROVEN_SYS_FS_PRIVATE : 0;
         f_res = internal_fs_open_with(scratch, tmp_view,
             (proven_fs_mode_t)(PROVEN_FS_WRITE | PROVEN_FS_CREATE_NEW), private_flag);
-        if (proven_is_ok(f_res.err)) break;
+        if (f_res.err != PROVEN_ERR_EXISTS) break;
     }
     if (!proven_is_ok(f_res.err)) {
         scratch.free_fn(scratch.ctx, tmp);

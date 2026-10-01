@@ -666,6 +666,18 @@ proven_err_t proven_fs_write_file(proven_allocator_t scratch, proven_u8str_view_
  * @note Needs write permission on the containing directory, and a filesystem
  *       where the temp sibling and the target share a mount (they always do,
  *       since the temp file is created next to the target).
+ * @note The temp file is named `<path>.pvtmp` plus 13 random characters from
+ *       `0-9a-v` (the basename is shortened first if the result would not fit the
+ *       filesystem's name limit). The name is unpredictable, so neither leftovers
+ *       nor names planted by another user can block the write; a name that is
+ *       taken is skipped. PROVEN_ERR_EXISTS means sixteen random names in a row
+ *       were taken, which does not happen by chance.
+ * @note A writer killed between creating the temp file and renaming it leaves the
+ *       temp file behind, and the library never removes one it did not just create:
+ *       it cannot tell a stale file from another writer's file in progress. A
+ *       long-running program that cares can list the directory and remove old
+ *       entries for which proven_fs_is_staging_name is true, using its own idea of
+ *       "old".
  */
 [[nodiscard]]
 proven_err_t proven_fs_write_file_atomic(proven_allocator_t scratch, proven_u8str_view_t path, proven_mem_view_t data);
@@ -699,5 +711,18 @@ proven_err_t proven_fs_write_file_atomic(proven_allocator_t scratch, proven_u8st
  */
 [[nodiscard]]
 proven_err_t proven_fs_write_file_durable(proven_allocator_t scratch, proven_u8str_view_t path, proven_mem_view_t data);
+
+/**
+ * @brief True when `name` ends the way a staging file of proven_fs_write_file_atomic or
+ *        proven_fs_write_file_durable ends: `.pvtmp` and 13 characters from `0-9a-v`, or
+ *        `.pvtmp` and two decimal digits (the names versions before 0.6.0 used).
+ *
+ * For a cleanup job that removes temp files left by writers that were killed mid-write. Pass
+ * a basename or a whole path; only the end is examined. A true result says the name has the
+ * shape, not that the file is abandoned: a writer may be filling it right now, so remove only
+ * entries older than the longest write you expect.
+ */
+[[nodiscard]]
+bool proven_fs_is_staging_name(proven_u8str_view_t name);
 
 #endif /* PROVEN_FS_H */
