@@ -307,6 +307,49 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("the bounded read stops at its bound",
+        "RFC-0009 S-003: read_all has no bound, so a path naming /dev/zero grows the buffer until the allocator refuses. read_all_bounded refuses a source past max_bytes, by its size or as the extra byte arrives, and allocates no more than the bound.",
+        "Inspect the `limit` checks in internal_slurp_path and internal_read_to_eof in src/proven/fs.c.");
+    // ---------------------------------------------------------------
+    {
+        proven_u8str_view_t bp = PROVEN_LIT("test_slurp_bounded.bin");
+        char hundred[100];
+        memset(hundred, 'x', sizeof hundred);
+        proven_mem_view_t hv = { (const proven_byte_t *)hundred, 100 };
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_write_file(heap, bp, hv)), "a 100-byte fixture is written", "");
+        proven_result_mem_mut_t b = proven_fs_read_all_bounded(heap, bp, 100);
+        PROVEN_TEST_ASSERT(proven_is_ok(b.err) && b.value.size == 100, "a file of exactly max_bytes is read", "");
+        heap.free_fn(heap.ctx, b.value.ptr);
+        counting_reset();
+        b = proven_fs_read_all_bounded(counting_allocator(), bp, 99);
+        PROVEN_TEST_ASSERT(b.err == PROVEN_ERR_OUT_OF_BOUNDS && b.value.ptr == NULL,
+            "one byte over is PROVEN_ERR_OUT_OF_BOUNDS with no buffer", "");
+        PROVEN_TEST_ASSERT(g_peak < 64, "and no buffer was allocated - only the path's C string: the reported size refused it", "");
+        (void)proven_fs_remove(heap, bp);
+
+        b = proven_fs_read_all_bounded(heap, empty_path, 0);
+        PROVEN_TEST_ASSERT(proven_is_ok(b.err) && b.value.size == 0, "an empty file fits a bound of 0", "");
+
+#if !defined(_WIN32) && !defined(_WIN64)
+        /* Sources whose size says nothing: the bound is enforced while reading. */
+        counting_reset();
+        b = proven_fs_read_all_bounded(counting_allocator(), PROVEN_LIT("/dev/zero"), 4096);
+        if (b.err != PROVEN_ERR_NOT_FOUND) {
+            PROVEN_TEST_ASSERT(b.err == PROVEN_ERR_OUT_OF_BOUNDS,
+                "/dev/zero, which never ends, is refused at the bound instead of exhausting memory", "");
+            PROVEN_TEST_ASSERT(g_peak <= 4096 + 64, "and the buffer never grew past the bound (64 bytes allow for the path string)", "");
+        }
+        b = proven_fs_read_all_bounded(heap, PROVEN_LIT("/proc/self/status"), 1);
+        if (b.err != PROVEN_ERR_NOT_FOUND) {
+            PROVEN_TEST_ASSERT(b.err == PROVEN_ERR_OUT_OF_BOUNDS, "/proc/self/status (size 0) is refused under a 1-byte bound", "");
+            b = proven_fs_read_all_bounded(heap, PROVEN_LIT("/proc/self/status"), 1u << 20);
+            PROVEN_TEST_ASSERT(proven_is_ok(b.err) && b.value.size > 0, "and read under a generous one", "");
+            heap.free_fn(heap.ctx, b.value.ptr);
+        }
+#endif
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("invalid arguments are rejected",
         "An invalid allocator or a missing file must fail as a value, never crash.",
         "Inspect the proven_alloc_is_valid guards at the top of each entry point.");

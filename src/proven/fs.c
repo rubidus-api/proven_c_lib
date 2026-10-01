@@ -704,7 +704,8 @@ static internal_slurp_t internal_read_to_eof(proven_allocator_t alloc,
                                              proven_file_t f,
                                              proven_byte_t *ptr,
                                              proven_size_t cap,
-                                             proven_size_t align) {
+                                             proven_size_t align,
+                                             proven_size_t limit) {
     internal_slurp_t res = {0};
     proven_size_t len = 0;
 
@@ -727,14 +728,26 @@ static internal_slurp_t internal_read_to_eof(proven_allocator_t alloc,
                 return res;
             }
 
-            /* The source really does have more than its size promised. Now grow,
-             * and keep the byte the probe already consumed. */
-            proven_size_t new_cap;
-            if (PROVEN_CKD_MUL(&new_cap, cap, (proven_size_t)2)) {
+            /* The source really does have more than its size promised. Past the
+             * caller's bound is the end of it: the bytes are not wanted, and a source
+             * that never ends (/dev/zero, a FIFO with a writer that does not stop)
+             * would otherwise grow the buffer until the allocator refuses. */
+            if (len >= limit) {
                 alloc.free_fn(alloc.ctx, ptr);
-                res.err = PROVEN_ERR_OVERFLOW;
+                res.err = PROVEN_ERR_OUT_OF_BOUNDS;
                 return res;
             }
+            /* Now grow, and keep the byte the probe already consumed. */
+            proven_size_t new_cap;
+            if (PROVEN_CKD_MUL(&new_cap, cap, (proven_size_t)2)) {
+                if (limit == PROVEN_SIZE_MAX) {
+                    alloc.free_fn(alloc.ctx, ptr);
+                    res.err = PROVEN_ERR_OVERFLOW;
+                    return res;
+                }
+                new_cap = limit;
+            }
+            if (new_cap > limit) new_cap = limit;   /* limit > len here, so new_cap > cap */
             proven_result_mem_mut_t grow = alloc.realloc_fn(alloc.ctx, ptr, cap, new_cap, align);
             if (!proven_is_ok(grow.err)) {
                 /* realloc is failure-atomic: `ptr` is still the live allocation. */
@@ -757,6 +770,11 @@ static internal_slurp_t internal_read_to_eof(proven_allocator_t alloc,
         }
         if (r.value == 0) break;
         len += r.value; /* r.value <= cap - len, so this cannot overflow */
+        if (len > limit) {
+            alloc.free_fn(alloc.ctx, ptr);
+            res.err = PROVEN_ERR_OUT_OF_BOUNDS;
+            return res;
+        }
     }
 
     res.err = PROVEN_OK;
@@ -782,7 +800,8 @@ static internal_slurp_t internal_read_to_eof(proven_allocator_t alloc,
 static internal_slurp_t internal_slurp_path(proven_allocator_t alloc,
                                             proven_u8str_view_t path,
                                             proven_size_t extra,
-                                            proven_size_t align) {
+                                            proven_size_t align,
+                                            proven_size_t limit) {
     internal_slurp_t res = {0};
 
     proven_result_file_t f_res = proven_fs_open(alloc, path, PROVEN_FS_READ);
@@ -803,9 +822,19 @@ static internal_slurp_t internal_slurp_path(proven_allocator_t alloc,
      * the capacity is never 0, so testing the capacity would leave a size-0
      * source (a pipe, a /proc entry) starting from a one-byte buffer and
      * doubling its way up. */
+    /* A file that says it is larger than the bound is refused before anything is
+     * allocated. One whose size lies (/proc, a FIFO) is caught while reading. */
+    if (s_res.value > limit) {
+        (void)proven_fs_close(f);
+        res.err = PROVEN_ERR_OUT_OF_BOUNDS;
+        return res;
+    }
+
     proven_size_t cap;
     if (s_res.value == 0) {
         cap = INTERNAL_SLURP_CHUNK;
+        /* Unknown size: start no larger than the bound needs (and never at 0). */
+        if (limit < cap && limit + extra < cap) cap = limit + extra > 0 ? limit + extra : 1;
     } else if (PROVEN_CKD_ADD(&cap, s_res.value, extra)) {
         (void)proven_fs_close(f);
         res.err = PROVEN_ERR_OVERFLOW;
@@ -819,19 +848,20 @@ static internal_slurp_t internal_slurp_path(proven_allocator_t alloc,
         return res;
     }
 
-    res = internal_read_to_eof(alloc, f, m_res.value.ptr, cap, align);
+    res = internal_read_to_eof(alloc, f, m_res.value.ptr, cap, align, limit);
     (void)proven_fs_close(f);
     return res;
 }
 
-proven_result_mem_mut_t proven_fs_read_all(proven_allocator_t alloc, proven_u8str_view_t path) {
+static proven_result_mem_mut_t internal_read_all(proven_allocator_t alloc, proven_u8str_view_t path,
+                                                 proven_size_t limit) {
     proven_result_mem_mut_t res = {0};
     if (!proven_alloc_is_valid(alloc)) {
         res.err = PROVEN_ERR_INVALID_ARG;
         return res;
     }
 
-    internal_slurp_t s = internal_slurp_path(alloc, path, 0, 1);
+    internal_slurp_t s = internal_slurp_path(alloc, path, 0, 1, limit);
     if (!proven_is_ok(s.err)) {
         res.err = s.err;
         return res;
@@ -859,6 +889,15 @@ proven_result_mem_mut_t proven_fs_read_all(proven_allocator_t alloc, proven_u8st
     return res;
 }
 
+proven_result_mem_mut_t proven_fs_read_all(proven_allocator_t alloc, proven_u8str_view_t path) {
+    return internal_read_all(alloc, path, PROVEN_SIZE_MAX);
+}
+
+proven_result_mem_mut_t proven_fs_read_all_bounded(proven_allocator_t alloc, proven_u8str_view_t path,
+                                                   proven_size_t max_bytes) {
+    return internal_read_all(alloc, path, max_bytes);
+}
+
 proven_result_u8str_t proven_fs_read_all_u8str(proven_allocator_t alloc, proven_u8str_view_t path) {
     proven_result_u8str_t res = {0};
     if (!proven_alloc_is_valid(alloc)) {
@@ -873,7 +912,7 @@ proven_result_u8str_t proven_fs_read_all_u8str(proven_allocator_t alloc, proven_
      * it at that alignment. A block must be reallocated with the alignment it
      * was allocated with, so the string this returns has to be allocated exactly
      * as proven_u8str_create would have allocated it. */
-    internal_slurp_t s = internal_slurp_path(alloc, path, 1, PROVEN_DEFAULT_ALIGNMENT);
+    internal_slurp_t s = internal_slurp_path(alloc, path, 1, PROVEN_DEFAULT_ALIGNMENT, PROVEN_SIZE_MAX);
     if (!proven_is_ok(s.err)) {
         res.err = s.err;
         return res;

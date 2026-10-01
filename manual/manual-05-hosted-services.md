@@ -185,6 +185,7 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 | `proven_fs_link(scratch, oldpath, newpath)` | Create hard link. | `proven_err_t`. |
 | `proven_fs_is_absolute(path)` | Classify absolute path. | bool. |
 | `proven_fs_read_all(alloc, path)` | Allocate and read a whole file, to EOF. | `proven_result_mem_mut_t`. |
+| `proven_fs_read_all_bounded(alloc, path, max)` | Same, refusing a source of more than `max` bytes. For a path from outside the program. | `proven_result_mem_mut_t`; `PROVEN_ERR_OUT_OF_BOUNDS` past the bound. |
 | `proven_fs_read_all_u8str(alloc, path)` | Same, as a NUL-terminated owned string. | `proven_result_u8str_t`. |
 | `proven_fs_write_file(scratch, path, data)` | Create-or-truncate whole-file write. | `proven_err_t`. |
 | `proven_fs_write_file_atomic(scratch, path, data)` | Whole-file write via temp file + rename. | `proven_err_t`. |
@@ -239,6 +240,20 @@ Important behavior:
 - `proven_fs_is_absolute()` recognizes POSIX absolute paths, Windows drive-root paths, UNC paths, and extended Windows path forms.
 - `proven_fs_read_all()` reads to EOF; it does not read to a pre-measured size. The file's reported size only seeds the initial capacity, so a regular file is still read in one allocation and one pass. This matters because `proven_fs_size()` reports 0 for anything that is not a regular file: a FIFO, a character device, or a `/proc` entry has no size that can be known up front, and reading to EOF is the only way to get their contents. It also means a file that grows while it is being read is not silently truncated. `value.size` is always the actual byte count, and an empty source yields `{ .ptr = NULL, .size = 0 }` with `PROVEN_OK`.
 - `proven_fs_read_all()` and `proven_fs_read_all_u8str()` need an allocator with a `realloc_fn` if the source outgrows its reported size; a non-growing allocator returns `PROVEN_ERR_UNSUPPORTED` in that case.
+- `proven_fs_read_all()` reads until the source ends, with no bound - use it on paths you trust. For a path from outside the program, `proven_fs_read_all_bounded()` refuses a source of more than `max_bytes` bytes with `PROVEN_ERR_OUT_OF_BOUNDS`: a file whose size says so before anything is allocated, and one whose size cannot be known (a FIFO, `/proc`, `/dev/zero`) as soon as the byte after the bound arrives.
+
+```c
+/* An upload path comes from a request, so it may name /dev/zero, a FIFO that never
+ * ends, or a 40 GB file. proven_fs_read_all would read until the allocator gives up;
+ * the bounded form stops at the limit and allocates no more than it. */
+proven_result_mem_mut_t body = proven_fs_read_all_bounded(alloc, PROVEN_LIT("upload.bin"), 1u << 20);
+if (body.err == PROVEN_ERR_OUT_OF_BOUNDS) {
+    proven_eprintln("upload.bin is larger than 1 MiB; refused");
+} else if (proven_is_ok(body.err)) {
+    proven_println("read {} bytes", PROVEN_ARG(body.value.size));
+    if (body.value.ptr) alloc.free_fn(alloc.ctx, body.value.ptr);
+}
+```
 - `proven_fs_read_all_u8str()` is the whole-file read most callers want: the result is NUL-terminated, so `proven_u8str_as_view()` and `proven_u8str_as_cstr()` work on it with no second copy. The terminator slot is reserved up front, so it costs no extra allocation. Contents are not validated as UTF-8. Release it with `proven_u8str_destroy()`.
 - `proven_fs_write_file()` is not atomic: a reader can observe a partially written file, and a failure mid-write leaves the file truncated. `proven_fs_write_file_atomic()` writes a sibling temp file and renames it over the target, so a concurrent reader sees either the entire old file or the entire new one. It is atomic with respect to readers, not durable across power loss: the rename may reach the disk before the data. When you need durability, ask for it explicitly with `proven_fs_write_file_durable` (or `proven_fs_sync`), described above.
 - The temp file is `<path>.pvtmp` plus 13 random characters, so it cannot be predicted: leftovers and names planted by another user never block the write, and a taken name is skipped (`PROVEN_ERR_EXISTS` only after sixteen in a row). A writer killed between creating and renaming it leaves the temp file behind, and proven never deletes one it did not just create - it cannot tell an abandoned file from a write in progress. A long-running service can list the directory and remove old entries for which `proven_fs_is_staging_name()` is true.

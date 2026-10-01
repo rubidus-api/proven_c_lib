@@ -35,6 +35,14 @@ written; their tags still exist.
   token of 0 is a predictable secret nothing reports. The checked form is for secrets; the
   unchecked one stays, now documented as not for them. Alias `xcv_random_u64_checked`.
 
+- **`proven_fs_read_all_bounded(alloc, path, max_bytes)`: a whole-file read with a ceiling**
+  (RFC-0009 S-003). `proven_fs_read_all` reads until the source ends, so a path naming
+  `/dev/zero`, an endless FIFO, or a far larger file than expected grows the buffer until the
+  allocator refuses. The bounded form returns `PROVEN_ERR_OUT_OF_BOUNDS` and no buffer past
+  `max_bytes`: before allocating when the reported size says so, and as the extra byte arrives
+  when the size says nothing. The unbounded functions now say they are for trusted paths. Alias
+  `xcv_fs_read_all_bounded`.
+
 ### Changed
 
 - **Text from the platform is strict, like all other text** (RFC-0009 D-003). An environment value

@@ -247,6 +247,7 @@
 #define xcv_fs_pwrite proven_fs_pwrite
 #define xcv_fs_read proven_fs_read
 #define xcv_fs_read_all proven_fs_read_all
+#define xcv_fs_read_all_bounded proven_fs_read_all_bounded
 #define xcv_fs_read_all_u8str proven_fs_read_all_u8str
 #define xcv_fs_remove proven_fs_remove
 #define xcv_fs_rename proven_fs_rename

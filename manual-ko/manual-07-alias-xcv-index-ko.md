@@ -269,6 +269,7 @@ alias 554개: 소문자 `xcv_` 함수 이름 420개와 대문자 `XCV_` 매크�
 | `xcv_fs_pwrite` | `proven_fs_pwrite` |
 | `xcv_fs_read` | `proven_fs_read` |
 | `xcv_fs_read_all` | `proven_fs_read_all` |
+| `xcv_fs_read_all_bounded` | `proven_fs_read_all_bounded` |
 | `xcv_fs_read_all_u8str` | `proven_fs_read_all_u8str` |
 | `xcv_fs_remove` | `proven_fs_remove` |
 | `xcv_fs_rename` | `proven_fs_rename` |

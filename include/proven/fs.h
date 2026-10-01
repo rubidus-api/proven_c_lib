@@ -597,9 +597,30 @@ bool proven_fs_is_absolute(proven_u8str_view_t path);
  *       The buffer only grows if the source really does outrun its reported
  *       size. If the final shrink realloc fails, the larger allocation is
  *       returned with `value.size` correctly set to the bytes read.
+ * @warning No bound: it reads until the source ends. Use it on a path you trust. A path that
+ *       names /dev/zero, a FIFO whose writer never stops, or simply a file far larger than
+ *       expected grows the allocation until the allocator refuses - with the heap allocator,
+ *       possibly the whole machine's memory first. For a path from outside the program use
+ *       proven_fs_read_all_bounded. (An arena allocator bounds the read by its own size.)
  */
 [[nodiscard]]
 proven_result_mem_mut_t proven_fs_read_all(proven_allocator_t alloc, proven_u8str_view_t path);
+
+/**
+ * @brief proven_fs_read_all, refusing a source larger than `max_bytes`.
+ *
+ * For a path you do not control. A file whose reported size is larger is refused before
+ * anything is allocated; a source whose size cannot be known or is wrong (a FIFO, /proc,
+ * /dev/zero, a file growing under the read) is refused as soon as byte `max_bytes + 1`
+ * arrives, so the buffer never grows past `max_bytes`.
+ *
+ * @return PROVEN_ERR_OUT_OF_BOUNDS, and no buffer, when the source holds more than
+ *         `max_bytes` bytes. A source of exactly `max_bytes` bytes is read. Otherwise the
+ *         same results as proven_fs_read_all.
+ */
+[[nodiscard]]
+proven_result_mem_mut_t proven_fs_read_all_bounded(proven_allocator_t alloc, proven_u8str_view_t path,
+                                                   proven_size_t max_bytes);
 
 /**
  * @brief Reads the entire contents of a file into a newly allocated owned string.
@@ -610,7 +631,8 @@ proven_result_mem_mut_t proven_fs_read_all(proven_allocator_t alloc, proven_u8st
  * reserved up front, so this costs no extra allocation over proven_fs_read_all.
  *
  * @note Contents are not validated as UTF-8; the bytes are returned as they are.
- * @note Same EOF and allocator semantics as proven_fs_read_all.
+ * @note Same EOF and allocator semantics as proven_fs_read_all - and the same warning: no
+ *       bound, so only for a path you trust.
  * @note Destroy the result with proven_u8str_destroy.
  */
 [[nodiscard]]

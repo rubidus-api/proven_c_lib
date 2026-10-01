@@ -1570,6 +1570,7 @@ Sub-checks:
 - Reads a source whose size cannot be known up front (`/proc/self/status`, whose `st_size` is 0) and requires a non-empty result. Skipped where the path is unavailable.
 - Verifies `proven_fs_read_all_u8str` is NUL-terminated and valid, including for an empty file.
 - Verifies `proven_fs_write_file_atomic` replaces the contents, creates a missing target, and leaves no temp file behind.
+- Verifies `proven_fs_read_all_bounded` reads a file of exactly `max_bytes`, refuses one byte more with `PROVEN_ERR_OUT_OF_BOUNDS` without allocating a buffer, reads an empty file under a bound of 0, and - on POSIX - refuses `/dev/zero` at a 4096-byte bound without the buffer growing past it and `/proc/self/status` under a 1-byte bound (RFC-0009 S-003).
 - Verifies an invalid allocator and a missing path are rejected as values.
 
 Failure tip: `proven_fs_size` reports 0 for anything that is not a regular file, so the reported size may only seed the read capacity - never bound the read. Inspect `internal_slurp_path` and `internal_read_to_eof` in `src/proven/fs.c`.

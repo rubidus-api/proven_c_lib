@@ -184,6 +184,7 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 | `proven_fs_link(scratch, oldpath, newpath)` | 하드 링크 생성. | `proven_err_t`. |
 | `proven_fs_is_absolute(path)` | 절대 경로 분류. | bool. |
 | `proven_fs_read_all(alloc, path)` | 파일 전체를 EOF까지 할당하여 읽기. | `proven_result_mem_mut_t`. |
+| `proven_fs_read_all_bounded(alloc, path, max)` | 같은 일을 하되 `max` 바이트를 넘는 소스는 거부. 프로그램 밖에서 온 경로용. | `proven_result_mem_mut_t`. 상한을 넘으면 `PROVEN_ERR_OUT_OF_BOUNDS`. |
 | `proven_fs_read_all_u8str(alloc, path)` | 같지만, NUL로 종료되는 owned 문자열로. | `proven_result_u8str_t`. |
 | `proven_fs_write_file(scratch, path, data)` | 생성-또는-절단(create-or-truncate) 방식의 파일 전체 쓰기. | `proven_err_t`. |
 | `proven_fs_write_file_atomic(scratch, path, data)` | 임시 파일 + rename을 통한 파일 전체 쓰기. | `proven_err_t`. |
@@ -235,6 +236,20 @@ durable 형태는 저장 장치를 두 번 기다린다. 쓰기를 잃는 것이
 - `proven_fs_is_absolute()`는 POSIX 절대 경로, Windows 드라이브-루트 경로, UNC 경로, 확장된 Windows 경로 형식을 인식한다.
 - `proven_fs_read_all()`은 EOF까지 읽는다. 미리 측정된 크기까지 읽는 것이 아니다. 파일이 보고한 크기는 초기 용량의 씨앗(seed)으로만 쓰이므로, 일반 파일은 여전히 한 번의 할당과 한 번의 패스로 읽힌다. 이것이 중요한 이유는 `proven_fs_size()`가 일반 파일이 아닌 모든 것에 대해 0을 보고하기 때문이다: FIFO, 캐릭터 디바이스, `/proc` 엔트리에는 미리 알 수 있는 크기가 없으며, EOF까지 읽는 것만이 그 내용을 얻는 유일한 방법이다. 또한 이는 읽히는 도중 커지는 파일이 조용히 절단되지 않음을 뜻한다. `value.size`는 언제나 실제 바이트 수이며, 빈 소스는 `PROVEN_OK`와 함께 `{ .ptr = NULL, .size = 0 }`을 낳는다.
 - `proven_fs_read_all()`과 `proven_fs_read_all_u8str()`은 소스가 보고된 크기를 초과해 커질 경우 `realloc_fn`을 가진 할당자(allocator)를 필요로 한다. 그렇지 않은(non-growing) allocator는 그 경우 `PROVEN_ERR_UNSUPPORTED`를 반환한다.
+- `proven_fs_read_all()`은 소스가 끝날 때까지 상한 없이 읽는다 - 믿을 수 있는 경로에만 쓴다. 프로그램 밖에서 온 경로에는 `proven_fs_read_all_bounded()`를 쓴다. `max_bytes` 바이트를 넘는 소스를 `PROVEN_ERR_OUT_OF_BOUNDS`로 거부한다. 크기가 그렇다고 말하는 파일은 아무것도 할당하기 전에, 크기를 알 수 없는 소스(FIFO, `/proc`, `/dev/zero`)는 상한 다음 바이트가 도착하는 즉시 거부한다.
+
+```c
+/* An upload path comes from a request, so it may name /dev/zero, a FIFO that never
+ * ends, or a 40 GB file. proven_fs_read_all would read until the allocator gives up;
+ * the bounded form stops at the limit and allocates no more than it. */
+proven_result_mem_mut_t body = proven_fs_read_all_bounded(alloc, PROVEN_LIT("upload.bin"), 1u << 20);
+if (body.err == PROVEN_ERR_OUT_OF_BOUNDS) {
+    proven_eprintln("upload.bin is larger than 1 MiB; refused");
+} else if (proven_is_ok(body.err)) {
+    proven_println("read {} bytes", PROVEN_ARG(body.value.size));
+    if (body.value.ptr) alloc.free_fn(alloc.ctx, body.value.ptr);
+}
+```
 - `proven_fs_read_all_u8str()`은 대부분의 호출자가 원하는 파일 전체 읽기다: 결과가 NUL로 종료되므로 `proven_u8str_as_view()`와 `proven_u8str_as_cstr()`가 두 번째 복사 없이 그 위에서 동작한다. 종료 슬롯은 미리 예약되므로 추가 할당 비용이 들지 않는다. 내용은 UTF-8로 검증되지 않는다. `proven_u8str_destroy()`로 해제하라.
 - `proven_fs_write_file()`은 atomic이 아니다: reader가 부분적으로 쓰인 파일을 관찰할 수 있고, 쓰기 도중의 실패는 파일을 절단된 채로 남긴다. `proven_fs_write_file_atomic()`은 형제 임시 파일을 쓰고 그것을 대상 위로 rename하므로, 동시 reader는 전체 이전 파일 또는 전체 새 파일 둘 중 하나를 본다. 이는 reader에 대해 atomic이지만 전원 손실에 대해 durable하지는 않다: rename이 데이터보다 먼저 디스크에 도달할 수 있다. durability가 필요할 때는 위에서 설명한 `proven_fs_write_file_durable`(또는 `proven_fs_sync`)로 명시적으로 요청하라.
 - 임시 파일 이름은 `<path>.pvtmp`에 무작위 문자 13개를 붙인 것이라 예측할 수 없다. 남은 파일이나 다른 사용자가 미리 만든 이름이 쓰기를 막지 못하고, 이미 있는 이름은 건너뛴다(`PROVEN_ERR_EXISTS`는 열여섯 번 연속으로 이름이 있을 때만). 만든 뒤 rename하기 전에 죽은 writer는 임시 파일을 남기며, proven은 방금 자신이 만든 것이 아닌 임시 파일을 지우지 않는다 - 버려진 파일과 진행 중인 쓰기를 구별할 수 없기 때문이다. 오래 도는 서비스는 디렉터리를 나열해 `proven_fs_is_staging_name()`이 참인 오래된 항목을 지울 수 있다.
