@@ -113,7 +113,13 @@ int main(void) {
     PROVEN_TEST_ASSERT(r.err == PROVEN_ERR_INVALID_ENCODING, "the value is PROVEN_ERR_INVALID_ENCODING",
         "PROVEN_OK here means bytes were passed through, or a U+FFFD was substituted.");
     unset_env("PROVEN_TEXT_BAD");
+#if defined(_WIN32) || defined(_WIN64)
+    /* The W call: SetEnvironmentVariableA reads its bytes in the ANSI code page, not UTF-8. */
+    wchar_t cafe[] = { L'c', L'a', L'f', 0x00E9, 0 };
+    PROVEN_TEST_ASSERT(SetEnvironmentVariableW(L"PROVEN_TEXT_GOOD", cafe) != 0, "a valid value is installed", "");
+#else
     PROVEN_TEST_ASSERT(set_env("PROVEN_TEXT_GOOD", "caf\xC3\xA9"), "a valid UTF-8 value is installed", "");
+#endif
     r = proven_env_get(heap, PROVEN_LIT("PROVEN_TEXT_GOOD"));
     PROVEN_TEST_ASSERT(r.err == PROVEN_OK && proven_u8str_view_eq(proven_u8str_as_view(&r.value), PROVEN_LIT("caf\xC3\xA9")),
         "valid text still reads back exactly", "");
