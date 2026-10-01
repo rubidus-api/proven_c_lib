@@ -73,7 +73,7 @@ done
 stage="$root/build/release/$version"
 rm -rf "$root/build/release"; mkdir -p "$stage"
 for item in include src platform tests manual manual-ko scripts site nob.c nob.h \
-            build_headers.inc build_tests.inc README.md README-ko.md LICENSE \
+            build_headers.inc build_tests.inc build_sources.inc README.md README-ko.md LICENSE \
             THIRD_PARTY_NOTICES.md CHANGELOG.md TEST.md; do
     [ -e "$root/$item" ] && cp -r "$root/$item" "$stage/"
 done

@@ -284,6 +284,8 @@ int main(void) {
             "a test relinks when a library object's CONTENTS change, not only its whole-second mtime");
     require(contains(nob, "record_build_state(&j->link, j->dep_tmp, j->dep_path, j->hash_path, objects_hash);"),
             "and the recorded link state folds in the same object hash, or every cached build relinks every test");
+    require(contains(nob, "reason=not-a-git-checkout"),
+            "a build from an unpacked release archive skips the repository checks instead of failing on git");
     require(contains(nob, "[PROVEN][BUILD][KEEP_GOING][SUMMARY]") && contains(nob, "\"-keep-going\""),
             "nob.c can run every test and list the failures instead of stopping at the first (RFC-0009 X-006)");
     require(contains(nob, "nob_cmd_run_opt(&j->link, (Nob_Cmd_Opt){ .async = &one, .dont_reset = true })"),

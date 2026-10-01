@@ -493,6 +493,13 @@ static int run_project_check(void) {
         nob_log(NOB_INFO, "[PROVEN][PROJECT_CHECK][SKIP] path=%s reason=not-present", script);
         return 0;
     }
+    /* The checks read the repository (git status, git diff --check, the tracked-file privacy
+     * scan). A release archive carries scripts/ but no .git, and every ./nob build from an
+     * unpacked release ZIP failed here until v0.6.0. */
+    if (nob_file_exists(".git") != 1) {
+        nob_log(NOB_INFO, "[PROVEN][PROJECT_CHECK][SKIP] path=%s reason=not-a-git-checkout", script);
+        return 0;
+    }
 #if defined(_WIN32) || defined(_WIN64)
     nob_log(NOB_WARNING, "[PROVEN][PROJECT_CHECK][SKIP] path=%s reason=needs-a-posix-shell", script);
     return 0;

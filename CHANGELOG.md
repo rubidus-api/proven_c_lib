@@ -126,6 +126,11 @@ written; their tags still exist.
 
 ### Fixed
 
+- **`./nob build` failed in an unpacked release archive.** It runs `scripts/project-check.sh`,
+  whose checks read the git repository, and the archive has none - so a build from any release
+  ZIP stopped at that step. Outside a git checkout the step is now skipped with a
+  `[PROVEN][PROJECT_CHECK][SKIP] reason=not-a-git-checkout` line. The archive also gains
+  `build_sources.inc`, which `nob.c` now includes.
 - **`./nob build` could run a test linked against a library object from the previous build.**
   A test relinked when a library object was newer than the executable, compared by whole-second
   modification time; an object rebuilt in the same second as the previous link compared equal,
