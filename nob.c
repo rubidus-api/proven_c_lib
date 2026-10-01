@@ -215,9 +215,13 @@ static bool depfile_state_hash(Nob_Cmd *cmd, const char *depfile, uint32_t *out_
 /* After a successful build: install the fresh depfile and record the hash taken from it (never
  * the pre-build one, which came from the previous depfile). No depfile means the next build
  * rebuilds this output again - correct, only slower. */
-static void record_build_state(Nob_Cmd *cmd, const char *dep_tmp, const char *dep_path, const char *hash_path) {
+static void record_build_state(Nob_Cmd *cmd, const char *dep_tmp, const char *dep_path, const char *hash_path,
+                               const uint32_t *extra) {
     uint32_t h = 0;
     if (nob_file_exists(dep_tmp) == 1 && nob_rename(dep_tmp, dep_path) && depfile_state_hash(cmd, dep_path, &h)) {
+        /* Whatever the check folds into the state hash, the record must fold in identically,
+         * or the next build sees a difference that is not there and rebuilds every time. */
+        if (extra) hash_bytes(&h, extra, sizeof *extra);
         write_cmdhash(hash_path, h);
     } else {
         nob_log(NOB_WARNING, "[PROVEN][BUILD][DEPFILE][MISSING] path=%s - the compiler wrote no usable dependency file; this output will rebuild every time", dep_path);
@@ -1461,7 +1465,7 @@ int main(int argc, char **argv)
                 if (nob_file_exists(obj_tmp)) nob_delete_file(obj_tmp);
                 return 1;
             }
-            record_build_state(&compile, dep_tmp, dep_path, hash_path);
+            record_build_state(&compile, dep_tmp, dep_path, hash_path, NULL);
             library_rebuilt += 1;
         } else {
             nob_log(NOB_INFO, "[PROVEN][BUILD][SOURCE][CACHED] path=%s", srcs[i]);
@@ -1531,7 +1535,7 @@ int main(int argc, char **argv)
                 if (nob_file_exists(exec_tmp)) nob_delete_file(exec_tmp);
                 return 1;
             }
-            record_build_state(&link, dep_tmp, dep_path, hash_path);
+            record_build_state(&link, dep_tmp, dep_path, hash_path, &objects_hash);
         } else {
             tests_cached += 1;
             nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][CACHED] path=%s", test->path);
