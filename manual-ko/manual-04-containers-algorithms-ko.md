@@ -625,6 +625,31 @@ typedef struct {
 | `proven_map_get(map, key)` | const 값을 조회한다. | 포인터 또는 null. |
 | `proven_map_remove(map, key)` | 키가 있으면 제거한다. | `proven_err_t`. |
 | `proven_map_destroy(map)` | 맵 저장소를 해제한다. | void. |
+| `proven_map_len(map)` | 항목 수. NULL이면 0. | `proven_size_t`. |
+| `proven_map_iter_init(map)` | 모든 항목을 버킷 순서로 도는 순회를 시작한다. | `proven_map_iter_t`. |
+| `proven_map_iter_next(&it, &key, &value)` | 다음 항목. 마지막 뒤에는 `PROVEN_ERR_EOF`, 순회 중 새 키나 reserve로 맵이 다시 해싱되면 `PROVEN_ERR_INVALID_STATE`. 항목 제거와 값 변경은 허용된다. | `proven_err_t`. |
+
+**모든 항목 방문하기.** 맵에는 호출자가 기댈 수 있는 순서가 없다 - 버킷 순서이고, 키 있는 맵은
+프로세스마다 다르다 - 하지만 담긴 것을 나열하거나, 직렬화하거나, `proven_map_destroy` 전에 값이
+가진 자원을 풀기 위해 순회할 수는 있다. 방금 돌려받은 항목을 제거해도 된다:
+
+```c
+/* Count words, then drop the rare ones while walking the map. */
+proven_result_map_t words = proven_map_create(alloc, 16, PROVEN_KEY_TYPE_U8_BORROWED, sizeof(int), _Alignof(int));
+if (proven_is_ok(words.err)) {
+    int one = 1, three = 3;
+    (void)proven_map_set(&words.value, (proven_map_key_t){ .str = PROVEN_LIT("rare") }, &one);
+    (void)proven_map_set(&words.value, (proven_map_key_t){ .str = PROVEN_LIT("common") }, &three);
+    proven_map_iter_t it = proven_map_iter_init(&words.value);
+    proven_map_key_t key;
+    void *value;
+    while (proven_map_iter_next(&it, &key, &value) == PROVEN_OK) {
+        if (*(int *)value < 2) (void)proven_map_remove(&words.value, key);
+    }
+    proven_println("{} word(s) left", PROVEN_ARG(proven_map_len(&words.value)));
+    proven_map_destroy(&words.value);
+}
+```
 
 ### 매크로
 

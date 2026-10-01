@@ -155,6 +155,50 @@ typedef struct {
 
 void proven_map_destroy(proven_map_t *map);
 
+/**
+ * @brief The number of entries in the map. 0 for NULL.
+ */
+[[nodiscard]] proven_size_t proven_map_len(const proven_map_t *map);
+
+/**
+ * @brief A cursor over a map's entries, in bucket order (not insertion order, and not
+ *        stable from one process to the next for a keyed map).
+ *
+ * Fill it with proven_map_iter_init, then call proven_map_iter_next until it returns
+ * PROVEN_ERR_EOF. The fields are the iterator's own; do not set them.
+ */
+typedef struct {
+    proven_map_t     *map;
+    proven_size_t     next;      /* the bucket to look at next */
+    const void       *storage;   /* the bucket array when the walk started */
+    proven_size_t     cap;
+} proven_map_iter_t;
+
+/**
+ * @brief Start a walk over every entry of `map`.
+ */
+[[nodiscard]] proven_map_iter_t proven_map_iter_init(proven_map_t *map);
+
+/**
+ * @brief The next entry: its key and a pointer to its value. PROVEN_ERR_EOF after the last.
+ *
+ * Allowed during a walk: removing any entry, including the one just returned (proven_map_remove
+ * leaves the slot in place; a removed entry not yet reached is not returned), and changing a
+ * value through `*out_value` or by proven_map_set on a key that is already there.
+ *
+ * Not allowed: adding a new key, proven_map_reserve, or anything else that can grow or rehash
+ * the map - entries move, so the walk could skip or repeat them. The iterator notices that the
+ * bucket array changed and returns PROVEN_ERR_INVALID_STATE instead of reading it; start a new
+ * walk. (proven_map_destroy during a walk is a use-after-free like any other.)
+ *
+ * @param out_key   the entry's key. For a string-key map the view points into the map (owned
+ *                  keys) or at the caller's bytes (borrowed keys); an owned key's bytes are
+ *                  freed when that entry is removed.
+ * @param out_value the entry's value, in the map's storage; same lifetime rules as
+ *                  proven_map_get_mut. Either out pointer may be NULL.
+ */
+[[nodiscard]] proven_err_t proven_map_iter_next(proven_map_iter_t *it, proven_map_key_t *out_key, void **out_value);
+
 // -------------------------------------------------------------
 // Type-Safe Strict Macro Wrappers
 // -------------------------------------------------------------

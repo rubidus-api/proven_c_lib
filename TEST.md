@@ -704,6 +704,7 @@ Sub-checks:
 - Creates a U8 string-key map and inserts enough entries to force growth.
 - Verifies all expected string keys remain reachable after rehash.
 - Tracks scratch allocation during safe rehash paths.
+- Walking every entry (RFC-0009 X-001): an empty map ends at once; over 1,000 integer keys one walk sees each key once with its value while removing the odd ones and updating the even ones through `proven_map_set`, `proven_map_len` follows, and a second walk sees exactly the updated survivors; adding keys until the map grows makes the next step `PROVEN_ERR_INVALID_STATE`; owned string keys come back intact; a NULL iterator is refused.
 
 Failure tip: inspect `src/proven/map.c`. Check hash/equality callbacks, tombstone reuse, threshold calculation, and whether borrowed keys or value pointers are being used after rehash.
 

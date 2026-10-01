@@ -236,6 +236,86 @@ int main() {
         PROVEN_TEST_ASSERT(map_free_count > 0, "Map buckets freed", "");
     }
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("walking every entry",
+        "RFC-0009 X-001: a map can be iterated - every entry once, with removal and value updates allowed during the walk, and a rehash reported instead of walked through.",
+        "Inspect proven_map_iter_next in src/proven/map.c: it must skip EMPTY and TOMBSTONE buckets and compare the bucket array with the one it started on.");
+    // ---------------------------------------------------------------
+    {
+        proven_allocator_t h = proven_heap_allocator();
+        proven_result_map_t mr = proven_map_create(h, 16, PROVEN_KEY_TYPE_INT, sizeof(int), _Alignof(int));
+        PROVEN_TEST_ASSERT(proven_is_ok(mr.err), "map created", "");
+        proven_map_t *m = &mr.value;
+        proven_map_iter_t it = proven_map_iter_init(m);
+        PROVEN_TEST_ASSERT(proven_map_iter_next(&it, NULL, NULL) == PROVEN_ERR_EOF, "an empty map ends at once", "");
+        PROVEN_TEST_ASSERT(proven_map_len(NULL) == 0, "len of NULL is 0", "");
+        enum { N = 1000 };
+        static unsigned char seen[N];
+        for (int i = 0; i < N; ++i) {
+            int v = i * 3;
+            PROVEN_TEST_ASSERT(proven_is_ok(proven_map_set(m, (proven_map_key_t){ .id = (proven_size_t)i }, &v)), "set", "");
+        }
+        PROVEN_TEST_ASSERT(proven_map_len(m) == N, "len counts the entries", "");
+
+        /* One walk: every key once with its value; remove the odd ones as they come; bump the
+         * even ones through proven_map_set on the existing key. */
+        memset(seen, 0, sizeof seen);
+        it = proven_map_iter_init(m);
+        proven_map_key_t k;
+        void *val;
+        int visits = 0;
+        proven_err_t e;
+        while ((e = proven_map_iter_next(&it, &k, &val)) == PROVEN_OK) {
+            PROVEN_TEST_ASSERT(k.id < N && !seen[k.id] && *(int *)val == (int)k.id * 3, "each key once, with its value", "");
+            seen[k.id] = 1;
+            ++visits;
+            if (k.id & 1u) {
+                PROVEN_TEST_ASSERT(proven_is_ok(proven_map_remove(m, k)), "removing the current entry is allowed", "");
+            } else {
+                int bumped = (int)k.id * 3 + 1;
+                PROVEN_TEST_ASSERT(proven_is_ok(proven_map_set(m, k, &bumped)), "updating an existing key is allowed", "");
+            }
+        }
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_EOF && visits == N, "the walk visited all of them and ended", "");
+        PROVEN_TEST_ASSERT(proven_map_len(m) == N / 2, "half were removed", "");
+        it = proven_map_iter_init(m);
+        visits = 0;
+        while (proven_map_iter_next(&it, &k, &val) == PROVEN_OK) {
+            PROVEN_TEST_ASSERT((k.id & 1u) == 0 && *(int *)val == (int)k.id * 3 + 1, "the survivors, updated", "");
+            ++visits;
+        }
+        PROVEN_TEST_ASSERT(visits == N / 2, "a second walk sees exactly the survivors", "");
+
+        /* Adding keys until the map grows: the walk must stop with INVALID_STATE, not read on. */
+        it = proven_map_iter_init(m);
+        PROVEN_TEST_ASSERT(proven_map_iter_next(&it, &k, &val) == PROVEN_OK, "the walk starts", "");
+        proven_size_t cap0 = m->cap;
+        for (int i = N; m->cap == cap0; ++i) {
+            int v = 0;
+            PROVEN_TEST_ASSERT(proven_is_ok(proven_map_set(m, (proven_map_key_t){ .id = (proven_size_t)i }, &v)), "set", "");
+        }
+        PROVEN_TEST_ASSERT(proven_map_iter_next(&it, &k, &val) == PROVEN_ERR_INVALID_STATE,
+            "after a grow the iterator says INVALID_STATE", "");
+        proven_map_destroy(m);
+
+        /* Owned string keys come back as the map's copies. */
+        proven_result_map_t om = proven_map_create(h, 4, PROVEN_KEY_TYPE_U8_OWNED, sizeof(int), _Alignof(int));
+        PROVEN_TEST_ASSERT(proven_is_ok(om.err), "owned-key map", "");
+        int one = 1, two = 2;
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_map_set_u8_owned(&om.value, PROVEN_LIT("alpha"), &one)) &&
+                           proven_is_ok(proven_map_set_u8_owned(&om.value, PROVEN_LIT("beta"), &two)), "two keys", "");
+        it = proven_map_iter_init(&om.value);
+        int sum = 0, n = 0;
+        while (proven_map_iter_next(&it, &k, &val) == PROVEN_OK) {
+            bool known = proven_u8str_view_eq(k.str, PROVEN_LIT("alpha")) || proven_u8str_view_eq(k.str, PROVEN_LIT("beta"));
+            PROVEN_TEST_ASSERT(known, "an owned key comes back intact", "");
+            sum += *(int *)val; ++n;
+        }
+        PROVEN_TEST_ASSERT(n == 2 && sum == 3, "both entries", "");
+        proven_map_destroy(&om.value);
+        PROVEN_TEST_ASSERT(proven_map_iter_next(NULL, NULL, NULL) == PROVEN_ERR_INVALID_ARG, "a NULL iterator is refused", "");
+    }
+
     PROVEN_TEST_PASS("All Phase 11 HashMap Collection Tests Passed Successfully!");
     return 0;
 }

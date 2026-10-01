@@ -635,6 +635,31 @@ still uses `map->alloc`; the scratch allocator is only for that transient copy.
 | `proven_map_get(map, key)` | Lookup const value. | pointer or null. |
 | `proven_map_remove(map, key)` | Remove key if present. | `proven_err_t`. |
 | `proven_map_destroy(map)` | Free map storage. | void. |
+| `proven_map_len(map)` | Number of entries; 0 for NULL. | `proven_size_t`. |
+| `proven_map_iter_init(map)` | Start a walk over every entry, in bucket order. | `proven_map_iter_t`. |
+| `proven_map_iter_next(&it, &key, &value)` | The next entry. `PROVEN_ERR_EOF` after the last; `PROVEN_ERR_INVALID_STATE` if a new key or a reserve rehashed the map during the walk. Removing entries and updating values is allowed. | `proven_err_t`. |
+
+**Visiting every entry.** The map has no order a caller can rely on - bucket order, and a keyed
+map's differs per process - but it can be walked, to list what it holds, serialise it, or release
+what its values own before `proven_map_destroy`. Removing the entry just returned is allowed:
+
+```c
+/* Count words, then drop the rare ones while walking the map. */
+proven_result_map_t words = proven_map_create(alloc, 16, PROVEN_KEY_TYPE_U8_BORROWED, sizeof(int), _Alignof(int));
+if (proven_is_ok(words.err)) {
+    int one = 1, three = 3;
+    (void)proven_map_set(&words.value, (proven_map_key_t){ .str = PROVEN_LIT("rare") }, &one);
+    (void)proven_map_set(&words.value, (proven_map_key_t){ .str = PROVEN_LIT("common") }, &three);
+    proven_map_iter_t it = proven_map_iter_init(&words.value);
+    proven_map_key_t key;
+    void *value;
+    while (proven_map_iter_next(&it, &key, &value) == PROVEN_OK) {
+        if (*(int *)value < 2) (void)proven_map_remove(&words.value, key);
+    }
+    proven_println("{} word(s) left", PROVEN_ARG(proven_map_len(&words.value)));
+    proven_map_destroy(&words.value);
+}
+```
 
 ### Macros
 

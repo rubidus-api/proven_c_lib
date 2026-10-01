@@ -335,7 +335,11 @@ alias 554개: 소문자 `xcv_` 함수 이름 420개와 대문자 `XCV_` 매크�
 | `xcv_map_get_mut` | `proven_map_get_mut` |
 | `xcv_map_hash` | `proven_map_hash` |
 | `xcv_map_is_valid` | `proven_map_is_valid` |
+| `xcv_map_iter_init` | `proven_map_iter_init` |
+| `xcv_map_iter_next` | `proven_map_iter_next` |
+| `xcv_map_iter_t` | `proven_map_iter_t` |
 | `xcv_map_key_t` | `proven_map_key_t` |
+| `xcv_map_len` | `proven_map_len` |
 | `xcv_map_remove` | `proven_map_remove` |
 | `xcv_map_reserve` | `proven_map_reserve` |
 | `xcv_map_set` | `proven_map_set` |

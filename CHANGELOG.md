@@ -34,7 +34,6 @@ written; their tags still exist.
   target with no source that is every call - and its documentation offered it for tokens. A
   token of 0 is a predictable secret nothing reports. The checked form is for secrets; the
   unchecked one stays, now documented as not for them. Alias `xcv_random_u64_checked`.
-
 - **`proven_fs_read_all_bounded(alloc, path, max_bytes)`: a whole-file read with a ceiling**
   (RFC-0009 S-003). `proven_fs_read_all` reads until the source ends, so a path naming
   `/dev/zero`, an endless FIFO, or a far larger file than expected grows the buffer until the
@@ -42,6 +41,13 @@ written; their tags still exist.
   `max_bytes`: before allocating when the reported size says so, and as the extra byte arrives
   when the size says nothing. The unbounded functions now say they are for trusted paths. Alias
   `xcv_fs_read_all_bounded`.
+- **A map can be walked: `proven_map_iter_init` / `proven_map_iter_next`, and `proven_map_len`**
+  (RFC-0009 X-001). Before, a program could not list what it stored, serialise a map, or release
+  what its values own without keeping a second list of keys. The walk is in bucket order; removing
+  entries (including the current one) and updating values are allowed during it; a new key or a
+  reserve that rehashes the map makes the next step `PROVEN_ERR_INVALID_STATE` instead of skipping
+  or repeating entries. Aliases `xcv_map_iter_t`, `xcv_map_iter_init`, `xcv_map_iter_next`,
+  `xcv_map_len`.
 
 ### Changed
 

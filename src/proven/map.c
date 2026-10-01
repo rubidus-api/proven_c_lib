@@ -707,6 +707,39 @@ proven_err_t proven_map_remove(proven_map_t *map, proven_map_key_t key) {
     return PROVEN_ERR_NOT_FOUND;
 }
 
+proven_size_t proven_map_len(const proven_map_t *map) {
+    return map ? map->len : 0;
+}
+
+proven_map_iter_t proven_map_iter_init(proven_map_t *map) {
+    proven_map_iter_t it = { .map = map, .next = 0, .storage = NULL, .cap = 0 };
+    if (map) {
+        it.storage = map->internal.ptr;
+        it.cap = map->cap;
+    }
+    return it;
+}
+
+proven_err_t proven_map_iter_next(proven_map_iter_t *it, proven_map_key_t *out_key, void **out_value) {
+    if (!it || !it->map) return PROVEN_ERR_INVALID_ARG;
+    proven_map_t *map = it->map;
+    /* A grow or rehash moved every entry: a walk that went on would skip some and repeat
+     * others. Say so rather than guess. */
+    if (map->internal.ptr != it->storage || map->cap != it->cap) return PROVEN_ERR_INVALID_STATE;
+    if (!proven_map_is_valid(map)) return PROVEN_ERR_INVALID_ARG;
+    while (it->next < map->cap) {
+        proven_size_t i = it->next++;
+        proven_size_t offset;
+        if (PROVEN_CKD_MUL(&offset, i, map->bucket_stride)) return PROVEN_ERR_OVERFLOW;
+        proven_map_bucket_header_t *hdr = (proven_map_bucket_header_t *)(map->internal.ptr + offset);
+        if (hdr->state != BUCKET_OCCUPIED) continue;
+        if (out_key) *out_key = hdr->key;
+        if (out_value) *out_value = (proven_byte_t *)hdr + map->payload_offset;
+        return PROVEN_OK;
+    }
+    return PROVEN_ERR_EOF;
+}
+
 void proven_map_destroy(proven_map_t *map) {
     if (!map) return;
     if (map->internal.ptr && proven_alloc_is_valid(map->alloc) && map->alloc.free_fn) {

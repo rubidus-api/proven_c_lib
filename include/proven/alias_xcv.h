@@ -313,7 +313,11 @@
 #define xcv_map_get_mut proven_map_get_mut
 #define xcv_map_hash proven_map_hash
 #define xcv_map_is_valid proven_map_is_valid
+#define xcv_map_iter_init proven_map_iter_init
+#define xcv_map_iter_next proven_map_iter_next
+#define xcv_map_iter_t proven_map_iter_t
 #define xcv_map_key_t proven_map_key_t
+#define xcv_map_len proven_map_len
 #define xcv_map_remove proven_map_remove
 #define xcv_map_reserve proven_map_reserve
 #define xcv_map_set proven_map_set
