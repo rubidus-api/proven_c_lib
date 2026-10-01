@@ -44,7 +44,7 @@ REPLACE = [
 
 
 def in_scope(path: str) -> bool:
-    if path in ("README.md", "TEST.md", "CHANGELOG.md", "nob.c", "build_headers.inc", "build_tests.inc"):
+    if path in ("README.md", "TEST.md", "CHANGELOG.md", "nob.c", "build_headers.inc", "build_tests.inc", "build_sources.inc"):
         return True
     if path.startswith("manual/examples/ko/") or path.startswith("manual-ko/") or "-ko." in path:
         return False

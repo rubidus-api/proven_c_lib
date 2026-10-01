@@ -330,6 +330,10 @@ int main(void) {
             "the shared manifest invalidates cached outputs when the manifest changes");
     require(build_manifest_contains("build_tests.inc"),
             "test registry changes invalidate cached test executables");
+    require(contains(nob, "#include \"build_sources.inc\"") && build_manifest_contains("build_sources.inc"),
+            "the library source list is the shared manifest build_sources.inc, and a change to it invalidates outputs");
+    require(!contains(nob, "strcmp(srcs[i], \"src/proven/fs.c\")") && !contains(nob, "strcmp(src, \"src/proven/fs.c\")"),
+            "no hand-kept list of hosted-only sources is left in nob.c (RFC-0009 X-005: two copies used to disagree silently)");
     require(require_manifest_paths_exist() == 0,
             "every path in the dependency manifest exists");
     int missing_headers = 0;

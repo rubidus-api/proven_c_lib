@@ -1723,6 +1723,7 @@ Sub-checks:
 
 Note on the two Windows rows: neither is a runtime result. This host has never run a Windows binary. What it has is `./nob cross`, which compiles both Windows targets, and these source contracts. Both defects stay open for native verification.
 - Every function named `*_internal` / `*_impl` declared in a public header (from the header manifest, the alias layer aside) is on a closed list of seven and is marked MACRO SUPPORT within the lines above it; all seven are still declared (RFC-0009 X-004; a planted eighth is caught).
+- `nob.c` takes its library sources from `build_sources.inc` (listed in the header manifest, so a change invalidates outputs) and keeps no hand-written list of hosted-only sources (RFC-0009 X-005).
 
 Failure tip: source-contract tests should stay narrow. If a source pattern changes legitimately, update the contract to the new safe pattern in the same commit as the source change and explain it in docs.
 

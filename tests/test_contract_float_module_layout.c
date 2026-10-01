@@ -96,9 +96,11 @@ int main(void) {
     require(!contains(fmt, "0x7f800000u"), "float_format.c should not carry the f32 shortest special-case literal table inline");
     free(fmt);
 
-    char *nob = read_text_file("nob.c");
-    require(contains(nob, "src/proven/float_decimal.c"), "nob.c should compile the shared float helper translation unit");
-    free(nob);
+    /* The library source list lives in build_sources.inc since RFC-0009 X-005. */
+    char *sources = read_text_file("build_sources.inc");
+    require(contains(sources, "\"src/proven/float_decimal.c\", PROVEN_SOURCE_FREESTANDING"),
+            "the build compiles the shared float helper translation unit, freestanding too");
+    free(sources);
 
     char *notices = read_text_file("THIRD_PARTY_NOTICES.md");
     require(contains(notices, "clean-room implementation"), "THIRD_PARTY_NOTICES.md should record the float parse rewrite as clean-room work");

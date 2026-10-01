@@ -9,6 +9,7 @@
 
 PROVEN_BUILD_HEADER("build_headers.inc")
 PROVEN_BUILD_HEADER("build_tests.inc")
+PROVEN_BUILD_HEADER("build_sources.inc")
 PROVEN_BUILD_HEADER("include/proven.h")
 PROVEN_BUILD_HEADER("include/proven/list.h")
 PROVEN_BUILD_HEADER("include/proven/fmt.h")

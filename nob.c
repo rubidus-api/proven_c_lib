@@ -663,21 +663,23 @@ static void print_proven_build_plan(const char *build_mode, const char *compiler
 #endif
 }
 
+/* Which sources the freestanding profile builds: one table, from build_sources.inc, read by the
+ * native freestanding build and by the cross matrix alike (RFC-0009 X-005). */
+static const struct { const char *path; bool freestanding; } build_source_table[] = {
+#define PROVEN_BUILD_SOURCE(path, freestanding) { path, (freestanding) != 0 },
+#include "build_sources.inc"
+#undef PROVEN_BUILD_SOURCE
+};
+
+static bool source_is_freestanding(const char *src) {
+    for (size_t i = 0; i < NOB_ARRAY_LEN(build_source_table); ++i) {
+        if (strcmp(build_source_table[i].path, src) == 0) return build_source_table[i].freestanding;
+    }
+    return false;   /* not in the manifest: never silently part of a bare-metal build */
+}
+
 static bool cross_source_is_freestanding(const char *src) {
-    if (strcmp(src, "src/proven/u16str.c") == 0) return false;
-    if (strcmp(src, "src/proven/fs.c") == 0) return false;
-    if (strcmp(src, "src/proven/stream.c") == 0) return false;
-    if (strcmp(src, "src/proven/sysio.c") == 0) return false;
-    if (strcmp(src, "src/proven/mmap.c") == 0) return false;
-    if (strcmp(src, "platform/proven_sys_random.c") == 0) return false;
-    if (strcmp(src, "src/proven/job.c") == 0) return false;
-    if (strcmp(src, "platform/proven_sys_fs.c") == 0) return false;
-    if (strcmp(src, "platform/proven_sys_thread.c") == 0) return false;
-    if (strcmp(src, "platform/proven_sys_io.c") == 0) return false;
-    if (strcmp(src, "platform/proven_sys_env.c") == 0) return false;
-    if (strcmp(src, "platform/proven_sys_time.c") == 0) return false;
-    if (strcmp(src, "platform/proven_sys_mem.c") == 0) return false;
-    return true;
+    return source_is_freestanding(src);
 }
 
 static void append_cross_cflags(Nob_Cmd *cmd, const Proven_Cross_Target *target, const char *standard_flag, const char *sysroot) {
@@ -1345,13 +1347,13 @@ int main(int argc, char **argv)
     }
 
     const char *srcs[] = {
-        "src/proven/stream.c", "src/proven/memory.c", "src/proven/arena.c", "src/proven/pool.c", "src/proven/buffer.c",
-        "src/proven/heap.c", "src/proven/alloc_check.c", "src/proven/u8str.c", "src/proven/u16str.c", "src/proven/array.c",
-        "src/proven/ring.c", "src/proven/map.c", "src/proven/algorithm.c", "src/proven/hash.c", "src/proven/encode.c", "src/proven/utf.c", "src/proven/random.c", "src/proven/fs.c",
-        "src/proven/time.c", "src/proven/fmt.c", "src/proven/mmap.c", "src/proven/sysio.c",
-        "src/proven/job.c", "src/proven/scan.c", "src/proven/float_decimal.c", "src/proven/float_parse.c", "src/proven/float_format.c", "src/proven/panic.c", "platform/proven_sys_mem.c",
-        "platform/proven_sys_fs.c", "platform/proven_sys_time.c", "platform/proven_sys_env.c", "platform/proven_sys_random.c",
-        "platform/proven_sys_thread.c", "platform/proven_sys_io.c", "platform/proven_sys_math.c"
+#undef PROVEN_BUILD_SOURCES_MANIFEST_INCLUDED
+#define PROVEN_BUILD_SOURCE(path, freestanding) path,
+#include "build_sources.inc"
+#ifndef PROVEN_BUILD_SOURCES_MANIFEST_INCLUDED
+#error "build_sources.inc must define PROVEN_BUILD_SOURCES_MANIFEST_INCLUDED"
+#endif
+#undef PROVEN_BUILD_SOURCE
     };
 
     const char *headers[] = {
@@ -1420,21 +1422,7 @@ int main(int argc, char **argv)
     size_t library_cached = 0;
     nob_log(NOB_INFO, "[PROVEN][BUILD][PHASE] library compilation start source_count=%zu", NOB_ARRAY_LEN(srcs));
     for (size_t i = 0; i < NOB_ARRAY_LEN(srcs); ++i) {
-        if (strcmp(build_mode, "freestanding") == 0) {
-            if (strcmp(srcs[i], "src/proven/u16str.c") == 0) continue;
-            if (strcmp(srcs[i], "src/proven/fs.c") == 0) continue;
-            if (strcmp(srcs[i], "src/proven/stream.c") == 0) continue;   /* streams sit on fs */
-            if (strcmp(srcs[i], "src/proven/sysio.c") == 0) continue;
-            if (strcmp(srcs[i], "src/proven/mmap.c") == 0) continue;
-            if (strcmp(srcs[i], "src/proven/job.c") == 0) continue;
-            if (strcmp(srcs[i], "platform/proven_sys_fs.c") == 0) continue;
-            if (strcmp(srcs[i], "platform/proven_sys_thread.c") == 0) continue;
-            if (strcmp(srcs[i], "platform/proven_sys_io.c") == 0) continue;
-            if (strcmp(srcs[i], "platform/proven_sys_env.c") == 0) continue;
-            if (strcmp(srcs[i], "platform/proven_sys_time.c") == 0) continue;
-            if (strcmp(srcs[i], "platform/proven_sys_random.c") == 0) continue;  /* no OS CSPRNG on bare metal */
-            if (strcmp(srcs[i], "platform/proven_sys_mem.c") == 0) continue;
-        }
+        if (strcmp(build_mode, "freestanding") == 0 && !source_is_freestanding(srcs[i])) continue;
 
         Nob_String_Builder op = {0};
         nob_sb_append_cstr(&op, build_dir);

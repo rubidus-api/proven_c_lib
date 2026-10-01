@@ -106,6 +106,12 @@ written; their tags still exist.
   once (empty `name`, other fields filled in) and go on; `proven_fs_list` refuses the whole
   listing rather than leave a file out.
 
+- **The library's source list is one manifest, `build_sources.inc`, with a freestanding attribute
+  per source** (RFC-0009 X-005). It was a literal array in `nob.c`, and the hosted-only sources
+  were listed twice more - for the native freestanding build and for the cross matrix - with
+  nothing checking the copies agreed. Both now read the manifest; a source-contract test refuses a
+  hand-kept list in `nob.c`.
+
 ### Fixed
 
 - **`./nob build` could run a test linked against a library object from the previous build.**
