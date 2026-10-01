@@ -184,7 +184,7 @@ platform/proven_sys_mem.c
 | `u16str.h` | 제외됨 | 현재 프로파일은 `PROVEN_NO_U16STR`를 정의한다. |
 | `array.h`, `list.h`, `ring.h`, `map.h` | 사용 가능 | 숨겨진 OS 의존성 없음. |
 | `algorithm.h` | 사용 가능 | 배열용 정렬/검색 헬퍼. |
-| `hash.h` | 사용 가능 | FNV-1a, SipHash-2-4, CRC-32, SHA-256 — 바이트 단위로 정확, OS 의존성 없음. |
+| `hash.h` | 사용 가능 | FNV-1a, SipHash-2-4, CRC-32, SHA-256 — 바이트 단위로 정확, OS 의존성 없음. CRC-32는 기본으로 256항목 표 여덟 개(읽기 전용 데이터 8 KiB)를 쓴다. 라이브러리를 `-DPROVEN_CRC32_SMALL=1`로 빌드하면 1 KiB 표 하나만 남는다. 긴 입력에서 약 5배 느리고 결과는 같다. |
 | `encode.h` | 사용 가능 | Hex와 Base64 — 순수 계산, OS 없음. |
 | `utf.h` | 사용 가능 | 엄격한 UTF-8 <-> UTF-16 변환 — 순수 계산, OS 없음. `proven_utf8_append_to_u16str`는 `PROVEN_NO_U16STR`와 함께 제외되고, 나머지는 `proven_u16` 배열 위에서 동작한다. |
 | `fmt.h` | 부동소수점 없이 사용 가능 | 현재 프로파일은 `PROVEN_FMT_NO_FLOAT`를 정의한다. |

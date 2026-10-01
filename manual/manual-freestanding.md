@@ -185,7 +185,7 @@ on every release, not asserted in this table.
 | `u16str.h` | Excluded | Current profile defines `PROVEN_NO_U16STR`. |
 | `array.h`, `list.h`, `ring.h`, `map.h` | Available | No hidden OS dependency. |
 | `algorithm.h` | Available | Sort/search helpers for arrays. |
-| `hash.h` | Available | FNV-1a, SipHash-2-4, CRC-32, SHA-256 - byte-exact, no OS dependency. |
+| `hash.h` | Available | FNV-1a, SipHash-2-4, CRC-32, SHA-256 - byte-exact, no OS dependency. CRC-32 uses eight 256-entry tables (8 KiB of read-only data) by default; build the library with `-DPROVEN_CRC32_SMALL=1` to keep one 1 KiB table, about 5x slower on long inputs, same output. |
 | `encode.h` | Available | Hex and Base64 - pure computation, no OS. |
 | `utf.h` | Available | Strict UTF-8 <-> UTF-16 transcoding - pure computation, no OS. `proven_utf8_append_to_u16str` is excluded with `PROVEN_NO_U16STR`; the rest works on raw `proven_u16` arrays. |
 | `fmt.h` | Available without float | Current profile defines `PROVEN_FMT_NO_FLOAT`. |

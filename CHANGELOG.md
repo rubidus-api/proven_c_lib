@@ -45,6 +45,11 @@ written; their tags still exist.
 
 ### Changed
 
+- **CRC-32 is about 6x faster on long inputs** (RFC-0009 P-101): slicing-by-8, eight bytes per
+  step with independent table lookups. Measured on 1 MiB: 0.36 ns per byte, from 2.30. Output is
+  unchanged (checked against the single-table path at every length and offset, and against
+  zlib). It costs 7 KiB more read-only data; a build with `-DPROVEN_CRC32_SMALL=1` keeps the
+  single 1 KiB table.
 - **Integer map keys are hashed with the per-process secret in a default map** (RFC-0009 S-001).
   They used a public bit-mix finaliser whatever the map was created with, and its inverse is
   public, so anyone choosing the keys - user ids, record numbers from a request - could put any

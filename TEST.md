@@ -635,6 +635,7 @@ Sub-checks:
 - FNV-1a: distinct inputs hash apart, the empty view hashes to the FNV offset basis, and a one-byte change moves the hash.
 - SipHash-2-4: two keys give two functions for the same bytes; the reference key/message vectors from the paper match (verified against the little-endian readings, which caught a big-endian transcription in the test itself).
 - CRC-32: `"123456789"` is `0xcbf43926`, and `proven_crc32_update` chained over chunks equals the one-shot over the whole.
+- CRC-32 slicing-by-8 (RFC-0009 P-101): for every offset 0-7 and lengths 0-40 then every 37th to 1090, the one-shot CRC and a two-chunk split equal the CRC fed one byte per call (which uses only the single table); the 44-byte fox sentence matches zlib's `0x519025e9`.
 - SHA-256: the two NIST example vectors and the empty-input digest match; a streamed `init`/`update`/`final` over arbitrary chunk boundaries equals the one-shot; `to_hex` is 64 lowercase hex characters, NUL-terminated.
 - Every entry point guards a `{NULL, size>0}` view the way SHA-256 does, rather than dereferencing it.
 

@@ -118,6 +118,36 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("CRC-32 eight bytes at a time agrees with one byte at a time",
+        "RFC-0009 P-101: inputs of 8 bytes or more go through the slicing-by-8 loop, the tail and one-byte updates through the single table. Fed one byte per call, every input takes only the single-table path, so the two must agree for every length, alignment and split.",
+        "A mismatch at length 8+ is a slice table or its index; one only at some offsets is the byte assembly of the 32-bit word.");
+    // ---------------------------------------------------------------
+    {
+        proven_byte_t buf[1100];
+        proven_u64 s = 0x0123456789abcdefull;
+        for (size_t i = 0; i < sizeof buf; ++i) {
+            s ^= s << 13; s ^= s >> 7; s ^= s << 17;
+            buf[i] = (proven_byte_t)s;
+        }
+        int bad = 0;
+        for (size_t off = 0; off < 8; ++off) {
+            for (size_t len = 0; off + len <= sizeof buf && len <= 1090; len += (len < 40 ? 1 : 37)) {
+                proven_mem_view_t v = { buf + off, len };
+                proven_u32 bytewise = 0;
+                for (size_t i = 0; i < len; ++i) bytewise = proven_crc32_update(bytewise, (proven_mem_view_t){ buf + off + i, 1 });
+                proven_u32 split = proven_crc32_update(proven_crc32_update(0, (proven_mem_view_t){ buf + off, len / 3 }),
+                                                       (proven_mem_view_t){ buf + off + len / 3, len - len / 3 });
+                if (proven_crc32(v) != bytewise || split != bytewise) ++bad;
+            }
+        }
+        PROVEN_TEST_ASSERT(bad == 0, "every length, offset and split agrees with the bytewise CRC", "");
+        /* An outside vector long enough for the eight-byte loop: five slicing steps, then a
+         * four-byte tail. */
+        PROVEN_TEST_ASSERT(proven_crc32(sv("The quick brown fox jumps over the lazy dog.")) == 0x519025e9u,
+            "the 44-byte fox with its period (zlib: 0x519025e9)", "");
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("SHA-256: the FIPS 180-4 vectors",
         "The digest that is safe to fingerprint content with must be THE SHA-256, bit for bit.",
         "Empty, \"abc\", the 56-byte example, and the million-'a' vector.");
