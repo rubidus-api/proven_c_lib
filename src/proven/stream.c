@@ -676,14 +676,23 @@ static proven_utf_step_t u16r_decode_raw(proven_u16_reader_t *st, proven_u16 *de
     const proven_byte_t *raw = st->raw + st->raw_pos;
     proven_size_t raw_n = st->raw_len - st->raw_pos;
     proven_size_t n = raw_n / 2;
-    for (proven_size_t i = 0; i < n; ++i) {
+    /* Decode and validate only what this call can hand out, plus one unit to see whether the
+     * last one taken is half of a pair (RFC-0009 P-103). The whole staged area - up to 512
+     * units - used to be validated on every call, so reading with cap 2 cost 261 ns a unit. */
+    proven_size_t m = n;
+    bool more_staged = false;
+    if (cap < m) {
+        m = cap + 1;
+        more_staged = true;
+    }
+    for (proven_size_t i = 0; i < m; ++i) {
         proven_byte_t a = raw[2 * i], b = raw[2 * i + 1];
         units[i] = (st->enc == PROVEN_TEXT_UTF16LE) ? (proven_u16)(a | (b << 8)) : (proven_u16)((a << 8) | b);
     }
     /* Validate as whole characters by converting to UTF-8 into scratch nobody reads: this is
      * the one place that already knows a lone surrogate from half a pair. */
     proven_byte_t scratch[sizeof units / sizeof units[0] * 3];
-    proven_utf_step_t v = proven_utf16_to_utf8_partial(units, n, scratch, sizeof scratch);
+    proven_utf_step_t v = proven_utf16_to_utf8_partial(units, m, scratch, sizeof scratch);
     proven_size_t take = v.consumed;
     if (take > cap) {
         take = cap;
@@ -691,7 +700,11 @@ static proven_utf_step_t u16r_decode_raw(proven_u16_reader_t *st, proven_u16 *de
         out.err = PROVEN_ERR_OUT_OF_BOUNDS;
     } else if (v.err == PROVEN_ERR_INVALID_ENCODING) {
         out.err = PROVEN_ERR_INVALID_ENCODING;
-    } else if (v.consumed < n || (raw_n & 1u)) {
+    } else if (v.consumed < m && more_staged) {
+        /* The unit after the last one examined is staged: a high surrogate at the end of the
+         * window has its partner there, so this is "no room", not "need more input". */
+        out.err = PROVEN_ERR_OUT_OF_BOUNDS;
+    } else if (v.consumed < m || (raw_n & 1u)) {
         out.err = PROVEN_ERR_NEED_MORE;   /* a trailing high surrogate, or an odd byte */
     }
     for (proven_size_t i = 0; i < take; ++i) dest[i] = units[i];

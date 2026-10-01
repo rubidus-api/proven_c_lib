@@ -45,6 +45,11 @@ written; their tags still exist.
 
 ### Changed
 
+- **`proven_u16_reader_read` with a small destination no longer revalidates everything it holds**
+  (RFC-0009 P-103). Each call decoded and validated the whole staged area - up to 512 units - to
+  hand out `cap` of them: 261 ns per unit at `cap` 2. It now examines `cap + 1` units: 12 ns per
+  unit at `cap` 2, 2.3 at 64 (from 9.6). The text delivered and the error that ends it are the
+  same for every `cap`.
 - **`proven_reader_read_line` searches each byte once** (RFC-0009 P-104). It searched from the
   start of the pending line, one byte at a time, after every refill, so a long line arriving in
   small pieces cost time quadratic in its length: 4.8 us per byte for a 16,000-byte line read a

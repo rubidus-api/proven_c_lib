@@ -64,6 +64,24 @@ static void expect_three_lines(proven_u16_reader_t *r) {
     PROVEN_TEST_ASSERT(proven_u16_reader_read_line(r).err == PROVEN_ERR_EOF, "and EOF again", "");
 }
 
+/* Everything proven_u16_reader_read hands out with destination size `cap`, and the error that
+ * ended it. Pairs are never split, so the concatenation must not depend on `cap`. */
+static proven_err_t read_all_units(const proven_byte_t *bytes, proven_size_t n, proven_size_t cap,
+                                   proven_u16 *out, proven_size_t out_cap, proven_size_t *got) {
+    proven_reader_view_t vs;
+    proven_reader_t inner = proven_reader_from_view(&vs, (proven_u8str_view_t){ bytes, n });
+    proven_u16 lbuf[8], dest[600];
+    proven_u16_reader_t st;
+    if (!proven_is_ok(proven_u16_reader_init(&st, inner, PROVEN_TEXT_UTF16LE, lbuf, 8))) return PROVEN_ERR_INVALID_STATE;
+    *got = 0;
+    for (;;) {
+        proven_result_size_t r = proven_u16_reader_read(&st, dest, cap);
+        for (proven_size_t i = 0; i < r.value && *got < out_cap; ++i) out[(*got)++] = dest[i];
+        if (!proven_is_ok(r.err)) return r.err;
+        if (r.value == 0) return PROVEN_OK;
+    }
+}
+
 int main(void) {
     PROVEN_TEST_SUITE("UTF-16 text through writers, readers and the formatter",
         "u16 text is written byte-exact in UTF-8, UTF-16LE and UTF-16BE, read back line by line from all three with a character split across source reads carried, and formatted into any sink; malformed text is refused everywhere.",
@@ -315,6 +333,43 @@ int main(void) {
         }
         PROVEN_TEST_INFO("{} lines in {} source reads", PROVEN_ARG(lines), PROVEN_ARG(c.reads));
         PROVEN_TEST_ASSERT(lines == sizeof big / 50 && c.reads <= sizeof big / 1024 + 3, "about one read per KiB", "");
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a small destination gets the same text, and the same error, as a large one",
+        "RFC-0009 P-103: the reader now validates only the units one call can take, plus one. Whatever cap a caller reads with, the units delivered and the error that stops them must be the same.",
+        "Inspect the validation window in u16r_decode_raw: a pair split at the window edge, or a lone surrogate found later than before, shows up here as a different count or error.");
+    // ---------------------------------------------------------------
+    {
+        static proven_byte_t bytes[2400];
+        static proven_u16 big[1200], small[1200];
+        for (int variant = 0; variant < 3; ++variant) {
+            proven_size_t n = 0, units = 0;
+            while (n + 4 <= sizeof bytes) {
+                if (units % 7 == 5) {   /* a pair at many different offsets from any window edge */
+                    bytes[n++] = 0x3D; bytes[n++] = 0xD8; bytes[n++] = 0x00; bytes[n++] = 0xDE; units += 2;
+                } else {
+                    bytes[n++] = (proven_byte_t)('a' + units % 26); bytes[n++] = 0; units += 1;
+                }
+            }
+            if (variant == 1) {   /* a lone low surrogate in place of an ASCII unit mid-text */
+                proven_size_t k = 1200;
+                while (bytes[k + 1] != 0) k += 2;
+                bytes[k] = 0x00; bytes[k + 1] = 0xDC;
+            }
+            if (variant == 2) { bytes[n - 4] = 0x3D; bytes[n - 3] = 0xD8; n -= 2; }                       /* a high one at the very end */
+            proven_size_t got_big = 0;
+            proven_err_t e_big = read_all_units(bytes, n, 512, big, 1200, &got_big);
+            for (proven_size_t cap = 2; cap <= 9; ++cap) {
+                proven_size_t got_small = 0;
+                proven_err_t e_small = read_all_units(bytes, n, cap, small, 1200, &got_small);
+                PROVEN_TEST_ASSERT(e_small == e_big && got_small == got_big &&
+                                   memcmp(small, big, got_big * sizeof big[0]) == 0,
+                    "the same units and the same ending for every cap from 2 to 9", "");
+            }
+            PROVEN_TEST_ASSERT(variant == 0 ? e_big == PROVEN_ERR_EOF : e_big == PROVEN_ERR_INVALID_ENCODING,
+                "valid text ends in EOF, a lone surrogate in INVALID_ENCODING", "");
+        }
     }
 
     PROVEN_TEST_PASS("UTF-16 text through writers, readers and the formatter");

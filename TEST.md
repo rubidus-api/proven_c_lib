@@ -897,6 +897,7 @@ Sub-checks:
 - A line that exactly fills the buffer is a line; one unit longer is `OUT_OF_BOUNDS` and stays so; a surrogate pair is never split at the buffer edge; `read` never ends on a high surrogate.
 - Malformed input, a lone surrogate, an odd trailing byte and a source ending mid-character each stop the reader with `INVALID_ENCODING` after the valid first line.
 - A file round-trips in each encoding through `proven_sysio_u16_lines_open(AUTO)`, and the wrapper may be moved between calls.
+- For 2,400 bytes of UTF-16LE with a surrogate pair every seven units - valid, with a lone low surrogate mid-text, and ending in a lone high surrogate - reading with every `cap` from 2 to 9 delivers the same units and ends with the same error as `cap` 512 (RFC-0009 P-103: the reader validates only `cap + 1` units per call; a window one unit too small is caught).
 
 Failure tip: inspect the UTF-16 section of `src/proven/stream.c` (`u16r_decode`, `proven_u16_reader_read_line`) and `render_u16` in `src/proven/fmt.c`. A failure only with the one-byte source is the carry between reads.
 
