@@ -245,9 +245,17 @@ static inline proven_scan_arg_t proven_scan_arg_identity(proven_scan_arg_t v) { 
  * If transactional parsing is required, save scan.cursor and destination 
  * values before calling and restore them on failure.
  */
+/*
+ * MACRO SUPPORT for proven_scan_fmt_cursor and proven_scan_fmt (RFC-0009 X-004).
+ * Not a stable interface: the signature may change in any MINOR release. Call the macro.
+ */
 [[nodiscard]]
 proven_err_t proven_scan_fmt_internal(proven_scan_t *scan, const char *fmt, const proven_scan_arg_t *args, proven_size_t args_count);
 
+/*
+ * MACRO SUPPORT for proven_scan_fmt (RFC-0009 X-004).
+ * Not a stable interface: the signature may change in any MINOR release. Call the macro.
+ */
 static inline proven_err_t proven_scan_fmt_internal_view(proven_u8str_view_t view, const char *fmt, const proven_scan_arg_t *args, proven_size_t count) {
     proven_scan_t scan = proven_scan_init(view);
     return proven_scan_fmt_internal(&scan, fmt, args, count);

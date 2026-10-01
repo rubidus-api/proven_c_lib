@@ -386,6 +386,10 @@ proven_result_size_t proven_u16_reader_read(proven_u16_reader_t *st, proven_u16 
  *         `required` says how much it would have needed. Nothing is written in that
  *         case - the write is atomic, so a reader never sees half a line.
  */
+/*
+ * MACRO SUPPORT for proven_fprint, proven_fprintln and proven_fwrite_fmt (RFC-0009 X-004).
+ * Not a stable interface: the signature may change in any MINOR release. Call the macro.
+ */
 [[nodiscard]]
 proven_fmt_result_t proven_fmt_to_writer_impl(proven_writer_t w, proven_mem_mut_t scratch,
                                               const char *fmt, const proven_arg_t *args, proven_size_t args_count);

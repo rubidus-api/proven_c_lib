@@ -1719,6 +1719,7 @@ Sub-checks:
 - The chunk planner itself is exercised, not just grepped: 0, 1, limit-1, limit, limit+1 and 2*limit+1 against a reduced artificial limit, plus a whole plan walked to check it covers the buffer with no gap and no overlap. A reduced limit is what makes those boundaries testable without allocating gigabytes or constructing a pointer outside a real object.
 
 Note on the two Windows rows: neither is a runtime result. This host has never run a Windows binary. What it has is `./nob cross`, which compiles both Windows targets, and these source contracts. Both defects stay open for native verification.
+- Every function named `*_internal` / `*_impl` declared in a public header (from the header manifest, the alias layer aside) is on a closed list of seven and is marked MACRO SUPPORT within the lines above it; all seven are still declared (RFC-0009 X-004; a planted eighth is caught).
 
 Failure tip: source-contract tests should stay narrow. If a source pattern changes legitimately, update the contract to the new safe pattern in the same commit as the source change and explain it in docs.
 

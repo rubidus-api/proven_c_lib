@@ -22,6 +22,8 @@ C 책을 한 권 뗐다고 해 봅시다. 포인터도, `malloc`도, `printf`도
 - 버전: proven_c_lib-v0.5.0 · 표준: C23 · 라이선스: MIT
 - 버전은 시맨틱 버전 `MAJOR.MINOR.PATCH`이며 v0.0.1(2026-09-04)부터 시작합니다. 그 이전 릴리스는
   날짜 기반 번호(`v26.MM.DDx`)이고, 발표된 그대로 둡니다.
+- `*_internal`이나 `*_impl`로 끝나는 함수 일곱 개는 매크로가 호출하기 때문에 공개 헤더에 있습니다.
+  모두 MACRO SUPPORT로 표시되어 있고 안정된 인터페이스가 아니니, 매크로를 호출하세요.
 - 저장소: https://github.com/rubidus-api/proven_c_lib
 
 ---

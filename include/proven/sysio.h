@@ -304,6 +304,10 @@ void proven_sysio_scanner_deinit(proven_sysio_scanner_t *scanner);
  * The view remains valid only until the next scanner scan call or scanner
  * deinitialization, either of which may refill, compact, or free that buffer.
  */
+/*
+ * MACRO SUPPORT for proven_sysio_scanner_scan (RFC-0009 X-004).
+ * Not a stable interface: the signature may change in any MINOR release. Call the macro.
+ */
 [[nodiscard]]
 proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, const char *fmt, const proven_scan_arg_t *args, size_t args_count);
 
@@ -323,6 +327,10 @@ proven_err_t proven_sysio_scanner_scan_impl(proven_sysio_scanner_t *scanner, con
  * and are used as printf is - a failed write to a console is conventionally
  * ignored. The scan entry points above and below are annotated, because
  * dropping their error means reading data that was never parsed. */
+/*
+ * MACRO SUPPORT for proven_print, proven_println, proven_eprint and proven_eprintln (RFC-0009 X-004).
+ * Not a stable interface: the signature may change in any MINOR release. Call the macro.
+ */
 proven_err_t proven_sysio_print_impl(proven_file_t handle, const char *fmt, const proven_arg_t *args, size_t args_count);
 /**
  * @brief Type-safe formatted scanning from a file descriptor.
@@ -339,6 +347,10 @@ proven_err_t proven_sysio_print_impl(proven_file_t handle, const char *fmt, cons
  * but this helper's input buffer is local to the call and cannot safely escape.
  * Use proven_sysio_scanner_t when the caller needs a borrowed string result; its
  * result remains valid only until the next scan call or scanner deinitialization.
+ */
+/*
+ * MACRO SUPPORT for proven_scan_fmt_from_file and proven_scan_fmt_from_stdin (RFC-0009 X-004).
+ * Not a stable interface: the signature may change in any MINOR release. Call the macro.
  */
 [[nodiscard]]
 proven_err_t proven_sysio_scan_chunk_impl(proven_file_t handle, const char *fmt, const proven_scan_arg_t *args, size_t args_count);

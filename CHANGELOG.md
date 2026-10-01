@@ -45,6 +45,11 @@ written; their tags still exist.
 
 ### Changed
 
+- **The seven `*_internal` / `*_impl` functions in public headers are marked MACRO SUPPORT and are
+  not a stable interface** (RFC-0009 X-004): `proven_u8str_fmt_internal`, `proven_scan_fmt_internal`,
+  `proven_scan_fmt_internal_view`, `proven_fmt_to_writer_impl`, `proven_sysio_scanner_scan_impl`,
+  `proven_sysio_print_impl`, `proven_sysio_scan_chunk_impl`. Their signatures may change in a MINOR
+  release; call the macros. A source-contract test keeps the list closed.
 - **`proven_u16_reader_read` with a small destination no longer revalidates everything it holds**
   (RFC-0009 P-103). Each call decoded and validated the whole staged area - up to 512 units - to
   hand out `cap` of them: 261 ns per unit at `cap` 2. It now examines `cap + 1` units: 12 ns per

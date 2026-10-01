@@ -419,6 +419,10 @@ static inline proven_arg_t proven_arg_identity(proven_arg_t v) { return v; }
  * @param str Target string.
  * @param trunc If true, performs best-effort truncation. If false, atomic.
  */
+/*
+ * MACRO SUPPORT for proven_u8str_append_fmt and its _trunc, _grow and _with_scratch forms (RFC-0009 X-004).
+ * Not a stable interface: the signature may change in any MINOR release. Call the macro.
+ */
 [[nodiscard]]
 proven_fmt_result_t proven_u8str_fmt_internal(proven_allocator_t alloc, proven_u8str_t *str, bool trunc, const char *fmt, proven_allocator_t scratch, const proven_arg_t *args, proven_size_t args_count);
 

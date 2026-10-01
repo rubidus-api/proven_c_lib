@@ -185,6 +185,61 @@ int main(void) {
         free(types);
     }
 
+    /* RFC-0009 X-004: functions named *_internal / *_impl in a public header exist for macros,
+     * are marked MACRO SUPPORT, and are NOT a stable interface. The list is closed: a new one
+     * is a decision, so it has to be added here, marked, and said in the CHANGELOG. */
+    {
+        static const char *const allowed[] = {
+            "proven_u8str_fmt_internal", "proven_scan_fmt_internal", "proven_scan_fmt_internal_view",
+            "proven_fmt_to_writer_impl", "proven_sysio_scanner_scan_impl", "proven_sysio_print_impl",
+            "proven_sysio_scan_chunk_impl",
+        };
+        int found = 0;
+        for (size_t h = 0; h < sizeof build_header_manifest / sizeof build_header_manifest[0]; ++h) {
+            const char *hp = build_header_manifest[h];
+            /* public headers only; the alias layer repeats every name by design */
+            if (strncmp(hp, "include/", 8) != 0 || strstr(hp, "alias_xcv.h")) continue;
+            char *text = read_text_file(hp);
+            if (!text) continue;
+            /* every declaration "<type> proven_..._internal(" or "..._impl(" at line start */
+            for (const char *line = text; line && *line; ) {
+                const char *eol = strchr(line, '\n');
+                size_t len = eol ? (size_t)(eol - line) : strlen(line);
+                if (len > 0 && line[0] != ' ' && line[0] != '#' && line[0] != '/' && line[0] != '*') {
+                    const char *open = memchr(line, '(', len);
+                    if (open) {
+                        const char *e = open;
+                        while (e > line && (e[-1] == '_' || (e[-1] >= 'a' && e[-1] <= 'z') || (e[-1] >= '0' && e[-1] <= '9'))) --e;
+                        size_t nlen = (size_t)(open - e);
+                        bool special = (nlen > 9 && memcmp(open - 9, "_internal", 9) == 0) ||
+                                       (nlen > 5 && memcmp(open - 5, "_impl", 5) == 0) ||
+                                       (nlen > 14 && memcmp(open - 14, "_internal_view", 14) == 0);
+                        if (special && nlen > 7 && memcmp(e, "proven_", 7) == 0) {
+                            bool listed = false;
+                            for (size_t a = 0; a < sizeof allowed / sizeof allowed[0]; ++a) {
+                                if (strlen(allowed[a]) == nlen && memcmp(allowed[a], e, nlen) == 0) listed = true;
+                            }
+                            if (!listed) fprintf(stderr, "unlisted macro-support function: %.*s in %s\n", (int)nlen, e, hp);
+                            require(listed, "every *_internal / *_impl function in a public header is on the closed list");
+                            /* the MACRO SUPPORT mark sits within the three lines above */
+                            const char *back = line;
+                            for (int k = 0; k < 4 && back > text; ++k) {
+                                back--;
+                                while (back > text && back[-1] != '\n') back--;
+                            }
+                            char *mark = strstr(back, "MACRO SUPPORT");
+                            require(mark != NULL && mark < line, "each one is marked MACRO SUPPORT right above its declaration");
+                            ++found;
+                        }
+                    }
+                }
+                line = eol ? eol + 1 : NULL;
+            }
+            free(text);
+        }
+        require(found == (int)(sizeof allowed / sizeof allowed[0]), "all seven listed macro-support functions are still declared");
+    }
+
     char *job = read_text_file("src/proven/job.c");
     require(contains(job, "admission_state"), "job system has a single admission state");
     require(contains(job, "proven_job_begin_submit"), "job submit claims admission before queue slot claim");
