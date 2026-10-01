@@ -359,6 +359,7 @@
 #define xcv_random_bytes proven_random_bytes
 #define xcv_random_set_source proven_random_set_source
 #define xcv_random_u64 proven_random_u64
+#define xcv_random_u64_checked proven_random_u64_checked
 #define xcv_result_u16str_view_t proven_result_u16str_view_t
 #define xcv_rng_below proven_rng_below
 #define xcv_rng_f64 proven_rng_f64

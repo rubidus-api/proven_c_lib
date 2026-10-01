@@ -438,6 +438,17 @@ proven_u64 proven_random_u64(void) {
     return v;
 }
 
+bool proven_random_u64_checked(proven_u64 *out) {
+    if (!out) return false;
+    proven_u64 v = 0;
+    if (!proven_random_bytes(&v, sizeof v)) {
+        *out = 0;
+        return false;
+    }
+    *out = v;
+    return true;
+}
+
 bool proven_chacha_rng_seed_from_entropy(proven_chacha_rng_t *g) {
     if (!g) return false;
 

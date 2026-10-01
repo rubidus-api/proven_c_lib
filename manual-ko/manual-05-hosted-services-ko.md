@@ -1861,6 +1861,7 @@ int main(void) {
 |---|---|
 | `proven_random_bytes(buf, len)` | OS CSPRNG. 실패 시 `false`를 반환한다; 그러면 `buf`를 사용하지 말라. `len == 0`은 성공적인 no-op이다. |
 | `proven_random_u64()` | OS로부터의 강한 한 워드, 실패 시 `0`. |
+| `proven_random_u64_checked(&out)` | 강한 한 워드, 그리고 없으면 `false`. 토큰이나 키에 쓰는 형태. |
 | `proven_chacha_rng_seed_from_entropy(&g)` | 엔트로피 source로부터 암호학적 생성기를 시드. **이것이 실패할 수 있는 호출이다.** |
 | `proven_random_set_source(fn, ctx)` | 엔트로피 source를 설치. 호스티드 타깃에는 OS가 이미 설치되어 있다; 베어메탈 타깃은 보드의 TRNG를 설치한다. |
 | `proven_chacha_rng_seed(&g, seed32)` | 당신이 공급하는 32바이트로부터 시드—보드의 하드웨어 엔트로피 source. 결코 시계로부터는 아니다. |
@@ -1938,6 +1939,7 @@ typedef struct {
 |---|---|---|
 | `proven_random_bytes(buf, len)` | 엔트로피 source로부터 채움(기본은 OS). **실패할 수 있는 유일한 호출.** | `bool`. `false`이면 `buf`는 미지정이며 사용해서는 안 된다. `len == 0`은 성공한다. |
 | `proven_random_u64()` | 같은 source로부터의 강한 한 워드. | `proven_u64`, 실패 시 `0`—그것도 valid한 draw이므로, 둘을 구별해야 할 때는 `proven_random_bytes`를 사용하라. |
+| `proven_random_u64_checked(&out)` | 비밀에 쓰는 강한 한 워드. | `bool`. `false`이면 `out`은 0이며 쓰면 안 된다: 0인 토큰은 이 함수가 막으려는 예측 가능한 비밀이다. |
 | `proven_random_set_source(fn, ctx)` | 엔트로피 source를 설치. 호스티드 타깃에는 불필요; 이것이 보드가 자신의 TRNG를 넘겨주는 방법이다. | void. |
 | `proven_xoshiro256ss_seed(&g, seed)` | 재현 가능 생성기를 시드. 어떤 시드든 괜찮다—0조차; SplitMix64를 통해 확장된다. | void. |
 | `proven_xoshiro256ss_next(&g)` | 다음 워드. 핫 패스: 트레이트를 통해서가 아니라 직접 호출하라. | `proven_u64`. |
@@ -1951,6 +1953,17 @@ typedef struct {
 | `proven_rng_range(rng, lo, hi)` | `[lo, hi]`에서 균일, 포함적. 전체 `INT64_MIN..INT64_MAX` 범위도 오버플로하지 않는다. | `proven_i64`; `hi < lo`이면 `lo`. |
 | `proven_rng_f64(rng)` | `[0, 1)`에서 균일. 53비트; 결코 `1.0`을 반환하지 않는다. | `double`. |
 | `proven_rng_shuffle(rng, base, count, elem_size)` | 무편향 Fisher-Yates 순열, 제자리(in place). | void. |
+
+```c
+/* A session token must not be guessable, so it may not be the 0 that proven_random_u64
+ * returns when the entropy source fails. The checked form says so instead. */
+proven_u64 token;
+if (!proven_random_u64_checked(&token)) {
+    proven_eprintln("no entropy source: refusing to issue a session token");
+} else {
+    proven_println("token {:x}", PROVEN_ARG(token));
+}
+```
 
 ### 주의사항, 그리고 무엇이 잘못되는가
 
@@ -2783,6 +2796,7 @@ memcpy((char *)m.value.ptr + 4096, data, n);                            /* wrong
   그것을 아는 사람은 이후의 모든 바이트를 알기 때문이다.
 - **`proven_random_u64()`**는 엔트로피 출처에서 강한 낱말 하나를 바로 뽑는다. 시동 시의 해시 키나
   식별자 같은 일회성에는 알맞고, 반복문 안에서는 그르다. 호출마다 운영체제까지 다녀오기 때문이다.
+  출처가 실패하면 0을 돌려주므로, 토큰이나 키에는 실패를 알려 주는 **`proven_random_u64_checked()`**를 쓴다.
 - **`proven_random_set_source()`**는 엔트로피 출처 자체를 설치한다. 호스티드(hosted) 프로그램에는 운영체제의
   것이 이미 있으니 그대로 두면 되고, 베어메탈 프로그램에는 없으니 그 보드의 하드웨어 출처가 여기로
   들어간다.

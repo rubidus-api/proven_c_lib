@@ -29,6 +29,11 @@ written; their tags still exist.
 - **`proven_fs_is_staging_name(name)`**: true for a name with the shape of the temp file an
   atomic or durable write leaves behind when killed mid-write (today's and the old one), for a
   cleanup job. The library itself never removes one it did not just create (RFC-0009 D-001).
+- **`proven_random_u64_checked(&out)`: one strong word, and `false` when there is none**
+  (RFC-0009 S-002). `proven_random_u64` returns 0 when the entropy source fails - on a bare-metal
+  target with no source that is every call - and its documentation offered it for tokens. A
+  token of 0 is a predictable secret nothing reports. The checked form is for secrets; the
+  unchecked one stays, now documented as not for them. Alias `xcv_random_u64_checked`.
 
 ### Changed
 

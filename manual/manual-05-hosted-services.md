@@ -1904,6 +1904,7 @@ seeding - which you check once, at startup. Every draw downstream is total.
 |---|---|
 | `proven_random_bytes(buf, len)` | The OS CSPRNG. Returns `false` on failure; do not use `buf` then. `len == 0` is a successful no-op. |
 | `proven_random_u64()` | One strong word from the OS, or `0` on failure. |
+| `proven_random_u64_checked(&out)` | One strong word, and `false` when there is none. The form for a token or a key. |
 | `proven_chacha_rng_seed_from_entropy(&g)` | Seed the cryptographic generator from the entropy source. **This is the call that can fail.** |
 | `proven_random_set_source(fn, ctx)` | Install the entropy source. The OS is already installed on a hosted target; a bare-metal target installs its board's TRNG. |
 | `proven_chacha_rng_seed(&g, seed32)` | Seed it from 32 bytes you supply - a hardware entropy source on a board. Never the clock. |
@@ -1981,6 +1982,7 @@ typedef struct {
 |---|---|---|
 | `proven_random_bytes(buf, len)` | Fill from the entropy source (the OS by default). **The one call that can fail.** | `bool`. On `false`, `buf` is unspecified and must not be used. `len == 0` succeeds. |
 | `proven_random_u64()` | One strong word from the same source. | `proven_u64`, or `0` on failure - which is also a valid draw, so use `proven_random_bytes` when you must tell them apart. |
+| `proven_random_u64_checked(&out)` | One strong word, for a secret. | `bool`. On `false`, `out` is 0 and must not be used: a token of 0 is the predictable secret this exists to prevent. |
 | `proven_random_set_source(fn, ctx)` | Install the entropy source. Not needed on a hosted target; this is how a board hands over its TRNG. | void. |
 | `proven_xoshiro256ss_seed(&g, seed)` | Seed the reproducible generator. Any seed is fine - even 0; it is expanded through SplitMix64. | void. |
 | `proven_xoshiro256ss_next(&g)` | The next word. The hot path: call it directly, not through the trait. | `proven_u64`. |
@@ -1994,6 +1996,17 @@ typedef struct {
 | `proven_rng_range(rng, lo, hi)` | Uniform in `[lo, hi]`, inclusive. The full `INT64_MIN..INT64_MAX` span does not overflow. | `proven_i64`; `lo` if `hi < lo`. |
 | `proven_rng_f64(rng)` | Uniform in `[0, 1)`. 53 bits; never returns `1.0`. | `double`. |
 | `proven_rng_shuffle(rng, base, count, elem_size)` | An unbiased Fisher-Yates permutation, in place. | void. |
+
+```c
+/* A session token must not be guessable, so it may not be the 0 that proven_random_u64
+ * returns when the entropy source fails. The checked form says so instead. */
+proven_u64 token;
+if (!proven_random_u64_checked(&token)) {
+    proven_eprintln("no entropy source: refusing to issue a session token");
+} else {
+    proven_println("token {:x}", PROVEN_ARG(token));
+}
+```
 
 ### Cautions, and what goes wrong
 
@@ -2867,7 +2880,9 @@ not care which source it got.
   knows every byte that follows.
 - **`proven_random_u64()`** draws a single strong word straight from the entropy
   source. Right for a one-off - a hash key at start-up, an identifier - and wrong
-  in a loop, where each call costs a trip to the operating system.
+  in a loop, where each call costs a trip to the operating system. It returns 0
+  when the source fails, so for a token or a key use
+  **`proven_random_u64_checked()`**, which says so.
 - **`proven_random_set_source()`** installs the entropy source itself. A hosted
   program already has the operating system's and should leave it alone; a
   bare-metal program has none, and this is where its hardware source goes.

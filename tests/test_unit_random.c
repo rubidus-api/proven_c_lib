@@ -36,6 +36,10 @@ static bool source_b(void *ctx, void *buf, proven_size_t len) {
     memset(buf, 0x5A, len);
     return true;
 }
+static bool source_fails(void *ctx, void *buf, proven_size_t len) {
+    (void)ctx; (void)buf; (void)len;
+    return false;
+}
 static void drawer(void *arg) {
     (void)arg;
     proven_byte_t b[8];
@@ -113,6 +117,25 @@ int main(void) {
         proven_u64 x = proven_random_u64();
         proven_u64 y = proven_random_u64();
         PROVEN_TEST_ASSERT(x != y, "two random u64 draws must differ", "");
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("the checked u64 says when there is no entropy",
+        "RFC-0009 S-002: proven_random_u64 returns 0 when the source fails - a predictable token. proven_random_u64_checked returns false instead.",
+        "Inspect proven_random_u64_checked in src/proven/random.c.");
+    // ---------------------------------------------------------------
+    {
+        proven_u64 v = 1;
+        PROVEN_TEST_ASSERT(proven_random_u64_checked(&v), "with the platform source it succeeds", "");
+        proven_u64 w = 1;
+        PROVEN_TEST_ASSERT(proven_random_u64_checked(&w) && (v != w || v != 0), "and draws", "");
+        PROVEN_TEST_ASSERT(!proven_random_u64_checked(NULL), "a NULL out is refused", "");
+        proven_random_set_source(source_fails, NULL);
+        v = 1;
+        PROVEN_TEST_ASSERT(!proven_random_u64_checked(&v) && v == 0, "a failing source is false, and out is 0", "");
+        PROVEN_TEST_ASSERT(proven_random_u64() == 0, "while the unchecked form silently returns 0", "");
+        proven_random_set_source(NULL, NULL);
+        PROVEN_TEST_ASSERT(proven_random_u64_checked(&v), "the platform default is back", "");
     }
 
     // ---------------------------------------------------------------

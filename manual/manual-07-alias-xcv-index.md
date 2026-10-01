@@ -379,6 +379,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_random_bytes` | `proven_random_bytes` |
 | `xcv_random_set_source` | `proven_random_set_source` |
 | `xcv_random_u64` | `proven_random_u64` |
+| `xcv_random_u64_checked` | `proven_random_u64_checked` |
 | `xcv_result_u16str_view_t` | `proven_result_u16str_view_t` |
 | `xcv_rng_below` | `proven_rng_below` |
 | `xcv_rng_f64` | `proven_rng_f64` |

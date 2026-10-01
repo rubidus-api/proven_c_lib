@@ -299,13 +299,28 @@ bool proven_random_bytes(void *buf, proven_size_t len);
 /**
  * @brief A single cryptographically strong 64-bit value, or 0 on failure.
  *
- * A convenience over proven_random_bytes for the common case of needing one word - a hash
- * seed, a token. Because 0 is both the failure signal and a (vanishingly unlikely) valid
- * result, use proven_random_bytes directly when you must distinguish "the RNG failed" from
- * "the RNG returned zero".
+ * A convenience over proven_random_bytes for one word where a failed draw does no harm - a
+ * hash seed that has a fallback, an identifier that only has to be unlikely to repeat.
+ *
+ * @warning Not for a secret. When the source fails - a bare-metal target with no source
+ *          installed is the common case - this returns 0, and a token or key of 0 is the
+ *          predictable secret the rest of this header exists to prevent. Nothing reports it.
+ *          Use proven_random_u64_checked, which says when it failed.
  */
 [[nodiscard]]
 proven_u64 proven_random_u64(void);
+
+/**
+ * @brief A single cryptographically strong 64-bit value, and whether there is one.
+ *
+ * The form to use for a token, a key, a nonce: anything whose value must not be guessable.
+ *
+ * @return true and `*out` set from the entropy source; false if there is no source or it
+ *         failed, with `*out` set to 0 - which must then not be used as a secret. false, and
+ *         nothing written, when `out` is NULL.
+ */
+[[nodiscard]]
+bool proven_random_u64_checked(proven_u64 *out);
 
 /**
  * @brief Seed a ChaCha generator from the entropy source - the OS, or the one you installed.

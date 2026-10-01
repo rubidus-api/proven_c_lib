@@ -195,7 +195,7 @@ on every release, not asserted in this table.
 | `time.h` | Limited | Core datetime formatting can compile; real PAL time is excluded. |
 | `heap.h` | Stub | `proven_heap_allocator()` returns an invalid allocator. |
 | `fs.h`, `stream.h`, `mmap.h`, `sysio.h`, `job.h` | Excluded | Require hosted PAL services. |
-| `random.h` | Available | The generators and helpers are pure arithmetic. `proven_random_bytes` works here too, but only once you install an entropy source with `proven_random_set_source` - a board's TRNG, ring oscillator, or ADC noise floor. With none installed it returns **false** rather than falling back to a clock-seeded PRNG, which would look like success and be a security hole nothing reports. `proven_chacha_rng_seed_from_entropy` then turns the board's entropy into an endless cryptographic stream. |
+| `random.h` | Available | The generators and helpers are pure arithmetic. `proven_random_bytes` works here too, but only once you install an entropy source with `proven_random_set_source` - a board's TRNG, ring oscillator, or ADC noise floor. With none installed it returns **false** rather than falling back to a clock-seeded PRNG, which would look like success and be a security hole nothing reports. `proven_chacha_rng_seed_from_entropy` then turns the board's entropy into an endless cryptographic stream. `proven_random_u64` returns 0 with no source, silently; for a token or key use `proven_random_u64_checked`, which returns false. |
 | `coro.h` | Available | Macro-only stackless coroutine support. |
 | `panic.h` | Available | Override for target-specific trap/reset behavior. |
 

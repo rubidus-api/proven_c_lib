@@ -381,6 +381,7 @@ alias 554개: 소문자 `xcv_` 함수 이름 420개와 대문자 `XCV_` 매크�
 | `xcv_random_bytes` | `proven_random_bytes` |
 | `xcv_random_set_source` | `proven_random_set_source` |
 | `xcv_random_u64` | `proven_random_u64` |
+| `xcv_random_u64_checked` | `proven_random_u64_checked` |
 | `xcv_result_u16str_view_t` | `proven_result_u16str_view_t` |
 | `xcv_rng_below` | `proven_rng_below` |
 | `xcv_rng_f64` | `proven_rng_f64` |
