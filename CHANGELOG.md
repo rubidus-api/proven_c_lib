@@ -63,6 +63,9 @@ written; their tags still exist.
 
 ### Changed
 
+- **SHA-256 is about 25% faster** (RFC-0009 P-107): `proven_sha256_update` compresses whole
+  64-byte blocks straight from the input instead of copying every byte into its block buffer
+  first. Measured on 4 MiB: 4.7 ns per byte, from 6.2. Digests are unchanged.
 - **`./nob build -keep-going` runs every test and lists the failures** (RFC-0009 X-006, first part).
   A run stopped at the first failing test, so one failure hid every other. With the flag, each
   test still runs once and the run ends with a summary and exit status 1. Per-test scratch

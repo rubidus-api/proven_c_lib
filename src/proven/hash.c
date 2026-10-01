@@ -478,13 +478,28 @@ void proven_sha256_init(proven_sha256_t *ctx) {
 void proven_sha256_update(proven_sha256_t *ctx, proven_mem_view_t data) {
     if (!ctx || (data.size > 0 && !data.ptr)) return;
     ctx->length += data.size;
-    for (proven_size_t i = 0; i < data.size; ++i) {
-        ctx->block[ctx->block_len++] = data.ptr[i];
-        if (ctx->block_len == 64) {
-            sha256_compress(ctx->state, ctx->block);
-            ctx->block_len = 0;
-        }
+    const proven_byte_t *p = data.ptr;
+    proven_size_t n = data.size;
+    /* Top up a partly filled block first; then compress whole blocks straight from the input,
+     * with no copy (RFC-0009 P-107 - it used to copy every byte into the block); keep the tail. */
+    if (ctx->block_len > 0) {
+        proven_size_t take = 64u - ctx->block_len;
+        if (take > n) take = n;
+        for (proven_size_t i = 0; i < take; ++i) ctx->block[ctx->block_len + i] = p[i];
+        ctx->block_len += take;
+        p += take;
+        n -= take;
+        if (ctx->block_len < 64u) return;
+        sha256_compress(ctx->state, ctx->block);
+        ctx->block_len = 0;
     }
+    while (n >= 64u) {
+        sha256_compress(ctx->state, p);
+        p += 64;
+        n -= 64;
+    }
+    for (proven_size_t i = 0; i < n; ++i) ctx->block[i] = p[i];
+    ctx->block_len = n;
 }
 
 void proven_sha256_final(proven_sha256_t *ctx, proven_byte_t out[PROVEN_SHA256_SIZE]) {
