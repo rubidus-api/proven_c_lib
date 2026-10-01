@@ -570,17 +570,20 @@ key+value), or **TOMBSTONE** (a removed entry). `payload_offset` and
 `bucket_stride` are computed once at create time from `elem_size`/`align`, so
 addressing bucket `i`'s value is just `internal.ptr + i*bucket_stride + payload_offset`.
 
-- **Hashing, and why the default is the safe one.** Integer keys go through a
-  SplitMix/Murmur-style bit-mix finaliser (so sequential ids spread across buckets).
-  **String keys are hashed with keyed SipHash-2-4 under a per-process secret** drawn once
+- **Hashing, and why the default is the safe one.** **Keys are hashed under a per-process
+  secret** drawn once
   from the OS CSPRNG - because a map that hashes *untrusted* keys with a predictable function
   is a denial of service waiting to happen: an attacker who controls the keys computes
   collisions offline, floods them all into one bucket, and turns every lookup into a linear
   scan. Keying the hash with a secret they cannot see is what closes that, and it is the same
-  choice Python, Rust, and the Linux kernel made for their own tables. If your keys all come
-  from your own program, `proven_map_create_trusted` opts into fast unkeyed FNV-1a instead;
-  `proven_map_hash` shows you which function a given map actually uses. (On a freestanding
-  target, which has no CSPRNG and no attacker model, string keys fall back to FNV.)
+  choice Python, Rust, and the Linux kernel made for their own tables. String keys use
+  SipHash-2-4; integer keys use SipHash-1-3 over the key's 8 bytes - an integer is no safer:
+  user ids and record numbers from a request are chosen by whoever sent it. If your keys all
+  come from your own program, `proven_map_create_trusted` opts into the fast unkeyed functions
+  instead - FNV-1a for strings, a SplitMix-style bit-mix finaliser for integers (about 7 ns
+  less per lookup on a small table); `proven_map_hash` shows you which function a given map
+  actually uses. (On a freestanding target, which has no CSPRNG and no attacker model, keys
+  fall back to the unkeyed functions.)
 - **Probing.** Linear open addressing: the start bucket is `hash & (cap - 1)`
   (cheap because `cap` is a power of two), then the search walks forward one
   bucket at a time, wrapping around, until it finds the key (OCCUPIED with an

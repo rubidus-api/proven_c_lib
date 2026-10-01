@@ -51,6 +51,8 @@ static proven_size_t hash_int(proven_size_t key) {
 static proven_byte_t g_map_key[16];
 static _Atomic int    g_map_key_state = 0;
 
+static void map_key_derive_sip_init(void);
+
 static void map_ensure_key(void) {
     if (atomic_load_explicit(&g_map_key_state, memory_order_acquire) == 2) return;
 
@@ -70,6 +72,7 @@ static void map_ensure_key(void) {
             proven_u64 mix = (proven_u64)a * 0x9e3779b97f4a7c15ull + (proven_u64)b;
             for (int i = 0; i < 16; ++i) { mix ^= mix >> 29; mix *= 0xbf58476d1ce4e5b9ull; g_map_key[i] = (proven_byte_t)(mix >> 56); }
         }
+        map_key_derive_sip_init();
         atomic_store_explicit(&g_map_key_state, 2, memory_order_release);
     } else {
         while (atomic_load_explicit(&g_map_key_state, memory_order_acquire) != 2) {
@@ -79,9 +82,61 @@ static void map_ensure_key(void) {
 }
 #endif
 
+#ifndef PROVEN_FREESTANDING
+/*
+ * SipHash-1-3 of one 64-bit word under the per-process key (RFC-0009 S-001).
+ *
+ * hash_int above is a bijection with a public inverse, so anyone who chooses integer keys can
+ * compute as many as they like that land in one bucket - and the table probes linearly, so n
+ * such keys cost O(n^2). Keyed, they cannot: the key is the same secret the string hash uses.
+ * One compression round and three finalisation rounds (the 1-3 variant) are enough for a hash
+ * table, whose output is never published as a MAC; one word of input is one block.
+ */
+static proven_u64 sip_rotl(proven_u64 x, int b) { return (x << b) | (x >> (64 - b)); }
+#define SIP_ROUND(v0, v1, v2, v3) do {                                  \
+        v0 += v1; v1 = sip_rotl(v1, 13); v1 ^= v0; v0 = sip_rotl(v0, 32); \
+        v2 += v3; v3 = sip_rotl(v3, 16); v3 ^= v2;                        \
+        v0 += v3; v3 = sip_rotl(v3, 21); v3 ^= v0;                        \
+        v2 += v1; v1 = sip_rotl(v1, 17); v1 ^= v2; v2 = sip_rotl(v2, 32); \
+    } while (0)
+
+static proven_u64 load_le64(const proven_byte_t *p) {
+    proven_u64 v = 0;
+    for (int i = 7; i >= 0; --i) v = (v << 8) | p[i];
+    return v;
+}
+
+/* The SipHash initial state for g_map_key, computed once when the key is published. */
+static proven_u64 g_map_sip_init[4];
+
+static void map_key_derive_sip_init(void) {
+    proven_u64 k0 = load_le64(g_map_key), k1 = load_le64(g_map_key + 8);
+    g_map_sip_init[0] = k0 ^ 0x736f6d6570736575ull;
+    g_map_sip_init[1] = k1 ^ 0x646f72616e646f6dull;
+    g_map_sip_init[2] = k0 ^ 0x6c7967656e657261ull;
+    g_map_sip_init[3] = k1 ^ 0x7465646279746573ull;
+}
+
+static proven_u64 hash_int_keyed(proven_u64 m) {
+    map_ensure_key();
+    proven_u64 v0 = g_map_sip_init[0], v1 = g_map_sip_init[1];
+    proven_u64 v2 = g_map_sip_init[2], v3 = g_map_sip_init[3];
+    v3 ^= m; SIP_ROUND(v0, v1, v2, v3); v0 ^= m;
+    proven_u64 b = (proven_u64)8 << 56;   /* the length byte; no tail bytes */
+    v3 ^= b; SIP_ROUND(v0, v1, v2, v3); v0 ^= b;
+    v2 ^= 0xff;
+    SIP_ROUND(v0, v1, v2, v3); SIP_ROUND(v0, v1, v2, v3); SIP_ROUND(v0, v1, v2, v3);
+    return v0 ^ v1 ^ v2 ^ v3;
+}
+#undef SIP_ROUND
+#endif
+
 /* The full 64-bit hash for a key, honouring the map's trusted/keyed choice. */
 static proven_u64 map_hash64(const proven_map_t *map, proven_map_key_t key) {
     if (map->key_type == PROVEN_KEY_TYPE_INT) {
+#ifndef PROVEN_FREESTANDING
+        if (!map->trusted_keys) return hash_int_keyed((proven_u64)key.id);
+#endif
         return (proven_u64)hash_int(key.id);
     }
     proven_mem_view_t kv = { .ptr = key.str.ptr, .size = key.str.size };

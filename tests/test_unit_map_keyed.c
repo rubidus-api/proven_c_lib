@@ -24,6 +24,32 @@ static proven_map_key_t skey(const char *s) {
     return (proven_map_key_t){ .str = { .ptr = (const proven_u8 *)s, .size = strlen(s) } };
 }
 
+/* The bit-mix finaliser trusted integer-key maps use (splitmix64's), and its public inverse.
+ * The inverse is what makes an unkeyed integer hash attackable: choose the bucket, compute
+ * the key (RFC-0009 S-001). */
+static proven_u64 mix64(proven_u64 z) {
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+    return z ^ (z >> 31);
+}
+static proven_u64 unxorshift(proven_u64 y, int s) {
+    proven_u64 x = y;
+    for (int i = 0; i < 64 / s + 1; ++i) x = y ^ (x >> s);
+    return x;
+}
+static proven_u64 inv_mul(proven_u64 a) {   /* inverse of an odd multiplier mod 2^64 */
+    proven_u64 x = a;
+    for (int i = 0; i < 6; ++i) x *= 2 - a * x;
+    return x;
+}
+static proven_u64 unmix64(proven_u64 z) {
+    z = unxorshift(z, 31);
+    z *= inv_mul(0x94d049bb133111ebULL);
+    z = unxorshift(z, 27);
+    z *= inv_mul(0xbf58476d1ce4e5b9ULL);
+    return unxorshift(z, 30);
+}
+
 int main(void) {
     PROVEN_TEST_SUITE("map: keyed hashing for untrusted string keys",
         "A default string-key map hashes with keyed SipHash (an attacker cannot predict the bucket); a trusted one keeps fast FNV; both look keys up correctly.",
@@ -156,6 +182,47 @@ int main(void) {
         proven_map_destroy(&tr.value);
     }
 
-    PROVEN_TEST_PASS("string keys are keyed by default, fast when trusted, and correct either way.");
+#if UINTPTR_MAX > 0xffffffffu
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("integer keys built to collide do not collide in a default map",
+        "RFC-0009 S-001: integer keys were hashed with an unkeyed bijection whose inverse is public, so 256 keys all landing in bucket 0 of a 4096-bucket table cost one inverse each. A default map now hashes them with the per-process key; a trusted map keeps the old mixer, on purpose.",
+        "Inspect hash_int_keyed and map_hash64 in src/proven/map.c.");
+    // ---------------------------------------------------------------
+    {
+        proven_result_map_t d = proven_map_create(heap, 16, PROVEN_KEY_TYPE_INT, sizeof(int), _Alignof(int));
+        proven_result_map_t tr = proven_map_create_trusted(heap, 16, PROVEN_KEY_TYPE_INT, sizeof(int), _Alignof(int));
+        PROVEN_TEST_ASSERT(proven_is_ok(d.err) && proven_is_ok(tr.err), "both integer-key maps are created", "");
+        proven_size_t keys[256];
+        for (proven_size_t j = 0; j < 256; ++j) {
+            keys[j] = (proven_size_t)unmix64((proven_u64)(j + 1) << 12);   /* low 12 bits all zero */
+            PROVEN_TEST_ASSERT(mix64(keys[j]) == ((proven_u64)(j + 1) << 12), "the inverse inverts", "");
+        }
+        int trusted_bucket0 = 0, default_bucket0 = 0;
+        for (proven_size_t j = 0; j < 256; ++j) {
+            proven_map_key_t k = { .id = keys[j] };
+            proven_u64 th = proven_map_hash(&tr.value, k);
+            PROVEN_TEST_ASSERT(th == mix64(keys[j]), "a trusted map keeps the bit-mix finaliser", "");
+            if ((th & 4095u) == 0) ++trusted_bucket0;
+            if ((proven_map_hash(&d.value, k) & 4095u) == 0) ++default_bucket0;
+        }
+        PROVEN_TEST_INFO("bucket 0 of 4096: trusted {} of 256, default {} of 256",
+            PROVEN_ARG(trusted_bucket0), PROVEN_ARG(default_bucket0));
+        PROVEN_TEST_ASSERT(trusted_bucket0 == 256, "on the trusted map every crafted key collides - the attack is real", "");
+        PROVEN_TEST_ASSERT(default_bucket0 <= 4, "on the default map they spread (expected 0.06 in bucket 0)",
+            "If they all collide here, default integer maps are not keyed.");
+        for (proven_size_t j = 0; j < 256; ++j) {
+            int v = (int)j;
+            PROVEN_TEST_ASSERT(proven_is_ok(proven_map_set(&d.value, (proven_map_key_t){ .id = keys[j] }, &v)), "set", "");
+        }
+        for (proven_size_t j = 0; j < 256; ++j) {
+            const int *g = proven_map_get(&d.value, (proven_map_key_t){ .id = keys[j] });
+            PROVEN_TEST_ASSERT(g && *g == (int)j, "every key is found in the default map", "");
+        }
+        proven_map_destroy(&d.value);
+        proven_map_destroy(&tr.value);
+    }
+#endif
+
+    PROVEN_TEST_PASS("string and integer keys are keyed by default, fast when trusted, and correct either way.");
     return 0;
 }

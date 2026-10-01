@@ -730,6 +730,7 @@ Sub-checks:
 - A trusted map (`proven_map_create_trusted`) has `trusted_keys == true` and `proven_map_hash` equals FNV-1a, which is the fast path it opts into.
 - Both kinds insert 500 distinct string keys, read them all back, remove half, and still resolve the survivors - a keyed hash that broke lookups would be safe and useless.
 - A malformed `{NULL, size>0}` key is hashed as empty on both kinds rather than dereferenced (the trusted path once used a duplicate internal FNV that read through the NULL).
+- On 64-bit targets: 256 integer keys built with the public inverse of the bit-mix finaliser all land in bucket 0 of 4096 on a trusted map (the attack is real, and the trusted hash is unchanged), spread on a default map (at most 4 in bucket 0), and are all found again (RFC-0009 S-001).
 
 Failure tip: inspect the hash selection and the per-process key in `src/proven/map.c`. The written-first assertion is that the default must NOT equal FNV; a stub that still uses FNV lands it red.
 

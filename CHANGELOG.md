@@ -45,6 +45,14 @@ written; their tags still exist.
 
 ### Changed
 
+- **Integer map keys are hashed with the per-process secret in a default map** (RFC-0009 S-001).
+  They used a public bit-mix finaliser whatever the map was created with, and its inverse is
+  public, so anyone choosing the keys - user ids, record numbers from a request - could put any
+  number of them in one bucket and make the map quadratic. A default (`proven_map_create`)
+  integer-key map now uses SipHash-1-3 of the key under the same secret as string keys;
+  `proven_map_create_trusted` keeps the finaliser. Measured cost on a default map: about 7 ns
+  more per lookup on a 1K-key table, 15-20 ns per insert. `proven_map_hash` values for default
+  integer-key maps change (and differ per process); trusted maps are unchanged.
 - **Text from the platform is strict, like all other text** (RFC-0009 D-003). An environment value
   or a directory entry name that is not valid text - bytes that are not UTF-8 on POSIX, a lone
   surrogate on Windows - is now `PROVEN_ERR_INVALID_ENCODING`. Before, POSIX returned the raw

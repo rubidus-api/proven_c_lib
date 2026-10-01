@@ -49,8 +49,10 @@ typedef struct {
      * true (from proven_map_create_trusted): string keys use FNV-1a, which is faster and
      * needs no randomness, and is the right choice when every key comes from your own code.
      *
-     * Integer keys ignore this - they always use a bit-mix finaliser. Read-only; set it by
-     * choosing which create function you call.
+     * Integer keys follow the same choice: SipHash-1-3 of the key's 8 bytes under the same
+     * secret by default, a public bit-mix finaliser when trusted. (Before RFC-0009 S-001 they
+     * always used the finaliser, whose inverse is public.) Read-only; set it by choosing
+     * which create function you call.
      */
     bool trusted_keys;
 } proven_map_t;
@@ -68,18 +70,19 @@ typedef struct {
  * @brief Create a map. String keys are hashed with a keyed, HashDoS-resistant hash by
  *        default; see proven_map_create_trusted for the fast path when you trust the keys.
  *
- * @note The keyed hash draws a per-process secret from the OS CSPRNG the first time a
- *       string-key map is created. On a freestanding target, which has no CSPRNG, string
- *       keys fall back to FNV-1a and are NOT HashDoS-resistant - there is no attacker model
- *       on a target with no OS, and no entropy to key with.
+ * @note The keyed hash draws a per-process secret from the OS CSPRNG the first time a key is
+ *       hashed. Integer keys are keyed too (SipHash-1-3), since ids from a request are as
+ *       attacker-chosen as strings. On a freestanding target, which has no CSPRNG, keys fall
+ *       back to the unkeyed functions and are NOT HashDoS-resistant - there is no attacker
+ *       model on a target with no OS, and no entropy to key with.
  */
 [[nodiscard]] proven_result_map_t proven_map_create(proven_allocator_t alloc, proven_size_t init_cap, proven_key_type_t key_type, proven_size_t elem_size, proven_size_t align);
 
 /**
  * @brief Create a map that hashes string keys with fast FNV-1a, for keys you trust.
  *
- * Identical to proven_map_create except that string keys are hashed with unkeyed FNV-1a
- * instead of keyed SipHash. Use it when every key is chosen by your own program - build a
+ * Identical to proven_map_create except that keys are hashed without the secret: string keys
+ * with FNV-1a, integer keys with a bit-mix finaliser. Use it when every key is chosen by your own program - build a
  * lookup table of your own identifiers, dedup a batch of your own blobs - where the extra
  * cost of a keyed hash buys nothing because there is no adversary choosing the keys.
  *
@@ -99,8 +102,8 @@ typedef struct {
  *        the key, exposed so you can inspect a table's distribution and so the keyed-vs-fast
  *        choice is observable rather than a claim.
  *
- * For a default (untrusted) string-key map this is keyed SipHash; for a trusted one it is
- * FNV-1a; for an integer-key map it is the bit-mix finaliser. The map hashes into its bucket
+ * For a default (untrusted) map this is keyed SipHash (2-4 for strings, 1-3 for integers);
+ * for a trusted one it is FNV-1a for strings and the bit-mix finaliser for integers. The map hashes into its bucket
  * array by masking this value, so a poor spread here is a poor spread there.
  */
 [[nodiscard]] proven_u64 proven_map_hash(const proven_map_t *map, proven_map_key_t key);
