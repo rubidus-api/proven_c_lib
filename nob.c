@@ -1493,6 +1493,15 @@ int main(int argc, char **argv)
     // Tests Compilation & Execution
     size_t tests_rebuilt = 0;
     size_t tests_cached = 0;
+    /* The library objects are inputs of every test link, so their CONTENTS go into each link's
+     * state hash. Their times alone missed a change: st_mtime has whole-second resolution here,
+     * and an object rebuilt in the same second as the previous link compared equal, so the
+     * test ran a binary linked against the old object (found while planting a defect for
+     * RFC-0009 X-002 - the planted binary kept running after the source was restored). */
+    uint32_t objects_hash = 2166136261u;
+    for (size_t i = 0; i < obj_files.count; ++i) {
+        if (!hash_file_contents(&objects_hash, obj_files.items[i])) return 1;
+    }
     nob_log(NOB_INFO, "[PROVEN][BUILD][PHASE] test link-and-run start test_count=%zu", tests_count);
     for (size_t i = 0; i < tests_count; ++i) {
         const Proven_Test_Case *test = &tests[i];
@@ -1510,6 +1519,7 @@ int main(int argc, char **argv)
         build_test_link_cmd(&link, linker_exe, src_path, obj_files, exec_tmp, dep_tmp, build_mode, user_cflags, user_ldflags, standard_flag, sysroot, target_windows);
         uint32_t current_hash = 0, old_hash = 0;
         bool state_known = depfile_state_hash(&link, dep_path, &current_hash);
+        hash_bytes(&current_hash, &objects_hash, sizeof objects_hash);
         bool hash_differs = !state_known || !read_cmdhash(hash_path, &old_hash) || old_hash != current_hash;
         /* The library objects are inputs too; their contents are not in the hash, their times are. */
         bool needs_link = false;

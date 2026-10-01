@@ -280,6 +280,8 @@ int main(void) {
 
     char *nob = read_text_file("nob.c");
     require(contains(nob, "Proven_Test_Case"), "nob.c stores structured metadata for each test executable");
+    require(contains(nob, "hash_bytes(&current_hash, &objects_hash, sizeof objects_hash);"),
+            "a test relinks when a library object's CONTENTS change, not only its whole-second mtime");
     require(contains(nob, "[PROVEN][BUILD][BEGIN]"), "nob.c announces the build mode and output directory before platform-specific setup");
     require(contains(nob, "[PROVEN][BUILD][NOTE]"), "nob.c warns when it detects a Windows or MSYS2 runtime that may need extra PATH/toolchain setup");
     require(contains(nob, "[PROVEN][BUILD][PHASE] library compilation start"), "nob.c prints a build-phase banner before source compilation begins");

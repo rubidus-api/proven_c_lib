@@ -96,6 +96,10 @@ written; their tags still exist.
 
 ### Fixed
 
+- **`./nob build` could run a test linked against a library object from the previous build.**
+  A test relinked when a library object was newer than the executable, compared by whole-second
+  modification time; an object rebuilt in the same second as the previous link compared equal,
+  and the old binary ran. The objects' contents now go into each test link's state hash.
 - **The view-taking macros say how to pass a compound literal** (RFC-0009 X-008).
   `PROVEN_ARG((proven_u8str_view_t){ p, n })` and the same in `proven_scan_fmt`, the print and
   `append_fmt` macros and the `PROVEN_MAP_*_U8_*` wrappers do not compile - the preprocessor splits
