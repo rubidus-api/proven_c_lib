@@ -7,6 +7,10 @@
 
 #include <sys/stat.h>
 #include <errno.h>
+#include <limits.h>
+#if !defined(_WIN32) && !defined(_WIN64)
+#include <unistd.h>
+#endif
 
 // Simple hash for command lines to detect flag changes
 static uint32_t simple_hash(const char *str) {
@@ -585,6 +589,9 @@ typedef struct {
     Nob_Cmd link;
     Nob_Proc proc;
     bool should_link, running, link_failed, install_failed;
+    bool ran, run_ok;            /* set by the parallel run pass */
+    char *run_dir, *out_path, *err_path;
+    Nob_Proc run_proc;
 } Test_Link_Job;
 
 static char *heap_sprintf(const char *fmt, ...) {
@@ -621,6 +628,7 @@ static void finish_test_link(Test_Link_Job *j, const uint32_t *objects_hash) {
 
 static void free_test_link_job(Test_Link_Job *j) {
     free(j->exec_path); free(j->exec_tmp); free(j->hash_path); free(j->dep_path); free(j->dep_tmp);
+    free(j->run_dir); free(j->out_path); free(j->err_path);
     nob_cmd_free(j->link);
 }
 
@@ -662,6 +670,151 @@ static void print_proven_test_fail(const Proven_Test_Case *test, const char *sta
 
 static void print_proven_test_pass(const Proven_Test_Case *test) {
     nob_log(NOB_INFO, "[PROVEN][TEST][PASS] path=%s", test->path);
+}
+
+/* Tests that measure time or load every CPU on purpose: they run alone, after the parallel
+ * batch, so neighbours do not perturb them. (The build-driver tests build into a build/ of
+ * their own inside their run directory - build/ is not linked - so they can run alongside.) */
+static bool test_runs_alone(const char *path) {
+    return strstr(path, "/test_stress_") || strstr(path, "/test_bench_");
+}
+
+/* Print a captured output file to the given stream, whole. */
+static void dump_file(const char *path, FILE *to) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+    char buf[8192];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) fwrite(buf, 1, n, to);
+    fclose(f);
+    fflush(to);
+}
+
+/*
+ * RFC-0009 X-006: run tests in parallel, each in a directory of its own.
+ *
+ * Many tests create fixtures under fixed names in the working directory (test_file.txt,
+ * test_fs_perms.d, ...), so two of them running at once in the repository root would trample
+ * each other. Each test here runs in <build dir>/run/<test>/, which holds a symbolic link to
+ * every top-level entry of the repository: a test that reads include/... or TEST.md by relative
+ * path finds it, and whatever a test creates lands in its own directory. Its output is captured
+ * and printed whole, in registry order, once everything has run. Tests that measure time run
+ * alone afterwards, in the repository root, as before.
+ *
+ * POSIX only: it needs symbolic links without privileges and a shell to start a process in
+ * another directory. Elsewhere it returns false without running anything, and the caller runs
+ * the tests one at a time.
+ */
+static bool run_tests_parallel(Test_Link_Job *jobs, size_t count, const char *build_dir, size_t max_running,
+                               Nob_File_Paths *failed, size_t *rebuilt, size_t *cached) {
+#if defined(_WIN32) || defined(_WIN64)
+    (void)jobs; (void)count; (void)build_dir; (void)max_running; (void)failed; (void)rebuilt; (void)cached;
+    nob_log(NOB_WARNING, "[PROVEN][BUILD][JOBS][SKIP] reason=windows - running tests one at a time");
+    return true;
+#else
+    char root_abs[PATH_MAX];
+    if (!realpath(".", root_abs)) { nob_log(NOB_ERROR, "[PROVEN][BUILD][JOBS][FAIL] stage=realpath"); return false; }
+    char run_root[PATH_MAX];
+    if (!format_path(run_root, sizeof run_root, "%s/run", build_dir)) return false;
+    if (nob_file_exists(run_root) == 1 && !remove_tree_no_follow(run_root)) return false;
+    if (!mkdir_p_safe(run_root)) return false;
+
+    /* What every test directory links to: the repository's top level, minus .git and the
+     * build roots (a link into the build tree would let a test reach other tests' files). */
+    const char *build_top = build_dir;
+    size_t build_top_len = strcspn(build_top, "/");
+    Nob_File_Paths top = {0};
+    if (!nob_read_entire_dir(".", &top)) return false;
+
+    size_t *slot = calloc(max_running, sizeof *slot);
+    if (!slot) { nob_da_free(top); return false; }
+    size_t running = 0, started = 0;
+    bool ok = true;
+    /* Start order: the build-driver tests first - one of them takes about six seconds, longer
+     * than the rest of the batch together, so starting it last made it the whole tail. Output
+     * is still reported in registry order below. */
+    for (size_t k = 0; k < 2 * count && ok; ++k) {
+        size_t i = k % count;
+        bool long_one = strstr(jobs[i].test->path, "/test_portability_nob_") != NULL;
+        if ((k < count) != long_one) continue;
+        Test_Link_Job *j = &jobs[i];
+        if (!j->exec_path || test_runs_alone(j->test->path)) continue;
+        char name[256];
+        sanitize_name(name, sizeof name, j->test->path);
+        j->run_dir = heap_sprintf("%s/%s", run_root, name);
+        j->out_path = heap_sprintf("%s/%s.stdout", run_root, name);
+        j->err_path = heap_sprintf("%s/%s.stderr", run_root, name);
+        if (!j->run_dir || !j->out_path || !j->err_path || !mkdir_p_safe(j->run_dir)) { ok = false; break; }
+        for (size_t e = 0; e < top.count; ++e) {
+            const char *n = top.items[e];
+            if (strcmp(n, ".") == 0 || strcmp(n, "..") == 0 || strcmp(n, ".git") == 0) continue;
+            if (strcmp(n, "build") == 0) continue;
+            if (strlen(n) == build_top_len && strncmp(n, build_top, build_top_len) == 0) continue;
+            char from[PATH_MAX], to[PATH_MAX];
+            if (!format_path(from, sizeof from, "%s/%s", root_abs, n) ||
+                !format_path(to, sizeof to, "%s/%s", j->run_dir, n)) { ok = false; break; }
+            if (symlink(from, to) != 0) {
+                nob_log(NOB_ERROR, "[PROVEN][BUILD][JOBS][FAIL] stage=symlink path=%s: %s", to, strerror(errno));
+                ok = false;
+                break;
+            }
+        }
+        if (!ok) break;
+
+        /* Full: wait for whichever test finishes first, not the oldest - the oldest may be
+         * the six-second one, and waiting on it held every free CPU idle behind it. */
+        while (running == max_running) {
+            for (size_t s = 0; s < running; ++s) {
+                Test_Link_Job *r = &jobs[slot[s]];
+                int st = nob__proc_wait_async(r->run_proc, 1);
+                if (st == 0) continue;
+                r->run_ok = st > 0;
+                slot[s] = slot[--running];
+                break;
+            }
+        }
+        char exe_abs[PATH_MAX];
+        if (!format_path(exe_abs, sizeof exe_abs, "%s/%s", root_abs, j->exec_path)) { ok = false; break; }
+        Nob_Cmd run = {0};
+        nob_cmd_append(&run, "sh", "-c", "cd \"$1\" && exec \"$2\"", "sh", j->run_dir, exe_abs);
+        Nob_Procs one = {0};
+        bool spawned = nob_cmd_run_opt(&run, (Nob_Cmd_Opt){ .async = &one, .stdout_path = j->out_path,
+                                                            .stderr_path = j->err_path }) && one.count == 1;
+        nob_cmd_free(run);
+        if (!spawned) { nob_da_free(one); ok = false; break; }
+        j->run_proc = one.items[0];
+        nob_da_free(one);
+        j->ran = true;
+        slot[running++] = i;
+        started++;
+    }
+    while (running > 0) {
+        Test_Link_Job *r = &jobs[slot[--running]];
+        r->run_ok = nob_proc_wait(r->run_proc);
+    }
+    free(slot);
+    nob_da_free(top);
+    nob_log(NOB_INFO, "[PROVEN][BUILD][JOBS] ran=%zu at_once=%zu (the rest run alone below)", started, max_running);
+
+    /* Report in registry order, each test's output whole. */
+    for (size_t i = 0; i < count; ++i) {
+        Test_Link_Job *j = &jobs[i];
+        if (!j->ran) continue;
+        print_proven_test_begin(j->test);
+        if (j->should_link) { *rebuilt += 1; nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][REBUILD] path=%s", j->test->path); }
+        else { *cached += 1; nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][CACHED] path=%s", j->test->path); }
+        nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][RUN] path=%s dir=%s", j->test->path, j->run_dir);
+        dump_file(j->out_path, stdout);
+        dump_file(j->err_path, stderr);
+        if (j->run_ok) {
+            print_proven_test_pass(j->test);
+        } else {
+            print_proven_test_fail(j->test, "run", j->test->failure_hint);
+            nob_da_append(failed, j->test->path);
+        }
+    }
+    return ok;
+#endif
 }
 
 static const char *detect_runtime_profile(void) {
@@ -1154,6 +1307,7 @@ int main(int argc, char **argv)
     bool force_rebuild = false;
     bool no_run = false;
     bool keep_going = false;
+    size_t run_jobs = 1;
     const char *build_mode = "debug";
     const char *cc = NULL;
     const char *user_ld = NULL;
@@ -1229,6 +1383,14 @@ int main(int argc, char **argv)
             nob_shift_args(&argc, &argv);
         } else if (strcmp(argv[0], "-keep-going") == 0) {
             keep_going = true;
+            nob_shift_args(&argc, &argv);
+        } else if (strcmp(argv[0], "-jobs") == 0) {
+            nob_shift_args(&argc, &argv);
+            if (argc == 0) { nob_log(NOB_ERROR, "-jobs needs a number"); return 1; }
+            char *end = NULL;
+            unsigned long n = strtoul(argv[0], &end, 10);
+            if (!end || *end != '\0' || n == 0 || n > 256) { nob_log(NOB_ERROR, "-jobs takes 1..256"); return 1; }
+            run_jobs = (size_t)n;
             nob_shift_args(&argc, &argv);
         } else if (strcmp(argv[0], "-cc") == 0) {
             nob_shift_args(&argc, &argv);
@@ -1308,6 +1470,7 @@ int main(int argc, char **argv)
         printf("  -f                 Force a full rebuild of the project.\n");
         printf("  -no-run            Build every test executable but run none (e.g. a mingw-w64 build for Windows).\n");
         printf("  -keep-going        Run every test even after one fails, then list the failures; still exits 1.\n");
+        printf("  -jobs N            Run up to N tests at once, each in its own scratch directory (POSIX); implies -keep-going.\n");
         printf("  -cc <compiler>     Specify the C compiler to use (e.g., clang, gcc).\n");
         printf("  -ld <linker>       Specify the linker to use (defaults to compiler).\n");
         printf("  -cflags <flags>    Additional compiler flags (e.g., -DDEBUG).\n");
@@ -1622,9 +1785,24 @@ int main(int argc, char **argv)
 
     int result = spawn_failed ? 1 : 0;
     Nob_File_Paths failed_tests = {0};
+    if (run_jobs > 1 && !no_run && result == 0) {
+        for (size_t i = 0; i < tests_count; ++i) {   /* links are reported before any test runs */
+            if (jobs[i].link_failed || jobs[i].install_failed) {
+                print_proven_test_begin(jobs[i].test);
+                print_proven_test_fail(jobs[i].test, jobs[i].link_failed ? "link" : "install",
+                                       "The test executable did not link. Read the compiler diagnostics above.");
+                result = 1;
+            }
+        }
+        if (result == 0) {
+            if (!run_tests_parallel(jobs, tests_count, build_dir, run_jobs, &failed_tests, &tests_rebuilt, &tests_cached)) result = 1;
+            keep_going = true;
+        }
+    }
     for (size_t i = 0; i < tests_count && result == 0; ++i) {
         Test_Link_Job *j = &jobs[i];
         if (!j->exec_path) break;
+        if (j->ran) continue;   /* already run by the parallel pass */
         const Proven_Test_Case *test = j->test;
         print_proven_test_begin(test);
         if (j->should_link) {

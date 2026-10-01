@@ -84,6 +84,17 @@ time.
 ./nob build -keep-going -build-root build-out/proven_c_lib
 ```
 
+On a POSIX host, `-jobs N` runs up to N tests at once (and implies `-keep-going`). Each runs in a
+directory of its own, `<build dir>/run/<test>/`, holding a symbolic link to every top-level entry
+of the repository except `.git` and the build roots: a test reads `include/...` or `TEST.md` by
+relative path as usual, and the fixture files it creates stay in its own directory. Each test's
+output is captured and printed whole, in registry order. Stress and benchmark tests still run one
+at a time afterwards, in the repository root. On Windows the flag is ignored with a note.
+
+```sh
+./nob asan -jobs 16 -build-root build-out/proven_c_lib
+```
+
 Run focused regression modes:
 
 ```sh

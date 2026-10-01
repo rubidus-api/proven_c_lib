@@ -68,8 +68,13 @@ written; their tags still exist.
   first. Measured on 4 MiB: 4.7 ns per byte, from 6.2. Digests are unchanged.
 - **`./nob build -keep-going` runs every test and lists the failures** (RFC-0009 X-006, first part).
   A run stopped at the first failing test, so one failure hid every other. With the flag, each
-  test still runs once and the run ends with a summary and exit status 1. Per-test scratch
-  directories, which parallel test runs need, are not done yet.
+  test still runs once and the run ends with a summary and exit status 1.
+- **`./nob <mode> -jobs N` runs tests in parallel on POSIX** (RFC-0009 X-006). Tests created
+  fixtures under fixed names in the working directory, so they could only run one at a time. With
+  the flag each runs in a directory of its own that links to the repository's top level, its output
+  is printed whole in registry order, and stress and benchmark tests still run alone. On the
+  16-CPU host a cached `./nob asan` takes 8.9 s instead of 16.9, a cached `./nob build` 7.1 s
+  instead of 10.1. The default stays one test at a time.
 - **A clean `./nob build` takes 14 s instead of 36 on a 16-CPU host** (RFC-0009 P-108). The test
   executables were compiled and linked one at a time - 20 of the 31 seconds a clean build spent
   outside the tests themselves. They are now linked in parallel, up to one per CPU, and then run

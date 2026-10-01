@@ -284,6 +284,8 @@ int main(void) {
             "a test relinks when a library object's CONTENTS change, not only its whole-second mtime");
     require(contains(nob, "record_build_state(&j->link, j->dep_tmp, j->dep_path, j->hash_path, objects_hash);"),
             "and the recorded link state folds in the same object hash, or every cached build relinks every test");
+    require(contains(nob, "\"-jobs\"") && contains(nob, "run_tests_parallel") && contains(nob, "nob__proc_wait_async(r->run_proc, 1)"),
+            "-jobs runs tests in their own directories and waits for whichever finishes first (RFC-0009 X-006)");
     require(contains(nob, "reason=not-a-git-checkout"),
             "a build from an unpacked release archive skips the repository checks instead of failing on git");
     require(contains(nob, "[PROVEN][BUILD][KEEP_GOING][SUMMARY]") && contains(nob, "\"-keep-going\""),
