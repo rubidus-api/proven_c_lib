@@ -45,6 +45,12 @@ written; their tags still exist.
 
 ### Changed
 
+- **Listing a directory on POSIX costs one metadata call per entry, or none** (RFC-0009 P-102).
+  `proven_fs_dir_next` (and so `proven_fs_list` and the walk) asked for every entry's type twice,
+  following and not following symlinks. `readdir`'s `d_type` already says what most entries are:
+  a directory or a special file now needs no call, a regular file one (for its size), and only a
+  symlink or a filesystem that leaves `d_type` unknown takes both. Measured over 50,000 files:
+  3.5 us per entry, from 5.9. What is reported is unchanged.
 - **CRC-32 is about 6x faster on long inputs** (RFC-0009 P-101): slicing-by-8, eight bytes per
   step with independent table lookups. Measured on 1 MiB: 0.36 ns per byte, from 2.30. Output is
   unchanged (checked against the single-table path at every length and offset, and against

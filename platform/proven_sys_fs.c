@@ -727,9 +727,38 @@ int proven_sys_fs_dir_step(proven_sys_dir_handle_t handle, proven_sys_dir_entry_
          * link fails the follow and lands in the fallback below, which reports OTHER: it
          * cannot be opened, so calling it a file would be the lie that started this.
          */
-        struct stat lst;
-        out_entry->is_symlink = (fstatat(dirfd(d), entry->d_name, &lst, AT_SYMLINK_NOFOLLOW) == 0) &&
-                                S_ISLNK(lst.st_mode);
+#if defined(DT_UNKNOWN) && defined(DT_LNK) && defined(DT_DIR) && defined(DT_REG)
+        /*
+         * readdir's d_type already says what most entries are (RFC-0009 P-102): it cost two
+         * metadata calls per entry to learn it again, about 40% of a listing. Anything d_type
+         * names that is not a link is exactly that - no symlink to follow - so a directory or
+         * a special file needs no call at all, and a regular file one, for its size. Only a
+         * link, or a filesystem that does not fill d_type in (DT_UNKNOWN), takes both.
+         */
+        unsigned char dt = entry->d_type;
+        if (dt == DT_DIR) {
+            out_entry->is_symlink = false;
+            out_entry->is_dir = true;
+            out_entry->is_regular = false;
+            out_entry->size = 0;
+            return 1;
+        }
+        if (dt != DT_UNKNOWN && dt != DT_LNK && dt != DT_REG) {
+            out_entry->is_symlink = false;   /* a FIFO, socket or device */
+            out_entry->is_dir = false;
+            out_entry->is_regular = false;
+            out_entry->size = 0;
+            return 1;
+        }
+        if (dt == DT_REG) {
+            out_entry->is_symlink = false;
+        } else
+#endif
+        {
+            struct stat lst;
+            out_entry->is_symlink = (fstatat(dirfd(d), entry->d_name, &lst, AT_SYMLINK_NOFOLLOW) == 0) &&
+                                    S_ISLNK(lst.st_mode);
+        }
 
         if (fstatat(dirfd(d), entry->d_name, &st, 0) == 0) {
             out_entry->is_dir = S_ISDIR(st.st_mode);

@@ -1509,6 +1509,7 @@ Sub-checks:
 - Copies a 0600 file and checks the destination is 0600. It used to be 0644: the destination was created with the process umask and the source's mode was never carried across.
 - Runs a watcher thread that stats every temp file *that already holds bytes* during a 16 MiB atomic rewrite of a 0600 target. If any of them is group- or world-readable, the window is open. The temp used to be chmod'd at the end, so the whole payload sat in a 0644 file for the duration of the write.
 - Walks a directory holding a dangling symlink, a FIFO and a regular file, and checks the first two are `PROVEN_FS_TYPE_OTHER`. They used to be reported as regular files - files a caller cannot open, or that block forever on a writer who never comes.
+- In the same walk (RFC-0009 P-102, where most entries are answered from `d_type` without a stat): the dangling link and a link to the file are marked `is_symlink`, the FIFO and the regular file are not, the regular file carries its real size, a subdirectory is `DIR` and not a symlink, and a symlink to it is `DIR` and marked as one.
 - Writes through a PRIVATE mapping, syncs, and requires `PROVEN_ERR_UNSUPPORTED`; then does the same through a SHARED mapping and requires the bytes to be on disk.
 
 Note: POSIX-only; compiles to a skip on Windows. The `close()`-failure defect from the same audit cannot be provoked without an `LD_PRELOAD`, so it is pinned by the `[[nodiscard]]` on `proven_fs_close` instead - the compiler now refuses to let a write path ignore it.

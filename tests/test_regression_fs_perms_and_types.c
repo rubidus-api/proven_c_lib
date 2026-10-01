@@ -204,12 +204,17 @@ int main(void) {
         PROVEN_TEST_ASSERT(symlink("secret.txt", "test_fs_perms.d/good1") == 0,
             "setup: a symlink to a real file", "");
         PROVEN_TEST_ASSERT(mkfifo("test_fs_perms.d/pipe", 0600) == 0, "setup: a FIFO", "");
+        /* RFC-0009 P-102 answers most entries from readdir's d_type alone; a directory and a
+         * link to one pin the fields that path fills in without a stat. */
+        PROVEN_TEST_ASSERT(mkdir("test_fs_perms.d/sub", 0700) == 0, "setup: a subdirectory", "");
+        PROVEN_TEST_ASSERT(symlink("sub", "test_fs_perms.d/sublink") == 0, "setup: a symlink to it", "");
 
         proven_result_dir_t dr = proven_fs_dir_open(heap, PROVEN_LIT("test_fs_perms.d"));
         PROVEN_TEST_ASSERT(proven_is_ok(dr.err), "the directory must open", "");
         proven_fs_dir_t dir = dr.value;
 
         bool saw_dangling = false, saw_fifo = false, saw_regular = false, saw_good_link = false;
+        bool saw_sub = false, saw_sublink = false;
         for (;;) {
             proven_fs_dir_entry_t entry = {0};
             proven_err_t e = proven_fs_dir_next(&dir, &entry);
@@ -222,26 +227,40 @@ int main(void) {
                 PROVEN_TEST_ASSERT(entry.type == PROVEN_FS_TYPE_OTHER,
                     "a dangling symlink must be PROVEN_FS_TYPE_OTHER",
                     "It used to be reported as a regular file - one a caller cannot even open.");
+                PROVEN_TEST_ASSERT(entry.is_symlink, "and it is marked as a symlink", "");
             } else if (n.size == 4 && memcmp(n.ptr, "pipe", 4) == 0) {
                 saw_fifo = true;
                 PROVEN_TEST_ASSERT(entry.type == PROVEN_FS_TYPE_OTHER,
                     "a FIFO must be PROVEN_FS_TYPE_OTHER",
                     "Reading a FIFO as if it were a file blocks forever on a writer that never comes.");
+                PROVEN_TEST_ASSERT(!entry.is_symlink && entry.size == 0, "not a symlink, size 0", "");
             } else if (n.size == 10 && memcmp(n.ptr, "secret.txt", 10) == 0) {
                 saw_regular = true;
                 PROVEN_TEST_ASSERT(entry.type == PROVEN_FS_TYPE_FILE,
                     "and a regular file must still be PROVEN_FS_TYPE_FILE", "");
+                proven_fs_stat_t fst = {0};
+                PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_stat(heap, PROVEN_LIT("test_fs_perms.d/secret.txt"), &fst)), "stat", "");
+                PROVEN_TEST_ASSERT(!entry.is_symlink && entry.size == fst.size, "not a symlink, with its real size", "");
             } else if (n.size == 5 && memcmp(n.ptr, "good1", 5) == 0) {
                 saw_good_link = true;
                 PROVEN_TEST_ASSERT(entry.type == PROVEN_FS_TYPE_FILE,
                     "a symlink to a regular file must be PROVEN_FS_TYPE_FILE, like stat says it is",
                     "The walk used to stat with AT_SYMLINK_NOFOLLOW, so it said OTHER while proven_fs_stat on the same path said FILE. A caller filtering a listing on type == FILE skipped files it could open and read.");
+                PROVEN_TEST_ASSERT(entry.is_symlink, "and it is marked as a symlink", "");
+            } else if (n.size == 3 && memcmp(n.ptr, "sub", 3) == 0) {
+                saw_sub = true;
+                PROVEN_TEST_ASSERT(entry.type == PROVEN_FS_TYPE_DIR && !entry.is_symlink && entry.size == 0,
+                    "a directory is DIR, not a symlink, size 0", "");
+            } else if (n.size == 7 && memcmp(n.ptr, "sublink", 7) == 0) {
+                saw_sublink = true;
+                PROVEN_TEST_ASSERT(entry.type == PROVEN_FS_TYPE_DIR && entry.is_symlink,
+                    "a symlink to a directory is DIR and marked as a symlink", "");
             }
         }
         proven_fs_dir_close(&dir);
 
-        PROVEN_TEST_ASSERT(saw_dangling && saw_fifo && saw_regular && saw_good_link,
-            "the walk must have seen all four entries", "");
+        PROVEN_TEST_ASSERT(saw_dangling && saw_fifo && saw_regular && saw_good_link && saw_sub && saw_sublink,
+            "the walk must have seen all six entries", "");
 
         /* And stat must agree with the listing, which is the whole point. */
         proven_fs_stat_t st = {0};
