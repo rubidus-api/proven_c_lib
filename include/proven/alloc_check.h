@@ -12,7 +12,7 @@
  * CALLER passes, and nothing checks that it is the allocator the memory came from. Freeing an
  * arena block through the heap, freeing twice, or growing a block with the wrong old size does
  * not fail where it happens: it corrupts the allocator, and the program breaks later, somewhere
- * else (docs/BACKLOG.md B-023, B-040).
+ * else (B-023, B-040).
  *
  * This wrapper goes in front of ANY allocator and keeps a record of the blocks it has handed out,
  * in memory you supply. A free or realloc of a block that is not in the record - someone else's

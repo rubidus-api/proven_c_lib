@@ -3,7 +3,7 @@
 #include <string.h>
 
 /*
- * Written from the contract in include/proven/utf.h (docs/TESTING.md section 5.1).
+ * Written from the contract in include/proven/utf.h (TESTING.md section 5.1).
  *
  * UTF-8 validity is judged against a SECOND formulation of the standard, not against the
  * implementation's own table: `ref_utf8_valid` decodes naively - any lead pattern, any

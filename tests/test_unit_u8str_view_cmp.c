@@ -3,7 +3,7 @@
 #include <string.h>
 
 /*
- * Written from docs/RFC-0003 section 3.4 and section 4.4 before the implementation (docs/TESTING.md section 5.1).
+ * Written from RFC-0005 section 3.4 and section 4.4 before the implementation (TESTING.md section 5.1).
  * The table is the RFC's, row for row. Two rows carry more weight than they look: "\xFF" after
  * "a" pins unsigned comparison, and "a\0b" before "a\0c" says that a NUL inside a view is data -
  * the property that separates these strings from C strings.
@@ -21,7 +21,7 @@ int main(void) {
         "Inspect proven_u8str_view_cmp in src/proven/u8str.c. A wrong sign on the \\xFF row is signed comparison; on the prefix rows, the length tie-break.");
 
     // ---------------------------------------------------------------
-    PROVEN_TEST_SECTION("RFC-0003 table 4.4", "Each row's sign, and its mirror.", "");
+    PROVEN_TEST_SECTION("RFC-0005 table 4.4", "Each row's sign, and its mirror.", "");
     // ---------------------------------------------------------------
     struct { proven_u8str_view_t a, b; int want; } rows[] = {
         { b("a", 1),      b("b", 1),      -1 },

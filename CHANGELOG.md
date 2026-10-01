@@ -58,7 +58,7 @@ Windows pipe and position cases above.
 - **The full test suite runs on Windows (B-035).** `./nob build -no-run` builds every test
   executable and runs none; the build driver asks the compiler for its target, so a mingw-w64
   cross compiler produces static `.exe` tests (with `-lbcrypt`, without `-ldl`).
-  `scripts/win11kd-full-suite.sh` and `scripts/win11kd-run-suite.ps1` build both word sizes and
+  `win11kd-full-suite.sh` and `win11kd-run-suite.ps1` build both word sizes and
   run them natively, reporting PASS / FAIL / SKIP / TIMEOUT per test. First run on the Windows 11
   test VM found the six defects below. Three tests that skipped on Windows now run there
   (`test_unit_sysio_streams`, `test_regression_scanner_short_read`,
@@ -135,7 +135,7 @@ text is ASCII, and a gate keeps it that way.
   `tests/test_bench_float_host.c` (the float-vs-glibc comparison, now checked in, with accuracy
   asserted in the same run) and `tests/test_bench_job.c` (idle CPU for 1-32 workers, idle / burst
   / saturated wake latency, throughput). Raw results and a claim-to-row map in
-  `docs/benchmarks/`, with the job system's latency budget.
+  the maintainers' benchmark records, with the job system's latency budget.
 
 ### Changed
 
@@ -159,23 +159,23 @@ text is ASCII, and a gate keeps it that way.
   drive letter or backslashes (`C:\...`) is refused; on Windows use a relative root. The Windows
   deletion path is compiled with mingw-w64 (x86-64, i686) but not yet run on Windows.
 - **The job system's wake-latency budget states its condition (B-041).** The Windows idle-wake p99
-  of ~8.9 ms was traced with `docs/b041-wake-probe.c`: a bare OS semaphore shows the same tail
+  of ~8.9 ms was traced with `b041-wake-probe.c`: a bare OS semaphore shows the same tail
   whenever CPUs are scarce (the 2-vCPU VM; Linux pinned to 2 CPUs), and neither shows it on a
   quiet 16-CPU host. The job system adds ~1 us at the median. No library change; the budget in
-  `docs/benchmarks/README.md` now says it assumes free CPUs, and `test_bench_job` prints the
+  the job budget in the maintainers' benchmark records now says it assumes free CPUs, and `test_bench_job` prints the
   host's logical CPU count.
 - **`./nob release` defines `NDEBUG`; new `./nob hardened` keeps the checks (B-036).**
   Compatibility note: a release build no longer traps a pool double free or a foreign pointer, or
   the map's key-overlap misuse - those checks are for debug and hardened builds. They made pool
   teardown quadratic: 20,000 frees took 59.6 ms with the check, 0.05 ms without
-  (`docs/b036-pool-teardown-benchmark.c`). Build with `hardened` (`-O2 -DNDEBUG
+  (`b036-pool-teardown-benchmark.c`). Build with `hardened` (`-O2 -DNDEBUG
   -DPROVEN_HARDENED=1`) to keep them in an optimised build, and use `alloc_check.h` in tests.
   Every build now logs its safety profile.
 - **Published float speed claims follow the checked-in benchmark.** Re-measured: parsing is
   faster than glibc on short numbers, level at ~16 digits, ~1.1x slower at 17; shortest formatting
   ~3.6x faster than `%.17g`; `%f`/`%e` faster at every magnitude measured - the June claim that
   they were 3-5x slower at extreme magnitudes did not reproduce. README (both), the float doc and
-  `docs/primitives-benchmark.md` updated.
+  `primitives-benchmark.md` updated.
 - **English public text is ASCII, and stays so (B-036).** README.md, TEST.md, CHANGELOG.md, the
   English manual and examples, and all C sources and build files were normalised (em dashes,
   section signs, arrows and the like; 48 files), with the Markdown anchors of changed headings
@@ -195,7 +195,7 @@ text is ASCII, and a gate keeps it that way.
 - **`proven_u8str_view_find_last` makes the forward search's choices (B-024).** The same entropy
   sample; an anchored backward scan over a new portable `proven_sys_mem_rchr` on ordinary input;
   backward Shift-Or (<= 64 bytes) or a new reverse Two-Way (> 64) on low-entropy input. Measured
-  with `docs/b024-find-last-benchmark.c`: about 5x faster on ordinary text for 2-64 byte needles
+  with `b024-find-last-benchmark.c`: about 5x faster on ordinary text for 2-64 byte needles
   (0.30 -> 0.055 ns/byte), and the long-needle quadratic tail is gone (a 256-byte needle on a dense
   run: 1,994 -> 0.002 ns/byte). Long needles on ordinary text are slower (0.022 -> 0.055), the price
   of a portable backward scan. Results unchanged: the oracle agrees on 120,000 cases.
@@ -210,7 +210,7 @@ text is ASCII, and a gate keeps it that way.
 
 A MINOR release: new public API, nothing removed. UTF-16 text gets a way in and out and UTF-8
 shows correctly on a Windows console (B-039); the view vocabulary - split, trim, affixes,
-find_last, contains, ordering (RFC-0003, B-018 to B-022); an allocator wrapper that catches the
+find_last, contains, ordering (RFC-0005, B-018 to B-022); an allocator wrapper that catches the
 wrong allocator at the call (B-040); Windows symlinks and the 4 GiB entropy boundary measured and
 fixed (B-033); reproducible manual PDFs. Existing behaviour changes only where it was wrong: on a
 Windows console, for Windows symlinks, and in `proven_time_u16_fmt` with non-ASCII locales.
@@ -243,7 +243,7 @@ Windows console, for Windows symlinks, and in `proven_time_u16_fmt` with non-ASC
   `proven_sys_io_console_read_u16` (Windows; POSIX answers "not a console" / unsupported).
 - Manual: chapter 3 "Converting between UTF-8 and UTF-16", chapter 5 "UTF-16 text in and out,
   and the Windows console", both editions, with runnable examples `ex_03_utf` and `ex_05_u16_io`.
-- `docs/b039-console-check.c` and `scripts/build-b039-check.sh`: a native Windows check that
+- `b039-console-check.c` and `build-b039-check.sh`: a native Windows check that
   makes its own console in code page 949 and verifies output by reading the screen buffer back
   and input by injecting key events.
 
@@ -256,7 +256,7 @@ Windows console, for Windows symlinks, and in `proven_time_u16_fmt` with non-ASC
   identity - it is a testing and debugging tool, and the lookup is linear. `proven_alloc_check_owns`,
   `proven_alloc_check_live` (a leak check). Tests `test_unit_alloc_check`, `test_unit_alloc_check_on`;
   manual chapter 2 section 7 with `ex_02_alloc_check`, both editions.
-- **The view vocabulary (RFC-0003; B-018 to B-022).** In `u8str.h`, all pure and non-allocating,
+- **The view vocabulary (RFC-0005; B-018 to B-022).** In `u8str.h`, all pure and non-allocating,
   ill-formed views treated as empty, every empty result `{NULL, 0}`:
   `proven_u8str_view_split` / `_split_next` with `proven_u8str_view_split_t` (n separators yield
   n + 1 fields; an empty separator yields the input once; the iterator is copyable);
@@ -268,7 +268,7 @@ Windows console, for Windows symlinks, and in `proven_time_u16_fmt` with non-ASC
   first, sign only); `proven_u8str_view_is_well_formed`. Tests `test_unit_u8str_view_cmp`,
   `test_unit_u8str_view_ops`, `test_unit_u8str_split`, `test_regression_split_empty_sep`,
   `test_differential_find_last_oracle` (60,000 cases; planted defects caught). Manual chapter 3
-  section 1 in both editions with `ex_03_view_ops`. The RFC-0002 benchmark now measures the
+  section 1 in both editions with `ex_03_view_ops`. The RFC-0004 benchmark now measures the
   shipped iterator: 18.1 ns/field against 16.5 for a correct hand-rolled loop (median of three).
 
 ### Changed
@@ -325,7 +325,7 @@ Windows console, for Windows symlinks, and in `proven_time_u16_fmt` with non-ASC
   `ALLOW_UNPRIVILEGED_CREATE` is retried, and failures are `PROVEN_ERR_PERMISSION` or
   `PROVEN_ERR_NOT_FOUND` where they can be told apart (POSIX too), not always `PROVEN_ERR_IO`.
   Measured on the Win11 VM before (7 of 12 failed) and after (win64 12/12, win32 11/11) with
-  `docs/b033-windows-check.c`, which also filled a 4 GiB + 4 KiB entropy request across the
+  `b033-windows-check.c`, which also filled a 4 GiB + 4 KiB entropy request across the
   32-bit count boundary.
 - **`proven_time_u16_fmt` widened each UTF-8 byte into a code unit.** A caller-supplied locale
   with non-ASCII names produced three meaningless units per Hangul syllable; it now transcodes.
@@ -371,7 +371,7 @@ on GCC 14 with glibc. No public API changes.
 
 ## [0.1.0] - 2026-09-11
 
-The RFC-0006 release: six security and boundary defects fixed, a rule for protected
+The RFC-0008 release: six security and boundary defects fixed, a rule for protected
 destinations, errors a caller can act on, and native Windows verified on 64 and 32 bit.
 MINOR, not PATCH, because behaviour changes: an atomic write, copy or rename over a
 read-only destination is now refused, and several failures that were `PROVEN_ERR_IO` now
@@ -380,7 +380,7 @@ was never published as a GitHub release.
 
 ### Changed
 
-- **Windows: an atomic write replaces a file someone is reading, as on POSIX** (RFC-0006
+- **Windows: an atomic write replaces a file someone is reading, as on POSIX** (RFC-0008
   Decision 2, option (b), the owner's choice). The rename now tries the POSIX-semantics
   rename first (`SetFileInformationByHandle` with `FileRenameInfoEx`,
   REPLACE_IF_EXISTS | POSIX_SEMANTICS, Windows 10 1809+): a reader that allowed delete
@@ -417,7 +417,7 @@ was never published as a GitHub release.
 
 ### Security
 
-- **A staging file is now created private, not narrowed afterwards** (RFC-0006 H-002).
+- **A staging file is now created private, not narrowed afterwards** (RFC-0008 H-002).
   Replacing a 0600 file with `proven_fs_write_file_atomic` or `proven_fs_write_file_durable`
   wrote the new contents into a `.pvtmpNN` sibling that was *created* with `0666 & ~umask`
   and narrowed a moment later. A `chmod` does not reach a descriptor another local user
@@ -426,14 +426,14 @@ was never published as a GitHub release.
   and the target's mode is applied through the open handle rather than by re-resolving the
   staging name. A new destination of `proven_fs_copy` is created the same way. The process
   umask is not touched - it is shared mutable state.
-- **A failed metadata lookup no longer reads as "no such file"** (RFC-0006 H-002).
+- **A failed metadata lookup no longer reads as "no such file"** (RFC-0008 H-002).
   `internal_write_file_atomic` treated any `stat` failure as a missing target and carried
   on with default permissions. It now stops before creating anything unless the target is
   genuinely absent. The platform layer gained `proven_sys_fs_stat_checked`, which
   distinguishes the two; the public `proven_fs_stat` is unchanged and still answers
   `PROVEN_ERR_IO` for both.
 
-- **Encoding sizes are computed with checked arithmetic** (RFC-0006 H-001).
+- **Encoding sizes are computed with checked arithmetic** (RFC-0008 H-001).
   `proven_hex_encoded_size`, `proven_base64_encoded_size` and `proven_base64_decoded_size`
   multiplied and added in `proven_size_t` and wrapped at the top of the range - all three
   answered 0 for the inputs where they should have said "that does not fit", and 0 passes
@@ -441,7 +441,7 @@ was never published as a GitHub release.
   fixing the helpers alone would not have protected them: a wrapped `need` passed
   `need > out_cap` and the loop then wrote past the caller's buffer.
 
-- **A failed atomic write no longer leaves its staging file behind on Windows** (RFC-0006
+- **A failed atomic write no longer leaves its staging file behind on Windows** (RFC-0008
   H-005 follow-up, found by the first native run on 2026-09-10). The staging file carries
   the target's mode; when that target is read-only, the mode is the READONLY attribute, and
   Windows will not delete a read-only file - so the cleanup after a refused replacement
@@ -451,8 +451,8 @@ was never published as a GitHub release.
   restores write permission before removing. Found by running the code, not by reading it, and
   confirmed by a second native run on the same machine: 31 checks, none failed.
 
-- **Windows: an atomic write can replace a file that already exists** (RFC-0006 H-005,
-  first recorded as RFC-0005 C-001). `proven_sys_fs_rename` used `MoveFileW`, which fails
+- **Windows: an atomic write can replace a file that already exists** (RFC-0008 H-005,
+  first recorded as RFC-0007 C-001). `proven_sys_fs_rename` used `MoveFileW`, which fails
   outright when the destination exists - and both whole-file atomic writes rename a staging
   file over their target, so on Windows the first write to a name succeeded and every write
   after it failed. Now `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`, without
@@ -460,8 +460,8 @@ was never published as a GitHub release.
   deleting the destination first (that opens an interval in which the name does not exist).
   Implemented and cross-compiled for both Windows targets; **not run natively**, so the
   behaviour against a read-only destination, ACLs, sharing modes and symlinks has no result.
-- **Windows: every requested entropy byte is actually requested** (RFC-0006 H-006, first
-  recorded as RFC-0005 V-003). `proven_sys_random_bytes` cast its `size_t` length once to
+- **Windows: every requested entropy byte is actually requested** (RFC-0008 H-006, first
+  recorded as RFC-0007 V-003). `proven_sys_random_bytes` cast its `size_t` length once to
   the `ULONG` that `BCryptGenRandom` takes. On 64-bit Windows a length above `ULONG_MAX`
   narrowed silently - a request for exactly 2^32 bytes asked the OS for **zero** - and the
   success of that short request was returned as success for the whole buffer, so a caller
@@ -471,7 +471,7 @@ was never published as a GitHub release.
   prefix, which the boolean API cannot report, so a caller must discard the whole buffer.
   Implemented and cross-compiled; **not run natively**.
 
-- **A protected destination is refused, by every whole-file replacement** (RFC-0006
+- **A protected destination is refused, by every whole-file replacement** (RFC-0008
   follow-up; the owner's decision, 2026-09-10). `proven_fs_write_file`,
   `proven_fs_write_file_atomic`, `proven_fs_write_file_durable` and `proven_fs_copy` now
   return `PROVEN_ERR_PERMISSION` when the destination's owner-write bit is clear, and leave
@@ -482,7 +482,7 @@ was never published as a GitHub release.
   (it opens the destination for writing), `write_file_atomic` succeeded (`rename` asks the
   DIRECTORY for permission, so the file's mode was never consulted), and `copy` succeeded
   **and left a 0444 file as 0664** - a protection the caller had set, gone, with nothing
-  saying so. The Windows/POSIX divergence RFC-0006 recorded was the fourth face of the same
+  saying so. The Windows/POSIX divergence RFC-0008 recorded was the fourth face of the same
   unresolved question, not a portability wart.
 
   **This is a behaviour change.** Code that replaced a read-only file through
@@ -519,7 +519,7 @@ was never published as a GitHub release.
 
 ### Fixed
 
-- **A durable write syncs the directory the file is actually in** (RFC-0006 H-003).
+- **A durable write syncs the directory the file is actually in** (RFC-0008 H-003).
   `internal_parent_dir` treated `/` and `\` as separators on every platform. On POSIX a
   backslash is an ordinary character in a filename, so a durable write to `d/a\b` - one
   file called `a\b` inside `d` - tried to sync `d/a`. When that name does not exist the
@@ -531,7 +531,7 @@ was never published as a GitHub release.
   fit. `proven_fs_is_absolute` is unchanged: it classifies a path that may have come from
   elsewhere rather than resolving one here, which is a different question.
 
-- **The job queue no longer compares positions with a signed subtraction** (RFC-0006 H-004).
+- **The job queue no longer compares positions with a signed subtraction** (RFC-0008 H-004).
   `proven_job_submit` and `proven_job_execute_one` computed
   `(proven_ptrdiff_t)seq - (proven_ptrdiff_t)pos`. The queue's counters run forward for
   ever and wrap; only their distance is small. At the sign boundary those two casts can
@@ -543,12 +543,12 @@ was never published as a GitHub release.
 
 ### Changed
 
-- **A job queue capacity at or past half the counter range is refused** (RFC-0006 H-004).
+- **A job queue capacity at or past half the counter range is refused** (RFC-0008 H-004).
   `proven_job_system_init` answers `PROVEN_ERR_INVALID_ARG` before it allocates anything.
   Past that limit "ahead" and "behind" stop being distinguishable, so it is a correctness
   condition rather than a resource one. No reachable capacity is affected.
 - **The encoded-size helpers answer `PROVEN_SIZE_MAX` for a size that cannot be
-  represented** (RFC-0006 H-001). They return a size and have nowhere to put an error. A
+  represented** (RFC-0008 H-001). They return a size and have nowhere to put an error. A
   valid hex output is always even and a valid padded Base64 output is always a multiple of
   four, so neither can be `PROVEN_SIZE_MAX` by accident; zero was not usable as the
   sentinel because zero is the honest answer for empty input. `proven_base64_decoded_size`
@@ -561,7 +561,7 @@ was never published as a GitHub release.
   creation carries an existing target's mode across; it is not a new default-permissions
   policy, which would be an owner decision.
 - `tests/test_docs_version_sync` skips an `## [Unreleased]` section when it looks for the
-  newest released entry. The gate and `docs/operations/README.md` had been asking for
+  newest released entry. The gate and the maintainers' operations notes had been asking for
   opposite things.
 
 ## [0.0.1] - 2026-09-04
@@ -582,7 +582,7 @@ was never published as a GitHub release.
 - The version gate (`test_docs_version_sync`) now also checks that the string
   agrees with the three numbers, and reads the changelog's `[x.y.z]` heading;
   `scripts/release.sh` takes the release notes from that heading. The rules in
-  `CHECKLIST.md`, `AGENTS.md`, `CONTEXT.md`, `docs/DOCUMENTING.md` and `TEST.md`
+  `CHECKLIST.md`, `AGENTS.md`, `CONTEXT.md`, `DOCUMENTING.md` and `TEST.md`
   say the same.
 
 ## [2026-09-04] - proven_c_lib-v26.09.04a
@@ -762,13 +762,13 @@ was never published as a GitHub release.
   a mean of 2000.081 ms for the former yield loop and 0.032 ms for parked
   workers. This establishes the idle-CPU mechanism on the measured POSIX host;
   the 1/2/8/32-worker matrix, wake-latency distribution, and native Windows
-  runtime evidence remain tracked in RFC-0005 and B-038.
+  runtime evidence remain tracked in RFC-0007 and B-038.
 
 ## [2026-07-23] - proven_c_lib-v26.07.23c
 
 A whole-library correctness, portability, build, and performance audit. Confirmed defects that
 could be fixed and verified locally are closed here; target-specific and measured follow-up work
-is specified in RFC-0005 rather than being changed without its required platform or benchmark.
+is specified in RFC-0007 rather than being changed without its required platform or benchmark.
 
 ### Fixed
 
@@ -815,12 +815,12 @@ is specified in RFC-0005 rather than being changed without its required platform
   `build-out/proven_c_lib`, and the repository policy check rejects Unix home-directory paths
   without relying on one machine's user name.
 
-- **RFC-0004 is an implementation record rather than a stale proposal.** It carries the measured
-  first-pass manual result and links its post-implementation gate findings to RFC-0005.
+- **RFC-0006 is an implementation record rather than a stale proposal.** It carries the measured
+  first-pass manual result and links its post-implementation gate findings to RFC-0007.
 
 ### Added
 
-- **RFC-0005 - whole-library audit and hardening.** It separates source-proved defects,
+- **RFC-0007 - whole-library audit and hardening.** It separates source-proved defects,
   verification gaps, and performance hypotheses, then assigns each a regression or measurement,
   compatibility risk, and exit condition before implementation.
 
@@ -893,21 +893,21 @@ docs, which had accumulated redundancy and one stale claim.
 ### Changed
 
 - **The release checklist and the G7 gate description now name `README-ko.md` explicitly.**
-  `CHECKLIST.md` and `docs/DOCUMENTING.md` still said to sync "`README.md` (both language
+  `CHECKLIST.md` and `DOCUMENTING.md` still said to sync "`README.md` (both language
   halves)" - wording left over from when the README was one bilingual file. The README has
   since been split into `README.md` (English) and `README-ko.md` (Korean), and the actual
   gate (`test_docs_version_sync`) already checks them separately; only the prose lagged. It
-  now matches the gate. `docs/operations/README.md` likewise names both READMEs in its
+  now matches the gate. The maintainers' operations notes likewise name both READMEs in its
   document-update rules.
 
-- **The resume-packet model is consolidated.** `docs/operations/README.md` and
+- **The resume-packet model is consolidated.** The maintainers' operations notes and
   `scripts/check-docs.py` now describe a single local queue (`BACKLOGS.md`) and a resume
   packet that lives in `CONTEXT.md`, replacing the previous split across separate handoff
   and backlog files.
 
 ### Removed
 
-- **Stale reference to a retired local file** in `docs/BACKLOG.md` (it named a second
+- **Stale reference to a retired local file** in the maintainers' backlog (it named a second
   gitignored queue that no longer exists).
 
 ## [2026-07-20] - proven_c_lib-v26.07.20g
@@ -1125,8 +1125,8 @@ v26.07.20b apart from the version constants.
 
 ### Note
 
-Design work only. `docs/RFC-0004-the-manual-as-a-book.md` is the plan this executed, and
-B-025 ... B-032 in `docs/BACKLOG.md` record what each phase set out to do.
+Design work only. RFC-0006 is the plan this executed, and
+B-025 ... B-032 in the maintainers' backlog record what each phase set out to do.
 
 ## [2026-07-20] - proven_c_lib-v26.07.20b
 
@@ -1185,7 +1185,7 @@ harnesses that make them checkable rather than merely readable.
 
 ### Added
 
-- **RFC-0002 - the view vocabulary, and the splitter every caller writes wrong.** Read Luca Sas's
+- **RFC-0004 - the view vocabulary, and the splitter every caller writes wrong.** Read Luca Sas's
   *Modern C and What We Can Learn From It* (ACCU 2021) against this library. The useful result was
   mostly negative: the talk argues for the owning/non-owning string split, values over
   out-parameters, allocator-as-parameter, a typed formatter extension point and a freestanding
@@ -1199,13 +1199,13 @@ harnesses that make them checkable rather than merely readable.
   alternative people actually reach for, one owned string per field, costs 3.4x the time and **one
   malloc per field**: a million allocations to read 6.8 MB.
 
-- **RFC-0003 - implementing the view vocabulary.** Exact declarations, every boundary as a table,
+- **RFC-0005 - implementing the view vocabulary.** Exact declarations, every boundary as a table,
   the algorithms with their real complexity, the six files a public symbol costs in this
   repository, and a commit order. Writing it invalidated four things the design document stated
   confidently, and each correction is recorded rather than quietly patched:
 
   - `proven_u8str_view_find` returns `start_offset` for an empty needle, not `NOT_FOUND`, so
-    RFC-0002's sketched iterator advances by zero bytes and **hangs**.
+    RFC-0004's sketched iterator advances by zero bytes and **hangs**.
   - The forward search is **not** "shift-or for short needles, Two-Way for long ones" - that is
     its entropy-triggered fallback. The default path is a rarest-byte anchored `memchr` scan,
     `O(n*m)` in the worst case. The reverse-search design no longer rests on a worst-case
@@ -1218,25 +1218,25 @@ harnesses that make them checkable rather than merely readable.
 - **Two harnesses, so the documents can be checked instead of believed.** Neither is built by
   `./nob`; both compile against the library directly and the command is in the file.
 
-  - `docs/rfc-0002-benchmark.c` reproduces every number in RFC-0002 section 2 - the six-of-six wrong
+  - `rfc-0004-benchmark.c` reproduces every number in RFC-0004 section 2 - the six-of-six wrong
     table, ns/field and allocation counts for four splitting strategies, and the
-    empty-versus-invalid view demonstration. RFC-0001's measurements were never committed and are
+    empty-versus-invalid view demonstration. RFC-0003's measurements were never committed and are
     now unreproducible; this is the correction.
-  - `docs/rfc-0003-spec-check.c` **executes RFC-0003's specification** against its own tables: all
+  - `rfc-0005-spec-check.c` **executes RFC-0005's specification** against its own tables: all
     thirteen rows and all three properties, plus 200,000 randomised cases. This is how a hole was
     found before it shipped - an ill-formed `{NULL,5}` source was yielded as a five-byte field
     over a NULL pointer, with eleven of twelve rows green.
 
-- **B-018 ... B-024 in `docs/BACKLOG.md`**, each with an exit condition reconciled against RFC-0003.
+- **B-018 ... B-024 in the maintainers' backlog**, each with an exit condition reconciled against RFC-0005.
 
 ### Fixed
 
-- **RFC-0002's two descriptions of the substring search**, corrected in place with a pointer to
+- **RFC-0004's two descriptions of the substring search**, corrected in place with a pointer to
   the evidence rather than silently rewritten.
 - **Three backlog exit conditions named APIs the design had already rejected**, which made them
   unclosable - and B-022's original wording would have led a contributor to ship the exact naming
-  trap RFC-0003 exists to avoid.
-- **A coverage claim that was not itself checked.** `rfc-0003-spec-check.c` claimed to run "every
+  trap RFC-0005 exists to avoid.
+- **A coverage claim that was not itself checked.** `rfc-0005-spec-check.c` claimed to run "every
   row" and "the two properties" while skipping the NULL-argument row and two of the three
   properties. It now checks them, and prints how much it exercised (380,883 fields, 86,325 forked
   iterators) so a vacuous pass is visible. An unchecked coverage claim is the same defect as an
@@ -1245,7 +1245,7 @@ harnesses that make them checkable rather than merely readable.
 
 ### Note
 
-Nothing in RFC-0003 is implemented. The `n` separators -> `n + 1` fields contract cannot be
+Nothing in RFC-0005 is implemented. The `n` separators -> `n + 1` fields contract cannot be
 revisited once callers depend on it, so it is the decision to settle before code.
 
 ## [2026-07-15] - proven_c_lib-v26.07.13m
@@ -1287,7 +1287,7 @@ revisited once callers depend on it, so it is the decision to settle before code
   reader could act on, write the assertion for it.** If you cannot state the assertion, the
   sentence is too vague to be in the manual.
 
-- **`docs/DOCUMENTING.md`** - the process (survey -> plan -> edit -> verify) and the gate table, with
+- **`DOCUMENTING.md`** - the process (survey -> plan -> edit -> verify) and the gate table, with
   the failure that motivated each gate. `CHECKLIST.md` points at it.
 
 ### Fixed
@@ -1359,7 +1359,7 @@ around them, and finishes the job.
   freestanding. Checked against RFC 4648's own vectors and differentially against Python and zlib.
 
 - **A primitive throughput benchmark** (`tests/test_bench_primitives`, run through
-  `./nob bench-float`), and the doc it produced, `docs/primitives-benchmark.md`. It times the
+  `./nob bench-float`), and the doc it produced, `primitives-benchmark.md`. It times the
   hashes, encoders, and generators over a fixed buffer, folding each output into a checksum so
   the work cannot be optimised away and a drift surfaces as a correctness failure.
 
@@ -1385,7 +1385,7 @@ around them, and finishes the job.
 ## [2026-07-15] - proven_c_lib-v26.07.13j
 
 Two regressions the standing audit found in the previous release's own fixes - the place the
-process says the next bugs are (docs/TESTING.md section 5.2) - plus a sweep of long-standing doc debt.
+process says the next bugs are (TESTING.md section 5.2) - plus a sweep of long-standing doc debt.
 
 ### Fixed
 
@@ -1900,7 +1900,7 @@ in it. That is the point of B-011, made twice in one day.
   all are royalty-free, all are implemented from their specifications rather than copied, and
   each is checked against its standard's own known-answer vectors (`tests/test_unit_hash`) and
   differentially against Python's hashlib/zlib and an independent SipHash over every length to
-  300. The second feature written test-first (`docs/TESTING.md` section 5.1).
+  300. The second feature written test-first (`TESTING.md` section 5.1).
 
 - **`proven_fs_walk`** - recursive, pre-order directory iteration that **cannot loop and cannot
   escape**. The manual had been telling callers to guard against symlink cycles themselves ever
@@ -1914,7 +1914,7 @@ in it. That is the point of B-011, made twice in one day.
   subtree is how a backup misses files and reports success. Memory is bounded by **depth**, not
   breadth: one handle and one `(dev, ino)` per level, plus a single reused path buffer.
 
-  This is the first feature written under the test-first rule (`docs/TESTING.md` section 5.1): the
+  This is the first feature written under the test-first rule (`TESTING.md` section 5.1): the
   contract and a failing test in one commit, the implementation in the next, and then the
   standing adversarial audit (section 5.2). Between them they caught, before and after it shipped: the
   first draft of the contract ("follow, but stop at a cycle") quietly walking all of `/tmp`; a
@@ -1932,7 +1932,7 @@ in it. That is the point of B-011, made twice in one day.
 
 ## [2026-07-12] - proven_c_lib-v26.07.12i
 
-Closes `docs/BACKLOG.md` B-005, B-009 and B-010.
+Closes B-005, B-009 and B-010.
 
 ### Added
 
@@ -1967,7 +1967,7 @@ Closes `docs/BACKLOG.md` B-005, B-009 and B-010.
   `{:>20}` align a user type exactly as it aligns an int with nothing allocated. A renderer
   whose two passes disagree is an error rather than a silently misaligned field, and a spec
   the library cannot interpret for your type (`{:x}`, `{:.2}`, `{:+}`) is refused rather
-  than guessed at. Closes `docs/BACKLOG.md` B-010.
+  than guessed at. Closes B-010.
 
 - **`proven_fs_dir_open` / `_next` / `_close`** - streaming directory iteration.
   `proven_fs_list` reads the whole directory before the caller sees any of it. Measured
@@ -2031,7 +2031,7 @@ Closes `docs/BACKLOG.md` B-005, B-009 and B-010.
 
 ## [2026-07-12] - proven_c_lib-v26.07.12h
 
-Steps 4-6 of `docs/RFC-0001-streams-and-io.md`: the keystone. Closes B-007 and B-008.
+Steps 4-6 of RFC-0003: the keystone. Closes B-007 and B-008.
 
 ### Added
 
@@ -2087,7 +2087,7 @@ Steps 4-6 of `docs/RFC-0001-streams-and-io.md`: the keystone. Closes B-007 and B
 
 ## [2026-07-12] - proven_c_lib-v26.07.12g
 
-Steps 1-3 of `docs/RFC-0001-streams-and-io.md`. Subtraction first, then the two things
+Steps 1-3 of RFC-0003. Subtraction first, then the two things
 the library simply could not do.
 
 ### Removed
@@ -2153,7 +2153,7 @@ the library simply could not do.
 
 Two audits went looking for weakness in the formatter and the I/O layer. They found
 several things that were quietly wrong - fixed here - and one thing that is missing,
-which is now designed rather than patched: see `docs/RFC-0001-streams-and-io.md`.
+which is now designed rather than patched: see RFC-0003.
 
 ### Fixed
 
@@ -2184,7 +2184,7 @@ which is now designed rather than patched: see `docs/RFC-0001-streams-and-io.md`
 
 ### Added
 
-- **`docs/RFC-0001-streams-and-io.md`** - the design for what is missing, with the
+- **RFC-0003** - the design for what is missing, with the
   measurements behind it. The short version: **there is no stream abstraction.** No
   `proven_writer_t`, no `proven_reader_t`. The formatter's only sink is
   `proven_u8str_t`, so you cannot format into a file; there is no line reader, so you
@@ -2205,7 +2205,7 @@ which is now designed rather than patched: see `docs/RFC-0001-streams-and-io.md`
   be compiled before this cycle. Every one is now either a compiled-and-run program
   from `manual/examples/`, a fragment the build syntax-checks, or a `text` fence for
   the things that are not runnable code (signature listings, struct listings,
-  deliberate counter-examples). Closes `docs/BACKLOG.md` B-002.
+  deliberate counter-examples). Closes B-002.
 
 ## [2026-07-12] - proven_c_lib-v26.07.12e
 
@@ -2213,7 +2213,7 @@ which is now designed rather than patched: see `docs/RFC-0001-streams-and-io.md`
 
 - **Manual chapter 8, sections 7-13** - the scanner half of the chapter, which had
   never been written. The chapter listed thirteen sections and ended at a bare
-  `## 7. Scanner data model` heading. Closes `docs/BACKLOG.md` **B-001**.
+  `## 7. Scanner data model` heading. Closes **B-001**.
 
   It was written against *measured* behaviour, not against the header, and that is
   how the surprising parts came to be documented at all:
@@ -2253,12 +2253,12 @@ and the testing policy says out loud how this project actually develops.
   be one of those programs, quoted verbatim; fails the build if a chapter and its
   example disagree, if a chapter quotes an example that does not exist, or if an
   example exists that no chapter shows.
-- `docs/TESTING.md` - the testing policy: the naming scheme, what each test class
+- `TESTING.md` - the testing policy: the naming scheme, what each test class
   is *for*, the rules a new test must satisfy, and an honest account of how this
   project develops. It records plainly that this is not TDD: every commit that
   adds a test also changes source in the same commit, and there is not one where a
   failing test lands first.
-- `docs/BACKLOG.md` - a **tracked** backlog. The repository had `BACKLOGS.md` and
+- the maintainers' backlog - a **tracked** backlog. The repository had `BACKLOGS.md` and
   `TODO.md`, but both are gitignored: a private queue nobody else can read and no
   commit can reference. Known work that lives on one machine is not tracked work.
 
@@ -2290,7 +2290,7 @@ and the testing policy says out loud how this project actually develops.
 
 ### Known
 
-Two items are registered in `docs/BACKLOG.md` rather than rushed:
+Two items are registered in the maintainers' backlog rather than rushed:
 
 - **B-001** - manual chapter 8 ends mid-chapter at a bare `## 7. Scanner data
   model` heading. Sections 7-13 are in the table of contents and absent from the
@@ -2567,7 +2567,7 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
   `unsigned long long uid` and `gid`, populated from `st_uid` / `st_gid` on
   POSIX and set to `0` on Windows (which has no POSIX ownership). The sys-level
   `proven_sys_fs_stat_t` carries the same two fields. Resolves the prov_text_editor
-  enhancement request (docs/REPORT.md, 2026-06-19) that blocked the file browser's
+  enhancement request (REPORT.md, 2026-06-19) that blocked the file browser's
   owner/group columns. Verified in `tests/test_phase14_fs_advanced.c` (uid/gid
   equal `getuid()`/`getgid()` for a just-created file on POSIX).
 
@@ -2579,7 +2579,7 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
   `map_key_is_valid`. Its only use is the hardened overlap check, which is
   compiled out on `-DNDEBUG` non-hardened builds, so downstream release builds
   (`-Wall -Wextra -DNDEBUG`) saw the warning. Added `(void)map;`. Reported via
-  `docs/REPORT.md`.
+  `REPORT.md`.
 
 ### Changed
 
@@ -2612,7 +2612,7 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
   instead of reallocating caller memory, and `proven_u8str_destroy` is a no-op
   for a borrowed string. This lets allocator-free and per-frame call sites use
   the proven string system / formatter without heap allocation. Requested by a
-  downstream project (`docs/REPORT.md`, 2026-06-18).
+  downstream project (`REPORT.md`, 2026-06-18).
 - `proven_mem_copy(dst, dst_cap, src_view)` (`memory.h`): a bounded byte copy
   that rejects overflow without writing, treats a zero-size source as a no-op,
   and rejects null pointers.
@@ -2659,7 +2659,7 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
   weak function definition in a separate object did not satisfy references,
   producing `undefined reference to proven_panic_handler` on every Windows link
   (the cross matrix is compile-only, so this was latent). Reported in
-  `docs/REPORT.md`.
+  `REPORT.md`.
 
 ### Added
 
@@ -2754,11 +2754,11 @@ A documentation-currency release, plus the API-surface gap that the sweep turned
 - Added internal float-parse path counters so tests can distinguish Clinger hits, staged Eisel-Lemire hits, and exact bigint fallback hits.
 - Added `THIRD_PARTY_NOTICES.md` to record the clean-room status of the decimal-to-binary64 parser rewrite.
 - Added `scripts/generate_float_decimal_tables.py` and a generated cached-`5^q` header so the current fast path no longer depends on hand-maintained power tables.
-- Added an opt-in `bench-float` build-driver command plus a dated `docs/benchmarks/2026-06-13-float-parse-benchmark.md` report comparing `proven_parse_double_ascii`, `proven_strtod`, and host `strtod` on a representative decimal corpus.
-- Added a dated `docs/benchmarks/2026-06-13-float-parse-path-matrix.md` guide that breaks the float parse workload into Clinger, staged cached-power, exact fallback, wrapper, and host-reference paths.
-- Added a dated `docs/benchmarks/2026-06-13-float-parse-path-benchmark.md` report that splits the float parse workload into short-exact, staged-scientific, fallback, and boundary-tie corpora.
-- Added a timestamped `docs/benchmarks/2026-06-12-194411-float-parse-path-benchmark.md` report capturing a fresh path benchmark run against host `strtod`.
-- Added a timestamped `docs/benchmarks/2026-06-12-192443-float-parse-path-benchmark.md` report capturing the updated path benchmark after the fast-path significand handling fix.
+- Added an opt-in `bench-float` build-driver command plus a dated `2026-06-13-float-parse-benchmark.md` report comparing `proven_parse_double_ascii`, `proven_strtod`, and host `strtod` on a representative decimal corpus.
+- Added a dated `2026-06-13-float-parse-path-matrix.md` guide that breaks the float parse workload into Clinger, staged cached-power, exact fallback, wrapper, and host-reference paths.
+- Added a dated `2026-06-13-float-parse-path-benchmark.md` report that splits the float parse workload into short-exact, staged-scientific, fallback, and boundary-tie corpora.
+- Added a timestamped `2026-06-12-194411-float-parse-path-benchmark.md` report capturing a fresh path benchmark run against host `strtod`.
+- Added a timestamped `2026-06-12-192443-float-parse-path-benchmark.md` report capturing the updated path benchmark after the fast-path significand handling fix.
 - Adjusted fast-path significand preparation so the staged Eisel-Lemire validation can keep its representative scientific inputs on the staged path without regressing the Clinger-only case.
 - Reduced exact-fallback comparison cost by caching the shared `5^q` state across fallback midpoint checks, which cuts the fallback-heavy and boundary-tie benchmark groups materially without changing the public parser API.
 - Deferred exact-bigint construction until the parser actually falls back, and switched staged Eisel-Lemire validation to the lightweight mantissa/exponent representation, which pulled the `staged_scientific` benchmark back into the sub-microsecond band.

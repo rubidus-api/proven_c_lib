@@ -4,7 +4,7 @@
 
 /*
  * Written from the contract in include/proven/random.h before the hook existed
- * (docs/TESTING.md section 5.1).
+ * (TESTING.md section 5.1).
  *
  * The library could get entropy from an operating system and from nowhere else. That is fine
  * until the target has no operating system - which is exactly the target the cryptographic

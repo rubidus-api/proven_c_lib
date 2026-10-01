@@ -4,7 +4,7 @@
 
 /*
  * Written from printf's %e - the one float form the {} grammar did not offer - before the
- * always-scientific engine mode was wired up (docs/TESTING.md section 5.1). Every expected string
+ * always-scientific engine mode was wired up (TESTING.md section 5.1). Every expected string
  * below is exactly what C's printf produces for the same spec, because "{:e} matches %e" is
  * the whole contract: a caller reaching for scientific notation with a fixed precision wants
  * the spelling the rest of the world already agrees on (mantissa, six default digits, a

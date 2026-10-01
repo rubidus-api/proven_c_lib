@@ -3,8 +3,7 @@
 #include <string.h>
 
 /*
- * Written from the contracts in stream.h, fmt.h and sysio.h for UTF-16 text (docs/BACKLOG.md
- * B-039). Output: u16 text reaches every sink the formatter reaches, and a writer in any of the
+ * Written from the contracts in stream.h, fmt.h and sysio.h for UTF-16 text (B-039). Output: u16 text reaches every sink the formatter reaches, and a writer in any of the
  * three encodings, byte-exact, with malformed text writing nothing. Input: the u16 reader
  * decodes all three encodings, carries a character split across reads of the source - checked
  * with a source that hands out ONE byte per read, the worst case a pipe can produce - and keeps

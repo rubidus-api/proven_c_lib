@@ -5,7 +5,7 @@
 
 /*
  * Written from the contract in include/proven/map.h before the keyed hash was wired in
- * (docs/TESTING.md section 5.1). The security property - an attacker cannot flood one bucket -
+ * (TESTING.md section 5.1). The security property - an attacker cannot flood one bucket -
  * cannot be a known-answer test, because the whole point is a per-process secret nobody
  * knows the answer to. So the contract is stated as what IS observable through
  * proven_map_hash:

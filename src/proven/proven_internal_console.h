@@ -6,7 +6,7 @@
 #include "../../platform/proven_sys_mem.h"
 
 /*
- * UTF-8 in and out of a console that speaks UTF-16 (docs/BACKLOG.md B-039).
+ * UTF-8 in and out of a console that speaks UTF-16 (B-039).
  *
  * The program writes and reads UTF-8, in pieces whose boundaries have nothing to do with
  * characters: a buffered writer flushes at 4096 bytes, a line reader asks for whatever room its

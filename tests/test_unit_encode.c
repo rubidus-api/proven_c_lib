@@ -4,7 +4,7 @@
 
 /*
  * Written from the contract in include/proven/encode.h before any of it existed
- * (docs/TESTING.md section 5.1). Hex and Base64 are standards, so the encoding half is judged against
+ * (TESTING.md section 5.1). Hex and Base64 are standards, so the encoding half is judged against
  * the STANDARD'S OWN vectors - RFC 4648's "", "f", "fo", "foo", "foob", "fooba", "foobar",
  * whose Base64 is the canonical example every implementation is checked against, verified here
  * against Python's base64/binascii before being trusted. A round-trip test proves the two
@@ -181,7 +181,7 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
-    PROVEN_TEST_SECTION("a size that cannot be represented is reported, not wrapped (RFC-0006 H-001)",
+    PROVEN_TEST_SECTION("a size that cannot be represented is reported, not wrapped (RFC-0008 H-001)",
         "The size helpers multiply and add in size_t. At the top of the range those operations wrap, and a wrapped size is a small number: it passes a capacity check it should have failed, and the encoder then writes past what the caller reserved.",
         "The helpers answer SIZE_MAX for an output size that cannot be represented. Valid hex output is always even and valid padded Base64 output is always a multiple of four, so neither can be SIZE_MAX by accident. Zero cannot be the sentinel: it is the honest answer for empty input.");
     // ---------------------------------------------------------------
@@ -223,7 +223,7 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
-    PROVEN_TEST_SECTION("an encoder refuses an impossible size before it touches memory (RFC-0006 H-001)",
+    PROVEN_TEST_SECTION("an encoder refuses an impossible size before it touches memory (RFC-0008 H-001)",
         "Fixing the helpers is not enough: the encoders computed their own capacity, with the same wrapping arithmetic, and a wrapped `need` passes `need > out_cap` and is then written past.",
         "The view below is SYNTHETIC - a deliberately impossible size over a small real buffer. It is an early-validation probe and nothing else: the check is precisely that the call returns before reading or writing a byte, which is why it is safe to run under a sanitizer. It is not a claim that a process can allocate an object this large.");
     // ---------------------------------------------------------------

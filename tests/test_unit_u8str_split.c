@@ -3,7 +3,7 @@
 #include <string.h>
 
 /*
- * Written from docs/RFC-0003 section 3.1 and table section 4.1 before the implementation (docs/TESTING.md
+ * Written from RFC-0005 section 3.1 and table section 4.1 before the implementation (TESTING.md
  * section 5.1). The contract is permanent once callers exist: n separators yield n + 1 fields. Every
  * empty field is {NULL, 0}, including a LEADING empty field that a test author would guess
  * points at offset 0 - so fields are compared by size and content, never by pointer.
@@ -54,11 +54,11 @@ static unsigned rnd(unsigned bound) {
 
 int main(void) {
     PROVEN_TEST_SUITE("splitting a view",
-        "RFC-0003 table 4.1 row for row, the field-count property (n separators, n + 1 fields) over random inputs, every field a sub-range of its source, and a copied iterator continuing on its own.",
+        "RFC-0005 table 4.1 row for row, the field-count property (n separators, n + 1 fields) over random inputs, every field a sub-range of its source, and a copied iterator continuing on its own.",
         "Inspect proven_u8str_view_split_next in src/proven/u8str.c, whose four steps must be in the RFC's order. A count one short is the dropped tail; a count at the cap is a non-terminating iterator.");
 
     // ---------------------------------------------------------------
-    PROVEN_TEST_SECTION("RFC-0003 table 4.1", "", "");
+    PROVEN_TEST_SECTION("RFC-0005 table 4.1", "", "");
     // ---------------------------------------------------------------
     {
         const char *r1[] = { "a", "b", "c" };

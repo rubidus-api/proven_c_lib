@@ -4,7 +4,7 @@
 
 /*
  * Written from the contract in include/proven/sysio.h before the bridge existed
- * (docs/TESTING.md section 5.1). Two things were missing, and one thing was a lie:
+ * (TESTING.md section 5.1). Two things were missing, and one thing was a lie:
  *
  *   - There was NO WAY to read stdin a line at a time. The standard streams were
  *     proven_file_t and nothing else, so the buffered reader and the line reader in stream.h -

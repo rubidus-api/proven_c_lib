@@ -1,5 +1,5 @@
 /*
- * The freestanding runtime contract, as a link (docs/BACKLOG.md B-034).
+ * The freestanding runtime contract, as a link (B-034).
  *
  * A freestanding build of proven needs from its environment exactly what GCC and Clang require of
  * any freestanding program: memcpy, memmove, memset and memcmp - the compiler may emit calls to

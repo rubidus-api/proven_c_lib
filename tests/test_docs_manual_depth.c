@@ -15,7 +15,7 @@
  *
  * You cannot TDD prose. What you CAN do is state, for each thing a section must contain, a
  * proposition that is either true or false of the text - and then let the build decide. That is
- * what this is: the depth checklist in docs/DOCUMENTING.md section 3, turned from advice into a gate.
+ * what this is: the depth checklist in DOCUMENTING.md section 3, turned from advice into a gate.
  *
  * For every module section registered below, the section must contain:
  *
@@ -45,7 +45,7 @@ typedef struct {
 static const Section SECTIONS[] = {
     /* Chapter 0 is the on-ramp: it is the one chapter a reader meets before they know anything,
      * so it is the one that must not decay into a reference. Registered when it was written
-     * (RFC-0004 phase 1) rather than later, because a new chapter is at its best on the day it
+     * (RFC-0006 phase 1) rather than later, because a new chapter is at its best on the day it
      * lands and every edit after that is a chance to lose the explanation. */
     { "manual-00-start-here.md",            "## 2. Why this library exists",            false, false,
       "the section argues from C's own APIs - strcpy, malloc, printf, qsort - so its code blocks "
@@ -53,7 +53,7 @@ static const Section SECTIONS[] = {
     { "manual-00-start-here.md",            "## 5. The five contracts you will meet on every page", false, false,
       "each contract is one paragraph and one counter-example; the compiled program that shows all "
       "five together is ex_00_hello, quoted in section 3." },
-    /* Chapter 1 (RFC-0004 phase 3). Before the rewrite it passed 0 of its 9 sections against this
+    /* Chapter 1 (RFC-0006 phase 3). Before the rewrite it passed 0 of its 9 sections against this
      * gate's own prose floor, while being the first chapter anyone reads. Six of them are
      * registered here; the three that are not are the table of contents, the version excerpt
      * (which is deliberately three lines and a gate of its own), and the examples section, which
@@ -73,7 +73,7 @@ static const Section SECTIONS[] = {
       "alignment does visible work." },
     { "manual-01-foundation.md",            "## 6. Panic: when there is no one left to return an error to", true, false,
       "a panic handler must not return, so an example that ran one would have to end the process." },
-    /* Chapter 2 (RFC-0004 phase 3). Reordered so the obvious case comes first: you use a heap,
+    /* Chapter 2 (RFC-0006 phase 3). Reordered so the obvious case comes first: you use a heap,
      * an arena and a pool before being shown the trait they share. */
     { "manual-02-allocation.md",            "## 1. Why allocation is a parameter, and the heap allocator", false, false,
       "the heap allocator is one function returning a value; the compiled programs that use it "
@@ -86,10 +86,10 @@ static const Section SECTIONS[] = {
     { "manual-02-allocation.md",            "## 4. The allocator trait",                true,  false,
       "the trait is an interface; every example in this chapter is already using it through "
       "proven_heap_allocator, proven_arena_as_allocator or proven_pool_as_allocator." },
-    /* Chapter 3 (RFC-0004 phase 4). Highest jargon density in the manual - "view" appears 288
+    /* Chapter 3 (RFC-0006 phase 4). Highest jargon density in the manual - "view" appears 288
      * times across manual/ - so this is the chapter where the ownership vocabulary has to be
      * taught rather than assumed. */
-    /* No longer exempt from an example: RFC-0003 gave the section ex_03_view_ops. */
+    /* No longer exempt from an example: RFC-0005 gave the section ex_03_view_ops. */
     { "manual-03-strings-text.md",          "## 1. U8 strings and views",               true,  true,  NULL },
     /* No longer exempt from an example: B-039 gave the section utf.h and ex_03_utf. */
     { "manual-03-strings-text.md",          "## 2. U16 strings and views",              true,  true,  NULL },
@@ -99,7 +99,7 @@ static const Section SECTIONS[] = {
     { "manual-03-strings-text.md",          "## 4. Scanning",                           true,  false,
       "the scanner's worked example is ex_08_scan_recovery, quoted in chapter 8 alongside the "
       "error-code guide it demonstrates." },
-    /* Chapter 4 and 5 gap-fill (RFC-0004 phase 5, B-028). These three modules were documented
+    /* Chapter 4 and 5 gap-fill (RFC-0006 phase 5, B-028). These three modules were documented
      * only as tables - the symbols gate was satisfied by a row and nothing checked that the hard
      * part was explained. Each now has motivation, a counter-example and a compiled program. */
     { "manual-04-containers-algorithms.md", "## 2. Intrusive list",                     true,  true,  NULL },
@@ -224,7 +224,7 @@ static int prose_word_count(const char *body) {
 
 int main(void) {
     PROVEN_TEST_SUITE("every module section is documented to depth, not merely mentioned",
-        "A section must carry its intent, a reference table, the structures the caller declares, a runnable example, and at least one COUNTER-EXAMPLE. This is docs/DOCUMENTING.md section 3 turned from advice into a gate.",
+        "A section must carry its intent, a reference table, the structures the caller declares, a runnable example, and at least one COUNTER-EXAMPLE. This is DOCUMENTING.md section 3 turned from advice into a gate.",
         "You cannot TDD prose - but you can state, for each thing a section must contain, a proposition that is either true or false of the text, and let the build decide. The five modules added this cycle passed every check there was and were still half-written: not one had a counter-example.");
 
     for (size_t i = 0; i < sizeof SECTIONS / sizeof SECTIONS[0]; ++i) {

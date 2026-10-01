@@ -24,7 +24,7 @@ int main(void) {
 #include <fcntl.h>
 
 /*
- * Two defects the standing audit of proven_fs_walk found (docs/TESTING.md section 5.2), pinned
+ * Two defects the standing audit of proven_fs_walk found (TESTING.md section 5.2), pinned
  * against the same fault injection that found them.
  *
  *   1. When a directory's own readdir() failed mid-iteration, the error was reported with

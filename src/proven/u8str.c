@@ -654,7 +654,7 @@ void proven_u8str_destroy(proven_allocator_t alloc, proven_u8str_t *str) {
 }
 
 // -------------------------------------------------------------
-// The view vocabulary (RFC-0003)
+// The view vocabulary (RFC-0005)
 // -------------------------------------------------------------
 
 /* The one guard every function here starts with: an ill-formed view is empty, and every empty
@@ -668,7 +668,7 @@ static proven_u8str_view_t view_or_empty(proven_u8str_view_t v) {
 
 int proven_u8str_view_cmp(proven_u8str_view_t a, proven_u8str_view_t b) {
     /* Guard here, not three layers down: {NULL, 3} is representable, and memcmp on it is
-     * undefined whatever the platform layer happens to do today (RFC-0003 section 1.3). */
+     * undefined whatever the platform layer happens to do today (RFC-0005 section 1.3). */
     a = view_or_empty(a);
     b = view_or_empty(b);
     proven_size_t n = a.size < b.size ? a.size : b.size;
@@ -873,7 +873,7 @@ proven_u8str_view_split_t proven_u8str_view_split(proven_u8str_view_t src, prove
     return (proven_u8str_view_split_t){ .rest = view_or_empty(src), .sep = view_or_empty(sep), .done = false };
 }
 
-/* The four steps of RFC-0003 section 3.1, in that order. The termination argument depends on the
+/* The four steps of RFC-0005 section 3.1, in that order. The termination argument depends on the
  * order: after step 2, sep.size >= 1, so step 4 shrinks `rest` by at least a byte and every
  * other path sets `done`. */
 bool proven_u8str_view_split_next(proven_u8str_view_split_t *it, proven_u8str_view_t *out) {
@@ -882,7 +882,7 @@ bool proven_u8str_view_split_next(proven_u8str_view_split_t *it, proven_u8str_vi
 
     /* 2 - an empty separator: one field, the whole input. It looks redundant; it is not. find
      * matches an empty needle where it starts, so without this the iterator never advances and
-     * yields empty fields for ever (RFC-0003 section 1.1, tests/test_regression_split_empty_sep). */
+     * yields empty fields for ever (RFC-0005 section 1.1, tests/test_regression_split_empty_sep). */
     if (it->sep.size == 0) {
         *out = it->rest;
         it->done = true;

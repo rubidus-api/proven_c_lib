@@ -1,5 +1,5 @@
 /*
- * RFC-0006 H-004: the job queue compared two positions by casting both to a signed type
+ * RFC-0008 H-004: the job queue compared two positions by casting both to a signed type
  * and subtracting.
  *
  *     proven_ptrdiff_t dif = (proven_ptrdiff_t)seq - (proven_ptrdiff_t)pos;
@@ -53,7 +53,7 @@ static void counting_job(void *arg) {
 }
 
 int main(void) {
-    PROVEN_TEST_SUITE("queue sequence comparison at the sign boundary (RFC-0006 H-004)",
+    PROVEN_TEST_SUITE("queue sequence comparison at the sign boundary (RFC-0008 H-004)",
         "The queue's positions wrap. Only their distance is small, so the comparison has to be modular - a signed subtraction of two wrapped counters is undefined at the boundary they wrap around.",
         "A failure here means the classifier disagrees with the modular distance, or the queue paths went back to computing a signed difference.");
 

@@ -3,7 +3,7 @@
 #include <string.h>
 
 /*
- * alloc_check.h (docs/BACKLOG.md B-040), from its contract. A panic handler that RETURNS is
+ * alloc_check.h (B-040), from its contract. A panic handler that RETURNS is
  * installed, so each refusal is observed as a message and a `faults` count instead of a trap -
  * and the test then checks that the refused pointer never reached the inner allocator: under
  * ASan a forwarded foreign or double free is a report, not a silent pass.

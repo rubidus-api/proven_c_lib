@@ -5,7 +5,7 @@
 
 /*
  * Written from the contract in include/proven/random.h before the generators existed
- * (docs/TESTING.md section 5.1). The module answers two different questions with two different
+ * (TESTING.md section 5.1). The module answers two different questions with two different
  * generators, and the tests have to hold each to ITS OWN standard:
  *
  *   - xoshiro256** is judged on being REPRODUCIBLE (the same seed replays the same run - the

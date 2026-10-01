@@ -4,7 +4,7 @@
 
 /*
  * Written from the four algorithms' OWN specifications, before proven/hash.c was
- * implemented (docs/TESTING.md section 5.1). Every expected value below is an official
+ * implemented (TESTING.md section 5.1). Every expected value below is an official
  * known-answer vector - the differential oracle a hash function is judged against - so
  * this test is not "does the code agree with itself" but "does the code agree with the
  * standard the rest of the world implements". That is exactly the case where writing the

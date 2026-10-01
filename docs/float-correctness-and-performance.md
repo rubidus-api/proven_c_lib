@@ -210,7 +210,7 @@ parameterised only by the significand width and exponent range.
 **Re-measured 2026-09-30 with a checked-in harness**, `tests/test_bench_float_host.c`, run by
 `./nob bench-float` (release profile, GCC 14.2, glibc, x86-64, single thread). Fixed-seed corpora
 of 100,000 values; one warmup pass, then the median of five samples, each in the shared row
-format with its spread (raw rows: `docs/benchmarks/2026-09-30-x86_64-linux.txt`). `ratio` is
+format with its spread (raw rows: `2026-09-30-x86_64-linux.txt`). `ratio` is
 proven / host, so **< 1.0 means the library is faster**. Accuracy is checked in the same run and
 a single mismatch fails the benchmark: parse results bit-for-bit against `strtod`, `%f` and `%e`
 byte-for-byte against `snprintf`, shortest output round-tripping through `strtod`. On this run:
@@ -293,9 +293,9 @@ data; this corpus stresses the exact big-integer path.
 ## 5. Reproducing the results
 
 The benchmark in section 3 is checked in (`tests/test_bench_float_host.c`) and runs with
-`./nob bench-float`; its raw rows are under `docs/benchmarks/`. The exhaustive sweeps are
+`./nob bench-float`; its raw rows are kept in the maintainers' benchmark records. The exhaustive sweeps are
 standalone programs that link the library sources and the host C library as the oracle; their
-dated raw outputs are kept in maintainer-local `docs/internal/` (outside the published repository)
+dated raw outputs are kept in the maintainers' benchmark records
 (`*-f32-exhaustive-validation.md`, `*-f64-differential-validation.md`). To re-run a sweep: compile
 the library sources at `-O2`, link the harness, and run - it prints the failure table above (all
 zeros).

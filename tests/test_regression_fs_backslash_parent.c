@@ -1,5 +1,5 @@
 /*
- * RFC-0006 H-003: a durable write synced the wrong directory when the filename contained
+ * RFC-0008 H-003: a durable write synced the wrong directory when the filename contained
  * a backslash.
  *
  * internal_parent_dir treated '/' and '\' as separators on every platform. On POSIX a
@@ -31,7 +31,7 @@
 #if defined(_WIN32) || defined(_WIN64)
 
 int main(void) {
-    PROVEN_TEST_SUITE("a backslash in a POSIX filename is not a separator (RFC-0006 H-003)",
+    PROVEN_TEST_SUITE("a backslash in a POSIX filename is not a separator (RFC-0008 H-003)",
         "On Windows both characters separate components, so there is nothing here to get wrong in this direction.",
         "The Windows path rules - drive roots, UNC shares, extended paths - need a native test, not this one.");
     PROVEN_TEST_INFO("SKIP: POSIX-only test. On Windows a backslash IS a separator and proven_fs_sync_dir is PROVEN_ERR_UNSUPPORTED.");
@@ -124,7 +124,7 @@ static bool file_holds(const char *path, const char *text) {
 }
 
 int main(void) {
-    PROVEN_TEST_SUITE("a backslash in a POSIX filename is not a separator (RFC-0006 H-003)",
+    PROVEN_TEST_SUITE("a backslash in a POSIX filename is not a separator (RFC-0008 H-003)",
         "A durable write has to sync the directory the file is actually in. Which directory that is depends on what separates path components, and on POSIX only '/' does.",
         "A failure naming the wrong directory means the separator rule is still unconditional. A durable write that fails on a legal filename means the same thing from the other side.");
 

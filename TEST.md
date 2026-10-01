@@ -2,7 +2,9 @@
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
-For the **policy** - how tests are named, what each class is for, the rules a new test has to satisfy, and an honest account of how this project actually develops - see [`docs/TESTING.md`](docs/TESTING.md).
+Labels such as `RFC-0007` or `B-043`, and bare file names such as `b024-find-last-benchmark.c`, refer to the maintainers' design records, backlog and measurement programs, which are not part of the published repository; every test and benchmark this file describes is.
+
+For the **policy** - how tests are named, what each class is for, the rules a new test has to satisfy, and an honest account of how this project actually develops - see `TESTING.md`.
 
 ## Naming
 
@@ -169,7 +171,7 @@ Standard informational and pass lines printed by test executables:
 
 The older test files still use many direct `PROVEN_TEST_INFO` calls. Those messages now share the `[PROVEN][TEST][INFO]` prefix. New or substantially edited tests should prefer `PROVEN_TEST_SECTION(name, intent, hint)` for each logically separate sub-check group.
 
-The float parse path benchmark uses the same test harness and emits its timing rows through `[PROVEN][TEST][INFO]` so the captured output can be saved directly as a dated markdown report. Those reports live in maintainer-local `docs/internal/` (kept outside the published repository), so a reader of this repository will not find them here.
+The float parse path benchmark uses the same test harness and emits its timing rows through `[PROVEN][TEST][INFO]` so the captured output can be saved directly as a dated markdown report. Those reports live in a maintainers' record, not in the published repository, so a reader of this repository will not find them here.
 
 ## Test modes
 
@@ -194,7 +196,7 @@ What it checks:
 - Optimized builds do not rely on debug-only initialization or timing.
 - Undefined behavior that is hidden in debug mode is less likely to survive optimization.
 - Public headers and implementation still agree under `-O3`.
-- The library's misuse validation (pool double-free scan, map key overlap check) is compiled out, as a release build intends; the contract tests for it skip their trap assertions. It was compiled in until B-036 and made pool teardown quadratic: 20,000 frees took 59.6 ms against 0.05 ms (`docs/b036-pool-teardown-benchmark.c`).
+- The library's misuse validation (pool double-free scan, map key overlap check) is compiled out, as a release build intends; the contract tests for it skip their trap assertions. It was compiled in until B-036 and made pool teardown quadratic: 20,000 frees took 59.6 ms against 0.05 ms (`b036-pool-teardown-benchmark.c`).
 
 ### `hardened`
 
@@ -276,7 +278,7 @@ Failure tip: do not delete a regression because it feels narrow. It exists becau
 
 ### `bench-float`
 
-Intent: run the three benchmark executables - the float parse path benchmark, the mixed-corpus float parse benchmark, and the primitive throughput benchmark - and write a dated report. Despite the name, this mode is not float-only. The reports live in maintainer-local `docs/internal/` (kept outside the published repository).
+Intent: run the three benchmark executables - the float parse path benchmark, the mixed-corpus float parse benchmark, and the primitive throughput benchmark - and write a dated report. Despite the name, this mode is not float-only. The reports live in a maintainers' record, not in the published repository.
 
 What it checks:
 
@@ -317,7 +319,7 @@ The whole hosted suite also runs natively on Windows, cross-built with mingw-w64
 ./nob build -no-run -cc x86_64-w64-mingw32-gcc -build-root build/win    # or i686-w64-mingw32-gcc
 ```
 
-`-no-run` builds and installs every test executable and runs none. The build driver asks the compiler for its target (`-dumpmachine`); for a Windows target the executables are `.exe`, linked `-static` with `-lbcrypt`, and never `-ldl`. `scripts/win11kd-full-suite.sh` builds both word sizes, sends the tracked tree and the executables to a Windows machine, and runs them there with `scripts/win11kd-run-suite.ps1`, which records PASS, FAIL, SKIP (a POSIX-only test that skipped itself - counted apart, since it proves nothing on Windows) and TIMEOUT per test.
+`-no-run` builds and installs every test executable and runs none. The build driver asks the compiler for its target (`-dumpmachine`); for a Windows target the executables are `.exe`, linked `-static` with `-lbcrypt`, and never `-ldl`. A maintainers' script (`win11kd-full-suite.sh`, not in this repository) builds both word sizes, sends the tracked tree and the executables to a Windows machine, and runs them there with `win11kd-run-suite.ps1`, which records PASS, FAIL, SKIP (a POSIX-only test that skipped itself - counted apart, since it proves nothing on Windows) and TIMEOUT per test.
 
 Last run, 2026-09-30, Windows 11 test VM: x86-64 214 PASS, 0 FAIL, 7 SKIP; i686 the same. The seven skips are fixtures whose subject is POSIX: `test_portability_nob_std_probe` and `test_portability_nob_clean` (they drive `./nob` through a POSIX shell), `test_regression_fs_walk_errors` (libc interposition with `dlsym`), `test_unit_fs_walk` (chmod 000 and `ln -s` cycles), `test_regression_fs_backslash_parent` (a backslash as an ordinary byte), `test_regression_fs_private_staging` and `test_regression_fs_perms_and_types` (POSIX modes). `test_unit_sysio_streams`, `test_regression_scanner_float_split` and `test_regression_scanner_short_read` run on Windows too.
 
@@ -344,7 +346,7 @@ The class says what kind of question the test answers:
 - **`differential`** - Correctness against an independent oracle - the host libc, or a corpus with known-good answers. These catch what a self-written expectation cannot: a wrong belief held consistently by both the code and its test.
 - **`portability`** - Freestanding builds, cross-target builds, source-level platform contracts, and the build driver's own standard probe. Most of these cannot be *run* on the host, so they check what can be checked: that the code compiles, links where configured, and keeps its platform branches intact.
 - **`stress`** - Concurrency under a sanitizer, over enough iterations to make a race likely rather than theoretical.
-- **`docs`** - The documentation is checked by the build, not by eye: every public function has an alias and is named in the manual, the manual never documents a function that does not exist, every example the manual prints is a program that compiles and runs, no example drifts from its chapter, and the version string agrees with itself everywhere, every module section carries its intent/reference/structures/example/counter-example, and every factual claim the chapters make is true. These are the **gates** in `docs/DOCUMENTING.md` Section 2 - each one exists because the thing it forbids already happened.
+- **`docs`** - The documentation is checked by the build, not by eye: every public function has an alias and is named in the manual, the manual never documents a function that does not exist, every example the manual prints is a program that compiles and runs, no example drifts from its chapter, and the version string agrees with itself everywhere, every module section carries its intent/reference/structures/example/counter-example, and every factual claim the chapters make is true. These are the **gates** in `DOCUMENTING.md` Section 2 - each one exists because the thing it forbids already happened.
 - **`bench`** - Timing, not correctness. A benchmark regression is a signal to investigate; a checksum drift inside one is a correctness failure and does fail the build.
 
 ## Unit tests
@@ -904,7 +906,7 @@ Sub-checks:
 - Ctrl+Z as the first unit of a read is end of input; a lone low surrogate, and a high surrogate followed by the end, are refused after the valid text before them.
 - On POSIX the standard streams are never consoles.
 
-Failure tip: inspect `src/proven/proven_internal_console.h`. A failure at one split offset is the write carry; at one destination size, the read carry; at one-unit chunks, the pending high surrogate. The real console is checked on Windows by `docs/b039-console-check.c`.
+Failure tip: inspect `src/proven/proven_internal_console.h`. A failure at one split offset is the write carry; at one destination size, the read carry; at one-unit chunks, the pending high surrogate. The real console is checked on Windows by `b039-console-check.c`.
 
 ### `tests/test_unit_sysio_streams` - the standard streams are writers and readers
 
@@ -1036,18 +1038,18 @@ Failure tip: inspect `src/proven/u8str.c`. For failures after a reallocation pat
 
 ### `tests/test_unit_u8str_split` - splitting a view
 
-Intent: verify `proven_u8str_view_split` / `_split_next` against RFC-0003 table 4.1 and its properties.
+Intent: verify `proven_u8str_view_split` / `_split_next` against RFC-0005 table 4.1 and its properties.
 
 Sub-checks:
 
 - Every row of table 4.1: `"a,b,c"` is three fields; no separator is one field; leading, trailing and doubled separators keep empty fields; `""` and a null view are one empty field; a multi-byte separator; leftmost non-overlapping matching (`"aXXXb"` on `"XX"`); empty and null separators yield the whole input once; an ill-formed source is one empty field; NULL arguments yield nothing and consume nothing; a well-formed separator reads back as passed.
 - Over 50,000 random inputs: field count equals non-overlapping occurrences + 1 (for a non-empty separator), every field lies inside the source, and an iterator copied part-way continues exactly as the original. Case, field and fork counts are printed so a vacuous pass is visible.
 
-Failure tip: inspect `proven_u8str_view_split_next`; its four steps must stay in RFC-0003's order. A count one short is the dropped tail; a count at the cap is a non-terminating iterator.
+Failure tip: inspect `proven_u8str_view_split_next`; its four steps must stay in RFC-0005's order. A count one short is the dropped tail; a count at the cap is a non-terminating iterator.
 
 ### `tests/test_unit_u8str_view_cmp` - view ordering
 
-Intent: verify `proven_u8str_view_cmp` is the order RFC-0003 section 3.4 defines, and `_cmp_ptr` sorts with it.
+Intent: verify `proven_u8str_view_cmp` is the order RFC-0005 section 3.4 defines, and `_cmp_ptr` sorts with it.
 
 Sub-checks:
 
@@ -1059,7 +1061,7 @@ Failure tip: a wrong sign on the `\xFF` row is signed comparison; on the prefix 
 
 ### `tests/test_unit_u8str_view_ops` - view trim, affixes, reverse search and well-formedness
 
-Intent: verify RFC-0003 tables 4.2, 4.3 and 4.5 row for row, asserting empty results by size, never by pointer.
+Intent: verify RFC-0005 tables 4.2, 4.3 and 4.5 row for row, asserting empty results by size, never by pointer.
 
 Sub-checks:
 
@@ -1102,9 +1104,9 @@ Failure tip: inspect include/proven/float_parse.h, src/proven/float_parse.c, and
 
 ### `tests/test_unit_float_rfc_0001_cases` - RFC-0001 parse audit
 
-Intent: verify the decimal-to-binary64 rewrite still satisfies the explicit named cases from docs/proposals/rfc-0001.
+Intent: verify the decimal-to-binary64 rewrite still satisfies the explicit named cases from RFC-0001.
 
-Failure tip: inspect docs/proposals/rfc-0001, include/proven/float_parse.h, src/proven/float_parse.c, and src/proven/float_decimal.c if a named RFC audit case fails.
+Failure tip: inspect RFC-0001, include/proven/float_parse.h, src/proven/float_parse.c, and src/proven/float_decimal.c if a named RFC audit case fails.
 
 ### `tests/test_unit_float_shortest_known` - float shortest known values
 
@@ -1332,7 +1334,7 @@ Failure tip: inspect `reader_buffered_fill` in `src/proven/stream.c`. It must re
 
 ### `tests/test_regression_split_empty_sep` - an empty separator ends the split
 
-Intent: pin RFC-0003 section 1.1: a split on an empty or null separator yields exactly one field, the whole input.
+Intent: pin RFC-0005 section 1.1: a split on an empty or null separator yields exactly one field, the whole input.
 
 Sub-checks:
 
@@ -1414,7 +1416,7 @@ Failure tip: inspect `insertion_sort` in `src/proven/algorithm.c`.
 
 Intent: verify `proven_fs_walk` reports every entry once in pre-order with the right depth, reports a symlinked directory without descending into it, REPORTS an unreadable directory as an error rather than skipping it, honours `max_depth` while still reporting the boundary directory, and streams a wide directory rather than buffering it.
 
-Note: this test was written **from the contract, before the implementation existed** - the first feature under the rule in `docs/TESTING.md` section 5.1 - and it landed red, in its own commit. It earned its keep immediately: it found the first draft of the contract ("follow symlinked directories, but stop at a cycle") quietly walking all of `/tmp`, and it found the implementation writing a NUL into the middle of a path view the caller was still holding. Neither would have been asked about by a test written afterwards to confirm code that already looked right.
+Note: this test was written **from the contract, before the implementation existed** - the first feature under the rule in `TESTING.md` section 5.1 - and it landed red, in its own commit. It earned its keep immediately: it found the first draft of the contract ("follow symlinked directories, but stop at a cycle") quietly walking all of `/tmp`, and it found the implementation writing a NUL into the middle of a path view the caller was still holding. Neither would have been asked about by a test written afterwards to confirm code that already looked right.
 
 Failure tip: inspect `proven_fs_walk_open/_next/_close` in `src/proven/fs.c`.
 
@@ -1441,7 +1443,7 @@ Skipped as root (file modes refuse root nothing) and on a filesystem that does n
 
 Failure tip: inspect `internal_refuse_if_protected` in `src/proven/fs.c` and its call sites. Adding a public function that replaces a file means adding a door here.
 
-### `tests/test_regression_fs_backslash_parent` - a backslash in a POSIX filename is not a separator (RFC-0006 H-003)
+### `tests/test_regression_fs_backslash_parent` - a backslash in a POSIX filename is not a separator (RFC-0008 H-003)
 
 Intent: verify a durable write syncs the directory the file is actually in, when the filename legally contains a backslash.
 
@@ -1458,7 +1460,7 @@ What it does not prove: the Windows path rules - drive roots, UNC shares, extend
 
 Failure tip: inspect `internal_is_separator` and `internal_parent_dir` in `src/proven/fs.c`.
 
-### `tests/test_regression_job_seq_wrap` - queue sequence comparison at the sign boundary (RFC-0006 H-004)
+### `tests/test_regression_job_seq_wrap` - queue sequence comparison at the sign boundary (RFC-0008 H-004)
 
 Intent: verify the job queue decides what to do with a cell by **modular** distance in the unsigned counter type, and that it is unambiguous everywhere the counters can be.
 
@@ -1475,7 +1477,7 @@ Note: the test reads the classifier from `src/proven/proven_internal_jobseq.h` r
 
 Failure tip: inspect `src/proven/proven_internal_jobseq.h` and the two call sites in `src/proven/job.c`.
 
-### `tests/test_regression_fs_private_staging` - staging files are created private (RFC-0006 H-002)
+### `tests/test_regression_fs_private_staging` - staging files are created private (RFC-0008 H-002)
 
 Intent: verify that replacing a 0600 file - atomically or durably - stages the new contents in a file that is *created* 0600, and that a new copy destination is created the same way.
 
@@ -1673,8 +1675,8 @@ Sub-checks:
 - Checks `nob.c` and the test share one preprocessed dependency manifest, and every header in the declared library, PAL, test, and example roots is active in it.
 - Checks the test-catalog gate uses the portable directory iterator instead of POSIX-only `dirent.h`.
 - Checks this `TEST.md` documents failure tips, sub-checks, and the log format.
-- **RFC-0006 H-005**: the Windows rename replaces an existing destination (`MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`), does not fall back to a cross-volume copy, and does not delete the destination first. `MoveFileW` fails outright when the destination exists, so on Windows the *first* whole-file atomic write to a name succeeded and every write after it failed. Deleting first would open an interval in which the name does not exist, which is the one thing an atomic replacement exists to prevent.
-- **RFC-0006 H-006**: the Windows entropy length is planned in chunks the backend accepts instead of being cast whole to `ULONG`, and a failed chunk fails the whole call rather than falling back to a PRNG. Above `ULONG_MAX` that cast narrowed silently - a request for exactly 2^32 bytes asked the OS for **zero** - and success for the short request was returned as success for the whole buffer, leaving untouched bytes to be read as fresh entropy.
+- **RFC-0008 H-005**: the Windows rename replaces an existing destination (`MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`), does not fall back to a cross-volume copy, and does not delete the destination first. `MoveFileW` fails outright when the destination exists, so on Windows the *first* whole-file atomic write to a name succeeded and every write after it failed. Deleting first would open an interval in which the name does not exist, which is the one thing an atomic replacement exists to prevent.
+- **RFC-0008 H-006**: the Windows entropy length is planned in chunks the backend accepts instead of being cast whole to `ULONG`, and a failed chunk fails the whole call rather than falling back to a PRNG. Above `ULONG_MAX` that cast narrowed silently - a request for exactly 2^32 bytes asked the OS for **zero** - and success for the short request was returned as success for the whole buffer, leaving untouched bytes to be read as fresh entropy.
 - The chunk planner itself is exercised, not just grepped: 0, 1, limit-1, limit, limit+1 and 2*limit+1 against a reduced artificial limit, plus a whole plan walked to check it covers the buffer with no gap and no overlap. A reduced limit is what makes those boundaries testable without allocating gigabytes or constructing a pointer outside a real object.
 
 Note on the two Windows rows: neither is a runtime result. This host has never run a Windows binary. What it has is `./nob cross`, which compiles both Windows targets, and these source contracts. Both defects stay open for native verification.
@@ -1727,7 +1729,7 @@ For each module section registered in the test, it must carry:
 
 A section that is legitimately exempt from *structures* or *an example* declares that **in the test, in code, with a reason**. A gate that cannot be argued with is a gate people route around; an exemption that has to be written down is one that has to survive being written down.
 
-Failure tip: the section and the missing element are named. This is `docs/DOCUMENTING.md` section 3 turned from advice into a gate.
+Failure tip: the section and the missing element are named. This is `DOCUMENTING.md` section 3 turned from advice into a gate.
 
 ### `tests/test_docs_manual_claims` - every factual claim the new chapters make is true
 
@@ -1751,7 +1753,7 @@ Sub-checks:
 - **Manual -> headers:** the manual does not document a function that does not exist. This is the worse direction - the reader writes the call and the *linker* tells them, which is the moment they stop trusting the manual. Two were live: `proven_sysio_flush`, deleted while the manual went on declaring it as public API in the present tense; and `proven_pool_free`, which never existed at all (the real symbol is a static `proven_pool_free_trait`, and freeing a pool slot goes through the allocator trait).
 - Writing a name as a **call** - `proven_x(...)` - is what counts as claiming it exists. A family wildcard (`proven_fs_*`) is not a claim, and a past-tense historical note about a deleted function is not one either.
 
-Failure tip: the name is printed. It is either a function you added without documenting, or one the manual promises and the linker will refuse. See `docs/DOCUMENTING.md`.
+Failure tip: the name is printed. It is either a function you added without documenting, or one the manual promises and the linker will refuse. See `DOCUMENTING.md`.
 
 ### `tests/test_docs_manual_usage` - every public function is shown in working code
 
@@ -1795,7 +1797,7 @@ Intent: verify `PROVEN_VERSION_STRING` - the source of truth - is `proven_c_lib-
 
 `CHECKLIST.md` has always required these to be updated together, and nothing checked: `version.h` once sat five releases behind the CHANGELOG while the README claimed a third value that matched neither. That is not cosmetic - it is the number a downstream project pins, the number a bug report quotes, and the number that decides whether a fix is in the copy someone is holding.
 
-Failure tip: bump the version in every place CHECKLIST.md lists.
+Failure tip: bump the version in every place the test names.
 
 ### `tests/test_docs_alias_completeness` - alias layer completeness
 
@@ -1877,7 +1879,7 @@ Intent: verify `proven_u8str_view_find_last` against a memcmp-at-every-position 
 Sub-checks:
 
 - 120,000 fixed-seed cases: dense 1-4 symbol alphabets, single-byte runs, the periodic `"aab"` haystack and arbitrary bytes; needles of 1, 64 and 65 bytes (the path boundaries), 65-214 bytes (the reverse Two-Way range) and random lengths; needles copied from the haystack so matches occur. The share of cases with a match is printed and must exceed a quarter.
-- Planted defects each failed it before it was trusted: unreversed Shift-Or masks, skipping a whole needle past a match, a 65-byte needle sent to Shift-Or (RFC-0003), and for B-024 an inverted Two-Way periodicity flag, a Two-Way result off by one, and an anchored scan that stops at its first failed candidate.
+- Planted defects each failed it before it was trusted: unreversed Shift-Or masks, skipping a whole needle past a match, a 65-byte needle sent to Shift-Or (RFC-0005), and for B-024 an inverted Two-Way periodicity flag, a Two-Way result off by one, and an anchored scan that stops at its first failed candidate.
 
 Failure tip: inspect `proven_u8str_view_find_last`. The printed needle length and shape name the path: 1 byte scan; 2-64 on shapes 0-2 backward Shift-Or, on shape 3 the anchored scan; 65+ on shapes 0-2 reverse Two-Way.
 
@@ -2063,7 +2065,7 @@ Benchmarks are not correctness gates. A timing regression is a signal to investi
 
 Intent: time the hashes (FNV-1a, CRC-32, SipHash-2-4, SHA-256), the encoders (hex, Base64), and the two random generators (xoshiro256\*\*, ChaCha20) over a fixed buffer, folding each output into a checksum so the work is not optimised away.
 
-Failure tip: if a checksum drifts the backend changed behaviour; if a timing regresses, inspect the module named by the backend label. See `docs/primitives-benchmark.md`.
+Failure tip: if a checksum drifts the backend changed behaviour; if a timing regresses, inspect the module named by the backend label. See `primitives-benchmark.md`.
 
 ### `tests/test_bench_float_parse_paths` - float parse path benchmark
 
@@ -2079,7 +2081,7 @@ Intent: time parsing and formatting against `strtod`/`snprintf` on fixed-seed co
 - Format: shortest (timed against `%.17g`), `%f` with 6 digits, `%e` with 16, on normal-magnitude and uniform-bit-pattern corpora; `%f`/`%e` bytes must equal `snprintf`'s and shortest must round-trip. Every call's result is checked and the buffer cleared first - the first draft scored a failed call by the previous call's output.
 - Rows in the shared benchmark format (`tests/proven_bench.h`) plus a proven/host ratio line per case.
 
-Failure tip: any mismatch fails the run and is a correctness defect in `src/proven/float_*.c`; timing is recorded, not judged (`docs/benchmarks/`).
+Failure tip: any mismatch fails the run and is a correctness defect in `src/proven/float_*.c`; timing is recorded, not judged (the maintainers' benchmark records).
 
 ### `tests/test_bench_job` - job system idle cost and latency
 
@@ -2089,7 +2091,7 @@ Intent: record the job system's idle cost and wake latency (B-038) in the shared
 - Median and p99 submit-to-start latency: every worker parked, a 64-job burst, and saturated by four producers; saturated four-producer throughput.
 - Ten thousand no-op jobs are counted; a lost job fails the run.
 
-Failure tip: timings are compared with the budget in `docs/benchmarks/README.md`, not asserted; a lost job is a defect in `src/proven/job.c`.
+Failure tip: timings are compared with the budget in the maintainers' benchmark records, not asserted; a lost job is a defect in `src/proven/job.c`.
 
 ### `tests/test_bench_float_parse` - float parse benchmark
 
@@ -2205,7 +2207,7 @@ Failure tip: inspect `include/proven/float_parse.h`, `src/proven/float_parse.c`,
 
 ### 38b. `tests/test_unit_float_rfc_0001_cases` - RFC-0001 parse audit
 
-Intent: verify the decimal-to-binary64 rewrite still satisfies the explicit named cases from RFC-0001 (the RFC itself is maintainer-local `docs/internal/` (kept outside the published repository); the cases it names are reproduced in the test).
+Intent: verify the decimal-to-binary64 rewrite still satisfies the explicit named cases from RFC-0001 (the RFC itself is a maintainers' record, not in the published repository; the cases it names are reproduced in the test).
 
 Sub-checks:
 

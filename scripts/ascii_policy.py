@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The English-ASCII policy for public text (AGENTS.md; docs/BACKLOG.md B-036).
+"""The English-ASCII policy for public text (AGENTS.md; B-036).
 
 Public English documentation and every source comment are English ASCII. Korean text is allowed
 where it is the point - the Korean edition, links to it, glossary pairs, tests that hold Korean

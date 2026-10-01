@@ -6,8 +6,7 @@
 #include <string.h>
 
 /*
- * The float engine against the host C library - speed and accuracy in one run (docs/BACKLOG.md
- * B-037). docs/float-correctness-and-performance.md section 3 and the README publish these
+ * The float engine against the host C library - speed and accuracy in one run (B-037). docs/float-correctness-and-performance.md section 3 and the README publish these
  * comparisons; the harness that produced them lived outside the repository, so the headline had
  * no checked-in source. This is that source, in the shared row format (tests/proven_bench.h).
  *

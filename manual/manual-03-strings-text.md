@@ -253,7 +253,7 @@ It loses the text after the last separator, and that is wrong on the *common* ca
 gives two fields, `"a"` gives none, `""` gives none. Getting it right means hoisting the last
 field out of the loop, which is exactly the step that gets skipped under a deadline. The
 alternative callers actually reached for - one owned string per field - measured 3.4x slower
-and one allocation per field (RFC-0002 section 2.2).
+and one allocation per field (RFC-0004 section 2.2).
 
 So the view vocabulary now has the rest of the words, all pure functions over views with no
 allocation. Two rules hold for every one of them. **An ill-formed view** - `ptr == NULL` with

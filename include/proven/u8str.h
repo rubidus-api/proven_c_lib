@@ -47,7 +47,7 @@ typedef struct {
  *          library can report: it corrupts the allocator's state, and the damage surfaces
  *          later, somewhere else. Keep a string and its allocator together in your own code.
  *          (Storing the allocator in every string was rejected - it doubles the struct and has
- *          no meaning for a borrowed string; see docs/BACKLOG.md B-023.)
+ *          no meaning for a borrowed string; see B-023.)
  */
 typedef struct {
     proven_buf_t internal;
@@ -183,7 +183,7 @@ typedef struct {
 [[nodiscard]] proven_u8str_view_t proven_u8str_view_slice(proven_u8str_view_t str, proven_size_t index, proven_size_t len);
 
 // -------------------------------------------------------------
-// The view vocabulary (RFC-0003): order, trim, reverse search, split, well-formedness.
+// The view vocabulary (RFC-0005): order, trim, reverse search, split, well-formedness.
 //
 // Every function below is a pure function of its arguments: no allocation, no hidden state,
 // freestanding-available. One rule governs all of them: an ILL-FORMED view - ptr == NULL with
@@ -247,14 +247,14 @@ typedef struct {
  *
  * No end limit parameter: search a prefix by slicing first.
  *
- * @note Cost. The mirror of proven_u8str_view_find (docs/BACKLOG.md B-024): a one-byte needle
+ * @note Cost. The mirror of proven_u8str_view_find (B-024): a one-byte needle
  *       is a backward word-at-a-time scan; otherwise, on ordinary input, the rarest needle byte
  *       is found from the end and the needle verified around it, and on a low-entropy haystack
  *       (the same sample find takes) a linear algorithm runs instead - backward Shift-Or up to
  *       64 bytes, a reverse Two-Way beyond. Like find, the anchored path is O(n*m) in the worst
  *       case and the fallbacks are O(n). The backward scan is portable rather than libc's
  *       memchr, so on ordinary text find_last is a few times slower than find
- *       (docs/b024-find-last-benchmark.c).
+ *       (b024-find-last-benchmark.c).
  */
 [[nodiscard]] proven_size_t proven_u8str_view_find_last(proven_u8str_view_t haystack, proven_u8str_view_t needle);
 

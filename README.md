@@ -370,7 +370,7 @@ and Luca Sas's ACCU 2021 talk **Modern C and What We Can Learn From It**
 ([video](https://www.youtube.com/watch?v=QpAhX-gsHMs) *
 [slides](https://accu.org/conf-docs/PDFs_2021/luca_sass_modern_c_and_what_we_can_learn_from_it.pdf))
 are the best short introductions to this style. This library was read against that talk in
-[`docs/RFC-0002`](docs/RFC-0002-view-vocabulary-and-splitting.md) - a useful exercise, because the
+`RFC-0004` - a useful exercise, because the
 result was mostly a list of things already done and one genuine gap.
 
 ---
@@ -641,7 +641,7 @@ How far this is checked, stated plainly:
 - Large-scale: 2,560,000,000 random `binary64` values, zero mismatches (this sweep
   found and fixed one real formatting defect - see the doc).
 - Speed vs glibc on one x86-64 machine (`tests/test_bench_float_host.c`, raw rows in
-  `docs/benchmarks/`): parsing faster at every length measured - ~1.7x on short numbers, ~1.3x
+  the maintainers' benchmark records): parsing faster at every length measured - ~1.7x on short numbers, ~1.3x
   at 16-17 digits, ~1.15x at 25; shortest formatting ~3.7x faster than `%.17g`, and `%f`/`%e`
   faster at every magnitude measured.
 
@@ -715,11 +715,14 @@ What you accept, and should not expect:
   `scripts/build-site.sh`. The Markdown is the source; everything under `docs/en` and
   `docs/ko` is generated and should never be edited by hand.
 - Float correctness and performance: `docs/float-correctness-and-performance.md`
-- Case study, language toolchain: `docs/case-study-lowent.md`
-- Primitive throughput (hash/encode/random): `docs/primitives-benchmark.md`
+- Primitive throughput (hash/encode/random): `./nob bench-float` runs `tests/test_bench_primitives.c`
 - Test matrix: `TEST.md`
 - Changelog: `CHANGELOG.md`
-- Contributor checklist: `CHECKLIST.md`
+
+Labels such as `RFC-0007` or `B-043`, and bare file names such as `b024-find-last-benchmark.c` or
+`2026-09-30-x86_64-linux.txt`, refer to the maintainers' design records, backlog, benchmark records
+and measurement programs, which are not part of the published repository. The programs that back
+every published number - the `tests/test_bench_*.c` benchmarks - are.
 
 ## Status
 

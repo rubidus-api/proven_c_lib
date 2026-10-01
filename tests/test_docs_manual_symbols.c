@@ -25,7 +25,7 @@
  *           manual described it as a callable function for as long as the manual has existed.
  *
  * So this test parses the public headers, parses manual/, and requires the two to agree. It is
- * the mechanical half of the documentation process in docs/DOCUMENTING.md; the half a human has
+ * the mechanical half of the documentation process in DOCUMENTING.md; the half a human has
  * to do is judgement about depth, and no test can check that.
  *
  * What counts as "the manual names it": the symbol appears inside a `backtick span` or a fenced

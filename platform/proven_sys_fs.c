@@ -438,7 +438,7 @@ proven_sys_fs_rename_result_t proven_sys_fs_rename_checked(const char *src, cons
      * reader holds open with delete sharing - as proven_fs_open does - and the reader keeps
      * the old bytes, which is what POSIX rename does. MoveFileExW refuses that case outright
      * (measured on Windows 11, 2026-09-11), so without this an atomic write failed whenever
-     * anyone had the file open. Owner's decision: RFC-0006 Decision 2, option (b).
+     * anyone had the file open. Owner's decision: RFC-0008 Decision 2, option (b).
      *
      * Older Windows, and file systems that lack the semantics (FAT, exFAT, many network
      * shares), answer "unsupported" to it - and only then is MoveFileExW tried. Any other

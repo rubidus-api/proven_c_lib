@@ -1,5 +1,5 @@
 /*
- * RFC-0006 H-002: a staging file must never exist, even briefly, in a mode that lets
+ * RFC-0008 H-002: a staging file must never exist, even briefly, in a mode that lets
  * another local user open it.
  *
  * proven_fs_write_file_atomic writes the new contents to a sibling ".pvtmpNN" file and
@@ -30,7 +30,7 @@
 #if defined(_WIN32) || defined(_WIN64)
 
 int main(void) {
-    PROVEN_TEST_SUITE("private staging permissions (RFC-0006 H-002)",
+    PROVEN_TEST_SUITE("private staging permissions (RFC-0008 H-002)",
         "POSIX creation modes are the subject; Windows uses ACLs and is a separate target result.",
         "Nothing to do here. The Windows permission story needs a native test, not this one.");
     PROVEN_TEST_INFO("SKIP: POSIX-only test. Windows confidentiality depends on ACLs, which this does not model.");
@@ -152,7 +152,7 @@ static bool modes_are_honoured(void) {
 }
 
 int main(void) {
-    PROVEN_TEST_SUITE("private staging permissions (RFC-0006 H-002)",
+    PROVEN_TEST_SUITE("private staging permissions (RFC-0008 H-002)",
         "A file that is about to hold private bytes must be CREATED private. Narrowing it later leaves a window, and a descriptor opened in that window survives the narrowing.",
         "The mode reported is the one the file was born with. If it carries group or other bits, the creating call asked for the default mode instead of the restrictive one.");
 
@@ -193,7 +193,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(staged != 07777u, "the staging file must have been observed",
             "No .pvtmp file was created through open(). The staging strategy changed; update this test with it.");
         PROVEN_TEST_ASSERT((staged & 077u) == 0u, "the staging file must be created without group or other access",
-            "This is the defect RFC-0006 H-002 describes. The creating call must pass a restrictive mode, not chmod afterwards.");
+            "This is the defect RFC-0008 H-002 describes. The creating call must pass a restrictive mode, not chmod afterwards.");
         PROVEN_TEST_ASSERT(mode_of(target) == 0600u, "the published file keeps the target's own mode",
             "Restrictive staging must not change what the finished file looks like.");
     }

@@ -967,7 +967,7 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | `strlen` | `view.size` | 길이가 이미 거기 있습니다. 아무것도 스캔하지 않습니다. [챕터 3](manual-03-strings-text-ko.md) |
 | 동등 비교용 `strcmp` | `proven_u8str_view_eq` | 중간에 NUL이 박힌 텍스트에서도 동작하고, 끝을 넘어가지 않습니다. [챕터 3](manual-03-strings-text-ko.md) |
 | `strstr` | `proven_u8str_view_find` | 인덱스 또는 `PROVEN_INDEX_NOT_FOUND`를 반환하며, 탐색이 단순 무식하지 않습니다. [챕터 3](manual-03-strings-text-ko.md) |
-| `strtok` | *(아직 대응물 없음)* | `strtok`은 입력을 변경하고 중첩해서 쓸 수 없습니다. view 기반 분할기가 `docs/RFC-0002`에 설계되어 있습니다. |
+| `strtok` | *(아직 대응물 없음)* | `strtok`은 입력을 변경하고 중첩해서 쓸 수 없습니다. view 기반 분할기가 `RFC-0004`에 설계되어 있습니다. |
 | `printf` | `proven_println("{}", PROVEN_ARG(x))` | 타입이 포맷 문자열이 아니라 인자에서 옵니다. [챕터 8](manual-08-fmt-scan-ko.md) |
 | `sprintf` | `proven_u8str_append_fmt` | 크기가 정해진 목적지에 쓰고, 그것을 넘기기를 거부합니다. [챕터 8](manual-08-fmt-scan-ko.md) |
 | `sscanf` | `proven_scan_*`, `proven_scan_fmt` | 어느 필드가 실패했고 커서가 어디서 멈췄는지 알려 줍니다. [챕터 8](manual-08-fmt-scan-ko.md) |

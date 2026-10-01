@@ -348,7 +348,7 @@ Luca Sas의 ACCU 2021 발표 **Modern C and What We Can Learn From It**
 ([영상](https://www.youtube.com/watch?v=QpAhX-gsHMs) ·
 [슬라이드](https://accu.org/conf-docs/PDFs_2021/luca_sass_modern_c_and_what_we_can_learn_from_it.pdf))이
 이 스타일에 대한 가장 좋은 짧은 입문입니다. 이 라이브러리를 그 발표에 비추어 읽은 결과가
-[`docs/RFC-0002`](docs/RFC-0002-view-vocabulary-and-splitting.md)입니다 — 해 볼 만한 작업이었습니다. 결과가
+`RFC-0004`입니다 — 해 볼 만한 작업이었습니다. 결과가
 대체로 "이미 하고 있는 것들의 목록"과 진짜 빈틈 하나였기 때문입니다.
 
 ---
@@ -612,7 +612,7 @@ proven_float_format_f64_policy(buf, sizeof buf, 0.1,
 - 대규모: 무작위 `binary64` 값 2,560,000,000개, 0 불일치(이 검증이 실제 포매팅
   결함 1건을 찾아 고쳤습니다 — 문서 참고).
 - glibc 대비 속도(x86-64 머신 한 대, `tests/test_bench_float_host.c`, 원본 결과는
-  `docs/benchmarks/`): 파싱은 측정한 모든 길이에서 더 빠릅니다 - 짧은 숫자 ~1.7배, 16~17자리
+  the maintainers' benchmark records): 파싱은 측정한 모든 길이에서 더 빠릅니다 - 짧은 숫자 ~1.7배, 16~17자리
   ~1.3배, 25자리 ~1.15배. shortest 포매팅은 `%.17g`보다 ~3.7배 빠르고, `%f`/`%e`는 측정한 모든
   크기에서 더 빠릅니다.
 
@@ -685,11 +685,14 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 - 웹·PDF 판: `docs/en/`, `docs/ko/`. 위의 마크다운에서 `scripts/build-site.sh`가 생성합니다.
   정본은 마크다운이며, `docs/en`과 `docs/ko` 아래는 전부 생성물이므로 직접 고치지 않습니다.
 - 부동소수점 정확성과 성능: `docs/float-correctness-and-performance.md`
-- 사례 연구, 언어 툴체인: `docs/case-study-lowent.md`
-- 기본 연산 처리량(해시/인코딩/난수): `docs/primitives-benchmark.md`
+- 기본 연산 처리량(해시/인코딩/난수): `./nob bench-float`가 `tests/test_bench_primitives.c`를 실행합니다
 - 테스트 매트릭스: `TEST.md`
 - 변경 이력: `CHANGELOG.md`
-- 기여자 체크리스트: `CHECKLIST.md`
+
+`RFC-0007`이나 `B-043` 같은 라벨, 그리고 `b024-find-last-benchmark.c`나 `2026-09-30-x86_64-linux.txt`
+같은 경로 없는 파일 이름은 관리자의 설계 기록, 백로그, 벤치마크 기록, 측정 프로그램을 가리키며, 이것들은
+공개 저장소에 들어 있지 않습니다. 공개된 모든 수치의 근거인 프로그램 - `tests/test_bench_*.c` 벤치마크 -
+는 들어 있습니다.
 
 ## 상태
 

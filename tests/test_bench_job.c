@@ -9,7 +9,7 @@
 #endif
 
 /*
- * The job system's idle and latency behaviour, measured (docs/BACKLOG.md B-038).
+ * The job system's idle and latency behaviour, measured (B-038).
  *
  * Idle workers park on a semaphore instead of spinning. That claim was backed by one five-run
  * probe on one host; this benchmark is the checked-in version, in the row format every benchmark
@@ -21,7 +21,7 @@
  *   - saturated multi-producer submission throughput.
  *
  * Timings are this host's. The latency budget they are held to is written down in
- * docs/benchmarks/README.md; a run that misses it is a finding, not a test failure - timing on a
+ * the maintainers' benchmark records; a run that misses it is a finding, not a test failure - timing on a
  * shared machine is not a pass/fail signal. The run fails only if a job is lost.
  */
 
@@ -144,7 +144,7 @@ static void saturated(proven_job_sys_t *sys, int per_producer, double *p50, doub
 int main(void) {
     PROVEN_TEST_SUITE("job system idle cost and latency",
         "Idle CPU for 1, 2, 8 and 32 parked workers; median and p99 submit-to-start latency when idle, under a burst and saturated; saturated four-producer throughput - five rounds each, in the shared benchmark row format.",
-        "Timings are reported, not judged: compare against docs/benchmarks/README.md. The run fails only if a submitted job is lost.");
+        "Timings are reported, not judged: compare against the maintainers' benchmark records. The run fails only if a submitted job is lost.");
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("idle CPU", "Process CPU time over 250 ms with every worker parked.", "");

@@ -993,7 +993,7 @@ the trade.
 | `strlen` | `view.size` | The length is already there; nothing scans. [Ch 3](manual-03-strings-text.md) |
 | `strcmp` for equality | `proven_u8str_view_eq` | Works on text with embedded NULs, and does not walk past the end. [Ch 3](manual-03-strings-text.md) |
 | `strstr` | `proven_u8str_view_find` | Returns an index or `PROVEN_INDEX_NOT_FOUND`; the search is not naive. [Ch 3](manual-03-strings-text.md) |
-| `strtok` | *(no equivalent yet)* | `strtok` mutates its input and cannot be nested. A view-based splitter is designed in `docs/RFC-0002`. |
+| `strtok` | *(no equivalent yet)* | `strtok` mutates its input and cannot be nested. A view-based splitter is designed in `RFC-0004`. |
 | `printf` | `proven_println("{}", PROVEN_ARG(x))` | Types come from the arguments, not from the format string. [Ch 8](manual-08-fmt-scan.md) |
 | `sprintf` | `proven_u8str_append_fmt` | Writes into a sized destination and refuses to overrun it. [Ch 8](manual-08-fmt-scan.md) |
 | `sscanf` | `proven_scan_*`, `proven_scan_fmt` | Reports which field failed and where the cursor stopped. [Ch 8](manual-08-fmt-scan.md) |

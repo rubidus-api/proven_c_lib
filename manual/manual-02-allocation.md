@@ -1099,7 +1099,7 @@ string through the heap, freeing a block twice, or growing a block with an old s
 allocated with does not fail where it happens. The heap is handed memory it never gave out, its
 bookkeeping is corrupted, and the crash comes later, in code that did nothing wrong. Storing the
 allocator in every owner would double the size of every string for a check most programs never
-need, so the library does not (docs/BACKLOG.md B-023). The check belongs on the other side: in
+need, so the library does not (B-023). The check belongs on the other side: in
 the allocator, which can know exactly which blocks are its own.
 
 ### What `alloc_check.h` does

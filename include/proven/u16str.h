@@ -33,7 +33,7 @@ typedef struct {
  *          library can report: it corrupts the allocator's state, and the damage surfaces
  *          later, somewhere else. Keep a string and its allocator together in your own code.
  *          (Storing the allocator in every string was rejected - it doubles the struct and has
- *          no meaning for a borrowed string; see docs/BACKLOG.md B-023.)
+ *          no meaning for a borrowed string; see B-023.)
  */
 typedef struct {
     proven_buf_t internal; /**< Capacity and length are tracked in bytes */

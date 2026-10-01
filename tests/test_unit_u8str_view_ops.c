@@ -3,8 +3,8 @@
 #include <string.h>
 
 /*
- * Written from docs/RFC-0003 section 3.2, section 3.3, section 3.5 and tables section 4.2, section 4.3, section 4.5, before the
- * implementations (docs/TESTING.md section 5.1). Every empty result is {NULL, 0} by the RFC's single
+ * Written from RFC-0005 section 3.2, section 3.3, section 3.5 and tables section 4.2, section 4.3, section 4.5, before the
+ * implementations (TESTING.md section 5.1). Every empty result is {NULL, 0} by the RFC's single
  * spelling of empty, so these tests compare sizes and contents, never pointers.
  */
 
@@ -23,11 +23,11 @@ static bool empty(proven_u8str_view_t v) { return v.size == 0; }
 
 int main(void) {
     PROVEN_TEST_SUITE("view trim, affixes, reverse search and well-formedness",
-        "RFC-0003 tables 4.2, 4.3 and 4.5, row for row: six-byte ASCII trim, prefix/suffix removal that leaves the view unchanged when absent, last-occurrence search that counts overlaps and returns size for an empty needle, and the one false case of is_well_formed.",
+        "RFC-0005 tables 4.2, 4.3 and 4.5, row for row: six-byte ASCII trim, prefix/suffix removal that leaves the view unchanged when absent, last-occurrence search that counts overlaps and returns size for an empty needle, and the one false case of is_well_formed.",
         "Inspect the view vocabulary at the end of src/proven/u8str.c. Each failing row is named.");
 
     // ---------------------------------------------------------------
-    PROVEN_TEST_SECTION("RFC-0003 table 4.2: trim and affix removal", "", "");
+    PROVEN_TEST_SECTION("RFC-0005 table 4.2: trim and affix removal", "", "");
     // ---------------------------------------------------------------
     PROVEN_TEST_ASSERT(is(proven_u8str_view_trim(z("  a  ")), "a"), "trim both ends", "");
     PROVEN_TEST_ASSERT(is(proven_u8str_view_trim(z("a")), "a"), "nothing to trim", "");
@@ -54,7 +54,7 @@ int main(void) {
     PROVEN_TEST_ASSERT(empty(proven_u8str_view_remove_prefix(b(NULL, 4), z("a"))), "ill-formed input: empty", "");
 
     // ---------------------------------------------------------------
-    PROVEN_TEST_SECTION("RFC-0003 table 4.3: find_last, and contains", "", "");
+    PROVEN_TEST_SECTION("RFC-0005 table 4.3: find_last, and contains", "", "");
     // ---------------------------------------------------------------
     {
         const proven_size_t NF = PROVEN_INDEX_NOT_FOUND;
@@ -87,7 +87,7 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
-    PROVEN_TEST_SECTION("RFC-0003 table 4.5: is_well_formed",
+    PROVEN_TEST_SECTION("RFC-0005 table 4.5: is_well_formed",
         "True for every view except {NULL, n > 0} - including {NULL, 0}, which is why it cannot end a loop.", "");
     // ---------------------------------------------------------------
     PROVEN_TEST_ASSERT(proven_u8str_view_is_well_formed(z("abc")), "a real view", "");

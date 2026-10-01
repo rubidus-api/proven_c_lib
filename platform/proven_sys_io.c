@@ -32,7 +32,7 @@
  * Removing it changes no behaviour: forcing every branch into the POSIX fallback
  * and running the I/O suite passed 12 of 12, byte-identical.
  *
- * See docs/RFC-0001-streams-and-io.md.
+ * See RFC-0003.
  */
 
 #if defined(_WIN32) || defined(_WIN64)

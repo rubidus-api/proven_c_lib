@@ -2,7 +2,7 @@
 #define PROVEN_BENCH_H
 
 /*
- * One format for every benchmark row (docs/BACKLOG.md B-037).
+ * One format for every benchmark row (B-037).
  *
  * A single timing on one host cannot tell an improvement from noise, so every number this
  * repository publishes comes from a row that carries its own evidence: the samples it was taken

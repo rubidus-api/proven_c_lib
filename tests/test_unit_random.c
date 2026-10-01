@@ -4,7 +4,7 @@
 
 /*
  * Written from the contract in include/proven/random.h before the OS call was wired up
- * (docs/TESTING.md section 5.1). You cannot write a known-answer test for randomness - the whole
+ * (TESTING.md section 5.1). You cannot write a known-answer test for randomness - the whole
  * point is that the answer is not known - so the contract is stated as the properties that
  * distinguish a real CSPRNG from the ways it is usually broken:
  *

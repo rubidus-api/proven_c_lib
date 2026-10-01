@@ -1848,7 +1848,7 @@ int main(void) {
 ```
 
 The console path cannot be shown by a program that also runs on Linux. It was checked on
-Windows 11 by `docs/b039-console-check.c`, which makes its own console in code page 949, writes
+Windows 11 by `b039-console-check.c`, which makes its own console in code page 949, writes
 through each sysio path and reads the screen buffer back, and places key events in the console's
 input buffer to read them through the line readers and the scanner.
 

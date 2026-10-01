@@ -7,7 +7,7 @@
 
 /* The special-value spellings ("NaN", "-Inf", ...) are short literals; their length is counted
  * here rather than with strlen, which is not among the runtime services a freestanding build
- * requires (memcpy, memmove, memset, memcmp - docs/BACKLOG.md B-034). */
+ * requires (memcpy, memmove, memset, memcmp - B-034). */
 static proven_size_t float_fmt_cstr_len(const char *s) {
     proven_size_t n = 0;
     while (s[n] != '\0') ++n;

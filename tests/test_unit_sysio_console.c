@@ -4,7 +4,7 @@
 #include <string.h>
 
 /*
- * The Windows console edge (docs/BACKLOG.md B-039), run against a FAKE console so that it runs
+ * The Windows console edge (B-039), run against a FAKE console so that it runs
  * on every host. A console takes and gives UTF-16 code units; the program writes and reads
  * UTF-8 in pieces that ignore character boundaries. This test drives the conversion in
  * src/proven/proven_internal_console.h through every way those pieces can fall:
@@ -16,7 +16,7 @@
  *
  * What the real console does - that WriteConsoleW shows Hangul on a code-page-949 console, and
  * that ReadConsoleW returns what a person typed - only a Windows run can say; see
- * docs/b039-console-check.c.
+ * b039-console-check.c.
  */
 
 typedef struct {

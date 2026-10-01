@@ -158,7 +158,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(s != NULL, "CHANGELOG.md must be readable", "");
         if (s) {
             /* The newest RELEASED entry is the first "## [" heading that is not
-             * `## [Unreleased]`. docs/operations/README.md asks for an Unreleased section
+             * `## [Unreleased]`. The maintainers' operations notes ask for an Unreleased section
              * while work is in flight, and this check used to read that section as the
              * newest release and fail - so the two rules could not both be obeyed, and the
              * one that gave way was the changelog policy. Skipping it here keeps the check
