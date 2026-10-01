@@ -63,6 +63,11 @@ written; their tags still exist.
 
 ### Changed
 
+- **A clean `./nob build` takes 14 s instead of 36 on a 16-CPU host** (RFC-0009 P-108). The test
+  executables were compiled and linked one at a time - 20 of the 31 seconds a clean build spent
+  outside the tests themselves. They are now linked in parallel, up to one per CPU, and then run
+  one at a time in registry order as before, with a link failure still reported under the test's
+  name. Running the tests in parallel needs per-test scratch files first and is not done.
 - **The seven `*_internal` / `*_impl` functions in public headers are marked MACRO SUPPORT and are
   not a stable interface** (RFC-0009 X-004): `proven_u8str_fmt_internal`, `proven_scan_fmt_internal`,
   `proven_scan_fmt_internal_view`, `proven_fmt_to_writer_impl`, `proven_sysio_scanner_scan_impl`,

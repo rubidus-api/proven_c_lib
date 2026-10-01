@@ -282,8 +282,10 @@ int main(void) {
     require(contains(nob, "Proven_Test_Case"), "nob.c stores structured metadata for each test executable");
     require(contains(nob, "hash_bytes(&current_hash, &objects_hash, sizeof objects_hash);"),
             "a test relinks when a library object's CONTENTS change, not only its whole-second mtime");
-    require(contains(nob, "record_build_state(&link, dep_tmp, dep_path, hash_path, &objects_hash);"),
+    require(contains(nob, "record_build_state(&j->link, j->dep_tmp, j->dep_path, j->hash_path, objects_hash);"),
             "and the recorded link state folds in the same object hash, or every cached build relinks every test");
+    require(contains(nob, "nob_cmd_run_opt(&j->link, (Nob_Cmd_Opt){ .async = &one, .dont_reset = true })"),
+            "test executables are linked in parallel, then run one at a time in registry order (RFC-0009 P-108)");
     require(contains(nob, "[PROVEN][BUILD][BEGIN]"), "nob.c announces the build mode and output directory before platform-specific setup");
     require(contains(nob, "[PROVEN][BUILD][NOTE]"), "nob.c warns when it detects a Windows or MSYS2 runtime that may need extra PATH/toolchain setup");
     require(contains(nob, "[PROVEN][BUILD][PHASE] library compilation start"), "nob.c prints a build-phase banner before source compilation begins");
@@ -316,7 +318,7 @@ int main(void) {
             "objects and tests are built with compiler dependency files");
     require(contains(nob, "depfile_state_hash(&compile, dep_path, &current_hash)"),
             "object cache keys are the exact compile command plus the contents of every file its depfile names");
-    require(contains(nob, "depfile_state_hash(&link, dep_path, &current_hash)"),
+    require(contains(nob, "depfile_state_hash(&j->link, j->dep_path, &current_hash)"),
             "test cache keys are the exact link command plus the contents of every file its depfile names");
     require(contains(nob, "hash_file_contents(&h, deps.items[i])"),
             "cache keys hash dependency contents, not only coarse timestamps");

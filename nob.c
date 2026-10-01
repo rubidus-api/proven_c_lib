@@ -570,6 +570,54 @@ typedef struct {
     const char *failure_hint;
 } Proven_Test_Case;
 
+/* One test's link, for the parallel link pass (RFC-0009 P-108). Strings are heap-owned: the
+ * temp allocator is reset between tests, and these live across the whole pass. */
+typedef struct {
+    const Proven_Test_Case *test;
+    char *exec_path, *exec_tmp, *hash_path, *dep_path, *dep_tmp;
+    Nob_Cmd link;
+    Nob_Proc proc;
+    bool should_link, running, link_failed, install_failed;
+} Test_Link_Job;
+
+static char *heap_sprintf(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+    if (n < 0) return NULL;
+    char *s = malloc((size_t)n + 1);
+    if (!s) return NULL;
+    va_start(ap, fmt);
+    vsnprintf(s, (size_t)n + 1, fmt, ap);
+    va_end(ap);
+    return s;
+}
+
+/* Wait for one link and install its executable, or remember that it failed. */
+static void finish_test_link(Test_Link_Job *j, const uint32_t *objects_hash) {
+    if (!j->running) return;
+    j->running = false;
+    if (!nob_proc_wait(j->proc)) {
+        j->link_failed = true;
+        if (nob_file_exists(j->exec_tmp)) nob_delete_file(j->exec_tmp);
+        if (nob_file_exists(j->dep_tmp)) nob_delete_file(j->dep_tmp);
+        return;
+    }
+    if (!nob_rename(j->exec_tmp, j->exec_path)) {
+        j->install_failed = true;
+        if (nob_file_exists(j->exec_tmp)) nob_delete_file(j->exec_tmp);
+        return;
+    }
+    record_build_state(&j->link, j->dep_tmp, j->dep_path, j->hash_path, objects_hash);
+}
+
+static void free_test_link_job(Test_Link_Job *j) {
+    free(j->exec_path); free(j->exec_tmp); free(j->hash_path); free(j->dep_path); free(j->dep_tmp);
+    nob_cmd_free(j->link);
+}
+
+
 #undef PROVEN_BUILD_TESTS_MANIFEST_INCLUDED
 #define PROVEN_BUILD_TESTS_MANIFEST_CONSUMER 1
 #include "build_tests.inc"
@@ -1495,68 +1543,113 @@ int main(int argc, char **argv)
         if (!hash_file_contents(&objects_hash, obj_files.items[i])) return 1;
     }
     nob_log(NOB_INFO, "[PROVEN][BUILD][PHASE] test link-and-run start test_count=%zu", tests_count);
+
+    /*
+     * Two passes (RFC-0009 P-108). Compiling and linking the tests one at a time was 20 of a
+     * clean build's 31 seconds on a 16-CPU host, so the first pass links every test that needs
+     * it, as many at once as there are CPUs; the second runs them one at a time, in registry
+     * order, exactly as before. Running them in parallel too needs every test to have its own
+     * scratch files (RFC-0009 X-006) and is not done here.
+     */
+    Test_Link_Job *jobs = calloc(tests_count ? tests_count : 1, sizeof *jobs);
+    if (!jobs) { nob_log(NOB_ERROR, "[PROVEN][BUILD][FAIL] stage=allocate-test-jobs"); return 1; }
+    size_t max_links = (size_t)nob_nprocs();
+    if (max_links < 1) max_links = 1;
+    size_t *inflight = calloc(max_links, sizeof *inflight);
+    if (!inflight) { free(jobs); return 1; }
+    size_t inflight_head = 0, inflight_count = 0;
+    bool spawn_failed = false;
+
     for (size_t i = 0; i < tests_count; ++i) {
-        const Proven_Test_Case *test = &tests[i];
-        const char *src_path = nob_temp_sprintf("%s.c", test->path);
-        const char *exec_path = nob_temp_sprintf("%s/%s%s", build_dir, test->path, exe_ext);
+        Test_Link_Job *j = &jobs[i];
+        j->test = &tests[i];
+        j->exec_path = heap_sprintf("%s/%s%s", build_dir, j->test->path, exe_ext);
+        j->exec_tmp = heap_sprintf("%s.tmp", j->exec_path);
+        j->hash_path = heap_sprintf("%s.cmdhash", j->exec_path);
+        j->dep_path = heap_sprintf("%s.d", j->exec_path);
+        j->dep_tmp = heap_sprintf("%s.d.tmp", j->exec_path);
+        const char *src_path = nob_temp_sprintf("%s.c", j->test->path);
 
-        print_proven_test_begin(test);
-
-        const char *hash_path = nob_temp_sprintf("%s.cmdhash", exec_path);
-        const char *exec_tmp = nob_temp_sprintf("%s.tmp", exec_path);
-        const char *dep_path = nob_temp_sprintf("%s.d", exec_path);
-        const char *dep_tmp = nob_temp_sprintf("%s.d.tmp", exec_path);
-
-        Nob_Cmd link = {0};
-        build_test_link_cmd(&link, linker_exe, src_path, obj_files, exec_tmp, dep_tmp, build_mode, user_cflags, user_ldflags, standard_flag, sysroot, target_windows);
+        build_test_link_cmd(&j->link, linker_exe, src_path, obj_files, j->exec_tmp, j->dep_tmp, build_mode, user_cflags, user_ldflags, standard_flag, sysroot, target_windows);
         uint32_t current_hash = 0, old_hash = 0;
-        bool state_known = depfile_state_hash(&link, dep_path, &current_hash);
+        bool state_known = depfile_state_hash(&j->link, j->dep_path, &current_hash);
         hash_bytes(&current_hash, &objects_hash, sizeof objects_hash);
-        bool hash_differs = !state_known || !read_cmdhash(hash_path, &old_hash) || old_hash != current_hash;
-        /* The library objects are inputs too; their contents are not in the hash, their times are. */
+        bool hash_differs = !state_known || !read_cmdhash(j->hash_path, &old_hash) || old_hash != current_hash;
         bool needs_link = false;
-        if (!checked_needs_rebuild(exec_path, obj_files.items, obj_files.count, &needs_link)) {
-            return 1;
+        if (!checked_needs_rebuild(j->exec_path, obj_files.items, obj_files.count, &needs_link)) {
+            spawn_failed = true;
+            break;
         }
-        needs_link = needs_link || !output_file_valid(exec_path, true);
-        bool should_link = needs_link || hash_differs || force_rebuild;
+        needs_link = needs_link || !output_file_valid(j->exec_path, true);
+        j->should_link = needs_link || hash_differs || force_rebuild;
+        if (!j->should_link) continue;
 
-        if (should_link) {
+        if (inflight_count == max_links) {   /* the pool is full: wait for the oldest link */
+            finish_test_link(&jobs[inflight[inflight_head]], &objects_hash);
+            inflight_head = (inflight_head + 1) % max_links;
+            inflight_count--;
+        }
+        Nob_Procs one = {0};
+        if (!nob_cmd_run_opt(&j->link, (Nob_Cmd_Opt){ .async = &one, .dont_reset = true }) || one.count != 1) {
+            j->link_failed = true;   /* reported in registry order below */
+            nob_da_free(one);
+            continue;
+        }
+        j->proc = one.items[0];
+        j->running = true;
+        nob_da_free(one);
+        inflight[(inflight_head + inflight_count) % max_links] = i;
+        inflight_count++;
+    }
+    while (inflight_count > 0) {
+        finish_test_link(&jobs[inflight[inflight_head]], &objects_hash);
+        inflight_head = (inflight_head + 1) % max_links;
+        inflight_count--;
+    }
+    free(inflight);
+
+    int result = spawn_failed ? 1 : 0;
+    for (size_t i = 0; i < tests_count && result == 0; ++i) {
+        Test_Link_Job *j = &jobs[i];
+        if (!j->exec_path) break;
+        const Proven_Test_Case *test = j->test;
+        print_proven_test_begin(test);
+        if (j->should_link) {
             tests_rebuilt += 1;
             nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][REBUILD] path=%s", test->path);
-            if (!nob_cmd_run_sync(link)) {
+            if (j->link_failed) {
                 print_proven_test_fail(test, "link", "The test executable did not link. Read the compiler diagnostics above, then check source/header/API drift.");
-                if (nob_file_exists(exec_tmp)) nob_delete_file(exec_tmp);
-                if (nob_file_exists(dep_tmp)) nob_delete_file(dep_tmp);
-                return 1;
+                result = 1;
+                break;
             }
-            if (!nob_rename(exec_tmp, exec_path)) {
+            if (j->install_failed) {
                 print_proven_test_fail(test, "install", "The linked executable could not be moved into place. Check build-root permissions and stale locked files.");
-                if (nob_file_exists(exec_tmp)) nob_delete_file(exec_tmp);
-                return 1;
+                result = 1;
+                break;
             }
-            record_build_state(&link, dep_tmp, dep_path, hash_path, &objects_hash);
         } else {
             tests_cached += 1;
             nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][CACHED] path=%s", test->path);
         }
-        nob_cmd_free(link);
 
         if (no_run) {
-            nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][BUILT] path=%s exe=%s", test->path, exec_path);
-            nob_temp_reset();
+            nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][BUILT] path=%s exe=%s", test->path, j->exec_path);
             continue;
         }
         cmd.count = 0;
-        nob_cmd_append(&cmd, exec_path);
+        nob_cmd_append(&cmd, j->exec_path);
         nob_log(NOB_INFO, "[PROVEN][BUILD][TEST][RUN] path=%s", test->path);
         if (!nob_cmd_run_sync(cmd)) {
             print_proven_test_fail(test, "run", test->failure_hint);
-            return 1;
+            result = 1;
+            break;
         }
         print_proven_test_pass(test);
-        nob_temp_reset();
     }
+    for (size_t i = 0; i < tests_count; ++i) free_test_link_job(&jobs[i]);
+    free(jobs);
+    nob_temp_reset();
+    if (result != 0) return result;
 
     nob_cmd_free(cmd);
     nob_log(NOB_INFO, "[PROVEN][BUILD][SUMMARY] mode=%s rebuilt_sources=%zu cached_sources=%zu rebuilt_tests=%zu cached_tests=%zu",
