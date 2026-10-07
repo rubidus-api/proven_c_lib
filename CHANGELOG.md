@@ -50,8 +50,8 @@ against `PROVEN_ERR_IO` must compare against the new code; `proven_is_ok` checks
   - `proven_fs_rename`: `PROVEN_ERR_NOT_FOUND` when the source, or the destination's directory,
     is not there (it already reported `PROVEN_ERR_PERMISSION` and `PROVEN_ERR_BUSY`).
 
-  The Windows mappings are written from the documented error codes and have not been run on
-  Windows yet. Regression: `tests/test_regression_fs_refusal_codes`.
+  Regression: `tests/test_regression_fs_refusal_codes`, run on Linux and on Windows 11 (x86-64
+  and i686) with relative paths; drive-root and UNC paths were not exercised there.
 
 ## [0.6.0] - 2026-10-01
 
