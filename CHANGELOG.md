@@ -18,6 +18,41 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+Behaviour change, for a MINOR release: six filesystem calls that answered `PROVEN_ERR_IO` for
+every failure now name the ones a caller can act on. Code that compared one of these cases
+against `PROVEN_ERR_IO` must compare against the new code; `proven_is_ok` checks are unaffected.
+
+### Added
+
+- **`proven_fs_mkdir_all(scratch, path)`: a directory and every missing directory above it.**
+  A level that is already a directory is not an error, so the call can be repeated and two
+  callers can race to create one path. A level that exists and is not a directory stops it with
+  `PROVEN_ERR_EXISTS`; the empty path is `PROVEN_ERR_INVALID_ARG`. Directories created before a
+  failure stay. Alias `xcv_fs_mkdir_all`.
+
+### Changed
+
+- **`proven_fs_mkdir`, `proven_fs_rmdir`, `proven_fs_chmod`, `proven_fs_link`, `proven_fs_lock`
+  and `proven_fs_rename` say which refusal they met.** Each took a yes-or-no answer from the
+  platform layer, so a second `proven_fs_mkdir` of one path was `PROVEN_ERR_IO`, the same code
+  as a failing disk, and a caller creating the directories of a path had to stat after every
+  failure (reported by a downstream project). Now:
+  - `proven_fs_mkdir`: `PROVEN_ERR_EXISTS` when the name is taken (by a directory or anything
+    else), `PROVEN_ERR_NOT_FOUND` when the parent is missing, `PROVEN_ERR_PERMISSION` when the
+    parent refuses it.
+  - `proven_fs_rmdir`: `PROVEN_ERR_NOT_FOUND`, `PROVEN_ERR_PERMISSION`, `PROVEN_ERR_BUSY`. A
+    directory that is not empty stays `PROVEN_ERR_IO`: no code names that case.
+  - `proven_fs_chmod`: `PROVEN_ERR_NOT_FOUND`, `PROVEN_ERR_PERMISSION`.
+  - `proven_fs_link`: `PROVEN_ERR_EXISTS` when the new name is taken, `PROVEN_ERR_NOT_FOUND`,
+    `PROVEN_ERR_PERMISSION`. A link across file systems stays `PROVEN_ERR_IO`.
+  - `proven_fs_lock` with `wait == false`: `PROVEN_ERR_BUSY` when another holder has a
+    conflicting lock.
+  - `proven_fs_rename`: `PROVEN_ERR_NOT_FOUND` when the source, or the destination's directory,
+    is not there (it already reported `PROVEN_ERR_PERMISSION` and `PROVEN_ERR_BUSY`).
+
+  The Windows mappings are written from the documented error codes and have not been run on
+  Windows yet. Regression: `tests/test_regression_fs_refusal_codes`.
+
 ## [0.6.0] - 2026-10-01
 
 A MINOR release: nothing public removed. It carries the whole-library review (RFC-0009): defects

@@ -246,6 +246,7 @@
 #define xcv_fs_lock proven_fs_lock
 #define xcv_fs_lock_type_t proven_fs_lock_type_t
 #define xcv_fs_mkdir proven_fs_mkdir
+#define xcv_fs_mkdir_all proven_fs_mkdir_all
 #define xcv_fs_mode_t proven_fs_mode_t
 #define xcv_fs_open proven_fs_open
 #define xcv_fs_perms_t proven_fs_perms_t

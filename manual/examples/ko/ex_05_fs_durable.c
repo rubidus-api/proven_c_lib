@@ -203,6 +203,24 @@ int main(void) {
     err = proven_fs_mkdir(alloc, dir);
     EXAMPLE_REQUIRE(proven_is_ok(err), "creating a directory must succeed");
 
+    /* 이미 있는 디렉터리를 만들라는 요청은 거절되고, 그 거절이 이유를 말한다:
+     * PROVEN_ERR_EXISTS 다. 부모가 없으면 PROVEN_ERR_NOT_FOUND 다. 부르는 쪽은 디스크를
+     * 다시 들여다보지 않고도 "할 일이 없다" 와 "무언가 잘못됐다" 를 가를 수 있다. */
+    err = proven_fs_mkdir(alloc, dir);
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_EXISTS, "a second mkdir of the same name must say it exists");
+
+    /* proven_fs_mkdir_all 은 경로에서 빠진 단계를 모두 만들고, 이미 디렉터리인 단계는
+     * 오류가 아니다. 그래서 트리 안에 쓰기 전에 그냥 부르면 된다. 길을 막은 *파일* 은
+     * 여전히 PROVEN_ERR_EXISTS 다. */
+    proven_u8str_view_t deep = PROVEN_LIT("proven_example_durable_dir/a/b");
+    err = proven_fs_mkdir_all(alloc, deep);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "creating two missing levels at once must succeed");
+    err = proven_fs_mkdir_all(alloc, deep);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "and asking again must succeed too");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_rmdir(alloc, deep)), "removing the inner level must succeed");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_rmdir(alloc, PROVEN_LIT("proven_example_durable_dir/a"))),
+                    "removing the level above it must succeed");
+
     /* rmdir 은 *빈* 디렉터리만 지운다. 그 거부가 기능이다. 재귀 삭제는 부르는 쪽이
      * 명시적으로 내려야 하는 결정이지, 잘못 들어온 경로 인자 하나가 일으킬 수 있는 일이
      * 아니다. */

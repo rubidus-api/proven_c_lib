@@ -359,6 +359,7 @@ static proven_err_t internal_rename_raw(proven_allocator_t scratch, proven_u8str
         case PROVEN_SYS_FS_RENAME_OK:     return PROVEN_OK;
         case PROVEN_SYS_FS_RENAME_DENIED: return PROVEN_ERR_PERMISSION;
         case PROVEN_SYS_FS_RENAME_BUSY:   return PROVEN_ERR_BUSY;
+        case PROVEN_SYS_FS_RENAME_NOT_FOUND: return PROVEN_ERR_NOT_FOUND;
         default:                          return PROVEN_ERR_IO;
     }
 }
@@ -404,22 +405,84 @@ proven_err_t proven_fs_remove(proven_allocator_t scratch, proven_u8str_view_t pa
     }
 }
 
+/* The platform layer's reason as a public code. One table for the calls below, so that a
+ * reason added to one of them cannot be forgotten in another. */
+static proven_err_t internal_err_from_refusal(proven_sys_fs_open_result_t why) {
+    switch (why) {
+        case PROVEN_SYS_FS_OPEN_OK:        return PROVEN_OK;
+        case PROVEN_SYS_FS_OPEN_NOT_FOUND: return PROVEN_ERR_NOT_FOUND;
+        case PROVEN_SYS_FS_OPEN_DENIED:    return PROVEN_ERR_PERMISSION;
+        case PROVEN_SYS_FS_OPEN_BUSY:      return PROVEN_ERR_BUSY;
+        case PROVEN_SYS_FS_OPEN_EXISTS:    return PROVEN_ERR_EXISTS;
+        default:                           return PROVEN_ERR_IO;
+    }
+}
+
 proven_err_t proven_fs_mkdir(proven_allocator_t scratch, proven_u8str_view_t path) {
     internal_result_cstr_t p_res = internal_view_to_cstr(scratch, path);
     if (!proven_is_ok(p_res.err)) return p_res.err;
-    
-    bool success = proven_sys_fs_mkdir(p_res.value);
+
+    proven_sys_fs_open_result_t why = proven_sys_fs_mkdir_checked(p_res.value);
     internal_cstr_free(scratch, p_res.value);
-    return success ? PROVEN_OK : PROVEN_ERR_IO;
+    return internal_err_from_refusal(why);
+}
+
+/* One level of proven_fs_mkdir_all: PROVEN_OK when `path` is a directory afterwards, whoever
+ * made it. mkdir answers EXISTS for a file of that name too - and the root of a Windows drive
+ * answers PERMISSION - so a failure is settled by asking what is there, not by its code. */
+static proven_err_t internal_mkdir_or_is_dir(proven_allocator_t scratch, proven_u8str_view_t path) {
+    proven_err_t err = proven_fs_mkdir(scratch, path);
+    if (err == PROVEN_OK || err == PROVEN_ERR_NOT_FOUND || err == PROVEN_ERR_NOMEM) return err;
+    proven_fs_stat_t st;
+    if (proven_fs_stat(scratch, path, &st) == PROVEN_OK && st.type == PROVEN_FS_TYPE_DIR) return PROVEN_OK;
+    return err;
+}
+
+static bool internal_is_separator(proven_byte_t c);   /* defined with the path helpers below */
+
+proven_err_t proven_fs_mkdir_all(proven_allocator_t scratch, proven_u8str_view_t path) {
+    if (path.size == 0 || !path.ptr) return PROVEN_ERR_INVALID_ARG;
+
+    /* "a/b/" names the same directory as "a/b"; a path that is only separators is the root. */
+    proven_size_t full = path.size;
+    while (full > 1 && internal_is_separator(path.ptr[full - 1])) --full;
+
+    /*
+     * Upwards first: try the whole path, and while the answer is "the parent is not there",
+     * try the parent. This finds the deepest directory that exists without ever asking about
+     * the levels above it - which matters where those cannot be asked about at all: the
+     * server and share of a UNC path, a drive prefix, a directory the caller may pass through
+     * but not read.
+     */
+    proven_size_t end = full;
+    for (;;) {
+        proven_err_t err = internal_mkdir_or_is_dir(scratch, (proven_u8str_view_t){ .ptr = path.ptr, .size = end });
+        if (err == PROVEN_OK) break;
+        if (err != PROVEN_ERR_NOT_FOUND) return err;
+        proven_size_t cut = end;
+        while (cut > 0 && !internal_is_separator(path.ptr[cut - 1])) --cut;   /* the last name */
+        while (cut > 0 && internal_is_separator(path.ptr[cut - 1])) --cut;    /* its separators */
+        if (cut == 0) return PROVEN_ERR_NOT_FOUND;   /* no parent left to try */
+        end = cut;
+    }
+
+    /* Then downwards, one name at a time, from that directory to the path asked for. */
+    while (end < full) {
+        while (end < full && internal_is_separator(path.ptr[end])) ++end;
+        while (end < full && !internal_is_separator(path.ptr[end])) ++end;
+        proven_err_t err = internal_mkdir_or_is_dir(scratch, (proven_u8str_view_t){ .ptr = path.ptr, .size = end });
+        if (err != PROVEN_OK) return err;
+    }
+    return PROVEN_OK;
 }
 
 proven_err_t proven_fs_rmdir(proven_allocator_t scratch, proven_u8str_view_t path) {
     internal_result_cstr_t p_res = internal_view_to_cstr(scratch, path);
     if (!proven_is_ok(p_res.err)) return p_res.err;
-    
-    bool success = proven_sys_fs_rmdir(p_res.value);
+
+    proven_sys_fs_open_result_t why = proven_sys_fs_rmdir_checked(p_res.value);
     internal_cstr_free(scratch, p_res.value);
-    return success ? PROVEN_OK : PROVEN_ERR_IO;
+    return internal_err_from_refusal(why);
 }
 
 proven_err_t proven_fs_copy(proven_allocator_t temp_alloc, proven_u8str_view_t src, proven_u8str_view_t dest) {
@@ -1408,9 +1471,9 @@ proven_err_t proven_fs_chmod(proven_allocator_t scratch, proven_u8str_view_t pat
     internal_result_cstr_t p_res = internal_view_to_cstr(scratch, path);
     if (!proven_is_ok(p_res.err)) return p_res.err;
     
-    bool success = proven_sys_fs_chmod(p_res.value, (unsigned int)perms);
+    proven_sys_fs_open_result_t why = proven_sys_fs_chmod_checked(p_res.value, (unsigned int)perms);
     internal_cstr_free(scratch, p_res.value);
-    return success ? PROVEN_OK : PROVEN_ERR_IO;
+    return internal_err_from_refusal(why);
 }
 
 proven_err_t proven_fs_lock(proven_file_t file, proven_fs_lock_type_t type, bool wait) {
@@ -1426,10 +1489,11 @@ proven_err_t proven_fs_lock(proven_file_t file, proven_fs_lock_type_t type, bool
     }
     
 #if defined(_WIN32) || defined(_WIN64)
-    return proven_sys_fs_lock((proven_sys_file_handle_t){ .handle = file.internal.ptr }, t, wait) ? PROVEN_OK : PROVEN_ERR_IO;
+    proven_sys_file_handle_t h = { .handle = file.internal.ptr };
 #else
-    return proven_sys_fs_lock((proven_sys_file_handle_t){ .fd = file.internal.fd }, t, wait) ? PROVEN_OK : PROVEN_ERR_IO;
+    proven_sys_file_handle_t h = { .fd = file.internal.fd };
 #endif
+    return internal_err_from_refusal(proven_sys_fs_lock_checked(h, t, wait));
 }
 
 /*
@@ -1513,10 +1577,10 @@ proven_err_t proven_fs_link(proven_allocator_t scratch, proven_u8str_view_t oldp
         return n_res.err;
     }
 
-    bool success = proven_sys_fs_link(o_res.value, n_res.value);
+    proven_sys_fs_open_result_t why = proven_sys_fs_link_checked(o_res.value, n_res.value);
     internal_cstr_free(scratch, o_res.value);
     internal_cstr_free(scratch, n_res.value);
-    return success ? PROVEN_OK : PROVEN_ERR_IO;
+    return internal_err_from_refusal(why);
 }
 
 bool proven_fs_is_absolute(proven_u8str_view_t path) {

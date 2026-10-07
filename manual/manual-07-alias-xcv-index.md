@@ -266,6 +266,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_fs_lock` | `proven_fs_lock` |
 | `xcv_fs_lock_type_t` | `proven_fs_lock_type_t` |
 | `xcv_fs_mkdir` | `proven_fs_mkdir` |
+| `xcv_fs_mkdir_all` | `proven_fs_mkdir_all` |
 | `xcv_fs_mode_t` | `proven_fs_mode_t` |
 | `xcv_fs_open` | `proven_fs_open` |
 | `xcv_fs_perms_t` | `proven_fs_perms_t` |

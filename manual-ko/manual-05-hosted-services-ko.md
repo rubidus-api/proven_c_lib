@@ -170,18 +170,19 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 | `proven_fs_rename(scratch, src, dest)` | 경로 이름 변경 또는 이동. | `proven_err_t`. |
 | `proven_fs_remove(scratch, path)` | 파일, 또는 빈 디렉터리 제거(POSIX `remove()` 처럼, Windows 에서도). | `proven_err_t`. |
 | `proven_fs_copy(temp_alloc, src, dest)` | 임시 버퍼 할당을 사용해 파일 복사. | `proven_err_t`. |
-| `proven_fs_mkdir(scratch, path)` | 디렉터리 생성. | `proven_err_t`. |
-| `proven_fs_rmdir(scratch, path)` | 빈 디렉터리 제거. | `proven_err_t`. |
+| `proven_fs_mkdir(scratch, path)` | 디렉터리 하나 생성. 부모가 있어야 한다. 이름이 이미 쓰이고 있으면 `PROVEN_ERR_EXISTS`, 부모가 없으면 `PROVEN_ERR_NOT_FOUND`. | `proven_err_t`. |
+| `proven_fs_mkdir_all(scratch, path)` | 디렉터리와 그 위의 빠진 디렉터리를 모두 생성. 이미 디렉터리인 단계는 오류가 아니고, 길을 막은 파일은 `PROVEN_ERR_EXISTS`. | `proven_err_t`. |
+| `proven_fs_rmdir(scratch, path)` | 빈 디렉터리 제거. 없으면 `PROVEN_ERR_NOT_FOUND`, 비어 있지 않은 디렉터리는 `PROVEN_ERR_IO`. | `proven_err_t`. |
 | `proven_fs_list(alloc, path)` | 디렉터리를 `proven_fs_entry_t`의 `proven_array_t`로 나열. | `proven_result_array_t`. |
 | `proven_fs_list_destroy(alloc, list)` | 디렉터리 목록과 엔트리 이름을 파괴. | void. |
 | `proven_fs_chmod(scratch, path, perms)` | 권한 설정. | `proven_err_t`. |
-| `proven_fs_lock(file, type, wait)` | 파일 잠금 획득/해제. | `proven_err_t`. |
+| `proven_fs_lock(file, type, wait)` | 파일 잠금 획득/해제. `wait`가 false일 때 남이 쥔 잠금은 `PROVEN_ERR_BUSY`. | `proven_err_t`. |
 | `proven_fs_stat(scratch, path, out_stat)` | 메타데이터 채우기. | `proven_err_t`. |
 
 `proven_fs_stat()`은 `perms`에 아홉 개의 권한 비트만 보고하므로, stat의 `perms`를 그대로 `proven_fs_chmod()`에 다시 넘길 수 있다. 예전에는 원시 POSIX `st_mode`를 담았는데, `chmod`가 거부하는 파일 타입 비트가 포함되어 있어서—이 필드의 자명한 용도인 그 왕복(round-trip)이 실제 파일마다 `PROVEN_ERR_INVALID_ARG`로 실패했다. 파일 타입은 `type`에서 읽어라.
 
 | `proven_fs_symlink(scratch, target, linkpath)` | 심볼릭 링크 생성. | `proven_err_t`. |
-| `proven_fs_link(scratch, oldpath, newpath)` | 하드 링크 생성. | `proven_err_t`. |
+| `proven_fs_link(scratch, oldpath, newpath)` | 하드 링크 생성. `newpath`가 이미 쓰이고 있으면 `PROVEN_ERR_EXISTS`. | `proven_err_t`. |
 | `proven_fs_is_absolute(path)` | 절대 경로 분류. | bool. |
 | `proven_fs_read_all(alloc, path)` | 파일 전체를 EOF까지 할당하여 읽기. | `proven_result_mem_mut_t`. |
 | `proven_fs_read_all_bounded(alloc, path, max)` | 같은 일을 하되 `max` 바이트를 넘는 소스는 거부. 프로그램 밖에서 온 경로용. | `proven_result_mem_mut_t`. 상한을 넘으면 `PROVEN_ERR_OUT_OF_BOUNDS`. |
@@ -301,6 +302,21 @@ if (proven_is_ok(dir.err)) {
 `proven_fs_remove`는 예전에 전부 `PROVEN_ERR_IO`로 답하던 자리에서 `PROVEN_ERR_NOT_FOUND`,
 `PROVEN_ERR_PERMISSION`, `PROVEN_ERR_BUSY`를 답한다. 사용자에게 묻기, 다시 시도하기,
 포기하기는 서로 다른 세 가지 답이고, 오류 코드 하나로는 그중 어느 것도 할 수 없다.
+
+디렉터리, 모드, 링크, 잠금 호출도 같은 규칙을 따른다. `proven_fs_mkdir`와
+`proven_fs_link`는 만들라고 받은 이름이 이미 쓰이고 있으면 `PROVEN_ERR_EXISTS`를 답한다.
+`proven_fs_mkdir`, `proven_fs_rmdir`, `proven_fs_chmod`, `proven_fs_link`,
+`proven_fs_rename`은 이름이나 부모 디렉터리가 없으면 `PROVEN_ERR_NOT_FOUND`를, 플랫폼이
+부르는 쪽을 거절하면 `PROVEN_ERR_PERMISSION`을 답한다. 기다리지 말라고 한
+`proven_fs_lock`은 남이 쥔 잠금에 `PROVEN_ERR_BUSY`를 답한다. 두 경우는 이름 붙일 코드가
+없어 `PROVEN_ERR_IO`로 남는다. 비어 있지 않은 디렉터리의 `proven_fs_rmdir`, 그리고 파일
+시스템을 건너는 하드 링크다.
+
+`proven_fs_mkdir`는 한 단계를 만들고, 이름이 이미 쓰이고 있으면 그렇다고 보고한다. 한
+단계에서는 그것이 정보이기 때문이다. 경로 전체가 있기만 하면 되고 누가 만들었는지는
+상관없는 호출자는 `proven_fs_mkdir_all`을 부른다. 빠진 단계를 모두 만들고, 이미
+디렉터리인 단계는 끝난 것으로 치며, 어떤 단계가 디렉터리가 아닌 다른 것이면 여전히
+`PROVEN_ERR_EXISTS`로 거절한다. 실패하기 전에 만든 디렉터리는 그대로 남는다.
 
 **누가 읽고 있는 파일도 바꿔 넣는다.** 다른 프로세스가 대상을 열어 두고 있어도 그 프로세스가
 삭제 공유(delete sharing)를 허용했다면 — `proven_fs_open`이 그렇게 연다 — atomic 쓰기는 성공하고,
@@ -2149,6 +2165,7 @@ int main(void) {
 | `proven_fs_link` | 같은 파일에 대한 두 번째 **이름**(하드 링크). 원본이라는 것이 없고, 마지막 이름이 사라질 때까지 데이터가 산다. 같은 파일 시스템 안에서만 된다. |
 | `proven_fs_symlink` | 경로를 담은 작은 파일(심볼릭 링크). 파일 시스템을 건너뛸 수 있고, 아무것도 가리키지 않을 수도 있다. |
 | `proven_fs_is_absolute` | 이 경로가 루트에서 시작하는가? 규칙이 플랫폼마다 달라서 함수인 것이다. |
+| `proven_fs_mkdir` / `proven_fs_mkdir_all` | 디렉터리 하나, 또는 그 위의 빠진 단계까지 모두 만든다. 앞의 것은 이미 쓰이는 이름에 `PROVEN_ERR_EXISTS`를 답하고, 뒤의 것은 이미 디렉터리인 단계를 받아들인다. |
 | `proven_fs_rmdir` | **빈** 디렉터리를 지운다. 비어 있지 않으면 거절하므로, 재귀 삭제는 명시적인 결정으로 남는다. |
 
 <!-- example: manual/examples/ko/ex_05_fs_durable.c -->
@@ -2355,6 +2372,24 @@ int main(void) {
     proven_u8str_view_t dir = PROVEN_LIT("proven_example_durable_dir");
     err = proven_fs_mkdir(alloc, dir);
     EXAMPLE_REQUIRE(proven_is_ok(err), "creating a directory must succeed");
+
+    /* 이미 있는 디렉터리를 만들라는 요청은 거절되고, 그 거절이 이유를 말한다:
+     * PROVEN_ERR_EXISTS 다. 부모가 없으면 PROVEN_ERR_NOT_FOUND 다. 부르는 쪽은 디스크를
+     * 다시 들여다보지 않고도 "할 일이 없다" 와 "무언가 잘못됐다" 를 가를 수 있다. */
+    err = proven_fs_mkdir(alloc, dir);
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_EXISTS, "a second mkdir of the same name must say it exists");
+
+    /* proven_fs_mkdir_all 은 경로에서 빠진 단계를 모두 만들고, 이미 디렉터리인 단계는
+     * 오류가 아니다. 그래서 트리 안에 쓰기 전에 그냥 부르면 된다. 길을 막은 *파일* 은
+     * 여전히 PROVEN_ERR_EXISTS 다. */
+    proven_u8str_view_t deep = PROVEN_LIT("proven_example_durable_dir/a/b");
+    err = proven_fs_mkdir_all(alloc, deep);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "creating two missing levels at once must succeed");
+    err = proven_fs_mkdir_all(alloc, deep);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "and asking again must succeed too");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_rmdir(alloc, deep)), "removing the inner level must succeed");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_rmdir(alloc, PROVEN_LIT("proven_example_durable_dir/a"))),
+                    "removing the level above it must succeed");
 
     /* rmdir 은 *빈* 디렉터리만 지운다. 그 거부가 기능이다. 재귀 삭제는 부르는 쪽이
      * 명시적으로 내려야 하는 결정이지, 잘못 들어온 경로 인자 하나가 일으킬 수 있는 일이

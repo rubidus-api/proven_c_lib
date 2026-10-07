@@ -210,6 +210,24 @@ int main(void) {
     err = proven_fs_mkdir(alloc, dir);
     EXAMPLE_REQUIRE(proven_is_ok(err), "creating a directory must succeed");
 
+    /* Asking for a directory that is already there is refused, and the refusal says so:
+     * PROVEN_ERR_EXISTS, where a missing parent is PROVEN_ERR_NOT_FOUND. A caller can tell
+     * "nothing to do" from "something is wrong" without a second look at the disk. */
+    err = proven_fs_mkdir(alloc, dir);
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_EXISTS, "a second mkdir of the same name must say it exists");
+
+    /* proven_fs_mkdir_all makes every missing level of a path, and a level that is already
+     * a directory is not an error - so it can simply be called before writing into a tree.
+     * A FILE in the way is still PROVEN_ERR_EXISTS. */
+    proven_u8str_view_t deep = PROVEN_LIT("proven_example_durable_dir/a/b");
+    err = proven_fs_mkdir_all(alloc, deep);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "creating two missing levels at once must succeed");
+    err = proven_fs_mkdir_all(alloc, deep);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "and asking again must succeed too");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_rmdir(alloc, deep)), "removing the inner level must succeed");
+    EXAMPLE_REQUIRE(proven_is_ok(proven_fs_rmdir(alloc, PROVEN_LIT("proven_example_durable_dir/a"))),
+                    "removing the level above it must succeed");
+
     /* rmdir removes an EMPTY directory only. That refusal is a feature: a
      * recursive delete is a decision the caller should have to make explicitly,
      * not something a stray path argument can trigger. */
