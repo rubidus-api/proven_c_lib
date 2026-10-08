@@ -18,8 +18,11 @@ written; their tags still exist.
 
 ## [Unreleased]
 
-Behaviour change, for a MINOR release: the two refusals 0.7.0 left as `PROVEN_ERR_IO` are named
-with existing codes. No error code is added.
+## [0.8.0] - 2026-10-08
+
+A MINOR release: nothing public removed or added. Behaviour change: the two refusals 0.7.0 left
+as `PROVEN_ERR_IO` are named with existing codes. No error code is added, so `PROVEN_ERR_LAST`
+does not move.
 
 ### Changed
 
