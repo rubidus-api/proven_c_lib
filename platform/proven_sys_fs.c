@@ -461,6 +461,8 @@ proven_sys_fs_rename_result_t proven_sys_fs_rename_checked(const char *src, cons
         result = rename_denied_reason(wdest);
     } else if (saved_error == ERROR_FILE_NOT_FOUND || saved_error == ERROR_PATH_NOT_FOUND) {
         result = PROVEN_SYS_FS_RENAME_NOT_FOUND;
+    } else if (saved_error == ERROR_NOT_SAME_DEVICE) {
+        result = PROVEN_SYS_FS_RENAME_CROSS_DEVICE;
     } else if (saved_error != 0) {
         result = PROVEN_SYS_FS_RENAME_ERROR;
     }
@@ -475,6 +477,7 @@ proven_sys_fs_rename_result_t proven_sys_fs_rename_checked(const char *src, cons
     if (errno == EACCES || errno == EPERM || errno == EROFS) return PROVEN_SYS_FS_RENAME_DENIED;
     if (errno == EBUSY || errno == ETXTBSY) return PROVEN_SYS_FS_RENAME_BUSY;
     if (errno == ENOENT || errno == ENOTDIR) return PROVEN_SYS_FS_RENAME_NOT_FOUND;
+    if (errno == EXDEV) return PROVEN_SYS_FS_RENAME_CROSS_DEVICE;
     return PROVEN_SYS_FS_RENAME_ERROR;
 #endif
 }
@@ -506,9 +509,12 @@ proven_sys_fs_open_result_t proven_sys_fs_remove_checked(const char *path) {
     if (e == ERROR_ACCESS_DENIED) return PROVEN_SYS_FS_OPEN_DENIED;
     if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) return PROVEN_SYS_FS_OPEN_NOT_FOUND;
     if (e == ERROR_SHARING_VIOLATION || e == ERROR_LOCK_VIOLATION) return PROVEN_SYS_FS_OPEN_BUSY;
+    if (e == ERROR_DIR_NOT_EMPTY) return PROVEN_SYS_FS_OPEN_NOT_EMPTY;
     return PROVEN_SYS_FS_OPEN_ERROR;
 #else
     if (remove(path) == 0) return PROVEN_SYS_FS_OPEN_OK;
+    /* A directory that still holds entries: ENOTEMPTY, or EEXIST where POSIX allows it. */
+    if (errno == ENOTEMPTY || errno == EEXIST) return PROVEN_SYS_FS_OPEN_NOT_EMPTY;
     if (errno == ENOENT || errno == ENOTDIR) return PROVEN_SYS_FS_OPEN_NOT_FOUND;
     if (errno == EACCES || errno == EPERM || errno == EROFS) return PROVEN_SYS_FS_OPEN_DENIED;
     if (errno == EBUSY || errno == ETXTBSY) return PROVEN_SYS_FS_OPEN_BUSY;
@@ -531,6 +537,8 @@ static proven_sys_fs_open_result_t path_refusal(DWORD e) {
     if (e == ERROR_ACCESS_DENIED || e == ERROR_WRITE_PROTECT) return PROVEN_SYS_FS_OPEN_DENIED;
     if (e == ERROR_SHARING_VIOLATION || e == ERROR_LOCK_VIOLATION) return PROVEN_SYS_FS_OPEN_BUSY;
     if (e == ERROR_ALREADY_EXISTS || e == ERROR_FILE_EXISTS) return PROVEN_SYS_FS_OPEN_EXISTS;
+    if (e == ERROR_DIR_NOT_EMPTY) return PROVEN_SYS_FS_OPEN_NOT_EMPTY;
+    if (e == ERROR_NOT_SAME_DEVICE) return PROVEN_SYS_FS_OPEN_CROSS_DEVICE;
     return PROVEN_SYS_FS_OPEN_ERROR;
 }
 #else
@@ -539,6 +547,8 @@ static proven_sys_fs_open_result_t path_refusal(int e) {
     if (e == EACCES || e == EPERM || e == EROFS) return PROVEN_SYS_FS_OPEN_DENIED;
     if (e == EBUSY || e == ETXTBSY) return PROVEN_SYS_FS_OPEN_BUSY;
     if (e == EEXIST) return PROVEN_SYS_FS_OPEN_EXISTS;
+    if (e == ENOTEMPTY) return PROVEN_SYS_FS_OPEN_NOT_EMPTY;
+    if (e == EXDEV) return PROVEN_SYS_FS_OPEN_CROSS_DEVICE;
     return PROVEN_SYS_FS_OPEN_ERROR;
 }
 #endif
@@ -572,11 +582,11 @@ proven_sys_fs_open_result_t proven_sys_fs_rmdir_checked(const char *path) {
     HeapFree(GetProcessHeap(), 0, wpath);
     if (success) return PROVEN_SYS_FS_OPEN_OK;
     SetLastError(e);
-    return path_refusal(e);   /* ERROR_DIR_NOT_EMPTY is not in the list: ERROR */
+    return path_refusal(e);
 #else
     if (rmdir(path) == 0) return PROVEN_SYS_FS_OPEN_OK;
     /* POSIX lets a directory that is not empty answer EEXIST instead of ENOTEMPTY. */
-    if (errno == EEXIST) return PROVEN_SYS_FS_OPEN_ERROR;
+    if (errno == EEXIST) return PROVEN_SYS_FS_OPEN_NOT_EMPTY;
     return path_refusal(errno);
 #endif
 }

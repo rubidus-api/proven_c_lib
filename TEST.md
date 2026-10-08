@@ -342,7 +342,7 @@ The whole hosted suite also runs natively on Windows, cross-built with mingw-w64
 
 `-no-run` builds and installs every test executable and runs none. The build driver asks the compiler for its target (`-dumpmachine`); for a Windows target the executables are `.exe`, linked `-static` with `-lbcrypt`, and never `-ldl`. A maintainers' script (`win11kd-full-suite.sh`, not in this repository) builds both word sizes, sends the tracked tree and the executables to a Windows machine, and runs them there with `win11kd-run-suite.ps1`, which records PASS, FAIL, SKIP (a POSIX-only test that skipped itself - counted apart, since it proves nothing on Windows) and TIMEOUT per test.
 
-Last run, 2026-10-07, Windows 11 test VM: x86-64 217 PASS, 0 FAIL, 7 SKIP; i686 the same. The seven skips are fixtures whose subject is POSIX: `test_portability_nob_std_probe` and `test_portability_nob_clean` (they drive `./nob` through a POSIX shell), `test_regression_fs_walk_errors` (libc interposition with `dlsym`), `test_unit_fs_walk` (chmod 000 and `ln -s` cycles), `test_regression_fs_backslash_parent` (a backslash as an ordinary byte), `test_regression_fs_private_staging` and `test_regression_fs_perms_and_types` (POSIX modes). `test_unit_sysio_streams`, `test_regression_scanner_float_split` and `test_regression_scanner_short_read` run on Windows too.
+Last run, 2026-10-08, Windows 11 test VM: x86-64 217 PASS, 0 FAIL, 7 SKIP; i686 the same. The seven skips are fixtures whose subject is POSIX: `test_portability_nob_std_probe` and `test_portability_nob_clean` (they drive `./nob` through a POSIX shell), `test_regression_fs_walk_errors` (libc interposition with `dlsym`), `test_unit_fs_walk` (chmod 000 and `ln -s` cycles), `test_regression_fs_backslash_parent` (a backslash as an ordinary byte), `test_regression_fs_private_staging` and `test_regression_fs_perms_and_types` (POSIX modes). `test_unit_sysio_streams`, `test_regression_scanner_float_split` and `test_regression_scanner_short_read` run on Windows too.
 
 ## Test catalog
 
@@ -1626,11 +1626,13 @@ Intent: verify that `proven_fs_mkdir`, `proven_fs_rmdir`, `proven_fs_chmod`, `pr
 Sub-checks:
 
 - The reproducer: the second `proven_fs_mkdir` of one path is `PROVEN_ERR_EXISTS`. So is a mkdir over a file; a mkdir under a missing parent is `PROVEN_ERR_NOT_FOUND`.
-- `proven_fs_rmdir` of a missing name is `PROVEN_ERR_NOT_FOUND`; of a directory that is not empty it is `PROVEN_ERR_IO` and the directory stays.
+- `proven_fs_rmdir` of a missing name is `PROVEN_ERR_NOT_FOUND`; of a directory that is not empty it is `PROVEN_ERR_INVALID_STATE`, as is `proven_fs_remove` of it, and the directory stays.
+- POSIX, where a second file system is found (`/dev/shm`, `/tmp`, `/var/tmp`): a hard link and a rename across file systems are `PROVEN_ERR_UNSUPPORTED`, and the rename leaves its source. Skipped with a reason otherwise, and on Windows.
 - `proven_fs_chmod`, `proven_fs_link` and `proven_fs_rename` of a missing name are `PROVEN_ERR_NOT_FOUND`; a hard link onto a name that is taken is `PROVEN_ERR_EXISTS`.
 - A lock held by someone else and asked for with `wait == false` is `PROVEN_ERR_BUSY`. The first holder is a child process on POSIX, where record locks belong to the process, and a second handle on Windows, where they belong to the handle.
 - POSIX, not as root: a mkdir inside a `0555` directory is `PROVEN_ERR_PERMISSION`, and so is `proven_fs_mkdir_all` through it. Skipped with a reason where the filesystem does not honour the mode.
 - `proven_fs_mkdir_all` creates four missing levels in one call, is `PROVEN_OK` when repeated, creates one level under an existing parent, accepts a trailing and a doubled separator and `.`, answers `PROVEN_ERR_EXISTS` for a file at the last name or in the middle of the path and leaves the file a file, and answers `PROVEN_ERR_INVALID_ARG` for the empty path.
+- `proven_fs_mkdir_all` with an absolute path creates two missing levels and is `PROVEN_OK` when repeated; the root (`/`, or the drive root on Windows) is `PROVEN_OK`. On Windows an extended-length `\\?\` path and a UNC path through the drive's administrative share are created too; the UNC case is skipped with a reason where that share cannot be reached.
 
 Failure tip: inspect `path_refusal` and the `*_checked` functions in `platform/proven_sys_fs.c`, then `internal_err_from_refusal` and `proven_fs_mkdir_all` in `src/proven/fs.c`. `PROVEN_ERR_IO` where a reason is expected means the platform reason was dropped; `PROVEN_OK` over a file means `proven_fs_mkdir_all` stopped asking what is there.
 

@@ -223,14 +223,15 @@ int main(void) {
 
     /* rmdir 은 *빈* 디렉터리만 지운다. 그 거부가 기능이다. 재귀 삭제는 부르는 쪽이
      * 명시적으로 내려야 하는 결정이지, 잘못 들어온 경로 인자 하나가 일으킬 수 있는 일이
-     * 아니다. */
+     * 아니다. 이 거부에는 자기 코드가 있다. PROVEN_ERR_INVALID_STATE 다. 실패한 것은 없고,
+     * 디렉터리를 먼저 비워야 한다는 뜻이다. */
     proven_u8str_view_t inside = PROVEN_LIT("proven_example_durable_dir/file.txt");
     proven_result_file_t child = proven_fs_open(alloc, inside, PROVEN_FS_WRITE | PROVEN_FS_CREATE);
     EXAMPLE_REQUIRE(proven_is_ok(child.err), "creating a file inside it must succeed");
     EXAMPLE_REQUIRE(proven_is_ok(proven_fs_close(child.value)), "closing it must succeed");
 
     err = proven_fs_rmdir(alloc, dir);
-    EXAMPLE_REQUIRE(err != PROVEN_OK, "removing a non-empty directory must be refused");
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_INVALID_STATE, "removing a non-empty directory must be refused");
 
     EXAMPLE_REQUIRE(proven_is_ok(proven_fs_remove(alloc, inside)), "removing the file must succeed");
     err = proven_fs_rmdir(alloc, dir);

@@ -18,6 +18,27 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+Behaviour change, for a MINOR release: the two refusals 0.7.0 left as `PROVEN_ERR_IO` are named
+with existing codes. No error code is added.
+
+### Changed
+
+- **A directory that is not empty is `PROVEN_ERR_INVALID_STATE`** from `proven_fs_rmdir` and
+  from `proven_fs_remove` (it was `PROVEN_ERR_IO`). Nothing failed: the directory has to be
+  emptied first, which is what that code has always meant - fix the order of the calls.
+- **A hard link or a rename across file systems is `PROVEN_ERR_UNSUPPORTED`** from
+  `proven_fs_link` and `proven_fs_rename` (it was `PROVEN_ERR_IO`). Neither can cross, and
+  `proven_fs_rename` never falls back to a copy; the caller copies and removes. Run on Linux
+  between two file systems; the Windows mapping (`ERROR_NOT_SAME_DEVICE`) has not been run, for
+  want of a second volume on the test machine.
+- **`proven_fs_mkdir_all` is verified with absolute paths**: a POSIX absolute path and the root;
+  on Windows 11 a drive root, an extended-length `\\?\` path and a UNC path. 0.7.0 had run it
+  with relative paths only. No code change was needed.
+
+### Fixed
+
+- README: the `[[nodiscard]]` count is the current one (221 in the public headers).
+
 ## [0.7.0] - 2026-10-08
 
 A MINOR release: nothing public removed, one function added. Behaviour change: six filesystem

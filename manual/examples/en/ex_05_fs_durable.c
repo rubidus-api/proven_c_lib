@@ -230,14 +230,15 @@ int main(void) {
 
     /* rmdir removes an EMPTY directory only. That refusal is a feature: a
      * recursive delete is a decision the caller should have to make explicitly,
-     * not something a stray path argument can trigger. */
+     * not something a stray path argument can trigger. The refusal has its own code,
+     * PROVEN_ERR_INVALID_STATE: nothing failed, the directory has to be emptied first. */
     proven_u8str_view_t inside = PROVEN_LIT("proven_example_durable_dir/file.txt");
     proven_result_file_t child = proven_fs_open(alloc, inside, PROVEN_FS_WRITE | PROVEN_FS_CREATE);
     EXAMPLE_REQUIRE(proven_is_ok(child.err), "creating a file inside it must succeed");
     EXAMPLE_REQUIRE(proven_is_ok(proven_fs_close(child.value)), "closing it must succeed");
 
     err = proven_fs_rmdir(alloc, dir);
-    EXAMPLE_REQUIRE(err != PROVEN_OK, "removing a non-empty directory must be refused");
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_INVALID_STATE, "removing a non-empty directory must be refused");
 
     EXAMPLE_REQUIRE(proven_is_ok(proven_fs_remove(alloc, inside)), "removing the file must succeed");
     err = proven_fs_rmdir(alloc, dir);

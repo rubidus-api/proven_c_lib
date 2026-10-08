@@ -221,7 +221,8 @@ proven_err_t proven_fs_sync_dir(proven_allocator_t scratch, proven_u8str_view_t 
  * @brief Renames or moves a file/directory from src to dest.
  * @return PROVEN_ERR_NOT_FOUND when `src`, or the directory of `dest`, is not there;
  *         PROVEN_ERR_PERMISSION for a protected destination; PROVEN_ERR_BUSY when something
- *         holds it; PROVEN_ERR_IO otherwise.
+ *         holds it; PROVEN_ERR_UNSUPPORTED when `src` and `dest` are on different file systems -
+ *         a rename never copies; PROVEN_ERR_IO otherwise.
  */
 [[nodiscard]]
 proven_err_t proven_fs_rename(proven_allocator_t scratch, proven_u8str_view_t src, proven_u8str_view_t dest);
@@ -230,7 +231,7 @@ proven_err_t proven_fs_rename(proven_allocator_t scratch, proven_u8str_view_t sr
  * @brief Deletes a file, or an empty directory, at the specified path.
  *
  * Like POSIX remove(): an empty directory goes too, on Windows as well. A non-empty one is
- * PROVEN_ERR_IO. A symlink is removed, never what it points to.
+ * PROVEN_ERR_INVALID_STATE. A symlink is removed, never what it points to.
  */
 [[nodiscard]]
 proven_err_t proven_fs_remove(proven_allocator_t scratch, proven_u8str_view_t path);
@@ -283,7 +284,8 @@ proven_err_t proven_fs_mkdir_all(proven_allocator_t scratch, proven_u8str_view_t
  * @brief Removes an empty directory.
  * @return PROVEN_ERR_NOT_FOUND when the name is not there; PROVEN_ERR_PERMISSION when the
  *         parent refuses it; PROVEN_ERR_BUSY when the platform reports the directory in use;
- *         PROVEN_ERR_IO otherwise - which includes a directory that is not empty.
+ *         PROVEN_ERR_INVALID_STATE when the directory is not empty - empty it first;
+ *         PROVEN_ERR_IO otherwise.
  */
 [[nodiscard]]
 proven_err_t proven_fs_rmdir(proven_allocator_t scratch, proven_u8str_view_t path);
@@ -602,8 +604,8 @@ proven_err_t proven_fs_symlink(proven_allocator_t scratch, proven_u8str_view_t t
  * @brief Create a hard link.
  * @return PROVEN_ERR_EXISTS when `newpath` is already taken; PROVEN_ERR_NOT_FOUND when
  *         `oldpath`, or the directory of `newpath`, is not there; PROVEN_ERR_PERMISSION when
- *         the platform refuses it; PROVEN_ERR_IO otherwise - which includes a link across
- *         file systems.
+ *         the platform refuses it; PROVEN_ERR_UNSUPPORTED when the two names are on different
+ *         file systems - copy instead; PROVEN_ERR_IO otherwise.
  */
 [[nodiscard]]
 proven_err_t proven_fs_link(proven_allocator_t scratch, proven_u8str_view_t oldpath, proven_u8str_view_t newpath);

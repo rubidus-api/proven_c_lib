@@ -360,6 +360,7 @@ static proven_err_t internal_rename_raw(proven_allocator_t scratch, proven_u8str
         case PROVEN_SYS_FS_RENAME_DENIED: return PROVEN_ERR_PERMISSION;
         case PROVEN_SYS_FS_RENAME_BUSY:   return PROVEN_ERR_BUSY;
         case PROVEN_SYS_FS_RENAME_NOT_FOUND: return PROVEN_ERR_NOT_FOUND;
+        case PROVEN_SYS_FS_RENAME_CROSS_DEVICE: return PROVEN_ERR_UNSUPPORTED;
         default:                          return PROVEN_ERR_IO;
     }
 }
@@ -401,6 +402,7 @@ proven_err_t proven_fs_remove(proven_allocator_t scratch, proven_u8str_view_t pa
         case PROVEN_SYS_FS_OPEN_NOT_FOUND: return PROVEN_ERR_NOT_FOUND;
         case PROVEN_SYS_FS_OPEN_DENIED:    return PROVEN_ERR_PERMISSION;
         case PROVEN_SYS_FS_OPEN_BUSY:      return PROVEN_ERR_BUSY;
+        case PROVEN_SYS_FS_OPEN_NOT_EMPTY: return PROVEN_ERR_INVALID_STATE;   /* a directory with entries */
         default:                           return PROVEN_ERR_IO;
     }
 }
@@ -414,6 +416,10 @@ static proven_err_t internal_err_from_refusal(proven_sys_fs_open_result_t why) {
         case PROVEN_SYS_FS_OPEN_DENIED:    return PROVEN_ERR_PERMISSION;
         case PROVEN_SYS_FS_OPEN_BUSY:      return PROVEN_ERR_BUSY;
         case PROVEN_SYS_FS_OPEN_EXISTS:    return PROVEN_ERR_EXISTS;
+        /* Not empty: nothing failed, the directory is in a state rmdir does not accept - empty
+         * it first. Across file systems: this route does not exist - copy instead. */
+        case PROVEN_SYS_FS_OPEN_NOT_EMPTY:    return PROVEN_ERR_INVALID_STATE;
+        case PROVEN_SYS_FS_OPEN_CROSS_DEVICE: return PROVEN_ERR_UNSUPPORTED;
         default:                           return PROVEN_ERR_IO;
     }
 }

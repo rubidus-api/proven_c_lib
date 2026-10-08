@@ -364,7 +364,7 @@ The pieces are in the language now, and most C code has not caught up:
   functions.
 - **C11** - `_Generic`, which is how `{}` gets a value's type from the argument instead of from a
   format string.
-- **C23** - `[[nodiscard]]` (used 172 times here, so the compiler refuses code that drops an
+- **C23** - `[[nodiscard]]` (used 221 times here, so the compiler refuses code that drops an
   error), `<stdckdint.h>` for checked arithmetic, `constexpr`, `typeof`, `nullptr`.
 
 Andre Weissflog's [*Modern C for C++ Peeps*](https://floooh.github.io/2019/09/27/modern-c-for-cpp-peeps.html)

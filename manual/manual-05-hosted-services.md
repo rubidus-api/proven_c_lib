@@ -169,11 +169,11 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 | `proven_fs_write_all(file, src)` | Retry until all bytes are written or an error occurs. | `proven_err_t`. |
 | `proven_fs_size(file)` | Query open file size. | `proven_result_size_t`. |
 | `proven_fs_rename(scratch, src, dest)` | Rename or move path, replacing `dest`. `PROVEN_ERR_NOT_FOUND` when `src` is not there. | `proven_err_t`. |
-| `proven_fs_remove(scratch, path)` | Remove a file, or an empty directory (as POSIX `remove()`, on Windows too). | `proven_err_t`. |
+| `proven_fs_remove(scratch, path)` | Remove a file, or an empty directory (as POSIX `remove()`, on Windows too). A directory that is not empty is `PROVEN_ERR_INVALID_STATE`. | `proven_err_t`. |
 | `proven_fs_copy(temp_alloc, src, dest)` | Copy file using temporary buffer allocation. | `proven_err_t`. |
 | `proven_fs_mkdir(scratch, path)` | Create one directory; its parent must exist. `PROVEN_ERR_EXISTS` when the name is taken, `PROVEN_ERR_NOT_FOUND` when the parent is missing. | `proven_err_t`. |
 | `proven_fs_mkdir_all(scratch, path)` | Create a directory and every missing directory above it. A level that is already a directory is not an error; a file in the way is `PROVEN_ERR_EXISTS`. | `proven_err_t`. |
-| `proven_fs_rmdir(scratch, path)` | Remove empty directory. `PROVEN_ERR_NOT_FOUND` when it is not there; a directory that is not empty is `PROVEN_ERR_IO`. | `proven_err_t`. |
+| `proven_fs_rmdir(scratch, path)` | Remove empty directory. `PROVEN_ERR_NOT_FOUND` when it is not there; `PROVEN_ERR_INVALID_STATE` when it is not empty. | `proven_err_t`. |
 | `proven_fs_list(alloc, path)` | List directory into `proven_array_t` of `proven_fs_entry_t`. | `proven_result_array_t`. |
 | `proven_fs_list_destroy(alloc, list)` | Destroy directory listing and entry names. | void. |
 | `proven_fs_chmod(scratch, path, perms)` | Set permissions. `PROVEN_ERR_NOT_FOUND` when the name is not there. | `proven_err_t`. |
@@ -183,7 +183,7 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 `proven_fs_stat()` reports only the nine permission bits in `perms`, so a stat's `perms` can be handed straight back to `proven_fs_chmod()`. It used to carry the raw POSIX `st_mode`, whose file-type bits `chmod` rejects - which made that round-trip, the obvious use of the field, fail with `PROVEN_ERR_INVALID_ARG` for every real file. Read the file type from `type`.
 
 | `proven_fs_symlink(scratch, target, linkpath)` | Create symbolic link. | `proven_err_t`. |
-| `proven_fs_link(scratch, oldpath, newpath)` | Create hard link. `PROVEN_ERR_EXISTS` when `newpath` is taken. | `proven_err_t`. |
+| `proven_fs_link(scratch, oldpath, newpath)` | Create hard link. `PROVEN_ERR_EXISTS` when `newpath` is taken; `PROVEN_ERR_UNSUPPORTED` across file systems. | `proven_err_t`. |
 | `proven_fs_is_absolute(path)` | Classify absolute path. | bool. |
 | `proven_fs_read_all(alloc, path)` | Allocate and read a whole file, to EOF. | `proven_result_mem_mut_t`. |
 | `proven_fs_read_all_bounded(alloc, path, max)` | Same, refusing a source of more than `max` bytes. For a path from outside the program. | `proven_result_mem_mut_t`; `PROVEN_ERR_OUT_OF_BOUNDS` past the bound. |
@@ -315,8 +315,12 @@ taken; `proven_fs_mkdir`, `proven_fs_rmdir`, `proven_fs_chmod`, `proven_fs_link`
 `proven_fs_rename` answer `PROVEN_ERR_NOT_FOUND` for a name, or a parent directory, that is
 not there, and `PROVEN_ERR_PERMISSION` when the platform refuses the caller;
 `proven_fs_lock` asked not to wait answers `PROVEN_ERR_BUSY` for a lock someone else
-holds. Two cases keep `PROVEN_ERR_IO` because no code names them: `proven_fs_rmdir` of a
-directory that is not empty, and a hard link across file systems.
+holds. Two refusals are named with codes that already had the right meaning. A directory
+that is not empty answers `PROVEN_ERR_INVALID_STATE` to `proven_fs_rmdir` and to
+`proven_fs_remove`: nothing failed, and the fix is the order of the calls - empty it first.
+A hard link or a rename that would have to cross from one file system to another answers
+`PROVEN_ERR_UNSUPPORTED`: that route does not exist, and the caller takes another - a copy,
+then a remove.
 
 `proven_fs_mkdir` creates one level and reports a name that is taken, because for one level
 that is information. A caller that wants a whole path to exist, and does not care who made
@@ -2235,7 +2239,7 @@ The same example covers the record-level calls that go with it:
 | `proven_fs_symlink` | A small file holding a path (a symbolic link). May cross filesystems, and may point at nothing. |
 | `proven_fs_is_absolute` | Does this path start from the root? The rule differs per platform, which is why it is a call. |
 | `proven_fs_mkdir` / `proven_fs_mkdir_all` | Create one directory, or a directory with every missing level above it. The first says `PROVEN_ERR_EXISTS` for a name that is taken; the second accepts a level that is already a directory. |
-| `proven_fs_rmdir` | Remove an **empty** directory. A non-empty one is refused, so a recursive delete stays an explicit decision. |
+| `proven_fs_rmdir` | Remove an **empty** directory. A non-empty one is refused with `PROVEN_ERR_INVALID_STATE`, so a recursive delete stays an explicit decision. |
 
 <!-- example: manual/examples/en/ex_05_fs_durable.c -->
 ```c
@@ -2469,14 +2473,15 @@ int main(void) {
 
     /* rmdir removes an EMPTY directory only. That refusal is a feature: a
      * recursive delete is a decision the caller should have to make explicitly,
-     * not something a stray path argument can trigger. */
+     * not something a stray path argument can trigger. The refusal has its own code,
+     * PROVEN_ERR_INVALID_STATE: nothing failed, the directory has to be emptied first. */
     proven_u8str_view_t inside = PROVEN_LIT("proven_example_durable_dir/file.txt");
     proven_result_file_t child = proven_fs_open(alloc, inside, PROVEN_FS_WRITE | PROVEN_FS_CREATE);
     EXAMPLE_REQUIRE(proven_is_ok(child.err), "creating a file inside it must succeed");
     EXAMPLE_REQUIRE(proven_is_ok(proven_fs_close(child.value)), "closing it must succeed");
 
     err = proven_fs_rmdir(alloc, dir);
-    EXAMPLE_REQUIRE(err != PROVEN_OK, "removing a non-empty directory must be refused");
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_INVALID_STATE, "removing a non-empty directory must be refused");
 
     EXAMPLE_REQUIRE(proven_is_ok(proven_fs_remove(alloc, inside)), "removing the file must succeed");
     err = proven_fs_rmdir(alloc, dir);

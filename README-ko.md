@@ -342,7 +342,7 @@ arena는 `free` 만 번을 `reset` 한 번으로 바꿉니다. 그리고 리눅�
 
 - **C99** — 지정 초기화자, 복합 리터럴: 매개변수 열 개짜리 함수 대신 옵션 구조체.
 - **C11** — `_Generic`. `{}`가 포맷 문자열이 아니라 인자에서 타입을 얻어 오는 방법이 이것입니다.
-- **C23** — `[[nodiscard]]`(이 저장소에서 172번 쓰였고, 그래서 컴파일러가 에러를 버리는 코드를 거부합니다),
+- **C23** — `[[nodiscard]]`(이 저장소에서 221번 쓰였고, 그래서 컴파일러가 에러를 버리는 코드를 거부합니다),
   검사 산술을 위한 `<stdckdint.h>`, `constexpr`, `typeof`, `nullptr`.
 
 Andre Weissflog의 [*Modern C for C++ Peeps*](https://floooh.github.io/2019/09/27/modern-c-for-cpp-peeps.html)와

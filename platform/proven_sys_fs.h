@@ -49,7 +49,9 @@ typedef enum {
     PROVEN_SYS_FS_OPEN_DENIED,     /**< permission refused it */
     PROVEN_SYS_FS_OPEN_BUSY,       /**< something else holds it right now */
     PROVEN_SYS_FS_OPEN_EXISTS,     /**< an exclusive create found the name already there */
-    PROVEN_SYS_FS_OPEN_ERROR       /**< anything else */
+    PROVEN_SYS_FS_OPEN_ERROR,      /**< anything else */
+    PROVEN_SYS_FS_OPEN_NOT_EMPTY,  /**< a directory to be removed still holds entries */
+    PROVEN_SYS_FS_OPEN_CROSS_DEVICE /**< a link or rename would have to cross file systems */
 } proven_sys_fs_open_result_t;
 
 /**
@@ -92,6 +94,7 @@ typedef enum {
     PROVEN_SYS_FS_RENAME_DENIED,   /**< permission refused it: the target is protected */
     PROVEN_SYS_FS_RENAME_BUSY,     /**< something else holds it open right now */
     PROVEN_SYS_FS_RENAME_NOT_FOUND, /**< the source, or the destination's directory, is not there */
+    PROVEN_SYS_FS_RENAME_CROSS_DEVICE, /**< source and destination are on different file systems */
     PROVEN_SYS_FS_RENAME_ERROR     /**< anything else */
 } proven_sys_fs_rename_result_t;
 
@@ -159,8 +162,8 @@ bool proven_sys_fs_mkdir(const char *path);
 /**
  * @brief Remove an empty directory, saying WHY when it fails.
  *
- * A directory that is not empty is ERROR, not EXISTS: POSIX allows either ENOTEMPTY or EEXIST
- * for it, and neither means what EXISTS means everywhere else in this enum.
+ * A directory that is not empty is NOT_EMPTY, never EXISTS: POSIX allows either ENOTEMPTY or
+ * EEXIST for it, and the second does not mean here what EXISTS means everywhere else in this enum.
  */
 [[nodiscard]]
 proven_sys_fs_open_result_t proven_sys_fs_rmdir_checked(const char *path);
@@ -314,7 +317,7 @@ bool proven_sys_fs_stat(const char *path, proven_sys_fs_stat_t *out_stat);
  * @brief Create a hard link, saying WHY when it fails.
  *
  * EXISTS: `newpath` is taken. NOT_FOUND: `oldpath`, or the directory of `newpath`, is not
- * there. A link across file systems is ERROR.
+ * there. A link across file systems is CROSS_DEVICE.
  */
 [[nodiscard]]
 proven_sys_fs_open_result_t proven_sys_fs_link_checked(const char *oldpath, const char *newpath);

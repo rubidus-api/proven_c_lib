@@ -9,15 +9,21 @@
  * first section: the same proven_fs_mkdir twice.
  *
  * proven_fs_mkdir_all is the function that report asked for, and its cases are here too.
+ *
+ * Two refusals had no code of their own and were first left as PROVEN_ERR_IO: a directory that
+ * is not empty (now PROVEN_ERR_INVALID_STATE, from rmdir and remove alike) and a hard link or
+ * rename across file systems (now PROVEN_ERR_UNSUPPORTED).
  */
 
 #include "proven.h"
 #include "proven_test.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #if defined(_WIN32) || defined(_WIN64)
 #define PLATFORM_IS_POSIX 0
+#include <direct.h>
 #else
 #define PLATFORM_IS_POSIX 1
 #include <sys/types.h>
@@ -48,7 +54,9 @@ static void sweep(void) {
     };
     static const char *const dirs[] = {
         ROOT "/all/a/b/c", ROOT "/all/a/b", ROOT "/all/a", ROOT "/all/s/t", ROOT "/all/s",
-        ROOT "/all/d/e", ROOT "/all/d", ROOT "/all/one", ROOT "/all",
+        ROOT "/all/d/e", ROOT "/all/d", ROOT "/all/one",
+        ROOT "/all/abs/x", ROOT "/all/abs", ROOT "/all/ext/x", ROOT "/all/ext",
+        ROOT "/all/unc/x", ROOT "/all/unc", ROOT "/all",
         ROOT "/closed/in", ROOT "/closed", ROOT "/full", ROOT "/once", ROOT
     };
     (void)proven_fs_chmod(heap, V(ROOT "/closed"), (proven_fs_perms_t)0755);
@@ -133,7 +141,7 @@ int main(void) {
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("proven_fs_rmdir",
-        "A name that is not there is NOT_FOUND. A directory that is not empty stays PROVEN_ERR_IO: no code names that case.",
+        "A name that is not there is NOT_FOUND. A directory that is not empty is INVALID_STATE - empty it first - from rmdir and from remove.",
         "Inspect proven_sys_fs_rmdir_checked and proven_fs_rmdir.");
     // ---------------------------------------------------------------
     e = proven_fs_rmdir(heap, V(ROOT "/absent"));
@@ -141,7 +149,9 @@ int main(void) {
     PROVEN_TEST_ASSERT(proven_fs_mkdir(heap, V(ROOT "/full")) == PROVEN_OK, "a second directory is created", "");
     put(V(ROOT "/full/inside"));
     e = proven_fs_rmdir(heap, V(ROOT "/full"));
-    PROVEN_TEST_ASSERT(e == PROVEN_ERR_IO, "rmdir of a directory that is not empty is PROVEN_ERR_IO", "");
+    PROVEN_TEST_ASSERT(e == PROVEN_ERR_INVALID_STATE, "rmdir of a directory that is not empty is PROVEN_ERR_INVALID_STATE", "");
+    e = proven_fs_remove(heap, V(ROOT "/full"));
+    PROVEN_TEST_ASSERT(e == PROVEN_ERR_INVALID_STATE, "and so is proven_fs_remove of it", "");
     PROVEN_TEST_ASSERT(is_dir(V(ROOT "/full")), "and the directory is still there", "");
 
     // ---------------------------------------------------------------
@@ -158,6 +168,39 @@ int main(void) {
     PROVEN_TEST_ASSERT(e == PROVEN_ERR_EXISTS, "a hard link onto a name that is taken is PROVEN_ERR_EXISTS", "");
     e = proven_fs_rename(heap, V(ROOT "/absent"), V(ROOT "/moved"));
     PROVEN_TEST_ASSERT(e == PROVEN_ERR_NOT_FOUND, "a rename of a missing name is PROVEN_ERR_NOT_FOUND", "");
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a hard link or a rename across file systems",
+        "Neither can cross from one file system to another; the answer is UNSUPPORTED - copy instead - not an I/O error.",
+        "Inspect the EXDEV / ERROR_NOT_SAME_DEVICE branches in platform/proven_sys_fs.c. Skipped where no second file system is found.");
+    // ---------------------------------------------------------------
+    {
+        static const char *const elsewhere[] = { "/dev/shm", "/tmp", "/var/tmp" };
+        proven_fs_stat_t here = {0}, there = {0};
+        const char *other = NULL;
+        if (PLATFORM_IS_POSIX && proven_is_ok(proven_fs_stat(heap, V(ROOT), &here))) {
+            for (size_t i = 0; i < sizeof elsewhere / sizeof elsewhere[0] && !other; ++i) {
+                if (proven_is_ok(proven_fs_stat(heap, proven_u8str_view_from_cstr(elsewhere[i]), &there)) &&
+                    there.type == PROVEN_FS_TYPE_DIR && there.dev != here.dev) other = elsewhere[i];
+            }
+        }
+        if (!other) {
+            PROVEN_TEST_INFO("SKIP: no second file system found to link or rename into.");
+        } else {
+            char target[128];
+            snprintf(target, sizeof target, "%s/proven_refusal_codes_%ld.tmp", other, (long)here.ino);
+            proven_u8str_view_t t = proven_u8str_view_from_cstr(target);
+            (void)proven_fs_remove(heap, t);
+            e = proven_fs_link(heap, V(ROOT "/file"), t);
+            if (e == PROVEN_OK) (void)proven_fs_remove(heap, t);
+            PROVEN_TEST_ASSERT(e == PROVEN_ERR_UNSUPPORTED, "a hard link across file systems is PROVEN_ERR_UNSUPPORTED", "");
+            e = proven_fs_rename(heap, V(ROOT "/file2"), t);
+            if (e == PROVEN_OK) (void)proven_fs_remove(heap, t);
+            PROVEN_TEST_ASSERT(e == PROVEN_ERR_UNSUPPORTED, "a rename across file systems is PROVEN_ERR_UNSUPPORTED", "");
+            proven_fs_stat_t still = {0};
+            PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_stat(heap, V(ROOT "/file2"), &still)), "and the source is still there", "");
+        }
+    }
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("proven_fs_lock",
@@ -218,6 +261,54 @@ int main(void) {
     PROVEN_TEST_ASSERT(e == PROVEN_OK && is_dir(V(ROOT "/all/d/e")), "a doubled separator is accepted", "");
     e = proven_fs_mkdir_all(heap, V("."));
     PROVEN_TEST_ASSERT(e == PROVEN_OK, "the current directory is already there", "");
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("proven_fs_mkdir_all with absolute paths",
+        "The walk goes up only as far as the deepest directory that exists, so a root above it is never asked to be created.",
+        "Inspect the upward loop of proven_fs_mkdir_all. On Windows the drive root, an extended-length path and a UNC path are tried too.");
+    // ---------------------------------------------------------------
+    {
+        char cwd[1024], abs_path[1400];
+#if PLATFORM_IS_POSIX
+        bool have_cwd = getcwd(cwd, sizeof cwd) != NULL;
+        const char *sep = "/";
+#else
+        bool have_cwd = _getcwd(cwd, (int)sizeof cwd) != NULL;
+        const char *sep = "\\";
+#endif
+        PROVEN_TEST_ASSERT(have_cwd, "the current directory is known", "");
+        snprintf(abs_path, sizeof abs_path, "%s%s" ROOT "%sall%sabs%sx", cwd, sep, sep, sep, sep);
+        e = proven_fs_mkdir_all(heap, proven_u8str_view_from_cstr(abs_path));
+        PROVEN_TEST_ASSERT(e == PROVEN_OK && is_dir(V(ROOT "/all/abs/x")), "an absolute path, two missing levels", "");
+        e = proven_fs_mkdir_all(heap, proven_u8str_view_from_cstr(abs_path));
+        PROVEN_TEST_ASSERT(e == PROVEN_OK, "and the same absolute path again", "");
+#if PLATFORM_IS_POSIX
+        e = proven_fs_mkdir_all(heap, V("/"));
+        PROVEN_TEST_ASSERT(e == PROVEN_OK, "the root is already there", "");
+#else
+        if (cwd[0] != '\0' && cwd[1] == ':') {
+            char root[4] = { cwd[0], ':', '\\', '\0' };
+            e = proven_fs_mkdir_all(heap, proven_u8str_view_from_cstr(root));
+            PROVEN_TEST_ASSERT(e == PROVEN_OK, "a drive root is already there", "Windows answers a mkdir of the drive root with access denied; the stat after it is what settles this.");
+
+            snprintf(abs_path, sizeof abs_path, "\\\\?\\%s\\" ROOT "\\all\\ext\\x", cwd);
+            e = proven_fs_mkdir_all(heap, proven_u8str_view_from_cstr(abs_path));
+            PROVEN_TEST_ASSERT(e == PROVEN_OK && is_dir(V(ROOT "/all/ext/x")), "an extended-length path, two missing levels", "");
+
+            char share[32];
+            snprintf(share, sizeof share, "\\\\localhost\\%c$\\", cwd[0]);
+            if (!is_dir(proven_u8str_view_from_cstr(share))) {
+                PROVEN_TEST_INFO("SKIP: the administrative share of this drive cannot be reached, so no UNC path is tried.");
+            } else {
+                snprintf(abs_path, sizeof abs_path, "\\\\localhost\\%c$%s\\" ROOT "\\all\\unc\\x", cwd[0], cwd + 2);
+                e = proven_fs_mkdir_all(heap, proven_u8str_view_from_cstr(abs_path));
+                PROVEN_TEST_ASSERT(e == PROVEN_OK && is_dir(V(ROOT "/all/unc/x")), "a UNC path, two missing levels", "");
+            }
+        } else {
+            PROVEN_TEST_INFO("SKIP: the current directory has no drive letter.");
+        }
+#endif
+    }
 
     put(V(ROOT "/all/blocked"));
     e = proven_fs_mkdir_all(heap, V(ROOT "/all/blocked"));
