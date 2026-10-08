@@ -130,7 +130,7 @@ typedef enum {
 | `PROVEN_ERR_BUSY` | 큐, 락, 또는 리소스가 사용 중이다. | 물러나서 기다린다. |
 | `PROVEN_ERR_PERMISSION` | 접근이 거부되었다. | 보고한다. 재시도해도 소용없다. |
 | `PROVEN_ERR_INVALID_FORMAT` | 포맷이나 스캔 템플릿 자체가 잘못되었다. | 포맷 문자열을 고친다 — 잘못된 데이터가 아니라 버그다. |
-| `PROVEN_ERR_EXISTS` | 배타적 생성이 이미 있는 이름을 만났다(`PROVEN_FS_CREATE_NEW`). | 다른 이름을 고르거나, 있는 것을 연다. |
+| `PROVEN_ERR_EXISTS` | 이름을 만들라는 호출이 이미 있는 이름을 만났다. 배타적 생성(`PROVEN_FS_CREATE_NEW`), `proven_fs_mkdir`, `proven_fs_link`. | 다른 이름을 고르거나, 있는 것을 쓴다. 다만 그것이 기대한 것인지 확인한 뒤에. |
 
 **여러분 자신의 코드를 위한 자리.** 모든 `proven_err_t` 값은 `PROVEN_ERR_RESERVED_END`(0x1000)보다
 작다. 이것은 이번 판의 모습이 아니라 이후 모든 판에 대한 약속이다: proven은 그 이상의 코드를 결코 정의하지
@@ -829,9 +829,9 @@ proven_mem_mut_t block = proven_arena_alloc_or_panic(&arena, n);
 
 ```text
 #define PROVEN_VERSION_MAJOR  0
-#define PROVEN_VERSION_MINOR  6
+#define PROVEN_VERSION_MINOR  7
 #define PROVEN_VERSION_PATCH  0
-#define PROVEN_VERSION_STRING "proven_c_lib-v0.6.0"
+#define PROVEN_VERSION_STRING "proven_c_lib-v0.7.0"
 #define PROVEN_VERSION_ENCODE(major, minor, patch) ((major) * 1000000L + (minor) * 1000L + (patch))
 #define PROVEN_VERSION_NUM    PROVEN_VERSION_ENCODE(PROVEN_VERSION_MAJOR, PROVEN_VERSION_MINOR, PROVEN_VERSION_PATCH)
 ```

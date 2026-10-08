@@ -129,7 +129,7 @@ typedef enum {
 | `PROVEN_ERR_BUSY` | A queue, lock, or resource is busy. | Backing off. |
 | `PROVEN_ERR_PERMISSION` | Access denied. | Reporting; retrying will not help. |
 | `PROVEN_ERR_INVALID_FORMAT` | A format or scan template is itself malformed. | Fixing the format string - a bug, not bad data. |
-| `PROVEN_ERR_EXISTS` | An exclusive create found the name already there (`PROVEN_FS_CREATE_NEW`). | Choosing another name, or opening the existing one. |
+| `PROVEN_ERR_EXISTS` | A call asked to create a name found it already there: an exclusive create (`PROVEN_FS_CREATE_NEW`), `proven_fs_mkdir`, `proven_fs_link`. | Choosing another name, or using what is there - after checking it is what you expect. |
 
 **Room for your own codes.** Every `proven_err_t` value is below `PROVEN_ERR_RESERVED_END`
 (0x1000), and that is a promise for every later version, not a description of this one: proven
@@ -848,9 +848,9 @@ Compile-time identification, for diagnostics and for code that must adapt to the
 
 ```text
 #define PROVEN_VERSION_MAJOR  0
-#define PROVEN_VERSION_MINOR  6
+#define PROVEN_VERSION_MINOR  7
 #define PROVEN_VERSION_PATCH  0
-#define PROVEN_VERSION_STRING "proven_c_lib-v0.6.0"
+#define PROVEN_VERSION_STRING "proven_c_lib-v0.7.0"
 #define PROVEN_VERSION_ENCODE(major, minor, patch) ((major) * 1000000L + (minor) * 1000L + (patch))
 #define PROVEN_VERSION_NUM    PROVEN_VERSION_ENCODE(PROVEN_VERSION_MAJOR, PROVEN_VERSION_MINOR, PROVEN_VERSION_PATCH)
 ```

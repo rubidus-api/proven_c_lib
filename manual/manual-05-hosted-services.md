@@ -168,7 +168,7 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 | `proven_fs_write(file, src)` | Single write attempt from byte view. | `proven_result_size_t`. |
 | `proven_fs_write_all(file, src)` | Retry until all bytes are written or an error occurs. | `proven_err_t`. |
 | `proven_fs_size(file)` | Query open file size. | `proven_result_size_t`. |
-| `proven_fs_rename(scratch, src, dest)` | Rename or move path. | `proven_err_t`. |
+| `proven_fs_rename(scratch, src, dest)` | Rename or move path, replacing `dest`. `PROVEN_ERR_NOT_FOUND` when `src` is not there. | `proven_err_t`. |
 | `proven_fs_remove(scratch, path)` | Remove a file, or an empty directory (as POSIX `remove()`, on Windows too). | `proven_err_t`. |
 | `proven_fs_copy(temp_alloc, src, dest)` | Copy file using temporary buffer allocation. | `proven_err_t`. |
 | `proven_fs_mkdir(scratch, path)` | Create one directory; its parent must exist. `PROVEN_ERR_EXISTS` when the name is taken, `PROVEN_ERR_NOT_FOUND` when the parent is missing. | `proven_err_t`. |
@@ -176,7 +176,7 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 | `proven_fs_rmdir(scratch, path)` | Remove empty directory. `PROVEN_ERR_NOT_FOUND` when it is not there; a directory that is not empty is `PROVEN_ERR_IO`. | `proven_err_t`. |
 | `proven_fs_list(alloc, path)` | List directory into `proven_array_t` of `proven_fs_entry_t`. | `proven_result_array_t`. |
 | `proven_fs_list_destroy(alloc, list)` | Destroy directory listing and entry names. | void. |
-| `proven_fs_chmod(scratch, path, perms)` | Set permissions. | `proven_err_t`. |
+| `proven_fs_chmod(scratch, path, perms)` | Set permissions. `PROVEN_ERR_NOT_FOUND` when the name is not there. | `proven_err_t`. |
 | `proven_fs_lock(file, type, wait)` | Acquire/release file lock. With `wait` false, a lock someone else holds is `PROVEN_ERR_BUSY`. | `proven_err_t`. |
 | `proven_fs_stat(scratch, path, out_stat)` | Fill metadata. | `proven_err_t`. |
 
@@ -323,6 +323,28 @@ that is information. A caller that wants a whole path to exist, and does not car
 it, calls `proven_fs_mkdir_all`: it creates every missing level, treats a level that is
 already a directory as done, and still refuses - with `PROVEN_ERR_EXISTS` - when a level is
 something other than a directory. Directories it created before a failure stay.
+
+Wrong - reading every refusal of `proven_fs_mkdir` as a failure:
+
+```text
+proven_err_t e = proven_fs_mkdir(alloc, dir);
+if (!proven_is_ok(e)) return e;                     /* wrong: stops when dir is already there */
+```
+
+A program run twice fails the second time, at a directory it made itself. Either ask for what
+is meant - `proven_fs_mkdir_all`, "this path is a directory when I return" - or accept
+`PROVEN_ERR_EXISTS` on purpose.
+
+Wrong - accepting `PROVEN_ERR_EXISTS` without asking what exists:
+
+```text
+proven_err_t e = proven_fs_mkdir(alloc, dir);
+if (e == PROVEN_ERR_EXISTS) e = PROVEN_OK;          /* wrong: a FILE named dir also answers this */
+```
+
+`proven_fs_mkdir` does not look at what holds the name. A file of that name gives the same
+answer, and the write into `dir/...` that follows fails somewhere less clear.
+`proven_fs_mkdir_all` asks, and returns `PROVEN_OK` only for a directory.
 
 **A file someone is reading is still replaced.** When another process holds the
 destination open but allowed delete sharing - `proven_fs_open` does - the atomic write

@@ -202,6 +202,35 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("chapter 5, creating directories",
+        "What the chapter says proven_fs_mkdir and proven_fs_mkdir_all answer when the name is taken.",
+        "");
+    // ---------------------------------------------------------------
+    {
+        /* CLAIM: "proven_fs_mkdir does not look at what holds the name. A file of that name
+         * gives the same answer", and: "proven_fs_mkdir_all asks, and returns PROVEN_OK only
+         * for a directory." */
+        proven_u8str_view_t dir = PROVEN_LIT("claims_mkdir.tmp");
+        proven_u8str_view_t file = PROVEN_LIT("claims_mkdir_file.tmp");
+        (void)proven_fs_rmdir(heap, dir);
+        PROVEN_TEST_ASSERT(proven_fs_mkdir(heap, dir) == PROVEN_OK, "setup: a directory", "");
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_fs_write_file(heap, file,
+            proven_mem_view_from_u8(PROVEN_LIT("x")))), "setup: a file", "");
+
+        PROVEN_TEST_ASSERT(proven_fs_mkdir(heap, dir) == PROVEN_ERR_EXISTS &&
+                           proven_fs_mkdir(heap, file) == PROVEN_ERR_EXISTS,
+            "proven_fs_mkdir must answer PROVEN_ERR_EXISTS for a directory and for a file alike",
+            "The chapter's second counter-example rests on the two answers being the same.");
+        PROVEN_TEST_ASSERT(proven_fs_mkdir_all(heap, dir) == PROVEN_OK &&
+                           proven_fs_mkdir_all(heap, file) == PROVEN_ERR_EXISTS,
+            "proven_fs_mkdir_all must be PROVEN_OK for the directory and PROVEN_ERR_EXISTS for the file",
+            "PROVEN_OK for the file would make 'returns PROVEN_OK only for a directory' false.");
+
+        (void)proven_fs_remove(heap, file);
+        (void)proven_fs_rmdir(heap, dir);
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("chapter 5, streams",
         "The refusals and lifetimes the streams sections promise.",
         "");

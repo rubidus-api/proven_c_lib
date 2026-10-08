@@ -18,9 +18,12 @@ written; their tags still exist.
 
 ## [Unreleased]
 
-Behaviour change, for a MINOR release: six filesystem calls that answered `PROVEN_ERR_IO` for
-every failure now name the ones a caller can act on. Code that compared one of these cases
-against `PROVEN_ERR_IO` must compare against the new code; `proven_is_ok` checks are unaffected.
+## [0.7.0] - 2026-10-08
+
+A MINOR release: nothing public removed, one function added. Behaviour change: six filesystem
+calls that answered `PROVEN_ERR_IO` for every failure now name the ones a caller can act on. Code
+that compared one of these cases against `PROVEN_ERR_IO` must compare against the new code;
+`proven_is_ok` checks are unaffected. No error code is added, so `PROVEN_ERR_LAST` does not move.
 
 ### Added
 

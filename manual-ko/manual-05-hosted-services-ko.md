@@ -167,7 +167,7 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 | `proven_fs_write(file, src)` | 바이트 view로부터의 단일 쓰기 시도. | `proven_result_size_t`. |
 | `proven_fs_write_all(file, src)` | 모든 바이트가 쓰이거나 에러가 발생할 때까지 재시도. | `proven_err_t`. |
 | `proven_fs_size(file)` | 열린 파일의 크기를 조회. | `proven_result_size_t`. |
-| `proven_fs_rename(scratch, src, dest)` | 경로 이름 변경 또는 이동. | `proven_err_t`. |
+| `proven_fs_rename(scratch, src, dest)` | 경로 이름 변경 또는 이동. `dest`를 대체한다. `src`가 없으면 `PROVEN_ERR_NOT_FOUND`. | `proven_err_t`. |
 | `proven_fs_remove(scratch, path)` | 파일, 또는 빈 디렉터리 제거(POSIX `remove()` 처럼, Windows 에서도). | `proven_err_t`. |
 | `proven_fs_copy(temp_alloc, src, dest)` | 임시 버퍼 할당을 사용해 파일 복사. | `proven_err_t`. |
 | `proven_fs_mkdir(scratch, path)` | 디렉터리 하나 생성. 부모가 있어야 한다. 이름이 이미 쓰이고 있으면 `PROVEN_ERR_EXISTS`, 부모가 없으면 `PROVEN_ERR_NOT_FOUND`. | `proven_err_t`. |
@@ -175,7 +175,7 @@ if (proven_is_ok(proven_fs_stat(scratch, PROVEN_LIT("/etc/hosts"), &st))) {
 | `proven_fs_rmdir(scratch, path)` | 빈 디렉터리 제거. 없으면 `PROVEN_ERR_NOT_FOUND`, 비어 있지 않은 디렉터리는 `PROVEN_ERR_IO`. | `proven_err_t`. |
 | `proven_fs_list(alloc, path)` | 디렉터리를 `proven_fs_entry_t`의 `proven_array_t`로 나열. | `proven_result_array_t`. |
 | `proven_fs_list_destroy(alloc, list)` | 디렉터리 목록과 엔트리 이름을 파괴. | void. |
-| `proven_fs_chmod(scratch, path, perms)` | 권한 설정. | `proven_err_t`. |
+| `proven_fs_chmod(scratch, path, perms)` | 권한 설정. 이름이 없으면 `PROVEN_ERR_NOT_FOUND`. | `proven_err_t`. |
 | `proven_fs_lock(file, type, wait)` | 파일 잠금 획득/해제. `wait`가 false일 때 남이 쥔 잠금은 `PROVEN_ERR_BUSY`. | `proven_err_t`. |
 | `proven_fs_stat(scratch, path, out_stat)` | 메타데이터 채우기. | `proven_err_t`. |
 
@@ -317,6 +317,28 @@ if (proven_is_ok(dir.err)) {
 상관없는 호출자는 `proven_fs_mkdir_all`을 부른다. 빠진 단계를 모두 만들고, 이미
 디렉터리인 단계는 끝난 것으로 치며, 어떤 단계가 디렉터리가 아닌 다른 것이면 여전히
 `PROVEN_ERR_EXISTS`로 거절한다. 실패하기 전에 만든 디렉터리는 그대로 남는다.
+
+잘못된 예 — `proven_fs_mkdir`의 모든 거절을 실패로 읽기:
+
+```text
+proven_err_t e = proven_fs_mkdir(alloc, dir);
+if (!proven_is_ok(e)) return e;                     /* wrong: stops when dir is already there */
+```
+
+두 번 실행한 프로그램은 두 번째에, 자기가 만든 디렉터리에서 실패한다. 뜻하는 바를 그대로
+요청하거나 — `proven_fs_mkdir_all`, "돌아올 때 이 경로는 디렉터리다" — 아니면
+`PROVEN_ERR_EXISTS`를 의도적으로 받아들여라.
+
+잘못된 예 — 무엇이 있는지 묻지 않고 `PROVEN_ERR_EXISTS`를 받아들이기:
+
+```text
+proven_err_t e = proven_fs_mkdir(alloc, dir);
+if (e == PROVEN_ERR_EXISTS) e = PROVEN_OK;          /* wrong: a FILE named dir also answers this */
+```
+
+`proven_fs_mkdir`는 그 이름을 무엇이 차지하고 있는지 보지 않는다. 같은 이름의 파일도 같은
+답을 주고, 뒤따르는 `dir/...` 쓰기는 덜 분명한 곳에서 실패한다. `proven_fs_mkdir_all`은
+물어보고, 디렉터리일 때만 `PROVEN_OK`를 돌려준다.
 
 **누가 읽고 있는 파일도 바꿔 넣는다.** 다른 프로세스가 대상을 열어 두고 있어도 그 프로세스가
 삭제 공유(delete sharing)를 허용했다면 — `proven_fs_open`이 그렇게 연다 — atomic 쓰기는 성공하고,
