@@ -104,10 +104,15 @@ typedef enum {
     PROVEN_ERR_BUSY,
     PROVEN_ERR_PERMISSION,
     PROVEN_ERR_INVALID_FORMAT,
-    PROVEN_ERR_EXISTS
+    PROVEN_ERR_EXISTS,
+    PROVEN_ERR_TIMEOUT,
+    PROVEN_ERR_REFUSED,
+    PROVEN_ERR_RESET,
+    PROVEN_ERR_UNREACHABLE,
+    PROVEN_ERR_UNTRUSTED
 } proven_err_t;
 
-#define PROVEN_ERR_LAST         PROVEN_ERR_EXISTS           /* moves when a code is added */
+#define PROVEN_ERR_LAST         PROVEN_ERR_UNTRUSTED        /* moves when a code is added */
 #define PROVEN_ERR_RESERVED_END 0x1000                      /* never reached, in any version */
 ```
 
@@ -130,6 +135,11 @@ typedef enum {
 | `PROVEN_ERR_PERMISSION` | Access denied. | Reporting; retrying will not help. |
 | `PROVEN_ERR_INVALID_FORMAT` | A format or scan template is itself malformed. | Fixing the format string - a bug, not bad data. |
 | `PROVEN_ERR_EXISTS` | A call asked to create a name found it already there: an exclusive create (`PROVEN_FS_CREATE_NEW`), `proven_fs_mkdir`, `proven_fs_link`. | Choosing another name, or using what is there - after checking it is what you expect. |
+| `PROVEN_ERR_TIMEOUT` | A deadline you gave passed before the operation could finish. | Retrying, giving up, or closing - the object is still usable; nothing broke. |
+| `PROVEN_ERR_REFUSED` | The other end answered and said no: nothing is listening at that address. | Trying another address, or reporting; an immediate retry gets the same answer. |
+| `PROVEN_ERR_RESET` | The peer ended the connection abruptly, or it was aborted on the way. | Closing your end; whatever was in flight may not have arrived. |
+| `PROVEN_ERR_UNREACHABLE` | No route to that network or host. | Reporting, or retrying later - the cause is outside the program. |
+| `PROVEN_ERR_UNTRUSTED` | A peer's identity could not be verified. Reserved for certificate checks; nothing in this version returns it. | Refusing to continue. |
 
 **Room for your own codes.** Every `proven_err_t` value is below `PROVEN_ERR_RESERVED_END`
 (0x1000), and that is a promise for every later version, not a description of this one: proven

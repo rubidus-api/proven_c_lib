@@ -15,25 +15,26 @@
  * 경과 시간이 아니라 CPU 시간을 재므로, 잠든 프로그램은 즉시 끝난 것처럼 보인다. 어느
  * 이름도 자기가 둘 중 어느 물음에 답하는지 말해 주지 않는다.
  *
- * proven_time_now() 는 유닉스 기점부터의 나노초다. 날짜로 형식화되기도 하고 기간으로
- * 빼지기도 하는 수 하나이며, 실제 작업의 시간을 재기에 충분히 고운 해상도를 갖는다.
+ * 여기서는 둘이 각자의 호출을 갖는다. proven_time_now() 는 벽시계, 곧 유닉스 기점부터의
+ * 나노초이고 날짜로 형식화된다. proven_time_monotonic_now() 는 단조 시계, 곧 이 프로세스
+ * 밖에서는 아무 뜻도 없는 기점부터의 나노초이고, 두 번 읽은 값을 빼면 기간이 된다.
  */
 
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
     /* --- 기간으로 쓰기 -------------------------------------------------- */
-    proven_time_t start = proven_time_now();
+    proven_time_t start = proven_time_now();            /* 벽시계: 아래의 날짜에 쓴다 */
+    proven_time_t t0 = proven_time_monotonic_now();     /* 단조 시계: 기간에 쓴다 */
     proven_time_sleep(15);                 /* 밀리초 */
-    proven_time_t end = proven_time_now();
+    proven_i64 elapsed_ns = proven_time_monotonic_now() - t0;
 
-    proven_i64 elapsed_ns = end - start;
-    EXAMPLE_REQUIRE(elapsed_ns > 0, "time must move forward across a sleep");
+    EXAMPLE_REQUIRE(elapsed_ns > 0, "the monotonic clock moves forward across a sleep");
     /* sleep 은 청한 시간 *이상*을 보장하지, 이하를 보장하지 않는다. 언제 다시 돌지는
      * 스케줄러가 정한다. 여기서 상한을 단언하면 바쁜 기계에서 실패하는 시험이 되고,
      * 그래서 이 예제는 그러지 않는다. */
     EXAMPLE_REQUIRE(elapsed_ns >= 10 * 1000 * 1000,
-                    "sleeping 15ms must take at least ~10ms of wall time");
+                    "sleeping 15ms must take at least ~10ms");
 
     /* --- 날짜로 쓰기 ---------------------------------------------------- */
     proven_datetime_t dt = proven_time_breakdown(start);

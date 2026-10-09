@@ -571,9 +571,14 @@ libc는 이 구분을 흐린다. `time()`은 벽시계의 초 단위 정수를 �
 
 ### 이 라이브러리는 대신 무엇을 하는가
 
-`proven_time_now()`는 **Unix epoch 이후의 나노초**를 부호 있는 64비트 값으로 반환한다. 빼면 경과
-시간이 되고, 분해하면 달력 날짜가 되는 하나의 숫자다 — 실제 작업의 시간을 잴 만큼 충분히 고운
-해상도로.
+시계는 둘이고, 각각 할 일이 하나다.
+
+`proven_time_now()`는 **벽시계**다: Unix epoch 이후의 나노초를 부호 있는 64비트 값으로 준다. 날짜가
+있고, NTP나 관리자가 맞추는 시계이므로 어느 방향으로든 건너뛸 수 있다. 분해하거나 포맷하는 데 쓴다.
+
+`proven_time_monotonic_now()`는 **단조 시계**다: 프로세스가 사는 동안 고정된 기점부터의 나노초다. 뒤로
+가지 않고 아무도 맞추지 않으므로, 두 번 읽은 값의 차이가 경과 시간이다. 날짜가 없고, 읽은 값은 다른
+프로세스나 다음 실행에서는 아무 뜻도 없다. 경과 시간, 타임아웃, 기한은 이것으로 잰다.
 
 `proven_time_breakdown()`은 그 숫자를 `proven_datetime_t`로 바꾸며, 그 필드는 사람이 쓰는 것들이다:
 `month`는 libc의 0-11이 아니라 **1-12**이고, `year`는 1900년 이후의 햇수가 아니라 실제 연도다.
@@ -593,8 +598,16 @@ proven_time_t t1 = proven_time_now();
 proven_u64 ns = (proven_u64)(t1 - t0);   /* wrong: an NTP step back makes this enormous */
 ```
 
-뺄셈은 괜찮다. 캐스트가 문제다. 차이를 부호 있는 값으로 유지하고, 음수 경과 시간은 지속 시간이
-아니라 "시계가 움직였다"로 취급하라.
+올바른 예 — 경과 시간은 건너뛸 수 없는 단조 시계에서 온다:
+
+```text
+proven_time_t t0 = proven_time_monotonic_now();
+do_work();
+proven_i64 elapsed_ns = proven_time_monotonic_now() - t0;   /* never negative */
+```
+
+가진 것이 벽시계 값 둘뿐이라면 - 로그의 타임스탬프 둘 - 차이를 부호 있는 값으로 유지하고, 음수는
+지속 시간이 아니라 "시계가 움직였다"로 취급하라.
 
 잘못된 예 — sleep이 정확하다고 가정하기:
 
@@ -626,25 +639,26 @@ proven_time_sleep(15);
  * 경과 시간이 아니라 CPU 시간을 재므로, 잠든 프로그램은 즉시 끝난 것처럼 보인다. 어느
  * 이름도 자기가 둘 중 어느 물음에 답하는지 말해 주지 않는다.
  *
- * proven_time_now() 는 유닉스 기점부터의 나노초다. 날짜로 형식화되기도 하고 기간으로
- * 빼지기도 하는 수 하나이며, 실제 작업의 시간을 재기에 충분히 고운 해상도를 갖는다.
+ * 여기서는 둘이 각자의 호출을 갖는다. proven_time_now() 는 벽시계, 곧 유닉스 기점부터의
+ * 나노초이고 날짜로 형식화된다. proven_time_monotonic_now() 는 단조 시계, 곧 이 프로세스
+ * 밖에서는 아무 뜻도 없는 기점부터의 나노초이고, 두 번 읽은 값을 빼면 기간이 된다.
  */
 
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
     /* --- 기간으로 쓰기 -------------------------------------------------- */
-    proven_time_t start = proven_time_now();
+    proven_time_t start = proven_time_now();            /* 벽시계: 아래의 날짜에 쓴다 */
+    proven_time_t t0 = proven_time_monotonic_now();     /* 단조 시계: 기간에 쓴다 */
     proven_time_sleep(15);                 /* 밀리초 */
-    proven_time_t end = proven_time_now();
+    proven_i64 elapsed_ns = proven_time_monotonic_now() - t0;
 
-    proven_i64 elapsed_ns = end - start;
-    EXAMPLE_REQUIRE(elapsed_ns > 0, "time must move forward across a sleep");
+    EXAMPLE_REQUIRE(elapsed_ns > 0, "the monotonic clock moves forward across a sleep");
     /* sleep 은 청한 시간 *이상*을 보장하지, 이하를 보장하지 않는다. 언제 다시 돌지는
      * 스케줄러가 정한다. 여기서 상한을 단언하면 바쁜 기계에서 실패하는 시험이 되고,
      * 그래서 이 예제는 그러지 않는다. */
     EXAMPLE_REQUIRE(elapsed_ns >= 10 * 1000 * 1000,
-                    "sleeping 15ms must take at least ~10ms of wall time");
+                    "sleeping 15ms must take at least ~10ms");
 
     /* --- 날짜로 쓰기 ---------------------------------------------------- */
     proven_datetime_t dt = proven_time_breakdown(start);
@@ -731,6 +745,7 @@ typedef struct {
 | `proven_time_u16_fmt(alloc, str, dt, locale, fmt)` | U16이 비활성화되지 않은 한 포맷된 날짜시간을 U16 문자열에 덧붙임. | `proven_err_t`. |
 | `proven_time_now()` | 현재 타임스탬프(나노초). | `proven_time_t`. |
 | `proven_time_breakdown(time_ns)` | epoch 나노초를 분해된 UTC 시간으로 변환. | `proven_datetime_t`. |
+| `proven_time_monotonic_now()` | 단조 시계: 프로세스별 기점부터의 나노초. 두 값을 빼서 경과 시간을 얻는다. 날짜가 아니다. | `proven_time_t`. |
 | `proven_time_now_datetime()` | 현재 로컬 분해 시간. | `proven_datetime_t`. |
 | `proven_time_sleep(ms)` | 밀리초 동안 sleep. | void. |
 

@@ -105,10 +105,15 @@ typedef enum {
     PROVEN_ERR_BUSY,
     PROVEN_ERR_PERMISSION,
     PROVEN_ERR_INVALID_FORMAT,
-    PROVEN_ERR_EXISTS
+    PROVEN_ERR_EXISTS,
+    PROVEN_ERR_TIMEOUT,
+    PROVEN_ERR_REFUSED,
+    PROVEN_ERR_RESET,
+    PROVEN_ERR_UNREACHABLE,
+    PROVEN_ERR_UNTRUSTED
 } proven_err_t;
 
-#define PROVEN_ERR_LAST         PROVEN_ERR_EXISTS           /* moves when a code is added */
+#define PROVEN_ERR_LAST         PROVEN_ERR_UNTRUSTED        /* moves when a code is added */
 #define PROVEN_ERR_RESERVED_END 0x1000                      /* never reached, in any version */
 ```
 
@@ -131,6 +136,11 @@ typedef enum {
 | `PROVEN_ERR_PERMISSION` | 접근이 거부되었다. | 보고한다. 재시도해도 소용없다. |
 | `PROVEN_ERR_INVALID_FORMAT` | 포맷이나 스캔 템플릿 자체가 잘못되었다. | 포맷 문자열을 고친다 — 잘못된 데이터가 아니라 버그다. |
 | `PROVEN_ERR_EXISTS` | 이름을 만들라는 호출이 이미 있는 이름을 만났다. 배타적 생성(`PROVEN_FS_CREATE_NEW`), `proven_fs_mkdir`, `proven_fs_link`. | 다른 이름을 고르거나, 있는 것을 쓴다. 다만 그것이 기대한 것인지 확인한 뒤에. |
+| `PROVEN_ERR_TIMEOUT` | 준 기한이 연산이 끝나기 전에 지났다. | 재시도하거나, 포기하거나, 닫는다 — 객체는 여전히 쓸 수 있다. 망가진 것은 없다. |
+| `PROVEN_ERR_REFUSED` | 상대가 응답했고 거절했다: 그 주소에서 듣고 있는 것이 없다. | 다른 주소를 시도하거나 보고한다. 곧바로 재시도하면 같은 답이 온다. |
+| `PROVEN_ERR_RESET` | 상대가 연결을 갑자기 끝냈거나, 도중에 중단됐다. | 이쪽 끝을 닫는다. 전송 중이던 것은 도착하지 않았을 수 있다. |
+| `PROVEN_ERR_UNREACHABLE` | 그 네트워크나 호스트로 가는 경로가 없다. | 보고하거나 나중에 재시도한다 — 원인은 프로그램 밖에 있다. |
+| `PROVEN_ERR_UNTRUSTED` | 상대의 신원을 확인할 수 없었다. 인증서 검사를 위해 예약됐고, 이 버전에서는 이것을 돌려주는 것이 없다. | 계속하기를 거부한다. |
 
 **여러분 자신의 코드를 위한 자리.** 모든 `proven_err_t` 값은 `PROVEN_ERR_RESERVED_END`(0x1000)보다
 작다. 이것은 이번 판의 모습이 아니라 이후 모든 판에 대한 약속이다: proven은 그 이상의 코드를 결코 정의하지

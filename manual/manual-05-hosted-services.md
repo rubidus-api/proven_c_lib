@@ -587,9 +587,16 @@ other one.
 
 ### What this library does instead
 
-`proven_time_now()` returns **nanoseconds since the Unix epoch** as a signed 64-bit value. One
-number that you can subtract to get a duration, or break down to get a calendar date - at a
-resolution fine enough to time real work.
+There are two clocks, and each has one job.
+
+`proven_time_now()` is the **wall clock**: nanoseconds since the Unix epoch as a signed 64-bit
+value. It has a date, and it is set - by NTP, by an administrator - so it can step in either
+direction. Break it down or format it.
+
+`proven_time_monotonic_now()` is the **monotonic clock**: nanoseconds from an origin fixed for the
+life of the process. It never goes backwards and nobody sets it, so the difference of two readings
+is an elapsed time. It has no date, and a reading means nothing in another process or a later run.
+Durations, timeouts and deadlines are measured with this one.
 
 `proven_time_breakdown()` turns that number into `proven_datetime_t`, whose fields are the ones a
 human uses: `month` is **1-12**, not libc's 0-11, and `year` is the actual year, not years since
@@ -610,8 +617,16 @@ proven_time_t t1 = proven_time_now();
 proven_u64 ns = (proven_u64)(t1 - t0);   /* wrong: an NTP step back makes this enormous */
 ```
 
-The subtraction is fine; the cast is not. Keep the difference signed, and treat a negative elapsed
-time as "the clock moved", not as a duration.
+Correct - a duration comes from the monotonic clock, which cannot step:
+
+```text
+proven_time_t t0 = proven_time_monotonic_now();
+do_work();
+proven_i64 elapsed_ns = proven_time_monotonic_now() - t0;   /* never negative */
+```
+
+If two wall-clock readings are all you have - two timestamps from a log - keep the difference
+signed, and treat a negative one as "the clock moved", not as a duration.
 
 Wrong - assuming sleep is precise:
 
@@ -646,26 +661,27 @@ because that would be a test that fails on a busy machine.
  * sleeps looks instantaneous. Neither name tells you which of the two questions
  * it is answering.
  *
- * proven_time_now() is nanoseconds since the Unix epoch: one number that both
- * formats as a date and subtracts as a duration, at a resolution fine enough to
- * time real work.
+ * Here each has its own call. proven_time_now() is the wall clock, nanoseconds
+ * since the Unix epoch: it formats as a date. proven_time_monotonic_now() is the
+ * monotonic clock, nanoseconds from an origin that means nothing outside this
+ * process: two readings subtract to a duration.
  */
 
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
     /* --- as a duration ------------------------------------------------- */
-    proven_time_t start = proven_time_now();
+    proven_time_t start = proven_time_now();            /* the wall clock, for the date below */
+    proven_time_t t0 = proven_time_monotonic_now();     /* the monotonic clock, for the duration */
     proven_time_sleep(15);                 /* milliseconds */
-    proven_time_t end = proven_time_now();
+    proven_i64 elapsed_ns = proven_time_monotonic_now() - t0;
 
-    proven_i64 elapsed_ns = end - start;
-    EXAMPLE_REQUIRE(elapsed_ns > 0, "time must move forward across a sleep");
+    EXAMPLE_REQUIRE(elapsed_ns > 0, "the monotonic clock moves forward across a sleep");
     /* Sleep guarantees AT LEAST the requested time, never at most: the scheduler
      * decides when you actually run again. Asserting an upper bound here would
      * be a test that fails on a busy machine, which is why this one does not. */
     EXAMPLE_REQUIRE(elapsed_ns >= 10 * 1000 * 1000,
-                    "sleeping 15ms must take at least ~10ms of wall time");
+                    "sleeping 15ms must take at least ~10ms");
 
     /* --- as a date ------------------------------------------------------ */
     proven_datetime_t dt = proven_time_breakdown(start);
@@ -752,6 +768,7 @@ typedef struct {
 | `proven_time_u16_fmt(alloc, str, dt, locale, fmt)` | Append formatted datetime to U16 string unless U16 is disabled. | `proven_err_t`. |
 | `proven_time_now()` | Current timestamp in nanoseconds. | `proven_time_t`. |
 | `proven_time_breakdown(time_ns)` | Convert epoch nanoseconds to broken-down UTC time. | `proven_datetime_t`. |
+| `proven_time_monotonic_now()` | The monotonic clock: nanoseconds from a per-process origin. Subtract two readings for a duration; never a date. | `proven_time_t`. |
 | `proven_time_now_datetime()` | Current local broken-down time. | `proven_datetime_t`. |
 | `proven_time_sleep(ms)` | Sleep for milliseconds. | void. |
 

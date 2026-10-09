@@ -18,26 +18,27 @@
  * sleeps looks instantaneous. Neither name tells you which of the two questions
  * it is answering.
  *
- * proven_time_now() is nanoseconds since the Unix epoch: one number that both
- * formats as a date and subtracts as a duration, at a resolution fine enough to
- * time real work.
+ * Here each has its own call. proven_time_now() is the wall clock, nanoseconds
+ * since the Unix epoch: it formats as a date. proven_time_monotonic_now() is the
+ * monotonic clock, nanoseconds from an origin that means nothing outside this
+ * process: two readings subtract to a duration.
  */
 
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
     /* --- as a duration ------------------------------------------------- */
-    proven_time_t start = proven_time_now();
+    proven_time_t start = proven_time_now();            /* the wall clock, for the date below */
+    proven_time_t t0 = proven_time_monotonic_now();     /* the monotonic clock, for the duration */
     proven_time_sleep(15);                 /* milliseconds */
-    proven_time_t end = proven_time_now();
+    proven_i64 elapsed_ns = proven_time_monotonic_now() - t0;
 
-    proven_i64 elapsed_ns = end - start;
-    EXAMPLE_REQUIRE(elapsed_ns > 0, "time must move forward across a sleep");
+    EXAMPLE_REQUIRE(elapsed_ns > 0, "the monotonic clock moves forward across a sleep");
     /* Sleep guarantees AT LEAST the requested time, never at most: the scheduler
      * decides when you actually run again. Asserting an upper bound here would
      * be a test that fails on a busy machine, which is why this one does not. */
     EXAMPLE_REQUIRE(elapsed_ns >= 10 * 1000 * 1000,
-                    "sleeping 15ms must take at least ~10ms of wall time");
+                    "sleeping 15ms must take at least ~10ms");
 
     /* --- as a date ------------------------------------------------------ */
     proven_datetime_t dt = proven_time_breakdown(start);

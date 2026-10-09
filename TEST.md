@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 70 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 71 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-09, Windows 11 test VM: x86-64 220 PASS, 0 FAIL, 7 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 133 registered tests plus the 94 runnable manual examples - 227 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 146 test files: the 133 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 134 registered tests plus the 94 runnable manual examples - 228 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 147 test files: the 134 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1034,6 +1034,17 @@ Failure tip: inspect `platform/proven_sys_time.c` for clock conversion and `src/
 Intent: verify `proven_time_u16_fmt` produces the same text as `proven_time_u8_fmt` (widened to code units) for every field and every fill/align/width spec - right-align, centre, left-align, custom fill - on numeric AND named fields, plus literals and escaping, so no spec is silently dropped.
 
 Failure tip: inspect `proven_time_u16_fmt` in `src/proven/time.c`. It renders through the u8 path (which delegates each field to the `fmt.h` spec engine) and widens the result, rather than hand-rolling a u16 parser that recognised only `:0>N`.
+
+### `tests/test_unit_time_monotonic` - the monotonic clock
+
+Intent: verify `proven_time_monotonic_now` is a clock a duration can be measured with.
+
+Sub-checks:
+
+- A hundred thousand consecutive readings never decrease, and the clock advances while it is read.
+- A 30 ms sleep is measured as at least 25 ms and less than a minute. No tighter upper bound is asserted: the scheduler decides when a sleeper runs again.
+
+Failure tip: inspect `proven_sys_time_monotonic_ns` in `platform/proven_sys_time.c`. A decrease means a settable clock is being read; a wrong magnitude means the unit, or the Windows frequency scaling, is wrong.
 
 ### `tests/test_unit_u16str` - U16 strings
 

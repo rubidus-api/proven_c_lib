@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-564 aliases: 430 lowercase `xcv_` function names and 134 uppercase `XCV_` macro names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+570 aliases: 431 lowercase `xcv_` function names and 139 uppercase `XCV_` macro names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -70,14 +70,19 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_ERR_INVALID_STATE` | `PROVEN_ERR_INVALID_STATE` |
 | `XCV_ERR_IO` | `PROVEN_ERR_IO` |
 | `XCV_ERR_LAST` | `PROVEN_ERR_LAST` |
+| `XCV_ERR_NEED_MORE` | `PROVEN_ERR_NEED_MORE` |
 | `XCV_ERR_NOMEM` | `PROVEN_ERR_NOMEM` |
 | `XCV_ERR_NOT_FOUND` | `PROVEN_ERR_NOT_FOUND` |
-| `XCV_ERR_NEED_MORE` | `PROVEN_ERR_NEED_MORE` |
 | `XCV_ERR_OUT_OF_BOUNDS` | `PROVEN_ERR_OUT_OF_BOUNDS` |
 | `XCV_ERR_OVERFLOW` | `PROVEN_ERR_OVERFLOW` |
 | `XCV_ERR_PERMISSION` | `PROVEN_ERR_PERMISSION` |
+| `XCV_ERR_REFUSED` | `PROVEN_ERR_REFUSED` |
 | `XCV_ERR_RESERVED_END` | `PROVEN_ERR_RESERVED_END` |
+| `XCV_ERR_RESET` | `PROVEN_ERR_RESET` |
+| `XCV_ERR_TIMEOUT` | `PROVEN_ERR_TIMEOUT` |
+| `XCV_ERR_UNREACHABLE` | `PROVEN_ERR_UNREACHABLE` |
 | `XCV_ERR_UNSUPPORTED` | `PROVEN_ERR_UNSUPPORTED` |
+| `XCV_ERR_UNTRUSTED` | `PROVEN_ERR_UNTRUSTED` |
 | `XCV_FS_APPEND` | `PROVEN_FS_APPEND` |
 | `XCV_FS_CREATE` | `PROVEN_FS_CREATE` |
 | `XCV_FS_LOCK_EXCLUSIVE` | `PROVEN_FS_LOCK_EXCLUSIVE` |
@@ -536,6 +541,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_time_breakdown` | `proven_time_breakdown` |
 | `xcv_time_locale_en` | `proven_time_locale_en` |
 | `xcv_time_locale_t` | `proven_time_locale_t` |
+| `xcv_time_monotonic_now` | `proven_time_monotonic_now` |
 | `xcv_time_now` | `proven_time_now` |
 | `xcv_time_now_datetime` | `proven_time_now_datetime` |
 | `xcv_time_sleep` | `proven_time_sleep` |
