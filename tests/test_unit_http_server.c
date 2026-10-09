@@ -654,6 +654,82 @@ static void run_timeouts(proven_job_sys_t *jobs) {
     g_server = NULL;
 }
 
+/* Many connections at once: the selector and the timer wheel with more than a handful of
+ * entries. Three hundred keep-alive connections are each served, sit idle together, do not
+ * disturb a request on another connection, and are all closed by their idle timers. */
+static void run_many(proven_job_sys_t *jobs) {
+    enum { MANY = 300 };
+    static proven_net_conn_t many[MANY];
+    proven_http_server_config_t cfg = {0};
+    cfg.alloc = proven_heap_allocator();
+    cfg.handler = handler;
+    cfg.handler_ctx = &g_server;
+    cfg.jobs = jobs;
+    cfg.max_connections = MANY + 8;
+    cfg.max_head_bytes = 1024;
+    cfg.idle_timeout_ms = 2500;
+    proven_err_t e = proven_http_server_create(&cfg, &g_server);
+    PROVEN_TEST_ASSERT(e == PROVEN_OK, "a server for a few hundred connections", "");
+    proven_net_addr_t at;
+    e = proven_http_server_listen(g_server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at);
+    PROVEN_TEST_ASSERT(e == PROVEN_OK, "it listens", "");
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("three hundred connections at once",
+        "Each is served; idle together they do not disturb another connection; each is closed by its own idle timer and none before it.",
+        "Inspect sv_wait_for and sv_timers_advance (the timer wheel) and the event loop of proven_http_server_poll.");
+    // ---------------------------------------------------------------
+    static const char req[] = "GET /hello HTTP/1.1\r\nHost: t\r\n\r\n";
+    proven_byte_t buf[512];
+    for (int i = 0; i < MANY; ++i) {
+        PROVEN_TEST_ASSERT(proven_net_connect(at, proven_net_deadline_in(5000), &many[i]) == PROVEN_OK, "a client connects", "This case opens 600 sockets.");
+        PROVEN_TEST_ASSERT(proven_net_write_all(&many[i], (proven_mem_view_t){ .ptr = (const proven_byte_t *)req, .size = sizeof req - 1 }, proven_net_deadline_in(5000)).err == PROVEN_OK, "and asks", "");
+        /* The server is driven from this thread: give it a turn, or three hundred connections
+         * pile up in the listen backlog, which on Windows is shorter than that. */
+        if (i % 8 == 7) pump(NULL);
+    }
+    /* The server may answer all of them in its first rounds, so their idle time is counted
+     * from here, where the last request has been sent, and not from when the answers were read. */
+    proven_time_t asked_at = proven_time_monotonic_now();
+    for (int i = 0; i < MANY; ++i) {
+        proven_size_t n = 0;
+        proven_time_t start = proven_time_monotonic_now();
+        while ((n < 5 || memcmp(buf + n - 5, "hello", 5) != 0) && (proven_time_monotonic_now() - start) / 1000000 < 10000) {
+            /* Look before turning the server's loop: most answers are already here, and a turn
+             * with nothing to do sleeps for a timer tick - sixteen milliseconds on Windows. */
+            proven_result_size_t r = proven_net_read(&many[i], (proven_mem_mut_t){ .ptr = buf + n, .size = sizeof buf - n }, PROVEN_NET_DONT_WAIT);
+            if (r.err == PROVEN_OK) n += r.value;
+            else pump(NULL);
+        }
+        PROVEN_TEST_ASSERT(n >= 5 && memcmp(buf + n - 5, "hello", 5) == 0, "each of the three hundred is answered", "");
+    }
+    PROVEN_TEST_ASSERT(wait_count(MANY), "and all three hundred are held open", "");
+
+    client_open(&ca, at);
+    client_send(&ca, "GET /hello HTTP/1.1\r\nHost: t\r\n\r\n");
+    PROVEN_TEST_ASSERT(client_reply(&ca, PROVEN_HTTP_GET, &rp) && rp.status == 200, "another connection is served while they sit idle", "");
+    (void)proven_net_close(&ca.conn);
+    PROVEN_TEST_ASSERT((proven_time_monotonic_now() - asked_at) / 1000000 > 2000 || proven_http_server_connection_count(g_server) >= MANY,
+        "none of them was closed before its idle time", "A timer that fires early: inspect the tick rounding in sv_wait_for.");
+
+    /* All of them time out, having been idle about equally long. */
+    bool gone = false;
+    for (int i = 0; i < 4000 && !gone; ++i) { pump(NULL); gone = proven_http_server_connection_count(g_server) == 0; }
+    proven_i64 took = (proven_time_monotonic_now() - asked_at) / 1000000;
+    PROVEN_TEST_INFO("three hundred idle connections closed {} ms after the last request was sent", PROVEN_ARG(took));
+    PROVEN_TEST_ASSERT(gone, "every one of them is closed by its idle timer", "");
+    PROVEN_TEST_ASSERT(took >= 2450 && took < 12000, "no sooner than idle_timeout_ms after it was last heard from", "A timer that fires early: inspect the tick rounding in sv_wait_for.");
+    int closed = 0;
+    for (int i = 0; i < MANY; ++i) {
+        proven_result_size_t r = proven_net_read(&many[i], (proven_mem_mut_t){ .ptr = buf, .size = sizeof buf }, proven_net_deadline_in(2000));
+        if (r.err == PROVEN_ERR_EOF) closed++;
+        (void)proven_net_close(&many[i]);
+    }
+    PROVEN_TEST_ASSERT(closed == MANY, "and each client sees its connection end, with nothing more sent", "");
+    proven_http_server_destroy(g_server);
+    g_server = NULL;
+}
+
 /* A job system that can take no more: the request is answered 503, not left waiting. */
 static void run_overload(void) {
     proven_job_sys_t *small = NULL;
@@ -737,6 +813,7 @@ int main(void) {
     PROVEN_TEST_INFO("model: handlers on the loop thread");
     run_cases(NULL);
     run_timeouts(NULL);
+    run_many(NULL);
 
     proven_job_sys_t *jobs = NULL;
     proven_err_t e = proven_job_system_init(proven_heap_allocator(), 4, 64, &jobs);
@@ -745,6 +822,16 @@ int main(void) {
     run_cases(jobs);
     run_timeouts(jobs);
     run_overload();
+    {
+        /* Three hundred requests arrive together; a queue of 64 would answer most of them 503,
+         * which is the server working as documented and not what this case is about. */
+        proven_job_sys_t *roomy = NULL;
+        e = proven_job_system_init(proven_heap_allocator(), 4, 512, &roomy);
+        PROVEN_TEST_ASSERT(e == PROVEN_OK, "a job system with room for three hundred requests at once", "");
+        run_many(roomy);
+        proven_job_system_close(roomy);
+        proven_job_system_destroy(roomy);
+    }
     proven_job_system_close(jobs);
     proven_job_system_destroy(jobs);
 

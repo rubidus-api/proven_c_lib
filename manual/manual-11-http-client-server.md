@@ -125,9 +125,18 @@ every platform. For both, call `proven_http_server_listen` twice.
 **`destroy` is not `stop`.** `stop` makes `run` return, and the server stays stopped: `run`
 called again returns at once. `destroy` frees it. From a handler, call `stop`, never `destroy`.
 
-Readiness is `proven_net_poll`. It serves hundreds of connections well and tens of thousands
-badly; a server for the open internet at scale wants `epoll` or `kqueue`, which this library
-does not have.
+**What an open connection costs the loop.** The loop waits on a selector (Chapter 9,
+section 9) and keeps its timeouts on a timer wheel, so a round of the loop costs in proportion
+to the connections that have something to do, not to the connections that are open: with
+twenty thousand idle keep-alive connections held, a request on one more takes as long as with
+none (measured on Linux, where the selector is `epoll`). On Windows the selector is built on
+`WSAPoll` and every round still looks at every connection.
+
+That removes one limit and leaves two. Each connection still holds its buffers from the moment
+it is accepted (below), and each request still occupies a thread while its handler runs
+(section 5). A server for tens of thousands of *busy* connections needs neither of those to be
+true, and this one does not provide that yet. Timeouts are kept to about a sixtieth of a
+second: a connection may live that much longer than its limit, never shorter.
 
 ## 3. Inside a handler
 

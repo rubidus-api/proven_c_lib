@@ -18,6 +18,33 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release: readiness that does not slow down as connections are added, and the HTTP
+server moved onto it. One addition to a public header; nothing public is removed or changed.
+
+### Added
+
+- **`proven/net.h`: a selector.** `proven_net_selector_create`, `_create_poll`, `_destroy`,
+  `_kind`, `_count`, `_add`, `_modify`, `_remove`, `_wait`. A socket is registered once and a
+  wait reports only the sockets that are ready - `epoll` on Linux, `kqueue` on the BSDs and
+  macOS (written from the manual pages; not compiled or run by this project). Elsewhere,
+  Windows included, the same interface is kept over `poll` / `WSAPoll`, behaves identically,
+  and still examines every socket on every wait; `proven_net_selector_kind` says which a
+  program has. Level-triggered, like `proven_net_poll`.
+
+### Changed
+
+- **The HTTP server's loop waits on a selector and keeps its timeouts on a timer wheel.** A
+  round of the loop now costs in proportion to the connections with something to do, not to
+  the connections open. Measured on Linux with one busy keep-alive connection and N idle ones:
+  a request round trip took about 20 microseconds with 20,000 idle connections, as with none;
+  v0.13.0 took about 0.4 ms with 1,000 idle, 3.4 ms with 5,000 and 10 ms with 20,000. No API
+  changed. Two limits are unchanged: a connection holds its buffers from the moment it is
+  accepted (about 38 KiB of address space with the defaults, about 11 KiB resident while
+  idle), and a request occupies a thread while its handler runs.
+- Timeouts of the HTTP server are kept to about a sixtieth of a second: a connection may
+  outlive its limit by that much, and does not fall short of it.
+- `max_connections` no longer sizes any allocation made when the server is created.
+
 ## [0.13.0] - 2026-10-09
 
 A MINOR release: WebSocket (RFC 6455), as a codec and as connections, and the hand-over from

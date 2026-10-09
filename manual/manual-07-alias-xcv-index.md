@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-864 aliases: 661 lowercase `xcv_` names and 203 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+879 aliases: 673 lowercase `xcv_` names and 206 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -174,6 +174,9 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_NET_NO_DEADLINE` | `PROVEN_NET_NO_DEADLINE` |
 | `XCV_NET_POLL_INLINE_MAX` | `PROVEN_NET_POLL_INLINE_MAX` |
 | `XCV_NET_READABLE` | `PROVEN_NET_READABLE` |
+| `XCV_NET_SELECTOR_EPOLL` | `PROVEN_NET_SELECTOR_EPOLL` |
+| `XCV_NET_SELECTOR_KQUEUE` | `PROVEN_NET_SELECTOR_KQUEUE` |
+| `XCV_NET_SELECTOR_POLL` | `PROVEN_NET_SELECTOR_POLL` |
 | `XCV_NET_UNIX_PATH_MAX` | `PROVEN_NET_UNIX_PATH_MAX` |
 | `XCV_NET_WRITABLE` | `PROVEN_NET_WRITABLE` |
 | `XCV_OK` | `PROVEN_OK` |
@@ -580,7 +583,19 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_net_poll_scratch_size` | `proven_net_poll_scratch_size` |
 | `xcv_net_poll_with` | `proven_net_poll_with` |
 | `xcv_net_read` | `proven_net_read` |
+| `xcv_net_ready_t` | `proven_net_ready_t` |
 | `xcv_net_resolve` | `proven_net_resolve` |
+| `xcv_net_selector_add` | `proven_net_selector_add` |
+| `xcv_net_selector_count` | `proven_net_selector_count` |
+| `xcv_net_selector_create` | `proven_net_selector_create` |
+| `xcv_net_selector_create_poll` | `proven_net_selector_create_poll` |
+| `xcv_net_selector_destroy` | `proven_net_selector_destroy` |
+| `xcv_net_selector_kind` | `proven_net_selector_kind` |
+| `xcv_net_selector_kind_t` | `proven_net_selector_kind_t` |
+| `xcv_net_selector_modify` | `proven_net_selector_modify` |
+| `xcv_net_selector_remove` | `proven_net_selector_remove` |
+| `xcv_net_selector_t` | `proven_net_selector_t` |
+| `xcv_net_selector_wait` | `proven_net_selector_wait` |
 | `xcv_net_shutdown_write` | `proven_net_shutdown_write` |
 | `xcv_net_udp_addr` | `proven_net_udp_addr` |
 | `xcv_net_udp_close` | `proven_net_udp_close` |

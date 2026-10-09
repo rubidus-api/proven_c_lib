@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 864개: 소문자 `xcv_` 이름 661개와 대문자 `XCV_` 이름 203개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 879개: 소문자 `xcv_` 이름 673개와 대문자 `XCV_` 이름 206개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -176,6 +176,9 @@ alias 864개: 소문자 `xcv_` 이름 661개와 대문자 `XCV_` 이름 203개. 
 | `XCV_NET_NO_DEADLINE` | `PROVEN_NET_NO_DEADLINE` |
 | `XCV_NET_POLL_INLINE_MAX` | `PROVEN_NET_POLL_INLINE_MAX` |
 | `XCV_NET_READABLE` | `PROVEN_NET_READABLE` |
+| `XCV_NET_SELECTOR_EPOLL` | `PROVEN_NET_SELECTOR_EPOLL` |
+| `XCV_NET_SELECTOR_KQUEUE` | `PROVEN_NET_SELECTOR_KQUEUE` |
+| `XCV_NET_SELECTOR_POLL` | `PROVEN_NET_SELECTOR_POLL` |
 | `XCV_NET_UNIX_PATH_MAX` | `PROVEN_NET_UNIX_PATH_MAX` |
 | `XCV_NET_WRITABLE` | `PROVEN_NET_WRITABLE` |
 | `XCV_OK` | `PROVEN_OK` |
@@ -582,7 +585,19 @@ alias 864개: 소문자 `xcv_` 이름 661개와 대문자 `XCV_` 이름 203개. 
 | `xcv_net_poll_scratch_size` | `proven_net_poll_scratch_size` |
 | `xcv_net_poll_with` | `proven_net_poll_with` |
 | `xcv_net_read` | `proven_net_read` |
+| `xcv_net_ready_t` | `proven_net_ready_t` |
 | `xcv_net_resolve` | `proven_net_resolve` |
+| `xcv_net_selector_add` | `proven_net_selector_add` |
+| `xcv_net_selector_count` | `proven_net_selector_count` |
+| `xcv_net_selector_create` | `proven_net_selector_create` |
+| `xcv_net_selector_create_poll` | `proven_net_selector_create_poll` |
+| `xcv_net_selector_destroy` | `proven_net_selector_destroy` |
+| `xcv_net_selector_kind` | `proven_net_selector_kind` |
+| `xcv_net_selector_kind_t` | `proven_net_selector_kind_t` |
+| `xcv_net_selector_modify` | `proven_net_selector_modify` |
+| `xcv_net_selector_remove` | `proven_net_selector_remove` |
+| `xcv_net_selector_t` | `proven_net_selector_t` |
+| `xcv_net_selector_wait` | `proven_net_selector_wait` |
 | `xcv_net_shutdown_write` | `proven_net_shutdown_write` |
 | `xcv_net_udp_addr` | `proven_net_udp_addr` |
 | `xcv_net_udp_close` | `proven_net_udp_close` |

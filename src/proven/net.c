@@ -35,6 +35,7 @@ static proven_err_t internal_err_from_reason(proven_sys_net_result_t r) {
         /* Out of descriptors or buffers: nothing is wrong with the call, and it may work once
          * something else is closed. "Back off" is the right response, which is what BUSY asks. */
         case PROVEN_SYS_NET_LIMIT:        return PROVEN_ERR_BUSY;
+        case PROVEN_SYS_NET_EXISTS:       return PROVEN_ERR_EXISTS;
         default:                          return PROVEN_ERR_IO;
     }
 }
@@ -884,6 +885,262 @@ proven_err_t proven_net_poll(proven_net_poll_item_t *items, proven_size_t count,
 // -----------------------------------------------------------------------------
 // Transport
 // -----------------------------------------------------------------------------
+
+// -----------------------------------------------------------------------------
+// Selector
+// -----------------------------------------------------------------------------
+
+/* One socket of a poll-kind selector. */
+typedef struct {
+    proven_uintptr_t raw;
+    void *tag;
+    proven_u8 want;
+} sel_item_t;
+
+struct proven_net_selector {
+    proven_allocator_t alloc;
+    proven_size_t count;
+    proven_uintptr_t sys;               /* the kernel object, when native */
+    bool native;
+    /* The poll kind: the list, a hash from socket to its place in the list, and the memory
+     * the wait needs. All three grow together. */
+    sel_item_t *items;
+    proven_u32 *slots;                  /* place + 1; 0 is empty */
+    proven_byte_t *scratch;
+    proven_size_t cap;                  /* items */
+    proven_size_t slot_count;           /* a power of two, at least twice cap */
+    proven_size_t scratch_size;
+    proven_size_t next;                 /* where the last report stopped, so nobody is starved */
+};
+
+static void *sel_alloc(proven_allocator_t a, proven_size_t size) {
+    proven_result_mem_mut_t m = a.alloc_fn(a.ctx, size ? size : 1, 16);
+    return proven_is_ok(m.err) ? (void *)m.value.ptr : (void *)0;
+}
+
+static proven_size_t sel_hash(proven_uintptr_t raw, proven_size_t slot_count) {
+    proven_u64 h = (proven_u64)raw * 0x9E3779B97F4A7C15ull;
+    return (proven_size_t)(h >> 32) & (slot_count - 1);
+}
+
+/* The slot that holds `raw`, or the empty slot where it would go. */
+static proven_size_t sel_find(const proven_net_selector_t *s, proven_uintptr_t raw, bool *found) {
+    proven_size_t i = sel_hash(raw, s->slot_count);
+    for (;;) {
+        proven_u32 v = s->slots[i];
+        if (v == 0) { *found = false; return i; }
+        if (s->items[v - 1].raw == raw) { *found = true; return i; }
+        i = (i + 1) & (s->slot_count - 1);
+    }
+}
+
+static proven_err_t sel_grow(proven_net_selector_t *s) {
+    proven_size_t cap = s->cap ? s->cap * 2 : 64;
+    proven_size_t slot_count = cap * 2;
+    proven_size_t wait_bytes = proven_net_poll_scratch_size(cap);
+    if (cap > 0x7fffffffu || wait_bytes == PROVEN_SIZE_MAX) return PROVEN_ERR_OVERFLOW;
+    sel_item_t *items = sel_alloc(s->alloc, cap * sizeof *items);
+    proven_u32 *slots = sel_alloc(s->alloc, slot_count * sizeof *slots);
+    proven_byte_t *scratch = sel_alloc(s->alloc, wait_bytes);
+    if (!items || !slots || !scratch) {
+        if (items) s->alloc.free_fn(s->alloc.ctx, items);
+        if (slots) s->alloc.free_fn(s->alloc.ctx, slots);
+        if (scratch) s->alloc.free_fn(s->alloc.ctx, scratch);
+        return PROVEN_ERR_NOMEM;
+    }
+    for (proven_size_t i = 0; i < s->count; ++i) items[i] = s->items[i];
+    for (proven_size_t i = 0; i < slot_count; ++i) slots[i] = 0;
+    if (s->items) s->alloc.free_fn(s->alloc.ctx, s->items);
+    if (s->slots) s->alloc.free_fn(s->alloc.ctx, s->slots);
+    if (s->scratch) s->alloc.free_fn(s->alloc.ctx, s->scratch);
+    s->items = items;
+    s->slots = slots;
+    s->scratch = scratch;
+    s->cap = cap;
+    s->slot_count = slot_count;
+    s->scratch_size = wait_bytes;
+    for (proven_size_t i = 0; i < s->count; ++i) {
+        bool found;
+        proven_size_t at = sel_find(s, items[i].raw, &found);
+        s->slots[at] = (proven_u32)(i + 1);
+    }
+    return PROVEN_OK;
+}
+
+proven_err_t proven_net_selector_create_poll(proven_allocator_t alloc, proven_net_selector_t **out) {
+    if (out) *out = (void *)0;
+    if (!out || !proven_alloc_is_valid(alloc)) return PROVEN_ERR_INVALID_ARG;
+    proven_net_selector_t *s = sel_alloc(alloc, sizeof *s);
+    if (!s) return PROVEN_ERR_NOMEM;
+    *s = (proven_net_selector_t){0};
+    s->alloc = alloc;
+    *out = s;
+    return PROVEN_OK;
+}
+
+proven_err_t proven_net_selector_create(proven_allocator_t alloc, proven_net_selector_t **out) {
+    if (out) *out = (void *)0;
+    if (!out || !proven_alloc_is_valid(alloc)) return PROVEN_ERR_INVALID_ARG;
+    proven_net_selector_t *s = sel_alloc(alloc, sizeof *s);
+    if (!s) return PROVEN_ERR_NOMEM;
+    *s = (proven_net_selector_t){0};
+    s->alloc = alloc;
+    proven_sys_net_result_t r = proven_sys_net_selector_open(&s->sys);
+    if (r == PROVEN_SYS_NET_OK) {
+        s->native = true;
+    } else if (r != PROVEN_SYS_NET_UNSUPPORTED) {
+        alloc.free_fn(alloc.ctx, s);
+        return internal_err_from_reason(r);
+    }
+    *out = s;
+    return PROVEN_OK;
+}
+
+void proven_net_selector_destroy(proven_net_selector_t *selector) {
+    if (!selector) return;
+    proven_allocator_t a = selector->alloc;
+    if (selector->native) proven_sys_net_selector_close(selector->sys);
+    if (selector->items) a.free_fn(a.ctx, selector->items);
+    if (selector->slots) a.free_fn(a.ctx, selector->slots);
+    if (selector->scratch) a.free_fn(a.ctx, selector->scratch);
+    a.free_fn(a.ctx, selector);
+}
+
+proven_net_selector_kind_t proven_net_selector_kind(const proven_net_selector_t *selector) {
+    if (!selector || !selector->native) return PROVEN_NET_SELECTOR_POLL;
+    return proven_sys_net_selector_kind() == PROVEN_SYS_NET_SELECTOR_KQUEUE ? PROVEN_NET_SELECTOR_KQUEUE : PROVEN_NET_SELECTOR_EPOLL;
+}
+
+proven_size_t proven_net_selector_count(const proven_net_selector_t *selector) {
+    return selector ? selector->count : 0;
+}
+
+proven_err_t proven_net_selector_add(proven_net_selector_t *selector, proven_net_handle_t handle, proven_u8 want, void *tag) {
+    if (!selector || !handle.valid) return PROVEN_ERR_INVALID_ARG;
+    proven_net_selector_t *s = selector;
+    want &= (proven_u8)(PROVEN_NET_READABLE | PROVEN_NET_WRITABLE);
+    if (s->native) {
+        proven_sys_net_result_t r = proven_sys_net_selector_set(s->sys, (proven_sys_socket_t)handle.raw, want, tag, true);
+        if (r != PROVEN_SYS_NET_OK) return internal_err_from_reason(r);
+        s->count++;
+        return PROVEN_OK;
+    }
+    if (s->count == s->cap) {
+        proven_err_t e = sel_grow(s);
+        if (e != PROVEN_OK) return e;
+    }
+    bool found;
+    proven_size_t at = sel_find(s, handle.raw, &found);
+    if (found) return PROVEN_ERR_EXISTS;
+    s->items[s->count] = (sel_item_t){ .raw = handle.raw, .tag = tag, .want = want };
+    s->slots[at] = (proven_u32)(s->count + 1);
+    s->count++;
+    return PROVEN_OK;
+}
+
+proven_err_t proven_net_selector_modify(proven_net_selector_t *selector, proven_net_handle_t handle, proven_u8 want, void *tag) {
+    if (!selector || !handle.valid) return PROVEN_ERR_INVALID_ARG;
+    proven_net_selector_t *s = selector;
+    want &= (proven_u8)(PROVEN_NET_READABLE | PROVEN_NET_WRITABLE);
+    if (s->native) return internal_err_from_reason(proven_sys_net_selector_set(s->sys, (proven_sys_socket_t)handle.raw, want, tag, false));
+    if (s->count == 0) return PROVEN_ERR_NOT_FOUND;
+    bool found;
+    proven_size_t at = sel_find(s, handle.raw, &found);
+    if (!found) return PROVEN_ERR_NOT_FOUND;
+    sel_item_t *it = &s->items[s->slots[at] - 1];
+    it->want = want;
+    it->tag = tag;
+    return PROVEN_OK;
+}
+
+proven_err_t proven_net_selector_remove(proven_net_selector_t *selector, proven_net_handle_t handle) {
+    if (!selector || !handle.valid) return PROVEN_ERR_INVALID_ARG;
+    proven_net_selector_t *s = selector;
+    if (s->native) {
+        proven_sys_net_result_t r = proven_sys_net_selector_remove(s->sys, (proven_sys_socket_t)handle.raw);
+        if (r != PROVEN_SYS_NET_OK) return internal_err_from_reason(r);
+        if (s->count > 0) s->count--;
+        return PROVEN_OK;
+    }
+    if (s->count == 0) return PROVEN_ERR_NOT_FOUND;
+    bool found;
+    proven_size_t at = sel_find(s, handle.raw, &found);
+    if (!found) return PROVEN_ERR_NOT_FOUND;
+    proven_size_t place = s->slots[at] - 1;
+    proven_size_t mask = s->slot_count - 1;
+
+    /* Take the entry out of the hash and close the gap it leaves in its probe run. */
+    proven_size_t hole = at;
+    for (proven_size_t j = (at + 1) & mask; s->slots[j] != 0; j = (j + 1) & mask) {
+        proven_size_t home = sel_hash(s->items[s->slots[j] - 1].raw, s->slot_count);
+        /* Move j back into the hole unless its home lies strictly between the hole and j. */
+        bool between = hole <= j ? (home > hole && home <= j) : (home > hole || home <= j);
+        if (!between) { s->slots[hole] = s->slots[j]; hole = j; }
+    }
+    s->slots[hole] = 0;
+
+    /* The last item of the list takes the freed place. */
+    proven_size_t last = s->count - 1;
+    if (place != last) {
+        s->items[place] = s->items[last];
+        proven_size_t moved = sel_find(s, s->items[place].raw, &found);
+        s->slots[moved] = (proven_u32)(place + 1);
+    }
+    s->count--;
+    return PROVEN_OK;
+}
+
+proven_err_t proven_net_selector_wait(proven_net_selector_t *selector, proven_net_ready_t *events, proven_size_t cap,
+                                      proven_net_deadline_t until, proven_size_t *count) {
+    if (count) *count = 0;
+    if (!selector || !events || !count || cap == 0) return PROVEN_ERR_INVALID_ARG;
+    proven_net_selector_t *s = selector;
+    for (;;) {
+        bool expired = false;
+        int ms = internal_remaining_ms(until, &expired);
+        if (expired) ms = 0;
+
+        if (s->native) {
+            proven_sys_net_event_t got[64];
+            proven_size_t n = 0;
+            proven_sys_net_result_t r = proven_sys_net_selector_wait(s->sys, got, cap < 64 ? cap : 64, ms, &n);
+            if (r != PROVEN_SYS_NET_OK) return internal_err_from_reason(r);
+            if (n > 0) {
+                for (proven_size_t i = 0; i < n; ++i) events[i] = (proven_net_ready_t){ .tag = got[i].tag, .got = got[i].got };
+                *count = n;
+                return PROVEN_OK;
+            }
+        } else {
+            proven_byte_t *first = s->count ? internal_align_up(s->scratch) : (void *)0;
+            proven_sys_net_wait_t *list = (proven_sys_net_wait_t *)(void *)first;
+            proven_byte_t *native = s->count ? internal_align_up(first + s->count * sizeof(proven_sys_net_wait_t)) : (void *)0;
+            for (proven_size_t i = 0; i < s->count; ++i) {
+                list[i].sock = (proven_sys_socket_t)s->items[i].raw;
+                list[i].want = s->items[i].want;
+                list[i].got = 0;
+            }
+            proven_size_t n = 0;
+            proven_sys_net_result_t r = proven_sys_net_wait(list, s->count, native, ms, &n);
+            if (r != PROVEN_SYS_NET_OK) return internal_err_from_reason(r);
+            if (n > 0) {
+                /* Start where the last report stopped: with more ready sockets than `cap`, the
+                 * ones at the front of the list must not be the only ones ever reported. */
+                proven_size_t start = s->next < s->count ? s->next : 0;
+                proven_size_t out = 0, i = start;
+                do {
+                    if (list[i].got != 0) {
+                        events[out++] = (proven_net_ready_t){ .tag = s->items[i].tag, .got = list[i].got };
+                    }
+                    i = i + 1 == s->count ? 0 : i + 1;
+                } while (i != start && out < cap);
+                s->next = i;
+                *count = out;
+                return PROVEN_OK;
+            }
+        }
+        if (expired) return PROVEN_ERR_TIMEOUT;
+    }
+}
 
 static proven_result_size_t internal_conn_read(void *ctx, proven_mem_mut_t dest, proven_net_deadline_t until) {
     return proven_net_read((proven_net_conn_t *)ctx, dest, until);

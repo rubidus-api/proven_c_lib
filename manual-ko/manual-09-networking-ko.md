@@ -20,8 +20,9 @@
 6. [소켓 여럿, 스레드 하나](#6-소켓-여럿-스레드-하나)
 7. [전송](#7-전송)
 8. [짝, 그리고 루프 깨우기](#8-짝-그리고-루프-깨우기)
-9. [플랫폼마다 다른 것](#9-플랫폼마다-다른-것)
-10. [여기에 없는 것](#10-여기에-없는-것)
+9. [selector: 소켓 수천 개](#9-selector-소켓-수천-개)
+10. [플랫폼마다 다른 것](#10-플랫폼마다-다른-것)
+11. [여기에 없는 것](#11-여기에-없는-것)
 
 ## 1. 세 가지 규칙
 
@@ -509,8 +510,8 @@ items[i].want = PROVEN_NET_READABLE | PROVEN_NET_WRITABLE;   /* wrong when nothi
 
 `proven_net_poll_with`가 있는 이유는 운영체제가 자기 배열을 원하고 이 라이브러리는 여러분 몰래 그것을
 할당하지 않기 때문이다. `proven_net_poll_scratch_size`로 크기를 잰 작업 메모리를 주고, 다음 호출에 다시
-쓴다. 여기서의 준비 상태는 POSIX의 `poll`과 Windows의 `WSAPoll`이다. 소켓 수백 개에 맞는 도구이고,
-수십만 개에는 맞지 않는다.
+쓴다. 여기서의 준비 상태는 POSIX의 `poll`과 Windows의 `WSAPoll`이다. 소켓 수십 개나 수백 개에 맞는
+도구다. 한 번에 바쁜 것이 적은 수천 개에는 §9의 selector를 써라.
 
 테스트 스위트가 컴파일하고 실행한다:
 
@@ -853,7 +854,176 @@ int main(void) {
 }
 ```
 
-## 9. 플랫폼마다 다른 것
+## 9. selector: 소켓 수천 개
+
+`proven_net_poll`은 호출할 때마다 목록 전체를 건네받고, 시스템은 호출할 때마다 모든 항목을 살핀다. 소켓
+수십 개라면 아무것도 아니다. 연결 만 개 가운데 다섯 개가 할 말이 있을 때에는, 그 다섯을 찾으려고 만 개
+항목을 복사하고 살핀다 - 루프가 한 바퀴 돌 때마다.
+
+selector는 같은 질문을 거꾸로 묻는다. 소켓을 한 번 등록하면 시스템이 기억하고, 기다리면 준비된 소켓만
+돌아오며 나머지는 들여다보지 않는다.
+
+### 참조
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_net_selector_create(alloc, &selector)` | selector를 만든다. | `proven_err_t`: `INVALID_ARG`. `NOMEM`. 디스크립터가 모자라면 `BUSY`. |
+| `proven_net_selector_create_poll(alloc, &selector)` | 시스템이 무엇을 제공하든 이식형 종류로 만든다. | 같다. |
+| `proven_net_selector_kind(selector)` | 무엇 위에 지어졌는지. | `PROVEN_NET_SELECTOR_EPOLL`, `_KQUEUE` 또는 `_POLL`. |
+| `proven_net_selector_add(selector, handle, want, tag)` | 소켓을 등록한다: 무엇을 지켜볼지, 그리고 이벤트와 함께 돌아올 포인터. | `proven_err_t`: 이미 등록되어 있으면 `EXISTS`. `INVALID_ARG`. `NOMEM`. `BUSY`. |
+| `proven_net_selector_modify(selector, handle, want, tag)` | 그 소켓에 묻는 것과 tag를 바꾼다. | `proven_err_t`: `NOT_FOUND`. |
+| `proven_net_selector_remove(selector, handle)` | 꺼낸다. | `proven_err_t`: `NOT_FOUND`. |
+| `proven_net_selector_wait(selector, events, cap, until, &count)` | 무언가 준비되거나 `until`이 될 때까지 기다리고, `cap`개까지 보고한다. | `proven_err_t`: 아무것도 없었으면 `TIMEOUT`(`count`는 0). |
+| `proven_net_selector_count(selector)` | 등록된 소켓 수. | `proven_size_t`. |
+| `proven_net_selector_destroy(selector)` | 해제한다. 소켓은 닫지 않는다. | 없음. |
+
+```text
+typedef struct {
+    void *tag;        /* what you registered with the socket */
+    proven_u8 got;    /* PROVEN_NET_READABLE, PROVEN_NET_WRITABLE and/or PROVEN_NET_FAILED */
+} proven_net_ready_t;
+```
+
+**무엇을 얻는지는 시스템에 달려 있고, selector가 어느 쪽인지 말해 준다.** Linux에서는 `epoll`이고 BSD와
+macOS에서는 `kqueue`다. 거기서는 기다림의 비용이 준비된 소켓 수에 비례한다. Windows와 그 밖의 곳에서는
+이식형 종류다: 같은 인터페이스를 `proven_net_poll`이 쓰는 호출 위에 얹은 것으로, 기다릴 때마다 여전히
+모든 소켓을 살핀다. 동작은 같고 확장성은 같지 않다. `proven_net_selector_kind`가 알려 준다. 수만 연결을
+쥘 작정인 서버는 확인해야 한다.
+
+**소켓을 닫기 전에 꺼내라.** 닫힌 소켓의 번호는 다음에 열리는 소켓에게 주어진다. 옛 등록을 아직 쥐고 있는
+selector는 여러분이 등록한 것이 아닌 소켓의 이벤트를 - 옛 tag와 함께 - 보고하거나, 이식형 종류에서는
+기다릴 때마다 실패를 보고한다.
+
+잘못된 예:
+
+```text
+proven_net_close(&conn);                                  /* wrong: the selector still holds its number */
+proven_net_selector_remove(selector, proven_net_conn_handle(&conn));   /* too late: the handle is no longer valid */
+```
+
+올바른 예 — `proven_net_selector_remove`를 먼저, 그다음 `proven_net_close`.
+
+**준비 상태는 레벨 트리거다.** 소켓은 준비되어 있는 동안 계속 보고된다. `proven_net_poll`과 똑같다:
+처리하지 않은 이벤트는 다음 기다림에 다시 온다. 그래서 §6의 규칙이 그대로 통한다 - 이벤트 뒤에는
+`PROVEN_NET_DONT_WAIT`를 받는 호출을 하고, 쓸 것이 있는 동안에만 쓰기 가능을 물어라.
+
+**tag는 여러분 것이고, 그 수명도 그렇다.** selector는 받은 포인터를 돌려줄 뿐 그 안을 들여다보지 않는다.
+그것이 가리키는 기록이, 그에 대한 이벤트가 이미 selector에서 꺼내졌을 수 있는 동안에 해제되면, 루프의
+다음 반복이 해제된 메모리를 읽는다. 이것을 피하는 방식: 이벤트 묶음을 처리하는 도중에 연결을 닫을 때에는
+그 기록에 표시만 하고, 묶음이 끝난 뒤에 해제한다.
+
+**스레드 하나.** selector는 여러 스레드가 쓰기에 안전하지 않다. 기다리는 루프가 다른 스레드가 한 일에
+반응하게 하려면 깨우개(§8)를 등록하고 깨워라.
+
+**양쪽으로 준비된 소켓은 이벤트 하나일 수도 둘일 수도 있다.** `kqueue`는 읽기 가능과 쓰기 가능을 따로
+보고한다. 소켓마다 하나를 기대하지 말고 이벤트 하나하나를 그것이 말하는 대로 처리하라.
+
+테스트 스위트가 컴파일하고 실행한다:
+
+<!-- example: manual/examples/ko/ex_09_net_selector.c -->
+```c
+/*
+ * selector: 소켓을 한 번씩 등록해 두고, 준비된 것에 대해서만 통지받는다.
+ *
+ * 루프는 poll 예제의 그것이다 - 기다리고, 준비된 것을 기다리지 않고 처리한다 - . 다만 기다림과
+ * 기다림 사이에 다시 짓는 것이 없고, 한가한 연결 천 개가 기다림에 아무 비용도 지우지 않는다.
+ */
+
+typedef struct {
+    proven_net_conn_t conn;
+    int number;
+    bool open;
+} client_t;
+
+int main(void) {
+    proven_net_listener_t listener;
+    proven_net_addr_t at;
+    proven_err_t err = proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 16, &listener, &at);
+    if (err == PROVEN_ERR_PERMISSION || err == PROVEN_ERR_UNSUPPORTED) {
+        printf("no sockets in this environment; nothing to show\n");
+        return EXAMPLE_OK();
+    }
+    EXAMPLE_REQUIRE(err == PROVEN_OK, "the listener opens");
+
+    proven_net_selector_t *selector = NULL;
+    EXAMPLE_REQUIRE(proven_net_selector_create(proven_heap_allocator(), &selector) == PROVEN_OK, "a selector");
+    /* Linux에서는 epoll, BSD와 macOS에서는 kqueue. 그 밖에서는 poll 위의 같은 인터페이스. */
+    proven_net_selector_kind_t kind = proven_net_selector_kind(selector);
+    printf("selector kind: %s\n", kind == PROVEN_NET_SELECTOR_EPOLL ? "epoll" : kind == PROVEN_NET_SELECTOR_KQUEUE ? "kqueue" : "poll");
+
+    /* tag는 이벤트와 함께 돌아오는 것이다: 그 소켓에 대한 여러분 자신의 기록을 가리키는 포인터.
+     * 여기서 리스너의 tag는 리스너 자신이다. */
+    EXAMPLE_REQUIRE(proven_net_selector_add(selector, proven_net_listener_handle(&listener), PROVEN_NET_READABLE, &listener) == PROVEN_OK,
+                    "the listener is registered, once");
+
+    /* 클라이언트 셋이 연결하고, 둘째와 셋째가 무언가를 말한다. */
+    proven_net_conn_t far[3];
+    for (int i = 0; i < 3; ++i) EXAMPLE_REQUIRE(proven_net_connect(at, proven_net_deadline_in(5000), &far[i]) == PROVEN_OK, "a client connects");
+    EXAMPLE_REQUIRE(proven_net_write_all(&far[1], proven_mem_view_from_u8(PROVEN_LIT("from one")), proven_net_deadline_in(5000)).err == PROVEN_OK &&
+                    proven_net_write_all(&far[2], proven_mem_view_from_u8(PROVEN_LIT("from two")), proven_net_deadline_in(5000)).err == PROVEN_OK, "two of them send");
+
+    client_t clients[3] = {0};
+    int accepted = 0, messages = 0;
+    for (int round = 0; round < 20 && messages < 2; ++round) {
+        proven_net_ready_t ready[8];
+        proven_size_t count = 0;
+        err = proven_net_selector_wait(selector, ready, 8, proven_net_deadline_in(1000), &count);
+        if (err == PROVEN_ERR_TIMEOUT) continue;        /* 루프의 한가한 한 박자 */
+        EXAMPLE_REQUIRE(err == PROVEN_OK, "something is ready");
+        for (proven_size_t i = 0; i < count; ++i) {
+            if (ready[i].tag == &listener) {
+                /* 준비됨은 "기다리지 않는다"는 뜻이다: 대기 중인 연결을 기다리지 않고 모두 받는다. */
+                while (accepted < 3 && proven_net_accept(&listener, PROVEN_NET_DONT_WAIT, &clients[accepted].conn, NULL) == PROVEN_OK) {
+                    client_t *c = &clients[accepted];
+                    c->number = accepted++;
+                    c->open = true;
+                    EXAMPLE_REQUIRE(proven_net_selector_add(selector, proven_net_conn_handle(&c->conn), PROVEN_NET_READABLE, c) == PROVEN_OK,
+                                    "each accepted connection is registered, with its record as the tag");
+                }
+            } else {
+                client_t *c = ready[i].tag;
+                proven_byte_t buf[32];
+                proven_result_size_t got = proven_net_read(&c->conn, (proven_mem_mut_t){ buf, sizeof buf }, PROVEN_NET_DONT_WAIT);
+                if (got.err == PROVEN_OK) messages++;
+            }
+        }
+    }
+    EXAMPLE_REQUIRE(accepted == 3 && messages == 2, "three connections accepted, two messages read");
+    EXAMPLE_REQUIRE(proven_net_selector_count(selector) == 4, "four sockets registered: the listener and three connections");
+
+    /* 첫 연결은 말한 적이 없어서 보고된 적도 없다: 해 줄 일이 없었다. 이제 그 연결에 다른 것을
+     * 묻는다 - 써도 되는가? - 그러면 곧장 보고된다. */
+    proven_net_ready_t one[4];
+    proven_size_t count = 0;
+    EXAMPLE_REQUIRE(proven_net_selector_wait(selector, one, 4, proven_net_deadline_in(30), &count) == PROVEN_ERR_TIMEOUT, "all quiet: nothing is reported");
+    EXAMPLE_REQUIRE(proven_net_selector_modify(selector, proven_net_conn_handle(&clients[0].conn), PROVEN_NET_WRITABLE, &clients[0]) == PROVEN_OK, "ask about writing instead");
+    EXAMPLE_REQUIRE(proven_net_selector_wait(selector, one, 4, proven_net_deadline_in(1000), &count) == PROVEN_OK && count == 1 &&
+                    one[0].tag == &clients[0] && (one[0].got & PROVEN_NET_WRITABLE), "an idle connection is writable");
+    /* 쓸 것이 있는 동안에만 쓰기 가능을 물어라. 그러지 않으면 모든 기다림이 곧장 돌아온다. */
+    EXAMPLE_REQUIRE(proven_net_selector_modify(selector, proven_net_conn_handle(&clients[0].conn), PROVEN_NET_READABLE, &clients[0]) == PROVEN_OK, "back to reading");
+
+    /* 소켓은 닫기 "전에" 꺼낸다. */
+    for (int i = 0; i < 3; ++i) {
+        EXAMPLE_REQUIRE(proven_net_selector_remove(selector, proven_net_conn_handle(&clients[i].conn)) == PROVEN_OK, "removed");
+        (void)proven_net_close(&clients[i].conn);
+        (void)proven_net_close(&far[i]);
+    }
+    EXAMPLE_REQUIRE(proven_net_selector_remove(selector, proven_net_listener_handle(&listener)) == PROVEN_OK &&
+                    proven_net_selector_count(selector) == 0, "and the listener: the selector is empty");
+    (void)proven_net_listener_close(&listener);
+
+    /* 이식형 종류를 이름으로 요청할 수 있다 - 둘을 비교하거나, Windows가 쓰는 코드 경로를
+     * Linux에서 돌려 보려고. */
+    proven_net_selector_t *portable = NULL;
+    EXAMPLE_REQUIRE(proven_net_selector_create_poll(proven_heap_allocator(), &portable) == PROVEN_OK &&
+                    proven_net_selector_kind(portable) == PROVEN_NET_SELECTOR_POLL, "a selector of the poll kind");
+    proven_net_selector_destroy(portable);
+    proven_net_selector_destroy(selector);
+    return EXAMPLE_OK();
+}
+```
+
+## 10. 플랫폼마다 다른 것
 
 이 호출들은 Linux, BSD, macOS, Windows에서 똑같이 동작한다. 아래는 라이브러리가 흡수하는 차이들이다.
 소켓을 직접 쓸 때 발목을 잡는 것들이라 적어 둔다.
@@ -875,10 +1045,10 @@ POSIX는 즉시 답한다 - 기한에 그만큼을 감안하라. 그리고 유�
 이상이 필요하다. 그 family가 없는 곳에서 `proven_net_listen`과 `proven_net_connect`는
 `PROVEN_ERR_UNSUPPORTED`를 돌려준다.
 
-## 10. 여기에 없는 것
+## 11. 여기에 없는 것
 
 - **TLS.** 전송 인터페이스가 그것이 붙을 자리다. 이 버전에는 없고, 여기서 만든 연결은 암호화되지 않는다.
 - **이름 해석의 기한.** §2를 보라.
-- **`poll`을 넘는 규모.** `epoll`, `kqueue`, completion port는 없다.
+- **Windows에서의 규모.** selector는 `epoll`이나 `kqueue`가 있는 곳에서는 그것이고, Windows에서는 `WSAPoll` 위에 지은 것이다. completion port 경로는 없다.
 - **유닉스 도메인 데이터그램, raw 소켓, 멀티캐스트, `TCP_NODELAY` 외의 소켓 옵션.**
 - **HTTP.** 메시지 코덱은 [10장](manual-10-http-ko.md)에 있다. 그것을 이 소켓 위에서 구동하는 클라이언트와 서버는 [11장](manual-11-http-client-server-ko.md)에 있다.

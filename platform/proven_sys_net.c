@@ -784,6 +784,178 @@ proven_sys_net_result_t proven_sys_net_resolve(const char *host, proven_u16 port
     return *count > 0 ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_NOT_FOUND;
 }
 
+// -----------------------------------------------------------------------------
+// Selector: epoll, kqueue, or none
+// -----------------------------------------------------------------------------
+
+#if defined(__linux__)
+#include <sys/epoll.h>
+
+proven_sys_net_selector_kind_t proven_sys_net_selector_kind(void) { return PROVEN_SYS_NET_SELECTOR_EPOLL; }
+
+proven_sys_net_result_t proven_sys_net_selector_open(proven_uintptr_t *out) {
+    int fd = epoll_create1(EPOLL_CLOEXEC);
+    if (fd < 0) return net_reason(errno);
+    *out = (proven_uintptr_t)fd;
+    return PROVEN_SYS_NET_OK;
+}
+
+void proven_sys_net_selector_close(proven_uintptr_t selector) {
+    (void)close((int)selector);
+}
+
+proven_sys_net_result_t proven_sys_net_selector_set(proven_uintptr_t selector, proven_sys_socket_t sock,
+                                                    proven_u8 want, void *tag, bool add) {
+    struct epoll_event ev;
+    memset(&ev, 0, sizeof ev);
+    if (want & PROVEN_SYS_NET_READABLE) ev.events |= EPOLLIN;
+    if (want & PROVEN_SYS_NET_WRITABLE) ev.events |= EPOLLOUT;
+    ev.data.ptr = tag;
+    if (epoll_ctl((int)selector, add ? EPOLL_CTL_ADD : EPOLL_CTL_MOD, (int)sock, &ev) == 0) return PROVEN_SYS_NET_OK;
+    if (errno == EEXIST) return PROVEN_SYS_NET_EXISTS;
+    if (errno == ENOENT) return PROVEN_SYS_NET_NOT_FOUND;
+    if (errno == ENOSPC || errno == ENOMEM) return PROVEN_SYS_NET_LIMIT;
+    return net_reason(errno);
+}
+
+proven_sys_net_result_t proven_sys_net_selector_remove(proven_uintptr_t selector, proven_sys_socket_t sock) {
+    struct epoll_event ev;
+    memset(&ev, 0, sizeof ev);
+    if (epoll_ctl((int)selector, EPOLL_CTL_DEL, (int)sock, &ev) == 0) return PROVEN_SYS_NET_OK;
+    return errno == ENOENT ? PROVEN_SYS_NET_NOT_FOUND : net_reason(errno);
+}
+
+proven_sys_net_result_t proven_sys_net_selector_wait(proven_uintptr_t selector, proven_sys_net_event_t *events,
+                                                     proven_size_t cap, int timeout_ms, proven_size_t *count) {
+    struct epoll_event got[64];
+    *count = 0;
+    if (cap == 0) return PROVEN_SYS_NET_OK;
+    int want = cap < 64 ? (int)cap : 64;
+    int n = epoll_wait((int)selector, got, want, timeout_ms);
+    if (n < 0) return errno == EINTR ? PROVEN_SYS_NET_OK : net_reason(errno);
+    for (int i = 0; i < n; ++i) {
+        proven_u8 g = 0;
+        if (got[i].events & EPOLLIN) g |= PROVEN_SYS_NET_READABLE;
+        if (got[i].events & EPOLLOUT) g |= PROVEN_SYS_NET_WRITABLE;
+        /* A hang-up means neither a read nor a write will wait; which was asked is not known
+         * here, so both are reported and the call that follows says what happened. */
+        if (got[i].events & EPOLLHUP) g |= PROVEN_SYS_NET_READABLE | PROVEN_SYS_NET_WRITABLE;
+        if (got[i].events & EPOLLERR) g |= PROVEN_SYS_NET_FAILED;
+        if (g == 0) g = PROVEN_SYS_NET_FAILED;
+        events[i].tag = got[i].data.ptr;
+        events[i].got = g;
+    }
+    *count = (proven_size_t)n;
+    return PROVEN_SYS_NET_OK;
+}
+
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
+#include <sys/event.h>
+#include <sys/time.h>
+
+/* Written from the manual pages. Like every BSD path in this unit it has not been compiled or
+ * run by this project: no such host is available to it. */
+
+proven_sys_net_selector_kind_t proven_sys_net_selector_kind(void) { return PROVEN_SYS_NET_SELECTOR_KQUEUE; }
+
+proven_sys_net_result_t proven_sys_net_selector_open(proven_uintptr_t *out) {
+    int fd = kqueue();
+    if (fd < 0) return net_reason(errno);
+    (void)fcntl(fd, F_SETFD, FD_CLOEXEC);
+    *out = (proven_uintptr_t)fd;
+    return PROVEN_SYS_NET_OK;
+}
+
+void proven_sys_net_selector_close(proven_uintptr_t selector) {
+    (void)close((int)selector);
+}
+
+/* kqueue keeps one entry per (socket, filter). Each change is applied by itself so that
+ * deleting a filter that was never added - which is not an error for this interface - can be
+ * told from a real failure. */
+static int kq_change(int kq, int sock, int filter, int flags, void *tag) {
+    struct kevent ch;
+    EV_SET(&ch, (uintptr_t)sock, filter, flags, 0, 0, tag);
+    return kevent(kq, &ch, 1, NULL, 0, NULL) == 0 ? 0 : errno;
+}
+
+proven_sys_net_result_t proven_sys_net_selector_set(proven_uintptr_t selector, proven_sys_socket_t sock,
+                                                    proven_u8 want, void *tag, bool add) {
+    (void)add;      /* kqueue has no separate "modify": adding an existing filter replaces it */
+    int kq = (int)selector;
+    int e1 = kq_change(kq, (int)sock, EVFILT_READ, (want & PROVEN_SYS_NET_READABLE) ? EV_ADD : EV_DELETE, tag);
+    int e2 = kq_change(kq, (int)sock, EVFILT_WRITE, (want & PROVEN_SYS_NET_WRITABLE) ? EV_ADD : EV_DELETE, tag);
+    if (e1 != 0 && e1 != ENOENT) return net_reason(e1);
+    if (e2 != 0 && e2 != ENOENT) return net_reason(e2);
+    return PROVEN_SYS_NET_OK;
+}
+
+proven_sys_net_result_t proven_sys_net_selector_remove(proven_uintptr_t selector, proven_sys_socket_t sock) {
+    int kq = (int)selector;
+    int e1 = kq_change(kq, (int)sock, EVFILT_READ, EV_DELETE, NULL);
+    int e2 = kq_change(kq, (int)sock, EVFILT_WRITE, EV_DELETE, NULL);
+    if (e1 != 0 && e1 != ENOENT) return net_reason(e1);
+    if (e2 != 0 && e2 != ENOENT) return net_reason(e2);
+    return PROVEN_SYS_NET_OK;
+}
+
+proven_sys_net_result_t proven_sys_net_selector_wait(proven_uintptr_t selector, proven_sys_net_event_t *events,
+                                                     proven_size_t cap, int timeout_ms, proven_size_t *count) {
+    struct kevent got[64];
+    struct timespec ts, *tp = NULL;
+    *count = 0;
+    if (cap == 0) return PROVEN_SYS_NET_OK;
+    if (timeout_ms >= 0) {
+        ts.tv_sec = timeout_ms / 1000;
+        ts.tv_nsec = (long)(timeout_ms % 1000) * 1000000L;
+        tp = &ts;
+    }
+    int n = kevent((int)selector, NULL, 0, got, cap < 64 ? (int)cap : 64, tp);
+    if (n < 0) return errno == EINTR ? PROVEN_SYS_NET_OK : net_reason(errno);
+    for (int i = 0; i < n; ++i) {
+        proven_u8 g = 0;
+        if (got[i].flags & EV_ERROR) g = PROVEN_SYS_NET_FAILED;
+        else if (got[i].filter == EVFILT_READ) g = PROVEN_SYS_NET_READABLE;
+        else if (got[i].filter == EVFILT_WRITE) g = PROVEN_SYS_NET_WRITABLE;
+        else g = PROVEN_SYS_NET_FAILED;
+        events[i].tag = got[i].udata;
+        events[i].got = g;
+    }
+    *count = (proven_size_t)n;
+    return PROVEN_SYS_NET_OK;
+}
+
+#else
+
+proven_sys_net_selector_kind_t proven_sys_net_selector_kind(void) { return PROVEN_SYS_NET_SELECTOR_NONE; }
+
+proven_sys_net_result_t proven_sys_net_selector_open(proven_uintptr_t *out) {
+    (void)out;
+    return PROVEN_SYS_NET_UNSUPPORTED;
+}
+
+void proven_sys_net_selector_close(proven_uintptr_t selector) { (void)selector; }
+
+proven_sys_net_result_t proven_sys_net_selector_set(proven_uintptr_t selector, proven_sys_socket_t sock,
+                                                    proven_u8 want, void *tag, bool add) {
+    (void)selector; (void)sock; (void)want; (void)tag; (void)add;
+    return PROVEN_SYS_NET_UNSUPPORTED;
+}
+
+proven_sys_net_result_t proven_sys_net_selector_remove(proven_uintptr_t selector, proven_sys_socket_t sock) {
+    (void)selector; (void)sock;
+    return PROVEN_SYS_NET_UNSUPPORTED;
+}
+
+proven_sys_net_result_t proven_sys_net_selector_wait(proven_uintptr_t selector, proven_sys_net_event_t *events,
+                                                     proven_size_t cap, int timeout_ms, proven_size_t *count) {
+    (void)selector; (void)events; (void)cap; (void)timeout_ms;
+    *count = 0;
+    return PROVEN_SYS_NET_UNSUPPORTED;
+}
+
+#endif
+
 #else
 /* A translation unit must not be empty. */
 typedef int proven_sys_net_unused_t;

@@ -24,6 +24,9 @@
 #define SV_BODY_WINDOW 4096u          /* room after the head for reading a request body */
 #define SV_DRAIN_LIMIT 65536u         /* an unread request body larger than this closes the connection */
 #define SV_LINGER_MS 1000u            /* how long a connection being closed is still read from */
+#define SV_WHEEL_SLOTS 1024u          /* timer wheel: this many slots ... */
+#define SV_TICK_NS 16000000           /* ... of 16 ms each, so one turn is about 16 s */
+#define SV_EVENTS 64u                 /* ready sockets taken from the selector per round */
 
 typedef struct sv_conn sv_conn_t;
 
@@ -40,9 +43,15 @@ struct sv_conn {
     proven_size_t out_cap;
     proven_net_deadline_t deadline;    /* while waiting: when to give up on this connection */
     sv_conn_t *next_done;
+    sv_conn_t *prev, *next;            /* every connection of the server */
+    sv_conn_t *timer_prev, *timer_next;/* the others in the same slot of the timer wheel */
+    proven_u64 timer_tick;             /* the tick at which the timer is due */
+    sv_conn_t *next_dead;
     bool handling;
     bool lingering;                    /* the response is sent; input is read and thrown away until the client closes */
-    bool ready;                        /* the last poll reported it readable */
+    bool watched;                      /* registered with the selector */
+    bool timed;                        /* on the timer wheel */
+    bool dead;                         /* closed; freed at the end of the round */
 
     /* One request. */
     proven_http_request_t req;
@@ -71,11 +80,14 @@ struct proven_http_server {
     proven_net_listener_t listeners[SV_MAX_LISTENERS];
     proven_size_t listener_count;
     proven_net_waker_t waker;
-    sv_conn_t **conns;
+    proven_net_selector_t *selector;
+    sv_conn_t *conns;                  /* a list: the server never walks it while serving */
     proven_size_t conn_count;
-    proven_net_poll_item_t *items;
-    proven_byte_t *scratch;
-    proven_size_t scratch_size;
+    sv_conn_t *dead;                   /* closed in this round; freed when its events are done with */
+    sv_conn_t *wheel[SV_WHEEL_SLOTS];
+    proven_u64 wheel_tick;             /* the last tick the wheel has been advanced to */
+    proven_size_t timed_count;
+    bool listening;                    /* the listeners are registered with the selector */
     _Atomic(sv_conn_t *) done;
     atomic_bool stop;
     atomic_size_t in_flight;
@@ -103,6 +115,8 @@ static void *sv_alloc(proven_allocator_t a, proven_size_t size) {
 static void sv_free(proven_allocator_t a, void *p) {
     if (p) a.free_fn(a.ctx, p);
 }
+
+static void sv_unwatch(proven_http_server_t *s, sv_conn_t *c);
 
 // -----------------------------------------------------------------------------
 // Responses
@@ -318,6 +332,9 @@ proven_err_t proven_http_exchange_upgrade(proven_http_exchange_t *exchange, prov
     e = sv_send(c, (proven_mem_view_t){ .ptr = c->out, .size = len });
     if (e != PROVEN_OK) { sv_free(c->server->cfg.alloc, owned); return e; }
 
+    /* With handlers on the loop's thread the connection is still registered with the selector;
+     * it must leave before the socket does. (On a worker it was taken out at dispatch.) */
+    sv_unwatch(c->server, c);
     owned->alloc = c->server->cfg.alloc;
     owned->sock = c->sock;
     c->sock = (proven_net_conn_t){0};
@@ -481,12 +498,108 @@ static void sv_job(void *arg) {
     atomic_fetch_sub_explicit(&s->in_flight, 1, memory_order_release);
 }
 
-static void sv_close_conn(proven_http_server_t *s, sv_conn_t *c) {
-    for (proven_size_t i = 0; i < s->conn_count; ++i) {
-        if (s->conns[i] == c) { s->conns[i] = s->conns[--s->conn_count]; break; }
+// -----------------------------------------------------------------------------
+// Timers: a hashed wheel, so that an idle connection costs nothing until its time comes
+// -----------------------------------------------------------------------------
+
+static void sv_timer_cancel(proven_http_server_t *s, sv_conn_t *c) {
+    if (!c->timed) return;
+    proven_size_t slot = (proven_size_t)(c->timer_tick % SV_WHEEL_SLOTS);
+    if (c->timer_prev) c->timer_prev->timer_next = c->timer_next;
+    else s->wheel[slot] = c->timer_next;
+    if (c->timer_next) c->timer_next->timer_prev = c->timer_prev;
+    c->timer_prev = (void *)0;
+    c->timer_next = (void *)0;
+    c->timed = false;
+    s->timed_count--;
+}
+
+/* Give the connection `ms` from now; the wheel calls sv_expired when that has passed. */
+static void sv_wait_for(proven_http_server_t *s, sv_conn_t *c, proven_u32 ms) {
+    sv_timer_cancel(s, c);
+    c->deadline = proven_net_deadline_in(ms);
+    /* Rounded up to a tick, and never into a slot the wheel has already passed. */
+    proven_u64 tick = (proven_u64)c->deadline / SV_TICK_NS + 1;
+    if (tick <= s->wheel_tick) tick = s->wheel_tick + 1;
+    c->timer_tick = tick;
+    proven_size_t slot = (proven_size_t)(tick % SV_WHEEL_SLOTS);
+    c->timer_prev = (void *)0;
+    c->timer_next = s->wheel[slot];
+    if (c->timer_next) c->timer_next->timer_prev = c;
+    s->wheel[slot] = c;
+    c->timed = true;
+    s->timed_count++;
+}
+
+/* When the next timer may be due: the time of the first slot that holds anything. A slot can
+ * hold timers of a later turn, so this may be early - which costs one look - but never late. */
+static proven_net_deadline_t sv_next_timer(const proven_http_server_t *s) {
+    if (s->timed_count == 0) return PROVEN_NET_NO_DEADLINE;
+    for (proven_u64 t = s->wheel_tick + 1; t <= s->wheel_tick + SV_WHEEL_SLOTS; ++t) {
+        if (s->wheel[t % SV_WHEEL_SLOTS]) return (proven_net_deadline_t)(t * SV_TICK_NS);
     }
+    return PROVEN_NET_NO_DEADLINE;
+}
+
+// -----------------------------------------------------------------------------
+// Watching, closing
+// -----------------------------------------------------------------------------
+
+static void sv_close_conn(proven_http_server_t *s, sv_conn_t *c);
+
+/* Register the connection with the selector, to be told when it has something to read. */
+static bool sv_watch(proven_http_server_t *s, sv_conn_t *c) {
+    if (c->watched) return true;
+    if (proven_net_selector_add(s->selector, proven_net_conn_handle(&c->sock), PROVEN_NET_READABLE, c) != PROVEN_OK) {
+        sv_close_conn(s, c);
+        return false;
+    }
+    c->watched = true;
+    return true;
+}
+
+static void sv_unwatch(proven_http_server_t *s, sv_conn_t *c) {
+    if (!c->watched) return;
+    (void)proven_net_selector_remove(s->selector, proven_net_conn_handle(&c->sock));
+    c->watched = false;
+}
+
+/* The listeners are watched only while there is room for another connection: a client beyond
+ * the limit then waits in the backlog instead of waking the loop for nothing. */
+static void sv_update_listeners(proven_http_server_t *s) {
+    bool want = s->conn_count < s->cfg.max_connections;
+    if (want == s->listening) return;
+    for (proven_size_t i = 0; i < s->listener_count; ++i) {
+        proven_net_handle_t h = proven_net_listener_handle(&s->listeners[i]);
+        if (want) (void)proven_net_selector_add(s->selector, h, PROVEN_NET_READABLE, &s->listeners[i]);
+        else (void)proven_net_selector_remove(s->selector, h);
+    }
+    s->listening = want;
+}
+
+/* Close a connection. Its memory stays until the end of the round, because an event for it
+ * may already have been taken from the selector and still be waiting to be looked at. */
+static void sv_close_conn(proven_http_server_t *s, sv_conn_t *c) {
+    if (c->dead) return;
+    c->dead = true;
+    sv_timer_cancel(s, c);
+    sv_unwatch(s, c);                       /* before the close: see proven_net_selector_remove */
     (void)proven_net_close(&c->sock);
-    sv_free(s->cfg.alloc, c);
+    if (c->prev) c->prev->next = c->next;
+    else s->conns = c->next;
+    if (c->next) c->next->prev = c->prev;
+    s->conn_count--;
+    c->next_dead = s->dead;
+    s->dead = c;
+    sv_update_listeners(s);
+}
+
+static void sv_free_dead(proven_http_server_t *s) {
+    while (s->dead) {
+        sv_conn_t *c = s->dead;
+        s->dead = c->next_dead;
+        sv_free(s->cfg.alloc, c);
+    }
 }
 
 /*
@@ -504,7 +617,46 @@ static void sv_linger(proven_http_server_t *s, sv_conn_t *c) {
     (void)proven_net_shutdown_write(&c->sock);
     c->lingering = true;
     c->len = 0;
-    c->deadline = proven_net_deadline_in(SV_LINGER_MS);
+    if (sv_watch(s, c)) sv_wait_for(s, c, SV_LINGER_MS);
+}
+
+/* A connection's time is up: a request that stopped half-way gets a 408 and a moment to hear
+ * it; a connection that was merely idle, or was already being closed, is closed. */
+static void sv_expired(proven_http_server_t *s, sv_conn_t *c) {
+    if (!c->lingering && c->len > 0) {
+        sv_reject(c, 408);
+        sv_linger(s, c);
+    } else {
+        sv_close_conn(s, c);
+    }
+}
+
+/* Move the wheel to `now`, expiring what is due. Returns whether anything was. */
+static bool sv_timers_advance(proven_http_server_t *s, proven_time_t now) {
+    proven_u64 target = (proven_u64)now / SV_TICK_NS;
+    if (target <= s->wheel_tick) return false;
+    bool any = false;
+    if (s->timed_count > 0) {
+        /* After a long sleep every slot is visited once; more turns would find nothing new. */
+        proven_u64 from = target - s->wheel_tick > SV_WHEEL_SLOTS ? target - SV_WHEEL_SLOTS + 1 : s->wheel_tick + 1;
+        for (proven_u64 t = from; t <= target && s->timed_count > 0; ++t) {
+            sv_conn_t *c = s->wheel[t % SV_WHEEL_SLOTS];
+            while (c) {
+                sv_conn_t *next = c->timer_next;
+                if (c->timer_tick <= target) {
+                    /* Off the wheel first; what happens to it next may put it back on. Its
+                     * neighbour `next` cannot be removed by that: only `c` is touched. */
+                    sv_timer_cancel(s, c);
+                    s->wheel_tick = t - 1;          /* so that a re-armed timer lands ahead */
+                    sv_expired(s, c);
+                    any = true;
+                }
+                c = next;
+            }
+        }
+    }
+    s->wheel_tick = target;
+    return any;
 }
 
 static void sv_reset_request(sv_conn_t *c) {
@@ -535,7 +687,7 @@ static void sv_reset_request(sv_conn_t *c) {
 static bool sv_service(proven_http_server_t *s, sv_conn_t *c) {
     for (;;) {
         if (c->len == 0) {
-            c->deadline = proven_net_deadline_in(s->cfg.idle_timeout_ms);
+            sv_wait_for(s, c, s->cfg.idle_timeout_ms);
             return true;
         }
         proven_size_t head = 0;
@@ -571,11 +723,15 @@ static bool sv_service(proven_http_server_t *s, sv_conn_t *c) {
         c->expect_continue = c->req.version_minor >= 1 && !c->body_done &&
                              proven_http_header_has_token(c->headers, c->req.header_count, sv_lit("Expect"), sv_lit("100-continue"));
         c->handling = true;
+        sv_timer_cancel(s, c);         /* the handler's own reads and writes have their own limits */
 
         if (s->cfg.jobs) {
+            /* The connection changes hands: this loop must not be told about it meanwhile. */
+            sv_unwatch(s, c);
             atomic_fetch_add_explicit(&s->in_flight, 1, memory_order_relaxed);
             if (proven_job_submit_ex(s->cfg.jobs, sv_job, c) != PROVEN_OK) {
                 atomic_fetch_sub_explicit(&s->in_flight, 1, memory_order_relaxed);
+                c->handling = false;
                 sv_reject(c, 503);
                 sv_linger(s, c);
                 return false;
@@ -591,7 +747,7 @@ static bool sv_service(proven_http_server_t *s, sv_conn_t *c) {
         for (proven_size_t i = 0; i < rest; ++i) c->buf[i] = c->buf[c->body_pos + i];
         c->len = rest;
         sv_reset_request(c);
-        c->deadline = proven_net_deadline_in(rest ? s->cfg.head_timeout_ms : s->cfg.idle_timeout_ms);
+        sv_wait_for(s, c, rest ? s->cfg.head_timeout_ms : s->cfg.idle_timeout_ms);
     }
 }
 
@@ -612,7 +768,8 @@ static bool sv_collect_done(proven_http_server_t *s) {
             for (proven_size_t i = 0; i < rest; ++i) c->buf[i] = c->buf[c->body_pos + i];
             c->len = rest;
             sv_reset_request(c);
-            c->deadline = proven_net_deadline_in(rest ? s->cfg.head_timeout_ms : s->cfg.idle_timeout_ms);
+            if (!sv_watch(s, c)) { c = next; continue; }
+            sv_wait_for(s, c, rest ? s->cfg.head_timeout_ms : s->cfg.idle_timeout_ms);
             if (rest) (void)sv_service(s, c);
         }
         c = next;
@@ -643,12 +800,16 @@ static void sv_accept(proven_http_server_t *s, proven_net_listener_t *l) {
         c->cap = cap;
         c->out = c->buf + cap;
         c->out_cap = out_cap;
+        (void)proven_net_conn_set_nodelay(&c->sock, true);
+        c->next = s->conns;
+        if (s->conns) s->conns->prev = c;
+        s->conns = c;
+        s->conn_count++;
         /* A new connection is expected to say something promptly: it gets the head timeout,
          * not the idle one. */
-        c->deadline = proven_net_deadline_in(s->cfg.head_timeout_ms);
-        (void)proven_net_conn_set_nodelay(&c->sock, true);
-        s->conns[s->conn_count++] = c;
+        if (sv_watch(s, c)) sv_wait_for(s, c, s->cfg.head_timeout_ms);
     }
+    sv_update_listeners(s);
 }
 
 /* A waiting connection became readable: take what is there, without waiting, and look at it. */
@@ -664,7 +825,7 @@ static void sv_readable(proven_http_server_t *s, sv_conn_t *c) {
     proven_result_size_t r = proven_net_read(&c->sock, (proven_mem_mut_t){ .ptr = c->buf + c->len, .size = c->cap - c->len }, PROVEN_NET_DONT_WAIT);
     if (r.err == PROVEN_ERR_TIMEOUT) return;                 /* readiness that turned out to be nothing */
     if (r.err != PROVEN_OK) { sv_close_conn(s, c); return; } /* EOF between requests is how a client leaves */
-    if (first) c->deadline = proven_net_deadline_in(s->cfg.head_timeout_ms);
+    if (first) sv_wait_for(s, c, s->cfg.head_timeout_ms);
     c->len += r.value;
     (void)sv_service(s, c);
 }
@@ -693,21 +854,21 @@ proven_err_t proven_http_server_create(const proven_http_server_config_t *config
     atomic_init(&s->stop, false);
     atomic_init(&s->in_flight, 0);
 
-    proven_size_t poll_count = s->cfg.max_connections + SV_MAX_LISTENERS + 1;
-    bool sizes_ok = s->cfg.max_connections <= PROVEN_SIZE_MAX / sizeof(sv_conn_t *) - 8 &&
-                    poll_count <= PROVEN_SIZE_MAX / sizeof(proven_net_poll_item_t) &&
-                    s->cfg.max_head_bytes <= PROVEN_SIZE_MAX / 4 &&
-                    s->cfg.max_headers <= PROVEN_SIZE_MAX / (4 * sizeof(proven_http_header_t));
-    s->scratch_size = sizes_ok ? proven_net_poll_scratch_size(poll_count) : PROVEN_SIZE_MAX;
-    if (s->scratch_size == PROVEN_SIZE_MAX) { sv_free(config->alloc, s); return PROVEN_ERR_OVERFLOW; }
-    s->conns = sv_alloc(config->alloc, s->cfg.max_connections * sizeof(sv_conn_t *));
-    s->items = sv_alloc(config->alloc, poll_count * sizeof(proven_net_poll_item_t));
-    s->scratch = sv_alloc(config->alloc, s->scratch_size);
-    proven_err_t e = (s->conns && s->items && s->scratch) ? proven_net_waker_open(&s->waker) : PROVEN_ERR_NOMEM;
+    if (s->cfg.max_head_bytes > PROVEN_SIZE_MAX / 4 || s->cfg.max_headers > PROVEN_SIZE_MAX / (4 * sizeof(proven_http_header_t))) {
+        sv_free(config->alloc, s);
+        return PROVEN_ERR_OVERFLOW;
+    }
+    s->wheel_tick = (proven_u64)proven_time_monotonic_now() / SV_TICK_NS;
+    proven_err_t e = proven_net_selector_create(config->alloc, &s->selector);
+    if (e == PROVEN_OK) {
+        e = proven_net_waker_open(&s->waker);
+        if (e == PROVEN_OK) e = proven_net_selector_add(s->selector, proven_net_waker_handle(&s->waker), PROVEN_NET_READABLE, &s->waker);
+        if (e != PROVEN_OK) {
+            proven_net_waker_close(&s->waker);
+            proven_net_selector_destroy(s->selector);
+        }
+    }
     if (e != PROVEN_OK) {
-        sv_free(config->alloc, s->conns);
-        sv_free(config->alloc, s->items);
-        sv_free(config->alloc, s->scratch);
         sv_free(config->alloc, s);
         return e;
     }
@@ -718,9 +879,17 @@ proven_err_t proven_http_server_create(const proven_http_server_config_t *config
 proven_err_t proven_http_server_listen(proven_http_server_t *server, proven_net_addr_t at, proven_net_addr_t *bound) {
     if (!server) return PROVEN_ERR_INVALID_ARG;
     if (server->listener_count == SV_MAX_LISTENERS) return PROVEN_ERR_OUT_OF_BOUNDS;
-    proven_err_t e = proven_net_listen(at, 0, &server->listeners[server->listener_count], bound);
-    if (e == PROVEN_OK) server->listener_count++;
-    return e;
+    proven_net_listener_t *l = &server->listeners[server->listener_count];
+    proven_err_t e = proven_net_listen(at, 0, l, bound);
+    if (e != PROVEN_OK) return e;
+    /* Listeners already registered stay so; this one joins them if they are being watched. */
+    if (server->listening || server->listener_count == 0) {
+        e = proven_net_selector_add(server->selector, proven_net_listener_handle(l), PROVEN_NET_READABLE, l);
+        if (e != PROVEN_OK) { (void)proven_net_listener_close(l); return e; }
+        server->listening = true;
+    }
+    server->listener_count++;
+    return PROVEN_OK;
 }
 
 proven_size_t proven_http_server_connection_count(const proven_http_server_t *server) {
@@ -738,86 +907,38 @@ proven_err_t proven_http_server_poll(proven_http_server_t *server, proven_net_de
     proven_http_server_t *s = server;
     bool did = sv_collect_done(s);
 
-    /* What to wait on: the waker, the listeners while there is room, and every connection that
-     * is waiting for a request. The wait ends at the earliest of the caller's deadline and the
-     * waiting connections' own. */
-    proven_size_t n = 0;
-    s->items[n++] = (proven_net_poll_item_t){ .handle = proven_net_waker_handle(&s->waker), .want = PROVEN_NET_READABLE };
-    proven_size_t first_listener = n;
-    bool listening = s->conn_count < s->cfg.max_connections;
-    if (listening) {
-        for (proven_size_t i = 0; i < s->listener_count; ++i) {
-            s->items[n++] = (proven_net_poll_item_t){ .handle = proven_net_listener_handle(&s->listeners[i]), .want = PROVEN_NET_READABLE };
-        }
-    }
-    proven_size_t first_conn = n;
+    /* The wait ends when a socket is ready, at the caller's deadline, or when the next timer
+     * may be due - whichever is first. How many connections are open does not enter into it:
+     * the selector reports only the ready ones and the wheel only the expired ones. */
     proven_net_deadline_t wake_at = until;
-    for (proven_size_t i = 0; i < s->conn_count; ++i) {
-        sv_conn_t *c = s->conns[i];
-        c->ready = false;
-        if (c->handling) continue;
-        s->items[n++] = (proven_net_poll_item_t){ .handle = proven_net_conn_handle(&c->sock), .want = PROVEN_NET_READABLE };
-        if (c->deadline < wake_at) wake_at = c->deadline;
-    }
+    proven_net_deadline_t timer = sv_next_timer(s);
+    if (timer < wake_at) wake_at = timer;
     /* Work was already done on the way in: look at the sockets, but do not wait for them. */
     if (did) wake_at = PROVEN_NET_DONT_WAIT;
 
-    proven_size_t ready = 0;
-    proven_err_t e = proven_net_poll_with((proven_mem_mut_t){ .ptr = s->scratch, .size = s->scratch_size }, s->items, n, wake_at, &ready);
+    proven_net_ready_t events[SV_EVENTS];
+    proven_size_t n = 0;
+    proven_err_t e = proven_net_selector_wait(s->selector, events, SV_EVENTS, wake_at, &n);
     if (e != PROVEN_OK && e != PROVEN_ERR_TIMEOUT) return e;
 
-    if (ready > 0) {
-        /* Mark the ready connections before anything is handled: handling one may close it and
-         * reorder the list the items were built from. Only this thread dispatches, so a
-         * connection that was waiting when the items were built is still waiting here. */
-        proven_size_t k = first_conn;
-        for (proven_size_t i = 0; i < s->conn_count && k < n; ++i) {
-            sv_conn_t *c = s->conns[i];
-            if (c->handling) continue;
-            c->ready = s->items[k++].got != 0;
-        }
-        if (s->items[0].got) {
+    for (proven_size_t i = 0; i < n; ++i) {
+        void *tag = events[i].tag;
+        did = true;
+        if (tag == (void *)&s->waker) {
             proven_net_waker_drain(&s->waker);
-            if (sv_collect_done(s)) did = true;
-        }
-        if (listening) {
-            for (proven_size_t i = 0; i < s->listener_count; ++i) {
-                if (s->items[first_listener + i].got) { sv_accept(s, &s->listeners[i]); did = true; }
-            }
-        }
-        for (proven_size_t i = 0; i < s->conn_count;) {
-            sv_conn_t *c = s->conns[i];
-            if (c->ready && !c->handling) {
-                c->ready = false;
-                did = true;
-                sv_readable(s, c);
-                /* The slot may now hold another connection; look at it again. */
-                if (i < s->conn_count && s->conns[i] == c) i++;
-            } else {
-                i++;
-            }
+            (void)sv_collect_done(s);
+        } else if ((proven_uintptr_t)tag >= (proven_uintptr_t)&s->listeners[0] && (proven_uintptr_t)tag < (proven_uintptr_t)&s->listeners[SV_MAX_LISTENERS]) {
+            sv_accept(s, tag);
+        } else {
+            /* A connection. It may have been closed by something earlier in this same batch;
+             * its memory is still there, marked. */
+            sv_conn_t *c = tag;
+            if (!c->dead && !c->handling) sv_readable(s, c);
         }
     }
 
-    /* Connections whose time is up: a request that stopped half-way gets a 408, a connection
-     * that was merely idle is closed without a word. */
-    proven_time_t now = proven_time_monotonic_now();
-    for (proven_size_t i = 0; i < s->conn_count;) {
-        sv_conn_t *c = s->conns[i];
-        if (!c->handling && c->deadline <= now) {
-            did = true;
-            if (!c->lingering && c->len > 0) {
-                /* Half a request: say so, and give the client a moment to hear it. */
-                sv_reject(c, 408);
-                sv_linger(s, c);
-                if (i < s->conn_count && s->conns[i] == c) i++;
-            } else {
-                sv_close_conn(s, c);
-            }
-        } else {
-            i++;
-        }
-    }
+    if (sv_timers_advance(s, proven_time_monotonic_now())) did = true;
+    sv_free_dead(s);
     return did ? PROVEN_OK : PROVEN_ERR_TIMEOUT;
 }
 
@@ -844,14 +965,16 @@ void proven_http_server_destroy(proven_http_server_t *server) {
         proven_net_waker_drain(&s->waker);
     }
     (void)sv_collect_done(s);
-    while (s->conn_count > 0) sv_close_conn(s, s->conns[s->conn_count - 1]);
-    for (proven_size_t i = 0; i < s->listener_count; ++i) (void)proven_net_listener_close(&s->listeners[i]);
+    while (s->conns) sv_close_conn(s, s->conns);
+    sv_free_dead(s);
+    for (proven_size_t i = 0; i < s->listener_count; ++i) {
+        if (s->listening) (void)proven_net_selector_remove(s->selector, proven_net_listener_handle(&s->listeners[i]));
+        (void)proven_net_listener_close(&s->listeners[i]);
+    }
+    (void)proven_net_selector_remove(s->selector, proven_net_waker_handle(&s->waker));
     proven_net_waker_close(&s->waker);
-    proven_allocator_t a = s->cfg.alloc;
-    sv_free(a, s->conns);
-    sv_free(a, s->items);
-    sv_free(a, s->scratch);
-    sv_free(a, s);
+    proven_net_selector_destroy(s->selector);
+    sv_free(s->cfg.alloc, s);
 }
 
 #else

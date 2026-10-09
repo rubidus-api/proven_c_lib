@@ -458,6 +458,113 @@ proven_net_handle_t proven_net_waker_handle(const proven_net_waker_t *waker);
 void proven_net_waker_close(proven_net_waker_t *waker);
 
 // -----------------------------------------------------------------------------
+// A selector: readiness for many sockets, without handing all of them over each time
+// -----------------------------------------------------------------------------
+
+/**
+ * @brief A set of sockets that the system watches for you.
+ *
+ * proven_net_poll is given its whole list on every call, and the system looks at every entry on
+ * every call - fine for dozens of sockets, wasteful for thousands of which a handful are busy.
+ * A selector is the same question asked the other way round: you register a socket once, and a
+ * wait returns only the sockets that are ready. On Linux (epoll) and on the BSDs and macOS
+ * (kqueue) the cost of a wait then depends on how many sockets are ready, not on how many are
+ * registered.
+ *
+ * Where the system has no such facility - Windows among them - the selector is built on the
+ * same call proven_net_poll uses. It behaves identically and scales as proven_net_poll does;
+ * proven_net_selector_kind says which you have.
+ *
+ * Readiness is level-triggered, as with proven_net_poll: a socket is reported for as long as
+ * it is ready, so an event you do not act on comes back on the next wait.
+ *
+ * A selector is for one thread. Opaque; made by proven_net_selector_create.
+ */
+typedef struct proven_net_selector proven_net_selector_t;
+
+/** @brief One ready socket: the tag it was registered with, and what is ready. */
+typedef struct {
+    void *tag;
+    proven_u8 got;      /**< PROVEN_NET_READABLE, PROVEN_NET_WRITABLE and/or PROVEN_NET_FAILED */
+} proven_net_ready_t;
+
+typedef enum {
+    PROVEN_NET_SELECTOR_POLL = 0,   /**< built on poll / WSAPoll: every wait looks at every socket */
+    PROVEN_NET_SELECTOR_EPOLL,      /**< Linux */
+    PROVEN_NET_SELECTOR_KQUEUE      /**< the BSDs and macOS */
+} proven_net_selector_kind_t;
+
+/**
+ * @brief Make a selector. `alloc` holds the selector itself and, for the poll kind, its list.
+ * @return PROVEN_ERR_INVALID_ARG; PROVEN_ERR_NOMEM; PROVEN_ERR_BUSY when the system is out of
+ *         descriptors.
+ */
+[[nodiscard]]
+proven_err_t proven_net_selector_create(proven_allocator_t alloc, proven_net_selector_t **out);
+
+/**
+ * @brief Make a selector of the poll kind whatever the system offers.
+ *
+ * The portable construction, on every platform. For measuring one kind against the other, and
+ * for testing on Linux the code that runs on Windows.
+ */
+[[nodiscard]]
+proven_err_t proven_net_selector_create_poll(proven_allocator_t alloc, proven_net_selector_t **out);
+
+/** @brief Free a selector. The sockets registered with it are not closed. NULL is ignored. */
+void proven_net_selector_destroy(proven_net_selector_t *selector);
+
+/** @brief Which facility this selector is built on. */
+[[nodiscard]]
+proven_net_selector_kind_t proven_net_selector_kind(const proven_net_selector_t *selector);
+
+/** @brief How many sockets are registered. */
+[[nodiscard]]
+proven_size_t proven_net_selector_count(const proven_net_selector_t *selector);
+
+/**
+ * @brief Register a socket.
+ * @param want PROVEN_NET_READABLE and/or PROVEN_NET_WRITABLE. May be 0: the socket is then
+ *        reported only when it fails or its peer hangs up.
+ * @param tag comes back with every event for this socket - a pointer to your own record of it.
+ * @return PROVEN_ERR_EXISTS when the socket is already registered; PROVEN_ERR_INVALID_ARG for
+ *         a handle that is not valid; PROVEN_ERR_NOMEM; PROVEN_ERR_BUSY at a system limit.
+ */
+[[nodiscard]]
+proven_err_t proven_net_selector_add(proven_net_selector_t *selector, proven_net_handle_t handle, proven_u8 want, void *tag);
+
+/** @brief Change what is asked of a registered socket, and its tag.
+ *  @return PROVEN_ERR_NOT_FOUND when it is not registered. */
+[[nodiscard]]
+proven_err_t proven_net_selector_modify(proven_net_selector_t *selector, proven_net_handle_t handle, proven_u8 want, void *tag);
+
+/**
+ * @brief Take a socket out of the selector. **Do this before closing the socket.** A closed
+ *        socket's number is reused by the next one opened, and a selector that still holds the
+ *        old registration will report events for the wrong socket - or, with the poll kind,
+ *        report a failure on every wait.
+ * @return PROVEN_ERR_NOT_FOUND when it is not registered.
+ */
+proven_err_t proven_net_selector_remove(proven_net_selector_t *selector, proven_net_handle_t handle);
+
+/**
+ * @brief Wait until a registered socket is ready or until `until`, and report up to `cap`.
+ *
+ * `*count` events are written. When more than `cap` sockets are ready the rest are reported by
+ * the next wait - nothing is lost, and no socket is starved by its position. A socket ready to
+ * read and to write may come as one event or as two (kqueue reports them apart).
+ *
+ * As with proven_net_poll, an event says the next call will not wait, not that it will
+ * succeed: follow it with a call that takes PROVEN_NET_DONT_WAIT and act on its result.
+ *
+ * @return PROVEN_ERR_TIMEOUT when nothing became ready (`*count` is 0); PROVEN_ERR_INVALID_ARG
+ *         for `cap` 0 or a null pointer.
+ */
+[[nodiscard]]
+proven_err_t proven_net_selector_wait(proven_net_selector_t *selector, proven_net_ready_t *events, proven_size_t cap,
+                                      proven_net_deadline_t until, proven_size_t *count);
+
+// -----------------------------------------------------------------------------
 // Transport: a connection, as an interface
 // -----------------------------------------------------------------------------
 

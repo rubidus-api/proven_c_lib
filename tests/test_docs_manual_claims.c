@@ -27,6 +27,44 @@ int main(void) {
 
     proven_allocator_t heap = proven_heap_allocator();
 
+#if !defined(PROVEN_NO_NET)
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("chapter 9, the selector",
+        "Which kind a selector is, and the three refusals its table names.",
+        "");
+    // ---------------------------------------------------------------
+    {
+        proven_net_conn_t a, b;
+        proven_net_selector_t *sel = NULL, *portable = NULL;
+        if (proven_net_pair(&a, &b) == PROVEN_OK) {
+            PROVEN_TEST_ASSERT(proven_net_selector_create(heap, &sel) == PROVEN_OK && proven_net_selector_create_poll(heap, &portable) == PROVEN_OK, "a selector of each kind", "");
+            /* CLAIM (s9): "On Linux it is epoll"; create_poll makes "one of the portable kind, whatever the system offers". */
+#if defined(__linux__)
+            PROVEN_TEST_ASSERT(proven_net_selector_kind(sel) == PROVEN_NET_SELECTOR_EPOLL, "on Linux the selector is epoll", "");
+#endif
+            PROVEN_TEST_ASSERT(proven_net_selector_kind(portable) == PROVEN_NET_SELECTOR_POLL, "the portable kind is the poll kind everywhere", "");
+            /* CLAIM (s9): EXISTS when already registered; NOT_FOUND for modify and remove of what is not there. */
+            proven_net_selector_t *both[2] = { sel, portable };
+            for (int i = 0; i < 2; ++i) {
+                proven_net_handle_t h = proven_net_conn_handle(&a);
+                PROVEN_TEST_ASSERT(proven_net_selector_modify(both[i], h, PROVEN_NET_READABLE, NULL) == PROVEN_ERR_NOT_FOUND &&
+                                   proven_net_selector_remove(both[i], h) == PROVEN_ERR_NOT_FOUND, "not registered: NOT_FOUND", "");
+                PROVEN_TEST_ASSERT(proven_net_selector_add(both[i], h, PROVEN_NET_READABLE, NULL) == PROVEN_OK &&
+                                   proven_net_selector_add(both[i], h, PROVEN_NET_READABLE, NULL) == PROVEN_ERR_EXISTS, "registered twice: EXISTS", "");
+                /* CLAIM (s9): TIMEOUT "when nothing was (count is 0)". */
+                proven_net_ready_t ev[2];
+                proven_size_t n = 9;
+                PROVEN_TEST_ASSERT(proven_net_selector_wait(both[i], ev, 2, PROVEN_NET_DONT_WAIT, &n) == PROVEN_ERR_TIMEOUT && n == 0, "nothing ready: TIMEOUT with a count of 0", "");
+                PROVEN_TEST_ASSERT(proven_net_selector_remove(both[i], h) == PROVEN_OK && proven_net_selector_count(both[i]) == 0, "removed before it is closed", "");
+            }
+            proven_net_selector_destroy(sel);
+            proven_net_selector_destroy(portable);
+            (void)proven_net_close(&a);
+            (void)proven_net_close(&b);
+        }
+    }
+#endif
+
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("chapter 12, WebSocket",
         "The codec's facts as the chapter states them: the handshake values, one spelling for a length, the close-code table, and what the decoder refuses.",

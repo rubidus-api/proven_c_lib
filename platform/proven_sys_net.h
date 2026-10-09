@@ -52,6 +52,7 @@ typedef enum {
     PROVEN_SYS_NET_TRUNCATED,     /**< a datagram was larger than the buffer; the rest is gone */
     PROVEN_SYS_NET_TOO_BIG,       /**< a datagram is larger than the network will carry */
     PROVEN_SYS_NET_LIMIT,         /**< out of descriptors, buffers or memory */
+    PROVEN_SYS_NET_EXISTS,        /**< a selector already holds this socket */
     PROVEN_SYS_NET_ERROR          /**< anything else */
 } proven_sys_net_result_t;
 
@@ -166,6 +167,49 @@ proven_size_t proven_sys_net_wait_scratch_size(proven_size_t count);
  */
 proven_sys_net_result_t proven_sys_net_wait(proven_sys_net_wait_t *items, proven_size_t count,
                                             void *scratch, int timeout_ms, proven_size_t *ready);
+
+/**
+ * A kernel-held set of sockets: epoll on Linux, kqueue on the BSDs and macOS. The set persists
+ * between waits and a wait returns only the sockets that are ready, so its cost does not grow
+ * with the number of idle sockets. Where neither exists (Windows, other systems)
+ * proven_sys_net_selector_open answers PROVEN_SYS_NET_UNSUPPORTED and the portable layer
+ * builds the same interface on proven_sys_net_wait.
+ *
+ * Level-triggered: a socket is reported for as long as it is ready.
+ */
+typedef struct {
+    void *tag;          /**< what was registered with the socket */
+    proven_u8 got;      /**< PROVEN_SYS_NET_READABLE / _WRITABLE / _FAILED */
+} proven_sys_net_event_t;
+
+typedef enum {
+    PROVEN_SYS_NET_SELECTOR_NONE = 0,
+    PROVEN_SYS_NET_SELECTOR_EPOLL,
+    PROVEN_SYS_NET_SELECTOR_KQUEUE
+} proven_sys_net_selector_kind_t;
+
+/** Which kernel facility this build uses; NONE when it has neither. */
+proven_sys_net_selector_kind_t proven_sys_net_selector_kind(void);
+
+proven_sys_net_result_t proven_sys_net_selector_open(proven_uintptr_t *out);
+void proven_sys_net_selector_close(proven_uintptr_t selector);
+
+/** Register `sock` (`add` true) or change what is asked of it. EXISTS when added twice,
+ *  NOT_FOUND when changed without being there. */
+proven_sys_net_result_t proven_sys_net_selector_set(proven_uintptr_t selector, proven_sys_socket_t sock,
+                                                    proven_u8 want, void *tag, bool add);
+
+/** Take `sock` out of the set. A socket that is closed leaves the set by itself. */
+proven_sys_net_result_t proven_sys_net_selector_remove(proven_uintptr_t selector, proven_sys_socket_t sock);
+
+/**
+ * Wait until something in the set is ready or `timeout_ms` passes (negative: no limit), and
+ * report at most `cap` of them. OK with `count == 0` means the time passed or the wait was
+ * interrupted. A hang-up is reported as readable and writable, since which was asked for is
+ * not known here; with kqueue a socket ready both ways appears as two events.
+ */
+proven_sys_net_result_t proven_sys_net_selector_wait(proven_uintptr_t selector, proven_sys_net_event_t *events,
+                                                     proven_size_t cap, int timeout_ms, proven_size_t *count);
 
 /**
  * Resolve a host name to addresses for stream sockets, blocking, through the system resolver.

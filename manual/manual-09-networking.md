@@ -20,8 +20,9 @@ This chapter covers `net.h`. Like Chapter 5 it needs an operating system and is 
 6. [Many sockets, one thread](#6-many-sockets-one-thread)
 7. [Transports](#7-transports)
 8. [A pair, and waking a loop](#8-a-pair-and-waking-a-loop)
-9. [What the platforms do differently](#9-what-the-platforms-do-differently)
-10. [What is not here](#10-what-is-not-here)
+9. [A selector: thousands of sockets](#9-a-selector-thousands-of-sockets)
+10. [What the platforms do differently](#10-what-the-platforms-do-differently)
+11. [What is not here](#11-what-is-not-here)
 
 ## 1. Three rules
 
@@ -513,7 +514,8 @@ asked or timed out, and only until that data has gone.
 `proven_net_poll_with` exists because the operating system wants an array of its own and this
 library does not allocate one behind your back: you give it working memory, sized by
 `proven_net_poll_scratch_size`, and reuse it for the next call. Readiness here is `poll` on POSIX
-and `WSAPoll` on Windows - the right tool for hundreds of sockets, not for hundreds of thousands.
+and `WSAPoll` on Windows - the right tool for dozens or hundreds of sockets. For thousands, of
+which few are busy at a time, use the selector of section 9.
 
 Compiled and run by the test suite:
 
@@ -858,7 +860,181 @@ int main(void) {
 }
 ```
 
-## 9. What the platforms do differently
+## 9. A selector: thousands of sockets
+
+`proven_net_poll` is handed its whole list on every call, and the system examines every entry on
+every call. With a few dozen sockets that is nothing. With ten thousand connections of which
+five have something to say, it is ten thousand entries copied and examined to find five - on
+every turn of the loop.
+
+A selector asks the same question the other way round. You register a socket once; the system
+remembers it; a wait returns the sockets that are ready and does not look at the others.
+
+### Reference
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_net_selector_create(alloc, &selector)` | Make a selector. | `proven_err_t`: `INVALID_ARG`; `NOMEM`; `BUSY` when out of descriptors. |
+| `proven_net_selector_create_poll(alloc, &selector)` | Make one of the portable kind, whatever the system offers. | the same. |
+| `proven_net_selector_kind(selector)` | Which facility it is built on. | `PROVEN_NET_SELECTOR_EPOLL`, `_KQUEUE` or `_POLL`. |
+| `proven_net_selector_add(selector, handle, want, tag)` | Register a socket: what to watch it for, and a pointer that comes back with its events. | `proven_err_t`: `EXISTS` when it is already registered; `INVALID_ARG`; `NOMEM`; `BUSY`. |
+| `proven_net_selector_modify(selector, handle, want, tag)` | Change what is asked of it, and its tag. | `proven_err_t`: `NOT_FOUND`. |
+| `proven_net_selector_remove(selector, handle)` | Take it out. | `proven_err_t`: `NOT_FOUND`. |
+| `proven_net_selector_wait(selector, events, cap, until, &count)` | Wait until something is ready or until `until`; report up to `cap`. | `proven_err_t`: `TIMEOUT` when nothing was (`count` is 0). |
+| `proven_net_selector_count(selector)` | How many sockets are registered. | `proven_size_t`. |
+| `proven_net_selector_destroy(selector)` | Free it. The sockets are not closed. | none. |
+
+```text
+typedef struct {
+    void *tag;        /* what you registered with the socket */
+    proven_u8 got;    /* PROVEN_NET_READABLE, PROVEN_NET_WRITABLE and/or PROVEN_NET_FAILED */
+} proven_net_ready_t;
+```
+
+**What you get depends on the system, and the selector says which.** On Linux it is `epoll`; on
+the BSDs and macOS it is `kqueue`. There a wait costs in proportion to the sockets that are
+ready. On Windows, and anywhere else, it is the portable kind: the same interface kept over the
+call `proven_net_poll` uses, which still examines every socket on every wait. It behaves the
+same and it does not scale the same. `proven_net_selector_kind` tells you; a server that
+means to hold tens of thousands of connections should look.
+
+**Remove a socket before you close it.** A closed socket's number is given to the next socket
+opened. A selector that still holds the old registration then reports events for a socket that
+is not the one you registered - with the old tag - or, in the portable kind, reports a failure
+on every wait.
+
+Wrong:
+
+```text
+proven_net_close(&conn);                                  /* wrong: the selector still holds its number */
+proven_net_selector_remove(selector, proven_net_conn_handle(&conn));   /* too late: the handle is no longer valid */
+```
+
+Correct - `proven_net_selector_remove` first, then `proven_net_close`.
+
+**Readiness is level-triggered.** A socket is reported for as long as it is ready, exactly as
+with `proven_net_poll`: an event you do not act on comes back on the next wait. So the rules
+of section 6 hold unchanged - follow an event with a call that takes `PROVEN_NET_DONT_WAIT`,
+and ask for writability only while you have something to write.
+
+**The tag is yours, and so is its lifetime.** The selector returns the pointer you gave it and
+never looks through it. If the record it points at is freed while events for it may already
+have been taken from the selector, the next loop iteration reads freed memory. The pattern
+that avoids this: when you close a connection in the middle of handling a batch of events, mark
+its record and free it after the batch.
+
+**One thread.** A selector is not safe to use from several threads. To make a waiting loop act
+on something another thread did, register a waker (section 8) and wake it.
+
+**A socket ready both ways may be one event or two.** `kqueue` reports readability and
+writability separately; handle each event for what it says rather than expecting one per socket.
+
+Compiled and run by the test suite:
+
+<!-- example: manual/examples/en/ex_09_net_selector.c -->
+```c
+/*
+ * A selector: register each socket once, and be told only about the ones that are ready.
+ *
+ * The loop is the one from the poll example - wait, then serve what is ready without waiting -
+ * but nothing is rebuilt between waits, and a thousand idle connections cost a wait nothing.
+ */
+
+typedef struct {
+    proven_net_conn_t conn;
+    int number;
+    bool open;
+} client_t;
+
+int main(void) {
+    proven_net_listener_t listener;
+    proven_net_addr_t at;
+    proven_err_t err = proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 16, &listener, &at);
+    if (err == PROVEN_ERR_PERMISSION || err == PROVEN_ERR_UNSUPPORTED) {
+        printf("no sockets in this environment; nothing to show\n");
+        return EXAMPLE_OK();
+    }
+    EXAMPLE_REQUIRE(err == PROVEN_OK, "the listener opens");
+
+    proven_net_selector_t *selector = NULL;
+    EXAMPLE_REQUIRE(proven_net_selector_create(proven_heap_allocator(), &selector) == PROVEN_OK, "a selector");
+    /* epoll on Linux, kqueue on the BSDs and macOS; elsewhere the same interface over poll. */
+    proven_net_selector_kind_t kind = proven_net_selector_kind(selector);
+    printf("selector kind: %s\n", kind == PROVEN_NET_SELECTOR_EPOLL ? "epoll" : kind == PROVEN_NET_SELECTOR_KQUEUE ? "kqueue" : "poll");
+
+    /* The tag is what comes back with an event: a pointer to your own record of the socket.
+     * The listener's tag here is the listener itself. */
+    EXAMPLE_REQUIRE(proven_net_selector_add(selector, proven_net_listener_handle(&listener), PROVEN_NET_READABLE, &listener) == PROVEN_OK,
+                    "the listener is registered, once");
+
+    /* Three clients connect; the second and third say something. */
+    proven_net_conn_t far[3];
+    for (int i = 0; i < 3; ++i) EXAMPLE_REQUIRE(proven_net_connect(at, proven_net_deadline_in(5000), &far[i]) == PROVEN_OK, "a client connects");
+    EXAMPLE_REQUIRE(proven_net_write_all(&far[1], proven_mem_view_from_u8(PROVEN_LIT("from one")), proven_net_deadline_in(5000)).err == PROVEN_OK &&
+                    proven_net_write_all(&far[2], proven_mem_view_from_u8(PROVEN_LIT("from two")), proven_net_deadline_in(5000)).err == PROVEN_OK, "two of them send");
+
+    client_t clients[3] = {0};
+    int accepted = 0, messages = 0;
+    for (int round = 0; round < 20 && messages < 2; ++round) {
+        proven_net_ready_t ready[8];
+        proven_size_t count = 0;
+        err = proven_net_selector_wait(selector, ready, 8, proven_net_deadline_in(1000), &count);
+        if (err == PROVEN_ERR_TIMEOUT) continue;        /* the idle tick of a loop */
+        EXAMPLE_REQUIRE(err == PROVEN_OK, "something is ready");
+        for (proven_size_t i = 0; i < count; ++i) {
+            if (ready[i].tag == &listener) {
+                /* Ready means "will not wait": take every pending connection, without waiting. */
+                while (accepted < 3 && proven_net_accept(&listener, PROVEN_NET_DONT_WAIT, &clients[accepted].conn, NULL) == PROVEN_OK) {
+                    client_t *c = &clients[accepted];
+                    c->number = accepted++;
+                    c->open = true;
+                    EXAMPLE_REQUIRE(proven_net_selector_add(selector, proven_net_conn_handle(&c->conn), PROVEN_NET_READABLE, c) == PROVEN_OK,
+                                    "each accepted connection is registered, with its record as the tag");
+                }
+            } else {
+                client_t *c = ready[i].tag;
+                proven_byte_t buf[32];
+                proven_result_size_t got = proven_net_read(&c->conn, (proven_mem_mut_t){ buf, sizeof buf }, PROVEN_NET_DONT_WAIT);
+                if (got.err == PROVEN_OK) messages++;
+            }
+        }
+    }
+    EXAMPLE_REQUIRE(accepted == 3 && messages == 2, "three connections accepted, two messages read");
+    EXAMPLE_REQUIRE(proven_net_selector_count(selector) == 4, "four sockets registered: the listener and three connections");
+
+    /* The first connection never spoke, so it was never reported: nothing to do for it. Now ask
+     * a different question of it - may I write? - and it is reported at once. */
+    proven_net_ready_t one[4];
+    proven_size_t count = 0;
+    EXAMPLE_REQUIRE(proven_net_selector_wait(selector, one, 4, proven_net_deadline_in(30), &count) == PROVEN_ERR_TIMEOUT, "all quiet: nothing is reported");
+    EXAMPLE_REQUIRE(proven_net_selector_modify(selector, proven_net_conn_handle(&clients[0].conn), PROVEN_NET_WRITABLE, &clients[0]) == PROVEN_OK, "ask about writing instead");
+    EXAMPLE_REQUIRE(proven_net_selector_wait(selector, one, 4, proven_net_deadline_in(1000), &count) == PROVEN_OK && count == 1 &&
+                    one[0].tag == &clients[0] && (one[0].got & PROVEN_NET_WRITABLE), "an idle connection is writable");
+    /* Ask for writability only while you have something to write, or every wait returns at once. */
+    EXAMPLE_REQUIRE(proven_net_selector_modify(selector, proven_net_conn_handle(&clients[0].conn), PROVEN_NET_READABLE, &clients[0]) == PROVEN_OK, "back to reading");
+
+    /* Remove a socket BEFORE closing it. */
+    for (int i = 0; i < 3; ++i) {
+        EXAMPLE_REQUIRE(proven_net_selector_remove(selector, proven_net_conn_handle(&clients[i].conn)) == PROVEN_OK, "removed");
+        (void)proven_net_close(&clients[i].conn);
+        (void)proven_net_close(&far[i]);
+    }
+    EXAMPLE_REQUIRE(proven_net_selector_remove(selector, proven_net_listener_handle(&listener)) == PROVEN_OK &&
+                    proven_net_selector_count(selector) == 0, "and the listener: the selector is empty");
+    (void)proven_net_listener_close(&listener);
+
+    /* The portable kind can be asked for by name - to compare the two, or to run on Linux the
+     * code path Windows uses. */
+    proven_net_selector_t *portable = NULL;
+    EXAMPLE_REQUIRE(proven_net_selector_create_poll(proven_heap_allocator(), &portable) == PROVEN_OK &&
+                    proven_net_selector_kind(portable) == PROVEN_NET_SELECTOR_POLL, "a selector of the poll kind");
+    proven_net_selector_destroy(portable);
+    proven_net_selector_destroy(selector);
+    return EXAMPLE_OK();
+}
+```
+
+## 10. What the platforms do differently
 
 The calls behave the same on Linux, the BSDs, macOS and Windows. These are the differences the
 library absorbs, written down because they are the ones that bite when sockets are used directly:
@@ -880,11 +1056,11 @@ refused loopback connection, where POSIX answers at once - allow for it in the d
 Unix-domain sockets need Windows 10 version 1803 or later; where the family is missing,
 `proven_net_listen` and `proven_net_connect` return `PROVEN_ERR_UNSUPPORTED`.
 
-## 10. What is not here
+## 11. What is not here
 
 - **TLS.** The transport interface is where it will attach; this version has none, and a
   connection made here is not encrypted.
 - **A deadline on name resolution.** See section 2.
-- **Scale beyond `poll`.** No `epoll`, `kqueue` or completion ports.
+- **Scale on Windows.** The selector is `epoll` or `kqueue` where they exist; on Windows it is built on `WSAPoll`, and there is no completion-port path.
 - **Unix-domain datagrams, raw sockets, multicast, socket options beyond `TCP_NODELAY`.**
 - **HTTP.** The message codec is [Chapter 10](manual-10-http.md); the client and the server that drive it over these sockets are [Chapter 11](manual-11-http-client-server.md).

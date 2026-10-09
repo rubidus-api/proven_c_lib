@@ -39,8 +39,12 @@
  *     directly on the connection from its worker thread; the connection belongs to it until it
  *     returns. Handlers then run concurrently and must be written for that.
  *
- * Readiness is proven_net_poll - `poll` and `WSAPoll` - which serves hundreds of connections
- * well and tens of thousands badly.
+ * The loop waits on a selector (net.h) and keeps its timeouts on a timer wheel, so what a
+ * round costs depends on the connections that have something to do, not on how many are open:
+ * thousands of idle connections are held at no cost to the busy ones where the selector is
+ * epoll or kqueue. On Windows it is built on WSAPoll and every round still looks at them all.
+ * Two limits remain everywhere: each connection holds its buffers from the moment it is
+ * accepted, and each request occupies a thread while its handler runs.
  *
  * There is no TLS here: what this server sends and receives is not encrypted.
  *

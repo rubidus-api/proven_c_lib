@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 86 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 87 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-09, Windows 11 test VM: x86-64 268 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 150 registered tests plus the 126 runnable manual examples - 276 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 163 test files: the 150 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 151 registered tests plus the 128 runnable manual examples - 279 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 164 test files: the 151 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1121,6 +1121,20 @@ Sub-checks:
 
 Failure tip: inspect `proven_net_poll_with` and the transport functions at the end of `src/proven/net.c`.
 
+### `tests/test_unit_net_selector` - net: the selector
+
+Intent: verify a registered set of sockets and a wait that reports the ready ones, for the system's kind (epoll on Linux) and for the portable kind built on poll - which must answer alike.
+
+Sub-checks, each run for both kinds:
+
+- An empty selector waits out its deadline. Three hundred socket pairs are registered; none idle is reported; eight made readable are reported exactly once each with their own tags; unread, they are reported again (level-triggered); read, they are quiet. Registering twice is `PROVEN_ERR_EXISTS`.
+- More ready than fit: a hundred ready sockets and a report of seven. The portable kind reaches all hundred within sixty waits (it rotates its starting point); for either kind, reading each as it is reported yields all hundred exactly once.
+- A socket asked nothing is not reported though it has data; asked again with another tag, the new tag comes back. A removed socket is silent; removing or changing what is not there is `PROVEN_ERR_NOT_FOUND`; it can be registered again. A closed peer makes its socket readable and the read says `PROVEN_ERR_EOF`; removed before it is closed, it leaves nothing behind. An idle socket asked about writing is writable and not readable.
+- Churn: twenty thousand random registrations, removals and readiness changes; after every ninety-seventh, every registered and ready socket is reported and nothing else is, and the count follows throughout. For the portable kind this is the test of its hash's deletion.
+- Null pointers, a zero cap, an invalid allocator and handles that are not open are `PROVEN_ERR_INVALID_ARG`.
+
+Failure tip: inspect the Selector section of `src/proven/net.c` - `proven_net_selector_remove` is where the portable kind repairs its hash - and of `platform/proven_sys_net.c` for the system's kind. The `kqueue` path is compiled and run by nothing this project has. The test opens 600 sockets per kind.
+
 ### `tests/test_unit_url` - url: parsing, percent-coding, and a path that stays inside its root
 
 Intent: verify a URL comes apart into the components that were written, and that a request path is decoded once and cannot climb out of its root.
@@ -1231,6 +1245,7 @@ Sub-checks:
 - `max_connections` of two holds a third client in the backlog until one leaves; a fifth listener is `PROVEN_ERR_OUT_OF_BOUNDS`.
 - With a job system: two handlers are inside at the same time, and a connection handed back by a worker carries the next request.
 - `stop` from a handler makes `run` return; `destroy` with a handler still running on a worker returns only after it.
+- Three hundred connections at once, in both models: each is answered, all are held open together, another connection is served while they sit idle, none is closed before `idle_timeout_ms` has passed since it was last heard from, and every one is then closed by its own timer with nothing more sent.
 - A full job queue: eight held requests against one worker and a queue of two - those that do not fit are answered `503` with a close, the rest are served once the worker is free, and every one is answered.
 
 Failure tip: inspect `src/proven/http_server.c`: `sv_service` for the refusal ladder, `sv_run` for what follows a handler, `proven_http_server_poll` for readiness and deadlines, `sv_job` and `sv_collect_done` for the hand-back between threads. Run under ThreadSanitizer when the job-system half fails alone. Responses are read with this library's own codec, so this test does not show agreement with another implementation.
