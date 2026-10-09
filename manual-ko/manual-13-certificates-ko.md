@@ -161,7 +161,11 @@ proven_size_t proven_cert_store_count(const proven_cert_store_t *store);
   집합이다. Windows에서는 `ROOT` 시스템 저장소를 읽는다. 그 밖에서는 환경 변수 `SSL_CERT_FILE`의
   경로와 흔한 번들 위치 가운데 읽을 수 있는 첫 파일을 읽는다. 기계에 읽을 수 있는 것이 없으면 -
   최소한의 컨테이너에는 흔히 없다 - `PROVEN_ERR_NOT_FOUND`를 돌려준다. 그것은 보고할 일이지, 모든
-  것을 믿는 것으로 피해 갈 일이 아니다.
+  것을 믿는 것으로 피해 갈 일이 아니다. **Windows에서는 답이 기대보다 작을 수 있다:** Windows는
+  지금까지 필요했던 루트만 갖고 있다가, 자신의 TLS가 다른 루트를 만나면 그때 받아 온다. 이 호출은
+  설치된 것을 읽을 뿐 받아 오기를 일으키지 않으므로, 그 기계가 한 번도 쓴 적 없는 루트로 가는
+  체인은 거기서 `PROVEN_ERR_UNTRUSTED`다. Windows에서 임의의 서버에 닿아야 하는 프로그램은 번들을
+  함께 싣고 `proven_cert_store_add_pem`을 써야 한다.
 - `proven_cert_store_add_pem`은 여러분이 공급하는 번들을 받는다. 조직의 기관, 또는 프로그램이
   대화하는 서버 하나의 인증서 하나. 인증서가 아닌 블록과 파싱되지 않는 인증서는 건너뛰고,
   `*added`가 받아들인 수를 센다. 인증서가 하나도 없는 번들은 `PROVEN_ERR_NOT_FOUND`다.

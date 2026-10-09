@@ -171,7 +171,11 @@ stale the day it ships and wrong for half its users. You choose:
   first file it can among the path in the environment variable `SSL_CERT_FILE` and the usual
   bundle locations. It returns `PROVEN_ERR_NOT_FOUND` when the machine has none it can read - a
   minimal container often has none - and that is something to report, not to work around by
-  trusting everything.
+  trusting everything. **On Windows the answer can be smaller than you expect:** Windows keeps
+  only the roots it has needed so far and fetches others on demand when its own TLS meets them.
+  This call reads what is installed and triggers no fetch, so a chain to a root that machine
+  has never used is `PROVEN_ERR_UNTRUSTED` there. A program that must reach arbitrary servers
+  from Windows should ship a bundle and use `proven_cert_store_add_pem`.
 - `proven_cert_store_add_pem` takes a bundle you supply: your organisation's authority, or the
   single certificate of the one server your program talks to. A block that is not a certificate
   and a certificate that does not parse are skipped, and `*added` counts the ones taken. A

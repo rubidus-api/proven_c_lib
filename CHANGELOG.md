@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-10
+
 A MINOR release: X.509 certificates, and - not public - the cryptographic primitives the TLS
 unit will be built on. There is still no TLS: nothing in this version opens an encrypted
 connection.
@@ -38,6 +40,8 @@ connection.
   Everything but `proven_cert_store_add_system` is in the freestanding profile.
 - `proven_cert_store_add_system` reads the operating system's roots: the `ROOT` system store
   on Windows; elsewhere the file named by `SSL_CERT_FILE`, then the usual bundle locations.
+  On Windows that store holds only the roots the machine has needed so far (the test VM had
+  30); the call reads what is installed and does not make Windows fetch more.
 - Four error codes: `PROVEN_ERR_EXPIRED`, `PROVEN_ERR_NOT_YET_VALID`,
   `PROVEN_ERR_NAME_MISMATCH` and `PROVEN_ERR_PROTOCOL`. `PROVEN_ERR_LAST` is now
   `PROVEN_ERR_PROTOCOL`. `proven_cert_verify` returns the first three and
