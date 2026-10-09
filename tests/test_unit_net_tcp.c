@@ -1,6 +1,9 @@
 #include "proven.h"
 #include "proven_test.h"
 #include <string.h>
+#if !defined(_WIN32) && !defined(_WIN64)
+#include <sys/resource.h>
+#endif
 
 /*
  * The contract of the stream-socket calls, on the loopback interface, in one thread.
@@ -300,6 +303,98 @@ int main(void) {
             pair_close(&p);
         }
     }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a name goes through the system resolver",
+        "\"localhost\" is the one name every system resolves without a network; a name under .invalid never resolves.",
+        "The literal cases elsewhere never reach getaddrinfo. This section is the one that does.");
+    // ---------------------------------------------------------------
+    {
+        proven_net_addr_t found[8];
+        proven_size_t n = 0;
+        proven_err_t err = proven_net_resolve(PROVEN_LIT("localhost"), 8080, found, 8, &n);
+        PROVEN_TEST_ASSERT(err == PROVEN_OK && n >= 1, "localhost resolves to at least one address", "");
+        bool all_loopback = true, ports = true;
+        for (proven_size_t i = 0; i < n; ++i) {
+            bool v4 = found[i].family == PROVEN_NET_FAMILY_IPV4 && found[i].ip[0] == 127;
+            bool v6 = found[i].family == PROVEN_NET_FAMILY_IPV6 && found[i].ip[15] == 1;
+            for (int k = 0; k < 15 && v6; ++k) if (found[i].ip[k] != 0) v6 = false;
+            if (!v4 && !v6) all_loopback = false;
+            if (found[i].port != 8080) ports = false;
+        }
+        PROVEN_TEST_ASSERT(all_loopback, "every address it resolves to is a loopback address", "");
+        PROVEN_TEST_ASSERT(ports, "and each carries the port that was asked for", "");
+
+        /* The address the resolver gave is one a socket accepts: listen on it. */
+        proven_net_listener_t l;
+        found[0].port = 0;
+        PROVEN_TEST_ASSERT(proven_net_listen(found[0], 1, &l, NULL) == PROVEN_OK, "a resolved address can be listened on", "");
+        (void)proven_net_listener_close(&l);
+
+        proven_size_t one = 0;
+        PROVEN_TEST_ASSERT(proven_net_resolve(PROVEN_LIT("localhost"), 1, found, 1, &one) == PROVEN_OK && one == 1,
+            "a capacity of one yields exactly one address", "");
+
+        /* RFC 6761 reserves .invalid: it must never resolve. A resolver with no name server to
+         * ask may instead report that nobody answered; both are refusals to produce an address. */
+        err = proven_net_resolve(PROVEN_LIT("no-such-host.invalid"), 80, found, 8, &n);
+        PROVEN_TEST_ASSERT((err == PROVEN_ERR_NOT_FOUND || err == PROVEN_ERR_TIMEOUT) && n == 0,
+            "a name under .invalid is PROVEN_ERR_NOT_FOUND (or PROVEN_ERR_TIMEOUT with no name server), and yields nothing", "");
+    }
+
+#if !defined(_WIN32) && !defined(_WIN64)
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("out of descriptors is PROVEN_ERR_BUSY, and nothing leaks",
+        "With the process's descriptor limit lowered, opening sockets ends in BUSY - not IO, not a crash - and works again once some are closed.",
+        "POSIX only: the limit is set with setrlimit. EMFILE must map to the LIMIT reason in platform/proven_sys_net.c.");
+    // ---------------------------------------------------------------
+    {
+        struct rlimit old, low;
+        PROVEN_TEST_ASSERT(getrlimit(RLIMIT_NOFILE, &old) == 0, "read the descriptor limit", "");
+        low = old;
+        low.rlim_cur = 64;
+        if (low.rlim_cur > old.rlim_max) low.rlim_cur = old.rlim_max;
+        PROVEN_TEST_ASSERT(setrlimit(RLIMIT_NOFILE, &low) == 0, "lower it to 64", "");
+
+        proven_net_udp_t socks[80];
+        int opened = 0;
+        proven_err_t last = PROVEN_OK;
+        for (; opened < 80; ++opened) {
+            last = proven_net_udp_open(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &socks[opened], NULL);
+            if (last != PROVEN_OK) break;
+        }
+        PROVEN_TEST_ASSERT(opened > 0 && opened < 80 && last == PROVEN_ERR_BUSY,
+            "sockets open until the limit, and the one too many is PROVEN_ERR_BUSY", "");
+        PROVEN_TEST_ASSERT(!proven_net_udp_is_open(&socks[opened]), "the failed open left nothing behind", "");
+
+        proven_net_listener_t l;
+        PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 1, &l, NULL) == PROVEN_ERR_BUSY,
+            "a listener cannot open either", "");
+
+        /* An accept with a connection pending and no descriptor to give it: BUSY, and the
+         * connection is still there to accept once one is free. */
+        PROVEN_TEST_ASSERT(proven_net_udp_close(&socks[--opened]) == PROVEN_OK && proven_net_udp_close(&socks[--opened]) == PROVEN_OK, "free two", "");
+        proven_net_addr_t at;
+        proven_net_conn_t client, server;
+        PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 4, &l, &at) == PROVEN_OK &&
+                           proven_net_connect(at, proven_net_deadline_in(5000), &client) == PROVEN_OK,
+            "with two free, a listener and a client fit", "");
+        PROVEN_TEST_ASSERT(proven_net_accept(&l, proven_net_deadline_in(200), &server, NULL) == PROVEN_ERR_BUSY,
+            "the accept has no descriptor left: PROVEN_ERR_BUSY, not a wait until the deadline", "");
+        PROVEN_TEST_ASSERT(proven_net_udp_close(&socks[--opened]) == PROVEN_OK, "free one more", "");
+        PROVEN_TEST_ASSERT(proven_net_accept(&l, proven_net_deadline_in(5000), &server, NULL) == PROVEN_OK,
+            "and the same pending connection is accepted", "");
+
+        (void)proven_net_close(&client);
+        (void)proven_net_close(&server);
+        (void)proven_net_listener_close(&l);
+        while (opened > 0) (void)proven_net_udp_close(&socks[--opened]);
+        PROVEN_TEST_ASSERT(setrlimit(RLIMIT_NOFILE, &old) == 0, "restore the limit", "");
+        PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 1, &l, NULL) == PROVEN_OK,
+            "after closing everything, sockets open again", "");
+        (void)proven_net_listener_close(&l);
+    }
+#endif
 
     PROVEN_TEST_PASS("the TCP contract holds on loopback.");
     return 0;

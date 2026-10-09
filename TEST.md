@@ -22,7 +22,7 @@ The class says what kind of question the test answers:
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
-| `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 12 |
+| `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 13 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
 | `docs` | Are the claims the documentation makes still true? | 11 |
 | `bench` | How fast is it? (Not a correctness gate.) | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-09, Windows 11 test VM: x86-64 236 PASS, 0 FAIL, 7 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 139 registered tests plus the 104 runnable manual examples - 243 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 152 test files: the 139 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 140 registered tests plus the 104 runnable manual examples - 244 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 153 test files: the 140 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1074,6 +1074,8 @@ Sub-checks:
 - A peer that closes with unread data makes the other end read `PROVEN_ERR_RESET`, and a later write there is `PROVEN_ERR_RESET` rather than a signal that kills the process.
 - A second listener on a bound address is `PROVEN_ERR_BUSY`; calls on a socket that is not open are `PROVEN_ERR_INVALID_STATE`; an address of no family is `PROVEN_ERR_INVALID_ARG`.
 - The same exchange over `::1`, or SKIP where the machine has no IPv6 loopback.
+- `localhost` resolves through the system resolver (the only case that reaches `getaddrinfo`; literals never do) to loopback addresses carrying the requested port, one of which can be listened on; a capacity of one yields one address; a name under `.invalid` is `PROVEN_ERR_NOT_FOUND`, or `PROVEN_ERR_TIMEOUT` where no name server answers.
+- POSIX only, with the descriptor limit lowered to 64 by `setrlimit`: sockets open until the limit and the next is `PROVEN_ERR_BUSY`, leaving nothing behind; a listener cannot open either; an accept with a connection pending and no descriptor free is `PROVEN_ERR_BUSY` at once rather than a wait, and the same connection is accepted after one descriptor is freed.
 
 Where the environment refuses to open a listening socket at all, the test reports SKIP and passes.
 
@@ -1885,6 +1887,20 @@ Failure tip: inspect src/proven/scan.c and src/proven/fmt.c if long double retur
 Intent: verify nob probes -std=c23 first and falls back to -std=c2x when the compiler rejects c23.
 
 Failure tip: inspect nob.c standard-flag selection and toolchain probing if the fallback does not trigger.
+
+### `tests/test_portability_compile_nonet` - PROVEN_NO_NET leaves the socket layer out
+
+Intent: verify the promise `PROVEN_NO_NET` makes to a consumer who wants no sockets. The suite is built without the macro, so nothing else would notice it breaking.
+
+Sub-checks:
+
+- Every source in `build_sources.inc` compiles with the host compiler and `-DPROVEN_NO_NET -Wall -Wextra -Werror`.
+- A program that includes `proven.h` and `proven/alias_xcv.h` links against that build and runs, and `net.h` was not included.
+- No object of that build defines or references `proven_net_*`, `proven_transport_*`, `proven_sys_net_*` or a socket call.
+
+The fixture runs the host compiler through `/bin/sh` and is skipped on Windows.
+
+Failure tip: inspect the `PROVEN_NO_NET` guards in `include/proven.h`, `src/proven/net.c` and `platform/proven_sys_net.c`.
 
 ### `tests/test_portability_nob_clean` - build driver clean
 
