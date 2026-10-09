@@ -60,6 +60,7 @@ struct sv_conn {
     bool length_known;
     bool close_after;
     bool io_failed;                    /* a write failed: nothing more can be sent */
+    bool detached;                     /* the socket was handed to the handler by an upgrade */
     bool keep;
 };
 
@@ -256,6 +257,82 @@ proven_err_t proven_http_exchange_respond(proven_http_exchange_t *exchange, prov
     return e;
 }
 
+// -----------------------------------------------------------------------------
+// Upgrade: the connection leaves the server
+// -----------------------------------------------------------------------------
+
+/* A socket that owns itself: what an upgrade hands out. Closing the transport closes the
+ * socket and frees this. */
+typedef struct {
+    proven_allocator_t alloc;
+    proven_net_conn_t sock;
+} sv_owned_t;
+
+static proven_result_size_t sv_owned_read(void *ctx, proven_mem_mut_t dest, proven_net_deadline_t until) {
+    return proven_net_read(&((sv_owned_t *)ctx)->sock, dest, until);
+}
+static proven_result_size_t sv_owned_write(void *ctx, proven_mem_view_t src, proven_net_deadline_t until) {
+    return proven_net_write(&((sv_owned_t *)ctx)->sock, src, until);
+}
+static proven_err_t sv_owned_shutdown(void *ctx) {
+    return proven_net_shutdown_write(&((sv_owned_t *)ctx)->sock);
+}
+static proven_err_t sv_owned_close(void *ctx) {
+    sv_owned_t *o = ctx;
+    proven_err_t e = proven_net_close(&o->sock);
+    sv_free(o->alloc, o);
+    return e;
+}
+
+proven_err_t proven_http_exchange_upgrade(proven_http_exchange_t *exchange, proven_u8str_view_t protocol,
+                                          const proven_http_header_t *headers, proven_size_t header_count,
+                                          proven_transport_t *out, proven_mem_view_t *early) {
+    if (out) *out = (proven_transport_t){0};
+    if (early) *early = (proven_mem_view_t){0};
+    if (!exchange || !out || !early || protocol.size == 0 || (header_count > 0 && !headers)) return PROVEN_ERR_INVALID_ARG;
+    sv_conn_t *c = &exchange->conn;
+    /* Only a request with no body left to read can change protocols: after the 101 the bytes
+     * on the connection belong to the new one. */
+    if (c->response_begun || c->detached || !c->body_done || c->req.version_minor < 1) return PROVEN_ERR_INVALID_STATE;
+
+    proven_mem_mut_t head = { .ptr = c->out, .size = c->out_cap };
+    proven_size_t len = 0;
+    proven_err_t e = proven_http_write_status_line(head, &len, 101, sv_lit(""));
+    proven_byte_t date[PROVEN_HTTP_DATE_SIZE];
+    if (e == PROVEN_OK && proven_http_date_format(proven_time_now(), date) == PROVEN_OK) {
+        e = proven_http_write_header(head, &len, sv_lit("Date"), (proven_u8str_view_t){ .ptr = date, .size = sizeof date });
+    }
+    if (e == PROVEN_OK) e = proven_http_write_header(head, &len, sv_lit("Upgrade"), protocol);
+    if (e == PROVEN_OK) e = proven_http_write_header(head, &len, sv_lit("Connection"), sv_lit("Upgrade"));
+    for (proven_size_t i = 0; i < header_count && e == PROVEN_OK; ++i) {
+        if (sv_is_driver_header(headers[i].name) || sv_eq_nocase(headers[i].name, sv_lit("Upgrade"))) return PROVEN_ERR_INVALID_ARG;
+        e = proven_http_write_header(head, &len, headers[i].name, headers[i].value);
+    }
+    if (e == PROVEN_OK) e = proven_http_write_head_end(head, &len);
+    if (e != PROVEN_OK) return e;
+
+    sv_owned_t *owned = sv_alloc(c->server->cfg.alloc, sizeof *owned);
+    if (!owned) return PROVEN_ERR_NOMEM;
+    c->response_begun = true;
+    c->response_ended = true;
+    e = sv_send(c, (proven_mem_view_t){ .ptr = c->out, .size = len });
+    if (e != PROVEN_OK) { sv_free(c->server->cfg.alloc, owned); return e; }
+
+    owned->alloc = c->server->cfg.alloc;
+    owned->sock = c->sock;
+    c->sock = (proven_net_conn_t){0};
+    c->t = (proven_transport_t){0};
+    c->detached = true;
+    c->close_after = true;
+    out->ctx = owned;
+    out->read_fn = sv_owned_read;
+    out->write_fn = sv_owned_write;
+    out->shutdown_fn = sv_owned_shutdown;
+    out->close_fn = sv_owned_close;
+    *early = (proven_mem_view_t){ .ptr = c->buf + c->body_pos, .size = c->len - c->body_pos };
+    return PROVEN_OK;
+}
+
 /* The response for a request that never reaches a handler, written without waiting: it is a
  * few dozen bytes into an empty socket buffer, and the loop thread must not be held by a
  * client that will not read. */
@@ -349,6 +426,9 @@ static void sv_run(sv_conn_t *c) {
     proven_http_server_t *s = c->server;
     s->cfg.handler(s->cfg.handler_ctx, (proven_http_exchange_t *)c);
 
+    /* The handler took the connection away with an upgrade: nothing of it is left here. */
+    if (c->detached) { c->keep = false; return; }
+
     if (!c->response_begun) {
         /* The handler sent nothing. If reading the body failed, that is the reason and it has
          * its own status; otherwise the handler is at fault. */
@@ -420,7 +500,7 @@ static void sv_close_conn(proven_http_server_t *s, sv_conn_t *c) {
  * instead of the 413.
  */
 static void sv_linger(proven_http_server_t *s, sv_conn_t *c) {
-    if (c->io_failed || atomic_load_explicit(&s->stop, memory_order_relaxed)) { sv_close_conn(s, c); return; }
+    if (c->detached || c->io_failed || atomic_load_explicit(&s->stop, memory_order_relaxed)) { sv_close_conn(s, c); return; }
     (void)proven_net_shutdown_write(&c->sock);
     c->lingering = true;
     c->len = 0;
@@ -442,6 +522,7 @@ static void sv_reset_request(sv_conn_t *c) {
     c->length_known = false;
     c->close_after = false;
     c->io_failed = false;
+    c->detached = false;
     c->keep = false;
 }
 

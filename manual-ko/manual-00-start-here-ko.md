@@ -430,7 +430,7 @@ proven_writer_buf_t a = ...;
 proven_writer_buf_t b = a;          /* wrong: b's internals still point into a */
 ```
 
-아래 §9.2에 이런 타입 스물다섯 개가 모두 나열되어 있습니다. 규칙은 간단합니다. 살아 있을
+아래 §9.2에 이런 타입 스물여섯 개가 모두 나열되어 있습니다. 규칙은 간단합니다. 살아 있을
 자리에서 만들고, `&it`을 넘기고, 대입하지 마세요.
 
 ### 5. 거부하되 절대 자르지 않는다
@@ -669,6 +669,7 @@ if (!proven_alloc_is_valid(heap)) {
 | `proven_http_cookie_jar_t` | `proven_http_cookie_jar_init` | (직접 사용) | **복사하지 마십시오:** 메모리를 소유합니다. `proven_http_cookie_jar_destroy`가 필요합니다. |
 | `proven_sse_t` | `proven_sse_init` | (직접 사용) | 여러분이 준 작업 메모리 안을 가리키며, 그 메모리는 이것보다 오래 살아야 합니다. |
 | `proven_http_client_response_t` | `proven_http_client_send` / `_get` | (직접 사용) | 살아 있는 동안 **복사하지 마십시오.** send가 실패한 뒤에도 `proven_http_client_finish`가 필요합니다. |
+| `proven_ws_decoder_t` | `proven_ws_decoder_init` | (직접 사용) | 디코딩 중인 스트림. 도중에 복사하면 디코더가 갈라집니다. 복사하지 마십시오. |
 
 잘못된 예 — 이 복사는 무해해 보이지만 use-after-free입니다:
 
@@ -783,7 +784,7 @@ alias 인덱스는 찾아보는 부록이고, 8장은 3장이 주제를 소개�
 | **II — 모든 프로그램이 쓰는 어휘** | [1](manual-01-foundation-ko.md) → [2](manual-02-allocation-ko.md) → [3](manual-03-strings-text-ko.md) | 0장 | 에러를 값으로 다루고, 메모리를 의도적으로 소유하고, 텍스트를 안전하게 담기 |
 | **III — 자료구조** | [4](manual-04-containers-algorithms-ko.md) | II부 | array, map, list, ring, 정렬, 검색, 해싱, 인코딩 |
 | **IV — 텍스트 입출력** | [8](manual-08-fmt-scan-ko.md) | 3장 §3–§4 | 무엇이든 형식화하고 파싱하며, 포매터에 내 타입 가르치기 |
-| **V — 운영체제와 대화하기** | [5](manual-05-hosted-services-ko.md) → [9](manual-09-networking-ko.md) → [10](manual-10-http-ko.md) → [11](manual-11-http-client-server-ko.md) | II부 | 파일, 디렉터리, 스트림, 표준 I/O, 시간, 난수, 매핑. 기한이 있는 소켓. URL과 HTTP 메시지. HTTP 클라이언트와 서버 |
+| **V — 운영체제와 대화하기** | [5](manual-05-hosted-services-ko.md) → [9](manual-09-networking-ko.md) → [10](manual-10-http-ko.md) → [11](manual-11-http-client-server-ko.md) → [12](manual-12-websocket-ko.md) | II부 | 파일, 디렉터리, 스트림, 표준 I/O, 시간, 난수, 매핑. 기한이 있는 소켓. URL과 HTTP 메시지. HTTP 클라이언트와 서버. WebSocket |
 | **VI — 더 나아가기** | [6](manual-06-execution-and-platform-ko.md) → [freestanding](manual-freestanding-ko.md) | II–V부 | 코루틴, job, 스레드 안전성, 베어메탈, 크로스 빌드 |
 | **부록** | [A](manual-07-alias-xcv-index-ko.md), [B](#13-부록-b-용어집), [C](#14-부록-c-공개-헤더-맵), [D](#15-부록-d-libc-대응표) | — | 찾아보기 |
 
@@ -802,6 +803,7 @@ alias 인덱스는 찾아보는 부록이고, 8장은 3장이 주제를 소개�
 9. [**네트워킹**: 주소, TCP, UDP, 기한, 준비 상태, 전송](manual-09-networking-ko.md) — *V부; 5장 다음*
 10. [**URL과 HTTP 메시지**: URL 파싱과 안전한 경로, HTTP/1.1 헤드 파서, 본문 프레이밍, 쓰기 함수, 날짜, 범위, multipart, 인증, 쿠키, 이벤트 스트림](manual-10-http-ko.md) — *V부; 순수 텍스트 처리, 프리스탠딩에서 사용 가능*
 11. [**HTTP 클라이언트와 서버**: 모든 기다림에 한도가 있는 핸들러와 루프, 리다이렉트·인증 요구·쿠키·프록시를 다루는 클라이언트](manual-11-http-client-server-ko.md) — *V부; 9장과 10장 다음*
+12. [**WebSocket**: 어느 쪽에서든 여는 연결, 메시지, 닫기. 그리고 프레임 코덱만 따로](manual-12-websocket-ko.md) — *V부; 11장 다음; 코덱은 프리스탠딩에서 사용 가능*
 
 **3장과 8장은 둘 다 포매터와 스캐너를 다루며, 이 분담은 의도적입니다.** 3장은 문자열과 나란히 이들을
 소개하며, 일상적인 경우와 생산성을 내기에 충분한 만큼을 담습니다. 8장은 완전한 레퍼런스입니다. 전체
@@ -967,6 +969,8 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | `sse.h` | 서버 전송 이벤트 파서 | 챕터 10 |
 | `http_client.h` | HTTP/1.1 클라이언트: 리다이렉트, 인증 요구, 쿠키, 프록시, 연결 재사용 (호스티드 전용) | 챕터 11 |
 | `http_server.h` | HTTP/1.1 서버: 핸들러와 한도가 있는 루프, 스레드 하나 또는 job system (호스티드 전용) | 챕터 11 |
+| `ws.h` | WebSocket 코덱: 핸드셰이크 값과 확인, 프레임, 메시지 디코더 | 챕터 12 |
+| `ws_conn.h` | 전송 위의 WebSocket 연결, 클라이언트와 서버 (호스티드 전용) | 챕터 12 |
 | `sysio.h` | 표준 스트림을 writer/reader로, stdin 줄 입력, 버퍼드 출력, 출력, 파싱, 환경변수 접근 | 챕터 5 |
 | `random.h` | 용도별 난수: xoshiro256** (재현 가능), ChaCha20 (암호학적), OS CSPRNG, 무편향 range/shuffle 헬퍼. 생성기는 freestanding에서 동작하고 OS 소스만 hosted. | 챕터 5 |
 | `mmap.h` | 메모리 매핑 파일 영역 | 챕터 5 |
@@ -1013,7 +1017,7 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | **II** | [1](manual-01-foundation-ko.md) → [2](manual-02-allocation-ko.md) → [3](manual-03-strings-text-ko.md) | 에러, 메모리, 텍스트: 모든 프로그램이 쓰는 것 |
 | **III** | [4](manual-04-containers-algorithms-ko.md) | 배열, 맵, 리스트, 링, 정렬, 해싱, 인코딩 |
 | **IV** | [8](manual-08-fmt-scan-ko.md) | 챕터 3이 소개한 뒤의, 형식화와 파싱 전체 |
-| **V** | [5](manual-05-hosted-services-ko.md) → [9](manual-09-networking-ko.md) → [10](manual-10-http-ko.md) → [11](manual-11-http-client-server-ko.md) | 파일, 스트림, 표준 I/O, 시간, 난수, 매핑. 그다음 소켓. 그다음 URL과 HTTP. 그다음 클라이언트와 서버 |
+| **V** | [5](manual-05-hosted-services-ko.md) → [9](manual-09-networking-ko.md) → [10](manual-10-http-ko.md) → [11](manual-11-http-client-server-ko.md) → [12](manual-12-websocket-ko.md) | 파일, 스트림, 표준 I/O, 시간, 난수, 매핑. 그다음 소켓. 그다음 URL과 HTTP. 그다음 클라이언트와 서버. 그다음 WebSocket |
 | **VI** | [6](manual-06-execution-and-platform-ko.md) → [freestanding](manual-freestanding-ko.md) | 코루틴, job, 스레드 안전성, 베어메탈, 크로스 빌드 |
 | **부록** | [A: alias 인덱스](manual-07-alias-xcv-index-ko.md), 위의 B와 D | 찾아보기 |
 

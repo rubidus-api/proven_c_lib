@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-801 aliases: 623 lowercase `xcv_` names and 178 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+864 aliases: 661 lowercase `xcv_` names and 203 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -207,6 +207,31 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_VERSION_NUM` | `PROVEN_VERSION_NUM` |
 | `XCV_VERSION_PATCH` | `PROVEN_VERSION_PATCH` |
 | `XCV_VERSION_STRING` | `PROVEN_VERSION_STRING` |
+| `XCV_WS_ACCEPT_SIZE` | `PROVEN_WS_ACCEPT_SIZE` |
+| `XCV_WS_BINARY` | `PROVEN_WS_BINARY` |
+| `XCV_WS_CLOSE` | `PROVEN_WS_CLOSE` |
+| `XCV_WS_CLOSE_ABNORMAL` | `PROVEN_WS_CLOSE_ABNORMAL` |
+| `XCV_WS_CLOSE_GOING_AWAY` | `PROVEN_WS_CLOSE_GOING_AWAY` |
+| `XCV_WS_CLOSE_INTERNAL_ERROR` | `PROVEN_WS_CLOSE_INTERNAL_ERROR` |
+| `XCV_WS_CLOSE_INVALID_DATA` | `PROVEN_WS_CLOSE_INVALID_DATA` |
+| `XCV_WS_CLOSE_NORMAL` | `PROVEN_WS_CLOSE_NORMAL` |
+| `XCV_WS_CLOSE_NO_STATUS` | `PROVEN_WS_CLOSE_NO_STATUS` |
+| `XCV_WS_CLOSE_POLICY` | `PROVEN_WS_CLOSE_POLICY` |
+| `XCV_WS_CLOSE_PROTOCOL_ERROR` | `PROVEN_WS_CLOSE_PROTOCOL_ERROR` |
+| `XCV_WS_CLOSE_TOO_BIG` | `PROVEN_WS_CLOSE_TOO_BIG` |
+| `XCV_WS_CLOSE_UNSUPPORTED_DATA` | `PROVEN_WS_CLOSE_UNSUPPORTED_DATA` |
+| `XCV_WS_CONTINUATION` | `PROVEN_WS_CONTINUATION` |
+| `XCV_WS_EVENT_CLOSE` | `PROVEN_WS_EVENT_CLOSE` |
+| `XCV_WS_EVENT_DATA` | `PROVEN_WS_EVENT_DATA` |
+| `XCV_WS_EVENT_NONE` | `PROVEN_WS_EVENT_NONE` |
+| `XCV_WS_EVENT_PING` | `PROVEN_WS_EVENT_PING` |
+| `XCV_WS_EVENT_PONG` | `PROVEN_WS_EVENT_PONG` |
+| `XCV_WS_KEY_SIZE` | `PROVEN_WS_KEY_SIZE` |
+| `XCV_WS_MAX_CONTROL` | `PROVEN_WS_MAX_CONTROL` |
+| `XCV_WS_MAX_FRAME_HEADER` | `PROVEN_WS_MAX_FRAME_HEADER` |
+| `XCV_WS_PING` | `PROVEN_WS_PING` |
+| `XCV_WS_PONG` | `PROVEN_WS_PONG` |
+| `XCV_WS_TEXT` | `PROVEN_WS_TEXT` |
 | `xcv_alloc_check_entry_t` | `proven_alloc_check_entry_t` |
 | `xcv_alloc_check_live` | `proven_alloc_check_live` |
 | `xcv_alloc_check_owns` | `proven_alloc_check_owns` |
@@ -377,6 +402,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_client_response_t` | `proven_http_client_response_t` |
 | `xcv_http_client_send` | `proven_http_client_send` |
 | `xcv_http_client_t` | `proven_http_client_t` |
+| `xcv_http_client_upgrade` | `proven_http_client_upgrade` |
 | `xcv_http_content_range_parse` | `proven_http_content_range_parse` |
 | `xcv_http_cookie_jar_clear` | `proven_http_cookie_jar_clear` |
 | `xcv_http_cookie_jar_count` | `proven_http_cookie_jar_count` |
@@ -398,6 +424,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_exchange_request` | `proven_http_exchange_request` |
 | `xcv_http_exchange_respond` | `proven_http_exchange_respond` |
 | `xcv_http_exchange_t` | `proven_http_exchange_t` |
+| `xcv_http_exchange_upgrade` | `proven_http_exchange_upgrade` |
 | `xcv_http_exchange_write` | `proven_http_exchange_write` |
 | `xcv_http_framing_t` | `proven_http_framing_t` |
 | `xcv_http_handler_fn` | `proven_http_handler_fn` |
@@ -827,6 +854,42 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_writer_write_partial` | `proven_writer_write_partial` |
 | `xcv_writer_write_str` | `proven_writer_write_str` |
 | `xcv_writer_write_u16` | `proven_writer_write_u16` |
+| `xcv_ws_accept_key` | `proven_ws_accept_key` |
+| `xcv_ws_check_request` | `proven_ws_check_request` |
+| `xcv_ws_check_response` | `proven_ws_check_response` |
+| `xcv_ws_close_code_for` | `proven_ws_close_code_for` |
+| `xcv_ws_close_code_is_valid` | `proven_ws_close_code_is_valid` |
+| `xcv_ws_close_parse` | `proven_ws_close_parse` |
+| `xcv_ws_close_write` | `proven_ws_close_write` |
+| `xcv_ws_conn_accept` | `proven_ws_conn_accept` |
+| `xcv_ws_conn_close` | `proven_ws_conn_close` |
+| `xcv_ws_conn_close_code` | `proven_ws_conn_close_code` |
+| `xcv_ws_conn_close_reason` | `proven_ws_conn_close_reason` |
+| `xcv_ws_conn_config_t` | `proven_ws_conn_config_t` |
+| `xcv_ws_conn_connect` | `proven_ws_conn_connect` |
+| `xcv_ws_conn_destroy` | `proven_ws_conn_destroy` |
+| `xcv_ws_conn_open` | `proven_ws_conn_open` |
+| `xcv_ws_conn_ping` | `proven_ws_conn_ping` |
+| `xcv_ws_conn_pong_count` | `proven_ws_conn_pong_count` |
+| `xcv_ws_conn_protocol` | `proven_ws_conn_protocol` |
+| `xcv_ws_conn_receive` | `proven_ws_conn_receive` |
+| `xcv_ws_conn_send_binary` | `proven_ws_conn_send_binary` |
+| `xcv_ws_conn_send_part` | `proven_ws_conn_send_part` |
+| `xcv_ws_conn_send_text` | `proven_ws_conn_send_text` |
+| `xcv_ws_conn_t` | `proven_ws_conn_t` |
+| `xcv_ws_decoder_feed` | `proven_ws_decoder_feed` |
+| `xcv_ws_decoder_init` | `proven_ws_decoder_init` |
+| `xcv_ws_decoder_t` | `proven_ws_decoder_t` |
+| `xcv_ws_event_kind_t` | `proven_ws_event_kind_t` |
+| `xcv_ws_event_t` | `proven_ws_event_t` |
+| `xcv_ws_frame_parse` | `proven_ws_frame_parse` |
+| `xcv_ws_frame_t` | `proven_ws_frame_t` |
+| `xcv_ws_frame_write` | `proven_ws_frame_write` |
+| `xcv_ws_make_key` | `proven_ws_make_key` |
+| `xcv_ws_mask` | `proven_ws_mask` |
+| `xcv_ws_message_t` | `proven_ws_message_t` |
+| `xcv_ws_opcode_t` | `proven_ws_opcode_t` |
+| `xcv_ws_request_offers` | `proven_ws_request_offers` |
 | `xcv_xoshiro256ss_next` | `proven_xoshiro256ss_next` |
 | `xcv_xoshiro256ss_rng` | `proven_xoshiro256ss_rng` |
 | `xcv_xoshiro256ss_seed` | `proven_xoshiro256ss_seed` |

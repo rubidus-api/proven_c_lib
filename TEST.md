@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 84 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 86 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-09, Windows 11 test VM: x86-64 260 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 148 registered tests plus the 120 runnable manual examples - 268 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 161 test files: the 148 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 150 registered tests plus the 126 runnable manual examples - 276 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 163 test files: the 150 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1254,6 +1254,38 @@ Sub-checks:
 - Proxies: an HTTP proxy sent the absolute URL without its fragment, with `Proxy-Authorization`; a `CONNECT` tunnel to `host:443` with TLS begun inside it for the origin's name and the proxy's credentials not sent through it; a `407` as `PROVEN_ERR_PERMISSION`; SOCKS5 negotiated byte for byte per RFC 1928 and RFC 1929 with the host as a name; a SOCKS5 refusal as `PROVEN_ERR_REFUSED`.
 
 Failure tip: inspect `src/proven/http_client.c`: `proven_http_client_send` for redirects and challenges, `cl_exchange` for what is written, `cl_connect`, `cl_http_tunnel` and `cl_socks5` for proxies. The proxy targets are under `.invalid`, so `PROVEN_ERR_NOT_FOUND` means the client resolved a name it should have handed to the proxy.
+
+### `tests/test_unit_ws` - ws: the WebSocket codec
+
+Intent: verify the codec against RFC 6455's own examples and against the rules it gives a receiver, with the result independent of how the stream is cut.
+
+Sub-checks:
+
+- Handshake: the key and accept value of section 1.3; five malformed keys refused with nothing written; a made key is the Base64 of its bytes. The RFC's request is an upgrade; twelve requests classified (`NOT_FOUND` for no or another upgrade, `INVALID_FORMAT` for the wrong method, HTTP/1.0, no `Connection: Upgrade`, a missing, repeated or short key, no version; `UNSUPPORTED` for another version); subprotocols offered compared exactly. Ten responses judged, among them a wrong accept value, a subprotocol that was not offered, and an extension.
+- Frame headers: the eight examples of section 5.7 parse to the RFC's fields, every proper prefix from an exact-size buffer is `PROVEN_ERR_NEED_MORE`, and the writer reproduces the bytes; the masked `Hello` unmasks, and masking in two pieces with the offset equals masking in one. Ten lengths at the edges of the three encodings, masked and not, written in shortest form and read back, with one byte short `PROVEN_ERR_OUT_OF_BOUNDS`. Twenty-five malformed headers refused: each reserved bit, the ten undefined opcodes, fragmented and long control frames, four lengths not in shortest form, a top bit set. The writer refuses four frames the parser would.
+- Close: sixteen codes that may be sent and thirteen that may not; payloads written and read back; no status as an empty payload; refusals for a reason without a code, an unsendable code, 124 bytes of reason, a reason that is not UTF-8, a small buffer; a one-byte payload and code 1005 on the wire.
+- Decoder, both directions: a conversation - a message, a fragmented message with a ping and an empty fragment inside, 300 binary bytes, two kinds of empty message, text cut inside a character, a pong, a close - decoded whole, split in two at every byte, and one byte at a time from exact-size copies, with identical transcripts. Bytes after a close frame are `PROVEN_ERR_EOF`.
+- Decoder refusals, each however it is cut: twenty-seven streams - wrong masking for the direction, continuation with nothing open, a new message inside an open one, eight close-payload violations, a close reason and eight texts that are not UTF-8 including a character broken across fragments, the message limit whole and across fragments - each with `INVALID_FORMAT`, `INVALID_ENCODING` or `OUT_OF_BOUNDS` as its close code requires. The same bytes pass as binary; the limit is exact and control frames are not counted; an error is repeated and consumes nothing.
+- 3000 generated conversations: random messages, fragmented at random with pings between fragments, masked or not, decoded from random pieces - every byte, every message end and every ping accounted for, and no call that consumes nothing and reports nothing.
+
+Failure tip: inspect `src/proven/ws.c`: `proven_ws_frame_parse` for header rows, the checks after the header in `proven_ws_decoder_feed` for stream rows, `ws_text_feed` for UTF-8 across pieces. The refusal tables follow the categories of the Autobahn test suite; the suite itself was not run.
+
+### `tests/test_unit_ws_conn` - ws: connections
+
+Intent: verify WebSocket connections end to end on loopback - this library's two ends with each other in both handler models of the HTTP server, and each end against a peer that breaks the rules.
+
+Sub-checks:
+
+- A conversation: connect with two subprotocols offered and one selected; text and binary echoed at eleven sizes from 1 to 70000 bytes, across the three length encodings and both the 4 KiB send buffer and the 16 KiB read buffer; text beyond ASCII; text that is not UTF-8 and a 126-byte ping refused before sending; a message sent in fragments with a ping inside and a character cut between two of them, received as one, with the pong counted; `PROVEN_ERR_TIMEOUT` at the deadline leaving the connection usable; the close handshake, twice, with the code echoed, `INVALID_STATE` for a later send and `EOF` for a later receive, and the server's end seeing code 1000.
+- Messages the server starts: text, 70000 binary bytes, three fragments with a ping between them reassembled; the server's close as `PROVEN_ERR_EOF` with code 1001 and its reason; the server's close completing because the client answered it.
+- The message limit: exactly the limit passes; one byte more is `PROVEN_ERR_OUT_OF_BOUNDS`, repeated by every later call, and the sender is sent 1009.
+- Hand-off: the handler gives the connection to another thread and returns; three ordinary HTTP requests are served while the WebSocket is open, and it still echoes afterwards.
+- No WebSocket there: a 404 as `PROVEN_ERR_REFUSED` with the status reported; a server selecting a subprotocol nobody offered gets `PROVEN_ERR_INVALID_ARG` and may still answer; `wss` without `tls_wrap` as `PROVEN_ERR_UNSUPPORTED`; argument errors; a plain GET to an endpoint is `PROVEN_ERR_NOT_FOUND` to accept with nothing sent.
+- A raw client: the 101 carries the accept value of RFC 6455 and names no subprotocol or extension; a frame sent in the same write as the handshake is echoed, unmasked; a ping gets its pong; a close gets a close with the same code and then the connection ends. Five violations answered with close 1002, 1007 or 1009 (the last for a frame only announced); a frame past the limit with 60000 bytes of its payload already sent, whose 1009 must still arrive - the run on Windows is what checks this, since Linux loopback tends to deliver a close that a reset should have destroyed; a reserved bit; a client that vanishes as `PROVEN_ERR_RESET` with 1006; three bad handshakes as 426 naming version 13, and 400.
+- A scripted server: a wrong accept value and an unrequested extension fail the connect; a frame in the same read as the 101 is received; what the client sends is a masked frame; a masked frame and invalid UTF-8 from the server end the connection with a masked close of 1002 and 1007; a server that never answers a close costs `close_timeout_ms`.
+- Over a socket pair, with no handshake: both directions, the getters on an open connection, and destroy without close seen by the peer as `PROVEN_ERR_RESET` with 1006.
+
+Failure tip: inspect `src/proven/ws_conn.c`: `wc_pump` for receiving, `wc_send_frame` for sending, `wc_fail` for the close sent on a violation; and `proven_http_exchange_upgrade` and `proven_http_client_upgrade` for the hand-over. Both ends share one codec, so this test does not show agreement with another implementation. Run under ThreadSanitizer when only the job-system half fails.
 
 ### `tests/test_unit_u16str` - U16 strings
 

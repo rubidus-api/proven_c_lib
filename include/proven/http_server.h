@@ -210,4 +210,37 @@ proven_err_t proven_http_exchange_write(proven_http_exchange_t *exchange, proven
  */
 proven_err_t proven_http_exchange_end(proven_http_exchange_t *exchange);
 
+/**
+ * @brief Answer `101 Switching Protocols` and take the connection out of the server.
+ *
+ * For a request that asks to change protocol - `Upgrade: websocket`, say. The server writes the
+ * 101 with `Upgrade: <protocol>`, `Connection: Upgrade`, `Date` and your `headers`, and from
+ * then on the connection is not its business: `*out` is a transport that owns the socket, to
+ * be used for as long as you like - after the handler has returned, from any one thread - and
+ * closed by you with proven_transport_close. It no longer counts against `max_connections`,
+ * and none of the server's timeouts apply to it.
+ *
+ * `*early` is whatever the client sent after its request head: the first bytes of the new
+ * protocol, if it did not wait for the 101. It is a view into the exchange and dies with it,
+ * so hand it over (or copy it) before the handler returns.
+ *
+ * Whether the request is a well-formed upgrade of the protocol you mean is yours to check
+ * first - for WebSocket, proven_ws_check_request; ws_conn.h does both steps.
+ *
+ * The transport is allocated from the server's allocator and freed when it is closed. If you
+ * close it from a thread other than the one the server runs on, that allocator must be
+ * thread-safe.
+ *
+ * @return PROVEN_ERR_INVALID_STATE when a response was already begun, the request has a body
+ *         that was not read to its end, or it is HTTP/1.0; PROVEN_ERR_INVALID_ARG for an empty
+ *         protocol, or a header the server owns (`Upgrade` included); PROVEN_ERR_NOMEM;
+ *         PROVEN_ERR_OUT_OF_BOUNDS; PROVEN_ERR_TIMEOUT or PROVEN_ERR_RESET when the 101 could
+ *         not be sent. After INVALID_ARG, NOMEM or OUT_OF_BOUNDS nothing was sent and another
+ *         response may be tried.
+ */
+[[nodiscard]]
+proven_err_t proven_http_exchange_upgrade(proven_http_exchange_t *exchange, proven_u8str_view_t protocol,
+                                          const proven_http_header_t *headers, proven_size_t header_count,
+                                          proven_transport_t *out, proven_mem_view_t *early);
+
 #endif /* PROVEN_HTTP_SERVER_H */

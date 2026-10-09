@@ -28,6 +28,7 @@ typedef struct cl_conn {
     proven_transport_t transport;
     bool wrapped;                      /* transport closes the socket itself */
     bool via_http_proxy;               /* requests on it use the absolute form */
+    proven_allocator_t alloc;          /* set when an upgrade hands the connection to the caller */
     proven_u64 last_used;
     proven_size_t key_len;
     proven_byte_t key[300];            /* "scheme://host:port" */
@@ -435,6 +436,26 @@ static proven_err_t cl_connect(proven_http_client_t *c, const proven_url_t *u, b
 // One exchange
 // -----------------------------------------------------------------------------
 
+/* A connection that owns itself: what an upgrade hands out. */
+static proven_result_size_t cl_owned_read(void *ctx, proven_mem_mut_t dest, proven_net_deadline_t until) {
+    return proven_transport_read(((cl_conn_t *)ctx)->transport, dest, until);
+}
+static proven_result_size_t cl_owned_write(void *ctx, proven_mem_view_t src, proven_net_deadline_t until) {
+    return proven_transport_write(((cl_conn_t *)ctx)->transport, src, until);
+}
+static proven_err_t cl_owned_shutdown(void *ctx) {
+    return proven_transport_shutdown(((cl_conn_t *)ctx)->transport);
+}
+static proven_err_t cl_owned_close(void *ctx) {
+    cl_conn_t *conn = ctx;
+    proven_allocator_t a = conn->alloc;
+    proven_err_t e = PROVEN_OK;
+    if (conn->wrapped) e = proven_transport_close(conn->transport);
+    proven_err_t e2 = proven_net_close(&conn->sock);
+    cl_free(a, conn);
+    return e != PROVEN_OK ? e : e2;
+}
+
 static bool cl_is_reserved_header(proven_u8str_view_t name) {
     return cl_eq_nocase(name, cl_lit("Host")) || cl_eq_nocase(name, cl_lit("Content-Length")) ||
            cl_eq_nocase(name, cl_lit("Transfer-Encoding")) || cl_eq_nocase(name, cl_lit("Connection"));
@@ -535,7 +556,14 @@ static proven_err_t cl_exchange(cl_call_t *call, const proven_http_client_reques
         if (streaming) e = proven_http_write_header(out, &len, cl_lit("Transfer-Encoding"), cl_lit("chunked"));
         else if (wants_body || body_method) e = proven_http_write_header_u64(out, &len, cl_lit("Content-Length"), at->send_body ? req->body.size : 0);
     }
-    if (e == PROVEN_OK && c->cfg.max_idle_connections == 0) e = proven_http_write_header(out, &len, cl_lit("Connection"), cl_lit("close"));
+    if (e == PROVEN_OK && req->upgrade.size > 0) {
+        /* Asking to change protocol: the two headers that say so, written here because
+         * Connection is the client's to write. */
+        e = proven_http_write_header(out, &len, cl_lit("Connection"), cl_lit("Upgrade"));
+        if (e == PROVEN_OK) e = proven_http_write_header(out, &len, cl_lit("Upgrade"), req->upgrade);
+    } else if (e == PROVEN_OK && c->cfg.max_idle_connections == 0) {
+        e = proven_http_write_header(out, &len, cl_lit("Connection"), cl_lit("close"));
+    }
     if (e == PROVEN_OK) e = proven_http_write_head_end(out, &len);
     if (e != PROVEN_OK) return e;
 
@@ -876,6 +904,25 @@ proven_result_size_t proven_http_client_read(proven_http_client_response_t *resp
     if (!response || (dest.size > 0 && !dest.ptr)) return res;
     if (!response->internal) { res.err = PROVEN_ERR_INVALID_STATE; return res; }
     return cl_read_body(response->internal, dest);
+}
+
+proven_err_t proven_http_client_upgrade(proven_http_client_response_t *response, proven_transport_t *out, proven_mem_view_t *early) {
+    if (out) *out = (proven_transport_t){0};
+    if (early) *early = (proven_mem_view_t){0};
+    if (!response || !out || !early) return PROVEN_ERR_INVALID_ARG;
+    cl_call_t *call = response->internal;
+    if (!call || !call->conn || call->res.status != 101) return PROVEN_ERR_INVALID_STATE;
+    cl_conn_t *conn = call->conn;
+    conn->alloc = call->client->cfg.alloc;
+    call->conn = (void *)0;                     /* finish no longer has a connection to close */
+    out->ctx = conn;
+    out->read_fn = cl_owned_read;
+    out->write_fn = cl_owned_write;
+    out->shutdown_fn = cl_owned_shutdown;
+    out->close_fn = cl_owned_close;
+    *early = (proven_mem_view_t){ .ptr = call->buf + call->buf_pos, .size = call->buf_len - call->buf_pos };
+    call->buf_pos = call->buf_len;
+    return PROVEN_OK;
 }
 
 proven_err_t proven_http_client_read_all(proven_http_client_response_t *response, proven_allocator_t alloc,

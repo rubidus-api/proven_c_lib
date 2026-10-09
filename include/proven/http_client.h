@@ -94,6 +94,7 @@ typedef struct {
     proven_size_t header_count;
     proven_mem_view_t body;                 /**< a body held in memory: sent with `Content-Length` */
     proven_reader_t body_stream;            /**< or, when valid, a body read from here and sent chunked */
+    proven_u8str_view_t upgrade;            /**< a protocol to change to (`websocket`): sends `Connection: Upgrade` and `Upgrade`; empty: none */
 } proven_http_client_request_t;
 
 /**
@@ -180,6 +181,30 @@ proven_result_size_t proven_http_client_read(proven_http_client_response_t *resp
 [[nodiscard]]
 proven_err_t proven_http_client_read_all(proven_http_client_response_t *response, proven_allocator_t alloc,
                                          proven_u8str_t *out, proven_size_t max_bytes);
+
+/**
+ * @brief Take the connection of a `101 Switching Protocols` response out of the client.
+ *
+ * After a request sent with `upgrade` set, a 101 means the server agreed and the connection now
+ * speaks the other protocol. `*out` is a transport that owns it: use it for as long as you
+ * like and close it with proven_transport_close. The client will not reuse it or close it,
+ * and proven_http_client_finish - still to be called - no longer touches it.
+ *
+ * `*early` is what the server sent after its response head: the first bytes of the new
+ * protocol, if they arrived with the 101. It is a view into the response and dies at
+ * proven_http_client_finish; copy it first.
+ *
+ * Checking that the 101 is the answer you asked for is yours to do before this - for
+ * WebSocket, proven_ws_check_response; ws_conn.h does both steps.
+ *
+ * The transport is freed, with the client's allocator, when it is closed: the allocator must
+ * outlive it, though the client need not.
+ *
+ * @return PROVEN_ERR_INVALID_STATE when the response is not a 101, was already upgraded, or
+ *         was never successfully sent.
+ */
+[[nodiscard]]
+proven_err_t proven_http_client_upgrade(proven_http_client_response_t *response, proven_transport_t *out, proven_mem_view_t *early);
 
 /**
  * @brief Release a response.

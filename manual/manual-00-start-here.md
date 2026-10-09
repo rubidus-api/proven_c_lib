@@ -433,7 +433,7 @@ proven_writer_buf_t a = ...;
 proven_writer_buf_t b = a;          /* wrong: b's internals still point into a */
 ```
 
-section 9.2 below lists all twenty-five of these types. The rule is simple: create it where it lives,
+section 9.2 below lists all twenty-six of these types. The rule is simple: create it where it lives,
 pass `&it`, and do not assign it.
 
 ### 5. Refuse, never truncate
@@ -685,6 +685,7 @@ copied or moved** while the handle is alive.
 | `proven_http_cookie_jar_t` | `proven_http_cookie_jar_init` | (used directly) | **Do not copy:** it owns memory. Needs `proven_http_cookie_jar_destroy`. |
 | `proven_sse_t` | `proven_sse_init` | (used directly) | Points into the work memory you gave it, which must outlive it. |
 | `proven_http_client_response_t` | `proven_http_client_send` / `_get` | (used directly) | **Do not copy** while live. Needs `proven_http_client_finish`, even after a failed send. |
+| `proven_ws_decoder_t` | `proven_ws_decoder_init` | (used directly) | A stream being decoded. Copying it mid-stream forks the decoder; do not. |
 
 Wrong - the copy looks harmless and is a use-after-free:
 
@@ -804,7 +805,7 @@ reference you read after Chapter 3 has introduced the subject.
 | **II - The vocabulary every program uses** | [1](manual-01-foundation.md) -> [2](manual-02-allocation.md) -> [3](manual-03-strings-text.md) | Chapter 0 | Handle errors as values, own memory deliberately, hold text safely |
 | **III - Data structures** | [4](manual-04-containers-algorithms.md) | Part II | Arrays, maps, lists, rings, sorting, searching, hashing, encoding |
 | **IV - Text in and out** | [8](manual-08-fmt-scan.md) | Chapter 3 section 3-section 4 | Format and parse anything, and teach the formatter your own types |
-| **V - Talking to the operating system** | [5](manual-05-hosted-services.md) -> [9](manual-09-networking.md) -> [10](manual-10-http.md) -> [11](manual-11-http-client-server.md) | Part II | Files, directories, streams, standard I/O, time, randomness, mapping; sockets with deadlines; URLs and HTTP messages; an HTTP client and server |
+| **V - Talking to the operating system** | [5](manual-05-hosted-services.md) -> [9](manual-09-networking.md) -> [10](manual-10-http.md) -> [11](manual-11-http-client-server.md) -> [12](manual-12-websocket.md) | Part II | Files, directories, streams, standard I/O, time, randomness, mapping; sockets with deadlines; URLs and HTTP messages; an HTTP client and server; WebSocket |
 | **VI - Going further** | [6](manual-06-execution-and-platform.md) -> [freestanding](manual-freestanding.md) | Parts II-V | Coroutines, jobs, thread-safety, bare metal, cross builds |
 | **Appendices** | [A](manual-07-alias-xcv-index.md), [B](#13-appendix-b-glossary), [C](#14-appendix-c-public-header-map), [D](#15-appendix-d-the-libc-map) | - | Look things up |
 
@@ -823,6 +824,7 @@ reference you read after Chapter 3 has introduced the subject.
 9. [**Networking**: addresses, TCP, UDP, deadlines, readiness, transports](manual-09-networking.md) - *Part V; after Chapter 5*
 10. [**URLs and HTTP messages**: URL parsing and safe paths, the HTTP/1.1 head parser, body framing, writers, dates, ranges, multipart, authentication, cookies, event streams](manual-10-http.md) - *Part V; pure text handling, freestanding-available*
 11. [**An HTTP client and server**: a handler and a loop with every wait bounded; a client with redirects, challenges, cookies and proxies](manual-11-http-client-server.md) - *Part V; after Chapters 9 and 10*
+12. [**WebSocket**: connections from either side, messages, closing; and the frame codec by itself](manual-12-websocket.md) - *Part V; after Chapter 11; the codec is freestanding-available*
 
 **Chapters 3 and 8 both cover the formatter and the scanner, and the division is deliberate.**
 Chapter 3 introduces them alongside strings, with the everyday cases and enough to be productive.
@@ -993,6 +995,8 @@ Two things this table tells you that the file names do not:
 | `sse.h` | Server-sent events parser | Chapter 10 |
 | `http_client.h` | HTTP/1.1 client: redirects, challenges, cookies, proxies, connection reuse (hosted-only) | Chapter 11 |
 | `http_server.h` | HTTP/1.1 server: a handler and a bounded loop, on one thread or a job system (hosted-only) | Chapter 11 |
+| `ws.h` | WebSocket codec: handshake values and checks, frames, a message decoder | Chapter 12 |
+| `ws_conn.h` | WebSocket connections over a transport, client and server (hosted-only) | Chapter 12 |
 | `sysio.h` | Standard streams as writers/readers, line input from stdin, buffered output, printing, scanning, environment access | Chapter 5 |
 | `random.h` | Randomness by use case: xoshiro256** (reproducible), ChaCha20 (cryptographic), the OS CSPRNG, and unbiased range/shuffle helpers. The generators work freestanding; only the OS source is hosted. | Chapter 5 |
 | `mmap.h` | Memory-mapped file regions | Chapter 5 |
@@ -1039,7 +1043,7 @@ The chapters are ordered so that each one only needs the ones before it.
 | **II** | [1](manual-01-foundation.md) -> [2](manual-02-allocation.md) -> [3](manual-03-strings-text.md) | Errors, memory, and text: what every program uses |
 | **III** | [4](manual-04-containers-algorithms.md) | Arrays, maps, lists, rings, sorting, hashing, encoding |
 | **IV** | [8](manual-08-fmt-scan.md) | Formatting and scanning in full, once Chapter 3 has introduced them |
-| **V** | [5](manual-05-hosted-services.md) -> [9](manual-09-networking.md) -> [10](manual-10-http.md) -> [11](manual-11-http-client-server.md) | Files, streams, standard I/O, time, randomness, mapping; then sockets; then URLs and HTTP; then a client and a server |
+| **V** | [5](manual-05-hosted-services.md) -> [9](manual-09-networking.md) -> [10](manual-10-http.md) -> [11](manual-11-http-client-server.md) -> [12](manual-12-websocket.md) | Files, streams, standard I/O, time, randomness, mapping; then sockets; then URLs and HTTP; then a client and a server; then WebSocket |
 | **VI** | [6](manual-06-execution-and-platform.md) -> [freestanding](manual-freestanding.md) | Coroutines, jobs, thread-safety, bare metal, cross builds |
 | **Appendices** | [A: alias index](manual-07-alias-xcv-index.md), B and D above | Looking things up |
 

@@ -18,6 +18,49 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release: WebSocket (RFC 6455), as a codec and as connections, and the hand-over from
+HTTP that it needs. Two new public headers and additions to two; nothing public is removed or
+changed, and no error code is added.
+
+As with the HTTP drivers, **there is no TLS**: a `ws://` connection can be read and altered on
+the network path, and `wss://` is `PROVEN_ERR_UNSUPPORTED` without a `tls_wrap`.
+
+### Added
+
+- **`proven/ws.h`: the WebSocket codec.** Pure - no socket, no allocation, no random source -
+  and part of the freestanding profile. The handshake: `proven_ws_make_key`,
+  `proven_ws_accept_key`, `proven_ws_check_request`, `proven_ws_request_offers`,
+  `proven_ws_check_response`. Frames: `proven_ws_frame_parse`, `proven_ws_frame_write`,
+  `proven_ws_mask`. Closing: `proven_ws_close_write`, `proven_ws_close_parse`,
+  `proven_ws_close_code_is_valid`, `proven_ws_close_code_for`. And `proven_ws_decoder_init` /
+  `proven_ws_decoder_feed`, which turns a byte stream in arbitrary pieces into message pieces,
+  pings, pongs and a close, without copying or holding a message, and refuses what RFC 6455
+  tells a receiver to refuse: wrong masking for the direction, reserved bits, undefined
+  opcodes, lengths not in shortest form, long or fragmented control frames, misplaced
+  continuations, text that is not UTF-8 (checked across fragments), close codes that may not
+  be sent, and messages past a limit - each with the error that names its close code.
+- **`proven/ws_conn.h`: WebSocket connections.** `proven_ws_conn_connect` (through an HTTP
+  client, so its proxy, timeouts and `tls_wrap` apply), `proven_ws_conn_accept` (inside an
+  HTTP handler), `proven_ws_conn_open` (over any transport); `_send_text`, `_send_binary`,
+  `_send_part`, `_ping`, `_receive`, `_close`, `_destroy`, `_protocol`, `_close_code`,
+  `_close_reason`, `_pong_count`. Receive returns whole messages up to `max_message_bytes`,
+  answers pings and counts pongs on the way; a violation by the peer ends the connection with
+  the close code that says which; close is a handshake with a deadline. A connection is for
+  one thread at a time, and receiving waits on one connection: a WebSocket costs a thread.
+  No extension is offered or accepted - `permessage-deflate` included.
+- **`proven/http_server.h`:** `proven_http_exchange_upgrade` answers `101 Switching Protocols`
+  and takes the connection out of the server as a transport that owns it, with the bytes
+  already received after the request head.
+- **`proven/http_client.h`:** the `upgrade` field of a request asks for a protocol change, and
+  `proven_http_client_upgrade` takes the connection of a `101` response out of the client in
+  the same way.
+- Manual chapter 12, "WebSocket", a section on changing protocol in chapter 11, and three
+  compiled examples, in both editions. Sixty-three `xcv_` aliases.
+- Two tests: `test_unit_ws` (the codec against the examples of RFC 6455 and its receiver
+  rules, with every stream decoded whole, split at every byte and a byte at a time) and
+  `test_unit_ws_conn` (connections in both handler models, a raw client and a scripted server
+  that break the rules).
+
 ## [0.12.0] - 2026-10-09
 
 A MINOR release: an HTTP/1.1 client and server, and the pieces around a message that they

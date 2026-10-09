@@ -28,6 +28,67 @@ int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("chapter 12, WebSocket",
+        "The codec's facts as the chapter states them: the handshake values, one spelling for a length, the close-code table, and what the decoder refuses.",
+        "");
+    // ---------------------------------------------------------------
+    {
+        /* CLAIM (s6): a key is "24 characters", an accept value "28 characters". */
+        proven_byte_t rnd[16] = {0}, key[PROVEN_WS_KEY_SIZE], accept[PROVEN_WS_ACCEPT_SIZE];
+        proven_ws_make_key(rnd, key);
+        PROVEN_TEST_ASSERT(sizeof key == 24 && sizeof accept == 28 && proven_ws_accept_key((proven_u8str_view_t){ key, sizeof key }, accept) == PROVEN_OK,
+            "a made key is 24 characters and has a 28-character answer", "");
+
+        /* CLAIM (s7): "Up to 125 it is in the second byte; up to 65535 in two more; beyond that
+         * in eight", and the parser "refuses any other" spelling. */
+        static const proven_u64 lens[] = { 125, 126, 65535, 65536 };
+        static const proven_size_t hdr[] = { 2, 4, 4, 10 };
+        for (int i = 0; i < 4; ++i) {
+            proven_byte_t h[PROVEN_WS_MAX_FRAME_HEADER];
+            proven_size_t n = 0;
+            proven_ws_frame_t f = { .fin = true, .opcode = PROVEN_WS_BINARY, .length = lens[i] };
+            PROVEN_TEST_ASSERT(proven_ws_frame_write((proven_mem_mut_t){ h, sizeof h }, &n, &f) == PROVEN_OK && n == hdr[i], "each length takes the header size the chapter gives", "");
+        }
+        proven_ws_frame_t f;
+        proven_size_t hs = 0;
+        PROVEN_TEST_ASSERT(proven_ws_frame_parse((proven_mem_view_t){ (const proven_byte_t *)"\x82\x7e\x00\x7d", 4 }, &f, &hs) == PROVEN_ERR_INVALID_FORMAT,
+            "125 spelled with the two-byte form is refused", "");
+        /* CLAIM (s7): a header is "2 to 14 bytes". */
+        proven_byte_t h[PROVEN_WS_MAX_FRAME_HEADER];
+        proven_size_t n = 0;
+        f = (proven_ws_frame_t){ .fin = true, .opcode = PROVEN_WS_BINARY, .masked = true, .length = 65536 };
+        PROVEN_TEST_ASSERT(proven_ws_frame_write((proven_mem_mut_t){ h, sizeof h }, &n, &f) == PROVEN_OK && n == 14 && sizeof h == 14, "the largest header is fourteen bytes", "");
+
+        /* CLAIM (s4): the table of close codes - 1005 and 1006 are "never sent"; 3000-4999 are
+         * the application's; a reason is "at most 123 bytes". */
+        PROVEN_TEST_ASSERT(!proven_ws_close_code_is_valid(1005) && !proven_ws_close_code_is_valid(1006) && proven_ws_close_code_is_valid(1000) &&
+                           proven_ws_close_code_is_valid(3000) && proven_ws_close_code_is_valid(4999) && !proven_ws_close_code_is_valid(5000), "the codes that may and may not travel", "");
+        proven_byte_t payload[PROVEN_WS_MAX_CONTROL];
+        static char reason[125];
+        memset(reason, 'r', 124);
+        n = 0;
+        PROVEN_TEST_ASSERT(proven_ws_close_write((proven_mem_mut_t){ payload, sizeof payload }, &n, 1000, (proven_u8str_view_t){ (const proven_byte_t *)reason, 124 }) == PROVEN_ERR_INVALID_ARG &&
+                           proven_ws_close_write((proven_mem_mut_t){ payload, sizeof payload }, &n, 1000, (proven_u8str_view_t){ (const proven_byte_t *)reason, 123 }) == PROVEN_OK,
+            "a reason of 123 bytes is the longest", "");
+        /* CLAIM (s7): close_code_for gives "1002, 1007, 1009, or 1011". */
+        PROVEN_TEST_ASSERT(proven_ws_close_code_for(PROVEN_ERR_INVALID_FORMAT) == 1002 && proven_ws_close_code_for(PROVEN_ERR_INVALID_ENCODING) == 1007 &&
+                           proven_ws_close_code_for(PROVEN_ERR_OUT_OF_BOUNDS) == 1009 && proven_ws_close_code_for(PROVEN_ERR_NOMEM) == 1011, "an error's close code", "");
+
+        /* CLAIM (s8): "After any of these the decoder repeats the error"; a frame from a client
+         * that is not masked is INVALID_FORMAT; a DATA event's data is "inside `in`". */
+        proven_ws_decoder_t d;
+        proven_ws_event_t ev;
+        proven_size_t used = 0;
+        proven_byte_t unmasked[3] = { 0x81, 0x01, 'x' };
+        proven_ws_decoder_init(&d, true, 0);
+        PROVEN_TEST_ASSERT(proven_ws_decoder_feed(&d, (proven_mem_mut_t){ unmasked, 3 }, &used, &ev) == PROVEN_ERR_INVALID_FORMAT &&
+                           proven_ws_decoder_feed(&d, (proven_mem_mut_t){ unmasked, 3 }, &used, &ev) == PROVEN_ERR_INVALID_FORMAT, "an unmasked client frame is refused, and the refusal repeats", "");
+        proven_ws_decoder_init(&d, false, 0);
+        PROVEN_TEST_ASSERT(proven_ws_decoder_feed(&d, (proven_mem_mut_t){ unmasked, 3 }, &used, &ev) == PROVEN_OK && ev.kind == PROVEN_WS_EVENT_DATA &&
+                           ev.first && ev.last && ev.text && ev.data.ptr == unmasked + 2 && ev.data.size == 1, "the same frame from a server is a message, its data a view into what was fed", "");
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("chapters 10 and 11, the pieces around a message, and the two drivers",
         "References, forms, ranges, boundaries, challenges, cookies and events as the chapters state them; and what a client and a server refuse before any socket is opened.",
         "");

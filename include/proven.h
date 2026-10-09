@@ -32,6 +32,7 @@
 #include "proven/http_auth.h"
 #include "proven/http_cookie.h"
 #include "proven/sse.h"
+#include "proven/ws.h"
 #include "proven/encode.h"
 #include "proven/utf.h"
 #include "proven/random.h"
@@ -52,6 +53,7 @@
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 #include "proven/http_client.h"
 #include "proven/http_server.h"
+#include "proven/ws_conn.h"
 #endif
 #include "proven/scan.h"
 #include "proven/coro.h"

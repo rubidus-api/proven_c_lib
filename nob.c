@@ -994,6 +994,7 @@ static bool check_manual_code_blocks(const char *compiler, const char *standard_
         "manual/manual-09-networking.md",
         "manual/manual-10-http.md",
         "manual/manual-11-http-client-server.md",
+        "manual/manual-12-websocket.md",
         "manual/manual-freestanding.md",
     };
 

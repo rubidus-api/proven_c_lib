@@ -122,6 +122,7 @@ src/proven/http.c
 src/proven/http_auth.c
 src/proven/http_cookie.c
 src/proven/sse.c
+src/proven/ws.c
 src/proven/encode.c
 src/proven/random.c
 src/proven/float_decimal.c
@@ -195,6 +196,7 @@ platform/proven_sys_mem.c
 | `hash_legacy.h` | 사용 가능 | SHA-1과 MD5. 그것을 못 박은 형식(WebSocket accept 키, 오래된 체크섬 파일)을 위한 것이다. SHA-256과 같은 모양이고, MD5의 상수 64개보다 큰 표는 없다. |
 | `url.h`, `http.h` | 사용 가능 | URL 파싱과 퍼센트 코딩, 그리고 HTTP/1.1 메시지 코덱. 순수한 텍스트 처리다: 소켓도 할당도 없다. 전송은 여러분이 제공한다 - 소켓이 없는 타깃(wasm32, 베어메탈)에서도 코덱은 메시지를 파싱하고 쓴다. `proven_http_date_format`은 여러분이 주는 시각을 받는다. 프리스탠딩 시계는 0을 돌려준다. |
 | `http_auth.h`, `http_cookie.h`, `sse.h` | 사용 가능 | Basic과 Digest 인증 값, 쿠키 보관함, 서버 전송 이벤트 파서. 코덱과 마찬가지로 텍스트 처리다. 쿠키 보관함은 여러분이 넘긴 할당자에서 할당하고, 시계를 읽는 대신 현재 시각을 인자로 받는다. `proven_http_multipart_boundary`는 여러분이 준 무작위 바이트를 받으므로 엔트로피 원천이 필요 없다. |
+| `ws.h` | 사용 가능 | WebSocket 코덱: 핸드셰이크 값과 확인, 프레임 헤더, 마스킹, close 페이로드, 메시지 디코더. 라이브러리의 SHA-1과 Base64를 쓰고, 키와 마스크의 무작위 바이트는 인자로 받는다. wasm32 모듈을 돌리는 브라우저는 자기 WebSocket을 갖고 있다. 거기서 이 코덱의 쓰임은 브라우저가 아닌 호스트이거나 핸드셰이크 계산뿐이다. |
 | `encode.h` | 사용 가능 | Hex와 Base64 — 순수 계산, OS 없음. |
 | `utf.h` | 사용 가능 | 엄격한 UTF-8 <-> UTF-16 변환 — 순수 계산, OS 없음. `proven_utf8_append_to_u16str`는 `PROVEN_NO_U16STR`와 함께 제외되고, 나머지는 `proven_u16` 배열 위에서 동작한다. |
 | `fmt.h` | 부동소수점 없이 사용 가능 | 현재 프로파일은 `PROVEN_FMT_NO_FLOAT`를 정의한다. |
@@ -203,7 +205,7 @@ platform/proven_sys_mem.c
 | `float_format.h` | `fmt.h` 연동 없이 사용 가능 | binary64 포매터는 정수 연산만 쓰므로 컴파일되지만, 현재 프로파일이 `PROVEN_FMT_NO_FLOAT`를 정의하므로 `{}`는 부동소수점을 렌더링하지 않는다. 코드 크기를 감수할 가치가 있다고 판단한 타깃에서 자릿수 출력이 필요하다면 `float_format.h`의 진입점을 직접 호출할 것. |
 | `time.h` | 제한적 | 핵심 datetime 포매팅은 컴파일 가능하지만, 실제 PAL 시간은 제외된다. |
 | `heap.h` | 스텁 | `proven_heap_allocator()`는 유효하지 않은 allocator를 반환한다. |
-| `fs.h`, `stream.h`, `net.h`, `http_client.h`, `http_server.h`, `mmap.h`, `sysio.h`, `job.h` | 제외됨 | 호스티드 PAL 서비스가 필요하다. |
+| `fs.h`, `stream.h`, `net.h`, `http_client.h`, `http_server.h`, `ws_conn.h`, `mmap.h`, `sysio.h`, `job.h` | 제외됨 | 호스티드 PAL 서비스가 필요하다. |
 | `random.h` | 사용 가능 | 생성기와 헬퍼는 순수 산술이다. `proven_random_bytes`도 여기서 동작하지만, `proven_random_set_source`로 엔트로피 소스 — 보드의 TRNG, 링 오실레이터, 또는 ADC 잡음 바닥 — 를 설치한 후에만 가능하다. 아무것도 설치되지 않았을 때는 클럭으로 시드된 PRNG로 폴백하지 않고 **false**를 반환한다. 폴백은 성공처럼 보이면서 아무것도 보고하지 않는 보안 구멍이 될 것이기 때문이다. 그런 다음 `proven_chacha_rng_seed_from_entropy`가 보드의 엔트로피를 끝없는 암호학적 스트림으로 바꾼다. 소스가 없으면 `proven_random_u64`는 말없이 0을 돌려주므로, 토큰이나 키에는 false를 돌려주는 `proven_random_u64_checked`를 쓴다. |
 | `coro.h` | 사용 가능 | 매크로 전용 스택리스 코루틴 지원. |
 | `panic.h` | 사용 가능 | 대상별 trap/reset 동작을 위한 오버라이드. |
