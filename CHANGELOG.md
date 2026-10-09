@@ -18,6 +18,12 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-09
+
+A MINOR release: a new public header, five new error codes and a new clock call. Nothing public
+is removed. **`PROVEN_ERR_LAST` moves**, and an exhaustive `switch` over `proven_err_t` needs
+five new cases - the one source-level change a consumer can meet.
+
 ### Added
 
 - **`proven/net.h`: sockets.** TCP, UDP and Unix-domain stream sockets on POSIX and Windows,
