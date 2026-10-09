@@ -404,6 +404,8 @@ view의 부분 범위를 취하는 것은 view로 하게 될 가장 흔한 일�
 | `proven_memcmp(s1, s2, size)` | 원시 메모리를 비교한다. | 같으면 0. 부호는 바이트 순서(부호 없음)에 따른다. |
 | `proven_mem_copy(dst, dst_cap, src)` | view를 `dst`로 경계 검사하며 복사한다. | `PROVEN_OK`. 들어가지 않으면 `PROVEN_ERR_OUT_OF_BOUNDS`이며 — **아무것도 기록되지 않는다**. 크기가 0이 아닌데 널 포인터이면 `PROVEN_ERR_INVALID_ARG`. 영역은 겹쳐서는 안 된다. |
 | `proven_mem_move(dst, dst_cap, src)` | `proven_mem_copy`와 같지만 영역이 겹쳐도 된다. | 위와 같다. |
+| `proven_mem_equal_ct(a, b)` | 두 범위가 같은지를, 어디가 다른지에 좌우되지 않는 시간에 알려 준다. 비밀 - MAC, 토큰 - 과 비교할 때 쓴다. `proven_memcmp`는 앞쪽 몇 바이트가 맞았는지를 흘린다. | `bool`. 크기가 다른 범위는 같지 않다. |
+| `proven_mem_wipe(mem)` | 컴파일러가 지워 버리지 못하는 방식으로 0을 덮어쓴다. 다 쓴 키나 비밀번호에 쓴다: 버퍼가 범위를 벗어나기 직전의 평범한 지우기 루프는 죽은 코드로 삭제된다. | 없음. |
 
 검사된 형태의 정확한 동작:
 

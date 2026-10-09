@@ -1055,6 +1055,174 @@ int main(void) {
 }
 ```
 
+### 인증과 키 유도: HMAC과 HKDF
+
+다이제스트는 바이트가 무엇인지 말해 준다. 누가 만들었는지는 말해 주지 않는다. 누구든 무엇이든 해시할
+수 있으므로, SHA-256을 옆에 달고 온 메시지는 보낸 이에 대해 아무것도 증명하지 않는다. `hmac.h`에는 거기에
+비밀 키를 끌어들이는 두 가지 구성이 있다.
+
+| 필요한 것 | 쓸 것 | 이유 |
+|---|---|---|
+| 메시지가 키를 가진 누군가에게서 왔음을 아는 것 - 서명된 쿠키, 웹훅, 토큰 | `proven_hmac` | 키를 가진 쪽만 MAC을 계산할 수 있고, 메시지의 한 비트만 바뀌어도 MAC이 바뀐다 |
+| 비밀 하나에서 여러 키 - 공유 비밀에서 암호화 키와 MAC 키 | `proven_hkdf` | 키마다 레이블에 묶인다. 하나를 알아도 다른 것에 대해 알 수 있는 것이 없다 |
+| **비밀번호**를 저장하거나 확인하는 것 | 어느 것도 아니다 | 둘 다 빠르고, 비밀번호는 추측할 수 있다: 공격자는 초당 수십억 번 시도한다. 여기에는 일부러 느리게 만든 함수(PBKDF2, scrypt, Argon2)가 필요한데, 이 라이브러리에는 없다 |
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_sha512(view, out[64])`, `proven_sha384(view, out[48])` | 한 번에 하는 SHA-512와 SHA-384. | void. |
+| `proven_sha512_init/_update/_final`, `proven_sha384_init/_update/_final` | 조각으로 오는 내용에 대한 같은 것. 다이제스트는 시작한 계열의 함수로 끝낸다. | void. |
+| `proven_hmac(hash, key, data, out)` | 한 번에 하는 HMAC. `hash`는 `PROVEN_HMAC_SHA256`, `_SHA384` 또는 `_SHA512`. | `proven_err_t`: 모르는 해시이거나 크기가 있는 null 포인터면 `INVALID_ARG`. |
+| `proven_hmac_init(&h, hash, key)`, `proven_hmac_update(&h, data)`, `proven_hmac_final(&h, out)` | 조각으로 오는 메시지에 대한 같은 것. `final`이 상태에서 키를 지운다. | `init`: `proven_err_t`. 나머지는 void. |
+| `proven_hmac_size(hash)` | MAC의 바이트 수: 32, 48 또는 64. | `proven_size_t`. 모르는 해시면 0. |
+| `proven_hkdf(hash, salt, ikm, info, out)` | 입력 키 재료에서 `info`에 묶인 키 `out.size`바이트를 유도한다. | `proven_err_t`: 해시 크기의 255배를 넘으면 `OUT_OF_BOUNDS`. `INVALID_ARG`. 오류일 때에는 아무것도 쓰지 않는다. |
+| `proven_hkdf_extract(hash, salt, ikm, prk)`, `proven_hkdf_expand(hash, prk, info, out)` | 두 단계를 따로: 한 번 추출하고, 키마다 확장한다. | `proven_err_t`, 위와 같다. `prk`가 해시보다 짧으면 `INVALID_ARG`. |
+
+MAC 버퍼는 해시가 무엇이든 `PROVEN_HMAC_MAX_SIZE`(64)바이트이고, 그 가운데 `proven_hmac_size(hash)`바이트가
+쓰인다: 버퍼는 상수로 크기를 잡고 비교는 그 크기로 하라.
+
+**MAC은 `proven_mem_equal_ct`로 비교하라. `memcmp`로는 절대 안 된다.** 평범한 비교는 처음 다른 바이트에서
+멈추고, 걸린 시간이 앞쪽 몇 바이트가 맞았는지를 말해 준다. 추측을 많이 내고 응답 시간을 잴 수 있는
+위조자는 MAC을 한 바이트씩 알아낸다 - 전체에 2^256번이 아니라 바이트마다 256번의 시도로.
+`proven_mem_equal_ct`는 무엇을 발견하든 모든 바이트를 본다(1장).
+
+잘못된 예:
+
+```text
+if (memcmp(received_mac, expected_mac, 32) == 0) accept();       /* wrong: leaks how many bytes matched */
+```
+
+올바른 예 — `proven_mem_equal_ct((proven_mem_view_t){ received, 32 }, (proven_mem_view_t){ expected, 32 })`.
+
+**키가 전부다.** `proven_random_bytes`에서, 적어도 MAC만큼 길게 얻어라. 단어이거나, 제품 이름이거나, MAC보다
+짧은 키는 가장 약한 고리이고, 구성의 어떤 부분도 그것을 메워 주지 않는다.
+
+**HMAC은 메시지가 진짜라고 말할 뿐 새것이라고 말하지 않는다.** 유효한 서명 토큰은 제시될 때마다 유효하다.
+재전송이 문제라면 - 어떤 행동을 일으키는 것이라면 문제다 - 서명되는 내용 *안에* 만료 시각이나 카운터를
+넣고 확인하라.
+
+**`info`가 유도된 키들을 서로 떼어 놓는다.** 같은 비밀과 같은 `info`로 두 번 부르면 같은 키가 나온다 -
+그것이 요점이다. 양쪽이 같은 키를 유도해야 하니까. 그러므로 두 가지 용도에는 두 가지 레이블을 써야 한다.
+그러지 않으면 키 하나가 두 가지 일을 하게 되고, 프로토콜은 그렇게 깨진다.
+
+**잘라 낸 SHA-512는 SHA-384가 아니다.** 둘은 일부러 다른 값에서 시작한다. SHA-512 다이제스트의 앞
+48바이트는 같은 입력의 SHA-384와 다른 수다.
+
+SHA-384, SHA-512, HMAC, HKDF가 여기 있는 까닭은 TLS가 그것들로 지어지기 때문이고, 공개인 까닭은 프로그램이
+자기 목적에 그것들을 필요로 하기 때문이다. FIPS 180-4, RFC 2104, RFC 5869에서 구현했고 그 문서들의 벡터로
+시험했다.
+
+테스트 스위트가 컴파일하고 실행한다:
+
+<!-- example: manual/examples/ko/ex_04_hmac.c -->
+```c
+#include <string.h>
+
+/*
+ * 다이제스트는 바이트가 무엇인지 말한다. MAC은 누가 그것을 보증했는지 말하고, KDF는 비밀 하나를
+ * 프로토콜에 필요한 여러 키로 바꾼다. 그리고 어떤 비밀에든 따라붙는 호출 둘: 새지 않는 비교와,
+ * 최적화로 지워지지 않는 지우기.
+ */
+
+static bool hex_is(const proven_byte_t *got, proven_size_t n, const char *want) {
+    char text[129];
+    proven_size_t len = 0;
+    return proven_hex_encode((proven_mem_view_t){ got, n }, (proven_byte_t *)text, sizeof text, &len) == PROVEN_OK &&
+           len == strlen(want) && memcmp(text, want, len) == 0;
+}
+
+int main(void) {
+    // ---- SHA-512와 SHA-384 ---------------------------------------------------
+    /* SHA-256과 같은 모양이다: 한 번에, 또는 메모리에 다 들어가지 않는 것에는 init / update / final.
+     * SHA-384는 시작 값이 다른 SHA-512를 48바이트로 자른 것이다. */
+    proven_byte_t d512[PROVEN_SHA512_SIZE], d384[PROVEN_SHA384_SIZE], again[PROVEN_SHA512_SIZE];
+    proven_sha512(proven_mem_view_from_u8(PROVEN_LIT("abc")), d512);
+    EXAMPLE_REQUIRE(hex_is(d512, 8, "ddaf35a193617aba"), "SHA-512 of abc begins as FIPS 180-4 prints it");
+    proven_sha384(proven_mem_view_from_u8(PROVEN_LIT("abc")), d384);
+    EXAMPLE_REQUIRE(hex_is(d384, 8, "cb00753f45a35e8b"), "and SHA-384");
+
+    proven_sha512_t running;
+    proven_sha512_init(&running);
+    proven_sha512_update(&running, proven_mem_view_from_u8(PROVEN_LIT("a")));
+    proven_sha512_update(&running, proven_mem_view_from_u8(PROVEN_LIT("bc")));
+    proven_sha512_final(&running, again);
+    EXAMPLE_REQUIRE(memcmp(d512, again, sizeof d512) == 0, "in pieces, the same digest");
+
+    proven_sha384_t running384;
+    proven_sha384_init(&running384);
+    proven_sha384_update(&running384, proven_mem_view_from_u8(PROVEN_LIT("abc")));
+    proven_sha384_final(&running384, again);
+    EXAMPLE_REQUIRE(memcmp(d384, again, sizeof d384) == 0, "and for SHA-384");
+
+    // ---- HMAC: 키를 가진 누군가가 보증한 메시지 ---------------------------------
+    /* 서버가 토큰에 서명하고, 나중에 돌아온 것이 자기가 발급한 그것인지 확인한다. */
+    proven_byte_t key[32];
+    EXAMPLE_REQUIRE(proven_random_bytes(key, sizeof key), "a key from the system: 32 bytes for a 32-byte MAC");
+    proven_mem_view_t token = proven_mem_view_from_u8(PROVEN_LIT("user=ada;expires=1767225600"));
+    proven_byte_t mac[PROVEN_HMAC_MAX_SIZE];
+    EXAMPLE_REQUIRE(proven_hmac(PROVEN_HMAC_SHA256, (proven_mem_view_t){ key, sizeof key }, token, mac) == PROVEN_OK, "the token's MAC");
+    EXAMPLE_REQUIRE(proven_hmac_size(PROVEN_HMAC_SHA256) == 32, "32 bytes of it; the buffer is sized for the largest");
+
+    /* 확인하기: 다시 계산해서, 둘이 어디서 다른지 흘리지 "않고" 비교한다. memcmp는 처음 틀린
+     * 바이트에서 멈추고, 걸린 시간이 위조자에게 어디까지 맞았는지 알려 준다. */
+    proven_byte_t check[PROVEN_HMAC_MAX_SIZE];
+    proven_hmac_t h;
+    EXAMPLE_REQUIRE(proven_hmac_init(&h, PROVEN_HMAC_SHA256, (proven_mem_view_t){ key, sizeof key }) == PROVEN_OK, "the streaming form, for a message in pieces");
+    proven_hmac_update(&h, proven_mem_view_from_u8(PROVEN_LIT("user=ada;")));
+    proven_hmac_update(&h, proven_mem_view_from_u8(PROVEN_LIT("expires=1767225600")));
+    proven_hmac_final(&h, check);                   /* `h`에서 키도 지운다 */
+    EXAMPLE_REQUIRE(proven_mem_equal_ct((proven_mem_view_t){ mac, 32 }, (proven_mem_view_t){ check, 32 }), "the token is genuine");
+
+    /* 누군가 토큰을 바꾼다. 그에 맞는 MAC은 만들 수 없다. */
+    proven_mem_view_t forged = proven_mem_view_from_u8(PROVEN_LIT("user=eve;expires=1767225600"));
+    EXAMPLE_REQUIRE(proven_hmac(PROVEN_HMAC_SHA256, (proven_mem_view_t){ key, sizeof key }, forged, check) == PROVEN_OK &&
+                    !proven_mem_equal_ct((proven_mem_view_t){ mac, 32 }, (proven_mem_view_t){ check, 32 }), "a changed token does not carry the old MAC");
+
+    /* 공개된 벡터 하나. 이것이 남들이 계산하는 그 HMAC임을 보이려고: RFC 4231, 2번 사례. */
+    EXAMPLE_REQUIRE(proven_hmac(PROVEN_HMAC_SHA256, proven_mem_view_from_u8(PROVEN_LIT("Jefe")),
+                                proven_mem_view_from_u8(PROVEN_LIT("what do ya want for nothing?")), check) == PROVEN_OK &&
+                    hex_is(check, 32, "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"), "RFC 4231, test case 2");
+
+    // ---- HKDF: 비밀 하나, 키 여럿 ----------------------------------------------
+    /* 양쪽이 공유 비밀에 합의했다. 그것은 아직 키가 아니다: 용도마다 레이블에 묶인 키를 하나씩
+     * 유도해서, 하나를 알아도 다른 것에 대해 알 수 있는 것이 없게 한다. */
+    proven_byte_t shared[32];
+    EXAMPLE_REQUIRE(proven_random_bytes(shared, sizeof shared), "stands for the output of a key exchange");
+    proven_mem_view_t secret = { shared, sizeof shared };
+    proven_mem_view_t salt = proven_mem_view_from_u8(PROVEN_LIT("example-protocol v1"));       /* 비밀이 아니다. 비어도 된다 */
+
+    proven_byte_t enc_key[32], mac_key[32];
+    EXAMPLE_REQUIRE(proven_hkdf(PROVEN_HMAC_SHA256, salt, secret, proven_mem_view_from_u8(PROVEN_LIT("encryption")), (proven_mem_mut_t){ enc_key, sizeof enc_key }) == PROVEN_OK &&
+                    proven_hkdf(PROVEN_HMAC_SHA256, salt, secret, proven_mem_view_from_u8(PROVEN_LIT("authentication")), (proven_mem_mut_t){ mac_key, sizeof mac_key }) == PROVEN_OK,
+                    "two keys from one secret");
+    EXAMPLE_REQUIRE(!proven_mem_equal_ct((proven_mem_view_t){ enc_key, 32 }, (proven_mem_view_t){ mac_key, 32 }), "different labels, unrelated keys");
+
+    /* 두 단계를 따로: 한 번 추출하고, 필요한 만큼 확장한다. */
+    proven_byte_t prk[PROVEN_HMAC_MAX_SIZE], enc_again[32];
+    EXAMPLE_REQUIRE(proven_hkdf_extract(PROVEN_HMAC_SHA256, salt, secret, prk) == PROVEN_OK &&
+                    proven_hkdf_expand(PROVEN_HMAC_SHA256, (proven_mem_view_t){ prk, 32 }, proven_mem_view_from_u8(PROVEN_LIT("encryption")),
+                                       (proven_mem_mut_t){ enc_again, sizeof enc_again }) == PROVEN_OK &&
+                    proven_mem_equal_ct((proven_mem_view_t){ enc_key, 32 }, (proven_mem_view_t){ enc_again, 32 }), "extract then expand is the same derivation");
+
+    /* HKDF는 해시의 255블록까지만 준다. 더 달라고 하면 잘라 주는 것이 아니라 거절한다. */
+    static proven_byte_t too_much[255 * 32 + 1];
+    EXAMPLE_REQUIRE(proven_hkdf_expand(PROVEN_HMAC_SHA256, (proven_mem_view_t){ prk, 32 }, proven_mem_view_from_u8(PROVEN_LIT("")),
+                                       (proven_mem_mut_t){ too_much, sizeof too_much }) == PROVEN_ERR_OUT_OF_BOUNDS, "more than 8160 bytes from SHA-256: refused");
+
+    // ---- 비밀을 다 썼을 때 -----------------------------------------------------
+    /* 지운다. 여기에 평범한 루프를 쓰면 최적화기가 삭제한다 - 그 뒤로 버퍼를 읽는 것이 없으니까 - .
+     * 그러면 키가 메모리에 남는다. 이 쓰기는 지워지지 않는다. */
+    proven_mem_wipe((proven_mem_mut_t){ key, sizeof key });
+    proven_mem_wipe((proven_mem_mut_t){ shared, sizeof shared });
+    proven_mem_wipe((proven_mem_mut_t){ prk, sizeof prk });
+    proven_mem_wipe((proven_mem_mut_t){ enc_key, sizeof enc_key });
+    proven_mem_wipe((proven_mem_mut_t){ mac_key, sizeof mac_key });
+    proven_byte_t zeros[32] = {0};
+    EXAMPLE_REQUIRE(proven_mem_equal_ct((proven_mem_view_t){ key, 32 }, (proven_mem_view_t){ zeros, 32 }), "the key is gone from its buffer");
+
+    return EXAMPLE_OK();
+}
+```
+
 ## 7. 바이트를 텍스트로: hex와 Base64
 
 일단 어떤 것을 해싱할 수 있고(위) 무작위 토큰을 뽑을 수 있으면(`random.h`), 그 바이트를

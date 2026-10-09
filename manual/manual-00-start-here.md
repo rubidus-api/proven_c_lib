@@ -433,7 +433,7 @@ proven_writer_buf_t a = ...;
 proven_writer_buf_t b = a;          /* wrong: b's internals still point into a */
 ```
 
-section 9.2 below lists all twenty-six of these types. The rule is simple: create it where it lives,
+section 9.2 below lists all twenty-eight of these types. The rule is simple: create it where it lives,
 pass `&it`, and do not assign it.
 
 ### 5. Refuse, never truncate
@@ -667,6 +667,8 @@ copied or moved** while the handle is alive.
 |---|---|---|---|
 | `proven_sha256_t` | `proven_sha256_init` | (used directly) | A hashing context. Safe to copy *before* you start, meaningless to copy mid-stream unless you intend to fork the hash. |
 | `proven_sha1_t`, `proven_md5_t` | `proven_sha1_init`, `proven_md5_init` | (used directly) | The legacy digest contexts; the same rules as `proven_sha256_t`. |
+| `proven_sha512_t` | `proven_sha512_init` / `proven_sha384_init` | (used directly) | The SHA-512 and SHA-384 context; the same rules. Finish it with the family it was begun with. |
+| `proven_hmac_t` | `proven_hmac_init` | (used directly) | A MAC in progress. **It holds key material**; `proven_hmac_final` wipes it. A copy is a second copy of the key. |
 | `proven_xoshiro256ss_t` | `proven_xoshiro256ss_seed` | `proven_rng_t` | Copying it **clones the sequence** - deliberate and useful for a replay, a bug anywhere else. |
 | `proven_chacha_rng_t` | `proven_chacha_rng_seed` / `_seed_from_entropy` | `proven_rng_t` | Copying it clones the keystream: two "independent" tokens become the same token. |
 | `proven_writer_buf_t` | `proven_writer_from_buffer` | `proven_writer_t` | **Do not copy.** |
@@ -982,7 +984,8 @@ Two things this table tells you that the file names do not:
 | `ring.h` | Fixed-capacity FIFO ring | Chapter 4 |
 | `map.h` | Open-addressing map | Chapter 4 |
 | `algorithm.h` | Array sort and search helpers | Chapter 4 |
-| `hash.h` | FNV-1a, SipHash-2-4, CRC-32, SHA-256, by use case | Chapter 4 |
+| `hash.h` | FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512, by use case | Chapter 4 |
+| `hmac.h` | HMAC and HKDF over the SHA-2 family | Chapter 4 |
 | `hash_legacy.h` | SHA-1 and MD5, for formats that fix them | Chapter 4 |
 | `encode.h` | Hex and Base64 (standard + URL-safe), bytes to text and back | Chapter 4 |
 | `fs.h` | Files, directories, metadata, links, locks, read-all, tree walk | Chapter 5 |

@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 87 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 88 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-10, Windows 11 test VM: x86-64 271 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 151 registered tests plus the 128 runnable manual examples - 279 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 164 test files: the 151 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 152 registered tests plus the 130 runnable manual examples - 282 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 165 test files: the 152 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -662,6 +662,20 @@ Sub-checks:
 - Every entry point guards a `{NULL, size>0}` view the way SHA-256 does, rather than dereferencing it.
 
 Failure tip: inspect `src/proven/hash.c`. The algorithms are implemented from their specifications; a KAT mismatch means a rotation, round count, or endianness is off.
+
+### `tests/test_unit_hmac` - SHA-384, SHA-512, HMAC and HKDF
+
+Intent: verify the SHA-2 digests added for TLS, HMAC and HKDF against the documents that define them, and the two memory calls that handling a secret needs.
+
+Sub-checks:
+
+- SHA-512 and SHA-384 of `abc`, the empty message, the 896-bit message and a million `a` fed in a thousand pieces: the values of FIPS 180-4.
+- Twenty-two lengths from 0 to 1000 on each side of the padding boundary (111, 112, 113) and the block boundary (127, 128, 129, and their multiples), both digests at each; every split of 300 bytes into two updates, and a byte at a time with empty updates among them, give the one-shot digest.
+- HMAC: RFC 4231 test cases 1, 2, 3, 4, 6 and 7, an empty key with an empty message, and keys of exactly one block and one byte more, for SHA-256, SHA-384 and SHA-512 - one-shot and streamed a byte at a time, with nothing written past the MAC's own size. An unknown hash and a null key are `PROVEN_ERR_INVALID_ARG` with nothing written; a state that was not begun ignores update and final; after final every byte of the state is zero.
+- HKDF: RFC 5869 A.1, A.2 and A.3 (extract's pseudorandom key and expand's output), the A.1 inputs over SHA-384 and SHA-512, 200 bytes, 1 byte, and exactly one block and one byte more - extract, expand and the combined call, writing exactly the length asked. Different `info` gives different keys. 255 blocks succeed; one byte more is `PROVEN_ERR_OUT_OF_BOUNDS` with nothing written; a short key, an unknown hash and a null input are `PROVEN_ERR_INVALID_ARG`.
+- `proven_mem_equal_ct`: equal ranges, a flip of each of 512 bits, different lengths, empty and null ranges. `proven_mem_wipe`: zeroes exactly the bytes named.
+
+Failure tip: inspect the SHA-512 section of `src/proven/hash.c`, `src/proven/hmac.c` and the end of `src/proven/memory.c`. The digests at boundary lengths and the HKDF values over SHA-384 and SHA-512 are not printed by any standard: they were computed with Python's `hashlib` and `hmac` by a script that first reproduced the published vectors. That `proven_mem_equal_ct` takes the same time whatever it finds, and that `proven_mem_wipe` survives optimisation, are properties of the source and are not observed by this test.
 
 ### `tests/test_unit_hash_legacy` - legacy digests: SHA-1 and MD5
 

@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 879개: 소문자 `xcv_` 이름 673개와 대문자 `XCV_` 이름 206개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 909개: 소문자 `xcv_` 이름 696개와 대문자 `XCV_` 이름 213개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -107,6 +107,10 @@ alias 879개: 소문자 `xcv_` 이름 673개와 대문자 `XCV_` 이름 206개. 
 | `XCV_FS_TYPE_FILE` | `PROVEN_FS_TYPE_FILE` |
 | `XCV_FS_TYPE_OTHER` | `PROVEN_FS_TYPE_OTHER` |
 | `XCV_FS_WRITE` | `PROVEN_FS_WRITE` |
+| `XCV_HMAC_MAX_SIZE` | `PROVEN_HMAC_MAX_SIZE` |
+| `XCV_HMAC_SHA256` | `PROVEN_HMAC_SHA256` |
+| `XCV_HMAC_SHA384` | `PROVEN_HMAC_SHA384` |
+| `XCV_HMAC_SHA512` | `PROVEN_HMAC_SHA512` |
 | `XCV_HTTP_BODY_CHUNKED` | `PROVEN_HTTP_BODY_CHUNKED` |
 | `XCV_HTTP_BODY_LENGTH` | `PROVEN_HTTP_BODY_LENGTH` |
 | `XCV_HTTP_BODY_NONE` | `PROVEN_HTTP_BODY_NONE` |
@@ -205,6 +209,9 @@ alias 879개: 소문자 `xcv_` 이름 673개와 대문자 `XCV_` 이름 206개. 
 | `XCV_SCAN_ARG_TYPE_ULONG` | `PROVEN_SCAN_ARG_TYPE_ULONG` |
 | `XCV_SCAN_ARG_TYPE_USHORT` | `PROVEN_SCAN_ARG_TYPE_USHORT` |
 | `XCV_SCAN_ARG_ULONG` | `PROVEN_SCAN_ARG_ULONG(ptr)` |
+| `XCV_SHA256_SIZE` | `PROVEN_SHA256_SIZE` |
+| `XCV_SHA384_SIZE` | `PROVEN_SHA384_SIZE` |
+| `XCV_SHA512_SIZE` | `PROVEN_SHA512_SIZE` |
 | `XCV_U16_LIT` | `PROVEN_U16_LIT` |
 | `XCV_VERSION_ENCODE` | `PROVEN_VERSION_ENCODE(major, minor, patch)` |
 | `XCV_VERSION_MAJOR` | `PROVEN_VERSION_MAJOR` |
@@ -388,6 +395,16 @@ alias 879개: 소문자 `xcv_` 이름 673개와 대문자 `XCV_` 이름 206개. 
 | `xcv_hex_decoded_size` | `proven_hex_decoded_size` |
 | `xcv_hex_encode` | `proven_hex_encode` |
 | `xcv_hex_encoded_size` | `proven_hex_encoded_size` |
+| `xcv_hkdf` | `proven_hkdf` |
+| `xcv_hkdf_expand` | `proven_hkdf_expand` |
+| `xcv_hkdf_extract` | `proven_hkdf_extract` |
+| `xcv_hmac` | `proven_hmac` |
+| `xcv_hmac_final` | `proven_hmac_final` |
+| `xcv_hmac_hash_t` | `proven_hmac_hash_t` |
+| `xcv_hmac_init` | `proven_hmac_init` |
+| `xcv_hmac_size` | `proven_hmac_size` |
+| `xcv_hmac_t` | `proven_hmac_t` |
+| `xcv_hmac_update` | `proven_hmac_update` |
 | `xcv_http_auth_offers` | `proven_http_auth_offers` |
 | `xcv_http_basic_auth` | `proven_http_basic_auth` |
 | `xcv_http_body_end` | `proven_http_body_end` |
@@ -530,6 +547,7 @@ alias 879개: 소문자 `xcv_` 이름 673개와 대문자 `XCV_` 이름 206개. 
 | `xcv_md5_update` | `proven_md5_update` |
 | `xcv_mem_align_up` | `proven_mem_align_up` |
 | `xcv_mem_copy` | `proven_mem_copy` |
+| `xcv_mem_equal_ct` | `proven_mem_equal_ct` |
 | `xcv_mem_move` | `proven_mem_move` |
 | `xcv_mem_mut_from_owned` | `proven_mem_mut_from_owned` |
 | `xcv_mem_mut_slice_checked` | `proven_mem_mut_slice_checked` |
@@ -541,6 +559,7 @@ alias 879개: 소문자 `xcv_` 이름 673개와 대문자 `XCV_` 이름 206개. 
 | `xcv_mem_view_slice_checked` | `proven_mem_view_slice_checked` |
 | `xcv_mem_view_slice_unchecked` | `proven_mem_view_slice_unchecked` |
 | `xcv_mem_view_t` | `proven_mem_view_t` |
+| `xcv_mem_wipe` | `proven_mem_wipe` |
 | `xcv_memcmp` | `proven_memcmp` |
 | `xcv_mmap_as_view` | `proven_mmap_as_view` |
 | `xcv_mmap_create` | `proven_mmap_create` |
@@ -711,8 +730,19 @@ alias 879개: 소문자 `xcv_` 이름 673개와 대문자 `XCV_` 이름 206개. 
 | `xcv_sha256` | `proven_sha256` |
 | `xcv_sha256_final` | `proven_sha256_final` |
 | `xcv_sha256_init` | `proven_sha256_init` |
+| `xcv_sha256_t` | `proven_sha256_t` |
 | `xcv_sha256_to_hex` | `proven_sha256_to_hex` |
 | `xcv_sha256_update` | `proven_sha256_update` |
+| `xcv_sha384` | `proven_sha384` |
+| `xcv_sha384_final` | `proven_sha384_final` |
+| `xcv_sha384_init` | `proven_sha384_init` |
+| `xcv_sha384_t` | `proven_sha384_t` |
+| `xcv_sha384_update` | `proven_sha384_update` |
+| `xcv_sha512` | `proven_sha512` |
+| `xcv_sha512_final` | `proven_sha512_final` |
+| `xcv_sha512_init` | `proven_sha512_init` |
+| `xcv_sha512_t` | `proven_sha512_t` |
+| `xcv_sha512_update` | `proven_sha512_update` |
 | `xcv_size_t` | `proven_size_t` |
 | `xcv_sse_event_t` | `proven_sse_event_t` |
 | `xcv_sse_feed` | `proven_sse_feed` |

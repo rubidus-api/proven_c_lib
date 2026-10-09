@@ -27,6 +27,36 @@ int main(void) {
 
     proven_allocator_t heap = proven_heap_allocator();
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("chapter 4, HMAC and HKDF",
+        "The sizes the table gives, the 255-block limit, and that a truncated SHA-512 is not SHA-384.",
+        "");
+    // ---------------------------------------------------------------
+    {
+        /* CLAIM: proven_hmac_size is "32, 48 or 64"; a MAC buffer is PROVEN_HMAC_MAX_SIZE (64). */
+        PROVEN_TEST_ASSERT(proven_hmac_size(PROVEN_HMAC_SHA256) == 32 && proven_hmac_size(PROVEN_HMAC_SHA384) == 48 &&
+                           proven_hmac_size(PROVEN_HMAC_SHA512) == 64 && PROVEN_HMAC_MAX_SIZE == 64, "the three MAC sizes and the buffer size", "");
+        /* CLAIM: "The first 48 bytes of a SHA-512 digest are a different number from the SHA-384 of the same input." */
+        proven_byte_t d512[PROVEN_SHA512_SIZE], d384[PROVEN_SHA384_SIZE];
+        proven_sha512(proven_mem_view_from_u8(PROVEN_LIT("abc")), d512);
+        proven_sha384(proven_mem_view_from_u8(PROVEN_LIT("abc")), d384);
+        PROVEN_TEST_ASSERT(memcmp(d512, d384, 48) != 0, "a truncated SHA-512 is not SHA-384", "");
+        /* CLAIM: HKDF is OUT_OF_BOUNDS "for more than 255 times the hash size"; "Nothing is written on error". */
+        static proven_byte_t big[255 * 48 + 1];
+        proven_byte_t prk[48] = {1};
+        big[0] = 0x5a;
+        PROVEN_TEST_ASSERT(proven_hkdf_expand(PROVEN_HMAC_SHA384, (proven_mem_view_t){ prk, 48 }, (proven_mem_view_t){0}, (proven_mem_mut_t){ big, 255 * 48 + 1 }) == PROVEN_ERR_OUT_OF_BOUNDS && big[0] == 0x5a &&
+                           proven_hkdf_expand(PROVEN_HMAC_SHA384, (proven_mem_view_t){ prk, 48 }, (proven_mem_view_t){0}, (proven_mem_mut_t){ big, 255 * 48 }) == PROVEN_OK,
+            "255 blocks is the limit, and past it nothing is written", "");
+        /* CLAIM: "Two calls with the same secret and the same info give the same key". */
+        proven_byte_t k1[32], k2[32];
+        PROVEN_TEST_ASSERT(proven_hkdf(PROVEN_HMAC_SHA256, (proven_mem_view_t){0}, proven_mem_view_from_u8(PROVEN_LIT("secret")), proven_mem_view_from_u8(PROVEN_LIT("a")), (proven_mem_mut_t){ k1, 32 }) == PROVEN_OK &&
+                           proven_hkdf(PROVEN_HMAC_SHA256, (proven_mem_view_t){0}, proven_mem_view_from_u8(PROVEN_LIT("secret")), proven_mem_view_from_u8(PROVEN_LIT("a")), (proven_mem_mut_t){ k2, 32 }) == PROVEN_OK &&
+                           proven_mem_equal_ct((proven_mem_view_t){ k1, 32 }, (proven_mem_view_t){ k2, 32 }), "the same inputs derive the same key", "");
+        /* CLAIM (ch1): proven_mem_equal_ct - "ranges of different sizes are unequal". */
+        PROVEN_TEST_ASSERT(!proven_mem_equal_ct((proven_mem_view_t){ k1, 32 }, (proven_mem_view_t){ k1, 31 }), "different sizes are unequal", "");
+    }
+
 #if !defined(PROVEN_NO_NET)
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("chapter 9, the selector",

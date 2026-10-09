@@ -18,6 +18,27 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release: the SHA-2 digests, HMAC and HKDF that TLS will be built from, public because
+programs need them for their own purposes. One new public header and additions to two;
+nothing public is removed or changed.
+
+### Added
+
+- **`proven/hash.h`: SHA-512 and SHA-384** (FIPS 180-4). `proven_sha512`, `proven_sha384`, and
+  `_init` / `_update` / `_final` for each, with `PROVEN_SHA512_SIZE` and `PROVEN_SHA384_SIZE`.
+- **`proven/hmac.h`: HMAC and HKDF** (RFC 2104, RFC 5869) over SHA-256, SHA-384 and SHA-512.
+  `proven_hmac`, `proven_hmac_init`, `_update`, `_final`, `proven_hmac_size`; `proven_hkdf`,
+  `proven_hkdf_extract`, `proven_hkdf_expand`. The HMAC state is wiped by `_final`; HKDF
+  refuses more than 255 blocks rather than truncating. Not for passwords: both are fast.
+- **`proven/memory.h`:** `proven_mem_equal_ct`, a comparison whose time does not depend on where
+  two ranges differ - for checking a MAC or a token - and `proven_mem_wipe`, a clear the
+  compiler may not remove.
+- All of it is pure computation and part of the freestanding profile.
+- A section of manual chapter 4, "Authentication and key derivation", with a compiled example,
+  in both editions; one test against the vectors of FIPS 180-4, RFC 4231 and RFC 5869.
+- `xcv_` aliases for the above, and for `PROVEN_SHA256_SIZE` and `proven_sha256_t`, which had
+  none.
+
 ## [0.14.0] - 2026-10-10
 
 A MINOR release: readiness that does not slow down as connections are added, and the HTTP

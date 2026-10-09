@@ -117,6 +117,7 @@ src/proven/map.c
 src/proven/algorithm.c
 src/proven/hash.c
 src/proven/hash_legacy.c
+src/proven/hmac.c
 src/proven/utf.c
 src/proven/url.c
 src/proven/http.c
@@ -195,6 +196,7 @@ on every release, not asserted in this table.
 | `algorithm.h` | Available | Sort/search helpers for arrays. |
 | `hash.h` | Available | FNV-1a, SipHash-2-4, CRC-32, SHA-256 - byte-exact, no OS dependency. CRC-32 uses eight 256-entry tables (8 KiB of read-only data) by default; build the library with `-DPROVEN_CRC32_SMALL=1` to keep one 1 KiB table, about 5x slower on long inputs, same output. |
 | `hash_legacy.h` | Available | SHA-1 and MD5, for formats that fix them (the WebSocket accept key, old checksum files). Same shape as SHA-256; no table larger than MD5's 64 constants. |
+| `hmac.h` | Available | HMAC and HKDF over SHA-256, SHA-384 and SHA-512 (the last two are in `hash.h`). Pure arithmetic. `proven_mem_equal_ct` and `proven_mem_wipe`, which go with them, are in `memory.h`. |
 | `url.h`, `http.h` | Available | URL parsing and percent-coding, and the HTTP/1.1 message codec. Pure text handling: no socket, no allocation. The transport is yours to supply - on a target with no sockets (wasm32, bare metal) the codec still parses and writes messages. `proven_http_date_format` takes a time you provide; the freestanding clock returns 0. |
 | `http_auth.h`, `http_cookie.h`, `sse.h` | Available | Basic and Digest authentication values, a cookie jar, and a server-sent events parser. Text handling like the codec; the cookie jar allocates from the allocator you pass, and takes the current time as an argument rather than reading a clock. `proven_http_multipart_boundary` takes random bytes you supply, so it needs no entropy source. |
 | `ws.h` | Available | The WebSocket codec: handshake values and checks, frame headers, masking, close payloads, and the message decoder. It uses SHA-1 and Base64 from the library and takes the key's and the masks' random bytes as arguments. A browser running a wasm32 module owns its own WebSocket; the codec's use there is a non-browser host, or the handshake arithmetic alone. |

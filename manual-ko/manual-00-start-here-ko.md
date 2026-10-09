@@ -430,7 +430,7 @@ proven_writer_buf_t a = ...;
 proven_writer_buf_t b = a;          /* wrong: b's internals still point into a */
 ```
 
-아래 §9.2에 이런 타입 스물여섯 개가 모두 나열되어 있습니다. 규칙은 간단합니다. 살아 있을
+아래 §9.2에 이런 타입 스물여덟 개가 모두 나열되어 있습니다. 규칙은 간단합니다. 살아 있을
 자리에서 만들고, `&it`을 넘기고, 대입하지 마세요.
 
 ### 5. 거부하되 절대 자르지 않는다
@@ -651,6 +651,8 @@ if (!proven_alloc_is_valid(heap)) {
 |---|---|---|---|
 | `proven_sha256_t` | `proven_sha256_init` | (직접 사용) | 해싱 컨텍스트. 시작 *전*에는 복사해도 안전하고, 스트림 도중 복사는 해시를 fork하려는 의도가 아닌 한 무의미. |
 | `proven_sha1_t`, `proven_md5_t` | `proven_sha1_init`, `proven_md5_init` | (직접 사용) | 레거시 다이제스트 컨텍스트. `proven_sha256_t`와 같은 규칙이다. |
+| `proven_sha512_t` | `proven_sha512_init` / `proven_sha384_init` | (직접 사용) | SHA-512와 SHA-384의 컨텍스트. 같은 규칙입니다. 시작한 계열의 함수로 끝내십시오. |
+| `proven_hmac_t` | `proven_hmac_init` | (직접 사용) | 진행 중인 MAC. **키 재료를 담고 있습니다.** `proven_hmac_final`이 그것을 지웁니다. 복사본은 키의 두 번째 사본입니다. |
 | `proven_xoshiro256ss_t` | `proven_xoshiro256ss_seed` | `proven_rng_t` | 복사하면 **수열이 복제됩니다** — 재현(replay)에는 의도적이고 유용하지만, 그 외에는 버그. |
 | `proven_chacha_rng_t` | `proven_chacha_rng_seed` / `_seed_from_entropy` | `proven_rng_t` | 복사하면 키스트림이 복제됩니다: "독립적인" 두 토큰이 같은 토큰이 됨. |
 | `proven_writer_buf_t` | `proven_writer_from_buffer` | `proven_writer_t` | **복사 금지.** |
@@ -956,7 +958,8 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | `ring.h` | 고정 용량 FIFO ring | 챕터 4 |
 | `map.h` | Open-addressing map | 챕터 4 |
 | `algorithm.h` | Array 정렬·검색 헬퍼 | 챕터 4 |
-| `hash.h` | FNV-1a, SipHash-2-4, CRC-32, SHA-256, 용도별 | 챕터 4 |
+| `hash.h` | FNV-1a, SipHash-2-4, CRC-32, SHA-256, 용도별, SHA-384, SHA-512 | 챕터 4 |
+| `hmac.h` | SHA-2 계열 위의 HMAC과 HKDF | 챕터 4 |
 | `hash_legacy.h` | SHA-1과 MD5, 그것을 못 박은 형식용 | 챕터 4 |
 | `encode.h` | Hex와 Base64 (표준 + URL-safe), 바이트↔텍스트 | 챕터 4 |
 | `fs.h` | 파일, 디렉터리, 메타데이터, 링크, 락, read-all, 트리 순회 | 챕터 5 |

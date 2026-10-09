@@ -27,6 +27,7 @@
 #include "proven/algorithm.h"
 #include "proven/hash.h"
 #include "proven/hash_legacy.h"
+#include "proven/hmac.h"
 #include "proven/url.h"
 #include "proven/http.h"
 #include "proven/http_auth.h"

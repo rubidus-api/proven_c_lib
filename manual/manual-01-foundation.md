@@ -408,6 +408,8 @@ forms on purpose:
 | `proven_memcmp(s1, s2, size)` | Compare raw memory. | Zero if equal; sign by byte order (unsigned). |
 | `proven_mem_copy(dst, dst_cap, src)` | Bounded copy of a view into `dst`. | `PROVEN_OK`; `PROVEN_ERR_OUT_OF_BOUNDS` if it would not fit - **and nothing is written**; `PROVEN_ERR_INVALID_ARG` on a null pointer with a non-zero size. Regions must not overlap. |
 | `proven_mem_move(dst, dst_cap, src)` | As `proven_mem_copy`, but the regions may overlap. | As above. |
+| `proven_mem_equal_ct(a, b)` | Whether two ranges are equal, in time that does not depend on where they differ. For comparing against a secret - a MAC, a token - where `proven_memcmp` would leak how many leading bytes matched. | `bool`; ranges of different sizes are unequal. |
+| `proven_mem_wipe(mem)` | Overwrite with zeros in a way the compiler may not remove. For a key or password that is done with: an ordinary clearing loop before a buffer goes out of scope is deleted as dead code. | none. |
 
 The checked form's exact behaviour:
 

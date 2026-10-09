@@ -1069,6 +1069,177 @@ int main(void) {
 }
 ```
 
+### Authentication and key derivation: HMAC and HKDF
+
+A digest tells you what the bytes are. It does not tell you who made them: anyone can hash
+anything, so a message that arrives with its SHA-256 beside it proves nothing about its sender.
+`hmac.h` has the two constructions that bring a secret key into it.
+
+| You need | Use | Because |
+|---|---|---|
+| to know a message came from someone who holds the key - a signed cookie, a webhook, a token | `proven_hmac` | only a holder of the key can compute the MAC, and changing one bit of the message changes it |
+| several keys from one secret - an encryption key and a MAC key from a shared secret | `proven_hkdf` | each key is bound to a label; knowing one says nothing about another |
+| to store or check a **password** | neither | both are fast, and a password is guessable: an attacker tries billions a second. That needs a deliberately slow function (PBKDF2, scrypt, Argon2), which this library does not have |
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_sha512(view, out[64])`, `proven_sha384(view, out[48])` | One-shot SHA-512 and SHA-384. | void. |
+| `proven_sha512_init/_update/_final`, `proven_sha384_init/_update/_final` | The same over content in pieces. Finish a digest with the family it was begun with. | void. |
+| `proven_hmac(hash, key, data, out)` | One-shot HMAC. `hash` is `PROVEN_HMAC_SHA256`, `_SHA384` or `_SHA512`. | `proven_err_t`: `INVALID_ARG` for an unknown hash or a null pointer with a size. |
+| `proven_hmac_init(&h, hash, key)`, `proven_hmac_update(&h, data)`, `proven_hmac_final(&h, out)` | The same over a message in pieces. `final` wipes the key out of the state. | `init`: `proven_err_t`; the others void. |
+| `proven_hmac_size(hash)` | Bytes in the MAC: 32, 48 or 64. | `proven_size_t`; 0 for an unknown hash. |
+| `proven_hkdf(hash, salt, ikm, info, out)` | Derive `out.size` bytes of key from input key material, bound to `info`. | `proven_err_t`: `OUT_OF_BOUNDS` for more than 255 times the hash size; `INVALID_ARG`. Nothing is written on error. |
+| `proven_hkdf_extract(hash, salt, ikm, prk)`, `proven_hkdf_expand(hash, prk, info, out)` | The two steps apart: extract once, expand for each key. | `proven_err_t`, as above; `INVALID_ARG` for a `prk` shorter than the hash. |
+
+A MAC buffer is `PROVEN_HMAC_MAX_SIZE` (64) bytes whatever the hash, and
+`proven_hmac_size(hash)` of them are written: size the buffer with the constant and compare
+with the size.
+
+**Compare a MAC with `proven_mem_equal_ct`, never with `memcmp`.** An ordinary comparison stops
+at the first byte that differs, and how long it took says how many leading bytes were right. A
+forger who can submit many guesses and time the answers recovers the MAC one byte at a time -
+256 tries a byte instead of 2^256 for the whole. `proven_mem_equal_ct` looks at every byte
+whatever it finds (Chapter 1).
+
+Wrong:
+
+```text
+if (memcmp(received_mac, expected_mac, 32) == 0) accept();       /* wrong: leaks how many bytes matched */
+```
+
+Correct - `proven_mem_equal_ct((proven_mem_view_t){ received, 32 }, (proven_mem_view_t){ expected, 32 })`.
+
+**The key is the whole of it.** Take it from `proven_random_bytes`, at least as long as the MAC.
+A key that is a word, a product name, or shorter than the MAC is the weakest part, and nothing
+in the construction makes up for it.
+
+**HMAC says the message is genuine, not that it is new.** A valid signed token is valid every
+time it is presented. If replay matters - and for anything that causes an action it does - put
+an expiry or a counter *inside* what is signed, and check it.
+
+**`info` is what keeps derived keys apart.** Two calls with the same secret and the same `info`
+give the same key - that is the point, both sides derive it. Two purposes must therefore use two
+labels, or one key ends up doing two jobs, which is how protocols break.
+
+**A truncated SHA-512 is not SHA-384.** They start from different values, on purpose: the first
+48 bytes of a SHA-512 digest are a different number from the SHA-384 of the same input.
+
+SHA-384, SHA-512, HMAC and HKDF are here because TLS is built from them; they are public
+because programs need them for their own purposes. They are implemented from FIPS 180-4,
+RFC 2104 and RFC 5869 and tested against those documents' vectors.
+
+Compiled and run by the test suite:
+
+<!-- example: manual/examples/en/ex_04_hmac.c -->
+```c
+#include <string.h>
+
+/*
+ * A digest says what the bytes are. A MAC says who vouched for them, and a KDF turns one
+ * secret into the several keys a protocol needs. Plus the two calls that go with any secret:
+ * a comparison that does not leak, and a clear that is not optimised away.
+ */
+
+static bool hex_is(const proven_byte_t *got, proven_size_t n, const char *want) {
+    char text[129];
+    proven_size_t len = 0;
+    return proven_hex_encode((proven_mem_view_t){ got, n }, (proven_byte_t *)text, sizeof text, &len) == PROVEN_OK &&
+           len == strlen(want) && memcmp(text, want, len) == 0;
+}
+
+int main(void) {
+    // ---- SHA-512 and SHA-384 -------------------------------------------------
+    /* The same shape as SHA-256: one-shot, or init / update / final for what does not fit in
+     * memory. SHA-384 is SHA-512 with other starting values, cut to 48 bytes. */
+    proven_byte_t d512[PROVEN_SHA512_SIZE], d384[PROVEN_SHA384_SIZE], again[PROVEN_SHA512_SIZE];
+    proven_sha512(proven_mem_view_from_u8(PROVEN_LIT("abc")), d512);
+    EXAMPLE_REQUIRE(hex_is(d512, 8, "ddaf35a193617aba"), "SHA-512 of abc begins as FIPS 180-4 prints it");
+    proven_sha384(proven_mem_view_from_u8(PROVEN_LIT("abc")), d384);
+    EXAMPLE_REQUIRE(hex_is(d384, 8, "cb00753f45a35e8b"), "and SHA-384");
+
+    proven_sha512_t running;
+    proven_sha512_init(&running);
+    proven_sha512_update(&running, proven_mem_view_from_u8(PROVEN_LIT("a")));
+    proven_sha512_update(&running, proven_mem_view_from_u8(PROVEN_LIT("bc")));
+    proven_sha512_final(&running, again);
+    EXAMPLE_REQUIRE(memcmp(d512, again, sizeof d512) == 0, "in pieces, the same digest");
+
+    proven_sha384_t running384;
+    proven_sha384_init(&running384);
+    proven_sha384_update(&running384, proven_mem_view_from_u8(PROVEN_LIT("abc")));
+    proven_sha384_final(&running384, again);
+    EXAMPLE_REQUIRE(memcmp(d384, again, sizeof d384) == 0, "and for SHA-384");
+
+    // ---- HMAC: a message somebody with the key vouched for --------------------
+    /* A server signs a token and later checks that what comes back is what it issued. */
+    proven_byte_t key[32];
+    EXAMPLE_REQUIRE(proven_random_bytes(key, sizeof key), "a key from the system: 32 bytes for a 32-byte MAC");
+    proven_mem_view_t token = proven_mem_view_from_u8(PROVEN_LIT("user=ada;expires=1767225600"));
+    proven_byte_t mac[PROVEN_HMAC_MAX_SIZE];
+    EXAMPLE_REQUIRE(proven_hmac(PROVEN_HMAC_SHA256, (proven_mem_view_t){ key, sizeof key }, token, mac) == PROVEN_OK, "the token's MAC");
+    EXAMPLE_REQUIRE(proven_hmac_size(PROVEN_HMAC_SHA256) == 32, "32 bytes of it; the buffer is sized for the largest");
+
+    /* Checking: compute it again and compare WITHOUT leaking where the two differ. memcmp
+     * stops at the first wrong byte, and the time it took tells a forger how far they got. */
+    proven_byte_t check[PROVEN_HMAC_MAX_SIZE];
+    proven_hmac_t h;
+    EXAMPLE_REQUIRE(proven_hmac_init(&h, PROVEN_HMAC_SHA256, (proven_mem_view_t){ key, sizeof key }) == PROVEN_OK, "the streaming form, for a message in pieces");
+    proven_hmac_update(&h, proven_mem_view_from_u8(PROVEN_LIT("user=ada;")));
+    proven_hmac_update(&h, proven_mem_view_from_u8(PROVEN_LIT("expires=1767225600")));
+    proven_hmac_final(&h, check);                   /* also wipes the key out of `h` */
+    EXAMPLE_REQUIRE(proven_mem_equal_ct((proven_mem_view_t){ mac, 32 }, (proven_mem_view_t){ check, 32 }), "the token is genuine");
+
+    /* Someone changes the token. They cannot make the MAC that goes with it. */
+    proven_mem_view_t forged = proven_mem_view_from_u8(PROVEN_LIT("user=eve;expires=1767225600"));
+    EXAMPLE_REQUIRE(proven_hmac(PROVEN_HMAC_SHA256, (proven_mem_view_t){ key, sizeof key }, forged, check) == PROVEN_OK &&
+                    !proven_mem_equal_ct((proven_mem_view_t){ mac, 32 }, (proven_mem_view_t){ check, 32 }), "a changed token does not carry the old MAC");
+
+    /* A published vector, so that this is the HMAC everyone else computes: RFC 4231, case 2. */
+    EXAMPLE_REQUIRE(proven_hmac(PROVEN_HMAC_SHA256, proven_mem_view_from_u8(PROVEN_LIT("Jefe")),
+                                proven_mem_view_from_u8(PROVEN_LIT("what do ya want for nothing?")), check) == PROVEN_OK &&
+                    hex_is(check, 32, "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"), "RFC 4231, test case 2");
+
+    // ---- HKDF: one secret, several keys --------------------------------------
+    /* Two sides have agreed on a shared secret. It is not yet a key: derive one for each
+     * purpose, each bound to a label, so that knowing one says nothing about another. */
+    proven_byte_t shared[32];
+    EXAMPLE_REQUIRE(proven_random_bytes(shared, sizeof shared), "stands for the output of a key exchange");
+    proven_mem_view_t secret = { shared, sizeof shared };
+    proven_mem_view_t salt = proven_mem_view_from_u8(PROVEN_LIT("example-protocol v1"));       /* not secret; may be empty */
+
+    proven_byte_t enc_key[32], mac_key[32];
+    EXAMPLE_REQUIRE(proven_hkdf(PROVEN_HMAC_SHA256, salt, secret, proven_mem_view_from_u8(PROVEN_LIT("encryption")), (proven_mem_mut_t){ enc_key, sizeof enc_key }) == PROVEN_OK &&
+                    proven_hkdf(PROVEN_HMAC_SHA256, salt, secret, proven_mem_view_from_u8(PROVEN_LIT("authentication")), (proven_mem_mut_t){ mac_key, sizeof mac_key }) == PROVEN_OK,
+                    "two keys from one secret");
+    EXAMPLE_REQUIRE(!proven_mem_equal_ct((proven_mem_view_t){ enc_key, 32 }, (proven_mem_view_t){ mac_key, 32 }), "different labels, unrelated keys");
+
+    /* The two steps apart: extract once, expand as often as needed. */
+    proven_byte_t prk[PROVEN_HMAC_MAX_SIZE], enc_again[32];
+    EXAMPLE_REQUIRE(proven_hkdf_extract(PROVEN_HMAC_SHA256, salt, secret, prk) == PROVEN_OK &&
+                    proven_hkdf_expand(PROVEN_HMAC_SHA256, (proven_mem_view_t){ prk, 32 }, proven_mem_view_from_u8(PROVEN_LIT("encryption")),
+                                       (proven_mem_mut_t){ enc_again, sizeof enc_again }) == PROVEN_OK &&
+                    proven_mem_equal_ct((proven_mem_view_t){ enc_key, 32 }, (proven_mem_view_t){ enc_again, 32 }), "extract then expand is the same derivation");
+
+    /* HKDF gives at most 255 blocks of the hash; asking for more is refused, not truncated. */
+    static proven_byte_t too_much[255 * 32 + 1];
+    EXAMPLE_REQUIRE(proven_hkdf_expand(PROVEN_HMAC_SHA256, (proven_mem_view_t){ prk, 32 }, proven_mem_view_from_u8(PROVEN_LIT("")),
+                                       (proven_mem_mut_t){ too_much, sizeof too_much }) == PROVEN_ERR_OUT_OF_BOUNDS, "more than 8160 bytes from SHA-256: refused");
+
+    // ---- When a secret is done with -------------------------------------------
+    /* Clear it. An ordinary loop here would be deleted by the optimiser - nothing reads the
+     * buffer afterwards - and the key would stay in memory. This write is not removed. */
+    proven_mem_wipe((proven_mem_mut_t){ key, sizeof key });
+    proven_mem_wipe((proven_mem_mut_t){ shared, sizeof shared });
+    proven_mem_wipe((proven_mem_mut_t){ prk, sizeof prk });
+    proven_mem_wipe((proven_mem_mut_t){ enc_key, sizeof enc_key });
+    proven_mem_wipe((proven_mem_mut_t){ mac_key, sizeof mac_key });
+    proven_byte_t zeros[32] = {0};
+    EXAMPLE_REQUIRE(proven_mem_equal_ct((proven_mem_view_t){ key, 32 }, (proven_mem_view_t){ zeros, 32 }), "the key is gone from its buffer");
+
+    return EXAMPLE_OK();
+}
+```
+
 ## 7. Bytes to text: hex and Base64
 
 Once you can hash a thing (above) and draw a random token (`random.h`), you need to write those

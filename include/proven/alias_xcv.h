@@ -85,6 +85,10 @@
 #define XCV_FS_TYPE_FILE PROVEN_FS_TYPE_FILE
 #define XCV_FS_TYPE_OTHER PROVEN_FS_TYPE_OTHER
 #define XCV_FS_WRITE PROVEN_FS_WRITE
+#define XCV_HMAC_MAX_SIZE PROVEN_HMAC_MAX_SIZE
+#define XCV_HMAC_SHA256 PROVEN_HMAC_SHA256
+#define XCV_HMAC_SHA384 PROVEN_HMAC_SHA384
+#define XCV_HMAC_SHA512 PROVEN_HMAC_SHA512
 #define XCV_HTTP_BODY_CHUNKED PROVEN_HTTP_BODY_CHUNKED
 #define XCV_HTTP_BODY_LENGTH PROVEN_HTTP_BODY_LENGTH
 #define XCV_HTTP_BODY_NONE PROVEN_HTTP_BODY_NONE
@@ -183,6 +187,9 @@
 #define XCV_SCAN_ARG_TYPE_ULONG PROVEN_SCAN_ARG_TYPE_ULONG
 #define XCV_SCAN_ARG_TYPE_USHORT PROVEN_SCAN_ARG_TYPE_USHORT
 #define XCV_SCAN_ARG_ULONG(ptr) PROVEN_SCAN_ARG_ULONG(ptr)
+#define XCV_SHA256_SIZE PROVEN_SHA256_SIZE
+#define XCV_SHA384_SIZE PROVEN_SHA384_SIZE
+#define XCV_SHA512_SIZE PROVEN_SHA512_SIZE
 #define XCV_U16_LIT PROVEN_U16_LIT
 #define XCV_VERSION_ENCODE(major, minor, patch) PROVEN_VERSION_ENCODE(major, minor, patch)
 #define XCV_VERSION_MAJOR PROVEN_VERSION_MAJOR
@@ -366,6 +373,16 @@
 #define xcv_hex_decoded_size proven_hex_decoded_size
 #define xcv_hex_encode proven_hex_encode
 #define xcv_hex_encoded_size proven_hex_encoded_size
+#define xcv_hkdf proven_hkdf
+#define xcv_hkdf_expand proven_hkdf_expand
+#define xcv_hkdf_extract proven_hkdf_extract
+#define xcv_hmac proven_hmac
+#define xcv_hmac_final proven_hmac_final
+#define xcv_hmac_hash_t proven_hmac_hash_t
+#define xcv_hmac_init proven_hmac_init
+#define xcv_hmac_size proven_hmac_size
+#define xcv_hmac_t proven_hmac_t
+#define xcv_hmac_update proven_hmac_update
 #define xcv_http_auth_offers proven_http_auth_offers
 #define xcv_http_basic_auth proven_http_basic_auth
 #define xcv_http_body_end proven_http_body_end
@@ -508,6 +525,7 @@
 #define xcv_md5_update proven_md5_update
 #define xcv_mem_align_up proven_mem_align_up
 #define xcv_mem_copy proven_mem_copy
+#define xcv_mem_equal_ct proven_mem_equal_ct
 #define xcv_mem_move proven_mem_move
 #define xcv_mem_mut_from_owned proven_mem_mut_from_owned
 #define xcv_mem_mut_slice_checked proven_mem_mut_slice_checked
@@ -519,6 +537,7 @@
 #define xcv_mem_view_slice_checked proven_mem_view_slice_checked
 #define xcv_mem_view_slice_unchecked proven_mem_view_slice_unchecked
 #define xcv_mem_view_t proven_mem_view_t
+#define xcv_mem_wipe proven_mem_wipe
 #define xcv_memcmp proven_memcmp
 #define xcv_mmap_as_view proven_mmap_as_view
 #define xcv_mmap_create proven_mmap_create
@@ -689,8 +708,19 @@
 #define xcv_sha256 proven_sha256
 #define xcv_sha256_final proven_sha256_final
 #define xcv_sha256_init proven_sha256_init
+#define xcv_sha256_t proven_sha256_t
 #define xcv_sha256_to_hex proven_sha256_to_hex
 #define xcv_sha256_update proven_sha256_update
+#define xcv_sha384 proven_sha384
+#define xcv_sha384_final proven_sha384_final
+#define xcv_sha384_init proven_sha384_init
+#define xcv_sha384_t proven_sha384_t
+#define xcv_sha384_update proven_sha384_update
+#define xcv_sha512 proven_sha512
+#define xcv_sha512_final proven_sha512_final
+#define xcv_sha512_init proven_sha512_init
+#define xcv_sha512_t proven_sha512_t
+#define xcv_sha512_update proven_sha512_update
 #define xcv_size_t proven_size_t
 #define xcv_sse_event_t proven_sse_event_t
 #define xcv_sse_feed proven_sse_feed
