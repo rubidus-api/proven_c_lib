@@ -110,10 +110,14 @@ typedef enum {
     PROVEN_ERR_REFUSED,
     PROVEN_ERR_RESET,
     PROVEN_ERR_UNREACHABLE,
-    PROVEN_ERR_UNTRUSTED
+    PROVEN_ERR_UNTRUSTED,
+    PROVEN_ERR_EXPIRED,
+    PROVEN_ERR_NOT_YET_VALID,
+    PROVEN_ERR_NAME_MISMATCH,
+    PROVEN_ERR_PROTOCOL
 } proven_err_t;
 
-#define PROVEN_ERR_LAST         PROVEN_ERR_UNTRUSTED        /* moves when a code is added */
+#define PROVEN_ERR_LAST         PROVEN_ERR_PROTOCOL         /* moves when a code is added */
 #define PROVEN_ERR_RESERVED_END 0x1000                      /* never reached, in any version */
 ```
 
@@ -140,7 +144,11 @@ typedef enum {
 | `PROVEN_ERR_REFUSED` | 상대가 응답했고 거절했다: 그 주소에서 듣고 있는 것이 없다. | 다른 주소를 시도하거나 보고한다. 곧바로 재시도하면 같은 답이 온다. |
 | `PROVEN_ERR_RESET` | 상대가 연결을 갑자기 끝냈거나, 도중에 중단됐다. | 이쪽 끝을 닫는다. 전송 중이던 것은 도착하지 않았을 수 있다. |
 | `PROVEN_ERR_UNREACHABLE` | 그 네트워크나 호스트로 가는 경로가 없다. | 보고하거나 나중에 재시도한다 — 원인은 프로그램 밖에 있다. |
-| `PROVEN_ERR_UNTRUSTED` | 상대의 신원을 확인할 수 없었다. 인증서 검사를 위해 예약됐고, 이 버전에서는 이것을 돌려주는 것이 없다. | 계속하기를 거부한다. |
+| `PROVEN_ERR_UNTRUSTED` | 상대의 신원을 확인할 수 없었다: 상대의 인증서에서 여러분이 믿는 무엇까지도 받아들일 만한 체인이 없다. | 계속하기를 거부한다. |
+| `PROVEN_ERR_EXPIRED` | 인증서가 유효 기간의 끝을 지났다. | 거부하고, 만료되었다고 사용자에게 알린다. 모든 것이 이렇게 실패하면 시계를 의심한다. |
+| `PROVEN_ERR_NOT_YET_VALID` | 인증서의 유효 기간이 아직 시작되지 않았다. | 거부한다. 대개 시계가 범인이다. |
+| `PROVEN_ERR_NAME_MISMATCH` | 인증서는 유효하지만, 닿으려던 이름이 아닌 다른 이름을 위한 것이다. | 거부한다. 잘못 이끌렸거나 가로채인 연결이 이렇게 보인다. |
+| `PROVEN_ERR_PROTOCOL` | 상대가 보안 프로토콜의 규칙을 어겼거나, 양쪽이 함께 쓸 수 있는 것이 없다. TLS 단위를 위해 예약됐고, 이 버전에서는 이것을 돌려주는 것이 없다. | 연결을 닫는다. |
 
 **여러분 자신의 코드를 위한 자리.** 모든 `proven_err_t` 값은 `PROVEN_ERR_RESERVED_END`(0x1000)보다
 작다. 이것은 이번 판의 모습이 아니라 이후 모든 판에 대한 약속이다: proven은 그 이상의 코드를 결코 정의하지

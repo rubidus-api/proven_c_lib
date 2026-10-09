@@ -678,7 +678,7 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 - Algorithms: `algorithm`.
 - Text: `fmt`, `scan`.
 - Numbers: `float_parse`, `float_format`.
-- Hashing and encoding: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512), `hmac` (HMAC and HKDF), `hash_legacy` (SHA-1 and MD5, for formats that fix them), `encode` (hex, Base64, Base64URL), `utf` (strict UTF-8 <-> UTF-16).
+- Hashing and encoding: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512), `hmac` (HMAC and HKDF), `cert` (X.509 certificates: reading, names, trust anchors, chain verification), `hash_legacy` (SHA-1 and MD5, for formats that fix them), `encode` (hex, Base64, Base64URL), `utf` (strict UTF-8 <-> UTF-16).
 - Randomness: `random` (xoshiro256** reproducible, ChaCha20 cryptographic, unbiased range/shuffle helpers, and a pluggable entropy source - the OS CSPRNG by default, a board's hardware TRNG on bare metal).
 - Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
 - Networking: `net` (TCP, UDP and Unix-domain sockets with a deadline on every wait, readiness on many sockets, and a transport interface). Hosted only; `PROVEN_NO_NET` leaves it out.
@@ -695,7 +695,7 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 
 It is also worth saying where the platform boundary **stops**, because otherwise you find out by running into it. The PAL covers memory, the filesystem, time, memory mapping, environment variables, console I/O, threads and sockets. It does **not** cover process control (`fork` / `exec` / pipes) or terminal control (raw mode, job control) - a program whose substance is one of those will reach for POSIX or Win32 directly, and the "no platform `#ifdef`s" property does not extend to it. The socket layer is the first step of a networking stack that is being built in stages: sockets (with an `epoll`/`kqueue` selector), the HTTP/1.1 message codec, an HTTP client and server, and WebSocket are here; TLS, compression and HTTP/2 are not yet.
 
-The `hash` and `hmac` modules do provide cryptographic and non-cryptographic hashes (the SHA-2 family alongside FNV, SipHash, and CRC-32), HMAC and HKDF, and `random` provides OS-strength bytes, but `proven` is not a cryptography library today: it has no signatures, key exchange, password hashing, authenticated encryption or TLS, so do not go looking - and a connection made with `net` is not encrypted. Also absent, and not planned: path manipulation, argument parsing, and a logging framework.
+The `hash` and `hmac` modules do provide cryptographic and non-cryptographic hashes (the SHA-2 family alongside FNV, SipHash, and CRC-32), HMAC and HKDF, `cert` reads and verifies X.509 certificates, and `random` provides OS-strength bytes, but `proven` is not a cryptography library today: it offers no public signing, key exchange, password hashing or authenticated encryption, and no TLS yet, so do not go looking - and a connection made with `net` is not encrypted. Also absent, and not planned: path manipulation, argument parsing, and a logging framework.
 
 ## Using it in a real project
 

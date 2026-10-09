@@ -1,0 +1,191 @@
+#ifndef PROVEN_INTERNAL_CRYPTO_H
+#define PROVEN_INTERNAL_CRYPTO_H
+
+/* The cryptographic primitives under the TLS unit. Internal: nothing here is public API, and
+ * the names may change between releases. Tests reach it by path.
+ *
+ * Rules every function here keeps for data marked SECRET in its comment: no branch on it, no
+ * memory index from it, no early exit that depends on it. */
+
+#include "proven/types.h"
+#include "proven/memory.h"
+
+/* Where secret-derived data becomes public on purpose - a tag that matched, a signature, the
+ * fact that a key is in range - the code says so with this. It does nothing in any build of
+ * the library; the private constant-time check defines PROVEN_CT_CHECK and then it tells
+ * Valgrind that the bytes may be branched on from here. Every use is a claim to review. */
+#ifdef PROVEN_CT_CHECK
+#include <valgrind/memcheck.h>
+#define PROVEN_CT_PUBLIC(p, n) ((void)VALGRIND_MAKE_MEM_DEFINED((p), (n)))
+#else
+#define PROVEN_CT_PUBLIC(p, n) ((void)(p), (void)(n))
+#endif
+
+#define PROVEN_CRYPTO_AEAD_KEY_MAX 32
+#define PROVEN_CRYPTO_AEAD_NONCE   12
+#define PROVEN_CRYPTO_AEAD_TAG     16
+
+/* ---- ChaCha20 and Poly1305 (RFC 8439) ---- */
+
+/* XOR `len` bytes of keystream into `out` from `in` (they may be the same), starting at block
+ * `counter`. SECRET: key, in. */
+void proven_crypto_chacha20(const proven_byte_t key[32], proven_u32 counter, const proven_byte_t nonce[12],
+                            const proven_byte_t *in, proven_byte_t *out, proven_size_t len);
+
+typedef struct {
+    proven_u32 r[5];
+    proven_u32 h[5];
+    proven_u32 pad[4];
+    proven_byte_t buf[16];
+    proven_size_t buf_len;
+} proven_crypto_poly1305_t;
+
+void proven_crypto_poly1305_init(proven_crypto_poly1305_t *st, const proven_byte_t key[32]);
+void proven_crypto_poly1305_update(proven_crypto_poly1305_t *st, const proven_byte_t *m, proven_size_t len);
+void proven_crypto_poly1305_final(proven_crypto_poly1305_t *st, proven_byte_t tag[16]);
+
+/* The AEAD of RFC 8439 section 2.8. `out` receives plain.size bytes and may be `plain.ptr`. */
+void proven_crypto_chacha20poly1305_seal(const proven_byte_t key[32], const proven_byte_t nonce[12],
+                                         proven_mem_view_t aad, proven_mem_view_t plain,
+                                         proven_byte_t *out, proven_byte_t tag[16]);
+/* False when the tag does not match; `out` is then zeroed, not left with unauthenticated text. */
+[[nodiscard]] bool proven_crypto_chacha20poly1305_open(const proven_byte_t key[32], const proven_byte_t nonce[12],
+                                                       proven_mem_view_t aad, proven_mem_view_t cipher,
+                                                       const proven_byte_t tag[16], proven_byte_t *out);
+
+/* ---- Multi-precision modular arithmetic (Montgomery form), constant-time ---- */
+
+/* Numbers are arrays of 32-bit limbs, least significant first, `limbs` long for a modulus of
+ * that many limbs. Every operation takes the same time for the same modulus size whatever the
+ * values are, except where a parameter is marked PUBLIC. */
+#define PROVEN_CRYPTO_MP_MAX 256                 /* limbs: moduli up to 8192 bits */
+
+typedef struct {
+    proven_size_t limbs;
+    proven_size_t bits;                          /* bit length of the modulus */
+    proven_u32 n0inv;                            /* -n^-1 mod 2^32 */
+    proven_u32 n[PROVEN_CRYPTO_MP_MAX];
+    proven_u32 rr[PROVEN_CRYPTO_MP_MAX];         /* R^2 mod n, R = 2^(32 * limbs) */
+} proven_crypto_mp_mod_t;
+
+/* The modulus from big-endian bytes. False when it is even, below 3, or too large. */
+[[nodiscard]] bool proven_crypto_mp_mod_init(proven_crypto_mp_mod_t *mod, const proven_byte_t *be, proven_size_t len);
+/* Load big-endian bytes into `limbs` limbs. False when the value does not fit. */
+[[nodiscard]] bool proven_crypto_mp_load_be(proven_u32 *out, proven_size_t limbs, const proven_byte_t *be, proven_size_t len);
+void proven_crypto_mp_store_be(proven_byte_t *out, proven_size_t len, const proven_u32 *a, proven_size_t limbs);
+/* All-ones when a < b, zero otherwise. */
+proven_u32 proven_crypto_mp_lt(const proven_u32 *a, const proven_u32 *b, proven_size_t limbs);
+/* All-ones when a is zero. */
+proven_u32 proven_crypto_mp_is_zero(const proven_u32 *a, proven_size_t limbs);
+/* All-ones when a equals b. */
+proven_u32 proven_crypto_mp_eq(const proven_u32 *a, const proven_u32 *b, proven_size_t limbs);
+/* out = mask ? a : b, for a mask of all ones or zero. */
+void proven_crypto_mp_select(proven_u32 *out, const proven_u32 *a, const proven_u32 *b, proven_u32 mask, proven_size_t limbs);
+/* out = a * b / R mod n. Inputs below n; `out` may be either input. */
+void proven_crypto_mp_montmul(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *a, const proven_u32 *b);
+void proven_crypto_mp_to_mont(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *a);
+void proven_crypto_mp_from_mont(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *a);
+void proven_crypto_mp_add(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *a, const proven_u32 *b);
+void proven_crypto_mp_sub(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *a, const proven_u32 *b);
+/* out = (big-endian value of any length) mod n, bit by bit. */
+void proven_crypto_mp_reduce_be(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_byte_t *be, proven_size_t len);
+/* out = base^exp mod n, base and out in Montgomery form. The exponent is PUBLIC: its bits
+ * decide which multiplications happen. */
+void proven_crypto_mp_pow(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *base,
+                          const proven_u32 *exp, proven_size_t exp_limbs);
+/* out = a^-1 mod n for a prime n (Fermat), in Montgomery form. Zero stays zero. */
+void proven_crypto_mp_inv_prime(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *a);
+
+/* ---- The NIST prime curves P-256 and P-384 ---- */
+
+typedef enum { PROVEN_CRYPTO_EC_P256, PROVEN_CRYPTO_EC_P384 } proven_crypto_ec_curve_t;
+
+#define PROVEN_CRYPTO_EC_MAX_BYTES 48            /* a coordinate or scalar of the larger curve */
+
+/* Bytes in a coordinate or scalar: 32 or 48; 0 for an unknown curve. */
+proven_size_t proven_crypto_ec_size(proven_crypto_ec_curve_t curve);
+
+/* The public point (0x04 | X | Y, 1 + 2 * size bytes) of a private scalar (big-endian, size
+ * bytes, SECRET). False when the scalar is zero or not below the group order. */
+[[nodiscard]] bool proven_crypto_ec_public(proven_crypto_ec_curve_t curve, const proven_byte_t *priv, proven_byte_t *pub_out);
+
+/* ECDH: the X coordinate of priv * peer. False when `peer` is not a valid point of the curve
+ * (wrong form, coordinate out of range, not on the curve) or the scalar is out of range. */
+[[nodiscard]] bool proven_crypto_ecdh(proven_crypto_ec_curve_t curve, const proven_byte_t *priv,
+                                      proven_mem_view_t peer, proven_byte_t *shared_out);
+
+/* ECDSA over a digest, with the deterministic nonce of RFC 6979 computed with HMAC over
+ * `hmac_hash` (the hash that produced the digest). `sig_out` receives r | s, 2 * size bytes. */
+[[nodiscard]] bool proven_crypto_ecdsa_sign(proven_crypto_ec_curve_t curve, int hmac_hash, const proven_byte_t *priv,
+                                            proven_mem_view_t digest, proven_byte_t *sig_out);
+
+/* True when (r, s), each big-endian of any length, is a valid signature of `digest` under the
+ * public point `pub`. Nothing here is secret. */
+[[nodiscard]] bool proven_crypto_ecdsa_verify(proven_crypto_ec_curve_t curve, proven_mem_view_t pub, proven_mem_view_t digest,
+                                              proven_mem_view_t r, proven_mem_view_t s);
+
+/* The same for a signature in its DER form, SEQUENCE { INTEGER r, INTEGER s }, read strictly:
+ * minimal lengths, minimal non-negative integers, nothing after the end. */
+[[nodiscard]] bool proven_crypto_ecdsa_verify_der(proven_crypto_ec_curve_t curve, proven_mem_view_t pub, proven_mem_view_t digest,
+                                                  proven_mem_view_t sig);
+
+/* ---- Curve25519: X25519 (RFC 7748) and Ed25519 (RFC 8032) ---- */
+
+/* out = scalar * u. SECRET: scalar. False when the result is all zeros (the peer sent a point
+ * of small order), which a key exchange must refuse. */
+[[nodiscard]] bool proven_crypto_x25519(proven_byte_t out[32], const proven_byte_t scalar[32], const proven_byte_t u[32]);
+void proven_crypto_x25519_public(proven_byte_t out[32], const proven_byte_t scalar[32]);
+
+/* The public key of a 32-byte seed (SECRET). */
+void proven_crypto_ed25519_public(proven_byte_t pub[32], const proven_byte_t seed[32]);
+void proven_crypto_ed25519_sign(proven_byte_t sig[64], const proven_byte_t seed[32], const proven_byte_t pub[32],
+                                proven_mem_view_t msg);
+/* Refuses S not below the group order, a public key or R that is not a canonical encoding of a
+ * point, and of course a signature that does not verify. */
+[[nodiscard]] bool proven_crypto_ed25519_verify(const proven_byte_t pub[32], proven_mem_view_t msg, const proven_byte_t sig[64]);
+
+/* ---- AES-GCM (NIST SP 800-38D), 96-bit nonces ---- */
+
+/* Two implementations behind one interface. The portable one is bitsliced: the S-box is
+ * computed (an inversion in GF(2^8)) with boolean operations over bit planes, never looked up,
+ * and GHASH multiplies bit by bit under masks. The hardware one (platform/proven_sys_aes.c)
+ * uses the AES and carry-less multiply instructions where the processor has them, chosen at
+ * run time. There is no table-driven AES here in any configuration. */
+typedef struct {
+    int rounds;                                  /* 10 or 14 */
+    bool hw;
+    proven_byte_t rk[240];                       /* round keys as bytes */
+    proven_u64 bs[15][8];                        /* the same, as bit planes */
+    proven_byte_t h[16];                         /* the GHASH key */
+} proven_crypto_aes_gcm_t;
+
+/* key_len is 16 or 32. False otherwise. SECRET: key. */
+[[nodiscard]] bool proven_crypto_aes_gcm_init(proven_crypto_aes_gcm_t *ctx, const proven_byte_t *key, proven_size_t key_len);
+void proven_crypto_aes_gcm_seal(const proven_crypto_aes_gcm_t *ctx, const proven_byte_t nonce[12],
+                                proven_mem_view_t aad, proven_mem_view_t plain, proven_byte_t *out, proven_byte_t tag[16]);
+[[nodiscard]] bool proven_crypto_aes_gcm_open(const proven_crypto_aes_gcm_t *ctx, const proven_byte_t nonce[12],
+                                              proven_mem_view_t aad, proven_mem_view_t cipher,
+                                              const proven_byte_t tag[16], proven_byte_t *out);
+/* One block under the key schedule, for tests against FIPS 197. */
+void proven_crypto_aes_encrypt_block(const proven_crypto_aes_gcm_t *ctx, const proven_byte_t in[16], proven_byte_t out[16]);
+/* A test hook: when set, contexts initialised afterwards use the portable code even where the
+ * hardware path exists. Not for use while other threads initialise contexts. */
+void proven_crypto_aes_force_portable(bool on);
+/* True when a context initialised now would use the hardware path. */
+bool proven_crypto_aes_hw_available(void);
+
+/* ---- RSA signature verification (RFC 8017). A public operation: nothing is secret. ---- */
+
+#define PROVEN_CRYPTO_RSA_MIN_BITS 2048
+#define PROVEN_CRYPTO_RSA_MAX_BITS 8192
+
+/* `hash` is a proven_hmac_hash_t naming the digest's hash. `n` and `e` are big-endian. Both
+ * refuse a modulus outside 2048..8192 bits, an even or tiny exponent, and a signature that is
+ * not exactly the modulus length or not below the modulus. */
+[[nodiscard]] bool proven_crypto_rsa_verify_pkcs1(proven_mem_view_t n, proven_mem_view_t e, int hash,
+                                                  proven_mem_view_t digest, proven_mem_view_t sig);
+/* RSASSA-PSS with MGF1 over the same hash and a salt of `salt_len` bytes. */
+[[nodiscard]] bool proven_crypto_rsa_verify_pss(proven_mem_view_t n, proven_mem_view_t e, int hash, proven_size_t salt_len,
+                                                proven_mem_view_t digest, proven_mem_view_t sig);
+
+#endif

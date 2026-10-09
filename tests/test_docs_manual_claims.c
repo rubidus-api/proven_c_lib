@@ -1,6 +1,8 @@
 #include "proven.h"
 #include "proven_test.h"
 #include <string.h>
+#include <stdlib.h>
+#include "test_unit_cert_vectors.h"
 
 /*
  * The manual makes CLAIMS. Each one is a proposition about the library that is either true or
@@ -26,6 +28,79 @@ int main(void) {
         "A failure names the claim. Either the code changed and the manual did not, or the manual was wrong when it was written - decide which before changing either.");
 
     proven_allocator_t heap = proven_heap_allocator();
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("chapter 13, certificates and trust",
+        "The name rules, the bounds and the PEM contract as the chapter states them.",
+        "");
+    // ---------------------------------------------------------------
+    {
+        static proven_byte_t der[2048];
+        proven_size_t n = strlen(CV_LEAF) / 2;
+        for (proven_size_t i = 0; i < n; ++i) {
+            char c[3] = { CV_LEAF[2 * i], CV_LEAF[2 * i + 1], 0 };
+            der[i] = (proven_byte_t)strtoul(c, NULL, 16);
+        }
+        proven_cert_t leaf;
+        PROVEN_TEST_ASSERT(proven_cert_parse((proven_mem_view_t){ der, n }, &leaf) == PROVEN_OK, "the leaf parses", "");
+
+        /* CLAIM (s2): "It copies nothing. Every field of the struct is a view into the bytes you
+         * passed". */
+        PROVEN_TEST_ASSERT(leaf.der.ptr == der && leaf.subject.ptr > der && leaf.subject.ptr < der + n &&
+                           leaf.alt_names.ptr > der && leaf.alt_names.ptr < der + n,
+            "the fields point into the caller's buffer", "");
+
+        /* CLAIM (s4): the certificate is for example.test and *.wild.example.test. "A wildcard
+         * ... stands for exactly one label"; "Letter case does not matter, and one trailing dot
+         * on the host is ignored"; an IP address "matches however the address was spelled". */
+        PROVEN_TEST_ASSERT(proven_cert_matches_host(&leaf, PROVEN_LIT("www.wild.example.test")) &&
+                           !proven_cert_matches_host(&leaf, PROVEN_LIT("wild.example.test")) &&
+                           !proven_cert_matches_host(&leaf, PROVEN_LIT("a.b.wild.example.test")),
+            "a wildcard is one label: not none, not two", "");
+        PROVEN_TEST_ASSERT(proven_cert_matches_host(&leaf, PROVEN_LIT("EXAMPLE.Test.")) && !proven_cert_matches_host(&leaf, PROVEN_LIT("example.test..")),
+            "case is ignored, and one trailing dot - not two", "");
+        PROVEN_TEST_ASSERT(proven_cert_matches_host(&leaf, PROVEN_LIT("2001:db8::1")) && proven_cert_matches_host(&leaf, PROVEN_LIT("2001:DB8:0:0:0:0:0:1")),
+            "an address matches in either spelling", "");
+        /* CLAIM (s4): "Only subjectAltName is consulted." The leaf's common name is "leaf". */
+        PROVEN_TEST_ASSERT(!proven_cert_matches_host(&leaf, PROVEN_LIT("leaf")), "the common name is not a host name", "");
+
+        /* CLAIM (s8): "A path is at most PROVEN_CERT_MAX_DEPTH (10) certificates." */
+        PROVEN_TEST_ASSERT(PROVEN_CERT_MAX_DEPTH == 10, "the depth bound is 10", "");
+
+        /* CLAIM (s3): OUT_OF_BOUNDS - "*written is the size needed and *pos has not moved". */
+        proven_size_t pos = 0, written = 0;
+        proven_u8str_view_t label;
+        proven_byte_t small[8];
+        proven_mem_view_t pem = { (const proven_byte_t *)CV_ROOT_PEM, sizeof CV_ROOT_PEM - 1 };
+        PROVEN_TEST_ASSERT(proven_pem_next(pem, &pos, &label, (proven_mem_mut_t){ small, sizeof small }, &written) == PROVEN_ERR_OUT_OF_BOUNDS &&
+                           pos == 0 && written == strlen(CV_ROOT) / 2,
+            "a short buffer reports the size needed and leaves the position", "");
+
+        /* CLAIM (s5): "It owns copies"; a bundle with no certificate at all is NOT_FOUND. */
+        proven_cert_store_t *store = NULL;
+        proven_size_t added = 7;
+        PROVEN_TEST_ASSERT(proven_cert_store_create(heap, &store) == PROVEN_OK &&
+                           proven_cert_store_add_pem(store, (proven_mem_view_t){ (const proven_byte_t *)"nothing", 7 }, &added) == PROVEN_ERR_NOT_FOUND && added == 0,
+            "text with no certificate is PROVEN_ERR_NOT_FOUND", "");
+
+        /* CLAIM (s6): "Leave it empty to skip the name check"; and with nothing in the store the
+         * answer is UNTRUSTED with the fault NO_ISSUER. */
+        proven_mem_view_t chain[1] = { { der, n } };
+        proven_cert_verify_options_t opt = { .anchors = store, .now = CV_NOW };
+        proven_cert_verify_result_t res;
+        PROVEN_TEST_ASSERT(proven_cert_verify(chain, 1, &opt, &res) == PROVEN_ERR_UNTRUSTED && res.fault == PROVEN_CERT_FAULT_NO_ISSUER,
+            "an empty store vouches for nothing", "");
+        /* CLAIM (s7): a pin "instead of" verification - the leaf itself as the only anchor. */
+        PROVEN_TEST_ASSERT(proven_cert_store_add_der(store, chain[0]) == PROVEN_OK && proven_cert_verify(chain, 1, &opt, &res) == PROVEN_OK && res.depth == 1,
+            "a certificate that is itself an anchor is a path of one", "");
+        proven_cert_store_destroy(store);
+
+        /* CLAIM (ch 1): PROVEN_ERR_LAST is the last code, and the four added here are in order. */
+        PROVEN_TEST_ASSERT(PROVEN_ERR_LAST == PROVEN_ERR_PROTOCOL && PROVEN_ERR_EXPIRED == PROVEN_ERR_UNTRUSTED + 1 &&
+                           PROVEN_ERR_NOT_YET_VALID == PROVEN_ERR_EXPIRED + 1 && PROVEN_ERR_NAME_MISMATCH == PROVEN_ERR_NOT_YET_VALID + 1 &&
+                           PROVEN_ERR_PROTOCOL == PROVEN_ERR_NAME_MISMATCH + 1 && PROVEN_ERR_PROTOCOL < PROVEN_ERR_RESERVED_END,
+            "the four codes follow PROVEN_ERR_UNTRUSTED in the order the table lists them", "");
+    }
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("chapter 4, HMAC and HKDF",

@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 909개: 소문자 `xcv_` 이름 696개와 대문자 `XCV_` 이름 213개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 976개: 소문자 `xcv_` 이름 718개와 대문자 `XCV_` 이름 258개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -51,6 +51,47 @@ alias 909개: 소문자 `xcv_` 이름 696개와 대문자 `XCV_` 이름 213개. 
 | `XCV_ARRAY_IS_VALID` | `proven_array_is_valid` |
 | `XCV_ARRAY_POP` | `PROVEN_ARRAY_POP` |
 | `XCV_ARRAY_PUSH` | `PROVEN_ARRAY_PUSH` |
+| `XCV_CERT_EKU_` | `PROVEN_CERT_EKU_` |
+| `XCV_CERT_EKU_ANY` | `PROVEN_CERT_EKU_ANY` |
+| `XCV_CERT_EKU_CLIENT_AUTH` | `PROVEN_CERT_EKU_CLIENT_AUTH` |
+| `XCV_CERT_EKU_OTHER` | `PROVEN_CERT_EKU_OTHER` |
+| `XCV_CERT_EKU_SERVER_AUTH` | `PROVEN_CERT_EKU_SERVER_AUTH` |
+| `XCV_CERT_FAULT_ALGORITHM` | `PROVEN_CERT_FAULT_ALGORITHM` |
+| `XCV_CERT_FAULT_BAD_SIGNATURE` | `PROVEN_CERT_FAULT_BAD_SIGNATURE` |
+| `XCV_CERT_FAULT_CRITICAL_EXTENSION` | `PROVEN_CERT_FAULT_CRITICAL_EXTENSION` |
+| `XCV_CERT_FAULT_EXPIRED` | `PROVEN_CERT_FAULT_EXPIRED` |
+| `XCV_CERT_FAULT_MALFORMED` | `PROVEN_CERT_FAULT_MALFORMED` |
+| `XCV_CERT_FAULT_NAME_CONSTRAINT` | `PROVEN_CERT_FAULT_NAME_CONSTRAINT` |
+| `XCV_CERT_FAULT_NAME_MISMATCH` | `PROVEN_CERT_FAULT_NAME_MISMATCH` |
+| `XCV_CERT_FAULT_NONE` | `PROVEN_CERT_FAULT_NONE` |
+| `XCV_CERT_FAULT_NOT_A_CA` | `PROVEN_CERT_FAULT_NOT_A_CA` |
+| `XCV_CERT_FAULT_NOT_YET_VALID` | `PROVEN_CERT_FAULT_NOT_YET_VALID` |
+| `XCV_CERT_FAULT_NO_ISSUER` | `PROVEN_CERT_FAULT_NO_ISSUER` |
+| `XCV_CERT_FAULT_PATH_LENGTH` | `PROVEN_CERT_FAULT_PATH_LENGTH` |
+| `XCV_CERT_FAULT_TOO_DEEP` | `PROVEN_CERT_FAULT_TOO_DEEP` |
+| `XCV_CERT_FAULT_USAGE` | `PROVEN_CERT_FAULT_USAGE` |
+| `XCV_CERT_KEY_EC_P256` | `PROVEN_CERT_KEY_EC_P256` |
+| `XCV_CERT_KEY_EC_P384` | `PROVEN_CERT_KEY_EC_P384` |
+| `XCV_CERT_KEY_ED25519` | `PROVEN_CERT_KEY_ED25519` |
+| `XCV_CERT_KEY_RSA` | `PROVEN_CERT_KEY_RSA` |
+| `XCV_CERT_KEY_UNKNOWN` | `PROVEN_CERT_KEY_UNKNOWN` |
+| `XCV_CERT_KU_` | `PROVEN_CERT_KU_` |
+| `XCV_CERT_KU_CRL_SIGN` | `PROVEN_CERT_KU_CRL_SIGN` |
+| `XCV_CERT_KU_DIGITAL_SIGNATURE` | `PROVEN_CERT_KU_DIGITAL_SIGNATURE` |
+| `XCV_CERT_KU_KEY_AGREEMENT` | `PROVEN_CERT_KU_KEY_AGREEMENT` |
+| `XCV_CERT_KU_KEY_CERT_SIGN` | `PROVEN_CERT_KU_KEY_CERT_SIGN` |
+| `XCV_CERT_KU_KEY_ENCIPHERMENT` | `PROVEN_CERT_KU_KEY_ENCIPHERMENT` |
+| `XCV_CERT_MAX_DEPTH` | `PROVEN_CERT_MAX_DEPTH` |
+| `XCV_CERT_NAME_DNS` | `PROVEN_CERT_NAME_DNS` |
+| `XCV_CERT_NAME_IP` | `PROVEN_CERT_NAME_IP` |
+| `XCV_CERT_NAME_OTHER` | `PROVEN_CERT_NAME_OTHER` |
+| `XCV_CERT_SIG_ECDSA` | `PROVEN_CERT_SIG_ECDSA` |
+| `XCV_CERT_SIG_ED25519` | `PROVEN_CERT_SIG_ED25519` |
+| `XCV_CERT_SIG_RSA_PKCS1` | `PROVEN_CERT_SIG_RSA_PKCS1` |
+| `XCV_CERT_SIG_RSA_PSS` | `PROVEN_CERT_SIG_RSA_PSS` |
+| `XCV_CERT_SIG_UNKNOWN` | `PROVEN_CERT_SIG_UNKNOWN` |
+| `XCV_CERT_USE_CLIENT` | `PROVEN_CERT_USE_CLIENT` |
+| `XCV_CERT_USE_SERVER` | `PROVEN_CERT_USE_SERVER` |
 | `XCV_CKD_ADD` | `PROVEN_CKD_ADD` |
 | `XCV_CKD_MUL` | `PROVEN_CKD_MUL` |
 | `XCV_CKD_SUB` | `PROVEN_CKD_SUB` |
@@ -66,18 +107,22 @@ alias 909개: 소문자 `xcv_` 이름 696개와 대문자 `XCV_` 이름 213개. 
 | `XCV_ERR_BUSY` | `PROVEN_ERR_BUSY` |
 | `XCV_ERR_EOF` | `PROVEN_ERR_EOF` |
 | `XCV_ERR_EXISTS` | `PROVEN_ERR_EXISTS` |
+| `XCV_ERR_EXPIRED` | `PROVEN_ERR_EXPIRED` |
 | `XCV_ERR_INVALID_ARG` | `PROVEN_ERR_INVALID_ARG` |
 | `XCV_ERR_INVALID_ENCODING` | `PROVEN_ERR_INVALID_ENCODING` |
 | `XCV_ERR_INVALID_FORMAT` | `PROVEN_ERR_INVALID_FORMAT` |
 | `XCV_ERR_INVALID_STATE` | `PROVEN_ERR_INVALID_STATE` |
 | `XCV_ERR_IO` | `PROVEN_ERR_IO` |
 | `XCV_ERR_LAST` | `PROVEN_ERR_LAST` |
+| `XCV_ERR_NAME_MISMATCH` | `PROVEN_ERR_NAME_MISMATCH` |
 | `XCV_ERR_NEED_MORE` | `PROVEN_ERR_NEED_MORE` |
 | `XCV_ERR_NOMEM` | `PROVEN_ERR_NOMEM` |
 | `XCV_ERR_NOT_FOUND` | `PROVEN_ERR_NOT_FOUND` |
+| `XCV_ERR_NOT_YET_VALID` | `PROVEN_ERR_NOT_YET_VALID` |
 | `XCV_ERR_OUT_OF_BOUNDS` | `PROVEN_ERR_OUT_OF_BOUNDS` |
 | `XCV_ERR_OVERFLOW` | `PROVEN_ERR_OVERFLOW` |
 | `XCV_ERR_PERMISSION` | `PROVEN_ERR_PERMISSION` |
+| `XCV_ERR_PROTOCOL` | `PROVEN_ERR_PROTOCOL` |
 | `XCV_ERR_REFUSED` | `PROVEN_ERR_REFUSED` |
 | `XCV_ERR_RESERVED_END` | `PROVEN_ERR_RESERVED_END` |
 | `XCV_ERR_RESET` | `PROVEN_ERR_RESET` |
@@ -315,6 +360,27 @@ alias 909개: 소문자 `xcv_` 이름 696개와 대문자 `XCV_` 이름 213개. 
 | `xcv_buf_t` | `proven_buf_t` |
 | `xcv_byte_t` | `proven_byte_t` |
 | `xcv_c_lib` | `proven_c_lib` |
+| `xcv_cert_alt_name_next` | `proven_cert_alt_name_next` |
+| `xcv_cert_fault_t` | `proven_cert_fault_t` |
+| `xcv_cert_key_kind_t` | `proven_cert_key_kind_t` |
+| `xcv_cert_key_sha256` | `proven_cert_key_sha256` |
+| `xcv_cert_matches_host` | `proven_cert_matches_host` |
+| `xcv_cert_name_kind_t` | `proven_cert_name_kind_t` |
+| `xcv_cert_parse` | `proven_cert_parse` |
+| `xcv_cert_sig_kind_t` | `proven_cert_sig_kind_t` |
+| `xcv_cert_store` | `proven_cert_store` |
+| `xcv_cert_store_add_der` | `proven_cert_store_add_der` |
+| `xcv_cert_store_add_pem` | `proven_cert_store_add_pem` |
+| `xcv_cert_store_add_system` | `proven_cert_store_add_system` |
+| `xcv_cert_store_count` | `proven_cert_store_count` |
+| `xcv_cert_store_create` | `proven_cert_store_create` |
+| `xcv_cert_store_destroy` | `proven_cert_store_destroy` |
+| `xcv_cert_store_t` | `proven_cert_store_t` |
+| `xcv_cert_t` | `proven_cert_t` |
+| `xcv_cert_use_t` | `proven_cert_use_t` |
+| `xcv_cert_verify` | `proven_cert_verify` |
+| `xcv_cert_verify_options_t` | `proven_cert_verify_options_t` |
+| `xcv_cert_verify_result_t` | `proven_cert_verify_result_t` |
 | `xcv_chacha_rng` | `proven_chacha_rng` |
 | `xcv_chacha_rng_fill` | `proven_chacha_rng_fill` |
 | `xcv_chacha_rng_next` | `proven_chacha_rng_next` |
@@ -637,6 +703,7 @@ alias 909개: 소문자 `xcv_` 이름 696개와 대문자 `XCV_` 이름 213개. 
 | `xcv_panic` | `proven_panic` |
 | `xcv_parse_double_ascii` | `proven_parse_double_ascii` |
 | `xcv_parse_f64_ascii` | `proven_parse_f64_ascii` |
+| `xcv_pem_next` | `proven_pem_next` |
 | `xcv_pool_as_allocator` | `proven_pool_as_allocator` |
 | `xcv_pool_destroy` | `proven_pool_destroy` |
 | `xcv_pool_init` | `proven_pool_init` |

@@ -18,6 +18,44 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release: X.509 certificates, and - not public - the cryptographic primitives the TLS
+unit will be built on. There is still no TLS: nothing in this version opens an encrypted
+connection.
+
+### Added
+
+- `cert.h`: `proven_cert_parse` (a strict DER reader for the fields validation needs),
+  `proven_cert_alt_name_next`, `proven_cert_matches_host` (subjectAltName only; a wildcard is
+  one whole left-most label; IP literals match IP entries), `proven_cert_key_sha256` (a
+  public-key pin), `proven_pem_next`, a store of trust anchors (`proven_cert_store_create`,
+  `_destroy`, `_add_der`, `_add_pem`, `_add_system`, `_count`) and `proven_cert_verify`: path
+  building from a peer's certificates to an anchor with signatures, validity at a time the
+  caller supplies, CA and path-length rules, name constraints for DNS names and IP addresses,
+  extended key usage and critical extensions checked, then the host name. The precise reason
+  for a refusal is reported as a `proven_cert_fault_t`. Accepted signatures: RSA PKCS #1 v1.5
+  and PSS (2048 to 8192 bits), ECDSA over P-256 and P-384, Ed25519, each with SHA-256, SHA-384
+  or SHA-512. Not checked: revocation, Certificate Transparency, certificate policies.
+  Everything but `proven_cert_store_add_system` is in the freestanding profile.
+- `proven_cert_store_add_system` reads the operating system's roots: the `ROOT` system store
+  on Windows; elsewhere the file named by `SSL_CERT_FILE`, then the usual bundle locations.
+- Four error codes: `PROVEN_ERR_EXPIRED`, `PROVEN_ERR_NOT_YET_VALID`,
+  `PROVEN_ERR_NAME_MISMATCH` and `PROVEN_ERR_PROTOCOL`. `PROVEN_ERR_LAST` is now
+  `PROVEN_ERR_PROTOCOL`. `proven_cert_verify` returns the first three and
+  `PROVEN_ERR_UNTRUSTED`; nothing returns `PROVEN_ERR_PROTOCOL` yet - it is added with the
+  others so that the set changes once.
+- Manual chapter 13, "Certificates and trust", with a compiled example in both languages.
+- Internal, not public API: ChaCha20-Poly1305; AES-GCM, bitsliced in portable C and on AES-NI
+  with PCLMULQDQ or the ARMv8 cryptography extension where the processor has them, chosen at
+  run time; constant-time multi-precision arithmetic; P-256 and P-384 (ECDH, ECDSA signing with
+  RFC 6979 nonces, verification); X25519; Ed25519; RSA signature verification. There is no
+  table-driven AES in any configuration.
+
+### Changed
+
+- Windows builds link `crypt32` in addition to `bcrypt` and `ws2_32`, for the system
+  certificate store. A program that links the library by hand must add `-lcrypt32`.
+- The manual's description of `PROVEN_ERR_UNTRUSTED` no longer says nothing returns it.
+
 ## [0.15.0] - 2026-10-10
 
 A MINOR release: the SHA-2 digests, HMAC and HKDF that TLS will be built from, public because

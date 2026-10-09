@@ -276,8 +276,9 @@ static void build_test_link_cmd(Nob_Cmd *cmd, const char *compiler, const char *
     if (target_windows) {
         /* The Windows CSPRNG (BCryptGenRandom): mingw-w64 ignores the #pragma comment that
          * names the import library for MSVC, as in the cross smoke link. */
-        /* -lws2_32: Winsock, for the socket layer (platform/proven_sys_net.c). */
-        if (strcmp(mode, "freestanding") != 0) nob_cmd_append(cmd, "-lbcrypt", "-lws2_32");
+        /* -lws2_32: Winsock, for the socket layer (platform/proven_sys_net.c).
+         * -lcrypt32: the system certificate store (platform/proven_sys_trust.c). */
+        if (strcmp(mode, "freestanding") != 0) nob_cmd_append(cmd, "-lbcrypt", "-lws2_32", "-lcrypt32");
     } else if (strcmp(mode, "freestanding") != 0 && test_source_needs_libdl(src)) {
         nob_cmd_append(cmd, "-ldl");
     }
@@ -995,6 +996,7 @@ static bool check_manual_code_blocks(const char *compiler, const char *standard_
         "manual/manual-10-http.md",
         "manual/manual-11-http-client-server.md",
         "manual/manual-12-websocket.md",
+        "manual/manual-13-certificates.md",
         "manual/manual-freestanding.md",
     };
 
@@ -1238,7 +1240,7 @@ static bool run_cross_target(const Proven_Cross_Target *target, const char *stan
         /* -lbcrypt: the Windows CSPRNG (BCryptGenRandom). MSVC pulls the import
          * library in from a #pragma comment in the source; mingw-w64 does not
          * honour that pragma, so the Windows link needs the library named here. */
-        nob_cmd_append(&link, "-o", exe_path, "-lwinpthread", "-lbcrypt", "-lws2_32");
+        nob_cmd_append(&link, "-o", exe_path, "-lwinpthread", "-lbcrypt", "-lws2_32", "-lcrypt32");
         bool linked = nob_cmd_run_sync(link);
         nob_cmd_free(link);
         if (!linked) {
@@ -1667,7 +1669,7 @@ int main(int argc, char **argv)
     const char *obj_ext = ".o";
     bool target_windows = compiler_targets_windows(compiler_exe, build_dir);
     const char *exe_ext = target_windows ? ".exe" : "";
-    if (target_windows) nob_log(NOB_INFO, "[PROVEN][BUILD][TARGET] windows=1 exe_ext=.exe link=-static,-lbcrypt,-lws2_32");
+    if (target_windows) nob_log(NOB_INFO, "[PROVEN][BUILD][TARGET] windows=1 exe_ext=.exe link=-static,-lbcrypt,-lws2_32,-lcrypt32");
     
     Nob_Cmd cmd = {0};
     Nob_File_Paths obj_files = {0};

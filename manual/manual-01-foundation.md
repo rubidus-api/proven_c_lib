@@ -109,10 +109,14 @@ typedef enum {
     PROVEN_ERR_REFUSED,
     PROVEN_ERR_RESET,
     PROVEN_ERR_UNREACHABLE,
-    PROVEN_ERR_UNTRUSTED
+    PROVEN_ERR_UNTRUSTED,
+    PROVEN_ERR_EXPIRED,
+    PROVEN_ERR_NOT_YET_VALID,
+    PROVEN_ERR_NAME_MISMATCH,
+    PROVEN_ERR_PROTOCOL
 } proven_err_t;
 
-#define PROVEN_ERR_LAST         PROVEN_ERR_UNTRUSTED        /* moves when a code is added */
+#define PROVEN_ERR_LAST         PROVEN_ERR_PROTOCOL         /* moves when a code is added */
 #define PROVEN_ERR_RESERVED_END 0x1000                      /* never reached, in any version */
 ```
 
@@ -139,7 +143,11 @@ typedef enum {
 | `PROVEN_ERR_REFUSED` | The other end answered and said no: nothing is listening at that address. | Trying another address, or reporting; an immediate retry gets the same answer. |
 | `PROVEN_ERR_RESET` | The peer ended the connection abruptly, or it was aborted on the way. | Closing your end; whatever was in flight may not have arrived. |
 | `PROVEN_ERR_UNREACHABLE` | No route to that network or host. | Reporting, or retrying later - the cause is outside the program. |
-| `PROVEN_ERR_UNTRUSTED` | A peer's identity could not be verified. Reserved for certificate checks; nothing in this version returns it. | Refusing to continue. |
+| `PROVEN_ERR_UNTRUSTED` | A peer's identity could not be verified: no acceptable chain from its certificate to anything you trust. | Refusing to continue. |
+| `PROVEN_ERR_EXPIRED` | A certificate is past the end of its validity period. | Refusing; telling the user it expired. If everything fails this way, suspect the clock. |
+| `PROVEN_ERR_NOT_YET_VALID` | A certificate's validity period has not begun. | Refusing; the clock is the usual culprit. |
+| `PROVEN_ERR_NAME_MISMATCH` | A certificate is valid, and is for another name than the one you meant to reach. | Refusing: this is what a misdirected or intercepted connection looks like. |
+| `PROVEN_ERR_PROTOCOL` | A peer broke the rules of a security protocol, or the two sides have nothing in common to speak. Reserved for the TLS unit; nothing in this version returns it. | Closing the connection. |
 
 **Room for your own codes.** Every `proven_err_t` value is below `PROVEN_ERR_RESERVED_END`
 (0x1000), and that is a promise for every later version, not a description of this one: proven

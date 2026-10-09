@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 88 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 90 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-10, Windows 11 test VM: x86-64 274 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 152 registered tests plus the 130 runnable manual examples - 282 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 165 test files: the 152 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 154 registered tests plus the 132 runnable manual examples - 286 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 167 test files: the 154 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -676,6 +676,35 @@ Sub-checks:
 - `proven_mem_equal_ct`: equal ranges, a flip of each of 512 bits, different lengths, empty and null ranges. `proven_mem_wipe`: zeroes exactly the bytes named.
 
 Failure tip: inspect the SHA-512 section of `src/proven/hash.c`, `src/proven/hmac.c` and the end of `src/proven/memory.c`. The digests at boundary lengths and the HKDF values over SHA-384 and SHA-512 are not printed by any standard: they were computed with Python's `hashlib` and `hmac` by a script that first reproduced the published vectors. That `proven_mem_equal_ct` takes the same time whatever it finds, and that `proven_mem_wipe` survives optimisation, are properties of the source and are not observed by this test.
+
+### `tests/test_unit_crypto` - the cryptographic primitives under TLS
+
+Intent: verify the internal primitives the TLS unit will stand on against another implementation, and that each refuses what it must. They are not public API; the test reaches them through `src/proven/proven_internal_crypto.h`.
+
+Sub-checks:
+
+- ChaCha20-Poly1305: the example of RFC 8439 section 2.8.2 and fifteen more at lengths on each side of the 16- and 64-byte boundaries; sealing, opening, and a changed tag or associated data refused with the output zeroed.
+- AES-GCM: the blocks of FIPS 197 appendix C, twenty more blocks, and thirty-two messages for 128- and 256-bit keys - run on the bitsliced code (forced by a test hook), run again on the processor's AES and carry-less multiply where it has them, sealing in place, and a changed tag, text or associated data refused. Then the two implementations against each other on twenty-four further messages. A key of another size is refused.
+- Multi-precision arithmetic: Montgomery multiplication, modular addition and subtraction, exponentiation, inversion modulo a prime, and reduction of a wide value, for the field and order of P-256 and P-384, the order of Curve25519 and odd moduli from 33 to 2049 bits, with 0, 1 and n-1 as operands; the comparisons; an even modulus, 1 and 0 refused.
+- P-256 and P-384: public keys and ECDH shared secrets; ECDSA with the deterministic nonce of RFC 6979 - its appendix A.2.5 example first - over SHA-256, SHA-384 and SHA-512, and verification of the same in raw and in DER form; a changed digest or signature, a DER signature one byte long or short, a point off the curve, a compressed point, a scalar of 0 or of the group order, and r or s of zero are refused.
+- X25519 and Ed25519: the examples of RFC 7748 section 6.1 and RFC 8032 section 7.1 first, then twenty more of each; a point of small order is refused by the key exchange; a changed R, S, public key or message, and the signature with the group order added to S, are refused.
+- RSA verification: PKCS #1 v1.5 and PSS over three hashes and moduli of 2048, 2049, 2056 and 3072 bits, with public exponents 65537 and 3 and salts of the hash length, 0 and 20; a 1024-bit key, a changed digest or signature, another hash, another salt length, a PSS signature offered as PKCS #1 and the reverse, a short signature, and a signature equal to the modulus are refused.
+
+Failure tip: inspect the `src/proven/crypto_*.c` file the failing section names, and `platform/proven_sys_aes.c` for the hardware path. The expected values are in `tests/test_unit_crypto_vectors.h`, written by a private generator from Python `cryptography`; where a standard prints the value, the generator reproduced it first. Not covered here: constant-time behaviour (a private Valgrind check), and the larger adversarial vector sets (a private Project Wycheproof run).
+
+### `tests/test_unit_cert` - X.509 certificates
+
+Intent: verify that certificates are read strictly, matched against names by the stated rules, and that a chain is accepted or refused exactly as another implementation built it to be.
+
+Sub-checks:
+
+- Reading: the fields of a leaf, an RSA root and an intermediate (version, key kind and bytes, signature kind and hash, validity as Unix seconds, CA flag, path length, key usage, extended key usage, alternative names), every view inside the caller's bytes; every proper prefix of a certificate refused; a sweep of single-bit changes over the whole certificate with no read outside the buffer; a trailing byte, a non-minimal length and an indefinite length refused.
+- Names: the DNS names, a wildcard for exactly one label, IPv4 and IPv6 literals in two spellings; a prefix, a suffix, a subdomain, an empty label, two labels under a wildcard, another address, an octet with a leading zero and the subject's common name refused. The public-key pin equals SHA-256 of the SubjectPublicKeyInfo.
+- PEM: blocks found among other text, labels returned, a short buffer reported with the size needed and the position unmoved; a missing END line, another END label, a bad symbol, an impossible length, misplaced padding and stray bits refused.
+- The store: a bundle taken entry by entry with a non-certificate block skipped, growth past its first capacity, copies that outlive the caller's bytes, text with no certificate and bytes that are not one refused without changing it.
+- Chain verification, forty cases with the error code, the fault and the depth each must give: RSA, P-256, P-384 and Ed25519 keys with PKCS #1, PSS and ECDSA signatures; an intermediate or the leaf as the anchor; extra certificates in any order; the name rules again; before and after the validity period; an expired and a not-yet-valid leaf; a missing intermediate; an anchor with the right name and another key; one changed signature bit; an issuer that is not a CA, or whose key usage does not allow issuing; a path length exceeded; name constraints permitting, excluding, by address, and against a wildcard; an unknown critical extension; the wrong extended key usage in each direction; a hash that is not accepted; a name only in the common name; a version 3 anchor that is not a CA; a trailing byte.
+
+Failure tip: inspect `src/proven/cert.c`. The chains are in `tests/test_unit_cert_vectors.h`, written by a private generator with Python `cryptography`; their dates are fixed and the test supplies the time. The case's text says what was built. Not covered: a certificate signed with SHA-1 (the generator's library will not make one; SHA-224 stands in for "a hash that is not accepted"), and the Windows root store beyond being opened by the manual example.
 
 ### `tests/test_unit_hash_legacy` - legacy digests: SHA-1 and MD5
 

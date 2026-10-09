@@ -807,7 +807,7 @@ reference you read after Chapter 3 has introduced the subject.
 | **II - The vocabulary every program uses** | [1](manual-01-foundation.md) -> [2](manual-02-allocation.md) -> [3](manual-03-strings-text.md) | Chapter 0 | Handle errors as values, own memory deliberately, hold text safely |
 | **III - Data structures** | [4](manual-04-containers-algorithms.md) | Part II | Arrays, maps, lists, rings, sorting, searching, hashing, encoding |
 | **IV - Text in and out** | [8](manual-08-fmt-scan.md) | Chapter 3 section 3-section 4 | Format and parse anything, and teach the formatter your own types |
-| **V - Talking to the operating system** | [5](manual-05-hosted-services.md) -> [9](manual-09-networking.md) -> [10](manual-10-http.md) -> [11](manual-11-http-client-server.md) -> [12](manual-12-websocket.md) | Part II | Files, directories, streams, standard I/O, time, randomness, mapping; sockets with deadlines; URLs and HTTP messages; an HTTP client and server; WebSocket |
+| **V - Talking to the operating system** | [5](manual-05-hosted-services.md) -> [9](manual-09-networking.md) -> [10](manual-10-http.md) -> [11](manual-11-http-client-server.md) -> [12](manual-12-websocket.md) -> [13](manual-13-certificates.md) | Part II | Files, directories, streams, standard I/O, time, randomness, mapping; sockets with deadlines; URLs and HTTP messages; an HTTP client and server; WebSocket; certificates and trust |
 | **VI - Going further** | [6](manual-06-execution-and-platform.md) -> [freestanding](manual-freestanding.md) | Parts II-V | Coroutines, jobs, thread-safety, bare metal, cross builds |
 | **Appendices** | [A](manual-07-alias-xcv-index.md), [B](#13-appendix-b-glossary), [C](#14-appendix-c-public-header-map), [D](#15-appendix-d-the-libc-map) | - | Look things up |
 
@@ -827,6 +827,7 @@ reference you read after Chapter 3 has introduced the subject.
 10. [**URLs and HTTP messages**: URL parsing and safe paths, the HTTP/1.1 head parser, body framing, writers, dates, ranges, multipart, authentication, cookies, event streams](manual-10-http.md) - *Part V; pure text handling, freestanding-available*
 11. [**An HTTP client and server**: a handler and a loop with every wait bounded; a client with redirects, challenges, cookies and proxies](manual-11-http-client-server.md) - *Part V; after Chapters 9 and 10*
 12. [**WebSocket**: connections from either side, messages, closing; and the frame codec by itself](manual-12-websocket.md) - *Part V; after Chapter 11; the codec is freestanding-available*
+13. [**Certificates and trust**: reading an X.509 certificate, the names it is for, trust anchors, verifying a chain, pinning](manual-13-certificates.md) - *Part V; after Chapter 4; freestanding-available except the system's roots*
 
 **Chapters 3 and 8 both cover the formatter and the scanner, and the division is deliberate.**
 Chapter 3 introduces them alongside strings, with the everyday cases and enough to be productive.
@@ -1000,6 +1001,7 @@ Two things this table tells you that the file names do not:
 | `http_server.h` | HTTP/1.1 server: a handler and a bounded loop, on one thread or a job system (hosted-only) | Chapter 11 |
 | `ws.h` | WebSocket codec: handshake values and checks, frames, a message decoder | Chapter 12 |
 | `ws_conn.h` | WebSocket connections over a transport, client and server (hosted-only) | Chapter 12 |
+| `cert.h` | X.509 certificates: a strict reader, host-name matching, PEM, a store of trust anchors, chain verification. Only reading the system's roots is hosted. | Chapter 13 |
 | `sysio.h` | Standard streams as writers/readers, line input from stdin, buffered output, printing, scanning, environment access | Chapter 5 |
 | `random.h` | Randomness by use case: xoshiro256** (reproducible), ChaCha20 (cryptographic), the OS CSPRNG, and unbiased range/shuffle helpers. The generators work freestanding; only the OS source is hosted. | Chapter 5 |
 | `mmap.h` | Memory-mapped file regions | Chapter 5 |
@@ -1046,7 +1048,7 @@ The chapters are ordered so that each one only needs the ones before it.
 | **II** | [1](manual-01-foundation.md) -> [2](manual-02-allocation.md) -> [3](manual-03-strings-text.md) | Errors, memory, and text: what every program uses |
 | **III** | [4](manual-04-containers-algorithms.md) | Arrays, maps, lists, rings, sorting, hashing, encoding |
 | **IV** | [8](manual-08-fmt-scan.md) | Formatting and scanning in full, once Chapter 3 has introduced them |
-| **V** | [5](manual-05-hosted-services.md) -> [9](manual-09-networking.md) -> [10](manual-10-http.md) -> [11](manual-11-http-client-server.md) -> [12](manual-12-websocket.md) | Files, streams, standard I/O, time, randomness, mapping; then sockets; then URLs and HTTP; then a client and a server; then WebSocket |
+| **V** | [5](manual-05-hosted-services.md) -> [9](manual-09-networking.md) -> [10](manual-10-http.md) -> [11](manual-11-http-client-server.md) -> [12](manual-12-websocket.md) -> [13](manual-13-certificates.md) | Files, streams, standard I/O, time, randomness, mapping; then sockets; then URLs and HTTP; then a client and a server; then WebSocket; then certificates |
 | **VI** | [6](manual-06-execution-and-platform.md) -> [freestanding](manual-freestanding.md) | Coroutines, jobs, thread-safety, bare metal, cross builds |
 | **Appendices** | [A: alias index](manual-07-alias-xcv-index.md), B and D above | Looking things up |
 
