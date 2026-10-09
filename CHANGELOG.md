@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-09
+
 A MINOR release: WebSocket (RFC 6455), as a codec and as connections, and the hand-over from
 HTTP that it needs. Two new public headers and additions to two; nothing public is removed or
 changed, and no error code is added.
