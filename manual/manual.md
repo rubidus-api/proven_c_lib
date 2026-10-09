@@ -14,6 +14,7 @@ the Korean edition mirrors it under [`manual-ko/`](../manual-ko/manual-ko.md).
 - [Chapter 8 - Formatting and scanning](manual-08-fmt-scan.md)
 - [Chapter 5 - Hosted services](manual-05-hosted-services.md)
 - [Chapter 9 - Networking](manual-09-networking.md)
+- [Chapter 10 - URLs and HTTP messages](manual-10-http.md)
 - [Chapter 6 - Execution and platform](manual-06-execution-and-platform.md)
 - [Freestanding](manual-freestanding.md)
 - [Appendix A - Alias index](manual-07-alias-xcv-index.md)

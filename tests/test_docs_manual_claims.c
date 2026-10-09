@@ -28,6 +28,79 @@ int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("chapter 10, URLs and HTTP messages",
+        "The facts the chapter states in prose, each as an assertion.",
+        "");
+    // ---------------------------------------------------------------
+    {
+        /* CLAIM: "In http://example.com@evil.test/ the host is evil.test." */
+        proven_url_t u;
+        PROVEN_TEST_ASSERT(proven_url_parse(PROVEN_LIT("http://example.com@evil.test/"), &u) == PROVEN_OK &&
+                           proven_u8str_view_eq(u.host, PROVEN_LIT("evil.test")),
+            "the host must be what follows the last '@', as the chapter warns", "");
+
+        /* CLAIM: "%2e%2e becomes .. and is then treated as .." and "%252e%252e becomes the text
+         * %2e%2e, which is a strange file name and nothing more". */
+        proven_byte_t out[64];
+        proven_size_t n = 0;
+        PROVEN_TEST_ASSERT(proven_url_path_resolve(PROVEN_LIT("/%2e%2e/x"), (proven_mem_mut_t){ out, sizeof out }, &n) == PROVEN_ERR_PERMISSION,
+            "an encoded .. must be a climb", "");
+        PROVEN_TEST_ASSERT(proven_url_path_resolve(PROVEN_LIT("/%252e%252e/x"), (proven_mem_mut_t){ out, sizeof out }, &n) == PROVEN_OK &&
+                           n == 9 && memcmp(out, "/%2e%2e/x", 9) == 0,
+            "a doubly encoded .. must come out as the literal text %2e%2e", "");
+        /* CLAIM: the refusals of section 3, one of each kind. */
+        PROVEN_TEST_ASSERT(proven_url_path_resolve(PROVEN_LIT("/a%2Fb"), (proven_mem_mut_t){ out, sizeof out }, &n) == PROVEN_ERR_INVALID_FORMAT &&
+                           proven_url_path_resolve(PROVEN_LIT("/a%5Cb"), (proven_mem_mut_t){ out, sizeof out }, &n) == PROVEN_ERR_INVALID_FORMAT &&
+                           proven_url_path_resolve(PROVEN_LIT("/file%00.png"), (proven_mem_mut_t){ out, sizeof out }, &n) == PROVEN_ERR_INVALID_FORMAT &&
+                           proven_url_path_resolve(PROVEN_LIT("/%c0%ae"), (proven_mem_mut_t){ out, sizeof out }, &n) == PROVEN_ERR_INVALID_FORMAT,
+            "an encoded slash, an encoded backslash, an encoded NUL and an overlong dot must each be refused", "");
+
+        /* CLAIM: "max_head 0 means PROVEN_HTTP_DEFAULT_MAX_HEAD (16 KiB)" and "always 29 bytes". */
+        PROVEN_TEST_ASSERT(PROVEN_HTTP_DEFAULT_MAX_HEAD == 16384 && PROVEN_HTTP_DATE_SIZE == 29,
+            "the default head limit and the date size are the numbers the chapter prints", "");
+
+        /* CLAIM: each row of the section 1 table is refused. */
+        static const char *const refused_heads[] = {
+            "GET / HTTP/1.1\nHost: h\n\n",
+            "GET / HTTP/1.1\r\nContent-Length : 5\r\n\r\n",
+            "GET / HTTP/1.1\r\nA: b\r\n c\r\n\r\n",
+        };
+        for (proven_size_t i = 0; i < sizeof refused_heads / sizeof refused_heads[0]; ++i) {
+            proven_http_header_t h[8];
+            proven_http_request_t r;
+            proven_size_t hs = 0;
+            proven_mem_view_t d = { (const proven_byte_t *)refused_heads[i], strlen(refused_heads[i]) };
+            PROVEN_TEST_ASSERT(proven_http_parse_request(d, h, 8, 0, &r, &hs) == PROVEN_ERR_INVALID_FORMAT,
+                "a bare LF, a space before the colon, and a folded line must each be refused", "");
+        }
+        static const char *const refused_framing[] = {
+            "POST / HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\n",
+            "POST / HTTP/1.1\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n",
+        };
+        for (proven_size_t i = 0; i < sizeof refused_framing / sizeof refused_framing[0]; ++i) {
+            proven_http_header_t h[8];
+            proven_http_request_t r;
+            proven_http_framing_t f;
+            proven_size_t hs = 0;
+            proven_mem_view_t d = { (const proven_byte_t *)refused_framing[i], strlen(refused_framing[i]) };
+            PROVEN_TEST_ASSERT(proven_http_parse_request(d, h, 8, 0, &r, &hs) == PROVEN_OK &&
+                               proven_http_request_framing(&r, &f) == PROVEN_ERR_INVALID_FORMAT,
+                "two Content-Length fields, and Content-Length with Transfer-Encoding, must each be refused", "");
+        }
+
+        /* CLAIM: "Expires in the year 9999 means never ... PROVEN_ERR_OVERFLOW". */
+        proven_time_t t = 0;
+        PROVEN_TEST_ASSERT(proven_http_date_parse(PROVEN_LIT("Fri, 31 Dec 9999 23:59:59 GMT"), 0, &t) == PROVEN_ERR_OVERFLOW,
+            "a date past the range of proven_time_t must be PROVEN_ERR_OVERFLOW, as the chapter says", "");
+
+        /* CLAIM: the response-splitting value of section 7 is refused and nothing is appended. */
+        proven_size_t len = 0;
+        PROVEN_TEST_ASSERT(proven_http_write_header((proven_mem_mut_t){ out, sizeof out }, &len, PROVEN_LIT("Location"),
+                                                    PROVEN_LIT("/home\r\nSet-Cookie: session=attacker")) == PROVEN_ERR_INVALID_ARG && len == 0,
+            "a header value with a line break must be refused with the length unmoved", "");
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("chapter 9, addresses and deadlines",
         "The facts the networking chapter states that need no socket to check.",
         "");

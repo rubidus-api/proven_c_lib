@@ -682,6 +682,7 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 - Randomness: `random` (xoshiro256** reproducible, ChaCha20 cryptographic, unbiased range/shuffle helpers, and a pluggable entropy source - the OS CSPRNG by default, a board's hardware TRNG on bare metal).
 - Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
 - Networking: `net` (TCP, UDP and Unix-domain sockets with a deadline on every wait, readiness on many sockets, and a transport interface). Hosted only; `PROVEN_NO_NET` leaves it out.
+- URLs and HTTP: `url` (parsing, percent-coding, and a request path resolved so it cannot leave its root), `http` (an HTTP/1.1 message codec - head parser, body framing and decoder, writers, dates - that refuses the ambiguities request smuggling is made of). Pure text, freestanding-available; a codec, not yet a client or server.
 - Execution: `coro`, `job`.
 - Diagnostics: `panic`.
 - Optional short aliases: `alias_xcv`.
@@ -690,7 +691,7 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 
 `proven` is not a libc replacement, a garbage collector, or a framework. It does not try to own your process, your build graph, or your error policy. It is a set of C components that are meant to be easy to read, easy to test, and possible to port one boundary at a time.
 
-It is also worth saying where the platform boundary **stops**, because otherwise you find out by running into it. The PAL covers memory, the filesystem, time, memory mapping, environment variables, console I/O, threads and sockets. It does **not** cover process control (`fork` / `exec` / pipes) or terminal control (raw mode, job control) - a program whose substance is one of those will reach for POSIX or Win32 directly, and the "no platform `#ifdef`s" property does not extend to it. The socket layer is the first step of a networking stack that is being built in stages: sockets are here, and HTTP, WebSocket and TLS are not yet.
+It is also worth saying where the platform boundary **stops**, because otherwise you find out by running into it. The PAL covers memory, the filesystem, time, memory mapping, environment variables, console I/O, threads and sockets. It does **not** cover process control (`fork` / `exec` / pipes) or terminal control (raw mode, job control) - a program whose substance is one of those will reach for POSIX or Win32 directly, and the "no platform `#ifdef`s" property does not extend to it. The socket layer is the first step of a networking stack that is being built in stages: sockets and the HTTP/1.1 message codec are here; an HTTP client and server, WebSocket and TLS are not yet.
 
 The `hash` module does provide cryptographic and non-cryptographic hashes (SHA-256 alongside FNV, SipHash, and CRC-32) and `random` provides OS-strength bytes, but `proven` is not a cryptography library today: it has no signatures, key exchange, password hashing / KDFs, authenticated encryption or TLS, so do not go looking - and a connection made with `net` is not encrypted. Also absent, and not planned: path manipulation, argument parsing, and a logging framework.
 

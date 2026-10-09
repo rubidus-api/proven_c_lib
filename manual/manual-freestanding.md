@@ -117,6 +117,9 @@ src/proven/map.c
 src/proven/algorithm.c
 src/proven/hash.c
 src/proven/hash_legacy.c
+src/proven/utf.c
+src/proven/url.c
+src/proven/http.c
 src/proven/encode.c
 src/proven/random.c
 src/proven/float_decimal.c
@@ -188,6 +191,7 @@ on every release, not asserted in this table.
 | `algorithm.h` | Available | Sort/search helpers for arrays. |
 | `hash.h` | Available | FNV-1a, SipHash-2-4, CRC-32, SHA-256 - byte-exact, no OS dependency. CRC-32 uses eight 256-entry tables (8 KiB of read-only data) by default; build the library with `-DPROVEN_CRC32_SMALL=1` to keep one 1 KiB table, about 5x slower on long inputs, same output. |
 | `hash_legacy.h` | Available | SHA-1 and MD5, for formats that fix them (the WebSocket accept key, old checksum files). Same shape as SHA-256; no table larger than MD5's 64 constants. |
+| `url.h`, `http.h` | Available | URL parsing and percent-coding, and the HTTP/1.1 message codec. Pure text handling: no socket, no allocation. The transport is yours to supply - on a target with no sockets (wasm32, bare metal) the codec still parses and writes messages. `proven_http_date_format` takes a time you provide; the freestanding clock returns 0. |
 | `encode.h` | Available | Hex and Base64 - pure computation, no OS. |
 | `utf.h` | Available | Strict UTF-8 <-> UTF-16 transcoding - pure computation, no OS. `proven_utf8_append_to_u16str` is excluded with `PROVEN_NO_U16STR`; the rest works on raw `proven_u16` arrays. |
 | `fmt.h` | Available without float | Current profile defines `PROVEN_FMT_NO_FLOAT`. |

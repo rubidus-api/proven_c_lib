@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 660개: 소문자 `xcv_` 이름 508개와 대문자 `XCV_` 이름 152개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 727개: 소문자 `xcv_` 이름 557개와 대문자 `XCV_` 이름 170개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -107,6 +107,24 @@ alias 660개: 소문자 `xcv_` 이름 508개와 대문자 `XCV_` 이름 152개. 
 | `XCV_FS_TYPE_FILE` | `PROVEN_FS_TYPE_FILE` |
 | `XCV_FS_TYPE_OTHER` | `PROVEN_FS_TYPE_OTHER` |
 | `XCV_FS_WRITE` | `PROVEN_FS_WRITE` |
+| `XCV_HTTP_BODY_CHUNKED` | `PROVEN_HTTP_BODY_CHUNKED` |
+| `XCV_HTTP_BODY_LENGTH` | `PROVEN_HTTP_BODY_LENGTH` |
+| `XCV_HTTP_BODY_NONE` | `PROVEN_HTTP_BODY_NONE` |
+| `XCV_HTTP_BODY_UNTIL_CLOSE` | `PROVEN_HTTP_BODY_UNTIL_CLOSE` |
+| `XCV_HTTP_CONNECT` | `PROVEN_HTTP_CONNECT` |
+| `XCV_HTTP_DATE_SIZE` | `PROVEN_HTTP_DATE_SIZE` |
+| `XCV_HTTP_DEFAULT_MAX_HEAD` | `PROVEN_HTTP_DEFAULT_MAX_HEAD` |
+| `XCV_HTTP_DELETE` | `PROVEN_HTTP_DELETE` |
+| `XCV_HTTP_GET` | `PROVEN_HTTP_GET` |
+| `XCV_HTTP_HEAD` | `PROVEN_HTTP_HEAD` |
+| `XCV_HTTP_MAX_CHUNK_LINE` | `PROVEN_HTTP_MAX_CHUNK_LINE` |
+| `XCV_HTTP_MAX_TRAILER_BYTES` | `PROVEN_HTTP_MAX_TRAILER_BYTES` |
+| `XCV_HTTP_METHOD_OTHER` | `PROVEN_HTTP_METHOD_OTHER` |
+| `XCV_HTTP_OPTIONS` | `PROVEN_HTTP_OPTIONS` |
+| `XCV_HTTP_PATCH` | `PROVEN_HTTP_PATCH` |
+| `XCV_HTTP_POST` | `PROVEN_HTTP_POST` |
+| `XCV_HTTP_PUT` | `PROVEN_HTTP_PUT` |
+| `XCV_HTTP_TRACE` | `PROVEN_HTTP_TRACE` |
 | `XCV_INDEX_NOT_FOUND` | `PROVEN_INDEX_NOT_FOUND` |
 | `XCV_IS_OK` | `PROVEN_IS_OK` |
 | `XCV_KEY_TYPE_INT` | `PROVEN_KEY_TYPE_INT` |
@@ -334,6 +352,39 @@ alias 660개: 소문자 `xcv_` 이름 508개와 대문자 `XCV_` 이름 152개. 
 | `xcv_hex_decoded_size` | `proven_hex_decoded_size` |
 | `xcv_hex_encode` | `proven_hex_encode` |
 | `xcv_hex_encoded_size` | `proven_hex_encoded_size` |
+| `xcv_http_body_end` | `proven_http_body_end` |
+| `xcv_http_body_feed` | `proven_http_body_feed` |
+| `xcv_http_body_init` | `proven_http_body_init` |
+| `xcv_http_body_kind_t` | `proven_http_body_kind_t` |
+| `xcv_http_body_received` | `proven_http_body_received` |
+| `xcv_http_body_t` | `proven_http_body_t` |
+| `xcv_http_date_format` | `proven_http_date_format` |
+| `xcv_http_date_parse` | `proven_http_date_parse` |
+| `xcv_http_framing_t` | `proven_http_framing_t` |
+| `xcv_http_header_count` | `proven_http_header_count` |
+| `xcv_http_header_find` | `proven_http_header_find` |
+| `xcv_http_header_has_token` | `proven_http_header_has_token` |
+| `xcv_http_header_t` | `proven_http_header_t` |
+| `xcv_http_method_from_text` | `proven_http_method_from_text` |
+| `xcv_http_method_t` | `proven_http_method_t` |
+| `xcv_http_method_text` | `proven_http_method_text` |
+| `xcv_http_parse_request` | `proven_http_parse_request` |
+| `xcv_http_parse_response` | `proven_http_parse_response` |
+| `xcv_http_reason_phrase` | `proven_http_reason_phrase` |
+| `xcv_http_request_framing` | `proven_http_request_framing` |
+| `xcv_http_request_keep_alive` | `proven_http_request_keep_alive` |
+| `xcv_http_request_t` | `proven_http_request_t` |
+| `xcv_http_response_framing` | `proven_http_response_framing` |
+| `xcv_http_response_keep_alive` | `proven_http_response_keep_alive` |
+| `xcv_http_response_t` | `proven_http_response_t` |
+| `xcv_http_write_chunk_begin` | `proven_http_write_chunk_begin` |
+| `xcv_http_write_chunk_end` | `proven_http_write_chunk_end` |
+| `xcv_http_write_head_end` | `proven_http_write_head_end` |
+| `xcv_http_write_header` | `proven_http_write_header` |
+| `xcv_http_write_header_u64` | `proven_http_write_header_u64` |
+| `xcv_http_write_last_chunk` | `proven_http_write_last_chunk` |
+| `xcv_http_write_request_line` | `proven_http_write_request_line` |
+| `xcv_http_write_status_line` | `proven_http_write_status_line` |
 | `xcv_i16` | `proven_i16` |
 | `xcv_i32` | `proven_i32` |
 | `xcv_i64` | `proven_i64` |
@@ -666,6 +717,22 @@ alias 660개: 소문자 `xcv_` 이름 508개와 대문자 `XCV_` 이름 152개. 
 | `xcv_u8str_view_trim_start` | `proven_u8str_view_trim_start` |
 | `xcv_uintptr_align_up` | `proven_uintptr_align_up` |
 | `xcv_uintptr_t` | `proven_uintptr_t` |
+| `xcv_url_default_port` | `proven_url_default_port` |
+| `xcv_url_effective_port` | `proven_url_effective_port` |
+| `xcv_url_encode_component` | `proven_url_encode_component` |
+| `xcv_url_encode_path` | `proven_url_encode_path` |
+| `xcv_url_encoded_size_max` | `proven_url_encoded_size_max` |
+| `xcv_url_form_decode` | `proven_url_form_decode` |
+| `xcv_url_form_encode` | `proven_url_form_encode` |
+| `xcv_url_parse` | `proven_url_parse` |
+| `xcv_url_path_resolve` | `proven_url_path_resolve` |
+| `xcv_url_percent_decode` | `proven_url_percent_decode` |
+| `xcv_url_query_iter` | `proven_url_query_iter` |
+| `xcv_url_query_iter_t` | `proven_url_query_iter_t` |
+| `xcv_url_query_next` | `proven_url_query_next` |
+| `xcv_url_scheme_is` | `proven_url_scheme_is` |
+| `xcv_url_split_target` | `proven_url_split_target` |
+| `xcv_url_t` | `proven_url_t` |
 | `xcv_utf16_append_to_u8str` | `proven_utf16_append_to_u8str` |
 | `xcv_utf16_to_utf8` | `proven_utf16_to_utf8` |
 | `xcv_utf16_to_utf8_partial` | `proven_utf16_to_utf8_partial` |

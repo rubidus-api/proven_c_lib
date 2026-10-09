@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 76 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 79 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-09, Windows 11 test VM: x86-64 236 PASS, 0 FAIL, 7 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 140 registered tests plus the 104 runnable manual examples - 244 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 153 test files: the 140 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 143 registered tests plus the 110 runnable manual examples - 253 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 156 test files: the 143 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1120,6 +1120,55 @@ Sub-checks:
 - A connection as a transport: two formatted lines out, two lines in through the line reader, a 60 ms reader timeout, shutdown read as `PROVEN_ERR_EOF`, and close closing the connection.
 
 Failure tip: inspect `proven_net_poll_with` and the transport functions at the end of `src/proven/net.c`.
+
+### `tests/test_unit_url` - url: parsing, percent-coding, and a path that stays inside its root
+
+Intent: verify a URL comes apart into the components that were written, and that a request path is decoded once and cannot climb out of its root.
+
+Sub-checks:
+
+- Twenty-one URLs split into scheme, userinfo, host, port, path, query and fragment, with absent told apart from empty; the splits were cross-checked against Python's `urllib.parse.urlsplit`. Twenty-eight texts that are not an absolute URL with an authority (relative references, raw spaces, non-ASCII, bad escapes, bad ports, malformed brackets) are `PROVEN_ERR_INVALID_FORMAT` and leave the output untouched.
+- Default and effective ports; scheme comparison without case; request targets in origin-form, absolute-form and `*`, with authority-form, fragments and spaces refused.
+- A query walked pair by pair: empty values, a missing `=`, empty pairs skipped, `=` inside a value.
+- Percent decoding yields any byte (slash, NUL, 0xff), leaves `+` alone, works in place, and refuses a malformed escape; form decoding reads `+` as a space; the three encoders; all 256 byte values round-trip.
+- `proven_url_path_resolve`: twenty-eight paths resolve to the expected clean path, including `%252e%252e` staying a file name; fifteen climbs above the root - with the dots written, encoded, and mixed - are `PROVEN_ERR_PERMISSION`; thirty-two hostile paths (encoded slash, backslash, NUL and other controls, overlong and broken UTF-8, an encoded surrogate, bad escapes) are `PROVEN_ERR_INVALID_FORMAT`; a too-small output is `PROVEN_ERR_OUT_OF_BOUNDS`.
+- 200,000 paths generated from a small alphabet of dangerous pieces: every one that resolves is checked, on the output alone, to start at the root and to hold no dot segment, empty segment, backslash or control byte.
+
+Failure tip: inspect `src/proven/url.c`. A path in the hostile tables that resolves is a path that reaches a file outside the root.
+
+### `tests/test_unit_http_head` - http: the head parser
+
+Intent: verify what the HTTP/1.1 head parser accepts and refuses, and the two properties callers build on.
+
+Sub-checks:
+
+- A request head field by field: method, target, version, headers in order with values trimmed, views pointing into the parsed buffer, `head_size` at the start of the body; an unknown method kept as `OTHER`; leading empty lines skipped and counted.
+- Every proper prefix of fourteen valid requests and eight valid responses, each parsed from an exact-size copy, is `PROVEN_ERR_NEED_MORE`, and the whole is `PROVEN_OK` at exactly its length.
+- Thirty-one malformed requests - bare LF and bare CR, whitespace before the colon, obsolete folding, a missing colon, control bytes, DEL and NUL in a value, doubled spaces, a tab separator, a missing target or version, a lowercase protocol name, junk after the version, a non-token method, non-ASCII in the target - are `PROVEN_ERR_INVALID_FORMAT`; HTTP/2.0, 0.9, 1.2 and 3.0 are `PROVEN_ERR_UNSUPPORTED`.
+- Limits: one byte under the head limit with no end is `NEED_MORE`, at the limit it is `PROVEN_ERR_OUT_OF_BOUNDS`; a head of exactly the limit parses and one byte more does not; one field more than the array holds is `OUT_OF_BOUNDS`; a limit of 0 means the 16 KiB default.
+- Response heads with and without a reason phrase; fourteen malformed ones refused.
+- Header lookup without case, first-match, counting repetitions, tokens across repeated fields and inside lists; method and reason-phrase tables; the keep-alive rule for 1.1 and 1.0.
+- 300,000 mutated heads (replace, delete, insert, truncate, biased toward CR, LF, space, colon, NUL) parsed from buffers of exactly their size: the result is always one of five known codes, and every accepted head ends in CRLF CRLF, keeps its views inside the buffer, and has no unpaired CR or LF and no NUL.
+
+A separate differential program (RFC-0010, `rfc-0010-http-diff.py`) compared 20,000 generated heads with Python's `http.server`: every head this parser accepted, Python read identically.
+
+Failure tip: inspect `http_fields` and the two parse functions in `src/proven/http.c`.
+
+### `tests/test_unit_http_body` - http: framing, the body decoder, writers and dates
+
+Intent: verify that the length of a body is never a matter of opinion, that a body decodes the same however it arrives, and that a writer cannot be made to write a line it was not asked for.
+
+Sub-checks:
+
+- Request framing: none, a length (zero, and the largest 64-bit value), chunked in any case with surrounding whitespace. Nineteen ambiguous or malformed framings are `PROVEN_ERR_INVALID_FORMAT`: `Transfer-Encoding` with `Content-Length` in either order, two `Content-Length` fields equal or not, a list, a sign, an inner space, hex, an exponent, a decimal point, empty, letters, overflow, `Transfer-Encoding` on HTTP/1.0, an empty or comma-only or quoted coding. Nine codings other than a single plain `chunked` are `PROVEN_ERR_UNSUPPORTED`.
+- Response framing: a length, chunked, until-close; no body for `HEAD`, 1xx, 204, 304 and a successful `CONNECT`; contradictory framing refused even on a bodiless status.
+- A length-delimited body and a chunked one (extensions, a trailer, CRLF inside chunk data, the next request behind it) decoded whole, split in two at every position, and in pieces of one to seven bytes: identical payload, identical end position. Each piece is an exact-size copy and each payload is checked to lie inside it.
+- The body limit: exact fits, one byte less is `PROVEN_ERR_OUT_OF_BOUNDS`, a `Content-Length` over it is refused at init and a chunk over the remaining allowance when its size is read.
+- Twenty malformed chunk framings (no size, non-hex, `0x`, whitespace around the size, a sign, bare LF, wrong data length, seventeen digits, a control byte in an extension, bad trailers) are `PROVEN_ERR_INVALID_FORMAT` whole and byte by byte; the 256-byte chunk-line bound and the trailer bound; `PROVEN_ERR_INVALID_STATE` after any error; `PROVEN_ERR_NEED_MORE` from `body_end` for a body cut short.
+- Writers: a request and a chunked response written field by field are byte for byte as expected and parse back, the chunks decoding to the data written. Ten values and six names with CR, LF, NUL, another control, or edge whitespace are `PROVEN_ERR_INVALID_ARG`, as are a target with a space or line break, a reason with a line break, a status outside 100-999 and a zero-size chunk - and through all of it the length does not move and no byte of the buffer is written. Exact-fit and one-byte-short buffers.
+- Dates: the RFC 9110 example and five other moments format as expected; the three accepted forms parse to the same instant; the two-digit-year rule; twenty-six invalid texts refused (wrong weekday, 30 February, lowercase, a missing zero, ISO 8601); a leap second accepted; 200,000 random moments across the whole range of `proven_time_t` round-trip; a date past April 2262 is `PROVEN_ERR_OVERFLOW`.
+
+Failure tip: inspect `http_framing_headers`, `proven_http_body_feed`, the writers and the date functions in `src/proven/http.c`.
 
 ### `tests/test_unit_u16str` - U16 strings
 

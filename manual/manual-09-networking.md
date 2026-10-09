@@ -769,4 +769,4 @@ Unix-domain sockets need Windows 10 version 1803 or later; where the family is m
 - **A deadline on name resolution.** See section 2.
 - **Scale beyond `poll`.** No `epoll`, `kqueue` or completion ports.
 - **Unix-domain datagrams, raw sockets, multicast, socket options beyond `TCP_NODELAY`.**
-- **HTTP.** It is being built on this layer and will have its own chapter.
+- **HTTP.** The message codec is [Chapter 10](manual-10-http.md); the client and server that drive it over these sockets are being built.

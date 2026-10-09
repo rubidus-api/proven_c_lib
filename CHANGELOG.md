@@ -18,6 +18,57 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-09
+
+A MINOR release: two new public headers. Nothing public is removed or changed, and no error
+code is added.
+
+### Added
+
+- **`proven/url.h`: URLs.** `proven_url_parse` splits an absolute URL into views of what was
+  written - nothing is decoded and nothing is repaired; `proven_url_split_target` does the same
+  for an HTTP request target. `proven_url_percent_decode` and `proven_url_form_decode`,
+  `proven_url_encode_component`, `_encode_path` and `_form_encode`, a query iterator, and
+  default ports. Text that is not an absolute RFC 3986 URL with an authority is
+  `PROVEN_ERR_INVALID_FORMAT`.
+- **`proven_url_path_resolve`: a request path that cannot leave its root.** Decodes once, then
+  resolves `.` and `..`; a climb above the root is `PROVEN_ERR_PERMISSION`. An encoded slash, a
+  backslash, a NUL or other control character, and text that is not UTF-8 once decoded (which
+  catches overlong encodings) are `PROVEN_ERR_INVALID_FORMAT`. It handles path syntax; symbolic
+  links and Windows device names are still the caller's to check where the file is opened.
+- **`proven/http.h`: an HTTP/1.1 message codec.** The third step of the networking work
+  (RFC-0010). A codec, not a client or a server: it parses bytes you have and writes into
+  memory you supply.
+  - `proven_http_parse_request` and `proven_http_parse_response`: views into the buffer, a
+    caller-supplied header array, `PROVEN_ERR_NEED_MORE` for any valid prefix, and a head limit
+    that is enforced while the head is still incomplete.
+  - Strict by design, because parser disagreement is what request smuggling is made of: bare
+    LF or CR line endings, whitespace before a header's colon, obsolete line folding,
+    duplicate or non-numeric `Content-Length`, `Transfer-Encoding` together with
+    `Content-Length`, and any transfer coding but a single `chunked` are refused.
+  - `proven_http_request_framing` and `proven_http_response_framing` decide how the body is
+    delimited; `proven_http_body_init`, `_feed`, `_end` and `_received` decode it with no copy
+    and a caller-stated size limit, chunked bodies included.
+  - Writers that append to a buffer: request and status lines, headers, chunk framing. A
+    header name that is not a token, or a value, target or reason containing CR, LF or another
+    control character, is `PROVEN_ERR_INVALID_ARG` and nothing is written - response splitting
+    cannot be expressed.
+  - `proven_http_date_format` and `proven_http_date_parse` (the three forms RFC 9110 requires a
+    recipient to read). A valid date later than `proven_time_t` can hold - April 2262 - is
+    `PROVEN_ERR_OVERFLOW`, so `Expires` in the year 9999 can be told from a malformed date.
+  - Header lookup, token search, method and reason-phrase tables, keep-alive.
+- Both headers are pure text handling with no I/O: they are part of the freestanding profile
+  (so the cross matrix compiles them for Cortex-M, RISC-V and wasm32) and are **not** removed by
+  `PROVEN_NO_NET`.
+- **Manual chapter 10, "URLs and HTTP messages"**, in both editions, with three compiled
+  examples.
+- Tests for what v0.10.0 left untested: `PROVEN_NO_NET` is now a gate
+  (`test_portability_compile_nonet`); name resolution through the system resolver; and, on
+  POSIX, descriptor exhaustion answering `PROVEN_ERR_BUSY`.
+- **What this is not:** an HTTP client or server - nothing here opens a connection. HTTP/2,
+  content codings (`gzip`), cookies, authentication, multipart bodies and relative URLs are not
+  handled, and trailers after a chunked body are checked and skipped.
+
 ## [0.10.0] - 2026-10-09
 
 A MINOR release: a new public header, five new error codes and a new clock call. Nothing public
