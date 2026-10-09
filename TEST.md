@@ -1,4 +1,4 @@
-# proven Test Matrix (v0.8.0)
+# proven Test Matrix (v0.9.0)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 

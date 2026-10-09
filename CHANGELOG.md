@@ -18,6 +18,13 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-09
+
+A MINOR release: a new public header and a new cross target. Nothing public is removed or
+changed, and no error code is added. The first step of the networking work (RFC-0010): the two
+digests a WebSocket handshake and old checksum formats need, and the freestanding subset
+building for wasm32.
+
 ### Added
 
 - **`proven/hash_legacy.h`: SHA-1 and MD5** - `proven_sha1`, `proven_sha1_init` / `_update` /
@@ -32,6 +39,10 @@ written; their tags still exist.
   wasm32 and `wasm-ld` links them with no C runtime; an undefined symbol fails the link. The
   target is skipped, and reported as skipped, where Clang lacks the wasm32 target or `wasm-ld` is
   missing. It is compiled and linked, not executed, by the matrix.
+- **What wasm32 is and is not.** It is the freestanding subset only: no sockets, no filesystem,
+  no threads. A wasm32 link needs `__multi3` from compiler-rt's builtins in addition to
+  `memcpy`, `memmove`, `memset` and `memcmp`; the cross matrix's link program supplies it because
+  a build host need not have those builtins installed.
 
 ### Fixed
 
@@ -43,13 +54,6 @@ written; their tags still exist.
   builtin. Hosted builds are unchanged. The freestanding manual said the compile check catches
   a hosted header in a portable file; that was true only where the toolchain lacks the header,
   and the manual now says so.
-
-### Notes
-
-- wasm32 is the freestanding subset only: no sockets, no filesystem, no threads. A wasm32 link
-  needs `__multi3` from compiler-rt's builtins in addition to `memcpy`, `memmove`, `memset` and
-  `memcmp`; the cross matrix's link program supplies it because a build host need not have those
-  builtins installed.
 
 ## [0.8.0] - 2026-10-08
 
