@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-10
+
 A MINOR release: the SHA-2 digests, HMAC and HKDF that TLS will be built from, public because
 programs need them for their own purposes. One new public header and additions to two;
 nothing public is removed or changed.
