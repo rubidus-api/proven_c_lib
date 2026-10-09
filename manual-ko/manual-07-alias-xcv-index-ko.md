@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 554개: 소문자 `xcv_` 함수 이름 420개와 대문자 `XCV_` 매크로 이름 134개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 564개: 소문자 `xcv_` 함수 이름 430개와 대문자 `XCV_` 매크로 이름 134개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -359,6 +359,11 @@ alias 554개: 소문자 `xcv_` 함수 이름 420개와 대문자 `XCV_` 매크�
 | `xcv_map_set_u8_owned` | `proven_map_set_u8_owned` |
 | `xcv_map_set_with_scratch` | `proven_map_set_with_scratch` |
 | `xcv_map_t` | `proven_map_t` |
+| `xcv_md5` | `proven_md5` |
+| `xcv_md5_final` | `proven_md5_final` |
+| `xcv_md5_init` | `proven_md5_init` |
+| `xcv_md5_to_hex` | `proven_md5_to_hex` |
+| `xcv_md5_update` | `proven_md5_update` |
 | `xcv_mem_align_up` | `proven_mem_align_up` |
 | `xcv_mem_copy` | `proven_mem_copy` |
 | `xcv_mem_move` | `proven_mem_move` |
@@ -499,6 +504,11 @@ alias 554개: 소문자 `xcv_` 함수 이름 420개와 대문자 `XCV_` 매크�
 | `xcv_scan_u64` | `proven_scan_u64` |
 | `xcv_scan_u64_hex` | `proven_scan_u64_hex` |
 | `xcv_set_panic_handler` | `proven_set_panic_handler` |
+| `xcv_sha1` | `proven_sha1` |
+| `xcv_sha1_final` | `proven_sha1_final` |
+| `xcv_sha1_init` | `proven_sha1_init` |
+| `xcv_sha1_to_hex` | `proven_sha1_to_hex` |
+| `xcv_sha1_update` | `proven_sha1_update` |
 | `xcv_sha256` | `proven_sha256` |
 | `xcv_sha256_final` | `proven_sha256_final` |
 | `xcv_sha256_init` | `proven_sha256_init` |

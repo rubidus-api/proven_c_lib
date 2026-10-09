@@ -39,6 +39,30 @@ int memcmp(const void *a, const void *b, __SIZE_TYPE__ n) {
     return 0;
 }
 
+#if defined(__wasm__)
+/* wasm32 only: the compiler lowers a 128-bit multiply to a call to __multi3, which lives in the
+ * compiler's support library (compiler-rt builtins) - the counterpart of -lgcc on the other
+ * freestanding targets. A host need not have that library installed for wasm32, so the link
+ * supplies this one helper itself; a real wasm32 build links the builtins instead. It is written
+ * with 64-bit arithmetic only, so that it cannot call itself. */
+typedef union { unsigned __int128 all; struct { unsigned long long lo, hi; } part; } proven_nocrt_u128;
+
+__int128 __multi3(__int128 a, __int128 b) {
+    proven_nocrt_u128 x, y, r;
+    x.all = (unsigned __int128)a;
+    y.all = (unsigned __int128)b;
+    const unsigned long long mask = 0xffffffffull;
+    unsigned long long a0 = x.part.lo & mask, a1 = x.part.lo >> 32;
+    unsigned long long b0 = y.part.lo & mask, b1 = y.part.lo >> 32;
+    unsigned long long p00 = a0 * b0, p01 = a0 * b1, p10 = a1 * b0, p11 = a1 * b1;
+    unsigned long long mid = (p00 >> 32) + (p01 & mask) + (p10 & mask);
+    r.part.lo = (p00 & mask) | (mid << 32);
+    r.part.hi = p11 + (p01 >> 32) + (p10 >> 32) + (mid >> 32) +
+                x.part.lo * y.part.hi + x.part.hi * y.part.lo;
+    return (__int128)r.all;
+}
+#endif
+
 static proven_byte_t g_mem[4096];
 volatile int g_result;
 

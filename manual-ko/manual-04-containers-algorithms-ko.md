@@ -954,6 +954,107 @@ int main(void) {
 }
 ```
 
+### 레거시 다이제스트: SHA-1과 MD5
+
+`proven/hash_legacy.h`에는 깨졌지만 남의 형식이 여전히 이름을 부르는 다이제스트 둘이 있다. 입력을
+고를 수 있는 사람은 MD5가 같은 서로 다른 메시지 둘을 몇 초 만에 만들고, SHA-1이 같은 둘도 알려진,
+감당할 만한 비용으로 만든다. 누군가 속여서 이득을 볼 수 있는 곳에서 두 가지가 "같은가"를 정하는
+데에는 둘 다 쓸 수 없다. 그 일은 여전히 `proven_sha256`의 것이다.
+
+이 둘은 선택권이 없는 경우를 위해 있다.
+
+| 형식이 요구하는 것 | 쓸 것 | 만나는 곳 |
+|---|---|---|
+| SHA-1 | `proven_sha1` | WebSocket accept 키(RFC 6455), `sha1sum` 파일, Git 객체 이름 |
+| MD5 | `proven_md5` | 오래된 서버에 대한 HTTP Digest 인증, `md5sum` 파일, `Content-MD5` |
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_sha1(view, out[20])` | 한 번에 계산하는 SHA-1. | void. `PROVEN_SHA1_SIZE`바이트를 쓴다. |
+| `proven_sha1_init/_update/_final` | 같은 다이제스트를 청크의 흐름 위에서. | void. |
+| `proven_sha1_to_hex(digest, out[41])` | `sha1sum`과 `git`이 찍는 40자 소문자 표기. NUL로 끝난다. | void. |
+| `proven_md5(view, out[16])` | 한 번에 계산하는 MD5. | void. `PROVEN_MD5_SIZE`바이트를 쓴다. |
+| `proven_md5_init/_update/_final` | 같은 다이제스트를 청크의 흐름 위에서. | void. |
+| `proven_md5_to_hex(digest, out[33])` | `md5sum`이 찍는 32자 소문자 표기. NUL로 끝난다. | void. |
+
+`proven_sha1_t`와 `proven_md5_t`는 `proven_sha256_t`처럼 호출자가 소유하는 상태다. 할당하는 것이
+없고 destroy할 것도 없다. 두 다이제스트 모두 규격(FIPS 180-4, RFC 1321)에서 구현했고 그 문서가
+싣고 있는 벡터로 검사했다. 이 헤더는 프리스탠딩 빌드에서도 쓸 수 있다.
+
+잘못된 예 — 더 짧다는 이유로 깨진 다이제스트를 고르는 새 설계:
+
+```text
+proven_byte_t id[PROVEN_MD5_SIZE];
+proven_md5(upload, id);              /* wrong: two different uploads can share this id */
+store_under(id, upload);
+```
+
+올바른 예 — 선택권이 있다면 `proven_sha256`이다. 32바이트가 들어갈 자리에 비해 길면 그 출력을
+잘라 쓴다.
+
+테스트 스위트가 컴파일하고 실행한다:
+
+<!-- example: manual/examples/ko/ex_04_hash_legacy.c -->
+```c
+/*
+ * SHA-1과 MD5. 둘 다 상대가 입력에 손댈 수 있는 곳에서는 깨진 해시이고, 둘 다 아무도 바꿀 수
+ * 없는 형식에 여전히 적혀 있다. 부를 이유는 그것 하나뿐이다.
+ */
+
+int main(void) {
+    /* WebSocket 핸드셰이크(RFC 6455): 서버는 클라이언트의 키를 읽었다는 증거로
+     * SHA-1(키 + 고정 GUID)을 Base64로 돌려준다. 형식이 SHA-1이라고 하니 SHA-1이다. */
+    proven_sha1_t ctx;
+    proven_sha1_init(&ctx);
+    proven_sha1_update(&ctx, proven_mem_view_from_u8(PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ==")));
+    proven_sha1_update(&ctx, proven_mem_view_from_u8(PROVEN_LIT("258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+    proven_byte_t sha1[PROVEN_SHA1_SIZE];
+    proven_sha1_final(&ctx, sha1);
+
+    proven_byte_t accept[32];
+    proven_size_t accept_len = 0;
+    proven_err_t err = proven_base64_encode((proven_mem_view_t){ .ptr = sha1, .size = sizeof sha1 },
+                                            accept, sizeof accept, &accept_len);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "20 bytes encode to 28 Base64 characters");
+    EXAMPLE_REQUIRE(proven_u8str_view_eq((proven_u8str_view_t){ .ptr = accept, .size = accept_len },
+                                         PROVEN_LIT("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")),
+                    "the accept key printed in RFC 6455 section 1.3");
+
+    /* 한 번에 계산하기, 그리고 sha1sum과 git이 찍는 hex 표기. */
+    proven_mem_view_t data = proven_mem_view_from_u8(PROVEN_LIT("abc"));
+    proven_sha1(data, sha1);
+    char sha1_hex[41];
+    proven_sha1_to_hex(sha1, sha1_hex);
+    EXAMPLE_REQUIRE(proven_cstr_len(sha1_hex) == 40, "a SHA-1 digest is 40 hex characters");
+
+    /* MD5: 내려받은 파일을 md5sum 출력으로 공개된 체크섬 파일과 맞춰 본다. 손상된 다운로드는
+     * 잡는다. 위조된 것은 못 잡는다 - 같은 MD5를 가진 두 번째 파일은 누구나 만들 수 있다. */
+    proven_byte_t md5[PROVEN_MD5_SIZE];
+    proven_md5(data, md5);
+    char md5_hex[33];
+    proven_md5_to_hex(md5, md5_hex);
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_view_from_cstr(md5_hex),
+                                         PROVEN_LIT("900150983cd24fb0d6963f7d28e17f72")),
+                    "the digest md5sum prints for \"abc\"");
+
+    /* MD5도 스트림으로 먹일 수 있다. 다이제스트는 바이트에만 달려 있다. */
+    proven_md5_t mctx;
+    proven_md5_init(&mctx);
+    proven_md5_update(&mctx, proven_mem_view_from_u8(PROVEN_LIT("a")));
+    proven_md5_update(&mctx, proven_mem_view_from_u8(PROVEN_LIT("bc")));
+    proven_byte_t streamed[PROVEN_MD5_SIZE];
+    proven_md5_final(&mctx, streamed);
+
+    bool same = true;
+    for (proven_size_t i = 0; i < PROVEN_MD5_SIZE; ++i) {
+        if (streamed[i] != md5[i]) same = false;
+    }
+    EXAMPLE_REQUIRE(same, "two updates of the pieces equal one hash of the whole");
+
+    return EXAMPLE_OK();
+}
+```
+
 ## 7. 바이트를 텍스트로: hex와 Base64
 
 일단 어떤 것을 해싱할 수 있고(위) 무작위 토큰을 뽑을 수 있으면(`random.h`), 그 바이트를

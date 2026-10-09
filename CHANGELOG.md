@@ -18,6 +18,39 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **`proven/hash_legacy.h`: SHA-1 and MD5** - `proven_sha1`, `proven_sha1_init` / `_update` /
+  `_final`, `proven_sha1_to_hex`, and the same five for `proven_md5`, with `xcv_` aliases. Both
+  digests are broken against an adversary and are here only for formats that name them: the
+  WebSocket accept key (RFC 6455) is now `proven_sha1` followed by `proven_base64_encode`. They
+  are written from FIPS 180-4 and RFC 1321, checked against those documents' vectors and against
+  `sha1sum` / `md5sum` at the padding and block boundaries, and are available in freestanding
+  builds. The umbrella header includes the new header. Fingerprinting content is still
+  `proven_sha256`.
+- **`freestanding-wasm32` in `./nob cross`.** Clang compiles every freestanding source for
+  wasm32 and `wasm-ld` links them with no C runtime; an undefined symbol fails the link. The
+  target is skipped, and reported as skipped, where Clang lacks the wasm32 target or `wasm-ld` is
+  missing. It is compiled and linked, not executed, by the matrix.
+
+### Fixed
+
+- **The freestanding profile no longer needs C library headers.** `float_decimal.c` and
+  `float_format.c` included `<string.h>` and `proven_sys_math.c` included `<math.h>` in
+  freestanding builds. The Cortex-M and RISC-V toolchains ship those headers, so the cross
+  matrix passed; a toolchain without them (bare Clang for wasm32) could not compile the three
+  files. They now declare the memory functions they call and use the compiler's `isfinite`
+  builtin. Hosted builds are unchanged. The freestanding manual said the compile check catches
+  a hosted header in a portable file; that was true only where the toolchain lacks the header,
+  and the manual now says so.
+
+### Notes
+
+- wasm32 is the freestanding subset only: no sockets, no filesystem, no threads. A wasm32 link
+  needs `__multi3` from compiler-rt's builtins in addition to `memcpy`, `memmove`, `memset` and
+  `memcmp`; the cross matrix's link program supplies it because a build host need not have those
+  builtins installed.
+
 ## [0.8.0] - 2026-10-08
 
 A MINOR release: nothing public removed or added. Behaviour change: the two refusals 0.7.0 left

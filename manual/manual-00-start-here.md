@@ -666,6 +666,7 @@ copied or moved** while the handle is alive.
 | State object | Constructed by | The handle it backs | Notes |
 |---|---|---|---|
 | `proven_sha256_t` | `proven_sha256_init` | (used directly) | A hashing context. Safe to copy *before* you start, meaningless to copy mid-stream unless you intend to fork the hash. |
+| `proven_sha1_t`, `proven_md5_t` | `proven_sha1_init`, `proven_md5_init` | (used directly) | The legacy digest contexts; the same rules as `proven_sha256_t`. |
 | `proven_xoshiro256ss_t` | `proven_xoshiro256ss_seed` | `proven_rng_t` | Copying it **clones the sequence** - deliberate and useful for a replay, a bug anywhere else. |
 | `proven_chacha_rng_t` | `proven_chacha_rng_seed` / `_seed_from_entropy` | `proven_rng_t` | Copying it clones the keystream: two "independent" tokens become the same token. |
 | `proven_writer_buf_t` | `proven_writer_from_buffer` | `proven_writer_t` | **Do not copy.** |
@@ -970,6 +971,7 @@ Two things this table tells you that the file names do not:
 | `map.h` | Open-addressing map | Chapter 4 |
 | `algorithm.h` | Array sort and search helpers | Chapter 4 |
 | `hash.h` | FNV-1a, SipHash-2-4, CRC-32, SHA-256, by use case | Chapter 4 |
+| `hash_legacy.h` | SHA-1 and MD5, for formats that fix them | Chapter 4 |
 | `encode.h` | Hex and Base64 (standard + URL-safe), bytes to text and back | Chapter 4 |
 | `fs.h` | Files, directories, metadata, links, locks, read-all, tree walk | Chapter 5 |
 | `stream.h` | Buffered writers, readers, and a line reader - and, through `sysio.h`, the standard streams (hosted-only) | Chapter 5 |

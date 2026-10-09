@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-554 aliases: 420 lowercase `xcv_` function names and 134 uppercase `XCV_` macro names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+564 aliases: 430 lowercase `xcv_` function names and 134 uppercase `XCV_` macro names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -357,6 +357,11 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_map_set_u8_owned` | `proven_map_set_u8_owned` |
 | `xcv_map_set_with_scratch` | `proven_map_set_with_scratch` |
 | `xcv_map_t` | `proven_map_t` |
+| `xcv_md5` | `proven_md5` |
+| `xcv_md5_final` | `proven_md5_final` |
+| `xcv_md5_init` | `proven_md5_init` |
+| `xcv_md5_to_hex` | `proven_md5_to_hex` |
+| `xcv_md5_update` | `proven_md5_update` |
 | `xcv_mem_align_up` | `proven_mem_align_up` |
 | `xcv_mem_copy` | `proven_mem_copy` |
 | `xcv_mem_move` | `proven_mem_move` |
@@ -497,6 +502,11 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_scan_u64` | `proven_scan_u64` |
 | `xcv_scan_u64_hex` | `proven_scan_u64_hex` |
 | `xcv_set_panic_handler` | `proven_set_panic_handler` |
+| `xcv_sha1` | `proven_sha1` |
+| `xcv_sha1_final` | `proven_sha1_final` |
+| `xcv_sha1_init` | `proven_sha1_init` |
+| `xcv_sha1_to_hex` | `proven_sha1_to_hex` |
+| `xcv_sha1_update` | `proven_sha1_update` |
 | `xcv_sha256` | `proven_sha256` |
 | `xcv_sha256_final` | `proven_sha256_final` |
 | `xcv_sha256_init` | `proven_sha256_init` |

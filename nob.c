@@ -913,6 +913,10 @@ static void append_cross_cflags(Nob_Cmd *cmd, const Proven_Cross_Target *target,
 /* Targets that also link a smoke executable instead of compiling only.
  * This catches link-time symbol resolution that differs from ELF, notably
  * PE/COFF (Windows / mingw-w64) weak-symbol handling. */
+static bool cross_target_is_wasm(const Proven_Cross_Target *target) {
+    return strncmp(target->name, "freestanding-wasm", 17) == 0;
+}
+
 static bool target_links_smoke(const Proven_Cross_Target *target) {
     return !target->freestanding && strncmp(target->name, "windows-", 8) == 0;
 }
@@ -1136,6 +1140,11 @@ static bool run_cross_target(const Proven_Cross_Target *target, const char *stan
             return false;
         }
         smoke_count = 1;
+        /* The freestanding smoke test reports through <stdio.h>, which the embedded toolchains
+         * ship and bare Clang for wasm32 does not. That target has no C library headers at all,
+         * so its consumer-side check is the no-CRT link program below, which includes proven.h
+         * and needs none. */
+        if (cross_target_is_wasm(target)) smoke_count = 0;
     }
     const char *smoke_obj_paths[NOB_ARRAY_LEN(cross_compile_tests)];
     for (size_t i = 0; i < smoke_count; ++i) {
@@ -1168,17 +1177,25 @@ static bool run_cross_target(const Proven_Cross_Target *target, const char *stan
         const char *nocrt_src = nob_temp_sprintf("%s.c", freestanding_link_tests[0].path);
         char elf_path[768];
         if (!format_path(elf_path, sizeof(elf_path), "%s/nocrt-link.elf", target_dir)) return false;
+        /* wasm32 has no libgcc and, on a host without the compiler-rt builtins for that target,
+         * no support library at all: the link program supplies the one helper the objects call
+         * (__multi3), wasm-ld refuses any other undefined symbol, and the result is a module
+         * rather than an executable. */
+        const bool wasm = cross_target_is_wasm(target);
         Nob_Cmd link = {0};
         nob_cmd_append(&link, target->compiler);
         append_cross_cflags(&link, target, standard_flag, sysroot);
-        nob_cmd_append(&link, "-nostartfiles", "-static", "-Wl,-e,proven_nocrt_entry");
+        if (wasm) nob_cmd_append(&link, "-nostartfiles", "-Wl,--no-entry", "-Wl,--export=proven_nocrt_entry");
+        else nob_cmd_append(&link, "-nostartfiles", "-static", "-Wl,-e,proven_nocrt_entry");
         for (size_t i = 0; i < srcs_count; ++i) {
             if (!cross_source_is_freestanding(srcs[i])) continue;
             char link_obj[256];
             sanitize_name(link_obj, sizeof link_obj, srcs[i]);
             nob_cmd_append(&link, nob_temp_sprintf("%s/%s.o", target_dir, link_obj));
         }
-        nob_cmd_append(&link, nocrt_src, "-lgcc", "-o", elf_path);
+        nob_cmd_append(&link, nocrt_src);
+        if (!wasm) nob_cmd_append(&link, "-lgcc");
+        nob_cmd_append(&link, "-o", elf_path);
         bool linked = nob_cmd_run_sync(link);
         nob_cmd_free(link);
         if (!linked) {
@@ -1186,7 +1203,8 @@ static bool run_cross_target(const Proven_Cross_Target *target, const char *stan
             nob_log(NOB_ERROR, "[PROVEN][TEST][FAIL_HINT] %s", freestanding_link_tests[0].failure_hint);
             return false;
         }
-        nob_log(NOB_INFO, "[PROVEN][TEST][INFO] path=cross/%s stage=nocrt-link linked with only memcpy, memmove, memset, memcmp and -lgcc", target->name);
+        nob_log(NOB_INFO, "[PROVEN][TEST][INFO] path=cross/%s stage=nocrt-link linked with only memcpy, memmove, memset, memcmp and %s", target->name,
+                wasm ? "__multi3" : "-lgcc");
     }
 
     if (target_links_smoke(target)) {
@@ -1247,6 +1265,8 @@ static bool run_cross_compile_matrix(const char *build_root, const char *sysroot
         { "freestanding-arm-cortex-m4", "arm-none-eabi-gcc", true, "-mcpu=cortex-m4", "-mthumb" },
         { "freestanding-riscv64-elf", "riscv64-elf-gcc", true, NULL, NULL },
         { "freestanding-riscv64-unknown-elf", "riscv64-unknown-elf-gcc", true, NULL, NULL },
+        /* RFC-0010: Clang only, compile and no-CRT link; nothing is executed. */
+        { "freestanding-wasm32", "clang", true, "--target=wasm32", NULL },
     };
 
     if (!mkdir_p_safe(build_root)) return false;
@@ -1272,6 +1292,9 @@ static bool run_cross_compile_matrix(const char *build_root, const char *sysroot
         if (!command_available(target->compiler)) {
             nob_log(NOB_WARNING, "Skipping %s: compiler not found: %s", target->name, target->compiler);
             result[t] = CROSS_SKIP; why[t] = "compiler not found"; ++skipped;
+        } else if (cross_target_is_wasm(target) && !command_available("wasm-ld")) {
+            nob_log(NOB_WARNING, "Skipping %s: linker not found: wasm-ld", target->name);
+            result[t] = CROSS_SKIP; why[t] = "wasm-ld not found"; ++skipped;
         } else if (!cross_target_toolchain_usable(build_root, target, sysroot, &standard_flag)) {
             result[t] = CROSS_SKIP; why[t] = "target flags or sysroot not usable"; ++skipped;
         } else if (run_cross_target(target, standard_flag, build_root, sysroot, srcs, srcs_count)) {

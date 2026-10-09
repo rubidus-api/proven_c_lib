@@ -966,6 +966,109 @@ int main(void) {
 }
 ```
 
+### Legacy digests: SHA-1 and MD5
+
+`proven/hash_legacy.h` holds two digests that are broken and that other people's formats still
+name. Someone who chooses the input can build two different messages with the same MD5 in
+seconds, and with the same SHA-1 for a known and affordable cost. Neither may decide whether two
+things are "the same" when someone gains by fooling you - that stays `proven_sha256`.
+
+They are here for the cases where you do not get to choose:
+
+| The format says... | Use | Where you meet it |
+|---|---|---|
+| SHA-1 | `proven_sha1` | the WebSocket accept key (RFC 6455); `sha1sum` files; Git object names |
+| MD5 | `proven_md5` | HTTP Digest authentication against old servers; `md5sum` files; `Content-MD5` |
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_sha1(view, out[20])` | One-shot SHA-1. | void; writes `PROVEN_SHA1_SIZE` bytes. |
+| `proven_sha1_init/_update/_final` | The same digest over a stream of chunks. | void. |
+| `proven_sha1_to_hex(digest, out[41])` | The 40-character lowercase spelling `sha1sum` and `git` print. NUL-terminated. | void. |
+| `proven_md5(view, out[16])` | One-shot MD5. | void; writes `PROVEN_MD5_SIZE` bytes. |
+| `proven_md5_init/_update/_final` | The same digest over a stream of chunks. | void. |
+| `proven_md5_to_hex(digest, out[33])` | The 32-character lowercase spelling `md5sum` prints. NUL-terminated. | void. |
+
+`proven_sha1_t` and `proven_md5_t` are caller-owned state like `proven_sha256_t`: nothing is
+allocated and there is nothing to destroy. Both digests are implemented from their specifications
+(FIPS 180-4, RFC 1321) and checked against the vectors those documents print; the header is
+available in freestanding builds.
+
+Wrong - a new design that picks a broken digest because it is shorter:
+
+```text
+proven_byte_t id[PROVEN_MD5_SIZE];
+proven_md5(upload, id);              /* wrong: two different uploads can share this id */
+store_under(id, upload);
+```
+
+Correct - when the choice is yours it is `proven_sha256`; truncate its output if 32 bytes is
+too long for the place it goes.
+
+Compiled and run by the test suite:
+
+<!-- example: manual/examples/en/ex_04_hash_legacy.c -->
+```c
+/*
+ * SHA-1 and MD5. Both are broken for anything an adversary can influence, and both are still
+ * written into formats nobody can change - which is the only reason to call them.
+ */
+
+int main(void) {
+    /* The WebSocket handshake (RFC 6455): the server proves it read the client's key by
+     * returning SHA-1(key + a fixed GUID), in Base64. The format says SHA-1, so SHA-1 it is. */
+    proven_sha1_t ctx;
+    proven_sha1_init(&ctx);
+    proven_sha1_update(&ctx, proven_mem_view_from_u8(PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ==")));
+    proven_sha1_update(&ctx, proven_mem_view_from_u8(PROVEN_LIT("258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+    proven_byte_t sha1[PROVEN_SHA1_SIZE];
+    proven_sha1_final(&ctx, sha1);
+
+    proven_byte_t accept[32];
+    proven_size_t accept_len = 0;
+    proven_err_t err = proven_base64_encode((proven_mem_view_t){ .ptr = sha1, .size = sizeof sha1 },
+                                            accept, sizeof accept, &accept_len);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "20 bytes encode to 28 Base64 characters");
+    EXAMPLE_REQUIRE(proven_u8str_view_eq((proven_u8str_view_t){ .ptr = accept, .size = accept_len },
+                                         PROVEN_LIT("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")),
+                    "the accept key printed in RFC 6455 section 1.3");
+
+    /* One-shot, and the hex spelling sha1sum and git print. */
+    proven_mem_view_t data = proven_mem_view_from_u8(PROVEN_LIT("abc"));
+    proven_sha1(data, sha1);
+    char sha1_hex[41];
+    proven_sha1_to_hex(sha1, sha1_hex);
+    EXAMPLE_REQUIRE(proven_cstr_len(sha1_hex) == 40, "a SHA-1 digest is 40 hex characters");
+
+    /* MD5: checking a download against a checksum file published as md5sum output. That
+     * catches a damaged download. It does not catch a forged one - anyone can build a second
+     * file with the same MD5. */
+    proven_byte_t md5[PROVEN_MD5_SIZE];
+    proven_md5(data, md5);
+    char md5_hex[33];
+    proven_md5_to_hex(md5, md5_hex);
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_view_from_cstr(md5_hex),
+                                         PROVEN_LIT("900150983cd24fb0d6963f7d28e17f72")),
+                    "the digest md5sum prints for \"abc\"");
+
+    /* MD5 streams too; the digest depends only on the bytes. */
+    proven_md5_t mctx;
+    proven_md5_init(&mctx);
+    proven_md5_update(&mctx, proven_mem_view_from_u8(PROVEN_LIT("a")));
+    proven_md5_update(&mctx, proven_mem_view_from_u8(PROVEN_LIT("bc")));
+    proven_byte_t streamed[PROVEN_MD5_SIZE];
+    proven_md5_final(&mctx, streamed);
+
+    bool same = true;
+    for (proven_size_t i = 0; i < PROVEN_MD5_SIZE; ++i) {
+        if (streamed[i] != md5[i]) same = false;
+    }
+    EXAMPLE_REQUIRE(same, "two updates of the pieces equal one hash of the whole");
+
+    return EXAMPLE_OK();
+}
+```
+
 ## 7. Bytes to text: hex and Base64
 
 Once you can hash a thing (above) and draw a random token (`random.h`), you need to write those

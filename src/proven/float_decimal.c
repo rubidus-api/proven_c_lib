@@ -1,7 +1,16 @@
 #include "float_decimal.h"
 #include "float_decimal_tables.h"
 #include "proven/float_config.h"
+#if !defined(PROVEN_FREESTANDING)
 #include <string.h>
+#else
+/* A freestanding build may have no C library headers at all (bare Clang for wasm32 has none), so
+ * the three runtime services this file uses are declared rather than included. They are among
+ * the four the freestanding contract requires of the environment (B-034). */
+void *memcpy(void *dst, const void *src, proven_size_t n);
+void *memmove(void *dst, const void *src, proven_size_t n);
+void *memset(void *dst, int value, proven_size_t n);
+#endif
 
 static proven_u32 proven_float_bits_copy_u32(float value) {
     proven_u32 bits = 0;

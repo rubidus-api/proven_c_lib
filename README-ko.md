@@ -541,6 +541,7 @@ proven_u8str_destroy(alloc, &src.value);
 | **신뢰할 수 없는** 입력의 키를 해싱 | `proven_hash_keyed` — SipHash. (`proven_map`이 이미 이걸 씁니다: 문자열 키 맵은 **기본이 HashDoS 저항**) |
 | 디스크·전송 중 **손상** 검출 | `proven_crc32` — gzip/zlib/PNG와 상호운용 |
 | 콘텐츠 **지문** — 중복제거, "같은 파일인가?" | `proven_sha256` — **고의로 위조된** 일치까지 막는 유일한 것 |
+| 내가 정할 수 없는 형식이 **SHA-1이나 MD5**를 요구 (WebSocket 핸드셰이크, 오래된 체크섬 파일) | `hash_legacy.h`의 `proven_sha1`, `proven_md5` — 둘 다 깨졌고, 새로 만드는 것에는 쓰지 않습니다 |
 | 키, 토큰, 논스 | `proven_random_bytes` (OS CSPRNG), 또는 그걸로 시드한 `proven_chacha_rng_t` |
 | **재현 가능한** 실행 — 시뮬레이션, 테스트 | `proven_xoshiro256ss_t`. 빠르고 시드로 정확히 재생. **비밀에는 절대 금지** |
 
@@ -634,7 +635,7 @@ portable implementation 파일은 `src/proven/`에 있습니다. OS와 C runtime
 - memory mapping
 - 필요한 경우의 math helper
 
-이 분리는 core library를 감사하기 쉽게 만들고, 포팅 작업이 들어갈 위치도 분명하게 해 줍니다. 현재 주요 런타임 대상은 hosted Linux입니다. 선택적 toolchain이 설치되어 있으면 빌드는 Linux AArch64, Linux ARM hard-float, Linux i686, MinGW Windows x86_64/i686, ARM Cortex-M freestanding, RISC-V ELF freestanding용 smoke source를 크로스 컴파일합니다. MinGW 경로는 smoke 실행 파일도 링크하지만, 어떤 크로스 경로도 대상 코드를 실행하지는 않습니다.
+이 분리는 core library를 감사하기 쉽게 만들고, 포팅 작업이 들어갈 위치도 분명하게 해 줍니다. 현재 주요 런타임 대상은 hosted Linux입니다. 선택적 toolchain이 설치되어 있으면 빌드는 Linux AArch64, Linux ARM hard-float, Linux i686, MinGW Windows x86_64/i686, ARM Cortex-M freestanding, RISC-V ELF freestanding용 smoke source를 크로스 컴파일합니다. wasm32는 Clang으로 freestanding 부분집합을 컴파일하고 링크합니다. MinGW 경로는 smoke 실행 파일도 링크하지만, 어떤 크로스 경로도 대상 코드를 실행하지는 않습니다.
 
 Cross compilation은 header, source visibility, ABI assumption, target별 compile-time branch가 함께 맞는지 확인하는 용도입니다. 대상 머신에서의 runtime test를 대신하지는 않습니다.
 

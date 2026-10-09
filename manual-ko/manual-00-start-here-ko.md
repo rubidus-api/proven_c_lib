@@ -650,6 +650,7 @@ if (!proven_alloc_is_valid(heap)) {
 | State 객체 | 생성 함수 | 뒷받침하는 핸들 | 비고 |
 |---|---|---|---|
 | `proven_sha256_t` | `proven_sha256_init` | (직접 사용) | 해싱 컨텍스트. 시작 *전*에는 복사해도 안전하고, 스트림 도중 복사는 해시를 fork하려는 의도가 아닌 한 무의미. |
+| `proven_sha1_t`, `proven_md5_t` | `proven_sha1_init`, `proven_md5_init` | (직접 사용) | 레거시 다이제스트 컨텍스트. `proven_sha256_t`와 같은 규칙이다. |
 | `proven_xoshiro256ss_t` | `proven_xoshiro256ss_seed` | `proven_rng_t` | 복사하면 **수열이 복제됩니다** — 재현(replay)에는 의도적이고 유용하지만, 그 외에는 버그. |
 | `proven_chacha_rng_t` | `proven_chacha_rng_seed` / `_seed_from_entropy` | `proven_rng_t` | 복사하면 키스트림이 복제됩니다: "독립적인" 두 토큰이 같은 토큰이 됨. |
 | `proven_writer_buf_t` | `proven_writer_from_buffer` | `proven_writer_t` | **복사 금지.** |
@@ -944,6 +945,7 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | `map.h` | Open-addressing map | 챕터 4 |
 | `algorithm.h` | Array 정렬·검색 헬퍼 | 챕터 4 |
 | `hash.h` | FNV-1a, SipHash-2-4, CRC-32, SHA-256, 용도별 | 챕터 4 |
+| `hash_legacy.h` | SHA-1과 MD5, 그것을 못 박은 형식용 | 챕터 4 |
 | `encode.h` | Hex와 Base64 (표준 + URL-safe), 바이트↔텍스트 | 챕터 4 |
 | `fs.h` | 파일, 디렉터리, 메타데이터, 링크, 락, read-all, 트리 순회 | 챕터 5 |
 | `stream.h` | 버퍼드 writer·읽기 스트림(reader)와 line reader — 그리고 `sysio.h`를 통해 표준 스트림 (hosted 전용) | 챕터 5 |

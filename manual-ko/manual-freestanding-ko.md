@@ -115,6 +115,7 @@ src/proven/ring.c
 src/proven/map.c
 src/proven/algorithm.c
 src/proven/hash.c
+src/proven/hash_legacy.c
 src/proven/encode.c
 src/proven/random.c
 src/proven/float_decimal.c
@@ -185,6 +186,7 @@ platform/proven_sys_mem.c
 | `array.h`, `list.h`, `ring.h`, `map.h` | 사용 가능 | 숨겨진 OS 의존성 없음. |
 | `algorithm.h` | 사용 가능 | 배열용 정렬/검색 헬퍼. |
 | `hash.h` | 사용 가능 | FNV-1a, SipHash-2-4, CRC-32, SHA-256 — 바이트 단위로 정확, OS 의존성 없음. CRC-32는 기본으로 256항목 표 여덟 개(읽기 전용 데이터 8 KiB)를 쓴다. 라이브러리를 `-DPROVEN_CRC32_SMALL=1`로 빌드하면 1 KiB 표 하나만 남는다. 긴 입력에서 약 5배 느리고 결과는 같다. |
+| `hash_legacy.h` | 사용 가능 | SHA-1과 MD5. 그것을 못 박은 형식(WebSocket accept 키, 오래된 체크섬 파일)을 위한 것이다. SHA-256과 같은 모양이고, MD5의 상수 64개보다 큰 표는 없다. |
 | `encode.h` | 사용 가능 | Hex와 Base64 — 순수 계산, OS 없음. |
 | `utf.h` | 사용 가능 | 엄격한 UTF-8 <-> UTF-16 변환 — 순수 계산, OS 없음. `proven_utf8_append_to_u16str`는 `PROVEN_NO_U16STR`와 함께 제외되고, 나머지는 `proven_u16` 배열 위에서 동작한다. |
 | `fmt.h` | 부동소수점 없이 사용 가능 | 현재 프로파일은 `PROVEN_FMT_NO_FLOAT`를 정의한다. |
@@ -465,11 +467,23 @@ GCC나 Clang으로 컴파일한 모든 프리스탠딩 C 프로그램이 필요�
 부동소수점 헬퍼). newlib, picolibc, 벤더 HAL에는 이미 이 넷이 있고, 없다면 각각 몇 줄이다. `strlen`도,
 `malloc`도, stdio도, 시작 파일도 필요 없다.
 
+C 라이브러리의 **헤더**도 필요 없다. 라이브러리의 프리스탠딩 소스는 프리스탠딩 컴파일러가 스스로
+제공하는 헤더(`<stddef.h>`, `<stdint.h>`, `<limits.h>` 같은 것)만 포함하고, `memcpy`를 부르는 곳에서는
+그것을 직접 선언한다. v0.9.0 전에는 그렇지 않았다. 세 파일이 `<string.h>`나 `<math.h>`를 포함했는데,
+임베디드 툴체인에는 그것이 마침 들어 있고 맨 Clang에는 없다. 아래의 wasm32 타깃이 그것을 찾아냈고,
+이제는 다시 생기지 않게 지킨다.
+
 바란 것이 아니라 검사한 것이다: `./nob cross`는 Cortex-M4와 RISC-V에 대해 라이브러리의 모든 프리스탠딩
 오브젝트를 그 네 함수만 제공하는 프로그램과 `-nostdlib -nostartfiles -static -lgcc`로
 링크한다(`tests/test_portability_freestanding_nocrt_link.c`). 정적 링크는 해결되지 않은 심볼이 하나라도
 있으면 실패하므로, 깨끗한 링크가 곧 증거다. 실행하지는 않는다 - 여기에는 보드가 없다 - 그래서 타깃에서의
 동작은 여전히 당신이 시험해야 한다.
+
+wasm32도 Clang과 `wasm-ld`로 같은 링크를 거치며, `wasm-ld` 역시 정의되지 않은 심볼을 거부한다. 지원
+라이브러리는 `libgcc`가 아니라 compiler-rt의 builtins이고, 라이브러리가 거기서 필요로 하는 도우미는
+128비트 곱셈인 `__multi3` 하나다. 빌드 호스트에 wasm32용 builtins가 설치돼 있지 않을 수 있으므로 링크
+프로그램이 그 함수 하나를 직접 제공한다. 여러분의 wasm32 빌드는 builtins를 링크한다. 여기서 wasm32에는
+소켓도 파일 시스템도 없다. 호스티드 포트가 아니라 다른 타깃과 같은 프리스탠딩 부분집합이다.
 
 ## 10. 수명 규칙은 여전히 적용된다
 
@@ -522,7 +536,7 @@ freestanding 프로파일은 깨진다 — 호스트 빌드에서는 아무도 �
 그래서 이 프로파일은 서술되는 대신 릴리스마다 빌드된다. `./nob freestanding`은 이식 가능한 코어를
 `-ffreestanding`과 이 프로파일의 정의들로 컴파일하고, 아래의 검사들을 빌드 호스트에서
 **정적으로** 링크한 뒤 실행한다. 그런 다음 `./nob cross`가 같은 프로파일을 실제 임베디드 대상 —
-그중에도 Cortex-M과 RISC-V — 에 대해 컴파일 전용 매트릭스로 컴파일한다.
+그중에도 Cortex-M, RISC-V, wasm32 — 에 대해 컴파일 전용 매트릭스로 컴파일한다.
 
 두 검사는 무엇을 잡아낼지를 기준으로 골랐다:
 
@@ -530,7 +544,9 @@ freestanding 프로파일은 깨진다 — 호스트 빌드에서는 아무도 �
   거부하는 무언가를 반환함을 증명한다. 누군가 그것을 대신 링크 실패로 만들었다면 트레이트 기반
   코드가 베어메탈용으로 컴파일되지 않게 된다 — §3이 설명하는, 이 설계가 피하는 그 실패다.
 - **컴파일 검사**는 이 프로파일에 대해 대표적인 프로그램을 빌드하며, 이것이 호스티드 헤더가 이식
-  가능한 파일에 몰래 들어오는 것을 잡아낸다.
+  가능한 파일에 몰래 들어오는 것을 잡아낸다 - 툴체인에 그 헤더가 없을 때에 한해서다. 호스트와 임베디드
+  툴체인에는 `<string.h>`가 언제나 있으므로, 이 검사를 완전하게 만드는 것은 C 라이브러리 헤더가 아예
+  없는 wasm32 타깃이다.
 
 어느 쪽도 실제 하드웨어에서 돌지 않으며, 이 가이드는 그렇다고 주장하지 않는다: 정렬 폴트,
 엔디안, 타이밍에는 보드가 필요하다. 검증되는 것은 검증될 수 있는 부분이고, 그것이 모든 빌드에서
@@ -552,6 +568,7 @@ tests/test_portability_freestanding
 freestanding-arm-cortex-m4        arm-none-eabi-gcc -mcpu=cortex-m4 -mthumb
 freestanding-riscv64-elf          riscv64-elf-gcc
 freestanding-riscv64-unknown-elf  riscv64-unknown-elf-gcc
+freestanding-wasm32               clang --target=wasm32
 ```
 
 모든 타깃은 PASS, FAIL, SKIP으로 보고된다. 없는 툴체인은 SKIP이다 - 통과가 아니라 증거의 빈자리다. 프리스탠딩 타깃은 건너뛸 수 있지만, 네이티브 호스트 컴파일러와 두 Windows 타깃은 건너뛸 수 없다. 실제 컴파일이나 링크 실패는 명령을 실패시킨다. 런타임 동작은 여전히 대상 또는 에뮬레이터에서의 검증이 필요하다.

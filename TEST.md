@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 69 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 70 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -342,12 +342,12 @@ The whole hosted suite also runs natively on Windows, cross-built with mingw-w64
 
 `-no-run` builds and installs every test executable and runs none. The build driver asks the compiler for its target (`-dumpmachine`); for a Windows target the executables are `.exe`, linked `-static` with `-lbcrypt`, and never `-ldl`. A maintainers' script (`win11kd-full-suite.sh`, not in this repository) builds both word sizes, sends the tracked tree and the executables to a Windows machine, and runs them there with `win11kd-run-suite.ps1`, which records PASS, FAIL, SKIP (a POSIX-only test that skipped itself - counted apart, since it proves nothing on Windows) and TIMEOUT per test.
 
-Last run, 2026-10-08, Windows 11 test VM: x86-64 217 PASS, 0 FAIL, 7 SKIP; i686 the same. The seven skips are fixtures whose subject is POSIX: `test_portability_nob_std_probe` and `test_portability_nob_clean` (they drive `./nob` through a POSIX shell), `test_regression_fs_walk_errors` (libc interposition with `dlsym`), `test_unit_fs_walk` (chmod 000 and `ln -s` cycles), `test_regression_fs_backslash_parent` (a backslash as an ordinary byte), `test_regression_fs_private_staging` and `test_regression_fs_perms_and_types` (POSIX modes). `test_unit_sysio_streams`, `test_regression_scanner_float_split` and `test_regression_scanner_short_read` run on Windows too.
+Last run, 2026-10-09, Windows 11 test VM: x86-64 220 PASS, 0 FAIL, 7 SKIP; i686 the same. The seven skips are fixtures whose subject is POSIX: `test_portability_nob_std_probe` and `test_portability_nob_clean` (they drive `./nob` through a POSIX shell), `test_regression_fs_walk_errors` (libc interposition with `dlsym`), `test_unit_fs_walk` (chmod 000 and `ln -s` cycles), `test_regression_fs_backslash_parent` (a backslash as an ordinary byte), `test_regression_fs_private_staging` and `test_regression_fs_perms_and_types` (POSIX modes). `test_unit_sysio_streams`, `test_regression_scanner_float_split` and `test_regression_scanner_short_read` run on Windows too.
 
 ## Test catalog
 
 
-The hosted full run builds and executes 132 registered tests plus the 92 runnable manual examples - 224 executables in all. `./nob regression` re-runs a 35-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 145 test files: the 132 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 133 registered tests plus the 94 runnable manual examples - 227 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 146 test files: the 133 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -662,6 +662,21 @@ Sub-checks:
 - Every entry point guards a `{NULL, size>0}` view the way SHA-256 does, rather than dereferencing it.
 
 Failure tip: inspect `src/proven/hash.c`. The algorithms are implemented from their specifications; a KAT mismatch means a rotation, round count, or endianness is off.
+
+### `tests/test_unit_hash_legacy` - legacy digests: SHA-1 and MD5
+
+Intent: verify the two digests of `hash_legacy.h` are the SHA-1 and the MD5 that formats name, bit for bit, against vectors that exist outside this repository.
+
+Sub-checks:
+
+- SHA-1: the FIPS 180-4 vectors - empty, `"abc"`, the 56-byte example, a sentence, and one million `a` streamed in 997-byte chunks.
+- MD5: all seven messages of the RFC 1321 test suite.
+- Both, at 55, 56, 57, 63, 64, 65, 119 and 120 bytes - each side of the padding boundary and of the block boundary - against the digests `sha1sum` and `md5sum` print.
+- Both: a 200-byte input cut in two at every one of its 201 positions, and fed one byte at a time, gives the one-shot digest.
+- The hex spellings are 40 and 32 lowercase characters, NUL-terminated; a `{NULL, 0}` view is the empty message.
+- The WebSocket accept key of RFC 6455 section 1.3, from `proven_sha1` and `proven_base64_encode`.
+
+Failure tip: inspect `src/proven/hash_legacy.c`. A boundary-length failure points at `legacy_pad` (the `0x80` byte, the zero fill, the byte order of the bit length); a vector failure at one compression function.
 
 ### `tests/test_unit_job` - job system
 
@@ -2007,6 +2022,7 @@ a slot count drifts or a producer stalls.
 - `tests/test_unit_rng`
 - `tests/test_unit_map_keyed`
 - `tests/test_unit_hash`
+- `tests/test_unit_hash_legacy`
 - `tests/test_unit_fs_walk`
 - `tests/test_regression_fs_backslash_parent`
 - `tests/test_regression_job_seq_wrap`
@@ -2200,8 +2216,11 @@ The matrix compiles `tests/test_portability_cross_compile_smoke.c` (or `tests/te
 - `freestanding-arm-cortex-m4` through `arm-none-eabi-gcc -mcpu=cortex-m4 -mthumb`
 - `freestanding-riscv64-elf` through `riscv64-elf-gcc`
 - `freestanding-riscv64-unknown-elf` through `riscv64-unknown-elf-gcc`
+- `freestanding-wasm32` through `clang --target=wasm32` (needs `wasm-ld`)
 
 Hosted targets compile all hosted source files and `tests/test_portability_cross_compile_smoke.c`. Freestanding targets compile only freestanding-safe source files and `tests/test_portability_freestanding.c` as a smoke translation unit.
+
+`freestanding-wasm32` differs in two ways, both because bare Clang for wasm32 ships no C library headers and no support library. It does not compile `tests/test_portability_freestanding.c`, which reports through `<stdio.h>`; its consumer-side check is the no-CRT link program, which includes `proven.h` and needs no hosted header. And that link supplies `__multi3` (the 128-bit multiply from compiler-rt's builtins) beside the four memory functions, where the other freestanding targets link `-lgcc`. `wasm-ld` refuses any other undefined symbol, so the link is the same evidence. The module is not executed by `./nob cross`. Because this target has no hosted headers at all, it is also the one that fails when a freestanding source includes one - three did until v0.9.0.
 
 Failure tip: if the log says the compiler is missing, fix the build-server toolchain rather than the library. If the target probe fails, check sysroot, multilib headers, or target flags. If a later library source file fails, treat it as a real portability bug.
 

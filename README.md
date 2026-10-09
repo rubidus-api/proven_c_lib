@@ -569,6 +569,7 @@ There is no single "hash" and no single "random". Which one is correct depends o
 | Hash keys from **untrusted** input | `proven_hash_keyed` - SipHash. (`proven_map` already does this for you: string-key maps are HashDoS-resistant by default.) |
 | Detect **corruption** on disk or in transit | `proven_crc32` - interoperates with gzip/zlib/PNG |
 | **Fingerprint** content - dedup, "same file?" | `proven_sha256` - the only one safe against a *deliberately* forged match |
+| A format you do not control says **SHA-1 or MD5** (a WebSocket handshake, an old checksum file) | `proven_sha1`, `proven_md5` in `hash_legacy.h` - both broken, neither for anything new |
 | A key, a token, a nonce | `proven_random_bytes` (the OS CSPRNG), or a `proven_chacha_rng_t` seeded from it |
 | A **reproducible** run - a simulation, a test | `proven_xoshiro256ss_t`. Fast, replays exactly from its seed, and **never** for a secret |
 
@@ -663,7 +664,7 @@ Portable implementation files live in `src/proven/`. OS and C runtime calls are 
 - memory mapping
 - math helpers where needed
 
-This split keeps the core library easier to audit and gives ports a clear place to work. Hosted Linux is the primary runtime target today. When optional toolchains are installed, the build cross-compiles Linux AArch64, Linux ARM hard-float, Linux i686, MinGW Windows x86_64/i686, ARM Cortex-M freestanding, and RISC-V ELF freestanding smoke sources. MinGW lanes also link a smoke executable; no cross lane executes target code.
+This split keeps the core library easier to audit and gives ports a clear place to work. Hosted Linux is the primary runtime target today. When optional toolchains are installed, the build cross-compiles Linux AArch64, Linux ARM hard-float, Linux i686, MinGW Windows x86_64/i686, ARM Cortex-M freestanding, and RISC-V ELF freestanding smoke sources, and compiles and links the freestanding subset for wasm32 with Clang. MinGW lanes also link a smoke executable; no cross lane executes target code.
 
 Cross compilation shows that headers, source visibility, ABI assumptions, and compile-time platform branches line up. It does not replace runtime tests on the target machine.
 

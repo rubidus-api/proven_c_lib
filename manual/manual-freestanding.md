@@ -116,6 +116,7 @@ src/proven/ring.c
 src/proven/map.c
 src/proven/algorithm.c
 src/proven/hash.c
+src/proven/hash_legacy.c
 src/proven/encode.c
 src/proven/random.c
 src/proven/float_decimal.c
@@ -186,6 +187,7 @@ on every release, not asserted in this table.
 | `array.h`, `list.h`, `ring.h`, `map.h` | Available | No hidden OS dependency. |
 | `algorithm.h` | Available | Sort/search helpers for arrays. |
 | `hash.h` | Available | FNV-1a, SipHash-2-4, CRC-32, SHA-256 - byte-exact, no OS dependency. CRC-32 uses eight 256-entry tables (8 KiB of read-only data) by default; build the library with `-DPROVEN_CRC32_SMALL=1` to keep one 1 KiB table, about 5x slower on long inputs, same output. |
+| `hash_legacy.h` | Available | SHA-1 and MD5, for formats that fix them (the WebSocket accept key, old checksum files). Same shape as SHA-256; no table larger than MD5's 64 constants. |
 | `encode.h` | Available | Hex and Base64 - pure computation, no OS. |
 | `utf.h` | Available | Strict UTF-8 <-> UTF-16 transcoding - pure computation, no OS. `proven_utf8_append_to_u16str` is excluded with `PROVEN_NO_U16STR`; the rest works on raw `proven_u16` arrays. |
 | `fmt.h` | Available without float | Current profile defines `PROVEN_FMT_NO_FLOAT`. |
@@ -470,11 +472,24 @@ whatever the source says, and the compiler's own support library (`libgcc`: on C
 four; if you have none, they are a few lines each. No `strlen`, no `malloc`, no stdio, no startup
 files.
 
+No C library **headers** either. The library's freestanding sources include only the headers a
+freestanding compiler supplies itself (`<stddef.h>`, `<stdint.h>`, `<limits.h>` and their kind);
+where one calls `memcpy` it declares it. That was not true before v0.9.0: three files included
+`<string.h>` or `<math.h>`, which the embedded toolchains happen to ship and a bare Clang does not.
+The wasm32 target below is what found it, and what now keeps it found.
+
 That is checked, not hoped for: `./nob cross` links every freestanding object of the library,
 for Cortex-M4 and RISC-V, with a program that supplies only those four functions, using
 `-nostdlib -nostartfiles -static -lgcc` (`tests/test_portability_freestanding_nocrt_link.c`). A
 static link fails on any unresolved symbol, so a clean link is the evidence. It is not run - there
 is no board here - so behaviour on the target is still yours to test.
+
+wasm32 gets the same link with Clang and `wasm-ld`, which also refuses an undefined symbol. Its
+support library is compiler-rt's builtins rather than `libgcc`, and the one helper the library
+needs from it is `__multi3`, the 128-bit multiply. A build host need not have those builtins
+installed for wasm32, so the link program supplies that one function itself; your own wasm32 build
+links the builtins. wasm32 has no sockets and no filesystem here: it is the same freestanding
+subset as the other targets, not a hosted port.
 
 ## 10. Lifetime rules still apply
 
@@ -527,15 +542,17 @@ commit and the freestanding profile is broken - on a host build nothing would no
 So the profile is built on every release rather than described. `./nob freestanding` compiles the
 portable core with `-ffreestanding` and the profile's defines, links the checks below **statically**
 on the build host, and runs them. `./nob cross` then compiles the same profile for real embedded
-targets - Cortex-M and RISC-V among them - as a compile-only matrix.
+targets - Cortex-M, RISC-V and wasm32 among them - as a compile-only matrix.
 
 The two checks are chosen for what they would catch:
 
 - The **heap stub** check proves `proven_heap_allocator()` still exists and returns something
   `proven_alloc_is_valid` rejects. If somebody made it fail to link instead, trait-based code would
   stop compiling for bare metal - the failure section 3 explains this design avoids.
-- The **compile check** builds a representative program against the profile, which is what catches
-  a hosted header sneaking into a portable file.
+- The **compile check** builds a representative program against the profile, which catches a hosted
+  header sneaking into a portable file - when the toolchain lacks that header. On the host and on
+  the embedded toolchains `<string.h>` is always there, so it is the wasm32 target, which has no C
+  library headers at all, that makes this check complete.
 
 Neither runs on the actual hardware, and this guide does not claim otherwise: alignment faults,
 endianness and timing need a board. What is verified is the part that can be, on every build,
@@ -557,6 +574,7 @@ The cross command performs compile-only checks for available embedded compilers:
 freestanding-arm-cortex-m4        arm-none-eabi-gcc -mcpu=cortex-m4 -mthumb
 freestanding-riscv64-elf          riscv64-elf-gcc
 freestanding-riscv64-unknown-elf  riscv64-unknown-elf-gcc
+freestanding-wasm32               clang --target=wasm32
 ```
 
 Every target is reported as PASS, FAIL or SKIP. A missing toolchain is a SKIP - a gap in the evidence, not a pass; the freestanding targets may be skipped, the native host compilers and both Windows targets may not. Real compile or link failures fail the command. Runtime behavior still needs validation on the target or emulator.

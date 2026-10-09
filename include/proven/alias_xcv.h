@@ -337,6 +337,11 @@
 #define xcv_map_set_u8_owned proven_map_set_u8_owned
 #define xcv_map_set_with_scratch proven_map_set_with_scratch
 #define xcv_map_t proven_map_t
+#define xcv_md5 proven_md5
+#define xcv_md5_final proven_md5_final
+#define xcv_md5_init proven_md5_init
+#define xcv_md5_to_hex proven_md5_to_hex
+#define xcv_md5_update proven_md5_update
 #define xcv_mem_align_up proven_mem_align_up
 #define xcv_mem_copy proven_mem_copy
 #define xcv_mem_move proven_mem_move
@@ -477,6 +482,11 @@
 #define xcv_scan_u64 proven_scan_u64
 #define xcv_scan_u64_hex proven_scan_u64_hex
 #define xcv_set_panic_handler proven_set_panic_handler
+#define xcv_sha1 proven_sha1
+#define xcv_sha1_final proven_sha1_final
+#define xcv_sha1_init proven_sha1_init
+#define xcv_sha1_to_hex proven_sha1_to_hex
+#define xcv_sha1_update proven_sha1_update
 #define xcv_sha256 proven_sha256
 #define xcv_sha256_final proven_sha256_final
 #define xcv_sha256_init proven_sha256_init

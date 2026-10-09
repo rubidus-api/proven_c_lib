@@ -628,8 +628,8 @@ happen at run time, and anything timing-dependent. Those need real hardware or a
 matrix does not pretend otherwise. It is the cheap half of portability testing, run on every build,
 rather than the expensive half run never.
 
-Cross builds are also where the freestanding profile is exercised for real targets - Cortex-M and
-RISC-V among them - so the "no operating system" claim is checked by a compiler rather than by a
+Cross builds are also where the freestanding profile is exercised for real targets - Cortex-M,
+RISC-V and wasm32 among them - so the "no operating system" claim is checked by a compiler rather than by a
 paragraph in a guide.
 
 Wrong - treating a green cross matrix as proof the library runs on that target:

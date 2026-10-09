@@ -28,6 +28,32 @@ int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("chapter 4, legacy digests",
+        "The sizes and spellings the SHA-1 and MD5 section states as fact.",
+        "");
+    // ---------------------------------------------------------------
+    {
+        /* CLAIM: "proven_sha1(view, out[20])" and "proven_md5(view, out[16])". */
+        PROVEN_TEST_ASSERT(PROVEN_SHA1_SIZE == 20 && PROVEN_MD5_SIZE == 16,
+            "the digest sizes must be the ones the chapter's reference table gives", "");
+
+        /* CLAIM: "The 40-character lowercase spelling sha1sum and git print. NUL-terminated."
+         * and "The 32-character lowercase spelling md5sum prints. NUL-terminated." */
+        proven_byte_t s1[PROVEN_SHA1_SIZE];
+        char s1hex[41];
+        proven_sha1(proven_mem_view_from_u8(PROVEN_LIT("abc")), s1);
+        proven_sha1_to_hex(s1, s1hex);
+        PROVEN_TEST_ASSERT(strcmp(s1hex, "a9993e364706816aba3e25717850c26c9cd0d89d") == 0,
+            "proven_sha1_to_hex must be what sha1sum prints for \"abc\", as the chapter states", "");
+        proven_byte_t m5[PROVEN_MD5_SIZE];
+        char m5hex[33];
+        proven_md5(proven_mem_view_from_u8(PROVEN_LIT("abc")), m5);
+        proven_md5_to_hex(m5, m5hex);
+        PROVEN_TEST_ASSERT(strcmp(m5hex, "900150983cd24fb0d6963f7d28e17f72") == 0,
+            "proven_md5_to_hex must be what md5sum prints for \"abc\", as the chapter states", "");
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("chapter 4, hashing",
         "The values and guarantees the hashing section states as fact.",
         "");
