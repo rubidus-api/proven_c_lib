@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-10
+
 A MINOR release: readiness that does not slow down as connections are added, and the HTTP
 server moved onto it. One addition to a public header; nothing public is removed or changed.
 
