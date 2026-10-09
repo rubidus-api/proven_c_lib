@@ -110,6 +110,13 @@ proven_sys_net_result_t proven_sys_net_connect_start(const proven_sys_net_addr_t
 /** The outcome of a connect that was IN_PROGRESS, once the socket reported ready. */
 proven_sys_net_result_t proven_sys_net_connect_result(proven_sys_socket_t sock);
 
+/**
+ * Make two stream sockets connected to each other, both non-blocking and not inherited: what
+ * one writes the other reads. A Unix-domain socket pair on POSIX; on Windows, which has none,
+ * a TCP connection through the loopback interface.
+ */
+proven_sys_net_result_t proven_sys_net_pair(proven_sys_socket_t *a, proven_sys_socket_t *b);
+
 /** Take one pending connection. WOULD_BLOCK when none is waiting. `peer` may be NULL. */
 proven_sys_net_result_t proven_sys_net_accept(proven_sys_socket_t listener, proven_sys_socket_t *out,
                                               proven_sys_net_addr_t *peer);

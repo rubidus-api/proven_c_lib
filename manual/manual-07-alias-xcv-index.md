@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-727 aliases: 557 lowercase `xcv_` names and 170 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+801 aliases: 623 lowercase `xcv_` names and 178 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -109,12 +109,19 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_HTTP_BODY_LENGTH` | `PROVEN_HTTP_BODY_LENGTH` |
 | `XCV_HTTP_BODY_NONE` | `PROVEN_HTTP_BODY_NONE` |
 | `XCV_HTTP_BODY_UNTIL_CLOSE` | `PROVEN_HTTP_BODY_UNTIL_CLOSE` |
+| `XCV_HTTP_BOUNDARY_SIZE` | `PROVEN_HTTP_BOUNDARY_SIZE` |
 | `XCV_HTTP_CONNECT` | `PROVEN_HTTP_CONNECT` |
+| `XCV_HTTP_COOKIE_MAX_SIZE` | `PROVEN_HTTP_COOKIE_MAX_SIZE` |
 | `XCV_HTTP_DATE_SIZE` | `PROVEN_HTTP_DATE_SIZE` |
 | `XCV_HTTP_DEFAULT_MAX_HEAD` | `PROVEN_HTTP_DEFAULT_MAX_HEAD` |
 | `XCV_HTTP_DELETE` | `PROVEN_HTTP_DELETE` |
+| `XCV_HTTP_DIGEST_MD5` | `PROVEN_HTTP_DIGEST_MD5` |
+| `XCV_HTTP_DIGEST_MD5_SESS` | `PROVEN_HTTP_DIGEST_MD5_SESS` |
+| `XCV_HTTP_DIGEST_SHA256` | `PROVEN_HTTP_DIGEST_SHA256` |
+| `XCV_HTTP_DIGEST_SHA256_SESS` | `PROVEN_HTTP_DIGEST_SHA256_SESS` |
 | `XCV_HTTP_GET` | `PROVEN_HTTP_GET` |
 | `XCV_HTTP_HEAD` | `PROVEN_HTTP_HEAD` |
+| `XCV_HTTP_LENGTH_UNKNOWN` | `PROVEN_HTTP_LENGTH_UNKNOWN` |
 | `XCV_HTTP_MAX_CHUNK_LINE` | `PROVEN_HTTP_MAX_CHUNK_LINE` |
 | `XCV_HTTP_MAX_TRAILER_BYTES` | `PROVEN_HTTP_MAX_TRAILER_BYTES` |
 | `XCV_HTTP_METHOD_OTHER` | `PROVEN_HTTP_METHOD_OTHER` |
@@ -122,6 +129,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_HTTP_PATCH` | `PROVEN_HTTP_PATCH` |
 | `XCV_HTTP_POST` | `PROVEN_HTTP_POST` |
 | `XCV_HTTP_PUT` | `PROVEN_HTTP_PUT` |
+| `XCV_HTTP_RANGE_TO_END` | `PROVEN_HTTP_RANGE_TO_END` |
 | `XCV_HTTP_TRACE` | `PROVEN_HTTP_TRACE` |
 | `XCV_INDEX_NOT_FOUND` | `PROVEN_INDEX_NOT_FOUND` |
 | `XCV_IS_OK` | `PROVEN_IS_OK` |
@@ -350,15 +358,49 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_hex_decoded_size` | `proven_hex_decoded_size` |
 | `xcv_hex_encode` | `proven_hex_encode` |
 | `xcv_hex_encoded_size` | `proven_hex_encoded_size` |
+| `xcv_http_auth_offers` | `proven_http_auth_offers` |
+| `xcv_http_basic_auth` | `proven_http_basic_auth` |
 | `xcv_http_body_end` | `proven_http_body_end` |
 | `xcv_http_body_feed` | `proven_http_body_feed` |
 | `xcv_http_body_init` | `proven_http_body_init` |
 | `xcv_http_body_kind_t` | `proven_http_body_kind_t` |
 | `xcv_http_body_received` | `proven_http_body_received` |
 | `xcv_http_body_t` | `proven_http_body_t` |
+| `xcv_http_client_config_t` | `proven_http_client_config_t` |
+| `xcv_http_client_create` | `proven_http_client_create` |
+| `xcv_http_client_destroy` | `proven_http_client_destroy` |
+| `xcv_http_client_finish` | `proven_http_client_finish` |
+| `xcv_http_client_get` | `proven_http_client_get` |
+| `xcv_http_client_read` | `proven_http_client_read` |
+| `xcv_http_client_read_all` | `proven_http_client_read_all` |
+| `xcv_http_client_request_t` | `proven_http_client_request_t` |
+| `xcv_http_client_response_t` | `proven_http_client_response_t` |
+| `xcv_http_client_send` | `proven_http_client_send` |
+| `xcv_http_client_t` | `proven_http_client_t` |
+| `xcv_http_content_range_parse` | `proven_http_content_range_parse` |
+| `xcv_http_cookie_jar_clear` | `proven_http_cookie_jar_clear` |
+| `xcv_http_cookie_jar_count` | `proven_http_cookie_jar_count` |
+| `xcv_http_cookie_jar_destroy` | `proven_http_cookie_jar_destroy` |
+| `xcv_http_cookie_jar_header` | `proven_http_cookie_jar_header` |
+| `xcv_http_cookie_jar_init` | `proven_http_cookie_jar_init` |
+| `xcv_http_cookie_jar_store` | `proven_http_cookie_jar_store` |
+| `xcv_http_cookie_jar_t` | `proven_http_cookie_jar_t` |
 | `xcv_http_date_format` | `proven_http_date_format` |
 | `xcv_http_date_parse` | `proven_http_date_parse` |
+| `xcv_http_digest_algorithm_t` | `proven_http_digest_algorithm_t` |
+| `xcv_http_digest_auth` | `proven_http_digest_auth` |
+| `xcv_http_digest_challenge_parse` | `proven_http_digest_challenge_parse` |
+| `xcv_http_digest_challenge_t` | `proven_http_digest_challenge_t` |
+| `xcv_http_exchange_begin` | `proven_http_exchange_begin` |
+| `xcv_http_exchange_end` | `proven_http_exchange_end` |
+| `xcv_http_exchange_peer` | `proven_http_exchange_peer` |
+| `xcv_http_exchange_read` | `proven_http_exchange_read` |
+| `xcv_http_exchange_request` | `proven_http_exchange_request` |
+| `xcv_http_exchange_respond` | `proven_http_exchange_respond` |
+| `xcv_http_exchange_t` | `proven_http_exchange_t` |
+| `xcv_http_exchange_write` | `proven_http_exchange_write` |
 | `xcv_http_framing_t` | `proven_http_framing_t` |
+| `xcv_http_handler_fn` | `proven_http_handler_fn` |
 | `xcv_http_header_count` | `proven_http_header_count` |
 | `xcv_http_header_find` | `proven_http_header_find` |
 | `xcv_http_header_has_token` | `proven_http_header_has_token` |
@@ -366,8 +408,14 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_method_from_text` | `proven_http_method_from_text` |
 | `xcv_http_method_t` | `proven_http_method_t` |
 | `xcv_http_method_text` | `proven_http_method_text` |
+| `xcv_http_multipart_boundary` | `proven_http_multipart_boundary` |
+| `xcv_http_multipart_write_content_type` | `proven_http_multipart_write_content_type` |
+| `xcv_http_multipart_write_end` | `proven_http_multipart_write_end` |
+| `xcv_http_multipart_write_part` | `proven_http_multipart_write_part` |
+| `xcv_http_multipart_write_part_end` | `proven_http_multipart_write_part_end` |
 | `xcv_http_parse_request` | `proven_http_parse_request` |
 | `xcv_http_parse_response` | `proven_http_parse_response` |
+| `xcv_http_range_parse` | `proven_http_range_parse` |
 | `xcv_http_reason_phrase` | `proven_http_reason_phrase` |
 | `xcv_http_request_framing` | `proven_http_request_framing` |
 | `xcv_http_request_keep_alive` | `proven_http_request_keep_alive` |
@@ -375,12 +423,24 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_response_framing` | `proven_http_response_framing` |
 | `xcv_http_response_keep_alive` | `proven_http_response_keep_alive` |
 | `xcv_http_response_t` | `proven_http_response_t` |
+| `xcv_http_server_config_t` | `proven_http_server_config_t` |
+| `xcv_http_server_connection_count` | `proven_http_server_connection_count` |
+| `xcv_http_server_create` | `proven_http_server_create` |
+| `xcv_http_server_destroy` | `proven_http_server_destroy` |
+| `xcv_http_server_listen` | `proven_http_server_listen` |
+| `xcv_http_server_poll` | `proven_http_server_poll` |
+| `xcv_http_server_run` | `proven_http_server_run` |
+| `xcv_http_server_stop` | `proven_http_server_stop` |
+| `xcv_http_server_t` | `proven_http_server_t` |
+| `xcv_http_tls_wrap_fn` | `proven_http_tls_wrap_fn` |
 | `xcv_http_write_chunk_begin` | `proven_http_write_chunk_begin` |
 | `xcv_http_write_chunk_end` | `proven_http_write_chunk_end` |
+| `xcv_http_write_content_range` | `proven_http_write_content_range` |
 | `xcv_http_write_head_end` | `proven_http_write_head_end` |
 | `xcv_http_write_header` | `proven_http_write_header` |
 | `xcv_http_write_header_u64` | `proven_http_write_header_u64` |
 | `xcv_http_write_last_chunk` | `proven_http_write_last_chunk` |
+| `xcv_http_write_range` | `proven_http_write_range` |
 | `xcv_http_write_request_line` | `proven_http_write_request_line` |
 | `xcv_http_write_status_line` | `proven_http_write_status_line` |
 | `xcv_i16` | `proven_i16` |
@@ -487,6 +547,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_net_listener_handle` | `proven_net_listener_handle` |
 | `xcv_net_listener_is_open` | `proven_net_listener_is_open` |
 | `xcv_net_listener_t` | `proven_net_listener_t` |
+| `xcv_net_pair` | `proven_net_pair` |
 | `xcv_net_poll` | `proven_net_poll` |
 | `xcv_net_poll_item_t` | `proven_net_poll_item_t` |
 | `xcv_net_poll_scratch_size` | `proven_net_poll_scratch_size` |
@@ -502,6 +563,12 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_net_udp_recv_from` | `proven_net_udp_recv_from` |
 | `xcv_net_udp_send_to` | `proven_net_udp_send_to` |
 | `xcv_net_udp_t` | `proven_net_udp_t` |
+| `xcv_net_waker_close` | `proven_net_waker_close` |
+| `xcv_net_waker_drain` | `proven_net_waker_drain` |
+| `xcv_net_waker_handle` | `proven_net_waker_handle` |
+| `xcv_net_waker_open` | `proven_net_waker_open` |
+| `xcv_net_waker_t` | `proven_net_waker_t` |
+| `xcv_net_waker_wake` | `proven_net_waker_wake` |
 | `xcv_net_write` | `proven_net_write` |
 | `xcv_net_write_all` | `proven_net_write_all` |
 | `xcv_panic` | `proven_panic` |
@@ -603,6 +670,11 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_sha256_to_hex` | `proven_sha256_to_hex` |
 | `xcv_sha256_update` | `proven_sha256_update` |
 | `xcv_size_t` | `proven_size_t` |
+| `xcv_sse_event_t` | `proven_sse_event_t` |
+| `xcv_sse_feed` | `proven_sse_feed` |
+| `xcv_sse_init` | `proven_sse_init` |
+| `xcv_sse_last_id` | `proven_sse_last_id` |
+| `xcv_sse_t` | `proven_sse_t` |
 | `xcv_strtod` | `proven_strtod` |
 | `xcv_sysio_file_buffered` | `proven_sysio_file_buffered` |
 | `xcv_sysio_lines_open` | `proven_sysio_lines_open` |
@@ -720,6 +792,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_url_encode_component` | `proven_url_encode_component` |
 | `xcv_url_encode_path` | `proven_url_encode_path` |
 | `xcv_url_encoded_size_max` | `proven_url_encoded_size_max` |
+| `xcv_url_form_append` | `proven_url_form_append` |
 | `xcv_url_form_decode` | `proven_url_form_decode` |
 | `xcv_url_form_encode` | `proven_url_form_encode` |
 | `xcv_url_parse` | `proven_url_parse` |
@@ -728,6 +801,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_url_query_iter` | `proven_url_query_iter` |
 | `xcv_url_query_iter_t` | `proven_url_query_iter_t` |
 | `xcv_url_query_next` | `proven_url_query_next` |
+| `xcv_url_resolve` | `proven_url_resolve` |
 | `xcv_url_scheme_is` | `proven_url_scheme_is` |
 | `xcv_url_split_target` | `proven_url_split_target` |
 | `xcv_url_t` | `proven_url_t` |

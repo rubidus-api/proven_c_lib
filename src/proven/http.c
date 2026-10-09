@@ -787,6 +787,206 @@ proven_err_t proven_http_write_last_chunk(proven_mem_mut_t out, proven_size_t *l
 }
 
 // -----------------------------------------------------------------------------
+// Ranges
+// -----------------------------------------------------------------------------
+
+proven_err_t proven_http_write_range(proven_mem_mut_t out, proven_size_t *len, proven_u64 first, proven_u64 last) {
+    http_w_t w;
+    if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
+    if (last < first) return PROVEN_ERR_INVALID_ARG;
+    http_put_cstr(&w, "Range: bytes=");
+    http_put_u64(&w, first, 10);
+    http_put_cstr(&w, "-");
+    if (last != PROVEN_HTTP_RANGE_TO_END) http_put_u64(&w, last, 10);
+    http_put_cstr(&w, "\r\n");
+    return http_w_end(&w, len);
+}
+
+proven_err_t proven_http_write_content_range(proven_mem_mut_t out, proven_size_t *len,
+                                             proven_u64 first, proven_u64 last, proven_u64 total) {
+    http_w_t w;
+    if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
+    if (first > last || last >= total) return PROVEN_ERR_INVALID_ARG;
+    http_put_cstr(&w, "Content-Range: bytes ");
+    http_put_u64(&w, first, 10);
+    http_put_cstr(&w, "-");
+    http_put_u64(&w, last, 10);
+    http_put_cstr(&w, "/");
+    http_put_u64(&w, total, 10);
+    http_put_cstr(&w, "\r\n");
+    return http_w_end(&w, len);
+}
+
+/* Decimal digits at s[*pos...], with overflow as "not a number". False when there are none. */
+static bool http_take_u64(proven_u8str_view_t s, proven_size_t *pos, proven_u64 *out) {
+    proven_size_t i = *pos;
+    proven_u64 n = 0;
+    while (i < s.size && s.ptr[i] >= '0' && s.ptr[i] <= '9') {
+        proven_u64 d = (proven_u64)(s.ptr[i] - '0');
+        if (n > (UINT64_MAX - d) / 10u) return false;
+        n = n * 10u + d;
+        i++;
+    }
+    if (i == *pos) return false;
+    *pos = i;
+    *out = n;
+    return true;
+}
+
+proven_err_t proven_http_range_parse(proven_u8str_view_t value, proven_u64 size, proven_u64 *first, proven_u64 *last) {
+    if (!first || !last || (value.size > 0 && !value.ptr)) return PROVEN_ERR_INVALID_ARG;
+    proven_size_t eq = 0;
+    while (eq < value.size && value.ptr[eq] != '=') eq++;
+    if (eq == value.size || eq == 0) return PROVEN_ERR_INVALID_FORMAT;
+    proven_u8str_view_t unit = { .ptr = value.ptr, .size = eq };
+    if (!http_is_token(unit)) return PROVEN_ERR_INVALID_FORMAT;
+    if (!http_eq_nocase(unit, http_cstr("bytes"))) return PROVEN_ERR_UNSUPPORTED;
+
+    proven_u8str_view_t spec = { .ptr = value.ptr + eq + 1, .size = value.size - eq - 1 };
+    for (proven_size_t i = 0; i < spec.size; ++i) if (spec.ptr[i] == ',') return PROVEN_ERR_UNSUPPORTED;
+    while (spec.size > 0 && http_is_ows(spec.ptr[0])) { spec.ptr++; spec.size--; }
+    while (spec.size > 0 && http_is_ows(spec.ptr[spec.size - 1])) spec.size--;
+
+    proven_size_t pos = 0;
+    proven_u64 a = 0, b = 0;
+    if (spec.size > 0 && spec.ptr[0] == '-') {
+        /* "-n": the last n bytes. */
+        pos = 1;
+        if (!http_take_u64(spec, &pos, &b) || pos != spec.size) return PROVEN_ERR_INVALID_FORMAT;
+        if (b == 0 || size == 0) return PROVEN_ERR_OUT_OF_BOUNDS;
+        *first = b >= size ? 0 : size - b;
+        *last = size - 1;
+        return PROVEN_OK;
+    }
+    if (!http_take_u64(spec, &pos, &a)) return PROVEN_ERR_INVALID_FORMAT;
+    if (pos >= spec.size || spec.ptr[pos] != '-') return PROVEN_ERR_INVALID_FORMAT;
+    pos++;
+    bool open = pos == spec.size;
+    if (!open && (!http_take_u64(spec, &pos, &b) || pos != spec.size)) return PROVEN_ERR_INVALID_FORMAT;
+    if (!open && b < a) return PROVEN_ERR_INVALID_FORMAT;
+    if (a >= size) return PROVEN_ERR_OUT_OF_BOUNDS;
+    *first = a;
+    *last = (open || b >= size) ? size - 1 : b;
+    return PROVEN_OK;
+}
+
+proven_err_t proven_http_content_range_parse(proven_u8str_view_t value, proven_u64 *first, proven_u64 *last,
+                                             proven_u64 *total, bool *has_total) {
+    if (!first || !last || !total || !has_total || (value.size > 0 && !value.ptr)) return PROVEN_ERR_INVALID_ARG;
+    static const char unit[] = "bytes ";
+    if (value.size < 6) return PROVEN_ERR_INVALID_FORMAT;
+    for (proven_size_t i = 0; i < 6; ++i) if (http_lower(value.ptr[i]) != (proven_byte_t)unit[i]) return PROVEN_ERR_INVALID_FORMAT;
+    proven_size_t pos = 6;
+    proven_u64 a = 0, b = 0, t = 0;
+    if (!http_take_u64(value, &pos, &a) || pos >= value.size || value.ptr[pos] != '-') return PROVEN_ERR_INVALID_FORMAT;
+    pos++;
+    if (!http_take_u64(value, &pos, &b) || pos >= value.size || value.ptr[pos] != '/') return PROVEN_ERR_INVALID_FORMAT;
+    pos++;
+    bool known = true;
+    if (pos + 1 == value.size && value.ptr[pos] == '*') { known = false; pos++; }
+    else if (!http_take_u64(value, &pos, &t)) return PROVEN_ERR_INVALID_FORMAT;
+    if (pos != value.size || a > b || (known && b >= t)) return PROVEN_ERR_INVALID_FORMAT;
+    *first = a;
+    *last = b;
+    *total = t;
+    *has_total = known;
+    return PROVEN_OK;
+}
+
+// -----------------------------------------------------------------------------
+// Multipart form data
+// -----------------------------------------------------------------------------
+
+void proven_http_multipart_boundary(const proven_byte_t random[16], proven_byte_t out[PROVEN_HTTP_BOUNDARY_SIZE]) {
+    static const char digits[] = "0123456789abcdef";
+    static const char prefix[] = "--proven";                 /* 8 characters, then 32 of hex */
+    if (!random || !out) return;
+    for (proven_size_t i = 0; i < 8; ++i) out[i] = (proven_byte_t)prefix[i];
+    for (proven_size_t i = 0; i < 16; ++i) {
+        out[8 + i * 2] = (proven_byte_t)digits[random[i] >> 4];
+        out[9 + i * 2] = (proven_byte_t)digits[random[i] & 0xf];
+    }
+}
+
+/* RFC 2046 boundary characters, less the ones that would need the parameter quoted. */
+static bool http_boundary_ok(proven_u8str_view_t b) {
+    if (b.size == 0 || b.size > 70) return false;
+    for (proven_size_t i = 0; i < b.size; ++i) {
+        proven_byte_t c = b.ptr[i];
+        bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                  c == '-' || c == '_' || c == '.' || c == '+';
+        if (!ok) return false;
+    }
+    return true;
+}
+
+proven_err_t proven_http_multipart_write_content_type(proven_mem_mut_t out, proven_size_t *len, proven_u8str_view_t boundary) {
+    http_w_t w;
+    if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
+    if (!http_boundary_ok(boundary)) return PROVEN_ERR_INVALID_ARG;
+    http_put_cstr(&w, "Content-Type: multipart/form-data; boundary=");
+    http_put(&w, boundary);
+    http_put_cstr(&w, "\r\n");
+    return http_w_end(&w, len);
+}
+
+/* A name inside a quoted string: '"', CR and LF percent-encoded, as browsers write them. */
+static void http_put_quoted_name(http_w_t *w, proven_u8str_view_t s) {
+    for (proven_size_t i = 0; i < s.size; ++i) {
+        proven_byte_t c = s.ptr[i];
+        if (c == '"') http_put_cstr(w, "%22");
+        else if (c == '\r') http_put_cstr(w, "%0D");
+        else if (c == '\n') http_put_cstr(w, "%0A");
+        else http_put(w, (proven_u8str_view_t){ .ptr = &s.ptr[i], .size = 1 });
+    }
+}
+
+proven_err_t proven_http_multipart_write_part(proven_mem_mut_t out, proven_size_t *len, proven_u8str_view_t boundary,
+                                              proven_u8str_view_t name, proven_u8str_view_t filename,
+                                              proven_u8str_view_t content_type) {
+    http_w_t w;
+    if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
+    if (!http_boundary_ok(boundary) || name.size == 0) return PROVEN_ERR_INVALID_ARG;
+    for (proven_size_t i = 0; i < name.size; ++i) if (name.ptr[i] == 0) return PROVEN_ERR_INVALID_ARG;
+    for (proven_size_t i = 0; i < filename.size; ++i) if (filename.ptr[i] == 0) return PROVEN_ERR_INVALID_ARG;
+    for (proven_size_t i = 0; i < content_type.size; ++i) {
+        if (!http_is_field_byte(content_type.ptr[i])) return PROVEN_ERR_INVALID_ARG;
+    }
+    http_put_cstr(&w, "--");
+    http_put(&w, boundary);
+    http_put_cstr(&w, "\r\nContent-Disposition: form-data; name=\"");
+    http_put_quoted_name(&w, name);
+    http_put_cstr(&w, "\"");
+    if (filename.size > 0) {
+        http_put_cstr(&w, "; filename=\"");
+        http_put_quoted_name(&w, filename);
+        http_put_cstr(&w, "\"");
+    }
+    http_put_cstr(&w, "\r\n");
+    if (content_type.size > 0) {
+        http_put_cstr(&w, "Content-Type: ");
+        http_put(&w, content_type);
+        http_put_cstr(&w, "\r\n");
+    }
+    http_put_cstr(&w, "\r\n");
+    return http_w_end(&w, len);
+}
+
+proven_err_t proven_http_multipart_write_part_end(proven_mem_mut_t out, proven_size_t *len) {
+    return proven_http_write_head_end(out, len);
+}
+
+proven_err_t proven_http_multipart_write_end(proven_mem_mut_t out, proven_size_t *len, proven_u8str_view_t boundary) {
+    http_w_t w;
+    if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
+    if (!http_boundary_ok(boundary)) return PROVEN_ERR_INVALID_ARG;
+    http_put_cstr(&w, "--");
+    http_put(&w, boundary);
+    http_put_cstr(&w, "--\r\n");
+    return http_w_end(&w, len);
+}
+
+// -----------------------------------------------------------------------------
 // Dates
 // -----------------------------------------------------------------------------
 

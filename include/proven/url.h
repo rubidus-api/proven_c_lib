@@ -102,6 +102,26 @@ bool proven_url_scheme_is(const proven_url_t *url, proven_u8str_view_t scheme);
 proven_err_t proven_url_split_target(proven_u8str_view_t target, proven_u8str_view_t *path,
                                      proven_u8str_view_t *query, bool *has_query);
 
+/**
+ * @brief Resolve a reference against a base URL (RFC 3986 section 5.2), writing the result as
+ *        text: what a `Location` header or a link means, given where it was found.
+ *
+ * `reference` may be an absolute URL (returned as it is), `//host/path` (the base's scheme is
+ * kept), `/path` (the base's scheme and authority), a relative path (`../a`, `b?x`), a bare
+ * query (`?x=1`) or a bare fragment. Dot segments in the result's path are removed; a `..`
+ * that would climb above the root stops at the root, as the RFC specifies. Nothing is decoded.
+ * The base's fragment is never carried over.
+ *
+ * `out` needs at most `base.size + reference.size + 1` bytes.
+ *
+ * @return PROVEN_ERR_INVALID_FORMAT when `base` is not an absolute URL, when the result is not
+ *         one, or when `reference` holds a space, a control character or a broken `%` escape.
+ *         PROVEN_ERR_OUT_OF_BOUNDS when `out` is too small.
+ */
+[[nodiscard]]
+proven_err_t proven_url_resolve(proven_u8str_view_t base, proven_u8str_view_t reference,
+                                proven_mem_mut_t out, proven_size_t *written);
+
 // -----------------------------------------------------------------------------
 // Queries
 // -----------------------------------------------------------------------------
@@ -179,6 +199,19 @@ proven_err_t proven_url_encode_path(proven_mem_view_t in, proven_mem_mut_t out, 
  *         `+`, the spelling form data uses. */
 [[nodiscard]]
 proven_err_t proven_url_form_encode(proven_mem_view_t in, proven_mem_mut_t out, proven_size_t *written);
+
+/**
+ * @brief Append one `name=value` pair to form data being built in `out`, encoding both.
+ *
+ * Appends at `*len` and advances it, writing `&` first when `*len` is not 0 - so a run of calls
+ * starting from an empty buffer builds `a=1&b=two+words`, ready to be a query string or an
+ * `application/x-www-form-urlencoded` body. On failure `*len` is unchanged.
+ *
+ * @return PROVEN_ERR_OUT_OF_BOUNDS when the pair does not fit.
+ */
+[[nodiscard]]
+proven_err_t proven_url_form_append(proven_mem_mut_t out, proven_size_t *len,
+                                    proven_mem_view_t name, proven_mem_view_t value);
 
 // -----------------------------------------------------------------------------
 // A path that is safe to use

@@ -294,6 +294,19 @@ proven_err_t proven_net_conn_peer_addr(const proven_net_conn_t *conn, proven_net
  */
 proven_err_t proven_net_conn_set_nodelay(proven_net_conn_t *conn, bool on);
 
+/**
+ * @brief Two connections joined to each other: what is written to one is read from the other.
+ *
+ * No address, no listener, nothing another process can connect to. It is the local end-to-end
+ * pipe - for a test that needs a connection without a network, and for handing data between
+ * two threads through the same readiness loop that watches the sockets.
+ *
+ * Both must be closed. (A Unix-domain pair on POSIX; a loopback TCP connection on Windows,
+ * where TCP_NODELAY therefore applies and on POSIX it does not.)
+ */
+[[nodiscard]]
+proven_err_t proven_net_pair(proven_net_conn_t *a, proven_net_conn_t *b);
+
 // -----------------------------------------------------------------------------
 // Datagram sockets: UDP
 // -----------------------------------------------------------------------------
@@ -408,6 +421,41 @@ proven_size_t proven_net_poll_scratch_size(proven_size_t count);
 [[nodiscard]]
 proven_err_t proven_net_poll_with(proven_mem_mut_t scratch, proven_net_poll_item_t *items, proven_size_t count,
                                   proven_net_deadline_t until, proven_size_t *ready);
+
+/**
+ * @brief A way to interrupt proven_net_poll from another thread.
+ *
+ * A loop blocked in proven_net_poll sees only sockets. A waker is a socket whose only purpose
+ * is to become readable when another thread says so: put its handle in the poll list, and any
+ * thread that calls proven_net_waker_wake makes the poll return.
+ *
+ * Caller-owned; do not copy one that is open.
+ */
+typedef struct {
+    proven_net_conn_t reader;
+    proven_net_conn_t writer;
+} proven_net_waker_t;
+
+/** @brief Open a waker. PROVEN_ERR_BUSY when the system is out of sockets. */
+[[nodiscard]]
+proven_err_t proven_net_waker_open(proven_net_waker_t *waker);
+
+/**
+ * @brief Make the waker readable. Safe to call from any thread, any number of times, and from
+ *        several threads at once; wakes that have not been drained yet merge into one.
+ */
+void proven_net_waker_wake(proven_net_waker_t *waker);
+
+/** @brief Read away what the wakes wrote, so the waker is quiet until the next wake. Called by
+ *         the polling thread once it has woken. */
+void proven_net_waker_drain(proven_net_waker_t *waker);
+
+/** @brief The handle to poll for PROVEN_NET_READABLE. */
+[[nodiscard]]
+proven_net_handle_t proven_net_waker_handle(const proven_net_waker_t *waker);
+
+/** @brief Close a waker. Not safe while another thread may still call proven_net_waker_wake. */
+void proven_net_waker_close(proven_net_waker_t *waker);
 
 // -----------------------------------------------------------------------------
 // Transport: a connection, as an interface

@@ -16,6 +16,7 @@ C23 시스템 라이브러리 `proven`의 매뉴얼입니다. 각 장은 `manual
 - [5장 — Hosted 서비스](manual-05-hosted-services-ko.md)
 - [9장 — 네트워킹](manual-09-networking-ko.md)
 - [10장 — URL과 HTTP 메시지](manual-10-http-ko.md)
+- [11장 — HTTP 클라이언트와 서버](manual-11-http-client-server-ko.md)
 - [6장 — 실행과 플랫폼](manual-06-execution-and-platform-ko.md)
 - [프리스탠딩](manual-freestanding-ko.md)
 - [부록 A — Alias 인덱스](manual-07-alias-xcv-index-ko.md)

@@ -28,6 +28,120 @@ int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("chapters 10 and 11, the pieces around a message, and the two drivers",
+        "References, forms, ranges, boundaries, challenges, cookies and events as the chapters state them; and what a client and a server refuse before any socket is opened.",
+        "");
+    // ---------------------------------------------------------------
+    {
+        proven_byte_t b[512];
+        proven_mem_mut_t out = { b, sizeof b };
+        proven_size_t n = 0;
+        proven_u8str_view_t base = PROVEN_LIT("http://example.com/docs/guide/intro.html?v=2");
+
+        /* CLAIM (ch10 s9): the table of references and what they resolve to. */
+        static const char *const refs[][2] = {
+            { "chapter2.html", "http://example.com/docs/guide/chapter2.html" },
+            { "../img/logo.png", "http://example.com/docs/img/logo.png" },
+            { "/login?next=%2F", "http://example.com/login?next=%2F" },
+            { "?v=3", "http://example.com/docs/guide/intro.html?v=3" },
+            { "//cdn.example.net/x", "http://cdn.example.net/x" },
+            { "https://other.example/", "https://other.example/" },
+        };
+        for (int i = 0; i < 6; ++i) {
+            PROVEN_TEST_ASSERT(proven_url_resolve(base, proven_u8str_view_from_cstr(refs[i][0]), out, &n) == PROVEN_OK &&
+                               proven_u8str_view_eq((proven_u8str_view_t){ b, n }, proven_u8str_view_from_cstr(refs[i][1])),
+                "each row of the chapter's table resolves as printed", "");
+        }
+
+        /* CLAIM (ch10 s9): "a space becomes +, and everything but letters, digits and -._~ becomes %XX." */
+        n = 0;
+        PROVEN_TEST_ASSERT(proven_url_form_append(out, &n, (proven_mem_view_t){ (const proven_byte_t *)"a-._~Z9", 7 }, (proven_mem_view_t){ (const proven_byte_t *)" /=", 3 }) == PROVEN_OK &&
+                           n == 15 && memcmp(b, "a-._~Z9=+%2F%3D", 15) == 0, "the unreserved set passes; a space is +; the rest is %XX", "");
+
+        /* CLAIM (ch10 s10): "The three errors of proven_http_range_parse are three different answers." */
+        proven_u64 first = 0, last = 0;
+        PROVEN_TEST_ASSERT(proven_http_range_parse(PROVEN_LIT("bytes=2000-"), 1000, &first, &last) == PROVEN_ERR_OUT_OF_BOUNDS, "past the end: 416", "");
+        PROVEN_TEST_ASSERT(proven_http_range_parse(PROVEN_LIT("bytes=0-1,5-6"), 1000, &first, &last) == PROVEN_ERR_UNSUPPORTED &&
+                           proven_http_range_parse(PROVEN_LIT("lines=1-2"), 1000, &first, &last) == PROVEN_ERR_UNSUPPORTED, "several ranges, another unit: ignore and send all", "");
+        PROVEN_TEST_ASSERT(proven_http_range_parse(PROVEN_LIT("bytes=x"), 1000, &first, &last) == PROVEN_ERR_INVALID_FORMAT, "unreadable: ignore", "");
+        /* CLAIM (ch10 s10): "INVALID_ARG unless first <= last < total". */
+        n = 0;
+        PROVEN_TEST_ASSERT(proven_http_write_content_range(out, &n, 5, 4, 10) == PROVEN_ERR_INVALID_ARG &&
+                           proven_http_write_content_range(out, &n, 0, 10, 10) == PROVEN_ERR_INVALID_ARG && n == 0 &&
+                           proven_http_write_content_range(out, &n, 0, 9, 10) == PROVEN_OK, "Content-Range checks its three numbers", "");
+
+        /* CLAIM (ch10 s10): a boundary is "PROVEN_HTTP_BOUNDARY_SIZE (40) characters", safe without quoting. */
+        proven_byte_t rnd[16], bd[PROVEN_HTTP_BOUNDARY_SIZE];
+        for (int i = 0; i < 16; ++i) rnd[i] = (proven_byte_t)(i * 17);
+        proven_http_multipart_boundary(rnd, bd);
+        n = 0;
+        PROVEN_TEST_ASSERT(sizeof bd == 40 && proven_http_multipart_write_content_type(out, &n, (proven_u8str_view_t){ bd, sizeof bd }) == PROVEN_OK,
+            "a made boundary is forty characters and accepted as one", "");
+        /* CLAIM (ch10 s10): "a file called a\".png cannot close the quoted string it is written in." */
+        n = 0;
+        PROVEN_TEST_ASSERT(proven_http_multipart_write_part(out, &n, (proven_u8str_view_t){ bd, sizeof bd }, PROVEN_LIT("f"), PROVEN_LIT("a\".png"), PROVEN_LIT("")) == PROVEN_OK, "a part with that file name is written", "");
+        b[n] = '\0';
+        PROVEN_TEST_ASSERT(strstr((const char *)b, "filename=\"a%22.png\"") != NULL, "with the quote percent-encoded", "");
+
+        /* CLAIM (ch10 s11): "INVALID_ARG for a colon in user"; "a challenge that offers both is
+         * answered with SHA-256"; "SHA-512-256 ... are not" implemented. */
+        PROVEN_TEST_ASSERT(proven_http_basic_auth(PROVEN_LIT("a:b"), PROVEN_LIT("c"), out, &n) == PROVEN_ERR_INVALID_ARG, "Basic cannot express a colon in the user name", "");
+        proven_http_digest_challenge_t dc;
+        PROVEN_TEST_ASSERT(proven_http_digest_challenge_parse(PROVEN_LIT("Digest realm=\"r\", nonce=\"n\", qop=\"auth\", algorithm=MD5, Digest realm=\"r\", nonce=\"n\", qop=\"auth\", algorithm=SHA-256"), &dc) == PROVEN_OK &&
+                           dc.algorithm == PROVEN_HTTP_DIGEST_SHA256, "offered MD5 and SHA-256, SHA-256 is chosen", "");
+        PROVEN_TEST_ASSERT(proven_http_digest_challenge_parse(PROVEN_LIT("Digest realm=\"r\", nonce=\"n\", qop=\"auth\", algorithm=SHA-512-256"), &dc) == PROVEN_ERR_UNSUPPORTED, "SHA-512-256 alone is unsupported", "");
+        PROVEN_TEST_ASSERT(proven_http_digest_challenge_parse(PROVEN_LIT("Basic realm=\"r\""), &dc) == PROVEN_ERR_NOT_FOUND, "no Digest challenge: NOT_FOUND", "");
+
+        /* CLAIM (ch10 s12): "every cookie goes back to the exact host that set it and to no other";
+         * a Domain "that does not cover the host that sent it is PROVEN_ERR_PERMISSION";
+         * Secure is "refused when set ... over a connection that is not encrypted". */
+        proven_http_cookie_jar_t jar;
+        PROVEN_TEST_ASSERT(proven_http_cookie_jar_init(&jar, heap, 8) == PROVEN_OK, "a jar", "");
+        PROVEN_TEST_ASSERT(proven_http_cookie_jar_store(&jar, PROVEN_LIT("www.example.com"), PROVEN_LIT("/"), false, PROVEN_LIT("a=1; Domain=example.com"), 0) == PROVEN_OK, "a Domain that covers the host is accepted", "");
+        PROVEN_TEST_ASSERT(proven_http_cookie_jar_header(&jar, PROVEN_LIT("example.com"), PROVEN_LIT("/"), false, 0, out, &n) == PROVEN_OK && n == 0, "and the cookie still does not go to the parent domain", "");
+        PROVEN_TEST_ASSERT(proven_http_cookie_jar_header(&jar, PROVEN_LIT("www.example.com"), PROVEN_LIT("/"), false, 0, out, &n) == PROVEN_OK && n == 3, "only to the host that set it", "");
+        PROVEN_TEST_ASSERT(proven_http_cookie_jar_store(&jar, PROVEN_LIT("www.example.com"), PROVEN_LIT("/"), false, PROVEN_LIT("b=1; Domain=example.net"), 0) == PROVEN_ERR_PERMISSION, "a foreign Domain is PERMISSION", "");
+        PROVEN_TEST_ASSERT(proven_http_cookie_jar_store(&jar, PROVEN_LIT("www.example.com"), PROVEN_LIT("/"), false, PROVEN_LIT("c=1; Secure"), 0) == PROVEN_ERR_PERMISSION, "Secure over plain HTTP is refused", "");
+        PROVEN_TEST_ASSERT(proven_http_cookie_jar_count(&jar) == 1, "the jar is unchanged by the refusals", "");
+        proven_http_cookie_jar_destroy(&jar);
+
+        /* CLAIM (ch10 s13): "At least 64 bytes"; "A stream that ends mid-event has not delivered that event." */
+        proven_byte_t work[64];
+        proven_sse_t sse;
+        proven_sse_event_t ev;
+        bool have = true;
+        proven_size_t used = 0;
+        PROVEN_TEST_ASSERT(proven_sse_init(&sse, (proven_mem_mut_t){ work, 63 }) == PROVEN_ERR_INVALID_ARG &&
+                           proven_sse_init(&sse, (proven_mem_mut_t){ work, 64 }) == PROVEN_OK, "63 bytes of work memory are refused, 64 accepted", "");
+        PROVEN_TEST_ASSERT(proven_sse_feed(&sse, (proven_mem_view_t){ (const proven_byte_t *)"data: x\n", 8 }, &used, &ev, &have) == PROVEN_OK && !have && used == 8,
+            "data without its blank line is consumed and is not an event", "");
+
+#if !defined(PROVEN_NO_NET)
+        /* CLAIM (ch11 s1): the client "refuses an https URL with PROVEN_ERR_UNSUPPORTED".
+         * CLAIM (ch11 s7): a header the client writes itself is PROVEN_ERR_INVALID_ARG.
+         * Both are decided before a connection is attempted, so no network is needed. */
+        proven_http_client_config_t cc = {0};
+        cc.alloc = heap;
+        proven_http_client_t *client = NULL;
+        proven_http_client_response_t resp;
+        PROVEN_TEST_ASSERT(proven_http_client_create(&cc, &client) == PROVEN_OK, "a client with only an allocator", "");
+        PROVEN_TEST_ASSERT(proven_http_client_get(client, PROVEN_LIT("https://example.invalid/"), &resp) == PROVEN_ERR_UNSUPPORTED, "https without tls_wrap is UNSUPPORTED", "");
+        proven_http_client_finish(&resp);
+        proven_http_header_t host = { PROVEN_LIT("Host"), PROVEN_LIT("other") };
+        proven_http_client_request_t req = { .url = PROVEN_LIT("http://example.invalid/"), .headers = &host, .header_count = 1 };
+        PROVEN_TEST_ASSERT(proven_http_client_send(client, &req, &resp) == PROVEN_ERR_INVALID_ARG, "a Host header of the caller's is INVALID_ARG", "");
+        proven_http_client_finish(&resp);
+        proven_http_client_destroy(client);
+
+        /* CLAIM (ch11 s2): create is INVALID_ARG "without an allocator or a handler". */
+        proven_http_server_config_t sc = {0};
+        proven_http_server_t *server = NULL;
+        sc.alloc = heap;
+        PROVEN_TEST_ASSERT(proven_http_server_create(&sc, &server) == PROVEN_ERR_INVALID_ARG && server == NULL, "a server without a handler is INVALID_ARG", "");
+#endif
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("chapter 10, URLs and HTTP messages",
         "The facts the chapter states in prose, each as an assertion.",
         "");

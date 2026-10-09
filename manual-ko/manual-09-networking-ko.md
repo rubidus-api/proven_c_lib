@@ -19,8 +19,9 @@
 5. [UDP](#5-udp)
 6. [소켓 여럿, 스레드 하나](#6-소켓-여럿-스레드-하나)
 7. [전송](#7-전송)
-8. [플랫폼마다 다른 것](#8-플랫폼마다-다른-것)
-9. [여기에 없는 것](#9-여기에-없는-것)
+8. [짝, 그리고 루프 깨우기](#8-짝-그리고-루프-깨우기)
+9. [플랫폼마다 다른 것](#9-플랫폼마다-다른-것)
+10. [여기에 없는 것](#10-여기에-없는-것)
 
 ## 1. 세 가지 규칙
 
@@ -735,7 +736,124 @@ int main(void) {
 }
 ```
 
-## 8. 플랫폼마다 다른 것
+## 8. 짝, 그리고 루프 깨우기
+
+`proven_net_poll`에 막혀 있는 루프에게는 소켓만 보이고 다른 것은 보이지 않는다. 그 루프를 위해 어떤
+작업을 끝낸 스레드나 그 루프를 멈추고 싶은 스레드는 변수로는 루프에 닿을 수 없다. 루프는 운영체제
+안에서 잠들어 있기 때문이다. 필요한 것은 다른 스레드가 말할 때 읽을 수 있게 되는 소켓이다. 그것이
+깨우개(waker)다.
+
+### 참조
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_net_pair(&a, &b)` | 주소 없이 서로 이어진 두 연결. 한쪽에 쓴 것이 다른 쪽에서 읽힌다. | `proven_err_t`: 시스템에 소켓이 모자라면 `BUSY`. 둘 다 닫아야 한다. |
+| `proven_net_waker_open(&waker)` | 깨우개를 연다. | `proven_err_t`: `BUSY`. |
+| `proven_net_waker_handle(&waker)` | poll 목록에 `PROVEN_NET_READABLE`을 원한다고 넣을 핸들. | `proven_net_handle_t`. |
+| `proven_net_waker_wake(&waker)` | 읽을 수 있게 만든다. 어느 스레드에서 불러도, 여러 스레드가 동시에 불러도 안전하다. | 없음. 호출자가 대응할 수 있는 방식으로는 실패하지 않는다. |
+| `proven_net_waker_drain(&waker)` | 지금까지의 깨우기를 읽어 없앤다. poll하는 스레드가 깨어난 뒤에 부른다. | 없음. |
+| `proven_net_waker_close(&waker)` | 닫는다. | 없음. |
+
+**깨어난 뒤에는 비워라.** 깨우개는 비울 때까지 읽을 수 있는 상태로 남는다. 이것을 잊은 루프는 poll하고,
+곧장 돌아오고, poll하고, 곧장 돌아오며 프로세서를 헛돌린다.
+
+**깨우기는 합쳐진다.** 비우기 한 번 전에 `proven_net_waker_wake`를 열 번 불러도 깨우기는 한 번이다.
+깨우개는 "보라"고 말할 뿐 몇 번인지는 말하지 않는다. 그러니 루프가 봐야 할 것은 다른 곳 - 큐, 플래그 -
+에 두고, 루프는 깨어날 때마다 그것을 확인한다.
+
+**플래그를 세운 다음 깨워라. 그리고 비운 다음에 보라. 비우기 전이 아니다.** 순서가 반대면 보는 것과
+비우는 것 사이에 깨우기가 끼어들어, 보이지 않은 채로 비워질 수 있다.
+
+잘못된 예:
+
+```text
+if (work_pending()) do_work();        /* wrong: work queued after this line... */
+proven_net_waker_drain(&waker);       /* ...has its wake drained here, and waits for the next poll to time out */
+```
+
+올바른 예:
+
+```text
+proven_net_waker_drain(&waker);
+if (work_pending()) do_work();
+```
+
+**맨 나중에 닫아라.** 다른 스레드가 아직 `proven_net_waker_wake`를 부를 수 있는 동안에는
+`proven_net_waker_close`가 안전하지 않다. 그 스레드들을 먼저 멈추거나 join하라.
+
+`proven_net_pair`는 깨우개를 이루는 재료이고, 테스트나 프로그램이 네트워크 없이 연결 하나를 원하는
+곳이면 어디서나 혼자서도 쓸모가 있다. POSIX에서는 유닉스 도메인 짝이고, Windows에서는 loopback TCP
+연결이다. 지원하는 모든 Windows 버전에 있는 것이 그것뿐이기 때문이다.
+
+테스트 스위트가 컴파일하고 실행한다:
+
+<!-- example: manual/examples/ko/ex_09_net_waker.c -->
+```c
+/*
+ * proven_net_poll에 막혀 있는 루프에게는 소켓만 보인다. 다른 스레드에서 그 루프에게
+ * 무언가를 알리려면 - "할 일이 생겼다", "멈춰라" - 여러분이 말할 때 읽을 수 있게 되는
+ * 소켓이 필요하다. 그것이 깨우개(waker)다.
+ *
+ * proven_net_pair는 깨우개를 이루는 재료이고 그 자체로도 쓸모가 있다: 주소 없이 서로
+ * 이어진 두 끝으로, 프로그램의 두 부분 사이에 바이트를 건넬 때 쓴다.
+ */
+
+static void finish_work(void *arg) {
+    proven_net_waker_t *waker = arg;
+    proven_time_sleep(20);              /* 어떤 작업을 대신하는 자리 */
+    proven_net_waker_wake(waker);       /* 어느 스레드에서 불러도 된다 */
+}
+
+int main(void) {
+    /* 짝: 한쪽 끝에 넣은 것이 다른 쪽 끝에서 나온다. */
+    proven_net_conn_t a, b;
+    proven_err_t err = proven_net_pair(&a, &b);
+    if (err == PROVEN_ERR_PERMISSION || err == PROVEN_ERR_UNSUPPORTED) {
+        printf("no sockets in this environment; nothing to show\n");
+        return EXAMPLE_OK();
+    }
+    EXAMPLE_REQUIRE(err == PROVEN_OK, "a pair opens");
+    EXAMPLE_REQUIRE(proven_net_write_all(&a, proven_mem_view_from_u8(PROVEN_LIT("across")), proven_net_deadline_in(1000)).err == PROVEN_OK, "write to one end");
+    proven_byte_t buf[16];
+    proven_result_size_t got = proven_net_read(&b, (proven_mem_mut_t){ buf, sizeof buf }, proven_net_deadline_in(1000));
+    EXAMPLE_REQUIRE(got.err == PROVEN_OK && got.value == 6, "read from the other");
+    (void)proven_net_close(&a);
+    (void)proven_net_close(&b);
+
+    /* poll 목록에 든 깨우개. 읽을 것이 없으니 poll은 1초를 꼬박 기다릴 터인데... */
+    proven_net_waker_t waker;
+    EXAMPLE_REQUIRE(proven_net_waker_open(&waker) == PROVEN_OK, "a waker opens");
+    proven_job_sys_t *jobs = NULL;
+    EXAMPLE_REQUIRE(proven_job_system_init(proven_heap_allocator(), 1, 4, &jobs) == PROVEN_OK, "a worker thread");
+    EXAMPLE_REQUIRE(proven_job_submit_ex(jobs, finish_work, &waker) == PROVEN_OK, "work is handed to it");
+
+    proven_net_poll_item_t item = { .handle = proven_net_waker_handle(&waker), .want = PROVEN_NET_READABLE };
+    proven_size_t ready = 0;
+    proven_time_t start = proven_time_monotonic_now();
+    err = proven_net_poll(&item, 1, proven_net_deadline_in(1000), &ready);
+    proven_i64 waited_ms = (proven_time_monotonic_now() - start) / 1000000;
+    /* ...작업 스레드가 깨웠다. */
+    EXAMPLE_REQUIRE(err == PROVEN_OK && ready == 1 && waited_ms < 900, "the poll returns when the worker says so, not at its deadline");
+
+    /* 비워야 한다. 그러지 않으면 계속 읽을 수 있는 상태로 남아 다음 poll이 아무 일 없이 곧장 돌아온다. */
+    proven_net_waker_drain(&waker);
+    EXAMPLE_REQUIRE(proven_net_poll(&item, 1, proven_net_deadline_in(20), &ready) == PROVEN_ERR_TIMEOUT, "drained: quiet again");
+
+    /* 비우기 전의 여러 번 깨우기는 한 번의 깨우기다. */
+    proven_net_waker_wake(&waker);
+    proven_net_waker_wake(&waker);
+    proven_net_waker_drain(&waker);
+    EXAMPLE_REQUIRE(proven_net_poll(&item, 1, proven_net_deadline_in(20), &ready) == PROVEN_ERR_TIMEOUT, "two wakes, one drain: quiet");
+
+    /* 깨우개는 어떤 스레드도 더는 깨울 수 없을 때에만 닫는다: 작업 스레드를 먼저 멈춘다. */
+    proven_job_system_close(jobs);
+    proven_job_system_destroy(jobs);
+    proven_net_waker_close(&waker);
+    return EXAMPLE_OK();
+}
+```
+
+## 9. 플랫폼마다 다른 것
 
 이 호출들은 Linux, BSD, macOS, Windows에서 똑같이 동작한다. 아래는 라이브러리가 흡수하는 차이들이다.
 소켓을 직접 쓸 때 발목을 잡는 것들이라 적어 둔다.
@@ -757,10 +875,10 @@ POSIX는 즉시 답한다 - 기한에 그만큼을 감안하라. 그리고 유�
 이상이 필요하다. 그 family가 없는 곳에서 `proven_net_listen`과 `proven_net_connect`는
 `PROVEN_ERR_UNSUPPORTED`를 돌려준다.
 
-## 9. 여기에 없는 것
+## 10. 여기에 없는 것
 
 - **TLS.** 전송 인터페이스가 그것이 붙을 자리다. 이 버전에는 없고, 여기서 만든 연결은 암호화되지 않는다.
 - **이름 해석의 기한.** §2를 보라.
 - **`poll`을 넘는 규모.** `epoll`, `kqueue`, completion port는 없다.
 - **유닉스 도메인 데이터그램, raw 소켓, 멀티캐스트, `TCP_NODELAY` 외의 소켓 옵션.**
-- **HTTP.** 메시지 코덱은 [10장](manual-10-http-ko.md)에 있다. 그것을 이 소켓 위에서 구동하는 클라이언트와 서버는 짓고 있다.
+- **HTTP.** 메시지 코덱은 [10장](manual-10-http-ko.md)에 있다. 그것을 이 소켓 위에서 구동하는 클라이언트와 서버는 [11장](manual-11-http-client-server-ko.md)에 있다.

@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 79 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 84 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-09, Windows 11 test VM: x86-64 245 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 143 registered tests plus the 110 runnable manual examples - 253 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 156 test files: the 143 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 148 registered tests plus the 120 runnable manual examples - 268 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 161 test files: the 148 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1169,6 +1169,91 @@ Sub-checks:
 - Dates: the RFC 9110 example and five other moments format as expected; the three accepted forms parse to the same instant; the two-digit-year rule; twenty-six invalid texts refused (wrong weekday, 30 February, lowercase, a missing zero, ISO 8601); a leap second accepted; 200,000 random moments across the whole range of `proven_time_t` round-trip; a date past April 2262 is `PROVEN_ERR_OVERFLOW`.
 
 Failure tip: inspect `http_framing_headers`, `proven_http_body_feed`, the writers and the date functions in `src/proven/http.c`.
+
+### `tests/test_unit_http_helpers` - http: URL references, forms, ranges, multipart and authentication
+
+Intent: verify the pure helpers a client and a server need around the codec against the documents that define them, not against themselves.
+
+Sub-checks:
+
+- `proven_url_resolve`: the forty-one normal and abnormal examples of RFC 3986 section 5.4, an absolute reference returned as it is, a base that is not absolute refused, and an output one byte short as `PROVEN_ERR_OUT_OF_BOUNDS`.
+- `proven_url_form_append`: separators, `+` for a space, every other byte percent-encoded; a buffer one byte short leaves the length and the bytes before it unchanged.
+- Ranges: `Range` written closed and open-ended; twenty-three request values - nine satisfied and clamped, four unsatisfiable (`PROVEN_ERR_OUT_OF_BOUNDS`), two unsupported, eight malformed; `Content-Range` written and parsed back, with an unknown total and with contradictory numbers refused.
+- Multipart: the boundary from sixteen bytes is forty header-safe characters; a body of a field and a file is byte for byte as expected; a quote, CR or LF in a name or file name is percent-encoded; an empty name, a bad boundary and a control byte in the type are refused.
+- Basic: the RFC 7617 example; a colon in the user name and control bytes refused.
+- Digest: challenges parsed from one header value holding several schemes; the strongest algorithm chosen; the answers of RFC 7616 section 3.9.1 (SHA-256 and MD5) and RFC 2617 section 3.5 reproduced exactly; the session variants; a challenge without `qop=auth` or with only unknown algorithms is `PROVEN_ERR_UNSUPPORTED`.
+
+Failure tip: inspect `proven_url_resolve` and `proven_url_form_append` in `src/proven/url.c`, the range and multipart functions in `src/proven/http.c`, and `src/proven/http_auth.c`. A Digest mismatch means the answer disagrees with the RFC's own worked example.
+
+### `tests/test_unit_http_cookie` - http: the cookie jar
+
+Intent: verify a cookie is returned to the host that set it, under the path and the transport it was set for, until it expires - and to nobody else.
+
+Sub-checks:
+
+- Store and return for the same host; nothing for another host, a parent or a child of it.
+- `Path` matching on segment boundaries; a cookie with no `Path` takes the request's directory; longer paths come first in the header.
+- `Secure` cookies are refused when set over plain HTTP and withheld from it.
+- `Max-Age` and `Expires` end a cookie; `Max-Age` wins when both are given; an expired cookie in a `Set-Cookie` deletes the stored one.
+- A `Domain` that does not cover the setting host is `PROVEN_ERR_PERMISSION`; one that does is accepted and the cookie stays host-only.
+- Replacement by name and path; the count limit evicts the oldest; clear empties the jar.
+- Malformed values (no `=`, an empty name, a control byte) are `PROVEN_ERR_INVALID_FORMAT`; an oversized one is `PROVEN_ERR_OUT_OF_BOUNDS`; an output buffer too small is `PROVEN_ERR_OUT_OF_BOUNDS`. The jar is unchanged after each.
+
+Failure tip: inspect `src/proven/http_cookie.c`. A cookie returned for a host that did not set it is a leak; the jar is host-only by design.
+
+### `tests/test_unit_sse` - sse: the event-stream parser
+
+Intent: verify the parser gives the events the WHATWG rules give, however the stream is cut into reads.
+
+Sub-checks:
+
+- Data lines joined with LF; LF, CRLF and CR line endings, with a CRLF split across two feeds counted once; comment lines; a field with no colon; exactly one leading space removed.
+- `id` kept across events and ignored when it contains NUL; `retry` accepted as digits only; an event with no data not delivered while its id is remembered; a leading byte-order mark skipped.
+- Every split of a sample stream into two feeds, and a byte-by-byte feed, give the same events as one feed.
+- A line or an event larger than the work memory is `PROVEN_ERR_OUT_OF_BOUNDS`, and every later feed is `PROVEN_ERR_INVALID_STATE`; work memory under 64 bytes is refused.
+
+Failure tip: inspect `proven_sse_feed` in `src/proven/sse.c`. A difference between split and whole feeds is state lost between calls.
+
+### `tests/test_unit_http_server` - http: the server
+
+Intent: verify what a client sees on the socket, with handlers on the loop thread and with handlers on a job system: every request answered, every wait bounded, nothing ambiguous let through.
+
+Sub-checks:
+
+- Keep-alive: several requests on one connection; `Date` and `Content-Length` written by the server; a second response to one request is `PROVEN_ERR_INVALID_STATE`; the handler sees the client's address.
+- Three requests in one write are answered in order, the body of the middle one not mistaken for a request.
+- Request bodies by length and chunked; 20000 bytes read through the 4 KiB window; a body the handler does not read is skipped so that the next request is found.
+- Responses in pieces: chunked when the length is unknown, checked against the length when it is known; `HEAD` with the headers and no bytes; `204`; HTTP/1.0 with and without `keep-alive`; `Connection: close` with the last chunk still sent; a response shorter than announced cut off by a close; a silent handler answered `500`.
+- A handler's own `Content-Length` is `PROVEN_ERR_INVALID_ARG` and a header value with a line break is refused, after which another response can be sent.
+- `Expect: 100-continue`: the interim response is sent when the handler first reads, before any body byte (job-system model), and not at all when the handler refuses - the connection is then closed without waiting for a body.
+- Eleven requests refused before any handler runs, each with its status and a close: missing or duplicate `Host`, bare LF, a space before the colon, a length with chunked, two lengths, a negative length (`400`); another version (`505`); another transfer coding (`501`); an oversized announced body (`413`); too many fields (`431`). A head that never ends is `431` at the limit; a chunked body past the limit and malformed chunk framing are `413` and `400`, reported to the handler's read.
+- Timeouts: half a head is `408` after `head_timeout_ms`; a silent connection and an idle one are closed with nothing sent; half a body is `408` with `PROVEN_ERR_TIMEOUT` to the handler; a client that leaves mid-body is `PROVEN_ERR_RESET`.
+- `max_connections` of two holds a third client in the backlog until one leaves; a fifth listener is `PROVEN_ERR_OUT_OF_BOUNDS`.
+- With a job system: two handlers are inside at the same time, and a connection handed back by a worker carries the next request.
+- `stop` from a handler makes `run` return; `destroy` with a handler still running on a worker returns only after it.
+- A full job queue: eight held requests against one worker and a queue of two - those that do not fit are answered `503` with a close, the rest are served once the worker is free, and every one is answered.
+
+Failure tip: inspect `src/proven/http_server.c`: `sv_service` for the refusal ladder, `sv_run` for what follows a handler, `proven_http_server_poll` for readiness and deadlines, `sv_job` and `sv_collect_done` for the hand-back between threads. Run under ThreadSanitizer when the job-system half fails alone. Responses are read with this library's own codec, so this test does not show agreement with another implementation.
+
+### `tests/test_unit_http_client` - http: the client
+
+Intent: verify the client against this library's server on another thread, and against scripted peers for what an origin server cannot play: a proxy, a SOCKS5 relay, a server that closes a kept connection.
+
+Sub-checks:
+
+- Configuration refused at creation: no allocator, a proxy scheme other than `http` and `socks5`, a control byte in a credential.
+- A `GET` read two bytes at a time and then to `PROVEN_ERR_EOF`; `404` and `204` as responses; requests refused before anything is sent - a relative URL, another scheme, `https` without `tls_wrap`, the four headers the client owns, a line break in a header value, a space in a URL - with the server's request count unchanged; `PROVEN_ERR_REFUSED` and `PROVEN_ERR_NOT_FOUND`.
+- Reuse: two requests from one source port; a response finished unread is not reused; a client that keeps no connections uses a new one each time; a kept connection the server closed costs one replay on a new connection.
+- Bodies: a form from memory with `Content-Length`; 40000 bytes from a stream sent chunked; both at once refused; a `POST` with no body; `HEAD`; a 300000-byte body the server refuses by its length is answered `413` and the client receives that answer rather than a reset.
+- Responses: fifty chunks; a body shorter than announced is `PROVEN_ERR_RESET` after the bytes that came; `read_all` with a limit above and below the size; a head past `max_head_bytes`.
+- A server that stops mid-body costs `io_timeout_ms`; `103 Early Hints` is skipped; a server that sends twelve interim responses and no final one is `PROVEN_ERR_INVALID_FORMAT` at the ninth, without waiting for a timeout.
+- Redirects: three hops followed, the sixth returned at a limit of five; eight method-and-status rows of RFC 9110 with the body and `Content-Type` kept or dropped; relative `Location` values with dot segments resolved and fragments dropped; a `307` for a stream body returned and a `303` followed; a redirect to `ftp` returned; `Authorization` and `Cookie` withheld from another origin and sent to their own.
+- Challenges: nothing volunteered; Basic answered in two requests; Digest preferred when both are offered and verified by the server's own computation, query included; a stale nonce answered in three; a challenge after a cross-origin redirect not answered; a wrong password costs two requests for either scheme.
+- A cookie jar filled from `Set-Cookie` with a foreign `Domain` dropped; the caller's own `Cookie` header replaces the jar's. A `206` with its `Content-Range`, and a `416`. An event stream read seven bytes at a time into three events.
+- The TLS seam: an `https` URL wrapped once for its host and reused without wrapping again; not shared with `http` to the same port; a redirect from `https` to `http` returned; a refusing wrap is `PROVEN_ERR_UNTRUSTED` with nothing sent.
+- Proxies: an HTTP proxy sent the absolute URL without its fragment, with `Proxy-Authorization`; a `CONNECT` tunnel to `host:443` with TLS begun inside it for the origin's name and the proxy's credentials not sent through it; a `407` as `PROVEN_ERR_PERMISSION`; SOCKS5 negotiated byte for byte per RFC 1928 and RFC 1929 with the host as a name; a SOCKS5 refusal as `PROVEN_ERR_REFUSED`.
+
+Failure tip: inspect `src/proven/http_client.c`: `proven_http_client_send` for redirects and challenges, `cl_exchange` for what is written, `cl_connect`, `cl_http_tunnel` and `cl_socks5` for proxies. The proxy targets are under `.invalid`, so `PROVEN_ERR_NOT_FOUND` means the client resolved a name it should have handed to the proxy.
 
 ### `tests/test_unit_u16str` - U16 strings
 

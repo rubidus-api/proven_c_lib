@@ -300,6 +300,164 @@ proven_err_t proven_url_form_encode(proven_mem_view_t in, proven_mem_mut_t out, 
     return url_encode(in, out, written, URL_KEEP_FORM);
 }
 
+proven_err_t proven_url_form_append(proven_mem_mut_t out, proven_size_t *len,
+                                    proven_mem_view_t name, proven_mem_view_t value) {
+    if (!len || *len > out.size || (out.size > 0 && !out.ptr)) return PROVEN_ERR_INVALID_ARG;
+    proven_size_t at = *len;
+    if (at > 0) {
+        if (at >= out.size) return PROVEN_ERR_OUT_OF_BOUNDS;
+        out.ptr[at++] = '&';
+    }
+    proven_size_t n = 0;
+    proven_err_t e = url_encode(name, (proven_mem_mut_t){ .ptr = out.ptr + at, .size = out.size - at }, &n, URL_KEEP_FORM);
+    if (e != PROVEN_OK) return e;
+    at += n;
+    if (at >= out.size) return PROVEN_ERR_OUT_OF_BOUNDS;
+    out.ptr[at++] = '=';
+    e = url_encode(value, (proven_mem_mut_t){ .ptr = out.ptr + at, .size = out.size - at }, &n, URL_KEEP_FORM);
+    if (e != PROVEN_OK) return e;
+    *len = at + n;
+    return PROVEN_OK;
+}
+
+// -----------------------------------------------------------------------------
+// Resolving a reference
+// -----------------------------------------------------------------------------
+
+typedef struct {
+    proven_byte_t *ptr;
+    proven_size_t cap;
+    proven_size_t len;
+    bool full;
+} url_out_t;
+
+static void url_out_put(url_out_t *o, proven_u8str_view_t s) {
+    if (o->full || s.size > o->cap - o->len) { o->full = true; return; }
+    for (proven_size_t i = 0; i < s.size; ++i) o->ptr[o->len + i] = s.ptr[i];
+    o->len += s.size;
+}
+
+static void url_out_byte(url_out_t *o, proven_byte_t c) {
+    url_out_put(o, (proven_u8str_view_t){ .ptr = &c, .size = 1 });
+}
+
+/* RFC 3986 section 5.2.4, applied in place to o->ptr[from..o->len): "." segments vanish, ".."
+ * removes the segment before it, and one that has nothing to remove is dropped - the path
+ * stays at the root. This is the textual algorithm for building a URL, not the security
+ * check for using a path, which is proven_url_path_resolve. */
+static void url_remove_dots(url_out_t *o, proven_size_t from) {
+    proven_byte_t *p = o->ptr;
+    proven_size_t n = o->len;
+    if (from >= n || p[from] != '/') return;
+    proven_size_t w = from + 1;
+    proven_size_t r = from + 1;
+    for (;;) {
+        proven_size_t start = r;
+        while (r < n && p[r] != '/') r++;
+        proven_size_t len = r - start;
+        bool last = r == n;
+        bool dot = len == 1 && p[start] == '.';
+        bool dotdot = len == 2 && p[start] == '.' && p[start + 1] == '.';
+        if (dotdot) {
+            if (w > from + 1) {
+                w--;
+                while (w > from + 1 && p[w - 1] != '/') w--;
+            }
+        } else if (!dot) {
+            for (proven_size_t k = 0; k < len; ++k) p[w + k] = p[start + k];
+            w += len;
+            if (!last) p[w++] = '/';
+        }
+        if (last) break;
+        r++;
+    }
+    o->len = w;
+}
+
+proven_err_t proven_url_resolve(proven_u8str_view_t base, proven_u8str_view_t reference,
+                                proven_mem_mut_t out, proven_size_t *written) {
+    if (written) *written = 0;
+    if (!written || (reference.size > 0 && !reference.ptr) || (out.size > 0 && !out.ptr)) return PROVEN_ERR_INVALID_ARG;
+    proven_url_t b;
+    if (proven_url_parse(base, &b) != PROVEN_OK) return PROVEN_ERR_INVALID_FORMAT;
+    if (reference.size > 0 && !url_text_ok(reference)) return PROVEN_ERR_INVALID_FORMAT;
+
+    url_out_t o = { .ptr = out.ptr, .cap = out.size, .len = 0, .full = false };
+    const proven_byte_t *r = reference.ptr;
+    proven_size_t n = reference.size;
+
+    /* A reference that has a scheme is already absolute: "scheme:" before any '/', '?' or '#'. */
+    proven_size_t colon = 0;
+    bool has_scheme = false;
+    if (n > 0 && url_is_alpha(r[0])) {
+        while (colon < n && (url_is_alpha(r[colon]) || url_is_digit(r[colon]) || r[colon] == '+' || r[colon] == '-' || r[colon] == '.')) colon++;
+        has_scheme = colon < n && r[colon] == ':';
+    }
+
+    proven_size_t path_from = 0;
+    if (has_scheme) {
+        /* Already absolute: it is the answer, provided it is a URL this library takes. */
+        url_out_put(&o, reference);
+        proven_url_t abs;
+        if (o.full) return PROVEN_ERR_OUT_OF_BOUNDS;
+        if (proven_url_parse((proven_u8str_view_t){ .ptr = o.ptr, .size = o.len }, &abs) != PROVEN_OK) return PROVEN_ERR_INVALID_FORMAT;
+        *written = o.len;
+        return PROVEN_OK;
+    }
+
+    /* Split the reference into path, query and fragment. */
+    proven_size_t q = 0;
+    while (q < n && r[q] != '?' && r[q] != '#') q++;
+    proven_size_t f = q;
+    while (f < n && r[f] != '#') f++;
+    proven_u8str_view_t rpath = { .ptr = r, .size = q };
+    proven_u8str_view_t rquery = (q < n && r[q] == '?') ? (proven_u8str_view_t){ .ptr = r + q, .size = f - q } : (proven_u8str_view_t){ .ptr = r + q, .size = 0 };
+    proven_u8str_view_t rfrag = { .ptr = r + f, .size = n - f };
+
+    url_out_put(&o, b.scheme);
+    url_out_byte(&o, ':');
+
+    if (rpath.size >= 2 && rpath.ptr[0] == '/' && rpath.ptr[1] == '/') {
+        /* "//host/path": everything but the scheme comes from the reference. */
+        url_out_put(&o, reference);
+        if (o.full) return PROVEN_ERR_OUT_OF_BOUNDS;
+        proven_url_t abs;
+        if (proven_url_parse((proven_u8str_view_t){ .ptr = o.ptr, .size = o.len }, &abs) != PROVEN_OK) return PROVEN_ERR_INVALID_FORMAT;
+        *written = o.len;
+        return PROVEN_OK;
+    }
+
+    /* The base's authority, exactly as it was written: from after "://" to the path. */
+    url_out_byte(&o, '/');
+    url_out_byte(&o, '/');
+    const proven_byte_t *auth = b.scheme.ptr + b.scheme.size + 3;
+    url_out_put(&o, (proven_u8str_view_t){ .ptr = auth, .size = (proven_size_t)(b.path.ptr - auth) });
+    path_from = o.len;
+
+    if (rpath.size == 0) {
+        url_out_put(&o, b.path);
+        if (rquery.size > 0) url_out_put(&o, rquery);
+        else if (b.has_query) { url_out_byte(&o, '?'); url_out_put(&o, b.query); }
+    } else {
+        if (rpath.ptr[0] == '/') {
+            url_out_put(&o, rpath);
+        } else {
+            /* Merge: the base path up to and including its last '/', then the reference. */
+            proven_size_t cut = b.path.size;
+            while (cut > 0 && b.path.ptr[cut - 1] != '/') cut--;
+            if (cut == 0) url_out_byte(&o, '/');
+            else url_out_put(&o, (proven_u8str_view_t){ .ptr = b.path.ptr, .size = cut });
+            url_out_put(&o, rpath);
+        }
+        if (!o.full) url_remove_dots(&o, path_from);
+        url_out_put(&o, rquery);
+    }
+    url_out_put(&o, rfrag);
+    if (o.full) return PROVEN_ERR_OUT_OF_BOUNDS;
+    *written = o.len;
+    return PROVEN_OK;
+}
+
 // -----------------------------------------------------------------------------
 // A path that is safe to use
 // -----------------------------------------------------------------------------

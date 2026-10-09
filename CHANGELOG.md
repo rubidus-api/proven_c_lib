@@ -18,6 +18,74 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release: an HTTP/1.1 client and server, and the pieces around a message that they
+need. Five new public headers and additions to three; nothing public is removed or changed,
+and no error code is added.
+
+**Neither the client nor the server has TLS.** The server speaks plain HTTP only, and the
+client refuses an `https` URL with `PROVEN_ERR_UNSUPPORTED` rather than fetching it in the
+clear. What they send can be read and altered on the network path.
+
+### Added
+
+- **`proven/http_server.h`: an HTTP/1.1 server.** One handler function and a loop:
+  `proven_http_server_create`, `_listen` (up to four addresses), `_run`, `_poll`, `_stop`,
+  `_destroy`, `_connection_count`. Inside a handler: `proven_http_exchange_request`, `_peer`,
+  `_read`, `_respond`, `_begin`, `_write`, `_end`. Keep-alive, pipelined requests, chunked
+  bodies in both directions, `Expect: 100-continue`, `HEAD`, HTTP/1.0 and the `Date` header
+  are the server's business. Requests that are malformed, ambiguous, oversized or slow are
+  answered `400`, `408`, `413`, `431`, `501` or `505` before any handler runs. Every wait has
+  a limit (`head_timeout_ms`, `body_timeout_ms`, `write_timeout_ms`, `idle_timeout_ms`), every
+  size has one (`max_head_bytes`, `max_headers`, `max_body_bytes`, `max_connections`), and
+  none can be turned off. Handlers run on the loop's thread, or - with `jobs` set - on a job
+  system's workers, where a full queue is answered `503`. A connection being closed is first
+  shut down for writing and read from for up to a second, so that the reset a socket with
+  unread input sends cannot destroy the response just written. Readiness is
+  `proven_net_poll`. No router, no static files, no sessions.
+- **`proven/http_client.h`: an HTTP/1.1 client.** `proven_http_client_create`, `_destroy`,
+  `_send`, `_get`, `_read`, `_read_all`, `_finish`. The response body is read by the caller in
+  pieces; a body cut short is `PROVEN_ERR_RESET`, never an end of file. Redirects are followed
+  up to a limit with the method rules of RFC 9110, never from `https` to `http`, and without
+  carrying `Authorization`, `Cookie` or `Proxy-Authorization` to another origin. A `401` with
+  a Digest or Basic challenge is answered once from configured credentials, and not after a
+  cross-origin redirect. Cookies through a jar; connections kept and reused, with one replay
+  when a kept connection is dead; interim responses passed over, up to eight; request bodies
+  from memory or, chunked, from a `proven_reader_t`; HTTP proxies (absolute-form and `CONNECT`) and SOCKS5 with the host sent
+  as a name. A zeroed configuration follows no redirect, keeps no connection and sends no
+  credentials. `tls_wrap` is the seam where an encrypted transport attaches; the library does
+  not supply one.
+- **`proven/http_auth.h`: authentication values.** `proven_http_basic_auth`,
+  `proven_http_auth_offers`, `proven_http_digest_challenge_parse` and
+  `proven_http_digest_auth` - Digest with MD5, MD5-sess, SHA-256 and SHA-256-sess and
+  `qop=auth`, reproducing the worked examples of RFC 7616 and RFC 2617.
+- **`proven/http_cookie.h`: a cookie jar.** `proven_http_cookie_jar_init`, `_destroy`,
+  `_clear`, `_count`, `_store`, `_header`. `Path`, `Max-Age`, `Expires` and `Secure` per
+  RFC 6265. The jar is host-only: without a public suffix list a `Domain` attribute cannot be
+  honoured safely, so it is checked and then set aside, and a cookie goes back only to the
+  host that set it.
+- **`proven/sse.h`: server-sent events.** `proven_sse_init`, `proven_sse_feed`,
+  `proven_sse_last_id`: a parser for `text/event-stream` that takes the stream in whatever
+  pieces it arrives, in memory the caller supplies.
+- **`proven/http.h`: ranges and multipart bodies.** `proven_http_write_range`,
+  `proven_http_range_parse` (one byte range in its three spellings, with the unsatisfiable,
+  unsupported and malformed cases told apart), `proven_http_write_content_range`,
+  `proven_http_content_range_parse`; `proven_http_multipart_boundary` (from sixteen random
+  bytes the caller supplies), `proven_http_multipart_write_content_type`, `_write_part`,
+  `_write_part_end`, `_write_end`.
+- **`proven/url.h`:** `proven_url_resolve` (a reference against a base, RFC 3986 section 5.2)
+  and `proven_url_form_append` (one `name=value` pair of a form body).
+- **`proven/net.h`:** `proven_net_pair` (two connections joined to each other) and
+  `proven_net_waker_t` with `proven_net_waker_open`, `_wake`, `_drain`, `_handle`, `_close` -
+  a way to interrupt `proven_net_poll` from another thread.
+- The three new text headers and the additions to `url.h` and `http.h` are part of the
+  freestanding profile; `http_client.h` and `http_server.h` are hosted-only and are left out
+  by `PROVEN_NO_NET`.
+- Manual chapter 11, "An HTTP Client and Server", new sections in chapters 9 and 10, and five
+  compiled examples, in both editions. Seventy-four `xcv_` aliases.
+- Five tests: `test_unit_http_helpers`, `test_unit_http_cookie`, `test_unit_sse`,
+  `test_unit_http_server` (both handler models) and `test_unit_http_client` (against the
+  library's server and against scripted proxy, SOCKS5 and misbehaving peers).
+
 ## [0.11.0] - 2026-10-09
 
 A MINOR release: two new public headers. Nothing public is removed or changed, and no error

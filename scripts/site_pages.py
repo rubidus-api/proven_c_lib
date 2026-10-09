@@ -40,6 +40,7 @@ TITLES = {
         'manual-08-fmt-scan': '8 · Formatting and scanning',
         'manual-09-networking': '9 · Networking',
         'manual-10-http': '10 · URLs and HTTP messages',
+        'manual-11-http-client-server': '11 · HTTP client and server',
         'manual-freestanding': 'Freestanding',
     },
     'ko': {
@@ -56,6 +57,7 @@ TITLES = {
         'manual-08-fmt-scan': '8 · 형식화와 파싱',
         'manual-09-networking': '9 · 네트워킹',
         'manual-10-http': '10 · URL과 HTTP 메시지',
+        'manual-11-http-client-server': '11 · HTTP 클라이언트와 서버',
         'manual-freestanding': '프리스탠딩',
     },
 }
@@ -64,7 +66,8 @@ TITLES = {
 # alias index last, because it is a lookup table rather than something anyone reads through.
 ORDER = ['index', 'manual-t-tutorial', 'manual-00-start-here', 'manual-01-foundation', 'manual-02-allocation',
          'manual-03-strings-text', 'manual-04-containers-algorithms', 'manual-08-fmt-scan',
-         'manual-05-hosted-services', 'manual-09-networking', 'manual-10-http', 'manual-06-execution-and-platform',
+         'manual-05-hosted-services', 'manual-09-networking', 'manual-10-http', 'manual-11-http-client-server',
+         'manual-06-execution-and-platform',
          'manual-freestanding', 'manual-07-alias-xcv-index']
 
 STR = {

@@ -19,8 +19,9 @@ This chapter covers `net.h`. Like Chapter 5 it needs an operating system and is 
 5. [UDP](#5-udp)
 6. [Many sockets, one thread](#6-many-sockets-one-thread)
 7. [Transports](#7-transports)
-8. [What the platforms do differently](#8-what-the-platforms-do-differently)
-9. [What is not here](#9-what-is-not-here)
+8. [A pair, and waking a loop](#8-a-pair-and-waking-a-loop)
+9. [What the platforms do differently](#9-what-the-platforms-do-differently)
+10. [What is not here](#10-what-is-not-here)
 
 ## 1. Three rules
 
@@ -740,7 +741,124 @@ int main(void) {
 }
 ```
 
-## 8. What the platforms do differently
+## 8. A pair, and waking a loop
+
+A loop blocked in `proven_net_poll` sees sockets and nothing else. A thread that has finished
+some work for it, or wants it to stop, cannot reach it through a variable: the loop is asleep in
+the operating system. What it needs is a socket that becomes readable when another thread says
+so. That is a waker.
+
+### Reference
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_net_pair(&a, &b)` | Two connections joined to each other, with no address: what is written to one is read from the other. | `proven_err_t`: `BUSY` when the system is out of sockets. Close both. |
+| `proven_net_waker_open(&waker)` | Open a waker. | `proven_err_t`: `BUSY`. |
+| `proven_net_waker_handle(&waker)` | The handle to put in a poll list, wanting `PROVEN_NET_READABLE`. | `proven_net_handle_t`. |
+| `proven_net_waker_wake(&waker)` | Make it readable. Safe from any thread, and from several at once. | none; it cannot fail in a way the caller could act on. |
+| `proven_net_waker_drain(&waker)` | Read away the wakes so far. Called by the polling thread once it has woken. | none. |
+| `proven_net_waker_close(&waker)` | Close it. | none. |
+
+**Drain after you wake.** A waker stays readable until it is drained. A loop that forgets polls,
+returns at once, polls, returns at once - and spins a processor.
+
+**Wakes merge.** Ten calls to `proven_net_waker_wake` before one drain are one wake. A waker says
+"look", not how many times, so what the loop should look at lives somewhere else - a queue, a
+flag - and the loop checks it every time it wakes.
+
+**Set the flag, then wake - and look after draining, not before.** In the other order a wake can
+land between the look and the drain and be drained away unseen.
+
+Wrong:
+
+```text
+if (work_pending()) do_work();        /* wrong: work queued after this line... */
+proven_net_waker_drain(&waker);       /* ...has its wake drained here, and waits for the next poll to time out */
+```
+
+Correct:
+
+```text
+proven_net_waker_drain(&waker);
+if (work_pending()) do_work();
+```
+
+**Close it last.** `proven_net_waker_close` is not safe while another thread can still call
+`proven_net_waker_wake`: stop or join those threads first.
+
+`proven_net_pair` is what a waker is built from, and is useful alone wherever a test or a program
+wants a connection without a network. It is a Unix-domain pair on POSIX and a loopback TCP
+connection on Windows, where nothing else is available on every supported version.
+
+Compiled and run by the test suite:
+
+<!-- example: manual/examples/en/ex_09_net_waker.c -->
+```c
+/*
+ * A loop blocked in proven_net_poll sees only sockets. To tell it something from another
+ * thread - "there is work for you", "stop" - you need a socket that becomes readable when
+ * you say so. That is a waker.
+ *
+ * proven_net_pair is what a waker is made of, and is useful by itself: two connected ends
+ * with no address, for handing bytes between two parts of a program.
+ */
+
+static void finish_work(void *arg) {
+    proven_net_waker_t *waker = arg;
+    proven_time_sleep(20);              /* stands for some work */
+    proven_net_waker_wake(waker);       /* any thread may call this */
+}
+
+int main(void) {
+    /* A pair: what goes into one end comes out of the other. */
+    proven_net_conn_t a, b;
+    proven_err_t err = proven_net_pair(&a, &b);
+    if (err == PROVEN_ERR_PERMISSION || err == PROVEN_ERR_UNSUPPORTED) {
+        printf("no sockets in this environment; nothing to show\n");
+        return EXAMPLE_OK();
+    }
+    EXAMPLE_REQUIRE(err == PROVEN_OK, "a pair opens");
+    EXAMPLE_REQUIRE(proven_net_write_all(&a, proven_mem_view_from_u8(PROVEN_LIT("across")), proven_net_deadline_in(1000)).err == PROVEN_OK, "write to one end");
+    proven_byte_t buf[16];
+    proven_result_size_t got = proven_net_read(&b, (proven_mem_mut_t){ buf, sizeof buf }, proven_net_deadline_in(1000));
+    EXAMPLE_REQUIRE(got.err == PROVEN_OK && got.value == 6, "read from the other");
+    (void)proven_net_close(&a);
+    (void)proven_net_close(&b);
+
+    /* A waker in a poll list. Nothing is readable, so the poll would wait its full second... */
+    proven_net_waker_t waker;
+    EXAMPLE_REQUIRE(proven_net_waker_open(&waker) == PROVEN_OK, "a waker opens");
+    proven_job_sys_t *jobs = NULL;
+    EXAMPLE_REQUIRE(proven_job_system_init(proven_heap_allocator(), 1, 4, &jobs) == PROVEN_OK, "a worker thread");
+    EXAMPLE_REQUIRE(proven_job_submit_ex(jobs, finish_work, &waker) == PROVEN_OK, "work is handed to it");
+
+    proven_net_poll_item_t item = { .handle = proven_net_waker_handle(&waker), .want = PROVEN_NET_READABLE };
+    proven_size_t ready = 0;
+    proven_time_t start = proven_time_monotonic_now();
+    err = proven_net_poll(&item, 1, proven_net_deadline_in(1000), &ready);
+    proven_i64 waited_ms = (proven_time_monotonic_now() - start) / 1000000;
+    /* ...but the worker woke it. */
+    EXAMPLE_REQUIRE(err == PROVEN_OK && ready == 1 && waited_ms < 900, "the poll returns when the worker says so, not at its deadline");
+
+    /* Drain it, or it stays readable and the next poll returns at once for nothing. */
+    proven_net_waker_drain(&waker);
+    EXAMPLE_REQUIRE(proven_net_poll(&item, 1, proven_net_deadline_in(20), &ready) == PROVEN_ERR_TIMEOUT, "drained: quiet again");
+
+    /* Several wakes before a drain are one wake. */
+    proven_net_waker_wake(&waker);
+    proven_net_waker_wake(&waker);
+    proven_net_waker_drain(&waker);
+    EXAMPLE_REQUIRE(proven_net_poll(&item, 1, proven_net_deadline_in(20), &ready) == PROVEN_ERR_TIMEOUT, "two wakes, one drain: quiet");
+
+    /* Close the waker only when no thread can still wake it: stop the workers first. */
+    proven_job_system_close(jobs);
+    proven_job_system_destroy(jobs);
+    proven_net_waker_close(&waker);
+    return EXAMPLE_OK();
+}
+```
+
+## 9. What the platforms do differently
 
 The calls behave the same on Linux, the BSDs, macOS and Windows. These are the differences the
 library absorbs, written down because they are the ones that bite when sockets are used directly:
@@ -762,11 +880,11 @@ refused loopback connection, where POSIX answers at once - allow for it in the d
 Unix-domain sockets need Windows 10 version 1803 or later; where the family is missing,
 `proven_net_listen` and `proven_net_connect` return `PROVEN_ERR_UNSUPPORTED`.
 
-## 9. What is not here
+## 10. What is not here
 
 - **TLS.** The transport interface is where it will attach; this version has none, and a
   connection made here is not encrypted.
 - **A deadline on name resolution.** See section 2.
 - **Scale beyond `poll`.** No `epoll`, `kqueue` or completion ports.
 - **Unix-domain datagrams, raw sockets, multicast, socket options beyond `TCP_NODELAY`.**
-- **HTTP.** The message codec is [Chapter 10](manual-10-http.md); the client and server that drive it over these sockets are being built.
+- **HTTP.** The message codec is [Chapter 10](manual-10-http.md); the client and the server that drive it over these sockets are [Chapter 11](manual-11-http-client-server.md).

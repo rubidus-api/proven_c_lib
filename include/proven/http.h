@@ -347,6 +347,105 @@ proven_err_t proven_http_write_chunk_end(proven_mem_mut_t out, proven_size_t *le
 proven_err_t proven_http_write_last_chunk(proven_mem_mut_t out, proven_size_t *len);
 
 // -----------------------------------------------------------------------------
+// Ranges
+// -----------------------------------------------------------------------------
+
+/** @brief Pass as `last` to ask for everything from `first` to the end. */
+#define PROVEN_HTTP_RANGE_TO_END UINT64_MAX
+
+/**
+ * @brief Append a `Range` header asking for bytes `first` through `last`, inclusive:
+ *        `Range: bytes=100-199`, or `Range: bytes=100-` with PROVEN_HTTP_RANGE_TO_END.
+ * @return PROVEN_ERR_INVALID_ARG when `last` is before `first`.
+ */
+[[nodiscard]]
+proven_err_t proven_http_write_range(proven_mem_mut_t out, proven_size_t *len, proven_u64 first, proven_u64 last);
+
+/**
+ * @brief Append a `Content-Range` header for a 206 response: `Content-Range: bytes 100-199/1000`.
+ * @return PROVEN_ERR_INVALID_ARG unless `first <= last < total`.
+ */
+[[nodiscard]]
+proven_err_t proven_http_write_content_range(proven_mem_mut_t out, proven_size_t *len,
+                                             proven_u64 first, proven_u64 last, proven_u64 total);
+
+/**
+ * @brief Read the value of a request's `Range` header against a resource of `size` bytes.
+ *
+ * Takes one byte range in any of its three spellings - `bytes=100-199`, `bytes=100-` (to the
+ * end) and `bytes=-500` (the last 500) - and gives back the first and last byte to send,
+ * clamped to the resource.
+ *
+ * @return PROVEN_ERR_OUT_OF_BOUNDS when the range starts at or past the end, or asks for the
+ *         last zero bytes, or `size` is 0 (answer 416);
+ *         PROVEN_ERR_UNSUPPORTED for a unit other than `bytes`, or more than one range - a
+ *         server may ignore `Range` and send the whole resource;
+ *         PROVEN_ERR_INVALID_FORMAT for anything else (ignore the header, as RFC 9110 says).
+ */
+[[nodiscard]]
+proven_err_t proven_http_range_parse(proven_u8str_view_t value, proven_u64 size, proven_u64 *first, proven_u64 *last);
+
+/**
+ * @brief Read the value of a response's `Content-Range` header: `bytes 100-199/1000`, or
+ *        `bytes 100-199/` followed by `*` when the total is not known.
+ * @param total receives the complete length; `*has_total` is false when it was `*`.
+ * @return PROVEN_ERR_INVALID_FORMAT when it is not that, or the numbers contradict each other.
+ */
+[[nodiscard]]
+proven_err_t proven_http_content_range_parse(proven_u8str_view_t value, proven_u64 *first, proven_u64 *last,
+                                             proven_u64 *total, bool *has_total);
+
+// -----------------------------------------------------------------------------
+// Multipart form data
+// -----------------------------------------------------------------------------
+
+/** @brief Bytes in a boundary made by proven_http_multipart_boundary, without a NUL. */
+#define PROVEN_HTTP_BOUNDARY_SIZE ((proven_size_t)40)
+
+/**
+ * @brief Make a boundary for a `multipart/form-data` body from 16 random bytes you supply.
+ *
+ * A boundary must not occur inside any part. 128 random bits make that as unlikely as a
+ * collision of two UUIDs; draw them from proven_random_bytes or a seeded generator. The result
+ * is 40 characters, all of which are safe in a header without quoting.
+ */
+void proven_http_multipart_boundary(const proven_byte_t random[16], proven_byte_t out[PROVEN_HTTP_BOUNDARY_SIZE]);
+
+/** @brief Append the header that announces the body: `Content-Type: multipart/form-data;
+ *         boundary=...`. PROVEN_ERR_INVALID_ARG for a boundary that is empty, longer than 70
+ *         characters, or holds a character that would need quoting. */
+[[nodiscard]]
+proven_err_t proven_http_multipart_write_content_type(proven_mem_mut_t out, proven_size_t *len, proven_u8str_view_t boundary);
+
+/**
+ * @brief Append the opening of one part: the boundary line, its `Content-Disposition`, an
+ *        optional `Content-Type`, and the empty line. The part's bytes follow, written by you,
+ *        and then proven_http_multipart_write_part_end.
+ *
+ * @param name the form field's name.
+ * @param filename empty for an ordinary field; for a file, the name to report.
+ * @param content_type empty to omit the header (a field's default is text/plain).
+ *
+ * A double quote, CR or LF in `name` or `filename` is written percent-encoded, as browsers do,
+ * so neither can end the quoted string or the header.
+ *
+ * @return PROVEN_ERR_INVALID_ARG for an empty name, a control character in `content_type`, or a
+ *         bad boundary.
+ */
+[[nodiscard]]
+proven_err_t proven_http_multipart_write_part(proven_mem_mut_t out, proven_size_t *len, proven_u8str_view_t boundary,
+                                              proven_u8str_view_t name, proven_u8str_view_t filename,
+                                              proven_u8str_view_t content_type);
+
+/** @brief Append the CRLF that follows a part's bytes. */
+[[nodiscard]]
+proven_err_t proven_http_multipart_write_part_end(proven_mem_mut_t out, proven_size_t *len);
+
+/** @brief Append the closing boundary that ends the whole body. */
+[[nodiscard]]
+proven_err_t proven_http_multipart_write_end(proven_mem_mut_t out, proven_size_t *len, proven_u8str_view_t boundary);
+
+// -----------------------------------------------------------------------------
 // Dates
 // -----------------------------------------------------------------------------
 

@@ -29,6 +29,9 @@
 #include "proven/hash_legacy.h"
 #include "proven/url.h"
 #include "proven/http.h"
+#include "proven/http_auth.h"
+#include "proven/http_cookie.h"
+#include "proven/sse.h"
 #include "proven/encode.h"
 #include "proven/utf.h"
 #include "proven/random.h"
@@ -46,6 +49,10 @@
 #endif
 #include "proven/sysio.h"
 #include "proven/job.h"
+#if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
+#include "proven/http_client.h"
+#include "proven/http_server.h"
+#endif
 #include "proven/scan.h"
 #include "proven/coro.h"
 

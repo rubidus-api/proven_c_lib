@@ -5,11 +5,14 @@
 바이트가 오는 곳은 [9장](manual-09-networking-ko.md)이지만, 여기 있는 것은 9장 없이도 쓸 수 있다.**
 **이 장을 마치면** URL을 나누고, 요청 경로를 열어도 안전한 경로로 바꾸고, HTTP/1.1 요청이나 응답을
 도착하는 대로 파싱하고, 본문이 얼마나 긴지 알아내고, 그 본문을 디코딩하고, 남의 입력이 망가뜨릴 수
-없는 메시지를 쓸 수 있다.
+없는 메시지를 쓸 수 있다. 그리고 메시지 둘레에 놓이는 조각들 - 리다이렉트 풀기, 폼, 바이트 범위,
+파일 올리기, 인증 응답, 쿠키 보관함, 이벤트 스트림 - 을 갖게 된다.
 
-이 장은 `url.h`와 `http.h`를 다룬다. 둘 다 순수한 텍스트 처리다. 소켓도 파일도 할당도 없다. 9장과
-달리 [프리스탠딩(freestanding)](manual-freestanding-ko.md) 빌드에서 쓸 수 있고, `PROVEN_NO_NET`으로
-빠지지 않는다.
+이 장은 `url.h`, `http.h`, `http_auth.h`, `http_cookie.h`, `sse.h`를 다룬다. 모두 소켓도 파일도 없는
+텍스트 처리다. 할당하는 것은 쿠키 보관함뿐이고, 그것도 여러분이 준 할당자(allocator)에서 한다. 9장과
+달리 이 헤더들은 [프리스탠딩(freestanding)](manual-freestanding-ko.md) 빌드에서 쓸 수 있고,
+`PROVEN_NO_NET`으로 빠지지 않는다. 이것들을 소켓 위에서 일하게 하는 클라이언트와 서버는
+[11장](manual-11-http-client-server-ko.md)에 있다.
 
 ## 목차
 
@@ -21,7 +24,12 @@
 6. [본문 디코딩](#6-본문-디코딩)
 7. [메시지 쓰기](#7-메시지-쓰기)
 8. [날짜](#8-날짜)
-9. [여기에 없는 것](#9-여기에-없는-것)
+9. [참조와 폼](#9-참조와-폼)
+10. [범위와 multipart 본문](#10-범위와-multipart-본문)
+11. [인증](#11-인증)
+12. [쿠키](#12-쿠키)
+13. [서버 전송 이벤트](#13-서버-전송-이벤트)
+14. [여기에 없는 것](#14-여기에-없는-것)
 
 ## 1. 서버가 아니라 코덱
 
@@ -666,12 +674,377 @@ HTTP는 날짜 형식 하나를 쓰고, 셋을 읽어야 한다.
 서버는 그런 날짜를 일부러 보낸다 - 9999년의 `Expires`는 "영원히"라는 뜻이다 - 그러니 그 답은 잘못된
 헤더가 아니라 "먼 미래"로 취급하라.
 
-## 9. 여기에 없는 것
+## 9. 참조와 폼
 
-- **클라이언트나 서버.** 읽고, 쓰고, 타임아웃을 걸고, 연결을 유지하는 드라이버는 이 코덱과 9장 위에
-  짓고 있으며 별도의 장을 갖게 된다.
+`Location` 헤더, 페이지 안의 링크, 폼의 `action`. 이것들은 모두 *참조*이고, 그것이 어디로 이어지는지는
+그것이 발견된 URL에 달려 있다. `proven_url_resolve`가 그 단계이며, RFC 3986 5.2절이 정한 대로 한다.
+
+| `http://example.com/docs/guide/intro.html?v=2`에서 발견된 참조 | 해소 결과 |
+|---|---|
+| `chapter2.html` | `http://example.com/docs/guide/chapter2.html` |
+| `../img/logo.png` | `http://example.com/docs/img/logo.png` |
+| `/login?next=%2F` | `http://example.com/login?next=%2F` |
+| `?v=3` | `http://example.com/docs/guide/intro.html?v=3` |
+| `//cdn.example.net/x` | `http://cdn.example.net/x` |
+| `https://other.example/` | `https://other.example/` |
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_url_resolve(base, reference, out, &written)` | `reference`를 절대 URL `base`에 대해 해소한다. 점 세그먼트는 제거된다. 그 자체로 절대 URL인 참조는 그대로 돌려준다. | `proven_err_t`: `base`가 절대 URL이 아니거나 결과에 호스트가 없게 되면 `INVALID_FORMAT`. `OUT_OF_BOUNDS`. |
+| `proven_url_form_append(out, &len, name, value)` | 폼 본문의 `name=value` 한 쌍을 인코딩해서 덧붙인다. 첫 쌍이 아니면 앞에 `&`를 붙인다. | `proven_err_t`: `OUT_OF_BOUNDS`. 그때 `len`과 그 앞의 바이트는 그대로다. |
+
+**해소된 URL은 남이 고른 목적지다.** 그 `Location`을 보낸 서버가 골랐다. 해소는 그것이 어디로
+이어지는지 알려 줄 뿐이다. 거기로 갈지 말지 - 다른 호스트로, `https`에서 `http`로 내려가서, 여러분의
+내부 네트워크 안의 주소로 - 는 해소 함수가 내리는 결정이 아니다. 앞의 둘은 11장의 클라이언트가
+결정한다. 셋째는 여러분 몫이다.
+
+`proven_url_form_append`는 `application/x-www-form-urlencoded`를 쓴다. 쿼리 문자열과 단순한 폼 본문의
+형식이다. 공백은 `+`가 되고, 글자와 숫자와 `-._~`가 아닌 것은 모두 `%XX`가 된다. 이름과 값은
+바이트이므로 주어진 그대로 인코딩된다.
+
+## 10. 범위와 multipart 본문
+
+범위 요청은 리소스의 일부를 요청한다. 내려받기를 이어 가거나 로그의 끝을 읽을 때 쓴다. 요청은 바이트를
+지목하고, 답은 자기가 어느 바이트를 싣고 있는지 말하는 `206`이다.
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_http_write_range(out, &len, first, last)` | `Range: bytes=first-last`를 덧붙인다. "끝까지"는 `last`에 `PROVEN_HTTP_RANGE_TO_END`를 준다. | `proven_err_t`: `last < first`이면 `INVALID_ARG`. |
+| `proven_http_range_parse(value, size, &first, &last)` | 서버 쪽: `Range` 값을 `size`바이트짜리 리소스에 견주어 읽는다. `bytes=a-b`, `bytes=a-`, `bytes=-n`을 받고 리소스 크기에 맞춰 자른다. | `proven_err_t`: `OUT_OF_BOUNDS` - 416으로 답하라. 범위가 여럿이거나 다른 단위면 `UNSUPPORTED` - 리소스 전체를 보내라. `INVALID_FORMAT` - 헤더를 무시하라. |
+| `proven_http_write_content_range(out, &len, first, last, total)` | 206을 위한 `Content-Range: bytes first-last/total`을 덧붙인다. | `proven_err_t`: `first <= last < total`이 아니면 `INVALID_ARG`. |
+| `proven_http_content_range_parse(value, &first, &last, &total, &has_total)` | 클라이언트 쪽: 그것을 다시 읽는다. `/*`이면 `has_total`이 false다. | `proven_err_t`: `INVALID_FORMAT`. |
+
+**`proven_http_range_parse`의 세 오류는 서로 다른 세 가지 답이며**, RFC 9110이 하나하나 이름을 붙였다.
+만족시킬 수 없는 범위는 `Content-Range: bytes */size`를 단 `416`이다. 이 서버가 구현하지 않는 범위나
+읽을 수 없는 헤더는 *무시*한다 - 응답은 리소스 전체를 실은 평범한 `200`이다. `Range` 헤더에 `400`으로
+답하는 것은 틀렸다.
+
+**이어받는 클라이언트는 무엇이 돌아왔는지 확인해야 한다.** 서버는 `Range`를 무시해도 된다. 5000번
+바이트부터 요청했는데 답이 `200`이라면 본문은 0번 바이트에서 시작한다. 그것을 이미 가진 5000바이트
+뒤에 덧붙이면 소리 없이 망가진 파일이 된다. `Content-Range`가 요청한 자리에서 시작하는 `206`에만
+덧붙여라.
+
+`multipart/form-data` 본문은 폼이 파일을 올리는 방식이다. 필드 하나하나가 파트이고, 파트들은 어느
+파트 안에도 나타나서는 안 되는 경계 줄로 나뉜다.
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_http_multipart_boundary(random, out)` | 여러분이 준 무작위 16바이트로 경계 - `PROVEN_HTTP_BOUNDARY_SIZE`(40) 글자 - 를 만든다. | 없음. |
+| `proven_http_multipart_write_content_type(out, &len, boundary)` | `Content-Type: multipart/form-data; boundary=...`를 덧붙인다. | `proven_err_t`: 경계가 비었거나, 70자를 넘거나, 따옴표가 필요하면 `INVALID_ARG`. |
+| `proven_http_multipart_write_part(out, &len, boundary, name, filename, content_type)` | 파트의 여는 부분을 덧붙인다. `filename`이 비면 평범한 필드다. `content_type`이 비면 쓰지 않는다. 파트의 바이트는 이어서 여러분이 쓴다. | `proven_err_t`: 이름이 비었거나 `content_type`에 제어 문자가 있으면 `INVALID_ARG`. |
+| `proven_http_multipart_write_part_end(out, &len)` | 파트의 바이트를 끝내는 줄바꿈을 덧붙인다. | `proven_err_t`. |
+| `proven_http_multipart_write_end(out, &len, boundary)` | 닫는 경계를 덧붙인다. | `proven_err_t`. |
+
+**경계는 예측할 수 없어야 한다.** 올린 파일의 바이트 안에 경계 줄이 들어갈 수 있다면, 그 파일은 자기
+파트를 끝내고 다른 파트 - 폼에 없던 필드 - 를 시작할 수 있다. `proven_random_bytes`에서 얻은
+16바이트는 그 가능성을 키를 맞히는 것만큼 낮춘다. 카운터나 시계로 만든 경계는 그렇지 않다.
+
+필드 이름이나 파일 이름 안의 큰따옴표와 줄바꿈은 브라우저가 하듯 퍼센트 인코딩해서 쓴다. 그래서
+`a".png`라는 파일이 자기가 적힌 따옴표 문자열을 닫을 수 없다.
+
+이 함수들은 틀만 만든다. 파트의 바이트는 `_write_part`와 `_write_part_end` 사이에 여러분이 쓰므로,
+큰 파일도 통째로 쥐지 않고 조각조각 보낼 수 있다. 그리고 남이 보낸 multipart 본문을 파싱하는 것은
+여기에 없다.
+
+## 11. 인증
+
+HTTP 자체의 인증은 요구와 응답이다. `401` 응답이 `WWW-Authenticate`를 싣고 오고, 요청을
+`Authorization`과 함께 다시 보낸다.
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_http_basic_auth(user, password, out, &written)` | `Basic <base64(user:password)>` 값을 쓴다. | `proven_err_t`: `user`에 콜론이 있거나 어느 쪽에든 제어 문자가 있으면 `INVALID_ARG`. `OUT_OF_BOUNDS`. |
+| `proven_http_auth_offers(header_value, scheme)` | `WWW-Authenticate` 값이 `scheme`을 내놓는지(대소문자 무시). | `bool`. |
+| `proven_http_digest_challenge_parse(header_value, &challenge)` | `WWW-Authenticate` 값에서 Digest 요구를 찾는다. 여럿이면 이 라이브러리가 가진 가장 강한 알고리즘의 것을 고른다. | `proven_err_t`: `NOT_FOUND` - Digest 요구가 없다. `UNSUPPORTED` - 없는 알고리즘뿐이거나 `qop=auth`가 없다. `INVALID_FORMAT`. |
+| `proven_http_digest_auth(&challenge, user, password, method, uri, nonce_count, cnonce, out, &written)` | 그에 답하는 `Authorization` 값을 쓴다. `uri`는 보낸 그대로의 요청 타깃이고, `cnonce`는 여러분이 주는 무작위 텍스트이며, `nonce_count`는 새 nonce마다 1에서 시작한다. | `proven_err_t`: `INVALID_ARG`. `OUT_OF_BOUNDS`. |
+
+**Basic은 비밀번호를 헤더에 실을 수 있게 인코딩한 것이지 숨긴 것이 아니다.** 요청을 읽을 수 있는
+사람은 누구나 비밀번호를 읽을 수 있다. 암호화되지 않은 연결에서는 경로 위의 모든 사람이 그렇다.
+TLS 위에서 쓰거나 아예 쓰지 마라.
+
+**Digest는 비밀번호를 보내지 않는다. 하는 일은 그것뿐이다.** 응답은 비밀번호와 서버의 nonce와 요청
+줄에 대한 해시라서, 엿듣는 사람이 나중에 로그인하는 데 쓸 것을 얻지 못한다. 그래도 요청과 응답은
+읽을 수 있는 채로 네트워크를 건너고, 교환 한 번을 붙잡은 사람은 그것을 놓고 느긋하게 비밀번호를
+추측해 볼 수 있다. 평문 HTTP 위의 Basic보다는 낫다. TLS를 대신하지는 못한다.
+
+`MD5`, `MD5-sess`, `SHA-256`, `SHA-256-sess`가 `qop=auth`와 함께 구현되어 있다. MD5가 있는 까닭은
+현장의 서버들이 아직 그것을 요구하기 때문이다 - 레거시 다이제스트는 4장을 보라. 둘 다 내놓는 요구에는
+SHA-256으로 답한다. `qop=auth-int`, `SHA-512-256`, `userhash` 옵션은 없다.
+
+**예상하지 않은 요구에는 답하지 마라.** 요구하는 서버 아무에게나 자격 증명을 보내는 클라이언트는
+엉뚱한 서버에도 보낸다 - 이를테면 리다이렉트 뒤에. 그 자격 증명이 어느 호스트를 위한 것인지 정하고,
+그 호스트에만 답하라.
+
+테스트 스위트가 컴파일하고 실행한다:
+
+<!-- example: manual/examples/ko/ex_10_http_helpers.c -->
+```c
+#include <string.h>
+
+/*
+ * 클라이언트와 서버가 메시지 코덱 둘레에서 필요로 하는 작은 조각들: 리다이렉트 풀기,
+ * 폼 만들기, 리소스의 일부 요청하기, 파일 올리기, 인증 요구에 답하기. 모두 텍스트를 받아
+ * 텍스트를 낸다 - 소켓도 할당도 없다.
+ */
+
+static bool view_is(proven_u8str_view_t v, const char *text) {
+    return proven_u8str_view_eq(v, proven_u8str_view_from_cstr(text));
+}
+
+int main(void) {
+    proven_byte_t buf[512];
+    proven_mem_mut_t out = (proven_mem_mut_t){ buf, sizeof buf };
+    proven_size_t len = 0;
+
+    /* Location 헤더는 참조다. 그것이 어디로 이어지는지는 지금 어디에 있는지에 달려 있다. */
+    proven_u8str_view_t base = PROVEN_LIT("http://example.com/docs/guide/intro.html?v=2");
+    EXAMPLE_REQUIRE(proven_url_resolve(base, PROVEN_LIT("../img/logo.png"), out, &len) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, len }, "http://example.com/docs/img/logo.png"), "a relative reference");
+    EXAMPLE_REQUIRE(proven_url_resolve(base, PROVEN_LIT("/login?next=%2F"), out, &len) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, len }, "http://example.com/login?next=%2F"), "an absolute path");
+    EXAMPLE_REQUIRE(proven_url_resolve(base, PROVEN_LIT("//cdn.example.net/x"), out, &len) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, len }, "http://cdn.example.net/x"), "another host, same scheme");
+
+    /* 폼 본문을 한 쌍씩. 구분자와 인코딩은 알아서 처리된다. */
+    len = 0;
+    EXAMPLE_REQUIRE(proven_url_form_append(out, &len, proven_mem_view_from_u8(PROVEN_LIT("q")), proven_mem_view_from_u8(PROVEN_LIT("tea & cake"))) == PROVEN_OK &&
+                    proven_url_form_append(out, &len, proven_mem_view_from_u8(PROVEN_LIT("page")), proven_mem_view_from_u8(PROVEN_LIT("2"))) == PROVEN_OK,
+                    "two fields");
+    EXAMPLE_REQUIRE(view_is((proven_u8str_view_t){ buf, len }, "q=tea+%26+cake&page=2"), "application/x-www-form-urlencoded");
+
+    /* 범위. 클라이언트가 요청하고, 서버는 그 요청을 자기가 가진 것의 크기에 견주어 읽는다. */
+    len = 0;
+    EXAMPLE_REQUIRE(proven_http_write_range(out, &len, 100, PROVEN_HTTP_RANGE_TO_END) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, len }, "Range: bytes=100-\r\n"), "from byte 100 to the end");
+    proven_u64 first = 0, last = 0, total = 0;
+    EXAMPLE_REQUIRE(proven_http_range_parse(PROVEN_LIT("bytes=100-"), 1000, &first, &last) == PROVEN_OK && first == 100 && last == 999, "of 1000 bytes: 100 through 999");
+    EXAMPLE_REQUIRE(proven_http_range_parse(PROVEN_LIT("bytes=-50"), 1000, &first, &last) == PROVEN_OK && first == 950 && last == 999, "the last fifty");
+    EXAMPLE_REQUIRE(proven_http_range_parse(PROVEN_LIT("bytes=2000-"), 1000, &first, &last) == PROVEN_ERR_OUT_OF_BOUNDS, "past the end: answer 416");
+    EXAMPLE_REQUIRE(proven_http_range_parse(PROVEN_LIT("bytes=0-9,20-29"), 1000, &first, &last) == PROVEN_ERR_UNSUPPORTED, "several ranges: send the whole thing");
+    len = 0;
+    EXAMPLE_REQUIRE(proven_http_write_content_range(out, &len, 950, 999, 1000) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, len }, "Content-Range: bytes 950-999/1000\r\n"), "the 206 says which part it is");
+    bool has_total = false;
+    EXAMPLE_REQUIRE(proven_http_content_range_parse(PROVEN_LIT("bytes 950-999/1000"), &first, &last, &total, &has_total) == PROVEN_OK &&
+                    first == 950 && last == 999 && has_total && total == 1000, "and the client reads it back");
+
+    /* multipart/form-data: 텍스트 필드 하나와 파일 하나. 경계는 여러분이 준 무작위 바이트에서
+     * 나오므로, 미리 짐작해 파트 안에 심어 둘 수 없다. */
+    proven_byte_t random[16];
+    EXAMPLE_REQUIRE(proven_random_bytes(random, sizeof random), "sixteen random bytes");
+    proven_byte_t boundary_bytes[PROVEN_HTTP_BOUNDARY_SIZE];
+    proven_http_multipart_boundary(random, boundary_bytes);
+    proven_u8str_view_t boundary = (proven_u8str_view_t){ boundary_bytes, sizeof boundary_bytes };
+
+    proven_byte_t head[128];
+    proven_size_t head_len = 0;
+    EXAMPLE_REQUIRE(proven_http_multipart_write_content_type((proven_mem_mut_t){ head, sizeof head }, &head_len, boundary) == PROVEN_OK, "the header that announces it");
+
+    len = 0;
+    proven_err_t err = proven_http_multipart_write_part(out, &len, boundary, PROVEN_LIT("title"), PROVEN_LIT(""), PROVEN_LIT(""));
+    if (err == PROVEN_OK) { memcpy(buf + len, "Holiday", 7); len += 7; }      /* 파트의 바이트는 여러분이 쓴다 */
+    if (err == PROVEN_OK) err = proven_http_multipart_write_part_end(out, &len);
+    if (err == PROVEN_OK) err = proven_http_multipart_write_part(out, &len, boundary, PROVEN_LIT("photo"), PROVEN_LIT("a \"b\".png"), PROVEN_LIT("image/png"));
+    if (err == PROVEN_OK) { memcpy(buf + len, "\x89PNG", 4); len += 4; }
+    if (err == PROVEN_OK) err = proven_http_multipart_write_part_end(out, &len);
+    if (err == PROVEN_OK) err = proven_http_multipart_write_end(out, &len, boundary);
+    EXAMPLE_REQUIRE(err == PROVEN_OK, "a body of two parts");
+    buf[len] = '\0';
+    EXAMPLE_REQUIRE(strstr((const char *)buf, "filename=\"a %22b%22.png\"") != NULL, "a quote in a file name cannot end the quoted string");
+
+    /* 인증. Basic은 두 문자열을 인코딩한 것이다 - 암호화한 것이 아니다. */
+    proven_size_t n = 0;
+    EXAMPLE_REQUIRE(proven_http_basic_auth(PROVEN_LIT("Aladdin"), PROVEN_LIT("open sesame"), out, &n) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, n }, "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=="), "the value of an Authorization header");
+
+    /* Digest는 요구에 답하는 방식이라 비밀번호 자체는 보내지 않는다. */
+    proven_u8str_view_t www = PROVEN_LIT("Digest realm=\"http-auth@example.org\", qop=\"auth, auth-int\", algorithm=SHA-256, "
+                                         "nonce=\"7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v\", opaque=\"FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS\"");
+    EXAMPLE_REQUIRE(proven_http_auth_offers(www, PROVEN_LIT("digest")) && !proven_http_auth_offers(www, PROVEN_LIT("Basic")), "what the server offers");
+    proven_http_digest_challenge_t challenge;
+    EXAMPLE_REQUIRE(proven_http_digest_challenge_parse(www, &challenge) == PROVEN_OK && challenge.algorithm == PROVEN_HTTP_DIGEST_SHA256 && challenge.qop_auth, "the challenge");
+    EXAMPLE_REQUIRE(proven_http_digest_auth(&challenge, PROVEN_LIT("Mufasa"), PROVEN_LIT("Circle of Life"), PROVEN_LIT("GET"), PROVEN_LIT("/dir/index.html"),
+                                            1, PROVEN_LIT("f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ"), out, &n) == PROVEN_OK, "the answer");
+    buf[n] = '\0';
+    /* RFC 7616 3.9.1절이 바로 이 입력으로 계산해 보인 response 값. */
+    EXAMPLE_REQUIRE(strstr((const char *)buf, "response=\"753927fa0e85d155564e2e272a28d1802ca10daf4496794697cf8db5856cb6c1\"") != NULL, "is the one in the RFC");
+
+    return EXAMPLE_OK();
+}
+```
+
+## 12. 쿠키
+
+쿠키는 서버가 되돌려 보내 달라고 요청하는 이름과 값이다. `proven_http_cookie_jar_t`가 요청과 요청
+사이에 그것을 보관한다. `Set-Cookie` 헤더가 심은 것을 저장하고, 요청에 실을 `Cookie` 헤더를 써 준다.
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_http_cookie_jar_init(&jar, alloc, max_cookies)` | `max_cookies`개까지 담는 보관함을 만든다. | `proven_err_t`: 한도가 0이면 `INVALID_ARG`. `NOMEM`. |
+| `proven_http_cookie_jar_store(&jar, host, path, secure, set_cookie, now)` | `host`와 `path`로 보낸 요청의 응답에 있던 `Set-Cookie` 값 하나를 처리한다. `now`는 `proven_time_now()`다. | `proven_err_t`: `INVALID_FORMAT` - 쿠키가 아니다, 무시하라. `PERMISSION` - 이 호스트가 심을 수 있는 것이 아니다. `OUT_OF_BOUNDS` - `PROVEN_HTTP_COOKIE_MAX_SIZE`보다 크다. `NOMEM`. 어느 경우든 보관함은 그대로다. |
+| `proven_http_cookie_jar_header(&jar, host, path, secure, now, out, &written)` | 요청에 실을 `Cookie` 값을 쓴다: `a=1; b=2`. 보낼 것이 없으면 `written`이 0이다. | `proven_err_t`: `OUT_OF_BOUNDS`. |
+| `proven_http_cookie_jar_count(&jar)` | 쿠키를 몇 개 갖고 있는지. | `proven_size_t`. |
+| `proven_http_cookie_jar_clear(&jar)` | 모두 잊는다. | 없음. |
+| `proven_http_cookie_jar_destroy(&jar)` | 해제한다. | 없음. |
+
+**이 보관함은 일부러 호스트 전용이다.** 브라우저는 `www.example.com`이 `example.com` 전체를 위한
+쿠키를 심게 해 주는데, 그것을 안전하게 하려면 공개 접미사 목록 - `co.uk`는 사이트가 아니고
+`example.co.uk`는 사이트라고 말해 주는 표 - 이 필요하다. 이 라이브러리에는 그런 표가 없고, 그 표
+없이 `Domain`을 따르는 보관함은 `evil.co.uk`가 `co.uk` 아래 모든 사이트를 위한 쿠키를 심게 내버려
+둔다. 그래서 `Domain` 속성은 검사한 다음 - 그것을 보낸 호스트를 덮지 않으면 `PROVEN_ERR_PERMISSION`
+이다 - 옆으로 치운다. 모든 쿠키는 그것을 심은 바로 그 호스트에게만 돌아가고 다른 곳으로는 가지
+않는다. 하위 도메인끼리 쿠키를 공유하는 데 기대는 사이트는 이 보관함으로는 동작하지 않는다. 받아서는
+안 될 것이 그 사이트에 닿는 일도 없다.
+
+보관함이 RFC 6265 가운데 구현한 것: `Path`와 그 일치 규칙, `Max-Age`와 `Expires`(`Max-Age`가
+이긴다), `Secure` - 암호화되지 않은 연결로는 보내지 않고, 그런 연결에서 심으려 하면 거절한다 - ,
+이름과 경로가 같은 쿠키의 교체, 만료를 통한 삭제, 보관함이 찼을 때 가장 오래된 것 내보내기.
+`HttpOnly`와 `SameSite`는 브라우저의 스크립트와 페이지가 무엇을 해도 되는지를 말한다. 프로그램에는
+둘 다 없으므로 받아들이고 무시한다.
+
+**보관함은 스레드 안전하지 않고**, 메모리 안에만 산다. destroy하면 쿠키는 사라진다.
+
+## 13. 서버 전송 이벤트
+
+이벤트 스트림은 끝나지 않는 응답이다. `Content-Type: text/event-stream`이 오고, 그다음 연결이 살아
+있는 동안 줄이 계속 온다.
+
+```text
+id: 41
+event: price
+data: {"sym":"X","p":12.5}
+
+data: a second event, of the default type
+```
+
+빈 줄이 이벤트를 끝낸다. `proven_sse_t`는 스트림을 도착한 조각 그대로 받아 이벤트를 돌려준다.
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_sse_init(&sse, work)` | 시작한다. `work`는 줄과 조립 중인 이벤트를 위한 메모리이고 - 절반씩 - , 따라서 받아들일 가장 큰 이벤트의 한도가 된다. 최소 64바이트. | `proven_err_t`: `INVALID_ARG`. |
+| `proven_sse_feed(&sse, in, &consumed, &event, &have_event)` | 이벤트 하나가 완성되거나 `in`을 다 쓸 때까지 `in`의 바이트를 소비한다. `have_event`가 true면 `event`를 쓰고 나머지로 다시 부른다. | `proven_err_t`: 줄이나 이벤트가 `work`보다 커지면 `OUT_OF_BOUNDS`. 그 뒤로는 `INVALID_STATE`. |
+| `proven_sse_last_id(&sse)` | 마지막으로 본 `id`. 다시 연결할 때 `Last-Event-ID`로 보낸다. | `proven_u8str_view_t`. 없었으면 비어 있다. |
+
+```text
+typedef struct {
+    proven_u8str_view_t event;   /* the type; empty means the default, "message" */
+    proven_u8str_view_t data;    /* the data lines joined with LF */
+    proven_u8str_view_t id;      /* the last id so far, from this event or an earlier one */
+    proven_u32 retry_ms;         /* valid when has_retry */
+    bool has_retry;
+} proven_sse_event_t;
+```
+
+**이벤트의 뷰(view)는 다음 feed까지만 유효하다.** `work` 안을 가리키기 때문이다. 간직할 것은 복사하라.
+
+**이벤트 중간에서 끝난 스트림은 그 이벤트를 전달하지 않은 것이다.** 표준은 이벤트가 빈 줄로
+내보내진다고 정한다. 그 전에 끊긴 이벤트는 절반만 전달되는 것이 아니라 버려진다. 연결이 끝나면
+`Last-Event-ID`를 달고 다시 연결하라. 서버가 다시 보내 줄 수 있다.
+
+파서는 WHATWG 규칙을 따른다 - 세 가지 줄 끝, 주석 줄, 맨 앞의 바이트 순서 표시, 콜론 없는 필드,
+콜론 뒤의 공백 하나 - . 다시 연결하지는 않는다. 그것은 클라이언트의 일이다. 이것은 파서이고, 연결은
+11장의 것이다.
+
+테스트 스위트가 컴파일하고 실행한다:
+
+<!-- example: manual/examples/ko/ex_10_cookies_events.c -->
+```c
+/*
+ * 클라이언트가 메시지와 메시지 사이에 간직하는 두 가지 상태: 서버가 심은 쿠키와,
+ * 서버 전송 이벤트 스트림에서의 자기 위치. 어느 쪽도 소켓을 건드리지 않는다.
+ */
+
+static bool view_is(proven_u8str_view_t v, const char *text) {
+    return proven_u8str_view_eq(v, proven_u8str_view_from_cstr(text));
+}
+
+int main(void) {
+    // ---- 쿠키 보관함 ---------------------------------------------------------
+    proven_http_cookie_jar_t jar;
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_init(&jar, proven_heap_allocator(), 32) == PROVEN_OK, "a jar for up to 32 cookies");
+    proven_time_t now = proven_time_now();
+
+    /* 응답의 Set-Cookie 헤더 하나하나를, 그것이 어디서 왔는지와 함께 저장한다. */
+    proven_u8str_view_t host = PROVEN_LIT("shop.example.com");
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_store(&jar, host, PROVEN_LIT("/"), true, PROVEN_LIT("sid=abc123; Path=/; Secure; HttpOnly"), now) == PROVEN_OK, "a session cookie");
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_store(&jar, host, PROVEN_LIT("/cart/view"), true, PROVEN_LIT("items=3; Max-Age=3600"), now) == PROVEN_OK,
+                    "one with no Path: it belongs to /cart");
+    /* 남의 도메인을 위한 쿠키는 거절된다. 이 보관함은 브라우저보다 더 엄격해서, 모든 쿠키를
+     * 그것을 심은 바로 그 호스트에만 돌려준다. */
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_store(&jar, host, PROVEN_LIT("/"), true, PROVEN_LIT("track=1; Domain=ads.example.net"), now) == PROVEN_ERR_PERMISSION,
+                    "not this host's to set");
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_count(&jar) == 2, "two cookies");
+
+    /* 요청을 보낼 때 보관함이 Cookie 헤더의 값을 써 준다. */
+    proven_byte_t buf[256];
+    proven_mem_mut_t out = { buf, sizeof buf };
+    proven_size_t n = 0;
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_header(&jar, host, PROVEN_LIT("/cart/checkout"), true, now, out, &n) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, n }, "items=3; sid=abc123"), "under /cart: both, the longer path first");
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_header(&jar, host, PROVEN_LIT("/account"), true, now, out, &n) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, n }, "sid=abc123"), "elsewhere: only the one for /");
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_header(&jar, host, PROVEN_LIT("/account"), false, now, out, &n) == PROVEN_OK && n == 0,
+                    "over plain HTTP: nothing - sid is Secure. n == 0 means send no header");
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_header(&jar, PROVEN_LIT("example.com"), PROVEN_LIT("/"), true, now, out, &n) == PROVEN_OK && n == 0,
+                    "another host: nothing");
+
+    /* 시간이 흐르면 Max-Age가 다한다. 서버는 쿠키를 만료시켜서 지운다. */
+    proven_time_t later = now + (proven_time_t)7200 * 1000000000;
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_header(&jar, host, PROVEN_LIT("/cart"), true, later, out, &n) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, n }, "sid=abc123"), "two hours on, items has expired");
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_store(&jar, host, PROVEN_LIT("/"), true, PROVEN_LIT("sid=; Path=/; Max-Age=0"), later) == PROVEN_OK &&
+                    proven_http_cookie_jar_count(&jar) == 0, "logged out: the jar is empty");
+
+    proven_http_cookie_jar_clear(&jar);       /* 또는 직접 비운다 */
+    proven_http_cookie_jar_destroy(&jar);
+
+    // ---- 서버 전송 이벤트 ---------------------------------------------------
+    /* 파서에는 도착한 것을 도착한 조각 그대로 넣고, 파서는 온전한 이벤트를 돌려준다. */
+    proven_byte_t work[512];
+    proven_sse_t sse;
+    EXAMPLE_REQUIRE(proven_sse_init(&sse, (proven_mem_mut_t){ work, sizeof work }) == PROVEN_OK, "a parser with room for 256-byte events");
+
+    static const char *const arrived[] = {
+        ": keep-alive\n\n",                              /* 주석 줄: 이벤트가 아니다 */
+        "id: 41\nevent: price\ndata: {\"sym\":\"X\",",   /* 중간에서 끊긴 이벤트 */
+        "\ndata:  \"p\":12.5}\n\n",                      /* ...그리고 그 끝 */
+        "data: plain\n\n",
+    };
+    int events = 0;
+    for (proven_size_t i = 0; i < 4; ++i) {
+        proven_mem_view_t in = proven_mem_view_from_u8(proven_u8str_view_from_cstr(arrived[i]));
+        while (in.size > 0) {
+            proven_size_t used = 0;
+            proven_sse_event_t ev;
+            bool have = false;
+            EXAMPLE_REQUIRE(proven_sse_feed(&sse, in, &used, &ev, &have) == PROVEN_OK, "the stream parses");
+            in.ptr += used;
+            in.size -= used;
+            if (!have) continue;           /* 전부 소비했고 아직 이벤트는 없다 */
+            events++;
+            if (events == 1) {
+                EXAMPLE_REQUIRE(view_is(ev.event, "price") && view_is(ev.id, "41"), "a typed event with an id");
+                EXAMPLE_REQUIRE(view_is(ev.data, "{\"sym\":\"X\",\n \"p\":12.5}"), "two data lines, joined by a line feed");
+            } else {
+                EXAMPLE_REQUIRE(ev.event.size == 0 && view_is(ev.data, "plain"), "no type given: a \"message\"");
+                EXAMPLE_REQUIRE(view_is(ev.id, "41"), "the id stays until another replaces it");
+            }
+        }
+    }
+    EXAMPLE_REQUIRE(events == 2, "two events from four pieces");
+    /* 연결이 끊긴 뒤 이것을 Last-Event-ID로 보내면 서버가 거기서부터 이어 줄 수 있다. */
+    EXAMPLE_REQUIRE(view_is(proven_sse_last_id(&sse), "41"), "where to resume");
+
+    return EXAMPLE_OK();
+}
+```
+
+## 14. 여기에 없는 것
+
+- **클라이언트나 서버.** [11장](manual-11-http-client-server-ko.md)에 있다.
 - **HTTP/2와 HTTP/3.** `HTTP/2.0`이라고 적힌 헤드는 `PROVEN_ERR_UNSUPPORTED`다.
 - **콘텐츠 코딩.** `gzip`과 그 밖의 것: 라이브러리에 아직 DEFLATE가 없다.
 - **트레일러.** 청크 본문 뒤의 트레일러는 검사하고 건너뛸 뿐, 돌려주지 않는다.
-- **쿠키, 인증, multipart 본문, range.** 이 계층에서 헤더는 텍스트다.
-- **상대 URL**, 그리고 그것을 기준 URL에 대해 해소하는 일.
+- **multipart 본문 파싱, 그리고 다중 범위(`multipart/byteranges`) 응답.**
+- **공개 접미사 목록**, 따라서 하위 도메인 사이에 공유되는 쿠키 - §12를 보라.
+- **`Negotiate`, `NTLM`, bearer 토큰 흐름.** bearer 토큰은 여러분이 직접 쓰는 헤더다.

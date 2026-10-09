@@ -120,6 +120,9 @@ src/proven/hash_legacy.c
 src/proven/utf.c
 src/proven/url.c
 src/proven/http.c
+src/proven/http_auth.c
+src/proven/http_cookie.c
+src/proven/sse.c
 src/proven/encode.c
 src/proven/random.c
 src/proven/float_decimal.c
@@ -192,6 +195,7 @@ on every release, not asserted in this table.
 | `hash.h` | Available | FNV-1a, SipHash-2-4, CRC-32, SHA-256 - byte-exact, no OS dependency. CRC-32 uses eight 256-entry tables (8 KiB of read-only data) by default; build the library with `-DPROVEN_CRC32_SMALL=1` to keep one 1 KiB table, about 5x slower on long inputs, same output. |
 | `hash_legacy.h` | Available | SHA-1 and MD5, for formats that fix them (the WebSocket accept key, old checksum files). Same shape as SHA-256; no table larger than MD5's 64 constants. |
 | `url.h`, `http.h` | Available | URL parsing and percent-coding, and the HTTP/1.1 message codec. Pure text handling: no socket, no allocation. The transport is yours to supply - on a target with no sockets (wasm32, bare metal) the codec still parses and writes messages. `proven_http_date_format` takes a time you provide; the freestanding clock returns 0. |
+| `http_auth.h`, `http_cookie.h`, `sse.h` | Available | Basic and Digest authentication values, a cookie jar, and a server-sent events parser. Text handling like the codec; the cookie jar allocates from the allocator you pass, and takes the current time as an argument rather than reading a clock. `proven_http_multipart_boundary` takes random bytes you supply, so it needs no entropy source. |
 | `encode.h` | Available | Hex and Base64 - pure computation, no OS. |
 | `utf.h` | Available | Strict UTF-8 <-> UTF-16 transcoding - pure computation, no OS. `proven_utf8_append_to_u16str` is excluded with `PROVEN_NO_U16STR`; the rest works on raw `proven_u16` arrays. |
 | `fmt.h` | Available without float | Current profile defines `PROVEN_FMT_NO_FLOAT`. |
@@ -200,7 +204,7 @@ on every release, not asserted in this table.
 | `float_format.h` | Available without `fmt.h` integration | The binary64 formatter is integer-only and compiles, but the current profile defines `PROVEN_FMT_NO_FLOAT`, so `{}` will not render a float. Call the `float_format.h` entry points directly if you need digits on a target where you have decided the code size is worth it. |
 | `time.h` | Limited | Core datetime formatting can compile; real PAL time is excluded. |
 | `heap.h` | Stub | `proven_heap_allocator()` returns an invalid allocator. |
-| `fs.h`, `stream.h`, `net.h`, `mmap.h`, `sysio.h`, `job.h` | Excluded | Require hosted PAL services. |
+| `fs.h`, `stream.h`, `net.h`, `http_client.h`, `http_server.h`, `mmap.h`, `sysio.h`, `job.h` | Excluded | Require hosted PAL services. |
 | `random.h` | Available | The generators and helpers are pure arithmetic. `proven_random_bytes` works here too, but only once you install an entropy source with `proven_random_set_source` - a board's TRNG, ring oscillator, or ADC noise floor. With none installed it returns **false** rather than falling back to a clock-seeded PRNG, which would look like success and be a security hole nothing reports. `proven_chacha_rng_seed_from_entropy` then turns the board's entropy into an endless cryptographic stream. `proven_random_u64` returns 0 with no source, silently; for a token or key use `proven_random_u64_checked`, which returns false. |
 | `coro.h` | Available | Macro-only stackless coroutine support. |
 | `panic.h` | Available | Override for target-specific trap/reset behavior. |

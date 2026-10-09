@@ -5,11 +5,15 @@
 [Chapter 9](manual-09-networking.md) is where the bytes come from, but nothing here needs it.**
 **After this chapter** you can take a URL apart, turn a request path into one that is safe to
 open, parse an HTTP/1.1 request or response as it arrives, tell how long its body is, decode
-that body, and write a message that nobody else's input can corrupt.
+that body, and write a message that nobody else's input can corrupt - and you have the pieces
+that sit around a message: a redirect resolved, a form, a byte range, a file upload, an
+authentication answer, a cookie jar and an event stream.
 
-This chapter covers `url.h` and `http.h`. Both are pure text handling: no socket, no file, no
-allocation. Unlike Chapter 9 they are available in a [freestanding](manual-freestanding.md)
-build, and `PROVEN_NO_NET` does not remove them.
+This chapter covers `url.h`, `http.h`, `http_auth.h`, `http_cookie.h` and `sse.h`. All of it is
+text handling with no socket and no file; only the cookie jar allocates, from the allocator you
+give it. Unlike Chapter 9 these headers are available in a [freestanding](manual-freestanding.md)
+build, and `PROVEN_NO_NET` does not remove them. The client and the server that put them to work
+over sockets are [Chapter 11](manual-11-http-client-server.md).
 
 ## Table of contents
 
@@ -21,7 +25,12 @@ build, and `PROVEN_NO_NET` does not remove them.
 6. [Decoding a body](#6-decoding-a-body)
 7. [Writing a message](#7-writing-a-message)
 8. [Dates](#8-dates)
-9. [What is not here](#9-what-is-not-here)
+9. [References and forms](#9-references-and-forms)
+10. [Ranges and multipart bodies](#10-ranges-and-multipart-bodies)
+11. [Authentication](#11-authentication)
+12. [Cookies](#12-cookies)
+13. [Server-sent events](#13-server-sent-events)
+14. [What is not here](#14-what-is-not-here)
 
 ## 1. A codec, not a server
 
@@ -672,12 +681,384 @@ the future.
 April 2262. Servers send such dates on purpose - `Expires` in the year 9999 means "never" - so
 treat that answer as "far in the future", not as a malformed header.
 
-## 9. What is not here
+## 9. References and forms
 
-- **A client or a server.** The drivers that read, write, time out and keep connections alive
-  are built on this codec and Chapter 9, and will have their own chapter.
+A `Location` header, a link in a page, a form's `action`: each is a *reference*, and where it
+leads depends on the URL it was found at. `proven_url_resolve` is that step, as RFC 3986
+section 5.2 lays it out.
+
+| Reference, found at `http://example.com/docs/guide/intro.html?v=2` | Resolves to |
+|---|---|
+| `chapter2.html` | `http://example.com/docs/guide/chapter2.html` |
+| `../img/logo.png` | `http://example.com/docs/img/logo.png` |
+| `/login?next=%2F` | `http://example.com/login?next=%2F` |
+| `?v=3` | `http://example.com/docs/guide/intro.html?v=3` |
+| `//cdn.example.net/x` | `http://cdn.example.net/x` |
+| `https://other.example/` | `https://other.example/` |
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_url_resolve(base, reference, out, &written)` | Resolve `reference` against the absolute URL `base`. Dot segments are removed; a reference that is itself absolute is returned as it is. | `proven_err_t`: `INVALID_FORMAT` when `base` is not an absolute URL or the result would have no host; `OUT_OF_BOUNDS`. |
+| `proven_url_form_append(out, &len, name, value)` | Append one `name=value` pair of a form body, encoded, with the `&` before it when it is not the first. | `proven_err_t`: `OUT_OF_BOUNDS`, and then `len` and the bytes before it are unchanged. |
+
+**A resolved URL is somebody else's choice of destination.** The server that sent the
+`Location` chose it. Resolving it tells you where it leads; whether to go there - to another
+host, from `https` down to `http`, to an address inside your own network - is a decision the
+resolver does not make. The client of Chapter 11 makes the first two; the third is yours.
+
+`proven_url_form_append` writes `application/x-www-form-urlencoded`, the format of a query
+string and of a simple form body: a space becomes `+`, and everything but letters, digits and
+`-._~` becomes `%XX`. Names and values are bytes, so they are encoded as given.
+
+## 10. Ranges and multipart bodies
+
+A range request asks for part of a resource - to resume a download, or to read the end of a
+log. The request names bytes; the answer is a `206` that says which bytes it carries.
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_http_write_range(out, &len, first, last)` | Append `Range: bytes=first-last`; pass `PROVEN_HTTP_RANGE_TO_END` as `last` for "to the end". | `proven_err_t`: `INVALID_ARG` when `last < first`. |
+| `proven_http_range_parse(value, size, &first, &last)` | A server's side: read a `Range` value against a resource of `size` bytes. Takes `bytes=a-b`, `bytes=a-` and `bytes=-n`, clamped to the resource. | `proven_err_t`: `OUT_OF_BOUNDS` - answer 416; `UNSUPPORTED` for several ranges or another unit - send the whole resource; `INVALID_FORMAT` - ignore the header. |
+| `proven_http_write_content_range(out, &len, first, last, total)` | Append `Content-Range: bytes first-last/total` for the 206. | `proven_err_t`: `INVALID_ARG` unless `first <= last < total`. |
+| `proven_http_content_range_parse(value, &first, &last, &total, &has_total)` | A client's side: read it back. `has_total` is false for `/*`. | `proven_err_t`: `INVALID_FORMAT`. |
+
+**The three errors of `proven_http_range_parse` are three different answers**, and RFC 9110
+names each: a range that cannot be satisfied is a `416` with `Content-Range: bytes */size`; a
+range this server does not implement, or a header it cannot read, is *ignored* - the response
+is the ordinary `200` with the whole resource. Answering `400` to a `Range` header is wrong.
+
+**A client that resumes must check what came back.** A server may ignore `Range`. If you asked
+for bytes 5000 onward and the answer is a `200`, the body starts at byte 0: appending it to the
+5000 bytes you have produces a file that is silently corrupt. Append only to a `206` whose
+`Content-Range` starts where you asked.
+
+A `multipart/form-data` body is how a form uploads a file: each field is a part, and the parts
+are separated by a boundary line that must not occur inside any of them.
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_http_multipart_boundary(random, out)` | Make a boundary - `PROVEN_HTTP_BOUNDARY_SIZE` (40) characters - from 16 random bytes you supply. | none. |
+| `proven_http_multipart_write_content_type(out, &len, boundary)` | Append `Content-Type: multipart/form-data; boundary=...`. | `proven_err_t`: `INVALID_ARG` for a boundary that is empty, longer than 70, or needs quoting. |
+| `proven_http_multipart_write_part(out, &len, boundary, name, filename, content_type)` | Append the opening of a part. `filename` empty: an ordinary field. `content_type` empty: none written. The part's bytes follow, written by you. | `proven_err_t`: `INVALID_ARG` for an empty name or a control character in `content_type`. |
+| `proven_http_multipart_write_part_end(out, &len)` | Append the line break that ends a part's bytes. | `proven_err_t`. |
+| `proven_http_multipart_write_end(out, &len, boundary)` | Append the closing boundary. | `proven_err_t`. |
+
+**The boundary must be unpredictable.** If the bytes of an uploaded file can contain the
+boundary line, that file can end its own part and begin another - a field the form never had.
+Sixteen bytes from `proven_random_bytes` make that as unlikely as guessing a key. A boundary
+made from a counter or a clock does not.
+
+A double quote or a line break in a field name or a file name is written percent-encoded, as
+browsers do, so a file called `a".png` cannot close the quoted string it is written in.
+
+These functions build the framing only. The parts' bytes are written by you between
+`_write_part` and `_write_part_end`, so a large file can be sent in pieces without ever being
+held whole - and nothing here parses a multipart body that someone sent to you.
+
+## 11. Authentication
+
+HTTP's own authentication is a challenge and an answer: a `401` response carries
+`WWW-Authenticate`, and the request is sent again with `Authorization`.
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_http_basic_auth(user, password, out, &written)` | Write the value `Basic <base64(user:password)>`. | `proven_err_t`: `INVALID_ARG` for a colon in `user` or a control character in either; `OUT_OF_BOUNDS`. |
+| `proven_http_auth_offers(header_value, scheme)` | Whether a `WWW-Authenticate` value offers `scheme` (compared without case). | `bool`. |
+| `proven_http_digest_challenge_parse(header_value, &challenge)` | Find the Digest challenge in a `WWW-Authenticate` value; if several, the strongest algorithm this library has. | `proven_err_t`: `NOT_FOUND` - no Digest challenge; `UNSUPPORTED` - only algorithms it lacks, or no `qop=auth`; `INVALID_FORMAT`. |
+| `proven_http_digest_auth(&challenge, user, password, method, uri, nonce_count, cnonce, out, &written)` | Write the `Authorization` value that answers it. `uri` is the request target exactly as sent; `cnonce` is random text you supply; `nonce_count` starts at 1 for each new nonce. | `proven_err_t`: `INVALID_ARG`; `OUT_OF_BOUNDS`. |
+
+**Basic is the password, encoded so it survives a header - not hidden.** Anyone who can read the
+request can read the password. Over a connection that is not encrypted, that is everyone on the
+path. Use it over TLS or not at all.
+
+**Digest does not send the password, and that is all it does.** The answer is a hash over the
+password, the server's nonce and the request line, so an eavesdropper learns nothing to log in
+with later. The request and the response still cross the network readable, and anyone who
+captures one exchange can guess passwords against it at their leisure. It is better than Basic
+over plain HTTP; it is not a substitute for TLS.
+
+`MD5`, `MD5-sess`, `SHA-256` and `SHA-256-sess` are implemented, with `qop=auth`. MD5 is there
+because deployed servers still ask for it - see Chapter 4 on the legacy digests - and a challenge
+that offers both is answered with SHA-256. `qop=auth-int`, `SHA-512-256` and the `userhash`
+option are not.
+
+**Do not answer a challenge you did not expect.** A client that sends credentials to any server
+that asks will send them to the wrong one - after a redirect, for instance. Decide which host
+the credentials are for, and answer only that host.
+
+Compiled and run by the test suite:
+
+<!-- example: manual/examples/en/ex_10_http_helpers.c -->
+```c
+#include <string.h>
+
+/*
+ * The small pieces a client and a server need around the message codec: resolving a
+ * redirect, building a form, asking for part of a resource, uploading a file, and answering
+ * an authentication challenge. All of it is text in, text out - no socket, no allocation.
+ */
+
+static bool view_is(proven_u8str_view_t v, const char *text) {
+    return proven_u8str_view_eq(v, proven_u8str_view_from_cstr(text));
+}
+
+int main(void) {
+    proven_byte_t buf[512];
+    proven_mem_mut_t out = (proven_mem_mut_t){ buf, sizeof buf };
+    proven_size_t len = 0;
+
+    /* A Location header is a reference; where it leads depends on where you are. */
+    proven_u8str_view_t base = PROVEN_LIT("http://example.com/docs/guide/intro.html?v=2");
+    EXAMPLE_REQUIRE(proven_url_resolve(base, PROVEN_LIT("../img/logo.png"), out, &len) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, len }, "http://example.com/docs/img/logo.png"), "a relative reference");
+    EXAMPLE_REQUIRE(proven_url_resolve(base, PROVEN_LIT("/login?next=%2F"), out, &len) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, len }, "http://example.com/login?next=%2F"), "an absolute path");
+    EXAMPLE_REQUIRE(proven_url_resolve(base, PROVEN_LIT("//cdn.example.net/x"), out, &len) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, len }, "http://cdn.example.net/x"), "another host, same scheme");
+
+    /* A form body, one pair at a time; the separators and the encoding are done for you. */
+    len = 0;
+    EXAMPLE_REQUIRE(proven_url_form_append(out, &len, proven_mem_view_from_u8(PROVEN_LIT("q")), proven_mem_view_from_u8(PROVEN_LIT("tea & cake"))) == PROVEN_OK &&
+                    proven_url_form_append(out, &len, proven_mem_view_from_u8(PROVEN_LIT("page")), proven_mem_view_from_u8(PROVEN_LIT("2"))) == PROVEN_OK,
+                    "two fields");
+    EXAMPLE_REQUIRE(view_is((proven_u8str_view_t){ buf, len }, "q=tea+%26+cake&page=2"), "application/x-www-form-urlencoded");
+
+    /* Ranges. A client asks; a server reads the request against the size of what it has. */
+    len = 0;
+    EXAMPLE_REQUIRE(proven_http_write_range(out, &len, 100, PROVEN_HTTP_RANGE_TO_END) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, len }, "Range: bytes=100-\r\n"), "from byte 100 to the end");
+    proven_u64 first = 0, last = 0, total = 0;
+    EXAMPLE_REQUIRE(proven_http_range_parse(PROVEN_LIT("bytes=100-"), 1000, &first, &last) == PROVEN_OK && first == 100 && last == 999, "of 1000 bytes: 100 through 999");
+    EXAMPLE_REQUIRE(proven_http_range_parse(PROVEN_LIT("bytes=-50"), 1000, &first, &last) == PROVEN_OK && first == 950 && last == 999, "the last fifty");
+    EXAMPLE_REQUIRE(proven_http_range_parse(PROVEN_LIT("bytes=2000-"), 1000, &first, &last) == PROVEN_ERR_OUT_OF_BOUNDS, "past the end: answer 416");
+    EXAMPLE_REQUIRE(proven_http_range_parse(PROVEN_LIT("bytes=0-9,20-29"), 1000, &first, &last) == PROVEN_ERR_UNSUPPORTED, "several ranges: send the whole thing");
+    len = 0;
+    EXAMPLE_REQUIRE(proven_http_write_content_range(out, &len, 950, 999, 1000) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, len }, "Content-Range: bytes 950-999/1000\r\n"), "the 206 says which part it is");
+    bool has_total = false;
+    EXAMPLE_REQUIRE(proven_http_content_range_parse(PROVEN_LIT("bytes 950-999/1000"), &first, &last, &total, &has_total) == PROVEN_OK &&
+                    first == 950 && last == 999 && has_total && total == 1000, "and the client reads it back");
+
+    /* multipart/form-data: a text field and a file. The boundary comes from random bytes
+     * you supply, so it cannot be predicted and placed inside a part. */
+    proven_byte_t random[16];
+    EXAMPLE_REQUIRE(proven_random_bytes(random, sizeof random), "sixteen random bytes");
+    proven_byte_t boundary_bytes[PROVEN_HTTP_BOUNDARY_SIZE];
+    proven_http_multipart_boundary(random, boundary_bytes);
+    proven_u8str_view_t boundary = (proven_u8str_view_t){ boundary_bytes, sizeof boundary_bytes };
+
+    proven_byte_t head[128];
+    proven_size_t head_len = 0;
+    EXAMPLE_REQUIRE(proven_http_multipart_write_content_type((proven_mem_mut_t){ head, sizeof head }, &head_len, boundary) == PROVEN_OK, "the header that announces it");
+
+    len = 0;
+    proven_err_t err = proven_http_multipart_write_part(out, &len, boundary, PROVEN_LIT("title"), PROVEN_LIT(""), PROVEN_LIT(""));
+    if (err == PROVEN_OK) { memcpy(buf + len, "Holiday", 7); len += 7; }      /* the part's bytes are yours to write */
+    if (err == PROVEN_OK) err = proven_http_multipart_write_part_end(out, &len);
+    if (err == PROVEN_OK) err = proven_http_multipart_write_part(out, &len, boundary, PROVEN_LIT("photo"), PROVEN_LIT("a \"b\".png"), PROVEN_LIT("image/png"));
+    if (err == PROVEN_OK) { memcpy(buf + len, "\x89PNG", 4); len += 4; }
+    if (err == PROVEN_OK) err = proven_http_multipart_write_part_end(out, &len);
+    if (err == PROVEN_OK) err = proven_http_multipart_write_end(out, &len, boundary);
+    EXAMPLE_REQUIRE(err == PROVEN_OK, "a body of two parts");
+    buf[len] = '\0';
+    EXAMPLE_REQUIRE(strstr((const char *)buf, "filename=\"a %22b%22.png\"") != NULL, "a quote in a file name cannot end the quoted string");
+
+    /* Authentication. Basic is the two strings, encoded - not encrypted. */
+    proven_size_t n = 0;
+    EXAMPLE_REQUIRE(proven_http_basic_auth(PROVEN_LIT("Aladdin"), PROVEN_LIT("open sesame"), out, &n) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, n }, "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=="), "the value of an Authorization header");
+
+    /* Digest answers a challenge, so the password itself is never sent. */
+    proven_u8str_view_t www = PROVEN_LIT("Digest realm=\"http-auth@example.org\", qop=\"auth, auth-int\", algorithm=SHA-256, "
+                                         "nonce=\"7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v\", opaque=\"FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS\"");
+    EXAMPLE_REQUIRE(proven_http_auth_offers(www, PROVEN_LIT("digest")) && !proven_http_auth_offers(www, PROVEN_LIT("Basic")), "what the server offers");
+    proven_http_digest_challenge_t challenge;
+    EXAMPLE_REQUIRE(proven_http_digest_challenge_parse(www, &challenge) == PROVEN_OK && challenge.algorithm == PROVEN_HTTP_DIGEST_SHA256 && challenge.qop_auth, "the challenge");
+    EXAMPLE_REQUIRE(proven_http_digest_auth(&challenge, PROVEN_LIT("Mufasa"), PROVEN_LIT("Circle of Life"), PROVEN_LIT("GET"), PROVEN_LIT("/dir/index.html"),
+                                            1, PROVEN_LIT("f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ"), out, &n) == PROVEN_OK, "the answer");
+    buf[n] = '\0';
+    /* The response RFC 7616 section 3.9.1 works out for exactly these inputs. */
+    EXAMPLE_REQUIRE(strstr((const char *)buf, "response=\"753927fa0e85d155564e2e272a28d1802ca10daf4496794697cf8db5856cb6c1\"") != NULL, "is the one in the RFC");
+
+    return EXAMPLE_OK();
+}
+```
+
+## 12. Cookies
+
+A cookie is a name and a value that a server asks to be sent back. `proven_http_cookie_jar_t`
+keeps them between requests: it stores what `Set-Cookie` headers set, and writes the `Cookie`
+header for a request.
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_http_cookie_jar_init(&jar, alloc, max_cookies)` | Make a jar that holds up to `max_cookies`. | `proven_err_t`: `INVALID_ARG` for a limit of 0; `NOMEM`. |
+| `proven_http_cookie_jar_store(&jar, host, path, secure, set_cookie, now)` | Act on one `Set-Cookie` value from a response to `host` and `path`. `now` is `proven_time_now()`. | `proven_err_t`: `INVALID_FORMAT` - not a cookie, ignore it; `PERMISSION` - not this host's to set; `OUT_OF_BOUNDS` - larger than `PROVEN_HTTP_COOKIE_MAX_SIZE`; `NOMEM`. The jar is unchanged in each case. |
+| `proven_http_cookie_jar_header(&jar, host, path, secure, now, out, &written)` | Write the `Cookie` value for a request: `a=1; b=2`. `written` is 0 when there is nothing to send. | `proven_err_t`: `OUT_OF_BOUNDS`. |
+| `proven_http_cookie_jar_count(&jar)` | How many cookies it holds. | `proven_size_t`. |
+| `proven_http_cookie_jar_clear(&jar)` | Forget them all. | none. |
+| `proven_http_cookie_jar_destroy(&jar)` | Free it. | none. |
+
+**This jar is host-only, on purpose.** A browser lets `www.example.com` set a cookie for all of
+`example.com`, and to do that safely it needs the public suffix list - the table that says
+`co.uk` is not a site but `example.co.uk` is. This library has no such table, and a jar that
+honours `Domain` without one will let `evil.co.uk` set a cookie for every site under `co.uk`. So
+a `Domain` attribute is checked - one that does not cover the host that sent it is
+`PROVEN_ERR_PERMISSION` - and then set aside: every cookie goes back to the exact host that set
+it and to no other. A site that relies on a cookie shared between its subdomains will not work
+through this jar; nothing that it should not receive will reach it either.
+
+What the jar does implement of RFC 6265: `Path` and its matching, `Max-Age` and `Expires`
+(`Max-Age` wins), `Secure` - never sent, and refused when set, over a connection that is not
+encrypted - replacement of a cookie with the same name and path, deletion by expiry, and
+eviction of the oldest when the jar is full. `HttpOnly` and `SameSite` describe what a browser's
+scripts and pages may do; a program has neither, and they are accepted and ignored.
+
+**The jar is not thread-safe**, and it lives in memory only: when it is destroyed the cookies
+are gone.
+
+## 13. Server-sent events
+
+An event stream is a response that does not end: `Content-Type: text/event-stream`, and then
+lines, for as long as the connection lasts.
+
+```text
+id: 41
+event: price
+data: {"sym":"X","p":12.5}
+
+data: a second event, of the default type
+```
+
+A blank line ends an event. `proven_sse_t` takes the stream in whatever pieces it arrives and
+hands back events.
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_sse_init(&sse, work)` | Begin. `work` is memory for the line and the event being assembled - half each - so it bounds the largest event accepted. At least 64 bytes. | `proven_err_t`: `INVALID_ARG`. |
+| `proven_sse_feed(&sse, in, &consumed, &event, &have_event)` | Consume bytes of `in` until an event is complete or `in` is used up. With `have_event` true, use `event` and call again with the rest. | `proven_err_t`: `OUT_OF_BOUNDS` when a line or an event outgrows `work`; after that, `INVALID_STATE`. |
+| `proven_sse_last_id(&sse)` | The last `id` seen, to send as `Last-Event-ID` when reconnecting. | `proven_u8str_view_t`; empty when there was none. |
+
+```text
+typedef struct {
+    proven_u8str_view_t event;   /* the type; empty means the default, "message" */
+    proven_u8str_view_t data;    /* the data lines joined with LF */
+    proven_u8str_view_t id;      /* the last id so far, from this event or an earlier one */
+    proven_u32 retry_ms;         /* valid when has_retry */
+    bool has_retry;
+} proven_sse_event_t;
+```
+
+**An event's views are good until the next feed.** They point into `work`. Copy what you keep.
+
+**A stream that ends mid-event has not delivered that event.** The standard says an event is
+dispatched by its blank line; one cut off before it is dropped, not delivered half. When the
+connection ends, reconnect with `Last-Event-ID` and the server can send it again.
+
+The parser follows the WHATWG rules - the three line endings, comment lines, a leading byte-order
+mark, a field with no colon, the single space after a colon - and does not reconnect, which is
+the client's job: this is the parser, and the connection is Chapter 11's.
+
+Compiled and run by the test suite:
+
+<!-- example: manual/examples/en/ex_10_cookies_events.c -->
+```c
+/*
+ * Two pieces of state a client keeps between messages: the cookies a server set, and its
+ * place in a stream of server-sent events. Neither touches a socket.
+ */
+
+static bool view_is(proven_u8str_view_t v, const char *text) {
+    return proven_u8str_view_eq(v, proven_u8str_view_from_cstr(text));
+}
+
+int main(void) {
+    // ---- A cookie jar -------------------------------------------------------
+    proven_http_cookie_jar_t jar;
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_init(&jar, proven_heap_allocator(), 32) == PROVEN_OK, "a jar for up to 32 cookies");
+    proven_time_t now = proven_time_now();
+
+    /* Each Set-Cookie header of a response is stored with where it came from. */
+    proven_u8str_view_t host = PROVEN_LIT("shop.example.com");
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_store(&jar, host, PROVEN_LIT("/"), true, PROVEN_LIT("sid=abc123; Path=/; Secure; HttpOnly"), now) == PROVEN_OK, "a session cookie");
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_store(&jar, host, PROVEN_LIT("/cart/view"), true, PROVEN_LIT("items=3; Max-Age=3600"), now) == PROVEN_OK,
+                    "one with no Path: it belongs to /cart");
+    /* A cookie for somebody else's domain is refused. This jar goes further than a browser
+     * and keeps every cookie for the exact host that set it. */
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_store(&jar, host, PROVEN_LIT("/"), true, PROVEN_LIT("track=1; Domain=ads.example.net"), now) == PROVEN_ERR_PERMISSION,
+                    "not this host's to set");
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_count(&jar) == 2, "two cookies");
+
+    /* For a request, the jar writes the value of the Cookie header. */
+    proven_byte_t buf[256];
+    proven_mem_mut_t out = { buf, sizeof buf };
+    proven_size_t n = 0;
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_header(&jar, host, PROVEN_LIT("/cart/checkout"), true, now, out, &n) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, n }, "items=3; sid=abc123"), "under /cart: both, the longer path first");
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_header(&jar, host, PROVEN_LIT("/account"), true, now, out, &n) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, n }, "sid=abc123"), "elsewhere: only the one for /");
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_header(&jar, host, PROVEN_LIT("/account"), false, now, out, &n) == PROVEN_OK && n == 0,
+                    "over plain HTTP: nothing - sid is Secure. n == 0 means send no header");
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_header(&jar, PROVEN_LIT("example.com"), PROVEN_LIT("/"), true, now, out, &n) == PROVEN_OK && n == 0,
+                    "another host: nothing");
+
+    /* Time passes; Max-Age runs out. And a server deletes a cookie by expiring it. */
+    proven_time_t later = now + (proven_time_t)7200 * 1000000000;
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_header(&jar, host, PROVEN_LIT("/cart"), true, later, out, &n) == PROVEN_OK &&
+                    view_is((proven_u8str_view_t){ buf, n }, "sid=abc123"), "two hours on, items has expired");
+    EXAMPLE_REQUIRE(proven_http_cookie_jar_store(&jar, host, PROVEN_LIT("/"), true, PROVEN_LIT("sid=; Path=/; Max-Age=0"), later) == PROVEN_OK &&
+                    proven_http_cookie_jar_count(&jar) == 0, "logged out: the jar is empty");
+
+    proven_http_cookie_jar_clear(&jar);       /* or empty it yourself */
+    proven_http_cookie_jar_destroy(&jar);
+
+    // ---- Server-sent events -------------------------------------------------
+    /* The parser is fed whatever arrived, in whatever pieces, and hands back whole events. */
+    proven_byte_t work[512];
+    proven_sse_t sse;
+    EXAMPLE_REQUIRE(proven_sse_init(&sse, (proven_mem_mut_t){ work, sizeof work }) == PROVEN_OK, "a parser with room for 256-byte events");
+
+    static const char *const arrived[] = {
+        ": keep-alive\n\n",                              /* a comment: no event */
+        "id: 41\nevent: price\ndata: {\"sym\":\"X\",",   /* an event, cut in the middle */
+        "\ndata:  \"p\":12.5}\n\n",                      /* ...and its end */
+        "data: plain\n\n",
+    };
+    int events = 0;
+    for (proven_size_t i = 0; i < 4; ++i) {
+        proven_mem_view_t in = proven_mem_view_from_u8(proven_u8str_view_from_cstr(arrived[i]));
+        while (in.size > 0) {
+            proven_size_t used = 0;
+            proven_sse_event_t ev;
+            bool have = false;
+            EXAMPLE_REQUIRE(proven_sse_feed(&sse, in, &used, &ev, &have) == PROVEN_OK, "the stream parses");
+            in.ptr += used;
+            in.size -= used;
+            if (!have) continue;           /* everything consumed, no event yet */
+            events++;
+            if (events == 1) {
+                EXAMPLE_REQUIRE(view_is(ev.event, "price") && view_is(ev.id, "41"), "a typed event with an id");
+                EXAMPLE_REQUIRE(view_is(ev.data, "{\"sym\":\"X\",\n \"p\":12.5}"), "two data lines, joined by a line feed");
+            } else {
+                EXAMPLE_REQUIRE(ev.event.size == 0 && view_is(ev.data, "plain"), "no type given: a \"message\"");
+                EXAMPLE_REQUIRE(view_is(ev.id, "41"), "the id stays until another replaces it");
+            }
+        }
+    }
+    EXAMPLE_REQUIRE(events == 2, "two events from four pieces");
+    /* After a disconnect, send this as Last-Event-ID and the server can resume from there. */
+    EXAMPLE_REQUIRE(view_is(proven_sse_last_id(&sse), "41"), "where to resume");
+
+    return EXAMPLE_OK();
+}
+```
+
+## 14. What is not here
+
+- **A client or a server.** They are [Chapter 11](manual-11-http-client-server.md).
 - **HTTP/2 and HTTP/3.** A head that says `HTTP/2.0` is `PROVEN_ERR_UNSUPPORTED`.
 - **Content codings.** `gzip` and the rest: the library has no DEFLATE yet.
 - **Trailers.** After a chunked body they are checked and skipped, not returned.
-- **Cookies, authentication, multipart bodies, ranges.** Headers are text to this layer.
-- **Relative URLs** and resolving one against a base.
+- **Parsing a multipart body, and multi-range (`multipart/byteranges`) responses.**
+- **A public suffix list**, and so cookies shared across subdomains - see section 12.
+- **`Negotiate`, `NTLM` and bearer-token flows.** A bearer token is a header you write yourself.

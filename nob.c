@@ -993,6 +993,7 @@ static bool check_manual_code_blocks(const char *compiler, const char *standard_
         "manual/manual-08-fmt-scan.md",
         "manual/manual-09-networking.md",
         "manual/manual-10-http.md",
+        "manual/manual-11-http-client-server.md",
         "manual/manual-freestanding.md",
     };
 

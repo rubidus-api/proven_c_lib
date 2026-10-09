@@ -64,7 +64,7 @@ int main(void) {
     /* The object files, not the linked program: a static libc may carry getaddrinfo for its own
      * reasons, and that would say nothing about this library. */
     snprintf(cmd, sizeof cmd,
-        "! (nm %s/*.o 2>/dev/null | grep -E ' [TU] (proven_net_|proven_sys_net_|proven_transport_|getaddrinfo|socket|connect|accept|recv|send)' >/dev/null)", dir);
+        "! (nm %s/*.o 2>/dev/null | grep -E ' [TU] (proven_net_|proven_sys_net_|proven_transport_|proven_http_client_|proven_http_server_|proven_http_exchange_|getaddrinfo|socket|connect|accept|recv|send)' >/dev/null)", dir);
     PROVEN_TEST_ASSERT(run(cmd) == 0,
         "no object of that build defines or references a socket function",
         "List them with: nm build/test_portability_compile_nonet/*.o | grep -E 'proven_net_|socket'");

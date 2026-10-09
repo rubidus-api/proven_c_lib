@@ -653,6 +653,24 @@ proven_err_t proven_net_conn_set_nodelay(proven_net_conn_t *conn, bool on) {
     return internal_err_from_reason(proven_sys_net_set_nodelay((proven_sys_socket_t)conn->internal.handle, on));
 }
 
+proven_err_t proven_net_pair(proven_net_conn_t *a, proven_net_conn_t *b) {
+    if (!a || !b) return PROVEN_ERR_INVALID_ARG;
+    *a = (proven_net_conn_t){0};
+    *b = (proven_net_conn_t){0};
+    proven_sys_socket_t sa = PROVEN_SYS_SOCKET_INVALID, sb = PROVEN_SYS_SOCKET_INVALID;
+    proven_sys_net_result_t r = proven_sys_net_pair(&sa, &sb);
+    if (r != PROVEN_SYS_NET_OK) return internal_err_from_reason(r);
+    /* The family decides only whether TCP_NODELAY applies; the pair is addressless either way. */
+#if defined(_WIN32) || defined(_WIN64)
+    proven_u8 family = (proven_u8)PROVEN_NET_FAMILY_IPV4;
+#else
+    proven_u8 family = (proven_u8)PROVEN_NET_FAMILY_UNIX;
+#endif
+    a->internal.handle = (proven_uintptr_t)sa; a->internal.family = family; a->internal.open = true;
+    b->internal.handle = (proven_uintptr_t)sb; b->internal.family = family; b->internal.open = true;
+    return PROVEN_OK;
+}
+
 // -----------------------------------------------------------------------------
 // Datagram sockets
 // -----------------------------------------------------------------------------
@@ -757,6 +775,43 @@ proven_net_handle_t proven_net_udp_handle(const proven_net_udp_t *udp) {
     proven_net_handle_t h = {0};
     if (proven_net_udp_is_open(udp)) { h.raw = udp->internal.handle; h.valid = true; }
     return h;
+}
+
+proven_err_t proven_net_waker_open(proven_net_waker_t *waker) {
+    if (!waker) return PROVEN_ERR_INVALID_ARG;
+    *waker = (proven_net_waker_t){0};
+    return proven_net_pair(&waker->reader, &waker->writer);
+}
+
+void proven_net_waker_wake(proven_net_waker_t *waker) {
+    if (!waker || !waker->writer.internal.open) return;
+    /* One byte, without waiting. If the pipe is full the reader has plenty to wake up for
+     * already, so "would block" is success. The platform send is safe to call from several
+     * threads on one socket. */
+    static const proven_byte_t one = 1;
+    proven_size_t sent = 0;
+    (void)proven_sys_net_send((proven_sys_socket_t)waker->writer.internal.handle, &one, 1, &sent);
+}
+
+void proven_net_waker_drain(proven_net_waker_t *waker) {
+    if (!waker || !waker->reader.internal.open) return;
+    proven_byte_t sink[64];
+    for (;;) {
+        proven_size_t n = 0;
+        proven_sys_net_result_t r = proven_sys_net_recv((proven_sys_socket_t)waker->reader.internal.handle, sink, sizeof sink, &n);
+        if (r != PROVEN_SYS_NET_OK || n < sizeof sink) return;
+    }
+}
+
+proven_net_handle_t proven_net_waker_handle(const proven_net_waker_t *waker) {
+    proven_net_handle_t none = {0};
+    return waker ? proven_net_conn_handle(&waker->reader) : none;
+}
+
+void proven_net_waker_close(proven_net_waker_t *waker) {
+    if (!waker) return;
+    (void)proven_net_close(&waker->reader);
+    (void)proven_net_close(&waker->writer);
 }
 
 /* The scratch holds two arrays: this layer's list of sockets for the platform unit, and the

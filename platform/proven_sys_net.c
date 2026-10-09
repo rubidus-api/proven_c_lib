@@ -430,6 +430,73 @@ proven_sys_net_result_t proven_sys_net_connect_start(const proven_sys_net_addr_t
     }
 }
 
+proven_sys_net_result_t proven_sys_net_pair(proven_sys_socket_t *a, proven_sys_socket_t *b) {
+    if (!net_ready()) return PROVEN_SYS_NET_ERROR;
+#if defined(_WIN32) || defined(_WIN64)
+    /* No socketpair here: listen on a loopback port the system chooses, connect to it, and
+     * accept. The listener exists for a moment; the accepted socket is checked to be the one
+     * that connected, so that another local process racing for that port cannot end up as one
+     * end of the pair. */
+    native_socket_t listener = native_open(AF_INET, SOCK_STREAM);
+    if (listener == NATIVE_INVALID) return net_fail();
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof addr);
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    native_len_t len = (native_len_t)sizeof addr;
+    native_socket_t client = NATIVE_INVALID, server = NATIVE_INVALID;
+    proven_sys_net_result_t r = PROVEN_SYS_NET_ERROR;
+    if (bind(listener, (const struct sockaddr *)&addr, len) != 0 || listen(listener, 1) != 0 ||
+        getsockname(listener, (struct sockaddr *)&addr, &len) != 0) { r = net_fail(); goto done; }
+    client = native_open(AF_INET, SOCK_STREAM);
+    if (client == NATIVE_INVALID) { r = net_fail(); goto done; }
+    if (connect(client, (const struct sockaddr *)&addr, len) != 0) {
+        proven_sys_net_result_t cr = net_fail();
+        if (cr != PROVEN_SYS_NET_WOULD_BLOCK && cr != PROVEN_SYS_NET_IN_PROGRESS) { r = cr; goto done; }
+    }
+    for (int tries = 0; tries < 200 && server == NATIVE_INVALID; ++tries) {
+        struct sockaddr_in from;
+        native_len_t fl = (native_len_t)sizeof from;
+        native_socket_t s = accept(listener, (struct sockaddr *)&from, &fl);
+        if (s == NATIVE_INVALID) {
+            if (net_reason(net_last_error()) != PROVEN_SYS_NET_WOULD_BLOCK) { r = net_fail(); goto done; }
+            Sleep(5);
+            continue;
+        }
+        struct sockaddr_in mine;
+        native_len_t ml = (native_len_t)sizeof mine;
+        if (getsockname(client, (struct sockaddr *)&mine, &ml) == 0 && mine.sin_port == from.sin_port &&
+            from.sin_addr.s_addr == htonl(INADDR_LOOPBACK)) {
+            server = s;
+        } else {
+            closesocket(s);                     /* somebody else's connection */
+        }
+    }
+    if (server == NATIVE_INVALID) { r = PROVEN_SYS_NET_TIMEOUT; goto done; }
+    if (!native_prepare_accepted(server)) { r = PROVEN_SYS_NET_ERROR; goto done; }
+    closesocket(listener);
+    *a = (proven_sys_socket_t)client;
+    *b = (proven_sys_socket_t)server;
+    return PROVEN_SYS_NET_OK;
+done:
+    if (listener != NATIVE_INVALID) closesocket(listener);
+    if (client != NATIVE_INVALID) closesocket(client);
+    if (server != NATIVE_INVALID) closesocket(server);
+    return r;
+#else
+    int fds[2];
+#if defined(__linux__)
+    if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, fds) != 0) return net_fail();
+#else
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) return net_fail();
+    if (!native_set_flags(fds[0]) || !native_set_flags(fds[1])) { close(fds[0]); close(fds[1]); return PROVEN_SYS_NET_ERROR; }
+#endif
+    *a = (proven_sys_socket_t)fds[0];
+    *b = (proven_sys_socket_t)fds[1];
+    return PROVEN_SYS_NET_OK;
+#endif
+}
+
 proven_sys_net_result_t proven_sys_net_connect_result(proven_sys_socket_t sock) {
     int err = 0;
     native_len_t len = (native_len_t)sizeof err;
