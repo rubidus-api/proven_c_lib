@@ -633,6 +633,7 @@ portable implementation 파일은 `src/proven/`에 있습니다. OS와 C runtime
 - console I/O
 - threads
 - memory mapping
+- sockets
 - 필요한 경우의 math helper
 
 이 분리는 core library를 감사하기 쉽게 만들고, 포팅 작업이 들어갈 위치도 분명하게 해 줍니다. 현재 주요 런타임 대상은 hosted Linux입니다. 선택적 toolchain이 설치되어 있으면 빌드는 Linux AArch64, Linux ARM hard-float, Linux i686, MinGW Windows x86_64/i686, ARM Cortex-M freestanding, RISC-V ELF freestanding용 smoke source를 크로스 컴파일합니다. wasm32는 Clang으로 freestanding 부분집합을 컴파일하고 링크합니다. MinGW 경로는 smoke 실행 파일도 링크하지만, 어떤 크로스 경로도 대상 코드를 실행하지는 않습니다.
@@ -648,9 +649,10 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 - Algorithms: `algorithm`.
 - Text: `fmt`, `scan`.
 - Numbers: `float_parse`, `float_format`.
-- 해싱과 인코딩: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256), `encode` (hex, Base64, Base64URL), `utf` (엄격한 UTF-8 <-> UTF-16).
+- 해싱과 인코딩: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256), `hash_legacy` (SHA-1과 MD5, 그것을 못 박은 형식용), `encode` (hex, Base64, Base64URL), `utf` (엄격한 UTF-8 <-> UTF-16).
 - 난수: `random` (xoshiro256** 재현 가능, ChaCha20 암호학적, 무편향 범위/셔플 헬퍼, 교체 가능한 엔트로피 소스 — 기본은 OS CSPRNG, 베어메탈은 보드의 하드웨어 TRNG).
 - Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
+- 네트워킹: `net` (기다리는 모든 호출에 기한이 있는 TCP·UDP·유닉스 도메인 소켓, 여러 소켓의 준비 상태, 전송 인터페이스). Hosted 전용이며 `PROVEN_NO_NET`으로 뺄 수 있습니다.
 - Execution: `coro`, `job`.
 - Diagnostics: `panic`.
 - Optional short aliases: `alias_xcv`.
@@ -659,9 +661,9 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 
 `proven`은 libc 대체품도 아니고, garbage collector도 아니고, 프레임워크도 아닙니다. 프로세스, build graph, error policy를 대신 소유하려고 하지도 않습니다. 읽기 쉽고, 테스트하기 쉽고, 한 경계씩 포팅할 수 있도록 만든 C 컴포넌트 모음입니다.
 
-플랫폼 경계가 **어디서 끝나는지**도 적어 둘 가치가 있습니다. 적어 두지 않으면 부딪혀 봐야 알게 되기 때문입니다. PAL이 덮는 범위는 메모리, 파일시스템, 시간, 메모리 매핑, 환경 변수, 콘솔 I/O, 스레드입니다. 프로세스 제어(`fork` / `exec` / 파이프), 터미널 제어(raw 모드, job control), 네트워킹은 **덮지 않습니다**. 프로그램의 본질이 그 중 하나라면 POSIX나 Win32를 직접 부르게 되고, "플랫폼 `#ifdef` 없음"이라는 성질은 거기까지 확장되지 않습니다.
+플랫폼 경계가 **어디서 끝나는지**도 적어 둘 가치가 있습니다. 적어 두지 않으면 부딪혀 봐야 알게 되기 때문입니다. PAL이 덮는 범위는 메모리, 파일시스템, 시간, 메모리 매핑, 환경 변수, 콘솔 I/O, 스레드, 소켓입니다. 프로세스 제어(`fork` / `exec` / 파이프)와 터미널 제어(raw 모드, job control)는 **덮지 않습니다**. 프로그램의 본질이 그 중 하나라면 POSIX나 Win32를 직접 부르게 되고, "플랫폼 `#ifdef` 없음"이라는 성질은 거기까지 확장되지 않습니다. 소켓 계층은 단계적으로 짓고 있는 네트워킹 스택의 첫 걸음입니다. 소켓은 들어왔고, HTTP·WebSocket·TLS는 아직 없습니다.
 
-`hash` 모듈은 암호학적·비암호학적 해시(FNV·SipHash·CRC-32와 함께 SHA-256)를, `random`은 OS 강도 바이트를 실제로 제공합니다. 다만 `proven`은 암호 라이브러리가 아닙니다. 의도적인 비목표라서 찾아 헤매지 않으셔도 되는 것은 서명, 키 교환, 비밀번호 해싱/KDF, 인증 암호화(AEAD), TLS이며, 여기에 더해 경로 조작, 인자 파싱, 로깅 프레임워크도 제공하지 않습니다.
+`hash` 모듈은 암호학적·비암호학적 해시(FNV·SipHash·CRC-32와 함께 SHA-256)를, `random`은 OS 강도 바이트를 실제로 제공합니다. 다만 `proven`은 지금 암호 라이브러리가 아닙니다. 서명, 키 교환, 비밀번호 해싱/KDF, 인증 암호화(AEAD), TLS가 없으니 찾아 헤매지 않으셔도 되고, `net`으로 만든 연결은 암호화되지 않습니다. 경로 조작, 인자 파싱, 로깅 프레임워크도 없으며 이것들은 계획에도 없습니다.
 
 ## 실제로 프로젝트에 적용했을 때의 효용성
 

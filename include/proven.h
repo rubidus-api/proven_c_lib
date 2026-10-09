@@ -38,6 +38,9 @@
 #include "proven/mmap.h"
 #ifndef PROVEN_FREESTANDING
 #include "proven/stream.h"
+#ifndef PROVEN_NO_NET
+#include "proven/net.h"
+#endif
 #endif
 #include "proven/sysio.h"
 #include "proven/job.h"

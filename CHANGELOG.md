@@ -18,6 +18,58 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **`proven/net.h`: sockets.** TCP, UDP and Unix-domain stream sockets on POSIX and Windows,
+  behind a new platform unit (`platform/proven_sys_net.c`); hosted only. The second step of the
+  networking work (RFC-0010).
+  - Every call that can wait takes a deadline - an absolute reading of the monotonic clock, so
+    one deadline bounds a whole exchange. `PROVEN_NET_NO_DEADLINE` and `PROVEN_NET_DONT_WAIT`
+    are the two ends. A deadline that passes is `PROVEN_ERR_TIMEOUT` and leaves the socket
+    usable.
+  - Addresses are values: `proven_net_addr_ipv4`, `_ipv6`, `_loopback`, `_any`, `_unix`,
+    `_parse`, `_format`, `_eq`. The parser takes literals only and refuses the IPv4 shorthands
+    and leading zeros that `inet_aton` accepts; IPv6 is printed in the canonical form of RFC
+    5952. `proven_net_resolve` asks the system resolver, and says in its documentation that it
+    blocks with no deadline.
+  - Streams: `proven_net_listen` (reports the address it bound), `_accept`, `_connect`, `_read`,
+    `_write`, `_write_all` (reports how far it got when it fails), `_shutdown_write`, `_close`,
+    and the address and `TCP_NODELAY` accessors. End of input is `PROVEN_ERR_EOF`, never a
+    zero-byte success.
+  - Datagrams: `proven_net_udp_open`, `_send_to`, `_recv_from`, `_addr`, `_close`. A datagram
+    larger than the buffer is `PROVEN_ERR_OUT_OF_BOUNDS` with the bytes that were kept.
+  - Readiness: `proven_net_poll` for up to 64 sockets and `proven_net_poll_with` for any number,
+    with caller-supplied scratch memory. `poll` on POSIX, `WSAPoll` on Windows.
+  - `proven_transport_t`: a connection as an interface (read, write, shutdown, close, each with
+    a deadline), with `proven_reader_t` and `proven_writer_t` adapters so the line reader and
+    `proven_fprint` work over a socket. This is the seam TLS will attach to; there is no TLS in
+    this release, and a connection is not encrypted.
+  - `PROVEN_NO_NET` leaves the header and both sources out of a hosted build.
+- **Five error codes**, appended after `PROVEN_ERR_EXISTS`: `PROVEN_ERR_TIMEOUT`,
+  `PROVEN_ERR_REFUSED`, `PROVEN_ERR_RESET`, `PROVEN_ERR_UNREACHABLE` and `PROVEN_ERR_UNTRUSTED`.
+  `PROVEN_ERR_LAST` is now `PROVEN_ERR_UNTRUSTED`. Nothing returns `PROVEN_ERR_UNTRUSTED` yet: it
+  is reserved for certificate verification and added now so that the enum grows once. **A
+  `switch` over `proven_err_t` with no `default` must add the five cases.**
+- **`proven_time_monotonic_now`**: nanoseconds on a clock that is never set and never goes
+  backwards (`CLOCK_MONOTONIC`; `QueryPerformanceCounter` on Windows). Durations, timeouts and
+  deadlines are measured with it. In a freestanding build it returns 0, as `proven_time_now`
+  does.
+- **Manual chapter 9, "Networking"**, in both editions, with five compiled examples; the
+  Windows link line gains `-lws2_32`.
+
+### Changed
+
+- The manual's time section and its example measured a duration with the wall clock while
+  explaining why that is wrong. They now use `proven_time_monotonic_now`; `proven_time_now` is
+  described as what it is, the wall clock.
+- `alias_xcv.h` and the alias index are sorted throughout (65 lines were out of order), and
+  the index states the real totals: 660 aliases.
+- README: networking is no longer listed as outside the platform boundary. Sockets are in;
+  HTTP, WebSocket and TLS are not yet.
+- **Windows:** a link of the library now needs `ws2_32` in addition to `bcrypt`. Unix-domain
+  sockets need Windows 10 version 1803 or later, and a refused loopback connection is reported
+  after about two seconds there, at once on POSIX.
+
 ## [0.9.0] - 2026-10-09
 
 A MINOR release: a new public header and a new cross target. Nothing public is removed or

@@ -105,7 +105,7 @@ build_lang() {
         printf '#outline(depth: 2)\n#pagebreak()\n'
         for name in index manual-t-tutorial manual-00-start-here manual-01-foundation manual-02-allocation \
                     manual-03-strings-text manual-04-containers-algorithms manual-08-fmt-scan \
-                    manual-05-hosted-services manual-06-execution-and-platform \
+                    manual-05-hosted-services manual-09-networking manual-06-execution-and-platform \
                     manual-freestanding manual-07-alias-xcv-index; do
             [ -f "$work/$lang/typ/$name.typ" ] || continue
             printf '#include "typ/%s.typ"\n#pagebreak()\n' "$name"

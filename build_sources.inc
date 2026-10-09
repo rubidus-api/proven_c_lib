@@ -34,6 +34,7 @@ PROVEN_BUILD_SOURCE("src/proven/utf.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/random.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/fs.c", PROVEN_SOURCE_HOSTED_ONLY)   /* the filesystem */
 PROVEN_BUILD_SOURCE("src/proven/time.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("src/proven/net.c", PROVEN_SOURCE_HOSTED_ONLY)   /* sockets */
 PROVEN_BUILD_SOURCE("src/proven/fmt.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/mmap.c", PROVEN_SOURCE_HOSTED_ONLY)   /* memory mapping */
 PROVEN_BUILD_SOURCE("src/proven/sysio.c", PROVEN_SOURCE_HOSTED_ONLY)   /* console and stdio */
@@ -46,6 +47,7 @@ PROVEN_BUILD_SOURCE("src/proven/panic.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("platform/proven_sys_mem.c", PROVEN_SOURCE_HOSTED_ONLY)   /* the freestanding build uses the inline fallbacks */
 PROVEN_BUILD_SOURCE("platform/proven_sys_fs.c", PROVEN_SOURCE_HOSTED_ONLY)
 PROVEN_BUILD_SOURCE("platform/proven_sys_time.c", PROVEN_SOURCE_HOSTED_ONLY)
+PROVEN_BUILD_SOURCE("platform/proven_sys_net.c", PROVEN_SOURCE_HOSTED_ONLY)
 PROVEN_BUILD_SOURCE("platform/proven_sys_env.c", PROVEN_SOURCE_HOSTED_ONLY)
 PROVEN_BUILD_SOURCE("platform/proven_sys_random.c", PROVEN_SOURCE_HOSTED_ONLY)   /* no OS CSPRNG on bare metal */
 PROVEN_BUILD_SOURCE("platform/proven_sys_thread.c", PROVEN_SOURCE_HOSTED_ONLY)

@@ -38,6 +38,7 @@ TITLES = {
         'manual-06-execution-and-platform': '6 · Execution and platform',
         'manual-07-alias-xcv-index': 'A · Alias index',
         'manual-08-fmt-scan': '8 · Formatting and scanning',
+        'manual-09-networking': '9 · Networking',
         'manual-freestanding': 'Freestanding',
     },
     'ko': {
@@ -52,6 +53,7 @@ TITLES = {
         'manual-06-execution-and-platform': '6 · 실행과 플랫폼',
         'manual-07-alias-xcv-index': '부록 A · Alias 인덱스',
         'manual-08-fmt-scan': '8 · 형식화와 파싱',
+        'manual-09-networking': '9 · 네트워킹',
         'manual-freestanding': '프리스탠딩',
     },
 }
@@ -60,7 +62,7 @@ TITLES = {
 # alias index last, because it is a lookup table rather than something anyone reads through.
 ORDER = ['index', 'manual-t-tutorial', 'manual-00-start-here', 'manual-01-foundation', 'manual-02-allocation',
          'manual-03-strings-text', 'manual-04-containers-algorithms', 'manual-08-fmt-scan',
-         'manual-05-hosted-services', 'manual-06-execution-and-platform',
+         'manual-05-hosted-services', 'manual-09-networking', 'manual-06-execution-and-platform',
          'manual-freestanding', 'manual-07-alias-xcv-index']
 
 STR = {

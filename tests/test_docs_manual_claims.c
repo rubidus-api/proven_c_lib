@@ -28,6 +28,61 @@ int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("chapter 9, addresses and deadlines",
+        "The facts the networking chapter states that need no socket to check.",
+        "");
+    // ---------------------------------------------------------------
+    {
+        /* CLAIM: "`127.1` and `2130706433` are refused although older parsers accept both, and
+         * so is `010.0.0.1`, which those parsers read as octal eight." */
+        proven_net_addr_t a;
+        PROVEN_TEST_ASSERT(proven_net_addr_parse(PROVEN_LIT("127.1"), 1, &a) == PROVEN_ERR_INVALID_FORMAT &&
+                           proven_net_addr_parse(PROVEN_LIT("2130706433"), 1, &a) == PROVEN_ERR_INVALID_FORMAT &&
+                           proven_net_addr_parse(PROVEN_LIT("010.0.0.1"), 1, &a) == PROVEN_ERR_INVALID_FORMAT,
+            "the three IPv4 shorthands the chapter says are refused must be refused", "");
+
+        /* CLAIM: "IPv6 has many spellings going in but one coming out ... so two equal addresses
+         * print as equal text", and "PROVEN_NET_ADDR_TEXT_MAX bytes are always enough". */
+        proven_net_addr_t b;
+        proven_byte_t ta[PROVEN_NET_ADDR_TEXT_MAX], tb[PROVEN_NET_ADDR_TEXT_MAX];
+        proven_size_t na = 0, nb = 0;
+        PROVEN_TEST_ASSERT(proven_net_addr_parse(PROVEN_LIT("2001:0DB8:0:0:0:0:0:1"), 80, &a) == PROVEN_OK &&
+                           proven_net_addr_parse(PROVEN_LIT("2001:db8::1"), 80, &b) == PROVEN_OK &&
+                           proven_net_addr_format(&a, (proven_mem_mut_t){ ta, sizeof ta }, &na) == PROVEN_OK &&
+                           proven_net_addr_format(&b, (proven_mem_mut_t){ tb, sizeof tb }, &nb) == PROVEN_OK &&
+                           na == nb && memcmp(ta, tb, na) == 0,
+            "two spellings of one IPv6 address must print as the same text", "");
+        proven_net_addr_t widest;
+        memset(&widest, 0, sizeof widest);
+        widest.family = PROVEN_NET_FAMILY_IPV6;
+        widest.port = 65535;
+        widest.scope_id = 0xffffffffu;
+        for (int i = 0; i < 16; ++i) widest.ip[i] = (proven_byte_t)(0x11 * ((i % 14) + 1));
+        PROVEN_TEST_ASSERT(proven_net_addr_format(&widest, (proven_mem_mut_t){ ta, sizeof ta }, &na) == PROVEN_OK &&
+                           na <= PROVEN_NET_ADDR_TEXT_MAX,
+            "the widest IPv6 address, zone and port must fit PROVEN_NET_ADDR_TEXT_MAX", "");
+        proven_net_addr_t longest;
+        char path[104];
+        memset(path, 'p', sizeof path);
+        PROVEN_TEST_ASSERT(proven_net_addr_unix((proven_u8str_view_t){ (const proven_byte_t *)path, PROVEN_NET_UNIX_PATH_MAX }, &longest) == PROVEN_OK &&
+                           proven_net_addr_format(&longest, (proven_mem_mut_t){ ta, sizeof ta }, &na) == PROVEN_OK,
+            "and so must the longest Unix-domain path", "");
+
+        /* CLAIM: "proven_net_poll ... Up to PROVEN_NET_POLL_INLINE_MAX (64) items." */
+        PROVEN_TEST_ASSERT(PROVEN_NET_POLL_INLINE_MAX == 64, "the inline poll limit is the 64 the chapter prints", "");
+
+        /* CLAIM: "A deadline is a moment ... a reading of the monotonic clock", and
+         * "proven_net_deadline_in(ms): the deadline ms milliseconds from now". */
+        proven_time_t before = proven_time_monotonic_now();
+        proven_net_deadline_t d = proven_net_deadline_in(1000);
+        proven_time_t after = proven_time_monotonic_now();
+        PROVEN_TEST_ASSERT(d >= before + 1000 * 1000000LL && d <= after + 1000 * 1000000LL,
+            "a deadline is the monotonic clock plus the milliseconds asked for", "");
+        PROVEN_TEST_ASSERT(PROVEN_NET_DONT_WAIT < before && PROVEN_NET_NO_DEADLINE > d,
+            "DONT_WAIT is before every moment and NO_DEADLINE after every moment", "");
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("chapter 4, legacy digests",
         "The sizes and spellings the SHA-1 and MD5 section states as fact.",
         "");

@@ -14,6 +14,7 @@ C23 시스템 라이브러리 `proven`의 매뉴얼입니다. 각 장은 `manual
 - [4장 — 컨테이너와 알고리즘](manual-04-containers-algorithms-ko.md)
 - [8장 — 형식화와 파싱](manual-08-fmt-scan-ko.md)
 - [5장 — Hosted 서비스](manual-05-hosted-services-ko.md)
+- [9장 — 네트워킹](manual-09-networking-ko.md)
 - [6장 — 실행과 플랫폼](manual-06-execution-and-platform-ko.md)
 - [프리스탠딩](manual-freestanding-ko.md)
 - [부록 A — Alias 인덱스](manual-07-alias-xcv-index-ko.md)

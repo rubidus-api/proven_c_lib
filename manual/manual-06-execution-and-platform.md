@@ -550,7 +550,8 @@ PAL areas:
 
 - `proven_sys_mem`: heap allocation backend.
 - `proven_sys_fs`: files, directories, paths, links, permissions, locks.
-- `proven_sys_time`: clock, sleep, time breakdown.
+- `proven_sys_time`: the wall clock, the monotonic clock, sleep, time breakdown.
+- `proven_sys_net`: sockets, readiness, name resolution.
 - `proven_sys_env`: environment variables.
 - `proven_sys_thread`: threads and synchronization for the job system.
 - `proven_sys_io`: standard stream I/O.
@@ -603,7 +604,7 @@ Excluded or stubbed modules:
   (`platform/proven_sys_time.c`) is not - so `proven_time_now()`,
   `proven_time_now_datetime()`, and `proven_time_sleep()` have no implementation to
   link against.
-- `fs`, `sysio`, `mmap`, `job`: hosted/PAL services excluded from the current freestanding subset.
+- `fs`, `sysio`, `mmap`, `job`, `net`: hosted/PAL services excluded from the current freestanding subset. A hosted build can also leave `net` out with `-DPROVEN_NO_NET`.
 
 See `manual-freestanding.md` for the exact source list and command examples.
 

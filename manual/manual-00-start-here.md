@@ -433,7 +433,7 @@ proven_writer_buf_t a = ...;
 proven_writer_buf_t b = a;          /* wrong: b's internals still point into a */
 ```
 
-section 9.2 below lists all sixteen of these types. The rule is simple: create it where it lives,
+section 9.2 below lists all nineteen of these types. The rule is simple: create it where it lives,
 pass `&it`, and do not assign it.
 
 ### 5. Refuse, never truncate
@@ -678,6 +678,7 @@ copied or moved** while the handle is alive.
 | `proven_sysio_out_t` | `proven_sysio_stdout_buffered` / `_file_buffered` | `proven_writer_t` | **Do not copy.** Must be flushed. |
 | `proven_sysio_lines_t` | `proven_sysio_lines_open` / `_stdin_lines` | (used via `proven_sysio_read_line`) | The one exception: `proven_sysio_read_line` re-binds it on every call, so this one **may** be moved. |
 | `proven_sysio_scanner_t` | `proven_sysio_scanner_init` | (used directly) | The exception in the other direction: this one **does** own a buffer, and you must call `proven_sysio_scanner_deinit`. |
+| `proven_transport_stream_t` | `proven_transport_reader` / `proven_transport_writer` | `proven_reader_t` / `proven_writer_t` | **Do not copy.** The transport it wraps must outlive it too. |
 
 Wrong - the copy looks harmless and is a use-after-free:
 
@@ -797,7 +798,7 @@ reference you read after Chapter 3 has introduced the subject.
 | **II - The vocabulary every program uses** | [1](manual-01-foundation.md) -> [2](manual-02-allocation.md) -> [3](manual-03-strings-text.md) | Chapter 0 | Handle errors as values, own memory deliberately, hold text safely |
 | **III - Data structures** | [4](manual-04-containers-algorithms.md) | Part II | Arrays, maps, lists, rings, sorting, searching, hashing, encoding |
 | **IV - Text in and out** | [8](manual-08-fmt-scan.md) | Chapter 3 section 3-section 4 | Format and parse anything, and teach the formatter your own types |
-| **V - Talking to the operating system** | [5](manual-05-hosted-services.md) | Part II | Files, directories, streams, standard I/O, time, randomness, mapping |
+| **V - Talking to the operating system** | [5](manual-05-hosted-services.md) -> [9](manual-09-networking.md) | Part II | Files, directories, streams, standard I/O, time, randomness, mapping; sockets with deadlines |
 | **VI - Going further** | [6](manual-06-execution-and-platform.md) -> [freestanding](manual-freestanding.md) | Parts II-V | Coroutines, jobs, thread-safety, bare metal, cross builds |
 | **Appendices** | [A](manual-07-alias-xcv-index.md), [B](#13-appendix-b-glossary), [C](#14-appendix-c-public-header-map), [D](#15-appendix-d-the-libc-map) | - | Look things up |
 
@@ -813,6 +814,7 @@ reference you read after Chapter 3 has introduced the subject.
 6. [**Execution and platform**: coroutines, jobs, thread-safety, aliases, PAL, cross builds](manual-06-execution-and-platform.md) - *Part VI*
 7. [**Appendix A - Alias index**: every `alias_xcv.h` spelling](manual-07-alias-xcv-index.md) - *reference only; not reading material*
 8. [**Formatting and scanning**: the full `fmt.h` and `scan.h` reference](manual-08-fmt-scan.md) - *Part IV; the reference half of the text material*
+9. [**Networking**: addresses, TCP, UDP, deadlines, readiness, transports](manual-09-networking.md) - *Part V; after Chapter 5*
 
 **Chapters 3 and 8 both cover the formatter and the scanner, and the division is deliberate.**
 Chapter 3 introduces them alongside strings, with the everyday cases and enough to be productive.
@@ -975,6 +977,7 @@ Two things this table tells you that the file names do not:
 | `encode.h` | Hex and Base64 (standard + URL-safe), bytes to text and back | Chapter 4 |
 | `fs.h` | Files, directories, metadata, links, locks, read-all, tree walk | Chapter 5 |
 | `stream.h` | Buffered writers, readers, and a line reader - and, through `sysio.h`, the standard streams (hosted-only) | Chapter 5 |
+| `net.h` | Addresses, TCP, UDP, Unix-domain streams, deadlines, readiness, transports (hosted-only) | Chapter 9 |
 | `sysio.h` | Standard streams as writers/readers, line input from stdin, buffered output, printing, scanning, environment access | Chapter 5 |
 | `random.h` | Randomness by use case: xoshiro256** (reproducible), ChaCha20 (cryptographic), the OS CSPRNG, and unbiased range/shuffle helpers. The generators work freestanding; only the OS source is hosted. | Chapter 5 |
 | `mmap.h` | Memory-mapped file regions | Chapter 5 |
@@ -1005,7 +1008,8 @@ the trade.
 | `qsort` | `proven_array_sort` | Introsort: *O(n log n)* guaranteed, not quicksort's worst case. [Ch 4](manual-04-containers-algorithms.md) |
 | `bsearch` | `proven_array_binary_search` | Same shape, same comparator contract. [Ch 4](manual-04-containers-algorithms.md) |
 | `rand` | `proven_xoshiro256ss_*` or `proven_random_bytes` | Reproducible and fast, or unpredictable and secure - you pick, deliberately. [Ch 5](manual-05-hosted-services.md) |
-| `time` / `clock` | `proven_time_now`, `proven_time_breakdown` | Nanoseconds, explicit about wall clock versus monotonic. [Ch 5](manual-05-hosted-services.md) |
+| `time` / `clock` | `proven_time_now`, `proven_time_monotonic_now`, `proven_time_breakdown` | Nanoseconds, with the wall clock and the monotonic clock as two separate calls. [Ch 5](manual-05-hosted-services.md) |
+| `socket` / `connect` / `send` / `recv` / `poll` | `proven_net_connect`, `_read`, `_write_all`, `proven_net_poll` | Every wait takes a deadline, and refused, reset and end-of-input are different answers. [Ch 9](manual-09-networking.md) |
 | `assert` | `proven_panic` + a panic hook | Works in freestanding builds and is overridable. [Ch 1](manual-01-foundation.md) |
 
 ---
@@ -1020,7 +1024,7 @@ The chapters are ordered so that each one only needs the ones before it.
 | **II** | [1](manual-01-foundation.md) -> [2](manual-02-allocation.md) -> [3](manual-03-strings-text.md) | Errors, memory, and text: what every program uses |
 | **III** | [4](manual-04-containers-algorithms.md) | Arrays, maps, lists, rings, sorting, hashing, encoding |
 | **IV** | [8](manual-08-fmt-scan.md) | Formatting and scanning in full, once Chapter 3 has introduced them |
-| **V** | [5](manual-05-hosted-services.md) | Files, streams, standard I/O, time, randomness, mapping |
+| **V** | [5](manual-05-hosted-services.md) -> [9](manual-09-networking.md) | Files, streams, standard I/O, time, randomness, mapping; then sockets |
 | **VI** | [6](manual-06-execution-and-platform.md) -> [freestanding](manual-freestanding.md) | Coroutines, jobs, thread-safety, bare metal, cross builds |
 | **Appendices** | [A: alias index](manual-07-alias-xcv-index.md), B and D above | Looking things up |
 

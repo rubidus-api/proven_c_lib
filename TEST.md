@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 71 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 76 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-09, Windows 11 test VM: x86-64 220 PASS, 0 FAIL, 7 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 134 registered tests plus the 94 runnable manual examples - 228 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 147 test files: the 134 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 139 registered tests plus the 104 runnable manual examples - 243 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 152 test files: the 139 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1045,6 +1045,79 @@ Sub-checks:
 - A 30 ms sleep is measured as at least 25 ms and less than a minute. No tighter upper bound is asserted: the scheduler decides when a sleeper runs again.
 
 Failure tip: inspect `proven_sys_time_monotonic_ns` in `platform/proven_sys_time.c`. A decrease means a settable clock is being read; a wrong magnitude means the unit, or the Windows frequency scaling, is wrong.
+
+### `tests/test_unit_net_addr` - net: addresses as text
+
+Intent: verify address literals parse to the bytes they name and print in one canonical form, with no socket opened and nothing asked of the system.
+
+Sub-checks:
+
+- IPv4: accepted literals give the right four bytes; twenty malformed ones - short forms (`127.1`, `2130706433`), leading zeros (`01.2.3.4`), out-of-range parts, stray characters and spaces - are `PROVEN_ERR_INVALID_FORMAT` and leave the output untouched.
+- IPv6: nineteen accepted forms (full, compressed at each position, bracketed, with a numeric zone, with an IPv4 tail) print as the RFC 5952 spelling - lowercase, no leading zeros, the longest run of two or more zero groups compressed, the first run on a tie; twenty-five malformed ones are refused. The accepted and refused sets were cross-checked against Python's `ipaddress` module, which differs only in printing an IPv4-mapped address in hex.
+- Constructors (`ipv4`, `ipv6`, `loopback`, `any`), equality including the zone, a destination too small (`PROVEN_ERR_OUT_OF_BOUNDS`, nothing reported written), an address of no family.
+- Unix-domain paths: kept as given; empty, one byte too long, or holding a NUL are refused.
+- `proven_net_resolve` answers a literal itself and refuses an empty name, a NUL in the name and a zero capacity.
+
+Failure tip: inspect `internal_parse_ipv4`, `internal_parse_ipv6` and `internal_put_ipv6` in `src/proven/net.c`.
+
+### `tests/test_unit_net_tcp` - net: TCP on the loopback interface
+
+Intent: verify each row of the stream-socket contract in `net.h`, in one thread on loopback. One thread suffices because a connection completes in the kernel's backlog before `accept` is called.
+
+Sub-checks:
+
+- `listen` on port 0 reports the port the OS chose; `listener_addr` agrees; each end's local address is the other's peer address; `TCP_NODELAY` sets and clears; close resets the value and closing twice is not an error.
+- Bytes cross both ways; after `shutdown_write` the peer reads `PROVEN_ERR_EOF` (repeatably, never a zero-byte success) and can still answer; a read into no space succeeds with zero bytes and waits for nothing.
+- A read with nothing to read is `PROVEN_ERR_TIMEOUT` after at least 75 ms of an 80 ms deadline; `PROVEN_NET_DONT_WAIT` does not wait; an accept with nobody connecting times out and hands back nothing; the connection carries data after two timeouts; data already waiting is read even with no time to wait.
+- `write_all` of 48 MiB into a connection nobody reads is `PROVEN_ERR_TIMEOUT` with a count greater than zero and less than the total; the peer then reads exactly that many bytes, equal to the start of the data, and not one more. A single `write` sends a part and reports its size.
+- Connecting to a port that was just released is `PROVEN_ERR_REFUSED` and leaves nothing open.
+- A peer that closes with unread data makes the other end read `PROVEN_ERR_RESET`, and a later write there is `PROVEN_ERR_RESET` rather than a signal that kills the process.
+- A second listener on a bound address is `PROVEN_ERR_BUSY`; calls on a socket that is not open are `PROVEN_ERR_INVALID_STATE`; an address of no family is `PROVEN_ERR_INVALID_ARG`.
+- The same exchange over `::1`, or SKIP where the machine has no IPv6 loopback.
+
+Where the environment refuses to open a listening socket at all, the test reports SKIP and passes.
+
+Failure tip: inspect the deadline loop (`internal_wait_one`) in `src/proven/net.c` and the reason mapping in `platform/proven_sys_net.c`. A run that dies with no failure message was killed by `SIGPIPE`.
+
+### `tests/test_unit_net_udp` - net: UDP on the loopback interface
+
+Intent: verify datagrams behave as messages.
+
+Sub-checks:
+
+- Three sends are three receives of matching sizes, each naming the sender; the empty datagram in the middle is a success of zero bytes; a reply to the reported address arrives.
+- A ten-byte datagram into four bytes of room is `PROVEN_ERR_OUT_OF_BOUNDS` with the first four bytes, and the next receive is the next datagram.
+- An empty socket times out after its deadline; a datagram sent to a port nobody holds does not break a later receive on the sending socket (one deferred refusal report is tolerated, as Linux gives).
+- Close resets the value; calls on a closed socket are `PROVEN_ERR_INVALID_STATE`; a Unix-domain address is `PROVEN_ERR_UNSUPPORTED`.
+
+Failure tip: inspect `proven_sys_net_recv_from` in `platform/proven_sys_net.c` - the truncation report and, on Windows, `SIO_UDP_CONNRESET`.
+
+### `tests/test_unit_net_unix` - net: Unix-domain stream sockets
+
+Intent: verify the stream calls over a filesystem path, and what is particular to paths.
+
+Sub-checks:
+
+- A listener on a path reports that path; a second listener on it is `PROVEN_ERR_BUSY`.
+- Connect, accept, both directions, a read timeout, half-close and `PROVEN_ERR_EOF` behave as over TCP; `TCP_NODELAY` is `PROVEN_ERR_UNSUPPORTED`.
+- After the listener closes the socket file remains: connecting is `PROVEN_ERR_REFUSED` and a new listener is `PROVEN_ERR_BUSY`. With the file removed, connecting is `PROVEN_ERR_NOT_FOUND`.
+
+The file's presence is observed through the sockets, not through `proven_fs_stat`, which does not open a socket file on Windows. SKIP where the address family is absent.
+
+Failure tip: inspect `to_native` and `from_native` in `platform/proven_sys_net.c`.
+
+### `tests/test_unit_net_poll_transport` - net: readiness and the transport interface
+
+Intent: verify `proven_net_poll` predicts the call that will not wait, and that the transport interface carries the same code over memory and over a socket.
+
+Sub-checks:
+
+- Over a transport made of memory: `write_all` continues across two-byte writes, reports the count on a failure part-way, and returns `PROVEN_ERR_IO` for a sink that accepts nothing; the reader adapter feeds a line reader three bytes at a time; `proven_fprint` writes through the writer adapter; shutdown and close reach the transport once, and are no-ops when it has none; an empty transport is invalid.
+- A listener is not readable until a client connects, then is, and the accept does not wait; of three sockets only the one that can act is reported; arriving data and end of input both make a connection readable, and the read that follows returns the data or `PROVEN_ERR_EOF`.
+- 65 items are `PROVEN_ERR_OUT_OF_BOUNDS` for `proven_net_poll` and accepted by `proven_net_poll_with`; scratch one byte short is refused; an impossible count has no scratch size; a closed socket's handle is invalid; a poll of nothing waits until its deadline.
+- A connection as a transport: two formatted lines out, two lines in through the line reader, a 60 ms reader timeout, shutdown read as `PROVEN_ERR_EOF`, and close closing the connection.
+
+Failure tip: inspect `proven_net_poll_with` and the transport functions at the end of `src/proven/net.c`.
 
 ### `tests/test_unit_u16str` - U16 strings
 

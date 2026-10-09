@@ -533,7 +533,8 @@ PAL 영역:
 
 - `proven_sys_mem`: 힙 할당 백엔드.
 - `proven_sys_fs`: 파일, 디렉터리, 경로, 링크, 권한, 잠금.
-- `proven_sys_time`: 클럭, 슬립, 시간 분해.
+- `proven_sys_time`: 벽시계, 단조 시계, 슬립, 시간 분해.
+- `proven_sys_net`: 소켓, 준비 상태, 이름 해석.
 - `proven_sys_env`: 환경 변수.
 - `proven_sys_thread`: job system을 위한 스레드와 동기화.
 - `proven_sys_io`: 표준 스트림 I/O.
@@ -586,7 +587,7 @@ PAL 내부 예외: 스레드 수명 주기 코드는 불투명한 OS 메타데�
   (`platform/proven_sys_time.c`)는 포함되지 않는다 — 따라서 `proven_time_now()`,
   `proven_time_now_datetime()`, `proven_time_sleep()`은 링크할 구현이
   없다.
-- `fs`, `sysio`, `mmap`, `job`: 호스티드/PAL 서비스로, 현재 freestanding 부분집합에서 제외됨.
+- `fs`, `sysio`, `mmap`, `job`, `net`: 호스티드/PAL 서비스로, 현재 freestanding 부분집합에서 제외됨. 호스티드 빌드에서도 `-DPROVEN_NO_NET`으로 `net`을 뺄 수 있다.
 
 정확한 소스 목록과 명령 예제는 `manual-freestanding-ko.md`를 참조하라.
 
