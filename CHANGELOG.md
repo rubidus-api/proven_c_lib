@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-09
+
 A MINOR release: an HTTP/1.1 client and server, and the pieces around a message that they
 need. Five new public headers and additions to three; nothing public is removed or changed,
 and no error code is added.
