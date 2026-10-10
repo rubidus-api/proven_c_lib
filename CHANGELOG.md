@@ -18,6 +18,13 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-10
+
+A MINOR release: the two other things that sit on the event loop of 0.18.0 - WebSocket
+connections that cost no thread, and an HTTP client with any number of requests in flight on
+one thread. As in 0.18.0, what a connection holds is measured and stated; how many a loop
+carries is not yet.
+
 ### Added
 
 - `ws_event.h`, WebSocket on the event-driven server (hosted-only): a connection that costs no
