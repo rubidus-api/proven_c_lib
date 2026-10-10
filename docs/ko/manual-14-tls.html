@@ -210,6 +210,15 @@ proven_err_t <span style="color: #4b69c6">proven_tls_key_update</span>(proven_tl
     <span style="color: #d73948">return</span> PROVEN_OK;
 }
 
+<span style="color: #74747c">/*</span><span style="color: #74747c"> `text`의 바이트가 그 순서대로 `data` 어딘가에 나타나면 참. </span><span style="color: #74747c">*/</span>
+<span style="color: #d73948">static</span> <span style="color: #d73948">bool</span> <span style="color: #4b69c6">appears</span>(proven_mem_view_t data, <span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>text) {
+    proven_size_t n <span style="color: #d73948">=</span> <span style="color: #4b69c6">strlen</span>(text);
+    <span style="color: #d73948">for</span> (proven_size_t i <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>; i <span style="color: #d73948">+</span> n <span style="color: #d73948">&lt;=</span> data.size; <span style="color: #d73948">++</span>i) {
+        <span style="color: #d73948">if</span> (<span style="color: #4b69c6">memcmp</span>(data.ptr <span style="color: #d73948">+</span> i, text, n) <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>) <span style="color: #d73948">return</span> <span style="color: #d73948">true</span>;
+    }
+    <span style="color: #d73948">return</span> <span style="color: #d73948">false</span>;
+}
+
 <span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
     proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
 
@@ -267,7 +276,7 @@ proven_err_t <span style="color: #4b69c6">proven_tls_key_update</span>(proven_tl
     proven_result_size_t wrote <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_tls_write</span>(client, <span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">hello, server</span><span style="color: #198810">"</span>)));
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(wrote.err <span style="color: #d73948">==</span> PROVEN_OK <span style="color: #d73948">&amp;&amp;</span> wrote.value <span style="color: #d73948">==</span> <span style="color: #b60157">13</span>, <span style="color: #198810">"</span><span style="color: #198810">열세 바이트를 받았다</span><span style="color: #198810">"</span>);
     proven_mem_view_t wire <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_tls_pending_output</span>(client);
-    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(wire.size <span style="color: #d73948">></span> <span style="color: #b60157">13</span> <span style="color: #d73948">&amp;&amp;</span> <span style="color: #4b69c6">memchr</span>(wire.ptr, <span style="color: #198810">'</span><span style="color: #198810">h</span><span style="color: #198810">'</span>, wire.size) <span style="color: #d73948">==</span> <span style="color: #d73948">NULL</span>, <span style="color: #198810">"</span><span style="color: #198810">선 위로 가는 것은 레코드이고, 그 텍스트가 아니다</span><span style="color: #198810">"</span>);
+    <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(wire.size <span style="color: #d73948">></span> <span style="color: #b60157">13</span> <span style="color: #d73948">&amp;&amp;</span> <span style="color: #d73948">!</span><span style="color: #4b69c6">appears</span>(wire, <span style="color: #198810">"</span><span style="color: #198810">hello, server</span><span style="color: #198810">"</span>), <span style="color: #198810">"</span><span style="color: #198810">선 위로 가는 것은 레코드이고, 그 텍스트가 아니다</span><span style="color: #198810">"</span>);
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">carry</span>(client, server) <span style="color: #d73948">==</span> PROVEN_OK, <span style="color: #198810">"</span><span style="color: #198810">클라이언트에서 서버로</span><span style="color: #198810">"</span>);
     proven_byte_t buf[<span style="color: #b60157">64</span>];
     proven_result_size_t got <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_tls_read</span>(server, (proven_mem_mut_t){ buf, <span style="color: #d73948">sizeof</span> buf });
