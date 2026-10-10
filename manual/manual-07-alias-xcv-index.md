@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1104 aliases: 830 lowercase `xcv_` names and 274 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1126 aliases: 846 lowercase `xcv_` names and 280 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -102,6 +102,12 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_CORO_IS_DONE` | `PROVEN_CORO_IS_DONE` |
 | `XCV_CORO_YIELD` | `PROVEN_CORO_YIELD` |
 | `XCV_DEFAULT_ALIGNMENT` | `PROVEN_DEFAULT_ALIGNMENT` |
+| `XCV_DEFLATE_FLUSH_FINISH` | `PROVEN_DEFLATE_FLUSH_FINISH` |
+| `XCV_DEFLATE_FLUSH_NONE` | `PROVEN_DEFLATE_FLUSH_NONE` |
+| `XCV_DEFLATE_FLUSH_SYNC` | `PROVEN_DEFLATE_FLUSH_SYNC` |
+| `XCV_DEFLATE_GZIP` | `PROVEN_DEFLATE_GZIP` |
+| `XCV_DEFLATE_RAW` | `PROVEN_DEFLATE_RAW` |
+| `XCV_DEFLATE_ZLIB` | `PROVEN_DEFLATE_ZLIB` |
 | `XCV_ERR_AGAIN` | `PROVEN_ERR_AGAIN` |
 | `XCV_ERR_BUSY` | `PROVEN_ERR_BUSY` |
 | `XCV_ERR_EOF` | `PROVEN_ERR_EOF` |
@@ -406,6 +412,16 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_crc32_update` | `proven_crc32_update` |
 | `xcv_cstr_len` | `proven_cstr_len` |
 | `xcv_datetime_t` | `proven_datetime_t` |
+| `xcv_deflate` | `proven_deflate` |
+| `xcv_deflate_all` | `proven_deflate_all` |
+| `xcv_deflate_bound` | `proven_deflate_bound` |
+| `xcv_deflate_create` | `proven_deflate_create` |
+| `xcv_deflate_destroy` | `proven_deflate_destroy` |
+| `xcv_deflate_flush_t` | `proven_deflate_flush_t` |
+| `xcv_deflate_format_t` | `proven_deflate_format_t` |
+| `xcv_deflate_options_t` | `proven_deflate_options_t` |
+| `xcv_deflate_reset` | `proven_deflate_reset` |
+| `xcv_deflate_t` | `proven_deflate_t` |
 | `xcv_entropy_fn` | `proven_entropy_fn` |
 | `xcv_env_get` | `proven_env_get` |
 | `xcv_eprint` | `proven_eprint` |
@@ -613,6 +629,12 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_i32` | `proven_i32` |
 | `xcv_i64` | `proven_i64` |
 | `xcv_i8` | `proven_i8` |
+| `xcv_inflate` | `proven_inflate` |
+| `xcv_inflate_all` | `proven_inflate_all` |
+| `xcv_inflate_create` | `proven_inflate_create` |
+| `xcv_inflate_destroy` | `proven_inflate_destroy` |
+| `xcv_inflate_reset` | `proven_inflate_reset` |
+| `xcv_inflate_t` | `proven_inflate_t` |
 | `xcv_intptr_t` | `proven_intptr_t` |
 | `xcv_is_ok` | `proven_is_ok` |
 | `xcv_is_pow2` | `proven_is_pow2` |

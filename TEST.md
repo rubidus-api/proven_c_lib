@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 101 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 102 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-10, Windows 11 test VM: x86-64 303 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 165 registered tests plus the 146 runnable manual examples - 311 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 178 test files: the 165 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 166 registered tests plus the 150 runnable manual examples - 316 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 179 test files: the 166 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -662,6 +662,25 @@ Sub-checks:
 - Every entry point guards a `{NULL, size>0}` view the way SHA-256 does, rather than dereferencing it.
 
 Failure tip: inspect `src/proven/hash.c`. The algorithms are implemented from their specifications; a KAT mismatch means a rotation, round count, or endianness is off.
+
+### `tests/test_unit_deflate` - DEFLATE, zlib and gzip, both ways
+
+Intent: verify `deflate.h` - decompression against what zlib made and what zlib refuses, compression by getting the input back, and both on input that is cut short, changed, or fed in pieces.
+
+Sub-checks:
+
+- 93 streams made by zlib 1.3.1 (every level and strategy, small windows, sync flushes inside, raw, zlib and gzip) over a corpus the test rebuilds from the same rules as the generator: each decompressed in one call, a byte in and a byte out at a time, and in steps of 7 and 13, to the same bytes, with the CRC-32 and length the generator recorded; fed in steps into room exactly the data's size and still reported as ended; exactly enough room accepted and one byte less `PROVEN_ERR_OUT_OF_BOUNDS`; bytes after the stream left unconsumed; a stream cut by a byte `PROVEN_ERR_INVALID_FORMAT`, also when the room is exactly the data's size.
+- Ten hand-built streams that are odd and that zlib accepts - length code 284 with all its extra bits, a block with one code, no distance codes, one distance code, lengths sent with each repeat code, a gzip header with every optional field, a zlib header with a small window, an empty stored block - accepted with zlib's output.
+- Thirty hand-built streams that zlib refuses, each refused the same way in one call and a byte at a time: a reserved block type, a stored length that disagrees with its complement, symbols and distance codes outside the alphabets, a distance before the first byte, too many codes, an incomplete or over-subscribed code of each kind, a repeat with nothing before it or past the end, no end-of-block code, bits that are no code, and each defect of the zlib and gzip wrappers including both checksums (a preset dictionary is `PROVEN_ERR_UNSUPPORTED`).
+- Streams built in the test: a stored block of 65,535 bytes and one more byte; a match of 258 at distance 32,768, and the same with one byte less before it refused; a hundred matches at distance 1 giving 25,801 equal bytes, and refused into 25 bytes with the byte after the buffer untouched.
+- Every proper prefix of the short streams (over a thousand) is `PROVEN_OK`, not done, and what it produced is the start of the data; every single-bit change of them (over eight thousand) gives an error or data inside the space given.
+- 363 round trips: eleven kinds of data, levels -1 to 9, windows of 9, 12 and 15 bits, the three framings in turn - the data comes back and the compressed size is within `proven_deflate_bound`; the corpus shrinks to less than an eighth at the default level.
+- Compression in steps of 1, 3, 1000 and 70,000 bytes into buffers of 1, 7, 5 and 70,000, through one compressor reset between streams; input after a finish is `PROVEN_ERR_INVALID_STATE`.
+- Flushing: four messages each sent with a sync flush - the output ends in `00 00 ff ff`, decompresses to the message when cut there and the four bytes are fed after, a repeated message takes less than half the bytes, a flush with nothing new produces nothing, and the stream is never done.
+- Two gzip members in sequence: done at the end of the first with the position reported, nothing taken until reset, then the second; an error repeated on every call until reset.
+- Arguments: unknown framings, levels and windows, missing allocators, null buffers with a length, missing out-parameters, an unknown flush; no input and no room is `PROVEN_OK` with no progress; a buffer too small for `proven_deflate_all`; nothing compresses to a 20-byte gzip member.
+
+Failure tip: inspect `src/proven/deflate.c`. The letter and line number printed name the vector; `tests/test_unit_deflate_vectors.h` is written by a private generator that runs every hand-built stream through zlib and stops if zlib's verdict is not the one written down. Not covered here: that zlib reads everything this compressor writes - a private check does that for 2,856 streams, and a private mutation run decompresses millions of damaged streams under the sanitizers; speed.
 
 ### `tests/test_unit_hmac` - SHA-384, SHA-512, HMAC and HKDF
 

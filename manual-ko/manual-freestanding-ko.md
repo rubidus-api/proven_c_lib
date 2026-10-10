@@ -196,6 +196,7 @@ platform/proven_sys_mem.c
 | `hash.h` | 사용 가능 | FNV-1a, SipHash-2-4, CRC-32, SHA-256 — 바이트 단위로 정확, OS 의존성 없음. CRC-32는 기본으로 256항목 표 여덟 개(읽기 전용 데이터 8 KiB)를 쓴다. 라이브러리를 `-DPROVEN_CRC32_SMALL=1`로 빌드하면 1 KiB 표 하나만 남는다. 긴 입력에서 약 5배 느리고 결과는 같다. |
 | `hash_legacy.h` | 사용 가능 | SHA-1과 MD5. 그것을 못 박은 형식(WebSocket accept 키, 오래된 체크섬 파일)을 위한 것이다. SHA-256과 같은 모양이고, MD5의 상수 64개보다 큰 표는 없다. |
 | `hmac.h` | 사용 가능 | SHA-256, SHA-384, SHA-512(뒤의 둘은 `hash.h`에 있다) 위의 HMAC과 HKDF. 순수한 산술이다. 함께 쓰는 `proven_mem_equal_ct`와 `proven_mem_wipe`는 `memory.h`에 있다. |
+| `deflate.h` | 사용 가능 | DEFLATE, zlib, gzip을 양방향으로. 순수한 산술이다. 압축기(기본 윈도에서 약 325 KiB, 가장 작은 윈도에서 11 KiB)나 해제기(약 35 KiB)마다 할당 하나를, 넘겨준 할당자로 한다. |
 | `cert.h` | 사용 가능, `proven_cert_store_add_system` 제외 | X.509 인증서: 읽기, 이름, PEM, 신뢰 앵커 저장소(여러분의 할당자로), 체인 검증. 시각과 앵커는 여러분이 공급한다. 운영체제의 루트를 읽는 것만 운영체제가 필요하다. |
 | `tls.h` | 엔진: 사용 가능. 전송 래퍼와 `proven_tls_http_wrap`: 호스티드 | I/O 없는 상태 기계로서의 TLS(1.3과 줄인 1.2): 도착한 바이트를 주고, 내주는 바이트를 보낸다. 프리스탠딩 빌드는 설정에 난수원과 시계를 공급해야 한다(`random`, `now`). |
 | `url.h`, `http.h` | 사용 가능 | URL 파싱과 퍼센트 코딩, 그리고 HTTP/1.1 메시지 코덱. 순수한 텍스트 처리다: 소켓도 할당도 없다. 전송은 여러분이 제공한다 - 소켓이 없는 타깃(wasm32, 베어메탈)에서도 코덱은 메시지를 파싱하고 쓴다. `proven_http_date_format`은 여러분이 주는 시각을 받는다. 프리스탠딩 시계는 0을 돌려준다. |

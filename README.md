@@ -364,7 +364,7 @@ The pieces are in the language now, and most C code has not caught up:
   functions.
 - **C11** - `_Generic`, which is how `{}` gets a value's type from the argument instead of from a
   format string.
-- **C23** - `[[nodiscard]]` (used 423 times here, so the compiler refuses code that drops an
+- **C23** - `[[nodiscard]]` (used 430 times here, so the compiler refuses code that drops an
   error), `<stdckdint.h>` for checked arithmetic, `constexpr`, `typeof`, `nullptr`.
 
 Andre Weissflog's [*Modern C for C++ Peeps*](https://floooh.github.io/2019/09/27/modern-c-for-cpp-peeps.html)
@@ -678,7 +678,7 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 - Algorithms: `algorithm`.
 - Text: `fmt`, `scan`.
 - Numbers: `float_parse`, `float_format`.
-- Hashing and encoding: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512), `hmac` (HMAC and HKDF), `cert` (X.509 certificates: reading, names, trust anchors, chain verification), `hash_legacy` (SHA-1 and MD5, for formats that fix them), `encode` (hex, Base64, Base64URL), `utf` (strict UTF-8 <-> UTF-16).
+- Hashing and encoding: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512), `hmac` (HMAC and HKDF), `deflate` (DEFLATE compression both ways, bare or as zlib or gzip, streaming, with the caller bounding what a decompression may produce), `cert` (X.509 certificates: reading, names, trust anchors, chain verification), `hash_legacy` (SHA-1 and MD5, for formats that fix them), `encode` (hex, Base64, Base64URL), `utf` (strict UTF-8 <-> UTF-16).
 - Randomness: `random` (xoshiro256** reproducible, ChaCha20 cryptographic, unbiased range/shuffle helpers, and a pluggable entropy source - the OS CSPRNG by default, a board's hardware TRNG on bare metal).
 - Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
 - Networking: `net` (TCP, UDP and Unix-domain sockets with a deadline on every wait, readiness on many sockets, and a transport interface). Hosted only; `PROVEN_NO_NET` leaves it out.
@@ -695,7 +695,7 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 
 `proven` is not a libc replacement, a garbage collector, or a framework. It does not try to own your process, your build graph, or your error policy. It is a set of C components that are meant to be easy to read, easy to test, and possible to port one boundary at a time.
 
-It is also worth saying where the platform boundary **stops**, because otherwise you find out by running into it. The PAL covers memory, the filesystem, time, memory mapping, environment variables, console I/O, threads and sockets. It does **not** cover process control (`fork` / `exec` / pipes) or terminal control (raw mode, job control) - a program whose substance is one of those will reach for POSIX or Win32 directly, and the "no platform `#ifdef`s" property does not extend to it. The socket layer is the first step of a networking stack that is being built in stages: sockets (with an `epoll`/`kqueue` selector), the HTTP/1.1 message codec, an HTTP client and server, WebSocket, certificates and TLS (1.3 and a cut-down 1.2) are here; compression and HTTP/2 are not yet.
+It is also worth saying where the platform boundary **stops**, because otherwise you find out by running into it. The PAL covers memory, the filesystem, time, memory mapping, environment variables, console I/O, threads and sockets. It does **not** cover process control (`fork` / `exec` / pipes) or terminal control (raw mode, job control) - a program whose substance is one of those will reach for POSIX or Win32 directly, and the "no platform `#ifdef`s" property does not extend to it. The socket layer is the first step of a networking stack that is being built in stages: sockets (with an `epoll`/`kqueue` selector), the HTTP/1.1 message codec, an HTTP client and server, WebSocket, certificates, TLS (1.3 and a cut-down 1.2) and the DEFLATE codec are here; HTTP content coding, `permessage-deflate` and HTTP/2 are not yet.
 
 The `hash` and `hmac` modules do provide cryptographic and non-cryptographic hashes (the SHA-2 family alongside FNV, SipHash, and CRC-32), HMAC and HKDF, `cert` reads and verifies X.509 certificates, `tls` is TLS 1.3 and 1.2, and `random` provides OS-strength bytes, but `proven` is not a cryptography library: the primitives under TLS are internal, and it offers no public signing, key exchange, password hashing or authenticated encryption, so do not go looking - and a connection made with `net` is not encrypted. Also absent, and not planned: path manipulation, argument parsing, and a logging framework.
 

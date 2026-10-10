@@ -21,6 +21,7 @@ C23 시스템 라이브러리 `proven`의 매뉴얼입니다. 각 장은 `manual
 - [13장 — 인증서와 신뢰](manual-13-certificates-ko.md)
 - [14장 — TLS](manual-14-tls-ko.md)
 - [15장 — 이벤트 루프와 이벤트 구동 서버](manual-15-event-loop-ko.md)
+- [16장 — 압축](manual-16-compression-ko.md)
 - [6장 — 실행과 플랫폼](manual-06-execution-and-platform-ko.md)
 - [프리스탠딩](manual-freestanding-ko.md)
 - [부록 A — Alias 인덱스](manual-07-alias-xcv-index-ko.md)

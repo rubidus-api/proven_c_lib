@@ -963,6 +963,7 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | `algorithm.h` | Array 정렬·검색 헬퍼 | 챕터 4 |
 | `hash.h` | FNV-1a, SipHash-2-4, CRC-32, SHA-256, 용도별, SHA-384, SHA-512 | 챕터 4 |
 | `hmac.h` | SHA-2 계열 위의 HMAC과 HKDF | 챕터 4 |
+| `deflate.h` | DEFLATE 압축과 풀기, 그대로 또는 zlib·gzip으로. 스트리밍이며 출력은 호출자가 한정한다 | 챕터 16 |
 | `hash_legacy.h` | SHA-1과 MD5, 그것을 못 박은 형식용 | 챕터 4 |
 | `encode.h` | Hex와 Base64 (표준 + URL-safe), 바이트↔텍스트 | 챕터 4 |
 | `fs.h` | 파일, 디렉터리, 메타데이터, 링크, 락, read-all, 트리 순회 | 챕터 5 |

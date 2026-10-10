@@ -999,6 +999,7 @@ static bool check_manual_code_blocks(const char *compiler, const char *standard_
         "manual/manual-13-certificates.md",
         "manual/manual-14-tls.md",
         "manual/manual-15-event-loop.md",
+        "manual/manual-16-compression.md",
         "manual/manual-freestanding.md",
     };
 

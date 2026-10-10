@@ -18,6 +18,28 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release: compression. `deflate.h` reads and writes DEFLATE, bare or wrapped as zlib or
+gzip - the first part of what `Content-Encoding: gzip` and WebSocket's `permessage-deflate`
+need; neither is wired into the HTTP or WebSocket code yet.
+
+### Added
+
+- `deflate.h`, freestanding-available:
+  - Decompression: `proven_inflate_create`, `proven_inflate`, `proven_inflate_reset`,
+    `proven_inflate_destroy`, and for a whole buffer `proven_inflate_all`. It writes only into
+    the space it is given - the caller decides how much a stream may expand to - and refuses
+    what zlib refuses.
+  - Compression: `proven_deflate_create`, `proven_deflate`, `proven_deflate_reset`,
+    `proven_deflate_destroy`, `proven_deflate_all`, `proven_deflate_bound`. Levels 1 to 9 (and
+    -1 to store only), windows of 512 bytes to 32 KiB, and three flush modes, of which the
+    sync flush is what `permessage-deflate` is made of.
+  - Three framings for both: `PROVEN_DEFLATE_RAW`, `PROVEN_DEFLATE_ZLIB`, `PROVEN_DEFLATE_GZIP`.
+- Manual chapter 16, "Compression", with what it costs: on the development machine the
+  default level compresses text to the size zlib does (within 0.1%) at about 16 MiB/s and
+  decompresses at about 84 MiB/s - roughly half and a third of zlib's speed.
+- Test `test_unit_deflate`, with streams made by zlib and hand-built streams carrying zlib's
+  verdict; examples `ex_16_gzip` and `ex_16_stream`.
+
 ## [0.23.0] - 2026-10-10
 
 A MINOR release: the legacy parts of TLS - CBC cipher suites, key exchange by RSA and by

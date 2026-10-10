@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 1104개: 소문자 `xcv_` 이름 830개와 대문자 `XCV_` 이름 274개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 1126개: 소문자 `xcv_` 이름 846개와 대문자 `XCV_` 이름 280개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -104,6 +104,12 @@ alias 1104개: 소문자 `xcv_` 이름 830개와 대문자 `XCV_` 이름 274개.
 | `XCV_CORO_IS_DONE` | `PROVEN_CORO_IS_DONE` |
 | `XCV_CORO_YIELD` | `PROVEN_CORO_YIELD` |
 | `XCV_DEFAULT_ALIGNMENT` | `PROVEN_DEFAULT_ALIGNMENT` |
+| `XCV_DEFLATE_FLUSH_FINISH` | `PROVEN_DEFLATE_FLUSH_FINISH` |
+| `XCV_DEFLATE_FLUSH_NONE` | `PROVEN_DEFLATE_FLUSH_NONE` |
+| `XCV_DEFLATE_FLUSH_SYNC` | `PROVEN_DEFLATE_FLUSH_SYNC` |
+| `XCV_DEFLATE_GZIP` | `PROVEN_DEFLATE_GZIP` |
+| `XCV_DEFLATE_RAW` | `PROVEN_DEFLATE_RAW` |
+| `XCV_DEFLATE_ZLIB` | `PROVEN_DEFLATE_ZLIB` |
 | `XCV_ERR_AGAIN` | `PROVEN_ERR_AGAIN` |
 | `XCV_ERR_BUSY` | `PROVEN_ERR_BUSY` |
 | `XCV_ERR_EOF` | `PROVEN_ERR_EOF` |
@@ -408,6 +414,16 @@ alias 1104개: 소문자 `xcv_` 이름 830개와 대문자 `XCV_` 이름 274개.
 | `xcv_crc32_update` | `proven_crc32_update` |
 | `xcv_cstr_len` | `proven_cstr_len` |
 | `xcv_datetime_t` | `proven_datetime_t` |
+| `xcv_deflate` | `proven_deflate` |
+| `xcv_deflate_all` | `proven_deflate_all` |
+| `xcv_deflate_bound` | `proven_deflate_bound` |
+| `xcv_deflate_create` | `proven_deflate_create` |
+| `xcv_deflate_destroy` | `proven_deflate_destroy` |
+| `xcv_deflate_flush_t` | `proven_deflate_flush_t` |
+| `xcv_deflate_format_t` | `proven_deflate_format_t` |
+| `xcv_deflate_options_t` | `proven_deflate_options_t` |
+| `xcv_deflate_reset` | `proven_deflate_reset` |
+| `xcv_deflate_t` | `proven_deflate_t` |
 | `xcv_entropy_fn` | `proven_entropy_fn` |
 | `xcv_env_get` | `proven_env_get` |
 | `xcv_eprint` | `proven_eprint` |
@@ -615,6 +631,12 @@ alias 1104개: 소문자 `xcv_` 이름 830개와 대문자 `XCV_` 이름 274개.
 | `xcv_i32` | `proven_i32` |
 | `xcv_i64` | `proven_i64` |
 | `xcv_i8` | `proven_i8` |
+| `xcv_inflate` | `proven_inflate` |
+| `xcv_inflate_all` | `proven_inflate_all` |
+| `xcv_inflate_create` | `proven_inflate_create` |
+| `xcv_inflate_destroy` | `proven_inflate_destroy` |
+| `xcv_inflate_reset` | `proven_inflate_reset` |
+| `xcv_inflate_t` | `proven_inflate_t` |
 | `xcv_intptr_t` | `proven_intptr_t` |
 | `xcv_is_ok` | `proven_is_ok` |
 | `xcv_is_pow2` | `proven_is_pow2` |

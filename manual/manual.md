@@ -20,6 +20,7 @@ the Korean edition mirrors it under [`manual-ko/`](../manual-ko/manual-ko.md).
 - [Chapter 13 - Certificates and trust](manual-13-certificates.md)
 - [Chapter 14 - TLS](manual-14-tls.md)
 - [Chapter 15 - The event loop and the event-driven server](manual-15-event-loop.md)
+- [Chapter 16 - Compression](manual-16-compression.md)
 - [Chapter 6 - Execution and platform](manual-06-execution-and-platform.md)
 - [Freestanding](manual-freestanding.md)
 - [Appendix A - Alias index](manual-07-alias-xcv-index.md)
