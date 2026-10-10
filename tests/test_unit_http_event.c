@@ -580,6 +580,16 @@ int main(void) {
     cases(false);
     PROVEN_TEST_SECTION("over TLS", "The same cases with the TLS engine between the socket and the parser.", "Check the TLS branches of ev_readable and ev_flush.");
     cases(true);
+    PROVEN_TEST_SECTION("over TLS 1.2", "The same cases once more, with clients that speak nothing newer than TLS 1.2.", "Check the TLS branches of ev_readable and ev_flush; the 1.2 handshake itself is test_unit_tls's business.");
+    {
+        proven_tls_config_t *any = g_client_tls;
+        proven_tls_options_t co12 = co;
+        co12.max_version = PROVEN_TLS_VERSION_1_2;
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&co12, &g_client_tls) == PROVEN_OK, "a client configuration limited to TLS 1.2", "");
+        cases(true);
+        proven_tls_config_destroy(g_client_tls);
+        g_client_tls = any;
+    }
     PROVEN_TEST_SECTION("what an idle connection holds", "Three hundred connections that have each made a request and now say nothing.", "Check that ev_process releases the stash and ev_flush the output buffer.");
     memory_case();
     PROVEN_TEST_SECTION("the idle timeout", "A connection that has been answered and then says nothing.", "Check ev_arm: the idle timer is set when an exchange ends with nothing buffered.");

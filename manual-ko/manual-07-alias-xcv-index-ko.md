@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 1095개: 소문자 `xcv_` 이름 829개와 대문자 `XCV_` 이름 266개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 1098개: 소문자 `xcv_` 이름 830개와 대문자 `XCV_` 이름 268개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -265,6 +265,8 @@ alias 1095개: 소문자 `xcv_` 이름 829개와 대문자 `XCV_` 이름 266개.
 | `XCV_TLS_SESSION_SIZE` | `PROVEN_TLS_SESSION_SIZE` |
 | `XCV_TLS_VERIFY_CHAIN` | `PROVEN_TLS_VERIFY_CHAIN` |
 | `XCV_TLS_VERIFY_PIN_ONLY` | `PROVEN_TLS_VERIFY_PIN_ONLY` |
+| `XCV_TLS_VERSION_1_2` | `PROVEN_TLS_VERSION_1_2` |
+| `XCV_TLS_VERSION_1_3` | `PROVEN_TLS_VERSION_1_3` |
 | `XCV_U16_LIT` | `PROVEN_U16_LIT` |
 | `XCV_VERSION_ENCODE` | `PROVEN_VERSION_ENCODE(major, minor, patch)` |
 | `XCV_VERSION_MAJOR` | `PROVEN_VERSION_MAJOR` |
@@ -954,6 +956,7 @@ alias 1095개: 소문자 `xcv_` 이름 829개와 대문자 `XCV_` 이름 266개.
 | `xcv_tls_transport_conn` | `proven_tls_transport_conn` |
 | `xcv_tls_transport_server` | `proven_tls_transport_server` |
 | `xcv_tls_verify_t` | `proven_tls_verify_t` |
+| `xcv_tls_version` | `proven_tls_version` |
 | `xcv_tls_write` | `proven_tls_write` |
 | `xcv_transport_close` | `proven_transport_close` |
 | `xcv_transport_is_valid` | `proven_transport_is_valid` |

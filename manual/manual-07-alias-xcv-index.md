@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1095 aliases: 829 lowercase `xcv_` names and 266 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1098 aliases: 830 lowercase `xcv_` names and 268 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -263,6 +263,8 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_TLS_SESSION_SIZE` | `PROVEN_TLS_SESSION_SIZE` |
 | `XCV_TLS_VERIFY_CHAIN` | `PROVEN_TLS_VERIFY_CHAIN` |
 | `XCV_TLS_VERIFY_PIN_ONLY` | `PROVEN_TLS_VERIFY_PIN_ONLY` |
+| `XCV_TLS_VERSION_1_2` | `PROVEN_TLS_VERSION_1_2` |
+| `XCV_TLS_VERSION_1_3` | `PROVEN_TLS_VERSION_1_3` |
 | `XCV_U16_LIT` | `PROVEN_U16_LIT` |
 | `XCV_VERSION_ENCODE` | `PROVEN_VERSION_ENCODE(major, minor, patch)` |
 | `XCV_VERSION_MAJOR` | `PROVEN_VERSION_MAJOR` |
@@ -952,6 +954,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_tls_transport_conn` | `proven_tls_transport_conn` |
 | `xcv_tls_transport_server` | `proven_tls_transport_server` |
 | `xcv_tls_verify_t` | `proven_tls_verify_t` |
+| `xcv_tls_version` | `proven_tls_version` |
 | `xcv_tls_write` | `proven_tls_write` |
 | `xcv_transport_close` | `proven_transport_close` |
 | `xcv_transport_is_valid` | `proven_transport_is_valid` |

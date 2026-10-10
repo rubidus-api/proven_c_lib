@@ -89,6 +89,7 @@ int main(void) {
         EXAMPLE_REQUIRE(carry(server, client) == PROVEN_OK, "서버에서 클라이언트로");
     }
     EXAMPLE_REQUIRE(proven_tls_is_established(client) && proven_tls_is_established(server), "양쪽이 수립되었다");
+    EXAMPLE_REQUIRE(proven_tls_version(client) == PROVEN_TLS_VERSION_1_3 && proven_tls_version(server) == PROVEN_TLS_VERSION_1_3, "양쪽이 가진 가장 새 버전인 TLS 1.3을 말했다");
     EXAMPLE_REQUIRE(proven_tls_cipher_suite(client) == proven_tls_cipher_suite(server) && proven_tls_cipher_suite(client) != 0, "암호 스위트에 합의했다");
     EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_tls_alpn(client), PROVEN_LIT("example/1")), "애플리케이션 프로토콜에도");
     EXAMPLE_REQUIRE(!proven_tls_resumed(client), "이번은 전체 핸드셰이크였다");

@@ -693,6 +693,260 @@ int main(void) {
         proven_tls_config_destroy(cc);
     }
 
+    PROVEN_TEST_SECTION("TLS 1.2",
+        "The six suites with each kind of server key; which version two configurations agree on; the extended master secret, the downgrade mark and ChangeCipherSpec, each refused where it must be; renegotiation declined; client certificates; tickets.",
+        "Check the TLS 1.2 part of src/proven/tls13.c: client12_server_hello, server12_client_hello, record_process12. Its key derivation and records are test_unit_tls12_keys's business.");
+    {
+        proven_tls_options_t o12 = base_options(), o13 = base_options();
+        o12.max_version = PROVEN_TLS_VERSION_1_2;
+        o13.min_version = PROVEN_TLS_VERSION_1_3;
+        proven_tls_config_t *c_any = client_config(NULL), *c_12 = client_config(&o12), *c_13 = client_config(&o13);
+        proven_tls_config_t *s_any = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, NULL), *s_12 = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &o12),
+                            *s_13 = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &o13);
+
+        /* Every suite, every kind of key. */
+        static const proven_u16 order13[3] = { PROVEN_TLS_AES_128_GCM_SHA256, PROVEN_TLS_AES_256_GCM_SHA384, PROVEN_TLS_CHACHA20_POLY1305_SHA256 };
+        static const proven_u16 ec_suites[3] = { 0xc02b, 0xc02c, 0xcca9 }, rsa_suites[3] = { 0xc02f, 0xc030, 0xcca8 };
+        bool all = true;
+        for (int k = 0; k < 3; ++k) {
+            proven_tls_config_t *sc = k == 0 ? server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &o12) : k == 1 ? server_config(TP_SERVER_ED, TP_SERVER_ED_KEY, &o12)
+                                                                                                           : server_config(TP_SERVER_RSA, TP_SERVER_RSA_KEY, &o12);
+            for (int su = 0; su < 3; ++su) {
+                proven_tls_test_knobs(order13[su], false);
+                pair_t p = connect_pair(c_any, sc, "example.test", NULL, NULL, NULL);
+                proven_u16 want = k == 2 ? rsa_suites[su] : ec_suites[su];
+                proven_byte_t key[32];
+                bool ok = both_up(&p) && proven_tls_version(p.c) == PROVEN_TLS_VERSION_1_2 && proven_tls_version(p.s) == PROVEN_TLS_VERSION_1_2 &&
+                          proven_tls_cipher_suite(p.c) == want && proven_tls_cipher_suite(p.s) == want && proven_tls_peer_key_sha256(p.c, key) && !proven_tls_resumed(p.c);
+                ok = ok && transfer(p.c, p.s, 1, 1) && transfer(p.s, p.c, 1, 2) && transfer(p.c, p.s, 16384, 3) && transfer(p.s, p.c, 16385, 4) && transfer(p.c, p.s, 100000, 5) && transfer(p.s, p.c, 150000, 6);
+                ok = ok && proven_tls_key_update(p.c) == PROVEN_ERR_UNSUPPORTED;
+                all = all && ok;
+                close_pair(&p);
+            }
+            proven_tls_config_destroy(sc);
+        }
+        proven_tls_test_knobs(0, false);
+        PROVEN_TEST_ASSERT(all, "three ciphers by three kinds of server key: TLS 1.2 established with the suite for that key, the server's key seen, data of 1 to 150,000 bytes each way, and no key update", "");
+        {
+            /* P-256 for the key exchange when the server will not take X25519, and a byte at a time. */
+            proven_tls_test_knobs(0, true);
+            wire_t slow = { .chunk = 1, .flip_at = -1 };
+            pair_t p = connect_pair(c_any, s_12, "example.test", NULL, &slow, &slow);
+            PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_version(p.c) == PROVEN_TLS_VERSION_1_2 && transfer(p.c, p.s, 3000, 9), "the key exchange on P-256, with every record delivered a byte at a time", "");
+            close_pair(&p);
+            proven_tls_test_knobs(0, false);
+        }
+
+        /* Which version. */
+        pair_t p = connect_pair(c_any, s_any, "example.test", NULL, NULL, NULL);
+        PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_version(p.c) == PROVEN_TLS_VERSION_1_3 && proven_tls_version(p.s) == PROVEN_TLS_VERSION_1_3, "two default configurations agree on TLS 1.3", "");
+        close_pair(&p);
+        p = connect_pair(c_12, s_any, "example.test", NULL, NULL, NULL);
+        PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_version(p.c) == PROVEN_TLS_VERSION_1_2 && proven_tls_version(p.s) == PROVEN_TLS_VERSION_1_2, "a client limited to 1.2 gets 1.2 from a default server", "");
+        close_pair(&p);
+        p = connect_pair(c_13, s_any, "example.test", NULL, NULL, NULL);
+        PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_version(p.s) == PROVEN_TLS_VERSION_1_3, "a client that insists on 1.3 gets it", "");
+        close_pair(&p);
+        p = connect_pair(c_12, s_13, "example.test", NULL, NULL, NULL);
+        PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 70 && g_err_c == PROVEN_ERR_PROTOCOL && proven_tls_alert_received(p.c) == 70 && proven_tls_version(p.c) == 0,
+            "a 1.2 client and a server that insists on 1.3: protocol_version, and no version was agreed", "");
+        close_pair(&p);
+        p = connect_pair(c_13, s_12, "example.test", NULL, NULL, NULL);
+        PROVEN_TEST_ASSERT(!both_up(&p) && g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 70, "a client that insists on 1.3 and a server limited to 1.2: refused by the server", "");
+        close_pair(&p);
+        {
+            proven_tls_options_t bad = base_options();
+            proven_tls_config_t *none = NULL;
+            bad.anchors = g_anchors; bad.min_version = PROVEN_TLS_VERSION_1_3; bad.max_version = PROVEN_TLS_VERSION_1_2;
+            PROVEN_TEST_ASSERT(proven_tls_config_create(&bad, &none) == PROVEN_ERR_INVALID_ARG, "a minimum above the maximum is PROVEN_ERR_INVALID_ARG", "");
+            bad.min_version = 0x0302; bad.max_version = 0;
+            PROVEN_TEST_ASSERT(proven_tls_config_create(&bad, &none) == PROVEN_ERR_INVALID_ARG, "and so is a version that is neither 1.2 nor 1.3", "");
+        }
+
+        /* The three things a TLS 1.2 handshake is refused for. */
+        proven_tls_test_knobs12(1);
+        p = connect_pair(c_any, s_any, "example.test", NULL, NULL, NULL);
+        PROVEN_TEST_ASSERT(g_err_c == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.c) == 47 && !proven_tls_is_established(p.c),
+            "a server that could have spoken 1.3 and answers 1.2 marks its random, and a client that offered 1.3 refuses: illegal_parameter", "");
+        close_pair(&p);
+        p = connect_pair(c_12, s_any, "example.test", NULL, NULL, NULL);
+        PROVEN_TEST_ASSERT(both_up(&p), "the same mark means nothing to a client that never offered 1.3", "");
+        close_pair(&p);
+        proven_tls_test_knobs12(2);
+        p = connect_pair(c_12, s_12, "example.test", NULL, NULL, NULL);
+        PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 40, "a client without the extended master secret is refused by the server: handshake_failure", "");
+        close_pair(&p);
+        proven_tls_test_knobs12(4);
+        p = connect_pair(c_12, s_12, "example.test", NULL, NULL, NULL);
+        PROVEN_TEST_ASSERT(g_err_c == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.c) == 40, "and a server that does not answer it, by the client", "");
+        close_pair(&p);
+        proven_tls_test_knobs12(8);
+        p = connect_pair(c_12, s_any, "example.test", NULL, NULL, NULL);
+        PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 86 && proven_tls_alert_received(p.c) == 86,
+            "a 1.2 hello that says it is a fallback, to a server that speaks 1.3: inappropriate_fallback", "");
+        close_pair(&p);
+        p = connect_pair(c_12, s_12, "example.test", NULL, NULL, NULL);
+        PROVEN_TEST_ASSERT(both_up(&p), "the same hello to a server whose best is 1.2 is in order", "");
+        close_pair(&p);
+        proven_tls_test_knobs12(0);
+        {
+            /* ChangeCipherSpec where none is due. The server's first flight is four records:
+             * ServerHello, Certificate, ServerKeyExchange, ServerHelloDone. */
+            static const proven_byte_t ccs[6] = { 20, 3, 3, 0, 1, 1 };
+            proven_tls_conn_t *c = NULL, *sv_ = NULL;
+            proven_size_t used = 0;
+            PROVEN_TEST_ASSERT(proven_tls_client_create(c_12, sv("example.test"), NULL, &c) == PROVEN_OK && proven_tls_server_create(s_12, &sv_) == PROVEN_OK, "a client and a server", "");
+            static proven_byte_t kept_hello[2048];
+            proven_mem_view_t out = proven_tls_pending_output(c);
+            proven_mem_view_t hello = { kept_hello, out.size < sizeof kept_hello ? out.size : 0 };
+            memcpy(kept_hello, out.ptr, hello.size);
+            proven_tls_output_sent(c, out.size);
+            PROVEN_TEST_ASSERT(hello.size > 0 && proven_tls_feed(sv_, hello, &used) == PROVEN_OK && used == hello.size, "the server has the ClientHello", "");
+            PROVEN_TEST_ASSERT(proven_tls_feed(sv_, (proven_mem_view_t){ ccs, 6 }, &used) == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(sv_) == 10,
+                "a ChangeCipherSpec before the client's key exchange is refused by the server: unexpected_message", "");
+            proven_tls_conn_destroy(sv_);
+            PROVEN_TEST_ASSERT(proven_tls_server_create(s_12, &sv_) == PROVEN_OK && proven_tls_feed(sv_, hello, &used) == PROVEN_OK, "another server, as far", "");
+            proven_mem_view_t flight = proven_tls_pending_output(sv_);
+            proven_size_t first = 5 + ((proven_size_t)flight.ptr[3] << 8 | flight.ptr[4]);
+            PROVEN_TEST_ASSERT(flight.size > first && proven_tls_feed(c, (proven_mem_view_t){ flight.ptr, first }, &used) == PROVEN_OK && proven_tls_version(c) == PROVEN_TLS_VERSION_1_2,
+                "the client has the ServerHello, and knows the version", "");
+            PROVEN_TEST_ASSERT(proven_tls_feed(c, (proven_mem_view_t){ ccs, 6 }, &used) == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(c) == 10,
+                "a ChangeCipherSpec in place of the server's certificate is refused by the client", "");
+            proven_tls_conn_destroy(c); proven_tls_conn_destroy(sv_);
+        }
+
+        /* Renegotiation is declined, and the connection goes on. */
+        p = connect_pair(c_12, s_12, "example.test", NULL, NULL, NULL);
+        PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_test_send_handshake(p.s, 0), "a server asks its client to start again (HelloRequest)", "");
+        pump(p.c, p.s, NULL, NULL);
+        PROVEN_TEST_ASSERT(g_err_c == PROVEN_OK && g_err_s == PROVEN_OK && both_up(&p) && transfer(p.c, p.s, 500, 1) && transfer(p.s, p.c, 500, 2),
+            "the client declines with a warning, and data still flows both ways", "");
+        PROVEN_TEST_ASSERT(proven_tls_test_send_handshake(p.c, 1), "a client starts again by itself (a second ClientHello)", "");
+        pump(p.c, p.s, NULL, NULL);
+        PROVEN_TEST_ASSERT(g_err_c == PROVEN_OK && g_err_s == PROVEN_OK && both_up(&p) && transfer(p.c, p.s, 500, 3), "the server declines the same way", "");
+        bool tolerated = true;
+        for (int i = 0; i < 40 && g_err_c == PROVEN_OK; ++i) { tolerated = proven_tls_test_send_handshake(p.s, 0); pump(p.c, p.s, NULL, NULL); }
+        PROVEN_TEST_ASSERT(tolerated && g_err_c == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.c) == 10, "a peer that keeps asking is given up on", "");
+        close_pair(&p);
+
+        /* Client certificates. */
+        {
+            proven_tls_options_t so = o12, co = base_options(), ro = o12;
+            so.anchors = g_anchors; so.client_auth = PROVEN_TLS_CLIENT_AUTH_REQUIRE;
+            ro.anchors = g_anchors; ro.client_auth = PROVEN_TLS_CLIENT_AUTH_REQUEST;
+            co.certificate_pem = pem(TP_CLIENT); co.private_key_pem = pem(TP_CLIENT_KEY);
+            proven_tls_config_t *require = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &so), *request = server_config(TP_SERVER_ED, TP_SERVER_ED_KEY, &ro), *with = client_config(&co);
+            proven_byte_t key[32];
+            p = connect_pair(with, require, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_version(p.s) == PROVEN_TLS_VERSION_1_2 && proven_tls_peer_key_sha256(p.s, key) && transfer(p.c, p.s, 100, 1),
+                "a client certificate required and given: the server holds the client's key hash", "");
+            close_pair(&p);
+            p = connect_pair(c_any, require, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_UNTRUSTED && proven_tls_alert_sent(p.s) == 40 && !proven_tls_is_established(p.s), "required and absent: the server refuses, with handshake_failure - TLS 1.2 has no better word", "");
+            close_pair(&p);
+            p = connect_pair(c_any, request, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && !proven_tls_peer_key_sha256(p.s, key), "requested and absent: the client is let in, unidentified", "");
+            close_pair(&p);
+            proven_tls_options_t eo = base_options();
+            eo.certificate_pem = pem(TP_SERVER_ED); eo.private_key_pem = pem(TP_SERVER_ED_KEY);
+            proven_tls_config_t *ed_client = client_config(&eo);
+            p = connect_pair(ed_client, request, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && !proven_tls_peer_key_sha256(p.s, key), "a client whose key is Ed25519 presents no certificate in TLS 1.2, and is let in where one is only requested", "");
+            close_pair(&p);
+            proven_crypto_rsa_test_min_bits(1024);
+            proven_tls_options_t rco = base_options();
+            rco.certificate_pem = pem(TP_CLIENT_RSA); rco.private_key_pem = pem(TP_CLIENT_RSA_KEY);
+            proven_tls_config_t *rsa_client = client_config(&rco);
+            p = connect_pair(rsa_client, require, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_peer_key_sha256(p.s, key), "an RSA client certificate is accepted", "");
+            close_pair(&p);
+            proven_crypto_rsa_test_min_bits(0);
+            proven_tls_config_destroy(require); proven_tls_config_destroy(request); proven_tls_config_destroy(with); proven_tls_config_destroy(ed_client); proven_tls_config_destroy(rsa_client);
+        }
+
+        /* Tickets. */
+        {
+            proven_tls_session_t session;
+            memset(&session, 0, sizeof session);
+            p = connect_pair(c_12, s_12, "example.test", &session, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && !proven_tls_resumed(p.c) && transfer(p.s, p.c, 10, 1), "a first 1.2 connection leaves a session", "");
+            close_pair(&p);
+            p = connect_pair(c_12, s_12, "example.test", &session, NULL, NULL);
+            proven_byte_t key[32];
+            PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_resumed(p.c) && proven_tls_resumed(p.s) && proven_tls_version(p.c) == PROVEN_TLS_VERSION_1_2 &&
+                               proven_tls_peer_key_sha256(p.c, key) && transfer(p.c, p.s, 2000, 2) && transfer(p.s, p.c, 2000, 3),
+                "the second resumes it: no certificate is sent, the server's key is the one remembered, and data flows", "");
+            close_pair(&p);
+            p = connect_pair(c_any, s_any, "example.test", &session, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_version(p.c) == PROVEN_TLS_VERSION_1_3 && !proven_tls_resumed(p.s), "a 1.2 session is not offered to, or honoured by, a 1.3 handshake", "");
+            close_pair(&p);
+            /* That 1.3 connection left a 1.3 session in the same place. */
+            p = connect_pair(c_12, s_12, "example.test", &session, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && !proven_tls_resumed(p.c) && !proven_tls_resumed(p.s), "and a 1.3 session is not resumed by a 1.2 handshake", "");
+            close_pair(&p);
+            p = connect_pair(c_12, s_12, "example.test", &session, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_resumed(p.c), "which left a 1.2 one again", "");
+            close_pair(&p);
+            p = connect_pair(c_12, s_12, "elsewhere.test", &session, NULL, NULL);
+            PROVEN_TEST_ASSERT(!proven_tls_resumed(p.s), "a session is offered only to the name it was made with", "");
+            close_pair(&p);
+            proven_i64 kept = g_now;
+            memset(&session, 0, sizeof session);
+            p = connect_pair(c_12, s_12, "example.test", &session, NULL, NULL);
+            close_pair(&p);
+            g_now = kept + 3 * 3600;
+            p = connect_pair(c_12, s_12, "example.test", &session, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && !proven_tls_resumed(p.c), "three hours on, past the ticket's lifetime, it is not offered", "");
+            close_pair(&p);
+            g_now = kept;
+            proven_tls_options_t nr = o12;
+            nr.no_resumption = true;
+            proven_tls_config_t *s_nr = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &nr);
+            memset(&session, 0, sizeof session);
+            p = connect_pair(c_12, s_nr, "example.test", &session, NULL, NULL);
+            close_pair(&p);
+            p = connect_pair(c_12, s_nr, "example.test", &session, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && !proven_tls_resumed(p.c), "a server with resumption off gives no ticket", "");
+            close_pair(&p);
+            /* A ticket from another server's keys is just not a ticket. */
+            proven_tls_config_t *s_other = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &o12);
+            memset(&session, 0, sizeof session);
+            p = connect_pair(c_12, s_12, "example.test", &session, NULL, NULL);
+            close_pair(&p);
+            p = connect_pair(c_12, s_other, "example.test", &session, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && !proven_tls_resumed(p.c) && !proven_tls_resumed(p.s), "a ticket sealed by another server's keys leads to a full handshake", "");
+            close_pair(&p);
+            proven_tls_config_destroy(s_nr); proven_tls_config_destroy(s_other);
+        }
+
+        /* A changed bit anywhere in a 1.2 handshake. */
+        {
+            long total_cs = 0, total_sc = 0;
+            wire_t count_cs = { .counter = &total_cs, .flip_at = -1 }, count_sc = { .counter = &total_sc, .flip_at = -1 };
+            g_rng = 0x9e3779b97f4a7c15ull;
+            p = connect_pair(c_12, s_12, "example.test", NULL, &count_cs, &count_sc);
+            PROVEN_TEST_ASSERT(both_up(&p) && total_cs > 200 && total_sc > 500, "a clean 1.2 handshake, to learn how many bytes each side sends", "");
+            close_pair(&p);
+            long survived = 0, tried = 0;
+            for (int dir = 0; dir < 2; ++dir) {
+                long total = dir ? total_sc : total_cs;
+                for (long at = 0; at < total; at += 5) {
+                    long n_cs = 0, n_sc = 0;
+                    wire_t w_cs = { .counter = &n_cs, .flip_at = dir == 0 ? at : -1 }, w_sc = { .counter = &n_sc, .flip_at = dir == 1 ? at : -1 };
+                    g_rng = 0x9e3779b97f4a7c15ull;
+                    p = connect_pair(c_12, s_12, "example.test", NULL, &w_cs, &w_sc);
+                    tried++;
+                    if (both_up(&p)) survived++;
+                    close_pair(&p);
+                }
+            }
+            fprintf(stderr, "[PROVEN][TEST][INFO] TLS 1.2: %ld single-bit changes tried, %ld left both sides established\n", tried, survived);
+            PROVEN_TEST_ASSERT(tried > 150 && survived <= 6, "a changed bit in a 1.2 handshake leaves at most the unauthenticated record-version bytes unnoticed", "");
+        }
+        proven_tls_config_destroy(c_any); proven_tls_config_destroy(c_12); proven_tls_config_destroy(c_13);
+        proven_tls_config_destroy(s_any); proven_tls_config_destroy(s_12); proven_tls_config_destroy(s_13);
+    }
+
     PROVEN_TEST_SECTION("resumption",
         "A ticket from one connection shortens the next: no certificates, the same identity. A ticket that is old, damaged or for another name falls back or fails as it should.",
         "Check proven_tls_ticket_seal/_open, client_session, and the PSK branch of server_client_hello.");
@@ -794,6 +1048,17 @@ int main(void) {
         PROVEN_TEST_ASSERT(pair_idle <= 2 * 1100, "idle, the two together hold at most 2,200 bytes: no record buffer, no handshake state", "");
         close_pair(&p);
         PROVEN_TEST_ASSERT(g_count.live == before, "and nothing once destroyed", "");
+        proven_tls_options_t o12 = base_options();
+        o12.max_version = PROVEN_TLS_VERSION_1_2;
+        proven_tls_config_t *c12 = client_config(&o12);
+        before = g_count.live;
+        p = connect_pair(c12, sc, "example.test", NULL, NULL, NULL);
+        PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_version(p.c) == PROVEN_TLS_VERSION_1_2 && transfer(p.c, p.s, 40000, 1) && transfer(p.s, p.c, 40000, 2), "a TLS 1.2 connection that has carried data", "");
+        fprintf(stderr, "[PROVEN][TEST][INFO] an idle TLS 1.2 pair holds %u bytes\n", (unsigned)(g_count.live - before));
+        PROVEN_TEST_ASSERT(g_count.live - before == pair_idle, "holds exactly what a 1.3 one does", "");
+        close_pair(&p);
+        PROVEN_TEST_ASSERT(g_count.live == before, "and frees it all", "");
+        proven_tls_config_destroy(c12);
         proven_tls_config_destroy(sc); proven_tls_config_destroy(cc);
     }
 

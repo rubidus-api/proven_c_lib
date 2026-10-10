@@ -203,7 +203,7 @@ static bool body_is(proven_http_client_response_t *resp, const char *want) {
 }
 
 static void https_cases(proven_job_sys_t *handlers, const char *how) {
-    proven_http_server_config_t scfg = { .alloc = g_heap, .handler = handler, .jobs = handlers, .tls = g_server_tls, .head_timeout_ms = 2000, .max_body_bytes = 4 * 1024 * 1024 };
+    proven_http_server_config_t scfg = { .alloc = g_heap, .handler = handler, .jobs = handlers, .tls = g_server_tls, .head_timeout_ms = 4000, .max_body_bytes = 4 * 1024 * 1024 };
     proven_net_addr_t at;
     PROVEN_TEST_ASSERT(proven_http_server_create(&scfg, &g_server) == PROVEN_OK &&
                        proven_http_server_listen(g_server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "an HTTPS server", how);
@@ -279,14 +279,14 @@ static void https_cases(proven_job_sys_t *handlers, const char *how) {
     /* A client that connects and says nothing must not hold up anybody else, and is dropped. */
     proven_net_conn_t silent;
     PROVEN_TEST_ASSERT(proven_net_connect(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, at.port), proven_net_deadline_in(5000), &silent) == PROVEN_OK, "a client that says nothing", how);
-    proven_time_t t0 = proven_time_monotonic_now();
     e = proven_http_client_get(client, url("https", at.port, "/"), &resp);
-    proven_time_t took = proven_time_monotonic_now() - t0;
-    PROVEN_TEST_ASSERT(e == PROVEN_OK && body_is(&resp, "hello over tls") && took < 1500000000, "others are served while its handshake is pending, well inside the head timeout it is using up", how);
+    /* Judged by the silent connection itself, not by a stopwatch: the answer is here, and the
+     * server is still waiting for that client - so it did not wait for it first. */
+    proven_byte_t drop[64];
+    proven_result_size_t gone = proven_net_read(&silent, (proven_mem_mut_t){ .ptr = drop, .size = sizeof drop }, proven_net_deadline_in(1));
+    PROVEN_TEST_ASSERT(e == PROVEN_OK && body_is(&resp, "hello over tls") && gone.err == PROVEN_ERR_TIMEOUT, "others are served while its handshake is pending: the answer arrives and the silent connection is still open", how);
     proven_http_client_finish(&resp);
     /* The server may say a TLS goodbye first; what matters is that the connection then ends. */
-    proven_byte_t drop[64];
-    proven_result_size_t gone;
     proven_net_deadline_t give_up = proven_net_deadline_in(8000);
     do { gone = proven_net_read(&silent, (proven_mem_mut_t){ .ptr = drop, .size = sizeof drop }, give_up); } while (gone.err == PROVEN_OK);
     PROVEN_TEST_ASSERT(gone.err == PROVEN_ERR_EOF || gone.err == PROVEN_ERR_RESET, "and after the head timeout the server closes it", how);
@@ -413,6 +413,17 @@ int main(void) {
     https_cases(NULL, "handlers on the loop thread");
     PROVEN_TEST_SECTION("HTTPS and wss, handlers on workers", "The same, with connections changing hands between the loop and worker threads.", "Check that the TLS transport travels with the connection.");
     https_cases(handlers, "handlers on workers");
+    PROVEN_TEST_SECTION("TLS 1.2 over sockets", "The transport cases and the HTTPS and wss cases again, with clients that speak nothing newer than TLS 1.2.", "The 1.2 handshake is test_unit_tls's business; check here what differs on a socket - the close, the ticket after the handshake, records split across reads.");
+    {
+        proven_tls_config_t *any = g_client_tls;
+        proven_tls_options_t co12 = co;
+        co12.max_version = PROVEN_TLS_VERSION_1_2;
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&co12, &g_client_tls) == PROVEN_OK, "a client configuration limited to TLS 1.2", "");
+        transport_cases();
+        https_cases(handlers, "TLS 1.2, handlers on workers");
+        proven_tls_config_destroy(g_client_tls);
+        g_client_tls = any;
+    }
     PROVEN_TEST_SECTION("an RSA key, signing on several threads", "Four threads completing handshakes against one configuration: the key's blinding pair is shared and changes with every signature.", "Check proven_tls_config_rsa_sign_ in src/proven/tls_config.c: the pair is copied and replaced under the flag, and the signature is made outside it. Run under ThreadSanitizer.");
     rsa_threads_case();
 

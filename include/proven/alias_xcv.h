@@ -243,6 +243,8 @@
 #define XCV_TLS_SESSION_SIZE PROVEN_TLS_SESSION_SIZE
 #define XCV_TLS_VERIFY_CHAIN PROVEN_TLS_VERIFY_CHAIN
 #define XCV_TLS_VERIFY_PIN_ONLY PROVEN_TLS_VERIFY_PIN_ONLY
+#define XCV_TLS_VERSION_1_2 PROVEN_TLS_VERSION_1_2
+#define XCV_TLS_VERSION_1_3 PROVEN_TLS_VERSION_1_3
 #define XCV_U16_LIT PROVEN_U16_LIT
 #define XCV_VERSION_ENCODE(major, minor, patch) PROVEN_VERSION_ENCODE(major, minor, patch)
 #define XCV_VERSION_MAJOR PROVEN_VERSION_MAJOR
@@ -932,6 +934,7 @@
 #define xcv_tls_transport_conn proven_tls_transport_conn
 #define xcv_tls_transport_server proven_tls_transport_server
 #define xcv_tls_verify_t proven_tls_verify_t
+#define xcv_tls_version proven_tls_version
 #define xcv_tls_write proven_tls_write
 #define xcv_transport_close proven_transport_close
 #define xcv_transport_is_valid proven_transport_is_valid

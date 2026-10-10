@@ -18,6 +18,60 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release: TLS 1.2, cut down to the part of it that is still defensible. Until now a
+peer that spoke nothing newer than 1.2 could not be reached at all.
+
+**This changes what a default configuration does.** A client that used to fail against a
+TLS 1.2 server with `PROVEN_ERR_PROTOCOL` now connects, and a server now accepts TLS 1.2
+clients. When both sides can speak 1.3 they still do. To keep the old behaviour exactly, set
+`min_version = PROVEN_TLS_VERSION_1_3` in the options.
+
+The standing caution applies: a new implementation with no external audit; manual chapter 14
+says what was checked and what could not be.
+
+### Added
+
+- **TLS 1.2, both roles.** Six cipher suites - `ECDHE-ECDSA` and `ECDHE-RSA`, each with
+  AES-128-GCM, AES-256-GCM and ChaCha20-Poly1305 - over X25519 or P-256, with this side's key
+  being P-256, Ed25519 or RSA. Server name indication, ALPN, client certificates, and session
+  tickets (RFC 5077).
+- **What is deliberately absent from it:** CBC cipher suites, RSA and finite-field
+  Diffie-Hellman key exchange, renegotiation, compression, SHA-1 and MD5 in handshake
+  signatures, session IDs, and everything older than 1.2. A peer that needs one of those is
+  refused. The extended master secret (RFC 7627) is required of every 1.2 peer.
+- `proven_tls_options_t` gains `min_version` and `max_version`, with
+  `PROVEN_TLS_VERSION_1_2` and `PROVEN_TLS_VERSION_1_3`; zero means the default, 1.2 to 1.3.
+  An unknown version, or a minimum above the maximum, is `PROVEN_ERR_INVALID_ARG` when the
+  configuration is created.
+- `proven_tls_version`: the version a connection agreed on.
+- Downgrade protection as RFC 8446 section 4.1.3 describes: a server that answers 1.2 though
+  it could speak 1.3 marks its random value, and a client that offered 1.3 and sees the mark
+  ends the handshake with `illegal_parameter`. A client hello carrying the fallback signal of
+  RFC 7507 below the server's best version is refused with `inappropriate_fallback`.
+- A request to renegotiate is declined with the warning `no_renegotiation` and the connection
+  carries on; after sixteen such requests in a row it is ended.
+- Manual chapter 14 says which part of TLS 1.2 this is and why, what is weaker about a
+  resumed 1.2 connection (no fresh key exchange), and how to refuse 1.2.
+- Test `test_unit_tls12_keys` (the PRF against its two published vectors, the key block and
+  records against known answers); a TLS 1.2 section in `test_unit_tls`.
+
+### Changed
+
+- A default client or server now agrees to TLS 1.2 as well as 1.3 (see above).
+- `proven_tls_key_update` returns `PROVEN_ERR_UNSUPPORTED` on a TLS 1.2 connection, which has
+  no such message. `proven_tls_write` returns `PROVEN_ERR_OVERFLOW` on a TLS 1.2 connection
+  that has sent 2^31 records.
+- A server that requires a client certificate and gets none tells a TLS 1.2 client
+  `handshake_failure`; a TLS 1.3 client is told `certificate_required`, as before. The error
+  on this side is `PROVEN_ERR_UNTRUSTED` in both.
+- A client whose key is Ed25519 presents no certificate on a TLS 1.2 connection.
+
+### Fixed
+
+- `test_unit_tls_net` judged "a silent client holds up nobody" by a stopwatch (1.5 s), which
+  thread checking on an overloaded machine could exceed. It now checks the thing itself: the
+  answer has arrived and the silent client's connection is still open.
+
 ## [0.21.0] - 2026-10-10
 
 A MINOR release: a server - or a client - may now present an RSA certificate. Until now this

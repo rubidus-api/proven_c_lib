@@ -89,6 +89,44 @@ proven_size_t proven_tls13_seal(proven_tls_keys_t *keys, proven_byte_t type, pro
 [[nodiscard]] bool proven_tls13_open(proven_tls_keys_t *keys, proven_byte_t *record, proven_size_t body_len,
                                      proven_byte_t *type, proven_mem_mut_t *content);
 
+/* ---- TLS 1.2 (RFC 5246) below its state machine: tls12_keys.c ---- */
+
+typedef struct {
+    proven_u16 id;
+    proven_hmac_hash_t hash;                      /* of the PRF and the handshake hash */
+    proven_size_t key_len;
+    bool chacha;
+    bool rsa_auth;                                /* ECDHE_RSA: the server's key is RSA; otherwise ECDSA or Ed25519 */
+} proven_tls12_suite_t;
+
+/* NULL for a suite this library does not implement. */
+const proven_tls12_suite_t *proven_tls12_suite_find(proven_u16 id);
+
+#define PROVEN_TLS12_MASTER_SIZE 48
+#define PROVEN_TLS12_VERIFY_SIZE 12
+
+/* PRF(secret, label, seed) = P_hash(secret, label | seed), `out_len` bytes. */
+void proven_tls12_prf(proven_hmac_hash_t hash, proven_mem_view_t secret, const char *label, proven_mem_view_t seed,
+                      proven_byte_t *out, proven_size_t out_len);
+/* The extended master secret (RFC 7627): from the premaster secret and the session hash -
+ * the hash of the handshake messages through ClientKeyExchange. The only kind made here. */
+void proven_tls12_master_secret(proven_hmac_hash_t hash, proven_mem_view_t premaster, proven_mem_view_t session_hash,
+                                proven_byte_t master[PROVEN_TLS12_MASTER_SIZE]);
+/* A Finished message's verify_data, from the hash of the handshake messages before it. */
+void proven_tls12_finished(proven_hmac_hash_t hash, const proven_byte_t master[PROVEN_TLS12_MASTER_SIZE], bool server,
+                           proven_mem_view_t handshake_hash, proven_byte_t out[PROVEN_TLS12_VERIFY_SIZE]);
+/* Expand the master secret into the two directions' keys and start both sequences at zero. */
+void proven_tls12_set_keys(proven_tls_keys_t *client_write, proven_tls_keys_t *server_write, const proven_tls12_suite_t *suite,
+                           const proven_byte_t master[PROVEN_TLS12_MASTER_SIZE], const proven_byte_t client_random[32],
+                           const proven_byte_t server_random[32]);
+/* One protected record of the given type: header, the explicit nonce (AES-GCM: 8 bytes), the
+ * content and the tag, into `out` - PROVEN_TLS_RECORD_HEADER + 8 + content.size + 16 bytes at
+ * most. Returns the number written. `content` and `out` must not overlap. */
+proven_size_t proven_tls12_seal(proven_tls_keys_t *keys, proven_byte_t type, proven_mem_view_t content, proven_byte_t *out);
+/* Open one in place. The type is the header's, in the clear and authenticated. False when the
+ * tag does not verify or the record is malformed. */
+[[nodiscard]] bool proven_tls12_open(proven_tls_keys_t *keys, proven_byte_t *record, proven_size_t body_len, proven_mem_mut_t *content);
+
 /* ---- The configuration and what the state machine needs from it ---- */
 
 #include "proven/tls.h"
@@ -144,6 +182,7 @@ struct proven_tls_config {
     bool keep_peer_certificate;
     proven_u32 ticket_lifetime_s;
     proven_size_t max_handshake_bytes;
+    proven_u16 min_version, max_version;          /* never zero: the defaults are filled in */
     proven_tls_ticket_keys_t tickets;             /* the one part that changes: see the lock */
 };
 
@@ -230,10 +269,10 @@ proven_size_t proven_tls_key_der_(proven_tls_key_kind_t kind, const proven_byte_
 /* An RSA private key as an RSAPrivateKey (PKCS #1), or with `pkcs8` inside a PrivateKeyInfo.
  * `d` is the private exponent, n_len bytes. Returns the length, or 0 when `out` is too small. */
 proven_size_t proven_tls_rsa_key_der_(const proven_crypto_rsa_key_t *key, const proven_byte_t *d, bool pkcs8, proven_mem_mut_t out);
-/* A CertificateVerify signature with the config's RSA key: RSASSA-PSS over SHA-256 with a
- * salt of 32 bytes, n_len bytes into `sig`. False when the config has no RSA key or the
- * signature could not be made. */
-[[nodiscard]] bool proven_tls_config_rsa_sign_(const proven_tls_config_t *config, proven_mem_view_t digest, proven_byte_t *sig, proven_size_t *len);
+/* A signature of a SHA-256 digest with the config's RSA key, n_len bytes into `sig`:
+ * RSASSA-PSS with a salt of 32 bytes, or - `pkcs1`, for TLS 1.2 peers that offer nothing
+ * else - PKCS #1 v1.5. False when the config has no RSA key or the signature could not be made. */
+[[nodiscard]] bool proven_tls_config_rsa_sign_(const proven_tls_config_t *config, bool pkcs1, proven_mem_view_t digest, proven_byte_t *sig, proven_size_t *len);
 /* PEM: the label between the dashes, the bytes in Base64, 64 to a line. */
 proven_err_t proven_tls_pem_write_(const char *label, proven_mem_view_t der, proven_mem_mut_t out, proven_size_t *len);
 /* 4 or 16 when `text` is an IP literal (cert.c). */
@@ -244,6 +283,12 @@ void proven_crypto_rsa_test_min_bits(proven_size_t bits);
 /* Put one suite first in both roles' order (0: the normal order), and make the server ignore
  * an X25519 key share so that it has to ask for P-256. */
 void proven_tls_test_knobs(proven_u16 suite_first, bool server_refuses_x25519);
+/* TLS 1.2 test knobs: bit 0, the server answers 1.2 whatever the client offers; bit 1, the
+ * client omits the extended master secret; bit 2, the server omits it from its answer; bit 3,
+ * the client adds the fallback signal of RFC 7507 to its suites. */
+void proven_tls_test_knobs12(unsigned flags);
+/* Send an empty handshake message of `type` under the current keys. */
+bool proven_tls_test_send_handshake(proven_tls_conn_t *conn, proven_byte_t type);
 /* A copy of a connection's sending keys and application secret, for a test that must forge the
  * next record a peer would send. */
 void proven_tls_test_peek_write(const proven_tls_conn_t *conn, proven_tls_keys_t *keys, proven_byte_t secret[48]);

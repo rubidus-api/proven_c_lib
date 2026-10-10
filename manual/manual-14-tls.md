@@ -33,8 +33,9 @@ capable adversary should terminate it in something audited and use this library 
 
 A TCP connection gives you a pipe. Everyone between the two ends - the cafe's access point, an
 internet provider, whoever compromised a router - can read what goes through it and change it,
-and neither end can tell. TLS (Transport Layer Security; RFC 8446 is version 1.3, the one
-here) puts three properties on top of the pipe:
+and neither end can tell. TLS (Transport Layer Security; this library speaks version 1.3,
+RFC 8446, and a cut-down version 1.2, RFC 5246 - section 9 says which part) puts three
+properties on top of the pipe:
 
 | Property | Meaning | What it is made from |
 |---|---|---|
@@ -85,6 +86,7 @@ Zero-initialise a `proven_tls_options_t`, set `alloc`, and set what applies:
 | `no_resumption`, `ticket_lifetime_s` | both, a server | Section 6 |
 | `keep_peer_certificate` | whoever verifies | Keep the peer's certificate after the handshake, for `proven_tls_peer_certificate` |
 | `max_handshake_bytes` | both | The largest handshake message accepted. Default 65,536 |
+| `min_version`, `max_version` | both | The oldest and newest protocol version this side agrees to: `PROVEN_TLS_VERSION_1_2` or `PROVEN_TLS_VERSION_1_3`. Zero is the default - 1.2 for the minimum, 1.3 for the maximum. **`min_version = PROVEN_TLS_VERSION_1_3` is how to refuse TLS 1.2** (section 9) |
 
 **`anchors`, `verify` and `pins` describe how the peer is verified, in either role.** There is
 no setting that verifies nothing. A client that would check a chain and is given no anchors is
@@ -96,7 +98,7 @@ handshake, which is at three in the morning on somebody else's machine:
 
 | Returns | When |
 |---|---|
-| `PROVEN_ERR_INVALID_ARG` | No allocator; anchors missing where this side verifies a chain; `PIN_ONLY` with no pins; a certificate without a key, or a key without a certificate; more than 8 certificates; an empty ALPN name |
+| `PROVEN_ERR_INVALID_ARG` | No allocator; anchors missing where this side verifies a chain; `PIN_ONLY` with no pins; a certificate without a key, or a key without a certificate; more than 8 certificates; an empty ALPN name; a version that is neither of the two, or a minimum above the maximum |
 | `PROVEN_ERR_INVALID_FORMAT` | PEM that does not parse, or holds no certificate, or no key; an RSA key outside 2048 to 4096 bits, or whose parts do not belong together, or that does not sign |
 | `PROVEN_ERR_UNSUPPORTED` | A key of another kind - P-384, for one - or an encrypted key file |
 | `PROVEN_ERR_INVALID_STATE` | The key is not the one in the certificate |
@@ -385,6 +387,7 @@ used by any number.
 What was agreed, once established:
 
 ```c
+proven_u16 proven_tls_version(const proven_tls_conn_t *conn);
 proven_u16 proven_tls_cipher_suite(const proven_tls_conn_t *conn);
 proven_u8str_view_t proven_tls_alpn(const proven_tls_conn_t *conn);
 bool proven_tls_resumed(const proven_tls_conn_t *conn);
@@ -394,6 +397,9 @@ proven_u8str_view_t proven_tls_server_name(const proven_tls_conn_t *conn);
 proven_err_t proven_tls_key_update(proven_tls_conn_t *conn);
 ```
 
+- `proven_tls_version` is `PROVEN_TLS_VERSION_1_3` or `PROVEN_TLS_VERSION_1_2`, and zero until
+  the peer's hello has settled it. A program that must not carry something over TLS 1.2 checks
+  here, or - better - sets `min_version` and never gets that far.
 - `proven_tls_cipher_suite` is the suite's number (section 9); `proven_tls_alpn` the agreed
   application protocol, empty when none was.
 - `proven_tls_peer_key_sha256` gives the hash of the peer's public key - the value a pin holds
@@ -404,6 +410,8 @@ proven_err_t proven_tls_key_update(proven_tls_conn_t *conn);
   client asked for.
 - `proven_tls_key_update` replaces this side's sending key with the next one. The engine does
   this by itself long before a key has protected too much; call it when policy wants it sooner.
+  TLS 1.2 has no such message: there it returns `PROVEN_ERR_UNSUPPORTED`, and a connection
+  that has sent 2^31 records refuses to write more (`PROVEN_ERR_OVERFLOW`) - open another.
 
 Compiled and run by the test suite:
 
@@ -501,6 +509,7 @@ int main(void) {
         EXAMPLE_REQUIRE(carry(server, client) == PROVEN_OK, "server to client");
     }
     EXAMPLE_REQUIRE(proven_tls_is_established(client) && proven_tls_is_established(server), "both sides are established");
+    EXAMPLE_REQUIRE(proven_tls_version(client) == PROVEN_TLS_VERSION_1_3 && proven_tls_version(server) == PROVEN_TLS_VERSION_1_3, "both spoke TLS 1.3, the newest version both sides have");
     EXAMPLE_REQUIRE(proven_tls_cipher_suite(client) == proven_tls_cipher_suite(server) && proven_tls_cipher_suite(client) != 0, "they agreed on a cipher suite");
     EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_tls_alpn(client), PROVEN_LIT("example/1")), "and on the application protocol");
     EXAMPLE_REQUIRE(!proven_tls_resumed(client), "this was a full handshake");
@@ -601,6 +610,16 @@ What resumption does not do here:
   not sent again, so it is not checked again, and an expiry that has passed since is not
   noticed. The ticket lifetime bounds how long that can matter.
 
+**Under TLS 1.2 a resumed connection is weaker than a new one, and you should know how.**
+There is no fresh key exchange: the new connection's keys come from the first connection's
+master secret and two new random values. So whoever later obtains the server's ticket key can
+read every connection resumed from a ticket it sealed, and the first one's secret with it -
+which a full handshake, and TLS 1.3's resumption, do not allow. The ticket key here lives only
+in the process's memory and is replaced every ticket lifetime, which bounds the exposure to
+that; `no_resumption` removes it. A session made under one version is never offered to, or
+accepted by, the other: one `proven_tls_session_t` holds whichever kind the last connection
+left, and a handshake that ends up in the other version is simply a full one.
+
 ## 7. Client certificates and pins
 
 **Client certificates.** A server can require that the client proves who it is, too - mutual
@@ -639,10 +658,10 @@ A connection fails once, with one error, and stays failed.
 
 | Error | What happened | Usual cause |
 |---|---|---|
-| `PROVEN_ERR_UNTRUSTED` | The peer's certificate does not chain to an anchor, or is not pinned, or a required client certificate was not presented | A private or self-signed authority; a missing intermediate; on Windows, a root the machine has not fetched (Chapter 13) |
+| `PROVEN_ERR_UNTRUSTED` | The peer's certificate does not chain to an anchor, or is not pinned, or a required client certificate was not presented (the peer is told `certificate_required` in TLS 1.3 and `handshake_failure` in 1.2, which has no closer word) | A private or self-signed authority; a missing intermediate; on Windows, a root the machine has not fetched (Chapter 13) |
 | `PROVEN_ERR_EXPIRED`, `PROVEN_ERR_NOT_YET_VALID` | A certificate on the path is outside its validity period | An unrenewed certificate - or this machine's clock |
 | `PROVEN_ERR_NAME_MISMATCH` | The certificate is valid and is for another name | A wrong URL, a misconfigured server, or an interception |
-| `PROVEN_ERR_PROTOCOL` | Everything else the peer did: a version or algorithm this side does not speak, a malformed or unexpected message, a record that does not authenticate - or the peer ended the handshake with an alert of its own | A TLS 1.2-only peer; no cipher suite or group in common; a peer that refused *this* side's certificate; corruption |
+| `PROVEN_ERR_PROTOCOL` | Everything else the peer did: a version or algorithm this side does not speak, a malformed or unexpected message, a record that does not authenticate - or the peer ended the handshake with an alert of its own | A peer that speaks only TLS 1.1 or older, or only the parts of TLS 1.2 this library leaves out (section 9); a TLS 1.2 peer when `min_version` is 1.3; no cipher suite or group in common; a peer that refused *this* side's certificate; corruption |
 | `PROVEN_ERR_RESET` (the wrapper) | The connection ended without a TLS close | The peer crashed or was cut off; do not trust what was received as complete |
 | `PROVEN_ERR_TIMEOUT` (the wrapper) | The deadline passed | A peer that stopped answering |
 
@@ -671,7 +690,10 @@ other side of the connection; they are for your log.
 
 ## 9. What is negotiated, what is held, what is not here
 
-**Negotiated.** TLS 1.3 only.
+**Negotiated.** TLS 1.3, and TLS 1.2 cut down to the part of it that is still defensible. When
+both sides can speak 1.3, that is what they speak.
+
+In TLS 1.3:
 
 | What | Which |
 |---|---|
@@ -682,13 +704,51 @@ other side of the connection; they are for your log.
 | A peer's key | Those, ECDSA with P-384, and RSA (2048 to 8192 bits, RSA-PSS) |
 | Also | ALPN, server name indication, session tickets, key update, `record_size_limit`, the middlebox-compatibility messages |
 
+In TLS 1.2:
+
+| What | Which |
+|---|---|
+| Cipher suites | `ECDHE-ECDSA` and `ECDHE-RSA`, each with `AES128-GCM-SHA256`, `AES256-GCM-SHA384` and `CHACHA20-POLY1305`: 0xC02B, 0xC02C, 0xCCA9, 0xC02F, 0xC030, 0xCCA8. In the same order of ciphers as above |
+| Key exchange | X25519 or P-256, a fresh key pair for every connection - so there is always forward secrecy |
+| This side's key | ECDSA with P-256 or Ed25519 for the `ECDHE-ECDSA` suites; RSA for `ECDHE-RSA`, signing with RSA-PSS when the peer offers it and PKCS #1 v1.5 with SHA-256 when it does not |
+| A peer's key | The same kinds as in 1.3; its signature must use SHA-256, SHA-384 or SHA-512 |
+| **Required of the peer** | The extended master secret (RFC 7627). A peer without it is refused with `handshake_failure` |
+| Also | ALPN, server name indication, session tickets (RFC 5077; section 6), client certificates, the downgrade mark of RFC 8446 section 4.1.3 |
+
+**What that leaves out is the point.** Every attack on TLS 1.2 that has a name went through
+something this list does not have: the CBC cipher suites (padding oracles), RSA key exchange
+(Bleichenbacher's attack, and no forward secrecy), finite-field Diffie-Hellman with weak or
+chosen groups, renegotiation, compression, a master secret not bound to the handshake, SHA-1
+and MD5 in handshake signatures. A peer that offers only those gets `handshake_failure`, and
+your program gets `PROVEN_ERR_PROTOCOL`.
+
+- **Renegotiation is declined, not answered.** A peer that asks for a new handshake on an
+  established connection is sent the warning `no_renegotiation` and the connection carries on
+  as it was. What the peer does next is its choice: some go on, some close. One that keeps
+  asking is cut off after sixteen requests in a row.
+- **A client is not fooled into 1.2.** A server that could have spoken 1.3 and answers 1.2
+  marks its random value; a client here that offered 1.3 and sees the mark ends the handshake
+  with `illegal_parameter`, because somebody in between removed the better offer.
+- **ChangeCipherSpec is accepted in one place per direction** - where the keys change - and
+  nowhere else.
+- **An Ed25519 key authenticates a client in TLS 1.3 only.** A client whose key is Ed25519
+  presents no certificate to a 1.2 server (as if it had none). A server's Ed25519 key works in
+  both.
+
+**To speak TLS 1.3 only**, set `min_version = PROVEN_TLS_VERSION_1_3`: that is exactly what
+versions of this library before 0.22.0 did. Consider it for a server whose clients you control,
+and for anything where the weaker resumption of section 6 is not acceptable. The default
+accepts 1.2 because a client that cannot reach a server that speaks nothing newer is not
+safer, only disconnected - and a great many servers and devices still speak nothing newer.
+
 **Held per connection.** During the handshake, a few kilobytes that are freed when it
 completes. After it, **about one kilobyte** per connection when nothing is in flight: the keys
 and the counters. Record buffers exist only while a record is being received, is waiting to be
 read, or is waiting to be sent, and are freed when it is done - so ten thousand idle TLS
 connections hold about ten megabytes, not the three hundred that two 16 KiB buffers each would
 cost. That is this layer's share: the transport wrapper adds a few dozen bytes, and an HTTP
-server's own per-connection request buffer is Chapter 11's and is separate.
+server's own per-connection request buffer is Chapter 11's and is separate. (A TLS 1.2
+connection holds the same.)
 
 **What a handshake costs.** On one x86-64 core of the development machine, a full handshake
 with X25519 and a P-256 certificate is about 2 ms of processor time on the server and about 5 ms
@@ -706,15 +766,17 @@ primes with a constant-time exponentiation, its input blinded, and its result ch
 the public key before it is released; it keeps its working numbers on the stack - about
 20 KiB by the compiler's own accounting at `-O2` on x86-64 - which a small target must allow
 for. A peer must accept `rsa_pss_rsae_sha256`, as TLS 1.3 requires of every implementation:
-it is the one scheme this side signs with.
+it is the one scheme this side signs with there.
 
 **Bounds on a peer.** A handshake message is at most `max_handshake_bytes`; a record at most what the protocol allows, refused on its header. Records that carry nothing - empty ones, repeated compatibility messages - are tolerated sixteen in a row. Key-update requests are answered until 64 KiB of answers are waiting unsent. Past any of these the connection ends with `PROVEN_ERR_PROTOCOL`.
 
 **Not here:**
 
-- **TLS 1.2 and earlier.** A peer that speaks only those fails with `PROVEN_ERR_PROTOCOL`.
+- **TLS 1.1 and earlier**, and from TLS 1.2: CBC cipher suites, RSA and finite-field
+  Diffie-Hellman key exchange, session IDs kept on the server, renegotiation, compression,
+  `record_size_limit`. A peer that needs one of those fails with `PROVEN_ERR_PROTOCOL`.
 - **RSA keys above 4096 bits for this side**, and RSA-PSS keys (a certificate whose key is marked for PSS only).
-- **Early data (0-RTT)**, and **renegotiation** (TLS 1.3 has none).
+- **Early data (0-RTT).**
 - **Revocation.** No CRL, no OCSP, no stapling. See Chapter 13.
 - **Choosing a certificate by the name the client asked for.** One config, one certificate.
 - **Encrypted ClientHello, post-handshake client authentication, external pre-shared keys.**
@@ -731,8 +793,16 @@ group, with retries, resumption and client certificates; and the client fetched 
 public servers. For RSA keys on this side: the same two implementations accepted handshakes
 signed with keys of 2048, 3072 and 4096 bits that OpenSSL had made; the library's PKCS #1 v1.5
 signatures were the same bytes as OpenSSL's for those keys and its PSS signatures were accepted
-by it; and the signing path was run under a checker that reports any branch or memory index
-that depends on the primes, the private exponents or the blinding values, and reported none,
+by it. For TLS 1.2: its key derivation is checked against the two published test vectors
+for the PRF and against values computed outside this library (there is no published trace of a
+whole 1.2 handshake as there is for 1.3, so for the handshake the other implementations are
+the evidence); both roles were run against OpenSSL for all six suites and all three kinds of
+key, with tickets, client certificates, PKCS #1 and PSS signatures, a peer without the extended
+master secret (refused), a peer offering only what is left out (refused), and a peer asking to
+renegotiate (declined); and GnuTLS's client was run against the server. The signing path, and
+the key derivation and record protection of both versions, were run under a checker that reports any branch or memory index
+that depends on a secret - the primes, the private exponents, the blinding values, the shared
+key and everything derived from it - and reported none,
 at two optimisation levels on one compiler and one processor family. **Not done:** no coverage-guided fuzzing, no protocol-level fuzzing suite
 (tlsfuzzer, BoGo), no timing measurement on hardware, no external review. The primitives
 underneath are Chapter 13's, with the limits stated there.

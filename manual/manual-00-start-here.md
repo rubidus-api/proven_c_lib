@@ -1004,7 +1004,7 @@ Two things this table tells you that the file names do not:
 | `ws.h` | WebSocket codec: handshake values and checks, frames, a message decoder | Chapter 12 |
 | `ws_conn.h` | WebSocket connections over a transport, client and server (hosted-only) | Chapter 12 |
 | `cert.h` | X.509 certificates: a strict reader, host-name matching, PEM, a store of trust anchors, chain verification. Only reading the system's roots is hosted. | Chapter 13 |
-| `tls.h` | TLS 1.3, client and server: a config, an engine with no I/O, and (hosted-only) a transport wrapper and the HTTP wrap | Chapter 14 |
+| `tls.h` | TLS 1.3 and a cut-down TLS 1.2, client and server: a config, an engine with no I/O, and (hosted-only) a transport wrapper and the HTTP wrap | Chapter 14 |
 | `loop.h` | An event loop: socket readiness, timers, work posted from other threads, a shared scratch buffer (hosted-only) | Chapter 15 |
 | `http_event.h` | HTTP/1.1 server driven by events on a loop: callbacks, responses in pieces with backpressure, optional TLS (hosted-only) | Chapter 15 |
 | `ws_event.h` | WebSocket on the event-driven server: messages in pieces, sends refused and resumed, liveness and close handled (hosted-only) | Chapter 15 |

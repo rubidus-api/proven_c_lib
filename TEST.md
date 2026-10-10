@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 99 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 100 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-10, Windows 11 test VM: x86-64 301 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 163 registered tests plus the 146 runnable manual examples - 309 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 176 test files: the 163 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 164 registered tests plus the 146 runnable manual examples - 310 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 177 test files: the 164 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -719,9 +719,23 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/tls_keys.c`. The step letter printed on failure names the operation (the test's header comment lists them). `tests/test_unit_tls_vectors.h` is written by a private generator from the RFC's text. Not covered: the traces are all `TLS_AES_128_GCM_SHA256`, so no published value checks the SHA-384 schedule; and this is not a handshake - no state machine is exercised.
 
-### `tests/test_unit_tls` - the TLS 1.3 engine
+### `tests/test_unit_tls12_keys` - TLS 1.2 PRF, key block and records against known answers
 
-Intent: verify the TLS 1.3 state machine, both roles, with no network: a client connection and a server connection wired back to back in memory, the test carrying the bytes. The clock and the random source are the test's own, so every run is the same run.
+Intent: verify the parts of TLS 1.2 below the state machine - the PRF, the extended master secret, Finished, the key block, record protection for the six AEAD suites - against a script of known answers. Internal code, reached through `src/proven/proven_internal_tls.h`.
+
+Sub-checks:
+
+- The PRF: 18 outputs, the first two being the test vectors published on the IETF TLS list for SHA-256 and SHA-384.
+- The extended master secret (RFC 7627) from a premaster secret and a session hash, and the client's and the server's Finished values: four of each, over both hashes.
+- For each of the six suites: the keys installed from the key block, then eight records in the two directions - handshake, application data from an empty record to 52 bytes, an alert - each sealed to exactly the expected bytes, and the expected record opened again to its content.
+- What record protection refuses, for an AES-128-GCM, an AES-256-GCM and a ChaCha20 suite: a changed tag, a changed content type, a record sealed for the other direction, one cut short by a byte, the same record a second time, and lengths below a tag or above the maximum; a record is its content, a 16-byte tag and, with AES-GCM, an 8-byte explicit nonce.
+- Suite numbers outside the six (a TLS 1.3 suite, a CBC suite, a static-RSA suite) are not found.
+
+Failure tip: inspect `src/proven/tls12_keys.c`. The letter printed on failure names the operation (the test's header comment lists them). `tests/test_unit_tls12_vectors.h` is written by a private generator whose own PRF first reproduced the two published vectors. Not covered: there is no published trace of a whole TLS 1.2 handshake to replay, as RFC 8448 is for 1.3 - agreement of the handshake with other implementations is checked in a private interoperability run; and this is not a handshake.
+
+### `tests/test_unit_tls` - the TLS engine
+
+Intent: verify the TLS state machine in both versions, both roles, with no network: a client connection and a server connection wired back to back in memory, the test carrying the bytes. The clock and the random source are the test's own, so every run is the same run.
 
 Sub-checks:
 
@@ -733,11 +747,12 @@ Sub-checks:
 - Verification: an unknown CA (`PROVEN_ERR_UNTRUSTED`, fault `NO_ISSUER`, alert `unknown_ca`, and the server told), another name (`PROVEN_ERR_NAME_MISMATCH`), an expired certificate and a clock before the validity period, each with its alert; after a failure every call is `PROVEN_ERR_INVALID_STATE`. Pins: `PIN_ONLY` ignores name, chain and dates; an unpinned key is refused with `PIN_MISMATCH`, also when the chain is good.
 - Client certificates: required and given (the server holds the key hash and, when configured, the certificate); required and absent (`certificate_required`, and the client learns on its next read); requested and absent (let in, no key reported); a certificate under an unknown CA refused even when only requested.
 - Resumption: a first handshake leaves a ticket; the second resumes on both sides with the original server key reported; through a HelloRetryRequest; not under a suite with another hash; not for another server name; a damaged ticket falls back to a full handshake; a good ticket with a wrong key behind it is a fatal `decrypt_error`; one second inside and one past the lifetime; a ticket under a key replaced twice; a server set to issue none.
-- Memory: an idle client and server together hold at most 2,200 bytes (measured and printed), and a destroyed pair has freed everything.
-- A lying wire: a single-bit change at every seventh byte of each direction of the handshake (162 handshakes) never leaves both sides established; an HTTP request, a record claiming 65,535 bytes, application data before a handshake, a fatal alert, and a plaintext handshake record on an established connection are each refused with the stated alert; a run of ChangeCipherSpec records is tolerated briefly and then refused; key-update requests (forged under the peer's real keys) are answered, and refused once the unsent answers pass the output limit.
+- TLS 1.2: three ciphers by three kinds of server key (P-256, Ed25519, RSA), each established as TLS 1.2 with the suite for that key and data of 1 to 150,000 bytes each way, `proven_tls_key_update` unsupported; the key exchange on P-256 a byte at a time; which version each pairing of default, 1.2-only and 1.3-only configurations agrees on, the two that agree on none ending with `protocol_version`, and a reversed or unknown version range refused as `PROVEN_ERR_INVALID_ARG`; a server that answers 1.2 although it could speak 1.3 refused by a client that offered 1.3 (`illegal_parameter`) and accepted by one that did not; a peer without the extended master secret refused by each side (`handshake_failure`); a 1.2 hello carrying the fallback signal refused by a server that speaks 1.3 (`inappropriate_fallback`) and accepted by one that does not; a ChangeCipherSpec before the client's key exchange, and one in place of the server's certificate, refused (`unexpected_message`); a HelloRequest and a second ClientHello declined with the connection carrying on, and a peer that keeps asking given up on; client certificates required and given (P-256, RSA), required and absent, requested and absent, and an Ed25519 client key presenting none; tickets - resumed with the server's key remembered, a 1.2 session not used by a 1.3 handshake nor the reverse, not for another name, not past its lifetime, not from a server with resumption off, not under another server's keys; and a single-bit change at every fifth byte of each direction of a 1.2 handshake, with at most the unauthenticated record-version bytes going unnoticed (none did in the run recorded here).
+- Memory: an idle client and server together hold at most 2,200 bytes (measured and printed), a TLS 1.2 pair exactly the same, and a destroyed pair has freed everything.
+- A lying wire: a single-bit change at every seventh byte of each direction of the handshake never leaves both sides established; an HTTP request, a record claiming 65,535 bytes, application data before a handshake, a fatal alert, and a plaintext handshake record on an established connection are each refused with the stated alert; a run of ChangeCipherSpec records is tolerated briefly and then refused; key-update requests (forged under the peer's real keys) are answered, and refused once the unsent answers pass the output limit.
 - RFC 8448 sections 3 and 7 through the client: given the trace's ClientHello and X25519 key, the client accepts the server's records and produces exactly the client's - the Finished record, the application data record, the close - byte for byte.
 
-Failure tip: inspect `src/proven/tls13.c`, `src/proven/tls_config.c` and `src/proven/tls_issue.c`. No key is stored in the tree: `tests/test_unit_tls_pki.h` derives keys from a fixed pattern and issues the certificates when the test starts, with the library's internal certificate writer. The RFC's records are in `tests/test_unit_tls_vectors.h`, written by a private generator. Not covered here: the server role against a published trace (RFC 8448's server key is RSA, which this version cannot sign with) - that is checked against OpenSSL and GnuTLS in a private interoperability run, as are both roles for every suite and group; `record_size_limit` from a peer.
+Failure tip: inspect `src/proven/tls13.c`, `src/proven/tls_config.c` and `src/proven/tls_issue.c`. No key is stored in the tree: `tests/test_unit_tls_pki.h` derives keys from a fixed pattern and issues the certificates when the test starts, with the library's internal certificate writer. The RFC's records are in `tests/test_unit_tls_vectors.h`, written by a private generator. Not covered here: the server role against a published trace (RFC 8448's server key is RSA, which this version cannot sign with) - that is checked against OpenSSL and GnuTLS in a private interoperability run, as are both roles for every suite and group in both versions; `record_size_limit` from a peer; a ServerKeyExchange or CertificateVerify actually signed with SHA-1 (no SHA-1 scheme is offered or accepted, and no peer at hand will send one unasked).
 
 ### `tests/test_unit_crypto_rsa` - RSA signing
 
@@ -763,6 +778,7 @@ Sub-checks:
 - The transport wrapper: a client and a server handshake over a socket with the server verified by its IP address; 1 to 150,000 bytes echoed intact; a read with nothing to read ends at its deadline; a close seen by the peer as `PROVEN_ERR_EOF`; a connection cut without a TLS close seen as `PROVEN_ERR_RESET`; another server name is `PROVEN_ERR_NAME_MISMATCH` and the server's handshake ends with the alert; a handshake nobody answers ends at its deadline; `proven_tls_transport_conn` on a TLS and on a plain transport.
 - HTTPS, with handlers on the loop's thread and again on workers: three GETs over one kept connection; a 200,000-byte request body and a 300,000-byte response body; a `wss://` connection with a text and a 70,000-byte binary message echoed and a clean close; two pipelined requests in one TLS record both answered; a client that connects and says nothing does not delay another request and is closed after the head timeout; a plain `http://` request to the TLS port fails and reaches no handler; an `https://` URL on a client with no wrap is still `PROVEN_ERR_UNSUPPORTED`; a server whose CA the client does not hold is `PROVEN_ERR_UNTRUSTED` with nothing sent.
 
+- TLS 1.2 over sockets: the transport-wrapper cases and the HTTPS and `wss` cases (handlers on workers) once more, with a client configuration limited to TLS 1.2.
 - An RSA key signing on several threads: twenty-four in-memory handshakes against one server configuration with a 2048-bit RSA key, from four threads at once, all complete and are verified by their clients - the key's blinding pair is shared and replaced by every signature; and a page is fetched over HTTPS from a server with that key.
 
 Failure tip: inspect `src/proven/tls_transport.c` and the `tls` branches of `src/proven/http_server.c`. This test uses the wall clock (its certificates, issued at start by `tests/test_unit_tls_pki.h`, are valid 2026 to 2036) and the operating system's random source. Not covered: client certificates through the HTTP server, and resumption through the transport wrapper (both are engine paths `test_unit_tls` covers).
@@ -792,6 +808,7 @@ Sub-checks:
 - Bodies and backpressure: an upload delivered in pieces; a handler that pauses the body and resumes it from a timer still receives every byte; a 16 MB download to a client that reads nothing until a write has been refused arrives intact, was resumed through `on_writable`, and never held more than the output limit and one piece; 3 MB sent chunked; `Expect: 100-continue`; a response sent before the body arrived.
 - Refusals: 400, 413, 431, 501 and 505 each with a close; bad chunk framing and a body shorter than its `Content-Length` end the exchange with an error.
 - Leaving: a client that disappears during a response ends the exchange with an error; `proven_http_stream_abort` closes with nothing sent and `on_done(PROVEN_ERR_RESET)`; half a request head gets 408 after the head timeout; destroying the server under an unanswered request ends it with `PROVEN_ERR_RESET`.
+- Every case above over plain HTTP, over TLS, and a third time with clients limited to TLS 1.2.
 - Accounting: `on_done` was called exactly once for every `on_request`; many connections that have each made a request stay open and close when their clients do.
 - Memory: three hundred idle plain connections hold less than 512 bytes of heap each (448 measured on x86-64 Linux), and everything is given back when they close and when the server is destroyed.
 - The idle timeout: an answered connection that then says nothing is closed by the server after `idle_timeout_ms`, not before.

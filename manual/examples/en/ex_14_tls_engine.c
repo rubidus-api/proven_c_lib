@@ -91,6 +91,7 @@ int main(void) {
         EXAMPLE_REQUIRE(carry(server, client) == PROVEN_OK, "server to client");
     }
     EXAMPLE_REQUIRE(proven_tls_is_established(client) && proven_tls_is_established(server), "both sides are established");
+    EXAMPLE_REQUIRE(proven_tls_version(client) == PROVEN_TLS_VERSION_1_3 && proven_tls_version(server) == PROVEN_TLS_VERSION_1_3, "both spoke TLS 1.3, the newest version both sides have");
     EXAMPLE_REQUIRE(proven_tls_cipher_suite(client) == proven_tls_cipher_suite(server) && proven_tls_cipher_suite(client) != 0, "they agreed on a cipher suite");
     EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_tls_alpn(client), PROVEN_LIT("example/1")), "and on the application protocol");
     EXAMPLE_REQUIRE(!proven_tls_resumed(client), "this was a full handshake");
