@@ -21,6 +21,7 @@
 #define AL_DECODE_ERROR 50
 #define AL_DECRYPT_ERROR 51
 #define AL_PROTOCOL_VERSION 70
+#define AL_INSUFFICIENT_SECURITY 71
 #define AL_INTERNAL_ERROR 80
 #define AL_USER_CANCELED 90
 #define AL_MISSING_EXTENSION 109
@@ -70,6 +71,7 @@
 #define HS12_SERVER_HELLO_DONE 14
 #define HS12_CLIENT_KEY_EXCHANGE 16
 #define EXT_EC_POINT_FORMATS 11
+#define EXT_ENCRYPT_THEN_MAC 22
 #define EXT_EXTENDED_MASTER_SECRET 23
 #define EXT_SESSION_TICKET 35
 #define EXT_RENEGOTIATION_INFO 0xff01
@@ -142,6 +144,15 @@ typedef struct {
     proven_tls_keys_t next_read;                  /* installed when the peer's ChangeCipherSpec arrives */
     proven_tls_keys_t next_write;                 /* server: installed when it sends its own */
     proven_u16 ske_group;
+    bool etm;                                     /* encrypt_then_mac was agreed, for a CBC suite */
+    bool ems;                                     /* the extended master secret was agreed (always, unless the legacy bit lets it go) */
+    bool tr_old;                                  /* TLS 1.0/1.1: the handshake is hashed with MD5 and SHA-1 as well */
+    proven_md5_t tr_md5;
+    proven_sha1_t tr_sha1;
+    proven_u16 hello_version;                     /* server: the ClientHello's legacy_version, which an RSA premaster repeats */
+    proven_byte_t dh_priv[PROVEN_TLS_DH_EXP_MAX]; /* DHE: this side's exponent. SECRET */
+    tls_buf_t dh;                                 /* DHE, client: its public value, then the shared secret */
+    proven_size_t dh_pub_len;
     bool ticket_expected;                         /* client: the server said it will send a ticket */
     bool ticket_offered12;                        /* client: a 1.2 ticket went out in the hello */
     bool issue_ticket12;                          /* server: a ticket follows the client's Finished */
@@ -164,6 +175,7 @@ struct proven_tls_conn {
     proven_u16 version;                           /* 0 until agreed */
     bool v12;
     proven_tls_keys_t read_keys, write_keys;
+    proven_tls_cbc_t *cbc;                        /* a CBC suite only: [0] what the client writes with, [1] the server */
     proven_byte_t read_secret[48], write_secret[48];      /* application traffic secrets, for KeyUpdate */
     proven_byte_t resumption_master[48];
     proven_size_t peer_record_limit;              /* the most plaintext the peer accepts in a record */
@@ -270,16 +282,27 @@ static bool out_reserve(proven_tls_conn_t *c, proven_size_t more) {
 /* One or more records carrying `data` as `type`, under the write keys if there are any. */
 static bool emit(proven_tls_conn_t *c, proven_byte_t type, const proven_byte_t *data, proven_size_t len, proven_byte_t clear_minor) {
     proven_size_t limit = c->write_keys.active ? c->peer_record_limit : PROVEN_TLS_MAX_PLAINTEXT;
+    /* TLS 1.0 chains each record's IV from the one before, so whoever can make this side send
+     * chosen data knows the IV it will be encrypted under (BEAST). Sending one byte first puts
+     * a MAC the attacker cannot predict in front of the rest. */
+    bool split = type == PROVEN_TLS_CT_APPLICATION && len > 1 && c->write_keys.active && c->cbc && c->cbc[c->is_server ? 1 : 0].chained;
     do {
         proven_size_t n = len < limit ? len : limit;
-        if (!out_reserve(c, PROVEN_TLS_RECORD_HEADER + n + 32)) return false;      /* 1.3: type and tag; 1.2: nonce and tag */
+        if (split) { n = 1; split = false; }
+        if (!out_reserve(c, n + PROVEN_TLS_CBC_MAX_EXPANSION)) return false;        /* 1.3: type and tag; 1.2: nonce and tag; CBC: the most */
         proven_byte_t *o = c->out.ptr + c->out.len;
-        if (c->write_keys.active && c->v12) {
+        if (c->write_keys.active && c->v12 && c->suite12->mac) {
+            proven_byte_t iv[16];
+            proven_tls_config_random(c->config, iv, sizeof iv);
+            c->out.len += proven_tls_cbc_seal(&c->write_keys, &c->cbc[c->is_server ? 1 : 0], type, (proven_mem_view_t){ .ptr = data, .size = n }, iv, o);
+        } else if (c->write_keys.active && c->v12) {
             c->out.len += proven_tls12_seal(&c->write_keys, type, (proven_mem_view_t){ .ptr = data, .size = n }, o);
         } else if (c->write_keys.active) {
             c->out.len += proven_tls13_seal(&c->write_keys, type, (proven_mem_view_t){ .ptr = data, .size = n }, o);
         } else {
-            o[0] = type; o[1] = 0x03; o[2] = clear_minor; o[3] = (proven_byte_t)(n >> 8); o[4] = (proven_byte_t)n;
+            /* Once an older version is agreed its records say so. */
+            o[0] = type; o[1] = 0x03; o[2] = c->version != 0 && c->version < PROVEN_TLS_VERSION_1_2 ? (proven_byte_t)c->version : clear_minor;
+            o[3] = (proven_byte_t)(n >> 8); o[4] = (proven_byte_t)n;
             for (proven_size_t i = 0; i < n; ++i) o[5 + i] = data[i];
             c->out.len += 5 + n;
         }
@@ -310,6 +333,10 @@ static bool hs_send(proven_tls_conn_t *c) {
     if (h->transcript_ready) {
         proven_tls_transcript_update(&h->transcript, (proven_mem_view_t){ .ptr = h->scratch.ptr, .size = h->scratch.len });
         if (c->v12) proven_tls_transcript_update(&h->transcript_alt, (proven_mem_view_t){ .ptr = h->scratch.ptr, .size = h->scratch.len });
+        if (h->tr_old) {
+            proven_md5_update(&h->tr_md5, (proven_mem_view_t){ .ptr = h->scratch.ptr, .size = h->scratch.len });
+            proven_sha1_update(&h->tr_sha1, (proven_mem_view_t){ .ptr = h->scratch.ptr, .size = h->scratch.len });
+        }
     }
     return emit(c, PROVEN_TLS_CT_HANDSHAKE, h->scratch.ptr, h->scratch.len, 0x03);
 }
@@ -356,8 +383,15 @@ void proven_tls_test_knobs(proven_u16 suite_first, bool server_refuses_x25519) {
  * master secret; bit 2, a server does not answer it. */
 static unsigned g_test12;
 void proven_tls_test_knobs12(unsigned flags) { g_test12 = flags; }
+static proven_u16 g_test_only12;
+void proven_tls_test_only_suite12(proven_u16 id) { g_test_only12 = id; }
 
 /* The TLS 1.2 suite with the same cipher as a 1.3 suite, for an RSA key or for an EC one. */
+/* A 1.2 suite this configuration may use: every legacy bit it needs is set. */
+static bool suite12_allowed(const proven_tls_config_t *cfg, const proven_tls12_suite_t *suite) {
+    return suite && (suite->legacy & ~cfg->legacy) == 0;
+}
+
 static proven_u16 suite12_for(proven_u16 id13, bool rsa) {
     if (id13 == PROVEN_TLS_AES_256_GCM_SHA384) return rsa ? 0xc030 : 0xc02c;
     if (id13 == PROVEN_TLS_CHACHA20_POLY1305_SHA256) return rsa ? 0xcca8 : 0xcca9;
@@ -436,6 +470,8 @@ static void hs_free(proven_tls_conn_t *c) {
     tls_handshake_t *h = c->hs;
     if (!h) return;
     buf_free(c, &h->first_hello); buf_free(c, &h->reassembly); buf_free(c, &h->scratch); buf_free(c, &h->peer_leaf); buf_free(c, &h->ticket12);
+    if (h->dh.ptr) tls_wipe(h->dh.ptr, h->dh.cap);
+    buf_free(c, &h->dh);
     tls_wipe(h, sizeof *h);
     c->alloc.free_fn(c->alloc.ctx, h);
     c->hs = NULL;
@@ -495,6 +531,22 @@ static int sig_check(proven_u16 scheme, const proven_cert_t *leaf, proven_mem_vi
         default:
             return -1;                            /* SHA-1 and everything else that was never offered */
     }
+}
+
+/* What TLS 1.0 and 1.1 sign: no scheme is named, the key's kind decides. An RSA key signs
+ * MD5 | SHA-1 of the message, 36 bytes with no DigestInfo; an ECDSA key signs the SHA-1.
+ * `digest` is those 36 bytes. 1 yes, 0 no, -1 a key that cannot sign there at all. */
+static int sig_check_old(const proven_cert_t *leaf, const proven_byte_t digest[36], proven_mem_view_t s) {
+    if (leaf->key_kind == PROVEN_CERT_KEY_RSA) return proven_crypto_rsa_verify_pkcs1_raw(leaf->rsa_n, leaf->rsa_e, (proven_mem_view_t){ .ptr = digest, .size = 36 }, s) ? 1 : 0;
+    const proven_mem_view_t sha1 = { .ptr = digest + 16, .size = 20 };
+    if (leaf->key_kind == PROVEN_CERT_KEY_EC_P256) return proven_crypto_ecdsa_verify_der(PROVEN_CRYPTO_EC_P256, leaf->key, sha1, s) ? 1 : 0;
+    if (leaf->key_kind == PROVEN_CERT_KEY_EC_P384) return proven_crypto_ecdsa_verify_der(PROVEN_CRYPTO_EC_P384, leaf->key, sha1, s) ? 1 : 0;
+    return -1;
+}
+
+static void sig_digest_old(proven_mem_view_t msg, proven_byte_t out[36]) {
+    proven_md5(msg, out);
+    proven_sha1(msg, out + 16);
 }
 
 /* Check the peer's CertificateVerify against the certificate it sent. */
@@ -559,6 +611,45 @@ static bool tls_sign_digest(proven_tls_conn_t *c, proven_u16 scheme, const prove
         wr_uint(w, scheme, 2); wr_uint(w, (proven_u32)n, 2); wr_bytes(w, der, n);
     }
     return true;
+}
+
+/* This side's signature in TLS 1.0 and 1.1 over the 36 bytes of sig_digest_old: its length
+ * and the signature, with no scheme in front. Not for an Ed25519 key, which those versions
+ * do not know. */
+static bool tls_sign_old(proven_tls_conn_t *c, const proven_byte_t digest[36], wr_t *w) {
+    const proven_tls_config_t *cfg = c->config;
+    if (cfg->key_kind == PROVEN_TLS_KEY_RSA) {
+        proven_byte_t sig[PROVEN_CRYPTO_RSA_SIGN_MAX_BYTES];
+        proven_size_t n = 0;
+        if (!proven_tls_config_rsa_sign_(cfg, true, (proven_mem_view_t){ .ptr = digest, .size = 36 }, sig, &n)) return false;
+        wr_uint(w, (proven_u32)n, 2); wr_bytes(w, sig, n);
+        return true;
+    }
+    if (cfg->key_kind != PROVEN_TLS_KEY_P256) return false;
+    proven_byte_t raw[64], der[80];
+    if (!proven_crypto_ecdsa_sign(PROVEN_CRYPTO_EC_P256, PROVEN_HMAC_SHA256, cfg->key, (proven_mem_view_t){ .ptr = digest + 16, .size = 20 }, raw)) return false;
+    proven_size_t n = 2;
+    for (int part = 0; part < 2; ++part) {
+        const proven_byte_t *v = raw + 32 * part;
+        proven_size_t len = 32;
+        while (len > 1 && v[0] == 0) { v++; len--; }
+        der[n++] = 0x02; der[n++] = (proven_byte_t)(len + (v[0] >> 7));
+        if (v[0] & 0x80) der[n++] = 0;
+        for (proven_size_t i = 0; i < len; ++i) der[n++] = v[i];
+    }
+    der[0] = 0x30; der[1] = (proven_byte_t)(n - 2);
+    wr_uint(w, (proven_u32)n, 2); wr_bytes(w, der, n);
+    return true;
+}
+
+/* A ServerKeyExchange's signature, in the form of the agreed version. */
+static bool ske_sign(proven_tls_conn_t *c, proven_u16 scheme, proven_mem_view_t msg, wr_t *w) {
+    if (c->version != 0 && c->version < PROVEN_TLS_VERSION_1_2) {
+        proven_byte_t digest[36];
+        sig_digest_old(msg, digest);
+        return tls_sign_old(c, digest, w);
+    }
+    return tls_sign(c, scheme, msg, w);
 }
 
 /* The scheme this side's key signs a TLS 1.3 CertificateVerify with. For an RSA key it is
@@ -683,6 +774,7 @@ static proven_err_t cert_process(proven_tls_conn_t *c, rd_t body, bool *empty) {
 static void tr_add(proven_tls_conn_t *c, proven_mem_view_t whole) {
     proven_tls_transcript_update(&c->hs->transcript, whole);
     if (c->v12) proven_tls_transcript_update(&c->hs->transcript_alt, whole);
+    if (c->hs->tr_old) { proven_md5_update(&c->hs->tr_md5, whole); proven_sha1_update(&c->hs->tr_sha1, whole); }
 }
 
 /* The Finished message of this side, built and sent. */
@@ -747,7 +839,7 @@ static proven_tls_session_data_t *client_session12(proven_tls_conn_t *c) {
     proven_tls_session_data_t *s = (proven_tls_session_data_t *)(void *)c->session->opaque;
     if (s->magic != PROVEN_TLS_SESSION_MAGIC) return NULL;
     proven_i64 age = proven_tls_config_now(c->config) - s->received_at;
-    if (!proven_tls12_suite_find(s->suite) || s->psk_len != PROVEN_TLS12_MASTER_SIZE || s->ticket_len == 0 || s->ticket_len > PROVEN_TLS_SESSION_TICKET_MAX) return NULL;
+    if (!suite12_allowed(c->config, proven_tls12_suite_find(s->suite)) || s->psk_len != PROVEN_TLS12_MASTER_SIZE || s->ticket_len == 0 || s->ticket_len > PROVEN_TLS_SESSION_TICKET_MAX) return NULL;
     if (age < 0 || age >= (proven_i64)s->lifetime_s || age >= 604800) return NULL;
     if (s->name_len != c->server_name_len || !bytes_eq(s->name, c->server_name, s->name_len)) return NULL;
     return s;
@@ -767,14 +859,17 @@ static proven_err_t client_hello_send(proven_tls_conn_t *c) {
     }
     proven_u16 suites[3];
     suite_order(suites);
+    /* offer12: anything before 1.3 is on offer. six: TLS 1.2 itself is, and with it the AEAD suites. */
     const bool offer13 = cfg->max_version >= PROVEN_TLS_VERSION_1_3, offer12 = cfg->min_version <= PROVEN_TLS_VERSION_1_2;
+    const bool six = offer12 && cfg->max_version >= PROVEN_TLS_VERSION_1_2;
+    h->hello_version = cfg->max_version < PROVEN_TLS_VERSION_1_2 ? cfg->max_version : PROVEN_TLS_VERSION_1_2;
     proven_tls_session_data_t *sess = offer13 ? client_session(c) : NULL;
     const proven_tls_suite_t *psk_suite = sess ? proven_tls_suite_find(sess->suite) : NULL;
     /* After a retry the server has fixed the suite: a session made under another hash cannot be offered. */
     if (sess && h->retried && psk_suite->hash != c->suite->hash) sess = NULL;
 
     wr_t w = hs_begin(c, HS_CLIENT_HELLO);
-    wr_uint(&w, 0x0303, 2);
+    wr_uint(&w, h->hello_version, 2);
     wr_bytes(&w, h->random, 32);
     wr_uint(&w, (proven_u32)h->session_id_len, 1); wr_bytes(&w, h->session_id, h->session_id_len);
     {
@@ -782,7 +877,20 @@ static proven_err_t client_hello_send(proven_tls_conn_t *c) {
         for (int i = 0; offer13 && i < 3; ++i) wr_uint(&w, suites[i], 2);
         if (offer12) {
             /* The six ECDHE suites with an AEAD, in the order 1.3's three are in. */
-            for (int i = 0; i < 3; ++i) { wr_uint(&w, suite12_for(suites[i], false), 2); wr_uint(&w, suite12_for(suites[i], true), 2); }
+            for (int i = 0; six && i < 3; ++i) {
+                for (int rsa = 0; rsa < 2; ++rsa) {
+                    const proven_u16 id = suite12_for(suites[i], rsa != 0);
+                    if (g_test_only12 == 0 || g_test_only12 == id) wr_uint(&w, id, 2);
+                }
+            }
+            /* Then whatever of the legacy set this configuration asked for, in the table's
+             * order - only the suites with a SHA-1 MAC if nothing as new as 1.2 is on offer. */
+            const proven_tls12_suite_t *s12;
+            for (proven_size_t i = 0; (s12 = proven_tls12_suite_at(i)) != NULL; ++i) {
+                if (g_test_only12 != 0 && g_test_only12 != s12->id) continue;
+                const bool allowed = suite12_allowed(cfg, s12) || ((g_test12 & 16u) && g_test_only12 == s12->id);
+                if (s12->legacy && allowed && (six || s12->mac == PROVEN_TLS_LH_SHA1)) wr_uint(&w, s12->id, 2);
+            }
         }
         if (g_test12 & 8u) wr_uint(&w, 0x5600, 2);               /* TLS_FALLBACK_SCSV, which this client never sends by itself */
         wr_close(&w, list, 2);
@@ -799,8 +907,9 @@ static proven_err_t client_hello_send(proven_tls_conn_t *c) {
     {
         wr_uint(&w, EXT_SUPPORTED_VERSIONS, 2);
         proven_size_t e = wr_open(&w, 2), l = wr_open(&w, 1);
-        if (offer13) wr_uint(&w, 0x0304, 2);
-        if (offer12) wr_uint(&w, 0x0303, 2);
+        /* Every version this configuration allows, newest first: a server that reads this
+         * list reads nothing else. */
+        for (proven_u16 v = PROVEN_TLS_VERSION_1_3; v >= PROVEN_TLS_VERSION_1_0; --v) if (v >= cfg->min_version && v <= cfg->max_version) wr_uint(&w, v, 2);
         wr_close(&w, l, 1); wr_close(&w, e, 2);
     }
     wr_uint(&w, EXT_SUPPORTED_GROUPS, 2); wr_uint(&w, 6, 2); wr_uint(&w, 4, 2); wr_uint(&w, GROUP_X25519, 2); wr_uint(&w, GROUP_P256, 2);
@@ -812,6 +921,9 @@ static proven_err_t client_hello_send(proven_tls_conn_t *c) {
         if (!(g_test12 & 2u)) { wr_uint(&w, EXT_EXTENDED_MASTER_SECRET, 2); wr_uint(&w, 0, 2); }
         wr_uint(&w, EXT_RENEGOTIATION_INFO, 2); wr_uint(&w, 1, 2); wr_uint(&w, 0, 1);
         wr_uint(&w, EXT_EC_POINT_FORMATS, 2); wr_uint(&w, 2, 2); wr_uint(&w, 1, 1); wr_uint(&w, 0, 1);
+        /* With a CBC suite on offer: ask to MAC the ciphertext instead of the plaintext
+         * (RFC 7366), which takes the padding out of reach of anyone who cannot forge a MAC. */
+        if ((cfg->legacy & PROVEN_TLS_LEGACY_CBC) && !(g_test12 & 32u)) { wr_uint(&w, EXT_ENCRYPT_THEN_MAC, 2); wr_uint(&w, 0, 2); }
         if (!cfg->no_resumption) {
             /* A ticket from an earlier 1.2 session with this server, or an empty extension to
              * say that one would be accepted. (A session struct holds one session: if it is a
@@ -891,7 +1003,7 @@ static proven_err_t client_hello_send(proven_tls_conn_t *c) {
 }
 
 static bool suite_was_offered(proven_u16 id) { return proven_tls_suite_find(id) != NULL; }
-static proven_err_t client12_server_hello(proven_tls_conn_t *c, rd_t random, rd_t sid, proven_u16 suite_id, rd_t exts, proven_mem_view_t whole);
+static proven_err_t client12_server_hello(proven_tls_conn_t *c, proven_u16 version, rd_t random, rd_t sid, proven_u16 suite_id, rd_t exts, proven_mem_view_t whole);
 
 static proven_err_t client_server_hello(proven_tls_conn_t *c, rd_t body, proven_mem_view_t whole) {
     tls_handshake_t *h = c->hs;
@@ -900,9 +1012,10 @@ static proven_err_t client_server_hello(proven_tls_conn_t *c, rd_t body, proven_
     rd_t sid = rd_vec(&body, 1);
     proven_u16 suite_id = (proven_u16)rd_uint(&body, 2);
     proven_u32 compression = rd_uint(&body, 1);
-    rd_t exts = rd_vec(&body, 2);
+    /* A server from before extensions existed ends its hello here. */
+    rd_t exts = body.ok && body.n == 0 ? (rd_t){ body.p, 0, true } : rd_vec(&body, 2);
     if (!body.ok || body.n != 0) return tls_decode(c);
-    if (version != 0x0303 || compression != 0) return tls_illegal(c);
+    if (version < PROVEN_TLS_VERSION_1_0 || version > PROVEN_TLS_VERSION_1_2 || compression != 0) return tls_illegal(c);
     {
         /* A ServerHello without supported_versions is a TLS 1.2 server's. */
         rd_t scan = exts;
@@ -913,8 +1026,10 @@ static proven_err_t client_server_hello(proven_tls_conn_t *c, rd_t body, proven_
             if (!scan.ok) return tls_decode(c);
             if (type == EXT_SUPPORTED_VERSIONS) names_version = true;
         }
-        if (!names_version && c->config->min_version <= PROVEN_TLS_VERSION_1_2) return client12_server_hello(c, random, sid, suite_id, exts, whole);
-        if (c->config->max_version < PROVEN_TLS_VERSION_1_3) return tls_fail(c, AL_PROTOCOL_VERSION, PROVEN_ERR_PROTOCOL);
+        /* Its version is then the number in the hello: one this side allows and offered. */
+        if (!names_version && version >= c->config->min_version && version <= h->hello_version) return client12_server_hello(c, version, random, sid, suite_id, exts, whole);
+        if (c->config->max_version < PROVEN_TLS_VERSION_1_3 || !names_version) return tls_fail(c, AL_PROTOCOL_VERSION, PROVEN_ERR_PROTOCOL);
+        if (version != PROVEN_TLS_VERSION_1_2) return tls_illegal(c);    /* TLS 1.3 keeps 3.3 here */
     }
     if (sid.n != h->session_id_len || !bytes_eq(sid.p, h->session_id, sid.n)) return tls_illegal(c);
     if (!suite_was_offered(suite_id)) return tls_illegal(c);
@@ -1148,7 +1263,7 @@ static bool list_has_u16(rd_t list, proven_u16 want) {
 
 static proven_err_t server_send_ticket(proven_tls_conn_t *c);
 
-static proven_err_t server12_client_hello(proven_tls_conn_t *c, rd_t random, rd_t sid, rd_t suites, rd_t exts, rd_t groups, rd_t sig_algs, rd_t alpn, proven_mem_view_t whole);
+static proven_err_t server12_client_hello(proven_tls_conn_t *c, proven_u16 version, rd_t random, rd_t sid, rd_t suites, rd_t exts, rd_t groups, rd_t sig_algs, rd_t alpn, proven_mem_view_t whole);
 
 static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_mem_view_t whole) {
     tls_handshake_t *h = c->hs;
@@ -1159,10 +1274,14 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
     rd_t sid = rd_vec(&body, 1);
     rd_t suites = rd_vec(&body, 2);
     rd_t compression = rd_vec(&body, 1);
-    rd_t exts = rd_vec(&body, 2);
+    /* A client from before extensions existed ends its hello here. */
+    rd_t exts = body.ok && body.n == 0 ? (rd_t){ body.p, 0, true } : rd_vec(&body, 2);
     if (!body.ok || body.n != 0) return tls_decode(c);
-    if (version < 0x0303) return tls_fail(c, AL_PROTOCOL_VERSION, PROVEN_ERR_PROTOCOL);       /* TLS 1.1 or older */
-    if (version != 0x0303 || sid.n > 32 || suites.n < 2 || suites.n % 2 != 0) return tls_illegal(c);
+    /* Below TLS 1.0 there is nothing here. Whether the number is enough for this configuration
+     * is decided further down: a client that lists its versions means the list, not this. */
+    if (version < PROVEN_TLS_VERSION_1_0) return tls_fail(c, AL_PROTOCOL_VERSION, PROVEN_ERR_PROTOCOL);
+    if (version > PROVEN_TLS_VERSION_1_2 || sid.n > 32 || suites.n < 2 || suites.n % 2 != 0) return tls_illegal(c);
+    h->hello_version = version;
     if (compression.n != 1 || compression.p[0] != 0) return tls_illegal(c);
 
     const rd_t all_exts = exts;
@@ -1227,11 +1346,19 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
         bool listed = (seen & 1) != 0;
         if (listed && versions.n % 2 != 0) return tls_decode(c);
         bool client13 = listed && list_has_u16(versions, 0x0304);
-        bool client12 = listed ? list_has_u16(versions, 0x0303) : true;         /* legacy_version was checked to be 3.3 */
         if (!(client13 && cfg->max_version >= PROVEN_TLS_VERSION_1_3) || (g_test12 & 1u)) {
-            if (!client12 || cfg->min_version > PROVEN_TLS_VERSION_1_2 || h->retried) return tls_fail(c, AL_PROTOCOL_VERSION, PROVEN_ERR_PROTOCOL);
-            return server12_client_hello(c, random, sid, suites, all_exts, groups, sig_algs, alpn, whole);
+            /* Something older, then: the newest of 1.2, 1.1 and 1.0 that the client names -
+             * in its list, or by the number in the hello, which means "up to this" - and
+             * that this configuration allows. */
+            proven_u16 agreed = 0;
+            for (proven_u16 v = PROVEN_TLS_VERSION_1_2; v >= PROVEN_TLS_VERSION_1_0 && (agreed == 0 || (g_test12 & 64u)); --v) {
+                const bool client_has = listed ? list_has_u16(versions, v) : v <= version;
+                if (client_has && v >= cfg->min_version && v <= cfg->max_version) agreed = v;      /* (the knob: the oldest instead) */
+            }
+            if (agreed == 0 || h->retried) return tls_fail(c, AL_PROTOCOL_VERSION, PROVEN_ERR_PROTOCOL);
+            return server12_client_hello(c, agreed, random, sid, suites, all_exts, groups, sig_algs, alpn, whole);
         }
+        if (version != PROVEN_TLS_VERSION_1_2) return tls_illegal(c);       /* a TLS 1.3 hello keeps 3.3 here */
     }
     c->version = PROVEN_TLS_VERSION_1_3;
     if (!(seen & 2) || !(seen & 4) || groups.n % 2 != 0) return tls_fail(c, AL_MISSING_EXTENSION, PROVEN_ERR_PROTOCOL);
@@ -1623,7 +1750,10 @@ static proven_err_t record_process12(proven_tls_conn_t *c) {
         return PROVEN_OK;
     }
     if (c->read_keys.active) {
-        if (!proven_tls12_open(&c->read_keys, c->in.ptr, len, &content)) return tls_fail(c, AL_BAD_RECORD_MAC, PROVEN_ERR_PROTOCOL);
+        /* One answer for every way a record can fail to open - a CBC record above all. */
+        bool opened = c->suite12->mac ? proven_tls_cbc_open(&c->read_keys, &c->cbc[c->is_server ? 0 : 1], c->in.ptr, len, &content)
+                                      : proven_tls12_open(&c->read_keys, c->in.ptr, len, &content);
+        if (!opened) return tls_fail(c, AL_BAD_RECORD_MAC, PROVEN_ERR_PROTOCOL);
     } else {
         if (type == PROVEN_TLS_CT_APPLICATION) return tls_unexpected(c);
         if (len > PROVEN_TLS_MAX_PLAINTEXT) return tls_fail(c, AL_RECORD_OVERFLOW, PROVEN_ERR_PROTOCOL);
@@ -1719,40 +1849,99 @@ static void tls12_establish(proven_tls_conn_t *c) {
     hs_free(c);
 }
 
-/* The handshake hash under the suite's hash, as Finished and the master secret use it. */
+/* TLS 1.0 or 1.1: the same handshake as 1.2 with the older hashes and no AEAD. */
+static bool tls_old(const proven_tls_conn_t *c) { return c->version != 0 && c->version < PROVEN_TLS_VERSION_1_2; }
+
+/* The handshake so far as TLS 1.0 and 1.1 hash it: MD5 then SHA-1, 36 bytes. */
+static void tls10_digest(proven_tls_conn_t *c, proven_byte_t out[36]) {
+    proven_md5_t m = c->hs->tr_md5;
+    proven_sha1_t s = c->hs->tr_sha1;
+    proven_md5_final(&m, out);
+    proven_sha1_final(&s, out + 16);
+}
+
+static void tls10_transcript_start(proven_tls_conn_t *c) {
+    proven_md5_init(&c->hs->tr_md5);
+    proven_sha1_init(&c->hs->tr_sha1);
+    c->hs->tr_old = true;
+}
+
+/* The handshake hash as Finished and the master secret use it: under the suite's hash from
+ * TLS 1.2 on, and both old hashes before. */
 static proven_mem_view_t tls12_hash(proven_tls_conn_t *c, proven_byte_t out[PROVEN_HMAC_MAX_SIZE]) {
+    if (tls_old(c)) { tls10_digest(c, out); return (proven_mem_view_t){ .ptr = out, .size = 36 }; }
     return (proven_mem_view_t){ .ptr = out, .size = proven_tls_transcript_hash(&c->hs->transcript, out) };
 }
 
+/* The PRF of whichever version was agreed. */
+static void tls1x_prf(proven_tls_conn_t *c, proven_mem_view_t secret, const char *label, proven_mem_view_t seed, proven_byte_t *out, proven_size_t out_len) {
+    if (tls_old(c)) proven_tls10_prf(secret, label, seed, out, out_len);
+    else proven_tls12_prf(c->suite12->hash, secret, label, seed, out, out_len);
+}
+
+static void tls1x_finished(proven_tls_conn_t *c, bool server, proven_byte_t out[PROVEN_TLS12_VERIFY_SIZE]) {
+    proven_byte_t th[PROVEN_HMAC_MAX_SIZE];
+    tls1x_prf(c, (proven_mem_view_t){ .ptr = c->hs->master12, .size = PROVEN_TLS12_MASTER_SIZE }, server ? "server finished" : "client finished",
+              tls12_hash(c, th), out, PROVEN_TLS12_VERIFY_SIZE);
+}
+
 static bool tls12_finished_send(proven_tls_conn_t *c) {
-    proven_byte_t th[PROVEN_HMAC_MAX_SIZE], verify[PROVEN_TLS12_VERIFY_SIZE];
-    proven_tls12_finished(c->suite12->hash, c->hs->master12, c->is_server, tls12_hash(c, th), verify);
+    proven_byte_t verify[PROVEN_TLS12_VERIFY_SIZE];
+    tls1x_finished(c, c->is_server, verify);
     wr_t w = hs_begin(c, HS_FINISHED);
     wr_bytes(&w, verify, sizeof verify);
     return hs_end(&w) && hs_send(c);
 }
 
 static proven_err_t tls12_finished_check(proven_tls_conn_t *c, rd_t body) {
-    proven_byte_t th[PROVEN_HMAC_MAX_SIZE], want[PROVEN_TLS12_VERIFY_SIZE];
+    proven_byte_t want[PROVEN_TLS12_VERIFY_SIZE];
     if (body.n != PROVEN_TLS12_VERIFY_SIZE) return tls_decode(c);
-    proven_tls12_finished(c->suite12->hash, c->hs->master12, !c->is_server, tls12_hash(c, th), want);
+    tls1x_finished(c, !c->is_server, want);
     if (!proven_mem_equal_ct((proven_mem_view_t){ .ptr = want, .size = sizeof want }, (proven_mem_view_t){ .ptr = body.p, .size = body.n }))
         return tls_fail(c, AL_DECRYPT_ERROR, PROVEN_ERR_PROTOCOL);
     return PROVEN_OK;
 }
 
+/* Both directions' keys from the master secret, for whichever kind of suite was agreed. A CBC
+ * suite keeps a little more per direction than the cipher, and that is allocated here: a
+ * connection that never agrees on one never has it. */
+static bool tls12_make_keys(proven_tls_conn_t *c, proven_tls_keys_t *client_write, proven_tls_keys_t *server_write) {
+    tls_handshake_t *h = c->hs;
+    if (c->suite12->mac == 0) {
+        proven_tls12_set_keys(client_write, server_write, c->suite12, h->master12, h->random, h->server_random);
+        return true;
+    }
+    if (!c->cbc) {
+        proven_result_mem_mut_t m = c->alloc.alloc_fn(c->alloc.ctx, 2 * sizeof *c->cbc, 16);
+        if (m.err != PROVEN_OK) return false;
+        c->cbc = (proven_tls_cbc_t *)(void *)m.value.ptr;
+    }
+    proven_tls_cbc_set_keys(client_write, server_write, c->cbc, c->suite12, c->version, h->etm, h->master12, h->random, h->server_random);
+    return client_write->active && server_write->active;
+}
+
 /* From the shared key to both directions' keys: the master secret is bound to the handshake
  * so far (through ClientKeyExchange), which is what makes it "extended". This side's writing
  * key is returned; its reading key waits in the handshake for the peer's ChangeCipherSpec. */
-static void tls12_derive(proven_tls_conn_t *c, const proven_byte_t shared[32], proven_tls_keys_t *write) {
+static bool tls12_derive(proven_tls_conn_t *c, const proven_byte_t *premaster, proven_size_t premaster_len, proven_tls_keys_t *write) {
     tls_handshake_t *h = c->hs;
     proven_byte_t th[PROVEN_HMAC_MAX_SIZE];
     proven_tls_keys_t client_write, server_write;
-    proven_tls12_master_secret(c->suite12->hash, (proven_mem_view_t){ .ptr = shared, .size = 32 }, tls12_hash(c, th), h->master12);
-    proven_tls12_set_keys(&client_write, &server_write, c->suite12, h->master12, h->random, h->server_random);
+    const proven_mem_view_t pre = { .ptr = premaster, .size = premaster_len };
+    if (h->ems) {
+        tls1x_prf(c, pre, "extended master secret", tls12_hash(c, th), h->master12, PROVEN_TLS12_MASTER_SIZE);
+    } else {
+        /* The derivation before RFC 7627, for a peer that has no other and a configuration
+         * that said it may be talked to: bound to the two randoms and to nothing else. */
+        proven_byte_t randoms[64];
+        for (int i = 0; i < 32; ++i) { randoms[i] = h->random[i]; randoms[32 + i] = h->server_random[i]; }
+        tls1x_prf(c, pre, "master secret", (proven_mem_view_t){ .ptr = randoms, .size = sizeof randoms }, h->master12, PROVEN_TLS12_MASTER_SIZE);
+    }
+    if (!tls12_make_keys(c, &client_write, &server_write)) return false;
     *write = c->is_server ? server_write : client_write;
     h->next_read = c->is_server ? client_write : server_write;
     tls_wipe(&client_write, sizeof client_write); tls_wipe(&server_write, sizeof server_write);
+    return true;
 }
 
 /* ChangeCipherSpec, in the clear, and from the next byte on this side writes under `write`. */
@@ -1765,15 +1954,17 @@ static bool tls12_send_ccs(proven_tls_conn_t *c, const proven_tls_keys_t *write)
 
 /* ---- Client ---- */
 
-static proven_err_t client12_server_hello(proven_tls_conn_t *c, rd_t random, rd_t sid, proven_u16 suite_id, rd_t exts, proven_mem_view_t whole) {
+static proven_err_t client12_server_hello(proven_tls_conn_t *c, proven_u16 version, rd_t random, rd_t sid, proven_u16 suite_id, rd_t exts, proven_mem_view_t whole) {
     tls_handshake_t *h = c->hs;
     const proven_tls_config_t *cfg = c->config;
     if (h->retried) return tls_illegal(c);                        /* a HelloRetryRequest was TLS 1.3; this is not */
     const proven_tls12_suite_t *suite = proven_tls12_suite_find(suite_id);
-    if (!suite) return tls_illegal(c);                            /* not one of the six that were offered */
+    if (!suite12_allowed(cfg, suite)) return tls_illegal(c);     /* not one of those that were offered */
+    /* Before 1.2 there is no AEAD and no SHA-256 MAC: only the suites with a SHA-1 MAC exist. */
+    if (version < PROVEN_TLS_VERSION_1_2 && suite->mac != PROVEN_TLS_LH_SHA1) return tls_illegal(c);
     /* A server that knows 1.3 and was talked down to 1.2 says so in its random; this side
      * offered 1.3, so seeing that mark means somebody removed the offer on the way. */
-    if (cfg->max_version >= PROVEN_TLS_VERSION_1_3 &&
+    if (cfg->max_version > version &&
         (bytes_eq(random.p + 24, DOWNGRADE_SENTINEL, 8) || (bytes_eq(random.p + 24, DOWNGRADE_SENTINEL, 7) && random.p[31] == 0))) return tls_illegal(c);
     bool ems = false;
     unsigned seen = 0;
@@ -1782,7 +1973,8 @@ static proven_err_t client12_server_hello(proven_tls_conn_t *c, rd_t random, rd_
         rd_t data = rd_vec(&exts, 2);
         if (!exts.ok) return tls_decode(c);
         unsigned bit = type == EXT_EXTENDED_MASTER_SECRET ? 1u : type == EXT_RENEGOTIATION_INFO ? 2u : type == EXT_EC_POINT_FORMATS ? 4u :
-                       type == EXT_ALPN ? 8u : type == EXT_SERVER_NAME ? 16u : type == EXT_SESSION_TICKET ? 32u : 0u;
+                       type == EXT_ALPN ? 8u : type == EXT_SERVER_NAME ? 16u : type == EXT_SESSION_TICKET ? 32u :
+                       type == EXT_ENCRYPT_THEN_MAC && (cfg->legacy & PROVEN_TLS_LEGACY_CBC) ? 64u : 0u;
         if (bit == 0) return tls_fail(c, AL_UNSUPPORTED_EXTENSION, PROVEN_ERR_PROTOCOL);       /* a server may only answer what was asked */
         if (seen & bit) return tls_illegal(c);
         seen |= bit;
@@ -1810,14 +2002,27 @@ static proven_err_t client12_server_hello(proven_tls_conn_t *c, rd_t random, rd_
             h->ticket_expected = true;
         } else if (type == EXT_SERVER_NAME) {
             if (data.n != 0) return tls_decode(c);
+        } else if (type == EXT_ENCRYPT_THEN_MAC) {
+            /* Only for a suite that has a MAC to move (RFC 7366 section 3). */
+            if (data.n != 0) return tls_decode(c);
+            if (suite->mac == 0) return tls_illegal(c);
+            h->etm = true;
         }
     }
     /* Without the extended master secret a session's keys are not bound to the handshake that
-     * made them (the triple-handshake attack). Such a server is not talked to. */
-    if (!ems) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
+     * made them (the triple-handshake attack). Such a server is not talked to - unless the
+     * configuration says it may be, and then nothing that attack needs is done on this
+     * connection: no session is kept from it, and no certificate of this side's is shown. */
+    if (!ems && !(cfg->legacy & PROVEN_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET)) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
+    h->ems = ems;
     c->v12 = true;
     c->suite12 = suite;
-    c->version = PROVEN_TLS_VERSION_1_2;
+    c->version = version;
+    if (version < PROVEN_TLS_VERSION_1_2) {
+        tls10_transcript_start(c);
+        proven_md5_update(&h->tr_md5, (proven_mem_view_t){ .ptr = h->first_hello.ptr, .size = h->first_hello.len });
+        proven_sha1_update(&h->tr_sha1, (proven_mem_view_t){ .ptr = h->first_hello.ptr, .size = h->first_hello.len });
+    }
     for (int i = 0; i < 32; ++i) h->server_random[i] = random.p[i];
     /* The handshake is hashed under both hashes from here: Finished uses the suite's, and a
      * CertificateVerify uses the signature's, which may be the other. */
@@ -1832,6 +2037,8 @@ static proven_err_t client12_server_hello(proven_tls_conn_t *c, rd_t random, rd_
     if (h->ticket_offered12 && sid.n > 0 && sid.n == h->session_id_len && bytes_eq(sid.p, h->session_id, sid.n)) {
         proven_tls_session_data_t *sess = (proven_tls_session_data_t *)(void *)c->session->opaque;
         if (sess->suite != suite_id) return tls_illegal(c);      /* a session is resumed under the suite it was made with */
+        /* Sessions are made in TLS 1.2 with the extended master secret, and resumed the same way. */
+        if (version != PROVEN_TLS_VERSION_1_2 || !ems) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
         for (int i = 0; i < PROVEN_TLS12_MASTER_SIZE; ++i) h->master12[i] = sess->psk[i];
         c->resumed = true;
         h->resuming12 = true;
@@ -1844,7 +2051,7 @@ static proven_err_t client12_server_hello(proven_tls_conn_t *c, rd_t random, rd_
             if (!pinned) { c->peer_fault = PROVEN_CERT_FAULT_PIN_MISMATCH; return tls_fail(c, AL_BAD_CERTIFICATE, PROVEN_ERR_UNTRUSTED); }
         }
         proven_tls_keys_t client_write, server_write;
-        proven_tls12_set_keys(&client_write, &server_write, suite, h->master12, h->random, h->server_random);
+        if (!tls12_make_keys(c, &client_write, &server_write)) return tls_nomem(c);
         h->next_read = server_write;
         h->next_write = client_write;
         tls_wipe(&client_write, sizeof client_write); tls_wipe(&server_write, sizeof server_write);
@@ -1867,6 +2074,7 @@ static bool tls12_handshake_digest(proven_tls_conn_t *c, proven_hmac_hash_t hash
 /* Keep the session for another connection: the master secret, under the ticket the server gave. */
 static void client12_store_session(proven_tls_conn_t *c) {
     tls_handshake_t *h = c->hs;
+    if (tls_old(c) || !h->ems) return;                            /* see client12_server_hello */
     if (!c->session || c->config->no_resumption || h->ticket12.len == 0 || h->ticket12.len > PROVEN_TLS_SESSION_TICKET_MAX || h->ticket12_lifetime == 0) return;
     proven_tls_session_data_t *s = (proven_tls_session_data_t *)(void *)c->session->opaque;
     tls_wipe(s, sizeof *s);
@@ -1885,14 +2093,70 @@ static void client12_store_session(proven_tls_conn_t *c) {
 }
 
 /* ServerKeyExchange: the server's ephemeral public key, signed together with both randoms. */
+/* The signature on a ServerKeyExchange, in the form of the agreed version. */
+static int ske_check(bool old, proven_u16 scheme, const proven_cert_t *leaf, proven_mem_view_t msg, proven_mem_view_t sig) {
+    if (old) {
+        proven_byte_t digest[36];
+        sig_digest_old(msg, digest);
+        return sig_check_old(leaf, digest, sig);
+    }
+    return sig_check(scheme, leaf, msg, sig, true);
+}
+
+/* A DHE ServerKeyExchange. The group is taken only if it is one of the six known here; this
+ * side's value and the shared secret are computed at once and kept for the flight. */
+static proven_err_t client12_key_exchange_dhe(proven_tls_conn_t *c, rd_t body) {
+    tls_handshake_t *h = c->hs;
+    const proven_byte_t *params = body.p;
+    rd_t p = rd_vec(&body, 2);
+    rd_t g = rd_vec(&body, 2);
+    rd_t theirs = rd_vec(&body, 2);
+    const proven_size_t params_len = (proven_size_t)(body.p - params);
+    const bool old = tls_old(c);
+    proven_u16 scheme = old ? 0 : (proven_u16)rd_uint(&body, 2);
+    rd_t sig = rd_vec(&body, 2);
+    if (!body.ok || body.n != 0 || sig.n == 0 || p.n == 0 || g.n == 0 || theirs.n == 0) return tls_decode(c);
+    const proven_mem_view_t prime = { .ptr = p.p, .size = p.n };
+    /* Too small, not a prime, or simply not known: all the same answer. */
+    if (!proven_tls_dh_known(prime, (proven_mem_view_t){ .ptr = g.p, .size = g.n })) return tls_fail(c, AL_INSUFFICIENT_SECURITY, PROVEN_ERR_PROTOCOL);
+    proven_cert_t leaf;
+    if (h->peer_leaf.len == 0 || proven_cert_parse((proven_mem_view_t){ .ptr = h->peer_leaf.ptr, .size = h->peer_leaf.len }, &leaf) != PROVEN_OK) return tls_unexpected(c);
+    if (params_len > 3 * (2 + PROVEN_TLS_DH_MAX + 1)) return tls_decode(c);
+    proven_byte_t signed_part[64 + 3 * (2 + PROVEN_TLS_DH_MAX + 1)];
+    proven_size_t n = 0;
+    for (int i = 0; i < 32; ++i) signed_part[n++] = h->random[i];
+    for (int i = 0; i < 32; ++i) signed_part[n++] = h->server_random[i];
+    for (proven_size_t i = 0; i < params_len; ++i) signed_part[n++] = params[i];
+    int ok = ske_check(old, scheme, &leaf, (proven_mem_view_t){ .ptr = signed_part, .size = n }, (proven_mem_view_t){ .ptr = sig.p, .size = sig.n });
+    if (ok < 0) return tls_illegal(c);
+    if (ok == 0) return tls_fail(c, AL_DECRYPT_ERROR, PROVEN_ERR_PROTOCOL);
+    proven_byte_t mine[PROVEN_TLS_DH_MAX], shared[PROVEN_TLS_DH_MAX];
+    proven_size_t plen = p.n, shared_len = 0;
+    for (proven_size_t i = 0; i < p.n && p.p[i] == 0; ++i) plen--;
+    const proven_size_t xl = proven_tls_dh_exponent_len(plen);
+    proven_tls_config_random(c->config, h->dh_priv, xl);
+    h->dh_priv[0] |= 0x80;
+    if (!proven_tls_dh_public(prime, h->dh_priv, xl, mine)) return tls_fail(c, AL_INTERNAL_ERROR, PROVEN_ERR_PROTOCOL);
+    if (!proven_tls_dh_shared(prime, h->dh_priv, xl, (proven_mem_view_t){ .ptr = theirs.p, .size = theirs.n }, shared, &shared_len)) return tls_illegal(c);
+    h->dh.len = 0;
+    bool kept = buf_append(c, &h->dh, mine, plen) && buf_append(c, &h->dh, shared, shared_len);
+    tls_wipe(shared, sizeof shared);
+    tls_wipe(h->dh_priv, sizeof h->dh_priv);
+    if (!kept) return tls_nomem(c);
+    h->dh_pub_len = plen;
+    return PROVEN_OK;
+}
+
 static proven_err_t client12_key_exchange(proven_tls_conn_t *c, rd_t body) {
     tls_handshake_t *h = c->hs;
+    if (c->suite12->kx == PROVEN_TLS_KX_DHE) return client12_key_exchange_dhe(c, body);
     const proven_byte_t *params = body.p;
     proven_u32 curve_type = rd_uint(&body, 1);
     proven_u16 group = (proven_u16)rd_uint(&body, 2);
     rd_t point = rd_vec(&body, 1);
     proven_size_t params_len = (proven_size_t)(body.p - params);
-    proven_u16 scheme = (proven_u16)rd_uint(&body, 2);
+    const bool old = tls_old(c);
+    proven_u16 scheme = old ? 0 : (proven_u16)rd_uint(&body, 2);
     rd_t sig = rd_vec(&body, 2);
     if (!body.ok || body.n != 0 || sig.n == 0) return tls_decode(c);
     if (curve_type != 3 || (group != GROUP_X25519 && group != GROUP_P256)) return tls_illegal(c);     /* a named curve this side offered */
@@ -1904,7 +2168,7 @@ static proven_err_t client12_key_exchange(proven_tls_conn_t *c, rd_t body) {
     for (int i = 0; i < 32; ++i) signed_part[n++] = h->random[i];
     for (int i = 0; i < 32; ++i) signed_part[n++] = h->server_random[i];
     for (proven_size_t i = 0; i < params_len; ++i) signed_part[n++] = params[i];
-    int ok = sig_check(scheme, &leaf, (proven_mem_view_t){ .ptr = signed_part, .size = n }, (proven_mem_view_t){ .ptr = sig.p, .size = sig.n }, true);
+    int ok = ske_check(old, scheme, &leaf, (proven_mem_view_t){ .ptr = signed_part, .size = n }, (proven_mem_view_t){ .ptr = sig.p, .size = sig.n });
     if (ok < 0) return tls_illegal(c);
     if (ok == 0) return tls_fail(c, AL_DECRYPT_ERROR, PROVEN_ERR_PROTOCOL);
     h->ske_group = group;
@@ -1917,26 +2181,66 @@ static proven_err_t client12_key_exchange(proven_tls_conn_t *c, rd_t body) {
 /* ServerHelloDone has arrived: ClientKeyExchange, ChangeCipherSpec, Finished. */
 static proven_err_t client12_flight(proven_tls_conn_t *c) {
     tls_handshake_t *h = c->hs;
-    proven_byte_t pub[65], shared[32];
-    proven_size_t pub_len;
+    proven_byte_t pub[65], shared[PROVEN_TLS_DH_MAX];
+    proven_size_t pub_len = 0, shared_len = 32;
     proven_tls_keys_t write;
-    if (h->ske_group == GROUP_P256) { make_p256_key(c, pub); pub_len = 65; }
-    else { proven_crypto_x25519_public(pub, h->x25519_priv); pub_len = 32; }
-    if (!key_agree(c, h->ske_group, (proven_mem_view_t){ .ptr = h->cookie, .size = h->cookie_len }, shared)) return tls_illegal(c);
+    const bool by_rsa = c->suite12->kx == PROVEN_TLS_KX_RSA, by_dhe = c->suite12->kx == PROVEN_TLS_KX_DHE;
+    if (by_dhe) {
+        /* Both were made when the server's value arrived. */
+        if (h->dh_pub_len == 0 || h->dh.len <= h->dh_pub_len) return tls_unexpected(c);
+        shared_len = h->dh.len - h->dh_pub_len;
+        for (proven_size_t i = 0; i < shared_len; ++i) shared[i] = h->dh.ptr[h->dh_pub_len + i];
+    } else if (by_rsa) {
+        /* The premaster is this side's own: the version first offered, then 46 random bytes.
+         * It reaches the server encrypted under the key in its certificate - and so can be
+         * read by whoever holds that key, now or ever. */
+        shared_len = 48;
+        proven_tls_config_random(c->config, shared, 48);
+        shared[0] = (proven_byte_t)(h->hello_version >> 8); shared[1] = (proven_byte_t)h->hello_version;       /* as the hello said, whatever was agreed since */
+    } else {
+        if (h->ske_group == GROUP_P256) { make_p256_key(c, pub); pub_len = 65; }
+        else { proven_crypto_x25519_public(pub, h->x25519_priv); pub_len = 32; }
+        if (!key_agree(c, h->ske_group, (proven_mem_view_t){ .ptr = h->cookie, .size = h->cookie_len }, shared)) return tls_illegal(c);
+    }
     /* A certificate was asked for: this side's, or an empty list when it has none the server
      * can use. peer_sig_schemes holds the scheme to sign with, or 0. */
     const bool prove = h->cert_requested && h->peer_sig_schemes != 0;
     if (h->cert_requested && (!cert_build(c, prove) || !hs_send(c))) return tls_nomem(c);
     wr_t w = hs_begin(c, HS12_CLIENT_KEY_EXCHANGE);
-    wr_uint(&w, (proven_u32)pub_len, 1); wr_bytes(&w, pub, pub_len);
+    if (by_rsa) {
+        proven_cert_t leaf;
+        proven_byte_t pad[PROVEN_CRYPTO_RSA_MAX_BITS / 8], sealed[PROVEN_CRYPTO_RSA_MAX_BITS / 8];
+        proven_size_t sealed_len = 0;
+        if (h->peer_leaf.len == 0 || proven_cert_parse((proven_mem_view_t){ .ptr = h->peer_leaf.ptr, .size = h->peer_leaf.len }, &leaf) != PROVEN_OK ||
+            leaf.key_kind != PROVEN_CERT_KEY_RSA) return tls_unexpected(c);
+        proven_tls_config_random(c->config, pad, sizeof pad);
+        proven_byte_t sent[48];
+        for (int i = 0; i < 48; ++i) sent[i] = shared[i];
+        if (g_test12 & 1024u) sent[1] ^= 0x04;                        /* a test: another version inside */
+        bool ok = proven_crypto_rsa_encrypt_pkcs1(leaf.rsa_n, leaf.rsa_e, (proven_mem_view_t){ .ptr = sent, .size = 48 }, pad, sealed, &sealed_len);
+        if (ok && (g_test12 & 2048u)) { for (proven_size_t i = 1; i < sealed_len; ++i) sealed[i] = pad[i]; sealed[0] = 0; }    /* a test: no encryption of anything */
+        tls_wipe(sent, sizeof sent);
+        tls_wipe(pad, sizeof pad);
+        if (!ok) { tls_wipe(shared, sizeof shared); return tls_illegal(c); }
+        wr_uint(&w, (proven_u32)sealed_len, 2); wr_bytes(&w, sealed, sealed_len);
+    } else if (by_dhe) {
+        if (g_test12 & 512u) for (proven_size_t i = 0; i < h->dh_pub_len; ++i) h->dh.ptr[i] = i + 1 == h->dh_pub_len;    /* a test: the value 1 */
+        wr_uint(&w, (proven_u32)h->dh_pub_len, 2); wr_bytes(&w, h->dh.ptr, h->dh_pub_len);
+    } else {
+        wr_uint(&w, (proven_u32)pub_len, 1); wr_bytes(&w, pub, pub_len);
+    }
     if (!hs_end(&w) || !hs_send(c)) return tls_nomem(c);
-    tls12_derive(c, shared, &write);
+    const bool derived = tls12_derive(c, shared, shared_len, &write);
     tls_wipe(shared, sizeof shared);
+    if (!derived) return tls_nomem(c);
     if (prove) {
         /* CertificateVerify: a signature over every handshake message so far. */
         proven_byte_t digest[PROVEN_HMAC_MAX_SIZE];
         w = hs_begin(c, HS_CERTIFICATE_VERIFY);
-        if (!tls12_handshake_digest(c, PROVEN_HMAC_SHA256, digest) || !tls_sign_digest(c, h->peer_sig_schemes, digest, &w) || !hs_end(&w) || !hs_send(c)) return tls_nomem(c);
+        if (tls_old(c)) {
+            tls10_digest(c, digest);
+            if (!tls_sign_old(c, digest, &w) || !hs_end(&w) || !hs_send(c)) return tls_nomem(c);
+        } else if (!tls12_handshake_digest(c, PROVEN_HMAC_SHA256, digest) || !tls_sign_digest(c, h->peer_sig_schemes, digest, &w) || !hs_end(&w) || !hs_send(c)) return tls_nomem(c);
     }
     bool sent = tls12_send_ccs(c, &write) && tls12_finished_send(c);
     tls_wipe(&write, sizeof write);
@@ -1959,7 +2263,8 @@ static proven_err_t client12_message(proven_tls_conn_t *c, proven_byte_t type, r
             if (proven_cert_parse((proven_mem_view_t){ .ptr = c->hs->peer_leaf.ptr, .size = c->hs->peer_leaf.len }, &leaf) != PROVEN_OK) return tls_decode(c);
             if (c->suite12->rsa_auth != (leaf.key_kind == PROVEN_CERT_KEY_RSA)) return tls_illegal(c);
             tr_add(c, whole);
-            c->state = ST12_C_WAIT_SKE;
+            /* A key exchange by RSA has no ServerKeyExchange: the certificate's key is the exchange. */
+            c->state = c->suite12->kx == PROVEN_TLS_KX_RSA ? ST12_C_WAIT_DONE : ST12_C_WAIT_SKE;
             return PROVEN_OK; }
         case ST12_C_WAIT_SKE:
             if (type != HS12_SERVER_KEY_EXCHANGE) return tls_unexpected(c);
@@ -1972,10 +2277,11 @@ static proven_err_t client12_message(proven_tls_conn_t *c, proven_byte_t type, r
             if (type == HS_CERTIFICATE_REQUEST && !c->hs->cert_requested) {
                 /* certificate_types, the signature schemes the server accepts, and the names
                  * of authorities (not used: this side has one certificate or none). */
+                const bool old = tls_old(c);
                 rd_t types = rd_vec(&body, 1);
-                rd_t schemes = rd_vec(&body, 2);
+                rd_t schemes = old ? (rd_t){ body.p, 0, true } : rd_vec(&body, 2);       /* TLS 1.0 and 1.1 name none */
                 rd_t names = rd_vec(&body, 2);
-                if (!body.ok || body.n != 0 || types.n == 0 || schemes.n == 0 || schemes.n % 2 != 0) return tls_decode(c);
+                if (!body.ok || body.n != 0 || types.n == 0 || (!old && (schemes.n == 0 || schemes.n % 2 != 0))) return tls_decode(c);
                 (void)names;
                 const proven_tls_config_t *cfg = c->config;
                 proven_u16 scheme = 0;
@@ -1983,6 +2289,10 @@ static proven_err_t client12_message(proven_tls_conn_t *c, proven_byte_t type, r
                  * not kept: in TLS 1.2 such a certificate is not presented. */
                 if (cfg->key_kind == PROVEN_TLS_KEY_P256 && list_has_u16(schemes, SIG_ECDSA_P256_SHA256)) scheme = SIG_ECDSA_P256_SHA256;
                 else if (cfg->key_kind == PROVEN_TLS_KEY_RSA) scheme = list_has_u16(schemes, SIG_RSA_PSS_RSAE_SHA256) ? SIG_RSA_PSS_RSAE_SHA256 : list_has_u16(schemes, SIG_RSA_PKCS1_SHA256) ? SIG_RSA_PKCS1_SHA256 : 0;
+                /* There the key's kind is the scheme: any non-zero value means "sign". */
+                if (old) scheme = cfg->key_kind == PROVEN_TLS_KEY_P256 || cfg->key_kind == PROVEN_TLS_KEY_RSA ? 1 : 0;
+                /* And without the extended master secret this side shows no certificate at all. */
+                if (!c->hs->ems) scheme = 0;
                 c->hs->cert_requested = true;
                 c->hs->peer_sig_schemes = scheme;
                 tr_add(c, whole);
@@ -2049,13 +2359,14 @@ static int sig_check_handshake(proven_tls_conn_t *c, proven_u16 scheme, const pr
     }
 }
 
-static proven_err_t server12_client_hello(proven_tls_conn_t *c, rd_t random, rd_t sid, rd_t suites, rd_t exts, rd_t groups, rd_t sig_algs, rd_t alpn, proven_mem_view_t whole) {
+static proven_err_t server12_client_hello(proven_tls_conn_t *c, proven_u16 version, rd_t random, rd_t sid, rd_t suites, rd_t exts, rd_t groups, rd_t sig_algs, rd_t alpn, proven_mem_view_t whole) {
     tls_handshake_t *h = c->hs;
     const proven_tls_config_t *cfg = c->config;
-    /* A client that fell back to 1.2 after failing with something newer says so; if this side
-     * could have done better, the fallback was forced on it (RFC 7507). */
-    if (list_has_u16(suites, 0x5600) && cfg->max_version >= PROVEN_TLS_VERSION_1_3) return tls_fail(c, 86, PROVEN_ERR_PROTOCOL);
-    bool ems = false, points = false, wants_ticket = false;
+    const bool old = version < PROVEN_TLS_VERSION_1_2;
+    /* A client that fell back to an older version after failing with something newer says so;
+     * if this side could have done better, the fallback was forced on it (RFC 7507). */
+    if (list_has_u16(suites, 0x5600) && cfg->max_version > version) return tls_fail(c, 86, PROVEN_ERR_PROTOCOL);
+    bool ems = false, points = false, wants_ticket = false, etm_offered = false;
     rd_t offered_ticket = { 0 };
     {
         rd_t scan = exts;
@@ -2071,32 +2382,54 @@ static proven_err_t server12_client_hello(proven_tls_conn_t *c, rd_t random, rd_
                 if (data.n != 1 || data.p[0] != 0) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
             } else if (type == EXT_EC_POINT_FORMATS) {
                 points = true;
+            } else if (type == EXT_ENCRYPT_THEN_MAC) {
+                if (data.n != 0) return tls_decode(c);
+                etm_offered = true;
             } else if (type == EXT_SESSION_TICKET) {
                 wants_ticket = true;
                 offered_ticket = data;
             }
         }
     }
-    if (!ems) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);       /* see client12_server_hello */
+    if (!ems && !(cfg->legacy & PROVEN_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET)) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);       /* see client12_server_hello */
+    /* On such a connection a client certificate proves less than it seems to: one that this
+     * configuration requires cannot be had, so the connection cannot either. */
+    if (!ems && cfg->client_auth == PROVEN_TLS_CLIENT_AUTH_REQUIRE) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
+    h->ems = ems;
+    /* TLS 1.0 and 1.1 have no way to sign with an Ed25519 key (RFC 8422). */
+    if (old && cfg->key_kind == PROVEN_TLS_KEY_ED25519) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
 
     /* The suite: for this side's kind of key, in this side's order. */
     const bool rsa = cfg->key_kind == PROVEN_TLS_KEY_RSA;
     proven_u16 order13[3];
     suite_order(order13);
     const proven_tls12_suite_t *suite = NULL;
-    for (int i = 0; i < 3 && !suite; ++i) if (list_has_u16(suites, suite12_for(order13[i], rsa))) suite = proven_tls12_suite_find(suite12_for(order13[i], rsa));
+    for (int i = 0; i < 3 && !suite && !old; ++i) if (list_has_u16(suites, suite12_for(order13[i], rsa))) suite = proven_tls12_suite_find(suite12_for(order13[i], rsa));
+    /* Nothing of the six in common: then the first legacy suite, in the table's order, that
+     * this configuration allows, the client offers and this key can serve. */
+    const proven_tls12_suite_t *s12;
+    for (proven_size_t i = 0; !suite && (s12 = proven_tls12_suite_at(i)) != NULL; ++i) {
+        if (s12->legacy && suite12_allowed(cfg, s12) && s12->rsa_auth == rsa && (!old || s12->mac == PROVEN_TLS_LH_SHA1) && list_has_u16(suites, s12->id)) suite = s12;
+    }
     if (!suite) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
 
     /* The group, and the scheme the key exchange is signed with. Both lists are required:
      * without signature_algorithms RFC 5246 would mean SHA-1, which is not signed with here. */
-    if (!groups.ok || groups.n % 2 != 0 || !sig_algs.ok || sig_algs.n % 2 != 0) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
-    proven_u16 group = list_has_u16(groups, GROUP_X25519) && !g_test_server_refuses_x25519 ? GROUP_X25519 : list_has_u16(groups, GROUP_P256) ? GROUP_P256 : 0;
-    if (group == 0) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
-    proven_u16 scheme = our_scheme(cfg);
-    if (!list_has_u16(sig_algs, scheme)) {
-        /* An RSA key may fall back to PKCS #1 v1.5 for a 1.2 client that predates PSS. */
-        scheme = rsa && list_has_u16(sig_algs, SIG_RSA_PKCS1_SHA256) ? SIG_RSA_PKCS1_SHA256 : 0;
-        if (scheme == 0) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
+    proven_u16 group = 0, scheme = 0;
+    if (suite->kx != PROVEN_TLS_KX_RSA) {
+        /* From TLS 1.2 the client must say which signatures it takes; before, the key's kind says it. */
+        if (!old && (!sig_algs.ok || sig_algs.n % 2 != 0)) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
+        if (suite->kx == PROVEN_TLS_KX_ECDHE) {
+            if (!groups.ok || groups.n % 2 != 0) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
+            group = list_has_u16(groups, GROUP_X25519) && !g_test_server_refuses_x25519 ? GROUP_X25519 : list_has_u16(groups, GROUP_P256) ? GROUP_P256 : 0;
+            if (group == 0) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
+        }
+        scheme = our_scheme(cfg);
+        if (!old && !list_has_u16(sig_algs, scheme)) {
+            /* An RSA key may fall back to PKCS #1 v1.5 for a 1.2 client that predates PSS. */
+            scheme = rsa && list_has_u16(sig_algs, SIG_RSA_PKCS1_SHA256) ? SIG_RSA_PKCS1_SHA256 : 0;
+            if (scheme == 0) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
+        }
     }
 
     c->alpn_index = -1;
@@ -2119,18 +2452,21 @@ static proven_err_t server12_client_hello(proven_tls_conn_t *c, rd_t random, rd_
      * session in which one was shown. */
     proven_tls_ticket_state_t ticket = { 0 };
     bool resume = false;
-    if (!cfg->no_resumption && offered_ticket.n > 0 && sid.n > 0 &&
+    if (!cfg->no_resumption && !old && ems && offered_ticket.n > 0 && sid.n > 0 &&
         proven_tls_ticket_open(cfg, (proven_mem_view_t){ .ptr = offered_ticket.p, .size = offered_ticket.n }, &ticket)) {
         const proven_tls12_suite_t *made = proven_tls12_suite_find(ticket.suite);
-        resume = made && ticket.psk_len == PROVEN_TLS12_MASTER_SIZE && list_has_u16(suites, ticket.suite) &&
+        resume = suite12_allowed(cfg, made) && ticket.psk_len == PROVEN_TLS12_MASTER_SIZE && list_has_u16(suites, ticket.suite) &&
                  !(cfg->client_auth == PROVEN_TLS_CLIENT_AUTH_REQUIRE && !ticket.has_peer_key);
         if (resume) suite = made;
     }
-    h->issue_ticket12 = wants_ticket && !cfg->no_resumption && !resume;
+    /* Tickets are for TLS 1.2 sessions made with the extended master secret, and no others. */
+    h->issue_ticket12 = wants_ticket && !cfg->no_resumption && !resume && !old && ems;
 
     c->v12 = true;
     c->suite12 = suite;
-    c->version = PROVEN_TLS_VERSION_1_2;
+    c->version = version;
+    if (old) tls10_transcript_start(c);
+    h->etm = etm_offered && suite->mac != 0;
     c->peer_record_limit = PROVEN_TLS_MAX_PLAINTEXT;               /* record_size_limit is not negotiated in 1.2 */
     proven_tls_transcript_init(&h->transcript, suite->hash);
     proven_tls_transcript_init(&h->transcript_alt, suite->hash == PROVEN_HMAC_SHA256 ? PROVEN_HMAC_SHA384 : PROVEN_HMAC_SHA256);
@@ -2140,10 +2476,13 @@ static proven_err_t server12_client_hello(proven_tls_conn_t *c, rd_t random, rd_
     proven_tls_config_random(cfg, h->server_random, 32);
     /* This side could have spoken 1.3 and is agreeing to 1.2: say so where a client that
      * offered 1.3 will look, so that it can tell a real choice from interference. */
-    if (cfg->max_version >= PROVEN_TLS_VERSION_1_3) for (int i = 0; i < 8; ++i) h->server_random[24 + i] = DOWNGRADE_SENTINEL[i];
+    if (cfg->max_version > version) {
+        for (int i = 0; i < 8; ++i) h->server_random[24 + i] = DOWNGRADE_SENTINEL[i];
+        if (old) h->server_random[31] = 0;                         /* the mark for "1.1 or older" ends in 00 */
+    }
 
     wr_t w = hs_begin(c, HS_SERVER_HELLO);
-    wr_uint(&w, 0x0303, 2); wr_bytes(&w, h->server_random, 32);
+    wr_uint(&w, version, 2); wr_bytes(&w, h->server_random, 32);
     /* No session id of this side's own: sessions are resumed by ticket or not at all. The
      * client's is repeated when its ticket is accepted. */
     if (resume) { wr_uint(&w, (proven_u32)sid.n, 1); wr_bytes(&w, sid.p, sid.n); }
@@ -2151,7 +2490,7 @@ static proven_err_t server12_client_hello(proven_tls_conn_t *c, rd_t random, rd_
     wr_uint(&w, suite->id, 2); wr_uint(&w, 0, 1);
     proven_size_t e = wr_open(&w, 2);
     wr_uint(&w, EXT_RENEGOTIATION_INFO, 2); wr_uint(&w, 1, 2); wr_uint(&w, 0, 1);
-    if (!(g_test12 & 4u)) { wr_uint(&w, EXT_EXTENDED_MASTER_SECRET, 2); wr_uint(&w, 0, 2); }
+    if (ems && !(g_test12 & 4u)) { wr_uint(&w, EXT_EXTENDED_MASTER_SECRET, 2); wr_uint(&w, 0, 2); }
     if (points) { wr_uint(&w, EXT_EC_POINT_FORMATS, 2); wr_uint(&w, 2, 2); wr_uint(&w, 1, 1); wr_uint(&w, 0, 1); }
     if (c->alpn_index >= 0) {
         proven_u8str_view_t name = proven_tls_config_alpn(cfg, (proven_size_t)c->alpn_index);
@@ -2160,6 +2499,7 @@ static proven_err_t server12_client_hello(proven_tls_conn_t *c, rd_t random, rd_
     }
     if (h->client_sent_sni) { wr_uint(&w, EXT_SERVER_NAME, 2); wr_uint(&w, 0, 2); }
     if (h->issue_ticket12) { wr_uint(&w, EXT_SESSION_TICKET, 2); wr_uint(&w, 0, 2); }
+    if (h->etm) { wr_uint(&w, EXT_ENCRYPT_THEN_MAC, 2); wr_uint(&w, 0, 2); }
     wr_close(&w, e, 2);
     if (!hs_end(&w) || !hs_send(c)) return tls_nomem(c);
 
@@ -2168,7 +2508,7 @@ static proven_err_t server12_client_hello(proven_tls_conn_t *c, rd_t random, rd_
          * randoms, and this side's Finished at once. The client's follows. */
         proven_tls_keys_t client_write, server_write;
         for (int i = 0; i < PROVEN_TLS12_MASTER_SIZE; ++i) h->master12[i] = ticket.psk[i];
-        proven_tls12_set_keys(&client_write, &server_write, suite, h->master12, h->random, h->server_random);
+        if (!tls12_make_keys(c, &client_write, &server_write)) return tls_nomem(c);
         h->next_read = client_write;
         c->resumed = true;
         h->resuming12 = true;
@@ -2185,7 +2525,8 @@ static proven_err_t server12_client_hello(proven_tls_conn_t *c, rd_t random, rd_
     if (!cert_build(c, true) || !hs_send(c)) return tls_nomem(c);
 
     /* ServerKeyExchange: a fresh key on the agreed curve, signed with both randoms so that it
-     * cannot be replayed into another handshake. */
+     * cannot be replayed into another handshake. A key exchange by RSA has none. */
+    if (suite->kx == PROVEN_TLS_KX_ECDHE) {
     proven_byte_t pub[65], signed_part[64 + 4 + 65];
     proven_size_t pub_len, n = 0;
     if (group == GROUP_X25519) { proven_tls_config_random(cfg, h->x25519_priv, 32); proven_crypto_x25519_public(pub, h->x25519_priv); pub_len = 32; }
@@ -2198,9 +2539,34 @@ static proven_err_t server12_client_hello(proven_tls_conn_t *c, rd_t random, rd_
     for (proven_size_t i = 0; i < pub_len; ++i) signed_part[n++] = pub[i];
     w = hs_begin(c, HS12_SERVER_KEY_EXCHANGE);
     wr_bytes(&w, signed_part + params_at, n - params_at);
-    if (!tls_sign(c, scheme, (proven_mem_view_t){ .ptr = signed_part, .size = n }, &w) || !hs_end(&w) || !hs_send(c)) return tls_nomem(c);
+    if (!ske_sign(c, scheme, (proven_mem_view_t){ .ptr = signed_part, .size = n }, &w) || !hs_end(&w) || !hs_send(c)) return tls_nomem(c);
+    }
+    if (suite->kx == PROVEN_TLS_KX_DHE) {
+        /* The same message over a finite field: the prime, the generator and this side's
+         * value, each with its length, signed with both randoms. The prime is ffdhe2048. */
+        const proven_mem_view_t p = proven_tls_dh_server_group();
+        const proven_size_t xl = proven_tls_dh_exponent_len(p.size);
+        proven_byte_t signed_part[64 + 2 + 256 + 3 + 2 + 256];
+        proven_size_t n = 0;
+        proven_tls_config_random(cfg, h->dh_priv, xl);
+        h->dh_priv[0] |= 0x80;                                       /* never a short exponent by chance */
+        for (int i = 0; i < 32; ++i) signed_part[n++] = h->random[i];
+        for (int i = 0; i < 32; ++i) signed_part[n++] = h->server_random[i];
+        const proven_size_t params_at = n;
+        signed_part[n++] = (proven_byte_t)(p.size >> 8); signed_part[n++] = (proven_byte_t)p.size;
+        for (proven_size_t i = 0; i < p.size; ++i) signed_part[n++] = p.ptr[i];
+        if (g_test12 & 128u) signed_part[n - 1] ^= 2;                 /* a test: a prime nobody knows */
+        signed_part[n++] = 0; signed_part[n++] = 1; signed_part[n++] = 2;
+        signed_part[n++] = (proven_byte_t)(p.size >> 8); signed_part[n++] = (proven_byte_t)p.size;
+        if (!proven_tls_dh_public(p, h->dh_priv, xl, signed_part + n)) return tls_fail(c, AL_INTERNAL_ERROR, PROVEN_ERR_PROTOCOL);
+        if (g_test12 & 256u) for (proven_size_t i = 0; i < p.size; ++i) signed_part[n + i] = i + 1 == p.size;     /* a test: the value 1 */
+        n += p.size;
+        w = hs_begin(c, HS12_SERVER_KEY_EXCHANGE);
+        wr_bytes(&w, signed_part + params_at, n - params_at);
+        if (!ske_sign(c, scheme, (proven_mem_view_t){ .ptr = signed_part, .size = n }, &w) || !hs_end(&w) || !hs_send(c)) return tls_nomem(c);
+    }
 
-    const bool ask_cert = cfg->client_auth != PROVEN_TLS_CLIENT_AUTH_NONE;
+    const bool ask_cert = cfg->client_auth != PROVEN_TLS_CLIENT_AUTH_NONE && (h->ems || (g_test12 & 4096u));       /* (the knob: ask all the same) */
     if (ask_cert) {
         /* The kinds of certificate, and the schemes a CertificateVerify may use: those whose
          * hash is one of the two the handshake is kept under. No authority names. */
@@ -2208,8 +2574,10 @@ static proven_err_t server12_client_hello(proven_tls_conn_t *c, rd_t random, rd_
                                               SIG_RSA_PKCS1_SHA256, SIG_RSA_PKCS1_SHA384 };
         w = hs_begin(c, HS_CERTIFICATE_REQUEST);
         wr_uint(&w, 2, 1); wr_uint(&w, 64, 1); wr_uint(&w, 1, 1);         /* ecdsa_sign, rsa_sign */
-        wr_uint(&w, (proven_u32)sizeof schemes, 2);
-        for (proven_size_t i = 0; i < sizeof schemes / sizeof schemes[0]; ++i) wr_uint(&w, schemes[i], 2);
+        if (!old) {                                                       /* TLS 1.0 and 1.1 name no schemes */
+            wr_uint(&w, (proven_u32)sizeof schemes, 2);
+            for (proven_size_t i = 0; i < sizeof schemes / sizeof schemes[0]; ++i) wr_uint(&w, schemes[i], 2);
+        }
         wr_uint(&w, 0, 2);
         if (!hs_end(&w) || !hs_send(c)) return tls_nomem(c);
     }
@@ -2259,12 +2627,20 @@ static proven_err_t server12_message(proven_tls_conn_t *c, proven_byte_t type, r
             return PROVEN_OK; }
         case ST12_S_WAIT_CV: {
             if (type != HS_CERTIFICATE_VERIFY) return tls_unexpected(c);
-            proven_u16 scheme = (proven_u16)rd_uint(&body, 2);
+            const bool old = tls_old(c);
+            proven_u16 scheme = old ? 0 : (proven_u16)rd_uint(&body, 2);
             rd_t sig = rd_vec(&body, 2);
             proven_cert_t leaf;
             if (!body.ok || body.n != 0 || sig.n == 0) return tls_decode(c);
             if (h->peer_leaf.len == 0 || proven_cert_parse((proven_mem_view_t){ .ptr = h->peer_leaf.ptr, .size = h->peer_leaf.len }, &leaf) != PROVEN_OK) return tls_unexpected(c);
-            int ok = sig_check_handshake(c, scheme, &leaf, (proven_mem_view_t){ .ptr = sig.p, .size = sig.n });
+            int ok;
+            if (old) {
+                proven_byte_t digest[36];
+                tls10_digest(c, digest);
+                ok = sig_check_old(&leaf, digest, (proven_mem_view_t){ .ptr = sig.p, .size = sig.n });
+            } else {
+                ok = sig_check_handshake(c, scheme, &leaf, (proven_mem_view_t){ .ptr = sig.p, .size = sig.n });
+            }
             if (ok < 0) return tls_illegal(c);
             if (ok == 0) return tls_fail(c, AL_DECRYPT_ERROR, PROVEN_ERR_PROTOCOL);
             tr_add(c, whole);
@@ -2272,14 +2648,31 @@ static proven_err_t server12_message(proven_tls_conn_t *c, proven_byte_t type, r
             return PROVEN_OK; }
         case ST12_S_WAIT_CKE: {
             if (type != HS12_CLIENT_KEY_EXCHANGE) return tls_unexpected(c);
-            rd_t point = rd_vec(&body, 1);
-            proven_byte_t shared[32];
-            if (!body.ok || body.n != 0) return tls_decode(c);
-            if (!key_agree(c, h->ske_group, (proven_mem_view_t){ .ptr = point.p, .size = point.n }, shared)) return tls_illegal(c);
+            proven_byte_t shared[PROVEN_TLS_DH_MAX];
+            proven_size_t shared_len = 32;
+            if (c->suite12->kx == PROVEN_TLS_KX_DHE) {
+                const proven_mem_view_t p = proven_tls_dh_server_group();
+                rd_t theirs = rd_vec(&body, 2);
+                if (!body.ok || body.n != 0) return tls_decode(c);
+                if (!proven_tls_dh_shared(p, h->dh_priv, proven_tls_dh_exponent_len(p.size), (proven_mem_view_t){ .ptr = theirs.p, .size = theirs.n }, shared, &shared_len)) return tls_illegal(c);
+            } else if (c->suite12->kx == PROVEN_TLS_KX_RSA) {
+                /* Whatever arrived, a premaster comes out and the handshake goes on: a wrong
+                 * one fails at Finished like any other wrong key, and tells the sender nothing
+                 * about what was wrong with it. Only the framing is judged here. */
+                rd_t sealed = rd_vec(&body, 2);
+                if (!body.ok || body.n != 0) return tls_decode(c);
+                proven_tls_config_rsa_decrypt_(c->config, (proven_mem_view_t){ .ptr = sealed.p, .size = sealed.n }, h->hello_version, shared);
+                shared_len = 48;
+            } else {
+                rd_t point = rd_vec(&body, 1);
+                if (!body.ok || body.n != 0) return tls_decode(c);
+                if (!key_agree(c, h->ske_group, (proven_mem_view_t){ .ptr = point.p, .size = point.n }, shared)) return tls_illegal(c);
+            }
             /* The master secret covers the handshake through this message. */
             tr_add(c, whole);
-            tls12_derive(c, shared, &h->next_write);
+            const bool derived = tls12_derive(c, shared, shared_len, &h->next_write);
             tls_wipe(shared, sizeof shared);
+            if (!derived) return tls_nomem(c);
             /* A client that showed a certificate must now prove it holds the key. */
             c->state = h->client_cert_seen ? ST12_S_WAIT_CV : ST12_S_WAIT_CCS;
             return PROVEN_OK; }
@@ -2407,6 +2800,7 @@ void proven_tls_conn_destroy(proven_tls_conn_t *c) {
     hs_free(c);
     buf_free(c, &c->in); buf_free(c, &c->out); buf_free(c, &c->post); buf_free(c, &c->peer_cert);
     if (c->server_name) a.free_fn(a.ctx, c->server_name);
+    if (c->cbc) { tls_wipe(c->cbc, 2 * sizeof *c->cbc); a.free_fn(a.ctx, c->cbc); }
     tls_wipe(c, sizeof *c);
     a.free_fn(a.ctx, c);
 }

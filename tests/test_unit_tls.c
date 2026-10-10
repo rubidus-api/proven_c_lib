@@ -947,6 +947,419 @@ int main(void) {
         proven_tls_config_destroy(s_any); proven_tls_config_destroy(s_12); proven_tls_config_destroy(s_13);
     }
 
+    PROVEN_TEST_SECTION("the legacy set",
+        "What a configuration must ask for by name: CBC suites, key exchange by RSA and by finite-field Diffie-Hellman, TLS 1.0 and 1.1, and a peer without the extended master secret. Each works when asked for, is refused when not, and fails the way it should.",
+        "Check the legacy branches of client12_server_hello, server12_client_hello, client12_flight and record_process12 in src/proven/tls13.c. The pieces underneath are test_unit_tls_legacy's business.");
+    {
+        const proven_u32 ALL = PROVEN_TLS_LEGACY_CBC | PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE | PROVEN_TLS_LEGACY_DHE;
+        static const proven_u16 VERS[3] = { PROVEN_TLS_VERSION_1_2, PROVEN_TLS_VERSION_1_1, PROVEN_TLS_VERSION_1_0 };
+        proven_tls_options_t lo = base_options();
+        lo.legacy = ALL; lo.min_version = PROVEN_TLS_VERSION_1_0; lo.max_version = PROVEN_TLS_VERSION_1_2;
+        proven_tls_config_t *l_rsa = server_config(TP_SERVER_RSA, TP_SERVER_RSA_KEY, &lo), *l_ec = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &lo),
+                            *l_ed = server_config(TP_SERVER_ED, TP_SERVER_ED_KEY, &lo);
+        proven_tls_config_t *l_client[3];
+        for (int v = 0; v < 3; ++v) { proven_tls_options_t co = lo; co.max_version = VERS[v]; l_client[v] = client_config(&co); }
+        /* The nineteen suites: its number, whether the server's key is RSA, whether it is CBC,
+         * and whether its MAC is SHA-1 - which is what TLS 1.0 and 1.1 can use. */
+        static const struct { proven_u16 id; bool rsa, cbc, sha1; proven_u32 bits; } L[19] = {
+            { 0x009e, true, false, false, 4 }, { 0x009f, true, false, false, 4 }, { 0xccaa, true, false, false, 4 },
+            { 0xc023, false, true, false, 1 }, { 0xc027, true, true, false, 1 }, { 0xc009, false, true, true, 1 }, { 0xc013, true, true, true, 1 },
+            { 0xc00a, false, true, true, 1 }, { 0xc014, true, true, true, 1 },
+            { 0x0067, true, true, false, 5 }, { 0x006b, true, true, false, 5 }, { 0x0033, true, true, true, 5 }, { 0x0039, true, true, true, 5 },
+            { 0x009c, true, false, false, 2 }, { 0x009d, true, false, false, 2 }, { 0x003c, true, true, false, 3 }, { 0x003d, true, true, false, 3 },
+            { 0x002f, true, true, true, 3 }, { 0x0035, true, true, true, 3 },
+        };
+        int made = 0;
+        bool all = true;
+        for (int v = 0; v < 3; ++v) {
+            for (int i = 0; i < 19; ++i) {
+                if (v > 0 && !L[i].sha1) continue;
+                for (int mte = 0; mte < (L[i].cbc ? 2 : 1); ++mte) {
+                    proven_tls_test_only_suite12(L[i].id);
+                    proven_tls_test_knobs12(mte ? 32u : 0u);
+                    pair_t p = connect_pair(l_client[v], L[i].rsa ? l_rsa : l_ec, "example.test", NULL, NULL, NULL);
+                    bool ok = both_up(&p) && proven_tls_version(p.c) == VERS[v] && proven_tls_version(p.s) == VERS[v] && proven_tls_cipher_suite(p.c) == L[i].id &&
+                              proven_tls_cipher_suite(p.s) == L[i].id && transfer(p.c, p.s, 1, 1) && transfer(p.s, p.c, 1, 2) && transfer(p.c, p.s, 16384, 3) &&
+                              transfer(p.s, p.c, 20000, 4) && proven_tls_key_update(p.c) == PROVEN_ERR_UNSUPPORTED;
+                    if (!ok) fprintf(stderr, "legacy: suite %04x in version %04x (%s) failed: client %d server %d\n", L[i].id, VERS[v], mte ? "MAC then encrypt" : "as agreed", (int)g_err_c, (int)g_err_s);
+                    all = all && ok;
+                    made++;
+                    close_pair(&p);
+                }
+            }
+        }
+        proven_tls_test_knobs12(0);
+        PROVEN_TEST_ASSERT(all && made == 33 + 16 + 16, "nineteen suites in TLS 1.2 and the eight with a SHA-1 MAC in 1.1 and 1.0, the CBC ones with and without encrypt_then_mac: each agreed, and data of 1 to 20,000 bytes each way", "");
+        {
+            /* An Ed25519 key serves the ECDSA suites of 1.2, and nothing older. */
+            proven_tls_test_only_suite12(0xc023);
+            pair_t p = connect_pair(l_client[0], l_ed, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_cipher_suite(p.s) == 0xc023 && transfer(p.c, p.s, 500, 1), "an Ed25519 server key with a CBC suite in TLS 1.2", "");
+            close_pair(&p);
+            proven_tls_test_only_suite12(0);
+            p = connect_pair(l_client[1], l_ed, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 40, "and refused to a client that speaks nothing newer than 1.1: those versions cannot carry its signature", "");
+            close_pair(&p);
+        }
+
+        /* Asked for by name, or not at all. */
+        {
+            proven_tls_options_t bad = base_options();
+            proven_tls_config_t *none = NULL;
+            bad.anchors = g_anchors; bad.min_version = PROVEN_TLS_VERSION_1_0;
+            PROVEN_TEST_ASSERT(proven_tls_config_create(&bad, &none) == PROVEN_ERR_INVALID_ARG, "a minimum below 1.2 without the CBC bit is PROVEN_ERR_INVALID_ARG: those versions have nothing else", "");
+            bad.min_version = 0; bad.legacy = 16;
+            PROVEN_TEST_ASSERT(proven_tls_config_create(&bad, &none) == PROVEN_ERR_INVALID_ARG, "and so is a legacy bit that does not exist", "");
+            bad.legacy = PROVEN_TLS_LEGACY_CBC; bad.min_version = 0x0300;
+            PROVEN_TEST_ASSERT(proven_tls_config_create(&bad, &none) == PROVEN_ERR_INVALID_ARG, "and SSL 3.0", "");
+        }
+        bool refused_by_server = true, refused_by_client = true;
+        proven_tls_config_t *plain_rsa = server_config(TP_SERVER_RSA, TP_SERVER_RSA_KEY, NULL), *plain_ec = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, NULL);
+        proven_tls_config_t *plain_client = client_config(NULL);
+        for (int i = 0; i < 19; ++i) {
+            /* A client that asks for the suite, to a default server. */
+            proven_tls_test_only_suite12(L[i].id);
+            pair_t p = connect_pair(l_client[0], L[i].rsa ? plain_rsa : plain_ec, "example.test", NULL, NULL, NULL);
+            refused_by_server = refused_by_server && g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 40;
+            close_pair(&p);
+            /* A default client made (by the test) to offer it, to a server that would take it:
+             * the client must refuse the answer it did not really ask for. */
+            proven_tls_test_knobs12(16);
+            p = connect_pair(plain_client, L[i].rsa ? l_rsa : l_ec, "example.test", NULL, NULL, NULL);
+            refused_by_client = refused_by_client && g_err_c == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.c) == 47;
+            close_pair(&p);
+            proven_tls_test_knobs12(0);
+        }
+        proven_tls_test_only_suite12(0);
+        PROVEN_TEST_ASSERT(refused_by_server, "a default server refuses every one of the nineteen: handshake_failure", "");
+        PROVEN_TEST_ASSERT(refused_by_client, "and a default client refuses a server that picks one: illegal_parameter", "");
+        {
+            /* One bit does not stand for another. */
+            static const struct { proven_u32 has; proven_u16 suite; } X[4] = { { 1, 0x009c }, { 2, 0xc013 }, { 4, 0xc013 }, { 3, 0x009e } };
+            bool each = true;
+            for (int i = 0; i < 4; ++i) {
+                proven_tls_options_t so = base_options();
+                so.legacy = X[i].has;
+                proven_tls_config_t *sc = server_config(TP_SERVER_RSA, TP_SERVER_RSA_KEY, &so);
+                proven_tls_test_only_suite12(X[i].suite);
+                pair_t p = connect_pair(l_client[0], sc, "example.test", NULL, NULL, NULL);
+                each = each && g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 40;
+                close_pair(&p);
+                proven_tls_config_destroy(sc);
+            }
+            proven_tls_test_only_suite12(0);
+            PROVEN_TEST_ASSERT(each, "the CBC bit does not allow RSA key exchange, nor that bit CBC, nor the DHE bit CBC, nor those two DHE", "");
+        }
+        {
+            /* With everything allowed on both sides, nothing legacy is chosen while better is there. */
+            pair_t p = connect_pair(l_client[0], l_rsa, "example.test", NULL, NULL, NULL);
+            /* Which of the three depends on whether this processor has AES instructions. */
+            const proven_u16 chosen = proven_tls_cipher_suite(p.c);
+            PROVEN_TEST_ASSERT(both_up(&p) && (chosen == 0xc02f || chosen == 0xc030 || chosen == 0xcca8), "two sides that allow all of it still agree on an ECDHE suite with an AEAD", "");
+            close_pair(&p);
+        }
+
+        /* Which version, for every pair of ranges. */
+        {
+            static const proven_u16 V4[4] = { PROVEN_TLS_VERSION_1_0, PROVEN_TLS_VERSION_1_1, PROVEN_TLS_VERSION_1_2, PROVEN_TLS_VERSION_1_3 };
+            proven_tls_config_t *cr[4][4], *sr[4][4];
+            for (int lo_ = 0; lo_ < 4; ++lo_) for (int hi = lo_; hi < 4; ++hi) {
+                proven_tls_options_t o = base_options();
+                o.min_version = V4[lo_]; o.max_version = V4[hi]; o.legacy = lo_ < 2 ? PROVEN_TLS_LEGACY_CBC : 0;
+                cr[lo_][hi] = client_config(&o);
+                sr[lo_][hi] = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &o);
+            }
+            int pairs = 0, wrong = 0;
+            for (int a = 0; a < 4; ++a) for (int b = a; b < 4; ++b) for (int c2 = 0; c2 < 4; ++c2) for (int d = c2; d < 4; ++d) {
+                const int top = b < d ? b : d, bottom = a > c2 ? a : c2;
+                pair_t p = connect_pair(cr[a][b], sr[c2][d], "example.test", NULL, NULL, NULL);
+                bool ok = top >= bottom ? both_up(&p) && proven_tls_version(p.c) == V4[top] && proven_tls_version(p.s) == V4[top]
+                                        : !both_up(&p) && g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 70;
+                if (!ok) { wrong++; fprintf(stderr, "versions: client %04x-%04x server %04x-%04x: client %d (version %04x) server %d\n", V4[a], V4[b], V4[c2], V4[d], (int)g_err_c, proven_tls_version(p.c), (int)g_err_s); }
+                pairs++;
+                close_pair(&p);
+            }
+            PROVEN_TEST_ASSERT(pairs == 100 && wrong == 0, "a hundred pairs of version ranges: the newest version both allow, or protocol_version from the server when there is none", "");
+            for (int lo_ = 0; lo_ < 4; ++lo_) for (int hi = lo_; hi < 4; ++hi) { proven_tls_config_destroy(cr[lo_][hi]); proven_tls_config_destroy(sr[lo_][hi]); }
+        }
+        {
+            /* Talked down. */
+            proven_tls_test_knobs12(64);
+            pair_t p = connect_pair(l_client[0], l_ec, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(g_err_c == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.c) == 47 && proven_tls_version(p.s) == PROVEN_TLS_VERSION_1_0,
+                "a server that could speak 1.2 and answers 1.0 marks its random, and a client that offered 1.2 refuses", "");
+            close_pair(&p);
+            p = connect_pair(l_client[2], l_ec, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_version(p.c) == PROVEN_TLS_VERSION_1_0, "the mark means nothing to a client whose best is 1.0", "");
+            close_pair(&p);
+            proven_tls_test_knobs12(8);
+            p = connect_pair(l_client[1], l_ec, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 86, "a 1.1 hello that says it is a fallback, to a server that speaks 1.2: inappropriate_fallback", "");
+            close_pair(&p);
+            proven_tls_test_knobs12(0);
+        }
+
+        /* A peer without the extended master secret. */
+        {
+            proven_tls_options_t eo = lo, ro = lo, qo = lo, ko = lo;
+            eo.legacy = ALL | PROVEN_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET;
+            ro.legacy = eo.legacy; ro.anchors = g_anchors; ro.client_auth = PROVEN_TLS_CLIENT_AUTH_REQUIRE;
+            qo.legacy = eo.legacy; qo.anchors = g_anchors; qo.client_auth = PROVEN_TLS_CLIENT_AUTH_REQUEST;
+            ko.legacy = eo.legacy; ko.certificate_pem = pem(TP_CLIENT); ko.private_key_pem = pem(TP_CLIENT_KEY);
+            proven_tls_config_t *s_ok = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &eo), *s_req = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &ro),
+                                *s_ask = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &qo), *c_ok = client_config(&eo), *c_cert = client_config(&ko);
+            proven_tls_session_t session;
+            proven_byte_t key[32];
+            bool empty = true;
+            memset(&session, 0, sizeof session);
+            for (int v = 0; v < 3; ++v) {
+                proven_tls_options_t vo = eo;
+                vo.max_version = VERS[v];
+                proven_tls_config_t *c_v = client_config(&vo);
+                /* The test makes the client leave the extension out; then neither side has it. */
+                proven_tls_test_knobs12(2);
+                pair_t p = connect_pair(c_v, l_ec, "example.test", NULL, NULL, NULL);
+                PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 40, "a client without it, to a server that did not say it may be let in: handshake_failure", "");
+                close_pair(&p);
+                p = connect_pair(l_client[v], s_ok, "example.test", NULL, NULL, NULL);
+                PROVEN_TEST_ASSERT(g_err_c == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.c) == 40, "a server that answers without it, to a client that did not say so: handshake_failure", "");
+                close_pair(&p);
+                p = connect_pair(c_v, s_ok, "example.test", &session, NULL, NULL);
+                PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_version(p.s) == VERS[v] && transfer(p.c, p.s, 3000, 1) && transfer(p.s, p.c, 3000, 2), "both having said so: the connection is made and carries data", "");
+                close_pair(&p);
+                for (proven_size_t i = 0; i < sizeof session.opaque; ++i) empty = empty && session.opaque[i] == 0;
+                p = connect_pair(c_v, s_ok, "example.test", &session, NULL, NULL);
+                PROVEN_TEST_ASSERT(both_up(&p) && !proven_tls_resumed(p.c), "and a second one is a full handshake again", "");
+                close_pair(&p);
+                proven_tls_test_knobs12(4);
+                p = connect_pair(l_client[v], l_ec, "example.test", NULL, NULL, NULL);
+                PROVEN_TEST_ASSERT(g_err_c == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.c) == 40, "a server that was offered it and does not answer it is refused too", "");
+                close_pair(&p);
+                proven_tls_test_knobs12(0);
+                p = connect_pair(c_v, s_ok, "example.test", NULL, NULL, NULL);
+                PROVEN_TEST_ASSERT(both_up(&p) && transfer(p.c, p.s, 100, 5), "the bit only allows its absence: two sides that have it still use it", "");
+                close_pair(&p);
+                proven_tls_config_destroy(c_v);
+            }
+            PROVEN_TEST_ASSERT(empty, "no session is kept from a connection without it: there is nothing to resume", "");
+            proven_tls_test_knobs12(2);
+            pair_t p = connect_pair(c_cert, s_req, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 40, "a server that requires a client certificate refuses such a client outright: the certificate would prove less than it seems to", "");
+            close_pair(&p);
+            p = connect_pair(c_cert, s_ask, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && !proven_tls_peer_key_sha256(p.s, key), "one that only requests it does not ask", "");
+            close_pair(&p);
+            proven_tls_test_knobs12(2 | 4096);
+            p = connect_pair(c_cert, s_ask, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && !proven_tls_peer_key_sha256(p.s, key), "and a client that is asked all the same (the test makes the server ask) shows no certificate", "");
+            close_pair(&p);
+            proven_tls_test_knobs12(0);
+            proven_tls_config_destroy(s_ok); proven_tls_config_destroy(s_req); proven_tls_config_destroy(s_ask); proven_tls_config_destroy(c_ok); proven_tls_config_destroy(c_cert);
+        }
+
+        /* Client certificates in the old versions, where the key's kind is the signature scheme. */
+        {
+            proven_crypto_rsa_test_min_bits(1024);
+            proven_tls_options_t so = lo, c1 = lo, c2 = lo, c3 = lo;
+            so.anchors = g_anchors; so.client_auth = PROVEN_TLS_CLIENT_AUTH_REQUIRE;
+            c1.certificate_pem = pem(TP_CLIENT); c1.private_key_pem = pem(TP_CLIENT_KEY);
+            c2.certificate_pem = pem(TP_CLIENT_RSA); c2.private_key_pem = pem(TP_CLIENT_RSA_KEY);
+            c3.certificate_pem = pem(TP_SERVER_ED); c3.private_key_pem = pem(TP_SERVER_ED_KEY);
+            proven_tls_config_t *require = server_config(TP_SERVER_RSA, TP_SERVER_RSA_KEY, &so);
+            bool both = true, none = true;
+            proven_byte_t key[32];
+            for (int v = 1; v < 3; ++v) {
+                proven_tls_options_t a = c1, b = c2, e = c3, n = lo;
+                a.max_version = b.max_version = e.max_version = n.max_version = VERS[v];
+                proven_tls_config_t *ca = client_config(&a), *cb = client_config(&b), *ce = client_config(&e), *cn = client_config(&n);
+                pair_t p = connect_pair(ca, require, "example.test", NULL, NULL, NULL);
+                both = both && both_up(&p) && proven_tls_version(p.s) == VERS[v] && proven_tls_peer_key_sha256(p.s, key) && transfer(p.c, p.s, 200, 1);
+                close_pair(&p);
+                p = connect_pair(cb, require, "example.test", NULL, NULL, NULL);
+                both = both && both_up(&p) && proven_tls_peer_key_sha256(p.s, key);
+                close_pair(&p);
+                p = connect_pair(cn, require, "example.test", NULL, NULL, NULL);
+                none = none && g_err_s == PROVEN_ERR_UNTRUSTED && proven_tls_alert_sent(p.s) == 40;
+                close_pair(&p);
+                p = connect_pair(ce, require, "example.test", NULL, NULL, NULL);
+                none = none && g_err_s == PROVEN_ERR_UNTRUSTED;
+                close_pair(&p);
+                proven_tls_config_destroy(ca); proven_tls_config_destroy(cb); proven_tls_config_destroy(ce); proven_tls_config_destroy(cn);
+            }
+            PROVEN_TEST_ASSERT(both, "TLS 1.1 and 1.0: a P-256 and an RSA client certificate, required and given, each accepted", "");
+            PROVEN_TEST_ASSERT(none, "none, and an Ed25519 one that those versions cannot sign with, each refused where one is required", "");
+            proven_tls_config_destroy(require);
+            proven_crypto_rsa_test_min_bits(0);
+        }
+
+        /* Sessions. */
+        {
+            proven_tls_session_t session;
+            bool empty = true;
+            memset(&session, 0, sizeof session);
+            for (int v = 1; v < 3; ++v) {
+                pair_t p = connect_pair(l_client[v], l_ec, "example.test", &session, NULL, NULL);
+                empty = empty && both_up(&p) && transfer(p.s, p.c, 10, 1);
+                close_pair(&p);
+                for (proven_size_t i = 0; i < sizeof session.opaque; ++i) empty = empty && session.opaque[i] == 0;
+            }
+            PROVEN_TEST_ASSERT(empty, "a TLS 1.1 or 1.0 connection leaves no session", "");
+            proven_tls_test_only_suite12(0xc027);
+            pair_t p = connect_pair(l_client[0], l_rsa, "example.test", &session, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && transfer(p.s, p.c, 10, 1), "a 1.2 connection under a CBC suite does", "");
+            close_pair(&p);
+            p = connect_pair(l_client[0], l_rsa, "example.test", &session, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_resumed(p.c) && proven_tls_resumed(p.s) && proven_tls_cipher_suite(p.c) == 0xc027 && transfer(p.c, p.s, 5000, 2) && transfer(p.s, p.c, 5000, 3),
+                "and it is resumed under that suite, with data both ways", "");
+            close_pair(&p);
+            proven_tls_test_knobs12(32);
+            p = connect_pair(l_client[0], l_rsa, "example.test", &session, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_resumed(p.c) && transfer(p.c, p.s, 5000, 4), "encrypt_then_mac is agreed afresh each time: resumed without it", "");
+            close_pair(&p);
+            proven_tls_test_knobs12(0);
+            proven_tls_test_only_suite12(0);
+            p = connect_pair(plain_client, plain_rsa, "example.test", &session, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && !proven_tls_resumed(p.c), "a default client does not offer a session made under a suite it would not now accept", "");
+            close_pair(&p);
+        }
+
+        /* A changed CBC record: one answer, wherever the change is. */
+        {
+            int cases = 0, same = 0;
+            for (int v = 0; v < 3; ++v) for (int mte = 0; mte < 2; ++mte) {
+                for (int where = 0; where < 6; ++where) {
+                    static proven_byte_t msg[300], wire[1000];
+                    proven_size_t used = 0;
+                    proven_tls_test_only_suite12(0xc013);
+                    proven_tls_test_knobs12(mte ? 32u : 0u);
+                    pair_t p = connect_pair(l_client[v], l_rsa, "example.test", NULL, NULL, NULL);
+                    memset(msg, 0x41, sizeof msg);
+                    bool ok = both_up(&p) && proven_tls_write(p.c, (proven_mem_view_t){ msg, where == 5 ? 1 : sizeof msg }).err == PROVEN_OK;
+                    proven_mem_view_t out = proven_tls_pending_output(p.c);
+                    ok = ok && out.size > 30 && out.size <= sizeof wire;
+                    if (!ok) fprintf(stderr, "cbc: version %04x, change %d: nothing to change (%u bytes)\n", VERS[v], where, (unsigned)out.size);
+                    if (ok) {
+                        memcpy(wire, out.ptr, out.size);
+                        /* The last record of what was written (TLS 1.0 writes two). */
+                        proven_size_t at = 0;
+                        while (at + 5 + ((proven_size_t)wire[at + 3] << 8 | wire[at + 4]) < out.size) at += 5 + ((proven_size_t)wire[at + 3] << 8 | wire[at + 4]);
+                        const proven_size_t body = out.size - at - 5;
+                        proven_size_t flip = where == 0 ? at + 5 : where == 1 ? at + 5 + 16 : where == 2 ? at + 5 + body / 2 : where == 3 ? out.size - 17 : out.size - 1;
+                        wire[flip] ^= where == 4 ? 0x80 : 0x01;
+                        /* Fed until everything is taken or refused; what opens on the way is read off. */
+                        proven_err_t e = PROVEN_OK;
+                        for (proven_size_t fed = 0; fed < out.size && e == PROVEN_OK;) {
+                            static proven_byte_t sink[400];
+                            e = proven_tls_feed(p.s, (proven_mem_view_t){ wire + fed, out.size - fed }, &used);
+                            fed += used;
+                            while (e == PROVEN_OK && proven_tls_read(p.s, (proven_mem_mut_t){ sink, sizeof sink }).value > 0) { }
+                            if (used == 0 && e == PROVEN_OK) break;
+                        }
+                        if (e == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 20) same++;
+                        else fprintf(stderr, "cbc: version %04x %s, change %d: error %d alert %d\n", VERS[v], mte ? "MAC then encrypt" : "encrypt then MAC", where, (int)e, proven_tls_alert_sent(p.s));
+                    }
+                    cases++;
+                    close_pair(&p);
+                }
+            }
+            proven_tls_test_knobs12(0); proven_tls_test_only_suite12(0);
+            PROVEN_TEST_ASSERT(cases == 36 && same == 36, "a bit changed in the IV, the first block, the middle, the block before last or the last byte of a CBC record, in each version and both MAC orders: bad_record_mac, every time", "");
+        }
+        {
+            /* TLS 1.0 splits what it writes; the others do not. */
+            static proven_byte_t msg[100];
+            int records[3] = { 0, 0, 0 };
+            for (int v = 0; v < 3; ++v) {
+                proven_tls_test_only_suite12(0xc009);
+                pair_t p = connect_pair(l_client[v], l_ec, "example.test", NULL, NULL, NULL);
+                if (both_up(&p) && proven_tls_write(p.c, (proven_mem_view_t){ msg, sizeof msg }).err == PROVEN_OK) {
+                    proven_mem_view_t out = proven_tls_pending_output(p.c);
+                    for (proven_size_t at = 0; at + 5 <= out.size; at += 5 + ((proven_size_t)out.ptr[at + 3] << 8 | out.ptr[at + 4])) records[v]++;
+                }
+                close_pair(&p);
+            }
+            proven_tls_test_only_suite12(0);
+            PROVEN_TEST_ASSERT(records[0] == 1 && records[1] == 1 && records[2] == 2, "a hundred bytes written are one record in TLS 1.2 and 1.1, and two in 1.0: one byte, then the rest", "");
+        }
+
+        /* Diffie-Hellman that is not what it should be. */
+        {
+            proven_tls_test_only_suite12(0x009e);
+            proven_tls_test_knobs12(128);
+            pair_t p = connect_pair(l_client[0], l_rsa, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(g_err_c == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.c) == 71, "a server whose prime is not one of the six known: insufficient_security", "");
+            close_pair(&p);
+            proven_tls_test_knobs12(256);
+            p = connect_pair(l_client[0], l_rsa, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(g_err_c == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.c) == 47, "a server whose value is 1: illegal_parameter", "");
+            close_pair(&p);
+            proven_tls_test_knobs12(512);
+            p = connect_pair(l_client[0], l_rsa, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 47, "a client whose value is 1: illegal_parameter from the server", "");
+            close_pair(&p);
+            proven_tls_test_knobs12(0);
+        }
+
+        /* Key exchange by RSA that is not what it should be: the server must not say how. */
+        {
+            int alert[3] = { 0, 0, 0 };
+            proven_err_t err[3] = { PROVEN_OK, PROVEN_OK, PROVEN_OK };
+            bool completed[3] = { false, false, false };
+            for (int kind = 0; kind < 3; ++kind) {
+                proven_tls_test_only_suite12(0x009c);
+                proven_tls_test_knobs12(kind == 0 ? 1024u : kind == 1 ? 2048u : 0u);
+                pair_t p = connect_pair(l_client[0], l_rsa, "example.test", NULL, NULL, NULL);
+                alert[kind] = proven_tls_alert_sent(p.s); err[kind] = g_err_s; completed[kind] = both_up(&p);
+                close_pair(&p);
+            }
+            proven_tls_test_knobs12(0); proven_tls_test_only_suite12(0);
+            PROVEN_TEST_ASSERT(completed[2] && !completed[0] && !completed[1], "a premaster with another version in it, and bytes that encrypt nothing: neither handshake completes (a good one does)", "");
+            PROVEN_TEST_ASSERT(alert[0] == alert[1] && err[0] == err[1] && alert[0] == 20 && err[0] == PROVEN_ERR_PROTOCOL,
+                "and the server answers both the same way, at the client's Finished and not before: bad_record_mac, as for any key that is simply wrong", "");
+        }
+
+        /* What it costs in memory, and that the rest pays nothing. */
+        {
+            proven_size_t before = g_count.live;
+            proven_tls_test_only_suite12(0xc013);
+            pair_t p = connect_pair(l_client[2], l_rsa, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && transfer(p.c, p.s, 30000, 1) && transfer(p.s, p.c, 30000, 2), "a TLS 1.0 CBC connection that has carried data", "");
+            proven_size_t idle = g_count.live - before;
+            fprintf(stderr, "[PROVEN][TEST][INFO] an idle TLS 1.0 CBC pair holds %u bytes\n", (unsigned)idle);
+            PROVEN_TEST_ASSERT(idle <= 2 * 1250, "idle, the two together hold at most 2,500 bytes", "");
+            close_pair(&p);
+            PROVEN_TEST_ASSERT(g_count.live == before, "and free it all", "");
+            proven_tls_test_only_suite12(0);
+        }
+        {
+            /* A changed bit anywhere in a TLS 1.0 handshake. */
+            long total_cs = 0, total_sc = 0;
+            wire_t count_cs = { .counter = &total_cs, .flip_at = -1 }, count_sc = { .counter = &total_sc, .flip_at = -1 };
+            g_rng = 0x9e3779b97f4a7c15ull;
+            pair_t p = connect_pair(l_client[2], l_ec, "example.test", NULL, &count_cs, &count_sc);
+            PROVEN_TEST_ASSERT(both_up(&p) && total_cs > 150 && total_sc > 400, "a clean TLS 1.0 handshake, to learn how many bytes each side sends", "");
+            close_pair(&p);
+            long survived = 0, tried = 0;
+            for (int dir = 0; dir < 2; ++dir) {
+                long total = dir ? total_sc : total_cs;
+                for (long at = 0; at < total; at += 5) {
+                    long n_cs = 0, n_sc = 0;
+                    wire_t w_cs = { .counter = &n_cs, .flip_at = dir == 0 ? at : -1 }, w_sc = { .counter = &n_sc, .flip_at = dir == 1 ? at : -1 };
+                    g_rng = 0x9e3779b97f4a7c15ull;
+                    p = connect_pair(l_client[2], l_ec, "example.test", NULL, &w_cs, &w_sc);
+                    tried++;
+                    if (both_up(&p)) { survived++; fprintf(stderr, "[PROVEN][TEST][INFO] TLS 1.0: unnoticed at byte %ld of what the %s sends\n", at, dir ? "server" : "client"); }
+                    close_pair(&p);
+                }
+            }
+            fprintf(stderr, "[PROVEN][TEST][INFO] TLS 1.0: %ld single-bit changes tried, %ld left both sides established\n", tried, survived);
+            PROVEN_TEST_ASSERT(tried > 120 && survived <= 6, "a changed bit in a TLS 1.0 handshake leaves at most the unauthenticated record-version bytes unnoticed", "");
+        }
+        proven_tls_config_destroy(plain_rsa); proven_tls_config_destroy(plain_ec); proven_tls_config_destroy(plain_client);
+        proven_tls_config_destroy(l_rsa); proven_tls_config_destroy(l_ec); proven_tls_config_destroy(l_ed);
+        for (int v = 0; v < 3; ++v) proven_tls_config_destroy(l_client[v]);
+    }
+
     PROVEN_TEST_SECTION("resumption",
         "A ticket from one connection shortens the next: no certificates, the same identity. A ticket that is old, damaged or for another name falls back or fails as it should.",
         "Check proven_tls_ticket_seal/_open, client_session, and the PSK branch of server_client_hello.");

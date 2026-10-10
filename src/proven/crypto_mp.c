@@ -255,6 +255,37 @@ bool proven_crypto_mp_pow_ct(const proven_crypto_mp_mod_t *mod, proven_u32 *out,
     return true;
 }
 
+/* The same walk for a modulus of up to PROVEN_CRYPTO_MP_DH_MAX limbs and an exponent of
+ * `exp_limbs` limbs - a count that is public, as a Diffie-Hellman exponent's length is. */
+bool proven_crypto_mp_pow_ct_short(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *base, const proven_u32 *exp, proven_size_t exp_limbs) {
+    const proven_size_t s = mod->limbs;
+    if (s > PROVEN_CRYPTO_MP_DH_MAX || exp_limbs == 0) return false;
+    proven_u32 table[16][PROVEN_CRYPTO_MP_DH_MAX], sel[PROVEN_CRYPTO_MP_DH_MAX], acc[PROVEN_CRYPTO_MP_DH_MAX];
+    for (proven_size_t j = 0; j < s; ++j) { acc[j] = 0; table[1][j] = base[j]; }
+    acc[0] = 1;
+    proven_crypto_mp_to_mont(mod, table[0], acc);
+    for (int k = 2; k < 16; ++k) proven_crypto_mp_montmul(mod, table[k], table[k - 1], base);
+    for (proven_size_t j = 0; j < s; ++j) acc[j] = table[0][j];
+    for (proven_size_t i = exp_limbs; i-- > 0;) {
+        for (int nibble = 7; nibble >= 0; --nibble) {
+            for (int q = 0; q < 4; ++q) proven_crypto_mp_montmul(mod, acc, acc, acc);
+            const proven_u32 w = (exp[i] >> (4 * nibble)) & 15u;
+            for (proven_size_t j = 0; j < s; ++j) sel[j] = 0;
+            for (proven_u32 k = 0; k < 16; ++k) {
+                const proven_u32 x = k ^ w;
+                const proven_u32 mask = ((x | ((proven_u32)0 - x)) >> 31) - 1u;
+                for (proven_size_t j = 0; j < s; ++j) sel[j] |= table[k][j] & mask;
+            }
+            proven_crypto_mp_montmul(mod, acc, acc, sel);
+        }
+    }
+    for (proven_size_t j = 0; j < s; ++j) out[j] = acc[j];
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)table, .size = sizeof table });
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)sel, .size = sizeof sel });
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)acc, .size = sizeof acc });
+    return true;
+}
+
 void proven_crypto_mp_mul(proven_u32 *out, const proven_u32 *a, proven_size_t alen, const proven_u32 *b, proven_size_t blen) {
     for (proven_size_t i = 0; i < alen + blen; ++i) out[i] = 0;
     for (proven_size_t i = 0; i < alen; ++i) {

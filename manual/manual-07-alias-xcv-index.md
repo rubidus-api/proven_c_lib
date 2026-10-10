@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1098 aliases: 830 lowercase `xcv_` names and 268 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1104 aliases: 830 lowercase `xcv_` names and 274 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -260,9 +260,15 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_TLS_CLIENT_AUTH_NONE` | `PROVEN_TLS_CLIENT_AUTH_NONE` |
 | `XCV_TLS_CLIENT_AUTH_REQUEST` | `PROVEN_TLS_CLIENT_AUTH_REQUEST` |
 | `XCV_TLS_CLIENT_AUTH_REQUIRE` | `PROVEN_TLS_CLIENT_AUTH_REQUIRE` |
+| `XCV_TLS_LEGACY_CBC` | `PROVEN_TLS_LEGACY_CBC` |
+| `XCV_TLS_LEGACY_DHE` | `PROVEN_TLS_LEGACY_DHE` |
+| `XCV_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET` | `PROVEN_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET` |
+| `XCV_TLS_LEGACY_RSA_KEY_EXCHANGE` | `PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE` |
 | `XCV_TLS_SESSION_SIZE` | `PROVEN_TLS_SESSION_SIZE` |
 | `XCV_TLS_VERIFY_CHAIN` | `PROVEN_TLS_VERIFY_CHAIN` |
 | `XCV_TLS_VERIFY_PIN_ONLY` | `PROVEN_TLS_VERIFY_PIN_ONLY` |
+| `XCV_TLS_VERSION_1_0` | `PROVEN_TLS_VERSION_1_0` |
+| `XCV_TLS_VERSION_1_1` | `PROVEN_TLS_VERSION_1_1` |
 | `XCV_TLS_VERSION_1_2` | `PROVEN_TLS_VERSION_1_2` |
 | `XCV_TLS_VERSION_1_3` | `PROVEN_TLS_VERSION_1_3` |
 | `XCV_U16_LIT` | `PROVEN_U16_LIT` |

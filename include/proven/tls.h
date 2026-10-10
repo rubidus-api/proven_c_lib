@@ -37,7 +37,8 @@
  *
  * **What this is not.** A new implementation with no external audit (the manual says what it
  * was tested against). Of TLS 1.2 only the ECDHE and AEAD suites, with the extended master
- * secret required and renegotiation declined; nothing older. No 0-RTT. No revocation checking. A
+ * secret required and renegotiation declined; what is older exists only behind the
+ * `legacy` bits of the options, each off by default. No 0-RTT. No revocation checking. A
  * program whose users depend on it against a capable adversary should terminate TLS in
  * something audited.
  */
@@ -49,8 +50,18 @@ typedef proven_i64 (*proven_tls_now_fn)(void *ctx);
 
 /** @brief Protocol versions, as `min_version` and `max_version` take them and as
  *         proven_tls_version reports. */
+#define PROVEN_TLS_VERSION_1_0 ((proven_u16)0x0301)   /**< legacy: only with PROVEN_TLS_LEGACY_CBC */
+#define PROVEN_TLS_VERSION_1_1 ((proven_u16)0x0302)   /**< legacy: only with PROVEN_TLS_LEGACY_CBC */
 #define PROVEN_TLS_VERSION_1_2 ((proven_u16)0x0303)
 #define PROVEN_TLS_VERSION_1_3 ((proven_u16)0x0304)
+
+/** @brief Bits for `legacy` in the options: parts of TLS that are kept out unless a
+ *         configuration names them, because each has a known weakness (the manual says which).
+ *         They exist to reach a peer that has nothing better. */
+#define PROVEN_TLS_LEGACY_CBC              ((proven_u32)1)  /**< CBC cipher suites with HMAC-SHA1 or HMAC-SHA256 */
+#define PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE ((proven_u32)2)  /**< key exchange by RSA encryption: no forward secrecy */
+#define PROVEN_TLS_LEGACY_DHE              ((proven_u32)4)  /**< finite-field Diffie-Hellman key exchange */
+#define PROVEN_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET ((proven_u32)8) /**< go on with a peer that lacks RFC 7627 */
 
 typedef enum {
     PROVEN_TLS_CLIENT_AUTH_NONE = 0,     /**< A server does not ask clients for a certificate. */
@@ -95,8 +106,9 @@ typedef struct {
     bool keep_peer_certificate;              /**< keep the peer's certificate for proven_tls_peer_certificate (costs its size per connection) */
     proven_u32 ticket_lifetime_s;            /**< server: how long a ticket is honoured; 0: 7200; at most 604800 */
     proven_size_t max_handshake_bytes;       /**< the largest handshake message accepted; 0: 65536 */
-    proven_u16 min_version;                  /**< the oldest protocol version to agree to; 0: PROVEN_TLS_VERSION_1_2 */
+    proven_u16 min_version;                  /**< the oldest protocol version to agree to; 0: PROVEN_TLS_VERSION_1_2. Below 1.2 needs PROVEN_TLS_LEGACY_CBC */
     proven_u16 max_version;                  /**< the newest; 0: PROVEN_TLS_VERSION_1_3 */
+    proven_u32 legacy;                       /**< PROVEN_TLS_LEGACY_* bits; 0: none of it */
 } proven_tls_options_t;
 
 /** @brief A configuration. Opaque, immutable, shareable between threads. */
@@ -227,11 +239,13 @@ proven_err_t proven_tls_close(proven_tls_conn_t *conn);
 proven_err_t proven_tls_key_update(proven_tls_conn_t *conn);
 
 /** @brief The cipher suite agreed, or 0 before the ServerHello: 0x1301, 0x1302 or 0x1303 in
- *         TLS 1.3; in TLS 1.2 one of the six ECDHE suites with AES-GCM or ChaCha20-Poly1305. */
+ *         TLS 1.3; in TLS 1.2 one of the six ECDHE suites with AES-GCM or ChaCha20-Poly1305,
+ *         or a legacy suite where the configuration allowed one (the manual lists them). */
 proven_u16 proven_tls_cipher_suite(const proven_tls_conn_t *conn);
 
-/** @brief The protocol version agreed - PROVEN_TLS_VERSION_1_3 or PROVEN_TLS_VERSION_1_2 - or
- *         0 before it is known. */
+/** @brief The protocol version agreed - PROVEN_TLS_VERSION_1_3 or PROVEN_TLS_VERSION_1_2, or
+ *         for a configuration that allowed them one of the two legacy versions - or 0 before
+ *         it is known. */
 proven_u16 proven_tls_version(const proven_tls_conn_t *conn);
 /** @brief The application protocol agreed by ALPN; empty when none was. Points into the config. */
 proven_u8str_view_t proven_tls_alpn(const proven_tls_conn_t *conn);

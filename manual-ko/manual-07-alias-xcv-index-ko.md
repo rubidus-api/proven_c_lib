@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 1098개: 소문자 `xcv_` 이름 830개와 대문자 `XCV_` 이름 268개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 1104개: 소문자 `xcv_` 이름 830개와 대문자 `XCV_` 이름 274개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -262,9 +262,15 @@ alias 1098개: 소문자 `xcv_` 이름 830개와 대문자 `XCV_` 이름 268개.
 | `XCV_TLS_CLIENT_AUTH_NONE` | `PROVEN_TLS_CLIENT_AUTH_NONE` |
 | `XCV_TLS_CLIENT_AUTH_REQUEST` | `PROVEN_TLS_CLIENT_AUTH_REQUEST` |
 | `XCV_TLS_CLIENT_AUTH_REQUIRE` | `PROVEN_TLS_CLIENT_AUTH_REQUIRE` |
+| `XCV_TLS_LEGACY_CBC` | `PROVEN_TLS_LEGACY_CBC` |
+| `XCV_TLS_LEGACY_DHE` | `PROVEN_TLS_LEGACY_DHE` |
+| `XCV_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET` | `PROVEN_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET` |
+| `XCV_TLS_LEGACY_RSA_KEY_EXCHANGE` | `PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE` |
 | `XCV_TLS_SESSION_SIZE` | `PROVEN_TLS_SESSION_SIZE` |
 | `XCV_TLS_VERIFY_CHAIN` | `PROVEN_TLS_VERIFY_CHAIN` |
 | `XCV_TLS_VERIFY_PIN_ONLY` | `PROVEN_TLS_VERIFY_PIN_ONLY` |
+| `XCV_TLS_VERSION_1_0` | `PROVEN_TLS_VERSION_1_0` |
+| `XCV_TLS_VERSION_1_1` | `PROVEN_TLS_VERSION_1_1` |
 | `XCV_TLS_VERSION_1_2` | `PROVEN_TLS_VERSION_1_2` |
 | `XCV_TLS_VERSION_1_3` | `PROVEN_TLS_VERSION_1_3` |
 | `XCV_U16_LIT` | `PROVEN_U16_LIT` |

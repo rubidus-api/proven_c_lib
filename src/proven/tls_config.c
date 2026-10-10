@@ -207,8 +207,12 @@ proven_err_t proven_tls_config_create(const proven_tls_options_t *o, proven_tls_
     if (o->client_auth > PROVEN_TLS_CLIENT_AUTH_REQUIRE || o->ticket_lifetime_s > 604800) return PROVEN_ERR_INVALID_ARG;
     const proven_u16 min_version = o->min_version ? o->min_version : PROVEN_TLS_VERSION_1_2;
     const proven_u16 max_version = o->max_version ? o->max_version : PROVEN_TLS_VERSION_1_3;
-    if ((min_version != PROVEN_TLS_VERSION_1_2 && min_version != PROVEN_TLS_VERSION_1_3) ||
-        (max_version != PROVEN_TLS_VERSION_1_2 && max_version != PROVEN_TLS_VERSION_1_3) || min_version > max_version) return PROVEN_ERR_INVALID_ARG;
+    if (min_version < PROVEN_TLS_VERSION_1_0 || min_version > PROVEN_TLS_VERSION_1_3 || max_version < PROVEN_TLS_VERSION_1_0 ||
+        max_version > PROVEN_TLS_VERSION_1_3 || min_version > max_version) return PROVEN_ERR_INVALID_ARG;
+    /* TLS 1.0 and 1.1 have CBC suites and nothing else: asking for them is asking for CBC,
+     * and a configuration has to say so in as many words. */
+    if (min_version < PROVEN_TLS_VERSION_1_2 && !(o->legacy & PROVEN_TLS_LEGACY_CBC)) return PROVEN_ERR_INVALID_ARG;
+    if (o->legacy & ~(PROVEN_TLS_LEGACY_CBC | PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE | PROVEN_TLS_LEGACY_DHE | PROVEN_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET)) return PROVEN_ERR_INVALID_ARG;
     /* Anchors are needed by any side that verifies a chain: a client always does; a server
      * does when it asks for client certificates. A config with no certificate can only be a
      * client; one with a certificate may be either, and is held to what it could be used for. */
@@ -238,6 +242,7 @@ proven_err_t proven_tls_config_create(const proven_tls_options_t *o, proven_tls_
     c->ticket_lifetime_s = o->ticket_lifetime_s ? o->ticket_lifetime_s : 7200;
     c->max_handshake_bytes = o->max_handshake_bytes ? o->max_handshake_bytes : 65536;
     c->min_version = min_version; c->max_version = max_version;
+    c->legacy = o->legacy;
     c->random = o->random; c->random_ctx = o->random_ctx;
     c->now = o->now; c->now_ctx = o->now_ctx;
 #ifndef PROVEN_FREESTANDING
@@ -303,7 +308,7 @@ void proven_tls_config_destroy(proven_tls_config_t *c) {
  * Each signature takes the blinding pair as it stands and leaves the next one - the same pair
  * squared - behind, under the flag. The signature itself is made outside it, on a copy. */
 bool proven_tls_config_rsa_sign_(const proven_tls_config_t *c, bool pkcs1, proven_mem_view_t digest, proven_byte_t *sig, proven_size_t *len) {
-    if (!c || !c->rsa || digest.size != 32) return false;
+    if (!c || !c->rsa || (digest.size != 32 && digest.size != 36)) return false;      /* 36: TLS 1.0/1.1's MD5 | SHA-1 */
     proven_tls_rsa_t *r = c->rsa;
     proven_crypto_rsa_blind_t mine;
     proven_byte_t salt[32], seed[PROVEN_CRYPTO_RSA_SIGN_MAX_BYTES];
@@ -320,11 +325,29 @@ bool proven_tls_config_rsa_sign_(const proven_tls_config_t *c, bool pkcs1, prove
         proven_crypto_rsa_blind_next(&r->key, &r->blind);
     }
     atomic_flag_clear_explicit(&r->lock, memory_order_release);
-    bool ok = pkcs1 ? proven_crypto_rsa_sign_pkcs1(&r->key, &mine, PROVEN_HMAC_SHA256, digest, sig)
+    bool ok = digest.size == 36 ? proven_crypto_rsa_sign_pkcs1_raw(&r->key, &mine, digest, sig)
+            : pkcs1 ? proven_crypto_rsa_sign_pkcs1(&r->key, &mine, PROVEN_HMAC_SHA256, digest, sig)
                     : proven_crypto_rsa_sign_pss(&r->key, &mine, PROVEN_HMAC_SHA256, digest, (proven_mem_view_t){ .ptr = salt, .size = sizeof salt }, sig);
     if (ok && len) *len = r->key.n_len;
     cfg_wipe(&mine, sizeof mine); cfg_wipe(seed, sizeof seed);
     return ok;
+}
+
+/* The premaster secret of a static-RSA key exchange. Takes a blinding pair exactly as signing
+ * does. Always "succeeds": see proven_crypto_rsa_decrypt_premaster. */
+void proven_tls_config_rsa_decrypt_(const proven_tls_config_t *c, proven_mem_view_t cipher, proven_u16 version, proven_byte_t out[48]) {
+    proven_byte_t fallback[48];
+    proven_tls_config_random(c, fallback, sizeof fallback);          /* before anything is known about the ciphertext */
+    if (!c->rsa) { for (int i = 0; i < 48; ++i) out[i] = fallback[i]; cfg_wipe(fallback, sizeof fallback); return; }
+    proven_tls_rsa_t *r = c->rsa;
+    proven_crypto_rsa_blind_t mine;
+    while (atomic_flag_test_and_set_explicit(&r->lock, memory_order_acquire)) { }
+    mine = r->blind;
+    ++r->uses;                                                       /* the next signature renews the pair when it is due */
+    proven_crypto_rsa_blind_next(&r->key, &r->blind);
+    atomic_flag_clear_explicit(&r->lock, memory_order_release);
+    proven_crypto_rsa_decrypt_premaster(&r->key, &mine, cipher, version, fallback, out);
+    cfg_wipe(&mine, sizeof mine); cfg_wipe(fallback, sizeof fallback);
 }
 
 /* ---- Tickets ----

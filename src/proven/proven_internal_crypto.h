@@ -106,6 +106,11 @@ void proven_crypto_mp_pow(const proven_crypto_mp_mod_t *mod, proven_u32 *out, co
  * False when the modulus has more than PROVEN_CRYPTO_MP_CT_MAX limbs. */
 [[nodiscard]] bool proven_crypto_mp_pow_ct(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *base, const proven_u32 *exp);
 /* out = a * b, a plain product of alen + blen limbs. `out` may not overlap an input. */
+/* base^exp for a SECRET exponent of `exp_limbs` limbs (a PUBLIC count) and a public modulus of
+ * up to PROVEN_CRYPTO_MP_DH_MAX limbs: finite-field Diffie-Hellman. Base and result in
+ * Montgomery form. Its table is 8 KiB of stack. */
+#define PROVEN_CRYPTO_MP_DH_MAX 128
+[[nodiscard]] bool proven_crypto_mp_pow_ct_short(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *base, const proven_u32 *exp, proven_size_t exp_limbs);
 void proven_crypto_mp_mul(proven_u32 *out, const proven_u32 *a, proven_size_t alen, const proven_u32 *b, proven_size_t blen);
 /* out = a^-1 mod n for a prime n (Fermat), in Montgomery form. Zero stays zero. The modulus
  * is PUBLIC here: it is used as the exponent of the public exponentiation. */
@@ -159,6 +164,11 @@ void proven_crypto_ed25519_sign(proven_byte_t sig[64], const proven_byte_t seed[
  * point, and of course a signature that does not verify. */
 [[nodiscard]] bool proven_crypto_ed25519_verify(const proven_byte_t pub[32], proven_mem_view_t msg, const proven_byte_t sig[64]);
 
+/* ---- Hash block functions, exposed for the constant-time record MAC of tls_legacy.c ---- */
+void proven_sha1_compress_(proven_u32 state[5], const proven_byte_t block[64]);
+void proven_md5_compress_(proven_u32 state[4], const proven_byte_t block[64]);
+void proven_sha256_compress_(proven_u32 state[8], const proven_byte_t block[64]);
+
 /* ---- AES-GCM (NIST SP 800-38D), 96-bit nonces ---- */
 
 /* Two implementations behind one interface. The portable one is bitsliced: the S-box is
@@ -182,6 +192,13 @@ void proven_crypto_aes_gcm_seal(const proven_crypto_aes_gcm_t *ctx, const proven
                                               const proven_byte_t tag[16], proven_byte_t *out);
 /* One block under the key schedule, for tests against FIPS 197. */
 void proven_crypto_aes_encrypt_block(const proven_crypto_aes_gcm_t *ctx, const proven_byte_t in[16], proven_byte_t out[16]);
+/* CBC over whole blocks, in place; `len` is a multiple of 16 and `iv` is left holding the last
+ * ciphertext block, which is the next call's IV. Encryption uses whichever block cipher the
+ * context has; decryption is the portable, bitsliced inverse cipher in every configuration -
+ * these exist for the legacy TLS suites, where constant time matters and speed does not.
+ * SECRET: the key, and the plaintext. */
+void proven_crypto_aes_cbc_encrypt(const proven_crypto_aes_gcm_t *ctx, proven_byte_t iv[16], proven_byte_t *data, proven_size_t len);
+void proven_crypto_aes_cbc_decrypt(const proven_crypto_aes_gcm_t *ctx, proven_byte_t iv[16], proven_byte_t *data, proven_size_t len);
 /* A test hook: when set, contexts initialised afterwards use the portable code even where the
  * hardware path exists. Not for use while other threads initialise contexts. */
 void proven_crypto_aes_force_portable(bool on);
@@ -252,6 +269,22 @@ void proven_crypto_rsa_blind_next(const proven_crypto_rsa_key_t *key, proven_cry
  * itself is not constant-time - how many candidates were tried is visible - which is the usual
  * state of key generation and one more reason long-lived keys come from elsewhere. */
 typedef void (*proven_crypto_random_fn)(void *ctx, proven_byte_t *out, proven_size_t len);
+/* PKCS #1 v1.5 type 1 over `data` as it stands, with no DigestInfo: the signature of TLS 1.0
+ * and 1.1, whose `data` is an MD5 hash followed by a SHA-1 hash. For nothing else. */
+[[nodiscard]] bool proven_crypto_rsa_sign_pkcs1_raw(const proven_crypto_rsa_key_t *key, const proven_crypto_rsa_blind_t *blind, proven_mem_view_t data, proven_byte_t *sig);
+[[nodiscard]] bool proven_crypto_rsa_verify_pkcs1_raw(proven_mem_view_t n, proven_mem_view_t e, proven_mem_view_t data, proven_mem_view_t sig);
+/* PKCS #1 v1.5 encryption (type 2) of `msg` under a public key, for a key exchange. `random`
+ * is as many unpredictable bytes as the modulus has. `out` receives the modulus's length. */
+[[nodiscard]] bool proven_crypto_rsa_encrypt_pkcs1(proven_mem_view_t n, proven_mem_view_t e, proven_mem_view_t msg, const proven_byte_t *random,
+                                                   proven_byte_t *out, proven_size_t *out_len);
+/* The server's half: decrypt a ClientKeyExchange and give back the 48-byte premaster - or, if
+ * anything at all is wrong with what came out, `fallback` instead (48 random bytes drawn
+ * BEFORE this call). There is no return value on purpose: nothing may be done differently for
+ * a bad ciphertext than for a good one, or the key can be used by anyone who can ask
+ * (Bleichenbacher 1998; ROBOT, 2017). The selection is by mask; `version` is the one the
+ * ClientHello carried. SECRET: the key, the blinding pair, `fallback`, `out`. */
+void proven_crypto_rsa_decrypt_premaster(const proven_crypto_rsa_key_t *key, const proven_crypto_rsa_blind_t *blind, proven_mem_view_t cipher,
+                                         proven_u16 version, const proven_byte_t fallback[48], proven_byte_t out[48]);
 [[nodiscard]] bool proven_crypto_rsa_generate(proven_size_t bits, proven_crypto_random_fn random, void *ctx,
                                               proven_crypto_rsa_key_t *out, proven_byte_t *d);
 

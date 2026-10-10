@@ -18,6 +18,57 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release: the legacy parts of TLS - CBC cipher suites, key exchange by RSA and by
+finite-field Diffie-Hellman, TLS 1.0 and 1.1 - for programs that must reach a peer with
+nothing better. **Every one is off unless a configuration names it**, and a configuration that
+names none behaves exactly as in 0.22.0.
+
+These are the parts of TLS with the worst history, implemented new and without an external
+audit. Manual chapter 14 has a section for them that says, for each setting, what it exposes
+you to and what was and was not checked. Read it before setting any of them; if you control
+the other end, update that instead.
+
+### Added
+
+- `proven_tls_options_t.legacy`, a set of bits, zero by default:
+  - `PROVEN_TLS_LEGACY_CBC`: AES-CBC suites with HMAC-SHA1 or HMAC-SHA256. `encrypt_then_mac`
+    (RFC 7366) is offered and used whenever the peer has it. Without it a record is opened
+    with no branch or memory index that depends on a decrypted byte (the Lucky Thirteen
+    countermeasure), and its decryption is the portable constant-time AES in every build -
+    about 6 MiB/s to receive on the development machine.
+  - `PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE`: key exchange by RSA encryption. No forward secrecy.
+    On a server the premaster is recovered under masks, with a random one substituted for
+    anything malformed and no alert or branch to tell which (RFC 5246 section 7.4.7.1).
+  - `PROVEN_TLS_LEGACY_DHE`: `DHE-RSA` suites. A client accepts a group only if it is one of
+    six known safe primes (RFC 7919 and RFC 3526, 2048 to 4096 bits) and refuses everything
+    else with `insufficient_security`; a server offers the 2048-bit group of RFC 7919.
+  - `PROVEN_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET`: go on with a peer that lacks RFC 7627. On
+    such a connection no ticket is issued or accepted and no client certificate is shown or
+    asked for.
+- `PROVEN_TLS_VERSION_1_1` and `PROVEN_TLS_VERSION_1_0` for `min_version` (and
+  `max_version`), which also need the CBC bit. TLS 1.0 sends application data as one byte and
+  then the rest. An Ed25519 key cannot serve these versions; no session is kept from them.
+- Nineteen cipher suites in all, offered and chosen after every non-legacy suite. The manual
+  lists them.
+- Manual chapter 14, section 10: "The legacy set: what each setting exposes you to".
+- Test `test_unit_tls_legacy` (the pieces, against known answers); a legacy section in
+  `test_unit_tls`.
+
+### Changed
+
+- An idle TLS connection holds eight bytes more (a pointer used only by CBC suites).
+- `proven_tls_config_create` accepts `min_version` and `max_version` from TLS 1.0, and
+  returns `PROVEN_ERR_INVALID_ARG` for a minimum below 1.2 without `PROVEN_TLS_LEGACY_CBC`
+  and for an unknown `legacy` bit.
+- A client lists every version it allows in its hello, not only 1.3 and 1.2.
+
+### Fixed
+
+- Nothing in released code: two defects in this release's own new code were found by its
+  tests before release (a 1.3-only server refusing 1.3 clients after the version check was
+  widened; an RSA premaster carrying the wrong version when the client's newest version was
+  below 1.2).
+
 ## [0.22.0] - 2026-10-10
 
 A MINOR release: TLS 1.2, cut down to the part of it that is still defensible. Until now a

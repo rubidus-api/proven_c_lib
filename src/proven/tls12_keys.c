@@ -4,13 +4,38 @@
  * it, and record protection for the AEAD suites (RFC 5288, RFC 7905). */
 
 static const proven_tls12_suite_t TLS12_SUITES[] = {
-    { 0xc02b, PROVEN_HMAC_SHA256, 16, false, false },      /* ECDHE-ECDSA-AES128-GCM-SHA256 */
-    { 0xc02c, PROVEN_HMAC_SHA384, 32, false, false },      /* ECDHE-ECDSA-AES256-GCM-SHA384 */
-    { 0xcca9, PROVEN_HMAC_SHA256, 32, true,  false },      /* ECDHE-ECDSA-CHACHA20-POLY1305 */
-    { 0xc02f, PROVEN_HMAC_SHA256, 16, false, true  },      /* ECDHE-RSA-AES128-GCM-SHA256 */
-    { 0xc030, PROVEN_HMAC_SHA384, 32, false, true  },      /* ECDHE-RSA-AES256-GCM-SHA384 */
-    { 0xcca8, PROVEN_HMAC_SHA256, 32, true,  true  },      /* ECDHE-RSA-CHACHA20-POLY1305 */
+    { 0xc02b, PROVEN_HMAC_SHA256, 16, false, false, 0, PROVEN_TLS_KX_ECDHE, 0 },      /* ECDHE-ECDSA-AES128-GCM-SHA256 */
+    { 0xc02c, PROVEN_HMAC_SHA384, 32, false, false, 0, PROVEN_TLS_KX_ECDHE, 0 },      /* ECDHE-ECDSA-AES256-GCM-SHA384 */
+    { 0xcca9, PROVEN_HMAC_SHA256, 32, true,  false, 0, PROVEN_TLS_KX_ECDHE, 0 },      /* ECDHE-ECDSA-CHACHA20-POLY1305 */
+    { 0xc02f, PROVEN_HMAC_SHA256, 16, false, true,  0, PROVEN_TLS_KX_ECDHE, 0 },      /* ECDHE-RSA-AES128-GCM-SHA256 */
+    { 0xc030, PROVEN_HMAC_SHA384, 32, false, true,  0, PROVEN_TLS_KX_ECDHE, 0 },      /* ECDHE-RSA-AES256-GCM-SHA384 */
+    { 0xcca8, PROVEN_HMAC_SHA256, 32, true,  true,  0, PROVEN_TLS_KX_ECDHE, 0 },      /* ECDHE-RSA-CHACHA20-POLY1305 */
+    /* The legacy set, in the order it is offered and chosen: always after everything above.
+     * `hash` is the PRF's from TLS 1.2 on; the record MAC is `mac`. */
+    { 0x009e, PROVEN_HMAC_SHA256, 16, false, true,  0,                    PROVEN_TLS_KX_DHE,   4 },   /* DHE-RSA-AES128-GCM-SHA256 */
+    { 0x009f, PROVEN_HMAC_SHA384, 32, false, true,  0,                    PROVEN_TLS_KX_DHE,   4 },   /* DHE-RSA-AES256-GCM-SHA384 */
+    { 0xccaa, PROVEN_HMAC_SHA256, 32, true,  true,  0,                    PROVEN_TLS_KX_DHE,   4 },   /* DHE-RSA-CHACHA20-POLY1305 */
+    { 0xc023, PROVEN_HMAC_SHA256, 16, false, false, PROVEN_TLS_LH_SHA256, PROVEN_TLS_KX_ECDHE, 1 },   /* ECDHE-ECDSA-AES128-SHA256 */
+    { 0xc027, PROVEN_HMAC_SHA256, 16, false, true,  PROVEN_TLS_LH_SHA256, PROVEN_TLS_KX_ECDHE, 1 },   /* ECDHE-RSA-AES128-SHA256 */
+    { 0xc009, PROVEN_HMAC_SHA256, 16, false, false, PROVEN_TLS_LH_SHA1,   PROVEN_TLS_KX_ECDHE, 1 },   /* ECDHE-ECDSA-AES128-SHA */
+    { 0xc013, PROVEN_HMAC_SHA256, 16, false, true,  PROVEN_TLS_LH_SHA1,   PROVEN_TLS_KX_ECDHE, 1 },   /* ECDHE-RSA-AES128-SHA */
+    { 0xc00a, PROVEN_HMAC_SHA256, 32, false, false, PROVEN_TLS_LH_SHA1,   PROVEN_TLS_KX_ECDHE, 1 },   /* ECDHE-ECDSA-AES256-SHA */
+    { 0xc014, PROVEN_HMAC_SHA256, 32, false, true,  PROVEN_TLS_LH_SHA1,   PROVEN_TLS_KX_ECDHE, 1 },   /* ECDHE-RSA-AES256-SHA */
+    { 0x0067, PROVEN_HMAC_SHA256, 16, false, true,  PROVEN_TLS_LH_SHA256, PROVEN_TLS_KX_DHE,   5 },   /* DHE-RSA-AES128-SHA256 */
+    { 0x006b, PROVEN_HMAC_SHA256, 32, false, true,  PROVEN_TLS_LH_SHA256, PROVEN_TLS_KX_DHE,   5 },   /* DHE-RSA-AES256-SHA256 */
+    { 0x0033, PROVEN_HMAC_SHA256, 16, false, true,  PROVEN_TLS_LH_SHA1,   PROVEN_TLS_KX_DHE,   5 },   /* DHE-RSA-AES128-SHA */
+    { 0x0039, PROVEN_HMAC_SHA256, 32, false, true,  PROVEN_TLS_LH_SHA1,   PROVEN_TLS_KX_DHE,   5 },   /* DHE-RSA-AES256-SHA */
+    { 0x009c, PROVEN_HMAC_SHA256, 16, false, true,  0,                    PROVEN_TLS_KX_RSA,   2 },   /* AES128-GCM-SHA256 */
+    { 0x009d, PROVEN_HMAC_SHA384, 32, false, true,  0,                    PROVEN_TLS_KX_RSA,   2 },   /* AES256-GCM-SHA384 */
+    { 0x003c, PROVEN_HMAC_SHA256, 16, false, true,  PROVEN_TLS_LH_SHA256, PROVEN_TLS_KX_RSA,   3 },   /* AES128-SHA256 */
+    { 0x003d, PROVEN_HMAC_SHA256, 32, false, true,  PROVEN_TLS_LH_SHA256, PROVEN_TLS_KX_RSA,   3 },   /* AES256-SHA256 */
+    { 0x002f, PROVEN_HMAC_SHA256, 16, false, true,  PROVEN_TLS_LH_SHA1,   PROVEN_TLS_KX_RSA,   3 },   /* AES128-SHA */
+    { 0x0035, PROVEN_HMAC_SHA256, 32, false, true,  PROVEN_TLS_LH_SHA1,   PROVEN_TLS_KX_RSA,   3 },   /* AES256-SHA */
 };
+
+const proven_tls12_suite_t *proven_tls12_suite_at(proven_size_t index) {
+    return index < sizeof TLS12_SUITES / sizeof TLS12_SUITES[0] ? &TLS12_SUITES[index] : NULL;
+}
 
 const proven_tls12_suite_t *proven_tls12_suite_find(proven_u16 id) {
     for (proven_size_t i = 0; i < sizeof TLS12_SUITES / sizeof TLS12_SUITES[0]; ++i) {

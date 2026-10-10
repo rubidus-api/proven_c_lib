@@ -34,9 +34,9 @@ static void bs_sq(proven_u64 r[8], const proven_u64 a[8]) {
     bs_reduce(r, t);
 }
 
-/* The S-box: the inverse in GF(2^8) (x^254, and so 0 for 0), then the affine map. */
-static void bs_sbox(proven_u64 q[8]) {
-    proven_u64 x2[8], x3[8], x12[8], x15[8], x240[8], t[8];
+/* The inverse in GF(2^8): x^254, and so 0 for 0. */
+static void bs_inverse(proven_u64 t[8], const proven_u64 q[8]) {
+    proven_u64 x2[8], x3[8], x12[8], x15[8], x240[8];
     bs_sq(x2, q);
     bs_mul(x3, x2, q);
     bs_sq(x12, x3); bs_sq(x12, x12);
@@ -44,8 +44,23 @@ static void bs_sbox(proven_u64 q[8]) {
     bs_sq(x240, x15); bs_sq(x240, x240); bs_sq(x240, x240); bs_sq(x240, x240);
     bs_mul(t, x240, x12);                       /* x^252 */
     bs_mul(t, t, x2);                           /* x^254 */
+}
+
+/* The S-box: the inverse, then the affine map. */
+static void bs_sbox(proven_u64 q[8]) {
+    proven_u64 t[8];
+    bs_inverse(t, q);
     for (int i = 0; i < 8; ++i) q[i] = t[i] ^ t[(i + 4) & 7] ^ t[(i + 5) & 7] ^ t[(i + 6) & 7] ^ t[(i + 7) & 7];
     q[0] = ~q[0]; q[1] = ~q[1]; q[5] = ~q[5]; q[6] = ~q[6];      /* + 0x63 */
+}
+
+/* The inverse S-box: the inverse affine map (b_i = a_i+2 + a_i+5 + a_i+7, + 0x05), then the
+ * inverse in the field. */
+static void bs_inv_sbox(proven_u64 q[8]) {
+    proven_u64 t[8];
+    for (int i = 0; i < 8; ++i) t[i] = q[(i + 2) & 7] ^ q[(i + 5) & 7] ^ q[(i + 7) & 7];
+    t[0] = ~t[0]; t[2] = ~t[2];
+    bs_inverse(q, t);
 }
 
 static void bs_shift_rows(proven_u64 q[8]) {
@@ -72,6 +87,20 @@ static void bs_mix_columns(proven_u64 q[8]) {
     out[0] = t[7]; out[1] = t[0] ^ t[7]; out[2] = t[1]; out[3] = t[2] ^ t[7];
     out[4] = t[3] ^ t[7]; out[5] = t[4]; out[6] = t[5]; out[7] = t[6];
     for (int i = 0; i < 8; ++i) q[i] = out[i] ^ r1[i] ^ bs_rot_rows(q[i], 2) ^ bs_rot_rows(q[i], 3);
+}
+
+/* The inverse of bs_mix_columns. Multiplying every column by (5, 0, 4, 0) first turns the
+ * forward matrix into its own inverse: a_r += 4 * (a_r + a_r+2), then mix as before. */
+static void bs_inv_mix_columns(proven_u64 q[8]) {
+    proven_u64 t[8], u[8];
+    for (int i = 0; i < 8; ++i) t[i] = q[i] ^ bs_rot_rows(q[i], 2);
+    for (int pass = 0; pass < 2; ++pass) {                     /* times two, twice */
+        u[0] = t[7]; u[1] = t[0] ^ t[7]; u[2] = t[1]; u[3] = t[2] ^ t[7];
+        u[4] = t[3] ^ t[7]; u[5] = t[4]; u[6] = t[5]; u[7] = t[6];
+        for (int i = 0; i < 8; ++i) t[i] = u[i];
+    }
+    for (int i = 0; i < 8; ++i) q[i] ^= t[i];
+    bs_mix_columns(q);
 }
 
 static void bs_pack(proven_u64 q[8], const proven_byte_t *in, proven_size_t n) {
@@ -116,6 +145,22 @@ static void bs_encrypt(const bs_keys_t *bk, int rounds, proven_byte_t *blocks, p
     bs_sbox(q);
     bs_shift_rows(q);
     for (int b = 0; b < 8; ++b) q[b] ^= bk->k[rounds][b];
+    bs_unpack(blocks, q, n);
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)q, .size = sizeof q });
+}
+
+/* Decrypt up to four blocks in place: the cipher's steps undone in reverse order. Moving row r
+ * left by r three times over is moving it right by r. */
+static void bs_decrypt(const bs_keys_t *bk, int rounds, proven_byte_t *blocks, proven_size_t n) {
+    proven_u64 q[8];
+    bs_pack(q, blocks, n);
+    for (int b = 0; b < 8; ++b) q[b] ^= bk->k[rounds][b];
+    for (int r = rounds - 1; r >= 0; --r) {
+        bs_shift_rows(q); bs_shift_rows(q); bs_shift_rows(q);
+        bs_inv_sbox(q);
+        for (int b = 0; b < 8; ++b) q[b] ^= bk->k[r][b];
+        if (r > 0) bs_inv_mix_columns(q);
+    }
     bs_unpack(blocks, q, n);
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)q, .size = sizeof q });
 }
@@ -216,6 +261,32 @@ void proven_crypto_aes_encrypt_block(const proven_crypto_aes_gcm_t *ctx, const p
     for (int i = 0; i < 16; ++i) b[i] = in[i];
     bs_encrypt(&bk, ctx->rounds, b, 16);
     for (int i = 0; i < 16; ++i) out[i] = b[i];
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&bk, .size = sizeof bk });
+}
+
+/* ---- CBC (SP 800-38A section 6.2), for the legacy TLS suites ---- */
+
+void proven_crypto_aes_cbc_encrypt(const proven_crypto_aes_gcm_t *ctx, proven_byte_t iv[16], proven_byte_t *data, proven_size_t len) {
+    for (proven_size_t at = 0; at + 16 <= len; at += 16) {
+        for (int i = 0; i < 16; ++i) data[at + (proven_size_t)i] ^= iv[i];
+        proven_crypto_aes_encrypt_block(ctx, data + at, data + at);
+        for (int i = 0; i < 16; ++i) iv[i] = data[at + (proven_size_t)i];
+    }
+}
+
+void proven_crypto_aes_cbc_decrypt(const proven_crypto_aes_gcm_t *ctx, proven_byte_t iv[16], proven_byte_t *data, proven_size_t len) {
+    bs_keys_t bk;
+    bs_keys(&bk, ctx);
+    for (proven_size_t at = 0; at + 16 <= len;) {
+        proven_size_t n = len - at >= 64 ? 64 : (len - at) & ~(proven_size_t)15;
+        proven_byte_t prev[64 + 16];
+        for (int i = 0; i < 16; ++i) prev[i] = iv[i];
+        for (proven_size_t i = 0; i < n; ++i) prev[16 + i] = data[at + i];
+        bs_decrypt(&bk, ctx->rounds, data + at, n);
+        for (proven_size_t i = 0; i < n; ++i) data[at + i] ^= prev[i];
+        for (int i = 0; i < 16; ++i) iv[i] = prev[n + (proven_size_t)i];
+        at += n;
+    }
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&bk, .size = sizeof bk });
 }
 

@@ -8,6 +8,7 @@
 #include "proven/memory.h"
 #include "proven/hash.h"
 #include "proven/hmac.h"
+#include "proven/hash_legacy.h"
 #include "proven_internal_crypto.h"
 
 #define PROVEN_TLS_AES_128_GCM_SHA256       ((proven_u16)0x1301)
@@ -97,10 +98,18 @@ typedef struct {
     proven_size_t key_len;
     bool chacha;
     bool rsa_auth;                                /* ECDHE_RSA: the server's key is RSA; otherwise ECDSA or Ed25519 */
+    proven_u8 mac;                                /* 0: an AEAD suite. Else the HMAC of a CBC suite, a proven_tls_lh_t */
+    proven_u8 kx;                                 /* PROVEN_TLS_KX_* */
+    proven_u8 legacy;                             /* the PROVEN_TLS_LEGACY_* bits a configuration must have set */
 } proven_tls12_suite_t;
+#define PROVEN_TLS_KX_ECDHE 0
+#define PROVEN_TLS_KX_RSA   1
+#define PROVEN_TLS_KX_DHE   2
 
 /* NULL for a suite this library does not implement. */
 const proven_tls12_suite_t *proven_tls12_suite_find(proven_u16 id);
+/* The table in order - the six AEAD suites, then the legacy ones - and NULL past its end. */
+const proven_tls12_suite_t *proven_tls12_suite_at(proven_size_t index);
 
 #define PROVEN_TLS12_MASTER_SIZE 48
 #define PROVEN_TLS12_VERIFY_SIZE 12
@@ -126,6 +135,65 @@ proven_size_t proven_tls12_seal(proven_tls_keys_t *keys, proven_byte_t type, pro
 /* Open one in place. The type is the header's, in the clear and authenticated. False when the
  * tag does not verify or the record is malformed. */
 [[nodiscard]] bool proven_tls12_open(proven_tls_keys_t *keys, proven_byte_t *record, proven_size_t body_len, proven_mem_mut_t *content);
+
+/* ---- The legacy set (RFC-0011 decision T-8), below the state machine: tls_legacy.c ----
+ * Everything here is reached only through a configuration that asks for it. */
+
+typedef enum { PROVEN_TLS_LH_MD5 = 0, PROVEN_TLS_LH_SHA1 = 1, PROVEN_TLS_LH_SHA256 = 2 } proven_tls_lh_t;
+#define PROVEN_TLS_LH_MAX_SIZE 32
+
+/* HMAC over `a` then `b` with one of the three hashes; out takes 16, 20 or 32 bytes. */
+void proven_tls_legacy_hmac(proven_tls_lh_t hash, proven_mem_view_t key, proven_mem_view_t a, proven_mem_view_t b, proven_byte_t *out);
+/* The PRF of TLS 1.0 and 1.1 (RFC 2246 section 5): P_MD5 over the first half of the secret
+ * XOR P_SHA-1 over the second. */
+void proven_tls10_prf(proven_mem_view_t secret, const char *label, proven_mem_view_t seed, proven_byte_t *out, proven_size_t out_len);
+
+/* What a CBC suite keeps for one direction beside the cipher and the sequence number, which
+ * stay in proven_tls_keys_t. */
+typedef struct {
+    proven_u8 mac;                                /* PROVEN_TLS_LH_SHA1 or PROVEN_TLS_LH_SHA256 */
+    proven_u8 mac_len;                            /* 20 or 32: of the MAC and of its key */
+    bool etm;                                     /* encrypt_then_mac (RFC 7366) was agreed */
+    bool chained;                                 /* TLS 1.0: a record's IV is the last block of the one before */
+    proven_u16 version;                           /* as records and the MAC carry it */
+    proven_byte_t mac_key[PROVEN_TLS_LH_MAX_SIZE];
+    proven_byte_t iv[16];                         /* the chain, when chained */
+} proven_tls_cbc_t;
+
+#define PROVEN_TLS_CBC_MAX_EXPANSION (PROVEN_TLS_RECORD_HEADER + 16 + PROVEN_TLS_LH_MAX_SIZE + 16)
+/* One CBC record: header, the explicit IV unless chained (`iv`: 16 unpredictable bytes from
+ * the caller), and the protected content. Returns the number of bytes written to `out`, at
+ * most content.size + PROVEN_TLS_CBC_MAX_EXPANSION. `content` and `out` must not overlap. */
+proven_size_t proven_tls_cbc_seal(proven_tls_keys_t *keys, proven_tls_cbc_t *cbc, proven_byte_t type, proven_mem_view_t content,
+                                  const proven_byte_t iv[16], proven_byte_t *out);
+/* Open one in place. Without encrypt_then_mac this does the same work whatever the padding
+ * says and wherever the MAC turns out to start (Lucky Thirteen): there is one answer for every
+ * kind of failure, and the time to reach it depends only on the record's length. */
+/* ---- Finite-field Diffie-Hellman over six known groups: tls_dh.c ---- */
+#define PROVEN_TLS_DH_MAX 512                    /* bytes: the largest prime known here, 4096 bits */
+#define PROVEN_TLS_DH_EXP_MAX 44                 /* bytes: the longest private exponent */
+/* The group a server offers: ffdhe2048 (RFC 7919). Its generator is 2, as every group's here. */
+proven_mem_view_t proven_tls_dh_server_group(void);
+/* True when `p` is one of the six primes and `g` is 2. Nothing else is ever used. */
+[[nodiscard]] bool proven_tls_dh_known(proven_mem_view_t p, proven_mem_view_t g);
+/* How many random bytes make a private exponent for a prime of `p_len` bytes: 32, 36 or 44. */
+proven_size_t proven_tls_dh_exponent_len(proven_size_t p_len);
+/* 2^priv mod p into `out`, p.size bytes. SECRET: priv. */
+[[nodiscard]] bool proven_tls_dh_public(proven_mem_view_t p, const proven_byte_t *priv, proven_size_t priv_len, proven_byte_t *out);
+/* peer^priv mod p with its leading zero bytes dropped, as TLS wants the premaster: up to
+ * p.size bytes into `out`. False when the peer's value is not in 2 .. p-2. SECRET: priv, out. */
+[[nodiscard]] bool proven_tls_dh_shared(proven_mem_view_t p, const proven_byte_t *priv, proven_size_t priv_len, proven_mem_view_t peer,
+                                        proven_byte_t *out, proven_size_t *out_len);
+
+/* Both directions' keys for a CBC suite from the master secret: the MAC keys, the cipher keys
+ * and - in TLS 1.0 only - the first IVs. cbc[0] is the client's writing state, cbc[1] the
+ * server's. The PRF is the suite's from TLS 1.2, and the MD5/SHA-1 one before. */
+void proven_tls_cbc_set_keys(proven_tls_keys_t *client_write, proven_tls_keys_t *server_write, proven_tls_cbc_t cbc[2],
+                             const proven_tls12_suite_t *suite, proven_u16 version, bool etm,
+                             const proven_byte_t master[PROVEN_TLS12_MASTER_SIZE], const proven_byte_t client_random[32],
+                             const proven_byte_t server_random[32]);
+[[nodiscard]] bool proven_tls_cbc_open(proven_tls_keys_t *keys, proven_tls_cbc_t *cbc, proven_byte_t *record, proven_size_t body_len,
+                                       proven_mem_mut_t *content);
 
 /* ---- The configuration and what the state machine needs from it ---- */
 
@@ -183,6 +251,7 @@ struct proven_tls_config {
     proven_u32 ticket_lifetime_s;
     proven_size_t max_handshake_bytes;
     proven_u16 min_version, max_version;          /* never zero: the defaults are filled in */
+    proven_u32 legacy;                            /* PROVEN_TLS_LEGACY_* */
     proven_tls_ticket_keys_t tickets;             /* the one part that changes: see the lock */
 };
 
@@ -273,6 +342,8 @@ proven_size_t proven_tls_rsa_key_der_(const proven_crypto_rsa_key_t *key, const 
  * RSASSA-PSS with a salt of 32 bytes, or - `pkcs1`, for TLS 1.2 peers that offer nothing
  * else - PKCS #1 v1.5. False when the config has no RSA key or the signature could not be made. */
 [[nodiscard]] bool proven_tls_config_rsa_sign_(const proven_tls_config_t *config, bool pkcs1, proven_mem_view_t digest, proven_byte_t *sig, proven_size_t *len);
+/* The premaster of a static-RSA ClientKeyExchange, or 48 random bytes when it is not one. */
+void proven_tls_config_rsa_decrypt_(const proven_tls_config_t *config, proven_mem_view_t cipher, proven_u16 version, proven_byte_t out[48]);
 /* PEM: the label between the dashes, the bytes in Base64, 64 to a line. */
 proven_err_t proven_tls_pem_write_(const char *label, proven_mem_view_t der, proven_mem_mut_t out, proven_size_t *len);
 /* 4 or 16 when `text` is an IP literal (cert.c). */
@@ -287,6 +358,15 @@ void proven_tls_test_knobs(proven_u16 suite_first, bool server_refuses_x25519);
  * client omits the extended master secret; bit 2, the server omits it from its answer; bit 3,
  * the client adds the fallback signal of RFC 7507 to its suites. */
 void proven_tls_test_knobs12(unsigned flags);
+/* More bits of the same, for the legacy set: 16, the client offers the suite of
+ * proven_tls_test_only_suite12 even when its configuration does not allow it; 32, the client
+ * does not ask for encrypt_then_mac; 64, the server agrees to the oldest version the client
+ * allows instead of the newest; 128, the server's Diffie-Hellman prime is not a known one;
+ * 256, its value is 1; 512, the client's value is 1; 1024, the client's RSA premaster carries
+ * another version; 2048, its ClientKeyExchange is no encryption of anything; 4096, the server
+ * asks for a client certificate even on a connection without the extended master secret. */
+/* The client offers only this TLS 1.2-family suite (0: everything, as usual). */
+void proven_tls_test_only_suite12(proven_u16 id);
 /* Send an empty handshake message of `type` under the current keys. */
 bool proven_tls_test_send_handshake(proven_tls_conn_t *conn, proven_byte_t type);
 /* A copy of a connection's sending keys and application secret, for a test that must forge the

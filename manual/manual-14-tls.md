@@ -28,14 +28,16 @@ capable adversary should terminate it in something audited and use this library 
 7. [Client certificates and pins](#7-client-certificates-and-pins)
 8. [When it fails](#8-when-it-fails)
 9. [What is negotiated, what is held, what is not here](#9-what-is-negotiated-what-is-held-what-is-not-here)
+10. [The legacy set: what each setting exposes you to](#10-the-legacy-set-what-each-setting-exposes-you-to)
 
 ## 1. What TLS does, in one page
 
 A TCP connection gives you a pipe. Everyone between the two ends - the cafe's access point, an
 internet provider, whoever compromised a router - can read what goes through it and change it,
 and neither end can tell. TLS (Transport Layer Security; this library speaks version 1.3,
-RFC 8446, and a cut-down version 1.2, RFC 5246 - section 9 says which part) puts three
-properties on top of the pipe:
+RFC 8446, and a cut-down version 1.2, RFC 5246 - section 9 says which part; older parts exist
+only for a configuration that asks for them by name, section 10) puts three properties on top
+of the pipe:
 
 | Property | Meaning | What it is made from |
 |---|---|---|
@@ -86,7 +88,8 @@ Zero-initialise a `proven_tls_options_t`, set `alloc`, and set what applies:
 | `no_resumption`, `ticket_lifetime_s` | both, a server | Section 6 |
 | `keep_peer_certificate` | whoever verifies | Keep the peer's certificate after the handshake, for `proven_tls_peer_certificate` |
 | `max_handshake_bytes` | both | The largest handshake message accepted. Default 65,536 |
-| `min_version`, `max_version` | both | The oldest and newest protocol version this side agrees to: `PROVEN_TLS_VERSION_1_2` or `PROVEN_TLS_VERSION_1_3`. Zero is the default - 1.2 for the minimum, 1.3 for the maximum. **`min_version = PROVEN_TLS_VERSION_1_3` is how to refuse TLS 1.2** (section 9) |
+| `min_version`, `max_version` | both | The oldest and newest protocol version this side agrees to: `PROVEN_TLS_VERSION_1_2` or `PROVEN_TLS_VERSION_1_3`. Zero is the default - 1.2 for the minimum, 1.3 for the maximum. **`min_version = PROVEN_TLS_VERSION_1_3` is how to refuse TLS 1.2** (section 9). `PROVEN_TLS_VERSION_1_1` and `PROVEN_TLS_VERSION_1_0` are legacy (section 10) |
+| `legacy` | both | `PROVEN_TLS_LEGACY_*` bits: parts of TLS that are left out unless named here. Zero, the default, is none of them. **Read section 10 before setting one** |
 
 **`anchors`, `verify` and `pins` describe how the peer is verified, in either role.** There is
 no setting that verifies nothing. A client that would check a chain and is given no anchors is
@@ -98,7 +101,7 @@ handshake, which is at three in the morning on somebody else's machine:
 
 | Returns | When |
 |---|---|
-| `PROVEN_ERR_INVALID_ARG` | No allocator; anchors missing where this side verifies a chain; `PIN_ONLY` with no pins; a certificate without a key, or a key without a certificate; more than 8 certificates; an empty ALPN name; a version that is neither of the two, or a minimum above the maximum |
+| `PROVEN_ERR_INVALID_ARG` | No allocator; anchors missing where this side verifies a chain; `PIN_ONLY` with no pins; a certificate without a key, or a key without a certificate; more than 8 certificates; an empty ALPN name; a version that does not exist, or a minimum above the maximum; a minimum below TLS 1.2 without `PROVEN_TLS_LEGACY_CBC`; a `legacy` bit that does not exist |
 | `PROVEN_ERR_INVALID_FORMAT` | PEM that does not parse, or holds no certificate, or no key; an RSA key outside 2048 to 4096 bits, or whose parts do not belong together, or that does not sign |
 | `PROVEN_ERR_UNSUPPORTED` | A key of another kind - P-384, for one - or an encrypted key file |
 | `PROVEN_ERR_INVALID_STATE` | The key is not the one in the certificate |
@@ -397,7 +400,8 @@ proven_u8str_view_t proven_tls_server_name(const proven_tls_conn_t *conn);
 proven_err_t proven_tls_key_update(proven_tls_conn_t *conn);
 ```
 
-- `proven_tls_version` is `PROVEN_TLS_VERSION_1_3` or `PROVEN_TLS_VERSION_1_2`, and zero until
+- `proven_tls_version` is `PROVEN_TLS_VERSION_1_3` or `PROVEN_TLS_VERSION_1_2` (or one of the
+  two legacy versions, for a configuration that allowed them), and zero until
   the peer's hello has settled it. A program that must not carry something over TLS 1.2 checks
   here, or - better - sets `min_version` and never gets that far.
 - `proven_tls_cipher_suite` is the suite's number (section 9); `proven_tls_alpn` the agreed
@@ -720,7 +724,8 @@ something this list does not have: the CBC cipher suites (padding oracles), RSA 
 (Bleichenbacher's attack, and no forward secrecy), finite-field Diffie-Hellman with weak or
 chosen groups, renegotiation, compression, a master secret not bound to the handshake, SHA-1
 and MD5 in handshake signatures. A peer that offers only those gets `handshake_failure`, and
-your program gets `PROVEN_ERR_PROTOCOL`.
+your program gets `PROVEN_ERR_PROTOCOL`. Some of them can be switched on, one by one, for a
+peer that has nothing else: section 10 says which, and what each one costs.
 
 - **Renegotiation is declined, not answered.** A peer that asks for a new handshake on an
   established connection is sent the warning `no_renegotiation` and the connection carries on
@@ -772,9 +777,11 @@ it is the one scheme this side signs with there.
 
 **Not here:**
 
-- **TLS 1.1 and earlier**, and from TLS 1.2: CBC cipher suites, RSA and finite-field
-  Diffie-Hellman key exchange, session IDs kept on the server, renegotiation, compression,
-  `record_size_limit`. A peer that needs one of those fails with `PROVEN_ERR_PROTOCOL`.
+- **Unless a configuration asks (section 10):** TLS 1.1 and 1.0, CBC cipher suites, RSA and
+  finite-field Diffie-Hellman key exchange, a peer without the extended master secret.
+- **Not at all:** SSL 3.0 and earlier; RC4, 3DES, export, anonymous and DSS suites; CBC with
+  SHA-384; renegotiation; compression; session IDs kept on the server; `record_size_limit` in
+  TLS 1.2. A peer that needs one of those fails with `PROVEN_ERR_PROTOCOL`.
 - **RSA keys above 4096 bits for this side**, and RSA-PSS keys (a certificate whose key is marked for PSS only).
 - **Early data (0-RTT).**
 - **Revocation.** No CRL, no OCSP, no stapling. See Chapter 13.
@@ -799,10 +806,166 @@ whole 1.2 handshake as there is for 1.3, so for the handshake the other implemen
 the evidence); both roles were run against OpenSSL for all six suites and all three kinds of
 key, with tickets, client certificates, PKCS #1 and PSS signatures, a peer without the extended
 master secret (refused), a peer offering only what is left out (refused), and a peer asking to
-renegotiate (declined); and GnuTLS's client was run against the server. The signing path, and
+renegotiate (declined); and GnuTLS's client was run against the server. For the legacy set:
+its pieces are checked against values computed outside the library and against the published
+ones that exist (section 10 lists them); both roles were run against OpenSSL, and the server
+against GnuTLS's client, in TLS 1.0, 1.1 and 1.2 with each added key exchange and cipher, with
+and without encrypt_then_mac, with client certificates, and against peers without the extended
+master secret; and the two places where a wrong step gives a key away - opening a CBC record
+and recovering an RSA premaster - were run under the same checker as below, with what is
+decrypted marked secret, and reported nothing. The signing path, and
 the key derivation and record protection of both versions, were run under a checker that reports any branch or memory index
 that depends on a secret - the primes, the private exponents, the blinding values, the shared
 key and everything derived from it - and reported none,
 at two optimisation levels on one compiler and one processor family. **Not done:** no coverage-guided fuzzing, no protocol-level fuzzing suite
 (tlsfuzzer, BoGo), no timing measurement on hardware, no external review. The primitives
 underneath are Chapter 13's, with the limits stated there.
+
+## 10. The legacy set: what each setting exposes you to
+
+Everything in this section is **off unless a configuration names it**, and none of it is what
+you want. It exists because a program sometimes has to talk to a machine that has nothing
+better - an appliance nobody can update, a server on somebody else's network - and the
+alternative is no connection or a second TLS library. RFC 8996 retired TLS 1.0 and 1.1 and
+RFC 9325 says not to negotiate the rest. If you control both ends, change the other end.
+
+**Each bit is one decision.** Set `legacy` in the options to the ones you mean:
+
+| Bit | What becomes possible | What you give up |
+|---|---|---|
+| `PROVEN_TLS_LEGACY_CBC` | Cipher suites that encrypt with AES in CBC mode and authenticate with HMAC-SHA1 or HMAC-SHA256. Needed for any version below 1.2, which has nothing else | A construction with a twenty-year record of padding attacks; here it is slow to receive |
+| `PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE` | The client encrypts the session's secret under the server's RSA key instead of both sides agreeing on one | **Forward secrecy**: whoever obtains the server's key later reads every recorded connection. And the key itself is put within reach of a server-side mistake (below) |
+| `PROVEN_TLS_LEGACY_DHE` | Key exchange by Diffie-Hellman in a finite field, with an RSA certificate | Nothing in principle; in practice time - it is several times slower than the elliptic-curve exchange - and it exists mostly on peers that are old in other ways too |
+| `PROVEN_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET` | A connection to a peer that does not have RFC 7627 goes ahead | The binding of the session's keys to the handshake that made them |
+
+and `min_version` to `PROVEN_TLS_VERSION_1_1` or `PROVEN_TLS_VERSION_1_0` to allow those
+versions - which also needs the CBC bit, and is refused without it. Nothing changes for a
+configuration that sets none of this: it sends the same hello, gives the same answers and
+holds the same memory as before these existed.
+
+**They are a last resort in the handshake as well.** A legacy suite is offered after, and
+chosen after, every suite of section 9; an older version is agreed only when the peer has no
+newer one. Two sides that both allow everything still end up on TLS 1.3. And the downgrade
+checks of section 9 cover the old versions: a server that could have spoken 1.2 and is made to
+answer 1.0 says so in a way the client checks.
+
+### CBC suites
+
+`ECDHE-ECDSA-` and `ECDHE-RSA-` with `AES128-SHA256`, `AES128-SHA` and `AES256-SHA`; and, with
+the bits below, the same ciphers after `DHE-RSA-` and after plain RSA (there also `AES256-SHA256`).
+The suites whose MAC is SHA-1 are the only ones TLS 1.0 and 1.1 have.
+
+The weakness is the order of operations. The sender authenticates the plaintext, pads it,
+then encrypts; the receiver must decrypt, strip the padding and only then check the MAC. A
+receiver that is a little faster or a little different for one kind of bad record than for
+another tells an attacker, one byte at a time, what the plaintext was (Vaudenay 2002, POODLE,
+Lucky Thirteen). What this library does about it:
+
+- **It asks for the fix first.** `encrypt_then_mac` (RFC 7366) authenticates the ciphertext
+  instead, so nothing is decrypted that was not sent by the peer. It is offered whenever CBC is
+  and used whenever the peer agrees. Most peers that still need CBC do not have it.
+- **Without it, opening a record does the same work whatever is in it.** Everything after
+  decryption - finding the padding, checking it, finding the MAC, computing it over a length
+  that depends on the padding, comparing - is done with masks, no branch and no memory index
+  depending on a decrypted byte, and the number of hash blocks computed depends only on the
+  record's length. Every failure is the one alert, `bad_record_mac`.
+- **Decryption is the portable, constant-time AES** in every configuration - there is no
+  hardware path for it. A CBC connection receives at about 6 MiB/s on the development machine
+  (it sends at about 75). That is the price of this design, and a reason not to use it.
+- **In TLS 1.0** each record's IV is the previous record's last block, so an attacker who can
+  make you send chosen data knows the IV in advance (BEAST). Application data is therefore
+  sent as one byte, then the rest - two records for every write.
+
+### Key exchange by RSA
+
+`AES128-GCM-SHA256` and `AES256-GCM-SHA384`, and with the CBC bit `AES128-SHA256`,
+`AES256-SHA256`, `AES128-SHA` and `AES256-SHA`. The server's key must be RSA.
+
+Two things, and the second is worse than it looks:
+
+- **No forward secrecy.** The secret every key is derived from travels encrypted under the
+  server's long-term key. A recording of the connection is as safe as that key, for ever.
+- **The server becomes a decryption oracle if it makes one mistake.** It decrypts a value the
+  client chose. If anything it does afterwards - an alert, a delay - depends on whether that
+  value decrypted to something well-formed, an attacker can use it, a few thousand connections
+  at a time, to decrypt or *sign* anything with the server's key (Bleichenbacher 1998; ROBOT,
+  2017). That is not limited to this key exchange: a signature forged this way is as good in
+  TLS 1.3. **Enabling this bit on a server puts its key at that risk for every protocol the
+  key is used in.** What is done here: 48 random bytes are drawn before the decryption; the
+  decryption is the blinded, checked operation of section 9; the result is examined with
+  masks - every byte, in fixed order - and either it or the random bytes become the secret, by
+  mask; the handshake then continues identically and fails, if it fails, at the Finished
+  message, like any handshake with a wrong key. This path was run under a checker that reports
+  any branch or memory index that depends on the decrypted bytes, and it reported none. It has
+  not been timed on hardware.
+
+### Finite-field Diffie-Hellman
+
+`DHE-RSA-` with `AES128-GCM-SHA256`, `AES256-GCM-SHA384` and `CHACHA20-POLY1305`, and with the
+CBC bit `AES128-SHA256`, `AES256-SHA256`, `AES128-SHA` and `AES256-SHA`.
+
+What went wrong with DHE was the group, which the server chooses and the client cannot
+examine in the time a handshake takes: too small (Logjam), not a prime, or built to leak. So
+no group is examined here at all:
+
+- **A client accepts a prime only if it is, byte for byte, one of six** - the 2048-, 3072- and
+  4096-bit groups of RFC 7919 and of RFC 3526 - with generator 2. Anything else ends the
+  handshake with `insufficient_security`: a server with a group of its own making cannot be
+  reached, however good the group is.
+- **A server offers one**: the 2048-bit group of RFC 7919.
+- A value from the peer of 0, 1 or the prime less one is refused. Every connection uses a
+  fresh exponent, which is what keeps a known weakness of the key derivation (Raccoon, 2020)
+  out of reach.
+- It costs about 13 ms of processor time a side on the development machine, on top of the
+  signature: a server with a 2048-bit RSA key completes some forty-five such handshakes a
+  second per core. And it keeps its working numbers on the stack: about 20 KiB at the deepest
+  point of a handshake, by the compiler's own accounting at `-O2` on x86-64 - the same as
+  signing with RSA.
+
+### TLS 1.0 and 1.1
+
+`min_version = PROVEN_TLS_VERSION_1_1` or `PROVEN_TLS_VERSION_1_0`, with the CBC bit.
+
+- The handshake's integrity rests on MD5 and SHA-1 together, and signatures are made over
+  them: an RSA key signs both hashes, an ECDSA key signs the SHA-1. Neither hash would be
+  accepted for this anywhere else in the library.
+- There is no AEAD cipher: every suite is CBC with HMAC-SHA1, with everything said above.
+- **An Ed25519 key cannot serve these versions** - they have no way to carry its signature. A
+  server whose key is Ed25519 refuses a client that speaks nothing newer.
+- **No session is kept** from a TLS 1.0 or 1.1 connection: every one is a full handshake.
+- Client certificates work, with P-256 and RSA keys.
+
+### A peer without the extended master secret
+
+RFC 7627 (2015) binds a session's keys to the handshake that made them. Without it, somebody
+in the middle can arrange for two different connections to share a master secret, and then
+pass a client's certificate proof from one to the other (the triple handshake attack). A
+default configuration refuses a peer that lacks it. Most peers that speak only TLS 1.0 or 1.1
+lack it.
+
+With `PROVEN_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET` such a peer is talked to, and on that
+connection the things the attack needs are not done: **no ticket is issued or accepted**, a
+client **shows no certificate**, and a server **does not ask for one** - a server that
+*requires* client certificates refuses such a client outright. A peer that does have the
+extension still uses it; the bit only allows its absence.
+
+### What this costs a program that uses none of it
+
+Eight bytes per connection (a pointer that stays null). An idle TLS 1.0 CBC connection holds
+about 1.15 KiB instead of about 1 KiB.
+
+### How this was checked, and what was not
+
+The registered tests check every piece against values computed outside the library - AES-CBC
+against SP 800-38A, HMAC against RFC 2202 and RFC 4231, and the rest (the old PRF, CBC records
+in every version and both MAC orders, Diffie-Hellman) against an independent implementation -
+and run every suite in every version it exists in, both roles, with each refusal described
+above. The six Diffie-Hellman primes were compared with two other implementations when they
+were added. Outside the registered tests, both roles were run against OpenSSL and the server
+against GnuTLS; and opening a CBC record and recovering an RSA premaster were each run under a
+checker with the decrypted bytes marked secret, together with a deliberately wrong version of
+each that the checker must catch (it did).
+
+**Not done:** a timing measurement on hardware fine enough to see Lucky Thirteen or a
+Bleichenbacher oracle - the checker shows that the instructions executed do not depend on the
+secret, not what a processor does with them; no fuzzing of these paths; no external review.
