@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-10
+
 A MINOR release: TLS 1.2, cut down to the part of it that is still defensible. Until now a
 peer that spoke nothing newer than 1.2 could not be reached at all.
 
