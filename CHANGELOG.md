@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-10
+
 A MINOR release: compression. `deflate.h` reads and writes DEFLATE, bare or wrapped as zlib or
 gzip - the first part of what `Content-Encoding: gzip` and WebSocket's `permessage-deflate`
 need; neither is wired into the HTTP or WebSocket code yet.
