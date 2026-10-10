@@ -439,6 +439,15 @@ static proven_err_t carry(proven_tls_conn_t *from, proven_tls_conn_t *to) {
     return PROVEN_OK;
 }
 
+/* True when the bytes of `text` appear, in order, somewhere in `data`. */
+static bool appears(proven_mem_view_t data, const char *text) {
+    proven_size_t n = strlen(text);
+    for (proven_size_t i = 0; i + n <= data.size; ++i) {
+        if (memcmp(data.ptr + i, text, n) == 0) return true;
+    }
+    return false;
+}
+
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
 
@@ -497,7 +506,7 @@ int main(void) {
     proven_result_size_t wrote = proven_tls_write(client, proven_mem_view_from_u8(PROVEN_LIT("hello, server")));
     EXAMPLE_REQUIRE(wrote.err == PROVEN_OK && wrote.value == 13, "thirteen bytes taken");
     proven_mem_view_t wire = proven_tls_pending_output(client);
-    EXAMPLE_REQUIRE(wire.size > 13 && memchr(wire.ptr, 'h', wire.size) == NULL, "what goes on the wire is a record, and not the text");
+    EXAMPLE_REQUIRE(wire.size > 13 && !appears(wire, "hello, server"), "what goes on the wire is a record, and not the text");
     EXAMPLE_REQUIRE(carry(client, server) == PROVEN_OK, "client to server");
     proven_byte_t buf[64];
     proven_result_size_t got = proven_tls_read(server, (proven_mem_mut_t){ buf, sizeof buf });

@@ -424,6 +424,15 @@ static proven_err_t carry(proven_tls_conn_t *from, proven_tls_conn_t *to) {
     return PROVEN_OK;
 }
 
+/* `text`의 바이트가 그 순서대로 `data` 어딘가에 나타나면 참. */
+static bool appears(proven_mem_view_t data, const char *text) {
+    proven_size_t n = strlen(text);
+    for (proven_size_t i = 0; i + n <= data.size; ++i) {
+        if (memcmp(data.ptr + i, text, n) == 0) return true;
+    }
+    return false;
+}
+
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
 
@@ -481,7 +490,7 @@ int main(void) {
     proven_result_size_t wrote = proven_tls_write(client, proven_mem_view_from_u8(PROVEN_LIT("hello, server")));
     EXAMPLE_REQUIRE(wrote.err == PROVEN_OK && wrote.value == 13, "열세 바이트를 받았다");
     proven_mem_view_t wire = proven_tls_pending_output(client);
-    EXAMPLE_REQUIRE(wire.size > 13 && memchr(wire.ptr, 'h', wire.size) == NULL, "선 위로 가는 것은 레코드이고, 그 텍스트가 아니다");
+    EXAMPLE_REQUIRE(wire.size > 13 && !appears(wire, "hello, server"), "선 위로 가는 것은 레코드이고, 그 텍스트가 아니다");
     EXAMPLE_REQUIRE(carry(client, server) == PROVEN_OK, "클라이언트에서 서버로");
     proven_byte_t buf[64];
     proven_result_size_t got = proven_tls_read(server, (proven_mem_mut_t){ buf, sizeof buf });
