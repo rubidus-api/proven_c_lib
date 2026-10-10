@@ -1058,8 +1058,8 @@ Unix-domain sockets need Windows 10 version 1803 or later; where the family is m
 
 ## 11. What is not here
 
-- **TLS.** The transport interface is where it will attach; this version has none, and a
-  connection made here is not encrypted.
+- **Encryption.** A connection made here is not encrypted. TLS is a layer over the transport
+  interface: [Chapter 14](manual-14-tls.md).
 - **A deadline on name resolution.** See section 2.
 - **Scale on Windows.** The selector is `epoll` or `kqueue` where they exist; on Windows it is built on `WSAPoll`, and there is no completion-port path.
 - **Unix-domain datagrams, raw sockets, multicast, socket options beyond `TCP_NODELAY`.**

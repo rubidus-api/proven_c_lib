@@ -90,20 +90,32 @@ static void bs_unpack(proven_byte_t *out, const proven_u64 q[8], proven_size_t n
     }
 }
 
+/* The round keys as bit planes, the same key in all four lanes. They are rebuilt from the bytes
+ * for each call rather than kept: a context is then a quarter of the size, which is what an
+ * idle connection holds two of. */
+typedef struct { proven_u64 k[15][8]; } bs_keys_t;
+
+static void bs_keys(bs_keys_t *bk, const proven_crypto_aes_gcm_t *ctx) {
+    for (int r = 0; r <= ctx->rounds; ++r) {
+        bs_pack(bk->k[r], ctx->rk + 16 * r, 16);
+        for (int b = 0; b < 8; ++b) bk->k[r][b] *= BS_LANES;
+    }
+}
+
 /* Encrypt up to four blocks (n bytes, a multiple of 16) in place. */
-static void bs_encrypt(const proven_crypto_aes_gcm_t *ctx, proven_byte_t *blocks, proven_size_t n) {
+static void bs_encrypt(const bs_keys_t *bk, int rounds, proven_byte_t *blocks, proven_size_t n) {
     proven_u64 q[8];
     bs_pack(q, blocks, n);
-    for (int b = 0; b < 8; ++b) q[b] ^= ctx->bs[0][b];
-    for (int r = 1; r < ctx->rounds; ++r) {
+    for (int b = 0; b < 8; ++b) q[b] ^= bk->k[0][b];
+    for (int r = 1; r < rounds; ++r) {
         bs_sbox(q);
         bs_shift_rows(q);
         bs_mix_columns(q);
-        for (int b = 0; b < 8; ++b) q[b] ^= ctx->bs[r][b];
+        for (int b = 0; b < 8; ++b) q[b] ^= bk->k[r][b];
     }
     bs_sbox(q);
     bs_shift_rows(q);
-    for (int b = 0; b < 8; ++b) q[b] ^= ctx->bs[ctx->rounds][b];
+    for (int b = 0; b < 8; ++b) q[b] ^= bk->k[rounds][b];
     bs_unpack(blocks, q, n);
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)q, .size = sizeof q });
 }
@@ -135,10 +147,6 @@ static void aes_expand(proven_crypto_aes_gcm_t *ctx, const proven_byte_t *key, p
         }
         for (int j = 0; j < 4; ++j) ctx->rk[4 * i + j] = (proven_byte_t)(ctx->rk[4 * (i - nk) + j] ^ t[j]);
         proven_mem_wipe((proven_mem_mut_t){ .ptr = t, .size = sizeof t });
-    }
-    for (int r = 0; r <= ctx->rounds; ++r) {
-        bs_pack(ctx->bs[r], ctx->rk + 16 * r, 16);
-        for (int b = 0; b < 8; ++b) ctx->bs[r][b] *= BS_LANES;      /* the same key in all four lanes */
     }
 }
 
@@ -203,9 +211,12 @@ void proven_crypto_aes_encrypt_block(const proven_crypto_aes_gcm_t *ctx, const p
     if (ctx->hw) { proven_sys_aes_encrypt_block(ctx->rk, ctx->rounds, in, out); return; }
 #endif
     proven_byte_t b[16];
+    bs_keys_t bk;
+    bs_keys(&bk, ctx);
     for (int i = 0; i < 16; ++i) b[i] = in[i];
-    bs_encrypt(ctx, b, 16);
+    bs_encrypt(&bk, ctx->rounds, b, 16);
     for (int i = 0; i < 16; ++i) out[i] = b[i];
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&bk, .size = sizeof bk });
 }
 
 static void gcm_ctr(const proven_crypto_aes_gcm_t *ctx, const proven_byte_t nonce[12], proven_u32 counter,
@@ -214,6 +225,8 @@ static void gcm_ctr(const proven_crypto_aes_gcm_t *ctx, const proven_byte_t nonc
     if (ctx->hw) { proven_sys_aes_ctr(ctx->rk, ctx->rounds, nonce, counter, in, out, len); return; }
 #endif
     proven_byte_t ks[64];
+    bs_keys_t bk;
+    bs_keys(&bk, ctx);
     while (len > 0) {
         proven_size_t n = len < 64 ? len : 64;
         proven_size_t blocks = (n + 15) / 16;
@@ -223,10 +236,11 @@ static void gcm_ctr(const proven_crypto_aes_gcm_t *ctx, const proven_byte_t nonc
             ks[16 * k + 14] = (proven_byte_t)(counter >> 8); ks[16 * k + 15] = (proven_byte_t)counter;
             counter++;
         }
-        bs_encrypt(ctx, ks, blocks * 16);
+        bs_encrypt(&bk, ctx->rounds, ks, blocks * 16);
         for (proven_size_t i = 0; i < n; ++i) out[i] = (proven_byte_t)(in[i] ^ ks[i]);
         in += n; out += n; len -= n;
     }
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&bk, .size = sizeof bk });
     proven_mem_wipe((proven_mem_mut_t){ .ptr = ks, .size = sizeof ks });
 }
 

@@ -654,8 +654,9 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 - Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
 - 네트워킹: `net` (기다리는 모든 호출에 기한이 있는 TCP·UDP·유닉스 도메인 소켓, 여러 소켓의 준비 상태, 전송 인터페이스). Hosted 전용이며 `PROVEN_NO_NET`으로 뺄 수 있습니다.
 - URL과 HTTP: `url` (파싱, 퍼센트 코딩, 루트를 벗어날 수 없게 해소한 요청 경로), `http` (HTTP/1.1 메시지 코덱 — 헤드 파서, 본문 프레이밍과 디코더, 쓰기 함수, 날짜 — 요청 밀반입의 재료가 되는 모호함을 거절합니다). 코덱 둘레에는 `http_auth` (Basic과 Digest), `http_cookie` (호스트 전용 쿠키 보관함), `sse` (서버 전송 이벤트)가 있고, 범위·multipart 본문·참조 해소도 있습니다. 순수 텍스트 처리이고 freestanding에서 쓸 수 있습니다.
-- 소켓 위의 HTTP: `http_server` (핸들러 하나와, 모든 기다림에 한도가 있는 루프. 스레드 하나 또는 job system에서 돕니다)와 `http_client` (리다이렉트, 인증 요구, 쿠키, HTTP·SOCKS5 프록시, 연결 재사용). hosted 전용입니다. **TLS는 아직 없습니다. 둘 다 평문 HTTP를 말하고, 클라이언트는 `https` URL을 평문으로 가져오는 대신 거절합니다.**
-- WebSocket: `ws` (RFC 6455 코덱 — 핸드셰이크 값과 확인, 프레임, 받는 쪽의 규칙을 적용하는 디코더. 순수 처리이고 freestanding에서 쓸 수 있습니다)와 `ws_conn` (HTTP 클라이언트와 서버 위에서 어느 쪽에서든 여는 연결: 온전한 메시지, ping 자동 응답, close 핸드셰이크. hosted 전용이고, 연결 하나에 스레드 하나이며, 압축과 TLS는 없습니다).
+- 소켓 위의 HTTP: `http_server` (핸들러 하나와, 모든 기다림에 한도가 있는 루프. 스레드 하나 또는 job system에서 돕니다)와 `http_client` (리다이렉트, 인증 요구, 쿠키, HTTP·SOCKS5 프록시, 연결 재사용). hosted 전용입니다. TLS 설정을 주면(각각 필드 하나) 둘 다 HTTPS를 말하고, 주지 않으면 서버는 평문 HTTP이고 클라이언트는 `https` URL을 평문으로 가져오는 대신 거절합니다.
+- WebSocket: `ws` (RFC 6455 코덱 — 핸드셰이크 값과 확인, 프레임, 받는 쪽의 규칙을 적용하는 디코더. 순수 처리이고 freestanding에서 쓸 수 있습니다)와 `ws_conn` (HTTP 클라이언트와 서버 위에서 어느 쪽에서든 여는 연결: 온전한 메시지, ping 자동 응답, close 핸드셰이크. hosted 전용이고, 연결 하나에 스레드 하나이며, 압축은 없습니다. `wss`는 같은 TLS 설정으로 됩니다).
+- TLS: `tls` (TLS 1.3, 클라이언트와 서버: freestanding에서 쓸 수 있는 I/O 없는 엔진, 전송 래퍼, HTTP 클라이언트용 랩과 HTTP 서버용 필드. 세션 재개, 클라이언트 인증서, 핀. 이쪽의 키는 P-256과 Ed25519이고, RSA 상대는 검증합니다. 외부 감사를 받지 않은 새 구현입니다 — 의존하기 전에 14장의 첫 쪽을 읽어 주세요).
 - Execution: `coro`, `job`.
 - Diagnostics: `panic`.
 - Optional short aliases: `alias_xcv`.
@@ -664,9 +665,9 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 
 `proven`은 libc 대체품도 아니고, garbage collector도 아니고, 프레임워크도 아닙니다. 프로세스, build graph, error policy를 대신 소유하려고 하지도 않습니다. 읽기 쉽고, 테스트하기 쉽고, 한 경계씩 포팅할 수 있도록 만든 C 컴포넌트 모음입니다.
 
-플랫폼 경계가 **어디서 끝나는지**도 적어 둘 가치가 있습니다. 적어 두지 않으면 부딪혀 봐야 알게 되기 때문입니다. PAL이 덮는 범위는 메모리, 파일시스템, 시간, 메모리 매핑, 환경 변수, 콘솔 I/O, 스레드, 소켓입니다. 프로세스 제어(`fork` / `exec` / 파이프)와 터미널 제어(raw 모드, job control)는 **덮지 않습니다**. 프로그램의 본질이 그 중 하나라면 POSIX나 Win32를 직접 부르게 되고, "플랫폼 `#ifdef` 없음"이라는 성질은 거기까지 확장되지 않습니다. 소켓 계층은 단계적으로 짓고 있는 네트워킹 스택의 첫 걸음입니다. 소켓(`epoll`/`kqueue` selector 포함), HTTP/1.1 메시지 코덱, HTTP 클라이언트와 서버, WebSocket은 들어왔고, TLS·압축·HTTP/2는 아직 없습니다.
+플랫폼 경계가 **어디서 끝나는지**도 적어 둘 가치가 있습니다. 적어 두지 않으면 부딪혀 봐야 알게 되기 때문입니다. PAL이 덮는 범위는 메모리, 파일시스템, 시간, 메모리 매핑, 환경 변수, 콘솔 I/O, 스레드, 소켓입니다. 프로세스 제어(`fork` / `exec` / 파이프)와 터미널 제어(raw 모드, job control)는 **덮지 않습니다**. 프로그램의 본질이 그 중 하나라면 POSIX나 Win32를 직접 부르게 되고, "플랫폼 `#ifdef` 없음"이라는 성질은 거기까지 확장되지 않습니다. 소켓 계층은 단계적으로 짓고 있는 네트워킹 스택의 첫 걸음입니다. 소켓(`epoll`/`kqueue` selector 포함), HTTP/1.1 메시지 코덱, HTTP 클라이언트와 서버, WebSocket, 인증서와 TLS 1.3은 들어왔고, 압축·HTTP/2·TLS 1.2는 아직 없습니다.
 
-`hash`와 `hmac` 모듈은 암호학적·비암호학적 해시(FNV·SipHash·CRC-32와 함께 SHA-2 계열)와 HMAC·HKDF를, `cert`는 X.509 인증서 읽기와 검증을, `random`은 OS 강도 바이트를 실제로 제공합니다. 다만 `proven`은 지금 암호 라이브러리가 아닙니다. 공개된 서명, 키 교환, 비밀번호 해싱, 인증 암호화(AEAD)가 없고 TLS도 아직 없으니 찾아 헤매지 않으셔도 되고, `net`으로 만든 연결은 암호화되지 않습니다. 경로 조작, 인자 파싱, 로깅 프레임워크도 없으며 이것들은 계획에도 없습니다.
+`hash`와 `hmac` 모듈은 암호학적·비암호학적 해시(FNV·SipHash·CRC-32와 함께 SHA-2 계열)와 HMAC·HKDF를, `cert`는 X.509 인증서 읽기와 검증을, `tls`는 TLS 1.3을, `random`은 OS 강도 바이트를 실제로 제공합니다. 다만 `proven`은 암호 라이브러리가 아닙니다. TLS 밑의 기본 연산은 내부용이고, 공개된 서명, 키 교환, 비밀번호 해싱, 인증 암호화(AEAD)는 없으니 찾아 헤매지 않으셔도 됩니다. `net`으로 만든 연결은 `tls`로 감싸지 않으면 암호화되지 않습니다. 경로 조작, 인자 파싱, 로깅 프레임워크도 없으며 이것들은 계획에도 없습니다.
 
 ## 실제로 프로젝트에 적용했을 때의 효용성
 

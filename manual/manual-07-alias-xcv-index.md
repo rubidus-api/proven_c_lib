@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-976 aliases: 718 lowercase `xcv_` names and 258 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1020 aliases: 755 lowercase `xcv_` names and 265 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -66,6 +66,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_CERT_FAULT_NOT_YET_VALID` | `PROVEN_CERT_FAULT_NOT_YET_VALID` |
 | `XCV_CERT_FAULT_NO_ISSUER` | `PROVEN_CERT_FAULT_NO_ISSUER` |
 | `XCV_CERT_FAULT_PATH_LENGTH` | `PROVEN_CERT_FAULT_PATH_LENGTH` |
+| `XCV_CERT_FAULT_PIN_MISMATCH` | `PROVEN_CERT_FAULT_PIN_MISMATCH` |
 | `XCV_CERT_FAULT_TOO_DEEP` | `PROVEN_CERT_FAULT_TOO_DEEP` |
 | `XCV_CERT_FAULT_USAGE` | `PROVEN_CERT_FAULT_USAGE` |
 | `XCV_CERT_KEY_EC_P256` | `PROVEN_CERT_KEY_EC_P256` |
@@ -255,6 +256,12 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_SHA256_SIZE` | `PROVEN_SHA256_SIZE` |
 | `XCV_SHA384_SIZE` | `PROVEN_SHA384_SIZE` |
 | `XCV_SHA512_SIZE` | `PROVEN_SHA512_SIZE` |
+| `XCV_TLS_CLIENT_AUTH_NONE` | `PROVEN_TLS_CLIENT_AUTH_NONE` |
+| `XCV_TLS_CLIENT_AUTH_REQUEST` | `PROVEN_TLS_CLIENT_AUTH_REQUEST` |
+| `XCV_TLS_CLIENT_AUTH_REQUIRE` | `PROVEN_TLS_CLIENT_AUTH_REQUIRE` |
+| `XCV_TLS_SESSION_SIZE` | `PROVEN_TLS_SESSION_SIZE` |
+| `XCV_TLS_VERIFY_CHAIN` | `PROVEN_TLS_VERIFY_CHAIN` |
+| `XCV_TLS_VERIFY_PIN_ONLY` | `PROVEN_TLS_VERIFY_PIN_ONLY` |
 | `XCV_U16_LIT` | `PROVEN_U16_LIT` |
 | `XCV_VERSION_ENCODE` | `PROVEN_VERSION_ENCODE(major, minor, patch)` |
 | `XCV_VERSION_MAJOR` | `PROVEN_VERSION_MAJOR` |
@@ -849,6 +856,43 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_time_t` | `proven_time_t` |
 | `xcv_time_u16_fmt` | `proven_time_u16_fmt` |
 | `xcv_time_u8_fmt` | `proven_time_u8_fmt` |
+| `xcv_tls_alert_received` | `proven_tls_alert_received` |
+| `xcv_tls_alert_sent` | `proven_tls_alert_sent` |
+| `xcv_tls_alpn` | `proven_tls_alpn` |
+| `xcv_tls_cipher_suite` | `proven_tls_cipher_suite` |
+| `xcv_tls_client_auth_t` | `proven_tls_client_auth_t` |
+| `xcv_tls_client_create` | `proven_tls_client_create` |
+| `xcv_tls_close` | `proven_tls_close` |
+| `xcv_tls_config` | `proven_tls_config` |
+| `xcv_tls_config_create` | `proven_tls_config_create` |
+| `xcv_tls_config_destroy` | `proven_tls_config_destroy` |
+| `xcv_tls_config_t` | `proven_tls_config_t` |
+| `xcv_tls_conn` | `proven_tls_conn` |
+| `xcv_tls_conn_destroy` | `proven_tls_conn_destroy` |
+| `xcv_tls_conn_t` | `proven_tls_conn_t` |
+| `xcv_tls_feed` | `proven_tls_feed` |
+| `xcv_tls_http_wrap` | `proven_tls_http_wrap` |
+| `xcv_tls_is_established` | `proven_tls_is_established` |
+| `xcv_tls_key_update` | `proven_tls_key_update` |
+| `xcv_tls_now_fn` | `proven_tls_now_fn` |
+| `xcv_tls_options_t` | `proven_tls_options_t` |
+| `xcv_tls_output_sent` | `proven_tls_output_sent` |
+| `xcv_tls_peer_certificate` | `proven_tls_peer_certificate` |
+| `xcv_tls_peer_fault` | `proven_tls_peer_fault` |
+| `xcv_tls_peer_key_sha256` | `proven_tls_peer_key_sha256` |
+| `xcv_tls_pending_output` | `proven_tls_pending_output` |
+| `xcv_tls_random_fn` | `proven_tls_random_fn` |
+| `xcv_tls_read` | `proven_tls_read` |
+| `xcv_tls_resumed` | `proven_tls_resumed` |
+| `xcv_tls_self_signed` | `proven_tls_self_signed` |
+| `xcv_tls_server_create` | `proven_tls_server_create` |
+| `xcv_tls_server_name` | `proven_tls_server_name` |
+| `xcv_tls_session_t` | `proven_tls_session_t` |
+| `xcv_tls_transport_client` | `proven_tls_transport_client` |
+| `xcv_tls_transport_conn` | `proven_tls_transport_conn` |
+| `xcv_tls_transport_server` | `proven_tls_transport_server` |
+| `xcv_tls_verify_t` | `proven_tls_verify_t` |
+| `xcv_tls_write` | `proven_tls_write` |
 | `xcv_transport_close` | `proven_transport_close` |
 | `xcv_transport_is_valid` | `proven_transport_is_valid` |
 | `xcv_transport_read` | `proven_transport_read` |

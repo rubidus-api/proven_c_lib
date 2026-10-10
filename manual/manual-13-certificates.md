@@ -11,10 +11,10 @@ system: they are available in a [freestanding](manual-freestanding.md) build. A 
 anchors allocates through the allocator you give it. One call, `proven_cert_store_add_system`,
 reads the operating system's roots and is hosted-only.
 
-**What this is, and what it is not yet.** This is the certificate half of TLS. The protocol
-itself - the handshake and the encrypted records - is not in this version: nothing here opens
-an `https` connection. What is here is the part you can already use on its own: checking a
-certificate you were handed, from a file, a message or another library's handshake.
+**What this is.** This is the certificate half of TLS, usable on its own: checking a certificate
+you were handed, from a file, a message or another library's handshake. The protocol itself -
+the handshake and the encrypted records - is [Chapter 14](manual-14-tls.md), which uses
+everything here.
 
 **And a caution that will stay in this chapter whatever is added to it.** This is a new
 implementation with no external audit. It is tested against another implementation and against
@@ -441,7 +441,6 @@ make verification expensive by sending a tangle.
 - **Certificate policies.** The policy extensions are recognised so that a certificate carrying
   them is not refused, and are not enforced.
 - **Internationalised names.** Compared as ASCII: supply the `xn--` form.
-- **The TLS protocol.** See the top of this chapter.
 - **Private keys.** Nothing here reads or holds one.
 
 **How this was tested.** Certificate chains built by another implementation, one for every

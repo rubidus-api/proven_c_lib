@@ -197,6 +197,7 @@ platform/proven_sys_mem.c
 | `hash_legacy.h` | 사용 가능 | SHA-1과 MD5. 그것을 못 박은 형식(WebSocket accept 키, 오래된 체크섬 파일)을 위한 것이다. SHA-256과 같은 모양이고, MD5의 상수 64개보다 큰 표는 없다. |
 | `hmac.h` | 사용 가능 | SHA-256, SHA-384, SHA-512(뒤의 둘은 `hash.h`에 있다) 위의 HMAC과 HKDF. 순수한 산술이다. 함께 쓰는 `proven_mem_equal_ct`와 `proven_mem_wipe`는 `memory.h`에 있다. |
 | `cert.h` | 사용 가능, `proven_cert_store_add_system` 제외 | X.509 인증서: 읽기, 이름, PEM, 신뢰 앵커 저장소(여러분의 할당자로), 체인 검증. 시각과 앵커는 여러분이 공급한다. 운영체제의 루트를 읽는 것만 운영체제가 필요하다. |
+| `tls.h` | 엔진: 사용 가능. 전송 래퍼와 `proven_tls_http_wrap`: 호스티드 | I/O 없는 상태 기계로서의 TLS 1.3: 도착한 바이트를 주고, 내주는 바이트를 보낸다. 프리스탠딩 빌드는 설정에 난수원과 시계를 공급해야 한다(`random`, `now`). |
 | `url.h`, `http.h` | 사용 가능 | URL 파싱과 퍼센트 코딩, 그리고 HTTP/1.1 메시지 코덱. 순수한 텍스트 처리다: 소켓도 할당도 없다. 전송은 여러분이 제공한다 - 소켓이 없는 타깃(wasm32, 베어메탈)에서도 코덱은 메시지를 파싱하고 쓴다. `proven_http_date_format`은 여러분이 주는 시각을 받는다. 프리스탠딩 시계는 0을 돌려준다. |
 | `http_auth.h`, `http_cookie.h`, `sse.h` | 사용 가능 | Basic과 Digest 인증 값, 쿠키 보관함, 서버 전송 이벤트 파서. 코덱과 마찬가지로 텍스트 처리다. 쿠키 보관함은 여러분이 넘긴 할당자에서 할당하고, 시계를 읽는 대신 현재 시각을 인자로 받는다. `proven_http_multipart_boundary`는 여러분이 준 무작위 바이트를 받으므로 엔트로피 원천이 필요 없다. |
 | `ws.h` | 사용 가능 | WebSocket 코덱: 핸드셰이크 값과 확인, 프레임 헤더, 마스킹, close 페이로드, 메시지 디코더. 라이브러리의 SHA-1과 Base64를 쓰고, 키와 마스크의 무작위 바이트는 인자로 받는다. wasm32 모듈을 돌리는 브라우저는 자기 WebSocket을 갖고 있다. 거기서 이 코덱의 쓰임은 브라우저가 아닌 호스트이거나 핸드셰이크 계산뿐이다. |

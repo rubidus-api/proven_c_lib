@@ -36,16 +36,17 @@ HTTP를 모른다. 이 두 헤더는 그 사이의 부분이다 - 연결을 받�
 템플릿도 없다. 요청 하나로 함수 하나를 부른다. 클라이언트에는 재시도 정책도, 캐시도, JSON도 없다.
 요청 하나를 보내고 응답 하나를 준다. 그 위에 프로그램이 짓는 것은 프로그램의 것이다.
 
-**TLS가 없다.** 이 라이브러리에는 아직 없다. 서버는 평문 HTTP만 말한다. 클라이언트는 `https` URL을
-`PROVEN_ERR_UNSUPPORTED`로 거절한다 - 슬그머니 `http`로 대신 가져오지 않는다 - . 여러분이 암호화를
-직접 공급하는 경우만 예외다(§10). TLS가 들어오기 전까지 이 둘이 보내고 받는 모든 것은 경로 위의
-누구든 읽을 수 있고 바꿀 수 있다.
+**TLS는 여러분이 고르는 것이고, 기본값은 없음이다.** 서버는 설정에 TLS 설정을 주지 않으면 평문
+HTTP를 말하고, 클라이언트는 TLS 랩을 주지 않으면 `https` URL을 `PROVEN_ERR_UNSUPPORTED`로
+거절한다 - 슬그머니 `http`로 대신 가져오지 않는다. 둘 다 필드 하나씩이며, 방법은
+[14장](manual-14-tls-ko.md)에 있다. 그것 없이는 이 둘이 보내고 받는 모든 것을 경로 위의 누구든 읽을
+수 있고 바꿀 수 있다.
 
-- 서버는 TLS를 끝내 주는 것 - 리버스 프록시, 로드 밸런서 - 뒤에 두거나, loopback 인터페이스나
-  믿을 수 있는 네트워크 안에 두어라.
-- 클라이언트로 다른 기계에 비밀번호나 토큰이나 세션 쿠키를 보내지 마라.
+- 서버에 TLS 설정을 주거나, TLS를 끝내 주는 것 뒤에 두거나, loopback 인터페이스나 믿을 수 있는
+  네트워크 안에 두어라.
+- 클라이언트로 `http://`를 통해 다른 기계에 비밀번호나 토큰이나 세션 쿠키를 보내지 마라.
 
-이것은 코드가 오늘 하는 일을 적은 것이지, 따져 보고 받아들일 권고가 아니다.
+이것은 코드가 하는 일을 적은 것이지, 따져 보고 받아들일 권고가 아니다.
 
 ## 2. 서버
 
@@ -89,6 +90,7 @@ typedef struct {
     proven_u32 body_timeout_ms;        /* 0: 30 s */
     proven_u32 write_timeout_ms;       /* 0: 30 s */
     proven_u32 idle_timeout_ms;        /* 0: 60 s */
+    const proven_tls_config_t *tls;    /* NULL: plain HTTP */
 } proven_http_server_config_t;
 ```
 
@@ -103,6 +105,7 @@ typedef struct {
 | `body_timeout_ms` | 같은 수법을 본문으로 쓰는 것. 본문 읽기 한 번이 이만큼 기다릴 수 있다. |
 | `write_timeout_ms` | 큰 응답을 요청해 놓고 읽지 않는 클라이언트. 쓰기 한 번이 이만큼 기다릴 수 있다. |
 | `idle_timeout_ms` | 열어 둔 채 쓰지 않는 연결. HTTP가 허락하는 대로 말없이 닫는다. |
+| `tls` | 인증서를 가진 TLS 설정([14장](manual-14-tls-ko.md)): 그러면 모든 연결이 HTTPS다. 서버보다 오래 살아야 한다. 핸드셰이크는 `head_timeout_ms`를 첫 요청의 헤드와 함께 쓴다. |
 | `max_head_bytes`, `max_headers` | 끝나지 않는 헤드, 필드가 만 개인 헤드: `431`. |
 | `max_body_bytes` | 받을 준비가 된 것보다 큰 본문: `413`. 길이를 미리 알렸으면 읽기 전에, 청크였으면 읽는 도중에. |
 | `max_connections` | 메모리가 감당할 수 있는 것보다 많은 연결. 다음 클라이언트는 listen 대기열에서 기다린다. 거절되지 않는다. |
@@ -498,7 +501,7 @@ typedef struct {
 | `PROVEN_ERR_REFUSED`, `PROVEN_ERR_UNREACHABLE`, `PROVEN_ERR_TIMEOUT`, `PROVEN_ERR_RESET` | 연결: 9장에서의 뜻 그대로. |
 | `PROVEN_ERR_OUT_OF_BOUNDS` | 요청이나 응답 헤드가 `max_head_bytes`보다 크다. |
 | `PROVEN_ERR_PERMISSION` | 프록시가 거절했다. |
-| `PROVEN_ERR_UNTRUSTED` | `tls_wrap`이 서버를 검증하지 못했다. |
+| `PROVEN_ERR_UNTRUSTED`, `PROVEN_ERR_EXPIRED`, `PROVEN_ERR_NOT_YET_VALID`, `PROVEN_ERR_NAME_MISMATCH`, `PROVEN_ERR_PROTOCOL` | `tls_wrap`에서: 서버를 검증할 수 없었거나 TLS 핸드셰이크가 실패했다(14장 8절). 요청의 어떤 부분도 보내지지 않았다. |
 
 ### 주의사항, 그리고 무엇이 잘못되는가
 
@@ -616,10 +619,11 @@ typedef proven_err_t (*proven_http_tls_wrap_fn)(void *ctx, proven_transport_t pl
 그 위에서 HTTP를 말하고 차이를 알지 못한다. 9장의 전송 인터페이스가 그것이 만들어진 목적대로 일하는
 것이다.
 
-라이브러리는 아직 그런 함수를 제공하지 않는다. 이 이음매가 여기 있는 까닭은, 그 둘레의 클라이언트
+라이브러리가 하나를 제공한다: `proven_tls_http_wrap`, 컨텍스트는 `proven_tls_config_t *`다
+([14장](manual-14-tls-ko.md) 3절). 이 이음매가 인터페이스로 남아 있는 까닭은, 그 둘레의 클라이언트
 동작 - 리다이렉트에서 내려가지 않기, 자격 증명을 원래 자리에 두기, 핸드셰이크보다 터널이 먼저 - 이
-이미 정해지고 시험되어 있도록 하고, TLS 구현을 가진 프로그램이 오늘 그것을 붙일 수 있도록 하기
-위해서다.
+뒤에 어떤 TLS가 있는지에 기대지 않게 하고, 다른 TLS 구현을 가진 프로그램이 대신 그것을 붙일 수
+있게 하기 위해서다.
 
 **직접 쓴다면 반드시 서버를 검증해야 한다.** `host`를 넘기는 것은 인증서를 그것에 견주어 확인하라는
 뜻이다. 검증 없이 암호화만 하는 wrap은, 그 연결 한가운데 있는 누군가만 빼고 모두에게서 비밀인 연결을
@@ -795,7 +799,7 @@ int main(void) {
 
     /* 오류란 들여다볼 응답이 없을 때다. */
     err = proven_http_client_get(client, PROVEN_LIT("https://127.0.0.1/"), &resp);
-    EXAMPLE_REQUIRE(err == PROVEN_ERR_UNSUPPORTED, "https: this library has no TLS yet, and says so rather than sending in the clear");
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_UNSUPPORTED, "https without a tls_wrap: the client says so rather than sending in the clear");
     proven_http_client_finish(&resp);         /* 실패한 뒤에 불러도 해롭지 않다 */
 
     proven_u8str_destroy(heap, &text);

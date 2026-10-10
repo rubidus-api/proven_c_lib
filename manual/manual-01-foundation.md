@@ -147,7 +147,7 @@ typedef enum {
 | `PROVEN_ERR_EXPIRED` | A certificate is past the end of its validity period. | Refusing; telling the user it expired. If everything fails this way, suspect the clock. |
 | `PROVEN_ERR_NOT_YET_VALID` | A certificate's validity period has not begun. | Refusing; the clock is the usual culprit. |
 | `PROVEN_ERR_NAME_MISMATCH` | A certificate is valid, and is for another name than the one you meant to reach. | Refusing: this is what a misdirected or intercepted connection looks like. |
-| `PROVEN_ERR_PROTOCOL` | A peer broke the rules of a security protocol, or the two sides have nothing in common to speak. Reserved for the TLS unit; nothing in this version returns it. | Closing the connection. |
+| `PROVEN_ERR_PROTOCOL` | A peer broke the rules of a security protocol, or the two sides have nothing in common to speak. The TLS unit returns it for everything a peer does wrong that is not about its certificate. | Closing the connection. |
 
 **Room for your own codes.** Every `proven_err_t` value is below `PROVEN_ERR_RESERVED_END`
 (0x1000), and that is a promise for every later version, not a description of this one: proven

@@ -38,16 +38,18 @@ sessions and no templates: it calls one function with one request. The client ha
 policy, no cache and no JSON: it sends one request and gives you one response. What a program
 builds on them is the program's.
 
-**There is no TLS.** This library does not have it yet. The server speaks plain HTTP only. The
-client refuses an `https` URL with `PROVEN_ERR_UNSUPPORTED` - it does not quietly fetch it over
-`http` instead - unless you supply the encryption yourself (section 10). Until TLS is here,
-everything these two send and receive can be read, and changed, by anyone on the path:
+**TLS is a choice you make, and the default is none.** A server speaks plain HTTP unless its
+config is given a TLS configuration, and a client refuses an `https` URL with
+`PROVEN_ERR_UNSUPPORTED` - it does not quietly fetch it over `http` instead - unless it is
+given the TLS wrap. Both are one field each; [Chapter 14](manual-14-tls.md) is how. Without
+them, everything these two send and receive can be read, and changed, by anyone on the path:
 
-- Put the server behind something that terminates TLS - a reverse proxy, a load balancer - or
+- Give the server a TLS configuration, or put it behind something that terminates TLS, or
   keep it on the loopback interface or a network you trust.
-- Do not send a password, a token or a session cookie through the client to another machine.
+- Do not send a password, a token or a session cookie through a client over `http://` to
+  another machine.
 
-That is a statement of what the code does today, not a recommendation to be weighed.
+That is a statement of what the code does, not a recommendation to be weighed.
 
 ## 2. A server
 
@@ -91,6 +93,7 @@ typedef struct {
     proven_u32 body_timeout_ms;        /* 0: 30 s */
     proven_u32 write_timeout_ms;       /* 0: 30 s */
     proven_u32 idle_timeout_ms;        /* 0: 60 s */
+    const proven_tls_config_t *tls;    /* NULL: plain HTTP */
 } proven_http_server_config_t;
 ```
 
@@ -105,6 +108,7 @@ there is no "unlimited".
 | `body_timeout_ms` | The same trick played with the body: each read of the body may wait this long. |
 | `write_timeout_ms` | A client that asks for a large response and never reads it. Each write may wait this long. |
 | `idle_timeout_ms` | Connections kept open and unused. Closed without a word, as HTTP allows. |
+| `tls` | A TLS configuration with a certificate ([Chapter 14](manual-14-tls.md)): every connection is then HTTPS. It must outlive the server. The handshake shares `head_timeout_ms` with the first request's head. |
 | `max_head_bytes`, `max_headers` | A head that never ends, or has ten thousand fields: `431`. |
 | `max_body_bytes` | A body larger than you are prepared to take: `413`, before it is read when it was announced, while it is read when it was chunked. |
 | `max_connections` | More connections than you have memory for. The next client waits in the listen backlog; it is not refused. |
@@ -507,7 +511,7 @@ size costs the memory you chose, and a download can go straight to a file.
 | `PROVEN_ERR_REFUSED`, `PROVEN_ERR_UNREACHABLE`, `PROVEN_ERR_TIMEOUT`, `PROVEN_ERR_RESET` | The connection: Chapter 9's meanings. |
 | `PROVEN_ERR_OUT_OF_BOUNDS` | The request or the response head is larger than `max_head_bytes`. |
 | `PROVEN_ERR_PERMISSION` | A proxy refused. |
-| `PROVEN_ERR_UNTRUSTED` | `tls_wrap` could not verify the server. |
+| `PROVEN_ERR_UNTRUSTED`, `PROVEN_ERR_EXPIRED`, `PROVEN_ERR_NOT_YET_VALID`, `PROVEN_ERR_NAME_MISMATCH`, `PROVEN_ERR_PROTOCOL` | From `tls_wrap`: the server could not be verified, or the TLS handshake failed (Chapter 14, section 8). Nothing of the request was sent. |
 
 ### Cautions, and what goes wrong
 
@@ -636,10 +640,11 @@ calls `tls_wrap` with the connected transport and the host name. The function pe
 handshake and returns a transport that encrypts; the client speaks HTTP over that and never
 learns the difference. This is Chapter 9's transport interface doing the job it was shaped for.
 
-The library does not yet supply such a function. The seam is here so that the client's
-behaviour around it - no downgrade on redirect, credentials kept to their origin, the tunnel
-before the handshake - is already fixed and tested, and so that a program which has a TLS
-implementation can attach it today.
+The library supplies one: `proven_tls_http_wrap`, with a `proven_tls_config_t *` as its
+context ([Chapter 14](manual-14-tls.md), section 3). The seam stays an interface so that the
+client's behaviour around it - no downgrade on redirect, credentials kept to their origin, the
+tunnel before the handshake - does not depend on which TLS is behind it, and so that a program
+with another TLS implementation can attach that instead.
 
 **If you write one, it must verify the server.** `host` is passed so that the certificate can be
 checked against it. A wrap that encrypts without verifying gives a connection that is private
@@ -816,7 +821,7 @@ int main(void) {
 
     /* An error is when there is no response to look at. */
     err = proven_http_client_get(client, PROVEN_LIT("https://127.0.0.1/"), &resp);
-    EXAMPLE_REQUIRE(err == PROVEN_ERR_UNSUPPORTED, "https: this library has no TLS yet, and says so rather than sending in the clear");
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_UNSUPPORTED, "https without a tls_wrap: the client says so rather than sending in the clear");
     proven_http_client_finish(&resp);         /* harmless after a failure */
 
     proven_u8str_destroy(heap, &text);

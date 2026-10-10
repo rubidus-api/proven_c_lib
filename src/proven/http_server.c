@@ -3,6 +3,7 @@
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 
 #include "proven/time.h"
+#include "proven_internal_tls.h"
 #include <stdatomic.h>
 
 /*
@@ -52,6 +53,7 @@ struct sv_conn {
     bool watched;                      /* registered with the selector */
     bool timed;                        /* on the timer wheel */
     bool dead;                         /* closed; freed at the end of the round */
+    bool tls;                          /* `t` is a TLS transport over `sock` */
 
     /* One request. */
     proven_http_request_t req;
@@ -280,20 +282,26 @@ proven_err_t proven_http_exchange_respond(proven_http_exchange_t *exchange, prov
 typedef struct {
     proven_allocator_t alloc;
     proven_net_conn_t sock;
+    bool tls;
+    proven_transport_t over;               /* with TLS: the TLS transport, which reads and writes `sock` */
 } sv_owned_t;
 
 static proven_result_size_t sv_owned_read(void *ctx, proven_mem_mut_t dest, proven_net_deadline_t until) {
-    return proven_net_read(&((sv_owned_t *)ctx)->sock, dest, until);
+    sv_owned_t *o = ctx;
+    return o->tls ? proven_transport_read(o->over, dest, until) : proven_net_read(&o->sock, dest, until);
 }
 static proven_result_size_t sv_owned_write(void *ctx, proven_mem_view_t src, proven_net_deadline_t until) {
-    return proven_net_write(&((sv_owned_t *)ctx)->sock, src, until);
+    sv_owned_t *o = ctx;
+    return o->tls ? proven_transport_write(o->over, src, until) : proven_net_write(&o->sock, src, until);
 }
 static proven_err_t sv_owned_shutdown(void *ctx) {
-    return proven_net_shutdown_write(&((sv_owned_t *)ctx)->sock);
+    sv_owned_t *o = ctx;
+    return o->tls ? proven_transport_shutdown(o->over) : proven_net_shutdown_write(&o->sock);
 }
 static proven_err_t sv_owned_close(void *ctx) {
     sv_owned_t *o = ctx;
-    proven_err_t e = proven_net_close(&o->sock);
+    /* Closing the TLS transport says goodbye and closes the socket under it. */
+    proven_err_t e = o->tls ? proven_transport_close(o->over) : proven_net_close(&o->sock);
     sv_free(o->alloc, o);
     return e;
 }
@@ -337,8 +345,13 @@ proven_err_t proven_http_exchange_upgrade(proven_http_exchange_t *exchange, prov
     sv_unwatch(c->server, c);
     owned->alloc = c->server->cfg.alloc;
     owned->sock = c->sock;
+    owned->tls = c->tls;
+    owned->over = c->t;
+    /* The socket has a new home; the TLS transport must read and write it there. */
+    if (c->tls) proven_tls_transport_set_plain_(owned->over, proven_net_conn_transport(&owned->sock));
     c->sock = (proven_net_conn_t){0};
     c->t = (proven_transport_t){0};
+    c->tls = false;
     c->detached = true;
     c->close_after = true;
     out->ctx = owned;
@@ -584,7 +597,8 @@ static void sv_close_conn(proven_http_server_t *s, sv_conn_t *c) {
     c->dead = true;
     sv_timer_cancel(s, c);
     sv_unwatch(s, c);                       /* before the close: see proven_net_selector_remove */
-    (void)proven_net_close(&c->sock);
+    if (c->tls) proven_tls_transport_close_now_(c->t);        /* a goodbye if it goes out at once; closes the socket */
+    else (void)proven_net_close(&c->sock);
     if (c->prev) c->prev->next = c->next;
     else s->conns = c->next;
     if (c->next) c->next->prev = c->prev;
@@ -614,6 +628,7 @@ static void sv_free_dead(proven_http_server_t *s) {
  */
 static void sv_linger(proven_http_server_t *s, sv_conn_t *c) {
     if (c->detached || c->io_failed || atomic_load_explicit(&s->stop, memory_order_relaxed)) { sv_close_conn(s, c); return; }
+    if (c->tls) proven_tls_transport_shutdown_now_(c->t);
     (void)proven_net_shutdown_write(&c->sock);
     c->lingering = true;
     c->len = 0;
@@ -686,6 +701,15 @@ static void sv_reset_request(sv_conn_t *c) {
  */
 static bool sv_service(proven_http_server_t *s, sv_conn_t *c) {
     for (;;) {
+        /* A TLS transport may hold input the socket will never announce again: a second
+         * request that arrived in the same segment as the first. Take it now. */
+        while (c->tls && c->len < c->cap && proven_tls_transport_buffered_(c->t)) {
+            proven_result_size_t r = proven_transport_read(c->t, (proven_mem_mut_t){ .ptr = c->buf + c->len, .size = c->cap - c->len }, PROVEN_NET_DONT_WAIT);
+            if (r.err == PROVEN_ERR_TIMEOUT || r.err == PROVEN_ERR_AGAIN) break;
+            if (r.err != PROVEN_OK) { sv_close_conn(s, c); return false; }
+            if (r.value == 0) break;
+            c->len += r.value;
+        }
         if (c->len == 0) {
             sv_wait_for(s, c, s->cfg.idle_timeout_ms);
             return true;
@@ -770,7 +794,7 @@ static bool sv_collect_done(proven_http_server_t *s) {
             sv_reset_request(c);
             if (!sv_watch(s, c)) { c = next; continue; }
             sv_wait_for(s, c, rest ? s->cfg.head_timeout_ms : s->cfg.idle_timeout_ms);
-            if (rest) (void)sv_service(s, c);
+            if (rest || c->tls) (void)sv_service(s, c);
         }
         c = next;
     }
@@ -794,6 +818,14 @@ static void sv_accept(proven_http_server_t *s, proven_net_listener_t *l) {
         c->server = s;
         c->sock = sock;
         c->t = proven_net_conn_transport(&c->sock);
+        if (s->cfg.tls) {
+            /* The handshake is not run here: it happens inside the reads, as the client's
+             * bytes arrive, so that a slow client holds up nobody else. */
+            proven_transport_t tls;
+            if (proven_tls_transport_server_lazy_(c->t, s->cfg.tls, &tls) != PROVEN_OK) { (void)proven_net_close(&sock); sv_free(s->cfg.alloc, c); return; }
+            c->t = tls;
+            c->tls = true;
+        }
         c->peer = peer;
         c->headers = (proven_http_header_t *)(void *)(c + 1);
         c->buf = (proven_byte_t *)(c + 1) + headers_bytes;
@@ -816,14 +848,16 @@ static void sv_accept(proven_http_server_t *s, proven_net_listener_t *l) {
 static void sv_readable(proven_http_server_t *s, sv_conn_t *c) {
     if (c->lingering) {
         /* Whatever arrives now is thrown away; the end of it is what is being waited for. */
-        proven_result_size_t r = proven_net_read(&c->sock, (proven_mem_mut_t){ .ptr = c->buf, .size = c->cap }, PROVEN_NET_DONT_WAIT);
+        proven_result_size_t r = proven_transport_read(c->t, (proven_mem_mut_t){ .ptr = c->buf, .size = c->cap }, PROVEN_NET_DONT_WAIT);
         if (r.err != PROVEN_OK && r.err != PROVEN_ERR_TIMEOUT) sv_close_conn(s, c);
         return;
     }
     if (c->len == c->cap) { sv_reject(c, 431); sv_linger(s, c); return; }
     bool first = c->len == 0;
-    proven_result_size_t r = proven_net_read(&c->sock, (proven_mem_mut_t){ .ptr = c->buf + c->len, .size = c->cap - c->len }, PROVEN_NET_DONT_WAIT);
-    if (r.err == PROVEN_ERR_TIMEOUT) return;                 /* readiness that turned out to be nothing */
+    /* Through the transport: with TLS this is where the handshake advances, and it reports
+     * "nothing yet" until the first request bytes have been decrypted. */
+    proven_result_size_t r = proven_transport_read(c->t, (proven_mem_mut_t){ .ptr = c->buf + c->len, .size = c->cap - c->len }, PROVEN_NET_DONT_WAIT);
+    if (r.err == PROVEN_ERR_TIMEOUT || r.err == PROVEN_ERR_AGAIN) return;   /* readiness that turned out to be nothing */
     if (r.err != PROVEN_OK) { sv_close_conn(s, c); return; } /* EOF between requests is how a client leaves */
     if (first) sv_wait_for(s, c, s->cfg.head_timeout_ms);
     c->len += r.value;

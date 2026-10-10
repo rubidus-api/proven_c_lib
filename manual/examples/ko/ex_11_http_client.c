@@ -165,7 +165,7 @@ int main(void) {
 
     /* 오류란 들여다볼 응답이 없을 때다. */
     err = proven_http_client_get(client, PROVEN_LIT("https://127.0.0.1/"), &resp);
-    EXAMPLE_REQUIRE(err == PROVEN_ERR_UNSUPPORTED, "https: this library has no TLS yet, and says so rather than sending in the clear");
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_UNSUPPORTED, "https without a tls_wrap: the client says so rather than sending in the clear");
     proven_http_client_finish(&resp);         /* 실패한 뒤에 불러도 해롭지 않다 */
 
     proven_u8str_destroy(heap, &text);

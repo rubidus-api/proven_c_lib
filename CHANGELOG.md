@@ -18,6 +18,61 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release: TLS 1.3, client and server. HTTPS and `wss` work through the HTTP client and
+server with one setting each.
+
+**This is a new TLS implementation with no external audit.** It is tested against RFC 8448's
+example handshakes, against OpenSSL and GnuTLS in both roles, and against adversarial vectors
+for the primitives; manual chapter 14 says exactly what was and was not done. A program whose
+users depend on TLS against a capable adversary should terminate it in something audited.
+
+### Added
+
+- `tls.h`. A configuration (`proven_tls_config_create`, `_destroy`) built from
+  `proven_tls_options_t`: trust anchors, verification by chain or by public-key pin, this
+  side's certificate and key (P-256 or Ed25519; PKCS #8 or `EC PRIVATE KEY`), client
+  authentication, ALPN, and the random source and clock (the operating system's by default).
+  Every option error is reported when the config is made.
+- The engine, with no I/O and in the freestanding profile: `proven_tls_client_create`,
+  `proven_tls_server_create`, `proven_tls_conn_destroy`, `proven_tls_feed`,
+  `proven_tls_pending_output`, `proven_tls_output_sent`, `proven_tls_is_established`,
+  `proven_tls_read`, `proven_tls_write`, `proven_tls_close`, `proven_tls_key_update`, and the
+  queries `proven_tls_cipher_suite`, `_alpn`, `_resumed`, `_peer_key_sha256`,
+  `_peer_certificate`, `_peer_fault`, `_server_name`, `_alert_received`, `_alert_sent`.
+- Hosted: `proven_tls_transport_client` and `proven_tls_transport_server` (the engine over a
+  `proven_transport_t`, as a transport), `proven_tls_transport_conn`, and
+  `proven_tls_http_wrap`, a `proven_http_tls_wrap_fn` for the HTTP client.
+- `proven_http_server_config_t` has a `tls` field: with a TLS configuration every connection
+  is HTTPS, the handshake driven by the server's loop without waiting on any connection. A
+  WebSocket accepted on such a server is `wss`.
+- TLS 1.3 (RFC 8446): `TLS_AES_128_GCM_SHA256`, `TLS_AES_256_GCM_SHA384`,
+  `TLS_CHACHA20_POLY1305_SHA256` (ChaCha20 preferred where the processor has no AES
+  instructions); X25519 and P-256, with HelloRetryRequest; ECDSA P-256 and Ed25519 for this
+  side's key, and ECDSA P-384 and RSA-PSS verified for a peer's; ALPN, server name,
+  `record_size_limit`, key update, the middlebox-compatibility messages; session resumption
+  with stateless tickets under a rotating key (`proven_tls_session_t` on the client); client
+  certificates; public-key pins. No 0-RTT.
+- `proven_tls_self_signed`: an Ed25519 key and a self-signed certificate for given names and a
+  given period, as PEM - an identity for a server you run yourself, with a pin or as the
+  peer's own anchor.
+- `PROVEN_CERT_FAULT_PIN_MISMATCH` in `proven_cert_fault_t`.
+- Manual chapter 14, "TLS", with two compiled examples in both languages.
+
+### Changed
+
+- `PROVEN_ERR_PROTOCOL` is now returned (by the TLS unit); `proven_http_client_send` passes
+  on whatever `tls_wrap` returns, which with `proven_tls_http_wrap` includes
+  `PROVEN_ERR_EXPIRED`, `PROVEN_ERR_NOT_YET_VALID`, `PROVEN_ERR_NAME_MISMATCH` and
+  `PROVEN_ERR_PROTOCOL`.
+- `proven_http_server_config_t` gained a field at its end. Code that zero-initialises the
+  struct, as the manual says to, is unaffected.
+- Manual chapters 9, 11, 12 and 13 no longer say that TLS is absent.
+
+### Not in this release
+
+- TLS 1.2 and earlier; RSA keys for this side's certificate; 0-RTT; revocation checking;
+  choosing a certificate by server name; tickets shared between processes.
+
 ## [0.16.0] - 2026-10-10
 
 A MINOR release: X.509 certificates, and - not public - the cryptographic primitives the TLS

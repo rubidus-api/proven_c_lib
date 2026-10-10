@@ -55,9 +55,10 @@ web page from choosing the exact bytes that cross the network, which was once en
 a caching proxy. And the handshake's key and answer are not authentication: they only prove
 that the server really speaks WebSocket and is not an HTTP server echoing things back.
 
-**There is no TLS here.** A `ws://` connection is readable and changeable by anyone on the path,
-exactly as Chapter 11 says of `http://`. `wss://` needs the HTTP client's `tls_wrap`, which this
-library does not yet supply.
+**`ws://` is not protected.** A `ws://` connection is readable and changeable by anyone on the path,
+exactly as Chapter 11 says of `http://`. `wss://` is the same protocol over TLS: give the HTTP
+client the TLS wrap, or the HTTP server a TLS configuration ([Chapter 14](manual-14-tls.md)), and
+nothing else in this chapter changes.
 
 ## 2. A connection
 
@@ -641,7 +642,6 @@ int main(void) {
 
 ## 9. What is not here
 
-- **TLS.** `wss://` needs the HTTP client's `tls_wrap`; the server side has no place for TLS yet.
 - **Compression.** `permessage-deflate` is not offered and not accepted: the library has no
   DEFLATE. A peer that insists on it cannot be talked to.
 - **One call that waits on many connections.** See section 5.

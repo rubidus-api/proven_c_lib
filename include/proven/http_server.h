@@ -9,6 +9,7 @@
 #include "proven/net.h"
 #include "proven/http.h"
 #include "proven/job.h"
+#include "proven/tls.h"
 
 /**
  * @file http_server.h
@@ -46,7 +47,8 @@
  * Two limits remain everywhere: each connection holds its buffers from the moment it is
  * accepted, and each request occupies a thread while its handler runs.
  *
- * There is no TLS here: what this server sends and receives is not encrypted.
+ * Plain HTTP unless the config's `tls` is set (tls.h): then every connection is HTTPS, and a
+ * handler sees no difference.
  *
  * Hosted only; `PROVEN_NO_NET` leaves it out.
  */
@@ -85,6 +87,7 @@ typedef struct {
     proven_u32 body_timeout_ms;         /**< for each read of a request body. 0: 30 s */
     proven_u32 write_timeout_ms;        /**< for each write of a response. 0: 30 s */
     proven_u32 idle_timeout_ms;         /**< an open connection with no request on it. 0: 60 s */
+    const proven_tls_config_t *tls;     /**< NULL: plain HTTP. Otherwise every connection is TLS under this config, which must outlive the server. The handshake shares `head_timeout_ms` with the first request's head. */
 } proven_http_server_config_t;
 
 /**

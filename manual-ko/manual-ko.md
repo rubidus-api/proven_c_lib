@@ -19,6 +19,7 @@ C23 시스템 라이브러리 `proven`의 매뉴얼입니다. 각 장은 `manual
 - [11장 — HTTP 클라이언트와 서버](manual-11-http-client-server-ko.md)
 - [12장 — WebSocket](manual-12-websocket-ko.md)
 - [13장 — 인증서와 신뢰](manual-13-certificates-ko.md)
+- [14장 — TLS](manual-14-tls-ko.md)
 - [6장 — 실행과 플랫폼](manual-06-execution-and-platform-ko.md)
 - [프리스탠딩](manual-freestanding-ko.md)
 - [부록 A — Alias 인덱스](manual-07-alias-xcv-index-ko.md)

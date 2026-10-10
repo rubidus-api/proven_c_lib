@@ -155,7 +155,6 @@ typedef struct {
     int rounds;                                  /* 10 or 14 */
     bool hw;
     proven_byte_t rk[240];                       /* round keys as bytes */
-    proven_u64 bs[15][8];                        /* the same, as bit planes */
     proven_byte_t h[16];                         /* the GHASH key */
 } proven_crypto_aes_gcm_t;
 

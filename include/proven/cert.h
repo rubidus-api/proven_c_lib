@@ -218,7 +218,8 @@ typedef enum {
     PROVEN_CERT_FAULT_EXPIRED,
     PROVEN_CERT_FAULT_NOT_YET_VALID,
     PROVEN_CERT_FAULT_NAME_MISMATCH,
-    PROVEN_CERT_FAULT_TOO_DEEP
+    PROVEN_CERT_FAULT_TOO_DEEP,
+    PROVEN_CERT_FAULT_PIN_MISMATCH       /**< TLS only: the peer's key is not one of the configured pins. */
 } proven_cert_fault_t;
 
 typedef struct {

@@ -18,6 +18,7 @@ the Korean edition mirrors it under [`manual-ko/`](../manual-ko/manual-ko.md).
 - [Chapter 11 - An HTTP client and server](manual-11-http-client-server.md)
 - [Chapter 12 - WebSocket](manual-12-websocket.md)
 - [Chapter 13 - Certificates and trust](manual-13-certificates.md)
+- [Chapter 14 - TLS](manual-14-tls.md)
 - [Chapter 6 - Execution and platform](manual-06-execution-and-platform.md)
 - [Freestanding](manual-freestanding.md)
 - [Appendix A - Alias index](manual-07-alias-xcv-index.md)

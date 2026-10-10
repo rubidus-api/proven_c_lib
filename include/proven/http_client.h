@@ -28,11 +28,11 @@
  *     proven_http_client_read_all exists for when you do want all of it, and takes a limit.
  *   - **Allocate from anywhere but the allocator you gave it.**
  *
- * And one thing it cannot do yet: **HTTPS.** This library has no TLS. A request for an
- * `https` URL fails with PROVEN_ERR_UNSUPPORTED unless you supply a `tls_wrap` function that
- * turns a connected transport into an encrypted one - the seam where TLS will attach. Until
- * then everything this client sends, passwords and cookies included, crosses the network in
- * the clear.
+ * **HTTPS is one setting.** A request for an `https` URL fails with PROVEN_ERR_UNSUPPORTED
+ * unless the config has a `tls_wrap` - a function that turns a connected transport into an
+ * encrypted one. `proven_tls_http_wrap` (tls.h) is this library's; another TLS can be attached
+ * the same way. Over `http://`, everything this client sends, passwords and cookies included,
+ * crosses the network in the clear.
  *
  * A client is not safe to use from several threads at once; give each thread its own.
  *
@@ -46,6 +46,7 @@
  * tunnel) is established. On success `*out` must be a transport whose close also closes
  * `plain`; on failure the function must leave `plain` open - the client closes it.
  * Return PROVEN_ERR_UNTRUSTED when the peer's identity cannot be verified.
+ * proven_tls_http_wrap in tls.h is one, with a proven_tls_config_t as its context.
  */
 typedef proven_err_t (*proven_http_tls_wrap_fn)(void *ctx, proven_transport_t plain, proven_u8str_view_t host,
                                                 proven_net_deadline_t until, proven_transport_t *out);
@@ -148,7 +149,9 @@ typedef struct {
  *         PROVEN_ERR_REFUSED, PROVEN_ERR_TIMEOUT, PROVEN_ERR_UNREACHABLE, PROVEN_ERR_RESET;
  *         PROVEN_ERR_OUT_OF_BOUNDS when the request or the response head exceeds
  *         `max_head_bytes`; PROVEN_ERR_PERMISSION when a proxy refuses the request;
- *         PROVEN_ERR_UNTRUSTED from `tls_wrap`; PROVEN_ERR_NOMEM.
+ *         whatever `tls_wrap` returned (with proven_tls_http_wrap: PROVEN_ERR_UNTRUSTED,
+ *         PROVEN_ERR_EXPIRED, PROVEN_ERR_NOT_YET_VALID, PROVEN_ERR_NAME_MISMATCH,
+ *         PROVEN_ERR_PROTOCOL); PROVEN_ERR_NOMEM.
  *         A response with an error STATUS - 404, 500 - is not an error here: it is a response.
  */
 [[nodiscard]]

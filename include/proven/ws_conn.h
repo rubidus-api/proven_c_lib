@@ -33,7 +33,7 @@
  *
  * What it does not do: reconnect, send pings on a timer, or compress. And it carries no more
  * protection than the connection under it - a `ws://` connection is readable by anyone on the
- * path, and this library has no TLS for `wss://` (see http_client.h).
+ * path. `wss://` is the same over TLS: the HTTP client's `tls_wrap`, the HTTP server's `tls`.
  *
  * **One thread at a time.** A connection is not safe to use from two threads at once - not
  * even one sending while another receives, because receiving answers pings. Give the

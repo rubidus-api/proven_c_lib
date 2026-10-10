@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 90 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 93 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-10, Windows 11 test VM: x86-64 278 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 154 registered tests plus the 132 runnable manual examples - 286 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 167 test files: the 154 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 157 registered tests plus the 136 runnable manual examples - 293 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 170 test files: the 157 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -705,6 +705,49 @@ Sub-checks:
 - Chain verification, forty cases with the error code, the fault and the depth each must give: RSA, P-256, P-384 and Ed25519 keys with PKCS #1, PSS and ECDSA signatures; an intermediate or the leaf as the anchor; extra certificates in any order; the name rules again; before and after the validity period; an expired and a not-yet-valid leaf; a missing intermediate; an anchor with the right name and another key; one changed signature bit; an issuer that is not a CA, or whose key usage does not allow issuing; a path length exceeded; name constraints permitting, excluding, by address, and against a wildcard; an unknown critical extension; the wrong extended key usage in each direction; a hash that is not accepted; a name only in the common name; a version 3 anchor that is not a CA; a trailing byte.
 
 Failure tip: inspect `src/proven/cert.c`. The chains are in `tests/test_unit_cert_vectors.h`, written by a private generator with Python `cryptography`; their dates are fixed and the test supplies the time. The case's text says what was built. Not covered: a certificate signed with SHA-1 (the generator's library will not make one; SHA-224 stands in for "a hash that is not accepted"), and the Windows root store beyond being opened by the manual example.
+
+### `tests/test_unit_tls_keys` - TLS 1.3 key schedule and records against RFC 8448
+
+Intent: verify the parts of TLS 1.3 below the state machine - the transcript hash, the key schedule, record protection - against the published example handshakes, value by value. Internal code, reached through `src/proven/proven_internal_tls.h`.
+
+Sub-checks:
+
+- RFC 8448 section 3 (a simple 1-RTT handshake) replayed in the RFC's order with the test's own transcript: the early, handshake and master extractions; every `Derive-Secret`, with its context required to equal the transcript hash at that point; both Finished values; the resumption secret; each traffic key and IV; and each protected record sealed to the printed bytes, opened again, refused with one bit changed and refused under the next sequence number.
+- Section 4 (resumption): the pre-shared key as the early secret, the binder over the truncated ClientHello, the early traffic secrets, EndOfEarlyData in the transcript.
+- Section 5 (HelloRetryRequest): the first ClientHello replaced in the transcript by a `message_hash` message. Section 6 (client authentication): the client's Certificate and CertificateVerify before its Finished. Section 7 (compatibility mode): ChangeCipherSpec records outside the transcript.
+- Beyond the traces: `TLS_AES_256_GCM_SHA384` and `TLS_CHACHA20_POLY1305_SHA256` seal and open records from empty to 2^14 bytes; padding is stripped; a record of only zeros, a body shorter than a tag and a type, and one over the limit are refused.
+
+Failure tip: inspect `src/proven/tls_keys.c`. The step letter printed on failure names the operation (the test's header comment lists them). `tests/test_unit_tls_vectors.h` is written by a private generator from the RFC's text. Not covered: the traces are all `TLS_AES_128_GCM_SHA256`, so no published value checks the SHA-384 schedule; and this is not a handshake - no state machine is exercised.
+
+### `tests/test_unit_tls` - the TLS 1.3 engine
+
+Intent: verify the TLS 1.3 state machine, both roles, with no network: a client connection and a server connection wired back to back in memory, the test carrying the bytes. The clock and the random source are the test's own, so every run is the same run.
+
+Sub-checks:
+
+- A self-signed identity: `proven_tls_self_signed` makes PEM the strict reader parses - version 3, Ed25519, self-issued, exactly the period asked for, the DNS name and both addresses, usable by a server and a client; a client holding the certificate connects to a server holding the key, and one second past the end it has expired; no names, an empty name, an empty period and a small buffer are refused; a period across 2050 round-trips through both time encodings.
+- Configuration: every option error is reported by `proven_tls_config_create` - missing anchors, `PIN_ONLY` without pins, a certificate without a key and the reverse, PEM with no certificate or no key, an RSA key and a P-384 key (`PROVEN_ERR_UNSUPPORTED`), a key that is not the certificate's (`PROVEN_ERR_INVALID_STATE`), client authentication without anchors, an empty ALPN name; the `EC PRIVATE KEY` form is accepted; a config with no certificate cannot serve; a client needs a name of at most 253 bytes.
+- Handshakes: the three cipher suites by the two server key types, each established with the server's key hash as the client verified it, and data of 1, 1,000, 16,384, 16,385, 100,000 and 150,000 bytes in both directions; the same handshake delivered a byte at a time; `NEED_MORE`, writes refused after `proven_tls_close`, data before a close delivered and then `PROVEN_ERR_EOF`, the other direction still open; a HelloRetryRequest to P-256 (whole and a byte at a time); key update from each side.
+- ALPN: the server's first choice among the client's offers; nothing in common ends with `no_application_protocol` and `PROVEN_ERR_PROTOCOL` on both sides; a server with no list agrees on none.
+- Verification: an unknown CA (`PROVEN_ERR_UNTRUSTED`, fault `NO_ISSUER`, alert `unknown_ca`, and the server told), another name (`PROVEN_ERR_NAME_MISMATCH`), an expired certificate and a clock before the validity period, each with its alert; after a failure every call is `PROVEN_ERR_INVALID_STATE`. Pins: `PIN_ONLY` ignores name, chain and dates; an unpinned key is refused with `PIN_MISMATCH`, also when the chain is good.
+- Client certificates: required and given (the server holds the key hash and, when configured, the certificate); required and absent (`certificate_required`, and the client learns on its next read); requested and absent (let in, no key reported); a certificate under an unknown CA refused even when only requested.
+- Resumption: a first handshake leaves a ticket; the second resumes on both sides with the original server key reported; through a HelloRetryRequest; not under a suite with another hash; not for another server name; a damaged ticket falls back to a full handshake; a good ticket with a wrong key behind it is a fatal `decrypt_error`; one second inside and one past the lifetime; a ticket under a key replaced twice; a server set to issue none.
+- Memory: an idle client and server together hold at most 2,200 bytes (measured and printed), and a destroyed pair has freed everything.
+- A lying wire: a single-bit change at every seventh byte of each direction of the handshake (162 handshakes) never leaves both sides established; an HTTP request, a record claiming 65,535 bytes, application data before a handshake, a fatal alert, and a plaintext handshake record on an established connection are each refused with the stated alert; a run of ChangeCipherSpec records is tolerated briefly and then refused; key-update requests (forged under the peer's real keys) are answered, and refused once the unsent answers pass the output limit.
+- RFC 8448 sections 3 and 7 through the client: given the trace's ClientHello and X25519 key, the client accepts the server's records and produces exactly the client's - the Finished record, the application data record, the close - byte for byte.
+
+Failure tip: inspect `src/proven/tls13.c`, `src/proven/tls_config.c` and `src/proven/tls_issue.c`. No key is stored in the tree: `tests/test_unit_tls_pki.h` derives keys from a fixed pattern and issues the certificates when the test starts, with the library's internal certificate writer. The RFC's records are in `tests/test_unit_tls_vectors.h`, written by a private generator. Not covered here: the server role against a published trace (RFC 8448's server key is RSA, which this version cannot sign with) - that is checked against OpenSSL and GnuTLS in a private interoperability run, as are both roles for every suite and group; `record_size_limit` from a peer.
+
+### `tests/test_unit_tls_net` - TLS over sockets: the transport, HTTPS and WebSocket
+
+Intent: verify the TLS engine carried by real connections on the loopback interface: the transport wrapper by itself, then the HTTP client and server with TLS in both handler models.
+
+Sub-checks:
+
+- The transport wrapper: a client and a server handshake over a socket with the server verified by its IP address; 1 to 150,000 bytes echoed intact; a read with nothing to read ends at its deadline; a close seen by the peer as `PROVEN_ERR_EOF`; a connection cut without a TLS close seen as `PROVEN_ERR_RESET`; another server name is `PROVEN_ERR_NAME_MISMATCH` and the server's handshake ends with the alert; a handshake nobody answers ends at its deadline; `proven_tls_transport_conn` on a TLS and on a plain transport.
+- HTTPS, with handlers on the loop's thread and again on workers: three GETs over one kept connection; a 200,000-byte request body and a 300,000-byte response body; a `wss://` connection with a text and a 70,000-byte binary message echoed and a clean close; two pipelined requests in one TLS record both answered; a client that connects and says nothing does not delay another request and is closed after the head timeout; a plain `http://` request to the TLS port fails and reaches no handler; an `https://` URL on a client with no wrap is still `PROVEN_ERR_UNSUPPORTED`; a server whose CA the client does not hold is `PROVEN_ERR_UNTRUSTED` with nothing sent.
+
+Failure tip: inspect `src/proven/tls_transport.c` and the `tls` branches of `src/proven/http_server.c`. This test uses the wall clock (its certificates, issued at start by `tests/test_unit_tls_pki.h`, are valid 2026 to 2036) and the operating system's random source. Not covered: client certificates through the HTTP server, and resumption through the transport wrapper (both are engine paths `test_unit_tls` covers).
 
 ### `tests/test_unit_hash_legacy` - legacy digests: SHA-1 and MD5
 

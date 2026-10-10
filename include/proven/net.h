@@ -30,7 +30,7 @@
  * value you own and must close; a reader or writer over one uses state you supply.
  *
  * What it does not do: name resolution has no deadline (it is the system resolver, which
- * offers none), there is no TLS here, and readiness is `poll`, which is the right tool for
+ * offers none), a connection made here is not encrypted (tls.h wraps one), and readiness is `poll`, which is the right tool for
  * hundreds of sockets and not for hundreds of thousands.
  *
  * Hosted only. A freestanding build has no sockets, and `PROVEN_NO_NET` leaves this header and

@@ -165,7 +165,7 @@ int main(void) {
 
     /* An error is when there is no response to look at. */
     err = proven_http_client_get(client, PROVEN_LIT("https://127.0.0.1/"), &resp);
-    EXAMPLE_REQUIRE(err == PROVEN_ERR_UNSUPPORTED, "https: this library has no TLS yet, and says so rather than sending in the clear");
+    EXAMPLE_REQUIRE(err == PROVEN_ERR_UNSUPPORTED, "https without a tls_wrap: the client says so rather than sending in the clear");
     proven_http_client_finish(&resp);         /* harmless after a failure */
 
     proven_u8str_destroy(heap, &text);

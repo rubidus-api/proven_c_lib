@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 976개: 소문자 `xcv_` 이름 718개와 대문자 `XCV_` 이름 258개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 1020개: 소문자 `xcv_` 이름 755개와 대문자 `XCV_` 이름 265개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -68,6 +68,7 @@ alias 976개: 소문자 `xcv_` 이름 718개와 대문자 `XCV_` 이름 258개. 
 | `XCV_CERT_FAULT_NOT_YET_VALID` | `PROVEN_CERT_FAULT_NOT_YET_VALID` |
 | `XCV_CERT_FAULT_NO_ISSUER` | `PROVEN_CERT_FAULT_NO_ISSUER` |
 | `XCV_CERT_FAULT_PATH_LENGTH` | `PROVEN_CERT_FAULT_PATH_LENGTH` |
+| `XCV_CERT_FAULT_PIN_MISMATCH` | `PROVEN_CERT_FAULT_PIN_MISMATCH` |
 | `XCV_CERT_FAULT_TOO_DEEP` | `PROVEN_CERT_FAULT_TOO_DEEP` |
 | `XCV_CERT_FAULT_USAGE` | `PROVEN_CERT_FAULT_USAGE` |
 | `XCV_CERT_KEY_EC_P256` | `PROVEN_CERT_KEY_EC_P256` |
@@ -257,6 +258,12 @@ alias 976개: 소문자 `xcv_` 이름 718개와 대문자 `XCV_` 이름 258개. 
 | `XCV_SHA256_SIZE` | `PROVEN_SHA256_SIZE` |
 | `XCV_SHA384_SIZE` | `PROVEN_SHA384_SIZE` |
 | `XCV_SHA512_SIZE` | `PROVEN_SHA512_SIZE` |
+| `XCV_TLS_CLIENT_AUTH_NONE` | `PROVEN_TLS_CLIENT_AUTH_NONE` |
+| `XCV_TLS_CLIENT_AUTH_REQUEST` | `PROVEN_TLS_CLIENT_AUTH_REQUEST` |
+| `XCV_TLS_CLIENT_AUTH_REQUIRE` | `PROVEN_TLS_CLIENT_AUTH_REQUIRE` |
+| `XCV_TLS_SESSION_SIZE` | `PROVEN_TLS_SESSION_SIZE` |
+| `XCV_TLS_VERIFY_CHAIN` | `PROVEN_TLS_VERIFY_CHAIN` |
+| `XCV_TLS_VERIFY_PIN_ONLY` | `PROVEN_TLS_VERIFY_PIN_ONLY` |
 | `XCV_U16_LIT` | `PROVEN_U16_LIT` |
 | `XCV_VERSION_ENCODE` | `PROVEN_VERSION_ENCODE(major, minor, patch)` |
 | `XCV_VERSION_MAJOR` | `PROVEN_VERSION_MAJOR` |
@@ -851,6 +858,43 @@ alias 976개: 소문자 `xcv_` 이름 718개와 대문자 `XCV_` 이름 258개. 
 | `xcv_time_t` | `proven_time_t` |
 | `xcv_time_u16_fmt` | `proven_time_u16_fmt` |
 | `xcv_time_u8_fmt` | `proven_time_u8_fmt` |
+| `xcv_tls_alert_received` | `proven_tls_alert_received` |
+| `xcv_tls_alert_sent` | `proven_tls_alert_sent` |
+| `xcv_tls_alpn` | `proven_tls_alpn` |
+| `xcv_tls_cipher_suite` | `proven_tls_cipher_suite` |
+| `xcv_tls_client_auth_t` | `proven_tls_client_auth_t` |
+| `xcv_tls_client_create` | `proven_tls_client_create` |
+| `xcv_tls_close` | `proven_tls_close` |
+| `xcv_tls_config` | `proven_tls_config` |
+| `xcv_tls_config_create` | `proven_tls_config_create` |
+| `xcv_tls_config_destroy` | `proven_tls_config_destroy` |
+| `xcv_tls_config_t` | `proven_tls_config_t` |
+| `xcv_tls_conn` | `proven_tls_conn` |
+| `xcv_tls_conn_destroy` | `proven_tls_conn_destroy` |
+| `xcv_tls_conn_t` | `proven_tls_conn_t` |
+| `xcv_tls_feed` | `proven_tls_feed` |
+| `xcv_tls_http_wrap` | `proven_tls_http_wrap` |
+| `xcv_tls_is_established` | `proven_tls_is_established` |
+| `xcv_tls_key_update` | `proven_tls_key_update` |
+| `xcv_tls_now_fn` | `proven_tls_now_fn` |
+| `xcv_tls_options_t` | `proven_tls_options_t` |
+| `xcv_tls_output_sent` | `proven_tls_output_sent` |
+| `xcv_tls_peer_certificate` | `proven_tls_peer_certificate` |
+| `xcv_tls_peer_fault` | `proven_tls_peer_fault` |
+| `xcv_tls_peer_key_sha256` | `proven_tls_peer_key_sha256` |
+| `xcv_tls_pending_output` | `proven_tls_pending_output` |
+| `xcv_tls_random_fn` | `proven_tls_random_fn` |
+| `xcv_tls_read` | `proven_tls_read` |
+| `xcv_tls_resumed` | `proven_tls_resumed` |
+| `xcv_tls_self_signed` | `proven_tls_self_signed` |
+| `xcv_tls_server_create` | `proven_tls_server_create` |
+| `xcv_tls_server_name` | `proven_tls_server_name` |
+| `xcv_tls_session_t` | `proven_tls_session_t` |
+| `xcv_tls_transport_client` | `proven_tls_transport_client` |
+| `xcv_tls_transport_conn` | `proven_tls_transport_conn` |
+| `xcv_tls_transport_server` | `proven_tls_transport_server` |
+| `xcv_tls_verify_t` | `proven_tls_verify_t` |
+| `xcv_tls_write` | `proven_tls_write` |
 | `xcv_transport_close` | `proven_transport_close` |
 | `xcv_transport_is_valid` | `proven_transport_is_valid` |
 | `xcv_transport_read` | `proven_transport_read` |

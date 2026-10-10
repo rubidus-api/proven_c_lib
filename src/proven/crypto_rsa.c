@@ -6,6 +6,12 @@
 
 #define RSA_MAX_BYTES (PROVEN_CRYPTO_RSA_MAX_BITS / 8)
 
+/* The smallest modulus accepted. A test lowers it to replay RFC 8448, whose example keys are
+ * 1024 bits; nothing else may. */
+static proven_size_t g_rsa_min_bits = PROVEN_CRYPTO_RSA_MIN_BITS;
+void proven_crypto_rsa_test_min_bits(proven_size_t bits);
+void proven_crypto_rsa_test_min_bits(proven_size_t bits) { g_rsa_min_bits = bits ? bits : PROVEN_CRYPTO_RSA_MIN_BITS; }
+
 /* sig^e mod n into `em`, exactly as many bytes as the modulus. Returns that length, or 0. */
 static proven_size_t rsa_public(proven_mem_view_t n, proven_mem_view_t e, proven_mem_view_t sig,
                                 proven_byte_t em[RSA_MAX_BYTES], proven_size_t *bits_out) {
@@ -16,7 +22,7 @@ static proven_size_t rsa_public(proven_mem_view_t n, proven_mem_view_t e, proven
     while (e.size > 0 && e.ptr[0] == 0) { e.ptr++; e.size--; }
     if (n.size > RSA_MAX_BYTES || e.size == 0 || e.size > 8) return 0;
     if (!proven_crypto_mp_mod_init(&mod, n.ptr, n.size)) return 0;
-    if (mod.bits < PROVEN_CRYPTO_RSA_MIN_BITS || mod.bits > PROVEN_CRYPTO_RSA_MAX_BITS) return 0;
+    if (mod.bits < g_rsa_min_bits || mod.bits > PROVEN_CRYPTO_RSA_MAX_BITS) return 0;
     if (!proven_crypto_mp_load_be(ex, 2, e.ptr, e.size)) return 0;
     if ((ex[0] & 1u) == 0 || (ex[1] == 0 && ex[0] < 3)) return 0;
     if (sig.size != n.size) return 0;

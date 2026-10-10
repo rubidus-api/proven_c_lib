@@ -30,6 +30,51 @@ int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("chapter 14, TLS",
+        "What the chapter says a configuration refuses, the session's size, and the contract after a failure.",
+        "");
+    // ---------------------------------------------------------------
+    {
+        /* CLAIM (s2): "There is no setting that verifies nothing. A client that would check a
+         * chain and is given no anchors is refused when the config is made". */
+        proven_tls_options_t o = { .alloc = heap };
+        proven_tls_config_t *cfg = NULL;
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &cfg) == PROVEN_ERR_INVALID_ARG, "a chain-verifying config without anchors is refused", "");
+        /* CLAIM (s2 table): PIN_ONLY with no pins is INVALID_ARG; a certificate without a key too. */
+        o.verify = PROVEN_TLS_VERIFY_PIN_ONLY;
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &cfg) == PROVEN_ERR_INVALID_ARG, "PIN_ONLY without pins is refused", "");
+        proven_byte_t pin[1][32] = { { 1 } };
+        o.pins = (const proven_byte_t (*)[32])pin; o.pin_count = 1;
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &cfg) == PROVEN_OK, "and with a pin it is made", "");
+        /* CLAIM (s7): with PIN_ONLY "server_name may be empty"; (s5) "A client has output the
+         * moment it is created." */
+        proven_tls_conn_t *c = NULL;
+        PROVEN_TEST_ASSERT(proven_tls_client_create(cfg, PROVEN_LIT(""), NULL, &c) == PROVEN_OK && proven_tls_pending_output(c).size > 0 &&
+                           !proven_tls_is_established(c), "a pinned client needs no name and speaks first", "");
+        /* CLAIM (s5): before the handshake completes a write is refused; (s8) the alert numbers
+         * are -1 when there was none. */
+        PROVEN_TEST_ASSERT(proven_tls_write(c, (proven_mem_view_t){ (const proven_byte_t *)"x", 1 }).err == PROVEN_ERR_INVALID_STATE &&
+                           proven_tls_alert_received(c) == -1 && proven_tls_alert_sent(c) == -1 && proven_tls_cipher_suite(c) == 0, "nothing is written before the handshake", "");
+        /* CLAIM (s8): "the error is returned once by proven_tls_feed; ... after that every call
+         * but the output pair and the questions returns PROVEN_ERR_INVALID_STATE." A record type
+         * that does not exist is the quickest failure there is. */
+        static const proven_byte_t junk[5] = { 99, 3, 3, 0, 1 };
+        proven_size_t used = 0;
+        PROVEN_TEST_ASSERT(proven_tls_feed(c, (proven_mem_view_t){ junk, 5 }, &used) == PROVEN_ERR_PROTOCOL &&
+                           proven_tls_feed(c, (proven_mem_view_t){ junk, 5 }, &used) == PROVEN_ERR_INVALID_STATE && proven_tls_alert_sent(c) == 10 &&
+                           proven_tls_pending_output(c).size > 0,
+            "a failure is reported once, then INVALID_STATE, with the alert left to send", "");
+        proven_tls_conn_destroy(c);
+        /* CLAIM (s3): a server "speaks TLS when its config has tls set to a config with a
+         * certificate" - one without cannot serve. */
+        PROVEN_TEST_ASSERT(proven_tls_server_create(cfg, &c) == PROVEN_ERR_INVALID_ARG, "a config with no certificate cannot be a server", "");
+        proven_tls_config_destroy(cfg);
+        /* CLAIM (s6): the session is "a plain block of bytes", of PROVEN_TLS_SESSION_SIZE. */
+        PROVEN_TEST_ASSERT(sizeof(proven_tls_session_t) == PROVEN_TLS_SESSION_SIZE && PROVEN_TLS_SESSION_SIZE == 1024, "a session is 1,024 bytes", "");
+        /* CLAIM (ch 1): PROVEN_ERR_PROTOCOL is what the TLS unit returns - shown above. */
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("chapter 13, certificates and trust",
         "The name rules, the bounds and the PEM contract as the chapter states them.",
         "");
