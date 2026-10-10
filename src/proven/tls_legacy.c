@@ -21,7 +21,7 @@ typedef struct {
     proven_tls_lh_t kind;
 } lh_t;
 
-static proven_size_t lh_size(proven_tls_lh_t kind) { return kind == PROVEN_TLS_LH_MD5 ? 16 : kind == PROVEN_TLS_LH_SHA1 ? 20 : 32; }
+static proven_size_t lh_size(proven_tls_lh_t kind) { return kind == PROVEN_TLS_LH_MD5 ? 16 : kind == PROVEN_TLS_LH_SHA1 ? 20 : kind == PROVEN_TLS_LH_SHA256 ? 32 : 48; }
 
 static void lh_start(proven_u32 state[8], proven_tls_lh_t kind) {
     static const proven_u32 legacy[5] = { 0x67452301u, 0xefcdab89u, 0x98badcfeu, 0x10325476u, 0xc3d2e1f0u };
@@ -109,6 +109,19 @@ static void lhmac_final(lhmac_t *m, proven_byte_t *out) {
 }
 
 void proven_tls_legacy_hmac(proven_tls_lh_t hash, proven_mem_view_t key, proven_mem_view_t a, proven_mem_view_t b, proven_byte_t *out) {
+    if (hash == PROVEN_TLS_LH_SHA384) {
+        /* The one of the four that the public HMAC has: 128-byte blocks, another shape. */
+        proven_hmac_t h;
+        proven_byte_t full[PROVEN_HMAC_MAX_SIZE];
+        (void)proven_hmac_init(&h, PROVEN_HMAC_SHA384, key);
+        proven_hmac_update(&h, a);
+        proven_hmac_update(&h, b);
+        proven_hmac_final(&h, full);
+        for (int i = 0; i < 48; ++i) out[i] = full[i];
+        proven_mem_wipe((proven_mem_mut_t){ .ptr = full, .size = sizeof full });
+        proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&h, .size = sizeof h });
+        return;
+    }
     lhmac_t m;
     lhmac_init(&m, hash, key);
     lh_update(&m.inner, a.ptr, a.size);
@@ -224,6 +237,56 @@ static void cbc_mac_ct(const proven_tls_cbc_t *cbc, const proven_byte_t h[13], c
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)result, .size = sizeof result });
 }
 
+/* The same for HMAC-SHA-384, whose hash works in 128-byte blocks with a 16-byte length and
+ * eight 64-bit words of state. Nothing else differs, and nothing is shared with the function
+ * above on purpose: that one is the path every other suite uses. */
+static void cbc_mac_ct_384(const proven_tls_cbc_t *cbc, const proven_byte_t h[13], const proven_byte_t *data,
+                           proven_u32 len, proven_u32 min_len, proven_u32 max_len, proven_byte_t *out) {
+    proven_sha384_t start;
+    proven_u64 state[8], result[8];
+    proven_byte_t block[128], bits[8];
+    proven_sha384_init(&start);
+    for (int i = 0; i < 8; ++i) { state[i] = start.state[i]; result[i] = 0; }
+    for (int i = 0; i < 128; ++i) block[i] = (proven_byte_t)((i < cbc->mac_len ? cbc->mac_key[i] : 0) ^ 0x36);
+    proven_sha512_compress_(state, block);
+
+    const proven_u32 mlen = 13 + len;                                 /* SECRET */
+    const proven_u32 sure = (13 + min_len) / 128;
+    const proven_u32 last = (13 + max_len + 16) / 128;
+    const proven_u32 final_block = (mlen + 16) >> 7;                  /* SECRET */
+    const proven_u64 bitlen = ((proven_u64)128 + mlen) * 8u;          /* SECRET; the upper eight bytes of the length are zero */
+    for (int i = 0; i < 8; ++i) bits[i] = (proven_byte_t)(bitlen >> (8 * (7 - i)));
+    for (proven_u32 b = 0; b <= last; ++b) {
+        for (proven_u32 j = 0; j < 128; ++j) {
+            const proven_u32 o = b * 128 + j;
+            const proven_byte_t v = o < 13 ? h[o] : o - 13 < max_len ? data[o - 13] : 0;
+            if (b < sure) { block[j] = v; continue; }
+            proven_u32 byte = (v & ct_lt(o, mlen)) | (0x80u & ct_eq(o, mlen));
+            if (j >= 120) byte |= bits[j - 120] & ct_eq(b, final_block);
+            block[j] = (proven_byte_t)byte;
+        }
+        proven_sha512_compress_(state, block);
+        const proven_u64 keep = (proven_u64)0 - (proven_u64)(ct_eq(b, final_block) & 1u);
+        for (int i = 0; i < 8; ++i) result[i] |= state[i] & keep;
+    }
+    proven_byte_t inner[48];
+    for (int i = 0; i < 48; ++i) inner[i] = (proven_byte_t)(result[i / 8] >> (56 - 8 * (i % 8)));
+    /* The outer hash is over a key block and 48 bytes: public lengths, the ordinary way. */
+    proven_sha384_t outer;
+    proven_byte_t full[PROVEN_SHA384_SIZE];
+    proven_sha384_init(&outer);
+    for (int i = 0; i < 128; ++i) block[i] = (proven_byte_t)((i < cbc->mac_len ? cbc->mac_key[i] : 0) ^ 0x5c);
+    proven_sha384_update(&outer, (proven_mem_view_t){ .ptr = block, .size = 128 });
+    proven_sha384_update(&outer, (proven_mem_view_t){ .ptr = inner, .size = 48 });
+    proven_sha384_final(&outer, full);
+    for (int i = 0; i < 48; ++i) out[i] = full[i];
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = block, .size = sizeof block });
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = inner, .size = sizeof inner });
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)state, .size = sizeof state });
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)result, .size = sizeof result });
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&outer, .size = sizeof outer });
+}
+
 void proven_tls_cbc_set_keys(proven_tls_keys_t *client_write, proven_tls_keys_t *server_write, proven_tls_cbc_t cbc[2],
                              const proven_tls12_suite_t *suite, proven_u16 version, bool etm,
                              const proven_byte_t master[PROVEN_TLS12_MASTER_SIZE], const proven_byte_t client_random[32],
@@ -337,7 +400,8 @@ bool proven_tls_cbc_open(proven_tls_keys_t *keys, proven_tls_cbc_t *cbc, proven_
     const proven_u32 min_len = max_len > 255 ? max_len - 255 : 0;
     const proven_u32 data_len = max_len - used;                       /* SECRET */
     cbc_header(keys, cbc, record[0], data_len, h);
-    cbc_mac_ct(cbc, h, text, data_len, min_len, max_len, mac);
+    if (cbc->mac == PROVEN_TLS_LH_SHA384) cbc_mac_ct_384(cbc, h, text, data_len, min_len, max_len, mac);
+    else cbc_mac_ct(cbc, h, text, data_len, min_len, max_len, mac);
 
     /* The record's MAC starts at data_len: gathered by a masked scan of every place it could be. */
     proven_byte_t theirs[PROVEN_TLS_LH_MAX_SIZE] = { 0 };

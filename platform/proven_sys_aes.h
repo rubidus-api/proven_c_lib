@@ -20,6 +20,11 @@ void proven_sys_aes_encrypt_block(const uint8_t *rk, int rounds, const uint8_t i
 void proven_sys_aes_ctr(const uint8_t *rk, int rounds, const uint8_t iv[12], uint32_t counter,
                         const uint8_t *in, uint8_t *out, size_t len);
 
+/* CBC decryption of `len` bytes (a multiple of 16) in place; `iv` is left holding the last
+ * ciphertext block. False when this build has no instruction path for it - x86-64 has one,
+ * AArch64 does not yet - and the caller then uses its portable code; nothing was touched. */
+bool proven_sys_aes_cbc_decrypt(const uint8_t *rk, int rounds, uint8_t iv[16], uint8_t *data, size_t len);
+
 /* GHASH: for each 16-byte block, y = (y ^ block) * h in GF(2^128) as GCM defines it. */
 void proven_sys_aes_ghash(uint8_t y[16], const uint8_t h[16], const uint8_t *data, size_t blocks);
 

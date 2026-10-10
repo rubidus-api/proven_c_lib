@@ -779,8 +779,8 @@ it is the one scheme this side signs with there.
 
 - **Unless a configuration asks (section 10):** TLS 1.1 and 1.0, CBC cipher suites, RSA and
   finite-field Diffie-Hellman key exchange, a peer without the extended master secret.
-- **Not at all:** SSL 3.0 and earlier; RC4, 3DES, export, anonymous and DSS suites; CBC with
-  SHA-384; renegotiation; compression; session IDs kept on the server; `record_size_limit` in
+- **Not at all:** SSL 3.0 and earlier; RC4, 3DES, export, anonymous and DSS suites;
+  renegotiation; compression; session IDs kept on the server; `record_size_limit` in
   TLS 1.2. A peer that needs one of those fails with `PROVEN_ERR_PROTOCOL`.
 - **RSA keys above 4096 bits for this side**, and RSA-PSS keys (a certificate whose key is marked for PSS only).
 - **Early data (0-RTT).**
@@ -833,7 +833,7 @@ RFC 9325 says not to negotiate the rest. If you control both ends, change the ot
 
 | Bit | What becomes possible | What you give up |
 |---|---|---|
-| `PROVEN_TLS_LEGACY_CBC` | Cipher suites that encrypt with AES in CBC mode and authenticate with HMAC-SHA1 or HMAC-SHA256. Needed for any version below 1.2, which has nothing else | A construction with a twenty-year record of padding attacks; here it is slow to receive |
+| `PROVEN_TLS_LEGACY_CBC` | Cipher suites that encrypt with AES in CBC mode and authenticate with HMAC-SHA1, HMAC-SHA256 or HMAC-SHA384. Needed for any version below 1.2, which has nothing else | A construction with a twenty-year record of padding attacks |
 | `PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE` | The client encrypts the session's secret under the server's RSA key instead of both sides agreeing on one | **Forward secrecy**: whoever obtains the server's key later reads every recorded connection. And the key itself is put within reach of a server-side mistake (below) |
 | `PROVEN_TLS_LEGACY_DHE` | Key exchange by Diffie-Hellman in a finite field, with an RSA certificate | Nothing in principle; in practice time - it is several times slower than the elliptic-curve exchange - and it exists mostly on peers that are old in other ways too |
 | `PROVEN_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET` | A connection to a peer that does not have RFC 7627 goes ahead | The binding of the session's keys to the handshake that made them |
@@ -851,8 +851,9 @@ answer 1.0 says so in a way the client checks.
 
 ### CBC suites
 
-`ECDHE-ECDSA-` and `ECDHE-RSA-` with `AES128-SHA256`, `AES128-SHA` and `AES256-SHA`; and, with
-the bits below, the same ciphers after `DHE-RSA-` and after plain RSA (there also `AES256-SHA256`).
+`ECDHE-ECDSA-` and `ECDHE-RSA-` with `AES256-SHA384`, `AES128-SHA256`, `AES128-SHA` and
+`AES256-SHA`; and, with the bits below, `AES128-SHA256`, `AES256-SHA256`, `AES128-SHA` and
+`AES256-SHA` after `DHE-RSA-` and after plain RSA.
 The suites whose MAC is SHA-1 are the only ones TLS 1.0 and 1.1 have.
 
 The weakness is the order of operations. The sender authenticates the plaintext, pads it,
@@ -869,9 +870,10 @@ Lucky Thirteen). What this library does about it:
   that depends on the padding, comparing - is done with masks, no branch and no memory index
   depending on a decrypted byte, and the number of hash blocks computed depends only on the
   record's length. Every failure is the one alert, `bad_record_mac`.
-- **Decryption is the portable, constant-time AES** in every configuration - there is no
-  hardware path for it. A CBC connection receives at about 6 MiB/s on the development machine
-  (it sends at about 75). That is the price of this design, and a reason not to use it.
+- **Decryption does not take a time that depends on the data either way**: with the
+  processor's AES instructions on x86-64 - a CBC connection then receives at about 100 MiB/s
+  on the development machine, as fast as it sends - and with the portable, bitsliced cipher
+  everywhere else, at about 6 MiB/s.
 - **In TLS 1.0** each record's IV is the previous record's last block, so an attacker who can
   make you send chosen data knows the IV in advance (BEAST). Application data is therefore
   sent as one byte, then the rest - two records for every write.
@@ -916,11 +918,10 @@ no group is examined here at all:
 - A value from the peer of 0, 1 or the prime less one is refused. Every connection uses a
   fresh exponent, which is what keeps a known weakness of the key derivation (Raccoon, 2020)
   out of reach.
-- It costs about 13 ms of processor time a side on the development machine, on top of the
-  signature: a server with a 2048-bit RSA key completes some forty-five such handshakes a
-  second per core. And it keeps its working numbers on the stack: about 20 KiB at the deepest
-  point of a handshake, by the compiler's own accounting at `-O2` on x86-64 - the same as
-  signing with RSA.
+- It costs about 7 ms of processor time a side on the development machine, on top of the
+  signature: a server with a 2048-bit RSA key completes some sixty-five such handshakes a
+  second per core. And it keeps its working numbers on the stack: about 16 KiB at the deepest
+  point of a handshake, by the compiler's own accounting at `-O2` on x86-64.
 
 ### TLS 1.0 and 1.1
 
@@ -932,7 +933,8 @@ no group is examined here at all:
 - There is no AEAD cipher: every suite is CBC with HMAC-SHA1, with everything said above.
 - **An Ed25519 key cannot serve these versions** - they have no way to carry its signature. A
   server whose key is Ed25519 refuses a client that speaks nothing newer.
-- **No session is kept** from a TLS 1.0 or 1.1 connection: every one is a full handshake.
+- Sessions work as in 1.2 (section 6): a ticket, resumed **in the version it was made in**
+  and no other - a session made in TLS 1.0 is not resumed by a handshake that agrees on 1.2.
 - Client certificates work, with P-256 and RSA keys.
 
 ### A peer without the extended master secret
@@ -951,8 +953,8 @@ extension still uses it; the bit only allows its absence.
 
 ### What this costs a program that uses none of it
 
-Eight bytes per connection (a pointer that stays null). An idle TLS 1.0 CBC connection holds
-about 1.15 KiB instead of about 1 KiB.
+Nothing: a connection that agrees on no CBC suite holds what it held before any of this
+existed. An idle CBC connection holds about 1.1 KiB instead of about 1 KiB.
 
 ### How this was checked, and what was not
 
@@ -966,6 +968,22 @@ against GnuTLS; and opening a CBC record and recovering an RSA premaster were ea
 checker with the decrypted bytes marked secret, together with a deliberately wrong version of
 each that the checker must catch (it did).
 
-**Not done:** a timing measurement on hardware fine enough to see Lucky Thirteen or a
-Bleichenbacher oracle - the checker shows that the instructions executed do not depend on the
-secret, not what a processor does with them; no fuzzing of these paths; no external review.
+**And the time was measured**, on the development machine's processor, the way such leaks are
+looked for: the same operation run hundreds of thousands of times on inputs of two kinds, in
+random order, each run timed with the cycle counter, and the two sets of times compared
+statistically. For a CBC record - each of the three MACs, with the processor's AES and with
+the portable one - a record with no padding against one with 255 bytes of it, a wrong MAC
+after each amount of padding, a wrong MAC against wrong padding, and against an impossible
+padding length; for the RSA premaster, a proper one against noise, against a wrong version and
+against a wrong length. Twice over. **No pair showed a difference that repeated.** Over all
+runs as measured the test statistic stayed below 3 for every pair, where 4.5 is the usual
+line; with the slowest tenth of runs set aside, as is customary to remove interruptions, it
+rose to between 4.5 and 7.7 for ten pairs in one run or the other and for no pair in both -
+which is what noise does, and what a real difference does not. A deliberately naive record
+check, measured the same way as a control, gave a statistic in the thousands. Whether a
+record opened at all *is* visible in the time, as it is in the answer.
+
+**What that does not show.** One processor, one compiler, a machine that was doing other work;
+400,000 runs a pair for records and 6,000 for RSA, which would miss a difference of a few
+cycles. It is a measurement, not a proof, and a quieter machine or another processor may see
+what this one did not. No fuzzing of these paths; no external review.

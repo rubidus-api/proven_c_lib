@@ -108,7 +108,7 @@ void proven_crypto_mp_pow(const proven_crypto_mp_mod_t *mod, proven_u32 *out, co
 /* out = a * b, a plain product of alen + blen limbs. `out` may not overlap an input. */
 /* base^exp for a SECRET exponent of `exp_limbs` limbs (a PUBLIC count) and a public modulus of
  * up to PROVEN_CRYPTO_MP_DH_MAX limbs: finite-field Diffie-Hellman. Base and result in
- * Montgomery form. Its table is 8 KiB of stack. */
+ * Montgomery form. Its table is 4 KiB of stack. */
 #define PROVEN_CRYPTO_MP_DH_MAX 128
 [[nodiscard]] bool proven_crypto_mp_pow_ct_short(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *base, const proven_u32 *exp, proven_size_t exp_limbs);
 void proven_crypto_mp_mul(proven_u32 *out, const proven_u32 *a, proven_size_t alen, const proven_u32 *b, proven_size_t blen);
@@ -168,6 +168,7 @@ void proven_crypto_ed25519_sign(proven_byte_t sig[64], const proven_byte_t seed[
 void proven_sha1_compress_(proven_u32 state[5], const proven_byte_t block[64]);
 void proven_md5_compress_(proven_u32 state[4], const proven_byte_t block[64]);
 void proven_sha256_compress_(proven_u32 state[8], const proven_byte_t block[64]);
+void proven_sha512_compress_(proven_u64 state[8], const proven_byte_t block[128]);
 
 /* ---- AES-GCM (NIST SP 800-38D), 96-bit nonces ---- */
 
@@ -194,8 +195,9 @@ void proven_crypto_aes_gcm_seal(const proven_crypto_aes_gcm_t *ctx, const proven
 void proven_crypto_aes_encrypt_block(const proven_crypto_aes_gcm_t *ctx, const proven_byte_t in[16], proven_byte_t out[16]);
 /* CBC over whole blocks, in place; `len` is a multiple of 16 and `iv` is left holding the last
  * ciphertext block, which is the next call's IV. Encryption uses whichever block cipher the
- * context has; decryption is the portable, bitsliced inverse cipher in every configuration -
- * these exist for the legacy TLS suites, where constant time matters and speed does not.
+ * context has, and so does decryption where the platform unit has an inverse path (x86-64);
+ * elsewhere decryption is the portable, bitsliced inverse cipher. Neither takes a time that
+ * depends on the data. These exist for the legacy TLS suites.
  * SECRET: the key, and the plaintext. */
 void proven_crypto_aes_cbc_encrypt(const proven_crypto_aes_gcm_t *ctx, proven_byte_t iv[16], proven_byte_t *data, proven_size_t len);
 void proven_crypto_aes_cbc_decrypt(const proven_crypto_aes_gcm_t *ctx, proven_byte_t iv[16], proven_byte_t *data, proven_size_t len);

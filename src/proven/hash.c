@@ -610,6 +610,10 @@ static void sha512_compress(proven_u64 state[8], const proven_byte_t block[128])
     state[4] += e; state[5] += f; state[6] += g; state[7] += h;
 }
 
+/* The block function by itself, for the legacy TLS unit (see hash_legacy.c). */
+void proven_sha512_compress_(proven_u64 state[8], const proven_byte_t block[128]);
+void proven_sha512_compress_(proven_u64 state[8], const proven_byte_t block[128]) { sha512_compress(state, block); }
+
 void proven_sha512_init(proven_sha512_t *ctx) {
     if (!ctx) return;
     ctx->state[0] = 0x6a09e667f3bcc908ull; ctx->state[1] = 0xbb67ae8584caa73bull;

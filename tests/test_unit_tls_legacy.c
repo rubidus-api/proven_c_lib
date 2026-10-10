@@ -64,7 +64,7 @@ static bool record_setup(const char **at, proven_tls_keys_t *keys, proven_tls_cb
     for (int i = 0; i < 9; ++i) f[i] = field(at, &n[i]);
     memset(keys, 0, sizeof *keys); memset(cbc, 0, sizeof *cbc);
     cbc->mac = (proven_u8)number(f[0], n[0], 10);
-    cbc->mac_len = cbc->mac == PROVEN_TLS_LH_SHA1 ? 20 : 32;
+    cbc->mac_len = cbc->mac == PROVEN_TLS_LH_SHA1 ? 20 : cbc->mac == PROVEN_TLS_LH_SHA256 ? 32 : 48;
     cbc->etm = f[1][0] == '1'; cbc->chained = f[2][0] == '1';
     cbc->version = (proven_u16)number(f[3], n[3], 16);
     const proven_size_t kl = unhex(f[4], n[4], key);
@@ -127,6 +127,9 @@ int main(void) {
             memcpy(g_buf[3], g_buf[1], len);
             proven_crypto_aes_cbc_encrypt(&aes, iv, g_buf[3], len);
             ok = ok && memcmp(g_buf[3], g_buf[2], len) == 0;
+            (void)unhex(f2, n2, iv);
+            proven_crypto_aes_cbc_decrypt(&aes, iv, g_buf[3], len);
+            ok = ok && memcmp(g_buf[3], g_buf[1], len) == 0 && memcmp(iv, g_buf[2] + len - 16, 16) == 0;
         } else if (kind == 'H') {
             const char *f1 = field(&at, &n1), *f2 = field(&at, &n2), *f3 = field(&at, &n3), *f4 = field(&at, &n4);
             const proven_tls_lh_t hash = (proven_tls_lh_t)number(f1, n1, 10);
@@ -181,8 +184,8 @@ int main(void) {
         if (!ok) { failed = 1; fprintf(stderr, "line %u (%c) differs\n", (unsigned)i, kind); }
     }
     PROVEN_TEST_ASSERT(!failed, "every line of the script is reproduced", "");
-    PROVEN_TEST_ASSERT(counts['A'] == 10 && counts['H'] == 23 && counts['P'] == 10 && counts['C'] == 108 && counts['Y'] == 48 && counts['X'] == 144 && counts['D'] == 12,
-        "ten AES-CBC texts, twenty-three MACs, ten PRF outputs, a hundred and eight records sealed and opened, forty-eight with more padding opened, a hundred and forty-four spoiled ones refused, twelve Diffie-Hellman exchanges", "");
+    PROVEN_TEST_ASSERT(counts['A'] == 10 && counts['H'] == 23 && counts['P'] == 10 && counts['C'] == 118 && counts['Y'] == 54 && counts['X'] == 162 && counts['D'] == 12,
+        "ten AES-CBC texts, twenty-three MACs, ten PRF outputs, 118 records sealed and opened, 54 with more padding opened, 162 spoiled ones refused, twelve Diffie-Hellman exchanges", "");
 
     PROVEN_TEST_SECTION("what a CBC record's length alone refuses", "Records that are too short to hold a MAC, or not a whole number of blocks.", "Check the public checks at the top of proven_tls_cbc_open.");
     {
@@ -332,9 +335,9 @@ int main(void) {
         proven_byte_t iv[16] = { 9 };
         bool all = true;
         memset(master, 3, sizeof master); memset(cr, 4, sizeof cr); memset(sr, 5, sizeof sr);
-        static const proven_u16 ids[4] = { 0xc013, 0xc027, 0x0035, 0x006b };
+        static const proven_u16 ids[5] = { 0xc013, 0xc027, 0x0035, 0x006b, 0xc028 };
         static const proven_u16 vers[3] = { 0x0301, 0x0302, 0x0303 };
-        for (int s = 0; s < 4; ++s) for (int v = 0; v < 3; ++v) for (int etm = 0; etm < 2; ++etm) {
+        for (int s = 0; s < 5; ++s) for (int v = 0; v < 3; ++v) for (int etm = 0; etm < 2; ++etm) {
             const proven_tls12_suite_t *suite = proven_tls12_suite_find(ids[s]);
             if (vers[v] < 0x0303 && suite->mac != PROVEN_TLS_LH_SHA1) continue;
             proven_tls_keys_t cw, sw, cw2, sw2;
@@ -342,7 +345,7 @@ int main(void) {
             proven_mem_mut_t content;
             proven_tls_cbc_set_keys(&cw, &sw, a, suite, vers[v], etm != 0, master, cr, sr);
             proven_tls_cbc_set_keys(&cw2, &sw2, b, suite, vers[v], etm != 0, master, cr, sr);
-            all = all && cw.active && sw.active && a[0].mac_len == (suite->mac == PROVEN_TLS_LH_SHA1 ? 20 : 32) && a[0].chained == (vers[v] == 0x0301) && a[0].etm == (etm != 0);
+            all = all && cw.active && sw.active && a[0].mac_len == (suite->mac == PROVEN_TLS_LH_SHA1 ? 20 : suite->mac == PROVEN_TLS_LH_SHA256 ? 32 : 48) && a[0].chained == (vers[v] == 0x0301) && a[0].etm == (etm != 0);
             all = all && memcmp(a[0].mac_key, a[1].mac_key, a[0].mac_len) != 0 && memcmp(cw.aes.rk, sw.aes.rk, 16) != 0;
             /* What the client seals the server's reading side opens, and the other way; never the same side. */
             proven_size_t n = proven_tls_cbc_seal(&cw, &a[0], PROVEN_TLS_CT_APPLICATION, (proven_mem_view_t){ master, 40 }, iv, record);
@@ -356,12 +359,12 @@ int main(void) {
             memcpy(copy, record, n);
             all = all && proven_tls_cbc_open(&sw2, &b[1], copy, n - 5, &content) && content.size == 32;
         }
-        PROVEN_TEST_ASSERT(all, "four suites in every version they exist in: the two directions have different keys, and each side opens what the other seals and not what it would seal itself", "");
+        PROVEN_TEST_ASSERT(all, "five suites in every version they exist in: the two directions have different keys, and each side opens what the other seals and not what it would seal itself", "");
         const proven_tls12_suite_t *s;
         int legacy = 0, total = 0;
         for (proven_size_t i = 0; (s = proven_tls12_suite_at(i)) != NULL; ++i) { total++; if (s->legacy) legacy++; else if (legacy) legacy = -100; }
-        PROVEN_TEST_ASSERT(total == 25 && legacy == 19 && proven_tls12_suite_find(0xc028) == NULL && proven_tls12_suite_find(0x000a) == NULL && proven_tls12_suite_find(0x0005) == NULL,
-            "twenty-five suites, the nineteen legacy ones after all the others; a CBC suite with SHA-384, 3DES and RC4 are not among them", "");
+        PROVEN_TEST_ASSERT(total == 27 && legacy == 21 && proven_tls12_suite_find(0xc012) == NULL && proven_tls12_suite_find(0x000a) == NULL && proven_tls12_suite_find(0x0005) == NULL,
+            "twenty-seven suites, the twenty-one legacy ones after all the others; 3DES and RC4 are not among them", "");
     }
 
     PROVEN_TEST_PASS("the pieces under the legacy TLS set reproduce their known answers and refuse what they must.");

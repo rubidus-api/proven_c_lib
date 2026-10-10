@@ -260,21 +260,25 @@ bool proven_crypto_mp_pow_ct(const proven_crypto_mp_mod_t *mod, proven_u32 *out,
 bool proven_crypto_mp_pow_ct_short(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *base, const proven_u32 *exp, proven_size_t exp_limbs) {
     const proven_size_t s = mod->limbs;
     if (s > PROVEN_CRYPTO_MP_DH_MAX || exp_limbs == 0) return false;
-    proven_u32 table[16][PROVEN_CRYPTO_MP_DH_MAX], sel[PROVEN_CRYPTO_MP_DH_MAX], acc[PROVEN_CRYPTO_MP_DH_MAX];
-    for (proven_size_t j = 0; j < s; ++j) { acc[j] = 0; table[1][j] = base[j]; }
+    /* One flat table of 1024 limbs serves both sizes: sixteen powers for a modulus of up to
+     * 2048 bits (windows of four bits), four for a larger one (windows of two). That halves
+     * the stack this needs, at the price of some multiplications for the larger groups. */
+    const unsigned wbits = s <= 64 ? 4u : 2u, entries = 1u << wbits;
+    proven_u32 table[1024], sel[PROVEN_CRYPTO_MP_DH_MAX], acc[PROVEN_CRYPTO_MP_DH_MAX];
+    for (proven_size_t j = 0; j < s; ++j) { acc[j] = 0; table[s + j] = base[j]; }
     acc[0] = 1;
-    proven_crypto_mp_to_mont(mod, table[0], acc);
-    for (int k = 2; k < 16; ++k) proven_crypto_mp_montmul(mod, table[k], table[k - 1], base);
-    for (proven_size_t j = 0; j < s; ++j) acc[j] = table[0][j];
+    proven_crypto_mp_to_mont(mod, table, acc);
+    for (unsigned k = 2; k < entries; ++k) proven_crypto_mp_montmul(mod, table + k * s, table + (k - 1) * s, base);
+    for (proven_size_t j = 0; j < s; ++j) acc[j] = table[j];
     for (proven_size_t i = exp_limbs; i-- > 0;) {
-        for (int nibble = 7; nibble >= 0; --nibble) {
-            for (int q = 0; q < 4; ++q) proven_crypto_mp_montmul(mod, acc, acc, acc);
-            const proven_u32 w = (exp[i] >> (4 * nibble)) & 15u;
+        for (int shift = 32 - (int)wbits; shift >= 0; shift -= (int)wbits) {
+            for (unsigned q = 0; q < wbits; ++q) proven_crypto_mp_montmul(mod, acc, acc, acc);
+            const proven_u32 w = (exp[i] >> shift) & (entries - 1);
             for (proven_size_t j = 0; j < s; ++j) sel[j] = 0;
-            for (proven_u32 k = 0; k < 16; ++k) {
+            for (proven_u32 k = 0; k < entries; ++k) {
                 const proven_u32 x = k ^ w;
                 const proven_u32 mask = ((x | ((proven_u32)0 - x)) >> 31) - 1u;
-                for (proven_size_t j = 0; j < s; ++j) sel[j] |= table[k][j] & mask;
+                for (proven_size_t j = 0; j < s; ++j) sel[j] |= table[k * s + j] & mask;
             }
             proven_crypto_mp_montmul(mod, acc, acc, sel);
         }

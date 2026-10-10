@@ -275,6 +275,11 @@ void proven_crypto_aes_cbc_encrypt(const proven_crypto_aes_gcm_t *ctx, proven_by
 }
 
 void proven_crypto_aes_cbc_decrypt(const proven_crypto_aes_gcm_t *ctx, proven_byte_t iv[16], proven_byte_t *data, proven_size_t len) {
+#ifndef PROVEN_FREESTANDING
+    /* The processor's own inverse cipher where there is one: its time does not depend on the
+     * data either, and it is some forty times faster. */
+    if (ctx->hw && proven_sys_aes_cbc_decrypt(ctx->rk, ctx->rounds, iv, data, len & ~(proven_size_t)15)) return;
+#endif
     bs_keys_t bk;
     bs_keys(&bk, ctx);
     for (proven_size_t at = 0; at + 16 <= len;) {

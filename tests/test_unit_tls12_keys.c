@@ -130,8 +130,8 @@ int main(void) {
             PROVEN_TEST_ASSERT(!proven_tls12_open(&cr_keys, b, n - 5, &content), "and a second time it does not: the sequence number has moved on", "");
             PROVEN_TEST_ASSERT(!proven_tls12_open(&cr_keys, b, 15, &content) && !proven_tls12_open(&cr_keys, b, PROVEN_TLS_MAX_CIPHERTEXT + 1, &content), "lengths below a tag and above the maximum are refused on sight", "");
         }
-        PROVEN_TEST_ASSERT(proven_tls12_suite_find(0x1301) == NULL && proven_tls12_suite_find(0xc028) == NULL && proven_tls12_suite_find(0x000a) == NULL,
-            "a TLS 1.3 suite, a CBC suite with SHA-384 and a 3DES suite are not among the 1.2 suites", "");
+        PROVEN_TEST_ASSERT(proven_tls12_suite_find(0x1301) == NULL && proven_tls12_suite_find(0xc012) == NULL && proven_tls12_suite_find(0x000a) == NULL,
+            "a TLS 1.3 suite and two 3DES suites are not among the 1.2 suites", "");
     }
 
     PROVEN_TEST_PASS("the TLS 1.2 PRF, key derivation and record protection reproduce values computed elsewhere.");

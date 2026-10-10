@@ -164,16 +164,23 @@ typedef struct {
 struct proven_tls_conn {
     const proven_tls_config_t *config;
     proven_allocator_t alloc;
+    /* The small fields first and together, so that none of them costs padding: an idle
+     * connection is held by the ten thousand. */
     bool is_server;
-    tls_state_t state;
     bool established, dead, close_sent, close_received;
-    proven_err_t error;                           /* the failure, to be returned once */
     bool error_reported;
+    bool v12;
+    bool resumed;
+    bool has_peer_key;
+    proven_u16 version;                           /* 0 until agreed */
+    tls_state_t state;
+    proven_err_t error;                           /* the failure, to be returned once */
     int alert_sent, alert_received;
+    int alpn_index;                               /* into the config's list; -1 none */
+    proven_u32 ignored;                           /* records in a row that carried nothing: see TLS_MAX_IGNORED */
+    proven_cert_fault_t peer_fault;
     const proven_tls_suite_t *suite;
     const proven_tls12_suite_t *suite12;          /* TLS 1.2: instead of `suite` */
-    proven_u16 version;                           /* 0 until agreed */
-    bool v12;
     proven_tls_keys_t read_keys, write_keys;
     proven_tls_cbc_t *cbc;                        /* a CBC suite only: [0] what the client writes with, [1] the server */
     proven_byte_t read_secret[48], write_secret[48];      /* application traffic secrets, for KeyUpdate */
@@ -185,13 +192,8 @@ struct proven_tls_conn {
     tls_buf_t out;
     proven_size_t out_off;
     tls_buf_t post;                               /* a post-handshake message that spans records */
-    proven_u32 ignored;                           /* records in a row that carried nothing: see TLS_MAX_IGNORED */
     proven_tls_session_t *session;
-    int alpn_index;                               /* into the config's list; -1 none */
-    bool resumed;
-    bool has_peer_key;
     proven_byte_t peer_key_hash[32];
-    proven_cert_fault_t peer_fault;
     tls_buf_t peer_cert;                          /* kept only when the config asks */
     proven_byte_t *server_name;                   /* client: the name it asked for; its own small allocation */
     proven_size_t server_name_len;
@@ -842,6 +844,8 @@ static proven_tls_session_data_t *client_session12(proven_tls_conn_t *c) {
     if (!suite12_allowed(c->config, proven_tls12_suite_find(s->suite)) || s->psk_len != PROVEN_TLS12_MASTER_SIZE || s->ticket_len == 0 || s->ticket_len > PROVEN_TLS_SESSION_TICKET_MAX) return NULL;
     if (age < 0 || age >= (proven_i64)s->lifetime_s || age >= 604800) return NULL;
     if (s->name_len != c->server_name_len || !bytes_eq(s->name, c->server_name, s->name_len)) return NULL;
+    /* A session is resumed in the version it was made in: not offered where that cannot be agreed. */
+    if (s->version < c->config->min_version || s->version > c->config->max_version) return NULL;
     return s;
 }
 
@@ -2037,8 +2041,8 @@ static proven_err_t client12_server_hello(proven_tls_conn_t *c, proven_u16 versi
     if (h->ticket_offered12 && sid.n > 0 && sid.n == h->session_id_len && bytes_eq(sid.p, h->session_id, sid.n)) {
         proven_tls_session_data_t *sess = (proven_tls_session_data_t *)(void *)c->session->opaque;
         if (sess->suite != suite_id) return tls_illegal(c);      /* a session is resumed under the suite it was made with */
-        /* Sessions are made in TLS 1.2 with the extended master secret, and resumed the same way. */
-        if (version != PROVEN_TLS_VERSION_1_2 || !ems) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
+        /* Sessions are made with the extended master secret, and resumed in the version they were made in. */
+        if (version != sess->version || !ems) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
         for (int i = 0; i < PROVEN_TLS12_MASTER_SIZE; ++i) h->master12[i] = sess->psk[i];
         c->resumed = true;
         h->resuming12 = true;
@@ -2074,11 +2078,12 @@ static bool tls12_handshake_digest(proven_tls_conn_t *c, proven_hmac_hash_t hash
 /* Keep the session for another connection: the master secret, under the ticket the server gave. */
 static void client12_store_session(proven_tls_conn_t *c) {
     tls_handshake_t *h = c->hs;
-    if (tls_old(c) || !h->ems) return;                            /* see client12_server_hello */
+    if (!h->ems) return;                                          /* see client12_server_hello */
     if (!c->session || c->config->no_resumption || h->ticket12.len == 0 || h->ticket12.len > PROVEN_TLS_SESSION_TICKET_MAX || h->ticket12_lifetime == 0) return;
     proven_tls_session_data_t *s = (proven_tls_session_data_t *)(void *)c->session->opaque;
     tls_wipe(s, sizeof *s);
     s->suite = c->suite12->id;
+    s->version = c->version;
     s->psk_len = PROVEN_TLS12_MASTER_SIZE;
     for (int i = 0; i < PROVEN_TLS12_MASTER_SIZE; ++i) s->psk[i] = h->master12[i];
     s->received_at = proven_tls_config_now(c->config);
@@ -2452,15 +2457,16 @@ static proven_err_t server12_client_hello(proven_tls_conn_t *c, proven_u16 versi
      * session in which one was shown. */
     proven_tls_ticket_state_t ticket = { 0 };
     bool resume = false;
-    if (!cfg->no_resumption && !old && ems && offered_ticket.n > 0 && sid.n > 0 &&
+    if (!cfg->no_resumption && ems && offered_ticket.n > 0 && sid.n > 0 &&
         proven_tls_ticket_open(cfg, (proven_mem_view_t){ .ptr = offered_ticket.p, .size = offered_ticket.n }, &ticket)) {
         const proven_tls12_suite_t *made = proven_tls12_suite_find(ticket.suite);
         resume = suite12_allowed(cfg, made) && ticket.psk_len == PROVEN_TLS12_MASTER_SIZE && list_has_u16(suites, ticket.suite) &&
+                 (ticket.version ? ticket.version : PROVEN_TLS_VERSION_1_2) == version &&
                  !(cfg->client_auth == PROVEN_TLS_CLIENT_AUTH_REQUIRE && !ticket.has_peer_key);
         if (resume) suite = made;
     }
-    /* Tickets are for TLS 1.2 sessions made with the extended master secret, and no others. */
-    h->issue_ticket12 = wants_ticket && !cfg->no_resumption && !resume && !old && ems;
+    /* Tickets are for sessions made with the extended master secret, and no others. */
+    h->issue_ticket12 = wants_ticket && !cfg->no_resumption && !resume && ems;
 
     c->v12 = true;
     c->suite12 = suite;
@@ -2594,6 +2600,7 @@ static bool server12_send_ticket(proven_tls_conn_t *c) {
     proven_tls_ticket_state_t st = { 0 };
     proven_byte_t ticket[PROVEN_TLS_TICKET_MAX];
     st.suite = c->suite12->id;
+    st.version = tls_old(c) ? c->version : 0;
     st.psk_len = PROVEN_TLS12_MASTER_SIZE;
     for (int i = 0; i < PROVEN_TLS12_MASTER_SIZE; ++i) st.psk[i] = c->hs->master12[i];
     st.issued_at = proven_tls_config_now(cfg);

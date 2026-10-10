@@ -139,10 +139,10 @@ proven_size_t proven_tls12_seal(proven_tls_keys_t *keys, proven_byte_t type, pro
 /* ---- The legacy set (RFC-0011 decision T-8), below the state machine: tls_legacy.c ----
  * Everything here is reached only through a configuration that asks for it. */
 
-typedef enum { PROVEN_TLS_LH_MD5 = 0, PROVEN_TLS_LH_SHA1 = 1, PROVEN_TLS_LH_SHA256 = 2 } proven_tls_lh_t;
-#define PROVEN_TLS_LH_MAX_SIZE 32
+typedef enum { PROVEN_TLS_LH_MD5 = 0, PROVEN_TLS_LH_SHA1 = 1, PROVEN_TLS_LH_SHA256 = 2, PROVEN_TLS_LH_SHA384 = 3 } proven_tls_lh_t;
+#define PROVEN_TLS_LH_MAX_SIZE 48
 
-/* HMAC over `a` then `b` with one of the three hashes; out takes 16, 20 or 32 bytes. */
+/* HMAC over `a` then `b` with one of the four hashes; out takes 16, 20, 32 or 48 bytes. */
 void proven_tls_legacy_hmac(proven_tls_lh_t hash, proven_mem_view_t key, proven_mem_view_t a, proven_mem_view_t b, proven_byte_t *out);
 /* The PRF of TLS 1.0 and 1.1 (RFC 2246 section 5): P_MD5 over the first half of the secret
  * XOR P_SHA-1 over the second. */
@@ -151,8 +151,8 @@ void proven_tls10_prf(proven_mem_view_t secret, const char *label, proven_mem_vi
 /* What a CBC suite keeps for one direction beside the cipher and the sequence number, which
  * stay in proven_tls_keys_t. */
 typedef struct {
-    proven_u8 mac;                                /* PROVEN_TLS_LH_SHA1 or PROVEN_TLS_LH_SHA256 */
-    proven_u8 mac_len;                            /* 20 or 32: of the MAC and of its key */
+    proven_u8 mac;                                /* PROVEN_TLS_LH_SHA1, _SHA256 or _SHA384 */
+    proven_u8 mac_len;                            /* 20, 32 or 48: of the MAC and of its key */
     bool etm;                                     /* encrypt_then_mac (RFC 7366) was agreed */
     bool chained;                                 /* TLS 1.0: a record's IV is the last block of the one before */
     proven_u16 version;                           /* as records and the MAC carry it */
@@ -160,7 +160,7 @@ typedef struct {
     proven_byte_t iv[16];                         /* the chain, when chained */
 } proven_tls_cbc_t;
 
-#define PROVEN_TLS_CBC_MAX_EXPANSION (PROVEN_TLS_RECORD_HEADER + 16 + PROVEN_TLS_LH_MAX_SIZE + 16)
+#define PROVEN_TLS_CBC_MAX_EXPANSION (PROVEN_TLS_RECORD_HEADER + 16 + PROVEN_TLS_LH_MAX_SIZE + 16)      /* 85 */
 /* One CBC record: header, the explicit IV unless chained (`iv`: 16 unpredictable bytes from
  * the caller), and the protected content. Returns the number of bytes written to `out`, at
  * most content.size + PROVEN_TLS_CBC_MAX_EXPANSION. `content` and `out` must not overlap. */
@@ -258,6 +258,7 @@ struct proven_tls_config {
 /* What a ticket holds, and what a client keeps of a session. */
 typedef struct {
     proven_u16 suite;
+    proven_u16 version;                           /* 0x0302 or 0x0301 for a session of those versions; 0 otherwise (the suite tells 1.3 from 1.2) */
     proven_size_t psk_len;
     proven_byte_t psk[PROVEN_TLS_TICKET_PSK_MAX];
     proven_i64 issued_at;
@@ -284,12 +285,13 @@ typedef struct {
     proven_u32 age_add;
     proven_u16 name_len;
     proven_u16 ticket_len;
+    proven_u16 version;                           /* of a session older than TLS 1.3: the version it was made in and resumes in */
     proven_byte_t name[254];
     proven_byte_t has_peer_key;
     proven_byte_t peer_key_hash[32];              /* the server's key, as verified when the session was made */
     proven_byte_t ticket[PROVEN_TLS_SESSION_TICKET_MAX];
 } proven_tls_session_data_t;
-#define PROVEN_TLS_SESSION_MAGIC ((proven_u32)0x70547331)
+#define PROVEN_TLS_SESSION_MAGIC ((proven_u32)0x70547332)      /* changed with the record's layout: an older record is simply empty */
 
 void proven_tls_config_random(const proven_tls_config_t *config, proven_byte_t *out, proven_size_t len);
 proven_i64 proven_tls_config_now(const proven_tls_config_t *config);

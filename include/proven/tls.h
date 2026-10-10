@@ -58,7 +58,7 @@ typedef proven_i64 (*proven_tls_now_fn)(void *ctx);
 /** @brief Bits for `legacy` in the options: parts of TLS that are kept out unless a
  *         configuration names them, because each has a known weakness (the manual says which).
  *         They exist to reach a peer that has nothing better. */
-#define PROVEN_TLS_LEGACY_CBC              ((proven_u32)1)  /**< CBC cipher suites with HMAC-SHA1 or HMAC-SHA256 */
+#define PROVEN_TLS_LEGACY_CBC              ((proven_u32)1)  /**< CBC cipher suites with HMAC-SHA1, -SHA256 or -SHA384 */
 #define PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE ((proven_u32)2)  /**< key exchange by RSA encryption: no forward secrecy */
 #define PROVEN_TLS_LEGACY_DHE              ((proven_u32)4)  /**< finite-field Diffie-Hellman key exchange */
 #define PROVEN_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET ((proven_u32)8) /**< go on with a peer that lacks RFC 7627 */

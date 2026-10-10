@@ -99,6 +99,27 @@ AES_TARGET void proven_sys_aes_ghash(uint8_t y[16], const uint8_t h[16], const u
     _mm_storeu_si128((__m128i *)y, _mm_shuffle_epi8(yv, rev));
 }
 
+/* The inverse cipher in the form the instructions want: the round keys in reverse, the
+ * middle ones passed through InvMixColumns. Made per call - nine or thirteen instructions. */
+AES_TARGET bool proven_sys_aes_cbc_decrypt(const uint8_t *rk, int rounds, uint8_t iv[16], uint8_t *data, size_t len) {
+    __m128i dk[15];
+    dk[0] = _mm_loadu_si128((const __m128i *)(rk + 16 * rounds));
+    for (int r = 1; r < rounds; ++r) dk[r] = _mm_aesimc_si128(_mm_loadu_si128((const __m128i *)(rk + 16 * (rounds - r))));
+    dk[rounds] = _mm_loadu_si128((const __m128i *)rk);
+    __m128i prev = _mm_loadu_si128((const __m128i *)iv);
+    for (size_t at = 0; at + 16 <= len; at += 16) {
+        const __m128i c = _mm_loadu_si128((const __m128i *)(data + at));
+        __m128i b = _mm_xor_si128(c, dk[0]);
+        for (int r = 1; r < rounds; ++r) b = _mm_aesdec_si128(b, dk[r]);
+        b = _mm_aesdeclast_si128(b, dk[rounds]);
+        _mm_storeu_si128((__m128i *)(data + at), _mm_xor_si128(b, prev));
+        prev = c;
+    }
+    _mm_storeu_si128((__m128i *)iv, prev);
+    for (int r = 0; r <= rounds; ++r) dk[r] = _mm_setzero_si128();
+    return true;
+}
+
 #elif defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__)) && !defined(PROVEN_SYS_AES_DISABLE)
 
 #include <arm_neon.h>
@@ -187,9 +208,19 @@ AES_TARGET void proven_sys_aes_ghash(uint8_t y[16], const uint8_t h[16], const u
     vst1q_u8(y, vrbitq_u8(yv));
 }
 
+bool proven_sys_aes_cbc_decrypt(const uint8_t *rk, int rounds, uint8_t iv[16], uint8_t *data, size_t len) {
+    (void)rk; (void)rounds; (void)iv; (void)data; (void)len;
+    return false;
+}
+
 #else
 
 bool proven_sys_aes_available(void) { return false; }
+
+bool proven_sys_aes_cbc_decrypt(const uint8_t *rk, int rounds, uint8_t iv[16], uint8_t *data, size_t len) {
+    (void)rk; (void)rounds; (void)iv; (void)data; (void)len;
+    return false;
+}
 
 void proven_sys_aes_encrypt_block(const uint8_t *rk, int rounds, const uint8_t in[16], uint8_t out[16]) {
     (void)rk; (void)rounds; (void)in; (void)out;

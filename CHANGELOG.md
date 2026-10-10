@@ -18,6 +18,39 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release that goes back over the legacy TLS set of 0.23.0 and removes most of what
+that release listed as its costs and gaps. Nothing changes for a configuration that sets no
+`legacy` bit, except that an idle connection is 24 bytes smaller than in 0.24.0.
+
+### Added
+
+- Two more CBC suites behind `PROVEN_TLS_LEGACY_CBC`: `ECDHE-ECDSA-AES256-SHA384` and
+  `ECDHE-RSA-AES256-SHA384`, with the constant-time record check done for HMAC-SHA384's
+  block size too.
+- **Sessions in TLS 1.0 and 1.1.** A ticket is issued and resumed in those versions as in
+  1.2, always in the version the session was made in. (0.23.0 kept no session from them.)
+
+### Changed
+
+- **CBC records are decrypted with the processor's AES instructions on x86-64**: receiving
+  goes from about 6 MiB/s to about 100 MiB/s on the development machine. Elsewhere the
+  portable constant-time cipher is used, as before.
+- A finite-field Diffie-Hellman handshake needs about 16 KiB of stack instead of 20. Its cost
+  is about 7 ms a side on the development machine; the 13 ms that 0.23.0's manual gave was
+  measured on a loaded machine and was wrong.
+- **An idle TLS connection no longer pays for the legacy set**: the pointer added in 0.23.0
+  now fits in what was padding, and a connection holds 1,022 bytes - 16 fewer than in 0.22.0.
+- A client's stored session (`proven_tls_session_t`) from an earlier version of the library
+  is treated as empty: its layout gained a field.
+
+### Security
+
+- The two places in the legacy set where the time taken must not depend on a secret -
+  opening a CBC record and recovering an RSA premaster - were **measured** on the development
+  machine, which 0.23.0 said had not been done. No difference between kinds of failure was
+  found; the manual (chapter 14, section 10) says how it was measured and what such a
+  measurement cannot show.
+
 ## [0.24.0] - 2026-10-10
 
 A MINOR release: compression. `deflate.h` reads and writes DEFLATE, bare or wrapped as zlib or

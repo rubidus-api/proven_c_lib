@@ -403,7 +403,8 @@ proven_size_t proven_tls_ticket_seal(const proven_tls_config_t *config, const pr
     bool have_prev;
     ticket_keys(config, cur, &cur_id, prev, &prev_id, &have_prev);
     proven_size_t n = 0;
-    plain[n++] = 1;                               /* the layout's version */
+    /* The layout's number, which also says which old version a session belongs to. */
+    plain[n++] = state->version == 0x0302 ? 2 : state->version == 0x0301 ? 3 : 1;
     plain[n++] = (proven_byte_t)(state->suite >> 8); plain[n++] = (proven_byte_t)state->suite;
     put64(plain + n, (proven_u64)state->issued_at); n += 8;
     plain[n++] = (proven_byte_t)state->psk_len;
@@ -430,7 +431,8 @@ bool proven_tls_ticket_open(const proven_tls_config_t *config, proven_mem_view_t
                                                  (proven_mem_view_t){ .ptr = ticket.ptr + 16, .size = TICKET_PLAIN },
                                                  ticket.ptr + 16 + TICKET_PLAIN, plain);
     }
-    if (ok && plain[0] == 1) {
+    if (ok && plain[0] >= 1 && plain[0] <= 3) {
+        state->version = plain[0] == 2 ? 0x0302 : plain[0] == 3 ? 0x0301 : 0;
         proven_size_t n = 1;
         state->suite = (proven_u16)(((proven_u16)plain[n] << 8) | plain[n + 1]); n += 2;
         state->issued_at = (proven_i64)get64(plain + n); n += 8;
