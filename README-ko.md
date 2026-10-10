@@ -1,4 +1,4 @@
-**한국어** | [English](README.md) — **Proven C library v0.17.0** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.17.0/proven_c_lib-v0.17.0.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.17.0/proven_c_lib-v0.17.0-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.17.0/proven_c_lib-v0.17.0-ko-manual.pdf)
+**한국어** | [English](README.md) — **Proven C library v0.18.0** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.18.0/proven_c_lib-v0.18.0.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.18.0/proven_c_lib-v0.18.0-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.18.0/proven_c_lib-v0.18.0-ko-manual.pdf)
 
 # Proven C library
 
@@ -19,7 +19,7 @@ C 책을 한 권 뗐다고 해 봅시다. 포인터도, `malloc`도, `printf`도
 공개 함수 전부를 이름으로 찾을 수 있는 검색이 함께 있습니다. 입문서 한 권 외에는 아무것도
 전제하지 않으며, 이 저장소에서 찾아보는 문서가 아니라 읽으라고 쓴 유일한 문서입니다.
 
-- 버전: proven_c_lib-v0.17.0 · 표준: C23 · 라이선스: MIT
+- 버전: proven_c_lib-v0.18.0 · 표준: C23 · 라이선스: MIT
 - 버전은 시맨틱 버전 `MAJOR.MINOR.PATCH`이며 v0.0.1(2026-09-04)부터 시작합니다. 그 이전 릴리스는
   날짜 기반 번호(`v26.MM.DDx`)이고, 발표된 그대로 둡니다.
 - `*_internal`이나 `*_impl`로 끝나는 함수 일곱 개는 매크로가 호출하기 때문에 공개 헤더에 있습니다.
@@ -342,7 +342,7 @@ arena는 `free` 만 번을 `reset` 한 번으로 바꿉니다. 그리고 리눅�
 
 - **C99** — 지정 초기화자, 복합 리터럴: 매개변수 열 개짜리 함수 대신 옵션 구조체.
 - **C11** — `_Generic`. `{}`가 포맷 문자열이 아니라 인자에서 타입을 얻어 오는 방법이 이것입니다.
-- **C23** — `[[nodiscard]]`(이 저장소에서 400번 쓰였고, 그래서 컴파일러가 에러를 버리는 코드를 거부합니다),
+- **C23** — `[[nodiscard]]`(이 저장소에서 412번 쓰였고, 그래서 컴파일러가 에러를 버리는 코드를 거부합니다),
   검사 산술을 위한 `<stdckdint.h>`, `constexpr`, `typeof`, `nullptr`.
 
 Andre Weissflog의 [*Modern C for C++ Peeps*](https://floooh.github.io/2019/09/27/modern-c-for-cpp-peeps.html)와

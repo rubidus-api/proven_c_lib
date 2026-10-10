@@ -18,6 +18,12 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-10
+
+A MINOR release: an event loop, and an HTTP server on it in which no call waits. It is the
+first step toward serving very many connections from one thread; this release states what a
+connection holds and makes no claim yet about how many a loop carries.
+
 ### Added
 
 - `loop.h`, an event loop (hosted-only). `proven_loop_create`, `_destroy`, `_run`, `_poll`,
@@ -40,7 +46,7 @@ written; their tags still exist.
   x86-64 Linux, and the test fails above 512.
 - Manual chapter 15, "The event loop and the event-driven server", in English and Korean,
   with two programs the build compiles and runs. Tests `test_unit_loop` and
-  `test_unit_http_event`. 41 `xcv_` aliases.
+  `test_unit_http_event`. 41 aliases.
 
 **Not in this release:** any measurement of how many connections or requests a loop carries;
 more than one loop; WebSocket on the event-driven server; an event-driven client. The blocking

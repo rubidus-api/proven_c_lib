@@ -67,17 +67,37 @@ static atomic_int g_posted_ran;
 static atomic_int g_wrong_thread;
 static proven_u64 g_loop_thread_marker;
 static _Thread_local proven_u64 t_marker;
+static atomic_int g_out_of_order;
+static int g_next_from[2];              /* touched on the loop's thread only */
 static void posted(void *ctx) {
-    (void)ctx;
+    /* ctx is the poster (0 or 1) and that poster's count: each must arrive in its own order. */
+    uintptr_t tag = (uintptr_t)ctx;
+    int who = (int)(tag >> 16), nth = (int)(tag & 0xffff);
+    if (g_next_from[who] != nth) atomic_fetch_add(&g_out_of_order, 1);
+    g_next_from[who] = nth + 1;
     if (t_marker != g_loop_thread_marker) atomic_fetch_add(&g_wrong_thread, 1);
     if (atomic_fetch_add(&g_posted_ran, 1) + 1 == 200) proven_loop_stop(g_loop);
 }
 static void poster(void *arg) {
-    (void)arg;
-    for (int i = 0; i < 100; ++i) {
-        while (proven_loop_post(g_loop, posted, NULL) != PROVEN_OK) { }
+    uintptr_t who = (uintptr_t)arg;
+    for (uintptr_t i = 0; i < 100; ++i) {
+        while (proven_loop_post(g_loop, posted, (void *)(who << 16 | i)) != PROVEN_OK) { }
     }
 }
+
+/* A thousand timers at once. */
+enum { MANY = 1000 };
+typedef struct { proven_loop_timer_t timer; proven_time_t due; } many_t;
+static many_t g_many[MANY];
+static int g_many_fired, g_many_early;
+static void many_fire(void *ctx) {
+    many_t *m = ctx;
+    g_many_fired++;
+    if (proven_time_monotonic_now() < m->due) g_many_early++;
+}
+static int g_forgotten_calls;
+static void forgotten(void *ctx) { (void)ctx; g_forgotten_calls++; }
+static void forgotten_io(void *ctx, proven_u8 got) { (void)ctx; (void)got; g_forgotten_calls++; }
 static void stopper(void *arg) { (void)arg; proven_time_sleep(60); proven_loop_stop(g_loop); }
 
 int main(void) {
@@ -144,6 +164,19 @@ int main(void) {
         PROVEN_TEST_ASSERT(g_order_n == 0, "a timer set again waits for its new time", "");
         spin(120);
         PROVEN_TEST_ASSERT(g_order_n == 1 && g_order[0] == 2, "and fires once, with what it was last given", "");
+
+        /* Many at once, at times spread over 300 ms: each fires once, and none early. */
+        for (int i = 0; i < MANY; ++i) {
+            proven_u32 ms = (proven_u32)(i * 37 % 300 + 1);
+            g_many[i].due = proven_time_monotonic_now() + (proven_time_t)ms * 1000000;
+            proven_loop_timer_set(g_loop, &g_many[i].timer, ms, many_fire, &g_many[i]);
+        }
+        for (int i = 0; i < 100 && g_many_fired < MANY; ++i) spin(50);
+        int still_set = 0;
+        for (int i = 0; i < MANY; ++i) still_set += proven_loop_timer_is_set(&g_many[i].timer) ? 1 : 0;
+        PROVEN_TEST_ASSERT(g_many_fired == MANY && g_many_early == 0 && still_set == 0, "a thousand timers set at once each fire once, none of them early", "");
+        spin(60);
+        PROVEN_TEST_ASSERT(g_many_fired == MANY, "and none fires a second time", "");
     }
 
     // ---------------------------------------------------------------
@@ -230,12 +263,13 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_job_system_init(heap, 2, 8, &jobs) == PROVEN_OK, "two other threads", "");
         t_marker = 0x1234567;
         g_loop_thread_marker = t_marker;
-        PROVEN_TEST_ASSERT(proven_job_group_submit(jobs, &group, poster, NULL) == PROVEN_OK && proven_job_group_submit(jobs, &group, poster, NULL) == PROVEN_OK, "each posts a hundred", "");
+        PROVEN_TEST_ASSERT(proven_job_group_submit(jobs, &group, poster, (void *)0) == PROVEN_OK && proven_job_group_submit(jobs, &group, poster, (void *)1) == PROVEN_OK, "each posts a hundred", "");
         proven_time_t t0 = proven_time_monotonic_now();
         PROVEN_TEST_ASSERT(proven_loop_run(g_loop) == PROVEN_OK, "the loop runs until the two-hundredth stops it", "");
         proven_job_group_wait(jobs, &group);
         PROVEN_TEST_ASSERT(atomic_load(&g_posted_ran) == 200 && atomic_load(&g_wrong_thread) == 0 && proven_time_monotonic_now() - t0 < 5000000000LL,
             "all two hundred ran, every one on the loop's thread", "");
+        PROVEN_TEST_ASSERT(atomic_load(&g_out_of_order) == 0 && g_next_from[0] == 100 && g_next_from[1] == 100, "and each thread's hundred in the order that thread posted them", "");
 
         proven_job_group_init(&group);
         PROVEN_TEST_ASSERT(proven_job_group_submit(jobs, &group, stopper, NULL) == PROVEN_OK, "a thread that will stop the loop", "");
@@ -252,6 +286,23 @@ int main(void) {
     bool intact = true;
     for (proven_size_t i = 0; i < scratch.size; i += 4099) intact = intact && scratch.ptr[i] == 0xa5;
     PROVEN_TEST_ASSERT(intact, "the scratch buffer is the callbacks' to use: the loop wrote nothing to it", "");
+
+    /* Destroying a loop with a timer set and a socket watched calls neither. */
+    {
+        proven_loop_t *other = NULL;
+        proven_loop_timer_t t = { 0 };
+        proven_loop_io_t io = { 0 };
+        proven_net_listener_t listener;
+        PROVEN_TEST_ASSERT(proven_loop_create(heap, &other) == PROVEN_OK &&
+                           proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 8, &listener, NULL) == PROVEN_OK, "a second loop and a listener", "");
+        proven_loop_timer_set(other, &t, 10, forgotten, NULL);
+        PROVEN_TEST_ASSERT(proven_loop_io_add(other, &io, proven_net_listener_handle(&listener), PROVEN_NET_READABLE, forgotten_io, NULL) == PROVEN_OK &&
+                           proven_loop_io_count(other) == 1, "with a timer set and a socket watched", "");
+        proven_time_sleep(40);
+        proven_loop_destroy(other);
+        PROVEN_TEST_ASSERT(g_forgotten_calls == 0, "destroying it calls nothing, though the timer was due", "");
+        (void)proven_net_listener_close(&listener);
+    }
 
     proven_loop_destroy(g_loop);
     proven_loop_destroy(NULL);

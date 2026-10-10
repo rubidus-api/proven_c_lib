@@ -849,9 +849,9 @@ proven_mem_mut_t block = proven_arena_alloc_or_panic(&arena, n);
 
 ```text
 #define PROVEN_VERSION_MAJOR  0
-#define PROVEN_VERSION_MINOR  17
+#define PROVEN_VERSION_MINOR  18
 #define PROVEN_VERSION_PATCH  0
-#define PROVEN_VERSION_STRING "proven_c_lib-v0.17.0"
+#define PROVEN_VERSION_STRING "proven_c_lib-v0.18.0"
 #define PROVEN_VERSION_ENCODE(major, minor, patch) ((major) * 1000000L + (minor) * 1000L + (patch))
 #define PROVEN_VERSION_NUM    PROVEN_VERSION_ENCODE(PROVEN_VERSION_MAJOR, PROVEN_VERSION_MINOR, PROVEN_VERSION_PATCH)
 ```

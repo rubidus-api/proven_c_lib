@@ -1,4 +1,4 @@
-# proven Test Matrix (v0.17.0)
+# proven Test Matrix (v0.18.0)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -342,7 +342,7 @@ The whole hosted suite also runs natively on Windows, cross-built with mingw-w64
 
 `-no-run` builds and installs every test executable and runs none. The build driver asks the compiler for its target (`-dumpmachine`); for a Windows target the executables are `.exe`, linked `-static` with `-lbcrypt`, and never `-ldl`. A maintainers' script (`win11kd-full-suite.sh`, not in this repository) builds both word sizes, sends the tracked tree and the executables to a Windows machine, and runs them there with `win11kd-run-suite.ps1`, which records PASS, FAIL, SKIP (a POSIX-only test that skipped itself - counted apart, since it proves nothing on Windows) and TIMEOUT per test.
 
-Last run, 2026-10-10, Windows 11 test VM: x86-64 285 PASS, 0 FAIL, 8 SKIP; i686 the same. The eight skips are fixtures whose subject is POSIX: `test_portability_nob_std_probe` and `test_portability_nob_clean` (they drive `./nob` through a POSIX shell), `test_portability_compile_nonet` (it drives the host compiler through one), `test_regression_fs_walk_errors` (libc interposition with `dlsym`), `test_unit_fs_walk` (chmod 000 and `ln -s` cycles), `test_regression_fs_backslash_parent` (a backslash as an ordinary byte), `test_regression_fs_private_staging` and `test_regression_fs_perms_and_types` (POSIX modes). `test_unit_sysio_streams`, `test_regression_scanner_float_split` and `test_regression_scanner_short_read` run on Windows too.
+Last run, 2026-10-10, Windows 11 test VM: x86-64 291 PASS, 0 FAIL, 8 SKIP; i686 the same. The eight skips are fixtures whose subject is POSIX: `test_portability_nob_std_probe` and `test_portability_nob_clean` (they drive `./nob` through a POSIX shell), `test_portability_compile_nonet` (it drives the host compiler through one), `test_regression_fs_walk_errors` (libc interposition with `dlsym`), `test_unit_fs_walk` (chmod 000 and `ln -s` cycles), `test_regression_fs_backslash_parent` (a backslash as an ordinary byte), `test_regression_fs_private_staging` and `test_regression_fs_perms_and_types` (POSIX modes). `test_unit_sysio_streams`, `test_regression_scanner_float_split` and `test_regression_scanner_short_read` run on Windows too.
 
 ## Test catalog
 
@@ -755,13 +755,13 @@ Intent: verify the loop of `loop.h` by itself - timers, functions posted from ot
 
 Sub-checks:
 
-- Timers: one fires once, not before its time and not long after; several fire in the order of their times; a timer set again moves; cancelling from the timer's own function and from another timer's; a timer that sets itself again; a thousand timers set at once all fire; `proven_loop_timer_is_set` before, while and after.
-- Posts: functions posted from the loop's thread and from several other threads are each called once, on the loop's thread, in the order one thread posted them; a post wakes a loop that is waiting.
-- Stopping: `proven_loop_stop` from a callback and from another thread makes `proven_loop_run` return `PROVEN_OK`; `proven_loop_poll` returns at its deadline with nothing to do, and with `PROVEN_NET_DONT_WAIT` at once.
-- Sockets: interest added, changed and removed; a registration added twice is `PROVEN_ERR_INVALID_STATE`; removing a socket from inside the batch that reports it delivers nothing further for it; `proven_loop_io_count`; the scratch buffer is 64 KiB.
-- `proven_loop_destroy` with timers set and sockets registered calls nothing; null is accepted.
+- Timers: nothing fires before its time; three fire in the order of their times and a cancelled one never does; cancelling twice is harmless; a fired timer is no longer set; a timer cancelled by another that was due with it does not fire; a timer that sets itself again from its callback repeats; a timer set again waits for its new time and fires once with what it was last given; a thousand timers set at once, spread over 300 ms, each fire once and none early.
+- Posts: five functions posted from the loop's thread run in the order posted; two other threads post a hundred each, and all two hundred run on the loop's thread, each thread's hundred in the order that thread posted them; no function and no loop are `PROVEN_ERR_INVALID_ARG`.
+- Stopping: `proven_loop_stop` from a posted function and from another thread makes `proven_loop_run` return `PROVEN_OK`; a loop with nothing to do sleeps until then.
+- Sockets: interest added, changed and removed, with a socket watched for nothing left alone; a registration added twice is `PROVEN_ERR_INVALID_STATE`; of two sockets ready in one round, the one the other's function removes is not delivered; removing what is not registered is harmless; a closed peer is delivered as readable; a handle that is not one is `PROVEN_ERR_INVALID_ARG`; `proven_loop_io_count`; the scratch buffer is 64 KiB and the loop itself writes nothing to it.
+- `proven_loop_destroy` with a due timer set and a socket watched calls neither; null is accepted.
 
-Failure tip: inspect `src/proven/loop.c` - `loop_timers_advance` for the wheel, `loop_run_tasks` for posts, `proven_loop_poll` for the order of one round. The timing checks allow for a loaded machine on the late side only; a timer that fires early is a defect.
+Failure tip: inspect `src/proven/loop.c` - `loop_timers_advance` for the wheel, `loop_run_tasks` for posts, `proven_loop_poll` for the order of one round. A timer that fires early is a defect; one that fires late on a loaded machine is not.
 
 ### `tests/test_unit_http_event` - the event-driven HTTP server
 
