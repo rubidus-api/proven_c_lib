@@ -786,7 +786,7 @@ alias 인덱스는 찾아보는 부록이고, 8장은 3장이 주제를 소개�
 | **II — 모든 프로그램이 쓰는 어휘** | [1](manual-01-foundation-ko.md) → [2](manual-02-allocation-ko.md) → [3](manual-03-strings-text-ko.md) | 0장 | 에러를 값으로 다루고, 메모리를 의도적으로 소유하고, 텍스트를 안전하게 담기 |
 | **III — 자료구조** | [4](manual-04-containers-algorithms-ko.md) | II부 | array, map, list, ring, 정렬, 검색, 해싱, 인코딩 |
 | **IV — 텍스트 입출력** | [8](manual-08-fmt-scan-ko.md) | 3장 §3–§4 | 무엇이든 형식화하고 파싱하며, 포매터에 내 타입 가르치기 |
-| **V — 운영체제와 대화하기** | [5](manual-05-hosted-services-ko.md) → [9](manual-09-networking-ko.md) → [10](manual-10-http-ko.md) → [11](manual-11-http-client-server-ko.md) → [12](manual-12-websocket-ko.md) → [13](manual-13-certificates-ko.md) → [14](manual-14-tls-ko.md) | II부 | 파일, 디렉터리, 스트림, 표준 I/O, 시간, 난수, 매핑. 기한이 있는 소켓. URL과 HTTP 메시지. HTTP 클라이언트와 서버. WebSocket. 인증서와 신뢰. TLS |
+| **V — 운영체제와 대화하기** | [5](manual-05-hosted-services-ko.md) → [9](manual-09-networking-ko.md) → [10](manual-10-http-ko.md) → [11](manual-11-http-client-server-ko.md) → [12](manual-12-websocket-ko.md) → [13](manual-13-certificates-ko.md) → [14](manual-14-tls-ko.md) → [15](manual-15-event-loop-ko.md) | II부 | 파일, 디렉터리, 스트림, 표준 I/O, 시간, 난수, 매핑. 기한이 있는 소켓. URL과 HTTP 메시지. HTTP 클라이언트와 서버. WebSocket. 인증서와 신뢰. TLS. 이벤트 루프와 그 위의 서버 |
 | **VI — 더 나아가기** | [6](manual-06-execution-and-platform-ko.md) → [freestanding](manual-freestanding-ko.md) | II–V부 | 코루틴, job, 스레드 안전성, 베어메탈, 크로스 빌드 |
 | **부록** | [A](manual-07-alias-xcv-index-ko.md), [B](#13-부록-b-용어집), [C](#14-부록-c-공개-헤더-맵), [D](#15-부록-d-libc-대응표) | — | 찾아보기 |
 
@@ -808,6 +808,7 @@ alias 인덱스는 찾아보는 부록이고, 8장은 3장이 주제를 소개�
 12. [**WebSocket**: 어느 쪽에서든 여는 연결, 메시지, 닫기. 그리고 프레임 코덱만 따로](manual-12-websocket-ko.md) — *V부; 11장 다음; 코덱은 프리스탠딩에서 사용 가능*
 13. [**인증서와 신뢰**: X.509 인증서 읽기, 인증서가 위하는 이름, 신뢰 앵커, 체인 검증, 피닝](manual-13-certificates-ko.md) — *V부; 4장 다음; 시스템 루트 읽기 외에는 프리스탠딩에서 사용 가능*
 14. [**TLS**: 두 줄로 하는 HTTPS와 wss, 전송 래퍼, 엔진, 재개, 클라이언트 인증서와 핀, 실패의 뜻](manual-14-tls-ko.md) — *V부; 11장과 13장 다음; 엔진은 프리스탠딩에서 사용 가능*
+15. [**이벤트 루프와 이벤트 구동 서버**: 타이머와 게시된 일을 가진 루프, 아무것도 기다리지 않는 HTTP 서버, 나중에 답하기, backpressure, 한가한 연결이 붙드는 것](manual-15-event-loop-ko.md) — *V부; 9장과 11장 다음; 호스티드 전용*
 
 **3장과 8장은 둘 다 포매터와 스캐너를 다루며, 이 분담은 의도적입니다.** 3장은 문자열과 나란히 이들을
 소개하며, 일상적인 경우와 생산성을 내기에 충분한 만큼을 담습니다. 8장은 완전한 레퍼런스입니다. 전체
@@ -978,6 +979,8 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | `ws_conn.h` | 전송 위의 WebSocket 연결, 클라이언트와 서버 (호스티드 전용) | 챕터 12 |
 | `cert.h` | X.509 인증서: 엄격한 읽기, 호스트 이름 대조, PEM, 신뢰 앵커 저장소, 체인 검증. 시스템 루트 읽기만 호스티드 전용. | 챕터 13 |
 | `tls.h` | TLS 1.3, 클라이언트와 서버: 설정, I/O 없는 엔진, 그리고 (호스티드 전용) 전송 래퍼와 HTTP 랩 | 챕터 14 |
+| `loop.h` | 이벤트 루프: 소켓 준비 상태, 타이머, 다른 스레드가 게시한 일, 함께 쓰는 임시 작업용 버퍼 (호스티드 전용) | 챕터 15 |
+| `http_event.h` | 루프 위에서 이벤트로 구동되는 HTTP/1.1 서버: 콜백, backpressure가 있는 조각 응답, 선택적 TLS (호스티드 전용) | 챕터 15 |
 | `sysio.h` | 표준 스트림을 writer/reader로, stdin 줄 입력, 버퍼드 출력, 출력, 파싱, 환경변수 접근 | 챕터 5 |
 | `random.h` | 용도별 난수: xoshiro256** (재현 가능), ChaCha20 (암호학적), OS CSPRNG, 무편향 range/shuffle 헬퍼. 생성기는 freestanding에서 동작하고 OS 소스만 hosted. | 챕터 5 |
 | `mmap.h` | 메모리 매핑 파일 영역 | 챕터 5 |
@@ -1024,7 +1027,7 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | **II** | [1](manual-01-foundation-ko.md) → [2](manual-02-allocation-ko.md) → [3](manual-03-strings-text-ko.md) | 에러, 메모리, 텍스트: 모든 프로그램이 쓰는 것 |
 | **III** | [4](manual-04-containers-algorithms-ko.md) | 배열, 맵, 리스트, 링, 정렬, 해싱, 인코딩 |
 | **IV** | [8](manual-08-fmt-scan-ko.md) | 챕터 3이 소개한 뒤의, 형식화와 파싱 전체 |
-| **V** | [5](manual-05-hosted-services-ko.md) → [9](manual-09-networking-ko.md) → [10](manual-10-http-ko.md) → [11](manual-11-http-client-server-ko.md) → [12](manual-12-websocket-ko.md) → [13](manual-13-certificates-ko.md) → [14](manual-14-tls-ko.md) | 파일, 스트림, 표준 I/O, 시간, 난수, 매핑. 그다음 소켓. 그다음 URL과 HTTP. 그다음 클라이언트와 서버. 그다음 WebSocket. 그다음 인증서. 그다음 TLS |
+| **V** | [5](manual-05-hosted-services-ko.md) → [9](manual-09-networking-ko.md) → [10](manual-10-http-ko.md) → [11](manual-11-http-client-server-ko.md) → [12](manual-12-websocket-ko.md) → [13](manual-13-certificates-ko.md) → [14](manual-14-tls-ko.md) → [15](manual-15-event-loop-ko.md) | 파일, 스트림, 표준 I/O, 시간, 난수, 매핑. 그다음 소켓. 그다음 URL과 HTTP. 그다음 클라이언트와 서버. 그다음 WebSocket. 그다음 인증서. 그다음 TLS. 그다음 이벤트 루프 |
 | **VI** | [6](manual-06-execution-and-platform-ko.md) → [freestanding](manual-freestanding-ko.md) | 코루틴, job, 스레드 안전성, 베어메탈, 크로스 빌드 |
 | **부록** | [A: alias 인덱스](manual-07-alias-xcv-index-ko.md), 위의 B와 D | 찾아보기 |
 

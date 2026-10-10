@@ -687,9 +687,9 @@ cost. That is this layer's share: the transport wrapper adds a few dozen bytes, 
 server's own per-connection request buffer is Chapter 11's and is separate.
 
 **What a handshake costs.** On one x86-64 core of the development machine, a full handshake
-with X25519 and a P-256 certificate is about 2 ms of processor time on the server and somewhat
-more on a client that verifies a chain: some 500 new connections a second per core. The
-public-key arithmetic here is written to be constant-time and to be read, and is ten to fifty
+with X25519 and a P-256 certificate is about 2 ms of processor time on the server and about 5 ms
+on a client that verifies the chain: for a server, some 500 new connections a second per core.
+The public-key arithmetic here is written to be constant-time and to be read, and is ten to fifty
 times slower than a tuned library's. Resumption (section 6) removes the signatures; keeping
 connections open removes the handshake.
 

@@ -44,6 +44,7 @@ TITLES = {
         'manual-12-websocket': '12 · WebSocket',
         'manual-13-certificates': '13 · Certificates and trust',
         'manual-14-tls': '14 · TLS',
+        'manual-15-event-loop': '15 · The event loop and the event-driven server',
         'manual-freestanding': 'Freestanding',
     },
     'ko': {
@@ -64,6 +65,7 @@ TITLES = {
         'manual-12-websocket': '12 · WebSocket',
         'manual-13-certificates': '13 · 인증서와 신뢰',
         'manual-14-tls': '14 · TLS',
+        'manual-15-event-loop': '15 · 이벤트 루프와 이벤트 구동 서버',
         'manual-freestanding': '프리스탠딩',
     },
 }
@@ -72,7 +74,7 @@ TITLES = {
 # alias index last, because it is a lookup table rather than something anyone reads through.
 ORDER = ['index', 'manual-t-tutorial', 'manual-00-start-here', 'manual-01-foundation', 'manual-02-allocation',
          'manual-03-strings-text', 'manual-04-containers-algorithms', 'manual-08-fmt-scan',
-         'manual-05-hosted-services', 'manual-09-networking', 'manual-10-http', 'manual-11-http-client-server', 'manual-12-websocket', 'manual-13-certificates', 'manual-14-tls',
+         'manual-05-hosted-services', 'manual-09-networking', 'manual-10-http', 'manual-11-http-client-server', 'manual-12-websocket', 'manual-13-certificates', 'manual-14-tls', 'manual-15-event-loop',
          'manual-06-execution-and-platform',
          'manual-freestanding', 'manual-07-alias-xcv-index']
 

@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 1020개: 소문자 `xcv_` 이름 755개와 대문자 `XCV_` 이름 265개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 1061개: 소문자 `xcv_` 이름 795개와 대문자 `XCV_` 이름 266개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -171,6 +171,7 @@ alias 1020개: 소문자 `xcv_` 이름 755개와 대문자 `XCV_` 이름 265개.
 | `XCV_HTTP_DIGEST_MD5_SESS` | `PROVEN_HTTP_DIGEST_MD5_SESS` |
 | `XCV_HTTP_DIGEST_SHA256` | `PROVEN_HTTP_DIGEST_SHA256` |
 | `XCV_HTTP_DIGEST_SHA256_SESS` | `PROVEN_HTTP_DIGEST_SHA256_SESS` |
+| `XCV_HTTP_EVENT_LENGTH_UNKNOWN` | `PROVEN_HTTP_EVENT_LENGTH_UNKNOWN` |
 | `XCV_HTTP_GET` | `PROVEN_HTTP_GET` |
 | `XCV_HTTP_HEAD` | `PROVEN_HTTP_HEAD` |
 | `XCV_HTTP_LENGTH_UNKNOWN` | `PROVEN_HTTP_LENGTH_UNKNOWN` |
@@ -512,6 +513,14 @@ alias 1020개: 소문자 `xcv_` 이름 755개와 대문자 `XCV_` 이름 265개.
 | `xcv_http_digest_auth` | `proven_http_digest_auth` |
 | `xcv_http_digest_challenge_parse` | `proven_http_digest_challenge_parse` |
 | `xcv_http_digest_challenge_t` | `proven_http_digest_challenge_t` |
+| `xcv_http_event_callbacks_t` | `proven_http_event_callbacks_t` |
+| `xcv_http_event_server_config_t` | `proven_http_event_server_config_t` |
+| `xcv_http_event_server_connections` | `proven_http_event_server_connections` |
+| `xcv_http_event_server_create` | `proven_http_event_server_create` |
+| `xcv_http_event_server_destroy` | `proven_http_event_server_destroy` |
+| `xcv_http_event_server_listen` | `proven_http_event_server_listen` |
+| `xcv_http_event_server_stop_listening` | `proven_http_event_server_stop_listening` |
+| `xcv_http_event_server_t` | `proven_http_event_server_t` |
 | `xcv_http_exchange_begin` | `proven_http_exchange_begin` |
 | `xcv_http_exchange_end` | `proven_http_exchange_end` |
 | `xcv_http_exchange_peer` | `proven_http_exchange_peer` |
@@ -554,6 +563,18 @@ alias 1020개: 소문자 `xcv_` 이름 755개와 대문자 `XCV_` 이름 265개.
 | `xcv_http_server_run` | `proven_http_server_run` |
 | `xcv_http_server_stop` | `proven_http_server_stop` |
 | `xcv_http_server_t` | `proven_http_server_t` |
+| `xcv_http_stream_abort` | `proven_http_stream_abort` |
+| `xcv_http_stream_begin` | `proven_http_stream_begin` |
+| `xcv_http_stream_buffered` | `proven_http_stream_buffered` |
+| `xcv_http_stream_end` | `proven_http_stream_end` |
+| `xcv_http_stream_pause` | `proven_http_stream_pause` |
+| `xcv_http_stream_peer` | `proven_http_stream_peer` |
+| `xcv_http_stream_respond` | `proven_http_stream_respond` |
+| `xcv_http_stream_resume` | `proven_http_stream_resume` |
+| `xcv_http_stream_set_user` | `proven_http_stream_set_user` |
+| `xcv_http_stream_t` | `proven_http_stream_t` |
+| `xcv_http_stream_user` | `proven_http_stream_user` |
+| `xcv_http_stream_write` | `proven_http_stream_write` |
 | `xcv_http_tls_wrap_fn` | `proven_http_tls_wrap_fn` |
 | `xcv_http_write_chunk_begin` | `proven_http_write_chunk_begin` |
 | `xcv_http_write_chunk_end` | `proven_http_write_chunk_end` |
@@ -594,6 +615,26 @@ alias 1020개: 소문자 `xcv_` 이름 755개와 대문자 `XCV_` 이름 265개.
 | `xcv_list_push_back` | `proven_list_push_back` |
 | `xcv_list_remove` | `proven_list_remove` |
 | `xcv_list_t` | `proven_list_t` |
+| `xcv_loop_allocator` | `proven_loop_allocator` |
+| `xcv_loop_create` | `proven_loop_create` |
+| `xcv_loop_destroy` | `proven_loop_destroy` |
+| `xcv_loop_fn` | `proven_loop_fn` |
+| `xcv_loop_io_add` | `proven_loop_io_add` |
+| `xcv_loop_io_count` | `proven_loop_io_count` |
+| `xcv_loop_io_fn` | `proven_loop_io_fn` |
+| `xcv_loop_io_remove` | `proven_loop_io_remove` |
+| `xcv_loop_io_set` | `proven_loop_io_set` |
+| `xcv_loop_io_t` | `proven_loop_io_t` |
+| `xcv_loop_poll` | `proven_loop_poll` |
+| `xcv_loop_post` | `proven_loop_post` |
+| `xcv_loop_run` | `proven_loop_run` |
+| `xcv_loop_scratch` | `proven_loop_scratch` |
+| `xcv_loop_stop` | `proven_loop_stop` |
+| `xcv_loop_t` | `proven_loop_t` |
+| `xcv_loop_timer_cancel` | `proven_loop_timer_cancel` |
+| `xcv_loop_timer_is_set` | `proven_loop_timer_is_set` |
+| `xcv_loop_timer_set` | `proven_loop_timer_set` |
+| `xcv_loop_timer_t` | `proven_loop_timer_t` |
 | `xcv_map_create` | `proven_map_create` |
 | `xcv_map_create_trusted` | `proven_map_create_trusted` |
 | `xcv_map_create_with_capacity` | `proven_map_create_with_capacity` |

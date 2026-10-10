@@ -18,6 +18,42 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- `loop.h`, an event loop (hosted-only). `proven_loop_create`, `_destroy`, `_run`, `_poll`,
+  `_stop`; socket readiness with caller-owned registrations (`proven_loop_io_add`, `_io_set`,
+  `_io_remove`, `_io_count`); timers that fire once, held by the caller and constant-time to
+  set, cancel and fire, with a 16 ms tick (`proven_loop_timer_set`, `_timer_cancel`,
+  `_timer_is_set`); `proven_loop_post`, safe from any thread, for work done elsewhere to come
+  back; and a 64 KiB scratch buffer shared by all callbacks (`proven_loop_scratch`), plus
+  `proven_loop_allocator`.
+- `http_event.h`, an HTTP/1.1 server on a loop in which no call waits (hosted-only).
+  `proven_http_event_server_create`, `_listen`, `_destroy`, `_connections`, `_stop_listening`,
+  configured by `proven_http_event_server_config_t` with four callbacks (`on_request`,
+  `on_body`, `on_writable`, `on_done`). A response is sent whole
+  (`proven_http_stream_respond`) or in pieces (`proven_http_stream_begin`, `_write`, `_end`),
+  at once or at any later time on the loop's thread; `proven_http_stream_write` takes only
+  what fits under `max_buffered_output` and `on_writable` says when to continue. Also
+  `proven_http_stream_abort`, `_pause`, `_resume`, `_set_user`, `_user`, `_peer`, `_buffered`
+  and `PROVEN_HTTP_EVENT_LENGTH_UNKNOWN`. It speaks TLS when given a `proven_tls_config_t`.
+  An idle plain connection holds its struct and no buffer: 440 bytes of heap measured on
+  x86-64 Linux, and the test fails above 512.
+- Manual chapter 15, "The event loop and the event-driven server", in English and Korean,
+  with two programs the build compiles and runs. Tests `test_unit_loop` and
+  `test_unit_http_event`. 41 `xcv_` aliases.
+
+**Not in this release:** any measurement of how many connections or requests a loop carries;
+more than one loop; WebSocket on the event-driven server; an event-driven client. The blocking
+server and client are unchanged.
+
+### Fixed
+
+- Manual chapter 14 said a TLS handshake costs a verifying client "somewhat more" than the
+  server's 2 ms. Measured, it is about 5 ms. The sentence now says so.
+- `tests/test_unit_tls_vectors.h` did not compile under clang with warnings as errors
+  (`-Wstring-concatenation` on a string split over two lines in an array). The generated
+  strings are now parenthesised; their values are unchanged.
+
 ## [0.17.0] - 2026-10-10
 
 A MINOR release: TLS 1.3, client and server. HTTPS and `wss` work through the HTTP client and

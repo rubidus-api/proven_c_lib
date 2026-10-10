@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 93 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 95 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-10, Windows 11 test VM: x86-64 285 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 157 registered tests plus the 136 runnable manual examples - 293 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 170 test files: the 157 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 159 registered tests plus the 140 runnable manual examples - 299 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 172 test files: the 159 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -748,6 +748,37 @@ Sub-checks:
 - HTTPS, with handlers on the loop's thread and again on workers: three GETs over one kept connection; a 200,000-byte request body and a 300,000-byte response body; a `wss://` connection with a text and a 70,000-byte binary message echoed and a clean close; two pipelined requests in one TLS record both answered; a client that connects and says nothing does not delay another request and is closed after the head timeout; a plain `http://` request to the TLS port fails and reaches no handler; an `https://` URL on a client with no wrap is still `PROVEN_ERR_UNSUPPORTED`; a server whose CA the client does not hold is `PROVEN_ERR_UNTRUSTED` with nothing sent.
 
 Failure tip: inspect `src/proven/tls_transport.c` and the `tls` branches of `src/proven/http_server.c`. This test uses the wall clock (its certificates, issued at start by `tests/test_unit_tls_pki.h`, are valid 2026 to 2036) and the operating system's random source. Not covered: client certificates through the HTTP server, and resumption through the transport wrapper (both are engine paths `test_unit_tls` covers).
+
+### `tests/test_unit_loop` - the event loop
+
+Intent: verify the loop of `loop.h` by itself - timers, functions posted from other threads, socket interest, stopping - before anything is built on it.
+
+Sub-checks:
+
+- Timers: one fires once, not before its time and not long after; several fire in the order of their times; a timer set again moves; cancelling from the timer's own function and from another timer's; a timer that sets itself again; a thousand timers set at once all fire; `proven_loop_timer_is_set` before, while and after.
+- Posts: functions posted from the loop's thread and from several other threads are each called once, on the loop's thread, in the order one thread posted them; a post wakes a loop that is waiting.
+- Stopping: `proven_loop_stop` from a callback and from another thread makes `proven_loop_run` return `PROVEN_OK`; `proven_loop_poll` returns at its deadline with nothing to do, and with `PROVEN_NET_DONT_WAIT` at once.
+- Sockets: interest added, changed and removed; a registration added twice is `PROVEN_ERR_INVALID_STATE`; removing a socket from inside the batch that reports it delivers nothing further for it; `proven_loop_io_count`; the scratch buffer is 64 KiB.
+- `proven_loop_destroy` with timers set and sockets registered calls nothing; null is accepted.
+
+Failure tip: inspect `src/proven/loop.c` - `loop_timers_advance` for the wheel, `loop_run_tasks` for posts, `proven_loop_poll` for the order of one round. The timing checks allow for a loaded machine on the late side only; a timer that fires early is a defect.
+
+### `tests/test_unit_http_event` - the event-driven HTTP server
+
+Intent: verify the server of `http_event.h` over the loopback interface, plain and again over TLS, through every outcome an exchange can have, and measure what an idle connection holds.
+
+Sub-checks:
+
+- Configuration: no `on_request`, no loop, and a TLS configuration with no certificate are each `PROVEN_ERR_INVALID_ARG`.
+- Answers: at once; later from a timer; later from a worker thread through `proven_loop_post`; 204 and `HEAD` without a body; a header the server writes itself refused with `PROVEN_ERR_INVALID_ARG`; kept connections; HTTP/1.0; pipelined requests served in order.
+- Bodies and backpressure: an upload delivered in pieces; a handler that pauses the body and resumes it from a timer still receives every byte; a 16 MB download to a client that reads nothing until a write has been refused arrives intact, was resumed through `on_writable`, and never held more than the output limit and one piece; 3 MB sent chunked; `Expect: 100-continue`; a response sent before the body arrived.
+- Refusals: 400, 413, 431, 501 and 505 each with a close; bad chunk framing and a body shorter than its `Content-Length` end the exchange with an error.
+- Leaving: a client that disappears during a response ends the exchange with an error; `proven_http_stream_abort` closes with nothing sent and `on_done(PROVEN_ERR_RESET)`; half a request head gets 408 after the head timeout; destroying the server under an unanswered request ends it with `PROVEN_ERR_RESET`.
+- Accounting: `on_done` was called exactly once for every `on_request`; many connections that have each made a request stay open and close when their clients do.
+- Memory: three hundred idle plain connections hold less than 512 bytes of heap each (440 measured on x86-64 Linux), and everything is given back when they close and when the server is destroyed.
+- The idle timeout: an answered connection that then says nothing is closed by the server after `idle_timeout_ms`, not before.
+
+Failure tip: inspect `src/proven/http_event.c` - `ev_process` for input, `ev_flush` and `ev_progress` for output and what follows it, `ev_arm` for which timer is running, `ev_finish` for the end of an exchange. The backpressure case waits for a refusal rather than for a fixed time; a failure there that prints `download: got N of M` is a stalled response, which is a lost wake-up in `proven_http_stream_write` or `ev_progress`.
 
 ### `tests/test_unit_hash_legacy` - legacy digests: SHA-1 and MD5
 

@@ -1,0 +1,633 @@
+# 15장: 이벤트 루프와 이벤트 구동 서버
+
+**5부 — 운영체제와 대화하기. 선행 조건: 소켓, 데드라인, 셀렉터를 다루는
+[9장](manual-09-networking-ko.md). 이 장의 서버가 그 다른 형태인 HTTP 서버를 다루는
+[11장](manual-11-http-client-server-ko.md). TLS를 쓰려면 [14장](manual-14-tls-ko.md).**
+**이 장을 마치면** 타이머와 다른 스레드에서 돌아오는 일을 가진 루프를 돌리고, 기다리는 호출 하나
+없이 그 위에서 HTTP를 서비스하고, 요청에 나중에 답하고, 프로그램보다 느린 클라이언트에게 응답을
+스트리밍하고, 아무 일도 하지 않는 연결 하나가 무엇을 차지하는지 말할 수 있다.
+
+이 장은 `loop.h`와 `http_event.h`를 다룬다. 둘 다 호스티드(hosted) 전용이고 `PROVEN_NO_NET`으로
+빠진다.
+
+## 목차
+
+1. [서비스하는 두 가지 방식](#1-서비스하는-두-가지-방식)
+2. [루프](#2-루프)
+3. [타이머](#3-타이머)
+4. [다른 곳에서 하는 일](#4-다른-곳에서-하는-일)
+5. [여러분 자신의 소켓 지켜보기](#5-여러분-자신의-소켓-지켜보기)
+6. [이벤트 구동 서버](#6-이벤트-구동-서버)
+7. [답하기](#7-답하기)
+8. [요청 본문](#8-요청-본문)
+9. [한도, 시간, 거절](#9-한도-시간-거절)
+10. [스레드, TLS, 종료](#10-스레드-tls-종료)
+11. [연결 하나가 붙드는 것, 그리고 여기 없는 것](#11-연결-하나가-붙드는-것-그리고-여기-없는-것)
+
+## 1. 서비스하는 두 가지 방식
+
+11장의 서버는 핸들러에게 요청을 건네고, 기다리는 호출로 읽고 쓰게 한다. 이보다 쓰기 쉬운 것은
+없다: 핸들러는 요청에서 응답까지 이어지는 한 줄기다. 그 값은, 처리 중인 요청 하나가 걸리는 시간
+내내 - 클라이언트가 느린 시간까지 전부 - 스레드 하나를 차지한다는 것이다.
+
+이 장의 서버는 그것을 뒤집는다. **그 안의 무엇도 기다리지 않는다.** 서버는 이벤트 루프 위에
+앉는다. 루프는 어느 소켓에 할 말이 있는지 시스템에 묻고, 그것들을 처리하고, 다시 묻는 스레드
+하나다. 여러분의 함수들은 무슨 일이 일어났는지 - 요청이 도착했다, 본문 한 조각이 도착했다, 더 쓸
+자리가 생겼다 - 전해 듣고 곧바로 돌아온다. 그러면 아무 일도 하지 않는 연결은 작은 구조체 하나일
+뿐 다른 것이 아니다: 스레드도, 스택도, 버퍼도 없다.
+
+그 대신 떠맡는 것은 실제로 있고, 그것이 이 장의 전부다:
+
+- **여러분의 함수는 기다려서는 안 된다** - 소켓도, 파일도, 누군가 오래 쥘 수 있는 락도. 시간이
+  걸리는 일은 다른 스레드로 가고 그 결과가 게시되어 돌아온다(4절).
+- **쓰기는 거절될 수 있다.** 클라이언트가 보낸 것을 가져가지 않으면 서버는 여러분에게서 더 받기를
+  멈추고, 언제 계속할지 알려 준다(7절).
+- **보여 주는 것은 수명이 짧다.** 요청 헤드와 본문 조각은 여러분의 함수가 돌아올 때까지만 유효한
+  뷰(view)다. 간직할 것은 복사한다.
+
+어느 쪽을 고를까: 동시에 열려 있는 연결 수가 스레드 풀(pool)이 넉넉히 감당하는 정도이고 핸들러를
+한 줄기로 쓰는 편이 쉬운 동안에는 블로킹 서버. 대부분의 연결이 대부분의 시간 동안 한가하고 그런
+연결이 많을 때 - 롱 폴링, 이벤트 스트림, 느린 클라이언트, 아주 많은 유지 연결 - 는 이 서버. 둘은
+[10장](manual-10-http-ko.md)의 같은 코드로 HTTP를 파싱하고 같은 잘못된 요청을 거절한다.
+
+## 2. 루프
+
+```c
+proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out);
+void proven_loop_destroy(proven_loop_t *loop);
+proven_err_t proven_loop_run(proven_loop_t *loop);
+proven_err_t proven_loop_poll(proven_loop_t *loop, proven_net_deadline_t until);
+void proven_loop_stop(proven_loop_t *loop);
+```
+
+`proven_loop_t`는 셀렉터([9장](manual-09-networking-ko.md) 9절), 타이머 묶음, 다른 스레드가 게시할
+수 있는 큐, 그리고 임시 작업용(scratch) 버퍼다. 만들 때 할당자(allocator)를 하나 받는다.
+
+| 호출 | 하는 일 | 반환 |
+|---|---|---|
+| `proven_loop_create(alloc, &loop)` | 루프를 만든다. | `proven_err_t`: `INVALID_ARG`. `NOMEM`. 셀렉터를 여는 호출이 돌려준 것. |
+| `proven_loop_run(loop)` | 기다리고, 준비된 것을 부르고, 때가 된 것을 울리고, 반복한다 - `proven_loop_stop`까지. | 멈춘 뒤 `PROVEN_OK`. 기다리는 일 자체가 실패하면 오류. |
+| `proven_loop_poll(loop, until)` | 한 바퀴: 무언가 준비되거나 `until`이 지날 때까지 기다리고 처리한다. `PROVEN_NET_DONT_WAIT`는 지금 준비된 것만 처리한다. | `proven_err_t`. |
+| `proven_loop_stop(loop)` | `proven_loop_run`이 돌아오게 한다. 어느 스레드에서든, 콜백 안에서든 안전하다. | 없음. |
+| `proven_loop_destroy(loop)` | 루프를 해제한다. 아직 등록되었거나 맞춰진 것은 잊힌다. 아무것도 불리지 않는다. 널을 받는다. | 없음. |
+
+`proven_loop_run`은 다른 일을 하지 않는 스레드를 위한 것이다. `proven_loop_poll`은 이미 자신의 메인
+루프가 있어서 그 안에서 이 루프에 차례를 주는 프로그램을 위한 것이다.
+
+**스레드 규칙.** 이 장에서 `proven_loop_stop`과 `proven_loop_post`를 뺀 모든 것은 루프 자신의
+스레드 - `proven_loop_run`이나 `proven_loop_poll` 안에 있는 스레드 - 에서, 또는 루프가 시작하기 전에
+불러야 한다. 서버와 뒤 절들의 모든 스트림 함수가 여기에 든다. 대신 검사해 주는 것은 없다.
+
+## 3. 타이머
+
+```c
+void proven_loop_timer_set(proven_loop_t *loop, proven_loop_timer_t *timer, proven_u32 ms, proven_loop_fn fn, void *ctx);
+void proven_loop_timer_cancel(proven_loop_t *loop, proven_loop_timer_t *timer);
+bool proven_loop_timer_is_set(const proven_loop_timer_t *timer);
+```
+
+`proven_loop_timer_t`는 여러분의 것이다: 그것이 속한 구조체 안에 0으로 초기화해 두고, 맞춰져 있는
+동안에는 복사하거나 옮기지 않는다. 맞추는 데 아무것도 할당하지 않는다.
+
+- 타이머는 지금부터 `ms` 밀리초 뒤에 **한 번 울린다**. 루프의 틱인 16 ms로 올림된다. 일찍 울리지
+  않는다. 반복해야 하는 타이머는 자기 함수 안에서 스스로 다시 맞춘다.
+- 이미 맞춰진 타이머를 맞추면 **옮겨진다**.
+- `proven_loop_timer_cancel`은 어느 콜백 안에서든, 다른 타이머의 콜백 안에서도 안전하고, 맞춰져
+  있지 않은 타이머에는 해가 없다.
+- 맞추기, 취소하기, 울리기는 상수 시간이고, 기다리는 타이머는 때가 될 때까지 들여다보지 않는다.
+  서버의 모든 연결이 저마다의 타임아웃을 가질 수 있는 것은 그 덕이다.
+
+타이머는 [5장](manual-05-hosted-services-ko.md)의 단조 시계를 잰다. 벽시계를 맞춰도 움직이지 않는다.
+
+## 4. 다른 곳에서 하는 일
+
+```c
+proven_err_t proven_loop_post(proven_loop_t *loop, proven_loop_fn fn, void *ctx);
+```
+
+`proven_loop_post`는 루프에게 `fn(ctx)`를 루프 자신의 스레드에서 곧 불러 달라고 한다. **어느
+스레드에서든 안전하고**, 결과가 돌아오는 길이 이것이다: 콜백은 느린 부분을 워커([6장](manual-06-execution-and-platform-ko.md)의
+job system)에게 넘기고 돌아오며, 워커는 루프의 데이터를 만져도 되는 곳에서 일을 마무리할 함수를
+게시한다.
+
+- 함수들은 게시된 순서대로 불린다.
+- 큐 항목은 루프의 할당자에서 나오므로, 다른 스레드가 게시한다면 그 할당자는 여러 스레드에서
+  불러도 되는 것이어야 한다. 힙(heap) 할당자는 그렇다.
+- 그 할당이 실패하면 `PROVEN_ERR_NOMEM`을, 그리고 `PROVEN_ERR_INVALID_ARG`를 돌려준다.
+
+아래 프로그램은 타이머들과 일 하나만 올라가 있는 루프다. 테스트 스위트가 컴파일하고 실행한다:
+
+<!-- example: manual/examples/ko/ex_15_loop.c -->
+```c
+#include <stdatomic.h>
+
+/*
+ * 이벤트 루프 그 자체: 타이머, 그리고 다른 스레드에서 하고 돌아오는 일.
+ *
+ * 루프의 스레드는 "다음은 무엇인가" 말고는 아무것도 기다리지 않는다. 시간이 걸리는 것 - 여기서는
+ * 파일이나 데이터베이스를 대신해 잠을 자는 워커 - 은 다른 곳에서 일어나고, 그 결과는 루프에
+ * 게시되어 다른 이벤트들 사이에서 실행된다.
+ */
+
+typedef struct {
+    proven_loop_t *loop;
+    proven_loop_timer_t tick, late;
+    int ticks;
+    int order[8];
+    int count;
+    atomic_int from_worker;
+} app_t;
+
+static void note(app_t *app, int what) { if (app->count < 8) app->order[app->count++] = what; }
+
+/* 타이머는 한 번 울린다. 반복해야 하는 타이머는 스스로 다시 맞춘다. */
+static void on_tick(void *ctx) {
+    app_t *app = ctx;
+    note(app, 1);
+    if (++app->ticks < 3) proven_loop_timer_set(app->loop, &app->tick, 20, on_tick, app);
+}
+
+static void on_late(void *ctx) { note(ctx, 9); }
+
+/* 워커 스레드가 요청했지만, 이것은 루프의 스레드에서 실행된다. */
+static void on_result(void *ctx) {
+    app_t *app = ctx;
+    note(app, 5);
+    proven_loop_timer_cancel(app->loop, &app->late);      /* 오 초 뒤에 울렸을 것이다. 이제는 영영 울리지 않는다 */
+    proven_loop_stop(app->loop);
+}
+
+/* 이것은 워커 스레드에서 실행된다. 얼마든지 오래 걸려도 된다: 루프는 기다리지 않는다. */
+static void slow_work(void *ctx) {
+    app_t *app = ctx;
+    proven_time_sleep(400);
+    atomic_store(&app->from_worker, 1);
+    if (proven_loop_post(app->loop, on_result, app) != PROVEN_OK) proven_loop_stop(app->loop);   /* 게시는 할당 실패일 때만 거절된다. 그때는 그냥 실행을 끝낸다 */
+}
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    app_t app = { 0 };
+
+    // ---- 루프 ---------------------------------------------------------------------
+    /* 루프는 셀렉터, 타이머 묶음, 그리고 다른 스레드가 게시할 수 있는 큐다. */
+    EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "루프");
+
+    // ---- 타이머 --------------------------------------------------------------------
+    /* 타이머 구조체는 여러분의 것이다: 여러분의 상태 안에 살고, 맞추는 데 아무것도 할당하지
+     * 않는다. 울리기를 기다리는 타이머도 비용이 없다 - 때가 될 때까지 들여다보지 않는다. */
+    proven_loop_timer_set(app.loop, &app.tick, 20, on_tick, &app);
+    proven_loop_timer_set(app.loop, &app.late, 5000, on_late, &app);
+    EXAMPLE_REQUIRE(proven_loop_timer_is_set(&app.tick) && proven_loop_timer_is_set(&app.late), "타이머 둘이 맞춰졌다");
+
+    // ---- 다른 곳에서 하는 일 --------------------------------------------------------
+    /* job system이 slow_work를 워커 스레드에서 돌린다. 끝나면 on_result를 루프로 게시한다. */
+    proven_job_sys_t *workers = NULL;
+    EXAMPLE_REQUIRE(proven_job_system_init(heap, 1, 4, &workers) == PROVEN_OK && proven_job_submit(workers, slow_work, &app), "워커가 느린 일을 맡았다");
+
+    // ---- 실행 ----------------------------------------------------------------------
+    /* proven_loop_run은 무언가가 proven_loop_stop을 부르면 돌아온다 - 여기서는 on_result가 부른다. */
+    proven_time_t began = proven_time_monotonic_now();
+    EXAMPLE_REQUIRE(proven_loop_run(app.loop) == PROVEN_OK, "루프가 돌았고 멈춰졌다");
+    proven_time_t took = proven_time_monotonic_now() - began;
+
+    EXAMPLE_REQUIRE(app.ticks == 3 && app.count == 4 && app.order[0] == 1 && app.order[1] == 1 && app.order[2] == 1 && app.order[3] == 5,
+                    "틱 세 번, 그다음 워커의 결과, 그 순서로");
+    EXAMPLE_REQUIRE(atomic_load(&app.from_worker) == 1 && took < 2000000000, "결과는 워커에게서 왔고, 오 초 타이머보다 훨씬 먼저 왔다");
+    EXAMPLE_REQUIRE(!proven_loop_timer_is_set(&app.late), "취소된 타이머는 더는 맞춰져 있지 않다");
+
+    proven_job_system_close(workers);
+    proven_job_system_destroy(workers);
+    proven_loop_destroy(app.loop);
+    return EXAMPLE_OK();
+}
+```
+
+## 5. 여러분 자신의 소켓 지켜보기
+
+다음 절의 서버는 이것을 대신 해 준다. 이 절은 HTTP가 아닌 프로토콜을 위한 것이다.
+
+```c
+proven_err_t proven_loop_io_add(proven_loop_t *loop, proven_loop_io_t *io, proven_net_handle_t handle,
+                                proven_u8 want, proven_loop_io_fn fn, void *ctx);
+proven_err_t proven_loop_io_set(proven_loop_t *loop, proven_loop_io_t *io, proven_u8 want);
+void proven_loop_io_remove(proven_loop_t *loop, proven_loop_io_t *io);
+proven_mem_mut_t proven_loop_scratch(proven_loop_t *loop);
+proven_allocator_t proven_loop_allocator(const proven_loop_t *loop);
+proven_size_t proven_loop_io_count(const proven_loop_t *loop);
+```
+
+| 호출 | 하는 일 | 반환 |
+|---|---|---|
+| `proven_loop_io_add(loop, &io, handle, want, fn, ctx)` | 소켓을 지켜본다: `want`가 묻는 것(`PROVEN_NET_READABLE`, `PROVEN_NET_WRITABLE`, 둘 다, 또는 아직 아무것도 아닌 0)에 준비되면 `fn(ctx, got)`가 불린다. | `proven_err_t`: `INVALID_ARG`. `io`가 이미 등록되어 있으면 `INVALID_STATE`. 셀렉터가 돌려준 것. |
+| `proven_loop_io_set(loop, &io, want)` | 무엇을 지켜볼지 바꾼다. | `proven_err_t`. |
+| `proven_loop_io_remove(loop, &io)` | 지켜보기를 그만둔다. | 없음. |
+| `proven_loop_scratch(loop)` | 루프의 임시 작업용 버퍼, 64 KiB. | `proven_mem_mut_t`. |
+| `proven_loop_allocator(loop)` | 루프를 만들 때 준 할당자. | `proven_allocator_t`. |
+| `proven_loop_io_count(loop)` | 지켜보는 소켓의 수. | `proven_size_t`. |
+
+`proven_loop_io_t`는 타이머와 같은 뜻에서 여러분의 것이다: 여러분의 연결 구조체 안에, 0으로
+초기화해서, 등록되어 있는 동안 옮기지 않는다. 알아 둘 것 네 가지:
+
+- **준비 상태는 레벨 트리거다.** 읽을 것이 있는 동안 함수는 바퀴마다 불린다.
+  `PROVEN_NET_DONT_WAIT`로 호출이 기다려야 한다고 할 때까지 읽거나, `PROVEN_NET_READABLE`을 그만
+  묻는다.
+- **쓸 것이 있는 동안에만 `PROVEN_NET_WRITABLE`을 묻는다.** 자리가 있는 소켓은 언제나 쓸 수 있고,
+  바퀴마다 그 말을 듣는 루프는 다른 일을 하지 못한다.
+- **닫기 전에 뺀다.** `proven_loop_io_remove`는 어느 콜백 안에서든, 그 소켓 자신의 콜백 안에서도
+  안전하고, 그 뒤로는 그 소켓에 대해 아무것도 전달되지 않는다 - 같은 바퀴에서 이미 거둔
+  이벤트조차도.
+- **임시 작업용 버퍼는 수천 개의 연결이 읽기 버퍼 하나를 나눠 쓰는 방법이다.** 거기에 읽어 들이고,
+  도착한 것을 쓰고, 아직 쓸 수 없는 것만 간직한다. 콜백이 돌아오거나, 그 버퍼를 쓸 수도 있는 다른
+  것을 부르고 나면 내용은 아무 뜻이 없다.
+
+## 6. 이벤트 구동 서버
+
+```c
+proven_err_t proven_http_event_server_create(proven_loop_t *loop, const proven_http_event_server_config_t *config,
+                                             proven_http_event_server_t **out);
+proven_err_t proven_http_event_server_listen(proven_http_event_server_t *server, proven_net_addr_t at, proven_net_addr_t *bound);
+void proven_http_event_server_destroy(proven_http_event_server_t *server);
+proven_size_t proven_http_event_server_connections(const proven_http_event_server_t *server);
+void proven_http_event_server_stop_listening(proven_http_event_server_t *server);
+```
+
+서버는 루프 위에 만들어지고, 어디서 들을지 지시받고, 루프가 돌 때까지는 아무 일도 하지 않는다.
+
+| 호출 | 하는 일 | 반환 |
+|---|---|---|
+| `proven_http_event_server_create(loop, &config, &server)` | 서버를 만든다. | `proven_err_t`: 루프가 없거나, `on_request`가 없거나, TLS 설정에 인증서가 없으면 `INVALID_ARG`. `NOMEM`. |
+| `proven_http_event_server_listen(server, at, &bound)` | `at`에서 듣는다. 서버 하나에 주소 넷까지. `bound`(선택)는 쓰이는 주소를 받는다 - `at`이 포트 0을 청했다면 시스템이 고른 포트와 함께. | `proven_err_t`. |
+| `proven_http_event_server_connections(server)` | 지금 열려 있는 연결. | `proven_size_t`. |
+| `proven_http_event_server_stop_listening(server)` | 받아들이기를 멈춘다. 열린 연결은 계속된다. | 없음. |
+| `proven_http_event_server_destroy(server)` | 모든 연결과 리스너를 닫고 서버를 해제한다. 진행 중인 교환은 `PROVEN_ERR_RESET`과 함께 `on_done`을 받는다. 루프는 멈추지도 해제되지도 않는다. 널을 받는다. | 없음. |
+
+**함수 넷.** 설정이 `on` 안에 싣고, `ctx`가 각각에 전달된다:
+
+| 함수 | 언제 | 비고 |
+|---|---|---|
+| `on_request(ctx, stream, head)` | 요청 헤드가 도착해 서버의 검사를 통과했다. | 필수. 여기서 답하거나, `stream`을 기억해 두고 나중에 답한다. `head`는 이 함수가 돌아올 때까지만 유효하다. |
+| `on_body(ctx, stream, piece, last)` | 요청 본문의 한 조각. 마지막 조각에서 `last`가 참이고, 그 조각은 비어 있을 수 있다. | 선택: 없으면 본문은 읽혀서 버려진다. `piece`는 이 함수가 돌아올 때까지만 유효하다. |
+| `on_writable(ctx, stream)` | 보류되었던 출력이 나갔고, `proven_http_stream_write`가 더 받는다. | 선택. |
+| `on_done(ctx, stream, why)` | 교환이 끝났다. | 선택. **`on_request`마다 정확히 한 번** 불린다: 응답 전체가 연결에 넘겨졌으면 `PROVEN_OK`, 아니면 그러지 못한 이유. |
+
+**스트림은 요청 하나와 그 응답이다.** `proven_http_stream_t *`는 `on_request`부터 `on_done`이
+돌아올 때까지 유효하고, 그보다 한순간도 더 길지 않다. 그러므로 `on_done`은 스트림에 붙여 둔 것을
+해제하고, 아직 스트림을 쥐고 있는 타이머를 취소하거나 일을 잊게 할 단 하나의 자리다: 끝난 스트림을
+들고 나중에 도착하는 함수에게는 부를 수 있는 유효한 것이 없다.
+
+```c
+void proven_http_stream_set_user(proven_http_stream_t *stream, void *user);
+void *proven_http_stream_user(const proven_http_stream_t *stream);
+proven_net_addr_t proven_http_stream_peer(const proven_http_stream_t *stream);
+```
+
+`proven_http_stream_set_user`는 여러분의 포인터를 스트림에 붙이고 `proven_http_stream_user`가 그것을
+돌려준다 - 아무것도 받지 않은 스트림은 널을 돌려주며, 해제하는 `on_done`은 그 경우를 받아들여야
+한다. `proven_http_stream_peer`는 클라이언트의 주소다.
+
+## 7. 답하기
+
+```c
+proven_err_t proven_http_stream_respond(proven_http_stream_t *stream, proven_u16 status,
+                                        const proven_http_header_t *headers, proven_size_t header_count,
+                                        proven_mem_view_t body);
+proven_err_t proven_http_stream_begin(proven_http_stream_t *stream, proven_u16 status,
+                                      const proven_http_header_t *headers, proven_size_t header_count,
+                                      proven_u64 content_length);
+proven_result_size_t proven_http_stream_write(proven_http_stream_t *stream, proven_mem_view_t data);
+proven_err_t proven_http_stream_end(proven_http_stream_t *stream);
+void proven_http_stream_abort(proven_http_stream_t *stream);
+proven_size_t proven_http_stream_buffered(const proven_http_stream_t *stream);
+```
+
+**전부 한 번에.** `proven_http_stream_respond`는 상태, 여러분의 헤더, 메모리에 든 본문을 보낸다.
+본문은 크기가 얼마든 복사되므로 작은 본문을 위한 것이다. `Content-Length`, `Date`, `Connection`은
+대신 써 주며 `headers`에 들어 있어서는 안 된다. `on_request` 안에서, 또는 스트림이 유효한 동안 그
+뒤 어느 때든 루프의 스레드에서 부를 수 있다.
+
+**조각조각.** `proven_http_stream_begin`은 헤드를 보내고 `content_length` 바이트의 본문을, 또는 -
+`PROVEN_HTTP_EVENT_LENGTH_UNKNOWN`을 주면 - 아직 아무도 길이를 모르는, chunked로 보내는 본문을
+약속한다. 그다음 `proven_http_stream_write`가 바이트를 내놓고 `proven_http_stream_end`가 끝낸다.
+
+**`proven_http_stream_write`는 내놓은 것보다 적게 받을 수 있다** - `max_buffered_output` 아래에
+들어가는 만큼, 어쩌면 하나도 - 그리고 몇 바이트를 받았는지 돌려준다. 이것은 오류가 아니다. 이미 보낸
+것을 클라이언트가 가져가지 않았다는 뜻이고, 규칙은 이렇다: **나머지를 간직하고, 돌아오고,
+`on_writable`이 불리면 다시 내놓는다.** 그렇게 쓴 생산자는 가장 느린 클라이언트와 정확히 같은
+속도로 가고, 그 연결에 쓰이는 서버의 메모리는 응답 크기와 무관하게 한도 아래에 머문다.
+
+| 호출 | 반환 |
+|---|---|
+| `proven_http_stream_respond`, `proven_http_stream_begin` | `proven_err_t`: 응답이 이미 시작되었거나 스트림이 끝났으면 `INVALID_STATE`. 상태가 200-999 밖이거나 서버가 직접 쓰는 헤더가 있으면 `INVALID_ARG`. 응답 헤드가 `max_head_bytes`에 들어가지 않으면 `OUT_OF_BOUNDS`. `NOMEM`. |
+| `proven_http_stream_write` | `proven_result_size_t`: 받은 바이트 수. `begin` 전, `end` 후, 또는 스트림이 끝났으면 `INVALID_STATE`. 약속한 `Content-Length`를 넘으면 `OUT_OF_BOUNDS`. |
+| `proven_http_stream_end` | `proven_err_t`: 응답이 시작되지 않았거나 이미 끝났으면 `INVALID_STATE`. 약속보다 적게 썼으면 `INVALID_FORMAT` - 그때 연결은 닫힌다. 클라이언트가 모자란 본문을 온전한 것으로 받아들이지 못하게 하기 위해서다. |
+| `proven_http_stream_abort` | 없음. 연결은 곧바로 닫히고 `on_done`이 `PROVEN_ERR_RESET`과 함께 불린다. |
+| `proven_http_stream_buffered` | `proven_size_t`: 이 연결을 위해 붙들고 있고 클라이언트가 아직 받지 않은 응답 바이트. |
+
+프로토콜에서 따라 나오고 여러분에게 아무것도 요구하지 않는 세 가지: `HEAD`에 대한 응답과 상태 204,
+304의 응답은 무엇을 넘기든 본문 없이 나간다. `Expect: 100-continue`라고 한 요청은 본문이 처음 필요해질
+때 계속하라는 말을 듣는다. 그리고 닫기를 청한 요청이나 끝까지 읽을 수 없었던 요청에 응답한 뒤에는
+연결을 유지하지 않고 닫는다.
+
+모든 것이 한 번에 소켓에 들어갈 때, `on_done`은 `proven_http_stream_respond`나
+`proven_http_stream_end` **안에서** 불릴 수 있다. 둘 중 하나가 돌아온 뒤에는 스트림도, `on_done`이
+해제한 것도 건드리지 않는다.
+
+아래 프로그램은 네 가지 방식으로 답한다 - 즉시, 나중에 타이머에서, 거절당하면 물러서는 펌프로
+스트리밍해서, 그리고 조각조각 받은 본문 뒤에. 테스트 스위트가 컴파일하고 실행한다:
+
+<!-- example: manual/examples/ko/ex_15_http_event.c -->
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/*
+ * 이벤트 루프 위의 HTTP 서버: 스레드 하나, 그리고 그 안에 기다리는 호출은 없다.
+ *
+ * 서버가 이 함수들에게 무슨 일이 일어났는지 알려 주고, 함수들은 곧바로 돌아온다. 답하는 방식
+ * 네 가지를 보인다: 즉시. 나중에 타이머에서. 스트리밍하되 클라이언트가 느리면 물러서며. 그리고
+ * 요청 본문이 조각조각 도착한 뒤에.
+ *
+ * 클라이언트는 11장의 블로킹 클라이언트이고, 예제의 메인 스레드에서 돈다.
+ */
+
+typedef struct {
+    proven_loop_t *loop;
+    int served;
+} app_t;
+
+/* 요청 하나에 답하는 동안 이 프로그램이 간직하는 것. */
+typedef struct {
+    app_t *app;
+    proven_http_stream_t *stream;
+    proven_loop_timer_t timer;
+    proven_size_t sent, total;         /* /count: how far the body has got */
+    proven_size_t received;            /* /size: body bytes seen */
+} exchange_t;
+
+/* 서버가 "지금은 그만"이라고 할 때까지 줄을 쓴다. 이미 보낸 것을 클라이언트가 가져가지
+ * 않았을 때 그렇게 말한다. 나머지는 on_writable을 기다린다. */
+static void count_pump(exchange_t *x) {
+    while (x->sent < x->total) {
+        char line[32];
+        int n = snprintf(line, sizeof line, "%u\n", (unsigned)x->sent);
+        proven_result_size_t w = proven_http_stream_write(x->stream, (proven_mem_view_t){ (const proven_byte_t *)line, (proven_size_t)n });
+        if (w.err != PROVEN_OK) return;                   /* 클라이언트가 떠났다 */
+        if (w.value < (proven_size_t)n) return;           /* 보류됨: 언제 되는지는 on_writable이 알려 준다 */
+        x->sent++;
+    }
+    (void)proven_http_stream_end(x->stream);
+}
+
+static void answer_later(void *ctx) {
+    exchange_t *x = ctx;
+    (void)proven_http_stream_respond(x->stream, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("worth the wait\n")));
+}
+
+static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
+    app_t *app = ctx;
+    exchange_t *x = calloc(1, sizeof *x);
+    if (!x) { proven_http_stream_abort(stream); return; }
+    x->app = app;
+    x->stream = stream;
+    proven_http_stream_set_user(stream, x);
+
+    /* `head`와 그 안의 모든 것은 이 함수가 돌아올 때까지만 유효하다. */
+    if (proven_u8str_view_eq(head->target, PROVEN_LIT("/"))) {
+        /* 가장 단순한 답: 전부, 지금. */
+        (void)proven_http_stream_respond(stream, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("hello\n")));
+    } else if (proven_u8str_view_eq(head->target, PROVEN_LIT("/slow"))) {
+        /* 지금은 아니다: 스트림을 기억해 두고 타이머에서 답한다. 그동안 루프는 계속 돈다. */
+        proven_loop_timer_set(app->loop, &x->timer, 50, answer_later, x);
+    } else if (proven_u8str_view_eq(head->target, PROVEN_LIT("/count"))) {
+        /* 만들어 가며 보내는 본문. 길이를 미리 알 수 없으므로 chunked로 보낸다. */
+        x->total = 20000;
+        if (proven_http_stream_begin(stream, 200, NULL, 0, PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) == PROVEN_OK) count_pump(x);
+    } else if (proven_u8str_view_eq(head->target, PROVEN_LIT("/size"))) {
+        /* 아직 없다: 본문이 오는 중이고, 다 오면 on_body가 답한다. */
+    } else {
+        (void)proven_http_stream_respond(stream, 404, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("not here\n")));
+    }
+}
+
+static void on_body(void *ctx, proven_http_stream_t *stream, proven_mem_view_t piece, bool last) {
+    (void)ctx;
+    exchange_t *x = proven_http_stream_user(stream);
+    x->received += piece.size;
+    if (last) {
+        char text[32];
+        int n = snprintf(text, sizeof text, "%u bytes\n", (unsigned)x->received);
+        (void)proven_http_stream_respond(stream, 200, NULL, 0, (proven_mem_view_t){ (const proven_byte_t *)text, (proven_size_t)n });
+    }
+}
+
+/* 보류되었던 출력이 나갔다: 쓰기가 멈춘 자리에서 이어 간다. */
+static void on_writable(void *ctx, proven_http_stream_t *stream) {
+    (void)ctx;
+    exchange_t *x = proven_http_stream_user(stream);
+    if (x->total > 0) count_pump(x);
+}
+
+/* 무슨 일이 있었든 on_request마다 한 번 불린다. 붙여 둔 것을 해제할 자리. */
+static void on_done(void *ctx, proven_http_stream_t *stream, proven_err_t why) {
+    app_t *app = ctx;
+    exchange_t *x = proven_http_stream_user(stream);
+    if (!x) return;
+    proven_loop_timer_cancel(app->loop, &x->timer);
+    free(x);
+    if (why == PROVEN_OK) app->served++;
+}
+
+static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+
+static char g_url[64];
+static proven_u8str_view_t url_for(proven_u16 port, const char *path) {
+    int n = snprintf(g_url, sizeof g_url, "http://127.0.0.1:%u%s", (unsigned)port, path);
+    return (proven_u8str_view_t){ (const proven_byte_t *)g_url, (proven_size_t)n };
+}
+
+static bool body_equals(proven_http_client_response_t *resp, proven_allocator_t alloc, const char *want) {
+    proven_u8str_t body = { 0 };
+    bool ok = proven_http_client_read_all(resp, alloc, &body, 1024 * 1024) == PROVEN_OK &&
+              proven_u8str_view_eq(proven_u8str_as_view(&body), (proven_u8str_view_t){ (const proven_byte_t *)want, strlen(want) });
+    proven_u8str_destroy(alloc, &body);
+    return ok;
+}
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    app_t app = { 0 };
+
+    // ---- 서버 ----------------------------------------------------------------------
+    /* 서버는 루프 위에 만들어지고 듣는다. 루프가 돌 때까지는 아무 일도 하지 않는다. */
+    EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "루프");
+    proven_http_event_server_config_t config = {
+        .on = { on_request, on_body, on_writable, on_done },
+        .ctx = &app,
+        .max_buffered_output = 16 * 1024,        /* 클라이언트가 가져가지 않은 것을 연결마다 최대 이만큼만 붙든다 */
+    };
+    proven_http_event_server_t *server = NULL;
+    proven_net_addr_t at;
+    EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &config, &server) == PROVEN_OK &&
+                    proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "빈 포트의 이벤트 구동 서버");
+
+    /* 이 예제는 메인 스레드가 클라이언트 노릇을 할 수 있도록 루프에 따로 스레드를 준다. */
+    proven_job_sys_t *threads = NULL;
+    proven_job_group_t running;
+    proven_job_group_init(&running);
+    EXAMPLE_REQUIRE(proven_job_system_init(heap, 1, 4, &threads) == PROVEN_OK &&
+                    proven_job_group_submit(threads, &running, run, &app) == PROVEN_OK, "루프가 다른 스레드에서 돈다");
+
+    // ---- 요청 넷 -------------------------------------------------------------------
+    proven_http_client_config_t client_config = { .alloc = heap, .max_idle_connections = 1 };
+    proven_http_client_t *client = NULL;
+    EXAMPLE_REQUIRE(proven_http_client_create(&client_config, &client) == PROVEN_OK, "클라이언트");
+    proven_http_client_response_t resp;
+
+    EXAMPLE_REQUIRE(proven_http_client_get(client, url_for(at.port, "/"), &resp) == PROVEN_OK && body_equals(&resp, heap, "hello\n"), "즉시 답했다");
+    proven_http_client_finish(&resp);
+    EXAMPLE_REQUIRE(proven_http_client_get(client, url_for(at.port, "/slow"), &resp) == PROVEN_OK && body_equals(&resp, heap, "worth the wait\n"), "50 ms 뒤에 타이머에서 답했다");
+    proven_http_client_finish(&resp);
+
+    /* 이만 줄. 서버가 보류할 때마다 핸들러는 멈추고 on_writable이 재개시킨다. */
+    EXAMPLE_REQUIRE(proven_http_client_get(client, url_for(at.port, "/count"), &resp) == PROVEN_OK && resp.status == 200, "스트리밍 응답이 시작된다");
+    proven_u8str_t counted = { 0 };
+    EXAMPLE_REQUIRE(proven_http_client_read_all(&resp, heap, &counted, 1024 * 1024) == PROVEN_OK, "끝까지 읽힌다");
+    proven_u8str_view_t all = proven_u8str_as_view(&counted);
+    EXAMPLE_REQUIRE(all.size == 108890 && memcmp(all.ptr, "0\n1\n2\n", 6) == 0 && memcmp(all.ptr + all.size - 6, "19999\n", 6) == 0, "모든 줄이 순서대로 도착했다");
+    proven_u8str_destroy(heap, &counted);
+    proven_http_client_finish(&resp);
+
+    static proven_byte_t upload[50000];
+    proven_http_client_request_t post = { .method = PROVEN_LIT("POST"), .url = url_for(at.port, "/size"), .body = { upload, sizeof upload } };
+    EXAMPLE_REQUIRE(proven_http_client_send(client, &post, &resp) == PROVEN_OK && body_equals(&resp, heap, "50000 bytes\n"), "조각조각 센 본문");
+    proven_http_client_finish(&resp);
+    proven_http_client_destroy(client);
+
+    // ---- 끝 ------------------------------------------------------------------------
+    /* 루프를 멈춘 다음 서버를 해체한다. 그때는 다른 무엇도 서버를 건드리지 않는다. */
+    proven_loop_stop(app.loop);
+    proven_job_group_wait(threads, &running);
+    EXAMPLE_REQUIRE(app.served == 4, "교환 넷이 on_done(PROVEN_OK)로 끝났다");
+    proven_http_event_server_destroy(server);
+    proven_loop_destroy(app.loop);
+    proven_job_system_close(threads);
+    proven_job_system_destroy(threads);
+    return EXAMPLE_OK();
+}
+```
+
+`count_pump`를 보라: 스트리밍되는 모든 응답이 갖는 모양이다. 시작할 때 `on_request`에서, 이어 갈 때
+`on_writable`에서 불리고, 자기 위치를 교환 자신의 상태에 간직하며, 쓰기가 내놓은 것보다 적게 받는
+순간 돌아온다. 어떤 실행에서 실제로 거절당하는지는 클라이언트가 얼마나 빨리 읽느냐에 달렸다. 함수는
+어느 쪽이든 옳다.
+
+## 8. 요청 본문
+
+```c
+void proven_http_stream_pause(proven_http_stream_t *stream);
+void proven_http_stream_resume(proven_http_stream_t *stream);
+```
+
+본문은 네트워크가 전달한 크기 그대로의 조각으로 `on_body`를 통해 도착하고, 프레이밍 -
+`Content-Length`나 청크 - 은 이미 벗겨져 있다. 본문이 없는 요청은 `on_body` 호출을 아예 받지 않는다.
+본문이 있는 요청은 `last`가 참인 마지막 호출을 받는다.
+
+핸들러는 본문이 도착하기 전에, 또는 본문을 읽지 않고 답해도 된다. 그때 본문의 나머지는 비용이 작으면
+읽혀서 버려지고, 그렇지 않으면 응답 뒤에 연결이 닫힌다.
+
+`proven_http_stream_pause`는 반대 방향의 backpressure다: `proven_http_stream_resume`까지 조각이 더
+전달되지 않고 연결도 읽히지 않는다. 받은 것을 네트워크보다 느린 무언가에 쓰는 핸들러는 이 쌍을 써서,
+본문이 메모리에 쌓이는 대신 클라이언트가 느려지게 한다. 기다리던 조각들은
+`proven_http_stream_resume` 호출 안에서 도착할 수 있다.
+
+## 9. 한도, 시간, 거절
+
+`proven_http_event_server_config_t`를 0으로 초기화하고, `on.on_request`를 정하고, 필요한 것을 정한다.
+0인 필드마다 기본값이 있다:
+
+| 필드 | 뜻 | 기본값 |
+|---|---|---|
+| `alloc` | 연결과 버퍼를 위한 할당자. | 루프의 것 |
+| `max_connections` | 동시에 열려 있는 연결. 그 이상은 받아들여지지 않은 채 시스템의 백로그에서 기다린다. | 10,000 |
+| `max_head_bytes` | 가장 큰 요청 헤드. 가장 큰 응답 헤드이기도 하다. | 16 KiB |
+| `max_headers` | 요청 하나의 헤더 필드 최대 수. | 64 |
+| `max_body_bytes` | 가장 큰 요청 본문. | 1 MiB |
+| `max_buffered_output` | 쓰기가 거절되기 전까지 연결 하나를 위해 붙드는 응답 바이트. | 64 KiB |
+| `head_timeout_ms` | 요청의 첫 바이트부터 헤드의 끝까지. TLS에서는 핸드셰이크도 포함한다. | 10초 |
+| `body_timeout_ms` | 요청 본문의 조각과 조각 사이. | 30초 |
+| `write_timeout_ms` | 붙든 출력을 클라이언트가 하나도 받지 않는 시간. | 30초 |
+| `idle_timeout_ms` | 요청이 없는 열린 연결. | 60초 |
+| `tls` | 인증서가 있는 TLS 설정, 또는 평문 HTTP를 뜻하는 널. | 널 |
+
+서버가 서비스하지 않을 요청은 `on_request`에 닿지 않는다. 답을 받고 연결이 닫힌다:
+
+| 상태 | 무엇에 |
+|---|---|
+| 400 | HTTP가 아닌 헤드. `Host`가 정확히 하나가 아닌 HTTP/1.1 요청. 스스로 모순되는 본문 프레이밍. 청크가 아닌 청크. |
+| 408 | 시작되었으나 `head_timeout_ms` 안에 끝나지 않은 헤드. |
+| 413 | `max_body_bytes`보다 긴 본문. |
+| 431 | `max_head_bytes`보다 큰 헤드, 또는 `max_headers`보다 많은 필드. |
+| 501 | `chunked`가 아닌 전송 코딩. |
+| 505 | HTTP/1.0도 HTTP/1.1도 아닌 버전. |
+
+이런 일이 `on_request` 뒤에 일어나면 - 너무 긴 것으로 드러나는 본문, 도중에 잘못되는 본문 - 교환은
+`on_done`과 그 이유로 끝나고, 응답이 아직 시작되지 않았다면 클라이언트는 그 상태를 받는다.
+`body_timeout_ms`, `write_timeout_ms`, `idle_timeout_ms`를 넘긴 연결은 닫힌다. 그 위에서 진행 중이던
+교환은 `on_done(PROVEN_ERR_TIMEOUT)`으로 끝난다. 사라진 클라이언트는 자기 교환을 `PROVEN_ERR_RESET`으로
+끝낸다.
+
+기다리지 않고 한 연결에 잇달아 보낸 요청 - 파이프라이닝 - 은 순서대로, 한 번에 스트림 하나씩
+서비스된다.
+
+## 10. 스레드, TLS, 종료
+
+**스레드.** 루프 하나는 스레드 하나이고, 서버는 그 스레드에 속한다. 계산하거나 무언가를 기다려야 하는
+핸들러는 일을 제출하고, 돌아오고, 그 일이 답을 게시해 돌려보낸다:
+
+1. `on_request`가 헤드에서 필요한 것을 복사하고, 스트림을 기억하고, 일을 제출한다.
+2. 일은 다른 스레드에서, 서버의 것은 아무것도 건드리지 않고 돈다.
+3. 일은 `proven_loop_post`로, 루프의 스레드에서 `proven_http_stream_respond`를 부를 함수를 게시한다.
+4. `on_done`이 먼저 왔다면 - 클라이언트가 떠났다 - 그 함수는 그것을 알아채고 아무것도 하지 않아야
+   한다. 흔한 방법은 `on_done`이 교환 자신의 상태에 끝났다고 표시하고, 그 해제는 둘 중 나중에 도는
+   쪽에 맡기는 것이다.
+
+**TLS.** 설정에 인증서가 있는 `proven_tls_config_t`([14장](manual-14-tls-ko.md) 2절)를 주면 모든
+연결이 TLS다. 여러분의 코드에서 다른 것은 바뀌지 않는다. 핸드셰이크는 다른 읽기와 쓰기처럼 루프가
+나르고 `head_timeout_ms`의 적용을 받는다. 설정은 서버보다 오래 살아야 한다. 핸드셰이크의 공개 키
+연산은 루프의 스레드에서 이루어지고, 그동안 다른 것은 서비스되지 않는다: 하나의 비용은 14장 9절에
+있다.
+
+**종료.** `proven_http_event_server_stop_listening`은 이미 연결된 누구도 거절하지 않고 새로운 누구도
+받아들이지 않는다. `proven_http_event_server_connections`가 줄어들 때까지, 또는 기다릴 만큼 기다린
+다음 `proven_http_event_server_destroy`, 그다음 루프를 멈추고 해제한다. 서버는 루프의 스레드에서,
+또는 루프가 멈춘 뒤에 해제한다 - 다른 스레드가 `proven_loop_run` 안에 있는 동안은 아니다.
+
+## 11. 연결 하나가 붙드는 것, 그리고 여기 없는 것
+
+**연결 하나가 붙드는 것.** 요청이 없는 연결은 자기 구조체를 붙들 뿐 버퍼는 붙들지 않는다: 요청은
+루프의 임시 작업용 버퍼로 읽히고, 바이트는 요청이 아직 완전하지 않을 때에만 따로 복사된다. x86-64
+Linux에서 등록된 테스트는 한가한 평문 연결 하나에 힙 440바이트를 재고, 512를 넘으면 실패한다. TLS
+연결은 엔진의 상태를 더한다. 한가할 때 약 1 KiB다(14장 9절). 열린 소켓에 대한 시스템 자신의 비용은
+별개이고 대개 그쪽이 더 크다.
+
+**여기 없는 것.**
+
+- 루프 하나가 **몇 개의 연결을 감당하는지**, 측정한 값. 설계는 수만 개를 겨냥한다. 측정은 뒤의
+  릴리스에 속하고, 그때까지 한정된 주장은 위의 것들이다.
+- **둘 이상의 루프.** 여기의 서버는 스레드 하나를 쓴다. 여러 루프를 프로세서 코어들에 걸쳐 돌리는
+  것은 뒤의 릴리스다.
+- 이 서버 위의 **WebSocket과 다른 업그레이드**, 그리고 **이벤트 구동 클라이언트**. 12장의
+  WebSocket과 11장의 클라이언트는 블로킹 쪽이다.
+- **파일을 복사 없이 보내기**, 응답 압축, HTTP/2.
+- 루프로 **파일, 시그널, 자식 프로세스 지켜보기**. 루프는 소켓을 지켜본다.
+
+**어떻게 시험했나.** 등록된 테스트는 루프의 타이머, 게시, 소켓 관심을 한 스레드에서, 그리고 여러
+스레드에서 몬다 - 해당 콜백 안에서의 제거와 취소를 포함해서. 그리고 서버를 루프백 위에서, 평문과
+TLS로, 7절과 9절 표의 모든 행에 걸쳐 돌린다: 즉시 하는 답, 타이머에서 하는 답, 다른 스레드에서 하는
+답, pause와 resume이 있는 업로드, 쓰기가 한 번 거절될 때까지 읽지 않는 클라이언트로의 16 MB 다운로드,
+파이프라이닝, 각 거절, 각 타임아웃, 사라지는 클라이언트, 답하지 않은 요청을 둔 채 해제되는 서버 -
+`on_request`마다 `on_done`이 한 번 불렸는지 확인하면서. 이것들을 기계에 부하를 건 채 주소 검사와
+미정의 동작 검사 아래에서 수백 번, 그리고 스레드 검사 아래에서 돌렸다. **하지 않은 것:** 부하 시험,
+처리량이나 지연 시간의 측정, 나열한 경우를 넘어서는 적대적 클라이언트 상대 실행.

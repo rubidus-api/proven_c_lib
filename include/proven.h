@@ -57,6 +57,8 @@
 #include "proven/http_client.h"
 #include "proven/http_server.h"
 #include "proven/ws_conn.h"
+#include "proven/loop.h"
+#include "proven/http_event.h"
 #endif
 #include "proven/scan.h"
 #include "proven/coro.h"

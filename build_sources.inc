@@ -42,6 +42,8 @@ PROVEN_BUILD_SOURCE("src/proven/tls_config.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/tls13.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/tls_issue.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/tls_transport.c", PROVEN_SOURCE_HOSTED_ONLY)   /* the engine over a transport */
+PROVEN_BUILD_SOURCE("src/proven/loop.c", PROVEN_SOURCE_HOSTED_ONLY)   /* an event loop over the selector */
+PROVEN_BUILD_SOURCE("src/proven/http_event.c", PROVEN_SOURCE_HOSTED_ONLY)   /* the event-driven HTTP server */
 PROVEN_BUILD_SOURCE("src/proven/cert_system.c", PROVEN_SOURCE_HOSTED_ONLY)   /* reads the system trust store */
 PROVEN_BUILD_SOURCE("src/proven/encode.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/utf.c", PROVEN_SOURCE_FREESTANDING)

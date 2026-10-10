@@ -29,6 +29,39 @@ int main(void) {
 
     proven_allocator_t heap = proven_heap_allocator();
 
+#ifndef PROVEN_NO_NET
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("chapter 15, the event loop and the event-driven server",
+        "The values and refusals the chapter states: the scratch buffer, a timer's life, what a server configuration must have.",
+        "");
+    // ---------------------------------------------------------------
+    {
+        proven_loop_t *loop = NULL;
+        PROVEN_TEST_ASSERT(proven_loop_create(heap, &loop) == PROVEN_OK, "a loop", "");
+        /* CLAIM (s5 table): "The loop's scratch buffer, 64 KiB." */
+        PROVEN_TEST_ASSERT(proven_loop_scratch(loop).size == 64 * 1024 && proven_loop_scratch(loop).ptr != NULL, "the scratch buffer is 64 KiB", "");
+        /* CLAIM (s3): cancel is "harmless when the timer is not set"; a zero-initialised timer
+         * is not set; "Setting a timer that is already set moves it" - it is still one timer. */
+        proven_loop_timer_t t = { 0 };
+        proven_loop_timer_cancel(loop, &t);
+        PROVEN_TEST_ASSERT(!proven_loop_timer_is_set(&t), "a zeroed timer is not set, and cancelling it does nothing", "");
+        /* CLAIM (s2 table): poll with PROVEN_NET_DONT_WAIT "handles only what is ready now". */
+        PROVEN_TEST_ASSERT(proven_loop_poll(loop, PROVEN_NET_DONT_WAIT) == PROVEN_OK && proven_loop_io_count(loop) == 0, "a round with nothing to do returns at once", "");
+        /* CLAIM (s4): post returns PROVEN_ERR_INVALID_ARG (no function). */
+        PROVEN_TEST_ASSERT(proven_loop_post(loop, NULL, NULL) == PROVEN_ERR_INVALID_ARG, "posting no function is refused", "");
+        /* CLAIM (s6 table): create is INVALID_ARG "for no loop, no on_request"; "A server is
+         * made on a loop ... and does nothing until the loop runs" - it has no connections. */
+        proven_http_event_server_config_t none = { 0 };
+        proven_http_event_server_t *server = NULL;
+        PROVEN_TEST_ASSERT(proven_http_event_server_create(loop, &none, &server) == PROVEN_ERR_INVALID_ARG && server == NULL, "a server with no on_request is refused", "");
+        /* CLAIM (s7): the length that means "sent chunked" is a value no body can have. */
+        PROVEN_TEST_ASSERT(PROVEN_HTTP_EVENT_LENGTH_UNKNOWN == UINT64_MAX, "the unknown length is the largest 64-bit value", "");
+        proven_http_event_server_destroy(NULL);
+        proven_loop_destroy(loop);
+        proven_loop_destroy(NULL);
+    }
+#endif
+
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("chapter 14, TLS",
         "What the chapter says a configuration refuses, the session's size, and the contract after a failure.",

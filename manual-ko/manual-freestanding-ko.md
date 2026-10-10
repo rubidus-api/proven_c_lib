@@ -209,7 +209,7 @@ platform/proven_sys_mem.c
 | `float_format.h` | `fmt.h` 연동 없이 사용 가능 | binary64 포매터는 정수 연산만 쓰므로 컴파일되지만, 현재 프로파일이 `PROVEN_FMT_NO_FLOAT`를 정의하므로 `{}`는 부동소수점을 렌더링하지 않는다. 코드 크기를 감수할 가치가 있다고 판단한 타깃에서 자릿수 출력이 필요하다면 `float_format.h`의 진입점을 직접 호출할 것. |
 | `time.h` | 제한적 | 핵심 datetime 포매팅은 컴파일 가능하지만, 실제 PAL 시간은 제외된다. |
 | `heap.h` | 스텁 | `proven_heap_allocator()`는 유효하지 않은 allocator를 반환한다. |
-| `fs.h`, `stream.h`, `net.h`, `http_client.h`, `http_server.h`, `ws_conn.h`, `mmap.h`, `sysio.h`, `job.h` | 제외됨 | 호스티드 PAL 서비스가 필요하다. |
+| `fs.h`, `stream.h`, `net.h`, `http_client.h`, `http_server.h`, `loop.h`, `http_event.h`, `ws_conn.h`, `mmap.h`, `sysio.h`, `job.h` | 제외됨 | 호스티드 PAL 서비스가 필요하다. |
 | `random.h` | 사용 가능 | 생성기와 헬퍼는 순수 산술이다. `proven_random_bytes`도 여기서 동작하지만, `proven_random_set_source`로 엔트로피 소스 — 보드의 TRNG, 링 오실레이터, 또는 ADC 잡음 바닥 — 를 설치한 후에만 가능하다. 아무것도 설치되지 않았을 때는 클럭으로 시드된 PRNG로 폴백하지 않고 **false**를 반환한다. 폴백은 성공처럼 보이면서 아무것도 보고하지 않는 보안 구멍이 될 것이기 때문이다. 그런 다음 `proven_chacha_rng_seed_from_entropy`가 보드의 엔트로피를 끝없는 암호학적 스트림으로 바꾼다. 소스가 없으면 `proven_random_u64`는 말없이 0을 돌려주므로, 토큰이나 키에는 false를 돌려주는 `proven_random_u64_checked`를 쓴다. |
 | `coro.h` | 사용 가능 | 매크로 전용 스택리스 코루틴 지원. |
 | `panic.h` | 사용 가능 | 대상별 trap/reset 동작을 위한 오버라이드. |
