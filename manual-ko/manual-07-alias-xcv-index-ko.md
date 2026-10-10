@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 1061개: 소문자 `xcv_` 이름 795개와 대문자 `XCV_` 이름 266개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 1094개: 소문자 `xcv_` 이름 828개와 대문자 `XCV_` 이름 266개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -514,6 +514,22 @@ alias 1061개: 소문자 `xcv_` 이름 795개와 대문자 `XCV_` 이름 266개.
 | `xcv_http_digest_challenge_parse` | `proven_http_digest_challenge_parse` |
 | `xcv_http_digest_challenge_t` | `proven_http_digest_challenge_t` |
 | `xcv_http_event_callbacks_t` | `proven_http_event_callbacks_t` |
+| `xcv_http_event_client_callbacks_t` | `proven_http_event_client_callbacks_t` |
+| `xcv_http_event_client_config_t` | `proven_http_event_client_config_t` |
+| `xcv_http_event_client_create` | `proven_http_event_client_create` |
+| `xcv_http_event_client_destroy` | `proven_http_event_client_destroy` |
+| `xcv_http_event_client_requests` | `proven_http_event_client_requests` |
+| `xcv_http_event_client_start` | `proven_http_event_client_start` |
+| `xcv_http_event_client_t` | `proven_http_event_client_t` |
+| `xcv_http_event_request_abort` | `proven_http_event_request_abort` |
+| `xcv_http_event_request_end` | `proven_http_event_request_end` |
+| `xcv_http_event_request_options_t` | `proven_http_event_request_options_t` |
+| `xcv_http_event_request_pause` | `proven_http_event_request_pause` |
+| `xcv_http_event_request_resume` | `proven_http_event_request_resume` |
+| `xcv_http_event_request_set_user` | `proven_http_event_request_set_user` |
+| `xcv_http_event_request_t` | `proven_http_event_request_t` |
+| `xcv_http_event_request_user` | `proven_http_event_request_user` |
+| `xcv_http_event_request_write` | `proven_http_event_request_write` |
 | `xcv_http_event_server_config_t` | `proven_http_event_server_config_t` |
 | `xcv_http_event_server_connections` | `proven_http_event_server_connections` |
 | `xcv_http_event_server_create` | `proven_http_event_server_create` |
@@ -701,6 +717,8 @@ alias 1061개: 소문자 `xcv_` 이름 795개와 대문자 `XCV_` 이름 266개.
 | `xcv_net_conn_t` | `proven_net_conn_t` |
 | `xcv_net_conn_transport` | `proven_net_conn_transport` |
 | `xcv_net_connect` | `proven_net_connect` |
+| `xcv_net_connect_finish` | `proven_net_connect_finish` |
+| `xcv_net_connect_start` | `proven_net_connect_start` |
 | `xcv_net_deadline_in` | `proven_net_deadline_in` |
 | `xcv_net_deadline_t` | `proven_net_deadline_t` |
 | `xcv_net_event_t` | `proven_net_event_t` |
@@ -1079,6 +1097,9 @@ alias 1061개: 소문자 `xcv_` 이름 795개와 대문자 `XCV_` 이름 266개.
 | `xcv_ws_decoder_feed` | `proven_ws_decoder_feed` |
 | `xcv_ws_decoder_init` | `proven_ws_decoder_init` |
 | `xcv_ws_decoder_t` | `proven_ws_decoder_t` |
+| `xcv_ws_event_accept` | `proven_ws_event_accept` |
+| `xcv_ws_event_callbacks_t` | `proven_ws_event_callbacks_t` |
+| `xcv_ws_event_config_t` | `proven_ws_event_config_t` |
 | `xcv_ws_event_kind_t` | `proven_ws_event_kind_t` |
 | `xcv_ws_event_t` | `proven_ws_event_t` |
 | `xcv_ws_frame_parse` | `proven_ws_frame_parse` |
@@ -1089,6 +1110,18 @@ alias 1061개: 소문자 `xcv_` 이름 795개와 대문자 `XCV_` 이름 266개.
 | `xcv_ws_message_t` | `proven_ws_message_t` |
 | `xcv_ws_opcode_t` | `proven_ws_opcode_t` |
 | `xcv_ws_request_offers` | `proven_ws_request_offers` |
+| `xcv_ws_stream_abort` | `proven_ws_stream_abort` |
+| `xcv_ws_stream_buffered` | `proven_ws_stream_buffered` |
+| `xcv_ws_stream_close` | `proven_ws_stream_close` |
+| `xcv_ws_stream_pause` | `proven_ws_stream_pause` |
+| `xcv_ws_stream_peer` | `proven_ws_stream_peer` |
+| `xcv_ws_stream_ping` | `proven_ws_stream_ping` |
+| `xcv_ws_stream_resume` | `proven_ws_stream_resume` |
+| `xcv_ws_stream_send` | `proven_ws_stream_send` |
+| `xcv_ws_stream_send_piece` | `proven_ws_stream_send_piece` |
+| `xcv_ws_stream_set_user` | `proven_ws_stream_set_user` |
+| `xcv_ws_stream_t` | `proven_ws_stream_t` |
+| `xcv_ws_stream_user` | `proven_ws_stream_user` |
 | `xcv_xoshiro256ss_next` | `proven_xoshiro256ss_next` |
 | `xcv_xoshiro256ss_rng` | `proven_xoshiro256ss_rng` |
 | `xcv_xoshiro256ss_seed` | `proven_xoshiro256ss_seed` |

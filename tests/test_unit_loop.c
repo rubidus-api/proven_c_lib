@@ -165,6 +165,19 @@ int main(void) {
         spin(120);
         PROVEN_TEST_ASSERT(g_order_n == 1 && g_order[0] == 2, "and fires once, with what it was last given", "");
 
+        /* Timers that come due while the loop was not looking - here it is simply not polled
+         * for 200 ms - fire together, and still earliest first. */
+        {
+            proven_loop_timer_t late[5] = { 0 };
+            static const proven_u32 at[5] = { 120, 20, 90, 50, 150 };
+            g_order_n = 0;
+            for (int i = 0; i < 5; ++i) proven_loop_timer_set(g_loop, &late[i], at[i], note, (void *)(proven_uintptr_t)at[i]);
+            proven_time_sleep(200);
+            spin(40);
+            PROVEN_TEST_ASSERT(g_order_n == 5 && g_order[0] == 20 && g_order[1] == 50 && g_order[2] == 90 && g_order[3] == 120 && g_order[4] == 150,
+                "timers that came due together fire in the order of their times", "");
+        }
+
         /* Many at once, at times spread over 300 ms: each fires once, and none early. */
         for (int i = 0; i < MANY; ++i) {
             proven_u32 ms = (proven_u32)(i * 37 % 300 + 1);

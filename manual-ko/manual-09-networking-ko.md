@@ -230,6 +230,8 @@ TCP 연결은 방향마다 하나씩의 바이트 스트림이다. 메시지 경
 | `proven_net_listener_addr(&listener, &out)` | 리스너가 바인드된 곳. | `proven_err_t`. |
 | `proven_net_listener_close(&listener)` | 듣기를 멈춘다. 이미 받은 연결에는 영향이 없다. | `proven_err_t`. |
 | `proven_net_connect(to, until, &conn)` | 연결한다. 실패하면 닫을 것이 없다. | `proven_err_t`: `REFUSED`, `TIMEOUT`, `UNREACHABLE`, `NOT_FOUND`(유닉스 도메인 경로). |
+| `proven_net_connect_start(to, &conn)` | 연결을 시작하고 곧바로 돌아온다. 여러 소켓을 함께 기다리는 프로그램을 위한 것이다(9절, 또는 [15장](manual-15-event-loop-ko.md)의 루프). | `proven_err_t`: 이미 연결되었으면 `PROVEN_OK`. 진행 중이면 `AGAIN` - 그때 `conn`은 쓸 수 있다고 보고될 때까지 지켜보고 닫는 것만 할 수 있다. 그 밖에는 실패이고 열린 것이 없다. |
+| `proven_net_connect_finish(&conn)` | 진행 중이던 연결이, 그 소켓이 쓸 수 있다거나 실패했다고 보고된 뒤 어떻게 끝났는지. | `proven_err_t`: 연결되었으면 `PROVEN_OK`. `AGAIN`이면 다시 기다린다. 그 밖에는 실패이고 `conn`은 닫혔다. 열려 있지 않으면 `INVALID_STATE`. |
 | `proven_net_read(&conn, dest, until)` | 도착한 것을 `dest.size`까지 읽는다. | `proven_result_size_t`: 끝에서는 `EOF` - 0바이트 성공은 없다. `TIMEOUT`. `RESET`. |
 | `proven_net_write(&conn, src, until)` | 지금 들어가는 만큼 쓴다. `.value`는 실패했을 때도 나간 양이다. | `proven_result_size_t`. |
 | `proven_net_write_all(&conn, src, until)` | `src` 전부를 쓰거나, 어디까지 갔는지 말하며 실패한다. | `proven_result_size_t`: `.err`가 OK일 때에만 `.value == src.size`. |
@@ -241,6 +243,20 @@ TCP 연결은 방향마다 하나씩의 바이트 스트림이다. 메시지 경
 
 `proven_net_listener_t`와 `proven_net_conn_t`는 여러분이 소유하는 작은 값이다. 연 것은 하나하나 닫고,
 열려 있는 것을 복사하지 마라. 복사본 둘은 소켓 하나의 주인 둘이다.
+
+**두 번에 나눠 하는 connect.** `proven_net_connect`는 기다린다. 많은 소켓을 한꺼번에 기다리는
+프로그램은 그럴 수 없으므로, 같은 connect가 호출 둘로도 제공된다:
+
+```c
+proven_err_t proven_net_connect_start(proven_net_addr_t to, proven_net_conn_t *out);
+proven_err_t proven_net_connect_finish(proven_net_conn_t *conn);
+```
+
+`proven_net_connect_start`는 곧바로 돌아온다: 연결이 이미 되었으면 `PROVEN_OK`(루프백 인터페이스에서는
+흔히 그렇다), 진행 중이면 `PROVEN_ERR_AGAIN`. 뒤의 경우 그 소켓은 지켜보고 닫는 것만 할 수 있다:
+`proven_net_poll`이나 셀렉터나 [15장](manual-15-event-loop-ko.md)의 루프로 쓸 수 있다고 보고될 때까지
+기다린 다음, `proven_net_connect_finish`에게 어떻게 끝났는지 묻는다. 어느 호출에서든 실패하면 열린 것이
+남지 않는다. 15장의 이벤트 구동 클라이언트가 이 쌍 위에 만들어져 있다.
 
 같은 호출들이 **유닉스 도메인** 스트림 소켓에도 쓰인다. `proven_net_addr_unix`로 만든 주소를 넘기면
 된다. listen은 경로를 만들고, 리스너를 닫아도 그 경로는 지워지지 않는다. 그래서 서버는 듣기 전에 남아

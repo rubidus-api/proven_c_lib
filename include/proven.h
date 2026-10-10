@@ -59,6 +59,8 @@
 #include "proven/ws_conn.h"
 #include "proven/loop.h"
 #include "proven/http_event.h"
+#include "proven/ws_event.h"
+#include "proven/http_event_client.h"
 #endif
 #include "proven/scan.h"
 #include "proven/coro.h"

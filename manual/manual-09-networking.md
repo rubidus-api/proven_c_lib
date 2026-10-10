@@ -231,6 +231,8 @@ side sends in a single write the other may receive in three reads, or two writes
 | `proven_net_listener_addr(&listener, &out)` | Where a listener is bound. | `proven_err_t`. |
 | `proven_net_listener_close(&listener)` | Stop listening. Accepted connections are unaffected. | `proven_err_t`. |
 | `proven_net_connect(to, until, &conn)` | Connect. On failure there is nothing to close. | `proven_err_t`: `REFUSED`, `TIMEOUT`, `UNREACHABLE`, `NOT_FOUND` (Unix-domain path). |
+| `proven_net_connect_start(to, &conn)` | Begin connecting and return at once, for a program that waits for many sockets together (section 9, or the loop of [Chapter 15](manual-15-event-loop.md)). | `proven_err_t`: `PROVEN_OK` when already connected; `AGAIN` when under way - `conn` can then be watched and closed and nothing else, until it is reported writable; otherwise the failure, with nothing open. |
+| `proven_net_connect_finish(&conn)` | How a connect that was under way ended, once its socket was reported writable or failed. | `proven_err_t`: `PROVEN_OK`, connected; `AGAIN`, wait again; otherwise the failure, and `conn` has been closed. `INVALID_STATE` when it is not open. |
 | `proven_net_read(&conn, dest, until)` | Read what has arrived, up to `dest.size`. | `proven_result_size_t`: `EOF` at the end - never zero bytes of success; `TIMEOUT`; `RESET`. |
 | `proven_net_write(&conn, src, until)` | Write what fits now. `.value` is how much went, also on failure. | `proven_result_size_t`. |
 | `proven_net_write_all(&conn, src, until)` | Write all of `src`, or fail saying how far it got. | `proven_result_size_t`: `.value == src.size` exactly when `.err` is OK. |
@@ -242,6 +244,22 @@ side sends in a single write the other may receive in three reads, or two writes
 
 `proven_net_listener_t` and `proven_net_conn_t` are small values you own. Close each one you
 opened, and do not copy one that is open: two copies are two owners of one socket.
+
+**A connect in two halves.** `proven_net_connect` waits. A program that is waiting for many
+sockets at once cannot afford to, so the same connect is offered as two calls:
+
+```c
+proven_err_t proven_net_connect_start(proven_net_addr_t to, proven_net_conn_t *out);
+proven_err_t proven_net_connect_finish(proven_net_conn_t *conn);
+```
+
+`proven_net_connect_start` returns at once: `PROVEN_OK` when the connection is already made
+(on the loopback interface it often is), or `PROVEN_ERR_AGAIN` when it is under way. In the
+second case the socket can be watched and closed and nothing else: wait until it is reported
+writable - with `proven_net_poll`, a selector, or the loop of
+[Chapter 15](manual-15-event-loop.md) - and ask `proven_net_connect_finish` how it ended. A
+failure, from either call, leaves nothing open. The event-driven client of Chapter 15 is built
+on this pair.
 
 The same calls serve **Unix-domain** stream sockets - pass an address made by
 `proven_net_addr_unix`. Listening creates the path; closing the listener does not remove it, so a

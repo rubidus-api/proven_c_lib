@@ -22,6 +22,11 @@
  * Each check below quotes the claim it is testing.
  */
 
+#ifndef PROVEN_NO_NET
+static int claims_done_calls;
+static void claims_never_done(void *ctx, proven_http_event_request_t *request, proven_err_t why) { (void)ctx; (void)request; (void)why; claims_done_calls++; }
+#endif
+
 int main(void) {
     PROVEN_TEST_SUITE("every factual claim the new chapters make is true",
         "The manual's statements about the hashes, the encoders, the generators and the streams, turned into assertions. A sentence a reader can act on is a proposition the build can check.",
@@ -57,6 +62,35 @@ int main(void) {
         /* CLAIM (s7): the length that means "sent chunked" is a value no body can have. */
         PROVEN_TEST_ASSERT(PROVEN_HTTP_EVENT_LENGTH_UNKNOWN == UINT64_MAX, "the unknown length is the largest 64-bit value", "");
         proven_http_event_server_destroy(NULL);
+
+        /* CLAIM (s12 table): start returns INVALID_ARG for "https with no TLS configuration -
+         * refused, never sent in the clear", for "a name with no address", for CONNECT; and
+         * "When proven_http_event_client_start returns an error ... no callback is or will be
+         * made" - nothing is in flight afterwards. "config may be null." */
+        proven_http_event_client_t *client = NULL;
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(loop, NULL, &client) == PROVEN_OK, "a client is made with a null configuration", "");
+        proven_http_event_request_options_t req = { .url = PROVEN_LIT("https://127.0.0.1/"), .on = { .on_done = claims_never_done } };
+        PROVEN_TEST_ASSERT(proven_http_event_client_start(client, &req, NULL) == PROVEN_ERR_INVALID_ARG, "https without a TLS configuration is refused", "");
+        req.url = PROVEN_LIT("http://example.invalid/");
+        PROVEN_TEST_ASSERT(proven_http_event_client_start(client, &req, NULL) == PROVEN_ERR_INVALID_ARG, "a name with no address is refused", "");
+        req.url = PROVEN_LIT("http://127.0.0.1/"); req.method = PROVEN_LIT("CONNECT");
+        PROVEN_TEST_ASSERT(proven_http_event_client_start(client, &req, NULL) == PROVEN_ERR_INVALID_ARG && proven_http_event_client_requests(client) == 0 && claims_done_calls == 0,
+            "CONNECT is refused; and none of the three made a callback or left a request", "");
+        proven_http_event_client_destroy(client);
+
+        /* CLAIM (s11 table): proven_ws_stream_ping is OUT_OF_BOUNDS "for more than 125 bytes" -
+         * decided before the stream is looked at; and accept is INVALID_ARG with no on_message. */
+        static const proven_byte_t much[126] = { 0 };
+        proven_ws_stream_t *ws = NULL;
+        proven_ws_event_config_t wcfg = { 0 };
+        proven_http_request_t head = { 0 };
+        PROVEN_TEST_ASSERT(proven_ws_stream_ping(NULL, (proven_mem_view_t){ much, sizeof much }) == PROVEN_ERR_OUT_OF_BOUNDS &&
+                           proven_ws_event_accept((proven_http_stream_t *)&head, &head, &wcfg, &ws) == PROVEN_ERR_INVALID_ARG && ws == NULL,
+            "a ping of 126 bytes and a WebSocket configuration with no on_message are refused", "");
+
+        /* CLAIM (ch 9 table): proven_net_connect_finish is INVALID_STATE "when it is not open". */
+        proven_net_conn_t closed = { 0 };
+        PROVEN_TEST_ASSERT(proven_net_connect_finish(&closed) == PROVEN_ERR_INVALID_STATE, "finishing a connect that was never begun is refused", "");
         proven_loop_destroy(loop);
         proven_loop_destroy(NULL);
     }

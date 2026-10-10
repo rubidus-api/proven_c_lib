@@ -229,6 +229,47 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a connect in two halves",
+        "proven_net_connect_start returns at once; proven_net_connect_finish says how it ended once the socket is ready.",
+        "Inspect proven_net_connect_start and proven_net_connect_finish in src/proven/net.c; the blocking connect is the same pair with a wait between.");
+    // ---------------------------------------------------------------
+    {
+        proven_net_listener_t l;
+        proven_net_addr_t at;
+        PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 4, &l, &at) == PROVEN_OK, "a listener", "");
+        proven_net_conn_t c;
+        proven_err_t e = proven_net_connect_start(at, &c);
+        PROVEN_TEST_ASSERT((e == PROVEN_OK || e == PROVEN_ERR_AGAIN) && proven_net_conn_is_open(&c), "a connect begun is PROVEN_OK or PROVEN_ERR_AGAIN, with a socket to watch", "");
+        for (int i = 0; i < 200 && e == PROVEN_ERR_AGAIN; ++i) {
+            proven_net_poll_item_t item = { .handle = proven_net_conn_handle(&c), .want = PROVEN_NET_WRITABLE };
+            proven_size_t ready = 0;
+            PROVEN_TEST_ASSERT(proven_net_poll(&item, 1, proven_net_deadline_in(5000), &ready) == PROVEN_OK, "wait for it", "");
+            e = proven_net_connect_finish(&c);
+        }
+        PROVEN_TEST_ASSERT(e == PROVEN_OK, "and finished: connected", "");
+        proven_net_conn_t served;
+        PROVEN_TEST_ASSERT(proven_net_accept(&l, proven_net_deadline_in(5000), &served, NULL) == PROVEN_OK, "the listener has it", "");
+        proven_byte_t got[4] = { 0 };
+        PROVEN_TEST_ASSERT(proven_net_write_all(&c, (proven_mem_view_t){ .ptr = (const proven_byte_t *)"ping", .size = 4 }, proven_net_deadline_in(5000)).err == PROVEN_OK &&
+                           proven_net_read(&served, (proven_mem_mut_t){ .ptr = got, .size = 4 }, proven_net_deadline_in(5000)).value == 4 && memcmp(got, "ping", 4) == 0,
+            "it is an ordinary connection afterwards", "");
+        (void)proven_net_close(&c); (void)proven_net_close(&served);
+        PROVEN_TEST_ASSERT(proven_net_listener_close(&l) == PROVEN_OK, "the port is given back", "");
+
+        /* Nothing listening: the refusal comes from one of the two halves, and nothing stays open. */
+        e = proven_net_connect_start(at, &c);
+        for (int i = 0; i < 200 && e == PROVEN_ERR_AGAIN; ++i) {
+            proven_net_poll_item_t item = { .handle = proven_net_conn_handle(&c), .want = PROVEN_NET_WRITABLE };
+            proven_size_t ready = 0;
+            PROVEN_TEST_ASSERT(proven_net_poll(&item, 1, proven_net_deadline_in(15000), &ready) == PROVEN_OK, "wait for it", "");
+            e = proven_net_connect_finish(&c);
+        }
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_REFUSED && !proven_net_conn_is_open(&c), "a refused connect is PROVEN_ERR_REFUSED from start or finish, and leaves nothing open", "");
+        PROVEN_TEST_ASSERT(proven_net_connect_finish(&c) == PROVEN_ERR_INVALID_STATE && proven_net_connect_start(at, NULL) == PROVEN_ERR_INVALID_ARG &&
+                           proven_net_connect_start((proven_net_addr_t){ 0 }, &c) == PROVEN_ERR_INVALID_ARG, "finishing what is not open, no out pointer and no address are refused", "");
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a peer that vanishes is PROVEN_ERR_RESET, and a write to it does not kill the process",
         "Closing with unread data aborts the connection; the other end reads RESET, and writing afterwards is an error value, not SIGPIPE.",
         "If this test dies with no failure message, a send was made without MSG_NOSIGNAL (or SO_NOSIGPIPE) and the signal killed it.");

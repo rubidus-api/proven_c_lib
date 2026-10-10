@@ -5,10 +5,12 @@
 server this one is the other form of); [Chapter 14](manual-14-tls.md) if it is to speak TLS.**
 **After this chapter** you can run a loop with timers and work that comes back from other
 threads, serve HTTP from it without a call that waits, answer a request later, stream a response
-to a client slower than your program, and say what a connection costs while it does nothing.
+to a client slower than your program, keep WebSocket connections open without a thread each,
+make many HTTP requests at once from one thread, and say what a connection costs while it does
+nothing.
 
-This chapter covers `loop.h` and `http_event.h`. Both are hosted-only, and `PROVEN_NO_NET`
-leaves them out.
+This chapter covers `loop.h`, `http_event.h`, `ws_event.h` and `http_event_client.h`. All are
+hosted-only, and `PROVEN_NO_NET` leaves them out.
 
 ## Table of contents
 
@@ -22,7 +24,9 @@ leaves them out.
 8. [Request bodies](#8-request-bodies)
 9. [Limits, time and refusals](#9-limits-time-and-refusals)
 10. [Threads, TLS and shutting down](#10-threads-tls-and-shutting-down)
-11. [What a connection holds, and what is not here](#11-what-a-connection-holds-and-what-is-not-here)
+11. [WebSocket on the loop](#11-websocket-on-the-loop)
+12. [The event-driven client](#12-the-event-driven-client)
+13. [What a connection holds, and what is not here](#13-what-a-connection-holds-and-what-is-not-here)
 
 ## 1. Two ways to serve
 
@@ -621,14 +625,557 @@ long as you are willing to, then `proven_http_event_server_destroy`, then stop a
 loop. Destroy the server on the loop's thread or after the loop has stopped - not while another
 thread is inside `proven_loop_run`.
 
-## 11. What a connection holds, and what is not here
+## 11. WebSocket on the loop
+
+[Chapter 12](manual-12-websocket.md)'s WebSocket connection has calls that wait, and so
+occupies a thread for as long as it is open. `ws_event.h` is the other form: a request to the
+server of this chapter is turned into a WebSocket inside `on_request`, and from then on the
+loop tells your functions what arrived. A connection that is silent holds its state and no
+buffer.
+
+```c
+proven_err_t proven_ws_event_accept(proven_http_stream_t *stream, const proven_http_request_t *head,
+                                    const proven_ws_event_config_t *config, proven_ws_stream_t **out);
+proven_err_t proven_ws_stream_send(proven_ws_stream_t *ws, bool text, proven_mem_view_t data);
+proven_err_t proven_ws_stream_send_piece(proven_ws_stream_t *ws, bool text, proven_mem_view_t data, bool first, bool last);
+proven_err_t proven_ws_stream_ping(proven_ws_stream_t *ws, proven_mem_view_t data);
+void proven_ws_stream_close(proven_ws_stream_t *ws, proven_u16 code, proven_u8str_view_t reason);
+void proven_ws_stream_abort(proven_ws_stream_t *ws);
+void proven_ws_stream_pause(proven_ws_stream_t *ws);
+void proven_ws_stream_resume(proven_ws_stream_t *ws);
+void proven_ws_stream_set_user(proven_ws_stream_t *ws, void *user);
+void *proven_ws_stream_user(const proven_ws_stream_t *ws);
+proven_net_addr_t proven_ws_stream_peer(const proven_ws_stream_t *ws);
+proven_size_t proven_ws_stream_buffered(const proven_ws_stream_t *ws);
+```
+
+**Accepting.** `proven_ws_event_accept` is called inside `on_request`, while `head` is valid.
+It checks the request, answers 101, and turns the connection into a WebSocket. **The HTTP
+exchange ends inside that call**: `on_done(PROVEN_OK)` is called for the stream, which is then
+over, and `*out` is what you hold until `on_closed` returns.
+
+| It returns | Meaning | What the handler does |
+|---|---|---|
+| `PROVEN_OK` | The connection is a WebSocket. | Attach its state to `*out` and return. |
+| `PROVEN_ERR_NOT_FOUND` | The request did not ask for a WebSocket. Nothing was sent. | Answer it as the ordinary request it is. |
+| `PROVEN_ERR_UNSUPPORTED` | An upgrade for a version other than 13. Nothing was sent. | Answer 426 with `Sec-WebSocket-Version: 13`. |
+| `PROVEN_ERR_INVALID_FORMAT` | An upgrade, but malformed. Nothing was sent. | Answer 400. |
+| `PROVEN_ERR_INVALID_ARG` | No `on_message`, or a subprotocol that is not a token. | A defect in the program. |
+| `PROVEN_ERR_INVALID_STATE` | Not inside `on_request` for this stream, or a response was already begun. | A defect in the program. |
+| `PROVEN_ERR_NOMEM` | | Answer 503, or abort. |
+| `PROVEN_ERR_RESET` | The client vanished at that moment; `on_done` has been called. | Nothing: the stream is over. |
+
+A `proven_ws_event_config_t` is zero-initialised, given `on.on_message`, and whatever else is
+needed:
+
+| Field | Meaning | Default |
+|---|---|---|
+| `on.on_message(ctx, ws, text, piece, first, last)` | A piece of a message. Required. | |
+| `on.on_writable(ctx, ws)` | A send that was refused will now be taken. | none |
+| `on.on_closed(ctx, ws, code, why)` | The connection is over. Called exactly once. | none |
+| `ctx` | Passed to every callback. | |
+| `subprotocol` | Named in the answer when not empty. Name one only if the client offered it (`proven_ws_request_offers`). | none |
+| `max_message_bytes` | Largest message accepted, its pieces together. | 1 MiB |
+| `max_buffered_output` | Output held before sends are refused. | 64 KiB |
+| `ping_interval_ms` | Silence from the client after which it is sent a ping. | 30 s |
+| `pong_timeout_ms` | Further silence after which the connection is ended. | 10 s |
+| `close_timeout_ms` | How long to wait for the answer to a close, counted from the last output the client took. | 5 s |
+
+**Messages arrive in pieces.** `on_message` is given each message in the pieces the network
+delivered, with `first` and `last` marking its ends: a message of any size passes through
+without being assembled or held, and `piece` is good only until the function returns. Text is
+checked to be UTF-8 over the whole message, and a piece may end in the middle of a character.
+A handler that wants whole messages collects the pieces itself, up to a limit of its own
+choosing - the program below does. `max_message_bytes` is the server's limit, not a buffer:
+a message past it is refused with close code 1009.
+
+**A send is taken whole or not at all.** `proven_ws_stream_send` queues one message when less
+than `max_buffered_output` is held, and otherwise takes nothing and returns
+`PROVEN_ERR_AGAIN`: keep the message, and send it again when `on_writable` is called. That is
+the difference from the HTTP body of section 7, whose write says how many bytes it took - a
+frame cannot be half-sent without the library choosing where to cut your message. The most a
+connection holds is therefore the limit and one message of your choosing; for a large message
+produced as it goes, `proven_ws_stream_send_piece` sends it a fragment at a time under the same
+rule. A handler that only echoes can stop reading while it waits, with
+`proven_ws_stream_pause`, so that a client that sends faster than it reads is slowed rather
+than buffered.
+
+| Call | Returns |
+|---|---|
+| `proven_ws_stream_send`, `proven_ws_stream_send_piece` | `proven_err_t`: `AGAIN` when the output limit is reached, with nothing taken; `INVALID_STATE` after a close was sent, for `first` inside a message, or for a piece that is not `first` outside one; `RESET` when the connection is gone. |
+| `proven_ws_stream_ping` | the same; `OUT_OF_BOUNDS` for more than 125 bytes. |
+| `proven_ws_stream_close` | nothing. Sends a close with `code` and `reason`, and ends the connection when the client answers or the close timeout passes; `on_closed` follows later. A code that may not be sent becomes 1000. |
+| `proven_ws_stream_abort` | nothing. Ends the connection at once with no close frame; `on_closed(1006, PROVEN_ERR_RESET)` is called inside the call. |
+| `proven_ws_stream_pause`, `proven_ws_stream_resume` | nothing. Stop and restart the delivery of messages and the reading of the connection. |
+| `proven_ws_stream_buffered` | `proven_size_t`: bytes queued for the client and not yet accepted by it. |
+
+**How it ends.** `on_closed` is called exactly once, and what it is given says how:
+
+| `code` | `why` | What happened |
+|---|---|---|
+| the client's code (1005 if its close had none) | `PROVEN_OK` | The client closed, and was answered. |
+| the code this side sent | `PROVEN_OK` | This side closed, and the client answered. |
+| the code this side sent | `PROVEN_ERR_TIMEOUT` | This side closed, and the client never answered. |
+| 1002, 1007, 1009 | `PROVEN_ERR_INVALID_FORMAT`, `PROVEN_ERR_INVALID_ENCODING`, `PROVEN_ERR_OUT_OF_BOUNDS` | The client broke the protocol, sent text that is not UTF-8, or a message past the limit; it was sent that code. |
+| 1006 | `PROVEN_ERR_TIMEOUT` | It answered neither data nor a ping within the two liveness limits. |
+| 1006 | `PROVEN_ERR_RESET` | It vanished without a close frame; or `proven_ws_stream_abort`; or the server was destroyed. |
+
+Pings from the client are answered for you, and its pongs need nothing from you. Liveness is
+judged by what is received: a client that is sent data and never reads it is not detected by
+that alone - but nothing more is queued for it than the output limit, and once it stops
+answering pings it is dropped.
+
+The test suite compiles and runs this program:
+
+<!-- example: manual/examples/en/ex_15_ws_event.c -->
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/*
+ * WebSocket on the event-driven server: connections that cost no thread.
+ *
+ * A request becomes a WebSocket inside on_request. From then on the loop tells these functions
+ * what arrived, and they return at once. This server shouts back: every text message is
+ * answered in capitals.
+ *
+ * The client is the blocking one of chapter 12, on the example's main thread.
+ */
+
+typedef struct {
+    proven_loop_t *loop;
+    int opened, closed;
+    proven_u16 last_code;
+} app_t;
+
+/* What this program keeps for one connection: the message being collected. */
+typedef struct {
+    app_t *app;
+    char text[4096];
+    proven_size_t len;
+    bool waiting;                 /* a reply the server would not take yet */
+} peer_t;
+
+/* Send the reply. If the client is not taking what was sent before, the server refuses it:
+ * keep it, stop reading from this client, and try again when on_writable says so. */
+static void reply(proven_ws_stream_t *ws, peer_t *peer) {
+    proven_err_t err = proven_ws_stream_send(ws, true, (proven_mem_view_t){ (const proven_byte_t *)peer->text, peer->len });
+    if (err == PROVEN_ERR_AGAIN) {
+        peer->waiting = true;
+        proven_ws_stream_pause(ws);
+        return;
+    }
+    peer->waiting = false;
+    peer->len = 0;
+}
+
+/* A message arrives in the pieces the network delivered. This handler wants whole messages,
+ * so it collects them - up to a limit of its own, which is the point of doing it by hand. */
+static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
+    (void)ctx;
+    peer_t *peer = proven_ws_stream_user(ws);
+    if (first) peer->len = 0;
+    if (!text || peer->len + piece.size > sizeof peer->text) {
+        proven_ws_stream_close(ws, 1009, PROVEN_LIT("short text only"));       /* 1009: too big */
+        return;
+    }
+    for (proven_size_t i = 0; i < piece.size; ++i) {
+        proven_byte_t ch = piece.ptr[i];
+        peer->text[peer->len++] = (char)(ch >= 'a' && ch <= 'z' ? ch - 32 : ch);
+    }
+    if (last) reply(ws, peer);
+}
+
+/* There is room again. */
+static void on_writable(void *ctx, proven_ws_stream_t *ws) {
+    (void)ctx;
+    peer_t *peer = proven_ws_stream_user(ws);
+    if (!peer->waiting) return;
+    reply(ws, peer);
+    if (!peer->waiting) proven_ws_stream_resume(ws);
+}
+
+/* Called once, however the connection ended. The place to free what was attached. */
+static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
+    app_t *app = ctx;
+    (void)why;
+    free(proven_ws_stream_user(ws));
+    app->last_code = code;
+    app->closed++;
+}
+
+static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
+    app_t *app = ctx;
+    peer_t *peer = calloc(1, sizeof *peer);
+    if (!peer) { proven_http_stream_abort(stream); return; }
+    peer->app = app;
+
+    proven_ws_event_config_t config = {
+        .on = { on_message, on_writable, on_closed },
+        .ctx = app,
+        .max_message_bytes = sizeof peer->text,
+    };
+    proven_ws_stream_t *ws = NULL;
+    /* Check the request, answer 101, and turn the connection into a WebSocket. The HTTP
+     * exchange ends inside this call (on_done is called, if there is one). */
+    proven_err_t err = proven_ws_event_accept(stream, head, &config, &ws);
+    if (err != PROVEN_OK) {
+        free(peer);
+        /* Nothing was sent: the request is still an ordinary one, and is answered as such. */
+        if (err == PROVEN_ERR_UNSUPPORTED) {
+            proven_http_header_t version = { PROVEN_LIT("Sec-WebSocket-Version"), PROVEN_LIT("13") };
+            (void)proven_http_stream_respond(stream, 426, &version, 1, (proven_mem_view_t){ 0 });
+        } else if (err != PROVEN_ERR_RESET) {
+            (void)proven_http_stream_respond(stream, err == PROVEN_ERR_NOT_FOUND ? 404 : 400, NULL, 0, (proven_mem_view_t){ 0 });
+        }
+        return;
+    }
+    /* `stream` is over now. `ws` is valid until on_closed returns. */
+    proven_ws_stream_set_user(ws, peer);
+    app->opened++;
+}
+
+static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    app_t app = { 0 };
+
+    // ---- a server on a loop, on its own thread -------------------------------------
+    EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
+    proven_http_event_server_config_t config = { .on = { .on_request = on_request }, .ctx = &app };
+    proven_http_event_server_t *server = NULL;
+    proven_net_addr_t at;
+    EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &config, &server) == PROVEN_OK &&
+                    proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "an event-driven server on a free port");
+    proven_job_sys_t *threads = NULL;
+    proven_job_group_t running;
+    proven_job_group_init(&running);
+    EXAMPLE_REQUIRE(proven_job_system_init(heap, 1, 4, &threads) == PROVEN_OK &&
+                    proven_job_group_submit(threads, &running, run, &app) == PROVEN_OK, "the loop runs on another thread");
+
+    // ---- a client ------------------------------------------------------------------
+    /* A blocking client is the simplest way to show the other end. */
+    proven_http_client_config_t client_config = { .alloc = heap };
+    proven_http_client_t *client = NULL;
+    EXAMPLE_REQUIRE(proven_http_client_create(&client_config, &client) == PROVEN_OK, "an HTTP client");
+    char url[64];
+    int n = snprintf(url, sizeof url, "ws://127.0.0.1:%u/shout", (unsigned)at.port);
+    proven_ws_conn_config_t ws_config = { .alloc = heap };
+    proven_ws_conn_t *conn = NULL;
+    EXAMPLE_REQUIRE(proven_ws_conn_connect(client, (proven_u8str_view_t){ (const proven_byte_t *)url, (proven_size_t)n }, NULL, 0, PROVEN_LIT(""),
+                                           &ws_config, &conn, NULL) == PROVEN_OK, "the server accepts a WebSocket");
+
+    proven_ws_message_t msg;
+    EXAMPLE_REQUIRE(proven_ws_conn_send_text(conn, PROVEN_LIT("hello, loop")) == PROVEN_OK &&
+                    proven_ws_conn_receive(conn, proven_net_deadline_in(5000), &msg) == PROVEN_OK &&
+                    msg.text && msg.data.size == 11 && memcmp(msg.data.ptr, "HELLO, LOOP", 11) == 0, "a message comes back in capitals");
+    /* However the client cuts a message up, the handler sees one message. */
+    EXAMPLE_REQUIRE(proven_ws_conn_send_part(conn, true, proven_mem_view_from_u8(PROVEN_LIT("in three ")), false) == PROVEN_OK &&
+                    proven_ws_conn_send_part(conn, true, proven_mem_view_from_u8(PROVEN_LIT("pieces, ")), false) == PROVEN_OK &&
+                    proven_ws_conn_send_part(conn, true, proven_mem_view_from_u8(PROVEN_LIT("one answer")), true) == PROVEN_OK &&
+                    proven_ws_conn_receive(conn, proven_net_deadline_in(5000), &msg) == PROVEN_OK &&
+                    msg.data.size == 27 && memcmp(msg.data.ptr, "IN THREE PIECES, ONE ANSWER", 27) == 0, "three fragments are one message to the handler");
+
+    // ---- closing -------------------------------------------------------------------
+    EXAMPLE_REQUIRE(proven_ws_conn_close(conn, 1000, PROVEN_LIT("done")) == PROVEN_OK, "the client's close is answered");
+    proven_ws_conn_destroy(conn);
+    proven_http_client_destroy(client);
+
+    /* Stop the loop before looking at what its thread wrote. */
+    proven_loop_stop(app.loop);
+    proven_job_group_wait(threads, &running);
+    EXAMPLE_REQUIRE(app.opened == 1 && app.closed == 1 && app.last_code == 1000, "one connection was opened, and closed once, with the client's code");
+    proven_http_event_server_destroy(server);
+    proven_loop_destroy(app.loop);
+    proven_job_system_close(threads);
+    proven_job_system_destroy(threads);
+    return EXAMPLE_OK();
+}
+```
+
+## 12. The event-driven client
+
+```c
+proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_http_event_client_config_t *config,
+                                             proven_http_event_client_t **out);
+void proven_http_event_client_destroy(proven_http_event_client_t *client);
+proven_size_t proven_http_event_client_requests(const proven_http_event_client_t *client);
+proven_err_t proven_http_event_client_start(proven_http_event_client_t *client, const proven_http_event_request_options_t *options,
+                                            proven_http_event_request_t **out);
+proven_result_size_t proven_http_event_request_write(proven_http_event_request_t *request, proven_mem_view_t data);
+proven_err_t proven_http_event_request_end(proven_http_event_request_t *request);
+void proven_http_event_request_abort(proven_http_event_request_t *request);
+void proven_http_event_request_pause(proven_http_event_request_t *request);
+void proven_http_event_request_resume(proven_http_event_request_t *request);
+void proven_http_event_request_set_user(proven_http_event_request_t *request, void *user);
+void *proven_http_event_request_user(const proven_http_event_request_t *request);
+```
+
+[Chapter 11](manual-11-http-client-server.md)'s client sends a request and waits for the
+answer. This one starts a request and returns; the response head, the pieces of its body and
+the end arrive through callbacks on the loop's thread, and any number of requests are in
+flight at once.
+
+**It is deliberately narrow, and the two limits are worth knowing before anything else.**
+
+- **One request, one connection, closed afterwards.** There is no connection reuse, and no
+  redirects, answers to challenges, cookies or proxies. Chapter 11's client has all of them;
+  use it wherever a thread per request in flight is affordable.
+- **Names are not resolved.** Looking a name up can take seconds, and nothing on a loop may
+  wait. A request says where to connect with `address`; only a URL whose host is an IP address
+  needs none. For a name: call `proven_net_resolve` on a job, post the result to the loop, and
+  start the request there, as the program at the end of this section does. The URL keeps the
+  name - it is what goes into `Host`, and over TLS it is the name the server's certificate
+  must be for.
+
+A request is described by a `proven_http_event_request_options_t`. Everything it points to is
+copied or used before `proven_http_event_client_start` returns:
+
+| Field | Meaning |
+|---|---|
+| `method` | Empty means `GET`. `CONNECT` is refused. |
+| `url` | Absolute, `http` or `https`, with no credentials in it. |
+| `address` | Where to connect; its port is used as given. Null only when the URL's host is an IP address. |
+| `headers`, `header_count` | Yours. `Host`, `Content-Length`, `Transfer-Encoding` and `Connection` are written for you and may not be among them. |
+| `body` | A body held in memory, sent whole. |
+| `body_length` | With no `body`: 0 for none; a length for a body written afterwards; `PROVEN_HTTP_EVENT_LENGTH_UNKNOWN` to write it chunked. |
+| `on.on_response(ctx, request, head)` | The response head. Optional. Interim responses (100, 103) are passed over and not reported. |
+| `on.on_body(ctx, request, piece, last)` | A piece of the body; `last` with the final one, which may be empty. A response with no body gets no call. Optional. |
+| `on.on_writable(ctx, request)` | Request-body bytes that were held back have gone. Optional. |
+| `on.on_done(ctx, request, why)` | The end. **Required**, and called exactly once for every request that was started. |
+| `ctx` | Passed to every callback. |
+
+**Starting.** When `proven_http_event_client_start` returns an error, the request was not
+started and no callback is or will be made. When it returns `PROVEN_OK`, `on_done` will be
+called exactly once - **never inside that call**, so code that starts a request can finish
+what it was doing before anything happens to it. A request is valid from the start until
+`on_done` returns.
+
+| `start` returns | For |
+|---|---|
+| `PROVEN_ERR_INVALID_ARG` | No `on_done`; a URL that is not absolute `http` or `https`, or that carries credentials; `https` with no TLS configuration - refused, never sent in the clear; a name with no `address`; a header the client writes itself; a method that is not a token, or `CONNECT`. |
+| `PROVEN_ERR_OUT_OF_BOUNDS` | A request head that does not fit `max_head_bytes`. |
+| `PROVEN_ERR_NOMEM` | |
+| `PROVEN_ERR_REFUSED`, `PROVEN_ERR_UNREACHABLE` | The connect failed at once. It may also fail later, and is then reported by `on_done`. |
+
+**How it ends.** `on_done` says:
+
+| `why` | What happened |
+|---|---|
+| `PROVEN_OK` | The whole response arrived - whatever its status: a 404 is a response. |
+| `PROVEN_ERR_REFUSED`, `PROVEN_ERR_UNREACHABLE` | Nothing was listening, or there was no route. |
+| `PROVEN_ERR_TIMEOUT` | One of the four time limits passed. |
+| `PROVEN_ERR_RESET` | The server closed or was lost before the response was whole - a body cut short of its length is never reported as complete; or `proven_http_event_request_abort`; or the client was destroyed. |
+| `PROVEN_ERR_INVALID_FORMAT` | The answer was not HTTP, its framing contradicted itself, or more than eight interim responses came in a row. |
+| `PROVEN_ERR_OUT_OF_BOUNDS` | The head was larger than `max_head_bytes`, or the body larger than `max_body_bytes`. |
+| `PROVEN_ERR_UNSUPPORTED` | The server answered 101: this client asks for no change of protocol. |
+| `PROVEN_ERR_UNTRUSTED`, `PROVEN_ERR_NAME_MISMATCH`, `PROVEN_ERR_EXPIRED`, ... | TLS refused the server ([Chapter 14](manual-14-tls.md), section 8). The request was never sent. |
+
+**A request body written as it goes** follows the rule of section 7.
+`proven_http_event_request_write` takes as many bytes as fit under `max_buffered_output`,
+possibly none, and says how many; the rest is offered again when `on_writable` is called. It
+may be called at once after `start`, before the connection exists: what is taken waits.
+`proven_http_event_request_end` finishes the body; ending short of a promised length ends the
+request with `PROVEN_ERR_INVALID_FORMAT`.
+
+| Call | Returns |
+|---|---|
+| `proven_http_event_client_create(loop, &config, &client)` | `proven_err_t`: `INVALID_ARG` for no loop; `NOMEM`. `config` may be null. |
+| `proven_http_event_client_requests(client)` | `proven_size_t`: requests in flight. |
+| `proven_http_event_client_destroy(client)` | nothing. Every request in flight gets `on_done(PROVEN_ERR_RESET)`. Null is accepted. |
+| `proven_http_event_request_write(request, data)` | `proven_result_size_t`: the bytes taken. `INVALID_STATE` when the request has no body to write or it was ended; `OUT_OF_BOUNDS` for more than the length promised. |
+| `proven_http_event_request_end(request)` | `proven_err_t`: `INVALID_STATE` when there was nothing to end; `INVALID_FORMAT` when fewer bytes were written than promised - `on_done` is then called inside the call. |
+| `proven_http_event_request_abort(request)` | nothing. `on_done(PROVEN_ERR_RESET)` is called inside the call. |
+| `proven_http_event_request_pause`, `proven_http_event_request_resume` | nothing. Stop and restart the delivery of the response body. |
+
+The configuration's fields, each with a default when zero:
+
+| Field | Meaning | Default |
+|---|---|---|
+| `alloc` | The allocator for requests and buffers. | the loop's |
+| `tls` | A TLS configuration that can verify servers, for `https`. Must outlive the client. | none: `https` is refused |
+| `max_head_bytes` | Largest response head, and request head. | 16 KiB |
+| `max_headers` | Most header fields in a response. | 64 |
+| `max_body_bytes` | Largest response body. | no limit: it is delivered in pieces and never held |
+| `max_buffered_output` | Request-body bytes held before writes are refused. | 64 KiB |
+| `connect_timeout_ms` | To be connected, the TLS handshake included. | 10 s |
+| `response_timeout_ms` | From the request being sent to the end of the response head. | 30 s |
+| `body_timeout_ms` | Between pieces of the response body. | 30 s |
+| `write_timeout_ms` | Output held with none of it accepted by the server. | 30 s |
+
+The test suite compiles and runs this program:
+
+<!-- example: manual/examples/en/ex_15_http_event_client.c -->
+```c
+#include <stdio.h>
+#include <string.h>
+
+/*
+ * The event-driven HTTP client: several requests in flight on one thread.
+ *
+ * A request is started and the call returns at once; what happens to it arrives through
+ * callbacks, on the loop's thread. The server here is the event-driven one of this chapter, on
+ * the same loop - this whole program is one thread and one worker for the one thing that waits.
+ *
+ * That one thing is looking a name up. The client does not resolve names: a lookup can take
+ * seconds, and nothing on a loop may wait. So the third request shows the pattern - resolve on
+ * a worker, post the answer back, start the request.
+ */
+
+typedef struct app app_t;
+
+/* What this program keeps for one request. */
+typedef struct {
+    app_t *app;
+    const char *path;
+    int status;
+    char body[64];
+    proven_size_t len;
+    proven_err_t why;
+    bool done;
+} fetch_t;
+
+struct app {
+    proven_loop_t *loop;
+    proven_http_event_client_t *client;
+    proven_job_sys_t *workers;
+    proven_u16 port;
+    fetch_t fetch[3];
+    int finished;
+    /* written by the worker, read on the loop after it has been posted */
+    proven_net_addr_t found;
+    proven_err_t lookup;
+};
+
+// ---- the server the requests go to -----------------------------------------
+
+static void serve(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
+    (void)ctx;
+    if (proven_u8str_view_eq(head->target, PROVEN_LIT("/a"))) (void)proven_http_stream_respond(stream, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("first")));
+    else if (proven_u8str_view_eq(head->target, PROVEN_LIT("/b"))) (void)proven_http_stream_respond(stream, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("second")));
+    else (void)proven_http_stream_respond(stream, 404, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("nothing here")));
+}
+
+// ---- the client's callbacks -------------------------------------------------
+
+/* The head: good only until this function returns, so take what is wanted from it. */
+static void on_response(void *ctx, proven_http_event_request_t *request, const proven_http_response_t *head) {
+    (void)request;
+    ((fetch_t *)ctx)->status = head->status;
+}
+
+/* The body, a piece at a time. Nothing is collected for you; collect what you want. */
+static void on_body(void *ctx, proven_http_event_request_t *request, proven_mem_view_t piece, bool last) {
+    (void)request; (void)last;
+    fetch_t *f = ctx;
+    for (proven_size_t i = 0; i < piece.size && f->len < sizeof f->body - 1; ++i) f->body[f->len++] = (char)piece.ptr[i];
+}
+
+/* Once for every request that was started, whatever happened to it. */
+static void on_done(void *ctx, proven_http_event_request_t *request, proven_err_t why) {
+    (void)request;
+    fetch_t *f = ctx;
+    f->why = why;
+    f->done = true;
+    if (++f->app->finished == 3) proven_loop_stop(f->app->loop);
+}
+
+static proven_err_t fetch(app_t *app, fetch_t *f, const char *path, const proven_net_addr_t *address, const char *host) {
+    char url[96];
+    int n = snprintf(url, sizeof url, "http://%s:%u%s", host, (unsigned)app->port, path);
+    f->app = app;
+    f->path = path;
+    proven_http_event_request_options_t options = {
+        .url = { (const proven_byte_t *)url, (proven_size_t)n },
+        .address = address,                               /* null is allowed only when the URL's host is an IP address */
+        .on = { on_response, on_body, NULL, on_done },
+        .ctx = f,
+    };
+    return proven_http_event_client_start(app->client, &options, NULL);     /* returns at once */
+}
+
+// ---- a name, resolved elsewhere ---------------------------------------------
+
+/* On the loop's thread again: now there is an address, and the request can start.
+ * The URL keeps the name - it is what goes into Host - and the address says where to connect. */
+static void resolved(void *ctx) {
+    app_t *app = ctx;
+    if (app->lookup != PROVEN_OK || fetch(app, &app->fetch[2], "/missing", &app->found, "localhost") != PROVEN_OK) {
+        app->fetch[2].why = PROVEN_ERR_NOT_FOUND;
+        if (++app->finished == 3) proven_loop_stop(app->loop);
+    }
+}
+
+/* On a worker thread: this call may wait as long as the resolver takes. */
+static void resolve(void *ctx) {
+    app_t *app = ctx;
+    proven_net_addr_t all[8];
+    proven_size_t count = 0;
+    app->lookup = proven_net_resolve(PROVEN_LIT("localhost"), app->port, all, 8, &count);
+    /* The server here listens on IPv4 only; a real program would try each address in turn. */
+    bool have = false;
+    for (proven_size_t i = 0; i < count && !have; ++i) {
+        if (all[i].family == PROVEN_NET_FAMILY_IPV4) { app->found = all[i]; have = true; }
+    }
+    if (app->lookup == PROVEN_OK && !have) app->lookup = PROVEN_ERR_NOT_FOUND;
+    if (proven_loop_post(app->loop, resolved, app) != PROVEN_OK) proven_loop_stop(app->loop);
+}
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    app_t app = { 0 };
+
+    // ---- one loop, a server and a client on it ------------------------------------
+    /* Nothing runs yet: a loop does nothing until it is run. */
+    EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
+    proven_http_event_server_config_t server_config = { .on = { .on_request = serve } };
+    proven_http_event_server_t *server = NULL;
+    proven_net_addr_t at;
+    EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &server_config, &server) == PROVEN_OK &&
+                    proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server to ask");
+    app.port = at.port;
+    EXAMPLE_REQUIRE(proven_http_event_client_create(app.loop, NULL, &app.client) == PROVEN_OK, "an event-driven client");
+    EXAMPLE_REQUIRE(proven_job_system_init(heap, 1, 4, &app.workers) == PROVEN_OK, "one worker, for the lookup");
+
+    // ---- three requests ------------------------------------------------------------
+    /* Two by address. Both are started before either has been sent. */
+    EXAMPLE_REQUIRE(fetch(&app, &app.fetch[0], "/a", NULL, "127.0.0.1") == PROVEN_OK &&
+                    fetch(&app, &app.fetch[1], "/b", NULL, "127.0.0.1") == PROVEN_OK, "two requests started");
+    EXAMPLE_REQUIRE(proven_http_event_client_requests(app.client) == 2 && !app.fetch[0].done && !app.fetch[1].done, "both in flight, neither answered: nothing has run yet");
+
+    /* One by name. Without an address it is refused - so resolve first, on the worker. */
+    fetch_t unresolved = { 0 };
+    EXAMPLE_REQUIRE(fetch(&app, &unresolved, "/missing", NULL, "localhost") == PROVEN_ERR_INVALID_ARG, "a name with no address is refused");
+    EXAMPLE_REQUIRE(proven_job_submit(app.workers, resolve, &app), "the lookup is handed to a worker");
+
+    // ---- run -----------------------------------------------------------------------
+    /* on_done stops the loop when the third request has ended. */
+    EXAMPLE_REQUIRE(proven_loop_run(app.loop) == PROVEN_OK, "the loop ran until all three were done");
+
+    EXAMPLE_REQUIRE(app.fetch[0].why == PROVEN_OK && app.fetch[0].status == 200 && strcmp(app.fetch[0].body, "first") == 0, "the first answer");
+    EXAMPLE_REQUIRE(app.fetch[1].why == PROVEN_OK && app.fetch[1].status == 200 && strcmp(app.fetch[1].body, "second") == 0, "the second answer");
+    EXAMPLE_REQUIRE(app.fetch[2].why == PROVEN_OK && app.fetch[2].status == 404 && strcmp(app.fetch[2].body, "nothing here") == 0, "the third, by name: a 404 is a response, not an error");
+
+    proven_job_system_close(app.workers);
+    proven_job_system_destroy(app.workers);
+    proven_http_event_client_destroy(app.client);
+    proven_http_event_server_destroy(server);
+    proven_loop_destroy(app.loop);
+    return EXAMPLE_OK();
+}
+```
+
+## 13. What a connection holds, and what is not here
 
 **What a connection holds.** A connection with no request on it holds its struct and no buffer:
 requests are read into the loop's scratch buffer, and bytes are copied aside only when a
-request is incomplete. On x86-64 Linux the registered test measures 440 bytes of heap for an
-idle plain connection and fails above 512. A TLS connection adds the engine's state, about
-1 KiB while idle (Chapter 14, section 9). The system's own cost for an open socket is separate
-and is usually the larger part.
+request is incomplete. On x86-64 Linux the registered tests measure 448 bytes of heap for an
+idle plain HTTP connection, failing above 512, and 928 bytes for an idle plain WebSocket
+connection, failing above 1 KiB. A TLS connection adds the engine's state, about 1 KiB while
+idle (Chapter 14, section 9). The system's own cost for an open socket is separate and is
+usually the larger part.
 
 **What is not here.**
 
@@ -636,8 +1183,10 @@ and is usually the larger part.
   measurements belong to a later release, and until then the bounded claims are the ones above.
 - **More than one loop.** A server here uses one thread. Running several loops across
   processor cores is a later release.
-- **WebSocket and other upgrades** on this server, and **an event-driven client**. Chapter 12's
-  WebSocket and Chapter 11's client are the blocking ones.
+- **A WebSocket client on the loop**, and upgrades other than WebSocket on this server.
+  Chapter 12's client is the blocking one.
+- **In the event-driven client:** connection reuse, redirects, authentication, cookies,
+  proxies, and name resolution (section 12 says what to do instead).
 - **Sending a file without copying it**, response compression, HTTP/2.
 - **Watching files, signals or child processes** with the loop. It watches sockets.
 
@@ -648,6 +1197,15 @@ row of the tables in sections 7 and 9: answers at once, from a timer and from an
 uploads with pause and resume, a 16 MB download to a client that does not read until a write
 has been refused, pipelining, each refusal, each timeout, clients that disappear, and a server
 destroyed under an unanswered request - checking that `on_done` was called once for every
-`on_request`. They were run several hundred times under address and undefined-behaviour
-checking with the machine loaded, and under thread checking. **Not done:** no load test, no
-measurement of throughput or latency, no run against a hostile client beyond the cases listed.
+`on_request`. The WebSocket is run against the blocking client of Chapter 12 and against raw
+sockets, through the rows of the tables of section 11 - all but `PROVEN_ERR_NOMEM`, and
+`PROVEN_ERR_RESET` from `proven_ws_event_accept` and from the send calls, which are not
+provoked. The client is run against this chapter's server on the same loop and against answers
+the test scripts itself, through the rows of the tables of section 12 - all but
+`PROVEN_ERR_UNREACHABLE`, `PROVEN_ERR_NOMEM`, an expired certificate, and three of the four
+time limits: only the response timeout is made to pass. All of them were run several hundred
+times under address and undefined-behaviour checking with the machine loaded, and under thread
+checking.
+**Not done:** no load test, no measurement of throughput or latency, no run against a hostile
+peer beyond the cases listed, and no run of a published WebSocket conformance suite against
+this server.

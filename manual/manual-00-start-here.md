@@ -829,7 +829,7 @@ reference you read after Chapter 3 has introduced the subject.
 12. [**WebSocket**: connections from either side, messages, closing; and the frame codec by itself](manual-12-websocket.md) - *Part V; after Chapter 11; the codec is freestanding-available*
 13. [**Certificates and trust**: reading an X.509 certificate, the names it is for, trust anchors, verifying a chain, pinning](manual-13-certificates.md) - *Part V; after Chapter 4; freestanding-available except the system's roots*
 14. [**TLS**: HTTPS and wss in two lines, the transport wrapper, the engine, resumption, client certificates and pins, what failures mean](manual-14-tls.md) - *Part V; after Chapters 11 and 13; the engine is freestanding-available*
-15. [**The event loop and the event-driven server**: a loop with timers and posted work, an HTTP server in which nothing waits, answering later, backpressure, what an idle connection holds](manual-15-event-loop.md) - *Part V; after Chapters 9 and 11; hosted-only*
+15. [**The event loop and the event-driven server**: a loop with timers and posted work, an HTTP server in which nothing waits, answering later, backpressure, WebSocket without a thread each, a client with many requests in flight, what an idle connection holds](manual-15-event-loop.md) - *Part V; after Chapters 9 and 11; hosted-only*
 
 **Chapters 3 and 8 both cover the formatter and the scanner, and the division is deliberate.**
 Chapter 3 introduces them alongside strings, with the everyday cases and enough to be productive.
@@ -1007,6 +1007,8 @@ Two things this table tells you that the file names do not:
 | `tls.h` | TLS 1.3, client and server: a config, an engine with no I/O, and (hosted-only) a transport wrapper and the HTTP wrap | Chapter 14 |
 | `loop.h` | An event loop: socket readiness, timers, work posted from other threads, a shared scratch buffer (hosted-only) | Chapter 15 |
 | `http_event.h` | HTTP/1.1 server driven by events on a loop: callbacks, responses in pieces with backpressure, optional TLS (hosted-only) | Chapter 15 |
+| `ws_event.h` | WebSocket on the event-driven server: messages in pieces, sends refused and resumed, liveness and close handled (hosted-only) | Chapter 15 |
+| `http_event_client.h` | HTTP/1.1 client driven by events on a loop: many requests in flight on one thread; narrow - no reuse, redirects or name resolution (hosted-only) | Chapter 15 |
 | `sysio.h` | Standard streams as writers/readers, line input from stdin, buffered output, printing, scanning, environment access | Chapter 5 |
 | `random.h` | Randomness by use case: xoshiro256** (reproducible), ChaCha20 (cryptographic), the OS CSPRNG, and unbiased range/shuffle helpers. The generators work freestanding; only the OS source is hosted. | Chapter 5 |
 | `mmap.h` | Memory-mapped file regions | Chapter 5 |

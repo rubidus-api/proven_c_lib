@@ -238,6 +238,31 @@ proven_err_t proven_net_listener_addr(const proven_net_listener_t *listener, pro
 proven_err_t proven_net_connect(proven_net_addr_t to, proven_net_deadline_t until, proven_net_conn_t *out);
 
 /**
+ * @brief Begin connecting to `to` and return at once: the first half of proven_net_connect, for
+ *        a program that waits for many sockets together (a selector, or the loop of loop.h).
+ *
+ * @return PROVEN_OK when the connection is already made - a loopback or Unix-domain connect
+ *         often is. PROVEN_ERR_AGAIN when it is under way: `*out` is then a socket that can be
+ *         watched and closed and nothing else; wait until it is writable
+ *         (PROVEN_NET_WRITABLE, or PROVEN_NET_FAILED) and call proven_net_connect_finish.
+ *         Otherwise the failure, as proven_net_connect names it, with `*out` not open.
+ */
+[[nodiscard]]
+proven_err_t proven_net_connect_start(proven_net_addr_t to, proven_net_conn_t *out);
+
+/**
+ * @brief Ask how a connect begun by proven_net_connect_start ended, once its socket was
+ *        reported writable or failed.
+ *
+ * @return PROVEN_OK: connected, and `conn` is an ordinary connection. PROVEN_ERR_AGAIN: still
+ *         under way; wait again. Otherwise the failure - PROVEN_ERR_REFUSED,
+ *         PROVEN_ERR_TIMEOUT, PROVEN_ERR_UNREACHABLE - and `conn` has been closed: there is
+ *         nothing more to close. PROVEN_ERR_INVALID_STATE when `conn` is not open.
+ */
+[[nodiscard]]
+proven_err_t proven_net_connect_finish(proven_net_conn_t *conn);
+
+/**
  * @brief Read up to `dest.size` bytes, waiting until `until` for the first of them.
  *
  * Returns as soon as any bytes are available - a stream has no message boundaries, and a full

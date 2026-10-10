@@ -195,15 +195,20 @@ static void loop_timers_advance(proven_loop_t *l) {
     if (l->timed_count > 0) {
         /* After a long sleep every slot is visited once; more turns would find nothing new. */
         proven_u64 from = target - l->wheel_tick > LOOP_WHEEL_SLOTS ? target - LOOP_WHEEL_SLOTS + 1 : l->wheel_tick + 1;
+        /* Slots are visited in the order of their times, and what is due is appended, so that
+         * timers which come due together still fire earliest first. */
+        proven_loop_timer_t *tail = l->due;
+        while (tail && tail->next) tail = tail->next;
         for (proven_u64 s = from; s <= target && l->timed_count > 0; ++s) {
             proven_loop_timer_t *t = l->wheel[s % LOOP_WHEEL_SLOTS];
             while (t) {
                 proven_loop_timer_t *next = t->next;
                 if (t->tick <= target) {
                     timer_unlink(l, t);
-                    t->next = l->due;
-                    if (l->due) l->due->prev = t;
-                    l->due = t;
+                    t->prev = tail;
+                    if (tail) tail->next = t;
+                    else l->due = t;
+                    tail = t;
                     t->state = TIMER_DUE;
                 }
                 t = next;

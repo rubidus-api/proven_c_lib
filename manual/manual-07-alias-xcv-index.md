@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1061 aliases: 795 lowercase `xcv_` names and 266 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1094 aliases: 828 lowercase `xcv_` names and 266 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -512,6 +512,22 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_digest_challenge_parse` | `proven_http_digest_challenge_parse` |
 | `xcv_http_digest_challenge_t` | `proven_http_digest_challenge_t` |
 | `xcv_http_event_callbacks_t` | `proven_http_event_callbacks_t` |
+| `xcv_http_event_client_callbacks_t` | `proven_http_event_client_callbacks_t` |
+| `xcv_http_event_client_config_t` | `proven_http_event_client_config_t` |
+| `xcv_http_event_client_create` | `proven_http_event_client_create` |
+| `xcv_http_event_client_destroy` | `proven_http_event_client_destroy` |
+| `xcv_http_event_client_requests` | `proven_http_event_client_requests` |
+| `xcv_http_event_client_start` | `proven_http_event_client_start` |
+| `xcv_http_event_client_t` | `proven_http_event_client_t` |
+| `xcv_http_event_request_abort` | `proven_http_event_request_abort` |
+| `xcv_http_event_request_end` | `proven_http_event_request_end` |
+| `xcv_http_event_request_options_t` | `proven_http_event_request_options_t` |
+| `xcv_http_event_request_pause` | `proven_http_event_request_pause` |
+| `xcv_http_event_request_resume` | `proven_http_event_request_resume` |
+| `xcv_http_event_request_set_user` | `proven_http_event_request_set_user` |
+| `xcv_http_event_request_t` | `proven_http_event_request_t` |
+| `xcv_http_event_request_user` | `proven_http_event_request_user` |
+| `xcv_http_event_request_write` | `proven_http_event_request_write` |
 | `xcv_http_event_server_config_t` | `proven_http_event_server_config_t` |
 | `xcv_http_event_server_connections` | `proven_http_event_server_connections` |
 | `xcv_http_event_server_create` | `proven_http_event_server_create` |
@@ -699,6 +715,8 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_net_conn_t` | `proven_net_conn_t` |
 | `xcv_net_conn_transport` | `proven_net_conn_transport` |
 | `xcv_net_connect` | `proven_net_connect` |
+| `xcv_net_connect_finish` | `proven_net_connect_finish` |
+| `xcv_net_connect_start` | `proven_net_connect_start` |
 | `xcv_net_deadline_in` | `proven_net_deadline_in` |
 | `xcv_net_deadline_t` | `proven_net_deadline_t` |
 | `xcv_net_event_t` | `proven_net_event_t` |
@@ -1077,6 +1095,9 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_ws_decoder_feed` | `proven_ws_decoder_feed` |
 | `xcv_ws_decoder_init` | `proven_ws_decoder_init` |
 | `xcv_ws_decoder_t` | `proven_ws_decoder_t` |
+| `xcv_ws_event_accept` | `proven_ws_event_accept` |
+| `xcv_ws_event_callbacks_t` | `proven_ws_event_callbacks_t` |
+| `xcv_ws_event_config_t` | `proven_ws_event_config_t` |
 | `xcv_ws_event_kind_t` | `proven_ws_event_kind_t` |
 | `xcv_ws_event_t` | `proven_ws_event_t` |
 | `xcv_ws_frame_parse` | `proven_ws_frame_parse` |
@@ -1087,6 +1108,18 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_ws_message_t` | `proven_ws_message_t` |
 | `xcv_ws_opcode_t` | `proven_ws_opcode_t` |
 | `xcv_ws_request_offers` | `proven_ws_request_offers` |
+| `xcv_ws_stream_abort` | `proven_ws_stream_abort` |
+| `xcv_ws_stream_buffered` | `proven_ws_stream_buffered` |
+| `xcv_ws_stream_close` | `proven_ws_stream_close` |
+| `xcv_ws_stream_pause` | `proven_ws_stream_pause` |
+| `xcv_ws_stream_peer` | `proven_ws_stream_peer` |
+| `xcv_ws_stream_ping` | `proven_ws_stream_ping` |
+| `xcv_ws_stream_resume` | `proven_ws_stream_resume` |
+| `xcv_ws_stream_send` | `proven_ws_stream_send` |
+| `xcv_ws_stream_send_piece` | `proven_ws_stream_send_piece` |
+| `xcv_ws_stream_set_user` | `proven_ws_stream_set_user` |
+| `xcv_ws_stream_t` | `proven_ws_stream_t` |
+| `xcv_ws_stream_user` | `proven_ws_stream_user` |
 | `xcv_xoshiro256ss_next` | `proven_xoshiro256ss_next` |
 | `xcv_xoshiro256ss_rng` | `proven_xoshiro256ss_rng` |
 | `xcv_xoshiro256ss_seed` | `proven_xoshiro256ss_seed` |

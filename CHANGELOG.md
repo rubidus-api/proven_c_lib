@@ -18,6 +18,47 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- `ws_event.h`, WebSocket on the event-driven server (hosted-only): a connection that costs no
+  thread. `proven_ws_event_accept` turns a request into a WebSocket inside `on_request` - the
+  HTTP exchange ends there, with `on_done(PROVEN_OK)` - configured by
+  `proven_ws_event_config_t` with `on_message` (pieces as they arrive, never assembled),
+  `on_writable` and `on_closed` (exactly once, with the close code and the reason).
+  `proven_ws_stream_send` and `proven_ws_stream_send_piece` take a frame whole or refuse it
+  with `PROVEN_ERR_AGAIN`; also `proven_ws_stream_ping`, `_close`, `_abort`, `_pause`,
+  `_resume`, `_set_user`, `_user`, `_peer`, `_buffered`. Pings are answered, a silent client
+  is pinged and then dropped, and a close is timed out. An idle plain WebSocket connection
+  holds 928 bytes of heap measured on x86-64 Linux; the test fails above 1 KiB.
+- `http_event_client.h`, an HTTP/1.1 client on a loop (hosted-only): any number of requests in
+  flight on one thread. `proven_http_event_client_create`, `_destroy`, `_requests`, `_start`;
+  callbacks `on_response`, `on_body`, `on_writable`, `on_done` (exactly once for every request
+  started, never inside `start`); a request body from memory or written with
+  `proven_http_event_request_write` (which may take fewer bytes than offered) and `_end`;
+  `proven_http_event_request_abort`, `_pause`, `_resume`, `_set_user`, `_user`. `https` through
+  a `proven_tls_config_t`, and refused without one. **Deliberately narrow:** one connection per
+  request, closed afterwards; no redirects, challenges, cookies or proxies; and no name
+  resolution - a request is given the address to connect to, and manual chapter 15 shows the
+  pattern for a name (resolve on a job, post back, start).
+- `net.h`: `proven_net_connect_start` and `proven_net_connect_finish`, a connect in two halves
+  for a program that waits for many sockets together.
+- Manual chapter 15: sections 11 (WebSocket on the loop) and 12 (the event-driven client), with
+  two more programs the build compiles and runs. Tests `test_unit_ws_event` and
+  `test_unit_http_event_client`. 33 aliases.
+
+### Changed
+
+- `loop.h`: timers that come due in the same round of the loop now fire in the order of their
+  times. Before, when the loop had been kept from looking for more than one tick - by a long
+  callback, say - those due together fired latest first. Nothing documented an order; the
+  order is now tested.
+- An idle plain connection of the event-driven server holds 448 bytes of heap, 8 more than in
+  0.18.0 (one pointer, for the protocol a connection may be handed to). The 512-byte bound the
+  test enforces is unchanged.
+
+**Still not in this release:** any measurement of load; more than one loop; a WebSocket client
+on the loop.
+
 ## [0.18.0] - 2026-10-10
 
 A MINOR release: an event loop, and an HTTP server on it in which no call waits. It is the

@@ -1,4 +1,5 @@
 #include "proven/http_event.h"
+#include "proven_internal_http_event.h"
 
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 
@@ -31,6 +32,7 @@
 #define EV_BODY 1          /* reading a request body */
 #define EV_RESPOND 2       /* the request is complete; its response is not */
 #define EV_LINGER 3        /* closing: input is thrown away until the client goes */
+#define EV_RAW 4           /* taken over by another protocol (proven_internal_http_event.h) */
 
 typedef struct { proven_byte_t *ptr; proven_size_t len, cap, off; bool borrowed; } ev_buf_t;
 
@@ -47,6 +49,7 @@ struct proven_http_stream {
     proven_http_body_t body;
     proven_u64 response_left;          /* body bytes still promised; LENGTH_UNKNOWN when chunked or not counted */
     void *user;
+    void *raw;                         /* EV_RAW: the protocol's object; it begins with its operations */
     proven_u32 depth;                  /* entries into this connection now on the stack */
     proven_u8 state;
     proven_u8 version_minor;
@@ -163,6 +166,11 @@ static void ev_kill(proven_http_stream_t *c, proven_err_t why) {
         c->active = false;
         if (s->cfg.on.on_done) s->cfg.on.on_done(s->cfg.ctx, c, why);
     }
+    if (c->raw) {
+        void *raw = c->raw;
+        c->raw = (void *)0;
+        (*(const proven_http_event_raw_ops_t *const *)raw)->on_closed(raw, why);
+    }
 }
 
 static proven_size_t ev_buffered(const proven_http_stream_t *c) {
@@ -175,6 +183,7 @@ static proven_size_t ev_buffered(const proven_http_stream_t *c) {
 static void ev_arm(proven_http_stream_t *c) {
     if (c->dead) return;
     proven_http_event_server_t *s = c->server;
+    if (c->state == EV_RAW) return;                /* its owner sets the timer */
     proven_u32 ms = 0;
     /* Output the client has not taken comes first: a response on its way out is not cut
      * short by the brief wait that follows it. */
@@ -190,7 +199,7 @@ static void ev_arm(proven_http_stream_t *c) {
 static void ev_watch(proven_http_stream_t *c) {
     if (c->dead) return;
     proven_u8 want = 0;
-    bool reading = !c->peer_eof && !(c->state == EV_BODY && c->paused) &&
+    bool reading = !c->peer_eof && !((c->state == EV_BODY || c->state == EV_RAW) && c->paused) &&
                    /* while a response is owed, a pipelined request is left in the socket */
                    !(c->state == EV_RESPOND && buf_pending(&c->stash) > 0);
     if (reading) want |= PROVEN_NET_READABLE;
@@ -280,6 +289,8 @@ static void ev_progress(proven_http_stream_t *c) {
     ev_enter(c);
     if (c->state == EV_LINGER) {
         if (c->close_when_flushed && ev_buffered(c) == 0) { c->close_when_flushed = false; ev_linger(c); }
+    } else if (c->state == EV_RAW) {
+        if (c->raw) (*(const proven_http_event_raw_ops_t *const *)c->raw)->on_progress(c->raw);
     } else if (c->active && c->response_ended && ev_buffered(c) == 0) {
         ev_finish(c);
     } else if (c->active && !c->response_ended && c->want_writable && ev_buffered(c) < s->cfg.max_buffered_output) {
@@ -327,6 +338,15 @@ static void ev_process(proven_http_stream_t *c) {
         proven_mem_view_t in = { .ptr = c->stash.ptr + c->stash.off, .size = buf_pending(&c->stash) };
         if (c->state == EV_LINGER) { c->stash.len = 0; c->stash.off = 0; break; }
         if (c->state == EV_RESPOND) break;        /* what follows belongs to the next request */
+        if (c->state == EV_RAW) {
+            if (c->paused || in.size == 0 || !c->raw) break;
+            proven_size_t used = (*(const proven_http_event_raw_ops_t *const *)c->raw)->on_input(
+                c->raw, (proven_mem_mut_t){ .ptr = c->stash.ptr + c->stash.off, .size = in.size });
+            if (c->dead || c->state != EV_RAW) break;      /* closed from inside: the input is void */
+            c->stash.off += used;
+            if (used < in.size) break;
+            continue;
+        }
         if (c->state == EV_HEAD) {
             if (in.size == 0) break;
             c->head_started = true;
@@ -420,6 +440,7 @@ static void ev_readable(proven_http_stream_t *c) {
     if (r.err == PROVEN_ERR_EOF) {
         /* A client may close its sending side and still wait for the answer. */
         c->peer_eof = true;
+        if (c->state == EV_RAW) { ev_kill(c, PROVEN_ERR_EOF); return; }
         if (c->state == EV_LINGER || !c->active || c->state == EV_BODY) { ev_kill(c, c->active ? PROVEN_ERR_RESET : PROVEN_OK); return; }
         c->keep = false;
         ev_watch(c);
@@ -441,6 +462,7 @@ static void ev_readable(proven_http_stream_t *c) {
             proven_result_size_t got = proven_tls_read(c->tls, (proven_mem_mut_t){ .ptr = s->pbuf, .size = EV_PLAIN_BYTES });
             if (got.err == PROVEN_ERR_EOF) {
                 c->peer_eof = true;
+                if (c->state == EV_RAW) { ev_kill(c, PROVEN_ERR_EOF); return; }
                 if (c->state == EV_LINGER || !c->active || c->state == EV_BODY) { ev_kill(c, c->active ? PROVEN_ERR_RESET : PROVEN_OK); return; }
                 c->keep = false;
                 break;
@@ -466,7 +488,8 @@ static void ev_on_io(void *ctx, proven_u8 got) {
 static void ev_on_timer(void *ctx) {
     proven_http_stream_t *c = ctx;
     ev_enter(c);
-    if (c->state == EV_HEAD && c->head_started && ev_buffered(c) == 0) ev_reject(c, 408, PROVEN_ERR_TIMEOUT);
+    if (c->state == EV_RAW) { if (c->raw) (*(const proven_http_event_raw_ops_t *const *)c->raw)->on_timer(c->raw); }
+    else if (c->state == EV_HEAD && c->head_started && ev_buffered(c) == 0) ev_reject(c, 408, PROVEN_ERR_TIMEOUT);
     else ev_kill(c, c->active ? PROVEN_ERR_TIMEOUT : PROVEN_OK);
     ev_leave(c);
 }
@@ -788,5 +811,78 @@ void proven_http_stream_set_user(proven_http_stream_t *c, void *user) { if (c) c
 void *proven_http_stream_user(const proven_http_stream_t *c) { return c ? c->user : (void *)0; }
 proven_net_addr_t proven_http_stream_peer(const proven_http_stream_t *c) { return c->peer; }
 proven_size_t proven_http_stream_buffered(const proven_http_stream_t *c) { return c && !c->dead ? ev_buffered(c) : 0; }
+
+// -----------------------------------------------------------------------------
+// A connection taken over by another protocol (proven_internal_http_event.h)
+// -----------------------------------------------------------------------------
+
+proven_err_t proven_http_event_raw_begin_(proven_http_stream_t *c, void *raw, proven_mem_view_t head) {
+    /* Only from inside on_request (`processing`): input that follows is then delivered by the
+     * loop that is already running, and not before the caller has the new object. */
+    if (!c || !raw || c->dead || !c->active || !c->processing || c->response_begun || c->state != EV_RESPOND) return PROVEN_ERR_INVALID_STATE;
+    proven_http_event_server_t *s = c->server;
+    ev_enter(c);
+    c->response_begun = true; c->response_ended = true;
+    if (!ev_send(c, head.ptr, head.size)) { ev_leave(c); return PROVEN_ERR_RESET; }   /* on_done was called by the kill */
+    /* The HTTP exchange is over; the connection goes on as something else. */
+    c->active = false;
+    if (s->cfg.on.on_done) s->cfg.on.on_done(s->cfg.ctx, c, PROVEN_OK);
+    if (c->dead) { ev_leave(c); return PROVEN_ERR_RESET; }
+    c->user = (void *)0;
+    c->response_begun = false; c->response_ended = false; c->chunked = false; c->bodiless = false;
+    c->want_writable = false; c->paused = false; c->expect_continue = false; c->keep = false;
+    c->state = EV_RAW;
+    c->raw = raw;
+    proven_loop_timer_cancel(s->loop, &c->timer);
+    ev_watch(c);
+    ev_leave(c);
+    return PROVEN_OK;
+}
+
+bool proven_http_event_raw_send_(proven_http_stream_t *c, proven_mem_view_t a, proven_mem_view_t b) {
+    if (!c || c->dead) return false;
+    ev_enter(c);
+    /* Both parts are queued before anything is sent, so that a frame's header and payload
+     * leave in one write. */
+    bool ok = buf_append(c->server, &c->out, a.ptr, a.size) && buf_append(c->server, &c->out, b.ptr, b.size);
+    if (!ok) ev_kill(c, PROVEN_ERR_NOMEM);
+    else ok = ev_flush(c);
+    if (ok) ev_watch(c);
+    ev_leave(c);
+    return ok;
+}
+
+void proven_http_event_raw_timer_(proven_http_stream_t *c, proven_u32 ms) {
+    if (!c || c->dead) return;
+    if (ms == 0) proven_loop_timer_cancel(c->server->loop, &c->timer);
+    else proven_loop_timer_set(c->server->loop, &c->timer, ms, ev_on_timer, c);
+}
+
+void proven_http_event_raw_pause_(proven_http_stream_t *c, bool paused) {
+    if (!c || c->dead || c->state != EV_RAW || c->paused == paused) return;
+    c->paused = paused;
+    ev_enter(c);
+    if (!paused) ev_process(c);
+    if (!c->dead) ev_watch(c);
+    ev_leave(c);
+}
+
+void proven_http_event_raw_close_(proven_http_stream_t *c) {
+    if (!c || c->dead) return;
+    c->raw = (void *)0;
+    ev_enter(c);
+    ev_linger(c);
+    ev_leave(c);
+}
+
+void proven_http_event_raw_kill_(proven_http_stream_t *c) {
+    if (!c || c->dead) return;
+    c->raw = (void *)0;
+    ev_enter(c);
+    ev_kill(c, PROVEN_OK);
+    ev_leave(c);
+}
+
+proven_allocator_t proven_http_event_raw_allocator_(const proven_http_stream_t *c) { return c->server->alloc; }
 
 #endif

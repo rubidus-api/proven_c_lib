@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 95 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 97 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-10, Windows 11 test VM: x86-64 291 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 159 registered tests plus the 140 runnable manual examples - 299 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 172 test files: the 159 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 161 registered tests plus the 144 runnable manual examples - 305 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 174 test files: the 161 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -755,7 +755,7 @@ Intent: verify the loop of `loop.h` by itself - timers, functions posted from ot
 
 Sub-checks:
 
-- Timers: nothing fires before its time; three fire in the order of their times and a cancelled one never does; cancelling twice is harmless; a fired timer is no longer set; a timer cancelled by another that was due with it does not fire; a timer that sets itself again from its callback repeats; a timer set again waits for its new time and fires once with what it was last given; a thousand timers set at once, spread over 300 ms, each fire once and none early.
+- Timers: nothing fires before its time; three fire in the order of their times and a cancelled one never does; cancelling twice is harmless; a fired timer is no longer set; a timer cancelled by another that was due with it does not fire; a timer that sets itself again from its callback repeats; a timer set again waits for its new time and fires once with what it was last given; five timers that came due while the loop was not polled fire together in the order of their times; a thousand timers set at once, spread over 300 ms, each fire once and none early.
 - Posts: five functions posted from the loop's thread run in the order posted; two other threads post a hundred each, and all two hundred run on the loop's thread, each thread's hundred in the order that thread posted them; no function and no loop are `PROVEN_ERR_INVALID_ARG`.
 - Stopping: `proven_loop_stop` from a posted function and from another thread makes `proven_loop_run` return `PROVEN_OK`; a loop with nothing to do sleeps until then.
 - Sockets: interest added, changed and removed, with a socket watched for nothing left alone; a registration added twice is `PROVEN_ERR_INVALID_STATE`; of two sockets ready in one round, the one the other's function removes is not delivered; removing what is not registered is harmless; a closed peer is delivered as readable; a handle that is not one is `PROVEN_ERR_INVALID_ARG`; `proven_loop_io_count`; the scratch buffer is 64 KiB and the loop itself writes nothing to it.
@@ -775,10 +775,43 @@ Sub-checks:
 - Refusals: 400, 413, 431, 501 and 505 each with a close; bad chunk framing and a body shorter than its `Content-Length` end the exchange with an error.
 - Leaving: a client that disappears during a response ends the exchange with an error; `proven_http_stream_abort` closes with nothing sent and `on_done(PROVEN_ERR_RESET)`; half a request head gets 408 after the head timeout; destroying the server under an unanswered request ends it with `PROVEN_ERR_RESET`.
 - Accounting: `on_done` was called exactly once for every `on_request`; many connections that have each made a request stay open and close when their clients do.
-- Memory: three hundred idle plain connections hold less than 512 bytes of heap each (440 measured on x86-64 Linux), and everything is given back when they close and when the server is destroyed.
+- Memory: three hundred idle plain connections hold less than 512 bytes of heap each (448 measured on x86-64 Linux), and everything is given back when they close and when the server is destroyed.
 - The idle timeout: an answered connection that then says nothing is closed by the server after `idle_timeout_ms`, not before.
 
 Failure tip: inspect `src/proven/http_event.c` - `ev_process` for input, `ev_flush` and `ev_progress` for output and what follows it, `ev_arm` for which timer is running, `ev_finish` for the end of an exchange. The backpressure case waits for a refusal rather than for a fixed time; a failure there that prints `download: got N of M` is a stalled response, which is a lost wake-up in `proven_http_stream_write` or `ev_progress`.
+
+### `tests/test_unit_ws_event` - WebSocket on the event-driven server
+
+Intent: verify `ws_event.h` over the loopback interface, plain and again over TLS, with the library's blocking WebSocket client where a client that behaves is wanted and raw sockets where one that does not is.
+
+Sub-checks:
+
+- Accepting: a WebSocket is accepted from inside `on_request`, and `on_done` was called for the request it began as; a configuration with no `on_message`, a subprotocol that is not a token, and no stream are `PROVEN_ERR_INVALID_ARG`; a second accept on the same stream is `PROVEN_ERR_INVALID_STATE`; a plain request is `PROVEN_ERR_NOT_FOUND`, an upgrade for version 12 `PROVEN_ERR_UNSUPPORTED` and one with no key `PROVEN_ERR_INVALID_FORMAT`, each with nothing sent and the handler's own answer (400, 426, 400) delivered; an ordinary page is served by the same server; the subprotocol the server chose is named in the answer.
+- Messages: text, an empty binary message and 150,000 bytes are echoed intact, in pieces; a message sent in three fragments is echoed as one, and one the server sends in two pieces arrives as one; a ping is answered with a pong.
+- Sending: 6,000 messages pushed at a client that reads nothing until a send has been refused all arrive, whole and in order, with sends refused (`PROVEN_ERR_AGAIN`) and resumed through `on_writable`; a piece that is not first outside a message, a new message inside one, and a send after a close was sent are `PROVEN_ERR_INVALID_STATE`; a ping of 126 bytes is `PROVEN_ERR_OUT_OF_BOUNDS`; the user pointer and peer address are kept.
+- Closing: a close from the client is answered and reported with its code (1000, 1001) and `PROVEN_OK`; one with no code is answered with one and reported as 1005; a close from the server (4001 with its reason, and 1000 after the push) is seen by the client and reported with `PROVEN_OK`; a code that may not be sent goes out as 1000 and a second close changes nothing; a close the client never answers ends after the close timeout with the code and `PROVEN_ERR_TIMEOUT`, and a client that answers it with a stream of pings instead is ended all the same; `proven_ws_stream_abort` ends with no close frame and 1006, `PROVEN_ERR_RESET`.
+- Liveness: a silent client that answers pings stays connected for 700 ms of a 100 ms ping interval and still works; one that does not is sent a ping and dropped after the pong timeout with 1006, `PROVEN_ERR_TIMEOUT`.
+- Bad input: an unmasked frame is answered with close 1002 (`PROVEN_ERR_INVALID_FORMAT`), a frame announcing 300,000 bytes with 1009 (`PROVEN_ERR_OUT_OF_BOUNDS`), text that is not UTF-8 with 1007 (`PROVEN_ERR_INVALID_ENCODING`); a client that vanishes is 1006, `PROVEN_ERR_RESET`.
+- Accounting: every accepted connection was closed exactly once; `on_done` was called once for every `on_request`, upgraded or not; destroying the server ends an open connection with `on_closed(1006, PROVEN_ERR_RESET)` and the client sees it end.
+- Memory: three hundred idle plain WebSocket connections hold less than 1 KiB of heap each (928 measured on x86-64 Linux), and everything is given back when they close and when the server is destroyed.
+
+Failure tip: inspect `src/proven/ws_event.c` - `ws_on_input` for what arrives, `ws_on_timer` for liveness and the close timeout, `ws_end` and `ws_finish` for the end. The connection underneath is `src/proven/http_event.c` in its `EV_RAW` state, reached through `src/proven/proven_internal_http_event.h`. The cases wait for the handler's own counters rather than for a fixed time: a client has its 101 before the handler's next line has run.
+
+### `tests/test_unit_http_event_client` - the event-driven HTTP client
+
+Intent: verify `http_event_client.h` on one thread - the client and the event-driven server it talks to sit on the same loop, driven by hand - plain and again over TLS, and against answers the test scripts itself on a listener.
+
+Sub-checks:
+
+- What `start` refuses, with no callback made: no loop, no `on_done`, a relative URL, a scheme that is not `http` or `https`, `https` with no TLS configuration, credentials in the URL, `CONNECT`, a method that is not a token, a header the client writes itself, a request head past `max_head_bytes` (`PROVEN_ERR_OUT_OF_BOUNDS`), and a name with no address.
+- Responses: a started request returns at once with nothing called; `GET` delivers the head once, the body with its last piece marked, then `on_done(PROVEN_OK)` once; the query goes with the path; `HEAD` and 204 make no body call; an answer 50 ms later; an error status is a response; 3 MB arrive in pieces with nothing delivered between pause and resume; a chunked body arrives with its framing taken off.
+- Request bodies: one held in memory is sent whole; a 16 MB body written before the connection exists is taken up to the limit and refused, then resumed through `on_writable` until the server has received exactly those bytes; a body of unknown length is sent chunked; writing past the promised length is `PROVEN_ERR_OUT_OF_BOUNDS`, ending short of it ends the request with `PROVEN_ERR_INVALID_FORMAT`, and a request with no body to write refuses write and end unharmed.
+- The address apart from the name: the request connects to the address and says the name in `Host`, and over TLS that name is what the certificate is checked for - a name it is not for ends with `PROVEN_ERR_NAME_MISMATCH` and the request never sent.
+- Time and endings: no answer within the response timeout is `PROVEN_ERR_TIMEOUT`; abort calls `on_done(PROVEN_ERR_RESET)` inside the call; two hundred requests (forty over TLS) in flight at once each complete once with their own body; destroying the client ends a request with `PROVEN_ERR_RESET`; the server saw every exchange end.
+- Servers that answer badly: a body with no length ends whole when the server closes; a body cut short of its `Content-Length`, a chunked body with no final chunk, and a head that never finishes are `PROVEN_ERR_RESET`; interim responses are passed over and nine in a row are `PROVEN_ERR_INVALID_FORMAT`; an unasked 101 is `PROVEN_ERR_UNSUPPORTED`; something that is not HTTP and two lengths that disagree are `PROVEN_ERR_INVALID_FORMAT`; a head past `max_head_bytes`, a body announced past `max_body_bytes` and a chunked body that grows past it are `PROVEN_ERR_OUT_OF_BOUNDS`.
+- A refused connection is `PROVEN_ERR_REFUSED` from `start` or from `on_done` and not both; a server the client does not trust ends with `PROVEN_ERR_UNTRUSTED` and the request never sent.
+
+Failure tip: inspect `src/proven/http_event_client.c` - `cl_process` for the response and the end-of-stream branch after its loop, `cl_flush` and `cl_progress` for the request, `cl_arm` for the time limits, `cl_kill` for the end. A request that never ends after the server closed is that branch: it once waited for the stash to be empty, which a half-received head never is.
 
 ### `tests/test_unit_hash_legacy` - legacy digests: SHA-1 and MD5
 
@@ -1188,6 +1221,7 @@ Sub-checks:
 - A read with nothing to read is `PROVEN_ERR_TIMEOUT` after at least 75 ms of an 80 ms deadline; `PROVEN_NET_DONT_WAIT` does not wait; an accept with nobody connecting times out and hands back nothing; the connection carries data after two timeouts; data already waiting is read even with no time to wait.
 - `write_all` of 48 MiB into a connection nobody reads is `PROVEN_ERR_TIMEOUT` with a count greater than zero and less than the total; the peer then reads exactly that many bytes, equal to the start of the data, and not one more. A single `write` sends a part and reports its size.
 - Connecting to a port that was just released is `PROVEN_ERR_REFUSED` and leaves nothing open.
+- A connect in two halves: `proven_net_connect_start` is `PROVEN_OK` or `PROVEN_ERR_AGAIN` with a socket to watch; `proven_net_connect_finish` after it is writable is `PROVEN_OK`, and the result is an ordinary connection; a refused connect is `PROVEN_ERR_REFUSED` from one of the two and leaves nothing open; finishing what is not open is `PROVEN_ERR_INVALID_STATE`.
 - A peer that closes with unread data makes the other end read `PROVEN_ERR_RESET`, and a later write there is `PROVEN_ERR_RESET` rather than a signal that kills the process.
 - A second listener on a bound address is `PROVEN_ERR_BUSY`; calls on a socket that is not open are `PROVEN_ERR_INVALID_STATE`; an address of no family is `PROVEN_ERR_INVALID_ARG`.
 - The same exchange over `::1`, or SKIP where the machine has no IPv6 loopback.

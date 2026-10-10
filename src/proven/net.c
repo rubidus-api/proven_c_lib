@@ -568,6 +568,35 @@ proven_err_t proven_net_connect(proven_net_addr_t to, proven_net_deadline_t unti
     return PROVEN_OK;
 }
 
+proven_err_t proven_net_connect_start(proven_net_addr_t to, proven_net_conn_t *out) {
+    if (!out) return PROVEN_ERR_INVALID_ARG;
+    *out = (proven_net_conn_t){0};
+    if (to.family == PROVEN_NET_FAMILY_NONE) return PROVEN_ERR_INVALID_ARG;
+
+    proven_sys_net_addr_t sys;
+    internal_addr_to_sys(&to, &sys);
+    proven_sys_socket_t s = PROVEN_SYS_SOCKET_INVALID;
+    proven_sys_net_result_t r = proven_sys_net_connect_start(&sys, &s);
+    if (r != PROVEN_SYS_NET_OK && r != PROVEN_SYS_NET_IN_PROGRESS) return internal_err_from_reason(r);
+
+    out->internal.handle = (proven_uintptr_t)s;
+    out->internal.family = (proven_u8)to.family;
+    out->internal.open = true;
+    return r == PROVEN_SYS_NET_OK ? PROVEN_OK : PROVEN_ERR_AGAIN;
+}
+
+proven_err_t proven_net_connect_finish(proven_net_conn_t *conn) {
+    if (!conn) return PROVEN_ERR_INVALID_ARG;
+    if (!conn->internal.open) return PROVEN_ERR_INVALID_STATE;
+    proven_sys_socket_t s = (proven_sys_socket_t)conn->internal.handle;
+    proven_sys_net_result_t r = proven_sys_net_connect_result(s);
+    if (r == PROVEN_SYS_NET_OK) return PROVEN_OK;
+    if (r == PROVEN_SYS_NET_IN_PROGRESS) return PROVEN_ERR_AGAIN;
+    (void)proven_sys_net_close(s);
+    *conn = (proven_net_conn_t){0};
+    return internal_err_from_reason(r);
+}
+
 proven_result_size_t proven_net_read(proven_net_conn_t *conn, proven_mem_mut_t dest, proven_net_deadline_t until) {
     proven_result_size_t res = { .err = PROVEN_OK, .value = 0 };
     if (!conn || (dest.size > 0 && !dest.ptr)) { res.err = PROVEN_ERR_INVALID_ARG; return res; }
