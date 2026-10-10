@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-11
+
 A MINOR release that goes back over the legacy TLS set of 0.23.0 and removes most of what
 that release listed as its costs and gaps. Nothing changes for a configuration that sets no
 `legacy` bit, except that an idle connection is 24 bytes smaller than in 0.24.0.
