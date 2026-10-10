@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 97 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 98 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-10, Windows 11 test VM: x86-64 297 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 161 registered tests plus the 144 runnable manual examples - 305 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 174 test files: the 161 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 162 registered tests plus the 146 runnable manual examples - 308 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 175 test files: the 162 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -755,7 +755,7 @@ Intent: verify the loop of `loop.h` by itself - timers, functions posted from ot
 
 Sub-checks:
 
-- Timers: nothing fires before its time; three fire in the order of their times and a cancelled one never does; cancelling twice is harmless; a fired timer is no longer set; a timer cancelled by another that was due with it does not fire; a timer that sets itself again from its callback repeats; a timer set again waits for its new time and fires once with what it was last given; five timers that came due while the loop was not polled fire together in the order of their times; a thousand timers set at once, spread over 300 ms, each fire once and none early.
+- Timers: nothing fires before its time; three fire in the order of their times and a cancelled one never does; cancelling twice is harmless; a fired timer is no longer set; a timer cancelled by another that was due with it does not fire; a timer that sets itself again from its callback repeats; a timer set again waits for its new time and fires once with what it was last given; five timers that came due while the loop was not polled fire together in the order of their times; with a clock the test moves, timers at 10, 20, 40 and 100 seconds - beyond one turn of the 16.4-second wheel - each fire once, in order, none before its time and each within one step of it, all four fire in one round after a jump of 200 seconds and none twice, and a far timer that was cancelled never fires; a thousand timers set at once, spread over 300 ms, each fire once and none early.
 - Posts: five functions posted from the loop's thread run in the order posted; two other threads post a hundred each, and all two hundred run on the loop's thread, each thread's hundred in the order that thread posted them; no function and no loop are `PROVEN_ERR_INVALID_ARG`.
 - Stopping: `proven_loop_stop` from a posted function and from another thread makes `proven_loop_run` return `PROVEN_OK`; a loop with nothing to do sleeps until then.
 - Sockets: interest added, changed and removed, with a socket watched for nothing left alone; a registration added twice is `PROVEN_ERR_INVALID_STATE`; of two sockets ready in one round, the one the other's function removes is not delivered; removing what is not registered is harmless; a closed peer is delivered as readable; a handle that is not one is `PROVEN_ERR_INVALID_ARG`; `proven_loop_io_count`; the scratch buffer is 64 KiB and the loop itself writes nothing to it.
@@ -779,6 +779,19 @@ Sub-checks:
 - The idle timeout: an answered connection that then says nothing is closed by the server after `idle_timeout_ms`, not before.
 
 Failure tip: inspect `src/proven/http_event.c` - `ev_process` for input, `ev_flush` and `ev_progress` for output and what follows it, `ev_arm` for which timer is running, `ev_finish` for the end of an exchange. The backpressure case waits for a refusal rather than for a fixed time; a failure there that prints `download: got N of M` is a stalled response, which is a lost wake-up in `proven_http_stream_write` or `ev_progress`.
+
+### `tests/test_unit_http_event_loops` - several loops behind one port
+
+Intent: verify `proven_http_event_server_adopt`, the call by which a connection accepted on one thread is given to a server on another thread's loop - and that the pattern built on it keeps every connection on one thread.
+
+Sub-checks:
+
+- What adopt refuses, on one thread with the loop driven by hand: no server and no connection are `PROVEN_ERR_INVALID_ARG`; a connection that is not open is `PROVEN_ERR_INVALID_STATE`; an adopted connection leaves the caller's value closed and the server with one connection, and a request on it is answered; at `max_connections` adopt is `PROVEN_ERR_BUSY` and the connection is still the caller's; after `proven_http_event_server_stop_listening` it is `PROVEN_ERR_INVALID_STATE`; a server that listens again takes connections again.
+- Three loops on three threads, each with a server that has no listener, and a fourth thread that accepts and deals connections in turn by posting to the loops: ninety requests on ninety connections are all answered, thirty by each loop; every accepted connection was adopted and none refused; every request was handled on the thread of the loop it was dealt to.
+- The same over TLS, each connection's handshake done by the loop it was dealt to.
+- Taking it apart: the acceptor is stopped and joined first, then the loops, then - after one last round of each loop - the servers.
+
+Failure tip: inspect `proven_http_event_server_adopt` and `ev_take` in `src/proven/http_event.c`. Run it under ThreadSanitizer: a report there means something of a connection was touched from the accepting thread. A count that is not thirty each means connections were not dealt in the order they were accepted.
 
 ### `tests/test_unit_ws_event` - WebSocket on the event-driven server
 

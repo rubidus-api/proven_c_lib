@@ -1,5 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
+#include "../src/proven/proven_internal_loop.h"
 #include <stdatomic.h>
 #include <string.h>
 
@@ -13,6 +14,9 @@
 static proven_loop_t *g_loop;
 static int g_order[32];
 static int g_order_n;
+
+static proven_time_t g_fake_now;
+static proven_time_t fake_clock(void *ctx) { (void)ctx; return g_fake_now; }
 
 static void note(void *ctx) { if (g_order_n < 32) g_order[g_order_n++] = (int)(proven_intptr_t)ctx; }
 
@@ -299,6 +303,59 @@ int main(void) {
     bool intact = true;
     for (proven_size_t i = 0; i < scratch.size; i += 4099) intact = intact && scratch.ptr[i] == 0xa5;
     PROVEN_TEST_ASSERT(intact, "the scratch buffer is the callbacks' to use: the loop wrote nothing to it", "");
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("timers further away than one turn of the wheel",
+        "The wheel has 1,024 slots of 16 ms: 16.4 s. A timer beyond that waits in its slot and is passed over until its own turn. The loop is given a clock the test moves.",
+        "Check loop_timers_advance: a timer is taken only when its tick has come, not when its slot is visited; and after a long jump every slot is visited once.");
+    // ---------------------------------------------------------------
+    {
+        proven_loop_t *far = NULL;
+        PROVEN_TEST_ASSERT(proven_loop_create(heap, &far) == PROVEN_OK, "a loop", "");
+        g_fake_now = 1000000000000LL;
+        proven_loop_test_clock_(far, fake_clock, NULL);
+        static const proven_u32 at_ms[4] = { 10000, 20000, 40000, 100000 };
+        proven_loop_timer_t t[4] = { 0 };
+        g_order_n = 0;
+        for (int i = 0; i < 4; ++i) proven_loop_timer_set(far, &t[i], at_ms[i], note, (void *)(proven_intptr_t)(i + 1));
+        /* Step the clock in pieces of 250 ms, as a loop that is busy would see it, and record
+         * the time on that clock at which each timer fired. */
+        proven_time_t start = g_fake_now, fired_at[4] = { 0 };
+        int seen = 0;
+        bool early = false;
+        for (int step = 0; step < 440 && seen < 4; ++step) {
+            g_fake_now += 250000000LL;
+            PROVEN_TEST_ASSERT(proven_loop_poll(far, PROVEN_NET_DONT_WAIT) == PROVEN_OK, "a round", "");
+            while (seen < g_order_n) {
+                int which = g_order[seen] - 1;
+                fired_at[which] = g_fake_now - start;
+                if (fired_at[which] < (proven_time_t)at_ms[which] * 1000000) early = true;
+                seen++;
+            }
+        }
+        PROVEN_TEST_ASSERT(seen == 4 && g_order[0] == 1 && g_order[1] == 2 && g_order[2] == 3 && g_order[3] == 4, "timers at 10, 20, 40 and 100 seconds each fire once, in order", "");
+        PROVEN_TEST_ASSERT(!early, "none before its time, although each of the later three is passed over in its slot at least once first", "");
+        bool prompt = true;
+        for (int i = 0; i < 4; ++i) prompt = prompt && fired_at[i] <= (proven_time_t)at_ms[i] * 1000000 + 300000000LL;
+        PROVEN_TEST_ASSERT(prompt, "and each within one step of its time", "");
+
+        /* One jump past everything: each fires exactly once, earliest first. */
+        g_order_n = 0;
+        for (int i = 0; i < 4; ++i) proven_loop_timer_set(far, &t[i], at_ms[3 - i], note, (void *)(proven_intptr_t)(4 - i));
+        g_fake_now += 200000000000LL;
+        PROVEN_TEST_ASSERT(proven_loop_poll(far, PROVEN_NET_DONT_WAIT) == PROVEN_OK && g_order_n == 4, "after one jump of 200 seconds all four fire in the same round", "");
+        PROVEN_TEST_ASSERT(proven_loop_poll(far, PROVEN_NET_DONT_WAIT) == PROVEN_OK && g_order_n == 4, "and none of them twice", "");
+
+        /* A timer set far ahead and cancelled leaves nothing behind for a later turn. */
+        g_order_n = 0;
+        proven_loop_timer_set(far, &t[0], 30000, note, (void *)9);
+        g_fake_now += 5000000000LL;
+        PROVEN_TEST_ASSERT(proven_loop_poll(far, PROVEN_NET_DONT_WAIT) == PROVEN_OK, "a round", "");
+        proven_loop_timer_cancel(far, &t[0]);
+        g_fake_now += 60000000000LL;
+        PROVEN_TEST_ASSERT(proven_loop_poll(far, PROVEN_NET_DONT_WAIT) == PROVEN_OK && g_order_n == 0 && !proven_loop_timer_is_set(&t[0]), "a far timer that was cancelled never fires", "");
+        proven_loop_destroy(far);
+    }
 
     /* Destroying a loop with a timer set and a socket watched calls neither. */
     {

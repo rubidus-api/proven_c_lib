@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 1094개: 소문자 `xcv_` 이름 828개와 대문자 `XCV_` 이름 266개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 1095개: 소문자 `xcv_` 이름 829개와 대문자 `XCV_` 이름 266개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -530,6 +530,7 @@ alias 1094개: 소문자 `xcv_` 이름 828개와 대문자 `XCV_` 이름 266개.
 | `xcv_http_event_request_t` | `proven_http_event_request_t` |
 | `xcv_http_event_request_user` | `proven_http_event_request_user` |
 | `xcv_http_event_request_write` | `proven_http_event_request_write` |
+| `xcv_http_event_server_adopt` | `proven_http_event_server_adopt` |
 | `xcv_http_event_server_config_t` | `proven_http_event_server_config_t` |
 | `xcv_http_event_server_connections` | `proven_http_event_server_connections` |
 | `xcv_http_event_server_create` | `proven_http_event_server_create` |

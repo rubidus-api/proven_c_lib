@@ -24,6 +24,7 @@
 
 #ifndef PROVEN_NO_NET
 static int claims_done_calls;
+static void claims_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) { (void)ctx; (void)stream; (void)head; }
 static void claims_never_done(void *ctx, proven_http_event_request_t *request, proven_err_t why) { (void)ctx; (void)request; (void)why; claims_done_calls++; }
 #endif
 
@@ -87,6 +88,19 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_ws_stream_ping(NULL, (proven_mem_view_t){ much, sizeof much }) == PROVEN_ERR_OUT_OF_BOUNDS &&
                            proven_ws_event_accept((proven_http_stream_t *)&head, &head, &wcfg, &ws) == PROVEN_ERR_INVALID_ARG && ws == NULL,
             "a ping of 126 bytes and a WebSocket configuration with no on_message are refused", "");
+
+        /* CLAIM (s13 table): adopt is INVALID_ARG with no server; and with a connection that is
+         * not open the answer is INVALID_STATE and the connection "still the caller's". */
+        {
+            proven_http_event_server_config_t acfg = { .on = { .on_request = claims_request } };
+            proven_http_event_server_t *srv = NULL;
+            proven_net_conn_t not_open = { 0 };
+            PROVEN_TEST_ASSERT(proven_http_event_server_create(loop, &acfg, &srv) == PROVEN_OK &&
+                               proven_http_event_server_adopt(NULL, &not_open) == PROVEN_ERR_INVALID_ARG &&
+                               proven_http_event_server_adopt(srv, &not_open) == PROVEN_ERR_INVALID_STATE && proven_http_event_server_connections(srv) == 0,
+                "adopt refuses no server, and a connection that is not open, and takes nothing", "");
+            proven_http_event_server_destroy(srv);
+        }
 
         /* CLAIM (ch 9 table): proven_net_connect_finish is INVALID_STATE "when it is not open". */
         proven_net_conn_t closed = { 0 };

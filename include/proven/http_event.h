@@ -105,10 +105,31 @@ proven_err_t proven_http_event_server_listen(proven_http_event_server_t *server,
  */
 void proven_http_event_server_destroy(proven_http_event_server_t *server);
 
+/**
+ * @brief Take a connection that was accepted elsewhere: it becomes one of the server's, as if
+ *        the server had accepted it (with TLS, the handshake begins).
+ *
+ * This is how several loops share one listening port: a thread accepts, and hands each
+ * connection to one of several servers, each on a loop of its own. **Like everything else
+ * here it must be called on the server's loop thread**, so the accepting thread posts it
+ * (proven_loop_post) - and a `proven_net_conn_t` is not to be copied while open, so what is
+ * posted carries the connection in memory of its own, not a copy on a stack.
+ *
+ * On PROVEN_OK the server owns the connection and `*conn` is no longer open. On any error it
+ * is still yours, to close.
+ *
+ * @return PROVEN_ERR_INVALID_ARG; PROVEN_ERR_INVALID_STATE when `conn` is not open, or after
+ *         proven_http_event_server_stop_listening; PROVEN_ERR_BUSY at `max_connections`;
+ *         PROVEN_ERR_NOMEM; or what watching the socket returned.
+ */
+[[nodiscard]]
+proven_err_t proven_http_event_server_adopt(proven_http_event_server_t *server, proven_net_conn_t *conn);
+
 /** @brief Connections open now. */
 proven_size_t proven_http_event_server_connections(const proven_http_event_server_t *server);
 
-/** @brief Stop accepting; connections that are open go on. For shutting down gracefully. */
+/** @brief Stop accepting - and adopting; connections that are open go on. For shutting down
+ *         gracefully. (proven_http_event_server_listen afterwards takes connections again.) */
 void proven_http_event_server_stop_listening(proven_http_event_server_t *server);
 
 /** @brief The length to give proven_http_stream_begin when it is not known in advance. */

@@ -18,6 +18,34 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- `proven_http_event_server_adopt`: give an event-driven server a connection that was accepted
+  elsewhere. With it several loops, each on a thread with a server of its own, share one
+  listening port - a thread accepts and deals connections out by posting to the loops. Manual
+  chapter 15, section 13, with a program the build compiles and runs, and the three rules that
+  make it correct (adopt on the server's loop thread; the connection carried in memory of its
+  own; taken apart acceptor first). Test `test_unit_http_event_loops`.
+- **Measurements**, in manual chapter 15, section 14 - one run of a load program that is not
+  part of the test suite, on one Linux machine over loopback, with a handler that answers two
+  bytes. One loop held 100,000 connections with none lost, at about 480 bytes each of the
+  server's resident memory (the kernel's own share was about 7.5 KiB per connection for both
+  ends). Ten active connections were served as fast among 50,000 idle ones as among 1,000.
+  With 1% active: 184,000 requests a second at 10,000 held, 171,000 at 50,000, 155,000 at
+  100,000. Four client processes against one, two and four loops: 167,000, 337,000 and 514,000
+  requests a second. The blocking server held the same 100,000 and answered slightly faster,
+  at 39 KiB allocated per connection. **On Windows**, where the loop waits with `WSAPoll`, the
+  median round trip was 1 ms at 1,000 held connections, 18 ms at 5,000 and 66 ms at 10,000,
+  with both ends on one machine: there it is for hundreds to a few thousand connections.
+
+### Changed
+
+- `proven_http_event_server_stop_listening` now also makes the server refuse
+  `proven_http_event_server_adopt`, until it is told to listen again.
+- Timers further away than one turn of the loop's wheel (16.4 s) - which the server's 30 s and
+  60 s defaults are - are now covered by a test with a clock the test moves. No defect was
+  found; nothing in the loop's behaviour changed.
+
 ## [0.19.0] - 2026-10-10
 
 A MINOR release: the two other things that sit on the event loop of 0.18.0 - WebSocket

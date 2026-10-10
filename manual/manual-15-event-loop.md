@@ -6,8 +6,8 @@ server this one is the other form of); [Chapter 14](manual-14-tls.md) if it is t
 **After this chapter** you can run a loop with timers and work that comes back from other
 threads, serve HTTP from it without a call that waits, answer a request later, stream a response
 to a client slower than your program, keep WebSocket connections open without a thread each,
-make many HTTP requests at once from one thread, and say what a connection costs while it does
-nothing.
+make many HTTP requests at once from one thread, spread a server over several processor cores,
+and say what a connection costs while it does nothing - and what was measured.
 
 This chapter covers `loop.h`, `http_event.h`, `ws_event.h` and `http_event_client.h`. All are
 hosted-only, and `PROVEN_NO_NET` leaves them out.
@@ -26,7 +26,8 @@ hosted-only, and `PROVEN_NO_NET` leaves them out.
 10. [Threads, TLS and shutting down](#10-threads-tls-and-shutting-down)
 11. [WebSocket on the loop](#11-websocket-on-the-loop)
 12. [The event-driven client](#12-the-event-driven-client)
-13. [What a connection holds, and what is not here](#13-what-a-connection-holds-and-what-is-not-here)
+13. [Several loops](#13-several-loops)
+14. [What a connection holds, what was measured, and what is not here](#14-what-a-connection-holds-what-was-measured-and-what-is-not-here)
 
 ## 1. Two ways to serve
 
@@ -1167,26 +1168,267 @@ int main(void) {
 }
 ```
 
-## 13. What a connection holds, and what is not here
+## 13. Several loops
+
+One loop is one thread, and a connection belongs to one loop for its whole life: nothing about
+it is ever touched by another thread, which is why nothing in this chapter takes a lock. A
+server that needs more than one processor core is therefore **several loops, each with a
+server of its own** - and something to share the incoming connections among them.
+
+```c
+proven_err_t proven_http_event_server_adopt(proven_http_event_server_t *server, proven_net_conn_t *conn);
+```
+
+`proven_http_event_server_adopt` gives a server a connection that was accepted somewhere
+else. It becomes one of the server's exactly as if the server had accepted it; with TLS, the
+handshake begins. So one thread listens and accepts, and deals each connection to the servers
+in turn. Three rules make that correct:
+
+- **`adopt` is called on the server's loop thread**, like everything else. The accepting
+  thread does not call it: it posts a function to that loop (`proven_loop_post`), and the
+  function calls it.
+- **The connection travels in memory of its own.** A `proven_net_conn_t` is not to be copied
+  while it is open, so what is posted is a small block holding it, freed by the function that
+  adopts.
+- **Taken apart in order:** the accepting thread first, so that nothing more is posted; then
+  the loops; then - after one last round of each loop, for anything posted and not yet run -
+  the servers.
+
+| `adopt` returns | Meaning |
+|---|---|
+| `PROVEN_OK` | The server owns the connection; the caller's value is no longer open. |
+| `PROVEN_ERR_BUSY` | The server is at `max_connections`. The connection is still the caller's, to close. |
+| `PROVEN_ERR_INVALID_STATE` | The connection is not open, or the server was told `proven_http_event_server_stop_listening`. Still the caller's. |
+| `PROVEN_ERR_INVALID_ARG`, `PROVEN_ERR_NOMEM` | Still the caller's. |
+
+The other way to the same end needs no call at all: give each loop's server a listener of its
+own on a different address or port, and let whatever is in front - a load balancer, or DNS -
+spread the clients. The load measurements of the next section were made that way.
+
+Whether more loops help depends on what the time goes on. They multiply what handlers can
+compute; they do nothing for a handler that waits, which should not be on a loop at all
+(section 10).
+
+The test suite compiles and runs this program:
+
+<!-- example: manual/examples/en/ex_15_loops.c -->
+```c
+#include <stdatomic.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/*
+ * Several loops behind one port: one thread accepts, and deals connections to servers on
+ * loops of their own.
+ *
+ * A connection belongs to one loop, and nothing about it is ever touched by another thread.
+ * So scaling across processors is several loops, each with its own server - and something has
+ * to share the incoming connections among them. Here that is a thread that accepts and deals
+ * them out in turn, which works wherever the library does.
+ */
+
+enum { LOOPS = 2 };
+
+/* One loop, its server, and what its handler counts. Only that loop's thread touches it. */
+typedef struct {
+    int index;
+    proven_loop_t *loop;
+    proven_http_event_server_t *server;
+    int served;                       /* read by the main thread only after the loop has stopped */
+} worker_t;
+
+static worker_t g_workers[LOOPS];
+static proven_net_listener_t g_listener;
+static atomic_bool g_stop;
+
+static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
+    worker_t *me = ctx;
+    (void)head;
+    char text[16];
+    int n = snprintf(text, sizeof text, "loop %d", me->index);
+    me->served++;
+    (void)proven_http_stream_respond(stream, 200, NULL, 0, (proven_mem_view_t){ (const proven_byte_t *)text, (proven_size_t)n });
+}
+
+/* What crosses from the accepting thread to a loop. An open connection is not to be copied,
+ * so it travels in memory of its own. */
+typedef struct { worker_t *to; proven_net_conn_t conn; } handoff_t;
+
+/* On the loop's thread - the only place a server may be given a connection. */
+static void adopt_here(void *ctx) {
+    handoff_t *h = ctx;
+    if (proven_http_event_server_adopt(h->to->server, &h->conn) != PROVEN_OK) (void)proven_net_close(&h->conn);   /* refused: still ours to close */
+    free(h);
+}
+
+/* The accepting thread. It touches no server: it accepts, chooses, and posts. */
+static void acceptor(void *arg) {
+    (void)arg;
+    int next = 0;
+    while (!atomic_load(&g_stop)) {
+        handoff_t *h = malloc(sizeof *h);
+        if (!h) break;
+        /* A short wait at a time, so that the thread notices when it is told to stop. */
+        if (proven_net_accept(&g_listener, proven_net_deadline_in(20), &h->conn, NULL) != PROVEN_OK) { free(h); continue; }
+        h->to = &g_workers[next];
+        next = (next + 1) % LOOPS;
+        if (proven_loop_post(h->to->loop, adopt_here, h) != PROVEN_OK) { (void)proven_net_close(&h->conn); free(h); }
+    }
+}
+
+static void run(void *arg) { (void)proven_loop_run(((worker_t *)arg)->loop); }
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+
+    // ---- two loops, each with a server that has no listener -----------------------
+    /* A server with no listener serves only what it is given. */
+    proven_job_sys_t *threads = NULL;
+    proven_job_group_t loops, accepting;
+    proven_job_group_init(&loops);
+    proven_job_group_init(&accepting);
+    EXAMPLE_REQUIRE(proven_job_system_init(heap, LOOPS + 1, 8, &threads) == PROVEN_OK, "three threads");
+    for (int i = 0; i < LOOPS; ++i) {
+        worker_t *w = &g_workers[i];
+        w->index = i;
+        proven_http_event_server_config_t config = { .on = { .on_request = on_request }, .ctx = w };
+        EXAMPLE_REQUIRE(proven_loop_create(heap, &w->loop) == PROVEN_OK &&
+                        proven_http_event_server_create(w->loop, &config, &w->server) == PROVEN_OK &&
+                        proven_job_group_submit(threads, &loops, run, w) == PROVEN_OK, "a loop on its own thread, with a server");
+    }
+
+    // ---- one listener, and the thread that deals ----------------------------------
+    proven_net_addr_t at;
+    EXAMPLE_REQUIRE(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 64, &g_listener, &at) == PROVEN_OK &&
+                    proven_job_group_submit(threads, &accepting, acceptor, NULL) == PROVEN_OK, "a listener and its accepting thread");
+
+    // ---- eight connections ---------------------------------------------------------
+    /* A client that keeps no connection open: eight requests are eight connections. */
+    proven_http_client_config_t client_config = { .alloc = heap, .max_idle_connections = 0 };
+    proven_http_client_t *client = NULL;
+    EXAMPLE_REQUIRE(proven_http_client_create(&client_config, &client) == PROVEN_OK, "a client");
+    char url[64];
+    int n = snprintf(url, sizeof url, "http://127.0.0.1:%u/", (unsigned)at.port);
+    int answers[LOOPS] = { 0 };
+    for (int i = 0; i < 8; ++i) {
+        proven_http_client_response_t response;
+        proven_u8str_t body = { 0 };
+        EXAMPLE_REQUIRE(proven_http_client_get(client, (proven_u8str_view_t){ (const proven_byte_t *)url, (proven_size_t)n }, &response) == PROVEN_OK &&
+                        proven_http_client_read_all(&response, heap, &body, 64) == PROVEN_OK, "a request is answered");
+        proven_u8str_view_t text = proven_u8str_as_view(&body);
+        if (text.size == 6 && memcmp(text.ptr, "loop ", 5) == 0 && text.ptr[5] - '0' < LOOPS) answers[text.ptr[5] - '0']++;
+        proven_u8str_destroy(heap, &body);
+        proven_http_client_finish(&response);
+    }
+    proven_http_client_destroy(client);
+    EXAMPLE_REQUIRE(answers[0] == 4 && answers[1] == 4, "dealt in turn: four connections were served by each loop");
+
+    // ---- taking it apart, in this order --------------------------------------------
+    /* The acceptor first, so that nothing more is posted. Then the loops. Then the servers. */
+    atomic_store(&g_stop, true);
+    proven_job_group_wait(threads, &accepting);
+    (void)proven_net_listener_close(&g_listener);
+    for (int i = 0; i < LOOPS; ++i) proven_loop_stop(g_workers[i].loop);
+    proven_job_group_wait(threads, &loops);
+    int served = 0;
+    for (int i = 0; i < LOOPS; ++i) {
+        /* Anything posted and not yet run is run here, before its server goes. */
+        EXAMPLE_REQUIRE(proven_loop_poll(g_workers[i].loop, PROVEN_NET_DONT_WAIT) == PROVEN_OK, "a last round");
+        served += g_workers[i].served;
+        proven_http_event_server_destroy(g_workers[i].server);
+        proven_loop_destroy(g_workers[i].loop);
+    }
+    EXAMPLE_REQUIRE(served == 8, "eight requests were served in all");
+    proven_job_system_close(threads);
+    proven_job_system_destroy(threads);
+    return EXAMPLE_OK();
+}
+```
+
+## 14. What a connection holds, what was measured, and what is not here
 
 **What a connection holds.** A connection with no request on it holds its struct and no buffer:
 requests are read into the loop's scratch buffer, and bytes are copied aside only when a
 request is incomplete. On x86-64 Linux the registered tests measure 448 bytes of heap for an
 idle plain HTTP connection, failing above 512, and 928 bytes for an idle plain WebSocket
 connection, failing above 1 KiB. A TLS connection adds the engine's state, about 1 KiB while
-idle (Chapter 14, section 9). The system's own cost for an open socket is separate and is
-usually the larger part.
+idle (Chapter 14, section 9).
+
+**What was measured.** One run of a load program that is not part of the test suite, on one
+machine: a 16-thread x86-64 desktop processor at 3.5 GHz with 62 GB, Linux 6.12, GCC at `-O2`.
+The server and the client are separate processes on that machine, talking over the loopback
+interface, plain HTTP. Every connection makes one request and is then left open; after that a
+stated share of them make requests back to back, each waiting for its answer, for ten seconds.
+The handler answers two bytes. **Loopback is not a network** - there is no loss and no slow
+peer here - and a handler that does real work will be slower than one that answers "ok".
+
+One loop:
+
+| Connections held | Making requests | Requests per second | Round trip: median, 99th percentile | Server's resident memory per connection |
+|---|---|---|---|---|
+| 1,000 | 10 | 169,000 | 0.05 ms, 0.14 ms | 479 B |
+| 50,000 | 10 | 175,000 | 0.04 ms, 0.11 ms | 481 B |
+| 10,000 | 100 | 184,000 | 0.5 ms, 0.9 ms | 486 B |
+| 50,000 | 500 | 171,000 | 2.8 ms, 5.2 ms | 481 B |
+| 100,000 | 1,000 | 155,000 | 6.4 ms, 9.7 ms | 480 B |
+
+What the table says: **connections that are doing nothing cost a busy one nothing** - ten
+connections are served as fast among fifty thousand as among a thousand - and they cost
+memory in proportion, about 480 bytes each in the server. One loop does a fixed amount of work
+per second, so when more connections ask at once each waits longer: the round trip grows with
+the number asking, not with the number held. No connection was lost in any row. Opening
+100,000 took 96 seconds, against 1.7 for 50,000. That appears to be the client's system
+searching for a free port as its range runs out, not the server: the blocking server took as
+long or longer for the same step.
+
+The system's own cost for a socket is separate and larger: over the same runs the kernel's
+slab memory grew by about 7.5 KiB per connection, for both of its ends together.
+
+Several loops, with four client processes holding 12,500 connections each and 1% of them
+making requests:
+
+| Loops | Requests per second, all clients together | Round trip: median |
+|---|---|---|
+| 1 | 167,000 | 2.9 ms |
+| 2 | 337,000 | 1.4 ms |
+| 4 | 514,000 | 1.0 ms |
+
+**The blocking server of Chapter 11, for comparison**, in the same program with its handler
+on its loop's thread: it held the same 100,000 connections and answered slightly faster -
+186,000 requests per second at 50,000 held, against 171,000. What it costs is memory: 39 KiB
+allocated per connection, 10.9 KiB of it resident, against 480 bytes. And it is one thread
+whose handler waits; the reasons to choose this chapter's server are the ones of section 1,
+not raw speed for a trivial handler.
+
+**On Windows the ceiling is low, and here is where.** There the loop waits with `WSAPoll`,
+which looks at every socket on every call. Both ends of the same program on one Windows 11
+virtual machine, ten connections making requests:
+
+| Connections held | Requests per second | Round trip: median |
+|---|---|---|
+| 100 | 40,000 | 0.2 ms |
+| 1,000 | 8,100 | 1.0 ms |
+| 2,000 | 2,700 | 3.2 ms |
+| 5,000 | 480 | 18 ms |
+| 10,000 | 150 | 66 ms |
+
+The client is on the same loop implementation, so each figure carries the cost twice. Asked
+for 20,000 connections, that machine opened 16,369 before its ports ran out. On Windows this
+server is for hundreds of connections, or a few thousand at most; nothing in this release
+changes that.
 
 **What is not here.**
 
-- **How many connections one loop carries**, measured. The design is for tens of thousands; the
-  measurements belong to a later release, and until then the bounded claims are the ones above.
-- **More than one loop.** A server here uses one thread. Running several loops across
-  processor cores is a later release.
+- **A load test worth the name.** The figures above are one machine talking to itself: no
+  network, no slow or hostile clients, no TLS under load, one handler that does nothing.
 - **A WebSocket client on the loop**, and upgrades other than WebSocket on this server.
   Chapter 12's client is the blocking one.
 - **In the event-driven client:** connection reuse, redirects, authentication, cookies,
   proxies, and name resolution (section 12 says what to do instead).
+- **TLS handshakes off the loop's thread.** Each costs the loop about 2 ms during which it
+  serves nothing else (Chapter 14, section 9).
+- **A faster wait on Windows** than `WSAPoll`.
 - **Sending a file without copying it**, response compression, HTTP/2.
 - **Watching files, signals or child processes** with the loop. It watches sockets.
 
@@ -1206,6 +1448,8 @@ the test scripts itself, through the rows of the tables of section 12 - all but
 time limits: only the response timeout is made to pass. All of them were run several hundred
 times under address and undefined-behaviour checking with the machine loaded, and under thread
 checking.
-**Not done:** no load test, no measurement of throughput or latency, no run against a hostile
-peer beyond the cases listed, and no run of a published WebSocket conformance suite against
-this server.
+Several loops are run as three servers on three threads behind one accepting thread, plain
+and over TLS, under thread checking. Timers further away than one turn of the loop's wheel
+(16.4 seconds) are tested with a clock the test moves. **Not done:** no run against a hostile
+peer beyond the cases listed, no run of a published WebSocket conformance suite against this
+server, and no load beyond the single run described above.

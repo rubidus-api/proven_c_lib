@@ -1,4 +1,5 @@
 #include "proven/loop.h"
+#include "proven_internal_loop.h"
 
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 
@@ -50,7 +51,19 @@ struct proven_loop {
     proven_size_t batch_count, batch_pos;
     proven_size_t io_count;
     proven_byte_t *scratch;
+    proven_loop_clock_fn clock;                   /* tests only: null is the monotonic clock */
+    void *clock_ctx;
 };
+
+/* The one place the loop reads the time. */
+static proven_time_t loop_now(const proven_loop_t *l) { return l->clock ? l->clock(l->clock_ctx) : proven_time_monotonic_now(); }
+
+void proven_loop_test_clock_(proven_loop_t *l, proven_loop_clock_fn clock, void *ctx) {
+    if (!l) return;
+    l->clock = clock;
+    l->clock_ctx = ctx;
+    l->wheel_tick = (proven_u64)loop_now(l) / LOOP_TICK_NS;
+}
 
 static void loop_waker_ready(void *ctx, proven_u8 got) {
     (void)got;
@@ -67,7 +80,7 @@ proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out) {
     l->alloc = alloc;
     atomic_init(&l->tasks, (loop_task_t *)0);
     atomic_init(&l->stop, false);
-    l->wheel_tick = (proven_u64)proven_time_monotonic_now() / LOOP_TICK_NS;
+    l->wheel_tick = (proven_u64)loop_now(l) / LOOP_TICK_NS;
     proven_err_t e = proven_net_selector_create(alloc, &l->selector);
     if (e == PROVEN_OK) {
         m = alloc.alloc_fn(alloc.ctx, LOOP_SCRATCH, 16);
@@ -167,7 +180,7 @@ void proven_loop_timer_set(proven_loop_t *l, proven_loop_timer_t *t, proven_u32 
     if (!l || !t || !fn) return;
     proven_loop_timer_cancel(l, t);
     /* Rounded up to a tick, and never into a slot the wheel has already passed. */
-    proven_u64 tick = (proven_u64)proven_net_deadline_in(ms) / LOOP_TICK_NS + 1;
+    proven_u64 tick = (proven_u64)(loop_now(l) + (proven_time_t)ms * 1000000) / LOOP_TICK_NS + 1;
     if (tick <= l->wheel_tick) tick = l->wheel_tick + 1;
     t->fn = fn; t->ctx = ctx; t->tick = tick;
     proven_size_t slot = (proven_size_t)(tick % LOOP_WHEEL_SLOTS);
@@ -190,7 +203,7 @@ static proven_net_deadline_t loop_next_timer(const proven_loop_t *l) {
 }
 
 static void loop_timers_advance(proven_loop_t *l) {
-    proven_u64 target = (proven_u64)proven_time_monotonic_now() / LOOP_TICK_NS;
+    proven_u64 target = (proven_u64)loop_now(l) / LOOP_TICK_NS;
     if (target <= l->wheel_tick) return;
     if (l->timed_count > 0) {
         /* After a long sleep every slot is visited once; more turns would find nothing new. */

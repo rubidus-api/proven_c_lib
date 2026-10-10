@@ -829,7 +829,7 @@ reference you read after Chapter 3 has introduced the subject.
 12. [**WebSocket**: connections from either side, messages, closing; and the frame codec by itself](manual-12-websocket.md) - *Part V; after Chapter 11; the codec is freestanding-available*
 13. [**Certificates and trust**: reading an X.509 certificate, the names it is for, trust anchors, verifying a chain, pinning](manual-13-certificates.md) - *Part V; after Chapter 4; freestanding-available except the system's roots*
 14. [**TLS**: HTTPS and wss in two lines, the transport wrapper, the engine, resumption, client certificates and pins, what failures mean](manual-14-tls.md) - *Part V; after Chapters 11 and 13; the engine is freestanding-available*
-15. [**The event loop and the event-driven server**: a loop with timers and posted work, an HTTP server in which nothing waits, answering later, backpressure, WebSocket without a thread each, a client with many requests in flight, what an idle connection holds](manual-15-event-loop.md) - *Part V; after Chapters 9 and 11; hosted-only*
+15. [**The event loop and the event-driven server**: a loop with timers and posted work, an HTTP server in which nothing waits, answering later, backpressure, WebSocket without a thread each, a client with many requests in flight, several loops, what an idle connection holds and what was measured](manual-15-event-loop.md) - *Part V; after Chapters 9 and 11; hosted-only*
 
 **Chapters 3 and 8 both cover the formatter and the scanner, and the division is deliberate.**
 Chapter 3 introduces them alongside strings, with the everyday cases and enough to be productive.

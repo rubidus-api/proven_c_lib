@@ -68,6 +68,7 @@ struct proven_http_event_server {
     ev_listener_t listeners[EV_MAX_LISTENERS];
     proven_size_t listener_count;
     bool accepting;                    /* the listeners are being watched */
+    bool closed_to_new;                /* stop_listening was called: nothing is adopted either */
     bool stopped;
     proven_http_stream_t *conns;
     proven_size_t conn_count;
@@ -505,6 +506,33 @@ static void ev_update_listeners(proven_http_event_server_t *s) {
     s->accepting = want;
 }
 
+/* Make a connection of the server's out of a socket. On failure the socket is untouched. */
+static proven_err_t ev_take(proven_http_event_server_t *s, const proven_net_conn_t *sock, proven_net_addr_t peer) {
+    proven_http_stream_t *c = ev_alloc(s->alloc, sizeof *c);
+    if (!c) return PROVEN_ERR_NOMEM;
+    for (proven_size_t i = 0; i < sizeof *c; ++i) ((proven_byte_t *)c)[i] = 0;
+    c->server = s;
+    c->sock = *sock;
+    c->peer = peer;
+    c->state = EV_HEAD;
+    c->head_started = true;                        /* a new connection is expected to speak promptly */
+    proven_err_t e = PROVEN_OK;
+    if (s->cfg.tls) e = proven_tls_server_create(s->cfg.tls, &c->tls);
+    if (e == PROVEN_OK) e = proven_loop_io_add(s->loop, &c->io, proven_net_conn_handle(&c->sock), PROVEN_NET_READABLE, ev_on_io, c);
+    if (e != PROVEN_OK) {
+        if (c->tls) proven_tls_conn_destroy(c->tls);
+        s->alloc.free_fn(s->alloc.ctx, c);
+        return e;
+    }
+    (void)proven_net_conn_set_nodelay(&c->sock, true);
+    c->next = s->conns;
+    if (s->conns) s->conns->prev = c;
+    s->conns = c;
+    s->conn_count++;
+    ev_arm(c);
+    return PROVEN_OK;
+}
+
 static void ev_on_accept(void *ctx, proven_u8 got) {
     ev_listener_t *l = ctx;
     proven_http_event_server_t *s = l->server;
@@ -513,29 +541,22 @@ static void ev_on_accept(void *ctx, proven_u8 got) {
         proven_net_conn_t sock;
         proven_net_addr_t peer;
         if (proven_net_accept(&l->listener, PROVEN_NET_DONT_WAIT, &sock, &peer) != PROVEN_OK) break;
-        proven_http_stream_t *c = ev_alloc(s->alloc, sizeof *c);
-        if (!c) { (void)proven_net_close(&sock); break; }
-        for (proven_size_t i = 0; i < sizeof *c; ++i) ((proven_byte_t *)c)[i] = 0;
-        c->server = s;
-        c->sock = sock;
-        c->peer = peer;
-        c->state = EV_HEAD;
-        c->head_started = true;                    /* a new connection is expected to speak promptly */
-        if (s->cfg.tls && proven_tls_server_create(s->cfg.tls, &c->tls) != PROVEN_OK) { (void)proven_net_close(&sock); s->alloc.free_fn(s->alloc.ctx, c); break; }
-        (void)proven_net_conn_set_nodelay(&c->sock, true);
-        if (proven_loop_io_add(s->loop, &c->io, proven_net_conn_handle(&c->sock), PROVEN_NET_READABLE, ev_on_io, c) != PROVEN_OK) {
-            if (c->tls) proven_tls_conn_destroy(c->tls);
-            (void)proven_net_close(&sock);
-            s->alloc.free_fn(s->alloc.ctx, c);
-            break;
-        }
-        c->next = s->conns;
-        if (s->conns) s->conns->prev = c;
-        s->conns = c;
-        s->conn_count++;
-        ev_arm(c);
+        if (ev_take(s, &sock, peer) != PROVEN_OK) { (void)proven_net_close(&sock); break; }
     }
     ev_update_listeners(s);
+}
+
+proven_err_t proven_http_event_server_adopt(proven_http_event_server_t *s, proven_net_conn_t *conn) {
+    if (!s || !conn) return PROVEN_ERR_INVALID_ARG;
+    if (!proven_net_conn_is_open(conn) || s->stopped || s->closed_to_new) return PROVEN_ERR_INVALID_STATE;
+    if (s->conn_count >= s->cfg.max_connections) return PROVEN_ERR_BUSY;
+    proven_net_addr_t peer = { 0 };
+    (void)proven_net_conn_peer_addr(conn, &peer);
+    proven_err_t e = ev_take(s, conn, peer);
+    if (e != PROVEN_OK) return e;
+    *conn = (proven_net_conn_t){ 0 };              /* the server's now */
+    ev_update_listeners(s);
+    return PROVEN_OK;
 }
 
 // -----------------------------------------------------------------------------
@@ -594,6 +615,7 @@ proven_err_t proven_http_event_server_listen(proven_http_event_server_t *s, prov
     if (e != PROVEN_OK) { (void)proven_net_listener_close(&l->listener); return e; }
     s->listener_count++;
     s->accepting = want;
+    s->closed_to_new = false;                      /* listening again is taking connections again */
     if (bound) *bound = got;
     return PROVEN_OK;
 }
@@ -606,6 +628,7 @@ void proven_http_event_server_stop_listening(proven_http_event_server_t *s) {
     }
     s->listener_count = 0;
     s->accepting = false;
+    s->closed_to_new = true;
 }
 
 void proven_http_event_server_destroy(proven_http_event_server_t *s) {

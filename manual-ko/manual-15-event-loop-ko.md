@@ -6,7 +6,8 @@
 **이 장을 마치면** 타이머와 다른 스레드에서 돌아오는 일을 가진 루프를 돌리고, 기다리는 호출 하나
 없이 그 위에서 HTTP를 서비스하고, 요청에 나중에 답하고, 프로그램보다 느린 클라이언트에게 응답을
 스트리밍하고, 연결마다 스레드를 두지 않고 WebSocket 연결을 열어 두고, 한 스레드에서 많은 HTTP
-요청을 한꺼번에 보내고, 아무 일도 하지 않는 연결 하나가 무엇을 차지하는지 말할 수 있다.
+요청을 한꺼번에 보내고, 서버를 여러 프로세서 코어에 펼치고, 아무 일도 하지 않는 연결 하나가 무엇을
+차지하는지 - 그리고 무엇을 측정했는지 - 말할 수 있다.
 
 이 장은 `loop.h`, `http_event.h`, `ws_event.h`, `http_event_client.h`를 다룬다. 모두
 호스티드(hosted) 전용이고 `PROVEN_NO_NET`으로 빠진다.
@@ -25,7 +26,8 @@
 10. [스레드, TLS, 종료](#10-스레드-tls-종료)
 11. [루프 위의 WebSocket](#11-루프-위의-websocket)
 12. [이벤트 구동 클라이언트](#12-이벤트-구동-클라이언트)
-13. [연결 하나가 붙드는 것, 그리고 여기 없는 것](#13-연결-하나가-붙드는-것-그리고-여기-없는-것)
+13. [여러 루프](#13-여러-루프)
+14. [연결 하나가 붙드는 것, 측정한 것, 그리고 여기 없는 것](#14-연결-하나가-붙드는-것-측정한-것-그리고-여기-없는-것)
 
 ## 1. 서비스하는 두 가지 방식
 
@@ -1140,25 +1142,256 @@ int main(void) {
 }
 ```
 
-## 13. 연결 하나가 붙드는 것, 그리고 여기 없는 것
+## 13. 여러 루프
+
+루프 하나는 스레드 하나이고, 연결은 평생 루프 하나에 속한다: 그 연결의 어떤 것도 다른 스레드가
+건드리지 않으며, 이 장의 무엇도 락을 잡지 않는 까닭이 그것이다. 그러므로 프로세서 코어가 둘 이상
+필요한 서버는 **각자 서버를 가진 여러 루프**이고, 들어오는 연결을 그들 사이에 나눠 줄 무언가다.
+
+```c
+proven_err_t proven_http_event_server_adopt(proven_http_event_server_t *server, proven_net_conn_t *conn);
+```
+
+`proven_http_event_server_adopt`는 다른 곳에서 받아들인 연결을 서버에 준다. 그 연결은 서버가 직접
+받아들인 것과 똑같이 서버의 것이 된다. TLS라면 핸드셰이크가 시작된다. 그래서 스레드 하나가 듣고
+받아들이며, 연결마다 서버들에게 차례로 나눠 준다. 세 가지 규칙이 이것을 올바르게 만든다:
+
+- **`adopt`는 서버의 루프 스레드에서 부른다** - 다른 모든 것처럼. 받아들이는 스레드는 그것을 부르지
+  않는다: 그 루프에 함수를 게시하고(`proven_loop_post`), 그 함수가 부른다.
+- **연결은 자기 메모리에 담겨 간다.** `proven_net_conn_t`는 열려 있는 동안 복사해서는 안 되므로,
+  게시하는 것은 그것을 담은 작은 블록이고, adopt하는 함수가 해제한다.
+- **해체는 순서대로:** 받아들이는 스레드가 먼저다. 그래야 더는 게시되지 않는다. 그다음 루프들. 그다음 -
+  게시되었으나 아직 돌지 않은 것을 위해 각 루프를 마지막으로 한 바퀴 돌린 뒤 - 서버들.
+
+| `adopt`의 반환 | 뜻 |
+|---|---|
+| `PROVEN_OK` | 서버가 연결을 소유한다. 호출자의 값은 더는 열려 있지 않다. |
+| `PROVEN_ERR_BUSY` | 서버가 `max_connections`에 닿았다. 연결은 여전히 호출자의 것이고, 호출자가 닫는다. |
+| `PROVEN_ERR_INVALID_STATE` | 연결이 열려 있지 않거나, 서버가 `proven_http_event_server_stop_listening`을 들었다. 여전히 호출자의 것. |
+| `PROVEN_ERR_INVALID_ARG`, `PROVEN_ERR_NOMEM` | 여전히 호출자의 것. |
+
+같은 목적에 이르는 다른 길은 호출이 전혀 필요 없다: 루프마다 서버에 다른 주소나 포트의 리스너를 따로
+주고, 앞에 있는 무언가 - 로드 밸런서나 DNS - 가 클라이언트를 퍼뜨리게 한다. 다음 절의 부하 측정은 그
+방식으로 했다.
+
+루프를 늘리는 것이 도움이 되는지는 시간이 어디에 쓰이느냐에 달렸다. 루프는 핸들러가 계산할 수 있는
+양을 곱해 준다. 기다리는 핸들러에게는 아무 도움이 되지 않으며, 그런 핸들러는 애초에 루프 위에 있어서는
+안 된다(10절).
+
+테스트 스위트가 이 프로그램을 컴파일하고 실행한다:
+
+<!-- example: manual/examples/ko/ex_15_loops.c -->
+```c
+#include <stdatomic.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/*
+ * 포트 하나 뒤의 여러 루프: 스레드 하나가 받아들이고, 각자의 루프 위에 있는 서버들에게
+ * 연결을 나눠 준다.
+ *
+ * 연결은 루프 하나에 속하고, 그 연결의 어떤 것도 다른 스레드가 건드리지 않는다. 그래서
+ * 프로세서에 걸친 확장은 각자 서버를 가진 여러 루프다 - 그리고 들어오는 연결을 그들 사이에
+ * 나눠 줄 무언가가 있어야 한다. 여기서는 받아들이고 차례로 나눠 주는 스레드가 그 일을 하며,
+ * 이 방식은 라이브러리가 도는 곳이면 어디서나 된다.
+ */
+
+enum { LOOPS = 2 };
+
+/* 루프 하나, 그 서버, 그리고 그 핸들러가 세는 것. 그 루프의 스레드만 건드린다. */
+typedef struct {
+    int index;
+    proven_loop_t *loop;
+    proven_http_event_server_t *server;
+    int served;                       /* 루프가 멈춘 뒤에만 메인 스레드가 읽는다 */
+} worker_t;
+
+static worker_t g_workers[LOOPS];
+static proven_net_listener_t g_listener;
+static atomic_bool g_stop;
+
+static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
+    worker_t *me = ctx;
+    (void)head;
+    char text[16];
+    int n = snprintf(text, sizeof text, "loop %d", me->index);
+    me->served++;
+    (void)proven_http_stream_respond(stream, 200, NULL, 0, (proven_mem_view_t){ (const proven_byte_t *)text, (proven_size_t)n });
+}
+
+/* 받아들이는 스레드에서 루프로 건너가는 것. 열린 연결은 복사해서는 안 되므로
+ * 자기 메모리에 담겨 간다. */
+typedef struct { worker_t *to; proven_net_conn_t conn; } handoff_t;
+
+/* 루프의 스레드에서 - 서버에 연결을 줄 수 있는 유일한 곳. */
+static void adopt_here(void *ctx) {
+    handoff_t *h = ctx;
+    if (proven_http_event_server_adopt(h->to->server, &h->conn) != PROVEN_OK) (void)proven_net_close(&h->conn);   /* 거절됨: 여전히 우리 것이니 닫는다 */
+    free(h);
+}
+
+/* 받아들이는 스레드. 어떤 서버도 건드리지 않는다: 받아들이고, 고르고, 게시한다. */
+static void acceptor(void *arg) {
+    (void)arg;
+    int next = 0;
+    while (!atomic_load(&g_stop)) {
+        handoff_t *h = malloc(sizeof *h);
+        if (!h) break;
+        /* 한 번에 잠깐씩만 기다려서, 멈추라는 말을 스레드가 알아채게 한다. */
+        if (proven_net_accept(&g_listener, proven_net_deadline_in(20), &h->conn, NULL) != PROVEN_OK) { free(h); continue; }
+        h->to = &g_workers[next];
+        next = (next + 1) % LOOPS;
+        if (proven_loop_post(h->to->loop, adopt_here, h) != PROVEN_OK) { (void)proven_net_close(&h->conn); free(h); }
+    }
+}
+
+static void run(void *arg) { (void)proven_loop_run(((worker_t *)arg)->loop); }
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+
+    // ---- 루프 둘, 각각 리스너 없는 서버 하나 ---------------------------------------
+    /* 리스너 없는 서버는 주어진 것만 서비스한다. */
+    proven_job_sys_t *threads = NULL;
+    proven_job_group_t loops, accepting;
+    proven_job_group_init(&loops);
+    proven_job_group_init(&accepting);
+    EXAMPLE_REQUIRE(proven_job_system_init(heap, LOOPS + 1, 8, &threads) == PROVEN_OK, "스레드 셋");
+    for (int i = 0; i < LOOPS; ++i) {
+        worker_t *w = &g_workers[i];
+        w->index = i;
+        proven_http_event_server_config_t config = { .on = { .on_request = on_request }, .ctx = w };
+        EXAMPLE_REQUIRE(proven_loop_create(heap, &w->loop) == PROVEN_OK &&
+                        proven_http_event_server_create(w->loop, &config, &w->server) == PROVEN_OK &&
+                        proven_job_group_submit(threads, &loops, run, w) == PROVEN_OK, "자기 스레드의 루프와 서버");
+    }
+
+    // ---- 리스너 하나, 그리고 나눠 주는 스레드 --------------------------------------
+    proven_net_addr_t at;
+    EXAMPLE_REQUIRE(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 64, &g_listener, &at) == PROVEN_OK &&
+                    proven_job_group_submit(threads, &accepting, acceptor, NULL) == PROVEN_OK, "리스너와 받아들이는 스레드");
+
+    // ---- 연결 여덟 -----------------------------------------------------------------
+    /* 연결을 열어 두지 않는 클라이언트: 요청 여덟은 연결 여덟이다. */
+    proven_http_client_config_t client_config = { .alloc = heap, .max_idle_connections = 0 };
+    proven_http_client_t *client = NULL;
+    EXAMPLE_REQUIRE(proven_http_client_create(&client_config, &client) == PROVEN_OK, "클라이언트");
+    char url[64];
+    int n = snprintf(url, sizeof url, "http://127.0.0.1:%u/", (unsigned)at.port);
+    int answers[LOOPS] = { 0 };
+    for (int i = 0; i < 8; ++i) {
+        proven_http_client_response_t response;
+        proven_u8str_t body = { 0 };
+        EXAMPLE_REQUIRE(proven_http_client_get(client, (proven_u8str_view_t){ (const proven_byte_t *)url, (proven_size_t)n }, &response) == PROVEN_OK &&
+                        proven_http_client_read_all(&response, heap, &body, 64) == PROVEN_OK, "요청에 답이 온다");
+        proven_u8str_view_t text = proven_u8str_as_view(&body);
+        if (text.size == 6 && memcmp(text.ptr, "loop ", 5) == 0 && text.ptr[5] - '0' < LOOPS) answers[text.ptr[5] - '0']++;
+        proven_u8str_destroy(heap, &body);
+        proven_http_client_finish(&response);
+    }
+    proven_http_client_destroy(client);
+    EXAMPLE_REQUIRE(answers[0] == 4 && answers[1] == 4, "차례로 나눠 줬다: 루프마다 연결 넷을 서비스했다");
+
+    // ---- 해체, 이 순서로 -----------------------------------------------------------
+    /* 받아들이는 쪽이 먼저다. 그래야 더는 게시되지 않는다. 그다음 루프들. 그다음 서버들. */
+    atomic_store(&g_stop, true);
+    proven_job_group_wait(threads, &accepting);
+    (void)proven_net_listener_close(&g_listener);
+    for (int i = 0; i < LOOPS; ++i) proven_loop_stop(g_workers[i].loop);
+    proven_job_group_wait(threads, &loops);
+    int served = 0;
+    for (int i = 0; i < LOOPS; ++i) {
+        /* 게시되었으나 아직 돌지 않은 것은 여기서, 서버가 사라지기 전에 돈다. */
+        EXAMPLE_REQUIRE(proven_loop_poll(g_workers[i].loop, PROVEN_NET_DONT_WAIT) == PROVEN_OK, "마지막 한 바퀴");
+        served += g_workers[i].served;
+        proven_http_event_server_destroy(g_workers[i].server);
+        proven_loop_destroy(g_workers[i].loop);
+    }
+    EXAMPLE_REQUIRE(served == 8, "모두 여덟 요청이 서비스되었다");
+    proven_job_system_close(threads);
+    proven_job_system_destroy(threads);
+    return EXAMPLE_OK();
+}
+```
+
+## 14. 연결 하나가 붙드는 것, 측정한 것, 그리고 여기 없는 것
 
 **연결 하나가 붙드는 것.** 요청이 없는 연결은 자기 구조체를 붙들 뿐 버퍼는 붙들지 않는다: 요청은
 루프의 임시 작업용 버퍼로 읽히고, 바이트는 요청이 아직 완전하지 않을 때에만 따로 복사된다. x86-64
 Linux에서 등록된 테스트는 한가한 평문 HTTP 연결 하나에 힙 448바이트를 재고 512를 넘으면 실패하며,
 한가한 평문 WebSocket 연결 하나에 928바이트를 재고 1 KiB를 넘으면 실패한다. TLS 연결은 엔진의 상태를
-더한다. 한가할 때 약 1 KiB다(14장 9절). 열린 소켓에 대한 시스템 자신의 비용은 별개이고 대개 그쪽이
-더 크다.
+더한다. 한가할 때 약 1 KiB다(14장 9절).
+
+**측정한 것.** 테스트 스위트에 들어 있지 않은 부하 프로그램을, 기계 한 대에서, 한 번 돌린 결과다:
+3.5 GHz의 16스레드 x86-64 데스크톱 프로세서, 62 GB, Linux 6.12, GCC `-O2`. 서버와 클라이언트는 그
+기계의 서로 다른 프로세스이고 루프백 인터페이스로, 평문 HTTP로 말한다. 모든 연결이 요청 하나를 보낸
+뒤 열린 채 남는다. 그다음 정해진 비율의 연결이 10초 동안, 답을 기다렸다가 곧바로 다음 요청을 보내는
+식으로 요청을 잇는다. 핸들러는 두 바이트로 답한다. **루프백은 네트워크가 아니다** - 여기에는 손실도
+느린 상대도 없다 - 그리고 실제 일을 하는 핸들러는 "ok"라고 답하는 핸들러보다 느릴 것이다.
+
+루프 하나:
+
+| 유지한 연결 | 요청을 보내는 연결 | 초당 요청 | 왕복 시간: 중앙값, 99번째 백분위 | 연결당 서버 상주 메모리 |
+|---|---|---|---|---|
+| 1,000 | 10 | 169,000 | 0.05 ms, 0.14 ms | 479 B |
+| 50,000 | 10 | 175,000 | 0.04 ms, 0.11 ms | 481 B |
+| 10,000 | 100 | 184,000 | 0.5 ms, 0.9 ms | 486 B |
+| 50,000 | 500 | 171,000 | 2.8 ms, 5.2 ms | 481 B |
+| 100,000 | 1,000 | 155,000 | 6.4 ms, 9.7 ms | 480 B |
+
+표가 말하는 것: **아무 일도 하지 않는 연결은 바쁜 연결에게 아무 비용도 지우지 않는다** - 연결 열 개는
+오만 개 사이에서도 천 개 사이에서와 같은 빠르기로 서비스된다 - 그리고 메모리는 비례해서 든다. 서버에서
+하나에 약 480바이트다. 루프 하나는 초당 정해진 양의 일을 하므로, 더 많은 연결이 한꺼번에 물으면 각자
+더 오래 기다린다: 왕복 시간은 유지한 수가 아니라 묻는 수에 따라 늘어난다. 어느 행에서도 연결은 하나도
+잃지 않았다. 100,000개를 여는 데 96초가 걸렸고 50,000개는 1.7초였다. 그것은 포트 범위가 바닥나면서
+클라이언트 쪽 시스템이 빈 포트를 찾느라 쓴 시간으로 보이며 서버의 시간이 아니다: 블로킹 서버도 같은
+단계에 그만큼 또는 그 이상 걸렸다.
+
+소켓에 대한 시스템 자신의 비용은 별개이고 더 크다: 같은 실행들에서 커널의 slab 메모리는 연결 하나에,
+그 양 끝을 합쳐, 약 7.5 KiB씩 늘었다.
+
+여러 루프. 클라이언트 프로세스 넷이 각각 연결 12,500개를 유지하고 그 1%가 요청을 보낸다:
+
+| 루프 | 초당 요청, 모든 클라이언트 합계 | 왕복 시간: 중앙값 |
+|---|---|---|
+| 1 | 167,000 | 2.9 ms |
+| 2 | 337,000 | 1.4 ms |
+| 4 | 514,000 | 1.0 ms |
+
+**비교를 위한 11장의 블로킹 서버.** 같은 프로그램에서, 핸들러를 자기 루프의 스레드에 둔 채: 같은
+100,000개의 연결을 유지했고 조금 더 빨리 답했다 - 50,000개를 유지할 때 초당 186,000 요청, 이쪽은
+171,000. 그 값은 메모리다: 연결당 39 KiB를 할당하고 그중 10.9 KiB가 상주한다. 이쪽은 480바이트다.
+그리고 그것은 핸들러가 기다리는 스레드 하나다. 이 장의 서버를 고를 이유는 1절의 것들이지, 사소한
+핸들러에서의 순수한 속도가 아니다.
+
+**Windows에서는 한계가 낮고, 그 자리는 여기다.** 거기서 루프는 `WSAPoll`로 기다리는데, 그것은 호출마다
+모든 소켓을 들여다본다. 같은 프로그램의 양쪽 끝을 Windows 11 가상 머신 하나에 두고, 연결 열 개가 요청을
+보낼 때:
+
+| 유지한 연결 | 초당 요청 | 왕복 시간: 중앙값 |
+|---|---|---|
+| 100 | 40,000 | 0.2 ms |
+| 1,000 | 8,100 | 1.0 ms |
+| 2,000 | 2,700 | 3.2 ms |
+| 5,000 | 480 | 18 ms |
+| 10,000 | 150 | 66 ms |
+
+클라이언트도 같은 루프 구현 위에 있으므로 각 수치는 그 비용을 두 번 싣는다. 20,000개의 연결을
+청했을 때 그 기계는 포트가 바닥나기 전에 16,369개를 열었다. Windows에서 이 서버는 수백 개의 연결,
+많아야 몇천 개를 위한 것이다. 이 릴리스의 무엇도 그것을 바꾸지 않는다.
 
 **여기 없는 것.**
 
-- 루프 하나가 **몇 개의 연결을 감당하는지**, 측정한 값. 설계는 수만 개를 겨냥한다. 측정은 뒤의
-  릴리스에 속하고, 그때까지 한정된 주장은 위의 것들이다.
-- **둘 이상의 루프.** 여기의 서버는 스레드 하나를 쓴다. 여러 루프를 프로세서 코어들에 걸쳐 돌리는
-  것은 뒤의 릴리스다.
+- **이름값을 하는 부하 시험.** 위의 수치는 기계 한 대가 자기 자신과 말한 것이다: 네트워크도, 느리거나
+  적대적인 클라이언트도, 부하 속의 TLS도 없고, 아무 일도 하지 않는 핸들러 하나뿐이다.
 - **루프 위의 WebSocket 클라이언트**, 그리고 이 서버 위의 WebSocket 아닌 업그레이드. 12장의
   클라이언트는 블로킹 쪽이다.
 - **이벤트 구동 클라이언트에서:** 연결 재사용, 리다이렉트, 인증, 쿠키, 프록시, 이름 해석(대신 무엇을
   할지는 12절에 있다).
+- **루프의 스레드 밖에서 하는 TLS 핸드셰이크.** 하나마다 루프는 약 2 ms 동안 다른 아무것도 서비스하지
+  못한다(14장 9절).
+- Windows에서 `WSAPoll`보다 **빠른 기다림**.
 - **파일을 복사 없이 보내기**, 응답 압축, HTTP/2.
 - 루프로 **파일, 시그널, 자식 프로세스 지켜보기**. 루프는 소켓을 지켜본다.
 
@@ -1173,6 +1406,7 @@ TLS로, 7절과 9절 표의 모든 행에 걸쳐 돌린다: 즉시 하는 답, �
 장의 서버와, 테스트가 직접 써 주는 답을 상대로 12절 표들의 행에 걸쳐 돌린다 -
 `PROVEN_ERR_UNREACHABLE`, `PROVEN_ERR_NOMEM`, 만료된 인증서, 그리고 네 시간 한도 가운데 셋만 빼고:
 지나가게 만드는 것은 응답 타임아웃뿐이다. 이 모두를 기계에 부하를 건 채 주소 검사와 미정의 동작 검사
-아래에서 수백 번, 그리고 스레드 검사 아래에서 돌렸다. **하지 않은 것:** 부하 시험, 처리량이나 지연
-시간의 측정, 나열한 경우를 넘어서는 적대적 상대와의 실행, 그리고 공개된 WebSocket 적합성 스위트를 이
-서버에 돌리는 것.
+아래에서 수백 번, 그리고 스레드 검사 아래에서 돌렸다. 여러 루프는 받아들이는 스레드 하나 뒤의 세 스레드 위 세 서버로, 평문과
+TLS로, 스레드 검사 아래에서 돌린다. 루프의 휠 한 바퀴(16.4초)보다 먼 타이머는 테스트가 움직이는 시계로
+시험한다. **하지 않은 것:** 나열한 경우를 넘어서는 적대적 상대와의 실행, 공개된 WebSocket 적합성
+스위트를 이 서버에 돌리는 것, 그리고 위에 적은 한 번의 실행을 넘어서는 부하.
