@@ -18,7 +18,8 @@ static int g_order_n;
 static proven_time_t g_fake_now;
 static proven_time_t fake_clock(void *ctx) { (void)ctx; return g_fake_now; }
 
-static void note(void *ctx) { if (g_order_n < 32) g_order[g_order_n++] = (int)(proven_intptr_t)ctx; }
+static proven_time_t g_fired_at[32];             /* when each note was taken, on the real clock */
+static void note(void *ctx) { if (g_order_n < 32) { g_fired_at[g_order_n] = proven_time_monotonic_now(); g_order[g_order_n++] = (int)(proven_intptr_t)ctx; } }
 
 static void spin(proven_u32 ms) {
     proven_net_deadline_t until = proven_net_deadline_in(ms);
@@ -134,9 +135,18 @@ int main(void) {
         PROVEN_TEST_ASSERT(!proven_loop_timer_is_set(&never), "cancelled, and cancelling again is harmless", "");
         proven_time_t t0 = proven_time_monotonic_now();
         spin(20);
-        PROVEN_TEST_ASSERT(g_order_n == 0, "nothing fires before its time", "");
+        /* Twenty milliseconds on, the 30 ms timer has not fired - unless this thread was kept
+         * from running for longer than that, which a loaded machine may do. What must hold
+         * either way is judged on the clock, below: no timer before its own time. */
+        PROVEN_TEST_ASSERT(g_order_n == 0 || proven_time_monotonic_now() - t0 >= 30000000, "nothing fires before its time", "");
         spin(180);
         PROVEN_TEST_ASSERT(g_order_n == 3 && g_order[0] == 1 && g_order[1] == 2 && g_order[2] == 3, "three timers fire in the order of their times; the cancelled one never does", "");
+        /* The timers were set a hair before t0, so their times are a hair before t0 plus the
+         * delay: a millisecond of allowance covers that. */
+        static const proven_time_t due[3] = { 30000000, 70000000, 120000000 };
+        bool on_time = true;
+        for (int i = 0; i < 3; ++i) on_time = on_time && g_fired_at[i] - t0 >= due[i] - 1000000;
+        PROVEN_TEST_ASSERT(on_time, "and each at or after its own time, by the clock", "");
         PROVEN_TEST_ASSERT(!proven_loop_timer_is_set(&t1) && proven_time_monotonic_now() - t0 < 1500000000, "a fired timer is no longer set", "");
         spin(150);
         PROVEN_TEST_ASSERT(g_order_n == 3, "and fires once", "");
@@ -164,8 +174,9 @@ int main(void) {
         g_order_n = 0;
         proven_loop_timer_set(g_loop, &t1, 30, note, (void *)1);
         proven_loop_timer_set(g_loop, &t1, 150, note, (void *)2);
+        proven_time_t moved_at = proven_time_monotonic_now();
         spin(90);
-        PROVEN_TEST_ASSERT(g_order_n == 0, "a timer set again waits for its new time", "");
+        PROVEN_TEST_ASSERT(g_order_n == 0 || g_fired_at[0] - moved_at >= 149000000, "a timer set again waits for its new time", "");
         spin(120);
         PROVEN_TEST_ASSERT(g_order_n == 1 && g_order[0] == 2, "and fires once, with what it was last given", "");
 

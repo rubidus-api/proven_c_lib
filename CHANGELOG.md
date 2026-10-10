@@ -18,6 +18,16 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-10
+
+A MINOR release: a server - or a client - may now present an RSA certificate. Until now this
+side of a TLS connection needed a P-256 or Ed25519 key, and a site whose only certificate is
+RSA could not use the library's TLS.
+
+The standing caution applies with more force here than anywhere: this is a new implementation
+of the operation where a mistake costs the key, it has had no external audit, and manual
+chapter 14 says exactly what was checked and what could not be.
+
 ### Added
 
 - **RSA keys for this side of a TLS connection.** `proven_tls_config_create` accepts an RSA
@@ -43,6 +53,16 @@ written; their tags still exist.
   key it will not use - outside 2048 to 4096 bits, malformed, or unable to sign - is
   `PROVEN_ERR_INVALID_FORMAT`. `PROVEN_ERR_UNSUPPORTED` remains for other kinds of key (P-384)
   and for encrypted key files.
+
+### Fixed
+
+- `test_unit_loop` judged "no timer fires before its time" by how long the test's own thread
+  had slept, and failed once on a loaded 32-bit Windows machine where that thread was kept
+  waiting longer than the timer. It now compares the time each timer fired with the time it
+  was due. The loop itself was not at fault and is unchanged.
+- `test_unit_tls_net` allowed 300 ms for an HTTPS request made while another client's
+  handshake was pending, which thread checking under load could exceed; the bound is now
+  1.5 s inside a 2 s head timeout.
 
 ## [0.20.0] - 2026-10-10
 
