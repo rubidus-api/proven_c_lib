@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-10
+
 A MINOR release: the legacy parts of TLS - CBC cipher suites, key exchange by RSA and by
 finite-field Diffie-Hellman, TLS 1.0 and 1.1 - for programs that must reach a peer with
 nothing better. **Every one is off unless a configuration names it**, and a configuration that

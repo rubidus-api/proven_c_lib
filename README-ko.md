@@ -1,4 +1,4 @@
-**한국어** | [English](README.md) — **Proven C library v0.22.0** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.22.0/proven_c_lib-v0.22.0.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.22.0/proven_c_lib-v0.22.0-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.22.0/proven_c_lib-v0.22.0-ko-manual.pdf)
+**한국어** | [English](README.md) — **Proven C library v0.23.0** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.23.0/proven_c_lib-v0.23.0.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.23.0/proven_c_lib-v0.23.0-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.23.0/proven_c_lib-v0.23.0-ko-manual.pdf)
 
 # Proven C library
 
@@ -19,7 +19,7 @@ C 책을 한 권 뗐다고 해 봅시다. 포인터도, `malloc`도, `printf`도
 공개 함수 전부를 이름으로 찾을 수 있는 검색이 함께 있습니다. 입문서 한 권 외에는 아무것도
 전제하지 않으며, 이 저장소에서 찾아보는 문서가 아니라 읽으라고 쓴 유일한 문서입니다.
 
-- 버전: proven_c_lib-v0.22.0 · 표준: C23 · 라이선스: MIT
+- 버전: proven_c_lib-v0.23.0 · 표준: C23 · 라이선스: MIT
 - 버전은 시맨틱 버전 `MAJOR.MINOR.PATCH`이며 v0.0.1(2026-09-04)부터 시작합니다. 그 이전 릴리스는
   날짜 기반 번호(`v26.MM.DDx`)이고, 발표된 그대로 둡니다.
 - `*_internal`이나 `*_impl`로 끝나는 함수 일곱 개는 매크로가 호출하기 때문에 공개 헤더에 있습니다.
