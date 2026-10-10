@@ -18,6 +18,12 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-10
+
+A MINOR release: the event-driven server across several processor cores, and the first
+measurements of what the loop of 0.18.0 carries. One function is new; the rest is what was
+measured and written down.
+
 ### Added
 
 - `proven_http_event_server_adopt`: give an event-driven server a connection that was accepted
