@@ -302,7 +302,7 @@ int main(void) {
         o.certificate_pem = pem(TP_SERVER_P256); o.private_key_pem = pem(TP_CA);
         PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &c) == PROVEN_ERR_INVALID_FORMAT, "a key file with no key", "");
         o.certificate_pem = pem(TP_SERVER_P256); o.private_key_pem = pem(TP_RSA_KEY);
-        PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &c) == PROVEN_ERR_UNSUPPORTED, "an RSA key is PROVEN_ERR_UNSUPPORTED in this version", "");
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &c) == PROVEN_ERR_INVALID_FORMAT, "something labelled an RSA key that is not one is PROVEN_ERR_INVALID_FORMAT", "");
         o.certificate_pem = pem(TP_SERVER_P256); o.private_key_pem = pem(TP_P384_KEY);
         PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &c) == PROVEN_ERR_UNSUPPORTED, "and so is a P-384 key", "");
         o.certificate_pem = pem(TP_SERVER_P256); o.private_key_pem = pem(TP_CLIENT_KEY);
@@ -615,6 +615,84 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("RSA keys for this side",
+        "A server with an RSA key, in both of its file forms; a client certificate with one; a chain signed with one; and the keys that are refused.",
+        "Check cfg_rsa and cfg_match_key in src/proven/tls_config.c, and the RSA branch of cv_build in src/proven/tls13.c. The signing itself is test_unit_crypto_rsa's business.");
+    {
+        proven_tls_config_t *bad = NULL;
+        PROVEN_TEST_ASSERT(tp_build_rsa(), "RSA identities are made", "");
+        proven_tls_config_t *cc = client_config(NULL);
+        for (int form = 0; form < 2; ++form) {
+            proven_tls_config_t *sc = server_config(TP_SERVER_RSA, form ? TP_SERVER_RSA_KEY_PKCS1 : TP_SERVER_RSA_KEY, NULL);
+            pair_t p = connect_pair(cc, sc, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p) && transfer(p.c, p.s, 3000, 5) && transfer(p.s, p.c, 70000, 6),
+                form ? "and the same key as an RSA PRIVATE KEY file" : "a server with a 2048-bit RSA key in PKCS #8 completes a handshake and carries data", "");
+            close_pair(&p);
+            /* Every handshake signs with the next blinding pair. */
+            bool all = true;
+            for (int i = 0; i < 12 && form == 0; ++i) {
+                p = connect_pair(cc, sc, "example.test", NULL, NULL, NULL);
+                all = all && both_up(&p);
+                close_pair(&p);
+            }
+            PROVEN_TEST_ASSERT(all, "twelve more handshakes on the same configuration all complete", "");
+            if (form == 0) {
+                /* Resumption does not sign: the session from an RSA handshake resumes like any other. */
+                proven_tls_session_t session;
+                memset(&session, 0, sizeof session);
+                p = connect_pair(cc, sc, "example.test", &session, NULL, NULL);
+                PROVEN_TEST_ASSERT(both_up(&p) && transfer(p.s, p.c, 10, 1), "a session is taken from an RSA handshake", "");
+                close_pair(&p);
+                p = connect_pair(cc, sc, "example.test", &session, NULL, NULL);
+                PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_resumed(p.c) && proven_tls_resumed(p.s), "and resumed", "");
+                close_pair(&p);
+            }
+            proven_tls_config_destroy(sc);
+        }
+
+        /* Keys that do not belong, or are not acceptable. */
+        proven_tls_options_t o = base_options();
+        o.certificate_pem = pem(TP_SERVER_RSA); o.private_key_pem = pem(TP_SERVER_P256_KEY);
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &bad) == PROVEN_ERR_INVALID_STATE, "an RSA certificate with a P-256 key is PROVEN_ERR_INVALID_STATE", "");
+        o.certificate_pem = pem(TP_SERVER_P256); o.private_key_pem = pem(TP_SERVER_RSA_KEY);
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &bad) == PROVEN_ERR_INVALID_STATE, "and a P-256 certificate with an RSA key", "");
+        o.certificate_pem = pem(TP_CLIENT_RSA); o.private_key_pem = pem(TP_SERVER_RSA_KEY);
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &bad) == PROVEN_ERR_INVALID_STATE, "and an RSA certificate with another RSA key", "");
+        o.certificate_pem = pem(TP_CLIENT_RSA); o.private_key_pem = pem(TP_CLIENT_RSA_KEY);
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &bad) == PROVEN_ERR_INVALID_FORMAT, "a 1024-bit RSA key is refused: PROVEN_ERR_INVALID_FORMAT", "");
+
+        /* With the size limit lowered for the test: an RSA client certificate, and a chain signed with RSA. */
+        proven_crypto_rsa_test_min_bits(1024);
+        {
+            proven_tls_options_t so = base_options(), co = base_options();
+            so.anchors = g_anchors; so.client_auth = PROVEN_TLS_CLIENT_AUTH_REQUIRE; so.keep_peer_certificate = true;
+            co.certificate_pem = pem(TP_CLIENT_RSA); co.private_key_pem = pem(TP_CLIENT_RSA_KEY);
+            proven_tls_config_t *sc = server_config(TP_SERVER_RSA, TP_SERVER_RSA_KEY, &so), *rc = client_config(&co);
+            pair_t p = connect_pair(rc, sc, "example.test", NULL, NULL, NULL);
+            proven_cert_t got;
+            PROVEN_TEST_ASSERT(both_up(&p) && proven_cert_parse(proven_tls_peer_certificate(p.s), &got) == PROVEN_OK && got.key_kind == PROVEN_CERT_KEY_RSA && transfer(p.c, p.s, 100, 2),
+                "RSA on both sides: the server signs with its key and accepts the client's RSA certificate", "");
+            close_pair(&p);
+            proven_tls_config_destroy(sc); proven_tls_config_destroy(rc);
+
+            proven_cert_store_t *rsa_anchors = NULL;
+            PROVEN_TEST_ASSERT(proven_cert_store_create(g_alloc, &rsa_anchors) == PROVEN_OK && proven_cert_store_add_pem(rsa_anchors, pem(TP_RSA_CA), NULL) == PROVEN_OK, "the RSA authority as an anchor", "");
+            proven_tls_options_t ro = base_options();
+            ro.anchors = rsa_anchors;
+            proven_tls_config_t *by_rsa = server_config(TP_SERVER_RSA_BY_RSA, TP_SERVER_RSA_KEY, NULL), *believer = client_config(&ro);
+            p = connect_pair(believer, by_rsa, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(both_up(&p), "a certificate the test's issuer signed with RSA is verified by the client: the issuing signature is a real one", "");
+            close_pair(&p);
+            p = connect_pair(cc, by_rsa, "example.test", NULL, NULL, NULL);
+            PROVEN_TEST_ASSERT(g_err_c == PROVEN_ERR_UNTRUSTED && !proven_tls_is_established(p.c), "and a client that trusts only the other authority refuses it", "");
+            close_pair(&p);
+            proven_tls_config_destroy(by_rsa); proven_tls_config_destroy(believer);
+            proven_cert_store_destroy(rsa_anchors);
+        }
+        proven_crypto_rsa_test_min_bits(0);
+        proven_tls_config_destroy(cc);
+    }
+
     PROVEN_TEST_SECTION("resumption",
         "A ticket from one connection shortens the next: no certificates, the same identity. A ticket that is old, damaged or for another name falls back or fails as it should.",
         "Check proven_tls_ticket_seal/_open, client_session, and the PSK branch of server_client_hello.");

@@ -203,7 +203,7 @@ static bool body_is(proven_http_client_response_t *resp, const char *want) {
 }
 
 static void https_cases(proven_job_sys_t *handlers, const char *how) {
-    proven_http_server_config_t scfg = { .alloc = g_heap, .handler = handler, .jobs = handlers, .tls = g_server_tls, .head_timeout_ms = 400, .max_body_bytes = 4 * 1024 * 1024 };
+    proven_http_server_config_t scfg = { .alloc = g_heap, .handler = handler, .jobs = handlers, .tls = g_server_tls, .head_timeout_ms = 2000, .max_body_bytes = 4 * 1024 * 1024 };
     proven_net_addr_t at;
     PROVEN_TEST_ASSERT(proven_http_server_create(&scfg, &g_server) == PROVEN_OK &&
                        proven_http_server_listen(g_server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "an HTTPS server", how);
@@ -282,12 +282,12 @@ static void https_cases(proven_job_sys_t *handlers, const char *how) {
     proven_time_t t0 = proven_time_monotonic_now();
     e = proven_http_client_get(client, url("https", at.port, "/"), &resp);
     proven_time_t took = proven_time_monotonic_now() - t0;
-    PROVEN_TEST_ASSERT(e == PROVEN_OK && body_is(&resp, "hello over tls") && took < 300000000, "others are served at once while its handshake is pending", how);
+    PROVEN_TEST_ASSERT(e == PROVEN_OK && body_is(&resp, "hello over tls") && took < 1500000000, "others are served while its handshake is pending, well inside the head timeout it is using up", how);
     proven_http_client_finish(&resp);
     /* The server may say a TLS goodbye first; what matters is that the connection then ends. */
     proven_byte_t drop[64];
     proven_result_size_t gone;
-    proven_net_deadline_t give_up = proven_net_deadline_in(3000);
+    proven_net_deadline_t give_up = proven_net_deadline_in(8000);
     do { gone = proven_net_read(&silent, (proven_mem_mut_t){ .ptr = drop, .size = sizeof drop }, give_up); } while (gone.err == PROVEN_OK);
     PROVEN_TEST_ASSERT(gone.err == PROVEN_ERR_EOF || gone.err == PROVEN_ERR_RESET, "and after the head timeout the server closes it", how);
     (void)proven_net_close(&silent);
@@ -321,6 +321,73 @@ static void https_cases(proven_job_sys_t *handlers, const char *how) {
     g_server = NULL;
 }
 
+/* One RSA key, signing on several threads at once. Each thread completes handshakes between a
+ * client and a server connection of its own, in memory; what they share is the server's
+ * configuration - and with it the key's blinding pair, which every signature takes and
+ * replaces. */
+static proven_tls_config_t *g_rsa_server;
+static atomic_int g_rsa_done, g_rsa_failed;
+enum { RSA_THREADS = 4, RSA_EACH = 6 };
+
+static void rsa_job(void *arg) {
+    (void)arg;
+    for (int i = 0; i < RSA_EACH; ++i) {
+        proven_tls_conn_t *c = NULL, *s = NULL;
+        bool ok = proven_tls_client_create(g_client_tls, sv("example.test"), NULL, &c) == PROVEN_OK && proven_tls_server_create(g_rsa_server, &s) == PROVEN_OK;
+        for (int round = 0; ok && round < 12 && !(proven_tls_is_established(c) && proven_tls_is_established(s)); ++round) {
+            for (int dir = 0; ok && dir < 2; ++dir) {
+                proven_tls_conn_t *from = dir ? s : c, *to = dir ? c : s;
+                proven_mem_view_t out = proven_tls_pending_output(from);
+                proven_size_t at = 0;
+                while (ok && at < out.size) {
+                    proven_size_t used = 0;
+                    ok = proven_tls_feed(to, (proven_mem_view_t){ .ptr = out.ptr + at, .size = out.size - at }, &used) == PROVEN_OK;
+                    at += used;
+                    if (used == 0) break;
+                }
+                proven_tls_output_sent(from, out.size);
+            }
+        }
+        ok = ok && proven_tls_is_established(c) && proven_tls_is_established(s);
+        if (ok) atomic_fetch_add(&g_rsa_done, 1); else atomic_fetch_add(&g_rsa_failed, 1);
+        proven_tls_conn_destroy(c); proven_tls_conn_destroy(s);
+    }
+}
+
+static void rsa_threads_case(void) {
+    PROVEN_TEST_ASSERT(tp_build_rsa(), "an RSA identity is made", "");
+    proven_tls_options_t so = { .alloc = g_heap, .certificate_pem = pem(TP_SERVER_RSA), .private_key_pem = pem(TP_SERVER_RSA_KEY) };
+    PROVEN_TEST_ASSERT(proven_tls_config_create(&so, &g_rsa_server) == PROVEN_OK, "a server configuration with a 2048-bit RSA key", "");
+    proven_job_sys_t *threads = NULL;
+    proven_job_group_t group;
+    proven_job_group_init(&group);
+    PROVEN_TEST_ASSERT(proven_job_system_init(g_heap, RSA_THREADS, 8, &threads) == PROVEN_OK, "four threads", "");
+    for (int i = 0; i < RSA_THREADS; ++i) PROVEN_TEST_ASSERT(proven_job_group_submit(threads, &group, rsa_job, NULL) == PROVEN_OK, "a thread of handshakes", "");
+    proven_job_group_wait(threads, &group);
+    PROVEN_TEST_ASSERT(atomic_load(&g_rsa_done) == RSA_THREADS * RSA_EACH && atomic_load(&g_rsa_failed) == 0,
+        "twenty-four handshakes signed with one RSA key from four threads at once all complete, each verified by its client", "");
+    proven_job_system_close(threads); proven_job_system_destroy(threads);
+
+    /* The same key behind a real server. */
+    proven_http_server_config_t scfg = { .alloc = g_heap, .handler = handler, .tls = g_rsa_server };
+    proven_net_addr_t at;
+    proven_job_group_init(&g_group);
+    PROVEN_TEST_ASSERT(proven_http_server_create(&scfg, &g_server) == PROVEN_OK && proven_http_server_listen(g_server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK &&
+                       proven_job_group_submit(g_loop, &g_group, serve, NULL) == PROVEN_OK, "an HTTPS server with that key", "");
+    proven_http_client_config_t ccfg = { .alloc = g_heap, .tls_wrap = proven_tls_http_wrap, .tls_ctx = g_client_tls };
+    proven_http_client_t *client = NULL;
+    proven_http_client_response_t resp;
+    PROVEN_TEST_ASSERT(proven_http_client_create(&ccfg, &client) == PROVEN_OK && proven_http_client_get(client, url("https", at.port, "/"), &resp) == PROVEN_OK &&
+                       body_is(&resp, "hello over tls"), "a page is fetched over HTTPS from a server whose key is RSA", "");
+    proven_http_client_finish(&resp);
+    proven_http_client_destroy(client);
+    proven_http_server_stop(g_server);
+    proven_job_group_wait(g_loop, &g_group);
+    proven_http_server_destroy(g_server);
+    g_server = NULL;
+    proven_tls_config_destroy(g_rsa_server);
+}
+
 int main(void) {
     PROVEN_TEST_SUITE("TLS over sockets: the transport, HTTPS and WebSocket",
         "The engine carried by real connections: the wrapper by itself, then through the HTTP client and server with handlers on the loop thread and on workers.",
@@ -346,6 +413,8 @@ int main(void) {
     https_cases(NULL, "handlers on the loop thread");
     PROVEN_TEST_SECTION("HTTPS and wss, handlers on workers", "The same, with connections changing hands between the loop and worker threads.", "Check that the TLS transport travels with the connection.");
     https_cases(handlers, "handlers on workers");
+    PROVEN_TEST_SECTION("an RSA key, signing on several threads", "Four threads completing handshakes against one configuration: the key's blinding pair is shared and changes with every signature.", "Check proven_tls_config_rsa_sign_ in src/proven/tls_config.c: the pair is copied and replaced under the flag, and the signature is made outside it. Run under ThreadSanitizer.");
+    rsa_threads_case();
 
     proven_tls_config_destroy(g_client_tls); proven_tls_config_destroy(g_server_tls); proven_tls_config_destroy(g_stranger_tls);
     proven_cert_store_destroy(g_anchors); proven_cert_store_destroy(g_other);

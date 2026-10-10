@@ -18,6 +18,32 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **RSA keys for this side of a TLS connection.** `proven_tls_config_create` accepts an RSA
+  private key of 2048 to 4096 bits, as PKCS #8 (`PRIVATE KEY`) or PKCS #1 (`RSA PRIVATE KEY`),
+  for a server's certificate or a client's. The handshake is signed with RSASSA-PSS over
+  SHA-256 (`rsa_pss_rsae_sha256`, the scheme TLS 1.3 requires every peer to accept). No
+  function is new: the same options, one more kind of key.
+- What the signing is: the private operation modulo the two primes (CRT) with a constant-time,
+  fixed-window exponentiation; the input blinded, with a pair that changes after every
+  signature; and the result verified with the public key before it is released, so that a
+  fault in one half cannot hand out the key's factors. The key is tried once - a signature
+  made and checked - when the configuration is created.
+- **What it costs**, in manual chapter 14, section 9: about 9 ms for one signature with a
+  2048-bit key on the development machine, 27 ms with 3072 bits, 55 ms with 4096 - a server
+  with a 2048-bit RSA key completes about a hundred new connections a second per core, against
+  five hundred with P-256. And about 20 KiB of stack while signing.
+- Test `test_unit_crypto_rsa`; an RSA section in `test_unit_tls`. The tests make their RSA keys
+  when they start: no key is stored in the tree.
+
+### Changed
+
+- `proven_tls_config_create` no longer answers `PROVEN_ERR_UNSUPPORTED` for an RSA key. An RSA
+  key it will not use - outside 2048 to 4096 bits, malformed, or unable to sign - is
+  `PROVEN_ERR_INVALID_FORMAT`. `PROVEN_ERR_UNSUPPORTED` remains for other kinds of key (P-384)
+  and for encrypted key files.
+
 ## [0.20.0] - 2026-10-10
 
 A MINOR release: the event-driven server across several processor cores, and the first

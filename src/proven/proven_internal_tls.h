@@ -97,7 +97,19 @@ proven_size_t proven_tls13_seal(proven_tls_keys_t *keys, proven_byte_t type, pro
 #define PROVEN_TLS_MAX_CHAIN 8
 #define PROVEN_TLS_TICKET_PSK_MAX 48
 
-typedef enum { PROVEN_TLS_KEY_NONE = 0, PROVEN_TLS_KEY_P256, PROVEN_TLS_KEY_ED25519 } proven_tls_key_kind_t;
+typedef enum { PROVEN_TLS_KEY_NONE = 0, PROVEN_TLS_KEY_P256, PROVEN_TLS_KEY_ED25519, PROVEN_TLS_KEY_RSA } proven_tls_key_kind_t;
+
+/* An RSA key and its blinding pair. The pair changes with every signature - from inside
+ * handshakes, on whichever thread signs - so a flag serialises that, as for the ticket keys.
+ * It is held for one squaring of the pair (and, every 65,536 signatures, for making a new
+ * one): longer than the ticket keys' few instructions, and still far shorter than the
+ * signature that follows outside it. */
+typedef struct {
+    proven_crypto_rsa_key_t key;                  /* SECRET */
+    atomic_flag lock;
+    proven_crypto_rsa_blind_t blind;              /* SECRET */
+    proven_u32 uses;
+} proven_tls_rsa_t;
 
 /* A server's ticket keys: the current one and the one before. They are replaced on a timer
  * from inside handshakes, on whichever thread gets there first; a flag serialises that. */
@@ -121,6 +133,7 @@ struct proven_tls_config {
     proven_tls_key_kind_t key_kind;
     proven_byte_t key[32];                        /* the P-256 scalar or the Ed25519 seed. SECRET */
     proven_byte_t key_public[32];                 /* Ed25519 only */
+    proven_tls_rsa_t *rsa;                        /* an RSA key lives here instead: it is two kilobytes */
     proven_tls_client_auth_t client_auth;
     proven_byte_t *alpn_wire;                     /* the names, each behind its length byte */
     proven_size_t alpn_wire_len;
@@ -200,6 +213,8 @@ typedef struct {
     const proven_byte_t *subject_key;             /* 32 bytes: an Ed25519 seed or a P-256 scalar */
     proven_tls_key_kind_t issuer_kind;
     const proven_byte_t *issuer_key;
+    const proven_crypto_rsa_key_t *subject_rsa;   /* instead of subject_key, for PROVEN_TLS_KEY_RSA */
+    const proven_crypto_rsa_key_t *issuer_rsa;
     bool is_ca;
     proven_u32 eku;                               /* PROVEN_CERT_EKU_SERVER_AUTH | PROVEN_CERT_EKU_CLIENT_AUTH; 0: none */
     const proven_u8str_view_t *names;             /* subjectAltName entries: DNS names and IP literals */
@@ -212,6 +227,13 @@ typedef struct {
 proven_err_t proven_tls_issue_(const proven_tls_issue_t *what, proven_mem_mut_t out, proven_size_t *len);
 /* A private key as PKCS #8 DER; with `sec1`, a P-256 key as an ECPrivateKey instead. At most 80 bytes. */
 proven_size_t proven_tls_key_der_(proven_tls_key_kind_t kind, const proven_byte_t key[32], bool sec1, proven_byte_t out[80]);
+/* An RSA private key as an RSAPrivateKey (PKCS #1), or with `pkcs8` inside a PrivateKeyInfo.
+ * `d` is the private exponent, n_len bytes. Returns the length, or 0 when `out` is too small. */
+proven_size_t proven_tls_rsa_key_der_(const proven_crypto_rsa_key_t *key, const proven_byte_t *d, bool pkcs8, proven_mem_mut_t out);
+/* A CertificateVerify signature with the config's RSA key: RSASSA-PSS over SHA-256 with a
+ * salt of 32 bytes, n_len bytes into `sig`. False when the config has no RSA key or the
+ * signature could not be made. */
+[[nodiscard]] bool proven_tls_config_rsa_sign_(const proven_tls_config_t *config, proven_mem_view_t digest, proven_byte_t *sig, proven_size_t *len);
 /* PEM: the label between the dashes, the bytes in Base64, 64 to a line. */
 proven_err_t proven_tls_pem_write_(const char *label, proven_mem_view_t der, proven_mem_mut_t out, proven_size_t *len);
 /* 4 or 16 when `text` is an IP literal (cert.c). */

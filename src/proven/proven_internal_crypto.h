@@ -70,6 +70,9 @@ typedef struct {
 
 /* The modulus from big-endian bytes. False when it is even, below 3, or too large. */
 [[nodiscard]] bool proven_crypto_mp_mod_init(proven_crypto_mp_mod_t *mod, const proven_byte_t *be, proven_size_t len);
+/* The same for a SECRET modulus of exactly `len` bytes (8 or more): nothing but its oddness
+ * is examined, and `bits` is len * 8 whatever its leading bits are. */
+[[nodiscard]] bool proven_crypto_mp_mod_init_secret(proven_crypto_mp_mod_t *mod, const proven_byte_t *be, proven_size_t len);
 /* Load big-endian bytes into `limbs` limbs. False when the value does not fit. */
 [[nodiscard]] bool proven_crypto_mp_load_be(proven_u32 *out, proven_size_t limbs, const proven_byte_t *be, proven_size_t len);
 void proven_crypto_mp_store_be(proven_byte_t *out, proven_size_t len, const proven_u32 *a, proven_size_t limbs);
@@ -93,7 +96,19 @@ void proven_crypto_mp_reduce_be(const proven_crypto_mp_mod_t *mod, proven_u32 *o
  * decide which multiplications happen. */
 void proven_crypto_mp_pow(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *base,
                           const proven_u32 *exp, proven_size_t exp_limbs);
-/* out = a^-1 mod n for a prime n (Fermat), in Montgomery form. Zero stays zero. */
+/* The largest modulus, in limbs, that proven_crypto_mp_pow_ct accepts: a prime factor of a
+ * 4096-bit RSA key, with room for factors of unequal size. Its table is sized by this. */
+#define PROVEN_CRYPTO_MP_CT_MAX 66
+/* out = base^exp mod n, base and out in Montgomery form, for a SECRET exponent - and the
+ * modulus may be secret too. `exp` has exactly as many limbs as the modulus, zero-padded: the
+ * number of steps depends on the modulus's size alone, never on the exponent's own length or
+ * bits (fixed four-bit windows, every table lookup a masked pass over the whole table).
+ * False when the modulus has more than PROVEN_CRYPTO_MP_CT_MAX limbs. */
+[[nodiscard]] bool proven_crypto_mp_pow_ct(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *base, const proven_u32 *exp);
+/* out = a * b, a plain product of alen + blen limbs. `out` may not overlap an input. */
+void proven_crypto_mp_mul(proven_u32 *out, const proven_u32 *a, proven_size_t alen, const proven_u32 *b, proven_size_t blen);
+/* out = a^-1 mod n for a prime n (Fermat), in Montgomery form. Zero stays zero. The modulus
+ * is PUBLIC here: it is used as the exponent of the public exponentiation. */
 void proven_crypto_mp_inv_prime(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *a);
 
 /* ---- The NIST prime curves P-256 and P-384 ---- */
@@ -186,5 +201,58 @@ bool proven_crypto_aes_hw_available(void);
 /* RSASSA-PSS with MGF1 over the same hash and a salt of `salt_len` bytes. */
 [[nodiscard]] bool proven_crypto_rsa_verify_pss(proven_mem_view_t n, proven_mem_view_t e, int hash, proven_size_t salt_len,
                                                 proven_mem_view_t digest, proven_mem_view_t sig);
+
+/* ---- RSA signing (RFC 8017). Everything in a key but n and e is SECRET. ---- */
+
+#define PROVEN_CRYPTO_RSA_SIGN_MAX_BITS 4096
+#define PROVEN_CRYPTO_RSA_SIGN_MAX_BYTES (PROVEN_CRYPTO_RSA_SIGN_MAX_BITS / 8)
+#define PROVEN_CRYPTO_RSA_PRIME_MAX_BYTES (PROVEN_CRYPTO_MP_CT_MAX * 4)
+
+/* A private key in the form signing uses: the two primes and the CRT values, big-endian.
+ * `dp` and `qinv` are p_len bytes, `dq` is q_len bytes, zero-padded on the left. */
+typedef struct {
+    proven_size_t n_len, e_len, p_len, q_len;
+    proven_byte_t n[PROVEN_CRYPTO_RSA_SIGN_MAX_BYTES];
+    proven_byte_t e[8];
+    proven_byte_t p[PROVEN_CRYPTO_RSA_PRIME_MAX_BYTES], q[PROVEN_CRYPTO_RSA_PRIME_MAX_BYTES];
+    proven_byte_t dp[PROVEN_CRYPTO_RSA_PRIME_MAX_BYTES], dq[PROVEN_CRYPTO_RSA_PRIME_MAX_BYTES];
+    proven_byte_t qinv[PROVEN_CRYPTO_RSA_PRIME_MAX_BYTES];
+} proven_crypto_rsa_key_t;
+
+/* A blinding pair for one key: r^e mod n and r^-1 mod n, n_len bytes each. SECRET. A
+ * signature made with it computes on c * r^e instead of c, so that what the private
+ * exponentiation works on is not what the caller - or an attacker - chose. */
+typedef struct {
+    proven_byte_t factor[PROVEN_CRYPTO_RSA_SIGN_MAX_BYTES];
+    proven_byte_t unfactor[PROVEN_CRYPTO_RSA_SIGN_MAX_BYTES];
+} proven_crypto_rsa_blind_t;
+
+/* Read an RSAPrivateKey (PKCS #1, DER). False unless it is a two-prime key of 2048 to 4096
+ * bits with n = p * q, an odd public exponent of at most 64 bits, and CRT values in range.
+ * It does not prove the key is sound - only signing and verifying does (the caller's job). */
+[[nodiscard]] bool proven_crypto_rsa_key_parse(proven_mem_view_t der, proven_crypto_rsa_key_t *out);
+/* A blinding pair from n_len random bytes. False (try other bytes) when they are not usable. */
+[[nodiscard]] bool proven_crypto_rsa_blind_make(const proven_crypto_rsa_key_t *key, const proven_byte_t *random, proven_crypto_rsa_blind_t *out);
+/* The next pair: both halves squared, which is again a pair. */
+void proven_crypto_rsa_blind_next(const proven_crypto_rsa_key_t *key, proven_crypto_rsa_blind_t *blind);
+/* Sign. `sig` receives n_len bytes. `blind` may be null (no blinding). The result is checked
+ * with the public key before it is released: false - and nothing in `sig` - when the check
+ * fails, as after a fault in one half of the CRT, or when the modulus is too small for the
+ * encoding. PKCS #1 v1.5 is deterministic; PSS takes the salt (usually as long as the digest). */
+[[nodiscard]] bool proven_crypto_rsa_sign_pkcs1(const proven_crypto_rsa_key_t *key, const proven_crypto_rsa_blind_t *blind, int hash,
+                                                proven_mem_view_t digest, proven_byte_t *sig);
+[[nodiscard]] bool proven_crypto_rsa_sign_pss(const proven_crypto_rsa_key_t *key, const proven_crypto_rsa_blind_t *blind, int hash,
+                                              proven_mem_view_t digest, proven_mem_view_t salt, proven_byte_t *sig);
+
+/* Make a key of `bits` bits (a multiple of 64, 1024 to 4096) with e = 65537, drawing from
+ * `random`. `d` receives the private exponent, n_len bytes, for writing the key out.
+ *
+ * For test identities and self-issued certificates: candidates are random, tested by trial
+ * division and Miller-Rabin (5 rounds at 512 bits and above per prime, 8 below). The search
+ * itself is not constant-time - how many candidates were tried is visible - which is the usual
+ * state of key generation and one more reason long-lived keys come from elsewhere. */
+typedef void (*proven_crypto_random_fn)(void *ctx, proven_byte_t *out, proven_size_t len);
+[[nodiscard]] bool proven_crypto_rsa_generate(proven_size_t bits, proven_crypto_random_fn random, void *ctx,
+                                              proven_crypto_rsa_key_t *out, proven_byte_t *d);
 
 #endif

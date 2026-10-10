@@ -461,6 +461,13 @@ static bool cv_build(proven_tls_conn_t *c, bool server_side) {
         proven_byte_t sig[64];
         proven_crypto_ed25519_sign(sig, cfg->key, cfg->key_public, msg);
         wr_uint(&w, SIG_ED25519, 2); wr_uint(&w, 64, 2); wr_bytes(&w, sig, 64);
+    } else if (cfg->key_kind == PROVEN_TLS_KEY_RSA) {
+        /* rsa_pss_rsae_sha256: the scheme every TLS 1.3 peer must accept (RFC 8446, 9.1). */
+        proven_byte_t digest[32], sig[PROVEN_CRYPTO_RSA_SIGN_MAX_BYTES];
+        proven_size_t n = 0;
+        proven_sha256(msg, digest);
+        if (!proven_tls_config_rsa_sign_(cfg, (proven_mem_view_t){ .ptr = digest, .size = 32 }, sig, &n)) return false;
+        wr_uint(&w, SIG_RSA_PSS_RSAE_SHA256, 2); wr_uint(&w, (proven_u32)n, 2); wr_bytes(&w, sig, n);
     } else {
         proven_byte_t digest[32], raw[64], der[80];
         proven_sha256(msg, digest);
@@ -497,7 +504,7 @@ static void wr_sig_algs(wr_t *w) {
 
 /* Whether the peer's signature_algorithms list has the scheme this side's key signs with. */
 static bool peer_accepts_our_key(const proven_tls_config_t *cfg, rd_t list) {
-    proven_u16 want = cfg->key_kind == PROVEN_TLS_KEY_ED25519 ? SIG_ED25519 : SIG_ECDSA_P256_SHA256;
+    proven_u16 want = cfg->key_kind == PROVEN_TLS_KEY_ED25519 ? SIG_ED25519 : cfg->key_kind == PROVEN_TLS_KEY_RSA ? SIG_RSA_PSS_RSAE_SHA256 : SIG_ECDSA_P256_SHA256;
     if (list.n % 2 != 0) return false;
     while (list.n >= 2) if ((proven_u16)rd_uint(&list, 2) == want) return true;
     return false;

@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 98 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 99 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-10, Windows 11 test VM: x86-64 300 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 162 registered tests plus the 146 runnable manual examples - 308 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 175 test files: the 162 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 163 registered tests plus the 146 runnable manual examples - 309 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 176 test files: the 163 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -726,7 +726,8 @@ Intent: verify the TLS 1.3 state machine, both roles, with no network: a client 
 Sub-checks:
 
 - A self-signed identity: `proven_tls_self_signed` makes PEM the strict reader parses - version 3, Ed25519, self-issued, exactly the period asked for, the DNS name and both addresses, usable by a server and a client; a client holding the certificate connects to a server holding the key, and one second past the end it has expired; no names, an empty name, an empty period and a small buffer are refused; a period across 2050 round-trips through both time encodings.
-- Configuration: every option error is reported by `proven_tls_config_create` - missing anchors, `PIN_ONLY` without pins, a certificate without a key and the reverse, PEM with no certificate or no key, an RSA key and a P-384 key (`PROVEN_ERR_UNSUPPORTED`), a key that is not the certificate's (`PROVEN_ERR_INVALID_STATE`), client authentication without anchors, an empty ALPN name; the `EC PRIVATE KEY` form is accepted; a config with no certificate cannot serve; a client needs a name of at most 253 bytes.
+- RSA keys for this side: a server with a 2048-bit RSA key in PKCS #8, and the same key as an `RSA PRIVATE KEY` file, complete a handshake and carry data; twelve more handshakes on one configuration all complete; a session from an RSA handshake is resumed; an RSA certificate with a P-256 key, the reverse, and an RSA certificate with another RSA key are `PROVEN_ERR_INVALID_STATE`; a 1024-bit RSA key is `PROVEN_ERR_INVALID_FORMAT`; with the size limit lowered by the test hook, RSA on both sides (a client certificate), and a certificate the test's issuer signed with RSA verified by one client and refused by another.
+- Configuration: every option error is reported by `proven_tls_config_create` - missing anchors, `PIN_ONLY` without pins, a certificate without a key and the reverse, PEM with no certificate or no key, something labelled an RSA key that is not one (`PROVEN_ERR_INVALID_FORMAT`), a P-384 key (`PROVEN_ERR_UNSUPPORTED`), a key that is not the certificate's (`PROVEN_ERR_INVALID_STATE`), client authentication without anchors, an empty ALPN name; the `EC PRIVATE KEY` form is accepted; a config with no certificate cannot serve; a client needs a name of at most 253 bytes.
 - Handshakes: the three cipher suites by the two server key types, each established with the server's key hash as the client verified it, and data of 1, 1,000, 16,384, 16,385, 100,000 and 150,000 bytes in both directions; the same handshake delivered a byte at a time; `NEED_MORE`, writes refused after `proven_tls_close`, data before a close delivered and then `PROVEN_ERR_EOF`, the other direction still open; a HelloRetryRequest to P-256 (whole and a byte at a time); key update from each side.
 - ALPN: the server's first choice among the client's offers; nothing in common ends with `no_application_protocol` and `PROVEN_ERR_PROTOCOL` on both sides; a server with no list agrees on none.
 - Verification: an unknown CA (`PROVEN_ERR_UNTRUSTED`, fault `NO_ISSUER`, alert `unknown_ca`, and the server told), another name (`PROVEN_ERR_NAME_MISMATCH`), an expired certificate and a clock before the validity period, each with its alert; after a failure every call is `PROVEN_ERR_INVALID_STATE`. Pins: `PIN_ONLY` ignores name, chain and dates; an unpinned key is refused with `PIN_MISMATCH`, also when the chain is good.
@@ -738,6 +739,21 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/tls13.c`, `src/proven/tls_config.c` and `src/proven/tls_issue.c`. No key is stored in the tree: `tests/test_unit_tls_pki.h` derives keys from a fixed pattern and issues the certificates when the test starts, with the library's internal certificate writer. The RFC's records are in `tests/test_unit_tls_vectors.h`, written by a private generator. Not covered here: the server role against a published trace (RFC 8448's server key is RSA, which this version cannot sign with) - that is checked against OpenSSL and GnuTLS in a private interoperability run, as are both roles for every suite and group; `record_size_limit` from a peer.
 
+### `tests/test_unit_crypto_rsa` - RSA signing
+
+Intent: verify the private half of RSA - the constant-time exponentiation, signing by CRT with its check, blinding, the two encodings, reading and making keys - with keys the test makes when it starts, from a fixed seed. Internal code, reached through `src/proven/proven_internal_crypto.h`.
+
+Sub-checks:
+
+- The exponentiation for secret exponents: twenty-four random powers modulo four primes agree with the plain square-and-multiply, exponents with leading zero limbs included; the zeroth power is one and the first is the base; a modulus of 64 limbs is within its bound and one of 67 is refused.
+- For a 2048-bit key, and (with the size limit lowered by the test hook) a 1024-bit one, for each of SHA-256, SHA-384 and SHA-512: a PKCS #1 v1.5 signature is accepted by the verifier, is what a plain exponentiation by `d` gives, is the same signature when blinded and again with the pair squared, and does not verify for another digest; a PSS signature is made and verifies with its salt length, another salt gives another valid signature, and an empty salt is not taken for one with a salt; PSS with a salt the modulus has no room for is refused.
+- Forty squarings on, the blinding pair still cancels exactly.
+- A wrong `dp`, `dq` or `qinv` yields no signature and nothing is written; a digest of the wrong length and a hash that does not exist are refused.
+- An `RSAPrivateKey` written and read back is the same key; cut short, or with a byte after it, it is not a key; a modulus that is not the product of the two primes is refused; a 1024-bit key is not accepted for signing.
+- Making a key: sizes outside 1024 to 4096 bits, sizes that are not a multiple of 64, and no random source are refused; a key has exactly the size asked for and two different primes; its `d` undoes its `e`.
+
+Failure tip: inspect `src/proven/crypto_rsa.c` (`rsa_private`, `rsa_garner`, `proven_crypto_rsa_blind_make`) and `proven_crypto_mp_pow_ct` in `src/proven/crypto_mp.c`. Keys and random bytes come from fixed seeds, so a failure repeats exactly. Agreement with another implementation, and the absence of secret-dependent branches, are checked outside the suite and are not this test's.
+
 ### `tests/test_unit_tls_net` - TLS over sockets: the transport, HTTPS and WebSocket
 
 Intent: verify the TLS engine carried by real connections on the loopback interface: the transport wrapper by itself, then the HTTP client and server with TLS in both handler models.
@@ -746,6 +762,8 @@ Sub-checks:
 
 - The transport wrapper: a client and a server handshake over a socket with the server verified by its IP address; 1 to 150,000 bytes echoed intact; a read with nothing to read ends at its deadline; a close seen by the peer as `PROVEN_ERR_EOF`; a connection cut without a TLS close seen as `PROVEN_ERR_RESET`; another server name is `PROVEN_ERR_NAME_MISMATCH` and the server's handshake ends with the alert; a handshake nobody answers ends at its deadline; `proven_tls_transport_conn` on a TLS and on a plain transport.
 - HTTPS, with handlers on the loop's thread and again on workers: three GETs over one kept connection; a 200,000-byte request body and a 300,000-byte response body; a `wss://` connection with a text and a 70,000-byte binary message echoed and a clean close; two pipelined requests in one TLS record both answered; a client that connects and says nothing does not delay another request and is closed after the head timeout; a plain `http://` request to the TLS port fails and reaches no handler; an `https://` URL on a client with no wrap is still `PROVEN_ERR_UNSUPPORTED`; a server whose CA the client does not hold is `PROVEN_ERR_UNTRUSTED` with nothing sent.
+
+- An RSA key signing on several threads: twenty-four in-memory handshakes against one server configuration with a 2048-bit RSA key, from four threads at once, all complete and are verified by their clients - the key's blinding pair is shared and replaced by every signature; and a page is fetched over HTTPS from a server with that key.
 
 Failure tip: inspect `src/proven/tls_transport.c` and the `tls` branches of `src/proven/http_server.c`. This test uses the wall clock (its certificates, issued at start by `tests/test_unit_tls_pki.h`, are valid 2026 to 2036) and the operating system's random source. Not covered: client certificates through the HTTP server, and resumption through the transport wrapper (both are engine paths `test_unit_tls` covers).
 

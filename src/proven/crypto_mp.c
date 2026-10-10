@@ -73,6 +73,25 @@ void proven_crypto_mp_select(proven_u32 *out, const proven_u32 *a, const proven_
     for (proven_size_t i = 0; i < limbs; ++i) out[i] = (a[i] & mask) | (b[i] & ~mask);
 }
 
+static void mp_mod_finish(proven_crypto_mp_mod_t *mod);
+
+bool proven_crypto_mp_mod_init_secret(proven_crypto_mp_mod_t *mod, const proven_byte_t *be, proven_size_t len) {
+    /* Nothing here may depend on the value: no stripping of leading zeros, no count of
+     * leading bits. One bit of it is examined - that it is odd - and odd is what every prime
+     * factor of an RSA modulus is. */
+    if (len < 8 || len > PROVEN_CRYPTO_MP_MAX * 4) return false;
+    proven_size_t limbs = (len + 3) / 4;
+    for (proven_size_t i = 0; i < limbs; ++i) mod->n[i] = 0;
+    for (proven_size_t i = 0; i < len; ++i) mod->n[i / 4] |= (proven_u32)be[len - 1 - i] << (8 * (i % 4));
+    proven_u32 odd = mod->n[0] & 1u;
+    PROVEN_CT_PUBLIC(&odd, sizeof odd);
+    if (!odd) return false;
+    mod->limbs = limbs;
+    mod->bits = len * 8;                          /* an upper bound: the true length is not looked for */
+    mp_mod_finish(mod);
+    return true;
+}
+
 bool proven_crypto_mp_mod_init(proven_crypto_mp_mod_t *mod, const proven_byte_t *be, proven_size_t len) {
     while (len > 0 && be[0] == 0) { be++; len--; }
     if (len == 0 || len > PROVEN_CRYPTO_MP_MAX * 4) return false;
@@ -83,6 +102,13 @@ bool proven_crypto_mp_mod_init(proven_crypto_mp_mod_t *mod, const proven_byte_t 
     mod->limbs = limbs;
     mod->bits = len * 8;
     for (proven_byte_t top = be[0]; (top & 0x80u) == 0; top = (proven_byte_t)(top << 1)) mod->bits--;
+    mp_mod_finish(mod);
+    return true;
+}
+
+/* n0inv and R^2 from the modulus's limbs: arithmetic only. */
+static void mp_mod_finish(proven_crypto_mp_mod_t *mod) {
+    const proven_size_t limbs = mod->limbs;
     /* Newton's iteration doubles the correct low bits each round: 5 rounds from 3 bits. */
     proven_u32 inv = mod->n[0];
     for (int i = 0; i < 5; ++i) inv *= 2u - mod->n[0] * inv;
@@ -98,7 +124,6 @@ bool proven_crypto_mp_mod_init(proven_crypto_mp_mod_t *mod, const proven_byte_t 
         /* Keep the difference when the doubling overflowed or did not borrow. */
         proven_crypto_mp_select(r, t, r, mp_mask_from_bit(carry | (borrow ^ 1u)), limbs);
     }
-    return true;
 }
 
 void proven_crypto_mp_montmul(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *a, const proven_u32 *b) {
@@ -196,6 +221,52 @@ void proven_crypto_mp_pow(const proven_crypto_mp_mod_t *mod, proven_u32 *out, co
         }
     }
     for (proven_size_t i = 0; i < s; ++i) out[i] = acc[i];
+}
+
+bool proven_crypto_mp_pow_ct(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *base, const proven_u32 *exp) {
+    const proven_size_t s = mod->limbs;
+    if (s > PROVEN_CRYPTO_MP_CT_MAX) return false;
+    proven_u32 table[16][PROVEN_CRYPTO_MP_CT_MAX], sel[PROVEN_CRYPTO_MP_CT_MAX], acc[PROVEN_CRYPTO_MP_CT_MAX];
+    /* table[k] = base^k, in Montgomery form. */
+    for (proven_size_t j = 0; j < s; ++j) { acc[j] = 0; table[1][j] = base[j]; }
+    acc[0] = 1;
+    proven_crypto_mp_to_mont(mod, table[0], acc);
+    for (int k = 2; k < 16; ++k) proven_crypto_mp_montmul(mod, table[k], table[k - 1], base);
+    for (proven_size_t j = 0; j < s; ++j) acc[j] = table[0][j];
+    /* Every window does the same work: four squarings, a pass over the whole table that keeps
+     * the wanted entry by mask, one multiplication - by 1 when the window is zero. */
+    for (proven_size_t i = s; i-- > 0;) {
+        for (int nibble = 7; nibble >= 0; --nibble) {
+            for (int q = 0; q < 4; ++q) proven_crypto_mp_montmul(mod, acc, acc, acc);
+            const proven_u32 w = (exp[i] >> (4 * nibble)) & 15u;
+            for (proven_size_t j = 0; j < s; ++j) sel[j] = 0;
+            for (proven_u32 k = 0; k < 16; ++k) {
+                const proven_u32 x = k ^ w;
+                const proven_u32 mask = ((x | ((proven_u32)0 - x)) >> 31) - 1u;      /* all ones when k == w */
+                for (proven_size_t j = 0; j < s; ++j) sel[j] |= table[k][j] & mask;
+            }
+            proven_crypto_mp_montmul(mod, acc, acc, sel);
+        }
+    }
+    for (proven_size_t j = 0; j < s; ++j) out[j] = acc[j];
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)table, .size = sizeof table });
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)sel, .size = sizeof sel });
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)acc, .size = sizeof acc });
+    return true;
+}
+
+void proven_crypto_mp_mul(proven_u32 *out, const proven_u32 *a, proven_size_t alen, const proven_u32 *b, proven_size_t blen) {
+    for (proven_size_t i = 0; i < alen + blen; ++i) out[i] = 0;
+    for (proven_size_t i = 0; i < alen; ++i) {
+        proven_u64 c = 0;
+        const proven_u64 ai = a[i];
+        for (proven_size_t j = 0; j < blen; ++j) {
+            proven_u64 v = ai * b[j] + out[i + j] + c;
+            out[i + j] = (proven_u32)v;
+            c = v >> 32;
+        }
+        out[i + blen] = (proven_u32)c;
+    }
 }
 
 void proven_crypto_mp_inv_prime(const proven_crypto_mp_mod_t *mod, proven_u32 *out, const proven_u32 *a) {

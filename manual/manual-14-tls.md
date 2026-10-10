@@ -78,7 +78,7 @@ Zero-initialise a `proven_tls_options_t`, set `alloc`, and set what applies:
 | `anchors` | whoever verifies | The trust anchors (Chapter 13). A client needs them; a server needs them only to check client certificates |
 | `verify` | whoever verifies | `PROVEN_TLS_VERIFY_CHAIN` (the default): a chain to the anchors, valid now, for the expected name. `PROVEN_TLS_VERIFY_PIN_ONLY`: section 7 |
 | `pins`, `pin_count` | whoever verifies | Public-key pins (section 7) |
-| `certificate_pem`, `private_key_pem` | a server; a client with a certificate | This side's certificates, its own first, and its key. The key is P-256 or Ed25519, as a PKCS #8 block (labelled `PRIVATE KEY`) or an `EC PRIVATE KEY` block, not encrypted |
+| `certificate_pem`, `private_key_pem` | a server; a client with a certificate | This side's certificates, its own first, and its key. The key is P-256, Ed25519, or RSA of 2048 to 4096 bits, as a PKCS #8 block (labelled `PRIVATE KEY`), an `EC PRIVATE KEY` block or an `RSA PRIVATE KEY` block, not encrypted |
 | `client_auth` | a server | Whether to ask clients for a certificate (section 7) |
 | `alpn`, `alpn_count` | both | Application protocol names, most preferred first (`http/1.1`). The server picks its first choice among what the client offers; if both sides have a list and nothing is common, the handshake fails |
 | `random`, `now` | both | Where unpredictable bytes and the time come from. Leave them null on a hosted system: the operating system's source and the wall clock are used. A freestanding build must supply both |
@@ -97,13 +97,17 @@ handshake, which is at three in the morning on somebody else's machine:
 | Returns | When |
 |---|---|
 | `PROVEN_ERR_INVALID_ARG` | No allocator; anchors missing where this side verifies a chain; `PIN_ONLY` with no pins; a certificate without a key, or a key without a certificate; more than 8 certificates; an empty ALPN name |
-| `PROVEN_ERR_INVALID_FORMAT` | PEM that does not parse, or holds no certificate, or no key |
-| `PROVEN_ERR_UNSUPPORTED` | A key that is not P-256 or Ed25519 - **RSA keys are not supported for this side's identity in this version** - or an encrypted key file |
+| `PROVEN_ERR_INVALID_FORMAT` | PEM that does not parse, or holds no certificate, or no key; an RSA key outside 2048 to 4096 bits, or whose parts do not belong together, or that does not sign |
+| `PROVEN_ERR_UNSUPPORTED` | A key of another kind - P-384, for one - or an encrypted key file |
 | `PROVEN_ERR_INVALID_STATE` | The key is not the one in the certificate |
 | `PROVEN_ERR_NOMEM` | The allocator refused |
 
-An RSA key is not accepted for *your* certificate. RSA certificates *presented by a peer* -
-most of the public web - are verified without restriction.
+**Which key to choose.** All three kinds work on either side of a connection. They do not
+cost the same: with an RSA key, every full handshake this side signs takes several times
+longer than with P-256 or Ed25519 (section 9 has the figures), and on a server that is the
+largest part of a handshake. Use RSA where a certificate you already have requires it; for a
+new one, P-256 or Ed25519. An RSA key is tried when the configuration is made - one signature,
+checked - so a key file that is damaged is refused there and not at the first connection.
 
 **An identity without an authority.**
 
@@ -674,7 +678,7 @@ other side of the connection; they are for your log.
 | Cipher suites | `TLS_AES_128_GCM_SHA256` (0x1301), `TLS_AES_256_GCM_SHA384` (0x1302), `TLS_CHACHA20_POLY1305_SHA256` (0x1303) |
 | Their order | AES-128, AES-256, ChaCha20 on a processor with AES instructions (x86-64 with AES-NI, AArch64 with the cryptography extension). **ChaCha20 first everywhere else**: without those instructions this library's AES is constant-time and some thirty times slower than its ChaCha20 |
 | Key exchange | X25519; P-256 when the peer insists (one extra round trip) |
-| This side's key | ECDSA with P-256, or Ed25519 |
+| This side's key | ECDSA with P-256, Ed25519, or RSA of 2048 to 4096 bits (signing with RSA-PSS and SHA-256) |
 | A peer's key | Those, ECDSA with P-384, and RSA (2048 to 8192 bits, RSA-PSS) |
 | Also | ALPN, server name indication, session tickets, key update, `record_size_limit`, the middlebox-compatibility messages |
 
@@ -693,12 +697,23 @@ The public-key arithmetic here is written to be constant-time and to be read, an
 times slower than a tuned library's. Resumption (section 6) removes the signatures; keeping
 connections open removes the handshake.
 
+**With an RSA key the signature dominates.** On the same core one signature takes about 9 ms
+with a 2048-bit key, 27 ms with 3072 bits and 55 ms with 4096: a server with a 2048-bit RSA key
+completes about a hundred new connections a second per core, against five hundred with P-256.
+On the event-driven server of [Chapter 15](manual-15-event-loop.md) that time is spent on the
+loop's thread, where nothing else is served meanwhile. The signing is done modulo the two
+primes with a constant-time exponentiation, its input blinded, and its result checked with
+the public key before it is released; it keeps its working numbers on the stack - about
+20 KiB by the compiler's own accounting at `-O2` on x86-64 - which a small target must allow
+for. A peer must accept `rsa_pss_rsae_sha256`, as TLS 1.3 requires of every implementation:
+it is the one scheme this side signs with.
+
 **Bounds on a peer.** A handshake message is at most `max_handshake_bytes`; a record at most what the protocol allows, refused on its header. Records that carry nothing - empty ones, repeated compatibility messages - are tolerated sixteen in a row. Key-update requests are answered until 64 KiB of answers are waiting unsent. Past any of these the connection ends with `PROVEN_ERR_PROTOCOL`.
 
 **Not here:**
 
 - **TLS 1.2 and earlier.** A peer that speaks only those fails with `PROVEN_ERR_PROTOCOL`.
-- **RSA keys for this side's identity.** A server here needs a P-256 or Ed25519 certificate.
+- **RSA keys above 4096 bits for this side**, and RSA-PSS keys (a certificate whose key is marked for PSS only).
 - **Early data (0-RTT)**, and **renegotiation** (TLS 1.3 has none).
 - **Revocation.** No CRL, no OCSP, no stapling. See Chapter 13.
 - **Choosing a certificate by the name the client asked for.** One config, one certificate.
@@ -713,6 +728,11 @@ suite and key type, every refusal in sections 7 and 8, resumption, and a sweep o
 changes to the handshake; and run HTTPS and `wss` over real sockets. Outside the registered
 tests, both roles were run against OpenSSL and the server against GnuTLS, for every suite and
 group, with retries, resumption and client certificates; and the client fetched pages from
-public servers. **Not done:** no coverage-guided fuzzing, no protocol-level fuzzing suite
+public servers. For RSA keys on this side: the same two implementations accepted handshakes
+signed with keys of 2048, 3072 and 4096 bits that OpenSSL had made; the library's PKCS #1 v1.5
+signatures were the same bytes as OpenSSL's for those keys and its PSS signatures were accepted
+by it; and the signing path was run under a checker that reports any branch or memory index
+that depends on the primes, the private exponents or the blinding values, and reported none,
+at two optimisation levels on one compiler and one processor family. **Not done:** no coverage-guided fuzzing, no protocol-level fuzzing suite
 (tlsfuzzer, BoGo), no timing measurement on hardware, no external review. The primitives
 underneath are Chapter 13's, with the limits stated there.

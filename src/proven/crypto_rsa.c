@@ -1,8 +1,11 @@
 #include "proven_internal_crypto.h"
 #include "proven/hash.h"
 #include "proven/hmac.h"
+#include "proven/memory.h"
+#include "proven_internal_der.h"
 
-/* RSA signature verification: PKCS #1 v1.5 and PSS. Only the public operation is here. */
+/* RSA signatures: PKCS #1 v1.5 and PSS. Verification first - a public operation - then
+ * signing, where everything about the key but n and e is secret. */
 
 #define RSA_MAX_BYTES (PROVEN_CRYPTO_RSA_MAX_BITS / 8)
 
@@ -116,4 +119,417 @@ bool proven_crypto_rsa_verify_pss(proven_mem_view_t n, proven_mem_view_t e, int 
     static const proven_byte_t zeros[8] = { 0 };
     rsa_hash(hash, (proven_mem_view_t){ .ptr = zeros, .size = 8 }, digest, (proven_mem_view_t){ .ptr = db + ps_len + 1, .size = salt_len }, h2);
     return proven_mem_equal_ct((proven_mem_view_t){ .ptr = h2, .size = hlen }, (proven_mem_view_t){ .ptr = h, .size = hlen });
+}
+
+// -----------------------------------------------------------------------------
+// Signing
+// -----------------------------------------------------------------------------
+//
+// The private operation is done modulo the two primes and recombined (CRT): four times less
+// work than one exponentiation modulo n. Three things guard it:
+//
+//   - every step on secret data is constant-time: the exponentiation is
+//     proven_crypto_mp_pow_ct, reductions are bit-serial under masks, and nothing branches
+//     on a prime, an exponent or an intermediate;
+//   - the input is blinded when a pair is given, so that what is exponentiated is not a
+//     value anyone outside chose;
+//   - the result is checked with the public key before it leaves. A CRT signature that is
+//     right modulo one prime and wrong modulo the other gives the modulus's factors to anyone
+//     who sees it, so a result that does not verify is never returned.
+
+#define RSA_SIGN_BYTES PROVEN_CRYPTO_RSA_SIGN_MAX_BYTES
+#define RSA_PRIME_BYTES PROVEN_CRYPTO_RSA_PRIME_MAX_BYTES
+#define RSA_SIGN_LIMBS (RSA_SIGN_BYTES / 4)
+#define RSA_PRIME_LIMBS PROVEN_CRYPTO_MP_CT_MAX
+
+static void rsa_wipe(void *p, proven_size_t n) { proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)p, .size = n }); }
+
+/* Copy an unsigned integer right-aligned into `width` bytes. False when it does not fit. */
+static bool rsa_copy_uint(proven_byte_t *out, proven_size_t width, proven_mem_view_t v) {
+    while (v.size > 0 && v.ptr[0] == 0) { v.ptr++; v.size--; }
+    if (v.size > width) return false;
+    for (proven_size_t i = 0; i < width - v.size; ++i) out[i] = 0;
+    for (proven_size_t i = 0; i < v.size; ++i) out[width - v.size + i] = v.ptr[i];
+    return true;
+}
+
+bool proven_crypto_rsa_key_parse(proven_mem_view_t der, proven_crypto_rsa_key_t *k) {
+    if (!k || !der.ptr) return false;
+    der_t in = { .p = der.ptr, .n = der.size }, seq;
+    proven_u32 version = 1;
+    proven_mem_view_t n, e, d, p, q, dp, dq, qinv;
+    bool ok = der_expect(&in, DER_SEQUENCE, &seq, (void *)0) && in.n == 0 && der_small_uint(&seq, &version) && version == 0 &&
+              der_uint(&seq, &n) && der_uint(&seq, &e) && der_uint(&seq, &d) && der_uint(&seq, &p) && der_uint(&seq, &q) &&
+              der_uint(&seq, &dp) && der_uint(&seq, &dq) && der_uint(&seq, &qinv) && seq.n == 0;
+    if (!ok) return false;
+    proven_mem_view_t *all[4] = { &n, &e, &p, &q };
+    for (int i = 0; i < 4; ++i) while (all[i]->size > 0 && all[i]->ptr[0] == 0) { all[i]->ptr++; all[i]->size--; }
+    if (n.size * 8 < g_rsa_min_bits || n.size > RSA_SIGN_BYTES || e.size == 0 || e.size > 8) return false;
+    if (p.size == 0 || q.size == 0 || p.size > RSA_PRIME_BYTES || q.size > RSA_PRIME_BYTES) return false;
+    if ((n.ptr[n.size - 1] & 1u) == 0 || (e.ptr[e.size - 1] & 1u) == 0 || (p.ptr[p.size - 1] & 1u) == 0 || (q.ptr[q.size - 1] & 1u) == 0) return false;
+    if (e.size == 1 && e.ptr[0] < 3) return false;
+    for (proven_size_t i = 0; i < sizeof *k; ++i) ((proven_byte_t *)k)[i] = 0;
+    k->n_len = n.size; k->e_len = e.size; k->p_len = p.size; k->q_len = q.size;
+    for (proven_size_t i = 0; i < n.size; ++i) k->n[i] = n.ptr[i];
+    for (proven_size_t i = 0; i < e.size; ++i) k->e[i] = e.ptr[i];
+    for (proven_size_t i = 0; i < p.size; ++i) k->p[i] = p.ptr[i];
+    for (proven_size_t i = 0; i < q.size; ++i) k->q[i] = q.ptr[i];
+    ok = rsa_copy_uint(k->dp, p.size, dp) && rsa_copy_uint(k->dq, q.size, dq) && rsa_copy_uint(k->qinv, p.size, qinv);
+    /* n must be the product of the two primes given: a key whose parts do not belong together
+     * signs wrongly at best. */
+    proven_u32 pl[RSA_PRIME_LIMBS], ql[RSA_PRIME_LIMBS], prod[2 * RSA_PRIME_LIMBS], nl[2 * RSA_PRIME_LIMBS];
+    proven_size_t sp = (p.size + 3) / 4, sq = (q.size + 3) / 4;
+    ok = ok && proven_crypto_mp_load_be(pl, sp, k->p, p.size) && proven_crypto_mp_load_be(ql, sq, k->q, q.size) &&
+         proven_crypto_mp_load_be(nl, sp + sq, k->n, n.size);
+    if (ok) {
+        proven_crypto_mp_mul(prod, pl, sp, ql, sq);
+        ok = proven_crypto_mp_eq(prod, nl, sp + sq) != 0;
+    }
+    rsa_wipe(pl, sizeof pl); rsa_wipe(ql, sizeof ql); rsa_wipe(prod, sizeof prod);
+    if (!ok) rsa_wipe(k, sizeof *k);
+    return ok;
+}
+
+/* The moduli of one key, prepared. About 6 KiB; kept on the stack of the one operation. */
+typedef struct {
+    proven_crypto_mp_mod_t n, p, q;
+} rsa_mods_t;
+
+static bool rsa_mods(const proven_crypto_rsa_key_t *k, rsa_mods_t *m) {
+    return proven_crypto_mp_mod_init(&m->n, k->n, k->n_len) && proven_crypto_mp_mod_init_secret(&m->p, k->p, k->p_len) &&
+           proven_crypto_mp_mod_init_secret(&m->q, k->q, k->q_len) && m->p.limbs <= RSA_PRIME_LIMBS && m->q.limbs <= RSA_PRIME_LIMBS &&
+           m->n.limbs <= RSA_SIGN_LIMBS && m->n.limbs <= m->p.limbs + m->q.limbs;
+}
+
+/* The number below n that is m1 modulo p and m2 modulo q (Garner). */
+static void rsa_garner(const proven_crypto_rsa_key_t *k, const rsa_mods_t *m, const proven_u32 *m1, const proven_u32 *m2, proven_u32 *out) {
+    const proven_size_t sp = m->p.limbs, sq = m->q.limbs;
+    proven_u32 h[RSA_PRIME_LIMBS], t[RSA_PRIME_LIMBS], prod[2 * RSA_PRIME_LIMBS + 1];
+    proven_byte_t bytes[RSA_PRIME_BYTES];
+    /* m2 is below q, which says nothing about p: reduce it before subtracting. */
+    proven_crypto_mp_store_be(bytes, k->q_len, m2, sq);
+    proven_crypto_mp_reduce_be(&m->p, t, bytes, k->q_len);
+    proven_crypto_mp_sub(&m->p, h, m1, t);
+    /* h = (m1 - m2) * qinv mod p: one factor in Montgomery form makes the product plain. */
+    (void)proven_crypto_mp_load_be(t, sp, k->qinv, k->p_len);
+    proven_crypto_mp_to_mont(&m->p, h, h);
+    proven_crypto_mp_montmul(&m->p, h, h, t);
+    /* m2 + q * h */
+    proven_crypto_mp_mul(prod, m->q.n, sq, h, sp);
+    prod[sp + sq] = 0;
+    proven_u64 carry = 0;
+    for (proven_size_t i = 0; i < sp + sq; ++i) {
+        proven_u64 v = (proven_u64)prod[i] + (i < sq ? m2[i] : 0u) + carry;
+        prod[i] = (proven_u32)v;
+        carry = v >> 32;
+    }
+    for (proven_size_t i = 0; i < m->n.limbs; ++i) out[i] = prod[i];
+    rsa_wipe(h, sizeof h); rsa_wipe(t, sizeof t); rsa_wipe(prod, sizeof prod); rsa_wipe(bytes, sizeof bytes);
+}
+
+/* x^exp modulo one prime, for x given as n_len big-endian bytes: reduce, exponentiate. */
+static bool rsa_half(const proven_crypto_mp_mod_t *prime, const proven_byte_t *x, proven_size_t x_len,
+                     const proven_byte_t *exp, proven_size_t exp_len, proven_u32 *out) {
+    proven_u32 b[RSA_PRIME_LIMBS], e[RSA_PRIME_LIMBS];
+    proven_crypto_mp_reduce_be(prime, b, x, x_len);
+    bool ok = proven_crypto_mp_load_be(e, prime->limbs, exp, exp_len);
+    proven_crypto_mp_to_mont(prime, b, b);
+    ok = ok && proven_crypto_mp_pow_ct(prime, b, b, e);
+    proven_crypto_mp_from_mont(prime, out, b);
+    rsa_wipe(b, sizeof b); rsa_wipe(e, sizeof e);
+    return ok;
+}
+
+/* c^d mod n for c of n_len bytes below n, into `sig`. False when the result does not verify. */
+static bool rsa_private(const proven_crypto_rsa_key_t *k, const proven_crypto_rsa_blind_t *blind, const proven_byte_t *c, proven_byte_t *sig) {
+    rsa_mods_t m;
+    proven_u32 cl[RSA_SIGN_LIMBS], x[RSA_SIGN_LIMBS], f[RSA_SIGN_LIMBS], m1[RSA_PRIME_LIMBS], m2[RSA_PRIME_LIMBS], ex[2];
+    proven_byte_t xb[RSA_SIGN_BYTES];
+    bool ok = rsa_mods(k, &m) && proven_crypto_mp_load_be(cl, m.n.limbs, c, k->n_len) && proven_crypto_mp_load_be(ex, 2, k->e, k->e_len);
+    if (ok) {
+        proven_u32 below = proven_crypto_mp_lt(cl, m.n.n, m.n.limbs);
+        PROVEN_CT_PUBLIC(&below, sizeof below);        /* whether the encoded message is below n: it is, by construction */
+        ok = below != 0;
+    }
+    if (ok) {
+        const proven_size_t sn = m.n.limbs;
+        for (proven_size_t i = 0; i < sn; ++i) x[i] = cl[i];
+        if (blind) {
+            (void)proven_crypto_mp_load_be(f, sn, blind->factor, k->n_len);
+            proven_crypto_mp_to_mont(&m.n, x, x);
+            proven_crypto_mp_montmul(&m.n, x, x, f);
+        }
+        proven_crypto_mp_store_be(xb, k->n_len, x, sn);
+        ok = rsa_half(&m.p, xb, k->n_len, k->dp, k->p_len, m1) && rsa_half(&m.q, xb, k->n_len, k->dq, k->q_len, m2);
+        if (ok) {
+            rsa_garner(k, &m, m1, m2, x);
+            if (blind) {
+                (void)proven_crypto_mp_load_be(f, sn, blind->unfactor, k->n_len);
+                proven_crypto_mp_to_mont(&m.n, x, x);
+                proven_crypto_mp_montmul(&m.n, x, x, f);
+            }
+            /* The check: x^e must be the message again. */
+            proven_crypto_mp_to_mont(&m.n, f, x);
+            proven_crypto_mp_pow(&m.n, f, f, ex, 2);
+            proven_crypto_mp_from_mont(&m.n, f, f);
+            proven_u32 same = proven_crypto_mp_eq(f, cl, sn);
+            PROVEN_CT_PUBLIC(&same, sizeof same);      /* a signature either verifies or is withheld */
+            ok = same != 0;
+            if (ok) {
+                proven_crypto_mp_store_be(sig, k->n_len, x, sn);
+                PROVEN_CT_PUBLIC(sig, k->n_len);       /* a signature is published */
+            }
+        }
+    }
+    rsa_wipe(&m, sizeof m); rsa_wipe(x, sizeof x); rsa_wipe(f, sizeof f); rsa_wipe(m1, sizeof m1); rsa_wipe(m2, sizeof m2); rsa_wipe(xb, sizeof xb);
+    return ok;
+}
+
+bool proven_crypto_rsa_blind_make(const proven_crypto_rsa_key_t *k, const proven_byte_t *random, proven_crypto_rsa_blind_t *out) {
+    rsa_mods_t m;
+    proven_u32 r[RSA_SIGN_LIMBS], t[RSA_SIGN_LIMBS], ip[RSA_PRIME_LIMBS], iq[RSA_PRIME_LIMBS], e2[RSA_PRIME_LIMBS], ex[2];
+    proven_byte_t rb[RSA_SIGN_BYTES], eb[RSA_PRIME_BYTES];
+    if (!k || !random || !out) return false;
+    bool ok = rsa_mods(k, &m) && proven_crypto_mp_load_be(ex, 2, k->e, k->e_len);
+    if (ok) {
+        const proven_size_t sn = m.n.limbs;
+        proven_crypto_mp_reduce_be(&m.n, r, random, k->n_len);
+        proven_crypto_mp_store_be(rb, k->n_len, r, sn);
+        /* r^e: the exponent is public, the base is not - and the arithmetic does not branch on it. */
+        proven_crypto_mp_to_mont(&m.n, t, r);
+        proven_crypto_mp_pow(&m.n, t, t, ex, 2);
+        proven_crypto_mp_from_mont(&m.n, t, t);
+        proven_crypto_mp_store_be(out->factor, k->n_len, t, sn);
+        /* r^-1 modulo each prime by Fermat - with the constant-time exponentiation, because
+         * here the exponent is the prime less two - and the two recombined. */
+        for (int half = 0; half < 2 && ok; ++half) {
+            const proven_crypto_mp_mod_t *prime = half == 0 ? &m.p : &m.q;
+            proven_size_t len = half == 0 ? k->p_len : k->q_len;
+            /* prime - 2, as bytes for rsa_half: the prime is odd and above 2, so no borrow leaves the low limb's run. */
+            proven_u32 borrow = 2;
+            for (proven_size_t i = 0; i < prime->limbs; ++i) {
+                proven_u64 v = (proven_u64)prime->n[i] - borrow;
+                e2[i] = (proven_u32)v;
+                borrow = (proven_u32)(v >> 63);
+            }
+            proven_crypto_mp_store_be(eb, len, e2, prime->limbs);
+            ok = rsa_half(prime, rb, k->n_len, eb, len, half == 0 ? ip : iq);
+        }
+        if (ok) {
+            rsa_garner(k, &m, ip, iq, t);
+            proven_crypto_mp_store_be(out->unfactor, k->n_len, t, sn);
+            /* r * r^-1 must be 1: it is not when r shares a factor with n, which random bytes
+             * do with negligible probability - and then these bytes are simply not used. */
+            proven_crypto_mp_to_mont(&m.n, r, r);
+            proven_crypto_mp_montmul(&m.n, r, r, t);
+            for (proven_size_t i = 0; i < sn; ++i) t[i] = 0;
+            t[0] = 1;
+            proven_u32 one = proven_crypto_mp_eq(r, t, sn);
+            PROVEN_CT_PUBLIC(&one, sizeof one);
+            ok = one != 0;
+        }
+    }
+    rsa_wipe(&m, sizeof m); rsa_wipe(r, sizeof r); rsa_wipe(t, sizeof t); rsa_wipe(ip, sizeof ip); rsa_wipe(iq, sizeof iq);
+    rsa_wipe(e2, sizeof e2); rsa_wipe(rb, sizeof rb); rsa_wipe(eb, sizeof eb);
+    if (!ok) rsa_wipe(out, sizeof *out);
+    return ok;
+}
+
+void proven_crypto_rsa_blind_next(const proven_crypto_rsa_key_t *k, proven_crypto_rsa_blind_t *blind) {
+    proven_crypto_mp_mod_t n;
+    proven_u32 v[RSA_SIGN_LIMBS], w[RSA_SIGN_LIMBS];
+    if (!k || !blind || !proven_crypto_mp_mod_init(&n, k->n, k->n_len) || n.limbs > RSA_SIGN_LIMBS) return;
+    for (int half = 0; half < 2; ++half) {
+        proven_byte_t *bytes = half == 0 ? blind->factor : blind->unfactor;
+        (void)proven_crypto_mp_load_be(v, n.limbs, bytes, k->n_len);
+        proven_crypto_mp_to_mont(&n, w, v);
+        proven_crypto_mp_montmul(&n, v, w, v);
+        proven_crypto_mp_store_be(bytes, k->n_len, v, n.limbs);
+    }
+    rsa_wipe(v, sizeof v); rsa_wipe(w, sizeof w);
+}
+
+bool proven_crypto_rsa_sign_pkcs1(const proven_crypto_rsa_key_t *k, const proven_crypto_rsa_blind_t *blind, int hash,
+                                  proven_mem_view_t digest, proven_byte_t *sig) {
+    proven_byte_t em[RSA_SIGN_BYTES];
+    const proven_byte_t *di;
+    proven_size_t hlen = proven_hmac_size((proven_hmac_hash_t)hash);
+    if (!k || !sig || !digest.ptr || hlen == 0 || digest.size != hlen) return false;
+    if (hash == PROVEN_HMAC_SHA256) di = RSA_DI_SHA256;
+    else if (hash == PROVEN_HMAC_SHA384) di = RSA_DI_SHA384;
+    else if (hash == PROVEN_HMAC_SHA512) di = RSA_DI_SHA512;
+    else return false;
+    const proven_size_t di_len = 19, t_len = di_len + hlen, len = k->n_len;
+    if (len > RSA_SIGN_BYTES || len < t_len + 11) return false;
+    /* 00 01 FF..FF 00 DigestInfo digest */
+    proven_size_t pad_end = len - t_len - 1;
+    em[0] = 0; em[1] = 1;
+    for (proven_size_t i = 2; i < pad_end; ++i) em[i] = 0xff;
+    em[pad_end] = 0;
+    for (proven_size_t i = 0; i < di_len; ++i) em[pad_end + 1 + i] = di[i];
+    for (proven_size_t i = 0; i < hlen; ++i) em[pad_end + 1 + di_len + i] = digest.ptr[i];
+    return rsa_private(k, blind, em, sig);
+}
+
+bool proven_crypto_rsa_sign_pss(const proven_crypto_rsa_key_t *k, const proven_crypto_rsa_blind_t *blind, int hash,
+                                proven_mem_view_t digest, proven_mem_view_t salt, proven_byte_t *sig) {
+    proven_byte_t em_full[RSA_SIGN_BYTES], h[PROVEN_HMAC_MAX_SIZE], block[PROVEN_HMAC_MAX_SIZE];
+    proven_size_t hlen = proven_hmac_size((proven_hmac_hash_t)hash);
+    if (!k || !sig || !digest.ptr || hlen == 0 || digest.size != hlen || (salt.size > 0 && !salt.ptr)) return false;
+    const proven_size_t len = k->n_len;
+    if (len > RSA_SIGN_BYTES || len == 0) return false;
+    /* The encoding is one bit shorter than the modulus. */
+    proven_size_t bits = len * 8;
+    for (proven_byte_t top = k->n[0]; (top & 0x80u) == 0; top = (proven_byte_t)(top << 1)) bits--;
+    const proven_size_t em_bits = bits - 1, em_len = (em_bits + 7) / 8;
+    if (em_len < hlen + salt.size + 2) return false;
+    proven_byte_t *em = em_full + (len - em_len);
+    for (proven_size_t i = 0; i < len - em_len; ++i) em_full[i] = 0;
+    static const proven_byte_t zeros[8] = { 0 };
+    rsa_hash(hash, (proven_mem_view_t){ .ptr = zeros, .size = 8 }, digest, salt, h);
+    /* DB = PS (zeros) | 01 | salt, then masked with MGF1(H). */
+    const proven_size_t db_len = em_len - hlen - 1, ps_len = db_len - salt.size - 1;
+    for (proven_size_t i = 0; i < ps_len; ++i) em[i] = 0;
+    em[ps_len] = 1;
+    for (proven_size_t i = 0; i < salt.size; ++i) em[ps_len + 1 + i] = salt.ptr[i];
+    for (proven_size_t done = 0, counter = 0; done < db_len; ++counter) {
+        proven_byte_t c[4] = { (proven_byte_t)(counter >> 24), (proven_byte_t)(counter >> 16), (proven_byte_t)(counter >> 8), (proven_byte_t)counter };
+        rsa_hash(hash, (proven_mem_view_t){ .ptr = h, .size = hlen }, (proven_mem_view_t){ .ptr = c, .size = 4 }, (proven_mem_view_t){ .ptr = c, .size = 0 }, block);
+        for (proven_size_t i = 0; i < hlen && done < db_len; ++i, ++done) em[done] ^= block[i];
+    }
+    em[0] &= (proven_byte_t)(0xffu >> (8 * em_len - em_bits));
+    for (proven_size_t i = 0; i < hlen; ++i) em[db_len + i] = h[i];
+    em[em_len - 1] = 0xbc;
+    return rsa_private(k, blind, em_full, sig);
+}
+
+// -----------------------------------------------------------------------------
+// Making a key
+// -----------------------------------------------------------------------------
+
+/* a mod d for a small d. */
+static proven_u32 rsa_mod_small(const proven_u32 *a, proven_size_t limbs, proven_u32 d) {
+    proven_u64 r = 0;
+    for (proven_size_t i = limbs; i-- > 0;) r = ((r << 32) | a[i]) % d;
+    return (proven_u32)r;
+}
+
+/* out = (1 + k * a) / e for small k and e, where the division is exact. `out` has limbs + 1 limbs. */
+static void rsa_inverse_from(proven_u32 *out, const proven_u32 *a, proven_size_t limbs, proven_u32 k, proven_u32 e) {
+    proven_u64 carry = 1;
+    for (proven_size_t i = 0; i < limbs; ++i) {
+        proven_u64 v = (proven_u64)a[i] * k + carry;
+        out[i] = (proven_u32)v;
+        carry = v >> 32;
+    }
+    out[limbs] = (proven_u32)carry;
+    proven_u64 r = 0;
+    for (proven_size_t i = limbs + 1; i-- > 0;) {
+        proven_u64 v = (r << 32) | out[i];
+        out[i] = (proven_u32)(v / e);
+        r = v % e;
+    }
+}
+
+/* The k with 1 + k * f = 0 mod e, for f = (the modulus of the inverse) mod e, f not zero, e prime. */
+static proven_u32 rsa_small_k(proven_u32 f, proven_u32 e) {
+    /* f^-1 mod e by Fermat: f^(e-2). */
+    proven_u64 inv = 1, base = f % e;
+    for (proven_u32 x = e - 2; x; x >>= 1) {
+        if (x & 1u) inv = inv * base % e;
+        base = base * base % e;
+    }
+    return (proven_u32)((e - inv) % e);
+}
+
+/* Is the odd number `x` (limbs limbs, top bit set) prime? Trial division, then Miller-Rabin. */
+static bool rsa_is_prime(const proven_byte_t *bytes, proven_size_t len, int rounds, proven_crypto_random_fn random, void *ctx) {
+    proven_crypto_mp_mod_t mod;
+    proven_u32 t[RSA_PRIME_LIMBS], y[RSA_PRIME_LIMBS], one[RSA_PRIME_LIMBS], minus[RSA_PRIME_LIMBS];
+    proven_byte_t rnd[RSA_PRIME_BYTES];
+    if (!proven_crypto_mp_mod_init(&mod, bytes, len) || mod.limbs > RSA_PRIME_LIMBS) return false;
+    const proven_size_t s = mod.limbs;
+    /* Small factors first: most candidates end here, at almost no cost. */
+    for (proven_u32 d = 3; d < 2000; d += 2) {
+        bool d_prime = true;
+        for (proven_u32 f = 3; f * f <= d; f += 2) if (d % f == 0) { d_prime = false; break; }
+        if (d_prime && rsa_mod_small(mod.n, s, d) == 0) return false;
+    }
+    /* x - 1 = 2^r * t with t odd. */
+    proven_size_t r = 0;
+    for (proven_size_t i = 0; i < s; ++i) t[i] = mod.n[i];
+    t[0] &= ~(proven_u32)1;
+    while ((t[0] & 1u) == 0) {
+        for (proven_size_t i = 0; i < s; ++i) t[i] = (t[i] >> 1) | (i + 1 < s ? t[i + 1] << 31 : 0u);
+        r++;
+    }
+    for (proven_size_t i = 0; i < s; ++i) one[i] = 0;
+    one[0] = 1;
+    proven_crypto_mp_to_mont(&mod, one, one);                        /* 1, in Montgomery form */
+    for (proven_size_t i = 0; i < s; ++i) y[i] = 0;
+    proven_crypto_mp_sub(&mod, minus, y, one);                       /* -1, as 0 - 1 */
+    for (int round = 0; round < rounds; ++round) {
+        random(ctx, rnd, len);
+        proven_crypto_mp_reduce_be(&mod, y, rnd, len);
+        proven_crypto_mp_to_mont(&mod, y, y);
+        if (proven_crypto_mp_is_zero(y, s) || proven_crypto_mp_eq(y, one, s) || proven_crypto_mp_eq(y, minus, s)) continue;
+        if (!proven_crypto_mp_pow_ct(&mod, y, y, t)) return false;
+        if (proven_crypto_mp_eq(y, one, s) || proven_crypto_mp_eq(y, minus, s)) continue;
+        bool witness = true;
+        for (proven_size_t i = 1; i < r && witness; ++i) {
+            proven_crypto_mp_montmul(&mod, y, y, y);
+            if (proven_crypto_mp_eq(y, minus, s)) witness = false;
+        }
+        if (witness) return false;
+    }
+    return true;
+}
+
+bool proven_crypto_rsa_generate(proven_size_t bits, proven_crypto_random_fn random, void *ctx, proven_crypto_rsa_key_t *k, proven_byte_t *d) {
+    const proven_u32 e = 65537;
+    if (!random || !k || !d || bits < 1024 || bits > PROVEN_CRYPTO_RSA_SIGN_MAX_BITS || bits % 64 != 0) return false;
+    const proven_size_t half = bits / 16, sp = half / 4;             /* bytes and limbs of one prime */
+    const int rounds = half * 8 >= 512 ? 5 : 8;
+    proven_u32 pl[2][RSA_PRIME_LIMBS], phi[2 * RSA_PRIME_LIMBS], tmp[2 * RSA_PRIME_LIMBS + 1], nl[2 * RSA_PRIME_LIMBS];
+    for (proven_size_t i = 0; i < sizeof *k; ++i) ((proven_byte_t *)k)[i] = 0;
+    k->n_len = bits / 8; k->e_len = 3; k->p_len = half; k->q_len = half;
+    k->e[0] = 1; k->e[1] = 0; k->e[2] = 1;
+    for (int which = 0; which < 2; ++which) {
+        proven_byte_t *prime = which == 0 ? k->p : k->q;
+        for (;;) {
+            random(ctx, prime, half);
+            prime[0] |= 0xc0;                                        /* two top bits: the product has all its bits */
+            prime[half - 1] |= 1;
+            (void)proven_crypto_mp_load_be(pl[which], sp, prime, half);
+            if (rsa_mod_small(pl[which], sp, e) == 1) continue;      /* e must not divide prime - 1 */
+            if (which == 1 && proven_crypto_mp_eq(pl[0], pl[1], sp)) continue;
+            if (rsa_is_prime(prime, half, rounds, random, ctx)) break;
+        }
+    }
+    /* n, and the exponents by exact arithmetic: for a prime e, e^-1 mod m = (1 + k m) / e
+     * with k = -(m^-1) mod e. */
+    proven_crypto_mp_mul(nl, pl[0], sp, pl[1], sp);
+    proven_crypto_mp_store_be(k->n, k->n_len, nl, 2 * sp);
+    pl[0][0] -= 1; pl[1][0] -= 1;                                    /* p - 1 and q - 1: the primes are odd */
+    rsa_inverse_from(tmp, pl[0], sp, rsa_small_k(rsa_mod_small(pl[0], sp, e), e), e);
+    proven_crypto_mp_store_be(k->dp, half, tmp, sp);
+    rsa_inverse_from(tmp, pl[1], sp, rsa_small_k(rsa_mod_small(pl[1], sp, e), e), e);
+    proven_crypto_mp_store_be(k->dq, half, tmp, sp);
+    proven_crypto_mp_mul(phi, pl[0], sp, pl[1], sp);
+    rsa_inverse_from(tmp, phi, 2 * sp, rsa_small_k(rsa_mod_small(phi, 2 * sp, e), e), e);
+    proven_crypto_mp_store_be(d, k->n_len, tmp, 2 * sp);
+    /* qinv = q^(p-2) mod p. */
+    proven_crypto_mp_mod_t modp;
+    proven_byte_t eb[RSA_PRIME_BYTES];
+    proven_u32 qi[RSA_PRIME_LIMBS];
+    bool ok = proven_crypto_mp_mod_init(&modp, k->p, half);
+    if (ok) {
+        pl[0][0] -= 1;                                               /* p - 2 */
+        proven_crypto_mp_store_be(eb, half, pl[0], sp);
+        ok = rsa_half(&modp, k->q, half, eb, half, qi);
+        proven_crypto_mp_store_be(k->qinv, half, qi, sp);
+    }
+    rsa_wipe(pl, sizeof pl); rsa_wipe(phi, sizeof phi); rsa_wipe(tmp, sizeof tmp); rsa_wipe(eb, sizeof eb); rsa_wipe(qi, sizeof qi); rsa_wipe(&modp, sizeof modp);
+    if (!ok) rsa_wipe(k, sizeof *k);
+    return ok;
 }

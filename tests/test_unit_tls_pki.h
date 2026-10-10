@@ -93,4 +93,80 @@ static bool tp_build(void) {
     return ok;
 }
 
+/*
+ * RSA identities, for the tests that need them. Separate from tp_build() because making an
+ * RSA key takes real time - searching for primes - and most tests have no use for one:
+ * tp_build_rsa() is called only where an RSA key is the subject. The keys come from a fixed
+ * seed, so a failure repeats; like the others, they exist only while the test runs.
+ *
+ *   TP_RSA_SERVER_K   2048 bits: the size a real server would have
+ *   TP_RSA_SMALL_K    1024 bits: a client certificate's key, and quick
+ *   TP_RSA_CA_K       1024 bits: a certificate authority that signs with RSA
+ *
+ * The two small ones are below what the library accepts, on purpose: tests that use them
+ * lower the limit with proven_crypto_rsa_test_min_bits(1024) and put it back.
+ */
+[[maybe_unused]] static proven_crypto_rsa_key_t TP_RSA_SERVER_K, TP_RSA_SMALL_K, TP_RSA_CA_K;
+[[maybe_unused]] static proven_byte_t TP_RSA_SERVER_D[512], TP_RSA_SMALL_D[512], TP_RSA_CA_D[512];
+[[maybe_unused]] static char TP_RSA_CA[4096];                              /* the RSA authority's own certificate */
+[[maybe_unused]] static char TP_SERVER_RSA[4096], TP_SERVER_RSA_KEY[4096], TP_SERVER_RSA_KEY_PKCS1[4096];   /* 2048-bit key, issued by the P-256 CA */
+[[maybe_unused]] static char TP_SERVER_RSA_BY_RSA[4096];                   /* the same key, issued by the RSA CA */
+[[maybe_unused]] static char TP_CLIENT_RSA[4096], TP_CLIENT_RSA_KEY[4096]; /* 1024-bit key, issued by the P-256 CA */
+
+typedef struct { char seed[32]; proven_u64 counter; } tp_stream_t;     /* the seed: a string of at most 31 characters */
+[[maybe_unused]] static void tp_stream(void *ctx, proven_byte_t *out, proven_size_t len) {
+    tp_stream_t *st = ctx;
+    while (len > 0) {
+        proven_byte_t in[40], block[32];
+        memcpy(in, st->seed, 32);
+        for (int i = 0; i < 8; ++i) in[32 + i] = (proven_byte_t)(st->counter >> (8 * i));
+        st->counter++;
+        proven_sha256((proven_mem_view_t){ .ptr = in, .size = sizeof in }, block);
+        proven_size_t n = len < 32 ? len : 32;
+        memcpy(out, block, n);
+        out += n; len -= n;
+    }
+}
+
+[[maybe_unused]] static bool tp_cert_rsa(char *out, proven_size_t cap, const char *subject, const proven_crypto_rsa_key_t *subject_rsa,
+                                         const char *issuer, proven_tls_key_kind_t issuer_kind, const proven_byte_t *issuer_key, const proven_crypto_rsa_key_t *issuer_rsa,
+                                         bool ca, proven_u32 eku) {
+    proven_u8str_view_t names[3] = {
+        { .ptr = (const proven_byte_t *)"example.test", .size = 12 },
+        { .ptr = (const proven_byte_t *)"localhost", .size = 9 },
+        { .ptr = (const proven_byte_t *)"127.0.0.1", .size = 9 },
+    };
+    proven_tls_issue_t q = {
+        .subject = subject, .issuer = issuer, .subject_kind = PROVEN_TLS_KEY_RSA, .subject_rsa = subject_rsa,
+        .issuer_kind = issuer_kind, .issuer_key = issuer_key, .issuer_rsa = issuer_rsa,
+        .is_ca = ca, .eku = eku, .names = names, .name_count = ca ? 0 : 3, .not_before = TP_FROM, .not_after = TP_UNTIL,
+    };
+    for (int i = 0; i < 16; ++i) q.serial[i] = (proven_byte_t)(subject[0] + i * 5 + (issuer_rsa ? 3 : 1));
+    static proven_byte_t der[2400];
+    proven_size_t n = 0;
+    return proven_tls_issue_(&q, (proven_mem_mut_t){ .ptr = der, .size = sizeof der }, &n) == PROVEN_OK && tp_pem(out, cap, "CERTIFICATE", der, n);
+}
+
+[[maybe_unused]] static bool tp_build_rsa(void) {
+    proven_byte_t ca[32];
+    static proven_byte_t der[2600];
+    tp_stream_t st = { .seed = "proven_c_lib RSA test keys", .counter = 0 };
+    const proven_u32 SRV = PROVEN_CERT_EKU_SERVER_AUTH, CLI = PROVEN_CERT_EKU_CLIENT_AUTH;
+    tp_key(ca, 1);                                                  /* the P-256 CA of tp_build() */
+    bool ok = proven_crypto_rsa_generate(2048, tp_stream, &st, &TP_RSA_SERVER_K, TP_RSA_SERVER_D) &&
+              proven_crypto_rsa_generate(1024, tp_stream, &st, &TP_RSA_SMALL_K, TP_RSA_SMALL_D) &&
+              proven_crypto_rsa_generate(1024, tp_stream, &st, &TP_RSA_CA_K, TP_RSA_CA_D);
+    ok = ok && tp_cert_rsa(TP_SERVER_RSA, sizeof TP_SERVER_RSA, "server", &TP_RSA_SERVER_K, "TLS test CA", PROVEN_TLS_KEY_P256, ca, NULL, false, SRV);
+    ok = ok && tp_cert_rsa(TP_CLIENT_RSA, sizeof TP_CLIENT_RSA, "client", &TP_RSA_SMALL_K, "TLS test CA", PROVEN_TLS_KEY_P256, ca, NULL, false, CLI);
+    ok = ok && tp_cert_rsa(TP_RSA_CA, sizeof TP_RSA_CA, "RSA test CA", &TP_RSA_CA_K, "RSA test CA", PROVEN_TLS_KEY_RSA, NULL, &TP_RSA_CA_K, true, 0);
+    ok = ok && tp_cert_rsa(TP_SERVER_RSA_BY_RSA, sizeof TP_SERVER_RSA_BY_RSA, "server", &TP_RSA_SERVER_K, "RSA test CA", PROVEN_TLS_KEY_RSA, NULL, &TP_RSA_CA_K, false, SRV);
+    proven_size_t n = ok ? proven_tls_rsa_key_der_(&TP_RSA_SERVER_K, TP_RSA_SERVER_D, true, (proven_mem_mut_t){ .ptr = der, .size = sizeof der }) : 0;
+    ok = ok && n > 0 && tp_pem(TP_SERVER_RSA_KEY, sizeof TP_SERVER_RSA_KEY, "PRIVATE KEY", der, n);
+    n = ok ? proven_tls_rsa_key_der_(&TP_RSA_SERVER_K, TP_RSA_SERVER_D, false, (proven_mem_mut_t){ .ptr = der, .size = sizeof der }) : 0;
+    ok = ok && n > 0 && tp_pem(TP_SERVER_RSA_KEY_PKCS1, sizeof TP_SERVER_RSA_KEY_PKCS1, "RSA PRIVATE KEY", der, n);
+    n = ok ? proven_tls_rsa_key_der_(&TP_RSA_SMALL_K, TP_RSA_SMALL_D, true, (proven_mem_mut_t){ .ptr = der, .size = sizeof der }) : 0;
+    ok = ok && n > 0 && tp_pem(TP_CLIENT_RSA_KEY, sizeof TP_CLIENT_RSA_KEY, "PRIVATE KEY", der, n);
+    return ok;
+}
+
 #endif

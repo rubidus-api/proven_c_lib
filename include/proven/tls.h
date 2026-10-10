@@ -77,7 +77,7 @@ typedef struct {
     const proven_byte_t (*pins)[32];         /**< SHA-256 of SubjectPublicKeyInfo, as proven_cert_key_sha256 gives */
     proven_size_t pin_count;
     proven_mem_view_t certificate_pem;       /**< this side's certificates, its own first. A server needs one. */
-    proven_mem_view_t private_key_pem;       /**< its key: PKCS #8 ("PRIVATE KEY") or "EC PRIVATE KEY"; P-256 or Ed25519 */
+    proven_mem_view_t private_key_pem;       /**< its key, not encrypted: P-256 or Ed25519 or RSA (2048 to 4096 bits), as PKCS #8 ("PRIVATE KEY"), "EC PRIVATE KEY" or "RSA PRIVATE KEY" */
     proven_tls_client_auth_t client_auth;    /**< server only */
     const proven_u8str_view_t *alpn;         /**< application protocols, most preferred first; none: ALPN is not used */
     proven_size_t alpn_count;
@@ -102,9 +102,11 @@ typedef struct proven_tls_config proven_tls_config_t;
  *         without a certificate, more than 8 certificates, an ALPN name that is empty or
  *         longer than 255 bytes, a missing `random` or `now` in a freestanding build;
  *         PROVEN_ERR_INVALID_FORMAT for PEM that does not parse or holds no certificate or
- *         key; PROVEN_ERR_UNSUPPORTED for a key that is not P-256 or Ed25519 (RSA keys are
- *         not supported in this version) or an encrypted key file; PROVEN_ERR_INVALID_STATE
- *         when the key is not the certificate's; PROVEN_ERR_NOMEM.
+ *         key, and for an RSA key that is not one this library signs with (not 2048 to 4096
+ *         bits, not two primes whose product is its modulus, or one that fails to sign);
+ *         PROVEN_ERR_UNSUPPORTED for a key of another kind (P-384, say) or an encrypted key
+ *         file; PROVEN_ERR_INVALID_STATE when the key is not the certificate's;
+ *         PROVEN_ERR_NOMEM.
  */
 [[nodiscard]]
 proven_err_t proven_tls_config_create(const proven_tls_options_t *options, proven_tls_config_t **out);
