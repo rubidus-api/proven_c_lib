@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-10
+
 A MINOR release: TLS 1.3, client and server. HTTPS and `wss` work through the HTTP client and
 server with one setting each.
 

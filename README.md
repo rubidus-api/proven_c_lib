@@ -1,4 +1,4 @@
-[한국어](README-ko.md) | **English** - **Proven C library v0.16.0** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.16.0/proven_c_lib-v0.16.0.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.16.0/proven_c_lib-v0.16.0-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.16.0/proven_c_lib-v0.16.0-ko-manual.pdf)
+[한국어](README-ko.md) | **English** - **Proven C library v0.17.0** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.17.0/proven_c_lib-v0.17.0.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.17.0/proven_c_lib-v0.17.0-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.17.0/proven_c_lib-v0.17.0-ko-manual.pdf)
 
 # Proven C library
 
@@ -22,7 +22,7 @@ manual is published with a searchable index of every public function. It assumes
 one introductory C book, and it is the only document in this repository written to be read rather
 than looked up.
 
-- Version: proven_c_lib-v0.16.0 | Standard: C23 | License: MIT
+- Version: proven_c_lib-v0.17.0 | Standard: C23 | License: MIT
 - Versions are semantic, `MAJOR.MINOR.PATCH`, from v0.0.1 (2026-09-04); the releases before it carry
   date-based numbers (`v26.MM.DDx`) and stay as they were published.
 - Seven functions named `*_internal` or `*_impl` sit in public headers because macros call them;
@@ -364,7 +364,7 @@ The pieces are in the language now, and most C code has not caught up:
   functions.
 - **C11** - `_Generic`, which is how `{}` gets a value's type from the argument instead of from a
   format string.
-- **C23** - `[[nodiscard]]` (used 390 times here, so the compiler refuses code that drops an
+- **C23** - `[[nodiscard]]` (used 400 times here, so the compiler refuses code that drops an
   error), `<stdckdint.h>` for checked arithmetic, `constexpr`, `typeof`, `nullptr`.
 
 Andre Weissflog's [*Modern C for C++ Peeps*](https://floooh.github.io/2019/09/27/modern-c-for-cpp-peeps.html)
