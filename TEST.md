@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 108 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 109 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-11, Windows 11 test VM: x86-64 328 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 172 registered tests plus the 164 runnable manual examples - 336 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 185 test files: the 171 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 173 registered tests plus the 166 runnable manual examples - 339 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 186 test files: the 171 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -850,6 +850,23 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/http_event.c` - `ev_process` for input, `ev_flush` and `ev_progress` for output and what follows it, `ev_arm` for which timer is running, `ev_finish` for the end of an exchange. The backpressure case waits for a refusal rather than for a fixed time; a failure there that prints `download: got N of M` is a stalled response, which is a lost wake-up in `proven_http_stream_write` or `ev_progress`.
 
+### `tests/test_unit_http_event_h2` - the event-driven HTTP server, speaking HTTP/2
+
+Intent: verify that the event-driven server with `http2` on serves HTTP/2 through the callbacks and stream calls an HTTP/1.1 handler uses, unchanged; that the protocol is chosen correctly per connection; and that each limit and timeout means on HTTP/2 what the configuration says. The client is this library's HTTP/2 connection (`proven_h2_conn_t`) with a socket moved through it; the server runs on a loop thread.
+
+Sub-checks:
+
+- Making a server: `http2` over a TLS configuration that does not offer `h2`, and a TLS configuration that offers `h2` without `http2`, are both `PROVEN_ERR_INVALID_ARG`.
+- The cases, run in the clear (prior knowledge), over TLS 1.3 and over TLS 1.2 (ALPN): a request answered with `content-length` and `date` and without `Keep-Alive`; the handler told the protocol is 2 and given one `Host` field; 404; HEAD with the length and no body; a response head the server will not send (`Content-Length` from the handler) refused to the handler, which then sends another; bodies of 0, 1 and 300,000 bytes of known length and 200,000 of unknown length, with writes refused and resumed; a streamed and a whole response compressed with gzip; request bodies of six sizes to 200,000 bytes echoed; sixty requests in flight together; a paused request whose 50,000-byte body reaches the handler only on resume; an aborted exchange and a response that ends short of its promised length, each a reset stream with the connection alive; a client that consumes nothing sent at most one window and the handler not told again and again that it may write; a client's reset reported to the handler; every `on_request` matched by exactly one `on_done`; all of it on one connection. A second client closes its sending side with its answer not yet ready and still receives all of it. The server stops listening: the response in progress finishes, GOAWAY arrives, the connection ends with `NO_ERROR` and the server lets go of it.
+- Both protocols on one listener, in the clear and over TLS: the blocking HTTP/1.1 client (offering no ALPN) is answered and its handler told the protocol is 1 - a POST among the requests, whose first letter is the preface's - while an HTTP/2 client on the same port is told 2.
+- Limits: at a limit of three streams the client's engine refuses a fourth itself; a body of exactly `max_body_bytes` is taken and one byte more is 413, sent while the body is still arriving; a body announced as too large is 413 before the handler is called; more fields than `max_headers` is 431 and exactly as many is served; a request whose `host` and `:authority` disagree is reset with `PROTOCOL_ERROR`; none of these ends the connection.
+- A client that does not read, in the clear and over TLS, with windows of a gigabyte: the server holds between 30,000 and 100,000 bytes for it - about `max_buffered_output` - and when it reads, all twenty megabytes arrive in order; two more large responses side by side arrive whole, and `on_writable` is never called from inside the handler's own write.
+- Time: a request whose body stops arriving is reset after `body_timeout_ms` and its handler told `PROVEN_ERR_TIMEOUT`, with the connection alive; with nothing open the server says goodbye after `idle_timeout_ms`; a client that connects and asks for nothing is dropped after `head_timeout_ms`.
+- What an idle connection holds: two hundred HTTP/2 connections that each made one request hold under 14 KiB each (12,840 bytes measured), with one buffer for reading header lists shared by all; closed, everything is returned.
+- The end: a server destroyed with five exchanges open tells each handler once, with `PROVEN_ERR_RESET`.
+
+Failure tip: inspect `src/proven/http_event_h2.c` - `d_request` and `d_body` for what arrives, `s_head` and `s_push` for what leaves, `d_pump` for the round and for when `on_writable` may be called, `d_arm` and `h2_on_timer` for time. Which protocol a connection speaks is decided in `ev_process` in `src/proven/http_event.c`; `proven_http_event_raw_offer_` there is what writes.
+
 ### `tests/test_unit_http_event_loops` - several loops behind one port
 
 Intent: verify `proven_http_event_server_adopt`, the call by which a connection accepted on one thread is given to a server on another thread's loop - and that the pattern built on it keeps every connection on one thread.
@@ -1001,7 +1018,7 @@ Sub-checks:
 - What a peer may do without progress: a hundred streams opened and reset at once are borne and the hundred and first ends the connection with `ENHANCE_YOUR_CALM`; a stream reset for the peer's fault counts the same; 150 resets matched by 150 streams that finish never end it at an allowance of 3; streams beyond the limit are refused and what follows on them dropped; resets of every open stream are all forgiven; sixteen empty frames in a row are borne and the seventeenth is not, for DATA and for CONTINUATION; sixty unread answers to PING fit a bound of 1,024 bytes and the sixty-first ends the connection, while five thousand that are read do not; with nobody reading, about 64 KiB of body is taken and a response on another stream is `PROVEN_ERR_BUSY` until the output has gone.
 - Goodbye: a stream begun after the server's goodbye is not acted on, and the client is told it may send it elsewhere; the open stream finishes and both ends report the end with `NO_ERROR`; a goodbye with an error code is the end at once; a second GOAWAY naming a later stream is refused; with no stream open the end follows the goodbye at once.
 - Hostile input: a recorded conversation of three requests with bodies, a ping and trailers is replayed 12,214 times to a fresh connection in each role - cut short at each of its first 2,000 bytes and every 97th after, or with one bit changed (every bit of the first 400 bytes, then one in every 53rd byte) - with the application answering as it goes: no feed takes more than it was given, every DATA event lies inside the input, and what is queued stays within its bound.
-- Memory: a connection that has only opened holds one block of at most 400 bytes; a hundred open streams cost under 64 bytes each on top of one header list's buffers; idle again it holds under 8 KiB with the default header tables and under 1,280 bytes with none; destroying it returns everything; and each of a conversation's 23 allocations is made to fail once, ending the conversation cleanly or being done without, with nothing leaked.
+- Memory: a connection that has only opened holds one block of at most 400 bytes; a hundred open streams cost under 64 bytes each on top of one header list's buffers; idle again it holds under 14 KiB when both header tables have been used at their default size and under 1,280 bytes with none; destroying it returns everything; and each of a conversation's 23 allocations is made to fail once, ending the conversation cleanly or being done without, with nothing leaked.
 
 Failure tip: inspect `src/proven/h2_conn.c` - `h2c_on_header` and `h2c_on_fixed` for the per-frame rules, `h2c_on_block` for what a header list is taken to be, `h2c_closed_frame` for frames that arrive after a stream ended, `h2c_stream_fault` and `h2c_fail` for the two kinds of error, `h2c_debt` and `h2c_ctl` for the bounds, `h2c_conn_credit` and `h2c_stream_credit` for the windows.
 

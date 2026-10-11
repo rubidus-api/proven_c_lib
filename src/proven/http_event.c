@@ -5,6 +5,8 @@
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 
 #include "proven/time.h"
+#include "proven/h2.h"
+#include "proven_internal_tls.h"
 
 /*
  * The event-driven HTTP/1.1 server.
@@ -23,67 +25,6 @@
  *   - nothing reads a field after a callback without having re-checked `dead`;
  *   - a connection is freed only when the outermost entry leaves (`depth`).
  */
-
-#define EV_MAX_LISTENERS 4
-#define EV_LINGER_MS 1000u
-#define EV_READ_BYTES ((proven_size_t)64 * 1024)
-#define EV_PLAIN_BYTES ((proven_size_t)16 * 1024 + 512)
-
-#define EV_HEAD 0          /* waiting for, or in, a request head */
-#define EV_BODY 1          /* reading a request body */
-#define EV_RESPOND 2       /* the request is complete; its response is not */
-#define EV_LINGER 3        /* closing: input is thrown away until the client goes */
-#define EV_RAW 4           /* taken over by another protocol (proven_internal_http_event.h) */
-
-typedef struct { proven_byte_t *ptr; proven_size_t len, cap, off; bool borrowed; } ev_buf_t;
-
-struct proven_http_stream {
-    proven_http_event_server_t *server;
-    struct proven_http_stream *prev, *next;
-    proven_net_conn_t sock;
-    proven_net_addr_t peer;
-    proven_loop_io_t io;
-    proven_loop_timer_t timer;
-    proven_tls_conn_t *tls;
-    ev_buf_t stash;                    /* input not consumed yet */
-    ev_buf_t out;                      /* output the transport has not taken yet */
-    proven_http_body_t body;
-    proven_u64 response_left;          /* body bytes still promised; LENGTH_UNKNOWN when chunked or not counted */
-    void *user;
-    /* One pointer for two things that never exist together: a connection taken over by
-     * another protocol has no HTTP response, and only a response has a compressor. Which it
-     * is, `state` says - so an idle connection is no larger for either. */
-    union {
-        void *raw;                     /* EV_RAW: the protocol's object; it begins with its operations */
-        proven_deflate_t *zip;         /* any other state: the response body goes through this, or null */
-    };
-    proven_u32 depth;                  /* entries into this connection now on the stack */
-    proven_u8 state;
-    proven_u8 version_minor;
-    proven_http_method_t method;
-    bool active;                       /* on_request was delivered and on_done has not been */
-    bool response_begun, response_ended, chunked, bodiless, keep, expect_continue;
-    bool paused, dead, processing, peer_eof, want_writable, close_when_flushed, head_started;
-    bool accepts_gzip, compress_asked;
-};
-
-typedef struct { proven_http_event_server_t *server; proven_net_listener_t listener; proven_loop_io_t io; } ev_listener_t;
-
-struct proven_http_event_server {
-    proven_loop_t *loop;
-    proven_allocator_t alloc;
-    proven_http_event_server_config_t cfg;
-    ev_listener_t listeners[EV_MAX_LISTENERS];
-    proven_size_t listener_count;
-    bool accepting;                    /* the listeners are being watched */
-    bool closed_to_new;                /* stop_listening was called: nothing is adopted either */
-    bool stopped;
-    proven_http_stream_t *conns;
-    proven_size_t conn_count;
-    proven_http_header_t *headers;
-    proven_byte_t *rbuf, *pbuf, *hbuf;
-    proven_byte_t *zbuf;               /* what a compressor gives out, on its way to a connection's output; made when first needed */
-};
 
 static proven_u8str_view_t ev_lit_n(const char *s, proven_size_t n) { return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n }; }
 #define ev_lit(s) ev_lit_n((s), sizeof(s) - 1)
@@ -148,11 +89,11 @@ static void ev_update_listeners(proven_http_event_server_t *s);
 static void ev_on_io(void *ctx, proven_u8 got);
 static void ev_on_timer(void *ctx);
 
-static void ev_enter(proven_http_stream_t *c) { c->depth++; }
+static void ev_enter(proven_http_stream_t *c) { c->h.depth++; }
 
 static void ev_leave(proven_http_stream_t *c) {
-    if (--c->depth > 0 || !c->dead) return;
-    proven_http_event_server_t *s = c->server;
+    if (--c->h.depth > 0 || !c->dead) return;
+    proven_http_event_server_t *s = c->h.server;
     buf_release(s, &c->stash);
     buf_release(s, &c->out);
     s->alloc.free_fn(s->alloc.ctx, c);
@@ -161,12 +102,12 @@ static void ev_leave(proven_http_stream_t *c) {
 /* End the connection now. `why` goes to on_done if an exchange was in progress. */
 static void ev_kill(proven_http_stream_t *c, proven_err_t why) {
     if (c->dead) return;
-    proven_http_event_server_t *s = c->server;
+    proven_http_event_server_t *s = c->h.server;
     c->dead = true;
     proven_loop_timer_cancel(s->loop, &c->timer);
     proven_loop_io_remove(s->loop, &c->io);           /* before the close */
     if (c->tls) { proven_tls_conn_destroy(c->tls); c->tls = (void *)0; }
-    if (c->state != EV_RAW && c->zip) { proven_deflate_destroy(c->zip); c->zip = (void *)0; }
+    if (c->h.state != EV_RAW && c->zip) { proven_deflate_destroy(c->zip); c->zip = (void *)0; }
     (void)proven_net_close(&c->sock);
     if (c->prev) c->prev->next = c->next;
     else s->conns = c->next;
@@ -177,7 +118,7 @@ static void ev_kill(proven_http_stream_t *c, proven_err_t why) {
         c->active = false;
         if (s->cfg.on.on_done) s->cfg.on.on_done(s->cfg.ctx, c, why);
     }
-    if (c->state == EV_RAW && c->raw) {
+    if (c->h.state == EV_RAW && c->raw) {
         void *raw = c->raw;
         c->raw = (void *)0;
         (*(const proven_http_event_raw_ops_t *const *)raw)->on_closed(raw, why);
@@ -193,15 +134,15 @@ static proven_size_t ev_buffered(const proven_http_stream_t *c) {
 /* Which timer a connection needs depends on what it is waiting for. */
 static void ev_arm(proven_http_stream_t *c) {
     if (c->dead) return;
-    proven_http_event_server_t *s = c->server;
-    if (c->state == EV_RAW) return;                /* its owner sets the timer */
+    proven_http_event_server_t *s = c->h.server;
+    if (c->h.state == EV_RAW) return;                /* its owner sets the timer */
     proven_u32 ms = 0;
     /* Output the client has not taken comes first: a response on its way out is not cut
      * short by the brief wait that follows it. */
     if (ev_buffered(c) > 0) ms = s->cfg.write_timeout_ms;
-    else if (c->state == EV_LINGER) ms = EV_LINGER_MS;
-    else if (c->state == EV_HEAD) ms = c->head_started ? s->cfg.head_timeout_ms : s->cfg.idle_timeout_ms;
-    else if (c->state == EV_BODY && !c->paused) ms = s->cfg.body_timeout_ms;
+    else if (c->h.state == EV_LINGER) ms = EV_LINGER_MS;
+    else if (c->h.state == EV_HEAD) ms = c->head_started ? s->cfg.head_timeout_ms : s->cfg.idle_timeout_ms;
+    else if (c->h.state == EV_BODY && !c->paused) ms = s->cfg.body_timeout_ms;
     /* EV_RESPOND with nothing held: the handler is thinking. That is its business. */
     if (ms == 0) proven_loop_timer_cancel(s->loop, &c->timer);
     else proven_loop_timer_set(s->loop, &c->timer, ms, ev_on_timer, c);
@@ -210,12 +151,12 @@ static void ev_arm(proven_http_stream_t *c) {
 static void ev_watch(proven_http_stream_t *c) {
     if (c->dead) return;
     proven_u8 want = 0;
-    bool reading = !c->peer_eof && !((c->state == EV_BODY || c->state == EV_RAW) && c->paused) &&
+    bool reading = !c->peer_eof && !((c->h.state == EV_BODY || c->h.state == EV_RAW) && c->paused) &&
                    /* while a response is owed, a pipelined request is left in the socket */
-                   !(c->state == EV_RESPOND && buf_pending(&c->stash) > 0);
+                   !(c->h.state == EV_RESPOND && buf_pending(&c->stash) > 0);
     if (reading) want |= PROVEN_NET_READABLE;
-    if (ev_buffered(c) > 0) want |= PROVEN_NET_WRITABLE;
-    (void)proven_loop_io_set(c->server->loop, &c->io, want);
+    if (ev_buffered(c) > 0 || (c->h.state == EV_RAW && c->raw_more)) want |= PROVEN_NET_WRITABLE;
+    (void)proven_loop_io_set(c->h.server->loop, &c->io, want);
 }
 
 /* Push what is waiting towards the socket, without waiting. False when the connection died. */
@@ -236,7 +177,7 @@ static bool ev_flush(proven_http_stream_t *c) {
         else c->out.off += w.value;
         if (w.value == 0) break;
     }
-    if (buf_pending(&c->out) == 0) buf_release(c->server, &c->out);
+    if (buf_pending(&c->out) == 0) buf_release(c->h.server, &c->out);
     return true;
 }
 
@@ -249,7 +190,7 @@ static bool ev_send(proven_http_stream_t *c, const proven_byte_t *p, proven_size
         if (w.err == PROVEN_OK) { p += w.value; n -= w.value; }
         else if (w.err != PROVEN_ERR_TIMEOUT && w.err != PROVEN_ERR_AGAIN) { ev_kill(c, PROVEN_ERR_RESET); return false; }
     }
-    if (!buf_append(c->server, &c->out, p, n)) { ev_kill(c, PROVEN_ERR_NOMEM); return false; }
+    if (!buf_append(c->h.server, &c->out, p, n)) { ev_kill(c, PROVEN_ERR_NOMEM); return false; }
     return ev_flush(c);
 }
 
@@ -258,8 +199,8 @@ static bool ev_send(proven_http_stream_t *c, const proven_byte_t *p, proven_size
  * take the response that was just sent with it. */
 static void ev_linger(proven_http_stream_t *c) {
     if (c->dead) return;
-    if (c->server->stopped) { ev_kill(c, PROVEN_ERR_RESET); return; }
-    c->state = EV_LINGER;
+    if (c->h.server->stopped) { ev_kill(c, PROVEN_ERR_RESET); return; }
+    c->h.state = EV_LINGER;
     c->stash.len = 0; c->stash.off = 0;
     if (ev_buffered(c) > 0) { c->close_when_flushed = true; ev_watch(c); ev_arm(c); return; }
     if (c->tls) { (void)proven_tls_close(c->tls); if (!ev_flush(c)) return; }
@@ -271,8 +212,8 @@ static void ev_linger(proven_http_stream_t *c) {
 
 /* The response is complete and gone: finish the exchange and go on to whatever is next. */
 static void ev_finish(proven_http_stream_t *c) {
-    proven_http_event_server_t *s = c->server;
-    bool reuse = c->keep && c->state == EV_RESPOND && !c->peer_eof && !s->stopped;
+    proven_http_event_server_t *s = c->h.server;
+    bool reuse = c->keep && c->h.state == EV_RESPOND && !c->peer_eof && !s->stopped;
     c->active = false;
     ev_enter(c);
     if (s->cfg.on.on_done) s->cfg.on.on_done(s->cfg.ctx, c, PROVEN_OK);
@@ -283,7 +224,7 @@ static void ev_finish(proven_http_stream_t *c) {
         c->compress_asked = false;
         if (c->zip) { proven_deflate_destroy(c->zip); c->zip = (void *)0; }
         if (reuse) {
-            c->state = EV_HEAD;
+            c->h.state = EV_HEAD;
             c->head_started = buf_pending(&c->stash) > 0;
             ev_watch(c);
             ev_arm(c);
@@ -298,11 +239,11 @@ static void ev_finish(proven_http_stream_t *c) {
 /* Something was sent, or the state moved: see what that allows. */
 static void ev_progress(proven_http_stream_t *c) {
     if (c->dead) return;
-    proven_http_event_server_t *s = c->server;
+    proven_http_event_server_t *s = c->h.server;
     ev_enter(c);
-    if (c->state == EV_LINGER) {
+    if (c->h.state == EV_LINGER) {
         if (c->close_when_flushed && ev_buffered(c) == 0) { c->close_when_flushed = false; ev_linger(c); }
-    } else if (c->state == EV_RAW) {
+    } else if (c->h.state == EV_RAW) {
         if (c->raw) (*(const proven_http_event_raw_ops_t *const *)c->raw)->on_progress(c->raw);
     } else if (c->active && c->response_ended && ev_buffered(c) == 0) {
         ev_finish(c);
@@ -316,7 +257,7 @@ static void ev_progress(proven_http_stream_t *c) {
 
 /* Refuse a request the server will not pass on. */
 static void ev_reject(proven_http_stream_t *c, proven_u16 status, proven_err_t why) {
-    proven_http_event_server_t *s = c->server;
+    proven_http_event_server_t *s = c->h.server;
     if (!c->response_begun) {
         proven_byte_t msg[128];
         proven_mem_mut_t out = { .ptr = msg, .size = sizeof msg };
@@ -343,26 +284,47 @@ static void ev_reject(proven_http_stream_t *c, proven_u16 status, proven_err_t w
 // -----------------------------------------------------------------------------
 
 static void ev_process(proven_http_stream_t *c) {
-    proven_http_event_server_t *s = c->server;
+    proven_http_event_server_t *s = c->h.server;
     if (c->processing || c->dead) return;         /* the outer call will see what changed */
     c->processing = true;
     ev_enter(c);
     while (!c->dead) {
         proven_mem_view_t in = { .ptr = c->stash.ptr + c->stash.off, .size = buf_pending(&c->stash) };
-        if (c->state == EV_LINGER) { c->stash.len = 0; c->stash.off = 0; break; }
-        if (c->state == EV_RESPOND) break;        /* what follows belongs to the next request */
-        if (c->state == EV_RAW) {
+        if (c->h.state == EV_LINGER) { c->stash.len = 0; c->stash.off = 0; break; }
+        if (c->h.state == EV_RESPOND) break;        /* what follows belongs to the next request */
+        if (c->h.state == EV_RAW) {
             if (c->paused || in.size == 0 || !c->raw) break;
             proven_size_t used = (*(const proven_http_event_raw_ops_t *const *)c->raw)->on_input(
                 c->raw, (proven_mem_mut_t){ .ptr = c->stash.ptr + c->stash.off, .size = in.size });
-            if (c->dead || c->state != EV_RAW) break;      /* closed from inside: the input is void */
+            if (c->dead || c->h.state != EV_RAW) break;      /* closed from inside: the input is void */
             c->stash.off += used;
             if (used < in.size) break;
             continue;
         }
-        if (c->state == EV_HEAD) {
+        if (c->h.state == EV_HEAD) {
             if (in.size == 0) break;
             c->head_started = true;
+            if (s->cfg.http2 && !c->sniffed) {
+                /* Once, before anything is parsed. Over TLS the handshake has said (ALPN). In
+                 * the clear a client that knows begins with 24 fixed bytes, and what has
+                 * arrived either is the beginning of those or is not: "PR" is, "PO" is POST. */
+                static const char preface[] = PROVEN_H2_PREFACE;
+                bool h2 = false;
+                if (c->tls) {
+                    proven_u8str_view_t chosen = proven_tls_alpn(c->tls);
+                    h2 = chosen.size == 2 && chosen.ptr[0] == 'h' && chosen.ptr[1] == '2';
+                } else {
+                    proven_size_t n = in.size < PROVEN_H2_PREFACE_SIZE ? in.size : PROVEN_H2_PREFACE_SIZE, same = 0;
+                    while (same < n && in.ptr[same] == (proven_byte_t)preface[same]) same++;
+                    if (same == n && n < PROVEN_H2_PREFACE_SIZE) break;        /* so far it is: wait for the rest */
+                    h2 = same == PROVEN_H2_PREFACE_SIZE;
+                }
+                c->sniffed = true;
+                if (h2) {
+                    if (proven_http_event_h2_take_(c) != PROVEN_OK) { ev_kill(c, PROVEN_ERR_NOMEM); break; }
+                    continue;                      /* the same bytes, to their new owner */
+                }
+            }
             proven_http_request_t req;
             proven_size_t head = 0;
             proven_err_t e = proven_http_parse_request(in, s->headers, s->cfg.max_headers, s->cfg.max_head_bytes, &req, &head);
@@ -387,19 +349,19 @@ static void ev_process(proven_http_stream_t *c) {
 
             bool no_body = framing.kind == PROVEN_HTTP_BODY_NONE || (framing.kind == PROVEN_HTTP_BODY_LENGTH && framing.length == 0);
             c->method = req.method;
-            c->version_minor = (proven_u8)req.version_minor;
+            c->h.version_minor = (proven_u8)req.version_minor;
             c->keep = proven_http_request_keep_alive(&req);
             c->accepts_gzip = proven_http_accepts_coding(s->headers, req.header_count, PROVEN_HTTP_CODING_GZIP);
             c->compress_asked = false;
             c->expect_continue = req.version_minor >= 1 && !no_body && proven_http_header_has_token(s->headers, req.header_count, ev_lit("Expect"), ev_lit("100-continue"));
-            c->state = no_body ? EV_RESPOND : EV_BODY;
+            c->h.state = no_body ? EV_RESPOND : EV_BODY;
             c->head_started = false;
             c->active = true;
             c->stash.off += head;                 /* consumed; the views stay good until this loop ends */
             ev_arm(c);
             s->cfg.on.on_request(s->cfg.ctx, c, &req);
             if (c->dead) break;
-            if (c->state == EV_BODY && c->expect_continue && !c->response_begun) {
+            if (c->h.state == EV_BODY && c->expect_continue && !c->response_begun) {
                 static const char go_on[] = "HTTP/1.1 100 Continue\r\n\r\n";
                 c->expect_continue = false;
                 if (!ev_send(c, (const proven_byte_t *)go_on, sizeof go_on - 1)) break;
@@ -415,7 +377,7 @@ static void ev_process(proven_http_stream_t *c) {
         proven_err_t e = proven_http_body_feed(&c->body, in, &used, &payload, &done);
         if (e != PROVEN_OK) { ev_reject(c, e == PROVEN_ERR_OUT_OF_BOUNDS ? 413 : 400, e); break; }
         c->stash.off += used;
-        if (done) c->state = EV_RESPOND;
+        if (done) c->h.state = EV_RESPOND;
         if ((payload.size > 0 || done) && s->cfg.on.on_body) s->cfg.on.on_body(s->cfg.ctx, c, payload, done);
         if (c->dead) break;
         ev_progress(c);
@@ -434,9 +396,9 @@ static void ev_process(proven_http_stream_t *c) {
 
 /* Bytes of the request stream (after TLS, if any) have arrived in a buffer of the server's. */
 static void ev_input(proven_http_stream_t *c, const proven_byte_t *p, proven_size_t n) {
-    proven_http_event_server_t *s = c->server;
+    proven_http_event_server_t *s = c->h.server;
     if (c->dead || n == 0) return;
-    if (c->state == EV_LINGER) return;
+    if (c->h.state == EV_LINGER) return;
     if (buf_pending(&c->stash) == 0) {
         /* The common case: parse where the bytes lie, and copy aside only what is left over. */
         buf_release(s, &c->stash);
@@ -448,15 +410,24 @@ static void ev_input(proven_http_stream_t *c, const proven_byte_t *p, proven_siz
     ev_process(c);
 }
 
+/* The peer will send nothing more to a connection that another protocol owns. The owner says
+ * whether what it still owes is to be written; if not, this is the end. False when it was. */
+static bool ev_raw_eof(proven_http_stream_t *c) {
+    const proven_http_event_raw_ops_t *ops = c->raw ? *(const proven_http_event_raw_ops_t *const *)c->raw : (void *)0;
+    if (ops && ops->on_eof && ops->on_eof(c->raw) && !c->dead) return true;
+    if (!c->dead) ev_kill(c, PROVEN_ERR_EOF);
+    return false;
+}
+
 static void ev_readable(proven_http_stream_t *c) {
-    proven_http_event_server_t *s = c->server;
+    proven_http_event_server_t *s = c->h.server;
     proven_result_size_t r = proven_net_read(&c->sock, (proven_mem_mut_t){ .ptr = s->rbuf, .size = EV_READ_BYTES }, PROVEN_NET_DONT_WAIT);
     if (r.err == PROVEN_ERR_TIMEOUT || r.err == PROVEN_ERR_AGAIN) return;
     if (r.err == PROVEN_ERR_EOF) {
         /* A client may close its sending side and still wait for the answer. */
         c->peer_eof = true;
-        if (c->state == EV_RAW) { ev_kill(c, PROVEN_ERR_EOF); return; }
-        if (c->state == EV_LINGER || !c->active || c->state == EV_BODY) { ev_kill(c, c->active ? PROVEN_ERR_RESET : PROVEN_OK); return; }
+        if (c->h.state == EV_RAW) { if (ev_raw_eof(c)) ev_watch(c); return; }
+        if (c->h.state == EV_LINGER || !c->active || c->h.state == EV_BODY) { ev_kill(c, c->active ? PROVEN_ERR_RESET : PROVEN_OK); return; }
         c->keep = false;
         ev_watch(c);
         return;
@@ -477,8 +448,8 @@ static void ev_readable(proven_http_stream_t *c) {
             proven_result_size_t got = proven_tls_read(c->tls, (proven_mem_mut_t){ .ptr = s->pbuf, .size = EV_PLAIN_BYTES });
             if (got.err == PROVEN_ERR_EOF) {
                 c->peer_eof = true;
-                if (c->state == EV_RAW) { ev_kill(c, PROVEN_ERR_EOF); return; }
-                if (c->state == EV_LINGER || !c->active || c->state == EV_BODY) { ev_kill(c, c->active ? PROVEN_ERR_RESET : PROVEN_OK); return; }
+                if (c->h.state == EV_RAW) { if (!ev_raw_eof(c)) return; break; }
+                if (c->h.state == EV_LINGER || !c->active || c->h.state == EV_BODY) { ev_kill(c, c->active ? PROVEN_ERR_RESET : PROVEN_OK); return; }
                 c->keep = false;
                 break;
             }
@@ -503,8 +474,8 @@ static void ev_on_io(void *ctx, proven_u8 got) {
 static void ev_on_timer(void *ctx) {
     proven_http_stream_t *c = ctx;
     ev_enter(c);
-    if (c->state == EV_RAW) { if (c->raw) (*(const proven_http_event_raw_ops_t *const *)c->raw)->on_timer(c->raw); }
-    else if (c->state == EV_HEAD && c->head_started && ev_buffered(c) == 0) ev_reject(c, 408, PROVEN_ERR_TIMEOUT);
+    if (c->h.state == EV_RAW) { if (c->raw) (*(const proven_http_event_raw_ops_t *const *)c->raw)->on_timer(c->raw); }
+    else if (c->h.state == EV_HEAD && c->head_started && ev_buffered(c) == 0) ev_reject(c, 408, PROVEN_ERR_TIMEOUT);
     else ev_kill(c, c->active ? PROVEN_ERR_TIMEOUT : PROVEN_OK);
     ev_leave(c);
 }
@@ -525,10 +496,10 @@ static proven_err_t ev_take(proven_http_event_server_t *s, const proven_net_conn
     proven_http_stream_t *c = ev_alloc(s->alloc, sizeof *c);
     if (!c) return PROVEN_ERR_NOMEM;
     for (proven_size_t i = 0; i < sizeof *c; ++i) ((proven_byte_t *)c)[i] = 0;
-    c->server = s;
+    c->h.server = s;
     c->sock = *sock;
     c->peer = peer;
-    c->state = EV_HEAD;
+    c->h.state = EV_HEAD;
     c->head_started = true;                        /* a new connection is expected to speak promptly */
     proven_err_t e = PROVEN_OK;
     if (s->cfg.tls) e = proven_tls_server_create(s->cfg.tls, &c->tls);
@@ -603,6 +574,18 @@ proven_err_t proven_http_event_server_create(proven_loop_t *loop, const proven_h
     if (s->cfg.body_timeout_ms == 0) s->cfg.body_timeout_ms = 30000;
     if (s->cfg.write_timeout_ms == 0) s->cfg.write_timeout_ms = 30000;
     if (s->cfg.idle_timeout_ms == 0) s->cfg.idle_timeout_ms = 60000;
+    if (s->cfg.max_concurrent_streams == 0) s->cfg.max_concurrent_streams = 100;
+    if (s->cfg.tls) {
+        /* What TLS may agree to and what the server will speak must be the same thing: a
+         * client told "h2" by the handshake and answered in HTTP/1.1 has no way to recover. */
+        bool offers_h2 = false;
+        for (proven_size_t i = 0;; ++i) {
+            proven_u8str_view_t name = proven_tls_config_alpn(s->cfg.tls, i);
+            if (name.size == 0) break;
+            if (name.size == 2 && name.ptr[0] == 'h' && name.ptr[1] == '2') offers_h2 = true;
+        }
+        if (offers_h2 != s->cfg.http2) { a.free_fn(a.ctx, s); return PROVEN_ERR_INVALID_ARG; }
+    }
     s->headers = ev_alloc(a, s->cfg.max_headers * sizeof(proven_http_header_t));
     s->rbuf = ev_alloc(a, EV_READ_BYTES);
     s->hbuf = ev_alloc(a, s->cfg.max_head_bytes);
@@ -648,6 +631,24 @@ void proven_http_event_server_stop_listening(proven_http_event_server_t *s) {
     s->listener_count = 0;
     s->accepting = false;
     s->closed_to_new = true;
+    /* A connection that carries many exchanges is told, so that it can say goodbye and
+     * finish the ones it has. (An HTTP/1.1 connection learns at its next response.) Telling
+     * one may run a handler's callbacks, and those may end any other connection: so the list
+     * is searched again from its head after each, for one that has not been told. */
+    for (bool again = !s->stopped; again;) {
+        again = false;
+        for (proven_http_stream_t *c = s->conns; c; c = c->next) {
+            if (c->h.state != EV_RAW || !c->raw || c->told_stop) continue;
+            c->told_stop = true;
+            const proven_http_event_raw_ops_t *ops = *(const proven_http_event_raw_ops_t *const *)c->raw;
+            if (!ops->on_shutdown) continue;
+            ev_enter(c);
+            ops->on_shutdown(c->raw);
+            ev_leave(c);
+            again = true;
+            break;
+        }
+    }
 }
 
 void proven_http_event_server_destroy(proven_http_event_server_t *s) {
@@ -666,6 +667,7 @@ void proven_http_event_server_destroy(proven_http_event_server_t *s) {
     if (s->hbuf) a.free_fn(a.ctx, s->hbuf);
     if (s->pbuf) a.free_fn(a.ctx, s->pbuf);
     if (s->zbuf) a.free_fn(a.ctx, s->zbuf);
+    if (s->h2buf) a.free_fn(a.ctx, s->h2buf);
     a.free_fn(a.ctx, s);
 }
 
@@ -683,7 +685,7 @@ static bool ev_is_driver_header(proven_u8str_view_t name) {
 /* The response head into the server's head buffer. */
 static proven_err_t ev_build_head(proven_http_stream_t *c, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
                                   proven_u64 content_length, bool vary, bool gzip, proven_size_t *head_len) {
-    proven_http_event_server_t *s = c->server;
+    proven_http_event_server_t *s = c->h.server;
     if (status < 200 || status > 999 || (header_count > 0 && !headers)) return PROVEN_ERR_INVALID_ARG;
     proven_mem_mut_t out = { .ptr = s->hbuf, .size = s->cfg.max_head_bytes };
     proven_size_t len = 0;
@@ -703,15 +705,15 @@ static proven_err_t ev_build_head(proven_http_stream_t *c, proven_u16 status, co
     bool chunked = false;
     /* Answering while the request body is still arriving, or while the client waits for its
      * 100 Continue: where the next request starts is no longer certain. */
-    bool close = !c->keep || c->state == EV_BODY || c->expect_continue || c->peer_eof || s->stopped;
+    bool close = !c->keep || c->h.state == EV_BODY || c->expect_continue || c->peer_eof || s->stopped;
     if (e == PROVEN_OK && !no_body_status) {
         if (content_length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) e = proven_http_write_header_u64(out, &len, ev_lit("Content-Length"), content_length);
-        else if (c->version_minor >= 1) { e = proven_http_write_header(out, &len, ev_lit("Transfer-Encoding"), ev_lit("chunked")); chunked = true; }
+        else if (c->h.version_minor >= 1) { e = proven_http_write_header(out, &len, ev_lit("Transfer-Encoding"), ev_lit("chunked")); chunked = true; }
         else close = true;                         /* an HTTP/1.0 client reads until the connection closes */
     }
     if (e == PROVEN_OK) {
         if (close) e = proven_http_write_header(out, &len, ev_lit("Connection"), ev_lit("close"));
-        else if (c->version_minor == 0) e = proven_http_write_header(out, &len, ev_lit("Connection"), ev_lit("keep-alive"));
+        else if (c->h.version_minor == 0) e = proven_http_write_header(out, &len, ev_lit("Connection"), ev_lit("keep-alive"));
     }
     if (e == PROVEN_OK) e = proven_http_write_head_end(out, &len);
     if (e != PROVEN_OK) return e;
@@ -734,14 +736,16 @@ static void ev_compress_plan(const proven_http_stream_t *c, proven_u16 status, c
 }
 
 void proven_http_stream_compress(proven_http_stream_t *c) {
+    if (c && PROVEN_HTTP_EVENT_IS_H2_(c)) { proven_http_event_h2_compress_(c); return; }
     if (c && !c->dead && c->active && !c->response_begun) c->compress_asked = true;
 }
 
 proven_err_t proven_http_stream_begin(proven_http_stream_t *c, proven_u16 status,
                                       const proven_http_header_t *headers, proven_size_t header_count, proven_u64 content_length) {
     if (!c) return PROVEN_ERR_INVALID_ARG;
+    if (PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_begin_(c, status, headers, header_count, content_length);
     if (c->dead || !c->active || c->response_begun) return PROVEN_ERR_INVALID_STATE;
-    proven_http_event_server_t *s = c->server;
+    proven_http_event_server_t *s = c->h.server;
     proven_size_t len = 0;
     bool vary = false, gzip = false;
     ev_compress_plan(c, status, headers, header_count, &vary, &gzip);
@@ -766,7 +770,7 @@ proven_err_t proven_http_stream_begin(proven_http_stream_t *c, proven_u16 status
     ev_enter(c);
     c->response_begun = true;
     c->expect_continue = false;
-    bool alive = ev_send(c, c->server->hbuf, len);
+    bool alive = ev_send(c, c->h.server->hbuf, len);
     ev_leave(c);
     return alive ? PROVEN_OK : PROVEN_ERR_RESET;
 }
@@ -774,7 +778,7 @@ proven_err_t proven_http_stream_begin(proven_http_stream_t *c, proven_u16 status
 /* Body bytes through the compressor and into the output queue, each piece that comes out as
  * a chunk (or bare, for a client that reads until close). False when the connection died. */
 static bool ev_zip(proven_http_stream_t *c, const proven_byte_t *p, proven_size_t n, proven_deflate_flush_t flush) {
-    proven_http_event_server_t *s = c->server;
+    proven_http_event_server_t *s = c->h.server;
     for (;;) {
         proven_size_t used = 0, made = 0;
         bool done = false;
@@ -802,8 +806,9 @@ static bool ev_zip(proven_http_stream_t *c, const proven_byte_t *p, proven_size_
 
 proven_result_size_t proven_http_stream_write(proven_http_stream_t *c, proven_mem_view_t data) {
     if (!c || (data.size > 0 && !data.ptr)) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_ARG, .value = 0 };
+    if (PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_write_(c, data);
     if (c->dead || !c->active || !c->response_begun || c->response_ended) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_STATE, .value = 0 };
-    proven_http_event_server_t *s = c->server;
+    proven_http_event_server_t *s = c->h.server;
     if (c->bodiless) return (proven_result_size_t){ .err = PROVEN_OK, .value = data.size };     /* counted, not sent */
     if (c->response_left != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN && data.size > c->response_left) return (proven_result_size_t){ .err = PROVEN_ERR_OUT_OF_BOUNDS, .value = 0 };
     ev_enter(c);
@@ -854,6 +859,7 @@ proven_result_size_t proven_http_stream_write(proven_http_stream_t *c, proven_me
 
 proven_err_t proven_http_stream_end(proven_http_stream_t *c) {
     if (!c) return PROVEN_ERR_INVALID_ARG;
+    if (PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_end_(c);
     if (c->dead || !c->active || !c->response_begun || c->response_ended) return PROVEN_ERR_INVALID_STATE;
     ev_enter(c);
     proven_err_t result = PROVEN_OK;
@@ -879,8 +885,9 @@ proven_err_t proven_http_stream_end(proven_http_stream_t *c) {
 proven_err_t proven_http_stream_respond(proven_http_stream_t *c, proven_u16 status,
                                         const proven_http_header_t *headers, proven_size_t header_count, proven_mem_view_t body) {
     if (!c || (body.size > 0 && !body.ptr)) return PROVEN_ERR_INVALID_ARG;
+    if (PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_respond_(c, status, headers, header_count, body);
     if (c->dead || !c->active || c->response_begun) return PROVEN_ERR_INVALID_STATE;
-    proven_http_event_server_t *s = c->server;
+    proven_http_event_server_t *s = c->h.server;
     proven_size_t len = 0;
     bool vary = false, gzip = false;
     ev_compress_plan(c, status, headers, header_count, &vary, &gzip);
@@ -918,21 +925,27 @@ proven_err_t proven_http_stream_respond(proven_http_stream_t *c, proven_u16 stat
 }
 
 void proven_http_stream_abort(proven_http_stream_t *c) {
-    if (!c || c->dead) return;
+    if (!c) return;
+    if (PROVEN_HTTP_EVENT_IS_H2_(c)) { proven_http_event_h2_abort_(c); return; }
+    if (c->dead) return;
     ev_enter(c);
     ev_kill(c, PROVEN_ERR_RESET);
     ev_leave(c);
 }
 
 void proven_http_stream_pause(proven_http_stream_t *c) {
-    if (!c || c->dead || !c->active) return;
+    if (!c) return;
+    if (PROVEN_HTTP_EVENT_IS_H2_(c)) { proven_http_event_h2_pause_(c); return; }
+    if (c->dead || !c->active) return;
     c->paused = true;
     ev_watch(c);
     ev_arm(c);
 }
 
 void proven_http_stream_resume(proven_http_stream_t *c) {
-    if (!c || c->dead || !c->paused) return;
+    if (!c) return;
+    if (PROVEN_HTTP_EVENT_IS_H2_(c)) { proven_http_event_h2_resume_(c); return; }
+    if (c->dead || !c->paused) return;
     c->paused = false;
     ev_enter(c);
     ev_watch(c);
@@ -941,10 +954,30 @@ void proven_http_stream_resume(proven_http_stream_t *c) {
     ev_leave(c);
 }
 
-void proven_http_stream_set_user(proven_http_stream_t *c, void *user) { if (c) c->user = user; }
-void *proven_http_stream_user(const proven_http_stream_t *c) { return c ? c->user : (void *)0; }
-proven_net_addr_t proven_http_stream_peer(const proven_http_stream_t *c) { return c->peer; }
-proven_size_t proven_http_stream_buffered(const proven_http_stream_t *c) { return c && !c->dead ? ev_buffered(c) : 0; }
+void proven_http_stream_set_user(proven_http_stream_t *c, void *user) {
+    if (!c) return;
+    if (PROVEN_HTTP_EVENT_IS_H2_(c)) proven_http_event_h2_set_user_(c, user);
+    else c->user = user;
+}
+
+void *proven_http_stream_user(const proven_http_stream_t *c) {
+    if (!c) return (void *)0;
+    return PROVEN_HTTP_EVENT_IS_H2_(c) ? proven_http_event_h2_user_(c) : c->user;
+}
+
+proven_net_addr_t proven_http_stream_peer(const proven_http_stream_t *c) {
+    return PROVEN_HTTP_EVENT_IS_H2_(c) ? proven_http_event_h2_peer_(c) : c->peer;
+}
+
+proven_size_t proven_http_stream_buffered(const proven_http_stream_t *c) {
+    if (!c) return 0;
+    if (PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_buffered_(c);
+    return !c->dead ? ev_buffered(c) : 0;
+}
+
+int proven_http_stream_protocol(const proven_http_stream_t *c) {
+    return c && PROVEN_HTTP_EVENT_IS_H2_(c) ? 2 : 1;
+}
 
 // -----------------------------------------------------------------------------
 // A connection taken over by another protocol (proven_internal_http_event.h)
@@ -953,8 +986,10 @@ proven_size_t proven_http_stream_buffered(const proven_http_stream_t *c) { retur
 proven_err_t proven_http_event_raw_begin_(proven_http_stream_t *c, void *raw, proven_mem_view_t head) {
     /* Only from inside on_request (`processing`): input that follows is then delivered by the
      * loop that is already running, and not before the caller has the new object. */
-    if (!c || !raw || c->dead || !c->active || !c->processing || c->response_begun || c->state != EV_RESPOND) return PROVEN_ERR_INVALID_STATE;
-    proven_http_event_server_t *s = c->server;
+    if (!c || !raw) return PROVEN_ERR_INVALID_STATE;
+    if (PROVEN_HTTP_EVENT_IS_H2_(c)) return PROVEN_ERR_UNSUPPORTED;       /* extended CONNECT (RFC 8441) is not here */
+    if (c->dead || !c->active || !c->processing || c->response_begun || c->h.state != EV_RESPOND) return PROVEN_ERR_INVALID_STATE;
+    proven_http_event_server_t *s = c->h.server;
     ev_enter(c);
     c->response_begun = true; c->response_ended = true;
     if (!ev_send(c, head.ptr, head.size)) { ev_leave(c); return PROVEN_ERR_RESET; }   /* on_done was called by the kill */
@@ -965,7 +1000,7 @@ proven_err_t proven_http_event_raw_begin_(proven_http_stream_t *c, void *raw, pr
     c->user = (void *)0;
     c->response_begun = false; c->response_ended = false; c->chunked = false; c->bodiless = false;
     c->want_writable = false; c->paused = false; c->expect_continue = false; c->keep = false;
-    c->state = EV_RAW;
+    c->h.state = EV_RAW;
     c->raw = raw;
     proven_loop_timer_cancel(s->loop, &c->timer);
     ev_watch(c);
@@ -978,7 +1013,7 @@ bool proven_http_event_raw_send_(proven_http_stream_t *c, proven_mem_view_t a, p
     ev_enter(c);
     /* Both parts are queued before anything is sent, so that a frame's header and payload
      * leave in one write. */
-    bool ok = buf_append(c->server, &c->out, a.ptr, a.size) && buf_append(c->server, &c->out, b.ptr, b.size);
+    bool ok = buf_append(c->h.server, &c->out, a.ptr, a.size) && buf_append(c->h.server, &c->out, b.ptr, b.size);
     if (!ok) ev_kill(c, PROVEN_ERR_NOMEM);
     else ok = ev_flush(c);
     if (ok) ev_watch(c);
@@ -988,12 +1023,12 @@ bool proven_http_event_raw_send_(proven_http_stream_t *c, proven_mem_view_t a, p
 
 void proven_http_event_raw_timer_(proven_http_stream_t *c, proven_u32 ms) {
     if (!c || c->dead) return;
-    if (ms == 0) proven_loop_timer_cancel(c->server->loop, &c->timer);
-    else proven_loop_timer_set(c->server->loop, &c->timer, ms, ev_on_timer, c);
+    if (ms == 0) proven_loop_timer_cancel(c->h.server->loop, &c->timer);
+    else proven_loop_timer_set(c->h.server->loop, &c->timer, ms, ev_on_timer, c);
 }
 
 void proven_http_event_raw_pause_(proven_http_stream_t *c, bool paused) {
-    if (!c || c->dead || c->state != EV_RAW || c->paused == paused) return;
+    if (!c || c->dead || c->h.state != EV_RAW || c->paused == paused) return;
     c->paused = paused;
     ev_enter(c);
     if (!paused) ev_process(c);
@@ -1017,6 +1052,39 @@ void proven_http_event_raw_kill_(proven_http_stream_t *c) {
     ev_leave(c);
 }
 
-proven_allocator_t proven_http_event_raw_allocator_(const proven_http_stream_t *c) { return c->server->alloc; }
+proven_allocator_t proven_http_event_raw_allocator_(const proven_http_stream_t *c) { return c->h.server->alloc; }
+
+proven_size_t proven_http_event_raw_held_(const proven_http_stream_t *c) { return c && !c->dead ? ev_buffered(c) : 0; }
+
+void proven_http_event_raw_again_(proven_http_stream_t *c) {
+    if (!c || c->dead || c->h.state != EV_RAW) return;
+    c->raw_more = true;
+    ev_watch(c);
+}
+
+proven_size_t proven_http_event_raw_offer_(proven_http_stream_t *c, proven_mem_view_t data) {
+    if (!c || c->dead || c->h.state != EV_RAW) return 0;
+    proven_size_t taken = 0;
+    ev_enter(c);
+    if (c->tls) {
+        /* A record's worth at a time, and only when the last has left: TLS's own queue stays
+         * one record long, whatever the owner has waiting. */
+        if (proven_tls_pending_output(c->tls).size == 0 && data.size > 0) {
+            proven_mem_view_t piece = { .ptr = data.ptr, .size = data.size < 16384 ? data.size : 16384 };
+            proven_result_size_t w = proven_tls_write(c->tls, piece);
+            if (w.err != PROVEN_OK) ev_kill(c, PROVEN_ERR_RESET);
+            else taken = w.value;
+        }
+        if (!c->dead) (void)ev_flush(c);
+    } else if (data.size > 0 && buf_pending(&c->out) == 0) {
+        proven_result_size_t w = proven_net_write(&c->sock, data, PROVEN_NET_DONT_WAIT);
+        if (w.err == PROVEN_OK) taken = w.value;
+        else if (w.err != PROVEN_ERR_TIMEOUT && w.err != PROVEN_ERR_AGAIN) ev_kill(c, PROVEN_ERR_RESET);
+    }
+    if (c->dead) taken = 0;
+    else { c->raw_more = taken < data.size; ev_watch(c); }
+    ev_leave(c);
+    return taken;
+}
 
 #endif

@@ -1372,8 +1372,10 @@ int main(void) {
             proven_h2_conn_t *c = opened(&sc);
             const proven_size_t idle = g_mem.bytes;
             PROVEN_TEST_ASSERT(g_mem.blocks == 1 && idle <= 400, "a connection that has only opened holds one block, of at most 400 bytes", "");
-            PROVEN_TEST_ASSERT(proven_hpack_encoder_create(g_alloc, 0, &g_enc) == PROVEN_OK, "the script's encoder again", "");
-            const proven_size_t enc_bytes = g_mem.bytes - idle;
+            /* With a table of its own this time, so that the connection's decoder fills one too -
+             * and from another allocator, so that what is counted is the connection's alone. */
+            PROVEN_TEST_ASSERT(proven_hpack_encoder_create(proven_heap_allocator(), tables ? 4096 : 0, &g_enc) == PROVEN_OK, "the script's encoder again", "");
+            const proven_size_t enc_bytes = 0;
             log_t log = { 0 };
             g_buf.n = 0;
             for (proven_u32 i = 0; i < 100; i++) put_get(&g_buf, 2 * i + 1, false);
@@ -1381,14 +1383,14 @@ int main(void) {
             const proven_size_t busy = g_mem.bytes - enc_bytes;
             PROVEN_TEST_ASSERT(log.headers == 100 && proven_h2_conn_stream_count(c) == 100, "a hundred streams are open", "");
             PROVEN_TEST_INFO("memory: {} bytes for a connection that has only opened; {} bytes with 100 open streams and the buffers for one header list", PROVEN_ARG((long long)idle), PROVEN_ARG((long long)busy));
-            PROVEN_TEST_ASSERT(busy < idle + 100 * 64 + 16384 * 5 + 2048, "a stream costs under 64 bytes, on top of one header list's buffers", "");
+            PROVEN_TEST_ASSERT(busy < idle + 100 * 64 + 16384 * 5 + 2048 + (tables ? 7168u : 0u), "a stream costs under 64 bytes, on top of one header list's buffers", "");
             for (proven_u32 i = 0; i < 100; i++) PROVEN_TEST_ASSERT(proven_h2_conn_submit_response(c, 2 * i + 1, OK200, 2, true) == PROVEN_OK, "each is answered", "");
             drain(c, (void *)0);
             feed(c, g_buf.b, 0, 1, &log);
             const proven_size_t after = g_mem.bytes - enc_bytes;
-            PROVEN_TEST_INFO("memory: {} bytes idle again, in {} blocks (the struct, the HPACK state and the record of how streams ended)", PROVEN_ARG((long long)after), PROVEN_ARG((long long)(g_mem.blocks - 1)));
-            PROVEN_TEST_ASSERT(after < (tables ? 8192u : 1280u) && g_mem.blocks - 1 <= 6,
-                "idle again, the buffers and the stream table are gone: what stays is the struct, the record of endings and the HPACK state - under 8 KiB with the default tables, under 1,280 bytes with none", "");
+            PROVEN_TEST_INFO("memory: {} bytes idle again, in {} blocks (the struct, the HPACK state and the record of how streams ended)", PROVEN_ARG((long long)after), PROVEN_ARG((long long)g_mem.blocks));
+            PROVEN_TEST_ASSERT(after < (tables ? 14336u : 1280u) && g_mem.blocks <= 6,
+                "idle again, the buffers and the stream table are gone: what stays is the struct, the record of endings and the HPACK state - under 14 KiB when both header tables have been used at their default size, under 1,280 bytes with none", "");
             proven_h2_conn_destroy(c);
             proven_hpack_encoder_destroy(g_enc); g_enc = (void *)0;
             PROVEN_TEST_ASSERT(g_mem.blocks == 0 && g_mem.bytes == 0, "and destroying it gives back everything", "");

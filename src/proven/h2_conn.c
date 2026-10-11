@@ -79,6 +79,7 @@ struct proven_h2_conn {
     bool server, fin, drop, end_headers;
     bool got_settings, settings_acked, peer_table_set;
     bool goaway_recv, goaway_sent, closed, reported, oom;
+    bool hbuf_lent;                        /* hbuf is the caller's, and stays */
     bool sweep_goaway, sweep_writable;
 };
 
@@ -390,12 +391,20 @@ static void h2c_closed_frame(proven_h2_conn_t *c, proven_u32 id, proven_u32 unkn
     }
 }
 
+static proven_size_t h2c_field_cap(proven_u32 list) { return list / 32 + 1; }
+
+proven_size_t proven_h2_header_buffer_size(proven_u32 max_header_list_bytes) {
+    const proven_u32 list = max_header_list_bytes ? max_header_list_bytes : 16384;
+    if (list > H2C_MAX_LIST) return 0;
+    return h2c_field_cap(list) * sizeof(proven_http_header_t) + (proven_size_t)list * 4;
+}
+
 /* A whole header block. It is always decoded - the two ends' tables move together or not at
  * all - and only then is it asked what the list is for. */
 static void h2c_on_block(proven_h2_conn_t *c, proven_mem_view_t block, proven_h2_event_t *ev) {
     const proven_u32 id = c->cur;
     const bool fin = c->fin;
-    const proven_size_t cap = c->cfg_list / 32 + 1;
+    const proven_size_t cap = h2c_field_cap(c->cfg_list);
     /* A block is at most twice the list limit, and Huffman coding at its densest makes eight
      * bytes of five: scratch of four times the limit holds any one field such a block can
      * carry, so a list that is merely too large is always read to its end and refused as a
@@ -915,6 +924,10 @@ proven_err_t proven_h2_conn_create(const proven_h2_config_t *config, proven_h2_c
     const proven_size_t bound = config->max_buffered_output ? config->max_buffered_output : 65536;
     if (streams > ((proven_u32)1 << 20) || window > PROVEN_H2_MAX_WINDOW || frame < PROVEN_H2_MIN_MAX_FRAME_SIZE || frame > H2C_MAX_FRAME
         || list < 64 || list > H2C_MAX_LIST || table > ((proven_u32)1 << 30) || bound < 1024 || bound > ((proven_size_t)1 << 30)) return PROVEN_ERR_INVALID_ARG;
+    if (config->header_buffer.ptr || config->header_buffer.size) {
+        if (!config->header_buffer.ptr || config->header_buffer.size < proven_h2_header_buffer_size(list)
+            || (proven_uintptr_t)config->header_buffer.ptr % alignof(proven_http_header_t) != 0) return PROVEN_ERR_INVALID_ARG;
+    }
 
     proven_result_mem_mut_t m = config->alloc.alloc_fn(config->alloc.ctx, sizeof(proven_h2_conn_t), alignof(proven_h2_conn_t));
     if (m.err != PROVEN_OK) return PROVEN_ERR_NOMEM;
@@ -928,6 +941,7 @@ proven_err_t proven_h2_conn_create(const proven_h2_config_t *config, proven_h2_c
         .send_win = PROVEN_H2_DEFAULT_WINDOW, .recv_win = PROVEN_H2_DEFAULT_WINDOW, .recv_target = PROVEN_H2_DEFAULT_WINDOW,
         .local_window = PROVEN_H2_DEFAULT_WINDOW, .next_id = 1,
         .rs = config->server ? RS_PREFACE : RS_HDR,
+        .hbuf = config->header_buffer.ptr, .hbuf_lent = config->header_buffer.ptr != (void *)0,
     };
 
     /* The opening: a client's preface, then this side's settings - only those that differ
@@ -966,7 +980,7 @@ void proven_h2_conn_destroy(proven_h2_conn_t *c) {
     h2c_free(c, c->ring);
     h2c_free(c, c->out);
     h2c_free(c, c->blk);
-    h2c_free(c, c->hbuf);
+    if (!c->hbuf_lent) h2c_free(c, c->hbuf);
     proven_allocator_t a = c->alloc;
     a.free_fn(a.ctx, c);
 }
@@ -1035,7 +1049,7 @@ proven_err_t proven_h2_conn_feed(proven_h2_conn_t *c, proven_mem_view_t in, prov
     }
     if (ev->kind == PROVEN_H2_EVENT_NONE && c->stream_count == 0 && c->rs == RS_HDR && c->small_len == 0 && c->expect_cont == 0) {
         /* Nothing is going on: an idle connection keeps its struct and its tables, no more. */
-        h2c_free(c, c->hbuf); c->hbuf = (void *)0;
+        if (!c->hbuf_lent) { h2c_free(c, c->hbuf); c->hbuf = (void *)0; }
         h2c_free(c, c->blk); c->blk = (void *)0; c->blk_cap = 0;
         h2c_free(c, c->streams); c->streams = (void *)0; c->stream_cap = 0;
         if (c->out_off == c->out_len) { h2c_free(c, c->out); c->out = (void *)0; c->out_cap = c->out_len = c->out_off = 0; }

@@ -83,6 +83,8 @@ typedef struct {
     const proven_tls_config_t *tls;      /**< NULL: plain HTTP. Otherwise every connection is TLS; must outlive the server. */
     int compress_level;                  /**< for responses that ask to be compressed (proven_http_stream_compress): 1 (fastest) to 9 (smallest); -1 stores without compressing. 0: 6 */
     int compress_window_bits;            /**< and how far back the compressor looks, 9 to 15: each response being streamed compressed holds from about 11 KiB (9) to about 325 KiB (15) until it ends. 0: 15 */
+    bool http2;                          /**< true: a connection may be HTTP/2 - over TLS when the handshake chose `h2` (the TLS configuration must offer it, and must not when this is false), in the clear when the client begins with the HTTP/2 preface. Every other connection is HTTP/1.1. The callbacks and the stream functions are the same for both */
+    proven_size_t max_concurrent_streams; /**< HTTP/2: requests in progress on one connection. 0: 100 */
 } proven_http_event_server_config_t;
 
 /**
@@ -231,5 +233,10 @@ proven_net_addr_t proven_http_stream_peer(const proven_http_stream_t *stream);
 
 /** @brief Response bytes held for this connection and not yet accepted by the client. */
 proven_size_t proven_http_stream_buffered(const proven_http_stream_t *stream);
+
+/** @brief Which protocol carries this exchange: 1 for HTTP/1.1 (and 1.0), 2 for HTTP/2. A
+ *         handler seldom needs to know - the calls are the same - but a log may want to say. */
+[[nodiscard]]
+int proven_http_stream_protocol(const proven_http_stream_t *stream);
 
 #endif /* PROVEN_HTTP_EVENT_H */

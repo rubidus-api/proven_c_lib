@@ -18,6 +18,55 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release: **the event-driven HTTP server speaks HTTP/2**, beside HTTP/1.1 on the same
+port and through the same handlers. It is off unless asked for. The blocking server and both
+clients speak HTTP/1.1 as before.
+
+### Added
+
+- **`http_event.h`: `http2` in `proven_http_event_server_config_t`.** With it on, a
+  connection is HTTP/2 when the TLS handshake chose `h2` (ALPN) or, in the clear, when the
+  client begins with the HTTP/2 preface; every other connection is HTTP/1.1. The four
+  callbacks and the `proven_http_stream_*` calls are the same for both: a request arrives as
+  the same `proven_http_request_t` (with a `Host` field made from `:authority`), a response
+  is written the same way, `proven_http_stream_pause` still means "no `on_body` until
+  resumed", and `on_done` is still called once for every `on_request`. A handler written for
+  HTTP/1.1 serves HTTP/2 unchanged.
+- `max_concurrent_streams` (default 100) in the same configuration;
+  `proven_http_stream_protocol`, which answers 1 or 2.
+- The server's limits and timeouts for HTTP/2: `max_buffered_output` for a connection's
+  streams together; `max_body_bytes` (413) and `max_headers` (431) per request;
+  `body_timeout_ms` resets the streams that were waiting and keeps the connection;
+  `idle_timeout_ms` and `proven_http_event_server_stop_listening` say goodbye with GOAWAY
+  and let open streams finish. A request whose `host` and `:authority` disagree is refused.
+- **`h2.h`: `header_buffer` in `proven_h2_config_t`**, and `proven_h2_header_buffer_size`:
+  memory of the caller's for reading header lists, which the connections of one thread may
+  share. The server gives all its HTTP/2 connections one, so the 80 KiB a busy connection
+  held in v0.29.0 for this is no longer per connection.
+- Manual chapter 17 gains "HTTP/2 in the event-driven server", with a compiled example of
+  one port serving both protocols; the registered test `test_unit_http_event_h2`.
+
+### Changed
+
+- At creation the server compares its `http2` setting with what its TLS configuration
+  offers by ALPN, and refuses a pair that disagrees - `h2` offered without `http2`, or
+  `http2` without `h2` offered - with `PROVEN_ERR_INVALID_ARG`. A server that offered `h2`
+  in its TLS configuration before this release answered such clients in HTTP/1.1, which
+  they could not read; it is now told so when it is made.
+
+### Fixed
+
+- The manual and the changelog of v0.29.0 said an HTTP/2 connection that is idle after
+  traffic holds "under 8 KiB with the default header tables". That was measured with one of
+  its two tables in use. With both it is 12,320 bytes (under 14 KiB): each table is about
+  6 KiB, and the protocol gives every connection two. The test now fills both.
+
+### Not included
+
+- HTTP/2 in the blocking server and in the clients. Server push, priorities, `Upgrade: h2c`,
+  extended CONNECT (WebSocket over HTTP/2 - a WebSocket still needs an HTTP/1.1 connection,
+  which the same port accepts), trailers in the event-driven server.
+
 ## [0.29.0] - 2026-10-11
 
 A MINOR release: an HTTP/2 connection, as an object with no socket. **The servers and clients

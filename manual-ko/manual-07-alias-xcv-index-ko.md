@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 1259개: 소문자 `xcv_` 이름 920개와 대문자 `XCV_` 이름 339개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 1261개: 소문자 `xcv_` 이름 922개와 대문자 `XCV_` 이름 339개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -574,6 +574,7 @@ alias 1259개: 소문자 `xcv_` 이름 920개와 대문자 `XCV_` 이름 339개.
 | `xcv_h2_frame_t` | `proven_h2_frame_t` |
 | `xcv_h2_frame_type_t` | `proven_h2_frame_type_t` |
 | `xcv_h2_frame_write` | `proven_h2_frame_write` |
+| `xcv_h2_header_buffer_size` | `proven_h2_header_buffer_size` |
 | `xcv_h2_read_goaway` | `proven_h2_read_goaway` |
 | `xcv_h2_read_rst_stream` | `proven_h2_read_rst_stream` |
 | `xcv_h2_read_window_update` | `proven_h2_read_window_update` |
@@ -738,6 +739,7 @@ alias 1259개: 소문자 `xcv_` 이름 920개와 대문자 `XCV_` 이름 339개.
 | `xcv_http_stream_end` | `proven_http_stream_end` |
 | `xcv_http_stream_pause` | `proven_http_stream_pause` |
 | `xcv_http_stream_peer` | `proven_http_stream_peer` |
+| `xcv_http_stream_protocol` | `proven_http_stream_protocol` |
 | `xcv_http_stream_respond` | `proven_http_stream_respond` |
 | `xcv_http_stream_resume` | `proven_http_stream_resume` |
 | `xcv_http_stream_set_user` | `proven_http_stream_set_user` |

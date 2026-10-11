@@ -552,6 +552,7 @@
 #define xcv_h2_frame_t proven_h2_frame_t
 #define xcv_h2_frame_type_t proven_h2_frame_type_t
 #define xcv_h2_frame_write proven_h2_frame_write
+#define xcv_h2_header_buffer_size proven_h2_header_buffer_size
 #define xcv_h2_read_goaway proven_h2_read_goaway
 #define xcv_h2_read_rst_stream proven_h2_read_rst_stream
 #define xcv_h2_read_window_update proven_h2_read_window_update
@@ -716,6 +717,7 @@
 #define xcv_http_stream_end proven_http_stream_end
 #define xcv_http_stream_pause proven_http_stream_pause
 #define xcv_http_stream_peer proven_http_stream_peer
+#define xcv_http_stream_protocol proven_http_stream_protocol
 #define xcv_http_stream_respond proven_http_stream_respond
 #define xcv_http_stream_resume proven_http_stream_resume
 #define xcv_http_stream_set_user proven_http_stream_set_user

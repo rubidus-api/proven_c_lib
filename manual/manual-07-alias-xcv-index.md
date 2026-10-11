@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1259 aliases: 920 lowercase `xcv_` names and 339 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1261 aliases: 922 lowercase `xcv_` names and 339 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -572,6 +572,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_h2_frame_t` | `proven_h2_frame_t` |
 | `xcv_h2_frame_type_t` | `proven_h2_frame_type_t` |
 | `xcv_h2_frame_write` | `proven_h2_frame_write` |
+| `xcv_h2_header_buffer_size` | `proven_h2_header_buffer_size` |
 | `xcv_h2_read_goaway` | `proven_h2_read_goaway` |
 | `xcv_h2_read_rst_stream` | `proven_h2_read_rst_stream` |
 | `xcv_h2_read_window_update` | `proven_h2_read_window_update` |
@@ -736,6 +737,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_stream_end` | `proven_http_stream_end` |
 | `xcv_http_stream_pause` | `proven_http_stream_pause` |
 | `xcv_http_stream_peer` | `proven_http_stream_peer` |
+| `xcv_http_stream_protocol` | `proven_http_stream_protocol` |
 | `xcv_http_stream_respond` | `proven_http_stream_respond` |
 | `xcv_http_stream_resume` | `proven_http_stream_resume` |
 | `xcv_http_stream_set_user` | `proven_http_stream_set_user` |

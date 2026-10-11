@@ -998,7 +998,7 @@ Two things this table tells you that the file names do not:
 | `url.h` | URL parsing, percent-coding, and a request path resolved to stay inside its root | Chapter 10 |
 | `http.h` | HTTP/1.1 codec: head parser, body framing and decoder, writers, dates, ranges, multipart bodies, content-coding headers | Chapter 10 |
 | `hpack.h` | HPACK, the header compression of HTTP/2: an encoder and a decoder with their tables, bounded by the caller | Chapter 17 |
-| `h2.h` | HTTP/2 frames, each type's rules, the checks that make a header list a request or a response, and a connection with streams and flow control that is given bytes and gives bytes back. The protocol, without a socket | Chapter 17 |
+| `h2.h` | HTTP/2 frames, each type's rules, the checks that make a header list a request or a response, and a connection with streams and flow control that is given bytes and gives bytes back: the protocol, without a socket. (The socket is `http_event.h`.) | Chapter 17 |
 | `http_auth.h` | Basic and Digest authentication values | Chapter 10 |
 | `http_cookie.h` | A host-only cookie jar | Chapter 10 |
 | `sse.h` | Server-sent events parser | Chapter 10 |
@@ -1009,7 +1009,7 @@ Two things this table tells you that the file names do not:
 | `cert.h` | X.509 certificates: a strict reader, host-name matching, PEM, a store of trust anchors, chain verification. Only reading the system's roots is hosted. | Chapter 13 |
 | `tls.h` | TLS 1.3 and a cut-down TLS 1.2, client and server: a config, an engine with no I/O, and (hosted-only) a transport wrapper and the HTTP wrap | Chapter 14 |
 | `loop.h` | An event loop: socket readiness, timers, work posted from other threads, a shared scratch buffer (hosted-only) | Chapter 15 |
-| `http_event.h` | HTTP/1.1 server driven by events on a loop: callbacks, responses in pieces with backpressure, optional TLS, a response compressed when asked (hosted-only) | Chapters 15, 16 |
+| `http_event.h` | HTTP server driven by events on a loop - HTTP/1.1, and HTTP/2 beside it when asked: callbacks, responses in pieces with backpressure, optional TLS, a response compressed when asked (hosted-only) | Chapters 15, 16, 17 |
 | `ws_event.h` | WebSocket on the event-driven server: messages in pieces, sends refused and resumed, liveness and close handled, compressed messages when asked for (hosted-only) | Chapters 15, 12 |
 | `http_event_client.h` | HTTP/1.1 client driven by events on a loop: many requests in flight on one thread; narrow - no reuse, redirects or name resolution; gzip responses decoded on request (hosted-only) | Chapters 15, 16 |
 | `sysio.h` | Standard streams as writers/readers, line input from stdin, buffered output, printing, scanning, environment access | Chapter 5 |

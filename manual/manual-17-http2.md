@@ -6,18 +6,20 @@ compression tables are made with.**
 **After this chapter** you can say what HTTP/2 changes and what it does not, encode and decode
 header blocks, read and write frames, tell a well-formed request from one that must not be
 passed on, drive a connection - streams, windows, resets and goodbyes - over bytes you carry
-yourself, and say which of these this library does today.
+yourself, turn HTTP/2 on in the event-driven server of [Chapter 15](manual-15-event-loop.md)
+without changing a handler, and say which of these this library does today.
 
 This chapter covers `hpack.h` and `h2.h`. Both are pure computation, available in a
 [freestanding](manual-freestanding.md) build: HPACK allocates one table for an encoder and one
 for a decoder, the frame functions allocate nothing, and a connection allocates what its
 configuration bounds.
 
-**What is here is the protocol without a socket.** Sections 2 to 4 are the codec: what
-travels on an HTTP/2 connection, read and written. Section 5 is the connection itself - which
-streams are open, how much may be sent, what to answer - as an object that is given bytes and
-gives bytes back. Nothing here opens a socket, and the servers and clients of Chapters 11 and
-15 still speak HTTP/1.1: section 6 says exactly where the line is.
+**What is here, from the bottom up.** Sections 2 to 4 are the codec: what travels on an
+HTTP/2 connection, read and written. Section 5 is the connection itself - which streams are
+open, how much may be sent, what to answer - as an object that is given bytes and gives bytes
+back. Section 6 is that object at work: the event-driven server speaks HTTP/2 when asked to,
+beside HTTP/1.1 on the same port. The blocking server of Chapter 11 and the clients still
+speak HTTP/1.1 only: section 7 says exactly where the line is.
 
 ## Table of contents
 
@@ -26,7 +28,8 @@ gives bytes back. Nothing here opens a socket, and the servers and clients of Ch
 3. [Frames](#3-frames)
 4. [A header list as a message](#4-a-header-list-as-a-message)
 5. [A connection](#5-a-connection)
-6. [What is accepted, what is not here, and how this was tested](#6-what-is-accepted-what-is-not-here-and-how-this-was-tested)
+6. [HTTP/2 in the event-driven server](#6-http2-in-the-event-driven-server)
+7. [What is accepted, what is not here, and how this was tested](#7-what-is-accepted-what-is-not-here-and-how-this-was-tested)
 
 ## 1. What HTTP/2 changes, in one page
 
@@ -531,7 +534,7 @@ It does **no I/O and reads no clock**. The shape is the one the TLS engine of Ch
 
 A socket, TLS, and every timeout are the caller's. That is what makes one object serve a
 blocking program, an event loop and a test with no network at all - the example below is two
-connections handing each other buffers.
+connections handing each other buffers, and section 6 is the same object behind a socket.
 
 ### Events
 
@@ -626,9 +629,14 @@ what it starts never comes near the limit.
 
 A connection that has only opened holds one block of at most 400 bytes. One that has carried
 requests and is idle again holds that, a record of how its last streams ended, and the two
-compression tables: under 8 KiB with the default tables, under 1,280 bytes with none. While
+compression tables: under 14 KiB when both have been used at their default size - each is
+about 6 KiB, and HTTP/2 gives every connection two - and under 1,280 bytes with none. While
 streams are open it also holds 48 bytes for each, and the buffers for reading one header
-list: five times `max_header_list_bytes`.
+list: five times `max_header_list_bytes`, which is 80 KiB at the default. **That last one
+need not be each connection's**: give the configuration a `header_buffer` of
+`proven_h2_header_buffer_size` bytes and every connection driven by one thread can read into
+the same memory - what is read there is what an event reports, and an event is good only
+until the next call. The server of section 6 does this.
 
 ### Goodbye
 
@@ -830,6 +838,7 @@ int main(void) {
 | API | Intent | Return |
 |---|---|---|
 | `proven_h2_conn_create(&config, &conn)` | Make a connection; the opening is queued at once. | `proven_err_t`: `INVALID_ARG` (a setting out of range), `NOMEM`. |
+| `proven_h2_header_buffer_size(max_header_list_bytes)` | How large `config.header_buffer` must be, if you supply one. | `proven_size_t`. |
 | `proven_h2_conn_destroy(conn)` | Free it. | `void`. |
 | `proven_h2_conn_feed(conn, in, &consumed, &event)` | Take bytes from the peer; report one event. | `proven_err_t`: `INVALID_FORMAT` (a server: not HTTP/2), `INVALID_STATE` after the end was reported, `NOMEM`. |
 | `proven_h2_conn_pending_output(conn)` | Bytes to send. | `proven_mem_view_t`. |
@@ -871,7 +880,245 @@ int main(void) {
 - **No clock means no timeouts.** A peer that opens a connection and says nothing, or never
   opens a window, is the caller's to give up on.
 
-## 6. What is accepted, what is not here, and how this was tested
+## 6. HTTP/2 in the event-driven server
+
+```c
+typedef struct {
+    /* ... everything Chapter 15 describes ... */
+    bool http2;
+    proven_size_t max_concurrent_streams;
+} proven_http_event_server_config_t;
+
+int proven_http_stream_protocol(const proven_http_stream_t *stream);
+```
+
+The event-driven server of [Chapter 15](manual-15-event-loop.md) speaks HTTP/2 when its
+configuration says `http2`. **Nothing else changes for a handler**: the same four callbacks,
+the same `proven_http_stream_*` calls, the same request type. What was one exchange on a
+connection is now one stream of many, and the server does the translating:
+
+| A handler does | On HTTP/2 that is |
+|---|---|
+| reads `head->method`, `head->target`, the fields | the pseudo-header fields and the list, already checked by section 4's rules. `Host` is there, made from `:authority` when the client sent no `host` field; `version_minor` is 1 |
+| `proven_http_stream_respond`, `_begin`, `_write`, `_end` | a response head, DATA frames as the client's windows and the output bound allow, and the end of the stream. Field names go out in lowercase; `Keep-Alive`, `Proxy-Connection` and `Upgrade` are not sent |
+| is refused by `_write`, and waits for `on_writable` | exactly as on HTTP/1.1 - and for the same two reasons, though it cannot tell them apart: the server holds `max_buffered_output`, or the client is not making room |
+| `proven_http_stream_pause` | no `on_body` until it resumes, as on HTTP/1.1. What had already arrived is kept - at most one window, because the client is not told it was consumed and can send no more - and delivered as one piece on resume |
+| `proven_http_stream_compress` | unchanged: the compressor is above the framing |
+| `proven_http_stream_abort` | the stream is reset; the connection and its other streams go on |
+| gets `on_done(why)` | once for every `on_request`, as before: `PROVEN_OK` when the whole response was handed over, `PROVEN_ERR_RESET` when the client reset the stream or the connection ended, `PROVEN_ERR_TIMEOUT`, `PROVEN_ERR_OUT_OF_BOUNDS` for a body over the limit |
+
+`proven_http_stream_protocol` answers 1 or 2, for a log line; a handler seldom has another
+reason to ask.
+
+### Which protocol a connection speaks
+
+- **Over TLS, the handshake says** (ALPN). The TLS configuration must offer `h2` - and
+  `http/1.1` after it, for clients that have nothing newer - when `http2` is on, and must not
+  offer `h2` when it is off: the server refuses at creation a pair that could agree in the
+  handshake to something it would then not speak. A connection that negotiated `h2` on TLS
+  older than 1.2, or on a 1.2 suite without forward secrecy and authenticated encryption -
+  possible only with the legacy options of Chapter 14 switched on - is ended with
+  `INADEQUATE_SECURITY`, as RFC 9113 requires.
+- **In the clear, the first bytes say.** A client that knows it wants HTTP/2 begins with the
+  24-byte preface (curl's `--http2-prior-knowledge`); anything else is HTTP/1.1. The server
+  decides at the first byte that differs, so `POST`, which shares the preface's first letter,
+  is HTTP/1.1 at its second. `Upgrade: h2c` is not offered: RFC 9113 removed it.
+
+Both protocols are served on one port, by one handler, at the same time.
+
+### Limits and time
+
+| Setting | For HTTP/2 |
+|---|---|
+| `max_connections` | Connections, as before: an HTTP/2 connection is one, however many streams it carries |
+| `max_concurrent_streams` (0: 100) | Requests in progress on one connection. A client is told the number and a stream beyond it is refused |
+| `max_head_bytes`, `max_headers` | The size of a request's header list as HPACK counts it; more fields than `max_headers` is `431` |
+| `max_body_bytes` | Per request: `413`, sent while the body is still arriving, which tells the client to stop |
+| `max_buffered_output` | What the connection holds for a client that is not reading, **for all its streams together** |
+| `head_timeout_ms` | From the connection's first byte to its first request |
+| `body_timeout_ms` | Silence while a request's body is owed: the streams that were waiting are reset, the connection goes on |
+| `write_timeout_ms` | Output held with none of it accepted: the connection ends |
+| `idle_timeout_ms` | No stream open: the server says goodbye (GOAWAY) and closes |
+
+`proven_http_event_server_stop_listening` is the graceful way to end: each HTTP/2 connection
+is sent GOAWAY, finishes the streams it has, and closes. `proven_http_event_server_destroy`
+ends everything at once, and every open stream's handler gets `on_done(PROVEN_ERR_RESET)`.
+
+### Example: one port, one handler, both protocols
+
+<!-- example: manual/examples/en/ex_17_server.c -->
+```c
+#include <stdio.h>
+#include <string.h>
+
+/*
+ * One server, one port, both protocols: the event-driven HTTP server with `http2` on.
+ *
+ * The handler below is an ordinary one - the same callbacks, the same stream calls - and does
+ * not know which protocol a request came by unless it asks. An HTTP/1.1 client and an HTTP/2
+ * client then talk to it on the same port. The HTTP/2 client is the connection engine of this
+ * chapter's section 5 with a socket put through it: this library has no HTTP/2 client of its
+ * own yet, and what it takes to make one is these forty lines.
+ */
+
+typedef struct { proven_loop_t *loop; int served, over_http2; } app_t;
+
+static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
+    app_t *app = ctx;
+    /* The request looks the same either way: a method, a target, fields - Host among them,
+     * which HTTP/2 carries as `:authority` and the server hands on under its usual name. */
+    const int protocol = proven_http_stream_protocol(stream);
+    char text[96];
+    int n = snprintf(text, sizeof text, "%.*s over HTTP/%d\n", (int)head->target.size, (const char *)head->target.ptr, protocol);
+    proven_http_header_t fields[] = { { PROVEN_LIT("Content-Type"), PROVEN_LIT("text/plain") } };
+    if (proven_http_stream_respond(stream, 200, fields, 1, (proven_mem_view_t){ (const proven_byte_t *)text, (proven_size_t)n }) != PROVEN_OK) return;
+    if (protocol == 2) app->over_http2++;
+}
+
+static void on_done(void *ctx, proven_http_stream_t *stream, proven_err_t why) {
+    (void)stream;
+    if (why == PROVEN_OK) ((app_t *)ctx)->served++;
+}
+
+static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+
+/* An HTTP/2 client in miniature: the engine, a socket, and a loop that moves bytes between
+ * them until every stream it asked for has ended. Returns how many were answered 200. */
+static int ask_three(proven_u16 port, char answers[3][64]) {
+    proven_net_conn_t sock;
+    if (proven_net_connect(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, port), proven_net_deadline_in(5000), &sock) != PROVEN_OK) return -1;
+
+    /* The engine reads header lists into memory it allocates while streams are open - or into
+     * memory of yours, which several connections on one thread may share. */
+    static proven_u64 header_room[16384];
+    proven_h2_config_t config = { .alloc = proven_heap_allocator(), .header_buffer = { (proven_byte_t *)header_room, sizeof header_room } };
+    proven_h2_conn_t *conn = NULL;
+    if (proven_h2_header_buffer_size(0) > sizeof header_room || proven_h2_conn_create(&config, &conn) != PROVEN_OK) { (void)proven_net_close(&sock); return -1; }
+
+    /* Three requests at once, on the one connection: streams 1, 3 and 5. */
+    static const char *const paths[3] = { "/first", "/second", "/third" };
+    for (int i = 0; i < 3; i++) {
+        proven_http_header_t request[] = {
+            { PROVEN_LIT(":method"), PROVEN_LIT("GET") }, { PROVEN_LIT(":scheme"), PROVEN_LIT("http") },
+            { PROVEN_LIT(":authority"), PROVEN_LIT("localhost") }, { PROVEN_LIT(":path"), proven_u8str_view_from_cstr(paths[i]) },
+        };
+        proven_u32 stream = 0;
+        if (proven_h2_conn_submit_request(conn, request, 4, true, &stream) != PROVEN_OK) { proven_h2_conn_destroy(conn); (void)proven_net_close(&sock); return -1; }
+    }
+
+    int ended = 0, ok = 0;
+    static proven_byte_t in[16384];
+    while (ended < 3) {
+        /* Whatever the engine has queued - the preface and settings, the requests, later its
+         * acknowledgements - goes to the socket first. */
+        proven_mem_view_t out = proven_h2_conn_pending_output(conn);
+        if (out.size > 0) {
+            if (proven_net_write_all(&sock, out, proven_net_deadline_in(5000)).err != PROVEN_OK) break;
+            proven_h2_conn_output_sent(conn, out.size);
+        }
+        proven_result_size_t got = proven_net_read(&sock, (proven_mem_mut_t){ in, sizeof in }, proven_net_deadline_in(5000));
+        if (got.err != PROVEN_OK) break;
+        proven_size_t pos = 0;
+        for (;;) {
+            proven_size_t used = 0;
+            proven_h2_event_t ev;
+            if (proven_h2_conn_feed(conn, (proven_mem_view_t){ in + pos, got.value - pos }, &used, &ev) != PROVEN_OK) { ended = 3; break; }
+            pos += used;
+            const proven_u32 k = ev.stream_id ? (ev.stream_id - 1) / 2 : 0;     /* stream 1, 3, 5 -> 0, 1, 2 */
+            if (ev.kind == PROVEN_H2_EVENT_HEADERS && ev.status == 200 && k < 3) ok++;
+            if (ev.kind == PROVEN_H2_EVENT_DATA && k < 3) {
+                snprintf(answers[k], 64, "%.*s", (int)(ev.data.size < 63 ? ev.data.size : 63), (const char *)ev.data.ptr);
+                proven_h2_conn_consumed(conn, ev.stream_id, ev.data.size);
+            }
+            if ((ev.kind == PROVEN_H2_EVENT_DATA || ev.kind == PROVEN_H2_EVENT_HEADERS) && ev.end_stream) ended++;
+            if (ev.kind == PROVEN_H2_EVENT_STREAM_RESET || ev.kind == PROVEN_H2_EVENT_CLOSED) { ended = 3; break; }
+            if (ev.kind == PROVEN_H2_EVENT_NONE && pos == got.value) break;
+        }
+    }
+    proven_h2_conn_destroy(conn);
+    (void)proven_net_close(&sock);
+    return ok;
+}
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    app_t app = { 0 };
+    EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
+
+    /* `http2` is the whole of it. In the clear, a client that begins with the HTTP/2 preface
+     * is HTTP/2 and every other is HTTP/1.1; over TLS the handshake decides (ALPN), and the
+     * TLS configuration must then offer "h2". */
+    proven_http_event_server_config_t config = { .on = { .on_request = on_request, .on_done = on_done }, .ctx = &app, .http2 = true };
+    proven_http_event_server_t *server = NULL;
+    proven_net_addr_t at;
+    EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &config, &server) == PROVEN_OK &&
+                    proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server that speaks both");
+    proven_job_sys_t *threads = NULL;
+    proven_job_group_t running;
+    proven_job_group_init(&running);
+    EXAMPLE_REQUIRE(proven_job_system_init(heap, 1, 4, &threads) == PROVEN_OK &&
+                    proven_job_group_submit(threads, &running, run, &app) == PROVEN_OK, "the loop runs on another thread");
+
+    // ---- an HTTP/1.1 client -------------------------------------------------------------------
+    char url[64];
+    snprintf(url, sizeof url, "http://127.0.0.1:%u/hello", (unsigned)at.port);
+    proven_http_client_config_t client_config = { .alloc = heap, .max_idle_connections = 1 };
+    proven_http_client_t *client = NULL;
+    proven_http_client_response_t resp;
+    proven_u8str_t body = { 0 };
+    EXAMPLE_REQUIRE(proven_http_client_create(&client_config, &client) == PROVEN_OK &&
+                    proven_http_client_get(client, proven_u8str_view_from_cstr(url), &resp) == PROVEN_OK && resp.status == 200 &&
+                    proven_http_client_read_all(&resp, heap, &body, 4096) == PROVEN_OK, "the blocking client of chapter 11 is answered");
+    printf("HTTP/1.1 client: %.*s", (int)proven_u8str_as_view(&body).size, (const char *)proven_u8str_as_view(&body).ptr);
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_as_view(&body), PROVEN_LIT("/hello over HTTP/1\n")), "over HTTP/1.1");
+    proven_u8str_destroy(heap, &body);
+    proven_http_client_finish(&resp);
+    proven_http_client_destroy(client);
+
+    // ---- an HTTP/2 client, on the same port ---------------------------------------------------
+    char answers[3][64] = { "", "", "" };
+    EXAMPLE_REQUIRE(ask_three(at.port, answers) == 3, "three requests on one HTTP/2 connection are each answered");
+    for (int i = 0; i < 3; i++) printf("HTTP/2 client:   %s", answers[i]);
+    EXAMPLE_REQUIRE(strcmp(answers[0], "/first over HTTP/2\n") == 0 && strcmp(answers[1], "/second over HTTP/2\n") == 0 && strcmp(answers[2], "/third over HTTP/2\n") == 0,
+                    "by the same handler, which was told the protocol was 2");
+
+    // ---- the end --------------------------------------------------------------------------------
+    /* Stop the loop, then look at what the handler counted and take the server apart: nothing
+     * else is touching either by then. */
+    proven_loop_stop(app.loop);
+    proven_job_group_wait(threads, &running);
+    EXAMPLE_REQUIRE(app.served == 4 && app.over_http2 == 3, "four exchanges ended with on_done(PROVEN_OK), three of them over HTTP/2");
+    proven_http_event_server_destroy(server);
+    proven_loop_destroy(app.loop);
+    proven_job_system_close(threads);
+    proven_job_system_destroy(threads);
+    return EXAMPLE_OK();
+}
+```
+
+### Cautions, and what goes wrong
+
+- **A handler that keeps its place across `on_writable` is safe, as it was.**
+  `on_writable` is never called from inside a call the handler itself made - a write that
+  called back into the same handler would send the same bytes twice. This is the server's
+  promise for both protocols; on HTTP/2 it took a defect to find (section 7).
+- **`max_buffered_output` is per connection, not per stream.** One slow client with a
+  hundred streams holds what one HTTP/1.1 client would, not a hundred times it.
+- **An idle HTTP/2 connection is not small.** HTTP/1.1's is 448 bytes; HTTP/2's is
+  about 12.8 KiB, nearly all of it the two header compression tables the protocol gives every
+  connection once both have been used. Ten thousand idle HTTP/2 connections are 128 MiB.
+  The buffer for reading header lists - 80 KiB - is one for the whole server, not one each.
+  A request in progress adds about 210 bytes: 160 in the server, 48 in the connection.
+- **One timer per connection.** `body_timeout_ms` measures silence on the connection, not
+  on a stream: a request whose body has stalled is not reset while other streams keep the
+  connection busy.
+- **WebSocket needs HTTP/1.1.** An upgrade is refused on an HTTP/2 stream
+  (`PROVEN_ERR_UNSUPPORTED`): a browser that wants a WebSocket opens an HTTP/1.1 connection
+  for it, which the same port accepts.
+- **Trailers are not passed on**, in either direction, as they are not on HTTP/1.1: a
+  request's trailers end its body and are dropped.
+
+## 7. What is accepted, what is not here, and how this was tested
 
 **What the decoder accepts is HPACK as RFC 7541 defines it.** Any number of table size
 updates at the start of a block (the RFC promises at most two); integers of up to five
@@ -890,10 +1137,11 @@ announce a length it does not carry.
 
 **Not here:**
 
-- **A socket.** The connection of section 5 is given bytes and gives bytes back; nothing in
-  this library carries them for it yet. The HTTP servers and clients of Chapters 11, 15 and
-  16 speak HTTP/1.1 only.
-- **Timeouts**, for the same reason: the connection reads no clock.
+- **HTTP/2 clients.** The blocking client and the event-driven client speak HTTP/1.1 only;
+  the example of section 6 shows what a client made directly of the connection takes.
+- **HTTP/2 in the blocking server** of Chapter 11: one thread to a connection suits one
+  exchange at a time, which is HTTP/1.1.
+- **Trailers in the event-driven server**, for either protocol.
 - **Extended CONNECT** (RFC 8441, WebSocket over HTTP/2) and the `SETTINGS` it needs.
 - **Server push**: `PUSH_PROMISE` is recognised so that it can be refused.
 - **Priorities** (RFC 7540's scheme, which RFC 9113 deprecated): skipped.
@@ -931,6 +1179,18 @@ responses, cancellations and settings changes with it in both roles, under twelv
 combinations of settings - 7,896 checks, none failed; and 5,000,230 random frames over
 140,108 connections, with an application acting at random, broke none of the connection's
 invariants under the same tools.
+
+The server of section 6 has its own registered test: the handlers of an HTTP/1.1 server,
+unchanged, answering a client made of this library's connection over real sockets - in the
+clear, over TLS 1.3 and over TLS 1.2 - with bodies both ways, sixty streams at once,
+compression, pause, resets from either side, a client that closes its sending side and is
+still answered, limits, each timeout, goodbye, and HTTP/1.1 clients on the same port
+throughout. Outside the registered tests, a private program serves both protocols on one
+port to Node's http2, http and https clients and to curl in five modes: 7,392 checks, none
+failed in the end. **One did at first**: two large responses side by side to Node over TLS
+stalled, because the server called `on_writable` from inside the handler's own write and the
+handler, re-entered, lost its place. This library's own client had not provoked it. The
+registered test now holds the handler to "never re-entered", with two streams racing.
 
 **Not done:** no coverage-guided fuzzing; no run of the h2spec conformance suite; no
 measurement of speed (the Huffman decoder reads a bit at a time; the connection finds a

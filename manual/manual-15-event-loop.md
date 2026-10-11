@@ -578,6 +578,8 @@ need. Every zero field has a default:
 | `write_timeout_ms` | Output held with none of it accepted by the client. | 30 s |
 | `idle_timeout_ms` | An open connection with no request on it. | 60 s |
 | `tls` | A TLS configuration with a certificate, or null for plain HTTP. | null |
+| `http2` | Let a connection be HTTP/2 - by ALPN over TLS, by its first bytes in the clear - beside HTTP/1.1 on the same port, for the same handler: [Chapter 17, section 6](manual-17-http2.md#6-http2-in-the-event-driven-server). | false |
+| `max_concurrent_streams` | HTTP/2: requests in progress on one connection. | 100 |
 
 A request the server will not serve never reaches `on_request`. It is answered and the
 connection closed:
@@ -1358,7 +1360,10 @@ request is incomplete. (A compressor exists only while a compressed response is 
 written.) On x86-64 Linux the registered tests measure 448 bytes of heap for an
 idle plain HTTP connection, failing above 512, and 928 bytes for an idle plain WebSocket
 connection, failing above 1 KiB. A TLS connection adds the engine's state, about 1 KiB while
-idle (Chapter 14, section 9).
+idle (Chapter 14, section 9). **An HTTP/2 connection is another size**: 12,840 bytes idle,
+failing above 14 KiB, nearly all of it the two header compression tables that protocol gives
+every connection ([Chapter 17, section 6](manual-17-http2.md#6-http2-in-the-event-driven-server)).
+The numbers below are HTTP/1.1's.
 
 **What was measured.** One run of a load program that is not part of the test suite, on one
 machine: a 16-thread x86-64 desktop processor at 3.5 GHz with 62 GB, Linux 6.12, GCC at `-O2`.

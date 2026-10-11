@@ -292,6 +292,7 @@ typedef struct {
     bool set_header_table;                 /**< true: use `header_table_bytes` (0 keeps no table: no memory, larger headers) */
     proven_size_t max_buffered_output;     /**< output held for a peer that is not reading before more is refused - and, counted apart, the answers the protocol owes that peer before the connection is ended. 0: 64 KiB */
     proven_u32 max_reset_debt;             /**< streams reset - by the peer, or for its fault - beyond those that finished properly, before the connection is ended. 0: 100 */
+    proven_mem_mut_t header_buffer;        /**< optional: memory of yours for reading header lists, of at least proven_h2_header_buffer_size bytes and aligned as a pointer. Connections used by one thread may share one: what is read into it is what an event reports, good until the next call on any of them. Empty: each connection allocates its own while it has streams open */
 } proven_h2_config_t;
 
 typedef enum {
@@ -322,11 +323,16 @@ typedef struct {
     proven_u32 last_stream_id;             /**< GOAWAY */
 } proven_h2_event_t;
 
+/** @brief How large `header_buffer` must be for a header list limit (0: the default, 16 KiB):
+ *         five times the limit and a little. */
+[[nodiscard]]
+proven_size_t proven_h2_header_buffer_size(proven_u32 max_header_list_bytes);
+
 /**
  * @brief Make a connection. A client's preface and both ends' first SETTINGS frame are
  *        pending output at once.
- * @return PROVEN_ERR_INVALID_ARG for an invalid allocator or a setting outside its range;
- *         PROVEN_ERR_NOMEM.
+ * @return PROVEN_ERR_INVALID_ARG for an invalid allocator, a setting outside its range, or a
+ *         `header_buffer` that is too small or misaligned; PROVEN_ERR_NOMEM.
  */
 [[nodiscard]]
 proven_err_t proven_h2_conn_create(const proven_h2_config_t *config, proven_h2_conn_t **out);
