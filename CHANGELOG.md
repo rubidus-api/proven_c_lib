@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-11
+
 A MINOR release: `Content-Encoding` in the four HTTP drivers, on the codec of 0.24.0.
 **Nothing changes for a program that sets nothing**: no `Accept-Encoding` is sent, no body is
 decoded and no response is compressed. An idle connection of the event-driven server is the
