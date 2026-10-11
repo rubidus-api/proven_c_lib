@@ -85,6 +85,8 @@ int main(void) {
 
     /* 여는 말은 이미 쌓여 있다: 클라이언트의 서문과 양쪽의 설정. */
     EXAMPLE_REQUIRE(carry(&client, &server) && carry(&server, &client) && carry(&client, &server), "settings cross and are acknowledged");
+    /* 첫 요청 전에 이것을 기다리는 클라이언트는 서버가 받는 것보다 많은 스트림을 요청하는 일이 없다. */
+    EXAMPLE_REQUIRE(proven_h2_conn_has_peer_settings(client.conn) && proven_h2_conn_has_peer_settings(server.conn), "each end has the other's settings");
 
     // ---- 본문이 있는 요청과 그 응답 ----------------------------------------------------------
     proven_http_header_t request[] = {

@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 1261개: 소문자 `xcv_` 이름 922개와 대문자 `XCV_` 이름 339개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 1263개: 소문자 `xcv_` 이름 924개와 대문자 `XCV_` 이름 339개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -550,6 +550,7 @@ alias 1261개: 소문자 `xcv_` 이름 922개와 대문자 `XCV_` 이름 339개.
 | `xcv_h2_conn_create` | `proven_h2_conn_create` |
 | `xcv_h2_conn_destroy` | `proven_h2_conn_destroy` |
 | `xcv_h2_conn_feed` | `proven_h2_conn_feed` |
+| `xcv_h2_conn_has_peer_settings` | `proven_h2_conn_has_peer_settings` |
 | `xcv_h2_conn_is_closed` | `proven_h2_conn_is_closed` |
 | `xcv_h2_conn_output_sent` | `proven_h2_conn_output_sent` |
 | `xcv_h2_conn_pending_output` | `proven_h2_conn_pending_output` |
@@ -676,6 +677,7 @@ alias 1261개: 소문자 `xcv_` 이름 922개와 대문자 `XCV_` 이름 339개.
 | `xcv_http_event_request_end` | `proven_http_event_request_end` |
 | `xcv_http_event_request_options_t` | `proven_http_event_request_options_t` |
 | `xcv_http_event_request_pause` | `proven_http_event_request_pause` |
+| `xcv_http_event_request_protocol` | `proven_http_event_request_protocol` |
 | `xcv_http_event_request_resume` | `proven_http_event_request_resume` |
 | `xcv_http_event_request_set_user` | `proven_http_event_request_set_user` |
 | `xcv_http_event_request_t` | `proven_http_event_request_t` |

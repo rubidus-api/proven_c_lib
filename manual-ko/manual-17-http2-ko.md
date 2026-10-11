@@ -16,9 +16,10 @@
 
 **여기 있는 것을, 아래에서 위로.** 2절부터 4절까지는 코덱이다: HTTP/2 연결 위를 오가는 것을 읽고
 쓴다. 5절은 연결 그 자체다 - 어떤 스트림이 열려 있는지, 얼마나 보낼 수 있는지, 무엇에 무엇으로
-답하는지 - 바이트를 받고 바이트를 돌려주는 객체로서. 6절은 그 객체가 일하는 모습이다: 이벤트 구동
-서버는 요청받으면 같은 포트에서 HTTP/1.1과 나란히 HTTP/2로 말한다. 11장의 블로킹 서버와
-클라이언트들은 아직 HTTP/1.1로만 말한다. 그 선이 정확히 어디인지는 7절에 있다.
+답하는지 - 바이트를 받고 바이트를 돌려주는 객체로서. 6절과 7절은 그 객체가 일하는 모습이다: 이벤트
+구동 서버는 요청받으면 같은 포트에서 HTTP/1.1과 나란히 HTTP/2로 말하고, 이벤트 구동 클라이언트는
+합의한 오리진마다 HTTP/2 연결 하나를 간직한다. 11장의 블로킹 서버와 블로킹 클라이언트는 HTTP/1.1로만
+말한다. 그 선이 정확히 어디인지는 8절에 있다.
 
 ## 목차
 
@@ -28,7 +29,8 @@
 4. [메시지로서의 헤더 목록](#4-메시지로서의-헤더-목록)
 5. [연결](#5-연결)
 6. [이벤트 구동 서버의 HTTP/2](#6-이벤트-구동-서버의-http2)
-7. [무엇을 받아들이고, 무엇이 없으며, 어떻게 시험했는가](#7-무엇을-받아들이고-무엇이-없으며-어떻게-시험했는가)
+7. [이벤트 구동 클라이언트의 HTTP/2](#7-이벤트-구동-클라이언트의-http2)
+8. [무엇을 받아들이고, 무엇이 없으며, 어떻게 시험했는가](#8-무엇을-받아들이고-무엇이-없으며-어떻게-시험했는가)
 
 ## 1. HTTP/2가 바꾸는 것, 한 쪽으로
 
@@ -724,6 +726,8 @@ int main(void) {
 
     /* 여는 말은 이미 쌓여 있다: 클라이언트의 서문과 양쪽의 설정. */
     EXAMPLE_REQUIRE(carry(&client, &server) && carry(&server, &client) && carry(&client, &server), "settings cross and are acknowledged");
+    /* 첫 요청 전에 이것을 기다리는 클라이언트는 서버가 받는 것보다 많은 스트림을 요청하는 일이 없다. */
+    EXAMPLE_REQUIRE(proven_h2_conn_has_peer_settings(client.conn) && proven_h2_conn_has_peer_settings(server.conn), "each end has the other's settings");
 
     // ---- 본문이 있는 요청과 그 응답 ----------------------------------------------------------
     proven_http_header_t request[] = {
@@ -931,8 +935,9 @@ int proven_http_stream_protocol(const proven_http_stream_t *stream);
  *
  * 아래 처리기는 평범한 처리기다 - 같은 콜백, 같은 스트림 호출 - 묻지 않는 한 요청이 어느
  * 프로토콜로 왔는지 모른다. 그런 다음 HTTP/1.1 클라이언트와 HTTP/2 클라이언트가 같은 포트로
- * 말을 건다. HTTP/2 클라이언트는 이 장 5절의 연결 엔진에 소켓을 통과시킨 것이다: 이
- * 라이브러리에는 아직 자체 HTTP/2 클라이언트가 없고, 하나 만드는 데 드는 것이 이 마흔 줄이다.
+ * 말을 건다. 여기의 HTTP/2 클라이언트는 이 장 5절의 연결 엔진에 소켓을 통과시킨 것으로, 그것이
+ * 무엇으로 이루어지는지 보여 준다: 마흔 줄이다. (연결을 간직하고 함께 쓰는 라이브러리 자체의
+ * 클라이언트는 7절에 있다.)
  */
 
 typedef struct { proven_loop_t *loop; int served, over_http2; } app_t;
@@ -1074,7 +1079,7 @@ int main(void) {
 - **`on_writable`을 넘어 자기 위치를 기억하는 처리기는 전과 같이 안전하다.** `on_writable`은 처리기가
   직접 한 호출 안에서는 결코 불리지 않는다 - 같은 처리기로 되돌아 들어오는 쓰기는 같은 바이트를 두 번
   보내게 된다. 이것은 두 프로토콜 모두에 대한 서버의 약속이며, HTTP/2에서는 결함 하나를 겪고서야 찾았다
-  (7절).
+  (8절).
 - **`max_buffered_output`은 스트림이 아니라 연결마다다.** 스트림 백 개를 가진 느린 클라이언트 하나는
   HTTP/1.1 클라이언트 하나만큼을 쥐게 하지, 그 백 배가 아니다.
 - **한가한 HTTP/2 연결은 HTTP/1.1 연결보다 크다. 받은 것만큼.** HTTP/1.1은 448바이트다. HTTP/2는 작은
@@ -1092,7 +1097,162 @@ int main(void) {
 - **트레일러는 전달되지 않는다.** 어느 방향이든, HTTP/1.1에서도 그렇듯이: 요청의 트레일러는 본문을
   끝내고 버려진다.
 
-## 7. 무엇을 받아들이고, 무엇이 없으며, 어떻게 시험했는가
+## 7. 이벤트 구동 클라이언트의 HTTP/2
+
+```c
+typedef struct {
+    /* ... 15장이 설명하는 모든 것 ... */
+    bool http2;
+    bool http2_cleartext;
+    proven_u32 idle_timeout_ms;
+    proven_size_t max_waiting_requests;
+} proven_http_event_client_config_t;
+
+int proven_http_event_request_protocol(const proven_http_event_request_t *request);
+```
+
+[15장](manual-15-event-loop-ko.md)의 이벤트 구동 클라이언트는 HTTP/1.1에서 요청 하나에 연결 하나다.
+`http2`를 켜면 **HTTP/2에 합의한 오리진마다 연결 하나를 간직하고, 그 오리진으로 가는 모든 요청을 거기에
+올린다**: 한 서버로 가는 요청 백 개가 핸드셰이크 백 번이 아니라 한 번이다. 콜백과
+`proven_http_event_request_*` 호출은 같다. `start`가 약속하는 것도 같다 - 옵션이 가리키는 것은 모두
+반환 전에 복사되거나 쓰이고, `on_done`은 정확히 한 번, `start` 안에서는 결코 오지 않는다.
+
+- **TLS에서는** `http2`와, `h2`를 (그리고 그 뒤에 `http/1.1`을) 내놓는 TLS 설정: 오리진마다 핸드셰이크가
+  정한다. HTTP/1.1을 고른 오리진은 그렇게 기억되고, 전처럼 요청 하나에 연결 하나로 서비스된다. (그런
+  오리진은 마지막 64개까지, 하나에 약 600바이트로 기억한다. 잊힌 오리진은 핸드셰이크 한 번을 들여 다시
+  알아낸다.)
+- **평문에서는** `http2_cleartext`: 그 클라이언트의 모든 `http` 요청이 사전 지식 방식의 HTTP/2다.
+  평문에서는 서버에 물어볼 방법이 없으니, 아는 서버에 대해서만 이렇게 말한다. 평문으로 두 종류와 모두
+  말하는 클라이언트는 클라이언트 둘이다.
+
+HTTP/1.1 요청은 결코 그러지 않았지만 **요청은 기다릴 수 있다**: 연결이 만들어지는 동안 그 연결을,
+스트림을 몇 개 허락하는지 말해 주는 서버의 첫 마디를 - 그보다 앞서 보내는 것이 없으므로 그 때문에
+거절되는 것도 없다 - 그리고 서버의 한도에 닿았을 때 빈 스트림을. 기다리는 요청은 시작할 때 받은 것의
+사본을 쥔다. 연결 하나에 많아야 `max_waiting_requests`(1,000)개가 기다리고, 그다음 `start`는
+`PROVEN_ERR_BUSY`다.
+
+**`on_done`이 말하는 것**은 전과 같되 답이 하나 늘었다: `PROVEN_ERR_AGAIN`, 서버가 처리하지 않은
+요청이다 - 서버가 먼저 작별했거나 스트림을 거절했다. 그런 요청은 메서드가 무엇이든 다시 시작해도
+된다. 클라이언트가 알아서 그러지는 않는다. `PROVEN_ERR_RESET`은 여전히 "처리되었을 수도 있다"는 뜻이다.
+
+| 설정 | HTTP/2에서 |
+|---|---|
+| `connect_timeout_ms` | 오리진의 연결 만들기, 핸드셰이크 포함: 그것을 기다리던 요청은 모두 그와 함께 끝난다 |
+| `response_timeout_ms`, `body_timeout_ms` | 요청 각각의 것: 답을 받지 못한 요청은 끝나고, 연결과 다른 요청은 계속된다 |
+| `write_timeout_ms` | 연결의 것: 서버가 출력을 하나도 받지 않으면 연결이 끝난다 |
+| `idle_timeout_ms` (0: 60초) | 요청이 없는 연결을 다음 요청을 위해 이만큼 간직했다가 닫는다 |
+| `max_buffered_output` | 그 연결의 요청들을 합쳐서 |
+| `decompress` | 그대로다. 정지된 요청은 도착한 것을 압축된 채로 쥐었다가 재개할 때 푼다 |
+
+### 예제: 요청 셋, 연결 하나
+
+<!-- example: manual/examples/ko/ex_17_client.c -->
+```c
+#include <stdio.h>
+#include <string.h>
+
+/*
+ * HTTP/2로 말하는 이벤트 구동 클라이언트: 요청 셋, 연결 하나.
+ *
+ * 여기서는 클라이언트와 서버가 한 루프 위에 있고 손으로 돌리므로 스레드가 필요 없다.
+ * 클라이언트의 콜백은 HTTP/1.1 프로그램의 것과 같다. 다른 것은 그 아래다 - 클라이언트가
+ * 오리진마다 연결 하나를 간직하고, 그 오리진으로 가는 모든 요청을 그 연결에 올린다.
+ */
+
+typedef struct { int answered, over_http2; char text[3][32]; bool done[3]; } seen_t;
+typedef struct { seen_t *seen; int which; } call_t;
+
+static void serve(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
+    (void)ctx;
+    (void)proven_http_stream_respond(stream, 200, NULL, 0, (proven_mem_view_t){ head->target.ptr, head->target.size });     /* 자기 경로를 그대로 돌려준다 */
+}
+
+static void on_response(void *ctx, proven_http_event_request_t *request, const proven_http_response_t *head) {
+    call_t *call = ctx;
+    /* 여기서는 2다. 아직 연결을 기다리는 요청이나, 서버가 HTTP/1.1만 말하는 것으로 드러난
+     * 요청은 1이다. */
+    if (head->status == 200 && proven_http_event_request_protocol(request) == 2) call->seen->over_http2++;
+}
+
+static void on_body(void *ctx, proven_http_event_request_t *request, proven_mem_view_t piece, bool last) {
+    (void)request; (void)last;
+    call_t *call = ctx;
+    snprintf(call->seen->text[call->which], sizeof call->seen->text[0], "%.*s", (int)piece.size, (const char *)piece.ptr);
+}
+
+static void on_done(void *ctx, proven_http_event_request_t *request, proven_err_t why) {
+    (void)request;
+    call_t *call = ctx;
+    call->seen->done[call->which] = true;
+    if (why == PROVEN_OK) call->seen->answered++;
+}
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    proven_loop_t *loop = NULL;
+    EXAMPLE_REQUIRE(proven_loop_create(heap, &loop) == PROVEN_OK, "a loop");
+
+    /* 두 프로토콜을 모두 말하는 서버(6절). */
+    proven_http_event_server_config_t server_config = { .on = { .on_request = serve }, .http2 = true };
+    proven_http_event_server_t *server = NULL;
+    proven_net_addr_t at;
+    EXAMPLE_REQUIRE(proven_http_event_server_create(loop, &server_config, &server) == PROVEN_OK &&
+                    proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server");
+
+    /* 평문에는 물어볼 핸드셰이크가 없으므로 클라이언트에게 알려 준다: 이 클라이언트의 모든
+     * `http` 요청은 HTTP/2다. TLS에서는 대신 `http2`이고, "h2"를 내놓는 TLS 설정과 함께 쓰며,
+     * 오리진마다 핸드셰이크가 정한다. */
+    proven_http_event_client_config_t client_config = { .alloc = heap, .http2_cleartext = true };
+    proven_http_event_client_t *client = NULL;
+    EXAMPLE_REQUIRE(proven_http_event_client_create(loop, &client_config, &client) == PROVEN_OK, "a client");
+
+    seen_t seen = { 0 };
+    call_t calls[3] = { { &seen, 0 }, { &seen, 1 }, { &seen, 2 } };
+    static const char *const paths[3] = { "/first", "/second", "/third" };
+    for (int i = 0; i < 3; i++) {
+        char url[64];
+        snprintf(url, sizeof url, "http://127.0.0.1:%u%s", (unsigned)at.port, paths[i]);
+        proven_http_event_request_options_t request = {
+            .url = proven_u8str_view_from_cstr(url),
+            .on = { .on_response = on_response, .on_body = on_body, .on_done = on_done }, .ctx = &calls[i],
+        };
+        /* 연결이 생기기 전에 한꺼번에 시작한다: 첫 요청이 연결을 만들고 나머지는 그것을
+         * 기다리며, 서버가 무엇을 허락하는지 말한 뒤 셋이 함께 나간다. */
+        EXAMPLE_REQUIRE(proven_http_event_client_start(client, &request, NULL) == PROVEN_OK, "a request is started");
+    }
+    EXAMPLE_REQUIRE(proven_http_event_client_requests(client) == 3, "three are under way");
+
+    proven_net_deadline_t until = proven_net_deadline_in(5000);
+    while (!(seen.done[0] && seen.done[1] && seen.done[2]) && proven_time_monotonic_now() < until)
+        EXAMPLE_REQUIRE(proven_loop_poll(loop, proven_net_deadline_in(10)) == PROVEN_OK, "a round of the loop");
+
+    for (int i = 0; i < 3; i++) printf("%s\n", seen.text[i]);
+    EXAMPLE_REQUIRE(seen.answered == 3 && seen.over_http2 == 3, "all three were answered, over HTTP/2");
+    EXAMPLE_REQUIRE(strcmp(seen.text[0], "/first") == 0 && strcmp(seen.text[1], "/second") == 0 && strcmp(seen.text[2], "/third") == 0, "each with its own answer");
+    EXAMPLE_REQUIRE(proven_http_event_server_connections(server) == 1, "and the server saw one connection, not three");
+
+    proven_http_event_client_destroy(client);
+    proven_http_event_server_destroy(server);
+    proven_loop_destroy(loop);
+    return EXAMPLE_OK();
+}
+```
+
+### 주의사항, 그리고 무엇이 잘못되는가
+
+- **요청의 객체는 여러분 손에서 바뀌지 않는다.** 오리진을 모르는 동안 시작되었고 그 오리진이 HTTP/1.1로
+  말하는 것으로 드러난 요청도 여전히 `start`가 준 그 포인터다. 그때
+  `proven_http_event_request_protocol`은 1을 답한다.
+- **기다리는 요청은 보내지기 전에 타임아웃될 수 있다**: `connect_timeout_ms`가 그것이 기다리는 연결을
+  덮는다. 빈 스트림을 기다리는 요청에게는 자기 시계가 없다 - 재어지는 것은 그 앞의 요청들이다.
+- **정지는 많아야 윈도 하나를 쥔다.** 서버에서와 같다: 클라이언트가 서버에게 소비했다는 말을 멈추고,
+  서버는 보내기를 멈춘다.
+- **`PROVEN_ERR_AGAIN`을 대신 재시도해 주지 않는다.** 조각으로 쓴 본문이 있는 요청은 그럴 수 없고, 일부
+  요청만 재시도하는 클라이언트는 아무것도 재시도하지 않는 클라이언트보다 따져 보기 어렵다.
+- **연결 하나는 실패 지점 하나다.** 그것이 끝나면 그 위의 모든 요청이 함께 끝난다 - 아직 보내지 않은
+  것은 `PROVEN_ERR_AGAIN`, 나머지는 `PROVEN_ERR_RESET`.
+
+## 8. 무엇을 받아들이고, 무엇이 없으며, 어떻게 시험했는가
 
 **디코더가 받아들이는 것은 RFC 7541이 정의한 HPACK이다.** 블록 맨 앞의 테이블 크기 갱신은 몇 개든
 (RFC는 많아야 둘이라고 약속한다), 정수는 연속 바이트 다섯 개까지, 리터럴의 허프만 패딩은 1 비트 일곱
@@ -1110,10 +1270,10 @@ int main(void) {
 
 **여기에 없는 것:**
 
-- **HTTP/2 클라이언트.** 블로킹 클라이언트와 이벤트 구동 클라이언트는 HTTP/1.1만 말한다. 연결로
-  직접 만든 클라이언트에 무엇이 드는지는 6절의 예제가 보여 준다.
-- 11장 **블로킹 서버의 HTTP/2**: 연결 하나에 스레드 하나는 한 번에 한 교환에 어울리고, 그것이
-  HTTP/1.1이다.
+- 11장 **블로킹 서버와 블로킹 클라이언트의 HTTP/2**: 연결 하나에 스레드 하나는 한 번에 한 교환에
+  어울리고, 그것이 HTTP/1.1이다.
+- **서버가 처리하지 않은 것의 재시도**: 이벤트 구동 클라이언트는 그것을 알리고(`PROVEN_ERR_AGAIN`)
+  재시도는 호출자에게 맡긴다.
 - **이벤트 구동 서버의 트레일러**, 어느 프로토콜이든.
 - **확장 CONNECT**(RFC 8441, HTTP/2 위의 WebSocket)와 거기에 필요한 `SETTINGS`.
 - **서버 푸시**: `PUSH_PROMISE`는 거절할 수 있도록 알아보기만 한다.
@@ -1161,6 +1321,15 @@ HTTP/2 서버의 적합성 시험 모음인 **h2spec**(버전 2.6.0, 사례 146�
 평문에서 서문이 아닌 바이트는 여기서 HTTP/2가 아니라 HTTP/1.1이고, 그렇게 답한다. 첫 실행은 두
 가지를 찾았다: 길이를 알리지 않은 본문이 온다는 것을 처리기가 알 길이 없었고(이제 `Transfer-Encoding:
 chunked`를 본다), 자기 자신에게 의존하는 스트림을 거부하지 않았다.
+
+7절의 클라이언트에는 6절의 서버를 한 루프에서 상대하는 등록된 시험이 있다 - 평문과 TLS로: 한 연결의
+요청 마흔 개, 양방향 본문, 압축, 일시 정지, 중단, 서버의 스트림 한도, 타임아웃 각각, 놓아 주는 한가한
+연결, 그리고 HTTP/1.1만 말하는 것으로 드러나는 오리진 - 기다리던 요청들은 호출자가 이미 쥐고 있던
+객체 그대로 HTTP/1.1로 서비스된다. 등록된 시험 밖에서는, 비공개 프로그램이 그 클라이언트를 TLS와
+평문의 Node HTTP/2 서버에 서버 설정 네 벌로, 그리고 HTTP/2가 없는 HTTPS 서버에 돌렸다: 검사 1,156개,
+마지막에는 실패 없음. **처음에는 열다섯이 실패했다**: 스트림 넷을 허락하는 서버를 상대로, 새 연결에
+몰아 보낸 요청들이 서버가 그렇게 말하기 전에 나갔고, 넘친 것이 거절되어 돌아왔다. 이제 클라이언트는
+서버의 설정보다 앞서 아무것도 보내지 않는다.
 
 **속도, 소켓 없이 한 번 잰 것**: 3.5 GHz x86-64 프로세서의 코어 하나에서 메모리 안의 연결 둘, GCC
 `-O2`. 필드 열두 개짜리 요청 머리(리터럴로 299바이트)를 초당 680,000번, 204 MB/s로 허프만 디코딩한다.

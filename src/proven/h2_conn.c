@@ -1262,6 +1262,10 @@ bool proven_h2_conn_is_closed(const proven_h2_conn_t *c) {
     return !c || c->closed;
 }
 
+bool proven_h2_conn_has_peer_settings(const proven_h2_conn_t *c) {
+    return c && c->got_settings;
+}
+
 proven_size_t proven_h2_conn_stream_count(const proven_h2_conn_t *c) {
     return c && !c->closed ? c->stream_count : 0;
 }

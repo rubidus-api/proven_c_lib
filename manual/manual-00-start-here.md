@@ -1011,7 +1011,7 @@ Two things this table tells you that the file names do not:
 | `loop.h` | An event loop: socket readiness, timers, work posted from other threads, a shared scratch buffer (hosted-only) | Chapter 15 |
 | `http_event.h` | HTTP server driven by events on a loop - HTTP/1.1, and HTTP/2 beside it when asked: callbacks, responses in pieces with backpressure, optional TLS, a response compressed when asked (hosted-only) | Chapters 15, 16, 17 |
 | `ws_event.h` | WebSocket on the event-driven server: messages in pieces, sends refused and resumed, liveness and close handled, compressed messages when asked for (hosted-only) | Chapters 15, 12 |
-| `http_event_client.h` | HTTP/1.1 client driven by events on a loop: many requests in flight on one thread; narrow - no reuse, redirects or name resolution; gzip responses decoded on request (hosted-only) | Chapters 15, 16 |
+| `http_event_client.h` | HTTP client driven by events on a loop: many requests in flight on one thread; HTTP/2 when asked, on one connection kept for each origin; narrow - no redirects or name resolution, no reuse for HTTP/1.1; gzip responses decoded on request (hosted-only) | Chapters 15, 16, 17 |
 | `sysio.h` | Standard streams as writers/readers, line input from stdin, buffered output, printing, scanning, environment access | Chapter 5 |
 | `random.h` | Randomness by use case: xoshiro256** (reproducible), ChaCha20 (cryptographic), the OS CSPRNG, and unbiased range/shuffle helpers. The generators work freestanding; only the OS source is hosted. | Chapter 5 |
 | `mmap.h` | Memory-mapped file regions | Chapter 5 |

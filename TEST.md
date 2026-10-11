@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 109 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 110 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-11, Windows 11 test VM: x86-64 331 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 173 registered tests plus the 166 runnable manual examples - 339 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 186 test files: the 171 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 174 registered tests plus the 168 runnable manual examples - 342 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 187 test files: the 171 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -912,6 +912,23 @@ Sub-checks:
 - A refused connection is `PROVEN_ERR_REFUSED` from `start` or from `on_done` and not both; a server the client does not trust ends with `PROVEN_ERR_UNTRUSTED` and the request never sent.
 
 Failure tip: inspect `src/proven/http_event_client.c` - `cl_process` for the response and the end-of-stream branch after its loop, `cl_flush` and `cl_progress` for the request, `cl_arm` for the time limits, `cl_kill` for the end. A request that never ends after the server closed is that branch: it once waited for the stash to be empty, which a half-received head never is.
+
+
+### `tests/test_unit_http_event_client_h2` - the event-driven HTTP client, speaking HTTP/2
+
+Intent: verify that the event-driven client with `http2` or `http2_cleartext` on puts its requests to an origin on one HTTP/2 connection that it keeps, through the callbacks and request calls an HTTP/1.1 program uses; that every request still ends exactly once; and that an origin which speaks only HTTP/1.1 is served as that without the caller's objects changing. Client and server (the event-driven server with HTTP/2 on) share one loop, driven by hand.
+
+Sub-checks:
+
+- Making a client: `http2` with a TLS configuration that does not offer `h2`, a TLS configuration that offers `h2` without `http2`, and `http2` with no TLS at all are each `PROVEN_ERR_INVALID_ARG`.
+- The cases, in the clear (prior knowledge) and over TLS (ALPN): a request that reports protocol 1 while its connection is being made and is answered over HTTP/2 with the user pointer it was given; forty requests at once, all answered and each ended once, on one server connection; a 400,000-byte download; a compressed download delivered decoded; HEAD; a 200,000-byte body from memory, larger than a window, echoed; bodies written in pieces of known and of unknown length, refused and resumed by `on_writable`, which is never called from inside the caller's own write; a download paused at its head - plain and compressed - with nothing delivered while paused and all of it on resume; an aborted request ending at once with `PROVEN_ERR_RESET` and the next request on the same connection; `on_done` never inside `proven_http_event_client_start`; the connection closed after `idle_timeout_ms` and a new one made for the next request; a client destroyed with five requests open, each told once.
+- The server's limit on streams: at a limit of three, twenty-three requests are all answered on one connection; the twenty-first to wait is `PROVEN_ERR_BUSY` at `max_waiting_requests` of twenty; and twelve requests started at once on a connection that does not exist yet are all answered, none having been sent ahead of the server's settings.
+- A server that says goodbye: at a limit of two streams and six requests, the server stops listening - the two it had taken are answered, the four that were waiting end with `PROVEN_ERR_AGAIN`, each once; the connection goes; a request started again makes a new one.
+- Two origins, one client: twelve requests, six to each of two servers, are answered on two connections, one for each origin.
+- Time: a request the server does not answer ends with `PROVEN_ERR_TIMEOUT` after `response_timeout_ms`, and the next is answered on the same connection.
+- An origin that speaks only HTTP/1.1 (a TLS server that does not offer `h2`): six requests started before that was known, and a seventh whose body is still to be written, are all answered over HTTP/1.1, each with its user pointer, by the objects the caller already held; a later request goes straight to HTTP/1.1.
+
+Failure tip: inspect `src/proven/http_event_client_h2.c` - `proven_http_event_client_h2_start_` for the connection a request joins, `r_submit` and `c_submit_waiting` for what is sent and when, `c_response` and `c_body` for what arrives, `c_fall_back` for an HTTP/1.1 origin, `c_pump` for the round. A forwarded request's `face` is in `src/proven/http_event_client.c`.
 
 ### `tests/test_unit_http_coding` - http: content codings
 

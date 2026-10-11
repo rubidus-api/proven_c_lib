@@ -71,6 +71,10 @@ typedef struct {
     proven_u32 body_timeout_ms;            /**< between pieces of the response body. 0: 30 s */
     proven_u32 write_timeout_ms;           /**< output held with none of it accepted by the server. 0: 30 s */
     bool decompress;                       /**< ask for compressed responses (`Accept-Encoding: gzip`, unless the request has its own or a `Range`) and decode a body sent with `Content-Encoding: gzip` or `deflate`: `on_body` gets decoded pieces of at most 16 KiB, the head stays as the server sent it, and a damaged or unfinished stream ends the request with PROVEN_ERR_INVALID_FORMAT. A 206 and other codings are delivered as sent. Costs about 52 KiB while such a response is arriving. false: bodies arrive as sent */
+    bool http2;                            /**< true: an `https` origin that agrees to it (ALPN `h2`) is spoken to in HTTP/2, on one connection the client keeps for that origin and shares between its requests. The TLS configuration must offer `h2` - and must not when this is false */
+    bool http2_cleartext;                  /**< true: every `http` request of this client is HTTP/2 by prior knowledge - there is no way to ask a server in the clear, so say this only of servers known to speak it */
+    proven_u32 idle_timeout_ms;            /**< HTTP/2: how long a connection with no request on it is kept for the next one. 0: 60 s */
+    proven_size_t max_waiting_requests;    /**< HTTP/2: requests that may wait for a connection that is still being made, or for the server's limit on streams. 0: 1,000 */
 } proven_http_event_client_config_t;
 
 /** @brief One request. Zero-initialise it and set `url` and `on.on_done`. Everything it points
@@ -150,5 +154,10 @@ void proven_http_event_request_resume(proven_http_event_request_t *request);
 /** @brief Attach a pointer of yours to the request, and get it back. */
 void proven_http_event_request_set_user(proven_http_event_request_t *request, void *user);
 void *proven_http_event_request_user(const proven_http_event_request_t *request);
+
+/** @brief Which protocol carries this request: 2 for HTTP/2, 1 for HTTP/1.1 - which is also
+ *         the answer while a request waits for a connection whose protocol is not yet known. */
+[[nodiscard]]
+int proven_http_event_request_protocol(const proven_http_event_request_t *request);
 
 #endif /* PROVEN_HTTP_EVENT_CLIENT_H */

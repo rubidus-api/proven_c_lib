@@ -1,4 +1,6 @@
 #include "proven/http_event_client.h"
+#include "proven_internal_http_event_client.h"
+#include "proven_internal_tls.h"
 
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 
@@ -20,67 +22,6 @@
  * And on_done is never called from inside proven_http_event_client_start: that call only
  * begins the connect, and everything that can fail afterwards happens from the loop.
  */
-
-#define CL_READ_BYTES ((proven_size_t)64 * 1024)
-#define CL_PLAIN_BYTES ((proven_size_t)16 * 1024 + 512)
-#define CL_MAX_INTERIM 8u
-
-#define CL_CONNECTING 0     /* the connect has not finished */
-#define CL_HEAD 1           /* connected; the response head has not arrived */
-#define CL_BODY 2           /* reading the response body */
-
-#define CL_T_NONE 0
-#define CL_T_CONNECT 1
-#define CL_T_WRITE 2
-#define CL_T_RESPONSE 3
-#define CL_T_BODY 4
-
-typedef struct { proven_byte_t *ptr; proven_size_t len, cap, off; bool borrowed; } cl_buf_t;
-
-/* A response body being decoded: made when such a response arrives, freed with the request. */
-typedef struct {
-    proven_http_decoder_t_ d;
-    proven_u64 total;                  /* decoded bytes delivered */
-    proven_size_t pay_off;             /* a payload being decoded: where it begins, counted from the stash's read position, */
-    proven_size_t pay_len;             /* how much of it is left, */
-    proven_size_t pay_tail;            /* and the framing bytes after it that were used with it */
-    bool have;                         /* there is such a payload */
-    bool pay_last;                     /* it ends the body */
-    proven_byte_t piece[PROVEN_HTTP_CODING_PIECE];
-} cl_dec_t;
-
-struct proven_http_event_request {
-    proven_http_event_client_t *client;
-    struct proven_http_event_request *prev, *next;
-    proven_net_conn_t sock;
-    proven_loop_io_t io;
-    proven_loop_timer_t timer;
-    proven_tls_conn_t *tls;
-    cl_buf_t out;                      /* request bytes the transport has not taken yet */
-    cl_buf_t stash;                    /* response bytes not used yet */
-    proven_http_body_t body;
-    proven_http_event_client_callbacks_t on;
-    void *ctx;
-    void *user;
-    proven_u64 send_left;              /* request-body bytes still promised; LENGTH_UNKNOWN when chunked */
-    cl_dec_t *dec;                     /* the response body is decoded on its way to on_body */
-    proven_u32 depth;
-    proven_u32 interim;
-    proven_http_method_t method;
-    proven_u8 state;
-    proven_u8 timer_kind;
-    bool connected_at_start, streamed, chunked, request_ended, want_writable, paused, peer_eof, processing, dead;
-};
-
-struct proven_http_event_client {
-    proven_loop_t *loop;
-    proven_allocator_t alloc;
-    proven_http_event_client_config_t cfg;
-    proven_http_event_request_t *requests;
-    proven_size_t request_count;
-    proven_http_header_t *headers;
-    proven_byte_t *rbuf, *pbuf, *hbuf;
-};
 
 static proven_u8str_view_t cl_lit_n(const char *s, proven_size_t n) { return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n }; }
 #define cl_lit(s) cl_lit_n((s), sizeof(s) - 1)
@@ -142,11 +83,11 @@ static bool buf_append(proven_http_event_client_t *cl, cl_buf_t *b, const proven
 static void cl_process(proven_http_event_request_t *c);
 static void cl_on_timer(void *ctx);
 
-static void cl_enter(proven_http_event_request_t *c) { c->depth++; }
+static void cl_enter(proven_http_event_request_t *c) { c->h.depth++; }
 
 static void cl_leave(proven_http_event_request_t *c) {
-    if (--c->depth > 0 || !c->dead) return;
-    proven_http_event_client_t *cl = c->client;
+    if (--c->h.depth > 0 || !c->dead) return;
+    proven_http_event_client_t *cl = c->h.client;
     buf_release(cl, &c->stash);
     buf_release(cl, &c->out);
     if (c->dec) {
@@ -159,7 +100,7 @@ static void cl_leave(proven_http_event_request_t *c) {
 /* The end, good or bad: close, and tell the program once. */
 static void cl_kill(proven_http_event_request_t *c, proven_err_t why) {
     if (c->dead) return;
-    proven_http_event_client_t *cl = c->client;
+    proven_http_event_client_t *cl = c->h.client;
     c->dead = true;
     proven_loop_timer_cancel(cl->loop, &c->timer);
     proven_loop_io_remove(cl->loop, &c->io);           /* before the close */
@@ -169,7 +110,9 @@ static void cl_kill(proven_http_event_request_t *c, proven_err_t why) {
     else cl->requests = c->next;
     if (c->next) c->next->prev = c->prev;
     cl->request_count--;
-    c->on.on_done(c->ctx, c, why);
+    proven_http_event_request_t *face = c->face;
+    c->on.on_done(c->ctx, face, why);
+    if (face != c) proven_http_event_client_h2_forwarded_done_(face);
 }
 
 static bool cl_secured(const proven_http_event_request_t *c) { return !c->tls || proven_tls_is_established(c->tls); }
@@ -185,7 +128,7 @@ static proven_size_t cl_buffered(const proven_http_event_request_t *c) {
  * (a write not taken, a body not arriving) start again with every sign of life. */
 static void cl_arm(proven_http_event_request_t *c) {
     if (c->dead) return;
-    proven_http_event_client_t *cl = c->client;
+    proven_http_event_client_t *cl = c->h.client;
     proven_u8 kind = CL_T_NONE;
     proven_u32 ms = 0;
     if (c->state == CL_CONNECTING || !cl_secured(c)) { kind = CL_T_CONNECT; ms = cl->cfg.connect_timeout_ms; }
@@ -206,7 +149,7 @@ static void cl_watch(proven_http_event_request_t *c) {
         if (!c->peer_eof && !(c->state == CL_BODY && c->paused)) want |= PROVEN_NET_READABLE;
         if (cl_buffered(c) > 0) want |= PROVEN_NET_WRITABLE;
     }
-    (void)proven_loop_io_set(c->client->loop, &c->io, want);
+    (void)proven_loop_io_set(c->h.client->loop, &c->io, want);
 }
 
 /* Push what is waiting towards the socket, without waiting. False when the request ended. */
@@ -229,7 +172,7 @@ static bool cl_flush(proven_http_event_request_t *c) {
         else c->out.off += w.value;
         if (w.value == 0) break;
     }
-    if (buf_pending(&c->out) == 0) buf_release(c->client, &c->out);
+    if (buf_pending(&c->out) == 0) buf_release(c->h.client, &c->out);
     return true;
 }
 
@@ -237,9 +180,9 @@ static bool cl_flush(proven_http_event_request_t *c) {
 static void cl_progress(proven_http_event_request_t *c) {
     if (c->dead) return;
     cl_enter(c);
-    if (c->streamed && !c->request_ended && c->want_writable && cl_buffered(c) < c->client->cfg.max_buffered_output) {
+    if (c->streamed && !c->request_ended && c->want_writable && cl_buffered(c) < c->h.client->cfg.max_buffered_output) {
         c->want_writable = false;
-        if (c->on.on_writable) c->on.on_writable(c->ctx, c);
+        if (c->on.on_writable) c->on.on_writable(c->ctx, c->face);
     }
     if (!c->dead) { cl_watch(c); cl_arm(c); }
     cl_leave(c);
@@ -254,7 +197,7 @@ static void cl_progress(proven_http_event_request_t *c) {
  * decoded, so a pause between two pieces loses nothing. False when the loop has nothing more
  * to do now. */
 static bool cl_decode(proven_http_event_request_t *c) {
-    proven_http_event_client_t *cl = c->client;
+    proven_http_event_client_t *cl = c->h.client;
     cl_dec_t *x = c->dec;
     if (!x->have) {
         proven_mem_view_t in = { .ptr = c->stash.ptr + c->stash.off, .size = buf_pending(&c->stash) };
@@ -280,7 +223,7 @@ static bool cl_decode(proven_http_event_request_t *c) {
     if (made > 0) {
         x->total += made;
         if (cl->cfg.max_body_bytes != 0 && x->total > cl->cfg.max_body_bytes) { cl_kill(c, PROVEN_ERR_OUT_OF_BOUNDS); return false; }
-        if (c->on.on_body) c->on.on_body(c->ctx, c, (proven_mem_view_t){ .ptr = x->piece, .size = made }, false);
+        if (c->on.on_body) c->on.on_body(c->ctx, c->face, (proven_mem_view_t){ .ptr = x->piece, .size = made }, false);
         if (!c->dead) cl_arm(c);
         return !c->dead;
     }
@@ -294,7 +237,7 @@ static bool cl_decode(proven_http_event_request_t *c) {
     x->have = false;
     if (x->pay_last) {
         e = proven_http_decoder_end_(&x->d);
-        if (e == PROVEN_OK && c->on.on_body) c->on.on_body(c->ctx, c, (proven_mem_view_t){ 0 }, true);
+        if (e == PROVEN_OK && c->on.on_body) c->on.on_body(c->ctx, c->face, (proven_mem_view_t){ 0 }, true);
         if (!c->dead) cl_kill(c, e);
         return false;
     }
@@ -303,7 +246,7 @@ static bool cl_decode(proven_http_event_request_t *c) {
 }
 
 static void cl_process(proven_http_event_request_t *c) {
-    proven_http_event_client_t *cl = c->client;
+    proven_http_event_client_t *cl = c->h.client;
     if (c->processing || c->dead) return;         /* the outer call will see what changed */
     c->processing = true;
     cl_enter(c);
@@ -341,7 +284,7 @@ static void cl_process(proven_http_event_request_t *c) {
                 proven_http_decoder_begin_(&c->dec->d, cl->alloc, coding);
             }
             c->state = CL_BODY;
-            if (c->on.on_response) c->on.on_response(c->ctx, c, &res);
+            if (c->on.on_response) c->on.on_response(c->ctx, c->face, &res);
             if (c->dead) break;
             if (no_body) { cl_kill(c, PROVEN_OK); break; }
             cl_arm(c);
@@ -359,7 +302,7 @@ static void cl_process(proven_http_event_request_t *c) {
         proven_err_t e = proven_http_body_feed(&c->body, in, &used, &payload, &done);
         if (e != PROVEN_OK) { cl_kill(c, e); break; }
         c->stash.off += used;
-        if ((payload.size > 0 || done) && c->on.on_body) c->on.on_body(c->ctx, c, payload, done);
+        if ((payload.size > 0 || done) && c->on.on_body) c->on.on_body(c->ctx, c->face, payload, done);
         if (c->dead) break;
         if (done) { cl_kill(c, PROVEN_OK); break; }
         cl_arm(c);
@@ -372,7 +315,7 @@ static void cl_process(proven_http_event_request_t *c) {
         if (c->state == CL_BODY && proven_http_body_end(&c->body) == PROVEN_OK) {
             /* A body that was being decoded must also have ended where its stream ends. */
             proven_err_t ended = c->dec ? proven_http_decoder_end_(&c->dec->d) : PROVEN_OK;
-            if (ended == PROVEN_OK && c->on.on_body) c->on.on_body(c->ctx, c, (proven_mem_view_t){ 0 }, true);
+            if (ended == PROVEN_OK && c->on.on_body) c->on.on_body(c->ctx, c->face, (proven_mem_view_t){ 0 }, true);
             if (!c->dead) cl_kill(c, ended);
         } else {
             cl_kill(c, PROVEN_ERR_RESET);
@@ -390,7 +333,7 @@ static void cl_process(proven_http_event_request_t *c) {
 
 /* Bytes of the response (after TLS, if any) have arrived in a buffer of the client's. */
 static void cl_input(proven_http_event_request_t *c, const proven_byte_t *p, proven_size_t n) {
-    proven_http_event_client_t *cl = c->client;
+    proven_http_event_client_t *cl = c->h.client;
     if (c->dead || n == 0) return;
     if (buf_pending(&c->stash) == 0) {
         buf_release(cl, &c->stash);
@@ -403,7 +346,7 @@ static void cl_input(proven_http_event_request_t *c, const proven_byte_t *p, pro
 }
 
 static void cl_readable(proven_http_event_request_t *c) {
-    proven_http_event_client_t *cl = c->client;
+    proven_http_event_client_t *cl = c->h.client;
     /* The end has been seen and the socket has nothing more to say. A hang-up may still be
      * reported - some systems report one whether or not reading was asked for - and a request
      * that is paused over what it already holds must not take that for a connection cut
@@ -488,6 +431,20 @@ proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_h
     if (cfg.response_timeout_ms == 0) cfg.response_timeout_ms = 30000;
     if (cfg.body_timeout_ms == 0) cfg.body_timeout_ms = 30000;
     if (cfg.write_timeout_ms == 0) cfg.write_timeout_ms = 30000;
+    if (cfg.idle_timeout_ms == 0) cfg.idle_timeout_ms = 60000;
+    if (cfg.max_waiting_requests == 0) cfg.max_waiting_requests = 1000;
+    if (cfg.tls) {
+        /* What TLS may agree to and what the client will speak must be the same thing. */
+        bool offers_h2 = false;
+        for (proven_size_t i = 0;; ++i) {
+            proven_u8str_view_t name = proven_tls_config_alpn(cfg.tls, i);
+            if (name.size == 0) break;
+            if (name.size == 2 && name.ptr[0] == 'h' && name.ptr[1] == '2') offers_h2 = true;
+        }
+        if (offers_h2 != cfg.http2) return PROVEN_ERR_INVALID_ARG;
+    } else if (cfg.http2) {
+        return PROVEN_ERR_INVALID_ARG;             /* HTTP/2 by ALPN needs the TLS that carries ALPN */
+    }
     proven_allocator_t a = cfg.alloc;
     proven_http_event_client_t *cl = cl_alloc(a, sizeof *cl);
     if (!cl) return PROVEN_ERR_NOMEM;
@@ -496,6 +453,7 @@ proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_h
     cl->rbuf = cl_alloc(a, CL_READ_BYTES);
     cl->hbuf = cl_alloc(a, cfg.max_head_bytes);
     if (cfg.tls) cl->pbuf = cl_alloc(a, CL_PLAIN_BYTES);
+    /* (An HTTP/2 connection in the clear has no TLS to read through, but shares the buffer's use.) */
     if (!cl->headers || !cl->rbuf || !cl->hbuf || (cfg.tls && !cl->pbuf)) { proven_http_event_client_destroy(cl); return PROVEN_ERR_NOMEM; }
     *out = cl;
     return PROVEN_OK;
@@ -503,6 +461,7 @@ proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_h
 
 void proven_http_event_client_destroy(proven_http_event_client_t *cl) {
     if (!cl) return;
+    proven_http_event_client_h2_destroy_(cl);
     while (cl->requests) {
         proven_http_event_request_t *c = cl->requests;
         cl_enter(c);
@@ -514,6 +473,7 @@ void proven_http_event_client_destroy(proven_http_event_client_t *cl) {
     if (cl->rbuf) a.free_fn(a.ctx, cl->rbuf);
     if (cl->pbuf) a.free_fn(a.ctx, cl->pbuf);
     if (cl->hbuf) a.free_fn(a.ctx, cl->hbuf);
+    if (cl->h2buf) a.free_fn(a.ctx, cl->h2buf);
     a.free_fn(a.ctx, cl);
 }
 
@@ -576,6 +536,11 @@ static proven_err_t cl_build_head(proven_http_event_client_t *cl, const proven_h
 
 proven_err_t proven_http_event_client_start(proven_http_event_client_t *cl, const proven_http_event_request_options_t *o,
                                             proven_http_event_request_t **out) {
+    return proven_http_event_client_start_h1_(cl, o, (void *)0, out);
+}
+
+proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *cl, const proven_http_event_request_options_t *o,
+                                                proven_http_event_request_t *face, proven_http_event_request_t **out) {
     if (out) *out = (void *)0;
     if (!cl || !o || !o->on.on_done || (o->header_count > 0 && !o->headers) || (o->body.size > 0 && !o->body.ptr)) return PROVEN_ERR_INVALID_ARG;
     proven_url_t u;
@@ -590,6 +555,14 @@ proven_err_t proven_http_event_client_start(proven_http_event_client_t *cl, cons
     if (o->address) to = *o->address;
     else if (proven_net_addr_parse(u.host, u.has_port ? u.port : proven_url_default_port(u.scheme), &to) != PROVEN_OK) return PROVEN_ERR_INVALID_ARG;
 
+    /* With HTTP/2 asked for, the request goes to the connection the client keeps for its
+     * origin - unless that origin has shown that it speaks only HTTP/1.1. */
+    if (!face && (https ? cl->cfg.http2 : cl->cfg.http2_cleartext)) {
+        for (proven_size_t i = 0; i < o->header_count; ++i) if (cl_is_reserved_header(o->headers[i].name)) return PROVEN_ERR_INVALID_ARG;
+        proven_err_t h2e = proven_http_event_client_h2_start_(cl, o, https, u.host, u.has_port ? u.port : proven_url_default_port(u.scheme), to, out);
+        if (h2e != PROVEN_ERR_UNSUPPORTED) return h2e;
+    }
+
     proven_size_t head_len = 0;
     proven_err_t e = cl_build_head(cl, o, &u, method, &head_len);
     if (e != PROVEN_OK) return e;
@@ -597,7 +570,7 @@ proven_err_t proven_http_event_client_start(proven_http_event_client_t *cl, cons
     proven_http_event_request_t *c = cl_alloc(cl->alloc, sizeof *c);
     if (!c) return PROVEN_ERR_NOMEM;
     *c = (proven_http_event_request_t){
-        .client = cl, .on = o->on, .ctx = o->ctx, .state = CL_CONNECTING,
+        .h = { .client = cl, .kind = CL_KIND_H1 }, .on = o->on, .ctx = o->ctx, .state = CL_CONNECTING,
         .method = cl_eq_nocase(method, cl_lit("HEAD")) ? PROVEN_HTTP_HEAD : PROVEN_HTTP_GET,
     };
     if (o->body.size == 0 && o->body_length != 0) {
@@ -628,6 +601,7 @@ proven_err_t proven_http_event_client_start(proven_http_event_client_t *cl, cons
     if (c->next) c->next->prev = c;
     cl->requests = c;
     cl->request_count++;
+    c->face = face ? face : c;
     cl_arm(c);
     if (out) *out = c;
     return PROVEN_OK;
@@ -635,9 +609,10 @@ proven_err_t proven_http_event_client_start(proven_http_event_client_t *cl, cons
 
 proven_result_size_t proven_http_event_request_write(proven_http_event_request_t *c, proven_mem_view_t data) {
     if (!c || (data.size > 0 && !data.ptr)) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_ARG, .value = 0 };
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) return proven_http_event_client_h2_write_(c, data);
     if (c->dead || !c->streamed || c->request_ended) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_STATE, .value = 0 };
     if (!c->chunked && data.size > c->send_left) return (proven_result_size_t){ .err = PROVEN_ERR_OUT_OF_BOUNDS, .value = 0 };
-    proven_http_event_client_t *cl = c->client;
+    proven_http_event_client_t *cl = c->h.client;
     cl_enter(c);
     proven_size_t done = 0;
     bool alive = true, tried = false;
@@ -679,6 +654,7 @@ proven_result_size_t proven_http_event_request_write(proven_http_event_request_t
 
 proven_err_t proven_http_event_request_end(proven_http_event_request_t *c) {
     if (!c) return PROVEN_ERR_INVALID_ARG;
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) return proven_http_event_client_h2_end_(c);
     if (c->dead || !c->streamed || c->request_ended) return PROVEN_ERR_INVALID_STATE;
     cl_enter(c);
     proven_err_t result = PROVEN_OK;
@@ -690,7 +666,7 @@ proven_err_t proven_http_event_request_end(proven_http_event_request_t *c) {
         c->request_ended = true;
         bool alive = true;
         if (c->chunked) {
-            alive = buf_append(c->client, &c->out, (const proven_byte_t *)"0\r\n\r\n", 5);
+            alive = buf_append(c->h.client, &c->out, (const proven_byte_t *)"0\r\n\r\n", 5);
             if (!alive) cl_kill(c, PROVEN_ERR_NOMEM);
         }
         if (alive) alive = cl_flush(c);
@@ -702,21 +678,27 @@ proven_err_t proven_http_event_request_end(proven_http_event_request_t *c) {
 }
 
 void proven_http_event_request_abort(proven_http_event_request_t *c) {
-    if (!c || c->dead) return;
+    if (!c) return;
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) { proven_http_event_client_h2_abort_(c); return; }
+    if (c->dead) return;
     cl_enter(c);
     cl_kill(c, PROVEN_ERR_RESET);
     cl_leave(c);
 }
 
 void proven_http_event_request_pause(proven_http_event_request_t *c) {
-    if (!c || c->dead || c->paused) return;
+    if (!c) return;
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) { proven_http_event_client_h2_pause_(c); return; }
+    if (c->dead || c->paused) return;
     c->paused = true;
     cl_watch(c);
     cl_arm(c);
 }
 
 void proven_http_event_request_resume(proven_http_event_request_t *c) {
-    if (!c || c->dead || !c->paused) return;
+    if (!c) return;
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) { proven_http_event_client_h2_resume_(c); return; }
+    if (c->dead || !c->paused) return;
     c->paused = false;
     cl_enter(c);
     cl_process(c);
@@ -724,7 +706,19 @@ void proven_http_event_request_resume(proven_http_event_request_t *c) {
     cl_leave(c);
 }
 
-void proven_http_event_request_set_user(proven_http_event_request_t *c, void *user) { if (c) c->user = user; }
-void *proven_http_event_request_user(const proven_http_event_request_t *c) { return c ? c->user : (void *)0; }
+void proven_http_event_request_set_user(proven_http_event_request_t *c, void *user) {
+    if (!c) return;
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) proven_http_event_client_h2_set_user_(c, user);
+    else c->user = user;
+}
+
+void *proven_http_event_request_user(const proven_http_event_request_t *c) {
+    if (!c) return (void *)0;
+    return PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c) ? proven_http_event_client_h2_user_(c) : c->user;
+}
+
+int proven_http_event_request_protocol(const proven_http_event_request_t *c) {
+    return c && PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c) && !proven_http_event_client_h2_is_h1_(c) ? 2 : 1;
+}
 
 #endif

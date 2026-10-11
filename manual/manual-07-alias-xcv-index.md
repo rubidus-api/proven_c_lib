@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1261 aliases: 922 lowercase `xcv_` names and 339 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1263 aliases: 924 lowercase `xcv_` names and 339 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -548,6 +548,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_h2_conn_create` | `proven_h2_conn_create` |
 | `xcv_h2_conn_destroy` | `proven_h2_conn_destroy` |
 | `xcv_h2_conn_feed` | `proven_h2_conn_feed` |
+| `xcv_h2_conn_has_peer_settings` | `proven_h2_conn_has_peer_settings` |
 | `xcv_h2_conn_is_closed` | `proven_h2_conn_is_closed` |
 | `xcv_h2_conn_output_sent` | `proven_h2_conn_output_sent` |
 | `xcv_h2_conn_pending_output` | `proven_h2_conn_pending_output` |
@@ -674,6 +675,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_event_request_end` | `proven_http_event_request_end` |
 | `xcv_http_event_request_options_t` | `proven_http_event_request_options_t` |
 | `xcv_http_event_request_pause` | `proven_http_event_request_pause` |
+| `xcv_http_event_request_protocol` | `proven_http_event_request_protocol` |
 | `xcv_http_event_request_resume` | `proven_http_event_request_resume` |
 | `xcv_http_event_request_set_user` | `proven_http_event_request_set_user` |
 | `xcv_http_event_request_t` | `proven_http_event_request_t` |

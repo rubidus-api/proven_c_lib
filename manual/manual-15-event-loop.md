@@ -1011,6 +1011,8 @@ The configuration's fields, each with a default when zero:
 | `body_timeout_ms` | Between pieces of the response body. | 30 s |
 | `write_timeout_ms` | Output held with none of it accepted by the server. | 30 s |
 | `decompress` | Ask for gzip and decode it: `on_body` gets decoded pieces, and `max_body_bytes` counts them. [Chapter 16](manual-16-compression.md), section 6. | off |
+| `http2`, `http2_cleartext` | Speak HTTP/2 to origins that agree to it (ALPN), or to every `http` origin: one connection kept for each, shared by its requests. [Chapter 17, section 7](manual-17-http2.md#7-http2-in-the-event-driven-client). | off |
+| `idle_timeout_ms`, `max_waiting_requests` | HTTP/2: how long a connection with no request is kept, and how many requests may wait for one. | 60 s, 1,000 |
 
 The test suite compiles and runs this program:
 

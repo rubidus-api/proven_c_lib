@@ -7,9 +7,9 @@
  *
  * The handler below is an ordinary one - the same callbacks, the same stream calls - and does
  * not know which protocol a request came by unless it asks. An HTTP/1.1 client and an HTTP/2
- * client then talk to it on the same port. The HTTP/2 client is the connection engine of this
- * chapter's section 5 with a socket put through it: this library has no HTTP/2 client of its
- * own yet, and what it takes to make one is these forty lines.
+ * client then talk to it on the same port. The HTTP/2 client here is the connection engine of
+ * this chapter's section 5 with a socket put through it, to show what one is made of: forty
+ * lines. (The library's own, which keeps connections and shares them, is section 7's.)
  */
 
 typedef struct { proven_loop_t *loop; int served, over_http2; } app_t;

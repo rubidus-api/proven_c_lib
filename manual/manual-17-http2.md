@@ -17,9 +17,10 @@ configuration bounds.
 **What is here, from the bottom up.** Sections 2 to 4 are the codec: what travels on an
 HTTP/2 connection, read and written. Section 5 is the connection itself - which streams are
 open, how much may be sent, what to answer - as an object that is given bytes and gives bytes
-back. Section 6 is that object at work: the event-driven server speaks HTTP/2 when asked to,
-beside HTTP/1.1 on the same port. The blocking server of Chapter 11 and the clients still
-speak HTTP/1.1 only: section 7 says exactly where the line is.
+back. Sections 6 and 7 are that object at work: the event-driven server speaks HTTP/2 when
+asked to, beside HTTP/1.1 on the same port, and the event-driven client keeps an HTTP/2
+connection for each origin that agrees to one. The blocking server and the blocking client
+of Chapter 11 speak HTTP/1.1 only: section 8 says exactly where the line is.
 
 ## Table of contents
 
@@ -29,7 +30,8 @@ speak HTTP/1.1 only: section 7 says exactly where the line is.
 4. [A header list as a message](#4-a-header-list-as-a-message)
 5. [A connection](#5-a-connection)
 6. [HTTP/2 in the event-driven server](#6-http2-in-the-event-driven-server)
-7. [What is accepted, what is not here, and how this was tested](#7-what-is-accepted-what-is-not-here-and-how-this-was-tested)
+7. [HTTP/2 in the event-driven client](#7-http2-in-the-event-driven-client)
+8. [What is accepted, what is not here, and how this was tested](#8-what-is-accepted-what-is-not-here-and-how-this-was-tested)
 
 ## 1. What HTTP/2 changes, in one page
 
@@ -745,6 +747,8 @@ int main(void) {
 
     /* The opening is already queued: the client's preface and both ends' settings. */
     EXAMPLE_REQUIRE(carry(&client, &server) && carry(&server, &client) && carry(&client, &server), "settings cross and are acknowledged");
+    /* A client that waits for this before its first request never asks for more streams than the server takes. */
+    EXAMPLE_REQUIRE(proven_h2_conn_has_peer_settings(client.conn) && proven_h2_conn_has_peer_settings(server.conn), "each end has the other's settings");
 
     // ---- a request with a body, and its answer --------------------------------------------
     proven_http_header_t request[] = {
@@ -961,9 +965,9 @@ ends everything at once, and every open stream's handler gets `on_done(PROVEN_ER
  *
  * The handler below is an ordinary one - the same callbacks, the same stream calls - and does
  * not know which protocol a request came by unless it asks. An HTTP/1.1 client and an HTTP/2
- * client then talk to it on the same port. The HTTP/2 client is the connection engine of this
- * chapter's section 5 with a socket put through it: this library has no HTTP/2 client of its
- * own yet, and what it takes to make one is these forty lines.
+ * client then talk to it on the same port. The HTTP/2 client here is the connection engine of
+ * this chapter's section 5 with a socket put through it, to show what one is made of: forty
+ * lines. (The library's own, which keeps connections and shares them, is section 7's.)
  */
 
 typedef struct { proven_loop_t *loop; int served, over_http2; } app_t;
@@ -1106,7 +1110,7 @@ int main(void) {
 - **A handler that keeps its place across `on_writable` is safe, as it was.**
   `on_writable` is never called from inside a call the handler itself made - a write that
   called back into the same handler would send the same bytes twice. This is the server's
-  promise for both protocols; on HTTP/2 it took a defect to find (section 7).
+  promise for both protocols; on HTTP/2 it took a defect to find (section 8).
 - **`max_buffered_output` is per connection, not per stream.** One slow client with a
   hundred streams holds what one HTTP/1.1 client would, not a hundred times it.
 - **An idle HTTP/2 connection is larger than an HTTP/1.1 one, by what it has been sent.**
@@ -1127,7 +1131,167 @@ int main(void) {
 - **Trailers are not passed on**, in either direction, as they are not on HTTP/1.1: a
   request's trailers end its body and are dropped.
 
-## 7. What is accepted, what is not here, and how this was tested
+## 7. HTTP/2 in the event-driven client
+
+```c
+typedef struct {
+    /* ... everything Chapter 15 describes ... */
+    bool http2;
+    bool http2_cleartext;
+    proven_u32 idle_timeout_ms;
+    proven_size_t max_waiting_requests;
+} proven_http_event_client_config_t;
+
+int proven_http_event_request_protocol(const proven_http_event_request_t *request);
+```
+
+The event-driven client of [Chapter 15](manual-15-event-loop.md) is, for HTTP/1.1, one
+connection to a request. With `http2` it **keeps a connection for each origin that agrees to
+HTTP/2 and puts every request to that origin on it**: a hundred requests to one server are
+one handshake, not a hundred. The callbacks and the `proven_http_event_request_*` calls are
+the same; so is what `start` promises - everything the options point to is copied or used
+before it returns, and `on_done` comes exactly once, never from inside `start`.
+
+- **Over TLS**, `http2` and a TLS configuration that offers `h2` (and `http/1.1` after it):
+  the handshake with each origin decides. An origin that chooses HTTP/1.1 is remembered as
+  such and served one connection to a request, as before. (The last 64 such origins are
+  remembered, at about 600 bytes each; one that has been forgotten costs a handshake to
+  learn again.)
+- **In the clear**, `http2_cleartext`: every `http` request of that client is HTTP/2 by
+  prior knowledge. There is no way to ask a server in the clear, so say this only of servers
+  you know; a client that talks to both kinds in the clear is two clients.
+
+**A request may wait**, where an HTTP/1.1 request never did: for the connection, while it is
+being made; for the server's first word, which says how many streams it allows - nothing is
+sent ahead of that, so nothing is refused for it; and for a free stream, when the server's
+limit is reached. A waiting request holds a copy of what it was started with. At most
+`max_waiting_requests` (1,000) wait for one connection; the next `start` is `PROVEN_ERR_BUSY`.
+
+**What `on_done` says** is what it said, with one more answer: `PROVEN_ERR_AGAIN`, for a
+request the server did not act on - it said goodbye first, or refused the stream. Such a
+request may be started again, whatever its method; the client does not do so by itself.
+`PROVEN_ERR_RESET` still means "it may have been acted on".
+
+| Setting | For HTTP/2 |
+|---|---|
+| `connect_timeout_ms` | Making an origin's connection, the handshake included: every request waiting for it ends with it |
+| `response_timeout_ms`, `body_timeout_ms` | Each request's own: a request that is not answered ends, the connection and its other requests go on |
+| `write_timeout_ms` | The connection's: output the server takes none of ends it |
+| `idle_timeout_ms` (0: 60 s) | A connection with no request on it is kept this long for the next, then closed |
+| `max_buffered_output` | For the connection's requests together |
+| `decompress` | Unchanged; a paused request holds what arrived compressed, and decodes it on resume |
+
+### Example: three requests, one connection
+
+<!-- example: manual/examples/en/ex_17_client.c -->
+```c
+#include <stdio.h>
+#include <string.h>
+
+/*
+ * The event-driven client speaking HTTP/2: three requests, one connection.
+ *
+ * Client and server sit on one loop here, driven by hand, so the example needs no thread. The
+ * client's callbacks are the ones an HTTP/1.1 program has; what differs is underneath - the
+ * client keeps a connection for the origin and puts every request to it on that connection.
+ */
+
+typedef struct { int answered, over_http2; char text[3][32]; bool done[3]; } seen_t;
+typedef struct { seen_t *seen; int which; } call_t;
+
+static void serve(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
+    (void)ctx;
+    (void)proven_http_stream_respond(stream, 200, NULL, 0, (proven_mem_view_t){ head->target.ptr, head->target.size });     /* its own path, back */
+}
+
+static void on_response(void *ctx, proven_http_event_request_t *request, const proven_http_response_t *head) {
+    call_t *call = ctx;
+    /* 2 here; 1 for a request that is still waiting for its connection, or whose server
+     * turned out to speak only HTTP/1.1. */
+    if (head->status == 200 && proven_http_event_request_protocol(request) == 2) call->seen->over_http2++;
+}
+
+static void on_body(void *ctx, proven_http_event_request_t *request, proven_mem_view_t piece, bool last) {
+    (void)request; (void)last;
+    call_t *call = ctx;
+    snprintf(call->seen->text[call->which], sizeof call->seen->text[0], "%.*s", (int)piece.size, (const char *)piece.ptr);
+}
+
+static void on_done(void *ctx, proven_http_event_request_t *request, proven_err_t why) {
+    (void)request;
+    call_t *call = ctx;
+    call->seen->done[call->which] = true;
+    if (why == PROVEN_OK) call->seen->answered++;
+}
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    proven_loop_t *loop = NULL;
+    EXAMPLE_REQUIRE(proven_loop_create(heap, &loop) == PROVEN_OK, "a loop");
+
+    /* A server that speaks both protocols (section 6). */
+    proven_http_event_server_config_t server_config = { .on = { .on_request = serve }, .http2 = true };
+    proven_http_event_server_t *server = NULL;
+    proven_net_addr_t at;
+    EXAMPLE_REQUIRE(proven_http_event_server_create(loop, &server_config, &server) == PROVEN_OK &&
+                    proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server");
+
+    /* In the clear there is no handshake to ask in, so the client is told: every `http`
+     * request of this client is HTTP/2. Over TLS it is `http2` instead, with a TLS
+     * configuration that offers "h2", and the handshake decides for each origin. */
+    proven_http_event_client_config_t client_config = { .alloc = heap, .http2_cleartext = true };
+    proven_http_event_client_t *client = NULL;
+    EXAMPLE_REQUIRE(proven_http_event_client_create(loop, &client_config, &client) == PROVEN_OK, "a client");
+
+    seen_t seen = { 0 };
+    call_t calls[3] = { { &seen, 0 }, { &seen, 1 }, { &seen, 2 } };
+    static const char *const paths[3] = { "/first", "/second", "/third" };
+    for (int i = 0; i < 3; i++) {
+        char url[64];
+        snprintf(url, sizeof url, "http://127.0.0.1:%u%s", (unsigned)at.port, paths[i]);
+        proven_http_event_request_options_t request = {
+            .url = proven_u8str_view_from_cstr(url),
+            .on = { .on_response = on_response, .on_body = on_body, .on_done = on_done }, .ctx = &calls[i],
+        };
+        /* Started at once, before there is a connection: the first makes it, the others wait
+         * for it, and all three go out together when the server has said what it allows. */
+        EXAMPLE_REQUIRE(proven_http_event_client_start(client, &request, NULL) == PROVEN_OK, "a request is started");
+    }
+    EXAMPLE_REQUIRE(proven_http_event_client_requests(client) == 3, "three are under way");
+
+    proven_net_deadline_t until = proven_net_deadline_in(5000);
+    while (!(seen.done[0] && seen.done[1] && seen.done[2]) && proven_time_monotonic_now() < until)
+        EXAMPLE_REQUIRE(proven_loop_poll(loop, proven_net_deadline_in(10)) == PROVEN_OK, "a round of the loop");
+
+    for (int i = 0; i < 3; i++) printf("%s\n", seen.text[i]);
+    EXAMPLE_REQUIRE(seen.answered == 3 && seen.over_http2 == 3, "all three were answered, over HTTP/2");
+    EXAMPLE_REQUIRE(strcmp(seen.text[0], "/first") == 0 && strcmp(seen.text[1], "/second") == 0 && strcmp(seen.text[2], "/third") == 0, "each with its own answer");
+    EXAMPLE_REQUIRE(proven_http_event_server_connections(server) == 1, "and the server saw one connection, not three");
+
+    proven_http_event_client_destroy(client);
+    proven_http_event_server_destroy(server);
+    proven_loop_destroy(loop);
+    return EXAMPLE_OK();
+}
+```
+
+### Cautions, and what goes wrong
+
+- **A request's object does not change under you.** One that was started while its origin
+  was unknown, and whose origin turned out to speak HTTP/1.1, is still the pointer `start`
+  gave you; `proven_http_event_request_protocol` then answers 1.
+- **A request that waits can time out before it is sent**: `connect_timeout_ms` covers the
+  connection it is waiting for. One that waits for a free stream has no clock of its own -
+  it is the requests ahead of it that are being timed.
+- **Pause holds at most one window**, as on the server: the client stops telling the server
+  that it has consumed, and the server stops sending.
+- **`PROVEN_ERR_AGAIN` is not retried for you.** A request with a body written in pieces
+  could not be, and a client that retries only some requests is harder to reason about than
+  one that retries none.
+- **One connection is one point of failure.** When it ends, every request on it ends with
+  it - `PROVEN_ERR_AGAIN` for those not yet sent, `PROVEN_ERR_RESET` for the others.
+
+## 8. What is accepted, what is not here, and how this was tested
 
 **What the decoder accepts is HPACK as RFC 7541 defines it.** Any number of table size
 updates at the start of a block (the RFC promises at most two); integers of up to five
@@ -1148,10 +1312,10 @@ announce a length it does not carry.
 
 **Not here:**
 
-- **HTTP/2 clients.** The blocking client and the event-driven client speak HTTP/1.1 only;
-  the example of section 6 shows what a client made directly of the connection takes.
-- **HTTP/2 in the blocking server** of Chapter 11: one thread to a connection suits one
-  exchange at a time, which is HTTP/1.1.
+- **HTTP/2 in the blocking server and the blocking client** of Chapter 11: one thread to a
+  connection suits one exchange at a time, which is HTTP/1.1.
+- **A retry of what the server did not act on**: the event-driven client reports it
+  (`PROVEN_ERR_AGAIN`) and leaves the retrying to its caller.
 - **Trailers in the event-driven server**, for either protocol.
 - **Extended CONNECT** (RFC 8441, WebSocket over HTTP/2) and the `SETTINGS` it needs.
 - **Server push**: `PUSH_PROMISE` is recognised so that it can be refused.
@@ -1209,6 +1373,17 @@ connection preface must end the connection": in the clear, bytes that are not th
 are not HTTP/2 here but HTTP/1.1, and are answered as such. Its first run found two things:
 a handler had no way to tell that a body with no announced length was coming (it now sees
 `Transfer-Encoding: chunked`), and a stream that depends on itself was not refused.
+
+The client of section 7 has a registered test against the server of section 6 on one loop -
+in the clear and over TLS: forty requests on one connection, bodies both ways, compression,
+pause, abort, the server's limit on streams, each timeout, an idle connection let go, and an
+origin that turns out to speak only HTTP/1.1, whose waiting requests are served as HTTP/1.1
+by the objects their caller already held. Outside the registered tests, a private program
+ran the client against Node's HTTP/2 servers over TLS and in the clear under four sets of
+server settings, and against an HTTPS server with no HTTP/2: 1,156 checks, none failed in the
+end. **Fifteen did at first**: against a server that allows four streams, a burst of
+requests on a new connection went out before the server had said so, and the surplus came
+back refused. The client now sends nothing ahead of the server's settings.
 
 **Speed, measured once, with no socket**: two connections in memory on one core of a
 3.5 GHz x86-64 processor, GCC `-O2`. A request head of twelve fields (299 bytes as literals)

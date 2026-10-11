@@ -466,6 +466,12 @@ void proven_h2_conn_shutdown(proven_h2_conn_t *conn, proven_h2_error_t code);
 [[nodiscard]]
 bool proven_h2_conn_is_closed(const proven_h2_conn_t *conn);
 
+/** @brief Whether the peer's first SETTINGS frame has arrived. Until it has, what the peer
+ *         allows is not known: a client that opens streams before then may open more than
+ *         the server will take, and have the surplus refused. */
+[[nodiscard]]
+bool proven_h2_conn_has_peer_settings(const proven_h2_conn_t *conn);
+
 /** @brief How many streams are open. */
 [[nodiscard]]
 proven_size_t proven_h2_conn_stream_count(const proven_h2_conn_t *conn);

@@ -85,6 +85,8 @@ int main(void) {
 
     /* The opening is already queued: the client's preface and both ends' settings. */
     EXAMPLE_REQUIRE(carry(&client, &server) && carry(&server, &client) && carry(&client, &server), "settings cross and are acknowledged");
+    /* A client that waits for this before its first request never asks for more streams than the server takes. */
+    EXAMPLE_REQUIRE(proven_h2_conn_has_peer_settings(client.conn) && proven_h2_conn_has_peer_settings(server.conn), "each end has the other's settings");
 
     // ---- a request with a body, and its answer --------------------------------------------
     proven_http_header_t request[] = {

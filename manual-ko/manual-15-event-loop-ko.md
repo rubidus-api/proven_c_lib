@@ -985,6 +985,8 @@ void *proven_http_event_request_user(const proven_http_event_request_t *request)
 | `body_timeout_ms` | 응답 본문의 조각과 조각 사이. | 30초 |
 | `write_timeout_ms` | 붙든 출력을 서버가 하나도 받지 않는 시간. | 30초 |
 | `decompress` | gzip을 요청하고 푼다: `on_body`는 풀린 조각을 받고 `max_body_bytes`는 그것을 센다. [16장](manual-16-compression-ko.md) 6절. | 꺼짐 |
+| `http2`, `http2_cleartext` | 합의하는 오리진(ALPN)에, 또는 모든 `http` 오리진에 HTTP/2로 말한다: 오리진마다 연결 하나를 간직해 그 요청들이 함께 쓴다. [17장 7절](manual-17-http2-ko.md#7-이벤트-구동-클라이언트의-http2). | 꺼짐 |
+| `idle_timeout_ms`, `max_waiting_requests` | HTTP/2: 요청이 없는 연결을 간직하는 시간, 그리고 연결 하나를 기다릴 수 있는 요청 수. | 60초, 1,000 |
 
 테스트 스위트가 이 프로그램을 컴파일하고 실행한다:
 

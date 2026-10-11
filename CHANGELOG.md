@@ -18,6 +18,41 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release: **the event-driven HTTP client speaks HTTP/2**, on one connection kept for
+each origin. With it, phase 8 of the networking plan is complete: HTTP/2 from the codec to
+both event-driven ends. It is off unless asked for; the blocking server and the blocking
+client speak HTTP/1.1 as before.
+
+### Added
+
+- **`http_event_client.h`: `http2` and `http2_cleartext` in the client's configuration.**
+  With `http2`, an `https` origin whose handshake chooses `h2` (ALPN) is spoken to in HTTP/2
+  on one connection the client keeps and shares between its requests; an origin that chooses
+  HTTP/1.1 is remembered and served as before. With `http2_cleartext`, every `http` request
+  of the client is HTTP/2 by prior knowledge. The callbacks and the request calls are
+  unchanged, and so is what `start` promises.
+- A request may now wait - for its connection, for the server's settings, for a free stream
+  under the server's limit - holding a copy of what it was started with; `max_waiting_requests`
+  (default 1,000) bounds that, and `idle_timeout_ms` (default 60 s) says how long a
+  connection with no request is kept.
+- `on_done` may say `PROVEN_ERR_AGAIN`: the server did not act on the request, which may be
+  started again. The client does not retry by itself.
+- `proven_http_event_request_protocol`, which answers 1 or 2; `h2.h`:
+  `proven_h2_conn_has_peer_settings`.
+- Manual chapter 17 gains "HTTP/2 in the event-driven client", with a compiled example; the
+  registered test `test_unit_http_event_client_h2`.
+
+### Changed
+
+- At creation the client compares `http2` with what its TLS configuration offers by ALPN and
+  refuses a pair that disagrees, as the server does since v0.30.0.
+- An HTTP/1.1 request of the event-driven client is 16 bytes larger (360 where it was 344).
+
+### Not included
+
+- HTTP/2 in the blocking client and the blocking server. A retry of requests the server did
+  not act on. Redirects, name resolution, and connection reuse for HTTP/1.1, as before.
+
 ## [0.31.0] - 2026-10-11
 
 A MINOR release: HTTP/2 made smaller and faster, and held to a conformance suite. Nothing
