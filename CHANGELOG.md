@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-10-12
+
 A MINOR release with no new API: **a second pass over HTTP/2's speed, this time on the
 client's side**, and a registered test for a fix of v0.33.0 that had none.
 
