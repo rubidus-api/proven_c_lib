@@ -158,6 +158,7 @@ not been read: that is the handler's choice.
 | `proven_http_exchange_begin(x, status, headers, count, content_length)` | Begin a response whose body follows in pieces. `PROVEN_HTTP_LENGTH_UNKNOWN` when you do not know the length: the body is then sent chunked. | as `respond`. |
 | `proven_http_exchange_write(x, data)` | Write more of that body. | `proven_err_t`: `OUT_OF_BOUNDS` past the length announced; `INVALID_STATE`; `TIMEOUT`, `RESET`. |
 | `proven_http_exchange_end(x)` | Finish it. Optional: returning from the handler does the same. | `proven_err_t`. |
+| `proven_http_exchange_compress(x)` | Ask that this response be compressed, if the client accepts gzip. Before the response begins. [Chapter 16](manual-16-compression.md), section 6 - read its cautions before using it. | none. |
 
 ### Cautions, and what goes wrong
 
@@ -989,8 +990,10 @@ int main(void) {
 
 - **TLS**, in both directions. Section 1.
 - **HTTP/2 and HTTP/3.**
-- **Compression.** No `Accept-Encoding` is sent and no content coding is decoded; a server that
-  compresses anyway hands you compressed bytes.
+- **Compression, unless asked for.** With nothing set, no `Accept-Encoding` is sent, no
+  content coding is decoded, and no response is compressed. Setting `decompress` in the
+  client's configuration, and calling `proven_http_exchange_compress` in a handler, turn on
+  gzip in each direction: [Chapter 16](manual-16-compression.md), section 6.
 - **WebSocket** is not in these two headers: it is [Chapter 12](manual-12-websocket.md), built on section 11.
 - **A router, static files, sessions, middleware** on the server; **retries, caching, a
   connection limit per host** on the client.

@@ -88,11 +88,14 @@ typedef struct {
     proven_u32 write_timeout_ms;        /**< for each write of a response. 0: 30 s */
     proven_u32 idle_timeout_ms;         /**< an open connection with no request on it. 0: 60 s */
     const proven_tls_config_t *tls;     /**< NULL: plain HTTP. Otherwise every connection is TLS under this config, which must outlive the server. The handshake shares `head_timeout_ms` with the first request's head. */
+    int compress_level;                 /**< for responses a handler asks to have compressed (proven_http_exchange_compress): 1 (fastest) to 9 (smallest); -1 stores without compressing. 0: 6 */
+    int compress_window_bits;           /**< and how far back the compressor looks, 9 to 15: its memory while such a response is being written runs from about 11 KiB at 9 to about 325 KiB at 15. 0: 15 */
 } proven_http_server_config_t;
 
 /**
  * @brief Make a server. It does not listen yet.
- * @return PROVEN_ERR_INVALID_ARG for an invalid allocator or no handler; PROVEN_ERR_NOMEM;
+ * @return PROVEN_ERR_INVALID_ARG for an invalid allocator, no handler, or a compression level
+ *         or window outside its range; PROVEN_ERR_NOMEM;
  *         PROVEN_ERR_BUSY when the system is out of sockets.
  */
 [[nodiscard]]
@@ -164,6 +167,30 @@ proven_net_addr_t proven_http_exchange_peer(const proven_http_exchange_t *exchan
  */
 [[nodiscard]]
 proven_result_size_t proven_http_exchange_read(proven_http_exchange_t *exchange, proven_mem_mut_t dest);
+
+/**
+ * @brief Ask that the response to this request be compressed. Call it before the response
+ *        begins; afterwards it does nothing.
+ *
+ * Nothing is compressed unless a handler asks, response by response, because whether it is
+ * safe is a property of the response: **do not ask for one that carries a secret together
+ * with text the client chose** - a session token beside a reflected query, say. The length of
+ * a compressed body tells an observer of the connection how much the two have in common,
+ * TLS or not (the attack known as BREACH).
+ *
+ * The response then carries `Vary: Accept-Encoding` (unless your `Vary` already names it) and,
+ * when the request's `Accept-Encoding` allows gzip, is sent as `Content-Encoding: gzip`.
+ * It is sent as it is when the client does not accept gzip; when the status is 204, 206 or
+ * 304; when your headers have a `Content-Encoding` or a `Content-Range` of their own; when
+ * memory for the compressor cannot be had; and, with proven_http_exchange_respond, when the
+ * body is under 256 bytes or does not get smaller.
+ *
+ * With proven_http_exchange_begin the body leaves chunked whatever length was given (the
+ * length is still what you must write), and **what you write may wait inside the compressor**
+ * until more is written or the response ends: do not ask for a response that the client must
+ * see piece by piece, such as an event stream.
+ */
+void proven_http_exchange_compress(proven_http_exchange_t *exchange);
 
 /** @brief Pass as `content_length` when the length of the body is not known in advance. */
 #define PROVEN_HTTP_LENGTH_UNKNOWN UINT64_MAX

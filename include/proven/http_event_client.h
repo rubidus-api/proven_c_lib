@@ -64,12 +64,13 @@ typedef struct {
     const proven_tls_config_t *tls;        /**< for `https`. NULL: an `https` URL is refused, never fetched in the clear. Must outlive the client. */
     proven_size_t max_head_bytes;          /**< largest response head, and request head. 0: 16 KiB */
     proven_size_t max_headers;             /**< most header fields in a response. 0: 64 */
-    proven_u64 max_body_bytes;             /**< largest response body. 0: no limit - it is delivered in pieces and never held */
+    proven_u64 max_body_bytes;             /**< largest response body - as sent, and with `decompress` as decoded too. 0: no limit - it is delivered in pieces and never held */
     proven_size_t max_buffered_output;     /**< request-body bytes held before writes are refused. 0: 64 KiB */
     proven_u32 connect_timeout_ms;         /**< to be connected, the TLS handshake included. 0: 10 s */
     proven_u32 response_timeout_ms;        /**< from the request being sent to the end of the response head. 0: 30 s */
     proven_u32 body_timeout_ms;            /**< between pieces of the response body. 0: 30 s */
     proven_u32 write_timeout_ms;           /**< output held with none of it accepted by the server. 0: 30 s */
+    bool decompress;                       /**< ask for compressed responses (`Accept-Encoding: gzip`, unless the request has its own or a `Range`) and decode a body sent with `Content-Encoding: gzip` or `deflate`: `on_body` gets decoded pieces of at most 16 KiB, the head stays as the server sent it, and a damaged or unfinished stream ends the request with PROVEN_ERR_INVALID_FORMAT. A 206 and other codings are delivered as sent. Costs about 52 KiB while such a response is arriving. false: bodies arrive as sent */
 } proven_http_event_client_config_t;
 
 /** @brief One request. Zero-initialise it and set `url` and `on.on_done`. Everything it points

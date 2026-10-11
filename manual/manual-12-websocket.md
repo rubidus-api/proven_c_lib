@@ -642,8 +642,8 @@ int main(void) {
 
 ## 9. What is not here
 
-- **Compression.** `permessage-deflate` is not offered and not accepted: the library has no
-  DEFLATE. A peer that insists on it cannot be talked to.
+- **Compression.** `permessage-deflate` is not offered and not accepted. A peer that insists
+  on it cannot be talked to.
 - **One call that waits on many connections.** See section 5.
 - **Concurrent send and receive on one connection.**
 - **Automatic pings, reconnection, backoff.** Policy, and yours.

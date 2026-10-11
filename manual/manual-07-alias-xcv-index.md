@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1126 aliases: 846 lowercase `xcv_` names and 280 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1135 aliases: 851 lowercase `xcv_` names and 284 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -166,6 +166,10 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_HTTP_BODY_NONE` | `PROVEN_HTTP_BODY_NONE` |
 | `XCV_HTTP_BODY_UNTIL_CLOSE` | `PROVEN_HTTP_BODY_UNTIL_CLOSE` |
 | `XCV_HTTP_BOUNDARY_SIZE` | `PROVEN_HTTP_BOUNDARY_SIZE` |
+| `XCV_HTTP_CODING_DEFLATE` | `PROVEN_HTTP_CODING_DEFLATE` |
+| `XCV_HTTP_CODING_GZIP` | `PROVEN_HTTP_CODING_GZIP` |
+| `XCV_HTTP_CODING_IDENTITY` | `PROVEN_HTTP_CODING_IDENTITY` |
+| `XCV_HTTP_CODING_OTHER` | `PROVEN_HTTP_CODING_OTHER` |
 | `XCV_HTTP_CONNECT` | `PROVEN_HTTP_CONNECT` |
 | `XCV_HTTP_COOKIE_MAX_SIZE` | `PROVEN_HTTP_COOKIE_MAX_SIZE` |
 | `XCV_HTTP_DATE_SIZE` | `PROVEN_HTTP_DATE_SIZE` |
@@ -501,6 +505,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_hmac_size` | `proven_hmac_size` |
 | `xcv_hmac_t` | `proven_hmac_t` |
 | `xcv_hmac_update` | `proven_hmac_update` |
+| `xcv_http_accepts_coding` | `proven_http_accepts_coding` |
 | `xcv_http_auth_offers` | `proven_http_auth_offers` |
 | `xcv_http_basic_auth` | `proven_http_basic_auth` |
 | `xcv_http_body_end` | `proven_http_body_end` |
@@ -521,6 +526,8 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_client_send` | `proven_http_client_send` |
 | `xcv_http_client_t` | `proven_http_client_t` |
 | `xcv_http_client_upgrade` | `proven_http_client_upgrade` |
+| `xcv_http_coding_t` | `proven_http_coding_t` |
+| `xcv_http_content_coding` | `proven_http_content_coding` |
 | `xcv_http_content_range_parse` | `proven_http_content_range_parse` |
 | `xcv_http_cookie_jar_clear` | `proven_http_cookie_jar_clear` |
 | `xcv_http_cookie_jar_count` | `proven_http_cookie_jar_count` |
@@ -561,6 +568,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_event_server_stop_listening` | `proven_http_event_server_stop_listening` |
 | `xcv_http_event_server_t` | `proven_http_event_server_t` |
 | `xcv_http_exchange_begin` | `proven_http_exchange_begin` |
+| `xcv_http_exchange_compress` | `proven_http_exchange_compress` |
 | `xcv_http_exchange_end` | `proven_http_exchange_end` |
 | `xcv_http_exchange_peer` | `proven_http_exchange_peer` |
 | `xcv_http_exchange_read` | `proven_http_exchange_read` |
@@ -605,6 +613,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_stream_abort` | `proven_http_stream_abort` |
 | `xcv_http_stream_begin` | `proven_http_stream_begin` |
 | `xcv_http_stream_buffered` | `proven_http_stream_buffered` |
+| `xcv_http_stream_compress` | `proven_http_stream_compress` |
 | `xcv_http_stream_end` | `proven_http_stream_end` |
 | `xcv_http_stream_pause` | `proven_http_stream_pause` |
 | `xcv_http_stream_peer` | `proven_http_stream_peer` |

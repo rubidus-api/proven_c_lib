@@ -146,6 +146,10 @@
 #define XCV_HTTP_BODY_NONE PROVEN_HTTP_BODY_NONE
 #define XCV_HTTP_BODY_UNTIL_CLOSE PROVEN_HTTP_BODY_UNTIL_CLOSE
 #define XCV_HTTP_BOUNDARY_SIZE PROVEN_HTTP_BOUNDARY_SIZE
+#define XCV_HTTP_CODING_DEFLATE PROVEN_HTTP_CODING_DEFLATE
+#define XCV_HTTP_CODING_GZIP PROVEN_HTTP_CODING_GZIP
+#define XCV_HTTP_CODING_IDENTITY PROVEN_HTTP_CODING_IDENTITY
+#define XCV_HTTP_CODING_OTHER PROVEN_HTTP_CODING_OTHER
 #define XCV_HTTP_CONNECT PROVEN_HTTP_CONNECT
 #define XCV_HTTP_COOKIE_MAX_SIZE PROVEN_HTTP_COOKIE_MAX_SIZE
 #define XCV_HTTP_DATE_SIZE PROVEN_HTTP_DATE_SIZE
@@ -481,6 +485,7 @@
 #define xcv_hmac_size proven_hmac_size
 #define xcv_hmac_t proven_hmac_t
 #define xcv_hmac_update proven_hmac_update
+#define xcv_http_accepts_coding proven_http_accepts_coding
 #define xcv_http_auth_offers proven_http_auth_offers
 #define xcv_http_basic_auth proven_http_basic_auth
 #define xcv_http_body_end proven_http_body_end
@@ -501,6 +506,8 @@
 #define xcv_http_client_send proven_http_client_send
 #define xcv_http_client_t proven_http_client_t
 #define xcv_http_client_upgrade proven_http_client_upgrade
+#define xcv_http_coding_t proven_http_coding_t
+#define xcv_http_content_coding proven_http_content_coding
 #define xcv_http_content_range_parse proven_http_content_range_parse
 #define xcv_http_cookie_jar_clear proven_http_cookie_jar_clear
 #define xcv_http_cookie_jar_count proven_http_cookie_jar_count
@@ -541,6 +548,7 @@
 #define xcv_http_event_server_stop_listening proven_http_event_server_stop_listening
 #define xcv_http_event_server_t proven_http_event_server_t
 #define xcv_http_exchange_begin proven_http_exchange_begin
+#define xcv_http_exchange_compress proven_http_exchange_compress
 #define xcv_http_exchange_end proven_http_exchange_end
 #define xcv_http_exchange_peer proven_http_exchange_peer
 #define xcv_http_exchange_read proven_http_exchange_read
@@ -585,6 +593,7 @@
 #define xcv_http_stream_abort proven_http_stream_abort
 #define xcv_http_stream_begin proven_http_stream_begin
 #define xcv_http_stream_buffered proven_http_stream_buffered
+#define xcv_http_stream_compress proven_http_stream_compress
 #define xcv_http_stream_end proven_http_stream_end
 #define xcv_http_stream_pause proven_http_stream_pause
 #define xcv_http_stream_peer proven_http_stream_peer

@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 102 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 103 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-11, Windows 11 test VM: x86-64 308 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 166 registered tests plus the 150 runnable manual examples - 316 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 179 test files: the 166 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 167 registered tests plus the 154 runnable manual examples - 321 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 180 test files: the 167 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -895,6 +895,28 @@ Sub-checks:
 - A refused connection is `PROVEN_ERR_REFUSED` from `start` or from `on_done` and not both; a server the client does not trust ends with `PROVEN_ERR_UNTRUSTED` and the request never sent.
 
 Failure tip: inspect `src/proven/http_event_client.c` - `cl_process` for the response and the end-of-stream branch after its loop, `cl_flush` and `cl_progress` for the request, `cl_arm` for the time limits, `cl_kill` for the end. A request that never ends after the server closed is that branch: it once waited for the stash to be empty, which a half-received head never is.
+
+### `tests/test_unit_http_coding` - http: content codings
+
+Intent: verify `Content-Encoding` in the four HTTP drivers - responses compressed when a handler asks and the client accepts, compressed bodies decoded by the clients that ask - and the helpers and the decoder under them, against bodies that zlib made.
+
+Sub-checks:
+
+- The helpers: `proven_http_accepts_coding` against thirty-four `Accept-Encoding` values (weights of zero and above, `*`, `identity`, case, spaces, empty elements, and eight malformed ones, which accept identity only), two fields read as one list, no field; `proven_http_content_coding` against thirteen values and a repeated field.
+- The decoder, with no sockets: each of the twenty-three vectors - gzip, zlib and raw under `deflate`, two members, every optional gzip header field, a stored stream, `x-gzip`, two megabytes of zeros in two kilobytes; and cut short, cut in the header, followed by other bytes, with a wrong checksum, with a damaged block, one byte, and text mislabelled as gzip - whole and a byte in and a byte out at a time: what zlib made decodes to what zlib was given, what zlib refuses is `PROVEN_ERR_INVALID_FORMAT`. A body of no bytes is an empty body. A 206 and a coding other than gzip or deflate alone are not decoded. A whole body under 256 bytes or one that does not shrink is not compressed; text is, at four windows, and inflates to itself.
+- Settings: a compression level or window outside its range is `PROVEN_ERR_INVALID_ARG` from both servers; the two calls accept null.
+- Compressed responses, through the blocking client and the event-driven client against the blocking server, and through the event-driven client against the event-driven server plain and over TLS: at 0, 1, 255, 256, 3,000, 65,536 and 1,048,576 bytes, a body sent whole (gzip from 256 bytes up, with the compressed `Content-Length`), streamed with its length and streamed without (gzip and chunked) each arrive as written, with `Vary: Accept-Encoding`; bytes that do not shrink, a response that did not ask, a handler's own `Content-Encoding`, a 204, a 206 with and without `Content-Range`, and a request made after the response began are sent as they are; a `Vary` that already names the header is not repeated; a compressed response that ends short of its promise does not pass for whole; HEAD announces the encoding and the length GET sends.
+- The vectors through each client, from the blocking server, whole and a byte a chunk: decoded, refused, or passed through as the table says, with the headers as the server wrote them and `Content-Length` counting what was sent.
+- A gzip body with no length, from a scripted peer that ends it by closing: decoded whole by each client, and `PROVEN_ERR_INVALID_FORMAT` when the close cuts the stream short.
+- Each side alone: a client that sets nothing sends no `Accept-Encoding` and gets gzip as gzip; a request's own `Accept-Encoding` replaces the client's, and with a `Range` none is sent.
+- Bounds: the blocking client reads the same body at six read sizes from one byte up; `read_all` stops at its limit of decoded bytes with `PROVEN_ERR_OUT_OF_BOUNDS`; after a decoded body the connection carries the next request. The event-driven client delivers two megabytes from two kilobytes in pieces of at most 16 KiB; paused after every piece nothing arrives while paused and nothing is lost; `max_body_bytes` counts decoded bytes.
+- A megabyte of text, compressed, to a client over TLS that pauses at every piece: the server has closed long before the client has read it all, and the request still ends whole (a regression check for the hang-up after the end, which fails on Windows without the fix).
+- The event-driven server's output limit: sixteen megabytes that do not compress, to a client that stops reading for a while - writes are refused, `on_writable` resumes them, and the queue passes its limit by no more than one piece.
+- Raw sockets, to both servers: an HTTP/1.0 request gets gzip with no chunks and no length, ended by the close, and it is one whole gzip stream; seven `Accept-Encoding` forms decide compression as the table says, in one piece and streamed; HEAD for a streamed response has no body.
+
+Failure tip: inspect `src/proven/http_coding.c` for the rules; `sv_zip` and the respond function in `src/proven/http_server.c`; `ev_zip` and the write function in `src/proven/http_event.c`; `cl_read_decoded` in `src/proven/http_client.c`; `cl_decode` in `src/proven/http_event_client.c`. The vectors are in `tests/test_unit_http_coding_vectors.h`, written by a private generator from zlib's output, with zlib's own verdict asserted for every row.
+
+Note: the blocking client is not run against the event-driven server here; that pair, and curl and Python against both servers, are checked by a private program.
 
 ### `tests/test_unit_hash_legacy` - legacy digests: SHA-1 and MD5
 

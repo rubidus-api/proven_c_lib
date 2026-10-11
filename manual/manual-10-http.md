@@ -1057,7 +1057,10 @@ int main(void) {
 
 - **A client or a server.** They are [Chapter 11](manual-11-http-client-server.md).
 - **HTTP/2 and HTTP/3.** A head that says `HTTP/2.0` is `PROVEN_ERR_UNSUPPORTED`.
-- **Content codings.** `gzip` and the rest: the library has no DEFLATE yet.
+- **Content codings in the codec.** The parser and the body decoder hand you the body as it
+  was sent. Two helpers read the headers involved (`proven_http_accepts_coding`,
+  `proven_http_content_coding`), and the servers and clients built on this codec can compress
+  and decode `gzip`: [Chapter 16](manual-16-compression.md), section 6.
 - **Trailers.** After a chunked body they are checked and skipped, not returned.
 - **Parsing a multipart body, and multi-range (`multipart/byteranges`) responses.**
 - **A public suffix list**, and so cookies shared across subdomains - see section 12.

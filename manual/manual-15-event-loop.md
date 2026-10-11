@@ -336,6 +336,7 @@ whatever the size of the response.
 | `proven_http_stream_end` | `proven_err_t`: `INVALID_STATE` when no response was begun or it was already ended; `INVALID_FORMAT` when fewer bytes were written than promised - the connection is then closed, so that the client cannot take a short body for a whole one. |
 | `proven_http_stream_abort` | nothing. The connection is closed at once and `on_done` is called with `PROVEN_ERR_RESET`. |
 | `proven_http_stream_buffered` | `proven_size_t`: response bytes held for this connection that the client has not accepted. |
+| `proven_http_stream_compress` | nothing. Asks that this response be compressed if the client accepts gzip; before the response begins. [Chapter 16](manual-16-compression.md), section 6 - read its cautions first. |
 
 Three details that follow from the protocol and need nothing from you: a response to `HEAD`,
 and one with status 204 or 304, is sent without a body whatever you pass; a request that said
@@ -1005,6 +1006,7 @@ The configuration's fields, each with a default when zero:
 | `response_timeout_ms` | From the request being sent to the end of the response head. | 30 s |
 | `body_timeout_ms` | Between pieces of the response body. | 30 s |
 | `write_timeout_ms` | Output held with none of it accepted by the server. | 30 s |
+| `decompress` | Ask for gzip and decode it: `on_body` gets decoded pieces, and `max_body_bytes` counts them. [Chapter 16](manual-16-compression.md), section 6. | off |
 
 The test suite compiles and runs this program:
 
@@ -1350,7 +1352,8 @@ int main(void) {
 
 **What a connection holds.** A connection with no request on it holds its struct and no buffer:
 requests are read into the loop's scratch buffer, and bytes are copied aside only when a
-request is incomplete. On x86-64 Linux the registered tests measure 448 bytes of heap for an
+request is incomplete. (A compressor exists only while a compressed response is being
+written.) On x86-64 Linux the registered tests measure 448 bytes of heap for an
 idle plain HTTP connection, failing above 512, and 928 bytes for an idle plain WebSocket
 connection, failing above 1 KiB. A TLS connection adds the engine's state, about 1 KiB while
 idle (Chapter 14, section 9).
@@ -1429,7 +1432,9 @@ changes that.
 - **TLS handshakes off the loop's thread.** Each costs the loop about 2 ms during which it
   serves nothing else (Chapter 14, section 9).
 - **A faster wait on Windows** than `WSAPoll`.
-- **Sending a file without copying it**, response compression, HTTP/2.
+- **Sending a file without copying it**, HTTP/2. (Compressed responses are in
+  [Chapter 16](manual-16-compression.md), section 6: `proven_http_stream_compress` in the
+  server, `decompress` in the client's configuration.)
 - **Watching files, signals or child processes** with the loop. It watches sockets.
 
 **How this was tested.** The registered tests drive the loop's timers, posts and socket

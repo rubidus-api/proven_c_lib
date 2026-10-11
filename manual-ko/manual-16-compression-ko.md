@@ -8,7 +8,8 @@
 
 이 장은 `deflate.h`를 다룬다. 순수한 계산이다 - 압축기나 해제기를 만들 때 할당 한 번, 운영체제에서는
 아무것도 받지 않는다 - 그래서 [프리스탠딩(freestanding)](manual-freestanding-ko.md) 빌드에서 쓸 수 있다.
-입력과 출력은 여러분의 메모리를 가리키는 뷰(view)로 주고받는다.
+입력과 출력은 여러분의 메모리를 가리키는 뷰(view)로 주고받는다. 6절은 예외다: 11장과 15장의 서버와
+클라이언트에서 다루는 압축된 HTTP 응답 이야기다.
 
 ## 목차
 
@@ -17,7 +18,8 @@
 3. [스트림](#3-스트림)
 4. [레벨, 윈도, 그리고 그 비용](#4-레벨-윈도-그리고-그-비용)
 5. [남이 보낸 데이터](#5-남이-보낸-데이터)
-6. [무엇을 받아들이고, 무엇이 없으며, 어떻게 시험했는가](#6-무엇을-받아들이고-무엇이-없으며-어떻게-시험했는가)
+6. [HTTP 위에서](#6-http-위에서)
+7. [무엇을 받아들이고, 무엇이 없으며, 어떻게 시험했는가](#7-무엇을-받아들이고-무엇이-없으며-어떻게-시험했는가)
 
 ## 1. DEFLATE가 하는 일, 한 쪽으로
 
@@ -367,7 +369,377 @@ int main(void) {
 - **raw DEFLATE에는 체크섬이 없다.** 바이트가 오는 길에 손상되었을 수 있고 둘레의 형식이 검사하지
   않는다면 zlib나 gzip을 쓴다.
 
-## 6. 무엇을 받아들이고, 무엇이 없으며, 어떻게 시험했는가
+## 6. HTTP 위에서
+
+```c
+void proven_http_exchange_compress(proven_http_exchange_t *exchange);     /* 11장의 서버 */
+void proven_http_stream_compress(proven_http_stream_t *stream);           /* 15장의 서버 */
+
+bool proven_http_accepts_coding(const proven_http_header_t *headers, proven_size_t count, proven_http_coding_t coding);
+proven_http_coding_t proven_http_content_coding(const proven_http_header_t *headers, proven_size_t count);
+```
+
+HTTP는 이것을 *콘텐츠 코딩*이라고 부른다: 서버가 본문을 압축하고 `Content-Encoding`으로 그 사실을
+알리는데, `Accept-Encoding`으로 허락한 클라이언트에게만 그렇게 할 수 있다.
+[11장](manual-11-http-client-server-ko.md)과 [15장](manual-15-event-loop-ko.md)의 HTTP 드라이버 넷은 이
+두 가지를 모두 한다 - 그리고 **요청하기 전에는 어느 것도 하지 않는다**. 아무것도 설정하지 않은
+프로그램은 이전과 같은 바이트를 보낸다.
+
+이 장의 나머지와 달리 이 부분은 소켓이 필요하고 프리스탠딩 빌드에는 없다 - 헬퍼 함수 둘은 예외로,
+`http.h`에 있는 헤더 계산일 뿐이다.
+
+**서버는 핸들러가 그 응답에 대해 요청할 때 응답을 압축한다.** 응답을 시작하기 전에 호출 하나:
+
+| | 일어나는 일 |
+|---|---|
+| 요청이 gzip을 허용하고, 응답에 자기 본문이 있다 | `Content-Encoding: gzip`으로 보낸다 |
+| 요청이 gzip을 허용하지 않는다(`Accept-Encoding` 없음, `gzip;q=0`, 다른 코딩만) | 그대로 보낸다 |
+| 상태 204, 206, 304. 또는 여러분의 헤더에 이미 `Content-Encoding`이나 `Content-Range`가 있다 | 그대로 보낸다 |
+| 한 번에 보내는 본문이 256바이트 미만이거나, 작아지지 않는다 | 그대로 보낸다 |
+| 압축기에 줄 메모리가 없다 | 그대로 보낸다 |
+| 이 모든 경우에 | `Vary: Accept-Encoding`이 붙는다. 여러분의 `Vary`가 이미 그것을 말하면 붙지 않는다 |
+
+`Vary`가 붙는 까닭은 응답이 이제 요청 헤더에 따라 달라지기 때문이다. 중간의 캐시가 gzip을 읽지 못하는
+클라이언트에게 gzip을 건네서는 안 된다.
+
+한 번에 보내는 본문은 먼저 압축한 다음 새 `Content-Length`와 함께 보낸다. 조각조각 쓰는 본문은 쓰는
+대로 압축해서, 알려 준 길이와 상관없이 청크로 보낸다 - 그 길이는 여전히 여러분이 써야 할 길이다.
+
+**클라이언트는 설정에 `decompress`가 있을 때 요청하고 푼다.** 그러면 `Accept-Encoding: gzip`을 보내고,
+`gzip`이나 `deflate`로 돌아온 본문을 여러분에게 가는 길에 푼다: `proven_http_client_read`는 여러분의
+버퍼를 풀린 바이트로 채우고, 이벤트 구동 클라이언트의 `on_body`는 풀린 조각을 최대 16 KiB씩 받는다.
+
+### 예제: 페이지는 압축하고, 계정 페이지는 하지 않는다
+
+<!-- example: manual/examples/ko/ex_16_http_gzip.c -->
+```c
+#include <stdio.h>
+#include <string.h>
+
+/*
+ * HTTP로 보내는 압축된 응답: 핸들러가 요청하고 클라이언트가 받아들이면 압축하는 서버와,
+ * 압축을 요청하고 풀어 읽는 클라이언트.
+ *
+ * 프로그램이 말하기 전에는 둘 다 꺼져 있다. 서버 쪽은 핸들러에서 응답마다 부르는 호출 하나이고,
+ * 클라이언트 쪽은 설정의 플래그 하나다.
+ */
+
+static proven_byte_t g_page[20000];        /* 제공할 페이지: 텍스트라서 압축이 잘 된다 */
+
+static void fill_page(void) {
+    proven_size_t n = 0;
+    for (unsigned k = 0; n < sizeof g_page; ++k) {
+        char line[48];
+        int len = snprintf(line, sizeof line, "row %u of a table that says much the same\n", k);
+        for (int i = 0; i < len && n < sizeof g_page; ++i) g_page[n++] = (proven_byte_t)line[i];
+    }
+}
+
+static void handle(void *ctx, proven_http_exchange_t *x) {
+    proven_http_server_t **server = ctx;
+    const proven_http_request_t *req = proven_http_exchange_request(x);
+    proven_mem_view_t page = { g_page, sizeof g_page };
+
+    if (proven_u8str_view_eq(req->target, PROVEN_LIT("/page"))) {
+        /* 응답을 시작하기 전에 호출 하나. 나머지는 서버가 한다: 요청의 Accept-Encoding을
+         * 읽고, gzip이 허용되면 압축하고, Content-Encoding과 Vary와 새 Content-Length를
+         * 쓴다. */
+        proven_http_exchange_compress(x);
+        proven_http_header_t type = { PROVEN_LIT("Content-Type"), PROVEN_LIT("text/plain") };
+        (void)proven_http_exchange_respond(x, 200, &type, 1, page);
+
+    } else if (proven_u8str_view_eq(req->target, PROVEN_LIT("/account"))) {
+        /* 여기서는 일부러 요청하지 않는다: 이 응답은 비밀을 클라이언트가 고른 글자 옆에
+         * 싣게 되는데, 압축된 본문의 크기는 그 비밀을 한 바이트씩 새어 나가게 한다.
+         * 압축을 응답마다 요청하게 한 것은 핸들러만이 이를 알기 때문이다. */
+        (void)proven_http_exchange_respond(x, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("token=... you searched for: ...\n")));
+
+    } else if (proven_u8str_view_eq(req->target, PROVEN_LIT("/accepts"))) {
+        /* 서버가 묻는 것과 같은 질문을, 스스로 고르고 싶은 핸들러가 묻는다 -
+         * 예컨대 파일과 미리 압축해 둔 그 짝 가운데 하나를. */
+        bool gzip = proven_http_accepts_coding(req->headers, req->header_count, PROVEN_HTTP_CODING_GZIP);
+        (void)proven_http_exchange_respond(x, 200, NULL, 0, proven_mem_view_from_u8(gzip ? PROVEN_LIT("gzip") : PROVEN_LIT("identity")));
+
+    } else {
+        (void)proven_http_exchange_respond(x, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("bye\n")));
+        proven_http_server_stop(*server);
+    }
+}
+
+static void serve(void *arg) { (void)proven_http_server_run(*(proven_http_server_t **)arg); }
+
+/* `path`를 GET한다. 읽은 본문의 크기, Content-Length, 헤더가 말하는 코딩을 알려 준다. */
+static bool get(proven_http_client_t *client, proven_u16 port, const char *path,
+                proven_size_t *read_size, proven_u64 *content_length, proven_http_coding_t *coding, proven_u8str_t *body) {
+    char url[96];
+    int n = snprintf(url, sizeof url, "http://127.0.0.1:%u%s", (unsigned)port, path);
+    proven_http_client_response_t resp;
+    bool ok = proven_http_client_get(client, (proven_u8str_view_t){ (const proven_byte_t *)url, (proven_size_t)n }, &resp) == PROVEN_OK && resp.status == 200;
+    if (ok) {
+        /* 헤더는 서버가 보낸 그대로다: 무엇이 전송됐는지는 이렇게 본다. */
+        *coding = proven_http_content_coding(resp.headers, resp.header_count);
+        proven_u8str_view_t length = { 0 };
+        *content_length = 0;
+        if (proven_http_header_find(resp.headers, resp.header_count, PROVEN_LIT("Content-Length"), &length)) {
+            for (proven_size_t i = 0; i < length.size; ++i) *content_length = *content_length * 10 + (proven_u64)(length.ptr[i] - '0');
+        }
+        /* 한도는 여기에 도착하는 것에 걸린다 - 클라이언트가 푼다면 풀린 바이트에. */
+        (void)proven_u8str_reset(body);
+        ok = proven_http_client_read_all(&resp, proven_heap_allocator(), body, 1024 * 1024) == PROVEN_OK;
+        *read_size = proven_u8str_as_view(body).size;
+    }
+    proven_http_client_finish(&resp);
+    return ok;
+}
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    fill_page();
+
+    static proven_http_server_t *server;
+    proven_http_server_config_t config = { .alloc = heap, .handler = handle, .handler_ctx = &server };
+    config.compress_level = 6;              /* 1이 가장 빠르고 9가 가장 작다. 0은 이 값을 뜻한다 */
+    EXAMPLE_REQUIRE(proven_http_server_create(&config, &server) == PROVEN_OK, "a server");
+    proven_net_addr_t at;
+    proven_err_t err = proven_http_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at);
+    if (err == PROVEN_ERR_PERMISSION || err == PROVEN_ERR_UNSUPPORTED) {
+        printf("no sockets in this environment; nothing to show\n");
+        proven_http_server_destroy(server);
+        return EXAMPLE_OK();
+    }
+    EXAMPLE_REQUIRE(err == PROVEN_OK, "it listens");
+    proven_job_sys_t *threads = NULL;
+    proven_job_group_t running;
+    proven_job_group_init(&running);
+    EXAMPLE_REQUIRE(proven_job_system_init(heap, 1, 4, &threads) == PROVEN_OK &&
+                    proven_job_group_submit(threads, &running, serve, &server) == PROVEN_OK, "the server loop is started");
+
+    /* 클라이언트 둘: 하나는 늘 하던 대로, 하나는 압축된 응답을 요청한다. */
+    proven_http_client_config_t plain_config = { .alloc = heap, .max_idle_connections = 2 };
+    proven_http_client_config_t decoding_config = { .alloc = heap, .max_idle_connections = 2, .decompress = true };
+    proven_http_client_t *plain = NULL, *decoding = NULL;
+    EXAMPLE_REQUIRE(proven_http_client_create(&plain_config, &plain) == PROVEN_OK &&
+                    proven_http_client_create(&decoding_config, &decoding) == PROVEN_OK, "two clients");
+
+    proven_u8str_t body = { 0 };
+    proven_size_t read_size = 0;
+    proven_u64 sent = 0;
+    proven_http_coding_t coding = PROVEN_HTTP_CODING_IDENTITY;
+
+    /* 아무것도 설정하지 않은 클라이언트는 Accept-Encoding을 보내지 않고, 달라지는 것이 없다. */
+    EXAMPLE_REQUIRE(get(plain, at.port, "/page", &read_size, &sent, &coding, &body), "the page, to a client that did not ask");
+    EXAMPLE_REQUIRE(coding == PROVEN_HTTP_CODING_IDENTITY && sent == sizeof g_page && read_size == sizeof g_page, "arrives as it is");
+
+    /* 요청한 쪽은 같은 바이트를 그 일부만으로 받는다. */
+    EXAMPLE_REQUIRE(get(decoding, at.port, "/page", &read_size, &sent, &coding, &body), "the page, to a client that asked");
+    EXAMPLE_REQUIRE(coding == PROVEN_HTTP_CODING_GZIP && read_size == sizeof g_page &&
+                    memcmp(proven_u8str_as_view(&body).ptr, g_page, sizeof g_page) == 0, "was sent as gzip and read as the page");
+    EXAMPLE_REQUIRE(sent < sizeof g_page / 5, "in less than a fifth of the bytes");
+    printf("the page: %u bytes, sent as %u\n", (unsigned)sizeof g_page, (unsigned)sent);
+
+    /* 핸들러가 요청하지 않은 응답은, 누가 달라고 하든 압축되지 않는다. */
+    EXAMPLE_REQUIRE(get(decoding, at.port, "/account", &read_size, &sent, &coding, &body) && coding == PROVEN_HTTP_CODING_IDENTITY, "the account page is sent as it is");
+
+    EXAMPLE_REQUIRE(get(decoding, at.port, "/accepts", &read_size, &sent, &coding, &body) &&
+                    proven_u8str_view_eq(proven_u8str_as_view(&body), PROVEN_LIT("gzip")), "the handler can see that this client accepts gzip");
+    EXAMPLE_REQUIRE(get(plain, at.port, "/accepts", &read_size, &sent, &coding, &body) &&
+                    proven_u8str_view_eq(proven_u8str_as_view(&body), PROVEN_LIT("identity")), "and that the other does not");
+
+    EXAMPLE_REQUIRE(get(plain, at.port, "/quit", &read_size, &sent, &coding, &body), "stop");
+    proven_job_group_wait(threads, &running);
+    proven_u8str_destroy(heap, &body);
+    proven_http_client_destroy(plain);
+    proven_http_client_destroy(decoding);
+    proven_http_server_destroy(server);
+    proven_job_system_close(threads);
+    proven_job_system_destroy(threads);
+    return EXAMPLE_OK();
+}
+```
+
+### 예제: 같은 일을 루프 위에서
+
+<!-- example: manual/examples/ko/ex_16_http_event_gzip.c -->
+```c
+#include <stdio.h>
+#include <string.h>
+
+/*
+ * 같은 일을 루프 위에서: 조각조각 쓰는 응답을 압축하는 이벤트 구동 서버와, 도착하는 대로
+ * 풀어 읽는 이벤트 구동 클라이언트.
+ *
+ * 어느 쪽도 본문을 쥐고 있지 않는다. 서버는 받은 것을 압축해 출력 큐에 넣되 큐의 한도를
+ * 지키고, 클라이언트는 풀린 조각을 최대 16 KiB씩 넘겨준다.
+ */
+
+#define REPORT_BYTES ((proven_size_t)300000)
+
+typedef struct {
+    proven_loop_t *loop;
+    proven_http_stream_t *stream;      /* 쓰고 있는 응답 하나 */
+    proven_size_t written;
+    proven_size_t received, pieces, largest;
+    unsigned long sum_sent, sum_received;
+    bool gzip, intact, done;
+    proven_err_t why;
+} app_t;
+
+/* 보고서는 쓰면서 만들어진다: 전체를 담은 버퍼는 없다. */
+static proven_byte_t report_byte(proven_size_t i) { return (proven_byte_t)("measured value \n"[i % 16]); }
+
+// ---- 서버 ------------------------------------------------------------------
+
+/* 서버가 더 받지 않을 때까지 쓴다. 자리가 나면 on_writable이 이것을 다시 부른다. */
+static void pump(app_t *app) {
+    proven_byte_t piece[4096];
+    while (app->written < REPORT_BYTES) {
+        proven_size_t n = REPORT_BYTES - app->written < sizeof piece ? REPORT_BYTES - app->written : sizeof piece;
+        for (proven_size_t i = 0; i < n; ++i) piece[i] = report_byte(app->written + i);
+        proven_result_size_t took = proven_http_stream_write(app->stream, (proven_mem_view_t){ piece, n });
+        if (took.err != PROVEN_OK) return;
+        for (proven_size_t i = 0; i < took.value; ++i) app->sum_sent += piece[i];
+        app->written += took.value;
+        if (took.value < n) return;        /* 압축된 출력이 한도에 닿았다: 기다린다 */
+    }
+    (void)proven_http_stream_end(app->stream);
+}
+
+static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
+    (void)head;
+    app_t *app = ctx;
+    app->stream = stream;
+    /* 응답을 시작하기 전에. 여기서부터 본문은 이것이 없을 때와 똑같이 쓴다:
+     * 클라이언트에게는 gzip 청크가 가지만, 알려 준 길이는 여전히 써야 할 길이다.
+     * 쓴 것은 뒤따르는 것이 올 때까지 압축기 안에서 기다릴 수 있다. */
+    proven_http_stream_compress(stream);
+    if (proven_http_stream_begin(stream, 200, NULL, 0, REPORT_BYTES) == PROVEN_OK) pump(app);
+}
+static void on_writable(void *ctx, proven_http_stream_t *stream) { (void)stream; pump(ctx); }
+
+// ---- 클라이언트 ------------------------------------------------------------
+
+static void on_response(void *ctx, proven_http_event_request_t *request, const proven_http_response_t *head) {
+    (void)request;
+    app_t *app = ctx;
+    app->gzip = proven_http_content_coding(head->headers, head->header_count) == PROVEN_HTTP_CODING_GZIP;
+}
+
+/* 풀린 조각들. 조각은 이 함수가 돌아갈 때까지만 유효한 뷰다. */
+static void on_body(void *ctx, proven_http_event_request_t *request, proven_mem_view_t piece, bool last) {
+    (void)request; (void)last;
+    app_t *app = ctx;
+    for (proven_size_t i = 0; i < piece.size; ++i) {
+        if (piece.ptr[i] != report_byte(app->received + i)) app->intact = false;
+        app->sum_received += piece.ptr[i];
+    }
+    app->received += piece.size;
+    app->pieces++;
+    if (piece.size > app->largest) app->largest = piece.size;
+}
+
+static void on_done(void *ctx, proven_http_event_request_t *request, proven_err_t why) {
+    (void)request;
+    app_t *app = ctx;
+    app->why = why;
+    app->done = true;
+    proven_loop_stop(app->loop);
+}
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    app_t app = { .intact = true };
+    EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
+
+    /* 창 크기가 압축 응답 하나가 쓰이는 동안 쥐는 메모리를 정한다: 12비트에서 약 53 KiB,
+     * 최대인 15비트에서 325 KiB. 한꺼번에 많이 다룬다면 골라야 할 숫자가 이것이다. */
+    proven_http_event_server_config_t server_config = { .on = { .on_request = on_request, .on_writable = on_writable }, .ctx = &app, .compress_window_bits = 12 };
+    proven_http_event_server_t *server = NULL;
+    proven_net_addr_t at;
+    EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &server_config, &server) == PROVEN_OK, "a server");
+    proven_err_t err = proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at);
+    if (err == PROVEN_ERR_PERMISSION || err == PROVEN_ERR_UNSUPPORTED) {
+        printf("no sockets in this environment; nothing to show\n");
+        proven_http_event_server_destroy(server);
+        proven_loop_destroy(app.loop);
+        return EXAMPLE_OK();
+    }
+    EXAMPLE_REQUIRE(err == PROVEN_OK, "it listens");
+
+    /* `decompress`는 gzip을 요청하고 풀어 준다. 그러면 `max_body_bytes`는 풀린 크기에도
+     * 걸리므로, 작은 본문이 거대하게 펼쳐지더라도 한도에서 끊긴다. */
+    proven_http_event_client_config_t client_config = { .decompress = true, .max_body_bytes = 1024 * 1024 };
+    proven_http_event_client_t *client = NULL;
+    EXAMPLE_REQUIRE(proven_http_event_client_create(app.loop, &client_config, &client) == PROVEN_OK, "a client that decodes");
+
+    char url[64];
+    int n = snprintf(url, sizeof url, "http://127.0.0.1:%u/report", (unsigned)at.port);
+    proven_http_event_request_options_t options = {
+        .url = { (const proven_byte_t *)url, (proven_size_t)n },
+        .on = { on_response, on_body, NULL, on_done },
+        .ctx = &app,
+    };
+    EXAMPLE_REQUIRE(proven_http_event_client_start(client, &options, NULL) == PROVEN_OK, "the request is started");
+    EXAMPLE_REQUIRE(proven_loop_run(app.loop) == PROVEN_OK && app.done, "the loop ran until it was done");
+
+    EXAMPLE_REQUIRE(app.why == PROVEN_OK && app.gzip, "the response came as gzip");
+    EXAMPLE_REQUIRE(app.received == REPORT_BYTES && app.intact && app.sum_received == app.sum_sent, "and was delivered as the report that was written");
+    EXAMPLE_REQUIRE(app.largest <= 16384 && app.pieces >= REPORT_BYTES / 16384, "in pieces of at most 16 KiB");
+    printf("%u bytes written, compressed, sent, decoded and received\n", (unsigned)app.received);
+
+    proven_http_event_client_destroy(client);
+    proven_http_event_server_destroy(server);
+    proven_loop_destroy(app.loop);
+    return EXAMPLE_OK();
+}
+```
+
+### 레퍼런스
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_http_exchange_compress(x)` | 이 응답을 압축해 달라고 요청한다. `respond`나 `begin` 전에. 그 뒤에는 아무 일도 하지 않는다. | 없음. |
+| `proven_http_stream_compress(stream)` | 이벤트 구동 서버에서 같은 일: `on_request` 안에서나 그 뒤에, 응답을 시작하기 전에. | 없음. |
+| `compress_level` (두 서버 설정) | 1(가장 빠름)부터 9(가장 작음). -1은 압축 없이 저장만 한다. 0은 6. 측정값은 4절에 있다. | 범위를 벗어나면 `create`가 `INVALID_ARG`. |
+| `compress_window_bits` (둘 다) | 9부터 15: 스트림으로 쓰는 응답이 쓰이는 동안 쥐는 메모리(4절의 표). 0은 15. | 위와 같다. |
+| `decompress` (두 클라이언트 설정) | `Accept-Encoding: gzip`을 보내고 `gzip`과 `deflate` 본문을 푼다. | - |
+| `proven_http_accepts_coding(headers, count, coding)` | 요청의 `Accept-Encoding`이 어떤 코딩을 허용하는가: 0보다 큰 가중치로 적혀 있거나, `*`에 포함된다. | `bool`. 필드가 없으면 identity만 허용된다. |
+| `proven_http_content_coding(headers, count)` | `Content-Encoding`이 말하는 코딩. | `PROVEN_HTTP_CODING_IDENTITY`, `_GZIP`(`x-gzip`도), `_DEFLATE`, 그 밖의 것과 둘 이상에는 `_OTHER`. |
+
+### 주의할 점과, 잘못되는 경우
+
+- **비밀과 클라이언트가 고른 글자가 섞인 응답에는 요청하지 말 것.** 5절의 누출이 가장 널리 알려진
+  모습으로 나타난 것이다(BREACH): 세션 토큰을 싣고 검색어도 그대로 되돌려 주는 페이지를 압축하면,
+  암호화된 연결을 지켜보는 이에게 - 길이만으로 - 검색어가 토큰의 일부와 맞았는지를 알려 준다. TLS는
+  돕지 못한다. TLS는 바이트를 가리지 크기를 가리지 않는다. 서버에 "전부 압축" 설정이 없는 까닭이
+  이것이다: 판단이 응답마다 달라서 호출도 응답마다 한다.
+- **스트림으로 보내는 압축 응답은 조각조각 도착하지 않는다.** 쓴 것은 더 쓰거나 응답이 끝날 때까지
+  압축기 안에 머물 수 있다. 이벤트 스트림([10장](manual-10-http-ko.md) 13절)처럼 클라이언트가 일어나는
+  대로 보아야 하는 것에는 압축을 요청하지 말 것.
+- **크기가 다른 압축 응답에는 다른 검증자가 필요하다.** `ETag`를 보낸다면 압축된 응답과 그대로인
+  응답은 서로 다른 표현이다. 다른 태그를 줄 것. 그러지 않으면 캐시가 한쪽을 다른 쪽과 맞출 수 있다.
+  서버는 여러분의 태그를 고쳐 쓰지 않는다.
+- **클라이언트가 보는 헤더는 서버가 보낸 것이다.** `decompress`를 켜도 `Content-Encoding: gzip`은 그대로
+  있고 `Content-Length`는 여전히 압축된 바이트를 센다 - 여러분이 읽는 바이트가 아니다. 읽은 것을
+  세거나, 어느 쪽이었는지는 `proven_http_content_coding`으로 본다.
+- **서버가 보낼 수 있는 양의 한도는 풀린 바이트로 센다.** `read_all`의 `max_bytes`와 이벤트 구동
+  클라이언트의 `max_body_bytes`는 해제기에서 나오는 것을 센다: 2메가바이트로 펼쳐지는 2킬로바이트는
+  상대의 한도가 아니라 여러분의 한도에서 끊긴다. 그냥 `proven_http_client_read`는 늘 그렇듯 여러분이
+  준 버퍼로 묶인다.
+- **손상된 압축 본문은 `PROVEN_ERR_INVALID_FORMAT`이다.** 짧은 성공이 되는 일은 없다: 중간에 끊긴
+  스트림, 체크섬이 틀린 스트림, 또 하나의 gzip 멤버가 아닌 바이트가 뒤따르는 스트림. 잇달아 오는
+  gzip 멤버 여럿은 본문 하나로 읽는다.
+- **`deflate`는 실제로 두 가지를 뜻한다.** 표준은 zlib 스트림이라고 하는데 raw DEFLATE를 보내는 서버가
+  있다. 클라이언트는 첫 두 바이트를 보고 어느 쪽이든 읽는다. `deflate`를 요청하는 일은 없고 - `gzip`만
+  요청한다 - 서버가 그것을 보내는 일도 없다.
+- **풀지 않는 것:** `206 Partial Content`(압축된 본문의 일부 범위는 압축된 본문이 아니다 - 그리고
+  `decompress`를 켰을 때 `Range`가 실린 요청은 `Accept-Encoding` 없이 나간다). 이 둘이 아닌 코딩(`br`,
+  `zstd`). 겹쳐 적용한 코딩 둘. 그런 본문은 헤더와 함께, 보낸 그대로 도착한다.
+- **메모리.** 풀리는 중인 응답은 열려 있는 동안 약 35 KiB(이벤트 구동 클라이언트에서는 52 KiB)를
+  쓴다. 스트림으로 압축되는 응답은 끝날 때까지 4절의 표가 윈도에 대해 말하는 만큼 - 기본값으로
+  325 KiB - 을 쓴다. 한 번에 보내는 응답은 그 호출 동안만, 본문보다 크지 않은 윈도로 쓴다. 기본 윈도로
+  스트림 응답 만 개면 3 GiB다: `compress_window_bits`를 낮추거나, 덜 압축한다.
+
+## 7. 무엇을 받아들이고, 무엇이 없으며, 어떻게 시험했는가
 
 **해제기가 받아들이는 것은 zlib가 받아들이는 것이다.** RFC 1951이 모퉁이를 열어 둔 곳마다, 경우 하나하나를
 먼저 zlib에 시험해 보고 그 판정을 따랐다. 실제 생산자가 zlib가 봐주는 것을 낼 수 있기 때문이다. 그래서:
@@ -386,6 +758,10 @@ int main(void) {
 - **Deflate64**, 그리고 다른 모든 압축 형식: Brotli, Zstandard, LZ4, bzip2, xz.
 - **gzip 헤더의 필드** - 이름, 시간, 주석 - 는 두거나 읽을 수 없다.
 - **여러 gzip 멤버를 하나의 스트림으로** 자동으로 읽기: 멤버마다 reset한다(3절).
+  (6절의 HTTP 클라이언트는 응답 본문에 대해 이것을 해 준다.)
+- **HTTP 위에서:** 어느 방향이든 압축된 *요청* 본문. `br`과 `zstd`. 스트림 응답이 지금까지 쓴 것을
+  밀어내는 호출. 미리 압축해 둔 파일 제공(핸들러가 직접 할 수 있다: `proven_http_accepts_coding`으로
+  물은 다음 자기 `Content-Encoding`을 쓴다).
 
 **어떻게 시험했는가.** 등록된 테스트는 zlib 1.3.1이 만든 스트림 93개 - 모든 레벨과 전략, 작은 윈도, 중간의
 flush, 세 형식 모두 - 를 한 바이트씩, 그리고 한 번의 호출로 풀어 zlib가 받았던 데이터를 얻는다. 드물지만
@@ -397,5 +773,11 @@ zlib가 받아들이는, 손으로 만든 스트림 열 개를 받아들인다. 
 이 해제기를 5,838개에 대해 더 zlib와 비교했다. 그리고 무작위로 손상시킨 스트림 육백만 개를, 버퍼 밖의
 읽기나 쓰기를 보고하는 도구 아래에서 풀었고, 보고된 것은 없었으며 해제기가 진전 없이 일하게 만든
 스트림도 없었다.
+
+**6절은** zlib이 만든 본문 - gzip, zlib, raw DEFLATE, 멤버 둘, 선택 헤더 필드 전부, 그리고 끊기거나
+손상되는 각 방식 - 을 두 클라이언트에 통째로 그리고 한 바이트짜리 청크로 통과시켜 시험했고, 시험의
+표를 만들 때 각각을 zlib 자신의 판정과 대조했다. 두 서버는 일곱 가지 크기를, 한 번에 그리고 스트림으로, 평문과 TLS
+위에서 압축했다. 등록된 시험 밖에서는 curl과 Python이 두 서버가 보내는 것을 읽었고, 두 클라이언트가
+Python 서버가 보내는 것을 읽었다.
 
 **하지 않은 것:** 커버리지 기반 퍼징 없음. zlib 말고 두 번째 압축기의 출력과의 비교 없음. 외부 검토 없음.

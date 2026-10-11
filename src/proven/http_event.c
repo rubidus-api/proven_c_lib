@@ -1,5 +1,6 @@
 #include "proven/http_event.h"
 #include "proven_internal_http_event.h"
+#include "proven_internal_http_coding.h"
 
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 
@@ -49,7 +50,13 @@ struct proven_http_stream {
     proven_http_body_t body;
     proven_u64 response_left;          /* body bytes still promised; LENGTH_UNKNOWN when chunked or not counted */
     void *user;
-    void *raw;                         /* EV_RAW: the protocol's object; it begins with its operations */
+    /* One pointer for two things that never exist together: a connection taken over by
+     * another protocol has no HTTP response, and only a response has a compressor. Which it
+     * is, `state` says - so an idle connection is no larger for either. */
+    union {
+        void *raw;                     /* EV_RAW: the protocol's object; it begins with its operations */
+        proven_deflate_t *zip;         /* any other state: the response body goes through this, or null */
+    };
     proven_u32 depth;                  /* entries into this connection now on the stack */
     proven_u8 state;
     proven_u8 version_minor;
@@ -57,6 +64,7 @@ struct proven_http_stream {
     bool active;                       /* on_request was delivered and on_done has not been */
     bool response_begun, response_ended, chunked, bodiless, keep, expect_continue;
     bool paused, dead, processing, peer_eof, want_writable, close_when_flushed, head_started;
+    bool accepts_gzip, compress_asked;
 };
 
 typedef struct { proven_http_event_server_t *server; proven_net_listener_t listener; proven_loop_io_t io; } ev_listener_t;
@@ -74,6 +82,7 @@ struct proven_http_event_server {
     proven_size_t conn_count;
     proven_http_header_t *headers;
     proven_byte_t *rbuf, *pbuf, *hbuf;
+    proven_byte_t *zbuf;               /* what a compressor gives out, on its way to a connection's output; made when first needed */
 };
 
 static proven_u8str_view_t ev_lit_n(const char *s, proven_size_t n) { return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n }; }
@@ -157,6 +166,7 @@ static void ev_kill(proven_http_stream_t *c, proven_err_t why) {
     proven_loop_timer_cancel(s->loop, &c->timer);
     proven_loop_io_remove(s->loop, &c->io);           /* before the close */
     if (c->tls) { proven_tls_conn_destroy(c->tls); c->tls = (void *)0; }
+    if (c->state != EV_RAW && c->zip) { proven_deflate_destroy(c->zip); c->zip = (void *)0; }
     (void)proven_net_close(&c->sock);
     if (c->prev) c->prev->next = c->next;
     else s->conns = c->next;
@@ -167,7 +177,7 @@ static void ev_kill(proven_http_stream_t *c, proven_err_t why) {
         c->active = false;
         if (s->cfg.on.on_done) s->cfg.on.on_done(s->cfg.ctx, c, why);
     }
-    if (c->raw) {
+    if (c->state == EV_RAW && c->raw) {
         void *raw = c->raw;
         c->raw = (void *)0;
         (*(const proven_http_event_raw_ops_t *const *)raw)->on_closed(raw, why);
@@ -270,6 +280,8 @@ static void ev_finish(proven_http_stream_t *c) {
         c->user = (void *)0;
         c->response_begun = false; c->response_ended = false; c->chunked = false; c->bodiless = false;
         c->want_writable = false; c->paused = false; c->expect_continue = false;
+        c->compress_asked = false;
+        if (c->zip) { proven_deflate_destroy(c->zip); c->zip = (void *)0; }
         if (reuse) {
             c->state = EV_HEAD;
             c->head_started = buf_pending(&c->stash) > 0;
@@ -377,6 +389,8 @@ static void ev_process(proven_http_stream_t *c) {
             c->method = req.method;
             c->version_minor = (proven_u8)req.version_minor;
             c->keep = proven_http_request_keep_alive(&req);
+            c->accepts_gzip = proven_http_accepts_coding(s->headers, req.header_count, PROVEN_HTTP_CODING_GZIP);
+            c->compress_asked = false;
             c->expect_continue = req.version_minor >= 1 && !no_body && proven_http_header_has_token(s->headers, req.header_count, ev_lit("Expect"), ev_lit("100-continue"));
             c->state = no_body ? EV_RESPOND : EV_BODY;
             c->head_started = false;
@@ -574,6 +588,11 @@ proven_err_t proven_http_event_server_create(proven_loop_t *loop, const proven_h
     s->loop = loop;
     s->alloc = a;
     s->cfg = *config;
+    if (s->cfg.compress_level < -1 || s->cfg.compress_level > 9 ||
+        (s->cfg.compress_window_bits != 0 && (s->cfg.compress_window_bits < 9 || s->cfg.compress_window_bits > 15))) {
+        a.free_fn(a.ctx, s);
+        return PROVEN_ERR_INVALID_ARG;
+    }
     if (s->cfg.max_connections == 0) s->cfg.max_connections = 10000;
     if (s->cfg.max_head_bytes == 0) s->cfg.max_head_bytes = PROVEN_HTTP_DEFAULT_MAX_HEAD;
     if (s->cfg.max_head_bytes < 256) s->cfg.max_head_bytes = 256;
@@ -646,6 +665,7 @@ void proven_http_event_server_destroy(proven_http_event_server_t *s) {
     if (s->rbuf) a.free_fn(a.ctx, s->rbuf);
     if (s->hbuf) a.free_fn(a.ctx, s->hbuf);
     if (s->pbuf) a.free_fn(a.ctx, s->pbuf);
+    if (s->zbuf) a.free_fn(a.ctx, s->zbuf);
     a.free_fn(a.ctx, s);
 }
 
@@ -662,7 +682,7 @@ static bool ev_is_driver_header(proven_u8str_view_t name) {
 
 /* The response head into the server's head buffer. */
 static proven_err_t ev_build_head(proven_http_stream_t *c, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
-                                  proven_u64 content_length, proven_size_t *head_len) {
+                                  proven_u64 content_length, bool vary, bool gzip, proven_size_t *head_len) {
     proven_http_event_server_t *s = c->server;
     if (status < 200 || status > 999 || (header_count > 0 && !headers)) return PROVEN_ERR_INVALID_ARG;
     proven_mem_mut_t out = { .ptr = s->hbuf, .size = s->cfg.max_head_bytes };
@@ -676,6 +696,8 @@ static proven_err_t ev_build_head(proven_http_stream_t *c, proven_u16 status, co
         if (ev_is_driver_header(headers[i].name)) return PROVEN_ERR_INVALID_ARG;
         e = proven_http_write_header(out, &len, headers[i].name, headers[i].value);
     }
+    if (e == PROVEN_OK && vary) e = proven_http_write_header(out, &len, ev_lit("Vary"), ev_lit("Accept-Encoding"));
+    if (e == PROVEN_OK && gzip) e = proven_http_write_header(out, &len, ev_lit("Content-Encoding"), ev_lit("gzip"));
     /* 204 and 304 never have a body; a response to HEAD has the headers of one and no bytes. */
     bool no_body_status = status == 204 || status == 304;
     bool chunked = false;
@@ -701,19 +723,81 @@ static proven_err_t ev_build_head(proven_http_stream_t *c, proven_u16 status, co
     return PROVEN_OK;
 }
 
+/* What the handler's request for compression comes to for this response. */
+static void ev_compress_plan(const proven_http_stream_t *c, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
+                             bool *vary, bool *gzip) {
+    *vary = false;
+    *gzip = false;
+    if (!c->compress_asked || (header_count > 0 && !headers)) return;
+    *vary = proven_http_compress_needs_vary_(headers, header_count);
+    *gzip = proven_http_compress_applies_(c->accepts_gzip, status, headers, header_count);
+}
+
+void proven_http_stream_compress(proven_http_stream_t *c) {
+    if (c && !c->dead && c->active && !c->response_begun) c->compress_asked = true;
+}
+
 proven_err_t proven_http_stream_begin(proven_http_stream_t *c, proven_u16 status,
                                       const proven_http_header_t *headers, proven_size_t header_count, proven_u64 content_length) {
     if (!c) return PROVEN_ERR_INVALID_ARG;
     if (c->dead || !c->active || c->response_begun) return PROVEN_ERR_INVALID_STATE;
+    proven_http_event_server_t *s = c->server;
     proven_size_t len = 0;
-    proven_err_t e = ev_build_head(c, status, headers, header_count, content_length, &len);
-    if (e != PROVEN_OK) return e;
+    bool vary = false, gzip = false;
+    ev_compress_plan(c, status, headers, header_count, &vary, &gzip);
+    proven_deflate_t *zip = (void *)0;
+    /* Without the memory for a compressor the response goes as it is. (A response to HEAD
+     * needs none: it has the headers and no bytes.) */
+    if (gzip && c->method != PROVEN_HTTP_HEAD) {
+        if (!s->zbuf) s->zbuf = ev_alloc(s->alloc, PROVEN_HTTP_CODING_PIECE);
+        if (!s->zbuf || proven_http_compress_create_(s->alloc, s->cfg.compress_level, s->cfg.compress_window_bits, &zip) != PROVEN_OK) gzip = false;
+    }
+    /* Compressed, the length on the wire is not the one given: the body goes chunked. The
+     * length given is still what the handler has promised to write. */
+    proven_err_t e = ev_build_head(c, status, headers, header_count, gzip ? PROVEN_HTTP_EVENT_LENGTH_UNKNOWN : content_length, vary, gzip, &len);
+    if (e != PROVEN_OK) {
+        if (zip) proven_deflate_destroy(zip);
+        return e;
+    }
+    if (zip) {
+        c->zip = zip;
+        c->response_left = content_length;
+    }
     ev_enter(c);
     c->response_begun = true;
     c->expect_continue = false;
     bool alive = ev_send(c, c->server->hbuf, len);
     ev_leave(c);
     return alive ? PROVEN_OK : PROVEN_ERR_RESET;
+}
+
+/* Body bytes through the compressor and into the output queue, each piece that comes out as
+ * a chunk (or bare, for a client that reads until close). False when the connection died. */
+static bool ev_zip(proven_http_stream_t *c, const proven_byte_t *p, proven_size_t n, proven_deflate_flush_t flush) {
+    proven_http_event_server_t *s = c->server;
+    for (;;) {
+        proven_size_t used = 0, made = 0;
+        bool done = false;
+        proven_err_t e = proven_deflate(c->zip, (proven_mem_view_t){ .ptr = p, .size = n }, &used,
+                                        (proven_mem_mut_t){ .ptr = s->zbuf, .size = PROVEN_HTTP_CODING_PIECE }, &made, flush, &done);
+        if (e != PROVEN_OK) { ev_kill(c, e); return false; }
+        p += used;
+        n -= used;
+        if (made > 0) {
+            bool ok = true;
+            if (c->chunked) {
+                proven_byte_t frame[24];
+                proven_size_t fl = 0;
+                (void)proven_http_write_chunk_begin((proven_mem_mut_t){ .ptr = frame, .size = sizeof frame }, &fl, made);
+                ok = buf_append(s, &c->out, frame, fl) && buf_append(s, &c->out, s->zbuf, made) && buf_append(s, &c->out, (const proven_byte_t *)"\r\n", 2);
+            } else {
+                ok = buf_append(s, &c->out, s->zbuf, made);
+            }
+            if (!ok) { ev_kill(c, PROVEN_ERR_NOMEM); return false; }
+        }
+        if (flush == PROVEN_DEFLATE_FLUSH_FINISH ? done : (n == 0 && made < PROVEN_HTTP_CODING_PIECE)) break;
+    }
+    return ev_flush(c);
 }
 
 proven_result_size_t proven_http_stream_write(proven_http_stream_t *c, proven_mem_view_t data) {
@@ -738,7 +822,13 @@ proven_result_size_t proven_http_stream_write(proven_http_stream_t *c, proven_me
             continue;
         }
         proven_size_t n = data.size - done < room ? data.size - done : room;
-        if (c->chunked) {
+        if (c->zip) {
+            /* A piece at a time: what the compressor gives back for it is queued whole, so the
+             * queue passes the limit by no more than one piece's worth. */
+            if (n > PROVEN_HTTP_CODING_PIECE) n = PROVEN_HTTP_CODING_PIECE;
+            alive = ev_zip(c, data.ptr + done, n, PROVEN_DEFLATE_FLUSH_NONE);
+            if (alive && c->response_left != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) c->response_left -= n;
+        } else if (c->chunked) {
             proven_byte_t frame[24];
             proven_size_t fl = 0;
             (void)proven_http_write_chunk_begin((proven_mem_mut_t){ .ptr = frame, .size = sizeof frame }, &fl, n);
@@ -774,7 +864,11 @@ proven_err_t proven_http_stream_end(proven_http_stream_t *c) {
     } else {
         c->response_ended = true;
         bool alive = true;
-        if (c->chunked) alive = ev_send(c, (const proven_byte_t *)"0\r\n\r\n", 5);
+        if (c->zip) {
+            alive = ev_zip(c, (void *)0, 0, PROVEN_DEFLATE_FLUSH_FINISH);
+            if (alive) { proven_deflate_destroy(c->zip); c->zip = (void *)0; }
+        }
+        if (alive && c->chunked) alive = ev_send(c, (const proven_byte_t *)"0\r\n\r\n", 5);
         if (alive) ev_progress(c);
         else result = PROVEN_ERR_RESET;
     }
@@ -786,15 +880,32 @@ proven_err_t proven_http_stream_respond(proven_http_stream_t *c, proven_u16 stat
                                         const proven_http_header_t *headers, proven_size_t header_count, proven_mem_view_t body) {
     if (!c || (body.size > 0 && !body.ptr)) return PROVEN_ERR_INVALID_ARG;
     if (c->dead || !c->active || c->response_begun) return PROVEN_ERR_INVALID_STATE;
+    proven_http_event_server_t *s = c->server;
     proven_size_t len = 0;
-    proven_err_t e = ev_build_head(c, status, headers, header_count, body.size, &len);
-    if (e != PROVEN_OK) return e;
+    bool vary = false, gzip = false;
+    ev_compress_plan(c, status, headers, header_count, &vary, &gzip);
+    /* Compressed first, because the head says how long the result is - for HEAD too, which
+     * must announce what GET would send. Too short to gain, no smaller, or no memory: the
+     * body goes as it is. */
+    proven_byte_t *packed = (void *)0;
+    proven_size_t packed_cap = 0, packed_size = 0;
+    if (gzip && proven_http_compress_all_(s->alloc, s->cfg.compress_level, s->cfg.compress_window_bits, body,
+                                          &packed, &packed_cap, &packed_size) != PROVEN_OK) {
+        packed = (void *)0;
+    }
+    if (packed) body = (proven_mem_view_t){ .ptr = packed, .size = packed_size };
+    proven_err_t e = ev_build_head(c, status, headers, header_count, body.size, vary, packed != (void *)0, &len);
+    if (e != PROVEN_OK) {
+        if (packed) s->alloc.free_fn(s->alloc.ctx, packed);
+        return e;
+    }
     ev_enter(c);
     c->response_begun = true;
     c->expect_continue = false;
     /* Head and body are queued as one, whatever the output limit: this call's contract is the
      * whole response. */
-    bool alive = buf_append(c->server, &c->out, c->server->hbuf, len) && (c->bodiless || buf_append(c->server, &c->out, body.ptr, body.size));
+    bool alive = buf_append(s, &c->out, s->hbuf, len) && (c->bodiless || buf_append(s, &c->out, body.ptr, body.size));
+    if (packed) s->alloc.free_fn(s->alloc.ctx, packed);
     if (!alive) { ev_kill(c, PROVEN_ERR_NOMEM); e = PROVEN_ERR_NOMEM; }
     else if (!ev_flush(c)) e = PROVEN_ERR_RESET;
     else {

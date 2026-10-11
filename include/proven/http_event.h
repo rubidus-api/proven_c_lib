@@ -81,12 +81,15 @@ typedef struct {
     proven_u32 write_timeout_ms;         /**< output held with none of it accepted by the client. 0: 30 s */
     proven_u32 idle_timeout_ms;          /**< an open connection with no request on it. 0: 60 s */
     const proven_tls_config_t *tls;      /**< NULL: plain HTTP. Otherwise every connection is TLS; must outlive the server. */
+    int compress_level;                  /**< for responses that ask to be compressed (proven_http_stream_compress): 1 (fastest) to 9 (smallest); -1 stores without compressing. 0: 6 */
+    int compress_window_bits;            /**< and how far back the compressor looks, 9 to 15: each response being streamed compressed holds from about 11 KiB (9) to about 325 KiB (15) until it ends. 0: 15 */
 } proven_http_event_server_config_t;
 
 /**
  * @brief Make a server on `loop`. It serves once proven_http_event_server_listen has been
  *        called and the loop runs.
- * @return PROVEN_ERR_INVALID_ARG (no loop, no `on_request`, a TLS config with no certificate),
+ * @return PROVEN_ERR_INVALID_ARG (no loop, no `on_request`, a TLS config with no certificate,
+ *         a compression level or window outside its range),
  *         PROVEN_ERR_NOMEM.
  */
 [[nodiscard]]
@@ -131,6 +134,31 @@ proven_size_t proven_http_event_server_connections(const proven_http_event_serve
 /** @brief Stop accepting - and adopting; connections that are open go on. For shutting down
  *         gracefully. (proven_http_event_server_listen afterwards takes connections again.) */
 void proven_http_event_server_stop_listening(proven_http_event_server_t *server);
+
+/**
+ * @brief Ask that the response of this stream be compressed. Call it before the response
+ *        begins - in `on_request` or later; afterwards it does nothing.
+ *
+ * Nothing is compressed unless asked for, response by response, because whether it is safe is
+ * a property of the response: **do not ask for one that carries a secret together with text
+ * the client chose**. The length of a compressed body tells an observer of the connection how
+ * much the two have in common, TLS or not (the attack known as BREACH).
+ *
+ * The response then carries `Vary: Accept-Encoding` (unless your `Vary` already names it) and,
+ * when the request's `Accept-Encoding` allows gzip, is sent as `Content-Encoding: gzip`. It
+ * is sent as it is when the client does not accept gzip; when the status is 204, 206 or 304;
+ * when your headers have a `Content-Encoding` or a `Content-Range` of their own; when memory
+ * for the compressor cannot be had; and, with proven_http_stream_respond, when the body is
+ * under 256 bytes or does not get smaller.
+ *
+ * With proven_http_stream_begin the body leaves chunked whatever length was given (the length
+ * is still what you must write). proven_http_stream_write takes input while the compressed
+ * output held for the connection is under its limit, and **what it takes may wait inside the
+ * compressor** until more is written or the response ends: do not ask for a response that the
+ * client must see piece by piece, such as an event stream. proven_http_stream_buffered counts
+ * compressed bytes.
+ */
+void proven_http_stream_compress(proven_http_stream_t *stream);
 
 /** @brief The length to give proven_http_stream_begin when it is not known in advance. */
 #define PROVEN_HTTP_EVENT_LENGTH_UNKNOWN UINT64_MAX

@@ -18,6 +18,66 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release: `Content-Encoding` in the four HTTP drivers, on the codec of 0.24.0.
+**Nothing changes for a program that sets nothing**: no `Accept-Encoding` is sent, no body is
+decoded and no response is compressed. An idle connection of the event-driven server is the
+size it was (448 bytes on x86-64); a connection of the blocking server, which holds over
+36 KiB of buffers, and a request of the event-driven client are each one pointer larger.
+
+### Added
+
+- **Compressed responses, when a handler asks.** `proven_http_exchange_compress` (the
+  server of `http_server.h`) and `proven_http_stream_compress` (the event-driven server),
+  called before a response begins. The response then carries `Vary: Accept-Encoding` and,
+  when the request's `Accept-Encoding` allows gzip, is sent as `Content-Encoding: gzip` -
+  a body sent in one piece with its compressed `Content-Length`, a body written in pieces
+  chunked. It is sent as it is for status 204, 206 and 304, when the handler's headers name
+  a `Content-Encoding` or `Content-Range` of their own, when a body sent in one piece is
+  under 256 bytes or does not get smaller, and when memory for the compressor cannot be had.
+  There is no setting that compresses every response: a response that mixes a secret with
+  text the client chose must not be compressed (BREACH), and only its handler knows.
+- `compress_level` and `compress_window_bits` in both server configurations (zero: level 6,
+  a 32 KiB window). The window sets what a streamed response holds while it is written:
+  about 11 KiB at 9 bits, 325 KiB at 15.
+- **Compressed bodies decoded, when a client asks.** `decompress` in
+  `proven_http_client_config_t` and `proven_http_event_client_config_t`: the client sends
+  `Accept-Encoding: gzip` (unless the request has its own, or a `Range`) and decodes a body
+  that arrives as `gzip` or `deflate` on its way to the caller. The blocking client decodes
+  into the caller's buffer a read at a time, and `proven_http_client_read_all`'s limit counts
+  decoded bytes; the event-driven client delivers decoded pieces of at most 16 KiB and
+  `max_body_bytes` counts decoded bytes too. The headers are left as the server sent them.
+  A stream that is cut short, fails its checksum or is followed by other bytes is
+  `PROVEN_ERR_INVALID_FORMAT`; several gzip members are read as one body; `deflate` is read
+  as zlib or as raw DEFLATE, whichever its first two bytes say. A 206 and any other coding
+  are delivered as sent.
+- `http.h`: `proven_http_coding_t`, `proven_http_content_coding` (what `Content-Encoding`
+  names) and `proven_http_accepts_coding` (whether an `Accept-Encoding` allows a coding,
+  with weights and `*`). Pure; available in a freestanding build.
+- Manual chapter 16, section 6, "Over HTTP", with two compiled examples; the registered test
+  `test_unit_http_coding`, whose bodies were made by zlib.
+
+### Changed
+
+- With compression asked for, `proven_http_exchange_begin` and `proven_http_stream_begin`
+  send the body chunked whatever length was given; the length is still what must be written.
+  What is written may wait inside the compressor until more is written or the response ends.
+
+### Fixed
+
+- **The event-driven client over TLS could end a paused request with `PROVEN_ERR_RESET`**
+  when the server had already sent everything and closed. On systems that report a hang-up
+  whether or not reading was asked for (Windows), the client read the socket again, found
+  its end, and took that for a connection cut under TLS - though the TLS close had already
+  been received. Present since the client was added in 0.21.0; found by this release's test,
+  where a compressed body is small enough for the server to finish while the client is still
+  paused.
+- Manual chapter 12 still said the library had no DEFLATE, which stopped being true in 0.24.0.
+
+### Not included
+
+- Compressed request bodies; `br` and `zstd`; a call that pushes out what a streamed
+  response has written so far; `permessage-deflate` for WebSocket.
+
 ## [0.25.0] - 2026-10-11
 
 A MINOR release that goes back over the legacy TLS set of 0.23.0 and removes most of what

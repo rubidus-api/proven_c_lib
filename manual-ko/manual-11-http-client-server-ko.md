@@ -153,6 +153,7 @@ keep-alive 연결 이만 개를 쥔 채로도, 하나 더 있는 연결의 요�
 | `proven_http_exchange_begin(x, status, headers, count, content_length)` | 본문이 조각조각 뒤따르는 응답을 시작한다. 길이를 모르면 `PROVEN_HTTP_LENGTH_UNKNOWN`: 본문은 청크로 나간다. | `respond`와 같다. |
 | `proven_http_exchange_write(x, data)` | 그 본문을 더 쓴다. | `proven_err_t`: 알린 길이를 넘으면 `OUT_OF_BOUNDS`. `INVALID_STATE`. `TIMEOUT`, `RESET`. |
 | `proven_http_exchange_end(x)` | 끝낸다. 선택 사항이다: 핸들러에서 돌아가도 같은 일이 일어난다. | `proven_err_t`. |
+| `proven_http_exchange_compress(x)` | 클라이언트가 gzip을 받아들이면 이 응답을 압축해 달라고 요청한다. 응답을 시작하기 전에. [16장](manual-16-compression-ko.md) 6절 - 쓰기 전에 그 절의 주의할 점을 읽을 것. | 없음. |
 
 ### 주의사항, 그리고 무엇이 잘못되는가
 
@@ -965,8 +966,9 @@ int main(void) {
 
 - 양쪽 방향의 **TLS**. §1.
 - **HTTP/2와 HTTP/3.**
-- **압축.** `Accept-Encoding`을 보내지 않고 콘텐츠 코딩을 풀지 않는다. 그래도 압축해서 보내는 서버는
-  압축된 바이트를 건넨다.
+- **요청하지 않은 압축.** 아무것도 설정하지 않으면 `Accept-Encoding`을 보내지 않고, 콘텐츠 코딩을
+  풀지 않으며, 응답을 압축하지 않는다. 클라이언트 설정의 `decompress`와 핸들러에서 부르는
+  `proven_http_exchange_compress`가 각 방향의 gzip을 켠다: [16장](manual-16-compression-ko.md) 6절.
 - **WebSocket**은 이 두 헤더에 없다. §11 위에 지은 [12장](manual-12-websocket-ko.md)에 있다.
 - 서버의 **라우터, 정적 파일, 세션, 미들웨어**. 클라이언트의 **재시도, 캐시, 호스트별 연결 한도**.
 - 양쪽 방향의 **트레일러**.

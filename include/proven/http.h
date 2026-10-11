@@ -140,6 +140,36 @@ proven_size_t proven_http_header_count(const proven_http_header_t *headers, prov
 bool proven_http_header_has_token(const proven_http_header_t *headers, proven_size_t count,
                                   proven_u8str_view_t name, proven_u8str_view_t token);
 
+/** @brief A content coding: how a body was transformed on top of its media type. */
+typedef enum {
+    PROVEN_HTTP_CODING_IDENTITY = 0,   /**< none: the bytes are the content */
+    PROVEN_HTTP_CODING_GZIP,           /**< `gzip` (and its old name `x-gzip`): RFC 1952 */
+    PROVEN_HTTP_CODING_DEFLATE,        /**< `deflate`: by the standard a zlib stream (RFC 1950); in practice sometimes raw DEFLATE */
+    PROVEN_HTTP_CODING_OTHER           /**< anything else, or more than one coding */
+} proven_http_coding_t;
+
+/**
+ * @brief What `Content-Encoding` says about a message's body.
+ * @return PROVEN_HTTP_CODING_IDENTITY when the field is absent, empty or `identity`;
+ *         PROVEN_HTTP_CODING_OTHER for a coding that is none of these, for a list of several,
+ *         and for more than one field.
+ */
+[[nodiscard]]
+proven_http_coding_t proven_http_content_coding(const proven_http_header_t *headers, proven_size_t count);
+
+/**
+ * @brief Whether a request's `Accept-Encoding` allows a response in `coding` (RFC 9110,
+ *        section 12.5.3): the coding is listed with a weight above zero, or it is not listed
+ *        and `*` is, with a weight above zero.
+ *
+ * Without the field nothing but PROVEN_HTTP_CODING_IDENTITY is accepted: the standard lets a
+ * server assume any coding then, and this does not. Identity is accepted unless the field
+ * rules it out (`identity;q=0`, or `*;q=0` without naming it). A field that is not well formed
+ * accepts identity only. PROVEN_HTTP_CODING_OTHER is never accepted.
+ */
+[[nodiscard]]
+bool proven_http_accepts_coding(const proven_http_header_t *headers, proven_size_t count, proven_http_coding_t coding);
+
 /** @brief The method a token names; PROVEN_HTTP_METHOD_OTHER for any other valid token.
  *         Case-sensitive: `get` is not `GET`. */
 [[nodiscard]]

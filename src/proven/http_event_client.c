@@ -3,6 +3,7 @@
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 
 #include "proven/url.h"
+#include "proven_internal_http_coding.h"
 
 /*
  * An event-driven HTTP/1.1 client on a loop.
@@ -36,6 +37,18 @@
 
 typedef struct { proven_byte_t *ptr; proven_size_t len, cap, off; bool borrowed; } cl_buf_t;
 
+/* A response body being decoded: made when such a response arrives, freed with the request. */
+typedef struct {
+    proven_http_decoder_t_ d;
+    proven_u64 total;                  /* decoded bytes delivered */
+    proven_size_t pay_off;             /* a payload being decoded: where it begins, counted from the stash's read position, */
+    proven_size_t pay_len;             /* how much of it is left, */
+    proven_size_t pay_tail;            /* and the framing bytes after it that were used with it */
+    bool have;                         /* there is such a payload */
+    bool pay_last;                     /* it ends the body */
+    proven_byte_t piece[PROVEN_HTTP_CODING_PIECE];
+} cl_dec_t;
+
 struct proven_http_event_request {
     proven_http_event_client_t *client;
     struct proven_http_event_request *prev, *next;
@@ -50,6 +63,7 @@ struct proven_http_event_request {
     void *ctx;
     void *user;
     proven_u64 send_left;              /* request-body bytes still promised; LENGTH_UNKNOWN when chunked */
+    cl_dec_t *dec;                     /* the response body is decoded on its way to on_body */
     proven_u32 depth;
     proven_u32 interim;
     proven_http_method_t method;
@@ -135,6 +149,10 @@ static void cl_leave(proven_http_event_request_t *c) {
     proven_http_event_client_t *cl = c->client;
     buf_release(cl, &c->stash);
     buf_release(cl, &c->out);
+    if (c->dec) {
+        proven_http_decoder_free_(&c->dec->d);
+        cl->alloc.free_fn(cl->alloc.ctx, c->dec);
+    }
     cl->alloc.free_fn(cl->alloc.ctx, c);
 }
 
@@ -231,6 +249,59 @@ static void cl_progress(proven_http_event_request_t *c) {
 // Input
 // -----------------------------------------------------------------------------
 
+/* One step of a body that is decoded: take a payload from the framing, or decode one piece of
+ * the payload in hand and deliver it. The payload stays in the stash until all of it has been
+ * decoded, so a pause between two pieces loses nothing. False when the loop has nothing more
+ * to do now. */
+static bool cl_decode(proven_http_event_request_t *c) {
+    proven_http_event_client_t *cl = c->client;
+    cl_dec_t *x = c->dec;
+    if (!x->have) {
+        proven_mem_view_t in = { .ptr = c->stash.ptr + c->stash.off, .size = buf_pending(&c->stash) };
+        if (in.size == 0) return false;
+        proven_size_t used = 0;
+        proven_mem_view_t payload = { 0 };
+        bool done = false;
+        proven_err_t e = proven_http_body_feed(&c->body, in, &used, &payload, &done);
+        if (e != PROVEN_OK) { cl_kill(c, e); return false; }
+        if (used == 0) return false;               /* it needs more than is here */
+        x->pay_off = payload.size > 0 ? (proven_size_t)(payload.ptr - in.ptr) : used;
+        x->pay_len = payload.size;
+        x->pay_tail = used - x->pay_off - x->pay_len;
+        x->pay_last = done;
+        x->have = true;
+    }
+    proven_size_t used = 0, made = 0;
+    proven_err_t e = proven_http_decoder_step_(&x->d, (proven_mem_view_t){ .ptr = c->stash.ptr + c->stash.off + x->pay_off, .size = x->pay_len }, &used,
+                                               (proven_mem_mut_t){ .ptr = x->piece, .size = sizeof x->piece }, &made);
+    if (e != PROVEN_OK) { cl_kill(c, e); return false; }
+    x->pay_off += used;
+    x->pay_len -= used;
+    if (made > 0) {
+        x->total += made;
+        if (cl->cfg.max_body_bytes != 0 && x->total > cl->cfg.max_body_bytes) { cl_kill(c, PROVEN_ERR_OUT_OF_BOUNDS); return false; }
+        if (c->on.on_body) c->on.on_body(c->ctx, c, (proven_mem_view_t){ .ptr = x->piece, .size = made }, false);
+        if (!c->dead) cl_arm(c);
+        return !c->dead;
+    }
+    if (x->pay_len > 0) {
+        if (used > 0) return true;
+        cl_kill(c, PROVEN_ERR_INVALID_FORMAT);     /* input it will not take, and nothing to give */
+        return false;
+    }
+    /* The payload is used up and the decoder holds nothing more of it. */
+    c->stash.off += x->pay_off + x->pay_tail;
+    x->have = false;
+    if (x->pay_last) {
+        e = proven_http_decoder_end_(&x->d);
+        if (e == PROVEN_OK && c->on.on_body) c->on.on_body(c->ctx, c, (proven_mem_view_t){ 0 }, true);
+        if (!c->dead) cl_kill(c, e);
+        return false;
+    }
+    cl_arm(c);
+    return true;
+}
+
 static void cl_process(proven_http_event_request_t *c) {
     proven_http_event_client_t *cl = c->client;
     if (c->processing || c->dead) return;         /* the outer call will see what changed */
@@ -260,6 +331,15 @@ static void cl_process(proven_http_event_request_t *c) {
             if (proven_http_response_framing(&res, c->method, &framing) != PROVEN_OK) { cl_kill(c, PROVEN_ERR_INVALID_FORMAT); break; }
             if (proven_http_body_init(&c->body, framing, cl->cfg.max_body_bytes) != PROVEN_OK) { cl_kill(c, PROVEN_ERR_OUT_OF_BOUNDS); break; }
             bool no_body = framing.kind == PROVEN_HTTP_BODY_NONE || (framing.kind == PROVEN_HTTP_BODY_LENGTH && framing.length == 0);
+            proven_http_coding_t coding = PROVEN_HTTP_CODING_IDENTITY;
+            if (cl->cfg.decompress && !no_body && proven_http_decoder_wanted_(res.status, res.headers, res.header_count, &coding)) {
+                proven_result_mem_mut_t m = cl->alloc.alloc_fn(cl->alloc.ctx, sizeof(cl_dec_t), alignof(cl_dec_t));
+                if (m.err != PROVEN_OK) { cl_kill(c, PROVEN_ERR_NOMEM); break; }
+                c->dec = (cl_dec_t *)(void *)m.value.ptr;
+                c->dec->total = 0;
+                c->dec->have = false;
+                proven_http_decoder_begin_(&c->dec->d, cl->alloc, coding);
+            }
             c->state = CL_BODY;
             if (c->on.on_response) c->on.on_response(c->ctx, c, &res);
             if (c->dead) break;
@@ -267,7 +347,12 @@ static void cl_process(proven_http_event_request_t *c) {
             cl_arm(c);
             continue;
         }
-        if (c->state != CL_BODY || c->paused || in.size == 0) break;
+        if (c->state != CL_BODY || c->paused) break;
+        if (c->dec) {
+            if (!cl_decode(c)) break;
+            continue;
+        }
+        if (in.size == 0) break;
         proven_size_t used = 0;
         proven_mem_view_t payload = { 0 };
         bool done = false;
@@ -285,8 +370,10 @@ static void cl_process(proven_http_event_request_t *c) {
      * still in the stash here is the start of something that will now never be finished.) */
     if (!c->dead && c->peer_eof && !(c->state == CL_BODY && c->paused)) {
         if (c->state == CL_BODY && proven_http_body_end(&c->body) == PROVEN_OK) {
-            if (c->on.on_body) c->on.on_body(c->ctx, c, (proven_mem_view_t){ 0 }, true);
-            if (!c->dead) cl_kill(c, PROVEN_OK);
+            /* A body that was being decoded must also have ended where its stream ends. */
+            proven_err_t ended = c->dec ? proven_http_decoder_end_(&c->dec->d) : PROVEN_OK;
+            if (ended == PROVEN_OK && c->on.on_body) c->on.on_body(c->ctx, c, (proven_mem_view_t){ 0 }, true);
+            if (!c->dead) cl_kill(c, ended);
         } else {
             cl_kill(c, PROVEN_ERR_RESET);
         }
@@ -317,6 +404,11 @@ static void cl_input(proven_http_event_request_t *c, const proven_byte_t *p, pro
 
 static void cl_readable(proven_http_event_request_t *c) {
     proven_http_event_client_t *cl = c->client;
+    /* The end has been seen and the socket has nothing more to say. A hang-up may still be
+     * reported - some systems report one whether or not reading was asked for - and a request
+     * that is paused over what it already holds must not take that for a connection cut
+     * under it. */
+    if (c->peer_eof) return;
     proven_result_size_t r = proven_net_read(&c->sock, (proven_mem_mut_t){ .ptr = cl->rbuf, .size = CL_READ_BYTES }, PROVEN_NET_DONT_WAIT);
     if (r.err == PROVEN_ERR_TIMEOUT || r.err == PROVEN_ERR_AGAIN) return;
     if (r.err == PROVEN_ERR_EOF) {
@@ -465,6 +557,11 @@ static proven_err_t cl_build_head(proven_http_event_client_t *cl, const proven_h
     for (proven_size_t i = 0; i < o->header_count && e == PROVEN_OK; ++i) {
         if (cl_is_reserved_header(o->headers[i].name)) return PROVEN_ERR_INVALID_ARG;
         e = proven_http_write_header(out, len, o->headers[i].name, o->headers[i].value);
+    }
+    if (e == PROVEN_OK && cl->cfg.decompress &&
+        !proven_http_header_find(o->headers, o->header_count, cl_lit("Accept-Encoding"), &(proven_u8str_view_t){0}) &&
+        !proven_http_header_find(o->headers, o->header_count, cl_lit("Range"), &(proven_u8str_view_t){0})) {
+        e = proven_http_write_header(out, len, cl_lit("Accept-Encoding"), cl_lit("gzip"));
     }
     bool body_method = cl_eq_nocase(method, cl_lit("POST")) || cl_eq_nocase(method, cl_lit("PUT")) || cl_eq_nocase(method, cl_lit("PATCH"));
     if (e == PROVEN_OK) {

@@ -70,6 +70,7 @@ typedef struct {
     proven_http_cookie_jar_t *cookies;      /**< a jar to read and fill; NULL: cookies are ignored. Must outlive the client. */
     proven_http_tls_wrap_fn tls_wrap;       /**< NULL: an `https` URL is PROVEN_ERR_UNSUPPORTED */
     void *tls_ctx;
+    bool decompress;                        /**< ask for compressed responses and decode them; false: bodies arrive as the server sent them. See proven_http_client_read. */
 } proven_http_client_config_t;
 
 /** @brief A client. Opaque; made by proven_http_client_create. */
@@ -170,8 +171,19 @@ proven_err_t proven_http_client_get(proven_http_client_t *client, proven_u8str_v
  * complete - never a zero-byte success. A body that is cut short by the peer closing is
  * PROVEN_ERR_RESET, not EOF: half a body must not look like a whole one.
  *
+ * **With `decompress` set** the client sends `Accept-Encoding: gzip` - unless the request has
+ * an `Accept-Encoding` of its own, a `Range`, or `upgrade` set - and a body that arrives with
+ * `Content-Encoding: gzip` or `deflate` is decoded here, as it is read, into `dest`: nothing
+ * is held beyond the decoder's state (about 35 KiB while such a response is open), and a small
+ * body that expands a thousandfold costs as many reads as you choose to make. The headers are
+ * left as the server sent them, so `Content-Length` then counts the encoded bytes, not the ones
+ * read. A `206 Partial Content` is never decoded (a range of an encoded body is not a body),
+ * nor is a coding other than these two: such a body arrives as it was sent. `deflate` is read
+ * as a zlib stream, or as raw DEFLATE when its first two bytes are no zlib header.
+ *
  * @return also PROVEN_ERR_TIMEOUT (no data within `io_timeout_ms`; the read may be repeated)
- *         and PROVEN_ERR_INVALID_FORMAT (malformed chunk framing).
+ *         and PROVEN_ERR_INVALID_FORMAT (malformed chunk framing; with `decompress`, a
+ *         compressed body that is damaged, unfinished, or followed by other bytes).
  */
 [[nodiscard]]
 proven_result_size_t proven_http_client_read(proven_http_client_response_t *response, proven_mem_mut_t dest);
@@ -180,6 +192,7 @@ proven_result_size_t proven_http_client_read(proven_http_client_response_t *resp
  * @brief Read the rest of the body and append it to `out`, growing it with `alloc`.
  * @param max_bytes the most to accept. A body longer than this is PROVEN_ERR_OUT_OF_BOUNDS -
  *        `out` then holds the first `max_bytes` - rather than however much a server sends.
+ *        With `decompress` these are decoded bytes: the limit is on what you receive.
  */
 [[nodiscard]]
 proven_err_t proven_http_client_read_all(proven_http_client_response_t *response, proven_allocator_t alloc,

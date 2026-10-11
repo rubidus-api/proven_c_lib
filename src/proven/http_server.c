@@ -4,6 +4,7 @@
 
 #include "proven/time.h"
 #include "proven_internal_tls.h"
+#include "proven_internal_http_coding.h"
 #include <stdatomic.h>
 
 /*
@@ -73,6 +74,8 @@ struct sv_conn {
     bool io_failed;                    /* a write failed: nothing more can be sent */
     bool detached;                     /* the socket was handed to the handler by an upgrade */
     bool keep;
+    bool compress_asked;               /* the handler asked for this response to be compressed */
+    proven_deflate_t *zip;             /* it is: the body goes through this, and `out` holds what comes out */
 };
 
 struct proven_http_exchange { sv_conn_t conn; };
@@ -143,7 +146,8 @@ static bool sv_is_driver_header(proven_u8str_view_t name) {
 /* Build the response head in c->out. Nothing is sent, and no state changes, unless it returns
  * PROVEN_OK - so a refused header leaves the handler free to try another response. */
 static proven_err_t sv_build_head(sv_conn_t *c, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
-                                  proven_u64 content_length, proven_size_t *head_len, bool *chunked, bool *will_close, bool *bodiless) {
+                                  proven_u64 content_length, bool vary, bool gzip,
+                                  proven_size_t *head_len, bool *chunked, bool *will_close, bool *bodiless) {
     if (status < 200 || status > 999) return PROVEN_ERR_INVALID_ARG;
     if (header_count > 0 && !headers) return PROVEN_ERR_INVALID_ARG;
     proven_mem_mut_t out = { .ptr = c->out, .size = c->out_cap };
@@ -158,6 +162,8 @@ static proven_err_t sv_build_head(sv_conn_t *c, proven_u16 status, const proven_
         if (sv_is_driver_header(headers[i].name)) return PROVEN_ERR_INVALID_ARG;
         e = proven_http_write_header(out, &len, headers[i].name, headers[i].value);
     }
+    if (e == PROVEN_OK && vary) e = proven_http_write_header(out, &len, sv_lit("Vary"), sv_lit("Accept-Encoding"));
+    if (e == PROVEN_OK && gzip) e = proven_http_write_header(out, &len, sv_lit("Content-Encoding"), sv_lit("gzip"));
 
     /* 204 and 304 never have a body; a response to HEAD has the headers of one and no bytes. */
     bool no_body_status = status == 204 || status == 304;
@@ -199,6 +205,21 @@ static void sv_mark_begun(sv_conn_t *c, proven_u64 content_length, bool chunked,
     if (will_close) c->close_after = true;
 }
 
+/* What the handler's request for compression comes to for this response. */
+static void sv_compress_plan(const sv_conn_t *c, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
+                             bool *vary, bool *gzip) {
+    *vary = false;
+    *gzip = false;
+    if (!c->compress_asked || (header_count > 0 && !headers)) return;
+    *vary = proven_http_compress_needs_vary_(headers, header_count);
+    *gzip = proven_http_compress_applies_(proven_http_accepts_coding(c->req.headers, c->req.header_count, PROVEN_HTTP_CODING_GZIP),
+                                          status, headers, header_count);
+}
+
+void proven_http_exchange_compress(proven_http_exchange_t *exchange) {
+    if (exchange && !exchange->conn.response_begun) exchange->conn.compress_asked = true;
+}
+
 proven_err_t proven_http_exchange_begin(proven_http_exchange_t *exchange, proven_u16 status,
                                         const proven_http_header_t *headers, proven_size_t header_count,
                                         proven_u64 content_length) {
@@ -206,11 +227,56 @@ proven_err_t proven_http_exchange_begin(proven_http_exchange_t *exchange, proven
     sv_conn_t *c = &exchange->conn;
     if (c->response_begun) return PROVEN_ERR_INVALID_STATE;
     proven_size_t head_len = 0;
-    bool chunked = false, will_close = false, bodiless = false;
-    proven_err_t e = sv_build_head(c, status, headers, header_count, content_length, &head_len, &chunked, &will_close, &bodiless);
+    bool chunked = false, will_close = false, bodiless = false, vary = false, gzip = false;
+    sv_compress_plan(c, status, headers, header_count, &vary, &gzip);
+    proven_deflate_t *zip = (void *)0;
+    /* Without the memory for a compressor the response goes as it is. (A response to HEAD
+     * needs none: it has the headers and no bytes.) */
+    if (gzip && c->req.method != PROVEN_HTTP_HEAD &&
+        proven_http_compress_create_(c->server->cfg.alloc, c->server->cfg.compress_level, c->server->cfg.compress_window_bits, &zip) != PROVEN_OK) {
+        gzip = false;
+    }
+    /* Compressed, the length on the wire is not the one given: the body goes chunked. The
+     * length given is still what the handler has promised to write. */
+    proven_err_t e = sv_build_head(c, status, headers, header_count, gzip ? PROVEN_HTTP_LENGTH_UNKNOWN : content_length, vary, gzip,
+                                   &head_len, &chunked, &will_close, &bodiless);
+    if (e != PROVEN_OK || bodiless) {
+        if (zip) proven_deflate_destroy(zip);
+        zip = (void *)0;
+    }
     if (e != PROVEN_OK) return e;
     sv_mark_begun(c, content_length, chunked, will_close, bodiless);
+    c->zip = zip;
     return sv_send(c, (proven_mem_view_t){ .ptr = c->out, .size = head_len });
+}
+
+/* One piece of the body as the client is to get it: a chunk, or bare bytes. */
+static proven_err_t sv_send_piece(sv_conn_t *c, proven_mem_view_t data) {
+    if (data.size == 0) return PROVEN_OK;
+    if (!c->chunked_out) return sv_send(c, data);
+    proven_byte_t frame[24];
+    proven_size_t fl = 0;
+    proven_err_t e = proven_http_write_chunk_begin((proven_mem_mut_t){ .ptr = frame, .size = sizeof frame }, &fl, data.size);
+    if (e != PROVEN_OK) return e;
+    e = sv_send(c, (proven_mem_view_t){ .ptr = frame, .size = fl });
+    if (e == PROVEN_OK) e = sv_send(c, data);
+    if (e == PROVEN_OK) e = sv_send(c, (proven_mem_view_t){ .ptr = (const proven_byte_t *)"\r\n", .size = 2 });
+    return e;
+}
+
+/* Body bytes through the compressor. The head has left, so its buffer takes what comes out. */
+static proven_err_t sv_zip(sv_conn_t *c, proven_mem_view_t data, proven_deflate_flush_t flush) {
+    for (;;) {
+        proven_size_t used = 0, made = 0;
+        bool done = false;
+        proven_err_t e = proven_deflate(c->zip, data, &used, (proven_mem_mut_t){ .ptr = c->out, .size = c->out_cap }, &made, flush, &done);
+        if (e != PROVEN_OK) { c->close_after = true; return e; }
+        data.ptr += used;
+        data.size -= used;
+        e = sv_send_piece(c, (proven_mem_view_t){ .ptr = c->out, .size = made });
+        if (e != PROVEN_OK) return e;
+        if (flush == PROVEN_DEFLATE_FLUSH_FINISH ? done : (data.size == 0 && made < c->out_cap)) return PROVEN_OK;
+    }
 }
 
 proven_err_t proven_http_exchange_write(proven_http_exchange_t *exchange, proven_mem_view_t data) {
@@ -222,16 +288,8 @@ proven_err_t proven_http_exchange_write(proven_http_exchange_t *exchange, proven
         c->out_remaining -= data.size;
     }
     if (c->head_only || data.size == 0) return PROVEN_OK;
-    if (!c->chunked_out) return sv_send(c, data);
-
-    proven_byte_t frame[24];
-    proven_size_t fl = 0;
-    proven_err_t e = proven_http_write_chunk_begin((proven_mem_mut_t){ .ptr = frame, .size = sizeof frame }, &fl, data.size);
-    if (e != PROVEN_OK) return e;
-    e = sv_send(c, (proven_mem_view_t){ .ptr = frame, .size = fl });
-    if (e == PROVEN_OK) e = sv_send(c, data);
-    if (e == PROVEN_OK) e = sv_send(c, (proven_mem_view_t){ .ptr = (const proven_byte_t *)"\r\n", .size = 2 });
-    return e;
+    if (c->zip) return sv_zip(c, data, PROVEN_DEFLATE_FLUSH_NONE);
+    return sv_send_piece(c, data);
 }
 
 proven_err_t proven_http_exchange_end(proven_http_exchange_t *exchange) {
@@ -242,7 +300,18 @@ proven_err_t proven_http_exchange_end(proven_http_exchange_t *exchange) {
     c->response_ended = true;
     /* Fewer bytes than were promised: the message cannot be completed, and the only honest
      * signal left is to close before its announced end. */
-    if (c->length_known && c->out_remaining > 0) c->close_after = true;
+    bool cut_short = c->length_known && c->out_remaining > 0;
+    if (cut_short) c->close_after = true;
+    if (c->zip) {
+        /* A short response is left unfinished inside as well: its gzip stream has no end, and
+         * no last chunk says otherwise. */
+        proven_err_t e = PROVEN_OK;
+        if (!c->io_failed && !cut_short) e = sv_zip(c, (proven_mem_view_t){0}, PROVEN_DEFLATE_FLUSH_FINISH);
+        proven_deflate_destroy(c->zip);
+        c->zip = (void *)0;
+        if (e != PROVEN_OK) return e;
+        if (cut_short) return PROVEN_OK;
+    }
     if (c->chunked_out && !c->io_failed) {
         return sv_send(c, (proven_mem_view_t){ .ptr = (const proven_byte_t *)"0\r\n\r\n", .size = 5 });
     }
@@ -255,21 +324,37 @@ proven_err_t proven_http_exchange_respond(proven_http_exchange_t *exchange, prov
     if (!exchange || (body.size > 0 && !body.ptr)) return PROVEN_ERR_INVALID_ARG;
     sv_conn_t *c = &exchange->conn;
     if (c->response_begun) return PROVEN_ERR_INVALID_STATE;
+    proven_allocator_t a = c->server->cfg.alloc;
     proven_size_t head_len = 0;
-    bool chunked = false, will_close = false, bodiless = false;
-    proven_err_t e = sv_build_head(c, status, headers, header_count, body.size, &head_len, &chunked, &will_close, &bodiless);
-    if (e != PROVEN_OK) return e;
-    sv_mark_begun(c, body.size, chunked, will_close, bodiless);
-    c->out_remaining = 0;
-    c->response_ended = true;
-
-    /* A small response leaves in one write, and so in one packet. */
-    if (!bodiless && body.size <= c->out_cap - head_len) {
-        for (proven_size_t i = 0; i < body.size; ++i) c->out[head_len + i] = body.ptr[i];
-        return sv_send(c, (proven_mem_view_t){ .ptr = c->out, .size = head_len + body.size });
+    bool chunked = false, will_close = false, bodiless = false, vary = false, gzip = false;
+    sv_compress_plan(c, status, headers, header_count, &vary, &gzip);
+    /* Compressed first, because the head says how long the result is - for HEAD too, which
+     * must announce what GET would send. Too short to gain, no smaller, or no memory: the
+     * body goes as it is. */
+    proven_byte_t *packed = (void *)0;
+    proven_size_t packed_cap = 0, packed_size = 0;
+    if (gzip && proven_http_compress_all_(a, c->server->cfg.compress_level, c->server->cfg.compress_window_bits, body,
+                                          &packed, &packed_cap, &packed_size) != PROVEN_OK) {
+        packed = (void *)0;
     }
-    e = sv_send(c, (proven_mem_view_t){ .ptr = c->out, .size = head_len });
-    if (e == PROVEN_OK && !bodiless) e = sv_send(c, body);
+    if (packed) body = (proven_mem_view_t){ .ptr = packed, .size = packed_size };
+    proven_err_t e = sv_build_head(c, status, headers, header_count, body.size, vary, packed != (void *)0,
+                                   &head_len, &chunked, &will_close, &bodiless);
+    if (e == PROVEN_OK) {
+        sv_mark_begun(c, body.size, chunked, will_close, bodiless);
+        c->out_remaining = 0;
+        c->response_ended = true;
+
+        /* A small response leaves in one write, and so in one packet. */
+        if (!bodiless && body.size <= c->out_cap - head_len) {
+            for (proven_size_t i = 0; i < body.size; ++i) c->out[head_len + i] = body.ptr[i];
+            e = sv_send(c, (proven_mem_view_t){ .ptr = c->out, .size = head_len + body.size });
+        } else {
+            e = sv_send(c, (proven_mem_view_t){ .ptr = c->out, .size = head_len });
+            if (e == PROVEN_OK && !bodiless) e = sv_send(c, body);
+        }
+    }
+    if (packed) sv_free(a, packed);
     return e;
 }
 
@@ -472,6 +557,10 @@ static void sv_run(sv_conn_t *c) {
         }
     } else if (!c->response_ended) {
         (void)proven_http_exchange_end((proven_http_exchange_t *)c);
+    }
+    if (c->zip) {                       /* ended before it was begun to be written, or never ended */
+        proven_deflate_destroy(c->zip);
+        c->zip = (void *)0;
     }
 
     /* The next request starts where this one's body ends, so what the handler did not read
@@ -691,6 +780,7 @@ static void sv_reset_request(sv_conn_t *c) {
     c->io_failed = false;
     c->detached = false;
     c->keep = false;
+    c->compress_asked = false;
 }
 
 /*
@@ -875,6 +965,11 @@ proven_err_t proven_http_server_create(const proven_http_server_config_t *config
     if (!s) return PROVEN_ERR_NOMEM;
     *s = (proven_http_server_t){0};
     s->cfg = *config;
+    if (s->cfg.compress_level < -1 || s->cfg.compress_level > 9 ||
+        (s->cfg.compress_window_bits != 0 && (s->cfg.compress_window_bits < 9 || s->cfg.compress_window_bits > 15))) {
+        sv_free(config->alloc, s);
+        return PROVEN_ERR_INVALID_ARG;
+    }
     if (s->cfg.max_connections == 0) s->cfg.max_connections = 64;
     if (s->cfg.max_head_bytes == 0) s->cfg.max_head_bytes = PROVEN_HTTP_DEFAULT_MAX_HEAD;
     if (s->cfg.max_head_bytes < 256) s->cfg.max_head_bytes = 256;

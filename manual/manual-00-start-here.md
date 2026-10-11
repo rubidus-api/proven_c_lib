@@ -996,20 +996,20 @@ Two things this table tells you that the file names do not:
 | `stream.h` | Buffered writers, readers, and a line reader - and, through `sysio.h`, the standard streams (hosted-only) | Chapter 5 |
 | `net.h` | Addresses, TCP, UDP, Unix-domain streams, deadlines, readiness, transports (hosted-only) | Chapter 9 |
 | `url.h` | URL parsing, percent-coding, and a request path resolved to stay inside its root | Chapter 10 |
-| `http.h` | HTTP/1.1 codec: head parser, body framing and decoder, writers, dates, ranges, multipart bodies | Chapter 10 |
+| `http.h` | HTTP/1.1 codec: head parser, body framing and decoder, writers, dates, ranges, multipart bodies, content-coding headers | Chapter 10 |
 | `http_auth.h` | Basic and Digest authentication values | Chapter 10 |
 | `http_cookie.h` | A host-only cookie jar | Chapter 10 |
 | `sse.h` | Server-sent events parser | Chapter 10 |
-| `http_client.h` | HTTP/1.1 client: redirects, challenges, cookies, proxies, connection reuse (hosted-only) | Chapter 11 |
-| `http_server.h` | HTTP/1.1 server: a handler and a bounded loop, on one thread or a job system (hosted-only) | Chapter 11 |
+| `http_client.h` | HTTP/1.1 client: redirects, challenges, cookies, proxies, connection reuse, gzip responses decoded on request (hosted-only) | Chapters 11, 16 |
+| `http_server.h` | HTTP/1.1 server: a handler and a bounded loop, on one thread or a job system; a response compressed when its handler asks (hosted-only) | Chapters 11, 16 |
 | `ws.h` | WebSocket codec: handshake values and checks, frames, a message decoder | Chapter 12 |
 | `ws_conn.h` | WebSocket connections over a transport, client and server (hosted-only) | Chapter 12 |
 | `cert.h` | X.509 certificates: a strict reader, host-name matching, PEM, a store of trust anchors, chain verification. Only reading the system's roots is hosted. | Chapter 13 |
 | `tls.h` | TLS 1.3 and a cut-down TLS 1.2, client and server: a config, an engine with no I/O, and (hosted-only) a transport wrapper and the HTTP wrap | Chapter 14 |
 | `loop.h` | An event loop: socket readiness, timers, work posted from other threads, a shared scratch buffer (hosted-only) | Chapter 15 |
-| `http_event.h` | HTTP/1.1 server driven by events on a loop: callbacks, responses in pieces with backpressure, optional TLS (hosted-only) | Chapter 15 |
+| `http_event.h` | HTTP/1.1 server driven by events on a loop: callbacks, responses in pieces with backpressure, optional TLS, a response compressed when asked (hosted-only) | Chapters 15, 16 |
 | `ws_event.h` | WebSocket on the event-driven server: messages in pieces, sends refused and resumed, liveness and close handled (hosted-only) | Chapter 15 |
-| `http_event_client.h` | HTTP/1.1 client driven by events on a loop: many requests in flight on one thread; narrow - no reuse, redirects or name resolution (hosted-only) | Chapter 15 |
+| `http_event_client.h` | HTTP/1.1 client driven by events on a loop: many requests in flight on one thread; narrow - no reuse, redirects or name resolution; gzip responses decoded on request (hosted-only) | Chapters 15, 16 |
 | `sysio.h` | Standard streams as writers/readers, line input from stdin, buffered output, printing, scanning, environment access | Chapter 5 |
 | `random.h` | Randomness by use case: xoshiro256** (reproducible), ChaCha20 (cryptographic), the OS CSPRNG, and unbiased range/shuffle helpers. The generators work freestanding; only the OS source is hosted. | Chapter 5 |
 | `mmap.h` | Memory-mapped file regions | Chapter 5 |

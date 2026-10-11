@@ -298,6 +298,93 @@ bool proven_http_header_has_token(const proven_http_header_t *headers, proven_si
     return false;
 }
 
+static proven_u8str_view_t http_lit_n(const char *s, proven_size_t n) {
+    return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n };
+}
+#define HTTP_LIT(s) http_lit_n("" s, sizeof(s) - 1)
+
+static proven_http_coding_t http_coding_named(proven_u8str_view_t name) {
+    if (http_eq_nocase(name, HTTP_LIT("gzip")) || http_eq_nocase(name, HTTP_LIT("x-gzip"))) return PROVEN_HTTP_CODING_GZIP;
+    if (http_eq_nocase(name, HTTP_LIT("deflate"))) return PROVEN_HTTP_CODING_DEFLATE;
+    if (http_eq_nocase(name, HTTP_LIT("identity"))) return PROVEN_HTTP_CODING_IDENTITY;
+    return PROVEN_HTTP_CODING_OTHER;
+}
+
+proven_http_coding_t proven_http_content_coding(const proven_http_header_t *headers, proven_size_t count) {
+    proven_http_coding_t found = PROVEN_HTTP_CODING_IDENTITY;
+    proven_size_t fields = 0, items = 0;
+    if (!headers) return found;
+    for (proven_size_t i = 0; i < count; ++i) {
+        if (!http_eq_nocase(headers[i].name, HTTP_LIT("Content-Encoding"))) continue;
+        if (++fields > 1) return PROVEN_HTTP_CODING_OTHER;
+        proven_u8str_view_t rest = headers[i].value, item;
+        while (http_list_next(&rest, &item)) {
+            if (item.size == 0) continue;
+            if (++items > 1) return PROVEN_HTTP_CODING_OTHER;
+            found = http_coding_named(item);
+        }
+    }
+    return found;
+}
+
+/* One element of Accept-Encoding: `coding [ OWS ";" OWS "q=" qvalue ]`. The weight comes back
+ * in thousandths. */
+static bool http_accept_item(proven_u8str_view_t item, proven_u8str_view_t *name, unsigned *weight) {
+    proven_size_t n = 0;
+    while (n < item.size && item.ptr[n] != ';' && item.ptr[n] != ' ' && item.ptr[n] != '\t') n++;
+    if (n == 0) return false;
+    *name = (proven_u8str_view_t){ .ptr = item.ptr, .size = n };
+    *weight = 1000;
+    proven_size_t i = n;
+    while (i < item.size && (item.ptr[i] == ' ' || item.ptr[i] == '\t')) i++;
+    if (i == item.size) return true;
+    if (item.ptr[i++] != ';') return false;
+    while (i < item.size && (item.ptr[i] == ' ' || item.ptr[i] == '\t')) i++;
+    if (item.size - i < 3 || (item.ptr[i] != 'q' && item.ptr[i] != 'Q') || item.ptr[i + 1] != '=') return false;
+    i += 2;
+    proven_byte_t lead = item.ptr[i++];
+    if (lead != '0' && lead != '1') return false;
+    unsigned w = lead == '1' ? 1000u : 0u, scale = 100;
+    if (i < item.size) {
+        if (item.ptr[i++] != '.') return false;
+        if (item.size - i > 3) return false;
+        for (; i < item.size; ++i, scale /= 10) {
+            if (item.ptr[i] < '0' || item.ptr[i] > '9') return false;
+            w += (unsigned)(item.ptr[i] - '0') * scale;
+        }
+    }
+    if (w > 1000) return false;
+    *weight = w;
+    return true;
+}
+
+bool proven_http_accepts_coding(const proven_http_header_t *headers, proven_size_t count, proven_http_coding_t coding) {
+    if (coding == PROVEN_HTTP_CODING_OTHER) return false;
+    bool identity = coding == PROVEN_HTTP_CODING_IDENTITY;
+    bool listed = false, starred = false;
+    unsigned listed_weight = 0, star_weight = 0;
+    if (!headers) return identity;
+    for (proven_size_t i = 0; i < count; ++i) {
+        if (!http_eq_nocase(headers[i].name, HTTP_LIT("Accept-Encoding"))) continue;
+        proven_u8str_view_t rest = headers[i].value, item;
+        while (http_list_next(&rest, &item)) {
+            proven_u8str_view_t name;
+            unsigned weight = 0;
+            if (item.size == 0) continue;
+            if (!http_accept_item(item, &name, &weight)) return identity;
+            if (name.size == 1 && name.ptr[0] == '*') {
+                if (!starred) { starred = true; star_weight = weight; }
+            } else if (http_coding_named(name) == coding && !listed) {
+                listed = true;
+                listed_weight = weight;
+            }
+        }
+    }
+    if (listed) return listed_weight > 0;
+    if (starred) return star_weight > 0;
+    return identity;
+}
+
 static const struct { proven_http_method_t method; const char *text; } http_methods[] = {
     { PROVEN_HTTP_GET, "GET" }, { PROVEN_HTTP_HEAD, "HEAD" }, { PROVEN_HTTP_POST, "POST" },
     { PROVEN_HTTP_PUT, "PUT" }, { PROVEN_HTTP_DELETE, "DELETE" }, { PROVEN_HTTP_CONNECT, "CONNECT" },

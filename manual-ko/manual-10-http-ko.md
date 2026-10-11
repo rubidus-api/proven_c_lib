@@ -1043,7 +1043,9 @@ int main(void) {
 
 - **클라이언트나 서버.** [11장](manual-11-http-client-server-ko.md)에 있다.
 - **HTTP/2와 HTTP/3.** `HTTP/2.0`이라고 적힌 헤드는 `PROVEN_ERR_UNSUPPORTED`다.
-- **콘텐츠 코딩.** `gzip`과 그 밖의 것: 라이브러리에 아직 DEFLATE가 없다.
+- **코덱 안의 콘텐츠 코딩.** 파서와 본문 디코더는 본문을 보낸 그대로 건넨다. 관련 헤더를 읽는 헬퍼가
+  둘 있고(`proven_http_accepts_coding`, `proven_http_content_coding`), 이 코덱 위에 지은 서버와
+  클라이언트는 `gzip`을 압축하고 풀 수 있다: [16장](manual-16-compression-ko.md) 6절.
 - **트레일러.** 청크 본문 뒤의 트레일러는 검사하고 건너뛸 뿐, 돌려주지 않는다.
 - **multipart 본문 파싱, 그리고 다중 범위(`multipart/byteranges`) 응답.**
 - **공개 접미사 목록**, 따라서 하위 도메인 사이에 공유되는 쿠키 - §12를 보라.

@@ -6,6 +6,7 @@
 #include "proven/http_auth.h"
 #include "proven/random.h"
 #include "proven/time.h"
+#include "proven_internal_http_coding.h"
 
 /*
  * The HTTP/1.1 client driver. The message format is http.c's business and the sockets are
@@ -64,6 +65,9 @@ typedef struct {
     bool keep_alive;
     bool reused;
     bool got_response_bytes;
+    bool decoding;                     /* the body is decoded on its way to the caller */
+    proven_mem_view_t pending;         /* decoding: encoded bytes of the window not decoded yet */
+    proven_http_decoder_t_ dec;
 } cl_call_t;
 
 static proven_u8str_view_t cl_lit(const char *s) {
@@ -550,6 +554,12 @@ static proven_err_t cl_exchange(cl_call_t *call, const proven_http_client_reques
         }
     }
 
+    if (e == PROVEN_OK && c->cfg.decompress && req->upgrade.size == 0 &&
+        !proven_http_header_find(req->headers, req->header_count, cl_lit("Accept-Encoding"), &(proven_u8str_view_t){0}) &&
+        !proven_http_header_find(req->headers, req->header_count, cl_lit("Range"), &(proven_u8str_view_t){0})) {
+        e = proven_http_write_header(out, &len, cl_lit("Accept-Encoding"), cl_lit("gzip"));
+    }
+
     bool wants_body = at->send_body && (streaming || req->body.size > 0);
     bool body_method = cl_eq_nocase(at->method, cl_lit("POST")) || cl_eq_nocase(at->method, cl_lit("PUT")) || cl_eq_nocase(at->method, cl_lit("PATCH"));
     if (e == PROVEN_OK) {
@@ -642,32 +652,32 @@ static proven_err_t cl_exchange(cl_call_t *call, const proven_http_client_reques
     call->body_done = framing.kind == PROVEN_HTTP_BODY_NONE || (framing.kind == PROVEN_HTTP_BODY_LENGTH && framing.length == 0);
     call->keep_alive = proven_http_response_keep_alive(&call->res) && framing.kind != PROVEN_HTTP_BODY_UNTIL_CLOSE &&
                        c->cfg.max_idle_connections > 0 && call->res.status != 101;
+    proven_http_coding_t coding = PROVEN_HTTP_CODING_IDENTITY;
+    proven_http_decoder_free_(&call->dec);
+    call->pending = (proven_mem_view_t){0};
+    call->decoding = c->cfg.decompress && !call->body_done &&
+                     proven_http_decoder_wanted_(call->res.status, call->res.headers, call->res.header_count, &coding);
+    if (call->decoding) proven_http_decoder_begin_(&call->dec, c->cfg.alloc, coding);
     return PROVEN_OK;
 }
 
-/* Body bytes into `dest`. Feeds the decoder no more than `dest` can take, so a payload always
- * fits, and refills the window from the transport when it runs dry. */
-static proven_result_size_t cl_read_body(cl_call_t *call, proven_mem_mut_t dest) {
-    proven_result_size_t res = { .err = PROVEN_OK, .value = 0 };
-    if (call->body_done) { res.err = PROVEN_ERR_EOF; return res; }
-    if (dest.size == 0) return res;
+/* The next piece of the body, as a view into the read window of at most `max` bytes. The
+ * window is refilled from the transport when it runs dry - so a view is good only until the
+ * next call. PROVEN_ERR_EOF at the end of the body. */
+static proven_err_t cl_next_payload(cl_call_t *call, proven_size_t max, proven_mem_view_t *payload) {
+    if (call->body_done) return PROVEN_ERR_EOF;
     for (;;) {
         if (call->buf_pos < call->buf_len) {
             proven_size_t avail = call->buf_len - call->buf_pos;
-            proven_size_t offer = avail < dest.size ? avail : dest.size;
+            proven_size_t offer = avail < max ? avail : max;
             proven_size_t used = 0;
-            proven_mem_view_t payload;
             bool done = false;
-            proven_err_t e = proven_http_body_feed(&call->body, (proven_mem_view_t){ .ptr = call->buf + call->buf_pos, .size = offer }, &used, &payload, &done);
-            if (e != PROVEN_OK) { res.err = e; return res; }
+            proven_err_t e = proven_http_body_feed(&call->body, (proven_mem_view_t){ .ptr = call->buf + call->buf_pos, .size = offer }, &used, payload, &done);
+            if (e != PROVEN_OK) return e;
             call->buf_pos += used;
             if (done) call->body_done = true;
-            if (payload.size > 0) {
-                for (proven_size_t i = 0; i < payload.size; ++i) dest.ptr[i] = payload.ptr[i];
-                res.value = payload.size;
-                return res;
-            }
-            if (done) { res.err = PROVEN_ERR_EOF; return res; }
+            if (payload->size > 0) return PROVEN_OK;
+            if (done) return PROVEN_ERR_EOF;
             continue;
         }
         call->buf_pos = 0;
@@ -678,13 +688,55 @@ static proven_result_size_t cl_read_body(cl_call_t *call, proven_mem_mut_t dest)
             /* The peer closed. For a body that runs until close that is its end; for any other
              * it is a body cut short, which must not pass for a complete one. */
             call->keep_alive = false;
-            if (proven_http_body_end(&call->body) == PROVEN_OK) { call->body_done = true; res.err = PROVEN_ERR_EOF; }
-            else res.err = PROVEN_ERR_RESET;
-            return res;
+            if (proven_http_body_end(&call->body) == PROVEN_OK) { call->body_done = true; return PROVEN_ERR_EOF; }
+            return PROVEN_ERR_RESET;
         }
-        if (r.err != PROVEN_OK) { res.err = r.err; return res; }
+        if (r.err != PROVEN_OK) return r.err;
         call->buf_len = r.value;
     }
+}
+
+/* Body bytes into `dest`, as they came. The decoder of the framing is fed no more than `dest`
+ * can take, so a payload always fits. */
+static proven_result_size_t cl_read_body(cl_call_t *call, proven_mem_mut_t dest) {
+    proven_result_size_t res = { .err = PROVEN_OK, .value = 0 };
+    if (call->body_done) { res.err = PROVEN_ERR_EOF; return res; }
+    if (dest.size == 0) return res;
+    proven_mem_view_t payload = {0};
+    res.err = cl_next_payload(call, dest.size, &payload);
+    if (res.err != PROVEN_OK) return res;
+    for (proven_size_t i = 0; i < payload.size; ++i) dest.ptr[i] = payload.ptr[i];
+    res.value = payload.size;
+    return res;
+}
+
+/* Body bytes into `dest`, decoded. The end is the end of the HTTP body, not of the compressed
+ * stream inside it: the connection is reusable exactly when it would have been. */
+static proven_result_size_t cl_read_decoded(cl_call_t *call, proven_mem_mut_t dest) {
+    proven_result_size_t res = { .err = PROVEN_OK, .value = 0 };
+    if (dest.size == 0) return res;
+    for (;;) {
+        /* Also with nothing pending: what the decoder still holds comes out first. */
+        proven_size_t used = 0, made = 0;
+        res.err = proven_http_decoder_step_(&call->dec, call->pending, &used, dest, &made);
+        if (res.err != PROVEN_OK) break;
+        call->pending.ptr += used;
+        call->pending.size -= used;
+        if (made > 0) { res.value = made; return res; }
+        if (call->pending.size > 0) {
+            if (used > 0) continue;
+            res.err = PROVEN_ERR_INVALID_FORMAT;       /* input it will not take, and nothing to give */
+            break;
+        }
+        res.err = cl_next_payload(call, call->buf_cap, &call->pending);
+        if (res.err == PROVEN_ERR_EOF) {
+            res.err = proven_http_decoder_end_(&call->dec);
+            if (res.err == PROVEN_OK) { res.err = PROVEN_ERR_EOF; return res; }
+        }
+        if (res.err != PROVEN_OK) break;
+    }
+    if (res.err != PROVEN_ERR_TIMEOUT) call->keep_alive = false;
+    return res;
 }
 
 /* Read away what is left of a body so the connection can carry the next request - up to a
@@ -879,6 +931,7 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
 
     if (e != PROVEN_OK) {
         if (call->conn) cl_conn_close(client, call->conn);
+        proven_http_decoder_free_(&call->dec);
         cl_free(a, call);
         return e;
     }
@@ -903,7 +956,8 @@ proven_result_size_t proven_http_client_read(proven_http_client_response_t *resp
     proven_result_size_t res = { .err = PROVEN_ERR_INVALID_ARG, .value = 0 };
     if (!response || (dest.size > 0 && !dest.ptr)) return res;
     if (!response->internal) { res.err = PROVEN_ERR_INVALID_STATE; return res; }
-    return cl_read_body(response->internal, dest);
+    cl_call_t *call = response->internal;
+    return call->decoding ? cl_read_decoded(call, dest) : cl_read_body(call, dest);
 }
 
 proven_err_t proven_http_client_upgrade(proven_http_client_response_t *response, proven_transport_t *out, proven_mem_view_t *early) {
@@ -954,6 +1008,7 @@ void proven_http_client_finish(proven_http_client_response_t *response) {
     if (call) {
         proven_allocator_t a = call->client->cfg.alloc;
         cl_release_conn(call);
+        proven_http_decoder_free_(&call->dec);
         cl_free(a, call);
     }
     *response = (proven_http_client_response_t){0};

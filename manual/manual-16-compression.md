@@ -8,7 +8,8 @@ to before you refuse it - and say what was tested and how fast it is.
 
 This chapter covers `deflate.h`. It is pure computation - one allocation when a compressor or
 decompressor is made, nothing from the operating system - and is available in a
-[freestanding](manual-freestanding.md) build.
+[freestanding](manual-freestanding.md) build. Section 6 is the exception: it is about
+compressed HTTP responses, in the servers and clients of Chapters 11 and 15.
 
 ## Table of contents
 
@@ -17,7 +18,8 @@ decompressor is made, nothing from the operating system - and is available in a
 3. [A stream](#3-a-stream)
 4. [Levels, windows and what they cost](#4-levels-windows-and-what-they-cost)
 5. [Data from somebody else](#5-data-from-somebody-else)
-6. [What is accepted, what is not here, and how this was tested](#6-what-is-accepted-what-is-not-here-and-how-this-was-tested)
+6. [Over HTTP](#6-over-http)
+7. [What is accepted, what is not here, and how this was tested](#7-what-is-accepted-what-is-not-here-and-how-this-was-tested)
 
 ## 1. What DEFLATE does, in one page
 
@@ -386,7 +388,385 @@ is only known to match at the very end.
 - **Raw DEFLATE has no checksum.** If the bytes may have been damaged on the way and the
   format around them does not check, use zlib or gzip.
 
-## 6. What is accepted, what is not here, and how this was tested
+## 6. Over HTTP
+
+```c
+void proven_http_exchange_compress(proven_http_exchange_t *exchange);     /* the server of Chapter 11 */
+void proven_http_stream_compress(proven_http_stream_t *stream);           /* the server of Chapter 15 */
+
+bool proven_http_accepts_coding(const proven_http_header_t *headers, proven_size_t count, proven_http_coding_t coding);
+proven_http_coding_t proven_http_content_coding(const proven_http_header_t *headers, proven_size_t count);
+```
+
+HTTP calls this a *content coding*: the server compresses the body and says so in
+`Content-Encoding`, and it may only do that for a client whose `Accept-Encoding` allowed it.
+The four HTTP drivers of [Chapter 11](manual-11-http-client-server.md) and
+[Chapter 15](manual-15-event-loop.md) do both halves - and **do neither until you ask**. A
+program that sets nothing sends the same bytes as before.
+
+Unlike the rest of this chapter, this part needs sockets and is not in a freestanding build -
+except the two helper functions, which are plain header arithmetic in `http.h`.
+
+**A server compresses a response when its handler asks for that response.** One call, before
+the response begins:
+
+| | What happens |
+|---|---|
+| The request allows gzip, and the response has a body of its own | Sent with `Content-Encoding: gzip` |
+| The request does not allow gzip (no `Accept-Encoding`, `gzip;q=0`, only other codings) | Sent as it is |
+| Status 204, 206 or 304; or your headers already have `Content-Encoding` or `Content-Range` | Sent as it is |
+| A body sent in one piece that is under 256 bytes, or does not get smaller | Sent as it is |
+| No memory for the compressor | Sent as it is |
+| In every one of these cases | `Vary: Accept-Encoding` is added, unless your own `Vary` names it |
+
+`Vary` is there because the response now depends on a request header, and a cache in between
+must not hand the gzip to a client that cannot read it.
+
+A body sent in one piece is compressed first and sent with its new `Content-Length`. A body
+written in pieces is compressed as it is written and sent chunked, whatever length you
+announced - the length is still what you must write.
+
+**A client asks and decodes when its configuration says `decompress`.** It then sends
+`Accept-Encoding: gzip` and decodes a body that comes back as `gzip` or `deflate`, on the way
+to you: `proven_http_client_read` fills your buffer with decoded bytes, and the event-driven
+client's `on_body` receives decoded pieces of at most 16 KiB.
+
+### Example: a page compressed, an account page not
+
+<!-- example: manual/examples/en/ex_16_http_gzip.c -->
+```c
+#include <stdio.h>
+#include <string.h>
+
+/*
+ * Compressed responses over HTTP: a server that compresses when its handler asks and the
+ * client accepts, and a client that asks and decodes.
+ *
+ * Both are off until the program says otherwise. The server's part is one call in the
+ * handler, per response; the client's part is one flag in its configuration.
+ */
+
+static proven_byte_t g_page[20000];        /* the page being served: text, so it compresses */
+
+static void fill_page(void) {
+    proven_size_t n = 0;
+    for (unsigned k = 0; n < sizeof g_page; ++k) {
+        char line[48];
+        int len = snprintf(line, sizeof line, "row %u of a table that says much the same\n", k);
+        for (int i = 0; i < len && n < sizeof g_page; ++i) g_page[n++] = (proven_byte_t)line[i];
+    }
+}
+
+static void handle(void *ctx, proven_http_exchange_t *x) {
+    proven_http_server_t **server = ctx;
+    const proven_http_request_t *req = proven_http_exchange_request(x);
+    proven_mem_view_t page = { g_page, sizeof g_page };
+
+    if (proven_u8str_view_eq(req->target, PROVEN_LIT("/page"))) {
+        /* One call, before the response begins. The server then does the rest: it reads the
+         * request's Accept-Encoding, compresses if gzip is allowed, and writes
+         * Content-Encoding, Vary and the new Content-Length. */
+        proven_http_exchange_compress(x);
+        proven_http_header_t type = { PROVEN_LIT("Content-Type"), PROVEN_LIT("text/plain") };
+        (void)proven_http_exchange_respond(x, 200, &type, 1, page);
+
+    } else if (proven_u8str_view_eq(req->target, PROVEN_LIT("/account"))) {
+        /* Not asked for here, on purpose: this response would carry a secret next to text
+         * the client chose, and the size of a compressed body gives the secret away a byte
+         * at a time. Compression is asked for per response because only the handler knows. */
+        (void)proven_http_exchange_respond(x, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("token=... you searched for: ...\n")));
+
+    } else if (proven_u8str_view_eq(req->target, PROVEN_LIT("/accepts"))) {
+        /* The same question the server asks, for a handler that wants to choose for itself -
+         * between a file and its precompressed twin, say. */
+        bool gzip = proven_http_accepts_coding(req->headers, req->header_count, PROVEN_HTTP_CODING_GZIP);
+        (void)proven_http_exchange_respond(x, 200, NULL, 0, proven_mem_view_from_u8(gzip ? PROVEN_LIT("gzip") : PROVEN_LIT("identity")));
+
+    } else {
+        (void)proven_http_exchange_respond(x, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("bye\n")));
+        proven_http_server_stop(*server);
+    }
+}
+
+static void serve(void *arg) { (void)proven_http_server_run(*(proven_http_server_t **)arg); }
+
+/* GET `path`; report the body's size as read, the Content-Length, and the coding named. */
+static bool get(proven_http_client_t *client, proven_u16 port, const char *path,
+                proven_size_t *read_size, proven_u64 *content_length, proven_http_coding_t *coding, proven_u8str_t *body) {
+    char url[96];
+    int n = snprintf(url, sizeof url, "http://127.0.0.1:%u%s", (unsigned)port, path);
+    proven_http_client_response_t resp;
+    bool ok = proven_http_client_get(client, (proven_u8str_view_t){ (const proven_byte_t *)url, (proven_size_t)n }, &resp) == PROVEN_OK && resp.status == 200;
+    if (ok) {
+        /* The headers are the server's, untouched: this is how to see what was sent. */
+        *coding = proven_http_content_coding(resp.headers, resp.header_count);
+        proven_u8str_view_t length = { 0 };
+        *content_length = 0;
+        if (proven_http_header_find(resp.headers, resp.header_count, PROVEN_LIT("Content-Length"), &length)) {
+            for (proven_size_t i = 0; i < length.size; ++i) *content_length = *content_length * 10 + (proven_u64)(length.ptr[i] - '0');
+        }
+        /* The limit is on what arrives here - decoded bytes, when the client decodes. */
+        (void)proven_u8str_reset(body);
+        ok = proven_http_client_read_all(&resp, proven_heap_allocator(), body, 1024 * 1024) == PROVEN_OK;
+        *read_size = proven_u8str_as_view(body).size;
+    }
+    proven_http_client_finish(&resp);
+    return ok;
+}
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    fill_page();
+
+    static proven_http_server_t *server;
+    proven_http_server_config_t config = { .alloc = heap, .handler = handle, .handler_ctx = &server };
+    config.compress_level = 6;              /* 1 is fastest, 9 smallest; zero means this */
+    EXAMPLE_REQUIRE(proven_http_server_create(&config, &server) == PROVEN_OK, "a server");
+    proven_net_addr_t at;
+    proven_err_t err = proven_http_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at);
+    if (err == PROVEN_ERR_PERMISSION || err == PROVEN_ERR_UNSUPPORTED) {
+        printf("no sockets in this environment; nothing to show\n");
+        proven_http_server_destroy(server);
+        return EXAMPLE_OK();
+    }
+    EXAMPLE_REQUIRE(err == PROVEN_OK, "it listens");
+    proven_job_sys_t *threads = NULL;
+    proven_job_group_t running;
+    proven_job_group_init(&running);
+    EXAMPLE_REQUIRE(proven_job_system_init(heap, 1, 4, &threads) == PROVEN_OK &&
+                    proven_job_group_submit(threads, &running, serve, &server) == PROVEN_OK, "the server loop is started");
+
+    /* Two clients: one as it always was, one that asks for compressed responses. */
+    proven_http_client_config_t plain_config = { .alloc = heap, .max_idle_connections = 2 };
+    proven_http_client_config_t decoding_config = { .alloc = heap, .max_idle_connections = 2, .decompress = true };
+    proven_http_client_t *plain = NULL, *decoding = NULL;
+    EXAMPLE_REQUIRE(proven_http_client_create(&plain_config, &plain) == PROVEN_OK &&
+                    proven_http_client_create(&decoding_config, &decoding) == PROVEN_OK, "two clients");
+
+    proven_u8str_t body = { 0 };
+    proven_size_t read_size = 0;
+    proven_u64 sent = 0;
+    proven_http_coding_t coding = PROVEN_HTTP_CODING_IDENTITY;
+
+    /* The client that sets nothing sends no Accept-Encoding, and nothing changes for it. */
+    EXAMPLE_REQUIRE(get(plain, at.port, "/page", &read_size, &sent, &coding, &body), "the page, to a client that did not ask");
+    EXAMPLE_REQUIRE(coding == PROVEN_HTTP_CODING_IDENTITY && sent == sizeof g_page && read_size == sizeof g_page, "arrives as it is");
+
+    /* The one that asks gets the same bytes from a fraction of them. */
+    EXAMPLE_REQUIRE(get(decoding, at.port, "/page", &read_size, &sent, &coding, &body), "the page, to a client that asked");
+    EXAMPLE_REQUIRE(coding == PROVEN_HTTP_CODING_GZIP && read_size == sizeof g_page &&
+                    memcmp(proven_u8str_as_view(&body).ptr, g_page, sizeof g_page) == 0, "was sent as gzip and read as the page");
+    EXAMPLE_REQUIRE(sent < sizeof g_page / 5, "in less than a fifth of the bytes");
+    printf("the page: %u bytes, sent as %u\n", (unsigned)sizeof g_page, (unsigned)sent);
+
+    /* A response whose handler did not ask is not compressed, whoever asks for it. */
+    EXAMPLE_REQUIRE(get(decoding, at.port, "/account", &read_size, &sent, &coding, &body) && coding == PROVEN_HTTP_CODING_IDENTITY, "the account page is sent as it is");
+
+    EXAMPLE_REQUIRE(get(decoding, at.port, "/accepts", &read_size, &sent, &coding, &body) &&
+                    proven_u8str_view_eq(proven_u8str_as_view(&body), PROVEN_LIT("gzip")), "the handler can see that this client accepts gzip");
+    EXAMPLE_REQUIRE(get(plain, at.port, "/accepts", &read_size, &sent, &coding, &body) &&
+                    proven_u8str_view_eq(proven_u8str_as_view(&body), PROVEN_LIT("identity")), "and that the other does not");
+
+    EXAMPLE_REQUIRE(get(plain, at.port, "/quit", &read_size, &sent, &coding, &body), "stop");
+    proven_job_group_wait(threads, &running);
+    proven_u8str_destroy(heap, &body);
+    proven_http_client_destroy(plain);
+    proven_http_client_destroy(decoding);
+    proven_http_server_destroy(server);
+    proven_job_system_close(threads);
+    proven_job_system_destroy(threads);
+    return EXAMPLE_OK();
+}
+```
+
+### Example: the same on a loop
+
+<!-- example: manual/examples/en/ex_16_http_event_gzip.c -->
+```c
+#include <stdio.h>
+#include <string.h>
+
+/*
+ * The same on a loop: the event-driven server compressing a response that is written in
+ * pieces, and the event-driven client decoding it as it arrives.
+ *
+ * Neither holds the body. The server compresses what it is given into its output queue, under
+ * the queue's limit; the client hands on decoded pieces of at most 16 KiB.
+ */
+
+#define REPORT_BYTES ((proven_size_t)300000)
+
+typedef struct {
+    proven_loop_t *loop;
+    proven_http_stream_t *stream;      /* the one response being written */
+    proven_size_t written;
+    proven_size_t received, pieces, largest;
+    unsigned long sum_sent, sum_received;
+    bool gzip, intact, done;
+    proven_err_t why;
+} app_t;
+
+/* The report is generated as it is written: there is no buffer holding all of it. */
+static proven_byte_t report_byte(proven_size_t i) { return (proven_byte_t)("measured value \n"[i % 16]); }
+
+// ---- the server --------------------------------------------------------------
+
+/* Write until the server takes no more; on_writable calls this again when there is room. */
+static void pump(app_t *app) {
+    proven_byte_t piece[4096];
+    while (app->written < REPORT_BYTES) {
+        proven_size_t n = REPORT_BYTES - app->written < sizeof piece ? REPORT_BYTES - app->written : sizeof piece;
+        for (proven_size_t i = 0; i < n; ++i) piece[i] = report_byte(app->written + i);
+        proven_result_size_t took = proven_http_stream_write(app->stream, (proven_mem_view_t){ piece, n });
+        if (took.err != PROVEN_OK) return;
+        for (proven_size_t i = 0; i < took.value; ++i) app->sum_sent += piece[i];
+        app->written += took.value;
+        if (took.value < n) return;        /* the compressed output is at its limit: wait */
+    }
+    (void)proven_http_stream_end(app->stream);
+}
+
+static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
+    (void)head;
+    app_t *app = ctx;
+    app->stream = stream;
+    /* Before the response begins. From here on the body is written exactly as it would be
+     * without it: the length given is still the length to write, though the client is sent
+     * chunks of gzip. What is written may wait in the compressor until more follows. */
+    proven_http_stream_compress(stream);
+    if (proven_http_stream_begin(stream, 200, NULL, 0, REPORT_BYTES) == PROVEN_OK) pump(app);
+}
+static void on_writable(void *ctx, proven_http_stream_t *stream) { (void)stream; pump(ctx); }
+
+// ---- the client --------------------------------------------------------------
+
+static void on_response(void *ctx, proven_http_event_request_t *request, const proven_http_response_t *head) {
+    (void)request;
+    app_t *app = ctx;
+    app->gzip = proven_http_content_coding(head->headers, head->header_count) == PROVEN_HTTP_CODING_GZIP;
+}
+
+/* Decoded pieces. A piece is a view that is good until this function returns. */
+static void on_body(void *ctx, proven_http_event_request_t *request, proven_mem_view_t piece, bool last) {
+    (void)request; (void)last;
+    app_t *app = ctx;
+    for (proven_size_t i = 0; i < piece.size; ++i) {
+        if (piece.ptr[i] != report_byte(app->received + i)) app->intact = false;
+        app->sum_received += piece.ptr[i];
+    }
+    app->received += piece.size;
+    app->pieces++;
+    if (piece.size > app->largest) app->largest = piece.size;
+}
+
+static void on_done(void *ctx, proven_http_event_request_t *request, proven_err_t why) {
+    (void)request;
+    app_t *app = ctx;
+    app->why = why;
+    app->done = true;
+    proven_loop_stop(app->loop);
+}
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    app_t app = { .intact = true };
+    EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
+
+    /* The window sets what each compressed response holds while it is being written: about
+     * 53 KiB at 12 bits, 325 KiB at the full 15. With many at once, that is the number to choose. */
+    proven_http_event_server_config_t server_config = { .on = { .on_request = on_request, .on_writable = on_writable }, .ctx = &app, .compress_window_bits = 12 };
+    proven_http_event_server_t *server = NULL;
+    proven_net_addr_t at;
+    EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &server_config, &server) == PROVEN_OK, "a server");
+    proven_err_t err = proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at);
+    if (err == PROVEN_ERR_PERMISSION || err == PROVEN_ERR_UNSUPPORTED) {
+        printf("no sockets in this environment; nothing to show\n");
+        proven_http_event_server_destroy(server);
+        proven_loop_destroy(app.loop);
+        return EXAMPLE_OK();
+    }
+    EXAMPLE_REQUIRE(err == PROVEN_OK, "it listens");
+
+    /* `decompress` asks for gzip and decodes it; `max_body_bytes` then also bounds the decoded
+     * size, so a small body that unfolds into a huge one is cut off at the limit. */
+    proven_http_event_client_config_t client_config = { .decompress = true, .max_body_bytes = 1024 * 1024 };
+    proven_http_event_client_t *client = NULL;
+    EXAMPLE_REQUIRE(proven_http_event_client_create(app.loop, &client_config, &client) == PROVEN_OK, "a client that decodes");
+
+    char url[64];
+    int n = snprintf(url, sizeof url, "http://127.0.0.1:%u/report", (unsigned)at.port);
+    proven_http_event_request_options_t options = {
+        .url = { (const proven_byte_t *)url, (proven_size_t)n },
+        .on = { on_response, on_body, NULL, on_done },
+        .ctx = &app,
+    };
+    EXAMPLE_REQUIRE(proven_http_event_client_start(client, &options, NULL) == PROVEN_OK, "the request is started");
+    EXAMPLE_REQUIRE(proven_loop_run(app.loop) == PROVEN_OK && app.done, "the loop ran until it was done");
+
+    EXAMPLE_REQUIRE(app.why == PROVEN_OK && app.gzip, "the response came as gzip");
+    EXAMPLE_REQUIRE(app.received == REPORT_BYTES && app.intact && app.sum_received == app.sum_sent, "and was delivered as the report that was written");
+    EXAMPLE_REQUIRE(app.largest <= 16384 && app.pieces >= REPORT_BYTES / 16384, "in pieces of at most 16 KiB");
+    printf("%u bytes written, compressed, sent, decoded and received\n", (unsigned)app.received);
+
+    proven_http_event_client_destroy(client);
+    proven_http_event_server_destroy(server);
+    proven_loop_destroy(app.loop);
+    return EXAMPLE_OK();
+}
+```
+
+### Reference
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_http_exchange_compress(x)` | Ask that this response be compressed. Before `respond` or `begin`; afterwards it does nothing. | none. |
+| `proven_http_stream_compress(stream)` | The same for the event-driven server: in `on_request` or later, before the response begins. | none. |
+| `compress_level` (both server configurations) | 1 (fastest) to 9 (smallest); -1 stores without compressing. Zero is 6. Section 4 has the measurements. | `INVALID_ARG` from `create` outside that range. |
+| `compress_window_bits` (both) | 9 to 15: the memory a streamed response holds while it is written (section 4's table). Zero is 15. | the same. |
+| `decompress` (both client configurations) | Send `Accept-Encoding: gzip` and decode `gzip` and `deflate` bodies. | - |
+| `proven_http_accepts_coding(headers, count, coding)` | Whether a request's `Accept-Encoding` allows a coding: listed with a weight above zero, or covered by `*`. | `bool`. Without the field only identity is accepted. |
+| `proven_http_content_coding(headers, count)` | What `Content-Encoding` names. | `PROVEN_HTTP_CODING_IDENTITY`, `_GZIP` (also for `x-gzip`), `_DEFLATE`, or `_OTHER` for anything else and for more than one. |
+
+### Cautions, and what goes wrong
+
+- **Do not ask for a response that mixes a secret with text the client chose.** This is the
+  leak of section 5 in its best-known form (BREACH): a page that carries a session token and
+  also echoes a search term, compressed, tells an observer of the encrypted connection -
+  through its length alone - whether the term matched part of the token. TLS does not help;
+  it hides bytes, not sizes. This is why the server has no "compress everything" setting:
+  the call is per response because the judgement is.
+- **A streamed, compressed response does not arrive piece by piece.** What you write may sit
+  in the compressor until more is written or the response ends. Do not ask for compression
+  of an event stream ([Chapter 10](manual-10-http.md), section 13) or anything else a client
+  must see as it happens.
+- **A compressed response of a different size needs a different validator.** If you send an
+  `ETag`, the compressed and the plain response are two representations; give them different
+  tags, or a cache may match one against the other. The server does not rewrite yours.
+- **The client's headers are the server's.** With `decompress`, `Content-Encoding: gzip` is
+  still there and `Content-Length` still counts the compressed bytes - not the bytes you
+  read. Count what you read, or look at `proven_http_content_coding` to know which it was.
+- **The limit on what a server may send you is in decoded bytes.** `read_all`'s `max_bytes`,
+  and the event-driven client's `max_body_bytes`, count what comes out of the decoder: two
+  kilobytes that unfold into two megabytes are cut off at your limit, not at theirs. A plain
+  `proven_http_client_read` is bounded by the buffer you give it, as always.
+- **A damaged compressed body is `PROVEN_ERR_INVALID_FORMAT`**, never a short success: a
+  stream that is cut off, fails its checksum, or is followed by bytes that are not another
+  gzip member. Several gzip members in a row are read as one body.
+- **`deflate` means two things in practice.** The standard says a zlib stream; some servers
+  send raw DEFLATE. The client looks at the first two bytes and reads whichever it is. It
+  never asks for `deflate` - only `gzip` - and the servers never send it.
+- **Not decoded:** a `206 Partial Content` (a range of a compressed body is not a compressed
+  body - and with `decompress` set, a request that carries `Range` is sent without
+  `Accept-Encoding`); a coding other than these two (`br`, `zstd`); two codings applied one
+  over the other. Such a body reaches you as it was sent, with its header.
+- **Memory.** A response being decoded costs about 35 KiB (52 KiB in the event-driven
+  client) while it is open. A streamed response being compressed costs what section 4's
+  table says for the window - 325 KiB by default - until it ends; one sent in one piece
+  costs that only for the call, with a window no larger than the body. Ten thousand
+  streamed responses at the default window are 3 GiB: lower `compress_window_bits`, or
+  compress fewer.
+
+## 7. What is accepted, what is not here, and how this was tested
 
 **What the decompressor accepts is what zlib accepts.** Where RFC 1951 leaves a corner open,
 each case was tried on zlib first and its verdict followed, because a real producer may emit
@@ -407,6 +787,11 @@ for byte, what zlib would have written for the same input, and it does not need 
 - **Deflate64**, and every other compression format: Brotli, Zstandard, LZ4, bzip2, xz.
 - **The gzip header's fields** - name, time, comment - cannot be set or read.
 - **Several gzip members read as one stream** automatically: reset after each (section 3).
+  (The HTTP clients of section 6 do this for a response body.)
+- **Over HTTP:** compressed *request* bodies, in either direction; `br` and `zstd`; a call
+  that pushes out what a streamed response has written so far; serving a precompressed file
+  (a handler can do that itself: `proven_http_accepts_coding`, then its own
+  `Content-Encoding`).
 
 **How this was tested.** The registered test decompresses 93 streams that zlib 1.3.1 made -
 every level and strategy, small windows, flushes in the middle, all three formats - a byte
@@ -421,6 +806,14 @@ with flushes and in small pieces (2,856 streams); this decompressor was compared
 on 5,838 more; and six million randomly damaged streams were decompressed under tools that
 report any read or write outside a buffer, with none reported and no stream that made the
 decoder do work without progress.
+
+**Section 6 was tested** against bodies zlib made - gzip, zlib, raw DEFLATE, two members,
+every optional header field, and each way of being cut short or damaged - through both
+clients, whole and a byte a chunk, each checked against zlib's own verdict when the test's
+table was generated; and with
+both servers compressing at seven sizes, in one piece and streamed, plain and over TLS.
+Outside the registered tests, curl and Python read what both servers send, and both clients
+read what a Python server sends.
 
 **Not done:** no coverage-guided fuzzing; no comparison with a second compressor's output
 besides zlib's; no external review.

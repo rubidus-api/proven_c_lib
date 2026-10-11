@@ -328,6 +328,7 @@ proven_size_t proven_http_stream_buffered(const proven_http_stream_t *stream);
 | `proven_http_stream_end` | `proven_err_t`: 응답이 시작되지 않았거나 이미 끝났으면 `INVALID_STATE`. 약속보다 적게 썼으면 `INVALID_FORMAT` - 그때 연결은 닫힌다. 클라이언트가 모자란 본문을 온전한 것으로 받아들이지 못하게 하기 위해서다. |
 | `proven_http_stream_abort` | 없음. 연결은 곧바로 닫히고 `on_done`이 `PROVEN_ERR_RESET`과 함께 불린다. |
 | `proven_http_stream_buffered` | `proven_size_t`: 이 연결을 위해 붙들고 있고 클라이언트가 아직 받지 않은 응답 바이트. |
+| `proven_http_stream_compress` | 없음. 클라이언트가 gzip을 받아들이면 이 응답을 압축해 달라고 요청한다. 응답을 시작하기 전에. [16장](manual-16-compression-ko.md) 6절 - 그 절의 주의할 점을 먼저 읽을 것. |
 
 프로토콜에서 따라 나오고 여러분에게 아무것도 요구하지 않는 세 가지: `HEAD`에 대한 응답과 상태 204,
 304의 응답은 무엇을 넘기든 본문 없이 나간다. `Expect: 100-continue`라고 한 요청은 본문이 처음 필요해질
@@ -979,6 +980,7 @@ void *proven_http_event_request_user(const proven_http_event_request_t *request)
 | `response_timeout_ms` | 요청을 다 보낸 때부터 응답 헤드의 끝까지. | 30초 |
 | `body_timeout_ms` | 응답 본문의 조각과 조각 사이. | 30초 |
 | `write_timeout_ms` | 붙든 출력을 서버가 하나도 받지 않는 시간. | 30초 |
+| `decompress` | gzip을 요청하고 푼다: `on_body`는 풀린 조각을 받고 `max_body_bytes`는 그것을 센다. [16장](manual-16-compression-ko.md) 6절. | 꺼짐 |
 
 테스트 스위트가 이 프로그램을 컴파일하고 실행한다:
 
@@ -1392,7 +1394,8 @@ Linux에서 등록된 테스트는 한가한 평문 HTTP 연결 하나에 힙 44
 - **루프의 스레드 밖에서 하는 TLS 핸드셰이크.** 하나마다 루프는 약 2 ms 동안 다른 아무것도 서비스하지
   못한다(14장 9절).
 - Windows에서 `WSAPoll`보다 **빠른 기다림**.
-- **파일을 복사 없이 보내기**, 응답 압축, HTTP/2.
+- **파일을 복사 없이 보내기**, HTTP/2. (압축된 응답은 [16장](manual-16-compression-ko.md) 6절에 있다:
+  서버에서는 `proven_http_stream_compress`, 클라이언트 설정에서는 `decompress`.)
 - 루프로 **파일, 시그널, 자식 프로세스 지켜보기**. 루프는 소켓을 지켜본다.
 
 **어떻게 시험했나.** 등록된 테스트는 루프의 타이머, 게시, 소켓 관심을 한 스레드에서, 그리고 여러
