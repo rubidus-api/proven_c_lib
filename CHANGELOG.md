@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-11
+
 A MINOR release: compressed WebSocket messages - `permessage-deflate` (RFC 7692) - in the
 codec and both drivers. **Nothing changes for a program that sets nothing**, and a connection
 that is idle holds no compression state even when the extension is on. In bytes: a connection
