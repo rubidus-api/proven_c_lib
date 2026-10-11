@@ -682,6 +682,7 @@ needed:
 | `ping_interval_ms` | Silence from the client after which it is sent a ping. | 30 s |
 | `pong_timeout_ms` | Further silence after which the connection is ended. | 10 s |
 | `close_timeout_ms` | How long to wait for the answer to a close, counted from the last output the client took. | 5 s |
+| `compress`, `compress_level`, `compress_window_bits` | Accept compressed messages when the client offers them: [Chapter 12](manual-12-websocket.md), section 9. A compressed message arrives inflated, in pieces of at most 16 KiB, and `max_message_bytes` counts the inflated size. | off; 6; 15 |
 
 **Messages arrive in pieces.** `on_message` is given each message in the pieces the network
 delivered, with `first` and `last` marking its ends: a message of any size passes through
@@ -710,6 +711,7 @@ than buffered.
 | `proven_ws_stream_abort` | nothing. Ends the connection at once with no close frame; `on_closed(1006, PROVEN_ERR_RESET)` is called inside the call. |
 | `proven_ws_stream_pause`, `proven_ws_stream_resume` | nothing. Stop and restart the delivery of messages and the reading of the connection. |
 | `proven_ws_stream_buffered` | `proven_size_t`: bytes queued for the client and not yet accepted by it. |
+| `proven_ws_stream_compressed` | `bool`: whether `compress` was set and the client agreed. |
 
 **How it ends.** `on_closed` is called exactly once, and what it is given says how:
 

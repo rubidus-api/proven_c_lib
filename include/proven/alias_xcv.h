@@ -282,6 +282,8 @@
 #define XCV_WS_CLOSE_TOO_BIG PROVEN_WS_CLOSE_TOO_BIG
 #define XCV_WS_CLOSE_UNSUPPORTED_DATA PROVEN_WS_CLOSE_UNSUPPORTED_DATA
 #define XCV_WS_CONTINUATION PROVEN_WS_CONTINUATION
+#define XCV_WS_DEFLATE_ANSWER_MAX PROVEN_WS_DEFLATE_ANSWER_MAX
+#define XCV_WS_DEFLATE_OFFER PROVEN_WS_DEFLATE_OFFER
 #define XCV_WS_EVENT_CLOSE PROVEN_WS_EVENT_CLOSE
 #define XCV_WS_EVENT_DATA PROVEN_WS_EVENT_DATA
 #define XCV_WS_EVENT_NONE PROVEN_WS_EVENT_NONE
@@ -1093,6 +1095,7 @@
 #define xcv_ws_accept_key proven_ws_accept_key
 #define xcv_ws_check_request proven_ws_check_request
 #define xcv_ws_check_response proven_ws_check_response
+#define xcv_ws_check_response_deflate proven_ws_check_response_deflate
 #define xcv_ws_close_code_for proven_ws_close_code_for
 #define xcv_ws_close_code_is_valid proven_ws_close_code_is_valid
 #define xcv_ws_close_parse proven_ws_close_parse
@@ -1101,6 +1104,7 @@
 #define xcv_ws_conn_close proven_ws_conn_close
 #define xcv_ws_conn_close_code proven_ws_conn_close_code
 #define xcv_ws_conn_close_reason proven_ws_conn_close_reason
+#define xcv_ws_conn_compressed proven_ws_conn_compressed
 #define xcv_ws_conn_config_t proven_ws_conn_config_t
 #define xcv_ws_conn_connect proven_ws_conn_connect
 #define xcv_ws_conn_destroy proven_ws_conn_destroy
@@ -1113,9 +1117,11 @@
 #define xcv_ws_conn_send_part proven_ws_conn_send_part
 #define xcv_ws_conn_send_text proven_ws_conn_send_text
 #define xcv_ws_conn_t proven_ws_conn_t
+#define xcv_ws_decoder_allow_compressed proven_ws_decoder_allow_compressed
 #define xcv_ws_decoder_feed proven_ws_decoder_feed
 #define xcv_ws_decoder_init proven_ws_decoder_init
 #define xcv_ws_decoder_t proven_ws_decoder_t
+#define xcv_ws_deflate_accept proven_ws_deflate_accept
 #define xcv_ws_event_accept proven_ws_event_accept
 #define xcv_ws_event_callbacks_t proven_ws_event_callbacks_t
 #define xcv_ws_event_config_t proven_ws_event_config_t
@@ -1132,6 +1138,7 @@
 #define xcv_ws_stream_abort proven_ws_stream_abort
 #define xcv_ws_stream_buffered proven_ws_stream_buffered
 #define xcv_ws_stream_close proven_ws_stream_close
+#define xcv_ws_stream_compressed proven_ws_stream_compressed
 #define xcv_ws_stream_pause proven_ws_stream_pause
 #define xcv_ws_stream_peer proven_ws_stream_peer
 #define xcv_ws_stream_ping proven_ws_stream_ping

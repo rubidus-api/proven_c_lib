@@ -18,6 +18,49 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release: compressed WebSocket messages - `permessage-deflate` (RFC 7692) - in the
+codec and both drivers. **Nothing changes for a program that sets nothing**, and a connection
+that is idle holds no compression state even when the extension is on. In bytes: a connection
+of the event-driven server is the size it was (488 on x86-64) and 24 larger when the
+extension was agreed; a `proven_ws_conn_t`, which holds 21 KiB of buffers, is 40 larger
+whether it compresses or not.
+
+### Added
+
+- **`compress` in `proven_ws_conn_config_t` and `proven_ws_event_config_t`**, with
+  `compress_level` and `compress_window_bits`. A client offers the extension, a server
+  accepts it when offered; `proven_ws_conn_compressed` and `proven_ws_stream_compressed` say
+  whether the other side agreed. Messages of 64 bytes or more are then compressed as they
+  are sent, and compressed messages are inflated as they arrive - whole from
+  `proven_ws_conn_receive`, in pieces of at most 16 KiB from the event-driven server.
+  `max_message_bytes` bounds the inflated size (1009 past it); text is checked after
+  inflating and bytes that do not inflate end the connection with 1007.
+- **Every message is compressed on its own** ("no context takeover", negotiated in both
+  directions, always). A compressor exists for one send and a decompressor for one message,
+  so an idle connection is the size it was, and the length of one message says nothing about
+  another. The form that keeps a window between messages is not offered and not accepted.
+- `ws.h`: `rsv1` in `proven_ws_frame_t` (parsed and written on the first frame of a message),
+  `compressed` in `proven_ws_event_t`, `proven_ws_decoder_allow_compressed`,
+  `PROVEN_WS_DEFLATE_OFFER`, `proven_ws_deflate_accept` (a server's choice among a request's
+  offers), `proven_ws_check_response_deflate` (a client's check of the answer). Pure; in a
+  freestanding build.
+- Manual chapter 12, section 9, "Compressed messages", with two compiled examples; the
+  registered tests `test_unit_ws_deflate` (which reads the published examples of RFC 7692)
+  and `test_unit_ws_compress`.
+
+### Changed
+
+- `proven_ws_frame_parse` reports the first reserved bit in `rsv1` instead of refusing it,
+  where a message begins. It is still refused on continuations and control frames, as are the
+  other two bits; and a decoder that was not told about the extension still refuses it
+  everywhere. `proven_ws_check_response` is unchanged: a client that offered nothing refuses
+  every extension.
+
+### Not included
+
+- Compression that carries its window from one message to the next; a way to send one
+  message uncompressed on a connection that compresses; other extensions.
+
 ## [0.26.0] - 2026-10-11
 
 A MINOR release: `Content-Encoding` in the four HTTP drivers, on the codec of 0.24.0.

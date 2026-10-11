@@ -59,6 +59,9 @@ typedef struct {
     proven_u32 ping_interval_ms;           /**< silence from the client after which a ping is sent. 0: 30 s */
     proven_u32 pong_timeout_ms;            /**< further silence after which the connection is ended. 0: 10 s */
     proven_u32 close_timeout_ms;           /**< how long to wait for the client's answer to a close, counted from the last output it took. 0: 5 s */
+    bool compress;                         /**< accept compressed messages (`permessage-deflate`) when the client offers them. See proven_ws_stream_compressed. false: not */
+    int compress_level;                    /**< 1 (fastest) to 9 (smallest); -1 stores without compressing. 0: 6 */
+    int compress_window_bits;              /**< how far back the compressor looks, 9 to 15: its memory during one send runs from about 11 KiB to about 325 KiB, less for a message smaller than the window. 0: 15 */
 } proven_ws_event_config_t;
 
 /**
@@ -73,7 +76,8 @@ typedef struct {
  * PROVEN_ERR_INVALID_FORMAT, and whatever the page is for PROVEN_ERR_NOT_FOUND, which means
  * the request did not ask for a WebSocket at all.
  *
- * @return PROVEN_ERR_INVALID_ARG (no `on_message`, a subprotocol that is not a token);
+ * @return PROVEN_ERR_INVALID_ARG (no `on_message`, a subprotocol that is not a token, a
+ *         compression level or window outside its range);
  *         PROVEN_ERR_INVALID_STATE when not called inside `on_request` for this stream, or a
  *         response was already begun; the errors of proven_ws_check_request; PROVEN_ERR_NOMEM;
  *         PROVEN_ERR_RESET when the client vanished at that moment (`on_done` was called).
@@ -140,6 +144,28 @@ void *proven_ws_stream_user(const proven_ws_stream_t *ws);
 
 /** @brief The client's address. */
 proven_net_addr_t proven_ws_stream_peer(const proven_ws_stream_t *ws);
+
+/**
+ * @brief Whether messages on this connection may be compressed: `compress` was set and the
+ *        client offered `permessage-deflate` in a form that could be met.
+ *
+ * When it is on, the calls are used as before. A message of 64 bytes or more is compressed as
+ * it is queued - each on its own, with nothing kept from one message to the next, so that an
+ * idle connection holds no compression state and the size of one message says nothing about
+ * another. A send is still taken or refused on `max_buffered_output`, and is queued a few
+ * kilobytes at a time. A compressed message that arrives is inflated on its way to
+ * `on_message`, in pieces of at most 16 KiB with `first` and `last` marking its ends:
+ * `max_message_bytes` bounds the **inflated** size (1009 past it), text is checked across
+ * the pieces, and bytes that do not inflate end the connection with 1007. While such a
+ * message is arriving the connection holds about 51 KiB for it.
+ *
+ * Raw DEFLATE carries no checksum: a compressed message damaged on the way can inflate to
+ * other bytes without an error. And **do not turn compression on for messages that carry a
+ * secret together with text the client chose**: the length of a compressed message tells an
+ * observer of the connection how much the two have in common, TLS or not.
+ */
+[[nodiscard]]
+bool proven_ws_stream_compressed(const proven_ws_stream_t *ws);
 
 /** @brief Bytes queued for the client and not yet accepted by it. */
 proven_size_t proven_ws_stream_buffered(const proven_ws_stream_t *ws);

@@ -54,6 +54,9 @@ typedef struct {
     proven_size_t max_message_bytes;    /**< largest message accepted, fragments together; 0: 1 MiB */
     proven_u32 io_timeout_ms;           /**< the limit for each write; 0: 30 s */
     proven_u32 close_timeout_ms;        /**< how long proven_ws_conn_close waits for the peer's close; 0: 5 s */
+    bool compress;                      /**< compressed messages (`permessage-deflate`): a client offers it, a server accepts it when offered. See proven_ws_conn_compressed. With it set, do not pass a `Sec-WebSocket-Extensions` header of your own to proven_ws_conn_connect: the connection writes one. false: neither */
+    int compress_level;                 /**< 1 (fastest) to 9 (smallest); -1 stores without compressing. 0: 6 */
+    int compress_window_bits;           /**< how far back the compressor looks, 9 to 15: its memory during one send runs from about 11 KiB to about 325 KiB, less for a message smaller than the window. 0: 15 */
 } proven_ws_conn_config_t;
 
 /** @brief A received message. `data` is memory the connection owns, good until the next
@@ -127,9 +130,14 @@ proven_err_t proven_ws_conn_accept(proven_http_exchange_t *exchange, proven_u8st
  * @param is_server true for the server's end: it expects masked frames and sends unmasked ones.
  * @param early bytes of the WebSocket stream that were read together with the HTTP handshake.
  *        They are copied.
- * @return PROVEN_ERR_INVALID_ARG; PROVEN_ERR_NOMEM; PROVEN_ERR_OUT_OF_BOUNDS when `early` is
- *         larger than the connection's read buffer (16 KiB); PROVEN_ERR_IO when a client could
- *         not draw random bytes for its masks.
+ * No handshake is made here, so nothing is negotiated: `config->compress` says that
+ * `permessage-deflate` **was** agreed (with no context takeover in either direction), and both
+ * ends must say the same.
+ *
+ * @return PROVEN_ERR_INVALID_ARG (also for a compression level or window outside its range);
+ *         PROVEN_ERR_NOMEM; PROVEN_ERR_OUT_OF_BOUNDS when `early` is larger than the
+ *         connection's read buffer (16 KiB); PROVEN_ERR_IO when a client could not draw random
+ *         bytes for its masks.
  */
 [[nodiscard]]
 proven_err_t proven_ws_conn_open(proven_transport_t transport, bool is_server, proven_mem_view_t early,
@@ -220,6 +228,28 @@ proven_u16 proven_ws_conn_close_code(const proven_ws_conn_t *conn);
 /** @brief The reason that came with the peer's close; often empty. Good until destroy. */
 [[nodiscard]]
 proven_u8str_view_t proven_ws_conn_close_reason(const proven_ws_conn_t *conn);
+
+/**
+ * @brief Whether messages on this connection may be compressed: `compress` was set and the
+ *        other side agreed.
+ *
+ * When it is on, nothing changes in how the connection is used. A message of 64 bytes or more
+ * is compressed as it is sent - each on its own, with nothing kept from one message to the
+ * next, so a connection holds no compression state between messages and the size of one
+ * message says nothing about another. A compressed message that arrives is inflated into the
+ * message buffer: `max_message_bytes` bounds the **inflated** size, and a message that would
+ * pass it ends the connection with 1009, as an uncompressed one does. Bytes that do not
+ * inflate, like text that is not UTF-8, end it with 1007.
+ *
+ * Raw DEFLATE carries no checksum. A compressed message damaged on the way can inflate to
+ * other bytes without an error: use TLS, or check what matters yourself.
+ *
+ * **Do not turn it on for messages that carry a secret together with text the other side
+ * chose** - the length of the compressed message tells an observer of the connection how
+ * much the two have in common, TLS or not.
+ */
+[[nodiscard]]
+bool proven_ws_conn_compressed(const proven_ws_conn_t *conn);
 
 /** @brief How many pongs have arrived. Send a ping, receive for a while, and see whether this
  *         moved: that is how a program finds out a silent connection is dead. */

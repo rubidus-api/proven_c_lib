@@ -185,7 +185,7 @@ void proven_inflate_destroy(proven_inflate_t *z);
 | `PROVEN_DEFLATE_FLUSH_FINISH` | 그것이 마지막 입력이었다: 스트림을 끝낸다 | 끝에서 한 번. `*done`이 될 때까지 이것과 함께, 자리를 더 주며 계속 부른다 |
 
 sync flush는 바이트 경계에서 끝나고, 그것이 내는 마지막 네 바이트는 언제나 `00 00 ff ff`다. WebSocket의
-`permessage-deflate`는 메시지마다 그 네 바이트를 뗀 sync flush로 보내고, 받는 쪽이 그것을 다시 붙인다.
+`permessage-deflate`는 메시지마다 그 네 바이트를 뗀 sync flush로 보내고, 받는 쪽이 그것을 다시 붙인다([12장](manual-12-websocket-ko.md) 9절: WebSocket 드라이버는 그 네 바이트를 떼고 다시 붙이며, 메시지마다 새로 시작한다).
 raw 스트림이 끝나지 않아도 되는 까닭도 그것이다: 해제기는 조각조각 받고, `*done`은 참이 되지 않으며,
 앞선 조각에 대해 기억하는 것이 뒤의 조각을 작게 만든다.
 

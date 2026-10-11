@@ -239,7 +239,8 @@ int main(void) {
         }
 
         static const struct { const char *hex; const char *why; } bad[] = {
-            { "c100", "RSV1 set" }, { "a100", "RSV2 set" }, { "9100", "RSV3 set" }, { "f100", "all reserved bits set" },
+            { "c000", "RSV1 on a continuation" }, { "c800", "RSV1 on a close" }, { "c900", "RSV1 on a ping" },
+            { "a100", "RSV2 set" }, { "9100", "RSV3 set" }, { "f100", "all reserved bits set" },
             { "8300", "opcode 3" }, { "8400", "opcode 4" }, { "8500", "opcode 5" }, { "8600", "opcode 6" }, { "8700", "opcode 7" },
             { "8b00", "opcode 11" }, { "8c00", "opcode 12" }, { "8d00", "opcode 13" }, { "8e00", "opcode 14" }, { "8f00", "opcode 15" },
             { "0900", "a fragmented ping" }, { "0a00", "a fragmented pong" }, { "0800", "a fragmented close" },

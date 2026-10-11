@@ -7,7 +7,8 @@ for the codec half alone.**
 binary messages, close it properly, and say what your program does when the other side breaks
 the rules - or you can take the frames apart yourself, with no socket in sight.
 
-This chapter covers `ws.h` and `ws_conn.h`. `ws.h` is pure text-and-bytes handling, available in
+This chapter covers `ws.h` and `ws_conn.h`, and - in section 9 - compressed messages in both
+of them and in the event-driven server of Chapter 15. `ws.h` is pure text-and-bytes handling, available in
 a [freestanding](manual-freestanding.md) build and untouched by `PROVEN_NO_NET`. `ws_conn.h`
 needs sockets: it is hosted-only and `PROVEN_NO_NET` leaves it out.
 
@@ -21,7 +22,8 @@ needs sockets: it is hosted-only and `PROVEN_NO_NET` leaves it out.
 6. [The codec: the handshake](#6-the-codec-the-handshake)
 7. [The codec: frames](#7-the-codec-frames)
 8. [The codec: the decoder](#8-the-codec-the-decoder)
-9. [What is not here](#9-what-is-not-here)
+9. [Compressed messages](#9-compressed-messages)
+10. [What is not here](#10-what-is-not-here)
 
 ## 1. What WebSocket is, in one page
 
@@ -418,8 +420,10 @@ value only has to be something an HTTP server that is *not* a WebSocket server w
 produce by reflex. That is also all it proves. It does not authenticate the server and it does
 not authenticate the client; anyone can compute it.
 
-**A response that names an extension is refused.** This library offers none, so a server that
-answers with `Sec-WebSocket-Extensions` is announcing frames this side cannot read.
+**A response that names an extension is refused** by `proven_ws_check_response`: a client
+that offered none is being told of frames it did not ask for. A client that offered
+compression checks with `proven_ws_check_response_deflate` instead (section 9), which
+accepts that one extension in the form it was offered and nothing else.
 
 ## 7. The codec: frames
 
@@ -435,7 +439,7 @@ typedef struct {
 
 | API | Intent | Return |
 |---|---|---|
-| `proven_ws_frame_parse(data, &frame, &header_size)` | Parse a frame header - 2 to 14 bytes - from the front of `data`. | `proven_err_t`: `NEED_MORE`; `INVALID_FORMAT` for a reserved bit, an undefined opcode, a length not in its shortest form, or a control frame that is fragmented or over 125 bytes. |
+| `proven_ws_frame_parse(data, &frame, &header_size)` | Parse a frame header - 2 to 14 bytes - from the front of `data`. | `proven_err_t`: `NEED_MORE`; `INVALID_FORMAT` for a reserved bit (the first is reported in `rsv1` where a message begins: section 9), an undefined opcode, a length not in its shortest form, or a control frame that is fragmented or over 125 bytes. |
 | `proven_ws_frame_write(out, &len, &frame)` | Append a frame header. The payload is yours to write after it. | `proven_err_t`: `INVALID_ARG` for a frame the parser would refuse; `OUT_OF_BOUNDS`. |
 | `proven_ws_mask(data, mask, offset)` | Mask or unmask payload bytes in place. `offset` is where `data` starts within the payload. | none. |
 | `proven_ws_close_write(out, &len, code, reason)` | Append a close frame's payload. | `proven_err_t`: `INVALID_ARG` for a code that may not be sent or a reason over 123 bytes; `INVALID_ENCODING`; `OUT_OF_BOUNDS`. |
@@ -492,7 +496,7 @@ feed memory you need unchanged.
 | The stream | Error |
 |---|---|
 | A frame from a client that is not masked, or one from a server that is | `INVALID_FORMAT` |
-| A reserved bit, an undefined opcode, a length not in its shortest form | `INVALID_FORMAT` |
+| A reserved bit (the first only where it may not be, or when compression was not agreed: section 9), an undefined opcode, a length not in its shortest form | `INVALID_FORMAT` |
 | A control frame over 125 bytes, or fragmented | `INVALID_FORMAT` |
 | A continuation with no message open; a new message inside an open one | `INVALID_FORMAT` |
 | A close frame with a one-byte payload, or a code that may not be sent | `INVALID_FORMAT` |
@@ -640,10 +644,334 @@ int main(void) {
 }
 ```
 
-## 9. What is not here
+## 9. Compressed messages
 
-- **Compression.** `permessage-deflate` is not offered and not accepted. A peer that insists
-  on it cannot be talked to.
+```c
+bool proven_ws_conn_compressed(const proven_ws_conn_t *conn);            /* ws_conn.h */
+bool proven_ws_stream_compressed(const proven_ws_stream_t *ws);          /* ws_event.h, Chapter 15 */
+
+#define PROVEN_WS_DEFLATE_OFFER "permessage-deflate; client_no_context_takeover; server_no_context_takeover"
+proven_err_t proven_ws_deflate_accept(const proven_http_request_t *request, proven_mem_mut_t out, proven_size_t *len, int *window_bits);
+proven_err_t proven_ws_check_response_deflate(const proven_http_response_t *response, proven_u8str_view_t key,
+                                              proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate);
+void proven_ws_decoder_allow_compressed(proven_ws_decoder_t *decoder);
+```
+
+A WebSocket connection can agree, in its handshake, to compress its messages: the extension
+is called `permessage-deflate` (RFC 7692), every browser offers it, and it is the DEFLATE of
+[Chapter 16](manual-16-compression.md). A page of JSON or a batch of log lines shrinks to a
+third or less; a message of a few dozen bytes gains little, for the reason given below.
+
+**It is off until you ask.** Set `compress` in the connection's configuration - in a
+`proven_ws_conn_config_t`, or in the `proven_ws_event_config_t` of Chapter 15. A client then
+offers the extension and a server accepts it when offered; `proven_ws_conn_compressed` and
+`proven_ws_stream_compressed` say whether the other side agreed. **Nothing else changes**:
+the same calls send and receive, and a connection whose peer did not agree simply goes on
+uncompressed.
+
+| | With compression agreed |
+|---|---|
+| A message you send | Compressed when it is 64 bytes or more; shorter ones go as they are |
+| A message you receive | Inflated before you see it: whole from `proven_ws_conn_receive`, in pieces of at most 16 KiB from the event-driven server |
+| `max_message_bytes` | Counts the **inflated** size. A few hundred bytes that unfold past it end the connection with 1009, as an oversized plain message does |
+| Text | Checked to be UTF-8 after inflating; 1007 if it is not |
+| Bytes that do not inflate | 1007 |
+| A frame marked compressed on a connection that did not agree | 1002 |
+
+**Every message is compressed on its own.** The extension allows each side to keep its
+32 KiB window from one message to the next, which helps small, similar messages - and costs
+a compressor and a decompressor per connection for as long as it is open. This library
+always negotiates the other form ("no context takeover", in both directions): a compressor
+exists for the length of one send, a decompressor from the first frame of a compressed
+message to its last, and **a connection that is idle holds no compression state at all**.
+Ten thousand quiet connections cost what they cost without compression. The price is that a
+short message has only itself to refer back to.
+
+### Example: one field, and what it changes
+
+<!-- example: manual/examples/en/ex_12_ws_compressed.c -->
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/*
+ * Compressed WebSocket messages, the way a program uses them: one field in a configuration.
+ *
+ * The server here is the event-driven one, the client the blocking one. Each sets `compress`;
+ * the handshake agrees; after that every call is used exactly as before, and what crosses
+ * the network is a fraction of what was said.
+ */
+
+typedef struct {
+    proven_loop_t *loop;
+    bool compressed;                   /* what the server found agreed */
+    proven_size_t received, largest, pieces;
+} app_t;
+
+/* A compressed message arrives decoded, in pieces of at most 16 KiB. Nothing holds the whole
+ * of it unless you do. This handler counts, and answers when the message is complete. */
+static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
+    app_t *app = ctx;
+    (void)text;
+    if (first) { app->received = 0; app->pieces = 0; app->largest = 0; }
+    app->received += piece.size;
+    app->pieces++;
+    if (piece.size > app->largest) app->largest = piece.size;
+    if (!last) return;
+    char answer[64];
+    int n = snprintf(answer, sizeof answer, "%u bytes", (unsigned)app->received);
+    /* Sent like any message. Short ones go as they are: under 64 bytes there is nothing to gain. */
+    (void)proven_ws_stream_send(ws, true, (proven_mem_view_t){ (const proven_byte_t *)answer, (proven_size_t)n });
+}
+
+static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
+    app_t *app = ctx;
+    proven_ws_event_config_t config = {
+        .on = { .on_message = on_message },
+        .ctx = app,
+        .compress = true,              /* accept the extension when the client offers it */
+        .max_message_bytes = 256 * 1024,   /* the limit on a message AS DECODED: a few bytes cannot become a gigabyte */
+    };
+    proven_ws_stream_t *ws = NULL;
+    if (proven_ws_event_accept(stream, head, &config, &ws) != PROVEN_OK) {
+        (void)proven_http_stream_respond(stream, 400, NULL, 0, (proven_mem_view_t){ 0 });
+        return;
+    }
+    /* Whether it was agreed depends on the client too. Nothing else has to be done either way. */
+    app->compressed = proven_ws_stream_compressed(ws);
+}
+
+static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    app_t app = { 0 };
+    EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
+    proven_http_event_server_config_t server_config = { .on = { .on_request = on_request }, .ctx = &app };
+    proven_http_event_server_t *server = NULL;
+    proven_net_addr_t at;
+    EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &server_config, &server) == PROVEN_OK, "a server");
+    proven_err_t err = proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at);
+    if (err == PROVEN_ERR_PERMISSION || err == PROVEN_ERR_UNSUPPORTED) {
+        printf("no sockets in this environment; nothing to show\n");
+        proven_http_event_server_destroy(server);
+        proven_loop_destroy(app.loop);
+        return EXAMPLE_OK();
+    }
+    EXAMPLE_REQUIRE(err == PROVEN_OK, "it listens");
+    proven_job_sys_t *threads = NULL;
+    proven_job_group_t running;
+    proven_job_group_init(&running);
+    EXAMPLE_REQUIRE(proven_job_system_init(heap, 1, 4, &threads) == PROVEN_OK &&
+                    proven_job_group_submit(threads, &running, run, &app) == PROVEN_OK, "the loop runs on another thread");
+
+    // ---- a client that asks for compression ---------------------------------------
+    proven_http_client_config_t client_config = { .alloc = heap };
+    proven_http_client_t *client = NULL;
+    EXAMPLE_REQUIRE(proven_http_client_create(&client_config, &client) == PROVEN_OK, "an HTTP client");
+    char url[64];
+    int n = snprintf(url, sizeof url, "ws://127.0.0.1:%u/", (unsigned)at.port);
+    proven_ws_conn_config_t ws_config = { .alloc = heap, .compress = true };       /* offer the extension */
+    proven_ws_conn_t *conn = NULL;
+    EXAMPLE_REQUIRE(proven_ws_conn_connect(client, (proven_u8str_view_t){ (const proven_byte_t *)url, (proven_size_t)n }, NULL, 0, PROVEN_LIT(""),
+                                           &ws_config, &conn, NULL) == PROVEN_OK, "connected");
+    EXAMPLE_REQUIRE(proven_ws_conn_compressed(conn), "and the server agreed to compress");
+
+    /* A hundred thousand bytes of a report. On the wire it is a few hundred. */
+    static char report[100000];
+    for (proven_size_t i = 0; i < sizeof report; ++i) report[i] = "temperature 21.5, humidity 40\n"[i % 30];
+    proven_ws_message_t msg;
+    EXAMPLE_REQUIRE(proven_ws_conn_send_text(conn, (proven_u8str_view_t){ (const proven_byte_t *)report, sizeof report }) == PROVEN_OK &&
+                    proven_ws_conn_receive(conn, proven_net_deadline_in(5000), &msg) == PROVEN_OK &&
+                    msg.data.size == 12 && memcmp(msg.data.ptr, "100000 bytes", 12) == 0, "the server received all of it");
+
+    /* The limit is on the decoded size. Three hundred thousand of one letter are a few hundred
+     * bytes compressed - and still too much: the server ends the connection with 1009. */
+    static char flood[300000];
+    memset(flood, 'x', sizeof flood);
+    EXAMPLE_REQUIRE(proven_ws_conn_send_text(conn, (proven_u8str_view_t){ (const proven_byte_t *)flood, sizeof flood }) == PROVEN_OK, "a message that inflates past the server's limit");
+    EXAMPLE_REQUIRE(proven_ws_conn_receive(conn, proven_net_deadline_in(5000), &msg) == PROVEN_ERR_EOF && proven_ws_conn_close_code(conn) == 1009, "is answered with 1009, however small it was on the wire");
+    proven_ws_conn_destroy(conn);
+    proven_http_client_destroy(client);
+
+    proven_loop_stop(app.loop);
+    proven_job_group_wait(threads, &running);
+    EXAMPLE_REQUIRE(app.compressed, "the server found the extension agreed as well");
+    proven_http_event_server_destroy(server);
+    proven_loop_destroy(app.loop);
+    proven_job_system_close(threads);
+    proven_job_system_destroy(threads);
+    return EXAMPLE_OK();
+}
+```
+
+### Example: the extension with the codec alone
+
+For a program that drives the codec itself (sections 6 to 8): the handshake functions, the
+bit in the frame, and the four bytes.
+
+<!-- example: manual/examples/en/ex_12_ws_deflate.c -->
+```c
+#include <stdio.h>
+#include <string.h>
+
+/*
+ * Compressed WebSocket messages with the codec alone: no socket, no driver.
+ *
+ * Three things make up the extension called permessage-deflate. The handshake agrees on it.
+ * One bit in a frame's header says "this message is compressed". And the payload is DEFLATE
+ * with its last four bytes left off. The codec does the first two; the third is deflate.h.
+ *
+ * A program that uses ws_conn.h or ws_event.h sets one field and sees none of this.
+ */
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+
+    // ---- the handshake ---------------------------------------------------------------
+    /* A client asks with one header. PROVEN_WS_DEFLATE_OFFER is the form this library speaks:
+     * each message compressed on its own, in both directions. */
+    proven_http_header_t asked[] = {
+        { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER) },
+    };
+    proven_http_request_t request = { .headers = asked, .header_count = 1 };
+
+    /* A server looks at what was offered and writes its answer - or finds nothing it can
+     * meet (PROVEN_ERR_NOT_FOUND), and the connection goes on uncompressed. */
+    proven_byte_t answer[PROVEN_WS_DEFLATE_ANSWER_MAX];
+    proven_size_t answer_len = 0;
+    int window_bits = 0;
+    EXAMPLE_REQUIRE(proven_ws_deflate_accept(&request, (proven_mem_mut_t){ answer, sizeof answer }, &answer_len, &window_bits) == PROVEN_OK, "the offer can be met");
+    printf("the server answers: %.*s\n", (int)answer_len, (const char *)answer);
+    EXAMPLE_REQUIRE(window_bits == 15, "and may compress with the full window");
+
+    /* A browser's offer looks different, and is met as well. */
+    proven_http_header_t browser[] = { { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT("permessage-deflate; client_max_window_bits") } };
+    proven_http_request_t from_browser = { .headers = browser, .header_count = 1 };
+    proven_size_t len2 = 0;
+    EXAMPLE_REQUIRE(proven_ws_deflate_accept(&from_browser, (proven_mem_mut_t){ answer, sizeof answer }, &len2, &window_bits) == PROVEN_OK, "a browser's offer too");
+
+    /* The client checks the whole answer: the usual things, and that the extension came back
+     * in the form it asked for. (The key and the accept value are the pair in RFC 6455.) */
+    proven_http_header_t answered[] = {
+        { PROVEN_LIT("Upgrade"), PROVEN_LIT("websocket") },
+        { PROVEN_LIT("Connection"), PROVEN_LIT("Upgrade") },
+        { PROVEN_LIT("Sec-WebSocket-Accept"), PROVEN_LIT("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=") },
+        { PROVEN_LIT("Sec-WebSocket-Extensions"), { answer, answer_len } },
+    };
+    proven_http_response_t response = { .status = 101, .headers = answered, .header_count = 4 };
+    proven_u8str_view_t protocol;
+    bool compressed = false;
+    EXAMPLE_REQUIRE(proven_ws_check_response_deflate(&response, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &compressed) == PROVEN_OK && compressed,
+                    "the client finds the extension agreed");
+
+    // ---- a compressed message arrives -------------------------------------------------
+    /* This frame is in RFC 7692: the text "Hello", compressed, from a server. Its first
+     * byte is c1 where an uncompressed text frame has 81: the extra bit is RSV1. */
+    proven_byte_t wire[] = { 0xc1, 0x07, 0xf2, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00 };
+
+    proven_ws_decoder_t decoder;
+    proven_ws_event_t event;
+    proven_size_t used = 0;
+    /* A decoder that was not told about the extension refuses the bit, as it must. */
+    proven_byte_t copy[sizeof wire];
+    memcpy(copy, wire, sizeof wire);
+    proven_ws_decoder_init(&decoder, false, 0);
+    EXAMPLE_REQUIRE(proven_ws_decoder_feed(&decoder, (proven_mem_mut_t){ copy, sizeof copy }, &used, &event) == PROVEN_ERR_INVALID_FORMAT, "without the extension, the bit is an error");
+
+    proven_ws_decoder_init(&decoder, false, 0);
+    proven_ws_decoder_allow_compressed(&decoder);
+    EXAMPLE_REQUIRE(proven_ws_decoder_feed(&decoder, (proven_mem_mut_t){ wire, sizeof wire }, &used, &event) == PROVEN_OK &&
+                    event.kind == PROVEN_WS_EVENT_DATA && event.compressed && event.last, "with it, the message is handed over, marked compressed");
+
+    /* The decoder does not inflate: it allocates nothing. The bytes it hands over are raw
+     * DEFLATE whose last four bytes - always 00 00 ff ff - the sender left off. Put them
+     * back and inflate. The limit on what comes out is the size of your buffer. */
+    proven_inflate_t *z = NULL;
+    EXAMPLE_REQUIRE(proven_inflate_create(heap, PROVEN_DEFLATE_RAW, &z) == PROVEN_OK, "a decompressor for raw DEFLATE");
+    static const proven_byte_t tail[4] = { 0x00, 0x00, 0xff, 0xff };
+    proven_byte_t text[64];
+    proven_size_t taken = 0, made = 0, total = 0;
+    bool ended = false;
+    EXAMPLE_REQUIRE(proven_inflate(z, event.data, &taken, (proven_mem_mut_t){ text, sizeof text }, &made, &ended) == PROVEN_OK && taken == event.data.size, "the payload");
+    total = made;
+    EXAMPLE_REQUIRE(proven_inflate(z, (proven_mem_view_t){ tail, 4 }, &taken, (proven_mem_mut_t){ text + total, sizeof text - total }, &made, &ended) == PROVEN_OK && taken == 4, "then the four bytes");
+    total += made;
+    EXAMPLE_REQUIRE(total == 5 && memcmp(text, "Hello", 5) == 0, "and the message is Hello");
+    printf("the message: %.*s\n", (int)total, (const char *)text);
+    /* Now - not before - it is text, and yours to check: the decoder could not. */
+    proven_inflate_destroy(z);
+
+    // ---- a compressed message is sent --------------------------------------------------
+    /* The other way: compress with a sync flush, which ends in those same four bytes, and
+     * leave them off. The frame that carries it has `rsv1` set. */
+    static const char said[] = "to be, or not to be, that is the question: to be, or not to be";
+    proven_deflate_options_t options = { .alloc = heap, .format = PROVEN_DEFLATE_RAW };
+    proven_deflate_t *c = NULL;
+    EXAMPLE_REQUIRE(proven_deflate_create(&options, &c) == PROVEN_OK, "a compressor");
+    proven_byte_t packed[128];
+    EXAMPLE_REQUIRE(proven_deflate(c, (proven_mem_view_t){ (const proven_byte_t *)said, sizeof said - 1 }, &taken, (proven_mem_mut_t){ packed, sizeof packed }, &made,
+                                   PROVEN_DEFLATE_FLUSH_SYNC, &ended) == PROVEN_OK && taken == sizeof said - 1 && made > 4, "compressed, with a sync flush");
+    EXAMPLE_REQUIRE(memcmp(packed + made - 4, tail, 4) == 0, "which ends in 00 00 ff ff");
+    proven_size_t payload = made - 4;
+    proven_deflate_destroy(c);
+
+    proven_ws_frame_t frame = { .fin = true, .opcode = PROVEN_WS_TEXT, .rsv1 = true, .length = payload };
+    proven_byte_t header[PROVEN_WS_MAX_FRAME_HEADER];
+    proven_size_t header_len = 0;
+    EXAMPLE_REQUIRE(proven_ws_frame_write((proven_mem_mut_t){ header, sizeof header }, &header_len, &frame) == PROVEN_OK && header[0] == 0xc1, "a frame header with the bit");
+    printf("%u bytes of text go out as %u\n", (unsigned)(sizeof said - 1), (unsigned)(header_len + payload));
+    EXAMPLE_REQUIRE(header_len + payload < sizeof said - 1, "fewer than were said");
+    return EXAMPLE_OK();
+}
+```
+
+### Reference
+
+| API | Intent | Return |
+|---|---|---|
+| `compress` (both connection configurations) | Offer the extension (a client) or accept it when offered (a server). | - |
+| `compress_level`, `compress_window_bits` (both) | As in Chapter 16, section 4: 1 to 9 or -1; 9 to 15. Zero: 6, and 15. | `INVALID_ARG` outside those ranges. |
+| `proven_ws_conn_compressed(conn)`, `proven_ws_stream_compressed(ws)` | Whether the other side agreed. | `bool`. |
+| `PROVEN_WS_DEFLATE_OFFER` | The `Sec-WebSocket-Extensions` value a client sends. | a string literal. |
+| `proven_ws_deflate_accept(request, out, &len, &window_bits)` | A server's choice among the request's offers; writes the answer. | `proven_err_t`: `NOT_FOUND` when no offer can be met - go on without; `OUT_OF_BOUNDS` (`PROVEN_WS_DEFLATE_ANSWER_MAX` bytes are enough). |
+| `proven_ws_check_response_deflate(response, key, offered, &protocol, &deflate)` | `proven_ws_check_response` for a client that offered. | the same, and `INVALID_FORMAT` for an answer in a form that was not offered. |
+| `proven_ws_decoder_allow_compressed(decoder)` | Let the decoder pass compressed messages through, marked `compressed`. It does not inflate. | none. |
+| `rsv1` in `proven_ws_frame_t` | The bit that marks a compressed message, on its first frame. | - |
+
+### Cautions, and what goes wrong
+
+- **Do not compress messages that carry a secret together with text the other side chose.**
+  The length of a compressed message tells an observer of the connection how much the two
+  have in common, with or without TLS - the leak described in Chapter 16, section 5. Because
+  each message is compressed alone, one message cannot leak another; what is inside a single
+  message still can. Compression is per connection here: a connection that carries such
+  messages should not ask for it.
+- **The limit is on the inflated size, and you should set one.** `max_message_bytes` is what
+  stops a kilobyte from becoming a gigabyte. Its default is 1 MiB.
+- **Raw DEFLATE has no checksum.** A compressed message damaged in transit can inflate to
+  different bytes with no error. TLS prevents that; without it, check what matters.
+- **A peer that offers only what cannot be met is served uncompressed, not refused.** The
+  one such offer is a compression window of 256 bytes (`server_max_window_bits=8`), which
+  this compressor does not have. A client's own window size (`client_max_window_bits`) is
+  accepted and ignored: any window can be read.
+- **A server that accepts in another form is refused by the client.** One that takes the
+  offer without `server_no_context_takeover` would compress across messages, which this side
+  does not read; the connection fails with `PROVEN_ERR_INVALID_FORMAT`. Servers that follow
+  RFC 7692 either accept the offer as made or decline it.
+- **Memory while a compressed message is in flight:** about 35 KiB to inflate one (51 KiB in
+  the event-driven server), and from 11 KiB to 325 KiB to compress one, by the window and no
+  more than the message needs. It is allocated for the message and freed with it - so a busy
+  connection with compression allocates per message where one without does not.
+- **With the codec alone, text is yours to check.** The decoder cannot check bytes that are
+  not text yet; after inflating, check them. And count what comes out: the decoder's limit
+  counts compressed bytes.
+
+## 10. What is not here
+
+- **Compression that carries its window from one message to the next** ("context takeover"),
+  and any extension other than `permessage-deflate`. Section 9.
 - **One call that waits on many connections.** See section 5.
 - **Concurrent send and receive on one connection.**
 - **Automatic pings, reconnection, backoff.** Policy, and yours.

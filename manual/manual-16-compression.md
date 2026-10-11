@@ -193,7 +193,9 @@ The contract of a step is short, and worth reading once:
 
 A sync flush ends on a byte boundary, and the last four bytes it produces are always
 `00 00 ff ff`. WebSocket's `permessage-deflate` sends each message as a sync flush with
-those four bytes left off, and the receiver puts them back. That is also why a raw stream
+those four bytes left off, and the receiver puts them back ([Chapter 12](manual-12-websocket.md),
+section 9: the WebSocket drivers cut and put back those four bytes, and start afresh with
+every message). That is also why a raw stream
 need never end: the decompressor is fed piece after piece, `*done` never becomes true, and
 what it remembers of earlier pieces is what makes later ones small.
 

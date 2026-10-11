@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 103 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 105 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-11, Windows 11 test VM: x86-64 313 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 167 registered tests plus the 154 runnable manual examples - 321 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 180 test files: the 167 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 169 registered tests plus the 158 runnable manual examples - 327 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 182 test files: the 169 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -917,6 +917,38 @@ Sub-checks:
 Failure tip: inspect `src/proven/http_coding.c` for the rules; `sv_zip` and the respond function in `src/proven/http_server.c`; `ev_zip` and the write function in `src/proven/http_event.c`; `cl_read_decoded` in `src/proven/http_client.c`; `cl_decode` in `src/proven/http_event_client.c`. The vectors are in `tests/test_unit_http_coding_vectors.h`, written by a private generator from zlib's output, with zlib's own verdict asserted for every row.
 
 Note: the blocking client is not run against the event-driven server here; that pair, and curl and Python against both servers, are checked by a private program.
+
+### `tests/test_unit_ws_deflate` - ws: permessage-deflate below the drivers
+
+Intent: verify, with no socket, the parts of `permessage-deflate` (RFC 7692) that the drivers are built on: the frame bit, the decoder's rules for it, the negotiation, and the transform of one message.
+
+Sub-checks:
+
+- The frame bit: twelve headers - RSV1 on the first frame of a text or binary message parsed, reported and written back; on a continuation, a close, a ping or a pong refused; RSV2 and RSV3 refused; the writer refuses to put the bit on a control frame or a continuation.
+- The decoder: without `proven_ws_decoder_allow_compressed` the RFC's compressed frame is `PROVEN_ERR_INVALID_FORMAT`; with it the message arrives marked `compressed`, its bytes untouched and unchecked, in one frame and in the RFC's two; text sent uncompressed on such a connection is still checked; the limit counts compressed bytes.
+- The negotiation: twenty-five offers. Twelve can be met - the plain one, this library's own, `client_max_window_bits` with and without a value, `server_max_window_bits` bare and quoted from 9 to 15 (echoed), mixed case, a second offer taken when the first cannot be met - and are answered byte for byte; thirteen are passed over with `PROVEN_ERR_NOT_FOUND` (a window of 8, a missing or bad value, a parameter twice, an unknown one, another extension, nothing). Offers in a second header field are read; too little room is `PROVEN_ERR_OUT_OF_BOUNDS`. Fifteen answers seen by a client: accepted only in the form that was offered (with `server_no_context_takeover`, with or without a server window), refused otherwise; a client that offered nothing still refuses every extension.
+- The examples of RFC 7692 section 7.2.3 - one block, a block with no compression, a final block, two blocks - each inflated to `Hello` at nine combinations of input step and output room, the first also as the RFC's two fragments; the one byte `00` is an empty message.
+- Both ways: messages of ten sizes from one byte to 300,000, whole and in two and seven parts, at varying levels and windows, compressed through buffers of 16 and 4,096 bytes and read back byte for byte; a whole message does not end in the four closing bytes; a flushed part keeps them; an empty last part is the single byte `00`.
+- Refusals: 200,000 of one letter pass a limit of exactly their size and are `PROVEN_ERR_OUT_OF_BOUNDS` one byte under it; text that inflates to invalid UTF-8, or ends inside a character, is `PROVEN_ERR_INVALID_ENCODING` (and fine as binary); a character split across one-byte pieces of output is one character; a block type that does not exist and a stored block with a wrong length are `PROVEN_ERR_INVALID_FORMAT`.
+
+Failure tip: inspect `proven_ws_frame_parse`, `proven_ws_decoder_feed`, `ws_deflate_element`, `proven_ws_deflate_accept` and `ws_check_response` in `src/proven/ws.c`, and `src/proven/ws_deflate.c`. The byte sequences marked RFC are copied from the published text of RFC 7692: they are another implementation's output.
+
+### `tests/test_unit_ws_compress` - ws: compressed messages in the drivers
+
+Intent: verify `permessage-deflate` through `ws_conn.h` and `ws_event.h` over loopback - both servers answering the same paths, the library's client and raw sockets as the other end.
+
+Sub-checks:
+
+- Settings: a compression level or window outside its range is `PROVEN_ERR_INVALID_ARG` from `proven_ws_conn_open` (five ways) and from `proven_ws_event_accept` (four ways, with the request still answerable); the two questions accept null.
+- For each server: compression is on exactly when the client offered it and the server took it (four combinations), and a message goes round in each; text and binary at ten sizes from empty to a megabyte (to 70,000 bytes for the event-driven server, whose handler answers a message while it is still arriving), whole and in three parts, come back unchanged; a compressed message the blocking server sends in three parts arrives as one.
+- The limit: a message of exactly `max_message_bytes` inflated (a few hundred bytes on the wire) is taken; one that inflates to twice that ends the connection with 1009.
+- Raw sockets, for each server: a handshake by hand is answered with both no-takeover parameters; the RFC's compressed `Hello` is read and comes back uncompressed (too short to gain); ten thousand bytes sent uncompressed come back compressed, the bit on the first frame only, under two hundred bytes in all; with no offer no extension is named and the message comes back as it is; an offer of an 8-bit server window is passed over; a 10-bit one is echoed; bytes that do not inflate and text that inflates to invalid UTF-8 end the connection with 1007; the bit on a continuation or a ping, and anywhere on a connection that did not agree the extension, with 1002.
+- Pieces and pauses, on the event-driven server: text messages of 300,000, 16,384, 100, 0 and 1,000,000 bytes (the last one letter repeated: a kilobyte on the wire, one frame) are delivered in pieces of at most 16 KiB with one first and one last piece, every byte in order, while the handler pauses after each piece - from a timer, and every third time by pausing and resuming inside the delivery itself - and nothing arrives between a pause and its resume.
+- Twenty thousand compressed messages pushed by the event-driven server through a 16 KiB output limit to a client that reads nothing until the first send has been refused: all arrive in order, with sends refused and resumed through `on_writable`.
+
+Failure tip: inspect `proven_ws_conn_send_part`, `wc_message_inflate` and the two handshakes in `src/proven/ws_conn.c`; `ws_rx_run`, `ws_rx_hold`, `proven_ws_stream_send_piece` and `proven_ws_stream_resume` in `src/proven/ws_event.c`. A wrong count from `/count` is the pause path: what was set aside in `ws_rx_hold` and how far `held_at` has moved.
+
+Note: this test is not run over TLS (the transform sits above the transport, which the other WebSocket tests cover); that Node's `ws` package and built-in client agree with both drivers is checked by a private program.
 
 ### `tests/test_unit_hash_legacy` - legacy digests: SHA-1 and MD5
 
@@ -1533,7 +1565,7 @@ Intent: verify the codec against RFC 6455's own examples and against the rules i
 Sub-checks:
 
 - Handshake: the key and accept value of section 1.3; five malformed keys refused with nothing written; a made key is the Base64 of its bytes. The RFC's request is an upgrade; twelve requests classified (`NOT_FOUND` for no or another upgrade, `INVALID_FORMAT` for the wrong method, HTTP/1.0, no `Connection: Upgrade`, a missing, repeated or short key, no version; `UNSUPPORTED` for another version); subprotocols offered compared exactly. Ten responses judged, among them a wrong accept value, a subprotocol that was not offered, and an extension.
-- Frame headers: the eight examples of section 5.7 parse to the RFC's fields, every proper prefix from an exact-size buffer is `PROVEN_ERR_NEED_MORE`, and the writer reproduces the bytes; the masked `Hello` unmasks, and masking in two pieces with the offset equals masking in one. Ten lengths at the edges of the three encodings, masked and not, written in shortest form and read back, with one byte short `PROVEN_ERR_OUT_OF_BOUNDS`. Twenty-five malformed headers refused: each reserved bit, the ten undefined opcodes, fragmented and long control frames, four lengths not in shortest form, a top bit set. The writer refuses four frames the parser would.
+- Frame headers: the eight examples of section 5.7 parse to the RFC's fields, every proper prefix from an exact-size buffer is `PROVEN_ERR_NEED_MORE`, and the writer reproduces the bytes; the masked `Hello` unmasks, and masking in two pieces with the offset equals masking in one. Ten lengths at the edges of the three encodings, masked and not, written in shortest form and read back, with one byte short `PROVEN_ERR_OUT_OF_BOUNDS`. Twenty-seven malformed headers refused: the first reserved bit where it may not be (a continuation, a close, a ping) and the other two anywhere, the ten undefined opcodes, fragmented and long control frames, four lengths not in shortest form, a top bit set. The writer refuses four frames the parser would.
 - Close: sixteen codes that may be sent and thirteen that may not; payloads written and read back; no status as an empty payload; refusals for a reason without a code, an unsendable code, 124 bytes of reason, a reason that is not UTF-8, a small buffer; a one-byte payload and code 1005 on the wire.
 - Decoder, both directions: a conversation - a message, a fragmented message with a ping and an empty fragment inside, 300 binary bytes, two kinds of empty message, text cut inside a character, a pong, a close - decoded whole, split in two at every byte, and one byte at a time from exact-size copies, with identical transcripts. Bytes after a close frame are `PROVEN_ERR_EOF`.
 - Decoder refusals, each however it is cut: twenty-seven streams - wrong masking for the direction, continuation with nothing open, a new message inside an open one, eight close-payload violations, a close reason and eight texts that are not UTF-8 including a character broken across fragments, the message limit whole and across fragments - each with `INVALID_FORMAT`, `INVALID_ENCODING` or `OUT_OF_BOUNDS` as its close code requires. The same bytes pass as binary; the limit is exact and control frames are not counted; an error is repeated and consumes nothing.

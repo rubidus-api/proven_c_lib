@@ -663,6 +663,7 @@ proven_size_t proven_ws_stream_buffered(const proven_ws_stream_t *ws);
 | `ping_interval_ms` | 클라이언트가 이만큼 조용하면 ping을 보낸다. | 30초 |
 | `pong_timeout_ms` | 그 뒤로도 이만큼 조용하면 연결을 끝낸다. | 10초 |
 | `close_timeout_ms` | close에 대한 답을 기다리는 시간. 클라이언트가 마지막으로 출력을 가져간 때부터 센다. | 5초 |
+| `compress`, `compress_level`, `compress_window_bits` | 클라이언트가 제안하면 압축된 메시지를 받아들인다: [12장](manual-12-websocket-ko.md) 9절. 압축된 메시지는 풀린 채 최대 16 KiB 조각으로 도착하고, `max_message_bytes`는 풀린 크기를 센다. | 꺼짐. 6. 15 |
 
 **메시지는 조각으로 도착한다.** `on_message`는 각 메시지를 네트워크가 전달한 조각대로 받고,
 `first`와 `last`가 그 양 끝을 표시한다: 어떤 크기의 메시지든 조립되거나 붙들리지 않고 지나가며,
@@ -689,6 +690,7 @@ HTTP 본문과 다른 점이다. 거기의 쓰기는 몇 바이트를 받았는�
 | `proven_ws_stream_abort` | 없음. close 프레임 없이 곧바로 연결을 끝낸다. `on_closed(1006, PROVEN_ERR_RESET)`이 호출 안에서 불린다. |
 | `proven_ws_stream_pause`, `proven_ws_stream_resume` | 없음. 메시지 전달과 연결 읽기를 멈추고 다시 시작한다. |
 | `proven_ws_stream_buffered` | `proven_size_t`: 클라이언트를 위해 큐에 있고 아직 받아 가지 않은 바이트. |
+| `proven_ws_stream_compressed` | `bool`: `compress`를 켰고 클라이언트가 동의했는가. |
 
 **어떻게 끝나는가.** `on_closed`는 정확히 한 번 불리고, 받는 값이 경위를 말한다:
 

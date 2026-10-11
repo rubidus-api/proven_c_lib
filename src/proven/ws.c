@@ -1,4 +1,5 @@
 #include "proven/ws.h"
+#include "proven_internal_ws.h"
 #include "proven/hash_legacy.h"
 #include "proven/encode.h"
 #include "proven/utf.h"
@@ -112,8 +113,120 @@ bool proven_ws_request_offers(const proven_http_request_t *request, proven_u8str
     return false;
 }
 
-proven_err_t proven_ws_check_response(const proven_http_response_t *response, proven_u8str_view_t key,
-                                      proven_u8str_view_t offered, proven_u8str_view_t *protocol) {
+/* One `permessage-deflate` element of Sec-WebSocket-Extensions, taken apart. */
+typedef struct {
+    bool server_no_takeover, client_no_takeover, server_bits_seen, client_bits_seen;
+    int server_bits;
+    bool whole;                        /* the element was the only thing in the value */
+} ws_deflate_params_t;
+
+static proven_byte_t ws_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
+
+static bool ws_eq_nocase(proven_u8str_view_t a, const char *b) {
+    proven_size_t n = 0;
+    while (b[n] != '\0') n++;
+    if (a.size != n) return false;
+    for (proven_size_t i = 0; i < n; ++i) if (ws_lower(a.ptr[i]) != (proven_byte_t)b[i]) return false;
+    return true;
+}
+
+/* A window size as a parameter value: 8 to 15, bare or in quotes. 0 when it is not one. */
+static int ws_window_value(proven_u8str_view_t v) {
+    if (v.size >= 2 && v.ptr[0] == '"' && v.ptr[v.size - 1] == '"') { v.ptr++; v.size -= 2; }
+    if (v.size == 1 && (v.ptr[0] == '8' || v.ptr[0] == '9')) return v.ptr[0] - '0';
+    if (v.size == 2 && v.ptr[0] == '1' && v.ptr[1] >= '0' && v.ptr[1] <= '5') return 10 + (v.ptr[1] - '0');
+    return 0;
+}
+
+/* Parse the first element of `list` (up to a comma) as a permessage-deflate element. False
+ * when it is another extension or not well formed: a parameter that is unknown or given
+ * twice, a value where none belongs or none where one does (`client_max_window_bits` may go
+ * without one in an offer only). `*rest`, when given, receives what follows the comma. */
+static bool ws_deflate_element(proven_u8str_view_t list, bool offer, ws_deflate_params_t *out, proven_u8str_view_t *rest) {
+    proven_size_t end = 0;
+    while (end < list.size && list.ptr[end] != ',') end++;
+    if (rest) *rest = (proven_u8str_view_t){ .ptr = list.ptr + (end < list.size ? end + 1 : end), .size = list.size - (end < list.size ? end + 1 : end) };
+    proven_u8str_view_t element = { .ptr = list.ptr, .size = end };
+    *out = (ws_deflate_params_t){ .server_bits = 15 };
+    bool named = false;
+    proven_size_t start = 0;
+    for (proven_size_t i = 0; i <= element.size; ++i) {
+        if (i < element.size && element.ptr[i] != ';') continue;
+        proven_u8str_view_t part = ws_trim((proven_u8str_view_t){ .ptr = element.ptr + start, .size = i - start });
+        start = i + 1;
+        if (!named) {
+            if (!ws_eq_nocase(part, "permessage-deflate")) return false;
+            named = true;
+            continue;
+        }
+        proven_size_t eq = 0;
+        while (eq < part.size && part.ptr[eq] != '=') eq++;
+        proven_u8str_view_t name = ws_trim((proven_u8str_view_t){ .ptr = part.ptr, .size = eq });
+        bool has_value = eq < part.size;
+        proven_u8str_view_t value = has_value ? ws_trim((proven_u8str_view_t){ .ptr = part.ptr + eq + 1, .size = part.size - eq - 1 }) : (proven_u8str_view_t){ 0 };
+        if (ws_eq_nocase(name, "server_no_context_takeover")) {
+            if (has_value || out->server_no_takeover) return false;
+            out->server_no_takeover = true;
+        } else if (ws_eq_nocase(name, "client_no_context_takeover")) {
+            if (has_value || out->client_no_takeover) return false;
+            out->client_no_takeover = true;
+        } else if (ws_eq_nocase(name, "server_max_window_bits")) {
+            int bits = has_value ? ws_window_value(value) : 0;
+            if (bits == 0 || out->server_bits_seen) return false;
+            out->server_bits_seen = true;
+            out->server_bits = bits;
+        } else if (ws_eq_nocase(name, "client_max_window_bits")) {
+            if (out->client_bits_seen || (has_value ? ws_window_value(value) == 0 : !offer)) return false;
+            out->client_bits_seen = true;
+        } else {
+            return false;
+        }
+    }
+    return named;
+}
+
+/* A whole header value that must be exactly one permessage-deflate element (a server's answer). */
+static bool ws_deflate_parse(proven_u8str_view_t value, bool offer, ws_deflate_params_t *out) {
+    proven_u8str_view_t rest;
+    if (!ws_deflate_element(value, offer, out, &rest)) return false;
+    out->whole = ws_trim(rest).size == 0 && (value.size == 0 || value.ptr[value.size - 1] != ',');
+    return true;
+}
+
+proven_err_t proven_ws_deflate_accept(const proven_http_request_t *request, proven_mem_mut_t out, proven_size_t *len, int *window_bits) {
+    if (!request || !len || !window_bits || (out.size > 0 && !out.ptr) || *len > out.size) return PROVEN_ERR_INVALID_ARG;
+    for (proven_size_t i = 0; i < request->header_count; ++i) {
+        if (!ws_eq_nocase(request->headers[i].name, "sec-websocket-extensions")) continue;
+        proven_u8str_view_t rest = request->headers[i].value;
+        while (ws_trim(rest).size > 0) {
+            ws_deflate_params_t p;
+            proven_u8str_view_t next;
+            bool ok = ws_deflate_element(rest, true, &p, &next);
+            rest = next;
+            /* This compressor's smallest window is 512 bytes; an offer that insists on 256
+             * is one for the next offer, or for no compression. */
+            if (!ok || p.server_bits < 9) continue;
+            static const char base[] = "permessage-deflate; server_no_context_takeover; client_no_context_takeover";
+            static const char bits[] = "; server_max_window_bits=";
+            proven_size_t need = sizeof base - 1 + (p.server_bits_seen ? sizeof bits - 1 + 2 : 0);
+            if (out.size - *len < need) return PROVEN_ERR_OUT_OF_BOUNDS;
+            proven_size_t at = *len;
+            for (proven_size_t k = 0; k < sizeof base - 1; ++k) out.ptr[at++] = (proven_byte_t)base[k];
+            if (p.server_bits_seen) {
+                for (proven_size_t k = 0; k < sizeof bits - 1; ++k) out.ptr[at++] = (proven_byte_t)bits[k];
+                if (p.server_bits >= 10) out.ptr[at++] = '1';
+                out.ptr[at++] = (proven_byte_t)('0' + p.server_bits % 10);
+            }
+            *len = at;
+            *window_bits = p.server_bits;
+            return PROVEN_OK;
+        }
+    }
+    return PROVEN_ERR_NOT_FOUND;
+}
+
+static proven_err_t ws_check_response(const proven_http_response_t *response, proven_u8str_view_t key,
+                                     proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate) {
     if (!response || !protocol) return PROVEN_ERR_INVALID_ARG;
     *protocol = (proven_u8str_view_t){0};
     const proven_http_header_t *h = response->headers;
@@ -127,7 +240,16 @@ proven_err_t proven_ws_check_response(const proven_http_response_t *response, pr
     if (proven_http_header_count(h, n, ws_lit("Sec-WebSocket-Accept")) != 1 ||
         !proven_http_header_find(h, n, ws_lit("Sec-WebSocket-Accept"), &got) ||
         !ws_eq(ws_trim(got), (proven_u8str_view_t){ .ptr = want, .size = sizeof want })) return PROVEN_ERR_INVALID_FORMAT;
-    if (proven_http_header_count(h, n, ws_lit("Sec-WebSocket-Extensions")) != 0) return PROVEN_ERR_INVALID_FORMAT;
+    proven_size_t extensions = proven_http_header_count(h, n, ws_lit("Sec-WebSocket-Extensions"));
+    if (extensions != 0) {
+        /* Only a client that offered permessage-deflate may be answered with it, once, in the
+         * one form that was offered. */
+        proven_u8str_view_t value;
+        if (!deflate || extensions != 1 || !proven_http_header_find(h, n, ws_lit("Sec-WebSocket-Extensions"), &value)) return PROVEN_ERR_INVALID_FORMAT;
+        ws_deflate_params_t params;
+        if (!ws_deflate_parse(value, false, &params) || !params.whole || !params.server_no_takeover || params.client_bits_seen) return PROVEN_ERR_INVALID_FORMAT;
+        *deflate = true;
+    }
     proven_size_t protocols = proven_http_header_count(h, n, ws_lit("Sec-WebSocket-Protocol"));
     if (protocols > 1) return PROVEN_ERR_INVALID_FORMAT;
     if (protocols == 1) {
@@ -138,6 +260,18 @@ proven_err_t proven_ws_check_response(const proven_http_response_t *response, pr
         *protocol = p;
     }
     return PROVEN_OK;
+}
+
+proven_err_t proven_ws_check_response(const proven_http_response_t *response, proven_u8str_view_t key,
+                                      proven_u8str_view_t offered, proven_u8str_view_t *protocol) {
+    return ws_check_response(response, key, offered, protocol, (void *)0);
+}
+
+proven_err_t proven_ws_check_response_deflate(const proven_http_response_t *response, proven_u8str_view_t key,
+                                              proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate) {
+    if (!deflate) return PROVEN_ERR_INVALID_ARG;
+    *deflate = false;
+    return ws_check_response(response, key, offered, protocol, deflate);
 }
 
 // -----------------------------------------------------------------------------
@@ -156,8 +290,11 @@ proven_err_t proven_ws_frame_parse(proven_mem_view_t data, proven_ws_frame_t *ou
     proven_u8 opcode = (proven_u8)(b0 & 0x0F);
     bool fin = (b0 & 0x80) != 0;
     bool control = (opcode & 0x08) != 0;
-    /* The reserved bits belong to extensions, and none is negotiated here. */
-    if ((b0 & 0x70) != 0 || !ws_opcode_known(opcode)) return PROVEN_ERR_INVALID_FORMAT;
+    /* The reserved bits belong to extensions. The first is permessage-deflate's, and means
+     * something only where a message begins; no extension this library knows uses the others. */
+    bool rsv1 = (b0 & 0x40) != 0;
+    if ((b0 & 0x30) != 0 || !ws_opcode_known(opcode)) return PROVEN_ERR_INVALID_FORMAT;
+    if (rsv1 && (control || opcode == PROVEN_WS_CONTINUATION)) return PROVEN_ERR_INVALID_FORMAT;
     if (control && !fin) return PROVEN_ERR_INVALID_FORMAT;
     if (data.size < 2) return PROVEN_ERR_NEED_MORE;
     proven_byte_t b1 = data.ptr[1];
@@ -179,7 +316,7 @@ proven_err_t proven_ws_frame_parse(proven_mem_view_t data, proven_ws_frame_t *ou
         if (length < 65536) return PROVEN_ERR_INVALID_FORMAT;
         pos = 10;
     }
-    proven_ws_frame_t f = { .fin = fin, .opcode = opcode, .masked = masked, .length = length };
+    proven_ws_frame_t f = { .fin = fin, .opcode = opcode, .masked = masked, .length = length, .rsv1 = rsv1 };
     if (masked) {
         if (data.size < pos + 4) return PROVEN_ERR_NEED_MORE;
         for (proven_size_t i = 0; i < 4; ++i) f.mask[i] = data.ptr[pos + i];
@@ -195,9 +332,10 @@ proven_err_t proven_ws_frame_write(proven_mem_mut_t out, proven_size_t *len, con
     bool control = (frame->opcode & 0x08) != 0;
     if (!ws_opcode_known(frame->opcode) || (frame->length >> 63) != 0) return PROVEN_ERR_INVALID_ARG;
     if (control && (!frame->fin || frame->length > PROVEN_WS_MAX_CONTROL)) return PROVEN_ERR_INVALID_ARG;
+    if (frame->rsv1 && (control || frame->opcode == PROVEN_WS_CONTINUATION)) return PROVEN_ERR_INVALID_ARG;
     proven_byte_t h[PROVEN_WS_MAX_FRAME_HEADER];
     proven_size_t n = 0;
-    h[n++] = (proven_byte_t)((frame->fin ? 0x80 : 0) | frame->opcode);
+    h[n++] = (proven_byte_t)((frame->fin ? 0x80 : 0) | (frame->rsv1 ? 0x40 : 0) | frame->opcode);
     proven_byte_t mask_bit = frame->masked ? 0x80 : 0;
     if (frame->length < 126) {
         h[n++] = (proven_byte_t)(mask_bit | (proven_byte_t)frame->length);
@@ -275,26 +413,34 @@ void proven_ws_decoder_init(proven_ws_decoder_t *decoder, bool from_client, prov
     decoder->failed = PROVEN_OK;
 }
 
-/* Check a piece of a text message. A character cut by the end of the piece waits in d->utf8
- * for the bytes that complete it. */
-static proven_err_t ws_text_feed(proven_ws_decoder_t *d, const proven_byte_t *p, proven_size_t n) {
+void proven_ws_decoder_allow_compressed(proven_ws_decoder_t *decoder) {
+    if (decoder) decoder->allow_compressed = true;
+}
+
+/* Check a piece of text. A character cut by the end of the piece waits in `held` for the bytes
+ * that complete it. (Internal: the drivers run it over what they inflate.) */
+proven_err_t proven_ws_utf8_feed_(proven_byte_t held[4], proven_u8 *held_len, const proven_byte_t *p, proven_size_t n) {
     proven_size_t pos = 0;
-    while (d->utf8_len > 0 && pos < n) {
-        d->utf8[d->utf8_len++] = p[pos++];
-        proven_utf8_char_t c = proven_utf8_decode_next((proven_u8str_view_t){ .ptr = d->utf8, .size = d->utf8_len }, 0);
-        if (c.err == PROVEN_OK) d->utf8_len = 0;
+    while (*held_len > 0 && pos < n) {
+        held[(*held_len)++] = p[pos++];
+        proven_utf8_char_t c = proven_utf8_decode_next((proven_u8str_view_t){ .ptr = held, .size = *held_len }, 0);
+        if (c.err == PROVEN_OK) *held_len = 0;
         else if (c.err != PROVEN_ERR_NEED_MORE) return PROVEN_ERR_INVALID_ENCODING;
     }
-    if (d->utf8_len > 0) return PROVEN_OK;
+    if (*held_len > 0) return PROVEN_OK;
     proven_u8str_view_t s = { .ptr = p, .size = n };
     while (pos < n) {
         if (p[pos] < 0x80) { pos++; continue; }
         proven_utf8_char_t c = proven_utf8_decode_next(s, pos);
         if (c.err == PROVEN_OK) { pos += c.len; continue; }
         if (c.err != PROVEN_ERR_NEED_MORE) return PROVEN_ERR_INVALID_ENCODING;
-        while (pos < n) d->utf8[d->utf8_len++] = p[pos++];      /* at most three bytes */
+        while (pos < n) held[(*held_len)++] = p[pos++];        /* at most three bytes */
     }
     return PROVEN_OK;
+}
+
+static proven_err_t ws_text_feed(proven_ws_decoder_t *d, const proven_byte_t *p, proven_size_t n) {
+    return proven_ws_utf8_feed_(d->utf8, &d->utf8_len, p, n);
 }
 
 proven_err_t proven_ws_decoder_feed(proven_ws_decoder_t *decoder, proven_mem_mut_t in, proven_size_t *consumed,
@@ -315,6 +461,9 @@ proven_err_t proven_ws_decoder_feed(proven_ws_decoder_t *decoder, proven_mem_mut
             bool have = false;
             while (pos < in.size && !have) {
                 d->header[d->header_len++] = in.ptr[pos++];
+                /* An extension nobody agreed to is refused at its first byte, as it always
+                 * was - not when the rest of the header has arrived. */
+                if (d->header_len == 1 && (d->header[0] & 0x40) != 0 && !d->allow_compressed) { e = PROVEN_ERR_INVALID_FORMAT; goto fail; }
                 proven_size_t hs = 0;
                 e = proven_ws_frame_parse((proven_mem_view_t){ .ptr = d->header, .size = d->header_len }, &d->frame, &hs);
                 if (e == PROVEN_ERR_NEED_MORE) continue;
@@ -326,6 +475,7 @@ proven_err_t proven_ws_decoder_feed(proven_ws_decoder_t *decoder, proven_mem_mut
 
             e = PROVEN_ERR_INVALID_FORMAT;
             if (d->frame.masked != d->expect_masked) goto fail;
+            if (d->frame.rsv1 && !d->allow_compressed) goto fail;   /* an extension nobody agreed to */
             bool control = (d->frame.opcode & 0x08) != 0;
             if (control) {
                 d->control_len = 0;
@@ -336,6 +486,7 @@ proven_err_t proven_ws_decoder_feed(proven_ws_decoder_t *decoder, proven_mem_mut
                     if (d->in_message) goto fail;              /* a new message inside an unfinished one */
                     d->in_message = true;
                     d->message_text = d->frame.opcode == PROVEN_WS_TEXT;
+                    d->message_compressed = d->frame.rsv1;
                     d->message_started = false;
                     d->message_size = 0;
                     d->utf8_len = 0;
@@ -383,13 +534,15 @@ proven_err_t proven_ws_decoder_feed(proven_ws_decoder_t *decoder, proven_mem_mut
         d->remaining -= take;
         d->message_size += take;
         pos += take;
-        if (d->message_text) {
+        /* Compressed bytes are not text yet: whoever inflates them checks what comes out. */
+        bool check_text = d->message_text && !d->message_compressed;
+        if (check_text) {
             e = ws_text_feed(d, piece, take);
             if (e != PROVEN_OK) goto fail;
         }
         bool frame_done = d->remaining == 0;
         bool last = frame_done && d->frame.fin;
-        if (last && d->message_text && d->utf8_len != 0) { e = PROVEN_ERR_INVALID_ENCODING; goto fail; }
+        if (last && check_text && d->utf8_len != 0) { e = PROVEN_ERR_INVALID_ENCODING; goto fail; }
         if (frame_done) d->in_frame = false;
         if (last) d->in_message = false;
         if (take == 0 && !last) continue;          /* an empty frame in the middle of a message says nothing */
@@ -397,6 +550,7 @@ proven_err_t proven_ws_decoder_feed(proven_ws_decoder_t *decoder, proven_mem_mut
         event->text = d->message_text;
         event->first = !d->message_started;
         event->last = last;
+        event->compressed = d->message_compressed;
         event->data = (proven_mem_view_t){ .ptr = piece, .size = take };
         d->message_started = true;
         *consumed = pos;

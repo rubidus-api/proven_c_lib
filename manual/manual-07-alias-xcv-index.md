@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1135 aliases: 851 lowercase `xcv_` names and 284 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1142 aliases: 856 lowercase `xcv_` names and 286 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -302,6 +302,8 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_WS_CLOSE_TOO_BIG` | `PROVEN_WS_CLOSE_TOO_BIG` |
 | `XCV_WS_CLOSE_UNSUPPORTED_DATA` | `PROVEN_WS_CLOSE_UNSUPPORTED_DATA` |
 | `XCV_WS_CONTINUATION` | `PROVEN_WS_CONTINUATION` |
+| `XCV_WS_DEFLATE_ANSWER_MAX` | `PROVEN_WS_DEFLATE_ANSWER_MAX` |
+| `XCV_WS_DEFLATE_OFFER` | `PROVEN_WS_DEFLATE_OFFER` |
 | `XCV_WS_EVENT_CLOSE` | `PROVEN_WS_EVENT_CLOSE` |
 | `XCV_WS_EVENT_DATA` | `PROVEN_WS_EVENT_DATA` |
 | `XCV_WS_EVENT_NONE` | `PROVEN_WS_EVENT_NONE` |
@@ -1113,6 +1115,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_ws_accept_key` | `proven_ws_accept_key` |
 | `xcv_ws_check_request` | `proven_ws_check_request` |
 | `xcv_ws_check_response` | `proven_ws_check_response` |
+| `xcv_ws_check_response_deflate` | `proven_ws_check_response_deflate` |
 | `xcv_ws_close_code_for` | `proven_ws_close_code_for` |
 | `xcv_ws_close_code_is_valid` | `proven_ws_close_code_is_valid` |
 | `xcv_ws_close_parse` | `proven_ws_close_parse` |
@@ -1121,6 +1124,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_ws_conn_close` | `proven_ws_conn_close` |
 | `xcv_ws_conn_close_code` | `proven_ws_conn_close_code` |
 | `xcv_ws_conn_close_reason` | `proven_ws_conn_close_reason` |
+| `xcv_ws_conn_compressed` | `proven_ws_conn_compressed` |
 | `xcv_ws_conn_config_t` | `proven_ws_conn_config_t` |
 | `xcv_ws_conn_connect` | `proven_ws_conn_connect` |
 | `xcv_ws_conn_destroy` | `proven_ws_conn_destroy` |
@@ -1133,9 +1137,11 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_ws_conn_send_part` | `proven_ws_conn_send_part` |
 | `xcv_ws_conn_send_text` | `proven_ws_conn_send_text` |
 | `xcv_ws_conn_t` | `proven_ws_conn_t` |
+| `xcv_ws_decoder_allow_compressed` | `proven_ws_decoder_allow_compressed` |
 | `xcv_ws_decoder_feed` | `proven_ws_decoder_feed` |
 | `xcv_ws_decoder_init` | `proven_ws_decoder_init` |
 | `xcv_ws_decoder_t` | `proven_ws_decoder_t` |
+| `xcv_ws_deflate_accept` | `proven_ws_deflate_accept` |
 | `xcv_ws_event_accept` | `proven_ws_event_accept` |
 | `xcv_ws_event_callbacks_t` | `proven_ws_event_callbacks_t` |
 | `xcv_ws_event_config_t` | `proven_ws_event_config_t` |
@@ -1152,6 +1158,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_ws_stream_abort` | `proven_ws_stream_abort` |
 | `xcv_ws_stream_buffered` | `proven_ws_stream_buffered` |
 | `xcv_ws_stream_close` | `proven_ws_stream_close` |
+| `xcv_ws_stream_compressed` | `proven_ws_stream_compressed` |
 | `xcv_ws_stream_pause` | `proven_ws_stream_pause` |
 | `xcv_ws_stream_peer` | `proven_ws_stream_peer` |
 | `xcv_ws_stream_ping` | `proven_ws_stream_ping` |

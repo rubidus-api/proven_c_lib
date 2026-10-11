@@ -60,6 +60,7 @@ PROVEN_BUILD_SOURCE("src/proven/http_cookie.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/http_coding.c", PROVEN_SOURCE_FREESTANDING)   /* content codings for the HTTP drivers */
 PROVEN_BUILD_SOURCE("src/proven/sse.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/ws.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("src/proven/ws_deflate.c", PROVEN_SOURCE_FREESTANDING)   /* permessage-deflate for the WebSocket drivers */
 PROVEN_BUILD_SOURCE("src/proven/random.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/fs.c", PROVEN_SOURCE_HOSTED_ONLY)   /* the filesystem */
 PROVEN_BUILD_SOURCE("src/proven/time.c", PROVEN_SOURCE_FREESTANDING)

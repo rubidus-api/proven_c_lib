@@ -86,12 +86,63 @@ bool proven_ws_request_offers(const proven_http_request_t *request, proven_u8str
  *        when it chose none.
  * @return PROVEN_ERR_INVALID_FORMAT unless the status is 101, `Upgrade` and `Connection` say
  *         so, `Sec-WebSocket-Accept` is the answer to `key`, the subprotocol (if any) is one of
- *         those offered, and no extension is named - this client offers none, so a server that
+ *         those offered, and no extension is named (for a client that offered compression,
+ *         see proven_ws_check_response_deflate) - this client offers none, so a server that
  *         names one is not speaking the protocol that was agreed.
  */
 [[nodiscard]]
 proven_err_t proven_ws_check_response(const proven_http_response_t *response, proven_u8str_view_t key,
                                       proven_u8str_view_t offered, proven_u8str_view_t *protocol);
+
+// -----------------------------------------------------------------------------
+// Compression: the permessage-deflate extension (RFC 7692)
+// -----------------------------------------------------------------------------
+
+/**
+ * @brief What a client sends in `Sec-WebSocket-Extensions` to ask for compressed messages.
+ *
+ * Both sides are asked to compress every message on its own, keeping nothing from one message
+ * to the next ("no context takeover"): a connection then holds no compression state between
+ * messages, and the size of one message says nothing about another. That is the only form of
+ * the extension this library speaks.
+ */
+#define PROVEN_WS_DEFLATE_OFFER "permessage-deflate; client_no_context_takeover; server_no_context_takeover"
+
+/** @brief Room that is always enough for the answer proven_ws_deflate_accept writes. */
+#define PROVEN_WS_DEFLATE_ANSWER_MAX ((proven_size_t)112)
+
+/**
+ * @brief A server's choice: can one of the request's `permessage-deflate` offers be met?
+ *
+ * The offers are tried in the order the client wrote them and the first that can be met is
+ * taken. An offer is passed over when it has a parameter this library does not know, the same
+ * parameter twice, a value that is not allowed, or `server_max_window_bits=8` (the smallest
+ * window this compressor has is 9 bits). `client_max_window_bits` is accepted and ignored.
+ *
+ * @param out receives the value to send back in `Sec-WebSocket-Extensions`, appended at
+ *        `out.ptr[*len]`: always with `server_no_context_takeover` and
+ *        `client_no_context_takeover`, and with `server_max_window_bits` when the offer had it.
+ * @param window_bits receives the largest window this side may compress with, 9 to 15.
+ * @return PROVEN_ERR_NOT_FOUND when the request offers no `permessage-deflate` that can be
+ *         met - go on without compression; PROVEN_ERR_OUT_OF_BOUNDS when `out` is too small
+ *         (PROVEN_WS_DEFLATE_ANSWER_MAX is enough), with `*len` unchanged.
+ */
+[[nodiscard]]
+proven_err_t proven_ws_deflate_accept(const proven_http_request_t *request, proven_mem_mut_t out, proven_size_t *len, int *window_bits);
+
+/**
+ * @brief proven_ws_check_response for a client that sent PROVEN_WS_DEFLATE_OFFER.
+ *
+ * As that function, except that the answer may name this one extension. `*deflate` is true
+ * when the server accepted it: messages may then be compressed in both directions.
+ *
+ * @return also PROVEN_ERR_INVALID_FORMAT when the server names another extension, names this
+ *         one twice, accepts it without `server_no_context_takeover` (it would then compress
+ *         in a way this side does not decode), or adds a parameter that was not offered.
+ */
+[[nodiscard]]
+proven_err_t proven_ws_check_response_deflate(const proven_http_response_t *response, proven_u8str_view_t key,
+                                              proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate);
 
 // -----------------------------------------------------------------------------
 // Frames
@@ -118,6 +169,7 @@ typedef struct {
     bool masked;                /**< the payload is XORed with `mask`: always from a client, never from a server */
     proven_byte_t mask[4];
     proven_u64 length;          /**< bytes of payload that follow the header */
+    bool rsv1;                  /**< the first reserved bit: with `permessage-deflate`, "this message is compressed". Only on the first frame of a text or binary message */
 } proven_ws_frame_t;
 
 /**
@@ -129,9 +181,11 @@ typedef struct {
  * business.
  *
  * @return PROVEN_ERR_NEED_MORE when `data` is the beginning of a header (at most 13 more bytes
- *         are needed); PROVEN_ERR_INVALID_FORMAT for a reserved bit, an opcode RFC 6455 does not
- *         define, a length not in its shortest form or with its top bit set, or a control frame
- *         that is fragmented or longer than 125 bytes.
+ *         are needed); PROVEN_ERR_INVALID_FORMAT for the second or third reserved bit, the
+ *         first on a control frame or a continuation, an opcode RFC 6455 does not define, a
+ *         length not in its shortest form or with its top bit set, or a control frame that is
+ *         fragmented or longer than 125 bytes. The first reserved bit on the first frame of a
+ *         message is reported in `rsv1`; whether it is allowed is the decoder's business.
  */
 [[nodiscard]]
 proven_err_t proven_ws_frame_parse(proven_mem_view_t data, proven_ws_frame_t *out, proven_size_t *header_size);
@@ -229,6 +283,7 @@ typedef struct {
     bool text;                  /**< DATA: the message is text (UTF-8, checked) rather than binary */
     bool first;                 /**< DATA: this is the first piece of its message */
     bool last;                  /**< DATA: the message is complete with this piece */
+    bool compressed;            /**< DATA: the message is compressed (`permessage-deflate`): `data` is compressed bytes, to be inflated - and, for text, checked - by you. Never set unless proven_ws_decoder_allow_compressed was called */
     proven_mem_view_t data;     /**< DATA: the piece, unmasked, inside the buffer you fed. PING, PONG: the payload. CLOSE: the reason. */
     proven_u16 close_code;      /**< CLOSE: the code; PROVEN_WS_CLOSE_NO_STATUS when the frame had none */
 } proven_ws_event_t;
@@ -256,6 +311,8 @@ typedef struct {
     bool message_text;
     bool message_started;           /* a DATA event of this message was delivered */
     bool closed;
+    bool allow_compressed;          /* permessage-deflate was negotiated */
+    bool message_compressed;        /* the open message began with RSV1 */
 } proven_ws_decoder_t;
 
 /**
@@ -265,6 +322,21 @@ typedef struct {
  * @param max_message_bytes the largest message to accept, fragments together; 0 means no limit.
  */
 void proven_ws_decoder_init(proven_ws_decoder_t *decoder, bool from_client, proven_u64 max_message_bytes);
+
+/**
+ * @brief Tell the decoder that `permessage-deflate` was negotiated: a message may then begin
+ *        with the first reserved bit set. Call it after proven_ws_decoder_init.
+ *
+ * The decoder does not inflate - it allocates nothing. The pieces of such a message are
+ * reported with `compressed` set and are the compressed bytes: text is **not** checked to be
+ * UTF-8 (it is not text yet), and `max_message_bytes` counts compressed bytes. Inflating them
+ * with a raw-DEFLATE decompressor (deflate.h; append `00 00 ff ff` after the last piece),
+ * bounding what comes out and checking text is the caller's part. ws_conn.h and ws_event.h
+ * do all of it.
+ *
+ * Without this call a frame with that bit is PROVEN_ERR_INVALID_FORMAT, as it always was.
+ */
+void proven_ws_decoder_allow_compressed(proven_ws_decoder_t *decoder);
 
 /**
  * @brief Give the decoder more of what was received.

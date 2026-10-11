@@ -6,7 +6,7 @@
 닫고, 상대가 규칙을 어겼을 때 여러분의 프로그램이 무엇을 하는지 말할 수 있다 - 또는 소켓 없이
 프레임을 직접 뜯어볼 수 있다.
 
-이 장은 `ws.h`와 `ws_conn.h`를 다룬다. `ws.h`는 순수한 텍스트·바이트 처리로,
+이 장은 `ws.h`와 `ws_conn.h`를 다루고, 9절에서는 그 둘과 15장의 이벤트 구동 서버에서 쓰는 압축된 메시지를 다룬다. `ws.h`는 순수한 텍스트·바이트 처리로,
 [프리스탠딩(freestanding)](manual-freestanding-ko.md) 빌드에서 쓸 수 있고 `PROVEN_NO_NET`의 영향을 받지
 않는다. `ws_conn.h`는 소켓이 필요하다. 호스티드(hosted) 전용이고 `PROVEN_NO_NET`으로 빠진다.
 
@@ -20,7 +20,8 @@
 6. [코덱: 핸드셰이크](#6-코덱-핸드셰이크)
 7. [코덱: 프레임](#7-코덱-프레임)
 8. [코덱: 디코더](#8-코덱-디코더)
-9. [여기에 없는 것](#9-여기에-없는-것)
+9. [압축된 메시지](#9-압축된-메시지)
+10. [여기에 없는 것](#10-여기에-없는-것)
 
 ## 1. WebSocket이 무엇인지, 한 쪽으로
 
@@ -401,8 +402,9 @@ accept 값은 키 뒤에 RFC가 정한 고정 문자열을 붙인 것의 SHA-1�
 HTTP 서버가 반사적으로 만들어 내지 않을 무언가이기만 하면 된다. 증명하는 것도 그것이 전부다. 서버를
 인증하지 않고 클라이언트를 인증하지 않는다. 누구든 계산할 수 있다.
 
-**확장의 이름을 댄 응답은 거절한다.** 이 라이브러리는 확장을 내놓지 않으므로, `Sec-WebSocket-Extensions`로
-답하는 서버는 이쪽이 읽을 수 없는 프레임을 예고하는 것이다.
+**확장의 이름을 댄 응답은** `proven_ws_check_response`가 **거절한다**: 아무것도 제안하지 않은 클라이언트가
+요청하지 않은 프레임을 예고받는 것이기 때문이다. 압축을 제안한 클라이언트는 그 대신
+`proven_ws_check_response_deflate`(9절)로 확인한다. 이 함수는 그 확장 하나를 제안한 형태 그대로만 받아들인다.
 
 ## 7. 코덱: 프레임
 
@@ -418,7 +420,7 @@ typedef struct {
 
 | API | 의도 | 반환 |
 |---|---|---|
-| `proven_ws_frame_parse(data, &frame, &header_size)` | `data` 앞에서 프레임 헤더 - 2~14바이트 - 를 파싱한다. | `proven_err_t`: `NEED_MORE`. 예약 비트, 정의되지 않은 opcode, 가장 짧은 형태가 아닌 길이, 프래그먼트로 나뉘었거나 125바이트를 넘는 제어 프레임은 `INVALID_FORMAT`. |
+| `proven_ws_frame_parse(data, &frame, &header_size)` | `data` 앞에서 프레임 헤더 - 2~14바이트 - 를 파싱한다. | `proven_err_t`: `NEED_MORE`. 예약 비트(첫째 비트는 메시지가 시작하는 곳에서는 `rsv1`로 알려 준다: 9절), 정의되지 않은 opcode, 가장 짧은 형태가 아닌 길이, 프래그먼트로 나뉘었거나 125바이트를 넘는 제어 프레임은 `INVALID_FORMAT`. |
 | `proven_ws_frame_write(out, &len, &frame)` | 프레임 헤더를 덧붙인다. 페이로드는 그 뒤에 여러분이 쓴다. | `proven_err_t`: 파서가 거절할 프레임이면 `INVALID_ARG`. `OUT_OF_BOUNDS`. |
 | `proven_ws_mask(data, mask, offset)` | 페이로드 바이트를 제자리에서 마스킹하거나 푼다. `offset`은 `data`가 페이로드 안에서 시작하는 위치다. | 없음. |
 | `proven_ws_close_write(out, &len, code, reason)` | close 프레임의 페이로드를 덧붙인다. | `proven_err_t`: 보낼 수 없는 코드나 123바이트를 넘는 이유는 `INVALID_ARG`. `INVALID_ENCODING`. `OUT_OF_BOUNDS`. |
@@ -474,7 +476,7 @@ typedef struct {
 | 스트림 | 오류 |
 |---|---|
 | 클라이언트가 보냈는데 마스킹되지 않은 프레임, 서버가 보냈는데 마스킹된 프레임 | `INVALID_FORMAT` |
-| 예약 비트, 정의되지 않은 opcode, 가장 짧은 형태가 아닌 길이 | `INVALID_FORMAT` |
+| 예약 비트(첫째 비트는 있어서는 안 되는 곳에 있을 때, 또는 압축에 합의하지 않았을 때만: 9절), 정의되지 않은 opcode, 가장 짧은 형태가 아닌 길이 | `INVALID_FORMAT` |
 | 125바이트를 넘거나 프래그먼트로 나뉜 제어 프레임 | `INVALID_FORMAT` |
 | 열린 메시지가 없는데 온 continuation. 열린 메시지 안에서 시작한 새 메시지 | `INVALID_FORMAT` |
 | 페이로드가 1바이트이거나, 보낼 수 없는 코드를 실은 close 프레임 | `INVALID_FORMAT` |
@@ -620,10 +622,325 @@ int main(void) {
 }
 ```
 
-## 9. 여기에 없는 것
+## 9. 압축된 메시지
 
-- **압축.** `permessage-deflate`는 내놓지도 받아들이지도 않는다. 그것을 고집하는 상대와는 대화할 수
-  없다.
+```c
+bool proven_ws_conn_compressed(const proven_ws_conn_t *conn);            /* ws_conn.h */
+bool proven_ws_stream_compressed(const proven_ws_stream_t *ws);          /* ws_event.h, 15장 */
+
+#define PROVEN_WS_DEFLATE_OFFER "permessage-deflate; client_no_context_takeover; server_no_context_takeover"
+proven_err_t proven_ws_deflate_accept(const proven_http_request_t *request, proven_mem_mut_t out, proven_size_t *len, int *window_bits);
+proven_err_t proven_ws_check_response_deflate(const proven_http_response_t *response, proven_u8str_view_t key,
+                                              proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate);
+void proven_ws_decoder_allow_compressed(proven_ws_decoder_t *decoder);
+```
+
+WebSocket 연결은 핸드셰이크에서 메시지를 압축하기로 합의할 수 있다: 이 확장은
+`permessage-deflate`(RFC 7692)라고 부르고, 모든 브라우저가 제안하며, [16장](manual-16-compression-ko.md)의
+DEFLATE다. JSON 한 쪽이나 로그 여러 줄은 3분의 1 이하로 줄어든다. 수십 바이트짜리 메시지는 얻는 것이 적은데, 까닭은 아래에 있다.
+
+**요청하기 전에는 꺼져 있다.** 연결 설정 - `proven_ws_conn_config_t`나 15장의
+`proven_ws_event_config_t` - 에서 `compress`를 켠다. 그러면 클라이언트는 확장을 제안하고 서버는 제안을
+받으면 수락한다. 상대가 동의했는지는 `proven_ws_conn_compressed`와 `proven_ws_stream_compressed`가
+말해 준다. **그 밖에는 아무것도 달라지지 않는다**: 같은 호출로 보내고 받으며, 상대가 동의하지 않은
+연결은 그저 압축 없이 이어진다.
+
+| | 압축에 합의했을 때 |
+|---|---|
+| 보내는 메시지 | 64바이트 이상이면 압축된다. 더 짧으면 그대로 간다 |
+| 받는 메시지 | 보기 전에 풀린다: `proven_ws_conn_receive`에서는 통째로, 이벤트 구동 서버에서는 최대 16 KiB 조각으로 |
+| `max_message_bytes` | **풀린** 크기를 센다. 몇백 바이트가 그것을 넘겨 펼쳐지면, 너무 큰 평문 메시지와 마찬가지로 1009로 연결이 끝난다 |
+| 텍스트 | 푼 다음 UTF-8인지 검사한다. 아니면 1007 |
+| 풀리지 않는 바이트 | 1007 |
+| 합의하지 않은 연결에서 압축 표시가 된 프레임 | 1002 |
+
+**메시지는 하나하나 따로 압축된다.** 확장은 각 쪽이 32 KiB 윈도를 한 메시지에서 다음 메시지로 이어 갈
+수 있게 하는데, 작고 비슷한 메시지에는 도움이 된다 - 그리고 연결이 열려 있는 내내 연결마다 압축기와
+해제기를 하나씩 쥐게 된다. 이 라이브러리는 언제나 다른 쪽 형태("no context takeover", 양방향)로
+협상한다: 압축기는 한 번의 전송 동안만, 해제기는 압축된 메시지의 첫 프레임부터 마지막 프레임까지만
+존재하고, **유휴 연결은 압축 상태를 전혀 쥐지 않는다**. 조용한 연결 만 개는 압축이 없을 때와 같은
+비용이 든다. 대가는 짧은 메시지가 자기 자신만을 참조할 수 있다는 것이다.
+
+### 예제: 필드 하나, 그리고 그것이 바꾸는 것
+
+<!-- example: manual/examples/ko/ex_12_ws_compressed.c -->
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/*
+ * 프로그램이 쓰는 방식 그대로의 압축된 WebSocket 메시지: 설정의 필드 하나.
+ *
+ * 여기서 서버는 이벤트 구동 서버이고 클라이언트는 블로킹 클라이언트다. 둘 다 `compress`를
+ * 켠다. 핸드셰이크가 합의한다. 그 뒤로 모든 호출은 전과 똑같이 쓰고, 네트워크를 건너는
+ * 것은 말한 것의 일부분이다.
+ */
+
+typedef struct {
+    proven_loop_t *loop;
+    bool compressed;                   /* 서버가 합의됐다고 본 것 */
+    proven_size_t received, largest, pieces;
+} app_t;
+
+/* 압축된 메시지는 풀린 채로, 최대 16 KiB 조각으로 도착한다. 여러분이 쥐지 않는 한 전체를
+ * 쥐는 것은 없다. 이 핸들러는 세기만 하고, 메시지가 끝나면 답한다. */
+static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
+    app_t *app = ctx;
+    (void)text;
+    if (first) { app->received = 0; app->pieces = 0; app->largest = 0; }
+    app->received += piece.size;
+    app->pieces++;
+    if (piece.size > app->largest) app->largest = piece.size;
+    if (!last) return;
+    char answer[64];
+    int n = snprintf(answer, sizeof answer, "%u bytes", (unsigned)app->received);
+    /* 여느 메시지처럼 보낸다. 짧은 것은 그대로 간다: 64바이트 미만에서는 얻을 것이 없다. */
+    (void)proven_ws_stream_send(ws, true, (proven_mem_view_t){ (const proven_byte_t *)answer, (proven_size_t)n });
+}
+
+static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
+    app_t *app = ctx;
+    proven_ws_event_config_t config = {
+        .on = { .on_message = on_message },
+        .ctx = app,
+        .compress = true,              /* 클라이언트가 제안하면 확장을 받아들인다 */
+        .max_message_bytes = 256 * 1024,   /* 풀린 뒤의 메시지에 걸리는 한도: 몇 바이트가 기가바이트가 될 수는 없다 */
+    };
+    proven_ws_stream_t *ws = NULL;
+    if (proven_ws_event_accept(stream, head, &config, &ws) != PROVEN_OK) {
+        (void)proven_http_stream_respond(stream, 400, NULL, 0, (proven_mem_view_t){ 0 });
+        return;
+    }
+    /* 합의됐는지는 클라이언트에도 달렸다. 어느 쪽이든 달리 할 일은 없다. */
+    app->compressed = proven_ws_stream_compressed(ws);
+}
+
+static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    app_t app = { 0 };
+    EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
+    proven_http_event_server_config_t server_config = { .on = { .on_request = on_request }, .ctx = &app };
+    proven_http_event_server_t *server = NULL;
+    proven_net_addr_t at;
+    EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &server_config, &server) == PROVEN_OK, "a server");
+    proven_err_t err = proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at);
+    if (err == PROVEN_ERR_PERMISSION || err == PROVEN_ERR_UNSUPPORTED) {
+        printf("no sockets in this environment; nothing to show\n");
+        proven_http_event_server_destroy(server);
+        proven_loop_destroy(app.loop);
+        return EXAMPLE_OK();
+    }
+    EXAMPLE_REQUIRE(err == PROVEN_OK, "it listens");
+    proven_job_sys_t *threads = NULL;
+    proven_job_group_t running;
+    proven_job_group_init(&running);
+    EXAMPLE_REQUIRE(proven_job_system_init(heap, 1, 4, &threads) == PROVEN_OK &&
+                    proven_job_group_submit(threads, &running, run, &app) == PROVEN_OK, "the loop runs on another thread");
+
+    // ---- 압축을 요청하는 클라이언트 ----------------------------------------------
+    proven_http_client_config_t client_config = { .alloc = heap };
+    proven_http_client_t *client = NULL;
+    EXAMPLE_REQUIRE(proven_http_client_create(&client_config, &client) == PROVEN_OK, "an HTTP client");
+    char url[64];
+    int n = snprintf(url, sizeof url, "ws://127.0.0.1:%u/", (unsigned)at.port);
+    proven_ws_conn_config_t ws_config = { .alloc = heap, .compress = true };       /* 확장을 제안한다 */
+    proven_ws_conn_t *conn = NULL;
+    EXAMPLE_REQUIRE(proven_ws_conn_connect(client, (proven_u8str_view_t){ (const proven_byte_t *)url, (proven_size_t)n }, NULL, 0, PROVEN_LIT(""),
+                                           &ws_config, &conn, NULL) == PROVEN_OK, "connected");
+    EXAMPLE_REQUIRE(proven_ws_conn_compressed(conn), "and the server agreed to compress");
+
+    /* 보고서 십만 바이트. 전송되는 것은 몇백 바이트다. */
+    static char report[100000];
+    for (proven_size_t i = 0; i < sizeof report; ++i) report[i] = "temperature 21.5, humidity 40\n"[i % 30];
+    proven_ws_message_t msg;
+    EXAMPLE_REQUIRE(proven_ws_conn_send_text(conn, (proven_u8str_view_t){ (const proven_byte_t *)report, sizeof report }) == PROVEN_OK &&
+                    proven_ws_conn_receive(conn, proven_net_deadline_in(5000), &msg) == PROVEN_OK &&
+                    msg.data.size == 12 && memcmp(msg.data.ptr, "100000 bytes", 12) == 0, "the server received all of it");
+
+    /* 한도는 풀린 크기에 걸린다. 한 글자 삼십만 개는 압축하면 몇백 바이트다 - 그래도
+     * 너무 많다: 서버는 1009로 연결을 끝낸다. */
+    static char flood[300000];
+    memset(flood, 'x', sizeof flood);
+    EXAMPLE_REQUIRE(proven_ws_conn_send_text(conn, (proven_u8str_view_t){ (const proven_byte_t *)flood, sizeof flood }) == PROVEN_OK, "a message that inflates past the server's limit");
+    EXAMPLE_REQUIRE(proven_ws_conn_receive(conn, proven_net_deadline_in(5000), &msg) == PROVEN_ERR_EOF && proven_ws_conn_close_code(conn) == 1009, "is answered with 1009, however small it was on the wire");
+    proven_ws_conn_destroy(conn);
+    proven_http_client_destroy(client);
+
+    proven_loop_stop(app.loop);
+    proven_job_group_wait(threads, &running);
+    EXAMPLE_REQUIRE(app.compressed, "the server found the extension agreed as well");
+    proven_http_event_server_destroy(server);
+    proven_loop_destroy(app.loop);
+    proven_job_system_close(threads);
+    proven_job_system_destroy(threads);
+    return EXAMPLE_OK();
+}
+```
+
+### 예제: 코덱만으로 다루는 확장
+
+코덱을 직접 구동하는 프로그램(6절부터 8절)을 위한 것: 핸드셰이크 함수, 프레임의 비트, 그리고 네 바이트.
+
+<!-- example: manual/examples/ko/ex_12_ws_deflate.c -->
+```c
+#include <stdio.h>
+#include <string.h>
+
+/*
+ * 코덱만으로 다루는 압축된 WebSocket 메시지: 소켓도 드라이버도 없다.
+ *
+ * permessage-deflate라는 확장은 세 가지로 이루어진다. 핸드셰이크가 그것에 합의한다.
+ * 프레임 헤더의 비트 하나가 "이 메시지는 압축되었다"고 말한다. 그리고 페이로드는 마지막
+ * 네 바이트를 뗀 DEFLATE다. 앞의 둘은 코덱이 하고, 셋째는 deflate.h가 한다.
+ *
+ * ws_conn.h나 ws_event.h를 쓰는 프로그램은 필드 하나를 정할 뿐 이것을 볼 일이 없다.
+ */
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+
+    // ---- 핸드셰이크 ------------------------------------------------------------------
+    /* 클라이언트는 헤더 하나로 요청한다. PROVEN_WS_DEFLATE_OFFER는 이 라이브러리가 말하는 형태다:
+     * 양쪽 방향 모두, 메시지 하나하나를 따로 압축한다. */
+    proven_http_header_t asked[] = {
+        { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER) },
+    };
+    proven_http_request_t request = { .headers = asked, .header_count = 1 };
+
+    /* 서버는 제안된 것을 보고 답을 쓴다 - 또는 맞춰 줄 수 있는 것이 없으면
+     * (PROVEN_ERR_NOT_FOUND) 연결은 압축 없이 이어진다. */
+    proven_byte_t answer[PROVEN_WS_DEFLATE_ANSWER_MAX];
+    proven_size_t answer_len = 0;
+    int window_bits = 0;
+    EXAMPLE_REQUIRE(proven_ws_deflate_accept(&request, (proven_mem_mut_t){ answer, sizeof answer }, &answer_len, &window_bits) == PROVEN_OK, "the offer can be met");
+    printf("the server answers: %.*s\n", (int)answer_len, (const char *)answer);
+    EXAMPLE_REQUIRE(window_bits == 15, "and may compress with the full window");
+
+    /* 브라우저의 제안은 모양이 다르지만, 그것도 맞춰 준다. */
+    proven_http_header_t browser[] = { { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT("permessage-deflate; client_max_window_bits") } };
+    proven_http_request_t from_browser = { .headers = browser, .header_count = 1 };
+    proven_size_t len2 = 0;
+    EXAMPLE_REQUIRE(proven_ws_deflate_accept(&from_browser, (proven_mem_mut_t){ answer, sizeof answer }, &len2, &window_bits) == PROVEN_OK, "a browser's offer too");
+
+    /* 클라이언트는 답 전체를 검사한다: 늘 보던 것들, 그리고 확장이 요청한 형태로 돌아왔는지.
+     * (키와 accept 값은 RFC 6455에 실린 한 쌍이다.) */
+    proven_http_header_t answered[] = {
+        { PROVEN_LIT("Upgrade"), PROVEN_LIT("websocket") },
+        { PROVEN_LIT("Connection"), PROVEN_LIT("Upgrade") },
+        { PROVEN_LIT("Sec-WebSocket-Accept"), PROVEN_LIT("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=") },
+        { PROVEN_LIT("Sec-WebSocket-Extensions"), { answer, answer_len } },
+    };
+    proven_http_response_t response = { .status = 101, .headers = answered, .header_count = 4 };
+    proven_u8str_view_t protocol;
+    bool compressed = false;
+    EXAMPLE_REQUIRE(proven_ws_check_response_deflate(&response, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &compressed) == PROVEN_OK && compressed,
+                    "the client finds the extension agreed");
+
+    // ---- 압축된 메시지가 도착한다 ----------------------------------------------------
+    /* 이 프레임은 RFC 7692에 있다: 서버가 보낸, 압축된 텍스트 "Hello". 압축하지 않은 텍스트
+     * 프레임이라면 81일 첫 바이트가 c1이다: 더해진 비트가 RSV1이다. */
+    proven_byte_t wire[] = { 0xc1, 0x07, 0xf2, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00 };
+
+    proven_ws_decoder_t decoder;
+    proven_ws_event_t event;
+    proven_size_t used = 0;
+    /* 확장에 대해 듣지 못한 디코더는 그 비트를 거부한다. 그래야 한다. */
+    proven_byte_t copy[sizeof wire];
+    memcpy(copy, wire, sizeof wire);
+    proven_ws_decoder_init(&decoder, false, 0);
+    EXAMPLE_REQUIRE(proven_ws_decoder_feed(&decoder, (proven_mem_mut_t){ copy, sizeof copy }, &used, &event) == PROVEN_ERR_INVALID_FORMAT, "without the extension, the bit is an error");
+
+    proven_ws_decoder_init(&decoder, false, 0);
+    proven_ws_decoder_allow_compressed(&decoder);
+    EXAMPLE_REQUIRE(proven_ws_decoder_feed(&decoder, (proven_mem_mut_t){ wire, sizeof wire }, &used, &event) == PROVEN_OK &&
+                    event.kind == PROVEN_WS_EVENT_DATA && event.compressed && event.last, "with it, the message is handed over, marked compressed");
+
+    /* 디코더는 압축을 풀지 않는다: 아무것도 할당하지 않는다. 건네주는 바이트는 raw DEFLATE이고,
+     * 보낸 쪽이 마지막 네 바이트 - 언제나 00 00 ff ff - 를 떼어 냈다. 그것을 다시 붙이고
+     * 푼다. 나오는 양의 한도는 여러분 버퍼의 크기다. */
+    proven_inflate_t *z = NULL;
+    EXAMPLE_REQUIRE(proven_inflate_create(heap, PROVEN_DEFLATE_RAW, &z) == PROVEN_OK, "a decompressor for raw DEFLATE");
+    static const proven_byte_t tail[4] = { 0x00, 0x00, 0xff, 0xff };
+    proven_byte_t text[64];
+    proven_size_t taken = 0, made = 0, total = 0;
+    bool ended = false;
+    EXAMPLE_REQUIRE(proven_inflate(z, event.data, &taken, (proven_mem_mut_t){ text, sizeof text }, &made, &ended) == PROVEN_OK && taken == event.data.size, "the payload");
+    total = made;
+    EXAMPLE_REQUIRE(proven_inflate(z, (proven_mem_view_t){ tail, 4 }, &taken, (proven_mem_mut_t){ text + total, sizeof text - total }, &made, &ended) == PROVEN_OK && taken == 4, "then the four bytes");
+    total += made;
+    EXAMPLE_REQUIRE(total == 5 && memcmp(text, "Hello", 5) == 0, "and the message is Hello");
+    printf("the message: %.*s\n", (int)total, (const char *)text);
+    /* 이제야 - 그 전이 아니라 - 텍스트이고, 검사는 여러분 몫이다: 디코더는 할 수 없었다. */
+    proven_inflate_destroy(z);
+
+    // ---- 압축된 메시지를 보낸다 ------------------------------------------------------
+    /* 반대 방향: sync flush로 압축하면 같은 네 바이트로 끝나는데, 그것을 떼어 낸다.
+     * 이것을 싣는 프레임에는 `rsv1`이 켜져 있다. */
+    static const char said[] = "to be, or not to be, that is the question: to be, or not to be";
+    proven_deflate_options_t options = { .alloc = heap, .format = PROVEN_DEFLATE_RAW };
+    proven_deflate_t *c = NULL;
+    EXAMPLE_REQUIRE(proven_deflate_create(&options, &c) == PROVEN_OK, "a compressor");
+    proven_byte_t packed[128];
+    EXAMPLE_REQUIRE(proven_deflate(c, (proven_mem_view_t){ (const proven_byte_t *)said, sizeof said - 1 }, &taken, (proven_mem_mut_t){ packed, sizeof packed }, &made,
+                                   PROVEN_DEFLATE_FLUSH_SYNC, &ended) == PROVEN_OK && taken == sizeof said - 1 && made > 4, "compressed, with a sync flush");
+    EXAMPLE_REQUIRE(memcmp(packed + made - 4, tail, 4) == 0, "which ends in 00 00 ff ff");
+    proven_size_t payload = made - 4;
+    proven_deflate_destroy(c);
+
+    proven_ws_frame_t frame = { .fin = true, .opcode = PROVEN_WS_TEXT, .rsv1 = true, .length = payload };
+    proven_byte_t header[PROVEN_WS_MAX_FRAME_HEADER];
+    proven_size_t header_len = 0;
+    EXAMPLE_REQUIRE(proven_ws_frame_write((proven_mem_mut_t){ header, sizeof header }, &header_len, &frame) == PROVEN_OK && header[0] == 0xc1, "a frame header with the bit");
+    printf("%u bytes of text go out as %u\n", (unsigned)(sizeof said - 1), (unsigned)(header_len + payload));
+    EXAMPLE_REQUIRE(header_len + payload < sizeof said - 1, "fewer than were said");
+    return EXAMPLE_OK();
+}
+```
+
+### 참조
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `compress` (두 연결 설정) | 확장을 제안한다(클라이언트) 또는 제안받으면 수락한다(서버). | - |
+| `compress_level`, `compress_window_bits` (둘 다) | 16장 4절과 같다: 1부터 9 또는 -1. 9부터 15. 0이면 6과 15. | 범위를 벗어나면 `INVALID_ARG`. |
+| `proven_ws_conn_compressed(conn)`, `proven_ws_stream_compressed(ws)` | 상대가 동의했는가. | `bool`. |
+| `PROVEN_WS_DEFLATE_OFFER` | 클라이언트가 보내는 `Sec-WebSocket-Extensions` 값. | 문자열 리터럴. |
+| `proven_ws_deflate_accept(request, out, &len, &window_bits)` | 요청의 제안 가운데 서버가 고른다. 답을 쓴다. | `proven_err_t`: 맞춰 줄 제안이 없으면 `NOT_FOUND` - 압축 없이 간다. `OUT_OF_BOUNDS`(`PROVEN_WS_DEFLATE_ANSWER_MAX` 바이트면 충분하다). |
+| `proven_ws_check_response_deflate(response, key, offered, &protocol, &deflate)` | 제안을 보낸 클라이언트를 위한 `proven_ws_check_response`. | 같고, 제안하지 않은 형태의 답에는 `INVALID_FORMAT`. |
+| `proven_ws_decoder_allow_compressed(decoder)` | 디코더가 압축된 메시지를 `compressed` 표시와 함께 통과시키게 한다. 풀지는 않는다. | 없음. |
+| `proven_ws_frame_t`의 `rsv1` | 압축된 메시지를 표시하는 비트. 첫 프레임에 있다. | - |
+
+### 주의사항, 그리고 무엇이 잘못되는가
+
+- **비밀과 상대가 고른 글자가 함께 실린 메시지는 압축하지 말 것.** 압축된 메시지의 길이는 연결을
+  지켜보는 이에게 그 둘이 얼마나 겹치는지를 알려 준다. TLS가 있든 없든 그렇다 - 16장 5절에서 설명한
+  누출이다. 메시지를 하나씩 따로 압축하므로 한 메시지가 다른 메시지를 새게 하지는 못한다. 한 메시지
+  안의 것은 여전히 샐 수 있다. 여기서 압축은 연결 단위다: 그런 메시지가 오가는 연결은 압축을 요청하지
+  말아야 한다.
+- **한도는 풀린 크기에 걸리며, 정해 두어야 한다.** 킬로바이트가 기가바이트가 되는 것을 막는 것이
+  `max_message_bytes`다. 기본값은 1 MiB.
+- **raw DEFLATE에는 체크섬이 없다.** 전송 중 손상된 압축 메시지는 오류 없이 다른 바이트로 풀릴 수
+  있다. TLS가 그것을 막는다. TLS가 없다면 중요한 것은 직접 검사한다.
+- **맞춰 줄 수 없는 것만 제안하는 상대는 거절하지 않고 압축 없이 응대한다.** 그런 제안은 하나뿐이다:
+  256바이트 압축 윈도(`server_max_window_bits=8`)인데, 이 압축기에는 그 크기가 없다. 클라이언트 자신의
+  윈도 크기(`client_max_window_bits`)는 받아들이고 무시한다: 어떤 윈도든 읽을 수 있다.
+- **다른 형태로 수락하는 서버는 클라이언트가 거부한다.** `server_no_context_takeover` 없이 제안을
+  받아들이는 서버는 메시지에 걸쳐 압축할 텐데, 이쪽은 그것을 읽지 않는다. 연결은
+  `PROVEN_ERR_INVALID_FORMAT`으로 실패한다. RFC 7692를 따르는 서버는 제안을 그대로 수락하거나 거절한다.
+- **압축된 메시지가 오가는 동안의 메모리:** 하나를 푸는 데 약 35 KiB(이벤트 구동 서버에서는 51 KiB),
+  하나를 압축하는 데 윈도에 따라 11 KiB에서 325 KiB까지이며 메시지가 필요로 하는 것보다 크지 않다.
+  메시지를 위해 할당하고 메시지와 함께 해제한다 - 그래서 압축을 쓰는 바쁜 연결은, 쓰지 않는 연결이
+  하지 않는 할당을 메시지마다 한다.
+- **코덱만 쓸 때 텍스트 검사는 여러분 몫이다.** 디코더는 아직 텍스트가 아닌 바이트를 검사할 수 없다.
+  푼 다음에 검사한다. 그리고 나오는 양을 센다: 디코더의 한도는 압축된 바이트를 센다.
+
+## 10. 여기에 없는 것
+
+- **윈도를 한 메시지에서 다음 메시지로 이어 가는 압축**("context takeover"), 그리고
+  `permessage-deflate` 말고 다른 확장. 9절.
 - **여러 연결을 한꺼번에 기다리는 호출.** §5를 보라.
 - **한 연결에서 동시에 보내고 받기.**
 - **자동 ping, 재연결, 백오프.** 정책이고, 여러분의 것이다.
