@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-10-11
+
 A MINOR release: an HTTP/2 connection, as an object with no socket. **The servers and clients
 of this library still speak HTTP/1.1**: this is the engine they will be built on, usable
 today by a program that carries the bytes itself. Nothing existing changes.
