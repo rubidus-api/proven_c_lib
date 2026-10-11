@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 1142개: 소문자 `xcv_` 이름 856개와 대문자 `XCV_` 이름 286개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 1228개: 소문자 `xcv_` 이름 898개와 대문자 `XCV_` 이름 330개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -159,10 +159,54 @@ alias 1142개: 소문자 `xcv_` 이름 856개와 대문자 `XCV_` 이름 286개.
 | `XCV_FS_TYPE_FILE` | `PROVEN_FS_TYPE_FILE` |
 | `XCV_FS_TYPE_OTHER` | `PROVEN_FS_TYPE_OTHER` |
 | `XCV_FS_WRITE` | `PROVEN_FS_WRITE` |
+| `XCV_H2_CANCEL` | `PROVEN_H2_CANCEL` |
+| `XCV_H2_COMPRESSION_ERROR` | `PROVEN_H2_COMPRESSION_ERROR` |
+| `XCV_H2_CONNECT_ERROR` | `PROVEN_H2_CONNECT_ERROR` |
+| `XCV_H2_CONTINUATION` | `PROVEN_H2_CONTINUATION` |
+| `XCV_H2_DATA` | `PROVEN_H2_DATA` |
+| `XCV_H2_DEFAULT_WINDOW` | `PROVEN_H2_DEFAULT_WINDOW` |
+| `XCV_H2_ENHANCE_YOUR_CALM` | `PROVEN_H2_ENHANCE_YOUR_CALM` |
+| `XCV_H2_FLAG_ACK` | `PROVEN_H2_FLAG_ACK` |
+| `XCV_H2_FLAG_END_HEADERS` | `PROVEN_H2_FLAG_END_HEADERS` |
+| `XCV_H2_FLAG_END_STREAM` | `PROVEN_H2_FLAG_END_STREAM` |
+| `XCV_H2_FLAG_PADDED` | `PROVEN_H2_FLAG_PADDED` |
+| `XCV_H2_FLAG_PRIORITY` | `PROVEN_H2_FLAG_PRIORITY` |
+| `XCV_H2_FLOW_CONTROL_ERROR` | `PROVEN_H2_FLOW_CONTROL_ERROR` |
+| `XCV_H2_FRAME_HEADER_SIZE` | `PROVEN_H2_FRAME_HEADER_SIZE` |
+| `XCV_H2_FRAME_SIZE_ERROR` | `PROVEN_H2_FRAME_SIZE_ERROR` |
+| `XCV_H2_GOAWAY` | `PROVEN_H2_GOAWAY` |
+| `XCV_H2_HEADERS` | `PROVEN_H2_HEADERS` |
+| `XCV_H2_HTTP_1_1_REQUIRED` | `PROVEN_H2_HTTP_1_1_REQUIRED` |
+| `XCV_H2_INADEQUATE_SECURITY` | `PROVEN_H2_INADEQUATE_SECURITY` |
+| `XCV_H2_INTERNAL_ERROR` | `PROVEN_H2_INTERNAL_ERROR` |
+| `XCV_H2_MAX_MAX_FRAME_SIZE` | `PROVEN_H2_MAX_MAX_FRAME_SIZE` |
+| `XCV_H2_MAX_WINDOW` | `PROVEN_H2_MAX_WINDOW` |
+| `XCV_H2_MIN_MAX_FRAME_SIZE` | `PROVEN_H2_MIN_MAX_FRAME_SIZE` |
+| `XCV_H2_NO_ERROR` | `PROVEN_H2_NO_ERROR` |
+| `XCV_H2_PING` | `PROVEN_H2_PING` |
+| `XCV_H2_PREFACE` | `PROVEN_H2_PREFACE` |
+| `XCV_H2_PREFACE_SIZE` | `PROVEN_H2_PREFACE_SIZE` |
+| `XCV_H2_PRIORITY` | `PROVEN_H2_PRIORITY` |
+| `XCV_H2_PROTOCOL_ERROR` | `PROVEN_H2_PROTOCOL_ERROR` |
+| `XCV_H2_PUSH_PROMISE` | `PROVEN_H2_PUSH_PROMISE` |
+| `XCV_H2_REFUSED_STREAM` | `PROVEN_H2_REFUSED_STREAM` |
+| `XCV_H2_RST_STREAM` | `PROVEN_H2_RST_STREAM` |
+| `XCV_H2_SETTINGS` | `PROVEN_H2_SETTINGS` |
+| `XCV_H2_SETTINGS_ENABLE_PUSH` | `PROVEN_H2_SETTINGS_ENABLE_PUSH` |
+| `XCV_H2_SETTINGS_HEADER_TABLE_SIZE` | `PROVEN_H2_SETTINGS_HEADER_TABLE_SIZE` |
+| `XCV_H2_SETTINGS_INITIAL_WINDOW_SIZE` | `PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE` |
+| `XCV_H2_SETTINGS_MAX_CONCURRENT_STREAMS` | `PROVEN_H2_SETTINGS_MAX_CONCURRENT_STREAMS` |
+| `XCV_H2_SETTINGS_MAX_FRAME_SIZE` | `PROVEN_H2_SETTINGS_MAX_FRAME_SIZE` |
+| `XCV_H2_SETTINGS_MAX_HEADER_LIST_SIZE` | `PROVEN_H2_SETTINGS_MAX_HEADER_LIST_SIZE` |
+| `XCV_H2_SETTINGS_TIMEOUT` | `PROVEN_H2_SETTINGS_TIMEOUT` |
+| `XCV_H2_STREAM_CLOSED` | `PROVEN_H2_STREAM_CLOSED` |
+| `XCV_H2_WINDOW_UPDATE` | `PROVEN_H2_WINDOW_UPDATE` |
 | `XCV_HMAC_MAX_SIZE` | `PROVEN_HMAC_MAX_SIZE` |
 | `XCV_HMAC_SHA256` | `PROVEN_HMAC_SHA256` |
 | `XCV_HMAC_SHA384` | `PROVEN_HMAC_SHA384` |
 | `XCV_HMAC_SHA512` | `PROVEN_HMAC_SHA512` |
+| `XCV_HPACK_DEFAULT_TABLE_BYTES` | `PROVEN_HPACK_DEFAULT_TABLE_BYTES` |
+| `XCV_HPACK_ENTRY_OVERHEAD` | `PROVEN_HPACK_ENTRY_OVERHEAD` |
 | `XCV_HTTP_BODY_CHUNKED` | `PROVEN_HTTP_BODY_CHUNKED` |
 | `XCV_HTTP_BODY_LENGTH` | `PROVEN_HTTP_BODY_LENGTH` |
 | `XCV_HTTP_BODY_NONE` | `PROVEN_HTTP_BODY_NONE` |
@@ -492,6 +536,29 @@ alias 1142개: 소문자 `xcv_` 이름 856개와 대문자 `XCV_` 이름 286개.
 | `xcv_fs_write_file` | `proven_fs_write_file` |
 | `xcv_fs_write_file_atomic` | `proven_fs_write_file_atomic` |
 | `xcv_fs_write_file_durable` | `proven_fs_write_file_durable` |
+| `xcv_h2_error_t` | `proven_h2_error_t` |
+| `xcv_h2_frame_check` | `proven_h2_frame_check` |
+| `xcv_h2_frame_content` | `proven_h2_frame_content` |
+| `xcv_h2_frame_parse` | `proven_h2_frame_parse` |
+| `xcv_h2_frame_t` | `proven_h2_frame_t` |
+| `xcv_h2_frame_type_t` | `proven_h2_frame_type_t` |
+| `xcv_h2_frame_write` | `proven_h2_frame_write` |
+| `xcv_h2_read_goaway` | `proven_h2_read_goaway` |
+| `xcv_h2_read_rst_stream` | `proven_h2_read_rst_stream` |
+| `xcv_h2_read_window_update` | `proven_h2_read_window_update` |
+| `xcv_h2_request_head` | `proven_h2_request_head` |
+| `xcv_h2_request_head_t` | `proven_h2_request_head_t` |
+| `xcv_h2_response_head` | `proven_h2_response_head` |
+| `xcv_h2_setting_id_t` | `proven_h2_setting_id_t` |
+| `xcv_h2_setting_t` | `proven_h2_setting_t` |
+| `xcv_h2_settings_next` | `proven_h2_settings_next` |
+| `xcv_h2_trailers_check` | `proven_h2_trailers_check` |
+| `xcv_h2_write_goaway` | `proven_h2_write_goaway` |
+| `xcv_h2_write_ping` | `proven_h2_write_ping` |
+| `xcv_h2_write_rst_stream` | `proven_h2_write_rst_stream` |
+| `xcv_h2_write_settings` | `proven_h2_write_settings` |
+| `xcv_h2_write_settings_ack` | `proven_h2_write_settings_ack` |
+| `xcv_h2_write_window_update` | `proven_h2_write_window_update` |
 | `xcv_hash_bytes` | `proven_hash_bytes` |
 | `xcv_hash_keyed` | `proven_hash_keyed` |
 | `xcv_heap_allocator` | `proven_heap_allocator` |
@@ -509,6 +576,25 @@ alias 1142개: 소문자 `xcv_` 이름 856개와 대문자 `XCV_` 이름 286개.
 | `xcv_hmac_size` | `proven_hmac_size` |
 | `xcv_hmac_t` | `proven_hmac_t` |
 | `xcv_hmac_update` | `proven_hmac_update` |
+| `xcv_hpack_decode` | `proven_hpack_decode` |
+| `xcv_hpack_decoder` | `proven_hpack_decoder` |
+| `xcv_hpack_decoder_create` | `proven_hpack_decoder_create` |
+| `xcv_hpack_decoder_destroy` | `proven_hpack_decoder_destroy` |
+| `xcv_hpack_decoder_set_max_table_bytes` | `proven_hpack_decoder_set_max_table_bytes` |
+| `xcv_hpack_decoder_t` | `proven_hpack_decoder_t` |
+| `xcv_hpack_decoder_table_bytes` | `proven_hpack_decoder_table_bytes` |
+| `xcv_hpack_decoder_table_count` | `proven_hpack_decoder_table_count` |
+| `xcv_hpack_decoder_table_entry` | `proven_hpack_decoder_table_entry` |
+| `xcv_hpack_encode` | `proven_hpack_encode` |
+| `xcv_hpack_encode_bound` | `proven_hpack_encode_bound` |
+| `xcv_hpack_encoder` | `proven_hpack_encoder` |
+| `xcv_hpack_encoder_create` | `proven_hpack_encoder_create` |
+| `xcv_hpack_encoder_destroy` | `proven_hpack_encoder_destroy` |
+| `xcv_hpack_encoder_set_peer_table_bytes` | `proven_hpack_encoder_set_peer_table_bytes` |
+| `xcv_hpack_encoder_t` | `proven_hpack_encoder_t` |
+| `xcv_hpack_huffman_decode` | `proven_hpack_huffman_decode` |
+| `xcv_hpack_huffman_encode` | `proven_hpack_huffman_encode` |
+| `xcv_hpack_huffman_size` | `proven_hpack_huffman_size` |
 | `xcv_http_accepts_coding` | `proven_http_accepts_coding` |
 | `xcv_http_auth_offers` | `proven_http_auth_offers` |
 | `xcv_http_basic_auth` | `proven_http_basic_auth` |

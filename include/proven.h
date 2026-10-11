@@ -33,6 +33,8 @@
 #include "proven/tls.h"
 #include "proven/url.h"
 #include "proven/http.h"
+#include "proven/hpack.h"
+#include "proven/h2.h"
 #include "proven/http_auth.h"
 #include "proven/http_cookie.h"
 #include "proven/sse.h"

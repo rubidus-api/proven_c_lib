@@ -18,6 +18,43 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release: the codec of HTTP/2 - header compression and frames - as two new headers.
+**It is the codec, not yet the protocol**: nothing holds a connection together, and the HTTP
+servers and clients of this library speak HTTP/1.1 as before. Nothing existing changes.
+
+### Added
+
+- **`hpack.h`: HPACK (RFC 7541).** An encoder and a decoder, each with its dynamic table -
+  one allocation of the table's size (4,096 bytes by default, 0 for none), made on first
+  use. `proven_hpack_decode` takes a whole header block and gives the fields as
+  `proven_http_header_t`, bounded three ways by the caller: the decoded list (names, values
+  and 32 bytes a field, as the RFC counts), the number of fields, and the scratch. Over a
+  bound the block is still read to its end and the decoder stays usable; a block that is
+  not HPACK ends it. `proven_hpack_encode` uses the tables, Huffman-codes what gets shorter,
+  and keeps secrets out of its table: `authorization` and `proxy-authorization` are sent
+  never-indexed, `cookie` and `set-cookie` are not remembered, and any field can be marked.
+  Table sizes follow the peer's settings in both directions, with the size updates the
+  protocol requires. The string code is available alone (`proven_hpack_huffman_*`).
+- **`h2.h`: HTTP/2 frames and header lists (RFC 9113).** Frame headers read and written;
+  `proven_h2_frame_check`, which applies each frame type's rule for size and stream and says
+  which error code to send and whether the stream or the connection ends;
+  `proven_h2_frame_content` for padding; settings read with their ranges held; writers and
+  readers for SETTINGS, PING, WINDOW_UPDATE, RST_STREAM and GOAWAY; and
+  `proven_h2_request_head`, `proven_h2_response_head` and `proven_h2_trailers_check`, which
+  refuse a malformed header list - capitals, control bytes or line breaks, misplaced or
+  missing pseudo-header fields, connection-specific fields - before it can be passed on.
+- The static table and the Huffman code are generated from the published text of RFC 7541
+  and checked to be whole (61 entries; 257 codes that are prefix-free and fill the code
+  space) both when generated and by the registered test.
+- Manual chapter 17, "HTTP/2 - frames and header compression", with two compiled examples;
+  the registered tests `test_unit_hpack` (every example of RFC 7541 Appendix C) and
+  `test_unit_h2`. Both headers are in the freestanding build.
+
+### Not included
+
+- The HTTP/2 connection itself - streams, flow control, settings exchange - and so HTTP/2 in
+  the servers and clients. Server push, priorities, `Upgrade: h2c`, WebSocket over HTTP/2.
+
 ## [0.27.0] - 2026-10-11
 
 A MINOR release: compressed WebSocket messages - `permessage-deflate` (RFC 7692) - in the

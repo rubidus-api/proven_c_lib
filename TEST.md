@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 105 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 107 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-11, Windows 11 test VM: x86-64 319 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 169 registered tests plus the 158 runnable manual examples - 327 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 182 test files: the 169 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 171 registered tests plus the 162 runnable manual examples - 333 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 184 test files: the 171 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -949,6 +949,43 @@ Sub-checks:
 Failure tip: inspect `proven_ws_conn_send_part`, `wc_message_inflate` and the two handshakes in `src/proven/ws_conn.c`; `ws_rx_run`, `ws_rx_hold`, `proven_ws_stream_send_piece` and `proven_ws_stream_resume` in `src/proven/ws_event.c`. A wrong count from `/count` is the pause path: what was set aside in `ws_rx_hold` and how far `held_at` has moved.
 
 Note: this test is not run over TLS (the transform sits above the transport, which the other WebSocket tests cover); that Node's `ws` package and built-in client agree with both drivers is checked by a private program.
+
+### `tests/test_unit_hpack` - hpack: header compression for HTTP/2
+
+Intent: verify `hpack.h` (RFC 7541) - the tables, the string code, the decoder and the encoder - against the RFC's own examples and against input that is malformed, too large or damaged.
+
+Sub-checks:
+
+- The tables this build is linked with: 61 static entries, the first, sixteenth and last as the RFC lists them; 257 Huffman codes of 5 to 30 bits whose Kraft sum is exactly one and none of which begins another; EOS is thirty ones.
+- Huffman coding: `www.example.com` codes to the RFC's twelve bytes and back; each of the 256 byte values alone, and random strings of 86 lengths, go round, with one byte too little room `PROVEN_ERR_OUT_OF_BOUNDS` both ways; five forbidden endings (EOS inside a string, padding of a whole byte, padding that is not ones or has a zero in it, a code cut off) are `PROVEN_ERR_INVALID_FORMAT`; up to seven ones of padding are accepted.
+- RFC 7541 Appendix C: the four single examples of C.2 and the four sequences of C.3 to C.6 (three blocks each through one decoder; C.5 and C.6 with a table of 256 bytes, so that entries are evicted) decode to the RFC's fields in order and leave the dynamic table with the RFC's entries, newest first, and size; the integers 10 and 1337 of C.1 appear as the size updates an encoder writes.
+- The encoder: C.4.1 to C.4.3 and C.6.1 are reproduced byte for byte; C.6.2 and C.6.3, where the RFC's encoder Huffman-codes a string that does not shrink and indexes `set-cookie`, are compared by decoding.
+- Secrets: of five fields - `authorization`, `cookie`, one flagged sensitive, one plain, `proxy-authorization` - only the plain one enters the table, and `authorization` is sent in the never-indexed form.
+- Thirteen malformed blocks (index 0, an index past the tables, a huge index, an integer of six continuation bytes, an integer cut off, a name index that names nothing, a string past the block, a literal with no value, a block that ends inside a field, a size update after a field, one above the limit, wrong Huffman padding, EOS in a name): each `PROVEN_ERR_INVALID_FORMAT`, and the decoder then refuses a valid block too. An empty block is an empty list; two size updates may open a block.
+- Limits: a list of exactly `max_list_bytes` passes and one byte under it is `PROVEN_ERR_OUT_OF_BOUNDS` with the table still updated; too many fields and too small a scratch likewise, after which the decoder still decodes; one field larger than the whole scratch is `PROVEN_ERR_INVALID_FORMAT`; five kilobytes naming a 3,000-byte entry two thousand times stop at a 16 KiB list limit and the connection could go on.
+- The table: three hundred insertions into 100 bytes never hold more than two entries; an entry named by the one it evicts keeps its name; an entry larger than the table empties it; a lowered limit must be followed by a size update, an update above it is refused; an encoder whose peer lowered and raised its limit announces both sizes; an encoder with no table sends every field whole.
+- Round trips: 400 generated header lists at each of four encoder table sizes, with the peer's setting changing on the way, decode to the same fields with the decoder's table never above the encoder's size; less room than the bound is refused with nothing written.
+- Every proper prefix of the sixteen RFC blocks (from an exact-size allocation) is a shorter list or `PROVEN_ERR_INVALID_FORMAT`; every single-bit change is other fields or an error.
+
+Failure tip: inspect `src/proven/hpack.c` - `proven_hpack_decode` for the representations and each refusal, `hp_table_add` and `hp_table_reserve` for the table, `proven_hpack_encode` for the encoder's choices, `proven_hpack_huffman_decode` for the padding rules. `src/proven/hpack_tables.h` and `tests/test_unit_hpack_vectors.h` are generated from the RFC's text by a private program: a wrong table is regenerated, never edited.
+
+Note: that other implementations agree - fourteen encoders' output read by this decoder, this encoder's output read by nghttp2 - and a run of millions of damaged blocks are a private program's.
+
+### `tests/test_unit_h2` - h2: HTTP/2 frames and header lists
+
+Intent: verify the stateless half of `h2.h` (RFC 9113): frame headers, the rule each frame type has, padding, settings, the small frames, and the checks that make a header list a request, a response or trailers.
+
+Sub-checks:
+
+- Frame headers: the preface is the RFC's 24 bytes; a SETTINGS acknowledgement and a HEADERS frame with every field at an extreme parse to their parts with the reserved bit dropped and are written back; fewer than nine bytes is `PROVEN_ERR_NEED_MORE`; a length of 2^24 or a stream of 2^31 is not written.
+- Each frame type's rule, thirty-five frames: DATA, HEADERS, CONTINUATION, PRIORITY, RST_STREAM and PUSH_PROMISE need a stream; SETTINGS, PING and GOAWAY must not have one; the fixed sizes (4, 5, 8, a multiple of 6, at least 8) on both sides of their edge; exactly the largest size and one byte over; an unknown type passes unless it is too large. Each refusal carries the code RFC 9113 section 6 names and whether it ends the stream (only PRIORITY of a wrong size) or the connection. The size limit is the one given.
+- Padding: the content of DATA with no flags, with padding, with nothing but padding; padding longer than what follows its length byte, and a padded frame with no room for that byte, are refused; HEADERS skips its five priority bytes; another frame type is `PROVEN_ERR_INVALID_ARG`.
+- Settings: seven settings written as one frame of 42 bytes, which passes its own check and is read back, the unknown one included, then `PROVEN_ERR_EOF`; `ENABLE_PUSH` of 2 and a frame size of 16,383 or 2^24 are `PROTOCOL_ERROR`, an initial window of 2^31 `FLOW_CONTROL_ERROR`; the largest allowed values pass; five bytes are not a setting; a frame that does not fit is not begun.
+- The small frames: a SETTINGS acknowledgement, PING and its acknowledgement, WINDOW_UPDATE, RST_STREAM and GOAWAY written to exact bytes and read back; an increment of 0 or 2^31 and a reset of stream 0 are not written; an increment of 0 that arrives is refused.
+- Requests: GET with all four pseudo-header fields, one without an authority and in another order, OPTIONS `*`, CONNECT, and an empty path for a scheme that is not HTTP are taken apart; thirty-one malformed lists are refused, one for each rule of RFC 9113 sections 8.2 and 8.3 (missing, empty, repeated, unknown or misplaced pseudo-header fields; CONNECT with a path or scheme; names with capitals, spaces, colons, control or non-ASCII bytes; values with NUL, CR, LF or outer whitespace; the five connection-specific fields; `te` other than `trailers`); spaces inside a value, bytes above 0x7f in a value and an empty value are allowed.
+- Responses and trailers: a response's status and fields; twelve malformed responses; trailers with a pseudo-header field or a connection-specific one refused.
+
+Failure tip: inspect `src/proven/h2.c` - `proven_h2_frame_check` for the per-type rules, `proven_h2_frame_content` for padding, `proven_h2_settings_next` for the ranges, `h2_field_ok` and `h2_ordinary_ok` for the header rules. A malformed list accepted here is a request that can be smuggled through a translation to HTTP/1.1.
 
 ### `tests/test_unit_hash_legacy` - legacy digests: SHA-1 and MD5
 
