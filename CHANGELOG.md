@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-10-11
+
 A MINOR release: **the event-driven HTTP server speaks HTTP/2**, beside HTTP/1.1 on the same
 port and through the same handlers. It is off unless asked for. The blocking server and both
 clients speak HTTP/1.1 as before.
