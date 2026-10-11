@@ -77,6 +77,7 @@ struct proven_h2_conn {
     proven_u32 cur, expect_cont;
 
     bool server, fin, drop, end_headers;
+    proven_u32 last_at;                /* where in `streams` the last stream asked for was found */
     bool got_settings, settings_acked, peer_table_set;
     bool goaway_recv, goaway_sent, closed, reported, oom;
     bool hbuf_lent;                        /* hbuf is the caller's, and stays */
@@ -232,10 +233,21 @@ static void h2c_stream_credit(proven_h2_conn_t *c, h2c_stream_t *s, proven_size_
 // Streams
 // -----------------------------------------------------------------------------
 
-static h2c_stream_t *h2c_find(const proven_h2_conn_t *c, proven_u32 id) {
+/* The table is not in order (a stream that ends gives its place to the last), so a stream is
+ * found by walking it - but what is asked about a stream is mostly asked several times running
+ * (its HEADERS and then its DATA; a response's head and then its body), and the place where
+ * the last one was found is tried first. */
+static h2c_stream_t *h2c_peek(const proven_h2_conn_t *c, proven_u32 id) {
+    if (c->last_at < c->stream_count && c->streams[c->last_at].id == id) return &c->streams[c->last_at];
     for (proven_u32 i = 0; i < c->stream_count; i++)
         if (c->streams[i].id == id) return &c->streams[i];
     return (void *)0;
+}
+
+static h2c_stream_t *h2c_find(proven_h2_conn_t *c, proven_u32 id) {
+    h2c_stream_t *s = h2c_peek(c, id);
+    if (s) c->last_at = (proven_u32)(s - c->streams);
+    return s;
 }
 
 static h2c_stream_t *h2c_add(proven_h2_conn_t *c, proven_u32 id) {
@@ -250,6 +262,7 @@ static h2c_stream_t *h2c_add(proven_h2_conn_t *c, proven_u32 id) {
         c->streams = (h2c_stream_t *)(void *)m.value.ptr;
         c->stream_cap = cap;
     }
+    c->last_at = c->stream_count;
     h2c_stream_t *s = &c->streams[c->stream_count++];
     *s = (h2c_stream_t){ .id = id, .send_win = (proven_i32)c->peer_window, .recv_win = (proven_i32)c->local_window, .expect = H2C_NO_LENGTH };
     return s;
@@ -1271,7 +1284,7 @@ proven_size_t proven_h2_conn_stream_count(const proven_h2_conn_t *c) {
 }
 
 proven_size_t proven_h2_conn_send_room(const proven_h2_conn_t *c, proven_u32 stream_id) {
-    const h2c_stream_t *s = c && !c->closed ? h2c_find(c, stream_id) : (void *)0;
+    const h2c_stream_t *s = c && !c->closed ? h2c_peek(c, stream_id) : (void *)0;
     if (!s || (s->flags & ST_HEAD_SENT) == 0 || (s->flags & ST_LOCAL_END) != 0 || s->send_win <= 0 || c->send_win <= 0) return 0;
     proven_size_t room = (proven_size_t)s->send_win;
     if ((proven_i64)room > c->send_win) room = (proven_size_t)c->send_win;
@@ -1286,6 +1299,6 @@ void proven_h2_conn_stream_set_user(proven_h2_conn_t *c, proven_u32 stream_id, v
 }
 
 void *proven_h2_conn_stream_user(const proven_h2_conn_t *c, proven_u32 stream_id) {
-    const h2c_stream_t *s = c ? h2c_find(c, stream_id) : (void *)0;
+    const h2c_stream_t *s = c ? h2c_peek(c, stream_id) : (void *)0;
     return s ? s->user : (void *)0;
 }

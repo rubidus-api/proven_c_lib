@@ -437,6 +437,43 @@ int main(void) {
         proven_http_event_server_destroy(server);
     }
 
+    PROVEN_TEST_SECTION("a burst larger than either side will hold", "Six hundred requests at once on one connection, their answers a few times the output either side keeps.", "Check d_pump and c_pump: what a read sets off is written when the read has been worked through, and what does not fit the output bound waits its turn.");
+    {
+        proven_http_event_server_t *server = server_on(NULL, true, 1000);
+        proven_http_event_client_config_t ccfg = { .alloc = g_heap, .http2_cleartext = true };
+        proven_http_event_client_t *client = NULL;
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &ccfg, &client) == PROVEN_OK, "a client", "");
+        enum { BURST = 600 };
+        static call_t many[BURST];
+        for (int i = 0; i < BURST; i++) PROVEN_TEST_ASSERT(start(client, &many[i], "GET", "/big/300", mv(""), 0) == PROVEN_OK, "a request is started", "");
+        for (int i = 0; i < BURST; i++) spin_until(&many[i].done, 10000);
+        int good = 0;
+        for (int i = 0; i < BURST; i++) good += many[i].done && many[i].why == PROVEN_OK && many[i].status == 200 && many[i].dones == 1 && !many[i].bad && many[i].got == 300 && many[i].protocol == 2;
+        PROVEN_TEST_ASSERT(good == BURST && proven_http_event_server_connections(server) == 1 && g_served_h2 == BURST,
+            "every one of six hundred requests started together is answered whole, once, on the one connection", "");
+        proven_http_event_client_destroy(client);
+        spin(50);
+        proven_http_event_server_destroy(server);
+    }
+
+    PROVEN_TEST_SECTION("http2_cleartext, and a server that is not HTTP/2", "The setting says the server speaks HTTP/2 in the clear. This one does not.", "Check c_input and c_event: bytes that are not HTTP/2 frames end the connection and every request on it, once.");
+    {
+        proven_http_event_server_t *server = server_on(NULL, false, 0);
+        proven_http_event_client_config_t ccfg = { .alloc = g_heap, .http2_cleartext = true };
+        proven_http_event_client_t *client = NULL;
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &ccfg, &client) == PROVEN_OK, "a client told that its servers speak HTTP/2", "");
+        static call_t many[3];
+        for (int i = 0; i < 3; i++) PROVEN_TEST_ASSERT(start(client, &many[i], "GET", "/hello", mv(""), 0) == PROVEN_OK, "a request is started", "");
+        for (int i = 0; i < 3; i++) spin_until(&many[i].done, 5000);
+        bool all = true;
+        for (int i = 0; i < 3; i++) all = all && many[i].done && many[i].why == PROVEN_ERR_AGAIN && many[i].dones == 1 && many[i].responses == 0;
+        PROVEN_TEST_ASSERT(all && g_served == 0 && proven_http_event_client_requests(client) == 0,
+            "each request ends once, with PROVEN_ERR_AGAIN and no response: nothing is sent ahead of a server's settings, so none of them was, and an HTTP/1.1 server's answer to the preface is not taken for a response", "");
+        proven_http_event_client_destroy(client);
+        spin(50);
+        proven_http_event_server_destroy(server);
+    }
+
     PROVEN_TEST_SECTION("an origin that speaks only HTTP/1.1", "A client that asks for HTTP/2, and a server whose TLS does not offer it.", "Check c_fall_back: the requests that were waiting start again as HTTP/1.1 requests, known to their caller by the objects it already had.");
     {
         proven_http_event_server_t *server = server_on(g_server_tls_h1, false, 0);

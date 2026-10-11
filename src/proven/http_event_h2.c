@@ -74,6 +74,7 @@ struct h2d {
     proven_u32 depth, round;
     bool dead;                         /* the transport is gone, or was let go of */
     bool pumping;
+    bool reading;                      /* input is being worked through: what it makes is written once, at its end */
     bool asked;                        /* a request has arrived: from here on a quiet connection is idle, not slow */
     proven_u32 calls;                  /* calls a handler made that are now on the stack */
     proven_time_t quiet_due;           /* when the connection's own silence - output not moving, nothing asked, nothing open - has lasted too long; 0: none is being measured */
@@ -403,7 +404,13 @@ static void d_event(h2d_t *d, const proven_h2_event_t *ev) {
 // -----------------------------------------------------------------------------
 
 static void d_pump(h2d_t *d) {
+    /* While a read is being worked through, what it makes is held back and written when the read
+     * is done: a hundred requests that came in one read are answered in one write, not a
+     * hundred. Only while little is held, though - past a quarter of the bound it leaves at
+     * once, as it always did, so that a response's head never finds the engine full of the
+     * bodies before it. h2_on_input pumps when the read is done. */
     if (d->pumping || d->dead) return;
+    if (d->reading && d_queued(d) < d->server->cfg.max_buffered_output / 4) return;
     d->pumping = true;
     d_enter(d);
     for (;;) {
@@ -468,6 +475,7 @@ static proven_size_t h2_on_input(void *raw, proven_mem_mut_t in) {
     h2d_t *d = raw;
     d_enter(d);
     proven_size_t pos = 0;
+    d->reading = true;
     while (!d->dead && !d->over && pos < in.size) {
         proven_size_t used = 0;
         proven_h2_event_t ev;
@@ -477,6 +485,7 @@ static proven_size_t h2_on_input(void *raw, proven_mem_mut_t in) {
         if (ev.kind != PROVEN_H2_EVENT_NONE) d_event(d, &ev);
         else if (pos == in.size) break;
     }
+    d->reading = false;
     d_pump(d);
     d_leave(d);
     return in.size;                                /* all of it, always: what a stream cannot take yet is its own to keep */
@@ -836,7 +845,14 @@ proven_err_t proven_http_event_h2_respond_(proven_http_stream_t *stream, proven_
         /* The whole response is this call's contract, whatever the output bound: what the
          * engine does not take now is kept, and follows as the peer's window opens. */
         if (!s->bodiless && body.size > 0) {
-            proven_result_size_t r = proven_h2_conn_send_data(d->engine, s->id, body, true);
+            /* Offered only as far as the bound on body bytes: the engine's own bound is twice
+             * that, and the other half is for heads - another stream's response must be able
+             * to begin while this one's body waits. */
+            const proven_size_t room = d_room(d);
+            const proven_mem_view_t now = { .ptr = body.ptr, .size = body.size < room ? body.size : room };
+            proven_result_size_t r = now.size == body.size ? proven_h2_conn_send_data(d->engine, s->id, body, true)
+                                   : now.size > 0 ? proven_h2_conn_send_data(d->engine, s->id, now, false)
+                                   : (proven_result_size_t){ .err = PROVEN_OK, .value = 0 };
             if (r.err != PROVEN_OK) { s_finish(s, PROVEN_ERR_RESET); e = PROVEN_ERR_RESET; }
             else if (r.value == body.size) s->engine_done = true;
             else if (!h2_append(sv->alloc, &s->out, &s->out_len, &s->out_cap, body.ptr + r.value, body.size - r.value)) { s_reset(s, PROVEN_H2_INTERNAL_ERROR, PROVEN_ERR_NOMEM); e = PROVEN_ERR_NOMEM; }

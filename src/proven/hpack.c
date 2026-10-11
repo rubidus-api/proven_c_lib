@@ -38,7 +38,8 @@ static void hp_table_free(hp_table_t *t) {
 
 static hp_entry_t *hp_at(const hp_table_t *t, proven_size_t newest_first) {
     /* Index 0 is the newest: the last one added. */
-    return &t->entries[(t->head + t->count - 1 - newest_first) % t->slots];
+    proven_size_t at = t->head + t->count - 1 - newest_first;          /* under twice `slots`: no division */
+    return &t->entries[at >= t->slots ? at - t->slots : at];
 }
 
 static void hp_evict_one(hp_table_t *t) {
@@ -514,6 +515,7 @@ static int hp_reserve_kind(proven_u8str_view_t name) {
     static const struct { const char *s; proven_u8 n; proven_u8 kind; } list[] = {
         { "authorization", 13, 2 }, { "proxy-authorization", 19, 2 }, { "cookie", 6, 1 }, { "set-cookie", 10, 1 },
     };
+    if (name.size < 6 || name.size > 19) return 0;
     for (proven_size_t i = 0; i < sizeof list / sizeof list[0]; ++i) {
         if (hp_eq(name, (proven_u8str_view_t){ .ptr = (const proven_byte_t *)list[i].s, .size = list[i].n })) return list[i].kind;
     }
@@ -549,10 +551,17 @@ proven_err_t proven_hpack_encode(proven_hpack_encoder_t *c, const proven_http_he
 
         /* Where the tables have it: the whole field, or at least its name. */
         proven_size_t whole = 0, by_name = 0;
-        for (proven_size_t k = 0; k < HPACK_STATIC_COUNT && whole == 0; ++k) {
-            if (!hp_eq(hp_static_name(k), name)) continue;
-            if (by_name == 0) by_name = k + 1;
-            if (hp_eq(hp_static_value(k), value)) whole = k + 1;
+        if (name.size <= HPACK_STATIC_LONGEST_NAME) {
+            /* Only the static names as long as this one are compared with it. */
+            for (proven_size_t j = hpack_static_by_len[name.size]; j < hpack_static_by_len[name.size + 1]; ++j) {
+                const proven_size_t first = hpack_static_names[j].first;
+                if (!hp_eq(hp_static_name(first), name)) continue;
+                by_name = first + 1;
+                for (proven_size_t k = first; k < first + hpack_static_names[j].count; ++k) {
+                    if (hp_eq(hp_static_value(k), value)) { whole = k + 1; break; }
+                }
+                break;
+            }
         }
         for (proven_size_t k = 0; k < t->count && whole == 0; ++k) {
             const hp_entry_t *en = hp_at(t, k);

@@ -18,6 +18,62 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **HTTP/2 in the event-driven server and client: what one read sets off is written once.** The
+  server answered each request with a write of its own, also when a hundred requests had arrived
+  in one read; it now works through the read and writes what that made in one piece. (While
+  little is held, that is: past a quarter of `max_buffered_output` it leaves at once, as
+  before.) The client does the same with the requests its answers set off. Measured over
+  loopback with a load program that is not part of the suite, ten connections with a hundred
+  requests in flight on each went from 198,000 to 1,368,000 requests a second; one request at a
+  time on a connection is as it was, about 155,000. What a handler or a caller is given has not
+  changed. One thing it may notice: a body written in pieces from inside a callback, while other
+  requests of the same read are still being worked through, may have less of it taken at once -
+  and is asked for the rest (`on_writable`) when the read is done, as the contract always
+  allowed. The table is in manual chapter 17, section 8, beside HTTP/1.1 rows made the same day.
+- **`hpack.h`: the encoder finds a static-table name by its length.** A field's name was
+  compared with each of the sixty-one entries; it is compared with the two to six as long as
+  it is. Encoding a response head of three fields went from about 200 to about 100
+  nanoseconds, and the engine's in-memory figure from 268,000 to 390,000 requests a second.
+  The bytes produced are the same.
+- **`h2.h`: header fields are checked with one table look-up a byte**, and the names that
+  have no place in HTTP/2 (`connection` and its kin) are told apart by length first. What is
+  accepted and refused is the same.
+- **The HTTP/2 connection tries the stream it found last before it walks its table**, which
+  is most of the look-ups there are (a stream's HEADERS and then its DATA, a response's head
+  and then its body).
+- **The event-driven client no longer walks its requests at every round**: the timer goes by
+  a time no later than the earliest request's (and is set right when it fires), and requests
+  that are waiting are counted only when there could be too many. With a hundred requests in
+  flight on one connection the client went from 216,000 to 403,000 requests a second against
+  the library's server, all of the above together.
+
+### Fixed
+
+- **Event-driven server, HTTP/2: a response given whole no longer takes the room that other
+  responses' heads need.** `proven_http_stream_respond` handed its body to the connection up
+  to the connection's own bound, which is twice `max_buffered_output` so that heads have room
+  beside bodies; a large body could fill all of it, and a response that began on another
+  stream before any of that had left was then reset (`INTERNAL_ERROR`) for want of room. In
+  v0.30.0 to v0.32.0 that needed a client slow to read while several large whole-body
+  responses were in progress, and no test had made it happen; it was found when the change
+  above, as first written, made it happen for any burst - Node's client, in the private
+  checks, had 945 of 7,392 checks fail, and the registered tests none. A body is now offered
+  as far as `max_buffered_output` and the rest follows, as a body written in pieces always
+  did. A registered test now sends a hundred requests in one write to a server whose bound is
+  smaller than the hundred heads.
+
+### Added
+
+- Tests, no new API: every entry of the HPACK static table asked of the encoder, as itself
+  and with another value; a smaller header table taking effect when the peer has
+  acknowledged it and not before (and the old table refused after); six hundred requests
+  started at once on one connection; and `http2_cleartext` against a server that speaks only
+  HTTP/1.1, where each request ends once with `PROVEN_ERR_AGAIN` and no response (nothing
+  is sent ahead of a server's settings, so none of them was sent). The manual now says so,
+  and that starting such a request again ends the same way.
+
 ## [0.32.0] - 2026-10-11
 
 A MINOR release: **the event-driven HTTP client speaks HTTP/2**, on one connection kept for

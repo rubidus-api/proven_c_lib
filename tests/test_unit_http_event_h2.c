@@ -105,6 +105,11 @@ static void on_request(void *ctx, proven_http_stream_t *s, const proven_http_req
     } else if (path_starts(req, "/big/")) {
         a->total = (proven_size_t)strtoul(a->path + 5, NULL, 10);
         if (proven_http_stream_begin(s, 200, plain, 1, a->total) == PROVEN_OK) app_pump(a);
+    } else if (path_starts(req, "/whole/")) {       /* a body of N bytes, given whole */
+        static proven_byte_t body[65536];
+        if (body[1] == 0) for (proven_size_t i = 0; i < sizeof body; i++) body[i] = pat(i);
+        const proven_size_t n = (proven_size_t)strtoul(a->path + 7, NULL, 10);
+        (void)proven_http_stream_respond(s, 200, plain, 1, (proven_mem_view_t){ body, n < sizeof body ? n : sizeof body });
     } else if (path_starts(req, "/later/")) {
         a->total = (proven_size_t)strtoul(a->path + 7, NULL, 10);
         proven_loop_timer_set(g_loop, &a->timer, 200, later_fire, a);
@@ -749,6 +754,31 @@ int main(void) {
         PROVEN_TEST_ASSERT(cl_wait(&c, a2, 20000) && cl_wait(&c, b2, 20000) && cl_res(&c, a2)->got == 3000000 && cl_res(&c, b2)->got == 6000000 && !cl_res(&c, a2)->bad && !cl_res(&c, b2)->bad,
             "two large responses side by side arrive whole and in order", tls ? "over TLS" : "in the clear");
         PROVEN_TEST_ASSERT(atomic_load(&g_reentered) == 0, "and on_writable is never called from inside the handler's own write", "");
+        cl_close(&c);
+        server_stop();
+    }
+
+    PROVEN_TEST_SECTION("a hundred requests in one read, answered whole", "Whole-body responses that together are many times what the server may hold as output.", "Check d_pump and proven_http_event_h2_respond_: output held back while a read is worked through leaves before the engine is full, and a body never takes the room a later response's head needs - no stream is reset for want of room.");
+    for (int tls = 0; tls < 2; tls++) {
+        /* A bound so small that the heads of a hundred responses are more than the engine may
+         * hold, never mind their bodies. */
+        proven_http_event_server_config_t cfg = { .tls = tls ? g_server_tls : NULL, .max_buffered_output = 600 };
+        proven_u16 port = server_start(cfg);
+        cl_t c;
+        PROVEN_TEST_ASSERT(cl_open_with(&c, tls ? g_client_tls : NULL, port, 1u << 20), "a client", "");
+        PROVEN_TEST_ASSERT(cl_get(&c, "/whole/10", 200, 10), "the connection is up", "");
+        /* All of them queued before a byte is written: they leave in one write and, as far as
+         * the system allows, arrive in one read. */
+        proven_u32 ids[100];
+        for (int i = 0; i < 100; i++) ids[i] = cl_ask(&c, "GET", i % 2 ? "/whole/3000" : "/whole/700", true);
+        int good = 0, resets = 0;
+        for (int i = 0; i < 100; i++) {
+            (void)cl_wait(&c, ids[i], 10000);
+            const res_t *r = cl_res(&c, ids[i]);
+            good += r->end && !r->reset && r->status == 200 && r->got == (proven_size_t)(i % 2 ? 3000 : 700) && !r->bad;
+            resets += r->reset;
+        }
+        PROVEN_TEST_ASSERT(good == 100 && resets == 0 && !c.closed, "all hundred are answered whole and none is reset", tls ? "over TLS" : "in the clear");
         cl_close(&c);
         server_stop();
     }

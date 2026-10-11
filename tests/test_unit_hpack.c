@@ -112,6 +112,40 @@ int main(void) {
         }
         PROVEN_TEST_ASSERT(hpack_huffman[256].code == 0x3fffffff && hpack_huffman[256].bits == 30 && hpack_huffman['/'].code == 0x18 && hpack_huffman['/'].bits == 6,
             "EOS is thirty ones, and '/' is the six bits the RFC spells out", "");
+
+        /* The encoder finds a name by its length first. Every entry is asked for, as itself and
+         * with a value the table does not have, and must come out as the index the RFC gives
+         * it - the first entry with that name, when several share one. */
+        for (proven_size_t i = 0; i < 61; ++i) {
+            proven_size_t first = i;
+            while (first > 0 && strcmp(hpack_static[first - 1].name, hpack_static[i].name) == 0) first--;
+            for (int other = 0; other < 2; ++other) {
+                proven_hpack_encoder_t *enc = NULL;
+                PROVEN_TEST_ASSERT(proven_hpack_encoder_create(proven_heap_allocator(), 4096, &enc) == PROVEN_OK, "an encoder", "");
+                proven_http_header_t h = { .name = sv(hpack_static[i].name), .value = sv(other ? "a value no table has" : hpack_static[i].value) };
+                proven_size_t n = 0;
+                PROVEN_TEST_ASSERT(proven_hpack_encode(enc, &h, 1, NULL, (proven_mem_mut_t){ g_block, sizeof g_block }, &n) == PROVEN_OK && n >= 1, "a static name is encoded", hpack_static[i].name);
+                const bool secret = strcmp(hpack_static[i].name, "authorization") == 0 || strcmp(hpack_static[i].name, "proxy-authorization") == 0;
+                const unsigned prefix = (g_block[0] & 0x80) ? 7u : (g_block[0] & 0x40) ? 6u : 4u;
+                const unsigned mask = (1u << prefix) - 1u;
+                unsigned index = g_block[0] & mask;
+                if (index == mask) index += g_block[1];
+                if (!other && !secret) PROVEN_TEST_ASSERT(n == 1 && g_block[0] == (0x80 | (i + 1)), "an entry of the static table is one byte: its index", hpack_static[i].name);
+                else PROVEN_TEST_ASSERT((g_block[0] & 0x80) == 0 && index == first + 1 && (!secret || (g_block[0] & 0xf0) == 0x10),
+                    "a static name with another value is a literal that names the first entry with that name - never indexed, for the two that carry credentials", hpack_static[i].name);
+                proven_hpack_encoder_destroy(enc);
+            }
+        }
+        {
+            /* And a name that only looks like one of them - the same length, one byte off - is not found. */
+            proven_hpack_encoder_t *enc = NULL;
+            PROVEN_TEST_ASSERT(proven_hpack_encoder_create(proven_heap_allocator(), 4096, &enc) == PROVEN_OK, "an encoder", "");
+            proven_http_header_t h = { .name = sv("content-lengtx"), .value = sv("2") };
+            proven_size_t n = 0;
+            PROVEN_TEST_ASSERT(proven_hpack_encode(enc, &h, 1, NULL, (proven_mem_mut_t){ g_block, sizeof g_block }, &n) == PROVEN_OK && g_block[0] == 0x40,
+                "a name as long as a static one and not equal to it is a new name", "");
+            proven_hpack_encoder_destroy(enc);
+        }
     }
 
     PROVEN_TEST_SECTION("Huffman coding", "Strings coded and decoded, and the endings that must be refused.", "Check proven_hpack_huffman_encode and proven_hpack_huffman_decode.");

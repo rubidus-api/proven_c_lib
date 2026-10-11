@@ -1405,6 +1405,38 @@ int main(void) {
 
         }
 
+        /* A smaller header table takes effect when the peer has acknowledged it, not when it
+         * was sent: a peer's first requests are written before it has read these settings,
+         * under the size every connection starts with. */
+        for (int follows = 0; follows < 2; follows++) {
+            proven_h2_config_t sc = { .alloc = g_alloc, .server = true, .set_header_table = true, .header_table_bytes = 0 };
+            proven_h2_conn_t *c = conn_new(&sc);
+            /* :method GET, :scheme https, :path /, :authority added to the table, a field
+             * added to the table - and then that field again, by its place in the table. */
+            static const proven_byte_t early[] = { 0x82, 0x87, 0x84, 0x41, 0x0b, 'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'o', 'r', 'g',
+                                                   0x40, 0x06, 'x', '-', 'm', 'a', 'r', 'k', 0x03, 'o', 'n', 'e', 0xbe };
+            log_t log = { 0 };
+            g_buf.n = 0;
+            memcpy(g_buf.b, PROVEN_H2_PREFACE, 24); g_buf.n = 24;
+            put_frame(&g_buf, PROVEN_H2_SETTINGS, 0, 0, (void *)0, 0);
+            put_frame(&g_buf, PROVEN_H2_HEADERS, EH | ES, 1, early, sizeof early);
+            feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+            PROVEN_TEST_ASSERT(log.err == PROVEN_OK && log.headers == 1 && !log.closed,
+                "a request written before the peer read \"no header table\" may still use the table it began with", "");
+            drain(c, (void *)0);
+            /* The acknowledgement: from here the peer has to say that it followed. */
+            static const proven_byte_t stale[] = { 0x82, 0x87, 0x84, 0xbf, 0xbe };
+            static const proven_byte_t followed[] = { 0x20, 0x82, 0x87, 0x84, 0x01, 0x0b, 'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'o', 'r', 'g' };
+            g_buf.n = 0;
+            put_frame(&g_buf, PROVEN_H2_SETTINGS, PROVEN_H2_FLAG_ACK, 0, (void *)0, 0);
+            if (follows) put_frame(&g_buf, PROVEN_H2_HEADERS, EH | ES, 3, followed, sizeof followed);
+            else put_frame(&g_buf, PROVEN_H2_HEADERS, EH | ES, 3, stale, sizeof stale);
+            feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+            if (follows) PROVEN_TEST_ASSERT(log.err == PROVEN_OK && log.headers == 2 && !log.closed, "once acknowledged, a block that opens by setting the table to nothing is read", "");
+            else PROVEN_TEST_ASSERT(log.closed == 1 && log.close_code == PROVEN_H2_COMPRESSION_ERROR, "once acknowledged, a block that goes on using the old table is a compression error", "");
+            proven_h2_conn_destroy(c);
+        }
+
         /* Every allocation of a short conversation fails once. */
         g_mem.calls = 0; g_mem.fail_at = 1000000;
         PROVEN_TEST_ASSERT(conversation(), "the conversation runs when memory is to be had", "");

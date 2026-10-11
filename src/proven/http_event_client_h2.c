@@ -72,10 +72,11 @@ struct c2conn {
     proven_size_t count;               /* requests on it, waiting or under way */
     proven_net_addr_t to;
     proven_time_t quiet_due;
+    proven_time_t req_due;             /* no later than the earliest hour among its requests (0: none): see c_arm */
     proven_u32 depth, round, calls;
     proven_u16 port;
     proven_u8 state, host_len;
-    bool https, connected_at_start, dead, pumping, over, peer_eof, more_out, registered;
+    bool https, connected_at_start, dead, pumping, reading, over, peer_eof, more_out, registered;
     proven_byte_t host[256];
 };
 
@@ -281,9 +282,10 @@ static void c_arm(c2conn_t *c) {
     /* Connecting is one step with one limit: its clock is not started again by progress. */
     if (c->state != C2_UP && c->quiet_due != 0) ms = c->quiet_due > now ? (proven_u32)((c->quiet_due - now) / 1000000 + 1) : 1;
     else c->quiet_due = ms ? now + (proven_time_t)ms * 1000000 : 0;
-    proven_time_t due = 0;
-    for (const c2req_t *r = c->reqs; r; r = r->next)
-        if (r->due != 0 && (due == 0 || r->due < due)) due = r->due;
+    /* Not the earliest of its requests' hours, which would be a walk of them all at every
+     * round, but a time no later than it: at worst the timer wakes early once, and c_on_timer
+     * looks at each request and sets this right. */
+    const proven_time_t due = c->req_due;
     if (due != 0) {
         const proven_time_t left = due > now ? (due - now) / 1000000 + 1 : 1;
         if (ms == 0 || (proven_time_t)ms > left) ms = (proven_u32)left;
@@ -300,6 +302,7 @@ static void r_expect(c2req_t *r) {
     else if (!r->got_head) ms = r->end_asked || !r->streamed ? cfg->response_timeout_ms : 0;
     else ms = cfg->body_timeout_ms;
     r->due = ms ? proven_time_monotonic_now() + (proven_time_t)ms * 1000000 : 0;
+    if (r->due != 0 && r->conn && (r->conn->req_due == 0 || r->due < r->conn->req_due)) r->conn->req_due = r->due;
 }
 
 // -----------------------------------------------------------------------------
@@ -589,7 +592,9 @@ static void c_event(c2conn_t *c, const proven_h2_event_t *ev) {
 // -----------------------------------------------------------------------------
 
 static void c_pump(c2conn_t *c) {
-    if (c->pumping || c->dead || c->state != C2_UP) return;
+    /* While a read is being worked through nothing is written: the requests that its answers
+     * set off leave in one write. c_on_io pumps when the read is done. */
+    if (c->pumping || c->dead || c->reading || c->state != C2_UP) return;
     c->pumping = true;
     c_enter(c);
     for (;;) {
@@ -791,7 +796,7 @@ static void c_on_io(void *ctx, proven_u8 got) {
             c->more_out = false;
             if (c_flush_tls(c) && c->state == C2_HANDSHAKE) c_watch(c);
         }
-        if (!c->dead && c->state != C2_H1 && (got & (PROVEN_NET_READABLE | PROVEN_NET_FAILED))) c_readable(c);
+        if (!c->dead && c->state != C2_H1 && (got & (PROVEN_NET_READABLE | PROVEN_NET_FAILED))) { c->reading = true; c_readable(c); c->reading = false; }
         if (!c->dead && c->state == C2_UP) c_pump(c);
         else if (!c->dead && c->state == C2_HANDSHAKE) { (void)c_flush_tls(c); c_watch(c); }
     }
@@ -813,6 +818,10 @@ static void c_on_timer(void *ctx) {
         }
     }
     if (!c->dead) {
+        /* The earliest hour among the requests that remain, exactly: c_arm goes by it. */
+        c->req_due = 0;
+        for (const c2req_t *r = c->reqs; r; r = r->next)
+            if (r->due != 0 && (c->req_due == 0 || r->due < c->req_due)) c->req_due = r->due;
         if (c->quiet_due != 0 && now >= c->quiet_due) {
             if (c->state != C2_UP || c_queued(c) > 0) c_kill(c, PROVEN_ERR_TIMEOUT);       /* never connected, or the server takes nothing */
             else if (c->count == 0) { proven_h2_conn_shutdown(c->engine, PROVEN_H2_NO_ERROR); c->over = true; c_pump(c); }
@@ -851,8 +860,9 @@ proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *cl, 
     }
     if (c && c->state == C2_H1) return PROVEN_ERR_UNSUPPORTED;
     if (c) {
+        /* Counted only when there could be that many: no more wait than there are requests. */
         proven_size_t waiting = 0;
-        for (const c2req_t *w = c->reqs; w; w = w->next) if (w->id == 0) waiting++;
+        if (c->count >= cl->cfg.max_waiting_requests) for (const c2req_t *w = c->reqs; w; w = w->next) if (w->id == 0) waiting++;
         if (waiting >= cl->cfg.max_waiting_requests) return PROVEN_ERR_BUSY;
     }
 

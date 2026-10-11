@@ -218,27 +218,43 @@ proven_err_t proven_h2_read_goaway(proven_mem_view_t payload, proven_u32 *last_s
 // A header list as a message
 // -----------------------------------------------------------------------------
 
-static bool h2_is(proven_u8str_view_t s, const char *lit) {
-    proven_size_t n = 0;
-    while (lit[n] != '\0') n++;
-    if (s.size != n) return false;
-    for (proven_size_t i = 0; i < n; ++i) if (s.ptr[i] != (proven_byte_t)lit[i]) return false;
+static bool h2_same(const proven_byte_t *p, const char *lit, proven_size_t n) {
+    for (proven_size_t i = 0; i < n; ++i) if (p[i] != (proven_byte_t)lit[i]) return false;
     return true;
 }
+/* `lit` is a string literal: its length is known where this is written, and is compared first. */
+#define h2_is(s, lit) ((s).size == sizeof(lit) - 1 && h2_same((s).ptr, (lit), sizeof(lit) - 1))
+
+/* What a byte may not be in (RFC 9113, 8.2.1): 1 - a field name (a control, a space, an upper-case
+ * letter, DEL or above); 2 - a field value (NUL, LF, CR); 4 - it is a colon. */
+enum { H2_BAD_IN_NAME = 1, H2_BAD_IN_VALUE = 2, H2_COLON = 4 };
+static const proven_u8 h2_class[256] = {
+    3,1,1,1,1,1,1,1,1,1,3,1,1,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+    1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,
+    0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+};
 
 /* RFC 9113, 8.2.1: the minimal validation every endpoint must do. `pseudo`: the name may
  * begin with a colon (and only begin with one). */
 static bool h2_field_ok(const proven_http_header_t *h, bool pseudo) {
     if (h->name.size == 0 || (h->name.size > 0 && !h->name.ptr) || (h->value.size > 0 && !h->value.ptr)) return false;
-    for (proven_size_t i = 0; i < h->name.size; ++i) {
-        proven_byte_t c = h->name.ptr[i];
-        if (c <= 0x20 || (c >= 0x41 && c <= 0x5a) || c >= 0x7f) return false;
-        if (c == ':' && !(pseudo && i == 0)) return false;
+    /* One table look-up a byte, and the verdict taken at the end of each string. */
+    unsigned seen = 0;
+    for (proven_size_t i = 0; i < h->name.size; ++i) seen |= h2_class[h->name.ptr[i]];
+    if ((seen & H2_BAD_IN_NAME) != 0) return false;
+    if ((seen & H2_COLON) != 0) {
+        /* A colon only begins a name, and only a pseudo-header field's. */
+        if (!pseudo || h->name.ptr[0] != ':') return false;
+        for (proven_size_t i = 1; i < h->name.size; ++i) if (h->name.ptr[i] == ':') return false;
     }
-    for (proven_size_t i = 0; i < h->value.size; ++i) {
-        proven_byte_t c = h->value.ptr[i];
-        if (c == 0x00 || c == 0x0a || c == 0x0d) return false;
-    }
+    seen = 0;
+    for (proven_size_t i = 0; i < h->value.size; ++i) seen |= h2_class[h->value.ptr[i]];
+    if ((seen & H2_BAD_IN_VALUE) != 0) return false;
     if (h->value.size > 0) {
         proven_byte_t a = h->value.ptr[0], z = h->value.ptr[h->value.size - 1];
         if (a == ' ' || a == '\t' || z == ' ' || z == '\t') return false;
@@ -249,10 +265,14 @@ static bool h2_field_ok(const proven_http_header_t *h, bool pseudo) {
 /* RFC 9113, 8.2.2: fields that describe a connection have no place here. */
 static bool h2_ordinary_ok(const proven_http_header_t *h, bool request) {
     if (!h2_field_ok(h, false)) return false;
-    if (h2_is(h->name, "connection") || h2_is(h->name, "proxy-connection") || h2_is(h->name, "keep-alive") ||
-        h2_is(h->name, "transfer-encoding") || h2_is(h->name, "upgrade")) return false;
-    if (h2_is(h->name, "te") && !(request && h2_is(h->value, "trailers"))) return false;
-    return true;
+    switch (h->name.size) {                       /* by length first: most names are none of these */
+        case 2: return !h2_is(h->name, "te") || (request && h2_is(h->value, "trailers"));
+        case 7: return !h2_is(h->name, "upgrade");
+        case 10: return !h2_is(h->name, "connection") && !h2_is(h->name, "keep-alive");
+        case 16: return !h2_is(h->name, "proxy-connection");
+        case 17: return !h2_is(h->name, "transfer-encoding");
+        default: return true;
+    }
 }
 
 proven_err_t proven_h2_request_head(const proven_http_header_t *headers, proven_size_t count, proven_h2_request_head_t *out) {

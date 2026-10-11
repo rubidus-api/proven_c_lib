@@ -1159,7 +1159,10 @@ before it returns, and `on_done` comes exactly once, never from inside `start`.
   learn again.)
 - **In the clear**, `http2_cleartext`: every `http` request of that client is HTTP/2 by
   prior knowledge. There is no way to ask a server in the clear, so say this only of servers
-  you know; a client that talks to both kinds in the clear is two clients.
+  you know; a client that talks to both kinds in the clear is two clients. Said of a server
+  that speaks only HTTP/1.1, it ends every request with `PROVEN_ERR_AGAIN` - nothing is sent
+  ahead of a server's settings, and that server never sends any - and starting them again
+  ends the same way: count your retries.
 
 **A request may wait**, where an HTTP/1.1 request never did: for the connection, while it is
 being made; for the server's first word, which says how many streams it allows - nothing is
@@ -1385,12 +1388,58 @@ end. **Fifteen did at first**: against a server that allows four streams, a burs
 requests on a new connection went out before the server had said so, and the surplus came
 back refused. The client now sends nothing ahead of the server's settings.
 
+**What the registered tests did not find, once more.** When the server was first made to
+hold its output for the length of a read (the table below is what that bought), a burst of
+whole-body responses filled the connection's output and the responses that began after them
+were reset for want of room. Every registered test passed. Node's client, in the private
+checks, had 945 of 7,392 fail. The hold now ends when a quarter of `max_buffered_output` is
+queued, a whole body leaves the room that heads need, and a registered test sends a hundred
+requests in one write to a server whose bound is smaller than their heads; the private
+checks were then run again in full - 7,896, 7,392 and 1,156 against Node and curl, h2spec as
+before - and none failed.
+
 **Speed, measured once, with no socket**: two connections in memory on one core of a
 3.5 GHz x86-64 processor, GCC `-O2`. A request head of twelve fields (299 bytes as literals)
-is Huffman-decoded 680,000 times a second, 204 MB/s; 268,000 requests a second are sent,
+is Huffman-decoded 680,000 times a second, 204 MB/s; 390,000 requests a second are sent,
 decoded, answered with a head and read back, a hundred in flight; and bodies cross at 2.4
 GB/s. These are the protocol's costs alone - a socket, TLS and a handler all cost more.
 
-**Not done:** no coverage-guided fuzzing; no measurement under load over a network (the
-connection finds a stream by walking its table); no browser has talked to the server; no
-external review.
+**Speed over a socket, measured once**: the load of [Chapter 15, section 14](manual-15-event-loop.md#14-what-a-connection-holds-what-was-measured-and-what-is-not-here),
+made again for HTTP/2 against the same server on the same machine - a load program that is
+not part of the test suite, client and server in two processes over the loopback interface,
+in the clear, one loop, a handler that answers two bytes, ten seconds a row. Every connection
+makes one request and is left open; then some of them keep a number of requests in flight.
+The HTTP/1.1 rows were made the same day against the same server process, for comparison.
+
+| Protocol | Connections held | Making requests | In flight on each | Requests per second | Round trip: median, 99th percentile |
+|---|---|---|---|---|---|
+| HTTP/1.1 | 1,000 | 10 | 1 | 176,000 | 0.04 ms, 0.12 ms |
+| HTTP/2 | 1,000 | 10 | 1 | 153,000 | 0.05 ms, 0.16 ms |
+| HTTP/2 | 1,000 | 10 | 10 | 821,000 | 0.1 ms, 0.2 ms |
+| HTTP/2 | 1,000 | 10 | 100 | 1,368,000 | 0.6 ms, 1.4 ms |
+| HTTP/1.1 | 10,000 | 100 | 1 | 188,000 | 0.5 ms, 0.9 ms |
+| HTTP/2 | 10,000 | 100 | 1 | 165,000 | 0.6 ms, 0.9 ms |
+| HTTP/2 | 10,000 | 100 | 10 | 820,000 | 1.2 ms, 2.0 ms |
+
+What the table says. **One request at a time, HTTP/2 is the slower by about an eighth**: each
+request is still one read and one write, and there is more to do for it between them. **With
+requests in flight together it is several times the faster**, because the server works
+through everything one read brought before it writes: a hundred requests that arrive
+together are answered in one write, and of the server's ten seconds the system's share falls
+from 7.3 to 0.8. The round trip grows with the number in flight, as it must: a hundred
+requests wait their turn on one loop. No connection and no request was lost in any row. In
+the server an idle HTTP/2 connection that had made its one request held 2,272 bytes
+(1,920 with `http2_no_header_table`), against 448 for HTTP/1.1, and the buffer for reading
+header lists, 82 KiB, is one for the whole server.
+
+The library's own client (section 7), against the same server: 403,000 requests a second
+with a hundred in flight on its one connection - the client was the limit there, the server
+busy under four seconds in ten - and 42,700 a second one at a time, 21 microseconds each at
+the median. The same client over HTTP/1.1, which makes a connection for every request, did
+22,500 a second. **Loopback is not a network**, and a handler that does real work will be
+slower than one that answers "ok".
+
+**Not done:** no coverage-guided fuzzing; no measurement over a real network, with TLS, or
+with large bodies under load (the connection finds a stream by trying the one it found last and then walking its
+table); no
+browser has talked to the server; no external review.

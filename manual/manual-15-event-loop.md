@@ -1365,7 +1365,8 @@ connection, failing above 1 KiB. A TLS connection adds the engine's state, about
 idle (Chapter 14, section 9). **An HTTP/2 connection is another size**: 2,264 bytes idle after
 one small request, failing above 3 KiB, and growing with the header fields it is made to
 remember to about 12.8 KiB when both of its compression tables are full ([Chapter 17, section 6](manual-17-http2.md#6-http2-in-the-event-driven-server)).
-The numbers below are HTTP/1.1's.
+The numbers below are HTTP/1.1's; HTTP/2's, under the same load, are in
+[Chapter 17, section 8](manual-17-http2.md#8-what-is-accepted-what-is-not-here-and-how-this-was-tested).
 
 **What was measured.** One run of a load program that is not part of the test suite, on one
 machine: a 16-thread x86-64 desktop processor at 3.5 GHz with 62 GB, Linux 6.12, GCC at `-O2`.

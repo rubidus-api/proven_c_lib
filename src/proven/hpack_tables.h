@@ -162,4 +162,19 @@ static const proven_u16 hpack_huffman_fast[256] = {
     0x777, 0x777, 0x787, 0x787, 0x797, 0x797, 0x7a7, 0x7a7, 0x268, 0x2a8, 0x2c8, 0x3b8, 0x588, 0x5a8, 0x0, 0x0,
 };
 
+/* For encoding. The distinct names by length: those of length n are
+ * hpack_static_names[hpack_static_by_len[n] .. hpack_static_by_len[n + 1]), each the index of
+ * its first entry in hpack_static and how many entries (neighbours) have that name. */
+#define HPACK_STATIC_LONGEST_NAME 27u
+static const proven_u8 hpack_static_by_len[29] = { 0, 0, 0, 0, 2, 8, 11, 15, 21, 24, 24, 27, 28, 30, 36, 38, 40, 44, 46, 47, 50, 50, 50, 50, 50, 50, 51, 51, 52 };
+static const struct { proven_u8 first, count; } hpack_static_names[52] = {
+    { 20, 1 }, { 59, 1 }, { 32, 1 }, { 33, 1 }, { 36, 1 }, { 37, 1 }, { 44, 1 }, { 58, 1 },
+    { 3, 2 }, { 21, 1 }, { 49, 1 }, { 18, 1 }, { 31, 1 }, { 34, 1 }, { 53, 1 }, { 1, 2 },
+    { 5, 2 }, { 7, 7 }, { 35, 1 }, { 50, 1 }, { 51, 1 }, { 38, 1 }, { 41, 1 }, { 45, 1 },
+    { 0, 1 }, { 54, 1 }, { 57, 1 }, { 52, 1 }, { 30, 1 }, { 46, 1 }, { 17, 1 }, { 22, 1 },
+    { 23, 1 }, { 29, 1 }, { 40, 1 }, { 43, 1 }, { 14, 1 }, { 27, 1 }, { 15, 1 }, { 16, 1 },
+    { 25, 1 }, { 26, 1 }, { 28, 1 }, { 60, 1 }, { 39, 1 }, { 56, 1 }, { 47, 1 }, { 24, 1 },
+    { 42, 1 }, { 48, 1 }, { 55, 1 }, { 19, 1 },
+};
+
 #endif /* PROVEN_HPACK_TABLES_H */
