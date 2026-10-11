@@ -18,6 +18,12 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-10-12
+
+A MINOR release with no new API: **HTTP/2 measured over a socket and made faster where the
+measurement pointed** - several times faster when requests are in flight together - and one
+defect of the event-driven server's HTTP/2 found on the way and fixed.
+
 ### Changed
 
 - **HTTP/2 in the event-driven server and client: what one read sets off is written once.** The
