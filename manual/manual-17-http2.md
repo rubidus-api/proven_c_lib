@@ -1400,7 +1400,7 @@ before - and none failed.
 
 **Speed, measured once, with no socket**: two connections in memory on one core of a
 3.5 GHz x86-64 processor, GCC `-O2`. A request head of twelve fields (299 bytes as literals)
-is Huffman-decoded 680,000 times a second, 204 MB/s; 390,000 requests a second are sent,
+is Huffman-decoded 680,000 times a second, 204 MB/s; 385,000 requests a second are sent,
 decoded, answered with a head and read back, a hundred in flight; and bodies cross at 2.4
 GB/s. These are the protocol's costs alone - a socket, TLS and a handler all cost more.
 
@@ -1432,14 +1432,19 @@ the server an idle HTTP/2 connection that had made its one request held 2,272 by
 (1,920 with `http2_no_header_table`), against 448 for HTTP/1.1, and the buffer for reading
 header lists, 82 KiB, is one for the whole server.
 
-The library's own client (section 7), against the same server: 403,000 requests a second
-with a hundred in flight on its one connection - the client was the limit there, the server
-busy under four seconds in ten - and 42,700 a second one at a time, 21 microseconds each at
-the median. The same client over HTTP/1.1, which makes a connection for every request, did
+The library's own client (section 7), against the same server: 471,000 to 486,000 requests a
+second in three runs with a hundred in flight on its one connection - the two processes take
+turns there, the client's the longer one, the server busy about four seconds in ten - and
+42,000 a second one at a time, 21 microseconds each at the median. (It was 403,000 with a
+hundred in flight until the connection found a stream by its number instead of walking its
+table, and the client read a request's URL once instead of twice.) The same client over HTTP/1.1, which makes a connection for every request, did
 22,500 a second. **Loopback is not a network**, and a handler that does real work will be
 slower than one that answers "ok".
 
 **Not done:** no coverage-guided fuzzing; no measurement over a real network, with TLS, or
-with large bodies under load (the connection finds a stream by trying the one it found last and then walking its
-table); no
-browser has talked to the server; no external review.
+with large bodies under load; no browser has talked to the server; no external review. A
+connection finds a stream in one step by a map from its number, which holds two slots for
+every place in the stream table; a stream that arrives to find its slot taken - by one open
+far longer than its neighbours - is found by walking the table, and a peer that arranges
+that on purpose makes the connection walk its table as it did before there was a map, and
+do nothing worse.

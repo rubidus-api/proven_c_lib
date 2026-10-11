@@ -106,7 +106,7 @@ static void on_request(void *ctx, proven_http_stream_t *s, const proven_http_req
         a->total = (proven_size_t)strtoul(a->path + 5, NULL, 10);
         if (proven_http_stream_begin(s, 200, plain, 1, a->total) == PROVEN_OK) app_pump(a);
     } else if (path_starts(req, "/whole/")) {       /* a body of N bytes, given whole */
-        static proven_byte_t body[65536];
+        static proven_byte_t body[400000];
         if (body[1] == 0) for (proven_size_t i = 0; i < sizeof body; i++) body[i] = pat(i);
         const proven_size_t n = (proven_size_t)strtoul(a->path + 7, NULL, 10);
         (void)proven_http_stream_respond(s, 200, plain, 1, (proven_mem_view_t){ body, n < sizeof body ? n : sizeof body });
@@ -779,6 +779,28 @@ int main(void) {
             resets += r->reset;
         }
         PROVEN_TEST_ASSERT(good == 100 && resets == 0 && !c.closed, "all hundred are answered whole and none is reset", tls ? "over TLS" : "in the clear");
+        cl_close(&c);
+        server_stop();
+    }
+    {
+        /* And with the default bound, bodies that together are more than the socket will take
+         * from a server whose client is not reading yet: the engine's output stays full, and
+         * the responses behind still have to begin. */
+        proven_http_event_server_config_t cfg = { 0 };
+        proven_u16 port = server_start(cfg);
+        cl_t c;
+        PROVEN_TEST_ASSERT(cl_open_with(&c, NULL, port, 1u << 30), "a client whose windows hold everything asked for", "");
+        PROVEN_TEST_ASSERT(cl_get(&c, "/whole/10", 200, 10), "the connection is up", "");
+        proven_u32 ids[100];
+        for (int i = 0; i < 100; i++) ids[i] = cl_ask(&c, "GET", "/whole/300000", true);
+        int good = 0, resets = 0;
+        for (int i = 0; i < 100; i++) {
+            (void)cl_wait(&c, ids[i], 30000);
+            const res_t *r = cl_res(&c, ids[i]);
+            good += r->end && !r->reset && r->status == 200 && r->got == 300000 && !r->bad;
+            resets += r->reset;
+        }
+        PROVEN_TEST_ASSERT(good == 100 && resets == 0 && !c.closed, "thirty megabytes in a hundred whole responses arrive, and none is reset", "");
         cl_close(&c);
         server_stop();
     }

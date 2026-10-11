@@ -559,7 +559,7 @@ proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *cl, 
      * origin - unless that origin has shown that it speaks only HTTP/1.1. */
     if (!face && (https ? cl->cfg.http2 : cl->cfg.http2_cleartext)) {
         for (proven_size_t i = 0; i < o->header_count; ++i) if (cl_is_reserved_header(o->headers[i].name)) return PROVEN_ERR_INVALID_ARG;
-        proven_err_t h2e = proven_http_event_client_h2_start_(cl, o, https, u.host, u.has_port ? u.port : proven_url_default_port(u.scheme), to, out);
+        proven_err_t h2e = proven_http_event_client_h2_start_(cl, o, https, &u, to, out);
         if (h2e != PROVEN_ERR_UNSUPPORTED) return h2e;
     }
 

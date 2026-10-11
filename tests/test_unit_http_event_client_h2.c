@@ -37,6 +37,7 @@ static void spin(proven_u32 ms) { bool never = false; spin_until(&never, ms); }
 
 typedef struct { proven_http_stream_t *stream; proven_loop_timer_t timer; proven_size_t sent, total, got; proven_byte_t *echo; proven_size_t cap; bool echoing; } served_t;
 static int g_served, g_served_done, g_served_h2;
+static char g_who_target[80], g_who_host[80];      /* what the last /who request looked like to the handler */
 
 static void served_pump(served_t *a) {
     static proven_byte_t piece[8192];
@@ -74,6 +75,12 @@ static void srv_request(void *ctx, proven_http_stream_t *s, const proven_http_re
         a->echoing = true;
         if (proven_http_header_count(req->headers, req->header_count, sv("Content-Length")) == 0 && proven_http_header_count(req->headers, req->header_count, sv("Transfer-Encoding")) == 0)
             (void)proven_http_stream_respond(s, 200, NULL, 0, mv(""));
+    } else if (target_starts(req, "/who")) {
+        proven_u8str_view_t host = { 0 };
+        (void)proven_http_header_find(req->headers, req->header_count, sv("Host"), &host);
+        snprintf(g_who_target, sizeof g_who_target, "%.*s", (int)req->target.size, (const char *)req->target.ptr);
+        snprintf(g_who_host, sizeof g_who_host, "%.*s", (int)host.size, (const char *)host.ptr);
+        (void)proven_http_stream_respond(s, 200, NULL, 0, mv("who"));
     } else if (target_is(req, "/later")) proven_loop_timer_set(g_loop, &a->timer, 60, served_later, a);
     else if (target_is(req, "/never")) { /* thinking */ }
     else (void)proven_http_stream_respond(s, 404, NULL, 0, mv("no"));
@@ -451,6 +458,59 @@ int main(void) {
         for (int i = 0; i < BURST; i++) good += many[i].done && many[i].why == PROVEN_OK && many[i].status == 200 && many[i].dones == 1 && !many[i].bad && many[i].got == 300 && many[i].protocol == 2;
         PROVEN_TEST_ASSERT(good == BURST && proven_http_event_server_connections(server) == 1 && g_served_h2 == BURST,
             "every one of six hundred requests started together is answered whole, once, on the one connection", "");
+        proven_http_event_client_destroy(client);
+        spin(50);
+        proven_http_event_server_destroy(server);
+    }
+
+    PROVEN_TEST_SECTION("what the server is told", "The URL is read once, when the request is started; the path, the query and the authority that reach the server are its own.", "Check proven_http_event_client_h2_start_ and r_submit: the target is the path and query of the copied URL, and :authority is the connection's host, in lower case, in brackets when it is an IPv6 address, with the port only when it is not the scheme's.");
+    {
+        proven_http_event_server_t *server = server_on(NULL, true, 100);
+        proven_http_event_client_config_t ccfg = { .alloc = g_heap, .http2_cleartext = true };
+        proven_http_event_client_t *client = NULL;
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &ccfg, &client) == PROVEN_OK, "a client", "");
+        const proven_net_addr_t at = proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, g_port);
+        char text[160], want[80];
+        call_t c;
+        /* Twice each: the first request of an origin waits for its connection, the second is
+         * put on a stream from inside the call that starts it. */
+        static const struct { const char *host, *rest, *target, *authority; } cases[] = {
+            { "127.0.0.1", "/who?a=1&b=%20", "/who?a=1&b=%20", "127.0.0.1" },
+            { "LocalHost.Example", "/who/Deep/Path", "/who/Deep/Path", "localhost.example" },
+            { "[::1]", "/who?", "/who?", "[::1]" },
+        };
+        for (int k = 0; k < 6; k++) {
+            const int i = k / 2;
+            const int n = snprintf(text, sizeof text, "http://%s:%u%s", cases[i].host, (unsigned)g_port, cases[i].rest);
+            snprintf(want, sizeof want, "%s:%u", cases[i].authority, (unsigned)g_port);
+            memset(&c, 0, sizeof c);
+            g_who_target[0] = g_who_host[0] = 0;
+            proven_http_event_request_options_t o = { .url = { (const proven_byte_t *)text, (proven_size_t)n }, .address = &at,
+                .on = { .on_response = on_response, .on_body = on_body, .on_done = on_done }, .ctx = &c };
+            PROVEN_TEST_ASSERT(proven_http_event_client_start(client, &o, &c.request) == PROVEN_OK, "a request is started", cases[i].host);
+            proven_http_event_request_set_user(c.request, &c);
+            memset(text, '#', sizeof text);            /* the caller's URL is the caller's again once the call returns */
+            spin_until(&c.done, 5000);
+            PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.status == 200 && c.protocol == 2, "it is answered over HTTP/2", cases[i].host);
+            PROVEN_TEST_ASSERT(strcmp(g_who_target, cases[i].target) == 0, "the server saw the path and the query as they were written", g_who_target);
+            PROVEN_TEST_ASSERT(strcmp(g_who_host, want) == 0, "and the host in lower case, with its port, as the authority", g_who_host);
+        }
+        PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == 3, "three hosts, three connections", "");
+        /* A query with no path before it is not a target HTTP/2 can carry. */
+        const int n = snprintf(text, sizeof text, "http://127.0.0.1:%u?a=1", (unsigned)g_port);
+        memset(&c, 0, sizeof c);
+        proven_http_event_request_options_t o = { .url = { (const proven_byte_t *)text, (proven_size_t)n }, .on = { .on_done = on_done }, .ctx = &c };
+        PROVEN_TEST_ASSERT(proven_http_event_client_start(client, &o, &c.request) == PROVEN_ERR_INVALID_ARG && c.request == NULL && c.dones == 0,
+            "a query without a path is refused by the call, on a connection that is up", "");
+        /* A body small enough to lie in the request's own allocation, and one that is not. */
+        static proven_byte_t up[3000];
+        for (proven_size_t i = 0; i < sizeof up; i++) up[i] = pattern(i);
+        for (int k = 0; k < 2; k++) {
+            const proven_size_t size = k ? sizeof up : 700;
+            PROVEN_TEST_ASSERT(start(client, &c, "POST", "/echo", (proven_mem_view_t){ up, size }, 0) == PROVEN_OK, "a request with a body is started", "");
+            spin_until(&c.done, 5000);
+            PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.status == 200 && c.got == size && !c.bad, "its body comes back whole", k ? "3000 bytes" : "700 bytes");
+        }
         proven_http_event_client_destroy(client);
         spin(50);
         proven_http_event_server_destroy(server);

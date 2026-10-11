@@ -2,6 +2,7 @@
 #define PROVEN_INTERNAL_HTTP_EVENT_CLIENT_H
 
 #include "proven/http_event_client.h"
+#include "proven/url.h"
 #include "proven_internal_http_coding.h"
 
 /*
@@ -104,7 +105,7 @@ proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *clie
  * one for HTTP/2 - its origin is known to speak HTTP/1.1 - and is to be started as such. */
 [[nodiscard]]
 proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *client, const proven_http_event_request_options_t *options,
-                                                bool https, proven_u8str_view_t host, proven_u16 port, proven_net_addr_t to,
+                                                bool https, const proven_url_t *url, proven_net_addr_t to,
                                                 proven_http_event_request_t **out);
 void proven_http_event_client_h2_destroy_(proven_http_event_client_t *client);
 /* The HTTP/1.1 request that `face` became has ended and its on_done has returned. */

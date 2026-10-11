@@ -32,6 +32,7 @@
 #define C2_UP 2             /* HTTP/2 */
 #define C2_H1 3             /* this origin speaks HTTP/1.1: remembered, with no connection */
 #define C2_MAX_REMEMBERED 64u   /* such memories kept; beyond that the oldest is forgotten, and costs a handshake to learn again */
+#define C2_COPY_BEHIND 1024u    /* a request's copied URL, fields and body up to this size share its allocation */
 
 typedef struct c2conn c2conn_t;
 
@@ -42,8 +43,9 @@ typedef struct c2req {
     proven_http_event_request_t *fwd;  /* the HTTP/1.1 request this became */
     proven_http_event_client_callbacks_t on;
     void *ctx, *user;
-    proven_byte_t *copy;               /* what it was started with, until it has been sent or handed on */
+    proven_byte_t *copy;               /* what it was started with, until it has been sent or handed on; null when that is small and lies behind this struct */
     proven_u8str_view_t url, method;
+    proven_u8str_view_t target;        /* the path and query within `url`: empty for none */
     proven_http_header_t *headers;
     proven_size_t header_count;
     proven_mem_view_t body;
@@ -58,6 +60,7 @@ typedef struct c2req {
     proven_u32 id, mark;               /* id 0: not yet on a stream */
     bool dead, streamed, end_asked, engine_done, paused, want_writable, window_shut;
     bool got_head, head_only, held_last, any_decoded;
+    bool host_is_ipv6, query_alone;    /* of the URL, read once when the request was started */
 } c2req_t;
 
 struct c2conn {
@@ -355,25 +358,18 @@ static void r_push(c2req_t *r) {
 static proven_err_t r_submit(c2req_t *r) {
     c2conn_t *c = r->conn;
     proven_http_event_client_t *cl = c->client;
-    proven_url_t u;
-    if (proven_url_parse(r->url, &u) != PROVEN_OK) return PROVEN_ERR_INVALID_ARG;
-    proven_u8str_view_t path = c2_lit("/");
-    if (u.path.size > 0) {
-        path = u.path;
-        if (u.has_query) path.size = (proven_size_t)(u.query.ptr + u.query.size - u.path.ptr);
-    } else if (u.has_query) {
-        return PROVEN_ERR_INVALID_ARG;
-    }
+    /* The URL was read when the request was started; the connection is its origin. */
+    if (r->query_alone) return PROVEN_ERR_INVALID_ARG;
+    const proven_u8str_view_t path = r->target.size > 0 ? r->target : c2_lit("/");
     /* :authority is what Host would have been: the port only when it is not the scheme's own. */
     proven_byte_t authority[300], digits[20];
     proven_size_t al = 0, nd = 0;
-    if (u.host.size > 256) return PROVEN_ERR_INVALID_ARG;
-    if (u.host_is_ipv6) authority[al++] = '[';
-    for (proven_size_t i = 0; i < u.host.size; ++i) authority[al++] = c2_lower(u.host.ptr[i]);
-    if (u.host_is_ipv6) authority[al++] = ']';
-    if (u.has_port && u.port != proven_url_default_port(u.scheme)) {
+    if (r->host_is_ipv6) authority[al++] = '[';
+    for (proven_size_t i = 0; i < c->host_len; ++i) authority[al++] = c2_lower(c->host[i]);
+    if (r->host_is_ipv6) authority[al++] = ']';
+    if (c->port != (c->https ? 443 : 80)) {
         authority[al++] = ':';
-        char d[5]; int dn = 0; proven_u16 p = u.port;
+        char d[5]; int dn = 0; proven_u16 p = c->port;
         do { d[dn++] = (char)('0' + p % 10); p /= 10; } while (p);
         while (dn > 0) authority[al++] = (proven_byte_t)d[--dn];
     }
@@ -432,8 +428,7 @@ static proven_err_t r_submit(c2req_t *r) {
         r->send_left = r->body_length;
     }
     /* What it was started with has been used. */
-    cl->alloc.free_fn(cl->alloc.ctx, r->copy);
-    r->copy = (void *)0;
+    if (r->copy) { cl->alloc.free_fn(cl->alloc.ctx, r->copy); r->copy = (void *)0; }
     r_expect(r);
     return PROVEN_OK;
 }
@@ -846,9 +841,11 @@ static bool c2_same_addr(const proven_net_addr_t *a, const proven_net_addr_t *b)
 }
 
 proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *cl, const proven_http_event_request_options_t *o,
-                                                bool https, proven_u8str_view_t host, proven_u16 port, proven_net_addr_t to,
+                                                bool https, const proven_url_t *url, proven_net_addr_t to,
                                                 proven_http_event_request_t **out) {
     if (out) *out = (void *)0;
+    const proven_u8str_view_t host = url->host;
+    const proven_u16 port = url->has_port ? url->port : proven_url_default_port(url->scheme);
     if (host.size == 0 || host.size > 255) return PROVEN_ERR_INVALID_ARG;
     const proven_u8str_view_t method = o->method.size ? o->method : c2_lit("GET");
     c2conn_t *c = (void *)0;
@@ -869,23 +866,34 @@ proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *cl, 
     /* The request, with a copy of everything it was started with: it may have to wait. */
     proven_size_t bytes = o->url.size + method.size + o->header_count * sizeof(proven_http_header_t) + o->body.size;
     for (proven_size_t i = 0; i < o->header_count; ++i) bytes += o->headers[i].name.size + o->headers[i].value.size;
-    c2req_t *r = c2_alloc(cl->alloc, sizeof *r);
-    proven_byte_t *copy = c2_alloc(cl->alloc, bytes + 16);
+    /* A small copy lies behind the struct, in the one allocation, and stays for the request's
+     * life; a large one - a body, mostly - is its own, and goes back once it has been sent. */
+    const bool behind = bytes <= C2_COPY_BEHIND;
+    c2req_t *r = c2_alloc(cl->alloc, sizeof *r + (behind ? bytes : 0));
+    proven_byte_t *copy = !r ? (void *)0 : behind ? (proven_byte_t *)(r + 1) : c2_alloc(cl->alloc, bytes);
     if (!r || !copy) {
         if (r) cl->alloc.free_fn(cl->alloc.ctx, r);
-        if (copy) cl->alloc.free_fn(cl->alloc.ctx, copy);
         return PROVEN_ERR_NOMEM;
     }
     for (proven_size_t i = 0; i < sizeof *r; ++i) ((proven_byte_t *)r)[i] = 0;
     r->h = (cl_head_t){ .client = cl, .kind = CL_KIND_H2 };
     r->on = o->on;
     r->ctx = o->ctx;
-    r->copy = copy;
+    r->copy = behind ? (void *)0 : copy;
     r->headers = (proven_http_header_t *)(void *)copy;     /* first: it is the part that needs alignment */
     r->header_count = o->header_count;
     proven_size_t at = o->header_count * sizeof(proven_http_header_t);
     #define C2_KEEP(view_ptr, view_size, dst) do { for (proven_size_t k_ = 0; k_ < (view_size); ++k_) copy[at + k_] = (view_ptr)[k_]; (dst).ptr = copy + at; (dst).size = (view_size); at += (view_size); } while (0)
     C2_KEEP(o->url.ptr, o->url.size, r->url);
+    /* The parsed URL's views lie within the caller's text: the same places in the copy. */
+    if (url->path.size > 0) {
+        const proven_size_t from = (proven_size_t)(url->path.ptr - o->url.ptr);
+        const proven_size_t to_ = url->has_query ? (proven_size_t)(url->query.ptr + url->query.size - o->url.ptr) : from + url->path.size;
+        r->target = (proven_u8str_view_t){ .ptr = r->url.ptr + from, .size = to_ - from };
+    } else {
+        r->query_alone = url->has_query;
+    }
+    r->host_is_ipv6 = url->host_is_ipv6;
     C2_KEEP(method.ptr, method.size, r->method);
     for (proven_size_t i = 0; i < o->header_count; ++i) {
         C2_KEEP(o->headers[i].name.ptr, o->headers[i].name.size, r->headers[i].name);
@@ -898,7 +906,7 @@ proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *cl, 
 
     if (!c) {
         c = c2_alloc(cl->alloc, sizeof *c);
-        if (!c) { cl->alloc.free_fn(cl->alloc.ctx, copy); cl->alloc.free_fn(cl->alloc.ctx, r); return PROVEN_ERR_NOMEM; }
+        if (!c) { r_free_parts(r); cl->alloc.free_fn(cl->alloc.ctx, r); return PROVEN_ERR_NOMEM; }
         for (proven_size_t i = 0; i < sizeof *c; ++i) ((proven_byte_t *)c)[i] = 0;
         c->client = cl;
         c->https = https;
@@ -921,7 +929,7 @@ proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *cl, 
             if (c->tls) proven_tls_conn_destroy(c->tls);
             if (proven_net_conn_is_open(&c->sock)) (void)proven_net_close(&c->sock);
             cl->alloc.free_fn(cl->alloc.ctx, c);
-            cl->alloc.free_fn(cl->alloc.ctx, copy);
+            r_free_parts(r);
             cl->alloc.free_fn(cl->alloc.ctx, r);
             return e;
         }

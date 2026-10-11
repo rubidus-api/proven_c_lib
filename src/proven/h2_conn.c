@@ -19,7 +19,8 @@ enum {
     ST_HEAD_RECV = 0x08,                   /* a client: the final response head arrived */
     ST_BLOCKED = 0x10,                     /* send_data was cut short */
     ST_HBLOCKED = 0x20,                    /* headers were refused for the output bound */
-    ST_NO_BODY = 0x40                      /* a client: the request was HEAD, so content-length describes no body */
+    ST_NO_BODY = 0x40,                     /* a client: the request was HEAD, so content-length describes no body */
+    ST_UNMAPPED = 0x80                     /* its slot in the map was taken when it came: it is found by walking */
 };
 
 typedef struct {
@@ -43,6 +44,7 @@ struct proven_h2_conn {
     proven_size_t cfg_out;
     /* the peer's */
     proven_u32 peer_streams, peer_window, peer_frame, peer_list, peer_table;
+    proven_u32 map_mask;                   /* of the map behind `streams`, in its allocation (see h2c_peek): its slots less one. Here, and `unmapped` below, because each fills a gap */
 
     proven_hpack_decoder_t *dec;
     proven_hpack_encoder_t *enc;
@@ -51,6 +53,7 @@ struct proven_h2_conn {
     proven_u32 stream_cap, stream_count;
     proven_u32 *ring;                      /* the streams that ended last, each with how (RING_*) in its low two bits */
     proven_u32 ring_cap, ring_len, ring_pos;
+    proven_u32 unmapped;                   /* streams that are not in the map */
 
     proven_byte_t *out;
     proven_size_t out_cap, out_len, out_off;
@@ -77,7 +80,6 @@ struct proven_h2_conn {
     proven_u32 cur, expect_cont;
 
     bool server, fin, drop, end_headers;
-    proven_u32 last_at;                /* where in `streams` the last stream asked for was found */
     bool got_settings, settings_acked, peer_table_set;
     bool goaway_recv, goaway_sent, closed, reported, oom;
     bool hbuf_lent;                        /* hbuf is the caller's, and stays */
@@ -233,21 +235,35 @@ static void h2c_stream_credit(proven_h2_conn_t *c, h2c_stream_t *s, proven_size_
 // Streams
 // -----------------------------------------------------------------------------
 
-/* The table is not in order (a stream that ends gives its place to the last), so a stream is
- * found by walking it - but what is asked about a stream is mostly asked several times running
- * (its HEADERS and then its DATA; a response's head and then its body), and the place where
- * the last one was found is tried first. */
+/* The table is not in order (a stream that ends gives its place to the last), so beside it is
+ * a map from a stream's number to its place: one slot a number, at least two slots for every
+ * place the table has. Streams open together have numbers close together, so nearly always
+ * each has a slot to itself and is found in one step. One that came to a slot already taken -
+ * a stream open much longer than its neighbours makes that happen - is marked and found by
+ * walking the table, as every stream once was; `unmapped` counts those, and while it is zero a
+ * number the map does not have is a number that is not there. */
+static proven_u32 *h2c_slot(const proven_h2_conn_t *c, proven_u32 id) {
+    return (proven_u32 *)(void *)(c->streams + c->stream_cap) + ((id >> 1) & c->map_mask);
+}
+
 static h2c_stream_t *h2c_peek(const proven_h2_conn_t *c, proven_u32 id) {
-    if (c->last_at < c->stream_count && c->streams[c->last_at].id == id) return &c->streams[c->last_at];
+    if (c->stream_count == 0) return (void *)0;
+    const proven_u32 at = *h2c_slot(c, id);
+    if (at != 0 && c->streams[at - 1].id == id) return &c->streams[at - 1];
+    if (c->unmapped == 0) return (void *)0;
     for (proven_u32 i = 0; i < c->stream_count; i++)
         if (c->streams[i].id == id) return &c->streams[i];
     return (void *)0;
 }
 
-static h2c_stream_t *h2c_find(proven_h2_conn_t *c, proven_u32 id) {
-    h2c_stream_t *s = h2c_peek(c, id);
-    if (s) c->last_at = (proven_u32)(s - c->streams);
-    return s;
+static h2c_stream_t *h2c_find(proven_h2_conn_t *c, proven_u32 id) { return h2c_peek(c, id); }
+
+/* Enter the stream at place `i` in the map, or mark it as one the map has no slot for. */
+static void h2c_map(proven_h2_conn_t *c, proven_u32 i) {
+    h2c_stream_t *s = &c->streams[i];
+    proven_u32 *slot = h2c_slot(c, s->id);
+    if (*slot == 0) { *slot = i + 1; s->flags &= ~(proven_u32)ST_UNMAPPED; }
+    else { s->flags |= ST_UNMAPPED; c->unmapped++; }
 }
 
 static h2c_stream_t *h2c_add(proven_h2_conn_t *c, proven_u32 id) {
@@ -255,17 +271,33 @@ static h2c_stream_t *h2c_add(proven_h2_conn_t *c, proven_u32 id) {
         proven_u32 cap = c->stream_cap ? c->stream_cap * 2 : 4;
         if (cap > c->cfg_streams) cap = c->cfg_streams;
         if (cap <= c->stream_cap) return (void *)0;
-        proven_result_mem_mut_t m = c->streams
-            ? c->alloc.realloc_fn(c->alloc.ctx, c->streams, c->stream_cap * sizeof(h2c_stream_t), cap * sizeof(h2c_stream_t), alignof(h2c_stream_t))
-            : c->alloc.alloc_fn(c->alloc.ctx, cap * sizeof(h2c_stream_t), alignof(h2c_stream_t));
+        proven_u32 slots = 8;
+        while (slots / 2 < cap && slots < ((proven_u32)1 << 30)) slots *= 2;
+        /* One allocation for both, and a new one when it grows: the map is made again. */
+        proven_result_mem_mut_t m = c->alloc.alloc_fn(c->alloc.ctx, cap * sizeof(h2c_stream_t) + slots * sizeof(proven_u32), alignof(h2c_stream_t));
         if (m.err != PROVEN_OK) return (void *)0;
-        c->streams = (h2c_stream_t *)(void *)m.value.ptr;
+        h2c_stream_t *streams = (h2c_stream_t *)(void *)m.value.ptr;
+        for (proven_u32 i = 0; i < c->stream_count; i++) streams[i] = c->streams[i];
+        h2c_free(c, c->streams);
+        c->streams = streams;
         c->stream_cap = cap;
+        c->map_mask = slots - 1;
+        c->unmapped = 0;
+        proven_u32 *map = (proven_u32 *)(void *)(streams + cap);
+        for (proven_u32 i = 0; i < slots; i++) map[i] = 0;
+        for (proven_u32 i = 0; i < c->stream_count; i++) h2c_map(c, i);
     }
-    c->last_at = c->stream_count;
     h2c_stream_t *s = &c->streams[c->stream_count++];
     *s = (h2c_stream_t){ .id = id, .send_win = (proven_i32)c->peer_window, .recv_win = (proven_i32)c->local_window, .expect = H2C_NO_LENGTH };
+    h2c_map(c, c->stream_count - 1);
     return s;
+}
+
+/* The stream table goes back: nothing is open. */
+static void h2c_streams_free(proven_h2_conn_t *c) {
+    h2c_free(c, c->streams);
+    c->streams = (void *)0;
+    c->stream_cap = c->map_mask = c->unmapped = 0;
 }
 
 /* How a stream ended decides what a late frame for it means (RFC 9113, section 5.1,
@@ -301,7 +333,14 @@ static proven_u32 h2c_ring_find(const proven_h2_conn_t *c, proven_u32 id) {
 static void h2c_remove(proven_h2_conn_t *c, h2c_stream_t *s, bool properly, proven_u32 how) {
     const proven_u32 held = s->held;
     const proven_u32 id = s->id;
-    *s = c->streams[--c->stream_count];
+    if (s->flags & ST_UNMAPPED) c->unmapped--;
+    else *h2c_slot(c, id) = 0;
+    const h2c_stream_t *last = &c->streams[--c->stream_count];
+    if (s != last) {
+        /* The last takes its place, and the map is told where it now is. */
+        *s = *last;
+        if (!(s->flags & ST_UNMAPPED)) *h2c_slot(c, s->id) = (proven_u32)(s - c->streams) + 1;
+    }
     if (properly && c->debt > 0) c->debt--;
     if (how != 0) h2c_ring_add(c, id, how);
     h2c_conn_credit(c, held);
@@ -1086,7 +1125,7 @@ proven_err_t proven_h2_conn_feed(proven_h2_conn_t *c, proven_mem_view_t in, prov
         /* Nothing is going on: an idle connection keeps its struct and its tables, no more. */
         if (!c->hbuf_lent) { h2c_free(c, c->hbuf); c->hbuf = (void *)0; }
         h2c_free(c, c->blk); c->blk = (void *)0; c->blk_cap = 0;
-        h2c_free(c, c->streams); c->streams = (void *)0; c->stream_cap = 0;
+        h2c_streams_free(c);
         if (c->out_off == c->out_len) { h2c_free(c, c->out); c->out = (void *)0; c->out_cap = c->out_len = c->out_off = 0; }
     }
     return PROVEN_OK;

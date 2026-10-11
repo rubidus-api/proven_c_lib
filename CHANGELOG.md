@@ -18,6 +18,51 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release with no new API: **a second pass over HTTP/2's speed, this time on the
+client's side**, and a registered test for a fix of v0.33.0 that had none.
+
+### Changed
+
+- **The HTTP/2 connection finds a stream by its number, not by walking its table.** Beside the
+  table of open streams there is now a map from a stream's number to its place - two slots of
+  four bytes for each place, in the table's own allocation, so it is there only while streams
+  are open and an idle connection holds what it did (2,264 bytes in the event-driven server).
+  A stream whose slot is taken when it arrives - one open far longer than its neighbours makes
+  that happen - is found by walking, as before. With a hundred requests in flight on one
+  connection this was the largest single cost in the library's client.
+- **The event-driven client reads a request's URL once, and a small request is one allocation.**
+  A request over HTTP/2 had its URL parsed when it was started and again when it was put on a
+  stream, and its copy of the URL, method, fields and body was an allocation beside the
+  request's own. The path, query and authority are now taken from the first reading, and a
+  copy of up to 1,024 bytes lies in the request's allocation (a larger one - a body, mostly -
+  is still its own, and still given back as soon as it has been sent).
+- Measured as in v0.33.0 (loopback, two processes, one loop, a handler that answers two bytes):
+  the library's client with a hundred requests in flight on one connection, 403,000 requests a
+  second before and 471,000 to 486,000 after, in three runs. The same client with ten in
+  flight or one at a time, and the server's rows with one or a hundred in flight, are where
+  they were, within what one run differs from the next. **The server's row with ten in
+  flight on each of ten connections is 1 to 2% slower** - 768,000 to 781,000 a second against
+  783,000 to 793,000 for v0.33.0, three runs of each in turn - and so is the engine alone in
+  memory (381,000 to 386,000 against 390,000): where the stream asked for was nearly always
+  the one asked for last, trying that one first was a little cheaper than the map is.
+- Tried and left out: keeping the server's per-request stream object for the next request made
+  no difference that could be measured (under 2%). The server's three allocations for a
+  request that arrives alone on an idle connection - the stream table, the output buffer, the
+  stream - are what keeps an idle connection at 2,264 bytes, and they are a few percent of a
+  request that is mostly two system calls.
+
+### Added
+
+- Registered tests: thousands of streams opened and ended in no order with a few open far
+  longer than the rest, every open stream asked for after every change (the map, through
+  growth, through streams that move, and through slots already taken); what a server is told
+  by the client - path and query as written, the authority in lower case, in brackets for an
+  IPv6 address, with its port - for a request that waits for its connection and for one that
+  does not, with the caller's URL overwritten as soon as the call returns; and **a hundred
+  whole-body responses of 300,000 bytes each to a client that is not reading yet**, which
+  fails when a whole body is again given all of the engine's room - the second fix of
+  v0.33.0, which until now only a private check caught.
+
 ## [0.33.0] - 2026-10-12
 
 A MINOR release with no new API: **HTTP/2 measured over a socket and made faster where the

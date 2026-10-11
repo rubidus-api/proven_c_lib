@@ -1370,6 +1370,55 @@ int main(void) {
         PROVEN_TEST_INFO("hostile input: {} replays", PROVEN_ARG((long long)runs));
     }
 
+    PROVEN_TEST_SECTION("finding a stream", "Thousands of streams opened and ended in no order, a few of them open far longer than the rest, with every open stream asked for after every change.", "Check h2c_peek, h2c_map, h2c_add and h2c_remove: the map from a stream's number to its place is kept through growth and through every stream that moves to a place another left, and a stream whose slot was taken is still found.");
+    {
+        proven_h2_config_t cc = base; cc.server = false; cc.max_concurrent_streams = 50;
+        proven_h2_conn_t *c = opened(&cc);
+        static int tags[4];                               /* user pointers that say which stream they were given to */
+        proven_u32 live[40], n = 0, opened_count = 0, wrong = 0, ghosts = 0, state = 0x9e3779b9u;
+        proven_u32 gone[8] = { 0 };
+        for (int step = 0; step < 6000 && wrong == 0; step++) {
+            state ^= state << 13; state ^= state >> 17; state ^= state << 5;
+            /* Three times it is emptied altogether: the table goes back and is made again. */
+            const bool empty_it = step == 1500 || step == 3000 || step == 4500;
+            if (!empty_it && (n == 0 || (n < 40 && state % 100 < 52))) {
+                proven_u32 id = 0;
+                if (proven_h2_conn_submit_request(c, POST, 4, false, &id) != PROVEN_OK || id != 2 * opened_count + 1) { wrong++; break; }
+                opened_count++;
+                proven_h2_conn_stream_set_user(c, id, &tags[(id >> 1) % 4]);
+                live[n++] = id;
+            } else {
+                /* Mostly one of the newest: the oldest stay, and the numbers run on past them
+                 * until a new stream's slot is one an old stream still holds. */
+                do {
+                    const proven_u32 k = empty_it ? n - 1 : state % 8 == 0 ? (state >> 8) % n : n - 1 - (state >> 8) % (n < 6 ? n : 6);
+                    const proven_u32 id = live[k];
+                    if (proven_h2_conn_reset(c, id, PROVEN_H2_CANCEL) != PROVEN_OK) wrong++;
+                    gone[step % 8] = id;
+                    live[k] = live[--n];
+                } while (empty_it && n > 0);
+            }
+            proven_h2_conn_output_sent(c, proven_h2_conn_pending_output(c).size);
+            if (empty_it) {
+                /* A call with nothing to read is where an idle connection lets go of the table. */
+                proven_size_t used = 0; proven_h2_event_t ev;
+                if (proven_h2_conn_feed(c, (proven_mem_view_t){ 0 }, &used, &ev) != PROVEN_OK || ev.kind != PROVEN_H2_EVENT_NONE) wrong++;
+            }
+            if (proven_h2_conn_stream_count(c) != n) wrong++;
+            for (proven_u32 i = 0; i < n; i++) if (proven_h2_conn_stream_user(c, live[i]) != &tags[(live[i] >> 1) % 4]) wrong++;
+            for (int i = 0; i < 8; i++) {
+                bool is_live = false;
+                for (proven_u32 k = 0; k < n; k++) if (live[k] == gone[i]) is_live = true;
+                if (gone[i] != 0 && !is_live && proven_h2_conn_stream_user(c, gone[i]) != NULL) ghosts++;
+            }
+            if (proven_h2_conn_stream_user(c, 2 * opened_count + 1) != NULL) ghosts++;      /* nor one not yet begun */
+        }
+        PROVEN_TEST_ASSERT(wrong == 0, "every open stream is found, with what was attached to it, after every change", "");
+        PROVEN_TEST_ASSERT(ghosts == 0, "and a stream that has ended, or has not begun, is not", "");
+        PROVEN_TEST_ASSERT(opened_count > 2500, "thousands of streams came and went", "");
+        proven_h2_conn_destroy(c);
+    }
+
     PROVEN_TEST_SECTION("memory", "What an idle connection keeps, what a stream costs, and that an allocation failing anywhere is survived.", "Check the release at the end of proven_h2_conn_feed and the paths that set `oom`.");
     {
         proven_hpack_encoder_destroy(g_enc); g_enc = (void *)0;
