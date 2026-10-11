@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-10-11
+
 A MINOR release: HTTP/2 made smaller and faster, and held to a conformance suite. Nothing
 existing changes in meaning; three things are added to the event-driven server's
 configuration.
