@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-10-11
+
 A MINOR release: **the event-driven HTTP client speaks HTTP/2**, on one connection kept for
 each origin. With it, phase 8 of the networking plan is complete: HTTP/2 from the codec to
 both event-driven ends. It is off unless asked for; the blocking server and the blocking
