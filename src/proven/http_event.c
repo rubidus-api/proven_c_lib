@@ -575,6 +575,9 @@ proven_err_t proven_http_event_server_create(proven_loop_t *loop, const proven_h
     if (s->cfg.write_timeout_ms == 0) s->cfg.write_timeout_ms = 30000;
     if (s->cfg.idle_timeout_ms == 0) s->cfg.idle_timeout_ms = 60000;
     if (s->cfg.max_concurrent_streams == 0) s->cfg.max_concurrent_streams = 100;
+    if (s->cfg.http2_no_header_table) s->cfg.http2_header_table_bytes = 0;
+    else if (s->cfg.http2_header_table_bytes == 0) s->cfg.http2_header_table_bytes = 4096;
+    if (s->cfg.http2_header_table_bytes > ((proven_size_t)1 << 20)) { a.free_fn(a.ctx, s); return PROVEN_ERR_INVALID_ARG; }
     if (s->cfg.tls) {
         /* What TLS may agree to and what the server will speak must be the same thing: a
          * client told "h2" by the handshake and answered in HTTP/1.1 has no way to recover. */

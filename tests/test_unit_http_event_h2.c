@@ -120,6 +120,13 @@ static void on_request(void *ctx, proven_http_stream_t *s, const proven_http_req
         for (proven_size_t i = 0; i < sizeof body; i++) body[i] = pat(i);
         proven_http_stream_compress(s);
         (void)proven_http_stream_respond(s, 200, plain, 1, (proven_mem_view_t){ body, sizeof body });
+    } else if (path_is(req, "/body-sign")) {
+        /* What an HTTP/1.1 handler looks at to learn whether a body follows. */
+        const bool chunked = proven_http_header_has_token(req->headers, req->header_count, sv("Transfer-Encoding"), sv("chunked"));
+        const bool length = proven_http_header_count(req->headers, req->header_count, sv("Content-Length")) > 0;
+        const char *sign = chunked ? "chunked" : length ? "length" : "none";
+        if (chunked || length) { a->sink = true; snprintf(a->path, sizeof a->path, "%s", sign); }
+        else (void)proven_http_stream_respond(s, 200, NULL, 0, (proven_mem_view_t){ (const proven_byte_t *)sign, strlen(sign) });
     } else if (path_is(req, "/echo") || path_is(req, "/pause")) {
         if (path_is(req, "/pause")) {
             /* Not now: nothing of the body is to be delivered until the timer resumes it. */
@@ -172,7 +179,7 @@ static void on_body(void *ctx, proven_http_stream_t *s, proven_mem_view_t piece,
     if (!last) return;
     if (a->sink) {
         char text[32];
-        int n = snprintf(text, sizeof text, "got %zu", a->received);
+        int n = strcmp(a->path, "chunked") == 0 || strcmp(a->path, "length") == 0 ? snprintf(text, sizeof text, "%s", a->path) : snprintf(text, sizeof text, "got %zu", a->received);
         (void)proven_http_stream_respond(s, 200, NULL, 0, (proven_mem_view_t){ (const proven_byte_t *)text, (proven_size_t)n });
     } else {
         (void)proven_http_stream_respond(s, 200, NULL, 0, (proven_mem_view_t){ a->echo, a->received });
@@ -420,6 +427,22 @@ static void cases(proven_tls_config_t *client_tls, const char *how) {
     PROVEN_TEST_ASSERT(cl_wait(&c, id, 8000) && cl_res(&c, id)->gzip && cl_res(&c, id)->has_length && cl_res(&c, id)->length == cl_res(&c, id)->got && cl_res(&c, id)->got < 20000,
         "a whole response that asked for it is compressed, with the compressed length", how);
 
+    /* A handler learns that a body is coming the way HTTP/1.1 taught it: from the fields. */
+    c.plain_body = true;
+    id = cl_ask(&c, "GET", "/body-sign", true);
+    PROVEN_TEST_ASSERT(cl_wait(&c, id, 5000) && memcmp(cl_res(&c, id)->first, "none", 4) == 0, "a request with no body has no sign of one", how);
+    id = cl_ask(&c, "POST", "/body-sign", false);
+    cl_body(&c, id, 10, true);
+    PROVEN_TEST_ASSERT(cl_wait(&c, id, 5000) && memcmp(cl_res(&c, id)->first, "chunked", 7) == 0,
+        "a body that HTTP/2 sends with no length announced is given the field that means that: Transfer-Encoding: chunked", how);
+    {
+        proven_http_header_t h[] = { H(":method", "POST"), H(":scheme", "http"), H(":authority", "127.0.0.1"), H(":path", "/body-sign"), H("content-length", "10") };
+        PROVEN_TEST_ASSERT(proven_h2_conn_submit_request(c.e, h, 5, false, &id) == PROVEN_OK, "a request that announces its length", how);
+        cl_body(&c, id, 10, true);
+        PROVEN_TEST_ASSERT(cl_wait(&c, id, 5000) && memcmp(cl_res(&c, id)->first, "length", 6) == 0, "and one that announces its length is left as it is", how);
+    }
+    c.plain_body = false;
+
     /* Bodies up, echoed. */
     static const proven_size_t sizes[] = { 0, 1, 16384, 65535, 65536, 200000 };
     for (proven_size_t k = 0; k < sizeof sizes / sizeof sizes[0]; k++) {
@@ -535,12 +558,12 @@ static void quiet_request(void *ctx, proven_http_stream_t *s, const proven_http_
 }
 
 /* What an HTTP/2 connection that has made a request and now says nothing costs the server. */
-static void memory_case(void) {
+static void memory_case(bool no_tables) {
     counting_t count = { .heap = g_heap, .live = 0 };
     proven_allocator_t alloc = { .ctx = &count, .alloc_fn = count_alloc, .realloc_fn = count_realloc, .free_fn = count_free };
     proven_loop_t *loop = NULL;
     proven_http_event_server_t *server = NULL;
-    proven_http_event_server_config_t cfg = { .alloc = alloc, .on = { .on_request = quiet_request }, .http2 = true };
+    proven_http_event_server_config_t cfg = { .alloc = alloc, .on = { .on_request = quiet_request }, .http2 = true, .http2_no_header_table = no_tables };
     proven_net_addr_t at;
     PROVEN_TEST_ASSERT(proven_loop_create(g_heap, &loop) == PROVEN_OK && proven_http_event_server_create(loop, &cfg, &server) == PROVEN_OK &&
                        proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server with a counting allocator", "");
@@ -564,9 +587,11 @@ static void memory_case(void) {
     PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == N, "two hundred HTTP/2 connections, each answered once, all idle", "");
     const proven_size_t shared = proven_h2_header_buffer_size(0);
     const proven_size_t each = (count.live - base - shared) / N;
-    fprintf(stderr, "[PROVEN][TEST][INFO] an idle HTTP/2 connection holds %u bytes; one buffer of %u bytes for reading header lists is shared by all\n", (unsigned)each, (unsigned)shared);
-    PROVEN_TEST_ASSERT(count.live - base > shared && each < 14336,
-        "an idle HTTP/2 connection holds under 14 KiB: the record, the driver, the engine, and above all the two header compression tables the protocol gives each connection - and no buffer of its own for reading header lists", "");
+    fprintf(stderr, "[PROVEN][TEST][INFO] an idle HTTP/2 connection %s holds %u bytes; one buffer of %u bytes for reading header lists is shared by all\n",
+            no_tables ? "with no header tables" : "with the default header tables", (unsigned)each, (unsigned)shared);
+    if (no_tables) PROVEN_TEST_ASSERT(each < 2048, "with http2_no_header_table an idle HTTP/2 connection holds under 2 KiB", "");
+    PROVEN_TEST_ASSERT(count.live - base > shared && each < 3072,
+        "an idle HTTP/2 connection that has carried one small request holds under 3 KiB: the record, the driver, the engine, and header tables that have grown only as far as they were used - and no buffer of its own for reading header lists", "");
     for (int i = 0; i < N; ++i) (void)proven_net_close(&socks[i]);
     until = proven_net_deadline_in(300);
     while (proven_time_monotonic_now() < until) PROVEN_TEST_ASSERT(proven_loop_poll(loop, until) == PROVEN_OK, "a round", "");
@@ -740,6 +765,16 @@ int main(void) {
         PROVEN_TEST_ASSERT(cl_wait(&c, stalled, 3000) && cl_res(&c, stalled)->reset && atomic_load(&g_done_timeout) == 1,
             "a request whose body stops arriving is reset after the body timeout, and its handler told", "");
         PROVEN_TEST_ASSERT(!c.closed && cl_get(&c, "/hello", 200, 5), "the connection itself goes on", "");
+        /* A stalled request beside a busy one: its own silence is what is measured, so the
+         * neighbour's traffic does not keep it alive. */
+        const int timeouts = atomic_load(&g_done_timeout);
+        proven_u32 quiet = cl_ask(&c, "POST", "/sink", false), busy = cl_ask(&c, "POST", "/sink", false);
+        cl_body(&c, quiet, 10, false);
+        for (int i = 0; i < 40 && !cl_res(&c, quiet)->reset; i++) { cl_body(&c, busy, 10, false); (void)cl_pump(&c, 20); }
+        PROVEN_TEST_ASSERT(cl_res(&c, quiet)->reset && atomic_load(&g_done_timeout) == timeouts + 1 && !cl_res(&c, busy)->reset && !cl_res(&c, busy)->end,
+            "a request that has stalled is reset though another on the same connection keeps sending - and that other is left alone", "");
+        cl_body(&c, busy, 0, true);
+        PROVEN_TEST_ASSERT(cl_wait(&c, busy, 3000) && cl_res(&c, busy)->status == 200, "which then finishes", "");
         for (int i = 0; i < 300 && !c.closed && !c.gone; i++) (void)cl_pump(&c, 10);
         PROVEN_TEST_ASSERT(c.goaway && c.closed && c.close_code == PROVEN_H2_NO_ERROR, "left with nothing to do, the server says goodbye after the idle timeout", "");
         cl_close(&c);
@@ -754,7 +789,8 @@ int main(void) {
     }
 
     PROVEN_TEST_SECTION("what an idle connection holds", "Two hundred HTTP/2 connections that have each made a request and now say nothing.", "Check the engine's release of its buffers when no stream is open, and that the buffer for header lists is the server's, not each connection's.");
-    memory_case();
+    memory_case(false);
+    memory_case(true);
 
     PROVEN_TEST_SECTION("the end of the server", "Destroying a server with exchanges open.", "Check h2_on_closed: every open stream's handler is told once.");
     {

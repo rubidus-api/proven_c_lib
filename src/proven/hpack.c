@@ -52,15 +52,34 @@ static void hp_evict_one(hp_table_t *t) {
 
 static void hp_table_shrink_to(hp_table_t *t, proven_size_t max) {
     while (t->count > 0 && t->size > max) hp_evict_one(t);
+    if (t->count == 0 && t->max == 0) hp_table_free(t);       /* a table that may hold nothing holds no memory */
 }
 
-/* Room for a table of `max` bytes. What is in it is kept. */
-static proven_err_t hp_table_reserve(hp_table_t *t, proven_size_t max) {
-    if (t->entries && t->cap >= max) return PROVEN_OK;
-    proven_size_t slots = max / PROVEN_HPACK_ENTRY_OVERHEAD + 1;
+/* Room for `add_slots` more entries holding `add_bytes` more bytes of names and values. What
+ * is in the table is kept. The table grows as it is used - a connection whose peer sends a
+ * few short fields keeps a few hundred bytes, not the 4,096 the protocol allows it - and never
+ * past what `max` can hold. */
+static proven_err_t hp_table_room(hp_table_t *t, proven_size_t add_slots, proven_size_t add_bytes) {
+    const proven_size_t live = t->hi - t->lo;
+    const proven_size_t top_slots = t->max / PROVEN_HPACK_ENTRY_OVERHEAD + 1;
+    proven_size_t slots = t->slots, cap = t->cap;
+    proven_size_t want_slots = t->count + add_slots, want_bytes = live + add_bytes;
+    if (want_slots > top_slots) want_slots = top_slots;
+    if (want_bytes > t->max) want_bytes = t->max;
+    if (want_slots > slots) {
+        slots = slots ? slots : 8;
+        while (slots < want_slots) slots *= 2;
+        if (slots > top_slots) slots = top_slots;
+    }
+    if (want_bytes > cap) {
+        cap = cap ? cap : 256;
+        while (cap < want_bytes) cap *= 2;
+        if (cap > t->max) cap = t->max;
+    }
+    if (t->entries && slots == t->slots && cap == t->cap) return PROVEN_OK;
+    if (t->max > (proven_size_t)1 << 30) return PROVEN_ERR_NOMEM;
     proven_size_t head_bytes = slots * sizeof(hp_entry_t);
-    if (max > (proven_size_t)1 << 30) return PROVEN_ERR_NOMEM;
-    proven_result_mem_mut_t m = t->alloc.alloc_fn(t->alloc.ctx, head_bytes + max, alignof(hp_entry_t));
+    proven_result_mem_mut_t m = t->alloc.alloc_fn(t->alloc.ctx, head_bytes + cap, alignof(hp_entry_t));
     if (m.err != PROVEN_OK) return PROVEN_ERR_NOMEM;
     hp_entry_t *entries = (hp_entry_t *)(void *)m.value.ptr;
     proven_byte_t *bytes = m.value.ptr + head_bytes;
@@ -76,7 +95,7 @@ static proven_err_t hp_table_reserve(hp_table_t *t, proven_size_t max) {
     t->entries = entries;
     t->bytes = bytes;
     t->slots = slots;
-    t->cap = max;
+    t->cap = cap;
     t->head = 0;
     t->lo = 0;
     t->hi = at;
@@ -91,10 +110,10 @@ static proven_err_t hp_table_add(hp_table_t *t, proven_u8str_view_t name, proven
         hp_table_shrink_to(t, 0);
         return PROVEN_OK;
     }
-    proven_err_t e = hp_table_reserve(t, t->max);
-    if (e != PROVEN_OK) return e;
     hp_table_shrink_to(t, t->max - need);
     proven_size_t n = name.size + value.size;
+    proven_err_t e = hp_table_room(t, 1, n);
+    if (e != PROVEN_OK) return e;
     if (t->cap - t->hi < n) {
         /* The tail is reached: move what is live to the front. */
         proven_size_t live = t->hi - t->lo;
@@ -163,32 +182,46 @@ proven_err_t proven_hpack_huffman_encode(proven_u8str_view_t text, proven_mem_mu
 
 proven_err_t proven_hpack_huffman_decode(proven_mem_view_t coded, proven_mem_mut_t out, proven_size_t *len) {
     if (!len || (coded.size > 0 && !coded.ptr) || (out.size > 0 && !out.ptr) || *len > out.size) return PROVEN_ERR_INVALID_ARG;
-    proven_size_t at = *len;
-    proven_u32 code = 0;
+    proven_size_t at = *len, i = 0;
+    proven_u64 acc = 0;                /* bits read and not yet used, the oldest highest */
     unsigned bits = 0;
-    bool ones = true;                  /* every bit of the code in progress is a one */
-    for (proven_size_t i = 0; i < coded.size; ++i) {
-        for (int b = 7; b >= 0; --b) {
-            unsigned bit = (coded.ptr[i] >> b) & 1u;
-            code = (code << 1) | bit;
-            bits++;
-            if (!bit) ones = false;
-            if (bits >= 5 && hpack_huffman_count[bits] != 0 && code >= hpack_huffman_first[bits] &&
-                code - hpack_huffman_first[bits] < hpack_huffman_count[bits]) {
-                proven_u16 symbol = hpack_huffman_sorted[hpack_huffman_offset[bits] + (code - hpack_huffman_first[bits])];
-                if (symbol == 256) return PROVEN_ERR_INVALID_FORMAT;       /* EOS inside a string */
-                if (at == out.size) return PROVEN_ERR_OUT_OF_BOUNDS;
-                out.ptr[at++] = (proven_byte_t)symbol;
-                code = 0;
-                bits = 0;
-                ones = true;
-            } else if (bits == 30) {
-                return PROVEN_ERR_INVALID_FORMAT;                           /* no code is longer */
+    for (;;) {
+        while (bits <= 56 && i < coded.size) { acc = (acc << 8) | coded.ptr[i++]; bits += 8; }
+        if (bits == 0) break;
+        proven_u16 symbol = 0;
+        unsigned used = 0;
+        /* Most codes are eight bits or fewer: the next eight bits name the symbol at once.
+         * (With fewer than eight left they are filled out with ones, which begin no code.) */
+        const unsigned next = bits >= 8 ? (unsigned)(acc >> (bits - 8)) & 0xffu
+                                        : (((unsigned)acc << (8 - bits)) | (0xffu >> bits)) & 0xffu;
+        const proven_u16 quick = hpack_huffman_fast[next];
+        if (quick != 0 && (quick & 15u) <= bits) {
+            symbol = (proven_u16)(quick >> 4);
+            used = quick & 15u;
+        } else {
+            /* A longer code: by length, as the canonical code allows. */
+            for (unsigned n = 9; n <= 30 && n <= bits; ++n) {
+                const proven_u32 code = (proven_u32)(acc >> (bits - n)) & (((proven_u32)1 << n) - 1);
+                if (hpack_huffman_count[n] != 0 && code >= hpack_huffman_first[n] && code - hpack_huffman_first[n] < hpack_huffman_count[n]) {
+                    symbol = hpack_huffman_sorted[hpack_huffman_offset[n] + (code - hpack_huffman_first[n])];
+                    used = n;
+                    break;
+                }
+            }
+            if (used == 0) {
+                /* No code here. Thirty bits that are none is an error; fewer are the end of the
+                 * string, and must then be its padding: under eight bits, all ones (the start
+                 * of EOS). */
+                if (bits >= 30 || i < coded.size) return PROVEN_ERR_INVALID_FORMAT;
+                if (bits > 7 || (acc & (((proven_u64)1 << bits) - 1)) != (((proven_u64)1 << bits) - 1)) return PROVEN_ERR_INVALID_FORMAT;
+                break;
             }
         }
+        if (symbol == 256) return PROVEN_ERR_INVALID_FORMAT;               /* EOS inside a string */
+        if (at == out.size) return PROVEN_ERR_OUT_OF_BOUNDS;
+        out.ptr[at++] = (proven_byte_t)symbol;
+        bits -= used;
     }
-    /* What is left is padding: fewer than eight bits, all ones (the start of EOS). */
-    if (bits > 7 || !ones) return PROVEN_ERR_INVALID_FORMAT;
     *len = at;
     return PROVEN_OK;
 }
@@ -498,7 +531,9 @@ proven_err_t proven_hpack_encode(proven_hpack_encoder_t *c, const proven_http_he
     /* The one thing that can fail later is the table's allocation: make it now, so that a
      * block is either written whole or not begun. */
     if (t->max > 0 && count > 0) {
-        proven_err_t e = hp_table_reserve(t, t->max);
+        proven_size_t bytes = 0;
+        for (proven_size_t i = 0; i < count; ++i) bytes += headers[i].name.size + headers[i].value.size;
+        proven_err_t e = hp_table_room(t, count, bytes);
         if (e != PROVEN_OK) return e;
     }
     proven_size_t at = *len;

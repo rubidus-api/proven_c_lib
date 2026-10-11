@@ -50,7 +50,8 @@ typedef struct proven_hpack_decoder proven_hpack_decoder_t;
  * @brief Make a decoder.
  * @param max_table_bytes the largest dynamic table the peer's encoder may use: what this side
  *        announces. PROVEN_HPACK_DEFAULT_TABLE_BYTES is the protocol's default.
- * @return PROVEN_ERR_INVALID_ARG; PROVEN_ERR_NOMEM. (The table itself is allocated later.)
+ * @return PROVEN_ERR_INVALID_ARG; PROVEN_ERR_NOMEM. (The table itself is allocated later, and
+ *         grows as entries are added: `max_table_bytes` is its ceiling, not its cost.)
  */
 [[nodiscard]]
 proven_err_t proven_hpack_decoder_create(proven_allocator_t alloc, proven_size_t max_table_bytes, proven_hpack_decoder_t **out);

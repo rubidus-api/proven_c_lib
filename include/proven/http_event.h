@@ -85,6 +85,8 @@ typedef struct {
     int compress_window_bits;            /**< and how far back the compressor looks, 9 to 15: each response being streamed compressed holds from about 11 KiB (9) to about 325 KiB (15) until it ends. 0: 15 */
     bool http2;                          /**< true: a connection may be HTTP/2 - over TLS when the handshake chose `h2` (the TLS configuration must offer it, and must not when this is false), in the clear when the client begins with the HTTP/2 preface. Every other connection is HTTP/1.1. The callbacks and the stream functions are the same for both */
     proven_size_t max_concurrent_streams; /**< HTTP/2: requests in progress on one connection. 0: 100 */
+    proven_size_t http2_header_table_bytes; /**< HTTP/2: the header compression table in each direction, which an idle connection keeps once it has been used - about one and a half times this, twice over. 0: 4,096, the protocol's default */
+    bool http2_no_header_table;          /**< HTTP/2: no such tables at all: an idle connection is then about 1.5 KiB instead of about 12.8, and every request and response head is sent in full */
 } proven_http_event_server_config_t;
 
 /**

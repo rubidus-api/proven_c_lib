@@ -80,6 +80,7 @@ struct proven_h2_conn {
     bool got_settings, settings_acked, peer_table_set;
     bool goaway_recv, goaway_sent, closed, reported, oom;
     bool hbuf_lent;                        /* hbuf is the caller's, and stays */
+    bool self_dep;                         /* the block being read came with a priority that names its own stream */
     bool sweep_goaway, sweep_writable;
 };
 
@@ -430,6 +431,14 @@ static void h2c_on_block(proven_h2_conn_t *c, proven_mem_view_t block, proven_h2
     const bool too_big = de != PROVEN_OK;
 
     h2c_stream_t *s = h2c_find(c, id);
+    if (c->self_dep) {
+        c->self_dep = false;
+        if (s || (c->server && (id & 1u) != 0 && id > c->last_peer_id)) {
+            if (!s) c->last_peer_id = id;
+            h2c_stream_fault(c, id, s, PROVEN_H2_PROTOCOL_ERROR, !fin, ev);
+            return;
+        }
+    }
     if (!s) {
         if (!c->server || (id & 1u) == 0) {
             /* A client is sent a block only on a stream it opened; a server only on odd ones. */
@@ -626,6 +635,7 @@ static void h2c_on_header(proven_h2_conn_t *c, proven_h2_event_t *ev) {
             c->end_headers = (f.flags & PROVEN_H2_FLAG_END_HEADERS) != 0;
             c->expect_cont = f.stream_id;
             c->blk_len = 0;
+            c->self_dep = false;
             const proven_u32 need = ((f.flags & PROVEN_H2_FLAG_PADDED) != 0 ? 1u : 0u) + ((f.flags & PROVEN_H2_FLAG_PRIORITY) != 0 ? 5u : 0u);
             if (f.length < need) { h2c_fail(c, PROVEN_H2_PROTOCOL_ERROR); return; }
             if (f.length == need && !c->end_headers && !c->fin && ++c->empty_run > H2C_EMPTY_RUN_MAX) { h2c_fail(c, PROVEN_H2_ENHANCE_YOUR_CALM); return; }
@@ -661,8 +671,11 @@ static void h2c_on_header(proven_h2_conn_t *c, proven_h2_event_t *ev) {
         case PROVEN_H2_GOAWAY:
             h2c_to_fixed(c, 8);
             return;
+        case PROVEN_H2_PRIORITY:
+            h2c_to_fixed(c, 5);
+            return;
         default:
-            /* PRIORITY, which is deprecated and ignored, and every type this side does not know. */
+            /* Every type this side does not know. */
             h2c_to_skip(c, f.length);
             return;
     }
@@ -688,6 +701,10 @@ static void h2c_on_fixed(proven_h2_conn_t *c, proven_h2_event_t *ev) {
         case PROVEN_H2_HEADERS: {
             const bool padded = (f.flags & PROVEN_H2_FLAG_PADDED) != 0;
             const proven_u32 pad = padded ? b[0] : 0;
+            /* The priority fields are deprecated and ignored (RFC 9113, section 5.3.2) - but a
+             * stream that says it depends on itself is still talking nonsense, and RFC 7540's
+             * verdict on that costs nothing to keep: an error of the stream. */
+            if ((f.flags & PROVEN_H2_FLAG_PRIORITY) != 0 && (h2c_u32(b + (padded ? 1 : 0)) & 0x7fffffffu) == f.stream_id) c->self_dep = true;
             if (c->small_need + pad > f.length) { h2c_fail(c, PROVEN_H2_PROTOCOL_ERROR); return; }
             c->content_left = f.length - c->small_need - pad;
             c->pad_left = pad;
@@ -744,6 +761,11 @@ static void h2c_on_fixed(proven_h2_conn_t *c, proven_h2_event_t *ev) {
             if (!polite) h2c_debt(c);
             return;
         }
+        case PROVEN_H2_PRIORITY:
+            /* Deprecated and ignored, but for the one thing that was always nonsense. */
+            h2c_to_skip(c, 0);
+            if ((h2c_u32(b) & 0x7fffffffu) == f.stream_id) h2c_stream_fault(c, f.stream_id, h2c_find(c, f.stream_id), PROVEN_H2_PROTOCOL_ERROR, false, ev);
+            return;
         case PROVEN_H2_PING:
             h2c_to_skip(c, 0);
             if ((f.flags & PROVEN_H2_FLAG_ACK) == 0) { h2c_q_empty(c, PROVEN_H2_PING, PROVEN_H2_FLAG_ACK, b, 8); return; }

@@ -78,8 +78,10 @@ by the one decoder of its connection and direction. Skip a block, or decode one 
 every block after it means something else. That is why a decoder that meets a malformed
 block refuses everything afterwards, and why HTTP/2 ends the connection over it.
 
-**The table's size is yours to set**, and its cost is exactly that size: 4,096 bytes by
-default (`PROVEN_HPACK_DEFAULT_TABLE_BYTES`), allocated when the first entry is added. An
+**The table's size is yours to set**, and it is a ceiling, not a cost: 4,096 bytes by
+default (`PROVEN_HPACK_DEFAULT_TABLE_BYTES`). The memory behind it grows as entries are added
+- a few hundred bytes for a peer that sends a few short fields - to about one and a half
+times the size when the table is full. An
 encoder made with 0 keeps no table and is stateless; a decoder made with 0 tells the peer to
 keep none.
 
@@ -629,8 +631,9 @@ what it starts never comes near the limit.
 
 A connection that has only opened holds one block of at most 400 bytes. One that has carried
 requests and is idle again holds that, a record of how its last streams ended, and the two
-compression tables: under 14 KiB when both have been used at their default size - each is
-about 6 KiB, and HTTP/2 gives every connection two - and under 1,280 bytes with none. While
+compression tables, **which grow as they are used**: under 3 KiB after a hundred small
+requests, about 12.5 KiB when both are full at their default size of 4,096 bytes, and under
+1,280 bytes with none. While
 streams are open it also holds 48 bytes for each, and the buffers for reading one header
 list: five times `max_header_list_bytes`, which is 80 KiB at the default. **That last one
 need not be each connection's**: give the configuration a `header_buffer` of
@@ -900,6 +903,7 @@ connection is now one stream of many, and the server does the translating:
 | A handler does | On HTTP/2 that is |
 |---|---|
 | reads `head->method`, `head->target`, the fields | the pseudo-header fields and the list, already checked by section 4's rules. `Host` is there, made from `:authority` when the client sent no `host` field; `version_minor` is 1 |
+| learns from `Content-Length` or `Transfer-Encoding` that a body follows | the same: HTTP/2 may send a body with neither, and such a request is given `Transfer-Encoding: chunked`, which means what it meant - a body whose length is not announced |
 | `proven_http_stream_respond`, `_begin`, `_write`, `_end` | a response head, DATA frames as the client's windows and the output bound allow, and the end of the stream. Field names go out in lowercase; `Keep-Alive`, `Proxy-Connection` and `Upgrade` are not sent |
 | is refused by `_write`, and waits for `on_writable` | exactly as on HTTP/1.1 - and for the same two reasons, though it cannot tell them apart: the server holds `max_buffered_output`, or the client is not making room |
 | `proven_http_stream_pause` | no `on_body` until it resumes, as on HTTP/1.1. What had already arrived is kept - at most one window, because the client is not told it was consumed and can send no more - and delivered as one piece on resume |
@@ -936,7 +940,8 @@ Both protocols are served on one port, by one handler, at the same time.
 | `max_body_bytes` | Per request: `413`, sent while the body is still arriving, which tells the client to stop |
 | `max_buffered_output` | What the connection holds for a client that is not reading, **for all its streams together** |
 | `head_timeout_ms` | From the connection's first byte to its first request |
-| `body_timeout_ms` | Silence while a request's body is owed: the streams that were waiting are reset, the connection goes on |
+| `body_timeout_ms` | Silence from one request whose body is owed: that stream is reset, the connection and its other streams go on |
+| `http2_header_table_bytes` (0: 4,096), `http2_no_header_table` | The header compression table in each direction: what an idle connection may come to hold, against how much a repeated field costs to send |
 | `write_timeout_ms` | Output held with none of it accepted: the connection ends |
 | `idle_timeout_ms` | No stream open: the server says goodbye (GOAWAY) and closes |
 
@@ -1104,14 +1109,18 @@ int main(void) {
   promise for both protocols; on HTTP/2 it took a defect to find (section 7).
 - **`max_buffered_output` is per connection, not per stream.** One slow client with a
   hundred streams holds what one HTTP/1.1 client would, not a hundred times it.
-- **An idle HTTP/2 connection is not small.** HTTP/1.1's is 448 bytes; HTTP/2's is
-  about 12.8 KiB, nearly all of it the two header compression tables the protocol gives every
-  connection once both have been used. Ten thousand idle HTTP/2 connections are 128 MiB.
+- **An idle HTTP/2 connection is larger than an HTTP/1.1 one, by what it has been sent.**
+  HTTP/1.1's is 448 bytes. HTTP/2's is 2,264 bytes after one small request, and grows with
+  the header fields its client has made it remember, to about 12.8 KiB when both compression
+  tables are full: ten thousand idle connections are between 22 and 128 MiB.
+  `http2_header_table_bytes` lowers the ceiling and `http2_no_header_table` removes it (under
+  2 KiB, always), at the price of sending every field in full every time.
   The buffer for reading header lists - 80 KiB - is one for the whole server, not one each.
   A request in progress adds about 210 bytes: 160 in the server, 48 in the connection.
-- **One timer per connection.** `body_timeout_ms` measures silence on the connection, not
-  on a stream: a request whose body has stalled is not reset while other streams keep the
-  connection busy.
+- **A handler that answers before the request has ended is done with it.** The server
+  tells the client to stop sending (section 5), and what was already on its way is dropped
+  unread - including a frame that would have been an error. If the body matters, answer
+  when it has arrived.
 - **WebSocket needs HTTP/1.1.** An upgrade is refused on an HTTP/2 stream
   (`PROVEN_ERR_UNSUPPORTED`): a browser that wants a WebSocket opens an HTTP/1.1 connection
   for it, which the same port accepts.
@@ -1128,7 +1137,9 @@ continuation bytes; a literal's Huffman padding of up to seven one bits and noth
 where there is one, Huffman coding where it is shorter (not where it is the same length), new
 fields added to the table unless they are secrets or larger than it.
 
-**What a connection accepts is RFC 9113**, with these choices where the RFC leaves one: a
+**What a connection accepts is RFC 9113**, with these choices where the RFC leaves one: the
+deprecated priority fields are ignored, except that a stream said to depend on itself is an
+error of that stream, as RFC 7540 had it; a
 frame for a stream that this side reset is dropped without comment for as long as the reset
 is among the last `max_concurrent_streams` endings it remembers; a header list over the limit
 is an error of its stream, not of the connection; `content-length` that disagrees with the
@@ -1166,7 +1177,7 @@ were decoded under tools that report any read or write outside a buffer, with no
 The connection has a registered test of its own. Two connections are wired together in
 memory and carry bodies of nine sizes through three window sizes, a byte at a time and in
 bulk, fifty streams at once, and a head of 40,000 bytes that leaves as three frames.
-Ninety-eight scripted conversations each break one rule of
+A hundred and one scripted conversations each break one rule of
 RFC 9113, or stand just inside it, and the connection is held to the verdict the RFC names -
 ignored, an error of the stream with its code, an error of the connection with its code -
 once with the bytes in one piece and once a byte at a time. Each bound of section 5 is driven
@@ -1192,6 +1203,19 @@ stalled, because the server called `on_writable` from inside the handler's own w
 handler, re-entered, lost its place. This library's own client had not provoked it. The
 registered test now holds the handler to "never re-entered", with two streams racing.
 
-**Not done:** no coverage-guided fuzzing; no run of the h2spec conformance suite; no
-measurement of speed (the Huffman decoder reads a bit at a time; the connection finds a
-stream by walking its table); no external review.
+**h2spec**, the conformance suite for HTTP/2 servers (version 2.6.0, 146 cases), was run
+against that server: 146 of 146 over TLS, and 145 of 146 in the clear. The one is "an invalid
+connection preface must end the connection": in the clear, bytes that are not the preface
+are not HTTP/2 here but HTTP/1.1, and are answered as such. Its first run found two things:
+a handler had no way to tell that a body with no announced length was coming (it now sees
+`Transfer-Encoding: chunked`), and a stream that depends on itself was not refused.
+
+**Speed, measured once, with no socket**: two connections in memory on one core of a
+3.5 GHz x86-64 processor, GCC `-O2`. A request head of twelve fields (299 bytes as literals)
+is Huffman-decoded 680,000 times a second, 204 MB/s; 268,000 requests a second are sent,
+decoded, answered with a head and read back, a hundred in flight; and bodies cross at 2.4
+GB/s. These are the protocol's costs alone - a socket, TLS and a handler all cost more.
+
+**Not done:** no coverage-guided fuzzing; no measurement under load over a network (the
+connection finds a stream by walking its table); no browser has talked to the server; no
+external review.

@@ -50,6 +50,7 @@ typedef struct h2s {
     proven_deflate_t *zip;
     proven_u64 response_left;          /* body bytes still promised; LENGTH_UNKNOWN when not counted */
     proven_u64 body_seen;
+    proven_time_t body_due;            /* when a request whose body is owed has been silent too long; 0: nothing is owed, or the handler paused it */
     proven_u32 id;
     proven_u32 mark;                   /* the driver's round in which this stream was last looked at */
     proven_http_method_t method;
@@ -75,6 +76,7 @@ struct h2d {
     bool pumping;
     bool asked;                        /* a request has arrived: from here on a quiet connection is idle, not slow */
     proven_u32 calls;                  /* calls a handler made that are now on the stack */
+    proven_time_t quiet_due;           /* when the connection's own silence - output not moving, nothing asked, nothing open - has lasted too long; 0: none is being measured */
     bool over;                         /* nothing more will be taken: write what is owed and close */
     bool eof;                          /* the peer closed its sending side */
 };
@@ -191,8 +193,15 @@ static proven_size_t d_queued(const h2d_t *d) {
     return proven_h2_conn_pending_output(d->engine).size + proven_http_event_raw_held_(d->conn);
 }
 
-/* One timer, for whatever the connection is waiting for. Every round of activity sets it
- * again, so each of these measures a silence, not a total. */
+/* A request's body is owed from now: it has `body_timeout_ms` to say something. */
+static void s_expect_body(h2s_t *s) {
+    s->body_due = s->in_done || s->paused ? 0 : proven_time_monotonic_now() + (proven_time_t)s->h.server->cfg.body_timeout_ms * 1000000;
+}
+
+/* One timer, for whatever the connection is waiting for. Output that does not move and a
+ * connection with nothing on it are the connection's silences, measured from its last
+ * activity. A request body is each stream's own: the timer is set for the earliest that is
+ * due, so a request that has stalled is found though its neighbours are busy. */
 static void d_arm(h2d_t *d) {
     if (d->dead) return;
     const proven_http_event_server_config_t *cfg = &d->server->cfg;
@@ -200,11 +209,16 @@ static void d_arm(h2d_t *d) {
     if (d_queued(d) > 0) ms = cfg->write_timeout_ms;
     else if (!d->asked) ms = cfg->head_timeout_ms;
     else if (d->stream_count == 0) ms = cfg->idle_timeout_ms;
-    else {
-        for (const h2s_t *s = d->streams; s; s = s->next)
-            if (!s->in_done && !s->paused) { ms = cfg->body_timeout_ms; break; }
-        /* Otherwise every request is whole and the handlers are thinking: their business. */
+    const proven_time_t now = proven_time_monotonic_now();
+    d->quiet_due = ms ? now + (proven_time_t)ms * 1000000 : 0;
+    proven_time_t due = 0;
+    for (const h2s_t *s = d->streams; s; s = s->next)
+        if (s->body_due != 0 && (due == 0 || s->body_due < due)) due = s->body_due;
+    if (due != 0) {
+        const proven_time_t left = due > now ? (due - now) / 1000000 + 1 : 1;
+        if (ms == 0 || (proven_time_t)ms > left) ms = (proven_u32)left;
     }
+    /* With neither, every request is whole and the handlers are thinking: their business. */
     proven_http_event_raw_timer_(d->conn, ms);
 }
 
@@ -270,7 +284,7 @@ static void d_request(h2d_t *d, const proven_h2_event_t *ev) {
     const bool connect = rq->path.size == 0 && rq->scheme.size == 0;
     /* The fields are copied into the server's array before the handler sees them - its own
      * answer takes the connection, and the event's list is not promised past that. */
-    bool has_host = false, bad = false;
+    bool has_host = false, has_length = false, bad = false;
     proven_u64 length = 0;
     for (proven_size_t i = 0; i < rq->field_count; ++i) {
         const proven_http_header_t *f = &rq->fields[i];
@@ -280,6 +294,7 @@ static void d_request(h2d_t *d, const proven_h2_event_t *ev) {
             if (has_host || (rq->authority.size > 0 && !h2_eq_nocase(f->value, rq->authority))) bad = true;
             has_host = true;
         } else if (h2_eq_nocase(f->name, h2_lit("content-length"))) {
+            has_length = true;
             length = 0;
             for (proven_size_t k = 0; k < f->value.size && length <= sv->cfg.max_body_bytes; ++k) length = length * 10 + (proven_u64)(f->value.ptr[k] - '0');
         }
@@ -287,7 +302,11 @@ static void d_request(h2d_t *d, const proven_h2_event_t *ev) {
     d->asked = true;
     if (bad) { (void)proven_h2_conn_reset(d->engine, ev->stream_id, PROVEN_H2_PROTOCOL_ERROR); return; }
     const proven_size_t add_host = !has_host && rq->authority.size > 0 ? 1 : 0;
-    if (rq->field_count + add_host > sv->cfg.max_headers) { d_refuse(d, ev->stream_id, "431"); return; }
+    /* A handler tells whether a body is coming from the fields, as HTTP/1.1 taught it to:
+     * a length, or "chunked". HTTP/2 may send a body with neither - the frames say where it
+     * ends - so one of unannounced length is given the field that means exactly that. */
+    const proven_size_t add_chunked = !ev->end_stream && !has_length ? 1 : 0;
+    if (rq->field_count + add_host + add_chunked > sv->cfg.max_headers) { d_refuse(d, ev->stream_id, "431"); return; }
     if (length > sv->cfg.max_body_bytes) { d_refuse(d, ev->stream_id, "413"); return; }
 
     h2s_t *s = h2_alloc(sv->alloc, sizeof *s);
@@ -296,6 +315,7 @@ static void d_request(h2d_t *d, const proven_h2_event_t *ev) {
     proven_size_t n = 0;
     if (add_host) sv->headers[n++] = (proven_http_header_t){ .name = h2_lit("host"), .value = rq->authority };
     for (proven_size_t i = 0; i < rq->field_count; ++i) sv->headers[n++] = rq->fields[i];
+    if (add_chunked) sv->headers[n++] = (proven_http_header_t){ .name = h2_lit("transfer-encoding"), .value = h2_lit("chunked") };
     proven_http_request_t req = {
         .method = proven_http_method_from_text(rq->method), .method_text = rq->method,
         .target = connect ? rq->authority : rq->path,
@@ -309,6 +329,7 @@ static void d_request(h2d_t *d, const proven_h2_event_t *ev) {
     s->response_left = PROVEN_HTTP_EVENT_LENGTH_UNKNOWN;
     s->accepts_gzip = proven_http_accepts_coding(sv->headers, n, PROVEN_HTTP_CODING_GZIP);
     s->in_done = ev->end_stream;
+    s_expect_body(s);
     s->active = true;
     s->next = d->streams;
     if (d->streams) d->streams->prev = s;
@@ -340,6 +361,7 @@ static void d_body(h2d_t *d, h2s_t *s, proven_mem_view_t piece, bool last) {
         return;
     }
     if (last) s->in_done = true;
+    s_expect_body(s);                              /* it spoke: the wait for its next piece begins again */
     if (s->paused) {
         /* The handler said "not now", and on HTTP/1.1 that means no call until it resumes.
          * Here the bytes have already arrived, so they are kept - at most one window of
@@ -466,23 +488,27 @@ static void h2_on_timer(void *raw) {
     h2d_t *d = raw;
     if (d->dead) return;
     d_enter(d);
-    if (d_queued(d) > 0 || !d->asked) {
+    /* Requests whose bodies have stopped arriving, first: they end, the others go on. */
+    const proven_time_t now = proven_time_monotonic_now();
+    for (bool again = true; again;) {
+        again = false;
+        for (h2s_t *s = d->streams; s; s = s->next) {
+            if (s->body_due == 0 || s->body_due > now) continue;
+            s_reset(s, PROVEN_H2_CANCEL, PROVEN_ERR_TIMEOUT);
+            again = true;
+            break;
+        }
+    }
+    if (d->dead) { d_leave(d); return; }
+    if (d->quiet_due == 0 || now < d->quiet_due) {
+        d_pump(d);                                 /* a stream's hour, not the connection's: the round sets the timer again */
+    } else if (d_queued(d) > 0 || !d->asked) {
         /* The client is not taking what it asked for, or never asked. */
         d_kill(d, PROVEN_ERR_TIMEOUT);
     } else if (d->stream_count == 0) {
         proven_h2_conn_shutdown(d->engine, PROVEN_H2_NO_ERROR);            /* idle: say goodbye */
         d_pump(d);
     } else {
-        /* Requests whose bodies have stopped arriving. The others go on. */
-        for (bool again = true; again;) {
-            again = false;
-            for (h2s_t *s = d->streams; s; s = s->next) {
-                if (s->in_done || s->paused) continue;
-                s_reset(s, PROVEN_H2_CANCEL, PROVEN_ERR_TIMEOUT);
-                again = true;
-                break;
-            }
-        }
         d_pump(d);
     }
     d_leave(d);
@@ -564,6 +590,7 @@ proven_err_t proven_http_event_h2_take_(proven_http_stream_t *conn) {
         .max_buffered_output = sv->cfg.max_buffered_output < 512 ? 1024
                              : sv->cfg.max_buffered_output > ((proven_size_t)1 << 29) ? (proven_size_t)1 << 30 : sv->cfg.max_buffered_output * 2,
         .header_buffer = { .ptr = sv->h2buf, .size = sv->h2buf_size },
+        .set_header_table = true, .header_table_bytes = (proven_u32)sv->cfg.http2_header_table_bytes,
     };
     if (proven_h2_conn_create(&cfg, &d->engine) != PROVEN_OK) { sv->alloc.free_fn(sv->alloc.ctx, d); return PROVEN_ERR_NOMEM; }
     d->ops = &h2_ops;
@@ -842,6 +869,7 @@ void proven_http_event_h2_pause_(proven_http_stream_t *stream) {
     h2s_t *s = h2s_of(stream);
     if (s->dead || !s->active) return;
     s->paused = true;
+    s_expect_body(s);
     d_arm(s->d);
 }
 
@@ -851,6 +879,7 @@ void proven_http_event_h2_resume_(proven_http_stream_t *stream) {
     proven_http_event_server_t *sv = s->h.server;
     h2d_t *d = s->d;
     s->paused = false;
+    s_expect_body(s);
     s_enter(s);
     d_enter(d);
     d->calls++;

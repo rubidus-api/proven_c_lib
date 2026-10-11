@@ -18,6 +18,42 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release: HTTP/2 made smaller and faster, and held to a conformance suite. Nothing
+existing changes in meaning; three things are added to the event-driven server's
+configuration.
+
+### Added
+
+- `http_event.h`: **`http2_header_table_bytes`** (default 4,096) and
+  **`http2_no_header_table`** in the server's configuration - the ceiling on what an idle
+  HTTP/2 connection keeps for header compression, or none at all.
+- **A handler can tell that an HTTP/2 request has a body the way it always could**: a request
+  whose body comes with no `content-length` - which HTTP/2 allows, the frames saying where it
+  ends - is given `Transfer-Encoding: chunked` in the fields the handler sees.
+
+### Changed
+
+- **An idle HTTP/2 connection holds what it was sent, not what it might be sent.** The header
+  compression tables (`hpack.h`) grow as entries are added instead of being allocated whole
+  at the first entry: an idle connection of the event-driven server after one small request
+  is 2,264 bytes, where v0.30.0's was 12,840. Full tables cost what they did.
+- **Huffman decoding is about three times as fast** (204 MB/s where it was 70, for a request
+  head of twelve fields on one core): the next eight bits are looked up in a table generated,
+  like the code itself, from the text of RFC 7541. Every decision is unchanged - the same
+  5,000,000 damaged blocks are accepted, refused and bounded in the same numbers.
+- **`body_timeout_ms` on HTTP/2 is each request's own.** A request whose body has stopped
+  arriving is reset when *it* has been silent that long, though other requests on the
+  connection are busy; in v0.30.0 the connection's silence was what was measured.
+- A stream that is said to depend on itself - in a HEADERS frame's priority fields or a
+  PRIORITY frame - is an error of that stream (`PROTOCOL_ERROR`), as RFC 7540 had it. The
+  priority fields are otherwise ignored, as before.
+
+### Tested
+
+- **h2spec 2.6.0** against the event-driven server: 146 of 146 cases over TLS, 145 of 146 in
+  the clear (the one: bytes that are not the HTTP/2 preface are, in the clear, HTTP/1.1 here).
+  Its first run is where the two additions above came from.
+
 ## [0.30.0] - 2026-10-11
 
 A MINOR release: **the event-driven HTTP server speaks HTTP/2**, beside HTTP/1.1 on the same

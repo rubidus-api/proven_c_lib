@@ -920,6 +920,14 @@ int main(void) {
         put_frame(&g_buf, PROVEN_H2_DATA, ES, 1, "x", 1);
         verdict("8.1: the rest of a request whose response is already complete is dropped", V_IGNORED, 0);
 
+        /* A stream that depends on itself (RFC 7540, section 5.3.1; priorities are otherwise ignored). */
+        { proven_size_t n = block_of(GET, 4); static proven_byte_t pl[300]; pl[0] = 0; pl[1] = 0; pl[2] = 0; pl[3] = 1; pl[4] = 16; memcpy(pl + 5, g_block, n); put_frame(&g_buf, PROVEN_H2_HEADERS, EH | ES | PROVEN_H2_FLAG_PRIORITY, 1, pl, 5 + n); put_get(&g_buf, 3, true); }
+        verdict("5.3.1: HEADERS whose priority names its own stream is PROTOCOL_ERROR for the stream, and the next request is understood", V_STREAM, PROVEN_H2_PROTOCOL_ERROR);
+        { static const proven_byte_t self[5] = { 0, 0, 0, 1, 16 }; put_get(&g_buf, 1, false); put_frame(&g_buf, PROVEN_H2_PRIORITY, 0, 1, self, 5); }
+        verdict("5.3.1: a PRIORITY frame that names its own stream is PROTOCOL_ERROR for the stream", V_STREAM, PROVEN_H2_PROTOCOL_ERROR);
+        { static const proven_byte_t other[5] = { 0x80, 0, 0, 3, 255 }; put_get(&g_buf, 1, false); put_frame(&g_buf, PROVEN_H2_PRIORITY, 0, 1, other, 5); put_frame(&g_buf, PROVEN_H2_PRIORITY, 0, 9, other, 5); }
+        verdict("5.3.1: any other PRIORITY frame, for an open stream or an idle one, is ignored", V_IGNORED, 0);
+
         /* Section 4.2 and 6: sizes. */
         put_frame(&g_buf, PROVEN_H2_DATA, 0, 1, g_zero, 16385);
         verdict("4.2: a frame larger than this side's limit is FRAME_SIZE_ERROR", V_CONN, PROVEN_H2_FRAME_SIZE_ERROR);
@@ -1389,8 +1397,8 @@ int main(void) {
             feed(c, g_buf.b, 0, 1, &log);
             const proven_size_t after = g_mem.bytes - enc_bytes;
             PROVEN_TEST_INFO("memory: {} bytes idle again, in {} blocks (the struct, the HPACK state and the record of how streams ended)", PROVEN_ARG((long long)after), PROVEN_ARG((long long)g_mem.blocks));
-            PROVEN_TEST_ASSERT(after < (tables ? 14336u : 1280u) && g_mem.blocks <= 6,
-                "idle again, the buffers and the stream table are gone: what stays is the struct, the record of endings and the HPACK state - under 14 KiB when both header tables have been used at their default size, under 1,280 bytes with none", "");
+            PROVEN_TEST_ASSERT(after < (tables ? 3072u : 1280u) && g_mem.blocks <= 6,
+                "idle again, the buffers and the stream table are gone: what stays is the struct, the record of endings and the HPACK state - under 3 KiB after a hundred small requests with both header tables in use (they grow as they are used, to about 6 KiB each at most), under 1,280 bytes with none", "");
             proven_h2_conn_destroy(c);
             proven_hpack_encoder_destroy(g_enc); g_enc = (void *)0;
             PROVEN_TEST_ASSERT(g_mem.blocks == 0 && g_mem.bytes == 0, "and destroying it gives back everything", "");
