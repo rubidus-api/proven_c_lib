@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-10-11
+
 A MINOR release: the codec of HTTP/2 - header compression and frames - as two new headers.
 **It is the codec, not yet the protocol**: nothing holds a connection together, and the HTTP
 servers and clients of this library speak HTTP/1.1 as before. Nothing existing changes.
