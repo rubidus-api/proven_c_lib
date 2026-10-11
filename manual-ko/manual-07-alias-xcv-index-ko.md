@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 1228개: 소문자 `xcv_` 이름 898개와 대문자 `XCV_` 이름 330개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 1259개: 소문자 `xcv_` 이름 920개와 대문자 `XCV_` 이름 339개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -166,6 +166,15 @@ alias 1228개: 소문자 `xcv_` 이름 898개와 대문자 `XCV_` 이름 330개.
 | `XCV_H2_DATA` | `PROVEN_H2_DATA` |
 | `XCV_H2_DEFAULT_WINDOW` | `PROVEN_H2_DEFAULT_WINDOW` |
 | `XCV_H2_ENHANCE_YOUR_CALM` | `PROVEN_H2_ENHANCE_YOUR_CALM` |
+| `XCV_H2_EVENT_CLOSED` | `PROVEN_H2_EVENT_CLOSED` |
+| `XCV_H2_EVENT_DATA` | `PROVEN_H2_EVENT_DATA` |
+| `XCV_H2_EVENT_GOAWAY` | `PROVEN_H2_EVENT_GOAWAY` |
+| `XCV_H2_EVENT_HEADERS` | `PROVEN_H2_EVENT_HEADERS` |
+| `XCV_H2_EVENT_NONE` | `PROVEN_H2_EVENT_NONE` |
+| `XCV_H2_EVENT_PONG` | `PROVEN_H2_EVENT_PONG` |
+| `XCV_H2_EVENT_STREAM_RESET` | `PROVEN_H2_EVENT_STREAM_RESET` |
+| `XCV_H2_EVENT_STREAM_WRITABLE` | `PROVEN_H2_EVENT_STREAM_WRITABLE` |
+| `XCV_H2_EVENT_TRAILERS` | `PROVEN_H2_EVENT_TRAILERS` |
 | `XCV_H2_FLAG_ACK` | `PROVEN_H2_FLAG_ACK` |
 | `XCV_H2_FLAG_END_HEADERS` | `PROVEN_H2_FLAG_END_HEADERS` |
 | `XCV_H2_FLAG_END_STREAM` | `PROVEN_H2_FLAG_END_STREAM` |
@@ -536,7 +545,29 @@ alias 1228개: 소문자 `xcv_` 이름 898개와 대문자 `XCV_` 이름 330개.
 | `xcv_fs_write_file` | `proven_fs_write_file` |
 | `xcv_fs_write_file_atomic` | `proven_fs_write_file_atomic` |
 | `xcv_fs_write_file_durable` | `proven_fs_write_file_durable` |
+| `xcv_h2_config_t` | `proven_h2_config_t` |
+| `xcv_h2_conn_consumed` | `proven_h2_conn_consumed` |
+| `xcv_h2_conn_create` | `proven_h2_conn_create` |
+| `xcv_h2_conn_destroy` | `proven_h2_conn_destroy` |
+| `xcv_h2_conn_feed` | `proven_h2_conn_feed` |
+| `xcv_h2_conn_is_closed` | `proven_h2_conn_is_closed` |
+| `xcv_h2_conn_output_sent` | `proven_h2_conn_output_sent` |
+| `xcv_h2_conn_pending_output` | `proven_h2_conn_pending_output` |
+| `xcv_h2_conn_ping` | `proven_h2_conn_ping` |
+| `xcv_h2_conn_reset` | `proven_h2_conn_reset` |
+| `xcv_h2_conn_send_data` | `proven_h2_conn_send_data` |
+| `xcv_h2_conn_send_room` | `proven_h2_conn_send_room` |
+| `xcv_h2_conn_send_trailers` | `proven_h2_conn_send_trailers` |
+| `xcv_h2_conn_shutdown` | `proven_h2_conn_shutdown` |
+| `xcv_h2_conn_stream_count` | `proven_h2_conn_stream_count` |
+| `xcv_h2_conn_stream_set_user` | `proven_h2_conn_stream_set_user` |
+| `xcv_h2_conn_stream_user` | `proven_h2_conn_stream_user` |
+| `xcv_h2_conn_submit_request` | `proven_h2_conn_submit_request` |
+| `xcv_h2_conn_submit_response` | `proven_h2_conn_submit_response` |
+| `xcv_h2_conn_t` | `proven_h2_conn_t` |
 | `xcv_h2_error_t` | `proven_h2_error_t` |
+| `xcv_h2_event_kind_t` | `proven_h2_event_kind_t` |
+| `xcv_h2_event_t` | `proven_h2_event_t` |
 | `xcv_h2_frame_check` | `proven_h2_frame_check` |
 | `xcv_h2_frame_content` | `proven_h2_frame_content` |
 | `xcv_h2_frame_parse` | `proven_h2_frame_parse` |

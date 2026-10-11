@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1228 aliases: 898 lowercase `xcv_` names and 330 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1259 aliases: 920 lowercase `xcv_` names and 339 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -164,6 +164,15 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_H2_DATA` | `PROVEN_H2_DATA` |
 | `XCV_H2_DEFAULT_WINDOW` | `PROVEN_H2_DEFAULT_WINDOW` |
 | `XCV_H2_ENHANCE_YOUR_CALM` | `PROVEN_H2_ENHANCE_YOUR_CALM` |
+| `XCV_H2_EVENT_CLOSED` | `PROVEN_H2_EVENT_CLOSED` |
+| `XCV_H2_EVENT_DATA` | `PROVEN_H2_EVENT_DATA` |
+| `XCV_H2_EVENT_GOAWAY` | `PROVEN_H2_EVENT_GOAWAY` |
+| `XCV_H2_EVENT_HEADERS` | `PROVEN_H2_EVENT_HEADERS` |
+| `XCV_H2_EVENT_NONE` | `PROVEN_H2_EVENT_NONE` |
+| `XCV_H2_EVENT_PONG` | `PROVEN_H2_EVENT_PONG` |
+| `XCV_H2_EVENT_STREAM_RESET` | `PROVEN_H2_EVENT_STREAM_RESET` |
+| `XCV_H2_EVENT_STREAM_WRITABLE` | `PROVEN_H2_EVENT_STREAM_WRITABLE` |
+| `XCV_H2_EVENT_TRAILERS` | `PROVEN_H2_EVENT_TRAILERS` |
 | `XCV_H2_FLAG_ACK` | `PROVEN_H2_FLAG_ACK` |
 | `XCV_H2_FLAG_END_HEADERS` | `PROVEN_H2_FLAG_END_HEADERS` |
 | `XCV_H2_FLAG_END_STREAM` | `PROVEN_H2_FLAG_END_STREAM` |
@@ -534,7 +543,29 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_fs_write_file` | `proven_fs_write_file` |
 | `xcv_fs_write_file_atomic` | `proven_fs_write_file_atomic` |
 | `xcv_fs_write_file_durable` | `proven_fs_write_file_durable` |
+| `xcv_h2_config_t` | `proven_h2_config_t` |
+| `xcv_h2_conn_consumed` | `proven_h2_conn_consumed` |
+| `xcv_h2_conn_create` | `proven_h2_conn_create` |
+| `xcv_h2_conn_destroy` | `proven_h2_conn_destroy` |
+| `xcv_h2_conn_feed` | `proven_h2_conn_feed` |
+| `xcv_h2_conn_is_closed` | `proven_h2_conn_is_closed` |
+| `xcv_h2_conn_output_sent` | `proven_h2_conn_output_sent` |
+| `xcv_h2_conn_pending_output` | `proven_h2_conn_pending_output` |
+| `xcv_h2_conn_ping` | `proven_h2_conn_ping` |
+| `xcv_h2_conn_reset` | `proven_h2_conn_reset` |
+| `xcv_h2_conn_send_data` | `proven_h2_conn_send_data` |
+| `xcv_h2_conn_send_room` | `proven_h2_conn_send_room` |
+| `xcv_h2_conn_send_trailers` | `proven_h2_conn_send_trailers` |
+| `xcv_h2_conn_shutdown` | `proven_h2_conn_shutdown` |
+| `xcv_h2_conn_stream_count` | `proven_h2_conn_stream_count` |
+| `xcv_h2_conn_stream_set_user` | `proven_h2_conn_stream_set_user` |
+| `xcv_h2_conn_stream_user` | `proven_h2_conn_stream_user` |
+| `xcv_h2_conn_submit_request` | `proven_h2_conn_submit_request` |
+| `xcv_h2_conn_submit_response` | `proven_h2_conn_submit_response` |
+| `xcv_h2_conn_t` | `proven_h2_conn_t` |
 | `xcv_h2_error_t` | `proven_h2_error_t` |
+| `xcv_h2_event_kind_t` | `proven_h2_event_kind_t` |
+| `xcv_h2_event_t` | `proven_h2_event_t` |
 | `xcv_h2_frame_check` | `proven_h2_frame_check` |
 | `xcv_h2_frame_content` | `proven_h2_frame_content` |
 | `xcv_h2_frame_parse` | `proven_h2_frame_parse` |

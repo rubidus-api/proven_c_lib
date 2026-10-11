@@ -18,6 +18,43 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release: an HTTP/2 connection, as an object with no socket. **The servers and clients
+of this library still speak HTTP/1.1**: this is the engine they will be built on, usable
+today by a program that carries the bytes itself. Nothing existing changes.
+
+### Added
+
+- **`h2.h`: `proven_h2_conn_t`, one HTTP/2 connection for either end (RFC 9113).** It is
+  given the bytes the peer sent (`proven_h2_conn_feed`) and reports one event at a time - a
+  request or a response head already checked as section 8 of the RFC requires, a piece of a
+  body as a view into the caller's buffer, trailers, a reset, a goodbye, the end - and it
+  queues what is to be sent (`proven_h2_conn_pending_output`,
+  `proven_h2_conn_output_sent`). It does no I/O and reads no clock.
+- Sending: `proven_h2_conn_submit_request`, `proven_h2_conn_submit_response` (interim
+  responses included), `proven_h2_conn_send_data` - which takes as much as the stream's
+  window, the connection's window and the output bound allow, and says how much -
+  `proven_h2_conn_send_trailers`, `proven_h2_conn_reset`, `proven_h2_conn_ping`,
+  `proven_h2_conn_shutdown`. Receiving: `proven_h2_conn_consumed` returns room to the peer
+  when the application has dealt with a body's bytes, not when they arrive, so a handler
+  that falls behind stops its peer.
+- **Every amount a peer can make a connection hold or do has a setting with a default**
+  (`proven_h2_config_t`): streams open at once (100), the stream and connection windows
+  (65,535), the frame size (16,384), the header list (16 KiB), the header tables (4,096),
+  output queued for a peer that does not read (64 KiB, with the answers the protocol owes
+  counted apart), and streams reset beyond those that finished properly (100) - the bound on
+  the "rapid reset" pattern, kept by counting, with no clock.
+- A connection that has only opened holds one block of at most 400 bytes; idle after
+  traffic, under 8 KiB with the default header tables and under 1,280 bytes with none.
+- Manual chapter 17 gains "A connection", with a compiled example of both ends in memory;
+  the registered test `test_unit_h2_conn` (98 scripted conversations held to the verdict the
+  RFC names, each bound driven to its edge, 12,214 replays of a damaged conversation).
+  Available in the freestanding build.
+
+### Not included
+
+- A socket: HTTP/2 in the HTTP servers and clients, and with it ALPN and timeouts. Server
+  push, priorities, `Upgrade: h2c`, extended CONNECT (WebSocket over HTTP/2).
+
 ## [0.28.0] - 2026-10-11
 
 A MINOR release: the codec of HTTP/2 - header compression and frames - as two new headers.

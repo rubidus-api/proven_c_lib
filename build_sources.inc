@@ -59,6 +59,7 @@ PROVEN_BUILD_SOURCE("src/proven/http_auth.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/http_cookie.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/hpack.c", PROVEN_SOURCE_FREESTANDING)   /* header compression for HTTP/2 */
 PROVEN_BUILD_SOURCE("src/proven/h2.c", PROVEN_SOURCE_FREESTANDING)   /* HTTP/2 frames and header-list rules */
+PROVEN_BUILD_SOURCE("src/proven/h2_conn.c", PROVEN_SOURCE_FREESTANDING)   /* an HTTP/2 connection: streams and flow control, no socket */
 PROVEN_BUILD_SOURCE("src/proven/http_coding.c", PROVEN_SOURCE_FREESTANDING)   /* content codings for the HTTP drivers */
 PROVEN_BUILD_SOURCE("src/proven/sse.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/ws.c", PROVEN_SOURCE_FREESTANDING)

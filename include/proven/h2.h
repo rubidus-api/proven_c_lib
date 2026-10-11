@@ -15,11 +15,11 @@
  * what HTTP/1.1 said in its first line is said by *pseudo-header fields* (`:method`, `:path`,
  * `:status`).
  *
- * This header is the part of that with no state: reading and writing frames, the checks each
- * frame type demands, and the checks a decoded header list must pass before it is a request or
- * a response. It is pure computation, allocates nothing, and is available in a freestanding
- * build. It does not hold a connection together - which stream is open, how much may be sent
- * - and so it is not, alone, a way to speak HTTP/2.
+ * This header has two layers. The first has no state: reading and writing frames, the checks
+ * each frame type demands, and the checks a decoded header list must pass before it is a
+ * request or a response. The second is a connection (proven_h2_conn_t): which streams are
+ * open, how much may be sent, what to answer. Both are pure computation and available in a
+ * freestanding build; neither touches a socket.
  *
  * **Errors come in two sizes in HTTP/2**, and the functions here say which: a *connection
  * error* ends the connection (after a GOAWAY frame saying why), a *stream error* ends one
@@ -254,5 +254,224 @@ proven_err_t proven_h2_response_head(const proven_http_header_t *headers, proven
  *         no pseudo-header field at all. */
 [[nodiscard]]
 proven_err_t proven_h2_trailers_check(const proven_http_header_t *headers, proven_size_t count);
+
+// -----------------------------------------------------------------------------
+// A connection (RFC 9113, sections 3, 5 and 6)
+// -----------------------------------------------------------------------------
+
+/**
+ * @brief One HTTP/2 connection, for either end: its settings, its streams, both directions'
+ *        flow control and header compression. Opaque.
+ *
+ * It does no I/O and reads no clock. You give it the bytes the peer sent
+ * (proven_h2_conn_feed) and it tells you what they mean, one event at a time; you ask it to
+ * send, and it puts frames where you collect them (proven_h2_conn_pending_output). A socket,
+ * TLS and every timeout are yours - or a driver's.
+ *
+ * **What the peer can make it hold or do is bounded by the configuration**: streams open at
+ * once, the size of a header list, the frames it will take, the output it queues for a peer
+ * that does not read, and how often streams may be reset without one finishing.
+ *
+ * A connection is for one thread at a time. Every pointer and view it hands out is good until
+ * the next call that takes the connection and is not marked `const`.
+ */
+typedef struct proven_h2_conn proven_h2_conn_t;
+
+/**
+ * @brief How a connection behaves. Zero-initialise it, set `alloc` and `server`, and set what
+ *        you need: every zero field has the default written beside it.
+ */
+typedef struct {
+    proven_allocator_t alloc;              /**< required */
+    bool server;                           /**< true: the end that receives the client preface and answers requests */
+    proven_u32 max_concurrent_streams;     /**< streams the peer may have open at once, and the most this side opens. 0: 100 */
+    proven_u32 initial_window;             /**< bytes of body the peer may send on a stream before this side says it has consumed some; the connection as a whole has the same allowance, and never less than 65,535. 0: 65,535 */
+    proven_u32 max_frame_size;             /**< largest frame payload accepted: 16,384 to 1,048,576. 0: 16,384 */
+    proven_u32 max_header_list_bytes;      /**< largest header list accepted, as HPACK counts it; at most 1 MiB. 0: 16 KiB */
+    proven_u32 header_table_bytes;         /**< the HPACK table in each direction, when `set_header_table` is true. Otherwise 4,096 */
+    bool set_header_table;                 /**< true: use `header_table_bytes` (0 keeps no table: no memory, larger headers) */
+    proven_size_t max_buffered_output;     /**< output held for a peer that is not reading before more is refused - and, counted apart, the answers the protocol owes that peer before the connection is ended. 0: 64 KiB */
+    proven_u32 max_reset_debt;             /**< streams reset - by the peer, or for its fault - beyond those that finished properly, before the connection is ended. 0: 100 */
+} proven_h2_config_t;
+
+typedef enum {
+    PROVEN_H2_EVENT_NONE = 0,              /**< everything given was used; read more */
+    PROVEN_H2_EVENT_HEADERS,               /**< a server: a request began. A client: a response head arrived (an interim one when `status` is below 200) */
+    PROVEN_H2_EVENT_DATA,                  /**< a piece of a body, possibly empty when it is the last. Say when you have consumed it: proven_h2_conn_consumed */
+    PROVEN_H2_EVENT_TRAILERS,              /**< trailer fields: the peer's side of the stream is over */
+    PROVEN_H2_EVENT_STREAM_RESET,          /**< the stream is over before its end: the peer reset it, broke a rule on it, or said goodbye without acting on it (PROVEN_H2_REFUSED_STREAM: safe to send again elsewhere). `code` says which. PROVEN_H2_NO_ERROR from a server: the response is complete and the rest of the request is not wanted */
+    PROVEN_H2_EVENT_STREAM_WRITABLE,       /**< a send that was cut short can go on */
+    PROVEN_H2_EVENT_GOAWAY,                /**< the peer will take no new stream; those above `last_stream_id` were not acted on */
+    PROVEN_H2_EVENT_PONG,                  /**< the answer to proven_h2_conn_ping; `data` is the eight bytes */
+    PROVEN_H2_EVENT_CLOSED                 /**< the connection is over, and with it every stream still open - they get no event of their own. `code` says why: PROVEN_H2_NO_ERROR after a goodbye from either side once the last stream has ended. Send what is pending and close */
+} proven_h2_event_kind_t;
+
+/** @brief What proven_h2_conn_feed found. The views are good until the next call that takes
+ *         the connection. */
+typedef struct {
+    proven_h2_event_kind_t kind;
+    proven_u32 stream_id;
+    void *user;                            /**< what proven_h2_conn_stream_set_user attached to the stream, for every event that names one */
+    bool end_stream;                       /**< HEADERS, DATA: the peer will send nothing more on this stream */
+    proven_h2_request_head_t request;      /**< HEADERS on a server: the request's parts; `request.fields` are its ordinary fields */
+    proven_u16 status;                     /**< HEADERS on a client */
+    const proven_http_header_t *fields;    /**< HEADERS on a client, TRAILERS: the ordinary fields */
+    proven_size_t field_count;
+    proven_mem_view_t data;                /**< DATA: the piece, inside the buffer you fed. PONG: the eight bytes */
+    proven_u32 code;                       /**< STREAM_RESET, GOAWAY, CLOSED: a proven_h2_error_t, or a code this library does not know */
+    proven_u32 last_stream_id;             /**< GOAWAY */
+} proven_h2_event_t;
+
+/**
+ * @brief Make a connection. A client's preface and both ends' first SETTINGS frame are
+ *        pending output at once.
+ * @return PROVEN_ERR_INVALID_ARG for an invalid allocator or a setting outside its range;
+ *         PROVEN_ERR_NOMEM.
+ */
+[[nodiscard]]
+proven_err_t proven_h2_conn_create(const proven_h2_config_t *config, proven_h2_conn_t **out);
+
+/** @brief Free a connection and everything it holds. Null is accepted. */
+void proven_h2_conn_destroy(proven_h2_conn_t *conn);
+
+/**
+ * @brief Give the connection bytes the peer sent, and learn what they mean.
+ *
+ * Uses bytes of `in` - `*consumed` says how many - until there is one event to report or `in`
+ * is used up. Call it again with the rest; when it reports PROVEN_H2_EVENT_NONE, read more.
+ * It may be called with nothing, to collect an event that needs no input (a stream that
+ * became writable when output was sent).
+ *
+ * A DATA event's `data` points into `in`: a body of any size passes through without being
+ * copied or held. So a frame that arrives over several reads is several events, and
+ * `end_stream` is on the last of them. Header fields are held by the connection until the
+ * next call.
+ *
+ * The connection answers what the protocol requires by itself - acknowledgements, window
+ * updates, resets and the final GOAWAY go to proven_h2_conn_pending_output - so after every
+ * call, send what is pending.
+ *
+ * @return PROVEN_OK, also with PROVEN_H2_EVENT_CLOSED: the peer's fault or farewell is an
+ *         event, not an error of this call. PROVEN_ERR_INVALID_FORMAT on a server whose
+ *         client did not begin with the HTTP/2 preface - **this is not HTTP/2**, nothing was
+ *         queued for it, and the bytes are yours to treat as something else; it is reported
+ *         at the first byte that differs. PROVEN_ERR_INVALID_STATE after the end was
+ *         reported; PROVEN_ERR_NOMEM (the connection is then over as well).
+ */
+[[nodiscard]]
+proven_err_t proven_h2_conn_feed(proven_h2_conn_t *conn, proven_mem_view_t in, proven_size_t *consumed, proven_h2_event_t *event);
+
+/** @brief Bytes waiting to be sent to the peer. A view into the connection, good until the
+ *         next call that takes it. */
+[[nodiscard]]
+proven_mem_view_t proven_h2_conn_pending_output(const proven_h2_conn_t *conn);
+
+/** @brief Say that the first `n` pending bytes went out. */
+void proven_h2_conn_output_sent(proven_h2_conn_t *conn, proven_size_t n);
+
+/**
+ * @brief A client: begin a request. The header list is the pseudo-header fields
+ *        (`:method`, `:scheme`, `:authority`, `:path`) and then the ordinary ones, names in
+ *        lowercase.
+ * @param end_stream true when no body follows.
+ * @param stream_id receives the new stream's number.
+ * @return PROVEN_ERR_INVALID_ARG for a list proven_h2_request_head refuses, or on a server;
+ *         PROVEN_ERR_BUSY when as many streams are open as the peer or this side allows - try
+ *         again when one has ended - or when `max_buffered_output` bytes are waiting for a
+ *         peer that does not read - try again when some were sent;
+ *         PROVEN_ERR_INVALID_STATE after a GOAWAY or the end, or when the stream numbers
+ *         are used up; PROVEN_ERR_OUT_OF_BOUNDS for a list larger than the peer said it
+ *         accepts; PROVEN_ERR_NOMEM.
+ */
+[[nodiscard]]
+proven_err_t proven_h2_conn_submit_request(proven_h2_conn_t *conn, const proven_http_header_t *headers, proven_size_t count,
+                                           bool end_stream, proven_u32 *stream_id);
+
+/**
+ * @brief A server: answer a request. The list begins with `:status`. An interim response
+ *        (status below 200) may be sent before the final one.
+ *
+ * A response that ends before the request's body did tells the client to stop sending it
+ * (RST_STREAM with NO_ERROR, as RFC 9113 section 8.1 provides): the stream is then over.
+ *
+ * @return PROVEN_ERR_INVALID_ARG for a list proven_h2_response_head refuses, or on a client;
+ *         PROVEN_ERR_NOT_FOUND for a stream that is not open; PROVEN_ERR_INVALID_STATE when
+ *         the final response was already sent; PROVEN_ERR_BUSY when `max_buffered_output`
+ *         bytes are waiting - PROVEN_H2_EVENT_STREAM_WRITABLE says when to try again;
+ *         PROVEN_ERR_OUT_OF_BOUNDS for a list larger than the peer accepts; PROVEN_ERR_NOMEM.
+ */
+[[nodiscard]]
+proven_err_t proven_h2_conn_submit_response(proven_h2_conn_t *conn, proven_u32 stream_id, const proven_http_header_t *headers, proven_size_t count,
+                                            bool end_stream);
+
+/**
+ * @brief Send body bytes on a stream. **It may take fewer than you offer** - as many as the
+ *        stream's window, the connection's window and the output limit allow, possibly none.
+ *        Keep the rest and offer it again after PROVEN_H2_EVENT_STREAM_WRITABLE.
+ * @param end_stream true when this is the end of the body; it takes effect when all of
+ *        `data` has been taken. With no data at all it always takes effect: the result 0
+ *        then means "ended", not "nothing fitted".
+ * @return the bytes taken. PROVEN_ERR_NOT_FOUND for a stream that is not open;
+ *         PROVEN_ERR_INVALID_STATE before the headers, or after this side ended the stream.
+ */
+[[nodiscard]]
+proven_result_size_t proven_h2_conn_send_data(proven_h2_conn_t *conn, proven_u32 stream_id, proven_mem_view_t data, bool end_stream);
+
+/** @brief End this side of a stream with trailer fields (ordinary fields only).
+ *  @return as proven_h2_conn_submit_response. */
+[[nodiscard]]
+proven_err_t proven_h2_conn_send_trailers(proven_h2_conn_t *conn, proven_u32 stream_id, const proven_http_header_t *headers, proven_size_t count);
+
+/** @brief Give up on a stream: the peer is told with `code` (PROVEN_H2_CANCEL is the usual
+ *         one), nothing more is reported for it, and what the peer had already sent on it
+ *         is dropped as it arrives.
+ *  @return PROVEN_ERR_NOT_FOUND for a stream that is not open. */
+[[nodiscard]]
+proven_err_t proven_h2_conn_reset(proven_h2_conn_t *conn, proven_u32 stream_id, proven_h2_error_t code);
+
+/**
+ * @brief Say that `n` bytes of a stream's DATA have been dealt with.
+ *
+ * This is the backpressure of HTTP/2: the peer may send only what this side has room for, and
+ * room comes back when you say so here. A handler that falls behind and stops calling this
+ * stops its peer, at the cost of `initial_window` bytes a stream.
+ *
+ * Only what a DATA event carried is yours to account for. Padding, and data for a stream that
+ * was reset, the connection gives back by itself; and when a stream ends, whatever it had not
+ * consumed is given back to the connection with it - so this call does nothing for a stream
+ * that is no longer open, and nothing is lost by not making it.
+ */
+void proven_h2_conn_consumed(proven_h2_conn_t *conn, proven_u32 stream_id, proven_size_t n);
+
+/** @brief Ask whether the peer is there: PROVEN_H2_EVENT_PONG follows with the same bytes.
+ *  @return PROVEN_ERR_INVALID_STATE after the end. */
+[[nodiscard]]
+proven_err_t proven_h2_conn_ping(proven_h2_conn_t *conn, const proven_byte_t opaque[8]);
+
+/** @brief Say goodbye: a GOAWAY frame is queued that names the last stream of the peer's
+ *         this side acted on, no new stream is taken or begun, and - with
+ *         PROVEN_H2_NO_ERROR - the streams that are open may finish:
+ *         PROVEN_H2_EVENT_CLOSED follows when the last has ended. Any other code ends the
+ *         connection at once. */
+void proven_h2_conn_shutdown(proven_h2_conn_t *conn, proven_h2_error_t code);
+
+/** @brief Whether the connection is over: PROVEN_H2_EVENT_CLOSED was or is about to be
+ *         reported. Pending output should still be sent. */
+[[nodiscard]]
+bool proven_h2_conn_is_closed(const proven_h2_conn_t *conn);
+
+/** @brief How many streams are open. */
+[[nodiscard]]
+proven_size_t proven_h2_conn_stream_count(const proven_h2_conn_t *conn);
+
+/** @brief How many bytes of body may be sent on a stream now; 0 for one that is not open. */
+[[nodiscard]]
+proven_size_t proven_h2_conn_send_room(const proven_h2_conn_t *conn, proven_u32 stream_id);
+
+/** @brief Attach a pointer of yours to an open stream, and get it back (null for a stream
+ *         that is not open). */
+void proven_h2_conn_stream_set_user(proven_h2_conn_t *conn, proven_u32 stream_id, void *user);
+[[nodiscard]]
+void *proven_h2_conn_stream_user(const proven_h2_conn_t *conn, proven_u32 stream_id);
 
 #endif /* PROVEN_H2_H */

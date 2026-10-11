@@ -998,7 +998,7 @@ Two things this table tells you that the file names do not:
 | `url.h` | URL parsing, percent-coding, and a request path resolved to stay inside its root | Chapter 10 |
 | `http.h` | HTTP/1.1 codec: head parser, body framing and decoder, writers, dates, ranges, multipart bodies, content-coding headers | Chapter 10 |
 | `hpack.h` | HPACK, the header compression of HTTP/2: an encoder and a decoder with their tables, bounded by the caller | Chapter 17 |
-| `h2.h` | HTTP/2 frames, each type's rules, and the checks that make a header list a request or a response. The codec, not the protocol | Chapter 17 |
+| `h2.h` | HTTP/2 frames, each type's rules, the checks that make a header list a request or a response, and a connection with streams and flow control that is given bytes and gives bytes back. The protocol, without a socket | Chapter 17 |
 | `http_auth.h` | Basic and Digest authentication values | Chapter 10 |
 | `http_cookie.h` | A host-only cookie jar | Chapter 10 |
 | `sse.h` | Server-sent events parser | Chapter 10 |
