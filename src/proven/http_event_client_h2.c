@@ -875,7 +875,7 @@ static bool c2_same_addr(const proven_net_addr_t *a, const proven_net_addr_t *b)
  * requests, or the memory that the origin speaks HTTP/1.1. `not`: one to pass over. */
 static c2conn_t *c_find(proven_http_event_client_t *cl, bool https, proven_u8str_view_t host, proven_u16 port, const proven_net_addr_t *to, const c2conn_t *not) {
     for (c2conn_t *k = cl->h2; k; k = k->next) {
-        if (k == not || k->dead || k->over || k->https != https || k->port != port || !c2_same_addr(&k->to, to)) continue;
+        if (k == not || k->dead || k->over || k->peer_eof || k->https != https || k->port != port || !c2_same_addr(&k->to, to)) continue;
         if (!c2_eq_nocase((proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, host)) continue;
         return k;
     }
@@ -930,6 +930,7 @@ static void r_unsent(c2req_t *r, bool here) {
     c2conn_t *c = r->conn;
     proven_http_event_client_t *cl = r->h.client;
     c2conn_t *to = (void *)0;
+    proven_err_t why = PROVEN_ERR_AGAIN;
     bool again = c && !cl->closing && !r->streamed && !r->got_head && r->tries < cl->cfg.retry_unsent;
     if (again) {
         const proven_u8str_view_t host = { .ptr = c->host, .size = c->host_len };
@@ -937,9 +938,13 @@ static void r_unsent(c2req_t *r, bool here) {
         else to = c_find(cl, c->https, host, c->port, &c->to, c);
         /* (An origin that has turned out to speak HTTP/1.1 since: the caller's to start again.) */
         if (to && to->state == C2_H1) again = false;
-        else if (!to && c_open(cl, c->https, host, c->port, &c->to, &to) != PROVEN_OK) again = false;
+        else if (!to) {
+            /* A try that cannot be begun ends the request as that try would have. */
+            why = c_open(cl, c->https, host, c->port, &c->to, &to);
+            if (why != PROVEN_OK) again = false;
+        }
     }
-    if (!again) { r_finish(r, PROVEN_ERR_AGAIN); return; }
+    if (!again) { r_finish(r, why); return; }
     r->tries++;
     if (r->id != 0 && !c->dead && c->engine) proven_h2_conn_stream_set_user(c->engine, r->id, (void *)0);
     r_unlink(r);

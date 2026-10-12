@@ -291,8 +291,8 @@ static bool cl_reusable(proven_http_event_request_t *c) {
 
 /* A connection that had carried a request before was given to this one and turned out to be
  * dead before anything came back on it: the server closed it while it sat idle. The request is
- * sent once more, on a connection of its own. False when it cannot be, and is to end. */
-static bool cl_send_again(proven_http_event_request_t *c) {
+ * sent once more, on a connection of its own. An error when it cannot be, and is to end. */
+static proven_err_t cl_send_again(proven_http_event_request_t *c) {
     proven_http_event_client_t *cl = c->h.client;
     cl_conn_t *old = c->k;
     c->k = (void *)0;
@@ -303,9 +303,9 @@ static bool cl_send_again(proven_http_event_request_t *c) {
     c->interim = 0;
     buf_release(cl, &c->stash);
     c->timer_kind = CL_T_NONE;
-    if (cl_conn_open(c) != PROVEN_OK) return false;
-    cl_arm(c);
-    return true;
+    proven_err_t e = cl_conn_open(c);
+    if (e == PROVEN_OK) cl_arm(c);
+    return e;
 }
 
 /* The end, good or bad: tell the program once, and let the connection go - to the next
@@ -318,14 +318,16 @@ static void cl_kill(proven_http_event_request_t *c, proven_err_t why) {
      * and its caller is told that it may be started again. */
     proven_http_event_client_t *cl = c->h.client;
     if (why == PROVEN_ERR_RESET && c->stale && !c->no_resend) {
-        if (c->keep_out && cl_send_again(c)) return;
+        if (c->keep_out && cl_send_again(c) == PROVEN_OK) return;
         if (c->streamed) why = PROVEN_ERR_AGAIN;
     } else if (why == PROVEN_ERR_RESET && !c->no_resend && c->k && !c->streamed && !c->sent && c->tries < cl->cfg.retry_unsent) {
         /* Lost before any of the request was given to its connection - while TLS was being
          * agreed, mostly: the server cannot have acted on what it was never sent. With
          * retry_unsent that is tried again, on a new connection, so many times. */
         c->tries++;
-        if (cl_send_again(c)) return;
+        proven_err_t e = cl_send_again(c);
+        if (e == PROVEN_OK) return;
+        why = e;                                   /* a try that cannot be begun ends the request as that try would have */
     }
     c->dead = true;
     proven_loop_timer_cancel(cl->loop, &c->timer);

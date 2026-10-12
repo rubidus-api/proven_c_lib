@@ -819,6 +819,15 @@ static void kept_over_tls(void) {
     (void)proven_net_listener_close(&l);
 }
 
+/* The heap, and a switch that makes it refuse: for what a client does when it cannot begin. */
+static bool g_refuse_memory;
+static proven_result_mem_mut_t stingy_alloc(void *ctx, proven_size_t size, proven_size_t align) {
+    (void)ctx;
+    if (g_refuse_memory) return (proven_result_mem_mut_t){ .err = PROVEN_ERR_NOMEM };
+    return g_heap.alloc_fn(g_heap.ctx, size, align);
+}
+static proven_allocator_t stingy(void) { proven_allocator_t a = g_heap; a.alloc_fn = stingy_alloc; return a; }
+
 /* retry_unsent over HTTP/1.1: a connection lost before any of the request was given to it.
  * Over TLS that is a server that takes the connection and goes away while TLS is being agreed. */
 static void unsent(void) {
@@ -836,7 +845,7 @@ static void unsent(void) {
     PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_ERR_RESET && c.dones == 1 && !peer_accept(&l, &x, 6), "and closes it before TLS is agreed: PROVEN_ERR_RESET without the setting, and no second connection", "");
     proven_http_event_client_destroy(client);
 
-    client = a_client((proven_http_event_client_config_t){ .retry_unsent = 1, .connect_timeout_ms = 300 }, true);
+    client = a_client((proven_http_event_client_config_t){ .alloc = stingy(), .retry_unsent = 1, .connect_timeout_ms = 300 }, true);
     PROVEN_TEST_ASSERT(start(client, &c, "POST", url(true, at.port, "/again"), (proven_mem_view_t){ (const proven_byte_t *)"body", 4 }, 0) == PROVEN_OK && peer_accept(&l, &x, 400), "with retry_unsent of one: a request, and the connection taken", "");
     spin(20);
     (void)proven_net_close(&x);
@@ -873,8 +882,21 @@ static void unsent(void) {
     PROVEN_TEST_ASSERT(start(client, &c, "GET", url(true, at.port, "/sent"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && tpeer_accept(&l, &a) && tpeer_request(&a, NULL), "a request the server has read", "");
     tpeer_end(&a);
     PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_ERR_RESET && c.dones == 1 && !peer_accept(&l, &x, 6), "and then the connection is cut: PROVEN_ERR_RESET, and not sent again", "");
-    proven_http_event_client_destroy(client);
+
+    /* A try that cannot be begun ends the request as that try would have. */
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(true, at.port, "/no-memory"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l, &x, 400), "a request, and the connection taken", "");
+    spin(20);
+    g_refuse_memory = true;
+    (void)proven_net_close(&x);
+    (void)spin_until(&c.done, 5000);
+    g_refuse_memory = false;
+    PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_ERR_NOMEM && c.dones == 1 && !peer_accept(&l, &x, 6), "closed, with no memory to be had for a new connection: PROVEN_ERR_NOMEM, not PROVEN_ERR_RESET", "");
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(true, at.port, "/nowhere"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l, &x, 400), "a request, and the connection taken", "");
     (void)proven_net_listener_close(&l);
+    spin(20);
+    (void)proven_net_close(&x);
+    PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_ERR_REFUSED && c.dones == 1, "the server stops listening and closes it: the second connection is refused, and the request ends with PROVEN_ERR_REFUSED", "");
+    proven_http_event_client_destroy(client);
 }
 
 int main(void) {

@@ -386,6 +386,15 @@ static bool h2peer_goodbye(h2peer_t *p, proven_u32 last) {
 
 static void h2peer_end(h2peer_t *p) { proven_h2_conn_destroy(p->engine); p->engine = NULL; (void)proven_net_close(&p->conn); }
 
+/* The heap, and a switch that makes it refuse: for what a client does when it cannot begin. */
+static bool g_refuse_memory;
+static proven_result_mem_mut_t stingy_alloc(void *ctx, proven_size_t size, proven_size_t align) {
+    (void)ctx;
+    if (g_refuse_memory) return (proven_result_mem_mut_t){ .err = PROVEN_ERR_NOMEM };
+    return g_heap.alloc_fn(g_heap.ctx, size, align);
+}
+static proven_allocator_t stingy(void) { proven_allocator_t a = g_heap; a.alloc_fn = stingy_alloc; return a; }
+
 static bool call_ok(const call_t *c) { return c->done && c->why == PROVEN_OK && c->dones == 1 && c->responses == 1 && c->got == 2 && memcmp(c->first, "ok", 2) == 0; }
 
 static void retries(void) {
@@ -397,7 +406,7 @@ static void retries(void) {
     for (proven_size_t i = 0; i < sizeof large; i++) large[i] = pattern(i);
     PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 8, &l, &at) == PROVEN_OK, "a listener the test answers on, as an HTTP/2 server", "");
     g_port = at.port; g_https = false;
-    proven_http_event_client_config_t ccfg = { .alloc = g_heap, .http2_cleartext = true, .retry_unsent = 1 };
+    proven_http_event_client_config_t ccfg = { .alloc = stingy(), .http2_cleartext = true, .retry_unsent = 1 };
     proven_http_event_client_t *client = NULL;
     PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &ccfg, &client) == PROVEN_OK, "a client that puts a request again once", "");
 
@@ -524,8 +533,24 @@ static void retries(void) {
     h2peer_end(&a);
     spin_until(&one.done, 5000);
     PROVEN_TEST_ASSERT(one.done && one.why == PROVEN_ERR_UNSUPPORTED && one.dones == 1 && !h2peer_accept(&l, &b, 2, 6), "and closes it without a word: PROVEN_ERR_UNSUPPORTED, and it is not tried again", "");
-    proven_http_event_client_destroy(client);
+
+    /* A try that cannot be begun ends the request as that try would have. */
+    PROVEN_TEST_ASSERT(start(client, &one, "GET", "/no-memory", mv(""), 0) == PROVEN_OK && h2peer_accept(&l, &a, 2, 400) && h2peer_has(&a, 1), "a request on a stream", "");
+    spin(20);
+    g_refuse_memory = true;
+    PROVEN_TEST_ASSERT(h2peer_goodbye(&a, 0), "a goodbye that leaves the request out, with no memory to be had for a new connection", "");
+    spin_until(&one.done, 5000);
+    g_refuse_memory = false;
+    PROVEN_TEST_ASSERT(one.done && one.why == PROVEN_ERR_NOMEM && one.dones == 1 && one.responses == 0 && !h2peer_accept(&l, &b, 2, 6), "PROVEN_ERR_NOMEM, once: what the try ended with, not PROVEN_ERR_AGAIN", "");
+    h2peer_end(&a);
+    spin(20);
+    PROVEN_TEST_ASSERT(start(client, &one, "GET", "/nowhere", mv(""), 0) == PROVEN_OK && h2peer_accept(&l, &a, 2, 400) && h2peer_has(&a, 1), "a request on a stream", "");
     (void)proven_net_listener_close(&l);
+    PROVEN_TEST_ASSERT(h2peer_goodbye(&a, 0), "the server stops listening, and says a goodbye that leaves the request out", "");
+    spin_until(&one.done, 5000);
+    PROVEN_TEST_ASSERT(one.done && one.why == PROVEN_ERR_REFUSED && one.dones == 1 && one.responses == 0, "the new connection is refused: PROVEN_ERR_REFUSED, once", "");
+    h2peer_end(&a);
+    proven_http_event_client_destroy(client);
     spin(20);
 }
 
