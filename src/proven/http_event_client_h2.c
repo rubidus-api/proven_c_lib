@@ -75,6 +75,9 @@ struct c2conn {
     proven_tls_conn_t *tls;
     proven_h2_conn_t *engine;
     c2req_t *reqs;
+    c2req_t *turn;                     /* the request whose output was moved last in a round: the next round goes on behind it */
+    proven_size_t share;               /* while `sharing`: how much more the request whose turn it is may move */
+    bool sharing;
     proven_size_t count;               /* requests on it, waiting or under way */
     proven_net_addr_t to;
     proven_time_t quiet_due;
@@ -158,6 +161,7 @@ static void r_leave(c2req_t *r) {
 static void r_unlink(c2req_t *r) {
     c2conn_t *c = r->conn;
     if (!c) return;
+    if (c->turn == r) c->turn = r->prev;
     if (r->prev) r->prev->next = r->next;
     else c->reqs = r->next;
     if (r->next) r->next->prev = r->prev;
@@ -355,9 +359,18 @@ static void r_expect(c2req_t *r) {
 
 static proven_size_t r_out_pending(const c2req_t *r) { return r->out_len - r->out_off; }
 
+/* What one request moves towards the engine in its turn of a round. Requests that hold a
+ * body take turns of this much, so that the room under the output bound - which the first to
+ * be asked would otherwise fill by itself, round after round - is shared between them.
+ * (While a turn lasts c_room answers with what is left of it, to whoever asks: a caller that
+ * writes to another request from inside this one's callback is refused sooner than the bound
+ * alone would, and is told when it may write like any other.) */
+#define C2_TURN_BYTES ((proven_size_t)65536)
+
 static proven_size_t c_room(const c2conn_t *c) {
     const proven_size_t held = proven_h2_conn_pending_output(c->engine).size, bound = c->client->cfg.max_buffered_output;
-    return held < bound ? bound - held : 0;
+    const proven_size_t room = held < bound ? bound - held : 0;
+    return c->sharing && c->share < room ? c->share : room;
 }
 
 static void r_push(c2req_t *r) {
@@ -372,6 +385,7 @@ static void r_push(c2req_t *r) {
         proven_result_size_t w = proven_h2_conn_send_data(c->engine, r->id, (proven_mem_view_t){ .ptr = r->out + r->out_off, .size = n }, false);
         if (w.err != PROVEN_OK) { r_finish(r, PROVEN_ERR_RESET); break; }
         r->out_off += w.value;
+        if (c->sharing) c->share -= w.value < c->share ? w.value : c->share;
         if (w.value < n) { r->window_shut = true; break; }
     }
     if (!r->dead && r_out_pending(r) == 0) {
@@ -669,18 +683,30 @@ static void c_pump(c2conn_t *c) {
             if (!c->dead && proven_h2_conn_pending_output(c->engine).size != before) progress = true;
         }
         if (c->dead) break;
+        /* Each request that holds a body has a turn of C2_TURN_BYTES, beginning behind the one
+         * that had the last turn. (From the list's head every time, the newest requests took
+         * all the room there was and an older one waited for as long as they had something
+         * to send.) */
         c->round++;
         for (bool again = true; again && !c->dead;) {
             again = false;
-            for (c2req_t *r = c->reqs; r; r = r->next) {
-                if (r->mark == c->round || r->id == 0 || r->window_shut || !(r_out_pending(r) > 0 || (r->end_asked && !r->engine_done) || r->want_writable)) continue;
-                r->mark = c->round;
-                if (c_room(c) == 0 && !(r->end_asked && !r->engine_done && r_out_pending(r) == 0)) continue;
-                const proven_size_t before = proven_h2_conn_pending_output(c->engine).size;
-                r_push(r);
-                if (!c->dead && proven_h2_conn_pending_output(c->engine).size != before) progress = true;
-                again = true;
-                break;
+            c2req_t *const first = c->turn && c->turn->next ? c->turn->next : c->reqs;
+            for (c2req_t *r = first; r; ) {
+                c2req_t *const after = r->next ? r->next : c->reqs;
+                if (!(r->mark == c->round || r->id == 0 || r->window_shut || !(r_out_pending(r) > 0 || (r->end_asked && !r->engine_done) || r->want_writable))) {
+                    r->mark = c->round;
+                    if (!(c_room(c) == 0 && !(r->end_asked && !r->engine_done && r_out_pending(r) == 0))) {
+                        const proven_size_t before = proven_h2_conn_pending_output(c->engine).size;
+                        c->turn = r;
+                        c->sharing = true; c->share = C2_TURN_BYTES;
+                        r_push(r);
+                        c->sharing = false;
+                        if (!c->dead && proven_h2_conn_pending_output(c->engine).size != before) progress = true;
+                        again = true;
+                        break;
+                    }
+                }
+                r = after == first ? (void *)0 : after;
             }
         }
         if (c->dead || !progress) break;
@@ -722,7 +748,7 @@ static void c_up(c2conn_t *c) {
         if (!cl->h2buf) { c_kill(c, PROVEN_ERR_NOMEM); return; }
     }
     proven_h2_config_t cfg = {
-        .alloc = cl->alloc, .max_header_list_bytes = list,
+        .alloc = cl->alloc, .max_header_list_bytes = list, .initial_window = cl->cfg.http2_window_bytes,
         .max_buffered_output = cl->cfg.max_buffered_output < 512 ? 1024
                              : cl->cfg.max_buffered_output > ((proven_size_t)1 << 29) ? (proven_size_t)1 << 30 : cl->cfg.max_buffered_output * 2,
         .header_buffer = { .ptr = cl->h2buf, .size = cl->h2buf_size },

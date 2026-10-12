@@ -70,6 +70,9 @@ struct h2d {
     proven_http_event_server_t *server;
     proven_h2_conn_t *engine;
     h2s_t *streams;
+    h2s_t *turn;                       /* the stream whose output was moved last in a round: the next round goes on behind it */
+    proven_size_t share;               /* while `sharing`: how much more the stream whose turn it is may move */
+    bool sharing;
     proven_size_t stream_count;
     proven_u32 depth, round;
     bool dead;                         /* the transport is gone, or was let go of */
@@ -148,6 +151,7 @@ static void s_finish(h2s_t *s, proven_err_t why) {
     h2d_t *d = s->d;
     s_enter(s);
     s->dead = true;
+    if (d->turn == s) d->turn = s->prev;
     if (s->prev) s->prev->next = s->next;
     else d->streams = s->next;
     if (s->next) s->next->prev = s->prev;
@@ -230,9 +234,18 @@ static void d_arm(h2d_t *d) {
 static proven_size_t s_out_pending(const h2s_t *s) { return s->out_len - s->out_off; }
 
 /* How much more body the engine may be given before it holds `max_buffered_output`. */
+/* What one stream moves towards the engine in its turn of a round. Streams that hold output
+ * take turns of this much, so that the room under the output bound - which the first to be
+ * asked would otherwise fill by itself, round after round - is shared between them.
+ * (While a turn lasts d_room answers with what is left of it, to whoever asks: a handler that
+ * writes to another stream from inside this one's callback is refused sooner than the bound
+ * alone would, and is told when it may write like any other.) */
+#define H2_TURN_BYTES ((proven_size_t)65536)
+
 static proven_size_t d_room(const h2d_t *d) {
     const proven_size_t held = proven_h2_conn_pending_output(d->engine).size, bound = d->server->cfg.max_buffered_output;
-    return held < bound ? bound - held : 0;
+    const proven_size_t room = held < bound ? bound - held : 0;
+    return d->sharing && d->share < room ? d->share : room;
 }
 
 /* Move what a stream has made towards the engine; send its end when all of it has gone; tell
@@ -249,6 +262,7 @@ static void s_push(h2s_t *s) {
         proven_result_size_t r = proven_h2_conn_send_data(d->engine, s->id, (proven_mem_view_t){ .ptr = s->out + s->out_off, .size = n }, false);
         if (r.err != PROVEN_OK) { s_finish(s, PROVEN_ERR_RESET); break; }
         s->out_off += r.value;
+        if (d->sharing) d->share -= r.value < d->share ? r.value : d->share;
         if (r.value < n) { s->window_shut = true; break; }      /* the peer's window: the engine says when */
     }
     if (!s->dead && s_out_pending(s) == 0) {
@@ -434,20 +448,31 @@ static void d_pump(h2d_t *d) {
             if (d->dead) break;
         }
         if (d->dead) break;
-        /* And what this driver itself held back for the output bound. A handler's callback
-         * may end any stream, so the list is searched again from its head after each. */
+        /* And what this driver itself held back for the output bound: each stream that holds
+         * some has a turn of H2_TURN_BYTES, beginning behind the one that had the last turn.
+         * (From the list's head every time, the newest streams took all the room there was
+         * and an older one waited for as long as they had something to send.) A handler's
+         * callback may end any stream, so the list is searched again after each. */
         d->round++;
         for (bool again = true; again && !d->dead;) {
             again = false;
-            for (h2s_t *s = d->streams; s; s = s->next) {
-                if (s->mark == d->round || s->window_shut || !(s_out_pending(s) > 0 || s->end_asked || s->want_writable)) continue;
-                s->mark = d->round;
-                if (d_room(d) == 0 && !(s->end_asked && s_out_pending(s) == 0)) continue;
-                const proven_size_t before = proven_h2_conn_pending_output(d->engine).size;
-                s_push(s);
-                if (!d->dead && proven_h2_conn_pending_output(d->engine).size != before) progress = true;
-                again = true;
-                break;
+            h2s_t *const first = d->turn && d->turn->next ? d->turn->next : d->streams;
+            for (h2s_t *s = first; s; ) {
+                h2s_t *const after = s->next ? s->next : d->streams;
+                if (!(s->mark == d->round || s->window_shut || !(s_out_pending(s) > 0 || s->end_asked || s->want_writable))) {
+                    s->mark = d->round;
+                    if (!(d_room(d) == 0 && !(s->end_asked && s_out_pending(s) == 0))) {
+                        const proven_size_t before = proven_h2_conn_pending_output(d->engine).size;
+                        d->turn = s;
+                        d->sharing = true; d->share = H2_TURN_BYTES;
+                        s_push(s);
+                        d->sharing = false;
+                        if (!d->dead && proven_h2_conn_pending_output(d->engine).size != before) progress = true;
+                        again = true;
+                        break;
+                    }
+                }
+                s = after == first ? (void *)0 : after;
             }
         }
         if (d->dead || !progress) break;
@@ -593,6 +618,7 @@ proven_err_t proven_http_event_h2_take_(proven_http_stream_t *conn) {
         .alloc = sv->alloc, .server = true,
         .max_concurrent_streams = (proven_u32)(sv->cfg.max_concurrent_streams > 100000 ? 100000 : sv->cfg.max_concurrent_streams),
         .max_header_list_bytes = list,
+        .initial_window = (proven_u32)sv->cfg.http2_window_bytes,
         /* Twice the server's bound: the first half is for bodies, which this driver stops
          * offering at the bound; the rest is room for response heads and the protocol's own
          * answers, so that neither is refused merely because a body filled the first. */

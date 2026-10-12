@@ -87,6 +87,7 @@ typedef struct {
     proven_size_t max_concurrent_streams; /**< HTTP/2: requests in progress on one connection. 0: 100 */
     proven_size_t http2_header_table_bytes; /**< HTTP/2: the header compression table in each direction, which an idle connection keeps once it has been used - about one and a half times this, twice over. 0: 4,096, the protocol's default */
     bool http2_no_header_table;          /**< HTTP/2: no such tables at all: an idle connection is then about 1.5 KiB instead of about 12.8, and every request and response head is sent in full */
+    proven_size_t http2_window_bytes;    /**< HTTP/2: request-body bytes a client may send on one stream, and on a connection as a whole, before the handler has taken them (flow control, RFC 9113 section 5.2). It is what a request that is paused can make a connection hold, and it bounds how fast a large body can arrive: a client must wait for room each time it has sent this much. 0: 65,535, the protocol's default. At most 2^31-1 */
 } proven_http_event_server_config_t;
 
 /**

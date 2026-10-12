@@ -133,12 +133,12 @@ static void on_request(void *ctx, proven_http_stream_t *s, const proven_http_req
         const char *sign = chunked ? "chunked" : length ? "length" : "none";
         if (chunked || length) { a->sink = true; snprintf(a->path, sizeof a->path, "%s", sign); }
         else (void)proven_http_stream_respond(s, 200, NULL, 0, (proven_mem_view_t){ (const proven_byte_t *)sign, strlen(sign) });
-    } else if (path_is(req, "/echo") || path_is(req, "/pause")) {
-        if (path_is(req, "/pause")) {
+    } else if (path_is(req, "/echo") || path_is(req, "/pause") || path_is(req, "/pause-long")) {
+        if (!path_is(req, "/echo")) {
             /* Not now: nothing of the body is to be delivered until the timer resumes it. */
             a->paused = true;
             proven_http_stream_pause(s);
-            proven_loop_timer_set(g_loop, &a->timer, 120, resume_fire_checked, a);
+            proven_loop_timer_set(g_loop, &a->timer, path_is(req, "/pause") ? 120 : 20000, resume_fire_checked, a);
         }
         if (req->method != PROVEN_HTTP_POST) (void)proven_http_stream_respond(s, 405, NULL, 0, (proven_mem_view_t){ NULL, 0 });
     } else if (path_is(req, "/sink")) {
@@ -873,6 +873,64 @@ int main(void) {
         cl_close(&c);
         server_stop();
         proven_tls_config_destroy(server_old); proven_tls_config_destroy(client_old);
+    }
+
+    PROVEN_TEST_SECTION("turns", "Two responses streamed at once to a client whose windows hold them both: what bounds them is this server's own output bound.", "Check `turn` and `sharing` in d_pump and d_room in src/proven/http_event_h2.c: the round goes on behind the stream that had the last turn, and a turn moves H2_TURN_BYTES.");
+    {
+        proven_http_event_server_config_t cfg = { 0 };
+        proven_u16 port = server_start(cfg);
+        cl_t c;
+        PROVEN_TEST_ASSERT(cl_open_with(&c, NULL, port, 1u << 30), "a client whose windows are a gigabyte", "");
+        c.plain_body = true;
+        /* The client asks for both and reads nothing for a while: what the system will hold
+         * fills, and from then on the server can send only as the client reads. */
+        const proven_u32 small = cl_ask(&c, "GET", "/big/16000000", true);
+        const proven_u32 large = cl_ask(&c, "GET", "/big/48000000", true);
+        proven_mem_view_t out = proven_h2_conn_pending_output(c.e);
+        PROVEN_TEST_ASSERT(proven_transport_write_all(c.t, out, proven_net_deadline_in(5000)).err == PROVEN_OK, "two requests are sent", "");
+        proven_h2_conn_output_sent(c.e, out.size);
+        proven_time_sleep(300);
+        for (int i = 0; i < 40000 && !cl_res(&c, small)->end && !c.closed && !c.gone; i++) (void)cl_pump(&c, 5);
+        const proven_size_t large_then = cl_res(&c, large)->got;
+        PROVEN_TEST_ASSERT(cl_res(&c, small)->end && cl_res(&c, small)->got == 16000000, "the response of sixteen megabytes, asked for first, arrives whole", "");
+        PROVEN_TEST_ASSERT(large_then < 40000000, "while the one of forty-eight, asked for with it, is under way: the newer stream did not take every turn", "");
+        PROVEN_TEST_ASSERT(cl_wait(&c, large, 30000) && cl_res(&c, large)->end && cl_res(&c, large)->got == 48000000, "which then arrives whole too", "");
+        cl_close(&c);
+        server_stop();
+    }
+
+    PROVEN_TEST_SECTION("http2_window_bytes", "How much of a request body a client may send before the handler has taken any.", "Check initial_window in proven_http_event_h2_take_ and the limit in proven_http_event_server_create.");
+    {
+        proven_http_event_server_config_t huge = { .on = { .on_request = on_request }, .http2 = true, .http2_window_bytes = (proven_size_t)0x80000000u };
+        proven_http_event_server_t *none = NULL;
+        proven_loop_t *spare = NULL;
+        PROVEN_TEST_ASSERT(proven_loop_create(g_heap, &spare) == PROVEN_OK, "a loop to make servers on", "");
+        PROVEN_TEST_ASSERT(proven_http_event_server_create(spare, &huge, &none) == PROVEN_ERR_INVALID_ARG && none == NULL, "a window above 2^31-1 is refused", "");
+        proven_loop_destroy(spare);
+        /* The handler pauses and takes nothing; the client sends until its engine takes no
+         * more. What it could send is the window. */
+        static const proven_size_t windows[2] = { 0, 300000 };
+        for (int w = 0; w < 2; ++w) {
+            proven_http_event_server_config_t cfg = { .http2_window_bytes = windows[w] };
+            proven_u16 port = server_start(cfg);
+            cl_t c;
+            PROVEN_TEST_ASSERT(cl_open_with(&c, NULL, port, 0), "a client connects", "");
+            proven_u32 id = cl_ask(&c, "POST", "/pause-long", false);
+            static proven_byte_t zeros[1 << 16];
+            proven_size_t sent = 0;
+            for (int round = 0, still = 0; round < 2000 && still < 20; ++round) {
+                proven_result_size_t r = proven_h2_conn_send_data(c.e, id, (proven_mem_view_t){ zeros, sizeof zeros }, false);
+                if (r.err != PROVEN_OK) break;
+                sent += r.value;
+                still = r.value == 0 ? still + 1 : 0;
+                (void)cl_pump(&c, 5);
+            }
+            PROVEN_TEST_ASSERT(sent == (windows[w] ? windows[w] : 65535), windows[w] ? "with http2_window_bytes 300,000 a paused request is sent 300,000 bytes and then no more" : "by default a paused request is sent 65,535 bytes and then no more", "");
+            (void)proven_h2_conn_reset(c.e, id, PROVEN_H2_CANCEL);
+            (void)cl_pump(&c, 20);
+            cl_close(&c);
+            server_stop();
+        }
     }
 
     PROVEN_TEST_SECTION("the end of the server", "Destroying a server with exchanges open.", "Check h2_on_closed: every open stream's handler is told once.");

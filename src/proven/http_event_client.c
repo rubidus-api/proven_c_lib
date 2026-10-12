@@ -693,6 +693,7 @@ proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_h
     if (cfg.max_waiting_requests == 0) cfg.max_waiting_requests = 1000;
     if (cfg.max_connections_per_origin == 0) cfg.max_connections_per_origin = 6;
     if (cfg.max_kept_connections == 0) cfg.max_kept_connections = 8;
+    if (cfg.http2_window_bytes > 0x7fffffffu) return PROVEN_ERR_INVALID_ARG;
     if (cfg.tls) {
         /* What TLS may agree to and what the client will speak must be the same thing. */
         bool offers_h2 = false;

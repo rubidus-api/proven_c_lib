@@ -125,6 +125,8 @@ static int g_in_write, g_reentered;
 
 static void call_resume(void *ctx) { call_t *c = ctx; c->paused_now = false; proven_http_event_request_resume(c->request); }
 
+static proven_u32 g_pause_ms = 100;         /* how long a call with pause_once stays paused */
+
 static void on_response(void *ctx, proven_http_event_request_t *r, const proven_http_response_t *head) {
     call_t *c = ctx;
     c->responses++;
@@ -135,7 +137,7 @@ static void on_response(void *ctx, proven_http_event_request_t *r, const proven_
         c->pause_once = false;
         c->paused_now = true;
         proven_http_event_request_pause(r);
-        proven_loop_timer_set(g_loop, &c->timer, 100, call_resume, c);
+        proven_loop_timer_set(g_loop, &c->timer, g_pause_ms, call_resume, c);
     }
 }
 
@@ -616,6 +618,87 @@ static void time_limits(void) {
 
 static bool waited(bool *flag, proven_u32 ms) { spin_until(flag, ms); return *flag; }
 
+// -----------------------------------------------------------------------------
+// Turns: two request bodies at once
+// -----------------------------------------------------------------------------
+
+static void turns(void) {
+    proven_net_listener_t l;
+    proven_net_addr_t at;
+    static h2peer_t a;
+    static call_t small, large;
+    static proven_byte_t body[8u * 1024 * 1024];
+    PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 8, &l, &at) == PROVEN_OK, "a listener the test answers on, as an HTTP/2 server", "");
+    g_port = at.port; g_https = false;
+    proven_http_event_client_config_t ccfg = { .alloc = g_heap, .http2_cleartext = true };
+    proven_http_event_client_t *client = NULL;
+    PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &ccfg, &client) == PROVEN_OK, "a client", "");
+    /* A server whose windows hold both bodies: what bounds them is the client's own output bound. */
+    g_peer_window = 0x7fffffffu;
+    small.plain = large.plain = true;
+    PROVEN_TEST_ASSERT(start(client, &small, "POST", "/small", (proven_mem_view_t){ body, 4000000 }, 0) == PROVEN_OK &&
+                       start(client, &large, "POST", "/large", (proven_mem_view_t){ body, sizeof body }, 0) == PROVEN_OK, "a request with a body of four megabytes, and with it one of eight", "");
+    PROVEN_TEST_ASSERT(h2peer_accept(&l, &a, 8, 400) && h2peer_has(&a, 2) && strcmp(a.paths[0], "/small") == 0, "both reach the server", "");
+    g_peer_window = 0;
+    for (int i = 0; i < 8000 && a.bodies[0] < 4000000 && !a.broken; ++i) h2peer_turn(&a);
+    const proven_size_t large_then = a.bodies[1];
+    PROVEN_TEST_ASSERT(a.bodies[0] == 4000000, "the smaller body, begun first, arrives whole", "");
+    PROVEN_TEST_ASSERT(large_then < 7000000, "while the larger, begun with it, is under way: the newer request did not take every turn", "");
+    for (int i = 0; i < 8000 && a.bodies[1] < sizeof body && !a.broken; ++i) h2peer_turn(&a);
+    PROVEN_TEST_ASSERT(a.bodies[1] == sizeof body && h2peer_answer(&a, 0) && h2peer_answer(&a, 1) && waited(&small.done, 5000) && waited(&large.done, 5000) && call_ok(&small) && call_ok(&large),
+        "which then arrives whole too, and both are answered", "");
+    h2peer_end(&a);
+    proven_http_event_client_destroy(client);
+    (void)proven_net_listener_close(&l);
+    spin(20);
+}
+
+// -----------------------------------------------------------------------------
+// http2_window_bytes
+// -----------------------------------------------------------------------------
+
+static void window(void) {
+    proven_net_listener_t l;
+    proven_net_addr_t at;
+    static h2peer_t a;
+    static call_t c;
+    static proven_byte_t zeros[1 << 16];
+    PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 8, &l, &at) == PROVEN_OK, "a listener the test answers on, as an HTTP/2 server", "");
+    g_port = at.port; g_https = false;
+    proven_http_event_client_t *client = NULL;
+    proven_http_event_client_config_t bad = { .alloc = g_heap, .http2_cleartext = true, .http2_window_bytes = 0x80000000u };
+    PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &bad, &client) == PROVEN_ERR_INVALID_ARG, "a window above 2^31-1 is refused", "");
+    static const proven_u32 windows[2] = { 0, 300000 };
+    g_pause_ms = 20000;
+    for (int w = 0; w < 2; ++w) {
+        proven_http_event_client_config_t ccfg = { .alloc = g_heap, .http2_cleartext = true, .http2_window_bytes = windows[w] };
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &ccfg, &client) == PROVEN_OK, "a client", "");
+        memset(&c, 0, sizeof c); c.plain = true;
+        PROVEN_TEST_ASSERT(start(client, &c, "GET", "/long", mv(""), 0) == PROVEN_OK, "a request whose caller pauses at the head and takes nothing of the body", "");
+        c.pause_once = true;
+        proven_http_header_t head = { sv(":status"), sv("200") };
+        PROVEN_TEST_ASSERT(h2peer_accept(&l, &a, 8, 400) && h2peer_has(&a, 1) && proven_h2_conn_submit_response(a.engine, a.ids[0], &head, 1, false) == PROVEN_OK, "the server answers", "");
+        proven_size_t sent = 0;
+        for (int round = 0, still = 0; round < 2000 && still < 20 && !a.broken; ++round) {
+            proven_result_size_t r = proven_h2_conn_send_data(a.engine, a.ids[0], (proven_mem_view_t){ zeros, sizeof zeros }, false);
+            if (r.err != PROVEN_OK) break;
+            sent += r.value;
+            still = r.value == 0 ? still + 1 : 0;
+            h2peer_flush(&a);
+            h2peer_turn(&a);
+        }
+        PROVEN_TEST_ASSERT(sent == (windows[w] ? windows[w] : 65535u) && c.responses == 1 && c.got == 0,
+            windows[w] ? "with http2_window_bytes 300,000 the server can send 300,000 bytes of a paused response and then no more" : "by default the server can send 65,535 bytes of a paused response and then no more", "");
+        proven_http_event_request_abort(c.request);
+        proven_loop_timer_cancel(g_loop, &c.timer);
+        h2peer_end(&a);
+        proven_http_event_client_destroy(client);
+        spin(20);
+    }
+    g_pause_ms = 100;
+    (void)proven_net_listener_close(&l);
+}
+
 static void numbers_run_out(void) {
     proven_net_listener_t l;
     proven_net_addr_t at;
@@ -1014,6 +1097,10 @@ int main(void) {
 
     PROVEN_TEST_SECTION("time, for a body and for output", "A response body that stops coming, and a server that stops reading.", "Check r_expect for a request's own deadline (body_timeout_ms once the head has come) and c_arm for the connection's (write_timeout_ms while output is queued).");
     time_limits();
+    PROVEN_TEST_SECTION("turns", "Two request bodies at once to a server whose windows hold them both: what bounds them is the client's own output bound.", "Check `turn` and `sharing` in c_pump and c_room in src/proven/http_event_client_h2.c: the round goes on behind the request that had the last turn, and a turn moves C2_TURN_BYTES.");
+    turns();
+    PROVEN_TEST_SECTION("http2_window_bytes", "How much of a response body a server may send before the caller has taken any.", "Check initial_window where the engine is made in http_event_client_h2.c, and the limit in proven_http_event_client_create.");
+    window();
     PROVEN_TEST_SECTION("a connection out of stream numbers", "A client has 2^30 streams on a connection. The test puts the next number at the end.", "Check proven_http_event_client_h2_start_ and c_submit_waiting: PROVEN_ERR_INVALID_STATE from the engine's submit marks the connection as over, so that c_find passes it by.");
     numbers_run_out();
     PROVEN_TEST_SECTION("an origin that speaks only HTTP/1.1", "A client that asks for HTTP/2, and a server whose TLS does not offer it.", "Check c_fall_back: the requests that were waiting start again as HTTP/1.1 requests, known to their caller by the objects it already had.");
