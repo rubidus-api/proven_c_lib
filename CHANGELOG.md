@@ -18,6 +18,30 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-10-13
+
+### Added
+
+- **`retry_delay_ms`** in `proven_http_event_client_config_t`: how long the client waits
+  before each try that `retry_unsent` makes, in either protocol. A fixed time; 0, the default,
+  is no wait, as before. While it waits the request has no connection - the one it lost is
+  closed - and `connect_timeout_ms` of the try begins when the wait ends. Abort during the
+  wait ends the request as any abort; destroying the client ends it as destroying ends any
+  request of its protocol (`PROVEN_ERR_AGAIN` over HTTP/2). The one re-send on a kept
+  HTTP/1.1 connection that turned out to be dead is not delayed.
+- **`max_connections`** in the same structure: a bound on the connections of the whole
+  client, HTTP/1.1 and HTTP/2, busy and idle; 0, the default, is no bound, as before. A
+  request that would make one more first has an idle connection closed for it (an HTTP/1.1
+  one, the one idle longest, before an HTTP/2 one with nothing on it). With none idle the
+  protocols differ: an HTTP/1.1 request waits in the queue v0.36.0 gave it, and a connection
+  that closes serves a request to its own origin first and then the one that has waited
+  longest and whose origin has room; **an HTTP/2 request to an origin with no connection is
+  refused, `PROVEN_ERR_BUSY` from `proven_http_event_client_start`** - what waits in HTTP/2
+  waits on its connection, and there is none. `max_kept_connections` set above it is
+  `PROVEN_ERR_INVALID_ARG`. Measured, a hundred HTTP/1.1 requests in flight to one origin,
+  the machine under another user's load: 124,000 a second with the bound unset, 124,800 at
+  six (the origin's own limit), 103,700 at two; no request failed.
+
 ## [0.39.0] - 2026-10-12
 
 ### Added

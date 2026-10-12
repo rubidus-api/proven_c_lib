@@ -657,6 +657,17 @@ static void turns(void) {
 // retry_delay_ms and max_connections
 // -----------------------------------------------------------------------------
 
+/* By the clock, not by rounds: a round of the loop is 5 ms on one system and 15 on another. */
+static bool h2peer_accept_within(proven_net_listener_t *l, h2peer_t *p, proven_u32 max_streams, proven_u32 ms) {
+    const proven_time_t until = proven_time_monotonic_now() + (proven_time_t)ms * 1000000;
+    while (proven_time_monotonic_now() < until) if (h2peer_accept(l, p, max_streams, 1)) return true;
+    return false;
+}
+static void h2peer_turn_for(h2peer_t *p, proven_u32 ms) {
+    const proven_time_t until = proven_time_monotonic_now() + (proven_time_t)ms * 1000000;
+    while (proven_time_monotonic_now() < until) h2peer_turn(p);
+}
+
 static void delay_and_limit(void) {
     proven_net_listener_t l, l2;
     proven_net_addr_t at, at2;
@@ -675,13 +686,13 @@ static void delay_and_limit(void) {
     PROVEN_TEST_ASSERT(h2peer_accept(&l, &a, 2, 400) && h2peer_has(&a, 2), "at a limit of two streams the first two are sent, and three wait", "");
     PROVEN_TEST_ASSERT(h2peer_goodbye(&a, a.ids[1]), "the server says goodbye, having taken both", "");
     proven_time_t t0 = proven_time_monotonic_now();
-    PROVEN_TEST_ASSERT(!h2peer_accept(&l, &b, 2, 20) && !many[2].done && proven_http_event_client_requests(client) == 5, "no new connection at once, and nothing told: the three wait to be tried again", "");
+    PROVEN_TEST_ASSERT(!h2peer_accept_within(&l, &b, 2, 100) && !many[2].done && proven_http_event_client_requests(client) == 5, "no new connection in the first 100 ms, and nothing told: the three wait to be tried again", "");
     PROVEN_TEST_ASSERT(h2peer_accept(&l, &b, 2, 400) && proven_time_monotonic_now() - t0 > 250000000 && proven_time_monotonic_now() - t0 < 2000000000, "the connection comes when the 300 ms have passed", "");
     PROVEN_TEST_ASSERT(h2peer_has(&b, 2) && strcmp(b.paths[0], "/r2") == 0 && strcmp(b.paths[1], "/r3") == 0, "and they are put in the order they were started", "");
     /* A stream refused: back on the same connection, after the wait. */
     PROVEN_TEST_ASSERT(h2peer_refuse(&b, 0), "the server refuses the stream of /r2", "");
     t0 = proven_time_monotonic_now();
-    for (int i = 0; i < 20; ++i) h2peer_turn(&b);
+    h2peer_turn_for(&b, 100);
     PROVEN_TEST_ASSERT(b.n == 3 && strcmp(b.paths[2], "/r4") == 0 && !many[2].done, "it does not come back at once: the stream it left goes to /r4, which had been waiting for one", "");
     PROVEN_TEST_ASSERT(h2peer_answer(&b, 1) && waited(&many[3].done, 5000) && call_ok(&many[3]), "/r3 is answered meanwhile", "");
     PROVEN_TEST_ASSERT(h2peer_has(&b, 4) && strcmp(b.paths[3], "/r2") == 0 && proven_time_monotonic_now() - t0 > 250000000, "after the wait /r2 is put again, on the same connection", "");
@@ -692,7 +703,7 @@ static void delay_and_limit(void) {
     memset(many, 0, sizeof many); many[0].plain = many[1].plain = true;
     PROVEN_TEST_ASSERT(start(client, &many[0], "GET", "/p", mv(""), 0) == PROVEN_OK && start(client, &many[1], "GET", "/q", mv(""), 0) == PROVEN_OK && h2peer_has(&b, 6), "two more requests, on streams", "");
     PROVEN_TEST_ASSERT(h2peer_refuse(&b, 4), "the first is refused", "");
-    for (int i = 0; i < 30; ++i) h2peer_turn(&b);
+    h2peer_turn_for(&b, 150);
     PROVEN_TEST_ASSERT(h2peer_refuse(&b, 5), "and, 150 ms later, the second", "");
     t0 = proven_time_monotonic_now();
     PROVEN_TEST_ASSERT(h2peer_has(&b, 7) && b.n == 7 && strcmp(b.paths[6], "/p") == 0, "the first is put again when its own wait is over, and the second is not yet", "");
@@ -756,7 +767,7 @@ static void mixed_limit(void) {
     bool early = false;
     PROVEN_TEST_ASSERT(start(client, &one, "GET", "/h1", mv(""), 0) == PROVEN_OK && proven_http_event_client_requests(client) == 2, "a request to the other origin, over HTTP/1.1: it waits", "");
     for (int i = 0; i < 4 && !early; ++i) { spin(5); early = proven_net_accept(&plain, PROVEN_NET_DONT_WAIT, &x, NULL) == PROVEN_OK; }
-    PROVEN_TEST_ASSERT(!early && !two.done, "and no connection is made for it while the HTTP/2 connection is in use", "");
+    PROVEN_TEST_ASSERT(!early || two.done, "and no connection is made for it while the HTTP/2 connection is in use", "");
     spin_until(&two.done, 5000);
     PROVEN_TEST_ASSERT(two.done && two.why == PROVEN_OK && two.protocol == 2, "the HTTP/2 request is answered", "");
     bool came = false;

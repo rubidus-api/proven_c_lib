@@ -947,6 +947,14 @@ static void time_limits(void) {
 
 #define OK_KEPT "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
 
+/* Whether a connection comes within so many milliseconds - by the clock, not by rounds: a
+ * round of the loop is 5 ms on one system and 15 on another. */
+static bool peer_accept_within(proven_net_listener_t *l, proven_net_conn_t *conn, proven_u32 ms) {
+    const proven_time_t until = proven_time_monotonic_now() + (proven_time_t)ms * 1000000;
+    while (proven_time_monotonic_now() < until) { spin(5); if (proven_net_accept(l, PROVEN_NET_DONT_WAIT, conn, NULL) == PROVEN_OK) return true; }
+    return false;
+}
+
 static void delay_and_limit(void) {
     proven_net_listener_t l[3];
     proven_net_addr_t at[3];
@@ -962,7 +970,7 @@ static void delay_and_limit(void) {
     spin(20);
     (void)proven_net_close(&x);
     proven_time_t t0 = proven_time_monotonic_now();
-    PROVEN_TEST_ASSERT(!peer_accept(&l[0], &x, 20) && !c.done, "and closes it before TLS is agreed: with retry_delay_ms 300 no second connection comes at once, and nothing is told", "");
+    PROVEN_TEST_ASSERT(!peer_accept_within(&l[0], &x, 100) && !c.done, "and closes it before TLS is agreed: with retry_delay_ms 300 no second connection comes in the first 100 ms, and nothing is told", "");
     /* (Pausing and resuming it meanwhile changes nothing: it has no connection to be paused on, and its wait is its own.) */
     proven_http_event_request_pause(c.request);
     proven_http_event_request_resume(c.request);

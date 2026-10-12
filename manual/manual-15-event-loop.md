@@ -999,6 +999,26 @@ begun again, and neither is one whose body is written in pieces. (The sending-ag
 kept connection, above, needs no setting and is not counted. Over HTTP/2 the setting covers
 more: Chapter 17.)
 
+`retry_delay_ms` is how long the client waits before each such try, in either protocol: a
+fixed time, the same for every try, zero by default. While it waits the request has no
+connection - the one it lost is closed, and its place may go to a request that was waiting -
+and `connect_timeout_ms` of the try begins when the wait ends. Aborting the request during
+the wait ends it as any abort does. The sending-again on a kept connection is not delayed.
+(With `max_connections`, below: when the wait is over the request takes a place as a new one
+would, and if there is none and too many wait already it ends with `PROVEN_ERR_BUSY` - the
+one case in which `on_done` says so, and not `proven_http_event_client_start`.)
+
+`max_connections` bounds the connections of the whole client, of both protocols, busy and
+idle; zero, the default, is no bound. A request that would make one more first has an idle
+connection closed for it - an HTTP/1.1 one, the one idle longest, before an HTTP/2 one with
+nothing on it. With none idle, **the two protocols differ**: an HTTP/1.1 request waits, in
+the queue described above, and has the next place that is freed (a connection that closes
+serves a request to its own origin first, then the one that has waited longest and whose
+origin has room); an HTTP/2 request whose origin has no connection is refused -
+`proven_http_event_client_start` returns `PROVEN_ERR_BUSY` - because what waits in HTTP/2
+waits on its connection, and here there is none. Setting `max_kept_connections` above it is
+`PROVEN_ERR_INVALID_ARG`.
+
 `no_connection_reuse` gives back the old behaviour for connections - `Connection: close` in
 every request, every connection closed when its response has ended - but not the old
 absence of a limit: six at a time to an origin still.
@@ -1068,6 +1088,8 @@ The configuration's fields, each with a default when zero:
 | `max_kept_connections` | HTTP/1.1: idle connections kept in the whole client. Zero is the default, as every zero in this table is; `no_connection_reuse` is what keeps none. (It was `max_idle_connections` in v0.36.0 - the name of a field of chapter 11's client, where 0 keeps none. The two no longer share a name.) | 8 |
 | `no_connection_reuse` | HTTP/1.1: `Connection: close` in every request, and no connection kept. | off |
 | `retry_unsent` | How many times the client itself puts again a request the server did not act on (HTTP/2: `PROVEN_ERR_AGAIN`; HTTP/1.1: lost before any of it was sent), at once and without telling you. Never a body written in pieces, never after `on_response`. | 0: never |
+| `retry_delay_ms` | The wait before each try `retry_unsent` makes, in either protocol; `connect_timeout_ms` of the try begins when it ends. | 0: none |
+| `max_connections` | Connections of the whole client, both protocols, busy and idle. At the limit an idle one is closed for a new request; with none idle an HTTP/1.1 request waits and an HTTP/2 request to an origin with no connection is `PROVEN_ERR_BUSY`. | 0: no limit |
 | `http2_window_bytes` | HTTP/2: response-body bytes a server may send on a stream, and on a connection as a whole, before `on_body` has taken them. What a paused request can make a connection hold; a large download waits for room each time the server has sent this much (sixteen responses of 1 MiB at once, measured: 568 a second at the default, 1,208 with 1 MiB). | 65,535 |
 
 The test suite compiles and runs this program:
