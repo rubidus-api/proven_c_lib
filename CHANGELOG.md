@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-10-12
+
 A MINOR release with new API - three settings of the event-driven client - and **a change of
 behaviour every program that uses that client over HTTP/1.1 will see**: its connections are
 kept and used again, and an origin has a limit on them.
