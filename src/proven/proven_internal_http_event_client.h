@@ -1,6 +1,7 @@
 #ifndef PROVEN_INTERNAL_HTTP_EVENT_CLIENT_H
 #define PROVEN_INTERNAL_HTTP_EVENT_CLIENT_H
 
+#include "proven/h2.h"
 #include "proven/http_event_client.h"
 #include "proven/url.h"
 #include "proven_internal_http_coding.h"
@@ -159,6 +160,14 @@ void proven_http_event_client_h2_set_user_(proven_http_event_request_t *request,
 void *proven_http_event_client_h2_user_(const proven_http_event_request_t *request);
 [[nodiscard]]
 bool proven_http_event_client_h2_is_h1_(const proven_http_event_request_t *request);
+
+/*
+ * For tests. A client has 2^30 stream numbers on a connection, and a test cannot use them up
+ * by asking: these put the next number where the test says, in an engine and in every
+ * HTTP/2 connection a client has. Not public API.
+ */
+void proven_h2_conn_test_next_id_(proven_h2_conn_t *conn, proven_u32 next_id);
+void proven_http_event_client_h2_test_next_id_(proven_http_event_client_t *client, proven_u32 next_id);
 
 #define PROVEN_HTTP_EVENT_REQUEST_IS_H2_(request) (((const cl_head_t *)(const void *)(request))->kind == CL_KIND_H2)
 

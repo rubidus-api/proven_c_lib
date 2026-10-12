@@ -902,6 +902,42 @@ static void unsent(void) {
     proven_http_event_client_destroy(client);
 }
 
+// -----------------------------------------------------------------------------
+// body_timeout_ms and write_timeout_ms
+// -----------------------------------------------------------------------------
+
+static void time_limits(void) {
+    proven_net_listener_t l;
+    proven_net_addr_t at;
+    proven_net_conn_t x;
+    char req[1024];
+    call_t c = { 0 };
+    static proven_byte_t large[48u * 1024 * 1024];
+    PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 8, &l, &at) == PROVEN_OK, "a listener the test answers on", "");
+
+    proven_http_event_client_t *client = a_client((proven_http_event_client_config_t){ .body_timeout_ms = 300, .response_timeout_ms = 5000 }, false);
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(false, at.port, "/half"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l, &x, 400) &&
+                       peer_exchange(&x, "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc", req, sizeof req), "a response of ten bytes, of which three are sent", "");
+    proven_time_t t0 = proven_time_monotonic_now();
+    PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_ERR_TIMEOUT && c.dones == 1 && c.responses == 1 && c.got == 3 && c.lasts == 0,
+        "the rest does not come: PROVEN_ERR_TIMEOUT, after the head and the three bytes were given, with no last piece", "");
+    proven_time_t took = proven_time_monotonic_now() - t0;
+    PROVEN_TEST_ASSERT(took > 250000000 && took < 3000000000, "after body_timeout_ms, not response_timeout_ms", "");
+    PROVEN_TEST_ASSERT(peer_sees_close(&x), "and the connection is closed, not kept", "");
+    (void)proven_net_close(&x);
+    proven_http_event_client_destroy(client);
+
+    client = a_client((proven_http_event_client_config_t){ .write_timeout_ms = 300, .response_timeout_ms = 20000 }, false);
+    PROVEN_TEST_ASSERT(start(client, &c, "POST", url(false, at.port, "/deaf"), (proven_mem_view_t){ large, sizeof large }, 0) == PROVEN_OK && peer_accept(&l, &x, 400),
+        "forty-eight megabytes to a server that takes the connection and reads nothing", "");
+    PROVEN_TEST_ASSERT(spin_until(&c.done, 15000) && c.why == PROVEN_ERR_TIMEOUT && c.dones == 1 && c.responses == 0,
+        "what the system will hold fills, and nothing more is accepted for write_timeout_ms: PROVEN_ERR_TIMEOUT, long before response_timeout_ms", "");
+    (void)proven_net_close(&x);
+    proven_http_event_client_destroy(client);
+    (void)proven_net_listener_close(&l);
+    spin(20);
+}
+
 int main(void) {
     PROVEN_TEST_SUITE("the event-driven HTTP client",
         "Requests started and answered through callbacks on one thread: bodies down and up in pieces with backpressure, the address apart from the name, time limits, abort, many at once - plain and over TLS - and servers that answer badly.",
@@ -1031,6 +1067,9 @@ int main(void) {
     kept_or_not();
     PROVEN_TEST_SECTION("a kept connection, and a TLS server's goodbye", "Over TLS a server that closes a connection says so first. The test is that server, and says it at each moment that matters.", "Check cl_readable: only what the server said counts as an answer (cl_alive), not the bytes of its goodbye; and cl_idle_io for a goodbye to a connection nobody uses.");
     kept_over_tls();
+    PROVEN_TEST_SECTION("time, for a body and for output", "A response body that stops coming, and a server that stops reading.", "Check cl_arm in http_event_client.c: CL_T_BODY while a body is awaited, CL_T_WRITE while output is held; and cl_on_timer.");
+    time_limits();
+
     PROVEN_TEST_SECTION("retry_unsent", "A connection lost before any of the request was given to it, with the setting and without.", "Check the second branch at the top of cl_kill, and `sent` in cl_flush.");
     unsent();
 

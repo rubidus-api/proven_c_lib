@@ -387,6 +387,9 @@ static unsigned g_test12;
 void proven_tls_test_knobs12(unsigned flags) { g_test12 = flags; }
 static proven_u16 g_test_only12;
 void proven_tls_test_only_suite12(proven_u16 id) { g_test_only12 = id; }
+/* The count of records this side has written and the count the other has read, put where a
+ * test says: a pair of connections that has carried 2^31 records, without carrying them. */
+void proven_tls_test_records_(proven_tls_conn_t *writer, proven_tls_conn_t *reader, proven_u64 count);
 
 /* The TLS 1.2 suite with the same cipher as a 1.3 suite, for an RSA key or for an EC one. */
 /* A 1.2 suite this configuration may use: every legacy bit it needs is set. */
@@ -2945,3 +2948,8 @@ proven_u8str_view_t proven_tls_server_name(const proven_tls_conn_t *c) {
 
 int proven_tls_alert_received(const proven_tls_conn_t *c) { return c ? c->alert_received : -1; }
 int proven_tls_alert_sent(const proven_tls_conn_t *c) { return c ? c->alert_sent : -1; }
+
+void proven_tls_test_records_(proven_tls_conn_t *writer, proven_tls_conn_t *reader, proven_u64 count) {
+    if (writer) writer->write_keys.seq = count;
+    if (reader) reader->read_keys.seq = count;
+}

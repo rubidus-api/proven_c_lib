@@ -369,6 +369,8 @@ void proven_tls_test_knobs12(unsigned flags);
  * asks for a client certificate even on a connection without the extended master secret. */
 /* The client offers only this TLS 1.2-family suite (0: everything, as usual). */
 void proven_tls_test_only_suite12(proven_u16 id);
+/* The count of records `writer` has written and `reader` has read, put where a test says. */
+void proven_tls_test_records_(proven_tls_conn_t *writer, proven_tls_conn_t *reader, proven_u64 count);
 /* Send an empty handshake message of `type` under the current keys. */
 bool proven_tls_test_send_handshake(proven_tls_conn_t *conn, proven_byte_t type);
 /* A copy of a connection's sending keys and application secret, for a test that must forge the

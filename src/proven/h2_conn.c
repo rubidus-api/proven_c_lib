@@ -85,6 +85,7 @@ struct proven_h2_conn {
     bool hbuf_lent;                        /* hbuf is the caller's, and stays */
     bool self_dep;                         /* the block being read came with a priority that names its own stream */
     bool sweep_goaway, sweep_writable;
+    proven_u32 sweep_at;                   /* where the search for a stream that may send again goes on from: each in its turn */
 };
 
 static proven_u32 h2c_u32(const proven_byte_t *p) {
@@ -1083,10 +1084,16 @@ static bool h2c_due(proven_h2_conn_t *c, proven_h2_event_t *ev) {
         c->sweep_goaway = false;
     }
     if (c->sweep_writable) {
-        for (proven_u32 i = 0; i < c->stream_count; i++) {
+        /* From the stream after the one that was told last, and round: a stream that is told
+         * takes what the connection's window has, so the same one first every time would
+         * leave the others waiting for as long as it has something to send. */
+        const proven_u32 n = c->stream_count;
+        for (proven_u32 k = 0; k < n; k++) {
+            const proven_u32 i = (c->sweep_at + k) % n;
             h2c_stream_t *s = &c->streams[i];
             if (!h2c_can_write(c, s)) continue;
             s->flags &= ~(proven_u32)(ST_BLOCKED | ST_HBLOCKED);
+            c->sweep_at = i + 1;
             h2c_event_stream(ev, PROVEN_H2_EVENT_STREAM_WRITABLE, s);
             return true;
         }
@@ -1340,4 +1347,10 @@ void proven_h2_conn_stream_set_user(proven_h2_conn_t *c, proven_u32 stream_id, v
 void *proven_h2_conn_stream_user(const proven_h2_conn_t *c, proven_u32 stream_id) {
     const h2c_stream_t *s = c ? h2c_peek(c, stream_id) : (void *)0;
     return s ? s->user : (void *)0;
+}
+
+/* For tests (declared in proven_internal_http_event_client.h): a client's next stream number. */
+void proven_h2_conn_test_next_id_(proven_h2_conn_t *c, proven_u32 next_id);
+void proven_h2_conn_test_next_id_(proven_h2_conn_t *c, proven_u32 next_id) {
+    if (c && !c->server) c->next_id = next_id;
 }

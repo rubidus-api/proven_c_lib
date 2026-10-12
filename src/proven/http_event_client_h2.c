@@ -1220,4 +1220,10 @@ bool proven_http_event_client_h2_is_h1_(const proven_http_event_request_t *reque
     return r->fwd != (void *)0 || r->id == 0;
 }
 
+/* For tests: see proven_internal_http_event_client.h. */
+void proven_http_event_client_h2_test_next_id_(proven_http_event_client_t *cl, proven_u32 next_id) {
+    if (!cl) return;
+    for (c2conn_t *k = cl->h2; k; k = k->next) if (k->engine) proven_h2_conn_test_next_id_(k->engine, next_id);
+}
+
 #endif

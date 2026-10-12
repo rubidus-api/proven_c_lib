@@ -704,6 +704,26 @@ int main(void) {
         proven_tls_config_t *s_any = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, NULL), *s_12 = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &o12),
                             *s_13 = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &o13);
 
+        /* A key of TLS 1.2 cannot be replaced: at 2^31 records this side writes no more. The
+         * count is put there by hand, on both sides, for each kind of record protection. */
+        {
+            static const proven_u16 kinds[2] = { 0xc02b, 0xcca9 };
+            bool limit = true;
+            for (int k = 0; k < 2; ++k) {
+                proven_tls_test_only_suite12(kinds[k]);
+                pair_t p = connect_pair(c_12, s_12, "example.test", NULL, NULL, NULL);
+                proven_tls_test_only_suite12(0);
+                limit = limit && both_up(&p) && proven_tls_cipher_suite(p.c) == kinds[k];
+                proven_tls_test_records_(p.c, p.s, ((proven_u64)1 << 31) - 2);
+                limit = limit && transfer(p.c, p.s, 10, 3) && transfer(p.c, p.s, 10, 4);       /* the last two records there are */
+                proven_result_size_t w = proven_tls_write(p.c, (proven_mem_view_t){ .ptr = (const proven_byte_t *)"x", .size = 1 });
+                limit = limit && w.err == PROVEN_ERR_OVERFLOW && w.value == 0 && proven_tls_pending_output(p.c).size == 0;
+                limit = limit && transfer(p.s, p.c, 500, 5);                                   /* the other direction has its own count */
+                close_pair(&p);
+            }
+            PROVEN_TEST_ASSERT(limit, "TLS 1.2: records 2^31 - 1 and 2^31 are written and read, the next write is PROVEN_ERR_OVERFLOW with nothing queued, and the other direction goes on", "");
+        }
+
         /* Every suite, every kind of key. */
         static const proven_u16 order13[3] = { PROVEN_TLS_AES_128_GCM_SHA256, PROVEN_TLS_AES_256_GCM_SHA384, PROVEN_TLS_CHACHA20_POLY1305_SHA256 };
         static const proven_u16 ec_suites[3] = { 0xc02b, 0xc02c, 0xcca9 }, rsa_suites[3] = { 0xc02f, 0xc030, 0xcca8 };

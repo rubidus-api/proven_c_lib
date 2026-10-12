@@ -860,6 +860,67 @@ int main(void) {
         g_consume = true;
     }
 
+    {
+        /* Two responses at once through the connection's one window: a long one and a short
+         * one. The window is given to those that wait in turn - the short one does not wait
+         * for the long one to finish. */
+        pair_t p;
+        proven_h2_config_t cfg = { 0 };
+        pair_open(&p, &cfg, &cfg, 1 << 16);
+        static proven_byte_t zeros[1 << 16];
+        const proven_size_t want[2] = { 4u << 20, 200000 };
+        proven_size_t sent[2] = { 0, 0 }, got[2] = { 0, 0 };
+        proven_u32 ids[2] = { 0, 0 };
+        bool ok = proven_h2_conn_submit_request(p.client, GET, 4, true, &ids[0]) == PROVEN_OK && proven_h2_conn_submit_request(p.client, GET, 4, true, &ids[1]) == PROVEN_OK;
+        carry(&p, p.client, p.server);
+        for (int k = 0; k < 2 && ok; k++) ok = proven_h2_conn_submit_response(p.server, ids[k], OK200, 2, false) == PROVEN_OK;
+        bool turn[2] = { true, true };
+        static proven_byte_t wire[1 << 19];
+        proven_size_t long_sent_when_short_ended = 0;
+        for (int round = 0; round < 4000 && ok && got[1] < want[1]; round++) {
+            for (int k = 0; k < 2; k++) {
+                if (!turn[k] || sent[k] >= want[k]) continue;
+                turn[k] = false;                                   /* until the engine says the stream may send again */
+                proven_size_t n = want[k] - sent[k] < sizeof zeros ? want[k] - sent[k] : sizeof zeros;
+                proven_result_size_t w = proven_h2_conn_send_data(p.server, ids[k], (proven_mem_view_t){ zeros, n }, sent[k] + n == want[k]);
+                ok = ok && w.err == PROVEN_OK;
+                sent[k] += w.value;
+                if (w.value == n) turn[k] = true;
+            }
+            for (int dir = 0; dir < 2; dir++) {
+                proven_h2_conn_t *from = dir == 0 ? p.server : p.client, *to = dir == 0 ? p.client : p.server;
+                proven_mem_view_t out = proven_h2_conn_pending_output(from);
+                const proven_size_t n = out.size;
+                ok = ok && n <= sizeof wire;
+                if (!ok) break;
+                if (n > 0) memcpy(wire, out.ptr, n);
+                proven_h2_conn_output_sent(from, n);
+                for (proven_size_t pos = 0;;) {
+                    proven_size_t used = 0;
+                    proven_h2_event_t ev;
+                    if (proven_h2_conn_feed(to, (proven_mem_view_t){ wire + pos, n - pos }, &used, &ev) != PROVEN_OK) { ok = false; break; }
+                    pos += used;
+                    const int k = ev.stream_id == ids[1] ? 1 : 0;
+                    if (ev.kind == PROVEN_H2_EVENT_DATA) { got[k] += ev.data.size; proven_h2_conn_consumed(to, ev.stream_id, ev.data.size); }
+                    else if (ev.kind == PROVEN_H2_EVENT_STREAM_WRITABLE && sent[k] < want[k]) {
+                        /* As an application does: it writes when it is told it may. */
+                        proven_size_t m = want[k] - sent[k] < sizeof zeros ? want[k] - sent[k] : sizeof zeros;
+                        proven_result_size_t w = proven_h2_conn_send_data(to, ev.stream_id, (proven_mem_view_t){ zeros, m }, sent[k] + m == want[k]);
+                        if (w.err != PROVEN_OK) { ok = false; break; }
+                        sent[k] += w.value;
+                        turn[k] = w.value == m;
+                    }
+                    else if (ev.kind == PROVEN_H2_EVENT_NONE && pos == n) break;
+                }
+            }
+            long_sent_when_short_ended = sent[0];
+        }
+        PROVEN_TEST_ASSERT(ok && got[1] == want[1], "a short response beside a long one arrives whole", "");
+        PROVEN_TEST_ASSERT(long_sent_when_short_ended < want[0] / 4 && long_sent_when_short_ended >= want[1] / 2,
+            "while the long one is under way: the connection's window went to the two in turn, about as much to each", "");
+        pair_close(&p);
+    }
+
     PROVEN_TEST_SECTION("the verdict on each frame", "For each rule of RFC 9113 sections 5 and 6, frames that break it and the answer the RFC names.", "Check h2c_on_header, h2c_on_fixed and h2c_closed_frame against the section of the RFC the row names.");
     {
         g_cfg = base; g_cfg.server = true;

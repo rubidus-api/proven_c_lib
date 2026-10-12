@@ -1,6 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "test_unit_tls_pki.h"
+#include "../src/proven/proven_internal_tls.h"
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -843,6 +844,36 @@ int main(void) {
     PROVEN_TEST_SECTION("what an idle connection holds", "Two hundred HTTP/2 connections that have each made a request and now say nothing.", "Check the engine's release of its buffers when no stream is open, and that the buffer for header lists is the server's, not each connection's.");
     memory_case(false);
     memory_case(true);
+
+    PROVEN_TEST_SECTION("TLS that HTTP/2 may not use", "TLS 1.2 with a CBC suite, and \"h2\" agreed over it.", "Check h2_tls_adequate and its use in proven_http_event_h2_take_: RFC 9113, section 9.2.");
+    {
+        /* The suite is one the library keeps out unless both configurations name it; the
+         * client is made to offer no other. */
+        proven_tls_options_t so_old = so, co_old = co_12;
+        so_old.legacy = PROVEN_TLS_LEGACY_CBC; co_old.legacy = PROVEN_TLS_LEGACY_CBC;
+        proven_tls_config_t *server_old = NULL, *client_old = NULL;
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&so_old, &server_old) == PROVEN_OK && proven_tls_config_create(&co_old, &client_old) == PROVEN_OK, "configurations that allow CBC suites", "");
+        proven_http_event_server_config_t cfg = { .tls = server_old };
+        proven_u16 port = server_start(cfg);
+        cl_t c;
+        proven_tls_test_only_suite12(0xc023);
+        bool up = cl_open_with(&c, client_old, port, 0);
+        proven_tls_test_only_suite12(0);
+        PROVEN_TEST_ASSERT(up, "a client that offers TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256 alone, and \"h2\"", "");
+        int before = atomic_load(&g_requests);
+        proven_u32 id = cl_ask(&c, "GET", "/hello", true);
+        for (int i = 0; i < 300 && !c.closed && !c.gone; i++) (void)cl_pump(&c, 10);
+        PROVEN_TEST_ASSERT(c.goaway && c.closed && c.close_code == PROVEN_H2_INADEQUATE_SECURITY, "the server ends the connection with INADEQUATE_SECURITY", "");
+        PROVEN_TEST_ASSERT(id != 0 && !cl_res(&c, id)->end && atomic_load(&g_requests) == before, "and the request sent on it reached no handler", "");
+        cl_close(&c);
+        /* The same client with a suite HTTP/2 may use is served. */
+        PROVEN_TEST_ASSERT(cl_open_with(&c, client_old, port, 0), "the same configurations, the client offering all it has", "");
+        id = cl_ask(&c, "GET", "/hello", true);
+        PROVEN_TEST_ASSERT(cl_wait(&c, id, 5000) && cl_res(&c, id)->end && cl_res(&c, id)->status == 200, "TLS 1.2 with an AEAD suite and forward secrecy: served", "");
+        cl_close(&c);
+        server_stop();
+        proven_tls_config_destroy(server_old); proven_tls_config_destroy(client_old);
+    }
 
     PROVEN_TEST_SECTION("the end of the server", "Destroying a server with exchanges open.", "Check h2_on_closed: every open stream's handler is told once.");
     {
