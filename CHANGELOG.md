@@ -18,6 +18,23 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **`max_idle_connections` of the event-driven client is now `max_kept_connections`**
+  (`proven_http_event_client_config_t`, added in v0.36.0). The meaning is the same - idle
+  HTTP/1.1 connections kept in the whole client, 0 for the default of 8, `no_connection_reuse`
+  to keep none. The old name was also the name of a field of the blocking client
+  (`proven_http_client_config_t`), where 0 means that no connection is kept: one name with
+  two zeros. A program that set the field in v0.36.0 no longer compiles until it is renamed;
+  the blocking client's field is untouched.
+
+### Added
+
+- Tests of v0.36.0's behaviour that were missing: a TLS server's goodbye (`close_notify`) on
+  a kept connection - read after the next request went, read before it, read while the
+  connection was idle, read after part of an answer - and the closing of the connection idle
+  longest across three origins. No defect was found by them.
+
 ## [0.36.0] - 2026-10-12
 
 A MINOR release with new API - three settings of the event-driven client - and **a change of

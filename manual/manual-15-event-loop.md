@@ -960,7 +960,7 @@ URL's scheme, host and port, and the address connected to - and a request takes 
 - **one that is idle**, if its origin has one. A connection is kept when an exchange on it
   ended cleanly: the response was HTTP/1.1 without `Connection: close`, its body had an end
   of its own (a length, or chunks) and that end was reached, the request had been sent
-  whole, and nothing came after the response. At most `max_idle_connections` (8) are kept
+  whole, and nothing came after the response. At most `max_kept_connections` (8) are kept
   in the whole client, the one idle longest making room for another, and none for longer
   than `idle_timeout_ms` (60 s);
 - **or a new one**, while the origin has fewer than `max_connections_per_origin` (6), busy
@@ -1054,7 +1054,7 @@ The configuration's fields, each with a default when zero:
 | `idle_timeout_ms` | How long a connection with no request on it is kept, in either protocol. | 60 s |
 | `max_waiting_requests` | Requests that may wait: for an HTTP/2 connection, on that connection; for an HTTP/1.1 connection, in the whole client. The next `start` is `PROVEN_ERR_BUSY`. | 1,000 |
 | `max_connections_per_origin` | HTTP/1.1: connections to one origin at a time, busy and idle together; a request beyond that waits. | 6 |
-| `max_idle_connections` | HTTP/1.1: idle connections kept in the whole client. (Chapter 11's client has a field of this name where 0 keeps none; here 0 is the default, and `no_connection_reuse` keeps none.) | 8 |
+| `max_kept_connections` | HTTP/1.1: idle connections kept in the whole client. Zero is the default, as every zero in this table is; `no_connection_reuse` is what keeps none. (It was `max_idle_connections` in v0.36.0 - the name of a field of chapter 11's client, where 0 keeps none. The two no longer share a name.) | 8 |
 | `no_connection_reuse` | HTTP/1.1: `Connection: close` in every request, and no connection kept. | off |
 
 The test suite compiles and runs this program:

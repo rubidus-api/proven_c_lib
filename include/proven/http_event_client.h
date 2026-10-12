@@ -90,7 +90,7 @@ typedef struct {
     proven_u32 idle_timeout_ms;            /**< how long a connection with no request on it is kept for the next one, in either protocol. 0: 60 s */
     proven_size_t max_waiting_requests;    /**< requests that may wait: over HTTP/2, on one connection, for it to be made or for the server's limit on streams; over HTTP/1.1, in the whole client, for a connection to their origin. The next start is PROVEN_ERR_BUSY. 0: 1,000 */
     proven_size_t max_connections_per_origin;  /**< HTTP/1.1: connections to one origin (scheme, host, port and the address connected to) at a time, busy and idle together. A request beyond that waits, in the order of starting, for one to come free. 0: 6 */
-    proven_size_t max_idle_connections;    /**< HTTP/1.1: connections kept idle for the next request, in the whole client; the one idle longest is closed to keep another. 0: 8. (Not the blocking client's field of this name, where 0 keeps none: here `no_connection_reuse` does that.) */
+    proven_size_t max_kept_connections;    /**< HTTP/1.1: connections kept idle for the next request, in the whole client; the one idle longest is closed to keep another. 0: 8, as every zero here is the default - to keep none, set `no_connection_reuse`. (Named `max_idle_connections` in v0.36.0. That is the name of a field of the blocking client, http_client.h, where 0 keeps none: the two no longer share it.) */
     bool no_connection_reuse;              /**< HTTP/1.1: true sends `Connection: close` and closes every connection when its response has ended, as every version before v0.36.0 did. The limit on connections to an origin applies all the same */
 } proven_http_event_client_config_t;
 

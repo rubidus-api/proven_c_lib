@@ -244,7 +244,7 @@ static void cl_conn_keep(cl_conn_t *k) {
     }
     (void)proven_loop_io_set(cl->loop, &k->io, PROVEN_NET_READABLE);
     proven_loop_timer_set(cl->loop, &k->timer, cl->cfg.idle_timeout_ms, cl_on_idle_timer, k);
-    if (cl->idle_count > cl->cfg.max_idle_connections) {
+    if (cl->idle_count > cl->cfg.max_kept_connections) {
         cl_conn_t *oldest = (void *)0;
         for (cl_conn_t *i = cl->conns; i; i = i->next)
             if (!i->owner && i != k && (!oldest || i->idle_since < oldest->idle_since)) oldest = i;
@@ -684,7 +684,7 @@ proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_h
     if (cfg.idle_timeout_ms == 0) cfg.idle_timeout_ms = 60000;
     if (cfg.max_waiting_requests == 0) cfg.max_waiting_requests = 1000;
     if (cfg.max_connections_per_origin == 0) cfg.max_connections_per_origin = 6;
-    if (cfg.max_idle_connections == 0) cfg.max_idle_connections = 8;
+    if (cfg.max_kept_connections == 0) cfg.max_kept_connections = 8;
     if (cfg.tls) {
         /* What TLS may agree to and what the client will speak must be the same thing. */
         bool offers_h2 = false;

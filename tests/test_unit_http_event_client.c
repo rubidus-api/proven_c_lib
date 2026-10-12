@@ -487,11 +487,11 @@ static void connections(bool tls) {
         PROVEN_TEST_ASSERT(held == 1, "the server still holds the one connection whose request it sits on", "");
 
         /* Idle connections are bounded in number and in time. */
-        client = a_client((proven_http_event_client_config_t){ .max_idle_connections = 2 }, false);
+        client = a_client((proven_http_event_client_config_t){ .max_kept_connections = 2 }, false);
         for (int i = 0; i < 6; i++) PROVEN_TEST_ASSERT(start(client, &many[i], "GET", url(false, at.port, "/slow"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK, "six at once", "");
         for (int i = 0; i < 6; i++) (void)spin_until(&many[i].done, 5000);
         spin(60);
-        PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == held + 2, "of six connections, max_idle_connections of two are kept", "");
+        PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == held + 2, "of six connections, max_kept_connections of two are kept", "");
         proven_http_event_client_destroy(client);
         client = a_client((proven_http_event_client_config_t){ .idle_timeout_ms = 120 }, false);
         PROVEN_TEST_ASSERT(get_ok(client, &c, false, at.port, "/", 5) && proven_http_event_server_connections(server) == held + 1, "a request, and its connection kept", "");
@@ -529,6 +529,28 @@ static void connections(bool tls) {
         PROVEN_TEST_ASSERT(all && proven_http_event_server_connections(server) == held + 1 && proven_http_event_server_connections(second) == 1, "requests to two servers in turn: one connection to each", "");
         proven_http_event_client_destroy(client);
         spin(60);
+
+        /* The bound on idle connections is the client's, not an origin's: when a third is to be
+         * kept and two may be, the one that has been idle longest goes, wherever it leads. */
+        proven_net_addr_t at3;
+        proven_http_event_server_t *third = a_server(false, &at3);
+        client = a_client((proven_http_event_client_config_t){ .max_kept_connections = 2 }, false);
+        PROVEN_TEST_ASSERT(get_ok(client, &c, false, at.port, "/", 5), "a request to the first server", "");
+        spin(15);
+        PROVEN_TEST_ASSERT(get_ok(client, &c, false, at2.port, "/", 5), "then one to the second", "");
+        spin(15);
+        PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == held + 1 && proven_http_event_server_connections(second) == 1, "two idle connections, one to each", "");
+        PROVEN_TEST_ASSERT(get_ok(client, &c, false, at3.port, "/", 5), "then one to a third", "");
+        spin(60);
+        PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == held && proven_http_event_server_connections(second) == 1 && proven_http_event_server_connections(third) == 1,
+            "max_kept_connections of two: the first server's, idle longest, is closed to keep the third's - and the second's stays", "");
+        PROVEN_TEST_ASSERT(get_ok(client, &c, false, at2.port, "/", 5) && get_ok(client, &c, false, at.port, "/", 5), "the second server's is used again, and the first is connected to anew", "");
+        spin(60);
+        PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == held + 1 && proven_http_event_server_connections(second) == 1 && proven_http_event_server_connections(third) == 0,
+            "and now the third's was the one idle longest", "");
+        proven_http_event_client_destroy(client);
+        spin(60);
+        proven_http_event_server_destroy(third);
         proven_http_event_server_destroy(second);
     }
     proven_http_event_server_destroy(server);
@@ -690,6 +712,113 @@ static void kept_or_not(void) {
     (void)proven_net_listener_close(&l);
 }
 
+/* The test as a TLS server on a socket of its own: the engine, driven by hand between rounds. */
+typedef struct { proven_net_conn_t conn; proven_tls_conn_t *tls; char req[2048]; proven_size_t have; bool eof; } tpeer_t;
+
+/* What has come is fed in and what is to go is written; `turn_loop` false leaves the client
+ * as it is, so that it learns of nothing yet. */
+static bool tpeer_turn(tpeer_t *p, bool turn_loop) {
+    static proven_byte_t in[16384];
+    if (turn_loop) spin(5);
+    proven_result_size_t got = proven_net_read(&p->conn, (proven_mem_mut_t){ in, sizeof in }, PROVEN_NET_DONT_WAIT);
+    if (got.err == PROVEN_ERR_EOF) p->eof = true;
+    for (proven_size_t pos = 0; got.err == PROVEN_OK && pos < got.value; ) {
+        proven_size_t used = 0;
+        if (proven_tls_feed(p->tls, (proven_mem_view_t){ in + pos, got.value - pos }, &used) != PROVEN_OK || used == 0) return false;
+        pos += used;
+    }
+    for (;;) {
+        proven_result_size_t plain = proven_tls_read(p->tls, (proven_mem_mut_t){ (proven_byte_t *)p->req + p->have, sizeof p->req - 1 - p->have });
+        if (plain.err != PROVEN_OK || plain.value == 0) break;
+        p->have += plain.value;
+    }
+    proven_mem_view_t out = proven_tls_pending_output(p->tls);
+    if (out.size > 0) {
+        if (proven_net_write_all(&p->conn, out, proven_net_deadline_in(5000)).err != PROVEN_OK) return false;
+        proven_tls_output_sent(p->tls, out.size);
+    }
+    return true;
+}
+
+static bool tpeer_accept(proven_net_listener_t *l, tpeer_t *p) {
+    memset(p, 0, sizeof *p);
+    if (!peer_accept(l, &p->conn, 400) || proven_tls_server_create(g_server_tls, &p->tls) != PROVEN_OK) return false;
+    for (int i = 0; i < 400 && !(proven_tls_is_established(p->tls) && proven_tls_pending_output(p->tls).size == 0); ++i) if (!tpeer_turn(p, true)) return false;
+    return proven_tls_is_established(p->tls);
+}
+
+/* A request, whole: its head, and `body` after it when one is expected. (It may have come
+ * with the end of the handshake; what was read is forgotten when it is answered.) */
+static bool tpeer_request(tpeer_t *p, const char *body) {
+    for (int i = 0; i < 400; ++i) {
+        const char *end = strstr(p->req, "\r\n\r\n");
+        if (end && (!body || strcmp(end + 4, body) == 0)) return true;
+        if (!tpeer_turn(p, true)) return false;
+    }
+    return false;
+}
+
+static bool tpeer_say(tpeer_t *p, const char *text) {
+    proven_result_size_t w = proven_tls_write(p->tls, mv(text));
+    memset(p->req, 0, sizeof p->req);
+    p->have = 0;
+    return w.err == PROVEN_OK && w.value == strlen(text) && tpeer_turn(p, true);
+}
+
+static bool tpeer_sees_close(tpeer_t *p) {
+    for (int i = 0; i < 100 && !p->eof; ++i) (void)tpeer_turn(p, true);
+    return p->eof;
+}
+
+static void tpeer_end(tpeer_t *p) { proven_tls_conn_destroy(p->tls); (void)proven_net_close(&p->conn); }
+
+/* Over TLS a server that closes says so first: its goodbye (close_notify) is bytes on the
+ * connection, and is not an answer. Here it says goodbye and leaves the socket open, so the
+ * goodbye is what the client reads - not a reset, which on one machine would overtake it. */
+static void kept_over_tls(void) {
+    proven_net_listener_t l;
+    proven_net_addr_t at;
+    static tpeer_t a, b;
+    call_t c = { 0 };
+    proven_http_event_client_t *client = a_client((proven_http_event_client_config_t){ 0 }, true);
+    PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 8, &l, &at) == PROVEN_OK, "a listener the test answers on, as a TLS server", "");
+
+    /* The goodbye arrives after the request has gone on the kept connection. */
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(true, at.port, "/"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && tpeer_accept(&l, &a) && tpeer_request(&a, NULL) && tpeer_say(&a, OK2) &&
+                       spin_until(&c.done, 5000) && c.why == PROVEN_OK && c.got == 2, "a request is answered, and its connection kept", "");
+    PROVEN_TEST_ASSERT(start(client, &c, "POST", url(true, at.port, "/again"), (proven_mem_view_t){ (const proven_byte_t *)"body", 4 }, 0) == PROVEN_OK && tpeer_request(&a, "body") &&
+                       strncmp(a.req, "POST /again ", 12) == 0, "the next request comes on the same connection", "");
+    PROVEN_TEST_ASSERT(proven_tls_close(a.tls) == PROVEN_OK && tpeer_turn(&a, true), "the server says goodbye, and does not close the socket", "");
+    PROVEN_TEST_ASSERT(tpeer_accept(&l, &b) && tpeer_request(&b, "body") && strncmp(b.req, "POST /again ", 12) == 0 && tpeer_say(&b, OK2),
+        "a goodbye is not an answer: the request comes again, whole, on a new connection", "");
+    PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_OK && c.dones == 1 && c.responses == 1 && c.got == 2, "and is answered, with one on_done", "");
+    PROVEN_TEST_ASSERT(tpeer_sees_close(&a), "the connection that said goodbye is closed by the client", "");
+    tpeer_end(&a);
+
+    /* The goodbye is already there, unread, when the kept connection is given to a request:
+     * it is written before the client's loop turns, and the request is started at once. */
+    PROVEN_TEST_ASSERT(proven_tls_close(b.tls) == PROVEN_OK && tpeer_turn(&b, false), "the server says goodbye to the idle connection, and the client has not looked yet", "");
+    PROVEN_TEST_ASSERT(start(client, &c, "POST", url(true, at.port, "/crossed"), (proven_mem_view_t){ (const proven_byte_t *)"body", 4 }, 0) == PROVEN_OK, "a request is given that connection", "");
+    PROVEN_TEST_ASSERT(tpeer_accept(&l, &a) && tpeer_request(&a, "body") && strncmp(a.req, "POST /crossed ", 14) == 0 && tpeer_say(&a, OK2) &&
+                       spin_until(&c.done, 5000) && c.why == PROVEN_OK && c.dones == 1 && c.responses == 1, "it crosses the goodbye, comes again on a new connection, and is answered with one on_done", "");
+    tpeer_end(&b);
+
+    /* Said to a connection nobody is using: the connection is simply gone. */
+    PROVEN_TEST_ASSERT(proven_tls_close(a.tls) == PROVEN_OK && tpeer_turn(&a, true) && tpeer_sees_close(&a), "a goodbye to an idle connection: the client closes it", "");
+    tpeer_end(&a);
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(true, at.port, "/fresh"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && tpeer_accept(&l, &a) && tpeer_request(&a, NULL) && tpeer_say(&a, OK2) &&
+                       spin_until(&c.done, 5000) && c.why == PROVEN_OK && c.dones == 1, "and the next request makes a new one", "");
+
+    /* A part of an answer, then the goodbye: something came back, so nothing is sent again. */
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(true, at.port, "/part"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && tpeer_request(&a, NULL) && tpeer_say(&a, "HTTP/1.1 200 OK\r\nContent-Le"), "a request on the kept connection, and the beginning of an answer", "");
+    spin(30);
+    PROVEN_TEST_ASSERT(proven_tls_close(a.tls) == PROVEN_OK && tpeer_turn(&a, true) && spin_until(&c.done, 5000) && c.why == PROVEN_ERR_RESET && c.dones == 1 && !peer_accept(&l, &b.conn, 6),
+        "then the goodbye: PROVEN_ERR_RESET, and not sent again", "");
+    tpeer_end(&a);
+    proven_http_event_client_destroy(client);
+    (void)proven_net_listener_close(&l);
+}
+
 int main(void) {
     PROVEN_TEST_SUITE("the event-driven HTTP client",
         "Requests started and answered through callbacks on one thread: bodies down and up in pieces with backpressure, the address apart from the name, time limits, abort, many at once - plain and over TLS - and servers that answer badly.",
@@ -817,6 +946,8 @@ int main(void) {
     connections(true);
     PROVEN_TEST_SECTION("a connection that is kept, and one that is not", "The test plays the server and keeps its connection, or closes it at each moment that matters.", "Check cl_reusable for what may be kept, cl_send_again for the one sending more a request gets when a kept connection was dead, and cl_idle_io for a connection closed while idle.");
     kept_or_not();
+    PROVEN_TEST_SECTION("a kept connection, and a TLS server's goodbye", "Over TLS a server that closes a connection says so first. The test is that server, and says it at each moment that matters.", "Check cl_readable: only what the server said counts as an answer (cl_alive), not the bytes of its goodbye; and cl_idle_io for a goodbye to a connection nobody uses.");
+    kept_over_tls();
 
     proven_loop_destroy(g_loop);
     proven_tls_config_destroy(g_client_tls); proven_tls_config_destroy(g_server_tls); proven_tls_config_destroy(g_stranger_tls);

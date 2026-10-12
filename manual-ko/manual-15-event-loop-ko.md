@@ -936,7 +936,7 @@ void *proven_http_event_request_user(const proven_http_event_request_t *request)
 - **한가한 것**, 오리진에 있으면. 연결은 그 위의 교환이 깨끗하게 끝났을 때 보관된다: 응답이
   `Connection: close` 없는 HTTP/1.1이었고, 본문에 제 끝(길이, 또는 청크)이 있었고 그 끝에 이르렀고,
   요청이 통째로 나갔고, 응답 뒤에 아무것도 오지 않았다. 클라이언트 전체에서 많아야
-  `max_idle_connections`(8)개가 보관되며, 가장 오래 쉰 것이 새 것에게 자리를 내준다. 어느 것도
+  `max_kept_connections`(8)개가 보관되며, 가장 오래 쉰 것이 새 것에게 자리를 내준다. 어느 것도
   `idle_timeout_ms`(60초)보다 오래 보관되지 않는다;
 - **또는 새 것**, 오리진의 연결이 바쁜 것과 한가한 것을 합쳐 `max_connections_per_origin`(6)보다
   적은 동안;
@@ -1023,7 +1023,7 @@ void *proven_http_event_request_user(const proven_http_event_request_t *request)
 | `idle_timeout_ms` | 요청이 없는 연결을 간직하는 시간, 두 프로토콜 모두. | 60초 |
 | `max_waiting_requests` | 기다릴 수 있는 요청 수: HTTP/2 연결은 그 연결 하나에서, HTTP/1.1 연결은 클라이언트 전체에서. 그다음 `start`는 `PROVEN_ERR_BUSY`. | 1,000 |
 | `max_connections_per_origin` | HTTP/1.1: 한 오리진으로 동시에 둘 수 있는 연결 수, 바쁜 것과 한가한 것 합쳐. 넘는 요청은 기다린다. | 6 |
-| `max_idle_connections` | HTTP/1.1: 클라이언트 전체에서 보관하는 한가한 연결 수. (11장의 클라이언트에는 같은 이름의 필드가 있고 거기서 0은 하나도 보관하지 않는다. 여기서 0은 기본값이고, 보관하지 않게 하는 것은 `no_connection_reuse`다.) | 8 |
+| `max_kept_connections` | HTTP/1.1: 클라이언트 전체에서 보관하는 한가한 연결 수. 이 표의 다른 0과 마찬가지로 0은 기본값이고, 하나도 보관하지 않게 하는 것은 `no_connection_reuse`다. (v0.36.0에서는 `max_idle_connections`였다. 그것은 11장 클라이언트의 필드 이름이고 거기서 0은 하나도 보관하지 않는다는 뜻이라, 이제 두 필드는 이름을 같이 쓰지 않는다.) | 8 |
 | `no_connection_reuse` | HTTP/1.1: 요청마다 `Connection: close`, 연결을 보관하지 않는다. | 꺼짐 |
 
 테스트 스위트가 이 프로그램을 컴파일하고 실행한다:
