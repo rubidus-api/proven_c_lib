@@ -66,7 +66,8 @@ typedef struct {
      *  whole response arrived, otherwise why not. Required. Free what you attached here.
      *  PROVEN_ERR_AGAIN is a request the server did not act on, which may be started again
      *  (HTTP/2: refused, or behind a goodbye; HTTP/1.1: a body written in pieces, on a kept
-     *  connection that turned out to be dead); PROVEN_ERR_UNSUPPORTED is a request to a server in the clear that did
+     *  connection that turned out to be dead) - `retry_unsent` has the client do that itself,
+     *  so many times, before this is said; PROVEN_ERR_UNSUPPORTED is a request to a server in the clear that did
      *  not speak HTTP/2 (`http2_cleartext`), which would end the same way again. */
     void (*on_done)(void *ctx, proven_http_event_request_t *request, proven_err_t why);
 } proven_http_event_client_callbacks_t;
@@ -92,6 +93,7 @@ typedef struct {
     proven_size_t max_connections_per_origin;  /**< HTTP/1.1: connections to one origin (scheme, host, port and the address connected to) at a time, busy and idle together. A request beyond that waits, in the order of starting, for one to come free. 0: 6 */
     proven_size_t max_kept_connections;    /**< HTTP/1.1: connections kept idle for the next request, in the whole client; the one idle longest is closed to keep another. 0: 8, as every zero here is the default - to keep none, set `no_connection_reuse`. (Named `max_idle_connections` in v0.36.0. That is the name of a field of the blocking client, http_client.h, where 0 keeps none: the two no longer share it.) */
     bool no_connection_reuse;              /**< HTTP/1.1: true sends `Connection: close` and closes every connection when its response has ended, as every version before v0.36.0 did. The limit on connections to an origin applies all the same */
+    proven_u32 retry_unsent;               /**< how many times a request that the server did not act on is put to it again by the client, before `on_done` is told PROVEN_ERR_AGAIN: over HTTP/2, a request behind a goodbye (GOAWAY), a refused stream, a connection lost before the request was on it; over HTTP/1.1, a connection lost before any of the request was given to it. At once, with no delay, on another connection where the first is finished with. Never a request whose body is written in pieces, never after `on_response`, never PROVEN_ERR_UNSUPPORTED. The time limits apply to each try, and a request held in memory stays there until its response begins. 0: never - the caller decides */
 } proven_http_event_client_config_t;
 
 /** @brief One request. Zero-initialise it and set `url` and `on.on_done`. Everything it points

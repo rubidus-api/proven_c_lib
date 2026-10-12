@@ -819,6 +819,64 @@ static void kept_over_tls(void) {
     (void)proven_net_listener_close(&l);
 }
 
+/* retry_unsent over HTTP/1.1: a connection lost before any of the request was given to it.
+ * Over TLS that is a server that takes the connection and goes away while TLS is being agreed. */
+static void unsent(void) {
+    proven_net_listener_t l;
+    proven_net_addr_t at;
+    proven_net_conn_t x;
+    static tpeer_t a;
+    call_t c = { 0 };
+    PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 8, &l, &at) == PROVEN_OK, "a listener the test answers on", "");
+
+    proven_http_event_client_t *client = a_client((proven_http_event_client_config_t){ 0 }, true);
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(true, at.port, "/"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l, &x, 400), "a request, and a server that takes the connection", "");
+    spin(20);
+    (void)proven_net_close(&x);
+    PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_ERR_RESET && c.dones == 1 && !peer_accept(&l, &x, 6), "and closes it before TLS is agreed: PROVEN_ERR_RESET without the setting, and no second connection", "");
+    proven_http_event_client_destroy(client);
+
+    client = a_client((proven_http_event_client_config_t){ .retry_unsent = 1, .connect_timeout_ms = 300 }, true);
+    PROVEN_TEST_ASSERT(start(client, &c, "POST", url(true, at.port, "/again"), (proven_mem_view_t){ (const proven_byte_t *)"body", 4 }, 0) == PROVEN_OK && peer_accept(&l, &x, 400), "with retry_unsent of one: a request, and the connection taken", "");
+    spin(20);
+    (void)proven_net_close(&x);
+    PROVEN_TEST_ASSERT(tpeer_accept(&l, &a) && tpeer_request(&a, "body") && strncmp(a.req, "POST /again ", 12) == 0 && tpeer_say(&a, OK2), "closed before TLS is agreed: the request comes on a new connection", "");
+    PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_OK && c.dones == 1 && c.responses == 1 && c.got == 2, "and is answered, with one on_done", "");
+    PROVEN_TEST_ASSERT(proven_tls_close(a.tls) == PROVEN_OK && tpeer_turn(&a, true) && tpeer_sees_close(&a), "(the kept connection is said goodbye to)", "");
+    tpeer_end(&a);
+
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(true, at.port, "/twice"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l, &x, 400), "a request, and the connection taken", "");
+    spin(20);
+    (void)proven_net_close(&x);
+    PROVEN_TEST_ASSERT(peer_accept(&l, &x, 400), "closed: a second connection is made", "");
+    spin(20);
+    (void)proven_net_close(&x);
+    PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_ERR_RESET && c.dones == 1 && !peer_accept(&l, &x, 6), "closed too: PROVEN_ERR_RESET, and no third", "");
+
+    /* Each try has the time to be connected: the first is closed 200 ms in, the second says nothing. */
+    const proven_time_t t0 = proven_time_monotonic_now();
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(true, at.port, "/slow"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l, &x, 400), "a request, and the connection taken", "");
+    spin(200);
+    (void)proven_net_close(&x);
+    PROVEN_TEST_ASSERT(peer_accept(&l, &x, 400) && spin_until(&c.done, 5000) && c.why == PROVEN_ERR_TIMEOUT && c.dones == 1 && proven_time_monotonic_now() - t0 > 450000000,
+        "closed after 200 ms, and the second connection never answers: PROVEN_ERR_TIMEOUT after connect_timeout_ms of that try", "");
+    (void)proven_net_close(&x);
+    PROVEN_TEST_ASSERT(!peer_accept(&l, &x, 6), "and a time limit is not tried again", "");
+
+    /* Not a request whose body is written in pieces. */
+    PROVEN_TEST_ASSERT(start(client, &c, "POST", url(true, at.port, "/pieces"), (proven_mem_view_t){ 0 }, 3) == PROVEN_OK && peer_accept(&l, &x, 400), "a request whose body is to be written", "");
+    spin(20);
+    (void)proven_net_close(&x);
+    PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_ERR_RESET && c.dones == 1 && !peer_accept(&l, &x, 6), "is not begun again: PROVEN_ERR_RESET", "");
+
+    /* Nor one that was sent: the server may have acted on it. */
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(true, at.port, "/sent"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && tpeer_accept(&l, &a) && tpeer_request(&a, NULL), "a request the server has read", "");
+    tpeer_end(&a);
+    PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_ERR_RESET && c.dones == 1 && !peer_accept(&l, &x, 6), "and then the connection is cut: PROVEN_ERR_RESET, and not sent again", "");
+    proven_http_event_client_destroy(client);
+    (void)proven_net_listener_close(&l);
+}
+
 int main(void) {
     PROVEN_TEST_SUITE("the event-driven HTTP client",
         "Requests started and answered through callbacks on one thread: bodies down and up in pieces with backpressure, the address apart from the name, time limits, abort, many at once - plain and over TLS - and servers that answer badly.",
@@ -948,6 +1006,8 @@ int main(void) {
     kept_or_not();
     PROVEN_TEST_SECTION("a kept connection, and a TLS server's goodbye", "Over TLS a server that closes a connection says so first. The test is that server, and says it at each moment that matters.", "Check cl_readable: only what the server said counts as an answer (cl_alive), not the bytes of its goodbye; and cl_idle_io for a goodbye to a connection nobody uses.");
     kept_over_tls();
+    PROVEN_TEST_SECTION("retry_unsent", "A connection lost before any of the request was given to it, with the setting and without.", "Check the second branch at the top of cl_kill, and `sent` in cl_flush.");
+    unsent();
 
     proven_loop_destroy(g_loop);
     proven_tls_config_destroy(g_client_tls); proven_tls_config_destroy(g_server_tls); proven_tls_config_destroy(g_stranger_tls);

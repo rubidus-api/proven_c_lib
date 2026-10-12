@@ -58,6 +58,7 @@ typedef struct c2req {
     proven_u64 send_left, got;
     proven_time_t due;                 /* 0: no deadline is running */
     proven_u32 id, mark;               /* id 0: not yet on a stream */
+    proven_u32 tries;                  /* times it was put to the server again (retry_unsent) */
     bool dead, streamed, end_asked, engine_done, paused, want_writable, window_shut;
     bool got_head, head_only, held_last, any_decoded;
     bool host_is_ipv6, query_alone;    /* of the URL, read once when the request was started */
@@ -182,6 +183,8 @@ static void r_finish(c2req_t *r, proven_err_t why) {
     r_leave(r);
 }
 
+static void r_unsent(c2req_t *r, bool here);
+
 static void c_end_requests(c2conn_t *c, proven_err_t why) {
     /* In the clear a connection is HTTP/2 because its caller said so (http2_cleartext), and the
      * server's settings are the first sign that it is. One that ends without them - the bytes
@@ -194,7 +197,9 @@ static void c_end_requests(c2conn_t *c, proven_err_t why) {
     while (c->reqs) {
         c2req_t *r = c->reqs;
         /* One the server never saw may be started again; one it may have acted on may not. */
-        r_finish(r, r->id == 0 && why == PROVEN_ERR_RESET ? (never_was ? PROVEN_ERR_UNSUPPORTED : PROVEN_ERR_AGAIN) : why);
+        if (r->id != 0 || why != PROVEN_ERR_RESET) r_finish(r, why);
+        else if (never_was) r_finish(r, PROVEN_ERR_UNSUPPORTED);
+        else r_unsent(r, false);
     }
 }
 
@@ -443,8 +448,9 @@ static proven_err_t r_submit(c2req_t *r) {
     } else {
         r->send_left = r->body_length;
     }
-    /* What it was started with has been used. */
-    if (r->copy) { cl->alloc.free_fn(cl->alloc.ctx, r->copy); r->copy = (void *)0; }
+    /* What it was started with has been used - unless it may have to be put to the server
+     * again (retry_unsent): then it is kept until the response begins. */
+    if (r->copy && (r->streamed || cl->cfg.retry_unsent == 0)) { cl->alloc.free_fn(cl->alloc.ctx, r->copy); r->copy = (void *)0; }
     r_expect(r);
     return PROVEN_OK;
 }
@@ -462,7 +468,14 @@ static void c_submit_waiting(c2conn_t *c) {
         if (!oldest) break;
         proven_err_t e = r_submit(oldest);
         if (e == PROVEN_ERR_BUSY) break;
-        if (e != PROVEN_OK) r_finish(oldest, e == PROVEN_ERR_INVALID_STATE ? PROVEN_ERR_AGAIN : e);
+        if (e == PROVEN_ERR_INVALID_STATE) {
+            /* The connection takes no more requests - it has none of its stream numbers left,
+             * if nothing else said so first. The next request to this origin makes another. */
+            c->over = true;
+            r_unsent(oldest, false);
+        } else if (e != PROVEN_OK) {
+            r_finish(oldest, e);
+        }
         again = true;
     }
     c_leave(c);
@@ -547,6 +560,7 @@ static void c_response(c2conn_t *c, c2req_t *r, const proven_h2_event_t *ev) {
     for (proven_size_t i = 0; i < ev->field_count; ++i) cl->headers[i] = ev->fields[i];
     proven_http_response_t res = { .status = ev->status, .version_minor = 1, .headers = cl->headers, .header_count = ev->field_count };
     r->got_head = true;
+    if (r->copy) { cl->alloc.free_fn(cl->alloc.ctx, r->copy); r->copy = (void *)0; }      /* answered: it will not be sent again */
     const bool no_body = ev->end_stream || r->head_only;
     proven_http_coding_t coding = PROVEN_HTTP_CODING_IDENTITY;
     if (cl->cfg.decompress && !no_body && proven_http_decoder_wanted_(res.status, res.headers, res.header_count, &coding)) {
@@ -577,7 +591,8 @@ static void c_event(c2conn_t *c, const proven_h2_event_t *ev) {
             if (r) {
                 r->engine_done = true;
                 /* Not acted on: safe to start again. Anything else: it may have been. */
-                r_finish(r, ev->code == PROVEN_H2_REFUSED_STREAM ? PROVEN_ERR_AGAIN : PROVEN_ERR_RESET);
+                if (ev->code == PROVEN_H2_REFUSED_STREAM) r_unsent(r, true);
+                else r_finish(r, PROVEN_ERR_RESET);
             }
             break;
         case PROVEN_H2_EVENT_STREAM_WRITABLE: if (r) { r->window_shut = false; r_push(r); } break;
@@ -587,7 +602,7 @@ static void c_event(c2conn_t *c, const proven_h2_event_t *ev) {
             c->over = true;
             for (bool again = true; again;) {
                 again = false;
-                for (c2req_t *w = c->reqs; w; w = w->next) if (w->id == 0) { r_finish(w, PROVEN_ERR_AGAIN); again = true; break; }
+                for (c2req_t *w = c->reqs; w; w = w->next) if (w->id == 0) { r_unsent(w, false); again = true; break; }
             }
             break;
         case PROVEN_H2_EVENT_CLOSED:
@@ -847,7 +862,7 @@ static void c_on_timer(void *ctx) {
 }
 
 // -----------------------------------------------------------------------------
-// What http_event_client.c calls
+// An origin's connection, and a request put to it again
 // -----------------------------------------------------------------------------
 
 static bool c2_same_addr(const proven_net_addr_t *a, const proven_net_addr_t *b) {
@@ -855,6 +870,106 @@ static bool c2_same_addr(const proven_net_addr_t *a, const proven_net_addr_t *b)
     for (proven_size_t i = 0; i < sizeof a->ip; ++i) if (a->ip[i] != b->ip[i]) return false;
     return true;
 }
+
+/* What the client has for an origin - scheme, host, port and address: a connection that takes
+ * requests, or the memory that the origin speaks HTTP/1.1. `not`: one to pass over. */
+static c2conn_t *c_find(proven_http_event_client_t *cl, bool https, proven_u8str_view_t host, proven_u16 port, const proven_net_addr_t *to, const c2conn_t *not) {
+    for (c2conn_t *k = cl->h2; k; k = k->next) {
+        if (k == not || k->dead || k->over || k->https != https || k->port != port || !c2_same_addr(&k->to, to)) continue;
+        if (!c2_eq_nocase((proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, host)) continue;
+        return k;
+    }
+    return (void *)0;
+}
+
+/* Begin a connection to an origin. On failure nothing is left of it. */
+static proven_err_t c_open(proven_http_event_client_t *cl, bool https, proven_u8str_view_t host, proven_u16 port, const proven_net_addr_t *to, c2conn_t **out) {
+    c2conn_t *c = c2_alloc(cl->alloc, sizeof *c);
+    if (!c) return PROVEN_ERR_NOMEM;
+    for (proven_size_t i = 0; i < sizeof *c; ++i) ((proven_byte_t *)c)[i] = 0;
+    c->client = cl;
+    c->https = https;
+    c->port = port;
+    c->to = *to;
+    c->host_len = (proven_u8)host.size;
+    for (proven_size_t i = 0; i < host.size; ++i) c->host[i] = host.ptr[i];
+    c->state = C2_CONNECTING;
+    proven_err_t e = PROVEN_OK;
+    if (https) e = proven_tls_client_create(cl->cfg.tls, host, (void *)0, &c->tls);
+    if (e == PROVEN_OK) {
+        e = proven_net_connect_start(c->to, &c->sock);
+        if (e == PROVEN_OK) c->connected_at_start = true;
+        else if (e == PROVEN_ERR_AGAIN) e = PROVEN_OK;
+    }
+    /* The socket is watched for writing either way: what follows happens from the loop, so
+     * that nothing is reported from inside the call that began it. */
+    if (e == PROVEN_OK) e = proven_loop_io_add(cl->loop, &c->io, proven_net_conn_handle(&c->sock), PROVEN_NET_WRITABLE, c_on_io, c);
+    if (e != PROVEN_OK) {
+        if (c->tls) proven_tls_conn_destroy(c->tls);
+        if (proven_net_conn_is_open(&c->sock)) (void)proven_net_close(&c->sock);
+        cl->alloc.free_fn(cl->alloc.ctx, c);
+        return e;
+    }
+    c->registered = true;
+    c->next = cl->h2;
+    if (c->next) c->next->prev = c;
+    cl->h2 = c;
+    *out = c;
+    return PROVEN_OK;
+}
+
+/* A request the server did not act on: it was never on a stream, or the stream was refused.
+ * Its caller is told PROVEN_ERR_AGAIN and may start it again - or, with retry_unsent, the
+ * client does that itself, so many times: the request goes back to waiting, on this connection
+ * (`here`: it was one stream that was refused, and the connection goes on) or on another for
+ * the same origin, which is made if there is none. Nothing is told of the try that failed.
+ * Not a request whose body is written in pieces - the client does not have it to send again -
+ * and not while the client is being destroyed. */
+static void r_unsent(c2req_t *r, bool here) {
+    if (r->dead) return;
+    c2conn_t *c = r->conn;
+    proven_http_event_client_t *cl = r->h.client;
+    c2conn_t *to = (void *)0;
+    bool again = c && !cl->closing && !r->streamed && !r->got_head && r->tries < cl->cfg.retry_unsent;
+    if (again) {
+        const proven_u8str_view_t host = { .ptr = c->host, .size = c->host_len };
+        if (here && !c->dead && !c->over && !c->peer_eof && c->state == C2_UP) to = c;
+        else to = c_find(cl, c->https, host, c->port, &c->to, c);
+        /* (An origin that has turned out to speak HTTP/1.1 since: the caller's to start again.) */
+        if (to && to->state == C2_H1) again = false;
+        else if (!to && c_open(cl, c->https, host, c->port, &c->to, &to) != PROVEN_OK) again = false;
+    }
+    if (!again) { r_finish(r, PROVEN_ERR_AGAIN); return; }
+    r->tries++;
+    if (r->id != 0 && !c->dead && c->engine) proven_h2_conn_stream_set_user(c->engine, r->id, (void *)0);
+    r_unlink(r);
+    /* As it was when it was started, and waiting: r_submit does the rest. */
+    if (r->out) { cl->alloc.free_fn(cl->alloc.ctx, r->out); r->out = (void *)0; r->out_len = r->out_off = r->out_cap = 0; }
+    r->id = 0;
+    r->mark = 0;
+    r->due = 0;
+    r->end_asked = r->engine_done = r->window_shut = r->head_only = false;
+    /* The oldest waiting request is the last in the list, and this one is older than any that
+     * is there: requests that move together arrive newest first, and so keep their order. */
+    c2req_t *last = to->reqs;
+    while (last && last->next) last = last->next;
+    r->conn = to;
+    r->prev = last;
+    r->next = (void *)0;
+    if (last) last->next = r;
+    else to->reqs = r;
+    to->count++;
+    if (to != c) {
+        /* Its bytes leave from the loop, never from inside another connection's round. */
+        if (to->state == C2_UP) { to->more_out = true; c_watch(to); }
+        c_arm(to);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// What http_event_client.c calls
+// -----------------------------------------------------------------------------
+
 
 proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *cl, const proven_http_event_request_options_t *o,
                                                 bool https, const proven_url_t *url, proven_net_addr_t to,
@@ -864,13 +979,7 @@ proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *cl, 
     const proven_u16 port = url->has_port ? url->port : proven_url_default_port(url->scheme);
     if (host.size == 0 || host.size > 255) return PROVEN_ERR_INVALID_ARG;
     const proven_u8str_view_t method = o->method.size ? o->method : c2_lit("GET");
-    c2conn_t *c = (void *)0;
-    for (c2conn_t *k = cl->h2; k; k = k->next) {
-        if (k->dead || k->over || k->https != https || k->port != port || !c2_same_addr(&k->to, &to)) continue;
-        if (!c2_eq_nocase((proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, host)) continue;
-        c = k;
-        break;
-    }
+    c2conn_t *c = c_find(cl, https, host, port, &to, (void *)0);
     if (c && c->state == C2_H1) return PROVEN_ERR_UNSUPPORTED;
     if (c) {
         /* Counted only when there could be that many: no more wait than there are requests. */
@@ -921,38 +1030,12 @@ proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *cl, 
     r->streamed = o->body.size == 0 && o->body_length != 0;
 
     if (!c) {
-        c = c2_alloc(cl->alloc, sizeof *c);
-        if (!c) { r_free_parts(r); cl->alloc.free_fn(cl->alloc.ctx, r); return PROVEN_ERR_NOMEM; }
-        for (proven_size_t i = 0; i < sizeof *c; ++i) ((proven_byte_t *)c)[i] = 0;
-        c->client = cl;
-        c->https = https;
-        c->port = port;
-        c->to = to;
-        c->host_len = (proven_u8)host.size;
-        for (proven_size_t i = 0; i < host.size; ++i) c->host[i] = host.ptr[i];
-        c->state = C2_CONNECTING;
-        proven_err_t e = PROVEN_OK;
-        if (https) e = proven_tls_client_create(cl->cfg.tls, host, (void *)0, &c->tls);
-        if (e == PROVEN_OK) {
-            e = proven_net_connect_start(to, &c->sock);
-            if (e == PROVEN_OK) c->connected_at_start = true;
-            else if (e == PROVEN_ERR_AGAIN) e = PROVEN_OK;
-        }
-        /* The socket is watched for writing either way: what follows happens from the loop,
-         * so that nothing is reported from inside this call. */
-        if (e == PROVEN_OK) e = proven_loop_io_add(cl->loop, &c->io, proven_net_conn_handle(&c->sock), PROVEN_NET_WRITABLE, c_on_io, c);
+        proven_err_t e = c_open(cl, https, host, port, &to, &c);
         if (e != PROVEN_OK) {
-            if (c->tls) proven_tls_conn_destroy(c->tls);
-            if (proven_net_conn_is_open(&c->sock)) (void)proven_net_close(&c->sock);
-            cl->alloc.free_fn(cl->alloc.ctx, c);
             r_free_parts(r);
             cl->alloc.free_fn(cl->alloc.ctx, r);
             return e;
         }
-        c->registered = true;
-        c->next = cl->h2;
-        if (c->next) c->next->prev = c;
-        cl->h2 = c;
     }
     r->conn = c;
     r->next = c->reqs;
@@ -971,7 +1054,9 @@ proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *cl, 
             r_free_parts(r);
             cl->alloc.free_fn(cl->alloc.ctx, r);
             if (out) *out = (void *)0;
-            return e == PROVEN_ERR_INVALID_STATE ? PROVEN_ERR_AGAIN : e;
+            /* (It takes no more requests: the same call, made again, makes a new connection.) */
+            if (e == PROVEN_ERR_INVALID_STATE) { c->over = true; c->more_out = true; c_watch(c); return PROVEN_ERR_AGAIN; }
+            return e;
         }
         c->more_out = true;                        /* "call me back": the round runs from the loop, never from here */
         c_watch(c);

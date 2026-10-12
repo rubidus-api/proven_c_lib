@@ -293,13 +293,12 @@ static bool cl_reusable(proven_http_event_request_t *c) {
  * dead before anything came back on it: the server closed it while it sat idle. The request is
  * sent once more, on a connection of its own. False when it cannot be, and is to end. */
 static bool cl_send_again(proven_http_event_request_t *c) {
-    if (!c->keep_out) return false;
     proven_http_event_client_t *cl = c->h.client;
     cl_conn_t *old = c->k;
     c->k = (void *)0;
     old->owner = (void *)0;
     cl_conn_close(old, false);                    /* its place is this request's own */
-    c->stale = c->keep_out = c->peer_eof = false;
+    c->stale = c->keep_out = c->peer_eof = c->sent = false;
     c->out.off = 0;
     c->interim = 0;
     buf_release(cl, &c->stash);
@@ -317,11 +316,17 @@ static void cl_kill(proven_http_event_request_t *c, proven_err_t why) {
      * closed it while it sat idle - that is the reading taken here - and never saw this
      * request. One that can be sent again is; one whose body was written in pieces cannot be,
      * and its caller is told that it may be started again. */
-    if (why == PROVEN_ERR_RESET && c->stale && !c->no_resend) {
-        if (cl_send_again(c)) return;
-        if (c->streamed) why = PROVEN_ERR_AGAIN;
-    }
     proven_http_event_client_t *cl = c->h.client;
+    if (why == PROVEN_ERR_RESET && c->stale && !c->no_resend) {
+        if (c->keep_out && cl_send_again(c)) return;
+        if (c->streamed) why = PROVEN_ERR_AGAIN;
+    } else if (why == PROVEN_ERR_RESET && !c->no_resend && c->k && !c->streamed && !c->sent && c->tries < cl->cfg.retry_unsent) {
+        /* Lost before any of the request was given to its connection - while TLS was being
+         * agreed, mostly: the server cannot have acted on what it was never sent. With
+         * retry_unsent that is tried again, on a new connection, so many times. */
+        c->tries++;
+        if (cl_send_again(c)) return;
+    }
     c->dead = true;
     proven_loop_timer_cancel(cl->loop, &c->timer);
     if (c->waiting) cl_unwait(c);
@@ -384,6 +389,7 @@ static bool cl_flush(proven_http_event_request_t *c) {
             proven_result_size_t w = proven_tls_write(k->tls, (proven_mem_view_t){ .ptr = c->out.ptr + c->out.off, .size = buf_pending(&c->out) });
             if (w.err != PROVEN_OK) { cl_kill(c, PROVEN_ERR_RESET); return false; }
             c->out.off += w.value;
+            if (w.value > 0) c->sent = true;
         }
         proven_mem_view_t pending = k->tls ? proven_tls_pending_output(k->tls)
                                            : (proven_mem_view_t){ .ptr = c->out.ptr + c->out.off, .size = buf_pending(&c->out) };
@@ -392,7 +398,7 @@ static bool cl_flush(proven_http_event_request_t *c) {
         if (w.err == PROVEN_ERR_TIMEOUT || w.err == PROVEN_ERR_AGAIN) break;
         if (w.err != PROVEN_OK) { cl_kill(c, PROVEN_ERR_RESET); return false; }
         if (k->tls) proven_tls_output_sent(k->tls, w.value);
-        else c->out.off += w.value;
+        else { c->out.off += w.value; if (w.value > 0) c->sent = true; }
         if (w.value == 0) break;
     }
     /* (Kept, when it may have to be sent again: see cl_conn_give.) */

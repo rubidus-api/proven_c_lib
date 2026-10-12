@@ -988,6 +988,16 @@ connection made for the request, a loss is `PROVEN_ERR_RESET` as it always was. 
 the reading every HTTP client that reuses connections makes, the blocking client of
 Chapter 11 among them; `no_connection_reuse` is for a program that will not have it.)
 
+`retry_unsent` - a number, zero by default - has the client begin a request again by itself
+when the server cannot have acted on it. Over HTTP/1.1 that is one case, and a narrow one: a
+connection that was made and then lost before any of the request had been given to it, which
+in practice is a server that goes away while TLS is being agreed. Such a request ends with
+`PROVEN_ERR_RESET` without the setting, and with it is begun on a new connection, so many
+times, each with its own `connect_timeout_ms`. A request of which anything was sent is not
+begun again, and neither is one whose body is written in pieces. (The sending-again on a
+kept connection, above, needs no setting and is not counted. Over HTTP/2 the setting covers
+more: Chapter 17.)
+
 `no_connection_reuse` gives back the old behaviour for connections - `Connection: close` in
 every request, every connection closed when its response has ended - but not the old
 absence of a limit: six at a time to an origin still.
@@ -1056,6 +1066,7 @@ The configuration's fields, each with a default when zero:
 | `max_connections_per_origin` | HTTP/1.1: connections to one origin at a time, busy and idle together; a request beyond that waits. | 6 |
 | `max_kept_connections` | HTTP/1.1: idle connections kept in the whole client. Zero is the default, as every zero in this table is; `no_connection_reuse` is what keeps none. (It was `max_idle_connections` in v0.36.0 - the name of a field of chapter 11's client, where 0 keeps none. The two no longer share a name.) | 8 |
 | `no_connection_reuse` | HTTP/1.1: `Connection: close` in every request, and no connection kept. | off |
+| `retry_unsent` | How many times the client itself puts again a request the server did not act on (HTTP/2: `PROVEN_ERR_AGAIN`; HTTP/1.1: lost before any of it was sent), at once and without telling you. Never a body written in pieces, never after `on_response`. | 0: never |
 
 The test suite compiles and runs this program:
 

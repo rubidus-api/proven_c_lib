@@ -28,8 +28,33 @@ written; their tags still exist.
   two zeros. A program that set the field in v0.36.0 no longer compiles until it is renamed;
   the blocking client's field is untouched.
 
+### Fixed
+
+- An HTTP/2 connection of the event-driven client that had used every stream number it has
+  (2^30 requests on one connection) went on being chosen for new requests, each of which
+  failed with `PROVEN_ERR_AGAIN`, until it had been idle for `idle_timeout_ms`. It is now
+  finished with at the first such request, and the next makes a new connection. Found by
+  reading; no test reaches that many requests.
+
 ### Added
 
+- **`retry_unsent`** in `proven_http_event_client_config_t`: how many times the event-driven
+  client itself puts to the server again a request the server did not act on. Zero, the
+  default, is none, and nothing changes for a program that does not set it.
+  - Over HTTP/2 it covers what ends with `PROVEN_ERR_AGAIN`: a request waiting behind a
+    goodbye (GOAWAY) or left out by one, a stream refused (`REFUSED_STREAM`), a request
+    waiting on a connection that was lost. It goes on the same connection when one stream
+    was refused and the connection goes on, otherwise on another for the origin, made if
+    there is none; requests that move together keep their order.
+  - Over HTTP/1.1 it covers one case: a connection made and lost before any of the request
+    was given to it - in practice a server that goes away during the TLS handshake - which
+    ends with `PROVEN_ERR_RESET` without the setting.
+  - Never a request whose body is written in pieces, never after `on_response`, never
+    `PROVEN_ERR_UNSUPPORTED`, `PROVEN_ERR_RESET` after something was sent, or a time limit.
+  - At once, with no delay between tries. The time limits apply to each try. A body held in
+    memory is kept until the response begins. A try that fails for another reason ends the
+    request with that reason. `on_done` is called once, and nothing is told of a try that
+    failed.
 - Tests of v0.36.0's behaviour that were missing: a TLS server's goodbye (`close_notify`) on
   a kept connection - read after the next request went, read before it, read while the
   connection was idle, read after part of an answer - and the closing of the connection idle

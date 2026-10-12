@@ -960,6 +960,14 @@ void *proven_http_event_request_user(const proven_http_event_request_t *request)
 있다. 연결을 재사용하는 HTTP 클라이언트는 모두 이렇게 판단하고, 11장의 블로킹 클라이언트도 그렇다.
 그것을 받아들일 수 없는 프로그램을 위해 `no_connection_reuse`가 있다.)
 
+`retry_unsent`는 횟수이고 기본값은 0이다. 서버가 처리했을 리 없는 요청을 클라이언트가 스스로 다시
+시작하게 한다. HTTP/1.1에서는 그런 경우가 하나뿐이고 좁다: 연결이 만들어진 뒤, 요청이 조금도 건네지기
+전에 잃은 경우이며, 실제로는 TLS를 합의하는 도중에 사라지는 서버다. 그런 요청은 설정이 없으면
+`PROVEN_ERR_RESET`으로 끝나고, 설정이 있으면 그 횟수만큼 새 연결에서 다시 시작되며 시도마다
+`connect_timeout_ms`가 따로 주어진다. 조금이라도 보낸 요청은 다시 시작하지 않고, 본문을 조각으로 쓰는
+요청도 그렇다. (위에서 말한, 보관한 연결에서 다시 보내는 것은 설정이 필요 없고 횟수에 들지 않는다.
+HTTP/2에서는 이 설정이 더 많은 경우를 다룬다: 17장.)
+
 `no_connection_reuse`는 연결에 관한 옛 동작을 돌려준다 - 요청마다 `Connection: close`, 응답이 끝나면
 연결을 닫는다 - 그러나 상한이 없던 것까지 돌려주지는 않는다: 한 오리진에 여전히 한 번에 여섯이다.
 
@@ -1025,6 +1033,7 @@ void *proven_http_event_request_user(const proven_http_event_request_t *request)
 | `max_connections_per_origin` | HTTP/1.1: 한 오리진으로 동시에 둘 수 있는 연결 수, 바쁜 것과 한가한 것 합쳐. 넘는 요청은 기다린다. | 6 |
 | `max_kept_connections` | HTTP/1.1: 클라이언트 전체에서 보관하는 한가한 연결 수. 이 표의 다른 0과 마찬가지로 0은 기본값이고, 하나도 보관하지 않게 하는 것은 `no_connection_reuse`다. (v0.36.0에서는 `max_idle_connections`였다. 그것은 11장 클라이언트의 필드 이름이고 거기서 0은 하나도 보관하지 않는다는 뜻이라, 이제 두 필드는 이름을 같이 쓰지 않는다.) | 8 |
 | `no_connection_reuse` | HTTP/1.1: 요청마다 `Connection: close`, 연결을 보관하지 않는다. | 꺼짐 |
+| `retry_unsent` | 서버가 처리하지 않은 요청(HTTP/2: `PROVEN_ERR_AGAIN`, HTTP/1.1: 조금도 보내기 전에 잃은 것)을 클라이언트가 스스로, 알리지 않고 곧바로 다시 보내는 횟수. 본문을 조각으로 쓰는 요청과 `on_response` 뒤는 제외. | 0: 하지 않음 |
 
 테스트 스위트가 이 프로그램을 컴파일하고 실행한다:
 

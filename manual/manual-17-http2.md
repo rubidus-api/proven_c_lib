@@ -1177,7 +1177,8 @@ limit is reached. A waiting request holds a copy of what it was started with. At
 **What `on_done` says** is what it said, with two more answers. `PROVEN_ERR_AGAIN`, for a
 request that an HTTP/2 server did not act on - it said goodbye first, or refused the
 stream, or the connection was lost before the request was sent. Such a request may be
-started again, whatever its method; the client does not do so by itself.
+started again, whatever its method; the client does not do so by itself unless
+`retry_unsent` says how many times it may (below).
 `PROVEN_ERR_UNSUPPORTED`, for a request to a server in the clear that turned out not to
 speak HTTP/2 (`http2_cleartext`, above): not acted on either, and not worth starting again.
 `PROVEN_ERR_RESET` still means "it may have been acted on". Over TLS there is no
@@ -1297,9 +1298,27 @@ int main(void) {
   it is the requests ahead of it that are being timed.
 - **Pause holds at most one window**, as on the server: the client stops telling the server
   that it has consumed, and the server stops sending.
-- **`PROVEN_ERR_AGAIN` is not retried for you.** A request with a body written in pieces
-  could not be, and a client that retries only some requests is harder to reason about than
-  one that retries none.
+- **`PROVEN_ERR_AGAIN` is not retried for you, unless you ask.** `retry_unsent` is a number:
+  how many times the client itself puts to the server again a request that would end that
+  way - one behind a goodbye, one whose stream was refused, one waiting on a connection that
+  was lost. It goes on the same connection when one stream was refused and the connection
+  goes on, and otherwise on another for the same origin, which is made if there is none;
+  requests that move together keep their order; you are told nothing of the try that
+  failed, and `on_done` comes once, for the last. Zero, the default, is none: the caller
+  decides. What the setting does not cover, and what it costs:
+  - **Not a request whose body is written in pieces** - the client does not have the pieces
+    to send again - **and not after `on_response`**: you have seen an answer begin.
+  - **Not `PROVEN_ERR_UNSUPPORTED`**, which would end the same way again, **nor
+    `PROVEN_ERR_RESET`**, which the server may have acted on, nor a time limit.
+  - **At once, with no delay.** A server that refuses a stream because it is busy is asked
+    again in the same moment; a small number is a few moments. A program that wants to wait
+    between tries leaves the setting at zero and starts the request again itself.
+  - **The time limits are each try's**: a request may take `connect_timeout_ms` or
+    `response_timeout_ms` once for every try it has.
+  - **A body held in memory stays in memory until the response begins**, not only until it
+    has been sent.
+  - **A try that fails for another reason ends the request with that reason.** If the new
+    connection cannot be made, `on_done` says `PROVEN_ERR_REFUSED`, not `PROVEN_ERR_AGAIN`.
 - **One connection is one point of failure.** When it ends, every request on it ends with
   it - `PROVEN_ERR_AGAIN` for those not yet sent, `PROVEN_ERR_RESET` for the others (and
   `PROVEN_ERR_UNSUPPORTED` for all of them when, in the clear, it never was HTTP/2).
@@ -1327,8 +1346,10 @@ announce a length it does not carry.
 
 - **HTTP/2 in the blocking server and the blocking client** of Chapter 11: one thread to a
   connection suits one exchange at a time, which is HTTP/1.1.
-- **A retry of what the server did not act on**: the event-driven client reports it
-  (`PROVEN_ERR_AGAIN`) and leaves the retrying to its caller.
+- **A retry with a delay, or of anything but what the server did not act on**: the
+  event-driven client reports such a request (`PROVEN_ERR_AGAIN`) and, when `retry_unsent`
+  is set, puts it again at once, so many times. Waiting between tries, and trying again
+  what may have been acted on, are its caller's.
 - **Trailers in the event-driven server**, for either protocol.
 - **Extended CONNECT** (RFC 8441, WebSocket over HTTP/2) and the `SETTINGS` it needs.
 - **Server push**: `PUSH_PROMISE` is recognised so that it can be refused.

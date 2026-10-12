@@ -96,6 +96,7 @@ struct proven_http_event_request {
     proven_u64 send_left;              /* request-body bytes still promised; LENGTH_UNKNOWN when chunked */
     cl_dec_t *dec;                     /* the response body is decoded on its way to on_body */
     proven_u32 interim;
+    proven_u32 tries;                  /* times it was begun again on a new connection, none of it having been sent (retry_unsent) */
     proven_http_method_t method;
     proven_u16 port;
     proven_u8 host_len;
@@ -106,6 +107,7 @@ struct proven_http_event_request {
     bool keep;                         /* the response allows the connection to be used again */
     bool stale;                        /* on a connection that carried a request before, with nothing come back on it yet: it may have been dead when it was given */
     bool keep_out;                     /* ... and so `out` is kept after it is sent, for it may have to be sent again */
+    bool sent;                         /* some of the request has been given to its connection */
     bool no_resend;                    /* ended by its caller or its client: not to be sent again */
 };
 
