@@ -71,7 +71,7 @@ typedef struct {
     proven_u16 status;
     proven_http_header_t headers[4];
     proven_size_t header_count;
-    bool compress, stream, known, cut, late;
+    bool compress, stream, known, cut, late, flush;
     const proven_byte_t *body;
     proven_size_t total, step;
     char peer[16], accept[80];
@@ -82,6 +82,7 @@ typedef struct {
  *   /s/N  compress asked, streamed with its length             /u/N  streamed with no length
  *   /x/N  compress asked, N bytes that do not compress         /n/N  the same, streamed (the megabyte of them over and over)
  *   /v/I  vector I under its Content-Encoding, in one respond  /w/I  streamed a byte a write
+ *   /f/N  compress asked, N bytes streamed, a flush, and - when the test says go - N more
  *   /own /204 /range /206 /vary /short /late: see below
  * Every answer says which port the request came from and what Accept-Encoding it carried.
  */
@@ -99,10 +100,11 @@ static void plan_for(const proven_http_request_t *req, proven_net_addr_t peer, p
     p->headers[p->header_count++] = (proven_http_header_t){ PROVEN_LIT("X-Accept"), sv(p->accept) };
     proven_size_t n = strlen(path) > 3 ? (proven_size_t)atol(path + 3) : 0;
     p->body = g_text;
-    if (path[1] != '\0' && path[2] == '/' && strchr("rpsuxn", path[1])) {
+    if (path[1] != '\0' && path[2] == '/' && strchr("rpsuxnf", path[1])) {
         p->total = n;
         p->compress = path[1] != 'p';
-        p->stream = path[1] == 's' || path[1] == 'u' || path[1] == 'n';
+        p->stream = path[1] == 's' || path[1] == 'u' || path[1] == 'n' || path[1] == 'f';
+        p->flush = path[1] == 'f';
         p->known = path[1] == 's';
         if (path[1] == 'x' || path[1] == 'n') p->body = g_noise;
     } else if ((path[1] == 'v' || path[1] == 'w') && path[2] == '/' && n < VECTOR_COUNT) {
@@ -144,6 +146,9 @@ static void plan_for(const proven_http_request_t *req, proven_net_addr_t peer, p
     }
 }
 
+static atomic_bool g_go;                   /* /f: the test has seen the first half */
+static atomic_int g_flush_bad;             /* a flush that did not answer as it should */
+
 /* The blocking server's handler. */
 static void blocking_handler(void *ctx, proven_http_exchange_t *x) {
     (void)ctx;
@@ -157,6 +162,13 @@ static void blocking_handler(void *ctx, proven_http_exchange_t *x) {
     proven_u64 length = p.known ? (p.cut ? (proven_u64)p.total * 10 : p.total) : PROVEN_HTTP_LENGTH_UNKNOWN;
     if (proven_http_exchange_begin(x, p.status, p.headers, p.header_count, length) != PROVEN_OK) return;
     if (p.late) proven_http_exchange_compress(x);
+    if (p.flush) {
+        /* The first half, handed over; the second when the test has seen the first arrive. */
+        if (proven_http_exchange_write(x, (proven_mem_view_t){ .ptr = p.body, .size = p.total }) != PROVEN_OK || proven_http_exchange_flush(x) != PROVEN_OK) return;
+        for (int i = 0; i < 4000 && !atomic_load(&g_go); ++i) proven_time_sleep(5);
+        (void)proven_http_exchange_write(x, (proven_mem_view_t){ .ptr = p.body + p.total, .size = p.total });
+        return;
+    }
     for (proven_size_t at = 0; at < p.total; at += p.step) {
         proven_size_t n = p.total - at < p.step ? p.total - at : p.step;
         if (proven_http_exchange_write(x, (proven_mem_view_t){ .ptr = p.body + at % MIB, .size = n }) != PROVEN_OK) return;
@@ -172,6 +184,7 @@ typedef struct {
     proven_http_stream_t *stream;
     const proven_byte_t *body;
     proven_size_t total, step, sent;
+    proven_loop_timer_t timer;         /* /f: looks for the test's word */
 } served_t;
 
 static proven_size_t g_most_buffered;
@@ -191,10 +204,17 @@ static void served_pump(served_t *a) {
     (void)proven_http_stream_end(a->stream);
 }
 
+static void flushed_go(void *ctx) {
+    served_t *a = ctx;
+    if (!atomic_load(&g_go)) { proven_loop_timer_set(g_loop, &a->timer, 5, flushed_go, a); return; }
+    served_pump(a);
+}
+
 static void event_request(void *ctx, proven_http_stream_t *s, const proven_http_request_t *req) {
     (void)ctx;
     plan_t p;
     plan_for(req, proven_http_stream_peer(s), &p);
+    if (proven_http_stream_flush(s) != PROVEN_ERR_INVALID_STATE) atomic_fetch_add(&g_flush_bad, 1);     /* no response yet */
     if (p.compress) proven_http_stream_compress(s);
     if (!p.stream) {
         (void)proven_http_stream_respond(s, p.status, p.headers, p.header_count, (proven_mem_view_t){ .ptr = p.body, .size = p.total });
@@ -207,6 +227,17 @@ static void event_request(void *ctx, proven_http_stream_t *s, const proven_http_
     proven_u64 length = p.known ? (p.cut ? (proven_u64)p.total * 10 : p.total) : PROVEN_HTTP_EVENT_LENGTH_UNKNOWN;
     if (proven_http_stream_begin(s, p.status, p.headers, p.header_count, length) != PROVEN_OK) return;
     if (p.late) proven_http_stream_compress(s);
+    if (p.flush) {
+        /* The first half, handed over; the second when the test has seen the first arrive. */
+        proven_result_size_t w = proven_http_stream_write(s, (proven_mem_view_t){ .ptr = p.body, .size = p.total });
+        if (w.err != PROVEN_OK || w.value != p.total || proven_http_stream_flush(s) != PROVEN_OK) { atomic_fetch_add(&g_flush_bad, 1); return; }
+        if (proven_http_stream_flush(s) != PROVEN_OK) atomic_fetch_add(&g_flush_bad, 1);                /* a second with nothing new: nothing, successfully */
+        a->sent = p.total;
+        a->total = 2 * p.total;
+        proven_loop_timer_set(g_loop, &a->timer, 5, flushed_go, a);
+        return;
+    }
+    if (proven_http_stream_flush(s) != PROVEN_OK) atomic_fetch_add(&g_flush_bad, 1);                    /* begun, compressed or not: allowed */
     served_pump(a);
 }
 static void event_writable(void *ctx, proven_http_stream_t *s) {
@@ -217,7 +248,10 @@ static void event_writable(void *ctx, proven_http_stream_t *s) {
 }
 static void event_done(void *ctx, proven_http_stream_t *s, proven_err_t why) {
     (void)ctx; (void)why;
-    free(proven_http_stream_user(s));
+    served_t *a = proven_http_stream_user(s);
+    if (a) proven_loop_timer_cancel(g_loop, &a->timer);
+    if (proven_http_stream_flush(s) != PROVEN_ERR_INVALID_STATE) atomic_fetch_add(&g_flush_bad, 1);     /* over */
+    free(a);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -358,6 +392,23 @@ static void efetch(proven_http_event_client_t *c, const char *method, bool tls, 
     PROVEN_TEST_ASSERT(g->done && g->dones == 1, "and ends, once", "Check cl_decode and cl_process in src/proven/http_event_client.c.");
 }
 static void eget(proven_http_event_client_t *c, bool tls, proven_u16 port, const char *path, got_t *g) { efetch(c, "GET", tls, port, path, NULL, 0, false, g); }
+
+/* A compressed response that is flushed in the middle: the first half must reach the client
+ * while the server holds the second back, which it does until told here. */
+static void flushed_response(proven_http_event_client_t *c, bool tls, proven_u16 port, const char *server) {
+    static got_t g;
+    memset(&g, 0, sizeof g);
+    atomic_store(&g_go, false);
+    proven_http_event_request_options_t o = { .method = sv("GET"), .url = url_at(tls, port, "/f/3000"), .on = { e_response, e_body, NULL, e_done }, .ctx = &g };
+    PROVEN_TEST_ASSERT(proven_http_event_client_start(c, &o, &g.request) == PROVEN_OK, "a request for a response that is flushed halfway", server);
+    proven_net_deadline_t until = proven_net_deadline_in(10000);
+    while (g.size < 3000 && !g.done && proven_time_monotonic_now() < until) (void)proven_loop_poll(g_loop, proven_net_deadline_in(10));
+    PROVEN_TEST_ASSERT(g.size == 3000 && !g.done && memcmp(g_got, g_text, 3000) == 0 && strcmp(g.encoding, "gzip") == 0,
+        "everything written before the flush reaches the client, decoded, while the response is still open", "Check proven_http_stream_flush, proven_http_event_h2_flush_ and proven_http_exchange_flush: a sync flush of the compressor, and what comes out sent.");
+    atomic_store(&g_go, true);
+    (void)spin_until(&g.done, 20000);
+    PROVEN_TEST_ASSERT(g.done && g.err == PROVEN_OK && g.size == 6000 && memcmp(g_got, g_text, 6000) == 0, "and the rest follows: one gzip stream, whole", server);
+}
 
 /* A raw socket: send `request`, and read until the server closes. The loop is turned
  * meanwhile, since the server may be the one that lives on it. */
@@ -797,6 +848,7 @@ int main(void) {
     {
         compressed_responses(fetch_event, edecoding, false, bat.port);
         decoded_vectors(fetch_event, edecoding, bat.port);
+        flushed_response(edecoding, false, bat.port, "the blocking server");
 
         until_close(fetch_event, edecoding);
 
@@ -838,6 +890,8 @@ int main(void) {
         g_most_buffered = 0;
         g_writable_calls = 0;
         compressed_responses(fetch_event, edecoding, tls != 0, eat.port);
+        flushed_response(edecoding, tls != 0, eat.port, "the event-driven server");
+        PROVEN_TEST_ASSERT(atomic_load(&g_flush_bad) == 0, "a flush before a response or after its end is refused; one with nothing held back does nothing, successfully", "Check the state test at the top of proven_http_stream_flush.");
 
         /* Bytes that do not compress, to a client that stops reading for a while: the queue
          * fills, writes are refused, and on_writable brings the rest. */

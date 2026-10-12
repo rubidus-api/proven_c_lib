@@ -723,6 +723,7 @@ int main(void) {
 |---|---|---|
 | `proven_http_exchange_compress(x)` | Ask that this response be compressed. Before `respond` or `begin`; afterwards it does nothing. | none. |
 | `proven_http_stream_compress(stream)` | The same for the event-driven server: in `on_request` or later, before the response begins. | none. |
+| `proven_http_exchange_flush(x)`, `proven_http_stream_flush(stream)` | Hand over what a compressed response holds back; the response goes on. For a response that is not being compressed: nothing, successfully. | `proven_err_t`: `INVALID_STATE` before the response begins or after it ends; otherwise as a write. |
 | `compress_level` (both server configurations) | 1 (fastest) to 9 (smallest); -1 stores without compressing. Zero is 6. Section 4 has the measurements. | `INVALID_ARG` from `create` outside that range. |
 | `compress_window_bits` (both) | 9 to 15: the memory a streamed response holds while it is written (section 4's table). Zero is 15. | the same. |
 | `decompress` (both client configurations) | Send `Accept-Encoding: gzip` and decode `gzip` and `deflate` bodies. | - |
@@ -737,10 +738,13 @@ int main(void) {
   through its length alone - whether the term matched part of the token. TLS does not help;
   it hides bytes, not sizes. This is why the server has no "compress everything" setting:
   the call is per response because the judgement is.
-- **A streamed, compressed response does not arrive piece by piece.** What you write may sit
-  in the compressor until more is written or the response ends. Do not ask for compression
-  of an event stream ([Chapter 10](manual-10-http.md), section 13) or anything else a client
-  must see as it happens.
+- **A streamed, compressed response does not arrive piece by piece unless you flush it.**
+  What you write may sit in the compressor until more is written or the response ends. For an
+  event stream ([Chapter 10](manual-10-http.md), section 13) or anything else a client must
+  see as it happens, call `proven_http_exchange_flush` or `proven_http_stream_flush` after
+  each piece: what was written so far then leaves in a form the client can read at once. A
+  flush costs a few bytes and some of the compression, so flush where a reader is waiting
+  and not after every write - or do not compress such a response at all.
 - **A compressed response of a different size needs a different validator.** If you send an
   `ETag`, the compressed and the plain response are two representations; give them different
   tags, or a cache may match one against the other. The server does not rewrite yours.

@@ -325,6 +325,7 @@ proven_size_t proven_http_stream_buffered(const proven_http_stream_t *stream);
 |---|---|
 | `proven_http_stream_respond`, `proven_http_stream_begin` | `proven_err_t`: 응답이 이미 시작되었거나 스트림이 끝났으면 `INVALID_STATE`. 상태가 200-999 밖이거나 서버가 직접 쓰는 헤더가 있으면 `INVALID_ARG`. 응답 헤드가 `max_head_bytes`에 들어가지 않으면 `OUT_OF_BOUNDS`. `NOMEM`. |
 | `proven_http_stream_write` | `proven_result_size_t`: 받은 바이트 수. `begin` 전, `end` 후, 또는 스트림이 끝났으면 `INVALID_STATE`. 약속한 `Content-Length`를 넘으면 `OUT_OF_BOUNDS`. |
+| `proven_http_stream_flush` | `proven_err_t`: 압축 중인 응답이 붙들고 있는 것을 내보낸다(16장 5절). 다른 응답에는 아무 일도 하지 않는다. `begin` 전, `end` 후, 또는 스트림이 끝났으면 `INVALID_STATE`. 그러다 연결이 끝났으면 `RESET`. |
 | `proven_http_stream_end` | `proven_err_t`: 응답이 시작되지 않았거나 이미 끝났으면 `INVALID_STATE`. 약속보다 적게 썼으면 `INVALID_FORMAT` - 그때 연결은 닫힌다. 클라이언트가 모자란 본문을 온전한 것으로 받아들이지 못하게 하기 위해서다. |
 | `proven_http_stream_abort` | 없음. 연결은 곧바로 닫히고 `on_done`이 `PROVEN_ERR_RESET`과 함께 불린다. |
 | `proven_http_stream_buffered` | `proven_size_t`: 이 연결을 위해 붙들고 있고 클라이언트가 아직 받지 않은 응답 바이트. |
@@ -694,6 +695,7 @@ HTTP 본문과 다른 점이다. 거기의 쓰기는 몇 바이트를 받았는�
 | `proven_ws_stream_pause`, `proven_ws_stream_resume` | 없음. 메시지 전달과 연결 읽기를 멈추고 다시 시작한다. |
 | `proven_ws_stream_buffered` | `proven_size_t`: 클라이언트를 위해 큐에 있고 아직 받아 가지 않은 바이트. |
 | `proven_ws_stream_compressed` | `bool`: `compress`를 켰고 클라이언트가 동의했는가. |
+| `proven_ws_stream_set_compress` | 없음. 압축에 합의한 연결에서, 이제부터 보내는 메시지를 압축할지(12장 9절). |
 
 **어떻게 끝나는가.** `on_closed`는 정확히 한 번 불리고, 받는 값이 경위를 말한다:
 

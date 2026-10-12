@@ -59,6 +59,7 @@ struct proven_ws_stream {
     bool closed : 1, close_sent : 1, in_message : 1, want_writable : 1, pinged : 1, paused : 1;
     bool deflate : 1;                            /* permessage-deflate was agreed: a ws_z_t follows this struct */
     bool raw_paused : 1;                         /* the connection underneath was told to stop reading */
+    bool plain : 1;                              /* proven_ws_stream_set_compress(false): messages that begin now go as they are */
 };
 
 /* What a connection that agreed permessage-deflate holds besides: allocated behind the struct
@@ -441,7 +442,7 @@ proven_err_t proven_ws_stream_send_piece(proven_ws_stream_t *ws, bool text, prov
         /* A message begins: is it compressed? Not when it is whole and too short to gain, and
          * not when there is no memory for a compressor - then it goes as it is. */
         if (z->zip) { proven_deflate_destroy(z->zip); z->zip = (void *)0; }
-        bool worth = !(last && data.size < PROVEN_WS_DEFLATE_MIN);
+        bool worth = !ws->plain && !(last && data.size < PROVEN_WS_DEFLATE_MIN);
         if (worth && proven_ws_deflate_begin_(ws->alloc, z->level, z->window_bits, last ? data.size : 0, &z->zip) != PROVEN_OK) z->zip = (void *)0;
         z->zip_tail_len = 0;
         z->zip_begun = false;
@@ -548,6 +549,10 @@ void proven_ws_stream_resume(proven_ws_stream_t *ws) {
 }
 
 bool proven_ws_stream_compressed(const proven_ws_stream_t *ws) { return ws && ws->deflate; }
+
+void proven_ws_stream_set_compress(proven_ws_stream_t *ws, bool on) {
+    if (ws) ws->plain = !on;
+}
 
 void proven_ws_stream_set_user(proven_ws_stream_t *ws, void *user) { if (ws) ws->user = user; }
 void *proven_ws_stream_user(const proven_ws_stream_t *ws) { return ws ? ws->user : (void *)0; }

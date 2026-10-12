@@ -365,6 +365,12 @@ static proven_err_t hp_string(hp_run_t *r, proven_u8str_view_t *out) {
 proven_err_t proven_hpack_decode(proven_hpack_decoder_t *d, proven_mem_view_t block,
                                  proven_http_header_t *headers, proven_size_t header_cap,
                                  proven_mem_mut_t scratch, proven_size_t max_list_bytes, proven_size_t *count) {
+    return proven_hpack_decode_marked(d, block, headers, (void *)0, header_cap, scratch, max_list_bytes, count);
+}
+
+proven_err_t proven_hpack_decode_marked(proven_hpack_decoder_t *d, proven_mem_view_t block,
+                                        proven_http_header_t *headers, bool *never_indexed, proven_size_t header_cap,
+                                        proven_mem_mut_t scratch, proven_size_t max_list_bytes, proven_size_t *count) {
     if (count) *count = 0;
     if (!d || !count || (block.size > 0 && !block.ptr) || (header_cap > 0 && !headers) || (scratch.size > 0 && !scratch.ptr)) return PROVEN_ERR_INVALID_ARG;
     if (d->failed) return PROVEN_ERR_INVALID_FORMAT;
@@ -378,7 +384,7 @@ proven_err_t proven_hpack_decode(proven_hpack_decoder_t *d, proven_mem_view_t bl
     while (r.pos < block.size) {
         proven_byte_t b = block.ptr[r.pos];
         proven_u8str_view_t name = { 0 }, value = { 0 };
-        bool insert = false;
+        bool insert = false, never = false;
         /* Once the list is over a limit nothing more is given out, but the block is read to
          * its end so that the table learns what it must: each field is then worked on at the
          * start of the scratch. */
@@ -415,6 +421,7 @@ proven_err_t proven_hpack_decode(proven_hpack_decoder_t *d, proven_mem_view_t bl
             /* A literal: with indexing (01), without (0000), or never indexed (0001). */
             unsigned prefix = (b & 0x40) != 0 ? 6u : 4u;
             insert = (b & 0x40) != 0;
+            never = (b & 0xf0) == 0x10;
             proven_u64 index = 0;
             if (!hp_int(block, &r.pos, prefix, &index)) goto fail;
             if (index == 0) {
@@ -440,7 +447,10 @@ proven_err_t proven_hpack_decode(proven_hpack_decoder_t *d, proven_mem_view_t bl
         }
         list += (proven_u64)name.size + value.size + PROVEN_HPACK_ENTRY_OVERHEAD;
         if ((max_list_bytes != 0 && list > max_list_bytes) || n == header_cap) r.over = true;
-        if (!r.over) headers[n++] = (proven_http_header_t){ .name = name, .value = value };
+        if (!r.over) {
+            if (never_indexed) never_indexed[n] = never;
+            headers[n++] = (proven_http_header_t){ .name = name, .value = value };
+        }
         continue;
 
     no_room:

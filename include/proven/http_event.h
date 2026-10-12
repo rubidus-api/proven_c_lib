@@ -159,9 +159,9 @@ void proven_http_event_server_stop_listening(proven_http_event_server_t *server)
  * With proven_http_stream_begin the body leaves chunked whatever length was given (the length
  * is still what you must write). proven_http_stream_write takes input while the compressed
  * output held for the connection is under its limit, and **what it takes may wait inside the
- * compressor** until more is written or the response ends: do not ask for a response that the
- * client must see piece by piece, such as an event stream. proven_http_stream_buffered counts
- * compressed bytes.
+ * compressor** until more is written or the response ends. For a response that the client
+ * must see piece by piece, such as an event stream, call proven_http_stream_flush after each
+ * piece - or do not compress it. proven_http_stream_buffered counts compressed bytes.
  */
 void proven_http_stream_compress(proven_http_stream_t *stream);
 
@@ -206,6 +206,24 @@ proven_err_t proven_http_stream_begin(proven_http_stream_t *stream, proven_u16 s
  */
 [[nodiscard]]
 proven_result_size_t proven_http_stream_write(proven_http_stream_t *stream, proven_mem_view_t data);
+
+/**
+ * @brief Hand over what a compressed response holds back: everything written so far becomes
+ *        readable by the client, and the response goes on.
+ *
+ * Only a response being compressed holds anything back (see proven_http_stream_compress);
+ * for any other this does nothing, successfully. It is what makes a compressed response that
+ * the client must see piece by piece possible: write an event, flush. Each flush costs a few
+ * bytes and some of the compression, so flush where a reader is waiting and not after every
+ * write. What comes out is queued whatever the output limit - no more than the compressor
+ * held, which is bounded by its window and not by what you wrote.
+ *
+ * @return PROVEN_ERR_INVALID_STATE before proven_http_stream_begin, after
+ *         proven_http_stream_end, or when the stream is over; PROVEN_ERR_RESET when the
+ *         connection or the stream ended over it.
+ */
+[[nodiscard]]
+proven_err_t proven_http_stream_flush(proven_http_stream_t *stream);
 
 /**
  * @brief Finish the response. `on_done` follows when everything has been handed to the

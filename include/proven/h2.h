@@ -302,7 +302,7 @@ typedef enum {
     PROVEN_H2_EVENT_TRAILERS,              /**< trailer fields: the peer's side of the stream is over */
     PROVEN_H2_EVENT_STREAM_RESET,          /**< the stream is over before its end: the peer reset it, broke a rule on it, or said goodbye without acting on it (PROVEN_H2_REFUSED_STREAM: safe to send again elsewhere). `code` says which. PROVEN_H2_NO_ERROR from a server: the response is complete and the rest of the request is not wanted */
     PROVEN_H2_EVENT_STREAM_WRITABLE,       /**< a send that was cut short can go on */
-    PROVEN_H2_EVENT_GOAWAY,                /**< the peer will take no new stream; those above `last_stream_id` were not acted on */
+    PROVEN_H2_EVENT_GOAWAY,                /**< the peer will take no new stream; those above `last_stream_id` were not acted on. `data` is the text it sent with that, if any */
     PROVEN_H2_EVENT_PONG,                  /**< the answer to proven_h2_conn_ping; `data` is the eight bytes */
     PROVEN_H2_EVENT_CLOSED                 /**< the connection is over, and with it every stream still open - they get no event of their own. `code` says why: PROVEN_H2_NO_ERROR after a goodbye from either side once the last stream has ended. Send what is pending and close */
 } proven_h2_event_kind_t;
@@ -318,7 +318,7 @@ typedef struct {
     proven_u16 status;                     /**< HEADERS on a client */
     const proven_http_header_t *fields;    /**< HEADERS on a client, TRAILERS: the ordinary fields */
     proven_size_t field_count;
-    proven_mem_view_t data;                /**< DATA: the piece, inside the buffer you fed. PONG: the eight bytes */
+    proven_mem_view_t data;                /**< DATA: the piece, inside the buffer you fed. PONG: the eight bytes. GOAWAY: the frame's debug text - its first 256 bytes, empty when there was none or no memory for it; bytes from the peer, for a log and not for a decision */
     proven_u32 code;                       /**< STREAM_RESET, GOAWAY, CLOSED: a proven_h2_error_t, or a code this library does not know */
     proven_u32 last_stream_id;             /**< GOAWAY */
 } proven_h2_event_t;
@@ -427,6 +427,18 @@ proven_result_size_t proven_h2_conn_send_data(proven_h2_conn_t *conn, proven_u32
  *  @return as proven_h2_conn_submit_response. */
 [[nodiscard]]
 proven_err_t proven_h2_conn_send_trailers(proven_h2_conn_t *conn, proven_u32 stream_id, const proven_http_header_t *headers, proven_size_t count);
+
+/**
+ * @brief Mark fields of the **next** header list this connection is given - by
+ *        proven_h2_conn_submit_request, proven_h2_conn_submit_response or
+ *        proven_h2_conn_send_trailers - as ones whose values no one may remember: they are
+ *        sent in the form that tells every hop never to index them (see proven_hpack_encode),
+ *        as `authorization` and `proxy-authorization` always are.
+ * @param sensitive one flag for each field of that list, pseudo-header fields included, in
+ *        its order. It is read by that call and must be good until then; the marks are
+ *        dropped by that call whether it succeeds or not. Null takes them back.
+ */
+void proven_h2_conn_next_sensitive(proven_h2_conn_t *conn, const bool *sensitive);
 
 /** @brief Give up on a stream: the peer is told with `code` (PROVEN_H2_CANCEL is the usual
  *         one), nothing more is reported for it, and what the peer had already sent on it

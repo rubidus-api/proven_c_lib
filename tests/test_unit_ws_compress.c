@@ -70,8 +70,14 @@ static void blocking_handler(void *ctx, proven_http_exchange_t *x) {
             e = proven_ws_conn_send_part(c, m.text, (proven_mem_view_t){ m.data.ptr, a }, false);
             if (e == PROVEN_OK) e = proven_ws_conn_send_part(c, m.text, (proven_mem_view_t){ m.data.ptr + a, b - a }, false);
             if (e == PROVEN_OK) e = proven_ws_conn_send_part(c, m.text, (proven_mem_view_t){ m.data.ptr + b, m.data.size - b }, true);
-        } else if (m.text) e = proven_ws_conn_send_text(c, (proven_u8str_view_t){ m.data.ptr, m.data.size });
-        else e = proven_ws_conn_send_binary(c, m.data);
+        } else {
+            /* A message that begins with "u:" goes back as it is, and only that one. */
+            const bool as_it_is = m.data.size >= 2 && m.data.ptr[0] == 'u' && m.data.ptr[1] == ':';
+            if (as_it_is) proven_ws_conn_set_compress(c, false);
+            if (m.text) e = proven_ws_conn_send_text(c, (proven_u8str_view_t){ m.data.ptr, m.data.size });
+            else e = proven_ws_conn_send_binary(c, m.data);
+            if (as_it_is) proven_ws_conn_set_compress(c, true);
+        }
         if (e != PROVEN_OK) break;
     }
     (void)proven_ws_conn_close(c, 1000, sv(""));
@@ -156,8 +162,13 @@ static void ev_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
         }
         return;
     }
-    /* Echo each piece as it arrives; one the server refuses is kept until there is room. */
+    /* Echo each piece as it arrives; one the server refuses is kept until there is room. A
+     * message that begins with "u:" goes back as it is, and only that one: the switch is read
+     * when a message begins, so it can be put back at once. */
+    const bool as_it_is = first && piece.size >= 2 && piece.ptr[0] == 'u' && piece.ptr[1] == ':';
+    if (as_it_is) proven_ws_stream_set_compress(ws, false);
     proven_err_t e = proven_ws_stream_send_piece(ws, text, piece, first, last);
+    if (as_it_is && e == PROVEN_OK) proven_ws_stream_set_compress(ws, true);
     if (e != PROVEN_ERR_AGAIN) return;
     atomic_fetch_add(&g_refused, 1);
     p->held = malloc(piece.size ? piece.size : 1);
@@ -175,6 +186,7 @@ static void ev_writable(void *ctx, proven_ws_stream_t *ws) {
     if (p->held) {
         if (proven_ws_stream_send_piece(ws, p->held_text, (proven_mem_view_t){ .ptr = p->held, .size = p->held_len }, p->held_first, p->held_last) != PROVEN_OK) return;
         free(p->held); p->held = NULL;
+        proven_ws_stream_set_compress(ws, true);
         proven_ws_stream_resume(ws);
     }
 }
@@ -474,6 +486,21 @@ int main(void) {
                 total += n;
             }
             PROVEN_TEST_ASSERT(fin && rsv1_once && total < 200, "come back compressed: the bit on the first frame only, and under two hundred bytes in all", server);
+            /* One message the server was told to send as it is, and the one after it. */
+            g_msg[0] = 'u'; g_msg[1] = ':';
+            total = 0; fin = false;
+            bool no_bit = true;
+            PROVEN_TEST_ASSERT(raw_frame(&r, 0x82, g_msg, 10000), "the same bytes, marked for the server to answer as they are", server);
+            for (int frames = 0; !fin && frames < 64; ++frames) {
+                PROVEN_TEST_ASSERT(raw_next(&r, &b0, payload, sizeof payload, &n), "a frame of the answer", server);
+                if ((b0 & 0x40) != 0) no_bit = false;
+                fin = (b0 & 0x80) != 0;
+                total += n;
+            }
+            PROVEN_TEST_ASSERT(fin && no_bit && total == 10000, "come back uncompressed, on a connection that agreed to compression: proven_ws_conn_set_compress and proven_ws_stream_set_compress", server);
+            g_msg[0] = 'x'; g_msg[1] = 'x';
+            total = 0; fin = false;
+            PROVEN_TEST_ASSERT(raw_frame(&r, 0x82, g_msg, 10000) && raw_next(&r, &b0, payload, sizeof payload, &n) && (b0 & 0x4f) == 0x42, "and the message after it is compressed again", server);
             (void)proven_net_close(&r);
 
             PROVEN_TEST_ASSERT(raw_upgrade(&r, port, "/echo", NULL, head, sizeof head) && strstr(head, "Sec-WebSocket-Extensions") == NULL, "with no offer, no extension is named", server);

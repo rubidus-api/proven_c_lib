@@ -907,6 +907,7 @@ int main(void) {
 | `compress` (두 연결 설정) | 확장을 제안한다(클라이언트) 또는 제안받으면 수락한다(서버). | - |
 | `compress_level`, `compress_window_bits` (둘 다) | 16장 4절과 같다: 1부터 9 또는 -1. 9부터 15. 0이면 6과 15. | 범위를 벗어나면 `INVALID_ARG`. |
 | `proven_ws_conn_compressed(conn)`, `proven_ws_stream_compressed(ws)` | 상대가 동의했는가. | `bool`. |
+| `proven_ws_conn_set_compress(conn, on)`, `proven_ws_stream_set_compress(ws, on)` | 이쪽이 이제부터 보내는 메시지를 압축할지. 압축하면 안 되는 한 메시지 - 상대가 고른 텍스트 옆의 비밀, 또는 이미 압축된 바이트 - 를 위한 것: 끄고, 보내고, 켠다. 압축에 합의하지 않은 연결에서는 아무 일도 하지 않는다. | 없음. |
 | `PROVEN_WS_DEFLATE_OFFER` | 클라이언트가 보내는 `Sec-WebSocket-Extensions` 값. | 문자열 리터럴. |
 | `proven_ws_deflate_accept(request, out, &len, &window_bits)` | 요청의 제안 가운데 서버가 고른다. 답을 쓴다. | `proven_err_t`: 맞춰 줄 제안이 없으면 `NOT_FOUND` - 압축 없이 간다. `OUT_OF_BOUNDS`(`PROVEN_WS_DEFLATE_ANSWER_MAX` 바이트면 충분하다). |
 | `proven_ws_check_response_deflate(response, key, offered, &protocol, &deflate)` | 제안을 보낸 클라이언트를 위한 `proven_ws_check_response`. | 같고, 제안하지 않은 형태의 답에는 `INVALID_FORMAT`. |

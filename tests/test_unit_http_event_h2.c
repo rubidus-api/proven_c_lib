@@ -75,6 +75,23 @@ static void later_fire(void *ctx) {
     if (proven_http_stream_begin(a->stream, 200, plain, 1, a->total) == PROVEN_OK) app_pump(a);
 }
 static void resume_fire_checked(void *ctx);
+static atomic_bool g_flush_go;
+static atomic_int g_flush_bad;
+static void flush_go_fire(void *ctx) {
+    app_t *a = ctx;
+    if (!atomic_load(&g_flush_go)) { proven_loop_timer_set(g_loop, &a->timer, 5, flush_go_fire, a); return; }
+    app_pump(a);
+}
+static void flush_first_fire(void *ctx) {
+    app_t *a = ctx;
+    static proven_byte_t half[2000];
+    for (proven_size_t i = 0; i < sizeof half; i++) half[i] = pat(i);
+    proven_result_size_t w = proven_http_stream_write(a->stream, (proven_mem_view_t){ half, sizeof half });
+    if (w.err != PROVEN_OK || w.value != sizeof half || proven_http_stream_flush(a->stream) != PROVEN_OK || proven_http_stream_flush(a->stream) != PROVEN_OK) atomic_fetch_add(&g_flush_bad, 1);
+    a->sent = sizeof half;
+    a->total = 2 * sizeof half;
+    proven_loop_timer_set(g_loop, &a->timer, 5, flush_go_fire, a);
+}
 
 static bool path_is(const proven_http_request_t *req, const char *p) { return req->target.size == strlen(p) && memcmp(req->target.ptr, p, req->target.size) == 0; }
 static bool path_starts(const proven_http_request_t *req, const char *p) { return req->target.size >= strlen(p) && memcmp(req->target.ptr, p, strlen(p)) == 0; }
@@ -121,6 +138,13 @@ static void on_request(void *ctx, proven_http_stream_t *s, const proven_http_req
         a->total = (proven_size_t)strtoul(a->path + 6, NULL, 10);
         proven_http_stream_compress(s);
         if (proven_http_stream_begin(s, 200, plain, 1, a->total) == PROVEN_OK) app_pump(a);
+    } else if (path_is(req, "/gzip-flush")) {
+        /* Half of a compressed body, handed over; the other half when the test says. */
+        proven_http_stream_compress(s);
+        if (proven_http_stream_flush(s) != PROVEN_ERR_INVALID_STATE) atomic_fetch_add(&g_flush_bad, 1);
+        /* Written and flushed from a timer: with no read of the connection going on around
+         * the call, nothing but the flush itself sends what it brings out. */
+        if (proven_http_stream_begin(s, 200, plain, 1, PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) == PROVEN_OK) proven_loop_timer_set(g_loop, &a->timer, 30, flush_first_fire, a);
     } else if (path_is(req, "/gzip-whole")) {
         static proven_byte_t body[20000];
         for (proven_size_t i = 0; i < sizeof body; i++) body[i] = pat(i);
@@ -429,6 +453,15 @@ static void cases(proven_tls_config_t *client_tls, const char *how) {
     id = cl_ask(&c, "GET", "/gzip/100000", true);
     PROVEN_TEST_ASSERT(cl_wait(&c, id, 8000) && cl_res(&c, id)->gzip && !cl_res(&c, id)->has_length && cl_res(&c, id)->got > 100 && cl_res(&c, id)->got < 30000 && cl_res(&c, id)->first[0] == 0x1f,
         "a streamed response that asked for it is compressed: gzip, shorter, and no length announced", how);
+    /* A compressed response flushed halfway: what was written reaches the client while the
+     * handler holds the rest back. The gzip header alone is ten bytes. */
+    atomic_store(&g_flush_go, false);
+    id = cl_ask(&c, "GET", "/gzip-flush", true);
+    for (proven_time_t until = proven_time_monotonic_now() + (proven_time_t)8000 * 1000000; cl_res(&c, id)->got < 20 && !cl_res(&c, id)->end && !c.closed && !c.gone && proven_time_monotonic_now() < until;) (void)cl_pump(&c, 20);
+    const proven_size_t before_go = cl_res(&c, id)->got;
+    PROVEN_TEST_ASSERT(before_go >= 20 && !cl_res(&c, id)->end && cl_res(&c, id)->gzip, "what was written before a flush reaches the client while the response is still open", "Check proven_http_event_h2_flush_: a sync flush of the compressor, then s_push and d_pump.");
+    atomic_store(&g_flush_go, true);
+    PROVEN_TEST_ASSERT(cl_wait(&c, id, 8000) && cl_res(&c, id)->end && cl_res(&c, id)->got > before_go && atomic_load(&g_flush_bad) == 0, "and the rest follows when the handler writes it; a flush before the response is refused, a second one does nothing", how);
     id = cl_ask(&c, "GET", "/gzip-whole", true);
     PROVEN_TEST_ASSERT(cl_wait(&c, id, 8000) && cl_res(&c, id)->gzip && cl_res(&c, id)->has_length && cl_res(&c, id)->length == cl_res(&c, id)->got && cl_res(&c, id)->got < 20000,
         "a whole response that asked for it is compressed, with the compressed length", how);

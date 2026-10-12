@@ -148,6 +148,7 @@ typedef struct {
     proven_u32 close_code, reset_id, reset_code, last_headers_id;
     proven_u64 data_bytes;
     proven_err_t err;
+    proven_byte_t text[400]; proven_size_t text_len;      /* of the last GOAWAY */
 } log_t;
 
 static bool g_consume = true;              /* say at once that every DATA piece was consumed */
@@ -160,7 +161,11 @@ static void note(proven_h2_conn_t *c, const proven_h2_event_t *ev, log_t *log) {
         case PROVEN_H2_EVENT_TRAILERS: log->trailers++; break;
         case PROVEN_H2_EVENT_STREAM_RESET: log->resets++; log->reset_id = ev->stream_id; log->reset_code = ev->code; break;
         case PROVEN_H2_EVENT_STREAM_WRITABLE: log->writable++; break;
-        case PROVEN_H2_EVENT_GOAWAY: log->goaways++; break;
+        case PROVEN_H2_EVENT_GOAWAY:
+            log->goaways++;
+            log->text_len = ev->data.size < sizeof log->text ? ev->data.size : sizeof log->text;
+            if (log->text_len > 0) memcpy(log->text, ev->data.ptr, log->text_len);
+            break;
         case PROVEN_H2_EVENT_PONG: log->pongs++; break;
         case PROVEN_H2_EVENT_CLOSED: log->closed++; log->close_code = ev->code; break;
         default: break;
@@ -1339,6 +1344,138 @@ int main(void) {
             proven_h2_conn_destroy(c);
         }
         g_buf.n = 0; g_before = (void *)0;
+    }
+
+    PROVEN_TEST_SECTION("the text of a goodbye", "A GOAWAY frame may carry text that says why. The event carries its first 256 bytes, however the frame arrived.", "Check the RS_TEXT case of h2c_read and h2c_goaway_event.");
+    {
+        proven_h2_config_t cfg = base;
+        static proven_byte_t pay[8 + 300];
+        static const proven_size_t chunks[] = { 1, 7, 1 << 16 };
+        for (proven_size_t i = 0; i < sizeof pay; i++) pay[i] = i < 8 ? (proven_byte_t)(i == 3 ? 1 : 0) : (proven_byte_t)('a' + i % 26);
+        for (proven_size_t k = 0; k < COUNT(chunks); k++) {
+            static const proven_size_t lens[] = { 0, 1, 27, 256, 257, 300 };
+            for (proven_size_t j = 0; j < COUNT(lens); j++) {
+                proven_h2_conn_t *c = opened(&cfg);
+                log_t log = { 0 };
+                proven_u32 id;
+                PROVEN_TEST_ASSERT(proven_h2_conn_submit_request(c, POST, 4, false, &id) == PROVEN_OK, "a request, so that the connection stays", "");
+                g_buf.n = 0;
+                put_frame(&g_buf, PROVEN_H2_GOAWAY, 0, 0, pay, 8 + lens[j]);
+                put_frame(&g_buf, PROVEN_H2_PING, 0, 0, "12345678", 8);          /* what follows the text is read as a frame */
+                feed(c, g_buf.b, g_buf.n, chunks[k], &log);
+                const proven_size_t want = lens[j] < 256 ? lens[j] : 256;
+                PROVEN_TEST_ASSERT(log.err == PROVEN_OK && log.goaways == 1 && log.text_len == want && memcmp(log.text, pay + 8, want) == 0,
+                    "the event carries the text, or its first 256 bytes, and nothing when there is none", "");
+                seen_t seen = { 0 };
+                drain(c, &seen);
+                PROVEN_TEST_ASSERT(seen.pongs == 1 && !log.closed, "and the frame after it is read as a frame", "");
+                proven_h2_conn_destroy(c);
+            }
+        }
+        /* A second GOAWAY with text reuses the memory; one with none clears it. */
+        {
+            proven_h2_conn_t *c = opened(&cfg);
+            proven_u32 id;
+            PROVEN_TEST_ASSERT(proven_h2_conn_submit_request(c, POST, 4, false, &id) == PROVEN_OK, "a request, so that the connection stays", "");
+            log_t log = { 0 };
+            g_buf.n = 0;
+            put_frame(&g_buf, PROVEN_H2_GOAWAY, 0, 0, pay, 8 + 5);
+            feed(c, g_buf.b, g_buf.n, 3, &log);
+            PROVEN_TEST_ASSERT(log.goaways == 1 && log.text_len == 5 && !log.closed, "a first goodbye with five bytes", "");
+            const proven_size_t blocks = g_mem.blocks;
+            g_buf.n = 0;
+            put_frame(&g_buf, PROVEN_H2_GOAWAY, 0, 0, pay, 8 + 9);
+            put_frame(&g_buf, PROVEN_H2_GOAWAY, 0, 0, pay, 8);
+            feed(c, g_buf.b, 9 + 17, 3, &log);
+            PROVEN_TEST_ASSERT(log.goaways == 2 && log.text_len == 9 && g_mem.blocks == blocks, "a second with nine, in the same memory", "");
+            feed(c, g_buf.b + 9 + 17, 17, 3, &log);
+            PROVEN_TEST_ASSERT(log.goaways == 3 && log.text_len == 0, "and a third with none says none", "");
+            proven_h2_conn_destroy(c);
+            /* No memory for the text: the goodbye is reported without it. */
+            c = opened(&cfg);
+            log = (log_t){ 0 };
+            PROVEN_TEST_ASSERT(proven_h2_conn_submit_request(c, POST, 4, false, &id) == PROVEN_OK, "a request", "");
+            g_buf.n = 0;
+            put_frame(&g_buf, PROVEN_H2_GOAWAY, 0, 0, pay, 8 + 9);
+            put_frame(&g_buf, PROVEN_H2_PING, 0, 0, "12345678", 8);
+            g_mem.calls = 0; g_mem.fail_at = 0;
+            feed(c, g_buf.b, g_buf.n, 4, &log);
+            g_mem.fail_at = -1;
+            seen_t seen = { 0 };
+            drain(c, &seen);
+            PROVEN_TEST_ASSERT(log.err == PROVEN_OK && log.goaways == 1 && log.text_len == 0 && seen.pongs == 1, "with no memory for the text the goodbye is reported without it, and the frames stay in step", "");
+            proven_h2_conn_destroy(c);
+        }
+        g_buf.n = 0;
+    }
+
+    PROVEN_TEST_SECTION("fields no one may remember", "proven_h2_conn_next_sensitive marks fields of the next header list: they go out in the never-indexed form, and the marks are for that list only.", "Check h2c_take_sensitive and the three callers of h2c_send_block.");
+    {
+        proven_h2_config_t cfg = base;
+        static const proven_http_header_t KEYED[] = { H(":method", "GET"), H(":scheme", "https"), H(":authority", "example.org"), H(":path", "/"), H("x-api-key", "k-0123456789"), H("x-plain", "remember me") };
+        static const bool marks[6] = { false, false, false, false, true, false };
+        proven_h2_conn_t *c = opened(&cfg);
+        proven_hpack_decoder_t *d = (void *)0;
+        PROVEN_TEST_ASSERT(proven_hpack_decoder_create(g_alloc, 4096, &d) == PROVEN_OK, "a decoder for what the connection sends", "");
+        static proven_http_header_t got[16];
+        static proven_byte_t scratch[4096];
+        bool never[16];
+        proven_u32 id;
+        /* 0: marked. 1: not marked - the marks were for one list. 2: marked, then a list that is refused; 3: the list after that. */
+        for (int round = 0; round < 4; round++) {
+            if (round == 0 || round == 2) proven_h2_conn_next_sensitive(c, marks);
+            if (round == 2) {
+                PROVEN_TEST_ASSERT(proven_h2_conn_submit_request(c, KEYED + 1, 5, true, &id) == PROVEN_ERR_INVALID_ARG, "a list that is refused", "");
+                continue;
+            }
+            PROVEN_TEST_ASSERT(proven_h2_conn_submit_request(c, KEYED, 6, true, &id) == PROVEN_OK, "a request with a key in it", "");
+            proven_mem_view_t out = proven_h2_conn_pending_output(c);
+            proven_size_t count = 0;
+            PROVEN_TEST_ASSERT(out.size > 9 && proven_hpack_decode_marked(d, (proven_mem_view_t){ out.ptr + 9, out.size - 9 }, got, never, 16, (proven_mem_mut_t){ scratch, sizeof scratch }, 0, &count) == PROVEN_OK && count == 6,
+                "what was queued is one header block of six fields", "");
+            proven_h2_conn_output_sent(c, out.size);
+            if (count != 6) break;
+            PROVEN_TEST_ASSERT(!never[0] && !never[1] && !never[2] && !never[3] && !never[5], "no other field is marked", "");
+            if (round == 0) PROVEN_TEST_ASSERT(never[4] && proven_hpack_decoder_table_count(d) == 2, "the marked field is sent never-indexed, and is in no table", "");
+            if (round == 1) PROVEN_TEST_ASSERT(!never[4] && proven_hpack_decoder_table_count(d) == 3, "the next list is not marked: the marks were for one", "");
+            if (round == 3) PROVEN_TEST_ASSERT(!never[4], "nor is the list after one that was refused", "");
+        }
+        proven_h2_conn_next_sensitive(c, marks);
+        proven_h2_conn_next_sensitive(c, (void *)0);
+        PROVEN_TEST_ASSERT(proven_h2_conn_submit_request(c, KEYED, 6, true, &id) == PROVEN_OK, "marks taken back", "");
+        {
+            proven_mem_view_t out = proven_h2_conn_pending_output(c);
+            proven_size_t count = 0;
+            PROVEN_TEST_ASSERT(proven_hpack_decode_marked(d, (proven_mem_view_t){ out.ptr + 9, out.size - 9 }, got, never, 16, (proven_mem_mut_t){ scratch, sizeof scratch }, 0, &count) == PROVEN_OK && count == 6 && !never[4], "mark nothing", "");
+        }
+        proven_hpack_decoder_destroy(d);
+        proven_h2_conn_destroy(c);
+        /* A server's response and its trailers. */
+        cfg.server = true;
+        c = opened(&cfg);
+        PROVEN_TEST_ASSERT(proven_hpack_decoder_create(g_alloc, 4096, &d) == PROVEN_OK, "a decoder", "");
+        g_buf.n = 0;
+        put_get(&g_buf, 1, true);
+        log_t log = { 0 };
+        feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+        g_buf.n = 0;
+        static const proven_http_header_t SET[] = { H(":status", "200"), H("x-token", "t-abcdefgh") };
+        static const proven_http_header_t TR[] = { H("x-signature", "s-abcdefgh") };
+        static const bool second[2] = { false, true }, first[1] = { true };
+        proven_h2_conn_next_sensitive(c, second);
+        PROVEN_TEST_ASSERT(log.headers == 1 && proven_h2_conn_submit_response(c, 1, SET, 2, false) == PROVEN_OK, "a response with a token in it", "");
+        proven_mem_view_t out = proven_h2_conn_pending_output(c);
+        proven_size_t count = 0;
+        PROVEN_TEST_ASSERT(proven_hpack_decode_marked(d, (proven_mem_view_t){ out.ptr + 9, out.size - 9 }, got, never, 16, (proven_mem_mut_t){ scratch, sizeof scratch }, 0, &count) == PROVEN_OK && count == 2 && !never[0] && never[1],
+            "the token is sent never-indexed", "");
+        proven_h2_conn_output_sent(c, out.size);
+        proven_h2_conn_next_sensitive(c, first);
+        PROVEN_TEST_ASSERT(proven_h2_conn_send_trailers(c, 1, TR, 1) == PROVEN_OK, "and trailers", "");
+        out = proven_h2_conn_pending_output(c);
+        PROVEN_TEST_ASSERT(proven_hpack_decode_marked(d, (proven_mem_view_t){ out.ptr + 9, out.size - 9 }, got, never, 16, (proven_mem_mut_t){ scratch, sizeof scratch }, 0, &count) == PROVEN_OK && count == 1 && never[0],
+            "likewise", "");
+        proven_hpack_decoder_destroy(d);
+        proven_h2_conn_destroy(c);
     }
 
     PROVEN_TEST_SECTION("hostile input", "Every beginning of a recorded conversation, and every single-bit change of it, given to a fresh connection of each role.", "A crash or a sanitizer report here is a missing length check in h2c_read or one of the frame handlers.");

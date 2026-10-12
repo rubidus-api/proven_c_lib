@@ -18,6 +18,38 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **`proven_http_stream_flush`** and **`proven_http_exchange_flush`**: hand over what a
+  response being compressed holds back, so that everything written so far reaches the client
+  in a form it can read at once, and the response goes on. In the event-driven server it
+  works for HTTP/1.1 and HTTP/2 alike. A compressed response that the client must see piece
+  by piece - an event stream - was not possible before: what a handler wrote waited in the
+  compressor until more was written or the response ended. For a response that is not being
+  compressed the calls do nothing, successfully.
+- **`proven_ws_conn_set_compress`** and **`proven_ws_stream_set_compress`**: whether the
+  messages this side sends from now on are compressed, on a connection that agreed to
+  `permessage-deflate`. For the message that must not be - a secret beside text the other
+  side chose, or bytes that are compressed already: off, send, on. Read when a message
+  begins; what arrives is not affected.
+- **`proven_h2_conn_next_sensitive`**: mark fields of the next header list given to an
+  HTTP/2 connection, one flag a field, so that they are sent in the form no hop may index -
+  as `authorization` and `proxy-authorization` always were. The marks are for that one list,
+  sent or refused.
+- **`proven_hpack_decode_marked`**: `proven_hpack_decode`, and which fields arrived in the
+  never-indexed form - what something that passes fields on needs in order to send them on
+  the same way.
+- **The text of a GOAWAY frame**: `PROVEN_H2_EVENT_GOAWAY` now carries in `data` the debug
+  text the peer sent with its goodbye - the first 256 bytes of it, kept in memory that is
+  allocated only when such a frame arrives. Bytes from the peer: for a log, not for a
+  decision. The event is reported when the text has been read, so it comes no earlier than
+  before and, for a text split over several reads, later.
+
+### Changed
+
+- `proven_h2_conn_t` is 24 bytes larger (384 bytes for a connection that has only opened, on
+  a 64-bit target): the pointer to the text above, its two counts, and the marks.
+
 ## [0.40.0] - 2026-10-13
 
 ### Added

@@ -288,6 +288,15 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_hpack_encode(c, list, 5, sensitive, (proven_mem_mut_t){ g_block, sizeof g_block }, &second) == PROVEN_OK, "the same list again", "");
         PROVEN_TEST_ASSERT(second == first - 20 + 1 || second < first, "is shorter only by the field that was remembered", "");
         PROVEN_TEST_ASSERT(decode(d, g_block, second, &got) == PROVEN_OK && got == 5 && proven_hpack_decoder_table_count(d) == 1, "and still leaves one entry", "");
+        /* What a proxy needs: which fields came never-indexed, to send them on the same way. */
+        bool never[6] = { false, true, false, true, false, true };
+        PROVEN_TEST_ASSERT(proven_hpack_encode(c, list, 5, sensitive, (proven_mem_mut_t){ g_block, sizeof g_block }, &(proven_size_t){ 0 }) == PROVEN_OK, "a third time", "");
+        second = 0;
+        PROVEN_TEST_ASSERT(proven_hpack_encode(c, list, 5, sensitive, (proven_mem_mut_t){ g_block, sizeof g_block }, &second) == PROVEN_OK
+            && proven_hpack_decode_marked(d, (proven_mem_view_t){ g_block, second }, g_fields, never, 5, (proven_mem_mut_t){ g_scratch, sizeof g_scratch }, 0, &got) == PROVEN_OK && got == 5,
+            "the list decoded with its marks", "");
+        PROVEN_TEST_ASSERT(never[0] && !never[1] && never[2] && !never[3] && never[4] && never[5],
+            "authorization, the flagged field and proxy-authorization are marked; cookie, only not remembered, and the indexed field are not; nothing is written past the fields given out", "");
         proven_hpack_encoder_destroy(c);
         proven_hpack_decoder_destroy(d);
     }

@@ -251,6 +251,18 @@ proven_u8str_view_t proven_ws_conn_close_reason(const proven_ws_conn_t *conn);
 [[nodiscard]]
 bool proven_ws_conn_compressed(const proven_ws_conn_t *conn);
 
+/**
+ * @brief Say whether the messages this side sends **from now on** are compressed, on a
+ *        connection that agreed to compression (on any other this does nothing). They are
+ *        until this is called with false.
+ *
+ * For the message that must not be: one that carries a secret together with text the other
+ * side chose (see above), or one that is compressed already and would only cost time. Turn
+ * it off, send, turn it on again. A message already begun in pieces goes on as it began; what
+ * arrives is not affected - the other side decides that for itself.
+ */
+void proven_ws_conn_set_compress(proven_ws_conn_t *conn, bool on);
+
 /** @brief How many pongs have arrived. Send a ping, receive for a while, and see whether this
  *         moved: that is how a program finds out a silent connection is dead. */
 [[nodiscard]]

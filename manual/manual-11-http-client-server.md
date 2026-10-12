@@ -158,6 +158,7 @@ not been read: that is the handler's choice.
 | `proven_http_exchange_begin(x, status, headers, count, content_length)` | Begin a response whose body follows in pieces. `PROVEN_HTTP_LENGTH_UNKNOWN` when you do not know the length: the body is then sent chunked. | as `respond`. |
 | `proven_http_exchange_write(x, data)` | Write more of that body. | `proven_err_t`: `OUT_OF_BOUNDS` past the length announced; `INVALID_STATE`; `TIMEOUT`, `RESET`. |
 | `proven_http_exchange_end(x)` | Finish it. Optional: returning from the handler does the same. | `proven_err_t`. |
+| `proven_http_exchange_flush(x)` | Hand over what a compressed response holds back (Chapter 16, section 5); nothing for any other. | `proven_err_t`: `INVALID_STATE` before `begin` or after `end`; otherwise as a write. |
 | `proven_http_exchange_compress(x)` | Ask that this response be compressed, if the client accepts gzip. Before the response begins. [Chapter 16](manual-16-compression.md), section 6 - read its cautions before using it. | none. |
 
 ### Cautions, and what goes wrong

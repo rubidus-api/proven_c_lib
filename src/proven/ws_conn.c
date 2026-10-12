@@ -42,6 +42,7 @@ struct proven_ws_conn {
     bool message_compressed;            /* the message being received is compressed */
     bool inflating;                     /* `inflate` holds a decompressor */
     bool zip_begun;                     /* the first frame of the compressed message being sent has left */
+    bool plain;                         /* proven_ws_conn_set_compress(false): messages that begin now go as they are */
     proven_u8 zip_tail_len;
     proven_byte_t zip_tail[4];
     proven_deflate_t *zip;              /* the message being sent goes through this */
@@ -113,7 +114,7 @@ proven_err_t proven_ws_conn_send_part(proven_ws_conn_t *conn, bool text, proven_
     if (conn->deflate && !conn->sending) {
         /* A message begins: is it compressed? Not when it is whole and too short to gain, and
          * not when there is no memory for a compressor - then it goes as it is. */
-        bool worth = !(last && data.size < PROVEN_WS_DEFLATE_MIN);
+        bool worth = !conn->plain && !(last && data.size < PROVEN_WS_DEFLATE_MIN);
         if (worth && proven_ws_deflate_begin_(conn->cfg.alloc, conn->cfg.compress_level, conn->cfg.compress_window_bits,
                                               last ? data.size : 0, &conn->zip) != PROVEN_OK) conn->zip = (void *)0;
         conn->zip_tail_len = 0;
@@ -427,6 +428,7 @@ static proven_err_t wc_open(proven_transport_t transport, bool is_server, proven
     c->inflating = false;
     c->zip_tail_len = 0;
     c->zip_begun = false;
+    c->plain = false;
     c->zip = (void *)0;
     if (deflate && window_bits != 0 && (c->cfg.compress_window_bits == 0 || c->cfg.compress_window_bits > window_bits)) c->cfg.compress_window_bits = window_bits;
     for (proven_size_t i = 0; i < early.size; ++i) c->read_buf[i] = early.ptr[i];
@@ -452,6 +454,10 @@ proven_err_t proven_ws_conn_open(proven_transport_t transport, bool is_server, p
 }
 
 bool proven_ws_conn_compressed(const proven_ws_conn_t *conn) { return conn && conn->deflate; }
+
+void proven_ws_conn_set_compress(proven_ws_conn_t *conn, bool on) {
+    if (conn) conn->plain = !on;
+}
 
 void proven_ws_conn_destroy(proven_ws_conn_t *conn) {
     if (!conn) return;

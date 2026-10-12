@@ -212,6 +212,7 @@ int main(void) {
 | `proven_hpack_encoder_set_peer_table_bytes(enc, n)` | 상대의 한도가 바뀌었다. 다음 블록에서 알린다. | 없음. |
 | `proven_hpack_decoder_create(alloc, max_table_bytes, &dec)` | 상대에게 이만큼의 테이블을 허용하는 디코더. | `proven_err_t`. |
 | `proven_hpack_decode(dec, block, headers, cap, scratch, max_list_bytes, &count)` | 블록 하나를 통째로 디코딩한다. | `proven_err_t`: `OUT_OF_BOUNDS` - 목록이 너무 크거나, 필드가 너무 많거나, 스크래치가 너무 작다. 디코더는 여전히 쓸 수 있다. `INVALID_FORMAT` - HPACK이 아니다. 디코더는 끝났다. |
+| `proven_hpack_decode_marked(dec, block, headers, never_indexed, cap, scratch, max_list_bytes, &count)` | 같은 일을 하고, `never_indexed[i]`가 필드 `i`가 절대 인덱싱하지 말라는 형태로 왔는지 알려 준다. | `proven_hpack_decode`와 같다. |
 | `proven_hpack_decoder_set_max_table_bytes(dec, n)` | 이쪽의 한도가 바뀌었다. 낮췄다면 상대의 다음 블록이 따랐다고 말해야 한다. | 없음. |
 | `proven_hpack_decoder_table_count`, `_table_bytes`, `_table_entry` | 디코더의 테이블을 들여다본다. | 개수. `bool`. |
 | `proven_hpack_huffman_size`, `_huffman_encode`, `_huffman_decode` | 문자열 코드만 따로. | 크기. `proven_err_t`. |
@@ -230,7 +231,9 @@ int main(void) {
 - **비밀은 테이블에 넣지 않는다.** 테이블은 압축 문맥이고, 그 안의 것은 공격자가 영향을 주는 뒤따르는
   블록의 크기로 한 바이트씩 추측될 수 있다. 인코더는 `authorization`과 `proxy-authorization`의 값을
   기억하지 않고, 어느 중간 지점도 기억하지 않도록 표시해서 보낸다. `cookie`와 `set-cookie`도 기억하지
-  않는다. `sensitive`는 여러분이 지목한 필드까지 그렇게 다룬다.
+  않는다. `sensitive`는 여러분이 지목한 필드까지 그렇게 다룬다. 필드를 받아서 넘기는 쪽 - 프록시 - 은
+  어느 필드가 그 표시와 함께 왔는지 `proven_hpack_decode_marked`로 알아내어, 그 표시를 인코더의
+  `sensitive`로 넘긴다.
 - **두 번 같기 어려운 것도 넣지 않는다.** `content-length`, `content-range`, `etag`, `age`,
   `if-none-match`, `if-modified-since`는 이름의 인덱스로 보내고 기억하지 않는다. 새 값마다 테이블에서
   되풀이되는 필드의 자리를 빼앗기 때문이다. (`content-length`가 매번 다른 응답 헤드: 값을 기억하면
@@ -543,7 +546,7 @@ void proven_h2_conn_output_sent(proven_h2_conn_t *conn, proven_size_t n);
 | `PROVEN_H2_EVENT_STREAM_RESET` | 스트림이 끝나기 전에 끝났다: 상대가 리셋했거나, 그 스트림에서 규칙을 어겼거나, 처리하지 않은 채 작별했다 | `stream_id`, `code`, `user` |
 | `PROVEN_H2_EVENT_STREAM_WRITABLE` | 잘렸던 전송을 이어 갈 수 있다 | `stream_id`, `user` |
 | `PROVEN_H2_EVENT_PONG` | `proven_h2_conn_ping`의 답 | `data`: 그 여덟 바이트 |
-| `PROVEN_H2_EVENT_GOAWAY` | 상대가 새 스트림을 받지 않는다 | `code`, `last_stream_id` |
+| `PROVEN_H2_EVENT_GOAWAY` | 상대가 새 스트림을 받지 않는다 | `code`, `last_stream_id`, `data` (함께 보낸 텍스트: 처음 256바이트, 로그용) |
 | `PROVEN_H2_EVENT_CLOSED` | 연결이 끝났고, 모든 스트림도 함께 끝났다. 남은 출력을 보내고 닫는다 | `code` |
 
 이 표에서 세 가지는 다시 볼 만하다.
@@ -842,6 +845,7 @@ int main(void) {
 | `proven_h2_conn_submit_response(conn, stream_id, headers, count, end_stream)` | 서버: 답한다. | `proven_err_t`: `INVALID_ARG`, `NOT_FOUND`, `INVALID_STATE`(이미 답함), `BUSY`, `OUT_OF_BOUNDS`, `NOMEM`. |
 | `proven_h2_conn_send_data(conn, stream_id, data, end_stream)` | 본문 바이트를 보낸다: 갈 수 있는 만큼. | `proven_result_size_t`: 가져간 바이트 수. `NOT_FOUND`, `INVALID_STATE`. |
 | `proven_h2_conn_send_trailers(conn, stream_id, headers, count)` | 트레일러 필드로 이쪽을 끝낸다. | `proven_err_t`, 응답과 같다. |
+| `proven_h2_conn_next_sensitive(conn, sensitive)` | 연결에 다음으로 넘기는 헤더 목록의 필드 - 필드마다 플래그 하나 - 를 절대 인덱싱하지 않도록 표시한다. 표시는 그 목록 하나에만 쓰인다. 보내졌든 거절되었든. | `void`. |
 | `proven_h2_conn_reset(conn, stream_id, code)` | 스트림을 포기한다. | `proven_err_t`: `NOT_FOUND`. |
 | `proven_h2_conn_consumed(conn, stream_id, n)` | DATA를 처리했다고 알린다. | `void`. |
 | `proven_h2_conn_ping(conn, opaque)` | 상대가 있는지 묻는다. | `proven_err_t`: 끝난 뒤에는 `INVALID_STATE`. |

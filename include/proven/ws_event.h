@@ -167,6 +167,18 @@ proven_net_addr_t proven_ws_stream_peer(const proven_ws_stream_t *ws);
 [[nodiscard]]
 bool proven_ws_stream_compressed(const proven_ws_stream_t *ws);
 
+/**
+ * @brief Say whether the messages this side sends **from now on** are compressed, on a
+ *        connection that agreed to compression (on any other this does nothing). They are
+ *        until this is called with false.
+ *
+ * For the message that must not be: one that carries a secret together with text the other
+ * side chose (see above), or one that is compressed already and would only cost time. Turn
+ * it off, send, turn it on again. A message already begun in pieces goes on as it began; what
+ * arrives is not affected - the other side decides that for itself.
+ */
+void proven_ws_stream_set_compress(proven_ws_stream_t *ws, bool on);
+
 /** @brief Bytes queued for the client and not yet accepted by it. */
 proven_size_t proven_ws_stream_buffered(const proven_ws_stream_t *ws);
 

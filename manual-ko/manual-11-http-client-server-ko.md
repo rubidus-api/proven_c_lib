@@ -153,6 +153,7 @@ keep-alive 연결 이만 개를 쥔 채로도, 하나 더 있는 연결의 요�
 | `proven_http_exchange_begin(x, status, headers, count, content_length)` | 본문이 조각조각 뒤따르는 응답을 시작한다. 길이를 모르면 `PROVEN_HTTP_LENGTH_UNKNOWN`: 본문은 청크로 나간다. | `respond`와 같다. |
 | `proven_http_exchange_write(x, data)` | 그 본문을 더 쓴다. | `proven_err_t`: 알린 길이를 넘으면 `OUT_OF_BOUNDS`. `INVALID_STATE`. `TIMEOUT`, `RESET`. |
 | `proven_http_exchange_end(x)` | 끝낸다. 선택 사항이다: 핸들러에서 돌아가도 같은 일이 일어난다. | `proven_err_t`. |
+| `proven_http_exchange_flush(x)` | 압축 중인 응답이 붙들고 있는 것을 내보낸다(16장 5절). 다른 응답에는 아무 일도 하지 않는다. | `proven_err_t`: `begin` 전이나 `end` 후면 `INVALID_STATE`. 그 밖에는 쓰기와 같다. |
 | `proven_http_exchange_compress(x)` | 클라이언트가 gzip을 받아들이면 이 응답을 압축해 달라고 요청한다. 응답을 시작하기 전에. [16장](manual-16-compression-ko.md) 6절 - 쓰기 전에 그 절의 주의할 점을 읽을 것. | 없음. |
 
 ### 주의사항, 그리고 무엇이 잘못되는가

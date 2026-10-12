@@ -819,6 +819,23 @@ proven_result_size_t proven_http_event_h2_write_(proven_http_stream_t *stream, p
     return alive ? (proven_result_size_t){ .err = PROVEN_OK, .value = done } : (proven_result_size_t){ .err = PROVEN_ERR_RESET, .value = 0 };
 }
 
+proven_err_t proven_http_event_h2_flush_(proven_http_stream_t *stream) {
+    h2s_t *s = h2s_of(stream);
+    if (s->dead || !s->active || !s->response_begun || s->response_ended) return PROVEN_ERR_INVALID_STATE;
+    if (!s->zip) return PROVEN_OK;
+    h2d_t *d = s->d;
+    s_enter(s);
+    d_enter(d);
+    d->calls++;
+    if (!s_zip(s, (void *)0, 0, PROVEN_DEFLATE_FLUSH_SYNC)) s_reset(s, PROVEN_H2_INTERNAL_ERROR, PROVEN_ERR_NOMEM);
+    const bool alive = !s->dead;
+    d_pump(d);
+    d->calls--;
+    d_leave(d);
+    s_leave(s);
+    return alive ? PROVEN_OK : PROVEN_ERR_RESET;
+}
+
 proven_err_t proven_http_event_h2_end_(proven_http_stream_t *stream) {
     h2s_t *s = h2s_of(stream);
     if (s->dead || !s->active || !s->response_begun || s->response_ended) return PROVEN_ERR_INVALID_STATE;

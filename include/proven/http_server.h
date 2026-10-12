@@ -187,8 +187,9 @@ proven_result_size_t proven_http_exchange_read(proven_http_exchange_t *exchange,
  *
  * With proven_http_exchange_begin the body leaves chunked whatever length was given (the
  * length is still what you must write), and **what you write may wait inside the compressor**
- * until more is written or the response ends: do not ask for a response that the client must
- * see piece by piece, such as an event stream.
+ * until more is written or the response ends. For a response that the client must see piece
+ * by piece, such as an event stream, call proven_http_exchange_flush after each piece - or do
+ * not compress it.
  */
 void proven_http_exchange_compress(proven_http_exchange_t *exchange);
 
@@ -234,6 +235,20 @@ proven_err_t proven_http_exchange_begin(proven_http_exchange_t *exchange, proven
  */
 [[nodiscard]]
 proven_err_t proven_http_exchange_write(proven_http_exchange_t *exchange, proven_mem_view_t data);
+
+/**
+ * @brief Hand over what a compressed response holds back: everything written so far is sent
+ *        in a form the client can read at once, and the response goes on.
+ *
+ * Only a response being compressed holds anything back (see proven_http_exchange_compress);
+ * for any other this does nothing, successfully. Each flush costs a few bytes and some of the
+ * compression: flush where a reader is waiting, not after every write.
+ *
+ * @return PROVEN_ERR_INVALID_STATE before begin or after end; otherwise as
+ *         proven_http_exchange_write.
+ */
+[[nodiscard]]
+proven_err_t proven_http_exchange_flush(proven_http_exchange_t *exchange);
 
 /**
  * @brief Finish a response begun with proven_http_exchange_begin.

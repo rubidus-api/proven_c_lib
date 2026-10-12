@@ -333,6 +333,7 @@ whatever the size of the response.
 |---|---|
 | `proven_http_stream_respond`, `proven_http_stream_begin` | `proven_err_t`: `INVALID_STATE` when a response was already begun or the stream is over; `INVALID_ARG` for a status outside 200-999 or a header the server writes itself; `OUT_OF_BOUNDS` when the response head does not fit `max_head_bytes`; `NOMEM`. |
 | `proven_http_stream_write` | `proven_result_size_t`: the bytes taken. `INVALID_STATE` before `begin`, after `end`, or when the stream is over; `OUT_OF_BOUNDS` for more than the `Content-Length` promised. |
+| `proven_http_stream_flush` | `proven_err_t`: hands over what a compressed response holds back (Chapter 16, section 5), and does nothing for any other. `INVALID_STATE` before `begin`, after `end`, or when the stream is over; `RESET` when the connection ended over it. |
 | `proven_http_stream_end` | `proven_err_t`: `INVALID_STATE` when no response was begun or it was already ended; `INVALID_FORMAT` when fewer bytes were written than promised - the connection is then closed, so that the client cannot take a short body for a whole one. |
 | `proven_http_stream_abort` | nothing. The connection is closed at once and `on_done` is called with `PROVEN_ERR_RESET`. |
 | `proven_http_stream_buffered` | `proven_size_t`: response bytes held for this connection that the client has not accepted. |
@@ -715,6 +716,7 @@ than buffered.
 | `proven_ws_stream_pause`, `proven_ws_stream_resume` | nothing. Stop and restart the delivery of messages and the reading of the connection. |
 | `proven_ws_stream_buffered` | `proven_size_t`: bytes queued for the client and not yet accepted by it. |
 | `proven_ws_stream_compressed` | `bool`: whether `compress` was set and the client agreed. |
+| `proven_ws_stream_set_compress` | nothing. Whether the messages sent from now on are compressed, on a connection that agreed to it (Chapter 12, section 9). |
 
 **How it ends.** `on_closed` is called exactly once, and what it is given says how:
 

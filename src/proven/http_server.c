@@ -292,6 +292,14 @@ proven_err_t proven_http_exchange_write(proven_http_exchange_t *exchange, proven
     return sv_send_piece(c, data);
 }
 
+proven_err_t proven_http_exchange_flush(proven_http_exchange_t *exchange) {
+    if (!exchange) return PROVEN_ERR_INVALID_ARG;
+    sv_conn_t *c = &exchange->conn;
+    if (!c->response_begun || c->response_ended) return PROVEN_ERR_INVALID_STATE;
+    if (c->head_only || !c->zip) return PROVEN_OK;     /* nothing is held back: every write has left already */
+    return sv_zip(c, (proven_mem_view_t){ 0 }, PROVEN_DEFLATE_FLUSH_SYNC);
+}
+
 proven_err_t proven_http_exchange_end(proven_http_exchange_t *exchange) {
     if (!exchange) return PROVEN_ERR_INVALID_ARG;
     sv_conn_t *c = &exchange->conn;

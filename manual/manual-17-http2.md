@@ -220,6 +220,7 @@ int main(void) {
 | `proven_hpack_encoder_set_peer_table_bytes(enc, n)` | The peer's limit changed; announced in the next block. | none. |
 | `proven_hpack_decoder_create(alloc, max_table_bytes, &dec)` | A decoder that allows the peer this much table. | `proven_err_t`. |
 | `proven_hpack_decode(dec, block, headers, cap, scratch, max_list_bytes, &count)` | Decode one whole block. | `proven_err_t`: `OUT_OF_BOUNDS` - too large a list, too many fields, too small a scratch; the decoder is still good. `INVALID_FORMAT` - not HPACK; the decoder is finished. |
+| `proven_hpack_decode_marked(dec, block, headers, never_indexed, cap, scratch, max_list_bytes, &count)` | The same, and `never_indexed[i]` says whether field `i` came in the form that must never be indexed. | as `proven_hpack_decode`. |
 | `proven_hpack_decoder_set_max_table_bytes(dec, n)` | This side's limit changed; if lowered, the peer's next block must say it followed. | none. |
 | `proven_hpack_decoder_table_count`, `_table_bytes`, `_table_entry` | Look at the decoder's table. | counts; `bool`. |
 | `proven_hpack_huffman_size`, `_huffman_encode`, `_huffman_decode` | The string code alone. | size; `proven_err_t`. |
@@ -241,7 +242,9 @@ int main(void) {
   be guessed, byte by byte, from the size of later blocks that an attacker influences. The
   encoder never remembers the values of `authorization` and `proxy-authorization` and sends
   them marked so that no hop will; it does not remember `cookie` and `set-cookie`; and
-  `sensitive` extends that to any field you name.
+  `sensitive` extends that to any field you name. Something that passes fields on - a proxy -
+  learns which ones arrived marked from `proven_hpack_decode_marked`, and gives those marks
+  to the encoder as its `sensitive`.
 - **What is seldom the same twice stays out too.** `content-length`, `content-range`, `etag`,
   `age`, `if-none-match` and `if-modified-since` are sent by their name's index and not
   remembered: each new value would take a place in the table from a field that does repeat.
@@ -559,7 +562,7 @@ many it used. Call it again with the rest; `PROVEN_H2_EVENT_NONE` means everythi
 | `PROVEN_H2_EVENT_STREAM_RESET` | The stream is over before its end: the peer reset it, broke a rule on it, or said goodbye without acting on it | `stream_id`, `code`, `user` |
 | `PROVEN_H2_EVENT_STREAM_WRITABLE` | A send that was cut short can go on | `stream_id`, `user` |
 | `PROVEN_H2_EVENT_PONG` | The answer to `proven_h2_conn_ping` | `data`: the eight bytes |
-| `PROVEN_H2_EVENT_GOAWAY` | The peer will take no new stream | `code`, `last_stream_id` |
+| `PROVEN_H2_EVENT_GOAWAY` | The peer will take no new stream | `code`, `last_stream_id`, `data` (the text it sent with that: the first 256 bytes, for a log) |
 | `PROVEN_H2_EVENT_CLOSED` | The connection is over, and every stream with it. Send what is pending, then close | `code` |
 
 Three things about this table are worth a second look.
@@ -866,6 +869,7 @@ int main(void) {
 | `proven_h2_conn_submit_response(conn, stream_id, headers, count, end_stream)` | A server: answer. | `proven_err_t`: `INVALID_ARG`, `NOT_FOUND`, `INVALID_STATE` (already answered), `BUSY`, `OUT_OF_BOUNDS`, `NOMEM`. |
 | `proven_h2_conn_send_data(conn, stream_id, data, end_stream)` | Send body bytes: as many as may go. | `proven_result_size_t`: the bytes taken; `NOT_FOUND`, `INVALID_STATE`. |
 | `proven_h2_conn_send_trailers(conn, stream_id, headers, count)` | End this side with trailer fields. | `proven_err_t`, as a response. |
+| `proven_h2_conn_next_sensitive(conn, sensitive)` | Mark fields of the next header list given to the connection - one flag a field - as never to be indexed. The marks are for that one list, sent or refused. | `void`. |
 | `proven_h2_conn_reset(conn, stream_id, code)` | Give up on a stream. | `proven_err_t`: `NOT_FOUND`. |
 | `proven_h2_conn_consumed(conn, stream_id, n)` | Say that DATA was dealt with. | `void`. |
 | `proven_h2_conn_ping(conn, opaque)` | Ask whether the peer is there. | `proven_err_t`: `INVALID_STATE` after the end. |

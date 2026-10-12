@@ -934,6 +934,7 @@ int main(void) {
 | `compress` (both connection configurations) | Offer the extension (a client) or accept it when offered (a server). | - |
 | `compress_level`, `compress_window_bits` (both) | As in Chapter 16, section 4: 1 to 9 or -1; 9 to 15. Zero: 6, and 15. | `INVALID_ARG` outside those ranges. |
 | `proven_ws_conn_compressed(conn)`, `proven_ws_stream_compressed(ws)` | Whether the other side agreed. | `bool`. |
+| `proven_ws_conn_set_compress(conn, on)`, `proven_ws_stream_set_compress(ws, on)` | Whether the messages this side sends from now on are compressed. For the one that must not be - a secret beside text the other side chose, or bytes compressed already: off, send, on. Nothing on a connection that did not agree to compression. | none. |
 | `PROVEN_WS_DEFLATE_OFFER` | The `Sec-WebSocket-Extensions` value a client sends. | a string literal. |
 | `proven_ws_deflate_accept(request, out, &len, &window_bits)` | A server's choice among the request's offers; writes the answer. | `proven_err_t`: `NOT_FOUND` when no offer can be met - go on without; `OUT_OF_BOUNDS` (`PROVEN_WS_DEFLATE_ANSWER_MAX` bytes are enough). |
 | `proven_ws_check_response_deflate(response, key, offered, &protocol, &deflate)` | `proven_ws_check_response` for a client that offered. | the same, and `INVALID_FORMAT` for an answer in a form that was not offered. |
