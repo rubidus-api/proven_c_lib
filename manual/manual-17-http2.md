@@ -906,6 +906,7 @@ typedef struct {
     /* ... everything Chapter 15 describes ... */
     bool http2;
     proven_size_t max_concurrent_streams;
+    proven_size_t http2_window_bytes;
 } proven_http_event_server_config_t;
 
 int proven_http_stream_protocol(const proven_http_stream_t *stream);
@@ -955,6 +956,7 @@ Both protocols are served on one port, by one handler, at the same time.
 | `max_head_bytes`, `max_headers` | The size of a request's header list as HPACK counts it; more fields than `max_headers` is `431` |
 | `max_body_bytes` | Per request: `413`, sent while the body is still arriving, which tells the client to stop |
 | `max_buffered_output` | What the connection holds for a client that is not reading, **for all its streams together** |
+| `http2_window_bytes` (0: 65,535) | Request-body bytes a client may send on a stream, and on the connection, before the handler has taken them: what a paused request can make the connection hold |
 | `head_timeout_ms` | From the connection's first byte to its first request |
 | `body_timeout_ms` | Silence from one request whose body is owed: that stream is reset, the connection and its other streams go on |
 | `http2_header_table_bytes` (0: 4,096), `http2_no_header_table` | The header compression table in each direction: what an idle connection may come to hold, against how much a repeated field costs to send |

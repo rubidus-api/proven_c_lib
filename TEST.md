@@ -1,4 +1,4 @@
-# proven Test Matrix (v0.38.0)
+# proven Test Matrix (v0.39.0)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -869,6 +869,7 @@ Sub-checks:
 - What an idle connection holds: two hundred HTTP/2 connections that each made one small request hold under 3 KiB each (2,264 bytes measured) with the default header tables and under 2 KiB with `http2_no_header_table`, with one buffer for reading header lists shared by all; closed, everything is returned.
 - The end: a server destroyed with five exchanges open tells each handler once, with `PROVEN_ERR_RESET`.
 - TLS that HTTP/2 may not use (RFC 9113, section 9.2): a client that offers one CBC suite of TLS 1.2 and "h2" - the server ends the connection with `INADEQUATE_SECURITY` and the request reaches no handler; the same configurations with an AEAD suite are served.
+- Turns: a client whose windows are a gigabyte asks for sixteen megabytes and, with it, forty-eight, and reads nothing for 300 ms, so that the server's own output bound is what limits it: the first arrives whole while the second is under way. `http2_window_bytes`: above 2^31-1 refused; a paused request is sent 65,535 bytes by default and 300,000 with the setting, and then no more.
 
 Failure tip: inspect `src/proven/http_event_h2.c` - `d_request` and `d_body` for what arrives, `s_head` and `s_push` for what leaves, `d_pump` for the round and for when `on_writable` may be called, `d_arm` and `h2_on_timer` for time. Which protocol a connection speaks is decided in `ev_process` in `src/proven/http_event.c`; `proven_http_event_raw_offer_` there is what writes.
 
@@ -942,6 +943,7 @@ Sub-checks:
 - `body_timeout_ms` and `write_timeout_ms` over HTTP/2, the test as the server: a response head and three bytes of a body that is not ended; forty-eight megabytes to a server whose windows let them all be sent and which reads nothing. `PROVEN_ERR_TIMEOUT` both times, by the right limit.
 - A connection out of stream numbers, the next number put at the end by an internal call: the last number is used; one more request is `PROVEN_ERR_AGAIN` from the call and the same call made again makes a new connection at once; the old connection is closed when its last request has ended. With a request waiting for a stream when the numbers run out: `PROVEN_ERR_AGAIN` without `retry_unsent`, a new connection and an answer with it.
 - An origin that speaks only HTTP/1.1 (a TLS server that does not offer `h2`): six requests started before that was known, and a seventh whose body is still to be written, are all answered over HTTP/1.1, each with its user pointer, by the objects the caller already held; a later request goes straight to HTTP/1.1.
+- Turns: two request bodies, four megabytes and with it eight, to a server whose windows hold both: the first arrives whole while the second is under way. `http2_window_bytes`: above 2^31-1 refused; of a paused response the server can send 65,535 bytes by default and 300,000 with the setting, and then no more.
 
 Failure tip: inspect `src/proven/http_event_client_h2.c` - `proven_http_event_client_h2_start_` for the connection a request joins, `r_submit` and `c_submit_waiting` for what is sent and when, `c_response` and `c_body` for what arrives, `c_fall_back` for an HTTP/1.1 origin, `c_pump` for the round. A forwarded request's `face` is in `src/proven/http_event_client.c`.
 

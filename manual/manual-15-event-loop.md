@@ -580,6 +580,7 @@ need. Every zero field has a default:
 | `tls` | A TLS configuration with a certificate, or null for plain HTTP. | null |
 | `http2` | Let a connection be HTTP/2 - by ALPN over TLS, by its first bytes in the clear - beside HTTP/1.1 on the same port, for the same handler: [Chapter 17, section 6](manual-17-http2.md#6-http2-in-the-event-driven-server). | false |
 | `max_concurrent_streams` | HTTP/2: requests in progress on one connection. | 100 |
+| `http2_window_bytes` | HTTP/2: request-body bytes a client may send on a stream, and on a connection as a whole, before the handler has taken them. What a paused request can make a connection hold; a large upload waits for room each time it has sent this much. | 65,535 |
 
 A request the server will not serve never reaches `on_request`. It is answered and the
 connection closed:
@@ -1067,6 +1068,7 @@ The configuration's fields, each with a default when zero:
 | `max_kept_connections` | HTTP/1.1: idle connections kept in the whole client. Zero is the default, as every zero in this table is; `no_connection_reuse` is what keeps none. (It was `max_idle_connections` in v0.36.0 - the name of a field of chapter 11's client, where 0 keeps none. The two no longer share a name.) | 8 |
 | `no_connection_reuse` | HTTP/1.1: `Connection: close` in every request, and no connection kept. | off |
 | `retry_unsent` | How many times the client itself puts again a request the server did not act on (HTTP/2: `PROVEN_ERR_AGAIN`; HTTP/1.1: lost before any of it was sent), at once and without telling you. Never a body written in pieces, never after `on_response`. | 0: never |
+| `http2_window_bytes` | HTTP/2: response-body bytes a server may send on a stream, and on a connection as a whole, before `on_body` has taken them. What a paused request can make a connection hold; a large download waits for room each time the server has sent this much (sixteen responses of 1 MiB at once, measured: 568 a second at the default, 1,208 with 1 MiB). | 65,535 |
 
 The test suite compiles and runs this program:
 

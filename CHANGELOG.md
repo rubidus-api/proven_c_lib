@@ -18,6 +18,36 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-10-12
+
+### Added
+
+- **`http2_window_bytes`**, in `proven_http_event_server_config_t` and in
+  `proven_http_event_client_config_t`: the HTTP/2 flow-control window this side grants - how
+  much of a body the peer may send on one stream, and on a connection as a whole, before the
+  application has taken it. 0 is the protocol's default, 65,535, which is what both drivers
+  always used; at most 2^31-1. It is what a paused request can make a connection hold, so it
+  is a bound on memory; and a large body moves in steps of it, so it is a bound on speed.
+  Measured on loopback, sixteen bodies of 1 MiB at once on one connection: responses 568 a
+  second at the default and 1,208 with a window of 1 MiB (HTTP/1.1 on six connections: 936);
+  requests 416 and 537 (HTTP/1.1: 913). A window of 16 MiB was slower than 1 MiB: 917 and
+  496. For the requests the client's `max_buffered_output` was left at its default, which is
+  then what bounds them; raising it was not measured.
+
+### Fixed
+
+- **HTTP/2, both event-driven drivers: bodies bounded by `max_buffered_output` were not sent
+  in turn.** Where what limits a connection is this side's own output bound and not the
+  peer's window - a client that sends several request bodies to a server with large windows;
+  a server that sends several responses to a client that announces large windows and reads
+  more slowly than the server writes (the test's client reads nothing for 300 ms) - each
+  round began with the newest stream, which took all the room there was. An older stream went unserved
+  for as long as newer ones had something to send. Measured in the client, sixteen uploads
+  of 1 MiB at once to a window of 1 MiB: one request took six seconds of a six-second run;
+  after, the slowest takes 63 ms. Streams now take turns of 64 KiB, each round beginning
+  behind the stream that had the last turn. v0.37.1 fixed the same kind of thing one layer
+  down, where the peer's window is what limits.
+
 ## [0.38.0] - 2026-10-12
 
 ### Changed
