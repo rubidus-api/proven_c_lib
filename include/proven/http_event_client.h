@@ -14,19 +14,29 @@
 
 /**
  * @file http_event_client.h
- * @brief An HTTP/1.1 client driven by events: many requests in flight on one thread.
+ * @brief An HTTP client driven by events: many requests in flight on one thread.
  *
  * http_client.h sends a request and waits for the answer; a thousand requests at once would be
  * a thousand threads. This client sits on a `proven_loop_t` (loop.h): a request is started,
  * the call returns at once, and your functions are told what happened - the response head, a
  * piece of its body, the end.
  *
- * **It is deliberately narrow.** One request uses one connection, which is closed afterwards.
- * There are no redirects, no answers to authentication challenges, no cookies, no proxies and
- * no connection reuse here; http_client.h has all of those. And **names are not resolved**:
+ * **It is deliberately narrow.** There are no redirects, no answers to authentication
+ * challenges, no cookies and no proxies here; http_client.h has all of those. And **names
+ * are not resolved**:
  * looking a name up can take seconds, and nothing on a loop may wait. Give the address to
  * connect to, having resolved it on another thread (proven_net_resolve from a job, the result
  * posted back with proven_loop_post). A URL whose host is an IP address needs none.
+ *
+ * **Connections are kept and counted** (HTTP/1.1; HTTP/2 has one connection an origin, see
+ * `http2`). A connection whose exchange ended cleanly is kept for the next request to the
+ * same origin - scheme, host, port and address - and an origin has at most
+ * `max_connections_per_origin` at a time: a request beyond that waits, in the order of
+ * starting, and a program that means to keep more than that many requests open to one server
+ * must raise the field. A kept connection may have been closed by the server when it is used
+ * again: a request lost on one before anything came back is sent once more on a new
+ * connection, silently - or, when its body was written in pieces and cannot be, ends with
+ * PROVEN_ERR_AGAIN.
  *
  * The rules of the loop apply: your functions must not wait; the views they are given - the
  * response head, a piece of the body - are good only until they return; and everything here
@@ -54,8 +64,9 @@ typedef struct {
     void (*on_writable)(void *ctx, proven_http_event_request_t *request);
     /** The end, called exactly once for every request that was started: PROVEN_OK when the
      *  whole response arrived, otherwise why not. Required. Free what you attached here.
-     *  Over HTTP/2, PROVEN_ERR_AGAIN is a request the server did not act on, which may be
-     *  started again; PROVEN_ERR_UNSUPPORTED is a request to a server in the clear that did
+     *  PROVEN_ERR_AGAIN is a request the server did not act on, which may be started again
+     *  (HTTP/2: refused, or behind a goodbye; HTTP/1.1: a body written in pieces, on a kept
+     *  connection that turned out to be dead); PROVEN_ERR_UNSUPPORTED is a request to a server in the clear that did
      *  not speak HTTP/2 (`http2_cleartext`), which would end the same way again. */
     void (*on_done)(void *ctx, proven_http_event_request_t *request, proven_err_t why);
 } proven_http_event_client_callbacks_t;
@@ -69,15 +80,18 @@ typedef struct {
     proven_size_t max_headers;             /**< most header fields in a response. 0: 64 */
     proven_u64 max_body_bytes;             /**< largest response body - as sent, and with `decompress` as decoded too. 0: no limit - it is delivered in pieces and never held */
     proven_size_t max_buffered_output;     /**< request-body bytes held before writes are refused. 0: 64 KiB */
-    proven_u32 connect_timeout_ms;         /**< to be connected, the TLS handshake included - and, for HTTP/2, the server's SETTINGS. 0: 10 s */
+    proven_u32 connect_timeout_ms;         /**< to be connected, the TLS handshake included - and, for HTTP/2, the server's SETTINGS; and, for HTTP/1.1, the wait for a connection when the origin has as many as it may. 0: 10 s */
     proven_u32 response_timeout_ms;        /**< from the request being sent to the end of the response head. 0: 30 s */
     proven_u32 body_timeout_ms;            /**< between pieces of the response body. 0: 30 s */
     proven_u32 write_timeout_ms;           /**< output held with none of it accepted by the server. 0: 30 s */
     bool decompress;                       /**< ask for compressed responses (`Accept-Encoding: gzip`, unless the request has its own or a `Range`) and decode a body sent with `Content-Encoding: gzip` or `deflate`: `on_body` gets decoded pieces of at most 16 KiB, the head stays as the server sent it, and a damaged or unfinished stream ends the request with PROVEN_ERR_INVALID_FORMAT. A 206 and other codings are delivered as sent. Costs about 52 KiB while such a response is arriving. false: bodies arrive as sent */
     bool http2;                            /**< true: an `https` origin that agrees to it (ALPN `h2`) is spoken to in HTTP/2, on one connection the client keeps for that origin and shares between its requests. The TLS configuration must offer `h2` - and must not when this is false */
     bool http2_cleartext;                  /**< true: every `http` request of this client is HTTP/2 by prior knowledge - there is no way to ask a server in the clear, so say this only of servers known to speak it. A connection that was made and is then lost before the server's SETTINGS ends its requests with PROVEN_ERR_UNSUPPORTED */
-    proven_u32 idle_timeout_ms;            /**< HTTP/2: how long a connection with no request on it is kept for the next one. 0: 60 s */
-    proven_size_t max_waiting_requests;    /**< HTTP/2: requests that may wait for a connection that is still being made, or for the server's limit on streams. 0: 1,000 */
+    proven_u32 idle_timeout_ms;            /**< how long a connection with no request on it is kept for the next one, in either protocol. 0: 60 s */
+    proven_size_t max_waiting_requests;    /**< requests that may wait: over HTTP/2, on one connection, for it to be made or for the server's limit on streams; over HTTP/1.1, in the whole client, for a connection to their origin. The next start is PROVEN_ERR_BUSY. 0: 1,000 */
+    proven_size_t max_connections_per_origin;  /**< HTTP/1.1: connections to one origin (scheme, host, port and the address connected to) at a time, busy and idle together. A request beyond that waits, in the order of starting, for one to come free. 0: 6 */
+    proven_size_t max_idle_connections;    /**< HTTP/1.1: connections kept idle for the next request, in the whole client; the one idle longest is closed to keep another. 0: 8. (Not the blocking client's field of this name, where 0 keeps none: here `no_connection_reuse` does that.) */
+    bool no_connection_reuse;              /**< HTTP/1.1: true sends `Connection: close` and closes every connection when its response has ended, as every version before v0.36.0 did. The limit on connections to an origin applies all the same */
 } proven_http_event_client_config_t;
 
 /** @brief One request. Zero-initialise it and set `url` and `on.on_done`. Everything it points
@@ -99,11 +113,11 @@ typedef struct {
 proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_http_event_client_config_t *config,
                                              proven_http_event_client_t **out);
 
-/** @brief End every request still in flight - each gets `on_done` with PROVEN_ERR_RESET - and
- *         free the client. The loop is not stopped or freed. Null is accepted. */
+/** @brief End every request still in flight or waiting - each gets `on_done` with
+ *         PROVEN_ERR_RESET - close the connections it kept, and free the client. The loop is not stopped or freed. Null is accepted. */
 void proven_http_event_client_destroy(proven_http_event_client_t *client);
 
-/** @brief Requests in flight now. */
+/** @brief Requests started and not ended: those in flight, and those waiting for a connection. */
 proven_size_t proven_http_event_client_requests(const proven_http_event_client_t *client);
 
 /**

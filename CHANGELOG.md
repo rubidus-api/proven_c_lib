@@ -18,6 +18,68 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release with new API - three settings of the event-driven client - and **a change of
+behaviour every program that uses that client over HTTP/1.1 will see**: its connections are
+kept and used again, and an origin has a limit on them.
+
+### Changed
+
+- **The event-driven client keeps HTTP/1.1 connections, and opens at most six to one origin.**
+  Until now a request made a connection, sent `Connection: close`, and closed it. Now a
+  connection whose exchange ended cleanly is kept for the next request to the same origin
+  (scheme, host, port, and the address connected to), up to `max_idle_connections` (8) in a
+  client and `idle_timeout_ms` (60 s) each; an origin has at most
+  `max_connections_per_origin` (6) at a time; and a request beyond that **waits**, in the
+  order of starting, for a connection of its origin to come free.
+  - **What to check in your program.** If it keeps more than six requests open to one server
+    at once - long polls, responses that do not end - the seventh is not sent until one
+    ends, and after `connect_timeout_ms` it ends with `PROVEN_ERR_TIMEOUT`. Raise
+    `max_connections_per_origin`. A burst of a hundred requests to one server now makes six
+    connections, not a hundred.
+  - `proven_http_event_client_requests` counts waiting requests too. At most
+    `max_waiting_requests` (1,000) wait in a client; the next `start` is `PROVEN_ERR_BUSY`.
+    `connect_timeout_ms` covers the wait, from the start of the request. `idle_timeout_ms`,
+    which was HTTP/2's, is both protocols'.
+  - **A request may be sent twice.** A kept connection may have been closed by the server
+    when it is used again. A request lost on such a connection before anything came back
+    is taken not to have been seen by the server, and is sent once more on a new
+    connection, silently: one `on_done`. A request whose body is written in pieces cannot
+    be sent again and ends with `PROVEN_ERR_AGAIN` - new for HTTP/1.1, and only there. After
+    any byte of an answer, or on a connection made for the request, a loss is
+    `PROVEN_ERR_RESET` as before. The blocking client has always done the same.
+  - `no_connection_reuse` gives back `Connection: close` and a connection closed after every
+    response. It does not give back the absence of a limit.
+- The client's HTTP/1.1 connections now have `TCP_NODELAY` set, as its HTTP/2 connections and
+  both servers' always had.
+- Measured as before (loopback, two processes, one loop each, a handler that answers two
+  bytes): a hundred requests in flight, 22,500 a second before and 129,000 after, on six
+  connections; one at a time, 15,700 before and 44,000 after, on one. With the limit raised
+  to twenty the figure is 132,000 and to a hundred 113,000: past six connections it is the
+  client's one thread that is the limit, not the number.
+
+### Added
+
+- `proven_http_event_client_config_t`: `max_connections_per_origin`, `max_idle_connections`,
+  `no_connection_reuse`. (`max_idle_connections` is also the name of a field of the blocking
+  client's configuration, where 0 keeps none. Here 0 is the default, 8, as every zero field
+  of this configuration is its default.)
+- Registered tests, plain and over TLS: eleven requests of every shape one after another on
+  one connection; twenty-one in a chain, each started from the `on_done` before it, on one;
+  twenty at once on six, answered in the order of starting; the queue's bound, a waiting
+  request aborted, timed out, and ended with its client; idle connections bounded in number
+  and in time; reuse off; two origins. And with the test as the server: the three responses
+  after which a connection is not kept; a kept connection found dead - the request sent
+  again whole, once and not twice, not after part of an answer, not when its body was written
+  in pieces (`PROVEN_ERR_AGAIN`), not when its caller gave it up; a connection closed while
+  idle; and a real server that closes idle connections after 60 ms, with requests that cross
+  its close, plain and over TLS.
+- Not tested: over TLS, a server's goodbye (`close_notify`) read on a kept connection before
+  the loss is seen - the code takes only decrypted data for an answer, so the request is sent
+  again as on a plain connection, but no test makes that order happen on one machine; an
+  idle connection of one origin closed to make room for another's. Not there: pipelining;
+  any order among waiting requests but the order of starting; a limit on connections for a
+  client as a whole.
+
 ## [0.35.0] - 2026-10-12
 
 A MINOR release that changes one answer of the event-driven client, and ends a wait that had

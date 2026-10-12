@@ -53,6 +53,29 @@ typedef struct {
 #define CL_KIND_H1 0
 #define CL_KIND_H2 1
 
+/* An HTTP/1.1 connection: what carries one request at a time and, when that request's
+ * exchange ended cleanly, is kept for the next one to the same origin. `owner` is the request
+ * it carries now; null while it is idle. */
+typedef struct cl_conn {
+    proven_http_event_client_t *client;
+    struct cl_conn *prev, *next;
+    proven_http_event_request_t *owner;
+    proven_net_conn_t sock;
+    proven_loop_io_t io;
+    proven_loop_timer_t timer;         /* how long it may sit idle */
+    proven_tls_conn_t *tls;
+    proven_net_addr_t to;              /* the origin: where it leads, */
+    proven_time_t idle_since;          /* when it was last put by */
+    proven_size_t unfed;               /* bytes of the read in hand that TLS has not been given yet */
+    proven_u32 uses;                   /* exchanges it has carried to their end */
+    proven_u16 port;                   /* the URL's port, */
+    proven_u8 host_len;                /* the URL's host, */
+    bool https;                        /* and the scheme */
+    bool connected_at_start;
+    bool idle;                         /* counted in the client's idle_count */
+    proven_byte_t host[256];
+} cl_conn_t;
+
 struct proven_http_event_request {
     cl_head_t h;
     struct proven_http_event_request *prev, *next;
@@ -60,10 +83,10 @@ struct proven_http_event_request {
      * while its origin's protocol was not yet known and has turned out to be HTTP/1.1 -
      * the caller holds the object it was given then, and the callbacks name that one. */
     proven_http_event_request_t *face;
-    proven_net_conn_t sock;
-    proven_loop_io_t io;
+    cl_conn_t *k;                      /* its connection; null while it waits for one */
+    struct proven_http_event_request *wnext;      /* the next request waiting, of any origin, in the order of starting */
     proven_loop_timer_t timer;
-    proven_tls_conn_t *tls;
+    proven_net_addr_t to;              /* the origin, as in cl_conn_t; the host's bytes lie behind this struct */
     cl_buf_t out;                      /* request bytes the transport has not taken yet */
     cl_buf_t stash;                    /* response bytes not used yet */
     proven_http_body_t body;
@@ -74,9 +97,16 @@ struct proven_http_event_request {
     cl_dec_t *dec;                     /* the response body is decoded on its way to on_body */
     proven_u32 interim;
     proven_http_method_t method;
+    proven_u16 port;
+    proven_u8 host_len;
     proven_u8 state;
     proven_u8 timer_kind;
-    bool connected_at_start, streamed, chunked, request_ended, want_writable, paused, peer_eof, processing, dead;
+    bool https, streamed, chunked, request_ended, want_writable, paused, peer_eof, processing, dead;
+    bool waiting;                      /* in the client's queue, with no connection */
+    bool keep;                         /* the response allows the connection to be used again */
+    bool stale;                        /* on a connection that carried a request before, with nothing come back on it yet: it may have been dead when it was given */
+    bool keep_out;                     /* ... and so `out` is kept after it is sent, for it may have to be sent again */
+    bool no_resend;                    /* ended by its caller or its client: not to be sent again */
 };
 
 struct proven_http_event_client {
@@ -85,6 +115,11 @@ struct proven_http_event_client {
     proven_http_event_client_config_t cfg;
     proven_http_event_request_t *requests;
     proven_size_t request_count;
+    cl_conn_t *conns;                  /* HTTP/1.1 connections, busy and idle */
+    proven_size_t idle_count;
+    proven_http_event_request_t *wait_head, *wait_tail;       /* requests waiting for a connection to their origin */
+    proven_size_t wait_count;
+    bool closing;                      /* being destroyed: nothing new is begun */
     proven_http_header_t *headers;
     proven_byte_t *rbuf, *pbuf, *hbuf;
     void *h2;                          /* http_event_client_h2.c: its connections, its origins */

@@ -903,9 +903,9 @@ void *proven_http_event_request_user(const proven_http_event_request_t *request)
 
 **의도적으로 좁다. 그리고 두 가지 한계는 다른 무엇보다 먼저 알아 둘 만하다.**
 
-- **요청 하나에 연결 하나, 끝나면 닫힌다.** 연결 재사용이 없고, 리다이렉트, 인증 요구에 대한 답,
-  쿠키, 프록시도 없다. 11장의 클라이언트에는 모두 있다. 진행 중인 요청마다 스레드 하나를 쓸 수 있는
-  곳에서는 그것을 쓴다.
+- **요청은 교환 하나이고 그 둘레의 것은 없다.** 리다이렉트, 인증 요구에 대한 답, 쿠키, 프록시가
+  없다. 11장의 클라이언트에는 모두 있다. 진행 중인 요청마다 스레드 하나를 쓸 수 있는 곳에서는
+  그것을 쓴다.
 - **이름을 해석하지 않는다.** 이름 조회는 몇 초가 걸릴 수 있고, 루프 위의 무엇도 기다려서는 안 된다.
   요청은 `address`로 어디에 연결할지 말한다. URL의 호스트가 IP 주소일 때만 필요 없다. 이름이라면:
   일(job)에서 `proven_net_resolve`를 부르고, 결과를 루프에 게시하고, 거기서 요청을 시작한다 - 이 절
@@ -928,6 +928,40 @@ void *proven_http_event_request_user(const proven_http_event_request_t *request)
 | `on.on_writable(ctx, request)` | 보류되었던 요청 본문 바이트가 나갔다. 선택. |
 | `on.on_done(ctx, request, why)` | 끝. **필수**이고, 시작된 요청마다 정확히 한 번 불린다. |
 | `ctx` | 모든 콜백에 전달된다. |
+
+**연결은 보관되고, 세어진다.** v0.36.0부터 HTTP/1.1 요청은 제 연결을 만들었다가 닫지 않는다.
+클라이언트는 **오리진** - URL의 스킴·호스트·포트, 그리고 연결한 주소 - 마다 연결을 갖고 있고, 요청은
+그 가운데 하나를 쓴다:
+
+- **한가한 것**, 오리진에 있으면. 연결은 그 위의 교환이 깨끗하게 끝났을 때 보관된다: 응답이
+  `Connection: close` 없는 HTTP/1.1이었고, 본문에 제 끝(길이, 또는 청크)이 있었고 그 끝에 이르렀고,
+  요청이 통째로 나갔고, 응답 뒤에 아무것도 오지 않았다. 클라이언트 전체에서 많아야
+  `max_idle_connections`(8)개가 보관되며, 가장 오래 쉰 것이 새 것에게 자리를 내준다. 어느 것도
+  `idle_timeout_ms`(60초)보다 오래 보관되지 않는다;
+- **또는 새 것**, 오리진의 연결이 바쁜 것과 한가한 것을 합쳐 `max_connections_per_origin`(6)보다
+  적은 동안;
+- **또는 기다린다**, 시작한 순서대로, 제 오리진의 연결이 다음에 비기를. **알아 둘 대목은 이것이다:
+  한 오리진으로 가는 일곱째 요청은 여섯 가운데 하나가 끝나기 전에는 나가지 않는다.** 일부러 한 서버에
+  여섯보다 많은 요청을 열어 두는 프로그램 - 롱 폴링, 끝나지 않는 스트림 - 은
+  `max_connections_per_origin`을 올려야 한다. 그러지 않으면 일곱째 요청은 기다리다가
+  `connect_timeout_ms` 뒤에 `PROVEN_ERR_TIMEOUT`으로 끝난다: 기다림은 연결 시계 위에 있고, 그 시계는
+  요청과 함께 시작한다. 한 클라이언트에서 많아야 `max_waiting_requests`(1,000)개가 기다리고, 그다음
+  `start`는 `PROVEN_ERR_BUSY`다. 기다리는 요청은 제 머리와 본문을 갖고 있고, (`max_buffered_output`까지)
+  쓸 수 있고, 중단할 수 있다.
+
+**보관된 연결은 쓰려는 순간 이미 죽어 있을 수 있다**: 서버는 한가한 연결을 묻지 않고 닫고, 그 닫음이
+다음 요청과 선 위에서 엇갈릴 수 있다. 그래서 전에 요청을 실어 나른 연결 위에서 요청을 잃었는데 그
+위로 아무것도 돌아오지 않았으면, 클라이언트는 서버가 그 요청을 보지 못한 것으로 받아들이고 **알리지
+않고 새 연결로 한 번 더 보낸다** - `on_done`은 한 번, 그것을 끝낸 쪽의 결과로. 본문을 조각으로 쓰는
+요청은 다시 보낼 수 없다. 클라이언트가 그 조각들을 갖고 있지 않기 때문이다. 그런 요청은
+`PROVEN_ERR_AGAIN`으로 끝나고, 뜻은 HTTP/2에서와 같다: 처리되지 않았고, 다시 시작할지는 호출자의 몫이다.
+응답의 바이트가 하나라도 온 뒤이거나, 그 요청을 위해 만든 연결이면, 잃는 것은 전과 같이
+`PROVEN_ERR_RESET`이다. ("보지 못했다"는 판단은 틀릴 수 있다 - 서버가 요청을 받고 답하기 전에 죽을 수도
+있다. 연결을 재사용하는 HTTP 클라이언트는 모두 이렇게 판단하고, 11장의 블로킹 클라이언트도 그렇다.
+그것을 받아들일 수 없는 프로그램을 위해 `no_connection_reuse`가 있다.)
+
+`no_connection_reuse`는 연결에 관한 옛 동작을 돌려준다 - 요청마다 `Connection: close`, 응답이 끝나면
+연결을 닫는다 - 그러나 상한이 없던 것까지 돌려주지는 않는다: 한 오리진에 여전히 한 번에 여섯이다.
 
 **시작.** `proven_http_event_client_start`가 오류를 돌려주면 요청은 시작되지 않았고 콜백은 지금도
 나중에도 불리지 않는다. `PROVEN_OK`를 돌려주면 `on_done`이 정확히 한 번 불린다 - **그 호출 안에서는
@@ -963,8 +997,8 @@ void *proven_http_event_request_user(const proven_http_event_request_t *request)
 | 호출 | 반환 |
 |---|---|
 | `proven_http_event_client_create(loop, &config, &client)` | `proven_err_t`: 루프가 없으면 `INVALID_ARG`. `NOMEM`. `config`는 널이어도 된다. |
-| `proven_http_event_client_requests(client)` | `proven_size_t`: 진행 중인 요청 수. |
-| `proven_http_event_client_destroy(client)` | 없음. 진행 중인 요청마다 `on_done(PROVEN_ERR_RESET)`을 받는다. 널을 받는다. |
+| `proven_http_event_client_requests(client)` | `proven_size_t`: 시작되어 아직 끝나지 않은 요청 수 - 연결을 기다리는 것 포함. |
+| `proven_http_event_client_destroy(client)` | 없음. 진행 중이든 기다리는 중이든 모든 요청이 `on_done(PROVEN_ERR_RESET)`을 받고, 보관된 연결은 닫힌다. 널을 받는다. |
 | `proven_http_event_request_write(request, data)` | `proven_result_size_t`: 받은 바이트 수. 쓸 본문이 없는 요청이거나 끝낸 뒤면 `INVALID_STATE`. 약속한 길이를 넘으면 `OUT_OF_BOUNDS`. |
 | `proven_http_event_request_end(request)` | `proven_err_t`: 끝낼 것이 없었으면 `INVALID_STATE`. 약속보다 적게 썼으면 `INVALID_FORMAT` - 그때 `on_done`이 호출 안에서 불린다. |
 | `proven_http_event_request_abort(request)` | 없음. `on_done(PROVEN_ERR_RESET)`이 호출 안에서 불린다. |
@@ -980,13 +1014,17 @@ void *proven_http_event_request_user(const proven_http_event_request_t *request)
 | `max_headers` | 응답 하나의 헤더 필드 최대 수. | 64 |
 | `max_body_bytes` | 가장 큰 응답 본문. | 한도 없음: 조각으로 전달되고 붙들지 않는다 |
 | `max_buffered_output` | 쓰기가 거절되기 전까지 붙드는 요청 본문 바이트. | 64 KiB |
-| `connect_timeout_ms` | 연결되기까지, TLS 핸드셰이크 포함. | 10초 |
+| `connect_timeout_ms` | 연결되기까지, TLS 핸드셰이크 포함 - 그리고 오리진의 연결이 허용된 만큼 차 있을 때 연결을 기다리는 시간까지. 요청의 시작부터 잰다. 다시 보내지는 요청은 새로 받는다. | 10초 |
 | `response_timeout_ms` | 요청을 다 보낸 때부터 응답 헤드의 끝까지. | 30초 |
 | `body_timeout_ms` | 응답 본문의 조각과 조각 사이. | 30초 |
 | `write_timeout_ms` | 붙든 출력을 서버가 하나도 받지 않는 시간. | 30초 |
 | `decompress` | gzip을 요청하고 푼다: `on_body`는 풀린 조각을 받고 `max_body_bytes`는 그것을 센다. [16장](manual-16-compression-ko.md) 6절. | 꺼짐 |
 | `http2`, `http2_cleartext` | 합의하는 오리진(ALPN)에, 또는 모든 `http` 오리진에 HTTP/2로 말한다: 오리진마다 연결 하나를 간직해 그 요청들이 함께 쓴다. [17장 7절](manual-17-http2-ko.md#7-이벤트-구동-클라이언트의-http2). | 꺼짐 |
-| `idle_timeout_ms`, `max_waiting_requests` | HTTP/2: 요청이 없는 연결을 간직하는 시간, 그리고 연결 하나를 기다릴 수 있는 요청 수. | 60초, 1,000 |
+| `idle_timeout_ms` | 요청이 없는 연결을 간직하는 시간, 두 프로토콜 모두. | 60초 |
+| `max_waiting_requests` | 기다릴 수 있는 요청 수: HTTP/2 연결은 그 연결 하나에서, HTTP/1.1 연결은 클라이언트 전체에서. 그다음 `start`는 `PROVEN_ERR_BUSY`. | 1,000 |
+| `max_connections_per_origin` | HTTP/1.1: 한 오리진으로 동시에 둘 수 있는 연결 수, 바쁜 것과 한가한 것 합쳐. 넘는 요청은 기다린다. | 6 |
+| `max_idle_connections` | HTTP/1.1: 클라이언트 전체에서 보관하는 한가한 연결 수. (11장의 클라이언트에는 같은 이름의 필드가 있고 거기서 0은 하나도 보관하지 않는다. 여기서 0은 기본값이고, 보관하지 않게 하는 것은 `no_connection_reuse`다.) | 8 |
+| `no_connection_reuse` | HTTP/1.1: 요청마다 `Connection: close`, 연결을 보관하지 않는다. | 꺼짐 |
 
 테스트 스위트가 이 프로그램을 컴파일하고 실행한다:
 
@@ -1398,8 +1436,8 @@ Linux에서 등록된 테스트는 한가한 평문 HTTP 연결 하나에 힙 44
   적대적인 클라이언트도, 부하 속의 TLS도 없고, 아무 일도 하지 않는 핸들러 하나뿐이다.
 - **루프 위의 WebSocket 클라이언트**, 그리고 이 서버 위의 WebSocket 아닌 업그레이드. 12장의
   클라이언트는 블로킹 쪽이다.
-- **이벤트 구동 클라이언트에서:** 연결 재사용, 리다이렉트, 인증, 쿠키, 프록시, 이름 해석(대신 무엇을
-  할지는 12절에 있다).
+- **이벤트 구동 클라이언트에서:** 리다이렉트, 인증, 쿠키, 프록시, 이름 해석(대신 무엇을 할지는
+  12절에 있다). 파이프라이닝, 그리고 기다리는 요청들 사이의 시작 순서 말고 다른 순서.
 - **루프의 스레드 밖에서 하는 TLS 핸드셰이크.** 하나마다 루프는 약 2 ms 동안 다른 아무것도 서비스하지
   못한다(14장 9절).
 - Windows에서 `WSAPoll`보다 **빠른 기다림**.

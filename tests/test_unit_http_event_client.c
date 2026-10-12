@@ -44,7 +44,7 @@ typedef struct {
     char path[40];
 } served_t;
 
-static int g_served_requests, g_served_done;
+static int g_served_requests, g_served_done, g_served_close;    /* ... and those that came with `Connection: close` */
 static char g_seen_host[64];
 
 static void served_pump(served_t *a) {
@@ -71,6 +71,7 @@ static void srv_request(void *ctx, proven_http_stream_t *s, const proven_http_re
     proven_http_stream_set_user(s, a);
     proven_u8str_view_t host = { 0 };
     (void)proven_http_header_find(req->headers, req->header_count, PROVEN_LIT("Host"), &host);
+    if (proven_http_header_has_token(req->headers, req->header_count, PROVEN_LIT("Connection"), PROVEN_LIT("close"))) g_served_close++;
     memset(g_seen_host, 0, sizeof g_seen_host);
     memcpy(g_seen_host, host.ptr, host.size < sizeof g_seen_host - 1 ? host.size : sizeof g_seen_host - 1);
     if (strcmp(a->path, "/") == 0 || strcmp(a->path, "/q?x=1&y=2") == 0) {
@@ -124,7 +125,16 @@ typedef struct {
     char text[128];
     proven_size_t to_send, sent;       /* a streamed request body */
     unsigned sum;
+    int order;                         /* which on_done of the test's this was */
+    int chain;                         /* requests still to be started, each from the on_done before it */
 } call_t;
+
+static int g_order;
+static proven_http_event_client_t *g_chain_client;
+static proven_u16 g_chain_port;
+static bool g_chain_tls;
+static proven_err_t start(proven_http_event_client_t *client, call_t *c, const char *method, proven_u8str_view_t u, proven_mem_view_t body, proven_u64 length);
+static proven_u8str_view_t url(bool tls, proven_u16 port, const char *path);
 
 static void call_resume(void *ctx) { call_t *c = ctx; c->paused_now = false; proven_http_event_request_resume(c->request); }
 
@@ -172,6 +182,12 @@ static void on_done(void *ctx, proven_http_event_request_t *r, proven_err_t why)
     proven_loop_timer_cancel(g_loop, &c->timer);
     c->dones++;
     c->why = why;
+    c->order = ++g_order;
+    if (c->chain > 0 && why == PROVEN_OK) {
+        /* The next one, from inside this callback: the connection is already free for it. */
+        const int left = c->chain - 1, dones = c->dones;
+        if (start(g_chain_client, c, "GET", url(g_chain_tls, g_chain_port, "/"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK) { c->chain = left; c->dones = dones; return; }
+    }
     c->done = true;
 }
 
@@ -359,7 +375,7 @@ static void scripted(proven_http_event_client_t *client, call_t *c, const char *
         proven_result_size_t r = proven_net_read(&conn, (proven_mem_mut_t){ .ptr = (proven_byte_t *)req + have, .size = sizeof req - 1 - have }, PROVEN_NET_DONT_WAIT);
         if (r.err == PROVEN_OK) have += r.value;
     }
-    PROVEN_TEST_ASSERT(strncmp(req, "GET / HTTP/1.1\r\nHost: 127.0.0.1:", 32) == 0 && strstr(req, "\r\nConnection: close\r\n"), "its request names the host and asks for the connection to be closed", "");
+    PROVEN_TEST_ASSERT(strncmp(req, "GET / HTTP/1.1\r\nHost: 127.0.0.1:", 32) == 0 && !strstr(req, "\r\nConnection:"), "its request names the host, and does not ask for the connection to be closed", "");
     PROVEN_TEST_ASSERT(proven_net_write_all(&conn, (proven_mem_view_t){ .ptr = (const proven_byte_t *)answer, .size = answer_len }, proven_net_deadline_in(5000)).err == PROVEN_OK, "the scripted answer", "");
     (void)proven_net_close(&conn);
     (void)proven_net_listener_close(&listener);
@@ -367,6 +383,312 @@ static void scripted(proven_http_event_client_t *client, call_t *c, const char *
     PROVEN_TEST_ASSERT(c->done, "the request ends", "");
 }
 #define SCRIPTED(client, c, text) scripted((client), (c), (text), sizeof(text) - 1)
+
+// ---------------------------------------------------------------------------------------
+// Connections: kept, counted, and waited for
+// ---------------------------------------------------------------------------------------
+
+static proven_http_event_server_t *a_server(bool tls, proven_net_addr_t *at) {
+    proven_http_event_server_t *server = NULL;
+    proven_http_event_server_config_t scfg = { .on = { srv_request, srv_body, srv_writable, srv_done }, .tls = tls ? g_server_tls : NULL };
+    PROVEN_TEST_ASSERT(proven_http_event_server_create(g_loop, &scfg, &server) == PROVEN_OK &&
+                       proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), at) == PROVEN_OK, "a server on the same loop", tls ? "over TLS" : "plain");
+    return server;
+}
+
+static proven_http_event_client_t *a_client(proven_http_event_client_config_t cfg, bool tls) {
+    proven_http_event_client_t *client = NULL;
+    cfg.tls = tls ? g_client_tls : NULL;
+    PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &cfg, &client) == PROVEN_OK, "a client", tls ? "over TLS" : "plain");
+    return client;
+}
+
+static bool get_ok(proven_http_event_client_t *client, call_t *c, bool tls, proven_u16 port, const char *path, proven_size_t size) {
+    return start(client, c, "GET", url(tls, port, path), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && spin_until(&c->done, 10000) &&
+           c->why == PROVEN_OK && c->dones == 1 && c->got == size;
+}
+
+static void connections(bool tls) {
+    const char *how = tls ? "over TLS" : "plain";
+    proven_net_addr_t at;
+    proven_http_event_server_t *server = a_server(tls, &at);
+    proven_http_event_client_t *client = a_client((proven_http_event_client_config_t){ 0 }, tls);
+    call_t c = { 0 };
+    static call_t many[40];
+
+    /* One after another: one connection carries them all, whatever the shape of the response. */
+    const int served = g_served_requests, closes = g_served_close;
+    bool all = true;
+    for (int i = 0; i < 5; i++) all = all && get_ok(client, &c, tls, at.port, "/", 5);
+    all = all && get_ok(client, &c, tls, at.port, "/big/100000", 100000) && c.intact && get_ok(client, &c, tls, at.port, "/chunked/50000", 50000) && c.intact;
+    all = all && get_ok(client, &c, tls, at.port, "/nothing", 0) && get_ok(client, &c, tls, at.port, "/missing", 2);
+    all = all && start(client, &c, "HEAD", url(tls, at.port, "/"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && spin_until(&c.done, 5000) && c.why == PROVEN_OK && c.pieces == 0;
+    all = all && get_ok(client, &c, tls, at.port, "/", 5) && memcmp(c.text, "hello", 5) == 0;
+    PROVEN_TEST_ASSERT(all && g_served_requests == served + 11, "eleven requests one after another are each answered whole", how);
+    PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == 1 && g_served_close == closes, "on one connection, and none of them asked for it to be closed", how);
+
+    /* Each started from the on_done of the one before: the connection is free by then. */
+    g_chain_client = client; g_chain_port = at.port; g_chain_tls = tls;
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(tls, at.port, "/"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK, "the first of a chain", how);
+    c.chain = 20;
+    PROVEN_TEST_ASSERT(spin_until(&c.done, 10000) && c.why == PROVEN_OK && c.dones == 21 && c.chain == 0 && proven_http_event_server_connections(server) == 1,
+        "twenty more, each started from the on_done before it, go on the same one connection", how);
+
+    /* More at once than an origin may have connections: six go, the rest wait their turn. */
+    g_order = 0;
+    for (int i = 0; i < 20; i++) PROVEN_TEST_ASSERT(start(client, &many[i], "GET", url(tls, at.port, "/slow"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK, "a request is started", how);
+    PROVEN_TEST_ASSERT(proven_http_event_client_requests(client) == 20, "twenty requests are counted, those waiting among them", how);
+    spin(tls ? 45 : 30);
+    PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == 6, "six connections are made, not twenty", how);
+    for (int i = 0; i < 20; i++) (void)spin_until(&many[i].done, 10000);
+    int good = 0, in_turn = 0;
+    for (int i = 0; i < 20; i++) good += many[i].done && many[i].why == PROVEN_OK && many[i].dones == 1 && many[i].got == 5 && memcmp(many[i].text, "later", 5) == 0;
+    /* The server answers each 50 ms after it came, and a waiting request is given the next
+     * connection that comes free, in the order of starting: so no request ends before one that
+     * was started six or more places ahead of it - six being all that can be under way at once. */
+    for (int i = 0; i < 20; i++) {
+        bool ok = true;
+        for (int j = 0; j + 6 <= i; j++) ok = ok && many[j].order < many[i].order;
+        in_turn += ok;
+    }
+    PROVEN_TEST_ASSERT(good == 20 && in_turn == 20 && proven_http_event_server_connections(server) == 6, "all twenty are answered, in the order of starting, on those six", how);
+    proven_http_event_client_destroy(client);
+    spin(60);
+    PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == 0, "destroying the client closes the idle connections", how);
+
+    if (!tls) {
+        /* The queue is bounded, and a request in it can be given up, can run out of time, and
+         * ends with its client. */
+        client = a_client((proven_http_event_client_config_t){ .max_connections_per_origin = 1, .max_waiting_requests = 2, .connect_timeout_ms = 250 }, false);
+        const int before = g_served_requests;
+        for (int i = 0; i < 3; i++) PROVEN_TEST_ASSERT(start(client, &many[i], "GET", url(false, at.port, "/slow"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK, "one that goes and two that wait", "");
+        many[3].dones = 0;
+        PROVEN_TEST_ASSERT(start(client, &many[3], "GET", url(false, at.port, "/slow"), (proven_mem_view_t){ 0 }, 0) == PROVEN_ERR_BUSY && many[3].dones == 0 && proven_http_event_client_requests(client) == 3,
+            "a third to wait is PROVEN_ERR_BUSY at max_waiting_requests of two, with no callback", "");
+        proven_http_event_request_abort(many[1].request);
+        PROVEN_TEST_ASSERT(many[1].done && many[1].why == PROVEN_ERR_RESET && many[1].dones == 1, "aborting a waiting request ends it inside the call", "");
+        PROVEN_TEST_ASSERT(spin_until(&many[0].done, 5000) && spin_until(&many[2].done, 5000) && many[0].why == PROVEN_OK && many[2].why == PROVEN_OK && g_served_requests == before + 2,
+            "the other two are answered, and the one given up was never sent", "");
+        PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == 1, "on the origin's one connection", "");
+        /* Waiting is on the connecting clock, from the start of the request. */
+        proven_time_t t0 = proven_time_monotonic_now();
+        PROVEN_TEST_ASSERT(start(client, &many[0], "GET", url(false, at.port, "/never"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK &&
+                           start(client, &many[1], "GET", url(false, at.port, "/"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK, "one the server sits on, and one behind it", "");
+        PROVEN_TEST_ASSERT(spin_until(&many[1].done, 5000) && many[1].why == PROVEN_ERR_TIMEOUT && many[1].dones == 1 && !many[0].done && proven_time_monotonic_now() - t0 > 200000000,
+            "the one that waits ends with PROVEN_ERR_TIMEOUT after connect_timeout_ms, and the one in front goes on", "");
+        PROVEN_TEST_ASSERT(start(client, &many[1], "GET", url(false, at.port, "/"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK, "another behind it", "");
+        proven_http_event_client_destroy(client);
+        PROVEN_TEST_ASSERT(many[0].done && many[1].done && many[0].why == PROVEN_ERR_RESET && many[1].why == PROVEN_ERR_RESET && many[0].dones == 1 && many[1].dones == 1,
+            "destroying the client ends both, the one that was waiting too, once each", "");
+        spin(60);
+        /* (The server keeps the connection of the request it never answered: a client may
+         * close its sending side and still wait. It is counted out of what follows.) */
+        const proven_size_t held = proven_http_event_server_connections(server);
+        PROVEN_TEST_ASSERT(held == 1, "the server still holds the one connection whose request it sits on", "");
+
+        /* Idle connections are bounded in number and in time. */
+        client = a_client((proven_http_event_client_config_t){ .max_idle_connections = 2 }, false);
+        for (int i = 0; i < 6; i++) PROVEN_TEST_ASSERT(start(client, &many[i], "GET", url(false, at.port, "/slow"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK, "six at once", "");
+        for (int i = 0; i < 6; i++) (void)spin_until(&many[i].done, 5000);
+        spin(60);
+        PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == held + 2, "of six connections, max_idle_connections of two are kept", "");
+        proven_http_event_client_destroy(client);
+        client = a_client((proven_http_event_client_config_t){ .idle_timeout_ms = 120 }, false);
+        PROVEN_TEST_ASSERT(get_ok(client, &c, false, at.port, "/", 5) && proven_http_event_server_connections(server) == held + 1, "a request, and its connection kept", "");
+        spin(60);
+        PROVEN_TEST_ASSERT(get_ok(client, &c, false, at.port, "/", 5), "used again within the time", "");
+        PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == held + 1, "on the same connection", "");
+        spin(400);
+        PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == held, "and closed when it has been idle for idle_timeout_ms", "");
+        PROVEN_TEST_ASSERT(get_ok(client, &c, false, at.port, "/", 5), "the next request makes a new one", "");
+        proven_http_event_client_destroy(client);
+        spin(60);
+
+        /* With reuse off: a connection each, closed when it is done - and still six at a time. */
+        client = a_client((proven_http_event_client_config_t){ .no_connection_reuse = true }, false);
+        const int closes_before = g_served_close;
+        PROVEN_TEST_ASSERT(get_ok(client, &c, false, at.port, "/", 5) && get_ok(client, &c, false, at.port, "/", 5), "two requests with no_connection_reuse", "");
+        spin(60);
+        PROVEN_TEST_ASSERT(g_served_close == closes_before + 2 && proven_http_event_server_connections(server) == held, "each said Connection: close, and nothing is kept", "");
+        for (int i = 0; i < 14; i++) PROVEN_TEST_ASSERT(start(client, &many[i], "GET", url(false, at.port, "/slow"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK, "fourteen at once", "");
+        spin(30);
+        PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == held + 6, "the limit on connections to an origin holds all the same", "");
+        for (int i = 0; i < 14; i++) (void)spin_until(&many[i].done, 10000);
+        good = 0;
+        for (int i = 0; i < 14; i++) good += many[i].why == PROVEN_OK && many[i].dones == 1;
+        PROVEN_TEST_ASSERT(good == 14, "and all fourteen are answered", "");
+        proven_http_event_client_destroy(client);
+        spin(60);
+
+        /* Two origins: a connection is used only for where it leads. */
+        proven_net_addr_t at2;
+        proven_http_event_server_t *second = a_server(false, &at2);
+        client = a_client((proven_http_event_client_config_t){ 0 }, false);
+        all = true;
+        for (int i = 0; i < 6; i++) all = all && get_ok(client, &c, false, i % 2 ? at2.port : at.port, "/", 5);
+        PROVEN_TEST_ASSERT(all && proven_http_event_server_connections(server) == held + 1 && proven_http_event_server_connections(second) == 1, "requests to two servers in turn: one connection to each", "");
+        proven_http_event_client_destroy(client);
+        spin(60);
+        proven_http_event_server_destroy(second);
+    }
+    proven_http_event_server_destroy(server);
+
+    /* A server that closes idle connections sooner than the client does, and a request that
+     * crosses the close: the loop is not turned while the server's time runs out, so the
+     * client learns of nothing before it has given the kept connection to the next request.
+     * (On one machine the request's own write brings the reset back before anything is read,
+     * so this is the path of a failed write or read. The other path over TLS - the server's
+     * goodbye read first, which is bytes and not an answer - needs a network between.) */
+    proven_http_event_server_config_t quick = { .on = { srv_request, srv_body, srv_writable, srv_done }, .tls = tls ? g_server_tls : NULL, .idle_timeout_ms = 60 };
+    PROVEN_TEST_ASSERT(proven_http_event_server_create(g_loop, &quick, &server) == PROVEN_OK &&
+                       proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server that keeps an idle connection 60 ms", how);
+    client = a_client((proven_http_event_client_config_t){ 0 }, tls);
+    for (int round = 0; round < 3; round++) {
+        PROVEN_TEST_ASSERT(get_ok(client, &c, tls, at.port, "/", 5), "a request, and its connection kept", how);
+        for (proven_time_t until = proven_time_monotonic_now() + 150000000; proven_time_monotonic_now() < until; ) { }
+        /* One turn: the server's timer runs, after the sockets of that turn, and its close goes
+         * out. The client's connection is told in the next turn - by which time it is in use. */
+        PROVEN_TEST_ASSERT(proven_loop_poll(g_loop, PROVEN_NET_DONT_WAIT) == PROVEN_OK, "one turn of the loop", how);
+        PROVEN_TEST_ASSERT(start(client, &c, "POST", url(tls, at.port, "/echo"), (proven_mem_view_t){ (const proven_byte_t *)"abc", 3 }, 0) == PROVEN_OK && spin_until(&c.done, 5000) &&
+                           c.why == PROVEN_OK && c.dones == 1 && c.responses == 1, "the next request crosses the server's close, and is answered all the same: sent again on a new connection, with one on_done", how);
+    }
+    proven_http_event_client_destroy(client);
+    spin(60);
+    proven_http_event_server_destroy(server);
+}
+
+/* The test as a server that keeps its connection: one exchange on it. False if no request came. */
+static bool peer_exchange(proven_net_conn_t *conn, const char *answer, char *req, proven_size_t cap) {
+    proven_size_t have = 0;
+    memset(req, 0, cap);
+    for (int i = 0; i < 400 && !strstr(req, "\r\n\r\n"); ++i) {
+        spin(5);
+        proven_result_size_t r = proven_net_read(conn, (proven_mem_mut_t){ .ptr = (proven_byte_t *)req + have, .size = cap - 1 - have }, PROVEN_NET_DONT_WAIT);
+        if (r.err == PROVEN_OK) have += r.value;
+        else if (r.err == PROVEN_ERR_EOF) return false;
+    }
+    if (!strstr(req, "\r\n\r\n")) return false;
+    return !answer || proven_net_write_all(conn, (proven_mem_view_t){ .ptr = (const proven_byte_t *)answer, .size = strlen(answer) }, proven_net_deadline_in(5000)).err == PROVEN_OK;
+}
+
+static bool peer_accept(proven_net_listener_t *l, proven_net_conn_t *conn, int rounds) {
+    for (int i = 0; i < rounds; ++i) { spin(5); if (proven_net_accept(l, PROVEN_NET_DONT_WAIT, conn, NULL) == PROVEN_OK) return true; }
+    return false;
+}
+
+static bool peer_sees_close(proven_net_conn_t *conn) {
+    proven_byte_t b[64];
+    for (int i = 0; i < 100; ++i) {
+        spin(5);
+        proven_result_size_t r = proven_net_read(conn, (proven_mem_mut_t){ .ptr = b, .size = sizeof b }, PROVEN_NET_DONT_WAIT);
+        if (r.err == PROVEN_ERR_EOF) return true;
+        if (r.err == PROVEN_OK && r.value > 0) return false;
+    }
+    return false;
+}
+
+#define OK2 "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+
+static void kept_or_not(void) {
+    proven_net_listener_t l;
+    proven_net_addr_t at;
+    proven_net_conn_t x, y;
+    char req[1024];
+    call_t c = { 0 };
+    proven_http_event_client_t *client = a_client((proven_http_event_client_config_t){ 0 }, false);
+    PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 8, &l, &at) == PROVEN_OK, "a listener the test answers on", "");
+
+    /* What a response must be for its connection to be kept: each of these is not. */
+    static const struct { const char *answer, *why; } not_kept[] = {
+        { "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok", "the server said Connection: close" },
+        { "HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nok", "the server answered in HTTP/1.0" },
+        { "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nokHTTP/1.1 200 OK\r\n", "more came than the response" },
+    };
+    for (int i = 0; i < 3; i++) {
+        PROVEN_TEST_ASSERT(start(client, &c, "GET", url(false, at.port, "/"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l, &x, 400) && peer_exchange(&x, not_kept[i].answer, req, sizeof req) &&
+                           spin_until(&c.done, 5000) && c.why == PROVEN_OK && c.got == 2, "a request is answered", not_kept[i].why);
+        PROVEN_TEST_ASSERT(peer_sees_close(&x), "and the client closes the connection", not_kept[i].why);
+        (void)proven_net_close(&x);
+    }
+
+    /* Kept, and found dead when it is used: the server reads the second request and closes. */
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(false, at.port, "/"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l, &x, 400) && peer_exchange(&x, OK2, req, sizeof req) &&
+                       spin_until(&c.done, 5000) && c.why == PROVEN_OK, "a request is answered, and its connection kept", "");
+    PROVEN_TEST_ASSERT(start(client, &c, "POST", url(false, at.port, "/again"), (proven_mem_view_t){ (const proven_byte_t *)"body", 4 }, 0) == PROVEN_OK && peer_exchange(&x, NULL, req, sizeof req) &&
+                       strncmp(req, "POST /again ", 12) == 0 && !peer_accept(&l, &y, 6), "the next request comes on the same connection, and on no other", "");
+    (void)proven_net_close(&x);
+    PROVEN_TEST_ASSERT(peer_accept(&l, &y, 400) && peer_exchange(&y, OK2, req, sizeof req) && strncmp(req, "POST /again ", 12) == 0 && strstr(req, "\r\n\r\nbody"),
+        "closed with nothing said: the request comes again, whole, on a new connection", "");
+    PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_OK && c.dones == 1 && c.responses == 1 && c.got == 2, "and is answered, with one on_done and nothing told of the first try", "");
+
+    /* Once, not twice: the new connection is its own, and its loss is the request's. */
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(false, at.port, "/third"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_exchange(&y, NULL, req, sizeof req), "a third request, on the kept connection", "");
+    (void)proven_net_close(&y);
+    PROVEN_TEST_ASSERT(peer_accept(&l, &x, 400) && peer_exchange(&x, NULL, req, sizeof req) && strncmp(req, "GET /third ", 11) == 0, "sent again on a new one", "");
+    (void)proven_net_close(&x);
+    PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_ERR_RESET && c.dones == 1 && !peer_accept(&l, &y, 6), "which is closed too: PROVEN_ERR_RESET, and no third sending", "");
+
+    /* Not when something of an answer had come. */
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(false, at.port, "/"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l, &x, 400) && peer_exchange(&x, OK2, req, sizeof req) &&
+                       spin_until(&c.done, 5000) && c.why == PROVEN_OK, "a connection kept", "");
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(false, at.port, "/part"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_exchange(&x, "HTTP/1.1 200 OK\r\nContent-Le", req, sizeof req), "a request on it, and the beginning of an answer", "");
+    spin(30);
+    (void)proven_net_close(&x);
+    PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_ERR_RESET && c.dones == 1 && !peer_accept(&l, &y, 6), "cut after a part of the answer: PROVEN_ERR_RESET, not sent again", "");
+
+    /* Nor a request whose body is written in pieces: the client does not have it to send again. */
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(false, at.port, "/"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l, &x, 400) && peer_exchange(&x, OK2, req, sizeof req) &&
+                       spin_until(&c.done, 5000) && c.why == PROVEN_OK, "a connection kept", "");
+    c.to_send = 0;
+    PROVEN_TEST_ASSERT(start(client, &c, "POST", url(false, at.port, "/pieces"), (proven_mem_view_t){ 0 }, 3) == PROVEN_OK, "a request whose body is to be written", "");
+    PROVEN_TEST_ASSERT(proven_http_event_request_write(c.request, (proven_mem_view_t){ (const proven_byte_t *)"abc", 3 }).value == 3 && proven_http_event_request_end(c.request) == PROVEN_OK &&
+                       peer_exchange(&x, NULL, req, sizeof req), "written, ended, and read by the server", "");
+    (void)proven_net_close(&x);
+    PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_ERR_AGAIN && c.dones == 1 && !peer_accept(&l, &y, 6), "the connection was dead: not sent again, and PROVEN_ERR_AGAIN - its caller may start it again", "");
+
+    /* But once something of an answer has come, such a request may have been acted on. */
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(false, at.port, "/"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l, &x, 400) && peer_exchange(&x, OK2, req, sizeof req) &&
+                       spin_until(&c.done, 5000) && c.why == PROVEN_OK, "a connection kept", "");
+    PROVEN_TEST_ASSERT(start(client, &c, "POST", url(false, at.port, "/pieces"), (proven_mem_view_t){ 0 }, 3) == PROVEN_OK &&
+                       proven_http_event_request_write(c.request, (proven_mem_view_t){ (const proven_byte_t *)"abc", 3 }).value == 3 && proven_http_event_request_end(c.request) == PROVEN_OK &&
+                       peer_exchange(&x, "HTTP/1.1 200 OK\r\nContent-Le", req, sizeof req), "a request written in pieces, and the beginning of an answer", "");
+    spin(30);
+    (void)proven_net_close(&x);
+    PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_ERR_RESET && c.dones == 1, "cut after a part of the answer: PROVEN_ERR_RESET", "");
+
+    /* A kept connection that the server closes while nobody uses it is simply gone. */
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(false, at.port, "/"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l, &x, 400) && peer_exchange(&x, OK2, req, sizeof req) &&
+                       spin_until(&c.done, 5000) && c.why == PROVEN_OK, "a connection kept", "");
+    (void)proven_net_close(&x);
+    spin(40);
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(false, at.port, "/fresh"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l, &y, 400) && peer_exchange(&y, OK2, req, sizeof req) &&
+                       spin_until(&c.done, 5000) && c.why == PROVEN_OK && c.dones == 1, "closed while idle: the next request makes a new connection", "");
+    /* Given up by its caller on a kept connection: that is an end, not a dead connection. */
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(false, at.port, "/given-up"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK, "a request on the kept connection", "");
+    proven_http_event_request_abort(c.request);
+    PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_ERR_RESET && c.dones == 1 && proven_http_event_client_requests(client) == 0 && !peer_accept(&l, &x, 6), "aborted at once: PROVEN_ERR_RESET inside the call, and nothing is sent again", "");
+    (void)proven_net_close(&y);
+    proven_http_event_client_destroy(client);
+
+    /* A client destroyed with a request waiting does not make that request a connection on the way out. */
+    client = a_client((proven_http_event_client_config_t){ .max_connections_per_origin = 1 }, false);
+    call_t behind = { 0 };
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(false, at.port, "/"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l, &x, 400) && peer_exchange(&x, NULL, req, sizeof req) &&
+                       start(client, &behind, "GET", url(false, at.port, "/behind"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK, "a request the server does not answer, and one waiting behind it", "");
+    proven_http_event_client_destroy(client);
+    PROVEN_TEST_ASSERT(c.done && behind.done && c.why == PROVEN_ERR_RESET && behind.why == PROVEN_ERR_RESET && c.dones == 1 && behind.dones == 1 && !peer_accept(&l, &y, 6),
+        "destroyed: both end once, and no connection is made for the one that waited", "");
+    (void)proven_net_close(&x);
+
+    /* With reuse off, a server that does not close is not waited for. */
+    client = a_client((proven_http_event_client_config_t){ .no_connection_reuse = true }, false);
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(false, at.port, "/"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l, &x, 400) && peer_exchange(&x, OK2, req, sizeof req) &&
+                       strstr(req, "\r\nConnection: close\r\n") && spin_until(&c.done, 5000) && c.why == PROVEN_OK, "no_connection_reuse: the request says Connection: close", "");
+    PROVEN_TEST_ASSERT(peer_sees_close(&x), "and the client closes when the response has ended, though the server did not", "");
+    (void)proven_net_close(&x);
+    proven_http_event_client_destroy(client);
+    (void)proven_net_listener_close(&l);
+}
 
 int main(void) {
     PROVEN_TEST_SUITE("the event-driven HTTP client",
@@ -489,6 +811,12 @@ int main(void) {
         spin(60);
         proven_http_event_server_destroy(server);
     }
+
+    PROVEN_TEST_SECTION("connections kept, counted and waited for", "Requests to one origin share the connections it may have: used again when an exchange ended cleanly, six at a time, the rest in a queue.", "Check cl_kill, cl_reusable, cl_conn_keep, cl_conn_give and cl_conn_close, and the choice in proven_http_event_client_start_h1_: an idle connection, a new one under the limit, or the queue.");
+    connections(false);
+    connections(true);
+    PROVEN_TEST_SECTION("a connection that is kept, and one that is not", "The test plays the server and keeps its connection, or closes it at each moment that matters.", "Check cl_reusable for what may be kept, cl_send_again for the one sending more a request gets when a kept connection was dead, and cl_idle_io for a connection closed while idle.");
+    kept_or_not();
 
     proven_loop_destroy(g_loop);
     proven_tls_config_destroy(g_client_tls); proven_tls_config_destroy(g_server_tls); proven_tls_config_destroy(g_stranger_tls);

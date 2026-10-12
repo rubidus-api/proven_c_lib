@@ -82,6 +82,8 @@ static bool buf_append(proven_http_event_client_t *cl, cl_buf_t *b, const proven
 
 static void cl_process(proven_http_event_request_t *c);
 static void cl_on_timer(void *ctx);
+static void cl_enter(proven_http_event_request_t *c);
+static void cl_leave(proven_http_event_request_t *c);
 
 static void cl_enter(proven_http_event_request_t *c) { c->h.depth++; }
 
@@ -97,30 +99,248 @@ static void cl_leave(proven_http_event_request_t *c) {
     cl->alloc.free_fn(cl->alloc.ctx, c);
 }
 
-/* The end, good or bad: close, and tell the program once. */
+static bool cl_secured(const proven_http_event_request_t *c) { return c->k && (!c->k->tls || proven_tls_is_established(c->k->tls)); }
+
+static proven_size_t cl_buffered(const proven_http_event_request_t *c) {
+    proven_size_t n = buf_pending(&c->out);
+    if (c->k && c->k->tls) n += proven_tls_pending_output(c->k->tls).size;
+    return n;
+}
+
+// -----------------------------------------------------------------------------
+// Connections: made for a request, kept when its exchange ended cleanly, given to the next
+// -----------------------------------------------------------------------------
+
+static void cl_on_io(void *ctx, proven_u8 got);
+static void cl_on_idle_timer(void *ctx);
+static void cl_kill(proven_http_event_request_t *c, proven_err_t why);
+static void cl_watch(proven_http_event_request_t *c);
+static void cl_arm(proven_http_event_request_t *c);
+
+static proven_u8str_view_t cl_host(const proven_http_event_request_t *c) {
+    return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)(c + 1), .size = c->host_len };
+}
+
+static bool cl_same_addr(const proven_net_addr_t *a, const proven_net_addr_t *b) {
+    if (a->family != b->family || a->port != b->port) return false;
+    for (proven_size_t i = 0; i < sizeof a->ip; ++i) if (a->ip[i] != b->ip[i]) return false;
+    return true;
+}
+
+/* Whether the connection leads where the request goes: scheme, host, port, and the address. */
+static bool cl_leads_to(const cl_conn_t *k, const proven_http_event_request_t *c) {
+    return k->https == c->https && k->port == c->port && cl_same_addr(&k->to, &c->to) &&
+           cl_eq_nocase((proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, cl_host(c));
+}
+
+/* A new connection for a request that has none. On failure nothing is left of it. */
+static proven_err_t cl_conn_open(proven_http_event_request_t *c) {
+    proven_http_event_client_t *cl = c->h.client;
+    cl_conn_t *k = cl_alloc(cl->alloc, sizeof *k);
+    if (!k) return PROVEN_ERR_NOMEM;
+    for (proven_size_t i = 0; i < sizeof *k; ++i) ((proven_byte_t *)k)[i] = 0;
+    k->client = cl;
+    k->https = c->https; k->port = c->port; k->to = c->to; k->host_len = c->host_len;
+    for (proven_size_t i = 0; i < c->host_len; ++i) k->host[i] = cl_host(c).ptr[i];
+    proven_err_t e = PROVEN_OK;
+    if (k->https) e = proven_tls_client_create(cl->cfg.tls, cl_host(c), (void *)0, &k->tls);
+    if (e == PROVEN_OK) {
+        e = proven_net_connect_start(k->to, &k->sock);
+        if (e == PROVEN_OK) k->connected_at_start = true;
+        else if (e == PROVEN_ERR_AGAIN) e = PROVEN_OK;
+    }
+    /* Either way the socket is watched for writing: what follows happens from the loop, so
+     * that nothing - not even a refusal - is reported from inside the call that began it. */
+    if (e == PROVEN_OK) e = proven_loop_io_add(cl->loop, &k->io, proven_net_conn_handle(&k->sock), PROVEN_NET_WRITABLE, cl_on_io, k);
+    if (e != PROVEN_OK) {
+        if (k->tls) proven_tls_conn_destroy(k->tls);
+        if (proven_net_conn_is_open(&k->sock)) (void)proven_net_close(&k->sock);
+        cl->alloc.free_fn(cl->alloc.ctx, k);
+        return e;
+    }
+    k->next = cl->conns;
+    if (k->next) k->next->prev = k;
+    cl->conns = k;
+    k->owner = c;
+    c->k = k;
+    c->state = CL_CONNECTING;
+    return PROVEN_OK;
+}
+
+/* Give a request that has none a connection that is idle. Its bytes leave from the loop. */
+static void cl_conn_give(cl_conn_t *k, proven_http_event_request_t *c) {
+    proven_http_event_client_t *cl = k->client;
+    proven_loop_timer_cancel(cl->loop, &k->timer);
+    k->idle = false;
+    cl->idle_count--;
+    k->owner = c;
+    c->k = k;
+    c->state = CL_HEAD;
+    /* It may have been closed by the server while it sat here: until something arrives on it,
+     * a request that can be sent again - one whose body is not written in pieces - keeps what
+     * it sent. Only here: a connection made for a request is that request's own, and when a
+     * request is sent again it is on such a one, so it is sent again once. */
+    c->stale = true;
+    c->keep_out = !c->streamed;
+    cl_watch(c);
+    cl_arm(c);
+}
+
+/* Take a request out of the queue of those waiting. */
+static void cl_unwait(proven_http_event_request_t *c) {
+    proven_http_event_client_t *cl = c->h.client;
+    proven_http_event_request_t *before = (void *)0;
+    for (proven_http_event_request_t *w = cl->wait_head; w && w != c; w = w->wnext) before = w;
+    if (before) before->wnext = c->wnext;
+    else cl->wait_head = c->wnext;
+    if (cl->wait_tail == c) cl->wait_tail = before;
+    c->wnext = (void *)0;
+    c->waiting = false;
+    cl->wait_count--;
+}
+
+/* Close a connection that no request owns. `serve_waiting`: a request to the same place that
+ * was waiting may now have a connection of its own - the first such, and if that cannot be
+ * made, it ends and the next is tried. */
+static void cl_conn_close(cl_conn_t *k, bool serve_waiting) {
+    proven_http_event_client_t *cl = k->client;
+    if (k->idle) { k->idle = false; cl->idle_count--; }
+    proven_loop_timer_cancel(cl->loop, &k->timer);
+    proven_loop_io_remove(cl->loop, &k->io);           /* before the close */
+    if (k->tls) proven_tls_conn_destroy(k->tls);
+    if (proven_net_conn_is_open(&k->sock)) (void)proven_net_close(&k->sock);
+    if (k->prev) k->prev->next = k->next;
+    else cl->conns = k->next;
+    if (k->next) k->next->prev = k->prev;
+    k->owner = (void *)0;
+    while (serve_waiting && !cl->closing) {
+        proven_http_event_request_t *w = cl->wait_head;
+        while (w && !cl_leads_to(k, w)) w = w->wnext;
+        if (!w) break;
+        cl_unwait(w);
+        proven_err_t e = cl_conn_open(w);
+        if (e == PROVEN_OK) { cl_arm(w); break; }
+        cl_enter(w);
+        cl_kill(w, e);
+        cl_leave(w);
+    }
+    cl->alloc.free_fn(cl->alloc.ctx, k);
+}
+
+/* A connection whose exchange ended cleanly: to the first request waiting for its origin, or
+ * kept idle - and then the one idle longest goes if there are too many. */
+static void cl_conn_keep(cl_conn_t *k) {
+    proven_http_event_client_t *cl = k->client;
+    k->owner = (void *)0;
+    k->uses++;
+    k->idle_since = proven_time_monotonic_now();
+    k->idle = true;
+    cl->idle_count++;
+    for (proven_http_event_request_t *w = cl->wait_head; w; w = w->wnext) {
+        if (!cl_leads_to(k, w)) continue;
+        cl_unwait(w);
+        cl_conn_give(k, w);
+        return;
+    }
+    (void)proven_loop_io_set(cl->loop, &k->io, PROVEN_NET_READABLE);
+    proven_loop_timer_set(cl->loop, &k->timer, cl->cfg.idle_timeout_ms, cl_on_idle_timer, k);
+    if (cl->idle_count > cl->cfg.max_idle_connections) {
+        cl_conn_t *oldest = (void *)0;
+        for (cl_conn_t *i = cl->conns; i; i = i->next)
+            if (!i->owner && i != k && (!oldest || i->idle_since < oldest->idle_since)) oldest = i;
+        cl_conn_close(oldest ? oldest : k, false);
+    }
+}
+
+static void cl_on_idle_timer(void *ctx) { cl_conn_close(ctx, false); }
+
+/* Something happened on a connection nobody is using. Under TLS it may be the server's
+ * housekeeping (a session ticket), which is read and kept; anything else - a close, or bytes
+ * nobody asked for - ends it. */
+static void cl_idle_io(cl_conn_t *k) {
+    proven_http_event_client_t *cl = k->client;
+    proven_result_size_t r = proven_net_read(&k->sock, (proven_mem_mut_t){ .ptr = cl->rbuf, .size = CL_READ_BYTES }, PROVEN_NET_DONT_WAIT);
+    if (r.err == PROVEN_ERR_TIMEOUT || r.err == PROVEN_ERR_AGAIN) return;
+    bool good = r.err == PROVEN_OK && k->tls != (void *)0;
+    for (proven_size_t at = 0; good && at < r.value; ) {
+        proven_size_t used = 0;
+        if (proven_tls_feed(k->tls, (proven_mem_view_t){ .ptr = cl->rbuf + at, .size = r.value - at }, &used) != PROVEN_OK || used == 0) good = false;
+        at += used;
+    }
+    if (good) {
+        proven_result_size_t got = proven_tls_read(k->tls, (proven_mem_mut_t){ .ptr = cl->pbuf, .size = CL_PLAIN_BYTES });
+        if (got.err == PROVEN_OK ? got.value > 0 : got.err == PROVEN_ERR_EOF) good = false;
+        if (proven_tls_pending_output(k->tls).size > 0) good = false;       /* it wants to answer: not while nobody drives it */
+    }
+    if (!good) cl_conn_close(k, false);
+}
+
+/* Whether the connection of a request that has just ended well can carry another. */
+static bool cl_reusable(proven_http_event_request_t *c) {
+    proven_http_event_client_t *cl = c->h.client;
+    cl_conn_t *k = c->k;
+    if (!c->keep || !c->request_ended || c->peer_eof || cl_buffered(c) > 0 || buf_pending(&c->stash) > 0 || k->unfed > 0) return false;
+    if (k->tls) {
+        /* Nothing more may be waiting inside TLS either. (The stash is empty, so the buffer
+         * this reads into holds nothing that is still wanted.) */
+        proven_result_size_t got = proven_tls_read(k->tls, (proven_mem_mut_t){ .ptr = cl->pbuf, .size = CL_PLAIN_BYTES });
+        if (got.err == PROVEN_OK ? got.value > 0 : got.err == PROVEN_ERR_EOF) return false;
+    }
+    return true;
+}
+
+/* A connection that had carried a request before was given to this one and turned out to be
+ * dead before anything came back on it: the server closed it while it sat idle. The request is
+ * sent once more, on a connection of its own. False when it cannot be, and is to end. */
+static bool cl_send_again(proven_http_event_request_t *c) {
+    if (!c->keep_out) return false;
+    proven_http_event_client_t *cl = c->h.client;
+    cl_conn_t *old = c->k;
+    c->k = (void *)0;
+    old->owner = (void *)0;
+    cl_conn_close(old, false);                    /* its place is this request's own */
+    c->stale = c->keep_out = c->peer_eof = false;
+    c->out.off = 0;
+    c->interim = 0;
+    buf_release(cl, &c->stash);
+    c->timer_kind = CL_T_NONE;
+    if (cl_conn_open(c) != PROVEN_OK) return false;
+    cl_arm(c);
+    return true;
+}
+
+/* The end, good or bad: tell the program once, and let the connection go - to the next
+ * request, or closed. */
 static void cl_kill(proven_http_event_request_t *c, proven_err_t why) {
     if (c->dead) return;
+    /* Lost on a connection that had been kept, before anything came back on it: the server
+     * closed it while it sat idle - that is the reading taken here - and never saw this
+     * request. One that can be sent again is; one whose body was written in pieces cannot be,
+     * and its caller is told that it may be started again. */
+    if (why == PROVEN_ERR_RESET && c->stale && !c->no_resend) {
+        if (cl_send_again(c)) return;
+        if (c->streamed) why = PROVEN_ERR_AGAIN;
+    }
     proven_http_event_client_t *cl = c->h.client;
     c->dead = true;
     proven_loop_timer_cancel(cl->loop, &c->timer);
-    proven_loop_io_remove(cl->loop, &c->io);           /* before the close */
-    if (c->tls) { proven_tls_conn_destroy(c->tls); c->tls = (void *)0; }
-    if (proven_net_conn_is_open(&c->sock)) (void)proven_net_close(&c->sock);
+    if (c->waiting) cl_unwait(c);
+    cl_conn_t *k = c->k;
+    const bool keep = k && why == PROVEN_OK && cl_reusable(c);
+    c->k = (void *)0;
     if (c->prev) c->prev->next = c->next;
     else cl->requests = c->next;
     if (c->next) c->next->prev = c->prev;
     cl->request_count--;
+    /* Before the program is told: a request it starts from on_done finds the connection. */
+    if (k) {
+        k->owner = (void *)0;
+        if (keep) cl_conn_keep(k);
+        else cl_conn_close(k, true);
+    }
     proven_http_event_request_t *face = c->face;
     c->on.on_done(c->ctx, face, why);
     if (face != c) proven_http_event_client_h2_forwarded_done_(face);
-}
-
-static bool cl_secured(const proven_http_event_request_t *c) { return !c->tls || proven_tls_is_established(c->tls); }
-
-static proven_size_t cl_buffered(const proven_http_event_request_t *c) {
-    proven_size_t n = buf_pending(&c->out);
-    if (c->tls) n += proven_tls_pending_output(c->tls).size;
-    return n;
 }
 
 /* Which time limit applies depends on what the request is waiting for. Limits that measure a
@@ -131,7 +351,9 @@ static void cl_arm(proven_http_event_request_t *c) {
     proven_http_event_client_t *cl = c->h.client;
     proven_u8 kind = CL_T_NONE;
     proven_u32 ms = 0;
-    if (c->state == CL_CONNECTING || !cl_secured(c)) { kind = CL_T_CONNECT; ms = cl->cfg.connect_timeout_ms; }
+    /* A request that waits for a connection is on the same clock as one whose connection is
+     * being made: it started when the request did, and is not started again. */
+    if (!c->k || c->state == CL_CONNECTING || !cl_secured(c)) { kind = CL_T_CONNECT; ms = cl->cfg.connect_timeout_ms; }
     else if (cl_buffered(c) > 0) { kind = CL_T_WRITE; ms = cl->cfg.write_timeout_ms; }
     else if (c->state == CL_HEAD && c->request_ended) { kind = CL_T_RESPONSE; ms = cl->cfg.response_timeout_ms; }
     else if (c->state == CL_BODY && !c->paused) { kind = CL_T_BODY; ms = cl->cfg.body_timeout_ms; }
@@ -142,37 +364,39 @@ static void cl_arm(proven_http_event_request_t *c) {
 }
 
 static void cl_watch(proven_http_event_request_t *c) {
-    if (c->dead) return;
+    if (c->dead || !c->k) return;
     proven_u8 want = 0;
     if (c->state == CL_CONNECTING) want = PROVEN_NET_WRITABLE;
     else {
         if (!c->peer_eof && !(c->state == CL_BODY && c->paused)) want |= PROVEN_NET_READABLE;
         if (cl_buffered(c) > 0) want |= PROVEN_NET_WRITABLE;
     }
-    (void)proven_loop_io_set(c->h.client->loop, &c->io, want);
+    (void)proven_loop_io_set(c->h.client->loop, &c->k->io, want);
 }
 
 /* Push what is waiting towards the socket, without waiting. False when the request ended. */
 static bool cl_flush(proven_http_event_request_t *c) {
     if (c->dead) return false;
-    if (c->state == CL_CONNECTING) return true;
+    if (!c->k || c->state == CL_CONNECTING) return true;
+    cl_conn_t *k = c->k;
     for (;;) {
-        if (c->tls && buf_pending(&c->out) > 0 && proven_tls_is_established(c->tls)) {
-            proven_result_size_t w = proven_tls_write(c->tls, (proven_mem_view_t){ .ptr = c->out.ptr + c->out.off, .size = buf_pending(&c->out) });
+        if (k->tls && buf_pending(&c->out) > 0 && proven_tls_is_established(k->tls)) {
+            proven_result_size_t w = proven_tls_write(k->tls, (proven_mem_view_t){ .ptr = c->out.ptr + c->out.off, .size = buf_pending(&c->out) });
             if (w.err != PROVEN_OK) { cl_kill(c, PROVEN_ERR_RESET); return false; }
             c->out.off += w.value;
         }
-        proven_mem_view_t pending = c->tls ? proven_tls_pending_output(c->tls)
+        proven_mem_view_t pending = k->tls ? proven_tls_pending_output(k->tls)
                                            : (proven_mem_view_t){ .ptr = c->out.ptr + c->out.off, .size = buf_pending(&c->out) };
         if (pending.size == 0) break;
-        proven_result_size_t w = proven_net_write(&c->sock, pending, PROVEN_NET_DONT_WAIT);
+        proven_result_size_t w = proven_net_write(&k->sock, pending, PROVEN_NET_DONT_WAIT);
         if (w.err == PROVEN_ERR_TIMEOUT || w.err == PROVEN_ERR_AGAIN) break;
         if (w.err != PROVEN_OK) { cl_kill(c, PROVEN_ERR_RESET); return false; }
-        if (c->tls) proven_tls_output_sent(c->tls, w.value);
+        if (k->tls) proven_tls_output_sent(k->tls, w.value);
         else c->out.off += w.value;
         if (w.value == 0) break;
     }
-    if (buf_pending(&c->out) == 0) buf_release(c->h.client, &c->out);
+    /* (Kept, when it may have to be sent again: see cl_conn_give.) */
+    if (buf_pending(&c->out) == 0 && !c->keep_out) buf_release(c->h.client, &c->out);
     return true;
 }
 
@@ -284,6 +508,7 @@ static void cl_process(proven_http_event_request_t *c) {
                 proven_http_decoder_begin_(&c->dec->d, cl->alloc, coding);
             }
             c->state = CL_BODY;
+            c->keep = !cl->cfg.no_connection_reuse && framing.kind != PROVEN_HTTP_BODY_UNTIL_CLOSE && proven_http_response_keep_alive(&res);
             if (c->on.on_response) c->on.on_response(c->ctx, c->face, &res);
             if (c->dead) break;
             if (no_body) { cl_kill(c, PROVEN_OK); break; }
@@ -345,55 +570,79 @@ static void cl_input(proven_http_event_request_t *c, const proven_byte_t *p, pro
     cl_process(c);
 }
 
+/* Something of an answer came back on this connection: it was alive when the request went,
+ * and nothing is sent twice now. */
+static void cl_alive(proven_http_event_request_t *c) {
+    if (!c->stale) return;
+    c->stale = c->keep_out = false;
+    if (buf_pending(&c->out) == 0) buf_release(c->h.client, &c->out);
+}
+
 static void cl_readable(proven_http_event_request_t *c) {
     proven_http_event_client_t *cl = c->h.client;
+    cl_conn_t *k = c->k;
     /* The end has been seen and the socket has nothing more to say. A hang-up may still be
      * reported - some systems report one whether or not reading was asked for - and a request
      * that is paused over what it already holds must not take that for a connection cut
      * under it. */
     if (c->peer_eof) return;
-    proven_result_size_t r = proven_net_read(&c->sock, (proven_mem_mut_t){ .ptr = cl->rbuf, .size = CL_READ_BYTES }, PROVEN_NET_DONT_WAIT);
+    proven_result_size_t r = proven_net_read(&k->sock, (proven_mem_mut_t){ .ptr = cl->rbuf, .size = CL_READ_BYTES }, PROVEN_NET_DONT_WAIT);
     if (r.err == PROVEN_ERR_TIMEOUT || r.err == PROVEN_ERR_AGAIN) return;
     if (r.err == PROVEN_ERR_EOF) {
         /* Under TLS an end of the connection without the engine having been told is a cut,
          * not a close: a body that runs until close must not be taken for whole. */
-        if (c->tls) { cl_kill(c, PROVEN_ERR_RESET); return; }
+        if (k->tls) { cl_kill(c, PROVEN_ERR_RESET); return; }
         c->peer_eof = true;
         cl_process(c);
         return;
     }
     if (r.err != PROVEN_OK) { cl_kill(c, r.err == PROVEN_ERR_REFUSED || r.err == PROVEN_ERR_UNREACHABLE ? r.err : PROVEN_ERR_RESET); return; }
-    if (!c->tls) { cl_input(c, cl->rbuf, r.value); return; }
+    if (!k->tls) {
+        if (r.value > 0) cl_alive(c);
+        cl_input(c, cl->rbuf, r.value);
+        return;
+    }
     proven_size_t at = 0;
-    while (at < r.value && !c->dead) {
+    while (at < r.value && !c->dead && c->k == k) {
         proven_size_t used = 0;
-        proven_err_t e = proven_tls_feed(c->tls, (proven_mem_view_t){ .ptr = cl->rbuf + at, .size = r.value - at }, &used);
+        proven_err_t e = proven_tls_feed(k->tls, (proven_mem_view_t){ .ptr = cl->rbuf + at, .size = r.value - at }, &used);
         at += used;
+        k->unfed = r.value - at;                   /* what cl_reusable must know of, should the response end in here */
         if (e != PROVEN_OK) {
             (void)cl_flush(c);                     /* the alert */
             cl_kill(c, e);
             return;
         }
         for (;;) {
-            proven_result_size_t got = proven_tls_read(c->tls, (proven_mem_mut_t){ .ptr = cl->pbuf, .size = CL_PLAIN_BYTES });
+            proven_result_size_t got = proven_tls_read(k->tls, (proven_mem_mut_t){ .ptr = cl->pbuf, .size = CL_PLAIN_BYTES });
             if (got.err == PROVEN_ERR_EOF) { c->peer_eof = true; cl_process(c); break; }
             if (got.err != PROVEN_OK) break;
+            /* Under TLS it is what the server said that counts, not that bytes came: its
+             * goodbye to a connection it had closed is bytes too. */
+            if (got.value > 0) cl_alive(c);
             cl_input(c, cl->pbuf, got.value);
-            if (c->dead) return;
+            if (c->dead || c->k != k) return;
         }
-        if (c->dead || c->peer_eof) break;
+        if (c->dead || c->k != k || c->peer_eof) break;
         if (used == 0) break;
     }
+    if (c->dead || c->k != k) return;
+    k->unfed = 0;
     /* The handshake may just have finished: the request can leave now. */
-    if (!c->dead) { if (cl_flush(c)) cl_progress(c); }
+    if (cl_flush(c)) cl_progress(c);
 }
 
 static void cl_on_io(void *ctx, proven_u8 got) {
-    proven_http_event_request_t *c = ctx;
+    cl_conn_t *k = ctx;
+    proven_http_event_request_t *c = k->owner;
+    if (!c) { cl_idle_io(k); return; }
     cl_enter(c);
+    /* (`c->k != k`: the request was sent again on another connection, and this one is gone.) */
     if (!c->dead && c->state == CL_CONNECTING) {
-        proven_err_t e = c->connected_at_start ? PROVEN_OK : proven_net_connect_finish(&c->sock);
+        proven_err_t e = k->connected_at_start ? PROVEN_OK : proven_net_connect_finish(&k->sock);
         if (e == PROVEN_OK) {
+            /* A request and the next one on the same connection are not to wait for each other's acknowledgements. */
+            (void)proven_net_conn_set_nodelay(&k->sock, true);
             c->state = CL_HEAD;
             if (cl_flush(c)) cl_progress(c);
         } else if (e != PROVEN_ERR_AGAIN) {
@@ -401,7 +650,7 @@ static void cl_on_io(void *ctx, proven_u8 got) {
         }
     } else {
         if (!c->dead && (got & PROVEN_NET_WRITABLE)) { if (cl_flush(c)) cl_progress(c); }
-        if (!c->dead && (got & (PROVEN_NET_READABLE | PROVEN_NET_FAILED))) cl_readable(c);
+        if (!c->dead && c->k == k && (got & (PROVEN_NET_READABLE | PROVEN_NET_FAILED))) cl_readable(c);
     }
     cl_leave(c);
 }
@@ -409,6 +658,7 @@ static void cl_on_io(void *ctx, proven_u8 got) {
 static void cl_on_timer(void *ctx) {
     proven_http_event_request_t *c = ctx;
     cl_enter(c);
+    c->no_resend = true;
     cl_kill(c, PROVEN_ERR_TIMEOUT);
     cl_leave(c);
 }
@@ -433,6 +683,8 @@ proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_h
     if (cfg.write_timeout_ms == 0) cfg.write_timeout_ms = 30000;
     if (cfg.idle_timeout_ms == 0) cfg.idle_timeout_ms = 60000;
     if (cfg.max_waiting_requests == 0) cfg.max_waiting_requests = 1000;
+    if (cfg.max_connections_per_origin == 0) cfg.max_connections_per_origin = 6;
+    if (cfg.max_idle_connections == 0) cfg.max_idle_connections = 8;
     if (cfg.tls) {
         /* What TLS may agree to and what the client will speak must be the same thing. */
         bool offers_h2 = false;
@@ -461,13 +713,18 @@ proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_h
 
 void proven_http_event_client_destroy(proven_http_event_client_t *cl) {
     if (!cl) return;
+    cl->closing = true;
     proven_http_event_client_h2_destroy_(cl);
     while (cl->requests) {
         proven_http_event_request_t *c = cl->requests;
         cl_enter(c);
+        c->no_resend = true;
         cl_kill(c, PROVEN_ERR_RESET);
         cl_leave(c);
     }
+    /* What is left is idle - or was made, a moment ago, for a request that had been waiting:
+     * that request is in the list above, so the loop has ended it by now. */
+    while (cl->conns) cl_conn_close(cl->conns, false);
     proven_allocator_t a = cl->alloc;
     if (cl->headers) a.free_fn(a.ctx, cl->headers);
     if (cl->rbuf) a.free_fn(a.ctx, cl->rbuf);
@@ -529,7 +786,8 @@ static proven_err_t cl_build_head(proven_http_event_client_t *cl, const proven_h
         else if (o->body_length == PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) e = proven_http_write_header(out, len, cl_lit("Transfer-Encoding"), cl_lit("chunked"));
         else if (o->body_length > 0 || body_method) e = proven_http_write_header_u64(out, len, cl_lit("Content-Length"), o->body_length);
     }
-    if (e == PROVEN_OK) e = proven_http_write_header(out, len, cl_lit("Connection"), cl_lit("close"));
+    /* HTTP/1.1 keeps a connection unless told otherwise. */
+    if (e == PROVEN_OK && cl->cfg.no_connection_reuse) e = proven_http_write_header(out, len, cl_lit("Connection"), cl_lit("close"));
     if (e == PROVEN_OK) e = proven_http_write_head_end(out, len);
     return e;
 }
@@ -567,12 +825,15 @@ proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *cl, 
     proven_err_t e = cl_build_head(cl, o, &u, method, &head_len);
     if (e != PROVEN_OK) return e;
 
-    proven_http_event_request_t *c = cl_alloc(cl->alloc, sizeof *c);
+    if (u.host.size > 255) return PROVEN_ERR_INVALID_ARG;
+    proven_http_event_request_t *c = cl_alloc(cl->alloc, sizeof *c + u.host.size);
     if (!c) return PROVEN_ERR_NOMEM;
     *c = (proven_http_event_request_t){
         .h = { .client = cl, .kind = CL_KIND_H1 }, .on = o->on, .ctx = o->ctx, .state = CL_CONNECTING,
         .method = cl_eq_nocase(method, cl_lit("HEAD")) ? PROVEN_HTTP_HEAD : PROVEN_HTTP_GET,
+        .https = https, .to = to, .port = u.has_port ? u.port : proven_url_default_port(u.scheme), .host_len = (proven_u8)u.host.size,
     };
+    for (proven_size_t i = 0; i < u.host.size; ++i) ((proven_byte_t *)(c + 1))[i] = u.host.ptr[i];
     if (o->body.size == 0 && o->body_length != 0) {
         c->streamed = true;
         c->chunked = o->body_length == PROVEN_HTTP_EVENT_LENGTH_UNKNOWN;
@@ -581,18 +842,18 @@ proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *cl, 
         c->request_ended = true;
     }
     if (!buf_append(cl, &c->out, cl->hbuf, head_len) || !buf_append(cl, &c->out, o->body.ptr, o->body.size)) e = PROVEN_ERR_NOMEM;
-    if (e == PROVEN_OK && https) e = proven_tls_client_create(cl->cfg.tls, u.host, (void *)0, &c->tls);
-    if (e == PROVEN_OK) {
-        e = proven_net_connect_start(to, &c->sock);
-        if (e == PROVEN_OK) c->connected_at_start = true;
-        else if (e == PROVEN_ERR_AGAIN) e = PROVEN_OK;
+    /* Its connection: one of its origin's that is idle; or a new one, while the origin has
+     * fewer than it may; or the next that comes free, for which it waits. */
+    cl_conn_t *idle = (void *)0;
+    proven_size_t have = 0;
+    for (cl_conn_t *k = cl->conns; k; k = k->next) {
+        if (!cl_leads_to(k, c)) continue;
+        have++;
+        if (k->idle && (!idle || k->idle_since > idle->idle_since)) idle = k;      /* the one used last is the likeliest to be alive */
     }
-    /* Either way the socket is watched for writing: what follows happens from the loop, so
-     * that nothing - not even a refusal - is reported from inside this call. */
-    if (e == PROVEN_OK) e = proven_loop_io_add(cl->loop, &c->io, proven_net_conn_handle(&c->sock), PROVEN_NET_WRITABLE, cl_on_io, c);
+    if (e == PROVEN_OK && !idle && have >= cl->cfg.max_connections_per_origin && cl->wait_count >= cl->cfg.max_waiting_requests) e = PROVEN_ERR_BUSY;
+    if (e == PROVEN_OK && !idle && have < cl->cfg.max_connections_per_origin) e = cl_conn_open(c);
     if (e != PROVEN_OK) {
-        if (c->tls) proven_tls_conn_destroy(c->tls);
-        if (proven_net_conn_is_open(&c->sock)) (void)proven_net_close(&c->sock);
         buf_release(cl, &c->out);
         cl->alloc.free_fn(cl->alloc.ctx, c);
         return e;
@@ -602,7 +863,18 @@ proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *cl, 
     cl->requests = c;
     cl->request_count++;
     c->face = face ? face : c;
-    cl_arm(c);
+    if (idle) {
+        cl_conn_give(idle, c);                     /* arms and watches */
+    } else if (!c->k) {
+        c->waiting = true;
+        if (cl->wait_tail) cl->wait_tail->wnext = c;
+        else cl->wait_head = c;
+        cl->wait_tail = c;
+        cl->wait_count++;
+        cl_arm(c);
+    } else {
+        cl_arm(c);
+    }
     if (out) *out = c;
     return PROVEN_OK;
 }
@@ -622,7 +894,7 @@ proven_result_size_t proven_http_event_request_write(proven_http_event_request_t
         proven_size_t held = cl_buffered(c);
         proven_size_t room = held < cl->cfg.max_buffered_output ? cl->cfg.max_buffered_output - held : 0;
         if (room == 0) {
-            if (tried || c->state == CL_CONNECTING || !cl_secured(c)) break;
+            if (tried || !c->k || c->state == CL_CONNECTING || !cl_secured(c)) break;
             tried = true;
             alive = cl_flush(c);
             continue;
@@ -682,6 +954,7 @@ void proven_http_event_request_abort(proven_http_event_request_t *c) {
     if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) { proven_http_event_client_h2_abort_(c); return; }
     if (c->dead) return;
     cl_enter(c);
+    c->no_resend = true;
     cl_kill(c, PROVEN_ERR_RESET);
     cl_leave(c);
 }

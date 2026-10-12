@@ -926,9 +926,9 @@ flight at once.
 
 **It is deliberately narrow, and the two limits are worth knowing before anything else.**
 
-- **One request, one connection, closed afterwards.** There is no connection reuse, and no
-  redirects, answers to challenges, cookies or proxies. Chapter 11's client has all of them;
-  use it wherever a thread per request in flight is affordable.
+- **A request is one exchange and nothing around it.** There are no redirects, answers to
+  challenges, cookies or proxies. Chapter 11's client has all of them; use it wherever a
+  thread per request in flight is affordable.
 - **Names are not resolved.** Looking a name up can take seconds, and nothing on a loop may
   wait. A request says where to connect with `address`; only a URL whose host is an IP address
   needs none. For a name: call `proven_net_resolve` on a job, post the result to the loop, and
@@ -952,6 +952,45 @@ copied or used before `proven_http_event_client_start` returns:
 | `on.on_writable(ctx, request)` | Request-body bytes that were held back have gone. Optional. |
 | `on.on_done(ctx, request, why)` | The end. **Required**, and called exactly once for every request that was started. |
 | `ctx` | Passed to every callback. |
+
+**Connections are kept, and counted.** Since v0.36.0 an HTTP/1.1 request does not make a
+connection of its own and close it. The client keeps the connections of each **origin** - the
+URL's scheme, host and port, and the address connected to - and a request takes one of them:
+
+- **one that is idle**, if its origin has one. A connection is kept when an exchange on it
+  ended cleanly: the response was HTTP/1.1 without `Connection: close`, its body had an end
+  of its own (a length, or chunks) and that end was reached, the request had been sent
+  whole, and nothing came after the response. At most `max_idle_connections` (8) are kept
+  in the whole client, the one idle longest making room for another, and none for longer
+  than `idle_timeout_ms` (60 s);
+- **or a new one**, while the origin has fewer than `max_connections_per_origin` (6), busy
+  and idle together;
+- **or it waits**, in the order of starting, for the next connection of its origin that comes
+  free. **This is the part to know: the seventh request in flight to one origin is not sent
+  until one of the six has ended.** A program that keeps more than six requests open to one
+  server on purpose - long polls, streams that do not end - must raise
+  `max_connections_per_origin`, or its seventh request waits and, after
+  `connect_timeout_ms`, ends with `PROVEN_ERR_TIMEOUT`: waiting is on the connecting clock,
+  which starts with the request. At most `max_waiting_requests` (1,000) wait in a client;
+  the next `start` is `PROVEN_ERR_BUSY`. A waiting request holds its head and its body, can
+  be written to (up to `max_buffered_output`), and can be aborted.
+
+**A kept connection may be dead by the time it is used**: servers close idle connections
+without asking, and the close can cross the next request on the wire. So when a request is
+lost on a connection that had carried one before, and nothing at all had come back on it,
+the client takes it that the server never saw the request, and **sends it once more, on a
+new connection, without telling you** - one `on_done`, for whichever sending ends it. A
+request whose body is written in pieces cannot be sent again, since the client does not
+have the pieces; it ends with `PROVEN_ERR_AGAIN`, which means what it means for HTTP/2: not
+acted on, and yours to start again. Once any byte of an answer has arrived, or on a
+connection made for the request, a loss is `PROVEN_ERR_RESET` as it always was. (The reading
+"never saw it" can be wrong - a server may take a request and die before it answers. It is
+the reading every HTTP client that reuses connections makes, the blocking client of
+Chapter 11 among them; `no_connection_reuse` is for a program that will not have it.)
+
+`no_connection_reuse` gives back the old behaviour for connections - `Connection: close` in
+every request, every connection closed when its response has ended - but not the old
+absence of a limit: six at a time to an origin still.
 
 **Starting.** When `proven_http_event_client_start` returns an error, the request was not
 started and no callback is or will be made. When it returns `PROVEN_OK`, `on_done` will be
@@ -989,8 +1028,8 @@ request with `PROVEN_ERR_INVALID_FORMAT`.
 | Call | Returns |
 |---|---|
 | `proven_http_event_client_create(loop, &config, &client)` | `proven_err_t`: `INVALID_ARG` for no loop; `NOMEM`. `config` may be null. |
-| `proven_http_event_client_requests(client)` | `proven_size_t`: requests in flight. |
-| `proven_http_event_client_destroy(client)` | nothing. Every request in flight gets `on_done(PROVEN_ERR_RESET)`. Null is accepted. |
+| `proven_http_event_client_requests(client)` | `proven_size_t`: requests started and not ended - those waiting for a connection among them. |
+| `proven_http_event_client_destroy(client)` | nothing. Every request, in flight or waiting, gets `on_done(PROVEN_ERR_RESET)`, and the kept connections are closed. Null is accepted. |
 | `proven_http_event_request_write(request, data)` | `proven_result_size_t`: the bytes taken. `INVALID_STATE` when the request has no body to write or it was ended; `OUT_OF_BOUNDS` for more than the length promised. |
 | `proven_http_event_request_end(request)` | `proven_err_t`: `INVALID_STATE` when there was nothing to end; `INVALID_FORMAT` when fewer bytes were written than promised - `on_done` is then called inside the call. |
 | `proven_http_event_request_abort(request)` | nothing. `on_done(PROVEN_ERR_RESET)` is called inside the call. |
@@ -1006,13 +1045,17 @@ The configuration's fields, each with a default when zero:
 | `max_headers` | Most header fields in a response. | 64 |
 | `max_body_bytes` | Largest response body. | no limit: it is delivered in pieces and never held |
 | `max_buffered_output` | Request-body bytes held before writes are refused. | 64 KiB |
-| `connect_timeout_ms` | To be connected, the TLS handshake included. | 10 s |
+| `connect_timeout_ms` | To be connected, the TLS handshake included - and the wait for a connection, when the origin has as many as it may. It runs from the start of the request; a request that is sent again gets it anew. | 10 s |
 | `response_timeout_ms` | From the request being sent to the end of the response head. | 30 s |
 | `body_timeout_ms` | Between pieces of the response body. | 30 s |
 | `write_timeout_ms` | Output held with none of it accepted by the server. | 30 s |
 | `decompress` | Ask for gzip and decode it: `on_body` gets decoded pieces, and `max_body_bytes` counts them. [Chapter 16](manual-16-compression.md), section 6. | off |
 | `http2`, `http2_cleartext` | Speak HTTP/2 to origins that agree to it (ALPN), or to every `http` origin: one connection kept for each, shared by its requests. [Chapter 17, section 7](manual-17-http2.md#7-http2-in-the-event-driven-client). | off |
-| `idle_timeout_ms`, `max_waiting_requests` | HTTP/2: how long a connection with no request is kept, and how many requests may wait for one. | 60 s, 1,000 |
+| `idle_timeout_ms` | How long a connection with no request on it is kept, in either protocol. | 60 s |
+| `max_waiting_requests` | Requests that may wait: for an HTTP/2 connection, on that connection; for an HTTP/1.1 connection, in the whole client. The next `start` is `PROVEN_ERR_BUSY`. | 1,000 |
+| `max_connections_per_origin` | HTTP/1.1: connections to one origin at a time, busy and idle together; a request beyond that waits. | 6 |
+| `max_idle_connections` | HTTP/1.1: idle connections kept in the whole client. (Chapter 11's client has a field of this name where 0 keeps none; here 0 is the default, and `no_connection_reuse` keeps none.) | 8 |
+| `no_connection_reuse` | HTTP/1.1: `Connection: close` in every request, and no connection kept. | off |
 
 The test suite compiles and runs this program:
 
@@ -1437,8 +1480,9 @@ changes that.
   network, no slow or hostile clients, no TLS under load, one handler that does nothing.
 - **A WebSocket client on the loop**, and upgrades other than WebSocket on this server.
   Chapter 12's client is the blocking one.
-- **In the event-driven client:** connection reuse, redirects, authentication, cookies,
-  proxies, and name resolution (section 12 says what to do instead).
+- **In the event-driven client:** redirects, authentication, cookies, proxies, and name
+  resolution (section 12 says what to do instead); pipelining, and any order among waiting
+  requests but the order of starting.
 - **TLS handshakes off the loop's thread.** Each costs the loop about 2 ms during which it
   serves nothing else (Chapter 14, section 9).
 - **A faster wait on Windows** than `WSAPoll`.

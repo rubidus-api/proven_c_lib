@@ -1447,8 +1447,10 @@ second in three runs with a hundred in flight on its one connection - the two pr
 turns there, the client's the longer one, the server busy about four seconds in ten - and
 42,000 a second one at a time, 21 microseconds each at the median. (It was 403,000 with a
 hundred in flight until the connection found a stream by its number instead of walking its
-table, and the client read a request's URL once instead of twice.) The same client over HTTP/1.1, which makes a connection for every request, did
-22,500 a second. **Loopback is not a network**, and a handler that does real work will be
+table, and the client read a request's URL once instead of twice.) The same client over HTTP/1.1 did 22,500 a second while it made a connection for
+every request; since v0.36.0 it keeps them ([Chapter 15, section 12](manual-15-event-loop.md#12-the-event-driven-client)) and does
+129,000 a second with a hundred requests in flight on its six connections, and 44,000 one
+at a time on one. **Loopback is not a network**, and a handler that does real work will be
 slower than one that answers "ok".
 
 **Not done:** no coverage-guided fuzzing; no measurement over a real network, with TLS, or
