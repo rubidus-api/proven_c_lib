@@ -18,6 +18,29 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.37.1] - 2026-10-12
+
+### Fixed
+
+- **HTTP/2: several bodies on one connection, and one of them could wait for all the
+  others.** When room came back in the connection's flow-control window, the engine
+  (`proven_h2_conn_t`) looked for a stream to tell from the same place every time, and the
+  stream it told took the whole window. With more bodies in flight than the window holds -
+  sixteen responses or requests of 64 KiB and more, measured - a stream could go unserved for
+  as long as others had something to send: in a ten-second run one request took the ten
+  seconds. Streams are now told in turn. It was so in both directions, in the event-driven
+  server and client and for anyone driving the engine by `PROVEN_H2_EVENT_STREAM_WRITABLE`.
+  Measured after, sixteen 1 MiB responses in flight: the slowest of 2,900 took 54 ms. The
+  throughput is the same.
+
+### Added
+
+- Tests that were missing: a connection that has used its stream numbers (v0.37.0's fix was
+  made by reading; it holds); `body_timeout_ms` and `write_timeout_ms` of the event-driven
+  client in both protocols; `INADEQUATE_SECURITY` from the event-driven server for TLS 1.2
+  with a CBC suite; the TLS 1.2 limit of 2^31 records; the engine's turns. No defect was found
+  by the first four. The HTTP/2 tests were also run as 32-bit Linux programs.
+
 ## [0.37.0] - 2026-10-12
 
 ### Changed

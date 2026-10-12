@@ -596,6 +596,12 @@ connection's window, and the room left under `max_buffered_output`. Keep the res
 it again when `PROVEN_H2_EVENT_STREAM_WRITABLE` names the stream. `end_stream` takes effect
 when all of what you offered was taken.
 
+When several streams wait for the connection's window, they are told **in turn**. A stream
+that is told takes what the window has; when room comes back, the search for the next one to
+tell goes on from the stream after it. A long body therefore does not hold up the other
+streams of its connection. (Before v0.37.1 it could: the search began at the same stream
+every time.)
+
 ### Flow control, receiving
 
 ```c
