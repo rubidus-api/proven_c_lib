@@ -18,6 +18,49 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-10-12
+
+### Changed
+
+- **A selector reports a lost connection once for a socket of which nothing is asked**
+  (`proven_net_selector_*`, and so `loop.h` and everything on it). A socket registered with
+  `want` of 0 - a request or a stream that is paused - whose connection was reset or hung up
+  was reported on every wait, because the system reports an error whether asked or not: the
+  loop did not sleep until the socket was resumed or removed. Known of the portable (poll)
+  kind on Windows since v0.26.0; the test written for it showed the same on Linux's `epoll`
+  for a reset. It is now reported one time and again when `proven_net_selector_modify`
+  changes what is asked. A caller that acted on the first report sees no difference. (The
+  `kqueue` kind, which has not been run, registers nothing for such a socket and so reports
+  nothing for it until something is asked.)
+- **The HPACK encoder no longer remembers `content-length`, `content-range`, `etag`, `age`,
+  `if-none-match` or `if-modified-since`.** Their values are seldom the same twice, and each
+  new one took a place in the table from a field that repeats. Measured, a response head of
+  six fields with a new `content-length` each time, encoded and decoded: 26.1 bytes and
+  430,000 a second before, 12.8 bytes and 1,020,000 after. A head whose `content-length` is
+  the same every time is two bytes longer than it was.
+- **Huffman coding of a header string of 2 to 127 bytes is one pass**, not a pass to measure
+  and a pass to code: it is coded in place and given up where it stops being shorter. (A
+  longer string is still measured first.) The bits leave four bytes at a time. A request head
+  of twelve fields, encoded and decoded with no table: 352,000 to 356,000 a second before,
+  423,000 after, the decoder unchanged. The output is the same bytes.
+- **The event-driven client's HTTP/2 connection asks the loop for its round, not the
+  socket.** A request started from outside the connection's own read asked to be told the
+  socket was writable: two changes of the socket's watch and a turn of the loop. It now uses
+  a hook inside `loop.c` that runs when the loop has delivered the round it is in, or before
+  it next sleeps, with no system call. What that saves was not measured: the load program
+  starts its requests inside a read, where nothing is asked for at all, and started from a
+  timer the rate is too low for the CPU time to show (the median round trip was 330 to 421
+  microseconds against 446 to 489, two runs each). At a hundred requests in flight on one
+  connection the release as a whole is where it was: 471,000 to 489,000 a second against
+  468,000 to 481,000, four runs each.
+
+### Added
+
+- Tests: WebSocket compression over TLS through both servers; the renewal of an RSA key's
+  blinding pair after 65,536 uses (the count is set by an internal call); the two changes
+  above. `test_unit_http_event` gives its raw reads ten seconds, not three: they end when the
+  server has answered, so nothing takes longer, and a loaded machine under TSan has room.
+
 ## [0.37.1] - 2026-10-12
 
 ### Fixed

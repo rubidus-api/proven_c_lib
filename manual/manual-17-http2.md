@@ -242,6 +242,12 @@ int main(void) {
   encoder never remembers the values of `authorization` and `proxy-authorization` and sends
   them marked so that no hop will; it does not remember `cookie` and `set-cookie`; and
   `sensitive` extends that to any field you name.
+- **What is seldom the same twice stays out too.** `content-length`, `content-range`, `etag`,
+  `age`, `if-none-match` and `if-modified-since` are sent by their name's index and not
+  remembered: each new value would take a place in the table from a field that does repeat.
+  (A response head whose `content-length` differs every time: 26 bytes and 430,000 a second
+  with the value remembered, 13 bytes and 1,020,000 without, on one machine, encoded and
+  decoded.)
 - **Names are lowercase before they reach the encoder.** It encodes what it is given; the
   check that a list is fit to send is section 4's.
 - **One encoder, one decoder, one direction, in order.** Not per request, not per stream.

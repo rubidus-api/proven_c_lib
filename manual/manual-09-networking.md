@@ -909,6 +909,16 @@ typedef struct {
 } proven_net_ready_t;
 ```
 
+**A socket of which nothing is asked is still told when its connection is lost - once.** The
+system reports an error or a hang-up whether you asked about the socket or not, and goes on
+reporting it. Registered with `want` of 0 - a connection you have paused - the socket is
+reported with `PROVEN_NET_FAILED` (or as readable and writable, for a hang-up) one time, and
+then left alone until you change what is asked of it with `proven_net_selector_modify`; then
+it is reported again. Before v0.38.0 it was reported on every wait, so a loop with one such
+socket never slept. (So on Linux and with the portable kind. The `kqueue` kind registers
+nothing for a socket of which nothing is asked, and reports nothing for it until something
+is; that kind has not been run.)
+
 **What you get depends on the system, and the selector says which.** On Linux it is `epoll`; on
 the BSDs and macOS it is `kqueue`. There a wait costs in proportion to the sockets that are
 ready. On Windows, and anywhere else, it is the portable kind: the same interface kept over the
