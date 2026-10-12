@@ -18,6 +18,48 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+A MINOR release that changes one answer of the event-driven client, and ends a wait that had
+no end.
+
+### Changed
+
+- **`http2_cleartext` against a server that does not speak HTTP/2: `on_done` says
+  `PROVEN_ERR_UNSUPPORTED`, not `PROVEN_ERR_AGAIN`.** In the clear a connection is HTTP/2
+  because the caller said so, and the server's SETTINGS are the first sign that it is. A
+  connection that was made and ended before them - on bytes that were not HTTP/2, or closed
+  without a word - ended every request with `PROVEN_ERR_AGAIN` since v0.32.0, because none had
+  been sent; but `PROVEN_ERR_AGAIN` means "start it again", and starting it again ended the
+  same way, for ever, for a caller that did not count. Now those requests end with
+  `PROVEN_ERR_UNSUPPORTED`, and `PROVEN_ERR_AGAIN` is left meaning one thing: an HTTP/2
+  server did not act on this request. **A caller that tested for `PROVEN_ERR_AGAIN` in this
+  case must test for the new value.** Nothing else moves: over TLS, where the handshake
+  settles the protocol, a connection lost before SETTINGS is `PROVEN_ERR_AGAIN` as before; a
+  connection that cannot be made is `PROVEN_ERR_REFUSED`, `PROVEN_ERR_UNREACHABLE` or
+  `PROVEN_ERR_TIMEOUT` as before; and once SETTINGS have arrived every ending is what it was.
+  A client destroyed while its connection waits for SETTINGS ends its requests with
+  `PROVEN_ERR_AGAIN` as before: that says nothing about the server. A server that was
+  restarting at that moment is not told apart: it gets `PROVEN_ERR_UNSUPPORTED` too.
+
+### Fixed
+
+- **A server that took an HTTP/2 connection and then said nothing held the client's requests
+  for ever.** Nothing is sent ahead of the server's SETTINGS, and no clock ran while the
+  client waited for them: once the connection was made (and the TLS handshake done)
+  `connect_timeout_ms` had stopped, and a request not yet sent has no `response_timeout_ms`.
+  So against a server that accepted the connection, read the preface and sent nothing, in
+  the clear or over TLS, `on_done` never came. Since v0.32.0. Becoming an HTTP/2 connection
+  is now part of connecting: `connect_timeout_ms` runs until the server's SETTINGS arrive,
+  and when it passes the requests end with `PROVEN_ERR_TIMEOUT`.
+
+### Added
+
+- Registered tests for each branch of the rule: an HTTP/1.1 server and a listener that
+  closes without a word (`PROVEN_ERR_UNSUPPORTED`), a port nobody listens on
+  (`PROVEN_ERR_REFUSED`), an HTTP/2 server in the clear destroyed with requests waiting
+  (`PROVEN_ERR_AGAIN`), a TLS peer that agrees to `h2` and closes before its SETTINGS
+  (`PROVEN_ERR_AGAIN`), a client destroyed while it waits (`PROVEN_ERR_AGAIN`), and a server
+  that reads and says nothing (`PROVEN_ERR_TIMEOUT` after `connect_timeout_ms`).
+
 ## [0.34.0] - 2026-10-12
 
 A MINOR release with no new API: **a second pass over HTTP/2's speed, this time on the

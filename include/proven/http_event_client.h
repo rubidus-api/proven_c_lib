@@ -53,7 +53,10 @@ typedef struct {
      *  take more. Optional. */
     void (*on_writable)(void *ctx, proven_http_event_request_t *request);
     /** The end, called exactly once for every request that was started: PROVEN_OK when the
-     *  whole response arrived, otherwise why not. Required. Free what you attached here. */
+     *  whole response arrived, otherwise why not. Required. Free what you attached here.
+     *  Over HTTP/2, PROVEN_ERR_AGAIN is a request the server did not act on, which may be
+     *  started again; PROVEN_ERR_UNSUPPORTED is a request to a server in the clear that did
+     *  not speak HTTP/2 (`http2_cleartext`), which would end the same way again. */
     void (*on_done)(void *ctx, proven_http_event_request_t *request, proven_err_t why);
 } proven_http_event_client_callbacks_t;
 
@@ -66,13 +69,13 @@ typedef struct {
     proven_size_t max_headers;             /**< most header fields in a response. 0: 64 */
     proven_u64 max_body_bytes;             /**< largest response body - as sent, and with `decompress` as decoded too. 0: no limit - it is delivered in pieces and never held */
     proven_size_t max_buffered_output;     /**< request-body bytes held before writes are refused. 0: 64 KiB */
-    proven_u32 connect_timeout_ms;         /**< to be connected, the TLS handshake included. 0: 10 s */
+    proven_u32 connect_timeout_ms;         /**< to be connected, the TLS handshake included - and, for HTTP/2, the server's SETTINGS. 0: 10 s */
     proven_u32 response_timeout_ms;        /**< from the request being sent to the end of the response head. 0: 30 s */
     proven_u32 body_timeout_ms;            /**< between pieces of the response body. 0: 30 s */
     proven_u32 write_timeout_ms;           /**< output held with none of it accepted by the server. 0: 30 s */
     bool decompress;                       /**< ask for compressed responses (`Accept-Encoding: gzip`, unless the request has its own or a `Range`) and decode a body sent with `Content-Encoding: gzip` or `deflate`: `on_body` gets decoded pieces of at most 16 KiB, the head stays as the server sent it, and a damaged or unfinished stream ends the request with PROVEN_ERR_INVALID_FORMAT. A 206 and other codings are delivered as sent. Costs about 52 KiB while such a response is arriving. false: bodies arrive as sent */
     bool http2;                            /**< true: an `https` origin that agrees to it (ALPN `h2`) is spoken to in HTTP/2, on one connection the client keeps for that origin and shares between its requests. The TLS configuration must offer `h2` - and must not when this is false */
-    bool http2_cleartext;                  /**< true: every `http` request of this client is HTTP/2 by prior knowledge - there is no way to ask a server in the clear, so say this only of servers known to speak it */
+    bool http2_cleartext;                  /**< true: every `http` request of this client is HTTP/2 by prior knowledge - there is no way to ask a server in the clear, so say this only of servers known to speak it. A connection that was made and is then lost before the server's SETTINGS ends its requests with PROVEN_ERR_UNSUPPORTED */
     proven_u32 idle_timeout_ms;            /**< HTTP/2: how long a connection with no request on it is kept for the next one. 0: 60 s */
     proven_size_t max_waiting_requests;    /**< HTTP/2: requests that may wait for a connection that is still being made, or for the server's limit on streams. 0: 1,000 */
 } proven_http_event_client_config_t;

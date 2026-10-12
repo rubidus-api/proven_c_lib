@@ -80,6 +80,7 @@ struct c2conn {
     proven_u16 port;
     proven_u8 state, host_len;
     bool https, connected_at_start, dead, pumping, reading, over, peer_eof, more_out, registered;
+    bool client_going;                 /* ended by proven_http_event_client_destroy, not by anything the server did */
     proven_byte_t host[256];
 };
 
@@ -182,10 +183,18 @@ static void r_finish(c2req_t *r, proven_err_t why) {
 }
 
 static void c_end_requests(c2conn_t *c, proven_err_t why) {
+    /* In the clear a connection is HTTP/2 because its caller said so (http2_cleartext), and the
+     * server's settings are the first sign that it is. One that ends without them - the bytes
+     * that came were not HTTP/2, or none came - was never an HTTP/2 connection, and "start it
+     * again" would be the answer that goes round for ever. Over TLS the handshake agreed on
+     * the protocol, so a connection lost there was an HTTP/2 connection, lost.
+     * (`engine`: it was connected. A connection that could not be made is not judged here,
+     * and neither is one that ends because its client is being destroyed.) */
+    const bool never_was = !c->https && c->engine && !c->client_going && !proven_h2_conn_has_peer_settings(c->engine);
     while (c->reqs) {
         c2req_t *r = c->reqs;
         /* One the server never saw may be started again; one it may have acted on may not. */
-        r_finish(r, r->id == 0 && why == PROVEN_ERR_RESET ? PROVEN_ERR_AGAIN : why);
+        r_finish(r, r->id == 0 && why == PROVEN_ERR_RESET ? (never_was ? PROVEN_ERR_UNSUPPORTED : PROVEN_ERR_AGAIN) : why);
     }
 }
 
@@ -274,16 +283,23 @@ static proven_size_t c_offer(c2conn_t *c, proven_mem_view_t data) {
 
 static void c_on_timer(void *ctx);
 
+/* Whether the connection is still being made, as time counts it: until the server's settings
+ * have come. A server that takes the connection - and the TLS handshake - and then says
+ * nothing has connect_timeout_ms to say it, like one that never answered the connect. */
+static bool c_connecting(const c2conn_t *c) {
+    return c->state != C2_UP || !proven_h2_conn_has_peer_settings(c->engine);
+}
+
 static void c_arm(c2conn_t *c) {
     if (c->dead || c->state == C2_H1) return;
     const proven_http_event_client_config_t *cfg = &c->client->cfg;
     proven_u32 ms = 0;
-    if (c->state != C2_UP) ms = cfg->connect_timeout_ms;
+    if (c_connecting(c)) ms = cfg->connect_timeout_ms;
     else if (c_queued(c) > 0) ms = cfg->write_timeout_ms;
     else if (c->count == 0) ms = cfg->idle_timeout_ms;
     const proven_time_t now = proven_time_monotonic_now();
     /* Connecting is one step with one limit: its clock is not started again by progress. */
-    if (c->state != C2_UP && c->quiet_due != 0) ms = c->quiet_due > now ? (proven_u32)((c->quiet_due - now) / 1000000 + 1) : 1;
+    if (c_connecting(c) && c->quiet_due != 0) ms = c->quiet_due > now ? (proven_u32)((c->quiet_due - now) / 1000000 + 1) : 1;
     else c->quiet_due = ms ? now + (proven_time_t)ms * 1000000 : 0;
     /* Not the earliest of its requests' hours, which would be a walk of them all at every
      * round, but a time no later than it: at worst the timer wakes early once, and c_on_timer
@@ -818,7 +834,7 @@ static void c_on_timer(void *ctx) {
         for (const c2req_t *r = c->reqs; r; r = r->next)
             if (r->due != 0 && (c->req_due == 0 || r->due < c->req_due)) c->req_due = r->due;
         if (c->quiet_due != 0 && now >= c->quiet_due) {
-            if (c->state != C2_UP || c_queued(c) > 0) c_kill(c, PROVEN_ERR_TIMEOUT);       /* never connected, or the server takes nothing */
+            if (c_connecting(c) || c_queued(c) > 0) c_kill(c, PROVEN_ERR_TIMEOUT);       /* never connected, or the server takes nothing */
             else if (c->count == 0) { proven_h2_conn_shutdown(c->engine, PROVEN_H2_NO_ERROR); c->over = true; c_pump(c); }
             else c_pump(c);
         } else if (c->state == C2_UP) {
@@ -976,6 +992,7 @@ void proven_http_event_client_h2_destroy_(proven_http_event_client_t *cl) {
             c_leave(c);
             continue;
         }
+        c->client_going = true;
         c_kill(c, PROVEN_ERR_RESET);
     }
 }

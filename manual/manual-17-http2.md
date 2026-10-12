@@ -1160,9 +1160,13 @@ before it returns, and `on_done` comes exactly once, never from inside `start`.
 - **In the clear**, `http2_cleartext`: every `http` request of that client is HTTP/2 by
   prior knowledge. There is no way to ask a server in the clear, so say this only of servers
   you know; a client that talks to both kinds in the clear is two clients. Said of a server
-  that speaks only HTTP/1.1, it ends every request with `PROVEN_ERR_AGAIN` - nothing is sent
-  ahead of a server's settings, and that server never sends any - and starting them again
-  ends the same way: count your retries.
+  that does not speak it, it ends every request with `PROVEN_ERR_UNSUPPORTED`: the
+  connection was made, and it ended - on bytes that were not HTTP/2, or with none at all -
+  before the server's settings, which are the first sign that a server in the clear is an
+  HTTP/2 server. Nothing is sent ahead of them, so no such request was acted on; but
+  starting it again would end the same way, which is why the answer is not
+  `PROVEN_ERR_AGAIN`. (It was, until v0.35.0.) A server that was only restarting at that
+  moment gets the same answer: if you know that it speaks HTTP/2, start the request again.
 
 **A request may wait**, where an HTTP/1.1 request never did: for the connection, while it is
 being made; for the server's first word, which says how many streams it allows - nothing is
@@ -1170,14 +1174,19 @@ sent ahead of that, so nothing is refused for it; and for a free stream, when th
 limit is reached. A waiting request holds a copy of what it was started with. At most
 `max_waiting_requests` (1,000) wait for one connection; the next `start` is `PROVEN_ERR_BUSY`.
 
-**What `on_done` says** is what it said, with one more answer: `PROVEN_ERR_AGAIN`, for a
-request the server did not act on - it said goodbye first, or refused the stream. Such a
-request may be started again, whatever its method; the client does not do so by itself.
-`PROVEN_ERR_RESET` still means "it may have been acted on".
+**What `on_done` says** is what it said, with two more answers. `PROVEN_ERR_AGAIN`, for a
+request that an HTTP/2 server did not act on - it said goodbye first, or refused the
+stream, or the connection was lost before the request was sent. Such a request may be
+started again, whatever its method; the client does not do so by itself.
+`PROVEN_ERR_UNSUPPORTED`, for a request to a server in the clear that turned out not to
+speak HTTP/2 (`http2_cleartext`, above): not acted on either, and not worth starting again.
+`PROVEN_ERR_RESET` still means "it may have been acted on". Over TLS there is no
+`PROVEN_ERR_UNSUPPORTED`: the handshake settles the protocol, and a server that agrees to
+HTTP/1.1 is spoken to in HTTP/1.1.
 
 | Setting | For HTTP/2 |
 |---|---|
-| `connect_timeout_ms` | Making an origin's connection, the handshake included: every request waiting for it ends with it |
+| `connect_timeout_ms` | Making an origin's connection - the handshake, and the server's SETTINGS, which are what makes it an HTTP/2 connection - and every request waiting for it ends with it (`PROVEN_ERR_TIMEOUT`) |
 | `response_timeout_ms`, `body_timeout_ms` | Each request's own: a request that is not answered ends, the connection and its other requests go on |
 | `write_timeout_ms` | The connection's: output the server takes none of ends it |
 | `idle_timeout_ms` (0: 60 s) | A connection with no request on it is kept this long for the next, then closed |
@@ -1292,7 +1301,8 @@ int main(void) {
   could not be, and a client that retries only some requests is harder to reason about than
   one that retries none.
 - **One connection is one point of failure.** When it ends, every request on it ends with
-  it - `PROVEN_ERR_AGAIN` for those not yet sent, `PROVEN_ERR_RESET` for the others.
+  it - `PROVEN_ERR_AGAIN` for those not yet sent, `PROVEN_ERR_RESET` for the others (and
+  `PROVEN_ERR_UNSUPPORTED` for all of them when, in the clear, it never was HTTP/2).
 
 ## 8. What is accepted, what is not here, and how this was tested
 

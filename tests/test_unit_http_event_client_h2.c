@@ -516,7 +516,7 @@ int main(void) {
         proven_http_event_server_destroy(server);
     }
 
-    PROVEN_TEST_SECTION("http2_cleartext, and a server that is not HTTP/2", "The setting says the server speaks HTTP/2 in the clear. This one does not.", "Check c_input and c_event: bytes that are not HTTP/2 frames end the connection and every request on it, once.");
+    PROVEN_TEST_SECTION("http2_cleartext, and a server that is not HTTP/2", "The setting says the server speaks HTTP/2 in the clear. This one does not.", "Check c_end_requests: a connection in the clear that was made and ended before the server's settings never was HTTP/2, and its requests end with PROVEN_ERR_UNSUPPORTED; every other ending is what it was. Check c_arm for the server that says nothing.");
     {
         proven_http_event_server_t *server = server_on(NULL, false, 0);
         proven_http_event_client_config_t ccfg = { .alloc = g_heap, .http2_cleartext = true };
@@ -526,12 +526,117 @@ int main(void) {
         for (int i = 0; i < 3; i++) PROVEN_TEST_ASSERT(start(client, &many[i], "GET", "/hello", mv(""), 0) == PROVEN_OK, "a request is started", "");
         for (int i = 0; i < 3; i++) spin_until(&many[i].done, 5000);
         bool all = true;
-        for (int i = 0; i < 3; i++) all = all && many[i].done && many[i].why == PROVEN_ERR_AGAIN && many[i].dones == 1 && many[i].responses == 0;
+        for (int i = 0; i < 3; i++) all = all && many[i].done && many[i].why == PROVEN_ERR_UNSUPPORTED && many[i].dones == 1 && many[i].responses == 0;
         PROVEN_TEST_ASSERT(all && g_served == 0 && proven_http_event_client_requests(client) == 0,
-            "each request ends once, with PROVEN_ERR_AGAIN and no response: nothing is sent ahead of a server's settings, so none of them was, and an HTTP/1.1 server's answer to the preface is not taken for a response", "");
+            "each request ends once, with PROVEN_ERR_UNSUPPORTED and no response: the server never spoke HTTP/2, starting again would end the same way, and an HTTP/1.1 server's answer to the preface is not taken for a response", "");
         proven_http_event_client_destroy(client);
         spin(50);
         proven_http_event_server_destroy(server);
+
+        /* A server that takes the connection and closes it without a word. */
+        proven_net_listener_t quiet;
+        proven_net_addr_t at;
+        PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 4, &quiet, &at) == PROVEN_OK, "a listener that is no HTTP server at all", "");
+        g_port = at.port; g_https = false;
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &ccfg, &client) == PROVEN_OK, "a client", "");
+        for (int i = 0; i < 2; i++) PROVEN_TEST_ASSERT(start(client, &many[i], "GET", "/hello", mv(""), 0) == PROVEN_OK, "a request is started", "");
+        proven_net_conn_t taken;
+        PROVEN_TEST_ASSERT(proven_net_accept(&quiet, proven_net_deadline_in(5000), &taken, NULL) == PROVEN_OK, "the connection is taken", "");
+        spin(30);
+        PROVEN_TEST_ASSERT(!many[0].done && !many[1].done, "while the server says nothing the requests wait", "");
+        (void)proven_net_close(&taken);
+        for (int i = 0; i < 2; i++) spin_until(&many[i].done, 5000);
+        PROVEN_TEST_ASSERT(many[0].done && many[1].done && many[0].why == PROVEN_ERR_UNSUPPORTED && many[1].why == PROVEN_ERR_UNSUPPORTED && many[0].dones == 1 && many[1].dones == 1 &&
+                           proven_http_event_client_requests(client) == 0, "closed without a word: PROVEN_ERR_UNSUPPORTED too, once each", "");
+        /* A server that takes the connection, reads what it is sent and says nothing, for ever:
+         * becoming an HTTP/2 connection is part of connecting, and has that long. */
+        proven_http_event_client_destroy(client);
+        spin(20);
+        proven_http_event_client_config_t short_cfg = ccfg;
+        short_cfg.connect_timeout_ms = 200;
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &short_cfg, &client) == PROVEN_OK, "a client that waits 200 ms to be connected", "");
+        for (int i = 0; i < 2; i++) PROVEN_TEST_ASSERT(start(client, &many[i], "GET", "/hello", mv(""), 0) == PROVEN_OK, "a request is started", "");
+        PROVEN_TEST_ASSERT(proven_net_accept(&quiet, proven_net_deadline_in(5000), &taken, NULL) == PROVEN_OK, "the connection is taken", "");
+        spin(30);
+        static proven_byte_t drained[4096];
+        (void)proven_net_read(&taken, (proven_mem_mut_t){ drained, sizeof drained }, PROVEN_NET_DONT_WAIT);
+        for (int i = 0; i < 2; i++) spin_until(&many[i].done, 3000);
+        PROVEN_TEST_ASSERT(many[0].done && many[1].done && many[0].why == PROVEN_ERR_TIMEOUT && many[1].why == PROVEN_ERR_TIMEOUT && many[0].dones == 1 && many[1].dones == 1,
+            "a server that never says it is HTTP/2 is given connect_timeout_ms, and the requests end with PROVEN_ERR_TIMEOUT", "");
+        (void)proven_net_close(&taken);
+        /* A client destroyed while its connection waits for the server's settings: that says
+         * nothing about the server. */
+        for (int i = 0; i < 2; i++) PROVEN_TEST_ASSERT(start(client, &many[i], "GET", "/hello", mv(""), 0) == PROVEN_OK, "a request is started", "");
+        PROVEN_TEST_ASSERT(proven_net_accept(&quiet, proven_net_deadline_in(5000), &taken, NULL) == PROVEN_OK, "the connection is taken", "");
+        spin(30);
+        PROVEN_TEST_ASSERT(!many[0].done && !many[1].done, "the requests wait", "");
+        proven_http_event_client_destroy(client);
+        PROVEN_TEST_ASSERT(many[0].done && many[1].done && many[0].why == PROVEN_ERR_AGAIN && many[1].why == PROVEN_ERR_AGAIN && many[0].dones == 1 && many[1].dones == 1,
+            "destroying the client ends them with PROVEN_ERR_AGAIN, as it did: nothing was learnt about the server", "");
+        (void)proven_net_close(&taken);
+        spin(20);
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &ccfg, &client) == PROVEN_OK, "a client", "");
+        /* And one where nothing listens: that is not a judgement on the protocol. */
+        (void)proven_net_listener_close(&quiet);
+        PROVEN_TEST_ASSERT(start(client, &many[0], "GET", "/hello", mv(""), 0) == PROVEN_OK, "a request to a port nobody listens on", "");
+        spin_until(&many[0].done, 5000);
+        PROVEN_TEST_ASSERT(many[0].done && many[0].why == PROVEN_ERR_REFUSED && many[0].dones == 1, "a connection that cannot be made is PROVEN_ERR_REFUSED, as it was", "");
+        proven_http_event_client_destroy(client);
+        spin(50);
+
+        /* A server that did speak HTTP/2 and then went away with requests still waiting for a
+         * stream: those may be started again, as before - it is the same kind of server. */
+        server = server_on(NULL, true, 1);
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &ccfg, &client) == PROVEN_OK, "a client", "");
+        PROVEN_TEST_ASSERT(start(client, &many[0], "GET", "/never", mv(""), 0) == PROVEN_OK, "a request the server will sit on", "");
+        while (g_served < 1) spin(5);
+        for (int i = 1; i < 3; i++) PROVEN_TEST_ASSERT(start(client, &many[i], "GET", "/hello", mv(""), 0) == PROVEN_OK, "and two that wait for its one stream", "");
+        spin(30);
+        proven_http_event_server_destroy(server);
+        for (int i = 0; i < 3; i++) spin_until(&many[i].done, 5000);
+        PROVEN_TEST_ASSERT(many[0].done && many[0].why == PROVEN_ERR_RESET, "the request that was sent ends with PROVEN_ERR_RESET", "");
+        PROVEN_TEST_ASSERT(many[1].done && many[2].done && many[1].why == PROVEN_ERR_AGAIN && many[2].why == PROVEN_ERR_AGAIN,
+            "the two that were not sent end with PROVEN_ERR_AGAIN: the server had said it speaks HTTP/2", "");
+        proven_http_event_client_destroy(client);
+        spin(50);
+
+        /* Over TLS the handshake has agreed on HTTP/2, so a server that goes away before its
+         * settings was an HTTP/2 server all the same. This one is the TLS engine and a socket. */
+        PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 4, &quiet, &at) == PROVEN_OK, "a listener", "");
+        g_port = at.port; g_https = true;
+        proven_http_event_client_config_t tcfg = { .alloc = g_heap, .tls = g_client_tls, .http2 = true };
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &tcfg, &client) == PROVEN_OK, "a client that asks for HTTP/2 over TLS", "");
+        for (int i = 0; i < 2; i++) PROVEN_TEST_ASSERT(start(client, &many[i], "GET", "/hello", mv(""), 0) == PROVEN_OK, "a request is started", "");
+        PROVEN_TEST_ASSERT(proven_net_accept(&quiet, proven_net_deadline_in(5000), &taken, NULL) == PROVEN_OK, "the connection is taken", "");
+        proven_tls_conn_t *peer = NULL;
+        PROVEN_TEST_ASSERT(proven_tls_server_create(g_server_tls_h2, &peer) == PROVEN_OK, "a TLS server's end", "");
+        static proven_byte_t in[16384];
+        bool broken = false;
+        for (int round = 0; round < 400 && !broken && !(proven_tls_is_established(peer) && proven_tls_pending_output(peer).size == 0); round++) {
+            spin(5);
+            proven_result_size_t got = proven_net_read(&taken, (proven_mem_mut_t){ in, sizeof in }, PROVEN_NET_DONT_WAIT);
+            for (proven_size_t pos = 0; got.err == PROVEN_OK && pos < got.value && !broken; ) {
+                proven_size_t used = 0;
+                if (proven_tls_feed(peer, (proven_mem_view_t){ in + pos, got.value - pos }, &used) != PROVEN_OK || used == 0) broken = true;
+                pos += used;
+            }
+            proven_mem_view_t out = proven_tls_pending_output(peer);
+            if (out.size > 0) {
+                if (proven_net_write_all(&taken, out, proven_net_deadline_in(5000)).err != PROVEN_OK) broken = true;
+                proven_tls_output_sent(peer, out.size);
+            }
+        }
+        PROVEN_TEST_ASSERT(!broken && proven_tls_is_established(peer) && proven_tls_alpn(peer).size == 2 && memcmp(proven_tls_alpn(peer).ptr, "h2", 2) == 0, "the handshake is done, and h2 was agreed", "");
+        spin(50);
+        PROVEN_TEST_ASSERT(!many[0].done && !many[1].done, "the requests wait for the server's settings", "");
+        (void)proven_net_close(&taken);
+        for (int i = 0; i < 2; i++) spin_until(&many[i].done, 5000);
+        PROVEN_TEST_ASSERT(many[0].done && many[1].done && many[0].why == PROVEN_ERR_AGAIN && many[1].why == PROVEN_ERR_AGAIN && many[0].dones == 1 && many[1].dones == 1,
+            "gone before its settings, over TLS: PROVEN_ERR_AGAIN, as it was", "");
+        proven_tls_conn_destroy(peer);
+        (void)proven_net_listener_close(&quiet);
+        proven_http_event_client_destroy(client);
+        spin(50);
     }
 
     PROVEN_TEST_SECTION("an origin that speaks only HTTP/1.1", "A client that asks for HTTP/2, and a server whose TLS does not offer it.", "Check c_fall_back: the requests that were waiting start again as HTTP/1.1 requests, known to their caller by the objects it already had.");
