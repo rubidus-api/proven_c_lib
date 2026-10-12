@@ -895,7 +895,10 @@ static void unsent(void) {
     (void)proven_net_listener_close(&l);
     spin(20);
     (void)proven_net_close(&x);
-    PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_ERR_REFUSED && c.dones == 1, "the server stops listening and closes it: the second connection is refused, and the request ends with PROVEN_ERR_REFUSED", "");
+    /* (Where a refusal takes longer to arrive than this client waits to be connected - Windows
+     * tries for a second or two - the try runs out of time instead. Either is the try's end.) */
+    PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && (c.why == PROVEN_ERR_REFUSED || c.why == PROVEN_ERR_TIMEOUT) && c.dones == 1,
+        "the server stops listening and closes it: the second connection cannot be made, and the request ends with PROVEN_ERR_REFUSED or PROVEN_ERR_TIMEOUT - the try's own end, not PROVEN_ERR_RESET", "");
     proven_http_event_client_destroy(client);
 }
 

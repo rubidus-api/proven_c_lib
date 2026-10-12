@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-10-12
+
 ### Changed
 
 - **`max_idle_connections` of the event-driven client is now `max_kept_connections`**

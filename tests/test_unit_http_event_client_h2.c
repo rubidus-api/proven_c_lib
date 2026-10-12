@@ -548,7 +548,10 @@ static void retries(void) {
     (void)proven_net_listener_close(&l);
     PROVEN_TEST_ASSERT(h2peer_goodbye(&a, 0), "the server stops listening, and says a goodbye that leaves the request out", "");
     spin_until(&one.done, 5000);
-    PROVEN_TEST_ASSERT(one.done && one.why == PROVEN_ERR_REFUSED && one.dones == 1 && one.responses == 0, "the new connection is refused: PROVEN_ERR_REFUSED, once", "");
+    /* (Where a refusal takes longer to arrive than this client waits to be connected - Windows
+     * tries for a second or two - the try runs out of time instead. Either is the try's end.) */
+    PROVEN_TEST_ASSERT(one.done && (one.why == PROVEN_ERR_REFUSED || one.why == PROVEN_ERR_TIMEOUT) && one.dones == 1 && one.responses == 0,
+        "the new connection cannot be made: PROVEN_ERR_REFUSED or PROVEN_ERR_TIMEOUT, once - the try's own end, not PROVEN_ERR_AGAIN", "");
     h2peer_end(&a);
     proven_http_event_client_destroy(client);
     spin(20);
