@@ -1,5 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
+#include "test_unit_tls_pki.h"
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -220,13 +221,32 @@ static void run_loop(void *arg) { (void)arg; (void)proven_loop_run(g_loop); }
 
 static proven_http_client_t *g_http;
 
+/* A second event-driven server, made on the loop's thread while the loop runs. */
+static atomic_bool g_made;
+static proven_http_event_server_config_t g_made_on;
+static proven_http_event_server_t **g_made_out, *g_tls_to_end;
+static proven_net_addr_t *g_made_at;
+static void make_event_server(void *ctx) {
+    (void)ctx;
+    if (proven_http_event_server_create(g_loop, &g_made_on, g_made_out) != PROVEN_OK ||
+        proven_http_event_server_listen(*g_made_out, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), g_made_at) != PROVEN_OK) *g_made_out = NULL;
+    atomic_store(&g_made, true);
+}
+static proven_http_server_t *g_blocking_tls;
+static proven_cert_store_t *anchors;                /* kept until the servers that use them are gone */
+static proven_tls_config_t *server_tls, *client_tls;
+static void blocking_tls_serve(void *arg) { (void)arg; (void)proven_http_server_run(g_blocking_tls); }
+
+static proven_http_client_t *g_https;       /* the same, with TLS: for wss */
+static bool g_wss;
+
 static proven_ws_conn_t *dial(proven_u16 port, const char *path, bool compress) {
     char url[96];
-    int n = snprintf(url, sizeof url, "ws://127.0.0.1:%u%s", (unsigned)port, path);
+    int n = snprintf(url, sizeof url, "%s://127.0.0.1:%u%s", g_wss ? "wss" : "ws", (unsigned)port, path);
     proven_ws_conn_config_t cfg = { .alloc = g_heap, .max_message_bytes = 2 * MIB, .compress = compress };
     proven_ws_conn_t *c = NULL;
     proven_u16 status = 0;
-    proven_err_t e = proven_ws_conn_connect(g_http, (proven_u8str_view_t){ (const proven_byte_t *)url, (proven_size_t)n }, NULL, 0, sv(""), &cfg, &c, &status);
+    proven_err_t e = proven_ws_conn_connect(g_wss ? g_https : g_http, (proven_u8str_view_t){ (const proven_byte_t *)url, (proven_size_t)n }, NULL, 0, sv(""), &cfg, &c, &status);
     PROVEN_TEST_ASSERT(e == PROVEN_OK && c != NULL, "the client connects", path);
     return c;
 }
@@ -525,10 +545,62 @@ int main(void) {
         proven_ws_conn_destroy(c);
     }
 
+    PROVEN_TEST_SECTION("over TLS", "The same extension where the bytes pass through TLS records in both servers: compressed messages of several sizes, both kinds, whole and in parts.", "Check that nothing in ws_conn.c or ws_event.c assumes a frame arrives in one read: TLS hands bytes on a record at a time.");
+    {
+        PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "");
+        PROVEN_TEST_ASSERT(proven_cert_store_create(g_heap, &anchors) == PROVEN_OK &&
+                           proven_cert_store_add_pem(anchors, (proven_mem_view_t){ (const proven_byte_t *)TP_CA, strlen(TP_CA) }, NULL) == PROVEN_OK, "anchors", "");
+        proven_tls_options_t co = { .alloc = g_heap, .anchors = anchors };
+        proven_tls_options_t so = { .alloc = g_heap, .certificate_pem = { (const proven_byte_t *)TP_SERVER_ED, strlen(TP_SERVER_ED) }, .private_key_pem = { (const proven_byte_t *)TP_SERVER_ED_KEY, strlen(TP_SERVER_ED_KEY) } };
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&co, &client_tls) == PROVEN_OK && proven_tls_config_create(&so, &server_tls) == PROVEN_OK, "TLS configurations", "");
+        /* A second pair of servers, with TLS: the event-driven one on the loop that is already running. */
+        proven_http_server_t *blocking_tls = NULL;
+        proven_http_event_server_t *event_tls = NULL;
+        proven_http_server_config_t bt = bcfg; bt.tls = server_tls;
+        proven_http_event_server_config_t et = ecfg; et.tls = server_tls;
+        proven_net_addr_t btat, etat;
+        PROVEN_TEST_ASSERT(proven_http_server_create(&bt, &blocking_tls) == PROVEN_OK &&
+                           proven_http_server_listen(blocking_tls, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &btat) == PROVEN_OK, "a blocking server with TLS listens", "");
+        g_made = false; g_made_on = et; g_made_out = &event_tls; g_made_at = &etat;
+        PROVEN_TEST_ASSERT(proven_loop_post(g_loop, make_event_server, NULL) == PROVEN_OK, "an event-driven server with TLS is asked for on the loop's thread", "");
+        for (int i = 0; i < 500 && !atomic_load(&g_made); ++i) proven_time_sleep(10);
+        PROVEN_TEST_ASSERT(atomic_load(&g_made) && event_tls != NULL, "and listens", "");
+        proven_job_sys_t *more = NULL;
+        proven_job_group_t tls_running;
+        proven_job_group_init(&tls_running);
+        g_blocking_tls = blocking_tls;
+        PROVEN_TEST_ASSERT(proven_job_system_init(g_heap, 1, 2, &more) == PROVEN_OK && proven_job_group_submit(more, &tls_running, blocking_tls_serve, NULL) == PROVEN_OK, "it is started", "");
+        proven_http_client_config_t hc = { .alloc = g_heap, .tls_wrap = proven_tls_http_wrap, .tls_ctx = client_tls };
+        PROVEN_TEST_ASSERT(proven_http_client_create(&hc, &g_https) == PROVEN_OK, "an HTTPS client for the handshakes", "");
+        g_wss = true;
+        for (int which = 0; which < 2; ++which) {
+            const char *server = which ? "the event-driven server, over TLS" : "the blocking server, over TLS";
+            proven_ws_conn_t *c = dial(which ? etat.port : btat.port, "/echo", true);
+            PROVEN_TEST_ASSERT(c && proven_ws_conn_compressed(c), "compression is agreed over wss", server);
+            static const proven_size_t sizes[] = { 0, 1, 64, 1000, 16384, 16385, 70000 };
+            for (proven_size_t i = 0; i < sizeof sizes / sizeof sizes[0]; ++i) {
+                for (int form = 0; form < 4; ++form) {
+                    fill(sizes[i], form % 2 == 0, (unsigned)(i * 4 + (proven_size_t)form + 100));
+                    PROVEN_TEST_ASSERT(echo_ok(c, sizes[i], form % 2 == 0, form >= 2), "text and binary, whole and in three parts, come back unchanged through TLS at every size", server);
+                }
+            }
+            hang_up(c);
+        }
+        g_wss = false;
+        proven_http_client_destroy(g_https);
+        proven_http_server_stop(blocking_tls);
+        proven_job_group_wait(more, &tls_running);
+        proven_job_system_close(more); proven_job_system_destroy(more);
+        proven_http_server_destroy(blocking_tls);
+        g_tls_to_end = event_tls;
+    }
+
     proven_http_client_destroy(g_http);
     proven_http_server_stop(g_blocking);
     proven_loop_stop(g_loop);
     proven_job_group_wait(threads, &running);
+    proven_http_event_server_destroy(g_tls_to_end);
+    proven_tls_config_destroy(server_tls); proven_tls_config_destroy(client_tls); proven_cert_store_destroy(anchors);
     proven_http_event_server_destroy(eserver);
     proven_loop_destroy(g_loop);
     proven_http_server_destroy(g_blocking);

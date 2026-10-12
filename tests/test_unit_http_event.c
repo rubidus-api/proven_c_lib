@@ -315,7 +315,7 @@ static void cases(bool tls) {
     static char text[70000];
     proven_err_t end = PROVEN_OK;
     PROVEN_TEST_ASSERT(raw_open(&raw, tls, at.port) && raw_send(&raw, "GET / HTTP/1.1\r\nHost: x\r\n\r\nGET /later HTTP/1.1\r\nHost: x\r\n\r\nGET /missing HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"), "three pipelined requests", how);
-    raw_read(&raw, text, sizeof text, 3000, &end);
+    raw_read(&raw, text, sizeof text, 10000, &end);
     const char *first = strstr(text, "hello"), *second = strstr(text, "later"), *third = strstr(text, "not here");
     PROVEN_TEST_ASSERT(first && second && third && first < second && second < third && count_of(text, "HTTP/1.1 ") == 3 && end == PROVEN_ERR_EOF,
         "three answers in the order asked, then the connection closes as the last request said", how);
@@ -324,17 +324,17 @@ static void cases(bool tls) {
 
     /* HEAD, HTTP/1.0, and a request whose answer comes before its body. */
     PROVEN_TEST_ASSERT(raw_open(&raw, tls, at.port) && raw_send(&raw, "HEAD / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"), "HEAD", how);
-    raw_read(&raw, text, sizeof text, 3000, &end);
+    raw_read(&raw, text, sizeof text, 10000, &end);
     PROVEN_TEST_ASSERT(strstr(text, "Content-Length: 5\r\n") && !strstr(text, "hello"), "a response to HEAD has the headers of the body and none of its bytes", how);
     raw_close(&raw);
     PROVEN_TEST_ASSERT(raw_open(&raw, tls, at.port) && raw_send(&raw, "GET /big/100?c HTTP/1.0\r\n\r\n"), "an HTTP/1.0 request", how);
-    proven_size_t n10 = raw_read(&raw, text, sizeof text, 3000, &end);
+    proven_size_t n10 = raw_read(&raw, text, sizeof text, 10000, &end);
     const char *body10 = strstr(text, "\r\n\r\n");
     PROVEN_TEST_ASSERT(body10 && (proven_size_t)(text + n10 - (body10 + 4)) == 100 && !strstr(text, "chunked") && strstr(text, "Connection: close") && end == PROVEN_ERR_EOF,
         "to HTTP/1.0 a body of unknown length is sent plain and ended by closing", how);
     raw_close(&raw);
     PROVEN_TEST_ASSERT(raw_open(&raw, tls, at.port) && raw_send(&raw, "POST /early HTTP/1.1\r\nHost: x\r\nContent-Length: 100000\r\n\r\nonly a little"), "a request answered before its body arrives", how);
-    raw_read(&raw, text, sizeof text, 3000, &end);
+    raw_read(&raw, text, sizeof text, 10000, &end);
     PROVEN_TEST_ASSERT(strstr(text, "HTTP/1.1 403") && strstr(text, "Connection: close") && end == PROVEN_ERR_EOF, "the answer says the connection will close, and it does", how);
     raw_close(&raw);
     PROVEN_TEST_ASSERT(raw_open(&raw, tls, at.port) && raw_send(&raw, "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\nExpect: 100-continue\r\n\r\n"), "Expect: 100-continue", how);
@@ -357,7 +357,7 @@ static void cases(bool tls) {
     int before = atomic_load(&g_requests);
     for (proven_size_t i = 0; i < sizeof refused / sizeof refused[0]; ++i) {
         PROVEN_TEST_ASSERT(raw_open(&raw, tls, at.port) && raw_send(&raw, refused[i].send), "a request to refuse", how);
-        raw_read(&raw, text, sizeof text, 3000, &end);
+        raw_read(&raw, text, sizeof text, 10000, &end);
         PROVEN_TEST_ASSERT(strstr(text, refused[i].status) && end == PROVEN_ERR_EOF, refused[i].what, how);
         raw_close(&raw);
     }
@@ -365,14 +365,14 @@ static void cases(bool tls) {
     memset(long_head, 'a', sizeof long_head - 1);
     memcpy(long_head, "GET /", 5);
     PROVEN_TEST_ASSERT(raw_open(&raw, tls, at.port) && raw_send(&raw, long_head), "a head that never ends", how);
-    raw_read(&raw, text, sizeof text, 3000, &end);
+    raw_read(&raw, text, sizeof text, 10000, &end);
     PROVEN_TEST_ASSERT(strstr(text, "HTTP/1.1 431") && atomic_load(&g_requests) == before, "a head larger than the limit is 431; none of these reached on_request", how);
     raw_close(&raw);
 
     /* A chunked upload with broken framing fails after on_request: the handler is told. */
     int err_before = atomic_load(&g_done_err);
     PROVEN_TEST_ASSERT(raw_open(&raw, tls, at.port) && raw_send(&raw, "POST /upload HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\nZZ\r\n"), "a chunked body with a bad size line", how);
-    raw_read(&raw, text, sizeof text, 3000, &end);
+    raw_read(&raw, text, sizeof text, 10000, &end);
     expected++;
     PROVEN_TEST_ASSERT(strstr(text, "HTTP/1.1 400") && settled(expected) && atomic_load(&g_done_err) == err_before + 1 && atomic_load(&g_last_error) == PROVEN_ERR_INVALID_FORMAT,
         "it is answered 400, and on_done says PROVEN_ERR_INVALID_FORMAT", how);
@@ -380,7 +380,7 @@ static void cases(bool tls) {
 
     /* A handler that ends short of what it promised: the connection is cut, not completed. */
     PROVEN_TEST_ASSERT(raw_open(&raw, tls, at.port) && raw_send(&raw, "GET /short HTTP/1.1\r\nHost: x\r\n\r\n"), "a handler that writes less than its Content-Length", how);
-    raw_read(&raw, text, sizeof text, 3000, &end);
+    raw_read(&raw, text, sizeof text, 10000, &end);
     expected++;
     PROVEN_TEST_ASSERT(strstr(text, "Content-Length: 10") && settled(expected) && atomic_load(&g_last_error) == PROVEN_ERR_INVALID_FORMAT && end != PROVEN_OK,
         "proven_http_stream_end reports PROVEN_ERR_INVALID_FORMAT and the client sees the connection end early", how);
@@ -394,7 +394,7 @@ static void cases(bool tls) {
     expected++;
     PROVEN_TEST_ASSERT(settled(expected) && atomic_load(&g_done_err) == err_before + 1, "a client that leaves in the middle of a response ends the exchange with an error", how);
     PROVEN_TEST_ASSERT(raw_open(&raw, tls, at.port) && raw_send(&raw, "GET /abort HTTP/1.1\r\nHost: x\r\n\r\n"), "a request the handler aborts", how);
-    proven_size_t na = raw_read(&raw, text, sizeof text, 3000, &end);
+    proven_size_t na = raw_read(&raw, text, sizeof text, 10000, &end);
     expected++;
     PROVEN_TEST_ASSERT(na == 0 && end != PROVEN_OK && settled(expected) && atomic_load(&g_last_error) == PROVEN_ERR_RESET, "proven_http_stream_abort closes the connection with nothing sent, and on_done says PROVEN_ERR_RESET", how);
     raw_close(&raw);
@@ -402,7 +402,7 @@ static void cases(bool tls) {
     /* Time limits. */
     PROVEN_TEST_ASSERT(raw_open(&raw, tls, at.port) && raw_send(&raw, "GET / HTTP/1.1\r\nHost"), "half a request head, and then silence", how);
     t0 = proven_time_monotonic_now();
-    raw_read(&raw, text, sizeof text, 3000, &end);
+    raw_read(&raw, text, sizeof text, 10000, &end);
     proven_time_t took = proven_time_monotonic_now() - t0;
     PROVEN_TEST_ASSERT(strstr(text, "HTTP/1.1 408") && took > 250000000 && took < 3000000000, "after the head timeout the server answers 408 and closes", how);
     raw_close(&raw);

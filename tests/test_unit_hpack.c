@@ -292,6 +292,74 @@ int main(void) {
         proven_hpack_decoder_destroy(d);
     }
 
+    PROVEN_TEST_SECTION("what the encoder does not remember, and how a string is written", "Fields whose value is seldom the same twice stay out of the table; a string is Huffman-coded exactly when that is shorter.", "Check hp_reserve_kind, the dynamic-table search in proven_hpack_encode, hp_put_string and hp_huffman_put.");
+    {
+        proven_hpack_encoder_t *c = NULL;
+        proven_hpack_decoder_t *d = NULL;
+        PROVEN_TEST_ASSERT(proven_hpack_encoder_create(g_heap, 4096, &c) == PROVEN_OK && proven_hpack_decoder_create(g_heap, 4096, &d) == PROVEN_OK, "an encoder and a decoder", "");
+        proven_http_header_t kept = { PROVEN_LIT("x-kept"), PROVEN_LIT("this one is the same every time") };
+        proven_size_t n = 0, got = 0;
+        PROVEN_TEST_ASSERT(proven_hpack_encode(c, &kept, 1, NULL, (proven_mem_mut_t){ g_block, sizeof g_block }, &n) == PROVEN_OK && decode(d, g_block, n, &got) == PROVEN_OK && proven_hpack_decoder_table_count(d) == 1, "a field goes into the table", "");
+        static const char *const seldom[6] = { "content-length", "content-range", "etag", "age", "if-none-match", "if-modified-since" };
+        bool ok = true;
+        proven_size_t each = 0;
+        for (int i = 0; i < 300 && ok; ++i) {
+            char value[32];
+            snprintf(value, sizeof value, "%d", 1000000 + i * 7919);
+            proven_http_header_t h = { sv(seldom[i % 6]), sv(value) };
+            n = 0;
+            ok = proven_hpack_encode(c, &h, 1, NULL, (proven_mem_mut_t){ g_block, sizeof g_block }, &n) == PROVEN_OK && (g_block[0] & 0xf0) == 0x00 && decode(d, g_block, n, &got) == PROVEN_OK && got == 1;
+            /* The same field again: as long, because nothing remembered it. */
+            proven_size_t again = 0;
+            ok = ok && proven_hpack_encode(c, &h, 1, NULL, (proven_mem_mut_t){ g_block, sizeof g_block }, &again) == PROVEN_OK && again == n && decode(d, g_block, again, &got) == PROVEN_OK;
+            each = n;
+        }
+        PROVEN_TEST_ASSERT(ok && each > 1 && proven_hpack_decoder_table_count(d) == 1, "six hundred fields of the six seldom-repeated names: each sent without indexing, by its name's static index, and the table still holds its one entry", "");
+        n = 0;
+        PROVEN_TEST_ASSERT(proven_hpack_encode(c, &kept, 1, NULL, (proven_mem_mut_t){ g_block, sizeof g_block }, &n) == PROVEN_OK && n == 1 && g_block[0] == (0x80 | 62), "which is still one byte to send: nothing pushed it out", "");
+        /* A secret whose name is in the dynamic table - not its value - is sent by that name's index. */
+        proven_http_header_t secret = { PROVEN_LIT("x-kept"), PROVEN_LIT("a value nobody may guess") };
+        const bool flag = true;
+        n = 0;
+        PROVEN_TEST_ASSERT(proven_hpack_encode(c, &secret, 1, &flag, (proven_mem_mut_t){ g_block, sizeof g_block }, &n) == PROVEN_OK && g_block[0] == 0x1f && g_block[1] == 62 - 15 &&
+                           decode(d, g_block, n, &got) == PROVEN_OK && got == 1 && proven_hpack_decoder_table_count(d) == 1,
+            "a field flagged as a secret, its name known to the table: never indexed, and the name sent as the table's index", "");
+        proven_hpack_encoder_destroy(c);
+        proven_hpack_decoder_destroy(d);
+
+        /* Strings of every length up to 300, of four kinds: one that codes shorter (letters),
+         * one that codes longer (bytes with long codes), one that is exactly as long coded
+         * (a symbol of eight bits), and one that is a little shorter coded - at 128 bytes it
+         * codes to 127, the first length that takes two bytes to write. The block must be the
+         * shorter form, and decode to the string. */
+        static char text[301];
+        bool sizes = true, shorter = true;
+        for (int kind = 0; kind < 4; ++kind) {
+            for (proven_size_t len = 0; len <= 300 && sizes; ++len) {
+                for (proven_size_t i = 0; i < len; ++i) text[i] = kind == 0 ? (char)('a' + (i * 7) % 26) : kind == 1 ? (char)(0x80 + (i * 13) % 100) : kind == 2 ? (i % 2 ? 'Z' : 'X') : (i < len - len / 10 ? 'X' : 'x');
+                proven_http_header_t h = { PROVEN_LIT("x-s"), { (const proven_byte_t *)text, len } };
+                const proven_size_t coded = proven_hpack_huffman_size(h.value);
+                PROVEN_TEST_ASSERT(proven_hpack_encoder_create(g_heap, 0, &c) == PROVEN_OK && proven_hpack_decoder_create(g_heap, 0, &d) == PROVEN_OK, "an encoder and a decoder with no table", "");
+                n = 0;
+                sizes = proven_hpack_encode(c, &h, 1, NULL, (proven_mem_mut_t){ g_block, sizeof g_block }, &n) == PROVEN_OK;
+                /* A size update to 0, the literal's first byte, the name (1 + 3; "x-s" does not code shorter), then the value. */
+                const proven_size_t body = coded < len ? coded : len, prefix = body < 127 ? 1u : body < 127 + 128 ? 2u : 3u;
+                const proven_size_t value_at = 1 + 1 + 4;
+                sizes = sizes && n == value_at + prefix + body && ((g_block[value_at] & 0x80) != 0) == (coded < len);
+                proven_size_t count = 0;
+                sizes = sizes && decode(d, g_block, n, &count) == PROVEN_OK && count == 1 && g_fields[0].value.size == len && (len == 0 || memcmp(g_fields[0].value.ptr, text, len) == 0);
+                if (kind == 0 && len >= 8 && coded >= len) shorter = false;
+                if (kind == 1 && len >= 1 && coded <= len) shorter = false;
+                if (kind == 2 && coded != len) shorter = false;
+                if (kind == 3 && len == 128 && coded != 127) shorter = false;
+                proven_hpack_encoder_destroy(c);
+                proven_hpack_decoder_destroy(d);
+            }
+        }
+        PROVEN_TEST_ASSERT(shorter, "the four kinds are what they are meant to be: shorter coded, longer coded, exactly as long, and 127 for 128", "");
+        PROVEN_TEST_ASSERT(sizes, "strings of 0 to 300 bytes of each kind: coded exactly when that is shorter, the length written in the form its size needs, and read back whole", "");
+    }
+
     PROVEN_TEST_SECTION("malformed blocks", "One for each way a block can be wrong.", "Check proven_hpack_decode: each `goto fail`.");
     {
         static const proven_byte_t index_zero[] = { 0x80 };

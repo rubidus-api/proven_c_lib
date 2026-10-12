@@ -85,7 +85,8 @@ typedef struct {
 enum {
     PROVEN_SYS_NET_READABLE = 1 << 0,
     PROVEN_SYS_NET_WRITABLE = 1 << 1,
-    PROVEN_SYS_NET_FAILED   = 1 << 2   /**< reported only: error or hang-up; the next call says which */
+    PROVEN_SYS_NET_FAILED   = 1 << 2,  /**< reported only: error or hang-up; the next call says which */
+    PROVEN_SYS_NET_IGNORE   = 1 << 7   /**< asked only, of proven_sys_net_wait: leave this item out of the wait - nothing is reported for it */
 };
 
 typedef struct {

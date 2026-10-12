@@ -51,6 +51,8 @@ struct proven_loop {
     proven_size_t batch_count, batch_pos;
     proven_size_t io_count;
     proven_byte_t *scratch;
+    proven_loop_after_t *after_first, *after_last;    /* "after this round", in the order asked */
+    proven_size_t after_count;
     proven_loop_clock_fn clock;                   /* tests only: null is the monotonic clock */
     void *clock_ctx;
 };
@@ -278,8 +280,40 @@ void proven_loop_stop(proven_loop_t *l) {
     proven_net_waker_wake(&l->waker);
 }
 
+void proven_loop_after_(proven_loop_t *l, proven_loop_after_t *a, proven_loop_fn fn, void *ctx) {
+    if (!l || !a || !fn || a->waiting) return;
+    a->fn = fn; a->ctx = ctx; a->waiting = true;
+    a->next = (void *)0; a->prev = l->after_last;
+    if (l->after_last) l->after_last->next = a; else l->after_first = a;
+    l->after_last = a;
+    l->after_count++;
+}
+
+void proven_loop_after_cancel_(proven_loop_t *l, proven_loop_after_t *a) {
+    if (!l || !a || !a->waiting) return;
+    if (a->prev) a->prev->next = a->next; else l->after_first = a->next;
+    if (a->next) a->next->prev = a->prev; else l->after_last = a->prev;
+    a->waiting = false;
+    a->next = a->prev = (void *)0;
+    l->after_count--;
+}
+
+/* As many as are waiting now, in order; one asked for meanwhile waits for the next call. Each
+ * is taken off the list before it runs, so it may ask again or be cancelled by another. */
+static void loop_run_after(proven_loop_t *l) {
+    for (proven_size_t n = l->after_count; n > 0 && l->after_first; --n) {
+        proven_loop_after_t *a = l->after_first;
+        proven_loop_after_cancel_(l, a);
+        a->fn(a->ctx);
+    }
+}
+
 proven_err_t proven_loop_poll(proven_loop_t *l, proven_net_deadline_t until) {
     if (!l) return PROVEN_ERR_INVALID_ARG;
+    /* What was asked for between rounds runs before the loop sleeps; what that asks for in
+     * its turn must not wait behind the sleep either. */
+    loop_run_after(l);
+    if (l->after_first) until = PROVEN_NET_DONT_WAIT;
     /* Work posted before this round must not wait behind a sleep. */
     if (loop_run_tasks(l)) until = PROVEN_NET_DONT_WAIT;
     proven_net_deadline_t next = loop_next_timer(l);
@@ -296,6 +330,8 @@ proven_err_t proven_loop_poll(proven_loop_t *l, proven_net_deadline_t until) {
     l->batch_count = 0; l->batch_pos = 0;
     loop_timers_advance(l);
     (void)loop_run_tasks(l);
+    loop_run_after(l);
+    loop_run_after(l);
     return PROVEN_OK;
 }
 

@@ -154,7 +154,9 @@ proven_size_t proven_hpack_encode_bound(const proven_http_header_t *headers, pro
  * a secret placed in one can be guessed from the size of later blocks. So the values of
  * `authorization` and `proxy-authorization` are sent in the form that tells every hop never
  * to index them, `cookie` and `set-cookie` are not remembered, and any field you mark in
- * `sensitive` is treated like the first two.
+ * `sensitive` is treated like the first two. Not remembered either, because their values are
+ * seldom the same twice and would push out of the table what is: `content-length`,
+ * `content-range`, `etag`, `age`, `if-none-match`, `if-modified-since`.
  *
  * @param sensitive optional: `count` flags, true for a field whose value must not be
  *        remembered by anyone. Null: none beyond the ones named above.

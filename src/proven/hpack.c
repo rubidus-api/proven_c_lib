@@ -163,21 +163,37 @@ proven_size_t proven_hpack_huffman_size(proven_u8str_view_t text) {
     return (proven_size_t)((bits + 7) / 8);
 }
 
+/* The coded form of `n` bytes at `out`, if it takes no more than `limit` bytes: its length.
+ * Otherwise 0, with `out` written to somewhere within `limit`. One pass: the code's bits are
+ * gathered in 64 and leave four bytes at a time (a code is at most 30 bits long). */
+static proven_size_t hp_huffman_put(const proven_byte_t *p, proven_size_t n, proven_byte_t *out, proven_size_t limit) {
+    proven_size_t at = 0;
+    proven_u64 acc = 0;
+    unsigned held = 0;
+    for (proven_size_t i = 0; i < n; ++i) {
+        const unsigned bits = hpack_huffman[p[i]].bits;
+        acc = (acc << bits) | hpack_huffman[p[i]].code;
+        held += bits;
+        if (held >= 32) {
+            if (limit - at < 4) return 0;
+            held -= 32;
+            const proven_u32 w = (proven_u32)(acc >> held);
+            out[at] = (proven_byte_t)(w >> 24); out[at + 1] = (proven_byte_t)(w >> 16); out[at + 2] = (proven_byte_t)(w >> 8); out[at + 3] = (proven_byte_t)w;
+            at += 4;
+        }
+    }
+    if (limit - at < (held + 7) / 8) return 0;
+    while (held >= 8) { held -= 8; out[at++] = (proven_byte_t)(acc >> held); }
+    /* The rest of the last byte is filled with the first bits of EOS: all ones. */
+    if (held > 0) out[at++] = (proven_byte_t)((acc << (8 - held)) | (0xffu >> held));
+    return at;
+}
+
 proven_err_t proven_hpack_huffman_encode(proven_u8str_view_t text, proven_mem_mut_t out, proven_size_t *len) {
     if (!len || (text.size > 0 && !text.ptr) || (out.size > 0 && !out.ptr) || *len > out.size) return PROVEN_ERR_INVALID_ARG;
     proven_size_t need = proven_hpack_huffman_size(text);
     if (out.size - *len < need) return PROVEN_ERR_OUT_OF_BOUNDS;
-    proven_size_t at = *len;
-    proven_u64 acc = 0;
-    unsigned held = 0;
-    for (proven_size_t i = 0; i < text.size; ++i) {
-        acc = (acc << hpack_huffman[text.ptr[i]].bits) | hpack_huffman[text.ptr[i]].code;
-        held += hpack_huffman[text.ptr[i]].bits;
-        while (held >= 8) { held -= 8; out.ptr[at++] = (proven_byte_t)(acc >> held); }
-    }
-    /* The rest of the last byte is filled with the first bits of EOS: all ones. */
-    if (held > 0) out.ptr[at++] = (proven_byte_t)((acc << (8 - held)) | (0xffu >> held));
-    *len = at;
+    *len += hp_huffman_put(text.ptr, text.size, out.ptr + *len, need);
     return PROVEN_OK;
 }
 
@@ -499,27 +515,44 @@ proven_size_t proven_hpack_encode_bound(const proven_http_header_t *headers, pro
 }
 
 static void hp_put_string(proven_byte_t *out, proven_size_t *at, proven_size_t cap, proven_u8str_view_t s) {
-    proven_size_t coded = proven_hpack_huffman_size(s);
-    if (coded < s.size) {
-        hp_put_int(out, at, 7, 0x80, coded);
-        (void)proven_hpack_huffman_encode(s, (proven_mem_mut_t){ .ptr = out, .size = cap }, at);
-    } else {
-        hp_put_int(out, at, 7, 0x00, s.size);
-        for (proven_size_t i = 0; i < s.size; ++i) out[(*at)++] = s.ptr[i];
+    (void)cap;
+    if (s.size >= 2 && s.size <= 127) {
+        /* Coded only if that is shorter, and a shorter form of so few bytes has a length of
+         * one byte: it is coded in place behind that byte, once, and given up where it stops
+         * being shorter. */
+        const proven_size_t coded = hp_huffman_put(s.ptr, s.size, out + *at + 1, s.size - 1);
+        if (coded != 0) { out[*at] = (proven_byte_t)(0x80u | coded); *at += 1 + coded; return; }
+    } else if (s.size > 127) {
+        const proven_size_t coded = proven_hpack_huffman_size(s);
+        if (coded < s.size) {
+            hp_put_int(out, at, 7, 0x80, coded);
+            *at += hp_huffman_put(s.ptr, s.size, out + *at, coded);
+            return;
+        }
     }
+    hp_put_int(out, at, 7, 0x00, s.size);
+    for (proven_size_t i = 0; i < s.size; ++i) out[(*at)++] = s.ptr[i];
 }
 
 /* Fields whose value this encoder does not put in a table unasked: 2 for "never indexed by
- * anyone", 1 for "not indexed here". */
+ * anyone", 1 for "not indexed here" - the secrets a table would let a peer probe for, and
+ * the fields whose value is seldom the same twice on a connection, which would only push out
+ * of the table what is. All of these names are in the static table. */
 static int hp_reserve_kind(proven_u8str_view_t name) {
-    static const struct { const char *s; proven_u8 n; proven_u8 kind; } list[] = {
-        { "authorization", 13, 2 }, { "proxy-authorization", 19, 2 }, { "cookie", 6, 1 }, { "set-cookie", 10, 1 },
-    };
-    if (name.size < 6 || name.size > 19) return 0;
-    for (proven_size_t i = 0; i < sizeof list / sizeof list[0]; ++i) {
-        if (hp_eq(name, (proven_u8str_view_t){ .ptr = (const proven_byte_t *)list[i].s, .size = list[i].n })) return list[i].kind;
+    /* By length first: most names are of a length none of these has, and are not compared. */
+#define HP_IS(text) hp_eq(name, (proven_u8str_view_t){ .ptr = (const proven_byte_t *)(text), .size = sizeof(text) - 1 })
+    switch (name.size) {
+        case 3: return HP_IS("age") ? 1 : 0;
+        case 4: return HP_IS("etag") ? 1 : 0;
+        case 6: return HP_IS("cookie") ? 1 : 0;
+        case 10: return HP_IS("set-cookie") ? 1 : 0;
+        case 13: return HP_IS("authorization") ? 2 : HP_IS("content-range") || HP_IS("if-none-match") ? 1 : 0;
+        case 14: return HP_IS("content-length") ? 1 : 0;
+        case 17: return HP_IS("if-modified-since") ? 1 : 0;
+        case 19: return HP_IS("proxy-authorization") ? 2 : 0;
+        default: return 0;
     }
-    return 0;
+#undef HP_IS
 }
 
 proven_err_t proven_hpack_encode(proven_hpack_encoder_t *c, const proven_http_header_t *headers, proven_size_t count,
@@ -563,7 +596,8 @@ proven_err_t proven_hpack_encode(proven_hpack_encoder_t *c, const proven_http_he
                 break;
             }
         }
-        for (proven_size_t k = 0; k < t->count && whole == 0; ++k) {
+        /* (A field this encoder never puts in the table, its name found: nothing to look for.) */
+        for (proven_size_t k = 0; k < t->count && whole == 0 && (reserve == 0 || by_name == 0); ++k) {
             const hp_entry_t *en = hp_at(t, k);
             if (!hp_eq(hp_name(t, en), name)) continue;
             if (by_name == 0) by_name = HPACK_STATIC_COUNT + k + 1;

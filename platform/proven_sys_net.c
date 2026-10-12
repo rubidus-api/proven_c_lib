@@ -705,22 +705,28 @@ proven_sys_net_result_t proven_sys_net_wait(proven_sys_net_wait_t *items, proven
     *ready = 0;
     if (!net_ready()) return PROVEN_SYS_NET_ERROR;
     native_pollfd_t *fds = scratch;
+    proven_size_t active = 0;
     for (proven_size_t i = 0; i < count; ++i) {
         fds[i].fd = (native_socket_t)items[i].sock;
         fds[i].events = 0;
         fds[i].revents = 0;
         if (items[i].want & PROVEN_SYS_NET_READABLE) fds[i].events |= NATIVE_POLL_IN;
         if (items[i].want & PROVEN_SYS_NET_WRITABLE) fds[i].events |= NATIVE_POLL_OUT;
+        /* A descriptor that is negative is passed over, by poll and by WSAPoll alike: the
+         * way to keep an item in the list and out of the wait. */
+        if (items[i].want & PROVEN_SYS_NET_IGNORE) { fds[i].fd = (native_socket_t)-1; fds[i].events = 0; }
+        else active++;
         items[i].got = 0;
     }
 #if defined(_WIN32) || defined(_WIN64)
-    if (count == 0) {
-        /* WSAPoll refuses an empty set; an empty wait is a sleep. */
+    if (active == 0) {
+        /* WSAPoll refuses a set with nothing to wait on; such a wait is a sleep. */
         if (timeout_ms != 0) Sleep(timeout_ms < 0 ? INFINITE : (DWORD)timeout_ms);
         return PROVEN_SYS_NET_OK;
     }
     int n = WSAPoll(fds, (ULONG)count, timeout_ms);
 #else
+    (void)active;
     int n = poll(fds, (nfds_t)count, timeout_ms);
 #endif
     if (n < 0) {
@@ -728,7 +734,8 @@ proven_sys_net_result_t proven_sys_net_wait(proven_sys_net_wait_t *items, proven
         return net_interrupted(e) ? PROVEN_SYS_NET_OK : net_reason(e);
     }
     for (proven_size_t i = 0; i < count; ++i) {
-        short r = fds[i].revents;
+        /* (Of an item that was left out nothing is taken: poll leaves 0 there, WSAPoll may not.) */
+        short r = (items[i].want & PROVEN_SYS_NET_IGNORE) ? 0 : fds[i].revents;
         proven_u8 got = 0;
         if (r & NATIVE_POLL_IN) got |= PROVEN_SYS_NET_READABLE;
         if (r & NATIVE_POLL_OUT) got |= PROVEN_SYS_NET_WRITABLE;
@@ -810,6 +817,11 @@ proven_sys_net_result_t proven_sys_net_selector_set(proven_uintptr_t selector, p
     memset(&ev, 0, sizeof ev);
     if (want & PROVEN_SYS_NET_READABLE) ev.events |= EPOLLIN;
     if (want & PROVEN_SYS_NET_WRITABLE) ev.events |= EPOLLOUT;
+    /* An error and a hang-up are reported whether asked for or not, and for as long as they
+     * last. Of a socket of which nothing is asked they are reported once: its owner is not
+     * looking - a request that is paused - and a wait that returned at once every time would
+     * spin. When something is asked again, they are reported again. */
+    if (ev.events == 0) ev.events = EPOLLET;
     ev.data.ptr = tag;
     if (epoll_ctl((int)selector, add ? EPOLL_CTL_ADD : EPOLL_CTL_MOD, (int)sock, &ev) == 0) return PROVEN_SYS_NET_OK;
     if (errno == EEXIST) return PROVEN_SYS_NET_EXISTS;

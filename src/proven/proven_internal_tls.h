@@ -369,6 +369,8 @@ void proven_tls_test_knobs12(unsigned flags);
  * asks for a client certificate even on a connection without the extended master secret. */
 /* The client offers only this TLS 1.2-family suite (0: everything, as usual). */
 void proven_tls_test_only_suite12(proven_u16 id);
+/* How often an RSA key's blinding pair has been used, put where a test says; returns what it was. */
+proven_u32 proven_tls_config_test_rsa_uses_(const proven_tls_config_t *config, proven_u32 uses);
 /* The count of records `writer` has written and `reader` has read, put where a test says. */
 void proven_tls_test_records_(proven_tls_conn_t *writer, proven_tls_conn_t *reader, proven_u64 count);
 /* Send an empty handshake message of `type` under the current keys. */

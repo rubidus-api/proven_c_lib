@@ -1,5 +1,6 @@
 #include "proven/http_event_client.h"
 #include "proven_internal_http_event_client.h"
+#include "proven_internal_loop.h"
 
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 
@@ -70,6 +71,7 @@ struct c2conn {
     proven_net_conn_t sock;
     proven_loop_io_t io;
     proven_loop_timer_t timer;
+    proven_loop_after_t after;         /* "call me back": a round, from the loop, when its present round is delivered */
     proven_tls_conn_t *tls;
     proven_h2_conn_t *engine;
     c2req_t *reqs;
@@ -206,6 +208,7 @@ static void c_end_requests(c2conn_t *c, proven_err_t why) {
 static void c_close_socket(c2conn_t *c) {
     proven_http_event_client_t *cl = c->client;
     proven_loop_timer_cancel(cl->loop, &c->timer);
+    proven_loop_after_cancel_(cl->loop, &c->after);
     if (c->registered) { proven_loop_io_remove(cl->loop, &c->io); c->registered = false; }      /* before the close */
     if (c->tls) { proven_tls_conn_destroy(c->tls); c->tls = (void *)0; }
     if (proven_net_conn_is_open(&c->sock)) (void)proven_net_close(&c->sock);
@@ -244,6 +247,23 @@ static void c_watch(c2conn_t *c) {
         if (c_held(c) > 0 || c->more_out) want |= PROVEN_NET_WRITABLE;
     }
     (void)proven_loop_io_set(c->client->loop, &c->io, want);
+}
+
+static void c_pump(c2conn_t *c);
+static void c_after(void *ctx) {
+    c2conn_t *c = ctx;
+    c_enter(c);
+    c_pump(c);
+    c_leave(c);
+}
+
+/* "Call me back": a round for this connection, run from the loop and never from where the
+ * caller stands. Inside the connection's own read nothing is asked for - c_on_io pumps when
+ * the read has been worked through. Otherwise the loop runs the round when it has delivered
+ * the one it is in, or before it next sleeps: no change of the socket's watch, no system call. */
+static void c_call_back(c2conn_t *c) {
+    if (c->dead || c->reading) return;
+    proven_loop_after_(c->client->loop, &c->after, c_after, c);
 }
 
 /* What TLS holds, towards the socket. False when the connection ended. */
@@ -361,7 +381,7 @@ static void r_push(c2req_t *r) {
             if (w.err != PROVEN_OK) r_finish(r, PROVEN_ERR_RESET);
             else { r->engine_done = true; r_expect(r); }
         } else if (!r->end_asked && r->want_writable && !r->window_shut && c_room(c) > 0) {
-            if (c->calls > 0) { c->more_out = true; c_watch(c); }      /* not from inside the caller's own call: the loop comes back */
+            if (c->calls > 0) c_call_back(c);                          /* not from inside the caller's own call: the loop comes back */
             else {
                 r->want_writable = false;
                 if (r->on.on_writable) r->on.on_writable(r->ctx, c2_handle(r));
@@ -966,7 +986,7 @@ static void r_unsent(c2req_t *r, bool here) {
     to->count++;
     if (to != c) {
         /* Its bytes leave from the loop, never from inside another connection's round. */
-        if (to->state == C2_UP) { to->more_out = true; c_watch(to); }
+        if (to->state == C2_UP) c_call_back(to);
         c_arm(to);
     }
 }
@@ -1060,11 +1080,10 @@ proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *cl, 
             cl->alloc.free_fn(cl->alloc.ctx, r);
             if (out) *out = (void *)0;
             /* (It takes no more requests: the same call, made again, makes a new connection.) */
-            if (e == PROVEN_ERR_INVALID_STATE) { c->over = true; c->more_out = true; c_watch(c); return PROVEN_ERR_AGAIN; }
+            if (e == PROVEN_ERR_INVALID_STATE) { c->over = true; c_call_back(c); return PROVEN_ERR_AGAIN; }
             return e;
         }
-        c->more_out = true;                        /* "call me back": the round runs from the loop, never from here */
-        c_watch(c);
+        c_call_back(c);                            /* the round runs from the loop, never from here */
     }
     c_arm(c);
     return PROVEN_OK;

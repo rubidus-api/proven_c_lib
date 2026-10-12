@@ -503,6 +503,11 @@ void proven_net_waker_close(proven_net_waker_t *waker);
  * Readiness is level-triggered, as with proven_net_poll: a socket is reported for as long as
  * it is ready, so an event you do not act on comes back on the next wait.
  *
+ * A socket registered with nothing asked of it (`want` of 0) whose connection is lost is
+ * reported once - PROVEN_NET_FAILED, or readable and writable for a hang-up - and then not
+ * again until proven_net_selector_modify changes what is asked. (The system would report it
+ * on every wait. The kqueue kind reports nothing for such a socket until something is asked.)
+ *
  * A selector is for one thread. Opaque; made by proven_net_selector_create.
  */
 typedef struct proven_net_selector proven_net_selector_t;

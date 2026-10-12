@@ -193,6 +193,53 @@ static void run(bool force_poll) {
     }
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a socket of which nothing is asked, and whose connection is lost",
+        "The system reports an error or a hang-up whether asked or not. A caller that asks nothing - a request that is paused - is told once, not on every wait.",
+        "Inspect the `told` mark in the poll kind of proven_net_selector_wait and _modify, and EPOLLET in proven_sys_net_selector_set.");
+    // ---------------------------------------------------------------
+    {
+        proven_net_listener_t l;
+        proven_net_addr_t at;
+        proven_net_conn_t mine, theirs;
+        int tag = 0;
+        PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 4, &l, &at) == PROVEN_OK &&
+                           proven_net_connect(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, at.port), proven_net_deadline_in(5000), &mine) == PROVEN_OK &&
+                           proven_net_accept(&l, proven_net_deadline_in(5000), &theirs, NULL) == PROVEN_OK, "a connection", "");
+        PROVEN_TEST_ASSERT(proven_net_selector_add(sel, proven_net_conn_handle(&mine), 0, &tag) == PROVEN_OK, "watched, with nothing asked", "");
+        /* The peer closes with a byte of ours unread: that resets the connection. */
+        PROVEN_TEST_ASSERT(proven_net_write_all(&mine, (proven_mem_view_t){ (const proven_byte_t *)"x", 1 }, proven_net_deadline_in(5000)).err == PROVEN_OK, "a byte is sent", "");
+        proven_time_sleep(30);
+        (void)proven_net_close(&theirs);
+        proven_time_sleep(50);
+        int told = 0;
+        proven_time_t t0 = proven_time_monotonic_now();
+        for (int i = 0; i < 20; ++i) {
+            proven_err_t e = proven_net_selector_wait(sel, events, 64, proven_net_deadline_in(20), &n);
+            if (e == PROVEN_OK) { for (proven_size_t k = 0; k < n; ++k) if (events[k].tag == &tag) told++; }
+        }
+        proven_time_t took = proven_time_monotonic_now() - t0;
+        PROVEN_TEST_ASSERT(told <= 1, "the lost connection is reported at most once while nothing is asked", "");
+        PROVEN_TEST_ASSERT(took > 300000000, "and twenty waits of 20 ms each waited: none returned at once on it", "");
+        PROVEN_TEST_ASSERT(proven_net_selector_modify(sel, proven_net_conn_handle(&mine), PROVEN_NET_READABLE, &tag) == PROVEN_OK &&
+                           proven_net_selector_wait(sel, events, 64, proven_net_deadline_in(2000), &n) == PROVEN_OK && n >= 1 && events[n - 1].tag == &tag &&
+                           (events[n - 1].got & (PROVEN_NET_READABLE | PROVEN_NET_FAILED)) != 0,
+            "asked about reading, it is reported: the caller that resumes learns what happened", "");
+        PROVEN_TEST_ASSERT(proven_net_selector_wait(sel, events, 64, proven_net_deadline_in(2000), &n) == PROVEN_OK && n >= 1, "and again, for as long as it asks", "");
+        /* Nothing asked again: told once more - what is asked was changed - and then left alone. */
+        PROVEN_TEST_ASSERT(proven_net_selector_modify(sel, proven_net_conn_handle(&mine), 0, &tag) == PROVEN_OK, "nothing is asked again", "");
+        told = 0;
+        t0 = proven_time_monotonic_now();
+        for (int i = 0; i < 10; ++i) {
+            proven_err_t e = proven_net_selector_wait(sel, events, 64, proven_net_deadline_in(20), &n);
+            if (e == PROVEN_OK) { for (proven_size_t k = 0; k < n; ++k) if (events[k].tag == &tag) told++; }
+        }
+        PROVEN_TEST_ASSERT(told == 1 && proven_time_monotonic_now() - t0 > 150000000, "it is reported once more, and then not", "");
+        PROVEN_TEST_ASSERT(proven_net_selector_remove(sel, proven_net_conn_handle(&mine)) == PROVEN_OK, "removed", "");
+        (void)proven_net_close(&mine);
+        (void)proven_net_listener_close(&l);
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("churn",
         "Twenty thousand random registrations, removals and readiness changes, checked against a model after each wait.",
         "A failure prints the step. For the poll kind this is the test of the hash's deletion; inspect proven_net_selector_remove.");

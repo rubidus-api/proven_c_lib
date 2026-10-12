@@ -924,6 +924,7 @@ typedef struct {
     proven_uintptr_t raw;
     void *tag;
     proven_u8 want;
+    bool told;                         /* nothing was asked of it and it was reported all the same: not again until something is */
 } sel_item_t;
 
 struct proven_net_selector {
@@ -1079,6 +1080,7 @@ proven_err_t proven_net_selector_modify(proven_net_selector_t *selector, proven_
     sel_item_t *it = &s->items[s->slots[at] - 1];
     it->want = want;
     it->tag = tag;
+    it->told = false;
     return PROVEN_OK;
 }
 
@@ -1145,7 +1147,11 @@ proven_err_t proven_net_selector_wait(proven_net_selector_t *selector, proven_ne
             proven_byte_t *native = s->count ? internal_align_up(first + s->count * sizeof(proven_sys_net_wait_t)) : (void *)0;
             for (proven_size_t i = 0; i < s->count; ++i) {
                 list[i].sock = (proven_sys_socket_t)s->items[i].raw;
-                list[i].want = s->items[i].want;
+                /* An error or a hang-up is reported whether asked for or not, on every wait.
+                 * Of a socket of which nothing is asked it is passed on once, and the socket
+                 * then left out of the wait until something is asked of it: its owner is not
+                 * looking, and a wait that returned at once every time would spin. */
+                list[i].want = s->items[i].want == 0 && s->items[i].told ? PROVEN_SYS_NET_IGNORE : s->items[i].want;
                 list[i].got = 0;
             }
             proven_size_t n = 0;
@@ -1159,6 +1165,7 @@ proven_err_t proven_net_selector_wait(proven_net_selector_t *selector, proven_ne
                 do {
                     if (list[i].got != 0) {
                         events[out++] = (proven_net_ready_t){ .tag = s->items[i].tag, .got = list[i].got };
+                        if (s->items[i].want == 0) s->items[i].told = true;
                     }
                     i = i + 1 == s->count ? 0 : i + 1;
                 } while (i != start && out < cap);

@@ -628,6 +628,21 @@ int main(void) {
             PROVEN_TEST_ASSERT(both_up(&p) && transfer(p.c, p.s, 3000, 5) && transfer(p.s, p.c, 70000, 6),
                 form ? "and the same key as an RSA PRIVATE KEY file" : "a server with a 2048-bit RSA key in PKCS #8 completes a handshake and carries data", "");
             close_pair(&p);
+            /* The pair is made afresh after 65,536 uses. The count is put just short of that:
+             * the signatures before the renewal, the one that renews, and those after are all
+             * signatures the client accepts, and the count begins again. */
+            if (form == 0) {
+                bool renewed = true;
+                const proven_u32 before = proven_tls_config_test_rsa_uses_(sc, 65533);
+                for (int i = 0; i < 5; ++i) {
+                    p = connect_pair(cc, sc, "example.test", NULL, NULL, NULL);
+                    renewed = renewed && both_up(&p) && transfer(p.c, p.s, 100, 9);
+                    close_pair(&p);
+                }
+                const proven_u32 after = proven_tls_config_test_rsa_uses_(sc, 0);
+                PROVEN_TEST_ASSERT(before >= 1 && before < 100 && renewed && after == 2,
+                    "five handshakes across the renewal of the blinding pair all complete, and the count of uses begins again at the renewal", "");
+            }
             /* Every handshake signs with the next blinding pair. */
             bool all = true;
             for (int i = 0; i < 12 && form == 0; ++i) {

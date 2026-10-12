@@ -333,6 +333,19 @@ bool proven_tls_config_rsa_sign_(const proven_tls_config_t *c, bool pkcs1, prove
     return ok;
 }
 
+/* For tests (declared in proven_internal_tls.h): how often the blinding pair has been used, put
+ * where a test says - the renewal is 65,536 signatures away otherwise. Returns the count as it
+ * was, or 0 for a configuration with no RSA key. */
+proven_u32 proven_tls_config_test_rsa_uses_(const proven_tls_config_t *c, proven_u32 uses) {
+    if (!c || !c->rsa) return 0;
+    proven_tls_rsa_t *r = c->rsa;
+    while (atomic_flag_test_and_set_explicit(&r->lock, memory_order_acquire)) { }
+    const proven_u32 was = r->uses;
+    r->uses = uses;
+    atomic_flag_clear_explicit(&r->lock, memory_order_release);
+    return was;
+}
+
 /* The premaster secret of a static-RSA key exchange. Takes a blinding pair exactly as signing
  * does. Always "succeeds": see proven_crypto_rsa_decrypt_premaster. */
 void proven_tls_config_rsa_decrypt_(const proven_tls_config_t *c, proven_mem_view_t cipher, proven_u16 version, proven_byte_t out[48]) {

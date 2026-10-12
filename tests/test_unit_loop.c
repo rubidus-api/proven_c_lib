@@ -103,6 +103,16 @@ static void many_fire(void *ctx) {
 static int g_forgotten_calls;
 static void forgotten(void *ctx) { (void)ctx; g_forgotten_calls++; }
 static void forgotten_io(void *ctx, proven_u8 got) { (void)ctx; (void)got; g_forgotten_calls++; }
+/* "After this round": what each one does when it runs. */
+static proven_loop_after_t g_after[5];
+static int g_after_log[16], g_after_n;
+static proven_loop_timer_t g_after_timer;
+static void after_note(void *ctx) { if (g_after_n < 16) g_after_log[g_after_n++] = (int)(proven_size_t)ctx; }
+static void after_asks_4(void *ctx) { after_note(ctx); proven_loop_after_(g_loop, &g_after[4], after_note, (void *)(proven_size_t)4); }
+static void after_cancels_2(void *ctx) { after_note(ctx); proven_loop_after_cancel_(g_loop, &g_after[2]); }
+static void after_again(void *ctx) { after_note(ctx); if (g_after_n < 6) proven_loop_after_(g_loop, &g_after[0], after_again, ctx); }
+static void after_from_timer(void *ctx) { after_note(ctx); proven_loop_after_(g_loop, &g_after[1], after_note, (void *)(proven_size_t)1); }
+
 static void stopper(void *arg) { (void)arg; proven_time_sleep(60); proven_loop_stop(g_loop); }
 
 int main(void) {
@@ -385,8 +395,63 @@ int main(void) {
         (void)proven_net_listener_close(&listener);
     }
 
+    PROVEN_TEST_SECTION("after this round",
+        "An internal hook for a connection that wants a round from the loop: no post, no change of a socket's watch.",
+        "Check proven_loop_after_, proven_loop_after_cancel_ and loop_run_after in src/proven/loop.c, and where proven_loop_poll calls it.");
+    {
+        const proven_size_t io_before = proven_loop_io_count(g_loop);
+        /* Asked for between rounds: they run at the next poll, in the order asked, once each -
+         * and a poll that would have slept for ever does not sleep on them. */
+        g_after_n = 0;
+        proven_loop_after_(g_loop, &g_after[0], after_note, (void *)(proven_size_t)10);
+        proven_loop_after_(g_loop, &g_after[1], after_note, (void *)(proven_size_t)11);
+        proven_loop_after_(g_loop, &g_after[0], after_note, (void *)(proven_size_t)99);      /* waiting already: nothing changes */
+        PROVEN_TEST_ASSERT(g_after_n == 0, "asking runs nothing", "");
+        PROVEN_TEST_ASSERT(proven_loop_poll(g_loop, PROVEN_NET_DONT_WAIT) == PROVEN_OK && g_after_n == 2 && g_after_log[0] == 10 && g_after_log[1] == 11, "the next poll runs both, in the order asked, the one asked for twice once", "");
+        PROVEN_TEST_ASSERT(proven_loop_poll(g_loop, PROVEN_NET_DONT_WAIT) == PROVEN_OK && g_after_n == 2, "and not again", "");
+        /* One that asks for another: the other runs in the same poll. */
+        g_after_n = 0;
+        proven_loop_after_(g_loop, &g_after[0], after_asks_4, (void *)(proven_size_t)20);
+        PROVEN_TEST_ASSERT(proven_loop_poll(g_loop, PROVEN_NET_DONT_WAIT) == PROVEN_OK && g_after_n == 2 && g_after_log[0] == 20 && g_after_log[1] == 4, "one asked for from inside another runs in the same poll", "");
+        /* One that cancels a later one; and a cancelled one may be asked for again. */
+        g_after_n = 0;
+        proven_loop_after_(g_loop, &g_after[0], after_cancels_2, (void *)(proven_size_t)30);
+        proven_loop_after_(g_loop, &g_after[2], after_note, (void *)(proven_size_t)32);
+        proven_loop_after_(g_loop, &g_after[3], after_note, (void *)(proven_size_t)33);
+        PROVEN_TEST_ASSERT(proven_loop_poll(g_loop, PROVEN_NET_DONT_WAIT) == PROVEN_OK && g_after_n == 2 && g_after_log[0] == 30 && g_after_log[1] == 33, "one cancelled by another before its turn does not run; the one behind it does", "");
+        proven_loop_after_cancel_(g_loop, &g_after[2]);                                      /* not waiting: nothing */
+        proven_loop_after_(g_loop, &g_after[2], after_note, (void *)(proven_size_t)34);
+        PROVEN_TEST_ASSERT(proven_loop_poll(g_loop, PROVEN_NET_DONT_WAIT) == PROVEN_OK && g_after_n == 3 && g_after_log[2] == 34, "and it can be asked for again", "");
+        /* One that asks for itself every time: a poll runs it a bounded number of times and
+         * returns, and the next poll goes on without sleeping. */
+        g_after_n = 0;
+        proven_loop_after_(g_loop, &g_after[0], after_again, (void *)(proven_size_t)40);
+        PROVEN_TEST_ASSERT(proven_loop_poll(g_loop, PROVEN_NET_DONT_WAIT) == PROVEN_OK && g_after_n >= 1 && g_after_n <= 3, "one that asks for itself each time does not keep a poll for ever", "");
+        proven_time_t t0 = proven_time_monotonic_now();
+        for (int i = 0; i < 10 && g_after_n < 6; ++i) (void)proven_loop_poll(g_loop, proven_net_deadline_in(2000));
+        PROVEN_TEST_ASSERT(g_after_n == 6 && proven_time_monotonic_now() - t0 < 1000000000, "and a poll that could sleep two seconds does not sleep while one is waiting", "");
+        /* Asked for from a timer: it runs in the poll that fired the timer. */
+        g_after_n = 0;
+        proven_loop_timer_set(g_loop, &g_after_timer, 1, after_from_timer, (void *)(proven_size_t)50);
+        for (int i = 0; i < 200 && g_after_n == 0; ++i) { (void)proven_loop_poll(g_loop, proven_net_deadline_in(5)); if (g_after_n == 1) break; }
+        PROVEN_TEST_ASSERT(g_after_n == 2 && g_after_log[0] == 50 && g_after_log[1] == 1, "one asked for by a timer runs in the poll that fired the timer", "");
+        /* Asked for between rounds, it runs before the poll looks at anything else: a timer
+         * that is already due comes after it. */
+        g_after_n = 0;
+        proven_loop_timer_set(g_loop, &g_after_timer, 1, after_note, (void *)(proven_size_t)71);
+        proven_time_sleep(20);
+        proven_loop_after_(g_loop, &g_after[0], after_note, (void *)(proven_size_t)70);
+        for (int i = 0; i < 50 && g_after_n < 2; ++i) (void)proven_loop_poll(g_loop, PROVEN_NET_DONT_WAIT);
+        PROVEN_TEST_ASSERT(g_after_n == 2 && g_after_log[0] == 70 && g_after_log[1] == 71, "one asked for between rounds runs first in the next poll, before a timer that was due", "");
+        PROVEN_TEST_ASSERT(proven_loop_io_count(g_loop) == io_before, "and none of it touched a socket's watch", "");
+        /* One left waiting when the loop is destroyed is simply not run. */
+        g_after_n = 0;
+        proven_loop_after_(g_loop, &g_after[0], after_note, (void *)(proven_size_t)60);
+    }
+
     proven_loop_destroy(g_loop);
     proven_loop_destroy(NULL);
+    PROVEN_TEST_ASSERT(g_after_n == 0, "one left waiting when its loop is destroyed is not run", "");
     PROVEN_TEST_PASS("timers, sockets and posted work behave, also when callbacks act on each other.");
     return 0;
 }
