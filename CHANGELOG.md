@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-10-12
+
 A MINOR release that changes one answer of the event-driven client, and ends a wait that had
 no end.
 
