@@ -654,6 +654,135 @@ static void turns(void) {
 }
 
 // -----------------------------------------------------------------------------
+// retry_delay_ms and max_connections
+// -----------------------------------------------------------------------------
+
+static void delay_and_limit(void) {
+    proven_net_listener_t l, l2;
+    proven_net_addr_t at, at2;
+    static h2peer_t a, b;
+    static call_t many[5], one;
+    PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 8, &l, &at) == PROVEN_OK &&
+                       proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 8, &l2, &at2) == PROVEN_OK, "two listeners the test answers on, as HTTP/2 servers", "");
+    g_port = at.port; g_https = false;
+    proven_http_event_client_config_t ccfg = { .alloc = g_heap, .http2_cleartext = true, .retry_unsent = 2, .retry_delay_ms = 300 };
+    proven_http_event_client_t *client = NULL;
+    PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &ccfg, &client) == PROVEN_OK, "a client that puts a request again twice, 300 ms after each loss", "");
+
+    /* A goodbye with three waiting: they go to a new connection when the wait is over, in order. */
+    static const char *paths[5] = { "/r0", "/r1", "/r2", "/r3", "/r4" };
+    for (int i = 0; i < 5; i++) { PROVEN_TEST_ASSERT(start(client, &many[i], "GET", paths[i], mv(""), 0) == PROVEN_OK, "a request is started", ""); many[i].plain = true; }
+    PROVEN_TEST_ASSERT(h2peer_accept(&l, &a, 2, 400) && h2peer_has(&a, 2), "at a limit of two streams the first two are sent, and three wait", "");
+    PROVEN_TEST_ASSERT(h2peer_goodbye(&a, a.ids[1]), "the server says goodbye, having taken both", "");
+    proven_time_t t0 = proven_time_monotonic_now();
+    PROVEN_TEST_ASSERT(!h2peer_accept(&l, &b, 2, 20) && !many[2].done && proven_http_event_client_requests(client) == 5, "no new connection at once, and nothing told: the three wait to be tried again", "");
+    PROVEN_TEST_ASSERT(h2peer_accept(&l, &b, 2, 400) && proven_time_monotonic_now() - t0 > 250000000 && proven_time_monotonic_now() - t0 < 2000000000, "the connection comes when the 300 ms have passed", "");
+    PROVEN_TEST_ASSERT(h2peer_has(&b, 2) && strcmp(b.paths[0], "/r2") == 0 && strcmp(b.paths[1], "/r3") == 0, "and they are put in the order they were started", "");
+    /* A stream refused: back on the same connection, after the wait. */
+    PROVEN_TEST_ASSERT(h2peer_refuse(&b, 0), "the server refuses the stream of /r2", "");
+    t0 = proven_time_monotonic_now();
+    for (int i = 0; i < 20; ++i) h2peer_turn(&b);
+    PROVEN_TEST_ASSERT(b.n == 3 && strcmp(b.paths[2], "/r4") == 0 && !many[2].done, "it does not come back at once: the stream it left goes to /r4, which had been waiting for one", "");
+    PROVEN_TEST_ASSERT(h2peer_answer(&b, 1) && waited(&many[3].done, 5000) && call_ok(&many[3]), "/r3 is answered meanwhile", "");
+    PROVEN_TEST_ASSERT(h2peer_has(&b, 4) && strcmp(b.paths[3], "/r2") == 0 && proven_time_monotonic_now() - t0 > 250000000, "after the wait /r2 is put again, on the same connection", "");
+    PROVEN_TEST_ASSERT(h2peer_answer(&b, 2) && h2peer_answer(&b, 3) && waited(&many[2].done, 5000) && waited(&many[4].done, 5000) && call_ok(&many[2]) && call_ok(&many[4]), "and both are answered", "");
+    PROVEN_TEST_ASSERT(h2peer_answer(&a, 0) && h2peer_answer(&a, 1) && waited(&many[0].done, 5000) && waited(&many[1].done, 5000) && call_ok(&many[0]) && call_ok(&many[1]), "as are the two the first connection had taken", "");
+    h2peer_end(&a);
+    /* Two that are refused 150 ms apart: each has its own wait. */
+    memset(many, 0, sizeof many); many[0].plain = many[1].plain = true;
+    PROVEN_TEST_ASSERT(start(client, &many[0], "GET", "/p", mv(""), 0) == PROVEN_OK && start(client, &many[1], "GET", "/q", mv(""), 0) == PROVEN_OK && h2peer_has(&b, 6), "two more requests, on streams", "");
+    PROVEN_TEST_ASSERT(h2peer_refuse(&b, 4), "the first is refused", "");
+    for (int i = 0; i < 30; ++i) h2peer_turn(&b);
+    PROVEN_TEST_ASSERT(h2peer_refuse(&b, 5), "and, 150 ms later, the second", "");
+    t0 = proven_time_monotonic_now();
+    PROVEN_TEST_ASSERT(h2peer_has(&b, 7) && b.n == 7 && strcmp(b.paths[6], "/p") == 0, "the first is put again when its own wait is over, and the second is not yet", "");
+    PROVEN_TEST_ASSERT(h2peer_has(&b, 8) && strcmp(b.paths[7], "/q") == 0 && proven_time_monotonic_now() - t0 > 250000000, "the second when its own is", "");
+    PROVEN_TEST_ASSERT(h2peer_answer(&b, 6) && h2peer_answer(&b, 7) && waited(&many[0].done, 5000) && waited(&many[1].done, 5000) && call_ok(&many[0]) && call_ok(&many[1]), "and both are answered", "");
+    /* Aborted while it waits to be tried again; and the client destroyed while one does. */
+    one.plain = true;
+    PROVEN_TEST_ASSERT(start(client, &one, "GET", "/gone", mv(""), 0) == PROVEN_OK && h2peer_has(&b, 9) && h2peer_refuse(&b, 8), "a request, refused", "");
+    spin(60);
+    PROVEN_TEST_ASSERT(!one.done && proven_http_event_client_requests(client) == 1, "it waits to be tried again", "");
+    proven_http_event_request_abort(one.request);
+    const int before = b.n;
+    for (int i = 0; i < 80; ++i) h2peer_turn(&b);
+    PROVEN_TEST_ASSERT(one.done && one.dones == 1 && proven_http_event_client_requests(client) == 0 && b.n == before, "aborted while it waits: it ends once, and is not put again", "");
+    memset(&one, 0, sizeof one); one.plain = true;
+    PROVEN_TEST_ASSERT(start(client, &one, "GET", "/left", mv(""), 0) == PROVEN_OK && h2peer_has(&b, 10) && h2peer_refuse(&b, 9), "another, refused", "");
+    spin(60);
+    PROVEN_TEST_ASSERT(!one.done, "it waits to be tried again", "");
+    proven_http_event_client_destroy(client);
+    PROVEN_TEST_ASSERT(one.done && one.why == PROVEN_ERR_AGAIN && one.dones == 1, "the client destroyed while it waits: PROVEN_ERR_AGAIN, once", "");
+    h2peer_end(&b);
+    spin(20);
+
+    /* max_connections 1: a second origin has no connection while the first's is in use, and
+     * the first's is closed for it once it is idle. */
+    proven_http_event_client_config_t one_conn = { .alloc = g_heap, .http2_cleartext = true, .max_connections = 1 };
+    PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &one_conn, &client) == PROVEN_OK, "a client that may have one connection", "");
+    memset(many, 0, sizeof many); many[0].plain = many[1].plain = true;
+    PROVEN_TEST_ASSERT(start(client, &many[0], "GET", "/first", mv(""), 0) == PROVEN_OK && h2peer_accept(&l, &a, 8, 400) && h2peer_has(&a, 1), "a request to the first origin, on its connection", "");
+    g_port = at2.port;
+    PROVEN_TEST_ASSERT(start(client, &many[1], "GET", "/second", mv(""), 0) == PROVEN_ERR_BUSY && proven_http_event_client_requests(client) == 1 && !h2peer_accept(&l2, &b, 8, 10),
+        "a request to a second origin is PROVEN_ERR_BUSY while that connection is in use: no connection, no request counted", "");
+    PROVEN_TEST_ASSERT(h2peer_answer(&a, 0) && waited(&many[0].done, 5000) && call_ok(&many[0]), "the first is answered: its connection has nothing on it", "");
+    PROVEN_TEST_ASSERT(start(client, &many[1], "GET", "/second", mv(""), 0) == PROVEN_OK && h2peer_accept(&l2, &b, 8, 400) && h2peer_has(&b, 1), "the same request now has a connection to the second origin", "");
+    for (int i = 0; i < 100 && !a.eof; ++i) h2peer_turn(&a);
+    PROVEN_TEST_ASSERT(a.eof, "for which the first origin's, idle, was closed", "");
+    PROVEN_TEST_ASSERT(h2peer_answer(&b, 0) && waited(&many[1].done, 5000) && call_ok(&many[1]), "and it is answered there", "");
+    h2peer_end(&a); h2peer_end(&b);
+    proven_http_event_client_destroy(client);
+    (void)proven_net_listener_close(&l); (void)proven_net_listener_close(&l2);
+    g_port = at.port;
+    spin(20);
+}
+
+/* max_connections across the two protocols: an HTTP/1.1 request that waits for a place has
+ * the place of an HTTP/2 connection when that has nothing on it any more. */
+static void mixed_limit(void) {
+    proven_http_event_server_t *server = server_on(g_server_tls_h2, true, 0);
+    const proven_u16 h2_port = g_port;
+    proven_net_listener_t plain;
+    proven_net_addr_t at;
+    proven_net_conn_t x;
+    static call_t two, one;
+    PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 4, &plain, &at) == PROVEN_OK, "and a listener in the clear, which the test answers as an HTTP/1.1 server", "");
+    proven_http_event_client_config_t ccfg = { .alloc = g_heap, .tls = g_client_tls, .http2 = true, .max_connections = 1 };
+    proven_http_event_client_t *client = NULL;
+    PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &ccfg, &client) == PROVEN_OK, "a client that may have one connection: HTTP/2 over TLS, HTTP/1.1 in the clear", "");
+    two.plain = one.plain = true;
+    PROVEN_TEST_ASSERT(start(client, &two, "GET", "/later", mv(""), 0) == PROVEN_OK, "a request over HTTP/2, answered in a little while", "");
+    g_https = false; g_port = at.port;
+    bool early = false;
+    PROVEN_TEST_ASSERT(start(client, &one, "GET", "/h1", mv(""), 0) == PROVEN_OK && proven_http_event_client_requests(client) == 2, "a request to the other origin, over HTTP/1.1: it waits", "");
+    for (int i = 0; i < 4 && !early; ++i) { spin(5); early = proven_net_accept(&plain, PROVEN_NET_DONT_WAIT, &x, NULL) == PROVEN_OK; }
+    PROVEN_TEST_ASSERT(!early && !two.done, "and no connection is made for it while the HTTP/2 connection is in use", "");
+    spin_until(&two.done, 5000);
+    PROVEN_TEST_ASSERT(two.done && two.why == PROVEN_OK && two.protocol == 2, "the HTTP/2 request is answered", "");
+    bool came = false;
+    for (int i = 0; i < 400 && !came; ++i) { spin(5); came = proven_net_accept(&plain, PROVEN_NET_DONT_WAIT, &x, NULL) == PROVEN_OK; }
+    PROVEN_TEST_ASSERT(came, "and the HTTP/2 connection, with nothing on it, is closed for the one that waited: its connection is made", "");
+    static const char answer[] = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+    char req[512]; proven_size_t have = 0;
+    memset(req, 0, sizeof req);
+    for (int i = 0; i < 400 && !strstr(req, "\r\n\r\n"); ++i) {
+        spin(5);
+        proven_result_size_t r = proven_net_read(&x, (proven_mem_mut_t){ (proven_byte_t *)req + have, sizeof req - 1 - have }, PROVEN_NET_DONT_WAIT);
+        if (r.err == PROVEN_OK) have += r.value;
+    }
+    PROVEN_TEST_ASSERT(strstr(req, "GET /h1 HTTP/1.1") != NULL && proven_net_write_all(&x, (proven_mem_view_t){ (const proven_byte_t *)answer, sizeof answer - 1 }, proven_net_deadline_in(5000)).err == PROVEN_OK,
+        "the request arrives there as HTTP/1.1, and is answered", "");
+    spin_until(&one.done, 5000);
+    PROVEN_TEST_ASSERT(call_ok(&one), "which its caller is told", "");
+    (void)proven_net_close(&x);
+    proven_http_event_client_destroy(client);
+    (void)proven_net_listener_close(&plain);
+    spin(20);
+    proven_http_event_server_destroy(server);
+    g_port = h2_port;
+}
+
+// -----------------------------------------------------------------------------
 // http2_window_bytes
 // -----------------------------------------------------------------------------
 
@@ -1099,6 +1228,9 @@ int main(void) {
     time_limits();
     PROVEN_TEST_SECTION("turns", "Two request bodies at once to a server whose windows hold them both: what bounds them is the client's own output bound.", "Check `turn` and `sharing` in c_pump and c_room in src/proven/http_event_client_h2.c: the round goes on behind the request that had the last turn, and a turn moves C2_TURN_BYTES.");
     turns();
+    PROVEN_TEST_SECTION("retry_delay_ms and max_connections", "The wait before a try, and a limit on the connections of the whole client.", "Check r_delay, c_on_delay and r_undelay in http_event_client_h2.c; proven_http_event_client_room_ in c_open, proven_http_event_client_h2_close_idle_.");
+    delay_and_limit();
+    mixed_limit();
     PROVEN_TEST_SECTION("http2_window_bytes", "How much of a response body a server may send before the caller has taken any.", "Check initial_window where the engine is made in http_event_client_h2.c, and the limit in proven_http_event_client_create.");
     window();
     PROVEN_TEST_SECTION("a connection out of stream numbers", "A client has 2^30 streams on a connection. The test puts the next number at the end.", "Check proven_http_event_client_h2_start_ and c_submit_waiting: PROVEN_ERR_INVALID_STATE from the engine's submit marks the connection as over, so that c_find passes it by.");

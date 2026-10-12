@@ -61,6 +61,7 @@ typedef struct c2req {
     proven_u32 id, mark;               /* id 0: not yet on a stream */
     proven_u32 tries;                  /* times it was put to the server again (retry_unsent) */
     bool dead, streamed, end_asked, engine_done, paused, want_writable, window_shut;
+    struct c2delay *delay;             /* waiting to be tried again: on no connection, and this says where it goes */
     bool got_head, head_only, held_last, any_decoded;
     bool host_is_ipv6, query_alone;    /* of the URL, read once when the request was started */
 } c2req_t;
@@ -171,11 +172,14 @@ static void r_unlink(c2req_t *r) {
 }
 
 /* The end of a request, good or bad: once. */
+static void r_undelay(c2req_t *r);
+
 static void r_finish(c2req_t *r, proven_err_t why) {
     if (r->dead) return;
     c2conn_t *c = r->conn;
     r_enter(r);
     r->dead = true;
+    if (r->delay) r_undelay(r);
     if (c && !c->dead && c->engine && r->id != 0) {
         proven_h2_conn_stream_set_user(c->engine, r->id, (void *)0);
         /* A response that is whole, or an end that is not: either way nothing more is to be
@@ -229,6 +233,8 @@ static void c_kill(c2conn_t *c, proven_err_t why) {
     else cl->h2 = c->next;
     if (c->next) c->next->prev = c->prev;
     c_end_requests(c, why);
+    /* A place in the client is free: an HTTP/1.1 request may have been waiting for one. */
+    if (!c->client_going) proven_http_event_client_freed_(cl);
     c_leave(c);
 }
 
@@ -716,6 +722,11 @@ static void c_pump(c2conn_t *c) {
         if (c->over && c->count == 0 && c_queued(c) == 0) c_kill(c, PROVEN_OK);
         else { c_arm(c); c_watch(c); }
     }
+    /* With nothing on it this connection is one that max_connections may close for a request
+     * that waits for a place - an HTTP/1.1 one; the HTTP/2 ones do not wait. (It may be this
+     * very connection that is closed: the memory holds while this round is open.) */
+    if (!c->dead && !c->client_going && c->count == 0 && c_queued(c) == 0 && c->client->cfg.max_connections != 0 && c->client->wait_head)
+        proven_http_event_client_freed_(c->client);
     c->pumping = false;
     c_leave(c);
 }
@@ -930,6 +941,8 @@ static c2conn_t *c_find(proven_http_event_client_t *cl, bool https, proven_u8str
 
 /* Begin a connection to an origin. On failure nothing is left of it. */
 static proven_err_t c_open(proven_http_event_client_t *cl, bool https, proven_u8str_view_t host, proven_u16 port, const proven_net_addr_t *to, c2conn_t **out) {
+    /* max_connections: an idle connection is closed to make room; with none, there is none. */
+    if (!proven_http_event_client_room_(cl)) return PROVEN_ERR_BUSY;
     c2conn_t *c = c2_alloc(cl->alloc, sizeof *c);
     if (!c) return PROVEN_ERR_NOMEM;
     for (proven_size_t i = 0; i < sizeof *c; ++i) ((proven_byte_t *)c)[i] = 0;
@@ -971,6 +984,118 @@ static proven_err_t c_open(proven_http_event_client_t *cl, bool https, proven_u8
  * the same origin, which is made if there is none. Nothing is told of the try that failed.
  * Not a request whose body is written in pieces - the client does not have it to send again -
  * and not while the client is being destroyed. */
+/* A request that waits to be tried again (retry_delay_ms). It is on no connection: this
+ * says where it is to go, and the client keeps them in the order they are due - which is the
+ * order they came, the wait being the same for all. */
+typedef struct c2delay {
+    struct c2delay *next;
+    c2req_t *r;
+    proven_time_t due;
+    proven_net_addr_t to;
+    proven_u16 port;
+    bool https;
+    proven_u8 host_len;
+    proven_byte_t host[256];
+} c2delay_t;
+
+static void c_on_delay(void *ctx);
+
+static void cl_delay_arm(proven_http_event_client_t *cl) {
+    const c2delay_t *first = cl->h2_delayed;
+    if (!first) { proven_loop_timer_cancel(cl->loop, &cl->h2_delay_timer); return; }
+    const proven_time_t now = proven_time_monotonic_now();
+    const proven_u64 ms = first->due > now ? (proven_u64)(first->due - now + 999999) / 1000000 : 0;
+    proven_loop_timer_set(cl->loop, &cl->h2_delay_timer, ms > 0xffffffffu ? 0xffffffffu : (proven_u32)ms, c_on_delay, cl);
+}
+
+/* Out of the list, its record freed: it is to be placed, or it has ended. */
+static void r_undelay(c2req_t *r) {
+    proven_http_event_client_t *cl = r->h.client;
+    c2delay_t *d = r->delay, *before = (void *)0;
+    for (c2delay_t *i = cl->h2_delayed; i && i != d; i = i->next) before = i;
+    if (before) before->next = d->next;
+    else cl->h2_delayed = d->next;
+    if (cl->h2_delayed_last == d) cl->h2_delayed_last = before;
+    r->delay = (void *)0;
+    cl->alloc.free_fn(cl->alloc.ctx, d);
+}
+
+/* As it was when it was started: r_submit does the rest. */
+static void r_as_new(c2req_t *r) {
+    proven_http_event_client_t *cl = r->h.client;
+    if (r->out) { cl->alloc.free_fn(cl->alloc.ctx, r->out); r->out = (void *)0; r->out_len = r->out_off = r->out_cap = 0; }
+    r->id = 0;
+    r->mark = 0;
+    r->due = 0;
+    r->end_asked = r->engine_done = r->window_shut = r->head_only = false;
+}
+
+/* Onto a connection, behind every request that waits there: the oldest waiting request is
+ * the last in the list, and this one is older than any that is there - requests that move
+ * together arrive newest first, and so keep their order. */
+static void r_attach(c2req_t *r, c2conn_t *to) {
+    c2req_t *last = to->reqs;
+    while (last && last->next) last = last->next;
+    r->conn = to;
+    r->prev = last;
+    r->next = (void *)0;
+    if (last) last->next = r;
+    else to->reqs = r;
+    to->count++;
+}
+
+/* The wait before a try is over for the first of them, perhaps for more. */
+static void c_on_delay(void *ctx) {
+    proven_http_event_client_t *cl = ctx;
+    for (;;) {
+        c2delay_t *d = cl->h2_delayed;
+        if (!d || d->due > proven_time_monotonic_now()) break;
+        c2req_t *r = d->r;
+        const proven_u8str_view_t host = { .ptr = d->host, .size = d->host_len };
+        const bool https = d->https;
+        const proven_u16 port = d->port;
+        const proven_net_addr_t addr = d->to;
+        proven_byte_t name[256];
+        for (proven_size_t i = 0; i < host.size; ++i) name[i] = host.ptr[i];
+        r_undelay(r);                              /* (frees the record: the origin is in the copies) */
+        const proven_u8str_view_t origin = { .ptr = name, .size = host.size };
+        c2conn_t *to = c_find(cl, https, origin, port, &addr, (void *)0);
+        proven_err_t why = PROVEN_ERR_AGAIN;
+        /* (An origin that has turned out to speak HTTP/1.1 since: the caller's to start again.) */
+        if (to && to->state == C2_H1) to = (void *)0;
+        else if (!to) { why = c_open(cl, https, origin, port, &addr, &to); if (why != PROVEN_OK) to = (void *)0; }
+        if (!to) { r_finish(r, why); continue; }
+        r_attach(r, to);
+        if (to->state == C2_UP) c_call_back(to);
+        c_arm(to);
+    }
+    cl_delay_arm(cl);
+}
+
+/* Off its connection and into the list of those that wait to be tried again. False: there
+ * was no memory for the record. */
+static bool r_delay(c2req_t *r) {
+    proven_http_event_client_t *cl = r->h.client;
+    c2conn_t *c = r->conn;
+    c2delay_t *d = c2_alloc(cl->alloc, sizeof *d);
+    if (!d) return false;
+    d->next = (void *)0;
+    d->r = r;
+    d->due = proven_time_monotonic_now() + (proven_time_t)cl->cfg.retry_delay_ms * 1000000;
+    d->to = c->to; d->port = c->port; d->https = c->https; d->host_len = c->host_len;
+    for (proven_size_t i = 0; i < c->host_len; ++i) d->host[i] = c->host[i];
+    r->tries++;
+    if (r->id != 0 && !c->dead && c->engine) proven_h2_conn_stream_set_user(c->engine, r->id, (void *)0);
+    r_unlink(r);
+    r_as_new(r);
+    r->delay = d;
+    if (cl->h2_delayed_last) ((c2delay_t *)cl->h2_delayed_last)->next = d;
+    else cl->h2_delayed = d;
+    cl->h2_delayed_last = d;
+    if (cl->h2_delayed == d) cl_delay_arm(cl);
+    return true;
+}
+
 static void r_unsent(c2req_t *r, bool here) {
     if (r->dead) return;
     c2conn_t *c = r->conn;
@@ -978,6 +1103,13 @@ static void r_unsent(c2req_t *r, bool here) {
     c2conn_t *to = (void *)0;
     proven_err_t why = PROVEN_ERR_AGAIN;
     bool again = c && !cl->closing && !r->streamed && !r->got_head && r->tries < cl->cfg.retry_unsent;
+    if (again && cl->cfg.retry_delay_ms != 0) {
+        /* Not at once: it leaves this connection now and is placed when the time has passed -
+         * on this one again if it is still there, on another, or on a new one. */
+        if (r_delay(r)) return;
+        again = false;
+        why = PROVEN_ERR_NOMEM;
+    }
     if (again) {
         const proven_u8str_view_t host = { .ptr = c->host, .size = c->host_len };
         if (here && !c->dead && !c->over && !c->peer_eof && c->state == C2_UP) to = c;
@@ -994,22 +1126,8 @@ static void r_unsent(c2req_t *r, bool here) {
     r->tries++;
     if (r->id != 0 && !c->dead && c->engine) proven_h2_conn_stream_set_user(c->engine, r->id, (void *)0);
     r_unlink(r);
-    /* As it was when it was started, and waiting: r_submit does the rest. */
-    if (r->out) { cl->alloc.free_fn(cl->alloc.ctx, r->out); r->out = (void *)0; r->out_len = r->out_off = r->out_cap = 0; }
-    r->id = 0;
-    r->mark = 0;
-    r->due = 0;
-    r->end_asked = r->engine_done = r->window_shut = r->head_only = false;
-    /* The oldest waiting request is the last in the list, and this one is older than any that
-     * is there: requests that move together arrive newest first, and so keep their order. */
-    c2req_t *last = to->reqs;
-    while (last && last->next) last = last->next;
-    r->conn = to;
-    r->prev = last;
-    r->next = (void *)0;
-    if (last) last->next = r;
-    else to->reqs = r;
-    to->count++;
+    r_as_new(r);
+    r_attach(r, to);
     if (to != c) {
         /* Its bytes leave from the loop, never from inside another connection's round. */
         if (to->state == C2_UP) c_call_back(to);
@@ -1115,7 +1233,26 @@ proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *cl, 
     return PROVEN_OK;
 }
 
+proven_size_t proven_http_event_client_h2_conns_(const proven_http_event_client_t *cl) {
+    proven_size_t n = 0;
+    for (const c2conn_t *k = cl->h2; k; k = k->next) if (!k->dead && k->state != C2_H1) n++;
+    return n;
+}
+
+bool proven_http_event_client_h2_close_idle_(proven_http_event_client_t *cl) {
+    for (c2conn_t *k = cl->h2; k; k = k->next) {
+        if (k->dead || k->state != C2_UP || k->count != 0 || c_queued(k) != 0) continue;
+        k->client_going = true;                    /* (its place is being taken: nobody is to be served from it) */
+        c_kill(k, PROVEN_OK);
+        return true;
+    }
+    return false;
+}
+
 void proven_http_event_client_h2_destroy_(proven_http_event_client_t *cl) {
+    /* Those that wait to be tried again are on no connection: they may be started again. */
+    proven_loop_timer_cancel(cl->loop, &cl->h2_delay_timer);
+    while (cl->h2_delayed) r_finish(((c2delay_t *)cl->h2_delayed)->r, PROVEN_ERR_AGAIN);
     while (cl->h2) {
         c2conn_t *c = cl->h2;
         if (c->state == C2_H1) {
@@ -1206,6 +1343,13 @@ void proven_http_event_client_h2_abort_(proven_http_event_request_t *request) {
     if (r->fwd) { proven_http_event_request_abort(r->fwd); return; }
     if (r->dead) return;
     c2conn_t *c = r->conn;
+    if (!c) {
+        /* Waiting to be tried again: on no connection. */
+        proven_http_event_client_t *cl = r->h.client;
+        r_finish(r, PROVEN_ERR_RESET);
+        cl_delay_arm(cl);
+        return;
+    }
     r_enter(r);
     c_enter(c);
     c->calls++;
@@ -1233,6 +1377,7 @@ void proven_http_event_client_h2_resume_(proven_http_event_request_t *request) {
     proven_http_event_client_t *cl = r->h.client;
     c2conn_t *c = r->conn;
     r->paused = false;
+    if (!c) return;                                /* waiting to be tried again: nothing has arrived */
     r_enter(r);
     c_enter(c);
     c->calls++;

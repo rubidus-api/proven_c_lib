@@ -116,6 +116,10 @@ static void cl_on_idle_timer(void *ctx);
 static void cl_kill(proven_http_event_request_t *c, proven_err_t why);
 static void cl_watch(proven_http_event_request_t *c);
 static void cl_arm(proven_http_event_request_t *c);
+static void cl_unwait(proven_http_event_request_t *c);
+static proven_err_t cl_conn_open(proven_http_event_request_t *c);
+static void cl_conn_close(cl_conn_t *k, bool serve_waiting);
+static proven_http_event_request_t *cl_waiter_with_room(const proven_http_event_client_t *cl);
 
 static proven_u8str_view_t cl_host(const proven_http_event_request_t *c) {
     return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)(c + 1), .size = c->host_len };
@@ -131,6 +135,47 @@ static bool cl_same_addr(const proven_net_addr_t *a, const proven_net_addr_t *b)
 static bool cl_leads_to(const cl_conn_t *k, const proven_http_event_request_t *c) {
     return k->https == c->https && k->port == c->port && cl_same_addr(&k->to, &c->to) &&
            cl_eq_nocase((proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, cl_host(c));
+}
+
+static proven_size_t cl_origin_conns(const proven_http_event_client_t *cl, const proven_http_event_request_t *c) {
+    proven_size_t have = 0;
+    for (const cl_conn_t *k = cl->conns; k; k = k->next) if (cl_leads_to(k, c)) have++;
+    return have;
+}
+
+/* The request that has waited longest and whose origin may have one more connection. */
+static proven_http_event_request_t *cl_waiter_with_room(const proven_http_event_client_t *cl) {
+    for (proven_http_event_request_t *w = cl->wait_head; w; w = w->wnext)
+        if (cl_origin_conns(cl, w) < cl->cfg.max_connections_per_origin) return w;
+    return (void *)0;
+}
+
+/* Whether the client may have one more connection, of either protocol - an idle one closed
+ * for it if that is what it takes: an HTTP/1.1 one, the one idle longest, before an HTTP/2
+ * one. False: the limit is reached and every connection is in use. */
+bool proven_http_event_client_room_(proven_http_event_client_t *cl) {
+    if (cl->cfg.max_connections == 0) return true;
+    if (cl->conn_count + proven_http_event_client_h2_conns_(cl) < cl->cfg.max_connections) return true;
+    cl_conn_t *oldest = (void *)0;
+    for (cl_conn_t *i = cl->conns; i; i = i->next)
+        if (i->idle && (!oldest || i->idle_since < oldest->idle_since)) oldest = i;
+    if (oldest) { cl_conn_close(oldest, false); return true; }
+    return proven_http_event_client_h2_close_idle_(cl);
+}
+
+/* A place was freed by something other than an HTTP/1.1 connection closing - an HTTP/2
+ * connection ended: a request that was waiting for one may have it. */
+void proven_http_event_client_freed_(proven_http_event_client_t *cl) {
+    while (cl->cfg.max_connections != 0 && !cl->closing) {
+        proven_http_event_request_t *w = cl_waiter_with_room(cl);
+        if (!w || !proven_http_event_client_room_(cl)) break;
+        cl_unwait(w);
+        proven_err_t e = cl_conn_open(w);
+        if (e == PROVEN_OK) { cl_arm(w); break; }
+        cl_enter(w);
+        cl_kill(w, e);
+        cl_leave(w);
+    }
 }
 
 /* A new connection for a request that has none. On failure nothing is left of it. */
@@ -161,6 +206,7 @@ static proven_err_t cl_conn_open(proven_http_event_request_t *c) {
     k->next = cl->conns;
     if (k->next) k->next->prev = k;
     cl->conns = k;
+    cl->conn_count++;
     k->owner = c;
     c->k = k;
     c->state = CL_CONNECTING;
@@ -212,10 +258,14 @@ static void cl_conn_close(cl_conn_t *k, bool serve_waiting) {
     if (k->prev) k->prev->next = k->next;
     else cl->conns = k->next;
     if (k->next) k->next->prev = k->prev;
+    cl->conn_count--;
     k->owner = (void *)0;
     while (serve_waiting && !cl->closing) {
         proven_http_event_request_t *w = cl->wait_head;
         while (w && !cl_leads_to(k, w)) w = w->wnext;
+        /* With a limit on the whole client, a request to another origin may have been waiting
+         * for this place: the one that has waited longest and whose origin has room. */
+        if (!w && cl->cfg.max_connections != 0) w = cl_waiter_with_room(cl);
         if (!w) break;
         cl_unwait(w);
         proven_err_t e = cl_conn_open(w);
@@ -242,6 +292,9 @@ static void cl_conn_keep(cl_conn_t *k) {
         cl_conn_give(k, w);
         return;
     }
+    /* Nobody waits for this origin. With a limit on the whole client somebody may be waiting
+     * for a place: an idle connection is what is closed to make one. */
+    if (cl->cfg.max_connections != 0 && !cl->closing && cl_waiter_with_room(cl)) { cl_conn_close(k, true); return; }
     (void)proven_loop_io_set(cl->loop, &k->io, PROVEN_NET_READABLE);
     proven_loop_timer_set(cl->loop, &k->timer, cl->cfg.idle_timeout_ms, cl_on_idle_timer, k);
     if (cl->idle_count > cl->cfg.max_kept_connections) {
@@ -292,20 +345,64 @@ static bool cl_reusable(proven_http_event_request_t *c) {
 /* A connection that had carried a request before was given to this one and turned out to be
  * dead before anything came back on it: the server closed it while it sat idle. The request is
  * sent once more, on a connection of its own. An error when it cannot be, and is to end. */
-static proven_err_t cl_send_again(proven_http_event_request_t *c) {
+/* Its connection is closed and the request is as it was before any of it was sent. */
+static void cl_unsend(proven_http_event_request_t *c, bool serve_waiting) {
     proven_http_event_client_t *cl = c->h.client;
     cl_conn_t *old = c->k;
     c->k = (void *)0;
     old->owner = (void *)0;
-    cl_conn_close(old, false);                    /* its place is this request's own */
+    cl_conn_close(old, serve_waiting);
     c->stale = c->keep_out = c->peer_eof = c->sent = false;
     c->out.off = 0;
     c->interim = 0;
     buf_release(cl, &c->stash);
     c->timer_kind = CL_T_NONE;
+}
+
+static proven_err_t cl_send_again(proven_http_event_request_t *c) {
+    cl_unsend(c, false);                          /* its place is this request's own */
     proven_err_t e = cl_conn_open(c);
     if (e == PROVEN_OK) cl_arm(c);
     return e;
+}
+
+/* A connection for a request that has none: one of its origin's that is idle; or a new one,
+ * while the origin has fewer than it may and the client has room; or the next that comes
+ * free, for which it waits. PROVEN_ERR_BUSY: it would wait, and too many do. */
+static proven_err_t cl_place(proven_http_event_request_t *c) {
+    proven_http_event_client_t *cl = c->h.client;
+    cl_conn_t *idle = (void *)0;
+    proven_size_t have = 0;
+    for (cl_conn_t *k = cl->conns; k; k = k->next) {
+        if (!cl_leads_to(k, c)) continue;
+        have++;
+        if (k->idle && (!idle || k->idle_since > idle->idle_since)) idle = k;      /* the one used last is the likeliest to be alive */
+    }
+    if (idle) { cl_conn_give(idle, c); return PROVEN_OK; }      /* arms and watches */
+    if (have < cl->cfg.max_connections_per_origin && proven_http_event_client_room_(cl)) {
+        proven_err_t e = cl_conn_open(c);
+        if (e == PROVEN_OK) cl_arm(c);
+        return e;
+    }
+    if (cl->wait_count >= cl->cfg.max_waiting_requests) return PROVEN_ERR_BUSY;
+    c->waiting = true;
+    c->wnext = (void *)0;
+    if (cl->wait_tail) cl->wait_tail->wnext = c;
+    else cl->wait_head = c;
+    cl->wait_tail = c;
+    cl->wait_count++;
+    cl_arm(c);
+    return PROVEN_OK;
+}
+
+/* The wait before a try is over: the request is given a connection as a new one would be. */
+static void cl_on_delay(void *ctx) {
+    proven_http_event_request_t *c = ctx;
+    cl_enter(c);
+    c->timer_kind = CL_T_NONE;
+    proven_err_t e = cl_place(c);
+    if (e != PROVEN_OK) { c->no_resend = true; cl_kill(c, e); }
+    cl_leave(c);
 }
 
 /* The end, good or bad: tell the program once, and let the connection go - to the next
@@ -325,6 +422,17 @@ static void cl_kill(proven_http_event_request_t *c, proven_err_t why) {
          * agreed, mostly: the server cannot have acted on what it was never sent. With
          * retry_unsent that is tried again, on a new connection, so many times. */
         c->tries++;
+        if (cl->cfg.retry_delay_ms != 0) {
+            /* Not at once: its connection goes (to a request that waits, if one does) and it
+             * has none until the time has passed. */
+            cl_unsend(c, true);
+            /* (Giving the place away can end another request, whose caller is told there and
+             * then - and may abort this one from inside that.) */
+            if (c->dead) return;
+            c->timer_kind = CL_T_DELAY;
+            proven_loop_timer_set(cl->loop, &c->timer, cl->cfg.retry_delay_ms, cl_on_delay, c);
+            return;
+        }
         proven_err_t e = cl_send_again(c);
         if (e == PROVEN_OK) return;
         why = e;                                   /* a try that cannot be begun ends the request as that try would have */
@@ -354,7 +462,7 @@ static void cl_kill(proven_http_event_request_t *c, proven_err_t why) {
  * whole step (connecting, the wait for the head) are set once; those that measure silence
  * (a write not taken, a body not arriving) start again with every sign of life. */
 static void cl_arm(proven_http_event_request_t *c) {
-    if (c->dead) return;
+    if (c->dead || c->timer_kind == CL_T_DELAY) return;        /* (waiting to be tried again: its timer is that wait) */
     proven_http_event_client_t *cl = c->h.client;
     proven_u8 kind = CL_T_NONE;
     proven_u32 ms = 0;
@@ -694,6 +802,9 @@ proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_h
     if (cfg.max_connections_per_origin == 0) cfg.max_connections_per_origin = 6;
     if (cfg.max_kept_connections == 0) cfg.max_kept_connections = 8;
     if (cfg.http2_window_bytes > 0x7fffffffu) return PROVEN_ERR_INVALID_ARG;
+    /* More kept than there may be at all: said together they contradict. (Left at its
+     * default the number kept needs no lowering: there are never more idle than there are.) */
+    if (cfg.max_connections != 0 && config && config->max_kept_connections > cfg.max_connections) return PROVEN_ERR_INVALID_ARG;
     if (cfg.tls) {
         /* What TLS may agree to and what the client will speak must be the same thing. */
         bool offers_h2 = false;
@@ -851,17 +962,8 @@ proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *cl, 
         c->request_ended = true;
     }
     if (!buf_append(cl, &c->out, cl->hbuf, head_len) || !buf_append(cl, &c->out, o->body.ptr, o->body.size)) e = PROVEN_ERR_NOMEM;
-    /* Its connection: one of its origin's that is idle; or a new one, while the origin has
-     * fewer than it may; or the next that comes free, for which it waits. */
-    cl_conn_t *idle = (void *)0;
-    proven_size_t have = 0;
-    for (cl_conn_t *k = cl->conns; k; k = k->next) {
-        if (!cl_leads_to(k, c)) continue;
-        have++;
-        if (k->idle && (!idle || k->idle_since > idle->idle_since)) idle = k;      /* the one used last is the likeliest to be alive */
-    }
-    if (e == PROVEN_OK && !idle && have >= cl->cfg.max_connections_per_origin && cl->wait_count >= cl->cfg.max_waiting_requests) e = PROVEN_ERR_BUSY;
-    if (e == PROVEN_OK && !idle && have < cl->cfg.max_connections_per_origin) e = cl_conn_open(c);
+    c->face = face ? face : c;
+    if (e == PROVEN_OK) e = cl_place(c);
     if (e != PROVEN_OK) {
         buf_release(cl, &c->out);
         cl->alloc.free_fn(cl->alloc.ctx, c);
@@ -871,19 +973,6 @@ proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *cl, 
     if (c->next) c->next->prev = c;
     cl->requests = c;
     cl->request_count++;
-    c->face = face ? face : c;
-    if (idle) {
-        cl_conn_give(idle, c);                     /* arms and watches */
-    } else if (!c->k) {
-        c->waiting = true;
-        if (cl->wait_tail) cl->wait_tail->wnext = c;
-        else cl->wait_head = c;
-        cl->wait_tail = c;
-        cl->wait_count++;
-        cl_arm(c);
-    } else {
-        cl_arm(c);
-    }
     if (out) *out = c;
     return PROVEN_OK;
 }

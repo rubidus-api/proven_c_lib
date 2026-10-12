@@ -27,6 +27,7 @@
 #define CL_T_WRITE 2
 #define CL_T_RESPONSE 3
 #define CL_T_BODY 4
+#define CL_T_DELAY 5        /* not a limit: the wait before a try of retry_unsent, the request with no connection */
 
 typedef struct { proven_byte_t *ptr; proven_size_t len, cap, off; bool borrowed; } cl_buf_t;
 
@@ -120,12 +121,15 @@ struct proven_http_event_client {
     proven_size_t request_count;
     cl_conn_t *conns;                  /* HTTP/1.1 connections, busy and idle */
     proven_size_t idle_count;
+    proven_size_t conn_count;          /* HTTP/1.1 connections there are */
     proven_http_event_request_t *wait_head, *wait_tail;       /* requests waiting for a connection to their origin */
     proven_size_t wait_count;
     bool closing;                      /* being destroyed: nothing new is begun */
     proven_http_header_t *headers;
     proven_byte_t *rbuf, *pbuf, *hbuf;
     void *h2;                          /* http_event_client_h2.c: its connections, its origins */
+    void *h2_delayed, *h2_delayed_last;    /* and its requests that wait to be tried again (retry_delay_ms), the first due first */
+    proven_loop_timer_t h2_delay_timer;
     proven_byte_t *h2buf;              /* where every HTTP/2 connection reads its header lists */
     proven_size_t h2buf_size;
 };
@@ -146,6 +150,14 @@ proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *clie
                                                 bool https, const proven_url_t *url, proven_net_addr_t to,
                                                 proven_http_event_request_t **out);
 void proven_http_event_client_h2_destroy_(proven_http_event_client_t *client);
+/* For max_connections, which counts both protocols. In http_event_client_h2.c: how many
+ * HTTP/2 connections there are, and "close one that has no request on it" (false: none).
+ * In http_event_client.c: whether the client may have one more connection, an idle one
+ * closed for it if need be; and "a place was freed", for the HTTP/1.1 requests that wait. */
+proven_size_t proven_http_event_client_h2_conns_(const proven_http_event_client_t *client);
+bool proven_http_event_client_h2_close_idle_(proven_http_event_client_t *client);
+bool proven_http_event_client_room_(proven_http_event_client_t *client);
+void proven_http_event_client_freed_(proven_http_event_client_t *client);
 /* The HTTP/1.1 request that `face` became has ended and its on_done has returned. */
 void proven_http_event_client_h2_forwarded_done_(proven_http_event_request_t *face);
 [[nodiscard]]

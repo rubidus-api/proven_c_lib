@@ -176,8 +176,11 @@ static void call_pump(call_t *c) {
     (void)proven_http_event_request_end(c->request);
 }
 static void on_writable(void *ctx, proven_http_event_request_t *r) { (void)r; call_t *c = ctx; c->writables++; call_pump(c); }
+static proven_http_event_request_t *g_abort_from_done;       /* a request that the next on_done is to abort, from inside itself */
+
 static void on_done(void *ctx, proven_http_event_request_t *r, proven_err_t why) {
     call_t *c = ctx;
+    if (g_abort_from_done) { proven_http_event_request_t *other = g_abort_from_done; g_abort_from_done = NULL; proven_http_event_request_abort(other); }
     if (proven_http_event_request_user(r) != c) c->intact = false;
     proven_loop_timer_cancel(g_loop, &c->timer);
     c->dones++;
@@ -938,6 +941,104 @@ static void time_limits(void) {
     spin(20);
 }
 
+// -----------------------------------------------------------------------------
+// retry_delay_ms and max_connections
+// -----------------------------------------------------------------------------
+
+#define OK_KEPT "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+
+static void delay_and_limit(void) {
+    proven_net_listener_t l[3];
+    proven_net_addr_t at[3];
+    proven_net_conn_t x, y, z;
+    char req[1024];
+    static call_t c, d, e;
+    for (int i = 0; i < 3; ++i)
+        PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 8, &l[i], &at[i]) == PROVEN_OK, "a listener the test answers on", "");
+
+    /* retry_delay_ms: the second connection comes after the wait, not at once. */
+    proven_http_event_client_t *client = a_client((proven_http_event_client_config_t){ .retry_unsent = 1, .retry_delay_ms = 300 }, true);
+    PROVEN_TEST_ASSERT(start(client, &c, "POST", url(true, at[0].port, "/again"), (proven_mem_view_t){ (const proven_byte_t *)"body", 4 }, 0) == PROVEN_OK && peer_accept(&l[0], &x, 400), "a request over TLS, and a server that takes the connection", "");
+    spin(20);
+    (void)proven_net_close(&x);
+    proven_time_t t0 = proven_time_monotonic_now();
+    PROVEN_TEST_ASSERT(!peer_accept(&l[0], &x, 20) && !c.done, "and closes it before TLS is agreed: with retry_delay_ms 300 no second connection comes at once, and nothing is told", "");
+    /* (Pausing and resuming it meanwhile changes nothing: it has no connection to be paused on, and its wait is its own.) */
+    proven_http_event_request_pause(c.request);
+    proven_http_event_request_resume(c.request);
+    PROVEN_TEST_ASSERT(peer_accept(&l[0], &x, 400) && proven_time_monotonic_now() - t0 > 250000000 && proven_time_monotonic_now() - t0 < 2000000000, "it comes when the 300 ms have passed", "");
+    (void)proven_net_close(&x);
+    PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_ERR_RESET && c.dones == 1 && !peer_accept(&l[0], &x, 80), "lost again, with no try left: PROVEN_ERR_RESET, once, and no third connection", "");
+    /* Aborted while it waits to be tried again: it ends, and no connection is made for it. */
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(true, at[0].port, "/gone"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l[0], &x, 400), "another request", "");
+    spin(20);
+    (void)proven_net_close(&x);
+    spin(60);
+    PROVEN_TEST_ASSERT(!c.done && proven_http_event_client_requests(client) == 1, "lost in the same way, it waits to be tried again", "");
+    proven_http_event_request_abort(c.request);
+    PROVEN_TEST_ASSERT(c.done && c.dones == 1 && proven_http_event_client_requests(client) == 0 && !peer_accept(&l[0], &x, 100), "aborted while it waits: it ends once, and no connection is made for it after the wait", "");
+    /* Its place given away as it begins to wait - to a request that cannot have it, whose
+     * caller is told there and then, and aborts the first from inside that. */
+    {
+        proven_http_event_client_t *narrow = a_client((proven_http_event_client_config_t){ .alloc = stingy(), .retry_unsent = 1, .retry_delay_ms = 300, .max_connections_per_origin = 1 }, true);
+        PROVEN_TEST_ASSERT(start(narrow, &d, "GET", url(true, at[0].port, "/first"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l[0], &x, 400) &&
+                           start(narrow, &e, "GET", url(true, at[0].port, "/behind"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK, "at one connection to an origin, a request and one that waits behind it", "");
+        spin(20);
+        g_abort_from_done = d.request;
+        g_refuse_memory = true;
+        (void)proven_net_close(&x);
+        spin_until(&e.done, 5000);
+        g_refuse_memory = false;
+        PROVEN_TEST_ASSERT(e.done && e.why == PROVEN_ERR_NOMEM && e.dones == 1, "the first loses its connection; the place goes to the one behind, which cannot be given a connection: PROVEN_ERR_NOMEM", "");
+        PROVEN_TEST_ASSERT(d.done && d.dones == 1 && proven_http_event_client_requests(narrow) == 0, "and the first, aborted from inside that, ended once - it is not left waiting to be tried", "");
+        spin(400);
+        PROVEN_TEST_ASSERT(d.dones == 1 && !peer_accept(&l[0], &x, 20), "nothing happens when its wait would have been over", "");
+        proven_http_event_client_destroy(narrow);
+    }
+    /* The client destroyed while one waits to be tried again. */
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(true, at[0].port, "/left"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l[0], &x, 400), "a third", "");
+    spin(20);
+    (void)proven_net_close(&x);
+    spin(60);
+    proven_http_event_client_destroy(client);
+    PROVEN_TEST_ASSERT(c.done && c.dones == 1 && !peer_accept(&l[0], &x, 100), "the client destroyed while it waits: it ends once, and no connection is made", "");
+
+    /* max_connections. Said with more kept than there may be: refused. Alone: the kept ones follow. */
+    proven_http_event_client_config_t both = { .max_connections = 2, .max_kept_connections = 3 };
+    proven_http_event_client_t *none = NULL;
+    PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &both, &none) == PROVEN_ERR_INVALID_ARG, "max_kept_connections above max_connections is refused", "");
+    client = a_client((proven_http_event_client_config_t){ .max_connections = 2 }, false);
+    /* Three origins, two connections: the third request waits, and has the place of the first
+     * connection that falls idle - which is closed for it, being another origin's. */
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(false, at[0].port, "/a"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l[0], &x, 400) &&
+                       start(client, &d, "GET", url(false, at[1].port, "/b"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l[1], &y, 400), "requests to two origins, each on its connection", "");
+    PROVEN_TEST_ASSERT(start(client, &e, "GET", url(false, at[2].port, "/c"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && !peer_accept(&l[2], &z, 20) && !e.done && proven_http_event_client_requests(client) == 3,
+        "with max_connections 2 a request to a third origin makes no connection: it waits", "");
+    PROVEN_TEST_ASSERT(peer_exchange(&x, OK_KEPT, req, sizeof req) && spin_until(&c.done, 5000) && c.why == PROVEN_OK, "the first is answered, its connection one that could be kept", "");
+    PROVEN_TEST_ASSERT(peer_accept(&l[2], &z, 400) && peer_sees_close(&x), "that connection is closed instead, and the one that waited has its place: a connection to the third origin", "");
+    (void)proven_net_close(&x);
+    PROVEN_TEST_ASSERT(peer_exchange(&z, OK_KEPT, req, sizeof req) && spin_until(&e.done, 5000) && e.why == PROVEN_OK && e.dones == 1, "where it is answered", "");
+    /* Now the third origin's connection is idle and the second's is busy: a request to the
+     * first origin has the idle one closed for it at once. */
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(false, at[0].port, "/a2"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l[0], &x, 400) && peer_sees_close(&z),
+        "at the limit with one connection idle, a request to another origin does not wait: the idle one is closed and its own is made", "");
+    (void)proven_net_close(&z);
+    PROVEN_TEST_ASSERT(peer_exchange(&x, OK_KEPT, req, sizeof req) && spin_until(&c.done, 5000) && c.why == PROVEN_OK &&
+                       peer_exchange(&y, OK_KEPT, req, sizeof req) && spin_until(&d.done, 5000) && d.why == PROVEN_OK, "and both that were open are answered", "");
+    /* The limit and the queue's own: with one request allowed to wait, the second is refused. */
+    proven_http_event_client_destroy(client);
+    (void)proven_net_close(&x); (void)proven_net_close(&y);
+    client = a_client((proven_http_event_client_config_t){ .max_connections = 1, .max_waiting_requests = 1 }, false);
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", url(false, at[0].port, "/a"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l[0], &x, 400) &&
+                       start(client, &d, "GET", url(false, at[1].port, "/b"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK &&
+                       start(client, &e, "GET", url(false, at[2].port, "/c"), (proven_mem_view_t){ 0 }, 0) == PROVEN_ERR_BUSY && proven_http_event_client_requests(client) == 2,
+        "max_connections 1 and one request allowed to wait: the second waits, the third is PROVEN_ERR_BUSY", "");
+    proven_http_event_client_destroy(client);
+    (void)proven_net_close(&x);
+    for (int i = 0; i < 3; ++i) (void)proven_net_listener_close(&l[i]);
+    spin(20);
+}
+
 int main(void) {
     PROVEN_TEST_SUITE("the event-driven HTTP client",
         "Requests started and answered through callbacks on one thread: bodies down and up in pieces with backpressure, the address apart from the name, time limits, abort, many at once - plain and over TLS - and servers that answer badly.",
@@ -1069,6 +1170,9 @@ int main(void) {
     kept_over_tls();
     PROVEN_TEST_SECTION("time, for a body and for output", "A response body that stops coming, and a server that stops reading.", "Check cl_arm in http_event_client.c: CL_T_BODY while a body is awaited, CL_T_WRITE while output is held; and cl_on_timer.");
     time_limits();
+
+    PROVEN_TEST_SECTION("retry_delay_ms and max_connections", "The wait before a try, and a limit on the connections of the whole client.", "Check the CL_T_DELAY branch of cl_kill and cl_on_delay; cl_place, proven_http_event_client_room_, cl_waiter_with_room and their uses in cl_conn_close and cl_conn_keep.");
+    delay_and_limit();
 
     PROVEN_TEST_SECTION("retry_unsent", "A connection lost before any of the request was given to it, with the setting and without.", "Check the second branch at the top of cl_kill, and `sent` in cl_flush.");
     unsent();
