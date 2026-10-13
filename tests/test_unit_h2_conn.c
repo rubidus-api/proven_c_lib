@@ -1406,6 +1406,52 @@ int main(void) {
             PROVEN_TEST_ASSERT(log.err == PROVEN_OK && log.goaways == 1 && log.text_len == 0 && seen.pongs == 1, "with no memory for the text the goodbye is reported without it, and the frames stay in step", "");
             proven_h2_conn_destroy(c);
         }
+        /* The same frame cut short at every byte and with every bit changed, to each role, a
+         * byte at a time and whole: the reader keeps to its input and to the text's memory. */
+        {
+            static buf_t rec, mut;
+            long runs = 0;
+            const proven_size_t blocks_before = g_mem.blocks;
+            for (int role = 0; role < 2; role++) {
+                proven_h2_config_t rc = base; rc.server = role == 0;
+                rec.n = 0;
+                if (rc.server) { memcpy(rec.b, PROVEN_H2_PREFACE, 24); rec.n = 24; }
+                put_frame(&rec, PROVEN_H2_SETTINGS, 0, 0, (void *)0, 0);
+                put_frame(&rec, PROVEN_H2_GOAWAY, 0, 0, pay, 8 + 30);
+                put_frame(&rec, PROVEN_H2_GOAWAY, 0, 0, pay, 8 + 300);
+                put_frame(&rec, PROVEN_H2_PING, 0, 0, "12345678", 8);
+                for (proven_size_t i = 0; i < rec.n + rec.n * 8; i++) {
+                    proven_size_t n = rec.n;
+                    memcpy(mut.b, rec.b, n);
+                    if (i < rec.n) n = i;
+                    else mut.b[(i - rec.n) / 8] ^= (proven_byte_t)(1u << ((i - rec.n) % 8));
+                    for (int whole = 0; whole < 2; whole++) {
+                        proven_h2_conn_t *c = conn_new(&rc);
+                        proven_u32 id;
+                        if (!rc.server) PROVEN_TEST_ASSERT(proven_h2_conn_submit_request(c, POST, 4, false, &id) == PROVEN_OK, "a request, so that the connection stays", "");
+                        proven_size_t pos = 0;
+                        for (;;) {
+                            const proven_size_t take = whole ? n - pos : (n - pos ? 1 : 0);
+                            proven_size_t used = 0; proven_h2_event_t ev;
+                            proven_err_t err = proven_h2_conn_feed(c, (proven_mem_view_t){ take ? mut.b + pos : (void *)0, take }, &used, &ev);
+                            if (err != PROVEN_OK) { PROVEN_TEST_ASSERT(err == PROVEN_ERR_INVALID_FORMAT && rc.server && pos + used < 24, "the only error of a feed is a preface that is not one", ""); break; }
+                            PROVEN_TEST_ASSERT(used <= take, "a feed stays inside its input", "");
+                            pos += used;
+                            if (ev.kind == PROVEN_H2_EVENT_GOAWAY) {
+                                PROVEN_TEST_ASSERT(ev.data.size <= 256 && (ev.data.size == 0 || ev.data.ptr != (void *)0), "a goodbye's text is at most what is kept", "");
+                                volatile proven_byte_t sum = 0;
+                                for (proven_size_t k = 0; k < ev.data.size; k++) sum = (proven_byte_t)(sum + ev.data.ptr[k]);     /* every byte of it is there to read */
+                            }
+                            if (ev.kind == PROVEN_H2_EVENT_CLOSED) break;
+                            if (ev.kind == PROVEN_H2_EVENT_NONE && pos == n) break;
+                        }
+                        proven_h2_conn_destroy(c);
+                        runs++;
+                    }
+                }
+            }
+            PROVEN_TEST_ASSERT(runs > 4000 && g_mem.blocks == blocks_before, "thousands of damaged goodbyes, and nothing is left allocated", "");
+        }
         g_buf.n = 0;
     }
 

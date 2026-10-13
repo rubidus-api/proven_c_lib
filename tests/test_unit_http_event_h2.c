@@ -824,6 +824,7 @@ int main(void) {
             good += r->end && !r->reset && r->status == 200 && r->got == (proven_size_t)(i % 2 ? 3000 : 700) && !r->bad;
             resets += r->reset;
         }
+        if (!(good == 100 && resets == 0 && !c.closed)) PROVEN_TEST_INFO("of a hundred: {} whole, {} reset; the connection closed {}, gone {}", PROVEN_ARG(good), PROVEN_ARG(resets), PROVEN_ARG((int)c.closed), PROVEN_ARG((int)c.gone));
         PROVEN_TEST_ASSERT(good == 100 && resets == 0 && !c.closed, "all hundred are answered whole and none is reset", tls ? "over TLS" : "in the clear");
         cl_close(&c);
 
@@ -851,11 +852,12 @@ int main(void) {
         PROVEN_TEST_ASSERT(taken > 0 && taken < 100, "while the client reads nothing, the server stops taking requests when its output is full", "Check d_full and the loop of h2_on_input in src/proven/http_event_h2.c.");
         good = 0; resets = 0;
         for (int i = 0; i < 100; i++) {
-            (void)cl_wait(&c, ids[i], 30000);
+            (void)cl_wait(&c, ids[i], 120000);     /* forty megabytes: under ThreadSanitizer on a busy machine that took more than thirty seconds, and the streams end together, so the first wait is the long one */
             const res_t *r = cl_res(&c, ids[i]);
             good += r->end && !r->reset && r->status == 200 && r->got == 400000 && !r->bad;
             resets += r->reset;
         }
+        if (!(good == 100 && resets == 0 && !c.closed)) PROVEN_TEST_INFO("of a hundred: {} whole, {} reset; the connection closed {}, gone {}", PROVEN_ARG(good), PROVEN_ARG(resets), PROVEN_ARG((int)c.closed), PROVEN_ARG((int)c.gone));
         PROVEN_TEST_ASSERT(good == 100 && resets == 0 && !c.closed, "with the socket full all hundred are still answered whole: a head waits for room, it is not a reason to reset",
             "Check s_head in src/proven/http_event_h2.c and the engine's bound in proven_h2_conn_submit_response: a response head is not refused for the output bound.");
         cl_close(&c);
@@ -878,11 +880,12 @@ int main(void) {
         proven_time_sleep(700);
         good = 0; resets = 0;
         for (int i = 0; i < 100; i++) {
-            (void)cl_wait(&c, ids[i], 30000);
+            (void)cl_wait(&c, ids[i], 120000);     /* forty megabytes: under ThreadSanitizer on a busy machine that took more than thirty seconds, and the streams end together, so the first wait is the long one */
             const res_t *r = cl_res(&c, ids[i]);
             good += r->end && !r->reset && r->status == 200 && r->got == 400000 && !r->bad;
             resets += r->reset;
         }
+        if (!(good == 100 && resets == 0 && !c.closed)) PROVEN_TEST_INFO("of a hundred: {} whole, {} reset; the connection closed {}, gone {}", PROVEN_ARG(good), PROVEN_ARG(resets), PROVEN_ARG((int)c.closed), PROVEN_ARG((int)c.gone));
         PROVEN_TEST_ASSERT(good == 100 && resets == 0 && !c.closed, "responses begun when the output was already full are whole too",
             "Check proven_h2_conn_heads_past_bound_ and its call in proven_http_event_h2_begin_: the engine queues a response head whatever is waiting.");
         cl_close(&c);
@@ -901,11 +904,12 @@ int main(void) {
         for (int i = 0; i < 100; i++) ids[i] = cl_ask(&c, "GET", "/whole/300000", true);
         int good = 0, resets = 0;
         for (int i = 0; i < 100; i++) {
-            (void)cl_wait(&c, ids[i], 30000);
+            (void)cl_wait(&c, ids[i], 120000);     /* forty megabytes: under ThreadSanitizer on a busy machine that took more than thirty seconds, and the streams end together, so the first wait is the long one */
             const res_t *r = cl_res(&c, ids[i]);
             good += r->end && !r->reset && r->status == 200 && r->got == 300000 && !r->bad;
             resets += r->reset;
         }
+        if (!(good == 100 && resets == 0 && !c.closed)) PROVEN_TEST_INFO("of a hundred: {} whole, {} reset; the connection closed {}, gone {}", PROVEN_ARG(good), PROVEN_ARG(resets), PROVEN_ARG((int)c.closed), PROVEN_ARG((int)c.gone));
         PROVEN_TEST_ASSERT(good == 100 && resets == 0 && !c.closed, "thirty megabytes in a hundred whole responses arrive, and none is reset", "");
         cl_close(&c);
         server_stop();

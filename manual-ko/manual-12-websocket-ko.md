@@ -714,6 +714,9 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
     }
     /* 합의됐는지는 클라이언트에도 달렸다. 어느 쪽이든 달리 할 일은 없다. */
     app->compressed = proven_ws_stream_compressed(ws);
+    /* 이쪽에도 같은 스위치가 있다. 답을 압축하면 안 되는 서버라면
+     * proven_ws_stream_set_compress(ws, false). 여기서는 압축해도 된다. */
+    proven_ws_stream_set_compress(ws, true);
 }
 
 static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
@@ -762,6 +765,14 @@ int main(void) {
 
     /* 한도는 풀린 크기에 걸린다. 한 글자 삼십만 개는 압축하면 몇백 바이트다 - 그래도
      * 너무 많다: 서버는 1009로 연결을 끝낸다. */
+    /* 압축기를 거치지 않는 메시지 하나 - 상대가 고른 텍스트 옆에 비밀을 실은 메시지에 필요한 것.
+     * 스위치는 메시지가 시작될 때 읽힌다. */
+    proven_ws_conn_set_compress(conn, false);
+    EXAMPLE_REQUIRE(proven_ws_conn_send_text(conn, (proven_u8str_view_t){ (const proven_byte_t *)report, 1000 }) == PROVEN_OK &&
+                    proven_ws_conn_receive(conn, proven_net_deadline_in(5000), &msg) == PROVEN_OK &&
+                    msg.data.size == 10 && memcmp(msg.data.ptr, "1000 bytes", 10) == 0, "a thousand bytes, sent as they are");
+    proven_ws_conn_set_compress(conn, true);
+
     static char flood[300000];
     memset(flood, 'x', sizeof flood);
     EXAMPLE_REQUIRE(proven_ws_conn_send_text(conn, (proven_u8str_view_t){ (const proven_byte_t *)flood, sizeof flood }) == PROVEN_OK, "a message that inflates past the server's limit");

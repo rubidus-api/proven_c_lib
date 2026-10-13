@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-10-13
+
 ### Added
 
 - **`proven_http_stream_flush`** and **`proven_http_exchange_flush`**: hand over what a
@@ -45,6 +47,11 @@ written; their tags still exist.
   decision. The event is reported when the text has been read, so it comes no earlier than
   before and, for a text split over several reads, later.
 
+### Changed
+
+- `proven_h2_conn_t` is 24 bytes larger (384 bytes for a connection that has only opened, on
+  a 64-bit target): the pointer to the text above, its two counts, and the marks.
+
 ### Fixed
 
 - **The event-driven server, HTTP/2: a response begun while the client was not taking output
@@ -56,11 +63,6 @@ written; their tags still exist.
   hidden. A head is now always queued. What bounds a client that asks and never reads is
   that the server takes no more input from a connection while twice `max_buffered_output`
   waits for it; the rest stays in the socket, and is read when there is room.
-
-### Changed
-
-- `proven_h2_conn_t` is 24 bytes larger (384 bytes for a connection that has only opened, on
-  a 64-bit target): the pointer to the text above, its two counts, and the marks.
 
 ## [0.40.0] - 2026-10-13
 

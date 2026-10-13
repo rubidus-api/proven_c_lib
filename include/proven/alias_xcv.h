@@ -530,6 +530,7 @@
 #define xcv_h2_conn_feed proven_h2_conn_feed
 #define xcv_h2_conn_has_peer_settings proven_h2_conn_has_peer_settings
 #define xcv_h2_conn_is_closed proven_h2_conn_is_closed
+#define xcv_h2_conn_next_sensitive proven_h2_conn_next_sensitive
 #define xcv_h2_conn_output_sent proven_h2_conn_output_sent
 #define xcv_h2_conn_pending_output proven_h2_conn_pending_output
 #define xcv_h2_conn_ping proven_h2_conn_ping
@@ -588,6 +589,7 @@
 #define xcv_hmac_t proven_hmac_t
 #define xcv_hmac_update proven_hmac_update
 #define xcv_hpack_decode proven_hpack_decode
+#define xcv_hpack_decode_marked proven_hpack_decode_marked
 #define xcv_hpack_decoder proven_hpack_decoder
 #define xcv_hpack_decoder_create proven_hpack_decoder_create
 #define xcv_hpack_decoder_destroy proven_hpack_decoder_destroy
@@ -672,6 +674,7 @@
 #define xcv_http_exchange_begin proven_http_exchange_begin
 #define xcv_http_exchange_compress proven_http_exchange_compress
 #define xcv_http_exchange_end proven_http_exchange_end
+#define xcv_http_exchange_flush proven_http_exchange_flush
 #define xcv_http_exchange_peer proven_http_exchange_peer
 #define xcv_http_exchange_read proven_http_exchange_read
 #define xcv_http_exchange_request proven_http_exchange_request
@@ -717,6 +720,7 @@
 #define xcv_http_stream_buffered proven_http_stream_buffered
 #define xcv_http_stream_compress proven_http_stream_compress
 #define xcv_http_stream_end proven_http_stream_end
+#define xcv_http_stream_flush proven_http_stream_flush
 #define xcv_http_stream_pause proven_http_stream_pause
 #define xcv_http_stream_peer proven_http_stream_peer
 #define xcv_http_stream_protocol proven_http_stream_protocol
@@ -1237,6 +1241,7 @@
 #define xcv_ws_conn_send_binary proven_ws_conn_send_binary
 #define xcv_ws_conn_send_part proven_ws_conn_send_part
 #define xcv_ws_conn_send_text proven_ws_conn_send_text
+#define xcv_ws_conn_set_compress proven_ws_conn_set_compress
 #define xcv_ws_conn_t proven_ws_conn_t
 #define xcv_ws_decoder_allow_compressed proven_ws_decoder_allow_compressed
 #define xcv_ws_decoder_feed proven_ws_decoder_feed
@@ -1266,6 +1271,7 @@
 #define xcv_ws_stream_resume proven_ws_stream_resume
 #define xcv_ws_stream_send proven_ws_stream_send
 #define xcv_ws_stream_send_piece proven_ws_stream_send_piece
+#define xcv_ws_stream_set_compress proven_ws_stream_set_compress
 #define xcv_ws_stream_set_user proven_ws_stream_set_user
 #define xcv_ws_stream_t proven_ws_stream_t
 #define xcv_ws_stream_user proven_ws_stream_user

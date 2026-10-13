@@ -67,10 +67,12 @@ int main(void) {
     /* Any field can be given the same treatment. */
     proven_http_header_t more[] = { { PROVEN_LIT("x-api-key"), PROVEN_LIT("k-0123456789") } };
     bool sensitive[] = { true };
+    bool marked[16] = { false };
     proven_size_t n = 0;
+    /* The decoder can say which fields came marked - what something that passes them on needs. */
     EXAMPLE_REQUIRE(proven_hpack_encode(encoder, more, 1, sensitive, (proven_mem_mut_t){ block, sizeof block }, &n) == PROVEN_OK &&
-                    proven_hpack_decode(decoder, (proven_mem_view_t){ block, n }, fields, 16, (proven_mem_mut_t){ scratch, sizeof scratch }, 4096, &count) == PROVEN_OK &&
-                    proven_hpack_decoder_table_count(decoder) == 3, "a field marked sensitive adds nothing to the table");
+                    proven_hpack_decode_marked(decoder, (proven_mem_view_t){ block, n }, fields, marked, 16, (proven_mem_mut_t){ scratch, sizeof scratch }, 4096, &count) == PROVEN_OK &&
+                    proven_hpack_decoder_table_count(decoder) == 3 && marked[0], "a field marked sensitive adds nothing to the table, and arrives marked");
 
     // ---- a limit, and what it is for ---------------------------------------------------
     /* A block is not the size of what it says. This one is five bytes and names the same

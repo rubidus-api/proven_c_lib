@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 1263개: 소문자 `xcv_` 이름 924개와 대문자 `XCV_` 이름 339개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 1269개: 소문자 `xcv_` 이름 930개와 대문자 `XCV_` 이름 339개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -552,6 +552,7 @@ alias 1263개: 소문자 `xcv_` 이름 924개와 대문자 `XCV_` 이름 339개.
 | `xcv_h2_conn_feed` | `proven_h2_conn_feed` |
 | `xcv_h2_conn_has_peer_settings` | `proven_h2_conn_has_peer_settings` |
 | `xcv_h2_conn_is_closed` | `proven_h2_conn_is_closed` |
+| `xcv_h2_conn_next_sensitive` | `proven_h2_conn_next_sensitive` |
 | `xcv_h2_conn_output_sent` | `proven_h2_conn_output_sent` |
 | `xcv_h2_conn_pending_output` | `proven_h2_conn_pending_output` |
 | `xcv_h2_conn_ping` | `proven_h2_conn_ping` |
@@ -610,6 +611,7 @@ alias 1263개: 소문자 `xcv_` 이름 924개와 대문자 `XCV_` 이름 339개.
 | `xcv_hmac_t` | `proven_hmac_t` |
 | `xcv_hmac_update` | `proven_hmac_update` |
 | `xcv_hpack_decode` | `proven_hpack_decode` |
+| `xcv_hpack_decode_marked` | `proven_hpack_decode_marked` |
 | `xcv_hpack_decoder` | `proven_hpack_decoder` |
 | `xcv_hpack_decoder_create` | `proven_hpack_decoder_create` |
 | `xcv_hpack_decoder_destroy` | `proven_hpack_decoder_destroy` |
@@ -694,6 +696,7 @@ alias 1263개: 소문자 `xcv_` 이름 924개와 대문자 `XCV_` 이름 339개.
 | `xcv_http_exchange_begin` | `proven_http_exchange_begin` |
 | `xcv_http_exchange_compress` | `proven_http_exchange_compress` |
 | `xcv_http_exchange_end` | `proven_http_exchange_end` |
+| `xcv_http_exchange_flush` | `proven_http_exchange_flush` |
 | `xcv_http_exchange_peer` | `proven_http_exchange_peer` |
 | `xcv_http_exchange_read` | `proven_http_exchange_read` |
 | `xcv_http_exchange_request` | `proven_http_exchange_request` |
@@ -739,6 +742,7 @@ alias 1263개: 소문자 `xcv_` 이름 924개와 대문자 `XCV_` 이름 339개.
 | `xcv_http_stream_buffered` | `proven_http_stream_buffered` |
 | `xcv_http_stream_compress` | `proven_http_stream_compress` |
 | `xcv_http_stream_end` | `proven_http_stream_end` |
+| `xcv_http_stream_flush` | `proven_http_stream_flush` |
 | `xcv_http_stream_pause` | `proven_http_stream_pause` |
 | `xcv_http_stream_peer` | `proven_http_stream_peer` |
 | `xcv_http_stream_protocol` | `proven_http_stream_protocol` |
@@ -1259,6 +1263,7 @@ alias 1263개: 소문자 `xcv_` 이름 924개와 대문자 `XCV_` 이름 339개.
 | `xcv_ws_conn_send_binary` | `proven_ws_conn_send_binary` |
 | `xcv_ws_conn_send_part` | `proven_ws_conn_send_part` |
 | `xcv_ws_conn_send_text` | `proven_ws_conn_send_text` |
+| `xcv_ws_conn_set_compress` | `proven_ws_conn_set_compress` |
 | `xcv_ws_conn_t` | `proven_ws_conn_t` |
 | `xcv_ws_decoder_allow_compressed` | `proven_ws_decoder_allow_compressed` |
 | `xcv_ws_decoder_feed` | `proven_ws_decoder_feed` |
@@ -1288,6 +1293,7 @@ alias 1263개: 소문자 `xcv_` 이름 924개와 대문자 `XCV_` 이름 339개.
 | `xcv_ws_stream_resume` | `proven_ws_stream_resume` |
 | `xcv_ws_stream_send` | `proven_ws_stream_send` |
 | `xcv_ws_stream_send_piece` | `proven_ws_stream_send_piece` |
+| `xcv_ws_stream_set_compress` | `proven_ws_stream_set_compress` |
 | `xcv_ws_stream_set_user` | `proven_ws_stream_set_user` |
 | `xcv_ws_stream_t` | `proven_ws_stream_t` |
 | `xcv_ws_stream_user` | `proven_ws_stream_user` |

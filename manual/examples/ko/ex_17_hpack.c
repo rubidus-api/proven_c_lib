@@ -67,10 +67,12 @@ int main(void) {
     /* 어떤 필드든 같은 취급을 받게 할 수 있다. */
     proven_http_header_t more[] = { { PROVEN_LIT("x-api-key"), PROVEN_LIT("k-0123456789") } };
     bool sensitive[] = { true };
+    bool marked[16] = { false };
     proven_size_t n = 0;
+    /* 디코더는 어느 필드가 표시와 함께 왔는지 알려 줄 수 있다 - 필드를 넘기는 쪽에 필요한 것. */
     EXAMPLE_REQUIRE(proven_hpack_encode(encoder, more, 1, sensitive, (proven_mem_mut_t){ block, sizeof block }, &n) == PROVEN_OK &&
-                    proven_hpack_decode(decoder, (proven_mem_view_t){ block, n }, fields, 16, (proven_mem_mut_t){ scratch, sizeof scratch }, 4096, &count) == PROVEN_OK &&
-                    proven_hpack_decoder_table_count(decoder) == 3, "a field marked sensitive adds nothing to the table");
+                    proven_hpack_decode_marked(decoder, (proven_mem_view_t){ block, n }, fields, marked, 16, (proven_mem_mut_t){ scratch, sizeof scratch }, 4096, &count) == PROVEN_OK &&
+                    proven_hpack_decoder_table_count(decoder) == 3 && marked[0], "a field marked sensitive adds nothing to the table, and arrives marked");
 
     // ---- 한도, 그리고 그것의 쓸모 --------------------------------------------------
     /* 블록의 크기는 그것이 말하는 내용의 크기가 아니다. 이 블록은 다섯 바이트이고, 기억된

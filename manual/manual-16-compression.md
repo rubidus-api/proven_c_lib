@@ -484,6 +484,16 @@ static void handle(void *ctx, proven_http_exchange_t *x) {
         bool gzip = proven_http_accepts_coding(req->headers, req->header_count, PROVEN_HTTP_CODING_GZIP);
         (void)proven_http_exchange_respond(x, 200, NULL, 0, proven_mem_view_from_u8(gzip ? PROVEN_LIT("gzip") : PROVEN_LIT("identity")));
 
+    } else if (proven_u8str_view_eq(req->target, PROVEN_LIT("/log"))) {
+        /* A compressed response written in pieces holds back what it is given. A flush hands
+         * it over: the client reads "started" now, not when the work is done. */
+        proven_http_exchange_compress(x);
+        if (proven_http_exchange_begin(x, 200, NULL, 0, PROVEN_HTTP_LENGTH_UNKNOWN) == PROVEN_OK &&
+            proven_http_exchange_write(x, proven_mem_view_from_u8(PROVEN_LIT("started\n"))) == PROVEN_OK &&
+            proven_http_exchange_flush(x) == PROVEN_OK) {
+            (void)proven_http_exchange_write(x, proven_mem_view_from_u8(PROVEN_LIT("finished\n")));
+        }
+
     } else {
         (void)proven_http_exchange_respond(x, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("bye\n")));
         proven_http_server_stop(*server);
@@ -569,6 +579,10 @@ int main(void) {
     EXAMPLE_REQUIRE(get(plain, at.port, "/accepts", &read_size, &sent, &coding, &body) &&
                     proven_u8str_view_eq(proven_u8str_as_view(&body), PROVEN_LIT("identity")), "and that the other does not");
 
+    /* A response flushed in the middle is still one gzip stream. */
+    EXAMPLE_REQUIRE(get(decoding, at.port, "/log", &read_size, &sent, &coding, &body) && coding == PROVEN_HTTP_CODING_GZIP &&
+                    proven_u8str_view_eq(proven_u8str_as_view(&body), PROVEN_LIT("started\nfinished\n")), "a log sent in two parts, the first flushed, reads as one");
+
     EXAMPLE_REQUIRE(get(plain, at.port, "/quit", &read_size, &sent, &coding, &body), "stop");
     proven_job_group_wait(threads, &running);
     proven_u8str_destroy(heap, &body);
@@ -623,6 +637,9 @@ static void pump(app_t *app) {
         if (took.err != PROVEN_OK) return;
         for (proven_size_t i = 0; i < took.value; ++i) app->sum_sent += piece[i];
         app->written += took.value;
+        /* The first piece is handed over at once: the reader sees the report begin while
+         * the rest is still being made. Without this it would wait in the compressor. */
+        if (app->written == sizeof piece) (void)proven_http_stream_flush(app->stream);
         if (took.value < n) return;        /* the compressed output is at its limit: wait */
     }
     (void)proven_http_stream_end(app->stream);

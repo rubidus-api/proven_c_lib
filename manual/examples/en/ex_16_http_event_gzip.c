@@ -37,6 +37,9 @@ static void pump(app_t *app) {
         if (took.err != PROVEN_OK) return;
         for (proven_size_t i = 0; i < took.value; ++i) app->sum_sent += piece[i];
         app->written += took.value;
+        /* The first piece is handed over at once: the reader sees the report begin while
+         * the rest is still being made. Without this it would wait in the compressor. */
+        if (app->written == sizeof piece) (void)proven_http_stream_flush(app->stream);
         if (took.value < n) return;        /* the compressed output is at its limit: wait */
     }
     (void)proven_http_stream_end(app->stream);

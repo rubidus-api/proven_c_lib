@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1263 aliases: 924 lowercase `xcv_` names and 339 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1269 aliases: 930 lowercase `xcv_` names and 339 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -550,6 +550,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_h2_conn_feed` | `proven_h2_conn_feed` |
 | `xcv_h2_conn_has_peer_settings` | `proven_h2_conn_has_peer_settings` |
 | `xcv_h2_conn_is_closed` | `proven_h2_conn_is_closed` |
+| `xcv_h2_conn_next_sensitive` | `proven_h2_conn_next_sensitive` |
 | `xcv_h2_conn_output_sent` | `proven_h2_conn_output_sent` |
 | `xcv_h2_conn_pending_output` | `proven_h2_conn_pending_output` |
 | `xcv_h2_conn_ping` | `proven_h2_conn_ping` |
@@ -608,6 +609,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_hmac_t` | `proven_hmac_t` |
 | `xcv_hmac_update` | `proven_hmac_update` |
 | `xcv_hpack_decode` | `proven_hpack_decode` |
+| `xcv_hpack_decode_marked` | `proven_hpack_decode_marked` |
 | `xcv_hpack_decoder` | `proven_hpack_decoder` |
 | `xcv_hpack_decoder_create` | `proven_hpack_decoder_create` |
 | `xcv_hpack_decoder_destroy` | `proven_hpack_decoder_destroy` |
@@ -692,6 +694,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_exchange_begin` | `proven_http_exchange_begin` |
 | `xcv_http_exchange_compress` | `proven_http_exchange_compress` |
 | `xcv_http_exchange_end` | `proven_http_exchange_end` |
+| `xcv_http_exchange_flush` | `proven_http_exchange_flush` |
 | `xcv_http_exchange_peer` | `proven_http_exchange_peer` |
 | `xcv_http_exchange_read` | `proven_http_exchange_read` |
 | `xcv_http_exchange_request` | `proven_http_exchange_request` |
@@ -737,6 +740,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_stream_buffered` | `proven_http_stream_buffered` |
 | `xcv_http_stream_compress` | `proven_http_stream_compress` |
 | `xcv_http_stream_end` | `proven_http_stream_end` |
+| `xcv_http_stream_flush` | `proven_http_stream_flush` |
 | `xcv_http_stream_pause` | `proven_http_stream_pause` |
 | `xcv_http_stream_peer` | `proven_http_stream_peer` |
 | `xcv_http_stream_protocol` | `proven_http_stream_protocol` |
@@ -1257,6 +1261,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_ws_conn_send_binary` | `proven_ws_conn_send_binary` |
 | `xcv_ws_conn_send_part` | `proven_ws_conn_send_part` |
 | `xcv_ws_conn_send_text` | `proven_ws_conn_send_text` |
+| `xcv_ws_conn_set_compress` | `proven_ws_conn_set_compress` |
 | `xcv_ws_conn_t` | `proven_ws_conn_t` |
 | `xcv_ws_decoder_allow_compressed` | `proven_ws_decoder_allow_compressed` |
 | `xcv_ws_decoder_feed` | `proven_ws_decoder_feed` |
@@ -1286,6 +1291,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_ws_stream_resume` | `proven_ws_stream_resume` |
 | `xcv_ws_stream_send` | `proven_ws_stream_send` |
 | `xcv_ws_stream_send_piece` | `proven_ws_stream_send_piece` |
+| `xcv_ws_stream_set_compress` | `proven_ws_stream_set_compress` |
 | `xcv_ws_stream_set_user` | `proven_ws_stream_set_user` |
 | `xcv_ws_stream_t` | `proven_ws_stream_t` |
 | `xcv_ws_stream_user` | `proven_ws_stream_user` |

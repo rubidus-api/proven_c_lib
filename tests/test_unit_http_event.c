@@ -58,6 +58,20 @@ static void big_pump(app_t *a) {
     (void)proven_http_stream_end(a->stream);
 }
 
+/* The time a request head may take. Over TLS the handshake shares it, and a handshake under
+ * ThreadSanitizer on a busy machine does not fit in half a second: the suite's TSan run
+ * failed here twice, at a different check each time, with other tests running beside it. */
+#if defined(__SANITIZE_THREAD__)
+#define HEAD_MS 4000u
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define HEAD_MS 4000u
+#endif
+#endif
+#ifndef HEAD_MS
+#define HEAD_MS 500u
+#endif
+
 static void later_fire(void *ctx) {
     app_t *a = ctx;
     (void)proven_http_stream_respond(a->stream, 200, NULL, 0, mv("later"));
@@ -224,7 +238,7 @@ static void cases(bool tls) {
     proven_http_event_server_config_t cfg = {
         .on = { on_request, on_body, on_writable, on_done },
         .max_buffered_output = 32 * 1024, .max_body_bytes = 2 * 1024 * 1024, .max_head_bytes = 4096,
-        .head_timeout_ms = 500, .idle_timeout_ms = 60000, .tls = tls ? g_server_tls : NULL,
+        .head_timeout_ms = HEAD_MS, .idle_timeout_ms = 60000, .tls = tls ? g_server_tls : NULL,
     };
     proven_net_addr_t at;
     PROVEN_TEST_ASSERT(proven_http_event_server_create(g_loop, &cfg, &g_server) == PROVEN_OK &&
@@ -404,7 +418,7 @@ static void cases(bool tls) {
     t0 = proven_time_monotonic_now();
     raw_read(&raw, text, sizeof text, 10000, &end);
     proven_time_t took = proven_time_monotonic_now() - t0;
-    PROVEN_TEST_ASSERT(strstr(text, "HTTP/1.1 408") && took > 250000000 && took < 3000000000, "after the head timeout the server answers 408 and closes", how);
+    PROVEN_TEST_ASSERT(strstr(text, "HTTP/1.1 408") && took > (proven_time_t)HEAD_MS * 500000 && took < (proven_time_t)HEAD_MS * 6000000, "after the head timeout the server answers 408 and closes", how);
     raw_close(&raw);
 
     PROVEN_TEST_ASSERT(connections() <= 2, "nothing is left open but the client's kept connection", how);

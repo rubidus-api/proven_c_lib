@@ -37,6 +37,9 @@ static void pump(app_t *app) {
         if (took.err != PROVEN_OK) return;
         for (proven_size_t i = 0; i < took.value; ++i) app->sum_sent += piece[i];
         app->written += took.value;
+        /* 첫 조각은 곧바로 내보낸다: 나머지를 아직 만드는 동안 읽는 쪽은 보고서가 시작되는 것을
+         * 본다. 이것이 없으면 압축기 안에서 기다렸을 것이다. */
+        if (app->written == sizeof piece) (void)proven_http_stream_flush(app->stream);
         if (took.value < n) return;        /* 압축된 출력이 한도에 닿았다: 기다린다 */
     }
     (void)proven_http_stream_end(app->stream);

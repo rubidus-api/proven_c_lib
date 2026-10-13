@@ -740,6 +740,9 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
     }
     /* Whether it was agreed depends on the client too. Nothing else has to be done either way. */
     app->compressed = proven_ws_stream_compressed(ws);
+    /* The same switch on this side, for a server whose answers must not be compressed:
+     * proven_ws_stream_set_compress(ws, false). Here they may be. */
+    proven_ws_stream_set_compress(ws, true);
 }
 
 static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
@@ -788,6 +791,14 @@ int main(void) {
 
     /* The limit is on the decoded size. Three hundred thousand of one letter are a few hundred
      * bytes compressed - and still too much: the server ends the connection with 1009. */
+    /* One message kept out of the compressor - what a message that carries a secret beside
+     * text the other side chose needs. The switch is read when a message begins. */
+    proven_ws_conn_set_compress(conn, false);
+    EXAMPLE_REQUIRE(proven_ws_conn_send_text(conn, (proven_u8str_view_t){ (const proven_byte_t *)report, 1000 }) == PROVEN_OK &&
+                    proven_ws_conn_receive(conn, proven_net_deadline_in(5000), &msg) == PROVEN_OK &&
+                    msg.data.size == 10 && memcmp(msg.data.ptr, "1000 bytes", 10) == 0, "a thousand bytes, sent as they are");
+    proven_ws_conn_set_compress(conn, true);
+
     static char flood[300000];
     memset(flood, 'x', sizeof flood);
     EXAMPLE_REQUIRE(proven_ws_conn_send_text(conn, (proven_u8str_view_t){ (const proven_byte_t *)flood, sizeof flood }) == PROVEN_OK, "a message that inflates past the server's limit");

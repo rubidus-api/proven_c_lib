@@ -159,10 +159,12 @@ int main(void) {
     /* Any field can be given the same treatment. */
     proven_http_header_t more[] = { { PROVEN_LIT("x-api-key"), PROVEN_LIT("k-0123456789") } };
     bool sensitive[] = { true };
+    bool marked[16] = { false };
     proven_size_t n = 0;
+    /* The decoder can say which fields came marked - what something that passes them on needs. */
     EXAMPLE_REQUIRE(proven_hpack_encode(encoder, more, 1, sensitive, (proven_mem_mut_t){ block, sizeof block }, &n) == PROVEN_OK &&
-                    proven_hpack_decode(decoder, (proven_mem_view_t){ block, n }, fields, 16, (proven_mem_mut_t){ scratch, sizeof scratch }, 4096, &count) == PROVEN_OK &&
-                    proven_hpack_decoder_table_count(decoder) == 3, "a field marked sensitive adds nothing to the table");
+                    proven_hpack_decode_marked(decoder, (proven_mem_view_t){ block, n }, fields, marked, 16, (proven_mem_mut_t){ scratch, sizeof scratch }, 4096, &count) == PROVEN_OK &&
+                    proven_hpack_decoder_table_count(decoder) == 3 && marked[0], "a field marked sensitive adds nothing to the table, and arrives marked");
 
     // ---- a limit, and what it is for ---------------------------------------------------
     /* A block is not the size of what it says. This one is five bytes and names the same
@@ -795,6 +797,9 @@ int main(void) {
     static proven_byte_t big[100000];
     server.hold = true;                                    /* the server's handler is busy: it consumes nothing */
     server.body_bytes = 0;
+    /* A field no hop may remember is marked for the one list that follows: here the last, as if it were a key. */
+    static const bool keep_out[5] = { false, false, false, false, true };
+    proven_h2_conn_next_sensitive(client.conn, keep_out);
     EXAMPLE_REQUIRE(proven_h2_conn_submit_request(client.conn, request, 5, false, &stream) == PROVEN_OK && stream == 3 && carry(&client, &server), "a second request");
     sent = proven_h2_conn_send_data(client.conn, stream, (proven_mem_view_t){ big, sizeof big }, true);
     const proven_size_t taken = sent.value;
@@ -1135,10 +1140,12 @@ int main(void) {
   the server has nowhere else to keep it - so what bounds a client that asks and never reads
   is that, while twice `max_buffered_output` waits for it, the server takes nothing more
   from that connection: further requests stay in the socket, as a pipelined request does on
-  HTTP/1.1 while a response is owed. A client that uploads without reading its other
-  responses therefore stops being read, and resumes when it reads.
+  HTTP/1.1 while a response is owed. The most a connection then holds as output is twice
+  `max_buffered_output` and one head for each stream that was open - at most
+  `max_concurrent_streams` of them, each the size its handler made it. A client that uploads
+  without reading its other responses therefore stops being read, and resumes when it reads.
 - **An idle HTTP/2 connection is larger than an HTTP/1.1 one, by what it has been sent.**
-  HTTP/1.1's is 448 bytes. HTTP/2's is 2,264 bytes after one small request, and grows with
+  HTTP/1.1's is 448 bytes. HTTP/2's is 2,312 bytes after one small request, and grows with
   the header fields its client has made it remember, to about 12.8 KiB when both compression
   tables are full: ten thousand idle connections are between 22 and 128 MiB.
   `http2_header_table_bytes` lowers the ceiling and `http2_no_header_table` removes it (under

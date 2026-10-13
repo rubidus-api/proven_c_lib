@@ -151,10 +151,12 @@ int main(void) {
     /* 어떤 필드든 같은 취급을 받게 할 수 있다. */
     proven_http_header_t more[] = { { PROVEN_LIT("x-api-key"), PROVEN_LIT("k-0123456789") } };
     bool sensitive[] = { true };
+    bool marked[16] = { false };
     proven_size_t n = 0;
+    /* 디코더는 어느 필드가 표시와 함께 왔는지 알려 줄 수 있다 - 필드를 넘기는 쪽에 필요한 것. */
     EXAMPLE_REQUIRE(proven_hpack_encode(encoder, more, 1, sensitive, (proven_mem_mut_t){ block, sizeof block }, &n) == PROVEN_OK &&
-                    proven_hpack_decode(decoder, (proven_mem_view_t){ block, n }, fields, 16, (proven_mem_mut_t){ scratch, sizeof scratch }, 4096, &count) == PROVEN_OK &&
-                    proven_hpack_decoder_table_count(decoder) == 3, "a field marked sensitive adds nothing to the table");
+                    proven_hpack_decode_marked(decoder, (proven_mem_view_t){ block, n }, fields, marked, 16, (proven_mem_mut_t){ scratch, sizeof scratch }, 4096, &count) == PROVEN_OK &&
+                    proven_hpack_decoder_table_count(decoder) == 3 && marked[0], "a field marked sensitive adds nothing to the table, and arrives marked");
 
     // ---- 한도, 그리고 그것의 쓸모 --------------------------------------------------
     /* 블록의 크기는 그것이 말하는 내용의 크기가 아니다. 이 블록은 다섯 바이트이고, 기억된
@@ -771,6 +773,9 @@ int main(void) {
     static proven_byte_t big[100000];
     server.hold = true;                                    /* 서버의 처리기가 바쁘다: 아무것도 소비하지 않는다 */
     server.body_bytes = 0;
+    /* 어느 중간 지점도 기억하면 안 되는 필드는 바로 다음 목록 하나에 대해 표시한다: 여기서는 마지막 필드를, 키인 셈 치고. */
+    static const bool keep_out[5] = { false, false, false, false, true };
+    proven_h2_conn_next_sensitive(client.conn, keep_out);
     EXAMPLE_REQUIRE(proven_h2_conn_submit_request(client.conn, request, 5, false, &stream) == PROVEN_OK && stream == 3 && carry(&client, &server), "a second request");
     sent = proven_h2_conn_send_data(client.conn, stream, (proven_mem_view_t){ big, sizeof big }, true);
     const proven_size_t taken = sent.value;
@@ -1099,11 +1104,13 @@ int main(void) {
   달리 둘 곳이 없다. 그래서 묻기만 하고 읽지 않는 클라이언트를 제한하는 것은 이것이다:
   `max_buffered_output`의 두 배가 그 클라이언트를 기다리는 동안 서버는 그 연결에서 더 받지 않는다.
   뒤따르는 요청은 소켓에 남는다. HTTP/1.1에서 응답이 밀려 있는 동안 파이프라인된 요청이 남는 것과
-  같다. 따라서 다른 응답을 읽지 않으면서 업로드하는 클라이언트는 읽히지 않게 되고, 읽으면 다시 읽힌다.
+  같다. 그때 연결이 출력으로 쥐는 최대는 `max_buffered_output`의 두 배와, 열려 있던 스트림마다 헤드
+  하나다 - 많아야 `max_concurrent_streams`개이고, 각각 처리기가 만든 크기다. 따라서 다른 응답을 읽지
+  않으면서 업로드하는 클라이언트는 읽히지 않게 되고, 읽으면 다시 읽힌다.
 - **`max_buffered_output`은 스트림이 아니라 연결마다다.** 스트림 백 개를 가진 느린 클라이언트 하나는
   HTTP/1.1 클라이언트 하나만큼을 쥐게 하지, 그 백 배가 아니다.
 - **한가한 HTTP/2 연결은 HTTP/1.1 연결보다 크다. 받은 것만큼.** HTTP/1.1은 448바이트다. HTTP/2는 작은
-  요청 하나 뒤에 2,264바이트이고, 클라이언트가 기억하게 한 헤더 필드만큼 자라 두 압축 테이블이 가득
+  요청 하나 뒤에 2,312바이트이고, 클라이언트가 기억하게 한 헤더 필드만큼 자라 두 압축 테이블이 가득
   차면 약 12.8 KiB가 된다: 한가한 연결 만 개는 22에서 128 MiB 사이다. `http2_header_table_bytes`는 그
   상한을 낮추고 `http2_no_header_table`은 없앤다(언제나 2 KiB 미만). 대가는 모든 필드를 매번 온전히
   보내는 것이다. 헤더 목록을 읽는 버퍼 - 80 KiB - 는 연결마다가 아니라 서버 전체에 하나다. 진행 중인

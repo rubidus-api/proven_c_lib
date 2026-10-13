@@ -118,6 +118,9 @@ int main(void) {
     static proven_byte_t big[100000];
     server.hold = true;                                    /* the server's handler is busy: it consumes nothing */
     server.body_bytes = 0;
+    /* A field no hop may remember is marked for the one list that follows: here the last, as if it were a key. */
+    static const bool keep_out[5] = { false, false, false, false, true };
+    proven_h2_conn_next_sensitive(client.conn, keep_out);
     EXAMPLE_REQUIRE(proven_h2_conn_submit_request(client.conn, request, 5, false, &stream) == PROVEN_OK && stream == 3 && carry(&client, &server), "a second request");
     sent = proven_h2_conn_send_data(client.conn, stream, (proven_mem_view_t){ big, sizeof big }, true);
     const proven_size_t taken = sent.value;

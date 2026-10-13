@@ -118,6 +118,9 @@ int main(void) {
     static proven_byte_t big[100000];
     server.hold = true;                                    /* 서버의 처리기가 바쁘다: 아무것도 소비하지 않는다 */
     server.body_bytes = 0;
+    /* 어느 중간 지점도 기억하면 안 되는 필드는 바로 다음 목록 하나에 대해 표시한다: 여기서는 마지막 필드를, 키인 셈 치고. */
+    static const bool keep_out[5] = { false, false, false, false, true };
+    proven_h2_conn_next_sensitive(client.conn, keep_out);
     EXAMPLE_REQUIRE(proven_h2_conn_submit_request(client.conn, request, 5, false, &stream) == PROVEN_OK && stream == 3 && carry(&client, &server), "a second request");
     sent = proven_h2_conn_send_data(client.conn, stream, (proven_mem_view_t){ big, sizeof big }, true);
     const proven_size_t taken = sent.value;
