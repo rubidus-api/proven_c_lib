@@ -1,4 +1,5 @@
 #include "proven_internal_tls.h"
+#include "../../platform/proven_sys_mem.h"
 
 /* TLS 1.3 below the state machine: suites, transcript, key schedule, record protection. */
 
@@ -122,7 +123,7 @@ proven_size_t proven_tls13_seal(proven_tls_keys_t *keys, proven_byte_t type, pro
     out[0] = PROVEN_TLS_CT_APPLICATION; out[1] = 0x03; out[2] = 0x03;
     out[3] = (proven_byte_t)(body >> 8); out[4] = (proven_byte_t)body;
     proven_byte_t *p = out + PROVEN_TLS_RECORD_HEADER;
-    for (proven_size_t i = 0; i < content.size; ++i) p[i] = content.ptr[i];
+    proven_sys_mem_copy(p, content.ptr, content.size);
     p[content.size] = type;
     tls13_nonce(keys, nonce);
     proven_mem_view_t aad = { .ptr = out, .size = PROVEN_TLS_RECORD_HEADER };

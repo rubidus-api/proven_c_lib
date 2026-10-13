@@ -18,6 +18,23 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **`proven_mem_wipe` is a block fill followed by a barrier** the compiler cannot see through
+  (GCC and Clang; any other compiler keeps the loop through a `volatile` pointer that it was).
+  The promise is the same - the bytes named are zero and the writes are performed - and a
+  private check reads the generated code of both compilers for it at four optimisation levels
+  and with link-time optimisation. It was one store a byte: on a TLS connection, whose buffers
+  are wiped as they are freed, that was four processor cycles for every byte carried.
+- **A TLS connection copies a record's bytes as blocks** where it copied them one at a time:
+  into its input buffer, out to the caller of `proven_tls_read`, and into the record being
+  sealed. Nothing else about the buffers changes, and what an idle connection holds is the
+  same.
+- With the two, a megabyte through two TLS 1.3 engines in memory (AES-128-GCM, 16 KiB writes)
+  went from 151 to 275 MiB/s on the development machine: what is left is the two passes of the
+  cipher. One machine, under other users' load; the measuring program is not part of the
+  repository.
+
 ## [0.45.0] - 2026-10-13
 
 ### Added

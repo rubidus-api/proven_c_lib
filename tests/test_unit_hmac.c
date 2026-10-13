@@ -299,6 +299,24 @@ int main(void) {
         proven_mem_wipe((proven_mem_mut_t){ NULL, 10 });
         proven_mem_wipe((proven_mem_mut_t){ a, 0 });
         PROVEN_TEST_ASSERT(a[0] == 0xab, "a null or empty range is left alone", "");
+
+        /* Every length to 64 at every alignment, with a guard on each side: a wipe that goes a
+         * block at a time has ends, and the ends are where it would go wrong. */
+        static proven_byte_t field[6000];
+        bool every = true;
+        for (proven_size_t at = 0; at < 16; ++at) {
+            for (proven_size_t len = 0; len <= 64; ++len) {
+                memset(field, 0x5c, 128);
+                proven_mem_wipe((proven_mem_mut_t){ field + 16 + at, len });
+                for (proven_size_t i = 0; i < 128; ++i) every = every && field[i] == ((i >= 16 + at && i < 16 + at + len) ? 0 : 0x5c);
+            }
+        }
+        PROVEN_TEST_ASSERT(every, "1,040 ranges - sixteen alignments, lengths 0 to 64 - each wiped to its last byte and not one past", "");
+        memset(field, 0x5c, sizeof field);
+        proven_mem_wipe((proven_mem_mut_t){ field + 3, 5000 });
+        bool large = field[2] == 0x5c && field[5003] == 0x5c;
+        for (proven_size_t i = 3; i < 5003; ++i) large = large && field[i] == 0;
+        PROVEN_TEST_ASSERT(large, "and five thousand bytes", "");
     }
 
     PROVEN_TEST_PASS("the digests, the MAC and the key derivation agree with their standards.");

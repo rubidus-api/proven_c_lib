@@ -1,4 +1,5 @@
 #include "proven_internal_tls.h"
+#include "../../platform/proven_sys_mem.h"
 
 /* The TLS 1.3 state machine (RFC 8446), both roles. Bytes in, bytes out: no I/O, no clock and
  * no random source of its own - those come from the config.
@@ -219,7 +220,7 @@ static void buf_free(proven_tls_conn_t *c, tls_buf_t *b) {
 
 static bool buf_append(proven_tls_conn_t *c, tls_buf_t *b, const proven_byte_t *p, proven_size_t n) {
     if (n > (proven_size_t)-1 - b->len || !buf_reserve(c, b, b->len + n)) return false;
-    for (proven_size_t i = 0; i < n; ++i) b->ptr[b->len + i] = p[i];
+    proven_sys_mem_copy(b->ptr + b->len, p, n);        /* a block: a byte at a time here was three cycles a byte of every record received */
     b->len += n;
     return true;
 }
@@ -2871,7 +2872,7 @@ proven_result_size_t proven_tls_read(proven_tls_conn_t *c, proven_mem_mut_t dest
     if (!c || (dest.size > 0 && !dest.ptr)) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_ARG, .value = 0 };
     if (c->plain_len > c->plain_off) {
         proven_size_t have = c->plain_len - c->plain_off, n = have < dest.size ? have : dest.size;
-        for (proven_size_t i = 0; i < n; ++i) dest.ptr[i] = c->in.ptr[c->plain_off + i];
+        proven_sys_mem_copy(dest.ptr, c->in.ptr + c->plain_off, n);
         c->plain_off += n;
         if (c->plain_off == c->plain_len) { c->plain_off = 0; c->plain_len = 0; buf_free(c, &c->in); }
         return (proven_result_size_t){ .err = PROVEN_OK, .value = n };

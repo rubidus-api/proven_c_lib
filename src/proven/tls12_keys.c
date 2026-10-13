@@ -1,4 +1,5 @@
 #include "proven_internal_tls.h"
+#include "../../platform/proven_sys_mem.h"
 
 /* TLS 1.2 below the state machine (RFC 5246): the suites, the PRF and what is derived with
  * it, and record protection for the AEAD suites (RFC 5288, RFC 7905). */
@@ -147,7 +148,7 @@ proven_size_t proven_tls12_seal(proven_tls_keys_t *keys, proven_byte_t type, pro
     tls12_aad(keys, type, content.size, aad);
     for (proven_size_t i = 0; i < explicit_len; ++i) p[i] = nonce[4 + i];
     p += explicit_len;
-    for (proven_size_t i = 0; i < content.size; ++i) p[i] = content.ptr[i];
+    proven_sys_mem_copy(p, content.ptr, content.size);
     proven_mem_view_t ad = { .ptr = aad, .size = sizeof aad }, plain = { .ptr = p, .size = content.size };
     if (keys->chacha) proven_crypto_chacha20poly1305_seal(keys->aes.rk, nonce, ad, plain, p, p + content.size);
     else proven_crypto_aes_gcm_seal(&keys->aes, nonce, ad, plain, p, p + content.size);
