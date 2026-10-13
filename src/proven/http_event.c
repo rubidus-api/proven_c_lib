@@ -1,4 +1,5 @@
 #include "proven/http_event.h"
+#include "../../platform/proven_sys_mem.h"
 #include "proven_internal_http_event.h"
 #include "proven_internal_http_coding.h"
 
@@ -57,7 +58,7 @@ static bool buf_own(proven_http_event_server_t *s, ev_buf_t *b, proven_size_t mo
     proven_size_t have = buf_pending(b);
     if (!b->borrowed && b->off == 0 && b->cap >= have + more) return true;
     if (!b->borrowed && b->cap >= have + more) {
-        for (proven_size_t i = 0; i < have; ++i) b->ptr[i] = b->ptr[b->off + i];
+        proven_sys_mem_move(b->ptr, b->ptr + b->off, have);
         b->len = have; b->off = 0;
         return true;
     }
@@ -65,7 +66,7 @@ static bool buf_own(proven_http_event_server_t *s, ev_buf_t *b, proven_size_t mo
     while (cap < have + more) { if (cap > (proven_size_t)-1 / 2) return false; cap *= 2; }
     proven_byte_t *p = ev_alloc(s->alloc, cap);
     if (!p) return false;
-    for (proven_size_t i = 0; i < have; ++i) p[i] = b->ptr[b->off + i];
+    proven_sys_mem_copy(p, b->ptr + b->off, have);
     if (b->ptr && !b->borrowed) s->alloc.free_fn(s->alloc.ctx, b->ptr);
     b->ptr = p; b->len = have; b->off = 0; b->cap = cap; b->borrowed = false;
     return true;
@@ -74,7 +75,7 @@ static bool buf_own(proven_http_event_server_t *s, ev_buf_t *b, proven_size_t mo
 static bool buf_append(proven_http_event_server_t *s, ev_buf_t *b, const proven_byte_t *p, proven_size_t n) {
     if (n == 0) return true;
     if (!buf_own(s, b, n)) return false;
-    for (proven_size_t i = 0; i < n; ++i) b->ptr[b->len + i] = p[i];
+    proven_sys_mem_copy(b->ptr + b->len, p, n);
     b->len += n;
     return true;
 }

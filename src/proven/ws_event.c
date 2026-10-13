@@ -1,4 +1,5 @@
 #include "proven/ws_event.h"
+#include "../../platform/proven_sys_mem.h"
 #include "proven_internal_http_event.h"
 #include "proven_internal_ws.h"
 
@@ -148,7 +149,7 @@ static proven_err_t ws_frame(proven_ws_stream_t *ws, proven_u8 opcode, bool fin,
     proven_size_t done = 0;
     do {
         const proven_size_t n = data.size - done < sizeof piece ? data.size - done : sizeof piece;
-        for (proven_size_t i = 0; i < n; ++i) piece[i] = data.ptr[done + i];
+        proven_sys_mem_copy(piece, data.ptr + done, n);
         proven_ws_mask((proven_mem_mut_t){ .ptr = piece, .size = n }, f.mask, done);
         if (!ws->conn || !ws->tr->send(ws->conn, (proven_mem_view_t){ .ptr = header, .size = done == 0 ? len : 0 }, (proven_mem_view_t){ .ptr = piece, .size = n })) return PROVEN_ERR_RESET;
         done += n;
@@ -242,7 +243,7 @@ static bool ws_rx_hold(proven_ws_stream_t *ws, const proven_byte_t *p, proven_si
     proven_result_mem_mut_t m = ws->alloc.alloc_fn(ws->alloc.ctx, n, 1);
     if (m.err != PROVEN_OK) return false;
     rx->held = m.value.ptr;
-    for (proven_size_t i = 0; i < n; ++i) rx->held[i] = p[i];
+    proven_sys_mem_copy(rx->held, p, n);
     return true;
 }
 

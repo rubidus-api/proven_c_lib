@@ -18,6 +18,19 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **The event-driven servers and clients copy their buffers as blocks.** Thirteen copies
+  that went a byte at a time - into and out of a connection's input and output buffers in
+  the HTTP/1.1 and HTTP/2 servers and clients, a WebSocket message being masked or held, and
+  what a TLS transport keeps for its next read - are block copies and, where a buffer is
+  compacted, block moves. Nothing about what the buffers hold or when they are freed changes.
+- Measured on the development machine, client and server on it, one-megabyte bodies with
+  sixteen requests in flight, requests a second before and after: HTTP/1.1 responses 961 to
+  6,869 in the clear and 569 to 1,175 over TLS; HTTP/1.1 uploads 937 to 5,144 and 557 to
+  1,113; HTTP/2 responses 590 to 911 and 434 to 578; HTTP/2 uploads 418 to 556 and 327 to
+  416. The measuring program is not part of the repository.
+
 ## [0.48.0] - 2026-10-13
 
 ### Changed

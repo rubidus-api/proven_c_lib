@@ -1,4 +1,5 @@
 #include "proven/ws_event.h"
+#include "../../platform/proven_sys_mem.h"
 #include "proven_internal_http_event.h"
 #include "proven_internal_ws.h"
 
@@ -92,7 +93,7 @@ static bool wsc_append(wsc_t *c, wsc_buf_t *b, const proven_byte_t *p, proven_si
         b->p = m.value.ptr;
         b->cap = cap;
     }
-    for (proven_size_t i = 0; i < n; ++i) b->p[b->len + i] = p[i];
+    proven_sys_mem_copy(b->p + b->len, p, n);
     b->len += n;
     return true;
 }

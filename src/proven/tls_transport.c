@@ -1,4 +1,5 @@
 #include "proven/tls.h"
+#include "../../platform/proven_sys_mem.h"
 
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 
@@ -61,7 +62,7 @@ static proven_err_t tt_pull(tls_transport_t *t, proven_net_deadline_t until) {
         proven_result_mem_mut_t m = t->alloc.alloc_fn(t->alloc.ctx, len - used, 1);
         if (m.err != PROVEN_OK) return m.err;
         t->rbuf = m.value.ptr;
-        for (proven_size_t i = 0; i < len - used; ++i) t->rbuf[i] = chunk[used + i];
+        proven_sys_mem_copy(t->rbuf, chunk + used, len - used);
         t->rlen = len - used;
         t->roff = 0;
     }
