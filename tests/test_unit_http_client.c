@@ -391,6 +391,76 @@ static void script_endless_interim(void *arg) {
     (void)proven_net_close(&c);
 }
 
+/* A server that knows `Expect: 100-continue`: it says to go on, and notes whether any of the
+ * body came before it did. `second` is "early" or "waited"; the body is in `socks`. */
+static void script_continue(void *arg) {
+    peer_t *p = arg;
+    proven_net_conn_t c;
+    if (!peer_accept(p, &c)) return;
+    if (peer_read_head(&c, p->first, sizeof p->first)) {
+        proven_byte_t one;
+        proven_result_size_t r = proven_net_read(&c, (proven_mem_mut_t){ .ptr = &one, .size = 1 }, proven_net_deadline_in(300));
+        strcpy(p->second, r.err == PROVEN_ERR_TIMEOUT ? "waited" : "early");
+        peer_say(&c, "HTTP/1.1 100 Continue\r\n\r\n");
+        if (r.err == PROVEN_ERR_TIMEOUT && peer_read_exact(&c, p->socks, 12)) {
+            p->socks_len = 12;
+            peer_say(&c, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\ngone");
+        }
+    }
+    (void)proven_net_close(&c);
+}
+
+/* A server that will not have the body: it answers the head and counts what still comes.
+ * `second` is "closed" when the client ended the connection, "kept" when it did not. */
+static void script_refuses(void *arg) {
+    peer_t *p = arg;
+    proven_net_conn_t c;
+    if (!peer_accept(p, &c)) return;
+    if (peer_read_head(&c, p->first, sizeof p->first)) {
+        peer_say(&c, "HTTP/1.1 417 Expectation Failed\r\nContent-Length: 2\r\n\r\nno");
+        strcpy(p->second, "kept");
+        for (;;) {
+            proven_byte_t sink[256];
+            proven_result_size_t r = proven_net_read(&c, (proven_mem_mut_t){ .ptr = sink, .size = sizeof sink }, proven_net_deadline_in(3000));
+            if (r.err == PROVEN_ERR_EOF) { strcpy(p->second, "closed"); break; }
+            if (r.err != PROVEN_OK) break;
+            p->socks_len += r.value;
+        }
+    }
+    (void)proven_net_close(&c);
+}
+
+/* A server that has never heard of `Expect`: it waits for the body and says nothing first. */
+static void script_no_word(void *arg) {
+    peer_t *p = arg;
+    proven_net_conn_t c;
+    if (!peer_accept(p, &c)) return;
+    if (peer_read_head(&c, p->first, sizeof p->first) && peer_read_exact(&c, p->socks, 12)) {
+        p->socks_len = 12;
+        peer_say(&c, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nlate");
+    }
+    (void)proven_net_close(&c);
+}
+
+/* A server that answers the head and closes with the body unread: the client's write then
+ * fails in the middle, with an answer already on its way. */
+static void script_shuts(void *arg) {
+    peer_t *p = arg;
+    proven_net_conn_t c;
+    if (!peer_accept(p, &c)) return;
+    if (peer_read_head(&c, p->first, sizeof p->first)) peer_say(&c, "HTTP/1.1 413 Content Too Large\r\nContent-Length: 7\r\nConnection: close\r\n\r\ntoo big");
+    (void)proven_net_close(&c);
+}
+
+/* And one that closes the same way with nothing said. */
+static void script_shuts_mute(void *arg) {
+    peer_t *p = arg;
+    proven_net_conn_t c;
+    if (!peer_accept(p, &c)) return;
+    (void)peer_read_head(&c, p->first, sizeof p->first);
+    (void)proven_net_close(&c);
+}
+
 static proven_job_sys_t *g_jobs;
 static proven_job_group_t g_group;
 
@@ -1056,6 +1126,176 @@ int main(void) {
         PROVEN_TEST_ASSERT(fetch(c2, sv("http://far.invalid/x"), &e) == 0 && e == PROVEN_ERR_REFUSED, "its reply 5 is PROVEN_ERR_REFUSED", "");
         peer_finish(&p);
         proven_http_client_destroy(c2);
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("no_proxy",
+        "Hosts named in no_proxy are reached directly: a name and every name under it, an address only as itself, `*` for all.",
+        "Inspect cl_no_proxy and its use in cl_connect.");
+    // ---------------------------------------------------------------
+    {
+        static peer_t p;
+        char proxy[100];
+        proven_http_client_config_t via = cfg;
+        proven_http_client_t *c2 = NULL;
+
+        /* Names, with a proxy that answers: a host that is excused is looked up here (and under
+         * .invalid is not found); one that is not goes to the proxy, which sees it first. */
+        peer_start(&p, script_proxy);
+        snprintf(proxy, sizeof proxy, "http://127.0.0.1:%u", (unsigned)p.port);
+        via.proxy = sv(proxy);
+        char list[] = " Example.INVALID ,\t.corp.invalid,, [::1]";
+        via.no_proxy = sv(list);
+        PROVEN_TEST_ASSERT(proven_http_client_create(&via, &c2) == PROVEN_OK, "a client with a proxy and a list of hosts excused from it", "");
+        memset(list, 0, sizeof list);          /* the client copied it */
+        PROVEN_TEST_ASSERT(fetch(c2, sv("http://example.invalid/a"), &e) == 0 && e != PROVEN_OK, "a name in the list is not sent to the proxy, in whatever case it was written", "");
+        PROVEN_TEST_ASSERT(fetch(c2, sv("http://WWW.example.invalid/a"), &e) == 0 && e != PROVEN_OK, "nor a name under it", "");
+        PROVEN_TEST_ASSERT(fetch(c2, sv("http://corp.invalid/a"), &e) == 0 && e != PROVEN_OK, "an entry written with a leading dot is the name itself", "");
+        PROVEN_TEST_ASSERT(fetch(c2, sv("http://a.b.corp.invalid/a"), &e) == 0 && e != PROVEN_OK, "and the names under it", "");
+        PROVEN_TEST_ASSERT(fetch(c2, sv("http://[::1]:9/a"), &e) == 0 && e != PROVEN_OK, "an IPv6 address may be listed in its brackets", "");
+        PROVEN_TEST_ASSERT(fetch(c2, sv("http://notexample.invalid/b"), &e) == 200 && e == PROVEN_OK && body_is("via proxy"),
+            "a name that only ends in the same letters still goes through the proxy", "");
+        peer_finish(&p);
+        PROVEN_TEST_ASSERT(p.accepted == 1 && strstr(p.first, "GET http://notexample.invalid/b HTTP/1.1\r\n") == p.first,
+            "and that request is the first the proxy saw: the excused ones never reached it", "");
+        proven_http_client_destroy(c2);
+
+        /* Addresses, with a proxy that is not there: the origin answers only a direct request. */
+        peer_start(&p, script_proxy);
+        snprintf(proxy, sizeof proxy, "http://127.0.0.1:%u", (unsigned)p.port);
+        (void)proven_net_listener_close(&p.listener);       /* the script's accept fails and it ends */
+        proven_job_group_wait(g_jobs, &g_group);
+        static const struct { const char *list; bool direct; const char *what; } rows[] = {
+            { "127.0.0.1", true, "an address is matched as itself" },
+            { "0.0.1", false, "the end of an address is not the address" },
+            { ".0.0.1", false, "with a leading dot or without" },
+            { "27.0.0.1", false, "nor its last digits" },
+            { "localhost, 127.0.0.1 ", true, "among other entries, with spaces" },
+            { "*", true, "`*` excuses every host" },
+            { "", false, "an empty list excuses none" },
+        };
+        for (proven_size_t i = 0; i < sizeof rows / sizeof rows[0]; ++i) {
+            via.proxy = sv(proxy);
+            via.no_proxy = sv(rows[i].list);
+            PROVEN_TEST_ASSERT(proven_http_client_create(&via, &c2) == PROVEN_OK, "a client", "");
+            proven_u16 status = fetch(c2, url_at(o.port, "/hello"), &e);
+            if (rows[i].direct) PROVEN_TEST_ASSERT(status == 200 && e == PROVEN_OK && body_is("hello"), rows[i].what, "");
+            else PROVEN_TEST_ASSERT(status == 0 && e == PROVEN_ERR_REFUSED, rows[i].what, "The request should have gone to the proxy, where nothing listens.");
+            proven_http_client_destroy(c2);
+        }
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("Expect: 100-continue",
+        "With expect_continue the head goes first: the body follows the server's 100, is kept back when the server answers instead, and goes anyway when the server says nothing for expect_timeout_ms.",
+        "Inspect the `expecting` part of cl_exchange.");
+    // ---------------------------------------------------------------
+    {
+        static peer_t p;
+        proven_http_client_config_t ec = cfg;
+        ec.expect_timeout_ms = 5000;
+        proven_http_client_t *c2 = NULL;
+        PROVEN_TEST_ASSERT(proven_http_client_create(&ec, &c2) == PROVEN_OK, "a client that waits long for the server's word", "");
+
+        peer_start(&p, script_continue);
+        proven_http_header_t own = { sv("expect"), sv("100-continue") };
+        proven_http_client_request_t req = { .method = sv("POST"), .url = url_at(p.port, "/up"), .body = mv("twelve bytes"), .expect_continue = true,
+                                             .headers = &own, .header_count = 1 };
+        e = proven_http_client_send(c2, &req, &resp);
+        PROVEN_TEST_ASSERT(e == PROVEN_OK && resp.status == 200 && take_body(&resp) == PROVEN_ERR_EOF && body_is("gone"), "a request the server lets through is answered", "");
+        proven_http_client_finish(&resp);
+        peer_finish(&p);
+        const char *first = strstr(p.first, "\r\nExpect: 100-continue\r\n");
+        PROVEN_TEST_ASSERT(first != NULL && strstr(first + 8, "xpect") == NULL && strstr(p.first, "\r\nexpect") == NULL,
+            "the head carried Expect: 100-continue once, the caller's own copy left out", "");
+        PROVEN_TEST_ASSERT(strstr(p.first, "\r\nContent-Length: 12\r\n") != NULL, "and the length of the body to come", "");
+        PROVEN_TEST_ASSERT(strcmp(p.second, "waited") == 0, "nothing of the body was sent before the server said 100", "");
+        PROVEN_TEST_ASSERT(p.socks_len == 12 && memcmp(p.socks, "twelve bytes", 12) == 0, "and all of it after", "");
+
+        peer_start(&p, script_refuses);
+        req = (proven_http_client_request_t){ .method = sv("POST"), .url = url_at(p.port, "/up"), .body = mv("twelve bytes"), .expect_continue = true };
+        e = proven_http_client_send(c2, &req, &resp);
+        PROVEN_TEST_ASSERT(e == PROVEN_OK && resp.status == 417 && take_body(&resp) == PROVEN_ERR_EOF && body_is("no"), "a server that answers instead: its answer is the response", "");
+        proven_http_client_finish(&resp);
+        peer_finish(&p);
+        PROVEN_TEST_ASSERT(p.socks_len == 0, "not a byte of the body was sent", "");
+        PROVEN_TEST_ASSERT(strcmp(p.second, "closed") == 0,
+            "and the connection is not kept, although the answer allowed it: the two sides no longer agree where the request ends", "");
+
+        proven_reader_view_t rv;
+        peer_start(&p, script_refuses);
+        req = (proven_http_client_request_t){ .method = sv("PUT"), .url = url_at(p.port, "/up"), .expect_continue = true,
+                                              .body_stream = proven_reader_from_view(&rv, sv("twelve bytes")) };
+        e = proven_http_client_send(c2, &req, &resp);
+        PROVEN_TEST_ASSERT(e == PROVEN_OK && resp.status == 417, "the same with a body from a stream", "");
+        proven_http_client_finish(&resp);
+        peer_finish(&p);
+        PROVEN_TEST_ASSERT(p.socks_len == 0 && rv.cursor == 0, "which is not sent, and not read from", "");
+
+        req = (proven_http_client_request_t){ .method = sv("POST"), .url = url_at(o.port, "/echo"), .body = mv("to the library's own server"), .expect_continue = true };
+        e = proven_http_client_send(c2, &req, &resp);
+        PROVEN_TEST_ASSERT(e == PROVEN_OK && resp.status == 200 && take_body(&resp) == PROVEN_ERR_EOF && body_is("to the library's own server"),
+            "this library's server says 100 and reads the body", "");
+        proven_http_client_finish(&resp);
+        req.body = (proven_mem_view_t){0};
+        req.body_stream = proven_reader_from_view(&rv, sv("and from a stream"));
+        e = proven_http_client_send(c2, &req, &resp);
+        PROVEN_TEST_ASSERT(e == PROVEN_OK && resp.status == 200 && take_body(&resp) == PROVEN_ERR_EOF && body_is("and from a stream"), "a streamed body too, on the connection that was kept", "");
+        proven_http_client_finish(&resp);
+
+        peer_start(&p, script_proxy);
+        req = (proven_http_client_request_t){ .method = sv("POST"), .url = url_at(p.port, "/none"), .expect_continue = true };
+        e = proven_http_client_send(c2, &req, &resp);
+        PROVEN_TEST_ASSERT(e == PROVEN_OK && resp.status == 200, "a request with no body is sent as ever", "");
+        proven_http_client_finish(&resp);
+        peer_finish(&p);
+        PROVEN_TEST_ASSERT(strstr(p.first, "xpect") == NULL, "and does not ask: there is nothing to hold back", "");
+        proven_http_client_destroy(c2);
+
+        ec.expect_timeout_ms = 200;
+        PROVEN_TEST_ASSERT(proven_http_client_create(&ec, &c2) == PROVEN_OK, "a client that waits 200 ms", "");
+        peer_start(&p, script_no_word);
+        req = (proven_http_client_request_t){ .method = sv("POST"), .url = url_at(p.port, "/up"), .body = mv("twelve bytes"), .expect_continue = true };
+        proven_time_t start = proven_time_monotonic_now();
+        e = proven_http_client_send(c2, &req, &resp);
+        proven_i64 took = (proven_time_monotonic_now() - start) / 1000000;
+        PROVEN_TEST_ASSERT(e == PROVEN_OK && resp.status == 200 && take_body(&resp) == PROVEN_ERR_EOF && body_is("late"), "a server that says nothing gets the body anyway", "");
+        PROVEN_TEST_ASSERT(took >= 150, "after expect_timeout_ms, not at once", "");
+        proven_http_client_finish(&resp);
+        peer_finish(&p);
+        PROVEN_TEST_ASSERT(p.socks_len == 12 && memcmp(p.socks, "twelve bytes", 12) == 0, "whole", "");
+        proven_http_client_destroy(c2);
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("an answer that came before the body was all sent",
+        "A server may answer the head and stop reading. The write of the body then fails - and the answer is still read.",
+        "Inspect write_failed in cl_exchange.");
+    // ---------------------------------------------------------------
+    {
+        static peer_t p;
+        static proven_byte_t flood[8u << 20];
+        memset(flood, 'f', sizeof flood);
+        peer_start(&p, script_shuts);
+        proven_http_client_request_t req = { .method = sv("POST"), .url = url_at(p.port, "/up"), .body = { .ptr = flood, .size = sizeof flood } };
+        e = proven_http_client_send(client, &req, &resp);
+#if defined(__linux__)
+        /* Linux keeps what arrived before the reset; other systems may discard it. */
+        PROVEN_TEST_ASSERT(e == PROVEN_OK && resp.status == 413, "the server's 413 is the result, not the failed write", "");
+#else
+        PROVEN_TEST_ASSERT((e == PROVEN_OK && resp.status == 413) || e != PROVEN_OK, "the server's 413 is the result where the system kept it; an error where it did not", "");
+        PROVEN_TEST_INFO("an answer sent before a reset: this system gave the client status {} (error {})", PROVEN_ARG((int)(e == PROVEN_OK ? resp.status : 0)), PROVEN_ARG((int)e));
+#endif
+        if (e == PROVEN_OK) PROVEN_TEST_ASSERT(take_body(&resp) == PROVEN_ERR_EOF && body_is("too big"), "with its body", "");
+        proven_http_client_finish(&resp);
+        peer_finish(&p);
+
+        peer_start(&p, script_shuts_mute);
+        req.url = url_at(p.port, "/up");
+        e = proven_http_client_send(client, &req, &resp);
+        PROVEN_TEST_ASSERT(e != PROVEN_OK && e != PROVEN_ERR_TIMEOUT, "with no answer there, the call fails as it did before, and does not wait for one", "");
+        proven_http_client_finish(&resp);
+        peer_finish(&p);
     }
 
     proven_http_client_destroy(client);

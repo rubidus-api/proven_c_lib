@@ -71,6 +71,31 @@ proven_err_t proven_ws_accept_key(proven_u8str_view_t key, proven_byte_t out[PRO
 proven_err_t proven_ws_check_request(const proven_http_request_t *request, proven_u8str_view_t *key);
 
 /**
+ * @brief A server's check of where the page that opened the connection came from: is the
+ *        request's `Origin` one of `allowed`?
+ *
+ * A browser sends `Origin` with every WebSocket handshake, and sends the user's cookies with
+ * it whatever page asked; the same-origin policy does not cover WebSocket. A server that
+ * knows its users by a cookie therefore has to refuse the origins it does not serve, or any
+ * page can talk to it as the user. A program that is not a browser sends what it likes, or
+ * nothing: this check is about browsers.
+ *
+ * An origin is written as a browser writes it - `https://app.example`, with the port only
+ * when it is not the scheme's own (`http://localhost:8080`), no path and no final slash. It is
+ * compared whole, letter case aside; `https://app.example:443` is not `https://app.example`.
+ *
+ * @param allowed the origins served, `allowed_count` of them.
+ * @return PROVEN_OK: the request has one `Origin` and it is in the list.
+ *         PROVEN_ERR_NOT_FOUND: it has none - not a browser. Whether that is let in is the
+ *         server's decision.
+ *         PROVEN_ERR_PERMISSION: an origin that is not in the list (`null` among them), or
+ *         more than one `Origin` field - answer 403.
+ *         PROVEN_ERR_INVALID_ARG: no request, or a count with no list.
+ */
+[[nodiscard]]
+proven_err_t proven_ws_check_origin(const proven_http_request_t *request, const proven_u8str_view_t *allowed, proven_size_t allowed_count);
+
+/**
  * @brief Whether the request's `Sec-WebSocket-Protocol` offers `name` (compared exactly: the
  *        names are case-sensitive). A server picks at most one of those offered, or none.
  */

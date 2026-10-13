@@ -578,6 +578,7 @@ need. Every zero field has a default:
 | `body_timeout_ms` | Between pieces of a request body. | 30 s |
 | `write_timeout_ms` | Output held with none of it accepted by the client. | 30 s |
 | `idle_timeout_ms` | An open connection with no request on it. | 60 s |
+| `linger_ms` | How long a connection that is being closed after its answer is still read from, so that the answer is not lost to a reset. It counts as a connection until then. | 1 s |
 | `tls` | A TLS configuration with a certificate, or null for plain HTTP. | null |
 | `http2` | Let a connection be HTTP/2 - by ALPN over TLS, by its first bytes in the clear - beside HTTP/1.1 on the same port, for the same handler: [Chapter 17, section 6](manual-17-http2.md#6-http2-in-the-event-driven-server). | false |
 | `max_concurrent_streams` | HTTP/2: requests in progress on one connection. | 100 |

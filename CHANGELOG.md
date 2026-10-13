@@ -18,6 +18,36 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **`expect_continue`** in a request of the blocking client (`http_client.h`), with
+  `expect_timeout_ms` in its configuration: the head goes with `Expect: 100-continue` and the
+  body is held back until the server says `100`. A server that answers instead - `401`,
+  `413`, `417` - is sent none of the body, that answer is the response, and the connection is
+  not kept; one that says nothing for `expect_timeout_ms` (1 s unless set) is sent the body
+  anyway. A request without a body does not ask. The event-driven client has no such option.
+- **`no_proxy`** in the blocking client's configuration: hosts reached without the proxy. A
+  name excuses itself and every name under it, with a leading dot or without and in any
+  letter case; an address excuses only itself (no ranges); `*` excuses every host. An excused
+  name is looked up on this machine.
+- **`linger_ms`** in the configuration of both servers (`http_server.h`, `http_event.h`): how
+  long a connection being closed after its answer is still read from. It was fixed at one
+  second, which it still is when the field is zero.
+- **`proven_ws_check_origin`** (`ws.h`): whether a request's `Origin` is one of the origins a
+  server serves - `PROVEN_OK`, `PROVEN_ERR_NOT_FOUND` for a request without one, and
+  `PROVEN_ERR_PERMISSION` for another origin or two `Origin` fields. No server calls it by
+  itself.
+- `scripts/check-docs.py` refuses a Markdown link followed directly by `(`: the site's
+  converter reads the second parenthesis into the first, and a release once stopped on one.
+
+### Changed
+
+- The blocking client reads the response when writing a request body fails. A server may
+  answer the head and stop reading - a `413` in the middle of an upload - and the call now
+  returns that answer where it returned the write's error. With no answer there the error is
+  the write's, as before, and a write that timed out is reported at once. On Windows a reset
+  discards what had arrived unread, so there the answer may still be lost.
+
 ## [0.44.0] - 2026-10-13
 
 ### Added

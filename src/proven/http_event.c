@@ -140,7 +140,7 @@ static void ev_arm(proven_http_stream_t *c) {
     /* Output the client has not taken comes first: a response on its way out is not cut
      * short by the brief wait that follows it. */
     if (ev_buffered(c) > 0) ms = s->cfg.write_timeout_ms;
-    else if (c->h.state == EV_LINGER) ms = EV_LINGER_MS;
+    else if (c->h.state == EV_LINGER) ms = c->h.server->cfg.linger_ms;
     else if (c->h.state == EV_HEAD) ms = c->head_started ? s->cfg.head_timeout_ms : s->cfg.idle_timeout_ms;
     else if (c->h.state == EV_BODY && !c->paused) ms = s->cfg.body_timeout_ms;
     /* EV_RESPOND with nothing held: the handler is thinking. That is its business. */
@@ -574,6 +574,7 @@ proven_err_t proven_http_event_server_create(proven_loop_t *loop, const proven_h
     if (s->cfg.body_timeout_ms == 0) s->cfg.body_timeout_ms = 30000;
     if (s->cfg.write_timeout_ms == 0) s->cfg.write_timeout_ms = 30000;
     if (s->cfg.idle_timeout_ms == 0) s->cfg.idle_timeout_ms = 60000;
+    if (s->cfg.linger_ms == 0) s->cfg.linger_ms = EV_LINGER_MS;
     if (s->cfg.max_concurrent_streams == 0) s->cfg.max_concurrent_streams = 100;
     if (s->cfg.http2_no_header_table) s->cfg.http2_header_table_bytes = 0;
     else if (s->cfg.http2_header_table_bytes == 0) s->cfg.http2_header_table_bytes = 4096;

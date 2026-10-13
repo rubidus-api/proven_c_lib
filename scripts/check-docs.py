@@ -54,6 +54,28 @@ def fail(message: str) -> None:
     sys.exit(1)
 
 
+LINK_THEN_PAREN = re.compile(r"\]\([^()\s]*\)\(")
+
+
+def link_then_paren(text: str) -> int | None:
+    """The line of a Markdown link followed directly by `(`, outside code; None when there is none.
+
+    `[Chapter 14](manual-14-tls.md)(section 3)` reads as a link and a remark, and the site's
+    converter takes the second parenthesis for part of the first: the build of the Korean
+    edition stopped on one at a release. A space between the two is all it takes.
+    """
+    fenced = False
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        if LINK_THEN_PAREN.search(re.sub(r"`[^`]*`", "``", line)):
+            return number
+    return None
+
+
 def candidate_files() -> list[Path]:
     out = subprocess.check_output(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
@@ -106,6 +128,13 @@ def main() -> None:
         text = path.read_text(encoding="utf-8", errors="ignore")
         if private_pattern.search(text):
             fail(f"private path or key-like pattern in {path.relative_to(ROOT)}")
+
+    for path in candidate_files():
+        if path.suffix.lower() != ".md" or not path.exists():
+            continue
+        line = link_then_paren(path.read_text(encoding="utf-8", errors="ignore"))
+        if line is not None:
+            fail(f"{path.relative_to(ROOT)}:{line}: a Markdown link followed directly by '(' - put a space between them")
 
     print("check-docs: ok")
 

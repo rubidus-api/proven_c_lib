@@ -96,6 +96,33 @@ proven_err_t proven_ws_check_request(const proven_http_request_t *request, prove
     return PROVEN_OK;
 }
 
+static bool ws_same_nocase(proven_u8str_view_t a, proven_u8str_view_t b) {
+    if (a.size != b.size) return false;
+    for (proven_size_t i = 0; i < a.size; ++i) {
+        proven_byte_t x = a.ptr[i], y = b.ptr[i];
+        if (x >= 'A' && x <= 'Z') x = (proven_byte_t)(x + 32);
+        if (y >= 'A' && y <= 'Z') y = (proven_byte_t)(y + 32);
+        if (x != y) return false;
+    }
+    return true;
+}
+
+proven_err_t proven_ws_check_origin(const proven_http_request_t *request, const proven_u8str_view_t *allowed, proven_size_t allowed_count) {
+    if (!request || (!allowed && allowed_count > 0)) return PROVEN_ERR_INVALID_ARG;
+    static const proven_u8str_view_t field = { .ptr = (const proven_byte_t *)"origin", .size = 6 };
+    const proven_u8str_view_t *origin = (void *)0;
+    for (proven_size_t i = 0; i < request->header_count; ++i) {
+        if (!ws_same_nocase(request->headers[i].name, field)) continue;
+        if (origin) return PROVEN_ERR_PERMISSION;          /* two of them: which one is true? */
+        origin = &request->headers[i].value;
+    }
+    if (!origin) return PROVEN_ERR_NOT_FOUND;
+    for (proven_size_t i = 0; i < allowed_count; ++i) {
+        if (allowed[i].size > 0 && ws_same_nocase(*origin, allowed[i])) return PROVEN_OK;
+    }
+    return PROVEN_ERR_PERMISSION;
+}
+
 bool proven_ws_request_offers(const proven_http_request_t *request, proven_u8str_view_t name) {
     if (!request || name.size == 0) return false;
     for (proven_size_t i = 0; i < request->header_count; ++i) {

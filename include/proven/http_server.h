@@ -87,6 +87,7 @@ typedef struct {
     proven_u32 body_timeout_ms;         /**< for each read of a request body. 0: 30 s */
     proven_u32 write_timeout_ms;        /**< for each write of a response. 0: 30 s */
     proven_u32 idle_timeout_ms;         /**< an open connection with no request on it. 0: 60 s */
+    proven_u32 linger_ms;               /**< how long a connection that is being closed after an answer is still read from, so that the answer is not lost to a reset (a refusal in the middle of an upload, mostly). It counts against `max_connections` for that long: a burst of refused requests holds those places. 0: 1 s */
     const proven_tls_config_t *tls;     /**< NULL: plain HTTP. Otherwise every connection is TLS under this config, which must outlive the server. The handshake shares `head_timeout_ms` with the first request's head. */
     int compress_level;                 /**< for responses a handler asks to have compressed (proven_http_exchange_compress): 1 (fastest) to 9 (smallest); -1 stores without compressing. 0: 6 */
     int compress_window_bits;           /**< and how far back the compressor looks, 9 to 15: its memory while such a response is being written runs from about 11 KiB at 9 to about 325 KiB at 15. 0: 15 */

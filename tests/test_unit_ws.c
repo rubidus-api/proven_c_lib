@@ -130,6 +130,32 @@ int main(void) {
                            !proven_ws_request_offers(&req, sv("Chat")) && !proven_ws_request_offers(&req, sv("cha")) && !proven_ws_request_offers(&req, sv("")),
             "the subprotocols offered are those listed, compared exactly", "");
 
+        const proven_u8str_view_t served[] = { sv("https://app.example"), sv("http://example.com"), sv("") };
+        const proven_u8str_view_t others[] = { sv("https://app.example"), sv("http://example.com:8080"), sv("http://example.co"), sv("http://example.com/"), sv("ttp://example.com") };
+        const proven_u8str_view_t shouted[] = { sv("HTTP://Example.COM") };
+        PROVEN_TEST_ASSERT(proven_ws_check_origin(&req, served, 3) == PROVEN_OK, "the request's Origin is one of those served", "");
+        PROVEN_TEST_ASSERT(proven_ws_check_origin(&req, shouted, 1) == PROVEN_OK, "letter case aside", "");
+        PROVEN_TEST_ASSERT(proven_ws_check_origin(&req, others, 5) == PROVEN_ERR_PERMISSION,
+            "another port, a shorter or longer name, a part of it: PROVEN_ERR_PERMISSION", "Inspect proven_ws_check_origin in src/proven/ws.c: an origin is compared whole.");
+        PROVEN_TEST_ASSERT(proven_ws_check_origin(&req, served, 1) == PROVEN_ERR_PERMISSION && proven_ws_check_origin(&req, NULL, 0) == PROVEN_ERR_PERMISSION,
+            "an origin further down the list than the count, and an empty list", "");
+        PROVEN_TEST_ASSERT(proven_ws_check_origin(NULL, served, 3) == PROVEN_ERR_INVALID_ARG && proven_ws_check_origin(&req, NULL, 1) == PROVEN_ERR_INVALID_ARG,
+            "no request, or a count with no list: PROVEN_ERR_INVALID_ARG", "");
+        static const struct { const char *request; proven_err_t want; const char *why; } origins[] = {
+            { "GET / HTTP/1.1\r\nHost: h\r\n\r\n", PROVEN_ERR_NOT_FOUND, "no Origin: not a browser, and the server's decision" },
+            { "GET / HTTP/1.1\r\nHost: h\r\noRIGIN: https://app.example\r\n\r\n", PROVEN_OK, "the field's name in any case" },
+            { "GET / HTTP/1.1\r\nHost: h\r\nOrigin: null\r\n\r\n", PROVEN_ERR_PERMISSION, "a page with no origin of its own says null" },
+            { "GET / HTTP/1.1\r\nHost: h\r\nOrigin:\r\n\r\n", PROVEN_ERR_PERMISSION, "an empty Origin matches nothing, not even an empty entry" },
+            { "GET / HTTP/1.1\r\nHost: h\r\nOrigin: https://app.example\r\nOrigin: https://app.example\r\n\r\n", PROVEN_ERR_PERMISSION, "two Origin fields" },
+            { "GET / HTTP/1.1\r\nHost: h\r\nOrigin: https://app.example https://evil.example\r\n\r\n", PROVEN_ERR_PERMISSION, "two origins in one field" },
+            { "GET / HTTP/1.1\r\nHost: h\r\nX-Origin: https://app.example\r\n\r\n", PROVEN_ERR_NOT_FOUND, "a field that only ends in Origin" },
+        };
+        for (proven_size_t i = 0; i < sizeof origins / sizeof origins[0]; ++i) {
+            proven_http_request_t r;
+            PROVEN_TEST_ASSERT(proven_http_parse_request((proven_mem_view_t){ (const proven_byte_t *)origins[i].request, strlen(origins[i].request) }, h, 16, 0, &r, &head) == PROVEN_OK, "a request parses", "");
+            PROVEN_TEST_ASSERT(proven_ws_check_origin(&r, served, 3) == origins[i].want, origins[i].why, "Inspect proven_ws_check_origin in src/proven/ws.c.");
+        }
+
         static const struct { const char *request; proven_err_t want; const char *why; } rows[] = {
             { "GET / HTTP/1.1\r\nHost: h\r\n\r\n", PROVEN_ERR_NOT_FOUND, "no Upgrade header: an ordinary request" },
             { "GET / HTTP/1.1\r\nHost: h\r\nUpgrade: h2c\r\nConnection: Upgrade\r\n\r\n", PROVEN_ERR_NOT_FOUND, "an upgrade to something else" },

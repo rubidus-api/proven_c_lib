@@ -119,14 +119,16 @@ proven_err_t proven_http_client_create(const proven_http_client_config_t *config
     if (c->cfg.io_timeout_ms == 0) c->cfg.io_timeout_ms = CL_DEFAULT_TIMEOUT_MS;
     if (c->cfg.max_head_bytes == 0) c->cfg.max_head_bytes = PROVEN_HTTP_DEFAULT_MAX_HEAD;
 
-    /* The four strings are copied, so the caller's need not outlive this call. */
-    proven_size_t total = config->proxy.size + config->username.size + config->password.size + config->user_agent.size;
+    if (c->cfg.expect_timeout_ms == 0) c->cfg.expect_timeout_ms = 1000;
+
+    /* The five strings are copied, so the caller's need not outlive this call. */
+    proven_size_t total = config->proxy.size + config->username.size + config->password.size + config->user_agent.size + config->no_proxy.size;
     c->strings = cl_alloc(config->alloc, total);
     if (!c->strings) { cl_free(config->alloc, c); return PROVEN_ERR_NOMEM; }
     proven_size_t at = 0;
-    proven_u8str_view_t *dst[4] = { &c->cfg.proxy, &c->cfg.username, &c->cfg.password, &c->cfg.user_agent };
-    const proven_u8str_view_t src[4] = { config->proxy, config->username, config->password, config->user_agent };
-    for (int i = 0; i < 4; ++i) {
+    proven_u8str_view_t *dst[5] = { &c->cfg.proxy, &c->cfg.username, &c->cfg.password, &c->cfg.user_agent, &c->cfg.no_proxy };
+    const proven_u8str_view_t src[5] = { config->proxy, config->username, config->password, config->user_agent, config->no_proxy };
+    for (int i = 0; i < 5; ++i) {
         for (proven_size_t k = 0; k < src[i].size; ++k) c->strings[at + k] = src[i].ptr[k];
         *dst[i] = (proven_u8str_view_t){ .ptr = c->strings + at, .size = src[i].size };
         at += src[i].size;
@@ -360,6 +362,36 @@ static proven_err_t cl_dial(proven_http_client_t *c, proven_u8str_view_t host, p
 }
 
 /* Find an idle connection for this URL or make one. */
+/* Whether `host` is one of those `no_proxy` names: an entry matches the host itself and every
+ * name under it, `*` matches everything, and nothing is known about addresses beyond their
+ * spelling. */
+static bool cl_no_proxy(const proven_http_client_t *c, proven_u8str_view_t host) {
+    const proven_u8str_view_t list = c->cfg.no_proxy;
+    /* An address is matched whole: `0.0.1` is not the end of `10.0.0.1` the way `example.org`
+     * is the end of `www.example.org`. */
+    proven_net_addr_t literal;
+    const bool is_address = proven_net_addr_parse(host, 0, &literal) == PROVEN_OK;
+    proven_size_t at = 0;
+    while (at < list.size) {
+        proven_size_t end = at;
+        while (end < list.size && list.ptr[end] != ',') end++;
+        proven_size_t from = at, to = end;
+        while (from < to && (list.ptr[from] == ' ' || list.ptr[from] == '\t')) from++;
+        while (to > from && (list.ptr[to - 1] == ' ' || list.ptr[to - 1] == '\t')) to--;
+        at = end + 1;
+        if (to - from == 1 && list.ptr[from] == '*') return true;
+        if (to - from >= 2 && list.ptr[from] == '[' && list.ptr[to - 1] == ']') { from++; to--; }   /* `[::1]` is `::1` */
+        else if (from < to && list.ptr[from] == '.' && !is_address) from++;                          /* `.example.org` is `example.org` */
+        const proven_u8str_view_t entry = { .ptr = list.ptr + from, .size = to - from };
+        if (entry.size == 0 || entry.size > host.size) continue;
+        const proven_u8str_view_t tail = { .ptr = host.ptr + (host.size - entry.size), .size = entry.size };
+        if (!cl_eq_nocase(tail, entry)) continue;
+        if (entry.size == host.size) return true;
+        if (!is_address && host.ptr[host.size - entry.size - 1] == '.') return true;
+    }
+    return false;
+}
+
 static proven_err_t cl_connect(proven_http_client_t *c, const proven_url_t *u, bool allow_reuse, cl_conn_t **out, bool *reused) {
     *out = (void *)0;
     *reused = false;
@@ -391,7 +423,8 @@ static proven_err_t cl_connect(proven_http_client_t *c, const proven_url_t *u, b
 
     proven_net_deadline_t until = proven_net_deadline_in(c->cfg.connect_timeout_ms);
     proven_err_t e;
-    if (c->has_proxy) {
+    const bool via_proxy = c->has_proxy && !cl_no_proxy(c, u->host);
+    if (via_proxy) {
         proven_u16 pport = c->proxy.has_port ? c->proxy.port : (c->proxy_socks ? 1080 : 8080);
         e = cl_dial(c, c->proxy.host, pport, until, &conn->sock);
     } else {
@@ -400,7 +433,7 @@ static proven_err_t cl_connect(proven_http_client_t *c, const proven_url_t *u, b
     if (e != PROVEN_OK) { cl_free(c->cfg.alloc, conn); return e; }
     conn->transport = proven_net_conn_transport(&conn->sock);
 
-    if (c->has_proxy) {
+    if (via_proxy) {
         if (c->proxy_socks) {
             e = cl_socks5(c, conn->transport, u->host, port, until);
         } else if (https) {
@@ -486,6 +519,8 @@ static proven_err_t cl_exchange(cl_call_t *call, const proven_http_client_reques
     proven_size_t len = 0;
     bool https = proven_url_scheme_is(u, cl_lit("https"));
     bool streaming = at->send_body && proven_reader_is_valid(req->body_stream);
+    /* The server is asked before the body is sent - only when there is a body to hold back. */
+    const bool expecting = req->expect_continue && at->send_body && (streaming || req->body.size > 0);
 
     /* The target: the path and query, or the whole URL when an HTTP proxy is to fetch it. */
     proven_byte_t target[CL_URL_MAX + 8];
@@ -528,6 +563,7 @@ static proven_err_t cl_exchange(cl_call_t *call, const proven_http_client_reques
         if (at->cross_origin && cl_is_credential_header(name)) continue;
         if (at->authorization.size > 0 && cl_eq_nocase(name, cl_lit("Authorization"))) continue;
         if (!at->send_body && (cl_eq_nocase(name, cl_lit("Content-Type")))) continue;
+        if (expecting && cl_eq_nocase(name, cl_lit("Expect"))) continue;      /* this call writes it */
         if (cl_eq_nocase(name, cl_lit("Cookie"))) caller_cookie = true;
         e = proven_http_write_header(out, &len, name, req->headers[i].value);
     }
@@ -565,6 +601,7 @@ static proven_err_t cl_exchange(cl_call_t *call, const proven_http_client_reques
     if (e == PROVEN_OK) {
         if (streaming) e = proven_http_write_header(out, &len, cl_lit("Transfer-Encoding"), cl_lit("chunked"));
         else if (wants_body || body_method) e = proven_http_write_header_u64(out, &len, cl_lit("Content-Length"), at->send_body ? req->body.size : 0);
+        if (e == PROVEN_OK && expecting) e = proven_http_write_header(out, &len, cl_lit("Expect"), cl_lit("100-continue"));
     }
     if (e == PROVEN_OK && req->upgrade.size > 0) {
         /* Asking to change protocol: the two headers that say so, written here because
@@ -580,9 +617,58 @@ static proven_err_t cl_exchange(cl_call_t *call, const proven_http_client_reques
     proven_transport_t t = conn->transport;
     proven_result_size_t w = proven_transport_write_all(t, (proven_mem_view_t){ .ptr = out.ptr, .size = len }, cl_io_deadline(c));
     if (w.err != PROVEN_OK) return w.err;
-    if (wants_body && !streaming) {
+    call->buf_len = 0;
+    call->buf_pos = 0;
+    unsigned interim = 0;
+    /* A body that was not sent, or not all of it: the connection is then not kept, whatever
+     * the response says - the server and this side no longer agree on where the request ends. */
+    bool body_unsent = false;
+    /* A write that failed while the body was going out. The server may have answered before
+     * it stopped listening - 413, 401 - and that answer is worth more than "the write failed":
+     * the response is read, and only if there is none is this the error. (A write that timed
+     * out is not such a case: the connection is still there, and a second wait on it would
+     * make the call take twice its time.) */
+    proven_err_t write_failed = PROVEN_OK;
+    if (expecting) {
+        /* The head has gone with `Expect: 100-continue`: the server's word first. 100 means go
+         * on; a final answer means the body is not wanted; silence for expect_timeout_ms means
+         * a server that does not know the rule, and the body goes as it would have. */
+        const proven_net_deadline_t word_by = proven_net_deadline_in(c->cfg.expect_timeout_ms);
+        for (;;) {
+            proven_size_t head = 0;
+            e = proven_http_parse_response((proven_mem_view_t){ .ptr = call->buf, .size = call->buf_len }, call->headers, CL_MAX_HEADERS,
+                                           c->cfg.max_head_bytes, &call->res, &head);
+            if (e == PROVEN_OK) {
+                if (call->res.status >= 200 || call->res.status == 101) { body_unsent = true; break; }
+                if (++interim > CL_MAX_INTERIM) return PROVEN_ERR_INVALID_FORMAT;
+                const bool go_on = call->res.status == 100;
+                proven_size_t rest = call->buf_len - head;
+                for (proven_size_t i = 0; i < rest; ++i) call->buf[i] = call->buf[head + i];
+                call->buf_len = rest;
+                if (!go_on) continue;
+                /* (More behind the 100 already: the server is answering, not waiting.) */
+                if (rest > 0) body_unsent = true;
+                break;
+            }
+            if (e != PROVEN_ERR_NEED_MORE) return e;
+            if (call->buf_len == call->buf_cap) return PROVEN_ERR_OUT_OF_BOUNDS;
+            proven_result_size_t r = proven_transport_read(t, (proven_mem_mut_t){ .ptr = call->buf + call->buf_len, .size = call->buf_cap - call->buf_len }, word_by);
+            if (r.err == PROVEN_ERR_TIMEOUT || r.err == PROVEN_ERR_AGAIN) {
+                if (call->buf_len > 0) body_unsent = true;       /* half an answer: it is answering */
+                break;
+            }
+            if (r.err == PROVEN_ERR_EOF) return PROVEN_ERR_RESET;
+            if (r.err != PROVEN_OK) return r.err;
+            call->got_response_bytes = true;
+            call->buf_len += r.value;
+        }
+    }
+    if (body_unsent) {
+        /* Nothing more is written. */
+    } else if (wants_body && !streaming) {
         w = proven_transport_write_all(t, req->body, cl_io_deadline(c));
-        if (w.err != PROVEN_OK) return w.err;
+        if (w.err == PROVEN_ERR_TIMEOUT) return w.err;
+        if (w.err != PROVEN_OK) { write_failed = w.err; body_unsent = true; }
     } else if (streaming) {
         /* Each piece the reader gives becomes one chunk. The head buffer is free until the
          * response arrives, so it serves as the copy buffer. */
@@ -597,17 +683,15 @@ static proven_err_t cl_exchange(cl_call_t *call, const proven_http_client_reques
             w = proven_transport_write_all(t, (proven_mem_view_t){ .ptr = frame, .size = fl }, cl_io_deadline(c));
             if (w.err == PROVEN_OK) w = proven_transport_write_all(t, (proven_mem_view_t){ .ptr = call->buf, .size = r.value }, cl_io_deadline(c));
             if (w.err == PROVEN_OK) w = proven_transport_write_all(t, (proven_mem_view_t){ .ptr = (const proven_byte_t *)"\r\n", .size = 2 }, cl_io_deadline(c));
-            if (w.err != PROVEN_OK) return w.err;
+            if (w.err != PROVEN_OK) break;
         }
-        w = proven_transport_write_all(t, (proven_mem_view_t){ .ptr = (const proven_byte_t *)"0\r\n\r\n", .size = 5 }, cl_io_deadline(c));
-        if (w.err != PROVEN_OK) return w.err;
+        if (w.err == PROVEN_OK) w = proven_transport_write_all(t, (proven_mem_view_t){ .ptr = (const proven_byte_t *)"0\r\n\r\n", .size = 5 }, cl_io_deadline(c));
+        if (w.err == PROVEN_ERR_TIMEOUT) return w.err;
+        if (w.err != PROVEN_OK) { write_failed = w.err; body_unsent = true; }
     }
 
     /* The head. Interim responses (100 Continue, 103 Early Hints) are read and passed over;
      * 101 is a final answer. */
-    call->buf_len = 0;
-    call->buf_pos = 0;
-    unsigned interim = 0;
     for (;;) {
         proven_size_t head = 0;
         e = proven_http_parse_response((proven_mem_view_t){ .ptr = call->buf, .size = call->buf_len }, call->headers, CL_MAX_HEADERS,
@@ -625,10 +709,12 @@ static proven_err_t cl_exchange(cl_call_t *call, const proven_http_client_reques
             call->buf_pos = head;
             break;
         }
-        if (e != PROVEN_ERR_NEED_MORE) return e;
+        if (e != PROVEN_ERR_NEED_MORE) return write_failed != PROVEN_OK ? write_failed : e;
         if (call->buf_len == call->buf_cap) return PROVEN_ERR_OUT_OF_BOUNDS;
         proven_result_size_t r = proven_transport_read(t, (proven_mem_mut_t){ .ptr = call->buf + call->buf_len, .size = call->buf_cap - call->buf_len },
                                                        cl_io_deadline(c));
+        /* (After a write that failed, no answer means the failure is the answer.) */
+        if (r.err != PROVEN_OK && write_failed != PROVEN_OK) return write_failed;
         if (r.err == PROVEN_ERR_EOF) return PROVEN_ERR_RESET;
         if (r.err != PROVEN_OK) return r.err;
         call->got_response_bytes = true;
@@ -651,7 +737,7 @@ static proven_err_t cl_exchange(cl_call_t *call, const proven_http_client_reques
     if (e != PROVEN_OK) return e;
     call->body_done = framing.kind == PROVEN_HTTP_BODY_NONE || (framing.kind == PROVEN_HTTP_BODY_LENGTH && framing.length == 0);
     call->keep_alive = proven_http_response_keep_alive(&call->res) && framing.kind != PROVEN_HTTP_BODY_UNTIL_CLOSE &&
-                       c->cfg.max_idle_connections > 0 && call->res.status != 101;
+                       c->cfg.max_idle_connections > 0 && call->res.status != 101 && !body_unsent;
     proven_http_coding_t coding = PROVEN_HTTP_CODING_IDENTITY;
     proven_http_decoder_free_(&call->dec);
     call->pending = (proven_mem_view_t){0};

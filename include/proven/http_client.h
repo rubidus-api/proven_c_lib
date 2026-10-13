@@ -64,6 +64,7 @@ typedef struct {
     proven_u32 max_redirects;               /**< redirects followed per request; 0: none are followed */
     proven_size_t max_idle_connections;     /**< connections kept for reuse; 0: every connection is closed */
     proven_u8str_view_t proxy;              /**< `http://[user:pw@]host:port` or `socks5://[user:pw@]host:port`; empty: none */
+    proven_u8str_view_t no_proxy;           /**< hosts that are reached directly although `proxy` is set, separated by commas: a name matches itself and every name under it (`example.org` and `.example.org` both match `example.org` and `www.example.org`), an address matches itself as written, `*` matches everything. Letters compare without case; ports are not looked at. Empty: every request goes through the proxy */
     proven_u8str_view_t username;           /**< credentials offered when a server answers 401; empty: none */
     proven_u8str_view_t password;
     proven_u8str_view_t user_agent;         /**< the `User-Agent` to send; empty: none is sent */
@@ -71,6 +72,7 @@ typedef struct {
     proven_http_tls_wrap_fn tls_wrap;       /**< NULL: an `https` URL is PROVEN_ERR_UNSUPPORTED */
     void *tls_ctx;
     bool decompress;                        /**< ask for compressed responses and decode them; false: bodies arrive as the server sent them. See proven_http_client_read. */
+    proven_u32 expect_timeout_ms;           /**< for a request sent with `expect_continue`: how long to wait for the server's word before sending the body anyway. 0: 1 s */
 } proven_http_client_config_t;
 
 /** @brief A client. Opaque; made by proven_http_client_create. */
@@ -97,6 +99,7 @@ typedef struct {
     proven_mem_view_t body;                 /**< a body held in memory: sent with `Content-Length` */
     proven_reader_t body_stream;            /**< or, when valid, a body read from here and sent chunked */
     proven_u8str_view_t upgrade;            /**< a protocol to change to (`websocket`): sends `Connection: Upgrade` and `Upgrade`; empty: none */
+    bool expect_continue;                   /**< for a request with a body: send `Expect: 100-continue` and the head first, and the body only when the server says to go on (or says nothing for `expect_timeout_ms`). A server that answers at once instead - 401, 413, 417 - is not sent the body at all, and that answer is the response; the connection is then not kept. Do not set an `Expect` header of your own with it */
 } proven_http_client_request_t;
 
 /**

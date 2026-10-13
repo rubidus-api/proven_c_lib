@@ -118,6 +118,19 @@ typedef struct {
 받아들이기 전에 `Origin`을 예상하는 사이트와 비교하라. 그러지 않으면 사용자가 방문한 아무 페이지나
 그 사용자 행세를 할 수 있다.
 
+`proven_ws_check_origin(&request, allowed, count)`가 그 비교다. 출처는 브라우저가 쓰는 대로 쓴다 -
+`https://app.example`, 포트는 스킴의 기본 포트가 아닐 때에만, 경로도 끝의 슬래시도 없이 - 그리고
+대소문자만 빼고 통째로 비교한다.
+
+| 결과 | 뜻 | 서버가 할 일 |
+|---|---|---|
+| `PROVEN_OK` | `Origin`이 하나이고 목록에 있다. | 받아들인다. |
+| `PROVEN_ERR_NOT_FOUND` | `Origin`이 없다: 브라우저가 아니다. | 정한다 - 브라우저가 아닌 프로그램은 사용자의 쿠키를 싣고 오지 않으며, 어떤 `Origin`이든 마음대로 쓸 수 있었다. |
+| `PROVEN_ERR_PERMISSION` | 목록에 없는 출처(`null` 포함), 또는 `Origin` 필드가 둘. | `403`으로 답한다. |
+
+파싱된 요청을 받으므로, 블로킹 서버의 핸들러에서도, 이벤트 구동 서버의 `on_request`에서도, 코덱만
+쓸 때에도 같은 호출이다.
+
 ## 3. 보내기와 받기
 
 | API | 의도 | 반환 |
@@ -395,6 +408,7 @@ int main(void) {
 | `proven_ws_accept_key(key, out)` | 키에 답하는 `Sec-WebSocket-Accept` 값(28글자). | `proven_err_t`: 키가 16바이트를 나타내는 Base64 24글자가 아니면 `INVALID_FORMAT`. |
 | `proven_ws_check_request(&request, &key)` | 파싱된 요청에 대한 서버의 확인. | `proven_err_t`: `PROVEN_OK` - 101로 답하라. `NOT_FOUND` - WebSocket 업그레이드가 아니다. `UNSUPPORTED` - 다른 버전이다, `Sec-WebSocket-Version: 13`을 단 426으로 답하라. `INVALID_FORMAT` - 400으로 답하라. |
 | `proven_ws_request_offers(&request, name)` | 요청이 서브프로토콜을 내놓는지. 정확히 비교한다. | `bool`. |
+| `proven_ws_check_origin(&request, allowed, count)` | 요청의 `Origin`이 서비스하는 출처 가운데 하나인지(2절). | `proven_err_t`: `PROVEN_OK`; `NOT_FOUND` - `Origin` 없음; `PERMISSION` - 다른 출처, 또는 필드가 둘; `INVALID_ARG`. |
 | `proven_ws_check_response(&response, key, offered, &protocol)` | 답에 대한 클라이언트의 확인: 101, 맞는 accept 값, 내놓았던 서브프로토콜, 확장 없음. | `proven_err_t`: 아니면 `INVALID_FORMAT`. |
 
 accept 값은 키 뒤에 RFC가 정한 고정 문자열을 붙인 것의 SHA-1을 Base64로 적은 것이다. SHA-1은 서명
@@ -516,7 +530,7 @@ int main(void) {
     /* 서버는 파싱된 요청을 보고 그것이 네 가지 중 무엇인지 안다. */
     static const char upgrade[] = "GET /chat HTTP/1.1\r\nHost: example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                                   "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Protocol: chat, superchat\r\n"
-                                  "Sec-WebSocket-Version: 13\r\n\r\n";
+                                  "Origin: http://example.com\r\nSec-WebSocket-Version: 13\r\n\r\n";
     proven_http_header_t fields[16];
     proven_http_request_t request;
     proven_size_t head = 0;
@@ -524,6 +538,10 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_http_parse_request((proven_mem_view_t){ (const proven_byte_t *)upgrade, sizeof upgrade - 1 }, fields, 16, 0, &request, &head) == PROVEN_OK, "the request parses");
     EXAMPLE_REQUIRE(proven_ws_check_request(&request, &client_key) == PROVEN_OK, "it is a WebSocket upgrade: answer 101");
     EXAMPLE_REQUIRE(proven_ws_request_offers(&request, PROVEN_LIT("superchat")) && !proven_ws_request_offers(&request, PROVEN_LIT("mqtt")), "and it offers these subprotocols");
+    /* 쿠키로 사용자를 알아보는 서버는 페이지가 어디서 왔는지 확인한다. */
+    const proven_u8str_view_t served[] = { PROVEN_LIT("https://app.example"), PROVEN_LIT("http://example.com") };
+    EXAMPLE_REQUIRE(proven_ws_check_origin(&request, served, 2) == PROVEN_OK && proven_ws_check_origin(&request, served, 1) == PROVEN_ERR_PERMISSION,
+                    "its Origin is one the server serves; were it not, the answer would be 403");
 
     /* 클라이언트는 답을 확인한다: 맞는 accept 값, 자기가 내놓은 서브프로토콜, 그 밖에는 없음. */
     static const char answer[] = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
@@ -957,5 +975,6 @@ int main(void) {
 - **한 연결에서 동시에 보내고 받기.**
 - **자동 ping, 재연결, 백오프.** 정책이고, 여러분의 것이다.
 - **`ws_conn.h`로 메모리보다 큰 메시지 다루기.** 메시지는 통째로 조립된다. 흘려 받으려면 디코더를 써라.
-- **`Origin` 확인.** §2를 보라.
+- **`Origin`을 대신 확인해 주기.** 여기의 어떤 서버도 스스로 출처를 거절하지 않는다: 출처 목록은
+  여러분의 것이고, 호출도 그렇다(`proven_ws_check_origin`, §2).
 - **HTTP/2 WebSocket(RFC 8441).**

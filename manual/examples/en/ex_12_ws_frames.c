@@ -22,7 +22,7 @@ int main(void) {
     /* A server looks at a parsed request and learns which of four things it is. */
     static const char upgrade[] = "GET /chat HTTP/1.1\r\nHost: example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                                   "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Protocol: chat, superchat\r\n"
-                                  "Sec-WebSocket-Version: 13\r\n\r\n";
+                                  "Origin: http://example.com\r\nSec-WebSocket-Version: 13\r\n\r\n";
     proven_http_header_t fields[16];
     proven_http_request_t request;
     proven_size_t head = 0;
@@ -30,6 +30,10 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_http_parse_request((proven_mem_view_t){ (const proven_byte_t *)upgrade, sizeof upgrade - 1 }, fields, 16, 0, &request, &head) == PROVEN_OK, "the request parses");
     EXAMPLE_REQUIRE(proven_ws_check_request(&request, &client_key) == PROVEN_OK, "it is a WebSocket upgrade: answer 101");
     EXAMPLE_REQUIRE(proven_ws_request_offers(&request, PROVEN_LIT("superchat")) && !proven_ws_request_offers(&request, PROVEN_LIT("mqtt")), "and it offers these subprotocols");
+    /* A server that knows its users by a cookie checks where the page came from. */
+    const proven_u8str_view_t served[] = { PROVEN_LIT("https://app.example"), PROVEN_LIT("http://example.com") };
+    EXAMPLE_REQUIRE(proven_ws_check_origin(&request, served, 2) == PROVEN_OK && proven_ws_check_origin(&request, served, 1) == PROVEN_ERR_PERMISSION,
+                    "its Origin is one the server serves; were it not, the answer would be 403");
 
     /* The client checks the answer: the right accept value, a subprotocol it offered, nothing else. */
     static const char answer[] = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"

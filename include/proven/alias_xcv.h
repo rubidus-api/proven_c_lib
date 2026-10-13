@@ -1261,6 +1261,7 @@
 #define xcv_ws_mask proven_ws_mask
 #define xcv_ws_message_t proven_ws_message_t
 #define xcv_ws_opcode_t proven_ws_opcode_t
+#define xcv_ws_check_origin proven_ws_check_origin
 #define xcv_ws_request_offers proven_ws_request_offers
 #define xcv_ws_stream_abort proven_ws_stream_abort
 #define xcv_ws_stream_buffered proven_ws_stream_buffered

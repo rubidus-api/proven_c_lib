@@ -25,7 +25,7 @@
 #define SV_MAX_LISTENERS 4
 #define SV_BODY_WINDOW 4096u          /* room after the head for reading a request body */
 #define SV_DRAIN_LIMIT 65536u         /* an unread request body larger than this closes the connection */
-#define SV_LINGER_MS 1000u            /* how long a connection being closed is still read from */
+#define SV_LINGER_MS 1000u            /* how long a connection being closed is still read from, unless the configuration says */
 #define SV_WHEEL_SLOTS 1024u          /* timer wheel: this many slots ... */
 #define SV_TICK_NS 16000000           /* ... of 16 ms each, so one turn is about 16 s */
 #define SV_EVENTS 64u                 /* ready sockets taken from the selector per round */
@@ -729,7 +729,7 @@ static void sv_linger(proven_http_server_t *s, sv_conn_t *c) {
     (void)proven_net_shutdown_write(&c->sock);
     c->lingering = true;
     c->len = 0;
-    if (sv_watch(s, c)) sv_wait_for(s, c, SV_LINGER_MS);
+    if (sv_watch(s, c)) sv_wait_for(s, c, s->cfg.linger_ms);
 }
 
 /* A connection's time is up: a request that stopped half-way gets a 408 and a moment to hear
@@ -987,6 +987,7 @@ proven_err_t proven_http_server_create(const proven_http_server_config_t *config
     if (s->cfg.body_timeout_ms == 0) s->cfg.body_timeout_ms = 30000;
     if (s->cfg.write_timeout_ms == 0) s->cfg.write_timeout_ms = 30000;
     if (s->cfg.idle_timeout_ms == 0) s->cfg.idle_timeout_ms = 60000;
+    if (s->cfg.linger_ms == 0) s->cfg.linger_ms = SV_LINGER_MS;
     atomic_init(&s->done, (sv_conn_t *)0);
     atomic_init(&s->stop, false);
     atomic_init(&s->in_flight, 0);

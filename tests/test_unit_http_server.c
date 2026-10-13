@@ -559,6 +559,7 @@ static void run_timeouts(proven_job_sys_t *jobs) {
     cfg.head_timeout_ms = 150;
     cfg.idle_timeout_ms = 400;
     cfg.body_timeout_ms = 150;
+    cfg.linger_ms = 1300;
     cfg.max_connections = 2;
     proven_err_t e = proven_http_server_create(&cfg, &g_server);
     PROVEN_TEST_ASSERT(e == PROVEN_OK, "a server with short timeouts is created", "");
@@ -601,6 +602,22 @@ static void run_timeouts(proven_job_sys_t *jobs) {
         PROVEN_TEST_ASSERT(client_sees_close(&ca, 5000), "and the idle connection is then closed in silence", "");
         took = (proven_time_monotonic_now() - start) / 1000000;
         PROVEN_TEST_ASSERT(took >= 300, "after idle_timeout_ms, which is the longer one", "");
+        (void)proven_net_close(&ca.conn);
+
+        /* A connection the server is closing is read from for linger_ms more, so that what the
+         * client is still sending does not turn the answer into a reset. Here that is 1300 ms,
+         * longer than the 1 s it is when the configuration says nothing. */
+        client_open(&ca, at);
+        client_send(&ca, "GET /hello HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n");
+        PROVEN_TEST_ASSERT(client_reply(&ca, PROVEN_HTTP_GET, &rp) && rp.status == 200 && rp.close, "a request that asks for the connection to be closed is answered", "");
+        start = proven_time_monotonic_now();
+        client_send(&ca, "still talking");
+        PROVEN_TEST_ASSERT(client_sees_close(&ca, 8000), "the server's side is closed at once, and what the client went on to say is not answered", "");
+        PROVEN_TEST_ASSERT(proven_http_server_connection_count(g_server) == 1, "the connection is still the server's: it is being read from", "");
+        while (proven_http_server_connection_count(g_server) != 0 && (proven_time_monotonic_now() - start) / 1000000 < 8000) pump(NULL);
+        took = (proven_time_monotonic_now() - start) / 1000000;
+        PROVEN_TEST_ASSERT(proven_http_server_connection_count(g_server) == 0, "and is let go", "");
+        PROVEN_TEST_ASSERT(took >= 1200, "after linger_ms, not after the second it would be by default", "Inspect sv_linger in src/proven/http_server.c.");
         (void)proven_net_close(&ca.conn);
 
         client_open(&ca, at);

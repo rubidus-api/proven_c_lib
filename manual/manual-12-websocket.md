@@ -125,6 +125,19 @@ to your server, and the browser will attach the user's cookies. If the server is
 browsers and uses cookies, compare `Origin` with the sites you expect before accepting, or any
 page the user visits can act as them.
 
+`proven_ws_check_origin(&request, allowed, count)` is that comparison. An origin is written as
+a browser writes it - `https://app.example`, the port only when it is not the scheme's own, no
+path, no final slash - and is compared whole, letter case aside.
+
+| Result | Meaning | What a server does |
+|---|---|---|
+| `PROVEN_OK` | One `Origin`, and it is in the list. | Accepts. |
+| `PROVEN_ERR_NOT_FOUND` | No `Origin`: the client is not a browser. | Decides - a program that is not a browser carries no user's cookies, and could have written any `Origin` it liked. |
+| `PROVEN_ERR_PERMISSION` | An origin that is not in the list (`null` among them), or two `Origin` fields. | Answers `403`. |
+
+It works on the parsed request, so it is the same call in a handler of the blocking server, in
+`on_request` of the event-driven one, and with the codec alone.
+
 ## 3. Sending and receiving
 
 | API | Intent | Return |
@@ -412,6 +425,7 @@ from one loop, or on a target with no sockets at all.
 | `proven_ws_accept_key(key, out)` | The `Sec-WebSocket-Accept` value (28 characters) that answers a key. | `proven_err_t`: `INVALID_FORMAT` unless the key is 24 characters of Base64 for 16 bytes. |
 | `proven_ws_check_request(&request, &key)` | A server's check of a parsed request. | `proven_err_t`: `PROVEN_OK` - answer 101; `NOT_FOUND` - not a WebSocket upgrade; `UNSUPPORTED` - another version, answer 426 with `Sec-WebSocket-Version: 13`; `INVALID_FORMAT` - answer 400. |
 | `proven_ws_request_offers(&request, name)` | Whether the request offers a subprotocol, compared exactly. | `bool`. |
+| `proven_ws_check_origin(&request, allowed, count)` | Whether the request's `Origin` is one of the origins served (section 2). | `proven_err_t`: `PROVEN_OK`; `NOT_FOUND` - no `Origin`; `PERMISSION` - another origin, or two fields; `INVALID_ARG`. |
 | `proven_ws_check_response(&response, key, offered, &protocol)` | A client's check of the answer: 101, the right accept value, a subprotocol that was offered, no extension. | `proven_err_t`: `INVALID_FORMAT` otherwise. |
 
 The accept value is Base64 of the SHA-1 of the key followed by a fixed string from the RFC.
@@ -538,7 +552,7 @@ int main(void) {
     /* A server looks at a parsed request and learns which of four things it is. */
     static const char upgrade[] = "GET /chat HTTP/1.1\r\nHost: example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                                   "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Protocol: chat, superchat\r\n"
-                                  "Sec-WebSocket-Version: 13\r\n\r\n";
+                                  "Origin: http://example.com\r\nSec-WebSocket-Version: 13\r\n\r\n";
     proven_http_header_t fields[16];
     proven_http_request_t request;
     proven_size_t head = 0;
@@ -546,6 +560,10 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_http_parse_request((proven_mem_view_t){ (const proven_byte_t *)upgrade, sizeof upgrade - 1 }, fields, 16, 0, &request, &head) == PROVEN_OK, "the request parses");
     EXAMPLE_REQUIRE(proven_ws_check_request(&request, &client_key) == PROVEN_OK, "it is a WebSocket upgrade: answer 101");
     EXAMPLE_REQUIRE(proven_ws_request_offers(&request, PROVEN_LIT("superchat")) && !proven_ws_request_offers(&request, PROVEN_LIT("mqtt")), "and it offers these subprotocols");
+    /* A server that knows its users by a cookie checks where the page came from. */
+    const proven_u8str_view_t served[] = { PROVEN_LIT("https://app.example"), PROVEN_LIT("http://example.com") };
+    EXAMPLE_REQUIRE(proven_ws_check_origin(&request, served, 2) == PROVEN_OK && proven_ws_check_origin(&request, served, 1) == PROVEN_ERR_PERMISSION,
+                    "its Origin is one the server serves; were it not, the answer would be 403");
 
     /* The client checks the answer: the right accept value, a subprotocol it offered, nothing else. */
     static const char answer[] = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
@@ -989,5 +1007,6 @@ int main(void) {
 - **Automatic pings, reconnection, backoff.** Policy, and yours.
 - **Messages larger than memory through `ws_conn.h`.** A message is assembled whole; to stream
   one, use the decoder.
-- **Checking `Origin`.** See section 2.
+- **Checking `Origin` for you.** No server here refuses an origin by itself: the list of
+  origins is yours, and so is the call (`proven_ws_check_origin`, section 2).
 - **HTTP/2 WebSockets (RFC 8441).**

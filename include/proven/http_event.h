@@ -80,6 +80,7 @@ typedef struct {
     proven_u32 body_timeout_ms;          /**< between pieces of a request body. 0: 30 s */
     proven_u32 write_timeout_ms;         /**< output held with none of it accepted by the client. 0: 30 s */
     proven_u32 idle_timeout_ms;          /**< an open connection with no request on it. 0: 60 s */
+    proven_u32 linger_ms;                /**< how long a connection that is being closed after an answer is still read from, so that the answer is not lost to a reset. It counts against `max_connections` for that long. 0: 1 s */
     const proven_tls_config_t *tls;      /**< NULL: plain HTTP. Otherwise every connection is TLS; must outlive the server. */
     int compress_level;                  /**< for responses that ask to be compressed (proven_http_stream_compress): 1 (fastest) to 9 (smallest); -1 stores without compressing. 0: 6 */
     int compress_window_bits;            /**< and how far back the compressor looks, 9 to 15: each response being streamed compressed holds from about 11 KiB (9) to about 325 KiB (15) until it ends. 0: 15 */

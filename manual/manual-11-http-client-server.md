@@ -93,6 +93,7 @@ typedef struct {
     proven_u32 body_timeout_ms;        /* 0: 30 s */
     proven_u32 write_timeout_ms;       /* 0: 30 s */
     proven_u32 idle_timeout_ms;        /* 0: 60 s */
+    proven_u32 linger_ms;              /* 0: 1 s */
     const proven_tls_config_t *tls;    /* NULL: plain HTTP */
 } proven_http_server_config_t;
 ```
@@ -108,6 +109,7 @@ there is no "unlimited".
 | `body_timeout_ms` | The same trick played with the body: each read of the body may wait this long. |
 | `write_timeout_ms` | A client that asks for a large response and never reads it. Each write may wait this long. |
 | `idle_timeout_ms` | Connections kept open and unused. Closed without a word, as HTTP allows. |
+| `linger_ms` | Not a limit on the client but on the server's patience with one it is closing. After an answer that ends the connection - a refusal in the middle of an upload, a `Connection: close` - the server has said all it will, and still reads and discards what the client sends for this long, because closing at once would turn the answer into a reset on the client's side. A connection in that state counts against `max_connections`: where many requests are refused at once, a shorter time gives the places back sooner, and a longer one suits clients on slow links. |
 | `tls` | A TLS configuration with a certificate ([Chapter 14](manual-14-tls.md)): every connection is then HTTPS. It must outlive the server. The handshake shares `head_timeout_ms` with the first request's head. |
 | `max_head_bytes`, `max_headers` | A head that never ends, or has ten thousand fields: `431`. |
 | `max_body_bytes` | A body larger than you are prepared to take: `413`, before it is read when it was announced, while it is read when it was chunked. |
@@ -459,11 +461,13 @@ typedef struct {
     proven_u32 max_redirects;               /* 0: none are followed */
     proven_size_t max_idle_connections;     /* 0: every connection is closed after use */
     proven_u8str_view_t proxy;              /* "http://host:port" or "socks5://host:port" */
+    proven_u8str_view_t no_proxy;           /* hosts reached without it: "localhost, .corp.example" */
     proven_u8str_view_t username, password; /* offered when a server answers 401 */
     proven_u8str_view_t user_agent;         /* empty: none is sent */
     proven_http_cookie_jar_t *cookies;      /* NULL: cookies are ignored */
     proven_http_tls_wrap_fn tls_wrap;       /* NULL: an https URL is PROVEN_ERR_UNSUPPORTED */
     void *tls_ctx;
+    proven_u32 expect_timeout_ms;           /* 0: 1 s - see expect_continue in section 7 */
 } proven_http_client_config_t;
 ```
 
@@ -484,6 +488,7 @@ typedef struct {
     proven_size_t header_count;
     proven_mem_view_t body;                 /* a body in memory: sent with Content-Length */
     proven_reader_t body_stream;            /* or a stream: sent chunked */
+    bool expect_continue;                   /* ask the server before sending the body */
 } proven_http_client_request_t;
 
 typedef struct {
@@ -545,6 +550,29 @@ grows until the machine has none left.
 request that has one is not repeated - not for a redirect that needs the body, not for a
 challenge, not when a kept connection turns out to be dead. You get the response that would
 have caused the repeat, and decide.
+
+**Asking before a large body.** With `expect_continue` the client sends the head with
+`Expect: 100-continue` and holds the body back until the server has spoken:
+
+| The server | The client |
+|---|---|
+| answers `100 Continue` | sends the body, and the call returns the response that follows. |
+| answers anything final - `401`, `413`, `417` | sends none of the body; that answer is the response. The connection is not kept afterwards, whatever the answer says. A stream body has not been read from. |
+| says nothing for `expect_timeout_ms` (1 s unless set) | sends the body anyway: a server that does not know the rule is waiting for it. |
+
+It costs a round trip, so it is for a body worth not sending: an upload that a server may
+refuse for its size or for missing credentials. It does nothing for a request without a body.
+Set the flag and do not write the field yourself: an `Expect` among your own headers is sent as
+it is, and the body follows it at once.
+The servers of this library answer it ([section 4](#4-what-the-server-does-without-asking-you)).
+
+**An answer in the middle of an upload.** Without `expect_continue` a server can still answer
+before it has the whole body, and stop reading. The client's write then fails - and the client
+reads what the server said before reporting anything: a `413` that arrived is the result of the
+call, not `PROVEN_ERR_RESET`. Only when no answer is there is the failed write the error. Two
+limits, both the system's and not this library's: a write that *timed out* is reported at once,
+without a second wait; and on Windows a reset discards what had arrived and not been read, so
+there the answer can be lost - `expect_continue` is what does not depend on it.
 
 **`io_timeout_ms` bounds each wait, not the whole request.** A server that sends one byte every
 ten seconds never trips a thirty-second timeout. For a limit on the whole exchange, note the
@@ -624,9 +652,20 @@ a stream body, which cannot be sent twice.
 - An HTTP proxy sees, and can change, everything in a plain `http` exchange. That is what a
   proxy is.
 
+**Hosts reached without the proxy.** `no_proxy` is a list separated by commas:
+
+| Entry | Excuses |
+|---|---|
+| `example.org` or `.example.org` | That name and every name under it - `www.example.org`, not `notexample.org`. Letter case does not matter. |
+| `10.0.0.5`, `::1` or `[::1]` | That address, written the same way as in the URL. An address is matched whole: there are no ranges and no `10.0.0.0/8`. |
+| `*` | Every host: the proxy is not used. |
+
+The port is not part of an entry. A host in the list is connected to directly - and so its name
+is looked up on this machine, which is the one thing the proxy otherwise prevents.
+
 Proxy settings are not read from the environment. `HTTP_PROXY` and its relatives are a
 convention with a history of surprises; if your program honours them, it reads them and sets
-`proxy` itself.
+`proxy` and `no_proxy` itself.
 
 ## 10. Where TLS will attach
 
@@ -999,7 +1038,8 @@ int main(void) {
 - **A router, static files, sessions, middleware** on the server; **retries, caching, a
   connection limit per host** on the client.
 - **Trailers**, in either direction.
-- **`Expect: 100-continue` from the client.** A body is sent without asking first.
-- **Proxy auto-configuration, `NO_PROXY`, and Digest authentication to a proxy.**
+- **`Expect: 100-continue` in the event-driven client.** `expect_continue` is the blocking
+  client's; the client of [Chapter 15](manual-15-event-loop.md) sends a body without asking.
+- **Proxy auto-configuration, address ranges in `no_proxy`, and Digest authentication to a proxy.**
 - **Graceful shutdown with a drain period.** `stop` ends the loop; connections waiting for a
   request are closed by `destroy`.

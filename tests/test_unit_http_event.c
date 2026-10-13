@@ -247,7 +247,8 @@ static void cases(bool tls) {
     proven_job_group_init(&running);
     PROVEN_TEST_ASSERT(proven_job_group_submit(g_threads, &running, run_loop, NULL) == PROVEN_OK, "the loop runs on its own thread", how);
 
-    proven_http_client_config_t ccfg = { .alloc = g_heap, .max_idle_connections = 2, .tls_wrap = tls ? proven_tls_http_wrap : NULL, .tls_ctx = g_client_tls };
+    proven_http_client_config_t ccfg = { .alloc = g_heap, .max_idle_connections = 2, .tls_wrap = tls ? proven_tls_http_wrap : NULL, .tls_ctx = g_client_tls,
+                                         .expect_timeout_ms = 30000 };
     proven_http_client_t *client = NULL;
     PROVEN_TEST_ASSERT(proven_http_client_create(&ccfg, &client) == PROVEN_OK, "a client", how);
     proven_http_client_response_t resp;
@@ -275,7 +276,17 @@ static void cases(bool tls) {
     PROVEN_TEST_ASSERT(proven_http_client_send(client, &req, &resp) == PROVEN_OK && resp.status == 200 && body_is(&resp, want) && proven_time_monotonic_now() - t0 > 50000000,
         "a handler that pauses the body and resumes it later still receives every byte", how);
     proven_http_client_finish(&resp);
-    expected += 2;
+    /* The client asks first: the body goes when the server's 100 has come - not when the
+     * client's wait for it (thirty seconds here) has run out. */
+    req.url = url(tls, at.port, "/upload");
+    req.expect_continue = true;
+    t0 = proven_time_monotonic_now();
+    PROVEN_TEST_ASSERT(proven_http_client_send(client, &req, &resp) == PROVEN_OK && resp.status == 200 && body_is(&resp, want),
+        "a client that sends Expect: 100-continue is told to go on, and its body arrives whole", how);
+    PROVEN_TEST_ASSERT(proven_time_monotonic_now() - t0 < 20000000000, "on the server's word, not by waiting it out", how);
+    proven_http_client_finish(&resp);
+    req.expect_continue = false;
+    expected += 3;
 
     /* A download far larger than the output limit and than any socket buffer, to a client that
      * does not read at first: the server must hold back rather than pile it up. Then a smaller
@@ -562,6 +573,41 @@ static void idle_case(void) {
     proven_loop_destroy(loop);
 }
 
+/* A connection the server is closing is still read from for linger_ms. */
+static void linger_case(void) {
+    proven_loop_t *loop = NULL;
+    proven_http_event_server_t *server = NULL;
+    proven_http_event_server_config_t cfg = { .on = { .on_request = quiet_request }, .linger_ms = 1300 };
+    proven_net_addr_t at;
+    proven_net_conn_t sock;
+    PROVEN_TEST_ASSERT(proven_loop_create(g_heap, &loop) == PROVEN_OK && proven_http_event_server_create(loop, &cfg, &server) == PROVEN_OK &&
+                       proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server that lingers 1300 ms", "");
+    PROVEN_TEST_ASSERT(proven_net_connect(at, proven_net_deadline_in(5000), &sock) == PROVEN_OK &&
+                       proven_net_write_all(&sock, mv("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"), proven_net_deadline_in(5000)).err == PROVEN_OK,
+                       "a request that asks for the connection to be closed", "");
+    char text[256];
+    proven_size_t have = 0;
+    proven_time_t answered = 0, closed = 0;
+    proven_net_deadline_t until = proven_net_deadline_in(10000);
+    while (proven_time_monotonic_now() < until && closed == 0) {
+        PROVEN_TEST_ASSERT(proven_loop_poll(loop, proven_net_deadline_in(10)) == PROVEN_OK, "a round", "");
+        if (answered == 0) {
+            proven_result_size_t got = proven_net_read(&sock, (proven_mem_mut_t){ .ptr = (proven_byte_t *)text + have, .size = sizeof text - 1 - have }, proven_net_deadline_in(0));
+            if (got.err == PROVEN_OK) have += got.value;
+            text[have] = '\0';
+            if (strstr(text, "\r\n\r\n") != NULL) answered = proven_time_monotonic_now();
+        } else if (proven_http_event_server_connections(server) == 0) {
+            closed = proven_time_monotonic_now();
+        }
+    }
+    PROVEN_TEST_ASSERT(answered != 0 && memcmp(text, "HTTP/1.1 200", 12) == 0 && strstr(text, "\r\nConnection: close\r\n") != NULL, "it is answered, and told the connection ends", "");
+    PROVEN_TEST_ASSERT(closed != 0 && closed - answered >= 1200000000, "the server lets go of it after linger_ms, not after the second it would be by default",
+        "Inspect ev_linger and ev_arm in src/proven/http_event.c.");
+    (void)proven_net_close(&sock);
+    proven_http_event_server_destroy(server);
+    proven_loop_destroy(loop);
+}
+
 int main(void) {
     PROVEN_TEST_SUITE("the event-driven HTTP server",
         "Requests answered at once and later, bodies in pieces with backpressure both ways, pipelining, refusals, time limits and disappearing clients - plain and over TLS - and what an idle connection holds.",
@@ -608,6 +654,8 @@ int main(void) {
     memory_case();
     PROVEN_TEST_SECTION("the idle timeout", "A connection that has been answered and then says nothing.", "Check ev_arm: the idle timer is set when an exchange ends with nothing buffered.");
     idle_case();
+    PROVEN_TEST_SECTION("the linger time", "A connection that is being closed after its answer.", "Check ev_linger and ev_arm.");
+    linger_case();
 
     proven_tls_config_destroy(g_client_tls); proven_tls_config_destroy(g_server_tls); proven_cert_store_destroy(anchors);
     proven_job_system_close(g_workers); proven_job_system_destroy(g_workers);

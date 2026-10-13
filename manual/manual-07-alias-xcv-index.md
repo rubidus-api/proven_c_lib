@@ -1281,6 +1281,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_ws_mask` | `proven_ws_mask` |
 | `xcv_ws_message_t` | `proven_ws_message_t` |
 | `xcv_ws_opcode_t` | `proven_ws_opcode_t` |
+| `xcv_ws_check_origin` | `proven_ws_check_origin` |
 | `xcv_ws_request_offers` | `proven_ws_request_offers` |
 | `xcv_ws_stream_abort` | `proven_ws_stream_abort` |
 | `xcv_ws_stream_buffered` | `proven_ws_stream_buffered` |

@@ -566,6 +566,7 @@ void proven_http_stream_resume(proven_http_stream_t *stream);
 | `body_timeout_ms` | 요청 본문의 조각과 조각 사이. | 30초 |
 | `write_timeout_ms` | 붙든 출력을 클라이언트가 하나도 받지 않는 시간. | 30초 |
 | `idle_timeout_ms` | 요청이 없는 열린 연결. | 60초 |
+| `linger_ms` | 응답 뒤에 닫는 중인 연결에서 계속 읽어 주는 시간. 응답이 리셋에 묻히지 않게 한다. 그때까지는 연결 하나로 센다. | 1초 |
 | `tls` | 인증서가 있는 TLS 설정, 또는 평문 HTTP를 뜻하는 널. | 널 |
 | `http2` | 연결이 HTTP/2일 수 있게 한다 - TLS에서는 ALPN으로, 평문에서는 첫 바이트들로 - 같은 포트에서 HTTP/1.1과 나란히, 같은 처리기로: [17장 6절](manual-17-http2-ko.md#6-이벤트-구동-서버의-http2). | false |
 | `max_concurrent_streams` | HTTP/2: 한 연결에서 진행 중인 요청 수. | 100 |

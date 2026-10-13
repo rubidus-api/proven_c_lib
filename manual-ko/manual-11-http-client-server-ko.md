@@ -90,6 +90,7 @@ typedef struct {
     proven_u32 body_timeout_ms;        /* 0: 30 s */
     proven_u32 write_timeout_ms;       /* 0: 30 s */
     proven_u32 idle_timeout_ms;        /* 0: 60 s */
+    proven_u32 linger_ms;              /* 0: 1 s */
     const proven_tls_config_t *tls;    /* NULL: plain HTTP */
 } proven_http_server_config_t;
 ```
@@ -105,6 +106,7 @@ typedef struct {
 | `body_timeout_ms` | 같은 수법을 본문으로 쓰는 것. 본문 읽기 한 번이 이만큼 기다릴 수 있다. |
 | `write_timeout_ms` | 큰 응답을 요청해 놓고 읽지 않는 클라이언트. 쓰기 한 번이 이만큼 기다릴 수 있다. |
 | `idle_timeout_ms` | 열어 둔 채 쓰지 않는 연결. HTTP가 허락하는 대로 말없이 닫는다. |
+| `linger_ms` | 클라이언트에 대한 한도가 아니라, 닫는 중인 연결을 서버가 얼마나 더 참아 주느냐다. 연결을 끝내는 응답 - 업로드 도중의 거절, `Connection: close` - 을 보낸 뒤 서버는 할 말을 다 했지만, 이 시간 동안은 클라이언트가 보내는 것을 계속 읽어서 버린다. 곧바로 닫으면 클라이언트 쪽에서 그 응답이 리셋으로 바뀌기 때문이다. 그 상태의 연결도 `max_connections`에 들어간다: 한꺼번에 많은 요청을 거절하는 곳에서는 짧게 잡아야 자리가 빨리 돌아오고, 느린 회선의 클라이언트에게는 길게 잡는 편이 맞다. |
 | `tls` | 인증서를 가진 TLS 설정([14장](manual-14-tls-ko.md)): 그러면 모든 연결이 HTTPS다. 서버보다 오래 살아야 한다. 핸드셰이크는 `head_timeout_ms`를 첫 요청의 헤드와 함께 쓴다. |
 | `max_head_bytes`, `max_headers` | 끝나지 않는 헤드, 필드가 만 개인 헤드: `431`. |
 | `max_body_bytes` | 받을 준비가 된 것보다 큰 본문: `413`. 길이를 미리 알렸으면 읽기 전에, 청크였으면 읽는 도중에. |
@@ -448,11 +450,13 @@ typedef struct {
     proven_u32 max_redirects;               /* 0: none are followed */
     proven_size_t max_idle_connections;     /* 0: every connection is closed after use */
     proven_u8str_view_t proxy;              /* "http://host:port" or "socks5://host:port" */
+    proven_u8str_view_t no_proxy;           /* hosts reached without it: "localhost, .corp.example" */
     proven_u8str_view_t username, password; /* offered when a server answers 401 */
     proven_u8str_view_t user_agent;         /* empty: none is sent */
     proven_http_cookie_jar_t *cookies;      /* NULL: cookies are ignored */
     proven_http_tls_wrap_fn tls_wrap;       /* NULL: an https URL is PROVEN_ERR_UNSUPPORTED */
     void *tls_ctx;
+    proven_u32 expect_timeout_ms;           /* 0: 1 s - see expect_continue in section 7 */
 } proven_http_client_config_t;
 ```
 
@@ -473,6 +477,7 @@ typedef struct {
     proven_size_t header_count;
     proven_mem_view_t body;                 /* a body in memory: sent with Content-Length */
     proven_reader_t body_stream;            /* or a stream: sent chunked */
+    bool expect_continue;                   /* ask the server before sending the body */
 } proven_http_client_request_t;
 
 typedef struct {
@@ -534,6 +539,27 @@ commit_download();
 **스트림 본문은 한 번만 보낸다.** `body_stream`에서 읽은 본문은 다시 읽을 수 없으므로, 그런 요청은
 되풀이되지 않는다 - 본문이 필요한 리다이렉트에도, 인증 요구에도, 남겨 둔 연결이 죽은 것으로 드러났을
 때에도. 되풀이를 일으켰을 그 응답을 여러분이 받고, 여러분이 정한다.
+
+**큰 본문을 보내기 전에 묻기.** `expect_continue`를 켜면 클라이언트는 헤드를
+`Expect: 100-continue`와 함께 보내고, 서버가 말할 때까지 본문을 붙들어 둔다.
+
+| 서버가 | 클라이언트는 |
+|---|---|
+| `100 Continue`로 답하면 | 본문을 보내고, 호출은 그 뒤에 오는 응답을 돌려준다. |
+| 최종 응답 - `401`, `413`, `417` - 으로 답하면 | 본문을 한 바이트도 보내지 않는다. 그 답이 응답이다. 그 뒤 연결은 답이 뭐라고 하든 간직하지 않는다. 스트림 본문은 읽히지 않은 채다. |
+| `expect_timeout_ms`(정하지 않으면 1초) 동안 아무 말이 없으면 | 본문을 그냥 보낸다: 이 규칙을 모르는 서버는 본문을 기다리고 있다. |
+
+왕복 한 번이 더 드니, 보내지 않을 만한 값어치가 있는 본문에 쓴다: 크기나 빠진 자격 증명 때문에
+서버가 거절할 수 있는 업로드다. 본문이 없는 요청에는 아무 일도 하지 않는다. 플래그를 켜고, 필드를
+직접 쓰지는 마라: 여러분의 헤더에 들어 있는 `Expect`는 그대로 보내지고, 본문은 곧바로 뒤따른다. 이 라이브러리의
+서버들은 여기에 답한다([4절](#4-서버가-묻지-않고-하는-일)).
+
+**업로드 도중에 온 답.** `expect_continue`가 없어도 서버는 본문을 다 받기 전에 답하고 읽기를 멈출
+수 있다. 그러면 클라이언트의 쓰기가 실패한다 - 그리고 클라이언트는 무엇을 보고하기 전에 서버가
+한 말을 읽는다: 도착해 있던 `413`이 호출의 결과이지, `PROVEN_ERR_RESET`이 아니다. 답이 없을 때에만
+실패한 쓰기가 오류다. 한계가 둘 있고, 둘 다 이 라이브러리가 아니라 시스템의 것이다: *시간이 다 된*
+쓰기는 두 번째로 기다리지 않고 곧바로 보고한다. 그리고 Windows에서는 리셋이, 도착했지만 아직 읽지
+않은 것을 버리므로 거기서는 답을 잃을 수 있다 - 그것에 기대지 않는 방법이 `expect_continue`다.
 
 **`io_timeout_ms`는 기다림 하나하나를 한정하지, 요청 전체를 한정하지 않는다.** 10초마다 한 바이트를
 보내는 서버는 30초 타임아웃에 걸리지 않는다. 교환 전체에 한도를 두려면 `send` 전에 시각을 적어 두고,
@@ -604,8 +630,19 @@ Digest로, 아니면 Basic으로. `stale`이라고 보고된 Digest nonce에는 
 - 거절하는 프록시(`407`, `403`, SOCKS5의 "허용되지 않음")는 `PROVEN_ERR_PERMISSION`이다.
 - HTTP 프록시는 평문 `http` 교환의 모든 것을 보고, 바꿀 수 있다. 프록시란 그런 것이다.
 
+**프록시 없이 닿는 호스트.** `no_proxy`는 쉼표로 나눈 목록이다.
+
+| 항목 | 면제되는 것 |
+|---|---|
+| `example.org` 또는 `.example.org` | 그 이름과 그 아래의 모든 이름 - `www.example.org`는 되고 `notexample.org`는 아니다. 대소문자는 가리지 않는다. |
+| `10.0.0.5`, `::1` 또는 `[::1]` | 그 주소, URL에 쓴 것과 같은 표기로. 주소는 통째로 비교한다: 범위도 `10.0.0.0/8`도 없다. |
+| `*` | 모든 호스트: 프록시를 쓰지 않는다. |
+
+포트는 항목의 일부가 아니다. 목록에 있는 호스트에는 직접 연결한다 - 따라서 그 이름은 이 기계에서
+찾게 되는데, 그것이 프록시가 다른 때에는 막아 주는 바로 그 일이다.
+
 프록시 설정을 환경에서 읽지 않는다. `HTTP_PROXY`와 그 친척들은 뜻밖의 일을 많이 일으켜 온 관례다.
-여러분의 프로그램이 그것을 따른다면, 프로그램이 읽어서 `proxy`를 직접 정한다.
+여러분의 프로그램이 그것을 따른다면, 프로그램이 읽어서 `proxy`와 `no_proxy`를 직접 정한다.
 
 ## 10. TLS가 붙을 자리
 
@@ -973,6 +1010,7 @@ int main(void) {
 - **WebSocket**은 이 두 헤더에 없다. §11 위에 지은 [12장](manual-12-websocket-ko.md)에 있다.
 - 서버의 **라우터, 정적 파일, 세션, 미들웨어**. 클라이언트의 **재시도, 캐시, 호스트별 연결 한도**.
 - 양쪽 방향의 **트레일러**.
-- **클라이언트가 보내는 `Expect: 100-continue`.** 본문은 먼저 묻지 않고 보낸다.
-- **프록시 자동 설정, `NO_PROXY`, 프록시에 대한 Digest 인증.**
+- **이벤트 구동 클라이언트의 `Expect: 100-continue`.** `expect_continue`는 블로킹 클라이언트의
+  것이다. [15장](manual-15-event-loop-ko.md)의 클라이언트는 묻지 않고 본문을 보낸다.
+- **프록시 자동 설정, `no_proxy`의 주소 범위, 프록시에 대한 Digest 인증.**
 - **유예 기간을 둔 우아한 종료.** `stop`은 루프를 끝낸다. 요청을 기다리던 연결은 `destroy`가 닫는다.
