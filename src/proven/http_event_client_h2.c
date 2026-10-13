@@ -723,9 +723,9 @@ static void c_pump(c2conn_t *c) {
         else { c_arm(c); c_watch(c); }
     }
     /* With nothing on it this connection is one that max_connections may close for a request
-     * that waits for a place - an HTTP/1.1 one; the HTTP/2 ones do not wait. (It may be this
-     * very connection that is closed: the memory holds while this round is open.) */
-    if (!c->dead && !c->client_going && c->count == 0 && c_queued(c) == 0 && c->client->cfg.max_connections != 0 && c->client->wait_head)
+     * that waits for a place, of either protocol. (It may be this very connection that is
+     * closed: the memory holds while this round is open.) */
+    if (!c->dead && !c->client_going && c->count == 0 && c_queued(c) == 0 && c->client->cfg.max_connections != 0 && (c->client->wait_head || c->client->h2_roomless))
         proven_http_event_client_freed_(c->client);
     c->pumping = false;
     c_leave(c);
@@ -985,8 +985,10 @@ static proven_err_t c_open(proven_http_event_client_t *cl, bool https, proven_u8
  * Not a request whose body is written in pieces - the client does not have it to send again -
  * and not while the client is being destroyed. */
 /* A request that waits to be tried again (retry_delay_ms). It is on no connection: this
- * says where it is to go, and the client keeps them in the order they are due - which is the
- * order they came, the wait being the same for all. */
+ * says where it is to go, and the client keeps them in the order they are due - the order
+ * they came, when the wait is the same for all; r_delay puts each in its place when the wait
+ * grows (retry_delay_max_ms). The same record serves a request that waits for the client to
+ * have room for a connection (`for_room`), in a list of its own. */
 typedef struct c2delay {
     struct c2delay *next;
     c2req_t *r;
@@ -994,6 +996,7 @@ typedef struct c2delay {
     proven_net_addr_t to;
     proven_u16 port;
     bool https;
+    bool for_room;                     /* in the other list: it waits for the client to have room for a connection, and `due` is when it gives up */
     proven_u8 host_len;
     proven_byte_t host[256];
 } c2delay_t;
@@ -1008,16 +1011,101 @@ static void cl_delay_arm(proven_http_event_client_t *cl) {
     proven_loop_timer_set(cl->loop, &cl->h2_delay_timer, ms > 0xffffffffu ? 0xffffffffu : (proven_u32)ms, c_on_delay, cl);
 }
 
-/* Out of the list, its record freed: it is to be placed, or it has ended. */
+/* Out of its list, its record freed: it is to be placed, or it has ended. */
 static void r_undelay(c2req_t *r) {
     proven_http_event_client_t *cl = r->h.client;
     c2delay_t *d = r->delay, *before = (void *)0;
-    for (c2delay_t *i = cl->h2_delayed; i && i != d; i = i->next) before = i;
+    void **head = d->for_room ? &cl->h2_roomless : &cl->h2_delayed, **last = d->for_room ? &cl->h2_roomless_last : &cl->h2_delayed_last;
+    for (c2delay_t *i = *head; i && i != d; i = i->next) before = i;
     if (before) before->next = d->next;
-    else cl->h2_delayed = d->next;
-    if (cl->h2_delayed_last == d) cl->h2_delayed_last = before;
+    else *head = d->next;
+    if (*last == d) *last = before;
+    if (d->for_room) cl->h2_roomless_count--;
     r->delay = (void *)0;
     cl->alloc.free_fn(cl->alloc.ctx, d);
+}
+
+/* max_connections, and every connection in use: a request for an origin with none waits here,
+ * on no connection, until the client may have one more - or until connect_timeout_ms, which
+ * is what the wait for a connection is. In the order they came: the wait is the same for
+ * all, so the first is the first to give up. */
+static void c_on_room_timer(void *ctx);
+static void r_attach(c2req_t *r, c2conn_t *to);
+
+static void cl_room_arm(proven_http_event_client_t *cl) {
+    const c2delay_t *first = cl->h2_roomless;
+    if (!first) { proven_loop_timer_cancel(cl->loop, &cl->h2_room_timer); return; }
+    const proven_time_t now = proven_time_monotonic_now();
+    const proven_u64 ms = first->due > now ? (proven_u64)(first->due - now + 999999) / 1000000 : 0;
+    proven_loop_timer_set(cl->loop, &cl->h2_room_timer, ms > 0xffffffffu ? 0xffffffffu : (proven_u32)ms, c_on_room_timer, cl);
+}
+
+static void c_on_room_timer(void *ctx) {
+    proven_http_event_client_t *cl = ctx;
+    for (;;) {
+        c2delay_t *d = cl->h2_roomless;
+        if (!d || d->due > proven_time_monotonic_now()) break;
+        r_finish(d->r, PROVEN_ERR_TIMEOUT);
+    }
+    cl_room_arm(cl);
+}
+
+/* Into that list. The request is on no connection. PROVEN_ERR_BUSY when as many wait as may;
+ * PROVEN_ERR_NOMEM. */
+static proven_err_t r_wait_room(c2req_t *r, bool https, proven_u8str_view_t host, proven_u16 port, const proven_net_addr_t *to) {
+    proven_http_event_client_t *cl = r->h.client;
+    if (cl->h2_roomless_count >= cl->cfg.max_waiting_requests) return PROVEN_ERR_BUSY;
+    c2delay_t *d = c2_alloc(cl->alloc, sizeof *d);
+    if (!d) return PROVEN_ERR_NOMEM;
+    d->next = (void *)0;
+    d->r = r;
+    d->due = proven_time_monotonic_now() + (proven_time_t)cl->cfg.connect_timeout_ms * 1000000;
+    d->to = *to; d->port = port; d->https = https; d->for_room = true; d->host_len = (proven_u8)host.size;
+    for (proven_size_t i = 0; i < host.size; ++i) d->host[i] = host.ptr[i];
+    r->delay = d;
+    if (cl->h2_roomless_last) ((c2delay_t *)cl->h2_roomless_last)->next = d;
+    else cl->h2_roomless = d;
+    cl->h2_roomless_last = d;
+    cl->h2_roomless_count++;
+    if (cl->h2_roomless == d) cl_room_arm(cl);
+    return PROVEN_OK;
+}
+
+bool proven_http_event_client_h2_waiting_(const proven_http_event_client_t *cl) {
+    return cl->h2_roomless != (void *)0;
+}
+
+/* A place can be had, or a connection was made: each of those that wait, in order, onto a
+ * connection to its origin if there is one by now, and otherwise onto a new one while the
+ * client has room for it. */
+void proven_http_event_client_h2_freed_(proven_http_event_client_t *cl) {
+    if (cl->closing || cl->h2_room_busy) return;
+    cl->h2_room_busy = true;                       /* (c_open closes an idle connection, which comes back here) */
+    bool may_open = true;
+    for (c2delay_t *d = cl->h2_roomless, *next; d; d = next) {
+        next = d->next;
+        c2req_t *r = d->r;
+        proven_byte_t name[256];
+        for (proven_size_t i = 0; i < d->host_len; ++i) name[i] = d->host[i];
+        const proven_u8str_view_t origin = { .ptr = name, .size = d->host_len };
+        const bool https = d->https;
+        const proven_u16 port = d->port;
+        const proven_net_addr_t addr = d->to;
+        c2conn_t *to = c_find(cl, https, origin, port, &addr, (void *)0);
+        if (to && to->state == C2_H1) { r_finish(r, PROVEN_ERR_AGAIN); next = cl->h2_roomless; continue; }       /* the origin turned out to speak HTTP/1.1: the caller's to start again */
+        if (!to) {
+            if (!may_open) continue;
+            const proven_err_t e = c_open(cl, https, origin, port, &addr, &to);
+            if (e == PROVEN_ERR_BUSY) { may_open = false; continue; }
+            if (e != PROVEN_OK) { r_finish(r, e); next = cl->h2_roomless; continue; }
+        }
+        r_undelay(r);
+        r_attach(r, to);
+        if (to->state == C2_UP) c_call_back(to);
+        c_arm(to);
+    }
+    cl->h2_room_busy = false;
+    cl_room_arm(cl);
 }
 
 /* As it was when it was started: r_submit does the rest. */
@@ -1063,7 +1151,12 @@ static void c_on_delay(void *ctx) {
         proven_err_t why = PROVEN_ERR_AGAIN;
         /* (An origin that has turned out to speak HTTP/1.1 since: the caller's to start again.) */
         if (to && to->state == C2_H1) to = (void *)0;
-        else if (!to) { why = c_open(cl, https, origin, port, &addr, &to); if (why != PROVEN_OK) to = (void *)0; }
+        else if (!to) {
+            why = cl->h2_roomless ? PROVEN_ERR_BUSY : c_open(cl, https, origin, port, &addr, &to);
+            /* No room for a connection: it waits for that now, as a request just started would. */
+            if (why == PROVEN_ERR_BUSY && cl->cfg.max_connections != 0 && (why = r_wait_room(r, https, origin, port, &addr)) == PROVEN_OK) continue;
+            if (why != PROVEN_OK) to = (void *)0;
+        }
         if (!to) { r_finish(r, why); continue; }
         r_attach(r, to);
         if (to->state == C2_UP) c_call_back(to);
@@ -1081,17 +1174,27 @@ static bool r_delay(c2req_t *r) {
     if (!d) return false;
     d->next = (void *)0;
     d->r = r;
-    d->due = proven_time_monotonic_now() + (proven_time_t)cl->cfg.retry_delay_ms * 1000000;
-    d->to = c->to; d->port = c->port; d->https = c->https; d->host_len = c->host_len;
+    d->due = proven_time_monotonic_now() + (proven_time_t)proven_http_event_client_retry_delay_(cl, r->tries) * 1000000;
+    d->to = c->to; d->port = c->port; d->https = c->https; d->for_room = false; d->host_len = c->host_len;
     for (proven_size_t i = 0; i < c->host_len; ++i) d->host[i] = c->host[i];
     r->tries++;
     if (r->id != 0 && !c->dead && c->engine) proven_h2_conn_stream_set_user(c->engine, r->id, (void *)0);
     r_unlink(r);
     r_as_new(r);
     r->delay = d;
-    if (cl->h2_delayed_last) ((c2delay_t *)cl->h2_delayed_last)->next = d;
+    /* In the order they are due: behind every one that is due no later. (With one wait for
+     * all that is the end of the list; with a wait that grows, a request on its second try
+     * may come before one on its third.) */
+    c2delay_t *before = cl->h2_delayed_last;
+    if (before && before->due > d->due) {
+        /* Not behind the last, then: its place is looked for. */
+        before = (void *)0;
+        for (c2delay_t *i = cl->h2_delayed; i && i->due <= d->due; i = i->next) before = i;
+    }
+    d->next = before ? before->next : (c2delay_t *)cl->h2_delayed;
+    if (before) before->next = d;
     else cl->h2_delayed = d;
-    cl->h2_delayed_last = d;
+    if (!d->next) cl->h2_delayed_last = d;
     if (cl->h2_delayed == d) cl_delay_arm(cl);
     return true;
 }
@@ -1118,7 +1221,22 @@ static void r_unsent(c2req_t *r, bool here) {
         if (to && to->state == C2_H1) again = false;
         else if (!to) {
             /* A try that cannot be begun ends the request as that try would have. */
-            why = c_open(cl, c->https, host, c->port, &c->to, &to);
+            why = cl->h2_roomless ? PROVEN_ERR_BUSY : c_open(cl, c->https, host, c->port, &c->to, &to);
+            if (why == PROVEN_ERR_BUSY && cl->cfg.max_connections != 0) {
+                /* No room for a connection: off this one, and it waits for a place. */
+                proven_byte_t name[256];
+                for (proven_size_t i = 0; i < c->host_len; ++i) name[i] = c->host[i];
+                const proven_u8str_view_t origin = { .ptr = name, .size = c->host_len };
+                const bool https = c->https;
+                const proven_u16 port = c->port;
+                const proven_net_addr_t addr = c->to;
+                r->tries++;
+                if (r->id != 0 && !c->dead && c->engine) proven_h2_conn_stream_set_user(c->engine, r->id, (void *)0);
+                r_unlink(r);
+                r_as_new(r);
+                why = r_wait_room(r, https, origin, port, &addr);
+                if (why == PROVEN_OK) return;
+            }
             if (why != PROVEN_OK) again = false;
         }
     }
@@ -1199,7 +1317,18 @@ proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *cl, 
     r->streamed = o->body.size == 0 && o->body_length != 0;
 
     if (!c) {
-        proven_err_t e = c_open(cl, https, host, port, &to, &c);
+        /* Behind those that already wait for a place, if any do: a place goes to whoever
+         * has waited longest. Otherwise a connection - or, when the client may have no more
+         * (max_connections) and none is idle, the wait. */
+        proven_err_t e = cl->h2_roomless ? PROVEN_ERR_BUSY : c_open(cl, https, host, port, &to, &c);
+        if (e == PROVEN_ERR_BUSY && cl->cfg.max_connections != 0) {
+            e = r_wait_room(r, https, host, port, &to);
+            if (e == PROVEN_OK) {
+                cl->request_count++;
+                if (out) *out = c2_handle(r);
+                return PROVEN_OK;
+            }
+        }
         if (e != PROVEN_OK) {
             r_free_parts(r);
             cl->alloc.free_fn(cl->alloc.ctx, r);
@@ -1253,6 +1382,9 @@ void proven_http_event_client_h2_destroy_(proven_http_event_client_t *cl) {
     /* Those that wait to be tried again are on no connection: they may be started again. */
     proven_loop_timer_cancel(cl->loop, &cl->h2_delay_timer);
     while (cl->h2_delayed) r_finish(((c2delay_t *)cl->h2_delayed)->r, PROVEN_ERR_AGAIN);
+    /* Nor are those that wait for a place: they were never sent, and end as every request of a client that is destroyed does. */
+    proven_loop_timer_cancel(cl->loop, &cl->h2_room_timer);
+    while (cl->h2_roomless) r_finish(((c2delay_t *)cl->h2_roomless)->r, PROVEN_ERR_RESET);
     while (cl->h2) {
         c2conn_t *c = cl->h2;
         if (c->state == C2_H1) {
@@ -1315,6 +1447,18 @@ proven_err_t proven_http_event_client_h2_end_(proven_http_event_request_t *reque
     if (r->dead || !r->streamed || r->end_asked) return PROVEN_ERR_INVALID_STATE;
     c2conn_t *c = r->conn;
     proven_err_t result = PROVEN_OK;
+    if (!c) {
+        /* Waiting for a place: on no connection, so on no stream. */
+        if (r->body_length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN && r->body_length != 0) {
+            proven_http_event_client_t *cl = r->h.client;
+            r_finish(r, PROVEN_ERR_INVALID_FORMAT);
+            cl_room_arm(cl);
+            return PROVEN_ERR_INVALID_FORMAT;
+        }
+        r->streamed = false;
+        r->body_length = 0;
+        return PROVEN_OK;
+    }
     r_enter(r);
     c_enter(c);
     c->calls++;
@@ -1344,10 +1488,11 @@ void proven_http_event_client_h2_abort_(proven_http_event_request_t *request) {
     if (r->dead) return;
     c2conn_t *c = r->conn;
     if (!c) {
-        /* Waiting to be tried again: on no connection. */
+        /* Waiting to be tried again, or for a place: on no connection. */
         proven_http_event_client_t *cl = r->h.client;
         r_finish(r, PROVEN_ERR_RESET);
         cl_delay_arm(cl);
+        cl_room_arm(cl);
         return;
     }
     r_enter(r);

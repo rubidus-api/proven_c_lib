@@ -130,6 +130,10 @@ struct proven_http_event_client {
     void *h2;                          /* http_event_client_h2.c: its connections, its origins */
     void *h2_delayed, *h2_delayed_last;    /* and its requests that wait to be tried again (retry_delay_ms), the first due first */
     proven_loop_timer_t h2_delay_timer;
+    void *h2_roomless, *h2_roomless_last;  /* and its requests that wait for the client to have room for a connection (max_connections), in the order they came */
+    proven_size_t h2_roomless_count;
+    bool h2_room_busy;                     /* that list is being worked through */
+    proven_loop_timer_t h2_room_timer;     /* connect_timeout_ms of the first of them */
     proven_byte_t *h2buf;              /* where every HTTP/2 connection reads its header lists */
     proven_size_t h2buf_size;
 };
@@ -157,7 +161,14 @@ void proven_http_event_client_h2_destroy_(proven_http_event_client_t *client);
 proven_size_t proven_http_event_client_h2_conns_(const proven_http_event_client_t *client);
 bool proven_http_event_client_h2_close_idle_(proven_http_event_client_t *client);
 bool proven_http_event_client_room_(proven_http_event_client_t *client);
+/* The wait before a request's next try, in milliseconds, when it has had `tries` of them
+ * beyond its first: retry_delay_ms, doubled so many times, and at most retry_delay_max_ms. */
+proven_u32 proven_http_event_client_retry_delay_(const proven_http_event_client_t *client, proven_u32 tries);
 void proven_http_event_client_freed_(proven_http_event_client_t *client);
+/* In http_event_client_h2.c: whether an HTTP/2 request waits for a place, and "a place can
+ * be had" for those - called by the HTTP/1.1 side when none of its own took it. */
+bool proven_http_event_client_h2_waiting_(const proven_http_event_client_t *client);
+void proven_http_event_client_h2_freed_(proven_http_event_client_t *client);
 /* The HTTP/1.1 request that `face` became has ended and its on_done has returned. */
 void proven_http_event_client_h2_forwarded_done_(proven_http_event_request_t *face);
 [[nodiscard]]

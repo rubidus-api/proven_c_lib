@@ -977,6 +977,25 @@ static void delay_and_limit(void) {
     PROVEN_TEST_ASSERT(peer_accept(&l[0], &x, 400) && proven_time_monotonic_now() - t0 > 250000000 && proven_time_monotonic_now() - t0 < 2000000000, "it comes when the 300 ms have passed", "");
     (void)proven_net_close(&x);
     PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_ERR_RESET && c.dones == 1 && !peer_accept(&l[0], &x, 80), "lost again, with no try left: PROVEN_ERR_RESET, once, and no third connection", "");
+    /* retry_delay_max_ms: the wait before the second try is the first wait, the wait before
+     * the third is twice that. */
+    {
+        proven_http_event_client_t *growing = a_client((proven_http_event_client_config_t){ .retry_unsent = 2, .retry_delay_ms = 100, .retry_delay_max_ms = 1000 }, true);
+        PROVEN_TEST_ASSERT(start(growing, &d, "POST", url(true, at[0].port, "/grow"), (proven_mem_view_t){ (const proven_byte_t *)"body", 4 }, 0) == PROVEN_OK && peer_accept(&l[0], &y, 400), "a request over TLS, and a server that accepts", "");
+        spin(20);
+        (void)proven_net_close(&y);
+        proven_time_t g0 = proven_time_monotonic_now();
+        PROVEN_TEST_ASSERT(peer_accept(&l[0], &y, 400) && proven_time_monotonic_now() - g0 > 80000000, "closed before TLS is agreed: the second connection comes after the first wait", "");
+        spin(20);
+        (void)proven_net_close(&y);
+        g0 = proven_time_monotonic_now();
+        PROVEN_TEST_ASSERT(!peer_accept_within(&l[0], &y, 150) && !d.done, "closed again: no third connection in the first 150 ms - the wait has doubled", "Check the use of proven_http_event_client_retry_delay_ in cl_kill.");
+        PROVEN_TEST_ASSERT(peer_accept(&l[0], &y, 400) && proven_time_monotonic_now() - g0 > 180000000, "it comes when 200 ms have passed", "");
+        (void)proven_net_close(&y);
+        PROVEN_TEST_ASSERT(spin_until(&d.done, 5000) && d.why == PROVEN_ERR_RESET && d.dones == 1, "and lost a third time, with no try left, the request ends once", "");
+        proven_http_event_client_destroy(growing);
+        spin(20);
+    }
     /* Aborted while it waits to be tried again: it ends, and no connection is made for it. */
     PROVEN_TEST_ASSERT(start(client, &c, "GET", url(true, at[0].port, "/gone"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK && peer_accept(&l[0], &x, 400), "another request", "");
     spin(20);

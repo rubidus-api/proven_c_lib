@@ -18,6 +18,28 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **`retry_delay_max_ms`** in `proven_http_event_client_config_t`: when it is set, the wait
+  before a try doubles with each try of a request, from `retry_delay_ms` up to this bound,
+  in either protocol. Zero, the default, keeps the wait the same for every try, as before.
+  Below `retry_delay_ms`, or set with no `retry_delay_ms`, it is `PROVEN_ERR_INVALID_ARG`.
+  Nothing is added at random.
+
+### Changed
+
+- **An HTTP/2 request waits for the client-wide limit, as an HTTP/1.1 request does.** With
+  `max_connections` reached and no connection idle, a request over HTTP/2 to an origin that
+  had no connection was refused: `PROVEN_ERR_BUSY` from `proven_http_event_client_start`.
+  It is now taken, and waits on no connection until a place can be had - or until a
+  connection to its origin exists - for `connect_timeout_ms` at most (`PROVEN_ERR_TIMEOUT`).
+  No more of them wait than `max_waiting_requests`; the next start is `PROVEN_ERR_BUSY`, so
+  a caller that handled that answer still meets it, later. The same holds for a request
+  whose wait before another try is over, and for one a goodbye left out while its connection
+  finishes the others: they wait for the place and are not ended. When requests of both
+  protocols wait, a place goes to an HTTP/1.1 request first. A client that sets no
+  `max_connections` is unchanged.
+
 ## [0.42.0] - 2026-10-13
 
 ### Changed

@@ -1204,6 +1204,9 @@ being made; for the server's first word, which says how many streams it allows -
 sent ahead of that, so nothing is refused for it; and for a free stream, when the server's
 limit is reached. A waiting request holds a copy of what it was started with. At most
 `max_waiting_requests` (1,000) wait for one connection; the next `start` is `PROVEN_ERR_BUSY`.
+And, with `max_connections` set and every connection in use, a request to an origin that has
+no connection waits for the client to have room for one - on no connection, as many again
+at most, and for `connect_timeout_ms` at most (Chapter 15).
 
 **What `on_done` says** is what it said, with two more answers. `PROVEN_ERR_AGAIN`, for a
 request that an HTTP/2 server did not act on - it said goodbye first, or refused the

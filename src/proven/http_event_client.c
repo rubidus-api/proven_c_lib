@@ -153,6 +153,14 @@ static proven_http_event_request_t *cl_waiter_with_room(const proven_http_event_
 /* Whether the client may have one more connection, of either protocol - an idle one closed
  * for it if that is what it takes: an HTTP/1.1 one, the one idle longest, before an HTTP/2
  * one. False: the limit is reached and every connection is in use. */
+proven_u32 proven_http_event_client_retry_delay_(const proven_http_event_client_t *cl, proven_u32 tries) {
+    const proven_u32 first = cl->cfg.retry_delay_ms, most = cl->cfg.retry_delay_max_ms;
+    if (most == 0) return first;
+    proven_u64 ms = first;
+    for (proven_u32 i = 0; i < tries && ms < most; ++i) ms *= 2;
+    return ms < most ? (proven_u32)ms : most;
+}
+
 bool proven_http_event_client_room_(proven_http_event_client_t *cl) {
     if (cl->cfg.max_connections == 0) return true;
     if (cl->conn_count + proven_http_event_client_h2_conns_(cl) < cl->cfg.max_connections) return true;
@@ -168,7 +176,12 @@ bool proven_http_event_client_room_(proven_http_event_client_t *cl) {
 void proven_http_event_client_freed_(proven_http_event_client_t *cl) {
     while (cl->cfg.max_connections != 0 && !cl->closing) {
         proven_http_event_request_t *w = cl_waiter_with_room(cl);
-        if (!w || !proven_http_event_client_room_(cl)) break;
+        if (!w) {
+            /* Nobody of this protocol: an HTTP/2 request may be waiting for the place. */
+            proven_http_event_client_h2_freed_(cl);
+            break;
+        }
+        if (!proven_http_event_client_room_(cl)) break;
         cl_unwait(w);
         proven_err_t e = cl_conn_open(w);
         if (e == PROVEN_OK) { cl_arm(w); break; }
@@ -266,7 +279,11 @@ static void cl_conn_close(cl_conn_t *k, bool serve_waiting) {
         /* With a limit on the whole client, a request to another origin may have been waiting
          * for this place: the one that has waited longest and whose origin has room. */
         if (!w && cl->cfg.max_connections != 0) w = cl_waiter_with_room(cl);
-        if (!w) break;
+        if (!w) {
+            /* Nobody of this protocol: an HTTP/2 request may be waiting for the place. */
+            if (cl->cfg.max_connections != 0) proven_http_event_client_h2_freed_(cl);
+            break;
+        }
         cl_unwait(w);
         proven_err_t e = cl_conn_open(w);
         if (e == PROVEN_OK) { cl_arm(w); break; }
@@ -294,7 +311,7 @@ static void cl_conn_keep(cl_conn_t *k) {
     }
     /* Nobody waits for this origin. With a limit on the whole client somebody may be waiting
      * for a place: an idle connection is what is closed to make one. */
-    if (cl->cfg.max_connections != 0 && !cl->closing && cl_waiter_with_room(cl)) { cl_conn_close(k, true); return; }
+    if (cl->cfg.max_connections != 0 && !cl->closing && (cl_waiter_with_room(cl) || proven_http_event_client_h2_waiting_(cl))) { cl_conn_close(k, true); return; }
     (void)proven_loop_io_set(cl->loop, &k->io, PROVEN_NET_READABLE);
     proven_loop_timer_set(cl->loop, &k->timer, cl->cfg.idle_timeout_ms, cl_on_idle_timer, k);
     if (cl->idle_count > cl->cfg.max_kept_connections) {
@@ -421,6 +438,7 @@ static void cl_kill(proven_http_event_request_t *c, proven_err_t why) {
         /* Lost before any of the request was given to its connection - while TLS was being
          * agreed, mostly: the server cannot have acted on what it was never sent. With
          * retry_unsent that is tried again, on a new connection, so many times. */
+        const proven_u32 wait_ms = proven_http_event_client_retry_delay_(cl, c->tries);
         c->tries++;
         if (cl->cfg.retry_delay_ms != 0) {
             /* Not at once: its connection goes (to a request that waits, if one does) and it
@@ -430,7 +448,7 @@ static void cl_kill(proven_http_event_request_t *c, proven_err_t why) {
              * then - and may abort this one from inside that.) */
             if (c->dead) return;
             c->timer_kind = CL_T_DELAY;
-            proven_loop_timer_set(cl->loop, &c->timer, cl->cfg.retry_delay_ms, cl_on_delay, c);
+            proven_loop_timer_set(cl->loop, &c->timer, wait_ms, cl_on_delay, c);
             return;
         }
         proven_err_t e = cl_send_again(c);
@@ -805,6 +823,8 @@ proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_h
     /* More kept than there may be at all: said together they contradict. (Left at its
      * default the number kept needs no lowering: there are never more idle than there are.) */
     if (cfg.max_connections != 0 && config && config->max_kept_connections > cfg.max_connections) return PROVEN_ERR_INVALID_ARG;
+    /* A bound on a wait that is not there bounds nothing, and is a mistake rather than a wish. */
+    if (cfg.retry_delay_max_ms != 0 && (cfg.retry_delay_ms == 0 || cfg.retry_delay_max_ms < cfg.retry_delay_ms)) return PROVEN_ERR_INVALID_ARG;
     if (cfg.tls) {
         /* What TLS may agree to and what the client will speak must be the same thing. */
         bool offers_h2 = false;
