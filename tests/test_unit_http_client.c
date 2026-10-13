@@ -1161,10 +1161,11 @@ int main(void) {
         proven_http_client_destroy(c2);
 
         /* Addresses, with a proxy that is not there: the origin answers only a direct request. */
-        peer_start(&p, script_proxy);
-        snprintf(proxy, sizeof proxy, "http://127.0.0.1:%u", (unsigned)p.port);
-        (void)proven_net_listener_close(&p.listener);       /* the script's accept fails and it ends */
-        proven_job_group_wait(g_jobs, &g_group);
+        proven_net_listener_t gone;
+        proven_net_addr_t gone_at;
+        PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 1, &gone, &gone_at) == PROVEN_OK &&
+                           proven_net_listener_close(&gone) == PROVEN_OK, "a port that was listened on and no longer is", "");
+        snprintf(proxy, sizeof proxy, "http://127.0.0.1:%u", (unsigned)gone_at.port);
         static const struct { const char *list; bool direct; const char *what; } rows[] = {
             { "127.0.0.1", true, "an address is matched as itself" },
             { "0.0.1", false, "the end of an address is not the address" },
