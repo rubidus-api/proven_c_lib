@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-10-13
+
 ### Changed
 
 - **32-bit x86 uses the processor's AES instructions.** The hardware path - AES-GCM, and CBC
