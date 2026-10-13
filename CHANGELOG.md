@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-10-13
+
 ### Added
 
 - **`retry_delay_max_ms`** in `proven_http_event_client_config_t`: when it is set, the wait
