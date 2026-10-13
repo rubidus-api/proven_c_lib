@@ -50,6 +50,7 @@ PROVEN_BUILD_SOURCE("src/proven/loop.c", PROVEN_SOURCE_HOSTED_ONLY)   /* an even
 PROVEN_BUILD_SOURCE("src/proven/http_event.c", PROVEN_SOURCE_HOSTED_ONLY)   /* the event-driven HTTP server */
 PROVEN_BUILD_SOURCE("src/proven/http_event_h2.c", PROVEN_SOURCE_HOSTED_ONLY)   /* HTTP/2 in the event-driven server: the driver of proven_h2_conn_t */
 PROVEN_BUILD_SOURCE("src/proven/ws_event.c", PROVEN_SOURCE_HOSTED_ONLY)   /* WebSocket on the event-driven server */
+PROVEN_BUILD_SOURCE("src/proven/ws_event_client.c", PROVEN_SOURCE_HOSTED_ONLY)   /* a WebSocket connection made by this side, on a loop */
 PROVEN_BUILD_SOURCE("src/proven/http_event_client.c", PROVEN_SOURCE_HOSTED_ONLY)   /* the event-driven HTTP client */
 PROVEN_BUILD_SOURCE("src/proven/http_event_client_h2.c", PROVEN_SOURCE_HOSTED_ONLY)   /* HTTP/2 in the event-driven client: connections kept, requests on them */
 PROVEN_BUILD_SOURCE("src/proven/cert_system.c", PROVEN_SOURCE_HOSTED_ONLY)   /* reads the system trust store */

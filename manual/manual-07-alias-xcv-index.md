@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1269 aliases: 930 lowercase `xcv_` names and 339 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1270 aliases: 931 lowercase `xcv_` names and 339 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -1271,6 +1271,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_ws_event_accept` | `proven_ws_event_accept` |
 | `xcv_ws_event_callbacks_t` | `proven_ws_event_callbacks_t` |
 | `xcv_ws_event_config_t` | `proven_ws_event_config_t` |
+| `xcv_ws_event_connect` | `proven_ws_event_connect` |
 | `xcv_ws_event_kind_t` | `proven_ws_event_kind_t` |
 | `xcv_ws_event_t` | `proven_ws_event_t` |
 | `xcv_ws_frame_parse` | `proven_ws_frame_parse` |

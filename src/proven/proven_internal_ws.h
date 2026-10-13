@@ -3,6 +3,7 @@
 
 #include "proven/deflate.h"
 #include "proven/ws.h"
+#include "proven/ws_event.h"
 
 /*
  * Internal: what the two WebSocket drivers share for permessage-deflate (RFC 7692), so that
@@ -60,5 +61,34 @@ proven_err_t proven_ws_deflate_begin_(proven_allocator_t alloc, int level, int w
 [[nodiscard]]
 proven_err_t proven_ws_deflate_step_(proven_deflate_t *z, proven_mem_view_t in, proven_size_t *consumed, bool flush, bool last,
                                      proven_mem_mut_t out, proven_size_t *produced, proven_byte_t tail[4], proven_u8 *tail_len, bool *done);
+
+/* How ws_event.c reaches the connection a WebSocket is on: the event-driven server's record
+ * (ws_event.c itself), or a client's (ws_event_client.c). `send` queues `a` then `b` and
+ * sends what goes at once - false when the connection is gone. `timer` fires on_timer in so
+ * many milliseconds (0 cancels). `close` and `kill` let go of the connection - politely, with
+ * what is queued flushed and a moment's wait, or at once - and no operation is called after
+ * either. */
+typedef struct {
+    bool (*send)(void *conn, proven_mem_view_t a, proven_mem_view_t b);
+    void (*timer)(void *conn, proven_u32 ms);
+    void (*pause)(void *conn, bool paused);
+    void (*close)(void *conn);
+    void (*kill)(void *conn);
+    proven_size_t (*buffered)(const void *conn);
+} proven_ws_transport_t_;
+
+/* In ws_event.c, for ws_event_client.c: the protocol's object for a connection this side is
+ * making. It is `opening` - nothing may be sent - until the server has accepted the upgrade.
+ * `config` is checked as proven_ws_event_accept checks it. */
+struct proven_ws_stream;
+[[nodiscard]]
+proven_err_t proven_ws_event_client_new_(proven_allocator_t alloc, const proven_ws_event_config_t *config, const proven_ws_transport_t_ *transport,
+                                         void *conn, proven_net_addr_t peer, struct proven_ws_stream **out);
+/* The upgrade was accepted, with compression or without: frames from here on. */
+void proven_ws_event_client_opened_(struct proven_ws_stream *ws, bool deflate);
+/* The connection was not made, or the upgrade not granted, and is gone: on_closed, code 0. */
+void proven_ws_event_client_failed_(struct proven_ws_stream *ws, proven_err_t why);
+/* It was never started: freed, and nobody is told. */
+void proven_ws_event_client_discard_(struct proven_ws_stream *ws);
 
 #endif /* PROVEN_INTERNAL_WS_H */

@@ -882,6 +882,184 @@ int main(void) {
 }
 ```
 
+### 이쪽에서 만드는 연결
+
+```c
+proven_err_t proven_ws_event_connect(proven_loop_t *loop, const proven_ws_event_connect_options_t *options, proven_ws_stream_t **out);
+```
+
+루프 위의 프로그램은 요청하는 쪽인 때도 그만큼 많다. `proven_ws_event_connect`는 서버로 가는 연결을
+시작하고 곧바로 돌아온다. 돌려주는 것은 `proven_ws_stream_t`, **서버의 연결과 같은 타입**이다. 이 절의
+모든 호출이 서버의 연결에서처럼 동작하고, 메시지는 같은 세 콜백으로 도착한다: 한쪽을 위해 쓴 처리기가
+다른 쪽에도 쓰인다.
+
+다른 것은 시작이다.
+
+| | |
+|---|---|
+| `url` | `ws://` 또는 `wss://`. 호스트가 `Host`에 들어가고, `wss`에서는 인증서가 가리켜야 하는 이름이다 |
+| `address` | 연결할 곳. 호스트가 IP 주소가 아니면 필요하다: **루프 위에서는 이름을 풀지 않는다**(까닭과 방법은 12절) |
+| `tls` | `wss`용. 없으면 `wss` URL은 거절된다 - 대신 평문으로 연결하는 일은 없다 |
+| `headers`, `protocols` | 여러분의 필드(`Origin`, `Authorization`)와, 제안할 서브프로토콜 |
+| `connect_timeout_ms` | 연결되고, 보안이 서고, 수락되기까지. 0: 10초 |
+| `on_open` | 서버가 수락했다. 서버가 고른 서브프로토콜을 받는다 |
+| `ws` | `proven_ws_event_config_t` - 연결의 콜백, 한도, 핑, 압축. 서버가 `proven_ws_event_accept`에 주는 것과 같다. 여기서 `compress`는 확장을 제안한다는 뜻이다 |
+
+**서버가 수락하기 전에는 아무것도 보낼 수 없다**: 보내는 호출은 `PROVEN_ERR_INVALID_STATE`로 답하고,
+`on_open`이 언제 수락되었는지 알려 준다(그 안에서 보내는 것은 괜찮다). 아직 진행 중인 시도는
+`proven_ws_stream_abort`가 끝내고, `proven_ws_stream_close`도 그렇게 한다.
+
+**`on_closed`는 시작한 연결마다 정확히 한 번 불린다** - WebSocket이 되지 못한 연결에도. 그때 코드는
+0이고 `why`가 무슨 일이 있었는지 말한다:
+
+| 코드 0과 함께 오는 `why` | 무슨 일이 있었나 |
+|---|---|
+| `PROVEN_ERR_REFUSED` | 거기서 아무도 듣지 않는다 - 또는 서버가 101이 아닌 것으로 답했다. 리다이렉트를 따르지 않고 인증 요구에 답하지 않는다 |
+| `PROVEN_ERR_TIMEOUT` | `connect_timeout_ms` 안에 연결·보안·수락이 끝나지 않았다 |
+| `PROVEN_ERR_INVALID_FORMAT` | 답이 HTTP가 아니었거나, 이 핸드셰이크의 것이 아닌 101이었다: 틀린 `Sec-WebSocket-Accept`, 제안하지 않은 서브프로토콜이나 확장 |
+| `PROVEN_ERR_RESET`, `PROVEN_ERR_UNREACHABLE`, TLS 오류 | 연결을 잃었거나, 만들 수 없었거나, 보안을 세울 수 없었다 |
+
+클라이언트의 프레임은 프로토콜이 요구하는 대로 마스킹된다. 키는 연결을 시작할 때 시스템에서 시드를
+받은 생성기에서 나온다. 여기에 없는 것: 프록시, 재연결(다시 시작할 것), HTTP/2 위의 WebSocket.
+
+이 프로그램은 양쪽 끝을 루프 하나에 둔다. 테스트 스위트가 컴파일하고 실행한다:
+
+<!-- example: manual/examples/ko/ex_15_ws_event_client.c -->
+```c
+#include <stdio.h>
+#include <string.h>
+
+/*
+ * 루프 위의 WebSocket 클라이언트: 이쪽에서도 스레드가 들지 않는 연결.
+ *
+ * proven_ws_event_connect는 연결을 시작하고 곧바로 돌아온다. 돌려주는 것은
+ * proven_ws_stream_t - 서버의 연결과 같은 타입 - 이므로 호출과 콜백이 위의 서버가 쓰는
+ * 것과 같다. 새로운 것은 시작이다: on_open이 서버가 수락했음을 알리고, 그때까지는 아무것도
+ * 보낼 수 없다.
+ *
+ * 여기서는 루프 하나가 양쪽을 다 싣는다: 요청받는 서버와 요청하는 클라이언트.
+ */
+
+typedef struct {
+    proven_loop_t *loop;
+    int opened, answers, closed, refused;
+    proven_u16 code;
+    char last[64];
+} app_t;
+
+// ---- 서버: 무엇을 받았는지 말해 준다 ----
+
+static void served(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
+    (void)ctx; (void)first;
+    if (!last) return;                      /* 이 예제의 메시지는 작다: 각각 한 조각 */
+    char reply[48];
+    int n = snprintf(reply, sizeof reply, "%s, %u bytes", text ? "text" : "binary", (unsigned)piece.size);
+    (void)proven_ws_stream_send(ws, true, (proven_mem_view_t){ (const proven_byte_t *)reply, (proven_size_t)n });
+}
+
+static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
+    (void)ctx;
+    proven_ws_event_config_t config = { .on = { .on_message = served } };
+    proven_ws_stream_t *ws = NULL;
+    if (proven_ws_event_accept(stream, head, &config, &ws) != PROVEN_OK) (void)proven_http_stream_respond(stream, 400, NULL, 0, (proven_mem_view_t){ 0 });
+}
+
+// ---- 클라이언트 ----
+
+/* 서버가 수락했다. 여기서부터 - 이 호출 안에서도 - 메시지를 보낼 수 있다. */
+static void on_open(void *ctx, proven_ws_stream_t *ws, proven_u8str_view_t protocol) {
+    app_t *app = ctx;
+    (void)protocol;
+    app->opened++;
+    (void)proven_ws_stream_send(ws, true, proven_mem_view_from_u8(PROVEN_LIT("hello")));
+}
+
+/* 서버가 갖는 것과 같은 콜백. 이쪽은 두 번 묻고 작별한다. */
+static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
+    app_t *app = ctx;
+    (void)text; (void)first;
+    if (!last) return;
+    proven_size_t n = piece.size < sizeof app->last - 1 ? piece.size : sizeof app->last - 1;
+    memcpy(app->last, piece.ptr, n);
+    app->last[n] = '\0';
+    printf("the server says: %s\n", app->last);
+    if (++app->answers == 1) {
+        static const proven_byte_t bytes[300] = { 1, 2, 3 };
+        (void)proven_ws_stream_send(ws, false, (proven_mem_view_t){ bytes, sizeof bytes });
+    } else {
+        proven_ws_stream_close(ws, 1000, PROVEN_LIT("thank you"));
+    }
+}
+
+/* 시작한 연결마다 정확히 한 번 불린다 - 끝내 열리지 않은 연결에도:
+ * 그때 코드는 0이고 `why`가 무엇이 잘못되었는지 말한다. */
+static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
+    app_t *app = ctx;
+    (void)ws;
+    if (code == 0) {
+        /* WebSocket이 되지 못했다: 아무도 듣지 않았거나, 서버가 다른 답을 했거나, 시간이 다 됐다. */
+        printf("no connection: error %d\n", (int)why);
+        app->refused++;
+    } else {
+        app->code = code;
+        app->closed++;
+    }
+    /* 이 프로그램의 두 연결이 모두 끝났다: 루프가 할 일이 남지 않았다. */
+    if (app->closed == 1 && app->refused == 1) proven_loop_stop(app->loop);
+}
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    app_t app = { 0 };
+    EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
+    proven_http_event_server_config_t server_config = { .on = { .on_request = on_request } };
+    proven_http_event_server_t *server = NULL;
+    proven_net_addr_t at;
+    EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &server_config, &server) == PROVEN_OK, "a server");
+    proven_err_t err = proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at);
+    if (err == PROVEN_ERR_PERMISSION || err == PROVEN_ERR_UNSUPPORTED) {
+        printf("no sockets in this environment; nothing to show\n");
+        proven_http_event_server_destroy(server);
+        proven_loop_destroy(app.loop);
+        return EXAMPLE_OK();
+    }
+    EXAMPLE_REQUIRE(err == PROVEN_OK, "it listens");
+
+    /* 호스트가 주소이므로 따로 줄 것이 없다: 루프 위에서는 이름을 풀지 않는다. */
+    char url[64];
+    int n = snprintf(url, sizeof url, "ws://127.0.0.1:%u/chat", (unsigned)at.port);
+    proven_ws_event_connect_options_t options = {
+        .url = { (const proven_byte_t *)url, (proven_size_t)n },
+        .on_open = on_open,
+        .ws = { .on = { .on_message = on_message, .on_closed = on_closed }, .ctx = &app },
+    };
+    proven_ws_stream_t *ws = NULL;
+    EXAMPLE_REQUIRE(proven_ws_event_connect(app.loop, &options, &ws) == PROVEN_OK && ws != NULL && app.opened == 0, "a connection is begun; nothing has happened yet");
+    /* 호출은 돌아왔고 연결은 만들어지는 중이다: 말하기에는 아직 이르다. */
+    EXAMPLE_REQUIRE(proven_ws_stream_send(ws, true, proven_mem_view_from_u8(PROVEN_LIT("too early"))) == PROVEN_ERR_INVALID_STATE, "nothing can be sent before the server has accepted");
+
+    /* 그리고 실패할 연결 하나. 그것이 어떻게 전해지는지 보려고: 방금 닫은 포트. */
+    proven_net_listener_t unused;
+    proven_net_addr_t nobody;
+    EXAMPLE_REQUIRE(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 1, &unused, &nobody) == PROVEN_OK && proven_net_listener_close(&unused) == PROVEN_OK, "a port nobody listens on");
+    n = snprintf(url, sizeof url, "ws://127.0.0.1:%u/chat", (unsigned)nobody.port);
+    options.url.size = (proven_size_t)n;
+    proven_ws_stream_t *lost = NULL;
+    err = proven_ws_event_connect(app.loop, &options, &lost);
+    EXAMPLE_REQUIRE(err == PROVEN_OK || err == PROVEN_ERR_REFUSED, "an attempt that cannot succeed: refused now, or told later");
+    if (err != PROVEN_OK) app.refused++;
+
+    /* 나머지는 모두 여기서 일어난다. */
+    if (!(app.closed == 1 && app.refused == 1)) EXAMPLE_REQUIRE(proven_loop_run(app.loop) == PROVEN_OK, "the loop runs until both have ended");
+    EXAMPLE_REQUIRE(app.opened == 1 && app.answers == 2 && strcmp(app.last, "binary, 300 bytes") == 0, "it opened once, and two messages were answered");
+    EXAMPLE_REQUIRE(app.closed == 1 && app.code == 1000 && app.refused == 1, "it closed once, with this side's code - and the other attempt was reported once");
+
+    proven_http_event_server_destroy(server);
+    proven_loop_destroy(app.loop);
+    return EXAMPLE_OK();
+}
+```
+
 ## 12. 이벤트 구동 클라이언트
 
 ```c
@@ -1404,7 +1582,7 @@ int main(void) {
 **연결 하나가 붙드는 것.** 요청이 없는 연결은 자기 구조체를 붙들 뿐 버퍼는 붙들지 않는다: 요청은
 루프의 임시 작업용 버퍼로 읽히고, 바이트는 요청이 아직 완전하지 않을 때에만 따로 복사된다. x86-64
 Linux에서 등록된 테스트는 한가한 평문 HTTP 연결 하나에 힙 448바이트를 재고 512를 넘으면 실패하며,
-한가한 평문 WebSocket 연결 하나에 928바이트를 재고 1 KiB를 넘으면 실패한다. TLS 연결은 엔진의 상태를
+한가한 평문 WebSocket 연결 하나에 944바이트를 재고 1 KiB를 넘으면 실패한다. TLS 연결은 엔진의 상태를
 더한다. 한가할 때 약 1 KiB다(14장 9절). **HTTP/2 연결은 크기가 다르다**: 작은 요청 하나 뒤 한가할 때 2,312바이트를 재고
 3 KiB를 넘으면 실패하며, 기억하게 된 헤더 필드만큼 자라 두 압축 테이블이 가득 차면 약 12.8 KiB가 된다
 ([17장 6절](manual-17-http2-ko.md#6-이벤트-구동-서버의-http2)). 아래 수치는 HTTP/1.1의 것이다.
@@ -1472,8 +1650,7 @@ Linux에서 등록된 테스트는 한가한 평문 HTTP 연결 하나에 힙 44
 
 - **이름값을 하는 부하 시험.** 위의 수치는 기계 한 대가 자기 자신과 말한 것이다: 네트워크도, 느리거나
   적대적인 클라이언트도, 부하 속의 TLS도 없고, 아무 일도 하지 않는 핸들러 하나뿐이다.
-- **루프 위의 WebSocket 클라이언트**, 그리고 이 서버 위의 WebSocket 아닌 업그레이드. 12장의
-  클라이언트는 블로킹 쪽이다.
+- 이 서버 위의 WebSocket 아닌 업그레이드. 프록시를 거치거나 HTTP/2 위에 놓인 WebSocket 클라이언트.
 - **이벤트 구동 클라이언트에서:** 리다이렉트, 인증, 쿠키, 프록시, 이름 해석(대신 무엇을 할지는
   12절에 있다). 파이프라이닝, 그리고 기다리는 요청들 사이의 시작 순서 말고 다른 순서.
 - **루프의 스레드 밖에서 하는 TLS 핸드셰이크.** 하나마다 루프는 약 2 ms 동안 다른 아무것도 서비스하지

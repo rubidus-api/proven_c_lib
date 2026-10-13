@@ -8,16 +8,20 @@
 #include "proven/net.h"
 #include "proven/http.h"
 #include "proven/http_event.h"
+#include "proven/loop.h"
+#include "proven/tls.h"
+#include "proven/allocator.h"
 #include "proven/ws.h"
 
 /**
  * @file ws_event.h
- * @brief WebSocket on the event-driven server: a connection that costs no thread.
+ * @brief WebSocket on a loop: a connection that costs no thread, on either side.
  *
  * ws_conn.h gives a WebSocket connection calls that wait, and so a thread for as long as it is
  * open. Here a request to the server of http_event.h is turned into a WebSocket inside
  * `on_request`, and from then on your functions are told what arrived - nothing waits, and a
- * connection that is silent holds its state and no buffer.
+ * connection that is silent holds its state and no buffer. A program that asks instead of
+ * answering makes the same kind of connection with proven_ws_event_connect.
  *
  * The same three rules as http_event.h: your functions must not wait; a send can be refused
  * (PROVEN_ERR_AGAIN, with `on_writable` to say when to try again); and a piece of a message is
@@ -32,7 +36,7 @@
  * Hosted only; `PROVEN_NO_NET` leaves it out.
  */
 
-/** @brief A WebSocket connection. Valid from proven_ws_event_accept until `on_closed` returns. */
+/** @brief A WebSocket connection. Valid from proven_ws_event_accept, or proven_ws_event_connect, until `on_closed` returns. */
 typedef struct proven_ws_stream proven_ws_stream_t;
 
 typedef struct {
@@ -85,6 +89,63 @@ typedef struct {
 [[nodiscard]]
 proven_err_t proven_ws_event_accept(proven_http_stream_t *stream, const proven_http_request_t *head,
                                     const proven_ws_event_config_t *config, proven_ws_stream_t **out);
+
+/**
+ * @brief What proven_ws_event_connect is given. Zero-initialise it and set `url` and
+ *        `ws.on.on_message`.
+ */
+typedef struct {
+    proven_allocator_t alloc;              /**< not valid: the loop's allocator */
+    const proven_tls_config_t *tls;        /**< for `wss`. NULL: a `wss` URL is refused, never connected in the clear. Must outlive the connection. */
+    proven_u8str_view_t url;               /**< absolute, `ws` or `wss`; its host goes into `Host` and, for `wss`, is the name the certificate must be for */
+    const proven_net_addr_t *address;      /**< where to connect. NULL only when the URL's host is an IP address: names are not resolved on a loop (see http_event_client.h). Its port is used as given. */
+    const proven_http_header_t *headers;   /**< yours - `Origin`, `Authorization`, a cookie. `Host`, `Upgrade`, `Connection` and the `Sec-WebSocket-` fields are written for you and may not be here */
+    proven_size_t header_count;
+    proven_u8str_view_t protocols;         /**< the subprotocols offered, as `Sec-WebSocket-Protocol` carries them (`chat, superchat`); empty: none. At most 255 bytes */
+    proven_u32 connect_timeout_ms;         /**< to be connected, the TLS handshake included, and for the server to have accepted the upgrade. 0: 10 s */
+    proven_size_t max_head_bytes;          /**< largest answer to the upgrade. 0: 16 KiB */
+    /** The server accepted: messages may be sent from here on - also from inside this call.
+     *  `protocol` is the subprotocol it chose, empty when none; good until this returns.
+     *  `ctx` is `ws.ctx`. Optional. */
+    void (*on_open)(void *ctx, proven_ws_stream_t *ws, proven_u8str_view_t protocol);
+    proven_ws_event_config_t ws;           /**< the callbacks, limits, pings and compression of the connection - what a server gives proven_ws_event_accept. `compress` here offers the extension; `subprotocol` is a server's answer and must be empty (the offer is `protocols`) */
+} proven_ws_event_connect_options_t;
+
+/**
+ * @brief Begin a WebSocket connection to a server, on a loop. Returns at once.
+ *
+ * The connection that results is a `proven_ws_stream_t`, the type a server's connections
+ * are: every call below works on it as it does on one of those, and its messages arrive
+ * through the same callbacks. A handler written for one side serves the other. What differs
+ * is the beginning. **Nothing may be sent until the server has accepted** - the sending calls
+ * answer PROVEN_ERR_INVALID_STATE - and `on_open` says when it has;
+ * proven_ws_stream_abort ends the attempt, and so does proven_ws_stream_close.
+ *
+ * When this returns an error nothing was begun and no callback is or will be made. When it
+ * returns PROVEN_OK, **`on_closed` will be called exactly once**, never inside this call -
+ * also for a connection that was never made or an upgrade that was refused. The close code
+ * is then 0 and `why` says which: PROVEN_ERR_REFUSED (nothing listens there, or the server
+ * answered with anything but 101 - no redirect is followed and no challenge answered),
+ * PROVEN_ERR_UNREACHABLE, PROVEN_ERR_TIMEOUT (`connect_timeout_ms`),
+ * PROVEN_ERR_INVALID_FORMAT (an answer that is not HTTP, or a 101 that is not this
+ * handshake's: a wrong `Sec-WebSocket-Accept`, a subprotocol that was not offered, an
+ * extension that was not), PROVEN_ERR_RESET, or what the TLS handshake failed with.
+ *
+ * Frames this side sends are masked, as a client's must be, with keys from a generator seeded
+ * from the system when the connection is begun.
+ *
+ * Not here: names are not resolved; no proxy; not over HTTP/2; no reconnection - begin again.
+ *
+ * @param out receives the connection. Required.
+ * @return PROVEN_ERR_INVALID_ARG for no loop, no `on_message`, a URL that is not absolute
+ *         `ws` or `wss` or that carries credentials, a `wss` URL with no TLS configuration, a
+ *         host that is a name with no `address`, a header this call writes itself or that
+ *         cannot be written, an offer longer than 255 bytes, a `ws.subprotocol` (it is a
+ *         server's field), a compression level or window outside its range; PROVEN_ERR_NOMEM; PROVEN_ERR_IO when the system gave no random
+ *         bytes; and what beginning to connect returned when it failed at once.
+ */
+[[nodiscard]]
+proven_err_t proven_ws_event_connect(proven_loop_t *loop, const proven_ws_event_connect_options_t *options, proven_ws_stream_t **out);
 
 /**
  * @brief Send one whole message.

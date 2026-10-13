@@ -18,6 +18,24 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **`proven_ws_event_connect`** (`ws_event.h`): a WebSocket connection made by this side, on
+  a loop. It returns at once, and what it gives back is a `proven_ws_stream_t` - the type the
+  event-driven server's connections are - so every `proven_ws_stream_` call works on it as on
+  one of those and its messages arrive through the same callbacks: a handler written for one
+  side serves the other. `ws` and `wss`; subprotocols; fields of the caller's; compression
+  offered; a server's pings answered. Nothing may be sent until the server has accepted
+  (`on_open` says when), and `on_closed` is called exactly once for every connection that
+  was begun - with code 0 and the reason for one that never became a WebSocket. Names are
+  not resolved, no redirect is followed, and there is no proxy and no reconnection.
+
+### Changed
+
+- An idle WebSocket connection on the event-driven server is 16 bytes larger (944 bytes,
+  measured): it reaches its connection through a table now, so that a client's can be
+  reached the same way.
+
 ## [0.43.0] - 2026-10-13
 
 ### Added

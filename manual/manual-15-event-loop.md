@@ -904,6 +904,187 @@ int main(void) {
 }
 ```
 
+### A connection this side makes
+
+```c
+proven_err_t proven_ws_event_connect(proven_loop_t *loop, const proven_ws_event_connect_options_t *options, proven_ws_stream_t **out);
+```
+
+A program on a loop is as often the one that asks. `proven_ws_event_connect` begins a
+connection to a server and returns at once; what it gives back is a `proven_ws_stream_t`,
+**the same type a server's connections are**. Every call of this section works on it as it
+does on one of those, and its messages arrive through the same three callbacks: a handler
+written for one side serves the other.
+
+What differs is the beginning.
+
+| | |
+|---|---|
+| `url` | `ws://` or `wss://`. Its host goes into `Host` and, for `wss`, is the name the certificate must be for |
+| `address` | Where to connect. Needed unless the host is an IP address: **names are not resolved on a loop** (section 12 says why, and what to do) |
+| `tls` | For `wss`. Without it a `wss` URL is refused - never connected in the clear instead |
+| `headers`, `protocols` | Fields of your own (`Origin`, `Authorization`), and the subprotocols to offer |
+| `connect_timeout_ms` | To be connected, secured and accepted. 0: 10 s |
+| `on_open` | The server accepted. It is given the subprotocol the server chose |
+| `ws` | A `proven_ws_event_config_t` - the callbacks, limits, pings and compression of the connection, as a server gives `proven_ws_event_accept`. `compress` here offers the extension |
+
+**Nothing may be sent until the server has accepted**: the sending calls answer
+`PROVEN_ERR_INVALID_STATE`, and `on_open` says when it has (sending from inside it is fine).
+`proven_ws_stream_abort` ends an attempt that is still under way, and so does
+`proven_ws_stream_close`.
+
+**`on_closed` is called exactly once for every connection that was begun** - also for one
+that never became a WebSocket. Its code is then 0, and `why` says what happened:
+
+| `why`, with code 0 | What happened |
+|---|---|
+| `PROVEN_ERR_REFUSED` | Nothing listens there - or the server answered with anything but 101. No redirect is followed and no challenge answered |
+| `PROVEN_ERR_TIMEOUT` | Not connected, secured and accepted within `connect_timeout_ms` |
+| `PROVEN_ERR_INVALID_FORMAT` | The answer was not HTTP, or was a 101 that is not this handshake's: a wrong `Sec-WebSocket-Accept`, a subprotocol or an extension that was not offered |
+| `PROVEN_ERR_RESET`, `PROVEN_ERR_UNREACHABLE`, a TLS error | The connection was lost, could not be made, or could not be secured |
+
+A client's frames are masked, as the protocol requires of them; the keys come from a
+generator seeded from the system when the connection is begun. Not here: a proxy,
+reconnection (begin again), and WebSocket over HTTP/2.
+
+This program has both ends on one loop. It is compiled and run by the test suite:
+
+<!-- example: manual/examples/en/ex_15_ws_event_client.c -->
+```c
+#include <stdio.h>
+#include <string.h>
+
+/*
+ * A WebSocket client on the loop: a connection that costs no thread on this side either.
+ *
+ * proven_ws_event_connect begins a connection and returns at once. What it gives back is a
+ * proven_ws_stream_t - the type a server's connections are - so the calls and the callbacks
+ * are the ones the server above uses. What is new is the beginning: on_open says when the
+ * server has accepted, and until then nothing may be sent.
+ *
+ * One loop carries both ends here: the server that is asked, and the client that asks.
+ */
+
+typedef struct {
+    proven_loop_t *loop;
+    int opened, answers, closed, refused;
+    proven_u16 code;
+    char last[64];
+} app_t;
+
+// ---- the server: it says what it was sent ----
+
+static void served(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
+    (void)ctx; (void)first;
+    if (!last) return;                      /* this example's messages are small: one piece each */
+    char reply[48];
+    int n = snprintf(reply, sizeof reply, "%s, %u bytes", text ? "text" : "binary", (unsigned)piece.size);
+    (void)proven_ws_stream_send(ws, true, (proven_mem_view_t){ (const proven_byte_t *)reply, (proven_size_t)n });
+}
+
+static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
+    (void)ctx;
+    proven_ws_event_config_t config = { .on = { .on_message = served } };
+    proven_ws_stream_t *ws = NULL;
+    if (proven_ws_event_accept(stream, head, &config, &ws) != PROVEN_OK) (void)proven_http_stream_respond(stream, 400, NULL, 0, (proven_mem_view_t){ 0 });
+}
+
+// ---- the client ----
+
+/* The server accepted. From here on - and from inside this call - messages may be sent. */
+static void on_open(void *ctx, proven_ws_stream_t *ws, proven_u8str_view_t protocol) {
+    app_t *app = ctx;
+    (void)protocol;
+    app->opened++;
+    (void)proven_ws_stream_send(ws, true, proven_mem_view_from_u8(PROVEN_LIT("hello")));
+}
+
+/* The same callback a server has. This side asks twice and then says goodbye. */
+static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
+    app_t *app = ctx;
+    (void)text; (void)first;
+    if (!last) return;
+    proven_size_t n = piece.size < sizeof app->last - 1 ? piece.size : sizeof app->last - 1;
+    memcpy(app->last, piece.ptr, n);
+    app->last[n] = '\0';
+    printf("the server says: %s\n", app->last);
+    if (++app->answers == 1) {
+        static const proven_byte_t bytes[300] = { 1, 2, 3 };
+        (void)proven_ws_stream_send(ws, false, (proven_mem_view_t){ bytes, sizeof bytes });
+    } else {
+        proven_ws_stream_close(ws, 1000, PROVEN_LIT("thank you"));
+    }
+}
+
+/* Called exactly once for every connection that was begun - also for one that never opened:
+ * its code is then 0, and `why` says what went wrong. */
+static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
+    app_t *app = ctx;
+    (void)ws;
+    if (code == 0) {
+        /* Never a WebSocket: nothing listened, the server answered something else, or time ran out. */
+        printf("no connection: error %d\n", (int)why);
+        app->refused++;
+    } else {
+        app->code = code;
+        app->closed++;
+    }
+    /* Both connections of this program have ended: there is nothing left for the loop to do. */
+    if (app->closed == 1 && app->refused == 1) proven_loop_stop(app->loop);
+}
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    app_t app = { 0 };
+    EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
+    proven_http_event_server_config_t server_config = { .on = { .on_request = on_request } };
+    proven_http_event_server_t *server = NULL;
+    proven_net_addr_t at;
+    EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &server_config, &server) == PROVEN_OK, "a server");
+    proven_err_t err = proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at);
+    if (err == PROVEN_ERR_PERMISSION || err == PROVEN_ERR_UNSUPPORTED) {
+        printf("no sockets in this environment; nothing to show\n");
+        proven_http_event_server_destroy(server);
+        proven_loop_destroy(app.loop);
+        return EXAMPLE_OK();
+    }
+    EXAMPLE_REQUIRE(err == PROVEN_OK, "it listens");
+
+    /* The host is an address, so none has to be given: names are not resolved on a loop. */
+    char url[64];
+    int n = snprintf(url, sizeof url, "ws://127.0.0.1:%u/chat", (unsigned)at.port);
+    proven_ws_event_connect_options_t options = {
+        .url = { (const proven_byte_t *)url, (proven_size_t)n },
+        .on_open = on_open,
+        .ws = { .on = { .on_message = on_message, .on_closed = on_closed }, .ctx = &app },
+    };
+    proven_ws_stream_t *ws = NULL;
+    EXAMPLE_REQUIRE(proven_ws_event_connect(app.loop, &options, &ws) == PROVEN_OK && ws != NULL && app.opened == 0, "a connection is begun; nothing has happened yet");
+    /* The call has returned and the connection is being made: this is too early to speak. */
+    EXAMPLE_REQUIRE(proven_ws_stream_send(ws, true, proven_mem_view_from_u8(PROVEN_LIT("too early"))) == PROVEN_ERR_INVALID_STATE, "nothing can be sent before the server has accepted");
+
+    /* And one that will fail, to see how that is told: a port that was just closed. */
+    proven_net_listener_t unused;
+    proven_net_addr_t nobody;
+    EXAMPLE_REQUIRE(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 1, &unused, &nobody) == PROVEN_OK && proven_net_listener_close(&unused) == PROVEN_OK, "a port nobody listens on");
+    n = snprintf(url, sizeof url, "ws://127.0.0.1:%u/chat", (unsigned)nobody.port);
+    options.url.size = (proven_size_t)n;
+    proven_ws_stream_t *lost = NULL;
+    err = proven_ws_event_connect(app.loop, &options, &lost);
+    EXAMPLE_REQUIRE(err == PROVEN_OK || err == PROVEN_ERR_REFUSED, "an attempt that cannot succeed: refused now, or told later");
+    if (err != PROVEN_OK) app.refused++;
+
+    /* Everything else happens here. */
+    if (!(app.closed == 1 && app.refused == 1)) EXAMPLE_REQUIRE(proven_loop_run(app.loop) == PROVEN_OK, "the loop runs until both have ended");
+    EXAMPLE_REQUIRE(app.opened == 1 && app.answers == 2 && strcmp(app.last, "binary, 300 bytes") == 0, "it opened once, and two messages were answered");
+    EXAMPLE_REQUIRE(app.closed == 1 && app.code == 1000 && app.refused == 1, "it closed once, with this side's code - and the other attempt was reported once");
+
+    proven_http_event_server_destroy(server);
+    proven_loop_destroy(app.loop);
+    return EXAMPLE_OK();
+}
+```
+
 ## 12. The event-driven client
 
 ```c
@@ -1447,7 +1628,7 @@ int main(void) {
 requests are read into the loop's scratch buffer, and bytes are copied aside only when a
 request is incomplete. (A compressor exists only while a compressed response is being
 written.) On x86-64 Linux the registered tests measure 448 bytes of heap for an
-idle plain HTTP connection, failing above 512, and 928 bytes for an idle plain WebSocket
+idle plain HTTP connection, failing above 512, and 944 bytes for an idle plain WebSocket
 connection, failing above 1 KiB. A TLS connection adds the engine's state, about 1 KiB while
 idle (Chapter 14, section 9). **An HTTP/2 connection is another size**: 2,312 bytes idle after
 one small request, failing above 3 KiB, and growing with the header fields it is made to
@@ -1522,8 +1703,8 @@ changes that.
 
 - **A load test worth the name.** The figures above are one machine talking to itself: no
   network, no slow or hostile clients, no TLS under load, one handler that does nothing.
-- **A WebSocket client on the loop**, and upgrades other than WebSocket on this server.
-  Chapter 12's client is the blocking one.
+- Upgrades other than WebSocket on this server; a WebSocket client through a proxy or over
+  HTTP/2.
 - **In the event-driven client:** redirects, authentication, cookies, proxies, and name
   resolution (section 12 says what to do instead); pipelining, and any order among waiting
   requests but the order of starting.

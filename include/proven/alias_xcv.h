@@ -1251,6 +1251,7 @@
 #define xcv_ws_event_accept proven_ws_event_accept
 #define xcv_ws_event_callbacks_t proven_ws_event_callbacks_t
 #define xcv_ws_event_config_t proven_ws_event_config_t
+#define xcv_ws_event_connect proven_ws_event_connect
 #define xcv_ws_event_kind_t proven_ws_event_kind_t
 #define xcv_ws_event_t proven_ws_event_t
 #define xcv_ws_frame_parse proven_ws_frame_parse

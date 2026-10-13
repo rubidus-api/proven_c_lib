@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 110 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 111 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-12, Windows 11 test VM: x86-64 334 PASS, 0 FAIL, 8 SKIP; i686 
 ## Test catalog
 
 
-The hosted full run builds and executes 174 registered tests plus the 168 runnable manual examples - 342 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 187 test files: the 171 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 175 registered tests plus the 170 runnable manual examples - 345 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 188 test files: the 171 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -906,9 +906,27 @@ Sub-checks:
 - Liveness: a silent client that answers pings stays connected for 700 ms of a 100 ms ping interval and still works; one that does not is sent a ping and dropped after the pong timeout with 1006, `PROVEN_ERR_TIMEOUT`.
 - Bad input: an unmasked frame is answered with close 1002 (`PROVEN_ERR_INVALID_FORMAT`), a frame announcing 300,000 bytes with 1009 (`PROVEN_ERR_OUT_OF_BOUNDS`), text that is not UTF-8 with 1007 (`PROVEN_ERR_INVALID_ENCODING`); a client that vanishes is 1006, `PROVEN_ERR_RESET`.
 - Accounting: every accepted connection was closed exactly once; `on_done` was called once for every `on_request`, upgraded or not; destroying the server ends an open connection with `on_closed(1006, PROVEN_ERR_RESET)` and the client sees it end.
-- Memory: three hundred idle plain WebSocket connections hold less than 1 KiB of heap each (928 measured on x86-64 Linux), and everything is given back when they close and when the server is destroyed.
+- Memory: three hundred idle plain WebSocket connections hold less than 1 KiB of heap each (944 measured on x86-64 Linux), and everything is given back when they close and when the server is destroyed.
 
 Failure tip: inspect `src/proven/ws_event.c` - `ws_on_input` for what arrives, `ws_on_timer` for liveness and the close timeout, `ws_end` and `ws_finish` for the end. The connection underneath is `src/proven/http_event.c` in its `EV_RAW` state, reached through `src/proven/proven_internal_http_event.h`. The cases wait for the handler's own counters rather than for a fixed time: a client has its 101 before the handler's next line has run.
+
+### `tests/test_unit_ws_event_client` - a WebSocket client on the loop
+
+Intent: verify `proven_ws_event_connect` on one thread - the connection and the event-driven server it talks to sit on the same loop, which the test turns - plain and over TLS, and against listeners the test answers itself for the ways a connection can fail to become a WebSocket.
+
+Sub-checks:
+
+- What the call refuses, with nothing begun and nothing told: no loop, no options, no `on_message`, a URL that is not absolute `ws` or `wss` or that carries credentials, `wss` with no TLS configuration, a host that is a name with no address, a header the call writes itself, a header value that would end its line, an offer of 256 bytes, a subprotocol in the server's part of the options, a compression level out of range.
+- For each transport: a connection is begun and nothing happens inside the call; a send, a ping and a piece before the server has accepted are `PROVEN_ERR_INVALID_STATE`; `on_open` once, with no subprotocol and no compression when none was asked for; the peer is the server. A text message goes and comes back - a server's decoder refuses a frame that is not masked, so every message that arrives there is also a check that this side masked it - and so do text and binary messages of eleven sizes from empty to 300,000 bytes, and one sent in three pieces. A close from this side: both ends report 1000, this one once with `PROVEN_OK`.
+- Compression offered to a server that takes it: agreed, a hundred thousand bytes and messages of 63 and 64 bytes go and come back, and one message is sent as it is; offered to a server that does not: not agreed, messages go as they are. An abort ends the connection inside the call, once, as 1006 and `PROVEN_ERR_RESET`.
+- Two subprotocols offered: `on_open` is given the one the server chose. A field of the caller's (`Origin`) reaches the server. A message sent from inside `on_open` is taken and answered.
+- A server that closes at once with 4001: `on_open`, then `on_closed` with that code. Fifty messages pushed by the server with this side pausing at the seventh for 60 ms: all fifty in order, none while paused. A server that pings every 40 ms and gives up after 150 more: half a second of silence later the connection is open and a message still reaches the server.
+- An answer of 200 instead of 101: no `on_open`, `on_closed` once with code 0 and `PROVEN_ERR_REFUSED`.
+- Connections that do not become WebSockets, each ending in one `on_closed` with code 0: nothing listening (`PROVEN_ERR_REFUSED`, from the call or from `on_closed`); a server that takes the request and says nothing (`PROVEN_ERR_TIMEOUT` when `connect_timeout_ms` is over); one that hangs up (`PROVEN_ERR_RESET`); one that answers in another protocol (`PROVEN_ERR_INVALID_FORMAT`); a redirect, which is not followed (`PROVEN_ERR_REFUSED`); a 101 whose `Sec-WebSocket-Accept` answers another key (`PROVEN_ERR_INVALID_FORMAT`). The request each of them received is checked: its line, `Host` with the port, `Upgrade`, the version and a key. Aborted, and closed, before it was open: ended inside the call, once.
+
+Failure tip: inspect `src/proven/ws_event_client.c` - `wsc_on_io` and `wsc_readable` for the states, `wsc_answer` for the upgrade, `wsc_gone` for the one report of a failure, the `wsc_tr_` functions for what the protocol asks of the connection - and, in `src/proven/ws_event.c`, `proven_ws_event_client_new_` and `ws_frame` for a client's masked frames. Run it under AddressSanitizer: every connection here ends, and nothing may be left.
+
+Note: the peer in every case is this library's own server or the test itself; that Node's `ws` package agrees is checked by a private program.
 
 ### `tests/test_unit_http_event_client` - the event-driven HTTP client
 

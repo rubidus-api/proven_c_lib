@@ -5,6 +5,7 @@
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 
 #include "proven/time.h"
+#include "proven/random.h"
 
 /*
  * WebSocket on a connection of the event-driven server.
@@ -40,8 +41,9 @@ typedef struct {
 } ws_rx_t;
 
 struct proven_ws_stream {
-    const proven_http_event_raw_ops_t *ops;      /* first: http_event.c finds the operations here */
-    proven_http_stream_t *conn;
+    const proven_http_event_raw_ops_t *ops;      /* first: whatever carries the connection finds the operations here */
+    const proven_ws_transport_t_ *tr;            /* and this is how the connection is reached: the server's record, or a client's */
+    void *conn;                                  /* what `tr` works on */
     proven_allocator_t alloc;
     proven_ws_event_callbacks_t on;
     void *ctx;
@@ -60,6 +62,9 @@ struct proven_ws_stream {
     bool deflate : 1;                            /* permessage-deflate was agreed: a ws_z_t follows this struct */
     bool raw_paused : 1;                         /* the connection underneath was told to stop reading */
     bool plain : 1;                              /* proven_ws_stream_set_compress(false): messages that begin now go as they are */
+    bool client : 1;                             /* this side asked for the connection: its frames are masked, the peer's are not */
+    bool opening : 1;                            /* a client's, before the server has accepted the upgrade: nothing may be sent */
+    bool may_deflate : 1;                        /* a client's that offered compression: room for a ws_z_t follows this struct, used if the server agrees */
 };
 
 /* What a connection that agreed permessage-deflate holds besides: allocated behind the struct
@@ -73,9 +78,16 @@ typedef struct {
     bool zip_begun;                              /* the first frame of the compressed message being sent has been queued */
 } ws_z_t;
 
+/* A client's generator of mask keys: behind the struct, after the room for a ws_z_t if it
+ * offered compression. A server's connection has neither, and is not a byte larger for them. */
+static proven_chacha_rng_t *ws_masks(const proven_ws_stream_t *ws);
+
 /* Only for a connection with `deflate` set. */
 static ws_z_t *ws_z(const proven_ws_stream_t *ws) { return (ws_z_t *)(void *)(ws + 1); }
 static ws_rx_t *ws_rx(const proven_ws_stream_t *ws) { return ws->deflate ? ws_z(ws)->rx : (ws_rx_t *)0; }
+static proven_chacha_rng_t *ws_masks(const proven_ws_stream_t *ws) {
+    return (proven_chacha_rng_t *)(void *)((proven_byte_t *)(ws + 1) + (ws->may_deflate ? sizeof(ws_z_t) : 0));
+}
 
 static proven_u8str_view_t ws_lit_n(const char *s, proven_size_t n) { return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n }; }
 #define ws_lit(s) ws_lit_n((s), sizeof(s) - 1)
@@ -110,12 +122,12 @@ static void ws_finish(proven_ws_stream_t *ws, proven_u16 code, proven_err_t why)
 /* Let go of the connection and end. `polite` flushes what is queued and waits a moment for
  * the client to close; otherwise the socket is closed now. */
 static void ws_end(proven_ws_stream_t *ws, bool polite, proven_u16 code, proven_err_t why) {
-    proven_http_stream_t *conn = ws->conn;
+    void *conn = ws->conn;
     ws->conn = (void *)0;
     if (conn) {
-        proven_http_event_raw_timer_(conn, 0);
-        if (polite) proven_http_event_raw_close_(conn);
-        else proven_http_event_raw_kill_(conn);
+        ws->tr->timer(conn, 0);
+        if (polite) ws->tr->close(conn);
+        else ws->tr->kill(conn);
     }
     ws_finish(ws, code, why);
 }
@@ -125,10 +137,22 @@ static proven_err_t ws_frame(proven_ws_stream_t *ws, proven_u8 opcode, bool fin,
     if (!ws->conn) return PROVEN_ERR_RESET;
     proven_byte_t header[PROVEN_WS_MAX_FRAME_HEADER];
     proven_size_t len = 0;
-    proven_ws_frame_t f = { .fin = fin, .opcode = opcode, .masked = false, .length = data.size, .rsv1 = rsv1 };
+    proven_ws_frame_t f = { .fin = fin, .opcode = opcode, .masked = ws->client, .length = data.size, .rsv1 = rsv1 };
+    if (f.masked) proven_chacha_rng_fill(ws_masks(ws), f.mask, sizeof f.mask);
     proven_err_t e = proven_ws_frame_write((proven_mem_mut_t){ .ptr = header, .size = sizeof header }, &len, &f);
     if (e != PROVEN_OK) return e;
-    if (!proven_http_event_raw_send_(ws->conn, (proven_mem_view_t){ .ptr = header, .size = len }, data)) return PROVEN_ERR_RESET;
+    if (!f.masked) return ws->tr->send(ws->conn, (proven_mem_view_t){ .ptr = header, .size = len }, data) ? PROVEN_OK : PROVEN_ERR_RESET;
+    /* A client's payload is masked on its way: a piece at a time through a small buffer, the
+     * header with the first. What is queued is queued whole or the connection is gone. */
+    proven_byte_t piece[4096];
+    proven_size_t done = 0;
+    do {
+        const proven_size_t n = data.size - done < sizeof piece ? data.size - done : sizeof piece;
+        for (proven_size_t i = 0; i < n; ++i) piece[i] = data.ptr[done + i];
+        proven_ws_mask((proven_mem_mut_t){ .ptr = piece, .size = n }, f.mask, done);
+        if (!ws->conn || !ws->tr->send(ws->conn, (proven_mem_view_t){ .ptr = header, .size = done == 0 ? len : 0 }, (proven_mem_view_t){ .ptr = piece, .size = n })) return PROVEN_ERR_RESET;
+        done += n;
+    } while (done < data.size);
     return PROVEN_OK;
 }
 
@@ -143,7 +167,7 @@ static void ws_send_close(proven_ws_stream_t *ws, proven_u16 code, proven_u8str_
     ws->close_sent = true;
     ws->close_code = code;
     if (ws_frame(ws, PROVEN_WS_CLOSE, true, false, (proven_mem_view_t){ .ptr = payload, .size = len }) == PROVEN_OK && ws->conn) {
-        ws->close_left = proven_http_stream_buffered(ws->conn);
+        ws->close_left = ws->tr->buffered(ws->conn);
     }
 }
 
@@ -156,7 +180,7 @@ static void ws_fail(proven_ws_stream_t *ws, proven_err_t why) {
 
 static void ws_arm(proven_ws_stream_t *ws) {
     if (!ws->conn) return;
-    proven_http_event_raw_timer_(ws->conn, ws->close_sent ? ws->close_ms : ws->pinged ? ws->pong_ms : ws->ping_ms);
+    ws->tr->timer(ws->conn, ws->close_sent ? ws->close_ms : ws->pinged ? ws->pong_ms : ws->ping_ms);
 }
 
 // -----------------------------------------------------------------------------
@@ -289,7 +313,7 @@ static proven_size_t ws_on_input(void *raw, proven_mem_mut_t in) {
      * stopped: nothing was resumed while a message was being delivered. */
     if (ws->raw_paused && !ws->paused && !ws->closed && ws->conn && !(ws_rx(ws) && ws_rx(ws)->have_held)) {
         ws->raw_paused = false;
-        proven_http_event_raw_pause_(ws->conn, false);
+        ws->tr->pause(ws->conn, false);
     }
     ws_leave(ws);
     return used;
@@ -302,12 +326,12 @@ static void ws_on_progress(void *raw) {
      * that, it is not late with its answer. Only output that actually went counts - this is
      * also called when nothing moved. */
     if (ws->close_sent) {
-        proven_size_t left = proven_http_stream_buffered(ws->conn);
+        proven_size_t left = ws->tr->buffered(ws->conn);
         if (left < ws->close_left) { ws->close_left = left; ws_arm(ws); }
         return;
     }
     if (!ws->want_writable) return;
-    if (proven_http_stream_buffered(ws->conn) >= ws->max_buffered) return;
+    if (ws->tr->buffered(ws->conn) >= ws->max_buffered) return;
     ws->want_writable = false;
     ws_enter(ws);
     if (ws->on.on_writable) ws->on.on_writable(ws->ctx, ws);
@@ -343,6 +367,15 @@ static void ws_on_closed(void *raw, proven_err_t why) {
 static const proven_http_event_raw_ops_t ws_ops = {
     .on_input = ws_on_input, .on_progress = ws_on_progress, .on_timer = ws_on_timer, .on_closed = ws_on_closed,
 };
+
+/* The server's connection record, as a transport. */
+static bool ws_sv_send(void *conn, proven_mem_view_t a, proven_mem_view_t b) { return proven_http_event_raw_send_(conn, a, b); }
+static void ws_sv_timer(void *conn, proven_u32 ms) { proven_http_event_raw_timer_(conn, ms); }
+static void ws_sv_pause(void *conn, bool paused) { proven_http_event_raw_pause_(conn, paused); }
+static void ws_sv_close(void *conn) { proven_http_event_raw_close_(conn); }
+static void ws_sv_kill(void *conn) { proven_http_event_raw_kill_(conn); }
+static proven_size_t ws_sv_buffered(const void *conn) { return proven_http_stream_buffered(conn); }
+static const proven_ws_transport_t_ ws_sv_transport = { ws_sv_send, ws_sv_timer, ws_sv_pause, ws_sv_close, ws_sv_kill, ws_sv_buffered };
 
 // -----------------------------------------------------------------------------
 // Public
@@ -401,7 +434,7 @@ proven_err_t proven_ws_event_accept(proven_http_stream_t *stream, const proven_h
     if (m.err != PROVEN_OK) return PROVEN_ERR_NOMEM;
     proven_ws_stream_t *ws = (proven_ws_stream_t *)(void *)m.value.ptr;
     *ws = (proven_ws_stream_t){
-        .ops = &ws_ops, .alloc = alloc, .on = config->on, .ctx = config->ctx,
+        .ops = &ws_ops, .tr = &ws_sv_transport, .alloc = alloc, .on = config->on, .ctx = config->ctx,
         .max_message = config->max_message_bytes ? config->max_message_bytes : WS_DEFAULT_MESSAGE,
         .max_buffered = config->max_buffered_output ? config->max_buffered_output : WS_DEFAULT_BUFFERED,
         .ping_ms = config->ping_interval_ms ? config->ping_interval_ms : WS_DEFAULT_PING_MS,
@@ -422,12 +455,65 @@ proven_err_t proven_ws_event_accept(proven_http_stream_t *stream, const proven_h
     return PROVEN_OK;
 }
 
+// -----------------------------------------------------------------------------
+// A connection this side makes (ws_event_client.c is its transport)
+// -----------------------------------------------------------------------------
+
+proven_err_t proven_ws_event_client_new_(proven_allocator_t alloc, const proven_ws_event_config_t *config, const proven_ws_transport_t_ *transport,
+                                         void *conn, proven_net_addr_t peer, proven_ws_stream_t **out) {
+    *out = (void *)0;
+    /* (`subprotocol` is a server's answer; a client's offer is in the options. Set here it
+     * would do nothing, which is a mistake to be told about and not a wish to be ignored.) */
+    if (!config || !config->on.on_message || config->subprotocol.size != 0) return PROVEN_ERR_INVALID_ARG;
+    if (config->compress_level < -1 || config->compress_level > 9 ||
+        (config->compress_window_bits != 0 && (config->compress_window_bits < 9 || config->compress_window_bits > 15))) return PROVEN_ERR_INVALID_ARG;
+    proven_byte_t seed[PROVEN_CHACHA_SEED_SIZE];
+    if (!proven_random_bytes(seed, sizeof seed)) return PROVEN_ERR_IO;
+    /* Behind the struct: room for the compression state, if it was offered, and the
+     * generator of mask keys - neither of which a server's connection carries. */
+    const proven_size_t z_bytes = config->compress ? sizeof(ws_z_t) : 0;
+    proven_result_mem_mut_t m = alloc.alloc_fn(alloc.ctx, sizeof(proven_ws_stream_t) + z_bytes + sizeof(proven_chacha_rng_t), 16);
+    if (m.err != PROVEN_OK) return PROVEN_ERR_NOMEM;
+    proven_ws_stream_t *ws = (proven_ws_stream_t *)(void *)m.value.ptr;
+    *ws = (proven_ws_stream_t){
+        .ops = &ws_ops, .tr = transport, .conn = conn, .alloc = alloc, .on = config->on, .ctx = config->ctx,
+        .max_message = config->max_message_bytes ? config->max_message_bytes : WS_DEFAULT_MESSAGE,
+        .max_buffered = config->max_buffered_output ? config->max_buffered_output : WS_DEFAULT_BUFFERED,
+        .ping_ms = config->ping_interval_ms ? config->ping_interval_ms : WS_DEFAULT_PING_MS,
+        .pong_ms = config->pong_timeout_ms ? config->pong_timeout_ms : WS_DEFAULT_PONG_MS,
+        .close_ms = config->close_timeout_ms ? config->close_timeout_ms : WS_DEFAULT_CLOSE_MS,
+        .peer = peer, .client = true, .opening = true, .may_deflate = config->compress,
+    };
+    if (config->compress) *ws_z(ws) = (ws_z_t){ .level = (proven_i8)config->compress_level, .window_bits = (proven_i8)config->compress_window_bits };
+    proven_chacha_rng_seed(ws_masks(ws), seed);
+    proven_ws_decoder_init(&ws->dec, false, ws->max_message);
+    *out = ws;
+    return PROVEN_OK;
+}
+
+void proven_ws_event_client_opened_(proven_ws_stream_t *ws, bool deflate) {
+    ws->opening = false;
+    if (deflate && ws->may_deflate) {
+        ws->deflate = true;
+        proven_ws_decoder_allow_compressed(&ws->dec);
+    }
+    ws_arm(ws);
+}
+
+void proven_ws_event_client_failed_(proven_ws_stream_t *ws, proven_err_t why) {
+    ws_finish(ws, 0, why);
+}
+
+void proven_ws_event_client_discard_(proven_ws_stream_t *ws) {
+    ws->alloc.free_fn(ws->alloc.ctx, ws);
+}
+
 /* Whether a data or ping frame may be queued now. */
 static proven_err_t ws_may_send(proven_ws_stream_t *ws) {
     if (!ws) return PROVEN_ERR_INVALID_ARG;
     if (ws->closed || !ws->conn) return PROVEN_ERR_RESET;
-    if (ws->close_sent) return PROVEN_ERR_INVALID_STATE;
-    if (proven_http_stream_buffered(ws->conn) >= ws->max_buffered) { ws->want_writable = true; return PROVEN_ERR_AGAIN; }
+    if (ws->close_sent || ws->opening) return PROVEN_ERR_INVALID_STATE;
+    if (ws->tr->buffered(ws->conn) >= ws->max_buffered) { ws->want_writable = true; return PROVEN_ERR_AGAIN; }
     return PROVEN_OK;
 }
 
@@ -497,6 +583,8 @@ proven_err_t proven_ws_stream_ping(proven_ws_stream_t *ws, proven_mem_view_t dat
 
 void proven_ws_stream_close(proven_ws_stream_t *ws, proven_u16 code, proven_u8str_view_t reason) {
     if (!ws || ws->closed || !ws->conn || ws->close_sent) return;
+    /* A client's that is not open yet has nobody to say goodbye to: it is given up. */
+    if (ws->opening) { proven_ws_stream_abort(ws); return; }
     if (!proven_ws_close_code_is_valid(code)) code = PROVEN_WS_CLOSE_NORMAL;
     ws_enter(ws);
     ws_send_close(ws, code, reason);
@@ -516,7 +604,7 @@ void proven_ws_stream_pause(proven_ws_stream_t *ws) {
     ws->paused = true;
     if (!ws->raw_paused) {
         ws->raw_paused = true;
-        proven_http_event_raw_pause_(ws->conn, true);
+        ws->tr->pause(ws->conn, true);
     }
 }
 
@@ -543,7 +631,7 @@ void proven_ws_stream_resume(proven_ws_stream_t *ws) {
     }
     if (!ws->closed && ws->conn && !ws->paused && ws->raw_paused && !(ws_rx(ws) && ws_rx(ws)->have_held)) {
         ws->raw_paused = false;
-        proven_http_event_raw_pause_(ws->conn, false);
+        ws->tr->pause(ws->conn, false);
     }
     ws_leave(ws);
 }
@@ -557,6 +645,6 @@ void proven_ws_stream_set_compress(proven_ws_stream_t *ws, bool on) {
 void proven_ws_stream_set_user(proven_ws_stream_t *ws, void *user) { if (ws) ws->user = user; }
 void *proven_ws_stream_user(const proven_ws_stream_t *ws) { return ws ? ws->user : (void *)0; }
 proven_net_addr_t proven_ws_stream_peer(const proven_ws_stream_t *ws) { return ws ? ws->peer : (proven_net_addr_t){ 0 }; }
-proven_size_t proven_ws_stream_buffered(const proven_ws_stream_t *ws) { return ws && ws->conn ? proven_http_stream_buffered(ws->conn) : 0; }
+proven_size_t proven_ws_stream_buffered(const proven_ws_stream_t *ws) { return ws && ws->conn ? ws->tr->buffered(ws->conn) : 0; }
 
 #endif
