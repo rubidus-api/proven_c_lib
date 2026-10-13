@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-10-14
+
 ### Changed
 
 - **The event-driven servers and clients copy their buffers as blocks.** Thirteen copies
