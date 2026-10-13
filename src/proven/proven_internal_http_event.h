@@ -176,6 +176,11 @@ proven_result_size_t proven_http_event_h2_write_(proven_http_stream_t *stream, p
 [[nodiscard]]
 proven_err_t proven_http_event_h2_end_(proven_http_stream_t *stream);
 proven_err_t proven_http_event_h2_flush_(proven_http_stream_t *stream);
+
+/* The engine (h2_conn.c), for this server's driver only: a response head is queued whatever
+ * output is waiting - see there for what bounds it instead. */
+struct proven_h2_conn;
+void proven_h2_conn_heads_past_bound_(struct proven_h2_conn *conn);
 [[nodiscard]]
 proven_err_t proven_http_event_h2_respond_(proven_http_stream_t *stream, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count, proven_mem_view_t body);
 void proven_http_event_h2_abort_(proven_http_stream_t *stream);

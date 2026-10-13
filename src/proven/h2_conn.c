@@ -63,8 +63,7 @@ struct proven_h2_conn {
     proven_byte_t *blk;                    /* a header block that came in more than one piece */
     proven_size_t blk_cap, blk_len;
     proven_byte_t *hbuf;                   /* decoded fields, then the scratch they point into */
-    proven_byte_t *text;                   /* the debug text of the peer's GOAWAY, when it sent one with any: H2C_TEXT_KEEP bytes */
-    proven_u32 text_len, text_left;
+    proven_byte_t *text;                   /* the debug text of the peer's GOAWAY, when it sent one with any: H2C_TEXT_KEEP bytes; `content_left` counts what of it is still to come */
     const bool *sensitive;                 /* proven_h2_conn_next_sensitive: for the next header list sent */
 
     proven_i64 send_win, recv_win;
@@ -90,8 +89,11 @@ struct proven_h2_conn {
     bool goaway_recv, goaway_sent, closed, reported, oom;
     bool hbuf_lent;                        /* hbuf is the caller's, and stays */
     bool self_dep;                         /* the block being read came with a priority that names its own stream */
-    bool sweep_goaway, sweep_writable;
+    /* One bit each, with the next: the three then take the room two took. */
+    bool sweep_goaway : 1, sweep_writable : 1;
+    bool heads_free : 1;                   /* proven_h2_conn_heads_past_bound_: a response head is not refused for the output bound */
     proven_u32 sweep_at;                   /* where the search for a stream that may send again goes on from: each in its turn */
+    proven_u32 text_len;                   /* how much of `text` the last GOAWAY filled */
 };
 
 static proven_u32 h2c_u32(const proven_byte_t *p) {
@@ -851,8 +853,8 @@ static void h2c_on_fixed(proven_h2_conn_t *c, proven_h2_event_t *ev) {
                     if (m.err == PROVEN_OK) c->text = m.value.ptr;
                 }
                 if (c->text) {
-                    c->text_left = f.length - 8 < H2C_TEXT_KEEP ? f.length - 8 : H2C_TEXT_KEEP;
-                    c->pad_left = f.length - 8 - c->text_left;
+                    c->content_left = f.length - 8 < H2C_TEXT_KEEP ? f.length - 8 : H2C_TEXT_KEEP;
+                    c->pad_left = f.length - 8 - c->content_left;
                     c->rs = RS_TEXT;
                     return;
                 }
@@ -997,12 +999,12 @@ static proven_err_t h2c_read(proven_h2_conn_t *c, proven_mem_view_t in, proven_s
                 break;
             }
             case RS_TEXT: {
-                const proven_u32 n = h2c_min_u32(c->text_left, avail);
+                const proven_u32 n = h2c_min_u32(c->content_left, avail);
                 h2c_copy(c->text + c->text_len, p, n);
                 c->text_len += n;
-                c->text_left -= n;
+                c->content_left -= n;
                 *used += n;
-                if (c->text_left > 0) return PROVEN_OK;
+                if (c->content_left > 0) return PROVEN_OK;
                 c->rs = RS_SKIP;                               /* what is not kept; pad_left was set with the state */
                 h2c_goaway_event(c, ev);
                 break;
@@ -1268,7 +1270,7 @@ proven_err_t proven_h2_conn_submit_response(proven_h2_conn_t *c, proven_u32 stre
     h2c_stream_t *s = h2c_find(c, stream_id);
     if (!s) return PROVEN_ERR_NOT_FOUND;
     if ((s->flags & ST_HEAD_SENT) != 0) return PROVEN_ERR_INVALID_STATE;
-    if (h2c_pending(c) >= c->cfg_out) { s->flags |= ST_HBLOCKED; return PROVEN_ERR_BUSY; }
+    if (!c->heads_free && h2c_pending(c) >= c->cfg_out) { s->flags |= ST_HBLOCKED; return PROVEN_ERR_BUSY; }
     proven_err_t err = h2c_send_block(c, stream_id, headers, count, end_stream, sensitive);
     if (err != PROVEN_OK) return err;
     if (status >= 200) s->flags |= ST_HEAD_SENT;
@@ -1399,6 +1401,15 @@ void proven_h2_conn_stream_set_user(proven_h2_conn_t *c, proven_u32 stream_id, v
 void *proven_h2_conn_stream_user(const proven_h2_conn_t *c, proven_u32 stream_id) {
     const h2c_stream_t *s = c ? h2c_peek(c, stream_id) : (void *)0;
     return s ? s->user : (void *)0;
+}
+
+/* For the event-driven server (declared in proven_internal_http_event.h): a response head is
+ * queued whatever is waiting. That driver cannot keep a head to offer again - the list is the
+ * handler's - and it bounds what a peer can make it hold another way: while the output is at
+ * its bound it takes no input, so no more heads can be owed than there are streams open. */
+void proven_h2_conn_heads_past_bound_(proven_h2_conn_t *c);
+void proven_h2_conn_heads_past_bound_(proven_h2_conn_t *c) {
+    if (c) c->heads_free = true;
 }
 
 /* For tests (declared in proven_internal_http_event_client.h): a client's next stream number. */

@@ -72,6 +72,15 @@ static void resume_fire(void *ctx) { proven_http_stream_resume(((app_t *)ctx)->s
 static void later_fire(void *ctx) {
     app_t *a = ctx;
     static const proven_http_header_t plain[] = { H("Content-Type", "text/plain") };
+    if (strncmp(a->path, "/later-wide/", 12) == 0) {
+        /* A head of some three hundred bytes that no table shortens: each one is different. */
+        static unsigned serial;
+        char wide[301];
+        snprintf(wide, sizeof wide, "%0300u", ++serial);
+        const proven_http_header_t fields[] = { H("Content-Type", "text/plain"), { .name = sv("X-Wide"), .value = { (const proven_byte_t *)wide, 300 } } };
+        if (proven_http_stream_begin(a->stream, 200, fields, 2, a->total) == PROVEN_OK) app_pump(a);
+        return;
+    }
     if (proven_http_stream_begin(a->stream, 200, plain, 1, a->total) == PROVEN_OK) app_pump(a);
 }
 static void resume_fire_checked(void *ctx);
@@ -128,6 +137,9 @@ static void on_request(void *ctx, proven_http_stream_t *s, const proven_http_req
         if (body[1] == 0) for (proven_size_t i = 0; i < sizeof body; i++) body[i] = pat(i);
         const proven_size_t n = (proven_size_t)strtoul(a->path + 7, NULL, 10);
         (void)proven_http_stream_respond(s, 200, plain, 1, (proven_mem_view_t){ body, n < sizeof body ? n : sizeof body });
+    } else if (path_starts(req, "/later-wide/")) {
+        a->total = (proven_size_t)strtoul(a->path + 12, NULL, 10);
+        proven_loop_timer_set(g_loop, &a->timer, 200, later_fire, a);
     } else if (path_starts(req, "/later/")) {
         a->total = (proven_size_t)strtoul(a->path + 7, NULL, 10);
         proven_loop_timer_set(g_loop, &a->timer, 200, later_fire, a);
@@ -813,6 +825,66 @@ int main(void) {
             resets += r->reset;
         }
         PROVEN_TEST_ASSERT(good == 100 && resets == 0 && !c.closed, "all hundred are answered whole and none is reset", tls ? "over TLS" : "in the clear");
+        cl_close(&c);
+
+        /* The same with the socket full. Forty megabytes are asked for by a client whose
+         * windows allow all of it and which reads nothing for a while: the system's buffers
+         * fill, the engine reaches its bound, and the requests still being worked through
+         * have their heads to send. A head must wait for room like any output - it was a
+         * reset, with INTERNAL_ERROR, of every response begun after the socket stopped taking
+         * (seen on Windows, where the buffers are small enough for a hundred small answers
+         * to fill them: one run in thirty). */
+        PROVEN_TEST_ASSERT(cl_open_with(&c, tls ? g_client_tls : NULL, port, 1u << 30), "a client whose windows allow everything", "");
+        PROVEN_TEST_ASSERT(cl_get(&c, "/whole/10", 200, 10), "the connection is up", "");
+        const int asked_before = atomic_load(&g_requests);
+        for (int i = 0; i < 100; i++) ids[i] = cl_ask(&c, "GET", "/whole/400000", true);
+        {
+            proven_mem_view_t out = proven_h2_conn_pending_output(c.e);
+            PROVEN_TEST_ASSERT(proven_transport_write_all(c.t, out, proven_net_deadline_in(5000)).err == PROVEN_OK, "a hundred requests written, and nothing read", "");
+            proven_h2_conn_output_sent(c.e, out.size);
+        }
+        proven_time_sleep(500);
+        /* And it takes no request it has no room to answer: with the output at its bound
+         * the rest of what the client sent stays unread, so a client that asks without
+         * reading cannot make the server hold an answer for everything it sends. */
+        const int taken = atomic_load(&g_requests) - asked_before;
+        PROVEN_TEST_ASSERT(taken > 0 && taken < 100, "while the client reads nothing, the server stops taking requests when its output is full", "Check d_full and the loop of h2_on_input in src/proven/http_event_h2.c.");
+        good = 0; resets = 0;
+        for (int i = 0; i < 100; i++) {
+            (void)cl_wait(&c, ids[i], 30000);
+            const res_t *r = cl_res(&c, ids[i]);
+            good += r->end && !r->reset && r->status == 200 && r->got == 400000 && !r->bad;
+            resets += r->reset;
+        }
+        PROVEN_TEST_ASSERT(good == 100 && resets == 0 && !c.closed, "with the socket full all hundred are still answered whole: a head waits for room, it is not a reason to reset",
+            "Check s_head in src/proven/http_event_h2.c and the engine's bound in proven_h2_conn_submit_response: a response head is not refused for the output bound.");
+        cl_close(&c);
+
+        /* And responses that begin later, when the output is already full: sixty handlers
+         * that answer from a timer, to a client that is not reading. Their requests are
+         * taken while there is room; behind them in the same write come forty requests
+         * answered at once, sixteen megabytes that fill the socket long before the timers
+         * fire. A head then still has to be queued - there is nowhere to keep it - and each
+         * of these is some two hundred bytes, so that a few of them are past what the
+         * engine's bound leaves for heads. */
+        PROVEN_TEST_ASSERT(cl_open_with(&c, tls ? g_client_tls : NULL, port, 1u << 30), "a client whose windows allow everything", "");
+        PROVEN_TEST_ASSERT(cl_get(&c, "/whole/10", 200, 10), "the connection is up", "");
+        for (int i = 0; i < 100; i++) ids[i] = cl_ask(&c, "GET", i < 60 ? "/later-wide/400000" : "/whole/400000", true);
+        {
+            proven_mem_view_t out = proven_h2_conn_pending_output(c.e);
+            PROVEN_TEST_ASSERT(proven_transport_write_all(c.t, out, proven_net_deadline_in(5000)).err == PROVEN_OK, "sixty requests that are answered later and forty that are answered at once, and nothing read", "");
+            proven_h2_conn_output_sent(c.e, out.size);
+        }
+        proven_time_sleep(700);
+        good = 0; resets = 0;
+        for (int i = 0; i < 100; i++) {
+            (void)cl_wait(&c, ids[i], 30000);
+            const res_t *r = cl_res(&c, ids[i]);
+            good += r->end && !r->reset && r->status == 200 && r->got == 400000 && !r->bad;
+            resets += r->reset;
+        }
+        PROVEN_TEST_ASSERT(good == 100 && resets == 0 && !c.closed, "responses begun when the output was already full are whole too",
+            "Check proven_h2_conn_heads_past_bound_ and its call in proven_http_event_h2_begin_: the engine queues a response head whatever is waiting.");
         cl_close(&c);
         server_stop();
     }

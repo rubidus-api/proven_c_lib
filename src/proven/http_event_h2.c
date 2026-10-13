@@ -83,6 +83,7 @@ struct h2d {
     proven_time_t quiet_due;           /* when the connection's own silence - output not moving, nothing asked, nothing open - has lasted too long; 0: none is being measured */
     bool over;                         /* nothing more will be taken: write what is owed and close */
     bool eof;                          /* the peer closed its sending side */
+    bool held;                         /* input is left where it is - the connection is not read - until the engine's output is under its bound again */
 };
 
 static proven_u8str_view_t h2_lit_n(const char *s, proven_size_t n) { return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n }; }
@@ -417,6 +418,17 @@ static void d_event(h2d_t *d, const proven_h2_event_t *ev) {
 // The round: output to the transport, and what that makes due
 // -----------------------------------------------------------------------------
 
+/* The engine's bound on output: twice the server's. */
+static proven_size_t h2_engine_bound(const proven_http_event_server_t *sv) {
+    return sv->cfg.max_buffered_output < 512 ? 1024
+         : sv->cfg.max_buffered_output > ((proven_size_t)1 << 29) ? (proven_size_t)1 << 30 : sv->cfg.max_buffered_output * 2;
+}
+
+/* Whether the engine holds as much output as it may: the transport is not taking it. */
+static bool d_full(const h2d_t *d) {
+    return proven_h2_conn_pending_output(d->engine).size >= h2_engine_bound(d->server);
+}
+
 static void d_pump(h2d_t *d) {
     /* While a read is being worked through, what it makes is held back and written when the read
      * is done: a hundred requests that came in one read are answered in one write, not a
@@ -489,6 +501,12 @@ static void d_pump(h2d_t *d) {
         }
     }
     d->pumping = false;
+    /* Input that was left for want of room is taken up again when there is some: the
+     * connection is read again, and what it had already read is worked through now. */
+    if (!d->dead && d->held && !d->reading && !d_full(d)) {
+        d->held = false;
+        proven_http_event_raw_pause_(d->conn, false);
+    }
     d_leave(d);
 }
 
@@ -500,20 +518,34 @@ static proven_size_t h2_on_input(void *raw, proven_mem_mut_t in) {
     h2d_t *d = raw;
     d_enter(d);
     proven_size_t pos = 0;
-    d->reading = true;
-    while (!d->dead && !d->over && pos < in.size) {
-        proven_size_t used = 0;
-        proven_h2_event_t ev;
-        proven_err_t e = proven_h2_conn_feed(d->engine, (proven_mem_view_t){ .ptr = in.ptr + pos, .size = in.size - pos }, &used, &ev);
-        if (e != PROVEN_OK) { d_kill(d, e == PROVEN_ERR_NOMEM ? PROVEN_ERR_NOMEM : PROVEN_ERR_RESET); break; }
-        pos += used;
-        if (ev.kind != PROVEN_H2_EVENT_NONE) d_event(d, &ev);
-        else if (pos == in.size) break;
+    for (;;) {
+        d->reading = true;
+        /* Nothing is taken while the engine's output is at its bound - which is while the
+         * client is not reading. What a request needs first is room for its answer's head,
+         * and a client that asks without reading must not be able to make this side hold
+         * an answer for everything it sends: the rest stays in the connection's buffer, and
+         * behind that in the socket. */
+        while (!d->dead && !d->over && pos < in.size && !d_full(d)) {
+            proven_size_t used = 0;
+            proven_h2_event_t ev;
+            proven_err_t e = proven_h2_conn_feed(d->engine, (proven_mem_view_t){ .ptr = in.ptr + pos, .size = in.size - pos }, &used, &ev);
+            if (e != PROVEN_OK) { d_kill(d, e == PROVEN_ERR_NOMEM ? PROVEN_ERR_NOMEM : PROVEN_ERR_RESET); break; }
+            pos += used;
+            if (ev.kind != PROVEN_H2_EVENT_NONE) d_event(d, &ev);
+            else if (pos == in.size) break;
+        }
+        d->reading = false;
+        d_pump(d);
+        /* The write that ends a read may have made the room that was missing. */
+        if (d->dead || d->over || pos == in.size || d_full(d)) break;
     }
-    d->reading = false;
-    d_pump(d);
+    const bool dead = d->dead, over = d->over;
+    if (!dead && !over && pos < in.size && !d->held) {
+        d->held = true;
+        proven_http_event_raw_pause_(d->conn, true);
+    }
     d_leave(d);
-    return in.size;                                /* all of it, always: what a stream cannot take yet is its own to keep */
+    return dead || over ? in.size : pos;           /* what was not taken is offered again when the connection is read again */
 }
 
 static void h2_on_progress(void *raw) { d_pump(raw); }
@@ -622,12 +654,12 @@ proven_err_t proven_http_event_h2_take_(proven_http_stream_t *conn) {
         /* Twice the server's bound: the first half is for bodies, which this driver stops
          * offering at the bound; the rest is room for response heads and the protocol's own
          * answers, so that neither is refused merely because a body filled the first. */
-        .max_buffered_output = sv->cfg.max_buffered_output < 512 ? 1024
-                             : sv->cfg.max_buffered_output > ((proven_size_t)1 << 29) ? (proven_size_t)1 << 30 : sv->cfg.max_buffered_output * 2,
+        .max_buffered_output = h2_engine_bound(sv),
         .header_buffer = { .ptr = sv->h2buf, .size = sv->h2buf_size },
         .set_header_table = true, .header_table_bytes = (proven_u32)sv->cfg.http2_header_table_bytes,
     };
     if (proven_h2_conn_create(&cfg, &d->engine) != PROVEN_OK) { sv->alloc.free_fn(sv->alloc.ctx, d); return PROVEN_ERR_NOMEM; }
+    proven_h2_conn_heads_past_bound_(d->engine);
     d->ops = &h2_ops;
     d->conn = conn;
     d->server = sv;

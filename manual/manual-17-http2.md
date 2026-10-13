@@ -1131,6 +1131,12 @@ int main(void) {
   promise for both protocols; on HTTP/2 it took a defect to find (section 8).
 - **`max_buffered_output` is per connection, not per stream.** One slow client with a
   hundred streams holds what one HTTP/1.1 client would, not a hundred times it.
+- **A client that does not read is not read from.** A response's head is always queued -
+  the server has nowhere else to keep it - so what bounds a client that asks and never reads
+  is that, while twice `max_buffered_output` waits for it, the server takes nothing more
+  from that connection: further requests stay in the socket, as a pipelined request does on
+  HTTP/1.1 while a response is owed. A client that uploads without reading its other
+  responses therefore stops being read, and resumes when it reads.
 - **An idle HTTP/2 connection is larger than an HTTP/1.1 one, by what it has been sent.**
   HTTP/1.1's is 448 bytes. HTTP/2's is 2,264 bytes after one small request, and grows with
   the header fields its client has made it remember, to about 12.8 KiB when both compression

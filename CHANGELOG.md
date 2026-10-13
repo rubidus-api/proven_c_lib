@@ -45,6 +45,18 @@ written; their tags still exist.
   decision. The event is reported when the text has been read, so it comes no earlier than
   before and, for a text split over several reads, later.
 
+### Fixed
+
+- **The event-driven server, HTTP/2: a response begun while the client was not taking output
+  could be reset.** A response's head was offered to the connection like any output, and when
+  the connection already held its bound - the socket full, the client slow for a moment - the
+  head was refused and the stream reset with `INTERNAL_ERROR`, through no fault of the
+  handler or of the client. A hundred small answers were enough on Windows, where the system
+  holds less: one run of the suite in thirty there, never on Linux, which is how it stayed
+  hidden. A head is now always queued. What bounds a client that asks and never reads is
+  that the server takes no more input from a connection while twice `max_buffered_output`
+  waits for it; the rest stays in the socket, and is read when there is room.
+
 ### Changed
 
 - `proven_h2_conn_t` is 24 bytes larger (384 bytes for a connection that has only opened, on
