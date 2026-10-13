@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-10-13
+
 ### Added
 
 - **`proven_ws_event_connect`** (`ws_event.h`): a WebSocket connection made by this side, on
