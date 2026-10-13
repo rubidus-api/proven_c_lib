@@ -1,8 +1,9 @@
 #ifndef PROVEN_SYS_AES_H
 #define PROVEN_SYS_AES_H
 
-/* The processor's AES and carry-less multiply instructions, where it has them: x86-64 (AES-NI
- * with PCLMULQDQ) and AArch64 (the ARMv8 cryptography extension). Detection is at run time.
+/* The processor's AES and carry-less multiply instructions, where it has them: x86, 64-bit
+ * and 32-bit (AES-NI with PCLMULQDQ), and AArch64 (the ARMv8 cryptography extension).
+ * Detection is at run time.
  * Everything else, and every freestanding build, reports "none" and is never called. */
 
 #include <stdbool.h>
@@ -21,7 +22,7 @@ void proven_sys_aes_ctr(const uint8_t *rk, int rounds, const uint8_t iv[12], uin
                         const uint8_t *in, uint8_t *out, size_t len);
 
 /* CBC decryption of `len` bytes (a multiple of 16) in place; `iv` is left holding the last
- * ciphertext block. False when this build has no instruction path for it - x86-64 has one,
+ * ciphertext block. False when this build has no instruction path for it - x86 has one,
  * AArch64 does not yet - and the caller then uses its portable code; nothing was touched. */
 bool proven_sys_aes_cbc_decrypt(const uint8_t *rk, int rounds, uint8_t iv[16], uint8_t *data, size_t len);
 

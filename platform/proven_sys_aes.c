@@ -4,7 +4,7 @@
  * mode, the key schedule and the choice between this and the portable code are in
  * src/proven/crypto_aes.c. */
 
-#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__)) && !defined(PROVEN_SYS_AES_DISABLE)
+#if (defined(__x86_64__) || defined(__i386__)) && (defined(__GNUC__) || defined(__clang__)) && !defined(PROVEN_SYS_AES_DISABLE)
 
 #include <immintrin.h>
 
@@ -41,7 +41,17 @@ AES_TARGET static void aes_forget(void *p, size_t n) {
     __asm__ __volatile__("" : : "r"(p) : "memory");
 }
 
-#define AES_WIDE 8        /* counter blocks in flight: no block waits for another, and a round takes several cycles */
+/* Counter blocks in flight, and blocks folded into one reduction: no block waits for another,
+ * and a round takes several cycles. Eight where there are sixteen registers to hold them and
+ * the round key; four on 32-bit x86, which has eight. (PROVEN_SYS_AES_WIDE is for a test
+ * build that wants the four-block code on a 64-bit machine.) */
+#if defined(PROVEN_SYS_AES_WIDE)
+#define AES_WIDE PROVEN_SYS_AES_WIDE
+#elif defined(__x86_64__)
+#define AES_WIDE 8
+#else
+#define AES_WIDE 4
+#endif
 
 AES_TARGET void proven_sys_aes_ctr(const uint8_t *rk, int rounds, const uint8_t iv[12], uint32_t counter,
                                    const uint8_t *in, uint8_t *out, size_t len) {
@@ -157,18 +167,20 @@ AES_TARGET void proven_sys_aes_ghash(uint8_t y[16], const uint8_t h[16], const u
     __m128i hv = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)h), rev);
     __m128i yv = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)y), rev);
     if (blocks >= AES_WIDE) {
-        /* The powers of H are made here, for this call, and not kept with the key: seven
+        /* The powers of H are made here, for this call, and not kept with the key: a few
          * multiplications, against a key that would be 112 bytes larger on every connection. */
-        _Static_assert(AES_WIDE == 8, "the powers below are written out for eight");
+        _Static_assert(AES_WIDE == 8 || AES_WIDE == 4, "the powers below are written out for four and for eight");
         __m128i hp[AES_WIDE];
         hp[0] = hv;                                  /* (in an order where no product waits */
         hp[1] = gf_mul(hp[0], hp[0]);                /*  for more than two before it)       */
         hp[2] = gf_mul(hp[1], hp[0]);
         hp[3] = gf_mul(hp[1], hp[1]);
+#if AES_WIDE == 8
         hp[4] = gf_mul(hp[3], hp[0]);
         hp[5] = gf_mul(hp[2], hp[2]);
         hp[6] = gf_mul(hp[3], hp[2]);
         hp[7] = gf_mul(hp[3], hp[3]);
+#endif
         do {
             yv = gf_fold(yv, hp, data, AES_WIDE, rev);
             data += 16 * AES_WIDE; blocks -= AES_WIDE;

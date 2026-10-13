@@ -702,7 +702,7 @@ In TLS 1.3:
 | What | Which |
 |---|---|
 | Cipher suites | `TLS_AES_128_GCM_SHA256` (0x1301), `TLS_AES_256_GCM_SHA384` (0x1302), `TLS_CHACHA20_POLY1305_SHA256` (0x1303) |
-| Their order | AES-128, AES-256, ChaCha20 on a processor with AES instructions (x86-64 with AES-NI, AArch64 with the cryptography extension). **ChaCha20 first everywhere else**: without those instructions this library's AES is constant-time and some thirty times slower than its ChaCha20 |
+| Their order | AES-128, AES-256, ChaCha20 on a processor with AES instructions (x86 with AES-NI - 64-bit, and 32-bit too - and AArch64 with the cryptography extension). **ChaCha20 first everywhere else**: without those instructions this library's AES is constant-time and some thirty times slower than its ChaCha20 |
 | Key exchange | X25519; P-256 when the peer insists (one extra round trip) |
 | This side's key | ECDSA with P-256, Ed25519, or RSA of 2048 to 4096 bits (signing with RSA-PSS and SHA-256) |
 | A peer's key | Those, ECDSA with P-384, and RSA (2048 to 8192 bits, RSA-PSS) |
@@ -871,7 +871,7 @@ Lucky Thirteen). What this library does about it:
   depending on a decrypted byte, and the number of hash blocks computed depends only on the
   record's length. Every failure is the one alert, `bad_record_mac`.
 - **Decryption does not take a time that depends on the data either way**: with the
-  processor's AES instructions on x86-64 - a CBC connection then receives at about 100 MiB/s
+  processor's AES instructions on x86 - a CBC connection then receives at about 100 MiB/s
   on the development machine, as fast as it sends - and with the portable, bitsliced cipher
   everywhere else, at about 6 MiB/s.
 - **In TLS 1.0** each record's IV is the previous record's last block, so an attacker who can

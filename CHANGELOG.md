@@ -18,6 +18,17 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **32-bit x86 uses the processor's AES instructions.** The hardware path - AES-GCM, and CBC
+  decryption for the legacy suites - was compiled for x86-64 only, and a 32-bit build ran
+  the portable bitsliced code on processors that have AES-NI. It is the same code now, with
+  four blocks at a time where x86-64 takes eight (there are eight registers, not sixteen),
+  chosen at run time as before. Measured as a 32-bit Linux build on the development machine:
+  AES-128-GCM on 16 KiB from 9 to 2,540 MiB/s.
+- On such a processor a 32-bit build therefore **offers the AES suites before ChaCha20**, as
+  a 64-bit build does: the order follows whether the instructions are there.
+
 ## [0.47.0] - 2026-10-13
 
 ### Changed
