@@ -22,7 +22,7 @@ written; their tags still exist.
 
 ### Changed
 
-- **The event-driven servers and clients copy their buffers as blocks.** Thirteen copies
+- **The event-driven servers and clients copy their buffers as blocks.** Fourteen copies
   that went a byte at a time - into and out of a connection's input and output buffers in
   the HTTP/1.1 and HTTP/2 servers and clients, a WebSocket message being masked or held, and
   what a TLS transport keeps for its next read - are block copies and, where a buffer is
