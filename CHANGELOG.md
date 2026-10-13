@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-10-13
+
 ### Added
 
 - **`expect_continue`** in a request of the blocking client (`http_client.h`), with
