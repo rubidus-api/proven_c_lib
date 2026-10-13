@@ -65,6 +65,10 @@ void proven_inflate_reset(proven_inflate_t *z);
  * Call it again with the rest of the input, or with more output space, until `*done`. Input
  * after the end of the stream is not consumed: `*consumed` says where the stream ended.
  *
+ * Only the first `*produced` bytes of `out` are data. Up to seven bytes after them, inside
+ * the space given, may have been written to as well - a copy made eight bytes at a time - so
+ * give as `out` space that is free, not space whose later bytes are still wanted.
+ *
  * A raw stream need not end. One that is cut at flush points instead - `permessage-deflate`
  * with context takeover - is fed piece by piece in the same way: `*done` simply never
  * becomes true, and the history the next piece refers to is kept.

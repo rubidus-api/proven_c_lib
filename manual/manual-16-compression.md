@@ -174,7 +174,9 @@ that takes some input and fills some output**.
 The contract of a step is short, and worth reading once:
 
 - It consumes as much of `in` as it can and produces as much into `out` as it can, and tells
-  you how much of each. It never allocates and never writes past `out`.
+  you how much of each. It never allocates and never writes past `out`. (Within `out`, the
+  decompressor may write up to seven bytes beyond the ones it reports: pass space that is
+  free.)
 - **`PROVEN_OK` with nothing consumed and nothing produced is not an error.** It means the
   step needs more of one or the other: more input, or more room. Call it again when you have
   some. A stream that simply stops arriving looks exactly like this, which is why a caller

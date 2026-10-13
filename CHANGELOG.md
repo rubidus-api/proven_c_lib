@@ -29,6 +29,10 @@ written; their tags still exist.
   drivers call it, about three to four times. A WebSocket message of 100 bytes: 3.1
   microseconds before, 0.4 after. Bytes that were stored and not compressed are copied, not
   moved one at a time.
+- `proven_inflate` may now write up to seven bytes of `out` beyond the ones it reports as
+  produced - inside the space given, never past it. A copy is made eight bytes at a time;
+  stopping at the last byte instead cost a quarter of the speed on text. The header and the
+  manual say so: give as `out` space that is free.
 - A decompressor is made without building anything: the fixed code's tables are generated
   and constant. Making one for a message and keeping one cost the same to within 50
   nanoseconds, which settles the question v0.41.0 left - none is kept. Its size is
@@ -36,7 +40,8 @@ written; their tags still exist.
 - **An RSA key keeps its moduli prepared.** Every signature prepared the three moduli of its
   key again, and the step that follows it a fourth time: about a sixth of the work at 2048
   bits. A signature and that step together: 12.6 ms before, 10.3 after (2048 bits); 37.3 and
-  32.0 (3072); 86.5 and 74.0 (4096). The signatures are the same bytes.
+  32.0 (3072); 86.5 and 74.0 (4096). The signatures are the same bytes. A TLS configuration
+  with an RSA key is about 6 KiB larger for it.
 
 ## [0.41.0] - 2026-10-13
 

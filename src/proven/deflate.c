@@ -446,7 +446,12 @@ static void fast(proven_inflate_t *z, io_t *io) {
         }
         /* The rest from the output itself. When the distance is shorter than the length the
          * copy reads what it has just written, and that is what it means: so byte by byte,
-         * unless the two are far enough apart for eight at a time not to overlap. */
+         * unless the two are far enough apart for eight at a time not to overlap. Eight at a
+         * time writes up to seven bytes beyond the match - inside the output, which is why
+         * room for them is asked for, and usually under what the next symbol writes; when the
+         * call ends there instead, they are bytes of `out` beyond what it reports produced.
+         * The header says that this may happen. Stopping at the match's last byte instead
+         * cost a quarter of the speed on text, whose matches are mostly shorter than eight. */
         const proven_byte_t *from = out + oa - distance;
         if (distance >= 8 && out_len - oa >= length + 8) {
             for (proven_size_t i = 0; i < length; i += 8) {

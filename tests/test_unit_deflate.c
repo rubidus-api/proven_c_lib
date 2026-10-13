@@ -407,6 +407,36 @@ int main(void) {
                 }
             }
         }
+        /* What a call writes and does not report: at most seven bytes after what it produced,
+         * never more, and never past the space it was given. All the room there is and a
+         * little input at a time: a call then ends where its input does, which in data full of
+         * repeats is often just behind a copy. */
+        {
+            bool tidy = true;
+            long beyond = 0, calls = 0;
+            for (int item = 0; item < NCORPUS; ++item) {
+                const proven_size_t plain_len = corpus(item, g_plain);
+                proven_inflate_t *z = NULL;
+                proven_size_t packed = 0, at = 0, made = 0;
+                proven_deflate_options_t o = { .alloc = g_heap, .format = PROVEN_DEFLATE_RAW, .level = 6 };
+                bool ended = false;
+                tidy = tidy && proven_deflate_all(&o, (proven_mem_view_t){ g_plain, plain_len }, (proven_mem_mut_t){ g_c, sizeof g_c }, &packed) == PROVEN_OK &&
+                       proven_inflate_create(g_heap, PROVEN_DEFLATE_RAW, &z) == PROVEN_OK;
+                memset(g_b, 0x5a, sizeof g_b);
+                for (long guard = 0; tidy && guard < 100000 && !ended; ++guard) {
+                    proven_size_t c = 0, p = 0;
+                    tidy = proven_inflate(z, (proven_mem_view_t){ g_c + at, packed - at < 5 ? packed - at : 5 }, &c, (proven_mem_mut_t){ g_b + made, sizeof g_b - made }, &p, &ended) == PROVEN_OK;
+                    at += c; made += p; calls++;
+                    for (proven_size_t k = made; k < made + 7 && k < sizeof g_b; ++k) if (g_b[k] != 0x5a) { beyond++; g_b[k] = 0x5a; }
+                    for (proven_size_t k = made + 7; k < made + 300 && k < sizeof g_b; ++k) tidy = tidy && g_b[k] == 0x5a;
+                }
+                proven_inflate_destroy(z);
+                tidy = tidy && ended && made == plain_len && memcmp(g_b, g_plain, plain_len) == 0;
+            }
+            PROVEN_TEST_ASSERT(tidy, "after each call nothing is written further than seven bytes past what it reports, and the data is whole", "Check the copy in fast(): eight at a time only with room for eight more.");
+            PROVEN_TEST_ASSERT(beyond > 0, "and within those seven, some were: the case is one this test reaches", "If nothing is written beyond any more, the header and the manual should stop saying it may be.");
+            PROVEN_TEST_INFO("{} bytes were written beyond what a call reported, in {} calls given five bytes of input each", PROVEN_ARG((int)beyond), PROVEN_ARG((int)calls));
+        }
         PROVEN_TEST_ASSERT(far_found, "32,000 bytes of noise written twice compress to little more than once: the matches at that distance are in the stream", "");
         PROVEN_TEST_ASSERT(all && runs > 3000, "the corpus and that block, at three levels, come back whole through 104 combinations of input and output piece", "");
     }

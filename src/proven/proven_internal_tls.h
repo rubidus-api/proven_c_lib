@@ -239,7 +239,7 @@ struct proven_tls_config {
     proven_tls_key_kind_t key_kind;
     proven_byte_t key[32];                        /* the P-256 scalar or the Ed25519 seed. SECRET */
     proven_byte_t key_public[32];                 /* Ed25519 only */
-    proven_tls_rsa_t *rsa;                        /* an RSA key lives here instead: it is two kilobytes */
+    proven_tls_rsa_t *rsa;                        /* an RSA key lives here instead: it is eight kilobytes, six of them its moduli prepared */
     proven_tls_client_auth_t client_auth;
     proven_byte_t *alpn_wire;                     /* the names, each behind its length byte */
     proven_size_t alpn_wire_len;
