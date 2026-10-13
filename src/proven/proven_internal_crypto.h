@@ -236,6 +236,12 @@ typedef struct {
     proven_byte_t p[PROVEN_CRYPTO_RSA_PRIME_MAX_BYTES], q[PROVEN_CRYPTO_RSA_PRIME_MAX_BYTES];
     proven_byte_t dp[PROVEN_CRYPTO_RSA_PRIME_MAX_BYTES], dq[PROVEN_CRYPTO_RSA_PRIME_MAX_BYTES];
     proven_byte_t qinv[PROVEN_CRYPTO_RSA_PRIME_MAX_BYTES];
+    /* The three moduli as the arithmetic wants them, made once when the key is read or
+     * generated (`prepared`): making them is a ninth to a sixth of a signature, and they do
+     * not change. SECRET like p and q, of which two of them are another form. A key filled
+     * in by hand has `prepared` false, and each operation then makes its own. */
+    bool prepared;
+    proven_crypto_mp_mod_t mod_n, mod_p, mod_q;
 } proven_crypto_rsa_key_t;
 
 /* A blinding pair for one key: r^e mod n and r^-1 mod n, n_len bytes each. SECRET. A

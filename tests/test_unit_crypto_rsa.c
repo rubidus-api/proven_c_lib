@@ -78,6 +78,26 @@ static void key_cases(const char *which, const proven_crypto_rsa_key_t *k, const
     }
     PROVEN_TEST_ASSERT(same, "forty squarings on, the blinding pair still cancels exactly", which);
 
+    /* The key keeps its three moduli prepared; one that does not - filled in by hand - makes
+     * them for each operation, and must come to the same bytes. */
+    {
+        static proven_crypto_rsa_key_t bare;
+        static proven_crypto_rsa_blind_t b1, b2;
+        bare = *k;
+        bare.prepared = false;
+        memset(&bare.mod_n, 0xee, sizeof bare.mod_n); memset(&bare.mod_p, 0xee, sizeof bare.mod_p); memset(&bare.mod_q, 0xee, sizeof bare.mod_q);
+        PROVEN_TEST_ASSERT(k->prepared && k->mod_n.limbs * 4 == k->n_len && k->mod_p.limbs * 4 >= k->p_len && k->mod_q.limbs * 4 >= k->q_len, "a key that was generated or read has its moduli prepared", which);
+        memset(sig2, 0, sizeof sig2);
+        PROVEN_TEST_ASSERT(proven_crypto_rsa_sign_pkcs1(&bare, NULL, PROVEN_HMAC_SHA256, view(digest, 32), sig2) && memcmp(sig, sig2, k->n_len) == 0, "a key without them signs the same bytes", which);
+        b1 = blind; b2 = blind;
+        proven_crypto_rsa_blind_next(k, &b1);
+        proven_crypto_rsa_blind_next(&bare, &b2);
+        PROVEN_TEST_ASSERT(memcmp(&b1, &b2, sizeof b1) == 0 && memcmp(&b1, &blind, sizeof b1) != 0, "and squares a blinding pair to the same pair", which);
+        PROVEN_TEST_ASSERT(proven_crypto_rsa_sign_pkcs1(&bare, &b2, PROVEN_HMAC_SHA256, view(digest, 32), sig2) && memcmp(sig, sig2, k->n_len) == 0 &&
+                           proven_crypto_rsa_blind_make(&bare, seed, &b2) && proven_crypto_rsa_blind_make(k, seed, &b1) && memcmp(&b1, &b2, sizeof b1) == 0,
+            "blinded signing and the making of a pair agree as well", which);
+    }
+
     /* A fault in any one CRT value: nothing comes out. */
     static proven_crypto_rsa_key_t broken;
     for (int part = 0; part < 3; ++part) {
@@ -97,7 +117,7 @@ static void key_cases(const char *which, const proven_crypto_rsa_key_t *k, const
     static proven_byte_t der[2600];
     static proven_crypto_rsa_key_t back;
     proven_size_t len = proven_tls_rsa_key_der_(k, d, false, (proven_mem_mut_t){ .ptr = der, .size = sizeof der });
-    PROVEN_TEST_ASSERT(len > 0 && proven_crypto_rsa_key_parse(view(der, len), &back) && back.n_len == k->n_len && back.p_len == k->p_len && back.q_len == k->q_len &&
+    PROVEN_TEST_ASSERT(len > 0 && proven_crypto_rsa_key_parse(view(der, len), &back) && back.prepared && memcmp(&back.mod_p, &k->mod_p, sizeof back.mod_p) == 0 && back.n_len == k->n_len && back.p_len == k->p_len && back.q_len == k->q_len &&
                        memcmp(back.n, k->n, k->n_len) == 0 && memcmp(back.p, k->p, k->p_len) == 0 && memcmp(back.q, k->q, k->q_len) == 0 &&
                        memcmp(back.dp, k->dp, k->p_len) == 0 && memcmp(back.dq, k->dq, k->q_len) == 0 && memcmp(back.qinv, k->qinv, k->p_len) == 0,
         "an RSAPrivateKey written and read back is the same key", which);
