@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-10-13
+
 ### Changed
 
 - **`proven_mem_wipe` is a block fill followed by a barrier** the compiler cannot see through
