@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-10-13
+
 ### Changed
 
 - **Decompression is about four times as fast.** `proven_inflate` found each code a bit at a
