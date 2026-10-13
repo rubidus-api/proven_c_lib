@@ -325,18 +325,20 @@ compressing this library's own sources and manual (3.2 MiB of text):
 
 | Level | Compressed to | Compressing | Decompressing |
 |---|---|---|---|
-| 1 | 30.2% | 33 MiB/s | 66 MiB/s |
-| 6 (default) | 25.9% | 16 MiB/s | 84 MiB/s |
-| 9 | 25.7% | 9 MiB/s | 83 MiB/s |
+| 1 | 29.4% | 34 MiB/s | 330 MiB/s |
+| 6 (default) | 25.2% | 16 MiB/s | 375 MiB/s |
+| 9 | 25.0% | 9 MiB/s | 380 MiB/s |
 
 From 1 to 6 buys a seventh off the size for half the speed. From 6 to 9 buys almost nothing
 for nearly half the speed again. Decompression does not care what level was used.
 
 zlib, the implementation everybody else uses, compresses the same data to the same sizes -
 within a quarter of a percent at levels 6 and 9, and it is a little larger at level 1 - and is
-about twice as fast at compressing and three times as fast at decompressing. This library's
-code was written to be read; if these figures are too slow for a program, that program wants
-zlib.
+about twice as fast at compressing, nearly three times at level 1. At decompressing the two
+are about the same: zlib 1.3.1, called from Python on the same data, gave between 190 and
+310 MiB/s as the machine's load moved. (Before v0.42.0 this library's decompressor read a
+bit at a time and gave 75 to 90 MiB/s.) The compressor was written to be read; if its
+figures are too slow for a program, that program wants zlib.
 
 **The window is mostly a question of memory.** A compressor holds twice its window and
 tables beside it; a decompressor always holds 32 KiB, because it cannot know what window the

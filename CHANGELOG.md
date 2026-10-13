@@ -18,6 +18,26 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **Decompression is about four times as fast.** `proven_inflate` found each code a bit at a
+  time; it now finds whole symbols by table when the input and the output are there in
+  plenty, and keeps the bit-at-a-time code for what the end of either cuts short - which is
+  also the code that names errors, so what is accepted and what is refused, and where, are
+  unchanged. Measured on this library's own sources and manual, 3.2 MiB: 75 to 90 MiB/s
+  before, 330 to 380 after. Into 16 KiB of output at a time, as the HTTP and WebSocket
+  drivers call it, about three to four times. A WebSocket message of 100 bytes: 3.1
+  microseconds before, 0.4 after. Bytes that were stored and not compressed are copied, not
+  moved one at a time.
+- A decompressor is made without building anything: the fixed code's tables are generated
+  and constant. Making one for a message and keeping one cost the same to within 50
+  nanoseconds, which settles the question v0.41.0 left - none is kept. Its size is
+  unchanged, about 35 KiB.
+- **An RSA key keeps its moduli prepared.** Every signature prepared the three moduli of its
+  key again, and the step that follows it a fourth time: about a sixth of the work at 2048
+  bits. A signature and that step together: 12.6 ms before, 10.3 after (2048 bits); 37.3 and
+  32.0 (3072); 86.5 and 74.0 (4096). The signatures are the same bytes.
+
 ## [0.41.0] - 2026-10-13
 
 ### Added

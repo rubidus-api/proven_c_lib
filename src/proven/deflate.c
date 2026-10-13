@@ -14,13 +14,27 @@
 #define MAXDCODES 30
 #define MAXCODES (MAXLCODES + MAXDCODES)
 
-/* A canonical Huffman code: how many codes there are of each length, and the symbols in the
- * order their codes come. Decoding walks the lengths one bit at a time (Mark Adler's puff). */
+#define LFAST_BITS 9                    /* a literal/length code this short is found in one look */
+#define DFAST_BITS 8                    /* and a distance code this short */
+#define CFAST_BITS 7                    /* the code for the code lengths: none of its codes is longer */
+
+/* A canonical Huffman code, in two forms. For input that is there in plenty: a table indexed
+ * by the next `fbits` bits, lowest first, each entry a symbol and its code's length
+ * (symbol << 4 | length) - or 0 where the code is longer than the index, or there is none.
+ * For the rest - a longer code, the last bits of what a call was given - how many codes there
+ * are of each length and the symbols in the order their codes come: walked a bit at a time
+ * (Mark Adler's puff), which can stop between any two bits and go on in the next call. */
 typedef struct {
-    proven_u16 count[MAXBITS + 1];
-    proven_u16 symbol[288];
+    const proven_u16 *count;            /* MAXBITS + 1 of them */
+    const proven_u16 *symbol;
+    const proven_u16 *fast;             /* 1 << fbits of them; null when fbits is 0 */
     int longest;                        /* the longest code there is: bits that match nothing by then never will */
+    unsigned fbits;
 } huff_t;
+
+#include "deflate_tables.h"             /* the fixed code, generated: nothing is built for it when a decompressor is made */
+static const huff_t FIXED_LEN = { deflate_fixed_lcount, deflate_fixed_lsymbol, deflate_fixed_lfast, 9, 9 };
+static const huff_t FIXED_DIST = { deflate_fixed_dcount, deflate_fixed_dsymbol, deflate_fixed_dfast, 5, 5 };
 
 enum {
     S_HEADER, S_BLOCK, S_STORED_LEN, S_STORED, S_TABLE, S_CODELENS, S_LENS, S_LENS_REPEAT,
@@ -41,8 +55,10 @@ struct proven_inflate {
     unsigned nlen, ndist, ncode, have;
     unsigned repeat_sym, repeat_len;
     proven_u16 lengths[MAXCODES];
-    huff_t lencode, distcode;           /* this block's */
-    huff_t fixed_len, fixed_dist;       /* the fixed block's, made once */
+    huff_t lencode, distcode;           /* a dynamic block's: they point into the six arrays that follow */
+    proven_u16 lcount[MAXBITS + 1], dcount[MAXBITS + 1];
+    proven_u16 lsymbol[288], dsymbol[32];
+    proven_u16 lfast[1 << LFAST_BITS], dfast[1 << DFAST_BITS];
     const huff_t *lc, *dc;
     /* a match or a stored block in progress, or a literal decoded when the output was full */
     unsigned length, distance, extra;
@@ -52,29 +68,52 @@ struct proven_inflate {
     unsigned head_step, head_flags, head_need;
     proven_u32 head_crc, check, trailer[2];
     proven_u64 total;
-    /* history */
+    /* History: the last 32 KiB that earlier calls produced. What the call in progress has
+     * produced is in its own output, and is copied here once, when the call ends. */
     proven_u32 wpos, whave;
     proven_byte_t window[WINDOW];
 };
 
-/* Build a code from the lengths of `n` symbols. Returns 0 for a complete code, a positive
- * number for an incomplete one and a negative one for an over-subscribed one. */
-static int construct(huff_t *h, const proven_u16 *length, int n) {
-    proven_u16 offs[MAXBITS + 1];
-    for (int len = 0; len <= MAXBITS; ++len) h->count[len] = 0;
-    for (int sym = 0; sym < n; ++sym) h->count[length[sym]]++;
+/* Build a code from the lengths of `n` symbols, into the arrays given (`fast` and `fbits` may
+ * be null and 0: no table). Returns 0 for a complete code, a positive number for an incomplete
+ * one and a negative one for an over-subscribed one, which is then not to be used. */
+static int construct(huff_t *h, proven_u16 *count, proven_u16 *symbol, proven_u16 *fast, unsigned fbits, const proven_u16 *length, int n) {
+    proven_u16 offs[MAXBITS + 1], next[MAXBITS + 1];
+    h->count = count; h->symbol = symbol; h->fast = fast; h->fbits = fbits;
+    for (int len = 0; len <= MAXBITS; ++len) count[len] = 0;
+    for (int sym = 0; sym < n; ++sym) count[length[sym]]++;
     h->longest = 0;
-    for (int len = 1; len <= MAXBITS; ++len) if (h->count[len]) h->longest = len;
-    if (h->count[0] == n) return 0;                 /* no codes at all: complete, and any use of it fails */
+    for (int len = 1; len <= MAXBITS; ++len) if (count[len]) h->longest = len;
+    for (unsigned i = 0; i < (fbits ? 1u << fbits : 0u); ++i) fast[i] = 0;
+    if (count[0] == n) return 0;                    /* no codes at all: complete, and any use of it fails */
     int left = 1;
     for (int len = 1; len <= MAXBITS; ++len) {
         left <<= 1;
-        left -= h->count[len];
+        left -= count[len];
         if (left < 0) return left;
     }
     offs[1] = 0;
-    for (int len = 1; len < MAXBITS; ++len) offs[len + 1] = (proven_u16)(offs[len] + h->count[len]);
-    for (int sym = 0; sym < n; ++sym) if (length[sym] != 0) h->symbol[offs[length[sym]]++] = (proven_u16)sym;
+    for (int len = 1; len < MAXBITS; ++len) offs[len + 1] = (proven_u16)(offs[len] + count[len]);
+    for (int sym = 0; sym < n; ++sym) if (length[sym] != 0) symbol[offs[length[sym]]++] = (proven_u16)sym;
+    if (fbits == 0) return left;
+    /* The table. Codes of one length are consecutive numbers, in the order of their symbols,
+     * and the first of each length follows from the counts of the shorter ones. A code is
+     * sent highest bit first and bits are read lowest first, so it is its mirror image that
+     * the next bits show - at every index whose low bits are that image. */
+    unsigned code = 0;
+    for (int len = 1; len <= MAXBITS; ++len) {
+        code = (code + (len > 1 ? count[len - 1] : 0u)) << 1;
+        next[len] = (proven_u16)code;
+    }
+    for (int sym = 0; sym < n; ++sym) {
+        const unsigned len = length[sym];
+        if (len == 0) continue;
+        unsigned c = next[len]++;
+        if (len > fbits) continue;
+        unsigned image = 0;
+        for (unsigned b = 0; b < len; ++b) { image = (image << 1) | (c & 1u); c >>= 1; }
+        for (unsigned i = image; i < (1u << fbits); i += 1u << len) fast[i] = (proven_u16)(((unsigned)sym << 4) | len);
+    }
     return left;
 }
 
@@ -85,20 +124,6 @@ static bool usable(const huff_t *h, int left) {
     if (left == 0) return true;
     for (int len = 2; len <= MAXBITS; ++len) if (h->count[len] != 0) return false;
     return h->count[1] == 1;
-}
-
-static void fixed_tables(proven_inflate_t *z) {
-    proven_u16 lengths[288];
-    int sym = 0;
-    for (; sym < 144; ++sym) lengths[sym] = 8;
-    for (; sym < 256; ++sym) lengths[sym] = 9;
-    for (; sym < 280; ++sym) lengths[sym] = 7;
-    for (; sym < 288; ++sym) lengths[sym] = 8;
-    (void)construct(&z->fixed_len, lengths, 288);
-    /* Thirty-two five-bit codes, of which the last two stand for no distance: they are in the
-     * table so that meeting one is an error at once, not a wait for bits that cannot help. */
-    for (sym = 0; sym < 32; ++sym) lengths[sym] = 5;
-    (void)construct(&z->fixed_dist, lengths, 32);
 }
 
 static void start(proven_inflate_t *z) {
@@ -123,7 +148,6 @@ proven_err_t proven_inflate_create(proven_allocator_t alloc, proven_deflate_form
     proven_inflate_t *z = (proven_inflate_t *)(void *)m.value.ptr;
     z->alloc = alloc;
     z->format = format;
-    fixed_tables(z);
     start(z);
     *out = z;
     return PROVEN_OK;
@@ -163,13 +187,34 @@ static proven_u32 take(proven_inflate_t *z, unsigned n) {
     return v;
 }
 
-/* One byte of output: to the caller, into the history, into the checksum. */
-static void emit(proven_inflate_t *z, io_t *io, proven_byte_t b) {
-    io->out[io->out_at++] = b;
-    z->window[z->wpos] = b;
-    z->wpos = (z->wpos + 1) & (WINDOW - 1);
-    if (z->whave < WINDOW) z->whave++;
-    z->total++;
+/* The byte `distance` back from where the next one goes: in this call's output, or - past
+ * its beginning - in the window. */
+static proven_byte_t back(const proven_inflate_t *z, const io_t *io, proven_size_t distance) {
+    return distance <= io->out_at ? io->out[io->out_at - distance]
+                                  : z->window[(z->wpos - (proven_u32)(distance - io->out_at)) & (WINDOW - 1)];
+}
+
+/* The call is over: what it produced becomes history. */
+static void keep(proven_inflate_t *z, const io_t *io) {
+    const proven_size_t n = io->out_at;
+    if (n >= WINDOW) {
+        const proven_byte_t *last = io->out + n - WINDOW;
+        for (proven_size_t i = 0; i < WINDOW; ++i) z->window[i] = last[i];
+        z->wpos = 0;
+        z->whave = WINDOW;
+    } else if (n > 0) {
+        const proven_size_t first = WINDOW - z->wpos < n ? WINDOW - z->wpos : n;
+        for (proven_size_t i = 0; i < first; ++i) z->window[z->wpos + i] = io->out[i];
+        for (proven_size_t i = first; i < n; ++i) z->window[i - first] = io->out[i];
+        z->wpos = (z->wpos + (proven_u32)n) & (WINDOW - 1);
+        z->whave = z->whave + n < WINDOW ? z->whave + (proven_u32)n : WINDOW;
+    }
+    z->total += n;
+}
+
+static proven_u64 load64(const proven_byte_t *p) {
+    return (proven_u64)p[0] | ((proven_u64)p[1] << 8) | ((proven_u64)p[2] << 16) | ((proven_u64)p[3] << 24) |
+           ((proven_u64)p[4] << 32) | ((proven_u64)p[5] << 40) | ((proven_u64)p[6] << 48) | ((proven_u64)p[7] << 56);
 }
 
 /* Decode one symbol of `h`, a bit at a time, picking up where the last call stopped.
@@ -284,6 +329,146 @@ static void sum_output(proven_inflate_t *z, io_t *io) {
     io->summed = io->out_at;
 }
 
+/* The code lengths of a dynamic block, as many as can be read whole - the same bargain as
+ * fast() below, and the same promise about the bits it leaves: a length that is cut by the end
+ * of the input, or wrong, is left for the code that works a bit at a time. Two or three hundred
+ * lengths precede every dynamic block, and for a short message they were most of the work. */
+static void fast_lengths(proven_inflate_t *z, io_t *io) {
+    const proven_u16 *const f = z->lencode.fast;
+    const proven_byte_t *const in = io->in;
+    const proven_size_t in_len = io->in_len;
+    const unsigned total = z->nlen + z->ndist;
+    proven_size_t ia = io->in_at;
+    proven_u64 bits = z->bitbuf;
+    unsigned have = z->bitcnt;
+    while (z->have < total) {
+        if (in_len - ia >= 8) {
+            bits |= load64(in + ia) << have;
+            ia += (63 - have) >> 3;
+            have |= 56;
+        } else {
+            while (have <= 56 && ia < in_len) { bits |= (proven_u64)in[ia++] << have; have += 8; }
+        }
+        const unsigned e = f[bits & ((1u << CFAST_BITS) - 1u)], len = e & 15u, sym = e >> 4;
+        if (len == 0 || len > have) break;
+        if (sym < 16) {
+            z->lengths[z->have++] = (proven_u16)sym;
+            bits >>= len; have -= len;
+            continue;
+        }
+        /* 16: the previous length 3 to 6 times. 17 and 18: zero, 3 to 10 or 11 to 138 times. */
+        const unsigned extra = sym == 16 ? 2 : sym == 17 ? 3 : 7;
+        if (len + extra > have) break;
+        unsigned times = (unsigned)((bits >> len) & ((1u << extra) - 1u)) + (sym == 18 ? 11u : 3u);
+        proven_u16 value = 0;
+        if (sym == 16) {
+            if (z->have == 0) break;
+            value = z->lengths[z->have - 1];
+        }
+        if (z->have + times > total) break;
+        bits >>= len + extra; have -= len + extra;
+        while (times-- > 0) z->lengths[z->have++] = value;
+    }
+    ia -= have >> 3;
+    have &= 7u;
+    z->bitbuf = (proven_u32)bits & ((1u << have) - 1u);
+    z->bitcnt = have;
+    io->in_at = ia;
+}
+
+/* Literals and matches, as many as can be decoded whole from what is there: each symbol is
+ * found by one look in a table, and nothing is taken until all of it - a length, its extra
+ * bits, a distance, its extra bits - is known to be present, to be valid and to fit. Whatever
+ * is not - a code longer than the table's index, a symbol the input ends in the middle of, a
+ * match the output has no room for, anything that is an error - is left exactly where it was
+ * for the code that works a bit at a time, which is the one that can stop anywhere and the one
+ * that names errors. Called with fewer than eight bits held; leaves fewer than eight, having
+ * given back every whole byte it read and did not use, so that the two agree on where the
+ * input is. Sets S_BLOCK when it has taken the end of the block. */
+static void fast(proven_inflate_t *z, io_t *io) {
+    const proven_u16 *const lf = z->lc->fast, *const df = z->dc->fast;
+    const proven_u32 lmask = (1u << z->lc->fbits) - 1u, dmask = (1u << z->dc->fbits) - 1u;
+    const proven_byte_t *const in = io->in;
+    proven_byte_t *const out = io->out;
+    const proven_size_t in_len = io->in_len, out_len = io->out_len;
+    proven_size_t ia = io->in_at, oa = io->out_at;
+    proven_u64 bits = z->bitbuf;
+    unsigned have = z->bitcnt;
+    for (;;) {
+        /* Up to 56 bits and more: a match is at most 15 + 5 + 15 + 13 of them. */
+        if (in_len - ia >= 8) {
+            bits |= load64(in + ia) << have;
+            ia += (63 - have) >> 3;
+            have |= 56;
+        } else {
+            while (have <= 56 && ia < in_len) { bits |= (proven_u64)in[ia++] << have; have += 8; }
+        }
+        const unsigned e = lf[bits & lmask], len = e & 15u, sym = e >> 4;
+        if (len == 0 || len > have) break;
+        if (sym < 256) {
+            if (oa == out_len) break;
+            out[oa++] = (proven_byte_t)sym;
+            bits >>= len; have -= len;
+            continue;
+        }
+        if (sym == 256) {
+            bits >>= len; have -= len;
+            z->state = S_BLOCK;
+            break;
+        }
+        if (sym >= 257 + 29) break;
+        /* A match: on a copy of the bits, kept only when it is whole. */
+        proven_u64 b = bits >> len;
+        unsigned h = have - len;
+        unsigned extra = LEN_EXTRA[sym - 257];
+        if (extra > h) break;
+        proven_size_t length = LEN_BASE[sym - 257] + (unsigned)(b & ((1u << extra) - 1u));
+        b >>= extra; h -= extra;
+        const unsigned de = df[b & dmask], dlen = de & 15u, dsym = de >> 4;
+        if (dlen == 0 || dlen > h || dsym >= MAXDCODES) break;
+        b >>= dlen; h -= dlen;
+        extra = DIST_EXTRA[dsym];
+        if (extra > h) break;
+        const proven_size_t distance = DIST_BASE[dsym] + (unsigned)(b & ((1u << extra) - 1u));
+        b >>= extra; h -= extra;
+        if (distance > z->whave + oa || length > out_len - oa) break;
+        bits = b; have = h;
+        if (distance > oa) {
+            /* It begins before this call's output: in the window. */
+            const proven_size_t before = distance - oa;
+            const proven_size_t n = before < length ? before : length;
+            const proven_u32 at = (z->wpos - (proven_u32)before) & (WINDOW - 1);
+            const proven_size_t first = WINDOW - at < n ? WINDOW - at : n;      /* as far as the window's end; the rest from its beginning */
+            for (proven_size_t i = 0; i < first; ++i) out[oa + i] = z->window[at + i];
+            for (proven_size_t i = first; i < n; ++i) out[oa + i] = z->window[i - first];
+            oa += n;
+            length -= n;
+        }
+        /* The rest from the output itself. When the distance is shorter than the length the
+         * copy reads what it has just written, and that is what it means: so byte by byte,
+         * unless the two are far enough apart for eight at a time not to overlap. */
+        const proven_byte_t *from = out + oa - distance;
+        if (distance >= 8 && out_len - oa >= length + 8) {
+            for (proven_size_t i = 0; i < length; i += 8) {
+                const proven_u64 w = load64(from + i);
+                proven_byte_t *to = out + oa + i;
+                to[0] = (proven_byte_t)w; to[1] = (proven_byte_t)(w >> 8); to[2] = (proven_byte_t)(w >> 16); to[3] = (proven_byte_t)(w >> 24);
+                to[4] = (proven_byte_t)(w >> 32); to[5] = (proven_byte_t)(w >> 40); to[6] = (proven_byte_t)(w >> 48); to[7] = (proven_byte_t)(w >> 56);
+            }
+        } else {
+            for (proven_size_t i = 0; i < length; ++i) out[oa + i] = from[i];
+        }
+        oa += length;
+    }
+    /* Whole bytes that were read ahead go back; the bits of the byte in use stay. */
+    ia -= have >> 3;
+    have &= 7u;
+    z->bitbuf = (proven_u32)bits & ((1u << have) - 1u);
+    z->bitcnt = have;
+    io->in_at = ia;
+    io->out_at = oa;
+}
+
 proven_err_t proven_inflate(proven_inflate_t *z, proven_mem_view_t in, proven_size_t *consumed,
                             proven_mem_mut_t out, proven_size_t *produced, bool *done) {
     if (consumed) *consumed = 0;
@@ -316,7 +501,7 @@ proven_err_t proven_inflate(proven_inflate_t *z, proven_mem_view_t in, proven_si
                         z->state = S_STORED_LEN;
                         break;
                     case 1:
-                        z->lc = &z->fixed_len; z->dc = &z->fixed_dist;
+                        z->lc = &FIXED_LEN; z->dc = &FIXED_DIST;
                         z->state = S_SYMBOL;
                         break;
                     case 2:
@@ -336,12 +521,16 @@ proven_err_t proven_inflate(proven_inflate_t *z, proven_mem_view_t in, proven_si
                 z->state = S_STORED;
                 break; }
             case S_STORED:
-                while (z->stored > 0) {
-                    if (io.in_at == io.in_len || io.out_at == io.out_len) { going = false; break; }
-                    emit(z, &io, io.in[io.in_at++]);
-                    z->stored--;
+                {
+                    proven_size_t n = z->stored;
+                    if (n > io.in_len - io.in_at) n = io.in_len - io.in_at;
+                    if (n > io.out_len - io.out_at) n = io.out_len - io.out_at;
+                    for (proven_size_t i = 0; i < n; ++i) io.out[io.out_at + i] = io.in[io.in_at + i];
+                    io.in_at += n; io.out_at += n;
+                    z->stored -= (proven_u32)n;
                 }
                 if (z->stored == 0) z->state = S_BLOCK;
+                else going = false;
                 break;
             case S_TABLE:
                 if (!need(z, &io, 14)) { going = false; break; }
@@ -360,11 +549,13 @@ proven_err_t proven_inflate(proven_inflate_t *z, proven_mem_view_t in, proven_si
                 }
                 if (!going) break;
                 /* The code for the code lengths must be complete: nothing is forgiven here. */
-                if (construct(&z->lencode, z->lengths, 19) != 0) { result = bad(z, PROVEN_ERR_INVALID_FORMAT); going = false; break; }
+                /* (Its table is the distance code's, which is not built until these lengths are read.) */
+                if (construct(&z->lencode, z->lcount, z->lsymbol, z->dfast, CFAST_BITS, z->lengths, 19) != 0) { result = bad(z, PROVEN_ERR_INVALID_FORMAT); going = false; break; }
                 z->have = 0;
                 z->state = S_LENS;
                 break;
             case S_LENS:
+                if (z->len == 1 && z->bitcnt < 8) fast_lengths(z, &io);
                 while (z->have < z->nlen + z->ndist) {
                     const int sym = decode(z, &io, &z->lencode);
                     if (sym == -1) { going = false; break; }
@@ -378,9 +569,9 @@ proven_err_t proven_inflate(proven_inflate_t *z, proven_mem_view_t in, proven_si
                 {
                     /* A block must be able to end. */
                     if (z->lengths[256] == 0) { result = bad(z, PROVEN_ERR_INVALID_FORMAT); going = false; break; }
-                    int left = construct(&z->lencode, z->lengths, (int)z->nlen);
+                    int left = construct(&z->lencode, z->lcount, z->lsymbol, z->lfast, LFAST_BITS, z->lengths, (int)z->nlen);
                     if (!usable(&z->lencode, left)) { result = bad(z, PROVEN_ERR_INVALID_FORMAT); going = false; break; }
-                    left = construct(&z->distcode, z->lengths + z->nlen, (int)z->ndist);
+                    left = construct(&z->distcode, z->dcount, z->dsymbol, z->dfast, DFAST_BITS, z->lengths + z->nlen, (int)z->ndist);
                     if (!usable(&z->distcode, left)) { result = bad(z, PROVEN_ERR_INVALID_FORMAT); going = false; break; }
                     z->lc = &z->lencode; z->dc = &z->distcode;
                     z->state = S_SYMBOL;
@@ -401,6 +592,12 @@ proven_err_t proven_inflate(proven_inflate_t *z, proven_mem_view_t in, proven_si
                 z->state = S_LENS;
                 break; }
             case S_SYMBOL: {
+                /* As many whole symbols as the tables find, when no symbol is half-read;
+                 * then one the slow way, which is what can stop anywhere. */
+                if (z->len == 1 && z->bitcnt < 8) {
+                    fast(z, &io);
+                    if (z->state != S_SYMBOL) break;
+                }
                 /* Decoded even when the output is full: the next symbol may be the end of the
                  * block, and a stream whose data fits exactly must be able to say it has ended. */
                 const int sym = decode(z, &io, z->lc);
@@ -408,7 +605,7 @@ proven_err_t proven_inflate(proven_inflate_t *z, proven_mem_view_t in, proven_si
                 if (sym < 0) { result = bad(z, PROVEN_ERR_INVALID_FORMAT); going = false; break; }
                 if (sym < 256) {
                     if (io.out_at == io.out_len) { z->held = (proven_byte_t)sym; z->state = S_HELD; going = false; break; }
-                    emit(z, &io, (proven_byte_t)sym);
+                    io.out[io.out_at++] = (proven_byte_t)sym;
                     break;
                 }
                 if (sym == 256) { z->state = S_BLOCK; break; }
@@ -419,7 +616,7 @@ proven_err_t proven_inflate(proven_inflate_t *z, proven_mem_view_t in, proven_si
                 break; }
             case S_HELD:
                 if (io.out_at == io.out_len) { going = false; break; }
-                emit(z, &io, z->held);
+                io.out[io.out_at++] = z->held;
                 z->state = S_SYMBOL;
                 break;
             case S_LEN_EXTRA:
@@ -439,7 +636,7 @@ proven_err_t proven_inflate(proven_inflate_t *z, proven_mem_view_t in, proven_si
                 if (!need(z, &io, z->extra)) { going = false; break; }
                 z->distance += take(z, z->extra);
                 /* Further back than anything that was ever written. */
-                if (z->distance > z->whave) { result = bad(z, PROVEN_ERR_INVALID_FORMAT); going = false; break; }
+                if (z->distance > z->whave + io.out_at) { result = bad(z, PROVEN_ERR_INVALID_FORMAT); going = false; break; }
                 z->state = S_COPY;
                 break;
             case S_COPY:
@@ -447,7 +644,8 @@ proven_err_t proven_inflate(proven_inflate_t *z, proven_mem_view_t in, proven_si
                  * the copy reads what it has just written, and that is what it means. */
                 while (z->length > 0) {
                     if (io.out_at == io.out_len) { going = false; break; }
-                    emit(z, &io, z->window[(z->wpos - z->distance) & (WINDOW - 1)]);
+                    io.out[io.out_at] = back(z, &io, z->distance);
+                    io.out_at++;
                     z->length--;
                 }
                 if (z->length == 0) z->state = S_SYMBOL;
@@ -466,7 +664,7 @@ proven_err_t proven_inflate(proven_inflate_t *z, proven_mem_view_t in, proven_si
                 }
                 if (!going) break;
                 sum_output(z, &io);
-                if (z->trailer[0] != z->check || (z->format == PROVEN_DEFLATE_GZIP && z->trailer[1] != (proven_u32)z->total)) {
+                if (z->trailer[0] != z->check || (z->format == PROVEN_DEFLATE_GZIP && z->trailer[1] != (proven_u32)(z->total + io.out_at))) {
                     result = bad(z, PROVEN_ERR_INVALID_FORMAT); going = false; break;
                 }
                 z->state = S_DONE;
@@ -477,6 +675,7 @@ proven_err_t proven_inflate(proven_inflate_t *z, proven_mem_view_t in, proven_si
         }
     }
     sum_output(z, &io);
+    keep(z, &io);
     *consumed = io.in_at;
     *produced = io.out_at;
     *done = z->state == S_DONE;

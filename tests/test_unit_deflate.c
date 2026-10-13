@@ -1,6 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "test_unit_deflate_vectors.h"
+#include "../src/proven/deflate_tables.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -197,6 +198,44 @@ int main(void) {
         bw_end(&w);
         PROVEN_TEST_ASSERT(proven_inflate_all(g_heap, PROVEN_DEFLATE_RAW, (proven_mem_view_t){ g_a, w.n }, (proven_mem_mut_t){ g_b, sizeof g_b }, &made, NULL) == PROVEN_ERR_INVALID_FORMAT,
             "the same distance with one byte less before it is refused", "");
+        /* Forty thousand stored bytes and then that match again, read in two calls: the first
+         * leaves more than a window behind it, and the second finds its match there. */
+        {
+            proven_size_t used = 0;
+            bool ended = false;
+            w = (bw_t){ g_a, 0, 0, 0 };
+            g_a[w.n++] = 0; g_a[w.n++] = 0x40; g_a[w.n++] = 0x9c; g_a[w.n++] = 0xbf; g_a[w.n++] = 0x63;
+            memcpy(g_a + w.n, g_plain, 40000); w.n += 40000;
+            bw_bits(&w, 1, 1); bw_bits(&w, 1, 2);
+            bw_code(&w, 0xc0 + 285 - 280, 8); bw_code(&w, 29, 5); bw_bits(&w, 8191, 13); bw_code(&w, 0, 7);
+            bw_end(&w);
+            PROVEN_TEST_ASSERT(inflate_steps(PROVEN_DEFLATE_RAW, g_a, w.n, 70000, 40000, g_b, sizeof g_b, &made, &used, &ended) == PROVEN_OK && ended && used == w.n &&
+                               made == 40000 + 258 && memcmp(g_b, g_plain, 40000) == 0 && memcmp(g_b + 40000, g_plain + 40000 - 32768, 258) == 0,
+                "a match at 32,768 into what an earlier call produced, when that call produced more than a window", "Check keep(): the last 32,768 bytes, with the next one to go at the window's start.");
+        }
+        /* A dynamic block whose code lengths are two long runs of zeros, a one for the end of
+         * block, and a one for the single distance code: nothing but an end of block, and
+         * valid. The same with a run of eleven zeros in place of the last length says more
+         * lengths than the block has, and is refused - by whichever code reads it. */
+        for (int over = 0; over < 2; ++over) {
+            w = (bw_t){ g_a, 0, 0, 0 };
+            bw_bits(&w, 1, 1); bw_bits(&w, 2, 2);
+            bw_bits(&w, 0, 5); bw_bits(&w, 0, 5); bw_bits(&w, 14, 4);       /* 257 literal/length codes, 1 distance code, 18 lengths for the code that follows */
+            for (int i = 0; i < 18; ++i) bw_bits(&w, i == 2 || i == 17 ? 1 : 0, 3);     /* symbols 18 and 1, a bit each: 1 is "0", 18 is "1" */
+            bw_bits(&w, 1, 1); bw_bits(&w, 127, 7);                         /* 138 zeros */
+            bw_bits(&w, 1, 1); bw_bits(&w, 107, 7);                         /* 118 more: 256 */
+            bw_bits(&w, 0, 1);                                              /* the end of block: one bit */
+            if (over) { bw_bits(&w, 1, 1); bw_bits(&w, 0, 7); }             /* eleven zeros where one length is left */
+            else bw_bits(&w, 0, 1);                                         /* the distance code: one bit */
+            bw_bits(&w, 0, 1);                                              /* the end of block */
+            bw_end(&w);
+            const proven_err_t e = proven_inflate_all(g_heap, PROVEN_DEFLATE_RAW, (proven_mem_view_t){ g_a, w.n }, (proven_mem_mut_t){ g_b, sizeof g_b }, &made, NULL);
+            proven_size_t used = 0, made1 = 0;
+            bool ended = false;
+            const proven_err_t e1 = inflate_steps(PROVEN_DEFLATE_RAW, g_a, w.n, 1, 1, g_b, sizeof g_b, &made1, &used, &ended);
+            if (!over) PROVEN_TEST_ASSERT(e == PROVEN_OK && made == 0 && e1 == PROVEN_OK && ended && made1 == 0, "a dynamic block that holds only its end is read, whole and a byte at a time", "");
+            else PROVEN_TEST_ASSERT(e == PROVEN_ERR_INVALID_FORMAT && e1 == PROVEN_ERR_INVALID_FORMAT, "a run of code lengths that passes the number the block announced is refused, whole and a byte at a time", "Check fast_lengths and S_LENS_REPEAT: both count before they write.");
+        }
         /* A run: distance 1, length 258, again and again - each copy reads what it has just written. */
         w = (bw_t){ g_a, 0, 0, 0 };
         bw_bits(&w, 1, 1); bw_bits(&w, 1, 2);
@@ -308,6 +347,68 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_deflate(z, (proven_mem_view_t){ NULL, 0 }, &c, (proven_mem_mut_t){ g_c, 100 }, &p, PROVEN_DEFLATE_FLUSH_FINISH, &done) == PROVEN_OK && done && p == 0,
             "asking a finished stream to finish again produces nothing and says done", "");
         proven_deflate_destroy(z);
+    }
+
+    PROVEN_TEST_SECTION("the fixed code's tables", "The decompressor builds nothing for a fixed block: its code is in src/proven/deflate_tables.h, generated. Here it is made again from the lengths RFC 1951 gives and compared.", "Regenerate src/proven/deflate_tables.h with the private generator; do not edit it.");
+    {
+        bool same = true;
+        for (int which = 0; which < 2; ++which) {
+            unsigned lengths[288], n = which == 0 ? 288 : 32, fbits = which == 0 ? 9 : 5;
+            for (unsigned sym = 0; sym < n; ++sym) lengths[sym] = which == 1 ? 5 : sym < 144 ? 8 : sym < 256 ? 9 : sym < 280 ? 7 : 8;
+            const proven_u16 *count = which == 0 ? deflate_fixed_lcount : deflate_fixed_dcount, *symbol = which == 0 ? deflate_fixed_lsymbol : deflate_fixed_dsymbol,
+                             *fast = which == 0 ? deflate_fixed_lfast : deflate_fixed_dfast;
+            unsigned counted[16] = { 0 }, next[16] = { 0 }, code = 0, order = 0, filled = 0;
+            for (unsigned sym = 0; sym < n; ++sym) counted[lengths[sym]]++;
+            for (unsigned len = 0; len < 16; ++len) same = same && count[len] == counted[len];
+            for (unsigned len = 1; len < 16; ++len) { code = (code + counted[len - 1]) << 1; next[len] = code; }
+            /* The symbols in the order of their codes: by length, then by number. */
+            for (unsigned len = 1; len < 16; ++len) for (unsigned sym = 0; sym < n; ++sym) if (lengths[sym] == len) same = same && symbol[order++] == sym;
+            /* Every index of the table: the symbol whose code, sent highest bit first and read lowest first, is its low bits. */
+            for (unsigned sym = 0; sym < n; ++sym) {
+                unsigned c = next[lengths[sym]]++, image = 0;
+                for (unsigned b = 0; b < lengths[sym]; ++b) { image = (image << 1) | (c & 1u); c >>= 1; }
+                for (unsigned at = image; at < (1u << fbits); at += 1u << lengths[sym]) { same = same && fast[at] == ((sym << 4) | lengths[sym]); filled++; }
+            }
+            same = same && order == n && filled == (1u << fbits);
+        }
+        PROVEN_TEST_ASSERT(same, "the counts, the order of the symbols and all 512 and 32 entries of the two tables are what the RFC's lengths make", "");
+    }
+
+    PROVEN_TEST_SECTION("pieces of every size", "The decoder finds whole symbols by table and leaves what the end of its input or of its output cuts to the code that works a bit at a time: where the two ends fall must not matter.",
+        "Check fast() and fast_lengths() in src/proven/deflate.c - what they leave untaken, and the bytes they give back - and back() and keep() for a distance that reaches past the beginning of a call's output.");
+    {
+        static const proven_size_t ins[] = { 1, 2, 7, 8, 9, 64, 4096, 70000 }, outs[] = { 1, 2, 3, 8, 9, 257, 258, 259, 266, 300, 16384, 40000, 70000 };      /* 40,000: a call that leaves more than a window behind it, and then another */
+        bool all = true, far_found = true;
+        long runs = 0;
+        for (int i = 0; i <= NCORPUS; ++i) {
+            proven_size_t plain_len;
+            if (i < NCORPUS) plain_len = corpus(i, g_plain);
+            else {
+                /* 32,000 bytes of noise, twice: the second half is one match after another at
+                 * nearly the greatest distance there is, from history that a small output
+                 * piece has long since left behind. */
+                proven_u32 x = 88172645u;
+                for (proven_size_t k = 0; k < 32000; ++k) { x ^= x << 13; x ^= x >> 17; x ^= x << 5; g_plain[k] = g_plain[32000 + k] = (proven_byte_t)(x >> 7); }
+                plain_len = 64000;
+            }
+            for (int level = 1; level <= 9; level += 4) {
+                proven_deflate_options_t o = { .alloc = g_heap, .format = PROVEN_DEFLATE_RAW, .level = level };
+                proven_size_t packed = 0;
+                if (proven_deflate_all(&o, (proven_mem_view_t){ g_plain, plain_len }, (proven_mem_mut_t){ g_c, sizeof g_c }, &packed) != PROVEN_OK) { all = false; continue; }
+                if (i == NCORPUS) far_found = far_found && packed < 40000;      /* the second half was found in the first: the distances are there */
+                for (proven_size_t a = 0; a < sizeof ins / sizeof ins[0]; ++a) for (proven_size_t b = 0; b < sizeof outs / sizeof outs[0]; ++b) {
+                    if (plain_len > 10000 && ins[a] * outs[b] < 16) continue;      /* a byte of each at a time, for the small ones only */
+                    proven_size_t made = 0, used = 0;
+                    bool ended = false;
+                    memset(g_b, 0x5a, plain_len);
+                    all = all && inflate_steps(PROVEN_DEFLATE_RAW, g_c, packed, ins[a], outs[b], g_b, plain_len, &made, &used, &ended) == PROVEN_OK && ended &&
+                          made == plain_len && used == packed && memcmp(g_b, g_plain, plain_len) == 0;
+                    runs++;
+                }
+            }
+        }
+        PROVEN_TEST_ASSERT(far_found, "32,000 bytes of noise written twice compress to little more than once: the matches at that distance are in the stream", "");
+        PROVEN_TEST_ASSERT(all && runs > 3000, "the corpus and that block, at three levels, come back whole through 104 combinations of input and output piece", "");
     }
 
     PROVEN_TEST_SECTION("flushing", "A sync flush makes everything so far decodable, ends in 00 00 ff ff, and the stream goes on.", "Check the sync branch of proven_deflate, and that proven_inflate keeps its history when a stream is fed in pieces.");
