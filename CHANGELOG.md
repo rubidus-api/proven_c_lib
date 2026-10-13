@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-10-13
+
 ### Changed
 
 - **AES-GCM on x86-64 takes eight blocks at a time.** The counter mode runs eight blocks
