@@ -26,10 +26,52 @@ AES_TARGET void proven_sys_aes_encrypt_block(const uint8_t *rk, int rounds, cons
     _mm_storeu_si128((__m128i *)out, aes_block(rk, rounds, _mm_loadu_si128((const __m128i *)in)));
 }
 
+/* The round keys, loaded once for a call that has many blocks to do. */
+typedef struct { __m128i k[15]; } aes_keys_t;
+
+AES_TARGET static void aes_keys_load(aes_keys_t *ks, const uint8_t *rk, int rounds) {
+    for (int r = 0; r <= rounds; ++r) ks->k[r] = _mm_loadu_si128((const __m128i *)(rk + 16 * r));
+}
+
+/* Zero what held key material, with the barrier proven_mem_wipe uses: the compiler must
+ * assume the empty statement reads it. */
+AES_TARGET static void aes_forget(void *p, size_t n) {
+    unsigned char *b = (unsigned char *)p;
+    for (size_t i = 0; i < n; ++i) b[i] = 0;
+    __asm__ __volatile__("" : : "r"(p) : "memory");
+}
+
+#define AES_WIDE 8        /* counter blocks in flight: no block waits for another, and a round takes several cycles */
+
 AES_TARGET void proven_sys_aes_ctr(const uint8_t *rk, int rounds, const uint8_t iv[12], uint32_t counter,
                                    const uint8_t *in, uint8_t *out, size_t len) {
     uint8_t block[16], ks[16];
     for (int i = 0; i < 12; ++i) block[i] = iv[i];
+    if (len >= 16 * AES_WIDE) {
+        aes_keys_t keys;
+        aes_keys_load(&keys, rk, rounds);
+        block[12] = block[13] = block[14] = block[15] = 0;
+        /* The nonce, zeros where the counter goes, and the first round key already folded in:
+         * a block's counter is then XORed into the last four bytes. */
+        const __m128i base = _mm_xor_si128(_mm_loadu_si128((const __m128i *)block), keys.k[0]);
+        do {
+            __m128i b[AES_WIDE];
+            for (int i = 0; i < AES_WIDE; ++i) {
+                b[i] = _mm_xor_si128(base, _mm_insert_epi32(_mm_setzero_si128(), (int)__builtin_bswap32(counter + (uint32_t)i), 3));
+            }
+            counter += AES_WIDE;
+            for (int r = 1; r < rounds; ++r) {
+                for (int i = 0; i < AES_WIDE; ++i) b[i] = _mm_aesenc_si128(b[i], keys.k[r]);
+            }
+            for (int i = 0; i < AES_WIDE; ++i) {
+                b[i] = _mm_aesenclast_si128(b[i], keys.k[rounds]);
+                /* Each block's input is read before that block is written: `in` may be `out`. */
+                _mm_storeu_si128((__m128i *)(out + 16 * i), _mm_xor_si128(b[i], _mm_loadu_si128((const __m128i *)(in + 16 * i))));
+            }
+            in += 16 * AES_WIDE; out += 16 * AES_WIDE; len -= 16 * AES_WIDE;
+        } while (len >= 16 * AES_WIDE);
+        aes_forget(&keys, sizeof keys);
+    }
     while (len > 0) {
         block[12] = (uint8_t)(counter >> 24); block[13] = (uint8_t)(counter >> 16);
         block[14] = (uint8_t)(counter >> 8); block[15] = (uint8_t)counter;
@@ -46,19 +88,22 @@ AES_TARGET void proven_sys_aes_ctr(const uint8_t *rk, int rounds, const uint8_t 
     }
 }
 
-/* The multiplication of Intel's carry-less multiplication white paper: operands are byte
- * reversed, multiplied as polynomials, shifted one bit for GCM's reflected order and reduced. */
-AES_TARGET static __m128i gf_mul(__m128i a, __m128i b) {
-    __m128i t2, t3, t4, t5, t6, t7, t8, t9;
-    t3 = _mm_clmulepi64_si128(a, b, 0x00);
-    t4 = _mm_clmulepi64_si128(a, b, 0x10);
-    t5 = _mm_clmulepi64_si128(a, b, 0x01);
-    t6 = _mm_clmulepi64_si128(a, b, 0x11);
+/* The multiplication of Intel's carry-less multiplication white paper, in its two halves:
+ * operands are byte reversed and multiplied as polynomials into 256 bits (gf_product); the
+ * 256 bits are shifted one bit for GCM's reflected order and reduced (gf_reduce). Both
+ * halves are linear, so several products may be added before one reduction. */
+AES_TARGET static void gf_product(__m128i a, __m128i b, __m128i *lo, __m128i *hi) {
+    __m128i t3 = _mm_clmulepi64_si128(a, b, 0x00);
+    __m128i t4 = _mm_clmulepi64_si128(a, b, 0x10);
+    __m128i t5 = _mm_clmulepi64_si128(a, b, 0x01);
+    __m128i t6 = _mm_clmulepi64_si128(a, b, 0x11);
     t4 = _mm_xor_si128(t4, t5);
-    t5 = _mm_slli_si128(t4, 8);
-    t4 = _mm_srli_si128(t4, 8);
-    t3 = _mm_xor_si128(t3, t5);
-    t6 = _mm_xor_si128(t6, t4);
+    *lo = _mm_xor_si128(t3, _mm_slli_si128(t4, 8));
+    *hi = _mm_xor_si128(t6, _mm_srli_si128(t4, 8));
+}
+
+AES_TARGET static __m128i gf_reduce(__m128i t3, __m128i t6) {
+    __m128i t2, t4, t5, t7, t8, t9;
     t7 = _mm_srli_epi32(t3, 31);
     t8 = _mm_srli_epi32(t6, 31);
     t3 = _mm_slli_epi32(t3, 1);
@@ -87,10 +132,53 @@ AES_TARGET static __m128i gf_mul(__m128i a, __m128i b) {
     return _mm_xor_si128(t6, t3);
 }
 
+AES_TARGET static __m128i gf_mul(__m128i a, __m128i b) {
+    __m128i lo, hi;
+    gf_product(a, b, &lo, &hi);
+    return gf_reduce(lo, hi);
+}
+
+/* `count` blocks (1 to AES_WIDE) folded into y with one reduction:
+ * y = (y ^ x1)*H^count ^ x2*H^(count-1) ^ ... ^ x_count*H, with hp[i] = H^(i+1). */
+AES_TARGET static __m128i gf_fold(__m128i y, const __m128i *hp, const uint8_t *data, int count, __m128i rev) {
+    __m128i lo = _mm_setzero_si128(), hi = _mm_setzero_si128();
+    for (int i = 0; i < count; ++i) {
+        __m128i x = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)(data + 16 * i)), rev), l, h;
+        if (i == 0) x = _mm_xor_si128(x, y);
+        gf_product(x, hp[count - 1 - i], &l, &h);
+        lo = _mm_xor_si128(lo, l);
+        hi = _mm_xor_si128(hi, h);
+    }
+    return gf_reduce(lo, hi);
+}
+
 AES_TARGET void proven_sys_aes_ghash(uint8_t y[16], const uint8_t h[16], const uint8_t *data, size_t blocks) {
     const __m128i rev = _mm_set_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
     __m128i hv = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)h), rev);
     __m128i yv = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)y), rev);
+    if (blocks >= AES_WIDE) {
+        /* The powers of H are made here, for this call, and not kept with the key: seven
+         * multiplications, against a key that would be 112 bytes larger on every connection. */
+        _Static_assert(AES_WIDE == 8, "the powers below are written out for eight");
+        __m128i hp[AES_WIDE];
+        hp[0] = hv;                                  /* (in an order where no product waits */
+        hp[1] = gf_mul(hp[0], hp[0]);                /*  for more than two before it)       */
+        hp[2] = gf_mul(hp[1], hp[0]);
+        hp[3] = gf_mul(hp[1], hp[1]);
+        hp[4] = gf_mul(hp[3], hp[0]);
+        hp[5] = gf_mul(hp[2], hp[2]);
+        hp[6] = gf_mul(hp[3], hp[2]);
+        hp[7] = gf_mul(hp[3], hp[3]);
+        do {
+            yv = gf_fold(yv, hp, data, AES_WIDE, rev);
+            data += 16 * AES_WIDE; blocks -= AES_WIDE;
+        } while (blocks >= AES_WIDE);
+        if (blocks > 0) {
+            yv = gf_fold(yv, hp, data, (int)blocks, rev);
+            blocks = 0;
+        }
+        aes_forget(hp, sizeof hp);
+    }
     while (blocks-- > 0) {
         __m128i x = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)data), rev);
         yv = gf_mul(_mm_xor_si128(yv, x), hv);

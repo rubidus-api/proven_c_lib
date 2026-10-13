@@ -18,6 +18,22 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **AES-GCM on x86-64 takes eight blocks at a time.** The counter mode runs eight blocks
+  through the rounds together, and GHASH adds eight carry-less products before one reduction,
+  where each did one block and waited for it. The instructions are the same (AES-NI,
+  PCLMULQDQ, SSSE3, SSE4.1, found at run time), so no processor that had the hardware path
+  loses it; nothing is kept with the key - the powers of the hash key are made for each call
+  of at least eight blocks and wiped after it. Shorter inputs, the other processors and the
+  portable code are as they were.
+- Measured on the development machine, one core, under other users' load: AES-128-GCM on
+  16 KiB from 581 to 2,660 MiB/s (AES-256-GCM 494 to 2,218; 1,400 bytes 565 to 1,774; 64 bytes
+  unchanged at 340); a megabyte through two TLS 1.3 engines in memory from 275 to 1,066 MiB/s;
+  one-megabyte responses from the event-driven server over TLS to sixteen requests in flight
+  from 334 to 566 a second on HTTP/1.1 and 284 to 416 on HTTP/2, client and server on the
+  same machine. The measuring programs are not part of the repository.
+
 ## [0.46.0] - 2026-10-13
 
 ### Changed

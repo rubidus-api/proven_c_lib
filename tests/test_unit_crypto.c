@@ -2,6 +2,7 @@
 #include "proven_test.h"
 #include "../src/proven/proven_internal_crypto.h"
 #include "test_unit_crypto_vectors.h"
+#include "../platform/proven_sys_aes.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -119,7 +120,7 @@ int main(void) {
         if (proven_crypto_aes_hw_available()) {
             PROVEN_TEST_ASSERT(run_gcm() == COUNT(CRV_GCM), "the processor's AES and carry-less multiply: every case", "");
             /* The two against each other on inputs neither was written for. */
-            proven_crypto_aes_gcm_t hw, sw;
+            proven_crypto_aes_gcm_t hw, sw, sw16;
             proven_byte_t key[32], nonce[12], tag_hw[16], tag_sw[16];
             static proven_byte_t text[777], a[777], b[777];
             bool same = true;
@@ -137,6 +138,67 @@ int main(void) {
                 same = same && hw.hw && !sw.hw && memcmp(a, b, len) == 0 && memcmp(tag_hw, tag_sw, 16) == 0;
             }
             PROVEN_TEST_ASSERT(same, "the two implementations agree on 24 further messages", "");
+
+            /* Every length: the hardware path takes eight blocks at a time and folds eight
+             * into one reduction, so each count of whole blocks and each length of tail is a
+             * different way through it - for the text, and for the associated data, which
+             * goes through the same hash. Sealed out of place, in place, and opened. */
+            static proven_byte_t big[1200], c1[1200], c2[1200], back[1200];
+            for (proven_size_t i = 0; i < sizeof big; ++i) big[i] = (proven_byte_t)(i * 73 + i / 7 + 11);
+            proven_size_t differing = 0;
+            for (proven_size_t len = 0; len <= 1100; ++len) {
+                const proven_size_t klen = len % 3 == 0 ? 32 : 16, alen = (len * 7) % 401, at = len % 16;
+                for (proven_size_t i = 0; i < sizeof key; ++i) key[i] = (proven_byte_t)(i * 29 + len);
+                for (proven_size_t i = 0; i < sizeof nonce; ++i) nonce[i] = (proven_byte_t)(i * 3 + len / 5);
+                (void)proven_crypto_aes_gcm_init(&hw, key, klen);
+                proven_crypto_aes_force_portable(true);
+                (void)proven_crypto_aes_gcm_init(&sw, key, klen);
+                proven_crypto_aes_force_portable(false);
+                const proven_mem_view_t ad = { big + 700 + at, alen }, plain = { big + at, len };
+                proven_crypto_aes_gcm_seal(&hw, nonce, ad, plain, c1, tag_hw);
+                proven_crypto_aes_gcm_seal(&sw, nonce, ad, plain, c2, tag_sw);
+                bool row = memcmp(c1, c2, len) == 0 && memcmp(tag_hw, tag_sw, 16) == 0;
+                memcpy(back + at, big + at, len);
+                proven_crypto_aes_gcm_seal(&hw, nonce, ad, (proven_mem_view_t){ back + at, len }, back + at, tag_sw);
+                row = row && memcmp(back + at, c1, len) == 0 && memcmp(tag_hw, tag_sw, 16) == 0;
+                row = row && proven_crypto_aes_gcm_open(&hw, nonce, ad, (proven_mem_view_t){ back + at, len }, tag_hw, back + at) && memcmp(back + at, big + at, len) == 0;
+                row = row && proven_crypto_aes_gcm_open(&sw, nonce, ad, (proven_mem_view_t){ c1, len }, tag_hw, c2) && memcmp(c2, big + at, len) == 0;
+                if (!row) { if (differing == 0) PROVEN_TEST_INFO("first difference at length {} (associated data {})", PROVEN_ARG((int)len), PROVEN_ARG((int)alen)); differing++; }
+            }
+            /* And long enough for the counter's low byte to turn over inside a message, which
+             * 1,100 bytes are not: a TLS record of the largest size is 1,025 blocks. */
+            static proven_byte_t rec[16401], r1[16401], r2[16401];
+            for (proven_size_t i = 0; i < sizeof rec; ++i) rec[i] = (proven_byte_t)(i * 151 + i / 255);
+            for (proven_size_t len = 16401 - 40; len <= 16401; len += 13) {
+                proven_crypto_aes_gcm_seal(&hw, nonce, (proven_mem_view_t){ rec, 5 }, (proven_mem_view_t){ rec, len }, r1, tag_hw);
+                proven_crypto_aes_gcm_seal(&sw, nonce, (proven_mem_view_t){ rec, 5 }, (proven_mem_view_t){ rec, len }, r2, tag_sw);
+                if (memcmp(r1, r2, len) != 0 || memcmp(tag_hw, tag_sw, 16) != 0) differing++;
+            }
+            PROVEN_TEST_ASSERT(differing == 0, "and on every length from 0 to 1,100 bytes, with associated data of 0 to 400 - sealed, sealed in place, and each opened by the other - and on four records of the largest size",
+                "Inspect proven_sys_aes_ctr and proven_sys_aes_ghash in platform/proven_sys_aes.c: the eight-block loops, what is left after them, and the one-block tails.");
+
+            /* The counter, across the end of its thirty-two bits. GCM as TLS uses it never
+             * gets there, but the function says what it does and so it is held to it: the
+             * keystream is the cipher on nonce | counter, block by block. */
+            bool wraps = true;
+            (void)proven_crypto_aes_gcm_init(&hw, key, 16);
+            proven_crypto_aes_force_portable(true);
+            (void)proven_crypto_aes_gcm_init(&sw16, key, 16);       /* the bitsliced cipher: another implementation altogether */
+            proven_crypto_aes_force_portable(false);
+            static const proven_u32 carries[4] = { 0x100u, 0x10000u, 0x1000000u, 0u };     /* where a byte of the counter turns over; 0 is 2^32 */
+            for (int edge = 0; edge < 4; ++edge) for (proven_u32 start = carries[edge] - 24; start != carries[edge] + 4; ++start) {
+                memset(c1, 0, 400);
+                proven_sys_aes_ctr(hw.rk, hw.rounds, nonce, start, c1, c1, 400);
+                for (proven_u32 k = 0; k < 25; ++k) {
+                    proven_byte_t block[16], want[16];
+                    const proven_u32 ctr = start + k;
+                    memcpy(block, nonce, 12);
+                    block[12] = (proven_byte_t)(ctr >> 24); block[13] = (proven_byte_t)(ctr >> 16); block[14] = (proven_byte_t)(ctr >> 8); block[15] = (proven_byte_t)ctr;
+                    proven_crypto_aes_encrypt_block(&sw16, block, want);
+                    wraps = wraps && memcmp(c1 + 16 * k, want, 16) == 0;
+                }
+            }
+            PROVEN_TEST_ASSERT(wraps, "the counter carries into each of its bytes, and from 2^32 - 1 to 0, inside a run of eight blocks - 28 starting points at each of the four - as it does one block at a time", "");
         } else {
             PROVEN_TEST_INFO("this processor or build has no hardware AES path; only the portable code ran");
         }
