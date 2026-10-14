@@ -757,22 +757,30 @@ server's own per-connection request buffer is Chapter 11's and is separate. (A T
 connection holds the same.)
 
 **What a handshake costs.** On one x86-64 core of the development machine, a full handshake
-with X25519 and a P-256 certificate is about 0.34 ms of processor time on the server and
-about 0.67 ms on a client that holds that certificate as its anchor; each certificate whose
+with X25519 and a P-256 certificate is about 0.33 ms of processor time on the server and
+about 0.47 ms on a client that holds that certificate as its anchor; each certificate whose
 signature the client checks on the way to an anchor - one, for a certificate an anchor
-issued - adds about 0.5 ms. For a server that is some 3,000 new connections a second per
-core. With an Ed25519 certificate the two figures are 0.26 ms and 0.32 ms, a further
-certificate 0.15 ms, and a core serves some 3,800 new connections a second. The public-key arithmetic here is written to be constant-time
-and to be read, and is 1.2 to 8 times slower than that of OpenSSL on the same machine, by
-operation: verifying with Ed25519 the least, verifying with P-256 the most. Resumption
+issued - adds about 0.3 ms. For a server that is some 3,000 new connections a second per
+core. With an Ed25519 certificate the two figures are 0.21 ms and 0.25 ms, a further
+certificate 0.08 ms, and a core serves some 4,800 new connections a second. Resumption
 (section 6) removes the signatures; keeping connections open removes the handshake.
+
+The public-key arithmetic here is written to be read, and to be constant-time wherever it
+handles a secret: a private key, a nonce, a shared secret. **Signature verification is not
+constant-time**, and need not be: the key, the message and the signature it is given are
+all public. It takes both of its multiplications in one variable-time pass, which is about
+twice as fast. The functions that do so are reachable from verification alone, and the build
+fails if anything else calls them (`scripts/check-vartime.py`). Against `openssl speed`
+(OpenSSL 3.5) on the same machine, Ed25519 here signs in about three quarters of OpenSSL's
+time and verifies in about two thirds; X25519 and the NIST curves take 1.2 to 7 times as
+long, P-384 verification the least and P-256 key agreement the most.
 
 Those figures are a 64-bit build's, by GCC or Clang: the numbers of P-256, RSA and
 Diffie-Hellman are then held in 64-bit limbs, and a number of Curve25519's field in five
 limbs of 51 bits, two of which multiply into the compiler's 128-bit integer. A 32-bit build,
 and any build with `-DPROVEN_CRYPTO_MP_LIMB_BITS=32`, holds them in limbs of 32 bits and of
-26 and 25, and takes two to four times as long over the same arithmetic - 0.84 ms and 1.6 ms
-for the handshake with a P-256 certificate, 0.76 ms and 1 ms with Ed25519, and 6, 19 and
+26 and 25, and takes two to four times as long over the same arithmetic - 0.83 ms and 1.1 ms
+for the handshake with a P-256 certificate, 0.59 ms and 0.75 ms with Ed25519, and 6, 19 and
 44 ms for the RSA signatures below. The results are the same bytes either way.
 
 **With an RSA key the signature dominates.** On the same core one signature takes about 1.7 ms

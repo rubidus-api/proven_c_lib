@@ -18,6 +18,44 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/check-vartime.py`, run by `./nob build` in every mode (skipped, and saying so,
+  without python3 or a POSIX shell): it fails the build when a function named `*_vartime`
+  is called from anywhere but signature verification or the suite's hooks, is not
+  `static`, is named in a macro or taken by address, or when it finds no such function to
+  check. It reads the call sites in the source, and in the object code compiled without
+  inlining when `objdump` is there.
+
+### Changed
+
+- **Signature verification is variable-time.** A verification has no secret - the key,
+  the message and the signature are public - and P-256, P-384 and Ed25519 now take its two
+  multiples in one pass that branches on them: a width-5 NAF of the second scalar against
+  eight odd multiples of the key, the generator's (or base point's) signed comb for the
+  first, and for the NIST curves Jacobian formulas that are not complete, branching to the
+  cases they get wrong. The check above keeps these functions out of everything that
+  handles a secret, which stays constant-time. The suite compares the pass against the
+  constant-time code on the cases where its formulas branch, and on scalars and points that
+  meet them. This is the last of four steps of the plan for the curves (RFC-0014).
+- **Ed25519 takes a multiple of the base point from a table**: sixteen points (1 KiB) read
+  by the same signed comb of five teeth as the NIST curves' generators, every lookup a full
+  pass under a mask. The table was computed by another implementation, and the suite
+  recomputes each entry with the general code. A public key now reduces the expanded secret
+  modulo L before the multiplication; the point is the same.
+- Reducing a long number modulo another - a hash to a scalar, among others - goes a chunk
+  of the modulus's size at a time by Montgomery multiplication, where it went a bit at a
+  time: 6.6 us became about 0.5 for a SHA-512 output modulo Ed25519's L.
+- Measured on the development machine (x86-64, one core, GCC `-O3`; before, after):
+  Ed25519 public key 70 -> 30 us, signing 90 -> 33, verifying 149 -> 79; P-256 verifying
+  527 -> 295 and signing 165 -> 159; P-384 verifying 1,202 -> 725. A full TLS 1.3 handshake
+  in memory with X25519, the server's certificate being the client's anchor: with a P-256
+  certificate 0.34 -> 0.33 ms of the server's time and 0.67 -> 0.47 ms of the client's;
+  with Ed25519 0.26 -> 0.21 and 0.32 -> 0.25. With 32-bit limbs the P-256 handshake's
+  client side is 1.6 -> 1.1 ms.
+- Chapter 14 of the manual gives the new figures, and says which arithmetic is
+  constant-time and which is not.
+
 ## [0.52.0] - 2026-10-14
 
 ### Changed

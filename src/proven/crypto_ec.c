@@ -13,7 +13,11 @@
  *
  * A multiple of the generator - a public key, the first half of a signature - is taken from
  * a table of sixteen fixed points a curve (a signed comb of five teeth), which leaves a fifth
- * of the doublings. A multiple of any other point walks a table made for that point. */
+ * of the doublings. A multiple of any other point walks a table made for that point.
+ *
+ * Signature verification is the exception to all of this, and only it: it has no secret, and
+ * takes its two multiples in one variable-time pass with formulas that are not complete (the
+ * section "Verification, in variable time" below). */
 
 #define EC_LIMBS PROVEN_CRYPTO_MP_LIMBS(PROVEN_CRYPTO_EC_MAX_BYTES)   /* P-384 */
 #define EC_NIBBLES (PROVEN_CRYPTO_MP_LIMB_BITS / 4)                  /* in a limb */
@@ -602,11 +606,224 @@ static void ec_digest_scalar(const ec_curve_t *c, proven_crypto_limb_t *z, prove
     proven_crypto_mp_reduce_be(&c->n, z, digest.ptr, n);
 }
 
+/* ---- Verification, in variable time ----
+ *
+ * A verification has no secret: the key, the digest and the signature are all public. The
+ * functions named `_vartime` below branch and index on the values they are given, and are
+ * correct only for that reason. They are for verification alone - `proven_crypto_ecdsa_verify`
+ * and the suite's hooks are their only callers, and scripts/check-vartime.py fails the build
+ * when anything else calls them.
+ *
+ * Points here are Jacobian (X : Y : Z), x = X / Z^2 and y = Y / Z^3, Z = 0 the point at
+ * infinity, a type of their own so they cannot be passed where the complete formulas expect
+ * theirs. The formulas are the usual incomplete ones (dbl-2001-b; add-2007-bl and
+ * madd-2007-bl of the Explicit-Formulas Database), and the cases they get wrong - a point at
+ * infinity, P + P, P + (-P) - are branched to. */
+
+typedef struct { proven_crypto_limb_t x[EC_LIMBS], y[EC_LIMBS], z[EC_LIMBS]; } ec_jac_t;
+
+#define EC_WNAF_WIDTH 5                     /* digits odd in [-15, 15]: eight multiples of Q */
+#define EC_WNAF_POINTS (1 << (EC_WNAF_WIDTH - 2))
+
+#define M(o, a, b) proven_crypto_mp_montmul(f, o, a, b)
+#define A(o, a, b) proven_crypto_mp_add(f, o, a, b)
+#define S(o, a, b) proven_crypto_mp_sub(f, o, a, b)
+
+static void ec_jac_set_infinity_vartime(const ec_curve_t *c, ec_jac_t *p) {
+    for (proven_size_t i = 0; i < EC_LIMBS; ++i) { p->x[i] = 0; p->y[i] = 0; p->z[i] = 0; }
+    ec_copy(p->x, c->one, c->limbs);
+    ec_copy(p->y, c->one, c->limbs);
+}
+
+/* dbl-2001-b for a = -3: three multiplications and five squarings. Right for the point at
+ * infinity too (Z stays zero). `out` may be `p`. */
+static void ec_jac_double_vartime(const ec_curve_t *c, ec_jac_t *out, const ec_jac_t *p) {
+    const proven_crypto_mp_mod_t *f = &c->p;
+    proven_crypto_limb_t delta[EC_LIMBS], gamma[EC_LIMBS], beta[EC_LIMBS], alpha[EC_LIMBS], t[EC_LIMBS];
+    proven_crypto_limb_t x3[EC_LIMBS], y3[EC_LIMBS], z3[EC_LIMBS];
+    M(delta, p->z, p->z); M(gamma, p->y, p->y); M(beta, p->x, gamma);
+    S(t, p->x, delta); A(alpha, p->x, delta); M(alpha, alpha, t);
+    A(t, alpha, alpha); A(alpha, t, alpha);                     /* 3 (X - delta)(X + delta) */
+    A(beta, beta, beta); A(beta, beta, beta);                   /* 4 beta */
+    M(x3, alpha, alpha); S(x3, x3, beta); S(x3, x3, beta);      /* alpha^2 - 8 beta */
+    A(z3, p->y, p->z); M(z3, z3, z3); S(z3, z3, gamma); S(z3, z3, delta);
+    S(t, beta, x3); M(y3, alpha, t);
+    M(gamma, gamma, gamma); A(gamma, gamma, gamma); A(gamma, gamma, gamma); A(gamma, gamma, gamma);
+    S(y3, y3, gamma);                                           /* alpha (4 beta - X3) - 8 gamma^2 */
+    ec_copy(out->x, x3, c->limbs); ec_copy(out->y, y3, c->limbs); ec_copy(out->z, z3, c->limbs);
+}
+
+/* The sum's last step, from H = U2 - U1 and R = S2 - S1 (both nonzero H), U1 and S1, and the
+ * new Z's factor. Shared by both additions. */
+static void ec_jac_finish_vartime(const ec_curve_t *c, ec_jac_t *out, const proven_crypto_limb_t *h, const proven_crypto_limb_t *r_half,
+                                  const proven_crypto_limb_t *u1, const proven_crypto_limb_t *s1, const proven_crypto_limb_t *z3) {
+    const proven_crypto_mp_mod_t *f = &c->p;
+    proven_crypto_limb_t i[EC_LIMBS], j[EC_LIMBS], r[EC_LIMBS], v[EC_LIMBS], x3[EC_LIMBS], y3[EC_LIMBS];
+    A(i, h, h); M(i, i, i); M(j, h, i);                         /* I = (2H)^2, J = H I */
+    A(r, r_half, r_half); M(v, u1, i);
+    M(x3, r, r); S(x3, x3, j); S(x3, x3, v); S(x3, x3, v);       /* R^2 - J - 2V */
+    S(v, v, x3); M(y3, r, v);
+    M(j, s1, j); A(j, j, j); S(y3, y3, j);                       /* R (V - X3) - 2 S1 J */
+    ec_copy(out->x, x3, c->limbs); ec_copy(out->y, y3, c->limbs); ec_copy(out->z, z3, c->limbs);
+}
+
+/* p + q. `out` may be either input. */
+static void ec_jac_add_vartime(const ec_curve_t *c, ec_jac_t *out, const ec_jac_t *p, const ec_jac_t *q) {
+    const proven_crypto_mp_mod_t *f = &c->p;
+    if (proven_crypto_mp_is_zero(p->z, c->limbs)) { *out = *q; return; }
+    if (proven_crypto_mp_is_zero(q->z, c->limbs)) { *out = *p; return; }
+    proven_crypto_limb_t z1z1[EC_LIMBS], z2z2[EC_LIMBS], u1[EC_LIMBS], u2[EC_LIMBS], s1[EC_LIMBS], s2[EC_LIMBS], z3[EC_LIMBS];
+    M(z1z1, p->z, p->z); M(z2z2, q->z, q->z);
+    M(u1, p->x, z2z2); M(u2, q->x, z1z1);
+    M(s1, p->y, q->z); M(s1, s1, z2z2); M(s2, q->y, p->z); M(s2, s2, z1z1);
+    S(u2, u2, u1); S(s2, s2, s1);                               /* H, and R / 2 */
+    if (proven_crypto_mp_is_zero(u2, c->limbs)) {
+        if (proven_crypto_mp_is_zero(s2, c->limbs)) ec_jac_double_vartime(c, out, p);
+        else ec_jac_set_infinity_vartime(c, out);
+        return;
+    }
+    A(z3, p->z, q->z); M(z3, z3, z3); S(z3, z3, z1z1); S(z3, z3, z2z2); M(z3, z3, u2);
+    ec_jac_finish_vartime(c, out, u2, s2, u1, s1, z3);
+}
+
+/* p + (qx, qy), the second point affine (and so not at infinity). `out` may be `p`. */
+static void ec_jac_add_affine_vartime(const ec_curve_t *c, ec_jac_t *out, const ec_jac_t *p, const proven_crypto_limb_t *qx, const proven_crypto_limb_t *qy) {
+    const proven_crypto_mp_mod_t *f = &c->p;
+    if (proven_crypto_mp_is_zero(p->z, c->limbs)) {
+        ec_copy(out->x, qx, c->limbs); ec_copy(out->y, qy, c->limbs); ec_copy(out->z, c->one, c->limbs);
+        return;
+    }
+    proven_crypto_limb_t z1z1[EC_LIMBS], u2[EC_LIMBS], s2[EC_LIMBS], z3[EC_LIMBS], x1[EC_LIMBS], y1[EC_LIMBS];
+    M(z1z1, p->z, p->z); M(u2, qx, z1z1);
+    M(s2, qy, p->z); M(s2, s2, z1z1);
+    S(u2, u2, p->x); S(s2, s2, p->y);                           /* H, and R / 2 */
+    if (proven_crypto_mp_is_zero(u2, c->limbs)) {
+        if (proven_crypto_mp_is_zero(s2, c->limbs)) ec_jac_double_vartime(c, out, p);
+        else ec_jac_set_infinity_vartime(c, out);
+        return;
+    }
+    A(z3, p->z, u2); M(z3, z3, z3); S(z3, z3, z1z1);
+    M(x1, u2, u2); S(z3, z3, x1);                               /* (Z1 + H)^2 - Z1Z1 - H^2 = 2 Z1 H */
+    ec_copy(x1, p->x, c->limbs); ec_copy(y1, p->y, c->limbs);
+    ec_jac_finish_vartime(c, out, u2, s2, x1, y1, z3);
+}
+#undef M
+#undef A
+#undef S
+
+/* The width-5 NAF of k (plain limbs, below 2^bits): digit i odd in [-15, 15] or zero, any
+ * two nonzero digits at least five apart. bits + 1 digits; returns the number used (one past
+ * the highest nonzero digit, 0 for k = 0). */
+static proven_size_t ec_wnaf_vartime(signed char *digits, const proven_crypto_limb_t *k, proven_size_t limbs, proven_size_t bits) {
+    const unsigned w = PROVEN_CRYPTO_MP_LIMB_BITS;
+    proven_size_t used = 0;
+    unsigned carry = 0;
+    for (proven_size_t i = 0; i <= bits; ++i) digits[i] = 0;
+    for (proven_size_t bit = 0; bit <= bits;) {
+        unsigned b = bit / w < limbs ? (unsigned)(k[bit / w] >> (bit % w)) & 1u : 0u;
+        if (b == carry) { ++bit; continue; }
+        unsigned word = 0;
+        for (unsigned j = 0; j < EC_WNAF_WIDTH; ++j) {
+            const proven_size_t at = bit + j;
+            if (at / w < limbs) word |= (unsigned)((k[at / w] >> (at % w)) & 1u) << j;
+        }
+        word += carry;                                          /* the window's value, odd */
+        carry = (word >> (EC_WNAF_WIDTH - 1)) & 1u;
+        digits[bit] = (signed char)((int)word - (int)(carry << EC_WNAF_WIDTH));
+        used = bit + 1;
+        bit += EC_WNAF_WIDTH;
+    }
+    return used;
+}
+
+/* u1 G + u2 Q for public u1, u2 below the order and a public Q (affine, from ec_decode): one
+ * walk of the doublings for both. Q's part reads its width-5 NAF against eight odd multiples
+ * of Q; G's part is the signed comb of ec_mul_base, whose column j is added when the walk is
+ * at j. */
+static void ec_mul2_vartime(const ec_curve_t *c, ec_jac_t *out, const proven_crypto_limb_t *u1, const proven_crypto_limb_t *u2, const ec_point_t *q) {
+    const proven_crypto_mp_mod_t *f = &c->p;
+    const proven_size_t s = c->limbs, bits = c->bytes * 8, d = (bits + EC_COMB_TEETH - 1) / EC_COMB_TEETH;
+    const unsigned w = PROVEN_CRYPTO_MP_LIMB_BITS;
+    ec_jac_t table[EC_WNAF_POINTS], q2, acc;
+    signed char naf[PROVEN_CRYPTO_EC_MAX_BYTES * 8 + 1];
+    proven_crypto_limb_t t[EC_LIMBS + 1], zero[EC_LIMBS], ny[EC_LIMBS];
+
+    /* Q, 3Q, ..., 15Q */
+    const proven_size_t qtop = ec_wnaf_vartime(naf, u2, s, bits);
+    if (qtop > 0) {
+        for (proven_size_t i = 0; i < EC_LIMBS; ++i) { table[0].x[i] = q->x[i]; table[0].y[i] = q->y[i]; table[0].z[i] = q->z[i]; }
+        ec_jac_double_vartime(c, &q2, &table[0]);
+        for (proven_size_t i = 1; i < EC_WNAF_POINTS; ++i) ec_jac_add_vartime(c, &table[i], &table[i - 1], &q2);
+    }
+    /* G: k = u1, or n - u1 when u1 is even (and the comb's points negated); then the comb's
+     * digits t = (k - 1) / 2 + 2^(L - 1). u1 = 0 leaves G out. */
+    const bool gpart = !proven_crypto_mp_is_zero(u1, s), negate = (u1[0] & 1u) == 0;
+    if (gpart) {
+        if (negate) (void)proven_crypto_mp_sub_raw(t, c->n.n, u1, s);
+        else ec_copy(t, u1, s);
+        for (proven_size_t i = 0; i < s; ++i) t[i] = (t[i] >> 1) | (i + 1 < s ? t[i + 1] << (w - 1) : 0u);
+        t[s] = 0;
+        const proven_size_t top = EC_COMB_TEETH * d - 1;
+        t[top / w] |= (proven_crypto_limb_t)1 << (top % w);
+    }
+    for (proven_size_t i = 0; i < s; ++i) zero[i] = 0;
+
+    ec_jac_set_infinity_vartime(c, &acc);
+    const proven_size_t start = qtop > (gpart ? d : 0) ? qtop : (gpart ? d : 0);
+    for (proven_size_t i = start; i-- > 0;) {
+        if (!proven_crypto_mp_is_zero(acc.z, s)) ec_jac_double_vartime(c, &acc, &acc);
+        if (gpart && i < d) {
+            unsigned low = 0;
+            for (proven_size_t b = 0; b < EC_COMB_TEETH - 1; ++b) {
+                const proven_size_t pos = i + b * d;
+                low |= (unsigned)((t[pos / w] >> (pos % w)) & 1u) << b;
+            }
+            const proven_size_t pos = i + (EC_COMB_TEETH - 1) * d;
+            const bool plus = ((t[pos / w] >> (pos % w)) & 1u) != 0;
+            const proven_byte_t *e = c->gtab + (plus ? low : low ^ 15u) * 2 * c->bytes;
+            proven_crypto_limb_t px[EC_LIMBS], py[EC_LIMBS];
+            (void)proven_crypto_mp_load_be(px, s, e, c->bytes);
+            (void)proven_crypto_mp_load_be(py, s, e + c->bytes, c->bytes);
+            proven_crypto_mp_to_mont(f, px, px);
+            proven_crypto_mp_to_mont(f, py, py);
+            if (plus == negate) { proven_crypto_mp_sub(f, ny, zero, py); ec_copy(py, ny, s); }
+            ec_jac_add_affine_vartime(c, &acc, &acc, px, py);
+        }
+        if (i < qtop && naf[i] != 0) {
+            const int dg = naf[i];
+            if (dg > 0) ec_jac_add_vartime(c, &acc, &acc, &table[dg / 2]);
+            else {
+                ec_jac_t neg = table[-dg / 2];
+                proven_crypto_mp_sub(f, neg.y, zero, neg.y);
+                ec_jac_add_vartime(c, &acc, &acc, &neg);
+            }
+        }
+    }
+    *out = acc;
+}
+
+/* Whether the x of a Jacobian point, reduced mod n, is r (plain, in [1, n-1]): X = r' Z^2 for
+ * r' = r or, when it is below p, r + n. No inversion. False for the point at infinity. */
+static bool ec_jac_x_is_vartime(const ec_curve_t *c, const ec_jac_t *p, const proven_crypto_limb_t *r) {
+    const proven_crypto_mp_mod_t *f = &c->p;
+    proven_crypto_limb_t zz[EC_LIMBS], rm[EC_LIMBS], t[EC_LIMBS];
+    if (proven_crypto_mp_is_zero(p->z, c->limbs)) return false;
+    proven_crypto_mp_montmul(f, zz, p->z, p->z);
+    proven_crypto_mp_to_mont(f, rm, r);
+    proven_crypto_mp_montmul(f, t, rm, zz);
+    if (proven_crypto_mp_eq(t, p->x, c->limbs)) return true;
+    if (proven_crypto_mp_add_raw(rm, r, c->n.n, c->limbs) != 0 || !proven_crypto_mp_lt(rm, f->n, c->limbs)) return false;
+    proven_crypto_mp_to_mont(f, rm, rm);
+    proven_crypto_mp_montmul(f, t, rm, zz);
+    return proven_crypto_mp_eq(t, p->x, c->limbs) != 0;
+}
+
 bool proven_crypto_ecdsa_verify(proven_crypto_ec_curve_t curve, proven_mem_view_t pub, proven_mem_view_t digest,
                                 proven_mem_view_t r_in, proven_mem_view_t s_in) {
     ec_curve_t c;
-    ec_point_t q, p1, p2;
-    proven_crypto_limb_t r[EC_LIMBS], s[EC_LIMBS], z[EC_LIMBS], w[EC_LIMBS], u1[EC_LIMBS], u2[EC_LIMBS], x[EC_LIMBS], y[EC_LIMBS];
+    ec_point_t q;
+    ec_jac_t p;
+    proven_crypto_limb_t r[EC_LIMBS], s[EC_LIMBS], z[EC_LIMBS], w[EC_LIMBS], u1[EC_LIMBS], u2[EC_LIMBS];
     if (!ec_curve_init(&c, curve) || !ec_decode(&c, &q, pub)) return false;
     if (!digest.ptr || digest.size == 0 || !r_in.ptr || !s_in.ptr) return false;
     if (!proven_crypto_mp_load_be(r, c.limbs, r_in.ptr, r_in.size) || !proven_crypto_mp_load_be(s, c.limbs, s_in.ptr, s_in.size)) return false;
@@ -618,16 +835,8 @@ bool proven_crypto_ecdsa_verify(proven_crypto_ec_curve_t curve, proven_mem_view_
     proven_crypto_mp_inv_prime(&c.n, w, w);
     proven_crypto_mp_montmul(&c.n, u1, z, w);
     proven_crypto_mp_montmul(&c.n, u2, r, w);
-    ec_mul_base(&c, &p1, u1);
-    ec_mul(&c, &p2, u2, &q);
-    ec_add(&c, &p1, &p1, &p2);
-    if (ec_affine(&c, x, y, &p1)) return false;
-    /* x mod n: x < p < 2n for both curves, so one subtraction at most. */
-    proven_crypto_limb_t xr[EC_LIMBS];
-    proven_byte_t xb[PROVEN_CRYPTO_EC_MAX_BYTES];
-    proven_crypto_mp_store_be(xb, c.bytes, x, c.limbs);
-    proven_crypto_mp_reduce_be(&c.n, xr, xb, c.bytes);
-    return proven_crypto_mp_eq(xr, r, c.limbs) != 0;
+    ec_mul2_vartime(&c, &p, u1, u2, &q);
+    return ec_jac_x_is_vartime(&c, &p, r);
 }
 
 /* One DER INTEGER of fewer than 128 content bytes: non-negative and minimal. */
@@ -790,4 +999,95 @@ bool proven_crypto_ec_test_base_mul(proven_crypto_ec_curve_t curve, const proven
     const bool ainf = ec_affine(&c, ax, ay, &a) != 0, binf = ec_affine(&c, bx, by, &b) != 0;
     if (ainf || binf) return ainf && binf;
     return proven_crypto_mp_eq(ax, bx, c.limbs) != 0 && proven_crypto_mp_eq(ay, by, c.limbs) != 0;
+}
+
+/* Whether a Jacobian point and a projective one are the same point (both at infinity, or
+ * equal affine coordinates). */
+static bool ec_test_same_vartime(const ec_curve_t *c, const ec_jac_t *j, const ec_point_t *p) {
+    proven_crypto_limb_t zi[EC_LIMBS], z2[EC_LIMBS], jx[EC_LIMBS], jy[EC_LIMBS], px[EC_LIMBS], py[EC_LIMBS];
+    const bool pinf = ec_affine(c, px, py, p) != 0, jinf = proven_crypto_mp_is_zero(j->z, c->limbs) != 0;
+    if (pinf || jinf) return pinf && jinf;
+    proven_crypto_mp_inv_prime(&c->p, zi, j->z);
+    proven_crypto_mp_montmul(&c->p, z2, zi, zi);
+    proven_crypto_mp_montmul(&c->p, jx, j->x, z2);
+    proven_crypto_mp_montmul(&c->p, z2, z2, zi);
+    proven_crypto_mp_montmul(&c->p, jy, j->y, z2);
+    proven_crypto_mp_from_mont(&c->p, jx, jx);
+    proven_crypto_mp_from_mont(&c->p, jy, jy);
+    return proven_crypto_mp_eq(jx, px, c->limbs) != 0 && proven_crypto_mp_eq(jy, py, c->limbs) != 0;
+}
+
+/* A projective point as a Jacobian one with Z = 1, by way of its affine coordinates. */
+static void ec_test_to_jac_vartime(const ec_curve_t *c, ec_jac_t *j, const ec_point_t *p) {
+    proven_crypto_limb_t x[EC_LIMBS], y[EC_LIMBS];
+    ec_jac_set_infinity_vartime(c, j);
+    if (ec_affine(c, x, y, p)) return;
+    proven_crypto_mp_to_mont(&c->p, j->x, x);
+    proven_crypto_mp_to_mont(&c->p, j->y, y);
+    ec_copy(j->z, c->one, c->limbs);
+}
+
+/* k1 G + k2 Q by verification's walk and by the constant-time code (the comb, the window, the
+ * complete addition), for k1, k2 below the order and Q an encoded point. True when the two
+ * agree. */
+bool proven_crypto_ec_test_mul2(proven_crypto_ec_curve_t curve, const proven_byte_t *k1_be, const proven_byte_t *k2_be, proven_mem_view_t pub) {
+    ec_curve_t c;
+    ec_point_t q, a, b;
+    ec_jac_t v;
+    proven_crypto_limb_t k1[EC_LIMBS], k2[EC_LIMBS];
+    if (!ec_curve_init(&c, curve) || !ec_decode(&c, &q, pub)) return false;
+    if (!proven_crypto_mp_load_be(k1, c.limbs, k1_be, c.bytes) || !proven_crypto_mp_lt(k1, c.n.n, c.limbs)) return false;
+    if (!proven_crypto_mp_load_be(k2, c.limbs, k2_be, c.bytes) || !proven_crypto_mp_lt(k2, c.n.n, c.limbs)) return false;
+    ec_mul_base(&c, &a, k1);
+    ec_mul(&c, &b, k2, &q);
+    ec_add(&c, &a, &a, &b);
+    ec_mul2_vartime(&c, &v, k1, k2, &q);
+    return ec_test_same_vartime(&c, &v, &a);
+}
+
+/* The cases the Jacobian formulas get wrong and branch to, against the complete formulas, for
+ * P = k G (k in [1, n-1]): P + P, P + (-P), P + infinity, infinity + P, P + 2P, and twice
+ * infinity - each by the projective-input addition and by the affine-input one. */
+bool proven_crypto_ec_test_vartime_add(proven_crypto_ec_curve_t curve, const proven_byte_t *k_be) {
+    ec_curve_t c;
+    ec_point_t g, p, np, p2, inf, want;
+    ec_jac_t jp, jnp, jp2, jinf, got;
+    proven_crypto_limb_t k[EC_LIMBS], zero[EC_LIMBS], px[EC_LIMBS], py[EC_LIMBS], nx[EC_LIMBS], ny[EC_LIMBS];
+    if (!ec_curve_init(&c, curve) || !ec_load_scalar(&c, k, k_be)) return false;
+    for (proven_size_t i = 0; i < EC_LIMBS; ++i) zero[i] = 0;
+    ec_base(&c, &g);
+    ec_mul(&c, &p, k, &g);
+    ec_double(&c, &p2, &p);
+    np = p;
+    proven_crypto_mp_sub(&c.p, np.y, zero, np.y);
+    ec_set_infinity(&c, &inf);
+    ec_test_to_jac_vartime(&c, &jp, &p); ec_test_to_jac_vartime(&c, &jnp, &np); ec_test_to_jac_vartime(&c, &jp2, &p2);
+    ec_jac_set_infinity_vartime(&c, &jinf);
+    /* Affine forms of P and -P, Montgomery, for the affine-input addition. */
+    if (ec_affine(&c, px, py, &p)) return false;
+    proven_crypto_mp_to_mont(&c.p, px, px); proven_crypto_mp_to_mont(&c.p, py, py);
+    ec_copy(nx, px, c.limbs);
+    proven_crypto_mp_sub(&c.p, ny, zero, py);
+
+    ec_add(&c, &want, &p, &p);
+    ec_jac_add_vartime(&c, &got, &jp, &jp);          if (!ec_test_same_vartime(&c, &got, &want)) return false;
+    ec_jac_add_affine_vartime(&c, &got, &jp, px, py); if (!ec_test_same_vartime(&c, &got, &want)) return false;
+    ec_jac_double_vartime(&c, &got, &jp);             if (!ec_test_same_vartime(&c, &got, &want)) return false;
+    ec_add(&c, &want, &p, &np);
+    ec_jac_add_vartime(&c, &got, &jp, &jnp);          if (!ec_test_same_vartime(&c, &got, &want)) return false;
+    ec_jac_add_affine_vartime(&c, &got, &jp, nx, ny); if (!ec_test_same_vartime(&c, &got, &want)) return false;
+    ec_jac_add_vartime(&c, &got, &jp, &jinf);         if (!ec_test_same_vartime(&c, &got, &p)) return false;
+    ec_jac_add_vartime(&c, &got, &jinf, &jp);         if (!ec_test_same_vartime(&c, &got, &p)) return false;
+    ec_jac_add_affine_vartime(&c, &got, &jinf, px, py); if (!ec_test_same_vartime(&c, &got, &p)) return false;
+    ec_jac_double_vartime(&c, &got, &jinf);           if (!ec_test_same_vartime(&c, &got, &inf)) return false;
+    ec_add(&c, &want, &p, &p2);
+    ec_jac_add_vartime(&c, &got, &jp2, &jp);          if (!ec_test_same_vartime(&c, &got, &want)) return false;
+    ec_jac_add_affine_vartime(&c, &got, &jp2, px, py); if (!ec_test_same_vartime(&c, &got, &want)) return false;
+    /* And a sum whose inputs are not affine: 2P + (2P + P) = 5P against the complete formulas. */
+    ec_jac_t j3;
+    ec_jac_add_affine_vartime(&c, &j3, &jp2, px, py);
+    ec_jac_double_vartime(&c, &jp2, &jp);             /* 2P with a Z that is not one */
+    ec_jac_add_vartime(&c, &got, &jp2, &j3);
+    ec_add(&c, &want, &want, &p2);
+    return ec_test_same_vartime(&c, &got, &want);
 }

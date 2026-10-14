@@ -215,25 +215,25 @@ void proven_crypto_mp_sub(const proven_crypto_mp_mod_t *mod, limb_t *out, const 
 }
 
 void proven_crypto_mp_reduce_be(const proven_crypto_mp_mod_t *mod, limb_t *out, const proven_byte_t *be, proven_size_t len) {
-    const proven_size_t s = mod->limbs;
-    limb_t r[PROVEN_CRYPTO_MP_MAX], t[PROVEN_CRYPTO_MP_MAX];
+    /* A chunk of the modulus's size at a time, from the top: r = r R + chunk (mod n), R being
+     * 2^(W s). r R is to_mont(r), r < n; a chunk below R comes below n as
+     * from_mont(to_mont(chunk)). Both are right because a Montgomery product is below 2n -
+     * one subtraction from right - whenever a b < R n, which holds for a below R and b below
+     * n (as R^2 mod n is). The first chunk is the short one, so the rest are whole. */
+    const proven_size_t s = mod->limbs, chunk = s * LB;
+    limb_t r[PROVEN_CRYPTO_MP_MAX], c[PROVEN_CRYPTO_MP_MAX];
     for (proven_size_t i = 0; i < s; ++i) r[i] = 0;
-    for (proven_size_t i = 0; i < len; ++i) {
-        for (int bit = 7; bit >= 0; --bit) {
-            /* r = 2r + bit, then one subtraction when it reached n. r < n, so 2r + 1 < 2n. */
-            limb_t carry = 0;
-            limb_t in = (limb_t)(be[i] >> bit) & 1u;
-            for (proven_size_t j = 0; j < s; ++j) {
-                limb_t v = r[j];
-                r[j] = (v << 1) | in;
-                in = v >> (W - 1);
-            }
-            carry = in;
-            limb_t borrow = proven_crypto_mp_sub_raw(t, r, mod->n, s);
-            proven_crypto_mp_select(r, t, r, mp_mask_from_bit(carry | (borrow ^ 1u)), s);
-        }
+    for (proven_size_t pos = 0; pos < len;) {
+        const proven_size_t take = pos == 0 && len % chunk != 0 ? len % chunk : chunk;
+        (void)proven_crypto_mp_load_be(c, s, be + pos, take);    /* take <= chunk: it fits */
+        proven_crypto_mp_to_mont(mod, c, c);
+        proven_crypto_mp_from_mont(mod, c, c);
+        proven_crypto_mp_to_mont(mod, r, r);
+        proven_crypto_mp_add(mod, r, r, c);
+        pos += take;
     }
     for (proven_size_t i = 0; i < s; ++i) out[i] = r[i];
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)c, .size = s * sizeof c[0] });
 }
 
 /* A modulus of up to this many limbs - the curves' - and an exponent longer than 64 bits

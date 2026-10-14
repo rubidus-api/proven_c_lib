@@ -119,7 +119,8 @@ void proven_crypto_mp_to_mont(const proven_crypto_mp_mod_t *mod, proven_crypto_l
 void proven_crypto_mp_from_mont(const proven_crypto_mp_mod_t *mod, proven_crypto_limb_t *out, const proven_crypto_limb_t *a);
 void proven_crypto_mp_add(const proven_crypto_mp_mod_t *mod, proven_crypto_limb_t *out, const proven_crypto_limb_t *a, const proven_crypto_limb_t *b);
 void proven_crypto_mp_sub(const proven_crypto_mp_mod_t *mod, proven_crypto_limb_t *out, const proven_crypto_limb_t *a, const proven_crypto_limb_t *b);
-/* out = (big-endian value of any length) mod n, bit by bit. */
+/* out = (big-endian value of any length) mod n, a modulus-sized chunk at a time (constant time
+ * for a given length). */
 void proven_crypto_mp_reduce_be(const proven_crypto_mp_mod_t *mod, proven_crypto_limb_t *out, const proven_byte_t *be, proven_size_t len);
 /* out = base^exp mod n, base and out in Montgomery form. The exponent is PUBLIC: its bits
  * decide which multiplications happen, and its leading zeros cost nothing. */
@@ -199,6 +200,12 @@ void proven_crypto_ed25519_sign(proven_byte_t sig[64], const proven_byte_t seed[
 /* Refuses S not below the group order, a public key or R that is not a canonical encoding of a
  * point, and of course a signature that does not verify. */
 [[nodiscard]] bool proven_crypto_ed25519_verify(const proven_byte_t pub[32], proven_mem_view_t msg, const proven_byte_t sig[64]);
+/* For the suite: the base point's table against the general multiplication, entry by entry;
+ * k B by the table and by the general walk; and verification's variable-time s B + k Q against
+ * the constant-time code. Scalars below L, 32 bytes little-endian; Q encoded. */
+[[nodiscard]] bool proven_crypto_ed25519_test_table(void);
+[[nodiscard]] bool proven_crypto_ed25519_test_base_mul(const proven_byte_t k_le[32]);
+[[nodiscard]] bool proven_crypto_ed25519_test_mul2(const proven_byte_t s_le[32], const proven_byte_t k_le[32], const proven_byte_t q_enc[32]);
 
 /* ---- Hash block functions, exposed for the constant-time record MAC of tls_legacy.c ---- */
 void proven_sha1_compress_(proven_u32 state[5], const proven_byte_t block[64]);
@@ -262,6 +269,11 @@ bool proven_crypto_aes_hw_available(void);
  * (big-endian, the curve's size; zero allowed). */
 [[nodiscard]] bool proven_crypto_ec_test_generator_table(proven_crypto_ec_curve_t curve);
 [[nodiscard]] bool proven_crypto_ec_test_base_mul(proven_crypto_ec_curve_t curve, const proven_byte_t *k_be);
+/* Verification's variable-time walk: k1 G + k2 Q against the constant-time code (k1, k2 below
+ * the order, Q encoded); and its additions' special cases - P + P, P + (-P), the point at
+ * infinity on either side - against the complete formulas, for P = k G with k in [1, n-1]. */
+[[nodiscard]] bool proven_crypto_ec_test_mul2(proven_crypto_ec_curve_t curve, const proven_byte_t *k1_be, const proven_byte_t *k2_be, proven_mem_view_t pub);
+[[nodiscard]] bool proven_crypto_ec_test_vartime_add(proven_crypto_ec_curve_t curve, const proven_byte_t *k_be);
 
 /* ---- RSA signing (RFC 8017). Everything in a key but n and e is SECRET. ---- */
 

@@ -319,7 +319,7 @@ int main(void) {
                         proven_crypto_mp_montmul(&m, a, v, v); proven_crypto_mp_from_mont(&m, a, a);
                         ok = ok && whole && proven_crypto_mp_eq(y, a, s) != 0;
                     }
-                    /* a small divisor: the remainder the long way, bit by bit with 65521 as a modulus (not
+                    /* a small divisor: the remainder by the general reduction, with 65521 as a modulus (not
                      * 65537, modulo which 2^32 is 1 and the two halves of a limb could change places unseen) */
                     static const proven_byte_t f4[] = { 0xff, 0xf1 };
                     proven_crypto_mp_store_be(xb, len, x, s);
@@ -458,6 +458,75 @@ int main(void) {
             PROVEN_TEST_ASSERT(tried == 120 && agreed == tried,
                 "k G by the table agrees with the general walk for k of 0, 1, 15, 16, n - 1, n - 2, the edges of every tooth and thirty-nine random scalars, on both curves", "");
         }
+
+        /* Verification's walk is variable time, with formulas that are wrong for P + P,
+         * P + (-P) and the point at infinity and branch to them instead. The branches first,
+         * then the whole of k1 G + k2 Q against the constant-time code - with Q = G and the
+         * scalars chosen so the walk meets those cases: k1 = k2 (each step of G's part can meet
+         * Q's), k1 = n - k2 (the sum is the point at infinity), and either one zero. */
+        {
+            static const char *const orders[2] = { "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
+                                                   "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973" };
+            proven_u64 x = 0x9e3779b97f4a7c15ull;
+            proven_size_t tried = 0, agreed = 0, add_tried = 0, add_agreed = 0;
+            for (int cv = 0; cv < 2; ++cv) {
+                const proven_crypto_ec_curve_t curve = cv == 0 ? PROVEN_CRYPTO_EC_P256 : PROVEN_CRYPTO_EC_P384;
+                const proven_size_t sz = proven_crypto_ec_size(curve);
+                proven_byte_t n[48], k1[48], k2[48], one[48], g[97], q[97], ng[97];
+                for (proven_size_t i = 0; i < sz; ++i) { char h[3] = { orders[cv][2 * i], orders[cv][2 * i + 1], 0 }; n[i] = (proven_byte_t)strtoul(h, NULL, 16); }
+                memset(one, 0, sz); one[sz - 1] = 1;
+                PROVEN_TEST_ASSERT(proven_crypto_ec_public(curve, one, g), "the generator, encoded", "");
+                memcpy(one, n, sz); one[sz - 1] -= 1;
+                PROVEN_TEST_ASSERT(proven_crypto_ec_public(curve, one, ng), "minus the generator, encoded", "");
+                for (int which = 0; which < 40; ++which) {
+                    for (proven_size_t i = 0; i < sz; ++i) { x ^= x << 13; x ^= x >> 7; x ^= x << 17; k1[i] = (proven_byte_t)(x >> 24); }
+                    k1[0] &= 0x7f;
+                    if (which < 8) {
+                        add_tried++;
+                        if (which == 0) { memset(k1, 0, sz); k1[sz - 1] = 1; }
+                        if (which == 1) { memcpy(k1, n, sz); k1[sz - 1] -= 1; }
+                        if (proven_crypto_ec_test_vartime_add(curve, k1)) add_agreed++;
+                    }
+                    for (proven_size_t i = 0; i < sz; ++i) { x ^= x << 13; x ^= x >> 7; x ^= x << 17; k2[i] = (proven_byte_t)(x >> 24); }
+                    k2[0] &= 0x7f;
+                    memcpy(q, g, 1 + 2 * sz);
+                    if (which < 10) {
+                        /* the generator's own cases */
+                        if (which % 5 == 0) memcpy(k2, k1, sz);                                 /* k G + k G */
+                        else if (which % 5 == 1) {                                              /* k G + (n - k) G */
+                            proven_byte_t b = 0;
+                            for (proven_size_t i = sz; i-- > 0;) { int dv = n[i] - k1[i] - b; b = dv < 0; k2[i] = (proven_byte_t)dv; }
+                        }
+                        else if (which % 5 == 2) memset(k1, 0, sz);
+                        else if (which % 5 == 3) memset(k2, 0, sz);
+                        else { memset(k1, 0, sz); memset(k2, 0, sz); }
+                    } else if (which < 14) {
+                        memcpy(q, ng, 1 + 2 * sz);                                              /* Q = -G, k1 = k2: the sum is zero */
+                        memcpy(k2, k1, sz);
+                    } else if (which < 18) {
+                        memset(one, 0, sz);
+                        for (proven_size_t i = 0; i < sz; ++i) { x ^= x << 13; x ^= x >> 7; x ^= x << 17; one[i] = (proven_byte_t)(x >> 24); }
+                        one[0] &= 0x7f; one[sz - 1] |= 1;
+                        PROVEN_TEST_ASSERT(proven_crypto_ec_public(curve, one, q), "a random point", "");
+                        if (which == 14) { memset(k1, 0, sz); k1[sz - 1] = 1; memset(k2, 0, sz); k2[sz - 1] = 1; }
+                        if (which == 15) { memcpy(k1, n, sz); k1[sz - 1] -= 1; memcpy(k2, k1, sz); }
+                    } else if (which < 22) {
+                        memset(one, 0, sz);
+                        for (proven_size_t i = 0; i < sz; ++i) { x ^= x << 13; x ^= x >> 7; x ^= x << 17; one[i] = (proven_byte_t)(x >> 24); }
+                        one[0] &= 0x7f; one[sz - 1] |= 1;
+                        PROVEN_TEST_ASSERT(proven_crypto_ec_public(curve, one, q), "a random point", "");
+                        if (which % 2) memset(k1 + sz / 4, 0xff, sz / 2);                       /* long runs of ones in the NAF */
+                        else memset(k2 + sz / 4, 0, sz / 2);                                    /* and of zeros */
+                    }
+                    tried++;
+                    if (proven_crypto_ec_test_mul2(curve, k1, k2, (proven_mem_view_t){ q, 1 + 2 * sz })) agreed++;
+                }
+            }
+            PROVEN_TEST_ASSERT(add_tried == 16 && add_agreed == add_tried,
+                "the variable-time additions agree with the complete formulas on P + P, P + (-P), the point at infinity on either side and P + 2P, for P = G, -G and six random multiples, on both curves", "");
+            PROVEN_TEST_ASSERT(tried == 80 && agreed == tried,
+                "k1 G + k2 Q in variable time agrees with the constant-time code on both curves: Q = G with k1 = k2, with k1 = n - k2 and with either or both zero; Q = -G with k1 = k2; random Q with long runs of ones and zeros; and random scalars", "");
+        }
     }
 
     // ---------------------------------------------------------------
@@ -562,6 +631,59 @@ int main(void) {
                 ok = ok && !proven_crypto_ed25519_verify(pb, (proven_mem_view_t){ msg, (proven_size_t)round }, sig);
             }
             PROVEN_TEST_ASSERT(ok, "forty-eight pairs of keys agree on their secret, and each key's signature verifies under it alone", "");
+        }
+        /* The base point's table and the comb that reads it (five teeth 51 apart; an even
+         * scalar takes L - k and a negation), then verification's variable-time s B + k Q
+         * against the constant-time code: Q = B with s = k, Q = -B with s = k (the sum is the
+         * identity), either or both zero, L - 1, random points, long runs. */
+        {
+            PROVEN_TEST_ASSERT(proven_crypto_ed25519_test_table(), "every entry of the base point's table is what the general multiplication gives", "");
+            static const proven_byte_t ell[32] = { 0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
+                                                   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10 };   /* L, little-endian */
+            proven_byte_t base[32], nbase[32], q[32], seed[32], s[32], k[32];
+            memset(base, 0x66, 32); base[0] = 0x58;                                           /* y = 4/5, x even */
+            memcpy(nbase, base, 32); nbase[31] |= 0x80;                                       /* -B */
+            proven_u64 x = 0x2545f4914f6cdd1dull;
+            proven_size_t tried = 0, agreed = 0, mtried = 0, magreed = 0;
+            for (int which = 0; which < 40; ++which) {
+                for (int i = 0; i < 32; ++i) { x ^= x << 13; x ^= x >> 7; x ^= x << 17; s[i] = (proven_byte_t)(x >> 24); k[i] = (proven_byte_t)(x >> 40); }
+                s[31] &= 0x0f; k[31] &= 0x0f;                                                 /* below 2^252 < L */
+                if (which == 1) { memset(s, 0, 32); s[0] = 1; }
+                else if (which == 2) { memcpy(s, ell, 32); s[0] -= 1; }                       /* L - 1 */
+                else if (which == 3) { memcpy(s, ell, 32); s[0] -= 2; }                       /* L - 2 */
+                else if (which == 4) { memset(s, 0, 32); s[0] = 16; }
+                else if (which == 5) memset(s, 0, 32);
+                else if (which >= 6 && which < 21) {
+                    const int t = (which - 6) / 3, kind = (which - 6) % 3;
+                    int bit = kind == 2 ? t * 51 + 50 : t * 51;
+                    if (bit > 251) bit = 251;
+                    memset(s, 0, 32);
+                    if (kind == 1) { for (int b = 0; b < bit; ++b) s[b / 8] |= (proven_byte_t)(1u << (b % 8)); }
+                    else s[bit / 8] |= (proven_byte_t)(1u << (bit % 8));
+                }
+                tried++;
+                if (proven_crypto_ed25519_test_base_mul(s)) agreed++;
+
+                memcpy(q, base, 32);
+                if (which < 5) memcpy(k, s, 32);                                              /* s B + s B */
+                else if (which < 10) { memcpy(q, nbase, 32); memcpy(k, s, 32); }              /* s B - s B */
+                else if (which == 10) memset(k, 0, 32);
+                else if (which == 11) { memset(s, 0, 32); memset(k, 0, 32); }
+                else if (which == 12) memset(s, 0, 32);
+                else {
+                    for (int i = 0; i < 32; ++i) { x ^= x << 13; x ^= x >> 7; x ^= x << 17; seed[i] = (proven_byte_t)(x >> 24); }
+                    proven_crypto_ed25519_public(q, seed);
+                    if (which == 13) { memcpy(k, ell, 32); k[0] -= 1; }
+                    if (which % 3 == 0) memset(k + 8, 0xff, 12);                              /* long runs in the NAF */
+                    if (which % 3 == 1) memset(k + 8, 0, 12);
+                }
+                mtried++;
+                if (proven_crypto_ed25519_test_mul2(s, k, q)) magreed++;
+            }
+            PROVEN_TEST_ASSERT(tried == 40 && agreed == tried,
+                "k B by the table agrees with the general walk for k of 0, 1, 16, L - 1, L - 2, the edges of every tooth and random scalars", "");
+            PROVEN_TEST_ASSERT(mtried == 40 && magreed == mtried,
+                "s B + k Q in variable time agrees with the constant-time code: Q = B and Q = -B with s = k, either or both scalars zero, L - 1, random points with long runs", "");
         }
     }
 

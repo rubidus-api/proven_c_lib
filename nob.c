@@ -528,6 +528,39 @@ static int run_project_check(void) {
 #endif
 }
 
+/*
+ * scripts/check-vartime.py: signature verification uses functions that branch on the values
+ * they are given, which is right only because a verification has no secret. The check fails
+ * when anything but verification calls one (it reads the call sites in the source, and in the
+ * object code when objdump is there). It needs no git checkout, so a release archive runs it
+ * too; it is skipped, loudly, without python3 or a POSIX shell.
+ */
+static int run_vartime_check(void) {
+    const char *script = "scripts/check-vartime.py";
+    if (!nob_file_exists(script)) {
+        nob_log(NOB_INFO, "[PROVEN][VARTIME_CHECK][SKIP] path=%s reason=not-present", script);
+        return 0;
+    }
+#if defined(_WIN32) || defined(_WIN64)
+    nob_log(NOB_WARNING, "[PROVEN][VARTIME_CHECK][SKIP] path=%s reason=needs-a-posix-shell", script);
+    return 0;
+#else
+    if (!command_available("python3")) {
+        nob_log(NOB_WARNING, "[PROVEN][VARTIME_CHECK][SKIP] path=%s reason=python3-not-found", script);
+        return 0;
+    }
+    if (system("PYTHONDONTWRITEBYTECODE=1 python3 scripts/check-vartime.py") != 0) {
+        nob_log(NOB_ERROR, "[PROVEN][VARTIME_CHECK][FAIL] path=%s", script);
+        nob_log(NOB_ERROR, "[PROVEN][VARTIME_CHECK][FAIL_HINT] A function named *_vartime is reached from "
+                           "somewhere other than signature verification. Call the constant-time code "
+                           "there instead; never widen the check's list of callers to let a secret in.");
+        return 1;
+    }
+    nob_log(NOB_INFO, "[PROVEN][VARTIME_CHECK][PASS] path=%s", script);
+    return 0;
+#endif
+}
+
 static bool compiler_accepts_standard_flag(const char *compiler, const char *standard_flag, const char *sysroot, const char *probe_dir) {
     char src_path[768];
     char obj_path[768];
@@ -1652,6 +1685,7 @@ int main(int argc, char **argv)
      * tests and is not where repository hygiene is decided. */
     if (!only_regression && !cross_check) {
         if (run_project_check() != 0) return 1;
+        if (run_vartime_check() != 0) return 1;
     }
 
     if (cross_check) {
