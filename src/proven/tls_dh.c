@@ -188,18 +188,19 @@ bool proven_tls_dh_known(proven_mem_view_t p, proven_mem_view_t g) {
     return false;
 }
 
-/* An exponent twice as long as the group is strong, rounded up to whole limbs. */
+/* An exponent twice as long as the group is strong, rounded up to a multiple of four bytes. */
 proven_size_t proven_tls_dh_exponent_len(proven_size_t p_len) { return p_len <= 256 ? 32 : p_len <= 384 ? 36 : 44; }
 
 /* base^priv mod p, big-endian, p.size bytes. */
-static bool dh_power(proven_mem_view_t p, const proven_u32 *base, const proven_byte_t *priv, proven_size_t priv_len, proven_byte_t *out) {
+static bool dh_power(proven_mem_view_t p, const proven_crypto_limb_t *base, const proven_byte_t *priv, proven_size_t priv_len, proven_byte_t *out) {
     proven_crypto_mp_mod_t mod;
-    proven_u32 b[PROVEN_CRYPTO_MP_DH_MAX], x[PROVEN_TLS_DH_EXP_MAX / 4];
+    proven_crypto_limb_t b[PROVEN_CRYPTO_MP_DH_MAX], x[PROVEN_CRYPTO_MP_LIMBS(PROVEN_TLS_DH_EXP_MAX)];
+    const proven_size_t exp_limbs = PROVEN_CRYPTO_MP_LIMBS(priv_len);
     if (priv_len == 0 || priv_len > PROVEN_TLS_DH_EXP_MAX || priv_len % 4 != 0) return false;
     if (!proven_crypto_mp_mod_init(&mod, p.ptr, p.size) || mod.limbs > PROVEN_CRYPTO_MP_DH_MAX) return false;
-    if (!proven_crypto_mp_load_be(x, priv_len / 4, priv, priv_len)) return false;
+    if (!proven_crypto_mp_load_be(x, exp_limbs, priv, priv_len)) return false;
     proven_crypto_mp_to_mont(&mod, b, base);
-    bool ok = proven_crypto_mp_pow_ct_short(&mod, b, b, x, priv_len / 4);
+    bool ok = proven_crypto_mp_pow_ct_short(&mod, b, b, x, exp_limbs);
     if (ok) {
         proven_crypto_mp_from_mont(&mod, b, b);
         proven_crypto_mp_store_be(out, p.size, b, mod.limbs);
@@ -210,7 +211,7 @@ static bool dh_power(proven_mem_view_t p, const proven_u32 *base, const proven_b
 }
 
 bool proven_tls_dh_public(proven_mem_view_t p, const proven_byte_t *priv, proven_size_t priv_len, proven_byte_t *out) {
-    proven_u32 two[PROVEN_CRYPTO_MP_DH_MAX];
+    proven_crypto_limb_t two[PROVEN_CRYPTO_MP_DH_MAX];
     while (p.size > 0 && p.ptr[0] == 0) { p.ptr++; p.size--; }
     if (p.size == 0 || p.size > PROVEN_TLS_DH_MAX) return false;
     for (proven_size_t i = 0; i < PROVEN_CRYPTO_MP_DH_MAX; ++i) two[i] = 0;
@@ -220,12 +221,12 @@ bool proven_tls_dh_public(proven_mem_view_t p, const proven_byte_t *priv, proven
 
 bool proven_tls_dh_shared(proven_mem_view_t p, const proven_byte_t *priv, proven_size_t priv_len, proven_mem_view_t peer,
                           proven_byte_t *out, proven_size_t *out_len) {
-    proven_u32 y[PROVEN_CRYPTO_MP_DH_MAX], top[PROVEN_CRYPTO_MP_DH_MAX];
+    proven_crypto_limb_t y[PROVEN_CRYPTO_MP_DH_MAX], top[PROVEN_CRYPTO_MP_DH_MAX];
     proven_byte_t z[PROVEN_TLS_DH_MAX];
     while (p.size > 0 && p.ptr[0] == 0) { p.ptr++; p.size--; }
     while (peer.size > 0 && peer.ptr[0] == 0) { peer.ptr++; peer.size--; }
     if (p.size == 0 || p.size > PROVEN_TLS_DH_MAX || peer.size == 0 || peer.size > p.size) return false;
-    const proven_size_t limbs = (p.size + 3) / 4;
+    const proven_size_t limbs = PROVEN_CRYPTO_MP_LIMBS(p.size);
     /* The peer's value is public, and must be one that can only lead somewhere unknown:
      * 2 <= y <= p - 2. Zero, one and p - 1 each give a shared secret anyone can name. */
     if (!proven_crypto_mp_load_be(y, limbs, peer.ptr, peer.size) || !proven_crypto_mp_load_be(top, limbs, p.ptr, p.size)) return false;

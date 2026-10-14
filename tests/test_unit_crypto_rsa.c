@@ -24,7 +24,7 @@ static proven_mem_view_t view(const proven_byte_t *p, proven_size_t n) { return 
 /* sig^e mod n, then that to the power d: both with the plain exponentiation. */
 static bool plain_roundtrip(const proven_crypto_rsa_key_t *k, const proven_byte_t *d, const proven_byte_t *sig) {
     static proven_crypto_mp_mod_t mod;
-    proven_u32 s[PROVEN_CRYPTO_MP_MAX], em[PROVEN_CRYPTO_MP_MAX], back[PROVEN_CRYPTO_MP_MAX], e[2], dl[PROVEN_CRYPTO_MP_MAX];
+    proven_crypto_limb_t s[PROVEN_CRYPTO_MP_MAX], em[PROVEN_CRYPTO_MP_MAX], back[PROVEN_CRYPTO_MP_MAX], e[2], dl[PROVEN_CRYPTO_MP_MAX];
     if (!proven_crypto_mp_mod_init(&mod, k->n, k->n_len)) return false;
     if (!proven_crypto_mp_load_be(s, mod.limbs, sig, k->n_len) || !proven_crypto_mp_load_be(e, 2, k->e, k->e_len) || !proven_crypto_mp_load_be(dl, mod.limbs, d, k->n_len)) return false;
     proven_crypto_mp_to_mont(&mod, em, s);
@@ -86,7 +86,7 @@ static void key_cases(const char *which, const proven_crypto_rsa_key_t *k, const
         bare = *k;
         bare.prepared = false;
         memset(&bare.mod_n, 0xee, sizeof bare.mod_n); memset(&bare.mod_p, 0xee, sizeof bare.mod_p); memset(&bare.mod_q, 0xee, sizeof bare.mod_q);
-        PROVEN_TEST_ASSERT(k->prepared && k->mod_n.limbs * 4 == k->n_len && k->mod_p.limbs * 4 >= k->p_len && k->mod_q.limbs * 4 >= k->q_len, "a key that was generated or read has its moduli prepared", which);
+        PROVEN_TEST_ASSERT(k->prepared && k->mod_n.limbs == PROVEN_CRYPTO_MP_LIMBS(k->n_len) && k->mod_p.limbs == PROVEN_CRYPTO_MP_LIMBS(k->p_len) && k->mod_q.limbs == PROVEN_CRYPTO_MP_LIMBS(k->q_len), "a key that was generated or read has its moduli prepared", which);
         memset(sig2, 0, sizeof sig2);
         PROVEN_TEST_ASSERT(proven_crypto_rsa_sign_pkcs1(&bare, NULL, PROVEN_HMAC_SHA256, view(digest, 32), sig2) && memcmp(sig, sig2, k->n_len) == 0, "a key without them signs the same bytes", which);
         b1 = blind; b2 = blind;
@@ -148,7 +148,7 @@ int main(void) {
                 const proven_byte_t *prime = half ? keys[which]->q : keys[which]->p;
                 proven_size_t len = half ? keys[which]->q_len : keys[which]->p_len;
                 PROVEN_TEST_ASSERT(proven_crypto_mp_mod_init(&mod, prime, len), "a prime as a modulus", "");
-                proven_u32 base[PROVEN_CRYPTO_MP_CT_MAX], ex[PROVEN_CRYPTO_MP_CT_MAX], a[PROVEN_CRYPTO_MP_CT_MAX], b[PROVEN_CRYPTO_MP_CT_MAX];
+                proven_crypto_limb_t base[PROVEN_CRYPTO_MP_CT_MAX], ex[PROVEN_CRYPTO_MP_CT_MAX], a[PROVEN_CRYPTO_MP_CT_MAX], b[PROVEN_CRYPTO_MP_CT_MAX];
                 proven_byte_t bytes[PROVEN_CRYPTO_RSA_PRIME_MAX_BYTES];
                 for (int round = 0; round < 6; ++round) {
                     fill(bytes, len);
@@ -174,11 +174,11 @@ int main(void) {
         PROVEN_TEST_ASSERT(agree, "twenty-four random powers modulo four primes agree with square-and-multiply, short exponents included", "");
         PROVEN_TEST_ASSERT(edge, "the zeroth power is one and the first is the base", "");
         static proven_crypto_mp_mod_t big;
-        proven_u32 x[PROVEN_CRYPTO_MP_MAX] = { 2 };
-        PROVEN_TEST_ASSERT(proven_crypto_mp_mod_init(&big, TP_RSA_SERVER_K.n, TP_RSA_SERVER_K.n_len) && big.limbs == 64 && proven_crypto_mp_pow_ct(&big, x, x, x), "a modulus of 64 limbs is within its bound", "");
-        static proven_byte_t wide[PROVEN_CRYPTO_MP_CT_MAX * 4 + 4];
+        proven_crypto_limb_t x[PROVEN_CRYPTO_MP_MAX] = { 2 };
+        PROVEN_TEST_ASSERT(proven_crypto_mp_mod_init(&big, TP_RSA_SERVER_K.n, TP_RSA_SERVER_K.n_len) && big.limbs == PROVEN_CRYPTO_MP_LIMBS(256) && proven_crypto_mp_pow_ct(&big, x, x, x), "a modulus of 2048 bits is within its bound", "");
+        static proven_byte_t wide[PROVEN_CRYPTO_MP_CT_MAX_BYTES + PROVEN_CRYPTO_MP_LIMB_BYTES];
         memset(wide, 0xff, sizeof wide);
-        PROVEN_TEST_ASSERT(proven_crypto_mp_mod_init(&big, wide, sizeof wide) && !proven_crypto_mp_pow_ct(&big, x, x, x), "one of 67 limbs is refused: the table is sized for a prime, not for a modulus", "");
+        PROVEN_TEST_ASSERT(proven_crypto_mp_mod_init(&big, wide, sizeof wide) && !proven_crypto_mp_pow_ct(&big, x, x, x), "one a limb longer than the bound is refused: the table is sized for a prime, not for a modulus", "");
     }
 
     PROVEN_TEST_SECTION("a 2048-bit key", "Every hash, both encodings, blinded and not, a fault in each CRT value, and the key written and read back.", "");
@@ -206,7 +206,7 @@ int main(void) {
             "a key of exactly the size asked for, with two different primes, and not the key another stream gave", "");
         /* e * d = 1 modulo p - 1 shows in the smallest way: (m^e)^d = m for a small m. */
         static proven_crypto_mp_mod_t mod;
-        proven_u32 m[PROVEN_CRYPTO_MP_MAX] = { 0 }, c[PROVEN_CRYPTO_MP_MAX], e[2], dl[PROVEN_CRYPTO_MP_MAX];
+        proven_crypto_limb_t m[PROVEN_CRYPTO_MP_MAX] = { 0 }, c[PROVEN_CRYPTO_MP_MAX], e[2], dl[PROVEN_CRYPTO_MP_MAX];
         m[0] = 0x12345678u;
         PROVEN_TEST_ASSERT(proven_crypto_mp_mod_init(&mod, k.n, k.n_len) && proven_crypto_mp_load_be(e, 2, k.e, k.e_len) && proven_crypto_mp_load_be(dl, mod.limbs, d, k.n_len), "its numbers", "");
         proven_crypto_mp_to_mont(&mod, c, m);

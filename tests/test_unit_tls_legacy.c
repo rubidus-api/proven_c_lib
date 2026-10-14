@@ -82,7 +82,7 @@ static tp_stream_t g_stream = { .seed = "test_unit_tls_legacy bytes", .counter =
  * make a malformed one. */
 static bool raw_encrypt(const proven_crypto_rsa_key_t *k, const proven_byte_t *em, proven_byte_t *out) {
     static proven_crypto_mp_mod_t mod;
-    static proven_u32 x[PROVEN_CRYPTO_MP_MAX], e[2];
+    static proven_crypto_limb_t x[PROVEN_CRYPTO_MP_MAX], e[2];
     if (!proven_crypto_mp_mod_init(&mod, k->n, k->n_len) || !proven_crypto_mp_load_be(x, mod.limbs, em, k->n_len) || !proven_crypto_mp_load_be(e, 2, k->e, k->e_len)) return false;
     proven_crypto_mp_to_mont(&mod, x, x);
     proven_crypto_mp_pow(&mod, x, x, e, 2);

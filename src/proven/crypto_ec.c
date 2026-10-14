@@ -9,21 +9,22 @@
  * opposite, the point at infinity - so there is no special case to branch into, and a scalar
  * multiplication does the same sequence of operations for every scalar. */
 
-#define EC_LIMBS 12                               /* P-384 */
+#define EC_LIMBS PROVEN_CRYPTO_MP_LIMBS(PROVEN_CRYPTO_EC_MAX_BYTES)   /* P-384 */
+#define EC_NIBBLES (PROVEN_CRYPTO_MP_LIMB_BITS / 4)                  /* in a limb */
 
 typedef struct {
     proven_size_t limbs;
     proven_size_t bytes;
     proven_crypto_mp_mod_t p;                     /* the field */
     proven_crypto_mp_mod_t n;                     /* the group order */
-    proven_u32 a[EC_LIMBS];                       /* -3, Montgomery form */
-    proven_u32 b[EC_LIMBS];
-    proven_u32 b3[EC_LIMBS];
-    proven_u32 one[EC_LIMBS];
-    proven_u32 gx[EC_LIMBS], gy[EC_LIMBS];
+    proven_crypto_limb_t a[EC_LIMBS];                       /* -3, Montgomery form */
+    proven_crypto_limb_t b[EC_LIMBS];
+    proven_crypto_limb_t b3[EC_LIMBS];
+    proven_crypto_limb_t one[EC_LIMBS];
+    proven_crypto_limb_t gx[EC_LIMBS], gy[EC_LIMBS];
 } ec_curve_t;
 
-typedef struct { proven_u32 x[EC_LIMBS], y[EC_LIMBS], z[EC_LIMBS]; } ec_point_t;
+typedef struct { proven_crypto_limb_t x[EC_LIMBS], y[EC_LIMBS], z[EC_LIMBS]; } ec_point_t;
 
 static const proven_byte_t EC_P256_P[32] = {
     0xff,0xff,0xff,0xff,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
@@ -71,9 +72,9 @@ static bool ec_curve_init(ec_curve_t *c, proven_crypto_ec_curve_t id) {
     if (id == PROVEN_CRYPTO_EC_P256) { c->bytes = 32; p = EC_P256_P; n = EC_P256_N; b = EC_P256_B; gx = EC_P256_GX; gy = EC_P256_GY; }
     else if (id == PROVEN_CRYPTO_EC_P384) { c->bytes = 48; p = EC_P384_P; n = EC_P384_N; b = EC_P384_B; gx = EC_P384_GX; gy = EC_P384_GY; }
     else return false;
-    c->limbs = c->bytes / 4;
+    c->limbs = PROVEN_CRYPTO_MP_LIMBS(c->bytes);
     if (!proven_crypto_mp_mod_init(&c->p, p, c->bytes) || !proven_crypto_mp_mod_init(&c->n, n, c->bytes)) return false;
-    proven_u32 t[EC_LIMBS], three[EC_LIMBS], zero[EC_LIMBS];
+    proven_crypto_limb_t t[EC_LIMBS], three[EC_LIMBS], zero[EC_LIMBS];
     for (proven_size_t i = 0; i < c->limbs; ++i) { t[i] = 0; three[i] = 0; zero[i] = 0; }
     t[0] = 1; three[0] = 3;
     proven_crypto_mp_to_mont(&c->p, c->one, t);
@@ -90,7 +91,7 @@ static bool ec_curve_init(ec_curve_t *c, proven_crypto_ec_curve_t id) {
     return true;
 }
 
-static void ec_copy(proven_u32 *out, const proven_u32 *a, proven_size_t limbs) {
+static void ec_copy(proven_crypto_limb_t *out, const proven_crypto_limb_t *a, proven_size_t limbs) {
     for (proven_size_t i = 0; i < limbs; ++i) out[i] = a[i];
 }
 
@@ -102,8 +103,8 @@ static void ec_set_infinity(const ec_curve_t *c, ec_point_t *p) {
 /* Algorithm 1 of Renes-Costello-Batina: complete addition for y^2 = x^3 + ax + b. */
 static void ec_add(const ec_curve_t *c, ec_point_t *out, const ec_point_t *p, const ec_point_t *q) {
     const proven_crypto_mp_mod_t *f = &c->p;
-    proven_u32 t0[EC_LIMBS], t1[EC_LIMBS], t2[EC_LIMBS], t3[EC_LIMBS], t4[EC_LIMBS], t5[EC_LIMBS];
-    proven_u32 x3[EC_LIMBS], y3[EC_LIMBS], z3[EC_LIMBS];
+    proven_crypto_limb_t t0[EC_LIMBS], t1[EC_LIMBS], t2[EC_LIMBS], t3[EC_LIMBS], t4[EC_LIMBS], t5[EC_LIMBS];
+    proven_crypto_limb_t x3[EC_LIMBS], y3[EC_LIMBS], z3[EC_LIMBS];
 #define M(o, a, b) proven_crypto_mp_montmul(f, o, a, b)
 #define A(o, a, b) proven_crypto_mp_add(f, o, a, b)
 #define S(o, a, b) proven_crypto_mp_sub(f, o, a, b)
@@ -129,20 +130,20 @@ static void ec_add(const ec_curve_t *c, ec_point_t *out, const ec_point_t *p, co
 
 /* k * p, k a reduced scalar in plain limbs (SECRET). A fixed window of four bits: sixteen
  * multiples in a table, every entry read on every lookup and one kept by mask. */
-static void ec_mul(const ec_curve_t *c, ec_point_t *out, const proven_u32 *k, const ec_point_t *p) {
+static void ec_mul(const ec_curve_t *c, ec_point_t *out, const proven_crypto_limb_t *k, const ec_point_t *p) {
     ec_point_t table[16];
     ec_set_infinity(c, &table[0]);
     table[1] = *p;
     for (int i = 2; i < 16; ++i) ec_add(c, &table[i], &table[i - 1], p);
     ec_point_t acc, pick;
     ec_set_infinity(c, &acc);
-    for (proven_size_t i = c->limbs * 8; i-- > 0;) {
+    for (proven_size_t i = c->limbs * EC_NIBBLES; i-- > 0;) {
         for (int d = 0; d < 4; ++d) ec_add(c, &acc, &acc, &acc);
-        proven_u32 nib = (k[i / 8] >> (4 * (i % 8))) & 15u;
+        proven_crypto_limb_t nib = (k[i / EC_NIBBLES] >> (4 * (i % EC_NIBBLES))) & 15u;
         for (proven_size_t j = 0; j < EC_LIMBS; ++j) { pick.x[j] = 0; pick.y[j] = 0; pick.z[j] = 0; }
-        for (proven_u32 t = 0; t < 16; ++t) {
-            proven_u32 x = t ^ nib;
-            proven_u32 mask = ((x | ((proven_u32)0 - x)) >> 31) - 1u;      /* all ones when t == nib */
+        for (proven_crypto_limb_t t = 0; t < 16; ++t) {
+            proven_crypto_limb_t x = t ^ nib;
+            proven_crypto_limb_t mask = ((x | ((proven_crypto_limb_t)0 - x)) >> (PROVEN_CRYPTO_MP_LIMB_BITS - 1)) - 1u;      /* all ones when t == nib */
             for (proven_size_t j = 0; j < c->limbs; ++j) {
                 pick.x[j] |= table[t].x[j] & mask;
                 pick.y[j] |= table[t].y[j] & mask;
@@ -159,14 +160,14 @@ static void ec_mul(const ec_curve_t *c, ec_point_t *out, const proven_u32 *k, co
 
 /* Affine coordinates in plain limbs. Returns all-ones when the point is at infinity (the
  * outputs are then zero). */
-static proven_u32 ec_affine(const ec_curve_t *c, proven_u32 *x, proven_u32 *y, const ec_point_t *p) {
-    proven_u32 zi[EC_LIMBS];
+static proven_crypto_limb_t ec_affine(const ec_curve_t *c, proven_crypto_limb_t *x, proven_crypto_limb_t *y, const ec_point_t *p) {
+    proven_crypto_limb_t zi[EC_LIMBS];
     proven_crypto_mp_inv_prime(&c->p, zi, p->z);
     proven_crypto_mp_montmul(&c->p, x, p->x, zi);
     proven_crypto_mp_montmul(&c->p, y, p->y, zi);
     proven_crypto_mp_from_mont(&c->p, x, x);
     proven_crypto_mp_from_mont(&c->p, y, y);
-    proven_u32 inf = proven_crypto_mp_is_zero(p->z, c->limbs);
+    proven_crypto_limb_t inf = proven_crypto_mp_is_zero(p->z, c->limbs);
     PROVEN_CT_PUBLIC(&inf, sizeof inf);          /* a result at infinity is refused, which is seen */
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)zi, .size = sizeof zi });
     return inf;
@@ -175,7 +176,7 @@ static proven_u32 ec_affine(const ec_curve_t *c, proven_u32 *x, proven_u32 *y, c
 /* An uncompressed point from the wire. Everything about it is public. */
 static bool ec_decode(const ec_curve_t *c, ec_point_t *out, proven_mem_view_t pub) {
     if (!pub.ptr || pub.size != 1 + 2 * c->bytes || pub.ptr[0] != 0x04) return false;
-    proven_u32 x[EC_LIMBS], y[EC_LIMBS], lhs[EC_LIMBS], rhs[EC_LIMBS];
+    proven_crypto_limb_t x[EC_LIMBS], y[EC_LIMBS], lhs[EC_LIMBS], rhs[EC_LIMBS];
     if (!proven_crypto_mp_load_be(x, c->limbs, pub.ptr + 1, c->bytes)) return false;
     if (!proven_crypto_mp_load_be(y, c->limbs, pub.ptr + 1 + c->bytes, c->bytes)) return false;
     if (!proven_crypto_mp_lt(x, c->p.n, c->limbs) || !proven_crypto_mp_lt(y, c->p.n, c->limbs)) return false;
@@ -195,9 +196,9 @@ static bool ec_decode(const ec_curve_t *c, ec_point_t *out, proven_mem_view_t pu
 
 /* A private scalar from bytes: in [1, n-1], or refused. The comparison's result is public (a
  * key out of range is not a key), the value is not. */
-static bool ec_load_scalar(const ec_curve_t *c, proven_u32 *k, const proven_byte_t *priv) {
+static bool ec_load_scalar(const ec_curve_t *c, proven_crypto_limb_t *k, const proven_byte_t *priv) {
     if (!proven_crypto_mp_load_be(k, c->limbs, priv, c->bytes)) return false;
-    proven_u32 ok = proven_crypto_mp_lt(k, c->n.n, c->limbs) & ~proven_crypto_mp_is_zero(k, c->limbs);
+    proven_crypto_limb_t ok = proven_crypto_mp_lt(k, c->n.n, c->limbs) & ~proven_crypto_mp_is_zero(k, c->limbs);
     PROVEN_CT_PUBLIC(&ok, sizeof ok);
     return ok != 0;
 }
@@ -209,12 +210,12 @@ static void ec_base(const ec_curve_t *c, ec_point_t *g) {
 
 bool proven_crypto_ec_public(proven_crypto_ec_curve_t curve, const proven_byte_t *priv, proven_byte_t *pub_out) {
     ec_curve_t c;
-    proven_u32 k[EC_LIMBS], x[EC_LIMBS], y[EC_LIMBS];
+    proven_crypto_limb_t k[EC_LIMBS], x[EC_LIMBS], y[EC_LIMBS];
     ec_point_t g, r;
     if (!ec_curve_init(&c, curve) || !ec_load_scalar(&c, k, priv)) return false;
     ec_base(&c, &g);
     ec_mul(&c, &r, k, &g);
-    proven_u32 inf = ec_affine(&c, x, y, &r);
+    proven_crypto_limb_t inf = ec_affine(&c, x, y, &r);
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)k, .size = sizeof k });
     if (inf) return false;
     pub_out[0] = 0x04;
@@ -226,13 +227,13 @@ bool proven_crypto_ec_public(proven_crypto_ec_curve_t curve, const proven_byte_t
 
 bool proven_crypto_ecdh(proven_crypto_ec_curve_t curve, const proven_byte_t *priv, proven_mem_view_t peer, proven_byte_t *shared_out) {
     ec_curve_t c;
-    proven_u32 k[EC_LIMBS], x[EC_LIMBS], y[EC_LIMBS];
+    proven_crypto_limb_t k[EC_LIMBS], x[EC_LIMBS], y[EC_LIMBS];
     ec_point_t q, r;
     if (!ec_curve_init(&c, curve) || !ec_decode(&c, &q, peer) || !ec_load_scalar(&c, k, priv)) return false;
     ec_mul(&c, &r, k, &q);
     /* The curves have prime order, so a valid point times a scalar in [1, n-1] is never the
      * point at infinity; the check costs nothing and is kept. */
-    proven_u32 inf = ec_affine(&c, x, y, &r);
+    proven_crypto_limb_t inf = ec_affine(&c, x, y, &r);
     proven_crypto_mp_store_be(shared_out, c.bytes, x, c.limbs);
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)k, .size = sizeof k });
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)x, .size = sizeof x });
@@ -242,7 +243,7 @@ bool proven_crypto_ecdh(proven_crypto_ec_curve_t curve, const proven_byte_t *pri
 }
 
 /* The digest as an integer mod n: its leftmost bytes, as many as the order has. */
-static void ec_digest_scalar(const ec_curve_t *c, proven_u32 *z, proven_mem_view_t digest) {
+static void ec_digest_scalar(const ec_curve_t *c, proven_crypto_limb_t *z, proven_mem_view_t digest) {
     proven_size_t n = digest.size < c->bytes ? digest.size : c->bytes;
     proven_crypto_mp_reduce_be(&c->n, z, digest.ptr, n);
 }
@@ -251,7 +252,7 @@ bool proven_crypto_ecdsa_verify(proven_crypto_ec_curve_t curve, proven_mem_view_
                                 proven_mem_view_t r_in, proven_mem_view_t s_in) {
     ec_curve_t c;
     ec_point_t q, g, p1, p2;
-    proven_u32 r[EC_LIMBS], s[EC_LIMBS], z[EC_LIMBS], w[EC_LIMBS], u1[EC_LIMBS], u2[EC_LIMBS], x[EC_LIMBS], y[EC_LIMBS];
+    proven_crypto_limb_t r[EC_LIMBS], s[EC_LIMBS], z[EC_LIMBS], w[EC_LIMBS], u1[EC_LIMBS], u2[EC_LIMBS], x[EC_LIMBS], y[EC_LIMBS];
     if (!ec_curve_init(&c, curve) || !ec_decode(&c, &q, pub)) return false;
     if (!digest.ptr || digest.size == 0 || !r_in.ptr || !s_in.ptr) return false;
     if (!proven_crypto_mp_load_be(r, c.limbs, r_in.ptr, r_in.size) || !proven_crypto_mp_load_be(s, c.limbs, s_in.ptr, s_in.size)) return false;
@@ -269,7 +270,7 @@ bool proven_crypto_ecdsa_verify(proven_crypto_ec_curve_t curve, proven_mem_view_
     ec_add(&c, &p1, &p1, &p2);
     if (ec_affine(&c, x, y, &p1)) return false;
     /* x mod n: x < p < 2n for both curves, so one subtraction at most. */
-    proven_u32 xr[EC_LIMBS];
+    proven_crypto_limb_t xr[EC_LIMBS];
     proven_byte_t xb[PROVEN_CRYPTO_EC_MAX_BYTES];
     proven_crypto_mp_store_be(xb, c.bytes, x, c.limbs);
     proven_crypto_mp_reduce_be(&c.n, xr, xb, c.bytes);
@@ -340,7 +341,7 @@ bool proven_crypto_ecdsa_sign(proven_crypto_ec_curve_t curve, int hmac_hash, con
     ec_curve_t c;
     ec_drbg_t d;
     ec_point_t g, rp;
-    proven_u32 key[EC_LIMBS], z[EC_LIMBS], k[EC_LIMBS], r[EC_LIMBS], s[EC_LIMBS], t[EC_LIMBS], x[EC_LIMBS], y[EC_LIMBS];
+    proven_crypto_limb_t key[EC_LIMBS], z[EC_LIMBS], k[EC_LIMBS], r[EC_LIMBS], s[EC_LIMBS], t[EC_LIMBS], x[EC_LIMBS], y[EC_LIMBS];
     proven_byte_t zb[PROVEN_CRYPTO_EC_MAX_BYTES], kb[PROVEN_CRYPTO_EC_MAX_BYTES + PROVEN_HMAC_MAX_SIZE], xb[PROVEN_CRYPTO_EC_MAX_BYTES];
     bool ok = false;
     d.hash = (proven_hmac_hash_t)hmac_hash;

@@ -215,8 +215,9 @@ int main(void) {
         "Check src/proven/crypto_mp.c.");
     {
         proven_size_t good = 0;
-        static proven_crypto_mp_mod_t m;
-        static proven_u32 a[PROVEN_CRYPTO_MP_MAX], b[PROVEN_CRYPTO_MP_MAX], e[PROVEN_CRYPTO_MP_MAX], am[PROVEN_CRYPTO_MP_MAX], bm[PROVEN_CRYPTO_MP_MAX], r[PROVEN_CRYPTO_MP_MAX];
+        proven_size_t secret_inits = 0;
+        static proven_crypto_mp_mod_t m, m2;
+        static proven_crypto_limb_t a[PROVEN_CRYPTO_MP_MAX], b[PROVEN_CRYPTO_MP_MAX], e[PROVEN_CRYPTO_MP_MAX], am[PROVEN_CRYPTO_MP_MAX], bm[PROVEN_CRYPTO_MP_MAX], r[PROVEN_CRYPTO_MP_MAX];
         for (proven_size_t i = 0; i < COUNT(CRV_MP); ++i) {
             /* n a b e wide | a*b a+b a-b a^e a^-1 wide mod n */
             split(CRV_MP[i]);
@@ -226,6 +227,14 @@ int main(void) {
             if (!proven_crypto_mp_load_be(a, s, g_bytes[1], g_len[1]) || !proven_crypto_mp_load_be(b, s, g_bytes[2], g_len[2]) ||
                 !proven_crypto_mp_load_be(e, s, g_bytes[3], g_len[3])) continue;
             bool ok = true;
+            /* What the modulus was prepared with: n * n0inv is -1 in a limb, and a modulus read as
+             * a secret - no leading zeros looked for, a longer walk to R^2 - is prepared the same. */
+            ok = ok && (proven_crypto_limb_t)(m.n[0] * m.n0inv) == (proven_crypto_limb_t)0 - 1u;
+            if (nl >= 8 && g_bytes[0][0] != 0) {
+                ok = ok && proven_crypto_mp_mod_init_secret(&m2, g_bytes[0], nl) && m2.limbs == s && m2.n0inv == m.n0inv &&
+                     proven_crypto_mp_eq(m2.rr, m.rr, s) != 0 && proven_crypto_mp_eq(m2.n, m.n, s) != 0;
+                secret_inits++;
+            }
             proven_crypto_mp_to_mont(&m, am, a); proven_crypto_mp_to_mont(&m, bm, b);
             proven_crypto_mp_montmul(&m, r, am, bm); proven_crypto_mp_from_mont(&m, r, r); proven_crypto_mp_store_be(g_out, nl, r, s);
             ok = ok && memcmp(g_out, g_bytes[5], nl) == 0;
@@ -244,13 +253,103 @@ int main(void) {
             if (ok) good++;
         }
         PROVEN_TEST_ASSERT(good == COUNT(CRV_MP) && good >= 60, "every case, including 0, 1 and n-1 as operands", "");
+        PROVEN_TEST_ASSERT(secret_inits >= 40, "and the modulus prepared as a secret one agrees, for those of eight bytes and more", "");
         static const proven_byte_t even[] = { 0x01, 0x00 }, one[] = { 0x01 }, zero[] = { 0x00, 0x00 };
         PROVEN_TEST_ASSERT(!proven_crypto_mp_mod_init(&m, even, 2) && !proven_crypto_mp_mod_init(&m, one, 1) && !proven_crypto_mp_mod_init(&m, zero, 2) &&
                            !proven_crypto_mp_mod_init(&m, one, 0),
             "an even modulus, 1, 0 and nothing are not moduli", "");
-        static const proven_byte_t wide[] = { 0x01, 0x00, 0x00, 0x00, 0x00 };
-        PROVEN_TEST_ASSERT(!proven_crypto_mp_load_be(a, 1, wide, 5) && proven_crypto_mp_load_be(a, 2, wide, 5) && a[1] == 1 && a[0] == 0 &&
-                           proven_crypto_mp_is_zero(b, 0) != 0,
+        /* Moduli with every limb but the lowest all ones, and operands of all ones and of n - 1:
+         * where a product's top word overflows and a sum's carry leaves the top limb. No oracle
+         * is needed for what the arithmetic must satisfy by itself. */
+        {
+            static const proven_size_t sizes[] = { 1, 2, 3, 4, 5, 7, 8, 9, 12, 15, 16, 17, 24, 31, 32, 33, 48, 64, 65, 128, 256, 264, 512, 1024 };
+            static const proven_byte_t lows[] = { 0xff, 0xfd, 0x01, 0x61 };
+            static proven_byte_t nb[PROVEN_CRYPTO_MP_MAX_BYTES], xb[PROVEN_CRYPTO_MP_MAX_BYTES];
+            static proven_crypto_limb_t one[PROVEN_CRYPTO_MP_MAX], neg[PROVEN_CRYPTO_MP_MAX], x[PROVEN_CRYPTO_MP_MAX], y[PROVEN_CRYPTO_MP_MAX], u[PROVEN_CRYPTO_MP_MAX], v[PROVEN_CRYPTO_MP_MAX];
+            static proven_crypto_limb_t pr[2 * PROVEN_CRYPTO_MP_MAX];             /* a plain product: twice the limbs */
+            proven_size_t held = 0, tried = 0;
+            for (proven_size_t si = 0; si < COUNT(sizes); ++si) {
+                for (proven_size_t li = 0; li < COUNT(lows); ++li) {
+                    const proven_size_t len = sizes[si];
+                    if (len == 1 && lows[li] == 0x01) continue;                   /* 1 is not a modulus */
+                    memset(nb, 0xff, len); nb[len - 1] = lows[li];
+                    if (len > 8 && li == 2) nb[len / 2] = 0x00;                   /* and one with a hole in it */
+                    tried++;
+                    if (!proven_crypto_mp_mod_init(&m, nb, len)) continue;
+                    const proven_size_t s = m.limbs;
+                    bool ok = (proven_crypto_limb_t)(m.n[0] * m.n0inv) == (proven_crypto_limb_t)0 - 1u;
+                    for (proven_size_t i = 0; i < s; ++i) { one[i] = 0; u[i] = 0; }
+                    one[0] = 1;
+                    proven_crypto_mp_sub(&m, neg, u, one);                        /* n - 1 */
+                    proven_crypto_mp_add(&m, v, neg, one);                        /* and back to zero */
+                    ok = ok && proven_crypto_mp_is_zero(v, s) != 0 && proven_crypto_mp_lt(neg, m.n, s) != 0 && proven_crypto_mp_lt(m.n, neg, s) == 0;
+                    /* x: bytes of all ones with the top one cleared - below n, every low limb full. */
+                    memset(xb, 0xff, len); xb[0] = len == 1 ? 0x03 : 0x7f;
+                    proven_crypto_mp_reduce_be(&m, x, xb, len);
+                    proven_crypto_mp_to_mont(&m, u, neg); proven_crypto_mp_to_mont(&m, v, x);
+                    /* (n-1)(n-1) = 1 */
+                    proven_crypto_mp_montmul(&m, y, u, u); proven_crypto_mp_from_mont(&m, y, y);
+                    ok = ok && proven_crypto_mp_eq(y, one, s) != 0;
+                    /* (n-1) x = -x, so adding x gives zero */
+                    proven_crypto_mp_montmul(&m, y, u, v); proven_crypto_mp_from_mont(&m, y, y);
+                    proven_crypto_mp_add(&m, y, y, x);
+                    ok = ok && proven_crypto_mp_is_zero(y, s) != 0;
+                    /* x (x + (n-1)) = x x - x, and the product does not depend on the order */
+                    proven_crypto_mp_add(&m, y, v, u);
+                    proven_crypto_mp_montmul(&m, y, v, y);
+                    proven_crypto_mp_montmul(&m, a, v, v); proven_crypto_mp_sub(&m, a, a, v);
+                    ok = ok && proven_crypto_mp_eq(y, a, s) != 0;
+                    proven_crypto_mp_montmul(&m, y, u, v); proven_crypto_mp_montmul(&m, a, v, u);
+                    ok = ok && proven_crypto_mp_eq(y, a, s) != 0;
+                    /* into and out of Montgomery form, and x^3 two ways */
+                    proven_crypto_mp_from_mont(&m, y, v);
+                    ok = ok && proven_crypto_mp_eq(y, x, s) != 0;
+                    for (proven_size_t i = 0; i < s; ++i) e[i] = 0;
+                    e[0] = 3;
+                    proven_crypto_mp_pow(&m, y, v, e, s);
+                    proven_crypto_mp_montmul(&m, a, v, v); proven_crypto_mp_montmul(&m, a, a, v);
+                    ok = ok && proven_crypto_mp_eq(y, a, s) != 0;
+                    /* the plain product against the modular one: x * x reduced is x x */
+                    if (2 * len <= sizeof g_out) {
+                        proven_crypto_mp_mul(pr, x, s, x, s);
+                        proven_crypto_mp_store_be(g_out, 2 * len, pr, 2 * s);
+                        bool whole = true;                                         /* nothing of it above 2 len bytes */
+                        for (proven_size_t i = PROVEN_CRYPTO_MP_LIMBS(2 * len); i < 2 * s; ++i) whole = whole && pr[i] == 0;
+                        proven_crypto_mp_reduce_be(&m, y, g_out, 2 * len);
+                        proven_crypto_mp_montmul(&m, a, v, v); proven_crypto_mp_from_mont(&m, a, a);
+                        ok = ok && whole && proven_crypto_mp_eq(y, a, s) != 0;
+                    }
+                    /* a small divisor: the remainder the long way, bit by bit with 65521 as a modulus (not
+                     * 65537, modulo which 2^32 is 1 and the two halves of a limb could change places unseen) */
+                    static const proven_byte_t f4[] = { 0xff, 0xf1 };
+                    proven_crypto_mp_store_be(xb, len, x, s);
+                    ok = ok && proven_crypto_mp_mod_init(&m2, f4, sizeof f4);
+                    proven_crypto_mp_reduce_be(&m2, y, xb, len);
+                    ok = ok && proven_crypto_mp_mod_small(x, s, 65521) == (proven_u32)y[0];
+                    if (ok) held++;
+                }
+            }
+            PROVEN_TEST_ASSERT(held == tried && tried >= 90, "what the arithmetic must satisfy by itself holds at moduli and operands of all ones, from one byte to the largest", "");
+        }
+        /* (1 + k a) / e, where it is exact: a = e q - 1 and k = 1 give q back. */
+        {
+            proven_crypto_limb_t q[5] = { (proven_crypto_limb_t)0 - 1u, (proven_crypto_limb_t)0 - 7u, 0x1234567u, (proven_crypto_limb_t)0 - 1u, 0 }, prod[6], got[7], ev[1] = { 65537 };
+            proven_crypto_mp_mul(prod, q, 5, ev, 1);
+            bool exact = prod[0] != 0;
+            prod[0] -= 1;                                                         /* e q - 1: the low limb of e q is not zero */
+            proven_crypto_mp_inverse_from(got, prod, 6, 1, 65537);
+            for (int i = 0; i < 7; ++i) exact = exact && got[i] == (i < 5 ? q[i] : 0);
+            exact = exact && proven_crypto_mp_mod_small(prod, 6, 65537) == 65536;
+            PROVEN_TEST_ASSERT(exact, "the exact division by a small number gives the quotient it was made from", "");
+        }
+        /* One byte more than a limb holds, and the same value in two limbs, read back as bytes. */
+        proven_byte_t wide[PROVEN_CRYPTO_MP_LIMB_BYTES + 1] = { 0x01 }, back[2 * PROVEN_CRYPTO_MP_LIMB_BYTES + 3];
+        bool fits = !proven_crypto_mp_load_be(a, 1, wide, sizeof wide) && proven_crypto_mp_load_be(a, 2, wide, sizeof wide) && a[1] == 1 && a[0] == 0;
+        proven_crypto_mp_store_be(back, sizeof back, a, 2);
+        for (proven_size_t i = 0; i < sizeof back; ++i) fits = fits && back[i] == (i == sizeof back - sizeof wide ? 1 : 0);
+        wide[0] = 0;                                       /* a leading zero byte is not a value that does not fit */
+        fits = fits && proven_crypto_mp_load_be(a, 1, wide, sizeof wide) && a[0] == 0;
+        PROVEN_TEST_ASSERT(fits && proven_crypto_mp_is_zero(b, 0) != 0,
             "a value that does not fit the limbs is refused by the loader", "");
     }
 

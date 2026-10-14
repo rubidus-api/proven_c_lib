@@ -18,6 +18,33 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **The numbers of P-256, P-384, RSA and Diffie-Hellman are held in 64-bit limbs on a 64-bit
+  target.** Where pointers are 64 bits and the compiler has a 128-bit integer for the product
+  of two (GCC and Clang; run here on x86-64), the multi-precision arithmetic under the TLS
+  unit works on limbs of 64 bits; everywhere else, and in any build with
+  `-DPROVEN_CRYPTO_MP_LIMB_BITS=32`, it works on limbs of 32 as before. The algorithms and
+  their constant-time shape are the same, and so is every result. This is the first of four
+  steps of the plan for the curves (RFC-0014).
+- A modulus is prepared faster: the constant a Montgomery multiplication needs is reached
+  by a few squarings instead of by doubling all the way, and for a public modulus the
+  doubling starts just below it. A public exponent's leading zeros are no longer squared
+  through. Together they are most of what verifying an RSA signature cost.
+- Measured on the development machine (x86-64, one core, GCC `-O3`; before, after):
+  P-256 key agreement 1,037 -> 440 us, signing 1,123 -> 474, verifying 2,090 -> 875; P-384
+  key agreement 3,069 -> 1,080 us, signing 3,314 -> 1,170, verifying 6,108 -> 2,166; an RSA
+  signature 6.3 -> 1.7 ms at 2048 bits, 19.9 -> 5.1 at 3072 and 45.6 -> 11.7 at 4096; an
+  RSA verification 948 -> 66 us at 2048 bits; a Diffie-Hellman exponentiation 3.1 -> 0.73 ms
+  for ffdhe2048 and 19.7 -> 4.7 for ffdhe4096. A full TLS 1.3 handshake in memory with
+  X25519 and a P-256 certificate: 1.59 -> 0.95 ms of the server's time and 2.52 -> 1.36 ms
+  of the client's; with an RSA-2048 certificate 6.8 -> 2.1 ms and 1.45 -> 0.56 ms. With
+  32-bit limbs the curve and signing figures are the earlier ones, and an RSA-2048
+  verification is 226 us. X25519 and Ed25519 have their own field arithmetic and are not
+  changed by this release.
+- Chapter 14 of the manual gives the new handshake and RSA figures, and what a build with
+  32-bit limbs pays.
+
 ## [0.49.0] - 2026-10-14
 
 ### Changed

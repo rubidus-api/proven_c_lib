@@ -314,16 +314,18 @@ static void ed_base(ge_t *b) {
     fe_copy(b->x, ED_BX); fe_copy(b->y, ED_BY); fe_one(b->z); fe_mul(b->t, ED_BX, ED_BY);
 }
 
-/* A 64-byte little-endian hash, or a 32-byte scalar, reduced mod L into 8 limbs. */
-static void sc_reduce(const proven_crypto_mp_mod_t *l, proven_u32 out[8], const proven_byte_t *le, proven_size_t n) {
+#define SC_LIMBS PROVEN_CRYPTO_MP_LIMBS(32)
+
+/* A 64-byte little-endian hash, or a 32-byte scalar, reduced mod L. */
+static void sc_reduce(const proven_crypto_mp_mod_t *l, proven_crypto_limb_t out[SC_LIMBS], const proven_byte_t *le, proven_size_t n) {
     proven_byte_t be[64];
     for (proven_size_t i = 0; i < n; ++i) be[i] = le[n - 1 - i];
     proven_crypto_mp_reduce_be(l, out, be, n);
     wipe(be, sizeof be);
 }
 
-static void sc_tobytes(proven_byte_t out[32], const proven_u32 a[8]) {
-    for (int i = 0; i < 32; ++i) out[i] = (proven_byte_t)(a[i / 4] >> (8 * (i % 4)));
+static void sc_tobytes(proven_byte_t out[32], const proven_crypto_limb_t a[SC_LIMBS]) {
+    for (int i = 0; i < 32; ++i) out[i] = (proven_byte_t)(a[i / PROVEN_CRYPTO_MP_LIMB_BYTES] >> (8 * (i % PROVEN_CRYPTO_MP_LIMB_BYTES)));
 }
 
 /* The secret scalar and the prefix from a seed (RFC 8032 section 5.1.5). */
@@ -347,7 +349,7 @@ void proven_crypto_ed25519_sign(proven_byte_t sig[64], const proven_byte_t seed[
                                 proven_mem_view_t msg) {
     proven_crypto_mp_mod_t l;
     proven_byte_t h[64], digest[64], rb[32];
-    proven_u32 r[8], k[8], a[8], s[8];
+    proven_crypto_limb_t r[SC_LIMBS], k[SC_LIMBS], a[SC_LIMBS], s[SC_LIMBS];
     proven_sha512_t ctx;
     ge_t b, rp;
     (void)proven_crypto_mp_mod_init(&l, ED_L, sizeof ED_L);      /* a fixed odd modulus: cannot fail */
@@ -383,13 +385,13 @@ void proven_crypto_ed25519_sign(proven_byte_t sig[64], const proven_byte_t seed[
 bool proven_crypto_ed25519_verify(const proven_byte_t pub[32], proven_mem_view_t msg, const proven_byte_t sig[64]) {
     proven_crypto_mp_mod_t l;
     proven_byte_t digest[64], sbe[32], kb[32], check[32];
-    proven_u32 s[8], k[8];
+    proven_crypto_limb_t s[SC_LIMBS], k[SC_LIMBS];
     proven_sha512_t ctx;
     ge_t a, b, p1, p2;
     fe_t zero;
     if (!proven_crypto_mp_mod_init(&l, ED_L, sizeof ED_L)) return false;
     for (int i = 0; i < 32; ++i) sbe[i] = sig[63 - i];
-    if (!proven_crypto_mp_load_be(s, 8, sbe, 32) || !proven_crypto_mp_lt(s, l.n, 8)) return false;
+    if (!proven_crypto_mp_load_be(s, SC_LIMBS, sbe, 32) || !proven_crypto_mp_lt(s, l.n, SC_LIMBS)) return false;
     if (!ge_decode(&a, pub)) return false;
     /* -A */
     fe_zero(zero);

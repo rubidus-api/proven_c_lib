@@ -108,9 +108,9 @@ handshake, which is at three in the morning on somebody else's machine:
 | `PROVEN_ERR_NOMEM` | The allocator refused |
 
 **Which key to choose.** All three kinds work on either side of a connection. They do not
-cost the same: with an RSA key, every full handshake this side signs takes several times
-longer than with P-256 or Ed25519 (section 9 has the figures), and on a server that is the
-largest part of a handshake. Use RSA where a certificate you already have requires it; for a
+cost the same: with an RSA key, every full handshake this side signs takes longer than with
+P-256 or Ed25519 - about twice as long with 2048 bits, twelve times with 4096 (section 9 has
+the figures) - and on a server that is the largest part of a handshake. Use RSA where a certificate you already have requires it; for a
 new one, P-256 or Ed25519. An RSA key is tried when the configuration is made - one signature,
 checked - so a key file that is damaged is refused there and not at the first connection.
 
@@ -756,15 +756,23 @@ server's own per-connection request buffer is Chapter 11's and is separate. (A T
 connection holds the same.)
 
 **What a handshake costs.** On one x86-64 core of the development machine, a full handshake
-with X25519 and a P-256 certificate is about 2 ms of processor time on the server and about 5 ms
-on a client that verifies the chain: for a server, some 500 new connections a second per core.
-The public-key arithmetic here is written to be constant-time and to be read, and is ten to fifty
-times slower than a tuned library's. Resumption (section 6) removes the signatures; keeping
-connections open removes the handshake.
+with X25519 and a P-256 certificate is about 1 ms of processor time on the server and about
+1.4 ms on a client that verifies a chain of one certificate: for a server, some 1,000 new
+connections a second per core. The public-key arithmetic here is written to be constant-time
+and to be read, and is two and a half to twenty-one times slower than that of OpenSSL on the
+same machine, by operation. Resumption
+(section 6) removes the signatures; keeping connections open removes the handshake.
 
-**With an RSA key the signature dominates.** On the same core one signature takes about 9 ms
-with a 2048-bit key, 27 ms with 3072 bits and 55 ms with 4096: a server with a 2048-bit RSA key
-completes about a hundred new connections a second per core, against five hundred with P-256.
+Those figures are a 64-bit build's, by GCC or Clang: the numbers of P-256, RSA and
+Diffie-Hellman are then held in 64-bit limbs, two of which multiply into the compiler's
+128-bit integer. A 32-bit build, and any build with `-DPROVEN_CRYPTO_MP_LIMB_BITS=32`, holds
+them in 32-bit limbs and takes two to four times as long over the same arithmetic - 1.6 ms
+and 2.5 ms for that handshake, and 6, 19 and 44 ms for the RSA signatures below. The results
+are the same bytes either way.
+
+**With an RSA key the signature dominates.** On the same core one signature takes about 1.7 ms
+with a 2048-bit key, 5 ms with 3072 bits and 12 ms with 4096: a server with a 2048-bit RSA key
+completes about 450 new connections a second per core, against a thousand with P-256.
 On the event-driven server of [Chapter 15](manual-15-event-loop.md) that time is spent on the
 loop's thread, where nothing else is served meanwhile. The signing is done modulo the two
 primes with a constant-time exponentiation, its input blinded, and its result checked with
