@@ -228,6 +228,8 @@ static void on_request(void *ctx, proven_http_stream_t *s, const proven_http_req
         if (proven_http_header_find(req->headers, req->header_count, sv("transfer-encoding"), &te)) atomic_fetch_add(&g_ws_framing_shown, 1);
         proven_ws_stream_t *ws = NULL;
         if (proven_ws_event_accept(s, req, &wcfg, &ws) != PROVEN_OK) (void)proven_http_stream_respond(s, 400, NULL, 0, (proven_mem_view_t){ (const proven_byte_t *)"no", 2 });
+    } else if (path_is(req, "/wsrefuse")) {
+        (void)proven_http_stream_respond(s, 404, NULL, 0, (proven_mem_view_t){ (const proven_byte_t *)"no", 2 });      /* a tunnel refused */
     } else if (path_is(req, "/wspush")) {
         proven_ws_event_config_t wcfg = { .on = { .on_message = ws_push_message, .on_writable = ws_push_writable, .on_closed = ws_echo_closed }, .max_buffered_output = 4096 };
         proven_ws_stream_t *ws = NULL;
@@ -647,6 +649,24 @@ static void ws_over_h2(void) {
     (void)proven_h2_conn_reset(c.e, id, PROVEN_H2_CANCEL);
     (void)cl_pump(&c, 5);
     PROVEN_TEST_ASSERT(ws_closed_is(4), "it is ended", "");
+
+    /* A tunnel the handler refuses, whose client sent data at once: the stream ends as a
+     * request's does, and what it sent goes back to the connection's window. Four of them carry
+     * 80,000 bytes - more than that window, 65,535 - each sent whole before any answer, so the
+     * fourth fits only if the others were given back. */
+    for (int t = 0; t < 4; t++) {
+        static proven_byte_t eager[20000];
+        id = ws_open_at(&c, "/wsrefuse", false);
+        proven_result_size_t w = proven_h2_conn_send_data(c.e, id, (proven_mem_view_t){ eager, sizeof eager }, false);
+        PROVEN_TEST_ASSERT(w.err == PROVEN_OK && w.value == sizeof eager, "a client sends 20,000 bytes on the tunnel before any answer, all within the windows", "Check proven_h2_conn_submit_response: a status other than 2xx leaves a tunnel ending as a request does, and what it held goes back to the connection.");
+        for (int i = 0; i < 300 && !cl_res(&c, id)->end && !cl_res(&c, id)->reset; i++) (void)cl_pump(&c, 10);
+        for (int i = 0; i < 100 && !cl_res(&c, id)->reset; i++) (void)cl_pump(&c, 5);
+        PROVEN_TEST_ASSERT(cl_res(&c, id)->status == 404 && cl_res(&c, id)->end && cl_res(&c, id)->reset && cl_res(&c, id)->code == PROVEN_H2_NO_ERROR,
+            "the handler answers 404, and the stream ends as a request's: RST_STREAM with NO_ERROR tells the client to stop, as for any complete answer to an unfinished request - no tunnel was made", "");
+    }
+    c.plain_body = true;
+    PROVEN_TEST_ASSERT(cl_get(&c, "/hello", 200, 5), "and the connection goes on", "");
+    c.plain_body = false;
 
     /* (One with no :path is refused by the engine for its stream: test_unit_h2_conn. This
      * client's engine will not even send it.) */

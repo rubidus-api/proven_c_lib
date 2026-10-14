@@ -70,6 +70,7 @@ typedef struct h2s {
     void *raw;
     proven_loop_timer_t timer;
     bool told_drain;                   /* the WebSocket was told the server is ending */
+    proven_size_t held_off;            /* a WebSocket's: how much of `held` it has taken */
 } h2s_t;
 
 struct h2d {
@@ -588,7 +589,7 @@ static void s_raw_feed(h2s_t *s);
  * `next` is live, otherwise the walk starts again from the head. */
 static void d_raw_feed_all(h2d_t *d) {
     for (h2s_t *s = d->streams; s && !d->dead;) {
-        if (s->dead || !s->raw || s->paused || s->held_len == 0) { s = s->next; continue; }
+        if (s->dead || !s->raw || s->paused || s->held_off == s->held_len) { s = s->next; continue; }
         s_enter(s);
         s_raw_feed(s);
         const bool open = !s->dead;
@@ -1094,19 +1095,26 @@ proven_size_t proven_http_event_h2_buffered_(const proven_http_stream_t *stream)
 static void s_raw_feed(h2s_t *s) {
     h2d_t *d = s->d;
     s_enter(s);
-    while (s->raw && !s->dead && !s->paused && s->held_len > 0) {
+    while (s->raw && !s->dead && !s->paused && s->held_off < s->held_len) {
         void *raw = s->raw;
-        proven_size_t took = (*(const proven_http_event_raw_ops_t *const *)raw)->on_input(raw, (proven_mem_mut_t){ .ptr = s->held, .size = s->held_len });
+        const proven_size_t have = s->held_len - s->held_off;
+        proven_size_t took = (*(const proven_http_event_raw_ops_t *const *)raw)->on_input(raw, (proven_mem_mut_t){ .ptr = s->held + s->held_off, .size = have });
         if (s->dead) break;
-        if (took > s->held_len) took = s->held_len;
-        for (proven_size_t i = took; i < s->held_len; ++i) s->held[i - took] = s->held[i];
-        s->held_len -= took;
+        if (took > have) took = have;
+        s->held_off += took;
         if (!d->dead) proven_h2_conn_consumed(d->engine, s->id, took);
         if (took == 0) break;                      /* it waits for the rest of a frame */
     }
+    /* What was taken goes from the front - not after every frame, which would move the rest
+     * once a frame: when all of it is taken, or half the buffer is behind it. */
+    if (!s->dead && s->held_off > 0 && (s->held_off == s->held_len || s->held_off > s->held_cap / 2)) {
+        for (proven_size_t i = s->held_off; i < s->held_len; ++i) s->held[i - s->held_off] = s->held[i];
+        s->held_len -= s->held_off;
+        s->held_off = 0;
+    }
     /* The peer ended its side and everything it sent has been taken: for the WebSocket that is
      * the end of its input, as a closed socket is on HTTP/1.1. This side ends too. */
-    if (s->raw && !s->dead && s->in_done && s->held_len == 0) {
+    if (s->raw && !s->dead && s->in_done && s->held_off == s->held_len) {
         void *raw = s->raw;
         s->raw = (void *)0;
         proven_loop_timer_cancel(s->h.server->loop, &s->timer);
@@ -1200,7 +1208,7 @@ void proven_http_event_h2_raw_pause_(proven_http_stream_t *stream, bool paused) 
     h2s_t *s = h2s_of(stream);
     if (s->dead || s->paused == paused) return;
     s->paused = paused;
-    if (paused || s->held_len == 0) return;
+    if (paused || s->held_off == s->held_len) return;
     /* As on HTTP/1.1: what waited is given at once. */
     h2d_t *d = s->d;
     s_enter(s);

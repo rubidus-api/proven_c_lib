@@ -1295,6 +1295,8 @@ proven_err_t proven_h2_conn_submit_response(proven_h2_conn_t *c, proven_u32 stre
     proven_err_t err = h2c_send_block(c, stream_id, headers, count, end_stream, sensitive);
     if (err != PROVEN_OK) return err;
     if (status >= 200) s->flags |= ST_HEAD_SENT;
+    /* A tunnel is made by a 2xx; any other answer refuses it, and the stream ends as a request's. */
+    if (status > 299) s->flags &= ~(proven_u32)ST_TUNNEL;
     if (end_stream) h2c_local_end(c, s);
     return PROVEN_OK;
 }

@@ -956,8 +956,10 @@ line; its own client is HTTP/1.1, which the same server goes on serving.
 - Its frames travel in DATA frames, so HTTP/2's flow control is under the WebSocket's own:
   `http2_window_bytes` is what a client may send before the WebSocket has taken it, and
   `on_writable` comes when the stream's output has moved.
-- Its end is END_STREAM from each side after the close handshake; a peer that resets the
-  stream is a WebSocket closed with 1006 and `PROVEN_ERR_RESET`. A shutdown closes it with 1001.
+- Its end is END_STREAM from each side after the close handshake - until the client's arrives
+  the stream keeps its place; a peer that resets the stream is a WebSocket closed with 1006 and
+  `PROVEN_ERR_RESET`. A shutdown closes it with 1001. A handler that refuses the request (any
+  answer but 2xx) ends the stream as it would a request's.
 - Without `http2_websocket` a client must not try (the setting says so), and a stream that
   does is refused with PROTOCOL_ERROR.
 - **Not here**: this library's own WebSocket client over HTTP/2 - `proven_ws_event_connect`
