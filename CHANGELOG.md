@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-10-14
+
 ### Changed
 
 - **P-256 and P-384: formulas for a = -3, and a table for the generator.** Points are added
