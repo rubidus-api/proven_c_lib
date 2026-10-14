@@ -617,14 +617,25 @@ static proven_err_t g_drained_why;
 static proven_loop_t *g_drain_loop;
 
 static void drain_answer(void *ctx) { (void)proven_http_stream_respond(((drain_slot_t *)ctx)->stream, 200, NULL, 0, mv("done")); }
+/* /half: the head and half the body now - keep-alive, as nothing was ending yet - the rest later. */
+static void drain_rest(void *ctx) {
+    proven_http_stream_t *st = ((drain_slot_t *)ctx)->stream;
+    if (proven_http_stream_write(st, mv("ne")).err == PROVEN_OK) (void)proven_http_stream_end(st);
+}
 
 static void drain_request(void *ctx, proven_http_stream_t *s, const proven_http_request_t *req) {
     (void)ctx;
     if (req->target.size == 1) { (void)proven_http_stream_respond(s, 200, NULL, 0, mv("hi")); return; }
     if (req->target.size == 6 && memcmp(req->target.ptr, "/never", 6) == 0) return;      /* answered by nobody */
+    const bool half = req->target.size == 5 && memcmp(req->target.ptr, "/half", 5) == 0;
     for (int i = 0; i < 8; ++i) {
         if (g_drain_slots[i].used) continue;
         g_drain_slots[i] = (drain_slot_t){ .stream = s, .used = true };
+        if (half) {
+            if (proven_http_stream_begin(s, 200, NULL, 0, 4) == PROVEN_OK && proven_http_stream_write(s, mv("do")).err == PROVEN_OK)
+                proven_loop_timer_set(g_drain_loop, &g_drain_slots[i].timer, 300, drain_rest, &g_drain_slots[i]);
+            return;
+        }
         proven_loop_timer_set(g_drain_loop, &g_drain_slots[i].timer, 300, drain_answer, &g_drain_slots[i]);      /* /slow */
         return;
     }
@@ -723,6 +734,26 @@ static void drain_case(void) {
     dc_pump(loop, d, 1, 1600);                      /* 300 ms of the handler, and up to linger_ms (1 s) after its answer */
     PROVEN_TEST_ASSERT(d[0].ended && strstr(d[0].text, "\r\n\r\ndone") != NULL && g_drained_calls == 1 && g_drained_why == PROVEN_OK,
         "the request finishes inside the deadline: on_drained with PROVEN_OK, well before the 5 s", "");
+    (void)proven_net_close(&d[0].sock);
+    proven_http_event_server_destroy(server);
+
+    /* A response whose head went out before the shutdown, without Connection: close, and whose
+     * body ends after it: the connection is not kept for another request but ends - long before
+     * the deadline - and the shutdown is over with PROVEN_OK. */
+    memset(d, 0, sizeof d);
+    g_drained_calls = 0;
+    PROVEN_TEST_ASSERT(proven_http_event_server_create(loop, &cfg, &server) == PROVEN_OK &&
+                       proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK &&
+                       proven_net_connect(at, proven_net_deadline_in(5000), &d[0].sock) == PROVEN_OK &&
+                       proven_net_write_all(&d[0].sock, mv("GET /half HTTP/1.1\r\nHost: x\r\n\r\n"), proven_net_deadline_in(5000)).err == PROVEN_OK, "a response begun", "");
+    dc_pump(loop, d, 1, 100);
+    PROVEN_TEST_ASSERT(strstr(d[0].text, "HTTP/1.1 200") == d[0].text && strstr(d[0].text, "Connection: close") == NULL && !d[0].ended, "its head has gone out, keeping the connection", "");
+    const proven_time_t asked = proven_time_monotonic_now();
+    PROVEN_TEST_ASSERT(proven_http_event_server_shutdown(server, 10000, drained, NULL) == PROVEN_OK, "the server begins to end, with 10 s", "");
+    dc_pump(loop, d, 1, 1600);
+    PROVEN_TEST_ASSERT(d[0].ended && strstr(d[0].text, "\r\n\r\ndone") != NULL && g_drained_calls == 1 && g_drained_why == PROVEN_OK &&
+                       proven_time_monotonic_now() - asked < 3000000000,
+        "the body ends, the connection is not kept but ends, and on_drained says PROVEN_OK - not at the 10 s deadline", "Check `reuse` in ev_finish: s->closed_to_new.");
     (void)proven_net_close(&d[0].sock);
     proven_http_event_server_destroy(server);
 

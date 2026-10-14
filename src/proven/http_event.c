@@ -230,7 +230,9 @@ static void ev_linger(proven_http_stream_t *c) {
 /* The response is complete and gone: finish the exchange and go on to whatever is next. */
 static void ev_finish(proven_http_stream_t *c) {
     proven_http_event_server_t *s = c->h.server;
-    bool reuse = c->keep && c->h.state == EV_RESPOND && !c->peer_eof && !s->stopped;
+    /* After stop_listening (or a shutdown) a connection is not kept, even when its response
+     * began before and promised to keep it: it ends here. */
+    bool reuse = c->keep && c->h.state == EV_RESPOND && !c->peer_eof && !s->stopped && !s->closed_to_new;
     c->active = false;
     ev_enter(c);
     if (s->cfg.on.on_done) s->cfg.on.on_done(s->cfg.ctx, c, PROVEN_OK);
@@ -700,33 +702,30 @@ proven_err_t proven_http_event_server_shutdown(proven_http_event_server_t *s, pr
     s->drained_ctx = ctx;
     /* Nothing new; HTTP/1.1 answers say Connection: close; HTTP/2 says goodbye. */
     proven_http_event_server_stop_listening(s);
-    /* Then each connection by what it is doing. Ending one, or telling one, may run callbacks
-     * that end others: so after each the list is walked again from its head, and a
-     * taken-over connection is told at most once. */
-    for (bool again = true; again;) {
-        again = false;
-        for (proven_http_stream_t *c = s->conns; c; c = c->next) {
-            if (c->dead) continue;
-            if (c->h.state == EV_RAW) {
-                if (!c->raw || c->told_drain) continue;
-                const proven_http_event_raw_ops_t *ops = *(const proven_http_event_raw_ops_t *const *)c->raw;
-                c->told_drain = true;
-                if (!ops->on_drain) continue;
-                ev_enter(c);
-                ops->on_drain(c->raw);
-                ev_leave(c);
-                again = true;
-                break;
-            }
-            /* HTTP/1.1 with no request on it: nothing to finish. */
-            if (c->h.state == EV_HEAD && !c->head_started && !c->active) {
-                ev_enter(c);
-                ev_kill(c, PROVEN_ERR_RESET);
-                ev_leave(c);
-                again = true;
-                break;
-            }
-        }
+    /* HTTP/1.1 with no request on it: nothing to finish. Ending one runs no callback - it has
+     * no exchange and no other protocol - so one pass does them all. */
+    for (proven_http_stream_t *c = s->conns, *next; c; c = next) {
+        next = c->next;
+        if (c->dead || c->h.state != EV_HEAD || c->head_started || c->active) continue;
+        ev_enter(c);
+        ev_kill(c, PROVEN_ERR_RESET);
+        ev_leave(c);
+    }
+    /* A taken-over connection is told, at most once. Telling one may run callbacks that end
+     * any connection: while the one told is still open its `next` is a live link and the walk
+     * goes on from there; when it was ended, the walk starts again from the head (those told
+     * are passed over), so the usual case is one pass. */
+    for (proven_http_stream_t *c = s->conns; c;) {
+        if (c->dead || c->h.state != EV_RAW || !c->raw || c->told_drain) { c = c->next; continue; }
+        const proven_http_event_raw_ops_t *ops = *(const proven_http_event_raw_ops_t *const *)c->raw;
+        c->told_drain = true;
+        if (!ops->on_drain) { c = c->next; continue; }
+        ev_enter(c);
+        ops->on_drain(c->raw);
+        const bool open = !c->dead;
+        proven_http_stream_t *next = open ? c->next : (void *)0;
+        ev_leave(c);
+        c = open ? next : s->conns;
     }
     if (grace_ms == 0) ev_drain_deadline(s);
     else proven_loop_timer_set(s->loop, &s->drain_deadline, grace_ms, ev_drain_deadline, s);

@@ -1075,6 +1075,21 @@ int main(void) {
         cl_close(&c);
         server_stop();
 
+        /* An HTTP/2 connection with nothing open: goodbye, and it ends at once. */
+        port = server_start(cfg);
+        atomic_store(&g_drained_calls, 0);
+        PROVEN_TEST_ASSERT(cl_open_with(&c, NULL, port, 0), "a client", "");
+        proven_u32 first = cl_ask(&c, "GET", "/", true);
+        PROVEN_TEST_ASSERT(cl_wait(&c, first, 5000) && cl_res(&c, first)->end, "one request answered; now nothing is open", "");
+        atomic_store(&g_drain_grace, 10000);
+        on_loop(do_shutdown);
+        for (int i = 0; i < 300 && !c.closed && !c.gone; i++) (void)cl_pump(&c, 10);
+        for (int i = 0; i < 2000 && atomic_load(&g_drained_calls) == 0; i++) proven_time_sleep(1);
+        PROVEN_TEST_ASSERT(c.goaway && c.closed && c.close_code == PROVEN_H2_NO_ERROR && atomic_load(&g_drained_calls) == 1 && atomic_load(&g_drained_why) == PROVEN_OK,
+            "an idle HTTP/2 connection is told goodbye and ends without an error; on_drained says PROVEN_OK, not at the 10 s deadline", "");
+        cl_close(&c);
+        server_stop();
+
         /* Only what finishes: PROVEN_OK, and the connection ends with NO_ERROR. */
         port = server_start(cfg);
         atomic_store(&g_drained_calls, 0);
