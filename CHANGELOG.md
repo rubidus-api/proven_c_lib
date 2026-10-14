@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.51.0] - 2026-10-14
+
 ### Changed
 
 - **Curve25519's field is five limbs of 51 bits on a 64-bit target.** Where the
