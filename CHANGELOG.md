@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-10-14
+
 ### Added
 
 - **A server's graceful end.** `proven_http_server_shutdown(server, grace_ms)` (from any
