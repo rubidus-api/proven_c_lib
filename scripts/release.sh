@@ -31,12 +31,17 @@ echo "release: $version (tag $tag)"
 # The full suite: every test, every manual example compiled and run, and every documentation
 # gate - the version string agreeing with itself among them, so a release cannot be cut with
 # the number disagreeing across the files a downstream project reads.
-( cd "$root" && cc nob.c -o nob && ./nob build ) >/dev/null 2>&1 || {
-    echo "release: ./nob build failed - not releasing" >&2; exit 1; }
+# Each run's output is kept under build/ (which is not tracked): a gate that fails once and
+# passes when run again by hand has otherwise left nothing to read.
+mkdir -p "$root/build"
+( cd "$root" && cc nob.c -o nob && ./nob build ) >"$root/build/release-build.log" 2>&1 || {
+    echo "release: ./nob build failed - not releasing (build/release-build.log)" >&2
+    grep -n 'FAIL' "$root/build/release-build.log" | head -5 >&2; exit 1; }
 echo "release: build and every gate passed"
 
-( cd "$root" && ./nob asan ) >/dev/null 2>&1 || {
-    echo "release: ./nob asan failed - not releasing" >&2; exit 1; }
+( cd "$root" && ./nob asan ) >"$root/build/release-asan.log" 2>&1 || {
+    echo "release: ./nob asan failed - not releasing (build/release-asan.log)" >&2
+    grep -n 'FAIL\|ERROR: AddressSanitizer' "$root/build/release-asan.log" | head -5 >&2; exit 1; }
 echo "release: asan passed"
 
 "$root/scripts/project-check.sh" >/dev/null || {

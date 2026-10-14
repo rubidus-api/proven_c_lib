@@ -757,8 +757,10 @@ connection holds the same.)
 
 **What a handshake costs.** On one x86-64 core of the development machine, a full handshake
 with X25519 and a P-256 certificate is about 1 ms of processor time on the server and about
-1.4 ms on a client that verifies a chain of one certificate: for a server, some 1,000 new
-connections a second per core. The public-key arithmetic here is written to be constant-time
+1.4 ms on a client that holds that certificate as its anchor; each certificate whose
+signature the client checks on the way to an anchor - one, for a certificate an anchor
+issued - adds about 0.9 ms. For a server that is some 1,000 new connections a second per
+core. The public-key arithmetic here is written to be constant-time
 and to be read, and is two and a half to twenty-one times slower than that of OpenSSL on the
 same machine, by operation. Resumption
 (section 6) removes the signatures; keeping connections open removes the handshake.

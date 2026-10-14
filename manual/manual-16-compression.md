@@ -338,7 +338,7 @@ zlib, the implementation everybody else uses, compresses the same data to the sa
 within a quarter of a percent at levels 6 and 9, and it is a little larger at level 1 - and is
 about twice as fast at compressing, nearly three times at level 1. At decompressing the two
 are about the same: zlib 1.3.1, called from Python on the same data, gave between 190 and
-310 MiB/s as the machine's load moved. (Before v0.49.0 this library's decompressor read a
+310 MiB/s as the machine's load moved. (Before v0.50.0 this library's decompressor read a
 bit at a time and gave 75 to 90 MiB/s.) The compressor was written to be read; if its
 figures are too slow for a program, that program wants zlib.
 

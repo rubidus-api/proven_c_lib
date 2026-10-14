@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-10-14
+
 ### Changed
 
 - **The numbers of P-256, P-384, RSA and Diffie-Hellman are held in 64-bit limbs on a 64-bit
@@ -37,8 +39,9 @@ written; their tags still exist.
   signature 6.3 -> 1.7 ms at 2048 bits, 19.9 -> 5.1 at 3072 and 45.6 -> 11.7 at 4096; an
   RSA verification 948 -> 66 us at 2048 bits; a Diffie-Hellman exponentiation 3.1 -> 0.73 ms
   for ffdhe2048 and 19.7 -> 4.7 for ffdhe4096. A full TLS 1.3 handshake in memory with
-  X25519 and a P-256 certificate: 1.59 -> 0.95 ms of the server's time and 2.52 -> 1.36 ms
-  of the client's; with an RSA-2048 certificate 6.8 -> 2.1 ms and 1.45 -> 0.56 ms. With
+  X25519 and a P-256 certificate that is the client's anchor: 1.59 -> 0.95 ms of the
+  server's time and 2.52 -> 1.36 ms of the client's; with an RSA-2048 certificate
+  6.8 -> 2.1 ms and 1.45 -> 0.56 ms. With
   32-bit limbs the curve and signing figures are the earlier ones, and an RSA-2048
   verification is 226 us. X25519 and Ed25519 have their own field arithmetic and are not
   changed by this release.
