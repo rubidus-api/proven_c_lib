@@ -130,6 +130,40 @@ proven_err_t proven_http_server_poll(proven_http_server_t *server, proven_net_de
 void proven_http_server_stop(proven_http_server_t *server);
 
 /**
+ * @brief End the server gracefully. Safe from any thread, and from a handler; returns at once,
+ *        and the loop carries it out.
+ *
+ * From the next round: the listeners are closed; a connection with nothing of a request on it
+ * is closed; one where a request has begun to arrive, or is with its handler, finishes it -
+ * the response says `Connection: close` - and closes. proven_http_server_run returns when no
+ * connection is left (PROVEN_OK), or when `grace_ms` has passed (PROVEN_ERR_TIMEOUT): then
+ * every connection the loop holds is closed. **A connection whose handler is still running is
+ * the handler's** and is not touched; it closes when the handler returns, and
+ * proven_http_server_destroy waits for that as always. 0: close what can be closed now.
+ *
+ * A connection handed over by proven_http_exchange_upgrade is not the server's: a handler that
+ * keeps one (a WebSocket) looks at proven_http_server_shutting_down and closes it - with 1001,
+ * "going away", for a WebSocket. A shutdown is final; proven_http_server_stop during it makes
+ * run return at once, as always.
+ *
+ * @return PROVEN_ERR_INVALID_ARG for no server; PROVEN_ERR_INVALID_STATE when it was already
+ *         asked.
+ */
+[[nodiscard]]
+proven_err_t proven_http_server_shutdown(proven_http_server_t *server, proven_u32 grace_ms);
+
+/** @brief Whether proven_http_server_shutdown has been called. Safe from any thread: for a
+ *         handler that keeps a connection (an upgraded one) and should let it go. */
+[[nodiscard]]
+bool proven_http_server_shutting_down(const proven_http_server_t *server);
+
+/** @brief For a program that calls proven_http_server_poll itself: whether the shutdown is
+ *         over, and (`why`, optional) how - PROVEN_OK or PROVEN_ERR_TIMEOUT, as run returns.
+ *         On the loop's thread. */
+[[nodiscard]]
+bool proven_http_server_drained(const proven_http_server_t *server, proven_err_t *why);
+
+/**
  * @brief Close every connection and listener and free the server.
  *
  * With a job system, handlers that are running are waited for: each returns when its handler

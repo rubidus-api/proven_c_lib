@@ -29,6 +29,9 @@ typedef struct {
     bool (*on_eof)(void *raw);
     /* Optional. The server stopped listening: finish what is open and take nothing new. */
     void (*on_shutdown)(void *raw);
+    /* Optional. The server is ending (proven_http_event_server_shutdown), after on_shutdown:
+     * end what is open as soon as the protocol allows - a WebSocket says goodbye. */
+    void (*on_drain)(void *raw);
 } proven_http_event_raw_ops_t;
 
 /* Inside on_request, with no response begun: send `head` (a complete response head), end the
@@ -135,6 +138,7 @@ struct proven_http_stream {
     bool sniffed;                      /* which protocol this connection speaks has been decided */
     bool raw_more;                     /* EV_RAW: the owner has output the transport would not take yet */
     bool told_stop;                    /* EV_RAW: the owner has been told that the server stopped listening */
+    bool told_drain;                   /* EV_RAW: and that it is shutting down (on_drain) */
 };
 
 typedef struct { proven_http_event_server_t *server; proven_net_listener_t listener; proven_loop_io_t io; } ev_listener_t;
@@ -155,6 +159,13 @@ struct proven_http_event_server {
     proven_byte_t *zbuf;               /* what a compressor gives out, on its way to a connection's output; made when first needed */
     proven_byte_t *h2buf;              /* where every HTTP/2 connection reads its header lists: one event at a time, one thread; made when first needed */
     proven_size_t h2buf_size;
+    /* proven_http_event_server_shutdown */
+    bool draining;                     /* it was called: final */
+    bool drain_cut;                    /* the deadline ended something */
+    bool drain_told;                   /* on_drained was called */
+    proven_loop_timer_t drain_deadline, drain_done;
+    proven_http_event_drained_fn on_drained;
+    void *drained_ctx;
 };
 
 // -----------------------------------------------------------------------------

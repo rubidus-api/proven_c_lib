@@ -16,6 +16,8 @@
 typedef struct {
     proven_loop_t *loop;
     int served;
+    proven_http_event_server_t *server;
+    proven_err_t ended;                /* what on_drained was told */
 } app_t;
 
 /* What this program keeps for one request while it is being answered. */
@@ -100,6 +102,17 @@ static void on_done(void *ctx, proven_http_stream_t *stream, proven_err_t why) {
     if (why == PROVEN_OK) app->served++;
 }
 
+/* The end, on the loop's thread: what is open finishes, and then the loop is stopped. */
+static void on_drained(void *ctx, proven_err_t why) {
+    app_t *app = ctx;
+    app->ended = why;
+    proven_loop_stop(app->loop);
+}
+static void begin_end(void *ctx) {
+    app_t *app = ctx;
+    if (proven_http_event_server_shutdown(app->server, 2000, on_drained, app) != PROVEN_OK) proven_loop_stop(app->loop);
+}
+
 static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
 
 static char g_url[64];
@@ -132,6 +145,7 @@ int main(void) {
     proven_net_addr_t at;
     EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &config, &server) == PROVEN_OK &&
                     proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "an event-driven server on a free port");
+    app.server = server;
 
     /* This example gives the loop a thread of its own, so that its main thread can be a client. */
     proven_job_sys_t *threads = NULL;
@@ -167,10 +181,12 @@ int main(void) {
     proven_http_client_destroy(client);
 
     // ---- done ----------------------------------------------------------------------
-    /* Stop the loop, then take the server apart. Nothing else is touching it by then. */
-    proven_loop_stop(app.loop);
+    /* End gracefully, on the loop's thread; on_drained stops the loop. Then take the server
+     * apart: nothing else is touching it by then. */
+    app.ended = PROVEN_ERR_INVALID_STATE;
+    EXAMPLE_REQUIRE(proven_loop_post(app.loop, begin_end, &app) == PROVEN_OK, "the end is asked for");
     proven_job_group_wait(threads, &running);
-    EXAMPLE_REQUIRE(app.served == 4, "four exchanges ended with on_done(PROVEN_OK)");
+    EXAMPLE_REQUIRE(app.ended == PROVEN_OK && app.served == 4, "it ended with nothing cut, and four exchanges ended with on_done(PROVEN_OK)");
     proven_http_event_server_destroy(server);
     proven_loop_destroy(app.loop);
     proven_job_system_close(threads);

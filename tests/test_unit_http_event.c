@@ -608,6 +608,140 @@ static void linger_case(void) {
     proven_loop_destroy(loop);
 }
 
+/* ---- the graceful end (proven_http_event_server_shutdown) ---- */
+
+typedef struct { proven_http_stream_t *stream; proven_loop_timer_t timer; bool used; } drain_slot_t;
+static drain_slot_t g_drain_slots[8];
+static int g_drain_ok, g_drain_err, g_drained_calls;
+static proven_err_t g_drained_why;
+static proven_loop_t *g_drain_loop;
+
+static void drain_answer(void *ctx) { (void)proven_http_stream_respond(((drain_slot_t *)ctx)->stream, 200, NULL, 0, mv("done")); }
+
+static void drain_request(void *ctx, proven_http_stream_t *s, const proven_http_request_t *req) {
+    (void)ctx;
+    if (req->target.size == 1) { (void)proven_http_stream_respond(s, 200, NULL, 0, mv("hi")); return; }
+    if (req->target.size == 6 && memcmp(req->target.ptr, "/never", 6) == 0) return;      /* answered by nobody */
+    for (int i = 0; i < 8; ++i) {
+        if (g_drain_slots[i].used) continue;
+        g_drain_slots[i] = (drain_slot_t){ .stream = s, .used = true };
+        proven_loop_timer_set(g_drain_loop, &g_drain_slots[i].timer, 300, drain_answer, &g_drain_slots[i]);      /* /slow */
+        return;
+    }
+}
+static void drain_done_cb(void *ctx, proven_http_stream_t *s, proven_err_t why) {
+    (void)ctx;
+    for (int i = 0; i < 8; ++i) if (g_drain_slots[i].used && g_drain_slots[i].stream == s) g_drain_slots[i].used = false;
+    if (why == PROVEN_OK) g_drain_ok++; else g_drain_err++;
+}
+static void drained(void *ctx, proven_err_t why) { (void)ctx; g_drained_calls++; g_drained_why = why; }
+
+/* A client socket read without waiting, until it ends. */
+typedef struct { proven_net_conn_t sock; char text[1024]; proven_size_t have; bool ended; proven_time_t ended_at; } dc_t;
+static void dc_read(dc_t *d) {
+    if (d->ended) return;
+    for (;;) {
+        if (d->have == sizeof d->text - 1) return;
+        proven_result_size_t got = proven_net_read(&d->sock, (proven_mem_mut_t){ .ptr = (proven_byte_t *)d->text + d->have, .size = sizeof d->text - 1 - d->have }, proven_net_deadline_in(0));
+        if (got.err == PROVEN_OK && got.value > 0) { d->have += got.value; d->text[d->have] = '\0'; continue; }
+        if (got.err != PROVEN_ERR_TIMEOUT && got.err != PROVEN_ERR_AGAIN) { d->ended = true; d->ended_at = proven_time_monotonic_now(); }
+        return;
+    }
+}
+static void dc_pump(proven_loop_t *loop, dc_t *d, int n, proven_u32 ms) {
+    proven_net_deadline_t until = proven_net_deadline_in(ms);
+    while (proven_time_monotonic_now() < until) {
+        PROVEN_TEST_ASSERT(proven_loop_poll(loop, proven_net_deadline_in(5)) == PROVEN_OK, "a round", "");
+        for (int i = 0; i < n; ++i) dc_read(&d[i]);
+    }
+}
+
+static void drain_case(void) {
+    proven_loop_t *loop = NULL;
+    proven_http_event_server_t *server = NULL;
+    proven_http_event_server_config_t cfg = { .on = { .on_request = drain_request, .on_done = drain_done_cb } };
+    proven_net_addr_t at;
+    static dc_t d[4];
+    memset(d, 0, sizeof d);
+    g_drain_ok = g_drain_err = g_drained_calls = 0;
+    PROVEN_TEST_ASSERT(proven_loop_create(g_heap, &loop) == PROVEN_OK && proven_http_event_server_create(loop, &cfg, &server) == PROVEN_OK &&
+                       proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server", "");
+    g_drain_loop = loop;
+    for (int i = 0; i < 4; ++i) PROVEN_TEST_ASSERT(proven_net_connect(at, proven_net_deadline_in(5000), &d[i].sock) == PROVEN_OK, "a connection", "");
+    /* 0: answered, and now idle. 1: a request the handler answers after 300 ms. 2: half a
+     * request head. 3: a request nobody answers. */
+    PROVEN_TEST_ASSERT(proven_net_write_all(&d[0].sock, mv("GET / HTTP/1.1\r\nHost: x\r\n\r\n"), proven_net_deadline_in(5000)).err == PROVEN_OK, "a request", "");
+    dc_pump(loop, d, 4, 100);
+    PROVEN_TEST_ASSERT(strstr(d[0].text, "\r\n\r\nhi") != NULL && strstr(d[0].text, "Connection: close") == NULL && !d[0].ended, "answered, and the connection kept", "");
+    d[0].have = 0; d[0].text[0] = '\0';
+    PROVEN_TEST_ASSERT(proven_net_write_all(&d[1].sock, mv("GET /slow HTTP/1.1\r\nHost: x\r\n\r\n"), proven_net_deadline_in(5000)).err == PROVEN_OK &&
+                       proven_net_write_all(&d[2].sock, mv("GET /slow HTTP/1.1\r\nHo"), proven_net_deadline_in(5000)).err == PROVEN_OK &&
+                       proven_net_write_all(&d[3].sock, mv("GET /never HTTP/1.1\r\nHost: x\r\n\r\n"), proven_net_deadline_in(5000)).err == PROVEN_OK, "three more", "");
+    dc_pump(loop, d, 4, 60);
+    PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == 4, "four connections open", "");
+
+    const proven_time_t began = proven_time_monotonic_now();
+    PROVEN_TEST_ASSERT(proven_http_event_server_shutdown(server, 1500, drained, NULL) == PROVEN_OK, "the server begins to end, with 1.5 s for what is open", "");
+    PROVEN_TEST_ASSERT(proven_http_event_server_shutdown(server, 1500, drained, NULL) == PROVEN_ERR_INVALID_STATE, "once", "");
+    PROVEN_TEST_ASSERT(proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), NULL) == PROVEN_ERR_INVALID_STATE, "and it is final: no listening again", "");
+    proven_net_conn_t late;
+    bool refused = proven_net_connect(at, proven_net_deadline_in(500), &late) != PROVEN_OK;
+    if (!refused) (void)proven_net_close(&late);
+    PROVEN_TEST_ASSERT(refused, "a new connection is refused", "");
+    dc_pump(loop, d, 4, 100);
+    PROVEN_TEST_ASSERT(d[0].ended && d[0].have == 0 && d[0].ended_at - began < 150000000, "the idle connection is closed at once, not at the idle timeout", "");
+    PROVEN_TEST_ASSERT(proven_net_write_all(&d[2].sock, mv("st: x\r\n\r\n"), proven_net_deadline_in(5000)).err == PROVEN_OK, "the half head is finished after the shutdown began", "");
+    dc_pump(loop, d, 4, 600);
+    PROVEN_TEST_ASSERT(d[1].ended && strstr(d[1].text, "HTTP/1.1 200") == d[1].text && strstr(d[1].text, "\r\nConnection: close\r\n") != NULL && strstr(d[1].text, "\r\n\r\ndone") != NULL,
+        "the request in progress is answered in full, told the connection ends, and then it does", "");
+    PROVEN_TEST_ASSERT(d[2].ended && strstr(d[2].text, "\r\nConnection: close\r\n") != NULL && strstr(d[2].text, "\r\n\r\ndone") != NULL,
+        "a request whose head was arriving is answered the same way: nothing it sent is lost", "");
+    PROVEN_TEST_ASSERT(!d[3].ended && g_drained_calls == 0, "the request nobody answers is still open, and the drain not over", "");
+    dc_pump(loop, d, 4, 1100);
+    PROVEN_TEST_ASSERT(d[3].ended && d[3].have == 0 && d[3].ended_at - began >= 1400000000, "at the deadline it is ended, with no answer", "");
+    PROVEN_TEST_ASSERT(g_drained_calls == 1 && g_drained_why == PROVEN_ERR_TIMEOUT && g_drain_ok == 3 && g_drain_err == 1 && proven_http_event_server_connections(server) == 0,
+        "on_drained once, with PROVEN_ERR_TIMEOUT; three exchanges ended well and the cut one with an error", "");
+    for (int i = 0; i < 4; ++i) (void)proven_net_close(&d[i].sock);
+    proven_http_event_server_destroy(server);
+
+    /* Nothing open: over on the next round. Then one request that finishes in time: PROVEN_OK. */
+    g_drained_calls = 0;
+    PROVEN_TEST_ASSERT(proven_http_event_server_create(loop, &cfg, &server) == PROVEN_OK &&
+                       proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK &&
+                       proven_http_event_server_shutdown(server, 5000, drained, NULL) == PROVEN_OK && g_drained_calls == 0, "a server with nothing open begins to end; on_drained is not called inside the call", "");
+    dc_pump(loop, d, 0, 60);
+    PROVEN_TEST_ASSERT(g_drained_calls == 1 && g_drained_why == PROVEN_OK, "and is called on the next round, with PROVEN_OK", "");
+    proven_http_event_server_destroy(server);
+    memset(d, 0, sizeof d);
+    g_drained_calls = 0;
+    PROVEN_TEST_ASSERT(proven_http_event_server_create(loop, &cfg, &server) == PROVEN_OK &&
+                       proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK &&
+                       proven_net_connect(at, proven_net_deadline_in(5000), &d[0].sock) == PROVEN_OK &&
+                       proven_net_write_all(&d[0].sock, mv("GET /slow HTTP/1.1\r\nHost: x\r\n\r\n"), proven_net_deadline_in(5000)).err == PROVEN_OK, "another server, and a slow request", "");
+    dc_pump(loop, d, 1, 60);
+    PROVEN_TEST_ASSERT(proven_http_event_server_shutdown(server, 5000, drained, NULL) == PROVEN_OK, "it begins to end", "");
+    dc_pump(loop, d, 1, 1600);                      /* 300 ms of the handler, and up to linger_ms (1 s) after its answer */
+    PROVEN_TEST_ASSERT(d[0].ended && strstr(d[0].text, "\r\n\r\ndone") != NULL && g_drained_calls == 1 && g_drained_why == PROVEN_OK,
+        "the request finishes inside the deadline: on_drained with PROVEN_OK, well before the 5 s", "");
+    (void)proven_net_close(&d[0].sock);
+    proven_http_event_server_destroy(server);
+
+    /* stop_listening alone: the next HTTP/1.1 response says the connection ends. */
+    memset(d, 0, sizeof d);
+    PROVEN_TEST_ASSERT(proven_http_event_server_create(loop, &cfg, &server) == PROVEN_OK &&
+                       proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK &&
+                       proven_net_connect(at, proven_net_deadline_in(5000), &d[0].sock) == PROVEN_OK, "a server and a connection", "");
+    dc_pump(loop, d, 1, 30);
+    proven_http_event_server_stop_listening(server);
+    PROVEN_TEST_ASSERT(proven_net_write_all(&d[0].sock, mv("GET / HTTP/1.1\r\nHost: x\r\n\r\n"), proven_net_deadline_in(5000)).err == PROVEN_OK, "a request after stop_listening, on the open connection", "");
+    dc_pump(loop, d, 1, 200);
+    PROVEN_TEST_ASSERT(strstr(d[0].text, "\r\nConnection: close\r\n") != NULL && strstr(d[0].text, "\r\n\r\nhi") != NULL && d[0].ended,
+        "after stop_listening alone, an HTTP/1.1 response says Connection: close and its connection ends", "Check the `close` decision in ev_begin: s->closed_to_new.");
+    (void)proven_net_close(&d[0].sock);
+    proven_http_event_server_destroy(server);
+    proven_loop_destroy(loop);
+}
+
 int main(void) {
     PROVEN_TEST_SUITE("the event-driven HTTP server",
         "Requests answered at once and later, bodies in pieces with backpressure both ways, pipelining, refusals, time limits and disappearing clients - plain and over TLS - and what an idle connection holds.",
@@ -656,6 +790,8 @@ int main(void) {
     idle_case();
     PROVEN_TEST_SECTION("the linger time", "A connection that is being closed after its answer.", "Check ev_linger and ev_arm.");
     linger_case();
+    PROVEN_TEST_SECTION("the graceful end", "proven_http_event_server_shutdown with an idle connection, a request in progress, half a request head and a request nobody answers; with nothing open; finishing in time; and stop_listening alone.", "Check proven_http_event_server_shutdown, ev_drain_check and ev_drain_deadline in src/proven/http_event.c, and the `close` decision for HTTP/1.1 responses.");
+    drain_case();
 
     proven_tls_config_destroy(g_client_tls); proven_tls_config_destroy(g_server_tls); proven_cert_store_destroy(anchors);
     proven_job_system_close(g_workers); proven_job_system_destroy(g_workers);

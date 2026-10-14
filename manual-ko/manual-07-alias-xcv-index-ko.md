@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 1270개: 소문자 `xcv_` 이름 931개와 대문자 `XCV_` 이름 339개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 1276개: 소문자 `xcv_` 이름 937개와 대문자 `XCV_` 이름 339개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -675,6 +675,7 @@ alias 1270개: 소문자 `xcv_` 이름 931개와 대문자 `XCV_` 이름 339개.
 | `xcv_http_event_client_requests` | `proven_http_event_client_requests` |
 | `xcv_http_event_client_start` | `proven_http_event_client_start` |
 | `xcv_http_event_client_t` | `proven_http_event_client_t` |
+| `xcv_http_event_drained_fn` | `proven_http_event_drained_fn` |
 | `xcv_http_event_request_abort` | `proven_http_event_request_abort` |
 | `xcv_http_event_request_end` | `proven_http_event_request_end` |
 | `xcv_http_event_request_options_t` | `proven_http_event_request_options_t` |
@@ -691,6 +692,7 @@ alias 1270개: 소문자 `xcv_` 이름 931개와 대문자 `XCV_` 이름 339개.
 | `xcv_http_event_server_create` | `proven_http_event_server_create` |
 | `xcv_http_event_server_destroy` | `proven_http_event_server_destroy` |
 | `xcv_http_event_server_listen` | `proven_http_event_server_listen` |
+| `xcv_http_event_server_shutdown` | `proven_http_event_server_shutdown` |
 | `xcv_http_event_server_stop_listening` | `proven_http_event_server_stop_listening` |
 | `xcv_http_event_server_t` | `proven_http_event_server_t` |
 | `xcv_http_exchange_begin` | `proven_http_exchange_begin` |
@@ -732,9 +734,12 @@ alias 1270개: 소문자 `xcv_` 이름 931개와 대문자 `XCV_` 이름 339개.
 | `xcv_http_server_connection_count` | `proven_http_server_connection_count` |
 | `xcv_http_server_create` | `proven_http_server_create` |
 | `xcv_http_server_destroy` | `proven_http_server_destroy` |
+| `xcv_http_server_drained` | `proven_http_server_drained` |
 | `xcv_http_server_listen` | `proven_http_server_listen` |
 | `xcv_http_server_poll` | `proven_http_server_poll` |
 | `xcv_http_server_run` | `proven_http_server_run` |
+| `xcv_http_server_shutdown` | `proven_http_server_shutdown` |
+| `xcv_http_server_shutting_down` | `proven_http_server_shutting_down` |
 | `xcv_http_server_stop` | `proven_http_server_stop` |
 | `xcv_http_server_t` | `proven_http_server_t` |
 | `xcv_http_stream_abort` | `proven_http_stream_abort` |

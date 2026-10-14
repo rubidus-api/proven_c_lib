@@ -437,6 +437,70 @@ static void cases(bool tls) {
  * driven by hand on this thread. */
 typedef struct { proven_allocator_t heap; proven_size_t live; } counting_t;
 typedef struct { proven_size_t size; proven_size_t pad; } count_head_t;
+/* ---- the graceful end: a WebSocket is told 1001 ---- */
+
+static atomic_int g_drained_calls, g_drained_why;
+static atomic_uint g_drain_grace;
+static void drained(void *ctx, proven_err_t why) { (void)ctx; atomic_store(&g_drained_why, (int)why); atomic_fetch_add(&g_drained_calls, 1); }
+static void do_shutdown(void *ctx) {
+    (void)ctx;
+    if (proven_http_event_server_shutdown(g_server, atomic_load(&g_drain_grace), drained, NULL) != PROVEN_OK) atomic_store(&g_drained_why, -1);
+    atomic_fetch_add(&g_ran, 1);
+}
+
+static void drain_case(void) {
+    for (int round = 0; round < 2; ++round) {
+        /* Round 0: a client that answers the close, and one that never does. Round 1: only the first. */
+        const char *how = round == 0 ? "one client that answers, one that does not" : "a client that answers";
+        atomic_store(&g_closed, 0); atomic_store(&g_drained_calls, 0); atomic_store(&g_drained_why, 0);
+        PROVEN_TEST_ASSERT(proven_loop_create(g_heap, &g_loop) == PROVEN_OK, "a loop", how);
+        proven_http_event_server_config_t cfg = { .on = { .on_request = on_request, .on_done = on_done } };
+        proven_net_addr_t at;
+        PROVEN_TEST_ASSERT(proven_http_event_server_create(g_loop, &cfg, &g_server) == PROVEN_OK &&
+                           proven_http_event_server_listen(g_server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server", how);
+        proven_job_group_t running;
+        proven_job_group_init(&running);
+        PROVEN_TEST_ASSERT(proven_job_group_submit(g_threads, &running, run_loop, NULL) == PROVEN_OK, "the loop on its thread", how);
+        proven_http_client_config_t ccfg = { .alloc = g_heap };
+        proven_http_client_t *client = NULL;
+        proven_ws_conn_config_t wcfg = { .alloc = g_heap };
+        proven_ws_conn_t *ws = NULL;
+        proven_ws_message_t msg;
+        proven_u16 status = 0;
+        raw_t raw;
+        PROVEN_TEST_ASSERT(proven_http_client_create(&ccfg, &client) == PROVEN_OK &&
+                           proven_ws_conn_connect(client, url(false, at.port, "/echo"), NULL, 0, sv(""), &wcfg, &ws, &status) == PROVEN_OK && status == 101, "a WebSocket", how);
+        if (round == 0) PROVEN_TEST_ASSERT(raw_upgrade(&raw, false, at.port, "/echo"), "and a raw one that will not answer a close", how);
+        proven_time_t began = proven_time_monotonic_now();
+        atomic_store(&g_drain_grace, 800);
+        on_loop(do_shutdown);
+        PROVEN_TEST_ASSERT(atomic_load(&g_drained_why) != -1, "the server begins to end, with 800 ms", how);
+        PROVEN_TEST_ASSERT(proven_ws_conn_receive(ws, proven_net_deadline_in(5000), &msg) == PROVEN_ERR_EOF && proven_ws_conn_close_code(ws) == PROVEN_WS_CLOSE_GOING_AWAY,
+            "the client is told goodbye with 1001, and its answer goes back", how);
+        if (round == 0) {
+            proven_byte_t bytes[64];
+            proven_err_t end = PROVEN_OK;
+            proven_size_t n = raw_read(&raw, bytes, 4, 3000, &end);
+            PROVEN_TEST_ASSERT(n == 4 && bytes[0] == 0x88 && bytes[1] == 12 && bytes[2] == 0x03 && bytes[3] == 0xe9, "the raw client has the same close, 1001, and says nothing", how);
+            n = raw_read(&raw, bytes, sizeof bytes, 3000, &end);
+            PROVEN_TEST_ASSERT(n == 10 && memcmp(bytes, "going away", 10) == 0 && end != PROVEN_OK && end != PROVEN_ERR_TIMEOUT && proven_time_monotonic_now() - began >= 700000000,
+                "the close's reason is \"going away\"; and at the deadline the connection is ended", how);
+            raw_close(&raw);
+        }
+        for (int i = 0; i < 3000 && atomic_load(&g_drained_calls) == 0; ++i) proven_time_sleep(1);
+        PROVEN_TEST_ASSERT(atomic_load(&g_drained_calls) == 1 && atomic_load(&g_closed) == (round == 0 ? 2 : 1) &&
+                           atomic_load(&g_drained_why) == (round == 0 ? PROVEN_ERR_TIMEOUT : PROVEN_OK),
+            round == 0 ? "on_closed once for each, and on_drained once with PROVEN_ERR_TIMEOUT" : "on_closed once, and on_drained once with PROVEN_OK", how);
+        proven_ws_conn_destroy(ws);
+        proven_http_client_destroy(client);
+        on_loop(do_destroy);
+        proven_loop_stop(g_loop);
+        proven_job_group_wait(g_threads, &running);
+        proven_loop_destroy(g_loop);
+        g_loop = NULL;
+    }
+}
+
 static proven_result_mem_mut_t count_alloc(void *ctx, proven_size_t size, proven_size_t align) {
     counting_t *c = ctx; (void)align;
     proven_result_mem_mut_t m = c->heap.alloc_fn(c->heap.ctx, size + sizeof(count_head_t), 16);
@@ -540,6 +604,8 @@ int main(void) {
     cases(false);
     PROVEN_TEST_SECTION("over TLS", "The same cases with the TLS engine between the socket and the decoder.", "");
     cases(true);
+    PROVEN_TEST_SECTION("the graceful end", "proven_http_event_server_shutdown with WebSocket connections open: each is closed with 1001; one that does not answer is ended at the deadline.", "Check ws_on_drain in ws_event.c and the EV_RAW branch of proven_http_event_server_shutdown.");
+    drain_case();
     PROVEN_TEST_SECTION("what an idle connection holds", "Three hundred WebSocket connections that have each echoed a message and now say nothing.", "Check the size of struct proven_ws_stream and of the connection struct in http_event.c.");
     memory_case();
 

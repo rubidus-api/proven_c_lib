@@ -10,6 +10,7 @@
 typedef struct {
     proven_http_server_t *server;
     int served;
+    proven_err_t ended;                 /* what run returned */
 } app_t;
 
 static void handle(void *ctx, proven_http_exchange_t *x) {
@@ -55,7 +56,8 @@ static void handle(void *ctx, proven_http_exchange_t *x) {
 
     } else if (proven_u8str_view_eq(path, PROVEN_LIT("/quit"))) {
         (void)proven_http_exchange_respond(x, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("bye\n")));
-        proven_http_server_stop(app->server);         /* run() returns after this request */
+        /* End gracefully: what is open finishes - this answer too - then run returns. */
+        if (proven_http_server_shutdown(app->server, 5000) != PROVEN_OK) proven_http_server_stop(app->server);
 
     } else {
         (void)proven_http_exchange_respond(x, 404, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("no such page\n")));
@@ -64,7 +66,7 @@ static void handle(void *ctx, proven_http_exchange_t *x) {
 
 static void serve(void *arg) {
     app_t *app = arg;
-    (void)proven_http_server_run(app->server);        /* until stop */
+    app->ended = proven_http_server_run(app->server);   /* until the shutdown is over */
 }
 
 /* GET or POST `path` and compare the whole body. */
@@ -132,10 +134,13 @@ int main(void) {
     EXAMPLE_REQUIRE(fetch_is(client, at.port, "GET", "/nothing-here", "", 404, "no such page\n"), "a 404 is the handler's to send");
     EXAMPLE_REQUIRE(fetch_is(client, at.port, "GET", "/quit", "", 200, "bye\n"), "GET /quit");
 
-    /* The handler called stop, so run returns; then the server can be taken apart. */
+    /* The handler asked for a shutdown: run returned when nothing was left open. */
     proven_job_group_wait(threads, &running);
     EXAMPLE_REQUIRE(app.served == 5, "five requests reached the handler");
-    EXAMPLE_REQUIRE(proven_http_server_connection_count(app.server) <= 1, "all on one connection, which is still open or just closed");
+    EXAMPLE_REQUIRE(app.ended == PROVEN_OK && proven_http_server_connection_count(app.server) == 0, "run returned PROVEN_OK: everything open had finished");
+    /* A program that calls poll itself, not run, asks the same of proven_http_server_drained. */
+    proven_err_t how = PROVEN_ERR_INVALID_STATE;
+    EXAMPLE_REQUIRE(proven_http_server_shutting_down(app.server) && proven_http_server_drained(app.server, &how) && how == PROVEN_OK, "the shutdown is over, and nothing was cut");
 
     proven_http_client_destroy(client);
     proven_http_server_destroy(app.server);   /* closes what is left */

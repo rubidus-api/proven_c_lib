@@ -137,9 +137,42 @@ proven_err_t proven_http_event_server_adopt(proven_http_event_server_t *server, 
 /** @brief Connections open now. */
 proven_size_t proven_http_event_server_connections(const proven_http_event_server_t *server);
 
-/** @brief Stop accepting - and adopting; connections that are open go on. For shutting down
- *         gracefully. (proven_http_event_server_listen afterwards takes connections again.) */
+/** @brief Stop accepting - and adopting; connections that are open go on, but an HTTP/1.1
+ *         response from now on says `Connection: close` and its connection ends after it, and
+ *         an HTTP/2 connection says goodbye (GOAWAY) and ends when its open streams have.
+ *         (proven_http_event_server_listen afterwards takes connections again.) To end the
+ *         server with a deadline, use proven_http_event_server_shutdown. */
 void proven_http_event_server_stop_listening(proven_http_event_server_t *server);
+
+/** @brief Told when a server's shutdown is over: `why` is PROVEN_OK when everything that was
+ *         open finished, PROVEN_ERR_TIMEOUT when something was cut at the deadline. */
+typedef void (*proven_http_event_drained_fn)(void *ctx, proven_err_t why);
+
+/**
+ * @brief End the server gracefully. On the loop's thread; returns at once.
+ *
+ * From the call: nothing new is taken (as proven_http_event_server_stop_listening); an
+ * HTTP/1.1 connection with no request on it is closed now; one where a request has begun to
+ * arrive, or is being answered, finishes it, with `Connection: close`, and closes; an HTTP/2
+ * connection says goodbye and finishes its open streams; a WebSocket connection is closed with
+ * 1001 ("going away") and its peer's answer waited for. When `grace_ms` has passed, whatever
+ * is still open is ended: an exchange in progress gets `on_done(PROVEN_ERR_RESET)`, a
+ * WebSocket `on_closed`. 0: end it all now.
+ *
+ * `on_drained(ctx, why)` (optional) is called once, from the loop, when the last connection has
+ * gone - on the next round when none was open. It may call proven_loop_stop; it must not
+ * destroy the server, which is done after the loop has returned. The deadline bounds
+ * connections, not handlers: a handler keeps running until it returns.
+ *
+ * A shutdown is final: the server takes no connection again (listen and adopt are
+ * PROVEN_ERR_INVALID_STATE). proven_http_event_server_destroy during it ends it at once.
+ *
+ * @return PROVEN_ERR_INVALID_ARG for no server; PROVEN_ERR_INVALID_STATE when it is already
+ *         shutting down.
+ */
+[[nodiscard]]
+proven_err_t proven_http_event_server_shutdown(proven_http_event_server_t *server, proven_u32 grace_ms,
+                                               proven_http_event_drained_fn on_drained, void *ctx);
 
 /**
  * @brief Ask that the response of this stream be compressed. Call it before the response

@@ -96,6 +96,13 @@ struct proven_http_server {
     _Atomic(sv_conn_t *) done;
     atomic_bool stop;
     atomic_size_t in_flight;
+    /* proven_http_server_shutdown: asked from any thread; carried out by the loop. */
+    atomic_bool shutdown_asked;
+    atomic_uint shutdown_grace_ms;
+    bool draining;                     /* the loop has begun it: no listeners, idle connections closed */
+    bool drain_over;                   /* everything has gone, or the deadline has passed */
+    bool drain_cut;                    /* the deadline ended something, or left a handler running */
+    proven_time_t drain_deadline;
 };
 
 static proven_u8str_view_t sv_lit(const char *s) {
@@ -172,7 +179,8 @@ static proven_err_t sv_build_head(sv_conn_t *c, proven_u16 status, const proven_
     /* A response sent while the client is still waiting for its 100 Continue: whether the body
      * follows is the client's choice, so the connection cannot carry another request. */
     bool close = c->close_after || c->expect_continue || !proven_http_request_keep_alive(&c->req) ||
-                 atomic_load_explicit(&c->server->stop, memory_order_relaxed);
+                 atomic_load_explicit(&c->server->stop, memory_order_relaxed) ||
+                 atomic_load_explicit(&c->server->shutdown_asked, memory_order_relaxed);
     if (e == PROVEN_OK && !no_body_status) {
         if (content_length != PROVEN_HTTP_LENGTH_UNKNOWN) {
             e = proven_http_write_header_u64(out, &len, sv_lit("Content-Length"), content_length);
@@ -589,7 +597,7 @@ static void sv_run(sv_conn_t *c) {
         if (!c->body_done) c->close_after = true;
     }
     c->keep = !c->close_after && c->body_done && proven_http_request_keep_alive(&c->req) &&
-              !atomic_load_explicit(&s->stop, memory_order_relaxed);
+              !atomic_load_explicit(&s->stop, memory_order_relaxed) && !atomic_load_explicit(&s->shutdown_asked, memory_order_relaxed);
 }
 
 static void sv_job(void *arg) {
@@ -677,7 +685,7 @@ static void sv_unwatch(proven_http_server_t *s, sv_conn_t *c) {
 /* The listeners are watched only while there is room for another connection: a client beyond
  * the limit then waits in the backlog instead of waking the loop for nothing. */
 static void sv_update_listeners(proven_http_server_t *s) {
-    bool want = s->conn_count < s->cfg.max_connections;
+    bool want = s->conn_count < s->cfg.max_connections && !s->draining;
     if (want == s->listening) return;
     for (proven_size_t i = 0; i < s->listener_count; ++i) {
         proven_net_handle_t h = proven_net_listener_handle(&s->listeners[i]);
@@ -883,7 +891,7 @@ static bool sv_collect_done(proven_http_server_t *s) {
         c->handling = false;
         /* A stop that came after the worker decided to keep the connection still wins: nothing
          * new is dispatched once the server is stopping. */
-        if (!c->keep || atomic_load_explicit(&s->stop, memory_order_acquire)) {
+        if (!c->keep || atomic_load_explicit(&s->stop, memory_order_acquire) || s->draining) {
             sv_linger(s, c);
         } else {
             proven_size_t rest = c->len - c->body_pos;
@@ -991,6 +999,8 @@ proven_err_t proven_http_server_create(const proven_http_server_config_t *config
     atomic_init(&s->done, (sv_conn_t *)0);
     atomic_init(&s->stop, false);
     atomic_init(&s->in_flight, 0);
+    atomic_init(&s->shutdown_asked, false);
+    atomic_init(&s->shutdown_grace_ms, 0u);
 
     if (s->cfg.max_head_bytes > PROVEN_SIZE_MAX / 4 || s->cfg.max_headers > PROVEN_SIZE_MAX / (4 * sizeof(proven_http_header_t))) {
         sv_free(config->alloc, s);
@@ -1040,6 +1050,63 @@ void proven_http_server_stop(proven_http_server_t *server) {
     proven_net_waker_wake(&server->waker);
 }
 
+// -----------------------------------------------------------------------------
+// The graceful end
+// -----------------------------------------------------------------------------
+
+/* Close every connection the loop holds now - not those a handler holds: their sockets are the
+ * handler's thread's until it returns. With `idle_only`, only those with nothing of a request. */
+static void sv_close_held(proven_http_server_t *s, bool idle_only) {
+    for (sv_conn_t *c = s->conns, *next; c; c = next) {
+        next = c->next;
+        if (c->handling || c->dead) continue;
+        if (idle_only && (c->lingering || c->len > 0)) continue;
+        sv_close_conn(s, c);
+    }
+}
+
+/* What a round of the loop does about a shutdown: begin it once it is asked, end it when
+ * nothing is left or at the deadline. */
+static void sv_drain_step(proven_http_server_t *s) {
+    if (s->drain_over || !atomic_load_explicit(&s->shutdown_asked, memory_order_acquire)) return;
+    proven_time_t now = proven_time_monotonic_now();
+    if (!s->draining) {
+        s->draining = true;
+        s->drain_deadline = now + (proven_time_t)atomic_load_explicit(&s->shutdown_grace_ms, memory_order_relaxed) * 1000000;
+        for (proven_size_t i = 0; i < s->listener_count; ++i) {
+            if (s->listening) (void)proven_net_selector_remove(s->selector, proven_net_listener_handle(&s->listeners[i]));
+            (void)proven_net_listener_close(&s->listeners[i]);
+        }
+        s->listener_count = 0;
+        s->listening = false;
+        sv_close_held(s, true);
+    }
+    if (s->conn_count == 0) { s->drain_over = true; return; }
+    if (now >= s->drain_deadline) {
+        s->drain_cut = true;
+        sv_close_held(s, false);
+        s->drain_over = true;
+    }
+}
+
+proven_err_t proven_http_server_shutdown(proven_http_server_t *server, proven_u32 grace_ms) {
+    if (!server) return PROVEN_ERR_INVALID_ARG;
+    atomic_store_explicit(&server->shutdown_grace_ms, grace_ms, memory_order_relaxed);
+    if (atomic_exchange_explicit(&server->shutdown_asked, true, memory_order_acq_rel)) return PROVEN_ERR_INVALID_STATE;
+    proven_net_waker_wake(&server->waker);
+    return PROVEN_OK;
+}
+
+bool proven_http_server_shutting_down(const proven_http_server_t *server) {
+    return server && atomic_load_explicit(&((proven_http_server_t *)server)->shutdown_asked, memory_order_acquire);
+}
+
+bool proven_http_server_drained(const proven_http_server_t *server, proven_err_t *why) {
+    if (!server || !server->drain_over) return false;
+    if (why) *why = server->drain_cut ? PROVEN_ERR_TIMEOUT : PROVEN_OK;
+    return true;
+}
+
 proven_err_t proven_http_server_poll(proven_http_server_t *server, proven_net_deadline_t until) {
     if (!server) return PROVEN_ERR_INVALID_ARG;
     proven_http_server_t *s = server;
@@ -1048,9 +1115,12 @@ proven_err_t proven_http_server_poll(proven_http_server_t *server, proven_net_de
     /* The wait ends when a socket is ready, at the caller's deadline, or when the next timer
      * may be due - whichever is first. How many connections are open does not enter into it:
      * the selector reports only the ready ones and the wheel only the expired ones. */
+    sv_drain_step(s);
     proven_net_deadline_t wake_at = until;
     proven_net_deadline_t timer = sv_next_timer(s);
     if (timer < wake_at) wake_at = timer;
+    if (s->draining && !s->drain_over && (proven_net_deadline_t)s->drain_deadline < wake_at) wake_at = (proven_net_deadline_t)s->drain_deadline;
+    if (s->drain_over && !did) did = true;
     /* Work was already done on the way in: look at the sockets, but do not wait for them. */
     if (did) wake_at = PROVEN_NET_DONT_WAIT;
 
@@ -1076,6 +1146,7 @@ proven_err_t proven_http_server_poll(proven_http_server_t *server, proven_net_de
     }
 
     if (sv_timers_advance(s, proven_time_monotonic_now())) did = true;
+    sv_drain_step(s);
     sv_free_dead(s);
     return did ? PROVEN_OK : PROVEN_ERR_TIMEOUT;
 }
@@ -1085,6 +1156,7 @@ proven_err_t proven_http_server_run(proven_http_server_t *server) {
     while (!atomic_load_explicit(&server->stop, memory_order_acquire)) {
         proven_err_t e = proven_http_server_poll(server, PROVEN_NET_NO_DEADLINE);
         if (e != PROVEN_OK && e != PROVEN_ERR_TIMEOUT) return e;
+        if (server->drain_over) return server->drain_cut ? PROVEN_ERR_TIMEOUT : PROVEN_OK;
     }
     return PROVEN_OK;
 }

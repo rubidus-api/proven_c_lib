@@ -365,8 +365,15 @@ static void ws_on_closed(void *raw, proven_err_t why) {
     ws_finish(ws, ws->close_sent ? ws->close_code : PROVEN_WS_CLOSE_ABNORMAL, why);
 }
 
+/* The server is ending: goodbye with 1001, and the answer is waited for as after any close
+ * (close_ms, or the server's deadline, whichever comes first). */
+static void ws_on_drain(void *raw) {
+    proven_ws_stream_close((proven_ws_stream_t *)raw, PROVEN_WS_CLOSE_GOING_AWAY, PROVEN_LIT("going away"));
+}
+
 static const proven_http_event_raw_ops_t ws_ops = {
     .on_input = ws_on_input, .on_progress = ws_on_progress, .on_timer = ws_on_timer, .on_closed = ws_on_closed,
+    .on_drain = ws_on_drain,
 };
 
 /* The server's connection record, as a transport. */

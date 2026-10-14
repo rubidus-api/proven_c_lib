@@ -18,6 +18,34 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **A server's graceful end.** `proven_http_server_shutdown(server, grace_ms)` (from any
+  thread or a handler) and `proven_http_event_server_shutdown(server, grace_ms, on_drained,
+  ctx)` (on the loop's thread): nothing new is taken; an HTTP/1.1 connection with no request on
+  it is closed at once; one where a request has begun to arrive, or is being answered,
+  finishes it with `Connection: close`; HTTP/2 says goodbye and finishes its open streams; a
+  WebSocket on the event server is closed with 1001 and its answer waited for. At the deadline
+  what is left is ended. The blocking server's `run` then returns `PROVEN_OK`, or
+  `PROVEN_ERR_TIMEOUT` when something was cut; the event server calls `on_drained` once with
+  the same. A connection whose handler is still running on a worker stays the handler's until
+  it returns, and `destroy` waits for it as before. `proven_http_server_shutting_down` tells a
+  handler that keeps an upgraded connection to let it go; `proven_http_server_drained` is for a
+  program that calls `poll`. A shutdown is final. `stop`, `destroy` and the rest keep their
+  meanings.
+
+### Changed
+
+- The two server examples of chapters 11 and 15 end with a shutdown instead of a stop.
+
+### Fixed
+
+- `proven_http_event_server_stop_listening` did not make HTTP/1.1 responses say
+  `Connection: close`, though its documentation ("for shutting down gracefully") and its code's
+  comment said they would: a kept-alive connection went on being reused, and an idle one stayed
+  until `idle_timeout_ms`. They now say it, and the connection ends after the response.
+- Chapter 7 gave the number of aliases as 1270 (931 lowercase) where the header had one more.
+
 ## [0.54.0] - 2026-10-14
 
 ### Added

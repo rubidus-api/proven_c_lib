@@ -70,9 +70,12 @@ proven_http_server_destroy(server);
 |---|---|---|
 | `proven_http_server_create(&config, &server)` | 서버를 만든다. 아직 listen하지 않는다. | `proven_err_t`: 할당자(allocator)나 핸들러가 없으면 `INVALID_ARG`. `NOMEM`. 소켓이 모자라면 `BUSY`. |
 | `proven_http_server_listen(server, at, &bound)` | 주소 하나에서 listen한다. 넷까지 - 이를테면 IPv4 하나와 IPv6 하나. `bound`(선택)는 실제로 묶인 주소를 받으므로 포트 0을 쓸 수 있다. | `proven_net_listen`의 오류들. 다섯 번째에는 `OUT_OF_BOUNDS`. |
-| `proven_http_server_run(server)` | 멈출 때까지 서비스한다. | `proven_err_t`: stop 뒤에는 `PROVEN_OK`. |
+| `proven_http_server_run(server)` | 멈출 때까지, 또는 종료가 끝날 때까지 서비스한다. | `proven_err_t`: stop 뒤, 또는 모두 끝낸 종료 뒤에는 `PROVEN_OK`; 기한이 무언가를 끊은 종료 뒤에는 `TIMEOUT`. |
 | `proven_http_server_poll(server, until)` | 한 바퀴: 무언가 준비되거나 `until`이 될 때까지 기다리고, 준비된 것을 처리한다. 자기 루프가 있는 프로그램을 위한 것이다. | `proven_err_t`: 처리한 것이 있으면 `PROVEN_OK`, 없으면 `TIMEOUT`. |
 | `proven_http_server_stop(server)` | `run`이 돌아오게 한다. 어느 스레드에서든, 핸들러 안에서든 안전하다. | 없음. |
+| `proven_http_server_shutdown(server, grace_ms)` | 부드럽게 끝낸다(아래). 어느 스레드에서든, 핸들러 안에서든 안전하고, 곧바로 돌아온다. | `proven_err_t`: 이미 요청되었으면 `INVALID_STATE`. |
+| `proven_http_server_shutting_down(server)` | 종료가 요청되었는지. 어느 스레드에서든: 넘겨받은 연결을 쥔 핸들러를 위한 것. | `bool`. |
+| `proven_http_server_drained(server, &why)` | `poll`을 스스로 부르는 프로그램을 위해: 종료가 끝났는지, 어떻게 끝났는지. | `bool`; `why`는 `run`이 돌려주는 것과 같다. |
 | `proven_http_server_destroy(server)` | 모든 연결과 리스너를 닫고 서버를 해제한다. 핸들러 안에서는 부르지 않는다. | 없음. |
 | `proven_http_server_connection_count(server)` | 지금 열려 있는 연결 수. 루프의 스레드에서 쓴다. | `proven_size_t`. |
 
@@ -127,6 +130,17 @@ typedef struct {
 **`destroy`는 `stop`이 아니다.** `stop`은 `run`이 돌아오게 하고, 서버는 멈춘 채로 남는다. `run`을 다시
 부르면 곧장 돌아온다. `destroy`는 서버를 해제한다. 핸들러 안에서는 `stop`을 부르고 `destroy`는 절대
 부르지 마라.
+
+**부드럽게 끝내기: `proven_http_server_shutdown(server, grace_ms)`.** `stop`은 연결을 모두 그대로 두고
+`destroy`가 끊게 한다. 종료는 그것들을 차례대로 끝낸다. 다음 바퀴부터 리스너가 닫히고 - 새 연결은
+거절된다 - 요청이 하나도 오지 않은 연결은 닫힌다. 요청이 오기 시작했거나 핸들러에 가 있는 연결은 그것을
+끝내고, 응답에 `Connection: close`가 붙는다. `run`은 남은 것이 없으면 `PROVEN_OK`를, `grace_ms`가 지나면
+`PROVEN_ERR_TIMEOUT`을 돌려준다 - 그때 루프가 쥔 것을 닫는다. **기한은 연결을 제한하지 핸들러를 제한하지
+않는다**: 워커에서 아직 도는 핸들러는 돌아올 때까지 연결을 쥐고, `destroy`는 언제나처럼 그것을 기다린다.
+업그레이드로 넘긴 연결은 프로그램의 것이다: 그런 연결을 쥔 핸들러는 `proven_http_server_shutting_down`을
+보고 그것을 닫는다(WebSocket이면 1001, "going away"로). 노는 연결이 닫히는 바로 그 순간 클라이언트가
+요청을 보낼 수 있다. 다시 보낼 수 있으면 다시 보내고, 이 라이브러리의 클라이언트는 한 번 그렇게 한다.
+아래 예제가 그렇게 끝난다.
 
 **열린 연결이 루프에 치르게 하는 값.** 루프는 selector(9장 §9)에서 기다리고 타임아웃을 타이머 휠에
 둔다. 그래서 루프 한 바퀴의 비용은 열려 있는 연결 수가 아니라 할 일이 있는 연결 수에 비례한다: 한가한
@@ -279,6 +293,7 @@ destroy한 뒤에 닫아라. 앞이 아니다.
 typedef struct {
     proven_http_server_t *server;
     int served;
+    proven_err_t ended;                 /* run이 돌려준 것 */
 } app_t;
 
 static void handle(void *ctx, proven_http_exchange_t *x) {
@@ -324,7 +339,8 @@ static void handle(void *ctx, proven_http_exchange_t *x) {
 
     } else if (proven_u8str_view_eq(path, PROVEN_LIT("/quit"))) {
         (void)proven_http_exchange_respond(x, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("bye\n")));
-        proven_http_server_stop(app->server);         /* 이 요청이 끝나면 run()이 돌아온다 */
+        /* 부드럽게 끝낸다: 열린 것은 - 이 응답도 - 끝나고, 그다음 run이 돌아온다. */
+        if (proven_http_server_shutdown(app->server, 5000) != PROVEN_OK) proven_http_server_stop(app->server);
 
     } else {
         (void)proven_http_exchange_respond(x, 404, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("no such page\n")));
@@ -333,7 +349,7 @@ static void handle(void *ctx, proven_http_exchange_t *x) {
 
 static void serve(void *arg) {
     app_t *app = arg;
-    (void)proven_http_server_run(app->server);        /* stop될 때까지 */
+    app->ended = proven_http_server_run(app->server);   /* 종료가 끝날 때까지 */
 }
 
 /* `path`를 GET 또는 POST하고 본문 전체를 비교한다. */
@@ -401,10 +417,13 @@ int main(void) {
     EXAMPLE_REQUIRE(fetch_is(client, at.port, "GET", "/nothing-here", "", 404, "no such page\n"), "a 404 is the handler's to send");
     EXAMPLE_REQUIRE(fetch_is(client, at.port, "GET", "/quit", "", 200, "bye\n"), "GET /quit");
 
-    /* 핸들러가 stop을 불렀으므로 run이 돌아온다. 그러면 서버를 해체할 수 있다. */
+    /* 핸들러가 종료를 요청했다: 열린 것이 남지 않았을 때 run이 돌아왔다. */
     proven_job_group_wait(threads, &running);
     EXAMPLE_REQUIRE(app.served == 5, "five requests reached the handler");
-    EXAMPLE_REQUIRE(proven_http_server_connection_count(app.server) <= 1, "all on one connection, which is still open or just closed");
+    EXAMPLE_REQUIRE(app.ended == PROVEN_OK && proven_http_server_connection_count(app.server) == 0, "run returned PROVEN_OK: everything open had finished");
+    /* run 대신 poll을 스스로 부르는 프로그램은 같은 것을 proven_http_server_drained에 묻는다. */
+    proven_err_t how = PROVEN_ERR_INVALID_STATE;
+    EXAMPLE_REQUIRE(proven_http_server_shutting_down(app.server) && proven_http_server_drained(app.server, &how) && how == PROVEN_OK, "the shutdown is over, and nothing was cut");
 
     proven_http_client_destroy(client);
     proven_http_server_destroy(app.server);   /* 남은 것을 닫는다 */
@@ -1013,4 +1032,3 @@ int main(void) {
 - **이벤트 구동 클라이언트의 `Expect: 100-continue`.** `expect_continue`는 블로킹 클라이언트의
   것이다. [15장](manual-15-event-loop-ko.md)의 클라이언트는 묻지 않고 본문을 보낸다.
 - **프록시 자동 설정, `no_proxy`의 주소 범위, 프록시에 대한 Digest 인증.**
-- **유예 기간을 둔 우아한 종료.** `stop`은 루프를 끝낸다. 요청을 기다리던 연결은 `destroy`가 닫는다.

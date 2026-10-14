@@ -112,6 +112,10 @@ static void handler(void *ctx, proven_http_exchange_t *x) {
         proven_time_sleep(150);
         (void)proven_http_exchange_respond(x, 200, NULL, 0, mv("rested"));
         atomic_fetch_add(&g_hold_left, 1);
+    } else if (target_is(r, "/shutdown")) {
+        /* Ends the server from inside a handler; the answer still goes out. */
+        if (proven_http_server_shutdown(*server, 2000) != PROVEN_OK) atomic_store(&g_body_error, -1);
+        (void)proven_http_exchange_respond(x, 200, NULL, 0, mv("ending"));
     } else if (target_is(r, "/stop")) {
         (void)proven_http_exchange_respond(x, 200, NULL, 0, mv("stopping"));
         proven_http_server_stop(*server);
@@ -549,6 +553,72 @@ static void run_cases(proven_job_sys_t *jobs) {
     }
 }
 
+/* The graceful end: proven_http_server_shutdown. */
+static void run_drain(proven_job_sys_t *jobs) {
+    proven_http_server_config_t cfg = {0};
+    cfg.alloc = proven_heap_allocator();
+    cfg.handler = handler;
+    cfg.handler_ctx = &g_server;
+    cfg.jobs = jobs;
+    proven_net_addr_t at;
+    PROVEN_TEST_ASSERT(proven_http_server_create(&cfg, &g_server) == PROVEN_OK &&
+                       proven_http_server_listen(g_server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server", "");
+    proven_err_t why = PROVEN_OK;
+    if (!jobs) {
+        /* From a handler, with handlers on the loop's thread: run returns when it is over. */
+        client_open(&ca, at);
+        client_send(&ca, "GET /shutdown HTTP/1.1\r\nHost: t\r\n\r\n");
+        proven_err_t e = proven_http_server_run(g_server);
+        PROVEN_TEST_ASSERT(e == PROVEN_OK && proven_http_server_shutting_down(g_server) && proven_http_server_drained(g_server, &why) && why == PROVEN_OK,
+            "a handler calls proven_http_server_shutdown; its answer goes out, and run returns PROVEN_OK when nothing is left", "");
+        PROVEN_TEST_ASSERT(client_reply(&ca, PROVEN_HTTP_GET, &rp) && rp.status == 200 && body_is(&rp, "ending") && rp.close, "the answer says Connection: close", "");
+        PROVEN_TEST_ASSERT(proven_http_server_shutdown(g_server, 0) == PROVEN_ERR_INVALID_STATE, "a second shutdown is PROVEN_ERR_INVALID_STATE", "");
+        (void)proven_net_close(&ca.conn);
+        proven_http_server_destroy(g_server);
+        g_server = NULL;
+        return;
+    }
+    /* With workers: 0 answered and idle; 1 a handler that takes 150 ms; 2 half a request head;
+     * 3 a handler that is still running at the deadline. */
+    atomic_store(&g_release, false);
+    atomic_store(&g_hold_entered, 0);
+    atomic_store(&g_hold_left, 0);
+    client_open(&ca, at); client_open(&cb, at); client_open(&cc, at);
+    static client_t cd;
+    client_open(&cd, at);
+    client_send(&ca, "GET /hello HTTP/1.1\r\nHost: t\r\n\r\n");
+    PROVEN_TEST_ASSERT(client_reply(&ca, PROVEN_HTTP_GET, &rp) && body_is(&rp, "hello") && !rp.close, "answered, and kept", "");
+    client_send(&cd, "GET /hold HTTP/1.1\r\nHost: t\r\n\r\n");
+    for (int i = 0; i < 5000 && atomic_load(&g_hold_entered) == 0; ++i) pump(NULL);
+    client_send(&cb, "GET /nap HTTP/1.1\r\nHost: t\r\n\r\n");
+    client_send(&cc, "GET /hello HTTP/1.1\r\nHo");
+    for (int i = 0; i < 5000 && atomic_load(&g_hold_entered) < 2; ++i) pump(NULL);
+    PROVEN_TEST_ASSERT(atomic_load(&g_hold_entered) == 2 && proven_http_server_connection_count(g_server) == 4, "four connections, two handlers running", "");
+
+    const proven_time_t began = proven_time_monotonic_now();
+    PROVEN_TEST_ASSERT(proven_http_server_shutdown(g_server, 600) == PROVEN_OK && proven_http_server_shutting_down(g_server) && !proven_http_server_drained(g_server, &why),
+        "the server begins to end, with 600 ms", "");
+    PROVEN_TEST_ASSERT(client_sees_close(&ca, 300), "the idle connection is closed at once", "");
+    proven_net_conn_t late;
+    bool refused = proven_net_connect(at, proven_net_deadline_in(500), &late) != PROVEN_OK;
+    if (!refused) (void)proven_net_close(&late);
+    PROVEN_TEST_ASSERT(refused, "a new connection is refused", "");
+    client_send(&cc, "st: t\r\n\r\n");
+    PROVEN_TEST_ASSERT(client_reply(&cc, PROVEN_HTTP_GET, &rp) && body_is(&rp, "hello") && rp.close, "the request whose head was arriving is answered, with Connection: close", "");
+    PROVEN_TEST_ASSERT(client_reply(&cb, PROVEN_HTTP_GET, &rp) && body_is(&rp, "rested") && rp.close, "the handler that was running finishes, with Connection: close", "");
+    while (!proven_http_server_drained(g_server, &why) && proven_time_monotonic_now() - began < 3000000000) pump(NULL);
+    PROVEN_TEST_ASSERT(proven_http_server_drained(g_server, &why) && why == PROVEN_ERR_TIMEOUT && proven_time_monotonic_now() - began >= 550000000 &&
+                       atomic_load(&g_hold_left) == 1,
+        "at the deadline the shutdown is over, PROVEN_ERR_TIMEOUT, though a handler is still running (the 150 ms one has finished, /hold has not)", "");
+    PROVEN_TEST_ASSERT(proven_http_server_connection_count(g_server) == 1, "its connection is the one left: the handler's until it returns", "");
+    atomic_store(&g_release, true);
+    PROVEN_TEST_ASSERT(client_reply(&cd, PROVEN_HTTP_GET, &rp) && body_is(&rp, "held") && rp.close, "that handler's answer still reaches its client, with Connection: close", "");
+    proven_http_server_destroy(g_server);
+    PROVEN_TEST_ASSERT(atomic_load(&g_hold_left) == 2, "and destroy waited for it", "");
+    g_server = NULL;
+    (void)proven_net_close(&ca.conn); (void)proven_net_close(&cb.conn); (void)proven_net_close(&cc.conn); (void)proven_net_close(&cd.conn);
+}
+
 /* Timeouts get their own server, with limits short enough to wait for. */
 static void run_timeouts(proven_job_sys_t *jobs) {
     proven_http_server_config_t cfg = {0};
@@ -828,6 +898,8 @@ int main(void) {
     }
 
     PROVEN_TEST_INFO("model: handlers on the loop thread");
+    PROVEN_TEST_SECTION("the graceful end, from a handler", "proven_http_server_shutdown called inside a handler that runs on the loop's thread.", "Check proven_http_server_shutdown, sv_drain_step and proven_http_server_run in src/proven/http_server.c.");
+    run_drain(NULL);
     run_cases(NULL);
     run_timeouts(NULL);
     run_many(NULL);
@@ -836,6 +908,8 @@ int main(void) {
     proven_err_t e = proven_job_system_init(proven_heap_allocator(), 4, 64, &jobs);
     PROVEN_TEST_ASSERT(e == PROVEN_OK, "a job system with four workers starts", "");
     PROVEN_TEST_INFO("model: handlers on a job system");
+    PROVEN_TEST_SECTION("the graceful end", "proven_http_server_shutdown with an idle connection, a handler that finishes, half a request head, and a handler still running at the deadline.", "Check sv_drain_step, sv_close_held and the `close` and `keep` decisions in src/proven/http_server.c.");
+    run_drain(jobs);
     run_cases(jobs);
     run_timeouts(jobs);
     run_overload();

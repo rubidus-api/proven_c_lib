@@ -16,6 +16,8 @@
 typedef struct {
     proven_loop_t *loop;
     int served;
+    proven_http_event_server_t *server;
+    proven_err_t ended;                /* on_drained가 들은 것 */
 } app_t;
 
 /* 요청 하나에 답하는 동안 이 프로그램이 간직하는 것. */
@@ -100,6 +102,17 @@ static void on_done(void *ctx, proven_http_stream_t *stream, proven_err_t why) {
     if (why == PROVEN_OK) app->served++;
 }
 
+/* 끝, 루프의 스레드에서: 열린 것이 끝나고, 그다음 루프를 멈춘다. */
+static void on_drained(void *ctx, proven_err_t why) {
+    app_t *app = ctx;
+    app->ended = why;
+    proven_loop_stop(app->loop);
+}
+static void begin_end(void *ctx) {
+    app_t *app = ctx;
+    if (proven_http_event_server_shutdown(app->server, 2000, on_drained, app) != PROVEN_OK) proven_loop_stop(app->loop);
+}
+
 static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
 
 static char g_url[64];
@@ -132,6 +145,7 @@ int main(void) {
     proven_net_addr_t at;
     EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &config, &server) == PROVEN_OK &&
                     proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "빈 포트의 이벤트 구동 서버");
+    app.server = server;
 
     /* 이 예제는 메인 스레드가 클라이언트 노릇을 할 수 있도록 루프에 따로 스레드를 준다. */
     proven_job_sys_t *threads = NULL;
@@ -167,10 +181,12 @@ int main(void) {
     proven_http_client_destroy(client);
 
     // ---- 끝 ------------------------------------------------------------------------
-    /* 루프를 멈춘 다음 서버를 해체한다. 그때는 다른 무엇도 서버를 건드리지 않는다. */
-    proven_loop_stop(app.loop);
+    /* 루프의 스레드에서 부드럽게 끝낸다. on_drained가 루프를 멈춘다. 그다음 서버를 해체한다:
+     * 그때는 다른 무엇도 서버를 건드리지 않는다. */
+    app.ended = PROVEN_ERR_INVALID_STATE;
+    EXAMPLE_REQUIRE(proven_loop_post(app.loop, begin_end, &app) == PROVEN_OK, "끝내기를 요청한다");
     proven_job_group_wait(threads, &running);
-    EXAMPLE_REQUIRE(app.served == 4, "교환 넷이 on_done(PROVEN_OK)로 끝났다");
+    EXAMPLE_REQUIRE(app.ended == PROVEN_OK && app.served == 4, "아무것도 끊기지 않고 끝났고, 교환 넷이 on_done(PROVEN_OK)로 끝났다");
     proven_http_event_server_destroy(server);
     proven_loop_destroy(app.loop);
     proven_job_system_close(threads);

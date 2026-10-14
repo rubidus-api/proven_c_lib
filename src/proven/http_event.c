@@ -100,6 +100,21 @@ static void ev_leave(proven_http_stream_t *c) {
     s->alloc.free_fn(s->alloc.ctx, c);
 }
 
+/* A shutdown is over when no connection is left: on_drained, from the loop's next round -
+ * never from inside the call that ended the last one, which may be a handler's. */
+static void ev_drain_done(void *ctx) {
+    proven_http_event_server_t *s = ctx;
+    if (s->drain_told) return;
+    s->drain_told = true;
+    proven_loop_timer_cancel(s->loop, &s->drain_deadline);
+    if (s->on_drained) s->on_drained(s->drained_ctx, s->drain_cut ? PROVEN_ERR_TIMEOUT : PROVEN_OK);
+}
+
+static void ev_drain_check(proven_http_event_server_t *s) {
+    if (s->draining && !s->drain_told && !s->stopped && s->conn_count == 0 && !proven_loop_timer_is_set(&s->drain_done))
+        proven_loop_timer_set(s->loop, &s->drain_done, 0, ev_drain_done, s);
+}
+
 /* End the connection now. `why` goes to on_done if an exchange was in progress. */
 static void ev_kill(proven_http_stream_t *c, proven_err_t why) {
     if (c->dead) return;
@@ -115,6 +130,7 @@ static void ev_kill(proven_http_stream_t *c, proven_err_t why) {
     if (c->next) c->next->prev = c->prev;
     s->conn_count--;
     ev_update_listeners(s);
+    ev_drain_check(s);
     if (c->active) {
         c->active = false;
         if (s->cfg.on.on_done) s->cfg.on.on_done(s->cfg.ctx, c, why);
@@ -611,6 +627,7 @@ proven_err_t proven_http_event_server_create(proven_loop_t *loop, const proven_h
 
 proven_err_t proven_http_event_server_listen(proven_http_event_server_t *s, proven_net_addr_t at, proven_net_addr_t *bound) {
     if (!s) return PROVEN_ERR_INVALID_ARG;
+    if (s->draining) return PROVEN_ERR_INVALID_STATE;
     if (s->listener_count == EV_MAX_LISTENERS) return PROVEN_ERR_OUT_OF_BOUNDS;
     ev_listener_t *l = &s->listeners[s->listener_count];
     proven_net_addr_t got;
@@ -657,8 +674,70 @@ void proven_http_event_server_stop_listening(proven_http_event_server_t *s) {
     }
 }
 
+/* Every connection still open, ended: the same walk as destroy's. */
+static void ev_end_all(proven_http_event_server_t *s) {
+    while (s->conns) {
+        proven_http_stream_t *c = s->conns;
+        ev_enter(c);
+        ev_kill(c, PROVEN_ERR_RESET);
+        ev_leave(c);
+    }
+}
+
+static void ev_drain_deadline(void *ctx) {
+    proven_http_event_server_t *s = ctx;
+    if (s->conns) s->drain_cut = true;
+    ev_end_all(s);
+    ev_drain_check(s);
+}
+
+proven_err_t proven_http_event_server_shutdown(proven_http_event_server_t *s, proven_u32 grace_ms,
+                                               proven_http_event_drained_fn on_drained, void *ctx) {
+    if (!s) return PROVEN_ERR_INVALID_ARG;
+    if (s->draining || s->stopped) return PROVEN_ERR_INVALID_STATE;
+    s->draining = true;
+    s->on_drained = on_drained;
+    s->drained_ctx = ctx;
+    /* Nothing new; HTTP/1.1 answers say Connection: close; HTTP/2 says goodbye. */
+    proven_http_event_server_stop_listening(s);
+    /* Then each connection by what it is doing. Ending one, or telling one, may run callbacks
+     * that end others: so after each the list is walked again from its head, and a
+     * taken-over connection is told at most once. */
+    for (bool again = true; again;) {
+        again = false;
+        for (proven_http_stream_t *c = s->conns; c; c = c->next) {
+            if (c->dead) continue;
+            if (c->h.state == EV_RAW) {
+                if (!c->raw || c->told_drain) continue;
+                const proven_http_event_raw_ops_t *ops = *(const proven_http_event_raw_ops_t *const *)c->raw;
+                c->told_drain = true;
+                if (!ops->on_drain) continue;
+                ev_enter(c);
+                ops->on_drain(c->raw);
+                ev_leave(c);
+                again = true;
+                break;
+            }
+            /* HTTP/1.1 with no request on it: nothing to finish. */
+            if (c->h.state == EV_HEAD && !c->head_started && !c->active) {
+                ev_enter(c);
+                ev_kill(c, PROVEN_ERR_RESET);
+                ev_leave(c);
+                again = true;
+                break;
+            }
+        }
+    }
+    if (grace_ms == 0) ev_drain_deadline(s);
+    else proven_loop_timer_set(s->loop, &s->drain_deadline, grace_ms, ev_drain_deadline, s);
+    ev_drain_check(s);
+    return PROVEN_OK;
+}
+
 void proven_http_event_server_destroy(proven_http_event_server_t *s) {
     if (!s) return;
+    proven_loop_timer_cancel(s->loop, &s->drain_deadline);
+    proven_loop_timer_cancel(s->loop, &s->drain_done);
     s->stopped = true;
     proven_http_event_server_stop_listening(s);
     while (s->conns) {
@@ -711,7 +790,7 @@ static proven_err_t ev_build_head(proven_http_stream_t *c, proven_u16 status, co
     bool chunked = false;
     /* Answering while the request body is still arriving, or while the client waits for its
      * 100 Continue: where the next request starts is no longer certain. */
-    bool close = !c->keep || c->h.state == EV_BODY || c->expect_continue || c->peer_eof || s->stopped;
+    bool close = !c->keep || c->h.state == EV_BODY || c->expect_continue || c->peer_eof || s->stopped || s->closed_to_new;
     if (e == PROVEN_OK && !no_body_status) {
         if (content_length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) e = proven_http_write_header_u64(out, &len, ev_lit("Content-Length"), content_length);
         else if (c->h.version_minor >= 1) { e = proven_http_write_header(out, &len, ev_lit("Transfer-Encoding"), ev_lit("chunked")); chunked = true; }

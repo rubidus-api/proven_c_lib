@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1270 aliases: 931 lowercase `xcv_` names and 339 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1276 aliases: 937 lowercase `xcv_` names and 339 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -673,6 +673,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_event_client_requests` | `proven_http_event_client_requests` |
 | `xcv_http_event_client_start` | `proven_http_event_client_start` |
 | `xcv_http_event_client_t` | `proven_http_event_client_t` |
+| `xcv_http_event_drained_fn` | `proven_http_event_drained_fn` |
 | `xcv_http_event_request_abort` | `proven_http_event_request_abort` |
 | `xcv_http_event_request_end` | `proven_http_event_request_end` |
 | `xcv_http_event_request_options_t` | `proven_http_event_request_options_t` |
@@ -689,6 +690,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_event_server_create` | `proven_http_event_server_create` |
 | `xcv_http_event_server_destroy` | `proven_http_event_server_destroy` |
 | `xcv_http_event_server_listen` | `proven_http_event_server_listen` |
+| `xcv_http_event_server_shutdown` | `proven_http_event_server_shutdown` |
 | `xcv_http_event_server_stop_listening` | `proven_http_event_server_stop_listening` |
 | `xcv_http_event_server_t` | `proven_http_event_server_t` |
 | `xcv_http_exchange_begin` | `proven_http_exchange_begin` |
@@ -730,9 +732,12 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_server_connection_count` | `proven_http_server_connection_count` |
 | `xcv_http_server_create` | `proven_http_server_create` |
 | `xcv_http_server_destroy` | `proven_http_server_destroy` |
+| `xcv_http_server_drained` | `proven_http_server_drained` |
 | `xcv_http_server_listen` | `proven_http_server_listen` |
 | `xcv_http_server_poll` | `proven_http_server_poll` |
 | `xcv_http_server_run` | `proven_http_server_run` |
+| `xcv_http_server_shutdown` | `proven_http_server_shutdown` |
+| `xcv_http_server_shutting_down` | `proven_http_server_shutting_down` |
 | `xcv_http_server_stop` | `proven_http_server_stop` |
 | `xcv_http_server_t` | `proven_http_server_t` |
 | `xcv_http_stream_abort` | `proven_http_stream_abort` |

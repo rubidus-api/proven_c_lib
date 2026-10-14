@@ -73,9 +73,12 @@ proven_http_server_destroy(server);
 |---|---|---|
 | `proven_http_server_create(&config, &server)` | Make a server. It does not listen yet. | `proven_err_t`: `INVALID_ARG` without an allocator or a handler; `NOMEM`; `BUSY` when out of sockets. |
 | `proven_http_server_listen(server, at, &bound)` | Listen at an address. Up to four - an IPv4 and an IPv6 one, say. `bound` (optional) receives the address actually bound, so port 0 can be used. | the errors of `proven_net_listen`; `OUT_OF_BOUNDS` for a fifth. |
-| `proven_http_server_run(server)` | Serve until stopped. | `proven_err_t`: `PROVEN_OK` after a stop. |
+| `proven_http_server_run(server)` | Serve until stopped, or until a shutdown is over. | `proven_err_t`: `PROVEN_OK` after a stop, or a shutdown that finished everything; `TIMEOUT` after a shutdown whose deadline cut something. |
 | `proven_http_server_poll(server, until)` | One round: wait until something is ready or until `until`, and handle it. For a program with a loop of its own. | `proven_err_t`: `PROVEN_OK` when something was handled, `TIMEOUT` when nothing was. |
 | `proven_http_server_stop(server)` | Make `run` return. Safe from any thread and from a handler. | none. |
+| `proven_http_server_shutdown(server, grace_ms)` | End gracefully (below). Safe from any thread and from a handler; returns at once. | `proven_err_t`: `INVALID_STATE` when already asked. |
+| `proven_http_server_shutting_down(server)` | Whether a shutdown was asked. Any thread: for a handler that keeps an upgraded connection. | `bool`. |
+| `proven_http_server_drained(server, &why)` | For a program that calls `poll`: whether the shutdown is over, and how. | `bool`; `why` as `run` returns. |
 | `proven_http_server_destroy(server)` | Close every connection and listener and free the server. Not from a handler. | none. |
 | `proven_http_server_connection_count(server)` | Connections open now. For the loop's thread. | `proven_size_t`. |
 
@@ -130,6 +133,19 @@ every platform. For both, call `proven_http_server_listen` twice.
 
 **`destroy` is not `stop`.** `stop` makes `run` return, and the server stays stopped: `run`
 called again returns at once. `destroy` frees it. From a handler, call `stop`, never `destroy`.
+
+**Ending gracefully: `proven_http_server_shutdown(server, grace_ms)`.** `stop` leaves every
+connection as it is, for `destroy` to cut. A shutdown ends them in order. From the next round
+the listeners are closed - a new connection is refused - and a connection with nothing of a
+request on it is closed; one where a request has begun to arrive, or is with its handler,
+finishes it, and the response says `Connection: close`. `run` returns `PROVEN_OK` when nothing
+is left, or `PROVEN_ERR_TIMEOUT` when `grace_ms` has passed - and then closes what the loop
+holds. **The deadline bounds connections, not handlers**: a handler still running on a worker
+keeps its connection until it returns, and `destroy` waits for it, as always. A connection
+handed over by an upgrade is the program's: a handler that keeps one looks at
+`proven_http_server_shutting_down` and closes it (a WebSocket with 1001, "going away"). A
+client may send a request just as its idle connection is closed; it sends it again if it can,
+and this library's clients do so once. The example below ends that way.
 
 **What an open connection costs the loop.** The loop waits on a selector (Chapter 9,
 section 9) and keeps its timeouts on a timer wheel, so a round of the loop costs in proportion
@@ -290,6 +306,7 @@ Compiled and run by the test suite:
 typedef struct {
     proven_http_server_t *server;
     int served;
+    proven_err_t ended;                 /* what run returned */
 } app_t;
 
 static void handle(void *ctx, proven_http_exchange_t *x) {
@@ -335,7 +352,8 @@ static void handle(void *ctx, proven_http_exchange_t *x) {
 
     } else if (proven_u8str_view_eq(path, PROVEN_LIT("/quit"))) {
         (void)proven_http_exchange_respond(x, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("bye\n")));
-        proven_http_server_stop(app->server);         /* run() returns after this request */
+        /* End gracefully: what is open finishes - this answer too - then run returns. */
+        if (proven_http_server_shutdown(app->server, 5000) != PROVEN_OK) proven_http_server_stop(app->server);
 
     } else {
         (void)proven_http_exchange_respond(x, 404, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("no such page\n")));
@@ -344,7 +362,7 @@ static void handle(void *ctx, proven_http_exchange_t *x) {
 
 static void serve(void *arg) {
     app_t *app = arg;
-    (void)proven_http_server_run(app->server);        /* until stop */
+    app->ended = proven_http_server_run(app->server);   /* until the shutdown is over */
 }
 
 /* GET or POST `path` and compare the whole body. */
@@ -412,10 +430,13 @@ int main(void) {
     EXAMPLE_REQUIRE(fetch_is(client, at.port, "GET", "/nothing-here", "", 404, "no such page\n"), "a 404 is the handler's to send");
     EXAMPLE_REQUIRE(fetch_is(client, at.port, "GET", "/quit", "", 200, "bye\n"), "GET /quit");
 
-    /* The handler called stop, so run returns; then the server can be taken apart. */
+    /* The handler asked for a shutdown: run returned when nothing was left open. */
     proven_job_group_wait(threads, &running);
     EXAMPLE_REQUIRE(app.served == 5, "five requests reached the handler");
-    EXAMPLE_REQUIRE(proven_http_server_connection_count(app.server) <= 1, "all on one connection, which is still open or just closed");
+    EXAMPLE_REQUIRE(app.ended == PROVEN_OK && proven_http_server_connection_count(app.server) == 0, "run returned PROVEN_OK: everything open had finished");
+    /* A program that calls poll itself, not run, asks the same of proven_http_server_drained. */
+    proven_err_t how = PROVEN_ERR_INVALID_STATE;
+    EXAMPLE_REQUIRE(proven_http_server_shutting_down(app.server) && proven_http_server_drained(app.server, &how) && how == PROVEN_OK, "the shutdown is over, and nothing was cut");
 
     proven_http_client_destroy(client);
     proven_http_server_destroy(app.server);   /* closes what is left */
@@ -1041,5 +1062,3 @@ int main(void) {
 - **`Expect: 100-continue` in the event-driven client.** `expect_continue` is the blocking
   client's; the client of [Chapter 15](manual-15-event-loop.md) sends a body without asking.
 - **Proxy auto-configuration, address ranges in `no_proxy`, and Digest authentication to a proxy.**
-- **Graceful shutdown with a drain period.** `stop` ends the loop; connections waiting for a
-  request are closed by `destroy`.

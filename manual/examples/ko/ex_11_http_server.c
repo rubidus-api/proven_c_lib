@@ -10,6 +10,7 @@
 typedef struct {
     proven_http_server_t *server;
     int served;
+    proven_err_t ended;                 /* run이 돌려준 것 */
 } app_t;
 
 static void handle(void *ctx, proven_http_exchange_t *x) {
@@ -55,7 +56,8 @@ static void handle(void *ctx, proven_http_exchange_t *x) {
 
     } else if (proven_u8str_view_eq(path, PROVEN_LIT("/quit"))) {
         (void)proven_http_exchange_respond(x, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("bye\n")));
-        proven_http_server_stop(app->server);         /* 이 요청이 끝나면 run()이 돌아온다 */
+        /* 부드럽게 끝낸다: 열린 것은 - 이 응답도 - 끝나고, 그다음 run이 돌아온다. */
+        if (proven_http_server_shutdown(app->server, 5000) != PROVEN_OK) proven_http_server_stop(app->server);
 
     } else {
         (void)proven_http_exchange_respond(x, 404, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("no such page\n")));
@@ -64,7 +66,7 @@ static void handle(void *ctx, proven_http_exchange_t *x) {
 
 static void serve(void *arg) {
     app_t *app = arg;
-    (void)proven_http_server_run(app->server);        /* stop될 때까지 */
+    app->ended = proven_http_server_run(app->server);   /* 종료가 끝날 때까지 */
 }
 
 /* `path`를 GET 또는 POST하고 본문 전체를 비교한다. */
@@ -132,10 +134,13 @@ int main(void) {
     EXAMPLE_REQUIRE(fetch_is(client, at.port, "GET", "/nothing-here", "", 404, "no such page\n"), "a 404 is the handler's to send");
     EXAMPLE_REQUIRE(fetch_is(client, at.port, "GET", "/quit", "", 200, "bye\n"), "GET /quit");
 
-    /* 핸들러가 stop을 불렀으므로 run이 돌아온다. 그러면 서버를 해체할 수 있다. */
+    /* 핸들러가 종료를 요청했다: 열린 것이 남지 않았을 때 run이 돌아왔다. */
     proven_job_group_wait(threads, &running);
     EXAMPLE_REQUIRE(app.served == 5, "five requests reached the handler");
-    EXAMPLE_REQUIRE(proven_http_server_connection_count(app.server) <= 1, "all on one connection, which is still open or just closed");
+    EXAMPLE_REQUIRE(app.ended == PROVEN_OK && proven_http_server_connection_count(app.server) == 0, "run returned PROVEN_OK: everything open had finished");
+    /* run 대신 poll을 스스로 부르는 프로그램은 같은 것을 proven_http_server_drained에 묻는다. */
+    proven_err_t how = PROVEN_ERR_INVALID_STATE;
+    EXAMPLE_REQUIRE(proven_http_server_shutting_down(app.server) && proven_http_server_drained(app.server, &how) && how == PROVEN_OK, "the shutdown is over, and nothing was cut");
 
     proven_http_client_destroy(client);
     proven_http_server_destroy(app.server);   /* 남은 것을 닫는다 */

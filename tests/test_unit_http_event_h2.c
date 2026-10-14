@@ -261,6 +261,14 @@ static atomic_ulong g_conn_count;
 static void do_count(void *ctx) { (void)ctx; atomic_store(&g_conn_count, (unsigned long)proven_http_event_server_connections(g_server)); atomic_fetch_add(&g_ran, 1); }
 static void do_destroy(void *ctx) { (void)ctx; proven_http_event_server_destroy(g_server); g_server = NULL; atomic_fetch_add(&g_ran, 1); }
 static void do_stop_listening(void *ctx) { (void)ctx; proven_http_event_server_stop_listening(g_server); atomic_fetch_add(&g_ran, 1); }
+static atomic_int g_drained_calls, g_drained_why;
+static atomic_uint g_drain_grace;
+static void drained(void *ctx, proven_err_t why) { (void)ctx; atomic_store(&g_drained_why, (int)why); atomic_fetch_add(&g_drained_calls, 1); }
+static void do_shutdown(void *ctx) {
+    (void)ctx;
+    if (proven_http_event_server_shutdown(g_server, atomic_load(&g_drain_grace), drained, NULL) != PROVEN_OK) atomic_store(&g_drained_why, -1);
+    atomic_fetch_add(&g_ran, 1);
+}
 static void on_loop(proven_loop_fn fn) {
     int before = atomic_load(&g_ran);
     PROVEN_TEST_ASSERT(proven_loop_post(g_loop, fn, NULL) == PROVEN_OK, "posted to the loop", "");
@@ -1040,6 +1048,49 @@ int main(void) {
             cl_close(&c);
             server_stop();
         }
+    }
+
+    PROVEN_TEST_SECTION("the graceful end", "proven_http_event_server_shutdown with HTTP/2 streams open: one that finishes, one nobody answers.", "Check proven_http_event_server_shutdown in http_event.c and h2_on_shutdown in http_event_h2.c: GOAWAY, open streams finish, the rest is ended at the deadline.");
+    {
+        proven_http_event_server_config_t cfg = { 0 };
+        proven_u16 port = server_start(cfg);
+        cl_t c;
+        atomic_store(&g_drained_calls, 0);
+        PROVEN_TEST_ASSERT(cl_open_with(&c, NULL, port, 0), "a client", "");
+        c.plain_body = false;
+        proven_u32 big = cl_ask(&c, "GET", "/big/300000", true), never = cl_ask(&c, "GET", "/never", true);
+        for (int i = 0; i < 300 && atomic_load(&g_requests) < 2; i++) (void)cl_pump(&c, 10);
+        PROVEN_TEST_ASSERT(atomic_load(&g_requests) == 2, "a long response under way, and a request nobody answers", "");
+        atomic_store(&g_drain_grace, 1500);
+        on_loop(do_shutdown);
+        PROVEN_TEST_ASSERT(atomic_load(&g_drained_why) != -1, "the server begins to end, with 1.5 s", "");
+        PROVEN_TEST_ASSERT(cl_wait(&c, big, 8000) && cl_res(&c, big)->end && cl_res(&c, big)->got == 300000 && !cl_res(&c, big)->bad, "the response under way is sent whole", "");
+        for (int i = 0; i < 100 && !c.goaway; i++) (void)cl_pump(&c, 10);
+        PROVEN_TEST_ASSERT(c.goaway && !cl_res(&c, never)->end && atomic_load(&g_drained_calls) == 0, "the client is told goodbye; the unanswered stream is still open", "");
+        for (int i = 0; i < 300 && !c.closed && !c.gone; i++) (void)cl_pump(&c, 10);
+        for (int i = 0; i < 2000 && atomic_load(&g_drained_calls) == 0; i++) proven_time_sleep(1);
+        PROVEN_TEST_ASSERT((c.closed || c.gone) && atomic_load(&g_drained_calls) == 1 && atomic_load(&g_drained_why) == PROVEN_ERR_TIMEOUT &&
+                           atomic_load(&g_done_ok) == 1 && atomic_load(&g_done_reset) == 1 && connections() == 0,
+            "at the deadline the connection is ended: on_drained once with PROVEN_ERR_TIMEOUT, one exchange done and the other cut", "");
+        cl_close(&c);
+        server_stop();
+
+        /* Only what finishes: PROVEN_OK, and the connection ends with NO_ERROR. */
+        port = server_start(cfg);
+        atomic_store(&g_drained_calls, 0);
+        PROVEN_TEST_ASSERT(cl_open_with(&c, NULL, port, 0), "another client", "");
+        c.plain_body = false;
+        big = cl_ask(&c, "GET", "/big/300000", true);
+        for (int i = 0; i < 300 && atomic_load(&g_requests) < 1; i++) (void)cl_pump(&c, 10);
+        atomic_store(&g_drain_grace, 10000);
+        on_loop(do_shutdown);
+        PROVEN_TEST_ASSERT(cl_wait(&c, big, 8000) && cl_res(&c, big)->got == 300000, "the response is sent whole", "");
+        for (int i = 0; i < 300 && !c.closed && !c.gone; i++) (void)cl_pump(&c, 10);
+        for (int i = 0; i < 2000 && atomic_load(&g_drained_calls) == 0; i++) proven_time_sleep(1);
+        PROVEN_TEST_ASSERT(c.goaway && c.closed && c.close_code == PROVEN_H2_NO_ERROR && atomic_load(&g_drained_calls) == 1 && atomic_load(&g_drained_why) == PROVEN_OK,
+            "the connection ends without an error when its stream has, and on_drained says PROVEN_OK - long before the 10 s", "");
+        cl_close(&c);
+        server_stop();
     }
 
     PROVEN_TEST_SECTION("the end of the server", "Destroying a server with exchanges open.", "Check h2_on_closed: every open stream's handler is told once.");

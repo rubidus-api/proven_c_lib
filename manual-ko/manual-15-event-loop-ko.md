@@ -255,6 +255,9 @@ proven_err_t proven_http_event_server_listen(proven_http_event_server_t *server,
 void proven_http_event_server_destroy(proven_http_event_server_t *server);
 proven_size_t proven_http_event_server_connections(const proven_http_event_server_t *server);
 void proven_http_event_server_stop_listening(proven_http_event_server_t *server);
+typedef void (*proven_http_event_drained_fn)(void *ctx, proven_err_t why);
+proven_err_t proven_http_event_server_shutdown(proven_http_event_server_t *server, proven_u32 grace_ms,
+                                               proven_http_event_drained_fn on_drained, void *ctx);
 ```
 
 서버는 루프 위에 만들어지고, 어디서 들을지 지시받고, 루프가 돌 때까지는 아무 일도 하지 않는다.
@@ -264,7 +267,8 @@ void proven_http_event_server_stop_listening(proven_http_event_server_t *server)
 | `proven_http_event_server_create(loop, &config, &server)` | 서버를 만든다. | `proven_err_t`: 루프가 없거나, `on_request`가 없거나, TLS 설정에 인증서가 없으면 `INVALID_ARG`. `NOMEM`. |
 | `proven_http_event_server_listen(server, at, &bound)` | `at`에서 듣는다. 서버 하나에 주소 넷까지. `bound`(선택)는 쓰이는 주소를 받는다 - `at`이 포트 0을 청했다면 시스템이 고른 포트와 함께. | `proven_err_t`. |
 | `proven_http_event_server_connections(server)` | 지금 열려 있는 연결. | `proven_size_t`. |
-| `proven_http_event_server_stop_listening(server)` | 받아들이기를 멈춘다. 열린 연결은 계속된다. | 없음. |
+| `proven_http_event_server_stop_listening(server)` | 받아들이기를 멈춘다. 열린 연결은 계속되지만, 이제부터 HTTP/1.1 응답은 `Connection: close`를 말하고 HTTP/2는 작별한다. | 없음. |
+| `proven_http_event_server_shutdown(server, grace_ms, on_drained, ctx)` | 부드럽게 끝낸다(10절). 끝나면 `on_drained(ctx, why)`. | `proven_err_t`: 이미 종료 중이면 `INVALID_STATE`. |
 | `proven_http_event_server_destroy(server)` | 모든 연결과 리스너를 닫고 서버를 해제한다. 진행 중인 교환은 `PROVEN_ERR_RESET`과 함께 `on_done`을 받는다. 루프는 멈추지도 해제되지도 않는다. 널을 받는다. | 없음. |
 
 **함수 넷.** 설정이 `on` 안에 싣고, `ctx`가 각각에 전달된다:
@@ -362,6 +366,8 @@ proven_size_t proven_http_stream_buffered(const proven_http_stream_t *stream);
 typedef struct {
     proven_loop_t *loop;
     int served;
+    proven_http_event_server_t *server;
+    proven_err_t ended;                /* on_drained가 들은 것 */
 } app_t;
 
 /* 요청 하나에 답하는 동안 이 프로그램이 간직하는 것. */
@@ -446,6 +452,17 @@ static void on_done(void *ctx, proven_http_stream_t *stream, proven_err_t why) {
     if (why == PROVEN_OK) app->served++;
 }
 
+/* 끝, 루프의 스레드에서: 열린 것이 끝나고, 그다음 루프를 멈춘다. */
+static void on_drained(void *ctx, proven_err_t why) {
+    app_t *app = ctx;
+    app->ended = why;
+    proven_loop_stop(app->loop);
+}
+static void begin_end(void *ctx) {
+    app_t *app = ctx;
+    if (proven_http_event_server_shutdown(app->server, 2000, on_drained, app) != PROVEN_OK) proven_loop_stop(app->loop);
+}
+
 static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
 
 static char g_url[64];
@@ -478,6 +495,7 @@ int main(void) {
     proven_net_addr_t at;
     EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &config, &server) == PROVEN_OK &&
                     proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "빈 포트의 이벤트 구동 서버");
+    app.server = server;
 
     /* 이 예제는 메인 스레드가 클라이언트 노릇을 할 수 있도록 루프에 따로 스레드를 준다. */
     proven_job_sys_t *threads = NULL;
@@ -513,10 +531,12 @@ int main(void) {
     proven_http_client_destroy(client);
 
     // ---- 끝 ------------------------------------------------------------------------
-    /* 루프를 멈춘 다음 서버를 해체한다. 그때는 다른 무엇도 서버를 건드리지 않는다. */
-    proven_loop_stop(app.loop);
+    /* 루프의 스레드에서 부드럽게 끝낸다. on_drained가 루프를 멈춘다. 그다음 서버를 해체한다:
+     * 그때는 다른 무엇도 서버를 건드리지 않는다. */
+    app.ended = PROVEN_ERR_INVALID_STATE;
+    EXAMPLE_REQUIRE(proven_loop_post(app.loop, begin_end, &app) == PROVEN_OK, "끝내기를 요청한다");
     proven_job_group_wait(threads, &running);
-    EXAMPLE_REQUIRE(app.served == 4, "교환 넷이 on_done(PROVEN_OK)로 끝났다");
+    EXAMPLE_REQUIRE(app.ended == PROVEN_OK && app.served == 4, "아무것도 끊기지 않고 끝났고, 교환 넷이 on_done(PROVEN_OK)로 끝났다");
     proven_http_event_server_destroy(server);
     proven_loop_destroy(app.loop);
     proven_job_system_close(threads);
@@ -610,10 +630,20 @@ void proven_http_stream_resume(proven_http_stream_t *stream);
 연산은 루프의 스레드에서 이루어지고, 그동안 다른 것은 서비스되지 않는다: 하나의 비용은 14장 9절에
 있다.
 
-**종료.** `proven_http_event_server_stop_listening`은 이미 연결된 누구도 거절하지 않고 새로운 누구도
-받아들이지 않는다. `proven_http_event_server_connections`가 줄어들 때까지, 또는 기다릴 만큼 기다린
-다음 `proven_http_event_server_destroy`, 그다음 루프를 멈추고 해제한다. 서버는 루프의 스레드에서,
-또는 루프가 멈춘 뒤에 해제한다 - 다른 스레드가 `proven_loop_run` 안에 있는 동안은 아니다.
+**종료: `proven_http_event_server_shutdown(server, grace_ms, on_drained, ctx)`.** 루프의 스레드에서.
+호출 순간부터 새것은 받지 않는다. 요청이 없는 HTTP/1.1 연결은 닫힌다. 요청이 오기 시작했거나 응답 중인
+연결은 `Connection: close`와 함께 그것을 끝낸다. HTTP/2 연결은 작별하고(GOAWAY) 열린 스트림을 끝낸다.
+WebSocket은 1001, "going away"로 닫히고 상대의 답을 기다린다. `grace_ms`가 지나면 남은 것은 끝난다 - 교환은
+`on_done(PROVEN_ERR_RESET)`을, WebSocket은 `on_closed`를 받는다. `on_drained(ctx, why)`는 마지막 연결이
+사라졌을 때 루프에서 한 번 불린다: `why`는 `PROVEN_OK`, 또는 기한이 무언가를 끊었으면
+`PROVEN_ERR_TIMEOUT`. 그 안에서 `proven_loop_stop`을 불러도 된다. 서버와 루프는 루프가 돌아온 뒤에
+해제한다. 종료는 마지막이다 - 서버는 더 이상 듣지도 넘겨받지도 않는다. 기한은 연결을 제한하지 핸들러를
+제한하지 않는다: 핸들러가 다른 스레드로 보낸 일은 이미 사라진 스트림으로 돌아온다.
+
+`proven_http_event_server_stop_listening`만 부르면 그 첫걸음만 하고 나머지는 하지 않는다: 새로운 누구도
+없고, HTTP/1.1 응답은 `Connection: close`를 말하고, HTTP/2는 작별한다 - 그리고 연결은 클라이언트가
+놓아 줄 때, 또는 `idle_timeout_ms`에 끝난다. 서버는 루프의 스레드에서, 또는 루프가 멈춘 뒤에 해제한다 -
+다른 스레드가 `proven_loop_run` 안에 있는 동안은 아니다. 7절의 예제가 종료로 끝난다.
 
 ## 11. 루프 위의 WebSocket
 

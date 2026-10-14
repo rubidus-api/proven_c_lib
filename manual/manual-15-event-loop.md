@@ -260,6 +260,9 @@ proven_err_t proven_http_event_server_listen(proven_http_event_server_t *server,
 void proven_http_event_server_destroy(proven_http_event_server_t *server);
 proven_size_t proven_http_event_server_connections(const proven_http_event_server_t *server);
 void proven_http_event_server_stop_listening(proven_http_event_server_t *server);
+typedef void (*proven_http_event_drained_fn)(void *ctx, proven_err_t why);
+proven_err_t proven_http_event_server_shutdown(proven_http_event_server_t *server, proven_u32 grace_ms,
+                                               proven_http_event_drained_fn on_drained, void *ctx);
 ```
 
 A server is made on a loop, told where to listen, and does nothing until the loop runs.
@@ -269,7 +272,8 @@ A server is made on a loop, told where to listen, and does nothing until the loo
 | `proven_http_event_server_create(loop, &config, &server)` | Make a server. | `proven_err_t`: `INVALID_ARG` for no loop, no `on_request`, or a TLS configuration with no certificate; `NOMEM`. |
 | `proven_http_event_server_listen(server, at, &bound)` | Listen at `at`; up to four addresses for one server. `bound` (optional) receives the address in use, with the port the system chose when `at` asked for port 0. | `proven_err_t`. |
 | `proven_http_event_server_connections(server)` | Connections open now. | `proven_size_t`. |
-| `proven_http_event_server_stop_listening(server)` | Stop accepting; open connections go on. | nothing. |
+| `proven_http_event_server_stop_listening(server)` | Stop accepting; open connections go on, an HTTP/1.1 response from now on says `Connection: close`, HTTP/2 says goodbye. | nothing. |
+| `proven_http_event_server_shutdown(server, grace_ms, on_drained, ctx)` | End gracefully (section 10); `on_drained(ctx, why)` when it is over. | `proven_err_t`: `INVALID_STATE` when already shutting down. |
 | `proven_http_event_server_destroy(server)` | Close every connection and the listeners, and free the server. Exchanges still in progress get `on_done` with `PROVEN_ERR_RESET`. The loop is neither stopped nor freed. Null is accepted. | nothing. |
 
 **Four functions.** The configuration carries them in `on`, and `ctx` is passed to each:
@@ -372,6 +376,8 @@ and runs it:
 typedef struct {
     proven_loop_t *loop;
     int served;
+    proven_http_event_server_t *server;
+    proven_err_t ended;                /* what on_drained was told */
 } app_t;
 
 /* What this program keeps for one request while it is being answered. */
@@ -456,6 +462,17 @@ static void on_done(void *ctx, proven_http_stream_t *stream, proven_err_t why) {
     if (why == PROVEN_OK) app->served++;
 }
 
+/* The end, on the loop's thread: what is open finishes, and then the loop is stopped. */
+static void on_drained(void *ctx, proven_err_t why) {
+    app_t *app = ctx;
+    app->ended = why;
+    proven_loop_stop(app->loop);
+}
+static void begin_end(void *ctx) {
+    app_t *app = ctx;
+    if (proven_http_event_server_shutdown(app->server, 2000, on_drained, app) != PROVEN_OK) proven_loop_stop(app->loop);
+}
+
 static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
 
 static char g_url[64];
@@ -488,6 +505,7 @@ int main(void) {
     proven_net_addr_t at;
     EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &config, &server) == PROVEN_OK &&
                     proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "an event-driven server on a free port");
+    app.server = server;
 
     /* This example gives the loop a thread of its own, so that its main thread can be a client. */
     proven_job_sys_t *threads = NULL;
@@ -523,10 +541,12 @@ int main(void) {
     proven_http_client_destroy(client);
 
     // ---- done ----------------------------------------------------------------------
-    /* Stop the loop, then take the server apart. Nothing else is touching it by then. */
-    proven_loop_stop(app.loop);
+    /* End gracefully, on the loop's thread; on_drained stops the loop. Then take the server
+     * apart: nothing else is touching it by then. */
+    app.ended = PROVEN_ERR_INVALID_STATE;
+    EXAMPLE_REQUIRE(proven_loop_post(app.loop, begin_end, &app) == PROVEN_OK, "the end is asked for");
     proven_job_group_wait(threads, &running);
-    EXAMPLE_REQUIRE(app.served == 4, "four exchanges ended with on_done(PROVEN_OK)");
+    EXAMPLE_REQUIRE(app.ended == PROVEN_OK && app.served == 4, "it ended with nothing cut, and four exchanges ended with on_done(PROVEN_OK)");
     proven_http_event_server_destroy(server);
     proven_loop_destroy(app.loop);
     proven_job_system_close(threads);
@@ -626,11 +646,24 @@ subject to `head_timeout_ms`. The configuration must outlive the server. A hands
 work is done on the loop's thread, and while it runs nothing else is served: Chapter 14,
 section 9, gives what one costs.
 
-**Shutting down.** `proven_http_event_server_stop_listening` refuses nobody already connected
-and accepts nobody new; wait until `proven_http_event_server_connections` falls, or for as
-long as you are willing to, then `proven_http_event_server_destroy`, then stop and destroy the
-loop. Destroy the server on the loop's thread or after the loop has stopped - not while another
-thread is inside `proven_loop_run`.
+**Shutting down: `proven_http_event_server_shutdown(server, grace_ms, on_drained, ctx)`.** On the
+loop's thread. From the call nothing new is taken; an HTTP/1.1 connection with no request on
+it is closed; one where a request has begun to arrive, or is being answered, finishes it with
+`Connection: close`; an HTTP/2 connection says goodbye (GOAWAY) and finishes its open
+streams; a WebSocket is closed with 1001, "going away", and its peer's answer waited for. When
+`grace_ms` has passed, what is left is ended - an exchange gets `on_done(PROVEN_ERR_RESET)`, a
+WebSocket `on_closed`. `on_drained(ctx, why)` is called once, from the loop, when the last
+connection has gone: `why` is `PROVEN_OK`, or `PROVEN_ERR_TIMEOUT` when the deadline cut
+something. It may call `proven_loop_stop`; then destroy the server and the loop after the
+loop has returned. A shutdown is final - the server listens and adopts no more. The deadline
+bounds connections, not handlers: work a handler sent to another thread comes back to a
+stream that is gone.
+
+`proven_http_event_server_stop_listening` alone is the first step of that, without the rest:
+nobody new, HTTP/1.1 responses say `Connection: close`, HTTP/2 says goodbye - and connections
+end when their clients let them, or at `idle_timeout_ms`. Destroy the server on the loop's
+thread or after the loop has stopped - not while another thread is inside `proven_loop_run`.
+The example of section 7 ends with a shutdown.
 
 ## 11. WebSocket on the loop
 
