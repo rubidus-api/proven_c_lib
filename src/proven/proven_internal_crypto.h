@@ -257,6 +257,12 @@ bool proven_crypto_aes_hw_available(void);
 [[nodiscard]] bool proven_crypto_rsa_verify_pss(proven_mem_view_t n, proven_mem_view_t e, int hash, proven_size_t salt_len,
                                                 proven_mem_view_t digest, proven_mem_view_t sig);
 
+/* For the suite. The generator's table of the curve against the general scalar multiplication,
+ * entry by entry; and k * G by the table and by the general walk, for a k below the order
+ * (big-endian, the curve's size; zero allowed). */
+[[nodiscard]] bool proven_crypto_ec_test_generator_table(proven_crypto_ec_curve_t curve);
+[[nodiscard]] bool proven_crypto_ec_test_base_mul(proven_crypto_ec_curve_t curve, const proven_byte_t *k_be);
+
 /* ---- RSA signing (RFC 8017). Everything in a key but n and e is SECRET. ---- */
 
 #define PROVEN_CRYPTO_RSA_SIGN_MAX_BITS 4096

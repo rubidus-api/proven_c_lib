@@ -18,6 +18,29 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **P-256 and P-384: formulas for a = -3, and a table for the generator.** Points are added
+  and doubled with the complete formulas of Renes, Costello and Batina for a curve whose a
+  is -3, as both of these are: fourteen multiplications for an addition (twelve, and two by
+  b) and thirteen for a doubling (eight, three squarings and two by b), where every
+  operation was seventeen; a point given in affine coordinates is added with thirteen
+  (eleven, and two by b). A multiple of the generator - a public key,
+  the first half of a signature, half of a verification - is taken from a table of sixteen
+  fixed points a curve (1 KiB for P-256, 1.5 KiB for P-384) by a signed comb of five teeth:
+  a fifth of the doublings, every lookup a full pass under a mask. The table's points were
+  computed by another implementation, and the suite recomputes each with the general code.
+  This is the third of four steps of the plan for the curves (RFC-0014).
+- A power with a long public exponent modulo a number of up to 384 bits - the inversions
+  of the curves - takes the exponent in sliding windows of four bits.
+- Measured on the development machine (x86-64, one core, GCC `-O3`; before, after): P-256
+  public key 438 -> 132 us, signing 475 -> 166, key agreement 438 -> 369, verifying
+  882 -> 527; P-384 public key 1,076 -> 315, signing 1,168 -> 386, key agreement
+  1,083 -> 890, verifying 2,165 -> 1,202. A full TLS 1.3 handshake in memory with X25519 and
+  a P-256 certificate that is the client's anchor: 0.64 -> 0.34 ms of the server's time and
+  1.05 -> 0.67 ms of the client's. With 32-bit limbs P-256 signing is 1,101 -> 379 us.
+- Chapter 14 of the manual gives the new figures.
+
 ## [0.51.0] - 2026-10-14
 
 ### Changed

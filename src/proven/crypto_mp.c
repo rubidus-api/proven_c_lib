@@ -236,6 +236,11 @@ void proven_crypto_mp_reduce_be(const proven_crypto_mp_mod_t *mod, limb_t *out, 
     for (proven_size_t i = 0; i < s; ++i) out[i] = r[i];
 }
 
+/* A modulus of up to this many limbs - the curves' - and an exponent longer than 64 bits
+ * (an inversion's) take the exponent four bits at a time below: a table of eight odd powers,
+ * small at this size, for about a fifth as many multiplications as squarings. */
+#define MP_POW_WINDOW_LIMBS PROVEN_CRYPTO_MP_LIMBS(48)
+
 void proven_crypto_mp_pow(const proven_crypto_mp_mod_t *mod, limb_t *out, const limb_t *base,
                           const limb_t *exp, proven_size_t exp_limbs) {
     const proven_size_t s = mod->limbs;
@@ -244,13 +249,35 @@ void proven_crypto_mp_pow(const proven_crypto_mp_mod_t *mod, limb_t *out, const 
     one[0] = 1;
     proven_crypto_mp_to_mont(mod, acc, one);
     /* The exponent is public, and so is where its bits begin: nothing is squared before the first. */
-    bool started = false;
-    for (proven_size_t i = exp_limbs; i-- > 0;) {
-        for (int bit = W - 1; bit >= 0; --bit) {
-            const bool set = ((exp[i] >> bit) & 1u) != 0;
-            if (started) proven_crypto_mp_montmul(mod, acc, acc, acc);
-            if (set) { proven_crypto_mp_montmul(mod, acc, acc, b); started = true; }
+    proven_size_t top = 0;                                   /* one past the highest set bit */
+    for (proven_size_t i = 0; i < exp_limbs * W; ++i) if ((exp[i / W] >> (i % W)) & 1u) top = i + 1;
+    if (s <= MP_POW_WINDOW_LIMBS && top > 64) {
+        /* Sliding windows: odd[j] = base^(2j + 1). A window starts at a set bit, is at most
+         * four bits long and ends at a set bit, so its value is odd. */
+        limb_t odd[8][MP_POW_WINDOW_LIMBS], sq[MP_POW_WINDOW_LIMBS];
+        for (proven_size_t i = 0; i < s; ++i) odd[0][i] = b[i];
+        proven_crypto_mp_montmul(mod, sq, b, b);
+        for (int j = 1; j < 8; ++j) proven_crypto_mp_montmul(mod, odd[j], odd[j - 1], sq);
+        bool started = false;
+        for (proven_size_t i = top; i-- > 0;) {
+            if (((exp[i / W] >> (i % W)) & 1u) == 0) { proven_crypto_mp_montmul(mod, acc, acc, acc); continue; }
+            proven_size_t low = i >= 3 ? i - 3 : 0;
+            while (((exp[low / W] >> (low % W)) & 1u) == 0) low++;
+            limb_t v = 0;
+            for (proven_size_t k = i + 1; k-- > low;) v = (v << 1) | ((exp[k / W] >> (k % W)) & 1u);
+            if (started) { for (proven_size_t k = low; k <= i; ++k) proven_crypto_mp_montmul(mod, acc, acc, acc); }
+            proven_crypto_mp_montmul(mod, acc, acc, odd[v >> 1]);
+            started = true;
+            i = low;
         }
+        for (proven_size_t i = 0; i < s; ++i) out[i] = acc[i];
+        return;
+    }
+    bool started = false;
+    for (proven_size_t i = top; i-- > 0;) {
+        const bool set = ((exp[i / W] >> (i % W)) & 1u) != 0;
+        if (started) proven_crypto_mp_montmul(mod, acc, acc, acc);
+        if (set) { proven_crypto_mp_montmul(mod, acc, acc, b); started = true; }
     }
     for (proven_size_t i = 0; i < s; ++i) out[i] = acc[i];
 }

@@ -415,6 +415,49 @@ int main(void) {
         PROVEN_TEST_ASSERT(!proven_crypto_ecdsa_verify(PROVEN_CRYPTO_EC_P256, (proven_mem_view_t){ pub, 65 }, (proven_mem_view_t){ digest, 32 }, (proven_mem_view_t){ r0, 32 }, (proven_mem_view_t){ order, 32 }) &&
                            !proven_crypto_ecdsa_verify(PROVEN_CRYPTO_EC_P256, (proven_mem_view_t){ pub, 65 }, (proven_mem_view_t){ digest, 32 }, (proven_mem_view_t){ order, 32 }, (proven_mem_view_t){ r0, 32 }),
             "a signature with r or s of zero is refused", "");
+
+        /* The generator's table, and the comb that reads it: five teeth d = ceil(bits / 5)
+         * apart, so the edges of the teeth are where a column changes meaning; an even scalar
+         * takes another way (n - k, and the result negated) than an odd one. */
+        PROVEN_TEST_ASSERT(proven_crypto_ec_test_generator_table(PROVEN_CRYPTO_EC_P256) && proven_crypto_ec_test_generator_table(PROVEN_CRYPTO_EC_P384),
+            "every entry of each curve's table of the generator is what the general multiplication gives", "");
+        {
+            static const char *const orders[2] = { "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
+                                                   "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973" };
+            proven_u64 x = 0x2545f4914f6cdd1dull;
+            proven_size_t tried = 0, agreed = 0;
+            for (int cv = 0; cv < 2; ++cv) {
+                const proven_crypto_ec_curve_t curve = cv == 0 ? PROVEN_CRYPTO_EC_P256 : PROVEN_CRYPTO_EC_P384;
+                const proven_size_t sz = proven_crypto_ec_size(curve), d = (sz * 8 + 4) / 5;
+                proven_byte_t n[48], k[48];
+                for (proven_size_t i = 0; i < sz; ++i) { char h[3] = { orders[cv][2 * i], orders[cv][2 * i + 1], 0 }; n[i] = (proven_byte_t)strtoul(h, NULL, 16); }
+                for (int which = 0; which < 60; ++which) {
+                    memset(k, 0, sz);
+                    if (which == 1) k[sz - 1] = 1;
+                    else if (which == 2) k[sz - 1] = 15;
+                    else if (which == 3) k[sz - 1] = 16;
+                    else if (which == 4) { memcpy(k, n, sz); k[sz - 1] -= 1; }                 /* n - 1 */
+                    else if (which == 5) { memcpy(k, n, sz); k[sz - 1] -= 2; }                 /* n - 2 */
+                    else if (which >= 6 && which < 21) {
+                        /* 2^(t d), 2^(t d) - 1 and 2^(t d + d - 1), for each tooth t - the last
+                         * tooth's past the curve's bits where it is cut short */
+                        const proven_size_t t = (proven_size_t)(which - 6) / 3, kind = (proven_size_t)(which - 6) % 3;
+                        proven_size_t bit = kind == 2 ? t * d + d - 1 : t * d;
+                        if (bit >= sz * 8 - 1) bit = sz * 8 - 2;                                /* below the order */
+                        if (kind == 1) { for (proven_size_t b = 0; b < bit; ++b) k[sz - 1 - b / 8] |= (proven_byte_t)(1u << (b % 8)); }
+                        else k[sz - 1 - bit / 8] |= (proven_byte_t)(1u << (bit % 8));
+                    } else if (which >= 21) {
+                        for (proven_size_t i = 0; i < sz; ++i) { x ^= x << 13; x ^= x >> 7; x ^= x << 17; k[i] = (proven_byte_t)(x >> 32); }
+                        k[0] &= 0x7f;                                                           /* below the order */
+                        if (which % 7 == 0) memset(k + sz / 4, 0, sz / 4);                      /* a run of zero columns in one tooth */
+                    }
+                    tried++;
+                    if (proven_crypto_ec_test_base_mul(curve, k)) agreed++;
+                }
+            }
+            PROVEN_TEST_ASSERT(tried == 120 && agreed == tried,
+                "k G by the table agrees with the general walk for k of 0, 1, 15, 16, n - 1, n - 2, the edges of every tooth and thirty-nine random scalars, on both curves", "");
+        }
     }
 
     // ---------------------------------------------------------------
