@@ -105,6 +105,41 @@ static void flush_first_fire(void *ctx) {
 static bool path_is(const proven_http_request_t *req, const char *p) { return req->target.size == strlen(p) && memcmp(req->target.ptr, p, req->target.size) == 0; }
 static bool path_starts(const proven_http_request_t *req, const char *p) { return req->target.size >= strlen(p) && memcmp(req->target.ptr, p, strlen(p)) == 0; }
 
+/* WebSocket over HTTP/2 (RFC 8441): an echo, and what its end was. */
+static atomic_int g_ws_closed, g_ws_code, g_ws_why, g_ws_framing_shown;
+static proven_byte_t g_ws_msg[300000];
+static proven_size_t g_ws_msg_len;
+static void ws_echo(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
+    (void)ctx;
+    if (first) g_ws_msg_len = 0;
+    if (g_ws_msg_len + piece.size <= sizeof g_ws_msg) { memcpy(g_ws_msg + g_ws_msg_len, piece.ptr, piece.size); g_ws_msg_len += piece.size; }
+    if (last) (void)proven_ws_stream_send(ws, text, (proven_mem_view_t){ g_ws_msg, g_ws_msg_len });
+}
+static void ws_echo_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
+    (void)ctx; (void)ws;
+    atomic_store(&g_ws_code, (int)code); atomic_store(&g_ws_why, (int)why); atomic_fetch_add(&g_ws_closed, 1);
+}
+
+/* /wspush: two hundred messages of 1,000 bytes, as fast as the server will take them - it says
+ * "not now" when 4 KiB are waiting, and on_writable when it may go on. */
+static atomic_int g_push_sent, g_push_refused, g_push_writable;
+static void ws_push_more(void *ctx, proven_ws_stream_t *ws) {
+    (void)ctx;
+    static proven_byte_t piece[1000];
+    while (atomic_load(&g_push_sent) < 200) {
+        piece[0] = (proven_byte_t)atomic_load(&g_push_sent);
+        proven_err_t e = proven_ws_stream_send(ws, false, (proven_mem_view_t){ piece, sizeof piece });
+        if (e == PROVEN_ERR_AGAIN) { atomic_fetch_add(&g_push_refused, 1); return; }
+        if (e != PROVEN_OK) return;
+        atomic_fetch_add(&g_push_sent, 1);
+    }
+}
+static void ws_push_writable(void *ctx, proven_ws_stream_t *ws) { atomic_fetch_add(&g_push_writable, 1); ws_push_more(ctx, ws); }
+static void ws_push_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
+    (void)text; (void)piece; (void)first;
+    if (last) ws_push_more(ctx, ws);                /* the client's word starts it */
+}
+
 static void ws_never(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
     (void)ctx; (void)ws; (void)text; (void)piece; (void)first; (void)last;
 }
@@ -186,6 +221,17 @@ static void on_request(void *ctx, proven_http_stream_t *s, const proven_http_req
         proven_ws_stream_t *ws = NULL;
         if (proven_ws_event_accept(s, req, &wcfg, &ws) == PROVEN_OK || ws != NULL) atomic_fetch_add(&g_dispatch_bad, 1);
         (void)proven_http_stream_respond(s, 400, NULL, 0, (proven_mem_view_t){ (const proven_byte_t *)"no", 2 });
+    } else if (path_is(req, "/wsecho")) {
+        /* The same handler for a WebSocket over HTTP/1.1 and over HTTP/2: accept answers either. */
+        proven_ws_event_config_t wcfg = { .on = { .on_message = ws_echo, .on_closed = ws_echo_closed }, .compress = true, .max_message_bytes = sizeof g_ws_msg };
+        proven_u8str_view_t te;
+        if (proven_http_header_find(req->headers, req->header_count, sv("transfer-encoding"), &te)) atomic_fetch_add(&g_ws_framing_shown, 1);
+        proven_ws_stream_t *ws = NULL;
+        if (proven_ws_event_accept(s, req, &wcfg, &ws) != PROVEN_OK) (void)proven_http_stream_respond(s, 400, NULL, 0, (proven_mem_view_t){ (const proven_byte_t *)"no", 2 });
+    } else if (path_is(req, "/wspush")) {
+        proven_ws_event_config_t wcfg = { .on = { .on_message = ws_push_message, .on_writable = ws_push_writable, .on_closed = ws_echo_closed }, .max_buffered_output = 4096 };
+        proven_ws_stream_t *ws = NULL;
+        if (proven_ws_event_accept(s, req, &wcfg, &ws) != PROVEN_OK) (void)proven_http_stream_respond(s, 400, NULL, 0, (proven_mem_view_t){ (const proven_byte_t *)"no", 2 });
     } else if (path_is(req, "/never")) {
         /* The handler is thinking, for ever. */
     } else if (path_is(req, "/abort")) {
@@ -341,6 +387,11 @@ static void cl_close(cl_t *c) {
     (void)proven_transport_close(c->t);
 }
 
+/* The bytes of one stream, kept whole: what a WebSocket over HTTP/2 sends. */
+static proven_u32 g_cap_id;
+static proven_byte_t g_cap[400000];
+static proven_size_t g_cap_len;
+
 /* One round: write what is queued, read for at most `ms`, take every event. False when
  * nothing arrived. */
 static bool cl_pump(cl_t *c, proven_u32 ms) {
@@ -378,6 +429,7 @@ static bool cl_pump(cl_t *c, proven_u32 ms) {
                 }
                 break;
             case PROVEN_H2_EVENT_DATA:
+                if (ev.stream_id == g_cap_id && g_cap_len + ev.data.size <= sizeof g_cap) { memcpy(g_cap + g_cap_len, ev.data.ptr, ev.data.size); g_cap_len += ev.data.size; }
                 if (r) {
                     for (proven_size_t i = 0; i < ev.data.size; i++) {
                         if (r->got + i < sizeof r->first) r->first[r->got + i] = ev.data.ptr[i];
@@ -427,6 +479,221 @@ static void cl_body(cl_t *c, proven_u32 id, proven_size_t len, bool end) {
 }
 
 static res_t *cl_res(cl_t *c, proven_u32 id) { return &c->r[(id - 1) / 2]; }
+
+/* Bytes on a stream, pumping while the windows are shut. */
+static bool cl_send(cl_t *c, proven_u32 id, const proven_byte_t *p, proven_size_t n, bool end) {
+    proven_size_t sent = 0;
+    for (int round = 0; round < 20000 && (sent < n || (n == 0 && round == 0)); round++) {
+        proven_result_size_t w = proven_h2_conn_send_data(c->e, id, (proven_mem_view_t){ p + sent, n - sent }, end);
+        if (w.err != PROVEN_OK) return false;
+        sent += w.value;
+        if (sent < n) (void)cl_pump(c, 5);
+        else if (n == 0) break;
+    }
+    (void)cl_pump(c, 1);
+    return sent == n;
+}
+
+/* A client's WebSocket frame - masked, as a client's must be - on stream `id`. */
+static bool ws_frame_send(cl_t *c, proven_u32 id, proven_ws_opcode_t op, const proven_byte_t *p, proven_size_t n) {
+    static proven_byte_t buf[300100];
+    proven_size_t len = 0;
+    proven_ws_frame_t f = { .fin = true, .opcode = op, .masked = true, .mask = { 0x11, 0x22, 0x33, 0x44 }, .length = n };
+    if (n + 14 > sizeof buf || proven_ws_frame_write((proven_mem_mut_t){ buf, sizeof buf }, &len, &f) != PROVEN_OK) return false;
+    memcpy(buf + len, p, n);
+    proven_ws_mask((proven_mem_mut_t){ buf + len, n }, f.mask, 0);
+    return cl_send(c, id, buf, len + n, false);
+}
+
+/* The server's frames that arrived on the captured stream, read with the codec: the next
+ * message whole (inflated when compressed), or its close. */
+typedef struct { proven_ws_decoder_t dec; proven_size_t at; } ws_rd_t;
+static bool ws_frame_read(cl_t *c, ws_rd_t *rd, bool *text, proven_byte_t *out, proven_size_t cap, proven_size_t *len, proven_u16 *close_code, bool deflate) {
+    static proven_byte_t z[300100];
+    proven_size_t zl = 0;
+    bool compressed = false;
+    *len = 0; *close_code = 0;
+    for (int round = 0; round < 3000; round++) {
+        while (rd->at < g_cap_len) {
+            proven_size_t used = 0;
+            proven_ws_event_t ev;
+            if (proven_ws_decoder_feed(&rd->dec, (proven_mem_mut_t){ g_cap + rd->at, g_cap_len - rd->at }, &used, &ev) != PROVEN_OK) return false;
+            rd->at += used;
+            if (ev.kind == PROVEN_WS_EVENT_CLOSE) { *close_code = ev.close_code; return true; }
+            if (ev.kind != PROVEN_WS_EVENT_DATA) { if (used == 0) break; continue; }
+            *text = ev.text;
+            if (ev.compressed) { compressed = true; if (zl + ev.data.size > sizeof z - 4) return false; memcpy(z + zl, ev.data.ptr, ev.data.size); zl += ev.data.size; }
+            else { if (*len + ev.data.size > cap) return false; memcpy(out + *len, ev.data.ptr, ev.data.size); *len += ev.data.size; }
+            if (ev.last) {
+                if (!compressed) return true;
+                if (!deflate) return false;
+                memcpy(z + zl, "\x00\x00\xff\xff", 4); zl += 4;
+                proven_size_t used = 0;
+                return proven_inflate_all(g_heap, PROVEN_DEFLATE_RAW, (proven_mem_view_t){ z, zl }, (proven_mem_mut_t){ out, cap }, len, &used) == PROVEN_OK ||
+                       *len > 0;
+            }
+        }
+        (void)cl_pump(c, 10);
+    }
+    return false;
+}
+
+/* An extended CONNECT for a WebSocket to /wsecho (RFC 8441), with or without an offer of
+ * compression. */
+static proven_u32 ws_open_at(cl_t *c, const char *path, bool deflate) {
+    proven_http_header_t h[] = { H(":method", "CONNECT"), H(":protocol", "websocket"), H(":scheme", "http"), H(":authority", "127.0.0.1"),
+                                 H(":path", "/wsecho"), H("sec-websocket-version", "13"), H("sec-websocket-extensions", "permessage-deflate") };
+    h[4].value = sv(path);
+    proven_size_t n = deflate ? 7 : 6;
+    proven_u32 id = 0;
+    PROVEN_TEST_ASSERT(proven_h2_conn_submit_request(c->e, h, n, false, &id) == PROVEN_OK, "an extended CONNECT is begun", "");
+    return id;
+}
+static proven_u32 ws_open(cl_t *c, bool deflate) { return ws_open_at(c, "/wsecho", deflate); }
+
+static bool cl_get(cl_t *c, const char *path, int status, proven_size_t size);
+
+static bool ws_answered(cl_t *c, proven_u32 id) {
+    for (int i = 0; i < 300 && cl_res(c, id)->status == 0 && !cl_res(c, id)->reset && !c->closed; i++) (void)cl_pump(c, 10);
+    return cl_res(c, id)->status == 200 && !cl_res(c, id)->end && !cl_res(c, id)->reset;
+}
+
+static bool ws_closed_is(int n) { for (int i = 0; i < 4000 && atomic_load(&g_ws_closed) < n; i++) proven_time_sleep(1); return atomic_load(&g_ws_closed) == n; }
+
+static void ws_over_h2(void) {
+    static proven_byte_t big[200000], got[300000];
+    for (proven_size_t i = 0; i < sizeof big; i++) big[i] = pat(i);
+    proven_size_t len = 0;
+    proven_u16 code = 0;
+    bool text = false;
+    ws_rd_t rd;
+    atomic_store(&g_ws_closed, 0);
+
+    /* A server that does not offer it: the stream is refused. */
+    proven_http_event_server_config_t plain = { 0 };
+    proven_u16 port = server_start(plain);
+    cl_t c;
+    PROVEN_TEST_ASSERT(cl_open_with(&c, NULL, port, 0), "a client", "");
+    proven_u32 id = ws_open(&c, false);
+    for (int i = 0; i < 300 && !cl_res(&c, id)->reset; i++) (void)cl_pump(&c, 10);
+    PROVEN_TEST_ASSERT(cl_res(&c, id)->reset && cl_res(&c, id)->code == PROVEN_H2_PROTOCOL_ERROR && !c.closed, "a server without http2_websocket refuses an extended CONNECT: PROTOCOL_ERROR for the stream", "");
+    cl_close(&c);
+    server_stop();
+
+    /* A body timeout far shorter than the test: a WebSocket stream is not a body that stopped. */
+    proven_http_event_server_config_t cfg = { .http2_websocket = true, .body_timeout_ms = 300 };
+    port = server_start(cfg);
+    atomic_store(&g_ws_framing_shown, 0);
+    /* A window of 16 KiB on this side: the server's 200,000-byte answer must wait for it. */
+    PROVEN_TEST_ASSERT(cl_open_with(&c, NULL, port, 16384), "a client", "");
+    id = ws_open(&c, false);
+    g_cap_id = id; g_cap_len = 0;
+    proven_ws_decoder_init(&rd.dec, false, sizeof got); rd.at = 0;
+    PROVEN_TEST_ASSERT(ws_answered(&c, id), "the handler of chapter 15's kind accepts it: 200, and the stream stays open", "");
+    PROVEN_TEST_ASSERT(atomic_load(&g_ws_framing_shown) == 0, "the handler was not shown a transfer-encoding for it: what follows is not a body", "");
+    for (int i = 0; i < 70; i++) (void)cl_pump(&c, 10);         /* quiet for longer than body_timeout_ms */
+    PROVEN_TEST_ASSERT(!cl_res(&c, id)->reset && !cl_res(&c, id)->end, "a quiet WebSocket stream outlives the body timeout", "");
+    PROVEN_TEST_ASSERT(ws_frame_send(&c, id, PROVEN_WS_TEXT, (const proven_byte_t *)"hello", 5) && ws_frame_read(&c, &rd, &text, got, sizeof got, &len, &code, false) &&
+                       text && len == 5 && memcmp(got, "hello", 5) == 0, "a text message goes there and back", "");
+    PROVEN_TEST_ASSERT(ws_frame_send(&c, id, PROVEN_WS_BINARY, (const proven_byte_t *)"\x00\x01\x02", 3) && ws_frame_read(&c, &rd, &text, got, sizeof got, &len, &code, false) &&
+                       !text && len == 3 && memcmp(got, "\x00\x01\x02", 3) == 0, "and a binary one", "");
+    PROVEN_TEST_ASSERT(ws_frame_send(&c, id, PROVEN_WS_BINARY, big, sizeof big) && ws_frame_read(&c, &rd, &text, got, sizeof got, &len, &code, false) &&
+                       len == sizeof big && memcmp(got, big, sizeof big) == 0,
+        "a message of 200,000 bytes, three times the stream window either way, arrives whole and comes back whole", "");
+    /* The close handshake, then END_STREAM from each side. */
+    proven_byte_t bye[2] = { 0x03, 0xe8 };
+    PROVEN_TEST_ASSERT(ws_frame_send(&c, id, PROVEN_WS_CLOSE, bye, 2) && ws_frame_read(&c, &rd, &text, got, sizeof got, &len, &code, false) && code == 1000,
+        "the client closes with 1000, and the server answers 1000", "");
+    for (int i = 0; i < 300 && !cl_res(&c, id)->end; i++) (void)cl_pump(&c, 10);
+    PROVEN_TEST_ASSERT(cl_res(&c, id)->end && !cl_res(&c, id)->reset && cl_send(&c, id, NULL, 0, true), "then the server ends its side of the stream, and the client its own", "");
+    PROVEN_TEST_ASSERT(ws_closed_is(1) && atomic_load(&g_ws_code) == 1000 && atomic_load(&g_ws_why) == PROVEN_OK, "on_closed once, 1000, PROVEN_OK", "");
+
+    /* Compression negotiated, on a second stream of the same connection. */
+    id = ws_open(&c, true);
+    g_cap_id = id; g_cap_len = 0;
+    proven_ws_decoder_init(&rd.dec, false, sizeof got); proven_ws_decoder_allow_compressed(&rd.dec); rd.at = 0;
+    PROVEN_TEST_ASSERT(ws_answered(&c, id), "a second WebSocket on the same connection, offering compression", "");
+    static const char words[] = "the same words, the same words, the same words, the same words";
+    PROVEN_TEST_ASSERT(ws_frame_send(&c, id, PROVEN_WS_TEXT, (const proven_byte_t *)words, sizeof words - 1) &&
+                       ws_frame_read(&c, &rd, &text, got, sizeof got, &len, &code, true) && len == sizeof words - 1 && memcmp(got, words, len) == 0,
+        "permessage-deflate is taken, and the answer comes back compressed and inflates to the message", "");
+    /* An abort: RST_STREAM with CANCEL. */
+    PROVEN_TEST_ASSERT(proven_h2_conn_reset(c.e, id, PROVEN_H2_CANCEL) == PROVEN_OK && cl_pump(&c, 1) == cl_pump(&c, 1), "the client resets the stream", "");
+    PROVEN_TEST_ASSERT(ws_closed_is(2) && atomic_load(&g_ws_why) == PROVEN_ERR_RESET, "the server's WebSocket is told it ended with PROVEN_ERR_RESET, once", "");
+    /* A client that ends its side with no close frame: for the WebSocket that is a peer gone
+     * without a goodbye - 1006 and PROVEN_ERR_RESET, as on HTTP/1.1 - and the server ends its
+     * side too. */
+    id = ws_open(&c, false);
+    PROVEN_TEST_ASSERT(ws_answered(&c, id) && cl_send(&c, id, NULL, 0, true), "a WebSocket whose client ends the stream at once", "");
+    PROVEN_TEST_ASSERT(ws_closed_is(3) && atomic_load(&g_ws_code) == 1006 && atomic_load(&g_ws_why) == PROVEN_ERR_RESET, "is told 1006, PROVEN_ERR_RESET, once - as a client that vanishes over HTTP/1.1 is", "");
+    for (int i = 0; i < 300 && !cl_res(&c, id)->end; i++) (void)cl_pump(&c, 10);
+    PROVEN_TEST_ASSERT(cl_res(&c, id)->end && !cl_res(&c, id)->reset, "and the server ends its side with END_STREAM", "");
+
+    /* A server that sends faster than this client reads: the WebSocket is refused, and told by
+     * on_writable when the stream's output has moved - through the HTTP/2 window of 16 KiB. */
+    atomic_store(&g_push_sent, 0); atomic_store(&g_push_refused, 0); atomic_store(&g_push_writable, 0);
+    id = ws_open_at(&c, "/wspush", false);
+    g_cap_id = id; g_cap_len = 0;
+    proven_ws_decoder_init(&rd.dec, false, sizeof got); rd.at = 0;
+    PROVEN_TEST_ASSERT(ws_answered(&c, id) && ws_frame_send(&c, id, PROVEN_WS_TEXT, (const proven_byte_t *)"go", 2), "a WebSocket that pushes, started", "");
+    int pushed = 0; bool in_order = true;
+    for (int i = 0; i < 200; i++) {
+        if (!ws_frame_read(&c, &rd, &text, got, sizeof got, &len, &code, false) || len != 1000) break;
+        if (got[0] != (proven_byte_t)i) in_order = false;
+        pushed++;
+    }
+    PROVEN_TEST_ASSERT(pushed == 200 && in_order && atomic_load(&g_push_refused) > 0 && atomic_load(&g_push_writable) > 0,
+        "two hundred messages arrive in order, though the server was refused on the way and resumed through on_writable", "Check s_push: output that moved tells the WebSocket (on_progress).");
+    (void)proven_h2_conn_reset(c.e, id, PROVEN_H2_CANCEL);
+    (void)cl_pump(&c, 5);
+    PROVEN_TEST_ASSERT(ws_closed_is(4), "it is ended", "");
+
+    /* (One with no :path is refused by the engine for its stream: test_unit_h2_conn. This
+     * client's engine will not even send it.) */
+    c.plain_body = true;
+    PROVEN_TEST_ASSERT(cl_get(&c, "/hello", 200, 5), "an ordinary request on the same connection is answered", "");
+
+    /* WebSocket over HTTP/1.1, to the same server and the same handler: as before. */
+    {
+        proven_http_client_config_t hcfg = { .alloc = g_heap };
+        proven_http_client_t *hc = NULL;
+        proven_ws_conn_config_t wcfg = { .alloc = g_heap };
+        proven_ws_conn_t *wc = NULL;
+        proven_u16 status = 0;
+        char url[64];
+        int un = snprintf(url, sizeof url, "ws://127.0.0.1:%u/wsecho", (unsigned)port);
+        proven_ws_message_t msg;
+        PROVEN_TEST_ASSERT(proven_http_client_create(&hcfg, &hc) == PROVEN_OK &&
+                           proven_ws_conn_connect(hc, (proven_u8str_view_t){ (const proven_byte_t *)url, (proven_size_t)un }, NULL, 0, sv(""), &wcfg, &wc, &status) == PROVEN_OK && status == 101,
+            "an HTTP/1.1 client is answered 101 by the same handler", "");
+        PROVEN_TEST_ASSERT(proven_ws_conn_send_text(wc, sv("over 1.1")) == PROVEN_OK && proven_ws_conn_receive(wc, proven_net_deadline_in(5000), &msg) == PROVEN_OK &&
+                           msg.data.size == 8 && memcmp(msg.data.ptr, "over 1.1", 8) == 0, "and its message comes back", "");
+        PROVEN_TEST_ASSERT(proven_ws_conn_close(wc, 1000, sv("")) == PROVEN_OK && ws_closed_is(5), "it closes", "");
+        proven_ws_conn_destroy(wc);
+        proven_http_client_destroy(hc);
+    }
+
+    /* The server ends with a WebSocket open on a stream: 1001, the client answers, the stream
+     * and the connection end, and the end is clean. */
+    id = ws_open(&c, false);
+    g_cap_id = id; g_cap_len = 0;
+    proven_ws_decoder_init(&rd.dec, false, sizeof got); rd.at = 0;
+    PROVEN_TEST_ASSERT(ws_answered(&c, id), "one more WebSocket", "");
+    atomic_store(&g_drained_calls, 0);
+    atomic_store(&g_drain_grace, 5000);
+    on_loop(do_shutdown);
+    PROVEN_TEST_ASSERT(ws_frame_read(&c, &rd, &text, got, sizeof got, &len, &code, false) && code == 1001, "a shutdown closes it with 1001", "");
+    PROVEN_TEST_ASSERT(ws_frame_send(&c, id, PROVEN_WS_CLOSE, (const proven_byte_t *)"\x03\xe9", 2), "the client answers", "");
+    for (int i = 0; i < 300 && !cl_res(&c, id)->end; i++) (void)cl_pump(&c, 10);
+    (void)cl_send(&c, id, NULL, 0, true);
+    for (int i = 0; i < 300 && !c.closed && !c.gone; i++) (void)cl_pump(&c, 10);
+    for (int i = 0; i < 2000 && atomic_load(&g_drained_calls) == 0; i++) proven_time_sleep(1);
+    PROVEN_TEST_ASSERT(ws_closed_is(6) && atomic_load(&g_ws_code) == 1001 && c.goaway && (c.closed || c.gone) && atomic_load(&g_drained_calls) == 1 && atomic_load(&g_drained_why) == PROVEN_OK,
+        "the WebSocket ends with 1001, the connection ends, and on_drained says PROVEN_OK", "");
+    cl_close(&c);
+    server_stop();
+    g_cap_id = 0;
+}
 
 /* Pump until the stream has ended one way or the other. */
 static bool cl_wait(cl_t *c, proven_u32 id, proven_u32 ms) {
@@ -1049,6 +1316,9 @@ int main(void) {
             server_stop();
         }
     }
+
+    PROVEN_TEST_SECTION("WebSocket over HTTP/2", "RFC 8441: an extended CONNECT, accepted by the handler that accepts WebSocket over HTTP/1.1.", "Check the `tunnel` branches of d_request and d_body, s_raw_feed and the proven_http_event_h2_raw_* functions in http_event_h2.c, and proven_ws_event_accept's HTTP/2 answer.");
+    ws_over_h2();
 
     PROVEN_TEST_SECTION("the graceful end", "proven_http_event_server_shutdown with HTTP/2 streams open: one that finishes, one nobody answers.", "Check proven_http_event_server_shutdown in http_event.c and h2_on_shutdown in http_event_h2.c: GOAWAY, open streams finish, the rest is ended at the deadline.");
     {

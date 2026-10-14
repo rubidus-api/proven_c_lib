@@ -64,6 +64,10 @@ typedef enum {
 /**
  * @brief A parsed request head. Every view points into the buffer that was parsed, so the
  *        buffer must outlive it and must not move.
+ *
+ * The event-driven server gives a handler an HTTP/2 request in the same form (version 1.1).
+ * An HTTP/2 extended CONNECT (RFC 8441) arrives as method CONNECT, its path as `target`, and a
+ * `:protocol` field first in `headers` - a name no HTTP/1.1 request can carry.
  */
 typedef struct {
     proven_http_method_t method;

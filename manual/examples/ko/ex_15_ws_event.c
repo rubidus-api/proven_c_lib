@@ -114,7 +114,10 @@ int main(void) {
 
     // ---- 루프 위의 서버, 자기 스레드에서 --------------------------------------------
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "루프");
-    proven_http_event_server_config_t config = { .on = { .on_request = on_request }, .ctx = &app };
+    /* HTTP/2도, 그리고 그 위의 WebSocket도(RFC 8441): HTTP/2를 말하는 클라이언트는 WebSocket을 그
+     * 연결의 스트림으로 연다. 위의 on_request는 둘 다에 같다 - 아래 실행이 쓰는 것은 이 프로그램의
+     * HTTP/1.1 클라이언트다. */
+    proven_http_event_server_config_t config = { .on = { .on_request = on_request }, .ctx = &app, .http2 = true, .http2_websocket = true };
     proven_http_event_server_t *server = NULL;
     proven_net_addr_t at;
     EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &config, &server) == PROVEN_OK &&

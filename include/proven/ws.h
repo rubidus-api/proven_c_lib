@@ -58,8 +58,13 @@ proven_err_t proven_ws_accept_key(proven_u8str_view_t key, proven_byte_t out[PRO
 /**
  * @brief A server's check: is this parsed request a WebSocket upgrade, and a well-formed one?
  *
- * @param key receives the client's `Sec-WebSocket-Key`, a view into the request.
- * @return PROVEN_OK: answer 101 with proven_ws_accept_key(key).
+ * A request that came over HTTP/2 as an extended CONNECT (RFC 8441) is one too: the
+ * event-driven server presents it with `method` CONNECT and a `:protocol` field first, and it
+ * has no key - the answer there is 200, not 101 (proven_ws_event_accept gives it).
+ *
+ * @param key receives the client's `Sec-WebSocket-Key`, a view into the request; empty for an
+ *        HTTP/2 request, which has none to answer.
+ * @return PROVEN_OK: answer 101 with proven_ws_accept_key(key) - or, over HTTP/2, 200.
  *         PROVEN_ERR_NOT_FOUND: not an upgrade to WebSocket at all (no `Upgrade: websocket`) -
  *         an ordinary request; handle it as one.
  *         PROVEN_ERR_UNSUPPORTED: an upgrade for a protocol version other than 13 - answer 426

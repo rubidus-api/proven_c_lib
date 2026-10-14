@@ -409,7 +409,7 @@ int main(void) {
 |---|---|---|
 | `proven_ws_make_key(random, out)` | 여러분이 준 무작위 16바이트로 클라이언트의 `Sec-WebSocket-Key`(24글자)를 만든다. | 없음. |
 | `proven_ws_accept_key(key, out)` | 키에 답하는 `Sec-WebSocket-Accept` 값(28글자). | `proven_err_t`: 키가 16바이트를 나타내는 Base64 24글자가 아니면 `INVALID_FORMAT`. |
-| `proven_ws_check_request(&request, &key)` | 파싱된 요청에 대한 서버의 확인. | `proven_err_t`: `PROVEN_OK` - 101로 답하라. `NOT_FOUND` - WebSocket 업그레이드가 아니다. `UNSUPPORTED` - 다른 버전이다, `Sec-WebSocket-Version: 13`을 단 426으로 답하라. `INVALID_FORMAT` - 400으로 답하라. |
+| `proven_ws_check_request(&request, &key)` | 파싱된 요청에 대한 서버의 확인 - 이벤트 구동 서버가 보여 주는 HTTP/2 확장 CONNECT도(15장 11절), 그때 `key`는 비어 있다. | `proven_err_t`: `PROVEN_OK` - 101로 답하라(HTTP/2에서는 200: `proven_ws_event_accept`가 어느 쪽이든 한다). `NOT_FOUND` - WebSocket 업그레이드가 아니다. `UNSUPPORTED` - 다른 버전이다, `Sec-WebSocket-Version: 13`을 단 426으로 답하라. `INVALID_FORMAT` - 400으로 답하라. |
 | `proven_ws_request_offers(&request, name)` | 요청이 서브프로토콜을 내놓는지. 정확히 비교한다. | `bool`. |
 | `proven_ws_check_origin(&request, allowed, count)` | 요청의 `Origin`이 서비스하는 출처 가운데 하나인지(2절). | `proven_err_t`: `PROVEN_OK`; `NOT_FOUND` - `Origin` 없음; `PERMISSION` - 다른 출처, 또는 필드가 둘; `INVALID_ARG`. |
 | `proven_ws_check_response(&response, key, offered, &protocol)` | 답에 대한 클라이언트의 확인: 101, 맞는 accept 값, 내놓았던 서브프로토콜, 확장 없음. | `proven_err_t`: 아니면 `INVALID_FORMAT`. |

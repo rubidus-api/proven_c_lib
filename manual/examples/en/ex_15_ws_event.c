@@ -114,7 +114,10 @@ int main(void) {
 
     // ---- a server on a loop, on its own thread -------------------------------------
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
-    proven_http_event_server_config_t config = { .on = { .on_request = on_request }, .ctx = &app };
+    /* HTTP/2 too, and WebSocket on it (RFC 8441): a client that speaks HTTP/2 opens its
+     * WebSocket as a stream of that connection. on_request above is the same for both - it is
+     * this program's client, over HTTP/1.1, that the run below uses. */
+    proven_http_event_server_config_t config = { .on = { .on_request = on_request }, .ctx = &app, .http2 = true, .http2_websocket = true };
     proven_http_event_server_t *server = NULL;
     proven_net_addr_t at;
     EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &config, &server) == PROVEN_OK &&

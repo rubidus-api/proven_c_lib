@@ -509,6 +509,30 @@ int main(void) {
         PROVEN_TEST_ASSERT(push_off, "a client's settings forbid server push", "");
         proven_h2_conn_destroy(c);
 
+        /* A server that takes extended CONNECT says so in its first SETTINGS; one that does not, does not. */
+        for (int offer = 0; offer < 2; ++offer) {
+            proven_h2_config_t sc = base;
+            sc.server = true; sc.enable_connect_protocol = offer == 1;
+            proven_h2_conn_t *s1 = conn_new(&sc);
+            proven_mem_view_t o = proven_h2_conn_pending_output(s1);
+            proven_h2_frame_t sf;
+            bool said = false; pos = 0;
+            PROVEN_TEST_ASSERT(proven_h2_frame_parse((proven_mem_view_t){ o.ptr, 9 }, &sf) == PROVEN_OK && sf.type == PROVEN_H2_SETTINGS, "a server's first frame is SETTINGS", "");
+            while (proven_h2_settings_next((proven_mem_view_t){ o.ptr + 9, sf.length }, &pos, &st, &code) == PROVEN_OK)
+                if (st.id == PROVEN_H2_SETTINGS_ENABLE_CONNECT_PROTOCOL && st.value == 1) said = true;
+            PROVEN_TEST_ASSERT(said == (offer == 1), offer ? "enable_connect_protocol: the server says ENABLE_CONNECT_PROTOCOL of 1 at once" : "without it, the server says nothing of extended CONNECT", "");
+            proven_h2_conn_destroy(s1);
+        }
+        cc.enable_connect_protocol = true;           /* on a client it is ignored: nothing changes */
+        c = conn_new(&cc);
+        out = proven_h2_conn_pending_output(c);
+        PROVEN_TEST_ASSERT(proven_h2_frame_parse((proven_mem_view_t){ out.ptr + 24, 9 }, &f) == PROVEN_OK, "a client's SETTINGS", "");
+        { bool said = false; pos = 0;
+          while (proven_h2_settings_next((proven_mem_view_t){ out.ptr + 33, f.length }, &pos, &st, &code) == PROVEN_OK) if (st.id == PROVEN_H2_SETTINGS_ENABLE_CONNECT_PROTOCOL) said = true;
+          PROVEN_TEST_ASSERT(!said, "a client never says ENABLE_CONNECT_PROTOCOL", ""); }
+        proven_h2_conn_destroy(c);
+        cc.enable_connect_protocol = false;
+
         cc.server = true; cc.initial_window = 1 << 20;
         c = conn_new(&cc);
         seen_t seen = { 0 };
@@ -1046,6 +1070,14 @@ int main(void) {
         verdict("6.5.2: ENABLE_PUSH of 2 is PROTOCOL_ERROR", V_CONN, PROVEN_H2_PROTOCOL_ERROR);
         put_setting(&g_buf, PROVEN_H2_SETTINGS_ENABLE_PUSH, 1);
         verdict("6.5.2: a client may say it accepts push; a server that never pushes takes it", V_IGNORED, 0);
+        put_setting(&g_buf, PROVEN_H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 2);
+        verdict("RFC 8441, 3: ENABLE_CONNECT_PROTOCOL of 2 is PROTOCOL_ERROR", V_CONN, PROVEN_H2_PROTOCOL_ERROR);
+        g_cfg.server = false;
+        put_setting(&g_buf, PROVEN_H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1); put_setting(&g_buf, PROVEN_H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1);
+        verdict("RFC 8441, 3: a server may say ENABLE_CONNECT_PROTOCOL of 1, and say it again", V_IGNORED, 0);
+        put_setting(&g_buf, PROVEN_H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1); put_setting(&g_buf, PROVEN_H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 0);
+        verdict("RFC 8441, 3: and may not take it back: 1 then 0 is PROTOCOL_ERROR", V_CONN, PROVEN_H2_PROTOCOL_ERROR);
+        g_cfg.server = true;
         put_setting(&g_buf, PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE, 0x80000000u);
         verdict("6.5.2: an initial window above 2^31-1 is FLOW_CONTROL_ERROR", V_CONN, PROVEN_H2_FLOW_CONTROL_ERROR);
         put_setting(&g_buf, PROVEN_H2_SETTINGS_MAX_FRAME_SIZE, 16383);
@@ -1114,6 +1146,17 @@ int main(void) {
         verdict("8.2.1: a field name with an uppercase letter is PROTOCOL_ERROR for the stream", V_STREAM, PROVEN_H2_PROTOCOL_ERROR);
         { static const proven_http_header_t h[] = { H(":method", "GET"), H(":scheme", "https") }; put_headers(&g_buf, 1, EH | ES, h, 2); }
         verdict("8.3.1: a request with no :path is PROTOCOL_ERROR for the stream", V_STREAM, PROVEN_H2_PROTOCOL_ERROR);
+        { static const proven_http_header_t h[] = { H(":method", "CONNECT"), H(":protocol", "websocket"), H(":scheme", "https"), H(":authority", "example.org"), H(":path", "/chat") };
+          put_headers(&g_buf, 1, EH, h, 5); }
+        verdict("RFC 8441, 4: an extended CONNECT to a server that did not offer it is PROTOCOL_ERROR for the stream", V_STREAM, PROVEN_H2_PROTOCOL_ERROR);
+        g_cfg.enable_connect_protocol = true;
+        { static const proven_http_header_t h[] = { H(":method", "CONNECT"), H(":protocol", "websocket"), H(":scheme", "https"), H(":authority", "example.org"), H(":path", "/chat") };
+          put_headers(&g_buf, 1, EH, h, 5); put_frame(&g_buf, PROVEN_H2_DATA, 0, 1, "abc", 3); }
+        verdict("RFC 8441, 4: to one that did, it is taken, and data follows on the stream", V_IGNORED, 0);
+        { static const proven_http_header_t h[] = { H(":method", "CONNECT"), H(":protocol", "websocket"), H(":scheme", "https"), H(":authority", "example.org") };
+          put_headers(&g_buf, 1, EH, h, 4); }
+        verdict("RFC 8441, 4: but not without :path", V_STREAM, PROVEN_H2_PROTOCOL_ERROR);
+        g_cfg.enable_connect_protocol = false;
         { static const proven_http_header_t h[] = { H(":method", "GET"), H(":scheme", "https"), H(":path", "/"), H("connection", "close") }; put_headers(&g_buf, 1, EH | ES, h, 4); }
         verdict("8.2.2: a connection field is PROTOCOL_ERROR for the stream", V_STREAM, PROVEN_H2_PROTOCOL_ERROR);
         { static const proven_http_header_t h[] = { H(":method", "POST"), H(":scheme", "https"), H(":path", "/"), H("content-length", "3") };

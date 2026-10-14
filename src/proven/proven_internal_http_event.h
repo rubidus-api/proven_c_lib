@@ -188,6 +188,17 @@ proven_result_size_t proven_http_event_h2_write_(proven_http_stream_t *stream, p
 proven_err_t proven_http_event_h2_end_(proven_http_stream_t *stream);
 proven_err_t proven_http_event_h2_flush_(proven_http_stream_t *stream);
 
+/* A WebSocket on an HTTP/2 stream (RFC 8441), for ws_event.c through the raw_* functions:
+ * begin answers 200 - with `headers` (at most six), and no END_STREAM - and hands the stream
+ * to `raw`; the rest are the HTTP/1.1 connection's raw operations, for a stream. */
+[[nodiscard]]
+proven_err_t proven_http_event_h2_raw_begin_(proven_http_stream_t *stream, void *raw, const proven_http_header_t *headers, proven_size_t count);
+bool proven_http_event_h2_raw_send_(proven_http_stream_t *stream, proven_mem_view_t a, proven_mem_view_t b);
+void proven_http_event_h2_raw_timer_(proven_http_stream_t *stream, proven_u32 ms);
+void proven_http_event_h2_raw_pause_(proven_http_stream_t *stream, bool paused);
+void proven_http_event_h2_raw_close_(proven_http_stream_t *stream);
+void proven_http_event_h2_raw_kill_(proven_http_stream_t *stream);
+
 /* The engine (h2_conn.c), for this server's driver only: a response head is queued whatever
  * output is waiting - see there for what bounds it instead. */
 struct proven_h2_conn;

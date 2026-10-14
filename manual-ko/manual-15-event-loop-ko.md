@@ -862,7 +862,10 @@ int main(void) {
 
     // ---- 루프 위의 서버, 자기 스레드에서 --------------------------------------------
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "루프");
-    proven_http_event_server_config_t config = { .on = { .on_request = on_request }, .ctx = &app };
+    /* HTTP/2도, 그리고 그 위의 WebSocket도(RFC 8441): HTTP/2를 말하는 클라이언트는 WebSocket을 그
+     * 연결의 스트림으로 연다. 위의 on_request는 둘 다에 같다 - 아래 실행이 쓰는 것은 이 프로그램의
+     * HTTP/1.1 클라이언트다. */
+    proven_http_event_server_config_t config = { .on = { .on_request = on_request }, .ctx = &app, .http2 = true, .http2_websocket = true };
     proven_http_event_server_t *server = NULL;
     proven_net_addr_t at;
     EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &config, &server) == PROVEN_OK &&
@@ -912,6 +915,27 @@ int main(void) {
     return EXAMPLE_OK();
 }
 ```
+
+### HTTP/2 위에서 (RFC 8441)
+
+`http2_websocket`을 켜면(`http2`와 함께) 서버는 첫 HTTP/2 설정에서 그렇다고 말하고, RFC 8441을 아는
+클라이언트는 WebSocket을 따로 연결을 만들지 않고 이미 가진 HTTP/2 연결의 스트림으로
+연다. **핸들러는 같다**: 요청은 CONNECT로, 경로를 대상으로, `:protocol` 필드를 맨 앞에 두고 `on_request`에
+오며, `proven_ws_check_request`가 그것을 알아보고(키는 비어 있다 - 없으므로), `proven_ws_event_accept`가
+101 대신 200으로 답한다. 위의 프로그램은 한 줄로 그것을 켠다. 그 프로그램 자신의 클라이언트는 HTTP/1.1이고,
+같은 서버가 그것도 계속 서비스한다.
+
+- **그런 WebSocket은 각각 스트림 하나를 쥔다** - `max_concurrent_streams`(기본 100) 중 하나 - 열려 있는
+  동안. WebSocket으로 가득한 연결은 새 요청을 거절한다.
+- 그 프레임은 DATA 프레임에 실려 가므로 HTTP/2의 흐름 제어가 WebSocket 자신의 것 아래에 있다:
+  `http2_window_bytes`는 WebSocket이 가져가기 전에 클라이언트가 보낼 수 있는 양이고, `on_writable`은
+  스트림의 출력이 움직였을 때 온다.
+- 끝은 close 핸드셰이크 뒤 양쪽의 END_STREAM이다. 스트림을 리셋하는 상대는 1006과 `PROVEN_ERR_RESET`으로
+  닫힌 WebSocket이다. 종료는 그것을 1001로 닫는다.
+- `http2_websocket`이 없으면 클라이언트는 시도해서는 안 되고(설정이 그렇게 말한다), 시도하는 스트림은
+  PROTOCOL_ERROR로 거절된다.
+- **여기 없는 것**: 이 라이브러리 자신의 HTTP/2 위 WebSocket 클라이언트 - `proven_ws_event_connect`는
+  전처럼 자기 연결을 만든다. Node의 HTTP/2 클라이언트와 대조해 시험했고, 브라우저로는 해 보지 않았다.
 
 ### 이쪽에서 만드는 연결
 

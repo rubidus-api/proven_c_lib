@@ -154,6 +154,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_h2_settings_next((proven_mem_view_t){ g_out + 9, 42 }, &pos, &s, &code) == PROVEN_ERR_EOF, "then PROVEN_ERR_EOF", "");
         static const struct { const char *what; proven_u16 id; proven_u32 value; proven_h2_error_t code; } bad[] = {
             { "ENABLE_PUSH of 2", PROVEN_H2_SETTINGS_ENABLE_PUSH, 2, PROVEN_H2_PROTOCOL_ERROR },
+            { "ENABLE_CONNECT_PROTOCOL of 2", PROVEN_H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 2, PROVEN_H2_PROTOCOL_ERROR },
             { "an initial window of 2^31", PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE, 0x80000000u, PROVEN_H2_FLOW_CONTROL_ERROR },
             { "a frame size of 16383", PROVEN_H2_SETTINGS_MAX_FRAME_SIZE, 16383, PROVEN_H2_PROTOCOL_ERROR },
             { "a frame size of 2^24", PROVEN_H2_SETTINGS_MAX_FRAME_SIZE, 16777216, PROVEN_H2_PROTOCOL_ERROR },
@@ -223,6 +224,12 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_h2_request_head(options, 4, &head) == PROVEN_OK && proven_u8str_view_eq(head.path, sv("*")), "OPTIONS for the server as a whole has the path *", "");
         proven_http_header_t connect[] = { { sv(":method"), sv("CONNECT") }, { sv(":authority"), sv("example.com:443") } };
         PROVEN_TEST_ASSERT(proven_h2_request_head(connect, 2, &head) == PROVEN_OK && head.scheme.size == 0 && head.path.size == 0, "CONNECT has a method and an authority and nothing else", "");
+        proven_http_header_t extended[] = { { sv(":method"), sv("CONNECT") }, { sv(":protocol"), sv("websocket") }, { sv(":scheme"), sv("https") },
+                                            { sv(":authority"), sv("example.com") }, { sv(":path"), sv("/chat") }, { sv("sec-websocket-version"), sv("13") } };
+        PROVEN_TEST_ASSERT(proven_h2_request_head(extended, 6, &head) == PROVEN_OK && head.protocol.size == 9 && memcmp(head.protocol.ptr, "websocket", 9) == 0 &&
+                           head.path.size == 5 && head.authority.size == 11 && head.field_count == 1,
+            "an extended CONNECT (RFC 8441): :protocol with CONNECT, and scheme, authority and path all there", "");
+        PROVEN_TEST_ASSERT(proven_h2_request_head(connect, 2, &head) == PROVEN_OK && head.protocol.size == 0, "a plain CONNECT names no protocol", "");
         proven_http_header_t other_scheme[] = { { sv(":method"), sv("GET") }, { sv(":scheme"), sv("ftp") }, { sv(":path"), sv("") } };
         PROVEN_TEST_ASSERT(proven_h2_request_head(other_scheme, 3, &head) == PROVEN_OK, "an empty path is malformed only for http and https", "");
 
@@ -238,7 +245,13 @@ int main(void) {
             { ":method twice", { { M }, { M }, { S }, { P } }, 4 },
             { ":path twice", { { M }, { S }, { P }, { P } }, 4 },
             { ":status in a request", { { M }, { S }, { P }, { ":status", "200" } }, 4 },
-            { "a pseudo-header field nobody defined", { { M }, { S }, { P }, { ":protocol", "websocket" } }, 4 },
+            { "a pseudo-header field nobody defined", { { M }, { S }, { P }, { ":tunnel", "x" } }, 4 },
+            { ":protocol with a method other than CONNECT", { { M }, { S }, { ":authority", "x" }, { P }, { ":protocol", "websocket" } }, 5 },
+            { "an empty :protocol", { { ":method", "CONNECT" }, { S }, { ":authority", "x" }, { P }, { ":protocol", "" } }, 5 },
+            { ":protocol twice", { { ":method", "CONNECT" }, { ":protocol", "websocket" }, { S }, { ":authority", "x" }, { ":protocol", "websocket" } }, 5 },
+            { "an extended CONNECT with no :path", { { ":method", "CONNECT" }, { ":protocol", "websocket" }, { S }, { ":authority", "x" } }, 4 },
+            { "an extended CONNECT with no :scheme", { { ":method", "CONNECT" }, { ":protocol", "websocket" }, { ":authority", "x" }, { P } }, 4 },
+            { "an extended CONNECT with no :authority", { { ":method", "CONNECT" }, { ":protocol", "websocket" }, { S }, { P } }, 4 },
             { "a pseudo-header field after an ordinary one", { { M }, { S }, { "accept", "*/*" }, { P } }, 4 },
             { "CONNECT with a path", { { ":method", "CONNECT" }, { ":authority", "x:443" }, { P } }, 3 },
             { "CONNECT with a scheme", { { ":method", "CONNECT" }, { ":authority", "x:443" }, { S } }, 3 },

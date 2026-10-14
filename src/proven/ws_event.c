@@ -409,9 +409,13 @@ proven_err_t proven_ws_event_accept(proven_http_stream_t *stream, const proven_h
     proven_u8str_view_t key;
     proven_err_t e = proven_ws_check_request(head, &key);
     if (e != PROVEN_OK) return e;
+    /* Over HTTP/2 there is no key, and nothing to compute from it (RFC 8441, section 5). */
+    const bool h2 = PROVEN_HTTP_EVENT_IS_H2_(stream);
     proven_byte_t accept[PROVEN_WS_ACCEPT_SIZE];
-    e = proven_ws_accept_key(key, accept);
-    if (e != PROVEN_OK) return e;
+    if (!h2) {
+        e = proven_ws_accept_key(key, accept);
+        if (e != PROVEN_OK) return e;
+    }
 
     /* Compression, when this side wants it and the client offered a form of it that can be met. */
     proven_byte_t extension[PROVEN_WS_DEFLATE_ANSWER_MAX];
@@ -421,21 +425,33 @@ proven_err_t proven_ws_event_accept(proven_http_stream_t *stream, const proven_h
                    proven_ws_deflate_accept(head, (proven_mem_mut_t){ .ptr = extension, .size = sizeof extension }, &extension_len, &window_bits) == PROVEN_OK;
     if (deflate && config->compress_window_bits != 0 && config->compress_window_bits < window_bits) window_bits = config->compress_window_bits;
 
+    /* Over HTTP/2 (RFC 8441) the answer is 200 with the same two optional fields, and no
+     * Upgrade, Connection or Sec-WebSocket-Accept: the stream is the connection. */
+    proven_http_header_t h2_fields[2];
+    proven_size_t h2_count = 0;
+    if (h2) {
+        if (config->subprotocol.size > 0) h2_fields[h2_count++] = (proven_http_header_t){ .name = ws_lit("sec-websocket-protocol"), .value = config->subprotocol };
+        if (deflate) h2_fields[h2_count++] = (proven_http_header_t){ .name = ws_lit("sec-websocket-extensions"), .value = { .ptr = extension, .size = extension_len } };
+    }
+
+    /* Over HTTP/1.1, the 101 as text. */
     proven_byte_t text[640];
     proven_mem_mut_t answer = { .ptr = text, .size = sizeof text };
     proven_size_t len = 0;
-    e = proven_http_write_status_line(answer, &len, 101, ws_lit(""));
-    proven_byte_t date[PROVEN_HTTP_DATE_SIZE];
-    if (e == PROVEN_OK && proven_http_date_format(proven_time_now(), date) == PROVEN_OK) {
-        e = proven_http_write_header(answer, &len, ws_lit("Date"), (proven_u8str_view_t){ .ptr = date, .size = sizeof date });
+    if (!h2) {
+        e = proven_http_write_status_line(answer, &len, 101, ws_lit(""));
+        proven_byte_t date[PROVEN_HTTP_DATE_SIZE];
+        if (e == PROVEN_OK && proven_http_date_format(proven_time_now(), date) == PROVEN_OK) {
+            e = proven_http_write_header(answer, &len, ws_lit("Date"), (proven_u8str_view_t){ .ptr = date, .size = sizeof date });
+        }
+        if (e == PROVEN_OK) e = proven_http_write_header(answer, &len, ws_lit("Upgrade"), ws_lit("websocket"));
+        if (e == PROVEN_OK) e = proven_http_write_header(answer, &len, ws_lit("Connection"), ws_lit("Upgrade"));
+        if (e == PROVEN_OK) e = proven_http_write_header(answer, &len, ws_lit("Sec-WebSocket-Accept"), (proven_u8str_view_t){ .ptr = accept, .size = sizeof accept });
+        if (e == PROVEN_OK && config->subprotocol.size > 0) e = proven_http_write_header(answer, &len, ws_lit("Sec-WebSocket-Protocol"), config->subprotocol);
+        if (e == PROVEN_OK && deflate) e = proven_http_write_header(answer, &len, ws_lit("Sec-WebSocket-Extensions"), (proven_u8str_view_t){ .ptr = extension, .size = extension_len });
+        if (e == PROVEN_OK) e = proven_http_write_head_end(answer, &len);
+        if (e != PROVEN_OK) return e == PROVEN_ERR_OUT_OF_BOUNDS ? PROVEN_ERR_INVALID_ARG : e;      /* a subprotocol too long to name */
     }
-    if (e == PROVEN_OK) e = proven_http_write_header(answer, &len, ws_lit("Upgrade"), ws_lit("websocket"));
-    if (e == PROVEN_OK) e = proven_http_write_header(answer, &len, ws_lit("Connection"), ws_lit("Upgrade"));
-    if (e == PROVEN_OK) e = proven_http_write_header(answer, &len, ws_lit("Sec-WebSocket-Accept"), (proven_u8str_view_t){ .ptr = accept, .size = sizeof accept });
-    if (e == PROVEN_OK && config->subprotocol.size > 0) e = proven_http_write_header(answer, &len, ws_lit("Sec-WebSocket-Protocol"), config->subprotocol);
-    if (e == PROVEN_OK && deflate) e = proven_http_write_header(answer, &len, ws_lit("Sec-WebSocket-Extensions"), (proven_u8str_view_t){ .ptr = extension, .size = extension_len });
-    if (e == PROVEN_OK) e = proven_http_write_head_end(answer, &len);
-    if (e != PROVEN_OK) return e == PROVEN_ERR_OUT_OF_BOUNDS ? PROVEN_ERR_INVALID_ARG : e;      /* a subprotocol too long to name */
 
     proven_allocator_t alloc = proven_http_event_raw_allocator_(stream);
     proven_result_mem_mut_t m = alloc.alloc_fn(alloc.ctx, sizeof(proven_ws_stream_t) + (deflate ? sizeof(ws_z_t) : 0), 16);
@@ -455,7 +471,8 @@ proven_err_t proven_ws_event_accept(proven_http_stream_t *stream, const proven_h
     proven_ws_decoder_init(&ws->dec, true, ws->max_message);
     if (deflate) proven_ws_decoder_allow_compressed(&ws->dec);
 
-    e = proven_http_event_raw_begin_(stream, ws, (proven_mem_view_t){ .ptr = text, .size = len });
+    e = h2 ? proven_http_event_h2_raw_begin_(stream, ws, h2_fields, h2_count)
+           : proven_http_event_raw_begin_(stream, ws, (proven_mem_view_t){ .ptr = text, .size = len });
     if (e != PROVEN_OK) { alloc.free_fn(alloc.ctx, ws); return e; }
     ws->conn = stream;
     ws_arm(ws);

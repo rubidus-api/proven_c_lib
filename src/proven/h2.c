@@ -120,7 +120,7 @@ proven_err_t proven_h2_settings_next(proven_mem_view_t payload, proven_size_t *p
     if (payload.size - *pos < 6) { *code = PROVEN_H2_FRAME_SIZE_ERROR; return PROVEN_ERR_INVALID_FORMAT; }
     const proven_byte_t *p = payload.ptr + *pos;
     proven_h2_setting_t s = { .id = (proven_u16)(((proven_u16)p[0] << 8) | p[1]), .value = h2_u32(p + 2) };
-    if (s.id == PROVEN_H2_SETTINGS_ENABLE_PUSH && s.value > 1) *code = PROVEN_H2_PROTOCOL_ERROR;
+    if ((s.id == PROVEN_H2_SETTINGS_ENABLE_PUSH || s.id == PROVEN_H2_SETTINGS_ENABLE_CONNECT_PROTOCOL) && s.value > 1) *code = PROVEN_H2_PROTOCOL_ERROR;
     else if (s.id == PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE && s.value > PROVEN_H2_MAX_WINDOW) *code = PROVEN_H2_FLOW_CONTROL_ERROR;
     else if (s.id == PROVEN_H2_SETTINGS_MAX_FRAME_SIZE && (s.value < PROVEN_H2_MIN_MAX_FRAME_SIZE || s.value > PROVEN_H2_MAX_MAX_FRAME_SIZE)) *code = PROVEN_H2_PROTOCOL_ERROR;
     if (*code != PROVEN_H2_NO_ERROR) return PROVEN_ERR_INVALID_FORMAT;
@@ -278,7 +278,7 @@ static bool h2_ordinary_ok(const proven_http_header_t *h, bool request) {
 proven_err_t proven_h2_request_head(const proven_http_header_t *headers, proven_size_t count, proven_h2_request_head_t *out) {
     if (!out || (count > 0 && !headers)) return PROVEN_ERR_INVALID_ARG;
     *out = (proven_h2_request_head_t){ 0 };
-    bool have_method = false, have_scheme = false, have_authority = false, have_path = false;
+    bool have_method = false, have_scheme = false, have_authority = false, have_path = false, have_protocol = false;
     proven_size_t i = 0;
     for (; i < count && headers[i].name.size > 0 && headers[i].name.ptr && headers[i].name.ptr[0] == ':'; ++i) {
         const proven_http_header_t *h = &headers[i];
@@ -287,6 +287,7 @@ proven_err_t proven_h2_request_head(const proven_http_header_t *headers, proven_
         else if (h2_is(h->name, ":scheme")) { if (have_scheme) return PROVEN_ERR_INVALID_FORMAT; have_scheme = true; out->scheme = h->value; }
         else if (h2_is(h->name, ":authority")) { if (have_authority) return PROVEN_ERR_INVALID_FORMAT; have_authority = true; out->authority = h->value; }
         else if (h2_is(h->name, ":path")) { if (have_path) return PROVEN_ERR_INVALID_FORMAT; have_path = true; out->path = h->value; }
+        else if (h2_is(h->name, ":protocol")) { if (have_protocol) return PROVEN_ERR_INVALID_FORMAT; have_protocol = true; out->protocol = h->value; }
         else return PROVEN_ERR_INVALID_FORMAT;         /* :status, or one nobody defined */
     }
     out->fields = headers + i;
@@ -296,6 +297,13 @@ proven_err_t proven_h2_request_head(const proven_http_header_t *headers, proven_
         if (!h2_ordinary_ok(&headers[i], true)) return PROVEN_ERR_INVALID_FORMAT;
     }
     if (!have_method || out->method.size == 0) return PROVEN_ERR_INVALID_FORMAT;
+    if (have_protocol) {
+        /* RFC 8441, section 4: an extended CONNECT names a protocol, and its target is a URI -
+         * scheme, authority and path all there. Only CONNECT takes it. */
+        if (!h2_is(out->method, "CONNECT") || out->protocol.size == 0) return PROVEN_ERR_INVALID_FORMAT;
+        if (!have_scheme || out->scheme.size == 0 || !have_path || out->path.size == 0 || !have_authority || out->authority.size == 0) return PROVEN_ERR_INVALID_FORMAT;
+        return PROVEN_OK;
+    }
     if (h2_is(out->method, "CONNECT")) {
         /* RFC 9113, 8.5: the authority is the target, and there is no scheme or path. */
         if (!have_authority || out->authority.size == 0 || have_scheme || have_path) return PROVEN_ERR_INVALID_FORMAT;

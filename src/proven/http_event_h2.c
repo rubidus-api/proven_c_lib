@@ -63,6 +63,13 @@ typedef struct h2s {
     bool end_asked;                    /* END_STREAM goes when `out` has drained */
     bool engine_done;                  /* the engine has seen this side's end already (a response with no body) */
     bool window_shut;                  /* the engine took less than it was offered: the peer's window, and only the engine knows when it opens */
+    bool tunnel;                       /* an extended CONNECT (RFC 8441): what follows the head is a protocol's, not a body */
+    /* A WebSocket on this stream, once its handler accepted the extended CONNECT: its object,
+     * whose first member is its operations (proven_internal_http_event.h), and its timer. Null
+     * when there is none, and from the moment it let go of the stream (close, kill). */
+    void *raw;
+    proven_loop_timer_t timer;
+    bool told_drain;                   /* the WebSocket was told the server is ending */
 } h2s_t;
 
 struct h2d {
@@ -162,9 +169,15 @@ static void s_finish(h2s_t *s, proven_err_t why) {
     if (s->zip) { proven_deflate_destroy(s->zip); s->zip = (void *)0; }
     if (s->held) { a.free_fn(a.ctx, s->held); s->held = (void *)0; s->held_len = s->held_cap = 0; }
     if (s->out) { a.free_fn(a.ctx, s->out); s->out = (void *)0; s->out_len = s->out_off = s->out_cap = 0; }
+    proven_loop_timer_cancel(sv->loop, &s->timer);
     if (s->active) {
         s->active = false;
         if (sv->cfg.on.on_done) sv->cfg.on.on_done(sv->cfg.ctx, (proven_http_stream_t *)(void *)s, why);
+    }
+    if (s->raw) {
+        void *raw = s->raw;
+        s->raw = (void *)0;
+        (*(const proven_http_event_raw_ops_t *const *)raw)->on_closed(raw, why);
     }
     s_leave(s);
 }
@@ -202,7 +215,7 @@ static proven_size_t d_queued(const h2d_t *d) {
 
 /* A request's body is owed from now: it has `body_timeout_ms` to say something. */
 static void s_expect_body(h2s_t *s) {
-    s->body_due = s->in_done || s->paused ? 0 : proven_time_monotonic_now() + (proven_time_t)s->h.server->cfg.body_timeout_ms * 1000000;
+    s->body_due = s->in_done || s->paused || s->tunnel ? 0 : proven_time_monotonic_now() + (proven_time_t)s->h.server->cfg.body_timeout_ms * 1000000;
 }
 
 /* One timer, for whatever the connection is waiting for. Output that does not move and a
@@ -264,6 +277,7 @@ static void s_push(h2s_t *s) {
         proven_result_size_t r = proven_h2_conn_send_data(d->engine, s->id, (proven_mem_view_t){ .ptr = s->out + s->out_off, .size = n }, false);
         if (r.err != PROVEN_OK) { s_finish(s, PROVEN_ERR_RESET); break; }
         s->out_off += r.value;
+        if (r.value > 0 && s->raw) s->want_writable = true;     /* output moved: the WebSocket may want to know */
         if (d->sharing) d->share -= r.value < d->share ? r.value : d->share;
         if (r.value < n) { s->window_shut = true; break; }      /* the peer's window: the engine says when */
     }
@@ -278,7 +292,8 @@ static void s_push(h2s_t *s) {
                 proven_http_event_raw_again_(d->conn);
             } else {
                 s->want_writable = false;
-                if (sv->cfg.on.on_writable) sv->cfg.on.on_writable(sv->cfg.ctx, (proven_http_stream_t *)(void *)s);
+                if (s->raw) (*(const proven_http_event_raw_ops_t *const *)s->raw)->on_progress(s->raw);
+                else if (sv->cfg.on.on_writable) sv->cfg.on.on_writable(sv->cfg.ctx, (proven_http_stream_t *)(void *)s);
             }
         }
     }
@@ -299,6 +314,10 @@ static void d_request(h2d_t *d, const proven_h2_event_t *ev) {
     proven_http_event_server_t *sv = d->server;
     const proven_h2_request_head_t *rq = &ev->request;
     const bool connect = rq->path.size == 0 && rq->scheme.size == 0;
+    /* An extended CONNECT (RFC 8441) - which the engine takes only when the server offered it.
+     * The handler sees CONNECT, its path as the target, and `:protocol` as the first field:
+     * that is what proven_ws_check_request looks for. */
+    const bool tunnel = rq->protocol.size > 0;
     /* The fields are copied into the server's array before the handler sees them - its own
      * answer takes the connection, and the event's list is not promised past that. */
     bool has_host = false, has_length = false, bad = false;
@@ -322,14 +341,16 @@ static void d_request(h2d_t *d, const proven_h2_event_t *ev) {
     /* A handler tells whether a body is coming from the fields, as HTTP/1.1 taught it to:
      * a length, or "chunked". HTTP/2 may send a body with neither - the frames say where it
      * ends - so one of unannounced length is given the field that means exactly that. */
-    const proven_size_t add_chunked = !ev->end_stream && !has_length ? 1 : 0;
-    if (rq->field_count + add_host + add_chunked > sv->cfg.max_headers) { d_refuse(d, ev->stream_id, "431"); return; }
+    const proven_size_t add_chunked = !ev->end_stream && !has_length && !tunnel ? 1 : 0;
+    const proven_size_t add_protocol = tunnel ? 1 : 0;
+    if (rq->field_count + add_host + add_chunked + add_protocol > sv->cfg.max_headers) { d_refuse(d, ev->stream_id, "431"); return; }
     if (length > sv->cfg.max_body_bytes) { d_refuse(d, ev->stream_id, "413"); return; }
 
     h2s_t *s = h2_alloc(sv->alloc, sizeof *s);
     if (!s) { d_refuse(d, ev->stream_id, "503"); return; }
     for (proven_size_t i = 0; i < sizeof *s; ++i) ((proven_byte_t *)s)[i] = 0;
     proven_size_t n = 0;
+    if (add_protocol) sv->headers[n++] = (proven_http_header_t){ .name = h2_lit(":protocol"), .value = rq->protocol };
     if (add_host) sv->headers[n++] = (proven_http_header_t){ .name = h2_lit("host"), .value = rq->authority };
     for (proven_size_t i = 0; i < rq->field_count; ++i) sv->headers[n++] = rq->fields[i];
     if (add_chunked) sv->headers[n++] = (proven_http_header_t){ .name = h2_lit("transfer-encoding"), .value = h2_lit("chunked") };
@@ -346,6 +367,7 @@ static void d_request(h2d_t *d, const proven_h2_event_t *ev) {
     s->response_left = PROVEN_HTTP_EVENT_LENGTH_UNKNOWN;
     s->accepts_gzip = proven_http_accepts_coding(sv->headers, n, PROVEN_HTTP_CODING_GZIP);
     s->in_done = ev->end_stream;
+    s->tunnel = tunnel;
     s_expect_body(s);
     s->active = true;
     s->next = d->streams;
@@ -365,10 +387,20 @@ static void d_request(h2d_t *d, const proven_h2_event_t *ev) {
 }
 
 /* A piece of a request body, or its end. */
+static void s_raw_in(h2s_t *s, proven_mem_view_t piece, bool last);
+
 static void d_body(h2d_t *d, h2s_t *s, proven_mem_view_t piece, bool last) {
     proven_http_event_server_t *sv = d->server;
+    if (s->raw) { s_raw_in(s, piece, last); return; }
+    if (s->tunnel) {
+        /* An extended CONNECT whose handler has not taken it yet: what follows is the
+         * protocol's, kept - not consumed - for when it does. */
+        if (!h2_append(sv->alloc, &s->held, &s->held_len, &s->held_cap, piece.ptr, piece.size)) { s_reset(s, PROVEN_H2_INTERNAL_ERROR, PROVEN_ERR_NOMEM); return; }
+        if (last) s->in_done = true;
+        return;
+    }
     s->body_seen += piece.size;
-    if (s->body_seen > sv->cfg.max_body_bytes) {
+    if (!s->tunnel && s->body_seen > sv->cfg.max_body_bytes) {
         if (!s->response_begun) {
             /* A complete answer to an unfinished request tells the client to stop sending. */
             proven_http_header_t h[1] = { { .name = h2_lit(":status"), .value = h2_lit("413") } };
@@ -549,7 +581,31 @@ static proven_size_t h2_on_input(void *raw, proven_mem_mut_t in) {
     return dead || over ? in.size : pos;           /* what was not taken is offered again when the connection is read again */
 }
 
-static void h2_on_progress(void *raw) { d_pump(raw); }
+static void s_raw_feed(h2s_t *s);
+
+/* Each WebSocket stream that has input it can take now - after a resume, or input that came
+ * before it was accepted. A callback may end any stream: while the one fed is still open its
+ * `next` is live, otherwise the walk starts again from the head. */
+static void d_raw_feed_all(h2d_t *d) {
+    for (h2s_t *s = d->streams; s && !d->dead;) {
+        if (s->dead || !s->raw || s->paused || s->held_len == 0) { s = s->next; continue; }
+        s_enter(s);
+        s_raw_feed(s);
+        const bool open = !s->dead;
+        h2s_t *next = open ? s->next : (void *)0;
+        s_leave(s);
+        s = open ? next : d->streams;
+    }
+}
+
+static void h2_on_progress(void *raw) {
+    h2d_t *d = raw;
+    if (d->dead) return;
+    d_enter(d);
+    d_raw_feed_all(d);
+    d_pump(d);
+    d_leave(d);
+}
 
 static void h2_on_timer(void *raw) {
     h2d_t *d = raw;
@@ -621,9 +677,30 @@ static void h2_on_shutdown(void *raw) {
     d_leave(d);
 }
 
+/* The server is ending: each WebSocket on this connection is told, once (it closes with 1001). */
+static void h2_on_drain(void *raw) {
+    h2d_t *d = raw;
+    if (d->dead) return;
+    d_enter(d);
+    for (h2s_t *s = d->streams; s && !d->dead;) {
+        if (s->dead || !s->raw || s->told_drain) { s = s->next; continue; }
+        s->told_drain = true;
+        const proven_http_event_raw_ops_t *ops = *(const proven_http_event_raw_ops_t *const *)s->raw;
+        if (!ops->on_drain) { s = s->next; continue; }
+        s_enter(s);
+        ops->on_drain(s->raw);
+        const bool open = !s->dead;
+        h2s_t *next = open ? s->next : (void *)0;
+        s_leave(s);
+        s = open ? next : d->streams;
+    }
+    d_pump(d);
+    d_leave(d);
+}
+
 static const proven_http_event_raw_ops_t h2_ops = {
     .on_input = h2_on_input, .on_progress = h2_on_progress, .on_timer = h2_on_timer, .on_closed = h2_on_closed,
-    .on_eof = h2_on_eof, .on_shutdown = h2_on_shutdown,
+    .on_eof = h2_on_eof, .on_shutdown = h2_on_shutdown, .on_drain = h2_on_drain,
 };
 
 /* RFC 9113, section 9.2: TLS 1.2 at least, and of 1.2 only the suites that keep forward
@@ -652,6 +729,7 @@ proven_err_t proven_http_event_h2_take_(proven_http_stream_t *conn) {
         .max_concurrent_streams = (proven_u32)(sv->cfg.max_concurrent_streams > 100000 ? 100000 : sv->cfg.max_concurrent_streams),
         .max_header_list_bytes = list,
         .initial_window = (proven_u32)sv->cfg.http2_window_bytes,
+        .enable_connect_protocol = sv->cfg.http2_websocket,
         /* Twice the server's bound: the first half is for bodies, which this driver stops
          * offering at the bound; the rest is room for response heads and the protocol's own
          * answers, so that neither is refused merely because a body filled the first. */
@@ -1004,6 +1082,168 @@ proven_size_t proven_http_event_h2_buffered_(const proven_http_stream_t *stream)
     const h2s_t *s = h2s_of_const(stream);
     if (s->dead) return 0;
     return s_out_pending(s) + d_queued(s->d);
+}
+
+// -----------------------------------------------------------------------------
+// A WebSocket on a stream (RFC 8441): what ws_event.c's transport asks of one
+// -----------------------------------------------------------------------------
+
+/* What arrived for the WebSocket, offered to it - all of it, unless it pauses. Input goes into
+ * `held` first: the WebSocket unmasks in place, and an event's data is the engine's. What it
+ * took is reported as consumed, so the peer's window opens by that much and no more. */
+static void s_raw_feed(h2s_t *s) {
+    h2d_t *d = s->d;
+    s_enter(s);
+    while (s->raw && !s->dead && !s->paused && s->held_len > 0) {
+        void *raw = s->raw;
+        proven_size_t took = (*(const proven_http_event_raw_ops_t *const *)raw)->on_input(raw, (proven_mem_mut_t){ .ptr = s->held, .size = s->held_len });
+        if (s->dead) break;
+        if (took > s->held_len) took = s->held_len;
+        for (proven_size_t i = took; i < s->held_len; ++i) s->held[i - took] = s->held[i];
+        s->held_len -= took;
+        if (!d->dead) proven_h2_conn_consumed(d->engine, s->id, took);
+        if (took == 0) break;                      /* it waits for the rest of a frame */
+    }
+    /* The peer ended its side and everything it sent has been taken: for the WebSocket that is
+     * the end of its input, as a closed socket is on HTTP/1.1. This side ends too. */
+    if (s->raw && !s->dead && s->in_done && s->held_len == 0) {
+        void *raw = s->raw;
+        s->raw = (void *)0;
+        proven_loop_timer_cancel(s->h.server->loop, &s->timer);
+        (*(const proven_http_event_raw_ops_t *const *)raw)->on_closed(raw, PROVEN_ERR_EOF);
+        if (!s->dead) { s->end_asked = true; s_push(s); }
+    }
+    s_leave(s);
+}
+
+static void s_raw_in(h2s_t *s, proven_mem_view_t piece, bool last) {
+    if (!h2_append(s->h.server->alloc, &s->held, &s->held_len, &s->held_cap, piece.ptr, piece.size)) { s_reset(s, PROVEN_H2_INTERNAL_ERROR, PROVEN_ERR_NOMEM); return; }
+    if (last) s->in_done = true;
+    s_raw_feed(s);
+}
+
+proven_err_t proven_http_event_h2_raw_begin_(proven_http_stream_t *stream, void *raw, const proven_http_header_t *headers, proven_size_t count) {
+    h2s_t *s = h2s_of(stream);
+    if (!raw || count > 6 || (count > 0 && !headers)) return PROVEN_ERR_INVALID_ARG;
+    if (s->dead || s->d->dead || !s->active || !s->tunnel || s->response_begun) return PROVEN_ERR_INVALID_STATE;
+    h2d_t *d = s->d;
+    proven_http_event_server_t *sv = s->h.server;
+    proven_http_header_t list[7];
+    list[0] = (proven_http_header_t){ .name = h2_lit(":status"), .value = h2_lit("200") };
+    for (proven_size_t i = 0; i < count; ++i) list[i + 1] = headers[i];
+    s_enter(s);
+    d_enter(d);
+    d->calls++;
+    /* 200 and no END_STREAM: the stream goes on, as the WebSocket's (RFC 8441, section 5). */
+    proven_err_t e = proven_h2_conn_submit_response(d->engine, s->id, list, count + 1, false);
+    if (e == PROVEN_OK) {
+        s->response_begun = true;
+        s->active = false;                         /* the HTTP exchange is over */
+        if (sv->cfg.on.on_done) sv->cfg.on.on_done(sv->cfg.ctx, stream, PROVEN_OK);
+        d_pump(d);
+        if (s->dead || d->dead) e = PROVEN_ERR_RESET;
+        else {
+            s->user = (void *)0;
+            s->raw = raw;
+            /* Input that came before this is fed from the loop, once the caller has the object. */
+            if (s->held_len > 0 || s->in_done) proven_http_event_raw_again_(d->conn);
+        }
+    } else {
+        e = e == PROVEN_ERR_NOMEM ? PROVEN_ERR_NOMEM : PROVEN_ERR_RESET;
+    }
+    d->calls--;
+    d_leave(d);
+    s_leave(s);
+    return e;
+}
+
+bool proven_http_event_h2_raw_send_(proven_http_stream_t *stream, proven_mem_view_t a, proven_mem_view_t b) {
+    h2s_t *s = h2s_of(stream);
+    if (s->dead || s->d->dead) return false;
+    h2d_t *d = s->d;
+    proven_allocator_t al = s->h.server->alloc;
+    s_enter(s);
+    d_enter(d);
+    d->calls++;
+    /* Both parts are queued together, so that a frame's header and payload stay in order. */
+    const bool ok = h2_append(al, &s->out, &s->out_len, &s->out_cap, a.ptr, a.size) && h2_append(al, &s->out, &s->out_len, &s->out_cap, b.ptr, b.size);
+    if (!ok) s_reset(s, PROVEN_H2_INTERNAL_ERROR, PROVEN_ERR_NOMEM);
+    else s_push(s);
+    d_pump(d);
+    const bool alive = ok && !s->dead;
+    d->calls--;
+    d_leave(d);
+    s_leave(s);
+    return alive;
+}
+
+static void s_raw_timer(void *ctx) {
+    h2s_t *s = ctx;
+    if (s->dead || !s->raw) return;
+    h2d_t *d = s->d;
+    s_enter(s);
+    d_enter(d);
+    (*(const proven_http_event_raw_ops_t *const *)s->raw)->on_timer(s->raw);
+    d_pump(d);
+    d_leave(d);
+    s_leave(s);
+}
+
+void proven_http_event_h2_raw_timer_(proven_http_stream_t *stream, proven_u32 ms) {
+    h2s_t *s = h2s_of(stream);
+    if (s->dead) return;
+    if (ms == 0) proven_loop_timer_cancel(s->h.server->loop, &s->timer);
+    else proven_loop_timer_set(s->h.server->loop, &s->timer, ms, s_raw_timer, s);
+}
+
+void proven_http_event_h2_raw_pause_(proven_http_stream_t *stream, bool paused) {
+    h2s_t *s = h2s_of(stream);
+    if (s->dead || s->paused == paused) return;
+    s->paused = paused;
+    if (paused || s->held_len == 0) return;
+    /* As on HTTP/1.1: what waited is given at once. */
+    h2d_t *d = s->d;
+    s_enter(s);
+    d_enter(d);
+    s_raw_feed(s);
+    d_pump(d);
+    d_leave(d);
+    s_leave(s);
+}
+
+/* The WebSocket lets go: politely - its output, then END_STREAM - or at once, with a reset.
+ * Nothing is called on it after either. */
+void proven_http_event_h2_raw_close_(proven_http_stream_t *stream) {
+    h2s_t *s = h2s_of(stream);
+    if (s->dead) return;
+    s->raw = (void *)0;
+    proven_loop_timer_cancel(s->h.server->loop, &s->timer);
+    h2d_t *d = s->d;
+    s_enter(s);
+    d_enter(d);
+    d->calls++;
+    s->end_asked = true;
+    s_push(s);
+    d_pump(d);
+    d->calls--;
+    d_leave(d);
+    s_leave(s);
+}
+
+void proven_http_event_h2_raw_kill_(proven_http_stream_t *stream) {
+    h2s_t *s = h2s_of(stream);
+    if (s->dead) return;
+    s->raw = (void *)0;
+    proven_loop_timer_cancel(s->h.server->loop, &s->timer);
+    h2d_t *d = s->d;
+    s_enter(s);
+    d_enter(d);
+    d->calls++;
+    s_reset(s, PROVEN_H2_CANCEL, PROVEN_OK);
+    d_pump(d);
+    d->calls--;
+    d_leave(d);
+    s_leave(s);
 }
 
 #endif

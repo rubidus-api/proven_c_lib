@@ -18,6 +18,30 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **WebSocket over HTTP/2 (RFC 8441) on the event-driven server.** With `http2_websocket`
+  (beside `http2`) in its configuration, the server says `SETTINGS_ENABLE_CONNECT_PROTOCOL`,
+  and a client that knows RFC 8441 opens its WebSocket as a stream of its HTTP/2 connection.
+  The handler does not change: the request reaches `on_request` as CONNECT with its path and a
+  `:protocol` field first, `proven_ws_check_request` recognises it (its key is empty: there is
+  none), and `proven_ws_event_accept` answers 200. Each such WebSocket holds a stream for its
+  life; its end is END_STREAM from each side, a reset is 1006, and a shutdown closes it with
+  1001. Tested against Node's HTTP/2 client and the `ws` package's frame reader; no browser was
+  tried. Not here: this library's WebSocket client over HTTP/2.
+- In `h2.h`: `PROVEN_H2_SETTINGS_ENABLE_CONNECT_PROTOCOL`; `enable_connect_protocol` in
+  `proven_h2_config_t` (a server takes extended CONNECT, and ends such a stream from its side
+  with END_STREAM, not a reset); `protocol` at the end of `proven_h2_request_head_t`. Both
+  structs grew by a field. `proven_h2_request_head` accepts `:protocol` with CONNECT when
+  scheme, authority and path are present; a peer's ENABLE_CONNECT_PROTOCOL must be 0 or 1 and,
+  once 1, may not become 0.
+
+### Changed
+
+- `proven_ws_check_request` gives an empty key for an HTTP/2 request; code that answered
+  101 with `proven_ws_accept_key(key)` on the event-driven server never saw one before.
+- Chapter 15's WebSocket server example turns on HTTP/2 and WebSocket over it.
+
 ## [0.55.0] - 2026-10-14
 
 ### Added

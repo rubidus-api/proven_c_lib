@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1276 aliases: 937 lowercase `xcv_` names and 339 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1277 aliases: 937 lowercase `xcv_` names and 340 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -199,6 +199,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_H2_REFUSED_STREAM` | `PROVEN_H2_REFUSED_STREAM` |
 | `XCV_H2_RST_STREAM` | `PROVEN_H2_RST_STREAM` |
 | `XCV_H2_SETTINGS` | `PROVEN_H2_SETTINGS` |
+| `XCV_H2_SETTINGS_ENABLE_CONNECT_PROTOCOL` | `PROVEN_H2_SETTINGS_ENABLE_CONNECT_PROTOCOL` |
 | `XCV_H2_SETTINGS_ENABLE_PUSH` | `PROVEN_H2_SETTINGS_ENABLE_PUSH` |
 | `XCV_H2_SETTINGS_HEADER_TABLE_SIZE` | `PROVEN_H2_SETTINGS_HEADER_TABLE_SIZE` |
 | `XCV_H2_SETTINGS_INITIAL_WINDOW_SIZE` | `PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE` |

@@ -20,7 +20,8 @@ enum {
     ST_BLOCKED = 0x10,                     /* send_data was cut short */
     ST_HBLOCKED = 0x20,                    /* headers were refused for the output bound */
     ST_NO_BODY = 0x40,                     /* a client: the request was HEAD, so content-length describes no body */
-    ST_UNMAPPED = 0x80                     /* its slot in the map was taken when it came: it is found by walking */
+    ST_UNMAPPED = 0x80,                    /* its slot in the map was taken when it came: it is found by walking */
+    ST_TUNNEL = 0x100                      /* a server: an extended CONNECT (RFC 8441) - its end is END_STREAM from each side, not a reset */
 };
 
 typedef struct {
@@ -85,6 +86,8 @@ struct proven_h2_conn {
     proven_u32 cur, expect_cont;
 
     bool server, fin, drop, end_headers;
+    bool connect_protocol;                 /* a server that said SETTINGS_ENABLE_CONNECT_PROTOCOL: it takes `:protocol` */
+    bool peer_connect_protocol;            /* the peer said it, with 1: it may not take it back */
     bool got_settings, settings_acked, peer_table_set;
     bool goaway_recv, goaway_sent, closed, reported, oom;
     bool hbuf_lent;                        /* hbuf is the caller's, and stays */
@@ -389,6 +392,8 @@ static void h2c_local_end(proven_h2_conn_t *c, h2c_stream_t *s) {
     s->flags |= ST_LOCAL_END;
     if ((s->flags & ST_REMOTE_END) != 0) { h2c_remove(c, s, true, RING_DONE); return; }
     if (!c->server) return;
+    /* A tunnel's end is END_STREAM from both sides (RFC 8441, section 5): wait for the peer's. */
+    if ((s->flags & ST_TUNNEL) != 0) return;
     /* A response that is complete before its request: the rest is not wanted (section 8.1). */
     h2c_q_rst(c, s->id, PROVEN_H2_NO_ERROR, false);
     h2c_remove(c, s, true, RING_OURS);
@@ -523,6 +528,7 @@ static void h2c_on_block(proven_h2_conn_t *c, proven_mem_view_t block, proven_h2
         proven_h2_request_head_t head;
         proven_u64 length = H2C_NO_LENGTH;
         if (too_big || proven_h2_request_head(fields, count, &head) != PROVEN_OK
+            || (head.protocol.size > 0 && !c->connect_protocol)        /* an extended CONNECT this side never offered (RFC 8441, section 4) */
             || !h2c_content_length(head.fields, head.field_count, &length) || (fin && length != H2C_NO_LENGTH && length != 0)) {
             h2c_stream_fault(c, id, (void *)0, PROVEN_H2_PROTOCOL_ERROR, !fin, ev);
             return;
@@ -531,6 +537,7 @@ static void h2c_on_block(proven_h2_conn_t *c, proven_mem_view_t block, proven_h2
         if (!s) { c->oom = c->closed = true; c->close_code = PROVEN_H2_INTERNAL_ERROR; return; }
         s->expect = length;
         if (fin) s->flags |= ST_REMOTE_END;
+        if (head.protocol.size > 0) s->flags |= ST_TUNNEL;
         c->last_acted = id;
         h2c_event_stream(ev, PROVEN_H2_EVENT_HEADERS, s);
         ev->end_stream = fin;
@@ -613,6 +620,11 @@ static void h2c_apply_setting(proven_h2_conn_t *c, proven_h2_setting_t st) {
             break;
         case PROVEN_H2_SETTINGS_MAX_HEADER_LIST_SIZE:
             c->peer_list = st.value;
+            break;
+        case PROVEN_H2_SETTINGS_ENABLE_CONNECT_PROTOCOL:
+            /* RFC 8441, section 3: said once with 1, it may not be withdrawn. */
+            if (c->peer_connect_protocol && st.value == 0) h2c_fail(c, PROVEN_H2_PROTOCOL_ERROR);
+            if (st.value == 1) c->peer_connect_protocol = true;
             break;
         default:
             break;                                         /* a setting this side does not know is ignored */
@@ -1055,7 +1067,7 @@ proven_err_t proven_h2_conn_create(const proven_h2_config_t *config, proven_h2_c
     if (m.err != PROVEN_OK) return PROVEN_ERR_NOMEM;
     proven_h2_conn_t *c = (proven_h2_conn_t *)(void *)m.value.ptr;
     *c = (proven_h2_conn_t){
-        .alloc = config->alloc, .server = config->server,
+        .alloc = config->alloc, .server = config->server, .connect_protocol = config->server && config->enable_connect_protocol,
         .cfg_streams = streams, .cfg_window = window, .cfg_frame = frame, .cfg_list = list, .cfg_table = table,
         .cfg_debt = config->max_reset_debt ? config->max_reset_debt : 100, .cfg_out = bound,
         .peer_streams = 0xffffffffu, .peer_window = PROVEN_H2_DEFAULT_WINDOW, .peer_frame = PROVEN_H2_MIN_MAX_FRAME_SIZE,
@@ -1068,7 +1080,7 @@ proven_err_t proven_h2_conn_create(const proven_h2_config_t *config, proven_h2_c
 
     /* The opening: a client's preface, then this side's settings - only those that differ
      * from the protocol's defaults, and for a client the one that forbids push. */
-    proven_h2_setting_t st[6];
+    proven_h2_setting_t st[7];
     proven_size_t n = 0;
     if (table != PROVEN_HPACK_DEFAULT_TABLE_BYTES) st[n++] = (proven_h2_setting_t){ PROVEN_H2_SETTINGS_HEADER_TABLE_SIZE, table };
     if (!c->server) st[n++] = (proven_h2_setting_t){ PROVEN_H2_SETTINGS_ENABLE_PUSH, 0 };
@@ -1076,6 +1088,7 @@ proven_err_t proven_h2_conn_create(const proven_h2_config_t *config, proven_h2_c
     if (window != PROVEN_H2_DEFAULT_WINDOW) st[n++] = (proven_h2_setting_t){ PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE, window };
     if (frame != PROVEN_H2_MIN_MAX_FRAME_SIZE) st[n++] = (proven_h2_setting_t){ PROVEN_H2_SETTINGS_MAX_FRAME_SIZE, frame };
     st[n++] = (proven_h2_setting_t){ PROVEN_H2_SETTINGS_MAX_HEADER_LIST_SIZE, list };
+    if (c->connect_protocol) st[n++] = (proven_h2_setting_t){ PROVEN_H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1 };
     if (!h2c_out_reserve(c, PROVEN_H2_PREFACE_SIZE + 9 + 6 * n + 13)) { proven_h2_conn_destroy(c); return PROVEN_ERR_NOMEM; }
     if (!c->server) {
         h2c_copy(c->out, (const proven_byte_t *)PROVEN_H2_PREFACE, PROVEN_H2_PREFACE_SIZE);

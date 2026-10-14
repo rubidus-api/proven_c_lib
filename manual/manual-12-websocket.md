@@ -426,7 +426,7 @@ from one loop, or on a target with no sockets at all.
 |---|---|---|
 | `proven_ws_make_key(random, out)` | A client's `Sec-WebSocket-Key` (24 characters) from 16 random bytes you supply. | none. |
 | `proven_ws_accept_key(key, out)` | The `Sec-WebSocket-Accept` value (28 characters) that answers a key. | `proven_err_t`: `INVALID_FORMAT` unless the key is 24 characters of Base64 for 16 bytes. |
-| `proven_ws_check_request(&request, &key)` | A server's check of a parsed request. | `proven_err_t`: `PROVEN_OK` - answer 101; `NOT_FOUND` - not a WebSocket upgrade; `UNSUPPORTED` - another version, answer 426 with `Sec-WebSocket-Version: 13`; `INVALID_FORMAT` - answer 400. |
+| `proven_ws_check_request(&request, &key)` | A server's check of a parsed request - also an HTTP/2 extended CONNECT as the event-driven server presents it (Chapter 15, section 11), whose `key` is empty. | `proven_err_t`: `PROVEN_OK` - answer 101 (over HTTP/2, 200: `proven_ws_event_accept` does either); `NOT_FOUND` - not a WebSocket upgrade; `UNSUPPORTED` - another version, answer 426 with `Sec-WebSocket-Version: 13`; `INVALID_FORMAT` - answer 400. |
 | `proven_ws_request_offers(&request, name)` | Whether the request offers a subprotocol, compared exactly. | `bool`. |
 | `proven_ws_check_origin(&request, allowed, count)` | Whether the request's `Origin` is one of the origins served (section 2). | `proven_err_t`: `PROVEN_OK`; `NOT_FOUND` - no `Origin`; `PERMISSION` - another origin, or two fields; `INVALID_ARG`. |
 | `proven_ws_check_response(&response, key, offered, &protocol)` | A client's check of the answer: 101, the right accept value, a subprotocol that was offered, no extension. | `proven_err_t`: `INVALID_FORMAT` otherwise. |

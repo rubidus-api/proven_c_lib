@@ -86,7 +86,8 @@ typedef enum {
     PROVEN_H2_SETTINGS_MAX_CONCURRENT_STREAMS = 0x3,
     PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE = 0x4,
     PROVEN_H2_SETTINGS_MAX_FRAME_SIZE = 0x5,
-    PROVEN_H2_SETTINGS_MAX_HEADER_LIST_SIZE = 0x6
+    PROVEN_H2_SETTINGS_MAX_HEADER_LIST_SIZE = 0x6,
+    PROVEN_H2_SETTINGS_ENABLE_CONNECT_PROTOCOL = 0x8  /**< RFC 8441: 1 from a server that takes extended CONNECT */
 } proven_h2_setting_id_t;
 
 /** @brief One setting: an identifier and its value. */
@@ -162,7 +163,7 @@ proven_err_t proven_h2_frame_content(const proven_h2_frame_t *frame, proven_mem_
  * requires. A known one outside its range is refused.
  *
  * @return PROVEN_ERR_EOF at the end of the payload. PROVEN_ERR_INVALID_FORMAT with `*code` -
- *         ENABLE_PUSH other than 0 or 1 and MAX_FRAME_SIZE outside 2^14..2^24-1
+ *         ENABLE_PUSH or ENABLE_CONNECT_PROTOCOL other than 0 or 1 and MAX_FRAME_SIZE outside 2^14..2^24-1
  *         (PROTOCOL_ERROR), INITIAL_WINDOW_SIZE above 2^31-1 (FLOW_CONTROL_ERROR): each a
  *         connection error.
  */
@@ -222,6 +223,7 @@ typedef struct {
     proven_u8str_view_t path;          /**< `:path`: path and query; empty for CONNECT */
     const proven_http_header_t *fields;    /**< the ordinary fields, which follow the pseudo-header fields */
     proven_size_t field_count;
+    proven_u8str_view_t protocol;      /**< `:protocol` of an extended CONNECT (RFC 8441): `websocket`, say; empty otherwise */
 } proven_h2_request_head_t;
 
 /**
@@ -233,8 +235,11 @@ typedef struct {
  * with a space or tab; a pseudo-header field after an ordinary one, twice, or unknown;
  * `:status` in a request; `:method`, `:scheme` or `:path` missing, or `:path` empty for
  * `http` and `https` (a CONNECT request has `:method` and `:authority` and neither of the
- * other two); `connection`, `proxy-connection`, `keep-alive`, `transfer-encoding` or
- * `upgrade`; `te` with anything but `trailers`.
+ * other two - unless it is an extended CONNECT, RFC 8441: `:protocol` with CONNECT only,
+ * not empty, and then `:scheme`, `:path` and `:authority` all present); `connection`,
+ * `proxy-connection`, `keep-alive`, `transfer-encoding` or `upgrade`; `te` with anything but
+ * `trailers`. Whether `:protocol` is allowed at all is the connection's to say (the
+ * `enable_connect_protocol` setting): this function only checks its form.
  *
  * These are the rules a message smuggled through a translation to HTTP/1.1 would break.
  */
@@ -293,6 +298,7 @@ typedef struct {
     proven_size_t max_buffered_output;     /**< output held for a peer that is not reading before more is refused - and, counted apart, the answers the protocol owes that peer before the connection is ended. 0: 64 KiB */
     proven_u32 max_reset_debt;             /**< streams reset - by the peer, or for its fault - beyond those that finished properly, before the connection is ended. 0: 100 */
     proven_mem_mut_t header_buffer;        /**< optional: memory of yours for reading header lists, of at least proven_h2_header_buffer_size bytes and aligned as a pointer. Connections used by one thread may share one: what is read into it is what an event reports, good until the next call on any of them. Empty: each connection allocates its own while it has streams open */
+    bool enable_connect_protocol;          /**< a server: say SETTINGS_ENABLE_CONNECT_PROTOCOL (RFC 8441) and take extended CONNECT - a request with `:protocol`. Without it such a request is refused (PROTOCOL_ERROR for the stream). Ignored on a client */
 } proven_h2_config_t;
 
 typedef enum {

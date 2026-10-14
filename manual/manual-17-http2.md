@@ -493,8 +493,8 @@ int main(void) {
 - **Unknown is not wrong.** A frame type or a setting this library does not know passes the
   check, as the protocol requires; skip it.
 - **Settings have ranges**, and a value outside one is a connection error:
-  `ENABLE_PUSH` is 0 or 1, the initial window at most 2^31-1, the frame size from 16,384 to
-  2^24-1.
+  `ENABLE_PUSH` and `ENABLE_CONNECT_PROTOCOL` are 0 or 1, the initial window at most 2^31-1,
+  the frame size from 16,384 to 2^24-1. `ENABLE_CONNECT_PROTOCOL`, once 1, may not become 0.
 
 ## 4. A header list as a message
 
@@ -522,7 +522,12 @@ when:
 | Trailers contain any pseudo-header field | Trailers are ordinary fields |
 
 `proven_h2_request_head` applies them and hands back the parts: method, scheme, authority,
-path, and the ordinary fields that follow. A malformed message is a stream error of type
+path, and the ordinary fields that follow - and `protocol`, for an extended CONNECT (RFC 8441):
+`:protocol` with CONNECT only, and then scheme, authority and path all present. Whether one is
+allowed is the connection's to say: a server whose configuration has `enable_connect_protocol`
+says `SETTINGS_ENABLE_CONNECT_PROTOCOL` and takes them; any other refuses such a stream with
+`PROTOCOL_ERROR`, and ends its side of one it took with END_STREAM rather than a reset - a
+tunnel ends from both sides. A malformed message is a stream error of type
 `PROTOCOL_ERROR`: answer `400` if a response can still be sent, reset the stream if not.
 
 ## 5. A connection
@@ -642,6 +647,7 @@ Every amount has a setting, and every setting a default:
 | `header_table_bytes` | 4,096 | The HPACK table in each direction; with `set_header_table` and 0, none |
 | `max_buffered_output` | 64 KiB | More body is not taken, and `submit` calls answer `PROVEN_ERR_BUSY`, until some is sent. Counted apart: the answers the protocol owes a peer that does not read them, beyond which the connection ends |
 | `max_reset_debt` | 100 | Streams reset - by the peer, or for its fault - beyond the number that finished properly: one more ends the connection with `ENHANCE_YOUR_CALM` |
+| `enable_connect_protocol` | false | A server: take extended CONNECT (RFC 8441) and say so in its first settings. The event-driven server sets it from `http2_websocket` (Chapter 15) |
 
 The last row is the answer to a client that opens streams and resets them at once, as fast
 as it can, to make a server start work it then throws away. No clock is involved: a reset

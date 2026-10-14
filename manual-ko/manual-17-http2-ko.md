@@ -478,8 +478,9 @@ int main(void) {
   만큼을 쥐게 된다.
 - **모르는 것은 틀린 것이 아니다.** 이 라이브러리가 모르는 프레임 종류나 설정은, 프로토콜이 요구하는
   대로 검사를 통과한다. 건너뛴다.
-- **설정에는 범위가 있고**, 벗어난 값은 연결 오류다: `ENABLE_PUSH`는 0 또는 1, 초기 윈도는 많아야
-  2^31-1, 프레임 크기는 16,384에서 2^24-1까지.
+- **설정에는 범위가 있고**, 벗어난 값은 연결 오류다: `ENABLE_PUSH`와 `ENABLE_CONNECT_PROTOCOL`은 0 또는 1,
+  초기 윈도는 많아야 2^31-1, 프레임 크기는 16,384에서 2^24-1까지. `ENABLE_CONNECT_PROTOCOL`은 한 번 1이 되면
+  0이 될 수 없다.
 
 ## 4. 메시지로서의 헤더 목록
 
@@ -506,7 +507,11 @@ HTTP/1.1과 만나는 곳에서 가장 중요하다: 줄바꿈이 든 값이 텍
 | 트레일러에 유사 헤더 필드가 있다 | 트레일러는 보통 필드다 |
 
 `proven_h2_request_head`는 이 규칙들을 적용하고 부분들을 돌려준다: 메서드, 스킴, authority, 경로,
-그리고 뒤따르는 보통 필드들. 잘못된 형식의 메시지는 `PROTOCOL_ERROR` 종류의 스트림 오류다: 응답을 아직
+그리고 뒤따르는 보통 필드들 - 그리고 확장 CONNECT(RFC 8441)이면 `protocol`: `:protocol`은 CONNECT에만,
+그리고 그때는 스킴, authority, 경로가 모두 있어야 한다. 그것이 허락되는지는 연결이 정한다: 설정에
+`enable_connect_protocol`이 있는 서버는 `SETTINGS_ENABLE_CONNECT_PROTOCOL`을 말하고 그것을 받는다. 다른
+서버는 그런 스트림을 `PROTOCOL_ERROR`로 거절하고, 받아들인 것의 자기 쪽은 리셋이 아니라 END_STREAM으로
+끝낸다 - 터널은 양쪽에서 끝난다. 잘못된 형식의 메시지는 `PROTOCOL_ERROR` 종류의 스트림 오류다: 응답을 아직
 보낼 수 있으면 `400`으로 답하고, 아니면 스트림을 리셋한다.
 
 ## 5. 연결
@@ -622,6 +627,7 @@ void proven_h2_conn_consumed(proven_h2_conn_t *conn, proven_u32 stream_id, prove
 | `header_table_bytes` | 4,096 | 방향마다의 HPACK 테이블. `set_header_table`과 0이면 없음 |
 | `max_buffered_output` | 64 KiB | 얼마가 나갈 때까지 본문을 더 받지 않고 `submit` 호출은 `PROVEN_ERR_BUSY`로 답한다. 따로 센다: 읽지 않는 상대에게 프로토콜이 빚진 답이 이만큼을 넘으면 연결이 끝난다 |
 | `max_reset_debt` | 100 | 리셋된 스트림 - 상대가 했거나 상대의 잘못 때문에 - 이 제대로 끝난 스트림보다 이만큼 많은 뒤: 하나 더 오면 `ENHANCE_YOUR_CALM`으로 연결이 끝난다 |
+| `enable_connect_protocol` | false | 서버: 확장 CONNECT(RFC 8441)를 받고 첫 설정에서 그렇다고 말한다. 이벤트 구동 서버는 `http2_websocket`(15장)으로 이것을 정한다 |
 
 마지막 줄은, 서버가 일을 시작하게 해 놓고 버리게 하려고 스트림을 열자마자 리셋하기를 되도록 빨리
 되풀이하는 클라이언트에 대한 답이다. 시계는 쓰지 않는다: 리셋 하나가 하나를 더하고, 제대로 끝난 스트림

@@ -75,10 +75,23 @@ proven_err_t proven_ws_accept_key(proven_u8str_view_t key, proven_byte_t out[PRO
     return proven_base64_encode((proven_mem_view_t){ .ptr = digest, .size = sizeof digest }, out, PROVEN_WS_ACCEPT_SIZE, &n);
 }
 
+static bool ws_same_nocase(proven_u8str_view_t a, proven_u8str_view_t b);
+
 proven_err_t proven_ws_check_request(const proven_http_request_t *request, proven_u8str_view_t *key) {
     if (!request || !key) return PROVEN_ERR_INVALID_ARG;
     const proven_http_header_t *h = request->headers;
     proven_size_t n = request->header_count;
+    /* HTTP/2 (RFC 8441): an extended CONNECT, which the event-driven server presents with a
+     * `:protocol` field first. It has no key: the stream itself is the proof. */
+    if (request->method == PROVEN_HTTP_CONNECT && n > 0 && proven_u8str_view_eq(h[0].name, ws_lit(":protocol"))) {
+        if (!ws_same_nocase(h[0].value, ws_lit("websocket"))) return PROVEN_ERR_NOT_FOUND;
+        proven_u8str_view_t version;
+        if (proven_http_header_count(h, n, ws_lit("Sec-WebSocket-Version")) != 1 ||
+            !proven_http_header_find(h, n, ws_lit("Sec-WebSocket-Version"), &version)) return PROVEN_ERR_INVALID_FORMAT;
+        if (!ws_eq(ws_trim(version), ws_lit("13"))) return PROVEN_ERR_UNSUPPORTED;
+        *key = (proven_u8str_view_t){ .ptr = (const proven_byte_t *)"", .size = 0 };
+        return PROVEN_OK;
+    }
     if (!proven_http_header_has_token(h, n, ws_lit("Upgrade"), ws_lit("websocket"))) return PROVEN_ERR_NOT_FOUND;
     if (request->method != PROVEN_HTTP_GET || request->version_minor < 1) return PROVEN_ERR_INVALID_FORMAT;
     if (!proven_http_header_has_token(h, n, ws_lit("Connection"), ws_lit("Upgrade"))) return PROVEN_ERR_INVALID_FORMAT;

@@ -598,7 +598,7 @@ proven_err_t proven_http_event_server_create(proven_loop_t *loop, const proven_h
     if (s->cfg.http2_no_header_table) s->cfg.http2_header_table_bytes = 0;
     else if (s->cfg.http2_header_table_bytes == 0) s->cfg.http2_header_table_bytes = 4096;
     if (s->cfg.http2_header_table_bytes > ((proven_size_t)1 << 20)) { a.free_fn(a.ctx, s); return PROVEN_ERR_INVALID_ARG; }
-    if (s->cfg.http2_window_bytes > 0x7fffffffu) { a.free_fn(a.ctx, s); return PROVEN_ERR_INVALID_ARG; }
+    if (s->cfg.http2_window_bytes > 0x7fffffffu || (s->cfg.http2_websocket && !s->cfg.http2)) { a.free_fn(a.ctx, s); return PROVEN_ERR_INVALID_ARG; }
     if (s->cfg.tls) {
         /* What TLS may agree to and what the server will speak must be the same thing: a
          * client told "h2" by the handshake and answered in HTTP/1.1 has no way to recover. */
@@ -1108,6 +1108,7 @@ proven_err_t proven_http_event_raw_begin_(proven_http_stream_t *c, void *raw, pr
 }
 
 bool proven_http_event_raw_send_(proven_http_stream_t *c, proven_mem_view_t a, proven_mem_view_t b) {
+    if (c && PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_raw_send_(c, a, b);
     if (!c || c->dead) return false;
     ev_enter(c);
     /* Both parts are queued before anything is sent, so that a frame's header and payload
@@ -1121,12 +1122,14 @@ bool proven_http_event_raw_send_(proven_http_stream_t *c, proven_mem_view_t a, p
 }
 
 void proven_http_event_raw_timer_(proven_http_stream_t *c, proven_u32 ms) {
+    if (c && PROVEN_HTTP_EVENT_IS_H2_(c)) { proven_http_event_h2_raw_timer_(c, ms); return; }
     if (!c || c->dead) return;
     if (ms == 0) proven_loop_timer_cancel(c->h.server->loop, &c->timer);
     else proven_loop_timer_set(c->h.server->loop, &c->timer, ms, ev_on_timer, c);
 }
 
 void proven_http_event_raw_pause_(proven_http_stream_t *c, bool paused) {
+    if (c && PROVEN_HTTP_EVENT_IS_H2_(c)) { proven_http_event_h2_raw_pause_(c, paused); return; }
     if (!c || c->dead || c->h.state != EV_RAW || c->paused == paused) return;
     c->paused = paused;
     ev_enter(c);
@@ -1136,6 +1139,7 @@ void proven_http_event_raw_pause_(proven_http_stream_t *c, bool paused) {
 }
 
 void proven_http_event_raw_close_(proven_http_stream_t *c) {
+    if (c && PROVEN_HTTP_EVENT_IS_H2_(c)) { proven_http_event_h2_raw_close_(c); return; }
     if (!c || c->dead) return;
     c->raw = (void *)0;
     ev_enter(c);
@@ -1144,6 +1148,7 @@ void proven_http_event_raw_close_(proven_http_stream_t *c) {
 }
 
 void proven_http_event_raw_kill_(proven_http_stream_t *c) {
+    if (c && PROVEN_HTTP_EVENT_IS_H2_(c)) { proven_http_event_h2_raw_kill_(c); return; }
     if (!c || c->dead) return;
     c->raw = (void *)0;
     ev_enter(c);

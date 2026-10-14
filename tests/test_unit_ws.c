@@ -177,6 +177,29 @@ int main(void) {
             PROVEN_TEST_ASSERT(e == rows[i].want, "a request is classified as its row says", "");
         }
 
+        /* Over HTTP/2 (RFC 8441), as the event-driven server presents an extended CONNECT: method
+         * CONNECT and `:protocol` first. No Upgrade, no Connection, no key. */
+        {
+            static const struct { const char *proto; const char *version; proven_err_t want; const char *why; } h2rows[] = {
+                { "websocket", "13", PROVEN_OK, "an extended CONNECT for websocket, version 13" },
+                { "WebSocket", "13", PROVEN_OK, "the protocol's name in any case" },
+                { "chat", "13", PROVEN_ERR_NOT_FOUND, "an extended CONNECT for another protocol: not a WebSocket" },
+                { "websocket", "8", PROVEN_ERR_UNSUPPORTED, "version 8" },
+                { "websocket", NULL, PROVEN_ERR_INVALID_FORMAT, "no version" },
+            };
+            for (proven_size_t i = 0; i < sizeof h2rows / sizeof h2rows[0]; ++i) {
+                proven_http_header_t f[3] = { { sv(":protocol"), sv(h2rows[i].proto) }, { sv("host"), sv("h") }, { sv("sec-websocket-version"), sv(h2rows[i].version ? h2rows[i].version : "") } };
+                proven_http_request_t r = { .method = PROVEN_HTTP_CONNECT, .method_text = sv("CONNECT"), .target = sv("/chat"), .version_minor = 1, .headers = f, .header_count = h2rows[i].version ? 3 : 2 };
+                k = sv("not touched");
+                proven_err_t e = proven_ws_check_request(&r, &k);
+                if (e != h2rows[i].want) PROVEN_TEST_INFO("row: {} -> {}", PROVEN_ARG(h2rows[i].why), PROVEN_ARG((int)e));
+                PROVEN_TEST_ASSERT(e == h2rows[i].want && (e != PROVEN_OK || k.size == 0), "an HTTP/2 request is classified as its row says, and has no key", h2rows[i].why);
+            }
+            proven_http_header_t f[3] = { { sv("host"), sv("h") }, { sv(":protocol"), sv("websocket") }, { sv("sec-websocket-version"), sv("13") } };
+            proven_http_request_t r = { .method = PROVEN_HTTP_CONNECT, .method_text = sv("CONNECT"), .target = sv("h:443"), .version_minor = 1, .headers = f, .header_count = 3 };
+            PROVEN_TEST_ASSERT(proven_ws_check_request(&r, &k) == PROVEN_ERR_NOT_FOUND, "`:protocol` anywhere but first is not how the server presents one: an ordinary CONNECT", "");
+        }
+
         static const struct { const char *response; const char *offered; proven_err_t want; const char *protocol; const char *why; } answers[] = {
             { "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-WebSocket-Protocol: chat\r\n\r\n", "chat, superchat", PROVEN_OK, "chat", "the RFC's response" },
             { "HTTP/1.1 101 Switching Protocols\r\nUpgrade: WebSocket\r\nConnection: upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n", "chat", PROVEN_OK, "", "no subprotocol chosen" },

@@ -887,7 +887,10 @@ int main(void) {
 
     // ---- a server on a loop, on its own thread -------------------------------------
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
-    proven_http_event_server_config_t config = { .on = { .on_request = on_request }, .ctx = &app };
+    /* HTTP/2 too, and WebSocket on it (RFC 8441): a client that speaks HTTP/2 opens its
+     * WebSocket as a stream of that connection. on_request above is the same for both - it is
+     * this program's client, over HTTP/1.1, that the run below uses. */
+    proven_http_event_server_config_t config = { .on = { .on_request = on_request }, .ctx = &app, .http2 = true, .http2_websocket = true };
     proven_http_event_server_t *server = NULL;
     proven_net_addr_t at;
     EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &config, &server) == PROVEN_OK &&
@@ -937,6 +940,29 @@ int main(void) {
     return EXAMPLE_OK();
 }
 ```
+
+### Over HTTP/2 (RFC 8441)
+
+With `http2_websocket` set (and `http2`), the server says so in its first HTTP/2 settings, and
+a client that knows RFC 8441 opens its WebSocket as a stream of the HTTP/2
+connection it already has, instead of a connection of its own. **The handler is the same**:
+the request reaches `on_request` as CONNECT, with its path as the target and a `:protocol`
+field first, `proven_ws_check_request` recognises it (with an empty key - there is none), and
+`proven_ws_event_accept` answers 200 instead of 101. The program above enables it with one
+line; its own client is HTTP/1.1, which the same server goes on serving.
+
+- **Each such WebSocket holds a stream** - one of `max_concurrent_streams` (100 by default) -
+  for as long as it is open. A connection full of WebSockets refuses new requests.
+- Its frames travel in DATA frames, so HTTP/2's flow control is under the WebSocket's own:
+  `http2_window_bytes` is what a client may send before the WebSocket has taken it, and
+  `on_writable` comes when the stream's output has moved.
+- Its end is END_STREAM from each side after the close handshake; a peer that resets the
+  stream is a WebSocket closed with 1006 and `PROVEN_ERR_RESET`. A shutdown closes it with 1001.
+- Without `http2_websocket` a client must not try (the setting says so), and a stream that
+  does is refused with PROTOCOL_ERROR.
+- **Not here**: this library's own WebSocket client over HTTP/2 - `proven_ws_event_connect`
+  makes a connection of its own, as before. Tested against Node's HTTP/2 client; no browser
+  was tried.
 
 ### A connection this side makes
 
