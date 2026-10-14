@@ -18,6 +18,25 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- Chapter 15 has a program in which one thread waits for a WebSocket connection's messages
+  while another decides what to send (`ex_15_ws_duplex.c`, compiled and run by the suite):
+  the loop's connection, and `proven_loop_post` to hand it each message.
+
+### Changed
+
+- **An HTTP/2 response is complete when the server resets the stream with `NO_ERROR`
+  after every byte its `content-length` declared**, in place of ending it. The event-driven
+  client reports `PROVEN_OK` with the whole body where it reported `PROVEN_ERR_RESET`; the
+  engine's `PROVEN_H2_EVENT_STREAM_RESET` has `end_stream` set in that case and after a
+  response's END_STREAM. One byte short, with no length (or one that describes no body:
+  HEAD, 204, 304), or with another code, the response is not complete, as before. Some
+  servers (Node's among them) end a response this way; the client used to fail it.
+- Chapter 12's caution on threads no longer offers a lock around every call as the way to
+  send while another thread receives: `proven_ws_conn_receive` holds such a lock for as long
+  as it waits. It points to chapter 15's program instead.
+
 ## [0.53.0] - 2026-10-14
 
 ### Added

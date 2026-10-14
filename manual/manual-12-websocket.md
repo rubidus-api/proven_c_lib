@@ -105,8 +105,11 @@ more than `max_message_bytes`.
 **A connection is for one thread at a time.** Not even "one thread sends while another
 receives": receiving answers pings, which is a send. Two threads on one connection will
 interleave the bytes of two frames, and the peer will close with a protocol error that
-points nowhere near the cause. Give the connection to one thread, or put one lock around every
-call.
+points nowhere near the cause. Give the connection to one thread. One lock around every call
+keeps the bytes apart, but `proven_ws_conn_receive` holds it for as long as it waits, and every
+send waits with it - so a program in which one thread waits for messages while another sends (a
+chat client) wants the loop's connection instead: [Chapter 15](manual-15-event-loop.md),
+section 11, "Two threads, one connection", has the program.
 
 **`max_message_bytes` is how much a peer can make you hold.** A message is assembled in memory
 before you see it. The limit is the most one connection will allocate for that, whatever is

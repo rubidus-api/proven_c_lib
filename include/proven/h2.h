@@ -313,7 +313,7 @@ typedef struct {
     proven_h2_event_kind_t kind;
     proven_u32 stream_id;
     void *user;                            /**< what proven_h2_conn_stream_set_user attached to the stream, for every event that names one */
-    bool end_stream;                       /**< HEADERS, DATA: the peer will send nothing more on this stream */
+    bool end_stream;                       /**< HEADERS, DATA: the peer will send nothing more on this stream. STREAM_RESET on a client: the response is complete - the reset is PROVEN_H2_NO_ERROR and came after the response's END_STREAM, or after every byte its content-length declared (never for a response with no content-length) */
     proven_h2_request_head_t request;      /**< HEADERS on a server: the request's parts; `request.fields` are its ordinary fields */
     proven_u16 status;                     /**< HEADERS on a client */
     const proven_http_header_t *fields;    /**< HEADERS on a client, TRAILERS: the ordinary fields */

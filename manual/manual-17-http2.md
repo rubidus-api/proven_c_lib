@@ -561,7 +561,7 @@ many it used. Call it again with the rest; `PROVEN_H2_EVENT_NONE` means everythi
 | `PROVEN_H2_EVENT_HEADERS` | A server: a request began, already checked by section 4's rules and taken apart. A client: a response head (`status` below 200 is an interim one; more follow) | `stream_id`, `request` or `status` and `fields`, `end_stream`, `user` |
 | `PROVEN_H2_EVENT_DATA` | A piece of a body, as a view into `in` | `stream_id`, `data`, `end_stream`, `user` |
 | `PROVEN_H2_EVENT_TRAILERS` | Trailer fields: the peer's side of the stream is over | `stream_id`, `fields`, `user` |
-| `PROVEN_H2_EVENT_STREAM_RESET` | The stream is over before its end: the peer reset it, broke a rule on it, or said goodbye without acting on it | `stream_id`, `code`, `user` |
+| `PROVEN_H2_EVENT_STREAM_RESET` | The stream is over before its end: the peer reset it, broke a rule on it, or said goodbye without acting on it | `stream_id`, `code`, `user`; on a client, `end_stream` when the response is nonetheless complete (below) |
 | `PROVEN_H2_EVENT_STREAM_WRITABLE` | A send that was cut short can go on | `stream_id`, `user` |
 | `PROVEN_H2_EVENT_PONG` | The answer to `proven_h2_conn_ping` | `data`: the eight bytes |
 | `PROVEN_H2_EVENT_GOAWAY` | The peer will take no new stream | `code`, `last_stream_id`, `data` (the text it sent with that: the first 256 bytes, for a log) |
@@ -903,7 +903,11 @@ int main(void) {
 - **A response that ends before its request tells the client to stop.** The server's side
   sends `RST_STREAM` with `NO_ERROR`, as RFC 9113 provides, and the stream is over. A client
   sees `PROVEN_H2_EVENT_STREAM_RESET` with `PROVEN_H2_NO_ERROR` after the response: not a
-  failure.
+  failure, and the event's `end_stream` is true. **Some servers reset with `NO_ERROR` in place
+  of ending the stream**, after every byte the response's `content-length` declared; the
+  length shows nothing is missing, and `end_stream` is true then too. One byte short, with no
+  length (or a length that describes no body: HEAD, 204, 304), or with any other code, it is
+  false: the response may be cut short.
 - **A connection is for one thread at a time.**
 - **No clock means no timeouts.** A peer that opens a connection and says nothing, or never
   opens a window, is the caller's to give up on.
@@ -1215,7 +1219,10 @@ started again, whatever its method; the client does not do so by itself unless
 `retry_unsent` says how many times it may (below).
 `PROVEN_ERR_UNSUPPORTED`, for a request to a server in the clear that turned out not to
 speak HTTP/2 (`http2_cleartext`, above): not acted on either, and not worth starting again.
-`PROVEN_ERR_RESET` still means "it may have been acted on". Over TLS there is no
+`PROVEN_ERR_RESET` still means "it may have been acted on" - but a server that resets a
+stream with `NO_ERROR` once every byte of the response's declared `content-length` has
+arrived has answered in full, and that is `PROVEN_OK`, with the whole body (section 5 says
+which resets count). Over TLS there is no
 `PROVEN_ERR_UNSUPPORTED`: the handshake settles the protocol, and a server that agrees to
 HTTP/1.1 is spoken to in HTTP/1.1.
 

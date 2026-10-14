@@ -824,8 +824,14 @@ static void h2c_on_fixed(proven_h2_conn_t *c, proven_h2_event_t *ev) {
             }
             h2c_event_stream(ev, PROVEN_H2_EVENT_STREAM_RESET, s);
             ev->code = code;
-            /* A server that is done with a response says so this way: that is an end, not a fault. */
-            const bool polite = !c->server && code == PROVEN_H2_NO_ERROR && (s->flags & ST_REMOTE_END) != 0;
+            /* A server that is done with a response says so this way: that is an end, not a fault -
+             * after its END_STREAM, or once every byte its content-length declared has arrived
+             * (some servers reset there instead of ending: the length shows nothing is missing).
+             * `expect` is set by a final response's head only, and never for HEAD, 204 or 304. */
+            const bool ended = (s->flags & ST_REMOTE_END) != 0;
+            const bool declared_all = s->expect != H2C_NO_LENGTH && s->got == s->expect;
+            const bool polite = !c->server && code == PROVEN_H2_NO_ERROR && (ended || declared_all);
+            ev->end_stream = polite;
             h2c_remove(c, s, polite, RING_PEER);
             if (!polite) h2c_debt(c);
             return;

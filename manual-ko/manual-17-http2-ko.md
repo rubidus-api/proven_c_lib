@@ -545,7 +545,7 @@ void proven_h2_conn_output_sent(proven_h2_conn_t *conn, proven_size_t n);
 | `PROVEN_H2_EVENT_HEADERS` | 서버: 요청이 시작되었다. 이미 4절의 규칙으로 검사되고 나뉘어 있다. 클라이언트: 응답의 머리(`status`가 200 미만이면 중간 응답이고, 더 온다) | `stream_id`, `request` 또는 `status`와 `fields`, `end_stream`, `user` |
 | `PROVEN_H2_EVENT_DATA` | 본문의 한 조각. `in` 안을 가리키는 뷰다 | `stream_id`, `data`, `end_stream`, `user` |
 | `PROVEN_H2_EVENT_TRAILERS` | 트레일러 필드: 상대 쪽의 스트림은 끝났다 | `stream_id`, `fields`, `user` |
-| `PROVEN_H2_EVENT_STREAM_RESET` | 스트림이 끝나기 전에 끝났다: 상대가 리셋했거나, 그 스트림에서 규칙을 어겼거나, 처리하지 않은 채 작별했다 | `stream_id`, `code`, `user` |
+| `PROVEN_H2_EVENT_STREAM_RESET` | 스트림이 끝나기 전에 끝났다: 상대가 리셋했거나, 그 스트림에서 규칙을 어겼거나, 처리하지 않은 채 작별했다 | `stream_id`, `code`, `user`; 클라이언트에서는 그래도 응답이 완전할 때 `end_stream`(아래) |
 | `PROVEN_H2_EVENT_STREAM_WRITABLE` | 잘렸던 전송을 이어 갈 수 있다 | `stream_id`, `user` |
 | `PROVEN_H2_EVENT_PONG` | `proven_h2_conn_ping`의 답 | `data`: 그 여덟 바이트 |
 | `PROVEN_H2_EVENT_GOAWAY` | 상대가 새 스트림을 받지 않는다 | `code`, `last_stream_id`, `data` (함께 보낸 텍스트: 처음 256바이트, 로그용) |
@@ -874,7 +874,11 @@ int main(void) {
   여러분의 것을 따라간다.
 - **요청보다 먼저 끝난 응답은 클라이언트에게 그만 보내라고 말한다.** 서버 쪽은 RFC 9113이 정한 대로
   `NO_ERROR`를 담은 `RST_STREAM`을 보내고 스트림은 끝난다. 클라이언트는 응답 뒤에
-  `PROVEN_H2_NO_ERROR`가 담긴 `PROVEN_H2_EVENT_STREAM_RESET`을 본다: 실패가 아니다.
+  `PROVEN_H2_NO_ERROR`가 담긴 `PROVEN_H2_EVENT_STREAM_RESET`을 본다: 실패가 아니고, 이벤트의
+  `end_stream`이 참이다. **어떤 서버는 스트림을 끝내는 대신 `NO_ERROR`로 리셋한다**, 응답의
+  `content-length`가 선언한 바이트를 모두 보낸 뒤에. 길이가 빠진 것이 없음을 보여 주므로 그때도
+  `end_stream`이 참이다. 한 바이트라도 모자라거나, 길이가 없거나(본문이 없는 길이 - HEAD, 204, 304 -
+  도 마찬가지), 다른 코드라면 거짓이다: 응답이 잘렸을 수 있다.
 - **연결 하나는 한 번에 한 스레드의 것이다.**
 - **시계가 없으니 타임아웃도 없다.** 연결을 열고 아무 말도 하지 않는 상대, 윈도를 끝내 열지 않는 상대를
   포기하는 것은 호출자의 일이다.
@@ -1170,7 +1174,9 @@ origin으로 가는 요청은 클라이언트에 연결 하나를 더 둘 자리
 메서드가 무엇이든 다시 시작해도 된다. 클라이언트가 알아서 그러지는 않는다 - `retry_unsent`로 몇 번까지
 그래도 되는지 정해 주지 않는 한(아래). `PROVEN_ERR_UNSUPPORTED`는
 평문에서 HTTP/2를 말하지 않는 것으로 드러난 서버로 간 요청이다(위의 `http2_cleartext`): 역시 처리되지
-않았고, 다시 시작할 가치가 없다. `PROVEN_ERR_RESET`은 여전히 "처리되었을 수도 있다"는 뜻이다. TLS
+않았고, 다시 시작할 가치가 없다. `PROVEN_ERR_RESET`은 여전히 "처리되었을 수도 있다"는 뜻이다 - 다만 응답이 선언한 `content-length`의
+바이트가 모두 도착한 뒤 스트림을 `NO_ERROR`로 리셋한 서버는 끝까지 답한 것이고, 그것은 본문 전체와 함께
+`PROVEN_OK`다(어떤 리셋이 그런지는 5절이 말한다). TLS
 위에서는 `PROVEN_ERR_UNSUPPORTED`가 없다: 핸드셰이크가 프로토콜을 정하고, HTTP/1.1에 동의한 서버와는
 HTTP/1.1로 말한다.
 

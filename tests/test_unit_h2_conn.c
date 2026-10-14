@@ -146,6 +146,7 @@ static void drain(proven_h2_conn_t *c, seen_t *s) {
 typedef struct {
     int n, closed, headers, data, trailers, resets, writable, goaways, pongs;
     proven_u32 close_code, reset_id, reset_code, last_headers_id;
+    bool reset_end;                        /* the last STREAM_RESET said the response was complete */
     proven_u64 data_bytes;
     proven_err_t err;
     proven_byte_t text[400]; proven_size_t text_len;      /* of the last GOAWAY */
@@ -159,7 +160,7 @@ static void note(proven_h2_conn_t *c, const proven_h2_event_t *ev, log_t *log) {
         case PROVEN_H2_EVENT_HEADERS: log->headers++; log->last_headers_id = ev->stream_id; break;
         case PROVEN_H2_EVENT_DATA: log->data++; log->data_bytes += ev->data.size; if (g_consume) proven_h2_conn_consumed(c, ev->stream_id, ev->data.size); break;
         case PROVEN_H2_EVENT_TRAILERS: log->trailers++; break;
-        case PROVEN_H2_EVENT_STREAM_RESET: log->resets++; log->reset_id = ev->stream_id; log->reset_code = ev->code; break;
+        case PROVEN_H2_EVENT_STREAM_RESET: log->resets++; log->reset_id = ev->stream_id; log->reset_code = ev->code; log->reset_end = ev->end_stream; break;
         case PROVEN_H2_EVENT_STREAM_WRITABLE: log->writable++; break;
         case PROVEN_H2_EVENT_GOAWAY:
             log->goaways++;
@@ -255,6 +256,20 @@ static void verdict(const char *what, verdict_t want, proven_u32 code) {
     g_before = (void *)0;
     g_mid = (void *)0;
 }
+
+/* The script in g_buf against a fresh connection, fed `chunk` bytes at a time: what it said.
+ * Leaves the script in place, for another pass; clear() ends it. */
+static log_t told(proven_size_t chunk) {
+    proven_h2_conn_t *c = opened(&g_cfg);
+    if (g_before) g_before(c);
+    drain(c, (void *)0);
+    log_t log = { 0 };
+    feed(c, g_buf.b, g_buf.n, chunk, &log);
+    proven_h2_conn_destroy(c);
+    return log;
+}
+
+static void clear(void) { g_buf.n = 0; g_before = (void *)0; g_mid = (void *)0; }
 
 // -----------------------------------------------------------------------------
 // Two connections in memory
@@ -1165,6 +1180,48 @@ int main(void) {
         verdict("client: DATA after both sides ended is STREAM_CLOSED for the connection", V_CONN, PROVEN_H2_STREAM_CLOSED);
         g_before = ask_1; put_headers(&g_buf, 1, EH | ES, OK200, 2); put_u32_frame(&g_buf, PROVEN_H2_RST_STREAM, 1, PROVEN_H2_NO_ERROR);
         verdict("client: a complete response and then RST_STREAM with NO_ERROR is an ordinary end", V_IGNORED, 0);
+
+        /* What a reset with NO_ERROR says of the response: complete (end_stream) after its
+         * END_STREAM, or after every byte its content-length declared; otherwise not. Each
+         * script fed whole and a byte at a time. */
+        {
+            static const proven_http_header_t L5[] = { H(":status", "200"), H("content-length", "5") };
+            static const proven_http_header_t L0[] = { H(":status", "200"), H("content-length", "0") };
+            static const proven_http_header_t N0[] = { H(":status", "204"), H("content-length", "0") };
+            struct { const char *what; void (*before)(proven_h2_conn_t *); const proven_http_header_t *head; const char *body; proven_size_t pieces; proven_u32 code; bool end; } cases[] = {
+                { "after END_STREAM", ask_1, (void *)0, "", 0, PROVEN_H2_NO_ERROR, true },
+                { "every declared byte, in one piece", ask_1, L5, "hello", 1, PROVEN_H2_NO_ERROR, true },
+                { "every declared byte, in two pieces", ask_1, L5, "hello", 2, PROVEN_H2_NO_ERROR, true },
+                { "a declared length of zero and no body", ask_1, L0, "", 0, PROVEN_H2_NO_ERROR, true },
+                { "one byte short", ask_1, L5, "hell", 1, PROVEN_H2_NO_ERROR, false },
+                { "no declared length", ask_1, OK200, "hello", 1, PROVEN_H2_NO_ERROR, false },
+                { "every declared byte, but CANCEL", ask_1, L5, "hello", 1, PROVEN_H2_CANCEL, false },
+                { "every declared byte, but INTERNAL_ERROR", ask_1, L5, "hello", 1, PROVEN_H2_INTERNAL_ERROR, false },
+                { "a response to HEAD, whose length describes no body", ask_head, L5, "", 0, PROVEN_H2_NO_ERROR, false },
+                { "204, whose length describes no body either", ask_1, N0, "", 0, PROVEN_H2_NO_ERROR, false },
+            };
+            proven_size_t right = 0, tried = 0;
+            for (proven_size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+                for (int pass = 0; pass < 2; pass++) {
+                    g_before = cases[i].before;
+                    if (!cases[i].head) put_headers(&g_buf, 1, EH | ES, OK200, 2);
+                    else {
+                        put_headers(&g_buf, 1, EH, cases[i].head, 2);
+                        const proven_size_t n = strlen(cases[i].body), half = cases[i].pieces == 2 ? n / 2 : n;
+                        if (cases[i].pieces >= 1) put_frame(&g_buf, PROVEN_H2_DATA, 0, 1, cases[i].body, half);
+                        if (cases[i].pieces == 2) put_frame(&g_buf, PROVEN_H2_DATA, 0, 1, cases[i].body + half, n - half);
+                    }
+                    put_u32_frame(&g_buf, PROVEN_H2_RST_STREAM, 1, cases[i].code);
+                    log_t l = told(pass == 0 ? g_buf.n + 1 : 1);
+                    tried++;
+                    if (l.err == PROVEN_OK && l.resets == 1 && l.reset_code == cases[i].code && l.reset_end == cases[i].end && !l.closed) right++;
+                    else PROVEN_TEST_ASSERT(false, cases[i].what, pass == 0 ? "fed in one piece" : "fed one byte at a time");
+                    clear();
+                }
+            }
+            PROVEN_TEST_ASSERT(tried == 20 && right == tried,
+                "client: a reset with NO_ERROR says the response is complete after END_STREAM or every declared byte (in one piece or two, and a length of zero) - and not one byte short, without a length, with another code, or after HEAD or a 204", "");
+        }
         g_cfg.server = true;
     }
 
@@ -1176,6 +1233,9 @@ int main(void) {
         verdict("a hundred streams opened and reset at once are borne", V_IGNORED, 0);
         for (proven_u32 i = 0; i < 101; i++) { put_get(&g_buf, 2 * i + 1, false); put_u32_frame(&g_buf, PROVEN_H2_RST_STREAM, 2 * i + 1, PROVEN_H2_CANCEL); }
         verdict("the hundred and first ends the connection with ENHANCE_YOUR_CALM", V_CONN, PROVEN_H2_ENHANCE_YOUR_CALM);
+        /* NO_ERROR is an end only from a server: a client's requests reset that way count the same. */
+        for (proven_u32 i = 0; i < 101; i++) { put_get(&g_buf, 2 * i + 1, true); put_u32_frame(&g_buf, PROVEN_H2_RST_STREAM, 2 * i + 1, PROVEN_H2_NO_ERROR); }
+        verdict("a hundred and one requests, each ended and then reset with NO_ERROR, end the connection the same way", V_CONN, PROVEN_H2_ENHANCE_YOUR_CALM);
         g_cfg.max_reset_debt = 3;
         for (proven_u32 i = 0; i < 3; i++) { put_get(&g_buf, 2 * i + 1, false); put_u32_frame(&g_buf, PROVEN_H2_RST_STREAM, 2 * i + 1, PROVEN_H2_CANCEL); }
         { static const proven_http_header_t h[] = { H(":method", "GET") }; put_headers(&g_buf, 7, EH | ES, h, 1); }

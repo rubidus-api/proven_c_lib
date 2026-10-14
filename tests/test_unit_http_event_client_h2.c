@@ -391,6 +391,17 @@ static bool h2peer_goodbye(h2peer_t *p, proven_u32 last) {
 
 static void h2peer_end(h2peer_t *p) { proven_h2_conn_destroy(p->engine); p->engine = NULL; (void)proven_net_close(&p->conn); }
 
+/* A response head - with a content-length when `length` is not null - and `body`, without
+ * END_STREAM, and then RST_STREAM with `code`. */
+static bool h2peer_reset_after(h2peer_t *p, int which, const char *length, const char *body, proven_u32 code) {
+    proven_http_header_t head[2] = { { sv(":status"), sv("200") }, { sv("content-length"), sv(length ? length : "") } };
+    bool ok = proven_h2_conn_submit_response(p->engine, p->ids[which], head, length ? 2 : 1, false) == PROVEN_OK &&
+              proven_h2_conn_send_data(p->engine, p->ids[which], mv(body), false).value == strlen(body) &&
+              proven_h2_conn_reset(p->engine, p->ids[which], code) == PROVEN_OK;
+    h2peer_flush(p);
+    return ok;
+}
+
 /* The heap, and a switch that makes it refuse: for what a client does when it cannot begin. */
 static bool g_refuse_memory;
 static proven_result_mem_mut_t stingy_alloc(void *ctx, proven_size_t size, proven_size_t align) {
@@ -401,6 +412,52 @@ static proven_result_mem_mut_t stingy_alloc(void *ctx, proven_size_t size, prove
 static proven_allocator_t stingy(void) { proven_allocator_t a = g_heap; a.alloc_fn = stingy_alloc; return a; }
 
 static bool call_ok(const call_t *c) { return c->done && c->why == PROVEN_OK && c->dones == 1 && c->responses == 1 && c->got == 2 && memcmp(c->first, "ok", 2) == 0; }
+
+/* A server that ends a response with RST_STREAM and NO_ERROR where END_STREAM belongs, after
+ * every byte its content-length declared: the response is complete. One byte short, without a
+ * length or with another code, it is not. */
+static void reset_after_length(void) {
+    proven_net_listener_t l;
+    proven_net_addr_t at;
+    static h2peer_t a;
+    static call_t c[6];
+    PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 8, &l, &at) == PROVEN_OK, "a listener the test answers on, as an HTTP/2 server", "");
+    g_port = at.port; g_https = false;
+    proven_http_event_client_config_t ccfg = { .alloc = g_heap, .http2_cleartext = true };
+    proven_http_event_client_t *client = NULL;
+    PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &ccfg, &client) == PROVEN_OK, "a client", "");
+    static const char *paths[6] = { "/full", "/short", "/no-length", "/cancel", "/paused", "/early" };
+    for (int i = 0; i < 6; i++) {
+        PROVEN_TEST_ASSERT(start(client, &c[i], i == 5 ? "POST" : "GET", paths[i], mv(""), i == 5 ? 300000 : 0) == PROVEN_OK, "a request is started", "");
+        c[i].plain = true;
+        if (i == 4) c[i].pause_once = true;                                  /* paused when its head comes, for g_pause_ms */
+        if (i == 5) c[i].to_send = 300000;                                   /* a body far larger than the server reads before it answers */
+    }
+    PROVEN_TEST_ASSERT(h2peer_accept(&l, &a, 16, 400) && h2peer_has(&a, 6), "all six reach the server", "");
+    int at_[6];
+    for (int i = 0; i < 6; i++) { at_[i] = -1; for (int j = 0; j < a.n; j++) if (strcmp(a.paths[j], paths[i]) == 0) at_[i] = j; }
+    PROVEN_TEST_ASSERT(at_[0] >= 0 && at_[1] >= 0 && at_[2] >= 0 && at_[3] >= 0 && at_[4] >= 0 && at_[5] >= 0, "each by its path", "");
+    PROVEN_TEST_ASSERT(h2peer_reset_after(&a, at_[0], "5", "hello", PROVEN_H2_NO_ERROR) && h2peer_reset_after(&a, at_[1], "6", "hello", PROVEN_H2_NO_ERROR) &&
+                       h2peer_reset_after(&a, at_[2], (void *)0, "hello", PROVEN_H2_NO_ERROR) && h2peer_reset_after(&a, at_[3], "5", "hello", PROVEN_H2_CANCEL) &&
+                       h2peer_reset_after(&a, at_[4], "5", "hello", PROVEN_H2_NO_ERROR) && h2peer_reset_after(&a, at_[5], "5", "hello", PROVEN_H2_NO_ERROR),
+        "the server answers each with five bytes and a reset", "");
+    for (int i = 0; i < 6; i++) spin_until(&c[i].done, 5000);
+    for (int i = 0; i < 20; i++) h2peer_turn(&a);
+    PROVEN_TEST_ASSERT(c[0].done && c[0].why == PROVEN_OK && c[0].dones == 1 && c[0].responses == 1 && c[0].got == 5 && memcmp(c[0].first, "hello", 5) == 0,
+        "every byte content-length declared, then RST_STREAM with NO_ERROR: the response, complete - PROVEN_OK", "");
+    PROVEN_TEST_ASSERT(c[1].done && c[1].why == PROVEN_ERR_RESET && c[1].dones == 1 && c[1].got == 5, "one byte short of its length: PROVEN_ERR_RESET, as before", "");
+    PROVEN_TEST_ASSERT(c[2].done && c[2].why == PROVEN_ERR_RESET && c[2].dones == 1, "no length to say it is whole: PROVEN_ERR_RESET", "");
+    PROVEN_TEST_ASSERT(c[3].done && c[3].why == PROVEN_ERR_RESET && c[3].dones == 1, "every byte, but a code other than NO_ERROR: PROVEN_ERR_RESET", "");
+    PROVEN_TEST_ASSERT(c[4].done && c[4].why == PROVEN_OK && c[4].dones == 1 && c[4].got == 5 && !c[4].body_while_paused,
+        "a request paused when the body and the reset came: given the body when resumed, then PROVEN_OK", "");
+    PROVEN_TEST_ASSERT(c[5].done && c[5].why == PROVEN_OK && c[5].dones == 1 && c[5].got == 5 && c[5].sent < c[5].to_send,
+        "a request whose body was still going out: the complete response is PROVEN_OK, and the rest of the body is not sent", "");
+    PROVEN_TEST_ASSERT(!a.broken && !a.eof, "and the connection goes on", "");
+    h2peer_end(&a);
+    proven_http_event_client_destroy(client);
+    (void)proven_net_listener_close(&l);
+    spin(20);
+}
 
 static void retries(void) {
     proven_net_listener_t l;
@@ -1377,6 +1434,8 @@ int main(void) {
 
     PROVEN_TEST_SECTION("retry_unsent", "With the setting, the client itself puts to the server again a request the server did not act on. The test is the server.", "Check r_unsent in http_event_client_h2.c - who may be put again, where, and how often - and its four callers: c_end_requests, the GOAWAY and STREAM_RESET cases of c_event, c_submit_waiting.");
     retries();
+    PROVEN_TEST_SECTION("a reset where the end belongs", "A server that sends every byte its content-length declared and then RST_STREAM with NO_ERROR instead of END_STREAM.", "Check the RST_STREAM case of h2c_read in h2_conn.c (`declared_all`) and the STREAM_RESET case of c_event in http_event_client_h2.c.");
+    reset_after_length();
 
     PROVEN_TEST_SECTION("time, for a body and for output", "A response body that stops coming, and a server that stops reading.", "Check r_expect for a request's own deadline (body_timeout_ms once the head has come) and c_arm for the connection's (write_timeout_ms while output is queued).");
     time_limits();
