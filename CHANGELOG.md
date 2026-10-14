@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.56.0] - 2026-10-15
+
 ### Added
 
 - **WebSocket over HTTP/2 (RFC 8441) on the event-driven server.** With `http2_websocket`
