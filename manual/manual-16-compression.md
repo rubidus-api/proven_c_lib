@@ -3,13 +3,14 @@
 **Part III - Data structures. Prerequisites: [Chapter 2](manual-02-allocation.md) for the allocator a
 compressor is made with; [Chapter 4](manual-04-containers-algorithms.md) for the checksums.**
 **After this chapter** you can compress and decompress a buffer or a stream of any length,
-read and write the `gzip` and `zlib` wrappers, decide how much a stranger's data may expand
-to before you refuse it - and say what was tested and how fast it is.
+read and write the `gzip` and `zlib` wrappers, read Zstandard, decide how much a stranger's
+data may expand to - and how much memory it may make you spend - before you refuse it, and
+say what was tested and how fast it is.
 
-This chapter covers `deflate.h`. It is pure computation - one allocation when a compressor or
-decompressor is made, nothing from the operating system - and is available in a
-[freestanding](manual-freestanding.md) build. Section 6 is the exception: it is about
-compressed HTTP responses, in the servers and clients of Chapters 11 and 15.
+This chapter covers `deflate.h` and, in section 7, `zstd.h`. Both are pure computation -
+allocation through the allocator you give, nothing from the operating system - and are
+available in a [freestanding](manual-freestanding.md) build. Section 6 is the exception: it
+is about compressed HTTP responses, in the servers and clients of Chapters 11 and 15.
 
 ## Table of contents
 
@@ -19,7 +20,8 @@ compressed HTTP responses, in the servers and clients of Chapters 11 and 15.
 4. [Levels, windows and what they cost](#4-levels-windows-and-what-they-cost)
 5. [Data from somebody else](#5-data-from-somebody-else)
 6. [Over HTTP](#6-over-http)
-7. [What is accepted, what is not here, and how this was tested](#7-what-is-accepted-what-is-not-here-and-how-this-was-tested)
+7. [Zstandard](#7-zstandard)
+8. [What is accepted, what is not here, and how this was tested](#8-what-is-accepted-what-is-not-here-and-how-this-was-tested)
 
 ## 1. What DEFLATE does, in one page
 
@@ -437,6 +439,14 @@ announced - the length is still what you must write.
 to you: `proven_http_client_read` fills your buffer with decoded bytes, and the event-driven
 client's `on_body` receives decoded pieces of at most 16 KiB.
 
+**With `decompress_zstd` as well, it asks for Zstandard too** - `Accept-Encoding: zstd, gzip`
+- and decodes a `zstd` body in the same way, with section 7's decoder and the 8 MiB window
+limit that RFC 9659 sets for HTTP. It is a separate switch because of that window: a server
+may make a client hold up to 8 MiB for one response, where gzip needs 35 KiB. Without
+`decompress`, `decompress_zstd` is `PROVEN_ERR_INVALID_ARG`. The servers of this library do
+not compress in Zstandard; a handler can send its own (`proven_http_accepts_coding` with
+`PROVEN_HTTP_CODING_ZSTD`, then its own `Content-Encoding: zstd`).
+
 ### Example: a page compressed, an account page not
 
 <!-- example: manual/examples/en/ex_16_http_gzip.c -->
@@ -748,8 +758,9 @@ int main(void) {
 | `compress_level` (both server configurations) | 1 (fastest) to 9 (smallest); -1 stores without compressing. Zero is 6. Section 4 has the measurements. | `INVALID_ARG` from `create` outside that range. |
 | `compress_window_bits` (both) | 9 to 15: the memory a streamed response holds while it is written (section 4's table). Zero is 15. | the same. |
 | `decompress` (both client configurations) | Send `Accept-Encoding: gzip` and decode `gzip` and `deflate` bodies. | - |
+| `decompress_zstd` (both client configurations) | With `decompress`: send `Accept-Encoding: zstd, gzip` and decode `zstd` bodies too. | `INVALID_ARG` from `create` without `decompress`. |
 | `proven_http_accepts_coding(headers, count, coding)` | Whether a request's `Accept-Encoding` allows a coding: listed with a weight above zero, or covered by `*`. | `bool`. Without the field only identity is accepted. |
-| `proven_http_content_coding(headers, count)` | What `Content-Encoding` names. | `PROVEN_HTTP_CODING_IDENTITY`, `_GZIP` (also for `x-gzip`), `_DEFLATE`, or `_OTHER` for anything else and for more than one. |
+| `proven_http_content_coding(headers, count)` | What `Content-Encoding` names. | `PROVEN_HTTP_CODING_IDENTITY`, `_GZIP` (also for `x-gzip`), `_DEFLATE`, `_ZSTD` (since v0.57.0; `_OTHER` before), or `_OTHER` for anything else and for more than one. |
 
 ### Cautions, and what goes wrong
 
@@ -778,22 +789,188 @@ int main(void) {
   `proven_http_client_read` is bounded by the buffer you give it, as always.
 - **A damaged compressed body is `PROVEN_ERR_INVALID_FORMAT`**, never a short success: a
   stream that is cut off, fails its checksum, or is followed by bytes that are not another
-  gzip member. Several gzip members in a row are read as one body.
+  gzip member (or Zstandard frame). Several gzip members, or Zstandard frames, in a row are
+  read as one body.
 - **`deflate` means two things in practice.** The standard says a zlib stream; some servers
   send raw DEFLATE. The client looks at the first two bytes and reads whichever it is. It
-  never asks for `deflate` - only `gzip` - and the servers never send it.
+  never asks for `deflate` - only `gzip`, and `zstd` with `decompress_zstd` - and the servers
+  never send it.
 - **Not decoded:** a `206 Partial Content` (a range of a compressed body is not a compressed
   body - and with `decompress` set, a request that carries `Range` is sent without
-  `Accept-Encoding`); a coding other than these two (`br`, `zstd`); two codings applied one
-  over the other. Such a body reaches you as it was sent, with its header.
+  `Accept-Encoding`); `zstd` without `decompress_zstd`; any other coding (`br`); two
+  codings applied one over the other. Such a body reaches you as it was sent, with its
+  header.
 - **Memory.** A response being decoded costs about 35 KiB (52 KiB in the event-driven
-  client) while it is open. A streamed response being compressed costs what section 4's
+  client) while it is open - a `zstd` one, as much as its frame's window, up to 8 MiB, and
+  about 400 KiB more, allocated as its output grows. A streamed response being compressed costs what section 4's
   table says for the window - 325 KiB by default - until it ends; one sent in one piece
   costs that only for the call, with a window no larger than the body. Ten thousand
   streamed responses at the default window are 3 GiB: lower `compress_window_bits`, or
   compress fewer.
 
-## 7. What is accepted, what is not here, and how this was tested
+## 7. Zstandard
+
+```c
+#include "proven/zstd.h"
+
+proven_err_t proven_zstd_decoder_create(proven_allocator_t alloc, proven_u64 window_max, proven_zstd_decoder_t **out);
+void proven_zstd_decoder_destroy(proven_zstd_decoder_t *z);
+void proven_zstd_decoder_reset(proven_zstd_decoder_t *z);
+proven_err_t proven_zstd_decode(proven_zstd_decoder_t *z, proven_mem_view_t in, proven_size_t *consumed,
+                                proven_mem_mut_t out, proven_size_t *produced, bool *done);
+proven_err_t proven_zstd_decode_all(proven_allocator_t alloc, proven_mem_view_t in, proven_mem_mut_t out, proven_size_t *written);
+```
+
+Zstandard (RFC 8878) is a newer format than DEFLATE: `.zst` files, HTTP's
+`Content-Encoding: zstd` (RFC 9659), and some package formats. Its compressors range from
+faster than gzip's fastest to smaller than gzip's smallest; whatever was used, it decodes
+quickly. **This library reads Zstandard and does not write it.**
+
+The decoder is used like section 3's decompressor - a state, and a step that takes what
+input there is and fills what output space there is - with two differences that the format
+makes necessary:
+
+- **A step may allocate.** Zstandard reads parts of each block from its end, so a block (up
+  to 128 KiB compressed) is held whole before it is decoded, and decoded whole next to the
+  history that later blocks refer to. These buffers grow as a frame's output grows - a
+  frame that says it holds 300 bytes costs 300 bytes of history, not 8 MiB - and are kept
+  for the next frame. So `proven_zstd_decode` can return `PROVEN_ERR_NOMEM`.
+- **Output can wait in the decoder**, by up to one block, while the space you give is too
+  small for it.
+
+**The window is the memory, and the limit is yours.** Every frame says how far back it may
+refer - its window - and a decoder must keep that much of what it produced. A frame may
+claim terabytes. `window_max` is the most you agree to: 0 means 8 MiB, which RFC 9659 sets
+for HTTP. A frame that needs more is `PROVEN_ERR_OUT_OF_BOUNDS` before anything is
+allocated for it.
+
+| | Memory |
+|---|---|
+| A decoder, made | about 16 KiB of tables |
+| While decoding a frame | its window (at most your limit), plus up to 384 KiB for the block being decoded |
+
+**A stream is a sequence of frames.** `*done` becomes true where a frame ends, and that call
+stops there: what it consumed is that frame. Call again with the rest and the next frame
+begins - no reset is needed. Skippable frames (magic numbers `0x184D2A50` to `0x184D2A5F`)
+are read past, producing nothing. A frame that needs a dictionary is
+`PROVEN_ERR_UNSUPPORTED`; content sent over HTTP does not use one.
+
+### Example: a buffer, two frames, and a window too large
+
+<!-- example: manual/examples/en/ex_16_zstd.c -->
+```c
+#include <string.h>
+
+/*
+ * Zstandard: a whole buffer, then a stream of two frames read piece by piece, and the window
+ * limit that keeps a stranger's frame from deciding how much memory this program spends.
+ */
+
+/* 4,000 bytes of log lines, as libzstd wrote them at level 19 with a checksum: 77 bytes. */
+static const proven_byte_t FRAME[] = {
+    0x28, 0xb5, 0x2f, 0xfd, 0x64, 0xa0, 0x0e, 0xfd, 0x01, 0x00, 0x62, 0xc3,
+    0x0c, 0x11, 0x90, 0x7d, 0x00, 0x04, 0x1c, 0xf9, 0xc4, 0x4b, 0x1e, 0x4d,
+    0x80, 0xa0, 0x8f, 0x99, 0x3a, 0xe6, 0x0c, 0xe0, 0x84, 0xb9, 0x79, 0xda,
+    0x52, 0xe7, 0x47, 0xe1, 0xa3, 0xb1, 0xbb, 0xdc, 0x1f, 0x9e, 0x10, 0xf3,
+    0xe1, 0x8b, 0x28, 0xa3, 0x39, 0xc7, 0xde, 0xde, 0x4d, 0x45, 0x97, 0x11,
+    0xd7, 0xf1, 0x4e, 0xad, 0x02, 0x00, 0xc6, 0xde, 0x95, 0x2f, 0x3b, 0x3b,
+    0x9f, 0xe8, 0x22, 0xa1, 0x2a,
+};
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    static const char line[] = "GET /index.html HTTP/1.1 - 200 - text/html; charset=utf-8\n";
+    static proven_byte_t text[4000];
+    for (proven_size_t i = 0; i < sizeof text; ++i) text[i] = (proven_byte_t)line[i % (sizeof line - 1)];
+
+    /* A whole buffer: as with gzip, the output buffer is the limit. */
+    static proven_byte_t out[8000];
+    proven_size_t n = 0;
+    EXAMPLE_REQUIRE(proven_zstd_decode_all(heap, (proven_mem_view_t){ FRAME, sizeof FRAME }, (proven_mem_mut_t){ out, sizeof out }, &n) == PROVEN_OK &&
+                    n == sizeof text && memcmp(out, text, n) == 0, "77 bytes of Zstandard decode to the 4,000 bytes libzstd was given");
+    EXAMPLE_REQUIRE(proven_zstd_decode_all(heap, (proven_mem_view_t){ FRAME, sizeof FRAME }, (proven_mem_mut_t){ out, 3999 }, &n) == PROVEN_ERR_OUT_OF_BOUNDS,
+                    "and do not fit in 3,999: PROVEN_ERR_OUT_OF_BOUNDS");
+
+    /* A stream: the same frame twice, given 10 bytes at a time with 500 bytes of room. Each
+     * call takes what it can; `done` says a frame has just ended, and the next call simply
+     * goes on with the frame that follows. */
+    static proven_byte_t two[2 * sizeof FRAME];
+    memcpy(two, FRAME, sizeof FRAME);
+    memcpy(two + sizeof FRAME, FRAME, sizeof FRAME);
+    proven_zstd_decoder_t *z = NULL;
+    EXAMPLE_REQUIRE(proven_zstd_decoder_create(heap, 0, &z) == PROVEN_OK, "a decoder with the default window limit, 8 MiB");
+    proven_size_t in_at = 0, out_at = 0;
+    int frames = 0;
+    while (in_at < sizeof two || out_at < sizeof out) {
+        proven_size_t give = sizeof two - in_at < 10 ? sizeof two - in_at : 10, room = sizeof out - out_at < 500 ? sizeof out - out_at : 500;
+        proven_size_t used = 0, made = 0;
+        bool done = false;
+        EXAMPLE_REQUIRE(proven_zstd_decode(z, (proven_mem_view_t){ two + in_at, give }, &used, (proven_mem_mut_t){ out + out_at, room }, &made, &done) == PROVEN_OK, "a step");
+        in_at += used;
+        out_at += made;
+        if (done && used + made > 0) frames++;
+        if (used == 0 && made == 0) break;              /* nothing more to give, or nowhere to put it */
+    }
+    EXAMPLE_REQUIRE(frames == 2 && out_at == 2 * sizeof text && memcmp(out + sizeof text, text, sizeof text) == 0, "two frames, one after the other, 8,000 bytes");
+
+    /* The window limit. Every frame says how far back it may refer, and a decoder must keep
+     * that much; this hand-made header asks for 1 MiB. A decoder limited to 64 KiB refuses it
+     * before allocating anything for it. reset makes the decoder usable again. */
+    static const proven_byte_t wide[] = { 0x28, 0xb5, 0x2f, 0xfd, 0x00, (20 - 10) << 3, 0x19, 0x00, 0x00, 'a', 'b', 'c' };
+    proven_zstd_decoder_t *small = NULL;
+    proven_size_t used = 0, made = 0;
+    bool done = false;
+    EXAMPLE_REQUIRE(proven_zstd_decoder_create(heap, 64 * 1024, &small) == PROVEN_OK, "a decoder limited to 64 KiB");
+    EXAMPLE_REQUIRE(proven_zstd_decode(small, (proven_mem_view_t){ wide, sizeof wide }, &used, (proven_mem_mut_t){ out, sizeof out }, &made, &done) == PROVEN_ERR_OUT_OF_BOUNDS,
+                    "a frame that needs 1 MiB of window: PROVEN_ERR_OUT_OF_BOUNDS");
+    proven_zstd_decoder_reset(small);
+    EXAMPLE_REQUIRE(proven_zstd_decode(small, (proven_mem_view_t){ FRAME, sizeof FRAME }, &used, (proven_mem_mut_t){ out, sizeof out }, &made, &done) == PROVEN_OK &&
+                    done && made == sizeof text, "after a reset, a frame within the limit decodes");
+    EXAMPLE_REQUIRE(proven_zstd_decode(z, (proven_mem_view_t){ wide, sizeof wide }, &used, (proven_mem_mut_t){ out, sizeof out }, &made, &done) == PROVEN_OK &&
+                    done && made == 3, "while the default limit takes it");
+
+    proven_zstd_decoder_destroy(small);
+    proven_zstd_decoder_destroy(z);
+    return EXAMPLE_OK();
+}
+```
+
+### Reference
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_zstd_decoder_create(alloc, window_max, &z)` | A decoder. `window_max` from 1 KiB to 2 GiB; 0 is 8 MiB. | `INVALID_ARG`, `NOMEM`. |
+| `proven_zstd_decode(z, in, &consumed, out, &produced, &done)` | Take some of `in`, fill some of `out`; stop at a frame's end. Only the bytes reported produced are written. | `INVALID_FORMAT` (damaged, a checksum or stated size that does not match), `OUT_OF_BOUNDS` (window above the limit), `UNSUPPORTED` (a dictionary), `NOMEM`, `INVALID_ARG`; after an error, the same until a reset. |
+| `proven_zstd_decoder_reset(z)` | Forget the stream in progress; keep the buffers. | none. |
+| `proven_zstd_decoder_destroy(z)` | Free it. NULL is allowed. | none. |
+| `proven_zstd_decode_all(alloc, in, out, &written)` | Every frame of `in` into `out`, with the default limit. `out`'s size is the limit on output. | `OUT_OF_BOUNDS` when it does not fit; `INVALID_FORMAT` also when `in` is empty or ends inside a frame. |
+
+### Cautions, and what goes wrong
+
+- **The window, not the size of the data, decides the memory.** A server - or anyone whose
+  frames you decode - chooses it, up to your limit. A thousand responses at once, each with
+  an 8 MiB window, are 8 GiB. Lower `window_max` where you can (a decoder for your own
+  `.zst` files knows what window they use), and count decoders the way you count
+  connections.
+- **The checksum is optional in Zstandard.** A frame written without one can be damaged and
+  still decode to wrong bytes; the decoder can only refuse what does not parse. Where it
+  matters, check what you decoded yourself.
+- **Not a gzip stream.** `proven_zstd_decode` reads Zstandard only. Over HTTP, the clients
+  choose the decoder from `Content-Encoding`; for files, look at the first four bytes
+  (`28 b5 2f fd`).
+
+**What it accepts is what libzstd accepts.** Where RFC 8878 leaves a case to the decoder it
+was settled as libzstd 1.5.7's streaming decoder settles it - the decoder curl and browsers
+use: a compressed block of no bytes is an empty block, Huffman codes up to 12 bits are read,
+and a stream that reads its last bits exactly is required. What libzstd's one-call decoder
+and its streaming one disagree about, the streaming one decides.
+
+**Speed.** On the development machine, the C sources of this library (2.2 MiB) compressed by
+libzstd at levels 1, 3 and 19 decode at about 380, 395 and 455 MiB/s; the same data as gzip,
+through section 3's decompressor, at about 335 MiB/s; libzstd itself, called from Node, at
+about 760 MiB/s.
+
+## 8. What is accepted, what is not here, and how this was tested
 
 **What the decompressor accepts is what zlib accepts.** Where RFC 1951 leaves a corner open,
 each case was tried on zlib first and its verdict followed, because a real producer may emit
@@ -811,11 +988,13 @@ for byte, what zlib would have written for the same input, and it does not need 
 
 - **Preset dictionaries** (zlib's `FDICT`), in either direction.
 - **ZIP archives, tar files**: those are containers. This is the codec inside them.
-- **Deflate64**, and every other compression format: Brotli, Zstandard, LZ4, bzip2, xz.
+- **Deflate64**, and every other compression format: Brotli, LZ4, bzip2, xz - and writing
+  Zstandard (section 7 reads it).
 - **The gzip header's fields** - name, time, comment - cannot be set or read.
 - **Several gzip members read as one stream** automatically: reset after each (section 3).
   (The HTTP clients of section 6 do this for a response body.)
-- **Over HTTP:** compressed *request* bodies, in either direction; `br` and `zstd`; a call
+- **Over HTTP:** compressed *request* bodies, in either direction; `br`; `zstd` from the
+  servers (the clients decode it, section 6); a call
   that pushes out what a streamed response has written so far; serving a precompressed file
   (a handler can do that itself: `proven_http_accepts_coding`, then its own
   `Content-Encoding`).
@@ -842,5 +1021,23 @@ both servers compressing at seven sizes, in one piece and streamed, plain and ov
 Outside the registered tests, curl and Python read what both servers send, and both clients
 read what a Python server sends.
 
+**Section 7 was tested** against libzstd 1.5.7, by way of Node: the registered test decodes
+90 streams libzstd made from seven kinds of data - levels 1, 3, 9 and 19, with and without
+the checksum and the content size, matches reaching across blocks - in one call, a byte at a
+time and in odd steps, and gets the data libzstd was given; accepts ten hand-built frames
+that are unusual and that libzstd accepts, and refuses fourteen that it refuses, with its
+reason (damage, a dictionary, a window above 8 MiB); refuses every proper prefix of the short
+streams; gives the same verdict, whole and in steps, for every single changed bit of them;
+and shows the window limit refusing before any allocation, the memory held, and every
+failed allocation answered with `PROVEN_ERR_NOMEM`. Outside the registered tests: 131 more
+streams libzstd made - up to 2.2 MiB, several frames, flushed streams - decoded byte for byte
+in steps from 1 byte to 70,000; and about 70,000 truncations and changed bits of seven of
+them, under tools that report any read or write outside a buffer, with none reported. Over
+HTTP, the blocking, event-driven and HTTP/2 clients decoded what Node's servers sent in
+`zstd` (levels 1, 3 and 19, whole, flushed and in several frames, up to 3 MB), refused it
+cut short or followed by junk, and a client that did not ask was sent gzip; curl read a
+handler's own Zstandard from this library's server.
+
 **Not done:** no coverage-guided fuzzing; no comparison with a second compressor's output
-besides zlib's; no external review.
+besides zlib's; no external review. For Zstandard: no frames from other encoders than
+libzstd; no browser.

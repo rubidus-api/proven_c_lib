@@ -38,6 +38,7 @@ static void spin(proven_u32 ms) { bool never = false; spin_until(&never, ms); }
 
 typedef struct { proven_http_stream_t *stream; proven_loop_timer_t timer; proven_size_t sent, total, got; proven_byte_t *echo; proven_size_t cap; bool echoing; } served_t;
 static int g_served, g_served_done, g_served_h2;
+#define ZST_PLAIN ((proven_size_t)200000)
 static char g_who_target[80], g_who_host[80];      /* what the last /who request looked like to the handler */
 
 static void served_pump(served_t *a) {
@@ -82,6 +83,26 @@ static void srv_request(void *ctx, proven_http_stream_t *s, const proven_http_re
         snprintf(g_who_target, sizeof g_who_target, "%.*s", (int)req->target.size, (const char *)req->target.ptr);
         snprintf(g_who_host, sizeof g_who_host, "%.*s", (int)host.size, (const char *)host.ptr);
         (void)proven_http_stream_respond(s, 200, NULL, 0, mv("who"));
+    } else if (target_is(req, "/zst")) {
+        /* A handler's own Zstandard (a frame of two raw blocks, built here): the client must ask
+         * for it, and decodes it. */
+        static proven_byte_t frame[ZST_PLAIN + 64];
+        proven_size_t n = 0;
+        const proven_byte_t head[] = { 0x28, 0xb5, 0x2f, 0xfd, 0x00, (17 - 10) << 3 };
+        memcpy(frame, head, sizeof head);
+        n = sizeof head;
+        for (proven_size_t at = 0; at < ZST_PLAIN;) {
+            proven_size_t k = ZST_PLAIN - at < 131072 ? ZST_PLAIN - at : 131072;
+            const proven_u32 bh = (proven_u32)(k << 3) | (at + k == ZST_PLAIN ? 1u : 0u);
+            frame[n++] = (proven_byte_t)bh; frame[n++] = (proven_byte_t)(bh >> 8); frame[n++] = (proven_byte_t)(bh >> 16);
+            for (proven_size_t i = 0; i < k; i++) frame[n++] = pattern(at + i);
+            at += k;
+        }
+        proven_u8str_view_t ae = { 0 };
+        (void)proven_http_header_find(req->headers, req->header_count, sv("Accept-Encoding"), &ae);
+        snprintf(g_who_target, sizeof g_who_target, "%.*s", (int)ae.size, (const char *)ae.ptr);
+        const proven_http_header_t ce = { .name = sv("Content-Encoding"), .value = sv("zstd") };
+        (void)proven_http_stream_respond(s, 200, &ce, 1, (proven_mem_view_t){ frame, n });
     } else if (target_is(req, "/later")) proven_loop_timer_set(g_loop, &a->timer, 60, served_later, a);
     else if (target_is(req, "/never")) { /* thinking */ }
     else (void)proven_http_stream_respond(s, 404, NULL, 0, mv("no"));
@@ -219,7 +240,7 @@ static proven_http_event_server_t *server_on(const proven_tls_config_t *tls, boo
 static void cases(bool tls) {
     const char *how = tls ? "over TLS, by ALPN" : "in the clear, by prior knowledge";
     proven_http_event_server_t *server = server_on(tls ? g_server_tls_h2 : NULL, true, 0);
-    proven_http_event_client_config_t ccfg = { .alloc = g_heap, .tls = tls ? g_client_tls : NULL, .http2 = tls, .http2_cleartext = !tls, .decompress = true, .idle_timeout_ms = 400 };
+    proven_http_event_client_config_t ccfg = { .alloc = g_heap, .tls = tls ? g_client_tls : NULL, .http2 = tls, .http2_cleartext = !tls, .decompress = true, .decompress_zstd = true, .idle_timeout_ms = 400 };
     proven_http_event_client_t *client = NULL;
     PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &ccfg, &client) == PROVEN_OK, "a client that may speak HTTP/2", how);
     static call_t c, many[40];
@@ -248,6 +269,10 @@ static void cases(bool tls) {
     PROVEN_TEST_ASSERT(start(client, &c, "GET", "/zip/300000", mv(""), 0) == PROVEN_OK, "a compressed download", how);
     spin_until(&c.done, 8000);
     PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.got == 300000 && !c.bad, "is delivered decoded, every byte", how);
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", "/zst", mv(""), 0) == PROVEN_OK, "a download in Zstandard", how);
+    spin_until(&c.done, 8000);
+    PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.got == ZST_PLAIN && !c.bad && strcmp(g_who_target, "zstd, gzip") == 0,
+        "asked for with decompress_zstd, and delivered decoded", how);
     PROVEN_TEST_ASSERT(start(client, &c, "HEAD", "/big/5000", mv(""), 0) == PROVEN_OK, "HEAD", how);
     spin_until(&c.done, 5000);
     PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.status == 200 && c.got == 0, "has a head and no body", how);

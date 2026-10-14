@@ -73,6 +73,7 @@ typedef struct {
     void *tls_ctx;
     bool decompress;                        /**< ask for compressed responses and decode them; false: bodies arrive as the server sent them. See proven_http_client_read. */
     proven_u32 expect_timeout_ms;           /**< for a request sent with `expect_continue`: how long to wait for the server's word before sending the body anyway. 0: 1 s */
+    bool decompress_zstd;                   /**< with `decompress`: ask for Zstandard too (`Accept-Encoding: zstd, gzip`) and decode a body sent with `Content-Encoding: zstd`, whose window may be up to 8 MiB (RFC 9659) - so a response being read can cost that much and 384 KiB more. Without `decompress`, PROVEN_ERR_INVALID_ARG. false: `zstd` is not asked for, and a body sent in it anyway arrives as sent */
 } proven_http_client_config_t;
 
 /** @brief A client. Opaque; made by proven_http_client_create. */

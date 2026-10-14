@@ -14,13 +14,17 @@ static proven_u8str_view_t hc_lit_n(const char *s, proven_size_t n) {
 // Decoding
 // -----------------------------------------------------------------------------
 
-bool proven_http_decoder_wanted_(proven_u16 status, const proven_http_header_t *headers, proven_size_t count, proven_http_coding_t *coding) {
+bool proven_http_decoder_wanted_(proven_u16 status, const proven_http_header_t *headers, proven_size_t count, bool zstd, proven_http_coding_t *coding) {
     /* 206 carries a range of the encoded bytes: a piece of a gzip stream is not one. */
     if (status == 206) return false;
     proven_http_coding_t c = proven_http_content_coding(headers, count);
-    if (c != PROVEN_HTTP_CODING_GZIP && c != PROVEN_HTTP_CODING_DEFLATE) return false;
+    if (c != PROVEN_HTTP_CODING_GZIP && c != PROVEN_HTTP_CODING_DEFLATE && !(zstd && c == PROVEN_HTTP_CODING_ZSTD)) return false;
     *coding = c;
     return true;
+}
+
+proven_u8str_view_t proven_http_decoder_accept_(bool zstd) {
+    return zstd ? HC_LIT("zstd, gzip") : HC_LIT("gzip");
 }
 
 void proven_http_decoder_begin_(proven_http_decoder_t_ *d, proven_allocator_t alloc, proven_http_coding_t coding) {
@@ -31,6 +35,8 @@ void proven_http_decoder_free_(proven_http_decoder_t_ *d) {
     if (!d) return;
     if (d->z) proven_inflate_destroy(d->z);
     d->z = (void *)0;
+    if (d->zs) proven_zstd_decoder_destroy(d->zs);
+    d->zs = (void *)0;
 }
 
 /* `deflate` is a zlib stream by the standard and raw DEFLATE from some servers. A zlib header
@@ -40,10 +46,34 @@ static bool hc_is_zlib(const proven_byte_t h[2]) {
     return (h[0] & 0x0fu) == 8u && (h[0] >> 4) <= 7u && (((unsigned)h[0] << 8) | h[1]) % 31u == 0u;
 }
 
+/* Zstandard: frames follow each other, which the decoder reads on its own. */
+static proven_err_t hc_zstd_step(proven_http_decoder_t_ *d, proven_mem_view_t in, proven_size_t *consumed,
+                                 proven_mem_mut_t out, proven_size_t *produced) {
+    if (!d->zs) {
+        if (in.size == 0) return PROVEN_OK;
+        proven_err_t e = proven_zstd_decoder_create(d->alloc, PROVEN_ZSTD_WINDOW_DEFAULT, &d->zs);
+        if (e != PROVEN_OK) return e;
+    }
+    for (;;) {
+        if (*consumed < in.size) d->any = true;
+        proven_size_t used = 0, made = 0;
+        bool done = false;
+        const proven_mem_view_t src = { .ptr = in.ptr ? in.ptr + *consumed : in.ptr, .size = in.size - *consumed };
+        const proven_mem_mut_t dst = { .ptr = out.ptr ? out.ptr + *produced : out.ptr, .size = out.size - *produced };
+        proven_err_t e = proven_zstd_decode(d->zs, src, &used, dst, &made, &done);
+        if (e != PROVEN_OK) return e == PROVEN_ERR_NOMEM ? e : PROVEN_ERR_INVALID_FORMAT;
+        *consumed += used;
+        *produced += made;
+        d->ended = done;
+        if (used == 0 && made == 0) return PROVEN_OK;
+    }
+}
+
 proven_err_t proven_http_decoder_step_(proven_http_decoder_t_ *d, proven_mem_view_t in, proven_size_t *consumed,
                                        proven_mem_mut_t out, proven_size_t *produced) {
     *consumed = 0;
     *produced = 0;
+    if (d->coding == PROVEN_HTTP_CODING_ZSTD) return hc_zstd_step(d, in, consumed, out, produced);
     for (;;) {
         if (!d->z) {
             proven_deflate_format_t format = PROVEN_DEFLATE_GZIP;

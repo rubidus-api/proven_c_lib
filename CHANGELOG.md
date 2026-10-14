@@ -18,6 +18,43 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **Zstandard decompression (RFC 8878): `zstd.h`.** `proven_zstd_decoder_create`, `_destroy`,
+  `_reset`, `proven_zstd_decode` and `proven_zstd_decode_all`, used as `proven_inflate` is: a
+  step that takes what input there is and fills what output space there is. Two differences
+  the format makes necessary: a step may allocate - a block is held whole and decoded whole
+  next to its history, in buffers that grow with a frame's output - and output can wait in
+  the decoder by up to one block. The caller sets the window limit (`window_max`, 0 is 8 MiB,
+  which RFC 9659 sets for HTTP); a frame that needs more is `PROVEN_ERR_OUT_OF_BOUNDS` before
+  anything is allocated for it, and one that needs a dictionary is `PROVEN_ERR_UNSUPPORTED`.
+  A stream is a sequence of frames: `done` at each frame's end, the next call goes on;
+  skippable frames are read past. At most a decoder holds its window limit, 384 KiB and about
+  16 KiB of tables. Part of the freestanding profile. Decompression only: the library does
+  not write Zstandard. Manual chapter 16, section 7, with an example run by the suite.
+- **The HTTP clients decode `zstd` when asked: `decompress_zstd`** in both client
+  configurations, beside `decompress`. The client then sends `Accept-Encoding: zstd, gzip`
+  and decodes a `zstd` body as it decodes gzip - the blocking client, the event-driven one and
+  its HTTP/2 connections - with the 8 MiB window limit of RFC 9659. It is a separate switch
+  because that window is memory a server may make the client hold for one response (gzip
+  needs 35 KiB). `decompress_zstd` without `decompress` is `PROVEN_ERR_INVALID_ARG`. Without
+  it nothing changes: `zstd` is not asked for, and a body sent in it anyway arrives as sent.
+- `PROVEN_HTTP_CODING_ZSTD`, after `PROVEN_HTTP_CODING_OTHER` so that the values before it keep
+  their numbers; `proven_http_accepts_coding` answers for it, so a handler can send its own
+  Zstandard where it is accepted.
+- Tests: `test_unit_zstd` (90 streams libzstd made, ten unusual frames it accepts, fourteen it
+  refuses with its reason, every prefix and single-bit change of the short streams, frames in
+  sequence, the window limit, the memory held, failed allocations); `test_unit_http_coding`
+  has thirteen `zstd` bodies made by libzstd (decoded, or refused, as libzstd's or curl's
+  verdict says) through both clients, and a client without `decompress_zstd` that asks for
+  gzip alone and is given `zstd` as sent; `test_unit_http_event_client_h2` decodes a handler's
+  own Zstandard over HTTP/2.
+
+### Changed
+
+- `proven_http_content_coding` returns `PROVEN_HTTP_CODING_ZSTD` for `Content-Encoding: zstd`,
+  where it returned `PROVEN_HTTP_CODING_OTHER`.
+
 ## [0.56.0] - 2026-10-15
 
 ### Added

@@ -461,7 +461,7 @@ static proven_err_t r_submit(c2req_t *r) {
     }
     const bool body_method = c2_eq_nocase(r->method, c2_lit("POST")) || c2_eq_nocase(r->method, c2_lit("PUT")) || c2_eq_nocase(r->method, c2_lit("PATCH"));
     if (e == PROVEN_OK) {
-        if (cl->cfg.decompress && !has_accept && !has_range) list[n++] = (proven_http_header_t){ .name = c2_lit("accept-encoding"), .value = c2_lit("gzip") };
+        if (cl->cfg.decompress && !has_accept && !has_range) list[n++] = (proven_http_header_t){ .name = c2_lit("accept-encoding"), .value = proven_http_decoder_accept_(cl->cfg.decompress_zstd) };
         proven_u64 length = r->body.size > 0 ? r->body.size : r->body_length;
         if (r->body.size > 0 || (r->body_length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN && (r->body_length > 0 || body_method))) {
             do { digits[sizeof digits - 1 - nd++] = (proven_byte_t)('0' + length % 10); length /= 10; } while (length > 0);
@@ -604,7 +604,7 @@ static void c_response(c2conn_t *c, c2req_t *r, const proven_h2_event_t *ev) {
     if (r->copy) { cl->alloc.free_fn(cl->alloc.ctx, r->copy); r->copy = (void *)0; }      /* answered: it will not be sent again */
     const bool no_body = ev->end_stream || r->head_only;
     proven_http_coding_t coding = PROVEN_HTTP_CODING_IDENTITY;
-    if (cl->cfg.decompress && !no_body && proven_http_decoder_wanted_(res.status, res.headers, res.header_count, &coding)) {
+    if (cl->cfg.decompress && !no_body && proven_http_decoder_wanted_(res.status, res.headers, res.header_count, cl->cfg.decompress_zstd, &coding)) {
         proven_result_mem_mut_t m = cl->alloc.alloc_fn(cl->alloc.ctx, sizeof(proven_http_decoder_t_) + PROVEN_HTTP_CODING_PIECE, alignof(proven_http_decoder_t_));
         if (m.err != PROVEN_OK) { r_finish(r, PROVEN_ERR_NOMEM); return; }
         r->dec = (proven_http_decoder_t_ *)(void *)m.value.ptr;

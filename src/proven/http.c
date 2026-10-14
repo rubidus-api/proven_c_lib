@@ -306,6 +306,7 @@ static proven_u8str_view_t http_lit_n(const char *s, proven_size_t n) {
 static proven_http_coding_t http_coding_named(proven_u8str_view_t name) {
     if (http_eq_nocase(name, HTTP_LIT("gzip")) || http_eq_nocase(name, HTTP_LIT("x-gzip"))) return PROVEN_HTTP_CODING_GZIP;
     if (http_eq_nocase(name, HTTP_LIT("deflate"))) return PROVEN_HTTP_CODING_DEFLATE;
+    if (http_eq_nocase(name, HTTP_LIT("zstd"))) return PROVEN_HTTP_CODING_ZSTD;
     if (http_eq_nocase(name, HTTP_LIT("identity"))) return PROVEN_HTTP_CODING_IDENTITY;
     return PROVEN_HTTP_CODING_OTHER;
 }

@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1277 aliases: 937 lowercase `xcv_` names and 340 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1285 aliases: 943 lowercase `xcv_` names and 342 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -224,6 +224,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_HTTP_CODING_GZIP` | `PROVEN_HTTP_CODING_GZIP` |
 | `XCV_HTTP_CODING_IDENTITY` | `PROVEN_HTTP_CODING_IDENTITY` |
 | `XCV_HTTP_CODING_OTHER` | `PROVEN_HTTP_CODING_OTHER` |
+| `XCV_HTTP_CODING_ZSTD` | `PROVEN_HTTP_CODING_ZSTD` |
 | `XCV_HTTP_CONNECT` | `PROVEN_HTTP_CONNECT` |
 | `XCV_HTTP_COOKIE_MAX_SIZE` | `PROVEN_HTTP_COOKIE_MAX_SIZE` |
 | `XCV_HTTP_DATE_SIZE` | `PROVEN_HTTP_DATE_SIZE` |
@@ -369,6 +370,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_WS_PING` | `PROVEN_WS_PING` |
 | `XCV_WS_PONG` | `PROVEN_WS_PONG` |
 | `XCV_WS_TEXT` | `PROVEN_WS_TEXT` |
+| `XCV_ZSTD_WINDOW_DEFAULT` | `PROVEN_ZSTD_WINDOW_DEFAULT` |
 | `xcv_alloc_check_entry_t` | `proven_alloc_check_entry_t` |
 | `xcv_alloc_check_live` | `proven_alloc_check_live` |
 | `xcv_alloc_check_owns` | `proven_alloc_check_owns` |
@@ -1306,3 +1308,9 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_xoshiro256ss_next` | `proven_xoshiro256ss_next` |
 | `xcv_xoshiro256ss_rng` | `proven_xoshiro256ss_rng` |
 | `xcv_xoshiro256ss_seed` | `proven_xoshiro256ss_seed` |
+| `xcv_zstd_decode` | `proven_zstd_decode` |
+| `xcv_zstd_decode_all` | `proven_zstd_decode_all` |
+| `xcv_zstd_decoder_create` | `proven_zstd_decoder_create` |
+| `xcv_zstd_decoder_destroy` | `proven_zstd_decoder_destroy` |
+| `xcv_zstd_decoder_reset` | `proven_zstd_decoder_reset` |
+| `xcv_zstd_decoder_t` | `proven_zstd_decoder_t` |

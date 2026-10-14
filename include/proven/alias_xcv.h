@@ -204,6 +204,7 @@
 #define XCV_HTTP_CODING_GZIP PROVEN_HTTP_CODING_GZIP
 #define XCV_HTTP_CODING_IDENTITY PROVEN_HTTP_CODING_IDENTITY
 #define XCV_HTTP_CODING_OTHER PROVEN_HTTP_CODING_OTHER
+#define XCV_HTTP_CODING_ZSTD PROVEN_HTTP_CODING_ZSTD
 #define XCV_HTTP_CONNECT PROVEN_HTTP_CONNECT
 #define XCV_HTTP_COOKIE_MAX_SIZE PROVEN_HTTP_COOKIE_MAX_SIZE
 #define XCV_HTTP_DATE_SIZE PROVEN_HTTP_DATE_SIZE
@@ -349,6 +350,7 @@
 #define XCV_WS_PING PROVEN_WS_PING
 #define XCV_WS_PONG PROVEN_WS_PONG
 #define XCV_WS_TEXT PROVEN_WS_TEXT
+#define XCV_ZSTD_WINDOW_DEFAULT PROVEN_ZSTD_WINDOW_DEFAULT
 #define xcv_alloc_check_entry_t proven_alloc_check_entry_t
 #define xcv_alloc_check_live proven_alloc_check_live
 #define xcv_alloc_check_owns proven_alloc_check_owns
@@ -1286,5 +1288,11 @@
 #define xcv_xoshiro256ss_next proven_xoshiro256ss_next
 #define xcv_xoshiro256ss_rng proven_xoshiro256ss_rng
 #define xcv_xoshiro256ss_seed proven_xoshiro256ss_seed
+#define xcv_zstd_decode proven_zstd_decode
+#define xcv_zstd_decode_all proven_zstd_decode_all
+#define xcv_zstd_decoder_create proven_zstd_decoder_create
+#define xcv_zstd_decoder_destroy proven_zstd_decoder_destroy
+#define xcv_zstd_decoder_reset proven_zstd_decoder_reset
+#define xcv_zstd_decoder_t proven_zstd_decoder_t
 
 #endif // PROVEN_ALIAS_XCV_H
