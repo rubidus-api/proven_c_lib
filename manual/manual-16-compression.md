@@ -1022,11 +1022,12 @@ Outside the registered tests, curl and Python read what both servers send, and b
 read what a Python server sends.
 
 **Section 7 was tested** against libzstd 1.5.7, by way of Node: the registered test decodes
-90 streams libzstd made from seven kinds of data - levels 1, 3, 9 and 19, with and without
-the checksum and the content size, matches reaching across blocks - in one call, a byte at a
-time and in odd steps, and gets the data libzstd was given; accepts ten hand-built frames
-that are unusual and that libzstd accepts, and refuses fourteen that it refuses, with its
-reason (damage, a dictionary, a window above 8 MiB); refuses every proper prefix of the short
+91 streams libzstd made from seven kinds of data - levels 1, 3, 9 and 19, with and without
+the checksum and the content size, matches reaching across blocks, a frame longer than its
+window - in one call, a byte at a time and in odd steps, and gets the data libzstd was given;
+accepts fourteen hand-built frames that are unusual and that libzstd accepts (among them
+every kind of repeat offset), and refuses nineteen that it refuses, with its reason (damage,
+a dictionary, a window above 8 MiB); refuses every proper prefix of the short
 streams; gives the same verdict, whole and in steps, for every single changed bit of them;
 and shows the window limit refusing before any allocation, the memory held, and every
 failed allocation answered with `PROVEN_ERR_NOMEM`. Outside the registered tests: 131 more

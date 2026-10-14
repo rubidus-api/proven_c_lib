@@ -11,7 +11,8 @@
  * test_unit_zstd_vectors.h was made outside this library, with Node's libzstd:
  *
  *   Z item level crc32 length hex   a stream libzstd made from corpus item `item`
- *   O length hex                    a hand-built stream that is odd, and that libzstd accepts
+ *   O crc32 length hex              a hand-built stream that is odd, and that libzstd accepts,
+ *                                   with the CRC-32 and length of what it decodes to
  *   X verdict hex                   a hand-built stream that libzstd refuses (I: invalid;
  *                                   U: it needs a dictionary; B: its window is above 8 MiB)
  *
@@ -192,11 +193,13 @@ int main(void) {
                 }
                 counts[0]++;
             } else if (kind == 'O') {
-                const char *f1 = field(&at, &n1), *f2 = field(&at, &n2);
-                const proven_size_t want_len = (proven_size_t)strtoul(f1, NULL, 10), comp_len = unhex(f2, n2, g_in);
+                const char *f1 = field(&at, &n1), *f2 = field(&at, &n2), *f3 = field(&at, &n3);
+                const proven_u32 want_crc = (proven_u32)strtoul(f1, NULL, 16);
+                const proven_size_t want_len = (proven_size_t)strtoul(f2, NULL, 10), comp_len = unhex(f3, n3, g_in);
                 proven_size_t made = 0, made2 = 0;
                 bool ended = false;
                 ok = proven_zstd_decode_all(g_heap, (proven_mem_view_t){ g_in, comp_len }, (proven_mem_mut_t){ g_out, sizeof g_out }, &made) == PROVEN_OK && made == want_len &&
+                     proven_crc32((proven_mem_view_t){ g_out, made }) == want_crc &&
                      decode_steps(g_heap, 0, g_in, comp_len, 1, 1, g_out2, sizeof g_out2, &made2, &ended) == PROVEN_OK && ended && made2 == made && memcmp(g_out, g_out2, made) == 0;
                 counts[1]++;
             } else {
@@ -212,7 +215,7 @@ int main(void) {
             if (!ok) { failed++; printf("vector %u (%c) differs\n", (unsigned)i, kind); }
         }
         PROVEN_TEST_ASSERT(failed == 0, "every stream libzstd made decodes to its corpus item, whole and in steps; every hand-built stream gets libzstd's verdict", "The vector's index and letter are printed above.");
-        PROVEN_TEST_ASSERT(counts[0] == 90 && counts[1] == 10 && counts[2] == 14, "90 streams libzstd made, 10 odd ones it accepts, 14 it refuses", "");
+        PROVEN_TEST_ASSERT(counts[0] == 91 && counts[1] == 14 && counts[2] == 19, "91 streams libzstd made, 14 odd ones it accepts, 19 it refuses", "");
     }
 
     PROVEN_TEST_SECTION("damage", "Every prefix and every single-bit change of the short streams: refused, or decoded within the output given - and the same whole as in steps.", "A sanitizer report here is an out-of-bounds read or write in src/proven/zstd.c.");
@@ -225,7 +228,7 @@ int main(void) {
             proven_size_t n;
             const char *h = NULL;
             at += 1;
-            for (int k = 0; k < (ZSTDV[i][0] == 'Z' ? 5 : 2); ++k) h = field(&at, &n);
+            for (int k = 0; k < (ZSTDV[i][0] == 'Z' ? 5 : 3); ++k) h = field(&at, &n);
             const proven_size_t len = unhex(h, n, g_in);
             if (len > 600) continue;
             streams++;
@@ -253,7 +256,8 @@ int main(void) {
 
     PROVEN_TEST_SECTION("several frames", "Frames that follow each other, with a skippable one between: each call stops at a frame's end, and the next goes on.", "Check the boundary in proven_zstd_decode: Z_MAGIC with `boundary` set.");
     {
-        proven_size_t n = 0, a = zstream(zline(5, 3, 0), g_cat), b;
+        /* The first frame has a checksum, so that it ends where the checksum is read. */
+        proven_size_t n = 0, a = zstream(zline(5, 3, 1), g_cat), b;
         n = a;
         const proven_byte_t skip[] = { 0x5e, 0x2a, 0x4d, 0x18, 3, 0, 0, 0, 'a', 'b', 'c' };
         memcpy(g_cat + n, skip, sizeof skip);
@@ -306,6 +310,14 @@ int main(void) {
         PROVEN_TEST_ASSERT(e == PROVEN_OK && ended && made == 200000 && memcmp(g_out, g_plain, made) == 0, "the same frame decodes with the default limit", "");
         PROVEN_TEST_ASSERT(g_count.peak <= 256 * 1024 + 3 * 128 * 1024 + 32 * 1024 && g_count.live == 0, "holding at most its window (here 256 KiB) and 384 KiB, plus its tables; and nothing after", "");
         printf("  a 200,000-byte frame with a 256 KiB window: at most %u bytes held\n", (unsigned)g_count.peak);
+        /* The same data with a window of 64 KiB: more than the window and a block, so the oldest
+         * history has to go as the frame is decoded. */
+        const proven_size_t slid = zstream(zline(6, 3, 0), g_in);
+        PROVEN_TEST_ASSERT(g_in[5] == (16 - 10) << 3, "the frame's window is 64 KiB", "");
+        e = decode_steps(counting(0), 0, g_in, slid, 3000, 5000, g_out, sizeof g_out, &made, &ended);
+        PROVEN_TEST_ASSERT(e == PROVEN_OK && ended && made == 200000 && memcmp(g_out, g_plain, made) == 0 && g_count.peak <= 64 * 1024 + 3 * 128 * 1024 + 32 * 1024,
+            "a frame longer than its window and a block decodes, holding at most that window and 384 KiB", "Check the slide in make_room: it keeps the last window's worth of output.");
+        printf("  the same with a 64 KiB window: at most %u bytes held\n", (unsigned)g_count.peak);
         const proven_size_t small = zstream(zline(1, 3, 3), g_in);
         e = decode_steps(counting(0), 0, g_in, small, small, 10, g_out, sizeof g_out, &made, &ended);
         PROVEN_TEST_ASSERT(e == PROVEN_OK && made == 1 && g_count.peak < 32 * 1024, "a frame of one byte costs the decoder and little more", "");
