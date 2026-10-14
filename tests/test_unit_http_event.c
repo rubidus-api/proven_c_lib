@@ -695,12 +695,14 @@ static void drain_case(void) {
     PROVEN_TEST_ASSERT(proven_http_event_server_shutdown(server, 1500, drained, NULL) == PROVEN_OK, "the server begins to end, with 1.5 s for what is open", "");
     PROVEN_TEST_ASSERT(proven_http_event_server_shutdown(server, 1500, drained, NULL) == PROVEN_ERR_INVALID_STATE, "once", "");
     PROVEN_TEST_ASSERT(proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), NULL) == PROVEN_ERR_INVALID_STATE, "and it is final: no listening again", "");
+    dc_pump(loop, d, 4, 100);
+    PROVEN_TEST_ASSERT(d[0].ended && d[0].have == 0 && d[0].ended_at - began < 150000000, "the idle connection is closed at once, not at the idle timeout", "");
+    /* After that check, not before: a refused connection to a closed port takes Windows a second
+     * or so to report, and this wait is not the server's. */
     proven_net_conn_t late;
     bool refused = proven_net_connect(at, proven_net_deadline_in(500), &late) != PROVEN_OK;
     if (!refused) (void)proven_net_close(&late);
     PROVEN_TEST_ASSERT(refused, "a new connection is refused", "");
-    dc_pump(loop, d, 4, 100);
-    PROVEN_TEST_ASSERT(d[0].ended && d[0].have == 0 && d[0].ended_at - began < 150000000, "the idle connection is closed at once, not at the idle timeout", "");
     PROVEN_TEST_ASSERT(proven_net_write_all(&d[2].sock, mv("st: x\r\n\r\n"), proven_net_deadline_in(5000)).err == PROVEN_OK, "the half head is finished after the shutdown began", "");
     dc_pump(loop, d, 4, 600);
     PROVEN_TEST_ASSERT(d[1].ended && strstr(d[1].text, "HTTP/1.1 200") == d[1].text && strstr(d[1].text, "\r\nConnection: close\r\n") != NULL && strstr(d[1].text, "\r\n\r\ndone") != NULL,
