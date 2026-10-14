@@ -459,6 +459,67 @@ int main(void) {
             if (ok) good++;
         }
         PROVEN_TEST_ASSERT(good == COUNT(CRV_X25519) && good >= 42, "every case: keys, shared secrets, signatures, and the refusals", "");
+        /* RFC 7748 section 5.2: k and u both the base point's encoding, k replaced by the result
+         * and u by the old k, once and a thousand times. A thousand ladders over values nobody
+         * chose pass through more of the field's carries than any list of cases. */
+        {
+            static const proven_byte_t once[32] = { 0x42,0x2c,0x8e,0x7a,0x62,0x27,0xd7,0xbc,0xa1,0x35,0x0b,0x3e,0x2b,0xb7,0x27,0x9f,
+                                                    0x78,0x97,0xb8,0x7b,0xb6,0x85,0x4b,0x78,0x3c,0x60,0xe8,0x03,0x11,0xae,0x30,0x79 };
+            static const proven_byte_t thousand[32] = { 0x68,0x4c,0xf5,0x9b,0xa8,0x33,0x09,0x55,0x28,0x00,0xef,0x56,0x6f,0x2f,0x4d,0x3c,
+                                                        0x1c,0x38,0x87,0xc4,0x93,0x60,0xe3,0x87,0x5f,0x2e,0xb9,0x4d,0x99,0x53,0x2c,0x51 };
+            proven_byte_t k[32] = { 9 }, u[32] = { 9 }, r[32];
+            bool ok = true, first = false;
+            for (int i = 0; i < 1000 && ok; ++i) {
+                ok = proven_crypto_x25519(r, k, u);
+                memcpy(u, k, 32); memcpy(k, r, 32);
+                if (i == 0) first = memcmp(k, once, 32) == 0;
+            }
+            PROVEN_TEST_ASSERT(ok && first && memcmp(k, thousand, 32) == 0, "the iterated X25519 of RFC 7748, after one round and after a thousand", "");
+        }
+        /* What a coordinate's encoding may be: the 256th bit is not part of it, and a value of
+         * p or more is read modulo p - so u and u + p give the same answer, to the byte. */
+        {
+            proven_byte_t k[32], u[32], v[32], a[32], b[32];
+            bool ok = true;
+            for (int i = 0; i < 32; ++i) k[i] = (proven_byte_t)(0xa5 ^ (i * 29));
+            for (int small = 2; small < 19; ++small) {
+                memset(u, 0, 32); u[0] = (proven_byte_t)small;
+                memset(v, 0xff, 32); v[0] = (proven_byte_t)(0xed + small); v[31] = 0x7f;      /* p + small, below 2^255 */
+                bool ra = proven_crypto_x25519(a, k, u), rb = proven_crypto_x25519(b, k, v);
+                ok = ok && ra == rb && memcmp(a, b, 32) == 0;
+                u[31] |= 0x80;
+                rb = proven_crypto_x25519(b, k, u);
+                ok = ok && ra == rb && memcmp(a, b, 32) == 0;
+            }
+            memset(v, 0xff, 32); v[0] = 0xed; v[31] = 0x7f;                                   /* p itself is zero */
+            ok = ok && !proven_crypto_x25519(b, k, v);
+            v[0] = 0xee;                                                                      /* and p + 1 is one */
+            ok = ok && !proven_crypto_x25519(b, k, v);
+            PROVEN_TEST_ASSERT(ok, "a coordinate of p or more, and one with the 256th bit set, are the number they are modulo p", "");
+        }
+        /* Pairs of keys from a fixed stream, scalars and all: both sides of an exchange reach
+         * the same secret, and a signature by each key verifies and does not verify a changed
+         * message. No oracle: the two sides are each other's. */
+        {
+            proven_u64 x = 0x9e3779b97f4a7c15ull;
+            proven_byte_t ka[32], kb[32], pa[32], pb[32], sa[32], sb[32], sig[64], msg[48];
+            bool ok = true;
+            for (int round = 0; round < 48 && ok; ++round) {
+                for (int i = 0; i < 32; ++i) { x ^= x << 13; x ^= x >> 7; x ^= x << 17; ka[i] = (proven_byte_t)(x >> 24); kb[i] = (proven_byte_t)(x >> 40); }
+                if (round == 0) { memset(ka, 0xff, 32); memset(kb, 0, 32); }                  /* the extreme scalars too */
+                if (round == 1) { memset(ka, 0x80, 32); memset(kb, 0x7f, 32); }
+                for (int i = 0; i < 48; ++i) msg[i] = (proven_byte_t)(ka[i % 32] + i);
+                proven_crypto_x25519_public(pa, ka); proven_crypto_x25519_public(pb, kb);
+                ok = ok && proven_crypto_x25519(sa, ka, pb) && proven_crypto_x25519(sb, kb, pa) && memcmp(sa, sb, 32) == 0;
+                proven_crypto_ed25519_public(pa, ka);
+                proven_crypto_ed25519_sign(sig, ka, pa, (proven_mem_view_t){ msg, (proven_size_t)round });
+                ok = ok && proven_crypto_ed25519_verify(pa, (proven_mem_view_t){ msg, (proven_size_t)round }, sig);
+                ok = ok && !proven_crypto_ed25519_verify(pa, (proven_mem_view_t){ msg, (proven_size_t)round + 1 }, sig);
+                proven_crypto_ed25519_public(pb, kb);
+                ok = ok && !proven_crypto_ed25519_verify(pb, (proven_mem_view_t){ msg, (proven_size_t)round }, sig);
+            }
+            PROVEN_TEST_ASSERT(ok, "forty-eight pairs of keys agree on their secret, and each key's signature verifies under it alone", "");
+        }
     }
 
     // ---------------------------------------------------------------

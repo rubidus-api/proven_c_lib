@@ -3,12 +3,135 @@
 
 /* Curve25519: the field, X25519 and Ed25519.
  *
- * A field element is ten limbs of alternately 26 and 25 bits (radix 2^25.5), so that every
- * product of two limbs, and the sum of the ten such products in a column, fits a 64-bit word
- * on every target. All limbs are unsigned; subtraction adds a multiple of p first. Nothing
- * here branches on, or indexes by, a field element or a scalar. */
+ * A field element is kept one of two ways, by the same choice as the limb of the
+ * multi-precision arithmetic (PROVEN_CRYPTO_MP_LIMB_BITS):
+ *
+ *  - five limbs of 51 bits, where a product of two is the compiler's 128-bit integer: a
+ *    multiplication is 25 machine multiplications, a squaring 15;
+ *  - ten limbs of alternately 26 and 25 bits (radix 2^25.5), so that every product of two
+ *    limbs, and the sum of the ten such products in a column, fits a 64-bit word on every
+ *    target.
+ *
+ * Either way the limbs are unsigned, subtraction adds a multiple of p first, and what a
+ * function gives back is "carried": every limb within its width, but for the second, which may
+ * be a few above it. Nothing here branches on, or indexes by, a field element or a scalar.
+ * Everything below the field is written once, over fe_t and FE_LIMBS. */
 
-typedef proven_u32 fe_t[10];
+/* The group order L = 2^252 + 27742317777372353535851937790883648493, big-endian. */
+static const proven_byte_t ED_L[32] = {
+    0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x14, 0xde, 0xf9, 0xde, 0xa2, 0xf7, 0x9c, 0xd6, 0x58, 0x12, 0x63, 0x1a, 0x5c, 0xf5, 0xd3, 0xed };
+
+#if PROVEN_CRYPTO_MP_LIMB_BITS == 64
+
+/* ---- the field on five limbs of 51 bits ---- */
+
+typedef proven_u64 fe_limb_t;
+#define FE_LIMBS 5
+typedef fe_limb_t fe_t[FE_LIMBS];
+__extension__ typedef unsigned __int128 fe_wide_t;
+#define FE_M51 0x7ffffffffffffull
+
+static const fe_t FE_D = { 0x34dca135978a3ull, 0x1a8283b156ebdull, 0x5e7a26001c029ull, 0x739c663a03cbbull, 0x52036cee2b6ffull };
+static const fe_t FE_D2 = { 0x69b9426b2f159ull, 0x35050762add7aull, 0x3cf44c0038052ull, 0x6738cc7407977ull, 0x2406d9dc56dffull };
+static const fe_t FE_SQRTM1 = { 0x61b274a0ea0b0ull, 0x0d5a5fc8f189dull, 0x7ef5e9cbd0c60ull, 0x78595a6804c9eull, 0x2b8324804fc1dull };
+static const fe_t ED_BX = { 0x62d608f25d51aull, 0x412a4b4f6592aull, 0x75b7171a4b31dull, 0x1ff60527118feull, 0x216936d3cd6e5ull };
+static const fe_t ED_BY = { 0x6666666666658ull, 0x4ccccccccccccull, 0x1999999999999ull, 0x3333333333333ull, 0x6666666666666ull };
+
+static void fe_carry(fe_t h) {
+    proven_u64 c;
+    for (int i = 0; i < 4; ++i) { c = h[i] >> 51; h[i] &= FE_M51; h[i + 1] += c; }
+    c = h[4] >> 51; h[4] &= FE_M51; h[0] += 19 * c;
+    c = h[0] >> 51; h[0] &= FE_M51; h[1] += c;
+}
+
+static void fe_add(fe_t h, const fe_t f, const fe_t g) {
+    for (int i = 0; i < 5; ++i) h[i] = f[i] + g[i];
+    fe_carry(h);
+}
+
+static void fe_sub(fe_t h, const fe_t f, const fe_t g) {
+    /* f + 2p - g: every limb of 2p is at least as large as a carried limb of g. */
+    h[0] = f[0] + 0xfffffffffffdaull - g[0];
+    for (int i = 1; i < 5; ++i) h[i] = f[i] + 0xffffffffffffeull - g[i];
+    fe_carry(h);
+}
+
+/* Five columns of up to 2^112 into a carried element. The fifth column has no term that was
+ * multiplied by 19, which is what leaves room for 19 times its carry in a 64-bit word. */
+static void fe_reduce_wide(fe_t h, fe_wide_t t0, fe_wide_t t1, fe_wide_t t2, fe_wide_t t3, fe_wide_t t4) {
+    t1 += (proven_u64)(t0 >> 51); t2 += (proven_u64)(t1 >> 51); t3 += (proven_u64)(t2 >> 51); t4 += (proven_u64)(t3 >> 51);
+    proven_u64 r0 = ((proven_u64)t0 & FE_M51) + 19 * (proven_u64)(t4 >> 51), r1 = (proven_u64)t1 & FE_M51;
+    r1 += r0 >> 51; r0 &= FE_M51;
+    h[0] = r0; h[1] = r1; h[2] = (proven_u64)t2 & FE_M51; h[3] = (proven_u64)t3 & FE_M51; h[4] = (proven_u64)t4 & FE_M51;
+}
+
+static void fe_mul(fe_t h, const fe_t f, const fe_t g) {
+    /* A limb above the fifth wraps to 19 times itself: 2^255 = 19 modulo p. */
+    const proven_u64 f0 = f[0], f1 = f[1], f2 = f[2], f3 = f[3], f4 = f[4];
+    const proven_u64 g0 = g[0], g1 = g[1], g2 = g[2], g3 = g[3], g4 = g[4];
+    const proven_u64 g1_19 = g1 * 19, g2_19 = g2 * 19, g3_19 = g3 * 19, g4_19 = g4 * 19;
+    fe_wide_t t0 = (fe_wide_t)f0 * g0 + (fe_wide_t)f1 * g4_19 + (fe_wide_t)f2 * g3_19 + (fe_wide_t)f3 * g2_19 + (fe_wide_t)f4 * g1_19;
+    fe_wide_t t1 = (fe_wide_t)f0 * g1 + (fe_wide_t)f1 * g0 + (fe_wide_t)f2 * g4_19 + (fe_wide_t)f3 * g3_19 + (fe_wide_t)f4 * g2_19;
+    fe_wide_t t2 = (fe_wide_t)f0 * g2 + (fe_wide_t)f1 * g1 + (fe_wide_t)f2 * g0 + (fe_wide_t)f3 * g4_19 + (fe_wide_t)f4 * g3_19;
+    fe_wide_t t3 = (fe_wide_t)f0 * g3 + (fe_wide_t)f1 * g2 + (fe_wide_t)f2 * g1 + (fe_wide_t)f3 * g0 + (fe_wide_t)f4 * g4_19;
+    fe_wide_t t4 = (fe_wide_t)f0 * g4 + (fe_wide_t)f1 * g3 + (fe_wide_t)f2 * g2 + (fe_wide_t)f3 * g1 + (fe_wide_t)f4 * g0;
+    fe_reduce_wide(h, t0, t1, t2, t3, t4);
+}
+
+static void fe_sq(fe_t h, const fe_t f) {
+    /* The same columns with the equal products taken once and doubled: fifteen multiplications. */
+    const proven_u64 f0 = f[0], f1 = f[1], f2 = f[2], f3 = f[3], f4 = f[4];
+    const proven_u64 d0 = 2 * f0, d1 = 2 * f1, d2 = 2 * f2, d3 = 2 * f3, f3_19 = 19 * f3, f4_19 = 19 * f4;
+    fe_wide_t t0 = (fe_wide_t)f0 * f0 + (fe_wide_t)d1 * f4_19 + (fe_wide_t)d2 * f3_19;
+    fe_wide_t t1 = (fe_wide_t)d0 * f1 + (fe_wide_t)d2 * f4_19 + (fe_wide_t)f3 * f3_19;
+    fe_wide_t t2 = (fe_wide_t)d0 * f2 + (fe_wide_t)f1 * f1 + (fe_wide_t)d3 * f4_19;
+    fe_wide_t t3 = (fe_wide_t)d0 * f3 + (fe_wide_t)d1 * f2 + (fe_wide_t)f4 * f4_19;
+    fe_wide_t t4 = (fe_wide_t)d0 * f4 + (fe_wide_t)d1 * f3 + (fe_wide_t)f2 * f2;
+    fe_reduce_wide(h, t0, t1, t2, t3, t4);
+}
+
+static void fe_mul_small(fe_t h, const fe_t f, proven_u32 k) {
+    fe_reduce_wide(h, (fe_wide_t)f[0] * k, (fe_wide_t)f[1] * k, (fe_wide_t)f[2] * k, (fe_wide_t)f[3] * k, (fe_wide_t)f[4] * k);
+}
+
+static void fe_frombytes(fe_t h, const proven_byte_t s[32]) {
+    proven_u64 w[4];
+    for (int i = 0; i < 4; ++i) {
+        w[i] = 0;
+        for (int b = 0; b < 8; ++b) w[i] |= (proven_u64)s[8 * i + b] << (8 * b);
+    }
+    h[0] = w[0] & FE_M51;
+    h[1] = ((w[0] >> 51) | (w[1] << 13)) & FE_M51;
+    h[2] = ((w[1] >> 38) | (w[2] << 26)) & FE_M51;
+    h[3] = ((w[2] >> 25) | (w[3] << 39)) & FE_M51;
+    h[4] = (w[3] >> 12) & FE_M51;             /* the 256th bit is not part of the number */
+}
+
+static void fe_tobytes(proven_byte_t s[32], const fe_t f) {
+    fe_t h;
+    for (int i = 0; i < 5; ++i) h[i] = f[i];
+    fe_carry(h);
+    /* q = floor((h + 19) / 2^255): 1 exactly when h >= p. Then h + 19q - q 2^255 is h mod p. */
+    proven_u64 q = 19;
+    for (int i = 0; i < 5; ++i) q = (h[i] + q) >> 51;
+    h[0] += 19 * q;
+    for (int i = 0; i < 4; ++i) { proven_u64 c = h[i] >> 51; h[i] &= FE_M51; h[i + 1] += c; }
+    h[4] &= FE_M51;
+    const proven_u64 w[4] = { h[0] | (h[1] << 51), (h[1] >> 13) | (h[2] << 38), (h[2] >> 26) | (h[3] << 25), (h[3] >> 39) | (h[4] << 12) };
+    for (int i = 0; i < 4; ++i) {
+        for (int b = 0; b < 8; ++b) s[8 * i + b] = (proven_byte_t)(w[i] >> (8 * b));
+    }
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)h, .size = sizeof h });
+}
+
+#else
+
+/* ---- the field on ten limbs of 26 and 25 bits ---- */
+
+typedef proven_u32 fe_limb_t;
+#define FE_LIMBS 10
+typedef fe_limb_t fe_t[FE_LIMBS];
 
 static const fe_t FE_D = { 0x35978a3, 0x0d37284, 0x3156ebd, 0x06a0a0e, 0x001c029, 0x179e898, 0x3a03cbb, 0x1ce7198, 0x2e2b6ff, 0x1480db3 };
 static const fe_t FE_D2 = { 0x2b2f159, 0x1a6e509, 0x22add7a, 0x0d4141d, 0x0038052, 0x0f3d130, 0x3407977, 0x19ce331, 0x1c56dff, 0x0901b67 };
@@ -16,17 +139,8 @@ static const fe_t FE_SQRTM1 = { 0x20ea0b0, 0x186c9d2, 0x08f189d, 0x035697f, 0x0b
 static const fe_t ED_BX = { 0x325d51a, 0x18b5823, 0x0f6592a, 0x104a92d, 0x1a4b31d, 0x1d6dc5c, 0x27118fe, 0x07fd814, 0x13cd6e5, 0x085a4db };
 static const fe_t ED_BY = { 0x2666658, 0x1999999, 0x0cccccc, 0x1333333, 0x1999999, 0x0666666, 0x3333333, 0x0cccccc, 0x2666666, 0x1999999 };
 
-/* The group order L = 2^252 + 27742317777372353535851937790883648493, big-endian. */
-static const proven_byte_t ED_L[32] = {
-    0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x14, 0xde, 0xf9, 0xde, 0xa2, 0xf7, 0x9c, 0xd6, 0x58, 0x12, 0x63, 0x1a, 0x5c, 0xf5, 0xd3, 0xed };
-
 #define FE_WIDTH(i) (((i) & 1) ? 25 : 26)
 #define FE_MASK(i) (((i) & 1) ? 0x1ffffffu : 0x3ffffffu)
-
-static void fe_copy(fe_t h, const fe_t f) { for (int i = 0; i < 10; ++i) h[i] = f[i]; }
-static void fe_zero(fe_t h) { for (int i = 0; i < 10; ++i) h[i] = 0; }
-static void fe_one(fe_t h) { fe_zero(h); h[0] = 1; }
 
 static void fe_carry(fe_t h) {
     proven_u32 c;
@@ -71,16 +185,57 @@ static void fe_mul(fe_t h, const fe_t f, const fe_t g) {
 
 static void fe_sq(fe_t h, const fe_t f) { fe_mul(h, f, f); }
 
-static void fe_sqn(fe_t h, const fe_t f, int n) {
-    fe_sq(h, f);
-    for (int i = 1; i < n; ++i) fe_sq(h, h);
-}
-
 static void fe_mul_small(fe_t h, const fe_t f, proven_u32 k) {
     proven_u64 t[19];
     for (int i = 0; i < 10; ++i) t[i] = (proven_u64)f[i] * k;
     for (int i = 10; i < 19; ++i) t[i] = 0;
     fe_reduce_wide(h, t);
+}
+
+static void fe_frombytes(fe_t h, const proven_byte_t s[32]) {
+    int off = 0;
+    for (int i = 0; i < 10; ++i) {
+        proven_u64 v = 0;
+        for (int b = 0; b < 5; ++b) {
+            int at = off / 8 + b;
+            if (at < 32) v |= (proven_u64)s[at] << (8 * b);
+        }
+        h[i] = (proven_u32)(v >> (off % 8)) & FE_MASK(i);
+        off += FE_WIDTH(i);
+    }
+}
+
+static void fe_tobytes(proven_byte_t s[32], const fe_t f) {
+    fe_t h;
+    for (int i = 0; i < 10; ++i) h[i] = f[i];
+    fe_carry(h);
+    /* q = floor((h + 19) / 2^255): 1 exactly when h >= p. Then h + 19q - q 2^255 is h mod p. */
+    proven_u32 q = 19;
+    for (int i = 0; i < 10; ++i) q = (h[i] + q) >> FE_WIDTH(i);
+    h[0] += 19 * q;
+    for (int i = 0; i < 9; ++i) { proven_u32 c = h[i] >> FE_WIDTH(i); h[i] &= FE_MASK(i); h[i + 1] += c; }
+    h[9] &= 0x1ffffffu;
+    proven_u64 acc = 0;
+    int bits = 0, at = 0;
+    for (int i = 0; i < 10; ++i) {
+        acc |= (proven_u64)h[i] << bits;
+        bits += FE_WIDTH(i);
+        while (bits >= 8) { s[at++] = (proven_byte_t)acc; acc >>= 8; bits -= 8; }
+    }
+    s[at] = (proven_byte_t)acc;           /* the last 7 bits */
+}
+
+#endif
+
+/* ---- what is written once, over either field ---- */
+
+static void fe_copy(fe_t h, const fe_t f) { for (int i = 0; i < FE_LIMBS; ++i) h[i] = f[i]; }
+static void fe_zero(fe_t h) { for (int i = 0; i < FE_LIMBS; ++i) h[i] = 0; }
+static void fe_one(fe_t h) { fe_zero(h); h[0] = 1; }
+
+static void fe_sqn(fe_t h, const fe_t f, int n) {
+    fe_sq(h, f);
+    for (int i = 1; i < n; ++i) fe_sq(h, h);
 }
 
 /* z^(2^250 - 1) into t250, z^11 into t11: the shared front of the two exponentiations. */
@@ -116,43 +271,10 @@ static void fe_pow22523(fe_t out, const fe_t z) {
     fe_mul(out, t, z);                    /* 2^252 - 3 = (p - 5) / 8 */
 }
 
-static void fe_frombytes(fe_t h, const proven_byte_t s[32]) {
-    int off = 0;
-    for (int i = 0; i < 10; ++i) {
-        proven_u64 v = 0;
-        for (int b = 0; b < 5; ++b) {
-            int at = off / 8 + b;
-            if (at < 32) v |= (proven_u64)s[at] << (8 * b);
-        }
-        h[i] = (proven_u32)(v >> (off % 8)) & FE_MASK(i);
-        off += FE_WIDTH(i);
-    }
-}
-
-static void fe_tobytes(proven_byte_t s[32], const fe_t f) {
-    fe_t h;
-    fe_copy(h, f);
-    fe_carry(h);
-    /* q = floor((h + 19) / 2^255): 1 exactly when h >= p. Then h + 19q - q 2^255 is h mod p. */
-    proven_u32 q = 19;
-    for (int i = 0; i < 10; ++i) q = (h[i] + q) >> FE_WIDTH(i);
-    h[0] += 19 * q;
-    for (int i = 0; i < 9; ++i) { proven_u32 c = h[i] >> FE_WIDTH(i); h[i] &= FE_MASK(i); h[i + 1] += c; }
-    h[9] &= 0x1ffffffu;
-    proven_u64 acc = 0;
-    int bits = 0, at = 0;
-    for (int i = 0; i < 10; ++i) {
-        acc |= (proven_u64)h[i] << bits;
-        bits += FE_WIDTH(i);
-        while (bits >= 8) { s[at++] = (proven_byte_t)acc; acc >>= 8; bits -= 8; }
-    }
-    s[at] = (proven_byte_t)acc;           /* the last 7 bits */
-}
-
 /* Swap f and g when bit is 1, by mask. */
 static void fe_cswap(fe_t f, fe_t g, proven_u32 bit) {
-    proven_u32 mask = (proven_u32)0 - bit;
-    for (int i = 0; i < 10; ++i) { proven_u32 x = (f[i] ^ g[i]) & mask; f[i] ^= x; g[i] ^= x; }
+    fe_limb_t mask = (fe_limb_t)0 - (fe_limb_t)bit;
+    for (int i = 0; i < FE_LIMBS; ++i) { fe_limb_t x = (f[i] ^ g[i]) & mask; f[i] ^= x; g[i] ^= x; }
 }
 
 static bool fe_equal(const fe_t f, const fe_t g) {
@@ -213,6 +335,7 @@ void proven_crypto_x25519_public(proven_byte_t out[32], const proven_byte_t scal
 /* Extended coordinates on -x^2 + y^2 = 1 + d x^2 y^2: x = X/Z, y = Y/Z, T = XY/Z. The addition
  * below is complete on this curve: it is right for every pair of points. */
 typedef struct { fe_t x, y, z, t; } ge_t;
+#define GE_LIMBS (4 * FE_LIMBS)
 
 static void ge_identity(ge_t *p) { fe_zero(p->x); fe_one(p->y); fe_one(p->z); fe_zero(p->t); }
 
@@ -248,13 +371,13 @@ static void ge_mul(ge_t *r, const proven_byte_t k[32], const ge_t *p) {
     for (int i = 63; i >= 0; --i) {
         for (int d = 0; d < 4; ++d) ge_double(&acc, &acc);
         proven_u32 nib = (proven_u32)(k[i / 2] >> (4 * (i % 2))) & 15u;
-        proven_u32 *dst = (proven_u32 *)&pick;
-        for (proven_size_t j = 0; j < 40; ++j) dst[j] = 0;
+        fe_limb_t *dst = (fe_limb_t *)&pick;
+        for (proven_size_t j = 0; j < GE_LIMBS; ++j) dst[j] = 0;
         for (proven_u32 t = 0; t < 16; ++t) {
             proven_u32 x = t ^ nib;
-            proven_u32 mask = ((x | ((proven_u32)0 - x)) >> 31) - 1u;
-            const proven_u32 *src = (const proven_u32 *)&table[t];
-            for (proven_size_t j = 0; j < 40; ++j) dst[j] |= src[j] & mask;
+            fe_limb_t mask = (fe_limb_t)0 - (fe_limb_t)((((x | ((proven_u32)0 - x)) >> 31) ^ 1u));  /* all ones when t == nib */
+            const fe_limb_t *src = (const fe_limb_t *)&table[t];
+            for (proven_size_t j = 0; j < GE_LIMBS; ++j) dst[j] |= src[j] & mask;
         }
         ge_add(&acc, &acc, &pick);
     }

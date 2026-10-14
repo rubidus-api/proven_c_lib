@@ -109,8 +109,9 @@ handshake, which is at three in the morning on somebody else's machine:
 
 **Which key to choose.** All three kinds work on either side of a connection. They do not
 cost the same: with an RSA key, every full handshake this side signs takes longer than with
-P-256 or Ed25519 - about twice as long with 2048 bits, twelve times with 4096 (section 9 has
-the figures) - and on a server that is the largest part of a handshake. Use RSA where a certificate you already have requires it; for a
+P-256 - about three times as long with 2048 bits, eighteen times with 4096 - and Ed25519 is
+less than half of P-256 again (section 9 has the figures). On a server the signature is the
+largest part of a handshake. Use RSA where a certificate you already have requires it; for a
 new one, P-256 or Ed25519. An RSA key is tried when the configuration is made - one signature,
 checked - so a key file that is damaged is refused there and not at the first connection.
 
@@ -756,25 +757,27 @@ server's own per-connection request buffer is Chapter 11's and is separate. (A T
 connection holds the same.)
 
 **What a handshake costs.** On one x86-64 core of the development machine, a full handshake
-with X25519 and a P-256 certificate is about 1 ms of processor time on the server and about
-1.4 ms on a client that holds that certificate as its anchor; each certificate whose
+with X25519 and a P-256 certificate is about 0.65 ms of processor time on the server and
+about 1 ms on a client that holds that certificate as its anchor; each certificate whose
 signature the client checks on the way to an anchor - one, for a certificate an anchor
-issued - adds about 0.9 ms. For a server that is some 1,000 new connections a second per
-core. The public-key arithmetic here is written to be constant-time
-and to be read, and is two and a half to twenty-one times slower than that of OpenSSL on the
-same machine, by operation. Resumption
+issued - adds about 0.9 ms. For a server that is some 1,500 new connections a second per
+core. With an Ed25519 certificate the two figures are 0.27 ms and 0.32 ms, a further
+certificate 0.15 ms, and a core serves some 3,700 new connections a second. The public-key arithmetic here is written to be constant-time
+and to be read, and is 1.2 to 21 times slower than that of OpenSSL on the same machine, by
+operation: verifying with Ed25519 the least, signing with P-256 the most. Resumption
 (section 6) removes the signatures; keeping connections open removes the handshake.
 
 Those figures are a 64-bit build's, by GCC or Clang: the numbers of P-256, RSA and
-Diffie-Hellman are then held in 64-bit limbs, two of which multiply into the compiler's
-128-bit integer. A 32-bit build, and any build with `-DPROVEN_CRYPTO_MP_LIMB_BITS=32`, holds
-them in 32-bit limbs and takes two to four times as long over the same arithmetic - 1.6 ms
-and 2.5 ms for that handshake, and 6, 19 and 44 ms for the RSA signatures below. The results
-are the same bytes either way.
+Diffie-Hellman are then held in 64-bit limbs, and a number of Curve25519's field in five
+limbs of 51 bits, two of which multiply into the compiler's 128-bit integer. A 32-bit build,
+and any build with `-DPROVEN_CRYPTO_MP_LIMB_BITS=32`, holds them in limbs of 32 bits and of
+26 and 25, and takes two to four times as long over the same arithmetic - 1.6 ms and 2.5 ms
+for the handshake with a P-256 certificate, 0.75 ms and 1 ms with Ed25519, and 6, 19 and
+44 ms for the RSA signatures below. The results are the same bytes either way.
 
 **With an RSA key the signature dominates.** On the same core one signature takes about 1.7 ms
 with a 2048-bit key, 5 ms with 3072 bits and 12 ms with 4096: a server with a 2048-bit RSA key
-completes about 450 new connections a second per core, against a thousand with P-256.
+completes about 500 new connections a second per core, against 1,500 with P-256.
 On the event-driven server of [Chapter 15](manual-15-event-loop.md) that time is spent on the
 loop's thread, where nothing else is served meanwhile. The signing is done modulo the two
 primes with a constant-time exponentiation, its input blinded, and its result checked with

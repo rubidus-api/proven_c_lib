@@ -18,6 +18,24 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **Curve25519's field is five limbs of 51 bits on a 64-bit target.** Where the
+  multi-precision arithmetic has 64-bit limbs (pointers of 64 bits and a compiler with a
+  128-bit integer: GCC and Clang; run here on x86-64), a field element of X25519 and Ed25519
+  is five limbs whose products are that integer - 25 machine multiplications for a product
+  where there were 100 - and a squaring is its own function of 15. Everywhere else, and with
+  `-DPROVEN_CRYPTO_MP_LIMB_BITS=32`, the field is the ten limbs of 26 and 25 bits it was.
+  The ladder, the point arithmetic, the constant-time table lookups and every result are
+  the same. This is the second of four steps of the plan for the curves (RFC-0014).
+- Measured on the development machine (x86-64, one core, GCC `-O3`; before, after): X25519
+  211 -> 56 us; an Ed25519 public key 245 -> 72, a signature 276 -> 91, a verification
+  511 -> 150. A full TLS 1.3 handshake in memory with X25519, the server's certificate being
+  the client's anchor: with an Ed25519 certificate 0.75 -> 0.27 ms of the server's time and
+  0.98 -> 0.32 ms of the client's; with P-256 0.95 -> 0.64 and 1.36 -> 1.05; with RSA-2048
+  2.14 -> 1.84 and 0.56 -> 0.25.
+- Chapter 14 of the manual gives the new figures.
+
 ## [0.50.0] - 2026-10-14
 
 ### Changed
