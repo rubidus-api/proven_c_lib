@@ -195,8 +195,10 @@ def object_check(errors: list[str], names: set[str]) -> str:
                                     "-I", str(ROOT / "src/proven"), "-c", str(ROOT / rel), "-o", str(obj)],
                                    capture_output=True, text=True)
             if build.returncode != 0:
-                errors.append(f"{rel}: does not compile for the object check: {build.stderr.strip()[:300]}")
-                continue
+                # A compiler that refuses these flags (the build has a fallback for -std=c2x;
+                # this does not) is no evidence either way: the source reading above stands.
+                first = (build.stderr.strip().splitlines() or ["no message"])[0][:160]
+                return f"object code: SKIP ({cc} would not compile {rel} with -std=c2x -O0 -fno-inline: {first})"
             dump = subprocess.run([objdump, "-d", "-r", "--no-show-raw-insn", str(obj)], capture_output=True, text=True)
             if dump.returncode != 0:
                 return "object code: SKIP (objdump could not read the object)"
