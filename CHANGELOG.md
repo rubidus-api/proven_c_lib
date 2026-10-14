@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-10-14
+
 ### Added
 
 - `scripts/check-vartime.py`, run by `./nob build` in every mode (skipped, and saying so,
@@ -55,6 +57,12 @@ written; their tags still exist.
   client side is 1.6 -> 1.1 ms.
 - Chapter 14 of the manual gives the new figures, and says which arithmetic is
   constant-time and which is not.
+
+### Fixed
+
+- Four sentences that name a past release named the current one: chapter 16's "before
+  v0.42.0" (in both editions), a case of TEST.md and a comment in a test that name v0.43.0.
+  Each release's version change since v0.43.0 had rewritten them along with the version.
 
 ## [0.52.0] - 2026-10-14
 

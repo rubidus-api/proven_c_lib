@@ -26,7 +26,7 @@ static proven_tls_config_t *g_server_tls, *g_client_tls;
 
 /* The liveness cases wait for pings and pongs by the clock: 40 ms here, 150 there. Under
  * ThreadSanitizer, beside fifteen other tests on a busy machine, a round of the loop has been
- * seen to take that long by itself (v0.41.0, v0.52.0): there every such time is four times
+ * seen to take that long by itself (v0.41.0, v0.43.0): there every such time is four times
  * as long. */
 #if defined(__SANITIZE_THREAD__)
 #define SLOW 4u
