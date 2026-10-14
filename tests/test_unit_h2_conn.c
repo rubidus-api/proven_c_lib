@@ -1236,6 +1236,12 @@ int main(void) {
         /* NO_ERROR is an end only from a server: a client's requests reset that way count the same. */
         for (proven_u32 i = 0; i < 101; i++) { put_get(&g_buf, 2 * i + 1, true); put_u32_frame(&g_buf, PROVEN_H2_RST_STREAM, 2 * i + 1, PROVEN_H2_NO_ERROR); }
         verdict("a hundred and one requests, each ended and then reset with NO_ERROR, end the connection the same way", V_CONN, PROVEN_H2_ENHANCE_YOUR_CALM);
+        put_get(&g_buf, 1, true); put_u32_frame(&g_buf, PROVEN_H2_RST_STREAM, 1, PROVEN_H2_NO_ERROR);
+        {
+            log_t l = told(g_buf.n + 1);
+            PROVEN_TEST_ASSERT(l.resets == 1 && l.reset_code == PROVEN_H2_NO_ERROR && !l.reset_end, "and a server's reset event never says a response is complete (end_stream stays false)", "");
+            clear();
+        }
         g_cfg.max_reset_debt = 3;
         for (proven_u32 i = 0; i < 3; i++) { put_get(&g_buf, 2 * i + 1, false); put_u32_frame(&g_buf, PROVEN_H2_RST_STREAM, 2 * i + 1, PROVEN_H2_CANCEL); }
         { static const proven_http_header_t h[] = { H(":method", "GET") }; put_headers(&g_buf, 7, EH | ES, h, 1); }

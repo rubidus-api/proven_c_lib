@@ -827,7 +827,9 @@ static void h2c_on_fixed(proven_h2_conn_t *c, proven_h2_event_t *ev) {
             /* A server that is done with a response says so this way: that is an end, not a fault -
              * after its END_STREAM, or once every byte its content-length declared has arrived
              * (some servers reset there instead of ending: the length shows nothing is missing).
-             * `expect` is set by a final response's head only, and never for HEAD, 204 or 304. */
+             * `expect` is set by a final response's head only, and never for HEAD, 204 or 304.
+             * Such an end does not count toward the limit on resets (h2c_debt): a stream that
+             * delivered its whole response was not wasted. */
             const bool ended = (s->flags & ST_REMOTE_END) != 0;
             const bool declared_all = s->expect != H2C_NO_LENGTH && s->got == s->expect;
             const bool polite = !c->server && code == PROVEN_H2_NO_ERROR && (ended || declared_all);
