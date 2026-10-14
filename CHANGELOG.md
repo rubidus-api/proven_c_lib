@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-10-14
+
 ### Added
 
 - Chapter 15 has a program in which one thread waits for a WebSocket connection's messages
