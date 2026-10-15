@@ -18,6 +18,29 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **Zstandard levels 4 to 9** in `zstd.h`'s encoder, as libzstd's: a hash table of 2^17
+  entries and a hash chain of 2^16 or 2^17, the first 4, 8, 12, 12, 24 and 32 positions of it
+  looked at - greedy at levels 4 and 5, lazy at 6 (one byte on), lazy2 at 7 to 9 (two bytes
+  on). On the three files of RFC-0015's profile, level 6 is no larger than this library's gzip
+  6 (22.79 % / 21.66 % / 32.68 % against 22.88 / 22.62 / 32.89) at 2.65 to 3.16 times its speed;
+  levels 5 to 9 are within 0.3 points of libzstd's same level at 0.76 to 1.01 of its speed (level
+  9 the slowest, level 4 a different method from libzstd's, 1.1 points smaller at about half the
+  speed). Level 6 looks at 12 candidates where libzstd's looks at 8, to stay at or below gzip 6 on
+  every file. A stream's blocks are byte for byte those of the same input compressed whole.
+  Memory: the tables are 768 KiB at level 4 and 1 MiB at 5 to 9, zeroed when an encoder is
+  made or reset; `encode_all` sizes them to a short input.
+- Tests: `test_unit_zstd_encode` compresses at all nine levels, streamed at 1 to 4, 6 and 8,
+  checks that a stream's blocks are the whole buffer's at every level, and pins three more
+  streamed frames; `test_unit_http_coding` runs the event-driven server at zstd level 6.
+
+### Changed
+
+- `level` in `proven_zstd_encoder_options_t` and `compress_zstd_level` in both server
+  configurations accept 1 to 9 (they accepted 1 to 3); the defaults (3, and 1 for the servers)
+  and the meaning of the old values are unchanged.
+
 ## [0.58.0] - 2026-10-15
 
 ### Added

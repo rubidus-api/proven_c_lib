@@ -123,7 +123,7 @@ proven_err_t proven_http_decoder_end_(const proven_http_decoder_t_ *d) {
 
 bool proven_http_compress_cfg_valid_(const proven_http_compress_cfg_t_ *cfg) {
     return cfg->level >= -1 && cfg->level <= 9 && (cfg->window_bits == 0 || (cfg->window_bits >= 9 && cfg->window_bits <= 15)) &&
-           cfg->zstd_level >= 0 && cfg->zstd_level <= 3 && (cfg->zstd_window_log == 0 || (cfg->zstd_window_log >= 10 && cfg->zstd_window_log <= 23));
+           cfg->zstd_level >= 0 && cfg->zstd_level <= 9 && (cfg->zstd_window_log == 0 || (cfg->zstd_window_log >= 10 && cfg->zstd_window_log <= 23));
 }
 
 proven_http_coding_t proven_http_compress_choose_(const proven_http_header_t *headers, proven_size_t count, bool zstd) {

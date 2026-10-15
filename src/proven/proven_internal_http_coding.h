@@ -61,7 +61,7 @@ typedef struct {
 } proven_http_compress_cfg_t_;
 
 /* Whether the fields are in range: gzip level -1 to 9 and window 0 or 9 to 15, zstd level 0
- * to 3 and window 0 or 10 to 23. */
+ * to 9 and window 0 or 10 to 23. */
 bool proven_http_compress_cfg_valid_(const proven_http_compress_cfg_t_ *cfg);
 
 /* The coding a response asked to be compressed goes in: zstd when it is offered and the

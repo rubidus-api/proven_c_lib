@@ -23,12 +23,12 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_zstd_decode_all(heap, (proven_mem_view_t){ frame, n }, (proven_mem_mut_t){ back, sizeof back }, &got) == PROVEN_OK &&
                     got == sizeof text && memcmp(back, text, got) == 0, "and decode to every byte");
 
-    /* A stream: 1,000 bytes at a time into a 64 KiB window, with the checksum. A block flush
+    /* A stream: 1,000 bytes at a time at level 6 into a 64 KiB window, with the checksum. A block flush
      * after the first 5,000 makes them decodable at once - what a server does before it
      * waits for more to send; FINISH ends the frame. */
     proven_zstd_encoder_t *z = NULL;
-    o = (proven_zstd_encoder_options_t){ .alloc = heap, .level = 3, .window_log = 16, .checksum = true };
-    EXAMPLE_REQUIRE(proven_zstd_encoder_create(&o, &z) == PROVEN_OK, "an encoder at level 3 with a 64 KiB window");
+    o = (proven_zstd_encoder_options_t){ .alloc = heap, .level = 6, .window_log = 16, .checksum = true };
+    EXAMPLE_REQUIRE(proven_zstd_encoder_create(&o, &z) == PROVEN_OK, "an encoder at level 6 - about gzip 6's size - with a 64 KiB window");
     proven_size_t in_at = 0, out_at = 0;
     bool done = false;
     while (!done) {

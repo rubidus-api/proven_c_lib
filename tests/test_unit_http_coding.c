@@ -749,7 +749,7 @@ int main(void) {
                                written == 100000 && consumed == size && memcmp(g_got, g_text, written) == 0, "and inflates to itself", "");
             g_heap.free_fn(g_heap.ctx, packed);
         }
-        for (int level = 0; level <= 3; ++level) {
+        for (int level = 0; level <= 9; level += level < 3 ? 1 : 3) {
             for (int wl = 0; wl <= 16; wl = wl == 0 ? 10 : wl + 6) {
                 const proven_http_compress_cfg_t_ cfg = { .zstd = true, .zstd_level = level, .zstd_window_log = wl };
                 PROVEN_TEST_ASSERT(proven_http_compress_all_(g_heap, PROVEN_HTTP_CODING_ZSTD, &cfg, (proven_mem_view_t){ g_text, 100000 }, &packed, &cap, &size) == PROVEN_OK && packed != NULL && size < 100000 / 4,
@@ -874,12 +874,12 @@ int main(void) {
             PROVEN_TEST_ASSERT(proven_http_server_create(&b, &bad) == PROVEN_ERR_INVALID_ARG && bad == NULL &&
                                proven_http_event_server_create(g_loop, &ev, &ebad) == PROVEN_ERR_INVALID_ARG && ebad == NULL, "a window outside 9..15 is PROVEN_ERR_INVALID_ARG", "");
         }
-        static const int zlevels[] = { -1, 4 }, zwindows[] = { 9, 24 };
+        static const int zlevels[] = { -1, 10 }, zwindows[] = { 9, 24 };
         for (int i = 0; i < 2; ++i) {
             proven_http_server_config_t b = { .alloc = g_heap, .handler = blocking_handler, .compress_zstd = true, .compress_zstd_level = zlevels[i] };
             proven_http_event_server_config_t ev = { .on = { .on_request = event_request }, .compress_zstd = true, .compress_zstd_level = zlevels[i] };
             PROVEN_TEST_ASSERT(proven_http_server_create(&b, &bad) == PROVEN_ERR_INVALID_ARG && bad == NULL &&
-                               proven_http_event_server_create(g_loop, &ev, &ebad) == PROVEN_ERR_INVALID_ARG && ebad == NULL, "a zstd level outside 0..3 is PROVEN_ERR_INVALID_ARG", "");
+                               proven_http_event_server_create(g_loop, &ev, &ebad) == PROVEN_ERR_INVALID_ARG && ebad == NULL, "a zstd level outside 0..9 is PROVEN_ERR_INVALID_ARG", "");
             proven_http_server_config_t b2 = { .alloc = g_heap, .handler = blocking_handler, .compress_zstd_window_log = zwindows[i] };
             proven_http_event_server_config_t ev2 = { .on = { .on_request = event_request }, .compress_zstd_window_log = zwindows[i] };
             PROVEN_TEST_ASSERT(proven_http_server_create(&b2, &bad) == PROVEN_ERR_INVALID_ARG && bad == NULL &&
@@ -1045,7 +1045,7 @@ int main(void) {
         proven_http_event_server_destroy(eserver);
     }
 
-    PROVEN_TEST_SECTION("servers that offer zstd", "The blocking server at the zstd defaults and the event-driven one at level 3 with a 1 KiB window, to the clients that ask for zstd, to those that ask for gzip, and to raw sockets with weights.",
+    PROVEN_TEST_SECTION("servers that offer zstd", "The blocking server at the zstd defaults and the event-driven one at level 6 with a 1 KiB window, to the clients that ask for zstd, to those that ask for gzip, and to raw sockets with weights.",
         "Check proven_http_compress_choose_ and the compressor in src/proven/http_coding.c, and where the servers call them.");
     {
         proven_job_sys_t *zjobs = NULL;
@@ -1058,7 +1058,7 @@ int main(void) {
                            proven_http_server_listen(zserver, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &zat) == PROVEN_OK &&
                            proven_job_group_submit(zjobs, &zgroup, blocking_serve, zserver) == PROVEN_OK, "a blocking server that offers zstd listens", "");
         proven_http_event_server_t *zeserver = NULL;
-        proven_http_event_server_config_t zecfg = { .on = { event_request, NULL, event_writable, event_done }, .compress_zstd = true, .compress_zstd_level = 3, .compress_zstd_window_log = 10 };
+        proven_http_event_server_config_t zecfg = { .on = { event_request, NULL, event_writable, event_done }, .compress_zstd = true, .compress_zstd_level = 6, .compress_zstd_window_log = 10 };
         proven_net_addr_t zeat;
         PROVEN_TEST_ASSERT(proven_http_event_server_create(g_loop, &zecfg, &zeserver) == PROVEN_OK &&
                            proven_http_event_server_listen(zeserver, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &zeat) == PROVEN_OK, "and an event-driven one", "");

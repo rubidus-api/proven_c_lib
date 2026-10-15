@@ -412,9 +412,11 @@ HTTP는 이것을 *콘텐츠 코딩*이라고 부른다: 서버가 본문을 압
 curl과, zstd를 받는 브라우저는 둘을 같은 가중치로 보낸다 - `gzip, deflate, br, zstd` - 그래서 zstd를 받는다.
 `gzip;q=1, zstd;q=0.5`라고 쓰는 클라이언트는 gzip을 받고, zstd를 적지 않는 클라이언트는 전에 받던 것을
 받는다. 같을 때 zstd로 가는 까닭은 둘 가운데 만드는 비용이 적기 때문이다(7절: 레벨 1에서 gzip의 여섯 배
-속도, 크기는 gzip 1 이하). 레벨과 창은 `compress_zstd_level`(1부터 3, 0은 1)과
+속도, 크기는 gzip 1 이하). 레벨과 창은 `compress_zstd_level`(1부터 9, 0은 1)과
 `compress_zstd_window_log`(10부터 23, 0은 17, 128 KiB)다. 한 번에 보내는 본문은 창과 상관없이 본문에 맞춘
-표로 압축하고, 스트림으로 보내는 본문은 이 기본값에서 끝날 때까지 약 0.8 MiB를 쥔다.
+표로 압축하고, 스트림으로 보내는 본문은 이 기본값에서 끝날 때까지 약 0.8 MiB를 쥔다. 레벨 6은 gzip 6의
+크기 이하를 그 속도의 약 세 배로 낸다 - gzip 6의 크기를 원하는 서버를 위한 것이다. 그 표 때문에 스트림 응답
+하나가 약 1.8 MiB를 쥔다.
 `proven_http_accept_weight`는 같은 가중치를 돌려준다. 직접 고를 때 쓴다.
 
 한 번에 보내는 본문은 먼저 압축한 다음 새 `Content-Length`와 함께 보낸다. 조각조각 쓰는 본문은 쓰는
@@ -740,7 +742,7 @@ int main(void) {
 | `compress_level` (두 서버 설정) | 1(가장 빠름)부터 9(가장 작음). -1은 압축 없이 저장만 한다. 0은 6. 측정값은 4절에 있다. | 범위를 벗어나면 `create`가 `INVALID_ARG`. |
 | `compress_window_bits` (둘 다) | 9부터 15: 스트림으로 쓰는 응답이 쓰이는 동안 쥐는 메모리(4절의 표). 0은 15. | 위와 같다. |
 | `compress_zstd` (두 서버 설정) | zstd에 gzip 이상의 가중치를 주는 요청에는 `zstd`로, 그 밖에는 gzip으로 압축한다. false: gzip만. | - |
-| `compress_zstd_level`, `compress_zstd_window_log` (둘 다) | 7절 인코더의 레벨(1부터 3, 0은 1)과 창(10부터 23, 0은 17). | 범위를 벗어나면 `create`가 `INVALID_ARG`. |
+| `compress_zstd_level`, `compress_zstd_window_log` (둘 다) | 7절 인코더의 레벨(1부터 9, 0은 1)과 창(10부터 23, 0은 17). | 범위를 벗어나면 `create`가 `INVALID_ARG`. |
 | `decompress` (두 클라이언트 설정) | `Accept-Encoding: gzip`을 보내고 `gzip`과 `deflate` 본문을 푼다. | - |
 | `decompress_zstd` (두 클라이언트 설정) | `decompress`와 함께: `Accept-Encoding: zstd, gzip`을 보내고 `zstd` 본문도 푼다. | `decompress` 없이 켜면 `create`가 `INVALID_ARG`. |
 | `proven_http_accepts_coding(headers, count, coding)` | 요청의 `Accept-Encoding`이 어떤 코딩을 허용하는가: 0보다 큰 가중치로 적혀 있거나, `*`에 포함된다. | `bool`. 필드가 없으면 identity만 허용된다. |
@@ -801,7 +803,7 @@ proven_err_t proven_zstd_decode_all(proven_allocator_t alloc, proven_mem_view_t 
 
 Zstandard(RFC 8878)는 DEFLATE보다 새 형식이다: `.zst` 파일, HTTP의 `Content-Encoding: zstd`(RFC 9659),
 일부 패키지 형식. 압축기는 gzip의 가장 빠른 것보다 빠른 데서부터 gzip의 가장 작은 것보다 작은 데까지
-고를 수 있고, 무엇으로 압축했든 빨리 풀린다. 이 라이브러리는 이것을 읽고, v0.58.0부터는 빠른 레벨 셋으로 쓴다(아래 "Zstandard 쓰기").
+고를 수 있고, 무엇으로 압축했든 빨리 풀린다. 이 라이브러리는 이것을 읽고, v0.58.0부터는 쓴다 - v0.59.0부터는 레벨 아홉으로(아래 "Zstandard 쓰기").
 
 디코더는 3절의 해제기처럼 쓴다 - 상태 하나와, 있는 입력을 가져가고 있는 출력 자리를 채우는 한 걸음 -
 다만 형식 때문에 두 가지가 다르다:
@@ -959,27 +961,38 @@ proven_err_t proven_zstd_encode_all(const proven_zstd_encoder_options_t *options
 하려면 `_BLOCK`, 프레임을 끝내려면 `_FINISH`. 만드는 프레임은 어떤 Zstandard 디코더든 읽는다. 같은 입력에
 대해 libzstd가 썼을 바이트와 같지는 않다.
 
-**레벨 셋, 모두 빠르다.** 레벨 1은 해시 표 하나로, 레벨 2와 3은 둘로 일치를 찾는다(libzstd의 "fast"와
-"double fast"). 블록마다 리터럴에는 Huffman 코드를, 시퀀스에는 FSE 표를 붙이는데, 표마다 그 블록에 드는
-비용을 보고 고른다. 4절의 세 파일을 개발 머신의 코어 하나에서, 릴리스 플래그로 잰 값:
+**레벨 아홉, libzstd의 처음 아홉처럼.** 레벨 1은 해시 표 하나로, 레벨 2와 3은 둘로 일치를 찾는다(libzstd의
+"fast"와 "double fast"). 레벨 4부터 9는 모든 위치를 해시 체인에 두고 그 앞쪽 4에서 32개를 보며, 찾은 가장 좋은
+일치를 고르거나(레벨 4와 5), 그 전에 한 바이트(6) 또는 두 바이트(7부터 9) 뒤에 더 좋은 것이 있는지 본다.
+블록마다 리터럴에는 Huffman 코드를, 시퀀스에는 FSE 표를 붙이는데, 표마다 그 블록에 드는 비용을 보고 고른다.
+4절의 세 파일을 개발 머신의 코어 하나에서, 릴리스 플래그로 잰 값:
 
 | | HTML 페이지 | Markdown | C 소스 |
 |---|---|---|---|
 | 이 라이브러리 gzip 레벨 1 | 26.25 %, 45 MiB/s | 36.77 %, 33 | 27.24 %, 43 |
+| 이 라이브러리 gzip 레벨 6 | 22.62 %, 25 | 32.89 %, 16 | 22.88 %, 21 |
 | 이 라이브러리 Zstandard 레벨 1 | 24.93 %, 263 | 36.19 %, 191 | 26.71 %, 234 |
 | 이 라이브러리 Zstandard 레벨 3 | 23.83 %, 193 | 34.58 %, 132 | 25.50 %, 172 |
+| 이 라이브러리 Zstandard 레벨 6 | 21.66 %, 67 | 32.68 %, 49 | 22.79 %, 64 |
+| 이 라이브러리 Zstandard 레벨 9 | 21.22 %, 37 | 32.11 %, 28 | 22.21 %, 36 |
 | libzstd 1.5.7 레벨 1 | 25.27 %, 312 | 36.68 %, 231 | 26.91 %, 273 |
 | libzstd 1.5.7 레벨 3 | 23.76 %, 232 | 34.42 %, 161 | 25.42 %, 213 |
+| libzstd 1.5.7 레벨 6 | 21.93 %, 74 | 32.65 %, 54 | 22.97 %, 67 |
+| libzstd 1.5.7 레벨 9 | 21.25 %, 48 | 32.12 %, 36 | 22.22 %, 43 |
 
-레벨 1은 이 라이브러리의 gzip 레벨 1보다 다섯에서 여섯 배 빠르고 더 작다. libzstd에 견주면 속도는
-0.8에서 0.9배, 크기는 0.5포인트 안이다.
+레벨 1은 이 라이브러리의 gzip 레벨 1보다 다섯에서 여섯 배 빠르고 더 작다. 레벨 6은 gzip 레벨 6보다 크지 않고
+2.6에서 3.2배 빠르다. libzstd에 견주면 레벨 1~3과 5~8은 속도 0.8에서 1.0배, 레벨 9는 약 0.8배, 크기는 0.3포인트
+안이다. 레벨 6은 libzstd의 레벨 6이 보는 8개 대신 12개의 후보를 보는데, 그래서 세 파일 모두에서 gzip 6 이하에
+머문다(libzstd 6은 C 소스에서 gzip 6보다 조금 크다). 레벨 4는 libzstd가 그 레벨에서 쓰는 방법이 아니다: 약 1포인트
+더 작고, 속도는 절반쯤이다. 메가바이트 단위 입력에서는 libzstd의 높은 레벨이 더 큰 창과 표도 써서 0.3에서
+0.5포인트 더 작다.
 
 **메모리.** `proven_zstd_encode_all`은 호출자의 버퍼를 그 자리에서 압축하고, 표와 블록 버퍼를 그 크기에
 맞춘다: 짧은 입력이면 몇 킬로바이트다. 스트림은 창을 자기 버퍼에 두고, 많아야 다음을 쥔다:
 
 | | 메모리 |
 |---|---|
-| 해시 표 | 레벨 1에서 64 KiB, 2에서 96 KiB, 3에서 768 KiB(통째로 주는 버퍼가 짧으면 더 적다) |
+| 해시 표(인코더를 만들거나 reset할 때 0으로 채운다) | 레벨 1에서 64 KiB, 2에서 96 KiB, 3과 4에서 768 KiB, 5부터 9에서 1 MiB(통째로 주는 버퍼가 짧으면 더 적다) |
 | 블록 하나의 일: 시퀀스, 리터럴, 출력 | 약 500 KiB |
 | 스트림의 입력 버퍼 | 창과 창의 절반, 또는 그보다 많으면 창과 128 KiB: 기본 512 KiB에서 768 KiB |
 
@@ -1015,11 +1028,11 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_zstd_decode_all(heap, (proven_mem_view_t){ frame, n }, (proven_mem_mut_t){ back, sizeof back }, &got) == PROVEN_OK &&
                     got == sizeof text && memcmp(back, text, got) == 0, "그리고 한 바이트도 빠짐없이 풀린다");
 
-    /* 스트림: 64 KiB 창, 체크섬 포함으로 1,000바이트씩. 처음 5,000바이트 뒤의 블록 flush는 그때까지를
+    /* 스트림: 레벨 6, 64 KiB 창, 체크섬 포함으로 1,000바이트씩. 처음 5,000바이트 뒤의 블록 flush는 그때까지를
      * 바로 풀 수 있게 한다 - 서버가 더 보낼 것을 기다리기 전에 하는 일이다. FINISH가 프레임을 끝낸다. */
     proven_zstd_encoder_t *z = NULL;
-    o = (proven_zstd_encoder_options_t){ .alloc = heap, .level = 3, .window_log = 16, .checksum = true };
-    EXAMPLE_REQUIRE(proven_zstd_encoder_create(&o, &z) == PROVEN_OK, "레벨 3, 64 KiB 창의 인코더");
+    o = (proven_zstd_encoder_options_t){ .alloc = heap, .level = 6, .window_log = 16, .checksum = true };
+    EXAMPLE_REQUIRE(proven_zstd_encoder_create(&o, &z) == PROVEN_OK, "레벨 6 - gzip 6 정도의 크기 - , 64 KiB 창의 인코더");
     proven_size_t in_at = 0, out_at = 0;
     bool done = false;
     while (!done) {
@@ -1066,7 +1079,7 @@ int main(void) {
 
 | API | 의도 | 반환 |
 |---|---|---|
-| `proven_zstd_encoder_create(&options, &z)` | 인코더: `level` 1부터 3(0은 libzstd의 기본값인 3), `window_log` 10부터 23(0은 19), `checksum`. 해시 표를 할당하고, 버퍼는 입력이 오는 대로. | `INVALID_ARG`, `NOMEM`. |
+| `proven_zstd_encoder_create(&options, &z)` | 인코더: `level` 1부터 9(0은 libzstd의 기본값인 3), `window_log` 10부터 23(0은 19), `checksum`. 해시 표를 할당하고, 버퍼는 입력이 오는 대로. | `INVALID_ARG`, `NOMEM`. |
 | `proven_zstd_encode(z, in, &consumed, out, &produced, flush, &done)` | `in`의 일부를 받고 `out`의 일부를 채운다. flush가 있으면 입력을 다 받고 더 나오는 것이 없을 때까지(FINISH면 `done`까지) 다시 부른다. | FINISH 뒤의 입력은 `INVALID_STATE`(먼저 reset). `NOMEM` - 그 뒤로는 reset할 때까지 모든 호출이 그렇게 말한다. `INVALID_ARG`. |
 | `proven_zstd_encoder_reset(z)` | 같은 옵션으로 새 프레임을 시작한다. 버퍼는 둔다. | 없음. |
 | `proven_zstd_encoder_destroy(z)` | 해제한다. NULL 허용. | 없음. |
@@ -1097,8 +1110,8 @@ int main(void) {
 
 - **미리 정한 사전**(zlib의 `FDICT`), 어느 방향이든.
 - **ZIP 압축 파일, tar 파일**: 그것들은 그릇이다. 이것은 그 안의 코덱이다.
-- **Deflate64**, 그리고 다른 모든 압축 형식: Brotli, LZ4, bzip2, xz. Zstandard의 느린 레벨(libzstd의 4부터 22:
-  lazy와 optimal 파싱), 사전, long-distance 모드.
+- **Deflate64**, 그리고 다른 모든 압축 형식: Brotli, LZ4, bzip2, xz. Zstandard의 느린 레벨(libzstd의 10부터 22:
+  이진 트리와 optimal 파싱), 사전, long-distance 모드.
 - **gzip 헤더의 필드** - 이름, 시간, 주석 - 는 두거나 읽을 수 없다.
 - **여러 gzip 멤버를 하나의 스트림으로** 자동으로 읽기: 멤버마다 reset한다(3절).
   (6절의 HTTP 클라이언트는 응답 본문에 대해 이것을 해 준다.)
@@ -1137,18 +1150,19 @@ Node 서버가 `zstd`로 보낸 것(레벨 1, 3, 19, 통째로, flush하며, 프
 뒤에 쓰레기가 붙은 것은 거부했으며, 요청하지 않은 클라이언트에게는 gzip이 왔다. curl은 이 라이브러리
 서버에서 핸들러가 직접 보낸 Zstandard를 읽었다.
 
-**7절의 인코더는** 자기 디코더와 libzstd에 대고 시험했다. 등록된 테스트는 일곱 종류의 데이터(빈 것, 한
-바이트, 같은 바이트의 연속, 번호 붙은 줄, 먼 뒤를 복사하는 잡음, 무작위 바이트, 128개가 넘는 바이트 값)를 세
-레벨과 세 창으로, 통째로 그리고 스트림으로 - 조각마다 블록 flush, 출력은 한 바이트씩 - 압축하고, 모든
-프레임을 이 라이브러리의 디코더로 푼다. 이 디코더는 오프셋마다 프레임이 밝힌 창 안인지 검사한다. 프레임
+**7절의 인코더는** 자기 디코더와 libzstd에 대고 시험했다. 등록된 테스트는 열한 종류의 데이터(빈 것, 한
+바이트, 같은 바이트의 연속, 번호 붙은 줄, 먼 뒤를 복사하는 잡음, 무작위 바이트, 128개가 넘는 바이트 값 등)를
+아홉 레벨 모두와 세 창으로 통째로, 그리고 방식마다 한 레벨씩 스트림으로 - 조각마다 블록 flush, 출력은 한
+바이트씩 - 압축하고, 모든 프레임을 이 라이브러리의 디코더로 푼다. 이 디코더는 오프셋마다 프레임이 밝힌 창
+안인지 검사한다. 모든 레벨에서 스트림의 블록이 같은 입력을 통째로 압축한 블록과 바이트까지 같은지도 본다. 프레임
 헤더, 입력 8,000개에 대한 상한, flush, 끝과 reset, 압축 블록 안의 한 값 리터럴, 쥐는 메모리, 실패한 할당을
-검사하고, libzstd가 푼 프레임 여덟 - 그중 둘은 reset 뒤에 버퍼를 밀며 스트림으로 만든 것 - 의 크기와 CRC를
+검사하고, libzstd가 푼 프레임 열셋 - 그중 다섯은 reset 뒤에 버퍼를 밀며 스트림으로 만든 것 - 의 크기와 CRC를
 고정해 둔다. 등록된 테스트 밖에서는 인코더가 말뭉치 - 이 저장소의 파일들, 한국어
 매뉴얼, 바이너리, 소스 4 MB, 4,096바이트까지의 모든 크기와 블록 및 헤더 경계의 입력, 한 값·두 값·네 값의
 리터럴, 블록의 시퀀스를 채우는 주기 - 로 만든 모든 프레임을 모든 레벨과 1 KiB부터 8 MiB까지의 창으로,
 통째로 그리고 한 바이트부터의 조각으로, 버퍼 밖의 읽기나 쓰기를 보고하는 도구 아래에서 libzstd가 풀었다:
-프레임 2,880개, 모두 바이트 하나까지 같다. HTTP에서는 Node의 libzstd와 curl이 두 서버가 `zstd`로 보낸 것을,
-통째로와 스트림으로, 세 레벨과 1 KiB부터 8 MiB까지의 창으로 풀었고, gzip을 더 원하는 클라이언트에게는
+프레임 4,105개, 모두 바이트 하나까지 같다. HTTP에서는 Node의 libzstd와 curl이 두 서버가 `zstd`로 보낸 것을,
+통째로와 스트림으로, 레벨 1, 2, 3, 6, 9와 1 KiB부터 8 MiB까지의 창으로 풀었고, gzip을 더 원하는 클라이언트에게는
 가중치가 gzip을 골랐다.
 
 **하지 않은 것:** 커버리지 기반 퍼징 없음. zlib 말고 두 번째 압축기의 출력과의 비교 없음. 외부 검토 없음.

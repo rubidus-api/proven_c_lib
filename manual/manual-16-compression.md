@@ -438,9 +438,11 @@ browsers that take zstd, send the two at one weight - `gzip, deflate, br, zstd` 
 zstd; a client that writes `gzip;q=1, zstd;q=0.5` gets gzip, and one that does not name zstd
 gets what it got before. The tie goes to zstd because it is the cheaper of the two to make
 (section 7: six times the speed of gzip at level 1, at gzip 1's size or less). The level and
-the window are `compress_zstd_level` (1 to 3, zero is 1) and `compress_zstd_window_log` (10 to
+the window are `compress_zstd_level` (1 to 9, zero is 1) and `compress_zstd_window_log` (10 to
 23, zero is 17, 128 KiB); a body sent in one piece is compressed with tables sized to it
 whatever the window, a streamed one holds about 0.8 MiB at those defaults until it ends.
+Level 6 gives gzip 6's size or less at about three times its speed, for a server that wants
+gzip 6's size; its tables make a streamed response about 1.8 MiB.
 `proven_http_accept_weight` gives you the same weights, for a choice of your own.
 
 A body sent in one piece is compressed first and sent with its new `Content-Length`. A body
@@ -769,7 +771,7 @@ int main(void) {
 | `compress_level` (both server configurations) | 1 (fastest) to 9 (smallest); -1 stores without compressing. Zero is 6. Section 4 has the measurements. | `INVALID_ARG` from `create` outside that range. |
 | `compress_window_bits` (both) | 9 to 15: the memory a streamed response holds while it is written (section 4's table). Zero is 15. | the same. |
 | `compress_zstd` (both server configurations) | Compress in `zstd` for a request that weighs it at least as high as gzip; gzip otherwise. False: gzip only. | - |
-| `compress_zstd_level`, `compress_zstd_window_log` (both) | Section 7's encoder level (1 to 3, zero is 1) and window (10 to 23, zero is 17). | `INVALID_ARG` from `create` outside those ranges. |
+| `compress_zstd_level`, `compress_zstd_window_log` (both) | Section 7's encoder level (1 to 9, zero is 1) and window (10 to 23, zero is 17). | `INVALID_ARG` from `create` outside those ranges. |
 | `decompress` (both client configurations) | Send `Accept-Encoding: gzip` and decode `gzip` and `deflate` bodies. | - |
 | `decompress_zstd` (both client configurations) | With `decompress`: send `Accept-Encoding: zstd, gzip` and decode `zstd` bodies too. | `INVALID_ARG` from `create` without `decompress`. |
 | `proven_http_accepts_coding(headers, count, coding)` | Whether a request's `Accept-Encoding` allows a coding: listed with a weight above zero, or covered by `*`. | `bool`. Without the field only identity is accepted. |
@@ -841,7 +843,7 @@ proven_err_t proven_zstd_decode_all(proven_allocator_t alloc, proven_mem_view_t 
 Zstandard (RFC 8878) is a newer format than DEFLATE: `.zst` files, HTTP's
 `Content-Encoding: zstd` (RFC 9659), and some package formats. Its compressors range from
 faster than gzip's fastest to smaller than gzip's smallest; whatever was used, it decodes
-quickly. This library reads it, and since v0.58.0 writes it, at three fast levels (below,
+quickly. This library reads it, and since v0.58.0 writes it - at nine levels since v0.59.0 (below,
 "Writing Zstandard").
 
 The decoder is used like section 3's decompressor - a state, and a step that takes what
@@ -1012,21 +1014,35 @@ The encoder is used like section 3's compressor: options (`alloc`, `level`, `win
 the frame. Its frames are read by any Zstandard decoder; they are not the bytes libzstd would
 have written for the same input.
 
-**Three levels, all fast.** Level 1 finds matches through one hash table, levels 2 and 3
-through two (libzstd's "fast" and "double fast"). Every block's literals get a Huffman code
-and its sequences FSE tables, each chosen for the block by what it would cost. Measured on
-the three files of section 4, on one core of the development machine, at the release flags:
+**Nine levels, as libzstd's first nine.** Level 1 finds matches through one hash table,
+levels 2 and 3 through two (libzstd's "fast" and "double fast"); levels 4 to 9 keep every
+position in a hash chain and look at the first 4 to 32 of it, taking the best match found
+(levels 4 and 5) or first looking one byte on (6) or two (7 to 9) for a better one. Every
+block's literals get a Huffman code and its sequences FSE tables, each chosen for the block by
+what it would cost. Measured on the three files of section 4, on one core of the development
+machine, at the release flags:
 
 | | HTML page | Markdown | C source |
 |---|---|---|---|
 | this library, gzip level 1 | 26.25 % at 45 MiB/s | 36.77 % at 33 | 27.24 % at 43 |
+| this library, gzip level 6 | 22.62 % at 25 | 32.89 % at 16 | 22.88 % at 21 |
 | this library, Zstandard level 1 | 24.93 % at 263 | 36.19 % at 191 | 26.71 % at 234 |
 | this library, Zstandard level 3 | 23.83 % at 193 | 34.58 % at 132 | 25.50 % at 172 |
+| this library, Zstandard level 6 | 21.66 % at 67 | 32.68 % at 49 | 22.79 % at 64 |
+| this library, Zstandard level 9 | 21.22 % at 37 | 32.11 % at 28 | 22.21 % at 36 |
 | libzstd 1.5.7, level 1 | 25.27 % at 312 | 36.68 % at 231 | 26.91 % at 273 |
 | libzstd 1.5.7, level 3 | 23.76 % at 232 | 34.42 % at 161 | 25.42 % at 213 |
+| libzstd 1.5.7, level 6 | 21.93 % at 74 | 32.65 % at 54 | 22.97 % at 67 |
+| libzstd 1.5.7, level 9 | 21.25 % at 48 | 32.12 % at 36 | 22.22 % at 43 |
 
-Level 1 is between five and six times as fast as this library's gzip at level 1, and smaller.
-Against libzstd it runs at 0.8 to 0.9 of the speed, within half a point of the size.
+Level 1 is between five and six times as fast as this library's gzip at level 1, and smaller;
+level 6 is no larger than gzip at level 6 and between 2.6 and 3.2 times as fast. Against
+libzstd, levels 1 to 3 and 5 to 8 run at 0.8 to 1.0 of the speed and level 9 at about 0.8,
+within a third of a point of the size. Level 6 looks at 12 candidates where libzstd's looks at
+8, which keeps it at or below gzip 6 on all three files (libzstd 6 is slightly larger than gzip
+6 on the C source). Level 4 is not libzstd's method at that level: smaller by about a point, at
+about half the speed. On inputs of megabytes libzstd's higher levels also use a larger window
+and tables, and are 0.3 to 0.5 points smaller there.
 
 **Memory.** `proven_zstd_encode_all` compresses the caller's buffer where it is, with tables
 and block buffers sized to it: a few kilobytes for a short input. A stream keeps the window in
@@ -1034,7 +1050,7 @@ its own buffer, and at most holds:
 
 | | Memory |
 |---|---|
-| Hash tables | 64 KiB at level 1, 96 KiB at 2, 768 KiB at 3 (less when a whole buffer is short) |
+| Hash tables (zeroed when an encoder is made or reset) | 64 KiB at level 1, 96 KiB at 2, 768 KiB at 3 and 4, 1 MiB at 5 to 9 (less when a whole buffer is short) |
 | One block's work: its sequences, literals and output | about 500 KiB |
 | The input buffer of a stream | the window and half a window, or the window and 128 KiB if that is more: 768 KiB at the default 512 KiB |
 
@@ -1070,12 +1086,12 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_zstd_decode_all(heap, (proven_mem_view_t){ frame, n }, (proven_mem_mut_t){ back, sizeof back }, &got) == PROVEN_OK &&
                     got == sizeof text && memcmp(back, text, got) == 0, "and decode to every byte");
 
-    /* A stream: 1,000 bytes at a time into a 64 KiB window, with the checksum. A block flush
+    /* A stream: 1,000 bytes at a time at level 6 into a 64 KiB window, with the checksum. A block flush
      * after the first 5,000 makes them decodable at once - what a server does before it
      * waits for more to send; FINISH ends the frame. */
     proven_zstd_encoder_t *z = NULL;
-    o = (proven_zstd_encoder_options_t){ .alloc = heap, .level = 3, .window_log = 16, .checksum = true };
-    EXAMPLE_REQUIRE(proven_zstd_encoder_create(&o, &z) == PROVEN_OK, "an encoder at level 3 with a 64 KiB window");
+    o = (proven_zstd_encoder_options_t){ .alloc = heap, .level = 6, .window_log = 16, .checksum = true };
+    EXAMPLE_REQUIRE(proven_zstd_encoder_create(&o, &z) == PROVEN_OK, "an encoder at level 6 - about gzip 6's size - with a 64 KiB window");
     proven_size_t in_at = 0, out_at = 0;
     bool done = false;
     while (!done) {
@@ -1122,7 +1138,7 @@ int main(void) {
 
 | API | Intent | Return |
 |---|---|---|
-| `proven_zstd_encoder_create(&options, &z)` | An encoder: `level` 1 to 3 (zero is 3, libzstd's default), `window_log` 10 to 23 (zero is 19), `checksum`. Allocates its hash tables; its buffers come with input. | `INVALID_ARG`, `NOMEM`. |
+| `proven_zstd_encoder_create(&options, &z)` | An encoder: `level` 1 to 9 (zero is 3, libzstd's default), `window_log` 10 to 23 (zero is 19), `checksum`. Allocates its hash tables; its buffers come with input. | `INVALID_ARG`, `NOMEM`. |
 | `proven_zstd_encode(z, in, &consumed, out, &produced, flush, &done)` | Take some of `in`, give some of `out`. With a flush, call again until all input is taken and nothing more comes (for FINISH, until `done`). | `INVALID_STATE` for input after FINISH (reset first); `NOMEM`, after which every call says so until a reset; `INVALID_ARG`. |
 | `proven_zstd_encoder_reset(z)` | Start a new frame with the same options; the buffers are kept. | none. |
 | `proven_zstd_encoder_destroy(z)` | Free it. NULL is allowed. | none. |
@@ -1156,7 +1172,7 @@ for byte, what zlib would have written for the same input, and it does not need 
 - **Preset dictionaries** (zlib's `FDICT`), in either direction.
 - **ZIP archives, tar files**: those are containers. This is the codec inside them.
 - **Deflate64**, and every other compression format: Brotli, LZ4, bzip2, xz. Zstandard's
-  slower levels (4 to 22 in libzstd: lazy and optimal parsing), its dictionaries and its
+  slower levels (10 to 22 in libzstd: binary trees and optimal parsing), its dictionaries and its
   long-distance mode.
 - **The gzip header's fields** - name, time, comment - cannot be set or read.
 - **Several gzip members read as one stream** automatically: reset after each (section 3).
@@ -1207,21 +1223,23 @@ cut short or followed by junk, and a client that did not ask was sent gzip; curl
 handler's own Zstandard from this library's server.
 
 **The encoder of section 7 was tested** against its decoder and against libzstd. The
-registered test compresses seven kinds of data (nothing, one byte, a run, numbered lines,
-noise with copies from far back, random bytes, more than 128 byte values) at the three levels
-and three windows, whole and streamed - a block flush after each piece, output a byte at a
-time - and decodes every frame with this library's decoder, which checks each offset against
-the window the frame states; it checks the frame header, the bound over 8,000 inputs, flushes,
+registered test compresses eleven kinds of data (nothing, one byte, a run, numbered lines,
+noise with copies from far back, random bytes, more than 128 byte values, and more) at all nine
+levels and three windows, whole and - at a level of each kind - streamed with a block flush
+after each piece and output a byte at a time, and decodes every frame with this library's
+decoder, which checks each offset against the window the frame states; it checks that a
+stream's blocks are byte for byte those of the same input compressed whole at every level,
+the frame header, the bound over 8,000 inputs, flushes,
 the end and a reset, literals of one byte value in a compressed block, the memory held, and
-failed allocations, and pins the size and CRC of eight frames that libzstd decoded - two of
+failed allocations, and pins the size and CRC of thirteen frames that libzstd decoded - five of
 them streamed after a reset with the buffer sliding. Outside the registered tests, libzstd decoded every frame the
 encoder made from a corpus - this repository's files, the Korean manual, a binary, 4 MB of
 sources, inputs of every size to 4,096 bytes and at every block and header boundary, literals
 of one byte, two and four values, periods that fill a block's sequences - at every level and at
 windows from 1 KiB to 8 MiB, whole and streamed in pieces from one byte, under the tools that
-report any read or write outside a buffer: 2,880 frames, every one byte for byte. Over HTTP,
-Node's libzstd and curl decoded what both servers sent in `zstd`, whole and streamed, at the
-three levels and windows of 1 KiB to 8 MiB, and the weights chose gzip where a client preferred
+report any read or write outside a buffer: 4,105 frames, every one byte for byte. Over HTTP,
+Node's libzstd and curl decoded what both servers sent in `zstd`, whole and streamed, at
+levels 1, 2, 3, 6 and 9 and windows of 1 KiB to 8 MiB, and the weights chose gzip where a client preferred
 it.
 
 **Not done:** no coverage-guided fuzzing; no comparison with a second compressor's output

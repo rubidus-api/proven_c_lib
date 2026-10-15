@@ -18,7 +18,7 @@
 #define WINDOW_LOG_MIN 10
 #define WINDOW_LOG_MAX 23
 #define WINDOW_LOG_DEFAULT 19
-#define LEVEL_MAX 3
+#define LEVEL_MAX 9
 #define LEVEL_DEFAULT 3
 #define SEQ_MAX 16384u                  /* sequences in one block; a block ends early when they run out */
 #define HUF_MAX_BITS 11
@@ -459,8 +459,9 @@ typedef struct {
 enum { K_LL, K_OF, K_ML };
 
 typedef struct {
-    unsigned strategy;                 /* 0: one hash table; 1: two */
-    unsigned hlog, clog, mls;
+    unsigned strategy;                 /* 0: one hash table; 1: two; 2: a hash table and a chain */
+    unsigned hlog, clog, mls;          /* clog: the second table's, or the chain's, size */
+    unsigned tries, depth;             /* chain: candidates looked at; 0 greedy, 1 lazy, 2 lazy2 */
 } params_t;
 
 struct proven_zstd_encoder {
@@ -482,6 +483,7 @@ struct proven_zstd_encoder {
     proven_u32 *hash, *hash2;
     proven_size_t hash_size, hash2_size;
     bool fresh;                        /* the hash tables hold nothing of the current frame */
+    proven_u32 next_update;            /* chain: the first position not yet in the tables */
     seq_t *seqs;
     proven_byte_t *codes;              /* each sequence's literal-length, offset and match-length codes */
     proven_size_t nseq;
@@ -496,10 +498,16 @@ struct proven_zstd_encoder {
 };
 
 static const params_t LEVELS[LEVEL_MAX + 1] = {
-    { 0, 0, 0, 0 },
-    { 0, 14, 0, 6 },
-    { 1, 14, 13, 6 },
-    { 1, 17, 16, 5 },
+    { 0, 0, 0, 0, 0, 0 },
+    { 0, 14, 0, 6, 0, 0 },
+    { 1, 14, 13, 6, 0, 0 },
+    { 1, 17, 16, 5, 0, 0 },
+    { 2, 17, 16, 5, 4, 0 },            /* greedy */
+    { 2, 17, 17, 5, 8, 0 },
+    { 2, 17, 17, 5, 12, 1 },           /* lazy: 12 candidates, where libzstd's level 6 has 8, to stay at or below gzip 6 */
+    { 2, 17, 17, 5, 12, 2 },           /* lazy2 */
+    { 2, 17, 17, 5, 24, 2 },
+    { 2, 17, 17, 4, 32, 2 },
 };
 
 static proven_err_t grow(proven_zstd_encoder_t *z, void **buf, proven_size_t *cap, proven_size_t want, proven_size_t unit) {
@@ -528,6 +536,7 @@ static void frame_start(proven_zstd_encoder_t *z) {
         for (proven_size_t i = 0; i < z->hash2_size; ++i) z->hash2[i] = 0;
         z->fresh = true;
     }
+    z->next_update = 0;
 }
 
 static proven_err_t make(const proven_zstd_encoder_options_t *o, proven_u64 size_hint, proven_zstd_encoder_t **out) {
@@ -554,7 +563,7 @@ static proven_err_t make(const proven_zstd_encoder_options_t *o, proven_u64 size
     z->block_size = z->window < ZSTD_BLOCK_MAX ? z->window : ZSTD_BLOCK_MAX;
     z->buf_max = z->window + (z->window / 2 > z->block_size ? z->window / 2 : z->block_size);
     z->hash_size = (proven_size_t)1 << z->p.hlog;
-    z->hash2_size = z->p.strategy ? (proven_size_t)1 << z->p.clog : 0;
+    z->hash2_size = z->p.strategy ? (proven_size_t)1 << z->p.clog : 0;     /* the second table, or the chain */
     proven_size_t got = 0;
     proven_err_t e = grow(z, (void **)&z->hash, &got, z->hash_size + z->hash2_size, sizeof(proven_u32));
     if (e != PROVEN_OK) { o->alloc.free_fn(o->alloc.ctx, z); return e; }
@@ -846,10 +855,128 @@ ZSTD_HOT proven_size_t match_double_mls(proven_zstd_encoder_t *z, const proven_b
     return full ? (proven_size_t)(anchor - base) : end;
 }
 
+/* Put every position from `next_update` up to `target` into the hash table, each linked to the
+ * one its hash held before: the chain, indexed by position modulo its size. */
+ZSTD_HOT void hc_insert(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_u32 target, const unsigned mls) {
+    proven_u32 *const ht = z->hash, *const ch = z->hash2;
+    const proven_u32 mask = (proven_u32)z->hash2_size - 1;
+    const unsigned hlog = z->p.hlog;
+    for (proven_u32 i = z->next_update; i < target; ++i) {
+        const proven_u32 h = hash_at(base + i, hlog, mls);
+        ch[i & mask] = ht[h];
+        ht[h] = i;
+    }
+    if (target > z->next_update) z->next_update = target;
+}
+
+/* The longest match for `ip` among the first positions of its chain, at least 4 long;
+ * 0 when there is none, looking at `tries` candidates. Older positions than the chain holds share slots with newer ones: the
+ * walk stops before them. Every candidate is compared byte by byte. */
+ZSTD_HOT proven_size_t hc_find(proven_zstd_encoder_t *z, const proven_byte_t *base, const proven_byte_t *ip, const proven_byte_t *iend,
+                               proven_size_t low, proven_u32 *off, const unsigned mls) {
+    const proven_u32 cur = (proven_u32)(ip - base), mask = (proven_u32)z->hash2_size - 1;
+    hc_insert(z, base, cur, mls);
+    const proven_u32 *const ch = z->hash2;
+    const proven_u32 min_chain = cur > mask + 1 ? cur - (mask + 1) : 0;
+    proven_u32 idx = z->hash[hash_at(ip, z->p.hlog, mls)];
+    proven_size_t best = 3;
+    const proven_size_t room = (proven_size_t)(iend - ip);
+    for (unsigned n = z->p.tries; n > 0 && idx >= low && idx < cur; --n) {
+        const proven_byte_t *m = base + idx;
+        if (best < room && m[best] == ip[best]) {
+            const proven_size_t len = count_same(ip, m, iend);
+            if (len > best) {
+                best = len;
+                *off = cur - idx;
+                if (len == room) break;
+            }
+        }
+        if (idx <= min_chain) break;
+        idx = ch[idx & mask];
+    }
+    return best >= 4 ? best : 0;
+}
+
+/* The cost of an offset in the reference encoder's comparisons: the bits of its offset value. */
+static inline int off_bits(proven_u32 off, bool rep) { return rep ? 0 : (int)highbit32(off + 3); }
+
+/* A hash chain, with a decision put off by `depth` positions: greedy (0) takes the first match
+ * found; lazy (1) and lazy2 (2) look one and two bytes on for a better one, weighing length
+ * against the offset's bits (the reference encoder's lazy loop). */
+ZSTD_HOT proven_size_t match_lazy_mls(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_size_t start, proven_size_t end,
+                                      proven_size_t low, proven_size_t *last_from, const unsigned mls, const unsigned depth) {
+    const proven_byte_t *const iend = base + end, *const lowp = base + low;
+    const proven_byte_t *const ilimit = end - start > 8 ? iend - 8 : base + start;
+    sink_t k = sink_open(z);
+    const proven_byte_t *ip = base + start, *anchor = ip;
+    if (ip == base) ip++;
+    while (ip < ilimit && k.seq_end - k.seq >= 2) {
+        proven_size_t ml = 0;
+        proven_u32 off = 0;
+        bool rep = false;
+        const proven_byte_t *st = ip + 1;
+        const proven_u32 r0 = k.rep[0];
+        if (r0 <= (proven_size_t)(ip + 1 - lowp) && le32(ip + 1) == le32(ip + 1 - r0)) {
+            ml = count_same(ip + 5, ip + 5 - r0, iend) + 4;
+            off = r0;
+            rep = true;
+            if (depth == 0) goto store_it;
+        }
+        {
+            proven_u32 o2 = 0;
+            const proven_size_t m2 = hc_find(z, base, ip, iend, low, &o2, mls);
+            if (m2 > ml) { ml = m2; off = o2; rep = false; st = ip; }
+        }
+        if (ml < 4) {
+            ip += ((ip - anchor) >> 8) + 1;
+            continue;
+        }
+        for (unsigned d = 1; d <= depth && ip < ilimit; ++d) {
+            ip++;
+            const int extra = d == 1 ? 4 : 7;
+            if (!rep && r0 <= (proven_size_t)(ip - lowp) && le32(ip) == le32(ip - r0)) {
+                const proven_size_t mr = count_same(ip + 4, ip + 4 - r0, iend) + 4;
+                const int g2 = (int)mr * (d == 1 ? 3 : 4), g1 = (int)ml * (d == 1 ? 3 : 4) - off_bits(off, rep) + 1;
+                if (g2 > g1) { ml = mr; off = r0; rep = true; st = ip; }
+            }
+            proven_u32 o2 = 0;
+            const proven_size_t m2 = hc_find(z, base, ip, iend, low, &o2, mls);
+            if (m2 >= 4) {
+                const int g2 = (int)m2 * 4 - off_bits(o2, false), g1 = (int)ml * 4 - off_bits(off, rep) + extra;
+                if (g2 > g1) { ml = m2; off = o2; rep = false; st = ip; d = 0; continue; }   /* a better match: look on from it */
+            }
+        }
+        if (!rep) while (st > anchor && (proven_size_t)(st - lowp) > off && st[-1] == st[-1 - (proven_size_t)off]) { st--; ml++; }
+    store_it:
+        store(&k, anchor, iend, (proven_size_t)(st - anchor), off, ml);
+        ip = anchor = st + ml;
+        while (ip <= ilimit && k.seq_end - k.seq >= 1) {
+            const proven_u32 r1 = k.rep[1];
+            if (r1 > (proven_size_t)(ip - lowp) || le32(ip) != le32(ip - r1)) break;
+            const proven_size_t rl = count_same(ip + 4, ip + 4 - r1, iend) + 4;
+            store(&k, anchor, iend, 0, r1, rl);
+            ip += rl;
+            anchor = ip;
+        }
+    }
+    *last_from = (proven_size_t)(anchor - base);
+    const bool full = k.seq_end - k.seq < 2;
+    sink_close(z, &k);
+    return full ? (proven_size_t)(anchor - base) : end;
+}
+
 static proven_size_t match_block(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_size_t start, proven_size_t end, proven_size_t low, proven_size_t *last_from) {
     z->fresh = false;
     if (z->p.strategy == 0) {
         return match_fast_mls(z, base, start, end, low, last_from, 6);
+    }
+    if (z->p.strategy == 2) {
+        const unsigned m4 = z->p.mls == 4;
+        switch (z->p.depth) {
+            case 0: return m4 ? match_lazy_mls(z, base, start, end, low, last_from, 4, 0) : match_lazy_mls(z, base, start, end, low, last_from, 5, 0);
+            case 1: return m4 ? match_lazy_mls(z, base, start, end, low, last_from, 4, 1) : match_lazy_mls(z, base, start, end, low, last_from, 5, 1);
+            default: return m4 ? match_lazy_mls(z, base, start, end, low, last_from, 4, 2) : match_lazy_mls(z, base, start, end, low, last_from, 5, 2);
+        }
     }
     return z->p.mls == 5 ? match_double_mls(z, base, start, end, low, last_from, 5) : match_double_mls(z, base, start, end, low, last_from, 6);
 }
@@ -1184,6 +1311,17 @@ static void slide(proven_zstd_encoder_t *z) {
     z->pos -= shift;
     z->fill -= shift;
     const proven_u32 s = (proven_u32)shift;
+    if (z->p.strategy == 2) {
+        /* The chain is indexed by position modulo its size: what was at p is now at p - s. Rotate
+         * it left by s, in place (three reversals). */
+        proven_u32 *c = z->hash2;
+        const proven_size_t n = z->hash2_size, r = shift & (n - 1);
+        for (int part = 0; part < 3; ++part) {
+            proven_size_t a = part == 1 ? r : 0, b = part == 0 ? r : n;
+            while (a + 1 < b) { const proven_u32 t = c[a]; c[a] = c[b - 1]; c[b - 1] = t; a++; b--; }
+        }
+        z->next_update = z->next_update > s ? z->next_update - s : 0;
+    }
     for (proven_size_t i = 0; i < z->hash_size + z->hash2_size; ++i) z->hash[i] = z->hash[i] > s ? z->hash[i] - s : 0;
 }
 
