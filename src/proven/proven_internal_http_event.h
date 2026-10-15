@@ -3,6 +3,7 @@
 
 #include "proven/http_event.h"
 #include "proven/deflate.h"
+#include "proven_internal_http_coding.h"
 
 /*
  * Internal: a connection of the event-driven server taken over by another protocol.
@@ -128,13 +129,14 @@ struct proven_http_stream {
      * is, `state` says - so an idle connection is no larger for either. */
     union {
         void *raw;                     /* EV_RAW: the protocol's object; it begins with its operations */
-        proven_deflate_t *zip;         /* any other state: the response body goes through this, or null */
+        proven_http_compressor_t_ *zip; /* any other state: the response body goes through this, or null */
     };
     proven_http_method_t method;
     bool active;                       /* on_request was delivered and on_done has not been */
     bool response_begun, response_ended, chunked, bodiless, keep, expect_continue;
     bool paused, dead, processing, peer_eof, want_writable, close_when_flushed, head_started;
-    bool accepts_gzip, compress_asked;
+    bool compress_asked;
+    proven_u8 compress_coding;         /* what a response asked to be compressed would go in: identity, gzip or zstd */
     bool sniffed;                      /* which protocol this connection speaks has been decided */
     bool raw_more;                     /* EV_RAW: the owner has output the transport would not take yet */
     bool told_stop;                    /* EV_RAW: the owner has been told that the server stopped listening */
@@ -217,6 +219,11 @@ proven_net_addr_t proven_http_event_h2_peer_(const proven_http_stream_t *stream)
 proven_size_t proven_http_event_h2_buffered_(const proven_http_stream_t *stream);
 
 #define PROVEN_HTTP_EVENT_IS_H2_(stream) (((const ev_head_t *)(const void *)(stream))->kind == EV_KIND_H2)
+
+/* The server's compression settings, for http_coding.c. */
+static inline proven_http_compress_cfg_t_ proven_http_event_compress_cfg_(const proven_http_event_server_config_t *c) {
+    return (proven_http_compress_cfg_t_){ c->compress_level, c->compress_window_bits, c->compress_zstd, c->compress_zstd_level, c->compress_zstd_window_log };
+}
 
 #endif /* hosted, with a network */
 

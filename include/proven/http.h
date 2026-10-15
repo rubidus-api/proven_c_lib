@@ -175,6 +175,15 @@ proven_http_coding_t proven_http_content_coding(const proven_http_header_t *head
 [[nodiscard]]
 bool proven_http_accepts_coding(const proven_http_header_t *headers, proven_size_t count, proven_http_coding_t coding);
 
+/**
+ * @brief How much a request's `Accept-Encoding` wants `coding`: its weight (`q`) in
+ *        thousandths, 0 to 1000, by the rules of proven_http_accepts_coding - the coding's own
+ *        weight, else that of `*`, else 1000 for identity and 0 for the rest. 0 exactly when
+ *        proven_http_accepts_coding says no. For choosing between codings a request accepts.
+ */
+[[nodiscard]]
+unsigned proven_http_accept_weight(const proven_http_header_t *headers, proven_size_t count, proven_http_coding_t coding);
+
 /** @brief The method a token names; PROVEN_HTTP_METHOD_OTHER for any other valid token.
  *         Case-sensitive: `get` is not `GET`. */
 [[nodiscard]]

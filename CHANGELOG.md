@@ -18,6 +18,48 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **Zstandard compression (RFC 8878) in `zstd.h`.** `proven_zstd_encoder_create` with
+  `proven_zstd_encoder_options_t` (`alloc`, `level` 1 to 3 - zero is 3, libzstd's default -,
+  `window_log` 10 to 23 - zero is 19 -, `checksum`), `_destroy`, `_reset`, `proven_zstd_encode`
+  (a step with a flush: `PROVEN_ZSTD_FLUSH_NONE`, `_BLOCK` - everything given so far decodable,
+  the frame goes on - and `_FINISH`), `proven_zstd_encode_bound` and `proven_zstd_encode_all`.
+  Three single-pass levels: one hash table at level 1, two at levels 2 and 3, as libzstd's
+  "fast" and "double fast"; each block's literals Huffman-coded and its sequences FSE-coded,
+  each table chosen per block by its cost (predefined, written for the block, the previous
+  block's, or a single symbol); a block that does not shrink is stored. Measured on the three
+  files of the RFC's profile, level 1 is 5.5 to 5.9 times as fast as this library's gzip at
+  level 1 and smaller (24.9 % / 36.2 % / 26.7 % against 26.3 / 36.8 / 27.2); against libzstd
+  1.5.7 every level runs at 0.80 to 0.90 of its speed, within half a point of its size.
+  `encode_all` compresses the caller's buffer in place and states the size, with tables and
+  buffers sized to the input; a stream holds its hash tables (64 KiB to 768 KiB by level),
+  about 500 KiB for a block and an input buffer of one and a half windows. Part of the
+  freestanding profile, in its own object file: a program that only decodes links no encoder.
+  Manual chapter 16, section 7, with an example run by the suite.
+- **The HTTP servers compress in Zstandard when configured to: `compress_zstd`**, with
+  `compress_zstd_level` (1 to 3, zero is 1) and `compress_zstd_window_log` (10 to 23, zero is
+  17), in both server configurations - the blocking server, the event-driven one and its
+  HTTP/2 connections. A response a handler asked to have compressed goes as `zstd` when the
+  request's `Accept-Encoding` weighs zstd at least as high as gzip (curl and browsers send the
+  two at one weight), and as gzip otherwise, as before. Without `compress_zstd` nothing
+  changes.
+- `proven_http_accept_weight`: the weight a request's `Accept-Encoding` gives a coding, in
+  thousandths, by the rules of `proven_http_accepts_coding` - for choosing among codings.
+- Tests: `test_unit_zstd_encode` (eleven inputs at every level and three windows, whole and
+  streamed, decoded by this library's decoder; the frame header, the bound, flushes, the end
+  and a reset, memory, failed allocations, eight pinned frames that libzstd decoded);
+  `test_unit_http_coding` chooses the coding for sixteen `Accept-Encoding` values and runs the
+  servers with zstd offered through the clients and raw sockets; `test_unit_http_event_client_h2`
+  gets a compressed download in zstd over TLS.
+
+### Changed
+
+- `proven_http_accepts_coding` is now `proven_http_accept_weight(...) > 0`; its answers are
+  the same.
+- `zstd.c` takes the checksum and the code tables from a new internal header shared with the
+  encoder; the decoder's behaviour is unchanged.
+
 ## [0.57.0] - 2026-10-15
 
 ### Added

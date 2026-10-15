@@ -8,13 +8,13 @@
 
 /**
  * @file zstd.h
- * @brief Zstandard decompression (RFC 8878).
+ * @brief Zstandard decompression and compression (RFC 8878).
  *
  * Zstandard is a newer compression format than DEFLATE: HTTP's `Content-Encoding: zstd`
  * (RFC 9659), `.zst` files, and some package and archive formats. It decodes faster than
  * DEFLATE and its compressors trade speed for size over a wider range.
  *
- * Only decompression is here. The decoder works as deflate.h's does - a state object, and a
+ * Decompression first: the decoder works as deflate.h's does - a state object, and a
  * step that takes what input there is and fills what output space there is - with two
  * differences that the format makes necessary:
  *
@@ -106,5 +106,97 @@ proven_err_t proven_zstd_decode(proven_zstd_decoder_t *z, proven_mem_view_t in, 
  */
 [[nodiscard]]
 proven_err_t proven_zstd_decode_all(proven_allocator_t alloc, proven_mem_view_t in, proven_mem_mut_t out, proven_size_t *written);
+
+// -----------------------------------------------------------------------------
+// Compression
+// -----------------------------------------------------------------------------
+
+/*
+ * The encoder works as deflate.h's compressor does: an options struct, a state object, and a
+ * step with a flush. Its output is a Zstandard frame that any decoder reads - libzstd's, this
+ * library's - and not the bytes libzstd would have written for the same input.
+ *
+ * Three levels, all single-pass. Level 1 looks up one earlier position per position, by a hash
+ * of the next six bytes in a table of 2^14 entries; levels 2 and 3 look up two, by hashes of
+ * eight bytes and of six (2^14 and 2^13 entries) or five (2^17 and 2^16). All three try the
+ * repeat offsets first and skip ahead faster the longer they find nothing. Each block's
+ * literals are Huffman-coded and its sequences FSE-coded, each table chosen per block by what
+ * it would cost: the predefined one, one written for the block, the previous block's, or a
+ * single symbol. A block that does not shrink is stored as it is.
+ *
+ * **Memory**, at most: the hash tables (64 KiB at level 1, 96 KiB at 2, 768 KiB at 3), about
+ * 500 KiB for one block (its sequences, literals and output), and, for a stream, an input
+ * buffer of the window and half a window (or of the window and 128 KiB, if that is more):
+ * 768 KiB at the default window. Buffers grow with the input. proven_zstd_encode_all needs no
+ * input buffer, and sizes its tables and block buffers to the input: a few kilobytes for a
+ * short one.
+ */
+
+/** @brief When an encoder must hand over what it has. */
+typedef enum {
+    PROVEN_ZSTD_FLUSH_NONE = 0,    /**< more input will come: output appears as blocks fill */
+    PROVEN_ZSTD_FLUSH_BLOCK = 1,   /**< everything given so far becomes decodable; the frame goes on */
+    PROVEN_ZSTD_FLUSH_FINISH = 2   /**< this was the last input: end the frame */
+} proven_zstd_flush_t;
+
+/** @brief What an encoder is made with. Zero-initialise, set `alloc`, and set what applies. */
+typedef struct {
+    proven_allocator_t alloc;      /**< required */
+    int level;                     /**< 1 (fastest) to 3 (smallest); 0: 3, as libzstd's default */
+    int window_log;                /**< how far back a match may reach, as a power of two: 10 to 23 (8 MiB, the most RFC 9659 lets an HTTP client be asked for); 0: 19 (512 KiB) */
+    bool checksum;                 /**< end each frame with the low 32 bits of its XXH64 */
+} proven_zstd_encoder_options_t;
+
+/** @brief A compressor. Opaque. */
+typedef struct proven_zstd_encoder proven_zstd_encoder_t;
+
+/**
+ * @brief Make a compressor. Its hash tables are allocated here; its buffers as input comes.
+ * @return PROVEN_ERR_INVALID_ARG for a bad allocator, level, window or out pointer;
+ *         PROVEN_ERR_NOMEM.
+ */
+[[nodiscard]]
+proven_err_t proven_zstd_encoder_create(const proven_zstd_encoder_options_t *options, proven_zstd_encoder_t **out);
+
+/** @brief Free a compressor and its buffers. NULL is allowed. */
+void proven_zstd_encoder_destroy(proven_zstd_encoder_t *z);
+
+/** @brief Forget everything and start a new frame with the same options. The buffers are kept. */
+void proven_zstd_encoder_reset(proven_zstd_encoder_t *z);
+
+/**
+ * @brief Compress: consume some of `in`, produce some of `out`.
+ *
+ * With `PROVEN_ZSTD_FLUSH_BLOCK` or `PROVEN_ZSTD_FLUSH_FINISH`, call it again with more output
+ * space - and the same flush - until all of `in` is consumed and nothing more is produced (for
+ * FINISH: until `*done`). A FLUSH_BLOCK ends what was given so far as one or more blocks; the
+ * frame goes on, and a decoder can give back everything up to that point. A frame made by
+ * steps does not state its size; it states the window, which a decoder must hold.
+ *
+ * @param done Out: true once a FINISH has been carried out and all output has been produced.
+ * @return PROVEN_OK, also when no progress was possible; PROVEN_ERR_INVALID_ARG;
+ *         PROVEN_ERR_INVALID_STATE for input after the frame was finished (reset first);
+ *         PROVEN_ERR_NOMEM, after which the compressor must be reset.
+ */
+[[nodiscard]]
+proven_err_t proven_zstd_encode(proven_zstd_encoder_t *z, proven_mem_view_t in, proven_size_t *consumed,
+                                proven_mem_mut_t out, proven_size_t *produced, proven_zstd_flush_t flush, bool *done);
+
+/** @brief The most bytes compressing `input_size` bytes in one FINISH, or with
+ *         proven_zstd_encode_all, can produce. Data that does not compress grows slightly. */
+[[nodiscard]]
+proven_size_t proven_zstd_encode_bound(proven_size_t input_size);
+
+/**
+ * @brief Compress a whole buffer into one frame, in a buffer of the caller's.
+ *
+ * The frame states its size, and when that is no more than the window, its window is the
+ * size: a decoder then holds no more than the data.
+ *
+ * @return PROVEN_ERR_OUT_OF_BOUNDS when `out` is too small (proven_zstd_encode_bound is always
+ *         enough); otherwise as proven_zstd_encoder_create.
+ */
+[[nodiscard]]
+proven_err_t proven_zstd_encode_all(const proven_zstd_encoder_options_t *options, proven_mem_view_t in, proven_mem_mut_t out, proven_size_t *written);
 
 #endif

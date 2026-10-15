@@ -2,7 +2,7 @@
 
 /*
  * Content codings for the HTTP drivers: when a body is decoded, when a response is
- * compressed, and the two small machines that do it over deflate.h.
+ * compressed, and the small machines that do it over deflate.h and zstd.h.
  */
 
 static proven_u8str_view_t hc_lit_n(const char *s, proven_size_t n) {
@@ -121,8 +121,25 @@ proven_err_t proven_http_decoder_end_(const proven_http_decoder_t_ *d) {
 // Compressing
 // -----------------------------------------------------------------------------
 
-bool proven_http_compress_applies_(bool accepts_gzip, proven_u16 status, const proven_http_header_t *headers, proven_size_t count) {
-    if (!accepts_gzip) return false;
+bool proven_http_compress_cfg_valid_(const proven_http_compress_cfg_t_ *cfg) {
+    return cfg->level >= -1 && cfg->level <= 9 && (cfg->window_bits == 0 || (cfg->window_bits >= 9 && cfg->window_bits <= 15)) &&
+           cfg->zstd_level >= 0 && cfg->zstd_level <= 3 && (cfg->zstd_window_log == 0 || (cfg->zstd_window_log >= 10 && cfg->zstd_window_log <= 23));
+}
+
+proven_http_coding_t proven_http_compress_choose_(const proven_http_header_t *headers, proven_size_t count, bool zstd) {
+    const unsigned g = proven_http_accept_weight(headers, count, PROVEN_HTTP_CODING_GZIP);
+    const unsigned z = zstd ? proven_http_accept_weight(headers, count, PROVEN_HTTP_CODING_ZSTD) : 0u;
+    /* A tie goes to zstd: the server has offered it, and it costs a fraction of gzip's time. */
+    if (z > 0 && z >= g) return PROVEN_HTTP_CODING_ZSTD;
+    return g > 0 ? PROVEN_HTTP_CODING_GZIP : PROVEN_HTTP_CODING_IDENTITY;
+}
+
+proven_u8str_view_t proven_http_coding_token_(proven_http_coding_t coding) {
+    return coding == PROVEN_HTTP_CODING_ZSTD ? HC_LIT("zstd") : HC_LIT("gzip");
+}
+
+bool proven_http_compress_applies_(bool accepted, proven_u16 status, const proven_http_header_t *headers, proven_size_t count) {
+    if (!accepted) return false;
     if (status == 204 || status == 206 || status == 304) return false;
     proven_u8str_view_t value;
     if (proven_http_header_find(headers, count, HC_LIT("Content-Encoding"), &value)) return false;
@@ -135,29 +152,79 @@ bool proven_http_compress_needs_vary_(const proven_http_header_t *headers, prove
            !proven_http_header_has_token(headers, count, HC_LIT("Vary"), HC_LIT("*"));
 }
 
-proven_err_t proven_http_compress_create_(proven_allocator_t alloc, int level, int window_bits, proven_deflate_t **out) {
-    proven_deflate_options_t o = { .alloc = alloc, .format = PROVEN_DEFLATE_GZIP, .level = level, .window_bits = window_bits };
-    return proven_deflate_create(&o, out);
+struct proven_http_compressor {
+    proven_allocator_t alloc;
+    proven_deflate_t *gz;
+    proven_zstd_encoder_t *zs;
+};
+
+static proven_zstd_encoder_options_t hc_zstd_options(proven_allocator_t alloc, const proven_http_compress_cfg_t_ *cfg) {
+    return (proven_zstd_encoder_options_t){ .alloc = alloc, .level = cfg->zstd_level ? cfg->zstd_level : 1, .window_log = cfg->zstd_window_log ? cfg->zstd_window_log : 17 };
 }
 
-proven_err_t proven_http_compress_all_(proven_allocator_t alloc, int level, int window_bits, proven_mem_view_t body,
+proven_err_t proven_http_compressor_create_(proven_allocator_t alloc, proven_http_coding_t coding, const proven_http_compress_cfg_t_ *cfg,
+                                            proven_http_compressor_t_ **out) {
+    *out = (void *)0;
+    proven_result_mem_mut_t m = alloc.alloc_fn(alloc.ctx, sizeof(proven_http_compressor_t_), 16);
+    if (m.err != PROVEN_OK) return PROVEN_ERR_NOMEM;
+    proven_http_compressor_t_ *c = (proven_http_compressor_t_ *)(void *)m.value.ptr;
+    *c = (proven_http_compressor_t_){ .alloc = alloc };
+    proven_err_t e;
+    if (coding == PROVEN_HTTP_CODING_ZSTD) {
+        const proven_zstd_encoder_options_t o = hc_zstd_options(alloc, cfg);
+        e = proven_zstd_encoder_create(&o, &c->zs);
+    } else {
+        const proven_deflate_options_t o = { .alloc = alloc, .format = PROVEN_DEFLATE_GZIP, .level = cfg->level, .window_bits = cfg->window_bits };
+        e = proven_deflate_create(&o, &c->gz);
+    }
+    if (e != PROVEN_OK) {
+        alloc.free_fn(alloc.ctx, c);
+        return e;
+    }
+    *out = c;
+    return PROVEN_OK;
+}
+
+void proven_http_compressor_destroy_(proven_http_compressor_t_ *c) {
+    if (!c) return;
+    proven_deflate_destroy(c->gz);
+    proven_zstd_encoder_destroy(c->zs);
+    c->alloc.free_fn(c->alloc.ctx, c);
+}
+
+proven_err_t proven_http_compressor_step_(proven_http_compressor_t_ *c, proven_mem_view_t in, proven_size_t *consumed,
+                                          proven_mem_mut_t out, proven_size_t *produced, proven_deflate_flush_t flush, bool *done) {
+    if (c->gz) return proven_deflate(c->gz, in, consumed, out, produced, flush, done);
+    const proven_zstd_flush_t f = flush == PROVEN_DEFLATE_FLUSH_FINISH ? PROVEN_ZSTD_FLUSH_FINISH
+                                : flush == PROVEN_DEFLATE_FLUSH_SYNC ? PROVEN_ZSTD_FLUSH_BLOCK : PROVEN_ZSTD_FLUSH_NONE;
+    return proven_zstd_encode(c->zs, in, consumed, out, produced, f, done);
+}
+
+proven_err_t proven_http_compress_all_(proven_allocator_t alloc, proven_http_coding_t coding, const proven_http_compress_cfg_t_ *cfg, proven_mem_view_t body,
                                        proven_byte_t **out, proven_size_t *out_cap, proven_size_t *out_size) {
     *out = (void *)0;
     *out_cap = 0;
     *out_size = 0;
     if (body.size < PROVEN_HTTP_CODING_MIN_BODY) return PROVEN_OK;
-    /* No window larger than the body can use: the compressor's state follows the window. */
-    int limit = window_bits == 0 ? 15 : window_bits;
-    int bits = 9;
-    while (bits < limit && ((proven_size_t)1 << bits) < body.size) bits++;
     /* The result must be smaller than the body to be worth sending, so that is all the room
      * it gets. */
     proven_size_t cap = body.size - 1;
     proven_result_mem_mut_t m = alloc.alloc_fn(alloc.ctx, cap, 1);
     if (m.err != PROVEN_OK) return m.err;
-    proven_deflate_options_t o = { .alloc = alloc, .format = PROVEN_DEFLATE_GZIP, .level = level, .window_bits = bits };
     proven_size_t written = 0;
-    proven_err_t e = proven_deflate_all(&o, body, (proven_mem_mut_t){ .ptr = m.value.ptr, .size = cap }, &written);
+    proven_err_t e;
+    if (coding == PROVEN_HTTP_CODING_ZSTD) {
+        /* Compressed in place: the encoder sizes its tables and its window to the body. */
+        const proven_zstd_encoder_options_t o = hc_zstd_options(alloc, cfg);
+        e = proven_zstd_encode_all(&o, body, (proven_mem_mut_t){ .ptr = m.value.ptr, .size = cap }, &written);
+    } else {
+        /* No window larger than the body can use: the compressor's state follows the window. */
+        int limit = cfg->window_bits == 0 ? 15 : cfg->window_bits;
+        int bits = 9;
+        while (bits < limit && ((proven_size_t)1 << bits) < body.size) bits++;
+        proven_deflate_options_t o = { .alloc = alloc, .format = PROVEN_DEFLATE_GZIP, .level = cfg->level, .window_bits = bits };
+        e = proven_deflate_all(&o, body, (proven_mem_mut_t){ .ptr = m.value.ptr, .size = cap }, &written);
+    }
     if (e != PROVEN_OK) {
         alloc.free_fn(alloc.ctx, m.value.ptr);
         return e == PROVEN_ERR_OUT_OF_BOUNDS ? PROVEN_OK : e;      /* it did not shrink */

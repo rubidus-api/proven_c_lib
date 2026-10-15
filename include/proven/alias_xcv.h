@@ -350,6 +350,9 @@
 #define XCV_WS_PING PROVEN_WS_PING
 #define XCV_WS_PONG PROVEN_WS_PONG
 #define XCV_WS_TEXT PROVEN_WS_TEXT
+#define XCV_ZSTD_FLUSH_BLOCK PROVEN_ZSTD_FLUSH_BLOCK
+#define XCV_ZSTD_FLUSH_FINISH PROVEN_ZSTD_FLUSH_FINISH
+#define XCV_ZSTD_FLUSH_NONE PROVEN_ZSTD_FLUSH_NONE
 #define XCV_ZSTD_WINDOW_DEFAULT PROVEN_ZSTD_WINDOW_DEFAULT
 #define xcv_alloc_check_entry_t proven_alloc_check_entry_t
 #define xcv_alloc_check_live proven_alloc_check_live
@@ -611,6 +614,7 @@
 #define xcv_hpack_huffman_decode proven_hpack_huffman_decode
 #define xcv_hpack_huffman_encode proven_hpack_huffman_encode
 #define xcv_hpack_huffman_size proven_hpack_huffman_size
+#define xcv_http_accept_weight proven_http_accept_weight
 #define xcv_http_accepts_coding proven_http_accepts_coding
 #define xcv_http_auth_offers proven_http_auth_offers
 #define xcv_http_basic_auth proven_http_basic_auth
@@ -1294,5 +1298,14 @@
 #define xcv_zstd_decoder_destroy proven_zstd_decoder_destroy
 #define xcv_zstd_decoder_reset proven_zstd_decoder_reset
 #define xcv_zstd_decoder_t proven_zstd_decoder_t
+#define xcv_zstd_encode proven_zstd_encode
+#define xcv_zstd_encode_all proven_zstd_encode_all
+#define xcv_zstd_encode_bound proven_zstd_encode_bound
+#define xcv_zstd_encoder_create proven_zstd_encoder_create
+#define xcv_zstd_encoder_destroy proven_zstd_encoder_destroy
+#define xcv_zstd_encoder_options_t proven_zstd_encoder_options_t
+#define xcv_zstd_encoder_reset proven_zstd_encoder_reset
+#define xcv_zstd_encoder_t proven_zstd_encoder_t
+#define xcv_zstd_flush_t proven_zstd_flush_t
 
 #endif // PROVEN_ALIAS_XCV_H

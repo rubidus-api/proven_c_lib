@@ -359,9 +359,9 @@ static bool http_accept_item(proven_u8str_view_t item, proven_u8str_view_t *name
     return true;
 }
 
-bool proven_http_accepts_coding(const proven_http_header_t *headers, proven_size_t count, proven_http_coding_t coding) {
-    if (coding == PROVEN_HTTP_CODING_OTHER) return false;
-    bool identity = coding == PROVEN_HTTP_CODING_IDENTITY;
+unsigned proven_http_accept_weight(const proven_http_header_t *headers, proven_size_t count, proven_http_coding_t coding) {
+    if (coding == PROVEN_HTTP_CODING_OTHER) return 0;
+    const unsigned identity = coding == PROVEN_HTTP_CODING_IDENTITY ? 1000u : 0u;
     bool listed = false, starred = false;
     unsigned listed_weight = 0, star_weight = 0;
     if (!headers) return identity;
@@ -381,9 +381,13 @@ bool proven_http_accepts_coding(const proven_http_header_t *headers, proven_size
             }
         }
     }
-    if (listed) return listed_weight > 0;
-    if (starred) return star_weight > 0;
+    if (listed) return listed_weight;
+    if (starred) return star_weight;
     return identity;
+}
+
+bool proven_http_accepts_coding(const proven_http_header_t *headers, proven_size_t count, proven_http_coding_t coding) {
+    return proven_http_accept_weight(headers, count, coding) > 0;
 }
 
 static const struct { proven_http_method_t method; const char *text; } http_methods[] = {

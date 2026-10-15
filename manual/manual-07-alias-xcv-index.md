@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1285 aliases: 943 lowercase `xcv_` names and 342 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1298 aliases: 953 lowercase `xcv_` names and 345 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -337,7 +337,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_TLS_VERSION_1_2` | `PROVEN_TLS_VERSION_1_2` |
 | `XCV_TLS_VERSION_1_3` | `PROVEN_TLS_VERSION_1_3` |
 | `XCV_U16_LIT` | `PROVEN_U16_LIT` |
-| `XCV_VERSION_ENCODE` | `PROVEN_VERSION_ENCODE(major, minor, patch)` |
+| `XCV_VERSION_ENCODE` | `minor, patch) PROVEN_VERSION_ENCODE(major, minor, patch)` |
 | `XCV_VERSION_MAJOR` | `PROVEN_VERSION_MAJOR` |
 | `XCV_VERSION_MINOR` | `PROVEN_VERSION_MINOR` |
 | `XCV_VERSION_NUM` | `PROVEN_VERSION_NUM` |
@@ -370,6 +370,9 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_WS_PING` | `PROVEN_WS_PING` |
 | `XCV_WS_PONG` | `PROVEN_WS_PONG` |
 | `XCV_WS_TEXT` | `PROVEN_WS_TEXT` |
+| `XCV_ZSTD_FLUSH_BLOCK` | `PROVEN_ZSTD_FLUSH_BLOCK` |
+| `XCV_ZSTD_FLUSH_FINISH` | `PROVEN_ZSTD_FLUSH_FINISH` |
+| `XCV_ZSTD_FLUSH_NONE` | `PROVEN_ZSTD_FLUSH_NONE` |
 | `XCV_ZSTD_WINDOW_DEFAULT` | `PROVEN_ZSTD_WINDOW_DEFAULT` |
 | `xcv_alloc_check_entry_t` | `proven_alloc_check_entry_t` |
 | `xcv_alloc_check_live` | `proven_alloc_check_live` |
@@ -631,6 +634,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_hpack_huffman_decode` | `proven_hpack_huffman_decode` |
 | `xcv_hpack_huffman_encode` | `proven_hpack_huffman_encode` |
 | `xcv_hpack_huffman_size` | `proven_hpack_huffman_size` |
+| `xcv_http_accept_weight` | `proven_http_accept_weight` |
 | `xcv_http_accepts_coding` | `proven_http_accepts_coding` |
 | `xcv_http_auth_offers` | `proven_http_auth_offers` |
 | `xcv_http_basic_auth` | `proven_http_basic_auth` |
@@ -1314,3 +1318,12 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_zstd_decoder_destroy` | `proven_zstd_decoder_destroy` |
 | `xcv_zstd_decoder_reset` | `proven_zstd_decoder_reset` |
 | `xcv_zstd_decoder_t` | `proven_zstd_decoder_t` |
+| `xcv_zstd_encode` | `proven_zstd_encode` |
+| `xcv_zstd_encode_all` | `proven_zstd_encode_all` |
+| `xcv_zstd_encode_bound` | `proven_zstd_encode_bound` |
+| `xcv_zstd_encoder_create` | `proven_zstd_encoder_create` |
+| `xcv_zstd_encoder_destroy` | `proven_zstd_encoder_destroy` |
+| `xcv_zstd_encoder_options_t` | `proven_zstd_encoder_options_t` |
+| `xcv_zstd_encoder_reset` | `proven_zstd_encoder_reset` |
+| `xcv_zstd_encoder_t` | `proven_zstd_encoder_t` |
+| `xcv_zstd_flush_t` | `proven_zstd_flush_t` |

@@ -53,25 +53,54 @@ proven_err_t proven_http_decoder_end_(const proven_http_decoder_t_ *d);
 
 void proven_http_decoder_free_(proven_http_decoder_t_ *d);
 
-/* Whether a response that its handler asked to have compressed is: the request accepts gzip
- * (`accepts_gzip`), the status has a body of its own, and the handler's headers neither name
- * a coding already nor describe a range. */
-bool proven_http_compress_applies_(bool accepts_gzip, proven_u16 status, const proven_http_header_t *headers, proven_size_t count);
+/* How a server compresses: its configuration's fields, defaults not yet applied. */
+typedef struct {
+    int level, window_bits;            /* gzip */
+    bool zstd;                         /* zstd offered */
+    int zstd_level, zstd_window_log;
+} proven_http_compress_cfg_t_;
+
+/* Whether the fields are in range: gzip level -1 to 9 and window 0 or 9 to 15, zstd level 0
+ * to 3 and window 0 or 10 to 23. */
+bool proven_http_compress_cfg_valid_(const proven_http_compress_cfg_t_ *cfg);
+
+/* The coding a response asked to be compressed goes in: zstd when it is offered and the
+ * request weighs it at least as high as gzip; gzip when the request accepts that; identity
+ * otherwise. */
+proven_http_coding_t proven_http_compress_choose_(const proven_http_header_t *headers, proven_size_t count, bool zstd);
+
+/* Its name in `Content-Encoding`. */
+proven_u8str_view_t proven_http_coding_token_(proven_http_coding_t coding);
+
+/* Whether a response that its handler asked to have compressed is: the request accepts a
+ * coding the server offers (`accepted`), the status has a body of its own, and the handler's
+ * headers neither name a coding already nor describe a range. */
+bool proven_http_compress_applies_(bool accepted, proven_u16 status, const proven_http_header_t *headers, proven_size_t count);
 
 /* Whether `Vary: Accept-Encoding` has to be added: false when the handler's own `Vary` lists
  * it, or is `*`. */
 bool proven_http_compress_needs_vary_(const proven_http_header_t *headers, proven_size_t count);
 
-/* A compressor for a streamed gzip response. `level` and `window_bits` as in the server's
- * configuration (zero: the defaults). */
+/* A compressor for a streamed response, gzip or zstd. */
+typedef struct proven_http_compressor proven_http_compressor_t_;
+
 [[nodiscard]]
-proven_err_t proven_http_compress_create_(proven_allocator_t alloc, int level, int window_bits, proven_deflate_t **out);
+proven_err_t proven_http_compressor_create_(proven_allocator_t alloc, proven_http_coding_t coding, const proven_http_compress_cfg_t_ *cfg,
+                                            proven_http_compressor_t_ **out);
+
+void proven_http_compressor_destroy_(proven_http_compressor_t_ *c);
+
+/* As proven_deflate: NONE, SYNC (for zstd, a block flush: all given so far is decodable) or
+ * FINISH. */
+[[nodiscard]]
+proven_err_t proven_http_compressor_step_(proven_http_compressor_t_ *c, proven_mem_view_t in, proven_size_t *consumed,
+                                          proven_mem_mut_t out, proven_size_t *produced, proven_deflate_flush_t flush, bool *done);
 
 /* Compress a whole body. On PROVEN_OK `*out` is a new allocation of `*out_cap` bytes holding
- * `*out_size` bytes of gzip - or null, when the body is too short to gain or did not shrink:
- * send it as it is. Free with the same allocator. */
+ * `*out_size` bytes in `coding` - or null, when the body is too short to gain or did not
+ * shrink: send it as it is. Free with the same allocator. */
 [[nodiscard]]
-proven_err_t proven_http_compress_all_(proven_allocator_t alloc, int level, int window_bits, proven_mem_view_t body,
+proven_err_t proven_http_compress_all_(proven_allocator_t alloc, proven_http_coding_t coding, const proven_http_compress_cfg_t_ *cfg, proven_mem_view_t body,
                                        proven_byte_t **out, proven_size_t *out_cap, proven_size_t *out_size);
 
 #endif /* PROVEN_INTERNAL_HTTP_CODING_H */

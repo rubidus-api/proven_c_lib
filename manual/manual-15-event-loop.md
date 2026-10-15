@@ -1935,7 +1935,8 @@ changes that.
 - **A faster wait on Windows** than `WSAPoll`.
 - **Sending a file without copying it**, HTTP/2. (Compressed responses are in
   [Chapter 16](manual-16-compression.md), section 6: `proven_http_stream_compress` in the
-  server, `decompress` - and `decompress_zstd` for Zstandard - in the client's configuration.)
+  server - with `compress_zstd` in its configuration for Zstandard - and `decompress` - and
+  `decompress_zstd` for Zstandard - in the client's.)
 - **Watching files, signals or child processes** with the loop. It watches sockets.
 
 **How this was tested.** The registered tests drive the loop's timers, posts and socket

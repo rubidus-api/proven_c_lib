@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 1285개: 소문자 `xcv_` 이름 943개와 대문자 `XCV_` 이름 342개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 1298개: 소문자 `xcv_` 이름 953개와 대문자 `XCV_` 이름 345개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -339,7 +339,7 @@ alias 1285개: 소문자 `xcv_` 이름 943개와 대문자 `XCV_` 이름 342개.
 | `XCV_TLS_VERSION_1_2` | `PROVEN_TLS_VERSION_1_2` |
 | `XCV_TLS_VERSION_1_3` | `PROVEN_TLS_VERSION_1_3` |
 | `XCV_U16_LIT` | `PROVEN_U16_LIT` |
-| `XCV_VERSION_ENCODE` | `PROVEN_VERSION_ENCODE(major, minor, patch)` |
+| `XCV_VERSION_ENCODE` | `minor, patch) PROVEN_VERSION_ENCODE(major, minor, patch)` |
 | `XCV_VERSION_MAJOR` | `PROVEN_VERSION_MAJOR` |
 | `XCV_VERSION_MINOR` | `PROVEN_VERSION_MINOR` |
 | `XCV_VERSION_NUM` | `PROVEN_VERSION_NUM` |
@@ -372,6 +372,9 @@ alias 1285개: 소문자 `xcv_` 이름 943개와 대문자 `XCV_` 이름 342개.
 | `XCV_WS_PING` | `PROVEN_WS_PING` |
 | `XCV_WS_PONG` | `PROVEN_WS_PONG` |
 | `XCV_WS_TEXT` | `PROVEN_WS_TEXT` |
+| `XCV_ZSTD_FLUSH_BLOCK` | `PROVEN_ZSTD_FLUSH_BLOCK` |
+| `XCV_ZSTD_FLUSH_FINISH` | `PROVEN_ZSTD_FLUSH_FINISH` |
+| `XCV_ZSTD_FLUSH_NONE` | `PROVEN_ZSTD_FLUSH_NONE` |
 | `XCV_ZSTD_WINDOW_DEFAULT` | `PROVEN_ZSTD_WINDOW_DEFAULT` |
 | `xcv_alloc_check_entry_t` | `proven_alloc_check_entry_t` |
 | `xcv_alloc_check_live` | `proven_alloc_check_live` |
@@ -633,6 +636,7 @@ alias 1285개: 소문자 `xcv_` 이름 943개와 대문자 `XCV_` 이름 342개.
 | `xcv_hpack_huffman_decode` | `proven_hpack_huffman_decode` |
 | `xcv_hpack_huffman_encode` | `proven_hpack_huffman_encode` |
 | `xcv_hpack_huffman_size` | `proven_hpack_huffman_size` |
+| `xcv_http_accept_weight` | `proven_http_accept_weight` |
 | `xcv_http_accepts_coding` | `proven_http_accepts_coding` |
 | `xcv_http_auth_offers` | `proven_http_auth_offers` |
 | `xcv_http_basic_auth` | `proven_http_basic_auth` |
@@ -1316,3 +1320,12 @@ alias 1285개: 소문자 `xcv_` 이름 943개와 대문자 `XCV_` 이름 342개.
 | `xcv_zstd_decoder_destroy` | `proven_zstd_decoder_destroy` |
 | `xcv_zstd_decoder_reset` | `proven_zstd_decoder_reset` |
 | `xcv_zstd_decoder_t` | `proven_zstd_decoder_t` |
+| `xcv_zstd_encode` | `proven_zstd_encode` |
+| `xcv_zstd_encode_all` | `proven_zstd_encode_all` |
+| `xcv_zstd_encode_bound` | `proven_zstd_encode_bound` |
+| `xcv_zstd_encoder_create` | `proven_zstd_encoder_create` |
+| `xcv_zstd_encoder_destroy` | `proven_zstd_encoder_destroy` |
+| `xcv_zstd_encoder_options_t` | `proven_zstd_encoder_options_t` |
+| `xcv_zstd_encoder_reset` | `proven_zstd_encoder_reset` |
+| `xcv_zstd_encoder_t` | `proven_zstd_encoder_t` |
+| `xcv_zstd_flush_t` | `proven_zstd_flush_t` |

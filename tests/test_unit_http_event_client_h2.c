@@ -139,6 +139,7 @@ typedef struct {
     bool done, bad, plain, pause_once, paused_now, body_while_paused;
     int tag;
     proven_byte_t first[8];
+    char coding[8];                     /* the response's Content-Encoding, if any */
 } call_t;
 
 static bool g_in_start, g_done_in_start;
@@ -153,6 +154,12 @@ static void on_response(void *ctx, proven_http_event_request_t *r, const proven_
     c->responses++;
     c->status = head->status;
     c->protocol = proven_http_event_request_protocol(r);
+    proven_u8str_view_t ce;
+    c->coding[0] = '\0';
+    if (proven_http_header_find(head->headers, head->header_count, sv("Content-Encoding"), &ce) && ce.size < sizeof c->coding) {
+        memcpy(c->coding, ce.ptr, ce.size);
+        c->coding[ce.size] = '\0';
+    }
     if (proven_http_event_request_user(r) != c || head->version_minor != 1) c->bad = true;
     if (c->pause_once) {
         c->pause_once = false;
@@ -225,8 +232,12 @@ static proven_err_t start(proven_http_event_client_t *client, call_t *c, const c
     return e;
 }
 
+static bool g_server_zstd;                  /* the next server offers zstd too */
+
 static proven_http_event_server_t *server_on(const proven_tls_config_t *tls, bool http2, proven_size_t max_streams) {
-    proven_http_event_server_config_t cfg = { .on = { srv_request, srv_body, srv_writable, srv_done }, .tls = tls, .http2 = http2, .max_concurrent_streams = max_streams };
+    proven_http_event_server_config_t cfg = { .on = { srv_request, srv_body, srv_writable, srv_done }, .tls = tls, .http2 = http2, .max_concurrent_streams = max_streams,
+                                              .compress_zstd = g_server_zstd };
+    g_server_zstd = false;
     proven_http_event_server_t *server = NULL;
     proven_net_addr_t at;
     PROVEN_TEST_ASSERT(proven_http_event_server_create(g_loop, &cfg, &server) == PROVEN_OK &&
@@ -239,6 +250,7 @@ static proven_http_event_server_t *server_on(const proven_tls_config_t *tls, boo
 
 static void cases(bool tls) {
     const char *how = tls ? "over TLS, by ALPN" : "in the clear, by prior knowledge";
+    g_server_zstd = tls;                    /* in the clear the server compresses in gzip; over TLS, in zstd */
     proven_http_event_server_t *server = server_on(tls ? g_server_tls_h2 : NULL, true, 0);
     proven_http_event_client_config_t ccfg = { .alloc = g_heap, .tls = tls ? g_client_tls : NULL, .http2 = tls, .http2_cleartext = !tls, .decompress = true, .decompress_zstd = true, .idle_timeout_ms = 400 };
     proven_http_event_client_t *client = NULL;
@@ -269,6 +281,7 @@ static void cases(bool tls) {
     PROVEN_TEST_ASSERT(start(client, &c, "GET", "/zip/300000", mv(""), 0) == PROVEN_OK, "a compressed download", how);
     spin_until(&c.done, 8000);
     PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.got == 300000 && !c.bad, "is delivered decoded, every byte", how);
+    PROVEN_TEST_ASSERT(strcmp(c.coding, tls ? "zstd" : "gzip") == 0, "compressed by the server in zstd where it offers it, in gzip where it does not", how);
     PROVEN_TEST_ASSERT(start(client, &c, "GET", "/zst", mv(""), 0) == PROVEN_OK, "a download in Zstandard", how);
     spin_until(&c.done, 8000);
     PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.got == ZST_PLAIN && !c.bad && strcmp(g_who_target, "zstd, gzip") == 0,

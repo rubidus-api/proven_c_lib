@@ -48,7 +48,7 @@ typedef struct h2s {
     proven_size_t held_len, held_cap;
     proven_byte_t *out;                /* response body made and not yet taken by the engine */
     proven_size_t out_len, out_off, out_cap;
-    proven_deflate_t *zip;
+    proven_http_compressor_t_ *zip;
     proven_u64 response_left;          /* body bytes still promised; LENGTH_UNKNOWN when not counted */
     proven_u64 body_seen;
     proven_time_t body_due;            /* when a request whose body is owed has been silent too long; 0: nothing is owed, or the handler paused it */
@@ -57,7 +57,8 @@ typedef struct h2s {
     proven_http_method_t method;
     bool active;                       /* on_request was delivered and on_done has not been */
     bool response_begun, response_ended, bodiless, paused, dead;
-    bool want_writable, accepts_gzip, compress_asked;
+    bool want_writable, compress_asked;
+    proven_u8 compress_coding;         /* what a response asked to be compressed would go in: identity, gzip or zstd */
     bool in_done;                      /* the request's end has arrived */
     bool held_last;                    /* ... while paused: it is delivered with what is held */
     bool end_asked;                    /* END_STREAM goes when `out` has drained */
@@ -167,7 +168,7 @@ static void s_finish(h2s_t *s, proven_err_t why) {
     if (s->next) s->next->prev = s->prev;
     d->stream_count--;
     if (!d->dead) proven_h2_conn_stream_set_user(d->engine, s->id, (void *)0);
-    if (s->zip) { proven_deflate_destroy(s->zip); s->zip = (void *)0; }
+    if (s->zip) { proven_http_compressor_destroy_(s->zip); s->zip = (void *)0; }
     if (s->held) { a.free_fn(a.ctx, s->held); s->held = (void *)0; s->held_len = s->held_cap = 0; }
     if (s->out) { a.free_fn(a.ctx, s->out); s->out = (void *)0; s->out_len = s->out_off = s->out_cap = 0; }
     proven_loop_timer_cancel(sv->loop, &s->timer);
@@ -366,7 +367,7 @@ static void d_request(h2d_t *d, const proven_h2_event_t *ev) {
     s->id = ev->stream_id;
     s->method = req.method;
     s->response_left = PROVEN_HTTP_EVENT_LENGTH_UNKNOWN;
-    s->accepts_gzip = proven_http_accepts_coding(sv->headers, n, PROVEN_HTTP_CODING_GZIP);
+    s->compress_coding = (proven_u8)proven_http_compress_choose_(sv->headers, n, sv->cfg.compress_zstd);
     s->in_done = ev->end_stream;
     s->tunnel = tunnel;
     s_expect_body(s);
@@ -778,7 +779,7 @@ static bool h2_is_hop_header(proven_u8str_view_t name) {
 
 /* The response head, to the engine. `length`: the body's size on the wire, or LENGTH_UNKNOWN. */
 static proven_err_t s_head(h2s_t *s, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
-                           proven_u64 length, bool vary, bool gzip, bool end_stream) {
+                           proven_u64 length, bool vary, proven_http_coding_t coding, bool end_stream) {
     proven_http_event_server_t *sv = s->h.server;
     h2d_t *d = s->d;
     if (status < 200 || status > 999 || (header_count > 0 && !headers)) return PROVEN_ERR_INVALID_ARG;
@@ -806,7 +807,7 @@ static proven_err_t s_head(h2s_t *s, proven_u16 status, const proven_http_header
     const bool no_body_status = status == 204 || status == 304;
     if (e == PROVEN_OK) {
         if (vary) list[n++] = (proven_http_header_t){ .name = h2_lit("vary"), .value = h2_lit("accept-encoding") };
-        if (gzip) list[n++] = (proven_http_header_t){ .name = h2_lit("content-encoding"), .value = h2_lit("gzip") };
+        if (coding != PROVEN_HTTP_CODING_IDENTITY) list[n++] = (proven_http_header_t){ .name = h2_lit("content-encoding"), .value = proven_http_coding_token_(coding) };
         if (!no_body_status && length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) {
             proven_u64 v = length;
             do { digits[sizeof digits - 1 - nd++] = (proven_byte_t)('0' + v % 10); v /= 10; } while (v > 0);
@@ -827,12 +828,13 @@ static proven_err_t s_head(h2s_t *s, proven_u16 status, const proven_http_header
     return PROVEN_OK;
 }
 
-static void s_compress_plan(const h2s_t *s, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count, bool *vary, bool *gzip) {
+static void s_compress_plan(const h2s_t *s, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count, bool *vary,
+                            proven_http_coding_t *coding) {
     *vary = false;
-    *gzip = false;
+    *coding = PROVEN_HTTP_CODING_IDENTITY;
     if (!s->compress_asked || (header_count > 0 && !headers)) return;
     *vary = proven_http_compress_needs_vary_(headers, header_count);
-    *gzip = proven_http_compress_applies_(s->accepts_gzip, status, headers, header_count);
+    if (proven_http_compress_applies_(s->compress_coding != PROVEN_HTTP_CODING_IDENTITY, status, headers, header_count)) *coding = (proven_http_coding_t)s->compress_coding;
 }
 
 proven_err_t proven_http_event_h2_begin_(proven_http_stream_t *stream, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
@@ -841,19 +843,22 @@ proven_err_t proven_http_event_h2_begin_(proven_http_stream_t *stream, proven_u1
     if (s->dead || !s->active || s->response_begun) return PROVEN_ERR_INVALID_STATE;
     proven_http_event_server_t *sv = s->h.server;
     h2d_t *d = s->d;
-    bool vary = false, gzip = false;
-    s_compress_plan(s, status, headers, header_count, &vary, &gzip);
-    proven_deflate_t *zip = (void *)0;
-    if (gzip && s->method != PROVEN_HTTP_HEAD) {
+    bool vary = false;
+    proven_http_coding_t coding = PROVEN_HTTP_CODING_IDENTITY;
+    s_compress_plan(s, status, headers, header_count, &vary, &coding);
+    proven_http_compressor_t_ *zip = (void *)0;
+    if (coding != PROVEN_HTTP_CODING_IDENTITY && s->method != PROVEN_HTTP_HEAD) {
         if (!sv->zbuf) sv->zbuf = h2_alloc(sv->alloc, PROVEN_HTTP_CODING_PIECE);
-        if (!sv->zbuf || proven_http_compress_create_(sv->alloc, sv->cfg.compress_level, sv->cfg.compress_window_bits, &zip) != PROVEN_OK) gzip = false;
+        const proven_http_compress_cfg_t_ cc = proven_http_event_compress_cfg_(&sv->cfg);
+        if (!sv->zbuf || proven_http_compressor_create_(sv->alloc, coding, &cc, &zip) != PROVEN_OK) coding = PROVEN_HTTP_CODING_IDENTITY;
     }
     s_enter(s);
     d_enter(d);
     d->calls++;
-    proven_err_t e = s_head(s, status, headers, header_count, gzip ? PROVEN_HTTP_EVENT_LENGTH_UNKNOWN : content_length, vary, gzip, false);
+    proven_err_t e = s_head(s, status, headers, header_count, coding != PROVEN_HTTP_CODING_IDENTITY ? PROVEN_HTTP_EVENT_LENGTH_UNKNOWN : content_length,
+                            vary, coding, false);
     if (e != PROVEN_OK || s->dead) {
-        if (zip) proven_deflate_destroy(zip);
+        proven_http_compressor_destroy_(zip);
     } else {
         s->zip = zip;
         s->response_left = s->bodiless ? PROVEN_HTTP_EVENT_LENGTH_UNKNOWN : content_length;
@@ -871,8 +876,8 @@ static bool s_zip(h2s_t *s, const proven_byte_t *p, proven_size_t n, proven_defl
     for (;;) {
         proven_size_t used = 0, made = 0;
         bool done = false;
-        proven_err_t e = proven_deflate(s->zip, (proven_mem_view_t){ .ptr = p, .size = n }, &used,
-                                        (proven_mem_mut_t){ .ptr = sv->zbuf, .size = PROVEN_HTTP_CODING_PIECE }, &made, flush, &done);
+        proven_err_t e = proven_http_compressor_step_(s->zip, (proven_mem_view_t){ .ptr = p, .size = n }, &used,
+                                                      (proven_mem_mut_t){ .ptr = sv->zbuf, .size = PROVEN_HTTP_CODING_PIECE }, &made, flush, &done);
         if (e != PROVEN_OK) return false;
         p += used;
         n -= used;
@@ -964,7 +969,7 @@ proven_err_t proven_http_event_h2_end_(proven_http_stream_t *stream) {
         s->response_ended = true;
         if (s->zip) {
             if (!s_zip(s, (void *)0, 0, PROVEN_DEFLATE_FLUSH_FINISH)) { s_reset(s, PROVEN_H2_INTERNAL_ERROR, PROVEN_ERR_NOMEM); result = PROVEN_ERR_RESET; }
-            else { proven_deflate_destroy(s->zip); s->zip = (void *)0; }
+            else { proven_http_compressor_destroy_(s->zip); s->zip = (void *)0; }
         }
         if (!s->dead) {
             s->end_asked = true;
@@ -984,16 +989,18 @@ proven_err_t proven_http_event_h2_respond_(proven_http_stream_t *stream, proven_
     if (s->dead || !s->active || s->response_begun) return PROVEN_ERR_INVALID_STATE;
     proven_http_event_server_t *sv = s->h.server;
     h2d_t *d = s->d;
-    bool vary = false, gzip = false;
-    s_compress_plan(s, status, headers, header_count, &vary, &gzip);
+    bool vary = false;
+    proven_http_coding_t coding = PROVEN_HTTP_CODING_IDENTITY;
+    s_compress_plan(s, status, headers, header_count, &vary, &coding);
     proven_byte_t *packed = (void *)0;
     proven_size_t packed_cap = 0, packed_size = 0;
-    if (gzip && proven_http_compress_all_(sv->alloc, sv->cfg.compress_level, sv->cfg.compress_window_bits, body, &packed, &packed_cap, &packed_size) != PROVEN_OK) packed = (void *)0;
+    const proven_http_compress_cfg_t_ cc = proven_http_event_compress_cfg_(&sv->cfg);
+    if (coding != PROVEN_HTTP_CODING_IDENTITY && proven_http_compress_all_(sv->alloc, coding, &cc, body, &packed, &packed_cap, &packed_size) != PROVEN_OK) packed = (void *)0;
     if (packed) body = (proven_mem_view_t){ .ptr = packed, .size = packed_size };
     s_enter(s);
     d_enter(d);
     d->calls++;
-    proven_err_t e = s_head(s, status, headers, header_count, body.size, vary, packed != (void *)0, body.size == 0);
+    proven_err_t e = s_head(s, status, headers, header_count, body.size, vary, packed ? coding : PROVEN_HTTP_CODING_IDENTITY, body.size == 0);
     if (e == PROVEN_OK && !s->dead) {
         s->response_ended = true;
         s->end_asked = true;

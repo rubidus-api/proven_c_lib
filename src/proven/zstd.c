@@ -1,4 +1,5 @@
 #include "proven/zstd.h"
+#include "proven_internal_zstd.h"
 
 /* Zstandard decompression (RFC 8878).
  *
@@ -11,7 +12,7 @@
  * Huffman decoder does not check that each of four streams was read exactly, and this one
  * does - but nothing libzstd refuses is accepted here. */
 
-#define BLOCK_MAX ((proven_size_t)128 * 1024)
+#define BLOCK_MAX ZSTD_BLOCK_MAX
 #define WILD 32                         /* bytes after `hist` and `lits` that copies eight at a time may touch */
 #define WINDOW_MIN ((proven_u64)1024)
 #define WINDOW_LIMIT ((proven_u64)1 << 31)
@@ -37,13 +38,6 @@ typedef struct {
     proven_u8 symbol;
     proven_u8 bits;
 } huf_t;
-
-typedef struct {
-    proven_u64 v[4];
-    proven_u64 total;
-    proven_byte_t buf[32];
-    unsigned held;
-} xxh64_t;
 
 enum { Z_MAGIC, Z_SKIP_SIZE, Z_SKIP, Z_FHD, Z_HEADER, Z_BLOCK, Z_RAW, Z_RLE, Z_DATA, Z_DRAIN, Z_CHECK };
 
@@ -81,78 +75,8 @@ struct proven_zstd_decoder {
 };
 
 // -----------------------------------------------------------------------------
-// XXH64, for the frame checksum
-// -----------------------------------------------------------------------------
-
-#define P1 0x9E3779B185EBCA87ull
-#define P2 0xC2B2AE3D27D4EB4Full
-#define P3 0x165667B19E3779F9ull
-#define P4 0x85EBCA77C2B2AE63ull
-#define P5 0x27D4EB2F165667C5ull
-
-static proven_u64 rotl64(proven_u64 x, unsigned r) { return (x << r) | (x >> (64 - r)); }
-
-static proven_u64 le64(const proven_byte_t *p) {
-    return (proven_u64)p[0] | ((proven_u64)p[1] << 8) | ((proven_u64)p[2] << 16) | ((proven_u64)p[3] << 24) |
-           ((proven_u64)p[4] << 32) | ((proven_u64)p[5] << 40) | ((proven_u64)p[6] << 48) | ((proven_u64)p[7] << 56);
-}
-
-static proven_u32 le32(const proven_byte_t *p) {
-    return (proven_u32)p[0] | ((proven_u32)p[1] << 8) | ((proven_u32)p[2] << 16) | ((proven_u32)p[3] << 24);
-}
-
-static proven_u64 xxh_round(proven_u64 acc, proven_u64 in) { return rotl64(acc + in * P2, 31) * P1; }
-
-static void xxh_init(xxh64_t *x) {
-    *x = (xxh64_t){ .v = { P1 + P2, P2, 0, (proven_u64)0 - P1 } };
-}
-
-static void xxh_update(xxh64_t *x, const proven_byte_t *p, proven_size_t n) {
-    x->total += n;
-    if (x->held > 0) {
-        while (x->held < 32 && n > 0) { x->buf[x->held++] = *p++; n--; }
-        if (x->held < 32) return;
-        for (unsigned i = 0; i < 4; ++i) x->v[i] = xxh_round(x->v[i], le64(x->buf + 8 * i));
-        x->held = 0;
-    }
-    for (; n >= 32; p += 32, n -= 32) {
-        x->v[0] = xxh_round(x->v[0], le64(p));
-        x->v[1] = xxh_round(x->v[1], le64(p + 8));
-        x->v[2] = xxh_round(x->v[2], le64(p + 16));
-        x->v[3] = xxh_round(x->v[3], le64(p + 24));
-    }
-    while (n > 0) { x->buf[x->held++] = *p++; n--; }
-}
-
-static proven_u64 xxh_digest(const xxh64_t *x) {
-    proven_u64 h;
-    if (x->total >= 32) {
-        h = rotl64(x->v[0], 1) + rotl64(x->v[1], 7) + rotl64(x->v[2], 12) + rotl64(x->v[3], 18);
-        for (unsigned i = 0; i < 4; ++i) h = (h ^ xxh_round(0, x->v[i])) * P1 + P4;
-    } else {
-        h = x->v[2] + P5;
-    }
-    h += x->total;
-    const proven_byte_t *p = x->buf;
-    unsigned n = x->held;
-    for (; n >= 8; p += 8, n -= 8) h = rotl64(h ^ xxh_round(0, le64(p)), 27) * P1 + P4;
-    if (n >= 4) { h = rotl64(h ^ ((proven_u64)le32(p) * P1), 23) * P2 + P3; p += 4; n -= 4; }
-    for (; n > 0; ++p, --n) h = rotl64(h ^ ((proven_u64)*p * P5), 11) * P1;
-    h ^= h >> 33; h *= P2;
-    h ^= h >> 29; h *= P3;
-    h ^= h >> 32;
-    return h;
-}
-
-// -----------------------------------------------------------------------------
 // Bits
 // -----------------------------------------------------------------------------
-
-static unsigned highbit32(proven_u32 v) {
-    unsigned n = 0;
-    while (v >>= 1) n++;
-    return n;
-}
 
 /* Up to eight bytes from `at`, little-endian; bytes at or past `len` read as zero. */
 static proven_u64 load_upto(const proven_byte_t *p, proven_size_t len, proven_size_t at) {
@@ -326,22 +250,6 @@ static bool fse_build(fse_t *t, const proven_i16 *norm, unsigned nsym, unsigned 
     }
     return true;
 }
-
-static const proven_i16 LL_DEFAULT[36] = { 4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2,
-                                           2, 3, 2, 1, 1, 1, 1, 1, -1, -1, -1, -1 };
-static const proven_i16 ML_DEFAULT[53] = { 1, 4, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-                                           1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, -1 };
-static const proven_i16 OF_DEFAULT[29] = { 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1 };
-
-static const proven_u32 LL_BASE[36] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24, 28, 32, 40,
-                                        48, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536 };
-static const proven_u8 LL_BITS[36] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3,
-                                       4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
-static const proven_u32 ML_BASE[53] = { 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-                                        27, 28, 29, 30, 31, 32, 33, 34, 35, 37, 39, 41, 43, 47, 51, 59, 67, 83, 99, 131, 259, 515,
-                                        1027, 2051, 4099, 8195, 16387, 32771, 65539 };
-static const proven_u8 ML_BITS[53] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                                       1, 1, 1, 1, 2, 2, 3, 3, 4, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
 
 // -----------------------------------------------------------------------------
 // Making, freeing, starting over
@@ -803,7 +711,7 @@ static proven_err_t compressed_block(proven_zstd_decoder_t *z, const proven_byte
 // Frames
 // -----------------------------------------------------------------------------
 
-#define MAGIC 0xFD2FB528u
+#define MAGIC ZSTD_MAGIC
 #define SKIP_MAGIC 0x184D2A50u
 
 static proven_err_t frame_header(proven_zstd_decoder_t *z) {

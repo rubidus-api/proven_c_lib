@@ -531,7 +531,8 @@ static void fetch_event(void *client, bool tls, proven_u16 port, const char *met
 }
 
 /* A server that compresses, seen through a client that decodes. */
-static void compressed_responses(fetch_fn fetch, void *client, bool tls, proven_u16 port) {
+/* `coding`: what the server is to compress in - gzip, or zstd for a server that offers it. */
+static void compressed_responses(fetch_fn fetch, void *client, bool tls, proven_u16 port, const char *coding) {
     static const proven_size_t sizes[] = { 0, 1, 255, 256, 3000, 65536, MIB };
     got_t g = { 0 };
     char path[32];
@@ -540,18 +541,18 @@ static void compressed_responses(fetch_fn fetch, void *client, bool tls, proven_
         snprintf(path, sizeof path, "/r/%u", (unsigned)n);
         fetch(client, tls, port, "GET", path, &g);
         PROVEN_TEST_ASSERT(g.status == 200 && text_is(&g, n), "a body sent with respond arrives as it was written, at every size", "Check the respond function of the server, and proven_http_compress_all_.");
-        PROVEN_TEST_ASSERT((strcmp(g.encoding, "gzip") == 0) == (n >= 256), "compressed from 256 bytes up, and sent as it is below that", "");
-        PROVEN_TEST_ASSERT(strcmp(g.vary, "Accept-Encoding") == 0 && strcmp(g.accept, "zstd, gzip") == 0, "with Vary: Accept-Encoding either way, in answer to Accept-Encoding: zstd, gzip - gzip being the one the server makes", "");
+        PROVEN_TEST_ASSERT((strcmp(g.encoding, coding) == 0) == (n >= 256), "compressed from 256 bytes up, and sent as it is below that", "");
+        PROVEN_TEST_ASSERT(strcmp(g.vary, "Accept-Encoding") == 0 && strcmp(g.accept, "zstd, gzip") == 0, "with Vary: Accept-Encoding either way, in answer to Accept-Encoding: zstd, gzip", "");
         if (n >= 256) PROVEN_TEST_ASSERT((proven_size_t)atol(g.length) < n && g.transfer[0] == '\0', "and a Content-Length that is the compressed size", "");
 
         snprintf(path, sizeof path, "/s/%u", (unsigned)n);
         fetch(client, tls, port, "GET", path, &g);
         PROVEN_TEST_ASSERT(g.status == 200 && text_is(&g, n), "a body streamed with its length arrives whole", "Check the write and end functions of the server.");
-        PROVEN_TEST_ASSERT(strcmp(g.encoding, "gzip") == 0 && strcmp(g.transfer, "chunked") == 0 && g.length[0] == '\0', "compressed and chunked: the length given is not the length sent", "");
+        PROVEN_TEST_ASSERT(strcmp(g.encoding, coding) == 0 && strcmp(g.transfer, "chunked") == 0 && g.length[0] == '\0', "compressed and chunked: the length given is not the length sent", "");
 
         snprintf(path, sizeof path, "/u/%u", (unsigned)n);
         fetch(client, tls, port, "GET", path, &g);
-        PROVEN_TEST_ASSERT(g.status == 200 && text_is(&g, n) && strcmp(g.encoding, "gzip") == 0, "and so does one streamed with no length", "");
+        PROVEN_TEST_ASSERT(g.status == 200 && text_is(&g, n) && strcmp(g.encoding, coding) == 0, "and so does one streamed with no length", "");
     }
     fetch(client, tls, port, "GET", "/x/3000", &g);
     PROVEN_TEST_ASSERT(g.err == PROVEN_OK && g.size == 3000 && memcmp(g_got, g_noise, 3000) == 0 && g.encoding[0] == '\0' && strcmp(g.length, "3000") == 0 &&
@@ -569,20 +570,20 @@ static void compressed_responses(fetch_fn fetch, void *client, bool tls, proven_
     fetch(client, tls, port, "GET", "/206", &g);
     PROVEN_TEST_ASSERT(g.status == 206 && text_is(&g, 1000) && g.encoding[0] == '\0', "or without it: the status is enough", "Check proven_http_compress_applies_.");
     fetch(client, tls, port, "GET", "/vary", &g);
-    PROVEN_TEST_ASSERT(text_is(&g, 3000) && strcmp(g.encoding, "gzip") == 0 && g.vary_fields == 1 && strcmp(g.vary, "Origin, accept-encoding") == 0,
+    PROVEN_TEST_ASSERT(text_is(&g, 3000) && strcmp(g.encoding, coding) == 0 && g.vary_fields == 1 && strcmp(g.vary, "Origin, accept-encoding") == 0,
         "a Vary that already names Accept-Encoding is not given a second field", "Check proven_http_compress_needs_vary_.");
     fetch(client, tls, port, "GET", "/late", &g);
     PROVEN_TEST_ASSERT(text_is(&g, 3000) && g.encoding[0] == '\0' && strcmp(g.length, "3000") == 0, "asking after the response has begun does nothing", "");
     fetch(client, tls, port, "GET", "/short", &g);
-    PROVEN_TEST_ASSERT(g.err != PROVEN_OK && g.lasts == 0, "a compressed response that ends short of its promise does not pass for a whole one", "Check the end function of the server: no last chunk and no end of the gzip stream.");
+    PROVEN_TEST_ASSERT(g.err != PROVEN_OK && g.lasts == 0, "a compressed response that ends short of its promise does not pass for a whole one", "Check the end function of the server: no last chunk and no end of the compressed stream.");
 
     got_t h = { 0 };
     fetch(client, tls, port, "GET", "/r/3000", &g);
     fetch(client, tls, port, "HEAD", "/r/3000", &h);
-    PROVEN_TEST_ASSERT(h.err == PROVEN_OK && h.size == 0 && strcmp(h.encoding, "gzip") == 0 && strcmp(h.length, g.length) == 0 && h.length[0] != '\0',
+    PROVEN_TEST_ASSERT(h.err == PROVEN_OK && h.size == 0 && strcmp(h.encoding, coding) == 0 && strcmp(h.length, g.length) == 0 && h.length[0] != '\0',
         "HEAD announces the encoding and the very length that GET sends", "");
     fetch(client, tls, port, "HEAD", "/s/3000", &h);
-    PROVEN_TEST_ASSERT(h.err == PROVEN_OK && h.size == 0 && strcmp(h.encoding, "gzip") == 0 && strcmp(h.transfer, "chunked") == 0, "and for a streamed response, that it is chunked", "");
+    PROVEN_TEST_ASSERT(h.err == PROVEN_OK && h.size == 0 && strcmp(h.encoding, coding) == 0 && strcmp(h.transfer, "chunked") == 0, "and for a streamed response, that it is chunked", "");
 }
 
 /* A client that decodes, shown every vector by the blocking server. */
@@ -732,15 +733,70 @@ int main(void) {
 
         proven_byte_t *packed = NULL;
         proven_size_t cap = 0, size = 0;
-        PROVEN_TEST_ASSERT(proven_http_compress_all_(g_heap, 0, 0, (proven_mem_view_t){ g_text, 255 }, &packed, &cap, &size) == PROVEN_OK && packed == NULL, "a body under 256 bytes is not compressed", "");
-        PROVEN_TEST_ASSERT(proven_http_compress_all_(g_heap, 0, 0, (proven_mem_view_t){ g_noise, 3000 }, &packed, &cap, &size) == PROVEN_OK && packed == NULL, "nor one that would not get smaller", "");
+        const proven_http_compress_cfg_t_ dflt = { 0 };
+        PROVEN_TEST_ASSERT(proven_http_compress_all_(g_heap, PROVEN_HTTP_CODING_GZIP, &dflt, (proven_mem_view_t){ g_text, 255 }, &packed, &cap, &size) == PROVEN_OK && packed == NULL &&
+                           proven_http_compress_all_(g_heap, PROVEN_HTTP_CODING_ZSTD, &dflt, (proven_mem_view_t){ g_text, 255 }, &packed, &cap, &size) == PROVEN_OK && packed == NULL,
+                           "a body under 256 bytes is not compressed, in either coding", "");
+        PROVEN_TEST_ASSERT(proven_http_compress_all_(g_heap, PROVEN_HTTP_CODING_GZIP, &dflt, (proven_mem_view_t){ g_noise, 3000 }, &packed, &cap, &size) == PROVEN_OK && packed == NULL &&
+                           proven_http_compress_all_(g_heap, PROVEN_HTTP_CODING_ZSTD, &dflt, (proven_mem_view_t){ g_noise, 3000 }, &packed, &cap, &size) == PROVEN_OK && packed == NULL,
+                           "nor one that would not get smaller", "");
         for (int bits = 0; bits <= 15; bits = bits == 0 ? 9 : bits + 3) {
-            PROVEN_TEST_ASSERT(proven_http_compress_all_(g_heap, 0, bits, (proven_mem_view_t){ g_text, 100000 }, &packed, &cap, &size) == PROVEN_OK && packed != NULL && size < 100000 / 4,
+            const proven_http_compress_cfg_t_ cfg = { .window_bits = bits };
+            PROVEN_TEST_ASSERT(proven_http_compress_all_(g_heap, PROVEN_HTTP_CODING_GZIP, &cfg, (proven_mem_view_t){ g_text, 100000 }, &packed, &cap, &size) == PROVEN_OK && packed != NULL && size < 100000 / 4,
                 "text is, to less than a quarter, at any window", "");
             proven_size_t written = 0, consumed = 0;
             PROVEN_TEST_ASSERT(proven_inflate_all(g_heap, PROVEN_DEFLATE_GZIP, (proven_mem_view_t){ packed, size }, (proven_mem_mut_t){ g_got, sizeof g_got }, &written, &consumed) == PROVEN_OK &&
                                written == 100000 && consumed == size && memcmp(g_got, g_text, written) == 0, "and inflates to itself", "");
             g_heap.free_fn(g_heap.ctx, packed);
+        }
+        for (int level = 0; level <= 3; ++level) {
+            for (int wl = 0; wl <= 16; wl = wl == 0 ? 10 : wl + 6) {
+                const proven_http_compress_cfg_t_ cfg = { .zstd = true, .zstd_level = level, .zstd_window_log = wl };
+                PROVEN_TEST_ASSERT(proven_http_compress_all_(g_heap, PROVEN_HTTP_CODING_ZSTD, &cfg, (proven_mem_view_t){ g_text, 100000 }, &packed, &cap, &size) == PROVEN_OK && packed != NULL && size < 100000 / 4,
+                    "and so in zstd, at every level and window", "");
+                proven_size_t written = 0;
+                PROVEN_TEST_ASSERT(proven_zstd_decode_all(g_heap, (proven_mem_view_t){ packed, size }, (proven_mem_mut_t){ g_got, sizeof g_got }, &written) == PROVEN_OK &&
+                                   written == 100000 && memcmp(g_got, g_text, written) == 0, "which decodes to itself", "");
+                g_heap.free_fn(g_heap.ctx, packed);
+            }
+        }
+        /* Which coding a response goes in, by the request's Accept-Encoding and whether the
+         * server offers zstd. */
+        static const struct { const char *accept; proven_http_coding_t off, on; } CHOOSE[] = {
+            { NULL, PROVEN_HTTP_CODING_IDENTITY, PROVEN_HTTP_CODING_IDENTITY },
+            { "gzip", PROVEN_HTTP_CODING_GZIP, PROVEN_HTTP_CODING_GZIP },
+            { "zstd", PROVEN_HTTP_CODING_IDENTITY, PROVEN_HTTP_CODING_ZSTD },
+            { "zstd, gzip", PROVEN_HTTP_CODING_GZIP, PROVEN_HTTP_CODING_ZSTD },
+            { "gzip, deflate, br, zstd", PROVEN_HTTP_CODING_GZIP, PROVEN_HTTP_CODING_ZSTD },
+            { "gzip;q=1.0, zstd;q=0.9", PROVEN_HTTP_CODING_GZIP, PROVEN_HTTP_CODING_GZIP },
+            { "gzip;q=0.5, zstd", PROVEN_HTTP_CODING_GZIP, PROVEN_HTTP_CODING_ZSTD },
+            { "zstd;q=0, gzip", PROVEN_HTTP_CODING_GZIP, PROVEN_HTTP_CODING_GZIP },
+            { "zstd;q=0.001, gzip;q=0", PROVEN_HTTP_CODING_IDENTITY, PROVEN_HTTP_CODING_ZSTD },
+            { "*", PROVEN_HTTP_CODING_GZIP, PROVEN_HTTP_CODING_ZSTD },
+            { "*;q=0.5, gzip", PROVEN_HTTP_CODING_GZIP, PROVEN_HTTP_CODING_GZIP },
+            { "*;q=0.5, gzip;q=0.4", PROVEN_HTTP_CODING_GZIP, PROVEN_HTTP_CODING_ZSTD },
+            { "*;q=0", PROVEN_HTTP_CODING_IDENTITY, PROVEN_HTTP_CODING_IDENTITY },
+            { "identity", PROVEN_HTTP_CODING_IDENTITY, PROVEN_HTTP_CODING_IDENTITY },
+            { "ZSTD, GZIP", PROVEN_HTTP_CODING_GZIP, PROVEN_HTTP_CODING_ZSTD },
+            { "zstd;q=2", PROVEN_HTTP_CODING_IDENTITY, PROVEN_HTTP_CODING_IDENTITY },
+        };
+        int wrong = 0;
+        for (proven_size_t i = 0; i < sizeof CHOOSE / sizeof CHOOSE[0]; ++i) {
+            const proven_http_header_t h = { sv("Accept-Encoding"), sv(CHOOSE[i].accept ? CHOOSE[i].accept : "") };
+            const proven_size_t n = CHOOSE[i].accept ? 1 : 0;
+            if (proven_http_compress_choose_(&h, n, false) != CHOOSE[i].off || proven_http_compress_choose_(&h, n, true) != CHOOSE[i].on) {
+                wrong++;
+                printf("  choose: %s\n", CHOOSE[i].accept ? CHOOSE[i].accept : "(none)");
+            }
+        }
+        PROVEN_TEST_ASSERT(wrong == 0, "zstd goes only to a request that accepts it at least as much as gzip, and only from a server that offers it; gzip as before otherwise", "Check proven_http_compress_choose_.");
+        PROVEN_TEST_ASSERT(proven_http_accept_weight(NULL, 0, PROVEN_HTTP_CODING_IDENTITY) == 1000 && proven_http_accept_weight(NULL, 0, PROVEN_HTTP_CODING_GZIP) == 0,
+                           "with no Accept-Encoding, identity weighs 1000 and every coding 0", "");
+        {
+            const proven_http_header_t h = { sv("Accept-Encoding"), sv("gzip;q=0.25, *;q=0.5, zstd;q=0") };
+            PROVEN_TEST_ASSERT(proven_http_accept_weight(&h, 1, PROVEN_HTTP_CODING_GZIP) == 250 && proven_http_accept_weight(&h, 1, PROVEN_HTTP_CODING_DEFLATE) == 500 &&
+                               proven_http_accept_weight(&h, 1, PROVEN_HTTP_CODING_ZSTD) == 0 && proven_http_accept_weight(&h, 1, PROVEN_HTTP_CODING_OTHER) == 0,
+                               "a coding's own weight, else that of *, in thousandths", "");
         }
     }
 
@@ -818,6 +874,17 @@ int main(void) {
             PROVEN_TEST_ASSERT(proven_http_server_create(&b, &bad) == PROVEN_ERR_INVALID_ARG && bad == NULL &&
                                proven_http_event_server_create(g_loop, &ev, &ebad) == PROVEN_ERR_INVALID_ARG && ebad == NULL, "a window outside 9..15 is PROVEN_ERR_INVALID_ARG", "");
         }
+        static const int zlevels[] = { -1, 4 }, zwindows[] = { 9, 24 };
+        for (int i = 0; i < 2; ++i) {
+            proven_http_server_config_t b = { .alloc = g_heap, .handler = blocking_handler, .compress_zstd = true, .compress_zstd_level = zlevels[i] };
+            proven_http_event_server_config_t ev = { .on = { .on_request = event_request }, .compress_zstd = true, .compress_zstd_level = zlevels[i] };
+            PROVEN_TEST_ASSERT(proven_http_server_create(&b, &bad) == PROVEN_ERR_INVALID_ARG && bad == NULL &&
+                               proven_http_event_server_create(g_loop, &ev, &ebad) == PROVEN_ERR_INVALID_ARG && ebad == NULL, "a zstd level outside 0..3 is PROVEN_ERR_INVALID_ARG", "");
+            proven_http_server_config_t b2 = { .alloc = g_heap, .handler = blocking_handler, .compress_zstd_window_log = zwindows[i] };
+            proven_http_event_server_config_t ev2 = { .on = { .on_request = event_request }, .compress_zstd_window_log = zwindows[i] };
+            PROVEN_TEST_ASSERT(proven_http_server_create(&b2, &bad) == PROVEN_ERR_INVALID_ARG && bad == NULL &&
+                               proven_http_event_server_create(g_loop, &ev2, &ebad) == PROVEN_ERR_INVALID_ARG && ebad == NULL, "and a zstd window outside 10..23", "");
+        }
         proven_http_exchange_compress(NULL);
         proven_http_stream_compress(NULL);
         PROVEN_TEST_ASSERT(true, "the two calls accept null", "");
@@ -825,7 +892,7 @@ int main(void) {
 
     PROVEN_TEST_SECTION("the blocking client and the blocking server", "A server that compresses and a client that decodes, each also seen without the other.", "Check src/proven/http_client.c (cl_read_decoded) and src/proven/http_server.c (sv_zip, the respond function).");
     {
-        compressed_responses(fetch_blocking, bdecoding, false, bat.port);
+        compressed_responses(fetch_blocking, bdecoding, false, bat.port, "gzip");
         decoded_vectors(fetch_blocking, bdecoding, bat.port);
 
         until_close(fetch_blocking, bdecoding);
@@ -877,7 +944,7 @@ int main(void) {
 
     PROVEN_TEST_SECTION("the event-driven client and the blocking server", "The same server, and the client that is given pieces.", "Check cl_decode in src/proven/http_event_client.c.");
     {
-        compressed_responses(fetch_event, edecoding, false, bat.port);
+        compressed_responses(fetch_event, edecoding, false, bat.port, "gzip");
         decoded_vectors(fetch_event, edecoding, bat.port);
         flushed_response(edecoding, false, bat.port, "the blocking server");
 
@@ -926,7 +993,7 @@ int main(void) {
                            proven_http_event_server_listen(eserver, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &eat) == PROVEN_OK, "the server listens", "");
         g_most_buffered = 0;
         g_writable_calls = 0;
-        compressed_responses(fetch_event, edecoding, tls != 0, eat.port);
+        compressed_responses(fetch_event, edecoding, tls != 0, eat.port, "gzip");
         flushed_response(edecoding, tls != 0, eat.port, "the event-driven server");
         PROVEN_TEST_ASSERT(atomic_load(&g_flush_bad) == 0, "a flush before a response or after its end is refused; one with nothing held back does nothing, successfully", "Check the state test at the top of proven_http_stream_flush.");
 
@@ -976,6 +1043,67 @@ int main(void) {
             }
         }
         proven_http_event_server_destroy(eserver);
+    }
+
+    PROVEN_TEST_SECTION("servers that offer zstd", "The blocking server at the zstd defaults and the event-driven one at level 3 with a 1 KiB window, to the clients that ask for zstd, to those that ask for gzip, and to raw sockets with weights.",
+        "Check proven_http_compress_choose_ and the compressor in src/proven/http_coding.c, and where the servers call them.");
+    {
+        proven_job_sys_t *zjobs = NULL;
+        proven_http_server_t *zserver = NULL;
+        proven_http_server_config_t zcfg = { .alloc = g_heap, .handler = blocking_handler, .compress_zstd = true };
+        proven_net_addr_t zat;
+        proven_job_group_t zgroup;
+        proven_job_group_init(&zgroup);
+        PROVEN_TEST_ASSERT(proven_job_system_init(g_heap, 1, 4, &zjobs) == PROVEN_OK && proven_http_server_create(&zcfg, &zserver) == PROVEN_OK &&
+                           proven_http_server_listen(zserver, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &zat) == PROVEN_OK &&
+                           proven_job_group_submit(zjobs, &zgroup, blocking_serve, zserver) == PROVEN_OK, "a blocking server that offers zstd listens", "");
+        proven_http_event_server_t *zeserver = NULL;
+        proven_http_event_server_config_t zecfg = { .on = { event_request, NULL, event_writable, event_done }, .compress_zstd = true, .compress_zstd_level = 3, .compress_zstd_window_log = 10 };
+        proven_net_addr_t zeat;
+        PROVEN_TEST_ASSERT(proven_http_event_server_create(g_loop, &zecfg, &zeserver) == PROVEN_OK &&
+                           proven_http_event_server_listen(zeserver, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &zeat) == PROVEN_OK, "and an event-driven one", "");
+        for (int which = 0; which < 2; ++which) {
+            const proven_u16 port = which ? zeat.port : zat.port;
+            const char *server = which ? "the event-driven server" : "the blocking server";
+            /* The blocking clients do not turn the loop: they are for the blocking server. */
+            if (!which) compressed_responses(fetch_blocking, bdecoding, false, port, "zstd");
+            compressed_responses(fetch_event, edecoding, false, port, "zstd");
+            if (!which) {
+                bget(bgzip, port, "/r/3000", &g);
+                PROVEN_TEST_ASSERT(text_is(&g, 3000) && strcmp(g.encoding, "gzip") == 0, "a client that asks for gzip alone is given gzip", server);
+            }
+            eget(egzip, false, port, "/r/3000", &g);
+            PROVEN_TEST_ASSERT(text_is(&g, 3000) && strcmp(g.encoding, "gzip") == 0, "a client that asks for gzip alone is given gzip", server);
+            eget(egzip, false, port, "/s/65536", &g);
+            PROVEN_TEST_ASSERT(text_is(&g, 65536) && strcmp(g.encoding, "gzip") == 0, "streamed too", server);
+            eget(eplain, false, port, "/r/3000", &g);
+            PROVEN_TEST_ASSERT(text_is(&g, 3000) && g.encoding[0] == '\0', "and one that asks for nothing, the body as it is", server);
+            static const struct { const char *accept; const char *coding; } rows[] = {
+                { "Accept-Encoding: zstd\r\n", "zstd" }, { "Accept-Encoding: gzip, zstd\r\n", "zstd" }, { "Accept-Encoding: gzip;q=1, zstd;q=0.5\r\n", "gzip" },
+                { "Accept-Encoding: zstd;q=0.5, gzip;q=0.5\r\n", "zstd" }, { "Accept-Encoding: zstd;q=0\r\n", NULL }, { "Accept-Encoding: *\r\n", "zstd" },
+                { "Accept-Encoding: gzip, deflate, br, zstd\r\n", "zstd" },
+            };
+            for (proven_size_t i = 0; i < sizeof rows / sizeof rows[0]; ++i) {
+                char request[256], want[64];
+                for (int streamed = 0; streamed < 2; ++streamed) {
+                    snprintf(request, sizeof request, "GET /%c/3000 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n%s\r\n", streamed ? 's' : 'r', rows[i].accept);
+                    PROVEN_TEST_ASSERT(raw(port, request) && raw_has("HTTP/1.1 200 OK\r\n") && raw_has("Vary: Accept-Encoding\r\n"), "answered, with Vary", rows[i].accept);
+                    snprintf(want, sizeof want, "Content-Encoding: %s\r\n", rows[i].coding ? rows[i].coding : "");
+                    PROVEN_TEST_ASSERT(rows[i].coding ? raw_has(want) : !raw_has("Content-Encoding"), "in the coding the weights choose: zstd at a tie", rows[i].accept);
+                    if (rows[i].coding && strcmp(rows[i].coding, "zstd") == 0 && !streamed) {
+                        proven_size_t written = 0;
+                        PROVEN_TEST_ASSERT(proven_zstd_decode_all(g_heap, (proven_mem_view_t){ (const proven_byte_t *)g_raw_body, g_raw_body_len }, (proven_mem_mut_t){ g_got, sizeof g_got }, &written) == PROVEN_OK &&
+                                           written == 3000 && memcmp(g_got, g_text, 3000) == 0, "and the body is one zstd frame of the 3,000 bytes", rows[i].accept);
+                    }
+                }
+            }
+        }
+        proven_http_event_server_destroy(zeserver);
+        proven_http_server_stop(zserver);
+        proven_job_group_wait(zjobs, &zgroup);
+        proven_http_server_destroy(zserver);
+        proven_job_system_close(zjobs);
+        proven_job_system_destroy(zjobs);
     }
 
     proven_http_event_client_destroy(eplain);
