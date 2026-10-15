@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.57.0] - 2026-10-15
+
 ### Added
 
 - **Zstandard decompression (RFC 8878): `zstd.h`.** `proven_zstd_decoder_create`, `_destroy`,
