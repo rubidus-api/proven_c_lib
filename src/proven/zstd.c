@@ -6,8 +6,10 @@
  * anywhere. A compressed block is decoded only when all of it is there: its Huffman streams
  * and its sequences are read from their ends. Each block is decoded into `hist`, after the
  * history it may refer to, and handed out from there. Every corner case that the format
- * leaves to the decoder is settled as the reference decoder (libzstd) settles it; a damaged
- * stream that it reads through by luck may be refused here, never the other way round. */
+ * leaves to the decoder is settled as the reference decoder (libzstd) settles it, or more
+ * strictly: a damaged stream that libzstd reads through may be refused here - its fast
+ * Huffman decoder does not check that each of four streams was read exactly, and this one
+ * does - but nothing libzstd refuses is accepted here. */
 
 #define BLOCK_MAX ((proven_size_t)128 * 1024)
 #define WILD 32                         /* bytes after `hist` and `lits` that copies eight at a time may touch */
@@ -939,12 +941,10 @@ proven_err_t proven_zstd_decode(proven_zstd_decoder_t *z, proven_mem_view_t in, 
                     (z->block_type != 2 && z->block_size > block_room(z))) {
                     result = bad(z, PROVEN_ERR_INVALID_FORMAT); going = false; break;
                 }
-                if (z->block_type == 2 && z->block_size == 0) {
-                    /* As libzstd's streaming decoder has it: a block of no bytes is empty,
-                     * whatever its type says. */
-                    z->state = Z_DRAIN;
-                    z->after = z->last ? Z_CHECK : Z_BLOCK;
-                } else if (z->block_type == 2) {
+                if (z->block_type == 2) {
+                    /* A compressed block of no bytes falls through to the literals, which
+                     * refuse it: RFC 8878 gives it two section headers. libzstd's streaming
+                     * decoder takes it as empty, its one-call decoder refuses it. */
                     if (in.size - ia >= z->block_size) {
                         /* All of it is here: decoded where it lies. */
                         proven_size_t from = 0;

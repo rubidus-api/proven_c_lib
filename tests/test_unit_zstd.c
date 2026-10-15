@@ -14,7 +14,9 @@
  *   O crc32 length hex              a hand-built stream that is odd, and that libzstd accepts,
  *                                   with the CRC-32 and length of what it decodes to
  *   X verdict hex                   a hand-built stream that libzstd refuses (I: invalid;
- *                                   U: it needs a dictionary; B: its window is above 8 MiB)
+ *                                   U: it needs a dictionary; B: its window is above 8 MiB), or
+ *                                   one RFC 8878 does not allow and that only libzstd's
+ *                                   streaming decoder accepts (S); every one is refused here
  *
  * The corpus is not in the header. corpus() below builds the same bytes from the same rules
  * as the generator, and each Z line carries their CRC-32 and length to prove it.
@@ -215,7 +217,7 @@ int main(void) {
             if (!ok) { failed++; printf("vector %u (%c) differs\n", (unsigned)i, kind); }
         }
         PROVEN_TEST_ASSERT(failed == 0, "every stream libzstd made decodes to its corpus item, whole and in steps; every hand-built stream gets libzstd's verdict", "The vector's index and letter are printed above.");
-        PROVEN_TEST_ASSERT(counts[0] == 91 && counts[1] == 14 && counts[2] == 19, "91 streams libzstd made, 14 odd ones it accepts, 19 it refuses", "");
+        PROVEN_TEST_ASSERT(counts[0] == 91 && counts[1] == 13 && counts[2] == 20, "91 streams libzstd made, 13 odd ones it accepts, 20 it refuses (one of them only its streaming decoder accepts)", "");
     }
 
     PROVEN_TEST_SECTION("damage", "Every prefix and every single-bit change of the short streams: refused, or decoded within the output given - and the same whole as in steps.", "A sanitizer report here is an out-of-bounds read or write in src/proven/zstd.c.");

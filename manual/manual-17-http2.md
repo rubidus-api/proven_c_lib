@@ -1240,6 +1240,7 @@ HTTP/1.1 is spoken to in HTTP/1.1.
 | `idle_timeout_ms` (0: 60 s) | A connection with no request on it is kept this long for the next, then closed |
 | `max_buffered_output` | For the connection's requests together |
 | `decompress` | Unchanged; a paused request holds what arrived compressed, and decodes it on resume |
+| `decompress_zstd` | The same for `zstd`: asked for in `accept-encoding`, decoded on the stream |
 
 ### Example: three requests, one connection
 

@@ -183,7 +183,9 @@ proven_err_t proven_http_client_get(proven_http_client_t *client, proven_u8str_v
  * left as the server sent them, so `Content-Length` then counts the encoded bytes, not the ones
  * read. A `206 Partial Content` is never decoded (a range of an encoded body is not a body),
  * nor is a coding other than these two: such a body arrives as it was sent. `deflate` is read
- * as a zlib stream, or as raw DEFLATE when its first two bytes are no zlib header.
+ * as a zlib stream, or as raw DEFLATE when its first two bytes are no zlib header. With
+ * `decompress_zstd` as well, `Accept-Encoding: zstd, gzip` is sent and a `zstd` body is
+ * decoded in the same way, holding up to its window (8 MiB at most) and 384 KiB more.
  *
  * @return also PROVEN_ERR_TIMEOUT (no data within `io_timeout_ms`; the read may be repeated)
  *         and PROVEN_ERR_INVALID_FORMAT (malformed chunk framing; with `decompress`, a

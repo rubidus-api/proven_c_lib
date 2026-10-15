@@ -959,11 +959,17 @@ int main(void) {
   choose the decoder from `Content-Encoding`; for files, look at the first four bytes
   (`28 b5 2f fd`).
 
-**What it accepts is what libzstd accepts.** Where RFC 8878 leaves a case to the decoder it
-was settled as libzstd 1.5.7's streaming decoder settles it - the decoder curl and browsers
-use: a compressed block of no bytes is an empty block, Huffman codes up to 12 bits are read,
-and a stream that reads its last bits exactly is required. What libzstd's one-call decoder
-and its streaming one disagree about, the streaming one decides.
+**Nothing that libzstd refuses is accepted; some damage it reads through is refused.** Where
+RFC 8878 leaves a case to the decoder it was settled as libzstd 1.5.7 settles it - Huffman
+codes up to 12 bits are read - or more strictly: every Huffman and sequence stream must be
+read to its first bit exactly, which libzstd's fast Huffman decoder does not check for four
+streams, and a compressed block of no bytes is refused, as RFC 8878 has it (libzstd's
+streaming decoder takes it as empty, its one-call decoder refuses it). Outside the registered
+tests, 80,232 truncated and changed copies of 92 streams libzstd made were given to both:
+none that libzstd refused was accepted here, none that both accepted came out different, and
+1,985 that libzstd accepted were refused here: 1,948 for one of four Huffman streams not read
+exactly, 25 for bytes after the frame (which Node, the way libzstd was called, ignores), 8 for
+a compressed block of no bytes, and 4 for a block too short to hold its literal.
 
 **Speed.** On the development machine, the C sources of this library (2.2 MiB) compressed by
 libzstd at levels 1, 3 and 19 decode at about 380, 395 and 455 MiB/s; the same data as gzip,
@@ -1025,9 +1031,9 @@ read what a Python server sends.
 91 streams libzstd made from seven kinds of data - levels 1, 3, 9 and 19, with and without
 the checksum and the content size, matches reaching across blocks, a frame longer than its
 window - in one call, a byte at a time and in odd steps, and gets the data libzstd was given;
-accepts fourteen hand-built frames that are unusual and that libzstd accepts (among them
-every kind of repeat offset), and refuses nineteen that it refuses, with its reason (damage,
-a dictionary, a window above 8 MiB); refuses every proper prefix of the short
+accepts thirteen hand-built frames that are unusual and that libzstd accepts (among them
+every kind of repeat offset), and refuses twenty, with their reasons (damage, a dictionary, a
+window above 8 MiB, and the empty compressed block above); refuses every proper prefix of the short
 streams; gives the same verdict, whole and in steps, for every single changed bit of them;
 and shows the window limit refusing before any allocation, the memory held, and every
 failed allocation answered with `PROVEN_ERR_NOMEM`. Outside the registered tests: 131 more

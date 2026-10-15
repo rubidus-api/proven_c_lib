@@ -42,8 +42,8 @@ written; their tags still exist.
 - `PROVEN_HTTP_CODING_ZSTD`, after `PROVEN_HTTP_CODING_OTHER` so that the values before it keep
   their numbers; `proven_http_accepts_coding` answers for it, so a handler can send its own
   Zstandard where it is accepted.
-- Tests: `test_unit_zstd` (91 streams libzstd made, fourteen unusual frames it accepts,
-  nineteen it refuses with its reason, every prefix and single-bit change of the short streams, frames in
+- Tests: `test_unit_zstd` (91 streams libzstd made, thirteen unusual frames it accepts,
+  twenty refused with their reasons, every prefix and single-bit change of the short streams, frames in
   sequence, the window limit, the memory held, failed allocations); `test_unit_http_coding`
   has thirteen `zstd` bodies made by libzstd (decoded, or refused, as libzstd's or curl's
   verdict says) through both clients, and a client without `decompress_zstd` that asks for
