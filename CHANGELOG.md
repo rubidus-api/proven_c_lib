@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-10-16
+
 ### Added
 
 - **Brotli decompression (RFC 7932): `brotli.h`.** `proven_brotli_decoder_create`, `_destroy`,
