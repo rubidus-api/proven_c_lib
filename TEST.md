@@ -700,7 +700,7 @@ Sub-checks:
 - Bounds, through an allocator that counts: a frame whose window (256 KiB) is above a 64 KiB limit is refused with only the decoder allocated; the same frame with the default limit holds at most its window and 384 KiB plus its tables, and nothing after; the same data with a 64 KiB window - longer than the window and a block, so the oldest history goes as it is decoded - decodes in steps, holding at most that window and 384 KiB; a one-byte frame costs little more than the decoder; `decode_all` one byte short is `PROVEN_ERR_OUT_OF_BOUNDS`, exactly enough is `PROVEN_OK`; a step writes nothing past what it reports; each of the first six allocations, failed in turn, is `PROVEN_ERR_NOMEM` with nothing left held.
 - Arguments: no out pointer, a limit under 1 KiB or over 2 GiB, no allocator; null buffers with a length, missing out-parameters, no decoder; no input and no room is `PROVEN_OK` with no progress and not done; destroy and reset accept null.
 
-Failure tip: inspect `src/proven/zstd.c`. A vector's index and letter are printed; `tests/test_unit_zstd_vectors.h` is written by a private generator that checks libzstd's verdict on every line before writing it. Not covered here: frames from other encoders than libzstd; the 131 larger streams and the 70,000 damaged ones of the private runs; speed.
+Failure tip: inspect `src/proven/zstd.c`. A vector's index and letter are printed; `tests/test_unit_zstd_vectors.h` is written by a private generator that checks libzstd's verdict on every line before writing it. Not covered here: frames from other encoders than libzstd; the 130 larger streams and the 70,000 damaged ones of the private runs; speed.
 
 ### `tests/test_unit_hmac` - SHA-384, SHA-512, HMAC and HKDF
 

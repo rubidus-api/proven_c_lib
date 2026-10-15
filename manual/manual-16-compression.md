@@ -1036,7 +1036,7 @@ every kind of repeat offset), and refuses twenty, with their reasons (damage, a 
 window above 8 MiB, and the empty compressed block above); refuses every proper prefix of the short
 streams; gives the same verdict, whole and in steps, for every single changed bit of them;
 and shows the window limit refusing before any allocation, the memory held, and every
-failed allocation answered with `PROVEN_ERR_NOMEM`. Outside the registered tests: 131 more
+failed allocation answered with `PROVEN_ERR_NOMEM`. Outside the registered tests: 130 more
 streams libzstd made - up to 2.2 MiB, several frames, flushed streams - decoded byte for byte
 in steps from 1 byte to 70,000; and about 70,000 truncations and changed bits of seven of
 them, under tools that report any read or write outside a buffer, with none reported. Over
