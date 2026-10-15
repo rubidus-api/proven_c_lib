@@ -1241,6 +1241,7 @@ HTTP/1.1 is spoken to in HTTP/1.1.
 | `max_buffered_output` | For the connection's requests together |
 | `decompress` | Unchanged; a paused request holds what arrived compressed, and decodes it on resume |
 | `decompress_zstd` | The same for `zstd`: asked for in `accept-encoding`, decoded on the stream |
+| `decompress_brotli` | The same for `br` |
 
 ### Example: three requests, one connection
 

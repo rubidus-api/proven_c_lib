@@ -634,7 +634,7 @@ static void cl_process(proven_http_event_request_t *c) {
             if (proven_http_body_init(&c->body, framing, cl->cfg.max_body_bytes) != PROVEN_OK) { cl_kill(c, PROVEN_ERR_OUT_OF_BOUNDS); break; }
             bool no_body = framing.kind == PROVEN_HTTP_BODY_NONE || (framing.kind == PROVEN_HTTP_BODY_LENGTH && framing.length == 0);
             proven_http_coding_t coding = PROVEN_HTTP_CODING_IDENTITY;
-            if (cl->cfg.decompress && !no_body && proven_http_decoder_wanted_(res.status, res.headers, res.header_count, cl->cfg.decompress_zstd, &coding)) {
+            if (cl->cfg.decompress && !no_body && proven_http_decoder_wanted_(res.status, res.headers, res.header_count, cl->cfg.decompress_zstd, cl->cfg.decompress_brotli, &coding)) {
                 proven_result_mem_mut_t m = cl->alloc.alloc_fn(cl->alloc.ctx, sizeof(cl_dec_t), alignof(cl_dec_t));
                 if (m.err != PROVEN_OK) { cl_kill(c, PROVEN_ERR_NOMEM); break; }
                 c->dec = (cl_dec_t *)(void *)m.value.ptr;
@@ -827,7 +827,8 @@ proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_h
     /* A bound on a wait that is not there bounds nothing, and is a mistake rather than a wish. */
     if (cfg.retry_delay_max_ms != 0 && (cfg.retry_delay_ms == 0 || cfg.retry_delay_max_ms < cfg.retry_delay_ms)) return PROVEN_ERR_INVALID_ARG;
     /* Zstandard is asked for on top of gzip, never instead of it. */
-    if (cfg.decompress_zstd && !cfg.decompress) return PROVEN_ERR_INVALID_ARG;
+    const proven_err_t coding_e = proven_http_decoder_cfg_check_(cfg.decompress, cfg.decompress_zstd, cfg.decompress_brotli);
+    if (coding_e != PROVEN_OK) return coding_e;
     if (cfg.tls) {
         /* What TLS may agree to and what the client will speak must be the same thing. */
         bool offers_h2 = false;
@@ -921,7 +922,7 @@ static proven_err_t cl_build_head(proven_http_event_client_t *cl, const proven_h
     if (e == PROVEN_OK && cl->cfg.decompress &&
         !proven_http_header_find(o->headers, o->header_count, cl_lit("Accept-Encoding"), &(proven_u8str_view_t){0}) &&
         !proven_http_header_find(o->headers, o->header_count, cl_lit("Range"), &(proven_u8str_view_t){0})) {
-        e = proven_http_write_header(out, len, cl_lit("Accept-Encoding"), proven_http_decoder_accept_(cl->cfg.decompress_zstd));
+        e = proven_http_write_header(out, len, cl_lit("Accept-Encoding"), proven_http_decoder_accept_(cl->cfg.decompress_zstd, cl->cfg.decompress_brotli));
     }
     bool body_method = cl_eq_nocase(method, cl_lit("POST")) || cl_eq_nocase(method, cl_lit("PUT")) || cl_eq_nocase(method, cl_lit("PATCH"));
     if (e == PROVEN_OK) {

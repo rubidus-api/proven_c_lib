@@ -14,17 +14,26 @@ static proven_u8str_view_t hc_lit_n(const char *s, proven_size_t n) {
 // Decoding
 // -----------------------------------------------------------------------------
 
-bool proven_http_decoder_wanted_(proven_u16 status, const proven_http_header_t *headers, proven_size_t count, bool zstd, proven_http_coding_t *coding) {
+bool proven_http_decoder_wanted_(proven_u16 status, const proven_http_header_t *headers, proven_size_t count, bool zstd, bool br, proven_http_coding_t *coding) {
     /* 206 carries a range of the encoded bytes: a piece of a gzip stream is not one. */
     if (status == 206) return false;
     proven_http_coding_t c = proven_http_content_coding(headers, count);
-    if (c != PROVEN_HTTP_CODING_GZIP && c != PROVEN_HTTP_CODING_DEFLATE && !(zstd && c == PROVEN_HTTP_CODING_ZSTD)) return false;
+    if (c != PROVEN_HTTP_CODING_GZIP && c != PROVEN_HTTP_CODING_DEFLATE && !(zstd && c == PROVEN_HTTP_CODING_ZSTD) &&
+        !(br && c == PROVEN_HTTP_CODING_BROTLI)) return false;
     *coding = c;
     return true;
 }
 
-proven_u8str_view_t proven_http_decoder_accept_(bool zstd) {
-    return zstd ? HC_LIT("zstd, gzip") : HC_LIT("gzip");
+proven_u8str_view_t proven_http_decoder_accept_(bool zstd, bool br) {
+    return zstd && br ? HC_LIT("zstd, br, gzip") : zstd ? HC_LIT("zstd, gzip") : br ? HC_LIT("br, gzip") : HC_LIT("gzip");
+}
+
+proven_err_t proven_http_decoder_cfg_check_(bool decompress, bool zstd, bool br) {
+    if ((zstd || br) && !decompress) return PROVEN_ERR_INVALID_ARG;
+#ifdef PROVEN_NO_BROTLI
+    if (br) return PROVEN_ERR_UNSUPPORTED;
+#endif
+    return PROVEN_OK;
 }
 
 void proven_http_decoder_begin_(proven_http_decoder_t_ *d, proven_allocator_t alloc, proven_http_coding_t coding) {
@@ -37,6 +46,10 @@ void proven_http_decoder_free_(proven_http_decoder_t_ *d) {
     d->z = (void *)0;
     if (d->zs) proven_zstd_decoder_destroy(d->zs);
     d->zs = (void *)0;
+#ifndef PROVEN_NO_BROTLI
+    if (d->br) proven_brotli_decoder_destroy(d->br);
+#endif
+    d->br = (void *)0;
 }
 
 /* `deflate` is a zlib stream by the standard and raw DEFLATE from some servers. A zlib header
@@ -69,11 +82,42 @@ static proven_err_t hc_zstd_step(proven_http_decoder_t_ *d, proven_mem_view_t in
     }
 }
 
+#ifndef PROVEN_NO_BROTLI
+/* Brotli: one stream, and nothing after it. The window is the stream's, 16 MiB at most. */
+static proven_err_t hc_brotli_step(proven_http_decoder_t_ *d, proven_mem_view_t in, proven_size_t *consumed,
+                                   proven_mem_mut_t out, proven_size_t *produced) {
+    if (!d->br) {
+        if (in.size == 0) return PROVEN_OK;
+        proven_err_t e = proven_brotli_decoder_create(d->alloc, PROVEN_BROTLI_WINDOW_DEFAULT, &d->br);
+        if (e != PROVEN_OK) return e;
+    }
+    for (;;) {
+        if (*consumed < in.size) {
+            if (d->ended) return PROVEN_ERR_INVALID_FORMAT;
+            d->any = true;
+        }
+        proven_size_t used = 0, made = 0;
+        bool done = false;
+        const proven_mem_view_t src = { .ptr = in.ptr ? in.ptr + *consumed : in.ptr, .size = in.size - *consumed };
+        const proven_mem_mut_t dst = { .ptr = out.ptr ? out.ptr + *produced : out.ptr, .size = out.size - *produced };
+        proven_err_t e = proven_brotli_decode(d->br, src, &used, dst, &made, &done);
+        if (e != PROVEN_OK) return e == PROVEN_ERR_NOMEM ? e : PROVEN_ERR_INVALID_FORMAT;
+        *consumed += used;
+        *produced += made;
+        d->ended = done;
+        if (used == 0 && made == 0) return done && *consumed < in.size ? PROVEN_ERR_INVALID_FORMAT : PROVEN_OK;
+    }
+}
+#endif
+
 proven_err_t proven_http_decoder_step_(proven_http_decoder_t_ *d, proven_mem_view_t in, proven_size_t *consumed,
                                        proven_mem_mut_t out, proven_size_t *produced) {
     *consumed = 0;
     *produced = 0;
     if (d->coding == PROVEN_HTTP_CODING_ZSTD) return hc_zstd_step(d, in, consumed, out, produced);
+#ifndef PROVEN_NO_BROTLI
+    if (d->coding == PROVEN_HTTP_CODING_BROTLI) return hc_brotli_step(d, in, consumed, out, produced);
+#endif
     for (;;) {
         if (!d->z) {
             proven_deflate_format_t format = PROVEN_DEFLATE_GZIP;

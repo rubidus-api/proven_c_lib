@@ -3,6 +3,9 @@
 
 #include "proven/deflate.h"
 #include "proven/zstd.h"
+#ifndef PROVEN_NO_BROTLI
+#include "proven/brotli.h"
+#endif
 #include "proven/http.h"
 
 /*
@@ -22,7 +25,8 @@ typedef struct {
     proven_allocator_t alloc;
     proven_inflate_t *z;
     proven_zstd_decoder_t *zs;         /* `zstd`: up to the 8 MiB window RFC 9659 allows, and 384 KiB */
-    proven_u8 coding;                  /* PROVEN_HTTP_CODING_GZIP, _DEFLATE or _ZSTD */
+    struct proven_brotli_decoder *br;  /* `br`: up to the stream's window, 16 MiB at most, and its codes */
+    proven_u8 coding;                  /* PROVEN_HTTP_CODING_GZIP, _DEFLATE, _ZSTD or _BROTLI */
     proven_u8 held;                    /* `deflate`: bytes kept until two tell zlib from raw */
     proven_u8 held_pos;
     bool any;                          /* some input has been seen */
@@ -30,12 +34,17 @@ typedef struct {
     proven_byte_t hold[2];
 } proven_http_decoder_t_;
 
-/* Whether a client that decodes would decode this response; `zstd`: whether it asked for
- * `zstd` too. */
-bool proven_http_decoder_wanted_(proven_u16 status, const proven_http_header_t *headers, proven_size_t count, bool zstd, proven_http_coding_t *coding);
+/* Whether a client that decodes would decode this response; `zstd`, `br`: whether it asked
+ * for those too. */
+bool proven_http_decoder_wanted_(proven_u16 status, const proven_http_header_t *headers, proven_size_t count, bool zstd, bool br, proven_http_coding_t *coding);
 
 /* The `Accept-Encoding` a client that decodes sends. */
-proven_u8str_view_t proven_http_decoder_accept_(bool zstd);
+proven_u8str_view_t proven_http_decoder_accept_(bool zstd, bool br);
+
+/* Whether a client's switches can be had: `decompress_zstd` and `decompress_brotli` need
+ * `decompress` (PROVEN_ERR_INVALID_ARG), and Brotli a build that has it (PROVEN_ERR_UNSUPPORTED). */
+[[nodiscard]]
+proven_err_t proven_http_decoder_cfg_check_(bool decompress, bool zstd, bool br);
 
 void proven_http_decoder_begin_(proven_http_decoder_t_ *d, proven_allocator_t alloc, proven_http_coding_t coding);
 

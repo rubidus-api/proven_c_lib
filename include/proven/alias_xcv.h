@@ -29,6 +29,7 @@
 #define XCV_ARRAY_IS_VALID proven_array_is_valid
 #define XCV_ARRAY_POP PROVEN_ARRAY_POP
 #define XCV_ARRAY_PUSH PROVEN_ARRAY_PUSH
+#define XCV_BROTLI_WINDOW_DEFAULT PROVEN_BROTLI_WINDOW_DEFAULT
 #define XCV_CERT_EKU_ PROVEN_CERT_EKU_
 #define XCV_CERT_EKU_ANY PROVEN_CERT_EKU_ANY
 #define XCV_CERT_EKU_CLIENT_AUTH PROVEN_CERT_EKU_CLIENT_AUTH
@@ -200,6 +201,7 @@
 #define XCV_HTTP_BODY_NONE PROVEN_HTTP_BODY_NONE
 #define XCV_HTTP_BODY_UNTIL_CLOSE PROVEN_HTTP_BODY_UNTIL_CLOSE
 #define XCV_HTTP_BOUNDARY_SIZE PROVEN_HTTP_BOUNDARY_SIZE
+#define XCV_HTTP_CODING_BROTLI PROVEN_HTTP_CODING_BROTLI
 #define XCV_HTTP_CODING_DEFLATE PROVEN_HTTP_CODING_DEFLATE
 #define XCV_HTTP_CODING_GZIP PROVEN_HTTP_CODING_GZIP
 #define XCV_HTTP_CODING_IDENTITY PROVEN_HTTP_CODING_IDENTITY
@@ -419,6 +421,12 @@
 #define xcv_base64_encode proven_base64_encode
 #define xcv_base64_encoded_size proven_base64_encoded_size
 #define xcv_base64url_encode proven_base64url_encode
+#define xcv_brotli_decode proven_brotli_decode
+#define xcv_brotli_decode_all proven_brotli_decode_all
+#define xcv_brotli_decoder_create proven_brotli_decoder_create
+#define xcv_brotli_decoder_destroy proven_brotli_decoder_destroy
+#define xcv_brotli_decoder_reset proven_brotli_decoder_reset
+#define xcv_brotli_decoder_t proven_brotli_decoder_t
 #define xcv_buf_append proven_buf_append
 #define xcv_buf_create proven_buf_create
 #define xcv_buf_destroy proven_buf_destroy

@@ -18,11 +18,11 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 113 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 114 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
-| `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 13 |
+| `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 14 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
 | `docs` | Are the claims the documentation makes still true? | 11 |
 | `bench` | How fast is it? (Not a correctness gate.) | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-15, Windows 11 test VM (v0.59.0): x86-64 345 PASS, 0 FAIL, 8 S
 ## Test catalog
 
 
-The hosted full run builds and executes 177 registered tests plus the 176 runnable manual examples - 353 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 190 test files: the 173 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 179 registered tests plus the 178 runnable manual examples - 357 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 192 test files: the 175 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -719,6 +719,24 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/zstd_encode.c`. A failing input is printed with its level and window. A changed pin means changed output: if that was meant, the private check (`docs/checks/zstd-encode`) decodes the new frames with libzstd before they are pinned again. Not covered here: that libzstd decodes everything the encoder makes - the private check does that for 4,105 frames under the sanitizers; speed.
 
+### `tests/test_unit_brotli` - Brotli decompression
+
+Intent: verify `brotli.h` - decompression against what libbrotli made and what libbrotli refuses, the window limit and the memory held, and input that is cut short, changed, or fed in pieces.
+
+Sub-checks:
+
+- 110 streams made by libbrotli 1.1.0 (by way of Python's brotli) from ten inputs - 5,000 bytes of an HTML page and of C, mixed scripts in UTF-8, dictionary words, random bytes, signed 16-bit integers, a run of 20,000, one byte, nothing, and HTML, numbers and Korean text in one (at qualities 10 and 11, which switch literal block types for it) - at qualities 0, 1, 5, 9 and 11 and windows of 1 KiB (shorter than most inputs) to 16 MiB, in text and generic modes: each decoded in one call, a byte in and a byte out at a time (the streams under 5,000 bytes), and in steps of 7 and 13, 4,096 and 1,000, 70,000 and 65,536 bytes, to the input, whose CRC-32 and length the vector carries.
+- 66 hand-built streams that libbrotli decodes, each with the CRC-32 and length of what it makes of them: metadata blocks (of 0, 7 and 300 bytes, and as the last meta-block), uncompressed meta-blocks, a stream of nothing, every window size from 10 to 24 bits, a dictionary word under each of the 121 transforms, words of every length with the first and last index and the first and last transform, capitals of words that begin with two- and three-byte letters, a word as the first bytes of a stream and in a 1 KiB window, the four context modes, context maps with runs of zeros (up to 16 run codes) and move-to-front, 64 literal codes, a distance context map, all 16 short distance codes, the implicit last distance and a dictionary word reached by it, distance codes with every postfix size and three direct-code counts, inserts and copies with the longest extra bits, block switches in each category (to the type before, to the next, by number - in the middle of a command too, from a block of one literal code to one of several), a literal code of 15-bit codes read four in a row, prefix codes simple (one to four symbols, both shapes of four) and complex (two symbols, runs of 16 and 17, the first two or three lengths skipped, and a code whose code-length code has one symbol) - decoded whole and a byte at a time.
+- 25 hand-built streams libbrotli refuses, refused whole and a byte at a time (bytes after the end are left unconsumed by the step and refused by `decode_all`): the reserved window pattern, a metadata block's reserved bit, its length's last byte zero and its padding not zero, a length's last nibble zero, an uncompressed block's padding, the end's padding, a byte and a second stream after the end, a simple code with a symbol twice and one past its alphabet, a code-length code over- and under-subscribed, a code under- and over-subscribed, a run past the alphabet, a context-map run past the map, an insert and a copy past the meta-block, a short distance code of zero and below, dictionary references of length 3 and 25, transform 121, and a word longer than what is left.
+- Every proper prefix of the streams up to 400 bytes (9,047) is `PROVEN_ERR_INVALID_FORMAT`; every single-bit change of them (72,376) is refused or decoded within the output given, with the same verdict and the same bytes whole as in steps of 3 and 5.
+- The end of a stream: a step decodes a stream with five bytes after it and stops at its end, consuming the stream alone; after the end it takes nothing; a reset reads the next stream; a window field that RFC 7932 does not allow is an error on that call and the next; no bytes are not a stream.
+- Bounds, through an allocator that counts: a stream with a 16 MiB window is refused by a 64 KiB limit with only the decoder allocated; with the default limit 5,000 bytes of it hold under 64 KiB, not the window; a stream five times longer than its 1 KiB window decodes in steps, the history going round; one byte costs little more than the decoder; `decode_all` one byte short is `PROVEN_ERR_OUT_OF_BOUNDS`, exactly enough is `PROVEN_OK`; a step writes nothing past what it reports; each of the first six allocations, failed in turn, is `PROVEN_ERR_NOMEM` with nothing left held.
+- Arguments: no out pointer, a limit under 1 KiB or over 2 GiB, no allocator; null buffers with a length, missing out-parameters, no decoder; no input and no room is `PROVEN_OK` with no progress and not done; destroy and reset accept null.
+
+The suite is a skip in a build with `PROVEN_NO_BROTLI`.
+
+Failure tip: inspect `src/proven/brotli.c`. A vector's name is printed; `tests/test_unit_brotli_vectors.h` is written by a private generator that checks libbrotli's verdict on every line before writing it. Not covered here: the 502 larger streams of the private run (Python's and Node's libbrotli), the 1,437,490 damaged copies compared with libbrotli, the largest code tables; speed.
+
 ### `tests/test_unit_hmac` - SHA-384, SHA-512, HMAC and HKDF
 
 Intent: verify the SHA-2 digests added for TLS, HMAC and HKDF against the documents that define them, and the two memory calls that handling a secret needs.
@@ -1020,19 +1038,19 @@ Failure tip: inspect `src/proven/http_event_client_h2.c` - `proven_http_event_cl
 
 ### `tests/test_unit_http_coding` - http: content codings
 
-Intent: verify `Content-Encoding` in the four HTTP drivers - responses compressed when a handler asks and the client accepts, compressed bodies decoded by the clients that ask - and the helpers and the decoder under them, against bodies that zlib and libzstd made.
+Intent: verify `Content-Encoding` in the four HTTP drivers - responses compressed when a handler asks and the client accepts, compressed bodies decoded by the clients that ask - and the helpers and the decoder under them, against bodies that zlib, libzstd and libbrotli made.
 
 Sub-checks:
 
-- The helpers: `proven_http_accepts_coding` against thirty-four `Accept-Encoding` values (weights of zero and above, `*`, `identity`, case, spaces, empty elements, and eight malformed ones, which accept identity only), two fields read as one list, no field; `proven_http_content_coding` against sixteen values and a repeated field; `PROVEN_HTTP_CODING_ZSTD` accepted exactly as seven `Accept-Encoding` values say; `decompress_zstd` without `decompress` is `PROVEN_ERR_INVALID_ARG` from both clients.
-- The decoder, with no sockets: each of the thirty-six vectors - gzip, zlib and raw under `deflate`, two members, every optional gzip header field, a stored stream, `x-gzip`, two megabytes of zeros in two kilobytes; and cut short, cut in the header, followed by other bytes, with a wrong checksum, with a damaged block, one byte, and text mislabelled as gzip; and thirteen `zstd` bodies libzstd made - levels 3 and 19, two frames, a skippable frame first, `ZSTD`, nothing, two megabytes of zeros; cut short, cut in the header, followed by other bytes, a wrong checksum, a 16 MiB window, a dictionary - whole and a byte in and a byte out at a time: what zlib or libzstd made decodes to what it was given, what the oracle refuses is `PROVEN_ERR_INVALID_FORMAT` (each `zstd` verdict is Node's for one frame with the 8 MiB limit, or curl's for frames in sequence). `zstd` is decoded only for a client that asked for it. A body of no bytes is an empty body. A 206 and a coding other than gzip or deflate alone are not decoded. A whole body under 256 bytes or one that does not shrink is not compressed; text is, at four windows, and inflates to itself.
+- The helpers: `proven_http_accepts_coding` against thirty-four `Accept-Encoding` values (weights of zero and above, `*`, `identity`, case, spaces, empty elements, and eight malformed ones, which accept identity only), two fields read as one list, no field; `proven_http_content_coding` against twenty values and a repeated field; `PROVEN_HTTP_CODING_ZSTD` accepted exactly as seven `Accept-Encoding` values say, and `PROVEN_HTTP_CODING_BROTLI` as seven more; `decompress_zstd` or `decompress_brotli` without `decompress` is `PROVEN_ERR_INVALID_ARG` from both clients.
+- The decoder, with no sockets: each of the forty-six vectors - gzip, zlib and raw under `deflate`, two members, every optional gzip header field, a stored stream, `x-gzip`, two megabytes of zeros in two kilobytes; and cut short, cut in the header, followed by other bytes, with a wrong checksum, with a damaged block, one byte, and text mislabelled as gzip; and thirteen `zstd` bodies libzstd made - levels 3 and 19, two frames, a skippable frame first, `ZSTD`, nothing, two megabytes of zeros; cut short, cut in the header, followed by other bytes, a wrong checksum, a 16 MiB window, a dictionary; and ten `br` bodies libbrotli made - qualities 5 and 11, a 1 KiB and a 16 MiB window, `BR`, nothing, two megabytes of zeros; cut short, followed by other bytes, twice, a changed byte - whole and a byte in and a byte out at a time: what zlib, libzstd or libbrotli made decodes to what it was given, what the oracle refuses is `PROVEN_ERR_INVALID_FORMAT` (each `zstd` verdict is Node's for one frame with the 8 MiB limit, or curl's for frames in sequence; each `br` verdict is Python's libbrotli, and curl's where it agrees - curl takes a `br` stream cut short as ended). `zstd` and `br` are each decoded only for a client that asked for it. A body of no bytes is an empty body. A 206 and a coding other than gzip or deflate alone are not decoded. A whole body under 256 bytes or one that does not shrink is not compressed; text is, at four windows, and inflates to itself.
 - Settings: a compression level or window outside its range, for gzip or for zstd, is `PROVEN_ERR_INVALID_ARG` from both servers; the two calls accept null.
 - Choosing the coding: sixteen `Accept-Encoding` values, each for a server that offers zstd and one that does not - zstd only where it weighs at least as much as gzip, gzip as before otherwise; `proven_http_accept_weight` in thousandths; a whole body in zstd at levels 0 to 3, 6 and 9 and three windows decodes to itself.
 - Servers that offer zstd: the blocking server at the zstd defaults and the event-driven one at level 6 with a 1 KiB window, through the clients that ask `zstd, gzip` - the same sizes, whole and streamed, with and without a length, the same refusals, `HEAD` - in `zstd`; a client that asks for gzip alone gets gzip, one that asks for nothing the body as it is; raw sockets with seven weightings, the body one zstd frame of the 3,000 bytes.
 - Compressed responses, through the blocking client and the event-driven client against the blocking server, and through the event-driven client against the event-driven server plain and over TLS: at 0, 1, 255, 256, 3,000, 65,536 and 1,048,576 bytes, a body sent whole (gzip from 256 bytes up, with the compressed `Content-Length`), streamed with its length and streamed without (gzip and chunked) each arrive as written, with `Vary: Accept-Encoding`; bytes that do not shrink, a response that did not ask, a handler's own `Content-Encoding`, a 204, a 206 with and without `Content-Range`, and a request made after the response began are sent as they are; a `Vary` that already names the header is not repeated; a compressed response that ends short of its promise does not pass for whole; HEAD announces the encoding and the length GET sends.
 - The vectors through each client, from the blocking server, whole and a byte a chunk: decoded, refused, or passed through as the table says, with the headers as the server wrote them and `Content-Length` counting what was sent.
 - A gzip body with no length, from a scripted peer that ends it by closing: decoded whole by each client, and `PROVEN_ERR_INVALID_FORMAT` when the close cuts the stream short.
-- Each side alone: a client that sets nothing sends no `Accept-Encoding` and gets gzip as gzip; a request's own `Accept-Encoding` replaces the client's, and with a `Range` none is sent. The decoding clients ask `zstd, gzip`; one with `decompress` alone asks `gzip` and is given a `zstd` body as it was sent, in both clients.
+- Each side alone: a client that sets nothing sends no `Accept-Encoding` and gets gzip as gzip; a request's own `Accept-Encoding` replaces the client's, and with a `Range` none is sent. The decoding clients ask `zstd, br, gzip`; one with `decompress` alone asks `gzip` and is given a `zstd` and a `br` body as they were sent, in both clients.
 - Bounds: the blocking client reads the same body at six read sizes from one byte up; `read_all` stops at its limit of decoded bytes with `PROVEN_ERR_OUT_OF_BOUNDS`; after a decoded body the connection carries the next request. The event-driven client delivers two megabytes from two kilobytes in pieces of at most 16 KiB; paused after every piece nothing arrives while paused and nothing is lost; `max_body_bytes` counts decoded bytes.
 - A megabyte of text, compressed, to a client over TLS that pauses at every piece: the server has closed long before the client has read it all, and the request still ends whole (a regression check for the hang-up after the end, which fails on Windows without the fix).
 - The event-driven server's output limit: sixteen megabytes that do not compress, to a client that stops reading for a while - writes are refused, `on_writable` resumes them, and the queue passes its limit by no more than one piece.
@@ -2554,6 +2572,20 @@ Failure tip: inspect src/proven/scan.c and src/proven/fmt.c if long double retur
 Intent: verify nob probes -std=c23 first and falls back to -std=c2x when the compiler rejects c23.
 
 Failure tip: inspect nob.c standard-flag selection and toolchain probing if the fallback does not trigger.
+
+### `tests/test_portability_compile_nobrotli` - PROVEN_NO_BROTLI leaves the Brotli decoder out
+
+Intent: verify the promise `PROVEN_NO_BROTLI` makes to a consumer who wants the library smaller: no Brotli decoder and no 122,784-byte dictionary. The suite is built without the macro, so nothing else would notice it breaking.
+
+Sub-checks:
+
+- Every source in `build_sources.inc` compiles with the host compiler and `-DPROVEN_NO_BROTLI -Wall -Wextra -Werror`.
+- A program that includes `proven.h` and `proven/alias_xcv.h` links against that build and runs, `brotli.h` was not included, and a blocking HTTP client made with `decompress_brotli` is `PROVEN_ERR_UNSUPPORTED`.
+- No object of that build defines or references `proven_brotli_*` or `brotli_*` (the dictionary and its tables).
+
+The fixture runs the host compiler through `/bin/sh` and is skipped on Windows.
+
+Failure tip: inspect the `PROVEN_NO_BROTLI` guards in `include/proven.h`, `src/proven/brotli.c` and `src/proven/http_coding.c`.
 
 ### `tests/test_portability_compile_nonet` - PROVEN_NO_NET leaves the socket layer out
 

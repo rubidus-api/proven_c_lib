@@ -3,11 +3,11 @@
 **Part III - Data structures. Prerequisites: [Chapter 2](manual-02-allocation.md) for the allocator a
 compressor is made with; [Chapter 4](manual-04-containers-algorithms.md) for the checksums.**
 **After this chapter** you can compress and decompress a buffer or a stream of any length,
-read and write the `gzip` and `zlib` wrappers, read and write Zstandard, decide how much a stranger's
+read and write the `gzip` and `zlib` wrappers, read and write Zstandard, read Brotli, decide how much a stranger's
 data may expand to - and how much memory it may make you spend - before you refuse it, and
 say what was tested and how fast it is.
 
-This chapter covers `deflate.h` and, in section 7, `zstd.h`. Both are pure computation -
+This chapter covers `deflate.h`, in section 7 `zstd.h`, and in section 8 `brotli.h`. All are pure computation -
 allocation through the allocator you give, nothing from the operating system - and are
 available in a [freestanding](manual-freestanding.md) build. Section 6 is the exception: it
 is about compressed HTTP responses, in the servers and clients of Chapters 11 and 15.
@@ -21,7 +21,8 @@ is about compressed HTTP responses, in the servers and clients of Chapters 11 an
 5. [Data from somebody else](#5-data-from-somebody-else)
 6. [Over HTTP](#6-over-http)
 7. [Zstandard](#7-zstandard)
-8. [What is accepted, what is not here, and how this was tested](#8-what-is-accepted-what-is-not-here-and-how-this-was-tested)
+8. [Brotli](#8-brotli)
+9. [What is accepted, what is not here, and how this was tested](#9-what-is-accepted-what-is-not-here-and-how-this-was-tested)
 
 ## 1. What DEFLATE does, in one page
 
@@ -460,6 +461,14 @@ limit that RFC 9659 sets for HTTP. It is a separate switch because of that windo
 may make a client hold up to 8 MiB for one response, where gzip needs 35 KiB. Without
 `decompress`, `decompress_zstd` is `PROVEN_ERR_INVALID_ARG`.
 
+**With `decompress_brotli`, it asks for Brotli too** - `br` joins the list, `Accept-Encoding:
+zstd, br, gzip` with both switches - and decodes a `br` body with section 8's decoder, which
+takes every window RFC 7932 allows, up to 16 MiB; no HTTP specification sets a lower one, as
+RFC 9659 does for Zstandard. It is a switch of its own for the same reason as Zstandard's: a
+server decides how much of that a response costs you. Without `decompress` it is
+`PROVEN_ERR_INVALID_ARG`, and in a build with `PROVEN_NO_BROTLI` (section 8)
+`PROVEN_ERR_UNSUPPORTED`. The servers never send `br`: there is no Brotli encoder here.
+
 ### Example: a page compressed, an account page not
 
 <!-- example: manual/examples/en/ex_16_http_gzip.c -->
@@ -774,9 +783,10 @@ int main(void) {
 | `compress_zstd_level`, `compress_zstd_window_log` (both) | Section 7's encoder level (1 to 9, zero is 1) and window (10 to 23, zero is 17). | `INVALID_ARG` from `create` outside those ranges. |
 | `decompress` (both client configurations) | Send `Accept-Encoding: gzip` and decode `gzip` and `deflate` bodies. | - |
 | `decompress_zstd` (both client configurations) | With `decompress`: send `Accept-Encoding: zstd, gzip` and decode `zstd` bodies too. | `INVALID_ARG` from `create` without `decompress`. |
+| `decompress_brotli` (both client configurations) | With `decompress`: ask for `br` too and decode `br` bodies (since v0.60.0). | `INVALID_ARG` from `create` without `decompress`; `UNSUPPORTED` in a build with `PROVEN_NO_BROTLI`. |
 | `proven_http_accepts_coding(headers, count, coding)` | Whether a request's `Accept-Encoding` allows a coding: listed with a weight above zero, or covered by `*`. | `bool`. Without the field only identity is accepted. |
 | `proven_http_accept_weight(headers, count, coding)` | How much: the coding's weight, else that of `*`, in thousandths. | 0 to 1000; 0 exactly where `accepts_coding` says no. Without the field, 1000 for identity and 0 for the rest. |
-| `proven_http_content_coding(headers, count)` | What `Content-Encoding` names. | `PROVEN_HTTP_CODING_IDENTITY`, `_GZIP` (also for `x-gzip`), `_DEFLATE`, `_ZSTD` (since v0.57.0; `_OTHER` before), or `_OTHER` for anything else and for more than one. |
+| `proven_http_content_coding(headers, count)` | What `Content-Encoding` names. | `PROVEN_HTTP_CODING_IDENTITY`, `_GZIP` (also for `x-gzip`), `_DEFLATE`, `_ZSTD` (since v0.57.0; `_OTHER` before), `_BROTLI` for `br` (since v0.60.0; `_OTHER` before), or `_OTHER` for anything else and for more than one. |
 
 ### Cautions, and what goes wrong
 
@@ -806,19 +816,20 @@ int main(void) {
 - **A damaged compressed body is `PROVEN_ERR_INVALID_FORMAT`**, never a short success: a
   stream that is cut off, fails its checksum, or is followed by bytes that are not another
   gzip member (or Zstandard frame). Several gzip members, or Zstandard frames, in a row are
-  read as one body.
+  read as one body; a Brotli stream has nothing after it.
 - **`deflate` means two things in practice.** The standard says a zlib stream; some servers
   send raw DEFLATE. The client looks at the first two bytes and reads whichever it is. It
-  never asks for `deflate` - only `gzip`, and `zstd` with `decompress_zstd` - and the servers
-  never send it.
+  never asks for `deflate` - only `gzip`, `zstd` with `decompress_zstd` and `br` with
+  `decompress_brotli` - and the servers never send it.
 - **Not decoded:** a `206 Partial Content` (a range of a compressed body is not a compressed
   body - and with `decompress` set, a request that carries `Range` is sent without
-  `Accept-Encoding`); `zstd` without `decompress_zstd`; any other coding (`br`); two
-  codings applied one over the other. Such a body reaches you as it was sent, with its
+  `Accept-Encoding`); `zstd` without `decompress_zstd`; `br` without `decompress_brotli`; any
+  other coding (`compress`); two codings applied one over the other. Such a body reaches you as it was sent, with its
   header.
 - **Memory.** A response being decoded costs about 35 KiB (52 KiB in the event-driven
   client) while it is open - a `zstd` one, as much as its frame's window, up to 8 MiB, and
-  about 400 KiB more, allocated as its output grows. A streamed response being compressed costs what section 4's
+  about 400 KiB more, and a `br` one as much as its stream's window, up to 16 MiB, and its
+  codes (section 8), each allocated as its output grows. A streamed response being compressed costs what section 4's
   table says for the window - 325 KiB by default - until it ends; one sent in one piece
   costs that only for the call, with a window no larger than the body. Ten thousand
   streamed responses at the default window are 3 GiB: lower `compress_window_bits`, or
@@ -1153,7 +1164,176 @@ header and the tables for a short block - flush where a reader is waiting, not a
 write. Compressing is no more secret than gzip: section 6's caution about secrets next to
 text the client chose holds for `zstd` as it does for gzip.
 
-## 8. What is accepted, what is not here, and how this was tested
+## 8. Brotli
+
+```c
+#include "proven/brotli.h"
+
+proven_err_t proven_brotli_decoder_create(proven_allocator_t alloc, proven_u64 window_max, proven_brotli_decoder_t **out);
+void proven_brotli_decoder_destroy(proven_brotli_decoder_t *b);
+void proven_brotli_decoder_reset(proven_brotli_decoder_t *b);
+proven_err_t proven_brotli_decode(proven_brotli_decoder_t *b, proven_mem_view_t in, proven_size_t *consumed,
+                                  proven_mem_mut_t out, proven_size_t *produced, bool *done);
+proven_err_t proven_brotli_decode_all(proven_allocator_t alloc, proven_mem_view_t in, proven_mem_mut_t out, proven_size_t *written);
+```
+
+Brotli (RFC 7932) is HTTP's `Content-Encoding: br`. Servers mostly use it for files they
+compress once in advance at its highest quality, where it comes out smaller than gzip and
+Zstandard; compressing at that quality is slow, and decoding is fast whatever the quality.
+This library reads it, since v0.60.0, and does not write it: a server here sends gzip or
+Zstandard.
+
+The decoder works as section 7's does - a state, and a step that takes what input there is
+and fills what output space there is, stopping anywhere: between two bits of a code if that
+is where your input ends, in the middle of a copy if that is where your space ends. Two
+things are the same as there:
+
+- **A step may allocate.** The history that later bytes refer to grows with the stream's
+  output, never past the window the stream states; and each meta-block (Brotli's unit, up to
+  16 MiB of output) brings its own prefix codes, built into a table that grows with how many
+  there are. Both are kept for the next stream. So `proven_brotli_decode` can return
+  `PROVEN_ERR_NOMEM`.
+- **Output can wait in the decoder**, in that history, while the space you give is too small.
+
+**The window is the memory, and the limit is yours.** A stream's first bits say how far back
+it may refer: 2^WBITS - 16 bytes, for WBITS from 10 to 24, so 16 MiB at most. `window_max` is
+the most you agree to: 0 means 16 MiB, which takes every stream RFC 7932 allows. A stream that
+needs more is `PROVEN_ERR_OUT_OF_BOUNDS` before anything is allocated for it. libbrotli's
+"large window" variant, which is not RFC 7932, is refused as malformed.
+
+| | Memory |
+|---|---|
+| A decoder, made | about 22 KiB |
+| While decoding a stream | its history - as much of the window as its output has reached, 2^WBITS bytes at most, and 32 more - and its codes: tens of KiB for what encoders write; 1,343,024 bytes for the most a meta-block can have (256 codes of each of its three kinds, each as large as a code's table can be) |
+
+**One stream, and nothing after it.** Brotli streams do not follow each other the way gzip
+members and Zstandard frames do. `*done` becomes true where the stream ends, that call stops
+there - what it consumed is the stream - and later calls consume nothing more; reset to read
+another. `proven_brotli_decode_all` refuses bytes after the end, as do the HTTP clients.
+
+**The static dictionary.** Brotli streams may copy words from a dictionary that every decoder
+carries: 122,784 bytes of words in many languages, and 121 ways of changing each (a space
+before, a capital first letter, a suffix such as `ing `). It is most of what this decoder
+adds to a program: with it, the library is 162,351 bytes larger (998,985 bytes of code and
+data against 836,634, at `-O2` on x86-64). A build with `-DPROVEN_NO_BROTLI` leaves the decoder and the
+dictionary out; `proven.h` then does not include `brotli.h`, and an HTTP client asked to
+decode Brotli is `PROVEN_ERR_UNSUPPORTED`.
+
+### Example: a buffer, a stream with something after it, and a window too large
+
+<!-- example: manual/examples/en/ex_16_brotli.c -->
+```c
+#include <string.h>
+
+/*
+ * Brotli: a whole buffer, then the same stream read piece by piece with other bytes after it,
+ * and the window limit that keeps a stranger's stream from deciding how much memory this
+ * program spends.
+ */
+
+/* 4,000 bytes of log lines, as libbrotli wrote them at quality 11 with a 64 KiB window: 58 bytes. */
+static const proven_byte_t STREAM[] = {
+    0xe2, 0xf3, 0x01, 0xb1, 0xe3, 0x30, 0x76, 0xb3, 0x54, 0x22, 0x7f, 0x6e,
+    0x31, 0x35, 0x23, 0x54, 0x7a, 0x83, 0xbc, 0xb8, 0x1c, 0x8d, 0x96, 0x8c,
+    0x29, 0xa2, 0x82, 0x0d, 0x38, 0x60, 0x0f, 0x30, 0xc2, 0x45, 0x17, 0x5a,
+    0x8c, 0xce, 0x18, 0x20, 0xa3, 0x8c, 0xc1, 0x41, 0x9a, 0xb7, 0x0a, 0x2d,
+    0x23, 0xe3, 0x31, 0x41, 0x6b, 0xd0, 0x07, 0x39, 0x00, 0x40,
+};
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    static const char line[] = "GET /index.html HTTP/1.1 - 200 - text/html; charset=utf-8\n";
+    static proven_byte_t text[4000];
+    for (proven_size_t i = 0; i < sizeof text; ++i) text[i] = (proven_byte_t)line[i % (sizeof line - 1)];
+
+    /* A whole buffer: as with gzip, the output buffer is the limit. */
+    static proven_byte_t out[8000];
+    proven_size_t n = 0;
+    EXAMPLE_REQUIRE(proven_brotli_decode_all(heap, (proven_mem_view_t){ STREAM, sizeof STREAM }, (proven_mem_mut_t){ out, sizeof out }, &n) == PROVEN_OK &&
+                    n == sizeof text && memcmp(out, text, n) == 0, "58 bytes of Brotli decode to the 4,000 bytes libbrotli was given");
+    EXAMPLE_REQUIRE(proven_brotli_decode_all(heap, (proven_mem_view_t){ STREAM, sizeof STREAM }, (proven_mem_mut_t){ out, 3999 }, &n) == PROVEN_ERR_OUT_OF_BOUNDS,
+                    "and do not fit in 3,999: PROVEN_ERR_OUT_OF_BOUNDS");
+
+    /* A stream with five other bytes after it, given 7 bytes at a time with 500 bytes of room.
+     * `done` comes where the stream ends, and the bytes after it are not consumed: a Brotli
+     * stream has no frames to follow it, so what they are is the caller's business. */
+    static proven_byte_t more[sizeof STREAM + 5];
+    memcpy(more, STREAM, sizeof STREAM);
+    memcpy(more + sizeof STREAM, "after", 5);
+    proven_brotli_decoder_t *b = NULL;
+    EXAMPLE_REQUIRE(proven_brotli_decoder_create(heap, 0, &b) == PROVEN_OK, "a decoder with the default window limit, 16 MiB");
+    proven_size_t in_at = 0, out_at = 0;
+    bool done = false;
+    while (!done) {
+        proven_size_t give = sizeof more - in_at < 7 ? sizeof more - in_at : 7, room = sizeof out - out_at < 500 ? sizeof out - out_at : 500;
+        proven_size_t used = 0, made = 0;
+        EXAMPLE_REQUIRE(proven_brotli_decode(b, (proven_mem_view_t){ more + in_at, give }, &used, (proven_mem_mut_t){ out + out_at, room }, &made, &done) == PROVEN_OK, "a step");
+        in_at += used;
+        out_at += made;
+        if (used == 0 && made == 0 && !done) break;     /* nothing more to give, or nowhere to put it */
+    }
+    EXAMPLE_REQUIRE(done && in_at == sizeof STREAM && out_at == sizeof text && memcmp(out, text, out_at) == 0,
+                    "done after the 58 bytes of the stream, with the five after it left alone");
+
+    /* The window limit. The first bits of a stream say how far back it may refer, and a
+     * decoder must keep that much: this one, made with libbrotli's largest window, asks for
+     * 16 MiB. A decoder limited to 64 KiB refuses it before allocating anything for it; reset
+     * makes the decoder usable again. */
+    static const proven_byte_t wide[] = { 0x0f, 0x01, 0x80, 0x61, 0x62, 0x63, 0x03 };
+    proven_brotli_decoder_t *small = NULL;
+    proven_size_t used = 0, made = 0;
+    EXAMPLE_REQUIRE(proven_brotli_decoder_create(heap, 64 * 1024, &small) == PROVEN_OK, "a decoder limited to 64 KiB");
+    EXAMPLE_REQUIRE(proven_brotli_decode(small, (proven_mem_view_t){ wide, sizeof wide }, &used, (proven_mem_mut_t){ out, sizeof out }, &made, &done) == PROVEN_ERR_OUT_OF_BOUNDS,
+                    "a stream with a 16 MiB window: PROVEN_ERR_OUT_OF_BOUNDS");
+    proven_brotli_decoder_reset(small);
+    EXAMPLE_REQUIRE(proven_brotli_decode(small, (proven_mem_view_t){ STREAM, sizeof STREAM }, &used, (proven_mem_mut_t){ out, sizeof out }, &made, &done) == PROVEN_OK &&
+                    done && made == sizeof text, "after a reset, a stream within the limit decodes");
+    proven_brotli_decoder_reset(b);
+    EXAMPLE_REQUIRE(proven_brotli_decode(b, (proven_mem_view_t){ wide, sizeof wide }, &used, (proven_mem_mut_t){ out, sizeof out }, &made, &done) == PROVEN_OK &&
+                    done && made == 3 && memcmp(out, "abc", 3) == 0, "while the default limit takes it - with a few KiB of history, not 16 MiB");
+
+    proven_brotli_decoder_destroy(small);
+    proven_brotli_decoder_destroy(b);
+    return EXAMPLE_OK();
+}
+```
+
+### Reference
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_brotli_decoder_create(alloc, window_max, &b)` | A decoder. `window_max` from 1 KiB to 2 GiB; 0 is 16 MiB. | `INVALID_ARG`, `NOMEM`. |
+| `proven_brotli_decode(b, in, &consumed, out, &produced, &done)` | Take some of `in`, fill some of `out`; stop at the stream's end. Only the bytes reported produced are written. | `INVALID_FORMAT` (not Brotli, or damaged), `OUT_OF_BOUNDS` (window above the limit), `NOMEM`, `INVALID_ARG`; after an error, the same until a reset. |
+| `proven_brotli_decoder_reset(b)` | Forget the stream in progress; keep the buffers. | none. |
+| `proven_brotli_decoder_destroy(b)` | Free it. NULL is allowed. | none. |
+| `proven_brotli_decode_all(alloc, in, out, &written)` | The one stream of `in` into `out`, with the default limit. `out`'s size is the limit on output. | `OUT_OF_BOUNDS` when it does not fit; `INVALID_FORMAT` also when `in` is empty, ends inside the stream or goes on after it. |
+
+### Cautions, and what goes wrong
+
+- **The window decides the memory**, as in section 7: whoever wrote the stream chooses it, up
+  to your limit. A thousand responses at once, each with a 16 MiB window and long enough to
+  fill it, are 16 GiB. Lower `window_max` where you know the streams (files you made with a
+  known window), and count decoders the way you count connections.
+- **There is no checksum.** Damage that still forms a valid stream decodes to other bytes;
+  the decoder can only refuse what does not parse. Where it matters, check what you decoded.
+- **Not recognisable by its first bytes.** Brotli has no magic number: a decoder given gzip,
+  or text, fails somewhere inside rather than at once, and very short inputs of other kinds
+  can happen to be valid streams. Over HTTP, `Content-Encoding` says what a body is; for
+  files, keep the name (`.br`) or a header of your own.
+
+**Nothing that libbrotli refuses is accepted.** Outside the registered tests, 1,437,490
+truncated and changed copies of 176 streams were given to both this decoder and libbrotli 1.1.0's
+one-call decoder: none that libbrotli refused was accepted here, none that both accepted came
+out different, and 11,242 that it accepted were refused here - each a stream that ends before
+the input does, with the same output, whose remaining bytes libbrotli's one-call decoder
+ignores and `proven_brotli_decode_all` (like Python's binding of libbrotli) does not.
+
+**Speed.** On the development machine, the C sources of this library (2.2 MB) compressed by
+libbrotli at qualities 1, 5 and 11 decode at about 170, 215 and 235 MiB/s - 0.54 to 0.68 of
+libbrotli's own decoder in the same process (about 260, 390 and 410 MiB/s); an uncompressed
+meta-block or a long run is copied at libbrotli's speed.
+
+## 9. What is accepted, what is not here, and how this was tested
 
 **What the decompressor accepts is what zlib accepts.** Where RFC 1951 leaves a corner open,
 each case was tried on zlib first and its verdict followed, because a real producer may emit
@@ -1171,13 +1351,14 @@ for byte, what zlib would have written for the same input, and it does not need 
 
 - **Preset dictionaries** (zlib's `FDICT`), in either direction.
 - **ZIP archives, tar files**: those are containers. This is the codec inside them.
-- **Deflate64**, and every other compression format: Brotli, LZ4, bzip2, xz. Zstandard's
+- **Deflate64**, and every other compression format: LZ4, bzip2, xz. Zstandard's
   slower levels (10 to 22 in libzstd: binary trees and optimal parsing), its dictionaries and its
-  long-distance mode.
+  long-distance mode. Brotli compression; Brotli's large-window variant and shared
+  dictionaries.
 - **The gzip header's fields** - name, time, comment - cannot be set or read.
 - **Several gzip members read as one stream** automatically: reset after each (section 3).
   (The HTTP clients of section 6 do this for a response body.)
-- **Over HTTP:** compressed *request* bodies, in either direction; `br`; a call
+- **Over HTTP:** compressed *request* bodies, in either direction; sending `br`; a call
   that pushes out what a streamed response has written so far; serving a precompressed file
   (a handler can do that itself: `proven_http_accepts_coding`, then its own
   `Content-Encoding`).
@@ -1222,6 +1403,28 @@ HTTP, the blocking, event-driven and HTTP/2 clients decoded what Node's servers 
 cut short or followed by junk, and a client that did not ask was sent gzip; curl read a
 handler's own Zstandard from this library's server.
 
+**Section 8 was tested** against libbrotli, by way of Python's binding (1.1.0): the registered
+test decodes 110 streams libbrotli made from ten kinds of data - qualities 0, 1, 5, 9 and 11,
+windows from 1 KiB to 16 MiB, text and generic modes - in one call, a byte at a time and in
+odd steps, and gets the data libbrotli was given; decodes 66 hand-built streams that libbrotli
+decodes, with the same result - metadata, uncompressed meta-blocks, every window size,
+dictionary words under all 121 transforms (capitals of two- and three-byte letters among
+them), every context mode, context maps with runs and move-to-front, every short distance
+code, block switches of each kind, every way of writing a prefix code - and refuses 25 that libbrotli refuses, each wrong
+in a different way; refuses every proper prefix of the short streams; gives the same
+verdict, whole and in steps, for every single changed bit of them (72,376); and shows the
+window limit refusing before any allocation, the memory held, and every failed allocation
+answered with `PROVEN_ERR_NOMEM`. The dictionary and its transforms were taken from the text
+of RFC 7932 and checked against the CRC-32s it gives and against libbrotli's own copy.
+Outside the registered tests: 358 more streams from Python's libbrotli and 144 from Node's (a
+copy of its own, 1.2.0) - this repository's files, the Korean manual, 2.2 MB of sources -
+decoded byte for byte in steps from 1 byte to 70,000, under the tools that report any read or
+write outside a buffer; the 1,437,490 damaged copies above; and the largest code table each
+alphabet can make, worked out and then built. Over HTTP, the blocking, event-driven and
+HTTP/2 clients decoded what Node's servers sent in `br` - qualities 1, 5 and 11, windows of
+1 KiB to 16 MiB, whole and flushed, up to 3 MB - refused it cut short, followed by junk or
+twice, and a client that did not ask was sent gzip.
+
 **The encoder of section 7 was tested** against its decoder and against libzstd. The
 registered test compresses eleven kinds of data (nothing, one byte, a run, numbered lines,
 noise with copies from far back, random bytes, more than 128 byte values, and more) at all nine
@@ -1244,4 +1447,5 @@ it.
 
 **Not done:** no coverage-guided fuzzing; no comparison with a second compressor's output
 besides zlib's; no external review. For Zstandard: no frames from other encoders than
-libzstd; no browser; no decoder but libzstd and this library's for the encoder's frames.
+libzstd; no browser; no decoder but libzstd and this library's for the encoder's frames. For
+Brotli: no streams from encoders other than libbrotli's two copies; no browser.

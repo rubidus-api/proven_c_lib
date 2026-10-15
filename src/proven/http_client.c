@@ -110,7 +110,8 @@ proven_err_t proven_http_client_create(const proven_http_client_config_t *config
     if (out) *out = (void *)0;
     if (!config || !out || !proven_alloc_is_valid(config->alloc)) return PROVEN_ERR_INVALID_ARG;
     if (cl_has_control(config->username) || cl_has_control(config->password) || cl_has_control(config->user_agent)) return PROVEN_ERR_INVALID_ARG;
-    if (config->decompress_zstd && !config->decompress) return PROVEN_ERR_INVALID_ARG;
+    const proven_err_t coding_e = proven_http_decoder_cfg_check_(config->decompress, config->decompress_zstd, config->decompress_brotli);
+    if (coding_e != PROVEN_OK) return coding_e;
 
     proven_http_client_t *c = cl_alloc(config->alloc, sizeof *c);
     if (!c) return PROVEN_ERR_NOMEM;
@@ -594,7 +595,7 @@ static proven_err_t cl_exchange(cl_call_t *call, const proven_http_client_reques
     if (e == PROVEN_OK && c->cfg.decompress && req->upgrade.size == 0 &&
         !proven_http_header_find(req->headers, req->header_count, cl_lit("Accept-Encoding"), &(proven_u8str_view_t){0}) &&
         !proven_http_header_find(req->headers, req->header_count, cl_lit("Range"), &(proven_u8str_view_t){0})) {
-        e = proven_http_write_header(out, &len, cl_lit("Accept-Encoding"), proven_http_decoder_accept_(c->cfg.decompress_zstd));
+        e = proven_http_write_header(out, &len, cl_lit("Accept-Encoding"), proven_http_decoder_accept_(c->cfg.decompress_zstd, c->cfg.decompress_brotli));
     }
 
     bool wants_body = at->send_body && (streaming || req->body.size > 0);
@@ -743,7 +744,7 @@ static proven_err_t cl_exchange(cl_call_t *call, const proven_http_client_reques
     proven_http_decoder_free_(&call->dec);
     call->pending = (proven_mem_view_t){0};
     call->decoding = c->cfg.decompress && !call->body_done &&
-                     proven_http_decoder_wanted_(call->res.status, call->res.headers, call->res.header_count, c->cfg.decompress_zstd, &coding);
+                     proven_http_decoder_wanted_(call->res.status, call->res.headers, call->res.header_count, c->cfg.decompress_zstd, c->cfg.decompress_brotli, &coding);
     if (call->decoding) proven_http_decoder_begin_(&call->dec, c->cfg.alloc, coding);
     return PROVEN_OK;
 }

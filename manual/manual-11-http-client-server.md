@@ -1055,7 +1055,7 @@ int main(void) {
   content coding is decoded, and no response is compressed. Setting `decompress` in the
   client's configuration, and calling `proven_http_exchange_compress` in a handler, turn on
   gzip in each direction (and Zstandard with `decompress_zstd` in the client and
-  `compress_zstd` in the server):
+  `compress_zstd` in the server; Brotli, in the client only, with `decompress_brotli`):
   [Chapter 16](manual-16-compression.md), section 6.
 - **WebSocket** is not in these two headers: it is [Chapter 12](manual-12-websocket.md), built on section 11.
 - **A router, static files, sessions, middleware** on the server; **retries, caching, a

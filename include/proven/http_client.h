@@ -74,6 +74,7 @@ typedef struct {
     bool decompress;                        /**< ask for compressed responses and decode them; false: bodies arrive as the server sent them. See proven_http_client_read. */
     proven_u32 expect_timeout_ms;           /**< for a request sent with `expect_continue`: how long to wait for the server's word before sending the body anyway. 0: 1 s */
     bool decompress_zstd;                   /**< with `decompress`: ask for Zstandard too (`Accept-Encoding: zstd, gzip`) and decode a body sent with `Content-Encoding: zstd`, whose window may be up to 8 MiB (RFC 9659) - so a response being read can cost that much and 384 KiB more. Without `decompress`, PROVEN_ERR_INVALID_ARG. false: `zstd` is not asked for, and a body sent in it anyway arrives as sent */
+    bool decompress_brotli;                 /**< with `decompress`: ask for Brotli too (`br` in `Accept-Encoding`) and decode a body sent with `Content-Encoding: br`, whose window may be up to 16 MiB - so a response being read can cost that much and its codes (tens of KiB as encoders write them, 1.3 MiB at most), allocated as its output grows. Without `decompress`, PROVEN_ERR_INVALID_ARG; in a build with PROVEN_NO_BROTLI, PROVEN_ERR_UNSUPPORTED. false: `br` is not asked for, and a body sent in it anyway arrives as sent */
 } proven_http_client_config_t;
 
 /** @brief A client. Opaque; made by proven_http_client_create. */
@@ -185,7 +186,9 @@ proven_err_t proven_http_client_get(proven_http_client_t *client, proven_u8str_v
  * nor is a coding other than these two: such a body arrives as it was sent. `deflate` is read
  * as a zlib stream, or as raw DEFLATE when its first two bytes are no zlib header. With
  * `decompress_zstd` as well, `Accept-Encoding: zstd, gzip` is sent and a `zstd` body is
- * decoded in the same way, holding up to its window (8 MiB at most) and 384 KiB more.
+ * decoded in the same way, holding up to its window (8 MiB at most) and 384 KiB more; with
+ * `decompress_brotli`, `br` is asked for and decoded too, holding up to its window (16 MiB at
+ * most) and its codes.
  *
  * @return also PROVEN_ERR_TIMEOUT (no data within `io_timeout_ms`; the read may be repeated)
  *         and PROVEN_ERR_INVALID_FORMAT (malformed chunk framing; with `decompress`, a

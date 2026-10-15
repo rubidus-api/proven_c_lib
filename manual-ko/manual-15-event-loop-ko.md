@@ -1872,7 +1872,7 @@ Linux에서 등록된 테스트는 한가한 평문 HTTP 연결 하나에 힙 44
 - Windows에서 `WSAPoll`보다 **빠른 기다림**.
 - **파일을 복사 없이 보내기**, HTTP/2. (압축된 응답은 [16장](manual-16-compression-ko.md) 6절에 있다:
   서버에서는 `proven_http_stream_compress` - Zstandard는 설정의 `compress_zstd` - , 클라이언트 설정에서는
-  `decompress` - Zstandard는 `decompress_zstd` - 다.)
+  `decompress` - Zstandard는 `decompress_zstd`, Brotli는 `decompress_brotli` - 다.)
 - 루프로 **파일, 시그널, 자식 프로세스 지켜보기**. 루프는 소켓을 지켜본다.
 
 **어떻게 시험했나.** 등록된 테스트는 루프의 타이머, 게시, 소켓 관심을 한 스레드에서, 그리고 여러

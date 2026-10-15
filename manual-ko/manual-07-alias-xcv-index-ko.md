@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 1298개: 소문자 `xcv_` 이름 953개와 대문자 `XCV_` 이름 345개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 1306개: 소문자 `xcv_` 이름 959개와 대문자 `XCV_` 이름 347개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -51,6 +51,7 @@ alias 1298개: 소문자 `xcv_` 이름 953개와 대문자 `XCV_` 이름 345개.
 | `XCV_ARRAY_IS_VALID` | `proven_array_is_valid` |
 | `XCV_ARRAY_POP` | `PROVEN_ARRAY_POP` |
 | `XCV_ARRAY_PUSH` | `PROVEN_ARRAY_PUSH` |
+| `XCV_BROTLI_WINDOW_DEFAULT` | `PROVEN_BROTLI_WINDOW_DEFAULT` |
 | `XCV_CERT_EKU_` | `PROVEN_CERT_EKU_` |
 | `XCV_CERT_EKU_ANY` | `PROVEN_CERT_EKU_ANY` |
 | `XCV_CERT_EKU_CLIENT_AUTH` | `PROVEN_CERT_EKU_CLIENT_AUTH` |
@@ -222,6 +223,7 @@ alias 1298개: 소문자 `xcv_` 이름 953개와 대문자 `XCV_` 이름 345개.
 | `XCV_HTTP_BODY_NONE` | `PROVEN_HTTP_BODY_NONE` |
 | `XCV_HTTP_BODY_UNTIL_CLOSE` | `PROVEN_HTTP_BODY_UNTIL_CLOSE` |
 | `XCV_HTTP_BOUNDARY_SIZE` | `PROVEN_HTTP_BOUNDARY_SIZE` |
+| `XCV_HTTP_CODING_BROTLI` | `PROVEN_HTTP_CODING_BROTLI` |
 | `XCV_HTTP_CODING_DEFLATE` | `PROVEN_HTTP_CODING_DEFLATE` |
 | `XCV_HTTP_CODING_GZIP` | `PROVEN_HTTP_CODING_GZIP` |
 | `XCV_HTTP_CODING_IDENTITY` | `PROVEN_HTTP_CODING_IDENTITY` |
@@ -441,6 +443,12 @@ alias 1298개: 소문자 `xcv_` 이름 953개와 대문자 `XCV_` 이름 345개.
 | `xcv_base64_encode` | `proven_base64_encode` |
 | `xcv_base64_encoded_size` | `proven_base64_encoded_size` |
 | `xcv_base64url_encode` | `proven_base64url_encode` |
+| `xcv_brotli_decode` | `proven_brotli_decode` |
+| `xcv_brotli_decode_all` | `proven_brotli_decode_all` |
+| `xcv_brotli_decoder_create` | `proven_brotli_decoder_create` |
+| `xcv_brotli_decoder_destroy` | `proven_brotli_decoder_destroy` |
+| `xcv_brotli_decoder_reset` | `proven_brotli_decoder_reset` |
+| `xcv_brotli_decoder_t` | `proven_brotli_decoder_t` |
 | `xcv_buf_append` | `proven_buf_append` |
 | `xcv_buf_create` | `proven_buf_create` |
 | `xcv_buf_destroy` | `proven_buf_destroy` |

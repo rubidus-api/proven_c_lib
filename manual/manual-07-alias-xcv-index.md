@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1298 aliases: 953 lowercase `xcv_` names and 345 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1306 aliases: 959 lowercase `xcv_` names and 347 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -49,6 +49,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_ARRAY_IS_VALID` | `proven_array_is_valid` |
 | `XCV_ARRAY_POP` | `PROVEN_ARRAY_POP` |
 | `XCV_ARRAY_PUSH` | `PROVEN_ARRAY_PUSH` |
+| `XCV_BROTLI_WINDOW_DEFAULT` | `PROVEN_BROTLI_WINDOW_DEFAULT` |
 | `XCV_CERT_EKU_` | `PROVEN_CERT_EKU_` |
 | `XCV_CERT_EKU_ANY` | `PROVEN_CERT_EKU_ANY` |
 | `XCV_CERT_EKU_CLIENT_AUTH` | `PROVEN_CERT_EKU_CLIENT_AUTH` |
@@ -220,6 +221,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_HTTP_BODY_NONE` | `PROVEN_HTTP_BODY_NONE` |
 | `XCV_HTTP_BODY_UNTIL_CLOSE` | `PROVEN_HTTP_BODY_UNTIL_CLOSE` |
 | `XCV_HTTP_BOUNDARY_SIZE` | `PROVEN_HTTP_BOUNDARY_SIZE` |
+| `XCV_HTTP_CODING_BROTLI` | `PROVEN_HTTP_CODING_BROTLI` |
 | `XCV_HTTP_CODING_DEFLATE` | `PROVEN_HTTP_CODING_DEFLATE` |
 | `XCV_HTTP_CODING_GZIP` | `PROVEN_HTTP_CODING_GZIP` |
 | `XCV_HTTP_CODING_IDENTITY` | `PROVEN_HTTP_CODING_IDENTITY` |
@@ -439,6 +441,12 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_base64_encode` | `proven_base64_encode` |
 | `xcv_base64_encoded_size` | `proven_base64_encoded_size` |
 | `xcv_base64url_encode` | `proven_base64url_encode` |
+| `xcv_brotli_decode` | `proven_brotli_decode` |
+| `xcv_brotli_decode_all` | `proven_brotli_decode_all` |
+| `xcv_brotli_decoder_create` | `proven_brotli_decoder_create` |
+| `xcv_brotli_decoder_destroy` | `proven_brotli_decoder_destroy` |
+| `xcv_brotli_decoder_reset` | `proven_brotli_decoder_reset` |
+| `xcv_brotli_decoder_t` | `proven_brotli_decoder_t` |
 | `xcv_buf_append` | `proven_buf_append` |
 | `xcv_buf_create` | `proven_buf_create` |
 | `xcv_buf_destroy` | `proven_buf_destroy` |

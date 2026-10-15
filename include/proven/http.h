@@ -150,7 +150,8 @@ typedef enum {
     PROVEN_HTTP_CODING_GZIP,           /**< `gzip` (and its old name `x-gzip`): RFC 1952 */
     PROVEN_HTTP_CODING_DEFLATE,        /**< `deflate`: by the standard a zlib stream (RFC 1950); in practice sometimes raw DEFLATE */
     PROVEN_HTTP_CODING_OTHER,          /**< anything else, or more than one coding */
-    PROVEN_HTTP_CODING_ZSTD            /**< `zstd`: Zstandard, RFC 8878, with a window of at most 8 MiB (RFC 9659); since v0.57.0, OTHER before */
+    PROVEN_HTTP_CODING_ZSTD,           /**< `zstd`: Zstandard, RFC 8878, with a window of at most 8 MiB (RFC 9659); since v0.57.0, OTHER before */
+    PROVEN_HTTP_CODING_BROTLI          /**< `br`: Brotli, RFC 7932; since v0.60.0, OTHER before */
 } proven_http_coding_t;
 
 /**

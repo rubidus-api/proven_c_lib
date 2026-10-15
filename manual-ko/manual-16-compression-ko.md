@@ -3,10 +3,10 @@
 **3부 — 자료 구조. 선행 조건: 압축기를 만들 때 쓰는 할당자(allocator) - 예제에서는 힙(heap) 할당자 - 는
 [2장](manual-02-allocation-ko.md), 체크섬은 [4장](manual-04-containers-algorithms-ko.md).**
 **이 장을 마치면** 어떤 길이의 버퍼나 스트림도 압축하고 풀 수 있고, `gzip`과 `zlib` 포장을 읽고 쓸 수
-있으며, Zstandard를 읽고 쓸 수 있고, 낯선 이의 데이터가 얼마까지 부풀면 - 그리고 메모리를 얼마나 쓰게
+있으며, Zstandard를 읽고 쓸 수 있고, Brotli를 읽을 수 있고, 낯선 이의 데이터가 얼마까지 부풀면 - 그리고 메모리를 얼마나 쓰게
 하면 - 거부할지 정할 수 있다. 그리고 무엇을 시험했고 얼마나 빠른지 말할 수 있다.
 
-이 장은 `deflate.h`를, 7절에서는 `zstd.h`를 다룬다. 둘 다 순수한 계산이다 - 할당은 여러분이 준 할당자로만
+이 장은 `deflate.h`를, 7절에서는 `zstd.h`를, 8절에서는 `brotli.h`를 다룬다. 모두 순수한 계산이다 - 할당은 여러분이 준 할당자로만
 하고, 운영체제에서는 아무것도 받지 않는다 - 그래서 [프리스탠딩(freestanding)](manual-freestanding-ko.md)
 빌드에서 쓸 수 있다. 입력과 출력은 여러분의 메모리를 가리키는 뷰(view)로 주고받는다. 6절은 예외다: 11장과
 15장의 서버와 클라이언트에서 다루는 압축된 HTTP 응답 이야기다.
@@ -20,7 +20,8 @@
 5. [남이 보낸 데이터](#5-남이-보낸-데이터)
 6. [HTTP 위에서](#6-http-위에서)
 7. [Zstandard](#7-zstandard)
-8. [무엇을 받아들이고, 무엇이 없으며, 어떻게 시험했는가](#8-무엇을-받아들이고-무엇이-없으며-어떻게-시험했는가)
+8. [Brotli](#8-brotli)
+9. [무엇을 받아들이고, 무엇이 없으며, 어떻게 시험했는가](#9-무엇을-받아들이고-무엇이-없으며-어떻게-시험했는가)
 
 ## 1. DEFLATE가 하는 일, 한 쪽으로
 
@@ -431,6 +432,13 @@ curl과, zstd를 받는 브라우저는 둘을 같은 가중치로 보낸다 - `
 때문이다: gzip은 35 KiB면 되는데, 서버는 응답 하나에 클라이언트가 최대 8 MiB를 들고 있게 할 수 있다.
 `decompress` 없이 `decompress_zstd`만 켜면 `PROVEN_ERR_INVALID_ARG`다.
 
+**`decompress_brotli`를 켜면 Brotli도 요청한다** - 목록에 `br`이 들어가고, 두 스위치를 다 켜면
+`Accept-Encoding: zstd, br, gzip` - 그리고 `br` 본문을 8절의 디코더로 푼다. 이 디코더는 RFC 7932가
+허용하는 모든 창, 최대 16 MiB를 받아들인다. RFC 9659가 Zstandard에 대해 하듯 더 낮은 창을 정한 HTTP
+명세는 없다. 따로 켜는 까닭은 Zstandard와 같다: 응답 하나에 그중 얼마를 쓰게 할지 서버가 정한다.
+`decompress` 없이 켜면 `PROVEN_ERR_INVALID_ARG`, `PROVEN_NO_BROTLI`로 만든 빌드(8절)에서는
+`PROVEN_ERR_UNSUPPORTED`다. 서버는 `br`을 보내지 않는다: 이 라이브러리에는 Brotli 인코더가 없다.
+
 ### 예제: 페이지는 압축하고, 계정 페이지는 하지 않는다
 
 <!-- example: manual/examples/ko/ex_16_http_gzip.c -->
@@ -745,9 +753,10 @@ int main(void) {
 | `compress_zstd_level`, `compress_zstd_window_log` (둘 다) | 7절 인코더의 레벨(1부터 9, 0은 1)과 창(10부터 23, 0은 17). | 범위를 벗어나면 `create`가 `INVALID_ARG`. |
 | `decompress` (두 클라이언트 설정) | `Accept-Encoding: gzip`을 보내고 `gzip`과 `deflate` 본문을 푼다. | - |
 | `decompress_zstd` (두 클라이언트 설정) | `decompress`와 함께: `Accept-Encoding: zstd, gzip`을 보내고 `zstd` 본문도 푼다. | `decompress` 없이 켜면 `create`가 `INVALID_ARG`. |
+| `decompress_brotli` (두 클라이언트 설정) | `decompress`와 함께: `br`도 요청하고 `br` 본문도 푼다(v0.60.0부터). | `decompress` 없이 켜면 `create`가 `INVALID_ARG`. `PROVEN_NO_BROTLI` 빌드에서는 `UNSUPPORTED`. |
 | `proven_http_accepts_coding(headers, count, coding)` | 요청의 `Accept-Encoding`이 어떤 코딩을 허용하는가: 0보다 큰 가중치로 적혀 있거나, `*`에 포함된다. | `bool`. 필드가 없으면 identity만 허용된다. |
 | `proven_http_accept_weight(headers, count, coding)` | 얼마나: 그 코딩의 가중치, 없으면 `*`의 가중치, 천분율로. | 0부터 1000. `accepts_coding`이 아니라고 할 때 꼭 0. 필드가 없으면 identity는 1000, 나머지는 0. |
-| `proven_http_content_coding(headers, count)` | `Content-Encoding`이 말하는 코딩. | `PROVEN_HTTP_CODING_IDENTITY`, `_GZIP`(`x-gzip`도), `_DEFLATE`, `_ZSTD`(v0.57.0부터. 그 전에는 `_OTHER`), 그 밖의 것과 둘 이상에는 `_OTHER`. |
+| `proven_http_content_coding(headers, count)` | `Content-Encoding`이 말하는 코딩. | `PROVEN_HTTP_CODING_IDENTITY`, `_GZIP`(`x-gzip`도), `_DEFLATE`, `_ZSTD`(v0.57.0부터. 그 전에는 `_OTHER`), `br`에는 `_BROTLI`(v0.60.0부터. 그 전에는 `_OTHER`), 그 밖의 것과 둘 이상에는 `_OTHER`. |
 
 ### 주의할 점과, 잘못되는 경우
 
@@ -774,15 +783,15 @@ int main(void) {
   준 버퍼로 묶인다.
 - **손상된 압축 본문은 `PROVEN_ERR_INVALID_FORMAT`이다.** 짧은 성공이 되는 일은 없다: 중간에 끊긴
   스트림, 체크섬이 틀린 스트림, 또 하나의 gzip 멤버(또는 Zstandard 프레임)가 아닌 바이트가 뒤따르는
-  스트림. 잇달아 오는 gzip 멤버나 Zstandard 프레임 여럿은 본문 하나로 읽는다.
+  스트림. 잇달아 오는 gzip 멤버나 Zstandard 프레임 여럿은 본문 하나로 읽는다. Brotli 스트림 뒤에는 아무것도 없다.
 - **`deflate`는 실제로 두 가지를 뜻한다.** 표준은 zlib 스트림이라고 하는데 raw DEFLATE를 보내는 서버가
   있다. 클라이언트는 첫 두 바이트를 보고 어느 쪽이든 읽는다. `deflate`를 요청하는 일은 없고 - `gzip`과,
-  `decompress_zstd`를 켰다면 `zstd`만 요청한다 - 서버가 그것을 보내는 일도 없다.
+  `decompress_zstd`를 켰다면 `zstd`, `decompress_brotli`를 켰다면 `br`만 요청한다 - 서버가 그것을 보내는 일도 없다.
 - **풀지 않는 것:** `206 Partial Content`(압축된 본문의 일부 범위는 압축된 본문이 아니다 - 그리고
   `decompress`를 켰을 때 `Range`가 실린 요청은 `Accept-Encoding` 없이 나간다). `decompress_zstd` 없이 온
-  `zstd`. 그 밖의 코딩(`br`). 겹쳐 적용한 코딩 둘. 그런 본문은 헤더와 함께, 보낸 그대로 도착한다.
+  `zstd`. `decompress_brotli` 없이 온 `br`. 그 밖의 코딩(`compress`). 겹쳐 적용한 코딩 둘. 그런 본문은 헤더와 함께, 보낸 그대로 도착한다.
 - **메모리.** 풀리는 중인 응답은 열려 있는 동안 약 35 KiB(이벤트 구동 클라이언트에서는 52 KiB)를
-  쓴다 - `zstd` 응답은 그 프레임의 창만큼(최대 8 MiB)과 약 400 KiB를 더, 출력이 자라는 대로 할당해 쓴다. 스트림으로 압축되는 응답은 끝날 때까지 4절의 표가 윈도에 대해 말하는 만큼 - 기본값으로
+  쓴다 - `zstd` 응답은 그 프레임의 창만큼(최대 8 MiB)과 약 400 KiB를 더, `br` 응답은 그 스트림의 창만큼(최대 16 MiB)과 그 코드들(8절)을 더, 각각 출력이 자라는 대로 할당해 쓴다. 스트림으로 압축되는 응답은 끝날 때까지 4절의 표가 윈도에 대해 말하는 만큼 - 기본값으로
   325 KiB - 을 쓴다. 한 번에 보내는 응답은 그 호출 동안만, 본문보다 크지 않은 윈도로 쓴다. 기본 윈도로
   스트림 응답 만 개면 3 GiB다: `compress_window_bits`를 낮추거나, 덜 압축한다. `zstd`로 스트림을 보내는
   응답은 기본값(레벨 1, 128 KiB 창)에서 약 0.8 MiB - gzip의 325 KiB보다 많다 - 를, 레벨 3에 512 KiB 창이면
@@ -1094,7 +1103,166 @@ int main(void) {
 자리에서 flush하고, 쓸 때마다 하지는 말 것. 압축은 gzip보다 더 비밀스럽지 않다: 클라이언트가 고른 글자
 옆의 비밀에 대한 6절의 주의는 gzip에서와 같이 `zstd`에도 해당한다.
 
-## 8. 무엇을 받아들이고, 무엇이 없으며, 어떻게 시험했는가
+## 8. Brotli
+
+```c
+#include "proven/brotli.h"
+
+proven_err_t proven_brotli_decoder_create(proven_allocator_t alloc, proven_u64 window_max, proven_brotli_decoder_t **out);
+void proven_brotli_decoder_destroy(proven_brotli_decoder_t *b);
+void proven_brotli_decoder_reset(proven_brotli_decoder_t *b);
+proven_err_t proven_brotli_decode(proven_brotli_decoder_t *b, proven_mem_view_t in, proven_size_t *consumed,
+                                  proven_mem_mut_t out, proven_size_t *produced, bool *done);
+proven_err_t proven_brotli_decode_all(proven_allocator_t alloc, proven_mem_view_t in, proven_mem_mut_t out, proven_size_t *written);
+```
+
+Brotli(RFC 7932)는 HTTP의 `Content-Encoding: br`이다. 서버는 대개 미리 한 번, 가장 높은 품질로 압축해 두는
+파일에 쓴다. 그 품질에서는 gzip과 Zstandard보다 작게 나온다. 그 품질로 압축하는 일은 느리고, 푸는 일은
+품질과 상관없이 빠르다. 이 라이브러리는 v0.60.0부터 이것을 읽고, 쓰지는 않는다: 여기의 서버는 gzip이나
+Zstandard를 보낸다.
+
+디코더는 7절의 것처럼 쓴다 - 상태 하나와, 있는 만큼의 입력을 받아 있는 만큼의 출력 공간을 채우는 한
+걸음. 그리고 어디서든 멈출 수 있다: 입력이 거기서 끝나면 코드의 두 비트 사이에서, 공간이 거기서 끝나면
+복사 한가운데서. 두 가지가 7절과 같다:
+
+- **한 걸음이 할당할 수 있다.** 뒤의 바이트가 참조하는 히스토리는 스트림의 출력과 함께 자라며, 스트림이
+  밝힌 창을 넘지 않는다. 그리고 메타블록(Brotli의 단위, 출력 16 MiB까지)마다 접두 부호를 따로 가져오고,
+  그것들은 개수에 따라 자라는 표 하나에 만들어진다. 둘 다 다음 스트림을 위해 남겨 둔다. 그래서
+  `proven_brotli_decode`는 `PROVEN_ERR_NOMEM`을 돌려줄 수 있다.
+- **출력이 디코더 안에서 기다릴 수 있다.** 여러분이 준 공간이 모자라는 동안 그 히스토리 안에서.
+
+**창이 곧 메모리이고, 상한은 여러분의 것이다.** 스트림의 처음 몇 비트가 얼마나 멀리 거슬러 참조할지를
+말한다: 2^WBITS - 16바이트, WBITS는 10부터 24, 그러니 최대 16 MiB. `window_max`는 여러분이 허락하는
+최대다: 0은 16 MiB로, RFC 7932가 허용하는 모든 스트림을 받아들인다. 그보다 많이 필요한 스트림은 그것을
+위해 아무것도 할당하기 전에 `PROVEN_ERR_OUT_OF_BOUNDS`다. RFC 7932가 아닌 libbrotli의 "큰 창" 변형은
+잘못된 형식으로 거절한다.
+
+| | 메모리 |
+|---|---|
+| 만든 디코더 | 약 22 KiB |
+| 스트림을 푸는 동안 | 히스토리 - 출력이 닿은 만큼의 창, 최대 2^WBITS바이트와 32바이트 - 와 코드들: 인코더가 쓰는 것은 수십 KiB, 메타블록이 가질 수 있는 최대(세 종류마다 256개, 각각 코드 표가 될 수 있는 가장 큰 크기)는 1,343,024바이트 |
+
+**스트림 하나, 그 뒤에는 아무것도 없다.** Brotli 스트림은 gzip 멤버나 Zstandard 프레임처럼 잇달아 오지
+않는다. `*done`은 스트림이 끝나는 곳에서 참이 되고, 그 호출은 거기서 멈춘다 - 소비한 것이 곧 그
+스트림이다 - 그 뒤의 호출은 아무것도 더 소비하지 않는다. 다른 스트림을 읽으려면 reset한다.
+`proven_brotli_decode_all`은 끝 뒤의 바이트를 거절하고, HTTP 클라이언트도 그렇다.
+
+**정적 사전.** Brotli 스트림은 모든 디코더가 지니는 사전에서 단어를 복사할 수 있다: 여러 언어의 단어
+122,784바이트와, 단어마다 바꾸는 방식 121가지(앞에 공백, 첫 글자를 대문자로, `ing ` 같은 접미사).
+이것이 이 디코더가 프로그램에 더하는 것의 대부분이다: 이것이 있으면 라이브러리가 162,351바이트 커진다
+(x86-64에서 `-O2`로, 코드와 데이터 998,985바이트 대 836,634바이트). `-DPROVEN_NO_BROTLI`로 만든 빌드는 디코더와
+사전을 뺀다. 그때 `proven.h`는 `brotli.h`를 포함하지 않고, Brotli를 풀라는 HTTP 클라이언트는
+`PROVEN_ERR_UNSUPPORTED`다.
+
+### 예제: 버퍼, 뒤에 무언가 붙은 스트림, 그리고 너무 큰 창
+
+<!-- example: manual/examples/ko/ex_16_brotli.c -->
+```c
+#include <string.h>
+
+/*
+ * Brotli: 버퍼 전체, 이어서 뒤에 다른 바이트가 붙은 같은 스트림을 조각조각 읽기, 그리고 남의
+ * 스트림이 이 프로그램이 쓸 메모리를 정하지 못하게 하는 창 상한.
+ */
+
+/* 로그 줄 4,000바이트를 libbrotli가 품질 11, 64 KiB 창으로 쓴 것: 58바이트. */
+static const proven_byte_t STREAM[] = {
+    0xe2, 0xf3, 0x01, 0xb1, 0xe3, 0x30, 0x76, 0xb3, 0x54, 0x22, 0x7f, 0x6e,
+    0x31, 0x35, 0x23, 0x54, 0x7a, 0x83, 0xbc, 0xb8, 0x1c, 0x8d, 0x96, 0x8c,
+    0x29, 0xa2, 0x82, 0x0d, 0x38, 0x60, 0x0f, 0x30, 0xc2, 0x45, 0x17, 0x5a,
+    0x8c, 0xce, 0x18, 0x20, 0xa3, 0x8c, 0xc1, 0x41, 0x9a, 0xb7, 0x0a, 0x2d,
+    0x23, 0xe3, 0x31, 0x41, 0x6b, 0xd0, 0x07, 0x39, 0x00, 0x40,
+};
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    static const char line[] = "GET /index.html HTTP/1.1 - 200 - text/html; charset=utf-8\n";
+    static proven_byte_t text[4000];
+    for (proven_size_t i = 0; i < sizeof text; ++i) text[i] = (proven_byte_t)line[i % (sizeof line - 1)];
+
+    /* 버퍼 전체: gzip처럼 출력 버퍼가 상한이다. */
+    static proven_byte_t out[8000];
+    proven_size_t n = 0;
+    EXAMPLE_REQUIRE(proven_brotli_decode_all(heap, (proven_mem_view_t){ STREAM, sizeof STREAM }, (proven_mem_mut_t){ out, sizeof out }, &n) == PROVEN_OK &&
+                    n == sizeof text && memcmp(out, text, n) == 0, "Brotli 58바이트가 libbrotli가 받은 4,000바이트로 풀린다");
+    EXAMPLE_REQUIRE(proven_brotli_decode_all(heap, (proven_mem_view_t){ STREAM, sizeof STREAM }, (proven_mem_mut_t){ out, 3999 }, &n) == PROVEN_ERR_OUT_OF_BOUNDS,
+                    "3,999바이트에는 들어가지 않는다: PROVEN_ERR_OUT_OF_BOUNDS");
+
+    /* 뒤에 다른 5바이트가 붙은 스트림을 7바이트씩, 500바이트의 자리로 준다. `done`은 스트림이
+     * 끝나는 곳에서 오고, 그 뒤의 바이트는 소비되지 않는다. Brotli 스트림 뒤에는 이어질
+     * 프레임이 없으니, 그 바이트가 무엇인지는 호출한 쪽이 정할 일이다. */
+    static proven_byte_t more[sizeof STREAM + 5];
+    memcpy(more, STREAM, sizeof STREAM);
+    memcpy(more + sizeof STREAM, "after", 5);
+    proven_brotli_decoder_t *b = NULL;
+    EXAMPLE_REQUIRE(proven_brotli_decoder_create(heap, 0, &b) == PROVEN_OK, "기본 창 상한(16 MiB)의 디코더");
+    proven_size_t in_at = 0, out_at = 0;
+    bool done = false;
+    while (!done) {
+        proven_size_t give = sizeof more - in_at < 7 ? sizeof more - in_at : 7, room = sizeof out - out_at < 500 ? sizeof out - out_at : 500;
+        proven_size_t used = 0, made = 0;
+        EXAMPLE_REQUIRE(proven_brotli_decode(b, (proven_mem_view_t){ more + in_at, give }, &used, (proven_mem_mut_t){ out + out_at, room }, &made, &done) == PROVEN_OK, "한 걸음");
+        in_at += used;
+        out_at += made;
+        if (used == 0 && made == 0 && !done) break;     /* 줄 것이 없거나 둘 자리가 없다 */
+    }
+    EXAMPLE_REQUIRE(done && in_at == sizeof STREAM && out_at == sizeof text && memcmp(out, text, out_at) == 0,
+                    "스트림의 58바이트 뒤에서 done, 그 뒤의 5바이트는 그대로");
+
+    /* 창 상한. 스트림의 처음 몇 비트가 얼마나 멀리 거슬러 참조할지를 말하고, 디코더는 그만큼을
+     * 쥐고 있어야 한다. libbrotli의 가장 큰 창으로 만든 이 스트림은 16 MiB를 요구한다. 64 KiB로
+     * 제한한 디코더는 아무것도 할당하기 전에 거절하고, reset하면 다시 쓸 수 있다. */
+    static const proven_byte_t wide[] = { 0x0f, 0x01, 0x80, 0x61, 0x62, 0x63, 0x03 };
+    proven_brotli_decoder_t *small = NULL;
+    proven_size_t used = 0, made = 0;
+    EXAMPLE_REQUIRE(proven_brotli_decoder_create(heap, 64 * 1024, &small) == PROVEN_OK, "64 KiB로 제한한 디코더");
+    EXAMPLE_REQUIRE(proven_brotli_decode(small, (proven_mem_view_t){ wide, sizeof wide }, &used, (proven_mem_mut_t){ out, sizeof out }, &made, &done) == PROVEN_ERR_OUT_OF_BOUNDS,
+                    "16 MiB 창의 스트림: PROVEN_ERR_OUT_OF_BOUNDS");
+    proven_brotli_decoder_reset(small);
+    EXAMPLE_REQUIRE(proven_brotli_decode(small, (proven_mem_view_t){ STREAM, sizeof STREAM }, &used, (proven_mem_mut_t){ out, sizeof out }, &made, &done) == PROVEN_OK &&
+                    done && made == sizeof text, "reset 뒤에는 상한 안의 스트림이 풀린다");
+    proven_brotli_decoder_reset(b);
+    EXAMPLE_REQUIRE(proven_brotli_decode(b, (proven_mem_view_t){ wide, sizeof wide }, &used, (proven_mem_mut_t){ out, sizeof out }, &made, &done) == PROVEN_OK &&
+                    done && made == 3 && memcmp(out, "abc", 3) == 0, "기본 상한은 받아들인다 - 히스토리는 16 MiB가 아니라 몇 KiB");
+
+    proven_brotli_decoder_destroy(small);
+    proven_brotli_decoder_destroy(b);
+    return EXAMPLE_OK();
+}
+```
+
+### 레퍼런스
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_brotli_decoder_create(alloc, window_max, &b)` | 디코더. `window_max`는 1 KiB부터 2 GiB. 0은 16 MiB. | `INVALID_ARG`, `NOMEM`. |
+| `proven_brotli_decode(b, in, &consumed, out, &produced, &done)` | `in`의 일부를 받아 `out`의 일부를 채운다. 스트림의 끝에서 멈춘다. 만들었다고 보고한 바이트만 쓴다. | `INVALID_FORMAT`(Brotli가 아니거나 손상됨), `OUT_OF_BOUNDS`(창이 상한 위), `NOMEM`, `INVALID_ARG`. 오류 뒤에는 reset까지 같은 오류. |
+| `proven_brotli_decoder_reset(b)` | 진행 중인 스트림을 잊는다. 버퍼는 남긴다. | 없음. |
+| `proven_brotli_decoder_destroy(b)` | 해제한다. NULL도 된다. | 없음. |
+| `proven_brotli_decode_all(alloc, in, out, &written)` | `in`의 스트림 하나를 기본 상한으로 `out`에. `out`의 크기가 출력의 상한이다. | 들어가지 않으면 `OUT_OF_BOUNDS`. `in`이 비었거나, 스트림 안에서 끝나거나, 스트림 뒤에 더 있으면 `INVALID_FORMAT`. |
+
+### 주의할 점과, 잘못되는 경우
+
+- **창이 메모리를 정한다.** 7절과 같다: 스트림을 쓴 쪽이 여러분의 상한 안에서 고른다. 16 MiB 창을 쓰고 그
+  창을 채울 만큼 긴 응답 천 개를 한꺼번에 받으면 16 GiB다. 스트림을 아는 곳(알려진 창으로 직접 만든
+  파일)에서는 `window_max`를 낮추고, 디코더 수를 연결 수처럼 셀 것.
+- **체크섬이 없다.** 여전히 유효한 스트림을 이루는 손상은 다른 바이트로 풀린다. 디코더는 해석되지 않는
+  것만 거부할 수 있다. 중요한 곳에서는 푼 것을 직접 확인할 것.
+- **첫 바이트로 알아볼 수 없다.** Brotli에는 매직 넘버가 없다: gzip이나 텍스트를 받은 디코더는 곧바로가
+  아니라 안쪽 어딘가에서 실패하고, 다른 종류의 아주 짧은 입력이 우연히 유효한 스트림일 수도 있다. HTTP에서는
+  `Content-Encoding`이 본문이 무엇인지 말한다. 파일이라면 이름(`.br`)이나 자기 헤더를 붙여 둘 것.
+
+**libbrotli가 거부하는 것은 하나도 받아들이지 않는다.** 등록된 테스트 밖에서, 스트림 176개를 자르거나 바꾼
+사본 1,437,490개를 이 디코더와 libbrotli 1.1.0의 한 번 호출 디코더에 함께 주었다: libbrotli가 거부한 것을
+여기서 받아들인 것은 없고, 둘 다 받아들인 것 가운데 다르게 나온 것도 없으며, libbrotli가 받아들이고 여기서
+거부한 것이 11,242개다 - 모두 입력보다 먼저 끝나 같은 출력을 내는 스트림으로, 남은 바이트를 libbrotli의 한 번
+호출 디코더는 무시하고 `proven_brotli_decode_all`은 (libbrotli의 Python 바인딩처럼) 무시하지 않는다.
+
+**속도.** 개발 기계에서, 이 라이브러리의 C 소스(2.2 MB)를 libbrotli가 품질 1, 5, 11로 압축한 것은 각각 약
+170, 215, 235 MiB/s로 풀린다 - 같은 프로세스에서 잰 libbrotli 자신의 디코더(약 260, 390, 410 MiB/s)의
+0.54~0.68배. 비압축 메타블록이나 긴 반복은 libbrotli의 속도로 복사한다.
+
+## 9. 무엇을 받아들이고, 무엇이 없으며, 어떻게 시험했는가
 
 **해제기가 받아들이는 것은 zlib가 받아들이는 것이다.** RFC 1951이 모퉁이를 열어 둔 곳마다, 경우 하나하나를
 먼저 zlib에 시험해 보고 그 판정을 따랐다. 실제 생산자가 zlib가 봐주는 것을 낼 수 있기 때문이다. 그래서:
@@ -1110,12 +1278,12 @@ int main(void) {
 
 - **미리 정한 사전**(zlib의 `FDICT`), 어느 방향이든.
 - **ZIP 압축 파일, tar 파일**: 그것들은 그릇이다. 이것은 그 안의 코덱이다.
-- **Deflate64**, 그리고 다른 모든 압축 형식: Brotli, LZ4, bzip2, xz. Zstandard의 느린 레벨(libzstd의 10부터 22:
-  이진 트리와 optimal 파싱), 사전, long-distance 모드.
+- **Deflate64**, 그리고 다른 모든 압축 형식: LZ4, bzip2, xz. Zstandard의 느린 레벨(libzstd의 10부터 22:
+  이진 트리와 optimal 파싱), 사전, long-distance 모드. Brotli 압축. Brotli의 큰 창 변형과 공유 사전.
 - **gzip 헤더의 필드** - 이름, 시간, 주석 - 는 두거나 읽을 수 없다.
 - **여러 gzip 멤버를 하나의 스트림으로** 자동으로 읽기: 멤버마다 reset한다(3절).
   (6절의 HTTP 클라이언트는 응답 본문에 대해 이것을 해 준다.)
-- **HTTP 위에서:** 어느 방향이든 압축된 *요청* 본문. `br`. 스트림 응답이 지금까지 쓴 것을
+- **HTTP 위에서:** 어느 방향이든 압축된 *요청* 본문. `br` 보내기. 스트림 응답이 지금까지 쓴 것을
   밀어내는 호출. 미리 압축해 둔 파일 제공(핸들러가 직접 할 수 있다: `proven_http_accepts_coding`으로
   물은 다음 자기 `Content-Encoding`을 쓴다).
 
@@ -1150,6 +1318,23 @@ Node 서버가 `zstd`로 보낸 것(레벨 1, 3, 19, 통째로, flush하며, 프
 뒤에 쓰레기가 붙은 것은 거부했으며, 요청하지 않은 클라이언트에게는 gzip이 왔다. curl은 이 라이브러리
 서버에서 핸들러가 직접 보낸 Zstandard를 읽었다.
 
+**8절은** Python 바인딩(1.1.0)을 거쳐 libbrotli에 대고 시험했다: 등록된 테스트는 libbrotli가 열 종류의
+데이터로 만든 스트림 110개 - 품질 0, 1, 5, 9, 11, 1 KiB부터 16 MiB까지의 창, 텍스트와 일반 모드 - 를 한 번의
+호출로, 한 바이트씩, 그리고 고르지 않은 걸음으로 풀어 libbrotli가 받았던 데이터를 얻는다. libbrotli가 푸는,
+손으로 만든 스트림 66개를 같은 결과로 푼다 - 메타데이터, 비압축 메타블록, 모든 창 크기, 121가지 변환 모두를
+거친 사전 단어(2바이트와 3바이트 글자의 대문자 변환 포함), 모든 문맥 모드, 반복과 move-to-front를 쓴 문맥
+맵, 모든 짧은 거리 코드, 모든 종류의 블록 전환, 접두 부호를 쓰는 모든 방식. libbrotli가 거부하는 25개를, 각기 다른 방식으로 틀린
+것들을 거부한다. 짧은 스트림들의 모든 진부분 접두를 거부하고, 그 모든 1비트 변경(72,376개)에 통째와 걸음
+단위에서 같은 판정을 내린다. 창 상한이 할당 전에 거부하는 것, 쥐는 메모리, 실패한 할당마다
+`PROVEN_ERR_NOMEM`이 오는 것도 보인다. 사전과 변환은 RFC 7932 본문에서 가져와, RFC가 밝힌 CRC-32와
+libbrotli 자신의 사본 모두와 대조했다. 등록된 테스트 밖에서는: Python의 libbrotli가 만든 스트림 358개와
+Node의 libbrotli(따로 들어 있는 1.2.0)가 만든 144개 - 이 저장소의 파일들, 한국어 매뉴얼, 소스 2.2 MB - 를
+1바이트부터 70,000바이트까지의 걸음으로, 버퍼 밖의 읽기나 쓰기를 보고하는 도구 아래에서 바이트 하나까지
+같게 풀었다. 위의 손상된 사본 1,437,490개. 그리고 알파벳마다 만들 수 있는 가장 큰 코드 표를 계산한 다음 실제로
+만들어 보았다. HTTP에서는 블로킹, 이벤트 구동, HTTP/2 클라이언트가 Node 서버가 `br`로 보낸 것(품질 1, 5, 11,
+1 KiB부터 16 MiB까지의 창, 통째로와 flush하며, 3 MB까지)을 풀었고, 끊기거나 뒤에 쓰레기가 붙거나 두 번
+이어진 것은 거부했으며, 요청하지 않은 클라이언트에게는 gzip이 왔다.
+
 **7절의 인코더는** 자기 디코더와 libzstd에 대고 시험했다. 등록된 테스트는 열한 종류의 데이터(빈 것, 한
 바이트, 같은 바이트의 연속, 번호 붙은 줄, 먼 뒤를 복사하는 잡음, 무작위 바이트, 128개가 넘는 바이트 값 등)를
 아홉 레벨 모두와 세 창으로 통째로, 그리고 방식마다 한 레벨씩 스트림으로 - 조각마다 블록 flush, 출력은 한
@@ -1167,3 +1352,4 @@ Node 서버가 `zstd`로 보낸 것(레벨 1, 3, 19, 통째로, flush하며, 프
 
 **하지 않은 것:** 커버리지 기반 퍼징 없음. zlib 말고 두 번째 압축기의 출력과의 비교 없음. 외부 검토 없음.
 Zstandard에 대해서는: libzstd 말고 다른 인코더의 프레임 없음. 브라우저 없음. 인코더의 프레임을 푼 디코더는 libzstd와 이 라이브러리의 것뿐.
+Brotli에 대해서는: libbrotli의 두 사본 말고 다른 인코더의 스트림 없음. 브라우저 없음.

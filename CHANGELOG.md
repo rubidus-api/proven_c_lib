@@ -18,6 +18,52 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **Brotli decompression (RFC 7932): `brotli.h`.** `proven_brotli_decoder_create`, `_destroy`,
+  `_reset`, `proven_brotli_decode` and `proven_brotli_decode_all`, used as `proven_zstd_decode`
+  is: a step that takes what input there is and fills what output space there is, and can stop
+  between any two bits of a code or in the middle of a copy. A step may allocate: the history
+  grows with the stream's output up to the window the stream states (2^WBITS bytes, 16 MiB at
+  most), and each meta-block's prefix codes go into a table that grows with how many there are
+  - tens of KiB for what encoders write, 1,343,024 bytes at most. The caller sets the window
+  limit (`window_max`, 0 is 16 MiB, which takes every stream of RFC 7932); a stream that needs
+  more is `PROVEN_ERR_OUT_OF_BOUNDS` before anything is allocated for it, and the "large window"
+  variant is refused as malformed. One stream: `done` where it ends, and the bytes after it are
+  not consumed (`decode_all` refuses them). The static dictionary (122,784 bytes) and its 121
+  transforms were taken from the text of RFC 7932 and checked against the CRC-32s the RFC gives
+  and against libbrotli's copy. Decoding is 0.54 to 0.68 of libbrotli's speed on the
+  development machine. Part of the freestanding profile. Decompression only: the library does
+  not write Brotli. Manual chapter 16, section 8, with an example run by the suite.
+- **`PROVEN_NO_BROTLI`**: a build option that leaves the decoder and its dictionary out -
+  162,351 bytes, about a sixth of the library (998,985 bytes of code and data with it, 836,634
+  without, at `-O2` on x86-64). `proven.h` then does not include `brotli.h`.
+- **The HTTP clients decode `br` when asked: `decompress_brotli`** in both client
+  configurations, beside `decompress_zstd`. The client then asks for `br` too (`Accept-Encoding:
+  br, gzip`, or `zstd, br, gzip` with both switches) and decodes a `br` body - the blocking
+  client, the event-driven one and its HTTP/2 connections - with the 16 MiB window limit. It is
+  a separate switch for the same reason as `decompress_zstd`: the window is memory a server
+  may make the client hold for one response. Without `decompress` it is
+  `PROVEN_ERR_INVALID_ARG`; in a build with `PROVEN_NO_BROTLI`, `PROVEN_ERR_UNSUPPORTED`. A
+  `br` body followed by other bytes is `PROVEN_ERR_INVALID_FORMAT`. The servers do not send
+  `br`.
+- `PROVEN_HTTP_CODING_BROTLI`, after `PROVEN_HTTP_CODING_ZSTD`.
+- Tests: `test_unit_brotli` (110 streams libbrotli made, 66 hand-built streams it decodes -
+  metadata, every window size, all 121 transforms, every context mode, context maps, every
+  short distance code, block switches in each category, every shape of prefix code - and 25
+  it refuses; every prefix and
+  single-bit change of the short streams; the end of a stream; the window limit; the memory
+  held; failed allocations); `test_portability_compile_nobrotli`; `test_unit_http_coding` has
+  ten `br` bodies made by libbrotli (decoded, or refused, as libbrotli's verdict says) through
+  both clients, and a client without `decompress_brotli` that is given `br` as sent.
+
+### Changed
+
+- `proven_http_content_coding` returns `PROVEN_HTTP_CODING_BROTLI` for `Content-Encoding: br`,
+  where it returned `PROVEN_HTTP_CODING_OTHER`.
+- The decoding clients of `test_unit_http_coding` ask for `zstd, br, gzip`; its handler that
+  names its own coding names `compress`, which no client decodes, where it named `br`.
+
 ## [0.59.0] - 2026-10-15
 
 ### Added

@@ -63,6 +63,7 @@ static bool vector_plain_is(const coding_vector_t *v, const proven_byte_t *got, 
 
 #define VECTOR_COUNT (sizeof coding_vectors / sizeof coding_vectors[0])
 #define ZSTD_VECTOR 23u                     /* the first zstd vector: "zstd" */
+#define BROTLI_VECTOR 36u                   /* the first Brotli vector: "br" */
 
 // ---------------------------------------------------------------------------------------
 // What the servers answer: one table for both
@@ -119,7 +120,7 @@ static void plan_for(const proven_http_request_t *req, proven_net_addr_t peer, p
     } else if (strcmp(path, "/own") == 0) {
         p->compress = true;
         p->total = 3000;
-        p->headers[p->header_count++] = (proven_http_header_t){ PROVEN_LIT("Content-Encoding"), PROVEN_LIT("br") };
+        p->headers[p->header_count++] = (proven_http_header_t){ PROVEN_LIT("Content-Encoding"), PROVEN_LIT("compress") };
     } else if (strcmp(path, "/204") == 0) {
         p->compress = true;
         p->status = 204;
@@ -542,7 +543,7 @@ static void compressed_responses(fetch_fn fetch, void *client, bool tls, proven_
         fetch(client, tls, port, "GET", path, &g);
         PROVEN_TEST_ASSERT(g.status == 200 && text_is(&g, n), "a body sent with respond arrives as it was written, at every size", "Check the respond function of the server, and proven_http_compress_all_.");
         PROVEN_TEST_ASSERT((strcmp(g.encoding, coding) == 0) == (n >= 256), "compressed from 256 bytes up, and sent as it is below that", "");
-        PROVEN_TEST_ASSERT(strcmp(g.vary, "Accept-Encoding") == 0 && strcmp(g.accept, "zstd, gzip") == 0, "with Vary: Accept-Encoding either way, in answer to Accept-Encoding: zstd, gzip", "");
+        PROVEN_TEST_ASSERT(strcmp(g.vary, "Accept-Encoding") == 0 && strcmp(g.accept, "zstd, br, gzip") == 0, "with Vary: Accept-Encoding either way, in answer to Accept-Encoding: zstd, br, gzip", "");
         if (n >= 256) PROVEN_TEST_ASSERT((proven_size_t)atol(g.length) < n && g.transfer[0] == '\0', "and a Content-Length that is the compressed size", "");
 
         snprintf(path, sizeof path, "/s/%u", (unsigned)n);
@@ -562,7 +563,7 @@ static void compressed_responses(fetch_fn fetch, void *client, bool tls, proven_
     fetch(client, tls, port, "GET", "/p/3000", &g);
     PROVEN_TEST_ASSERT(text_is(&g, 3000) && g.encoding[0] == '\0' && g.vary_fields == 0, "a response that did not ask is not compressed and says nothing of Vary", "");
     fetch(client, tls, port, "GET", "/own", &g);
-    PROVEN_TEST_ASSERT(text_is(&g, 3000) && strcmp(g.encoding, "br") == 0, "a handler's own Content-Encoding is left alone, body and header", "");
+    PROVEN_TEST_ASSERT(text_is(&g, 3000) && strcmp(g.encoding, "compress") == 0, "a handler's own Content-Encoding is left alone, body and header", "");
     fetch(client, tls, port, "GET", "/204", &g);
     PROVEN_TEST_ASSERT(g.err == PROVEN_OK && g.status == 204 && g.size == 0 && g.encoding[0] == '\0', "a 204 is not compressed", "");
     fetch(client, tls, port, "GET", "/range", &g);
@@ -676,11 +677,19 @@ int main(void) {
             proven_http_header_t h = { PROVEN_LIT("Accept-Encoding"), sv(zrows[i].value) };
             PROVEN_TEST_ASSERT(proven_http_accepts_coding(&h, 1, PROVEN_HTTP_CODING_ZSTD) == zrows[i].zstd, "zstd is accepted exactly when the field says so", zrows[i].value);
         }
+        static const struct { const char *value; bool br; } brows[] = {
+            { "br", true }, { "BR, gzip", true }, { "gzip, deflate, br, zstd", true }, { "br;q=0, *", false }, { "*", true }, { "zstd, gzip", false }, { "brotli", false },
+        };
+        for (proven_size_t i = 0; i < sizeof brows / sizeof brows[0]; ++i) {
+            proven_http_header_t h = { PROVEN_LIT("Accept-Encoding"), sv(brows[i].value) };
+            PROVEN_TEST_ASSERT(proven_http_accepts_coding(&h, 1, PROVEN_HTTP_CODING_BROTLI) == brows[i].br, "br is accepted exactly when the field says so", brows[i].value);
+        }
 
         static const struct { const char *value; proven_http_coding_t coding; } codings[] = {
             { NULL, PROVEN_HTTP_CODING_IDENTITY }, { "", PROVEN_HTTP_CODING_IDENTITY }, { "identity", PROVEN_HTTP_CODING_IDENTITY },
             { "gzip", PROVEN_HTTP_CODING_GZIP }, { "GZIP", PROVEN_HTTP_CODING_GZIP }, { "x-gzip", PROVEN_HTTP_CODING_GZIP }, { " gzip ", PROVEN_HTTP_CODING_GZIP },
-            { "deflate", PROVEN_HTTP_CODING_DEFLATE }, { "br", PROVEN_HTTP_CODING_OTHER }, { "zstd", PROVEN_HTTP_CODING_ZSTD }, { "ZStd", PROVEN_HTTP_CODING_ZSTD },
+            { "deflate", PROVEN_HTTP_CODING_DEFLATE }, { "br", PROVEN_HTTP_CODING_BROTLI }, { "Br", PROVEN_HTTP_CODING_BROTLI }, { "brotli", PROVEN_HTTP_CODING_OTHER },
+            { "compress", PROVEN_HTTP_CODING_OTHER }, { "zstd", PROVEN_HTTP_CODING_ZSTD }, { "ZStd", PROVEN_HTTP_CODING_ZSTD }, { "br, gzip", PROVEN_HTTP_CODING_OTHER },
             { "zstd, gzip", PROVEN_HTTP_CODING_OTHER }, { "x-zstd", PROVEN_HTTP_CODING_OTHER },
             { "gzip, gzip", PROVEN_HTTP_CODING_OTHER }, { "deflate, gzip", PROVEN_HTTP_CODING_OTHER }, { "gzip;q=1", PROVEN_HTTP_CODING_OTHER },
         };
@@ -698,11 +707,14 @@ int main(void) {
             const coding_vector_t *v = &coding_vectors[i];
             proven_http_header_t h = { PROVEN_LIT("Content-Encoding"), sv(v->encoding) };
             proven_http_coding_t coding = PROVEN_HTTP_CODING_IDENTITY;
-            bool wanted = proven_http_decoder_wanted_(200, &h, 1, true, &coding);
-            PROVEN_TEST_ASSERT(wanted == (v->plain != CODING_PLAIN_AS_SENT), "a body is decoded exactly when its coding is gzip, deflate or zstd alone", v->name);
-            PROVEN_TEST_ASSERT(!proven_http_decoder_wanted_(206, &h, 1, true, &coding), "and never in a 206", v->name);
+            bool wanted = proven_http_decoder_wanted_(200, &h, 1, true, true, &coding);
+            PROVEN_TEST_ASSERT(wanted == (v->plain != CODING_PLAIN_AS_SENT), "a body is decoded exactly when its coding is gzip, deflate, zstd or br alone", v->name);
+            PROVEN_TEST_ASSERT(!proven_http_decoder_wanted_(206, &h, 1, true, true, &coding), "and never in a 206", v->name);
             proven_http_coding_t gz = PROVEN_HTTP_CODING_IDENTITY;
-            PROVEN_TEST_ASSERT(proven_http_decoder_wanted_(200, &h, 1, false, &gz) == (wanted && coding != PROVEN_HTTP_CODING_ZSTD), "zstd only when it was asked for", v->name);
+            PROVEN_TEST_ASSERT(proven_http_decoder_wanted_(200, &h, 1, false, false, &gz) == (wanted && coding != PROVEN_HTTP_CODING_ZSTD && coding != PROVEN_HTTP_CODING_BROTLI),
+                               "zstd and br only when they were asked for", v->name);
+            PROVEN_TEST_ASSERT(proven_http_decoder_wanted_(200, &h, 1, true, false, &gz) == (wanted && coding != PROVEN_HTTP_CODING_BROTLI) &&
+                               proven_http_decoder_wanted_(200, &h, 1, false, true, &gz) == (wanted && coding != PROVEN_HTTP_CODING_ZSTD), "each by its own switch", v->name);
             if (!wanted) continue;
             for (int bytewise = 0; bytewise < 2; ++bytewise) {
                 proven_http_decoder_t_ d;
@@ -722,7 +734,7 @@ int main(void) {
                 }
                 if (e == PROVEN_OK) e = proven_http_decoder_end_(&d);
                 proven_http_decoder_free_(&d);
-                if (v->plain >= 0) PROVEN_TEST_ASSERT(e == PROVEN_OK && vector_plain_is(v, g_got, out), "what zlib or libzstd made decodes to what it was given", v->name);
+                if (v->plain >= 0) PROVEN_TEST_ASSERT(e == PROVEN_OK && vector_plain_is(v, g_got, out), "what zlib, libzstd or libbrotli made decodes to what it was given", v->name);
                 else PROVEN_TEST_ASSERT(e == PROVEN_ERR_INVALID_FORMAT, "what the oracle refuses is PROVEN_ERR_INVALID_FORMAT", v->name);
             }
         }
@@ -836,12 +848,12 @@ int main(void) {
     PROVEN_TEST_ASSERT(proven_job_group_submit(server_jobs, &server_group, blocking_serve, bserver) == PROVEN_OK, "its loop is started", "");
 
     proven_http_client_config_t plain_cfg = { .alloc = g_heap, .max_idle_connections = 4 };
-    proven_http_client_config_t decoding_cfg = { .alloc = g_heap, .max_idle_connections = 4, .decompress = true, .decompress_zstd = true };
+    proven_http_client_config_t decoding_cfg = { .alloc = g_heap, .max_idle_connections = 4, .decompress = true, .decompress_zstd = true, .decompress_brotli = true };
     proven_http_client_config_t gzip_cfg = { .alloc = g_heap, .max_idle_connections = 4, .decompress = true };
     proven_http_client_t *bplain = NULL, *bdecoding = NULL, *bgzip = NULL;
     PROVEN_TEST_ASSERT(proven_http_client_create(&plain_cfg, &bplain) == PROVEN_OK && proven_http_client_create(&decoding_cfg, &bdecoding) == PROVEN_OK &&
-                       proven_http_client_create(&gzip_cfg, &bgzip) == PROVEN_OK, "a blocking client that decodes zstd and gzip, one that decodes gzip, and one that does not decode", "");
-    proven_http_event_client_config_t edecoding_cfg = { .decompress = true, .decompress_zstd = true, .tls = client_tls };
+                       proven_http_client_create(&gzip_cfg, &bgzip) == PROVEN_OK, "a blocking client that decodes zstd, br and gzip, one that decodes gzip, and one that does not decode", "");
+    proven_http_event_client_config_t edecoding_cfg = { .decompress = true, .decompress_zstd = true, .decompress_brotli = true, .tls = client_tls };
     proven_http_event_client_config_t egzip_cfg = { .decompress = true };
     proven_http_event_client_t *eplain = NULL, *edecoding = NULL, *egzip = NULL;
     PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, NULL, &eplain) == PROVEN_OK && proven_http_event_client_create(g_loop, &edecoding_cfg, &edecoding) == PROVEN_OK &&
@@ -853,6 +865,10 @@ int main(void) {
         proven_http_event_client_t *ebad = NULL;
         PROVEN_TEST_ASSERT(proven_http_client_create(&lone, &bad) == PROVEN_ERR_INVALID_ARG && bad == NULL &&
                            proven_http_event_client_create(g_loop, &elone, &ebad) == PROVEN_ERR_INVALID_ARG && ebad == NULL, "decompress_zstd without decompress is PROVEN_ERR_INVALID_ARG", "");
+        proven_http_client_config_t blone = { .alloc = g_heap, .decompress_brotli = true };
+        proven_http_event_client_config_t eblone = { .decompress_brotli = true };
+        PROVEN_TEST_ASSERT(proven_http_client_create(&blone, &bad) == PROVEN_ERR_INVALID_ARG && bad == NULL &&
+                           proven_http_event_client_create(g_loop, &eblone, &ebad) == PROVEN_ERR_INVALID_ARG && ebad == NULL, "and so is decompress_brotli", "");
     }
 
     got_t g = { 0 };
@@ -911,6 +927,11 @@ int main(void) {
         bget(bgzip, bat.port, zpath, &g);
         PROVEN_TEST_ASSERT(g.err == PROVEN_OK && strcmp(g.encoding, "zstd") == 0 && g.size == coding_vectors[ZSTD_VECTOR].size && memcmp(g_got, coding_vectors[ZSTD_VECTOR].bytes, g.size) == 0,
             "and is given a zstd body that comes anyway as it was sent", "Check the decompress_zstd argument of proven_http_decoder_wanted_ in src/proven/http_client.c.");
+        PROVEN_TEST_ASSERT(strcmp(coding_vectors[BROTLI_VECTOR].name, "br") == 0, "the Brotli vector", "");
+        snprintf(zpath, sizeof zpath, "/v/%u", (unsigned)BROTLI_VECTOR);
+        bget(bgzip, bat.port, zpath, &g);
+        PROVEN_TEST_ASSERT(g.err == PROVEN_OK && strcmp(g.encoding, "br") == 0 && g.size == coding_vectors[BROTLI_VECTOR].size && memcmp(g_got, coding_vectors[BROTLI_VECTOR].bytes, g.size) == 0,
+            "and a br body as it was sent", "Check the decompress_brotli argument of proven_http_decoder_wanted_ in src/proven/http_client.c.");
 
         proven_http_header_t own = { PROVEN_LIT("Accept-Encoding"), PROVEN_LIT("identity") };
         bfetch(bdecoding, "GET", bat.port, "/r/3000", &own, 1, 4096, &g);
@@ -956,6 +977,10 @@ int main(void) {
         PROVEN_TEST_ASSERT(g.err == PROVEN_OK && strcmp(g.accept, "gzip") == 0 && strcmp(g.encoding, "zstd") == 0 && g.size == coding_vectors[ZSTD_VECTOR].size &&
                            memcmp(g_got, coding_vectors[ZSTD_VECTOR].bytes, g.size) == 0,
             "a client that decodes without decompress_zstd asks for gzip alone, and is given a zstd body as it was sent", "Check the decompress_zstd argument of proven_http_decoder_wanted_ in src/proven/http_event_client.c.");
+        snprintf(zpath, sizeof zpath, "/v/%u", (unsigned)BROTLI_VECTOR);
+        eget(egzip, false, bat.port, zpath, &g);
+        PROVEN_TEST_ASSERT(g.err == PROVEN_OK && strcmp(g.encoding, "br") == 0 && g.size == coding_vectors[BROTLI_VECTOR].size && memcmp(g_got, coding_vectors[BROTLI_VECTOR].bytes, g.size) == 0,
+            "and a br body as it was sent", "Check the decompress_brotli argument of proven_http_decoder_wanted_ in src/proven/http_event_client.c.");
         eget(eplain, false, bat.port, "/v/0", &g);
         PROVEN_TEST_ASSERT(g.err == PROVEN_OK && strcmp(g.accept, "(none)") == 0 && g.size == coding_vectors[0].size && memcmp(g_got, coding_vectors[0].bytes, g.size) == 0,
             "a client that sets nothing sends no Accept-Encoding and is given the gzip as it is", "");

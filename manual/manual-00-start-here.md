@@ -991,6 +991,7 @@ Two things this table tells you that the file names do not:
 | `hmac.h` | HMAC and HKDF over the SHA-2 family | Chapter 4 |
 | `deflate.h` | DEFLATE compression and decompression, bare or as zlib or gzip; streaming, with the output bounded by the caller | Chapter 16 |
 | `zstd.h` | Zstandard decompression and compression (nine levels), streaming, with the output and the window bounded by the caller | Chapter 16 |
+| `brotli.h` | Brotli decompression, streaming, with the output and the window bounded by the caller; left out by `PROVEN_NO_BROTLI` | Chapter 16 |
 | `hash_legacy.h` | SHA-1 and MD5, for formats that fix them | Chapter 4 |
 | `encode.h` | Hex and Base64 (standard + URL-safe), bytes to text and back | Chapter 4 |
 | `fs.h` | Files, directories, metadata, links, locks, read-all, tree walk | Chapter 5 |

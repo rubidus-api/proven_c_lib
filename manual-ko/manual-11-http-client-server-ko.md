@@ -1026,7 +1026,7 @@ int main(void) {
 - **요청하지 않은 압축.** 아무것도 설정하지 않으면 `Accept-Encoding`을 보내지 않고, 콘텐츠 코딩을
   풀지 않으며, 응답을 압축하지 않는다. 클라이언트 설정의 `decompress`와 핸들러에서 부르는
   `proven_http_exchange_compress`가 각 방향의 gzip을 켠다(Zstandard는 클라이언트의 `decompress_zstd`와
-  서버의 `compress_zstd`가 켠다): [16장](manual-16-compression-ko.md) 6절.
+  서버의 `compress_zstd`가, Brotli는 클라이언트에서만 `decompress_brotli`가 켠다): [16장](manual-16-compression-ko.md) 6절.
 - **WebSocket**은 이 두 헤더에 없다. §11 위에 지은 [12장](manual-12-websocket-ko.md)에 있다.
 - 서버의 **라우터, 정적 파일, 세션, 미들웨어**. 클라이언트의 **재시도, 캐시, 호스트별 연결 한도**.
 - 양쪽 방향의 **트레일러**.

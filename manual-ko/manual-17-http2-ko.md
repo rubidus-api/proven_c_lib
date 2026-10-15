@@ -1195,6 +1195,7 @@ HTTP/1.1로 말한다.
 | `max_buffered_output` | 그 연결의 요청들을 합쳐서 |
 | `decompress` | 그대로다. 정지된 요청은 도착한 것을 압축된 채로 쥐었다가 재개할 때 푼다 |
 | `decompress_zstd` | `zstd`에 대해 같다: `accept-encoding`으로 요청하고, 스트림에서 푼다 |
+| `decompress_brotli` | `br`에 대해 같다 |
 
 ### 예제: 요청 셋, 연결 하나
 
