@@ -603,7 +603,7 @@ static proven_err_t block_room(proven_zstd_encoder_t *z) {
 // -----------------------------------------------------------------------------
 
 static inline unsigned ctz64(proven_u64 v) {
-#if defined(__GNUC__) || defined(__clang__)
+#if ZSTD_BUILTINS
     return (unsigned)__builtin_ctzll(v);
 #else
     static const proven_u8 DEBRUIJN[64] = { 0, 1, 48, 2, 57, 49, 28, 3, 61, 58, 50, 42, 38, 29, 17, 4, 62, 55, 59, 36, 53, 51, 43, 22,
@@ -1269,9 +1269,10 @@ proven_err_t proven_zstd_encode(proven_zstd_encoder_t *z, proven_mem_view_t in, 
             if (e != PROVEN_OK) break;
             continue;
         }
+        /* Input left: the buffer grows, or slides, at the top. Full and unable to slide, a
+         * whole block would be ready and have gone above, so this does not loop. */
         if (in_at < in.size) {
-            if (z->fill == z->buf_max && z->pos > z->window) continue;     /* room is made by sliding */
-            if (z->fill < z->buf_cap) continue;
+            if (z->fill < z->buf_max || z->pos > z->window) continue;
             break;
         }
         if (flush == PROVEN_ZSTD_FLUSH_NONE) break;

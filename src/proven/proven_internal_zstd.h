@@ -23,16 +23,22 @@ static inline proven_u32 le32(const proven_byte_t *p) {
 }
 
 /* Inlining that the hot loops need, and the bit scans the processor has, where the compiler
- * says how to ask for them; plain C otherwise. */
+ * says how to ask for them; plain C otherwise. PROVEN_ZSTD_NO_BUILTINS takes the plain C bit
+ * scans everywhere, so that a test can run the code other compilers get. */
 #if defined(__GNUC__) || defined(__clang__)
 #define ZSTD_HOT static inline __attribute__((always_inline))
 #else
 #define ZSTD_HOT static inline
 #endif
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(PROVEN_ZSTD_NO_BUILTINS)
+#define ZSTD_BUILTINS 1
+#else
+#define ZSTD_BUILTINS 0
+#endif
 
 /* The position of the highest set bit of a nonzero value. */
 static inline unsigned highbit32(proven_u32 v) {
-#if defined(__GNUC__) || defined(__clang__)
+#if ZSTD_BUILTINS
     return 31u - (unsigned)__builtin_clz(v | 1u);
 #else
     static const proven_u8 DEBRUIJN[32] = { 0, 9, 1, 10, 13, 21, 2, 29, 11, 14, 16, 18, 22, 25, 3, 30,

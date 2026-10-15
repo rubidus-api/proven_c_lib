@@ -1212,13 +1212,14 @@ noise with copies from far back, random bytes, more than 128 byte values) at the
 and three windows, whole and streamed - a block flush after each piece, output a byte at a
 time - and decodes every frame with this library's decoder, which checks each offset against
 the window the frame states; it checks the frame header, the bound over 8,000 inputs, flushes,
-the end and a reset, the memory held, and failed allocations, and pins the size and CRC of six
-frames that libzstd decoded. Outside the registered tests, libzstd decoded every frame the
+the end and a reset, literals of one byte value in a compressed block, the memory held, and
+failed allocations, and pins the size and CRC of eight frames that libzstd decoded - two of
+them streamed after a reset with the buffer sliding. Outside the registered tests, libzstd decoded every frame the
 encoder made from a corpus - this repository's files, the Korean manual, a binary, 4 MB of
 sources, inputs of every size to 4,096 bytes and at every block and header boundary, literals
 of one byte, two and four values, periods that fill a block's sequences - at every level and at
 windows from 1 KiB to 8 MiB, whole and streamed in pieces from one byte, under the tools that
-report any read or write outside a buffer: 2,877 frames, every one byte for byte. Over HTTP,
+report any read or write outside a buffer: 2,880 frames, every one byte for byte. Over HTTP,
 Node's libzstd and curl decoded what both servers sent in `zstd`, whole and streamed, at the
 three levels and windows of 1 KiB to 8 MiB, and the weights chose gzip where a client preferred
 it.

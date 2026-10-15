@@ -265,6 +265,22 @@ int main(void) {
         proven_zstd_encoder_reset(z);
         PROVEN_TEST_ASSERT(encode_steps(z, g_in, n, 70000, (proven_size_t)-1, false, g_enc, sizeof g_enc, &made) == PROVEN_OK && decodes_to(g_enc, made, g_in, n, 0),
                            "after a reset, a new frame of 400,000 bytes", "");
+        /* Literals of one byte value inside a compressed block: 1,000 random bytes in a block
+         * of their own, then a copy from 1,000 back with a new x at every 41st byte - each x a
+         * literal, each followed by a match at the first repeat offset. */
+        g_x = 11;
+        for (proven_size_t i = 0; i < 1000; ++i) g_in[i] = (proven_byte_t)xs();
+        for (proven_size_t i = 1000; i < 91000; ++i) g_in[i] = i % 41 == 0 && g_in[i - 1000] != 'x' ? 'x' : g_in[i - 1000];
+        proven_zstd_encoder_reset(z);
+        PROVEN_TEST_ASSERT(proven_zstd_encode(z, (proven_mem_view_t){ g_in, 1000 }, &c, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &p, PROVEN_ZSTD_FLUSH_BLOCK, &done) == PROVEN_OK && c == 1000,
+                           "1,000 random bytes, and a block flush", "");
+        made = p;
+        PROVEN_TEST_ASSERT(proven_zstd_encode(z, (proven_mem_view_t){ g_in + 1000, 90000 }, &c, (proven_mem_mut_t){ g_enc + made, sizeof g_enc - made }, &p, PROVEN_ZSTD_FLUSH_FINISH, &done) == PROVEN_OK &&
+                           c == 90000 && done, "90,000 more taken and finished in one call", "");
+        const proven_size_t b2 = made + 3;               /* the second block's literals section */
+        made += p;
+        PROVEN_TEST_ASSERT((g_enc[made - 3 - (p - 3)] & 6) == 4 && (g_enc[b2] & 3) == 1 && decodes_to(g_enc, made, g_in, 91000, 0),
+                           "the second block is compressed, its literals one byte repeated, and the frame decodes", "Check the single-value branch of write_literals.");
         proven_zstd_encoder_destroy(z);
     }
 
