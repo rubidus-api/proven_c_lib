@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-10-15
+
 ### Added
 
 - **Zstandard compression (RFC 8878) in `zstd.h`.** `proven_zstd_encoder_create` with
