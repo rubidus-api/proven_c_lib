@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.59.0] - 2026-10-15
+
 ### Added
 
 - **Zstandard levels 4 to 9** in `zstd.h`'s encoder, as libzstd's: a hash table of 2^17
