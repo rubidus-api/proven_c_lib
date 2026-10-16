@@ -538,6 +538,34 @@ int main(void) {
         n->hook = NULL;
         PROVEN_TEST_ASSERT(run_handshake(n, 20000000), "and when the client is heard again, the handshake completes", "");
         net_free(n);
+        /* An Initial in a datagram under 1,200 bytes is dropped by a server (RFC 9000 section 14.1).
+         * Initial keys come from the connection ID, so anyone can make one: the test does. */
+        net_init(n, 121);
+        n->capture = true;
+        net_start(n);
+        for (int k = 0; k < 3 && !n->ep[1]; ++k) net_step(n);
+        PROVEN_TEST_ASSERT(n->ep[1] && n->capn >= 1, "the server exists after the client's first datagram", "");
+        proven_quic_hdr_t h0;
+        PROVEN_TEST_ASSERT(proven_quic_hdr_parse((proven_mem_view_t){ n->cap[0].b, n->cap[0].n }, 8, &h0), "", "");
+        proven_byte_t cs[32], ss[32];
+        proven_quic_initial_secrets((proven_mem_view_t){ h0.dcid.id, h0.dcid.len }, cs, ss);
+        proven_quic_keys_t ck;
+        proven_quic_keys_set(&ck, proven_quic_initial_suite(), cs);
+        static proven_byte_t dg[1300];
+        for (int padded = 0; padded < 2; ++padded) {
+            memset(dg, 0, sizeof dg);
+            const proven_size_t plen = 30;
+            proven_size_t hl = proven_quic_long_header_put(PROVEN_QUIC_PKT_INITIAL, &h0.dcid, &h0.scid, (proven_mem_view_t){ 0 }, 1000 + (proven_u64)padded, 2, plen,
+                                                           (proven_mem_mut_t){ dg, sizeof dg });
+            dg[hl] = 0x01;                          /* PING, then PADDING */
+            const proven_size_t len = proven_quic_protect(&ck, dg, hl, 2, 1000 + (proven_u64)padded, plen);
+            const proven_size_t dlen = padded ? 1200 : len;   /* the rest of a padded datagram is zeros: no packet */
+            const proven_u64 before = stats(n, 1).packets_received;
+            PROVEN_TEST_ASSERT(proven_quic_conn_receive(n->ep[1], (proven_mem_view_t){ dg, dlen }, &n->addr[0], n->now) == PROVEN_OK, "", "");
+            if (!padded) PROVEN_TEST_ASSERT(stats(n, 1).packets_received == before, "an Initial in a datagram of 70 bytes is dropped", "");
+            else PROVEN_TEST_ASSERT(stats(n, 1).packets_received == before + 1, "the same packet in a datagram of 1,200 bytes is read: the drop was the size", "");
+        }
+        net_free(n);
     }
 
     PROVEN_TEST_SECTION("the client's address changes", "A client behind a NAT that rebinds: the server validates the new path and data goes on.", "");
@@ -571,6 +599,38 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_quic_conn_test_key_update_(n->ep[1]), "then the server", "");
         PROVEN_TEST_ASSERT(run_xfers(n, t, 30000000), "the transfer completes", "");
         PROVEN_TEST_ASSERT(stats(n, 0).key_updates == 2 && stats(n, 1).key_updates == 2, "each side made one update and followed one", "");
+        free(t);
+        net_free(n);
+        /* RFC 9001 section 6.6: each side updates by itself after a number of packets (here 300). */
+        net_init(n, 141);
+        n->cfg[0].key_update_packets = 300; n->cfg[1].key_update_packets = 300;
+        n->loss = 20; n->reorder = 20;
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000), "", "");
+        t = calloc(1, sizeof *t);
+        xfer_open(n, t, 0, true, 2 << 20);
+        xfer_open(n, t, 1, true, 2 << 20);
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 120000000), "two megabytes each way at 2 percent loss across many updates", "");
+        printf("  key updates: %llu and %llu\n", (unsigned long long)stats(n, 0).key_updates, (unsigned long long)stats(n, 1).key_updates);
+        PROVEN_TEST_ASSERT(stats(n, 0).key_updates >= 5 && stats(n, 1).key_updates >= 5, "each side's key moved on at least five times", "");
+        free(t);
+        net_free(n);
+        /* Every 4 packets: faster than a round trip, so only "not before a packet under the
+         * current key is acknowledged" keeps the two sides on keys the other can still open. */
+        net_init(n, 142);
+        n->cfg[0].key_update_packets = 4; n->cfg[1].key_update_packets = 4;
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000), "", "");
+        t = calloc(1, sizeof *t);
+        xfer_open(n, t, 0, true, 300000);
+        xfer_open(n, t, 1, true, 300000);
+        const proven_u64 started = n->now;
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 60000000), "with an update due every 4 packets, every byte arrives", "");
+        const proven_u64 rtts = (n->now - started) / 20000 + 2;
+        PROVEN_TEST_ASSERT(stats(n, 0).packets_dropped == 0 && stats(n, 1).packets_dropped == 0,
+            "on this network that loses nothing, no packet was undecryptable: neither side moved two keys ahead of the other", "");
+        PROVEN_TEST_ASSERT(stats(n, 0).key_updates <= rtts && stats(n, 1).key_updates <= rtts,
+            "and no more updates than round trips: none before a packet under the current key was acknowledged (RFC 9001 section 6.5)", "");
         free(t);
         net_free(n);
     }

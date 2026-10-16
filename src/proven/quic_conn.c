@@ -419,6 +419,8 @@ struct proven_quic_conn {
     proven_quic_keys_t rx_next, rx_prev;
     bool rx_prev_ok, key_phase;
     proven_u64 rx_prev_until, phase_first_pn, key_updates;
+    proven_u64 phase_sent, phase_first_sent;    /* 1-RTT packets sent under the current key, and the first of them */
+    bool phase_acked;                   /* one of them has been acknowledged: another update may follow */
 
     /* Connection IDs. */
     proven_quic_cid_t odcid;            /* the client's first Destination Connection ID */
@@ -546,6 +548,7 @@ static void cfg_defaults(proven_quic_config_t *o, const proven_quic_config_t *in
     if (!o->datagram_size) o->datagram_size = PROVEN_QUIC_MIN_INITIAL;
     if (!o->granularity_us) o->granularity_us = 1000;
     if (!o->max_ack_ranges) o->max_ack_ranges = 64;
+    if (!o->key_update_packets) o->key_update_packets = 1u << 22;
 }
 
 static bool cfg_valid(const proven_quic_config_t *in) {
@@ -1008,6 +1011,7 @@ static proven_u64 on_ack(proven_quic_conn_t *c, int lvl, const proven_quic_frame
     qspace_t *sp = &c->sp[lvl];
     if (f->largest >= sp->next_pn) return PROVEN_QUIC_PROTOCOL_VIOLATION;
     if (f->largest + 1 > sp->largest_acked_plus_one) sp->largest_acked_plus_one = f->largest + 1;
+    if (lvl == PROVEN_QUIC_LEVEL_APPLICATION && f->largest >= c->phase_first_sent) c->phase_acked = true;
     proven_quic_ack_iter_t it = proven_quic_ack_iter(f);
     proven_u64 lo, hi;
     bool newly = false, eliciting = false;
@@ -1298,6 +1302,32 @@ static proven_u64 on_frame(proven_quic_conn_t *c, int lvl, const proven_quic_fra
 
 /* ---- Packets received ---- */
 
+/* This side's 1-RTT write key moves to the next phase (its own update, or following the peer's). */
+static void tx_key_next(proven_quic_conn_t *c) {
+    qspace_t *sp = &c->sp[2];
+    const proven_quic_keys_t tx = sp->tx;
+    proven_quic_secret_update(c->suite, c->tx_secret);
+    proven_quic_keys_set(&sp->tx, c->suite, c->tx_secret);
+    sp->tx.hp = tx.hp;                  /* header protection keys are never updated */
+    c->key_phase = !c->key_phase;
+    c->phase_sent = 0;
+    c->phase_first_sent = sp->next_pn;
+    c->phase_acked = false;
+    ++c->key_updates;
+}
+
+/* This side starts a key update: the read key moves too, the old one kept for late packets. */
+static void key_update_start(proven_quic_conn_t *c) {
+    qspace_t *sp = &c->sp[2];
+    c->rx_prev = sp->rx; c->rx_prev_ok = true;
+    c->rx_prev_until = c->now + 3 * pto_base(c);
+    sp->rx = c->rx_next;
+    proven_quic_secret_update(c->suite, c->rx_secret);
+    next_keys(c, c->rx_secret, &sp->rx, &c->rx_next);
+    c->phase_first_pn = sp->rx_largest_plus_one;
+    tx_key_next(c);
+}
+
 /* The 1-RTT packet at `pkt` under the right key phase (RFC 9001 section 6). */
 static bool open_short(proven_quic_conn_t *c, proven_byte_t *pkt, proven_size_t pn_offset, proven_size_t len, proven_u64 *pn, proven_size_t *hlen, proven_mem_mut_t *payload) {
     qspace_t *sp = &c->sp[2];
@@ -1326,13 +1356,8 @@ static bool open_short(proven_quic_conn_t *c, proven_byte_t *pkt, proven_size_t 
     sp->rx = c->rx_next;
     proven_quic_secret_update(c->suite, c->rx_secret);
     next_keys(c, c->rx_secret, &sp->rx, &c->rx_next);
-    proven_quic_keys_t tx = sp->tx;
-    proven_quic_secret_update(c->suite, c->tx_secret);
-    proven_quic_keys_set(&sp->tx, c->suite, c->tx_secret);
-    sp->tx.hp = tx.hp;
-    c->key_phase = !c->key_phase;
     c->phase_first_pn = *pn;
-    ++c->key_updates;
+    tx_key_next(c);
     return true;
 }
 
@@ -1772,6 +1797,7 @@ static proven_size_t seal(proven_quic_conn_t *c, proven_byte_t *buf, qpkt_t *pk,
         const proven_size_t len = proven_quic_protect(&sp->tx, at, p->hlen, p->pn_len, p->pn, p->payload);
         total = p->at + len;
         ++sp->next_pn;
+        if (p->lvl == 2) ++c->phase_sent;
         ++c->st.packets_sent;
         const bool in_flight = p->eliciting || p->padded;
         if (in_flight && sp->sent_n < QC_MAX_SENT) {
@@ -1857,6 +1883,9 @@ proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven
         *len = seal(c, out.ptr, &pk, 1);
         return PROVEN_OK;
     }
+    /* RFC 9001 section 6.6: a key is updated well before the AEAD's limit - once the handshake
+     * is confirmed and a packet under the current key has been acknowledged. */
+    if (c->confirmed && c->phase_sent >= c->cfg.key_update_packets && c->phase_acked && c->sp[2].tx_ok && c->sp[2].rx_ok) key_update_start(c);
     /* What may be ack-eliciting now: the window, pacing, a probe. */
     pace_refill(c);
     const bool window = c->bif + c->datagram <= c->cwnd;
@@ -2134,19 +2163,7 @@ proven_u64 proven_quic_conn_test_frames_(proven_quic_conn_t *c, int lvl, proven_
 
 bool proven_quic_conn_test_key_update_(proven_quic_conn_t *c) {
     if (!c->confirmed || !c->sp[2].tx_ok || !c->sp[2].rx_ok) return false;
-    qspace_t *sp = &c->sp[2];
-    c->rx_prev = sp->rx; c->rx_prev_ok = true;
-    c->rx_prev_until = c->now + 3 * pto_base(c);
-    sp->rx = c->rx_next;
-    proven_quic_secret_update(c->suite, c->rx_secret);
-    next_keys(c, c->rx_secret, &sp->rx, &c->rx_next);
-    const proven_quic_keys_t tx = sp->tx;
-    proven_quic_secret_update(c->suite, c->tx_secret);
-    proven_quic_keys_set(&sp->tx, c->suite, c->tx_secret);
-    sp->tx.hp = tx.hp;
-    c->key_phase = !c->key_phase;
-    c->phase_first_pn = sp->rx_largest_plus_one;
-    ++c->key_updates;
+    key_update_start(c);
     return true;
 }
 

@@ -29,7 +29,8 @@ written; their tags still exist.
   control per stream and per connection; acknowledgements, loss detection, the probe timeout
   and NewReno congestion control with pacing (RFC 9002), its packet and time thresholds raised
   when a loss proves to have been reordering (RFC 9002 section 6.1.1); the handshake over the
-  TLS engine's QUIC mode, keys dropped as RFC 9001 says, and the peer's key updates followed;
+  TLS engine's QUIC mode, keys dropped as RFC 9001 says, the peer's key updates followed and
+  this side's own made after 2^22 packets under one key (RFC 9001 section 6.6);
   Retry (a server may require one, its tokens bound to the address for ten seconds), version
   negotiation (version 1 only), the amplification limit before an address is validated,
   connection IDs issued and retired, a client's change of address validated (passive migration

@@ -337,6 +337,7 @@ typedef struct {
     proven_u32 datagram_size;                      /* the datagrams this side sends: 1,200 to 1,452. 0: 1,200 */
     proven_u32 granularity_us;                     /* RFC 9002's timer granularity: the clock's tick. 0: 1,000 */
     proven_u32 max_ack_ranges;                     /* received packet ranges kept per space. 0: 64 */
+    proven_u32 key_update_packets;                 /* 1-RTT packets sent under one key before this side updates it (RFC 9001 section 6.6: AES-GCM's limit is 2^23). 0: 2^22 */
     proven_byte_t static_key[32];                  /* a server: one key for all its connections (Retry tokens, stateless reset tokens). All zero: drawn per connection */
 } proven_quic_config_t;
 
