@@ -18,6 +18,48 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **The third piece of HTTP/3: QPACK and HTTP/3 itself** (RFC 9204, RFC 9114), internal to the
+  library like the first two - no public function is added or changed; the event server and
+  client that use them follow in the next two releases. QPACK with a dynamic table of capacity
+  0, which is what this side announces (no state from one field section to the next, no
+  blocked streams; headers are larger than with a table): RFC 9204's 99-entry static table,
+  literals with HPACK's Huffman code where shorter, the never-indexed bit kept on decoding and
+  set for `authorization` and `proxy-authorization` and for fields the caller marks; the peer's
+  encoder and decoder streams taken for what a table of capacity 0 allows, anything else
+  refused with its code. An HTTP/3 connection over a QUIC connection it borrows, both roles,
+  no I/O of its own: the control stream and SETTINGS, requests and responses with bodies of any
+  size passed through without being held, trailers, interim responses, a stream paused by not
+  reading it (QUIC's flow control then stops the peer), a response that ends before its request
+  asking the client to stop, GOAWAY both ways and a close with H3_NO_ERROR only once what was
+  sent is acknowledged. The head rules are HTTP/2's (`proven_h2_request_head` and its kin);
+  extended CONNECT (`:protocol`) and server push are refused. Every rule broken is refused with
+  the code RFC 9114 or RFC 9204 names. Bounded: a field section of 16 KiB by default (at most 1
+  MiB), a HEADERS frame of twice that, control frames of 16 KiB, resets beyond those that
+  finish at 100; an idle connection holds a 16 KiB read buffer. Part of the freestanding
+  profile.
+- QUIC: the bytes a stream would take now (`proven_quic_stream_room`) and whether stream data
+  is still unacknowledged (`proven_quic_conn_sending`), both internal.
+- `PROVEN_NO_HTTP3` now leaves [SIZE] bytes out ([WITH] bytes of code and data with it,
+  999,267 without, at `-O2` on x86-64).
+- Tests: `test_unit_qpack` (the static table, RFC 9204 appendix B - B.1 decoded, B.2 to B.5
+  refused as a table of capacity 0 must - the encoder's choices, four thousand lists both ways,
+  nineteen malformed sections, the limits, the peer's encoder and decoder streams, every
+  truncation and bit change); `test_unit_h3_conn` (two HTTP/3 ends over the simulated network
+  of `test_unit_quic_conn`: requests and responses of every shape, a hundred at once under
+  loss, a paused stream, an early response, GOAWAY both ways, and seventy-six scripts of raw
+  QUIC streams producing each code of RFC 9114 section 8.1 and RFC 9204 section 6 from the
+  input that should produce it).
+
+### Fixed
+
+- QUIC: a stream whose write was cut short by the connection's send buffer, not its own, was
+  never told when room came back - only the stream whose data was acknowledged was. Every
+  stream held back is now told (STREAM_WRITABLE). Seen in the code while HTTP/3 was built on
+  it; `test_unit_h3_conn` reproduces it (eight POST bodies that together pass the 1 MiB buffer,
+  sent only when told, stalled without the fix).
+
 ## [0.62.0] - 2026-10-16
 
 ### Added

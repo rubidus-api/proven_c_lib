@@ -14,15 +14,16 @@ int main(void) {
 /*
  * PROVEN_NO_HTTP3 is a promise about size (RFC-0017 B-10): QUIC, QPACK and HTTP/3 are left out
  * of the library. That is QUIC's packet protection and transport parameters (quic_crypto.c) and
- * the TLS engine's QUIC mode (v0.61.0), and the packet and frame codec (quic_frame.c) and the
- * connection (quic_conn.c) (v0.62.0); the pieces of later releases join it. TLS over TCP is
- * untouched either way.
+ * the TLS engine's QUIC mode (v0.61.0), the packet and frame codec (quic_frame.c) and the
+ * connection (quic_conn.c) (v0.62.0), and QPACK (qpack.c) and the HTTP/3 connection
+ * (h3_conn.c) (v0.63.0); the pieces of later releases join it. TLS over TCP is untouched
+ * either way.
  *
  * The suite itself is built without that macro, so nothing else here could notice the promise
  * breaking. This test asks the host compiler directly: every library source must compile with
  * -DPROVEN_NO_HTTP3, a program that includes proven.h and the alias header and makes a TLS
- * client must link against the result and run, and no object may define or reference a QUIC
- * symbol.
+ * client must link against the result and run, and no object may define or reference a QUIC,
+ * QPACK or HTTP/3 symbol.
  */
 
 static int run(const char *cmd) {
@@ -33,8 +34,8 @@ static int run(const char *cmd) {
 
 int main(void) {
     PROVEN_TEST_SUITE("test_portability_compile_nohttp3",
-        "A hosted build with -DPROVEN_NO_HTTP3 compiles every source, links, runs a TLS client, and contains no QUIC code.",
-        "Inspect the PROVEN_NO_HTTP3 guards in src/proven/quic_crypto.c, src/proven/proven_internal_quic.h and src/proven/tls13.c.");
+        "A hosted build with -DPROVEN_NO_HTTP3 compiles every source, links, runs a TLS client, and contains no QUIC, QPACK or HTTP/3 code.",
+        "Inspect the PROVEN_NO_HTTP3 guards in src/proven/quic_*.c, qpack.c, h3_conn.c, proven_internal_quic.h, proven_internal_h3.h and tls13.c.");
 
     const char *dir = "build/test_portability_compile_nohttp3";
     char cmd[4096];
@@ -76,10 +77,10 @@ int main(void) {
         "Something outside the guards references a QUIC function, or the guards in tls13.c broke the engine.");
 
     snprintf(cmd, sizeof cmd,
-        "! (nm %s/*.o 2>/dev/null | grep -E ' [TtUDdRr] (proven_quic_|proven_tls_quic_)' >/dev/null)", dir);
+        "! (nm %s/*.o 2>/dev/null | grep -E ' [TtUDdRr] (proven_quic_|proven_tls_quic_|proven_qpack_|proven_h3_)' >/dev/null)", dir);
     PROVEN_TEST_ASSERT(run(cmd) == 0,
-        "no object of that build defines or references a QUIC function",
-        "List them with: nm build/test_portability_compile_nohttp3/*.o | grep -i quic");
+        "no object of that build defines or references a QUIC, QPACK or HTTP/3 function",
+        "List them with: nm build/test_portability_compile_nohttp3/*.o | grep -iE 'quic|qpack|h3_'");
 
     snprintf(cmd, sizeof cmd, "rm -rf %s", dir);
     (void)run(cmd);

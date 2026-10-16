@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 118 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 120 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-16, Windows 11 test VM (v0.62.0): x86-64 352 PASS, 0 FAIL, 10 
 ## Test catalog
 
 
-The hosted full run builds and executes 184 registered tests plus the 178 runnable manual examples - 362 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 197 test files: the 180 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 186 registered tests plus the 178 runnable manual examples - 364 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 199 test files: the 182 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -855,6 +855,45 @@ Sub-checks:
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 
 Failure tip: inspect `src/proven/quic_conn.c`. The network and the clock are the test's own, so a failure repeats with the same seed. Not covered here: another implementation over real UDP - the private check runs aioquic against this library through a lossy relay, in both roles.
+
+### `tests/test_unit_qpack` - QPACK: header compression for HTTP/3
+
+Intent: verify QPACK (RFC 9204; RFC-0017 Q-3) with a dynamic table of capacity 0 - what this side announces, so no table is ever used and nothing is kept from one field section to the next. Internal code, reached through `src/proven/proven_internal_h3.h`.
+
+Sub-checks:
+
+- The static table this build is linked with: seven entries spot-checked, each encoded as one indexed field line at its own index and decoded back; every index from 0 to 98 decoded, 99 refused.
+- RFC 9204 appendix B: B.1's field section decoded to `:path: /index.html`, and this encoder making the same choice (the static name, a literal value) with the value Huffman-coded in 8 bytes. B.2 to B.5 need a dynamic table and are refused: their field sections with QPACK_DECOMPRESSION_FAILED, their encoder-stream instructions (a capacity, inserts, a duplicate) with QPACK_ENCODER_STREAM_ERROR, a Section Acknowledgement and an Insert Count Increment with QPACK_DECODER_STREAM_ERROR; a Stream Cancellation is taken.
+- The encoder's choices: a whole static field indexed, a static name with a literal value, a literal name; Huffman only where shorter; the never-indexed bit on a marked field and always on `authorization`; less room than the bound refused before a byte is written.
+- RFC 7541 appendix C's header lists and four thousand generated ones (names from the table and not, values of every byte, up to 290 bytes) through the encoder and decoder: the same fields and the same marks back.
+- Nineteen malformed sections refused with QPACK_DECOMPRESSION_FAILED: an empty or half prefix, a Required Insert Count of 1, a sign bit with a Required Insert Count of 0 (a negative Base), each representation that refers to the dynamic table or past the Base, static index 99 in either form, values and names cut short, a length past 2^62, Huffman padding of eight bits and EOS inside a string. A prefix alone is an empty list.
+- Limits: a list of exactly the byte limit taken and one byte over refused, one field over the array refused, a scratch too small refused; a dynamic reference after the scratch filled is still found.
+- The peer's encoder and decoder streams fed a byte at a time: a capacity of 0 taken, a capacity of 31 refused at its last byte, Stream Cancellations of one and two bytes taken, an integer that does not end refused, and each instruction a table of capacity 0 cannot take refused with its code.
+- Every truncation and every single-bit change of an encoded section of seven fields refused or decoded within bounds.
+
+The suite is a skip in a build with `PROVEN_NO_HTTP3`.
+
+Failure tip: inspect `src/proven/qpack.c`. The table (`src/proven/qpack_static.h`) and the vectors (`tests/test_unit_qpack_vectors.h`) are generated from the RFC's text by a private program: regenerate, do not edit. Not covered here: another implementation - the private check runs every header list of the HPACK corpus through pylsqpack (aioquic's) and this library both ways.
+
+### `tests/test_unit_h3_conn` - HTTP/3 connections
+
+Intent: verify the HTTP/3 connection (RFC 9114; RFC-0017 Q-3) over two QUIC engines on this test's simulated network, and every code of RFC 9114 section 8.1 and RFC 9204 section 6 that this side acts on, produced by the input that should produce it. Internal code, reached through `src/proven/proven_internal_h3.h`; it borrows the QUIC connection and does no I/O of its own.
+
+Sub-checks:
+
+- Requests and responses: GET with bodies of 0, 1, 1,000, 16,384, 16,385 and 300,000 bytes; POST with 200,000 bytes and with 5,000 bytes and trailers, checked by the server; a response with trailers; an interim 103 before a 204; HEAD with a content-length and no body; an unknown path. Every body is checked against a pattern of its length and offset; sends that were cut short go on only when the connection says the stream is writable. Idle, a connection holds its 16 KiB read buffer and its control stream: under 20,000 bytes.
+- The connection's send buffer, shared: eight POST bodies of 200,000 bytes, sent only when told, together pass QUIC's 1 MiB connection send buffer though each fits its stream's; every one is answered - the streams the connection held back are told when another stream's data is acknowledged (without that, this stalled).
+- A hundred requests at once with 5 percent loss, reordering and duplication: each whole; the 101st is PROVEN_ERR_BUSY and goes through once streams have ended.
+- A paused stream: a client that pauses a 2,000,000-byte download at its first piece stops the server near the stream's window and send buffer (between 262,144 and 562,144 bytes sent); resumed, all of it arrives.
+- A response before its request's end: the client is asked to stop sending its body with H3_NO_ERROR and the response still arrives.
+- GOAWAY from the server and from the client: the request in flight is answered, a server's GOAWAY names the first request it did not act on, no new request is accepted, and both sides close with H3_NO_ERROR once the last stream has ended and what was sent is acknowledged. A request above a server's GOAWAY is reset with H3_REQUEST_REJECTED; a client's request above one ends with that code.
+- Seventy-six scripts in which one side writes raw QUIC streams: H3_STREAM_CREATION_ERROR (a server's bidirectional stream, a second control, encoder or decoder stream, a client's push stream; an unknown stream type is asked to stop with it and the connection stays); H3_CLOSED_CRITICAL_STREAM (a control or QPACK stream ended or reset, STOP_SENDING on this side's control stream; a stream reset before its type was read is tolerated); H3_FRAME_UNEXPECTED (DATA before HEADERS, HEADERS or DATA after trailers, a second SETTINGS, control frames on a request stream, DATA, HEADERS and PUSH_PROMISE on the control stream, HTTP/2's four reserved types, MAX_PUSH_ID to a client, PUSH_PROMISE to a server); H3_FRAME_ERROR (payloads with a byte too many or too few, a stream ended inside a frame, its header or DATA); H3_EXCESSIVE_LOAD (SETTINGS of 20,000 bytes); H3_ID_ERROR (a GOAWAY larger than before or not a request stream, any push, MAX_PUSH_ID made smaller); H3_SETTINGS_ERROR (a known setting twice, HTTP/2's settings); H3_MISSING_SETTINGS; H3_REQUEST_INCOMPLETE both ways; H3_MESSAGE_ERROR (a malformed head, `:protocol`, a content-length the DATA does not match, a HEADERS frame of more than twice the limit, a 101, an interim response the stream ends on); the three QPACK codes. Unknown settings and frames, a capacity of 0 and a Stream Cancellation are taken.
+- Codes this side sends of its own: H3_REQUEST_CANCELLED when a stream is given up, and reported when the peer resets one; H3_EXCESSIVE_LOAD after one more reset than `max_reset_debt` allows; H3_INTERNAL_ERROR, and the peer told, when the HTTP/3 side's memory runs out; a list larger than the peer's SETTINGS_MAX_FIELD_SECTION_SIZE refused before it is sent.
+- A request stream's bytes with one bit changed, every fifth bit: each change closes the connection with a code, resets the stream with one, or is taken as another request.
+
+The suite is a skip in a build with `PROVEN_NO_HTTP3`.
+
+Failure tip: inspect `src/proven/h3_conn.c`: `req_step` and `req_headers` for request streams, `ctl_step` and `ctl_frame` for the control stream, `uni_step` for stream types, `h3_quic_event` for what QUIC reports, `proven_h3_conn_poll` for the order of work and the close after GOAWAY. The network and the clock are the test's own, so a failure repeats with the same seed. Not covered here: another implementation over real UDP - the private check runs aioquic's HTTP/3 against this library in both roles. H3_GENERAL_PROTOCOL_ERROR (sent when the peer allows this side no unidirectional stream) cannot be produced here: QUIC's configuration has no limit of 0.
 
 ### `tests/test_unit_tls12_keys` - TLS 1.2 PRF, key block and records against known answers
 
@@ -2668,19 +2707,19 @@ The fixture runs the host compiler through `/bin/sh` and is skipped on Windows.
 
 Failure tip: inspect the `PROVEN_NO_BROTLI` guards in `include/proven.h`, `src/proven/brotli.c` and `src/proven/http_coding.c`.
 
-### `tests/test_portability_compile_nohttp3` - PROVEN_NO_HTTP3 leaves QUIC out
+### `tests/test_portability_compile_nohttp3` - PROVEN_NO_HTTP3 leaves QUIC and HTTP/3 out
 
-Intent: verify the promise `PROVEN_NO_HTTP3` makes (RFC-0017 B-10): QUIC, QPACK and HTTP/3 left out of the library. In v0.62.0 that is QUIC packet protection, the transport parameters, the TLS engine's QUIC mode, the packet and frame codec and the connection - 65,654 bytes at `-O2` on x86-64; QPACK and HTTP/3 join it in later releases. The suite is built without the macro, so nothing else would notice it breaking.
+Intent: verify the promise `PROVEN_NO_HTTP3` makes (RFC-0017 B-10): QUIC, QPACK and HTTP/3 left out of the library. In v0.63.0 that is QUIC packet protection, the transport parameters, the TLS engine's QUIC mode, the packet and frame codec, the connection, QPACK and the HTTP/3 connection - 93,921 bytes at `-O2` on x86-64. The suite is built without the macro, so nothing else would notice it breaking.
 
 Sub-checks:
 
 - Every source in `build_sources.inc` compiles with the host compiler and `-DPROVEN_NO_HTTP3 -Wall -Wextra -Werror`.
 - A program that includes `proven.h` and `proven/alias_xcv.h` links against that build and runs, and its TLS client writes a ClientHello.
-- No object of that build defines or references `proven_quic_*` or `proven_tls_quic_*`.
+- No object of that build defines or references `proven_quic_*`, `proven_tls_quic_*`, `proven_qpack_*` or `proven_h3_*`.
 
 The fixture runs the host compiler through `/bin/sh` and is skipped on Windows.
 
-Failure tip: inspect the `PROVEN_NO_HTTP3` guards in `src/proven/quic_crypto.c`, `quic_frame.c`, `quic_conn.c`, `proven_internal_quic.h` and `tls13.c`.
+Failure tip: inspect the `PROVEN_NO_HTTP3` guards in `src/proven/quic_crypto.c`, `quic_frame.c`, `quic_conn.c`, `qpack.c`, `h3_conn.c`, `proven_internal_quic.h`, `proven_internal_h3.h` and `tls13.c`.
 
 ### `tests/test_portability_compile_nonet` - PROVEN_NO_NET leaves the socket layer out
 
