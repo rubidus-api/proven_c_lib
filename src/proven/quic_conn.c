@@ -1154,7 +1154,8 @@ static proven_u64 on_stream(proven_quic_conn_t *c, const proven_quic_frame_t *f)
     }
     const proven_size_t ranges = q->got.n;
     if (!recvq_insert(&c->mem, q, f->offset, f->data.ptr, f->data.size)) return PROVEN_QUIC_INTERNAL_ERROR;
-    c->rx_ranges += q->got.n - ranges;
+    c->rx_ranges += q->got.n;           /* never their difference in size_t: it can be negative (ranges merge) */
+    c->rx_ranges -= ranges;
     if (end > q->highest) q->highest = end;
     if (recvq_ready(q) > 0 || (q->has_final && q->read == q->final)) s->ev_readable = true;
     return 0;

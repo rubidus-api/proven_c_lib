@@ -42,7 +42,7 @@ written; their tags still exist.
   reader, the same sent and not yet acknowledged, 64 ACK ranges per space, 64 KiB of CRYPTO
   data per level out of order, four datagrams held for keys not yet there. Part of the
   freestanding profile.
-- `PROVEN_NO_HTTP3` now leaves 65,382 bytes out (1,064,649 bytes of code and data with it,
+- `PROVEN_NO_HTTP3` now leaves 65,654 bytes out (1,064,921 bytes of code and data with it,
   999,267 without, at `-O2` on x86-64; v0.61.0's tree measured the same way today gives
   1,011,190 and 999,267 - its 11,923 as stated then, the absolute figures 250 bytes apart).
 - Tests: `test_unit_quic_frame` (RFC 9001 appendix A's headers read and written byte for byte,

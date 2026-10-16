@@ -2670,7 +2670,7 @@ Failure tip: inspect the `PROVEN_NO_BROTLI` guards in `include/proven.h`, `src/p
 
 ### `tests/test_portability_compile_nohttp3` - PROVEN_NO_HTTP3 leaves QUIC out
 
-Intent: verify the promise `PROVEN_NO_HTTP3` makes (RFC-0017 B-10): QUIC, QPACK and HTTP/3 left out of the library. In v0.62.0 that is QUIC packet protection, the transport parameters, the TLS engine's QUIC mode, the packet and frame codec and the connection - 65,382 bytes at `-O2` on x86-64; QPACK and HTTP/3 join it in later releases. The suite is built without the macro, so nothing else would notice it breaking.
+Intent: verify the promise `PROVEN_NO_HTTP3` makes (RFC-0017 B-10): QUIC, QPACK and HTTP/3 left out of the library. In v0.62.0 that is QUIC packet protection, the transport parameters, the TLS engine's QUIC mode, the packet and frame codec and the connection - 65,654 bytes at `-O2` on x86-64; QPACK and HTTP/3 join it in later releases. The suite is built without the macro, so nothing else would notice it breaking.
 
 Sub-checks:
 
