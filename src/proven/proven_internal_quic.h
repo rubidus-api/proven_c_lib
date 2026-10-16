@@ -185,5 +185,252 @@ const proven_quic_tp_t *proven_tls_quic_peer_params_(const proven_tls_conn_t *c)
  * (RFC 9001 section 4.8), or a transport error such as TRANSPORT_PARAMETER_ERROR. 0: none. */
 proven_u64 proven_tls_quic_error_(const proven_tls_conn_t *c);
 
+/* ---- Packets and frames (RFC 9000 sections 12, 17 and 19): quic_frame.c ----
+ *
+ * Headers are read from a stranger's datagram: every length is checked against what is left,
+ * and a header that does not parse ends the reading of that datagram. Frames are read from a
+ * packet that has opened, so from the peer: a frame that breaks the encoding ends the
+ * connection with the code returned. */
+
+#define PROVEN_QUIC_CONNECTION_REFUSED        0x02
+#define PROVEN_QUIC_FLOW_CONTROL_ERROR        0x03
+#define PROVEN_QUIC_STREAM_LIMIT_ERROR        0x04
+#define PROVEN_QUIC_STREAM_STATE_ERROR        0x05
+#define PROVEN_QUIC_FINAL_SIZE_ERROR          0x06
+#define PROVEN_QUIC_FRAME_ENCODING_ERROR      0x07
+#define PROVEN_QUIC_CONNECTION_ID_LIMIT_ERROR 0x09
+#define PROVEN_QUIC_INVALID_TOKEN             0x0b
+#define PROVEN_QUIC_APPLICATION_ERROR         0x0c
+#define PROVEN_QUIC_KEY_UPDATE_ERROR          0x0e
+#define PROVEN_QUIC_AEAD_LIMIT_REACHED        0x0f
+#define PROVEN_QUIC_NO_VIABLE_PATH            0x10
+
+#define PROVEN_QUIC_MIN_INITIAL 1200               /* bytes in a datagram carrying a client's Initial */
+#define PROVEN_QUIC_RESET_TOKEN 16
+
+typedef enum {
+    PROVEN_QUIC_PKT_INITIAL, PROVEN_QUIC_PKT_0RTT, PROVEN_QUIC_PKT_HANDSHAKE, PROVEN_QUIC_PKT_RETRY,
+    PROVEN_QUIC_PKT_SHORT,
+    PROVEN_QUIC_PKT_VN,                            /* a version negotiation packet (version 0) */
+    PROVEN_QUIC_PKT_OTHER_VERSION                  /* a long header of a version this library does not speak */
+} proven_quic_pkt_type_t;
+
+typedef struct {
+    proven_quic_pkt_type_t type;
+    proven_u32 version;
+    proven_quic_cid_t dcid, scid;                  /* scid: long headers only */
+    proven_mem_view_t token;                       /* Initial: its token (maybe empty). Retry: the Retry token. VN: the versions */
+    proven_size_t pn_offset;                       /* Initial, 0-RTT, Handshake, short: where the protected packet number starts */
+    proven_size_t len;                             /* the packet's bytes in the datagram (a short header, VN, Retry and another version: the rest of it) */
+} proven_quic_hdr_t;
+
+/* The header of the packet at the start of `d`. A short header does not say how long its
+ * connection ID is: `short_dcid_len` is this side's. False when the header is malformed or
+ * runs past the datagram, the fixed bit is clear in a version 1 packet, or a connection ID is
+ * longer than 20 bytes in version 1: the rest of the datagram is then dropped. */
+[[nodiscard]] bool proven_quic_hdr_parse(proven_mem_view_t d, proven_size_t short_dcid_len, proven_quic_hdr_t *h);
+
+/* Version negotiation (RFC 9000 section 17.2.1): an answer to a client's long header of
+ * another version, listing version 1. `dcid` and `scid` are the client's scid and dcid, as
+ * the answer swaps them. Returns its length, 0 when `out` is too small. */
+proven_size_t proven_quic_vn_build(const proven_quic_cid_t *dcid, const proven_quic_cid_t *scid, proven_byte_t random_bits, proven_mem_mut_t out);
+/* A Retry packet (RFC 9000 section 17.2.5) with its integrity tag over `odcid`. */
+proven_size_t proven_quic_retry_build(const proven_quic_cid_t *odcid, const proven_quic_cid_t *dcid, const proven_quic_cid_t *scid,
+                                      proven_mem_view_t token, proven_byte_t random_bits, proven_mem_mut_t out);
+
+/* A long header of `type` up to and including its packet number field of `pn_len` bytes,
+ * with a two-byte Length field counting `pn_len + payload_len + 16` - what
+ * proven_quic_protect takes. Returns the header's length, 0 when it does not fit or the
+ * Length would need more than two bytes. */
+proven_size_t proven_quic_long_header_put(proven_quic_pkt_type_t type, const proven_quic_cid_t *dcid, const proven_quic_cid_t *scid,
+                                          proven_mem_view_t token, proven_u64 pn, proven_size_t pn_len, proven_size_t payload_len,
+                                          proven_mem_mut_t out);
+/* A short header: the key phase bit, the connection ID, the packet number field. */
+proven_size_t proven_quic_short_header_put(const proven_quic_cid_t *dcid, bool key_phase, proven_u64 pn, proven_size_t pn_len, proven_mem_mut_t out);
+/* The packet number field's length for `pn` when the peer has acknowledged up to `largest_acked`
+ * (`largest_acked_plus_one` 0: nothing yet), RFC 9000 section 17.1: 1 to 4. */
+proven_size_t proven_quic_pn_len(proven_u64 pn, proven_u64 largest_acked_plus_one);
+
+/* A writer: every put checks the room left, and the first that does not fit clears `ok`. */
+typedef struct { proven_byte_t *p; proven_size_t n, cap; bool ok; } proven_quic_wr_t;
+void proven_quic_wr_varint(proven_quic_wr_t *w, proven_u64 v);
+void proven_quic_wr_uint(proven_quic_wr_t *w, proven_u64 v, proven_size_t bytes);
+void proven_quic_wr_bytes(proven_quic_wr_t *w, const proven_byte_t *p, proven_size_t n);
+
+enum {
+    PROVEN_QUIC_FT_PADDING = 0x00, PROVEN_QUIC_FT_PING = 0x01, PROVEN_QUIC_FT_ACK = 0x02, PROVEN_QUIC_FT_ACK_ECN = 0x03,
+    PROVEN_QUIC_FT_RESET_STREAM = 0x04, PROVEN_QUIC_FT_STOP_SENDING = 0x05, PROVEN_QUIC_FT_CRYPTO = 0x06,
+    PROVEN_QUIC_FT_NEW_TOKEN = 0x07, PROVEN_QUIC_FT_STREAM = 0x08, /* 0x08 to 0x0f */
+    PROVEN_QUIC_FT_MAX_DATA = 0x10, PROVEN_QUIC_FT_MAX_STREAM_DATA = 0x11, PROVEN_QUIC_FT_MAX_STREAMS_BIDI = 0x12,
+    PROVEN_QUIC_FT_MAX_STREAMS_UNI = 0x13, PROVEN_QUIC_FT_DATA_BLOCKED = 0x14, PROVEN_QUIC_FT_STREAM_DATA_BLOCKED = 0x15,
+    PROVEN_QUIC_FT_STREAMS_BLOCKED_BIDI = 0x16, PROVEN_QUIC_FT_STREAMS_BLOCKED_UNI = 0x17,
+    PROVEN_QUIC_FT_NEW_CONNECTION_ID = 0x18, PROVEN_QUIC_FT_RETIRE_CONNECTION_ID = 0x19,
+    PROVEN_QUIC_FT_PATH_CHALLENGE = 0x1a, PROVEN_QUIC_FT_PATH_RESPONSE = 0x1b,
+    PROVEN_QUIC_FT_CONNECTION_CLOSE = 0x1c, PROVEN_QUIC_FT_CONNECTION_CLOSE_APP = 0x1d, PROVEN_QUIC_FT_HANDSHAKE_DONE = 0x1e
+};
+
+/* One frame, read or to be written. Which fields mean something depends on `type`. */
+typedef struct {
+    proven_u64 type;                               /* STREAM: 0x08, its three bits in `fin` and in whether `offset` and the length are written */
+    proven_u64 id;                                 /* a stream ID; NEW_CONNECTION_ID's and RETIRE_CONNECTION_ID's sequence number */
+    proven_u64 offset;                             /* STREAM, CRYPTO */
+    proven_u64 value;                              /* MAX_*, *_BLOCKED: the limit; RESET_STREAM, STOP_SENDING, CONNECTION_CLOSE: the error code; NEW_CONNECTION_ID: retire_prior_to */
+    proven_u64 final_size;                         /* RESET_STREAM */
+    proven_u64 frame_type;                         /* CONNECTION_CLOSE (0x1c): the frame type that caused it */
+    bool fin;                                      /* STREAM */
+    proven_mem_view_t data;                        /* STREAM, CRYPTO, NEW_TOKEN; CONNECTION_CLOSE's reason; PATH_CHALLENGE's and PATH_RESPONSE's 8 bytes */
+    proven_quic_cid_t cid;                         /* NEW_CONNECTION_ID */
+    proven_byte_t reset_token[PROVEN_QUIC_RESET_TOKEN];
+    proven_u64 largest, ack_delay, first_range, range_count;   /* ACK */
+    proven_mem_view_t ranges;                      /* ACK: `range_count` (gap, length) pairs, already checked */
+    proven_u64 ecn[3];                             /* ACK_ECN: ECT(0), ECT(1), ECN-CE */
+} proven_quic_frame_t;
+
+/* Read one frame. Returns 0, or the code to close with: FRAME_ENCODING_ERROR for a frame
+ * that is cut short or malformed - an unknown type, an ACK range below zero, a STREAM or
+ * CRYPTO frame past 2^62 - 1, a connection ID of 0 or more than 20 bytes, retire_prior_to
+ * above the sequence number, a stream count above 2^60, an empty NEW_TOKEN; PROTOCOL_VIOLATION
+ * for a frame type not in its shortest encoding. */
+proven_u64 proven_quic_frame_read(proven_quic_rd_t *r, proven_quic_frame_t *f);
+/* Write a frame other than ACK. STREAM always carries its length; its offset when not 0.
+ * False when it does not fit (nothing usable is written then). */
+bool proven_quic_frame_put(proven_quic_wr_t *w, const proven_quic_frame_t *f);
+/* The bytes a STREAM frame's header takes (type, id, offset when not 0, length). */
+proven_size_t proven_quic_stream_overhead(proven_u64 id, proven_u64 offset, proven_size_t len);
+
+/* Walk an ACK frame's ranges from the highest: each call gives the next range [*lo, *hi]. */
+typedef struct { proven_quic_rd_t r; proven_u64 hi, lo, left; bool first; } proven_quic_ack_iter_t;
+proven_quic_ack_iter_t proven_quic_ack_iter(const proven_quic_frame_t *f);
+bool proven_quic_ack_next(proven_quic_ack_iter_t *it, proven_u64 *lo, proven_u64 *hi);
+/* Write an ACK frame for `count` ranges [lo, hi], highest first and not touching, as many as
+ * fit (at least the first); `ack_delay` already scaled down by the exponent. Returns the
+ * ranges written, 0 when not even the first fits. */
+proven_size_t proven_quic_ack_put(proven_quic_wr_t *w, const proven_u64 (*ranges)[2], proven_size_t count, proven_u64 ack_delay);
+
+/* What a frame type is: allowed in Initial and Handshake packets (PADDING, PING, ACK, CRYPTO,
+ * CONNECTION_CLOSE 0x1c); ack-eliciting (all but ACK, PADDING, CONNECTION_CLOSE); probing
+ * (PATH_CHALLENGE, PATH_RESPONSE, NEW_CONNECTION_ID, PADDING). */
+bool proven_quic_frame_in_handshake(proven_u64 type);
+bool proven_quic_frame_ack_eliciting(proven_u64 type);
+bool proven_quic_frame_probing(proven_u64 type);
+
+/* ---- The connection (RFC 9000, RFC 9002): quic_conn.c ----
+ *
+ * Like proven_h2_conn_t: no socket and no clock of its own. Datagrams and the time come in,
+ * datagrams and a deadline go out; streams are read and written through it. A connection is
+ * for one thread at a time. Time is microseconds on any monotonic clock, the same one for
+ * every call. Addresses are opaque bytes the caller chooses (a proven_net_addr_t's, say),
+ * compared for equality only: the engine never sends anywhere by itself. */
+
+typedef struct { proven_byte_t len; proven_byte_t b[32]; } proven_quic_addr_t;
+
+typedef struct {
+    proven_allocator_t alloc;                      /* required */
+    const proven_tls_config_t *tls;                /* required: names a protocol (ALPN); its random source is this connection's */
+    proven_u32 max_streams_bidi;                   /* streams the peer may open, each kind. 0: 100 */
+    proven_u32 max_streams_uni;                    /* 0: 100 */
+    proven_u32 stream_window;                      /* bytes a stream may receive ahead of the reader. 0: 256 KiB */
+    proven_u32 conn_window;                        /* the same for all streams together. 0: 1 MiB */
+    proven_u32 stream_send_buffer;                 /* bytes written and not yet acknowledged, per stream. 0: 256 KiB */
+    proven_u32 conn_send_buffer;                   /* the same for all streams together. 0: 1 MiB */
+    proven_u32 idle_timeout_ms;                    /* 0: 30,000 */
+    proven_u32 datagram_size;                      /* the datagrams this side sends: 1,200 to 1,452. 0: 1,200 */
+    proven_u32 granularity_us;                     /* RFC 9002's timer granularity: the clock's tick. 0: 1,000 */
+    proven_u32 max_ack_ranges;                     /* received packet ranges kept per space. 0: 64 */
+    proven_byte_t static_key[32];                  /* a server: one key for all its connections (Retry tokens, stateless reset tokens). All zero: drawn per connection */
+} proven_quic_config_t;
+
+typedef struct proven_quic_conn proven_quic_conn_t;
+
+typedef enum {
+    PROVEN_QUIC_EV_NONE = 0,
+    PROVEN_QUIC_EV_ESTABLISHED,                    /* the handshake is complete: streams may be used */
+    PROVEN_QUIC_EV_STREAM_OPENED,                  /* the peer opened `stream_id` */
+    PROVEN_QUIC_EV_STREAM_READABLE,                /* `stream_id` has bytes to read, or its end */
+    PROVEN_QUIC_EV_STREAM_WRITABLE,                /* `stream_id` can take bytes again */
+    PROVEN_QUIC_EV_STREAM_RESET,                   /* the peer reset its side of `stream_id` with `code` */
+    PROVEN_QUIC_EV_STOP_SENDING,                   /* the peer wants no more on `stream_id` (`code`); this side has reset it */
+    PROVEN_QUIC_EV_CID_NEW,                        /* `cid` reaches this connection (for a demultiplexer) */
+    PROVEN_QUIC_EV_CID_RETIRED,                    /* `cid` no longer does */
+    PROVEN_QUIC_EV_CLOSED                          /* over: `code` (`app`: an application's code), `remote` when the peer closed; nothing more is sent */
+} proven_quic_event_kind_t;
+
+typedef struct {
+    proven_quic_event_kind_t kind;
+    proven_u64 stream_id;
+    proven_u64 code;
+    bool app, remote;
+    proven_quic_cid_t cid;
+} proven_quic_event_t;
+
+/* What a server makes of a datagram before any connection exists. */
+typedef enum {
+    PROVEN_QUIC_STATELESS_DROP = 0,                /* nothing to do */
+    PROVEN_QUIC_STATELESS_REPLY,                   /* send `out` back (version negotiation or a Retry) */
+    PROVEN_QUIC_STATELESS_ACCEPT                   /* a client's first Initial: proven_quic_conn_server_create */
+} proven_quic_stateless_t;
+
+typedef struct {
+    proven_quic_cid_t odcid;                       /* the client's first Destination Connection ID */
+    proven_quic_cid_t retry_scid;                  /* when `retried`: the Source Connection ID of the Retry */
+    bool retried;                                  /* the token was a valid Retry token: the address is validated */
+} proven_quic_accept_t;
+
+/* A server's look at a datagram that matched no connection. Version negotiation for a long
+ * header of another version (in a datagram of at least 1,200 bytes); with `require_retry`, a
+ * Retry for an Initial without a token, and a token checked (address, age at most ten
+ * seconds) when there is one; otherwise a client's Initial in a datagram of at least 1,200
+ * bytes is to be accepted. Everything else is dropped. */
+proven_quic_stateless_t proven_quic_server_stateless(const proven_quic_config_t *cfg, proven_mem_view_t datagram, const proven_quic_addr_t *from,
+                                                      proven_u64 now, bool require_retry, proven_mem_mut_t out, proven_size_t *out_len,
+                                                      proven_quic_accept_t *accept);
+/* A stateless reset (RFC 9000 section 10.3) for a short-header datagram of `in_len` bytes to a
+ * connection ID this server issued and no longer knows: shorter than what came, at least 21
+ * bytes. 0 when `in_len` is too small to answer without the answer being as large. */
+proven_size_t proven_quic_stateless_reset(const proven_quic_config_t *cfg, const proven_quic_cid_t *dcid, proven_size_t in_len, proven_mem_mut_t out);
+
+proven_err_t proven_quic_conn_client_create(const proven_quic_config_t *cfg, proven_u8str_view_t server_name, proven_tls_session_t *session,
+                                           const proven_quic_addr_t *server, proven_u64 now, proven_quic_conn_t **out);
+/* A server's connection for an ACCEPTed datagram, which it then reads. */
+proven_err_t proven_quic_conn_server_create(const proven_quic_config_t *cfg, const proven_quic_accept_t *accept, proven_mem_view_t datagram,
+                                           const proven_quic_addr_t *from, proven_u64 now, proven_quic_conn_t **out);
+void proven_quic_conn_destroy(proven_quic_conn_t *c);
+
+/* A datagram from `from`. A packet that does not open or breaks no rule worth closing over is
+ * dropped; a rule broken closes the connection (an event). PROVEN_ERR_NOMEM only. */
+proven_err_t proven_quic_conn_receive(proven_quic_conn_t *c, proven_mem_view_t datagram, const proven_quic_addr_t *from, proven_u64 now);
+/* The next datagram to send now, into `out` (at least 1,452 bytes), and where: `*len` 0 when
+ * nothing may go now (call again after the deadline or after receiving). */
+proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven_mem_mut_t out, proven_size_t *len, proven_quic_addr_t *to);
+/* When to call proven_quic_conn_timeout next; UINT64 max when nothing is waiting. */
+proven_u64 proven_quic_conn_deadline(const proven_quic_conn_t *c);
+void proven_quic_conn_timeout(proven_quic_conn_t *c, proven_u64 now);
+/* The next event; false when there is none. */
+bool proven_quic_conn_poll(proven_quic_conn_t *c, proven_quic_event_t *ev);
+
+/* Streams. PROVEN_ERR_INVALID_STATE before the handshake completes, after the close, or for a
+ * stream in the wrong state; PROVEN_ERR_NOT_FOUND for a stream that is not open. */
+proven_err_t proven_quic_stream_open(proven_quic_conn_t *c, bool bidi, proven_u64 *id);   /* PROVEN_ERR_BUSY: the peer's limit */
+proven_err_t proven_quic_stream_write(proven_quic_conn_t *c, proven_u64 id, proven_mem_view_t data, bool fin, proven_size_t *taken);
+proven_err_t proven_quic_stream_read(proven_quic_conn_t *c, proven_u64 id, proven_mem_mut_t out, proven_size_t *got, bool *fin);
+proven_err_t proven_quic_stream_reset(proven_quic_conn_t *c, proven_u64 id, proven_u64 code);
+proven_err_t proven_quic_stream_stop(proven_quic_conn_t *c, proven_u64 id, proven_u64 code);
+/* Close: an application's code (`app`) or a transport one. Sending goes on for the close. */
+void proven_quic_conn_close(proven_quic_conn_t *c, bool app, proven_u64 code);
+
+/* For tests and the private checks: counters and state. */
+typedef struct {
+    proven_u64 packets_sent, packets_received, packets_lost, packets_dropped, bytes_sent, bytes_received;
+    proven_u64 cwnd, bytes_in_flight, srtt_us, min_rtt_us, pto_count;
+    proven_size_t streams, memory;                 /* streams held; bytes of buffers held */
+    bool established, confirmed, closed, path_validated;
+    proven_u64 key_updates, spurious_losses;
+} proven_quic_stats_t;
+void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s);
+/* Tests only: `payload` read as the frames of a packet that opened at `lvl` (its result: the
+ * close code, or 0), and a key update started by this side. */
+proven_u64 proven_quic_conn_test_frames_(proven_quic_conn_t *c, int lvl, proven_mem_view_t payload, proven_u64 now);
+bool proven_quic_conn_test_key_update_(proven_quic_conn_t *c);
+
 #endif /* PROVEN_NO_HTTP3 */
 #endif

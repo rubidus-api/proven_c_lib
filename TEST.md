@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 116 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 118 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-16, Windows 11 test VM (v0.61.0): x86-64 350 PASS, 0 FAIL, 10 
 ## Test catalog
 
 
-The hosted full run builds and executes 182 registered tests plus the 178 runnable manual examples - 360 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 195 test files: the 178 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 184 registered tests plus the 178 runnable manual examples - 362 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 197 test files: the 180 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -810,7 +810,50 @@ Sub-checks:
 
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 
-Failure tip: inspect `src/proven/quic_crypto.c`. `tests/test_unit_quic_vectors.h` is the RFC's text, written by a private generator. Not covered here: a real peer - the private check drives aioquic's TLS engine against this library's in QUIC mode; packets from a QUIC implementation (RFC-0017 Q-2).
+Failure tip: inspect `src/proven/quic_crypto.c`. `tests/test_unit_quic_vectors.h` is the RFC's text, written by a private generator. Not covered here: a real peer - the private check drives aioquic's TLS engine against this library's in QUIC mode; the connection that uses these packets (`tests/test_unit_quic_conn`).
+
+### `tests/test_unit_quic_frame` - QUIC packet headers and frames
+
+Intent: verify the reading and writing of RFC 9000's packet headers and frames (RFC-0017 Q-2) - the codec under the connection. Internal code, reached through `src/proven/proven_internal_quic.h`.
+
+Sub-checks:
+
+- The headers of RFC 9001 appendix A's packets located: the client's Initial (version 1, its connection IDs, no token, the packet number at byte 18, 1,200 bytes), the server's, two coalesced packets one after the other by their Length, the Retry's token between the connection IDs and the tag, and the short header with a zero-length connection ID. The client's and server's Initial headers and the short header written to the RFC's bytes; the Retry built to the RFC's bytes with its tag, and not built into too little room; a Length past two bytes, a Retry and a five-byte packet number not written; a Handshake header read back.
+- Headers refused: the Initial cut at each of its first twenty bytes, a Length one byte past the datagram, the fixed bit clear, a 21-byte connection ID, a Retry with no token, a short header shorter than this side's connection ID or with the fixed bit clear.
+- Version negotiation built (listing version 1) and read, a list that is not whole or is empty refused; a long header of another version located by its invariants alone.
+- Packet number lengths: RFC 9000 appendix A.2's two examples, the boundaries with nothing acknowledged, and, over 3,000 by 70 cases, every length written decoding again to the same number.
+- Every frame type of version 1 (23 shapes) written and read back the same, every prefix of each refused with FRAME_ENCODING_ERROR, and nothing written into one byte too little room; a STREAM frame without a length runs to the end of the packet; the frames allowed in Initial and Handshake packets, the ack-eliciting and the probing ones.
+- ACK ranges written highest first and walked back the same, as many as fit when room is short; a first range, a gap and a range below zero refused, a range ending at zero taken, ECN counts read, a count past the frame refused.
+- Malformed frames with their codes: a frame type in a longer encoding (PROTOCOL_VIOLATION); an unknown type, DATAGRAM included; STREAM and CRYPTO past 2^62 - 1; an empty NEW_TOKEN; MAX_STREAMS and STREAMS_BLOCKED above 2^60; NEW_CONNECTION_ID with no connection ID, with 21 bytes, or retiring above its own number; PATH_CHALLENGE with seven bytes; a CONNECTION_CLOSE reason past the packet. Writing a short PATH_CHALLENGE, an ACK through the general writer or an unknown type writes nothing.
+
+The suite is a skip in a build with `PROVEN_NO_HTTP3`.
+
+Failure tip: inspect `src/proven/quic_frame.c`.
+
+### `tests/test_unit_quic_conn` - QUIC connections
+
+Intent: verify the QUIC connection (RFC 9000, RFC 9002; RFC-0017 Q-2): no socket and no clock of its own, so two engines run over this test's simulated network - a virtual clock, and a seeded network that delays, loses, duplicates and reorders datagrams and can capture them all. Internal code, reached through `src/proven/proven_internal_quic.h`.
+
+Sub-checks:
+
+- The handshake completes and the client confirms it; one stream each way carries a megabyte, every byte checked against a pattern of its stream and offset.
+- At 1, 5 and 20 percent loss, with reordering and duplication and jitter: four streams, half a megabyte each, both ways, every byte in order.
+- A hundred bidirectional streams from the client and a hundred unidirectional ones from the server at once; the 101st of each kind is PROVEN_ERR_BUSY; once they end, both sides have freed every stream, and a hundred more open on the credit MAX_STREAMS renews.
+- A server that requires a Retry: one Retry, the token comes back, the address counts as validated, and data flows.
+- Version negotiation: a client Initial of another version is answered; a client ignores an answer that lists version 1 and goes on; one that does not ends the attempt (CONNECTION_REFUSED).
+- An application's close (0x1234) reaches the peer as the peer's, application, with its code; both sides end after the closing period; the draining side sends nothing.
+- Eighteen frames that break RFC 9000's rules, read by a server: STREAM on its own unidirectional stream, on a server stream not opened, past the stream limit, past the stream's window, past a final size; RESET_STREAM below what was received; STOP_SENDING, MAX_STREAM_DATA and STREAM_DATA_BLOCKED on a stream of the wrong direction; HANDSHAKE_DONE and NEW_TOKEN to a server; RETIRE_CONNECTION_ID of one never issued; an ACK of a packet never sent; an unknown frame; CRYPTO past its window; a connection ID past the limit and two IDs for one sequence number; five streams' offsets past the connection's window. Each closes with the code RFC 9000 names, and the client is told it. MAX_DATA in an Initial packet is PROTOCOL_VIOLATION.
+- The idle timeout: on a silent network neither side closes before 30 seconds, and both have closed silently by 35.
+- A stateless reset from a server that lost its state ends the client.
+- The amplification limit: a server whose client is heard once sends at most 3,600 bytes for its 1,200; when the client is heard again the handshake completes.
+- A client whose address changes mid-transfer (a NAT rebinding): the server validates the new path and sends there, and the transfer completes.
+- Key updates started by the client and then by the server in the middle of a transfer: the other follows, nothing is lost, two updates on each side.
+- Flow control and memory: with a reader that reads nothing, six streams of 2 MiB stop at the windows; the receiver holds less than its 1 MiB window and bookkeeping, the sender less than its 1 MiB send buffer and bookkeeping; once read, everything arrives.
+- Changed packets: every datagram captured in a handshake and a small transfer, delivered again with a bit changed (each of the first 64 bytes' bits, then every 29th) and cut short (each of the first 64 lengths, then every 17th) - about 21,000 datagrams - is dropped; neither side closes or is told to, and a new transfer goes through.
+
+The suite is a skip in a build with `PROVEN_NO_HTTP3`.
+
+Failure tip: inspect `src/proven/quic_conn.c`. The network and the clock are the test's own, so a failure repeats with the same seed. Not covered here: another implementation over real UDP - the private check runs aioquic against this library through a lossy relay, in both roles.
 
 ### `tests/test_unit_tls12_keys` - TLS 1.2 PRF, key block and records against known answers
 
@@ -2626,7 +2669,7 @@ Failure tip: inspect the `PROVEN_NO_BROTLI` guards in `include/proven.h`, `src/p
 
 ### `tests/test_portability_compile_nohttp3` - PROVEN_NO_HTTP3 leaves QUIC out
 
-Intent: verify the promise `PROVEN_NO_HTTP3` makes (RFC-0017 B-10): QUIC, QPACK and HTTP/3 left out of the library. In v0.61.0 that is QUIC packet protection, the transport parameters and the TLS engine's QUIC mode - 11,923 bytes at `-O2` on x86-64; QPACK and HTTP/3 join it in later releases. The suite is built without the macro, so nothing else would notice it breaking.
+Intent: verify the promise `PROVEN_NO_HTTP3` makes (RFC-0017 B-10): QUIC, QPACK and HTTP/3 left out of the library. In v0.62.0 that is QUIC packet protection, the transport parameters, the TLS engine's QUIC mode, the packet and frame codec and the connection - 65,062 bytes at `-O2` on x86-64; QPACK and HTTP/3 join it in later releases. The suite is built without the macro, so nothing else would notice it breaking.
 
 Sub-checks:
 
@@ -2636,7 +2679,7 @@ Sub-checks:
 
 The fixture runs the host compiler through `/bin/sh` and is skipped on Windows.
 
-Failure tip: inspect the `PROVEN_NO_HTTP3` guards in `src/proven/quic_crypto.c`, `src/proven/proven_internal_quic.h` and `src/proven/tls13.c`.
+Failure tip: inspect the `PROVEN_NO_HTTP3` guards in `src/proven/quic_crypto.c`, `quic_frame.c`, `quic_conn.c`, `proven_internal_quic.h` and `tls13.c`.
 
 ### `tests/test_portability_compile_nonet` - PROVEN_NO_NET leaves the socket layer out
 

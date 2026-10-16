@@ -48,6 +48,8 @@ PROVEN_BUILD_SOURCE("src/proven/tls_dh.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/tls_config.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/tls13.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/quic_crypto.c", PROVEN_SOURCE_FREESTANDING)   /* QUIC packet protection and transport parameters; empty under PROVEN_NO_HTTP3 */
+PROVEN_BUILD_SOURCE("src/proven/quic_frame.c", PROVEN_SOURCE_FREESTANDING)   /* QUIC packet headers and frames; empty under PROVEN_NO_HTTP3 */
+PROVEN_BUILD_SOURCE("src/proven/quic_conn.c", PROVEN_SOURCE_FREESTANDING)   /* a QUIC connection: streams, loss recovery, NewReno, no socket; empty under PROVEN_NO_HTTP3 */
 PROVEN_BUILD_SOURCE("src/proven/tls_issue.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/tls_transport.c", PROVEN_SOURCE_HOSTED_ONLY)   /* the engine over a transport */
 PROVEN_BUILD_SOURCE("src/proven/loop.c", PROVEN_SOURCE_HOSTED_ONLY)   /* an event loop over the selector */

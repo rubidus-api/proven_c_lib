@@ -18,6 +18,37 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **The second piece of HTTP/3: the QUIC transport** (RFC 9000, RFC 9002), internal to the
+  library like the first - no public function is added or changed; HTTP/3 and the event server
+  and client that use it follow in the next three releases. A connection that, like the HTTP/2
+  one, has no socket and no clock of its own: datagrams and the time go in, datagrams and a
+  deadline come out. Long and short headers, every frame of QUIC version 1, packets coalesced
+  and padded as RFC 9000 requires; streams in both directions and of both kinds with flow
+  control per stream and per connection; acknowledgements, loss detection, the probe timeout
+  and NewReno congestion control with pacing (RFC 9002), its packet and time thresholds raised
+  when a loss proves to have been reordering (RFC 9002 section 6.1.1); the handshake over the
+  TLS engine's QUIC mode, keys dropped as RFC 9001 says, and the peer's key updates followed;
+  Retry (a server may require one, its tokens bound to the address for ten seconds), version
+  negotiation (version 1 only), the amplification limit before an address is validated,
+  connection IDs issued and retired, a client's change of address validated (passive migration
+  only), the idle timeout, closing and draining, and stateless resets sent and recognised. Each
+  rule broken closes the connection with the code RFC 9000 names. Every buffer has a cap: 100
+  streams of each kind, 256 KiB per stream and 1 MiB per connection received ahead of the
+  reader, the same sent and not yet acknowledged, 64 ACK ranges per space, 64 KiB of CRYPTO
+  data per level out of order, four datagrams held for keys not yet there. Part of the
+  freestanding profile.
+- `PROVEN_NO_HTTP3` now leaves 65,062 bytes out (1,064,329 bytes of code and data with it,
+  999,267 without, at `-O2` on x86-64).
+- Tests: `test_unit_quic_frame` (RFC 9001 appendix A's headers read and written byte for byte,
+  every frame type both ways, every truncation and each malformed frame refused with its code);
+  `test_unit_quic_conn` (two engines over a simulated network with a virtual clock: the
+  handshake and data at 0 to 20 percent loss with reordering and duplication, a hundred streams
+  at once, Retry, version negotiation, closes, eighteen rule breaches and their codes, the idle
+  timeout, a stateless reset, the amplification limit, a change of address, key updates, the
+  windows and the memory they bound, and about 21,000 changed or cut datagrams dropped).
+
 ## [0.61.0] - 2026-10-16
 
 ### Added
