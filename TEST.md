@@ -18,11 +18,11 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 114 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 116 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
-| `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 14 |
+| `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 15 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
 | `docs` | Are the claims the documentation makes still true? | 11 |
 | `bench` | How fast is it? (Not a correctness gate.) | 5 |
