@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.63.0] - 2026-10-17
+
 ### Added
 
 - **The third piece of HTTP/3: QPACK and HTTP/3 itself** (RFC 9204, RFC 9114), internal to the
@@ -41,7 +43,7 @@ written; their tags still exist.
   profile.
 - QUIC: the bytes a stream would take now (`proven_quic_stream_room`) and whether stream data
   is still unacknowledged (`proven_quic_conn_sending`), both internal.
-- `PROVEN_NO_HTTP3` now leaves [SIZE] bytes out ([WITH] bytes of code and data with it,
+- `PROVEN_NO_HTTP3` now leaves 93,921 bytes out (1,093,188 bytes of code and data with it,
   999,267 without, at `-O2` on x86-64).
 - Tests: `test_unit_qpack` (the static table, RFC 9204 appendix B - B.1 decoded, B.2 to B.5
   refused as a table of capacity 0 must - the encoder's choices, four thousand lists both ways,
