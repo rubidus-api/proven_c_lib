@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.62.0] - 2026-10-16
+
 ### Added
 
 - **The second piece of HTTP/3: the QUIC transport** (RFC 9000, RFC 9002), internal to the
