@@ -148,6 +148,9 @@ bool proven_quic_unprotect(const proven_quic_keys_t *keys, proven_byte_t *packet
     if (pn_offset < 1 || pn_offset > packet_len || packet_len - pn_offset < 4 + 16) return false;
     proven_byte_t mask[5];
     proven_quic_hp_mask(keys, packet + pn_offset + 4, mask);
+    /* Header protection hides the header from whoever watches the wire, not from the key
+     * holder, who must read it to open the packet: what the mask reveals is public here. */
+    PROVEN_CT_PUBLIC(mask, sizeof mask);
     packet[0] ^= (proven_byte_t)(mask[0] & first_byte_mask(packet[0]));
     const proven_size_t pn_len = (proven_size_t)(packet[0] & 0x03) + 1;
     proven_u64 truncated = 0;
