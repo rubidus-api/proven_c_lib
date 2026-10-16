@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.61.0] - 2026-10-16
+
 ### Added
 
 - **The first piece of HTTP/3: QUIC's packet protection and TLS 1.3 in QUIC mode** (RFC 9001),
