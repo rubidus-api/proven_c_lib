@@ -18,6 +18,34 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **The first piece of HTTP/3: QUIC's packet protection and TLS 1.3 in QUIC mode** (RFC 9001),
+  internal to the library - no public function is added or changed in this release; the QUIC
+  transport, HTTP/3 and the event server and client that use them follow in the next four.
+  Packet protection: the Initial secrets from a connection ID, each level's key, IV and header
+  protection key, AES-GCM and ChaCha20-Poly1305 packets with header protection, the next key
+  phase's secret, and the Retry integrity tag - all reproduce RFC 9001's appendix A byte for
+  byte. Variable-length integers and packet numbers (RFC 9000 section 16, appendix A.3), and the
+  transport parameters of RFC 9000 section 18, encoded and decoded with each range and rule
+  checked. The TLS engine's QUIC mode hands handshake bytes in and out one encryption level at
+  a time instead of in records, hands each level's traffic secrets to the QUIC layer, carries
+  the transport parameters in their extension, and keeps QUIC's rules: TLS 1.3 only, no session
+  id, no ChangeCipherSpec, no KeyUpdate, a protocol (ALPN) agreed; a breach ends the handshake
+  with the error code RFC 9001 names (0x0100 + the alert, or a transport error). TLS over TCP
+  does not change: `tls.h` is as it was, and a server over TCP passes over the transport
+  parameters extension as it always has. Part of the freestanding profile.
+- **`PROVEN_NO_HTTP3`**: a build option that leaves QUIC, QPACK and HTTP/3 out. In this release
+  that is 11,923 bytes (1,010,940 bytes of code and data with it, 999,017 without, at `-O2` on
+  x86-64); it grows as the later pieces arrive.
+- Tests: `test_unit_quic_crypto` (RFC 9001 appendix A and RFC 9000 appendix A as printed, every
+  bit change and truncation of the sample packets - 12,204 - refused, the bits header protection
+  covers, every transport parameter and each refusal); `test_unit_tls_quic` (two engines in QUIC
+  mode: the same secrets on both sides at every level under each suite, through a retry, a
+  resumption and a client certificate; the parameters both ways; each rule broken and its code;
+  a server over TCP's records opened with the QUIC-mode client's secret; and 6,920 handshakes
+  with one bit of a flight changed, none of which completes); `test_portability_compile_nohttp3`.
+
 ## [0.60.0] - 2026-10-16
 
 ### Added

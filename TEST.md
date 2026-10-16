@@ -347,7 +347,7 @@ Last run, 2026-10-16, Windows 11 test VM (v0.60.0): x86-64 348 PASS, 0 FAIL, 9 S
 ## Test catalog
 
 
-The hosted full run builds and executes 179 registered tests plus the 178 runnable manual examples - 357 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 192 test files: the 175 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 182 registered tests plus the 178 runnable manual examples - 360 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 195 test files: the 178 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -794,6 +794,24 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/tls_keys.c`. The step letter printed on failure names the operation (the test's header comment lists them). `tests/test_unit_tls_vectors.h` is written by a private generator from the RFC's text. Not covered: the traces are all `TLS_AES_128_GCM_SHA256`, so no published value checks the SHA-384 schedule; and this is not a handshake - no state machine is exercised.
 
+### `tests/test_unit_quic_crypto` - QUIC packet protection and transport parameters
+
+Intent: verify QUIC version 1 below the transport (RFC-0017 Q-1) - variable-length integers, packet numbers, packet protection, the Retry integrity tag and the transport parameters - against the published examples, byte for byte, and refuse every change. Internal code, reached through `src/proven/proven_internal_quic.h`.
+
+Sub-checks:
+
+- RFC 9000 appendix A.1: the four variable-length integers decode (and 37 in two bytes), one byte short is refused, the writer uses the shortest form; the first and last value of each length round-trip at that length and 2^62 has none. Appendix A.3: the packet number example, the first packet, both directions of a wrap, the half-open window, and no candidate above 2^62.
+- RFC 9001 appendix A.1: the initial secret from the version 1 salt and the 8-byte connection ID, both sides' secrets, the labels `quic key` and `quic hp`, and each side's key, IV and header protection key.
+- Appendix A.2 and A.3: the client's 1,200-byte Initial (a CRYPTO frame padded to 1,162 bytes, packet number 2 in four bytes) and the server's (packet number 1 in two) protected to the printed bytes, each mask as printed, and opened again to the same number and payload; the client's keys do not open the server's packet.
+- Appendix A.4: the Retry tag as printed; every bit change of the packet or of the connection ID, and every truncation, fails the check.
+- Appendix A.5: ChaCha20-Poly1305 - key, IV, header protection key, the next key phase's secret (`quic ku`), the mask with the counter taken little endian, and the 21-byte short-header packet; packets too short to sample are not protected.
+- Every single-bit change and every truncation of the three protected packets (12,204 in all) fails to open; a long header's top four bits and a short header's top three are never masked, over 64 packet numbers whose masks would change them; `TLS_AES_256_GCM_SHA384` protects with AES-256 for both keys.
+- Transport parameters: those of RFC 9001's own ClientHello decode to the values it carries and the defaults for the rest, and are refused as a server's (no `original_destination_connection_id`); every parameter a server sends round-trips, a zero-length connection ID included; every buffer too small is refused; a client never sends what only a server may; a parameter at its default is left out and every prefix of a list is refused; each range limit (`max_udp_payload_size` 1,200 to 65,527, `ack_delay_exponent` to 20, `max_ack_delay` below 2^14, `active_connection_id_limit` from 2, stream counts to 2^60) is refused one past it and accepted at it; repeated, malformed, missing, server-only and oversized parameters are refused; unknown and reserved ones are skipped; a server's `preferred_address` is read and refused with a zero-length connection ID, cut short, or from a client, and is never sent.
+
+The suite is a skip in a build with `PROVEN_NO_HTTP3`.
+
+Failure tip: inspect `src/proven/quic_crypto.c`. `tests/test_unit_quic_vectors.h` is the RFC's text, written by a private generator. Not covered here: a real peer - the private check drives aioquic's TLS engine against this library's in QUIC mode; packets from a QUIC implementation (RFC-0017 Q-2).
+
 ### `tests/test_unit_tls12_keys` - TLS 1.2 PRF, key block and records against known answers
 
 Intent: verify the parts of TLS 1.2 below the state machine - the PRF, the extended master secret, Finished, the key block, record protection for the six AEAD suites - against a script of known answers. Internal code, reached through `src/proven/proven_internal_tls.h`.
@@ -862,6 +880,25 @@ Sub-checks:
 - Making a key: sizes outside 1024 to 4096 bits, sizes that are not a multiple of 64, and no random source are refused; a key has exactly the size asked for and two different primes; its `d` undoes its `e`.
 
 Failure tip: inspect `src/proven/crypto_rsa.c` (`rsa_private`, `rsa_garner`, `proven_crypto_rsa_blind_make`) and `proven_crypto_mp_pow_ct` in `src/proven/crypto_mp.c`. Keys and random bytes come from fixed seeds, so a failure repeats exactly. Agreement with another implementation, and the absence of secret-dependent branches, are checked outside the suite and are not this test's.
+
+### `tests/test_unit_tls_quic` - TLS 1.3 in QUIC mode
+
+Intent: verify the TLS engine's QUIC mode (RFC 9001 sections 4 and 8): handshake bytes handed in and out one encryption level at a time, each level's traffic secrets handed out, the transport parameters exchanged, and QUIC's rules kept. Two engines back to back with no network; internal code, reached through `src/proven/proven_internal_quic.h`.
+
+Sub-checks:
+
+- A handshake level by level: the ClientHello waits at Initial as one message with no record header, with an empty session id, the client's parameters in `quic_transport_parameters`, TLS 1.3 alone in `supported_versions` and three TLS 1.3 suites though the config allows 1.2, and no `record_size_limit` or TLS 1.2 extensions. Both sides complete with no error, reach the same secret at Handshake and at Application in each direction (and the two directions differ), read and write at Application, have each other's parameters and both name h3; no Initial secret comes from TLS; a dropped level's secrets are gone.
+- The record interface is refused (`proven_tls_feed`, `_pending_output`, `_read`, `_write`, `_close`; `proven_tls_key_update` is unsupported); a KeyUpdate message from the peer ends the connection with 0x010a.
+- Each suite, both key types, a HelloRetryRequest for P-256, a resumption from a ticket sent at Application, and a client certificate sent at Handshake: the same secrets on both sides; without the required certificate, 0x0174.
+- What a QUIC-mode connection is made from: a config with no ALPN or no TLS 1.3, parameters over 1,024 bytes or missing, a server config with no certificate - refused; a TCP connection is not one in QUIC mode.
+- Breaches and their codes: no protocol in common (0x0178), and a hello with no ALPN at all (0x0178); a ClientHello at Handshake or Application, and the server's whole flight at Initial (0x010a); a client's parameter out of range and a server's missing `original_destination_connection_id` (0x08); a TCP ClientHello's session id (0x0a), and without it the missing parameters (0x016d).
+- The key schedule is TLS 1.3's: a server over TCP answers the QUIC-mode client's hello (passing over `quic_transport_parameters`), the client's Handshake read secret opens every record after the ServerHello, and their EncryptedExtensions, lacking the parameters, is 0x016d.
+- Flights fed a byte at a time and in pieces of 7 and 64 complete with the same secrets.
+- Every single-bit change of the Initial and Handshake flights in both directions (6,920 handshakes) leaves the pair unestablished: 6,854 end with an error code, 66 wait for bytes that never come (a length made longer).
+
+The suite is a skip in a build with `PROVEN_NO_HTTP3`.
+
+Failure tip: inspect the QUIC-mode parts of `src/proven/tls13.c` (`quic_emit`, `keys_read`, `keys_write`, `proven_tls_quic_*`). A changed handshake that completes means some byte reaches neither the transcript nor a check. Not covered here: an independent peer (the private check runs aioquic's TLS engine against this one in both roles, secret by secret); packet protection of these bytes and the QUIC transport (RFC-0017 Q-2).
 
 ### `tests/test_unit_tls_net` - TLS over sockets: the transport, HTTPS and WebSocket
 
@@ -2586,6 +2623,20 @@ Sub-checks:
 The fixture runs the host compiler through `/bin/sh` and is skipped on Windows.
 
 Failure tip: inspect the `PROVEN_NO_BROTLI` guards in `include/proven.h`, `src/proven/brotli.c` and `src/proven/http_coding.c`.
+
+### `tests/test_portability_compile_nohttp3` - PROVEN_NO_HTTP3 leaves QUIC out
+
+Intent: verify the promise `PROVEN_NO_HTTP3` makes (RFC-0017 B-10): QUIC, QPACK and HTTP/3 left out of the library. In v0.61.0 that is QUIC packet protection, the transport parameters and the TLS engine's QUIC mode - 11,923 bytes at `-O2` on x86-64; QPACK and HTTP/3 join it in later releases. The suite is built without the macro, so nothing else would notice it breaking.
+
+Sub-checks:
+
+- Every source in `build_sources.inc` compiles with the host compiler and `-DPROVEN_NO_HTTP3 -Wall -Wextra -Werror`.
+- A program that includes `proven.h` and `proven/alias_xcv.h` links against that build and runs, and its TLS client writes a ClientHello.
+- No object of that build defines or references `proven_quic_*` or `proven_tls_quic_*`.
+
+The fixture runs the host compiler through `/bin/sh` and is skipped on Windows.
+
+Failure tip: inspect the `PROVEN_NO_HTTP3` guards in `src/proven/quic_crypto.c`, `src/proven/proven_internal_quic.h` and `src/proven/tls13.c`.
 
 ### `tests/test_portability_compile_nonet` - PROVEN_NO_NET leaves the socket layer out
 

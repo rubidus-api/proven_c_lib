@@ -1,4 +1,5 @@
 #include "proven_internal_tls.h"
+#include "proven_internal_quic.h"
 #include "../../platform/proven_sys_mem.h"
 
 /* The TLS 1.3 state machine (RFC 8446), both roles. Bytes in, bytes out: no I/O, no clock and
@@ -52,6 +53,7 @@
 #define EXT_COOKIE 44
 #define EXT_PSK_MODES 45
 #define EXT_KEY_SHARE 51
+#define EXT_QUIC_TRANSPORT_PARAMETERS 0x39
 
 #define GROUP_P256 0x0017
 #define GROUP_X25519 0x001d
@@ -162,6 +164,26 @@ typedef struct {
     proven_u32 ticket12_lifetime;
 } tls_handshake_t;
 
+#ifndef PROVEN_NO_HTTP3
+/* QUIC mode (RFC 9001 section 4): handshake messages go to and come from the QUIC layer one
+ * encryption level at a time, with no records around them; the secrets of each level are handed
+ * over instead of being installed here; a failure is a QUIC error code instead of an alert on
+ * the wire. Its own allocation, so that a connection over TCP pays one pointer for it. */
+#define TLS_QUIC_TP_MAX 1024
+typedef struct {
+    proven_byte_t tp_local[TLS_QUIC_TP_MAX];      /* the transport parameters this side sends */
+    proven_size_t tp_local_len;
+    proven_quic_tp_t tp_peer;
+    bool have_peer;
+    proven_u8 read_level, write_level;            /* proven_quic_level_t */
+    tls_buf_t out[PROVEN_QUIC_LEVELS];            /* handshake bytes for the QUIC layer to send, per level */
+    proven_size_t out_off[PROVEN_QUIC_LEVELS];
+    proven_byte_t secret[PROVEN_QUIC_LEVELS][2][PROVEN_HMAC_MAX_SIZE];   /* [level][0 read, 1 write]; SECRET */
+    bool secret_ready[PROVEN_QUIC_LEVELS][2];
+    proven_u64 error;                             /* 0x0100 + alert, or a transport error code; 0: none */
+} tls_quic_t;
+#endif
+
 struct proven_tls_conn {
     const proven_tls_config_t *config;
     proven_allocator_t alloc;
@@ -198,6 +220,9 @@ struct proven_tls_conn {
     tls_buf_t peer_cert;                          /* kept only when the config asks */
     proven_byte_t *server_name;                   /* client: the name it asked for; its own small allocation */
     proven_size_t server_name_len;
+#ifndef PROVEN_NO_HTTP3
+    tls_quic_t *quic;                             /* QUIC mode; NULL over TCP */
+#endif
 };
 
 static void tls_wipe(void *p, proven_size_t n) { proven_mem_wipe((proven_mem_mut_t){ .ptr = p, .size = n }); }
@@ -283,7 +308,27 @@ static bool out_reserve(proven_tls_conn_t *c, proven_size_t more) {
 }
 
 /* One or more records carrying `data` as `type`, under the write keys if there are any. */
+#ifndef PROVEN_NO_HTTP3
+/* QUIC mode: a handshake message goes out at the level being written, as it is; an alert
+ * becomes the connection's error code (unless a transport error was set first); nothing else
+ * is ever sent. */
+static bool quic_emit(proven_tls_conn_t *c, proven_byte_t type, const proven_byte_t *data, proven_size_t len) {
+    tls_quic_t *q = c->quic;
+    if (type == PROVEN_TLS_CT_ALERT) {
+        if (q->error == 0 && len == 2) q->error = PROVEN_QUIC_CRYPTO_ERROR + data[1];
+        return true;
+    }
+    if (type != PROVEN_TLS_CT_HANDSHAKE) return false;
+    tls_buf_t *b = &q->out[q->write_level];
+    if (q->out_off[q->write_level] > 0 && q->out_off[q->write_level] == b->len) { b->len = 0; q->out_off[q->write_level] = 0; }
+    return buf_append(c, b, data, len);
+}
+#endif
+
 static bool emit(proven_tls_conn_t *c, proven_byte_t type, const proven_byte_t *data, proven_size_t len, proven_byte_t clear_minor) {
+#ifndef PROVEN_NO_HTTP3
+    if (c->quic) return quic_emit(c, type, data, len);
+#endif
     proven_size_t limit = c->write_keys.active ? c->peer_record_limit : PROVEN_TLS_MAX_PLAINTEXT;
     /* TLS 1.0 chains each record's IV from the one before, so whoever can make this side send
      * chosen data knows the IV it will be encrypted under (BEAST). Sending one byte first puts
@@ -329,6 +374,51 @@ static proven_err_t tls_nomem(proven_tls_conn_t *c) { return tls_fail(c, AL_INTE
 static proven_err_t tls_decode(proven_tls_conn_t *c) { return tls_fail(c, AL_DECODE_ERROR, PROVEN_ERR_PROTOCOL); }
 static proven_err_t tls_illegal(proven_tls_conn_t *c) { return tls_fail(c, AL_ILLEGAL_PARAMETER, PROVEN_ERR_PROTOCOL); }
 static proven_err_t tls_unexpected(proven_tls_conn_t *c) { return tls_fail(c, AL_UNEXPECTED_MESSAGE, PROVEN_ERR_PROTOCOL); }
+
+static bool is_quic(const proven_tls_conn_t *c) {
+#ifndef PROVEN_NO_HTTP3
+    return c->quic != NULL;
+#else
+    (void)c;
+    return false;
+#endif
+}
+
+#ifndef PROVEN_NO_HTTP3
+/* End a QUIC-mode connection with a transport error code rather than an alert's. */
+static proven_err_t quic_fail(proven_tls_conn_t *c, proven_u64 code) {
+    if (!c->dead && c->quic->error == 0) c->quic->error = code;
+    return tls_fail(c, AL_ILLEGAL_PARAMETER, PROVEN_ERR_PROTOCOL);
+}
+#endif
+
+/* A level's traffic secret takes effect for reading or for writing. Over TCP its record keys are
+ * installed; in QUIC mode the secret is handed to the QUIC layer and the level moves on. */
+static void keys_read(proven_tls_conn_t *c, const proven_tls_suite_t *suite, const proven_byte_t *secret) {
+#ifndef PROVEN_NO_HTTP3
+    if (c->quic) {
+        tls_quic_t *q = c->quic;
+        q->read_level++;
+        for (proven_size_t i = 0; i < suite->hash_len; ++i) q->secret[q->read_level][0][i] = secret[i];
+        q->secret_ready[q->read_level][0] = true;
+        return;
+    }
+#endif
+    proven_tls13_set_keys(&c->read_keys, suite, secret);
+}
+
+static void keys_write(proven_tls_conn_t *c, const proven_tls_suite_t *suite, const proven_byte_t *secret) {
+#ifndef PROVEN_NO_HTTP3
+    if (c->quic) {
+        tls_quic_t *q = c->quic;
+        q->write_level++;
+        for (proven_size_t i = 0; i < suite->hash_len; ++i) q->secret[q->write_level][1][i] = secret[i];
+        q->secret_ready[q->write_level][1] = true;
+        return;
+    }
+#endif
+    proven_tls13_set_keys(&c->write_keys, suite, secret);
+}
 
 /* Send the handshake message in the scratch buffer and add it to the transcript. */
 static bool hs_send(proven_tls_conn_t *c) {
@@ -868,7 +958,8 @@ static proven_err_t client_hello_send(proven_tls_conn_t *c) {
     proven_u16 suites[3];
     suite_order(suites);
     /* offer12: anything before 1.3 is on offer. six: TLS 1.2 itself is, and with it the AEAD suites. */
-    const bool offer13 = cfg->max_version >= PROVEN_TLS_VERSION_1_3, offer12 = cfg->min_version <= PROVEN_TLS_VERSION_1_2;
+    /* QUIC carries TLS 1.3 and nothing older (RFC 9001 section 4.2). */
+    const bool offer13 = cfg->max_version >= PROVEN_TLS_VERSION_1_3, offer12 = cfg->min_version <= PROVEN_TLS_VERSION_1_2 && !is_quic(c);
     const bool six = offer12 && cfg->max_version >= PROVEN_TLS_VERSION_1_2;
     h->hello_version = cfg->max_version < PROVEN_TLS_VERSION_1_2 ? cfg->max_version : PROVEN_TLS_VERSION_1_2;
     proven_tls_session_data_t *sess = offer13 ? client_session(c) : NULL;
@@ -917,7 +1008,7 @@ static proven_err_t client_hello_send(proven_tls_conn_t *c) {
         proven_size_t e = wr_open(&w, 2), l = wr_open(&w, 1);
         /* Every version this configuration allows, newest first: a server that reads this
          * list reads nothing else. */
-        for (proven_u16 v = PROVEN_TLS_VERSION_1_3; v >= PROVEN_TLS_VERSION_1_0; --v) if (v >= cfg->min_version && v <= cfg->max_version) wr_uint(&w, v, 2);
+        for (proven_u16 v = PROVEN_TLS_VERSION_1_3; v >= PROVEN_TLS_VERSION_1_0; --v) if (v >= cfg->min_version && v <= cfg->max_version && (v == PROVEN_TLS_VERSION_1_3 || offer12)) wr_uint(&w, v, 2);
         wr_close(&w, l, 1); wr_close(&w, e, 2);
     }
     wr_uint(&w, EXT_SUPPORTED_GROUPS, 2); wr_uint(&w, 6, 2); wr_uint(&w, 4, 2); wr_uint(&w, GROUP_X25519, 2); wr_uint(&w, GROUP_P256, 2);
@@ -964,7 +1055,14 @@ static proven_err_t client_hello_send(proven_tls_conn_t *c) {
         wr_bytes(&w, cfg->alpn_wire, cfg->alpn_wire_len);
         wr_close(&w, l, 2); wr_close(&w, e, 2);
     }
-    wr_uint(&w, EXT_RECORD_SIZE_LIMIT, 2); wr_uint(&w, 2, 2); wr_uint(&w, PROVEN_TLS_MAX_PLAINTEXT + 1, 2);
+    /* QUIC has no records to limit. It has transport parameters instead. */
+    if (!is_quic(c)) { wr_uint(&w, EXT_RECORD_SIZE_LIMIT, 2); wr_uint(&w, 2, 2); wr_uint(&w, PROVEN_TLS_MAX_PLAINTEXT + 1, 2); }
+#ifndef PROVEN_NO_HTTP3
+    if (c->quic) {
+        wr_uint(&w, EXT_QUIC_TRANSPORT_PARAMETERS, 2); wr_uint(&w, (proven_u32)c->quic->tp_local_len, 2);
+        wr_bytes(&w, c->quic->tp_local, c->quic->tp_local_len);
+    }
+#endif
     if (h->cookie_len > 0) {
         wr_uint(&w, EXT_COOKIE, 2); wr_uint(&w, (proven_u32)h->cookie_len + 2, 2);
         wr_uint(&w, (proven_u32)h->cookie_len, 2); wr_bytes(&w, h->cookie, h->cookie_len);
@@ -1035,7 +1133,7 @@ static proven_err_t client_server_hello(proven_tls_conn_t *c, rd_t body, proven_
             if (type == EXT_SUPPORTED_VERSIONS) names_version = true;
         }
         /* Its version is then the number in the hello: one this side allows and offered. */
-        if (!names_version && version >= c->config->min_version && version <= h->hello_version) return client12_server_hello(c, version, random, sid, suite_id, exts, whole);
+        if (!names_version && version >= c->config->min_version && version <= h->hello_version && !is_quic(c)) return client12_server_hello(c, version, random, sid, suite_id, exts, whole);
         if (c->config->max_version < PROVEN_TLS_VERSION_1_3 || !names_version) return tls_fail(c, AL_PROTOCOL_VERSION, PROVEN_ERR_PROTOCOL);
         if (version != PROVEN_TLS_VERSION_1_2) return tls_illegal(c);    /* TLS 1.3 keeps 3.3 here */
     }
@@ -1127,9 +1225,9 @@ static proven_err_t client_server_hello(proven_tls_conn_t *c, rd_t body, proven_
     if (!key_agree(c, group, (proven_mem_view_t){ .ptr = share.p, .size = share.n }, shared)) return tls_illegal(c);
     derive_handshake(c, shared, 32);
     tls_wipe(shared, sizeof shared);
-    proven_tls13_set_keys(&c->read_keys, c->suite, h->server_hs);
+    keys_read(c, c->suite, h->server_hs);
     /* From here on anything this side sends - an alert included - is under its handshake key. */
-    proven_tls13_set_keys(&c->write_keys, c->suite, h->client_hs);
+    keys_write(c, c->suite, h->client_hs);
     c->state = ST_C_WAIT_EE;
     return PROVEN_OK;
 }
@@ -1143,7 +1241,8 @@ static proven_err_t client_encrypted_extensions(proven_tls_conn_t *c, rd_t body,
         proven_u16 type = (proven_u16)rd_uint(&exts, 2);
         rd_t data = rd_vec(&exts, 2);
         if (!exts.ok) return tls_decode(c);
-        unsigned bit = type == EXT_ALPN ? 1u : type == EXT_SERVER_NAME ? 2u : type == EXT_RECORD_SIZE_LIMIT ? 4u : type == EXT_SUPPORTED_GROUPS ? 8u : 0u;
+        unsigned bit = type == EXT_ALPN ? 1u : type == EXT_SERVER_NAME ? 2u : type == EXT_RECORD_SIZE_LIMIT ? 4u : type == EXT_SUPPORTED_GROUPS ? 8u :
+                       type == EXT_QUIC_TRANSPORT_PARAMETERS && is_quic(c) ? 16u : 0u;
         /* A server may only answer what was asked. */
         if (bit == 0) return tls_fail(c, AL_UNSUPPORTED_EXTENSION, PROVEN_ERR_PROTOCOL);
         if (seen & bit) return tls_illegal(c);
@@ -1166,7 +1265,17 @@ static proven_err_t client_encrypted_extensions(proven_tls_conn_t *c, rd_t body,
         } else if (type == EXT_SERVER_NAME) {
             if (data.n != 0) return tls_decode(c);
         }
+#ifndef PROVEN_NO_HTTP3
+        else if (type == EXT_QUIC_TRANSPORT_PARAMETERS) {
+            proven_u64 err = proven_quic_tp_decode((proven_mem_view_t){ .ptr = data.p, .size = data.n }, true, &c->quic->tp_peer);
+            if (err != 0) return quic_fail(c, err);
+            c->quic->have_peer = true;
+        }
+#endif
     }
+    /* QUIC: the server must name the protocol (RFC 9001 section 8.1) and send its parameters (section 8.2). */
+    if (is_quic(c) && !(seen & 1u)) return tls_fail(c, AL_NO_APPLICATION_PROTOCOL, PROVEN_ERR_PROTOCOL);
+    if (is_quic(c) && !(seen & 16u)) return tls_fail(c, AL_MISSING_EXTENSION, PROVEN_ERR_PROTOCOL);
     tr_add(c, whole);
     c->state = c->hs->psk_accepted ? ST_C_WAIT_FINISHED : ST_C_WAIT_CERT_CR;
     return PROVEN_OK;
@@ -1206,7 +1315,7 @@ static proven_err_t client_finished(proven_tls_conn_t *c, rd_t body, proven_mem_
     if (e != PROVEN_OK) return e;
     tr_add(c, whole);
     derive_application(c, client_ap, server_ap);
-    proven_tls13_set_keys(&c->read_keys, c->suite, server_ap);
+    keys_read(c, c->suite, server_ap);
     if (!send_ccs(c)) return tls_nomem(c);
     if (h->cert_requested) {
         bool send = h->peer_sig_schemes != 0;
@@ -1216,7 +1325,7 @@ static proven_err_t client_finished(proven_tls_conn_t *c, rd_t body, proven_mem_
     if (!finished_send(c, h->client_hs)) return tls_nomem(c);
     hs_hash(c, th);
     proven_tls13_derive_secret(c->suite->hash, h->master_secret, "res master", th, c->resumption_master);
-    proven_tls13_set_keys(&c->write_keys, c->suite, client_ap);
+    keys_write(c, c->suite, client_ap);
     establish(c, server_ap, client_ap);
     tls_wipe(client_ap, sizeof client_ap); tls_wipe(server_ap, sizeof server_ap);
     hs_free(c);
@@ -1293,7 +1402,7 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
     if (compression.n != 1 || compression.p[0] != 0) return tls_illegal(c);
 
     const rd_t all_exts = exts;
-    rd_t versions = { 0 }, groups = { 0 }, shares = { 0 }, sig_algs = { 0 }, alpn = { 0 }, psk_ids = { 0 }, psk_binders = { 0 }, modes = { 0 };
+    rd_t versions = { 0 }, groups = { 0 }, shares = { 0 }, sig_algs = { 0 }, alpn = { 0 }, psk_ids = { 0 }, psk_binders = { 0 }, modes = { 0 }, quic_tp = { 0 };
     proven_size_t binders_at = 0;
     bool have_psk = false, have_sni = false;
     unsigned seen = 0;
@@ -1332,6 +1441,14 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
                 c->peer_record_limit = limit - 1;
                 h->client_sent_record_limit = true;
                 break; }
+            case EXT_QUIC_TRANSPORT_PARAMETERS:
+                /* Over TCP it means nothing and is passed over, as before RFC-0017 (its section 3:
+                 * TLS over TCP does not change); RFC 9001 section 8.2 would refuse it. */
+                if (!is_quic(c)) continue;
+                bit = 512;
+                quic_tp = data;
+                data.n = 0;
+                break;
             case EXT_PRE_SHARED_KEY:
                 bit = 256;
                 psk_ids = rd_vec(&data, 2);
@@ -1354,6 +1471,7 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
         bool listed = (seen & 1) != 0;
         if (listed && versions.n % 2 != 0) return tls_decode(c);
         bool client13 = listed && list_has_u16(versions, 0x0304);
+        if (is_quic(c) && !client13) return tls_fail(c, AL_PROTOCOL_VERSION, PROVEN_ERR_PROTOCOL);
         if (!(client13 && cfg->max_version >= PROVEN_TLS_VERSION_1_3) || (g_test12 & 1u)) {
             /* Something older, then: the newest of 1.2, 1.1 and 1.0 that the client names -
              * in its list, or by the number in the hello, which means "up to this" - and
@@ -1370,6 +1488,19 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
     }
     c->version = PROVEN_TLS_VERSION_1_3;
     if (!(seen & 2) || !(seen & 4) || groups.n % 2 != 0) return tls_fail(c, AL_MISSING_EXTENSION, PROVEN_ERR_PROTOCOL);
+#ifndef PROVEN_NO_HTTP3
+    if (c->quic) {
+        /* RFC 9001 section 8.4: no middlebox compatibility mode in QUIC. Section 8.2: the
+         * client's transport parameters, which must be there and well formed. */
+        if (sid.n != 0) return quic_fail(c, PROVEN_QUIC_PROTOCOL_VIOLATION);
+        if (!(seen & 512)) return tls_fail(c, AL_MISSING_EXTENSION, PROVEN_ERR_PROTOCOL);
+        proven_u64 err = proven_quic_tp_decode((proven_mem_view_t){ .ptr = quic_tp.p, .size = quic_tp.n }, false, &c->quic->tp_peer);
+        if (err != 0) return quic_fail(c, err);
+        c->quic->have_peer = true;
+    }
+#else
+    (void)quic_tp;
+#endif
 
     /* The suite: the first of this side's order that the client offers. */
     proven_u16 order[3];
@@ -1467,6 +1598,8 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
     }
     /* ALPN: this side's first choice among what the client offers; no overlap is a failure. */
     c->alpn_index = -1;
+    /* QUIC: a protocol must be agreed (RFC 9001 section 8.1). */
+    if (is_quic(c) && (!h->client_sent_alpn || cfg->alpn_count == 0)) return tls_fail(c, AL_NO_APPLICATION_PROTOCOL, PROVEN_ERR_PROTOCOL);
     if (h->client_sent_alpn && cfg->alpn_count > 0) {
         for (proven_size_t i = 0; i < cfg->alpn_count && c->alpn_index < 0; ++i) {
             proven_u8str_view_t ours = proven_tls_config_alpn(cfg, i);
@@ -1510,8 +1643,8 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
     if (!send_ccs(c)) return tls_nomem(c);
     derive_handshake(c, shared, 32);
     tls_wipe(shared, sizeof shared);
-    proven_tls13_set_keys(&c->write_keys, suite, h->server_hs);
-    proven_tls13_set_keys(&c->read_keys, suite, h->client_hs);
+    keys_write(c, suite, h->server_hs);
+    keys_read(c, suite, h->client_hs);
 
     w = hs_begin(c, HS_ENCRYPTED_EXTENSIONS);
     e = wr_open(&w, 2);
@@ -1521,7 +1654,13 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
         wr_uint(&w, (proven_u32)name.size, 1); wr_bytes(&w, name.ptr, name.size);
     }
     if (h->client_sent_sni) { wr_uint(&w, EXT_SERVER_NAME, 2); wr_uint(&w, 0, 2); }
-    if (h->client_sent_record_limit) { wr_uint(&w, EXT_RECORD_SIZE_LIMIT, 2); wr_uint(&w, 2, 2); wr_uint(&w, PROVEN_TLS_MAX_PLAINTEXT + 1, 2); }
+    if (h->client_sent_record_limit && !is_quic(c)) { wr_uint(&w, EXT_RECORD_SIZE_LIMIT, 2); wr_uint(&w, 2, 2); wr_uint(&w, PROVEN_TLS_MAX_PLAINTEXT + 1, 2); }
+#ifndef PROVEN_NO_HTTP3
+    if (c->quic) {
+        wr_uint(&w, EXT_QUIC_TRANSPORT_PARAMETERS, 2); wr_uint(&w, (proven_u32)c->quic->tp_local_len, 2);
+        wr_bytes(&w, c->quic->tp_local, c->quic->tp_local_len);
+    }
+#endif
     wr_close(&w, e, 2);
     if (!hs_end(&w) || !hs_send(c)) return tls_nomem(c);
 
@@ -1542,7 +1681,7 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
     /* The server may write application data from here; this side's sending keys change now. */
     proven_byte_t client_ap[PROVEN_HMAC_MAX_SIZE], server_ap[PROVEN_HMAC_MAX_SIZE];
     derive_application(c, client_ap, server_ap);
-    proven_tls13_set_keys(&c->write_keys, suite, server_ap);
+    keys_write(c, suite, server_ap);
     for (proven_size_t i = 0; i < suite->hash_len; ++i) { c->write_secret[i] = server_ap[i]; c->read_secret[i] = client_ap[i]; }
     tls_wipe(client_ap, sizeof client_ap); tls_wipe(server_ap, sizeof server_ap);
     c->state = ask_cert ? ST_S_WAIT_CERT : ST_S_WAIT_FINISHED;
@@ -1557,7 +1696,7 @@ static proven_err_t server_finished(proven_tls_conn_t *c, rd_t body, proven_mem_
     tr_add(c, whole);
     hs_hash(c, th);
     proven_tls13_derive_secret(c->suite->hash, h->master_secret, "res master", th, c->resumption_master);
-    proven_tls13_set_keys(&c->read_keys, c->suite, c->read_secret);
+    keys_read(c, c->suite, c->read_secret);
     c->state = ST_ESTABLISHED;
     c->established = true;
     e = c->config->no_resumption ? PROVEN_OK : server_send_ticket(c);
@@ -1677,6 +1816,8 @@ static proven_err_t post_message(proven_tls_conn_t *c, proven_byte_t type, rd_t 
         return PROVEN_OK;
     }
     if (type == HS_KEY_UPDATE) {
+        /* QUIC changes keys with its own key phase bit; the message is refused (RFC 9001 section 6). */
+        if (is_quic(c)) return tls_unexpected(c);
         if (body.n != 1 || body.p[0] > 1) return tls_illegal(c);
         rotate(c, c->read_secret, &c->read_keys);
         *keys_changed = true;
@@ -2735,8 +2876,23 @@ static proven_err_t conn_new(const proven_tls_config_t *config, bool server, pro
     return PROVEN_OK;
 }
 
+#ifndef PROVEN_NO_HTTP3
+/* QUIC mode for a new connection: TLS 1.3 only, a protocol to name, and parameters that fit. */
+static proven_err_t quic_attach(proven_tls_conn_t *c, proven_mem_view_t tp) {
+    const proven_tls_config_t *cfg = c->config;
+    if (cfg->max_version < PROVEN_TLS_VERSION_1_3 || cfg->alpn_count == 0 || tp.size > TLS_QUIC_TP_MAX || (tp.size > 0 && !tp.ptr)) return PROVEN_ERR_INVALID_ARG;
+    proven_result_mem_mut_t m = c->alloc.alloc_fn(c->alloc.ctx, sizeof(tls_quic_t), 16);
+    if (m.err != PROVEN_OK) return m.err;
+    c->quic = (tls_quic_t *)m.value.ptr;
+    tls_wipe(c->quic, sizeof *c->quic);
+    for (proven_size_t i = 0; i < tp.size; ++i) c->quic->tp_local[i] = tp.ptr[i];
+    c->quic->tp_local_len = tp.size;
+    return PROVEN_OK;
+}
+#endif
+
 static proven_err_t client_create(const proven_tls_config_t *config, proven_u8str_view_t server_name, proven_tls_session_t *session,
-                                  proven_mem_view_t hello, const proven_byte_t *x25519_private, proven_tls_conn_t **out) {
+                                  proven_mem_view_t hello, const proven_byte_t *x25519_private, const proven_mem_view_t *quic_tp, proven_tls_conn_t **out) {
     if (!out || !config || (server_name.size > 0 && !server_name.ptr) || server_name.size > 253) return PROVEN_ERR_INVALID_ARG;
     if (server_name.size == 0 && config->verify != PROVEN_TLS_VERIFY_PIN_ONLY) return PROVEN_ERR_INVALID_ARG;
     if (config->verify == PROVEN_TLS_VERIFY_CHAIN && !config->anchors) return PROVEN_ERR_INVALID_ARG;
@@ -2755,9 +2911,19 @@ static proven_err_t client_create(const proven_tls_config_t *config, proven_u8st
     if (c->server_name_len > 0 && c->server_name[c->server_name_len - 1] == '.') c->server_name_len--;
     proven_tls_config_random(config, h->random, 32);
     /* A session id of 32 random bytes makes the handshake look like a resumption of TLS 1.2
-     * to boxes in the middle that would otherwise drop it. It means nothing else. */
+     * to boxes in the middle that would otherwise drop it. It means nothing else - and nothing
+     * at all in QUIC, which forbids it (RFC 9001 section 8.4). */
     proven_tls_config_random(config, h->session_id, 32);
     h->session_id_len = 32;
+#ifndef PROVEN_NO_HTTP3
+    if (quic_tp) {
+        e = quic_attach(c, *quic_tp);
+        if (e != PROVEN_OK) { proven_tls_conn_destroy(c); return e; }
+        h->session_id_len = 0;
+    }
+#else
+    (void)quic_tp;
+#endif
     proven_tls_config_random(config, h->x25519_priv, 32);
     if (hello.size > 0) {
         if (hello.size > sizeof h->test_hello || hello.size < 39 + 32) { proven_tls_conn_destroy(c); return PROVEN_ERR_INVALID_ARG; }
@@ -2786,13 +2952,13 @@ void proven_tls_test_peek_write(const proven_tls_conn_t *conn, proven_tls_keys_t
 
 proven_err_t proven_tls_client_create(const proven_tls_config_t *config, proven_u8str_view_t server_name,
                                       proven_tls_session_t *session, proven_tls_conn_t **out) {
-    return client_create(config, server_name, session, (proven_mem_view_t){ .ptr = NULL, .size = 0 }, NULL, out);
+    return client_create(config, server_name, session, (proven_mem_view_t){ .ptr = NULL, .size = 0 }, NULL, NULL, out);
 }
 
 proven_err_t proven_tls_client_create_replay(const proven_tls_config_t *config, proven_u8str_view_t server_name,
                                              proven_mem_view_t hello, const proven_byte_t x25519_private[32], proven_tls_conn_t **out) {
     if (!hello.ptr || !x25519_private) return PROVEN_ERR_INVALID_ARG;
-    return client_create(config, server_name, NULL, hello, x25519_private, out);
+    return client_create(config, server_name, NULL, hello, x25519_private, NULL, out);
 }
 
 proven_err_t proven_tls_server_create(const proven_tls_config_t *config, proven_tls_conn_t **out) {
@@ -2805,11 +2971,84 @@ proven_err_t proven_tls_server_create(const proven_tls_config_t *config, proven_
     return PROVEN_OK;
 }
 
+#ifndef PROVEN_NO_HTTP3
+/* ---- QUIC mode (RFC 9001 section 4): proven_internal_quic.h ---- */
+
+proven_err_t proven_tls_quic_client_create_(const proven_tls_config_t *config, proven_u8str_view_t server_name, proven_tls_session_t *session,
+                                            proven_mem_view_t transport_params, proven_tls_conn_t **out) {
+    return client_create(config, server_name, session, (proven_mem_view_t){ .ptr = NULL, .size = 0 }, NULL, &transport_params, out);
+}
+
+proven_err_t proven_tls_quic_server_create_(const proven_tls_config_t *config, proven_mem_view_t transport_params, proven_tls_conn_t **out) {
+    proven_tls_conn_t *c = NULL;
+    proven_err_t e = proven_tls_server_create(config, &c);
+    if (e != PROVEN_OK) return e;
+    e = quic_attach(c, transport_params);
+    if (e != PROVEN_OK) { proven_tls_conn_destroy(c); return e; }
+    *out = c;
+    return PROVEN_OK;
+}
+
+proven_err_t proven_tls_quic_feed_(proven_tls_conn_t *c, proven_quic_level_t level, proven_mem_view_t in) {
+    if (!c || !c->quic || (unsigned)level >= PROVEN_QUIC_LEVELS || (in.size > 0 && !in.ptr)) return PROVEN_ERR_INVALID_ARG;
+    if (c->dead) return PROVEN_ERR_INVALID_STATE;
+    if (in.size == 0) return PROVEN_OK;
+    /* Handshake bytes are read at the level they were sent at, and only that one: bytes at
+     * another level are a message out of place (RFC 9001 section 4.1.3). */
+    if ((unsigned)level != c->quic->read_level) return tls_unexpected(c);
+    return handshake_bytes(c, in.ptr, in.size);
+}
+
+proven_mem_view_t proven_tls_quic_pending_(const proven_tls_conn_t *c, proven_quic_level_t level) {
+    if (!c || !c->quic || (unsigned)level >= PROVEN_QUIC_LEVELS) return (proven_mem_view_t){ .ptr = NULL, .size = 0 };
+    const tls_buf_t *b = &c->quic->out[level];
+    const proven_size_t off = c->quic->out_off[level];
+    if (b->len <= off) return (proven_mem_view_t){ .ptr = NULL, .size = 0 };
+    return (proven_mem_view_t){ .ptr = b->ptr + off, .size = b->len - off };
+}
+
+void proven_tls_quic_sent_(proven_tls_conn_t *c, proven_quic_level_t level, proven_size_t n) {
+    if (!c || !c->quic || (unsigned)level >= PROVEN_QUIC_LEVELS) return;
+    tls_buf_t *b = &c->quic->out[level];
+    proven_size_t left = b->len - c->quic->out_off[level];
+    c->quic->out_off[level] += n < left ? n : left;
+    if (c->quic->out_off[level] == b->len) { buf_free(c, b); c->quic->out_off[level] = 0; }
+}
+
+proven_size_t proven_tls_quic_secret_(const proven_tls_conn_t *c, proven_quic_level_t level, bool write, proven_byte_t out[PROVEN_HMAC_MAX_SIZE]) {
+    if (!c || !c->quic || !c->suite || level == PROVEN_QUIC_LEVEL_INITIAL || (unsigned)level >= PROVEN_QUIC_LEVELS || !c->quic->secret_ready[level][write ? 1 : 0]) return 0;
+    for (proven_size_t i = 0; i < c->suite->hash_len; ++i) out[i] = c->quic->secret[level][write ? 1 : 0][i];
+    return c->suite->hash_len;
+}
+
+void proven_tls_quic_secret_drop_(proven_tls_conn_t *c, proven_quic_level_t level) {
+    if (!c || !c->quic || (unsigned)level >= PROVEN_QUIC_LEVELS) return;
+    tls_wipe(c->quic->secret[level], sizeof c->quic->secret[level]);
+    c->quic->secret_ready[level][0] = c->quic->secret_ready[level][1] = false;
+}
+
+const proven_tls_suite_t *proven_tls_quic_suite_(const proven_tls_conn_t *c) { return c && c->quic ? c->suite : NULL; }
+
+const proven_quic_tp_t *proven_tls_quic_peer_params_(const proven_tls_conn_t *c) { return c && c->quic && c->quic->have_peer ? &c->quic->tp_peer : NULL; }
+
+proven_quic_level_t proven_tls_quic_read_level_(const proven_tls_conn_t *c) { return c && c->quic ? (proven_quic_level_t)c->quic->read_level : PROVEN_QUIC_LEVEL_INITIAL; }
+proven_quic_level_t proven_tls_quic_write_level_(const proven_tls_conn_t *c) { return c && c->quic ? (proven_quic_level_t)c->quic->write_level : PROVEN_QUIC_LEVEL_INITIAL; }
+
+proven_u64 proven_tls_quic_error_(const proven_tls_conn_t *c) { return c && c->quic ? c->quic->error : 0; }
+#endif
+
 void proven_tls_conn_destroy(proven_tls_conn_t *c) {
     if (!c) return;
     proven_allocator_t a = c->alloc;
     hs_free(c);
     buf_free(c, &c->in); buf_free(c, &c->out); buf_free(c, &c->post); buf_free(c, &c->peer_cert);
+#ifndef PROVEN_NO_HTTP3
+    if (c->quic) {
+        for (int i = 0; i < PROVEN_QUIC_LEVELS; ++i) buf_free(c, &c->quic->out[i]);
+        tls_wipe(c->quic, sizeof *c->quic);
+        a.free_fn(a.ctx, c->quic);
+    }
+#endif
     if (c->server_name) a.free_fn(a.ctx, c->server_name);
     if (c->cbc) { tls_wipe(c->cbc, 2 * sizeof *c->cbc); a.free_fn(a.ctx, c->cbc); }
     tls_wipe(c, sizeof *c);
@@ -2819,6 +3058,7 @@ void proven_tls_conn_destroy(proven_tls_conn_t *c) {
 proven_err_t proven_tls_feed(proven_tls_conn_t *c, proven_mem_view_t in, proven_size_t *consumed) {
     if (consumed) *consumed = 0;
     if (!c || !consumed || (in.size > 0 && !in.ptr)) return PROVEN_ERR_INVALID_ARG;
+    if (is_quic(c)) return PROVEN_ERR_INVALID_STATE;              /* QUIC mode has no records: proven_tls_quic_feed_ */
     if (c->dead) {
         if (!c->error_reported) { c->error_reported = true; return c->error; }
         return PROVEN_ERR_INVALID_STATE;
@@ -2855,7 +3095,7 @@ proven_err_t proven_tls_feed(proven_tls_conn_t *c, proven_mem_view_t in, proven_
 }
 
 proven_mem_view_t proven_tls_pending_output(proven_tls_conn_t *c) {
-    if (!c || c->out.len <= c->out_off) return (proven_mem_view_t){ .ptr = NULL, .size = 0 };
+    if (!c || is_quic(c) || c->out.len <= c->out_off) return (proven_mem_view_t){ .ptr = NULL, .size = 0 };
     return (proven_mem_view_t){ .ptr = c->out.ptr + c->out_off, .size = c->out.len - c->out_off };
 }
 
@@ -2870,6 +3110,7 @@ bool proven_tls_is_established(const proven_tls_conn_t *c) { return c && c->esta
 
 proven_result_size_t proven_tls_read(proven_tls_conn_t *c, proven_mem_mut_t dest) {
     if (!c || (dest.size > 0 && !dest.ptr)) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_ARG, .value = 0 };
+    if (is_quic(c)) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_STATE, .value = 0 };
     if (c->plain_len > c->plain_off) {
         proven_size_t have = c->plain_len - c->plain_off, n = have < dest.size ? have : dest.size;
         proven_sys_mem_copy(dest.ptr, c->in.ptr + c->plain_off, n);
@@ -2884,7 +3125,7 @@ proven_result_size_t proven_tls_read(proven_tls_conn_t *c, proven_mem_mut_t dest
 
 proven_result_size_t proven_tls_write(proven_tls_conn_t *c, proven_mem_view_t src) {
     if (!c || (src.size > 0 && !src.ptr)) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_ARG, .value = 0 };
-    if (c->dead || !c->established || c->close_sent) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_STATE, .value = 0 };
+    if (c->dead || !c->established || c->close_sent || is_quic(c)) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_STATE, .value = 0 };
     proven_size_t done = 0;
     while (done < src.size) {
         proven_size_t unsent = c->out.len - c->out_off;
@@ -2905,7 +3146,7 @@ proven_result_size_t proven_tls_write(proven_tls_conn_t *c, proven_mem_view_t sr
 
 proven_err_t proven_tls_close(proven_tls_conn_t *c) {
     if (!c) return PROVEN_ERR_INVALID_ARG;
-    if (c->dead) return PROVEN_ERR_INVALID_STATE;
+    if (c->dead || is_quic(c)) return PROVEN_ERR_INVALID_STATE;     /* QUIC closes with CONNECTION_CLOSE, not an alert */
     if (c->close_sent) return PROVEN_OK;
     proven_byte_t body[2] = { 1, AL_CLOSE_NOTIFY };
     c->close_sent = true;
@@ -2915,7 +3156,7 @@ proven_err_t proven_tls_close(proven_tls_conn_t *c) {
 proven_err_t proven_tls_key_update(proven_tls_conn_t *c) {
     if (!c) return PROVEN_ERR_INVALID_ARG;
     if (c->dead || !c->established || c->close_sent) return PROVEN_ERR_INVALID_STATE;
-    if (c->v12) return PROVEN_ERR_UNSUPPORTED;                    /* TLS 1.2 has no such message */
+    if (c->v12 || is_quic(c)) return PROVEN_ERR_UNSUPPORTED;      /* TLS 1.2 has no such message, and QUIC forbids it */
     return key_update_send(c, 0) ? PROVEN_OK : PROVEN_ERR_NOMEM;
 }
 
