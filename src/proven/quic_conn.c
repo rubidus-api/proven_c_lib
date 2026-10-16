@@ -349,6 +349,7 @@ typedef struct {
     proven_u64 rx_stop_code;
     bool rx_fin_read;                   /* the reader has had the end */
     bool ev_opened, ev_readable, ev_writable, ev_reset, ev_stop;
+    bool tx_blocked;                    /* a write took less than offered: told when there is room again */
     proven_u64 ev_stop_code;
     bool rx_reset_reported;
 } qstream_t;
@@ -452,6 +453,7 @@ struct proven_quic_conn {
     proven_u64 rx_max_data, rx_data, rx_read;   /* ours as last sent; the sum of highest offsets; bytes read */
     bool max_data_owed;
     proven_u64 send_buffered;           /* stream bytes held for sending, all streams */
+    bool send_room_freed;               /* send_buffered went down: every blocked stream is told */
 
     /* Streams. */
     qstream_t **streams;
@@ -662,7 +664,7 @@ static void stream_maybe_free(proven_quic_conn_t *c, qstream_t *s) {
     }
     if (c->cursor >= c->nstreams) c->cursor = 0;
     if (c->ev_cursor >= c->nstreams) c->ev_cursor = 0;
-    c->send_buffered -= s->tx.end - s->tx.base;
+    if (s->tx.end != s->tx.base) { c->send_buffered -= s->tx.end - s->tx.base; c->send_room_freed = true; }
     c->rx_ranges -= s->rx.got.n;
     if (!s->local) {
         const unsigned k = id_kind(s->id);
@@ -720,7 +722,7 @@ static void stream_tx_reset(proven_quic_conn_t *c, qstream_t *s, proven_u64 code
     s->tx_reset = true; s->tx_reset_owed = true;
     s->tx_reset_code = code;
     s->tx_reset_final = s->tx.next;
-    c->send_buffered -= s->tx.end - s->tx.base;
+    if (s->tx.end != s->tx.base) { c->send_buffered -= s->tx.end - s->tx.base; c->send_room_freed = true; }
     sendq_free(&c->mem, &s->tx);
     s->tx.base = s->tx.end = s->tx.next = s->tx_reset_final;
 }
@@ -920,7 +922,7 @@ static void frame_acked(proven_quic_conn_t *c, int lvl, const qfrec_t *f) {
         const proven_u64 before = s->tx.base;
         sendq_acked(&c->mem, &s->tx, f->off, f->len, f->fin);
         c->send_buffered -= s->tx.base - before;
-        if (s->tx.base != before) s->ev_writable = true;
+        if (s->tx.base != before) { s->ev_writable = true; c->send_room_freed = true; }
         stream_maybe_free(c, s);
         break;
     }
@@ -2026,6 +2028,15 @@ bool proven_quic_conn_poll(proven_quic_conn_t *c, proven_quic_event_t *ev) {
         --c->ev_n;
         return true;
     }
+    if (c->send_room_freed) {
+        /* Room for one stream is room for any that the connection's limit held back. */
+        c->send_room_freed = false;
+        for (proven_size_t i = 0; i < c->nstreams; ++i) {
+            qstream_t *s = c->streams[i];
+            if (s->tx_blocked && !s->tx_reset) s->ev_writable = true;
+            s->tx_blocked = false;
+        }
+    }
     for (proven_size_t k = 0; k < c->nstreams; ++k) {
         const proven_size_t i = (c->ev_cursor + k) % c->nstreams;
         qstream_t *s = c->streams[i];
@@ -2074,7 +2085,19 @@ proven_err_t proven_quic_stream_write(proven_quic_conn_t *c, proven_u64 id, prov
     c->send_buffered += n;
     *taken = n;
     if (fin && n == data.size) s->tx.fin = true;
+    if (n < data.size) s->tx_blocked = true;
     return PROVEN_OK;
+}
+
+proven_u64 proven_quic_stream_room(proven_quic_conn_t *c, proven_u64 id) {
+    if (!c || c->state != QS_OPEN) return 0;
+    qstream_t *s = stream_find(c, id);
+    if (!s || !s->has_tx || s->tx_reset || s->tx.fin) return 0;
+    s->tx_blocked = true;               /* asked because it may wait: told when room is freed */
+    const proven_u64 held = s->tx.end - s->tx.base;
+    proven_u64 room = qmin(c->cfg.stream_send_buffer - qmin(held, c->cfg.stream_send_buffer),
+                           c->cfg.conn_send_buffer - qmin(c->send_buffered, c->cfg.conn_send_buffer));
+    return qmin(room, Q_STREAM_LIMIT - s->tx.end);
 }
 
 proven_err_t proven_quic_stream_read(proven_quic_conn_t *c, proven_u64 id, proven_mem_mut_t out, proven_size_t *got, bool *fin) {
@@ -2134,6 +2157,15 @@ void proven_quic_conn_close(proven_quic_conn_t *c, bool app, proven_u64 code) {
     c->close_app = app;
     /* the event already told the code; tell `app` as well */
     if (c->ev_n > 0) c->ev[(c->ev_head + c->ev_n - 1) % QC_EVENTS].app = app;
+}
+
+bool proven_quic_conn_sending(const proven_quic_conn_t *c) {
+    if (!c) return false;
+    for (proven_size_t i = 0; i < c->nstreams; ++i) {
+        const qstream_t *s = c->streams[i];
+        if (s->has_tx && !s->tx_reset && (s->tx.end != s->tx.base || (s->tx.fin && !s->tx.fin_acked))) return true;
+    }
+    return false;
 }
 
 void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s) {

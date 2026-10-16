@@ -412,10 +412,13 @@ bool proven_quic_conn_poll(proven_quic_conn_t *c, proven_quic_event_t *ev);
 /* Streams. PROVEN_ERR_INVALID_STATE before the handshake completes, after the close, or for a
  * stream in the wrong state; PROVEN_ERR_NOT_FOUND for a stream that is not open. */
 proven_err_t proven_quic_stream_open(proven_quic_conn_t *c, bool bidi, proven_u64 *id);   /* PROVEN_ERR_BUSY: the peer's limit */
-proven_err_t proven_quic_stream_write(proven_quic_conn_t *c, proven_u64 id, proven_mem_view_t data, bool fin, proven_size_t *taken);
+proven_err_t proven_quic_stream_write(proven_quic_conn_t *c, proven_u64 id, proven_mem_view_t data, bool fin, proven_size_t *taken);   /* may take less: STREAM_WRITABLE follows when there is room */
+proven_u64 proven_quic_stream_room(proven_quic_conn_t *c, proven_u64 id);   /* what a write would take now (0 for a stream that cannot be written); STREAM_WRITABLE follows when that grows */
 proven_err_t proven_quic_stream_read(proven_quic_conn_t *c, proven_u64 id, proven_mem_mut_t out, proven_size_t *got, bool *fin);
 proven_err_t proven_quic_stream_reset(proven_quic_conn_t *c, proven_u64 id, proven_u64 code);
 proven_err_t proven_quic_stream_stop(proven_quic_conn_t *c, proven_u64 id, proven_u64 code);
+/* Whether stream data or a stream's end is still unacknowledged: a graceful close waits for it. */
+bool proven_quic_conn_sending(const proven_quic_conn_t *c);
 /* Close: an application's code (`app`) or a transport one. Sending goes on for the close. */
 void proven_quic_conn_close(proven_quic_conn_t *c, bool app, proven_u64 code);
 
