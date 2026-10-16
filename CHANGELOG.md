@@ -28,7 +28,9 @@ written; their tags still exist.
   and padded as RFC 9000 requires; streams in both directions and of both kinds with flow
   control per stream and per connection; acknowledgements, loss detection, the probe timeout
   and NewReno congestion control with pacing (RFC 9002), its packet and time thresholds raised
-  when a loss proves to have been reordering (RFC 9002 section 6.1.1); the handshake over the
+  when a loss proves to have been reordering (RFC 9002 section 6.1.1), and Initial and Handshake
+  data never held behind the window (a lost Finished behind 1-RTT data would otherwise wait for
+  an acknowledgement that cannot come); the handshake over the
   TLS engine's QUIC mode, keys dropped as RFC 9001 says, the peer's key updates followed and
   this side's own made after 2^22 packets under one key (RFC 9001 section 6.6);
   Retry (a server may require one, its tokens bound to the address for ten seconds), version
@@ -40,8 +42,9 @@ written; their tags still exist.
   reader, the same sent and not yet acknowledged, 64 ACK ranges per space, 64 KiB of CRYPTO
   data per level out of order, four datagrams held for keys not yet there. Part of the
   freestanding profile.
-- `PROVEN_NO_HTTP3` now leaves 65,062 bytes out (1,064,329 bytes of code and data with it,
-  999,267 without, at `-O2` on x86-64).
+- `PROVEN_NO_HTTP3` now leaves 65,382 bytes out (1,064,649 bytes of code and data with it,
+  999,267 without, at `-O2` on x86-64; v0.61.0's tree measured the same way today gives
+  1,011,190 and 999,267 - its 11,923 as stated then, the absolute figures 250 bytes apart).
 - Tests: `test_unit_quic_frame` (RFC 9001 appendix A's headers read and written byte for byte,
   every frame type both ways, every truncation and each malformed frame refused with its code);
   `test_unit_quic_conn` (two engines over a simulated network with a virtual clock: the

@@ -838,6 +838,7 @@ Sub-checks:
 
 - The handshake completes and the client confirms it, and without a Retry the server counts the client's address as validated once a Handshake packet arrived (RFC 9000 section 8.1); one stream each way carries a megabyte, every byte checked against a pattern of its stream and offset.
 - At 1, 5 and 20 percent loss, with reordering and duplication and jitter: four streams, half a megabyte each, both ways, every byte in order.
+- A lost Finished behind 1-RTT data: the client's two first datagrams that carry a Handshake packet (its Finished, then the probe that carries it again) are lost while it is already sending a megabyte the server cannot read yet; the Finished goes out again although that data fills the congestion window, and the megabyte arrives. Before this was fixed, the client waited for an acknowledgement that could not come, with no timer left (found by the private UDP check, once in seventeen runs).
 - A hundred bidirectional streams from the client and a hundred unidirectional ones from the server at once; the 101st of each kind is PROVEN_ERR_BUSY; once they end, both sides have freed every stream, and a hundred more open on the credit MAX_STREAMS renews.
 - A server that requires a Retry: one Retry, the token comes back, the address counts as validated, and data flows.
 - Version negotiation: a client Initial of another version is answered; a client ignores an answer that lists version 1 and goes on; one that does not ends the attempt (CONNECTION_REFUSED).
@@ -2669,7 +2670,7 @@ Failure tip: inspect the `PROVEN_NO_BROTLI` guards in `include/proven.h`, `src/p
 
 ### `tests/test_portability_compile_nohttp3` - PROVEN_NO_HTTP3 leaves QUIC out
 
-Intent: verify the promise `PROVEN_NO_HTTP3` makes (RFC-0017 B-10): QUIC, QPACK and HTTP/3 left out of the library. In v0.62.0 that is QUIC packet protection, the transport parameters, the TLS engine's QUIC mode, the packet and frame codec and the connection - 65,062 bytes at `-O2` on x86-64; QPACK and HTTP/3 join it in later releases. The suite is built without the macro, so nothing else would notice it breaking.
+Intent: verify the promise `PROVEN_NO_HTTP3` makes (RFC-0017 B-10): QUIC, QPACK and HTTP/3 left out of the library. In v0.62.0 that is QUIC packet protection, the transport parameters, the TLS engine's QUIC mode, the packet and frame codec and the connection - 65,382 bytes at `-O2` on x86-64; QPACK and HTTP/3 join it in later releases. The suite is built without the macro, so nothing else would notice it breaking.
 
 Sub-checks:
 

@@ -1899,6 +1899,14 @@ proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven
         if (!sp->tx_ok || sp->discarded) continue;
         if (lvl == 2 && !c->complete && !c->server) continue;   /* a client sends no 1-RTT before its Finished */
         bool ok = sp->probes > 0 || (window && paced && sp->sent_n < QC_MAX_SENT);
+        /* Initial and Handshake CRYPTO data is not held behind the window: it is a few kilobytes,
+         * and no 1-RTT packet can be acknowledged before it arrives. Held, a lost Finished
+         * behind 1-RTT data that fills the window would wait for an acknowledgement that cannot
+         * come, with no probe timer while the handshake is unconfirmed (RFC 9002 section 6.2.1). */
+        if (lvl < 2 && sp->sent_n < QC_MAX_SENT) {
+            proven_u64 off, len; bool fin, fresh;
+            if (sendq_next(&sp->crypto_tx, 1000, QC_INF, &off, &len, &fin, &fresh) && len) ok = true;
+        }
         if (c->server && lvl == 0 && budget < PROVEN_QUIC_MIN_INITIAL) ok = false;   /* an ack-eliciting Initial is padded */
         if (!ok && space_has_eliciting(c, lvl) && window && !paced) c->pace_blocked = true;
         if (budget - at < 64) break;

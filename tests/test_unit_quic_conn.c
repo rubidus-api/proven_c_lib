@@ -309,6 +309,21 @@ static bool hook_reset_from_server(net_t *n, int to, proven_byte_t *b, proven_si
     return false;
 }
 
+/* The client's first two datagrams that carry a Handshake packet are lost: its Finished, then
+ * the probe that carried it again. */
+static bool hook_lose_client_handshake_twice(net_t *n, int to, proven_byte_t *b, proven_size_t *len) {
+    (void)n;
+    if (to != 1 || g_hook_count >= 2) return true;
+    proven_size_t at = 0;
+    proven_quic_hdr_t h;
+    while (at < *len && proven_quic_hdr_parse((proven_mem_view_t){ b + at, *len - at }, 8, &h)) {
+        if (h.type == PROVEN_QUIC_PKT_HANDSHAKE) { ++g_hook_count; return false; }   /* coalesced or not */
+        if (h.type == PROVEN_QUIC_PKT_SHORT) break;
+        at += h.len;
+    }
+    return true;
+}
+
 /* A payload of frames, from hex. */
 static proven_size_t unhex(const char *hex, proven_byte_t *out, proven_size_t cap) {
     proven_size_t k = strlen(hex) / 2;
@@ -366,6 +381,22 @@ int main(void) {
             free(t);
             net_free(n);
         }
+    }
+
+    PROVEN_TEST_SECTION("a lost Finished behind 1-RTT data", "The client's Finished and its first probe are lost while it is already sending a megabyte the server cannot read yet: the Finished goes out again although that data fills the window, and everything arrives.", "");
+    {
+        net_init(n, 15);
+        g_hook_count = 0;
+        n->hook = hook_lose_client_handshake_twice;
+        net_start(n);
+        xfers_t *t = calloc(1, sizeof *t);
+        for (int k = 0; k < 200 && !stats(n, 0).established; ++k) net_step(n);
+        PROVEN_TEST_ASSERT(stats(n, 0).established && !stats(n, 0).confirmed, "the client has completed the handshake and not yet heard it confirmed", "");
+        xfer_open(n, t, 0, true, 1 << 20);
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 20000000), "the megabyte arrives: the Finished was not held behind data the server could not acknowledge", "");
+        PROVEN_TEST_ASSERT(g_hook_count == 2, "both losses happened", "");
+        free(t);
+        net_free(n);
     }
 
     PROVEN_TEST_SECTION("a hundred streams at once, and more when they end", "Each side's 100 streams in use together; the 101st waits (BUSY) and opens once streams end: MAX_STREAMS renewed.", "");
