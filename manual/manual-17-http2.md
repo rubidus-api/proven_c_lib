@@ -1611,7 +1611,7 @@ as they end HTTP/2 ones.
   acknowledgement - fires up to 16 ms late; a busy one does its work in each round.
 - **HTTP/3 is slower than HTTP/2 here.** One datagram is one system call, and each is
   encrypted and protected on its own: one 100 MiB download from this server to curl on
-  loopback ran at 169 MiB/s over HTTP/3, 376 over HTTP/2 and 500 over HTTP/1.1, all over TLS.
+  loopback ran at 174 MiB/s over HTTP/3, 387 over HTTP/2 and 505 over HTTP/1.1, all over TLS.
 - **Not over HTTP/3:** WebSocket (`proven_ws_event_accept` refuses the stream), 0-RTT,
   trailers, server push, migration of this side's own (a client's new address is
   validated), QUIC versions other than 1. `proven_http_event_server_adopt` takes TCP

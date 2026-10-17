@@ -602,6 +602,21 @@ static void case_requests(proven_u16 port) {
         const int next = cl_request(c, "GET", "/hello", 0, NULL, 0, true);
         PROVEN_TEST_ASSERT(cl_wait(c, next, next + 1, 3000) && c->r[next].status == 200, "and the next request is answered", "");
     }
+    /* A client that abandons an upload, resetting only its sending side (RESET_STREAM, no
+     * STOP_SENDING): the handler is told PROVEN_ERR_RESET at once, not at the body timeout. */
+    {
+        const int before = atomic_load(&g_done_reset);
+        const proven_http_header_t len[] = { H("content-length", "100000") };
+        proven_u64 id = 0;
+        const proven_http_header_t f[] = { { sv(":method"), sv("POST") }, { sv(":scheme"), sv("https") }, { sv(":authority"), sv("example.test") }, { sv(":path"), sv("/sink") }, len[0] };
+        proven_size_t taken = 0;
+        PROVEN_TEST_ASSERT(proven_h3_submit_request(c->h, f, 5, false, &id) == PROVEN_OK && proven_h3_send_data(c->h, id, (proven_mem_view_t){ (const proven_byte_t *)"0123456789", 10 }, false, &taken) == PROVEN_OK,
+                           "an upload of 100,000 bytes begun", "");
+        cl_run(c, 50);
+        PROVEN_TEST_ASSERT(proven_quic_stream_reset(c->q, id, PROVEN_H3_REQUEST_CANCELLED) == PROVEN_OK, "the client resets its sending side only", "");
+        for (int i = 0; i < 400 && atomic_load(&g_done_reset) == before; ++i) cl_pump(c, 5);
+        PROVEN_TEST_ASSERT(atomic_load(&g_done_reset) == before + 1, "the handler is told PROVEN_ERR_RESET, at once", "");
+    }
     /* Many at once: more than the server lets be open, so the client waits for room. */
     const int first = c->n;
     int made = 0, busy = 0;

@@ -487,7 +487,7 @@ static void raw_write(net_t *n, int side, proven_u64 id, const proven_byte_t *b,
  *   F      end the last stream    R  reset it (0x10c)    S  ask the other end's control stream to stop
  *   Q:hex  write on stream 0 (a raw server answering the client's request)
  *   q      the HTTP/3 client sends GET /get/10                  G  the HTTP/3 end says GOAWAY
- *   T      let 100 ms pass */
+ *   g      the HTTP/3 server says the first GOAWAY of two      T  let 100 ms pass */
 typedef struct {
     int h3side;                         /* which end speaks HTTP/3 */
     const char *steps;
@@ -532,6 +532,7 @@ static void run_script(net_t *n, const script_t *s, unsigned seed) {
         case 'Q': last = 0; have_last = true; len = unhex(arg, b, sizeof b); raw_write(n, raw, 0, b, len, false); break;
         case 'q': (void)request(n, "GET", "/get/10", 0, false); break;
         case 'G': PROVEN_TEST_ASSERT(proven_h3_conn_goaway(n->h3[s->h3side]) == PROVEN_OK, "goaway", s->what); break;
+        case 'g': PROVEN_TEST_ASSERT(proven_h3_conn_goaway_step(n->h3[s->h3side], true) == PROVEN_OK, "the first goodbye of two", s->what); break;
         case 'T': run_for(n, 100000); break;
         default: PROVEN_TEST_ASSERT(false, "a known step", tok);
         }
@@ -731,6 +732,10 @@ int main(void) {
         PROVEN_TEST_ASSERT(g_app[0].goaways == 2 && g_app[0].goaway_id == 8, "the client heard two goodbyes - the first again said nothing - the last naming the first request not acted on", "");
         PROVEN_TEST_ASSERT(g_app[0].closed && g_app[1].closed && g_app[1].close_code == PROVEN_H3_NO_ERROR, "and the connection closes with H3_NO_ERROR", "");
         net_free(n);
+        /* With nothing open and a peer that does not close on its own (raw QUIC): the first goodbye
+         * keeps the connection, the last one closes it. */
+        run_script(n, &(script_t){ 1, "C:000400 g T", 0, 0, 0, 0, 0, "a server's first goodbye of two, nothing open: the connection stays" }, 22);
+        run_script(n, &(script_t){ 1, "C:000400 g T G", PROVEN_H3_NO_ERROR, 0, 0, 0, 0, "and its last one closes it with H3_NO_ERROR" }, 23);
         /* A request the server had not seen when it said goodbye is rejected, safe to send again. */
         run_script(n, &(script_t){ 1, "B: H::method=GET" REQ "|:path=/get/100000 F T G B: H::method=GET" REQ "|:path=/ F", PROVEN_H3_NO_ERROR, PROVEN_H3_REQUEST_REJECTED, 0, 0, 0, "a request above the server's GOAWAY: H3_REQUEST_REJECTED, then the close" }, 20);
         run_script(n, &(script_t){ 0, "q q T C:00 W:0400 W:070104", 0, 0, 0, PROVEN_H3_REQUEST_REJECTED, 4, "the client's request above a GOAWAY: STREAM_RESET with H3_REQUEST_REJECTED" }, 21);
