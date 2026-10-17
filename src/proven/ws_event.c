@@ -406,6 +406,7 @@ proven_err_t proven_ws_event_accept(proven_http_stream_t *stream, const proven_h
     if (!stream || !head || !config || !out || !config->on.on_message || !ws_is_token(config->subprotocol)) return PROVEN_ERR_INVALID_ARG;
     if (config->compress_level < -1 || config->compress_level > 9 ||
         (config->compress_window_bits != 0 && (config->compress_window_bits < 9 || config->compress_window_bits > 15))) return PROVEN_ERR_INVALID_ARG;
+    if (PROVEN_HTTP_EVENT_IS_H3_(stream)) return PROVEN_ERR_INVALID_STATE;        /* WebSocket over HTTP/3 (RFC 9220) is not taken */
     proven_u8str_view_t key;
     proven_err_t e = proven_ws_check_request(head, &key);
     if (e != PROVEN_OK) return e;

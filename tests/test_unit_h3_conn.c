@@ -683,6 +683,28 @@ int main(void) {
             PROVEN_TEST_ASSERT(g_app[0].closed && g_app[1].closed && g_app[who].close_code == PROVEN_H3_NO_ERROR && g_app[who].close_app, "closed with H3_NO_ERROR", "");
             net_free(n);
         }
+        /* In two steps (RFC 9114 section 5.2): a request already on its way when the server says
+         * the first is answered, the first does not close, and the second names the real ID. A
+         * long download keeps the client from closing on its own between the two. */
+        reset_apps();
+        net_init(n, 7);
+        fresh(n, 7);
+        (void)request(n, "GET", "/get/5000000", 0, false);
+        run_for(n, 50000);
+        PROVEN_TEST_ASSERT(proven_h3_conn_goaway_step(n->h3[1], true) == PROVEN_OK, "the first goodbye", "");
+        (void)request(n, "GET", "/get/2000", 0, false);              /* sent before the client hears it */
+        run_for(n, 80000);
+        PROVEN_TEST_ASSERT(g_app[0].r[1].status == 200 && g_app[0].r[1].got == 2000 && !g_app[0].r[1].reset, "the request on its way is answered, not rejected", "");
+        PROVEN_TEST_ASSERT(g_app[0].goaways == 1 && g_app[0].goaway_id == ((proven_u64)1 << 62) - 4, "the first names the largest ID a client may use", "");
+        PROVEN_TEST_ASSERT(!g_app[1].closed, "the server does not close on it", "");
+        PROVEN_TEST_ASSERT(proven_h3_conn_goaway_step(n->h3[1], true) == PROVEN_OK, "a first goodbye again", "");
+        PROVEN_TEST_ASSERT(proven_h3_conn_goaway_step(n->h3[1], false) == PROVEN_OK, "the last goodbye", "");
+        PROVEN_TEST_ASSERT(run_until_done(n, 2, 20000000), "the download ends", "");
+        run_for(n, 3000000);
+        PROVEN_TEST_ASSERT(g_app[0].r[0].status == 200 && g_app[0].r[0].got == 5000000, "whole", "");
+        PROVEN_TEST_ASSERT(g_app[0].goaways == 2 && g_app[0].goaway_id == 8, "the client heard two goodbyes - the first again said nothing - the last naming the first request not acted on", "");
+        PROVEN_TEST_ASSERT(g_app[0].closed && g_app[1].closed && g_app[1].close_code == PROVEN_H3_NO_ERROR, "and the connection closes with H3_NO_ERROR", "");
+        net_free(n);
         /* A request the server had not seen when it said goodbye is rejected, safe to send again. */
         run_script(n, &(script_t){ 1, "B: H::method=GET" REQ "|:path=/get/100000 F T G B: H::method=GET" REQ "|:path=/ F", PROVEN_H3_NO_ERROR, PROVEN_H3_REQUEST_REJECTED, 0, 0, 0, "a request above the server's GOAWAY: H3_REQUEST_REJECTED, then the close" }, 20);
         run_script(n, &(script_t){ 0, "q q T C:00 W:0400 W:070104", 0, 0, 0, PROVEN_H3_REQUEST_REJECTED, 4, "the client's request above a GOAWAY: STREAM_RESET with H3_REQUEST_REJECTED" }, 21);

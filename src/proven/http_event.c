@@ -111,7 +111,7 @@ static void ev_drain_done(void *ctx) {
 }
 
 static void ev_drain_check(proven_http_event_server_t *s) {
-    if (s->draining && !s->drain_told && !s->stopped && s->conn_count == 0 && !proven_loop_timer_is_set(&s->drain_done))
+    if (s->draining && !s->drain_told && !s->stopped && s->conn_count == 0 && s->h3_count == 0 && !proven_loop_timer_is_set(&s->drain_done))
         proven_loop_timer_set(s->loop, &s->drain_done, 0, ev_drain_done, s);
 }
 
@@ -504,7 +504,7 @@ static void ev_on_timer(void *ctx) {
 // -----------------------------------------------------------------------------
 
 static void ev_update_listeners(proven_http_event_server_t *s) {
-    bool want = !s->stopped && s->conn_count < s->cfg.max_connections;
+    bool want = !s->stopped && s->conn_count + s->h3_count < s->cfg.max_connections;
     if (want == s->accepting) return;
     for (proven_size_t i = 0; i < s->listener_count; ++i) (void)proven_loop_io_set(s->loop, &s->listeners[i].io, want ? PROVEN_NET_READABLE : 0);
     s->accepting = want;
@@ -529,6 +529,8 @@ static proven_err_t ev_take(proven_http_event_server_t *s, const proven_net_conn
         return e;
     }
     (void)proven_net_conn_set_nodelay(&c->sock, true);
+    proven_net_addr_t local;
+    if (proven_net_conn_local_addr(&c->sock, &local) == PROVEN_OK) c->local_port = local.port;
     c->next = s->conns;
     if (s->conns) s->conns->prev = c;
     s->conns = c;
@@ -541,7 +543,7 @@ static void ev_on_accept(void *ctx, proven_u8 got) {
     ev_listener_t *l = ctx;
     proven_http_event_server_t *s = l->server;
     (void)got;
-    while (s->conn_count < s->cfg.max_connections) {
+    while (s->conn_count + s->h3_count < s->cfg.max_connections) {
         proven_net_conn_t sock;
         proven_net_addr_t peer;
         if (proven_net_accept(&l->listener, PROVEN_NET_DONT_WAIT, &sock, &peer) != PROVEN_OK) break;
@@ -553,7 +555,7 @@ static void ev_on_accept(void *ctx, proven_u8 got) {
 proven_err_t proven_http_event_server_adopt(proven_http_event_server_t *s, proven_net_conn_t *conn) {
     if (!s || !conn) return PROVEN_ERR_INVALID_ARG;
     if (!proven_net_conn_is_open(conn) || s->stopped || s->closed_to_new) return PROVEN_ERR_INVALID_STATE;
-    if (s->conn_count >= s->cfg.max_connections) return PROVEN_ERR_BUSY;
+    if (s->conn_count + s->h3_count >= s->cfg.max_connections) return PROVEN_ERR_BUSY;
     proven_net_addr_t peer = { 0 };
     (void)proven_net_conn_peer_addr(conn, &peer);
     proven_err_t e = ev_take(s, conn, peer);
@@ -599,16 +601,21 @@ proven_err_t proven_http_event_server_create(proven_loop_t *loop, const proven_h
     else if (s->cfg.http2_header_table_bytes == 0) s->cfg.http2_header_table_bytes = 4096;
     if (s->cfg.http2_header_table_bytes > ((proven_size_t)1 << 20)) { a.free_fn(a.ctx, s); return PROVEN_ERR_INVALID_ARG; }
     if (s->cfg.http2_window_bytes > 0x7fffffffu || (s->cfg.http2_websocket && !s->cfg.http2)) { a.free_fn(a.ctx, s); return PROVEN_ERR_INVALID_ARG; }
+#if defined(PROVEN_NO_HTTP3)
+    if (s->cfg.http3) { a.free_fn(a.ctx, s); return PROVEN_ERR_UNSUPPORTED; }
+#endif
+    if (s->cfg.http3 && (!s->cfg.tls || s->cfg.http3_window_bytes > 0x7fffffffu)) { a.free_fn(a.ctx, s); return PROVEN_ERR_INVALID_ARG; }
     if (s->cfg.tls) {
         /* What TLS may agree to and what the server will speak must be the same thing: a
          * client told "h2" by the handshake and answered in HTTP/1.1 has no way to recover. */
-        bool offers_h2 = false;
+        bool offers_h2 = false, offers_h3 = false;
         for (proven_size_t i = 0;; ++i) {
             proven_u8str_view_t name = proven_tls_config_alpn(s->cfg.tls, i);
             if (name.size == 0) break;
             if (name.size == 2 && name.ptr[0] == 'h' && name.ptr[1] == '2') offers_h2 = true;
+            if (name.size == 2 && name.ptr[0] == 'h' && name.ptr[1] == '3') offers_h3 = true;
         }
-        if (offers_h2 != s->cfg.http2) { a.free_fn(a.ctx, s); return PROVEN_ERR_INVALID_ARG; }
+        if (offers_h2 != s->cfg.http2 || offers_h3 != s->cfg.http3) { a.free_fn(a.ctx, s); return PROVEN_ERR_INVALID_ARG; }
     }
     s->headers = ev_alloc(a, s->cfg.max_headers * sizeof(proven_http_header_t));
     s->rbuf = ev_alloc(a, EV_READ_BYTES);
@@ -623,6 +630,9 @@ proven_err_t proven_http_event_server_create(proven_loop_t *loop, const proven_h
         proven_tls_conn_destroy(probe);
     }
     if (!ok) { proven_http_event_server_destroy(s); return PROVEN_ERR_NOMEM; }
+#if !defined(PROVEN_NO_HTTP3)
+    if (s->cfg.http3 && proven_http_event_h3_create_(s) != PROVEN_OK) { proven_http_event_server_destroy(s); return PROVEN_ERR_NOMEM; }
+#endif
     *out = s;
     return PROVEN_OK;
 }
@@ -640,6 +650,15 @@ proven_err_t proven_http_event_server_listen(proven_http_event_server_t *s, prov
     bool want = !s->stopped && s->conn_count < s->cfg.max_connections;
     e = proven_loop_io_add(s->loop, &l->io, proven_net_listener_handle(&l->listener), want ? PROVEN_NET_READABLE : 0, ev_on_accept, l);
     if (e != PROVEN_OK) { (void)proven_net_listener_close(&l->listener); return e; }
+#if !defined(PROVEN_NO_HTTP3)
+    /* HTTP/3 on the same address and port, or neither: a server that says `Alt-Svc` for a port
+     * it does not serve sends its clients to nothing. */
+    if (s->h3 && (e = proven_http_event_h3_listen_(s, got)) != PROVEN_OK) {
+        proven_loop_io_remove(s->loop, &l->io);
+        (void)proven_net_listener_close(&l->listener);
+        return e;
+    }
+#endif
     s->listener_count++;
     s->accepting = want;
     s->closed_to_new = false;                      /* listening again is taking connections again */
@@ -656,6 +675,9 @@ void proven_http_event_server_stop_listening(proven_http_event_server_t *s) {
     s->listener_count = 0;
     s->accepting = false;
     s->closed_to_new = true;
+#if !defined(PROVEN_NO_HTTP3)
+    proven_http_event_h3_stop_(s);
+#endif
     /* A connection that carries many exchanges is told, so that it can say goodbye and
      * finish the ones it has. (An HTTP/1.1 connection learns at its next response.) Telling
      * one may run a handler's callbacks, and those may end any other connection: so the list
@@ -684,11 +706,14 @@ static void ev_end_all(proven_http_event_server_t *s) {
         ev_kill(c, PROVEN_ERR_RESET);
         ev_leave(c);
     }
+#if !defined(PROVEN_NO_HTTP3)
+    proven_http_event_h3_end_all_(s);
+#endif
 }
 
 static void ev_drain_deadline(void *ctx) {
     proven_http_event_server_t *s = ctx;
-    if (s->conns) s->drain_cut = true;
+    if (s->conns || s->h3_count > 0) s->drain_cut = true;
     ev_end_all(s);
     ev_drain_check(s);
 }
@@ -745,6 +770,9 @@ void proven_http_event_server_destroy(proven_http_event_server_t *s) {
         ev_kill(c, PROVEN_ERR_RESET);
         ev_leave(c);
     }
+#if !defined(PROVEN_NO_HTTP3)
+    proven_http_event_h3_destroy_(s);
+#endif
     proven_allocator_t a = s->alloc;
     if (s->headers) a.free_fn(a.ctx, s->headers);
     if (s->rbuf) a.free_fn(a.ctx, s->rbuf);
@@ -755,7 +783,12 @@ void proven_http_event_server_destroy(proven_http_event_server_t *s) {
     a.free_fn(a.ctx, s);
 }
 
-proven_size_t proven_http_event_server_connections(const proven_http_event_server_t *s) { return s ? s->conn_count : 0; }
+proven_size_t proven_http_event_server_connections(const proven_http_event_server_t *s) { return s ? s->conn_count + s->h3_count : 0; }
+
+void proven_http_event_gone_(proven_http_event_server_t *s) {
+    ev_update_listeners(s);
+    ev_drain_check(s);
+}
 
 // -----------------------------------------------------------------------------
 // Responding
@@ -784,6 +817,13 @@ static proven_err_t ev_build_head(proven_http_stream_t *c, proven_u16 status, co
     }
     if (e == PROVEN_OK && vary) e = proven_http_write_header(out, &len, ev_lit("Vary"), ev_lit("Accept-Encoding"));
     if (e == PROVEN_OK && coding != PROVEN_HTTP_CODING_IDENTITY) e = proven_http_write_header(out, &len, ev_lit("Content-Encoding"), proven_http_coding_token_(coding));
+#if !defined(PROVEN_NO_HTTP3)
+    if (e == PROVEN_OK && s->h3) {
+        proven_byte_t alt[16];
+        const proven_size_t n = proven_http_event_alt_svc_(s, c->local_port, headers, header_count, alt);
+        if (n > 0) e = proven_http_write_header(out, &len, ev_lit("Alt-Svc"), (proven_u8str_view_t){ .ptr = alt, .size = n });
+    }
+#endif
     /* 204 and 304 never have a body; a response to HEAD has the headers of one and no bytes. */
     bool no_body_status = status == 204 || status == 304;
     bool chunked = false;
@@ -822,6 +862,9 @@ static void ev_compress_plan(const proven_http_stream_t *c, proven_u16 status, c
 
 void proven_http_stream_compress(proven_http_stream_t *c) {
     if (c && PROVEN_HTTP_EVENT_IS_H2_(c)) { proven_http_event_h2_compress_(c); return; }
+#if !defined(PROVEN_NO_HTTP3)
+    if (c && PROVEN_HTTP_EVENT_IS_H3_(c)) { proven_http_event_h3_compress_(c); return; }
+#endif
     if (c && !c->dead && c->active && !c->response_begun) c->compress_asked = true;
 }
 
@@ -829,6 +872,9 @@ proven_err_t proven_http_stream_begin(proven_http_stream_t *c, proven_u16 status
                                       const proven_http_header_t *headers, proven_size_t header_count, proven_u64 content_length) {
     if (!c) return PROVEN_ERR_INVALID_ARG;
     if (PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_begin_(c, status, headers, header_count, content_length);
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_IS_H3_(c)) return proven_http_event_h3_begin_(c, status, headers, header_count, content_length);
+#endif
     if (c->dead || !c->active || c->response_begun) return PROVEN_ERR_INVALID_STATE;
     proven_http_event_server_t *s = c->h.server;
     proven_size_t len = 0;
@@ -895,6 +941,9 @@ static bool ev_zip(proven_http_stream_t *c, const proven_byte_t *p, proven_size_
 proven_result_size_t proven_http_stream_write(proven_http_stream_t *c, proven_mem_view_t data) {
     if (!c || (data.size > 0 && !data.ptr)) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_ARG, .value = 0 };
     if (PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_write_(c, data);
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_IS_H3_(c)) return proven_http_event_h3_write_(c, data);
+#endif
     if (c->dead || !c->active || !c->response_begun || c->response_ended) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_STATE, .value = 0 };
     proven_http_event_server_t *s = c->h.server;
     if (c->bodiless) return (proven_result_size_t){ .err = PROVEN_OK, .value = data.size };     /* counted, not sent */
@@ -948,6 +997,9 @@ proven_result_size_t proven_http_stream_write(proven_http_stream_t *c, proven_me
 proven_err_t proven_http_stream_flush(proven_http_stream_t *c) {
     if (!c) return PROVEN_ERR_INVALID_ARG;
     if (PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_flush_(c);
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_IS_H3_(c)) return proven_http_event_h3_flush_(c);
+#endif
     if (c->dead || !c->active || !c->response_begun || c->response_ended) return PROVEN_ERR_INVALID_STATE;
     if (!c->zip) return PROVEN_OK;                 /* nothing is held back: what was written is queued or gone */
     ev_enter(c);
@@ -963,6 +1015,9 @@ proven_err_t proven_http_stream_flush(proven_http_stream_t *c) {
 proven_err_t proven_http_stream_end(proven_http_stream_t *c) {
     if (!c) return PROVEN_ERR_INVALID_ARG;
     if (PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_end_(c);
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_IS_H3_(c)) return proven_http_event_h3_end_(c);
+#endif
     if (c->dead || !c->active || !c->response_begun || c->response_ended) return PROVEN_ERR_INVALID_STATE;
     ev_enter(c);
     proven_err_t result = PROVEN_OK;
@@ -989,6 +1044,9 @@ proven_err_t proven_http_stream_respond(proven_http_stream_t *c, proven_u16 stat
                                         const proven_http_header_t *headers, proven_size_t header_count, proven_mem_view_t body) {
     if (!c || (body.size > 0 && !body.ptr)) return PROVEN_ERR_INVALID_ARG;
     if (PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_respond_(c, status, headers, header_count, body);
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_IS_H3_(c)) return proven_http_event_h3_respond_(c, status, headers, header_count, body);
+#endif
     if (c->dead || !c->active || c->response_begun) return PROVEN_ERR_INVALID_STATE;
     proven_http_event_server_t *s = c->h.server;
     proven_size_t len = 0;
@@ -1031,6 +1089,9 @@ proven_err_t proven_http_stream_respond(proven_http_stream_t *c, proven_u16 stat
 void proven_http_stream_abort(proven_http_stream_t *c) {
     if (!c) return;
     if (PROVEN_HTTP_EVENT_IS_H2_(c)) { proven_http_event_h2_abort_(c); return; }
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_IS_H3_(c)) { proven_http_event_h3_abort_(c); return; }
+#endif
     if (c->dead) return;
     ev_enter(c);
     ev_kill(c, PROVEN_ERR_RESET);
@@ -1040,6 +1101,9 @@ void proven_http_stream_abort(proven_http_stream_t *c) {
 void proven_http_stream_pause(proven_http_stream_t *c) {
     if (!c) return;
     if (PROVEN_HTTP_EVENT_IS_H2_(c)) { proven_http_event_h2_pause_(c); return; }
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_IS_H3_(c)) { proven_http_event_h3_pause_(c); return; }
+#endif
     if (c->dead || !c->active) return;
     c->paused = true;
     ev_watch(c);
@@ -1049,6 +1113,9 @@ void proven_http_stream_pause(proven_http_stream_t *c) {
 void proven_http_stream_resume(proven_http_stream_t *c) {
     if (!c) return;
     if (PROVEN_HTTP_EVENT_IS_H2_(c)) { proven_http_event_h2_resume_(c); return; }
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_IS_H3_(c)) { proven_http_event_h3_resume_(c); return; }
+#endif
     if (c->dead || !c->paused) return;
     c->paused = false;
     ev_enter(c);
@@ -1060,27 +1127,39 @@ void proven_http_stream_resume(proven_http_stream_t *c) {
 
 void proven_http_stream_set_user(proven_http_stream_t *c, void *user) {
     if (!c) return;
-    if (PROVEN_HTTP_EVENT_IS_H2_(c)) proven_http_event_h2_set_user_(c, user);
-    else c->user = user;
+    if (PROVEN_HTTP_EVENT_IS_H2_(c)) { proven_http_event_h2_set_user_(c, user); return; }
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_IS_H3_(c)) { proven_http_event_h3_set_user_(c, user); return; }
+#endif
+    c->user = user;
 }
 
 void *proven_http_stream_user(const proven_http_stream_t *c) {
     if (!c) return (void *)0;
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_IS_H3_(c)) return proven_http_event_h3_user_(c);
+#endif
     return PROVEN_HTTP_EVENT_IS_H2_(c) ? proven_http_event_h2_user_(c) : c->user;
 }
 
 proven_net_addr_t proven_http_stream_peer(const proven_http_stream_t *c) {
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_IS_H3_(c)) return proven_http_event_h3_peer_(c);
+#endif
     return PROVEN_HTTP_EVENT_IS_H2_(c) ? proven_http_event_h2_peer_(c) : c->peer;
 }
 
 proven_size_t proven_http_stream_buffered(const proven_http_stream_t *c) {
     if (!c) return 0;
     if (PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_buffered_(c);
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_IS_H3_(c)) return proven_http_event_h3_buffered_(c);
+#endif
     return !c->dead ? ev_buffered(c) : 0;
 }
 
 int proven_http_stream_protocol(const proven_http_stream_t *c) {
-    return c && PROVEN_HTTP_EVENT_IS_H2_(c) ? 2 : 1;
+    return !c ? 1 : PROVEN_HTTP_EVENT_IS_H2_(c) ? 2 : PROVEN_HTTP_EVENT_IS_H3_(c) ? 3 : 1;
 }
 
 // -----------------------------------------------------------------------------

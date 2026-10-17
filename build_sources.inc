@@ -57,6 +57,7 @@ PROVEN_BUILD_SOURCE("src/proven/tls_transport.c", PROVEN_SOURCE_HOSTED_ONLY)   /
 PROVEN_BUILD_SOURCE("src/proven/loop.c", PROVEN_SOURCE_HOSTED_ONLY)   /* an event loop over the selector */
 PROVEN_BUILD_SOURCE("src/proven/http_event.c", PROVEN_SOURCE_HOSTED_ONLY)   /* the event-driven HTTP server */
 PROVEN_BUILD_SOURCE("src/proven/http_event_h2.c", PROVEN_SOURCE_HOSTED_ONLY)   /* HTTP/2 in the event-driven server: the driver of proven_h2_conn_t */
+PROVEN_BUILD_SOURCE("src/proven/http_event_h3.c", PROVEN_SOURCE_HOSTED_ONLY)   /* HTTP/3 in the event-driven server: UDP sockets, connections by their IDs, the driver of h3_conn; empty under PROVEN_NO_HTTP3 */
 PROVEN_BUILD_SOURCE("src/proven/ws_event.c", PROVEN_SOURCE_HOSTED_ONLY)   /* WebSocket on the event-driven server */
 PROVEN_BUILD_SOURCE("src/proven/ws_event_client.c", PROVEN_SOURCE_HOSTED_ONLY)   /* a WebSocket connection made by this side, on a loop */
 PROVEN_BUILD_SOURCE("src/proven/http_event_client.c", PROVEN_SOURCE_HOSTED_ONLY)   /* the event-driven HTTP client */

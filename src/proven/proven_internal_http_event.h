@@ -110,6 +110,7 @@ typedef struct {
 
 #define EV_KIND_H1 0       /* a connection of the server's, speaking HTTP/1.1 or taken over */
 #define EV_KIND_H2 1       /* one stream of an HTTP/2 connection */
+#define EV_KIND_H3 2       /* one stream of an HTTP/3 connection */
 
 struct proven_http_stream {
     ev_head_t h;
@@ -141,6 +142,7 @@ struct proven_http_stream {
     bool raw_more;                     /* EV_RAW: the owner has output the transport would not take yet */
     bool told_stop;                    /* EV_RAW: the owner has been told that the server stopped listening */
     bool told_drain;                   /* EV_RAW: and that it is shutting down (on_drain) */
+    proven_u16 local_port;             /* the port the connection came in on: the one `Alt-Svc` names */
 };
 
 typedef struct { proven_http_event_server_t *server; proven_net_listener_t listener; proven_loop_io_t io; } ev_listener_t;
@@ -161,6 +163,8 @@ struct proven_http_event_server {
     proven_byte_t *zbuf;               /* what a compressor gives out, on its way to a connection's output; made when first needed */
     proven_byte_t *h2buf;              /* where every HTTP/2 connection reads its header lists: one event at a time, one thread; made when first needed */
     proven_size_t h2buf_size;
+    struct ev_h3 *h3;                  /* HTTP/3 (http_event_h3.c): its sockets and connections; null without `http3` */
+    proven_size_t h3_count;            /* QUIC connections open: they count against `max_connections` with `conn_count` */
     /* proven_http_event_server_shutdown */
     bool draining;                     /* it was called: final */
     bool drain_cut;                    /* the deadline ended something */
@@ -219,6 +223,59 @@ proven_net_addr_t proven_http_event_h2_peer_(const proven_http_stream_t *stream)
 proven_size_t proven_http_event_h2_buffered_(const proven_http_stream_t *stream);
 
 #define PROVEN_HTTP_EVENT_IS_H2_(stream) (((const ev_head_t *)(const void *)(stream))->kind == EV_KIND_H2)
+#define PROVEN_HTTP_EVENT_IS_H3_(stream) (((const ev_head_t *)(const void *)(stream))->kind == EV_KIND_H3)
+
+/* The count of connections has changed (one came or went, outside http_event.c): the listeners
+ * may take connections again, or must stop at `max_connections`, and a shutdown may be over. */
+void proven_http_event_gone_(proven_http_event_server_t *server);
+
+// -----------------------------------------------------------------------------
+// HTTP/3 (http_event_h3.c): UDP sockets, QUIC connections, and their streams
+// -----------------------------------------------------------------------------
+
+#if !defined(PROVEN_NO_HTTP3)
+/* At create, with `http3`: the state every socket shares (connection IDs, the key). */
+[[nodiscard]]
+proven_err_t proven_http_event_h3_create_(proven_http_event_server_t *server);
+/* A UDP socket at `at` (the TCP listener's address, its port chosen). */
+[[nodiscard]]
+proven_err_t proven_http_event_h3_listen_(proven_http_event_server_t *server, proven_net_addr_t at);
+/* stop_listening: no new connection; each says goodbye, in two steps. */
+void proven_http_event_h3_stop_(proven_http_event_server_t *server);
+/* Every connection ended now: exchanges get on_done(PROVEN_ERR_RESET). */
+void proven_http_event_h3_end_all_(proven_http_event_server_t *server);
+/* destroy: everything ended, sockets closed, state freed. */
+void proven_http_event_h3_destroy_(proven_http_event_server_t *server);
+/* The UDP port `Alt-Svc` names for a TCP connection that came in on `local_port`: 0 for none. */
+[[nodiscard]]
+proven_u16 proven_http_event_h3_port_(const proven_http_event_server_t *server, proven_u16 local_port);
+/* The value of the `Alt-Svc` a TCP response carries, `h3=":PORT"`, into `out`: its length, or 0
+ * when there is none to send - no HTTP/3 socket, or the handler's `headers` have one of their own. */
+[[nodiscard]]
+proven_size_t proven_http_event_alt_svc_(const proven_http_event_server_t *server, proven_u16 local_port, const proven_http_header_t *headers,
+                                         proven_size_t header_count, proven_byte_t out[16]);
+
+void proven_http_event_h3_compress_(proven_http_stream_t *stream);
+[[nodiscard]]
+proven_err_t proven_http_event_h3_begin_(proven_http_stream_t *stream, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count, proven_u64 content_length);
+[[nodiscard]]
+proven_result_size_t proven_http_event_h3_write_(proven_http_stream_t *stream, proven_mem_view_t data);
+[[nodiscard]]
+proven_err_t proven_http_event_h3_end_(proven_http_stream_t *stream);
+proven_err_t proven_http_event_h3_flush_(proven_http_stream_t *stream);
+[[nodiscard]]
+proven_err_t proven_http_event_h3_respond_(proven_http_stream_t *stream, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count, proven_mem_view_t body);
+void proven_http_event_h3_abort_(proven_http_stream_t *stream);
+void proven_http_event_h3_pause_(proven_http_stream_t *stream);
+void proven_http_event_h3_resume_(proven_http_stream_t *stream);
+void proven_http_event_h3_set_user_(proven_http_stream_t *stream, void *user);
+[[nodiscard]]
+void *proven_http_event_h3_user_(const proven_http_stream_t *stream);
+[[nodiscard]]
+proven_net_addr_t proven_http_event_h3_peer_(const proven_http_stream_t *stream);
+[[nodiscard]]
+proven_size_t proven_http_event_h3_buffered_(const proven_http_stream_t *stream);
+#endif
 
 /* The server's compression settings, for http_coding.c. */
 static inline proven_http_compress_cfg_t_ proven_http_event_compress_cfg_(const proven_http_event_server_config_t *c) {

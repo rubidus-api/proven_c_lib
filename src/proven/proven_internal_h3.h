@@ -163,6 +163,11 @@ void proven_h3_stream_pause(proven_h3_conn_t *h, proven_u64 stream_id, bool paus
 /* Say goodbye (GOAWAY): a server takes no request after those it has seen, a client sends
  * none; the connection closes with H3_NO_ERROR when the last stream ends. */
 proven_err_t proven_h3_conn_goaway(proven_h3_conn_t *h);
+/* The same in two steps, for a server (RFC 9114 section 5.2): `early` says the largest ID a
+ * client may use, so that requests already on their way are not refused, and the connection
+ * stays open; a round trip later the call without it says the real one. A client's goodbye
+ * is always the last. */
+proven_err_t proven_h3_conn_goaway_step(proven_h3_conn_t *h, bool early);
 /* Bytes the HTTP/3 side holds (streams, buffers), for tests. */
 proven_size_t proven_h3_conn_memory(const proven_h3_conn_t *h);
 

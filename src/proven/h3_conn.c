@@ -78,6 +78,7 @@ struct proven_h3_conn {
     proven_u64 max_push;
     /* Goodbye */
     bool goaway_sent, goaway_recv;
+    bool goaway_early;                  /* a server's first goodbye of two: the ID said is not the last */
     proven_u64 goaway_sent_id, goaway_recv_id;
     proven_u64 next_peer_req;               /* a server: one above the highest request stream seen */
     proven_u32 debt;
@@ -870,7 +871,7 @@ bool proven_h3_conn_poll(proven_h3_conn_t *h, proven_h3_event_t *ev) {
                 /* Every pass clears a readable flag or frees a stream, so this ends. */
             }
             /* Goodbye, and nothing left: the close waits until what was sent is acknowledged. */
-            if ((h->goaway_sent || (!h->server && h->goaway_recv)) && !h->failed && !h3_any_requests(h) && !proven_quic_conn_sending(h->q)) h3_fail(h, PROVEN_H3_NO_ERROR);
+            if (((h->goaway_sent && !h->goaway_early) || (!h->server && h->goaway_recv)) && !h->failed && !h3_any_requests(h) && !proven_quic_conn_sending(h->q)) h3_fail(h, PROVEN_H3_NO_ERROR);
         }
         proven_quic_event_t q;
         if (!proven_quic_conn_poll(h->q, &q)) return false;
@@ -979,7 +980,8 @@ proven_err_t proven_h3_send_data(proven_h3_conn_t *h, proven_u64 stream_id, prov
     st_flush(h, s);
     if (h->oom) { h->oom = false; return PROVEN_ERR_NOMEM; }
     if (s->tx_done) return PROVEN_ERR_INVALID_STATE;
-    if (s->out_off < s->out_n) { s->want_writable = true; return PROVEN_OK; }
+    /* An end with no bytes is taken whatever is queued before it: it goes with the last of that. */
+    if (data.size > 0 && s->out_off < s->out_n) { s->want_writable = true; return PROVEN_OK; }
     proven_size_t n = 0;
     if (data.size > 0) {
         const proven_u64 room = proven_quic_stream_room(h->q, s->id);
@@ -1051,21 +1053,26 @@ void proven_h3_stream_pause(proven_h3_conn_t *h, proven_u64 stream_id, bool paus
     if (s) { s->paused = paused; if (!paused) s->readable = true; }
 }
 
-proven_err_t proven_h3_conn_goaway(proven_h3_conn_t *h) {
+proven_err_t proven_h3_conn_goaway_step(proven_h3_conn_t *h, bool early) {
     if (!h) return PROVEN_ERR_INVALID_ARG;
     if (h->failed || h->closed || !h->ctl_open) return PROVEN_ERR_INVALID_STATE;
-    if (h->goaway_sent) return PROVEN_OK;
-    /* A server: the first request stream it will not act on. A client: a push ID, and it
-     * allows none. */
-    const proven_u64 id = h->server ? h->next_peer_req : 0;
+    early = early && h->server;
+    if (h->goaway_sent && (early || !h->goaway_early)) return PROVEN_OK;
+    /* A server: the first request stream it will not act on - or, the first time of two, the
+     * largest a client may open, so that nothing already on its way is refused (RFC 9114
+     * section 5.2). A client: a push ID, and it allows none. */
+    const proven_u64 id = !h->server ? 0 : early ? ((proven_u64)1 << 62) - 4 : h->next_peer_req;
     proven_byte_t p[8];
     const proven_size_t n = proven_quic_varint_put(id, p);
     if (!ctl_put_frame(h, PROVEN_H3_FRAME_GOAWAY, p, n)) { h->oom = false; return PROVEN_ERR_NOMEM; }
     h->goaway_sent = true;
+    h->goaway_early = early;
     h->goaway_sent_id = id;
     ctl_flush(h);
     return PROVEN_OK;
 }
+
+proven_err_t proven_h3_conn_goaway(proven_h3_conn_t *h) { return proven_h3_conn_goaway_step(h, false); }
 
 proven_size_t proven_h3_conn_memory(const proven_h3_conn_t *h) { return h ? h->held : 0; }
 

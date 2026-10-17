@@ -787,8 +787,8 @@ static proven_err_t s_head(h2s_t *s, proven_u16 status, const proven_http_header
     /* Names go out in lowercase, as HTTP/2 requires of them: written into the server's head
      * buffer, which is where an HTTP/1.1 head would have been built. */
     proven_http_header_t small[40], *list = small;
-    if (header_count + 5 > sizeof small / sizeof small[0]) {
-        list = h2_alloc(sv->alloc, (header_count + 5) * sizeof *list);
+    if (header_count + 6 > sizeof small / sizeof small[0]) {
+        list = h2_alloc(sv->alloc, (header_count + 6) * sizeof *list);
         if (!list) return PROVEN_ERR_NOMEM;
     }
     proven_byte_t code[3] = { (proven_byte_t)('0' + status / 100), (proven_byte_t)('0' + status / 10 % 10), (proven_byte_t)('0' + status % 10) };
@@ -808,6 +808,11 @@ static proven_err_t s_head(h2s_t *s, proven_u16 status, const proven_http_header
     if (e == PROVEN_OK) {
         if (vary) list[n++] = (proven_http_header_t){ .name = h2_lit("vary"), .value = h2_lit("accept-encoding") };
         if (coding != PROVEN_HTTP_CODING_IDENTITY) list[n++] = (proven_http_header_t){ .name = h2_lit("content-encoding"), .value = proven_http_coding_token_(coding) };
+#if !defined(PROVEN_NO_HTTP3)
+        proven_byte_t alt[16];
+        const proven_size_t alt_n = sv->h3 && !d->dead ? proven_http_event_alt_svc_(sv, d->conn->local_port, headers, header_count, alt) : 0;
+        if (alt_n > 0) list[n++] = (proven_http_header_t){ .name = h2_lit("alt-svc"), .value = { .ptr = alt, .size = alt_n } };
+#endif
         if (!no_body_status && length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) {
             proven_u64 v = length;
             do { digits[sizeof digits - 1 - nd++] = (proven_byte_t)('0' + v % 10); v /= 10; } while (v > 0);
