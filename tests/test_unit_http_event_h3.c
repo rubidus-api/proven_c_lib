@@ -278,6 +278,7 @@ typedef struct {
     proven_h3_conn_t *h;
     proven_tls_session_t session;
     bool established, closed, remote_close, mute;
+    int first_type;                    /* the first datagram's first byte, high nibble: 0xf for a Retry; -1 before one has come */
     proven_u64 close_code;
     int goaways;
     proven_u64 goaway_id;
@@ -299,6 +300,7 @@ static proven_quic_addr_t qaddr(const proven_net_addr_t *a) {
 static bool cl_open(cl_t *c, proven_u16 port) {
     memset(c, 0, sizeof *c);
     c->server = proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, port);
+    c->first_type = -1;
     if (proven_net_udp_open(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &c->udp, NULL) != PROVEN_OK) return false;
     const proven_quic_config_t qc = { .alloc = g_heap, .tls = g_client_tls };
     const proven_quic_addr_t sa = qaddr(&c->server);
@@ -391,6 +393,7 @@ static void cl_pump(cl_t *c, proven_u32 ms) {
     const proven_quic_addr_t sa = qaddr(&c->server);
     proven_result_size_t r = proven_net_udp_recv_from(&c->udp, (proven_mem_mut_t){ dg, sizeof dg }, &from, wait);
     while (r.err == PROVEN_OK) {
+        if (c->first_type < 0 && r.value > 0) c->first_type = dg[0] >> 4;
         (void)proven_quic_conn_receive(c->q, (proven_mem_view_t){ dg, r.value }, &sa, us_now());
         r = proven_net_udp_recv_from(&c->udp, (proven_mem_mut_t){ dg, sizeof dg }, &from, PROVEN_NET_DONT_WAIT);
     }
@@ -526,6 +529,7 @@ out:
 static void case_requests(proven_u16 port) {
     cl_t *c = calloc(1, sizeof *c);
     PROVEN_TEST_ASSERT(cl_connect(c, port), "a QUIC connection, with h3", "");
+    PROVEN_TEST_ASSERT(c->first_type == 0xc, "without http3_retry the server's first answer is its Initial", "");
     static const proven_http_header_t gzip[] = { H("accept-encoding", "gzip") }, zstd[] = { H("accept-encoding", "gzip, zstd") };
     const int hello = cl_request(c, "GET", "/hello", 0, NULL, 0, true);
     const int proto = cl_request(c, "GET", "/proto", 0, NULL, 0, true);
@@ -586,6 +590,18 @@ static void case_requests(proven_u16 port) {
     PROVEN_TEST_ASSERT(atomic_load(&g_reentered) == 0, "on_writable is never called from inside the handler's own write", "");
     PROVEN_TEST_ASSERT(atomic_load(&g_writable) > 0, "and it is called when output that was refused can go on", "");
 
+    /* A client that gives a request up: the handler is told PROVEN_ERR_RESET, the connection goes on. */
+    {
+        const int before = atomic_load(&g_done_reset);
+        const int given = cl_request(c, "GET", "/never", 0, NULL, 0, true);
+        cl_run(c, 50);
+        PROVEN_TEST_ASSERT(proven_h3_stream_reset(c->h, c->r[given].id, 0) == PROVEN_OK, "the client resets its request", "");
+        c->r[given].end = true;
+        for (int i = 0; i < 400 && atomic_load(&g_done_reset) == before; ++i) cl_pump(c, 5);
+        PROVEN_TEST_ASSERT(atomic_load(&g_done_reset) == before + 1, "the handler is told PROVEN_ERR_RESET", "");
+        const int next = cl_request(c, "GET", "/hello", 0, NULL, 0, true);
+        PROVEN_TEST_ASSERT(cl_wait(c, next, next + 1, 3000) && c->r[next].status == 200, "and the next request is answered", "");
+    }
     /* Many at once: more than the server lets be open, so the client waits for room. */
     const int first = c->n;
     int made = 0, busy = 0;
@@ -848,7 +864,8 @@ int main(void) {
     {
         const proven_u16 port = server_start((proven_http_event_server_config_t){ .http3_retry = true });
         cl_t *c = calloc(1, sizeof *c);
-        PROVEN_TEST_ASSERT(cl_connect(c, port), "a connection, through a Retry", "");
+        PROVEN_TEST_ASSERT(cl_connect(c, port), "a connection", "");
+        PROVEN_TEST_ASSERT(c->first_type == 0xf, "made through a Retry: the server's first answer is one (long header, type 3)", "");
         const int h = cl_request(c, "GET", "/hello", 0, NULL, 0, true);
         PROVEN_TEST_ASSERT(cl_wait(c, h, h + 1, 3000) && c->r[h].status == 200 && body_is(&c->r[h], "hello"), "and a request on it", "");
         cl_close(c);
