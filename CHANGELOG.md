@@ -23,13 +23,14 @@ written; their tags still exist.
 - HTTP/3 is faster (RFC-0018 S-1; no API change). The QUIC connection's stream buffers copied,
   moved and zeroed a byte at a time; they now copy in blocks through the platform layer, as the
   event path has since v0.49.0. A receive buffer zeroes only a gap that arrives ahead of the data
-  (not every byte), and one drained and given back grows again at once to the size it had, not
-  from 1 KiB through doublings that copied what it held; a stream's send buffer is a ring, so
+  (not every byte), and one drained and given back grows again at once to the size its last fill
+  needed - a larger fill before that forgotten by an eighth at each fill after - not from 1 KiB
+  through doublings that copied what it held; a stream's send buffer is a ring, so
   the bytes waiting for acknowledgement are never moved. Bytes touched per byte delivered in the
-  stream buffers: receiver 4.2 to 2.0, sender 2.0 to 1.0. Measured on loopback with this library
+  stream buffers: receiver 4.2 to 2.1, sender 2.0 to 1.0. Measured on loopback with this library
   at both ends, one 1 GiB download through a handler that costs next to nothing, median of five:
-  HTTP/3 from 1,667 to 2,234 Mbit/s, 0.34 of HTTP/2 to 0.48 (HTTP/2 measured 4,851 and 4,654 in
-  the same two runs); user time per GiB from 2.73 to 1.71 s on the client and from 2.89 to 1.53 s on the
+  HTTP/3 from 1,667 to 2,254 Mbit/s, 0.34 of HTTP/2 to about 0.46 (HTTP/2's median moved between
+  4,654 and 4,958 from run to run); user time per GiB from 2.73 to 1.73 s on the client and from 2.89 to 1.51 s on the
   server. One 100 MiB download from the event server to curl: 174 to 217 MiB/s. What is left is
   mostly system calls (one per datagram) and the per-packet AES-GCM.
 

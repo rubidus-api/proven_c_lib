@@ -85,15 +85,26 @@ static void qfree(qmem_t *m, void *p, proven_size_t n) {
     m->held -= n < 1 ? 1 : n;
 }
 
+/* The capacity a buffer grown from 1 KiB by doubling has when it holds `n` bytes. */
+static proven_size_t qcap_for(proven_size_t n) {
+    proven_size_t cap = 1024;
+    while (cap < n) cap *= 2;
+    return cap;
+}
+
 /* ---- A byte buffer: bytes [head, head + len) of `p` ----
  *
- * `last` is the capacity it had when it was last given back empty: the next fill allocates that
- * at once, not 1 KiB doubled again with its bytes copied at each step (RFC-0018 S-1). */
+ * `last` is the capacity for the most its last fill needed at once (`peak` while it fills): when
+ * it was given back empty, the next fill allocates that at once, not 1 KiB doubled again with
+ * its bytes copied at each step (RFC-0018 S-1). A larger fill before it is forgotten by an eighth
+ * at each fill after, so one large fill is not kept for the stream's life, and fills that cross a
+ * doubling now and then do not regrow every time. */
 
-typedef struct { proven_byte_t *p; proven_size_t cap, head, len, last; } qbuf_t;
+typedef struct { proven_byte_t *p; proven_size_t cap, head, len, peak, last; } qbuf_t;
 
 /* Room for `n` bytes from the head. */
 static bool qbuf_reserve(qmem_t *m, qbuf_t *b, proven_size_t n) {
+    if (n > b->peak) b->peak = n;
     if (b->cap - b->head >= n) return true;
     if (b->head > 0) {
         qmove(b->p, b->p + b->head, b->len);
@@ -114,7 +125,8 @@ static void qbuf_drop(qmem_t *m, qbuf_t *b, proven_size_t n) {
     b->head += n; b->len -= n;
     if (b->len == 0) {
         b->head = 0;
-        if (b->cap > 4096) { qfree(m, b->p, b->cap); b->last = b->cap; b->p = NULL; b->cap = 0; }
+        if (b->cap > 4096) { qfree(m, b->p, b->cap); b->last = (proven_size_t)qmax(qcap_for(b->peak), b->last - b->last / 8); b->p = NULL; b->cap = 0; }
+        b->peak = 0;
     }
 }
 
@@ -127,9 +139,9 @@ static void qbuf_free(qmem_t *m, qbuf_t *b) {
  *
  * A send queue's bytes from the acknowledged base to the end: written at the end, dropped from
  * the front, never moved while they wait (RFC-0018 S-1: the linear buffer moved its whole
- * unacknowledged window down whenever the end ran out of room). `last` as in qbuf_t. */
+ * unacknowledged window down whenever the end ran out of room). `peak` and `last` as in qbuf_t. */
 
-typedef struct { proven_byte_t *p; proven_size_t cap, head, len, last; } qring_t;
+typedef struct { proven_byte_t *p; proven_size_t cap, head, len, peak, last; } qring_t;
 
 /* The position of the byte `i` after the head. */
 static proven_size_t ring_pos(const qring_t *r, proven_size_t i) {
@@ -139,6 +151,7 @@ static proven_size_t ring_pos(const qring_t *r, proven_size_t i) {
 
 /* Room for `n` bytes in all. Growing copies the bytes out unwrapped, once per doubling. */
 static bool ring_reserve(qmem_t *m, qring_t *r, proven_size_t n) {
+    if (n > r->peak) r->peak = n;
     if (r->cap >= n) return true;
     proven_size_t cap = r->cap ? r->cap * 2 : r->last ? r->last : 1024;
     while (cap < n) cap *= 2;
@@ -170,7 +183,8 @@ static void ring_drop(qmem_t *m, qring_t *r, proven_size_t n) {
     r->len -= n;
     if (r->len == 0) {
         r->head = 0;
-        if (r->cap > 4096) { qfree(m, r->p, r->cap); r->last = r->cap; r->p = NULL; r->cap = 0; }
+        if (r->cap > 4096) { qfree(m, r->p, r->cap); r->last = (proven_size_t)qmax(qcap_for(r->peak), r->last - r->last / 8); r->p = NULL; r->cap = 0; }
+        r->peak = 0;
     }
 }
 
