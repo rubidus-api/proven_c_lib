@@ -1,4 +1,5 @@
 #include "proven_internal_quic.h"
+#include "../../platform/proven_sys_mem.h"
 
 #ifndef PROVEN_NO_HTTP3
 
@@ -29,18 +30,18 @@ static const proven_u64 Q_STREAM_LIMIT = (((proven_u64)1) << 62) - 1;
 
 /* ---- Small helpers ---- */
 
+/* Block copies through the platform (RFC-0018 S-1: these were byte loops, 45 % of a
+ * receiver's time). */
 static void qcopy(proven_byte_t *dst, const proven_byte_t *src, proven_size_t n) {
-    for (proven_size_t i = 0; i < n; ++i) dst[i] = src[i];
+    proven_sys_mem_copy(dst, src, n);
 }
 
 static void qmove(proven_byte_t *dst, const proven_byte_t *src, proven_size_t n) {
-    if (dst < src) for (proven_size_t i = 0; i < n; ++i) dst[i] = src[i];
-    else if (dst > src) for (proven_size_t i = n; i > 0; --i) dst[i - 1] = src[i - 1];
+    proven_sys_mem_move(dst, src, n);
 }
 
 static void qzero(void *p, proven_size_t n) {
-    proven_byte_t *b = p;
-    for (proven_size_t i = 0; i < n; ++i) b[i] = 0;
+    proven_sys_mem_zero(p, n);
 }
 
 static bool cid_eq(const proven_quic_cid_t *a, const proven_quic_cid_t *b) {
@@ -84,9 +85,12 @@ static void qfree(qmem_t *m, void *p, proven_size_t n) {
     m->held -= n < 1 ? 1 : n;
 }
 
-/* ---- A byte buffer: bytes [head, head + len) of `p` ---- */
+/* ---- A byte buffer: bytes [head, head + len) of `p` ----
+ *
+ * `last` is the capacity it had when it was last given back empty: the next fill allocates that
+ * at once, not 1 KiB doubled again with its bytes copied at each step (RFC-0018 S-1). */
 
-typedef struct { proven_byte_t *p; proven_size_t cap, head, len; } qbuf_t;
+typedef struct { proven_byte_t *p; proven_size_t cap, head, len, last; } qbuf_t;
 
 /* Room for `n` bytes from the head. */
 static bool qbuf_reserve(qmem_t *m, qbuf_t *b, proven_size_t n) {
@@ -96,7 +100,7 @@ static bool qbuf_reserve(qmem_t *m, qbuf_t *b, proven_size_t n) {
         b->head = 0;
         if (b->cap >= n) return true;
     }
-    proven_size_t cap = b->cap ? b->cap : 1024;
+    proven_size_t cap = b->cap ? b->cap : b->last ? b->last : 1024;
     while (cap < n) cap *= 2;
     proven_byte_t *p = qrealloc(m, b->p, b->cap, cap, 1);
     if (!p) return false;
@@ -110,13 +114,69 @@ static void qbuf_drop(qmem_t *m, qbuf_t *b, proven_size_t n) {
     b->head += n; b->len -= n;
     if (b->len == 0) {
         b->head = 0;
-        if (b->cap > 4096) { qfree(m, b->p, b->cap); b->p = NULL; b->cap = 0; }
+        if (b->cap > 4096) { qfree(m, b->p, b->cap); b->last = b->cap; b->p = NULL; b->cap = 0; }
     }
 }
 
 static void qbuf_free(qmem_t *m, qbuf_t *b) {
     qfree(m, b->p, b->cap);
     *b = (qbuf_t){ 0 };
+}
+
+/* ---- A ring: bytes [head, head + len) of `p`, wrapping at `cap` ----
+ *
+ * A send queue's bytes from the acknowledged base to the end: written at the end, dropped from
+ * the front, never moved while they wait (RFC-0018 S-1: the linear buffer moved its whole
+ * unacknowledged window down whenever the end ran out of room). `last` as in qbuf_t. */
+
+typedef struct { proven_byte_t *p; proven_size_t cap, head, len, last; } qring_t;
+
+/* The position of the byte `i` after the head. */
+static proven_size_t ring_pos(const qring_t *r, proven_size_t i) {
+    const proven_size_t at = r->head + i;
+    return at >= r->cap ? at - r->cap : at;
+}
+
+/* Room for `n` bytes in all. Growing copies the bytes out unwrapped, once per doubling. */
+static bool ring_reserve(qmem_t *m, qring_t *r, proven_size_t n) {
+    if (r->cap >= n) return true;
+    proven_size_t cap = r->cap ? r->cap * 2 : r->last ? r->last : 1024;
+    while (cap < n) cap *= 2;
+    proven_byte_t *p = qalloc(m, cap, 1);
+    if (!p) return false;
+    if (r->len > 0) {
+        const proven_size_t first = r->cap - r->head < r->len ? r->cap - r->head : r->len;
+        qcopy(p, r->p + r->head, first);
+        qcopy(p + first, r->p, r->len - first);
+    }
+    qfree(m, r->p, r->cap);
+    r->p = p; r->cap = cap; r->head = 0;
+    return true;
+}
+
+/* `n` bytes added at the end, in at most two parts. */
+static void ring_put(qring_t *r, const proven_byte_t *src, proven_size_t n) {
+    if (n == 0) return;
+    const proven_size_t at = ring_pos(r, r->len);
+    const proven_size_t first = r->cap - at < n ? r->cap - at : n;
+    qcopy(r->p + at, src, first);
+    qcopy(r->p, src + first, n - first);
+    r->len += n;
+}
+
+/* Bytes taken from the front; an empty ring is given back as qbuf_drop gives back a buffer. */
+static void ring_drop(qmem_t *m, qring_t *r, proven_size_t n) {
+    r->head = ring_pos(r, n);
+    r->len -= n;
+    if (r->len == 0) {
+        r->head = 0;
+        if (r->cap > 4096) { qfree(m, r->p, r->cap); r->last = r->cap; r->p = NULL; r->cap = 0; }
+    }
+}
+
+static void ring_free(qmem_t *m, qring_t *r) {
+    qfree(m, r->p, r->cap);
+    *r = (qring_t){ 0 };
 }
 
 /* ---- A set of ranges [lo, hi), ascending, apart ---- */
@@ -194,16 +254,15 @@ static void rset_free(qmem_t *m, qrset_t *s) {
  * acknowledged above `base` in `acked`. */
 
 typedef struct {
-    qbuf_t buf;
+    qring_t buf;
     proven_u64 base, end, next;
     qrset_t lost, acked;
     bool fin, fin_sent, fin_lost, fin_acked;
 } qsendq_t;
 
 static bool sendq_write(qmem_t *m, qsendq_t *q, const proven_byte_t *p, proven_size_t n) {
-    if (!qbuf_reserve(m, &q->buf, q->buf.len + n)) return false;
-    qcopy(q->buf.p + q->buf.head + q->buf.len, p, n);
-    q->buf.len += n;
+    if (!ring_reserve(m, &q->buf, q->buf.len + n)) return false;
+    ring_put(&q->buf, p, n);
     q->end += n;
     return true;
 }
@@ -216,7 +275,7 @@ static void sendq_acked(qmem_t *m, qsendq_t *q, proven_u64 off, proven_u64 len, 
     (void)rset_remove(m, &q->lost, off, off + len);
     if (q->acked.n > 0 && q->acked.r[0].lo == q->base) {
         const proven_u64 to = q->acked.r[0].hi;
-        qbuf_drop(m, &q->buf, (proven_size_t)(to - q->base));
+        ring_drop(m, &q->buf, (proven_size_t)(to - q->base));
         q->base = to;
         rset_erase(&q->acked, 0, 1);
     }
@@ -236,20 +295,28 @@ static void sendq_resend_all(qmem_t *m, qsendq_t *q) {
     if (q->fin_sent && !q->fin_acked) q->fin_lost = true;
 }
 
-/* The next piece to send, at most `room` bytes: lost bytes first, then new ones up to `limit`
- * (flow control). False when there is nothing. `*fin` when the piece ends the stream. */
+/* The bytes from `off` (held, below `end`) to the ring's wrap: a piece ends there, so a frame's
+ * data is always one view. */
+static proven_u64 sendq_contig(const qsendq_t *q, proven_u64 off) {
+    return q->buf.cap - ring_pos(&q->buf, (proven_size_t)(off - q->base));
+}
+
+/* The next piece to send, at most `room` bytes and never across the ring's wrap: lost bytes
+ * first, then new ones up to `limit` (flow control). False when there is nothing. `*fin` when
+ * the piece ends the stream. */
 static bool sendq_next(const qsendq_t *q, proven_u64 room, proven_u64 limit, proven_u64 *off, proven_u64 *len, bool *fin, bool *fresh) {
     *fin = false; *fresh = false;
     for (proven_size_t i = 0; i < q->lost.n; ++i) {
         proven_u64 a, b;
         if (!rset_first_gap(&q->acked, qmax(q->lost.r[i].lo, q->base), q->lost.r[i].hi, &a, &b)) continue;
         *off = a; *len = qmin(b - a, room);
+        if (*len > 0) *len = qmin(*len, sendq_contig(q, a));
         *fin = q->fin && a + *len == q->end && (q->fin_lost || !q->fin_sent);
         return *len > 0 || *fin;
     }
     const proven_u64 upto = qmin(q->end, limit);
     if (q->next < upto && room > 0) {
-        *off = q->next; *len = qmin(upto - q->next, room); *fresh = true;
+        *off = q->next; *len = qmin(qmin(upto - q->next, room), sendq_contig(q, q->next)); *fresh = true;
         *fin = q->fin && *off + *len == q->end;
         return true;
     }
@@ -268,7 +335,7 @@ static void sendq_sent(qmem_t *m, qsendq_t *q, proven_u64 off, proven_u64 len, b
 }
 
 static const proven_byte_t *sendq_at(const qsendq_t *q, proven_u64 off) {
-    return q->buf.p + q->buf.head + (proven_size_t)(off - q->base);
+    return q->buf.p + ring_pos(&q->buf, (proven_size_t)(off - q->base));
 }
 
 static bool sendq_done(const qsendq_t *q) {
@@ -276,7 +343,7 @@ static bool sendq_done(const qsendq_t *q) {
 }
 
 static void sendq_free(qmem_t *m, qsendq_t *q) {
-    qbuf_free(m, &q->buf);
+    ring_free(m, &q->buf);
     rset_free(m, &q->lost);
     rset_free(m, &q->acked);
 }
@@ -297,13 +364,15 @@ typedef struct {
 static bool recvq_insert(qmem_t *m, qrecvq_t *q, proven_u64 off, const proven_byte_t *p, proven_size_t n) {
     if (off + n <= q->read) return true;
     if (off < q->read) { const proven_size_t skip = (proven_size_t)(q->read - off); p += skip; n -= skip; off = q->read; }
-    const proven_size_t need = (proven_size_t)(off + n - q->read);
+    const proven_size_t at = (proven_size_t)(off - q->read), need = at + n;
     if (need > q->buf.len) {
         if (!qbuf_reserve(m, &q->buf, need)) return false;
-        qzero(q->buf.p + q->buf.head + q->buf.len, need - q->buf.len);
+        /* Only a hole is zeroed: what arrives at the end is copied over at once. Nothing reads
+         * outside `got`; the zero is so a hole never holds a freed buffer's bytes. */
+        if (at > q->buf.len) qzero(q->buf.p + q->buf.head + q->buf.len, at - q->buf.len);
         q->buf.len = need;
     }
-    qcopy(q->buf.p + q->buf.head + (proven_size_t)(off - q->read), p, n);
+    qcopy(q->buf.p + q->buf.head + at, p, n);
     if (!rset_add(m, &q->got, off, off + n)) return false;
     if (off + n > q->highest) q->highest = off + n;
     return true;

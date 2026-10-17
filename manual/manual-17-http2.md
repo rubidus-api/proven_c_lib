@@ -1613,7 +1613,8 @@ as they end HTTP/2 ones.
   acknowledgement - fires up to 16 ms late; a busy one does its work in each round.
 - **HTTP/3 is slower than HTTP/2 here.** One datagram is one system call, and each is
   encrypted and protected on its own: one 100 MiB download from this server to curl on
-  loopback ran at 174 MiB/s over HTTP/3, 387 over HTTP/2 and 505 over HTTP/1.1, all over TLS.
+  loopback ran at 217 MiB/s over HTTP/3, 372 over HTTP/2 and 502 over HTTP/1.1, all over TLS
+  (v0.66.0; 174 before it, when the QUIC stream buffers copied a byte at a time).
 - **Not over HTTP/3:** WebSocket (`proven_ws_event_accept` refuses the stream), 0-RTT,
   trailers, server push, migration of this side's own (a client's new address is
   validated), QUIC versions other than 1. `proven_http_event_server_adopt` takes TCP
@@ -1670,8 +1671,8 @@ starts the request again without `http3`.
 - **Ask only servers known to speak it.** Nothing here learns which do; a server's `Alt-Svc`
   says so, and reading it is the caller's to do.
 - **HTTP/3 is slower here than HTTP/2.** One 100 MiB download from this library's server to
-  this client on loopback ran at 171 MiB/s over HTTP/3 and 343 over HTTP/2: one datagram is one
-  system call and one protection.
+  this client on loopback ran at 218 MiB/s over HTTP/3 and 335 over HTTP/2 (v0.66.0; 171 over
+  HTTP/3 before it): one datagram is one system call and one protection.
 - **No TLS session is kept**, over either transport: every connection is a full handshake.
 - **Not here:** 0-RTT, connection migration of this side's own, WebSocket over HTTP/3.
 

@@ -1,4 +1,5 @@
 #include "proven_internal_h3.h"
+#include "../../platform/proven_sys_mem.h"
 
 #ifndef PROVEN_NO_HTTP3
 
@@ -123,11 +124,11 @@ static bool buf_put(proven_h3_conn_t *h, proven_byte_t **p, proven_size_t *off, 
             q = (proven_byte_t *)h3_alloc(h, want, 1);
             if (!q) return false;
         }
-        for (proven_size_t i = 0; i < live; ++i) q[i] = (*p)[*off + i];
+        proven_sys_mem_move(q, *p + *off, live);
         if (q != *p) { h3_free(h, *p, *cap); *cap = want; }
         *p = q; *off = 0; *n = live;
     }
-    for (proven_size_t i = 0; i < len; ++i) (*p)[*n + i] = src[i];
+    proven_sys_mem_copy(*p + *n, src, len);
     *n += len;
     return true;
 }
