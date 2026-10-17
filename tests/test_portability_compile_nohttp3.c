@@ -17,8 +17,8 @@ int main(void) {
  * the TLS engine's QUIC mode (v0.61.0), the packet and frame codec (quic_frame.c) and the
  * connection (quic_conn.c) (v0.62.0), QPACK (qpack.c) and the HTTP/3 connection (h3_conn.c)
  * (v0.63.0), and the event server's HTTP/3 (http_event_h3.c, where `http3` is then
- * PROVEN_ERR_UNSUPPORTED) (v0.64.0); the event client's joins it next. TLS over TCP is
- * untouched either way.
+ * PROVEN_ERR_UNSUPPORTED) (v0.64.0), and the event client's (http_event_client_h3.c, the same)
+ * (v0.65.0). TLS over TCP is untouched either way.
  *
  * The suite itself is built without that macro, so nothing else here could notice the promise
  * breaking. This test asks the host compiler directly: every library source must compile with
@@ -73,6 +73,8 @@ int main(void) {
         "'    if (proven_loop_create(proven_heap_allocator(), &loop) != PROVEN_OK) return 4;' "
         "'    proven_http_event_server_config_t sc = { .on = { .on_request = on_req }, .http3 = true };' "
         "'    if (proven_http_event_server_create(loop, &sc, &sv) != PROVEN_ERR_UNSUPPORTED || sv) return 5;' "
+        "'    proven_http_event_client_t *cl = NULL; proven_http_event_client_config_t cc = { .http3 = true };' "
+        "'    if (proven_http_event_client_create(loop, &cc, &cl) != PROVEN_ERR_UNSUPPORTED || cl) return 6;' "
         "'    proven_loop_destroy(loop);' "
         "'    return ok;' "
         "'}' > %s/main.c && "
@@ -80,11 +82,11 @@ int main(void) {
         "  %s/main.c %s/*.o -pthread -o %s/nohttp3 && %s/nohttp3",
         dir, dir, dir, dir, dir, dir);
     PROVEN_TEST_ASSERT(run(cmd) == 0,
-        "a program that includes proven.h links against that build and runs, its TLS client writes a ClientHello, and an event server asked for http3 is PROVEN_ERR_UNSUPPORTED",
+        "a program that includes proven.h links against that build and runs, its TLS client writes a ClientHello, and an event server or client asked for http3 is PROVEN_ERR_UNSUPPORTED",
         "Something outside the guards references a QUIC function, or the guards in tls13.c broke the engine.");
 
     snprintf(cmd, sizeof cmd,
-        "! (nm %s/*.o 2>/dev/null | grep -E ' [TtUDdRr] (proven_quic_|proven_tls_quic_|proven_qpack_|proven_h3_|proven_http_event_h3_|proven_http_event_alt_svc_)' >/dev/null)", dir);
+        "! (nm %s/*.o 2>/dev/null | grep -E ' [TtUDdRr] (proven_quic_|proven_tls_quic_|proven_qpack_|proven_h3_|proven_http_event_h3_|proven_http_event_alt_svc_|proven_http_event_client_h3_)' >/dev/null)", dir);
     PROVEN_TEST_ASSERT(run(cmd) == 0,
         "no object of that build defines or references a QUIC, QPACK or HTTP/3 function",
         "List them with: nm build/test_portability_compile_nohttp3/*.o | grep -iE 'quic|qpack|h3_|alt_svc'");

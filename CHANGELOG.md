@@ -18,6 +18,29 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **The event-driven client speaks HTTP/3** (RFC 9114, over QUIC), the fifth and last piece of
+  RFC-0017: `http3` and `http3_window_bytes` in `proven_http_event_client_config_t`, and `http3` in
+  `proven_http_event_request_options_t`. A request that asks for it - with an `https` URL, on a
+  client with `http3` - goes over HTTP/3, on one QUIC connection kept for its origin on a UDP
+  socket of its own and shared by its requests; every other request goes as before, and nothing
+  follows a server's `Alt-Svc`. **No fallback**: a server that does not answer over UDP ends the
+  request with `PROVEN_ERR_TIMEOUT` after `connect_timeout_ms`, one that refuses `h3` with
+  `PROVEN_ERR_UNSUPPORTED`, an untrusted one with `PROVEN_ERR_UNTRUSTED`, and no TCP connection is
+  tried. The same callbacks and request calls; `proven_http_event_request_protocol` says 3;
+  bodies both ways, `decompress` with zstd and br, pause by flow control (`http3_window_bytes`, as
+  the server's), `retry_unsent` for a request the server refused unprocessed, `max_connections`
+  counting QUIC connections with the TCP ones, the idle goodbye. In a build with
+  `PROVEN_NO_HTTP3`, `http3` makes `proven_http_event_client_create` return
+  `PROVEN_ERR_UNSUPPORTED`.
+- `PROVEN_NO_HTTP3` now leaves 140,086 bytes out (1,140,207 bytes of code and data with it,
+  1,000,121 without, at `-O2` on x86-64; the client's part, `http_event_client_h3.o`, is 19,591).
+- Tests: `test_unit_http_event_client_h3` - the client against the event server on one loop over
+  real UDP: the cases of the HTTP/2 client test the server can answer, the client's refusals, no
+  fallback (a port where only TCP listens: `PROVEN_ERR_TIMEOUT`, no TCP connection tried), an
+  untrusted server, the timeouts.
+
 ## [0.64.0] - 2026-10-17
 
 ### Added

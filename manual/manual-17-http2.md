@@ -22,7 +22,8 @@ back. Sections 6 and 7 are that object at work: the event-driven server speaks H
 asked to, beside HTTP/1.1 on the same port, and the event-driven client keeps an HTTP/2
 connection for each origin that agrees to one. The blocking server and the blocking client
 of Chapter 11 speak HTTP/1.1 only: section 8 says exactly where the line is. Section 9 is the
-same server speaking HTTP/3, over QUIC on UDP, to the same handlers.
+same server speaking HTTP/3, over QUIC on UDP, to the same handlers; section 10 is the client
+speaking it when a request asks.
 
 ## Table of contents
 
@@ -35,6 +36,7 @@ same server speaking HTTP/3, over QUIC on UDP, to the same handlers.
 7. [HTTP/2 in the event-driven client](#7-http2-in-the-event-driven-client)
 8. [What is accepted, what is not here, and how this was tested](#8-what-is-accepted-what-is-not-here-and-how-this-was-tested)
 9. [HTTP/3 in the event-driven server](#9-http3-in-the-event-driven-server)
+10. [HTTP/3 in the event-driven client](#10-http3-in-the-event-driven-client)
 
 ## 1. What HTTP/2 changes, in one page
 
@@ -1406,7 +1408,7 @@ announce a length it does not carry.
 - **Extended CONNECT** (RFC 8441, WebSocket over HTTP/2) and the `SETTINGS` it needs.
 - **Server push**: `PUSH_PROMISE` is recognised so that it can be refused.
 - **Priorities** (RFC 7540's scheme, which RFC 9113 deprecated): skipped.
-- **`Upgrade: h2c`**, which RFC 9113 removed; **HTTP/3 in the event-driven client** (the server speaks it: section 9).
+- **`Upgrade: h2c`**, which RFC 9113 removed. (HTTP/3 is sections 9 and 10.)
 - **The never-indexed mark on a decoded field**: a proxy would pass it on; nothing here does.
 
 **How this was tested.** The static table and the Huffman code are not typed in: a private
@@ -1616,7 +1618,7 @@ as they end HTTP/2 ones.
   trailers, server push, migration of this side's own (a client's new address is
   validated), QUIC versions other than 1. `proven_http_event_server_adopt` takes TCP
   connections only, so several loops cannot share one UDP port.
-- **The event-driven client does not speak HTTP/3 yet.**
+- **The event-driven client speaks HTTP/3 when a request asks** (section 10); it never follows this server's `Alt-Svc` on its own.
 
 **How this was tested.** A registered test runs the server against a client made of this
 library's QUIC and HTTP/3 engines over UDP on loopback - every route of the HTTP/2 tests that
@@ -1626,3 +1628,55 @@ checked byte for byte; h3spec 0.1.14, 76 of its 77 cases passed - the one not is
 unknown setting, which RFC 9114 lets a server take; a thousand client first packets from
 addresses that never answered, each sent at most three times what it sent, all let go after
 `head_timeout_ms`, and none kept with `http3_retry`.
+
+## 10. HTTP/3 in the event-driven client
+
+```c
+typedef struct {
+    /* ... everything Chapter 15 describes, and section 7's fields ... */
+    bool http3;
+    proven_size_t http3_window_bytes;
+} proven_http_event_client_config_t;
+
+typedef struct {
+    /* ... */
+    bool http3;            /* this request over HTTP/3 */
+} proven_http_event_request_options_t;
+```
+
+HTTP/2 is chosen by the TLS handshake; HTTP/3 cannot be - it is another transport, on UDP, and
+there is nothing to ask before the first packet. So **the caller chooses**: a client with
+`http3` sends over HTTP/3 the requests whose options say `http3`, each with an `https` URL, and
+every other request as before. It never follows a server's `Alt-Svc` on its own. The callbacks
+and the request calls are the same for all three protocols; `proven_http_event_request_protocol`
+says 3, from the start.
+
+What happens underneath is section 7's, on QUIC: one connection kept for each origin (scheme,
+host, port, address), on a UDP socket of its own, shared by its requests; a request beyond the
+server's limit on streams waits on it; an idle one is told goodbye after `idle_timeout_ms` and
+closed; `max_connections` counts it with the TCP ones; `retry_unsent` sends again a request the
+server refused unprocessed (H3_REQUEST_REJECTED, or behind its GOAWAY); `decompress` decodes as
+over the others. A write is bounded by QUIC's send buffer - 256 KiB a stream, 1 MiB a connection
+- and a paused request stops being read, so the server stops at `http3_window_bytes`.
+
+**There is no fallback.** A request asked over HTTP/3 whose server does not answer over UDP ends
+with `PROVEN_ERR_TIMEOUT` when `connect_timeout_ms` has passed - an unconnected UDP socket hears
+no refusal - one whose server refuses `h3` with `PROVEN_ERR_UNSUPPORTED`, and one whose server is
+not trusted with `PROVEN_ERR_UNTRUSTED`. No TCP connection is tried: a caller that wants one
+starts the request again without `http3`.
+
+### Cautions, and what goes wrong
+
+- **Ask only servers known to speak it.** Nothing here learns which do; a server's `Alt-Svc`
+  says so, and reading it is the caller's to do.
+- **HTTP/3 is slower here than HTTP/2.** One 100 MiB download from this library's server to
+  this client on loopback ran at 171 MiB/s over HTTP/3 and 343 over HTTP/2: one datagram is one
+  system call and one protection.
+- **No TLS session is kept**, over either transport: every connection is a full handshake.
+- **Not here:** 0-RTT, connection migration of this side's own, WebSocket over HTTP/3.
+
+**How this was tested.** A registered test runs this client against this library's server over
+UDP on loopback - every case of section 7's test that the server can answer, the client's
+refusals, no fallback, an untrusted server, the timeouts. Outside the registered tests:
+aioquic's server (downloads to 50 MB byte for byte, uploads, trailers, an interim response passed
+over, 400 requests) and two public servers, cloudflare-quic.com and www.google.com.

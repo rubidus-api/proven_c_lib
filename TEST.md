@@ -2745,17 +2745,17 @@ Failure tip: inspect the `PROVEN_NO_BROTLI` guards in `include/proven.h`, `src/p
 
 ### `tests/test_portability_compile_nohttp3` - PROVEN_NO_HTTP3 leaves QUIC and HTTP/3 out
 
-Intent: verify the promise `PROVEN_NO_HTTP3` makes (RFC-0017 B-10): QUIC, QPACK and HTTP/3 left out of the library. Since v0.64.0 that is QUIC packet protection, the transport parameters, the TLS engine's QUIC mode, the packet and frame codec, the connection, QPACK, the HTTP/3 connection and the event server's HTTP/3 - 119,455 bytes at `-O2` on x86-64. The suite is built without the macro, so nothing else would notice it breaking.
+Intent: verify the promise `PROVEN_NO_HTTP3` makes (RFC-0017 B-10): QUIC, QPACK and HTTP/3 left out of the library. Since v0.65.0 that is QUIC packet protection, the transport parameters, the TLS engine's QUIC mode, the packet and frame codec, the connection, QPACK, the HTTP/3 connection, and the event server's and the event client's HTTP/3 - 140,086 bytes at `-O2` on x86-64. The suite is built without the macro, so nothing else would notice it breaking.
 
 Sub-checks:
 
 - Every source in `build_sources.inc` compiles with the host compiler and `-DPROVEN_NO_HTTP3 -Wall -Wextra -Werror`.
-- A program that includes `proven.h` and `proven/alias_xcv.h` links against that build and runs, and its TLS client writes a ClientHello; an event server asked for `http3` is `PROVEN_ERR_UNSUPPORTED`.
-- No object of that build defines or references `proven_quic_*`, `proven_tls_quic_*`, `proven_qpack_*`, `proven_h3_*`, `proven_http_event_h3_*` or `proven_http_event_alt_svc_`.
+- A program that includes `proven.h` and `proven/alias_xcv.h` links against that build and runs, and its TLS client writes a ClientHello; an event server or client asked for `http3` is `PROVEN_ERR_UNSUPPORTED`.
+- No object of that build defines or references `proven_quic_*`, `proven_tls_quic_*`, `proven_qpack_*`, `proven_h3_*`, `proven_http_event_h3_*`, `proven_http_event_alt_svc_` or `proven_http_event_client_h3_*`.
 
 The fixture runs the host compiler through `/bin/sh` and is skipped on Windows.
 
-Failure tip: inspect the `PROVEN_NO_HTTP3` guards in `src/proven/quic_crypto.c`, `quic_frame.c`, `quic_conn.c`, `qpack.c`, `h3_conn.c`, `http_event_h3.c`, `http_event.c`, `http_event_h2.c`, `proven_internal_quic.h`, `proven_internal_h3.h`, `proven_internal_http_event.h` and `tls13.c`.
+Failure tip: inspect the `PROVEN_NO_HTTP3` guards in `src/proven/quic_crypto.c`, `quic_frame.c`, `quic_conn.c`, `qpack.c`, `h3_conn.c`, `http_event_h3.c`, `http_event.c`, `http_event_h2.c`, `http_event_client_h3.c`, `http_event_client.c`, `proven_internal_quic.h`, `proven_internal_h3.h`, `proven_internal_http_event.h` and `tls13.c`.
 
 ### `tests/test_portability_compile_nonet` - PROVEN_NO_NET leaves the socket layer out
 
