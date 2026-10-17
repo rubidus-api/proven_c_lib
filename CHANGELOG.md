@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.66.0] - 2026-10-18
+
 ### Changed
 
 - HTTP/3 is faster (RFC-0018 S-1; no API change). The QUIC connection's stream buffers copied,
