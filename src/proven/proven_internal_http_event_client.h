@@ -54,6 +54,7 @@ typedef struct {
 
 #define CL_KIND_H1 0
 #define CL_KIND_H2 1
+#define CL_KIND_H3 2       /* a request over HTTP/3 (http_event_client_h3.c) */
 
 /* An HTTP/1.1 connection: what carries one request at a time and, when that request's
  * exchange ended cleanly, is kept for the next one to the same origin. `owner` is the request
@@ -136,6 +137,11 @@ struct proven_http_event_client {
     proven_loop_timer_t h2_room_timer;     /* connect_timeout_ms of the first of them */
     proven_byte_t *h2buf;              /* where every HTTP/2 connection reads its header lists */
     proven_size_t h2buf_size;
+    void *h3;                          /* http_event_client_h3.c: its QUIC connections */
+    void *h3_roomless, *h3_roomless_last;  /* and its requests that wait for the client to have room for a connection, in the order they came */
+    proven_size_t h3_roomless_count;
+    bool h3_room_busy;
+    void *h3_delayed;                  /* and those that wait for a try (retry_delay_ms), in no order that matters */
 };
 
 // -----------------------------------------------------------------------------
@@ -193,6 +199,32 @@ void proven_h2_conn_test_next_id_(proven_h2_conn_t *conn, proven_u32 next_id);
 void proven_http_event_client_h2_test_next_id_(proven_http_event_client_t *client, proven_u32 next_id);
 
 #define PROVEN_HTTP_EVENT_REQUEST_IS_H2_(request) (((const cl_head_t *)(const void *)(request))->kind == CL_KIND_H2)
+#define PROVEN_HTTP_EVENT_REQUEST_IS_H3_(request) (((const cl_head_t *)(const void *)(request))->kind == CL_KIND_H3)
+
+#if !defined(PROVEN_NO_HTTP3)
+/* HTTP/3 (http_event_client_h3.c): the twins of the HTTP/2 calls above, for requests that asked
+ * for it. `start` is called only for such a request, with an `https` URL, on a client with `http3`. */
+[[nodiscard]]
+proven_err_t proven_http_event_client_h3_start_(proven_http_event_client_t *client, const proven_http_event_request_options_t *options,
+                                                const proven_url_t *url, proven_net_addr_t to, proven_http_event_request_t **out);
+void proven_http_event_client_h3_destroy_(proven_http_event_client_t *client);
+[[nodiscard]]
+proven_size_t proven_http_event_client_h3_conns_(const proven_http_event_client_t *client);
+bool proven_http_event_client_h3_close_idle_(proven_http_event_client_t *client);
+[[nodiscard]]
+bool proven_http_event_client_h3_waiting_(const proven_http_event_client_t *client);
+void proven_http_event_client_h3_freed_(proven_http_event_client_t *client);
+[[nodiscard]]
+proven_result_size_t proven_http_event_client_h3_write_(proven_http_event_request_t *request, proven_mem_view_t data);
+[[nodiscard]]
+proven_err_t proven_http_event_client_h3_end_(proven_http_event_request_t *request);
+void proven_http_event_client_h3_abort_(proven_http_event_request_t *request);
+void proven_http_event_client_h3_pause_(proven_http_event_request_t *request);
+void proven_http_event_client_h3_resume_(proven_http_event_request_t *request);
+void proven_http_event_client_h3_set_user_(proven_http_event_request_t *request, void *user);
+[[nodiscard]]
+void *proven_http_event_client_h3_user_(const proven_http_event_request_t *request);
+#endif
 
 #endif /* hosted, with a network */
 

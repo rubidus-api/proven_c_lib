@@ -729,7 +729,7 @@ static void c_pump(c2conn_t *c) {
     /* With nothing on it this connection is one that max_connections may close for a request
      * that waits for a place, of either protocol. (It may be this very connection that is
      * closed: the memory holds while this round is open.) */
-    if (!c->dead && !c->client_going && c->count == 0 && c_queued(c) == 0 && c->client->cfg.max_connections != 0 && (c->client->wait_head || c->client->h2_roomless))
+    if (!c->dead && !c->client_going && c->count == 0 && c_queued(c) == 0 && c->client->cfg.max_connections != 0 && (c->client->wait_head || c->client->h2_roomless || c->client->h3_roomless))
         proven_http_event_client_freed_(c->client);
     c->pumping = false;
     c_leave(c);

@@ -62,6 +62,7 @@ PROVEN_BUILD_SOURCE("src/proven/ws_event.c", PROVEN_SOURCE_HOSTED_ONLY)   /* Web
 PROVEN_BUILD_SOURCE("src/proven/ws_event_client.c", PROVEN_SOURCE_HOSTED_ONLY)   /* a WebSocket connection made by this side, on a loop */
 PROVEN_BUILD_SOURCE("src/proven/http_event_client.c", PROVEN_SOURCE_HOSTED_ONLY)   /* the event-driven HTTP client */
 PROVEN_BUILD_SOURCE("src/proven/http_event_client_h2.c", PROVEN_SOURCE_HOSTED_ONLY)   /* HTTP/2 in the event-driven client: connections kept, requests on them */
+PROVEN_BUILD_SOURCE("src/proven/http_event_client_h3.c", PROVEN_SOURCE_HOSTED_ONLY)   /* HTTP/3 in the event-driven client: a QUIC connection per origin on a UDP socket of its own, the driver of h3_conn; empty under PROVEN_NO_HTTP3 */
 PROVEN_BUILD_SOURCE("src/proven/cert_system.c", PROVEN_SOURCE_HOSTED_ONLY)   /* reads the system trust store */
 PROVEN_BUILD_SOURCE("src/proven/encode.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/utf.c", PROVEN_SOURCE_FREESTANDING)

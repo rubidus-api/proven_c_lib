@@ -7,6 +7,7 @@
 
 #include "proven_internal_quic.h"
 #include "proven_internal_h3.h"
+#include "proven_internal_quic_net.h"
 #include "proven/time.h"
 
 /*
@@ -154,28 +155,8 @@ static bool h3_append(proven_allocator_t a, proven_byte_t **buf, proven_size_t *
 /* QUIC's clock is microseconds. */
 static proven_u64 h3_now_us(void) { return (proven_u64)proven_time_monotonic_now() / 1000u; }
 
-/* An address as the engine keeps it: bytes compared for equality, so every byte is set. */
-static proven_quic_addr_t h3_qaddr(const proven_net_addr_t *a) {
-    proven_quic_addr_t q;
-    proven_sys_mem_set(&q, 0, sizeof q);
-    q.len = 23;
-    q.b[0] = (proven_byte_t)a->family;
-    q.b[1] = (proven_byte_t)(a->port >> 8);
-    q.b[2] = (proven_byte_t)a->port;
-    for (int i = 0; i < 4; ++i) q.b[3 + i] = (proven_byte_t)(a->scope_id >> (24 - 8 * i));
-    const proven_size_t ip = a->family == PROVEN_NET_FAMILY_IPV4 ? 4 : 16;
-    for (proven_size_t i = 0; i < ip; ++i) q.b[7 + i] = a->ip[i];
-    return q;
-}
-
-static proven_net_addr_t h3_naddr(const proven_quic_addr_t *q) {
-    proven_net_addr_t a = { 0 };
-    a.family = (proven_net_family_t)q->b[0];
-    a.port = (proven_u16)((proven_u16)q->b[1] << 8 | q->b[2]);
-    for (int i = 0; i < 4; ++i) a.scope_id = a.scope_id << 8 | q->b[3 + i];
-    for (int i = 0; i < 16; ++i) a.ip[i] = q->b[7 + i];
-    return a;
-}
+#define h3_qaddr proven_quic_addr_of_
+#define h3_naddr proven_net_addr_of_quic_
 
 // -----------------------------------------------------------------------------
 // Connection IDs

@@ -162,14 +162,37 @@ proven_u32 proven_http_event_client_retry_delay_(const proven_http_event_client_
     return ms < most ? (proven_u32)ms : most;
 }
 
+static bool cl_h3_waiting(const proven_http_event_client_t *cl) {
+#if !defined(PROVEN_NO_HTTP3)
+    return proven_http_event_client_h3_waiting_(cl);
+#else
+    (void)cl;
+    return false;
+#endif
+}
+
+static proven_size_t cl_h3_conns(const proven_http_event_client_t *cl) {
+#if !defined(PROVEN_NO_HTTP3)
+    return proven_http_event_client_h3_conns_(cl);
+#else
+    (void)cl;
+    return 0;
+#endif
+}
+
 bool proven_http_event_client_room_(proven_http_event_client_t *cl) {
     if (cl->cfg.max_connections == 0) return true;
-    if (cl->conn_count + proven_http_event_client_h2_conns_(cl) < cl->cfg.max_connections) return true;
+    if (cl->conn_count + proven_http_event_client_h2_conns_(cl) + cl_h3_conns(cl) < cl->cfg.max_connections) return true;
     cl_conn_t *oldest = (void *)0;
     for (cl_conn_t *i = cl->conns; i; i = i->next)
         if (i->idle && (!oldest || i->idle_since < oldest->idle_since)) oldest = i;
     if (oldest) { cl_conn_close(oldest, false); return true; }
-    return proven_http_event_client_h2_close_idle_(cl);
+    if (proven_http_event_client_h2_close_idle_(cl)) return true;
+#if !defined(PROVEN_NO_HTTP3)
+    return proven_http_event_client_h3_close_idle_(cl);
+#else
+    return false;
+#endif
 }
 
 /* A place was freed by something other than an HTTP/1.1 connection closing - an HTTP/2
@@ -178,8 +201,11 @@ void proven_http_event_client_freed_(proven_http_event_client_t *cl) {
     while (cl->cfg.max_connections != 0 && !cl->closing) {
         proven_http_event_request_t *w = cl_waiter_with_room(cl);
         if (!w) {
-            /* Nobody of this protocol: an HTTP/2 request may be waiting for the place. */
+            /* Nobody of this protocol: an HTTP/2 or HTTP/3 request may be waiting for the place. */
             proven_http_event_client_h2_freed_(cl);
+#if !defined(PROVEN_NO_HTTP3)
+            proven_http_event_client_h3_freed_(cl);
+#endif
             break;
         }
         if (!proven_http_event_client_room_(cl)) break;
@@ -281,8 +307,11 @@ static void cl_conn_close(cl_conn_t *k, bool serve_waiting) {
          * for this place: the one that has waited longest and whose origin has room. */
         if (!w && cl->cfg.max_connections != 0) w = cl_waiter_with_room(cl);
         if (!w) {
-            /* Nobody of this protocol: an HTTP/2 request may be waiting for the place. */
+            /* Nobody of this protocol: an HTTP/2 or HTTP/3 request may be waiting for the place. */
             if (cl->cfg.max_connections != 0) proven_http_event_client_h2_freed_(cl);
+#if !defined(PROVEN_NO_HTTP3)
+            if (cl->cfg.max_connections != 0) proven_http_event_client_h3_freed_(cl);
+#endif
             break;
         }
         cl_unwait(w);
@@ -312,7 +341,7 @@ static void cl_conn_keep(cl_conn_t *k) {
     }
     /* Nobody waits for this origin. With a limit on the whole client somebody may be waiting
      * for a place: an idle connection is what is closed to make one. */
-    if (cl->cfg.max_connections != 0 && !cl->closing && (cl_waiter_with_room(cl) || proven_http_event_client_h2_waiting_(cl))) { cl_conn_close(k, true); return; }
+    if (cl->cfg.max_connections != 0 && !cl->closing && (cl_waiter_with_room(cl) || proven_http_event_client_h2_waiting_(cl) || cl_h3_waiting(cl))) { cl_conn_close(k, true); return; }
     (void)proven_loop_io_set(cl->loop, &k->io, PROVEN_NET_READABLE);
     proven_loop_timer_set(cl->loop, &k->timer, cl->cfg.idle_timeout_ms, cl_on_idle_timer, k);
     if (cl->idle_count > cl->cfg.max_kept_connections) {
@@ -820,7 +849,10 @@ proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_h
     if (cfg.max_waiting_requests == 0) cfg.max_waiting_requests = 1000;
     if (cfg.max_connections_per_origin == 0) cfg.max_connections_per_origin = 6;
     if (cfg.max_kept_connections == 0) cfg.max_kept_connections = 8;
-    if (cfg.http2_window_bytes > 0x7fffffffu) return PROVEN_ERR_INVALID_ARG;
+    if (cfg.http2_window_bytes > 0x7fffffffu || cfg.http3_window_bytes > 0x7fffffffu) return PROVEN_ERR_INVALID_ARG;
+#if defined(PROVEN_NO_HTTP3)
+    if (cfg.http3) return PROVEN_ERR_UNSUPPORTED;
+#endif
     /* More kept than there may be at all: said together they contradict. (Left at its
      * default the number kept needs no lowering: there are never more idle than there are.) */
     if (cfg.max_connections != 0 && config && config->max_kept_connections > cfg.max_connections) return PROVEN_ERR_INVALID_ARG;
@@ -831,15 +863,16 @@ proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_h
     if (coding_e != PROVEN_OK) return coding_e;
     if (cfg.tls) {
         /* What TLS may agree to and what the client will speak must be the same thing. */
-        bool offers_h2 = false;
+        bool offers_h2 = false, offers_h3 = false;
         for (proven_size_t i = 0;; ++i) {
             proven_u8str_view_t name = proven_tls_config_alpn(cfg.tls, i);
             if (name.size == 0) break;
             if (name.size == 2 && name.ptr[0] == 'h' && name.ptr[1] == '2') offers_h2 = true;
+            if (name.size == 2 && name.ptr[0] == 'h' && name.ptr[1] == '3') offers_h3 = true;
         }
-        if (offers_h2 != cfg.http2) return PROVEN_ERR_INVALID_ARG;
-    } else if (cfg.http2) {
-        return PROVEN_ERR_INVALID_ARG;             /* HTTP/2 by ALPN needs the TLS that carries ALPN */
+        if (offers_h2 != cfg.http2 || offers_h3 != cfg.http3) return PROVEN_ERR_INVALID_ARG;
+    } else if (cfg.http2 || cfg.http3) {
+        return PROVEN_ERR_INVALID_ARG;             /* HTTP/2 by ALPN, and HTTP/3 always, need TLS */
     }
     proven_allocator_t a = cfg.alloc;
     proven_http_event_client_t *cl = cl_alloc(a, sizeof *cl);
@@ -858,6 +891,9 @@ proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_h
 void proven_http_event_client_destroy(proven_http_event_client_t *cl) {
     if (!cl) return;
     cl->closing = true;
+#if !defined(PROVEN_NO_HTTP3)
+    proven_http_event_client_h3_destroy_(cl);
+#endif
     proven_http_event_client_h2_destroy_(cl);
     while (cl->requests) {
         proven_http_event_request_t *c = cl->requests;
@@ -957,6 +993,16 @@ proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *cl, 
     if (o->address) to = *o->address;
     else if (proven_net_addr_parse(u.host, u.has_port ? u.port : proven_url_default_port(u.scheme), &to) != PROVEN_OK) return PROVEN_ERR_INVALID_ARG;
 
+    /* HTTP/3 only when this request asks for it: there is nothing to learn it from. */
+    if (o->http3) {
+        if (face || !https || !cl->cfg.http3) return PROVEN_ERR_INVALID_ARG;
+        for (proven_size_t i = 0; i < o->header_count; ++i) if (cl_is_reserved_header(o->headers[i].name)) return PROVEN_ERR_INVALID_ARG;
+#if !defined(PROVEN_NO_HTTP3)
+        return proven_http_event_client_h3_start_(cl, o, &u, to, out);
+#else
+        return PROVEN_ERR_UNSUPPORTED;
+#endif
+    }
     /* With HTTP/2 asked for, the request goes to the connection the client keeps for its
      * origin - unless that origin has shown that it speaks only HTTP/1.1. */
     if (!face && (https ? cl->cfg.http2 : cl->cfg.http2_cleartext)) {
@@ -1004,6 +1050,9 @@ proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *cl, 
 proven_result_size_t proven_http_event_request_write(proven_http_event_request_t *c, proven_mem_view_t data) {
     if (!c || (data.size > 0 && !data.ptr)) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_ARG, .value = 0 };
     if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) return proven_http_event_client_h2_write_(c, data);
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H3_(c)) return proven_http_event_client_h3_write_(c, data);
+#endif
     if (c->dead || !c->streamed || c->request_ended) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_STATE, .value = 0 };
     if (!c->chunked && data.size > c->send_left) return (proven_result_size_t){ .err = PROVEN_ERR_OUT_OF_BOUNDS, .value = 0 };
     proven_http_event_client_t *cl = c->h.client;
@@ -1049,6 +1098,9 @@ proven_result_size_t proven_http_event_request_write(proven_http_event_request_t
 proven_err_t proven_http_event_request_end(proven_http_event_request_t *c) {
     if (!c) return PROVEN_ERR_INVALID_ARG;
     if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) return proven_http_event_client_h2_end_(c);
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H3_(c)) return proven_http_event_client_h3_end_(c);
+#endif
     if (c->dead || !c->streamed || c->request_ended) return PROVEN_ERR_INVALID_STATE;
     cl_enter(c);
     proven_err_t result = PROVEN_OK;
@@ -1074,6 +1126,9 @@ proven_err_t proven_http_event_request_end(proven_http_event_request_t *c) {
 void proven_http_event_request_abort(proven_http_event_request_t *c) {
     if (!c) return;
     if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) { proven_http_event_client_h2_abort_(c); return; }
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H3_(c)) { proven_http_event_client_h3_abort_(c); return; }
+#endif
     if (c->dead) return;
     cl_enter(c);
     c->no_resend = true;
@@ -1084,6 +1139,9 @@ void proven_http_event_request_abort(proven_http_event_request_t *c) {
 void proven_http_event_request_pause(proven_http_event_request_t *c) {
     if (!c) return;
     if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) { proven_http_event_client_h2_pause_(c); return; }
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H3_(c)) { proven_http_event_client_h3_pause_(c); return; }
+#endif
     if (c->dead || c->paused) return;
     c->paused = true;
     cl_watch(c);
@@ -1093,6 +1151,9 @@ void proven_http_event_request_pause(proven_http_event_request_t *c) {
 void proven_http_event_request_resume(proven_http_event_request_t *c) {
     if (!c) return;
     if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) { proven_http_event_client_h2_resume_(c); return; }
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H3_(c)) { proven_http_event_client_h3_resume_(c); return; }
+#endif
     if (c->dead || !c->paused) return;
     c->paused = false;
     cl_enter(c);
@@ -1103,16 +1164,23 @@ void proven_http_event_request_resume(proven_http_event_request_t *c) {
 
 void proven_http_event_request_set_user(proven_http_event_request_t *c, void *user) {
     if (!c) return;
-    if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) proven_http_event_client_h2_set_user_(c, user);
-    else c->user = user;
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) { proven_http_event_client_h2_set_user_(c, user); return; }
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H3_(c)) { proven_http_event_client_h3_set_user_(c, user); return; }
+#endif
+    c->user = user;
 }
 
 void *proven_http_event_request_user(const proven_http_event_request_t *c) {
     if (!c) return (void *)0;
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H3_(c)) return proven_http_event_client_h3_user_(c);
+#endif
     return PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c) ? proven_http_event_client_h2_user_(c) : c->user;
 }
 
 int proven_http_event_request_protocol(const proven_http_event_request_t *c) {
+    if (c && PROVEN_HTTP_EVENT_REQUEST_IS_H3_(c)) return 3;
     return c && PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c) && !proven_http_event_client_h2_is_h1_(c) ? 2 : 1;
 }
 

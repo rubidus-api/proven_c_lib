@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 121 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 122 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-17, Windows 11 test VM (v0.64.0): x86-64 355 PASS, 0 FAIL, 10 
 ## Test catalog
 
 
-The hosted full run builds and executes 187 registered tests plus the 178 runnable manual examples - 365 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 200 test files: the 183 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 188 registered tests plus the 178 runnable manual examples - 366 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 201 test files: the 184 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1176,6 +1176,21 @@ Sub-checks:
 - `retry_delay_max_ms`: 150, 300 and then the bound of 500 however many tries there were; a bound below the first wait is `PROVEN_ERR_INVALID_ARG`; a request refused twice waits its doubled wait, and one refused for the first time meanwhile is put again alone when its own shorter wait is over - the list is kept in the order they are due; with no bound the wait is the same before every try.
 
 Failure tip: inspect `src/proven/http_event_client_h2.c` - `proven_http_event_client_h2_start_` for the connection a request joins, `r_submit` and `c_submit_waiting` for what is sent and when, `c_response` and `c_body` for what arrives, `c_fall_back` for an HTTP/1.1 origin, `c_pump` for the round. A forwarded request's `face` is in `src/proven/http_event_client.c`.
+
+### `tests/test_unit_http_event_client_h3` - the event-driven HTTP client, speaking HTTP/3
+
+Intent: verify that the event-driven client with `http3` sends over HTTP/3 (RFC 9114, over QUIC) exactly the requests that ask for it, through the same callbacks and request calls as the other two protocols, and that a server it cannot reach that way is an error the caller sees, never a fall back to TCP. The server is this library's event-driven server with `http3` on, on the same loop, over real UDP on loopback - this library at both ends - in one thread.
+
+Sub-checks:
+
+- Making a client: `http3` without TLS, over a TLS configuration that does not offer `h3`, a configuration that offers `h3` to a client without `http3`, and `http3_window_bytes` above 2^31-1 are each `PROVEN_ERR_INVALID_ARG`. A request asked over HTTP/3 on an `http` URL, and one on a client without `http3`, is refused.
+- Requests and responses: a request asked over HTTP/3 says protocol 3 from the start and is answered, the server seeing one QUIC connection; the same client's request that does not ask goes over HTTP/2; forty at once on the one connection, each whole and ended once; 3 MB down; a compressed download decoded (zstd, as asked); HEAD; a 404; a body in memory of 600,000 bytes - more than a stream's send buffer - and bodies written in pieces of known and unknown length, echoed whole, `on_writable` called and never from inside the caller's own write; a paused download held back by flow control and delivered whole after the resume, and a paused compressed one delivered decoded, nothing delivered while paused; the target and the authority, with its port, that the server sees; an abort, and the next request on the same connection; `on_done` never inside `start`; the connections idle past the idle timeout closed, and a new one made for the next request; a client destroyed with five requests open telling each once, and every server handler seeing its end.
+- No fallback: a request asked over HTTP/3 to a port where only a TCP listener waits ends with `PROVEN_ERR_TIMEOUT` after its 400 ms `connect_timeout_ms`, with no response and no TCP connection tried; a client that trusts no certificate ends its request with `PROVEN_ERR_UNTRUSTED`, the request never sent.
+- Time: a request nobody answers ends with `PROVEN_ERR_TIMEOUT` after `response_timeout_ms`, and the next request is answered on the same connection.
+
+The suite is a skip in a build with `PROVEN_NO_HTTP3`.
+
+Failure tip: inspect `src/proven/http_event_client_h3.c`: `r_submit` and `r_push` for what leaves, `c_event` for what arrives, `c_round` for a round and for when `on_writable` is called, `c_check_time` and `c_arm` for time, `c_open` for a connection, `c_close_reason` for what a failed handshake means. The choice of protocol is the `http3` branch in `proven_http_event_client_start_h1_` (`src/proven/http_event_client.c`). Not covered here: other implementations - the private check runs this client against aioquic's server and public servers.
 
 ### `tests/test_unit_http_coding` - http: content codings
 
