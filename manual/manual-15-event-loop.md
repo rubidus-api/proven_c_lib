@@ -603,6 +603,9 @@ need. Every zero field has a default:
 | `http2` | Let a connection be HTTP/2 - by ALPN over TLS, by its first bytes in the clear - beside HTTP/1.1 on the same port, for the same handler: [Chapter 17, section 6](manual-17-http2.md#6-http2-in-the-event-driven-server). | false |
 | `max_concurrent_streams` | HTTP/2: requests in progress on one connection. | 100 |
 | `http2_window_bytes` | HTTP/2: request-body bytes a client may send on a stream, and on a connection as a whole, before the handler has taken them. What a paused request can make a connection hold; a large upload waits for room each time it has sent this much. | 65,535 |
+| `http3` | HTTP/3 too, over QUIC on a UDP socket beside each TCP listener on the same port, for the same handler, and `Alt-Svc` on the TCP responses: [Chapter 17, section 9](manual-17-http2.md#9-http3-in-the-event-driven-server). Needs `tls`, offering `h3`. | false |
+| `http3_retry` | HTTP/3: answer each client's first packet with a Retry, so that no state is kept for an address that has not shown it receives - a round trip more per connection, for a server under load. | false |
+| `http3_window_bytes` | HTTP/3: request-body bytes a client may send on a stream, and on a connection as a whole, before the handler has taken them (QUIC's flow control). | 256 KiB a stream, 1 MiB a connection |
 
 A request the server will not serve never reaches `on_request`. It is answered and the
 connection closed:

@@ -18,6 +18,66 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **The event-driven server speaks HTTP/3** (RFC 9114, over QUIC, RFC 9000), the fourth piece
+  of HTTP/3: `http3`, `http3_retry` and `http3_window_bytes` in
+  `proven_http_event_server_config_t`, off by default. With `http3` on - over TLS, whose
+  configuration must offer `h3` - each `proven_http_event_server_listen` also opens a UDP
+  socket on the same address and port (a listen whose UDP socket cannot be had fails), and
+  connections on it are told apart by their connection IDs. **Handlers do not change**: the same
+  callbacks and `proven_http_stream_*` calls answer HTTP/1.1, HTTP/2 and HTTP/3, and
+  `proven_http_stream_protocol` says 3. HTTP/1.1 and HTTP/2 responses carry
+  `Alt-Svc: h3=":PORT"` unless the handler wrote its own. Bodies of any size both ways, gzip and
+  zstd, a paused request held by QUIC's flow control (`http3_window_bytes`: 0 for 256 KiB a
+  stream and 1 MiB a connection), the limits and timeouts of the configuration (each in the
+  field's comment), and `max_connections` counting QUIC connections. `stop_listening` says
+  goodbye in two GOAWAYs a round trip apart (RFC 9114 section 5.2), so that a request already on
+  its way is answered; the UDP socket stays open until its last connection has gone, and
+  listening again on the same port uses it. `http3_retry` answers every client's first packet
+  with a Retry, so no state is kept for an address that has not shown it receives; without it
+  an address is never sent more than three times what it sent, and a connection that asks
+  nothing is let go after `head_timeout_ms`. The key for Retry tokens and stateless resets is
+  drawn when the server is made; a short header to an unknown connection ID is answered with a
+  stateless reset. WebSocket over HTTP/3 is not taken (`proven_ws_event_accept` refuses the
+  stream); `proven_http_event_server_adopt` takes TCP connections only. In a build with
+  `PROVEN_NO_HTTP3`, `http3` makes `proven_http_event_server_create` return
+  `PROVEN_ERR_UNSUPPORTED`.
+- HTTP/3: a server's goodbye in two steps (`proven_h3_conn_goaway_step`, internal).
+- `PROVEN_NO_HTTP3` now leaves 119,455 bytes out (1,119,138 bytes of code and data with it,
+  999,683 without, at `-O2` on x86-64; the server's part, `http_event_h3.o`, is 23,958).
+- Tests: `test_unit_http_event_h3` - the event server over real UDP on loopback against a client
+  made of this library's QUIC and HTTP/3 engines: every route of the HTTP/2 event tests that is
+  not WebSocket, three hundred requests on one connection, a paused request, Alt-Svc, the
+  limits, each timeout (a stalled request beside a busy download included), the two goodbyes, a
+  listen again while the old socket is still in use, shutdown and destroy, Retry and a stateless
+  reset.
+
+### Fixed
+
+- QUIC (since v0.62.0): a packet that held only acknowledgements was answered with one - RFC
+  9000 section 13.2.1 says such a packet is not acknowledged - so two of these engines answered
+  each other's ACKs for ever: a hundred datagrams a second on an idle connection in the
+  simulated network, tens of thousands a second on loopback. Acknowledgements now go when an
+  ack-eliciting packet is owed one, or with frames that are being sent anyway. aioquic never
+  answers an ACK, so the interop check could not see it; seen while the event server's HTTP/3
+  test was run, and `test_unit_quic_conn` reproduces it (an idle second: 100 datagrams before,
+  none now).
+- QUIC (since v0.62.0): an application's close (`proven_quic_conn_close`, whose call has no
+  time) timed its closing period from the last time the engine had seen the clock, so a close
+  asked for after a quiet spell was over at once and never sent; and a close to an address owed
+  nothing more (the amplification limit) waited for the idle timeout. The closing period now
+  starts at the first chance to send the close, and a peer's close that arrives before this
+  side's own drains for three probe timeouts. Seen while the event server closed idle and
+  half-open connections; `test_unit_quic_conn` reproduces each.
+- HTTP/3 (since v0.63.0): an end with no bytes (`proven_h3_send_data` with nothing and the end)
+  was not taken while the response's head waited behind a full send buffer, and a caller that
+  does not offer it again never ended the response; `test_unit_h3_conn` reproduces it (a head
+  behind five downloads). A request for `http` or `https` with neither `:authority` nor `Host`
+  is now malformed (RFC 9114 section 4.3.1; HTTP/2's rules, which the head follows otherwise,
+  only advise it), and a GOAWAY or CANCEL_PUSH frame that says it is larger than any control
+  frame is H3_EXCESSIVE_LOAD, as SETTINGS is, rather than H3_FRAME_ERROR - both found by h3spec.
+
 ## [0.63.0] - 2026-10-17
 
 ### Added

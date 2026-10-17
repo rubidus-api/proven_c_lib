@@ -66,6 +66,7 @@ static void later_fire(void *ctx) {
 }
 static void resume_fire(void *ctx) { app_t *a = ctx; a->paused = false; proven_http_stream_resume(a->stream); }
 
+
 static bool path_is(const proven_http_request_t *req, const char *p) { return req->target.size == strlen(p) && memcmp(req->target.ptr, p, req->target.size) == 0; }
 static bool path_starts(const proven_http_request_t *req, const char *p) { return req->target.size >= strlen(p) && memcmp(req->target.ptr, p, strlen(p)) == 0; }
 static void ws_never(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) { (void)ctx; (void)ws; (void)text; (void)piece; (void)first; (void)last; }
@@ -127,6 +128,7 @@ static void on_request(void *ctx, proven_http_stream_t *s, const proven_http_req
         }
     } else if (path_is(req, "/sink")) {
         a->sink = true;
+
     } else if (path_is(req, "/ws")) {
         proven_ws_event_config_t wcfg = { .on = { .on_message = ws_never } };
         proven_ws_stream_t *ws = NULL;
@@ -752,11 +754,35 @@ int main(void) {
         c->n = 1;
         PROVEN_TEST_ASSERT(cl_wait(c, 0, 1, 3000) && c->r[0].reset, "and no more: the stream is reset after body_timeout_ms", "");
         PROVEN_TEST_ASSERT(settled(1) && atomic_load(&g_done_timeout) == 1, "and the handler is told it timed out", "");
-        /* A client that stops reading a large response. */
+        /* The same beside a download that keeps the connection busy - packets far more often
+         * than the loop's 16 ms tick, on a connection of its own: the stalled one is reset by its
+         * own silence, in time. */
+        {
+            cl_t *b = calloc(1, sizeof *b);
+            PROVEN_TEST_ASSERT(cl_connect(b, port), "a second connection", "");
+            reset_counts();
+            proven_u64 sid = 0;
+            PROVEN_TEST_ASSERT(proven_h3_submit_request(b->h, f, 5, false, &sid) == PROVEN_OK && proven_h3_send_data(b->h, sid, (proven_mem_view_t){ (const proven_byte_t *)"0123456789", 10 }, false, &taken) == PROVEN_OK, "a body of 1,000 bytes begun", "");
+            b->r[0] = (rq_t){ .id = sid, .up_done = true };
+            b->n = 1;
+            const int busy = cl_request(b, "GET", "/big/1000000000", 0, NULL, 0, true);
+            const proven_u64 t0 = ms_now();
+            PROVEN_TEST_ASSERT(cl_wait(b, 0, 1, 3000) && b->r[0].reset, "the stalled request is reset", "");
+            const proven_u64 took = ms_now() - t0;
+            PROVEN_TEST_ASSERT(took < 1000 && !b->r[busy].end && b->r[busy].got > 0, "within its body_timeout_ms and a tick or two, while the download goes on", "");
+            cl_close(b);
+            free(b);
+            PROVEN_TEST_ASSERT(connections_fall_to(1), "the abandoned download's connection is let go", "");
+        }
+        /* A client that stops reading a large response - on a new connection: the first was idle
+         * for longer than idle_timeout_ms meanwhile, and has been told goodbye. */
+        cl_close(c);
+        memset(c, 0, sizeof *c);
+        PROVEN_TEST_ASSERT(cl_connect(c, port), "a connection", "");
         reset_counts();
         const int big = cl_request(c, "GET", "/big/5000000", 0, NULL, 0, true);
-        cl_run(c, 100);
-        proven_h3_stream_pause(c->h, c->r[big].id, true);
+        PROVEN_TEST_ASSERT(big >= 0, "a request", "");
+        proven_h3_stream_pause(c->h, c->r[big].id, true);        /* at once: QUIC's flow control stops the server at this side's window */
         PROVEN_TEST_ASSERT(cl_wait_closed(c, 5000) || c->r[big].reset, "a reader that stops is let go after write_timeout_ms", "");
         PROVEN_TEST_ASSERT(settled(1) && atomic_load(&g_done_timeout) == 1, "with on_done saying it timed out", "");
         cl_close(c);
@@ -781,6 +807,17 @@ int main(void) {
         g_relisten_port = port;
         on_loop(do_relisten);
         PROVEN_TEST_ASSERT(atomic_load(&g_relisten_err) == PROVEN_OK, "the same port is listened on again", "");
+        /* And again while a connection still holds the UDP socket: the socket kept for it serves the
+         * new listener, rather than a second one being refused the port. */
+        PROVEN_TEST_ASSERT(cl_connect(c, port), "a connection", "");
+        const int slow = cl_request(c, "GET", "/later/1000", 0, NULL, 0, true);
+        cl_run(c, 20);
+        on_loop(do_stop_listening);
+        on_loop(do_relisten);
+        PROVEN_TEST_ASSERT(atomic_load(&g_relisten_err) == PROVEN_OK, "a listen while the old socket is still in use succeeds", "");
+        PROVEN_TEST_ASSERT(cl_wait(c, slow, slow + 1, 3000) && c->r[slow].status == 200 && c->r[slow].got == 1000, "and the old connection's request is still answered", "");
+        cl_close(c);
+        memset(c, 0, sizeof *c);
         PROVEN_TEST_ASSERT(cl_connect(c, port), "and HTTP/3 is served there", "");
         const int never = cl_request(c, "GET", "/never", 0, NULL, 0, true);
         reset_counts();

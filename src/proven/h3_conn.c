@@ -345,6 +345,19 @@ static bool req_end(proven_h3_conn_t *h, h3s_t *s, proven_h3_event_t *ev) {
 }
 
 /* A complete HEADERS frame on a request stream. */
+
+/* RFC 9114 section 4.3.1: a request for a scheme with an authority - http, https - carries
+ * `:authority` or a Host field. (HTTP/2's rules, which the rest of the head follows, only advise it.) */
+static bool has_authority(const proven_h2_request_head_t *head) {
+    if (head->authority.size > 0) return true;
+    const proven_u8str_view_t sc = head->scheme;
+    const bool web = name_is(sc, "http", 4) || name_is(sc, "https", 5);
+    if (!web) return true;
+    for (proven_size_t i = 0; i < head->field_count; ++i)
+        if (name_is(head->fields[i].name, "host", 4) && head->fields[i].value.size > 0) return true;
+    return false;
+}
+
 static bool req_headers(proven_h3_conn_t *h, h3s_t *s, proven_h3_event_t *ev) {
     if (s->rq == RQ_BODY) {
         /* Trailers: checked and given out when the stream ends, as nothing may follow them. */
@@ -363,7 +376,7 @@ static bool req_headers(proven_h3_conn_t *h, h3s_t *s, proven_h3_event_t *ev) {
         proven_h2_request_head_t head;
         proven_u64 length = H3_NO_LENGTH;
         if (proven_h2_request_head(fields, count, &head) != PROVEN_OK || head.protocol.size > 0
-            || !content_length(head.fields, head.field_count, &length)) return st_fault(h, s, PROVEN_H3_MESSAGE_ERROR, ev);
+            || !content_length(head.fields, head.field_count, &length) || !has_authority(&head)) return st_fault(h, s, PROVEN_H3_MESSAGE_ERROR, ev);
         /* A request that is also the stream's end carries no body. */
         if (s->fin && length != H3_NO_LENGTH && length != 0) return st_fault(h, s, PROVEN_H3_MESSAGE_ERROR, ev);
         s->length = length;
@@ -592,6 +605,9 @@ static bool ctl_step(proven_h3_conn_t *h, h3s_t *s, proven_h3_event_t *ev) {
                 if (!h->server) { h3_fail(h, PROVEN_H3_FRAME_UNEXPECTED); return false; }
                 [[fallthrough]];
             case PROVEN_H3_FRAME_CANCEL_PUSH: case PROVEN_H3_FRAME_GOAWAY:
+                /* Larger than any control frame is taken: the load, as for SETTINGS; within that,
+                 * more than one varint: the frame. */
+                if (s->fleft > H3_CONTROL_MAX) { h3_fail(h, PROVEN_H3_EXCESSIVE_LOAD); return false; }
                 if (s->fleft == 0 || s->fleft > 8) { h3_fail(h, PROVEN_H3_FRAME_ERROR); return false; }
                 s->fmode = 1;
                 break;

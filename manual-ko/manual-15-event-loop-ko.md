@@ -591,6 +591,9 @@ void proven_http_stream_resume(proven_http_stream_t *stream);
 | `http2` | 연결이 HTTP/2일 수 있게 한다 - TLS에서는 ALPN으로, 평문에서는 첫 바이트들로 - 같은 포트에서 HTTP/1.1과 나란히, 같은 처리기로: [17장 6절](manual-17-http2-ko.md#6-이벤트-구동-서버의-http2). | false |
 | `max_concurrent_streams` | HTTP/2: 한 연결에서 진행 중인 요청 수. | 100 |
 | `http2_window_bytes` | HTTP/2: 핸들러가 가져가기 전에 클라이언트가 한 스트림에, 그리고 연결 전체에 보낼 수 있는 요청 본문 바이트. 멈춘 요청이 연결에 쥐게 할 수 있는 양이며, 큰 업로드는 이만큼 보낼 때마다 자리를 기다린다. | 65,535 |
+| `http3` | HTTP/3도: 각 TCP 리스너 곁의 같은 포트 UDP 소켓에서 QUIC으로, 같은 처리기로, 그리고 TCP 응답에 `Alt-Svc`: [17장 9절](manual-17-http2-ko.md#9-이벤트-구동-서버의-http3). `h3`를 내는 `tls`가 필요하다. | false |
+| `http3_retry` | HTTP/3: 클라이언트마다 첫 패킷에 Retry로 답해, 받는다는 것을 보이지 않은 주소에는 상태를 두지 않는다 - 연결마다 한 왕복이 더 들며, 부하가 걸린 서버를 위한 것. | false |
+| `http3_window_bytes` | HTTP/3: 처리기가 가져가기 전에 클라이언트가 한 스트림에, 그리고 연결 전체에 보낼 수 있는 요청 본문 바이트(QUIC의 흐름 제어). | 스트림 256 KiB, 연결 1 MiB |
 
 서버가 서비스하지 않을 요청은 `on_request`에 닿지 않는다. 답을 받고 연결이 닫힌다:
 

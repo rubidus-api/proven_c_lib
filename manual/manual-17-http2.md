@@ -6,8 +6,9 @@ compression tables are made with.**
 **After this chapter** you can say what HTTP/2 changes and what it does not, encode and decode
 header blocks, read and write frames, tell a well-formed request from one that must not be
 passed on, drive a connection - streams, windows, resets and goodbyes - over bytes you carry
-yourself, turn HTTP/2 on in the event-driven server of [Chapter 15](manual-15-event-loop.md)
-without changing a handler, and say which of these this library does today.
+yourself, turn HTTP/2 - and HTTP/3 - on in the event-driven server of
+[Chapter 15](manual-15-event-loop.md) without changing a handler, and say which of these this
+library does today.
 
 This chapter covers `hpack.h` and `h2.h`. Both are pure computation, available in a
 [freestanding](manual-freestanding.md) build: HPACK allocates one table for an encoder and one
@@ -20,7 +21,8 @@ open, how much may be sent, what to answer - as an object that is given bytes an
 back. Sections 6 and 7 are that object at work: the event-driven server speaks HTTP/2 when
 asked to, beside HTTP/1.1 on the same port, and the event-driven client keeps an HTTP/2
 connection for each origin that agrees to one. The blocking server and the blocking client
-of Chapter 11 speak HTTP/1.1 only: section 8 says exactly where the line is.
+of Chapter 11 speak HTTP/1.1 only: section 8 says exactly where the line is. Section 9 is the
+same server speaking HTTP/3, over QUIC on UDP, to the same handlers.
 
 ## Table of contents
 
@@ -32,6 +34,7 @@ of Chapter 11 speak HTTP/1.1 only: section 8 says exactly where the line is.
 6. [HTTP/2 in the event-driven server](#6-http2-in-the-event-driven-server)
 7. [HTTP/2 in the event-driven client](#7-http2-in-the-event-driven-client)
 8. [What is accepted, what is not here, and how this was tested](#8-what-is-accepted-what-is-not-here-and-how-this-was-tested)
+9. [HTTP/3 in the event-driven server](#9-http3-in-the-event-driven-server)
 
 ## 1. What HTTP/2 changes, in one page
 
@@ -947,7 +950,7 @@ connection is now one stream of many, and the server does the translating:
 | `proven_http_stream_abort` | the stream is reset; the connection and its other streams go on |
 | gets `on_done(why)` | once for every `on_request`, as before: `PROVEN_OK` when the whole response was handed over, `PROVEN_ERR_RESET` when the client reset the stream or the connection ended, `PROVEN_ERR_TIMEOUT`, `PROVEN_ERR_OUT_OF_BOUNDS` for a body over the limit |
 
-`proven_http_stream_protocol` answers 1 or 2, for a log line; a handler seldom has another
+`proven_http_stream_protocol` answers 1 or 2 (3 for HTTP/3, section 9), for a log line; a handler seldom has another
 reason to ask.
 
 ### Which protocol a connection speaks
@@ -1403,7 +1406,7 @@ announce a length it does not carry.
 - **Extended CONNECT** (RFC 8441, WebSocket over HTTP/2) and the `SETTINGS` it needs.
 - **Server push**: `PUSH_PROMISE` is recognised so that it can be refused.
 - **Priorities** (RFC 7540's scheme, which RFC 9113 deprecated): skipped.
-- **`Upgrade: h2c`**, which RFC 9113 removed; **HTTP/3**.
+- **`Upgrade: h2c`**, which RFC 9113 removed; **HTTP/3 in the event-driven client** (the server speaks it: section 9).
 - **The never-indexed mark on a decoded field**: a proxy would pass it on; nothing here does.
 
 **How this was tested.** The static table and the Huffman code are not typed in: a private
@@ -1530,3 +1533,96 @@ every place in the stream table; a stream that arrives to find its slot taken - 
 far longer than its neighbours - is found by walking the table, and a peer that arranges
 that on purpose makes the connection walk its table as it did before there was a map, and
 do nothing worse.
+
+## 9. HTTP/3 in the event-driven server
+
+```c
+typedef struct {
+    /* ... everything Chapter 15 describes, and section 6's fields ... */
+    bool http3;
+    bool http3_retry;
+    proven_size_t http3_window_bytes;
+} proven_http_event_server_config_t;
+```
+
+HTTP/3 (RFC 9114) is HTTP over QUIC (RFC 9000): a transport on UDP with its own streams,
+flow control, loss recovery and congestion control, and TLS 1.3 inside it rather than under
+it. Its header compression is QPACK (RFC 9204), HPACK's successor. What it gives over HTTP/2
+is that a lost packet holds up only its own stream, and that the transport and TLS handshake
+take one round trip together. All of it is this library's own code.
+
+With `http3` on, the server of section 6 speaks it too. **Handlers still do not change**:
+section 6's table holds for HTTP/3 as written for HTTP/2, with QUIC's flow control where it
+says the client's windows, and `proven_http_stream_protocol` answers 3. What is different is
+underneath:
+
+- **Each listen opens a UDP socket as well**, on the same address and port as its TCP
+  listener; a listen whose UDP socket cannot be had fails, and the TCP listener is closed
+  again. HTTP/3 is over TLS only: the TLS configuration must offer `h3` (beside `h2` and
+  `http/1.1`), and must not when `http3` is off.
+- **How a client finds it.** HTTP/1.1 and HTTP/2 responses carry `Alt-Svc: h3=":PORT"` - the
+  port the connection came in on - unless the handler wrote an `Alt-Svc` of its own, which is
+  sent instead. A browser, or `curl --alt-svc`, tries HTTP/3 on its next request; `curl
+  --http3-only` asks for it at once.
+- **One socket, many connections.** QUIC connections are told apart by their connection IDs,
+  not by sockets: a datagram goes to the connection whose ID it carries, a client's first
+  packet makes one, and a short packet for an ID nobody holds is answered with a stateless
+  reset.
+- **What bounds a write** is QUIC's send buffer - 256 KiB a stream and 1 MiB a connection of
+  data sent and not yet acknowledged - not `max_buffered_output`. A refused write is told
+  `on_writable` as on the other two.
+- **A paused request** stops being read, and QUIC's flow control stops the client at
+  `http3_window_bytes`: 256 KiB a stream and 1 MiB a connection by default.
+
+| Setting | For HTTP/3 |
+|---|---|
+| `max_connections` | Counts QUIC connections, with TCP ones: at the limit, a client's first packet is not answered |
+| `max_concurrent_streams` | Request streams a client may open at once on one connection |
+| `max_head_bytes`, `max_headers` | The largest field section, as QPACK counts it, said to the client in SETTINGS; more fields than `max_headers` is `431` |
+| `max_body_bytes` | Per request: `413`, as on HTTP/2 |
+| `http3_window_bytes` (0: 256 KiB a stream, 1 MiB a connection) | Request-body bytes a client may send before the handler has taken them; at most 2^31-1 |
+| `http3_retry` | A Retry for every client's first packet: see the cautions |
+| `head_timeout_ms` | From a connection's first packet - the handshake included - to its first request |
+| `body_timeout_ms` | Silence from one request whose body is owed: that stream is reset, the others go on |
+| `write_timeout_ms` | Output that does not move: the connection is closed |
+| `idle_timeout_ms` | No request open: the server says goodbye and closes. A connection on which nothing at all arrives - a client gone - is let go a second after the larger of this and `head_timeout_ms` (QUIC's idle timeout) |
+
+**Goodbye** is two GOAWAYs a round trip apart (RFC 9114 section 5.2): the first names the
+largest request a client may still send, so that one already on its way is answered and not
+refused; the second names the first request not acted on, and the connection closes with
+H3_NO_ERROR when what it took is answered. `proven_http_event_server_stop_listening` does
+this; the UDP socket stays open while a connection uses it, and listening again on the same
+port takes it up. `proven_http_event_server_shutdown` and `_destroy` end HTTP/3 connections
+as they end HTTP/2 ones.
+
+### Cautions, and what goes wrong
+
+- **UDP reaches the server before any handshake.** Anyone can send a client's first packet
+  from any address, and without `http3_retry` each one makes a connection - about 40 KiB
+  while its handshake waits, measured with a thousand from addresses that never answered -
+  until `head_timeout_ms` lets it go. Such an address is never sent more than three times what
+  it sent (RFC 9000 section 8), so the server cannot be used to flood someone else, but a
+  flood can hold `max_connections` of them. `http3_retry` keeps nothing for an address until
+  it has shown that it receives, at the price of a round trip for every connection.
+- **The key for Retry tokens and stateless resets is drawn when the server is made.** A
+  restarted server cannot reset a client's old connection; that client waits out its idle
+  timeout.
+- **Timers have the loop's 16 ms tick.** A quiet connection's QUIC timer - a probe, a delayed
+  acknowledgement - fires up to 16 ms late; a busy one does its work in each round.
+- **HTTP/3 is slower than HTTP/2 here.** One datagram is one system call, and each is
+  encrypted and protected on its own: one 100 MiB download from this server to curl on
+  loopback ran at 169 MiB/s over HTTP/3, 376 over HTTP/2 and 500 over HTTP/1.1, all over TLS.
+- **Not over HTTP/3:** WebSocket (`proven_ws_event_accept` refuses the stream), 0-RTT,
+  trailers, server push, migration of this side's own (a client's new address is
+  validated), QUIC versions other than 1. `proven_http_event_server_adopt` takes TCP
+  connections only, so several loops cannot share one UDP port.
+- **The event-driven client does not speak HTTP/3 yet.**
+
+**How this was tested.** A registered test runs the server against a client made of this
+library's QUIC and HTTP/3 engines over UDP on loopback - every route of the HTTP/2 tests that
+is not WebSocket, the limits, each timeout, the goodbyes, Retry. Outside the registered tests:
+curl `--http3-only` (OpenSSL's QUIC) and aioquic's client against the server, every response
+checked byte for byte; h3spec 0.1.14, 76 of its 77 cases passed - the one not is a repeated
+unknown setting, which RFC 9114 lets a server take; a thousand client first packets from
+addresses that never answered, each sent at most three times what it sent, all let go after
+`head_timeout_ms`, and none kept with `http3_retry`.

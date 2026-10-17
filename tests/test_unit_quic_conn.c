@@ -608,6 +608,21 @@ int main(void) {
         n->hook = NULL;
         PROVEN_TEST_ASSERT(run_handshake(n, 20000000), "and when the client is heard again, the handshake completes", "");
         net_free(n);
+        /* Such a server closed by its application - an HTTP server's head timeout - can send no
+         * close: it owes that address nothing more. It still ends within its closing period, not
+         * at the idle timeout. (It was held for thirty seconds and more.) */
+        net_init(n, 122);
+        g_hook_count = 0;
+        n->hook = hook_server_deaf_after_first;
+        net_start(n);
+        run_for(n, 3000000);
+        PROVEN_TEST_ASSERT(n->ep[1] && !stats(n, 1).closed, "a server owed nothing more by its client", "");
+        const proven_u64 sent_before = n->bytes[1];
+        proven_quic_conn_close(n->ep[1], true, 0x100);
+        run_for(n, 5000000);
+        PROVEN_TEST_ASSERT(stats(n, 1).closed, "closed by its application, it is over within five seconds", "");
+        PROVEN_TEST_ASSERT(n->bytes[1] <= 3 * 1200 && n->bytes[1] >= sent_before, "and still within three times what it received", "");
+        net_free(n);
         /* An Initial in a datagram under 1,200 bytes is dropped by a server (RFC 9000 section 14.1).
          * Initial keys come from the connection ID, so anyone can make one: the test does. */
         net_init(n, 121);

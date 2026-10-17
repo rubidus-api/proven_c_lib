@@ -1866,9 +1866,12 @@ proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven
         if (allow < budget) budget = (proven_size_t)allow;
     }
     if (c->state == QS_CLOSING) {
+        /* The closing period starts at the first chance to send the close, whether or not it can
+         * go: to an address that is owed nothing more (the amplification limit) it cannot, and
+         * the connection must still end - three PTOs, not the idle timeout. */
+        if (c->close_unsent) { c->close_unsent = false; c->close_deadline = now + 3 * pto_base(c); }
         if (!c->close_owed || budget < 64) return PROVEN_OK;
         c->close_owed = false;
-        if (c->close_unsent) { c->close_unsent = false; c->close_deadline = now + 3 * pto_base(c); }
         *len = send_close(c, out.ptr, budget);
         c->amp_tx += *len;
         return PROVEN_OK;

@@ -270,6 +270,15 @@ static void serve(proven_h3_conn_t *h, rec_t *r) {
         const proven_http_header_t f[] = { { sv(":status"), sv("200") }, { sv("content-length"), sv("1000") } };
         if (proven_h3_submit_response(h, r->id, f, 2, true) != PROVEN_OK) r->bad = true;
         r->sent_end = true;
+    } else if (strcmp(r->path, "/end-after-head") == 0) {
+        /* A head, then an end with no bytes - as a server that learns only afterwards that the
+         * body is empty sends it. Behind a download that holds the connection's send buffer the
+         * head is queued, and the end must be taken behind it. */
+        static const char pad[] = "a field of a hundred bytes, longer than what a full send buffer still has room for after a body....";
+        const proven_http_header_t f[] = { { sv(":status"), sv("200") }, { sv("x-pad"), sv(pad) } };
+        proven_size_t taken = 0;
+        if (proven_h3_submit_response(h, r->id, f, 2, false) != PROVEN_OK || proven_h3_send_data(h, r->id, (proven_mem_view_t){ 0 }, true, &taken) != PROVEN_OK) r->bad = true;
+        r->sent_end = true;
     } else if (strcmp(r->path, "/post") == 0) {
         r->respond_at_end = true;                /* when the body has come */
     } else {
@@ -665,6 +674,23 @@ int main(void) {
         net_free(n);
     }
 
+    PROVEN_TEST_SECTION("an end with no bytes behind a queued head", "A response head the connection's send buffer cannot take yet, then proven_h3_send_data with nothing and the end: the end is taken, and goes behind the head.", "Check the order of the checks at the top of proven_h3_send_data.");
+    {
+        reset_apps();
+        net_init(n, 9);
+        /* A client whose windows are larger than the server's send buffers: five downloads then
+         * hold all of the server's 1 MiB, and a head that comes after waits in HTTP/3's queue. */
+        n->cfg[0].stream_window = 4u << 20;
+        n->cfg[0].conn_window = 16u << 20;
+        fresh(n, 9);
+        for (int i = 0; i < 5; ++i) (void)request(n, "GET", "/get/2000000", 0, false);
+        (void)request(n, "GET", "/end-after-head", 0, false);
+        PROVEN_TEST_ASSERT(run_until_done(n, 6, 30000000), "every response ends", "");
+        for (int i = 0; i < 5; ++i) PROVEN_TEST_ASSERT(g_app[0].r[i].status == 200 && g_app[0].r[i].got == 2000000 && !g_app[0].r[i].bad, "the downloads, whole", "");
+        PROVEN_TEST_ASSERT(g_app[0].r[5].status == 200 && g_app[0].r[5].got == 0 && g_app[0].r[5].end && !g_app[1].r[5].bad, "the empty response, ended", "");
+        net_free(n);
+    }
+
     PROVEN_TEST_SECTION("goodbye", "A server's GOAWAY: what it took is answered, the client sends no new request, and both close with H3_NO_ERROR once the last stream ends; a client's GOAWAY likewise.", "");
     {
         for (int who = 1; who >= 0; --who) {
@@ -758,6 +784,7 @@ int main(void) {
             { 1, "B:01 F", PROVEN_H3_FRAME_ERROR, 0, 0, 0, 0, "a request stream ended inside a frame header" },
             /* H3_EXCESSIVE_LOAD */
             { 1, "C:00 W:0480004e20", PROVEN_H3_EXCESSIVE_LOAD, 0, 0, 0, 0, "SETTINGS of 20,000 bytes" },
+            { 1, "C:000400 W:07c000000040000000", PROVEN_H3_EXCESSIVE_LOAD, 0, 0, 0, 0, "a GOAWAY that says it is a gigabyte (h3spec)" },
             /* H3_ID_ERROR */
             { 0, "C:000400 W:070108 W:07010c", PROVEN_H3_ID_ERROR, 0, 0, 0, 0, "a GOAWAY larger than the one before" },
             { 0, "C:000400 W:070101", PROVEN_H3_ID_ERROR, 0, 0, 0, 0, "a server's GOAWAY that is no client request stream" },
@@ -783,6 +810,8 @@ int main(void) {
             { 1, "B: H::method=GET" REQ "|:path=/|X-Upper=1", 0, PROVEN_H3_MESSAGE_ERROR, PROVEN_H3_MESSAGE_ERROR, 0, 0, "an uppercase field name" },
             { 1, "B: H::method=CONNECT|:protocol=websocket" REQ "|:path=/", 0, PROVEN_H3_MESSAGE_ERROR, 0, 0, 0, "an extended CONNECT (:protocol)" },
             { 1, "B: H::method=GET|:path=/", 0, PROVEN_H3_MESSAGE_ERROR, 0, 0, 0, "no :scheme" },
+            { 1, "B: H::method=GET|:scheme=https|:path=/", 0, PROVEN_H3_MESSAGE_ERROR, 0, 0, 0, "https with neither :authority nor Host (RFC 9114 section 4.3.1; h3spec)" },
+            { 1, "B: H::method=GET|:scheme=https|:path=/|host=example.test F", 0, 0, 0, 0, 0, "https with Host and no :authority: taken" },
             { 1, "B: H::method=GET" REQ "|:path=/|connection=close", 0, PROVEN_H3_MESSAGE_ERROR, 0, 0, 0, "a connection-specific field" },
             { 1, "B: H::method=POST" REQ "|:path=/post|content-length=5 W:0003616263 F", 0, PROVEN_H3_MESSAGE_ERROR, 0, 0, 0, "content-length 5 and 3 bytes" },
             { 1, "B: H::method=POST" REQ "|:path=/post|content-length=2 W:0003616263", 0, PROVEN_H3_MESSAGE_ERROR, 0, 0, 0, "content-length 2 and 3 bytes" },

@@ -35,7 +35,7 @@ static int run(const char *cmd) {
 int main(void) {
     PROVEN_TEST_SUITE("test_portability_compile_nohttp3",
         "A hosted build with -DPROVEN_NO_HTTP3 compiles every source, links, runs a TLS client, and contains no QUIC, QPACK or HTTP/3 code.",
-        "Inspect the PROVEN_NO_HTTP3 guards in src/proven/quic_*.c, qpack.c, h3_conn.c, proven_internal_quic.h, proven_internal_h3.h and tls13.c.");
+        "Inspect the PROVEN_NO_HTTP3 guards in src/proven/quic_*.c, qpack.c, h3_conn.c, http_event_h3.c, http_event.c, http_event_h2.c, proven_internal_quic.h, proven_internal_h3.h, proven_internal_http_event.h and tls13.c.");
 
     const char *dir = "build/test_portability_compile_nohttp3";
     char cmd[4096];
@@ -58,6 +58,7 @@ int main(void) {
     snprintf(cmd, sizeof cmd,
         "printf '%%s\\n' '#include \"proven.h\"' '#include \"proven/alias_xcv.h\"' "
         "'static const proven_u8str_view_t h3[1] = { { (const proven_byte_t *)\"h3\", 2 } };' "
+        "'static void on_req(void *x, proven_http_stream_t *s, const proven_http_request_t *r) { (void)x; (void)s; (void)r; }' "
         "'int main(void) {' "
         "'    proven_tls_options_t o = { .alloc = proven_heap_allocator(), .verify = PROVEN_TLS_VERIFY_PIN_ONLY, .alpn = h3, .alpn_count = 1 };' "
         "'    static const proven_byte_t pin[1][32] = { { 1 } };' "
@@ -67,20 +68,25 @@ int main(void) {
         "'    if (proven_tls_client_create(cfg, (proven_u8str_view_t){ (const proven_byte_t *)\"example.test\", 12 }, NULL, &c) != PROVEN_OK) return 2;' "
         "'    int ok = proven_tls_pending_output(c).size > 100 ? 0 : 3;' "
         "'    proven_tls_conn_destroy(c); proven_tls_config_destroy(cfg);' "
+        "'    proven_loop_t *loop = NULL; proven_http_event_server_t *sv = NULL;' "
+        "'    if (proven_loop_create(proven_heap_allocator(), &loop) != PROVEN_OK) return 4;' "
+        "'    proven_http_event_server_config_t sc = { .on = { .on_request = on_req }, .http3 = true };' "
+        "'    if (proven_http_event_server_create(loop, &sc, &sv) != PROVEN_ERR_UNSUPPORTED || sv) return 5;' "
+        "'    proven_loop_destroy(loop);' "
         "'    return ok;' "
         "'}' > %s/main.c && "
         "${CC:-cc} $(cat %s/std.txt) -Wall -Wextra -Werror -D_DEFAULT_SOURCE -DPROVEN_NO_HTTP3 -I./include -I./platform "
         "  %s/main.c %s/*.o -pthread -o %s/nohttp3 && %s/nohttp3",
         dir, dir, dir, dir, dir, dir);
     PROVEN_TEST_ASSERT(run(cmd) == 0,
-        "a program that includes proven.h links against that build and runs, and its TLS client writes a ClientHello",
+        "a program that includes proven.h links against that build and runs, its TLS client writes a ClientHello, and an event server asked for http3 is PROVEN_ERR_UNSUPPORTED",
         "Something outside the guards references a QUIC function, or the guards in tls13.c broke the engine.");
 
     snprintf(cmd, sizeof cmd,
-        "! (nm %s/*.o 2>/dev/null | grep -E ' [TtUDdRr] (proven_quic_|proven_tls_quic_|proven_qpack_|proven_h3_)' >/dev/null)", dir);
+        "! (nm %s/*.o 2>/dev/null | grep -E ' [TtUDdRr] (proven_quic_|proven_tls_quic_|proven_qpack_|proven_h3_|proven_http_event_h3_|proven_http_event_alt_svc_)' >/dev/null)", dir);
     PROVEN_TEST_ASSERT(run(cmd) == 0,
         "no object of that build defines or references a QUIC, QPACK or HTTP/3 function",
-        "List them with: nm build/test_portability_compile_nohttp3/*.o | grep -iE 'quic|qpack|h3_'");
+        "List them with: nm build/test_portability_compile_nohttp3/*.o | grep -iE 'quic|qpack|h3_|alt_svc'");
 
     snprintf(cmd, sizeof cmd, "rm -rf %s", dir);
     (void)run(cmd);
