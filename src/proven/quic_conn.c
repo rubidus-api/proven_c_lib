@@ -484,6 +484,7 @@ struct proven_quic_conn {
     bool ack_eliciting_since_rx;
     proven_u64 close_code, close_frame_type, close_deadline;
     bool close_app, close_remote, close_owed;
+    bool close_unsent;                  /* closed by the application, whose call has no time: the closing period starts when the close is sent */
     proven_u32 close_rx, close_answered;
     proven_size_t datagram;             /* bytes a sent datagram may take */
     proven_size_t peer_max_udp;
@@ -612,6 +613,7 @@ static void conn_drain(proven_quic_conn_t *c, proven_u64 code, bool app) {
     if (c->state >= QS_DRAINING) return;
     const bool told = c->state == QS_CLOSING;
     c->state = QS_DRAINING;
+    c->close_unsent = false;            /* nothing is sent while draining: the period runs from now */
     c->close_deadline = c->now + 3 * pto_base(c);
     if (!told) { c->close_code = code; c->close_app = app; c->close_remote = true; enter_closed_event(c); }
 }
@@ -1764,8 +1766,11 @@ static bool build_packet(proven_quic_conn_t *c, int lvl, proven_byte_t *buf, pro
                                   .frame_type = c->close_app ? 0 : c->close_frame_type };
         if (!proven_quic_frame_put(&w, &f)) return false;
     } else {
-        const bool ack_due = sp->ack_any && (lvl < 2 || (sp->ack_owed && sp->ack_deadline <= c->now));
-        if (ack_due || (eliciting_ok && sp->ack_any)) put_ack(c, lvl, &w);
+        /* A packet that holds only acknowledgements is not acknowledged (RFC 9000 section 13.2.1):
+         * what came is acknowledged when an ack-eliciting packet is owed it, or with frames that
+         * are going anyway - never alone, or two ends would answer each other's ACKs for ever. */
+        const bool ack_due = sp->ack_owed && (lvl < 2 || sp->ack_deadline <= c->now);
+        if (ack_due || (eliciting_ok && sp->ack_any && space_has_eliciting(c, lvl))) put_ack(c, lvl, &w);
         if (eliciting_ok) {
             put_crypto(c, lvl, &w, &pk->rec);
             if (lvl == 2 && c->state == QS_OPEN) { put_control(c, &w, &pk->rec); put_streams(c, &w, &pk->rec); }
@@ -1863,6 +1868,7 @@ proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven
     if (c->state == QS_CLOSING) {
         if (!c->close_owed || budget < 64) return PROVEN_OK;
         c->close_owed = false;
+        if (c->close_unsent) { c->close_unsent = false; c->close_deadline = now + 3 * pto_base(c); }
         *len = send_close(c, out.ptr, budget);
         c->amp_tx += *len;
         return PROVEN_OK;
@@ -1950,7 +1956,7 @@ static proven_u64 idle_end(const proven_quic_conn_t *c) {
 
 proven_u64 proven_quic_conn_deadline(const proven_quic_conn_t *c) {
     if (!c || c->state == QS_CLOSED) return QC_INF;
-    if (c->state >= QS_CLOSING) return c->close_deadline;
+    if (c->state >= QS_CLOSING) return c->close_unsent ? idle_end(c) : c->close_deadline;
     proven_u64 d = qmin(c->loss_timer, idle_end(c));
     for (int i = 0; i < PROVEN_QUIC_LEVELS; ++i) if (c->sp[i].ack_owed && !c->sp[i].discarded) d = qmin(d, c->sp[i].ack_deadline);
     if (c->pace_blocked) d = qmin(d, pace_next(c));
@@ -1962,7 +1968,8 @@ void proven_quic_conn_timeout(proven_quic_conn_t *c, proven_u64 now) {
     if (!c || c->state == QS_CLOSED) return;
     c->now = now;
     if (c->state >= QS_CLOSING) {
-        if (now >= c->close_deadline) c->state = QS_CLOSED;
+        /* A close not sent yet - none could be, the amplification limit, say - ends with the idle time. */
+        if (c->close_unsent ? now >= idle_end(c) : now >= c->close_deadline) c->state = QS_CLOSED;
         return;
     }
     if (now >= idle_end(c)) {
@@ -2154,6 +2161,7 @@ proven_err_t proven_quic_stream_stop(proven_quic_conn_t *c, proven_u64 id, prove
 void proven_quic_conn_close(proven_quic_conn_t *c, bool app, proven_u64 code) {
     if (!c || c->state >= QS_CLOSING) return;
     conn_fail(c, code, 0);
+    c->close_unsent = true;
     c->close_app = app;
     /* the event already told the code; tell `app` as well */
     if (c->ev_n > 0) c->ev[(c->ev_head + c->ev_n - 1) % QC_EVENTS].app = app;

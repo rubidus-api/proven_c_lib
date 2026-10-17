@@ -473,6 +473,45 @@ int main(void) {
         run_for(n, 1000000);
         PROVEN_TEST_ASSERT(n->sent[1] == sent, "the drained side sends nothing", "");
         net_free(n);
+        /* A close asked for long after the engine last saw the clock - the call has no time of its
+         * own - whose timeout is looked at before anything is sent: the closing period starts
+         * when the close goes out, so the peer is told. (It began at the stale time, was over at
+         * once, and the peer heard nothing.) */
+        fresh(n, 51);
+        n->now += 2000000;                         /* two quiet seconds that no call saw */
+        proven_quic_conn_close(n->ep[1], true, 0x99);
+        proven_quic_conn_timeout(n->ep[1], n->now);
+        PROVEN_TEST_ASSERT(!stats(n, 1).closed, "a close not yet sent does not end with the stale time", "");
+        run_for(n, 3000000);
+        PROVEN_TEST_ASSERT(closed_event(n->ep[1], &a) && closed_event(n->ep[0], &b) && b.remote && b.app && b.code == 0x99, "the peer gets the code", "");
+        PROVEN_TEST_ASSERT(stats(n, 0).closed && stats(n, 1).closed, "and both are over", "");
+        net_free(n);
+        /* Both close at once, and the peer's close arrives before this side's own has gone out:
+         * draining, its period three PTOs - not the idle timeout's thirty seconds. */
+        fresh(n, 53);
+        n->now += 2000000;
+        proven_quic_conn_close(n->ep[1], true, 0x77);
+        proven_quic_conn_close(n->ep[0], true, 0x78);
+        static proven_byte_t out[1500];
+        proven_size_t len = 0;
+        proven_quic_addr_t to;
+        PROVEN_TEST_ASSERT(proven_quic_conn_send(n->ep[0], n->now, (proven_mem_mut_t){ out, sizeof out }, &len, &to) == PROVEN_OK && len > 0, "the client's close", "");
+        PROVEN_TEST_ASSERT(proven_quic_conn_receive(n->ep[1], (proven_mem_view_t){ out, len }, &n->addr[0], n->now) == PROVEN_OK, "reaches the server before its own close went out", "");
+        n->hook = hook_drop_all;
+        run_for(n, 1000000);
+        PROVEN_TEST_ASSERT(stats(n, 1).closed, "the server is over within a second, its draining period", "");
+        net_free(n);
+    }
+
+    PROVEN_TEST_SECTION("acknowledgements alone", "A packet that holds only ACK frames is not acknowledged (RFC 9000 section 13.2.1): an idle connection between two of these engines sends nothing for a second.", "Check the condition before put_ack in build_packet.");
+    {
+        fresh(n, 52);
+        run_for(n, 200000);                        /* what the handshake owes, acknowledged */
+        const proven_u64 before = n->sent[0] + n->sent[1];
+        run_for(n, 1000000);
+        printf("  datagrams in a quiet second: %llu\n", (unsigned long long)(n->sent[0] + n->sent[1] - before));
+        PROVEN_TEST_ASSERT(n->sent[0] + n->sent[1] - before <= 2, "an ACK is not answered with an ACK (they answered each other every round trip)", "");
+        net_free(n);
     }
 
     PROVEN_TEST_SECTION("each rule's code", "Frames that break RFC 9000's rules, read by a server: the connection closes with the code the RFC names, and the client is told it.", "");
@@ -687,7 +726,11 @@ int main(void) {
         t = calloc(1, sizeof *t);
         for (int k = 0; k < 5; ++k) xfer_open(n, t, 0, true, 250000);
         const proven_u64 fill = n->now + 3000000;     /* long enough to fill the 1 MiB window */
+        /* The clock in steps no longer than that: once the window is full nothing is sent - an ACK is
+         * not answered - and the next deadline is the idle timeout's, thirty seconds on. */
+        n->until = fill;
         while (n->now < fill) { pump(n, t); net_step(n); }
+        n->until = 0;
         PROVEN_TEST_ASSERT(stats(n, 1).memory > (1u << 20), "the receiver holds a full window it has not read", "");
         for (int k = 0; k < 5; ++k) PROVEN_TEST_ASSERT(proven_quic_stream_reset(n->ep[0], t->x[k].id, 9) == PROVEN_OK, "the sender resets", "");
         n->reading_off[1] = false;
