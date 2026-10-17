@@ -39,7 +39,8 @@ written; their tags still exist.
 - Tests: `test_unit_http_event_client_h3` - the client against the event server on one loop over
   real UDP: the cases of the HTTP/2 client test the server can answer, the client's refusals, no
   fallback (a port where only TCP listens: `PROVEN_ERR_TIMEOUT`, no TCP connection tried), an
-  untrusted server, the timeouts.
+  untrusted server, the timeouts, and a server's GOAWAY sending the requests that wait for a
+  stream to a new connection (`retry_unsent`).
 
 ## [0.64.0] - 2026-10-17
 

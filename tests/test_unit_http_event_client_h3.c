@@ -396,6 +396,40 @@ int main(void) {
         proven_http_event_server_destroy(server);
     }
 
+    PROVEN_TEST_SECTION("a server that says goodbye", "Two requests on the server's only two streams, three waiting behind them; the server stops listening and listens again on the same port. Its GOAWAY sends the three waiting through retry_unsent to a new connection, where they are answered; without retry_unsent they end with PROVEN_ERR_AGAIN.", "Check the GOAWAY case of c_event, r_unsent and r_place.");
+    for (int retry = 1; retry >= 0; --retry) {
+        proven_http_event_server_config_t scfg = { .on = { srv_request, srv_body, srv_writable, srv_done }, .tls = g_server_tls, .http2 = true, .http3 = true, .max_concurrent_streams = 2 };
+        proven_http_event_server_t *server = NULL;
+        proven_net_addr_t at;
+        PROVEN_TEST_ASSERT(proven_http_event_server_create(g_loop, &scfg, &server) == PROVEN_OK &&
+                           proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server with two streams to a connection", "");
+        g_port = at.port;
+        g_served = g_served_done = g_served_h3 = 0;
+        proven_http_event_client_config_t cfg = { .alloc = g_heap, .tls = g_client_tls, .http2 = true, .http3 = true, .retry_unsent = (proven_u32)retry };
+        proven_http_event_client_t *cl = NULL;
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &cfg, &cl) == PROVEN_OK, "a client", "");
+        static call_t held[2], waiting[3];
+        for (int i = 0; i < 2; ++i) PROVEN_TEST_ASSERT(start(cl, &held[i], "GET", "/never", mv(""), 0) == PROVEN_OK, "a request the server holds", "");
+        for (int i = 0; i < 3; ++i) { PROVEN_TEST_ASSERT(start(cl, &waiting[i], "GET", "/hello", mv(""), 0) == PROVEN_OK, "a request that waits for a stream", ""); waiting[i].plain = true; }
+        for (int i = 0; i < 300 && g_served < 2; ++i) spin(5);
+        spin(100);
+        PROVEN_TEST_ASSERT(g_served == 2 && !waiting[0].done && !waiting[2].done, "two on the server's streams, three waiting", "");
+        proven_http_event_server_stop_listening(server);
+        PROVEN_TEST_ASSERT(proven_http_event_server_listen(server, at, NULL) == PROVEN_OK, "the server stops listening and listens again on the same port", "");
+        for (int i = 0; i < 3; ++i) spin_until(&waiting[i].done, 5000);
+        bool all = true;
+        for (int i = 0; i < 3; ++i)
+            all = all && waiting[i].done && waiting[i].dones == 1 && (retry ? waiting[i].why == PROVEN_OK && waiting[i].status == 200 && waiting[i].protocol == 3 && waiting[i].got == 5
+                                                                             : waiting[i].why == PROVEN_ERR_AGAIN && waiting[i].responses == 0);
+        PROVEN_TEST_ASSERT(all, retry ? "the GOAWAY sends the three waiting to a new connection, where they are answered" : "without retry_unsent the three waiting end with PROVEN_ERR_AGAIN, never sent", "");
+        if (retry) PROVEN_TEST_ASSERT(g_served == 5 && proven_http_event_server_connections(server) == 2, "the server saw five requests, on two connections", "");
+        PROVEN_TEST_ASSERT(!held[0].done && !held[1].done, "the two it held go on waiting for their answers", "");
+        proven_http_event_client_destroy(cl);
+        PROVEN_TEST_ASSERT(held[0].done && held[1].done && held[0].why == PROVEN_ERR_RESET, "and end with the client", "");
+        spin(300);
+        proven_http_event_server_destroy(server);
+    }
+
     PROVEN_TEST_SECTION("time", "A request that is not answered: response_timeout_ms.", "Check r_expect and c_check_time.");
     {
         proven_http_event_server_t *server = server_on();
