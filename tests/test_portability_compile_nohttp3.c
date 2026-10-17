@@ -15,9 +15,10 @@ int main(void) {
  * PROVEN_NO_HTTP3 is a promise about size (RFC-0017 B-10): QUIC, QPACK and HTTP/3 are left out
  * of the library. That is QUIC's packet protection and transport parameters (quic_crypto.c) and
  * the TLS engine's QUIC mode (v0.61.0), the packet and frame codec (quic_frame.c) and the
- * connection (quic_conn.c) (v0.62.0), and QPACK (qpack.c) and the HTTP/3 connection
- * (h3_conn.c) (v0.63.0); the pieces of later releases join it. TLS over TCP is untouched
- * either way.
+ * connection (quic_conn.c) (v0.62.0), QPACK (qpack.c) and the HTTP/3 connection (h3_conn.c)
+ * (v0.63.0), and the event server's HTTP/3 (http_event_h3.c, where `http3` is then
+ * PROVEN_ERR_UNSUPPORTED) (v0.64.0); the event client's joins it next. TLS over TCP is
+ * untouched either way.
  *
  * The suite itself is built without that macro, so nothing else here could notice the promise
  * breaking. This test asks the host compiler directly: every library source must compile with
