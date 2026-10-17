@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.65.0] - 2026-10-17
+
 ### Added
 
 - **The event-driven client speaks HTTP/3** (RFC 9114, over QUIC), the fifth and last piece of
