@@ -607,7 +607,7 @@ need. Every zero field has a default:
 | `http2_window_bytes` | HTTP/2: request-body bytes a client may send on a stream, and on a connection as a whole, before the handler has taken them. What a paused request can make a connection hold; a large upload waits for room each time it has sent this much. | 65,535 |
 | `http3` | HTTP/3 too, over QUIC on a UDP socket beside each TCP listener on the same port, for the same handler, and `Alt-Svc` on the TCP responses: [Chapter 17, section 9](manual-17-http2.md#9-http3-in-the-event-driven-server). Needs `tls`, offering `h3`. | false |
 | `http3_retry` | HTTP/3: answer each client's first packet with a Retry, so that no state is kept for an address that has not shown it receives - a round trip more per connection, for a server under load. | false |
-| `http3_window_bytes` | HTTP/3: request-body bytes a client may send on a stream, and on a connection as a whole, before the handler has taken them (QUIC's flow control). | 256 KiB a stream, 1 MiB a connection |
+| `http3_window_bytes` | HTTP/3: request-body bytes a client may send on a stream, and on a connection as a whole, before the handler has taken them (QUIC's flow control). | 256 KiB a stream and 1 MiB a connection, growing while bodies are read as fast as they come, up to 16 MiB and 24 MiB; a value set is fixed |
 
 A request the server will not serve never reaches `on_request`. It is answered and the
 connection closed:
@@ -1509,7 +1509,7 @@ The configuration's fields, each with a default when zero:
 | `max_connections` | Connections of the whole client, both protocols, busy and idle. At the limit an idle one is closed for a new request; with none idle the request waits, in either protocol, for `connect_timeout_ms` at most. | 0: no limit |
 | `http2_window_bytes` | HTTP/2: response-body bytes a server may send on a stream, and on a connection as a whole, before `on_body` has taken them. What a paused request can make a connection hold; a large download waits for room each time the server has sent this much (sixteen responses of 1 MiB at once, measured: 568 a second at the default, 1,208 with 1 MiB). | 65,535 |
 | `http3` | A request that asks for it (`http3` in its options, an `https` URL) goes over HTTP/3, on one QUIC connection kept for its origin: [Chapter 17, section 10](manual-17-http2.md#10-http3-in-the-event-driven-client). Never one that does not ask, and never by following `Alt-Svc`. **No fallback**: no answer over UDP is `PROVEN_ERR_TIMEOUT` after `connect_timeout_ms`. Needs `tls`, offering `h3`. | false |
-| `http3_window_bytes` | HTTP/3: response-body bytes a server may send on a stream, and on a connection as a whole, before `on_body` has taken them (QUIC's flow control). | 256 KiB a stream, 1 MiB a connection |
+| `http3_window_bytes` | HTTP/3: response-body bytes a server may send on a stream, and on a connection as a whole, before `on_body` has taken them (QUIC's flow control). | 256 KiB a stream and 1 MiB a connection, growing while bodies are read as fast as they come, up to 16 MiB and 24 MiB; a value set is fixed |
 
 The test suite compiles and runs this program:
 

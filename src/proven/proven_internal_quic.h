@@ -333,6 +333,11 @@ typedef struct {
     proven_u32 conn_window;                        /* the same for all streams together. 0: 1 MiB */
     proven_u32 stream_send_buffer;                 /* bytes written and not yet acknowledged, per stream. 0: 256 KiB */
     proven_u32 conn_send_buffer;                   /* the same for all streams together. 0: 1 MiB */
+    proven_u32 stream_window_max;                  /* RFC-0019 section 9: the stream window doubles, up to this, while the reader */
+    proven_u32 conn_window_max;                    /*   empties it within two round trips; and these cap the send buffers, which follow */
+                                                   /*   what the peer has granted. 0: no growth (stream_window, conn_window fixed) */
+#define PROVEN_QUIC_STREAM_WINDOW_MAX (16u * 1024 * 1024)   /* the event drivers' caps when no window is configured */
+#define PROVEN_QUIC_CONN_WINDOW_MAX (24u * 1024 * 1024)
     proven_u32 idle_timeout_ms;                    /* 0: 30,000 */
     proven_u32 datagram_size;                      /* the datagrams this side sends: 1,200 to 1,452. 0: 1,200 */
     proven_u32 granularity_us;                     /* RFC 9002's timer granularity: the clock's tick. 0: 1,000 */

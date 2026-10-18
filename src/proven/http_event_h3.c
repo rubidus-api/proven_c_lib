@@ -891,6 +891,9 @@ proven_err_t proven_http_event_h3_create_(proven_http_event_server_t *sv) {
         .max_streams_uni = 16,                     /* a client's control and QPACK streams, and a few it may add */
         .stream_window = (proven_u32)sv->cfg.http3_window_bytes,
         .conn_window = (proven_u32)sv->cfg.http3_window_bytes,
+        /* No window configured: it starts at the engine's and grows while bodies are read (RFC-0019 section 9). */
+        .stream_window_max = sv->cfg.http3_window_bytes ? 0u : PROVEN_QUIC_STREAM_WINDOW_MAX,
+        .conn_window_max = sv->cfg.http3_window_bytes ? 0u : PROVEN_QUIC_CONN_WINDOW_MAX,
         /* QUIC's own idle timeout is for a peer that has gone silent; the server's timeouts end a
          * connection politely first, with a goodbye or a close it can read. */
         .idle_timeout_ms = (sv->cfg.idle_timeout_ms > sv->cfg.head_timeout_ms ? sv->cfg.idle_timeout_ms : sv->cfg.head_timeout_ms) + 1000,

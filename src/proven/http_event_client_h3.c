@@ -804,6 +804,9 @@ static proven_err_t c_open(proven_http_event_client_t *cl, proven_u8str_view_t h
         const proven_quic_config_t qc = {
             .alloc = cl->alloc, .tls = cl->cfg.tls,
             .stream_window = (proven_u32)cl->cfg.http3_window_bytes, .conn_window = (proven_u32)cl->cfg.http3_window_bytes,
+            /* No window configured: it starts at the engine's and grows while bodies are read (RFC-0019 section 9). */
+            .stream_window_max = cl->cfg.http3_window_bytes ? 0u : PROVEN_QUIC_STREAM_WINDOW_MAX,
+            .conn_window_max = cl->cfg.http3_window_bytes ? 0u : PROVEN_QUIC_CONN_WINDOW_MAX,
             .idle_timeout_ms = (cl->cfg.idle_timeout_ms > cl->cfg.connect_timeout_ms ? cl->cfg.idle_timeout_ms : cl->cfg.connect_timeout_ms) + 1000,
         };
         const proven_quic_addr_t qa = proven_quic_addr_of_(to);

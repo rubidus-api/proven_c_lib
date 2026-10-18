@@ -423,6 +423,7 @@ typedef struct {
     qrecvq_t rx;
     proven_u64 tx_max;                  /* the peer's MAX_STREAM_DATA */
     proven_u64 rx_max;                  /* ours, as last sent */
+    proven_u64 rx_window, rx_moved_at;  /* the window as it has grown, and when it last moved (RFC-0019 section 9) */
     bool rx_max_owed;                   /* MAX_STREAM_DATA to send */
     bool tx_reset, tx_reset_owed, tx_reset_acked;
     proven_u64 tx_reset_code, tx_reset_final;
@@ -534,6 +535,8 @@ struct proven_quic_conn {
     /* Flow control. */
     proven_u64 tx_max_data, tx_data;    /* the peer's limit; new stream bytes sent */
     proven_u64 rx_max_data, rx_data, rx_read;   /* ours as last sent; the sum of highest offsets; bytes read */
+    proven_u64 rx_conn_window, rx_conn_moved_at;   /* the connection's window as it has grown, and when it last moved */
+    proven_u64 tx_written;                       /* stream bytes ever written: less send_buffered, those acknowledged */
     bool max_data_owed;
     proven_u64 send_buffered;           /* stream bytes held for sending, all streams */
     bool send_room_freed;               /* send_buffered went down: every blocked stream is told */
@@ -742,6 +745,8 @@ static qstream_t *stream_new(proven_quic_conn_t *c, proven_u64 id) {
     const proven_quic_tp_t *tp = &c->peer_tp;
     s->tx_max = uni ? tp->initial_max_stream_data_uni : s->local ? tp->initial_max_stream_data_bidi_remote : tp->initial_max_stream_data_bidi_local;
     s->rx_max = c->cfg.stream_window;
+    s->rx_window = c->cfg.stream_window;
+    s->rx_moved_at = c->now;
     c->streams[c->nstreams++] = s;
     return s;
 }
@@ -797,17 +802,58 @@ static qstream_t *stream_for_peer(proven_quic_conn_t *c, proven_u64 id, proven_u
     return s;
 }
 
+/* A window that was emptied to half within two round trips of its last move is too small for
+ * the path: it doubles, up to its cap (RFC-0019 section 9, as TCP's receive window grows). A
+ * reader that stops reading stops the growth, so what an unread stream can hold stays bounded
+ * by the window it had. */
+static proven_u64 rx_grow(const proven_quic_conn_t *c, proven_u64 window, proven_u64 moved_at, proven_u64 cap) {
+    if (cap <= window || !c->have_rtt || c->now - moved_at >= 2 * c->srtt) return window;
+    return 2 * window < cap ? 2 * window : cap;
+}
+
 /* Bytes read: the window moves, and MAX_STREAM_DATA / MAX_DATA are owed at half a window. */
 static void rx_credit(proven_quic_conn_t *c, qstream_t *s, proven_u64 n) {
     c->rx_read += n;
-    if (s && !s->rx.has_final && s->rx_max - s->rx.read < c->cfg.stream_window / 2) {
-        s->rx_max = s->rx.read + c->cfg.stream_window;
+    if (s && !s->rx.has_final && s->rx_max - s->rx.read < s->rx_window / 2) {
+        s->rx_window = rx_grow(c, s->rx_window, s->rx_moved_at, c->cfg.stream_window_max);
+        s->rx_max = s->rx.read + s->rx_window;
+        s->rx_moved_at = c->now;
         s->rx_max_owed = true;
+        /* The connection's window keeps one and a half of the largest stream window, so one
+         * stream that grew is not held back by the connection's. */
+        const proven_u64 want = s->rx_window + s->rx_window / 2;
+        if (c->cfg.conn_window_max && c->rx_conn_window < want) {
+            c->rx_conn_window = want < c->cfg.conn_window_max ? want : c->cfg.conn_window_max;
+            c->rx_max_data = c->rx_read + c->rx_conn_window;
+            c->rx_conn_moved_at = c->now;
+            c->max_data_owed = true;
+        }
     }
-    if (c->rx_max_data - c->rx_read < c->cfg.conn_window / 2) {
-        c->rx_max_data = c->rx_read + c->cfg.conn_window;
+    if (c->rx_max_data - c->rx_read < c->rx_conn_window / 2) {
+        c->rx_conn_window = rx_grow(c, c->rx_conn_window, c->rx_conn_moved_at, c->cfg.conn_window_max);
+        c->rx_max_data = c->rx_read + c->rx_conn_window;
+        c->rx_conn_moved_at = c->now;
         c->max_data_owed = true;
     }
+}
+
+/* What a stream, and the connection, may hold written and unacknowledged: the configured
+ * buffer, or - when the windows grow - what the peer has granted beyond what it acknowledged,
+ * up to the caps, so the send side keeps up with a receive window that grew. */
+static proven_u64 tx_room(const proven_quic_conn_t *c, const qstream_t *s) {
+    proven_u64 stream_cap = c->cfg.stream_send_buffer, conn_cap = c->cfg.conn_send_buffer;
+    if (c->cfg.stream_window_max) {
+        const proven_u64 granted = s->tx_max > s->tx.base ? s->tx_max - s->tx.base : 0;
+        stream_cap = qmax(stream_cap, qmin(granted, c->cfg.stream_window_max));
+    }
+    if (c->cfg.conn_window_max) {
+        const proven_u64 acked = c->tx_written - c->send_buffered;
+        const proven_u64 granted = c->tx_max_data > acked ? c->tx_max_data - acked : 0;
+        conn_cap = qmax(conn_cap, qmin(granted, c->cfg.conn_window_max));
+    }
+    const proven_u64 held = s->tx.end - s->tx.base;
+    const proven_u64 room = qmin(stream_cap - qmin(held, stream_cap), conn_cap - qmin(c->send_buffered, conn_cap));
+    return qmin(room, Q_STREAM_LIMIT - s->tx.end);
 }
 
 /* This side's sending half ends early (a reset of its own, or the peer's STOP_SENDING). */
@@ -1605,7 +1651,7 @@ static int read_packet(proven_quic_conn_t *c, proven_byte_t *pkt, const proven_q
             if (proven_quic_frame_read(&r, &f) != 0) break;
             if (f.type == PROVEN_QUIC_FT_STREAM) ++streams;
         }
-        const proven_u64 cap = c->cfg.conn_window / 512 + 2 * ((proven_u64)c->cfg.max_streams_bidi + c->cfg.max_streams_uni);
+        const proven_u64 cap = c->rx_conn_window / 512 + 2 * ((proven_u64)c->cfg.max_streams_bidi + c->cfg.max_streams_uni);
         if (c->rx_ranges + streams > cap) { ++c->st.packets_dropped; return 0; }
     }
     if (c->server && lvl == 1) {
@@ -2272,13 +2318,11 @@ proven_err_t proven_quic_stream_write(proven_quic_conn_t *c, proven_u64 id, prov
     qstream_t *s = stream_find(c, id);
     if (!s) return PROVEN_ERR_NOT_FOUND;
     if (!s->has_tx || s->tx_reset || s->tx.fin) return PROVEN_ERR_INVALID_STATE;
-    const proven_u64 held = s->tx.end - s->tx.base;
-    proven_u64 room = qmin(c->cfg.stream_send_buffer - qmin(held, c->cfg.stream_send_buffer),
-                           c->cfg.conn_send_buffer - qmin(c->send_buffered, c->cfg.conn_send_buffer));
-    room = qmin(room, Q_STREAM_LIMIT - s->tx.end);
+    const proven_u64 room = tx_room(c, s);
     const proven_size_t n = data.size < room ? data.size : (proven_size_t)room;
     if (n && !sendq_write(&c->mem, &s->tx, data.ptr, n)) { c->mem.oom = false; return PROVEN_ERR_NOMEM; }
     c->send_buffered += n;
+    c->tx_written += n;
     *taken = n;
     if (fin && n == data.size) s->tx.fin = true;
     if (n < data.size) s->tx_blocked = true;
@@ -2290,10 +2334,7 @@ proven_u64 proven_quic_stream_room(proven_quic_conn_t *c, proven_u64 id) {
     qstream_t *s = stream_find(c, id);
     if (!s || !s->has_tx || s->tx_reset || s->tx.fin) return 0;
     s->tx_blocked = true;               /* asked because it may wait: told when room is freed */
-    const proven_u64 held = s->tx.end - s->tx.base;
-    proven_u64 room = qmin(c->cfg.stream_send_buffer - qmin(held, c->cfg.stream_send_buffer),
-                           c->cfg.conn_send_buffer - qmin(c->send_buffered, c->cfg.conn_send_buffer));
-    return qmin(room, Q_STREAM_LIMIT - s->tx.end);
+    return tx_room(c, s);
 }
 
 proven_err_t proven_quic_stream_read(proven_quic_conn_t *c, proven_u64 id, proven_mem_mut_t out, proven_size_t *got, bool *fin) {
@@ -2429,6 +2470,8 @@ static proven_quic_conn_t *conn_new(const proven_quic_config_t *cfg, bool server
     c->peer_cid_limit = 2;
     c->idle_timeout = (proven_u64)c->cfg.idle_timeout_ms * 1000;
     c->rx_max_data = c->cfg.conn_window;
+    c->rx_conn_window = c->cfg.conn_window;
+    c->rx_conn_moved_at = c->now;
     c->our_max_streams[0] = c->cfg.max_streams_bidi;
     c->our_max_streams[1] = c->cfg.max_streams_uni;
     c->state = QS_HANDSHAKE;

@@ -838,6 +838,42 @@ int main(void) {
         net_free(n);
     }
 
+    PROVEN_TEST_SECTION("windows that grow", "RFC-0019 section 9: with growth on, a stream read as fast as it arrives gets its window doubled while it is emptied within two round trips, and a transfer over a 20 ms round trip finishes sooner than with fixed windows; a reader that reads nothing holds no more than with fixed windows.", "Inspect rx_grow, rx_credit and tx_room.");
+    {
+        proven_u64 took[2] = { 0, 0 };
+        for (int grow = 0; grow < 2; ++grow) {
+            net_init(n, 170);
+            for (int i = 0; i < 2; ++i) if (grow) { n->cfg[i].stream_window_max = 16u << 20; n->cfg[i].conn_window_max = 24u << 20; }
+            net_start(n);
+            PROVEN_TEST_ASSERT(run_handshake(n, 10000000), "the handshake completes", "");
+            xfers_t *t = calloc(1, sizeof *t);
+            xfer_open(n, t, 1, false, 8u << 20);
+            const proven_u64 started = n->now;
+            PROVEN_TEST_ASSERT(run_xfers(n, t, 120000000), "8 MiB arrive", "");
+            took[grow] = n->now - started;
+            free(t);
+            net_free(n);
+        }
+        printf("  8 MiB over a 20 ms round trip: %.2f s with fixed windows, %.2f s with windows that grow\n", (double)took[0] / 1e6, (double)took[1] / 1e6);
+        PROVEN_TEST_ASSERT(took[1] * 10 < took[0] * 4, "growing windows - the send buffer following the grant - take less than four tenths of the time", "");
+        /* A reader that reads nothing, growth on: the window never moved, so nothing grew. */
+        net_init(n, 171);
+        for (int i = 0; i < 2; ++i) { n->cfg[i].stream_window_max = 16u << 20; n->cfg[i].conn_window_max = 24u << 20; }
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000), "the handshake completes", "");
+        n->reading_off[1] = true;
+        xfers_t *t = calloc(1, sizeof *t);
+        for (int k = 0; k < 6; ++k) xfer_open(n, t, 0, true, 2 << 20);
+        for (int k = 0; k < 400; ++k) { pump(n, t); net_step(n); }
+        proven_quic_stats_t r = stats(n, 1), w = stats(n, 0);
+        printf("  growth on, reader stopped: receiver holds %zu bytes, sender %zu\n", r.memory, w.memory);
+        PROVEN_TEST_ASSERT(r.memory < (1u << 20) + (1u << 19) && w.memory < (1u << 20) + (1u << 19), "a reader that reads nothing holds what it held with fixed windows: growth needs reading", "");
+        n->reading_off[1] = false;
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 120000000), "once read, everything arrives", "");
+        free(t);
+        net_free(n);
+    }
+
     PROVEN_TEST_SECTION("flow control and memory", "A reader that reads nothing: the sender stops at the windows, and the receiver holds no more than its connection window.", "");
     {
         fresh(n, 150);

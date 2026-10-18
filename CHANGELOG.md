@@ -18,6 +18,24 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- HTTP/3 flow-control windows grow (RFC-0019 section 9). With `http3_window_bytes` left at 0 - in
+  the event server and the event client - a stream's window starts at 256 KiB and doubles, up to
+  16 MiB, each time the reader has emptied half of it within two round trips of its last move; the
+  connection's starts at 1 MiB, keeps one and a half of the largest stream window and grows the
+  same way, up to 24 MiB. A body that is not read stops the growth, so a paused or slow reader
+  holds no more than the window it had. The send buffers follow what the peer has granted beyond
+  what it acknowledged, up to the same caps. A value set in `http3_window_bytes` is fixed, as
+  before. The fixed 256 KiB had held one HTTP/3 download over a 20 ms round trip to about 46
+  Mbit/s; through a relay with 10 ms each way it now runs at 64 to 70 (100 MiB: about 68, the
+  same as with every window quadrupled - the relay's ceiling), and with 25 ms each way 19 to 43.
+  No function changed; the default's documentation in `http_event.h`, `http_event_client.h` and
+  manual chapters 15 and 17 did.
+- Tests: `test_unit_quic_conn` - 8 MiB over a 20 ms round trip in less than four tenths of the time
+  with growth on (0.22 s against 1.09 s), and a reader that reads nothing holding with growth on what
+  it held with fixed windows.
+
 ## [0.70.0] - 2026-10-19
 
 ### Changed

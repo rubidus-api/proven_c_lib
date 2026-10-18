@@ -1571,10 +1571,14 @@ underneath:
   packet makes one, and a short packet for an ID nobody holds is answered with a stateless
   reset.
 - **What bounds a write** is QUIC's send buffer - 256 KiB a stream and 1 MiB a connection of
-  data sent and not yet acknowledged - not `max_buffered_output`. A refused write is told
+  data sent and not yet acknowledged, or what the client has granted, up to 16 MiB and 24 MiB -
+  not `max_buffered_output`. A refused write is told
   `on_writable` as on the other two.
 - **A paused request** stops being read, and QUIC's flow control stops the client at
-  `http3_window_bytes`: 256 KiB a stream and 1 MiB a connection by default.
+  `http3_window_bytes`: by default 256 KiB a stream and 1 MiB a connection to begin with, grown -
+  doubling while bodies are read as fast as they come - up to 16 MiB and 24 MiB; a body that is
+  not read stops the growth, so a paused one holds no more than the window it had (v0.71.0).
+  The send buffers follow what the peer has granted, up to the same caps.
 
 | Setting | For HTTP/3 |
 |---|---|
@@ -1582,7 +1586,7 @@ underneath:
 | `max_concurrent_streams` | Request streams a client may open at once on one connection |
 | `max_head_bytes`, `max_headers` | The largest field section, as QPACK counts it, said to the client in SETTINGS; more fields than `max_headers` is `431` |
 | `max_body_bytes` | Per request: `413`, as on HTTP/2 |
-| `http3_window_bytes` (0: 256 KiB a stream, 1 MiB a connection) | Request-body bytes a client may send before the handler has taken them; at most 2^31-1 |
+| `http3_window_bytes` (0: 256 KiB a stream, 1 MiB a connection, growing up to 16 MiB and 24 MiB while bodies are read) | Request-body bytes a client may send before the handler has taken them; a value set is fixed; at most 2^31-1 |
 | `http3_retry` | A Retry for every client's first packet: see the cautions |
 | `head_timeout_ms` | From a connection's first packet - the handshake included - to its first request |
 | `body_timeout_ms` | Silence from one request whose body is owed: that stream is reset, the others go on |
@@ -1667,8 +1671,10 @@ host, port, address), on a UDP socket of its own, shared by its requests; a requ
 server's limit on streams waits on it; an idle one is told goodbye after `idle_timeout_ms` and
 closed; `max_connections` counts it with the TCP ones; `retry_unsent` sends again a request the
 server refused unprocessed (H3_REQUEST_REJECTED, or behind its GOAWAY); `decompress` decodes as
-over the others. A write is bounded by QUIC's send buffer - 256 KiB a stream, 1 MiB a connection
-- and a paused request stops being read, so the server stops at `http3_window_bytes`.
+over the others. A write is bounded by QUIC's send buffer - 256 KiB a stream, 1 MiB a connection,
+or what the server has granted, up to 16 MiB and 24 MiB - and a paused response stops being read,
+so the server stops at the window it had; read as fast as it comes, the window grows to 16 MiB a
+stream and 24 MiB a connection unless `http3_window_bytes` fixes it (v0.71.0).
 
 **There is no fallback.** A request asked over HTTP/3 whose server does not answer over UDP ends
 with `PROVEN_ERR_TIMEOUT` when `connect_timeout_ms` has passed - an unconnected UDP socket hears
