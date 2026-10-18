@@ -220,6 +220,21 @@ int main(void) {
             proven_time_sleep(20);
             for (int i = 0; i < 20 && g_order_n < 2; ++i) (void)proven_loop_poll(g_loop, proven_net_deadline_in(20));
             PROVEN_TEST_ASSERT(g_order_n == 2 && g_order[0] == 3 && g_order[1] == 5, "two timers of one slot that came due together fire earliest first", "");
+            /* A timer one turn of the wheel away (16,385 ms: 1,024 slots of 16 ms and a bit)
+             * lands in the slot the wheel stands in, as a later turn's. Polling must sleep until
+             * the deadline asked for, not return at once: a handful of returns in 200 ms, not
+             * thousands (the first cut of T-1 named the current slot's past boundary). */
+            static const proven_u32 away[2] = { 16385, 32769 };      /* one turn, and two (no timer of the scanned turn at all) */
+            for (int k = 0; k < 2; ++k) {
+                proven_loop_timer_t far = { 0 };
+                g_order_n = 0;
+                proven_loop_timer_set(g_loop, &far, away[k], note, (void *)99);
+                const proven_time_t until = proven_time_monotonic_now() + 200000000;
+                int returns = 0;
+                while (proven_time_monotonic_now() < until && returns < 100000) { (void)proven_loop_poll(g_loop, proven_net_deadline_in(50)); ++returns; }
+                proven_loop_timer_cancel(g_loop, &far);
+                PROVEN_TEST_ASSERT(returns <= 10 && g_order_n == 0, k == 0 ? "a timer a turn away does not wake the loop: no more than a handful of returns in 200 ms" : "nor one two turns away", "");
+            }
         }
 
         /* Timers that come due while the loop was not looking - here it is simply not polled

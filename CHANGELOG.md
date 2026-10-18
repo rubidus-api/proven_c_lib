@@ -26,7 +26,9 @@ written; their tags still exist.
   the loop sleeps until the earliest one, and timers that come due together fire earliest first,
   within a slot too. On POSIX a timer fires within about a millisecond of its time; on Windows the
   wait still ends at the system timer's interval (about 16 ms). A timer never fires early, an idle
-  loop wakes no more often than before (a flat 1 ms tick, measured, would have doubled it), and no
+  loop wakes no more often than before (a flat 1 ms tick, measured, would have doubled it; a timer
+  a whole turn of the wheel away - 16.4 s - never makes the loop's deadline a time already past),
+  a poll with 10,000 far timers costs about 1 us (0.8 before: the walk is capped), and no
   function or structure changed - only the documented rounding (`loop.h`, manual chapters 15 and
   17). Every event driver's timers fire sooner, within their contracts. Measured for HTTP/3
   through a relay with 1 ms of delay each way: a 20 MiB download from 149 to 213 Mbit/s; with 2 %

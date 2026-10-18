@@ -200,19 +200,27 @@ void proven_loop_timer_set(proven_loop_t *l, proven_loop_timer_t *t, proven_u32 
 }
 
 /* When the next timer is due: from the slot the wheel stands in, the first slot holding a timer
- * of its own turn gives the earliest due time among those. When every timer belongs to a later
- * turn, the first non-empty slot's boundary - an early look, as often as before, never late. */
+ * of its own turn gives the earliest due time among those. The scan covers one whole turn and
+ * the current slot again at its end (its timers of the next turn, exact). When every timer belongs
+ * to a later turn - or a crowded slot has shown no timer of its own turn among the first
+ * LOOP_LOOK timers looked at - the boundary of a slot after the current one: an early look, never
+ * a time already past (which would spin), never late. */
+#define LOOP_LOOK 32u
 static proven_net_deadline_t loop_next_timer(const proven_loop_t *l) {
     if (l->timed_count == 0) return PROVEN_NET_NO_DEADLINE;
     proven_u64 first_any = 0;
     bool any = false;
-    for (proven_u64 s = l->wheel_tick; s < l->wheel_tick + LOOP_WHEEL_SLOTS; ++s) {
+    unsigned looked = 0;
+    for (proven_u64 s = l->wheel_tick; s <= l->wheel_tick + LOOP_WHEEL_SLOTS; ++s) {
         const proven_loop_timer_t *t = l->wheel[s % LOOP_WHEEL_SLOTS];
         if (!t) continue;
-        if (!any) { any = true; first_any = s; }
+        if (!any && s > l->wheel_tick) { any = true; first_any = s; }
         proven_u64 best = 0;
         bool found = false;
-        for (; t; t = t->next) if (t->tick / LOOP_TICK_NS == s && (!found || t->tick < best)) { best = t->tick; found = true; }
+        for (; t; t = t->next) {
+            if (t->tick / LOOP_TICK_NS == s && (!found || t->tick < best)) { best = t->tick; found = true; }
+            if (!found && ++looked >= LOOP_LOOK) return (proven_net_deadline_t)((s > l->wheel_tick ? s : l->wheel_tick + 1) * LOOP_TICK_NS);
+        }
         if (found) return (proven_net_deadline_t)best;
     }
     return any ? (proven_net_deadline_t)(first_any * LOOP_TICK_NS) : PROVEN_NET_NO_DEADLINE;
