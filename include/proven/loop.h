@@ -136,8 +136,9 @@ proven_err_t proven_loop_io_set(proven_loop_t *loop, proven_loop_io_t *io, prove
 void proven_loop_io_remove(proven_loop_t *loop, proven_loop_io_t *io);
 
 /**
- * @brief Call `fn(ctx)` once, `ms` milliseconds from now (rounded up to the loop's tick of
- *        16 ms). Setting a timer that is already set moves it.
+ * @brief Call `fn(ctx)` once, `ms` milliseconds from now: never earlier, and on POSIX within
+ *        about a millisecond of it; on Windows at the system timer's interval (about 16 ms).
+ *        Setting a timer that is already set moves it.
  */
 void proven_loop_timer_set(proven_loop_t *loop, proven_loop_timer_t *timer, proven_u32 ms, proven_loop_fn fn, void *ctx);
 

@@ -161,8 +161,12 @@ void proven_loop_io_remove(proven_loop_t *l, proven_loop_io_t *io) {
 // Timers
 // -----------------------------------------------------------------------------
 
+/* A timer's `tick` holds its due time in nanoseconds on the loop's clock (RFC-0019 T-1); its
+ * slot is the tick of the wheel that time falls in. */
+static proven_size_t timer_slot(const proven_loop_timer_t *t) { return (proven_size_t)((t->tick / LOOP_TICK_NS) % LOOP_WHEEL_SLOTS); }
+
 static void timer_unlink(proven_loop_t *l, proven_loop_timer_t *t) {
-    proven_loop_timer_t **head = t->state == TIMER_DUE ? &l->due : &l->wheel[t->tick % LOOP_WHEEL_SLOTS];
+    proven_loop_timer_t **head = t->state == TIMER_DUE ? &l->due : &l->wheel[timer_slot(t)];
     if (t->prev) t->prev->next = t->next;
     else *head = t->next;
     if (t->next) t->next->prev = t->prev;
@@ -181,11 +185,12 @@ bool proven_loop_timer_is_set(const proven_loop_timer_t *t) { return t && t->sta
 void proven_loop_timer_set(proven_loop_t *l, proven_loop_timer_t *t, proven_u32 ms, proven_loop_fn fn, void *ctx) {
     if (!l || !t || !fn) return;
     proven_loop_timer_cancel(l, t);
-    /* Rounded up to a tick, and never into a slot the wheel has already passed. */
-    proven_u64 tick = (proven_u64)(loop_now(l) + (proven_time_t)ms * 1000000) / LOOP_TICK_NS + 1;
-    if (tick <= l->wheel_tick) tick = l->wheel_tick + 1;
-    t->fn = fn; t->ctx = ctx; t->tick = tick;
-    proven_size_t slot = (proven_size_t)(tick % LOOP_WHEEL_SLOTS);
+    /* Due at the time asked for (RFC-0019 T-1: no longer rounded up to the next tick); never in
+     * a tick the wheel has already passed. */
+    proven_u64 due = (proven_u64)loop_now(l) + (proven_u64)ms * 1000000u;
+    if (due / LOOP_TICK_NS < l->wheel_tick) due = l->wheel_tick * (proven_u64)LOOP_TICK_NS;
+    t->fn = fn; t->ctx = ctx; t->tick = due;
+    proven_size_t slot = timer_slot(t);
     t->prev = (void *)0;
     t->next = l->wheel[slot];
     if (t->next) t->next->prev = t;
@@ -194,36 +199,52 @@ void proven_loop_timer_set(proven_loop_t *l, proven_loop_timer_t *t, proven_u32 
     l->timed_count++;
 }
 
-/* When the next timer may be due: the time of the first slot that holds anything. A slot can
- * hold timers of a later turn, so this may be early - which costs one look - but never late. */
+/* When the next timer is due: from the slot the wheel stands in, the first slot holding a timer
+ * of its own turn gives the earliest due time among those. When every timer belongs to a later
+ * turn, the first non-empty slot's boundary - an early look, as often as before, never late. */
 static proven_net_deadline_t loop_next_timer(const proven_loop_t *l) {
     if (l->timed_count == 0) return PROVEN_NET_NO_DEADLINE;
-    for (proven_u64 t = l->wheel_tick + 1; t <= l->wheel_tick + LOOP_WHEEL_SLOTS; ++t) {
-        if (l->wheel[t % LOOP_WHEEL_SLOTS]) return (proven_net_deadline_t)(t * LOOP_TICK_NS);
+    proven_u64 first_any = 0;
+    bool any = false;
+    for (proven_u64 s = l->wheel_tick; s < l->wheel_tick + LOOP_WHEEL_SLOTS; ++s) {
+        const proven_loop_timer_t *t = l->wheel[s % LOOP_WHEEL_SLOTS];
+        if (!t) continue;
+        if (!any) { any = true; first_any = s; }
+        proven_u64 best = 0;
+        bool found = false;
+        for (; t; t = t->next) if (t->tick / LOOP_TICK_NS == s && (!found || t->tick < best)) { best = t->tick; found = true; }
+        if (found) return (proven_net_deadline_t)best;
     }
-    return PROVEN_NET_NO_DEADLINE;
+    return any ? (proven_net_deadline_t)(first_any * LOOP_TICK_NS) : PROVEN_NET_NO_DEADLINE;
 }
 
 static void loop_timers_advance(proven_loop_t *l) {
-    proven_u64 target = (proven_u64)loop_now(l) / LOOP_TICK_NS;
-    if (target <= l->wheel_tick) return;
+    const proven_u64 now = (proven_u64)loop_now(l);
+    proven_u64 target = now / LOOP_TICK_NS;
+    if (target < l->wheel_tick) target = l->wheel_tick;
     if (l->timed_count > 0) {
-        /* After a long sleep every slot is visited once; more turns would find nothing new. */
-        proven_u64 from = target - l->wheel_tick > LOOP_WHEEL_SLOTS ? target - LOOP_WHEEL_SLOTS + 1 : l->wheel_tick + 1;
-        /* Slots are visited in the order of their times, and what is due is appended, so that
-         * timers which come due together still fire earliest first. */
+        /* From the slot the wheel stands in (its timers may have come due within the tick) to
+         * the one `now` falls in; after a long sleep every slot is visited once. */
+        proven_u64 from = target - l->wheel_tick >= LOOP_WHEEL_SLOTS ? target - LOOP_WHEEL_SLOTS + 1 : l->wheel_tick;
+        /* Slots are visited in the order of their times, and each timer that is due goes into
+         * the due list by its due time, so that timers which come due together fire earliest
+         * first - within a slot too. Walked back from the tail: they mostly come in order. */
         proven_loop_timer_t *tail = l->due;
         while (tail && tail->next) tail = tail->next;
         for (proven_u64 s = from; s <= target && l->timed_count > 0; ++s) {
             proven_loop_timer_t *t = l->wheel[s % LOOP_WHEEL_SLOTS];
             while (t) {
                 proven_loop_timer_t *next = t->next;
-                if (t->tick <= target) {
+                if (t->tick <= now) {
                     timer_unlink(l, t);
-                    t->prev = tail;
-                    if (tail) tail->next = t;
+                    proven_loop_timer_t *after = tail;
+                    while (after && after->tick > t->tick) after = after->prev;
+                    t->prev = after;
+                    t->next = after ? after->next : l->due;
+                    if (t->next) t->next->prev = t;
+                    else tail = t;
+                    if (after) after->next = t;
                     else l->due = t;
-                    tail = t;
                     t->state = TIMER_DUE;
                 }
                 t = next;

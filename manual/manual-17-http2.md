@@ -1609,8 +1609,10 @@ as they end HTTP/2 ones.
 - **The key for Retry tokens and stateless resets is drawn when the server is made.** A
   restarted server cannot reset a client's old connection; that client waits out its idle
   timeout.
-- **Timers have the loop's 16 ms tick.** A quiet connection's QUIC timer - a probe, a delayed
-  acknowledgement - fires up to 16 ms late; a busy one does its work in each round.
+- **Timers fire at their time** (within about a millisecond on POSIX, at the system timer's
+  interval on Windows; v0.70.0): a quiet connection's QUIC timer - a probe, a delayed
+  acknowledgement - no longer waits for the next 16 ms boundary; a busy one does its work in each
+  round.
 - **How fast HTTP/3 is depends on the platform.** On Linux the datagrams of a round go to the
   kernel together - up to 45 of 1,452 bytes in one call (`UDP_SEGMENT`), and a receive may hand
   several back (`UDP_GRO`); everywhere else each datagram is one system call. Each is encrypted

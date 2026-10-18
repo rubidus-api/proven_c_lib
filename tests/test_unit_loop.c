@@ -190,6 +190,38 @@ int main(void) {
         spin(120);
         PROVEN_TEST_ASSERT(g_order_n == 1 && g_order[0] == 2, "and fires once, with what it was last given", "");
 
+        /* Precision (RFC-0019 T-1): a timer fires at the time asked for, not at the next 16 ms
+         * boundary - on POSIX within a few milliseconds (12 here, loose for a loaded host; the
+         * wheel alone fired a 3 ms timer 16 to 32 ms late). Windows waits at its system timer's
+         * interval, so there only "not early" is checked. */
+        {
+            int early = 0, late = 0;
+            for (int k = 0; k < 5; ++k) {
+                g_order_n = 0;
+                const proven_time_t set_at = proven_time_monotonic_now();
+                proven_loop_timer_set(g_loop, &t1, 3, note, (void *)1);
+                for (int i = 0; i < 200 && g_order_n == 0; ++i) (void)proven_loop_poll(g_loop, proven_net_deadline_in(50));
+                const proven_time_t took = g_fired_at[0] - set_at;
+                if (took < 3000000) ++early;
+                if (took >= 12000000) ++late;
+            }
+            PROVEN_TEST_ASSERT(early == 0, "a 3 ms timer never fires before 3 ms", "");
+#if !defined(_WIN32)
+            PROVEN_TEST_ASSERT(late <= 1, "and fires within 12 ms (at least four times in five): not rounded up to the wheel's 16 ms", "");
+#else
+            (void)late;
+#endif
+            /* Two timers in one 16 ms slot, both due by the time the loop looks: earliest first. */
+            proven_loop_timer_t a5 = { 0 }, a3 = { 0 };
+            g_order_n = 0;
+            /* Set earliest first: a slot's list then holds them latest first. */
+            proven_loop_timer_set(g_loop, &a3, 3, note, (void *)3);
+            proven_loop_timer_set(g_loop, &a5, 5, note, (void *)5);
+            proven_time_sleep(20);
+            for (int i = 0; i < 20 && g_order_n < 2; ++i) (void)proven_loop_poll(g_loop, proven_net_deadline_in(20));
+            PROVEN_TEST_ASSERT(g_order_n == 2 && g_order[0] == 3 && g_order[1] == 5, "two timers of one slot that came due together fire earliest first", "");
+        }
+
         /* Timers that come due while the loop was not looking - here it is simply not polled
          * for 200 ms - fire together, and still earliest first. */
         {

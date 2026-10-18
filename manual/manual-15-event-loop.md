@@ -97,8 +97,10 @@ bool proven_loop_timer_is_set(const proven_loop_timer_t *timer);
 A `proven_loop_timer_t` is yours: put it inside the struct it belongs to, zero-initialised, and
 do not copy or move it while it is set. Setting one allocates nothing.
 
-- A timer **fires once**, `ms` milliseconds from now, rounded up to the loop's tick of 16 ms. It
-  does not fire early. One that should repeat sets itself again in its own function.
+- A timer **fires once**, `ms` milliseconds from now. It does not fire early, and on POSIX it
+  fires within about a millisecond of that time; on Windows the wait ends at the system timer's
+  interval, about 16 ms (until v0.70.0 every timer was rounded up to the loop's 16 ms tick). One
+  that should repeat sets itself again in its own function.
 - Setting a timer that is already set **moves** it.
 - `proven_loop_timer_cancel` is safe inside any callback, another timer's included, and
   harmless when the timer is not set.

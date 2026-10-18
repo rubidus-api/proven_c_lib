@@ -18,6 +18,23 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- The event loop's timers fire at the time asked for (RFC-0019 T-1). `proven_loop_timer_set`
+  rounded `ms` up to the loop's 16 ms tick and fired at the next boundary after it - up to 16 ms
+  late, more for short timers; each timer now keeps its exact due time inside the same 16 ms wheel,
+  the loop sleeps until the earliest one, and timers that come due together fire earliest first,
+  within a slot too. On POSIX a timer fires within about a millisecond of its time; on Windows the
+  wait still ends at the system timer's interval (about 16 ms). A timer never fires early, an idle
+  loop wakes no more often than before (a flat 1 ms tick, measured, would have doubled it), and no
+  function or structure changed - only the documented rounding (`loop.h`, manual chapters 15 and
+  17). Every event driver's timers fire sooner, within their contracts. Measured for HTTP/3
+  through a relay with 1 ms of delay each way: a 20 MiB download from 149 to 213 Mbit/s; with 2 %
+  loss, the 90th percentile of a request from 17-52 ms (two runs) to 10 ms; paths with 10 ms each
+  way unchanged.
+- Tests: `test_unit_loop` checks a 3 ms timer's firing (never early; within 12 ms on POSIX) and the
+  order of two timers due within one slot.
+
 ## [0.69.0] - 2026-10-18
 
 ### Fixed
