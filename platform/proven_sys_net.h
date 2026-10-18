@@ -139,6 +139,31 @@ proven_sys_net_result_t proven_sys_net_recv_from(proven_sys_socket_t sock, void 
 proven_sys_net_result_t proven_sys_net_send_to(proven_sys_socket_t sock, const void *buf, proven_size_t len,
                                                const proven_sys_net_addr_t *to);
 
+/** The largest batch proven_sys_net_send_segments takes: the kernel's limits on one UDP send. */
+#define PROVEN_SYS_NET_SEGMENTS_MAX_BYTES ((proven_size_t)65507)
+#define PROVEN_SYS_NET_SEGMENTS_MAX_COUNT 64
+
+/** Send `total` bytes as datagrams of `seg` bytes each (the last may be shorter) to one address
+ *  (RFC-0018 S-3). On Linux one call carries them (UDP_SEGMENT, GSO) when the kernel takes it;
+ *  everywhere else, and after a refusal, one datagram at a time. `sent` says how many bytes
+ *  went - all of them on OK; on WOULD_BLOCK a whole number of datagrams, the rest not sent. At
+ *  most PROVEN_SYS_NET_SEGMENTS_MAX_BYTES and _MAX_COUNT datagrams. */
+proven_sys_net_result_t proven_sys_net_send_segments(proven_sys_socket_t sock, const void *buf, proven_size_t total,
+                                                     proven_size_t seg, const proven_sys_net_addr_t *to, proven_size_t *sent);
+
+/** Ask for UDP_GRO (Linux): the kernel may then hand several datagrams of one sender in one
+ *  receive, their size reported by proven_sys_net_recv_segments. UNSUPPORTED elsewhere. */
+proven_sys_net_result_t proven_sys_net_udp_gro(proven_sys_socket_t sock);
+
+/** proven_sys_net_recv_from, and in `seg` the size of each datagram when the buffer holds
+ *  several (a GRO receive; the last may be shorter), or 0 when it holds one. */
+proven_sys_net_result_t proven_sys_net_recv_segments(proven_sys_socket_t sock, void *buf, proven_size_t cap,
+                                                     proven_size_t *received, proven_size_t *seg, proven_sys_net_addr_t *from);
+
+/** For tests: true makes the process send one datagram at a time and ask for no GRO, as every
+ *  platform but Linux does. */
+void proven_sys_net_segments_off_for_test_(bool off);
+
 /** Close the sending side; the peer reads end of input, and this side can still receive. */
 proven_sys_net_result_t proven_sys_net_shutdown_write(proven_sys_socket_t sock);
 

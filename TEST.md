@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 122 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 125 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-18, Windows 11 test VM (v0.67.0): x86-64 356 PASS, 0 FAIL, 10 
 ## Test catalog
 
 
-The hosted full run builds and executes 188 registered tests plus the 178 runnable manual examples - 366 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 201 test files: the 184 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 191 registered tests plus the 178 runnable manual examples - 369 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 204 test files: the 187 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1079,6 +1079,12 @@ The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 
 Failure tip: inspect `src/proven/http_event_h3.c`: `x_datagram` for what arrives, `d_request` and `d_body` for requests, `s_head` and `s_push` for what leaves, `d_service` for a round, `d_arm` and `d_check_time` for time, `d_bye` for goodbye. `Alt-Svc` is added in `ev_build_head` (`src/proven/http_event.c`) and `s_head` (`src/proven/http_event_h2.c`). Not covered here: other implementations - the private check runs curl and aioquic's client against this server, and h3spec.
 
+### `tests/test_unit_http_event_h3_fallback` - the event-driven HTTP server, speaking HTTP/3, one datagram a call
+
+Intent: run `test_unit_http_event_h3` again with datagrams sent one a call and no GRO asked for (RFC-0018 S-3): the way every platform but Linux sends, and the way Linux falls back when its kernel refuses `UDP_SEGMENT` - so that way is a tested path on Linux too. The file sets the switch and includes the other test; its sub-checks are that test's.
+
+Failure tip: if only this one fails, inspect the one-at-a-time branch of `proven_sys_net_send_segments`; otherwise as for `test_unit_http_event_h3`.
+
 ### `tests/test_unit_http_event_loops` - several loops behind one port
 
 Intent: verify `proven_http_event_server_adopt`, the call by which a connection accepted on one thread is given to a server on another thread's loop - and that the pattern built on it keeps every connection on one thread.
@@ -1193,6 +1199,12 @@ Sub-checks:
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 
 Failure tip: inspect `src/proven/http_event_client_h3.c`: `r_submit` and `r_push` for what leaves, `c_event` for what arrives, `c_round` for a round and for when `on_writable` is called, `c_check_time` and `c_arm` for time, `c_open` for a connection, `c_close_reason` for what a failed handshake means, `r_unsent` and `r_place` for a request sent again after a GOAWAY. The choice of protocol is the `http3` branch in `proven_http_event_client_start_h1_` (`src/proven/http_event_client.c`). Not covered here: other implementations - the private check runs this client against aioquic's server and public servers; a request refused with `H3_REQUEST_REJECTED` after the second GOAWAY, which is bound to timing.
+
+### `tests/test_unit_http_event_client_h3_fallback` - the event-driven HTTP client, speaking HTTP/3, one datagram a call
+
+Intent: run `test_unit_http_event_client_h3` again with datagrams sent one a call and no GRO asked for (RFC-0018 S-3), as `test_unit_http_event_h3_fallback` does for the server. Its sub-checks are that test's.
+
+Failure tip: if only this one fails, inspect the one-at-a-time branch of `proven_sys_net_send_segments`; otherwise as for `test_unit_http_event_client_h3`.
 
 ### `tests/test_unit_http_coding` - http: content codings
 
@@ -1747,6 +1759,18 @@ Sub-checks:
 - Close resets the value; calls on a closed socket are `PROVEN_ERR_INVALID_STATE`; a Unix-domain address is `PROVEN_ERR_UNSUPPORTED`.
 
 Failure tip: inspect `proven_sys_net_recv_from` in `platform/proven_sys_net.c` - the truncation report and, on Windows, `SIO_UDP_CONNRESET`.
+
+### `tests/test_unit_net_udp_segments` - net: batched datagrams
+
+Intent: verify the internal segment calls of RFC-0018 S-3 over loopback: datagrams of one size, the last possibly shorter, sent in one call where the platform can (Linux: `UDP_SEGMENT`, GSO) and one at a time where it cannot or is told not to, and received with the size reported when the kernel hands several in one receive (Linux: `UDP_GRO`). Whatever the kernel does, the receiving side must see the same datagrams.
+
+Sub-checks:
+
+- Refusals before anything is sent: a datagram size of 0; 65 datagrams; 65,508 bytes. Nothing to send is a success.
+- In four modes - the platform's way and the one-at-a-time way forced, each against a fresh receiver with GRO asked for and one without (with the one-at-a-time way forced, GRO is not granted): 1, 2, 44 and 45 datagrams of 1,452 bytes, 44 with a 300-byte last one, 1 with a 700-byte last one, 54 of 1,200 and 53 with a 1-byte last one, 64 of 60 and 63 with a 20-byte last one - every datagram received in order, its size and every byte as sent.
+- How many receives held several datagrams is printed, never asserted: it depends on the kernel and the interface (0 off Linux).
+
+Failure tip: inspect `proven_sys_net_send_segments` and `proven_sys_net_recv_segments` in `platform/proven_sys_net.c` and their wrappers in `src/proven/net.c`.
 
 ### `tests/test_unit_net_unix` - net: Unix-domain stream sockets
 

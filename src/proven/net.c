@@ -3,6 +3,7 @@
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 
 #include "../../platform/proven_sys_net.h"
+#include "proven_internal_quic_net.h"
 
 /*
  * The portable half of the socket layer. Everything the operating system does is in
@@ -766,6 +767,40 @@ proven_result_size_t proven_net_udp_recv_from(proven_net_udp_t *udp, proven_mem_
         if (w != PROVEN_OK) { res.err = w; return res; }
     }
 }
+
+proven_err_t proven_net_udp_send_segments_(proven_net_udp_t *udp, proven_net_addr_t to, proven_mem_view_t data, proven_size_t seg, proven_size_t *sent) {
+    *sent = 0;
+    if (!udp || (data.size > 0 && !data.ptr) || seg == 0) return PROVEN_ERR_INVALID_ARG;
+    if (!udp->internal.open) return PROVEN_ERR_INVALID_STATE;
+    proven_sys_net_addr_t sys;
+    internal_addr_to_sys(&to, &sys);
+    const proven_sys_net_result_t r = proven_sys_net_send_segments((proven_sys_socket_t)udp->internal.handle, data.ptr, data.size, seg, &sys, sent);
+    return r == PROVEN_SYS_NET_WOULD_BLOCK ? PROVEN_ERR_TIMEOUT : internal_err_from_reason(r);
+}
+
+proven_result_size_t proven_net_udp_recv_segments_(proven_net_udp_t *udp, proven_mem_mut_t dest, proven_size_t *seg, proven_net_addr_t *from) {
+    proven_result_size_t res = { .err = PROVEN_OK, .value = 0 };
+    *seg = 0;
+    if (!udp || (dest.size > 0 && !dest.ptr)) { res.err = PROVEN_ERR_INVALID_ARG; return res; }
+    if (!udp->internal.open) { res.err = PROVEN_ERR_INVALID_STATE; return res; }
+    proven_size_t n = 0;
+    proven_sys_net_addr_t sys;
+    const proven_sys_net_result_t r = proven_sys_net_recv_segments((proven_sys_socket_t)udp->internal.handle, dest.ptr, dest.size, &n, seg, &sys);
+    if (r == PROVEN_SYS_NET_OK || r == PROVEN_SYS_NET_TRUNCATED) {
+        res.value = n;
+        res.err = internal_err_from_reason(r);
+        if (from) internal_addr_from_sys(&sys, from);
+        return res;
+    }
+    res.err = r == PROVEN_SYS_NET_WOULD_BLOCK ? PROVEN_ERR_TIMEOUT : internal_err_from_reason(r);
+    return res;
+}
+
+bool proven_net_udp_gro_(proven_net_udp_t *udp) {
+    return udp && udp->internal.open && proven_sys_net_udp_gro((proven_sys_socket_t)udp->internal.handle) == PROVEN_SYS_NET_OK;
+}
+
+void proven_net_udp_segments_off_for_test_(bool off) { proven_sys_net_segments_off_for_test_(off); }
 
 proven_err_t proven_net_udp_addr(const proven_net_udp_t *udp, proven_net_addr_t *out) {
     if (!out) return PROVEN_ERR_INVALID_ARG;

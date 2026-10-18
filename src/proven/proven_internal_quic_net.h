@@ -10,6 +10,20 @@
 #include "proven/net.h"
 #include "proven_internal_quic.h"
 
+#if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
+/* Batched datagrams (RFC-0018 S-3), in net.c over the platform's segment calls; never waiting.
+ * send: `data` as datagrams of `seg` bytes (the last may be shorter); `*sent` bytes went - all
+ * on PROVEN_OK, a whole number of datagrams on PROVEN_ERR_TIMEOUT (the socket would block).
+ * recv: one receive; `*seg` the size of each datagram when it holds several, else 0;
+ * PROVEN_ERR_TIMEOUT when there is nothing. gro: whether the socket may coalesce. */
+#define PROVEN_NET_UDP_BATCH_BYTES ((proven_size_t)65507)
+#define PROVEN_NET_UDP_BATCH_COUNT 64
+proven_err_t proven_net_udp_send_segments_(proven_net_udp_t *udp, proven_net_addr_t to, proven_mem_view_t data, proven_size_t seg, proven_size_t *sent);
+proven_result_size_t proven_net_udp_recv_segments_(proven_net_udp_t *udp, proven_mem_mut_t dest, proven_size_t *seg, proven_net_addr_t *from);
+bool proven_net_udp_gro_(proven_net_udp_t *udp);
+void proven_net_udp_segments_off_for_test_(bool off);
+#endif
+
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET) && !defined(PROVEN_NO_HTTP3)
 
 static inline proven_quic_addr_t proven_quic_addr_of_(const proven_net_addr_t *a) {

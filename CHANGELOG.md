@@ -18,6 +18,28 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- HTTP/3 on Linux sends a round's datagrams together and receives them together (RFC-0018 S-3;
+  no API change). The event server and the event client gather the datagrams a connection has
+  for one address while they are one size and hand them to the kernel in one call
+  (`UDP_SEGMENT`, GSO: up to 64 datagrams and 65,507 bytes - 45 of 1,452); their UDP sockets ask
+  for `UDP_GRO`, and a receive that holds several datagrams is split and each handed to the QUIC
+  connection as if alone. A kernel that refuses `UDP_SEGMENT` is remembered and the batch in hand
+  goes one datagram at a time, not dropped; every other platform sends one datagram a call, as
+  before (Windows' USO and URO are not used). What the socket will not take is kept, a batch's
+  worth, and sent when it will. Measured on Linux loopback with this library at both ends, one
+  1 GiB download through a handler that costs next to nothing, median of five: HTTP/3 from 2,675
+  to 4,380 Mbit/s, 0.95 of HTTP/2 (4,604 in the same run); system time per GiB from 1.40 to 0.15 s
+  on the client and from 1.86 to 0.25 s on the server - below HTTP/2's 0.40 and 0.58. One 100 MiB
+  download from the event server to curl: 219 to 369 MiB/s (HTTP/2 382).
+- Tests: `test_unit_net_udp_segments` - batches of 1 to 64 datagrams of 1,452, 1,200 and 60
+  bytes, with and without a shorter last one, sent in one call and one at a time, received with
+  GRO and without: every datagram, its size and every byte; the refusals.
+  `test_unit_http_event_h3_fallback` and `test_unit_http_event_client_h3_fallback` - the two
+  HTTP/3 event tests again with datagrams sent one a call and no GRO, so the path every other
+  platform takes is tested on Linux too.
+
 ## [0.67.0] - 2026-10-18
 
 ### Changed

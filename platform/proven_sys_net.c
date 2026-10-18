@@ -139,6 +139,9 @@ static void native_datagram_options(native_socket_t s) {
 #include <sys/un.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#if defined(__linux__)
+#include <netinet/udp.h>
+#endif
 
 typedef int native_socket_t;
 typedef socklen_t native_len_t;
@@ -654,6 +657,114 @@ proven_sys_net_result_t proven_sys_net_send_to(proven_sys_socket_t sock, const v
         if (net_interrupted(e)) continue;
         return net_reason(e);
     }
+}
+
+/* RFC-0018 S-3: batched datagrams. */
+static bool g_segments_off;             /* the test switch */
+#if defined(__linux__) && defined(UDP_SEGMENT)
+static bool g_gso_refused;              /* the kernel refused UDP_SEGMENT once: not asked again */
+#endif
+
+void proven_sys_net_segments_off_for_test_(bool off) { g_segments_off = off; }
+
+proven_sys_net_result_t proven_sys_net_send_segments(proven_sys_socket_t sock, const void *buf, proven_size_t total,
+                                                     proven_size_t seg, const proven_sys_net_addr_t *to, proven_size_t *sent) {
+    const unsigned char *p = (const unsigned char *)buf;
+    *sent = 0;
+    if (total == 0) return PROVEN_SYS_NET_OK;
+    if (seg == 0 || total > PROVEN_SYS_NET_SEGMENTS_MAX_BYTES || (total + seg - 1) / seg > PROVEN_SYS_NET_SEGMENTS_MAX_COUNT) return PROVEN_SYS_NET_TOO_BIG;
+#if defined(__linux__) && defined(UDP_SEGMENT)
+    if (!g_segments_off && !g_gso_refused && total > seg) {
+        struct sockaddr_storage ss;
+        const native_len_t sl = to_native(to, &ss);
+        if (sl == 0) return PROVEN_SYS_NET_ADDR_INVALID;
+        struct iovec iov = { .iov_base = (void *)(proven_uintptr_t)p, .iov_len = (size_t)total };
+        union { char b[CMSG_SPACE(sizeof(proven_u16))]; struct cmsghdr align; } ctl;
+        memset(&ctl, 0, sizeof ctl);
+        struct msghdr msg;
+        memset(&msg, 0, sizeof msg);
+        msg.msg_name = &ss;
+        msg.msg_namelen = sl;
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = ctl.b;
+        msg.msg_controllen = sizeof ctl.b;
+        struct cmsghdr *c = CMSG_FIRSTHDR(&msg);
+        c->cmsg_level = IPPROTO_UDP;
+        c->cmsg_type = UDP_SEGMENT;
+        c->cmsg_len = CMSG_LEN(sizeof(proven_u16));
+        const proven_u16 size = (proven_u16)seg;
+        memcpy(CMSG_DATA(c), &size, sizeof size);
+        for (;;) {
+            const ssize_t n = sendmsg((native_socket_t)sock, &msg, NATIVE_SEND_FLAGS);
+            if (n >= 0) { *sent = (proven_size_t)n; return (proven_size_t)n == total ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_ERROR; }
+            const int e = net_last_error();
+            if (net_interrupted(e)) continue;
+            /* A kernel without GSO for this socket: remembered, and this batch goes one datagram
+             * at a time - not dropped, which would read as a path that lost them all. */
+            if (e == EIO || e == EINVAL || e == ENOPROTOOPT || e == EOPNOTSUPP) { g_gso_refused = true; break; }
+            if (e == EMSGSIZE) break;           /* larger than this path takes in one: one at a time says which */
+            return net_reason(e);
+        }
+    }
+#endif
+    while (*sent < total) {
+        const proven_size_t n = total - *sent < seg ? total - *sent : seg;
+        const proven_sys_net_result_t r = proven_sys_net_send_to(sock, p + *sent, n, to);
+        if (r != PROVEN_SYS_NET_OK) return r;
+        *sent += n;
+    }
+    return PROVEN_SYS_NET_OK;
+}
+
+proven_sys_net_result_t proven_sys_net_udp_gro(proven_sys_socket_t sock) {
+#if defined(__linux__) && defined(UDP_GRO)
+    if (g_segments_off) return PROVEN_SYS_NET_UNSUPPORTED;
+    const int on = 1;
+    return setsockopt((native_socket_t)sock, IPPROTO_UDP, UDP_GRO, &on, (socklen_t)sizeof on) == 0 ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_UNSUPPORTED;
+#else
+    (void)sock;
+    return PROVEN_SYS_NET_UNSUPPORTED;
+#endif
+}
+
+proven_sys_net_result_t proven_sys_net_recv_segments(proven_sys_socket_t sock, void *buf, proven_size_t cap,
+                                                     proven_size_t *received, proven_size_t *seg, proven_sys_net_addr_t *from) {
+    *seg = 0;
+#if defined(__linux__) && defined(UDP_GRO)
+    *received = 0;
+    for (;;) {
+        struct sockaddr_storage ss;
+        memset(&ss, 0, sizeof ss);
+        struct iovec iov = { .iov_base = buf, .iov_len = (size_t)clamp_len(cap) };
+        union { char b[CMSG_SPACE(sizeof(int)) * 4]; struct cmsghdr align; } ctl;
+        struct msghdr msg;
+        memset(&msg, 0, sizeof msg);
+        msg.msg_name = &ss;
+        msg.msg_namelen = (socklen_t)sizeof ss;
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = ctl.b;
+        msg.msg_controllen = sizeof ctl.b;
+        const ssize_t n = recvmsg((native_socket_t)sock, &msg, 0);
+        if (n >= 0) {
+            *received = (proven_size_t)n;
+            if (from) from_native(&ss, msg.msg_namelen, from);
+            for (struct cmsghdr *c = CMSG_FIRSTHDR(&msg); c; c = CMSG_NXTHDR(&msg, c)) {
+                if (c->cmsg_level != IPPROTO_UDP || c->cmsg_type != UDP_GRO) continue;
+                int size = 0;
+                memcpy(&size, CMSG_DATA(c), sizeof size);
+                if (size > 0 && (proven_size_t)size < *received) *seg = (proven_size_t)size;
+            }
+            return (msg.msg_flags & MSG_TRUNC) ? PROVEN_SYS_NET_TRUNCATED : PROVEN_SYS_NET_OK;
+        }
+        const int e = net_last_error();
+        if (net_interrupted(e)) continue;
+        return net_reason(e);
+    }
+#else
+    return proven_sys_net_recv_from(sock, buf, cap, received, from);
+#endif
 }
 
 proven_sys_net_result_t proven_sys_net_shutdown_write(proven_sys_socket_t sock) {

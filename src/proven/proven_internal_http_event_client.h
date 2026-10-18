@@ -142,6 +142,7 @@ struct proven_http_event_client {
     proven_size_t h3_roomless_count;
     bool h3_room_busy;
     void *h3_delayed;                  /* and those that wait for a try (retry_delay_ms), in no order that matters */
+    proven_byte_t *h3_batch;           /* a connection's datagrams gathered for one send (RFC-0018 S-3); made when first needed */
 };
 
 // -----------------------------------------------------------------------------

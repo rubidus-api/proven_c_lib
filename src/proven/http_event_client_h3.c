@@ -32,6 +32,7 @@
 #define C3_OUT ((proven_size_t)1500)
 #define C3_DATAGRAM ((proven_size_t)65536)
 #define C3_READS 256
+#define C3_BATCH PROVEN_NET_UDP_BATCH_BYTES
 #define C3_SENDS 64
 #define C3_COPY_BEHIND 1024u
 
@@ -85,8 +86,9 @@ struct c3conn {
     proven_u8 host_len, want;
     bool dead, up, closed, over, registered, client_going, bye;
     proven_err_t closed_why;           /* what the close means for a request that was never answered */
-    proven_size_t pend_len;            /* a datagram the socket would not take */
-    proven_byte_t pend[C3_OUT];
+    proven_size_t pend_len;            /* datagrams the socket would not take */
+    proven_size_t pend_seg;            /* their size (the last may be shorter) */
+    proven_byte_t pend[C3_BATCH];
     proven_byte_t host[256];
 };
 
@@ -301,18 +303,46 @@ static void c_call_back(c3conn_t *c) {
     proven_loop_after_(c->client->loop, &c->after, c_after, c);
 }
 
+/* Datagrams of `seg` bytes (the last may be shorter) out in one call where the platform can;
+ * what the socket will not take now is kept, and nothing more goes until it has. */
+static void c_send_batch(c3conn_t *c, const proven_byte_t *p, proven_size_t n, proven_size_t seg) {
+    if (c->pend_len > 0 || n == 0) return;
+    proven_size_t sent = 0;
+    const proven_err_t e = proven_net_udp_send_segments_(&c->udp, c->to, (proven_mem_view_t){ .ptr = p, .size = n }, seg, &sent);
+    if (e != PROVEN_ERR_TIMEOUT) return;          /* sent, or lost as UDP may lose it */
+    proven_sys_mem_copy(c->pend, p + sent, n - sent);
+    c->pend_len = n - sent;
+    c->pend_seg = seg;
+}
+
 static void c_send(c3conn_t *c) {
     if (c->dead) return;
-    proven_byte_t out[C3_OUT];
-    int k = 0;
+    proven_http_event_client_t *cl = c->client;
+    if (!cl->h3_batch) cl->h3_batch = c3_alloc(cl->alloc, C3_BATCH);
+    proven_byte_t one[C3_OUT];
+    proven_byte_t *buf = cl->h3_batch ? cl->h3_batch : one;     /* without it, one datagram a call */
+    const proven_size_t cap = cl->h3_batch ? C3_BATCH : C3_OUT;
+    /* Gathered while they are one size (RFC-0018 S-3): a larger one (a PMTU probe) sends what is
+     * gathered first; a shorter one ends the batch; so do the platform's limits and the round. */
+    proven_size_t at = 0, seg = 0;
+    int count = 0, k = 0;
     for (; k < C3_SENDS; ++k) {
-        if (c->pend_len > 0) break;
+        if (at == 0 && c->pend_len > 0) break;
+        if (cap - at < C3_OUT) { c_send_batch(c, buf, at, seg); at = 0; count = 0; --k; continue; }
         proven_size_t len = 0;
         proven_quic_addr_t to;
-        if (proven_quic_conn_send(c->q, c3_now_us(), (proven_mem_mut_t){ .ptr = out, .size = sizeof out }, &len, &to) != PROVEN_OK || len == 0) break;
-        const proven_err_t e = proven_net_udp_send_to(&c->udp, c->to, (proven_mem_view_t){ .ptr = out, .size = len }, PROVEN_NET_DONT_WAIT);
-        if (e == PROVEN_ERR_TIMEOUT) { proven_sys_mem_copy(c->pend, out, len); c->pend_len = len; break; }
+        if (proven_quic_conn_send(c->q, c3_now_us(), (proven_mem_mut_t){ .ptr = buf + at, .size = C3_OUT }, &len, &to) != PROVEN_OK || len == 0) break;
+        if (at > 0 && len > seg) {
+            c_send_batch(c, buf, at, seg);
+            if (c->pend_len > 0) { at = 0; break; }    /* this one is lost as UDP may lose it */
+            proven_sys_mem_move(buf, buf + at, len);
+            at = 0; count = 0;
+        }
+        if (at == 0) seg = len;
+        at += len;
+        if (len < seg || ++count == PROVEN_NET_UDP_BATCH_COUNT) { c_send_batch(c, buf, at, seg); at = 0; count = 0; }
     }
+    if (at > 0) c_send_batch(c, buf, at, seg);
     if (k == C3_SENDS) c_call_back(c);            /* more, after the other connections have had theirs */
     c_watch(c);
 }
@@ -717,16 +747,27 @@ static void c_on_io(void *ctx, proven_u8 got) {
     proven_http_event_client_t *cl = c->client;
     c_enter(c);
     if ((got & PROVEN_NET_WRITABLE) && c->pend_len > 0) {
-        if (proven_net_udp_send_to(&c->udp, c->to, (proven_mem_view_t){ .ptr = c->pend, .size = c->pend_len }, PROVEN_NET_DONT_WAIT) != PROVEN_ERR_TIMEOUT) c->pend_len = 0;
+        proven_size_t sent = 0;
+        const proven_err_t e = proven_net_udp_send_segments_(&c->udp, c->to, (proven_mem_view_t){ .ptr = c->pend, .size = c->pend_len }, c->pend_seg, &sent);
+        if (e != PROVEN_ERR_TIMEOUT) c->pend_len = 0;
+        else if (sent > 0) { proven_sys_mem_move(c->pend, c->pend + sent, c->pend_len - sent); c->pend_len -= sent; }
     }
     if (got & (PROVEN_NET_READABLE | PROVEN_NET_FAILED)) {
         for (int i = 0; i < C3_READS && !c->dead; ++i) {
             proven_net_addr_t from;
-            const proven_result_size_t r = proven_net_udp_recv_from(&c->udp, (proven_mem_mut_t){ .ptr = cl->rbuf, .size = CL_READ_BYTES }, &from, PROVEN_NET_DONT_WAIT);
+            proven_size_t seg = 0;
+            const proven_result_size_t r = proven_net_udp_recv_segments_(&c->udp, (proven_mem_mut_t){ .ptr = cl->rbuf, .size = CL_READ_BYTES }, &seg, &from);
             if (r.err == PROVEN_ERR_OUT_OF_BOUNDS) continue;
             if (r.err != PROVEN_OK) break;
             const proven_quic_addr_t qa = proven_quic_addr_of_(&from);
-            if (proven_quic_conn_receive(c->q, (proven_mem_view_t){ .ptr = cl->rbuf, .size = r.value }, &qa, c3_now_us()) != PROVEN_OK) { c_kill(c, PROVEN_ERR_NOMEM); break; }
+            /* Several datagrams of one sender coalesced by the kernel (GRO): each as if alone. */
+            const proven_size_t step = seg ? seg : r.value;
+            bool failed = false;
+            for (proven_size_t off = 0; off < r.value && !c->dead; off += step) {
+                const proven_size_t n = r.value - off < step ? r.value - off : step;
+                if (proven_quic_conn_receive(c->q, (proven_mem_view_t){ .ptr = cl->rbuf + off, .size = n }, &qa, c3_now_us()) != PROVEN_OK) { failed = true; break; }
+            }
+            if (failed) { c_kill(c, PROVEN_ERR_NOMEM); break; }
         }
     }
     c_round(c);
@@ -758,6 +799,7 @@ static proven_err_t c_open(proven_http_event_client_t *cl, proven_u8str_view_t h
     c->born = proven_time_monotonic_now();
     c->closed_why = PROVEN_ERR_RESET;
     proven_err_t e = proven_net_udp_open(proven_net_addr_any(to->family, 0), &c->udp, (void *)0);
+    if (e == PROVEN_OK) (void)proven_net_udp_gro_(&c->udp);
     if (e == PROVEN_OK) {
         const proven_quic_config_t qc = {
             .alloc = cl->alloc, .tls = cl->cfg.tls,
@@ -962,6 +1004,7 @@ void proven_http_event_client_h3_destroy_(proven_http_event_client_t *cl) {
         if (!c->closed) { proven_quic_conn_close(c->q, true, PROVEN_H3_NO_ERROR); c_send(c); }
         c_kill(c, PROVEN_ERR_RESET);
     }
+    if (cl->h3_batch) { cl->alloc.free_fn(cl->alloc.ctx, cl->h3_batch); cl->h3_batch = (void *)0; }
 }
 
 static void call_begin(c3req_t *r) { r_enter(r); if (r->conn) { c_enter(r->conn); r->conn->calls++; } }
