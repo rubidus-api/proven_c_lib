@@ -429,6 +429,8 @@ typedef struct {
     proven_size_t streams, memory;                 /* streams held; bytes of buffers held */
     bool established, confirmed, closed, path_validated;
     proven_u64 key_updates, spurious_losses;
+    proven_size_t datagram_size;                   /* what a datagram may take on this path now */
+    proven_u64 pmtu_probes, pmtu_probes_lost;      /* PMTU probes sent, and not acknowledged in time */
 } proven_quic_stats_t;
 void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s);
 /* Tests only: `payload` read as the frames of a packet that opened at `lvl` (its result: the

@@ -1613,8 +1613,13 @@ as they end HTTP/2 ones.
   acknowledgement - fires up to 16 ms late; a busy one does its work in each round.
 - **HTTP/3 is slower than HTTP/2 here.** One datagram is one system call, and each is
   encrypted and protected on its own: one 100 MiB download from this server to curl on
-  loopback ran at 217 MiB/s over HTTP/3, 372 over HTTP/2 and 502 over HTTP/1.1, all over TLS
-  (v0.66.0; 174 before it, when the QUIC stream buffers copied a byte at a time).
+  loopback ran at 219 MiB/s over HTTP/3, 380 over HTTP/2 and 487 over HTTP/1.1, all over TLS
+  (v0.67.0; 174 at v0.65.0, when the QUIC stream buffers copied a byte at a time; curl's own
+  side is most of what is left there).
+- **Datagrams start at 1,200 bytes and grow by probing** (RFC 9000 section 14.3), up to 1,452
+  where the path and the peer carry them: one probe after the handshake on a path that carries
+  1,452, none once found. A path that stops carrying the size is noticed by its losses or its
+  probe timeouts, and the size goes back to 1,200 and is found again. Nothing is configured.
 - **Not over HTTP/3:** WebSocket (`proven_ws_event_accept` refuses the stream), 0-RTT,
   trailers, server push, migration of this side's own (a client's new address is
   validated), QUIC versions other than 1. `proven_http_event_server_adopt` takes TCP
@@ -1671,8 +1676,9 @@ starts the request again without `http3`.
 - **Ask only servers known to speak it.** Nothing here learns which do; a server's `Alt-Svc`
   says so, and reading it is the caller's to do.
 - **HTTP/3 is slower here than HTTP/2.** One 100 MiB download from this library's server to
-  this client on loopback ran at 218 MiB/s over HTTP/3 and 335 over HTTP/2 (v0.66.0; 171 over
-  HTTP/3 before it): one datagram is one system call and one protection.
+  this client on loopback ran at 233 MiB/s over HTTP/3 and 324 over HTTP/2 (v0.67.0; 171 over
+  HTTP/3 at v0.65.0): one datagram is one system call and one protection. Datagrams grow from
+  1,200 to 1,452 bytes by probing, as the server's do.
 - **No TLS session is kept**, over either transport: every connection is a full handshake.
 - **Not here:** 0-RTT, connection migration of this side's own, WebSocket over HTTP/3.
 

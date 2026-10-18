@@ -324,6 +324,18 @@ static bool hook_lose_client_handshake_twice(net_t *n, int to, proven_byte_t *b,
     return true;
 }
 
+/* A path that carries no datagram above 1,280 bytes. */
+static bool hook_mtu_1280(net_t *n, int to, proven_byte_t *b, proven_size_t *len) {
+    (void)n; (void)to; (void)b;
+    if (*len <= 1280) return true;
+    ++g_hook_count;
+    return false;
+}
+
+/* Toward the server only: nothing at all (a blackout), or nothing above 1,280 bytes. */
+static bool hook_blackout_to_server(net_t *n, int to, proven_byte_t *b, proven_size_t *len) { (void)n; (void)b; (void)len; return to != 1; }
+static bool hook_mtu_1280_to_server(net_t *n, int to, proven_byte_t *b, proven_size_t *len) { (void)n; (void)b; return to != 1 || *len <= 1280; }
+
 /* A payload of frames, from hex. */
 static proven_size_t unhex(const char *hex, proven_byte_t *out, proven_size_t cap) {
     proven_size_t k = strlen(hex) / 2;
@@ -716,6 +728,112 @@ int main(void) {
             "on this network that loses nothing, no packet was undecryptable: neither side moved two keys ahead of the other", "");
         PROVEN_TEST_ASSERT(stats(n, 0).key_updates <= rtts && stats(n, 1).key_updates <= rtts,
             "and no more updates than round trips: none before a packet under the current key was acknowledged (RFC 9001 section 6.5)", "");
+        free(t);
+        net_free(n);
+    }
+
+    PROVEN_TEST_SECTION("the path's datagram size", "PMTU probing (RFC-0018 S-2): 1,452 reached; a path that carries no more than 1,280 found without a stall and without a congestion signal; a path that stops carrying the size found falls back and finds it again; quiet once found.", "Inspect pm_next, pm_passed, pm_lost and the probe in proven_quic_conn_send, and the fallbacks in detect_lost and on_loss_timeout.");
+    {
+        fresh(n, 160);
+        run_for(n, 2000000);
+        proven_quic_stats_t a0 = stats(n, 0), a1 = stats(n, 1);
+        printf("  datagram size %zu and %zu after %llu and %llu probes\n", a0.datagram_size, a1.datagram_size, (unsigned long long)a0.pmtu_probes, (unsigned long long)a1.pmtu_probes);
+        PROVEN_TEST_ASSERT(a0.datagram_size == 1452 && a1.datagram_size == 1452, "both sides reach 1,452 on a path that carries it", "");
+        PROVEN_TEST_ASSERT(a0.pmtu_probes == 1 && a1.pmtu_probes == 1 && a0.pmtu_probes_lost == 0 && a1.pmtu_probes_lost == 0, "with one probe each, none lost", "");
+        const proven_u64 before = n->sent[0] + n->sent[1];
+        run_for(n, 5000000);
+        PROVEN_TEST_ASSERT(n->sent[0] + n->sent[1] == before, "and once it is found, an idle connection sends nothing", "");
+        xfers_t *t = calloc(1, sizeof *t);
+        xfer_open(n, t, 0, true, 1 << 20);
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 30000000), "a megabyte at the size found", "");
+        /* The path stops carrying more than 1,280 bytes: full-sized packets vanish, nothing is
+         * acknowledged, and after two probe timeouts the size goes back to 1,200 and is found
+         * again. */
+        n->hook = hook_mtu_1280; g_hook_count = 0;
+        t->n = 0;
+        xfer_open(n, t, 0, true, 1 << 20);
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 60000000), "when the path stops carrying the size, the next megabyte still arrives", "");
+        run_for(n, 3000000);
+        a0 = stats(n, 0);
+        printf("  after the path narrowed: %zu, %llu datagrams dropped by it\n", a0.datagram_size, (unsigned long long)g_hook_count);
+        PROVEN_TEST_ASSERT(a0.datagram_size >= 1200 && a0.datagram_size <= 1280, "the sender fell back and found a size the path carries", "");
+        free(t);
+        net_free(n);
+
+        /* A path that never carried more than 1,280: found by the search, every probe's loss
+         * outside congestion control. */
+        net_init(n, 161);
+        n->hook = hook_mtu_1280; g_hook_count = 0;
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000), "the handshake completes (its datagrams are 1,200 bytes)", "");
+        const proven_u64 cwnd0 = stats(n, 0).cwnd;
+        run_for(n, 10000000);
+        a0 = stats(n, 0); a1 = stats(n, 1);
+        printf("  narrow path: %zu and %zu, %llu probes lost of %llu, cwnd %llu (after the handshake %llu)\n", a0.datagram_size, a1.datagram_size,
+               (unsigned long long)a0.pmtu_probes_lost, (unsigned long long)a0.pmtu_probes, (unsigned long long)a0.cwnd, (unsigned long long)cwnd0);
+        PROVEN_TEST_ASSERT(a0.datagram_size >= 1252 && a0.datagram_size <= 1280 && a1.datagram_size >= 1252 && a1.datagram_size <= 1280,
+            "each side settles within 32 bytes below 1,280", "");
+        PROVEN_TEST_ASSERT(a0.pmtu_probes_lost >= 3 && a0.packets_lost == 0 && a0.cwnd >= cwnd0, "its lost probes were no packet loss and left the window alone", "");
+        t = calloc(1, sizeof *t);
+        xfer_open(n, t, 0, true, 1 << 20);
+        xfer_open(n, t, 1, true, 1 << 20);
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 30000000), "a megabyte each way over the narrow path", "");
+        PROVEN_TEST_ASSERT(stats(n, 0).packets_lost == 0 && stats(n, 1).packets_lost == 0, "with no packet lost: nothing was sent above what the path carries", "");
+        free(t);
+        net_free(n);
+
+        /* Thirty seconds in which nothing reaches the server: nothing is acknowledged, no loss
+         * can be detected, and only the probe timeouts tell. The size goes back; the probes lost
+         * meanwhile say nothing of the size (long enough to fail every size down to 1,200 if
+         * they counted), and it is found again once the path is back. */
+        net_init(n, 162);
+        n->cfg[0].idle_timeout_ms = n->cfg[1].idle_timeout_ms = 120000;
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000), "the handshake completes", "");
+        run_for(n, 2000000);
+        PROVEN_TEST_ASSERT(stats(n, 0).datagram_size == 1452, "1,452 found", "");
+        t = calloc(1, sizeof *t);
+        xfer_open(n, t, 0, true, 4 << 20);
+        for (int k = 0; k < 20; ++k) { pump(n, t); net_step(n); }
+        n->hook = hook_blackout_to_server;
+        const proven_u64 dark = n->now + 30000000;
+        while (n->now < dark) { pump(n, t); net_step(n); }
+        n->hook = NULL;
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 60000000), "after the blackout the transfer completes", "");
+        run_for(n, 10000000);
+        printf("  after a blackout: %llu probes, %llu lost, size %zu\n", (unsigned long long)stats(n, 0).pmtu_probes, (unsigned long long)stats(n, 0).pmtu_probes_lost, stats(n, 0).datagram_size);
+        PROVEN_TEST_ASSERT(stats(n, 0).pmtu_probes >= 2 && stats(n, 0).datagram_size == 1452,
+            "the probe timeouts sent the size back, and it was found again once the path came back: probes lost in the outage did not count", "");
+        free(t);
+        net_free(n);
+
+        /* The path toward the server narrows while the client writes 3,000 bytes a turn: two
+         * full-sized packets and a small one each time. The small ones are acknowledged; the
+         * larger ones' losses - or the probe timeouts that follow once the holes they leave hold
+         * the sender at its flow-control window - send the size back. */
+        fresh(n, 163);
+        run_for(n, 2000000);
+        PROVEN_TEST_ASSERT(stats(n, 0).datagram_size == 1452, "1,452 found", "");
+        n->hook = hook_mtu_1280_to_server;
+        t = calloc(1, sizeof *t);
+        xfer_t *x = xfer_open(n, t, 0, false, 600000);
+        x->fin_written = true;                         /* written here, a turn at a time */
+        proven_u64 put = 0;
+        const proven_u64 slow_end = n->now + 60000000;
+        static proven_byte_t piece[3000];
+        while (n->now < slow_end && !xfers_done(t)) {
+            if (put < x->total) {
+                const proven_size_t len = (proven_size_t)(x->total - put < sizeof piece ? x->total - put : sizeof piece);
+                for (proven_size_t k = 0; k < len; ++k) piece[k] = pattern(x->id, put + k);
+                proven_size_t taken = 0;
+                if (proven_quic_stream_write(n->ep[0], x->id, (proven_mem_view_t){ piece, len }, put + len == x->total, &taken) == PROVEN_OK) put += taken;
+            }
+            pump(n, t);
+            net_step(n);
+        }
+        printf("  narrowed toward the server, small packets passing: client %zu, server %zu, client pto %llu\n", stats(n, 0).datagram_size, stats(n, 1).datagram_size, (unsigned long long)stats(n, 0).pto_count);
+        PROVEN_TEST_ASSERT(xfers_done(t), "the stream arrives whole although only its small packets passed at first", "");
+        PROVEN_TEST_ASSERT(stats(n, 0).datagram_size <= 1280 && stats(n, 1).datagram_size == 1452, "the client fell back to what the path carries; the server kept its size", "");
         free(t);
         net_free(n);
     }

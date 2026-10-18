@@ -18,6 +18,27 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- HTTP/3: a QUIC connection finds its path's datagram size (RFC-0018 S-2; RFC 9000 section 14.3,
+  in the shape of RFC 8899; no API change). Datagrams start at 1,200 bytes as before; once the
+  handshake is confirmed, a probe - a packet of PING and padding, alone, not counted in flight,
+  its loss no congestion signal - tries 1,452 (or the peer's `max_udp_payload_size`, if less),
+  then halves the interval between what passed and what failed, three tries a size, until they
+  are less than 32 bytes apart. A path that carries 1,452 takes one probe; one that carries no
+  more than 1,280 settles at 1,263. A path that stops carrying the size found is noticed by ten
+  larger packets lost with none of them acknowledged, or by two probe timeouts in a row; the
+  size goes back to 1,200 and is found again, and probes lost while nothing at all gets through
+  do not count against any size. A new peer address starts again at 1,200. An idle connection
+  sends nothing once the size is found. Measured on loopback with this library at both ends, one
+  1 GiB download through a handler that costs next to nothing, median of five: HTTP/3 from 2,254
+  to 2,675 Mbit/s, 0.55 of HTTP/2 (4,894 in the same run); system time per GiB from 1.74 to 1.40
+  s on the client and from 2.33 to 1.86 s on the server. Against aioquic (the private check)
+  both roles reach 1,452.
+- Tests: `test_unit_quic_conn` gains the datagram size - 1,452 reached with one probe; a path
+  that carries no more than 1,280 found without a packet lost or the window touched; a path that
+  narrows, and one dark for thirty seconds, falling back and finding the size again.
+
 ## [0.66.0] - 2026-10-18
 
 ### Changed

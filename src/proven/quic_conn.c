@@ -571,6 +571,15 @@ struct proven_quic_conn {
     proven_u32 close_rx, close_answered;
     proven_size_t datagram;             /* bytes a sent datagram may take */
     proven_size_t peer_max_udp;
+    /* The path's datagram size, found by probing (RFC-0018 S-2; RFC 9000 section 14.3, RFC
+     * 8899): sizes up to `pm_good` passed, `pm_bad` (0: none yet) failed; `pm_size` is the next
+     * to probe (0: no search now); one probe at a time, kept by its number, not in the records. */
+    int pm_state;                       /* 0 not begun, 1 searching, 2 done */
+    proven_size_t pm_good, pm_bad, pm_size;
+    unsigned pm_tries;
+    unsigned pm_big_lost;               /* packets above the configured size lost since one was acknowledged */
+    bool pm_out;
+    proven_u64 pm_pn, pm_deadline;
 
     proven_quic_event_t ev[QC_EVENTS];
     unsigned ev_head, ev_n;
@@ -901,6 +910,52 @@ static void tls_after(proven_quic_conn_t *c) {
     }
 }
 
+/* ---- The path's datagram size (RFC-0018 S-2) ---- */
+
+#define QC_PM_PROBES 3                  /* tries before a size counts as too large (RFC 8899's MAX_PROBES) */
+#define QC_PM_STEP 32                   /* the search ends when what passed and what failed are this close */
+#define QC_PM_BLACK_HOLE 10             /* larger packets lost in a row, none acknowledged: the path stopped carrying them */
+
+/* The next size to probe: the largest allowed first, then halfway between what passed and
+ * what failed. */
+static void pm_next(proven_quic_conn_t *c) {
+    const proven_size_t top = c->peer_max_udp < QC_MAX_DGRAM ? c->peer_max_udp : QC_MAX_DGRAM;
+    proven_size_t want = c->pm_bad ? c->pm_good + (c->pm_bad - c->pm_good) / 2 : top;
+    if (want > top) want = top;
+    c->pm_tries = 0;
+    c->pm_out = false;
+    if (want <= c->pm_good || (c->pm_bad && c->pm_bad - c->pm_good < QC_PM_STEP)) { c->pm_size = 0; c->pm_state = 2; return; }
+    c->pm_size = want;
+    c->pm_state = 1;
+}
+
+/* A search from the size in use (the handshake confirmed, a new path, a black hole). */
+static void pm_begin(proven_quic_conn_t *c) {
+    c->pm_good = c->datagram;
+    c->pm_bad = 0;
+    c->pm_big_lost = 0;
+    pm_next(c);
+}
+
+static void pm_passed(proven_quic_conn_t *c) {
+    c->pm_good = c->pm_size;
+    c->datagram = c->pm_size;
+    pm_next(c);
+}
+
+/* The probe was not acknowledged in time: tried again, or the size is too large. Never a
+ * congestion signal (RFC 9000 section 14.4). While probe timeouts pile up nothing at all is
+ * getting through, so the loss says nothing of the size: it is not counted against it (an
+ * outage would otherwise end the search at the configured size for good). */
+static void pm_lost(proven_quic_conn_t *c) {
+    c->pm_out = false;
+    ++c->st.pmtu_probes_lost;
+    if (c->pto_count >= 2 && c->pm_tries > 0) --c->pm_tries;
+    if (c->pm_tries < QC_PM_PROBES) return;
+    c->pm_bad = c->pm_size;
+    pm_next(c);
+}
+
 /* ---- RFC 9002: what was sent, what was acknowledged, what was lost ---- */
 
 static void cc_init(proven_quic_conn_t *c) {
@@ -1072,6 +1127,7 @@ static void detect_lost(proven_quic_conn_t *c, int lvl) {
             }
             sent_gone(c, sp, p);
             ++c->st.packets_lost;
+            if (p->size > c->cfg.datagram_size) ++c->pm_big_lost;
             continue;
         }
         const proven_u64 at = p->time + delay;
@@ -1083,6 +1139,10 @@ static void detect_lost(proven_quic_conn_t *c, int lvl) {
         for (proven_size_t j = i; j < sp->sent_n; ++j) sp->sent[keep + j - i] = sp->sent[j];
         sp->sent_n -= i - keep;
     }
+    /* With a size raised by probing, the path may have stopped carrying it while smaller packets
+     * still pass (a black hole, RFC 8899 section 4.3): ten larger packets lost with none of them
+     * acknowledged in between. Back to the configured size, and search again. */
+    if (c->pm_big_lost >= QC_PM_BLACK_HOLE && c->datagram > c->cfg.datagram_size) { c->datagram = c->cfg.datagram_size; pm_begin(c); }
     if (lost_n == 0) return;
     cc_congestion_event(c, last_time);
     /* Persistent congestion (RFC 9002 section 7.6): lost packets spanning the period, none of
@@ -1117,6 +1177,7 @@ static proven_u64 on_ack(proven_quic_conn_t *c, int lvl, const proven_quic_frame
             if (p->ack_eliciting) eliciting = true;
             if (p->pn == f->largest) { largest_new = true; largest_time = p->time; }
             sent_gone(c, sp, p);
+            if (p->size > c->cfg.datagram_size) c->pm_big_lost = 0;
             for (unsigned j = 0; j < p->nfr; ++j) frame_acked(c, lvl, &p->fr[j]);
             cc_acked(c, p, bif_before);
         }
@@ -1138,6 +1199,10 @@ static proven_u64 on_ack(proven_quic_conn_t *c, int lvl, const proven_quic_frame
                 ++c->spurious;
             }
         }
+    }
+    if (lvl == PROVEN_QUIC_LEVEL_APPLICATION && c->pm_out) {
+        it = proven_quic_ack_iter(f);
+        while (proven_quic_ack_next(&it, &lo, &hi)) if (c->pm_pn >= lo && c->pm_pn <= hi) { c->pm_out = false; pm_passed(c); break; }
     }
     if (!newly) return 0;
     if (largest_new && eliciting) {
@@ -1200,6 +1265,11 @@ static void on_loss_timeout(proven_quic_conn_t *c) {
         if (space < 2) sendq_resend_all(&c->mem, &sp->crypto_tx);
     }
     ++c->pto_count;
+    /* Two probe timeouts in a row with a size raised by probing: a path that drops every
+     * full-sized packet acknowledges nothing, so no loss is ever detected and the probes, full
+     * of data, are dropped too. Back to the configured size, and search again (RFC 8899
+     * section 4.3). */
+    if (c->pto_count >= 2 && c->datagram > c->cfg.datagram_size) { c->datagram = c->cfg.datagram_size; pm_begin(c); }
     set_loss_timer(c);
 }
 
@@ -1575,6 +1645,8 @@ static int read_packet(proven_quic_conn_t *c, proven_byte_t *pkt, const proven_q
         random_bytes(c, c->challenge, 8);
         c->challenge_owed = true; c->challenge_wait = true;
         c->challenge_deadline = c->now + 3 * pto_base(c);
+        c->datagram = c->cfg.datagram_size;     /* a new path: its size is found again */
+        c->pm_state = 0; c->pm_out = false;
         cc_init(c);
         c->have_rtt = false;
     }
@@ -1978,6 +2050,35 @@ proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven
         *len = seal(c, out.ptr, &pk, 1);
         return PROVEN_OK;
     }
+    /* A PMTU probe (RFC-0018 S-2): once the handshake is confirmed and the path validated, a
+     * datagram of the size probed, PING and PADDING, alone. Not recorded as in flight: its loss
+     * is no congestion, and a probe timeout is not owed for it. */
+    if (c->confirmed && c->state == QS_OPEN && c->validated && c->sp[2].tx_ok && !c->challenge_wait) {
+        if (c->pm_state == 0) pm_begin(c);
+        if (c->pm_state == 1 && !c->pm_out && c->pm_size <= out.size) {
+            qpkt_t pk;
+            if (!build_packet(c, 2, out.ptr, c->pm_size, false, false, &pk)) {
+                pk = (qpkt_t){ .lvl = 2, .pn = c->sp[2].next_pn, .pn_len = proven_quic_pn_len(c->sp[2].next_pn, c->sp[2].largest_acked_plus_one) };
+                pk.hlen = proven_quic_short_header_put(&peer_cid(c)->cid, c->key_phase, pk.pn, pk.pn_len, (proven_mem_mut_t){ out.ptr, out.size });
+            }
+            proven_quic_wr_t w = { out.ptr + pk.hlen, pk.payload, c->pm_size - pk.hlen - 16, true };
+            proven_quic_frame_t f = { .type = PROVEN_QUIC_FT_PING };
+            (void)proven_quic_frame_put(&w, &f);
+            if (w.ok && pk.hlen > 0) {
+                while (w.n < w.cap) w.p[w.n++] = 0;
+                pk.payload = w.n; pk.eliciting = false; pk.padded = false;
+                c->pm_pn = pk.pn;
+                *len = seal(c, out.ptr, &pk, 1);
+                c->pm_out = true;
+                ++c->pm_tries;
+                c->pm_deadline = now + (pto_base(c) << (c->pto_count < 6 ? c->pto_count : 6));
+                ++c->st.pmtu_probes;
+                c->amp_tx += *len;
+                c->st.bytes_sent += *len;
+                return PROVEN_OK;
+            }
+        }
+    }
     /* RFC 9001 section 6.6: a key is updated well before the AEAD's limit - once the handshake
      * is confirmed and a packet under the current key has been acknowledged. */
     if (c->confirmed && c->phase_sent >= c->cfg.key_update_packets && c->phase_acked && c->sp[2].tx_ok && c->sp[2].rx_ok) key_update_start(c);
@@ -2047,6 +2148,7 @@ proven_u64 proven_quic_conn_deadline(const proven_quic_conn_t *c) {
     for (int i = 0; i < PROVEN_QUIC_LEVELS; ++i) if (c->sp[i].ack_owed && !c->sp[i].discarded) d = qmin(d, c->sp[i].ack_deadline);
     if (c->pace_blocked) d = qmin(d, pace_next(c));
     if (c->challenge_wait) d = qmin(d, c->challenge_deadline);
+    if (c->pm_out) d = qmin(d, c->pm_deadline);
     return d;
 }
 
@@ -2069,6 +2171,7 @@ void proven_quic_conn_timeout(proven_quic_conn_t *c, proven_u64 now) {
         c->challenge_wait = false;
         if (c->has_old) { c->peer_addr = c->old_addr; c->validated = true; c->has_old = false; }
     }
+    if (c->pm_out && now >= c->pm_deadline) pm_lost(c);
     if (c->loss_timer != QC_INF && now >= c->loss_timer) on_loss_timeout(c);
 }
 
@@ -2270,6 +2373,7 @@ void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s)
     s->path_validated = c->validated;
     s->key_updates = c->key_updates;
     s->spurious_losses = c->spurious;
+    s->datagram_size = c->datagram;
 }
 
 /* ---- For tests: frames as if a packet carried them, and a key update started here ---- */
