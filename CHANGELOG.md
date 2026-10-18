@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.71.0] - 2026-10-19
+
 ### Changed
 
 - HTTP/3 flow-control windows grow (RFC-0019 section 9). With `http3_window_bytes` left at 0 - in
