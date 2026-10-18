@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.68.0] - 2026-10-18
+
 ### Changed
 
 - HTTP/3 on Linux sends a round's datagrams together and receives them together (RFC-0018 S-3;
