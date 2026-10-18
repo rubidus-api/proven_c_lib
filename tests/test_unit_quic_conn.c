@@ -334,6 +334,7 @@ static bool hook_mtu_1280(net_t *n, int to, proven_byte_t *b, proven_size_t *len
 
 /* Toward the server only: nothing at all (a blackout), or nothing above 1,280 bytes. */
 static bool hook_blackout_to_server(net_t *n, int to, proven_byte_t *b, proven_size_t *len) { (void)n; (void)b; (void)len; return to != 1; }
+static bool hook_blackout_to_client(net_t *n, int to, proven_byte_t *b, proven_size_t *len) { (void)n; (void)b; (void)len; return to != 0; }
 static bool hook_mtu_1280_to_server(net_t *n, int to, proven_byte_t *b, proven_size_t *len) { (void)n; (void)b; return to != 1 || *len <= 1280; }
 
 /* A payload of frames, from hex. */
@@ -870,6 +871,24 @@ int main(void) {
         PROVEN_TEST_ASSERT(r.memory < (1u << 20) + (1u << 19) && w.memory < (1u << 20) + (1u << 19), "a reader that reads nothing holds what it held with fixed windows: growth needs reading", "");
         n->reading_off[1] = false;
         PROVEN_TEST_ASSERT(run_xfers(n, t, 120000000), "once read, everything arrives", "");
+        free(t);
+        net_free(n);
+        /* A peer that grants a 16 MiB stream window and 24 MiB for the connection from the start
+         * and then acknowledges nothing: the sender, growth on, must not buffer what was granted
+         * - its buffer follows twice the congestion window, which stays small. */
+        net_init(n, 172);
+        n->cfg[0].stream_window_max = 16u << 20; n->cfg[0].conn_window_max = 24u << 20;
+        n->cfg[1].stream_window = 16u << 20; n->cfg[1].conn_window = 24u << 20;
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000), "the handshake completes", "");
+        n->hook = hook_blackout_to_client;
+        t = calloc(1, sizeof *t);
+        for (int k = 0; k < 6; ++k) xfer_open(n, t, 0, true, 4 << 20);
+        for (int k = 0; k < 300; ++k) { pump(n, t); net_step(n); }
+        w = stats(n, 0);
+        printf("  a 24 MiB grant never acknowledged: the sender holds %zu bytes\n", w.memory);
+        PROVEN_TEST_ASSERT(w.memory < (1u << 20) + (1u << 19), "the sender holds no more than its configured buffers: a grant alone does not grow them", "");
+        n->hook = NULL;
         free(t);
         net_free(n);
     }

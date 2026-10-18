@@ -838,18 +838,21 @@ static void rx_credit(proven_quic_conn_t *c, qstream_t *s, proven_u64 n) {
 }
 
 /* What a stream, and the connection, may hold written and unacknowledged: the configured
- * buffer, or - when the windows grow - what the peer has granted beyond what it acknowledged,
- * up to the caps, so the send side keeps up with a receive window that grew. */
+ * buffer, or - when the windows grow - what the path carries (twice the congestion window),
+ * within what the peer has granted beyond what it acknowledged, up to the caps. The congestion
+ * window bounds it because a grant alone is the peer's word: one that grants 24 MiB and
+ * acknowledges nothing keeps the window, and so the buffer, at the configured floor. */
 static proven_u64 tx_room(const proven_quic_conn_t *c, const qstream_t *s) {
     proven_u64 stream_cap = c->cfg.stream_send_buffer, conn_cap = c->cfg.conn_send_buffer;
+    const proven_u64 path = 2 * c->cwnd;
     if (c->cfg.stream_window_max) {
         const proven_u64 granted = s->tx_max > s->tx.base ? s->tx_max - s->tx.base : 0;
-        stream_cap = qmax(stream_cap, qmin(granted, c->cfg.stream_window_max));
+        stream_cap = qmax(stream_cap, qmin(qmin(granted, path), c->cfg.stream_window_max));
     }
     if (c->cfg.conn_window_max) {
         const proven_u64 acked = c->tx_written - c->send_buffered;
         const proven_u64 granted = c->tx_max_data > acked ? c->tx_max_data - acked : 0;
-        conn_cap = qmax(conn_cap, qmin(granted, c->cfg.conn_window_max));
+        conn_cap = qmax(conn_cap, qmin(qmin(granted, path), c->cfg.conn_window_max));
     }
     const proven_u64 held = s->tx.end - s->tx.base;
     const proven_u64 room = qmin(stream_cap - qmin(held, stream_cap), conn_cap - qmin(c->send_buffered, conn_cap));

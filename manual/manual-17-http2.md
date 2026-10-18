@@ -1571,14 +1571,16 @@ underneath:
   packet makes one, and a short packet for an ID nobody holds is answered with a stateless
   reset.
 - **What bounds a write** is QUIC's send buffer - 256 KiB a stream and 1 MiB a connection of
-  data sent and not yet acknowledged, or what the client has granted, up to 16 MiB and 24 MiB -
+  data sent and not yet acknowledged, or, within what the client has granted, twice the congestion
+  window, up to 16 MiB and 24 MiB -
   not `max_buffered_output`. A refused write is told
   `on_writable` as on the other two.
 - **A paused request** stops being read, and QUIC's flow control stops the client at
   `http3_window_bytes`: by default 256 KiB a stream and 1 MiB a connection to begin with, grown -
   doubling while bodies are read as fast as they come - up to 16 MiB and 24 MiB; a body that is
   not read stops the growth, so a paused one holds no more than the window it had (v0.71.0).
-  The send buffers follow what the peer has granted, up to the same caps.
+  The send buffers grow with what the path carries (twice the congestion window), within what the
+  peer has granted, up to the same caps.
 
 | Setting | For HTTP/3 |
 |---|---|
@@ -1672,7 +1674,8 @@ server's limit on streams waits on it; an idle one is told goodbye after `idle_t
 closed; `max_connections` counts it with the TCP ones; `retry_unsent` sends again a request the
 server refused unprocessed (H3_REQUEST_REJECTED, or behind its GOAWAY); `decompress` decodes as
 over the others. A write is bounded by QUIC's send buffer - 256 KiB a stream, 1 MiB a connection,
-or what the server has granted, up to 16 MiB and 24 MiB - and a paused response stops being read,
+or, within what the server has granted, twice the congestion window, up to 16 MiB and 24 MiB - and
+a paused response stops being read,
 so the server stops at the window it had; read as fast as it comes, the window grows to 16 MiB a
 stream and 24 MiB a connection unless `http3_window_bytes` fixes it (v0.71.0).
 
