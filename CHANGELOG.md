@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.70.0] - 2026-10-19
+
 ### Changed
 
 - The event loop's timers fire at the time asked for (RFC-0019 T-1). `proven_loop_timer_set`
