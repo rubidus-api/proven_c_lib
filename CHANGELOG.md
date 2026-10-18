@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.67.0] - 2026-10-18
+
 ### Changed
 
 - HTTP/3: a QUIC connection finds its path's datagram size (RFC-0018 S-2; RFC 9000 section 14.3,
