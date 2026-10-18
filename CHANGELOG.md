@@ -25,9 +25,12 @@ written; their tags still exist.
   for one address while they are one size and hand them to the kernel in one call
   (`UDP_SEGMENT`, GSO: up to 64 datagrams and 65,507 bytes - 45 of 1,452); their UDP sockets ask
   for `UDP_GRO`, and a receive that holds several datagrams is split and each handed to the QUIC
-  connection as if alone. A kernel that refuses `UDP_SEGMENT` is remembered and the batch in hand
-  goes one datagram at a time, not dropped; every other platform sends one datagram a call, as
-  before (Windows' USO and URO are not used). What the socket will not take is kept, a batch's
+  connection as if alone. A kernel without `UDP_SEGMENT` is told apart before the first batch (by
+  asking for the socket option: a kernel before 4.18 would otherwise ignore the request and send a
+  batch as one large datagram); a refusal before GSO has ever worked in the process is remembered,
+  and any failure after that - a route whose MTU shrank below the size - is that batch's alone; a
+  refused batch goes one datagram at a time, not dropped. Every other platform sends one datagram
+  a call, as before (Windows' USO and URO are not used). What the socket will not take is kept, a batch's
   worth, and sent when it will. Measured on Linux loopback with this library at both ends, one
   1 GiB download through a handler that costs next to nothing, median of five: HTTP/3 from 2,675
   to 4,380 Mbit/s, 0.95 of HTTP/2 (4,604 in the same run); system time per GiB from 1.40 to 0.15 s

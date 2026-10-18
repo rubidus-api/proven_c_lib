@@ -11,6 +11,7 @@
 #endif
 
 #include "proven_sys_net.h"
+#include <stdatomic.h>
 
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 
@@ -659,13 +660,27 @@ proven_sys_net_result_t proven_sys_net_send_to(proven_sys_socket_t sock, const v
     }
 }
 
-/* RFC-0018 S-3: batched datagrams. */
-static bool g_segments_off;             /* the test switch */
+/* RFC-0018 S-3: batched datagrams. Any thread may send first, so the process-wide flags are
+ * atomic (relaxed: each is a hint that a later call reads again). */
+static atomic_bool g_segments_off;      /* the test switch */
 #if defined(__linux__) && defined(UDP_SEGMENT)
-static bool g_gso_refused;              /* the kernel refused UDP_SEGMENT once: not asked again */
+static atomic_bool g_gso_refused;       /* this kernel has no GSO for UDP: not asked again */
+static atomic_bool g_gso_probed;        /* the option was asked for once */
+static atomic_bool g_gso_worked;        /* a GSO send has succeeded in this process */
+
+/* A kernel before 4.18 has no UDP_SEGMENT and skips the control message without an error: every
+ * batch would leave as one large datagram. Asking for the socket option (0: no default size)
+ * tells such a kernel apart - ENOPROTOOPT - before the first batch. */
+static void gso_probe(proven_sys_socket_t sock) {
+    if (atomic_load_explicit(&g_gso_probed, memory_order_relaxed)) return;
+    const int zero = 0;
+    if (setsockopt((native_socket_t)sock, IPPROTO_UDP, UDP_SEGMENT, &zero, (socklen_t)sizeof zero) != 0 && errno == ENOPROTOOPT)
+        atomic_store_explicit(&g_gso_refused, true, memory_order_relaxed);
+    atomic_store_explicit(&g_gso_probed, true, memory_order_relaxed);
+}
 #endif
 
-void proven_sys_net_segments_off_for_test_(bool off) { g_segments_off = off; }
+void proven_sys_net_segments_off_for_test_(bool off) { atomic_store_explicit(&g_segments_off, off, memory_order_relaxed); }
 
 proven_sys_net_result_t proven_sys_net_send_segments(proven_sys_socket_t sock, const void *buf, proven_size_t total,
                                                      proven_size_t seg, const proven_sys_net_addr_t *to, proven_size_t *sent) {
@@ -674,7 +689,8 @@ proven_sys_net_result_t proven_sys_net_send_segments(proven_sys_socket_t sock, c
     if (total == 0) return PROVEN_SYS_NET_OK;
     if (seg == 0 || total > PROVEN_SYS_NET_SEGMENTS_MAX_BYTES || (total + seg - 1) / seg > PROVEN_SYS_NET_SEGMENTS_MAX_COUNT) return PROVEN_SYS_NET_TOO_BIG;
 #if defined(__linux__) && defined(UDP_SEGMENT)
-    if (!g_segments_off && !g_gso_refused && total > seg) {
+    if (total > seg && !atomic_load_explicit(&g_segments_off, memory_order_relaxed)) gso_probe(sock);
+    if (total > seg && !atomic_load_explicit(&g_segments_off, memory_order_relaxed) && !atomic_load_explicit(&g_gso_refused, memory_order_relaxed)) {
         struct sockaddr_storage ss;
         const native_len_t sl = to_native(to, &ss);
         if (sl == 0) return PROVEN_SYS_NET_ADDR_INVALID;
@@ -697,14 +713,25 @@ proven_sys_net_result_t proven_sys_net_send_segments(proven_sys_socket_t sock, c
         memcpy(CMSG_DATA(c), &size, sizeof size);
         for (;;) {
             const ssize_t n = sendmsg((native_socket_t)sock, &msg, NATIVE_SEND_FLAGS);
-            if (n >= 0) { *sent = (proven_size_t)n; return (proven_size_t)n == total ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_ERROR; }
+            if (n >= 0) {
+                atomic_store_explicit(&g_gso_worked, true, memory_order_relaxed);
+                *sent = (proven_size_t)n;
+                return (proven_size_t)n == total ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_ERROR;
+            }
             const int e = net_last_error();
             if (net_interrupted(e)) continue;
-            /* A kernel without GSO for this socket: remembered, and this batch goes one datagram
-             * at a time - not dropped, which would read as a path that lost them all. */
-            if (e == EIO || e == EINVAL || e == ENOPROTOOPT || e == EOPNOTSUPP) { g_gso_refused = true; break; }
-            if (e == EMSGSIZE) break;           /* larger than this path takes in one: one at a time says which */
-            return net_reason(e);
+            if (e == EAGAIN
+#if defined(EWOULDBLOCK) && EWOULDBLOCK != EAGAIN
+                || e == EWOULDBLOCK
+#endif
+                ) return PROVEN_SYS_NET_WOULD_BLOCK;
+            /* Any other failure: this batch goes one datagram at a time - not dropped, which would
+             * read as a path that lost them all. Remembered for the process only while GSO has
+             * never worked here: afterwards the same errors (EINVAL when a route's MTU has
+             * shrunk below the segment size, EMSGSIZE) belong to this batch, not to the kernel. */
+            if ((e == EIO || e == EINVAL || e == ENOPROTOOPT || e == EOPNOTSUPP) && !atomic_load_explicit(&g_gso_worked, memory_order_relaxed))
+                atomic_store_explicit(&g_gso_refused, true, memory_order_relaxed);
+            break;
         }
     }
 #endif
@@ -719,7 +746,7 @@ proven_sys_net_result_t proven_sys_net_send_segments(proven_sys_socket_t sock, c
 
 proven_sys_net_result_t proven_sys_net_udp_gro(proven_sys_socket_t sock) {
 #if defined(__linux__) && defined(UDP_GRO)
-    if (g_segments_off) return PROVEN_SYS_NET_UNSUPPORTED;
+    if (atomic_load_explicit(&g_segments_off, memory_order_relaxed)) return PROVEN_SYS_NET_UNSUPPORTED;
     const int on = 1;
     return setsockopt((native_socket_t)sock, IPPROTO_UDP, UDP_GRO, &on, (socklen_t)sizeof on) == 0 ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_UNSUPPORTED;
 #else
