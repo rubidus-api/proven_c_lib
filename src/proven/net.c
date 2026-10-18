@@ -800,6 +800,12 @@ bool proven_net_udp_gro_(proven_net_udp_t *udp) {
     return udp && udp->internal.open && proven_sys_net_udp_gro((proven_sys_socket_t)udp->internal.handle) == PROVEN_SYS_NET_OK;
 }
 
+bool proven_net_udp_dontfrag_(proven_net_udp_t *udp) {
+    if (!udp || !udp->internal.open) return false;
+    const proven_sys_net_family_t f = udp->internal.family == PROVEN_NET_FAMILY_IPV6 ? PROVEN_SYS_NET_FAMILY_IPV6 : PROVEN_SYS_NET_FAMILY_IPV4;
+    return proven_sys_net_udp_dontfrag((proven_sys_socket_t)udp->internal.handle, f) == PROVEN_SYS_NET_OK;
+}
+
 void proven_net_udp_segments_off_for_test_(bool off) { proven_sys_net_segments_off_for_test_(off); }
 
 proven_err_t proven_net_udp_addr(const proven_net_udp_t *udp, proven_net_addr_t *out) {

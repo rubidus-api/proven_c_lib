@@ -799,7 +799,7 @@ static proven_err_t c_open(proven_http_event_client_t *cl, proven_u8str_view_t h
     c->born = proven_time_monotonic_now();
     c->closed_why = PROVEN_ERR_RESET;
     proven_err_t e = proven_net_udp_open(proven_net_addr_any(to->family, 0), &c->udp, (void *)0);
-    if (e == PROVEN_OK) (void)proven_net_udp_gro_(&c->udp);
+    if (e == PROVEN_OK) { (void)proven_net_udp_gro_(&c->udp); (void)proven_net_udp_dontfrag_(&c->udp); }
     if (e == PROVEN_OK) {
         const proven_quic_config_t qc = {
             .alloc = cl->alloc, .tls = cl->cfg.tls,

@@ -3,6 +3,10 @@
 #include "../src/proven/proven_internal_quic_net.h"
 #include <stdio.h>
 #include <string.h>
+#if defined(__linux__)
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
 
 /*
  * Batched datagrams (RFC-0018 S-3): proven_net_udp_send_segments_ sends datagrams of one size
@@ -63,6 +67,35 @@ int main(void) {
     static proven_byte_t out[PROVEN_NET_UDP_BATCH_BYTES], in[65536];
     static proven_size_t sizes[128];
     proven_size_t sent = 0;
+
+    PROVEN_TEST_SECTION("the don't-fragment bit", "A socket asked for it reports it (Linux: IP_PMTUDISC_PROBE - the bit set, nothing fragmented here) and still carries datagrams of 1,452 bytes (RFC-0018 11).", "Inspect proven_sys_net_udp_dontfrag.");
+    {
+        const bool df = proven_net_udp_dontfrag_(&s);
+#if defined(__linux__) || defined(_WIN32)
+        PROVEN_TEST_ASSERT(df, "the platform sets it", "");
+#endif
+#if defined(__linux__) && defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_PROBE)
+        int mode = -1;
+        socklen_t ml = sizeof mode;
+        PROVEN_TEST_ASSERT(getsockopt((int)proven_net_udp_handle(&s).raw, IPPROTO_IP, IP_MTU_DISCOVER, &mode, &ml) == 0 && mode == IP_PMTUDISC_PROBE,
+                           "the socket reports IP_PMTUDISC_PROBE", "");
+        proven_net_udp_t s6;
+        proven_net_addr_t at6;
+        if (proven_net_udp_open(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV6, 0), &s6, &at6) == PROVEN_OK) {
+            PROVEN_TEST_ASSERT(proven_net_udp_dontfrag_(&s6), "an IPv6 socket too", "");
+            ml = sizeof mode;
+            PROVEN_TEST_ASSERT(getsockopt((int)proven_net_udp_handle(&s6).raw, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &mode, &ml) == 0 && mode == IPV6_PMTUDISC_PROBE,
+                               "and reports IPV6_PMTUDISC_PROBE", "");
+            (void)proven_net_udp_close(&s6);
+        }
+#else
+        (void)df;
+#endif
+        for (proven_size_t i = 0; i < 1452; ++i) out[i] = pattern(999, 0, i);
+        PROVEN_TEST_ASSERT(proven_net_udp_send_segments_(&s, r_at, (proven_mem_view_t){ out, 1452 }, 1452, &sent) == PROVEN_OK && sent == 1452, "a datagram of 1,452 bytes goes", "");
+        unsigned count = 0, batches = 0;
+        PROVEN_TEST_ASSERT(receive_all(&r, in, 1452, 999, sizes, 128, &count, &batches) && count == 1 && sizes[0] == 1452, "and arrives whole", "");
+    }
 
     PROVEN_TEST_SECTION("refusals", "A batch the platform cannot take in one call is refused before anything is sent.", "");
     PROVEN_TEST_ASSERT(proven_net_udp_send_segments_(&s, r_at, (proven_mem_view_t){ out, 100 }, 0, &sent) == PROVEN_ERR_INVALID_ARG && sent == 0, "a datagram size of 0", "");

@@ -18,6 +18,20 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Fixed
+
+- HTTP/3: the event server's and the event client's UDP sockets set the don't-fragment bit and
+  fragment nothing on this side (RFC-0018 section 11; RFC 9000 section 14) - on Linux
+  `IP_PMTUDISC_PROBE` and `IPV6_PMTUDISC_PROBE` (`_DO` where `_PROBE` is missing), on Windows
+  `IP_DONTFRAGMENT` and `IPV6_DONTFRAG`, on the BSDs `IP_DONTFRAG` and `IPV6_DONTFRAG`. They had
+  kept the system's default, which on Linux fragments a datagram locally once the kernel has
+  learned a smaller path MTU: a PMTU probe could pass in fragments and the search settle on a size
+  the path does not carry whole. A datagram the kernel now refuses as too large is lost as UDP may
+  lose it, which is what the search reads. With the bit set the two public servers checked still
+  take what they took before (1,350 and 1,452 bytes). No API change.
+- Tests: `test_unit_net_udp_segments` checks the mode the socket reports on Linux (IPv4 and IPv6)
+  and that 1,452-byte datagrams still flow.
+
 ## [0.68.0] - 2026-10-18
 
 ### Changed

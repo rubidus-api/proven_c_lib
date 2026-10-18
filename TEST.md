@@ -1766,6 +1766,7 @@ Intent: verify the internal segment calls of RFC-0018 S-3 over loopback: datagra
 
 Sub-checks:
 
+- The don't-fragment bit (RFC-0018 section 11): on Linux and Windows the call that sets it succeeds; on Linux the socket then reports `IP_PMTUDISC_PROBE`, and an IPv6 socket `IPV6_PMTUDISC_PROBE`; everywhere a datagram of 1,452 bytes still goes and arrives whole.
 - Refusals before anything is sent: a datagram size of 0; 65 datagrams; 65,508 bytes. Nothing to send is a success.
 - In four modes - the platform's way and the one-at-a-time way forced, each against a fresh receiver with GRO asked for and one without (with the one-at-a-time way forced, GRO is not granted): 1, 2, 44 and 45 datagrams of 1,452 bytes, 44 with a 300-byte last one, 1 with a 700-byte last one, 54 of 1,200 and 53 with a 1-byte last one, 64 of 60 and 63 with a 20-byte last one - every datagram received in order, its size and every byte as sent.
 - How many receives held several datagrams is printed, never asserted: it depends on the kernel and the interface (0 off Linux).

@@ -155,6 +155,12 @@ proven_sys_net_result_t proven_sys_net_send_segments(proven_sys_socket_t sock, c
  *  receive, their size reported by proven_sys_net_recv_segments. UNSUPPORTED elsewhere. */
 proven_sys_net_result_t proven_sys_net_udp_gro(proven_sys_socket_t sock);
 
+/** Set the don't-fragment bit on what the socket sends, and fragment nothing here (RFC-0018
+ *  11; RFC 9000 section 14): Linux IP_PMTUDISC_PROBE / IPV6_PMTUDISC_PROBE (IP_PMTUDISC_DO where
+ *  PROBE is missing), Windows IP_DONTFRAGMENT / IPV6_DONTFRAG, the BSDs IP_DONTFRAG /
+ *  IPV6_DONTFRAG. `family` is the socket's. UNSUPPORTED where none of them exists. */
+proven_sys_net_result_t proven_sys_net_udp_dontfrag(proven_sys_socket_t sock, proven_sys_net_family_t family);
+
 /** proven_sys_net_recv_from, and in `seg` the size of each datagram when the buffer holds
  *  several (a GRO receive; the last may be shorter), or 0 when it holds one. */
 proven_sys_net_result_t proven_sys_net_recv_segments(proven_sys_socket_t sock, void *buf, proven_size_t cap,

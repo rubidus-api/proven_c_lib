@@ -21,6 +21,7 @@
 proven_err_t proven_net_udp_send_segments_(proven_net_udp_t *udp, proven_net_addr_t to, proven_mem_view_t data, proven_size_t seg, proven_size_t *sent);
 proven_result_size_t proven_net_udp_recv_segments_(proven_net_udp_t *udp, proven_mem_mut_t dest, proven_size_t *seg, proven_net_addr_t *from);
 bool proven_net_udp_gro_(proven_net_udp_t *udp);
+bool proven_net_udp_dontfrag_(proven_net_udp_t *udp);   /* the don't-fragment bit, nothing fragmented here (RFC-0018 11) */
 void proven_net_udp_segments_off_for_test_(bool off);
 #endif
 

@@ -1621,6 +1621,8 @@ as they end HTTP/2 ones.
   where the path and the peer carry them: one probe after the handshake on a path that carries
   1,452, none once found. A path that stops carrying the size is noticed by its losses or its
   probe timeouts, and the size goes back to 1,200 and is found again. Nothing is configured.
+  Every datagram carries the don't-fragment bit and nothing is fragmented on this side (Linux
+  `IP_PMTUDISC_PROBE`, Windows `IP_DONTFRAGMENT`; v0.69.0), so a probe that passes passed whole.
 - **Not over HTTP/3:** WebSocket (`proven_ws_event_accept` refuses the stream), 0-RTT,
   trailers, server push, migration of this side's own (a client's new address is
   validated), QUIC versions other than 1. `proven_http_event_server_adopt` takes TCP

@@ -929,6 +929,7 @@ proven_err_t proven_http_event_h3_listen_(proven_http_event_server_t *sv, proven
     proven_err_t r = proven_net_udp_open(at, &e->udp, &got);
     if (r != PROVEN_OK) return r;
     (void)proven_net_udp_gro_(&e->udp);
+    (void)proven_net_udp_dontfrag_(&e->udp);
     r = proven_loop_io_add(sv->loop, &e->io, proven_net_udp_handle(&e->udp), PROVEN_NET_READABLE, e_on_io, e);
     if (r != PROVEN_OK) { (void)proven_net_udp_close(&e->udp); return r; }
     e->bound = got;

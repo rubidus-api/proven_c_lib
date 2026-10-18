@@ -755,6 +755,31 @@ proven_sys_net_result_t proven_sys_net_udp_gro(proven_sys_socket_t sock) {
 #endif
 }
 
+proven_sys_net_result_t proven_sys_net_udp_dontfrag(proven_sys_socket_t sock, proven_sys_net_family_t family) {
+    int level = -1, name = -1, value = 1;
+    if (family == PROVEN_SYS_NET_FAMILY_IPV4) {
+#if defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_PROBE)
+        level = IPPROTO_IP; name = IP_MTU_DISCOVER; value = IP_PMTUDISC_PROBE;
+#elif defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_DO)
+        level = IPPROTO_IP; name = IP_MTU_DISCOVER; value = IP_PMTUDISC_DO;
+#elif defined(IP_DONTFRAGMENT)
+        level = IPPROTO_IP; name = IP_DONTFRAGMENT;
+#elif defined(IP_DONTFRAG)
+        level = IPPROTO_IP; name = IP_DONTFRAG;
+#endif
+    } else if (family == PROVEN_SYS_NET_FAMILY_IPV6) {
+#if defined(IPV6_MTU_DISCOVER) && defined(IPV6_PMTUDISC_PROBE)
+        level = IPPROTO_IPV6; name = IPV6_MTU_DISCOVER; value = IPV6_PMTUDISC_PROBE;
+#elif defined(IPV6_MTU_DISCOVER) && defined(IPV6_PMTUDISC_DO)
+        level = IPPROTO_IPV6; name = IPV6_MTU_DISCOVER; value = IPV6_PMTUDISC_DO;
+#elif defined(IPV6_DONTFRAG)
+        level = IPPROTO_IPV6; name = IPV6_DONTFRAG;
+#endif
+    }
+    if (level < 0) return PROVEN_SYS_NET_UNSUPPORTED;
+    return setsockopt((native_socket_t)sock, level, name, (const char *)&value, (native_len_t)sizeof value) == 0 ? PROVEN_SYS_NET_OK : net_fail();
+}
+
 proven_sys_net_result_t proven_sys_net_recv_segments(proven_sys_socket_t sock, void *buf, proven_size_t cap,
                                                      proven_size_t *received, proven_size_t *seg, proven_sys_net_addr_t *from) {
     *seg = 0;
