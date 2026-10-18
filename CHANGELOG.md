@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.69.0] - 2026-10-18
+
 ### Fixed
 
 - HTTP/3: the event server's and the event client's UDP sockets set the don't-fragment bit and
