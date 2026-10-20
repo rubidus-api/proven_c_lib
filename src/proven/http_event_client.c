@@ -234,9 +234,12 @@ typedef struct {
     proven_byte_t host[256];
 } cl_session_t;
 
-static bool cl_session_empty(const proven_tls_session_t *s) {
-    for (proven_size_t i = 0; i < sizeof s->opaque; ++i) if (s->opaque[i]) return false;
-    return true;
+/* A session's mark: FNV-1a of its bytes, 0 for an empty one (and never 0 for another). */
+static proven_u64 cl_session_mark(const proven_tls_session_t *s) {
+    bool any = false;
+    proven_u64 h = 0xcbf29ce484222325ull;
+    for (proven_size_t i = 0; i < sizeof s->opaque; ++i) { any = any || s->opaque[i]; h = (h ^ s->opaque[i]) * 0x100000001b3ull; }
+    return !any ? 0 : h ? h : 1;
 }
 
 static cl_session_t *cl_session_find(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, bool quic) {
@@ -252,17 +255,27 @@ static cl_session_t *cl_session_find(proven_http_event_client_t *cl, proven_u8st
     return (void *)0;
 }
 
-void proven_http_event_client_session_start_(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, bool quic, proven_tls_session_t *out) {
+proven_u64 proven_http_event_client_session_start_(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, bool quic, proven_tls_session_t *out) {
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)(out->opaque), .size = sizeof out->opaque });
     cl_session_t *e = cl_session_find(cl, host, port, quic);
-    if (!e) return;
+    if (!e) return 0;
     *out = e->s;
     e->used = ++cl->session_clock;
+    return cl_session_mark(out);
 }
 
-void proven_http_event_client_session_keep_(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, bool quic, const proven_tls_session_t *s) {
-    if (cl_session_empty(s) || host.size == 0 || host.size > 255) return;
+void proven_http_event_client_session_keep_(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, bool quic, const proven_tls_session_t *s,
+                                            proven_u64 mark, bool established, bool resumed) {
+    if (host.size == 0 || host.size > 255) return;
+    const proven_u64 now = cl_session_mark(s);
+    if (now == 0) return;
     cl_session_t *e = cl_session_find(cl, host, port, quic);
+    if (now == mark) {
+        /* Nothing learned. Offered and refused, with no ticket in its place: a dead ticket, not
+         * offered again - unless another connection has stored a newer one since. */
+        if (established && !resumed && e && cl_session_mark(&e->s) == mark) proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)e, .size = sizeof *e });
+        return;
+    }
     if (!e) {
         if (!cl->sessions) {
             cl->sessions = cl_alloc(cl->alloc, 2 * PROVEN_HTTP_EVENT_CLIENT_SESSIONS * sizeof(cl_session_t));
@@ -295,7 +308,7 @@ static proven_err_t cl_conn_open(proven_http_event_request_t *c) {
     for (proven_size_t i = 0; i < c->host_len; ++i) k->host[i] = cl_host(c).ptr[i];
     proven_err_t e = PROVEN_OK;
     if (k->https) {
-        proven_http_event_client_session_start_(cl, cl_host(c), k->port, false, &k->session);
+        k->session_mark = proven_http_event_client_session_start_(cl, cl_host(c), k->port, false, &k->session);
         e = proven_tls_client_create(cl->cfg.tls, cl_host(c), &k->session, &k->tls);
     }
     if (e == PROVEN_OK) {
@@ -362,9 +375,10 @@ static void cl_conn_close(cl_conn_t *k, bool serve_waiting) {
     if (k->idle) { k->idle = false; cl->idle_count--; }
     proven_loop_timer_cancel(cl->loop, &k->timer);
     proven_loop_io_remove(cl->loop, &k->io);           /* before the close */
+    const bool established = k->tls && proven_tls_is_established(k->tls), resumed = established && proven_tls_resumed(k->tls);
     if (k->tls) proven_tls_conn_destroy(k->tls);
     if (k->https) {
-        proven_http_event_client_session_keep_(cl, (proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, k->port, false, &k->session);
+        proven_http_event_client_session_keep_(cl, (proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, k->port, false, &k->session, k->session_mark, established, resumed);
         proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)(k->session.opaque), .size = sizeof k->session.opaque });
     }
     if (proven_net_conn_is_open(&k->sock)) (void)proven_net_close(&k->sock);
@@ -402,7 +416,8 @@ static void cl_conn_close(cl_conn_t *k, bool serve_waiting) {
 static void cl_conn_keep(cl_conn_t *k) {
     proven_http_event_client_t *cl = k->client;
     /* A ticket that came with the exchange is the next connection's to offer (RFC-0020). */
-    if (k->https) proven_http_event_client_session_keep_(cl, (proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, k->port, false, &k->session);
+    if (k->https && k->tls) proven_http_event_client_session_keep_(cl, (proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, k->port, false, &k->session, k->session_mark,
+                                                                   proven_tls_is_established(k->tls), proven_tls_resumed(k->tls));
     k->owner = (void *)0;
     k->uses++;
     k->idle_since = proven_time_monotonic_now();

@@ -20,7 +20,7 @@ static proven_u8str_view_t sv(const char *s) { return (proven_u8str_view_t){ .pt
 
 static proven_allocator_t g_heap;
 static proven_loop_t *g_loop;
-static proven_tls_config_t *g_server_tls, *g_server_tls_new;
+static proven_tls_config_t *g_server_tls, *g_server_tls_new, *g_server_tls_none;
 static proven_tls_config_t *g_client_h1, *g_client_h1_none, *g_client_h2, *g_client_h3;
 
 static void spin_until(const bool *flag, proven_u32 ms) {
@@ -102,10 +102,12 @@ int main(void) {
     static const proven_u8str_view_t h2h3[] = { { (const proven_byte_t *)"h2", 2 }, { (const proven_byte_t *)"h3", 2 } };
     proven_tls_options_t so = { .alloc = g_heap, .certificate_pem = { (const proven_byte_t *)TP_SERVER_P256, strlen(TP_SERVER_P256) },
                                 .private_key_pem = { (const proven_byte_t *)TP_SERVER_P256_KEY, strlen(TP_SERVER_P256_KEY) }, .alpn = all, .alpn_count = 3 };
+    proven_tls_options_t so_none = so; so_none.no_resumption = true;
     proven_tls_options_t c1 = { .alloc = g_heap, .anchors = anchors };
     proven_tls_options_t c1_none = c1; c1_none.no_resumption = true;
     proven_tls_options_t c2 = { .alloc = g_heap, .anchors = anchors, .alpn = h2, .alpn_count = 1 };
     proven_tls_options_t c3 = { .alloc = g_heap, .anchors = anchors, .alpn = h2h3, .alpn_count = 2 };
+    PROVEN_TEST_ASSERT(proven_tls_config_create(&so_none, &g_server_tls_none) == PROVEN_OK, "a server configuration that resumes nothing", "");
     PROVEN_TEST_ASSERT(proven_tls_config_create(&so, &g_server_tls) == PROVEN_OK && proven_tls_config_create(&so, &g_server_tls_new) == PROVEN_OK &&
                        proven_tls_config_create(&c1, &g_client_h1) == PROVEN_OK && proven_tls_config_create(&c1_none, &g_client_h1_none) == PROVEN_OK &&
                        proven_tls_config_create(&c2, &g_client_h2) == PROVEN_OK && proven_tls_config_create(&c3, &g_client_h3) == PROVEN_OK, "TLS configurations", "");
@@ -164,6 +166,43 @@ int main(void) {
         PROVEN_TEST_ASSERT(again == port, "a new server on the same port", "");
         call_t d = ask(client, port, false), e = ask(client, port, false);
         PROVEN_TEST_ASSERT(!d.resumed && e.resumed, "the old ticket is refused and answered all the same; the next connection resumes the new server's", "");
+        /* Replaced again, by a server that resumes nothing and issues no ticket: the ticket the
+         * client holds is refused and nothing takes its place - it is dropped, not kept and
+         * offered for ever. */
+        proven_http_event_server_destroy(server);
+        spin(100);
+        server = server_on(g_server_tls_none, port, &again);
+        PROVEN_TEST_ASSERT(again == port, "a server that resumes nothing, on the same port", "");
+        call_t f = ask(client, port, false);
+        PROVEN_TEST_ASSERT(!f.resumed, "the ticket is refused", "");
+        proven_tls_session_t held;
+        (void)proven_http_event_client_session_start_(client, sv("127.0.0.1"), port, false, &held);
+        bool none = true;
+        for (proven_size_t i = 0; i < sizeof held.opaque; ++i) if (held.opaque[i]) none = false;
+        PROVEN_TEST_ASSERT(none, "and the dead ticket is dropped from the cache", "");
+        proven_http_event_client_destroy(client);
+        proven_http_event_server_destroy(server);
+        spin(100);
+        server = server_on(g_server_tls, port, &again);
+    }
+
+    PROVEN_TEST_SECTION("connections at once", "Three connections to one origin made together each start from the same ticket and each store what they learn; the next connection still resumes.", "Check the mark in proven_http_event_client_session_keep_: a connection stores what it learned, never what it merely carried.");
+    {
+        proven_http_event_client_t *client = client_of(g_client_h1, false, false, true);
+        call_t a = ask(client, port, false);
+        PROVEN_TEST_ASSERT(!a.resumed, "a ticket is learned", "");
+        static char url[64];
+        int n = snprintf(url, sizeof url, "https://127.0.0.1:%u/", (unsigned)port);
+        call_t at_once[3] = { 0 };
+        for (int i = 0; i < 3; ++i) {
+            proven_http_event_request_options_t o = { .method = sv("GET"), .url = { (const proven_byte_t *)url, (proven_size_t)n },
+                .on = { .on_response = on_response, .on_body = on_body, .on_done = on_done }, .ctx = &at_once[i] };
+            PROVEN_TEST_ASSERT(proven_http_event_client_start(client, &o, &at_once[i].request) == PROVEN_OK, "three requests started together", "");
+        }
+        for (int i = 0; i < 3; ++i) spin_until(&at_once[i].done, 5000);
+        PROVEN_TEST_ASSERT(at_once[0].resumed && at_once[1].resumed && at_once[2].resumed, "each, a connection of its own, resumes the one ticket", "");
+        call_t b = ask(client, port, false);
+        PROVEN_TEST_ASSERT(b.resumed, "and the next connection still resumes", "");
         proven_http_event_client_destroy(client);
     }
 
@@ -176,9 +215,9 @@ int main(void) {
             memset(&s, i + 1, sizeof s);
             int n = snprintf(host, sizeof host, "host%d.test", i);
             /* host0, the oldest, is used again before the 65th comes: host1 is then the least recently used. */
-            if (i == 64) proven_http_event_client_session_start_(client, sv("host0.test"), 443, false, &out);
-            proven_http_event_client_session_keep_(client, (proven_u8str_view_t){ (const proven_byte_t *)host, (proven_size_t)n }, 443, false, &s);
-            if (i == 0) proven_http_event_client_session_keep_(client, (proven_u8str_view_t){ (const proven_byte_t *)host, (proven_size_t)n }, 443, true, &s);
+            if (i == 64) (void)proven_http_event_client_session_start_(client, sv("host0.test"), 443, false, &out);
+            proven_http_event_client_session_keep_(client, (proven_u8str_view_t){ (const proven_byte_t *)host, (proven_size_t)n }, 443, false, &s, 0, true, false);
+            if (i == 0) proven_http_event_client_session_keep_(client, (proven_u8str_view_t){ (const proven_byte_t *)host, (proven_size_t)n }, 443, true, &s, 0, true, false);
         }
         proven_http_event_client_session_start_(client, sv("host1.test"), 443, false, &out);
         bool zero = true;
@@ -201,7 +240,7 @@ int main(void) {
 
     proven_http_event_server_destroy(server);
     spin(50);
-    proven_tls_config_destroy(g_server_tls); proven_tls_config_destroy(g_server_tls_new);
+    proven_tls_config_destroy(g_server_tls); proven_tls_config_destroy(g_server_tls_new); proven_tls_config_destroy(g_server_tls_none);
     proven_tls_config_destroy(g_client_h1); proven_tls_config_destroy(g_client_h1_none);
     proven_tls_config_destroy(g_client_h2); proven_tls_config_destroy(g_client_h3);
     proven_cert_store_destroy(anchors);

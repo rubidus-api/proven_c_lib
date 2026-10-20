@@ -28,11 +28,14 @@ written; their tags still exist.
   bytes (which over QUIC also keeps it under the amplification limit). The client keeps the
   sessions of 64 origins for TCP and 64 for QUIC (at most 128 KiB), gives up and wipes the least
   recently used, never offers a session learned over TCP on QUIC, and wipes them all when it is
-  destroyed; a ticket the server refuses is answered by a full handshake. The TLS configuration's
+  destroyed; a ticket the server refuses is answered by a full handshake, and if no new one comes
+  in its place it is dropped rather than offered again. A connection stores only a ticket it
+  learned, so connections made together do not overwrite one another's. The TLS configuration's
   `no_resumption` turns it off. The WebSocket client and the blocking client do not keep sessions.
 - Tests: `test_unit_http_event_client_resume` - a second connection resumes over each protocol,
   none does with `no_resumption`, TCP's sessions stay off QUIC, a server with new ticket keys is
-  answered, and the cache's bound.
+  answered, a refused ticket with nothing in its place dropped, connections made together, and the
+  cache's bound.
 
 ## [0.71.0] - 2026-10-19
 

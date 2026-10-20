@@ -78,6 +78,7 @@ typedef struct cl_conn {
     bool idle;                         /* counted in the client's idle_count */
     proven_byte_t host[256];
     proven_tls_session_t session;      /* this connection's copy of the origin's session (RFC-0020) */
+    proven_u64 session_mark;           /* what it was given: proven_http_event_client_session_start_'s mark */
 } cl_conn_t;
 
 struct proven_http_event_request {
@@ -176,11 +177,14 @@ bool proven_http_event_client_room_(proven_http_event_client_t *client);
 proven_u32 proven_http_event_client_retry_delay_(const proven_http_event_client_t *client, proven_u32 tries);
 void proven_http_event_client_freed_(proven_http_event_client_t *client);
 /* RFC-0020: TLS session reuse. `start` gives a new connection to an origin a copy of what the
- * client has learned for it on that transport (zero when nothing); `keep` stores what a
- * connection's copy holds now, when it holds anything and differs. */
+ * client has learned for it on that transport (zero when nothing) and returns its mark (a hash;
+ * 0 for nothing). `keep` stores what the connection learned - its copy, when it differs from the
+ * mark; when it does not, and the handshake was made without resuming, the ticket offered was
+ * refused and nothing replaced it: the cache's entry is dropped if it still holds that ticket. */
 #define PROVEN_HTTP_EVENT_CLIENT_SESSIONS 64u   /* origins per transport */
-void proven_http_event_client_session_start_(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, bool quic, proven_tls_session_t *out);
-void proven_http_event_client_session_keep_(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, bool quic, const proven_tls_session_t *s);
+proven_u64 proven_http_event_client_session_start_(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, bool quic, proven_tls_session_t *out);
+void proven_http_event_client_session_keep_(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, bool quic, const proven_tls_session_t *s,
+                                            proven_u64 mark, bool established, bool resumed);
 /* For tests: whether the connection carrying a request resumed a session (false before its
  * handshake, and in the clear). */
 bool proven_http_event_request_resumed_(proven_http_event_request_t *request);

@@ -77,6 +77,7 @@ struct c3conn {
     proven_quic_conn_t *q;
     proven_h3_conn_t *h3;
     proven_tls_session_t session;
+    proven_u64 session_mark;           /* what it was given (RFC-0020) */
     c3req_t *reqs;
     proven_size_t count;
     proven_net_addr_t to;
@@ -214,8 +215,9 @@ static void r_finish(c3req_t *r, proven_err_t why) {
         if (why != PROVEN_OK) (void)proven_h3_stream_reset(c->h3, r->id, PROVEN_H3_REQUEST_CANCELLED);
     }
     /* A ticket the connection has had by now is the next connection's to offer (RFC-0020). */
-    if (c && !c->dead && why == PROVEN_OK)
-        proven_http_event_client_session_keep_(cl, (proven_u8str_view_t){ .ptr = c->host, .size = c->host_len }, c->port, true, &c->session);
+    if (c && !c->dead && c->q && why == PROVEN_OK)
+        proven_http_event_client_session_keep_(cl, (proven_u8str_view_t){ .ptr = c->host, .size = c->host_len }, c->port, true, &c->session, c->session_mark,
+                                               c->up, proven_quic_conn_resumed(c->q));
     r_unlink(r);
     cl->request_count--;
     r_free_parts(r);
@@ -276,10 +278,11 @@ static void c_kill(c3conn_t *c, proven_err_t why) {
     if (c->next) c->next->prev = c->prev;
     c_end_requests(c);
     c_close_socket(c);
+    const bool established = c->up, resumed = c->q && proven_quic_conn_resumed(c->q);
     proven_h3_conn_destroy(c->h3);
     proven_quic_conn_destroy(c->q);
     c->h3 = (void *)0; c->q = (void *)0;
-    proven_http_event_client_session_keep_(cl, (proven_u8str_view_t){ .ptr = c->host, .size = c->host_len }, c->port, true, &c->session);
+    proven_http_event_client_session_keep_(cl, (proven_u8str_view_t){ .ptr = c->host, .size = c->host_len }, c->port, true, &c->session, c->session_mark, established, resumed);
     proven_mem_wipe((proven_mem_mut_t){ .ptr = c->session.opaque, .size = sizeof c->session.opaque });
     if (!c->client_going) proven_http_event_client_freed_(cl);
     c_leave(c);
@@ -815,7 +818,7 @@ static proven_err_t c_open(proven_http_event_client_t *cl, proven_u8str_view_t h
             .idle_timeout_ms = (cl->cfg.idle_timeout_ms > cl->cfg.connect_timeout_ms ? cl->cfg.idle_timeout_ms : cl->cfg.connect_timeout_ms) + 1000,
         };
         const proven_quic_addr_t qa = proven_quic_addr_of_(to);
-        proven_http_event_client_session_start_(cl, host, c->port, true, &c->session);    /* RFC-0020 */
+        c->session_mark = proven_http_event_client_session_start_(cl, host, c->port, true, &c->session);    /* RFC-0020 */
         e = proven_quic_conn_client_create(&qc, host, &c->session, &qa, c3_now_us(), &c->q);
         if (e == PROVEN_OK) {
             const proven_u32 list = cl->cfg.max_head_bytes > ((proven_size_t)1 << 20) ? (proven_u32)1 << 20 : (proven_u32)cl->cfg.max_head_bytes;
