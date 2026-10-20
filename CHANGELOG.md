@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.72.0] - 2026-10-21
+
 ### Changed
 
 - The event-driven client resumes TLS sessions (RFC-0020; no API change). A second connection to
