@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 125 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 126 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-19, Windows 11 test VM (v0.71.0): x86-64 359 PASS, 0 FAIL, 10 
 ## Test catalog
 
 
-The hosted full run builds and executes 191 registered tests plus the 178 runnable manual examples - 369 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 204 test files: the 187 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 192 registered tests plus the 178 runnable manual examples - 370 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 205 test files: the 188 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1207,6 +1207,20 @@ Failure tip: inspect `src/proven/http_event_client_h3.c`: `r_submit` and `r_push
 Intent: run `test_unit_http_event_client_h3` again with datagrams sent one a call and no GRO asked for (RFC-0018 S-3), as `test_unit_http_event_h3_fallback` does for the server. Its sub-checks are that test's.
 
 Failure tip: if only this one fails, inspect the one-at-a-time branch of `proven_sys_net_send_segments`; otherwise as for `test_unit_http_event_client_h3`.
+
+### `tests/test_unit_http_event_client_resume` - the event-driven HTTP client, resuming TLS sessions
+
+Intent: verify RFC-0020's session reuse in the event-driven client, against the event-driven server on the same loop over loopback: a second connection to an origin offers the TLS session the last one learned, and the server takes it. Whether a request's connection resumed is read through an internal hook (`proven_http_event_request_resumed_`).
+
+Sub-checks:
+
+- HTTP/1.1 with `no_connection_reuse` (a connection a request): the first connection makes a full handshake, the next two resume; with the TLS configuration's `no_resumption`, none does.
+- HTTP/2: when the first connection has gone idle and closed (100 ms), the second connection resumes.
+- HTTP/3 (not in a build with `PROVEN_NO_HTTP3`): after a request over HTTP/2 the first QUIC connection does not offer the session learned over TCP; the second QUIC connection resumes.
+- A server that changed: the origin's server is replaced, on the same port, by one with other ticket keys; the next connection's ticket is refused and it is answered all the same, and the one after resumes the new server's session.
+- The cache's bound, through the internal calls: 65 origins over TCP, the oldest used again before the 65th - the least recently used (the second) is given up, the one used again kept, the newest there; a host name is matched without regard to case; QUIC's session for an origin is kept apart and untouched, an origin known only over TCP gives QUIC nothing, and another port is another origin.
+
+Failure tip: inspect `proven_http_event_client_session_start_` and `_keep_` in `src/proven/http_event_client.c`, and where each path calls them: `cl_conn_open`, `cl_conn_keep` and `cl_conn_close`; `c_open` and `c_close_socket` in `http_event_client_h2.c`; `c_open`, `r_finish` and `c_kill` in `http_event_client_h3.c`. Not covered here: another server implementation's tickets.
 
 ### `tests/test_unit_http_coding` - http: content codings
 

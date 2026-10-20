@@ -2420,6 +2420,8 @@ void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s)
     s->datagram_size = c->datagram;
 }
 
+bool proven_quic_conn_resumed(const proven_quic_conn_t *c) { return c && c->tls && c->complete && proven_tls_resumed(c->tls); }
+
 /* ---- For tests: frames as if a packet carried them, and a key update started here ---- */
 
 proven_u64 proven_quic_conn_test_frames_(proven_quic_conn_t *c, int lvl, proven_mem_view_t payload, proven_u64 now) {

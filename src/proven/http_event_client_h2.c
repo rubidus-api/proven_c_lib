@@ -75,6 +75,7 @@ struct c2conn {
     proven_loop_timer_t timer;
     proven_loop_after_t after;         /* "call me back": a round, from the loop, when its present round is delivered */
     proven_tls_conn_t *tls;
+    proven_tls_session_t session;      /* this connection's copy of the origin's session (RFC-0020) */
     proven_h2_conn_t *engine;
     c2req_t *reqs;
     c2req_t *turn;                     /* the request whose output was moved last in a round: the next round goes on behind it */
@@ -187,6 +188,9 @@ static void r_finish(c2req_t *r, proven_err_t why) {
          * sent or taken on this stream. */
         if (!r->engine_done || why != PROVEN_OK) (void)proven_h2_conn_reset(c->engine, r->id, PROVEN_H2_CANCEL);
     }
+    /* A ticket the connection has had by now is the next connection's to offer (RFC-0020). */
+    if (c && !c->dead && c->https && why == PROVEN_OK)
+        proven_http_event_client_session_keep_(r->h.client, (proven_u8str_view_t){ .ptr = c->host, .size = c->host_len }, c->port, false, &c->session);
     r_unlink(r);
     r->h.client->request_count--;
     r_free_parts(r);
@@ -220,6 +224,10 @@ static void c_close_socket(c2conn_t *c) {
     proven_loop_after_cancel_(cl->loop, &c->after);
     if (c->registered) { proven_loop_io_remove(cl->loop, &c->io); c->registered = false; }      /* before the close */
     if (c->tls) { proven_tls_conn_destroy(c->tls); c->tls = (void *)0; }
+    if (c->https) {
+        proven_http_event_client_session_keep_(cl, (proven_u8str_view_t){ .ptr = c->host, .size = c->host_len }, c->port, false, &c->session);
+        proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)(c->session.opaque), .size = sizeof c->session.opaque });
+    }
     if (proven_net_conn_is_open(&c->sock)) (void)proven_net_close(&c->sock);
 }
 
@@ -958,7 +966,10 @@ static proven_err_t c_open(proven_http_event_client_t *cl, bool https, proven_u8
     for (proven_size_t i = 0; i < host.size; ++i) c->host[i] = host.ptr[i];
     c->state = C2_CONNECTING;
     proven_err_t e = PROVEN_OK;
-    if (https) e = proven_tls_client_create(cl->cfg.tls, host, (void *)0, &c->tls);
+    if (https) {
+        proven_http_event_client_session_start_(cl, host, port, false, &c->session);
+        e = proven_tls_client_create(cl->cfg.tls, host, &c->session, &c->tls);
+    }
     if (e == PROVEN_OK) {
         e = proven_net_connect_start(c->to, &c->sock);
         if (e == PROVEN_OK) c->connected_at_start = true;
@@ -1403,6 +1414,12 @@ void proven_http_event_client_h2_destroy_(proven_http_event_client_t *cl) {
         c->client_going = true;
         c_kill(c, PROVEN_ERR_RESET);
     }
+}
+
+bool proven_http_event_client_h2_resumed_(proven_http_event_request_t *request) {
+    c2req_t *r = c2_of(request);
+    if (r->fwd) return proven_http_event_request_resumed_(r->fwd);
+    return r->conn && r->conn->tls && proven_tls_is_established(r->conn->tls) && proven_tls_resumed(r->conn->tls);
 }
 
 void proven_http_event_client_h2_forwarded_done_(proven_http_event_request_t *face) {

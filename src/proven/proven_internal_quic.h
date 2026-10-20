@@ -442,6 +442,8 @@ void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s)
  * close code, or 0), and a key update started by this side. */
 proven_u64 proven_quic_conn_test_frames_(proven_quic_conn_t *c, int lvl, proven_mem_view_t payload, proven_u64 now);
 bool proven_quic_conn_test_key_update_(proven_quic_conn_t *c);
+/* Whether the handshake resumed a session the client offered (RFC-0020). */
+bool proven_quic_conn_resumed(const proven_quic_conn_t *c);
 
 #endif /* PROVEN_NO_HTTP3 */
 #endif

@@ -18,6 +18,22 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- The event-driven client resumes TLS sessions (RFC-0020; no API change). A second connection to
+  an origin - over HTTP/1.1, HTTP/2 or HTTP/3 - offers the session the last connection to it
+  learned from the server's ticket, and when the server takes it skips the certificates and a
+  signature: measured in memory, a client's handshake with a P-256 server from 765 to 177 us, a
+  server's with an RSA-2048 chain from 1,691 to 180 us, the server's first flight from 2,189 to 235
+  bytes (which over QUIC also keeps it under the amplification limit). The client keeps the
+  sessions of 64 origins for TCP and 64 for QUIC (at most 128 KiB), gives up and wipes the least
+  recently used, never offers a session learned over TCP on QUIC, and wipes them all when it is
+  destroyed; a ticket the server refuses is answered by a full handshake. The TLS configuration's
+  `no_resumption` turns it off. The WebSocket client and the blocking client do not keep sessions.
+- Tests: `test_unit_http_event_client_resume` - a second connection resumes over each protocol,
+  none does with `no_resumption`, TCP's sessions stay off QUIC, a server with new ticket keys is
+  answered, and the cache's bound.
+
 ## [0.71.0] - 2026-10-19
 
 ### Changed

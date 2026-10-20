@@ -77,6 +77,7 @@ typedef struct cl_conn {
     bool connected_at_start;
     bool idle;                         /* counted in the client's idle_count */
     proven_byte_t host[256];
+    proven_tls_session_t session;      /* this connection's copy of the origin's session (RFC-0020) */
 } cl_conn_t;
 
 struct proven_http_event_request {
@@ -143,6 +144,8 @@ struct proven_http_event_client {
     bool h3_room_busy;
     void *h3_delayed;                  /* and those that wait for a try (retry_delay_ms), in no order that matters */
     proven_byte_t *h3_batch;           /* a connection's datagrams gathered for one send (RFC-0018 S-3); made when first needed */
+    void *sessions;                    /* RFC-0020: the TLS sessions learned, by origin and transport; made when first needed */
+    proven_u64 session_clock;
 };
 
 // -----------------------------------------------------------------------------
@@ -172,6 +175,17 @@ bool proven_http_event_client_room_(proven_http_event_client_t *client);
  * beyond its first: retry_delay_ms, doubled so many times, and at most retry_delay_max_ms. */
 proven_u32 proven_http_event_client_retry_delay_(const proven_http_event_client_t *client, proven_u32 tries);
 void proven_http_event_client_freed_(proven_http_event_client_t *client);
+/* RFC-0020: TLS session reuse. `start` gives a new connection to an origin a copy of what the
+ * client has learned for it on that transport (zero when nothing); `keep` stores what a
+ * connection's copy holds now, when it holds anything and differs. */
+#define PROVEN_HTTP_EVENT_CLIENT_SESSIONS 64u   /* origins per transport */
+void proven_http_event_client_session_start_(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, bool quic, proven_tls_session_t *out);
+void proven_http_event_client_session_keep_(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, bool quic, const proven_tls_session_t *s);
+/* For tests: whether the connection carrying a request resumed a session (false before its
+ * handshake, and in the clear). */
+bool proven_http_event_request_resumed_(proven_http_event_request_t *request);
+bool proven_http_event_client_h2_resumed_(proven_http_event_request_t *request);
+bool proven_http_event_client_h3_resumed_(proven_http_event_request_t *request);
 /* In http_event_client_h2.c: whether an HTTP/2 request waits for a place, and "a place can
  * be had" for those - called by the HTTP/1.1 side when none of its own took it. */
 bool proven_http_event_client_h2_waiting_(const proven_http_event_client_t *client);

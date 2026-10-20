@@ -218,6 +218,72 @@ void proven_http_event_client_freed_(proven_http_event_client_t *cl) {
     }
 }
 
+// -----------------------------------------------------------------------------
+// TLS sessions (RFC-0020): what a server's ticket lets the next connection skip
+// -----------------------------------------------------------------------------
+
+/* One remembered session: an origin (host, port), a transport (TCP's TLS or QUIC's - a ticket
+ * for one is not offered on the other) and the engine's block. 64 per transport, the least
+ * recently used given up - and wiped - first. */
+typedef struct {
+    proven_tls_session_t s;
+    proven_u64 used;                   /* the client's clock when last given or stored; 0: free */
+    proven_u16 port;
+    proven_u8 host_len;
+    bool quic;
+    proven_byte_t host[256];
+} cl_session_t;
+
+static bool cl_session_empty(const proven_tls_session_t *s) {
+    for (proven_size_t i = 0; i < sizeof s->opaque; ++i) if (s->opaque[i]) return false;
+    return true;
+}
+
+static cl_session_t *cl_session_find(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, bool quic) {
+    cl_session_t *t = cl->sessions;
+    if (!t) return (void *)0;
+    for (proven_size_t i = 0; i < 2 * PROVEN_HTTP_EVENT_CLIENT_SESSIONS; ++i) {
+        cl_session_t *e = &t[i];
+        if (!e->used || e->quic != quic || e->port != port || e->host_len != host.size) continue;
+        bool same = true;
+        for (proven_size_t k = 0; k < host.size && same; ++k) same = cl_lower(e->host[k]) == cl_lower(host.ptr[k]);
+        if (same) return e;
+    }
+    return (void *)0;
+}
+
+void proven_http_event_client_session_start_(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, bool quic, proven_tls_session_t *out) {
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)(out->opaque), .size = sizeof out->opaque });
+    cl_session_t *e = cl_session_find(cl, host, port, quic);
+    if (!e) return;
+    *out = e->s;
+    e->used = ++cl->session_clock;
+}
+
+void proven_http_event_client_session_keep_(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, bool quic, const proven_tls_session_t *s) {
+    if (cl_session_empty(s) || host.size == 0 || host.size > 255) return;
+    cl_session_t *e = cl_session_find(cl, host, port, quic);
+    if (!e) {
+        if (!cl->sessions) {
+            cl->sessions = cl_alloc(cl->alloc, 2 * PROVEN_HTTP_EVENT_CLIENT_SESSIONS * sizeof(cl_session_t));
+            if (!cl->sessions) return;             /* none remembered: the next is a full handshake */
+            proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)(cl->sessions), .size = 2 * PROVEN_HTTP_EVENT_CLIENT_SESSIONS * sizeof(cl_session_t) });
+        }
+        /* A free slot of this transport's half, or its least recently used. */
+        cl_session_t *t = (cl_session_t *)cl->sessions + (quic ? PROVEN_HTTP_EVENT_CLIENT_SESSIONS : 0);
+        e = &t[0];
+        for (proven_size_t i = 0; i < PROVEN_HTTP_EVENT_CLIENT_SESSIONS; ++i) {
+            if (!t[i].used) { e = &t[i]; break; }
+            if (t[i].used < e->used) e = &t[i];
+        }
+        proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)(e), .size = sizeof *e });
+        e->quic = quic; e->port = port; e->host_len = (proven_u8)host.size;
+        for (proven_size_t k = 0; k < host.size; ++k) e->host[k] = host.ptr[k];
+    }
+    e->s = *s;
+    e->used = ++cl->session_clock;
+}
+
 /* A new connection for a request that has none. On failure nothing is left of it. */
 static proven_err_t cl_conn_open(proven_http_event_request_t *c) {
     proven_http_event_client_t *cl = c->h.client;
@@ -228,7 +294,10 @@ static proven_err_t cl_conn_open(proven_http_event_request_t *c) {
     k->https = c->https; k->port = c->port; k->to = c->to; k->host_len = c->host_len;
     for (proven_size_t i = 0; i < c->host_len; ++i) k->host[i] = cl_host(c).ptr[i];
     proven_err_t e = PROVEN_OK;
-    if (k->https) e = proven_tls_client_create(cl->cfg.tls, cl_host(c), (void *)0, &k->tls);
+    if (k->https) {
+        proven_http_event_client_session_start_(cl, cl_host(c), k->port, false, &k->session);
+        e = proven_tls_client_create(cl->cfg.tls, cl_host(c), &k->session, &k->tls);
+    }
     if (e == PROVEN_OK) {
         e = proven_net_connect_start(k->to, &k->sock);
         if (e == PROVEN_OK) k->connected_at_start = true;
@@ -294,6 +363,10 @@ static void cl_conn_close(cl_conn_t *k, bool serve_waiting) {
     proven_loop_timer_cancel(cl->loop, &k->timer);
     proven_loop_io_remove(cl->loop, &k->io);           /* before the close */
     if (k->tls) proven_tls_conn_destroy(k->tls);
+    if (k->https) {
+        proven_http_event_client_session_keep_(cl, (proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, k->port, false, &k->session);
+        proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)(k->session.opaque), .size = sizeof k->session.opaque });
+    }
     if (proven_net_conn_is_open(&k->sock)) (void)proven_net_close(&k->sock);
     if (k->prev) k->prev->next = k->next;
     else cl->conns = k->next;
@@ -328,6 +401,8 @@ static void cl_conn_close(cl_conn_t *k, bool serve_waiting) {
  * kept idle - and then the one idle longest goes if there are too many. */
 static void cl_conn_keep(cl_conn_t *k) {
     proven_http_event_client_t *cl = k->client;
+    /* A ticket that came with the exchange is the next connection's to offer (RFC-0020). */
+    if (k->https) proven_http_event_client_session_keep_(cl, (proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, k->port, false, &k->session);
     k->owner = (void *)0;
     k->uses++;
     k->idle_since = proven_time_monotonic_now();
@@ -911,6 +986,10 @@ void proven_http_event_client_destroy(proven_http_event_client_t *cl) {
     if (cl->pbuf) a.free_fn(a.ctx, cl->pbuf);
     if (cl->hbuf) a.free_fn(a.ctx, cl->hbuf);
     if (cl->h2buf) a.free_fn(a.ctx, cl->h2buf);
+    if (cl->sessions) {
+        proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)(cl->sessions), .size = 2 * PROVEN_HTTP_EVENT_CLIENT_SESSIONS * sizeof(cl_session_t) });
+        a.free_fn(a.ctx, cl->sessions);
+    }
     a.free_fn(a.ctx, cl);
 }
 
@@ -1177,6 +1256,15 @@ void *proven_http_event_request_user(const proven_http_event_request_t *c) {
     if (PROVEN_HTTP_EVENT_REQUEST_IS_H3_(c)) return proven_http_event_client_h3_user_(c);
 #endif
     return PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c) ? proven_http_event_client_h2_user_(c) : c->user;
+}
+
+bool proven_http_event_request_resumed_(proven_http_event_request_t *c) {
+    if (!c) return false;
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H3_(c)) return proven_http_event_client_h3_resumed_(c);
+#endif
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) return proven_http_event_client_h2_resumed_(c);
+    return c->k && c->k->tls && proven_tls_is_established(c->k->tls) && proven_tls_resumed(c->k->tls);
 }
 
 int proven_http_event_request_protocol(const proven_http_event_request_t *c) {
