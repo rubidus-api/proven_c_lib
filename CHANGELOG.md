@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.73.0] - 2026-10-21
+
 ### Added
 
 - 0-RTT over HTTP/3 (RFC-0021): `early_data` in `proven_tls_options_t`, and
