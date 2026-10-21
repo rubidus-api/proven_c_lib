@@ -1,6 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "../src/proven/proven_internal_quic.h"
+#include "../src/proven/proven_internal_tls.h"
 #include "test_unit_tls_pki.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +16,12 @@
  * ChangeCipherSpec, no KeyUpdate, a protocol agreed, parameters present and well formed) are
  * kept and their breaches end the handshake with the code RFC 9001 names; every bit change of
  * a flight ends it too, and a flight cut anywhere completes when the rest arrives.
+ *
+ * Early data (RFC-0021): a ticket made in QUIC under `early_data` allows it; the next client
+ * offers it and both sides reach the same early secret; the server refuses a second use of a
+ * ticket (also a replayed ClientHello), a stale one, another protocol, other limits, a full
+ * register, a retry; a ticket made over TCP never allows it; a client refuses an acceptance for
+ * another protocol and a QUIC ticket whose early_data is not 0xffffffff.
  *
  * One check reaches past this engine: the client's Handshake-level secret opens the records a
  * server running over TCP sends for the same ClientHello, so the key schedule in QUIC mode is
@@ -152,6 +159,252 @@ static bool hello_ext(const proven_byte_t *m, proven_size_t n, proven_u16 type, 
     return false;
 }
 
+
+/* ---- Early data (RFC-0021) ---- */
+
+static proven_tls_config_t *g_cc, *g_sc;          /* main's client and server without early_data */
+
+/* A pair whose server sends `stp` as its parameters. */
+static pair_t pair_make_tp(proven_tls_config_t *cc, proven_tls_config_t *sc, proven_tls_session_t *session, proven_mem_view_t stp) {
+    pair_t p = { 0 };
+    PROVEN_TEST_ASSERT(proven_tls_quic_client_create_(cc, sv("example.test"), session, (proven_mem_view_t){ g_ctp, g_ctp_len }, &p.c) == PROVEN_OK, "a QUIC-mode client", "");
+    PROVEN_TEST_ASSERT(proven_tls_quic_server_create_(sc, stp, &p.s) == PROVEN_OK, "a QUIC-mode server", "");
+    return p;
+}
+
+/* Both sides at the same early secret: the client's to write, the server's to read. */
+static bool early_agree(const pair_t *p) {
+    proven_byte_t a[PROVEN_HMAC_MAX_SIZE], b[PROVEN_HMAC_MAX_SIZE];
+    const proven_tls_suite_t *sa = NULL, *sb = NULL;
+    proven_size_t n1 = proven_tls_quic_early_secret_(p->c, a, &sa), n2 = proven_tls_quic_early_secret_(p->s, b, &sb);
+    return n1 > 0 && n1 == n2 && sa == sb && memcmp(a, b, n1) == 0;
+}
+
+/* A full handshake that leaves `session` holding a ticket. */
+static void ticket_into(proven_tls_config_t *cc, proven_tls_config_t *sc, proven_tls_session_t *session) {
+    memset(session, 0, sizeof *session);
+    pair_t p = pair_make(cc, sc, session);
+    pump(p.c, p.s, NULL);
+    PROVEN_TEST_ASSERT(established_both(&p), "a handshake that leaves a ticket", "");
+    pair_free(&p);
+}
+
+/* A server fed only the client's first flight: where it leaves early data. */
+static int server_takes(proven_tls_config_t *sc, const proven_byte_t *hello, proven_size_t n) {
+    proven_tls_conn_t *s = NULL;
+    PROVEN_TEST_ASSERT(proven_tls_quic_server_create_(sc, (proven_mem_view_t){ g_stp, g_stp_len }, &s) == PROVEN_OK, "a QUIC-mode server", "");
+    (void)proven_tls_quic_feed_(s, PROVEN_QUIC_LEVEL_INITIAL, (proven_mem_view_t){ hello, n });
+    const int e = proven_tls_quic_early_(s);
+    proven_tls_conn_destroy(s);
+    return e;
+}
+
+/* Over TCP: bytes back and forth until neither side has more. */
+static void pump_tcp(proven_tls_conn_t *a, proven_tls_conn_t *b) {
+    proven_tls_conn_t *from[2] = { a, b }, *to[2] = { b, a };
+    for (int round = 0; round < 40; ++round) {
+        bool any = false;
+        for (int d = 0; d < 2; ++d) {
+            proven_mem_view_t out = proven_tls_pending_output(from[d]);
+            if (out.size == 0) continue;
+            const proven_size_t n = out.size;
+            memcpy(g_buf, out.ptr, n);
+            proven_tls_output_sent(from[d], n);
+            any = true;
+            for (proven_size_t used = 0; used < n;) {
+                proven_size_t k = 0;
+                if (proven_tls_feed(to[d], (proven_mem_view_t){ g_buf + used, n - used }, &k) != PROVEN_OK) return;
+                used += k;
+                proven_byte_t sink[256];
+                while (proven_tls_read(to[d], (proven_mem_mut_t){ sink, sizeof sink }).err == PROVEN_OK) { }
+                if (k == 0) break;
+            }
+        }
+        if (!any) break;
+    }
+}
+
+static void early_data_section(void) {
+    PROVEN_TEST_SECTION("early data (RFC-0021)",
+        "A ticket made in QUIC under early_data allows it; the next client offers it and both sides reach the same early secret. The server takes a ticket's early data once, fresh, for the same protocol and limits, never after a retry, never when its register is full; a ticket made over TCP never allows it.",
+        "Check server_early_ok and proven_tls_early_take_ (the register), client_hello_send's offer and client_encrypted_extensions.");
+    proven_tls_options_t o = client_options();
+    o.early_data = true;
+    proven_tls_config_t *ce = config(&o);
+    o = server_options(TP_SERVER_ED, TP_SERVER_ED_KEY);
+    o.early_data = true;
+    proven_tls_config_t *se = config(&o);
+
+    o = client_options(); o.early_data = true; o.no_resumption = true;
+    proven_tls_config_t *bad = NULL;
+    PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &bad) == PROVEN_ERR_INVALID_ARG && !bad, "early_data with no_resumption is refused", "");
+
+    static proven_tls_session_t session, copy;
+    ticket_into(ce, se, &session);
+    const proven_tls_session_data_t *sd = (const proven_tls_session_data_t *)(const void *)session.opaque;
+    PROVEN_TEST_ASSERT(sd->early == 1 && sd->has_limits == 1 && sd->alpn_len == 2 && memcmp(sd->alpn, "h3", 2) == 0 && sd->limits[0] == 262144,
+        "the ticket allows early data; the session keeps the protocol and the server's limits", "");
+    memcpy(&copy, &session, sizeof copy);
+
+    pair_t p = pair_make(ce, se, &session);
+    proven_mem_view_t ext;
+    proven_mem_view_t ch = proven_tls_quic_pending_(p.c, PROVEN_QUIC_LEVEL_INITIAL);
+    PROVEN_TEST_ASSERT(hello_ext(ch.ptr, ch.size, 42, &ext) && ext.size == 0 && proven_tls_quic_early_(p.c) == PROVEN_TLS_EARLY_OFFERED,
+        "the next ClientHello offers early_data, empty", "");
+    proven_u64 lim[7];
+    PROVEN_TEST_ASSERT(proven_tls_quic_early_limits_(p.c, lim) && lim[0] == 262144 && lim[5] == 3, "the client has the limits its early data must keep to", "");
+    pump(p.c, p.s, NULL);
+    PROVEN_TEST_ASSERT(established_both(&p) && proven_tls_resumed(p.s) && proven_tls_quic_early_(p.s) == PROVEN_TLS_EARLY_ACCEPTED &&
+                       proven_tls_quic_early_(p.c) == PROVEN_TLS_EARLY_ACCEPTED && early_agree(&p) && secrets_agree(&p, PROVEN_QUIC_LEVEL_APPLICATION),
+        "the server accepts it: both sides the same early secret, and the handshake completes", "");
+    proven_tls_quic_early_drop_(p.c);
+    proven_byte_t gone[PROVEN_HMAC_MAX_SIZE];
+    const proven_tls_suite_t *su = NULL;
+    PROVEN_TEST_ASSERT(proven_tls_quic_early_secret_(p.c, gone, &su) == 0, "a dropped early secret is gone", "");
+    pair_free(&p);
+
+    /* The same ticket again: the register has it. */
+    memcpy(&session, &copy, sizeof session);
+    p = pair_make(ce, se, &session);
+    pump(p.c, p.s, NULL);
+    PROVEN_TEST_ASSERT(established_both(&p) && proven_tls_resumed(p.s) && proven_tls_quic_early_(p.s) == PROVEN_TLS_EARLY_REFUSED &&
+                       proven_tls_quic_early_(p.c) == PROVEN_TLS_EARLY_REFUSED,
+        "a second use of a ticket: refused, and the connection resumes all the same", "");
+    pair_free(&p);
+
+    /* A replayed ClientHello: taken once, then refused while fresh, and refused when stale. */
+    static proven_byte_t hello[2048];
+    ticket_into(ce, se, &session);
+    p = pair_make(ce, se, &session);
+    ch = proven_tls_quic_pending_(p.c, PROVEN_QUIC_LEVEL_INITIAL);
+    const proven_size_t hn = ch.size;
+    memcpy(hello, ch.ptr, hn);
+    pair_free(&p);
+    PROVEN_TEST_ASSERT(server_takes(se, hello, hn) == PROVEN_TLS_EARLY_ACCEPTED, "a captured ClientHello: its early data taken once", "");
+    PROVEN_TEST_ASSERT(server_takes(se, hello, hn) == PROVEN_TLS_EARLY_REFUSED, "the same hello replayed at once: refused by the register", "");
+    g_now += 30;
+    PROVEN_TEST_ASSERT(server_takes(se, hello, hn) == PROVEN_TLS_EARLY_REFUSED, "replayed 30 s later: refused", "");
+    ticket_into(ce, se, &session);
+    p = pair_make(ce, se, &session);
+    ch = proven_tls_quic_pending_(p.c, PROVEN_QUIC_LEVEL_INITIAL);
+    const proven_size_t hn2 = ch.size;
+    memcpy(hello, ch.ptr, hn2);
+    pair_free(&p);
+    g_now += 12;
+    PROVEN_TEST_ASSERT(server_takes(se, hello, hn2) == PROVEN_TLS_EARLY_REFUSED, "a hello never seen, 12 s after it was made: refused as stale", "");
+    g_now -= 12;
+    PROVEN_TEST_ASSERT(server_takes(se, hello, hn2) == PROVEN_TLS_EARLY_ACCEPTED, "and at its time: taken", "");
+
+    /* A full register refuses. */
+    g_now += 60;                                   /* every entry so far has expired */
+    proven_tls_test_early_cap_(se, 1);
+    ticket_into(ce, se, &session);
+    ticket_into(ce, se, &copy);
+    p = pair_make(ce, se, &session);
+    pump(p.c, p.s, NULL);
+    PROVEN_TEST_ASSERT(proven_tls_quic_early_(p.s) == PROVEN_TLS_EARLY_ACCEPTED, "a register of one: the first ticket taken", "");
+    pair_free(&p);
+    p = pair_make(ce, se, &copy);
+    pump(p.c, p.s, NULL);
+    PROVEN_TEST_ASSERT(established_both(&p) && proven_tls_quic_early_(p.s) == PROVEN_TLS_EARLY_REFUSED, "another ticket while it is full: refused, the handshake goes on", "");
+    pair_free(&p);
+    proven_tls_test_early_cap_(se, 0);
+
+    /* Other limits on the server's side: the 0-RTT data assumed the old ones. */
+    ticket_into(ce, se, &session);
+    proven_quic_tp_t t;
+    proven_byte_t stp2[128];
+    PROVEN_TEST_ASSERT(proven_quic_tp_decode((proven_mem_view_t){ g_stp, g_stp_len }, true, &t) == 0, "the server's parameters decode", "");
+    t.initial_max_data = 131072;
+    const proven_size_t stp2_len = proven_quic_tp_encode(&t, true, (proven_mem_mut_t){ stp2, sizeof stp2 });
+    p = pair_make_tp(ce, se, &session, (proven_mem_view_t){ stp2, stp2_len });
+    pump(p.c, p.s, NULL);
+    PROVEN_TEST_ASSERT(established_both(&p) && proven_tls_resumed(p.s) && proven_tls_quic_early_(p.s) == PROVEN_TLS_EARLY_REFUSED, "a server whose limits changed: refused", "");
+    pair_free(&p);
+
+    /* A retry: never early data after it. */
+    ticket_into(ce, se, &session);
+    proven_tls_test_knobs(0, true);
+    p = pair_make(ce, se, &session);
+    pump(p.c, p.s, NULL);
+    proven_tls_test_knobs(0, false);
+    PROVEN_TEST_ASSERT(established_both(&p) && proven_tls_quic_early_(p.c) == PROVEN_TLS_EARLY_REFUSED && proven_tls_quic_early_(p.s) != PROVEN_TLS_EARLY_ACCEPTED,
+        "a HelloRetryRequest: the client's early data counts as refused, the server takes none", "");
+    pair_free(&p);
+
+    /* Another protocol chosen than the ticket's: the server refuses. */
+    static const proven_u8str_view_t H2H3[2] = { { (const proven_byte_t *)"h2", 2 }, { (const proven_byte_t *)"h3", 2 } };
+    static const proven_u8str_view_t H3H2[2] = { { (const proven_byte_t *)"h3", 2 }, { (const proven_byte_t *)"h2", 2 } };
+    o = server_options(TP_SERVER_ED, TP_SERVER_ED_KEY); o.early_data = true; o.alpn = H2H3; o.alpn_count = 2;
+    proven_tls_config_t *s23 = config(&o);
+    o = client_options(); o.early_data = true; o.alpn = H3H2; o.alpn_count = 2;
+    proven_tls_config_t *c32 = config(&o);
+    ticket_into(ce, s23, &session);                /* the client offers h3 alone: the ticket's protocol is h3 */
+    p = pair_make(c32, s23, &session);             /* now h3 and h2: the server prefers h2 */
+    pump(p.c, p.s, NULL);
+    PROVEN_TEST_ASSERT(established_both(&p) && proven_tls_quic_early_(p.c) == PROVEN_TLS_EARLY_REFUSED && proven_tls_quic_early_(p.s) == PROVEN_TLS_EARLY_REFUSED &&
+                       proven_tls_alpn(p.c).size == 2 && memcmp(proven_tls_alpn(p.c).ptr, "h2", 2) == 0,
+        "another protocol than the ticket's: refused", "");
+    pair_free(&p);
+
+    /* A session naming a protocol the server does not then choose, accepted all the same (as a
+     * server that broke the rule would): the client refuses. */
+    ticket_into(ce, se, &session);
+    memcpy(((proven_tls_session_data_t *)(void *)session.opaque)->alpn, "h2", 2);
+    p = pair_make(c32, se, &session);
+    pump(p.c, p.s, NULL);
+    PROVEN_TEST_ASSERT(!proven_tls_is_established(p.c) && proven_tls_quic_error_(p.c) == 0x0100 + 47, "an acceptance for another protocol than the session's: illegal_parameter", "");
+    pair_free(&p);
+
+    /* No offer: a client without early_data; a server without it, whose tickets do not allow it. */
+    ticket_into(g_cc, se, &session);
+    p = pair_make(g_cc, se, &session);
+    ch = proven_tls_quic_pending_(p.c, PROVEN_QUIC_LEVEL_INITIAL);
+    PROVEN_TEST_ASSERT(!hello_ext(ch.ptr, ch.size, 42, &ext), "a client without early_data offers none", "");
+    pair_free(&p);
+    ticket_into(ce, g_sc, &session);
+    PROVEN_TEST_ASSERT(((const proven_tls_session_data_t *)(const void *)session.opaque)->early == 0, "a server without it issues tickets that do not allow it", "");
+    p = pair_make(ce, g_sc, &session);
+    ch = proven_tls_quic_pending_(p.c, PROVEN_QUIC_LEVEL_INITIAL);
+    PROVEN_TEST_ASSERT(!hello_ext(ch.ptr, ch.size, 42, &ext), "and the client offers none with it", "");
+    pair_free(&p);
+
+    /* A ticket made over TCP never allows it. */
+    memset(&session, 0, sizeof session);
+    proven_tls_conn_t *a = NULL, *b = NULL;
+    PROVEN_TEST_ASSERT(proven_tls_client_create(ce, sv("example.test"), &session, &a) == PROVEN_OK && proven_tls_server_create(se, &b) == PROVEN_OK, "a pair over TCP", "");
+    pump_tcp(a, b);
+    PROVEN_TEST_ASSERT(proven_tls_is_established(a) && proven_tls_is_established(b), "a handshake over TCP", "");
+    sd = (const proven_tls_session_data_t *)(const void *)session.opaque;
+    PROVEN_TEST_ASSERT(sd->magic != 0 && sd->early == 0, "its ticket is kept and does not allow early data", "");
+    proven_tls_conn_destroy(a); proven_tls_conn_destroy(b);
+
+    /* In QUIC, a ticket whose early_data is not 0xffffffff ends the connection. */
+    memset(&session, 0, sizeof session);
+    p = pair_make(ce, se, &session);
+    pump(p.c, p.s, NULL);
+    static const proven_byte_t nst[] = { 4, 0, 0, 26,  0, 0, 0x1c, 0x20,  1, 2, 3, 4,  1, 0,  0, 4, 't', 'i', 'c', 'k',  0, 8, 0, 42, 0, 4, 0, 0, 0x40, 0 };
+    (void)proven_tls_quic_feed_(p.c, PROVEN_QUIC_LEVEL_APPLICATION, (proven_mem_view_t){ nst, sizeof nst });
+    PROVEN_TEST_ASSERT(proven_tls_quic_error_(p.c) == PROVEN_QUIC_PROTOCOL_VIOLATION, "a ticket allowing 16,384 bytes of early data in QUIC: PROTOCOL_VIOLATION", "");
+    pair_free(&p);
+
+    /* A NEW_TOKEN token beside the ticket: kept across a new ticket, taken once. */
+    memset(&session, 0, sizeof session);
+    proven_tls_session_token_keep_(&session, (proven_mem_view_t){ (const proven_byte_t *)"token-1", 7 });
+    p = pair_make(ce, se, &session);
+    pump(p.c, p.s, NULL);
+    PROVEN_TEST_ASSERT(established_both(&p) && ((const proven_tls_session_data_t *)(const void *)session.opaque)->magic != 0, "a ticket arrives after the token", "");
+    pair_free(&p);
+    proven_byte_t tok[255];
+    PROVEN_TEST_ASSERT(proven_tls_session_token_take_(&session, tok, sizeof tok) == 7 && memcmp(tok, "token-1", 7) == 0, "a token kept across the ticket that followed it", "");
+    PROVEN_TEST_ASSERT(proven_tls_session_token_take_(&session, tok, sizeof tok) == 0, "and taken only once", "");
+    proven_byte_t big[256] = { 0 };
+    proven_tls_session_token_keep_(&session, (proven_mem_view_t){ big, sizeof big });
+    PROVEN_TEST_ASSERT(proven_tls_session_token_take_(&session, tok, sizeof tok) == 0, "a token of 256 bytes is not kept", "");
+
+    proven_tls_config_destroy(ce); proven_tls_config_destroy(se); proven_tls_config_destroy(s23); proven_tls_config_destroy(c32);
+}
+
 int main(void) {
     PROVEN_TEST_SUITE("TLS 1.3 in QUIC mode",
         "Two engines in QUIC mode, handshake bytes per encryption level: the same secrets on both sides at every level, the transport parameters, QUIC's rules, and every change refused.",
@@ -281,6 +534,9 @@ int main(void) {
         pair_free(&p);
         proven_tls_config_destroy(cc_auth); proven_tls_config_destroy(sc_auth);
     }
+
+    g_cc = cc; g_sc = sc;
+    early_data_section();
 
     PROVEN_TEST_SECTION("what a QUIC-mode connection is made from", "TLS 1.3, a protocol to name, parameters that fit.", "Check quic_attach.");
     {

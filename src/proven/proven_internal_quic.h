@@ -185,6 +185,24 @@ const proven_quic_tp_t *proven_tls_quic_peer_params_(const proven_tls_conn_t *c)
  * (RFC 9001 section 4.8), or a transport error such as TRANSPORT_PARAMETER_ERROR. 0: none. */
 proven_u64 proven_tls_quic_error_(const proven_tls_conn_t *c);
 
+/* 0-RTT (RFC-0021). Early data is offered by a client whose configuration has `early_data` and
+ * whose session allows it, and accepted by a server only as RFC-0021 section 10.1 P-5 lists. */
+enum { PROVEN_TLS_EARLY_NONE = 0, PROVEN_TLS_EARLY_OFFERED, PROVEN_TLS_EARLY_ACCEPTED, PROVEN_TLS_EARLY_REFUSED };
+int proven_tls_quic_early_(const proven_tls_conn_t *c);
+/* The early traffic secret: a client's for writing from its ClientHello on, a server's for
+ * reading once it accepted. Its length and the suite it belongs to (the ticket's), or 0 when
+ * there is none. SECRET: out. */
+proven_size_t proven_tls_quic_early_secret_(const proven_tls_conn_t *c, proven_byte_t out[PROVEN_HMAC_MAX_SIZE], const proven_tls_suite_t **suite);
+void proven_tls_quic_early_drop_(proven_tls_conn_t *c);
+/* A client offering early data: the server's limits its session remembers (RFC 9000 section
+ * 7.4.1), in proven_quic_tp_t's order: initial_max_data, initial_max_stream_data_bidi_local,
+ * _bidi_remote, _uni, initial_max_streams_bidi, _uni, active_connection_id_limit. */
+bool proven_tls_quic_early_limits_(const proven_tls_conn_t *c, proven_u64 out[7]);
+/* A session's NEW_TOKEN token (RFC 9000 section 8.1.3): taken out once (and cleared), and kept
+ * when the server sends one. A token longer than 255 bytes is not kept. */
+proven_size_t proven_tls_session_token_take_(proven_tls_session_t *s, proven_byte_t *out, proven_size_t cap);
+void proven_tls_session_token_keep_(proven_tls_session_t *s, proven_mem_view_t token);
+
 /* ---- Packets and frames (RFC 9000 sections 12, 17 and 19): quic_frame.c ----
  *
  * Headers are read from a stranger's datagram: every length is checked against what is left,

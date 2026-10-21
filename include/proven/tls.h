@@ -103,6 +103,7 @@ typedef struct {
     proven_tls_now_fn now;                   /**< NULL: the wall clock. Required when freestanding. */
     void *now_ctx;
     bool no_resumption;                      /**< a server issues no tickets; a client offers none */
+    bool early_data;                         /**< 0-RTT, over QUIC only (HTTP/3): a server's tickets allow early data and it accepts it - once per ticket, fresh tickets only (a register of 4,096, 96 KiB); a client sends it with a session that allows it. Early data can be replayed: see the manual. Not with `no_resumption` */
     bool keep_peer_certificate;              /**< keep the peer's certificate for proven_tls_peer_certificate (costs its size per connection) */
     proven_u32 ticket_lifetime_s;            /**< server: how long a ticket is honoured; 0: 7200; at most 604800 */
     proven_size_t max_handshake_bytes;       /**< the largest handshake message accepted; 0: 65536 */
@@ -135,7 +136,7 @@ proven_err_t proven_tls_config_create(const proven_tls_options_t *options, prove
 void proven_tls_config_destroy(proven_tls_config_t *config);
 
 /** @brief Bytes in a proven_tls_session_t. */
-#define PROVEN_TLS_SESSION_SIZE ((proven_size_t)1024)
+#define PROVEN_TLS_SESSION_SIZE ((proven_size_t)2048)
 
 /**
  * @brief A client's memory of one server, for resumption. Yours to keep: a plain block with no
@@ -148,7 +149,7 @@ void proven_tls_config_destroy(proven_tls_config_t *config);
  * connections at once.
  */
 typedef struct {
-    proven_byte_t opaque[PROVEN_TLS_SESSION_SIZE];
+    alignas(8) proven_byte_t opaque[PROVEN_TLS_SESSION_SIZE];   /* aligned for the record the engine keeps in it */
 } proven_tls_session_t;
 
 /** @brief One connection's state. Opaque. Used by one thread at a time. */

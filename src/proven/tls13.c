@@ -52,6 +52,7 @@
 #define EXT_SUPPORTED_VERSIONS 43
 #define EXT_COOKIE 44
 #define EXT_PSK_MODES 45
+#define EXT_EARLY_DATA 42
 #define EXT_KEY_SHARE 51
 #define EXT_QUIC_TRANSPORT_PARAMETERS 0x39
 
@@ -131,6 +132,8 @@ typedef struct {
     proven_byte_t psk[PROVEN_TLS_TICKET_PSK_MAX];
     proven_size_t psk_len;
     bool psk_offered, psk_accepted;
+    bool client_early;                            /* server: the ClientHello offered early data */
+    proven_u32 client_age;                        /* server: the first identity's obfuscated_ticket_age */
     bool cert_requested;                          /* client: the server asked for a certificate */
     bool client_cert_seen;                        /* server: the client presented one */
     proven_u16 peer_sig_schemes;                  /* a mask: bit 0 ecdsa p256, bit 1 ed25519 */
@@ -181,6 +184,12 @@ typedef struct {
     proven_byte_t secret[PROVEN_QUIC_LEVELS][2][PROVEN_HMAC_MAX_SIZE];   /* [level][0 read, 1 write]; SECRET */
     bool secret_ready[PROVEN_QUIC_LEVELS][2];
     proven_u64 error;                             /* 0x0100 + alert, or a transport error code; 0: none */
+    /* 0-RTT (RFC-0021): the early traffic secret (the client's to write, the server's to read)
+     * and the suite it belongs to; where early data stands (PROVEN_TLS_EARLY_*). */
+    proven_byte_t early_secret[PROVEN_HMAC_MAX_SIZE];   /* SECRET */
+    const proven_tls_suite_t *early_suite;
+    bool early_ready;
+    proven_u8 early;
 } tls_quic_t;
 #endif
 
@@ -918,6 +927,7 @@ static bool host_is_ip(const proven_byte_t *s, proven_size_t n) {
 static proven_tls_session_data_t *client_session(proven_tls_conn_t *c) {
     if (!c->session || c->config->no_resumption) return NULL;
     _Static_assert(sizeof(proven_tls_session_data_t) <= PROVEN_TLS_SESSION_SIZE, "the session record must fit its public block");
+    _Static_assert(alignof(proven_tls_session_data_t) <= alignof(proven_tls_session_t), "and be aligned in it");
     proven_tls_session_data_t *s = (proven_tls_session_data_t *)(void *)c->session->opaque;
     if (s->magic != PROVEN_TLS_SESSION_MAGIC) return NULL;
     const proven_tls_suite_t *suite = proven_tls_suite_find(s->suite);
@@ -943,6 +953,17 @@ static proven_tls_session_data_t *client_session12(proven_tls_conn_t *c) {
     return s;
 }
 
+#ifndef PROVEN_NO_HTTP3
+/* The protocol a session was made for is among those offered now: early data assumes it. */
+static bool session_alpn_offered(const proven_tls_config_t *cfg, const proven_tls_session_data_t *s) {
+    for (proven_size_t i = 0; s->alpn_len > 0 && i < cfg->alpn_count; ++i) {
+        proven_u8str_view_t ours = proven_tls_config_alpn(cfg, i);
+        if (ours.size == s->alpn_len && bytes_eq(ours.ptr, s->alpn, s->alpn_len)) return true;
+    }
+    return false;
+}
+#endif
+
 static proven_err_t client_hello_send(proven_tls_conn_t *c) {
     tls_handshake_t *h = c->hs;
     const proven_tls_config_t *cfg = c->config;
@@ -966,6 +987,13 @@ static proven_err_t client_hello_send(proven_tls_conn_t *c) {
     const proven_tls_suite_t *psk_suite = sess ? proven_tls_suite_find(sess->suite) : NULL;
     /* After a retry the server has fixed the suite: a session made under another hash cannot be offered. */
     if (sess && h->retried && psk_suite->hash != c->suite->hash) sess = NULL;
+    /* Early data (RFC-0021): QUIC only, with a session that allows it for a protocol offered
+     * now, and never after a retry (RFC 8446 section 4.1.2). */
+    bool offer_early = false;
+#ifndef PROVEN_NO_HTTP3
+    offer_early = is_quic(c) && cfg->early_data && sess && sess->early && !h->retried && session_alpn_offered(cfg, sess);
+    if (is_quic(c) && h->retried && c->quic->early == PROVEN_TLS_EARLY_OFFERED) c->quic->early = PROVEN_TLS_EARLY_REFUSED;
+#endif
 
     wr_t w = hs_begin(c, HS_CLIENT_HELLO);
     wr_uint(&w, h->hello_version, 2);
@@ -1067,6 +1095,7 @@ static proven_err_t client_hello_send(proven_tls_conn_t *c) {
         wr_uint(&w, EXT_COOKIE, 2); wr_uint(&w, (proven_u32)h->cookie_len + 2, 2);
         wr_uint(&w, (proven_u32)h->cookie_len, 2); wr_bytes(&w, h->cookie, h->cookie_len);
     }
+    if (offer_early) { wr_uint(&w, EXT_EARLY_DATA, 2); wr_uint(&w, 0, 2); }
     proven_size_t binder_at = 0;
     h->psk_offered = false;
     if (sess) {
@@ -1100,7 +1129,22 @@ static proven_err_t client_hello_send(proven_tls_conn_t *c) {
         proven_tls13_derive_secret(hash, early, "res binder", binder, binder_key);
         proven_tls13_finished(hash, binder_key, th, binder);
         for (proven_size_t i = 0; i < psk_suite->hash_len; ++i) h->scratch.ptr[binder_at + 3 + i] = binder[i];
-        tls_wipe(early, sizeof early); tls_wipe(binder_key, sizeof binder_key);
+        tls_wipe(binder_key, sizeof binder_key);
+#ifndef PROVEN_NO_HTTP3
+        if (offer_early) {
+            /* client_early_traffic_secret: the whole ClientHello, binders and all, under the
+             * ticket's hash (RFC 8446 section 7.1). A first hello: nothing before it. */
+            proven_tls_transcript_t ch;
+            proven_tls_transcript_init(&ch, hash);
+            proven_tls_transcript_update(&ch, (proven_mem_view_t){ .ptr = h->scratch.ptr, .size = h->scratch.len });
+            (void)proven_tls_transcript_hash(&ch, th);
+            proven_tls13_derive_secret(hash, early, "c e traffic", th, c->quic->early_secret);
+            c->quic->early_suite = psk_suite;
+            c->quic->early_ready = true;
+            c->quic->early = PROVEN_TLS_EARLY_OFFERED;
+        }
+#endif
+        tls_wipe(early, sizeof early);
     }
     if (!h->transcript_ready && !buf_append(c, &h->first_hello, h->scratch.ptr, h->scratch.len)) return tls_nomem(c);
     /* The first record of a connection says version 3.1 for the benefit of old middleboxes. */
@@ -1232,6 +1276,16 @@ static proven_err_t client_server_hello(proven_tls_conn_t *c, rd_t body, proven_
     return PROVEN_OK;
 }
 
+/* A client whose ClientHello offered early data, still waiting for the answer. */
+static bool client_offered_early(const proven_tls_conn_t *c) {
+#ifndef PROVEN_NO_HTTP3
+    return c->quic && c->quic->early == PROVEN_TLS_EARLY_OFFERED;
+#else
+    (void)c;
+    return false;
+#endif
+}
+
 static proven_err_t client_encrypted_extensions(proven_tls_conn_t *c, rd_t body, proven_mem_view_t whole) {
     const proven_tls_config_t *cfg = c->config;
     rd_t exts = rd_vec(&body, 2);
@@ -1242,7 +1296,7 @@ static proven_err_t client_encrypted_extensions(proven_tls_conn_t *c, rd_t body,
         rd_t data = rd_vec(&exts, 2);
         if (!exts.ok) return tls_decode(c);
         unsigned bit = type == EXT_ALPN ? 1u : type == EXT_SERVER_NAME ? 2u : type == EXT_RECORD_SIZE_LIMIT ? 4u : type == EXT_SUPPORTED_GROUPS ? 8u :
-                       type == EXT_QUIC_TRANSPORT_PARAMETERS && is_quic(c) ? 16u : 0u;
+                       type == EXT_QUIC_TRANSPORT_PARAMETERS && is_quic(c) ? 16u : type == EXT_EARLY_DATA && client_offered_early(c) ? 32u : 0u;
         /* A server may only answer what was asked. */
         if (bit == 0) return tls_fail(c, AL_UNSUPPORTED_EXTENSION, PROVEN_ERR_PROTOCOL);
         if (seen & bit) return tls_illegal(c);
@@ -1262,7 +1316,7 @@ static proven_err_t client_encrypted_extensions(proven_tls_conn_t *c, rd_t body,
             proven_u32 limit = rd_uint(&data, 2);
             if (!data.ok || data.n != 0 || limit < 64 || limit > PROVEN_TLS_MAX_PLAINTEXT + 1) return tls_illegal(c);
             c->peer_record_limit = limit - 1;                      /* the limit counts the content type byte */
-        } else if (type == EXT_SERVER_NAME) {
+        } else if (type == EXT_SERVER_NAME || type == EXT_EARLY_DATA) {
             if (data.n != 0) return tls_decode(c);
         }
 #ifndef PROVEN_NO_HTTP3
@@ -1276,6 +1330,20 @@ static proven_err_t client_encrypted_extensions(proven_tls_conn_t *c, rd_t body,
     /* QUIC: the server must name the protocol (RFC 9001 section 8.1) and send its parameters (section 8.2). */
     if (is_quic(c) && !(seen & 1u)) return tls_fail(c, AL_NO_APPLICATION_PROTOCOL, PROVEN_ERR_PROTOCOL);
     if (is_quic(c) && !(seen & 16u)) return tls_fail(c, AL_MISSING_EXTENSION, PROVEN_ERR_PROTOCOL);
+#ifndef PROVEN_NO_HTTP3
+    if (client_offered_early(c)) {
+        /* Accepted only with the ticket, and for the protocol the session was made for (RFC 8446
+         * section 4.2.10): the early data assumed it. */
+        if (seen & 32u) {
+            const proven_tls_session_data_t *s = (const proven_tls_session_data_t *)(const void *)c->session->opaque;
+            const proven_u8str_view_t chosen = c->alpn_index >= 0 ? proven_tls_config_alpn(cfg, (proven_size_t)c->alpn_index) : (proven_u8str_view_t){ 0 };
+            if (!c->hs->psk_accepted || chosen.size != s->alpn_len || !bytes_eq(chosen.ptr, s->alpn, s->alpn_len)) return tls_illegal(c);
+            c->quic->early = PROVEN_TLS_EARLY_ACCEPTED;
+        } else {
+            c->quic->early = PROVEN_TLS_EARLY_REFUSED;
+        }
+    }
+#endif
     tr_add(c, whole);
     c->state = c->hs->psk_accepted ? ST_C_WAIT_FINISHED : ST_C_WAIT_CERT_CR;
     return PROVEN_OK;
@@ -1306,7 +1374,7 @@ static proven_err_t client_certificate_request(proven_tls_conn_t *c, rd_t body, 
     return PROVEN_OK;
 }
 
-static void client_store_ticket(proven_tls_conn_t *c, rd_t body);
+static proven_err_t client_store_ticket(proven_tls_conn_t *c, rd_t body);
 
 static proven_err_t client_finished(proven_tls_conn_t *c, rd_t body, proven_mem_view_t whole) {
     tls_handshake_t *h = c->hs;
@@ -1379,6 +1447,40 @@ static bool list_has_u16(rd_t list, proven_u16 want) {
 }
 
 static proven_err_t server_send_ticket(proven_tls_conn_t *c);
+
+#ifndef PROVEN_NO_HTTP3
+/* A digest of the limits this side's transport parameters promise, which a client's 0-RTT
+ * packets assume (RFC 9000 section 7.4.1): early data on a ticket is taken only while they are
+ * what they were when the ticket was issued. */
+static void limits_digest(const proven_tls_conn_t *c, proven_byte_t out[8]) {
+    proven_quic_tp_t tp;
+    proven_byte_t buf[7 * 8], d[32];
+    for (int i = 0; i < 8; ++i) out[i] = 0;
+    if (proven_quic_tp_decode((proven_mem_view_t){ .ptr = c->quic->tp_local, .size = c->quic->tp_local_len }, c->is_server, &tp) != 0) return;
+    const proven_u64 v[7] = { tp.initial_max_data, tp.initial_max_stream_data_bidi_local, tp.initial_max_stream_data_bidi_remote,
+                              tp.initial_max_stream_data_uni, tp.initial_max_streams_bidi, tp.initial_max_streams_uni, tp.active_connection_id_limit };
+    for (int i = 0; i < 7; ++i) for (int k = 0; k < 8; ++k) buf[i * 8 + k] = (proven_byte_t)(v[i] >> (56 - 8 * k));
+    proven_sha256((proven_mem_view_t){ .ptr = buf, .size = sizeof buf }, d);
+    for (int i = 0; i < 8; ++i) out[i] = d[i];
+}
+
+/* Whether a server takes the early data of a ClientHello whose ticket it accepted. */
+static bool server_early_ok(proven_tls_conn_t *c, const proven_tls_suite_t *suite, const proven_tls_ticket_state_t *t, const proven_byte_t id[16]) {
+    const proven_tls_config_t *cfg = c->config;
+    tls_handshake_t *h = c->hs;
+    if (!cfg->early_data || !h->psk_accepted || h->retried || !t->early) return false;
+    if (t->suite != suite->id || c->alpn_index < 0 || t->alpn_index != (proven_u8)c->alpn_index) return false;
+    proven_byte_t now_limits[8];
+    limits_digest(c, now_limits);
+    if (!bytes_eq(now_limits, t->limits, 8)) return false;
+    /* Fresh: the age the client reports against the time since the ticket was issued. */
+    const proven_i64 now = proven_tls_config_now(cfg);
+    const proven_i64 said = (proven_i64)(proven_u32)(h->client_age - t->age_add), known = (now - t->issued_at) * 1000;
+    const proven_i64 off = said > known ? said - known : known - said;
+    if (off > (proven_i64)PROVEN_TLS_EARLY_WINDOW_S * 1000) return false;
+    return proven_tls_early_take_(cfg, id, now);
+}
+#endif
 
 static proven_err_t server12_client_hello(proven_tls_conn_t *c, proven_u16 version, rd_t random, rd_t sid, rd_t suites, rd_t exts, rd_t groups, rd_t sig_algs, rd_t alpn, proven_mem_view_t whole);
 
@@ -1455,6 +1557,10 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
                 binders_at = (proven_size_t)(data.p - msg_start);
                 psk_binders = rd_vec(&data, 2);
                 have_psk = true;
+                break;
+            case EXT_EARLY_DATA:
+                bit = 1024;
+                h->client_early = true;
                 break;
             default:
                 continue;                                         /* an extension this side does not use */
@@ -1556,11 +1662,12 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
     /* Resumption: the first identity, if it is a ticket of this server, made for a suite with
      * this hash, and its binder proves the client holds the key. The binder is checked before
      * the key is used for anything else. */
-    proven_tls_ticket_state_t ticket = { 0 };
+    proven_tls_ticket_state_t ticket = { 0 }, early_ticket = { 0 };
+    proven_byte_t early_id[16] = { 0 };
     if (have_psk) {
         rd_t ids = psk_ids, binders = psk_binders;
         rd_t identity = rd_vec(&ids, 2);
-        (void)rd_uint(&ids, 4);
+        h->client_age = rd_uint(&ids, 4);
         rd_t binder = rd_vec(&binders, 1);
         if (!ids.ok || !binders.ok || identity.n == 0 || binder.n < 32) return tls_decode(c);
         bool usable = !cfg->no_resumption && modes.ok && modes.n > 0;
@@ -1588,6 +1695,8 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
                 c->resumed = true;
                 c->has_peer_key = ticket.has_peer_key;
                 for (int i = 0; i < 32; ++i) c->peer_key_hash[i] = ticket.peer_key_hash[i];
+                early_ticket = ticket;
+                for (int i = 0; i < 16; ++i) early_id[i] = identity.p[i];
             }
         }
         tls_wipe(&ticket, sizeof ticket);
@@ -1613,6 +1722,24 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
         if (c->alpn_index < 0) return tls_fail(c, AL_NO_APPLICATION_PROTOCOL, PROVEN_ERR_PROTOCOL);
     }
     tr_add(c, whole);
+#ifndef PROVEN_NO_HTTP3
+    /* Early data (RFC-0021): taken only when every condition of RFC-0021 10.1 P-5 holds; the
+     * register last, so that a ticket is marked used only when the rest would have let it in. */
+    if (is_quic(c)) {
+        c->quic->early = h->client_early ? PROVEN_TLS_EARLY_REFUSED : PROVEN_TLS_EARLY_NONE;
+        if (h->client_early && server_early_ok(c, suite, &early_ticket, early_id)) {
+            proven_byte_t es[PROVEN_HMAC_MAX_SIZE], th[PROVEN_HMAC_MAX_SIZE];
+            proven_tls13_extract(suite->hash, NULL, (proven_mem_view_t){ .ptr = h->psk, .size = h->psk_len }, es);
+            hs_hash(c, th);
+            proven_tls13_derive_secret(suite->hash, es, "c e traffic", th, c->quic->early_secret);
+            tls_wipe(es, sizeof es);
+            c->quic->early_suite = suite;
+            c->quic->early_ready = true;
+            c->quic->early = PROVEN_TLS_EARLY_ACCEPTED;
+        }
+    }
+#endif
+    tls_wipe(&early_ticket, sizeof early_ticket);
 
     /* This side's share and the key both arrive at. */
     proven_byte_t shared[32], pub[65];
@@ -1659,6 +1786,7 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
     if (c->quic) {
         wr_uint(&w, EXT_QUIC_TRANSPORT_PARAMETERS, 2); wr_uint(&w, (proven_u32)c->quic->tp_local_len, 2);
         wr_bytes(&w, c->quic->tp_local, c->quic->tp_local_len);
+        if (c->quic->early == PROVEN_TLS_EARLY_ACCEPTED) { wr_uint(&w, EXT_EARLY_DATA, 2); wr_uint(&w, 0, 2); }
     }
 #endif
     wr_close(&w, e, 2);
@@ -1714,15 +1842,25 @@ static proven_err_t server_send_ticket(proven_tls_conn_t *c) {
     st.issued_at = proven_tls_config_now(cfg);
     st.has_peer_key = c->has_peer_key;
     for (int i = 0; i < 32; ++i) st.peer_key_hash[i] = c->peer_key_hash[i];
-    proven_size_t ticket_len = proven_tls_ticket_seal(cfg, &st, ticket);
-    tls_wipe(&st, sizeof st);
     proven_tls_config_random(cfg, age_add, 4);
+    st.age_add = ((proven_u32)age_add[0] << 24) | ((proven_u32)age_add[1] << 16) | ((proven_u32)age_add[2] << 8) | age_add[3];
+    st.alpn_index = c->alpn_index >= 0 ? (proven_u8)c->alpn_index : 0xff;
+    /* Early data: only on a ticket made in QUIC under a configuration that takes it. Over TCP
+     * a ticket never allows it (RFC-0021 D-1). */
+#ifndef PROVEN_NO_HTTP3
+    st.early = is_quic(c) && cfg->early_data && c->alpn_index >= 0;
+    if (st.early) limits_digest(c, st.limits);
+#endif
+    proven_size_t ticket_len = proven_tls_ticket_seal(cfg, &st, ticket);
+    const bool early = st.early;
+    tls_wipe(&st, sizeof st);
     wr_t w = hs_begin(c, HS_NEW_SESSION_TICKET);
     wr_uint(&w, cfg->ticket_lifetime_s, 4);
     wr_bytes(&w, age_add, 4);
     wr_uint(&w, 1, 1); wr_uint(&w, nonce, 1);
     wr_uint(&w, (proven_u32)ticket_len, 2); wr_bytes(&w, ticket, ticket_len);
-    wr_uint(&w, 0, 2);
+    if (early) { wr_uint(&w, 8, 2); wr_uint(&w, EXT_EARLY_DATA, 2); wr_uint(&w, 4, 2); wr_uint(&w, 0xffffffffu, 4); }
+    else wr_uint(&w, 0, 2);
     /* Sent after the handshake: it is not part of the transcript. */
     if (!hs_end(&w) || !emit(c, PROVEN_TLS_CT_HANDSHAKE, w.b->ptr, w.b->len, 0x03)) return tls_nomem(c);
     return PROVEN_OK;
@@ -1768,16 +1906,35 @@ static proven_err_t server_message(proven_tls_conn_t *c, proven_byte_t type, rd_
 
 /* ================= After the handshake ================= */
 
-static void client_store_ticket(proven_tls_conn_t *c, rd_t body) {
+static proven_err_t client_store_ticket(proven_tls_conn_t *c, rd_t body) {
     proven_u32 lifetime = rd_uint(&body, 4), age_add = rd_uint(&body, 4);
     rd_t nonce = rd_vec(&body, 1);
     rd_t ticket = rd_vec(&body, 2);
     rd_t exts = rd_vec(&body, 2);
-    (void)exts;
+    /* early_data says the ticket allows it; in QUIC its value must be 0xffffffff (RFC 9001
+     * section 4.6.1), and anything else ends the connection. */
+    bool early = false;
+    while (body.ok && exts.ok && exts.n > 0) {
+        proven_u16 type = (proven_u16)rd_uint(&exts, 2);
+        rd_t data = rd_vec(&exts, 2);
+        if (type != EXT_EARLY_DATA || !exts.ok) continue;
+        proven_u32 max = rd_uint(&data, 4);
+        if (!data.ok || data.n != 0) return tls_decode(c);
+#ifndef PROVEN_NO_HTTP3
+        if (is_quic(c) && max != 0xffffffffu) return quic_fail(c, PROVEN_QUIC_PROTOCOL_VIOLATION);
+#endif
+        early = max > 0;
+    }
     /* A ticket that is malformed or does not fit is simply not kept: resumption is optional. */
-    if (!body.ok || !c->session || c->config->no_resumption || ticket.n == 0 || ticket.n > PROVEN_TLS_SESSION_TICKET_MAX || lifetime == 0) return;
+    if (!body.ok || !exts.ok || !c->session || c->config->no_resumption || ticket.n == 0 || ticket.n > PROVEN_TLS_SESSION_TICKET_MAX || lifetime == 0) return PROVEN_OK;
     proven_tls_session_data_t *s = (proven_tls_session_data_t *)(void *)c->session->opaque;
+    /* The NEW_TOKEN token is the QUIC layer's and outlives tickets: kept across the wipe. */
+    proven_u16 token_len = s->token_len <= PROVEN_TLS_SESSION_TOKEN_MAX ? s->token_len : 0;
+    proven_byte_t token[PROVEN_TLS_SESSION_TOKEN_MAX];
+    for (proven_size_t i = 0; i < token_len; ++i) token[i] = s->token[i];
     tls_wipe(s, sizeof *s);
+    s->token_len = token_len;
+    for (proven_size_t i = 0; i < token_len; ++i) s->token[i] = token[i];
     s->suite = c->suite->id;
     s->psk_len = (proven_u16)c->suite->hash_len;
     proven_tls13_expand_label(c->suite->hash, c->resumption_master, "resumption", (proven_mem_view_t){ .ptr = nonce.p, .size = nonce.n }, s->psk, s->psk_len);
@@ -1790,7 +1947,26 @@ static void client_store_ticket(proven_tls_conn_t *c, rd_t body) {
     for (int i = 0; i < 32; ++i) s->peer_key_hash[i] = c->peer_key_hash[i];
     s->ticket_len = (proven_u16)ticket.n;
     for (proven_size_t i = 0; i < ticket.n; ++i) s->ticket[i] = ticket.p[i];
+    if (c->alpn_index >= 0) {
+        proven_u8str_view_t name = proven_tls_config_alpn(c->config, (proven_size_t)c->alpn_index);
+        s->alpn_len = (proven_byte_t)name.size;
+        for (proven_size_t i = 0; i < name.size; ++i) s->alpn[i] = name.ptr[i];
+    }
+#ifndef PROVEN_NO_HTTP3
+    /* Early data needs the server's limits, which the next connection's 0-RTT packets assume. */
+    if (is_quic(c) && c->quic->have_peer) {
+        const proven_quic_tp_t *tp = &c->quic->tp_peer;
+        const proven_u64 v[PROVEN_TLS_SESSION_LIMITS] = { tp->initial_max_data, tp->initial_max_stream_data_bidi_local, tp->initial_max_stream_data_bidi_remote,
+                                                          tp->initial_max_stream_data_uni, tp->initial_max_streams_bidi, tp->initial_max_streams_uni, tp->active_connection_id_limit };
+        for (int i = 0; i < PROVEN_TLS_SESSION_LIMITS; ++i) s->limits[i] = v[i];
+        s->has_limits = 1;
+        s->early = early && s->alpn_len > 0 ? 1 : 0;
+    }
+#else
+    (void)early;
+#endif
     s->magic = PROVEN_TLS_SESSION_MAGIC;
+    return PROVEN_OK;
 }
 
 /* The next traffic secret of a direction (RFC 8446 section 7.2). */
@@ -1812,8 +1988,7 @@ static bool key_update_send(proven_tls_conn_t *c, proven_byte_t request) {
 static proven_err_t post_message(proven_tls_conn_t *c, proven_byte_t type, rd_t body, bool *keys_changed) {
     if (type == HS_NEW_SESSION_TICKET) {
         if (c->is_server) return tls_unexpected(c);
-        client_store_ticket(c, body);
-        return PROVEN_OK;
+        return client_store_ticket(c, body);
     }
     if (type == HS_KEY_UPDATE) {
         /* QUIC changes keys with its own key phase bit; the message is refused (RFC 9001 section 6). */
@@ -3035,7 +3210,58 @@ proven_quic_level_t proven_tls_quic_read_level_(const proven_tls_conn_t *c) { re
 proven_quic_level_t proven_tls_quic_write_level_(const proven_tls_conn_t *c) { return c && c->quic ? (proven_quic_level_t)c->quic->write_level : PROVEN_QUIC_LEVEL_INITIAL; }
 
 proven_u64 proven_tls_quic_error_(const proven_tls_conn_t *c) { return c && c->quic ? c->quic->error : 0; }
+
+int proven_tls_quic_early_(const proven_tls_conn_t *c) { return c && c->quic ? c->quic->early : PROVEN_TLS_EARLY_NONE; }
+
+proven_size_t proven_tls_quic_early_secret_(const proven_tls_conn_t *c, proven_byte_t out[PROVEN_HMAC_MAX_SIZE], const proven_tls_suite_t **suite) {
+    if (!c || !c->quic || !c->quic->early_ready || !c->quic->early_suite) return 0;
+    const proven_size_t n = c->quic->early_suite->hash_len;
+    for (proven_size_t i = 0; i < n; ++i) out[i] = c->quic->early_secret[i];
+    *suite = c->quic->early_suite;
+    return n;
+}
+
+void proven_tls_quic_early_drop_(proven_tls_conn_t *c) {
+    if (!c || !c->quic) return;
+    tls_wipe(c->quic->early_secret, sizeof c->quic->early_secret);
+    c->quic->early_ready = false;
+}
+
+bool proven_tls_quic_early_limits_(const proven_tls_conn_t *c, proven_u64 out[7]) {
+    if (!c || !c->quic || c->is_server || c->quic->early != PROVEN_TLS_EARLY_OFFERED || !c->session) return false;
+    const proven_tls_session_data_t *s = (const proven_tls_session_data_t *)(const void *)c->session->opaque;
+    if (s->magic != PROVEN_TLS_SESSION_MAGIC || !s->has_limits) return false;
+    for (int i = 0; i < 7; ++i) out[i] = s->limits[i];
+    return true;
+}
 #endif
+
+/* ---- A session's NEW_TOKEN token (RFC-0021 P-7): the QUIC layer's, kept beside the ticket ---- */
+
+/* A record of this layout, or an empty one: the token's place is only trusted then. */
+static bool session_token_place(const proven_tls_session_data_t *s) {
+    return (s->magic == PROVEN_TLS_SESSION_MAGIC || s->magic == 0) && s->token_len <= PROVEN_TLS_SESSION_TOKEN_MAX;
+}
+
+proven_size_t proven_tls_session_token_take_(proven_tls_session_t *session, proven_byte_t *out, proven_size_t cap) {
+    if (!session) return 0;
+    proven_tls_session_data_t *s = (proven_tls_session_data_t *)(void *)session->opaque;
+    if (!session_token_place(s) || s->token_len == 0 || s->token_len > cap) return 0;
+    const proven_size_t n = s->token_len;
+    for (proven_size_t i = 0; i < n; ++i) out[i] = s->token[i];
+    tls_wipe(s->token, sizeof s->token);
+    s->token_len = 0;
+    return n;
+}
+
+void proven_tls_session_token_keep_(proven_tls_session_t *session, proven_mem_view_t token) {
+    if (!session || !token.ptr || token.size == 0 || token.size > PROVEN_TLS_SESSION_TOKEN_MAX) return;
+    proven_tls_session_data_t *s = (proven_tls_session_data_t *)(void *)session->opaque;
+    if (!session_token_place(s)) tls_wipe(s, sizeof *s);              /* an older layout: nothing of it is used */
+    tls_wipe(s->token, sizeof s->token);
+    for (proven_size_t i = 0; i < token.size; ++i) s->token[i] = token.ptr[i];
+    s->token_len = (proven_u16)token.size;
+}
 
 void proven_tls_conn_destroy(proven_tls_conn_t *c) {
     if (!c) return;

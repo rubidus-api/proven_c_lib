@@ -205,6 +205,7 @@ proven_err_t proven_tls_config_create(const proven_tls_options_t *o, proven_tls_
     if (o->pin_count > 0 && !o->pins) return PROVEN_ERR_INVALID_ARG;
     if (o->alpn_count > 0 && !o->alpn) return PROVEN_ERR_INVALID_ARG;
     if (o->client_auth > PROVEN_TLS_CLIENT_AUTH_REQUIRE || o->ticket_lifetime_s > 604800) return PROVEN_ERR_INVALID_ARG;
+    if (o->early_data && o->no_resumption) return PROVEN_ERR_INVALID_ARG;      /* early data rides on a ticket */
     const proven_u16 min_version = o->min_version ? o->min_version : PROVEN_TLS_VERSION_1_2;
     const proven_u16 max_version = o->max_version ? o->max_version : PROVEN_TLS_VERSION_1_3;
     if (min_version < PROVEN_TLS_VERSION_1_0 || min_version > PROVEN_TLS_VERSION_1_3 || max_version < PROVEN_TLS_VERSION_1_0 ||
@@ -238,6 +239,7 @@ proven_err_t proven_tls_config_create(const proven_tls_options_t *o, proven_tls_
     c->verify = o->verify;
     c->client_auth = o->client_auth;
     c->no_resumption = o->no_resumption;
+    c->early_data = o->early_data;
     c->keep_peer_certificate = o->keep_peer_certificate;
     c->ticket_lifetime_s = o->ticket_lifetime_s ? o->ticket_lifetime_s : 7200;
     c->max_handshake_bytes = o->max_handshake_bytes ? o->max_handshake_bytes : 65536;
@@ -251,6 +253,17 @@ proven_err_t proven_tls_config_create(const proven_tls_options_t *o, proven_tls_
 #endif
     atomic_flag_clear(&c->tickets.lock);
     proven_err_t e = PROVEN_OK;
+    if (o->early_data) {
+        /* The register, made now rather than inside a handshake under its lock. */
+        m = a.alloc_fn(a.ctx, sizeof(proven_tls_early_seen_t), 16);
+        if (m.err != PROVEN_OK) e = m.err;
+        else {
+            c->early_seen = (proven_tls_early_seen_t *)m.value.ptr;
+            for (proven_size_t i = 0; i < sizeof *c->early_seen; ++i) m.value.ptr[i] = 0;
+            atomic_flag_clear(&c->early_seen->lock);
+            c->early_seen->cap = PROVEN_TLS_EARLY_SEEN;
+        }
+    }
     if (o->pin_count > 0) {
         if (o->pin_count > 64) e = PROVEN_ERR_INVALID_ARG;
         else {
@@ -299,6 +312,7 @@ void proven_tls_config_destroy(proven_tls_config_t *c) {
     if (c->alpn_wire) a.free_fn(a.ctx, c->alpn_wire);
     if (c->chain_mem) a.free_fn(a.ctx, c->chain_mem);
     if (c->rsa) { cfg_wipe(c->rsa, sizeof *c->rsa); a.free_fn(a.ctx, c->rsa); }
+    if (c->early_seen) a.free_fn(a.ctx, c->early_seen);
     cfg_wipe(c, sizeof *c);
     a.free_fn(a.ctx, c);
 }
@@ -404,10 +418,45 @@ static void ticket_keys(const proven_tls_config_t *config, proven_byte_t cur[32]
     cfg_wipe(fresh, sizeof fresh);
 }
 
+/* ---- The strike register (RFC-0021): each ticket's early data taken once ---- */
+
+bool proven_tls_early_take_(const proven_tls_config_t *config, const proven_byte_t id[16], proven_i64 now) {
+    proven_tls_early_seen_t *r = config->early_seen;
+    if (!r) return false;
+    bool ok = true;
+    while (atomic_flag_test_and_set_explicit(&r->lock, memory_order_acquire)) { /* a scan of at most a few thousand entries */ }
+    /* What the window has closed on can no longer come in: dropped from the front. A clock
+     * that went back keeps everything, which only refuses more. */
+    while (r->count > 0 && r->e[r->head].until < now) { r->head = (r->head + 1) % PROVEN_TLS_EARLY_SEEN; r->count--; }
+    for (proven_size_t i = 0; ok && i < r->count; ++i) {
+        const proven_tls_early_entry_t *x = &r->e[(r->head + i) % PROVEN_TLS_EARLY_SEEN];
+        bool same = true;
+        for (int k = 0; k < 16; ++k) same = same && x->id[k] == id[k];
+        if (same) ok = false;
+    }
+    if (ok && r->count >= r->cap) ok = false;
+    if (ok) {
+        proven_tls_early_entry_t *x = &r->e[(r->head + r->count) % PROVEN_TLS_EARLY_SEEN];
+        for (int k = 0; k < 16; ++k) x->id[k] = id[k];
+        x->until = now + PROVEN_TLS_EARLY_WINDOW_S + 1;      /* the window, and the clock's step of a second */
+        r->count++;
+    }
+    atomic_flag_clear_explicit(&r->lock, memory_order_release);
+    return ok;
+}
+
+void proven_tls_test_early_cap_(const proven_tls_config_t *config, proven_size_t cap) {
+    proven_tls_early_seen_t *r = config ? config->early_seen : NULL;
+    if (!r) return;
+    while (atomic_flag_test_and_set_explicit(&r->lock, memory_order_acquire)) { }
+    r->cap = cap == 0 || cap > PROVEN_TLS_EARLY_SEEN ? PROVEN_TLS_EARLY_SEEN : cap;
+    atomic_flag_clear_explicit(&r->lock, memory_order_release);
+}
+
 static void put64(proven_byte_t *p, proven_u64 v) { for (int i = 7; i >= 0; --i) { p[i] = (proven_byte_t)v; v >>= 8; } }
 static proven_u64 get64(const proven_byte_t *p) { proven_u64 v = 0; for (int i = 0; i < 8; ++i) v = (v << 8) | p[i]; return v; }
 
-#define TICKET_PLAIN (1 + 2 + 8 + 1 + PROVEN_TLS_TICKET_PSK_MAX + 1 + 32)
+#define TICKET_PLAIN (1 + 2 + 8 + 1 + PROVEN_TLS_TICKET_PSK_MAX + 1 + 32 + 1 + 4 + 1 + 8)
 
 proven_size_t proven_tls_ticket_seal(const proven_tls_config_t *config, const proven_tls_ticket_state_t *state,
                                      proven_byte_t out[PROVEN_TLS_TICKET_MAX]) {
@@ -424,6 +473,10 @@ proven_size_t proven_tls_ticket_seal(const proven_tls_config_t *config, const pr
     for (proven_size_t i = 0; i < PROVEN_TLS_TICKET_PSK_MAX; ++i) plain[n++] = i < state->psk_len ? state->psk[i] : 0;
     plain[n++] = state->has_peer_key ? 1 : 0;
     for (int i = 0; i < 32; ++i) plain[n++] = state->has_peer_key ? state->peer_key_hash[i] : 0;
+    plain[n++] = state->early ? 1 : 0;
+    for (int i = 3; i >= 0; --i) plain[n++] = (proven_byte_t)(state->age_add >> (8 * i));
+    plain[n++] = state->alpn_index;
+    for (int i = 0; i < 8; ++i) plain[n++] = state->limits[i];
     out[0] = (proven_byte_t)(cur_id >> 24); out[1] = (proven_byte_t)(cur_id >> 16); out[2] = (proven_byte_t)(cur_id >> 8); out[3] = (proven_byte_t)cur_id;
     proven_tls_config_random(config, out + 4, 12);
     proven_crypto_chacha20poly1305_seal(cur, out + 4, (proven_mem_view_t){ .ptr = out, .size = 4 },
@@ -453,6 +506,11 @@ bool proven_tls_ticket_open(const proven_tls_config_t *config, proven_mem_view_t
         for (proven_size_t i = 0; i < PROVEN_TLS_TICKET_PSK_MAX; ++i) state->psk[i] = plain[n++];
         state->has_peer_key = plain[n++] == 1;
         for (int i = 0; i < 32; ++i) state->peer_key_hash[i] = plain[n++];
+        state->early = plain[n++] == 1;
+        state->age_add = 0;
+        for (int i = 0; i < 4; ++i) state->age_add = (state->age_add << 8) | plain[n++];
+        state->alpn_index = plain[n++];
+        for (int i = 0; i < 8; ++i) state->limits[i] = plain[n++];
         proven_i64 age = proven_tls_config_now(config) - state->issued_at;
         ok = state->psk_len <= PROVEN_TLS_TICKET_PSK_MAX && state->psk_len >= 32 && age >= 0 && age <= (proven_i64)config->ticket_lifetime_s;
     } else {

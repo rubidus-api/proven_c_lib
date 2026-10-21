@@ -227,6 +227,24 @@ typedef struct {
     bool have_prev;
 } proven_tls_ticket_keys_t;
 
+/* The tickets early data was taken on, so that each is taken once (RFC 8446 section 8.1), for
+ * as long as the freshness window could still let it in. Oldest first in a ring; full: refused. */
+#define PROVEN_TLS_EARLY_SEEN 4096
+#define PROVEN_TLS_EARLY_WINDOW_S 10              /* the freshness window: a ticket's age as the client says it and as the server knows it */
+typedef struct {
+    proven_byte_t id[16];                         /* the ticket's key id and nonce: unique to it */
+    proven_i64 until;
+} proven_tls_early_entry_t;
+typedef struct {
+    atomic_flag lock;
+    proven_size_t head, count, cap;               /* cap: PROVEN_TLS_EARLY_SEEN, smaller in a test */
+    proven_tls_early_entry_t e[PROVEN_TLS_EARLY_SEEN];
+} proven_tls_early_seen_t;
+/* Take a ticket's early data once: false when it was seen already, or the register is full. */
+[[nodiscard]] bool proven_tls_early_take_(const proven_tls_config_t *config, const proven_byte_t id[16], proven_i64 now);
+/* Tests: shrink a configuration's register (0 restores it). */
+void proven_tls_test_early_cap_(const proven_tls_config_t *config, proven_size_t cap);
+
 struct proven_tls_config {
     proven_allocator_t alloc;
     const proven_cert_store_t *anchors;
@@ -247,12 +265,14 @@ struct proven_tls_config {
     proven_tls_random_fn random; void *random_ctx;
     proven_tls_now_fn now; void *now_ctx;
     bool no_resumption;
+    bool early_data;
     bool keep_peer_certificate;
     proven_u32 ticket_lifetime_s;
     proven_size_t max_handshake_bytes;
     proven_u16 min_version, max_version;          /* never zero: the defaults are filled in */
     proven_u32 legacy;                            /* PROVEN_TLS_LEGACY_* */
     proven_tls_ticket_keys_t tickets;             /* the one part that changes: see the lock */
+    proven_tls_early_seen_t *early_seen;          /* a server with early_data: the strike register (RFC-0021), which also changes under its lock */
 };
 
 /* What a ticket holds, and what a client keeps of a session. */
@@ -264,6 +284,13 @@ typedef struct {
     proven_i64 issued_at;
     bool has_peer_key;
     proven_byte_t peer_key_hash[32];
+    /* Early data (RFC-0021): whether the ticket allows it, the age_add the client was told (for
+     * the freshness check), the protocol's index in the configuration (0xff: none), and a digest
+     * of the 0-RTT limits the server sent. */
+    bool early;
+    proven_u32 age_add;
+    proven_u8 alpn_index;
+    proven_byte_t limits[8];
 } proven_tls_ticket_state_t;
 
 #define PROVEN_TLS_TICKET_MAX 160
@@ -275,6 +302,8 @@ proven_size_t proven_tls_ticket_seal(const proven_tls_config_t *config, const pr
 
 /* The client's session record, laid out inside proven_tls_session_t's bytes. */
 #define PROVEN_TLS_SESSION_TICKET_MAX 640
+#define PROVEN_TLS_SESSION_LIMITS 7                    /* initial_max_data, the three stream data, the two streams, active_connection_id_limit */
+#define PROVEN_TLS_SESSION_TOKEN_MAX 255
 typedef struct {
     proven_u32 magic;                             /* 0 for an empty session */
     proven_u16 suite;
@@ -290,8 +319,18 @@ typedef struct {
     proven_byte_t has_peer_key;
     proven_byte_t peer_key_hash[32];              /* the server's key, as verified when the session was made */
     proven_byte_t ticket[PROVEN_TLS_SESSION_TICKET_MAX];
+    /* 0-RTT (RFC-0021): what the ticket allows and what early data must assume. */
+    proven_byte_t early;                          /* the ticket allows early data (QUIC only) */
+    proven_byte_t alpn_len;                       /* the protocol agreed when the ticket came */
+    proven_byte_t alpn[255];
+    proven_byte_t has_limits;                     /* QUIC: the server's limits below are known */
+    proven_u64 limits[PROVEN_TLS_SESSION_LIMITS]; /* QUIC: the server's 0-RTT limits (RFC 9000 section 7.4.1), in proven_quic_tp_t's order */
+    /* QUIC: a NEW_TOKEN token for the next connection (RFC 9000 section 8.1.3). Kept apart from
+     * the ticket: a new ticket leaves it, and it is used once. */
+    proven_u16 token_len;
+    proven_byte_t token[PROVEN_TLS_SESSION_TOKEN_MAX];
 } proven_tls_session_data_t;
-#define PROVEN_TLS_SESSION_MAGIC ((proven_u32)0x70547332)      /* changed with the record's layout: an older record is simply empty */
+#define PROVEN_TLS_SESSION_MAGIC ((proven_u32)0x70547333)      /* changed with the record's layout: an older record is simply empty */
 
 void proven_tls_config_random(const proven_tls_config_t *config, proven_byte_t *out, proven_size_t len);
 proven_i64 proven_tls_config_now(const proven_tls_config_t *config);
