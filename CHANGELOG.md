@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.73.1] - 2026-10-22
+
 ### Fixed
 
 - A TLS server over TCP now passes over early data it does not take, as RFC 8446 section 4.2.10
