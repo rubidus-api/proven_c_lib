@@ -979,6 +979,13 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
     app_t *app = ctx;
     /* 요청은 어느 쪽이든 같아 보인다: 메서드, 대상, 필드 - 그 가운데 Host도 있다. HTTP/2는
      * 그것을 `:authority`로 싣고, 서버는 익숙한 이름으로 넘겨준다. */
+    /* HTTP/3에서 TLS 설정에 `early_data`가 있으면 요청은 조기 데이터로 올 수 있고(14장 6절),
+     * 공격자가 재전송한 사본일 수 있다. 이 답은 두 번 해도 괜찮다. 그렇지 않은 요청이라면 425로
+     * 답하고, 클라이언트는 나중에 다시 보낸다. */
+    if (proven_http_stream_early(stream) && head->method != PROVEN_HTTP_GET) {
+        (void)proven_http_stream_respond(stream, 425, NULL, 0, (proven_mem_view_t){ 0 });
+        return;
+    }
     const int protocol = proven_http_stream_protocol(stream);
     char text[96];
     int n = snprintf(text, sizeof text, "%.*s over HTTP/%d\n", (int)head->target.size, (const char *)head->target.ptr, protocol);
@@ -1533,7 +1540,17 @@ UDP 소켓은 연결이 쓰는 동안 열려 있고, 같은 포트에 다시 lis
   탐침 타임아웃으로 알아채고, 크기를 1,200으로 되돌린 뒤 다시 찾는다. 설정할 것은 없다. 모든 데이터그램에 조각 금지
   비트가 서고 이쪽에서는 아무것도 조각내지 않으므로(Linux `IP_PMTUDISC_PROBE`, Windows `IP_DONTFRAGMENT`; v0.69.0),
   통과한 탐침은 통째로 통과한 것이다.
-- **HTTP/3 위에서 없는 것:** WebSocket(`proven_ws_event_accept`는 그 스트림을 거절한다), 0-RTT, 트레일러,
+- **TLS 설정에 `early_data`가 있으면 0-RTT**(14장 6절; v0.73.0). 재개하는 클라이언트는 첫 요청들을 첫 패킷에
+  실어 보낼 수 있고, 서버는 첫 응답에서 답한다: 왕복 둘이 하나가 된다. 그렇게 온 요청은 핸드셰이크가 끝나기
+  전에 핸들러에게 가며, 그 요청에서 `proven_http_stream_early`는 참이다: **공격자가 재전송한 사본일 수 있다**.
+  핸들러에게 조기에 가는 것은 본문 없는 GET, HEAD, OPTIONS뿐이고, 그 밖의 것이 조기에 오면 서버가 스스로 425(Too
+  Early)로 답한다. 사본에 따라 행동하면 안 되는 핸들러도 425로 답하면 된다 - 클라이언트는 핸드셰이크가 끝난 뒤
+  요청을 다시 보낸다. 기본은 꺼짐.
+- **클라이언트의 다음 연결은 주소 확인을 건너뛴다.** 핸드셰이크마다 서버는 클라이언트에게 IP 주소에 묶이고 하루
+  동안 유효한 토큰(NEW_TOKEN, RFC 9000 8.1.3절)을 준다. 그 토큰을 가져온 연결은 곧바로 확인된 것으로 다뤄지므로
+  - 보낸 양의 3배라는 한도도, `http3_retry`의 Retry도 없다 - 약 3.6 KB보다 큰 0-RTT 응답도 왕복 하나를 기다리지
+  않는다. 확인되지 않는 토큰은 없는 것으로 다룬다.
+- **HTTP/3 위에서 없는 것:** WebSocket(`proven_ws_event_accept`는 그 스트림을 거절한다), 트레일러,
   서버 푸시, 이쪽 스스로의 이주(클라이언트의 새 주소는 검증한다), 1이 아닌 QUIC 버전.
   `proven_http_event_server_adopt`는 TCP 연결만 받으므로, 여러 루프가 UDP 포트 하나를 나눠 쓸 수 없다.
 - **이벤트 구동 클라이언트는 요청이 청하면 HTTP/3을 말한다**(10절). 이 서버의 `Alt-Svc`를 스스로 따르지는 않는다.
@@ -1586,8 +1603,12 @@ HTTP/2는 TLS 핸드셰이크가 고른다. HTTP/3은 그럴 수 없다 - UDP �
   여러 개를 돌려줄 수 있으며, 다른 곳에서는 하나에 시스템 호출 하나다. Linux 루프백에서 이 라이브러리의 서버로부터
   이 클라이언트로 100 MiB 하나를 내려받는 데 HTTP/3은 393 MiB/s, HTTP/2는 340이었다(v0.68.0; v0.67.0의 HTTP/3은 233,
   v0.65.0은 171). 데이터그램은 서버처럼 탐침으로 1,200에서 1,452바이트까지 커진다.
-- **TLS 세션은 어느 전송에서도 보관하지 않는다**: 연결마다 핸드셰이크 전체를 한다.
-- **여기 없는 것:** 0-RTT, 이쪽 스스로의 연결 이주, HTTP/3 위 WebSocket.
+- **TLS 세션은 출처마다 보관한다**(15장; v0.72.0): 새 연결은 그것을 재개하고, 서버의 NEW_TOKEN 토큰을 다음
+  연결을 위해 보관하므로 다음 연결은 주소 확인을 건너뛴다.
+- **TLS 설정에 `early_data`가 있으면 0-RTT**(14장 6절; v0.73.0). 세션이 허용하는 새 연결에서는 본문 없는 GET,
+  HEAD, OPTIONS 요청을 첫 패킷에 실어 보내 왕복 하나 먼저 답을 받는다. 그 밖의 요청은 핸드셰이크를 기다린다.
+  조기 데이터로 거절되거나 425를 받은 요청은 핸드셰이크 뒤 한 번 다시 보내며, 두 번째 답만 전달한다. 기본은 꺼짐.
+- **여기 없는 것:** 이쪽 스스로의 연결 이주, HTTP/3 위 WebSocket.
 
 **어떻게 시험했는가.** 등록된 시험이 이 클라이언트를 루프백 UDP 위 이 라이브러리의 서버에 붙인다 - 서버가
 답할 수 있는 7절 시험의 모든 사례, 클라이언트의 거절, 대체 없음, 믿을 수 없는 서버, 시간 초과. 등록된 시험

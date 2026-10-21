@@ -761,6 +761,7 @@ alias 1306개: 소문자 `xcv_` 이름 959개와 대문자 `XCV_` 이름 347개.
 | `xcv_http_stream_begin` | `proven_http_stream_begin` |
 | `xcv_http_stream_buffered` | `proven_http_stream_buffered` |
 | `xcv_http_stream_compress` | `proven_http_stream_compress` |
+| `xcv_http_stream_early` | `proven_http_stream_early` |
 | `xcv_http_stream_end` | `proven_http_stream_end` |
 | `xcv_http_stream_flush` | `proven_http_stream_flush` |
 | `xcv_http_stream_pause` | `proven_http_stream_pause` |

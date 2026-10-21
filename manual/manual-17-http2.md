@@ -1014,6 +1014,13 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
     app_t *app = ctx;
     /* The request looks the same either way: a method, a target, fields - Host among them,
      * which HTTP/2 carries as `:authority` and the server hands on under its usual name. */
+    /* Over HTTP/3, with `early_data` in the TLS configuration, a request may come as early data
+     * (chapter 14, section 6) and may be a copy an attacker replayed. This answer is safe to give
+     * twice; a handler whose request is not answers 425 and the client sends it again later. */
+    if (proven_http_stream_early(stream) && head->method != PROVEN_HTTP_GET) {
+        (void)proven_http_stream_respond(stream, 425, NULL, 0, (proven_mem_view_t){ 0 });
+        return;
+    }
     const int protocol = proven_http_stream_protocol(stream);
     char text[96];
     int n = snprintf(text, sizeof text, "%.*s over HTTP/%d\n", (int)head->target.size, (const char *)head->target.ptr, protocol);
@@ -1631,7 +1638,20 @@ as they end HTTP/2 ones.
   probe timeouts, and the size goes back to 1,200 and is found again. Nothing is configured.
   Every datagram carries the don't-fragment bit and nothing is fragmented on this side (Linux
   `IP_PMTUDISC_PROBE`, Windows `IP_DONTFRAGMENT`; v0.69.0), so a probe that passes passed whole.
-- **Not over HTTP/3:** WebSocket (`proven_ws_event_accept` refuses the stream), 0-RTT,
+- **0-RTT, when the TLS configuration has `early_data`** (chapter 14, section 6; v0.73.0). A
+  client that resumes may send its first requests in its first packet, and the server answers
+  them in its first reply: one round trip instead of two. A request that arrives that way is
+  handed to the handler before the handshake is complete, and `proven_http_stream_early` is true
+  for it: **it may be a copy an attacker replayed**. Only GET, HEAD and OPTIONS without a body
+  reach a handler early; the server answers anything else that arrives early with 425 (Too
+  Early) itself, and a handler that must not act on a copy answers 425 too - the client sends the
+  request again once the handshake is over. Off by default.
+- **A client's next connection skips the address check.** After each handshake the server gives
+  the client a token (NEW_TOKEN, RFC 9000 section 8.1.3) bound to its IP address and good for a
+  day; a connection that brings one back is validated at once - no limit of three times what it
+  sent, no Retry under `http3_retry` - so a 0-RTT answer larger than about 3.6 KB is not held
+  back a round trip. A token that does not check is taken as none.
+- **Not over HTTP/3:** WebSocket (`proven_ws_event_accept` refuses the stream),
   trailers, server push, migration of this side's own (a client's new address is
   validated), QUIC versions other than 1. `proven_http_event_server_adopt` takes TCP
   connections only, so several loops cannot share one UDP port.
@@ -1694,8 +1714,14 @@ starts the request again without `http3`.
   each. One 100 MiB download from this library's server to this client on Linux loopback ran at
   393 MiB/s over HTTP/3 and 340 over HTTP/2 (v0.68.0; 233 over HTTP/3 at v0.67.0, 171 at
   v0.65.0). Datagrams grow from 1,200 to 1,452 bytes by probing, as the server's do.
-- **No TLS session is kept**, over either transport: every connection is a full handshake.
-- **Not here:** 0-RTT, connection migration of this side's own, WebSocket over HTTP/3.
+- **A TLS session is kept per origin** (chapter 15; v0.72.0): a new connection resumes it, and
+  keeps the server's NEW_TOKEN token for the next one, which then skips the address check.
+- **0-RTT with `early_data` in the TLS configuration** (chapter 14, section 6; v0.73.0). On a new
+  connection whose session allows it, requests that are GET, HEAD or OPTIONS without a body go in
+  the first packet and are answered one round trip sooner; any other request waits for the
+  handshake. A request refused as early data, or answered 425, is sent again once after the
+  handshake and only its second answer is delivered. Off by default.
+- **Not here:** connection migration of this side's own, WebSocket over HTTP/3.
 
 **How this was tested.** A registered test runs this client against this library's server over
 UDP on loopback - every case of section 7's test that the server can answer, the client's

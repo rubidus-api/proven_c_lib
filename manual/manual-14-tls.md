@@ -86,6 +86,7 @@ Zero-initialise a `proven_tls_options_t`, set `alloc`, and set what applies:
 | `alpn`, `alpn_count` | both | Application protocol names, most preferred first (`http/1.1`). The server picks its first choice among what the client offers; if both sides have a list and nothing is common, the handshake fails |
 | `random`, `now` | both | Where unpredictable bytes and the time come from. Leave them null on a hosted system: the operating system's source and the wall clock are used. A freestanding build must supply both |
 | `no_resumption`, `ticket_lifetime_s` | both, a server | Section 6 |
+| `early_data` | both, over QUIC (HTTP/3) | Section 6, "Early data" |
 | `keep_peer_certificate` | whoever verifies | Keep the peer's certificate after the handshake, for `proven_tls_peer_certificate` |
 | `max_handshake_bytes` | both | The largest handshake message accepted. Default 65,536 |
 | `min_version`, `max_version` | both | The oldest and newest protocol version this side agrees to: `PROVEN_TLS_VERSION_1_2` or `PROVEN_TLS_VERSION_1_3`. Zero is the default - 1.2 for the minimum, 1.3 for the maximum. **`min_version = PROVEN_TLS_VERSION_1_3` is how to refuse TLS 1.2** (section 9). `PROVEN_TLS_VERSION_1_1` and `PROVEN_TLS_VERSION_1_0` are legacy (section 10) |
@@ -585,7 +586,7 @@ its own.
 On the client it is one struct:
 
 ```c
-typedef struct { proven_byte_t opaque[PROVEN_TLS_SESSION_SIZE]; } proven_tls_session_t;
+typedef struct { alignas(8) proven_byte_t opaque[PROVEN_TLS_SESSION_SIZE]; } proven_tls_session_t;   /* 2,048 bytes */
 ```
 
 Zero-initialise a `proven_tls_session_t`, and pass it to `proven_tls_client_create` (or to
@@ -606,9 +607,8 @@ tickets do not survive a restart, and two processes do not accept each other's.
 
 What resumption does not do here:
 
-- **No early data** (0-RTT). Data sent before the handshake completes can be replayed by an
-  attacker; using it safely requires an application written for it, and this library does not
-  offer it.
+- **Early data only over QUIC** (next part). Over TCP a ticket never allows it and a client never
+  sends it.
 - **Not through `proven_tls_http_wrap`.** The HTTP client's connections do not resume; it
   reuses open connections instead, which is cheaper still.
 - A resumed connection's peer is the one verified when the session was made: the certificate is
@@ -624,6 +624,44 @@ in the process's memory and is replaced every ticket lifetime, which bounds the 
 that; `no_resumption` removes it. A session made under one version is never offered to, or
 accepted by, the other: one `proven_tls_session_t` holds whichever kind the last connection
 left, and a handshake that ends up in the other version is simply a full one.
+
+### Early data (0-RTT)
+
+Resumption still waits one round trip for the handshake before the first request leaves. With
+**early data** a client sends that request in its first packet, under a key made from the
+ticket, and the server can answer in its first reply: one round trip instead of two for a new
+connection (measured: a GET over HTTP/3 with a 20 ms round trip, 43 ms to 22 ms). Here it exists
+**only in QUIC mode**, so only for HTTP/3 (chapter 17), and only when both configurations set
+`early_data` (it cannot be combined with `no_resumption`):
+
+- A server with `early_data` issues tickets that allow it - only on QUIC connections - and
+  accepts early data when all of these hold: the ticket allows it; it is the first identity and
+  its binder checks; the cipher suite and the protocol (ALPN) are the ticket's; the transport
+  limits this server promises are the ones it promised when it issued the ticket; no
+  HelloRetryRequest happened; the age the client reports is within 10 seconds of the time since
+  the ticket was issued; and **the ticket has not carried early data before**. Otherwise the
+  early data is refused and the handshake goes on as a resumption.
+- A client with `early_data` sends early data when its session holds a ticket that allows it,
+  for a protocol it still offers; a refusal costs it only the round trip it hoped to save - what
+  it sent goes again after the handshake.
+
+**Early data can be replayed.** Whoever sees the client's first flight can send it again, and
+a server that accepts it acts on the request again. Each server configuration keeps a register
+of the tickets it took early data on (4,096 of them, 96 KiB, made with the configuration), for as
+long as the freshness window could let them in, and takes each ticket's early data once; when
+the register is full, early data is refused. Because tickets open only in the process and
+configuration that sealed them (above), that one register covers every server that could take
+the ticket. What no register prevents: an attacker who holds the client's flight back and sends
+it first makes the server act on the copy; the original's early data is then refused and sent
+again after the handshake, so the request is acted on twice. Hence the rule the HTTP/3 server
+and client follow (chapter 17): only requests that are safe to repeat - GET, HEAD and OPTIONS
+without a body - go early, a handler can ask `proven_http_stream_early` and answer **425 Too
+Early**, and anything else that arrives early is answered 425 by the server itself.
+
+**A known limit over TCP.** A client of another make that presents a ticket this server issued
+over QUIC on a TCP connection, with early data in its ClientHello, finds a server that neither
+accepts the early records nor skips them as RFC 8446 section 4.2.10 asks: that handshake fails.
+No ticket allowed early data before version 0.73.0, so this could not happen earlier.
 
 ## 7. Client certificates and pins
 
@@ -804,7 +842,7 @@ it is the one scheme this side signs with there.
   renegotiation; compression; session IDs kept on the server; `record_size_limit` in
   TLS 1.2. A peer that needs one of those fails with `PROVEN_ERR_PROTOCOL`.
 - **RSA keys above 4096 bits for this side**, and RSA-PSS keys (a certificate whose key is marked for PSS only).
-- **Early data (0-RTT).**
+- **Early data over TCP.** It is offered and accepted only in QUIC mode (section 6).
 - **Revocation.** No CRL, no OCSP, no stapling. See Chapter 13.
 - **Choosing a certificate by the name the client asked for.** One config, one certificate.
 - **Encrypted ClientHello, post-handshake client authentication, external pre-shared keys.**

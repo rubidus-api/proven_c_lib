@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 126 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 127 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -347,7 +347,7 @@ Last run, 2026-10-21, Windows 11 test VM (v0.72.0): x86-64 360 PASS, 0 FAIL, 10 
 ## Test catalog
 
 
-The hosted full run builds and executes 192 registered tests plus the 178 runnable manual examples - 370 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 205 test files: the 188 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 193 registered tests plus the 178 runnable manual examples - 371 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 206 test files: the 189 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -852,6 +852,8 @@ Sub-checks:
 - Key updates started by the client and then by the server in the middle of a transfer: the other follows, nothing is lost, two updates on each side. With the threshold set to 300 packets, each side updates by itself (RFC 9001 section 6.6) - at least five times each over two megabytes each way at 2 percent loss - and nothing is lost; with an update due every 4 packets, faster than a round trip, every byte still arrives, no packet is undecryptable, and neither side updates more often than once a round trip - not again before a packet under its current key is acknowledged.
 - The path's datagram size (RFC-0018 S-2, PMTU probing, RFC 9000 section 14.3): on a path that carries 1,452 bytes both sides reach it with one probe each, none lost, and an idle connection then sends nothing in five seconds; a megabyte goes at that size. When the path then stops carrying more than 1,280 bytes, the next megabyte still arrives and the sender has fallen back and found a size the path carries. On a path that never carried more than 1,280, each side settles within 32 bytes below it (1,263), its lost probes counted as no packet loss and leaving the congestion window as it was, and a megabyte each way loses no packet. Thirty seconds in which nothing reaches the server (a 120-second idle timeout): the probe timeouts send the size back, the probes lost meanwhile are not counted against any size, and once the path is back the size is 1,452 again. A path narrowed toward the server only, the client writing 3,000 bytes a turn: the stream arrives whole, the client falls back to a size the path carries, the server keeps 1,452.
 - Windows that grow (RFC-0019 section 9, v0.71.0): 8 MiB over the 20 ms round trip of the simulated network take less than four tenths of the time with growth on (0.22 s against 1.09 s; with the windows grown but the send buffer fixed it would not); with growth on and a reader that reads nothing, six streams of 2 MiB leave both sides holding what they hold with fixed windows (under 1.5 MiB each), and once read everything arrives. A receiver that grants a 16 MiB stream window and 24 MiB for the connection from the start and then has every datagram toward the sender dropped: the sender, growth on, writing six streams of 4 MiB, holds under 1.5 MiB - its buffers follow twice the congestion window, not the grant.
+- 0-RTT (RFC-0021, v0.73.0): a first connection leaves a ticket that allows early data, and before it a client cannot open a stream; the next connection is told at once (`PROVEN_QUIC_EV_EARLY`), opens a stream before the handshake, and its request of 1,000 bytes, coalesced after its Initial, is answered 20 ms after it began - one round trip of the simulated network - with both sides saying early data was accepted. The same ticket again: refused by the server's register, the request sent again under 1-RTT and answered after two round trips. The first datagram (Initial and 0-RTT) lost: the request still arrives. Refused by a server whose windows are now 4 KiB, a client that sent 12 KB early closes with INTERNAL_ERROR, its own. A server without `early_data`: its ticket allows none, and the client opens no stream before the handshake. A 0-RTT packet that carries ACK, CRYPTO, HANDSHAKE_DONE, RETIRE_CONNECTION_ID or PATH_RESPONSE ends the connection with PROTOCOL_VIOLATION; STREAM and PING are taken.
+- NEW_TOKEN (RFC-0021, v0.73.0): a first connection leaves the client a token of 37 bytes; the next connection, from another port, is validated with its first datagram, and a server that asks for Retries asks none of it; a token brought from another address counts as none (not dropped; with Retries asked for, one Retry); one more than a day old counts as none; without one, nothing changes; a token is taken out of the session once.
 - Flow control and memory: with a reader that reads nothing, six streams of 2 MiB stop at the windows; the receiver holds less than its 1 MiB window and bookkeeping, the sender less than its 1 MiB send buffer and bookkeeping; once read, everything arrives. Five streams that fill the connection's window unread and are then reset by the sender give their bytes back: a new stream's 2 MiB arrive. (The fill runs the clock in steps of at most its three seconds: with the window full nothing is sent, and the next deadline is the idle timeout's.)
 - Changed packets: every datagram captured in a handshake and a small transfer, delivered again with a bit changed (each of the first 64 bytes' bits, then every 29th) and cut short (each of the first 64 lengths, then every 17th) - about 21,000 datagrams - is dropped; delivered again unchanged, not one packet is processed a second time (RFC 9000 section 12.3); neither side closes or is told to, and a new transfer goes through.
 
@@ -980,6 +982,7 @@ Sub-checks:
 - What a QUIC-mode connection is made from: a config with no ALPN or no TLS 1.3, parameters over 1,024 bytes or missing, a server config with no certificate - refused; a TCP connection is not one in QUIC mode.
 - Breaches and their codes: no protocol in common (0x0178), and a hello with no ALPN at all (0x0178); a ClientHello at Handshake or Application, and the server's whole flight at Initial (0x010a); a client's parameter out of range and a server's missing `original_destination_connection_id` (0x08); a TCP ClientHello's session id (0x0a), and without it the missing parameters (0x016d).
 - The key schedule is TLS 1.3's: a server over TCP answers the QUIC-mode client's hello (passing over `quic_transport_parameters`), the client's Handshake read secret opens every record after the ServerHello, and their EncryptedExtensions, lacking the parameters, is 0x016d.
+- Early data (RFC-0021, v0.73.0): `early_data` with `no_resumption` is refused; a ticket made in QUIC under `early_data` allows it and the session keeps the protocol and the server's limits; the next ClientHello offers an empty `early_data` and both sides reach the same early secret, which the client can drop. The server refuses, and the connection still resumes: the same ticket again; a captured ClientHello replayed at once and 30 s later (taken once); a hello never seen, 12 s after it was made; a second ticket while a register of one is full; a server whose limits changed; a connection that agreed ChaCha20 on a ticket made under AES-128-GCM (both SHA-256); a HelloRetryRequest (the client counts its early data as refused); another protocol than the ticket's. A client refuses an acceptance for another protocol than its session's (`illegal_parameter`) and a QUIC ticket that allows 16,384 bytes of early data (PROTOCOL_VIOLATION). A client without `early_data` offers none; a server without it issues tickets that allow none; a ticket made over TCP never allows it. A NEW_TOKEN token kept in the session survives the ticket after it, is taken once, and one of 256 bytes is not kept.
 - Flights fed a byte at a time and in pieces of 7 and 64 complete with the same secrets.
 - Every single-bit change of the Initial and Handshake flights in both directions (6,920 handshakes) leaves the pair unestablished: 6,854 end with an error code, 66 wait for bytes that never come (a length made longer).
 
@@ -1222,6 +1225,22 @@ Sub-checks:
 - The cache's bound, through the internal calls: 65 origins over TCP, the oldest used again before the 65th - the least recently used (the second) is given up, the one used again kept, the newest there; a host name is matched without regard to case; QUIC's session for an origin is kept apart and untouched, an origin known only over TCP gives QUIC nothing, and another port is another origin.
 
 Failure tip: inspect `proven_http_event_client_session_start_` and `_keep_` in `src/proven/http_event_client.c`, and where each path calls them: `cl_conn_open`, `cl_conn_keep` and `cl_conn_close`; `c_open` and `c_close_socket` in `http_event_client_h2.c`; `c_open`, `r_finish` and `c_kill` in `http_event_client_h3.c`. Not covered here: another server implementation's tickets.
+
+### `tests/test_unit_http_event_early` - 0-RTT over HTTP/3, client and server
+
+Intent: verify RFC-0021's 0-RTT between the event-driven client and server over loopback, both TLS configurations with `early_data`. Whether a request went as early data, and was accepted, is read through an internal hook (`proven_http_event_client_h3_early_`); what the handler saw through `proven_http_stream_early`.
+
+Sub-checks:
+
+- A GET as early data: the first connection makes a full handshake and nothing goes early; after it has gone idle and closed, the second connection's GET goes as early data, is accepted, and its handler sees `proven_http_stream_early` (and answers "early"); a GET once the connection is up is not early.
+- A POST as the first request of a resuming connection waits for the handshake and is answered; its handler never sees it as early.
+- 425 from a handler: a handler that will not act on an early copy answers 425; the client does not deliver it, sends the request again after the handshake, and delivers the second answer (two handler calls, the first early).
+- 425 from the server: a POST sent early (an internal switch lets this client do what another might) is answered 425 by the server without calling its handler; sent again after the handshake, it reaches the handler and is answered.
+- Without `early_data`: a client without it sends nothing early; a server without it issues tickets that allow none.
+
+The suite is a skip in a build with `PROVEN_NO_HTTP3`.
+
+Failure tip: inspect `r_early_ok`, `c_submit_waiting`, the 425 in `c_response` and `r_again` in `src/proven/http_event_client_h3.c`; the early branch of `d_request` in `src/proven/http_event_h3.c`. The QUIC side is `test_unit_quic_conn`'s 0-RTT section, the TLS side `test_unit_tls_quic`'s early data section.
 
 ### `tests/test_unit_http_coding` - http: content codings
 

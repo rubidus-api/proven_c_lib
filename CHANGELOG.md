@@ -18,6 +18,58 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- 0-RTT over HTTP/3 (RFC-0021): `early_data` in `proven_tls_options_t`, and
+  `proven_http_stream_early` (alias `xcv_http_stream_early`). With it on both sides, a client
+  that resumes sends GET, HEAD and OPTIONS requests without a body in its first packet and the
+  server answers them in its first reply: one round trip instead of two for a new connection
+  (measured over a relay with a 20 ms round trip: 43 ms to 22 ms for a GET of 1,000 bytes). A
+  server accepts early data only on a ticket it issued over QUIC under the same configuration,
+  for the same cipher suite, protocol and transport limits, with an age within 10 s of the truth,
+  never after a HelloRetryRequest, and **once per ticket** - a register of 4,096 tickets per
+  configuration (96 KiB, made with it), early data refused when it is full. Early data can still
+  be replayed by an attacker who holds the client's flight back: a handler sees
+  `proven_http_stream_early` and may answer 425 (Too Early), the server answers 425 itself to
+  anything other than GET, HEAD and OPTIONS without a body that arrives early, and the client
+  sends a refused or 425 request again once after the handshake. Off by default; not with
+  `no_resumption`. Over TCP nothing changes: tickets issued there never allow early data (a
+  client of another make that offers early data over TCP on a ticket issued over QUIC fails its
+  handshake - see chapter 14).
+- QUIC NEW_TOKEN (RFC 9000 section 8.1.3): the HTTP/3 server gives each client a token bound to
+  its IP address and good for a day; the client's next connection brings it back and is
+  validated at once - no limit of three times what it sent, no Retry under `http3_retry` - so a
+  first answer above about 3.6 KB is not held back a round trip (an 8 KB answer over 0-RTT: 42 to
+  22 ms at a 20 ms round trip). The event client keeps the token in the origin's session and uses
+  it once.
+- Tests: `test_unit_http_event_early`; early data in `test_unit_tls_quic` (each condition, a
+  replayed ClientHello, a full register, a TCP ticket, a ticket with another early_data value);
+  0-RTT and NEW_TOKEN in `test_unit_quic_conn` (one round trip, a refusal, a loss, limits too
+  small after a refusal, the frames a 0-RTT packet may not carry, a token from another address or
+  too old).
+
+### Changed
+
+- `PROVEN_TLS_SESSION_SIZE` is 2,048 bytes (was 1,024) and `proven_tls_session_t` is aligned to
+  8: a session also keeps the protocol agreed, the server's 0-RTT limits and a NEW_TOKEN token.
+  **Callers must be recompiled**; a session written by an older version reads as empty (one full
+  handshake). The event client's sessions take at most 256 KiB (was 128 KiB).
+- The QUIC Retry token now begins with a byte naming its kind; a Retry token issued by an older
+  version is dropped (it is good for ten seconds anyway).
+
+### Fixed
+
+- The event client's session cache (v0.72.0): a connection that closed late stored its session
+  again, putting an older ticket back over the newer one a later connection had stored; it now
+  stores only what it learned since it last stored. An HTTP/3 connection's ticket that came after
+  its last request ended reached the cache only when the connection was gone, after QUIC's
+  closing period; the client now stores it before it makes the next connection to that origin.
+  Neither stopped resumption (an older ticket still resumes), but with 0-RTT, whose tickets carry
+  early data once, half the attempts at a 100 ms round trip were refused before these fixes.
+- `proven_tls_session_t` is aligned to 8 bytes: the engine reads its record in place, and a
+  session embedded at an odd offset was read unaligned (UBSan found it once the size changed).
+- Chapter 17 said the event client keeps no TLS session; since v0.72.0 it does.
+
 ## [0.72.0] - 2026-10-21
 
 ### Changed
