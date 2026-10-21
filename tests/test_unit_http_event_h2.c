@@ -431,7 +431,7 @@ static bool cl_pump(cl_t *c, proven_u32 ms) {
                 }
                 break;
             case PROVEN_H2_EVENT_DATA:
-                if (ev.stream_id == g_cap_id && g_cap_len + ev.data.size <= sizeof g_cap) { memcpy(g_cap + g_cap_len, ev.data.ptr, ev.data.size); g_cap_len += ev.data.size; }
+                if (ev.stream_id == g_cap_id && ev.data.size > 0 && g_cap_len + ev.data.size <= sizeof g_cap) { memcpy(g_cap + g_cap_len, ev.data.ptr, ev.data.size); g_cap_len += ev.data.size; }
                 if (r) {
                     for (proven_size_t i = 0; i < ev.data.size; i++) {
                         if (r->got + i < sizeof r->first) r->first[r->got + i] = ev.data.ptr[i];
