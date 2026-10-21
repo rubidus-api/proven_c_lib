@@ -395,6 +395,9 @@ void proven_crypto_rsa_test_min_bits(proven_size_t bits);
 /* Put one suite first in both roles' order (0: the normal order), and make the server ignore
  * an X25519 key share so that it has to ask for P-256. */
 void proven_tls_test_knobs(proven_u16 suite_first, bool server_refuses_x25519);
+/* A client over TCP offers early data in its first ClientHello and sends none of it, so that a
+ * test can put records of its own after that hello. */
+void proven_tls_test_early_tcp_(bool on);
 /* TLS 1.2 test knobs: bit 0, the server answers 1.2 whatever the client offers; bit 1, the
  * client omits the extended master secret; bit 2, the server omits it from its answer; bit 3,
  * the client adds the fallback signal of RFC 7507 to its suites. */

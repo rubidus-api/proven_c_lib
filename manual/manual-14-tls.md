@@ -608,7 +608,7 @@ tickets do not survive a restart, and two processes do not accept each other's.
 What resumption does not do here:
 
 - **Early data only over QUIC** (next part). Over TCP a ticket never allows it and a client never
-  sends it.
+  sends it; a server passes over what another client sends (next part).
 - **Not through `proven_tls_http_wrap`.** The HTTP client's connections do not resume; it
   reuses open connections instead, which is cheaper still.
 - A resumed connection's peer is the one verified when the session was made: the certificate is
@@ -658,10 +658,16 @@ and client follow (chapter 17): only requests that are safe to repeat - GET, HEA
 without a body - go early, a handler can ask `proven_http_stream_early` and answer **425 Too
 Early**, and anything else that arrives early is answered 425 by the server itself.
 
-**A known limit over TCP.** A client of another make that presents a ticket this server issued
-over QUIC on a TCP connection, with early data in its ClientHello, finds a server that neither
-accepts the early records nor skips them as RFC 8446 section 4.2.10 asks: that handshake fails.
-No ticket allowed early data before version 0.73.0, so this could not happen earlier.
+**Early data sent over TCP.** A client of another make may present a ticket this server issued
+over QUIC on a TCP connection, with early data in its ClientHello. A server over TCP never takes
+early data, so it does what RFC 8446 section 4.2.10 asks of a server that refuses it: it passes
+over those records - after a HelloRetryRequest, every application_data record until the second
+ClientHello; otherwise every record that does not open under the handshake keys, until one
+does - and the handshake goes on as if they had not been sent. The client learns from the
+server's answer that its early data was not taken, and may send it again. What is passed over is
+bounded: 64 KiB, each record counted with its 5-byte header. Past that the next record ends the
+connection, as any record that does not open would (bad_record_mac, or unexpected_message after
+a HelloRetryRequest). Before version 0.73.1 such a handshake failed.
 
 ## 7. Client certificates and pins
 
@@ -842,7 +848,8 @@ it is the one scheme this side signs with there.
   renegotiation; compression; session IDs kept on the server; `record_size_limit` in
   TLS 1.2. A peer that needs one of those fails with `PROVEN_ERR_PROTOCOL`.
 - **RSA keys above 4096 bits for this side**, and RSA-PSS keys (a certificate whose key is marked for PSS only).
-- **Early data over TCP.** It is offered and accepted only in QUIC mode (section 6).
+- **Early data over TCP.** It is offered and accepted only in QUIC mode (section 6); over TCP a
+  server passes over what a client sends of it, up to 64 KiB.
 - **Revocation.** No CRL, no OCSP, no stapling. See Chapter 13.
 - **Choosing a certificate by the name the client asked for.** One config, one certificate.
 - **Encrypted ClientHello, post-handshake client authentication, external pre-shared keys.**

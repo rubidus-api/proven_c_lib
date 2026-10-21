@@ -90,6 +90,7 @@ static const proven_byte_t DOWNGRADE_SENTINEL[8] = { 0x44, 0x4f, 0x57, 0x4e, 0x4
 #define TLS_MAX_UNSENT ((proven_size_t)64 * 1024)
 #define TLS_COOKIE_MAX 256
 #define TLS_MAX_IGNORED 16                     /* records that carry nothing, tolerated in a row */
+#define TLS_EARLY_SKIP 65536u                  /* bytes of refused early data a TCP server passes over */
 
 static const proven_byte_t HRR_RANDOM[32] = {
     0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11, 0xbe, 0x1d, 0x8c, 0x02, 0x1e, 0x65, 0xb8, 0x91,
@@ -133,6 +134,7 @@ typedef struct {
     proven_size_t psk_len;
     bool psk_offered, psk_accepted;
     bool client_early;                            /* server: the ClientHello offered early data */
+    proven_u32 early_skip;                        /* server, TCP: bytes of refused early data still to pass over */
     proven_u32 client_age;                        /* server: the first identity's obfuscated_ticket_age */
     bool cert_requested;                          /* client: the server asked for a certificate */
     bool client_cert_seen;                        /* server: the client presented one */
@@ -479,6 +481,9 @@ void proven_tls_test_knobs(proven_u16 suite_first, bool server_refuses_x25519) {
     g_test_suite_first = suite_first;
     g_test_server_refuses_x25519 = server_refuses_x25519;
 }
+/* A client over TCP offers early data in its first ClientHello (and sends none: a test does). */
+static bool g_test_early_tcp;
+void proven_tls_test_early_tcp_(bool on) { g_test_early_tcp = on; }
 
 /* Test knobs for TLS 1.2: bit 0, a server answers 1.2 though both sides could do 1.3 (what
  * interference with the hello would cause); bit 1, a client does not offer the extended
@@ -994,6 +999,7 @@ static proven_err_t client_hello_send(proven_tls_conn_t *c) {
     offer_early = is_quic(c) && cfg->early_data && sess && sess->early && !h->retried && session_alpn_offered(cfg, sess);
     if (is_quic(c) && h->retried && c->quic->early == PROVEN_TLS_EARLY_OFFERED) c->quic->early = PROVEN_TLS_EARLY_REFUSED;
 #endif
+    const bool test_early = g_test_early_tcp && !is_quic(c) && !h->retried;
 
     wr_t w = hs_begin(c, HS_CLIENT_HELLO);
     wr_uint(&w, h->hello_version, 2);
@@ -1095,7 +1101,7 @@ static proven_err_t client_hello_send(proven_tls_conn_t *c) {
         wr_uint(&w, EXT_COOKIE, 2); wr_uint(&w, (proven_u32)h->cookie_len + 2, 2);
         wr_uint(&w, (proven_u32)h->cookie_len, 2); wr_bytes(&w, h->cookie, h->cookie_len);
     }
-    if (offer_early) { wr_uint(&w, EXT_EARLY_DATA, 2); wr_uint(&w, 0, 2); }
+    if (offer_early || test_early) { wr_uint(&w, EXT_EARLY_DATA, 2); wr_uint(&w, 0, 2); }
     proven_size_t binder_at = 0;
     h->psk_offered = false;
     if (sess) {
@@ -1561,6 +1567,9 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
             case EXT_EARLY_DATA:
                 bit = 1024;
                 h->client_early = true;
+                /* Over TCP early data is never taken: what the client sends of it is passed
+                 * over (RFC 8446 section 4.2.10), whatever else this hello leads to. */
+                if (!is_quic(c) && !h->retried) h->early_skip = TLS_EARLY_SKIP;
                 break;
             default:
                 continue;                                         /* an extension this side does not use */
@@ -2114,6 +2123,20 @@ static proven_err_t record_process12(proven_tls_conn_t *c) {
     }
 }
 
+/* A TCP server passes over the early data it does not take (RFC 8446 section 4.2.10): after a
+ * HelloRetryRequest, records of type application_data until the second ClientHello; otherwise
+ * records that do not open under the client's handshake keys, until one does. Either way up to
+ * TLS_EARLY_SKIP bytes, each record charged its header too, so that empty ones count. */
+static bool early_skipped(proven_tls_conn_t *c, proven_size_t len, bool keyed) {
+    tls_handshake_t *h = c->hs;
+    if (!c->is_server || !h || h->early_skip == 0) return false;
+    if (keyed ? h->retried : (!h->retried || c->state != ST_S_WAIT_CH)) return false;
+    const proven_size_t cost = PROVEN_TLS_RECORD_HEADER + len;
+    if (cost > h->early_skip) return false;
+    h->early_skip -= (proven_u32)cost;
+    return true;
+}
+
 static proven_err_t record_process(proven_tls_conn_t *c) {
     if (c->v12) return record_process12(c);
     proven_byte_t type = c->in.ptr[0];
@@ -2131,9 +2154,13 @@ static proven_err_t record_process(proven_tls_conn_t *c) {
     }
     if (c->read_keys.active) {
         if (type != PROVEN_TLS_CT_APPLICATION) return tls_unexpected(c);
-        if (!proven_tls13_open(&c->read_keys, c->in.ptr, len, &type, &content)) return tls_fail(c, AL_BAD_RECORD_MAC, PROVEN_ERR_PROTOCOL);
+        if (!proven_tls13_open(&c->read_keys, c->in.ptr, len, &type, &content)) {
+            if (early_skipped(c, len, true)) return PROVEN_OK;
+            return tls_fail(c, AL_BAD_RECORD_MAC, PROVEN_ERR_PROTOCOL);
+        }
+        if (c->hs) c->hs->early_skip = 0;                         /* the client's own records have begun */
     } else {
-        if (type == PROVEN_TLS_CT_APPLICATION) return tls_unexpected(c);
+        if (type == PROVEN_TLS_CT_APPLICATION) return early_skipped(c, len, false) ? PROVEN_OK : tls_unexpected(c);
         if (len > PROVEN_TLS_MAX_PLAINTEXT) return tls_fail(c, AL_RECORD_OVERFLOW, PROVEN_ERR_PROTOCOL);
     }
     switch (type) {

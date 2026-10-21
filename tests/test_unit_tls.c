@@ -148,6 +148,32 @@ static pair_t connect_pair(const proven_tls_config_t *cc, const proven_tls_confi
     return p;
 }
 
+/* A client's first flight with `n` records of `len` bytes after its ClientHello, all of type
+ * application_data and none that the server can open (early data it has no keys for), then the
+ * rest of the handshake as usual. */
+static pair_t early_pair(const proven_tls_config_t *cc, const proven_tls_config_t *sc, proven_tls_session_t *session, int n, proven_size_t len) {
+    static proven_byte_t rec[PROVEN_TLS_RECORD_HEADER + PROVEN_TLS_MAX_CIPHERTEXT];
+    pair_t p = { NULL, NULL };
+    g_err_c = PROVEN_OK; g_err_s = PROVEN_OK;
+    g_stash_len[0] = 0; g_stash_len[1] = 0;
+    PROVEN_TEST_ASSERT(proven_tls_client_create(cc, sv("example.test"), session, &p.c) == PROVEN_OK, "a client connection", "");
+    PROVEN_TEST_ASSERT(proven_tls_server_create(sc, &p.s) == PROVEN_OK, "a server connection", "");
+    (void)move(p.c, p.s, &g_err_s, NULL, 0);
+    rec[0] = 23; rec[1] = 3; rec[2] = 3; rec[3] = (proven_byte_t)(len >> 8); rec[4] = (proven_byte_t)len;
+    for (int k = 0; k < n && g_err_s == PROVEN_OK; ++k) {
+        for (proven_size_t i = 0; i < len; ++i) rec[PROVEN_TLS_RECORD_HEADER + i] = (proven_byte_t)(i * 7 + (proven_size_t)k);
+        proven_size_t at = 0, used = 0;
+        while (at < PROVEN_TLS_RECORD_HEADER + len && g_err_s == PROVEN_OK) {
+            proven_err_t e = proven_tls_feed(p.s, (proven_mem_view_t){ .ptr = rec + at, .size = PROVEN_TLS_RECORD_HEADER + len - at }, &used);
+            if (e != PROVEN_OK) g_err_s = e;
+            else if (used == 0) break;
+            at += used;
+        }
+    }
+    pump(p.c, p.s, NULL, NULL);
+    return p;
+}
+
 static void close_pair(pair_t *p) { proven_tls_conn_destroy(p->c); proven_tls_conn_destroy(p->s); p->c = NULL; p->s = NULL; }
 
 static bool both_up(const pair_t *p) {
@@ -1499,6 +1525,69 @@ int main(void) {
         for (proven_size_t i = 0; i < sizeof session.opaque; ++i) empty = empty && session.opaque[i] == 0;
         PROVEN_TEST_ASSERT(both_up(&p) && empty, "a server set to issue no tickets issues none", "");
         close_pair(&p);
+        proven_tls_config_destroy(sc); proven_tls_config_destroy(cc);
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("early data over TCP, passed over",
+        "A server over TCP takes no early data, but a client may send it after a hello that offers it: the server passes over those records, up to 64 KiB, and the handshake goes on (RFC 8446 section 4.2.10).",
+        "Check early_skipped and its two callers in record_process, and where h->early_skip is set in the ClientHello's extensions.");
+    {
+        proven_tls_options_t so = base_options();
+        so.ticket_lifetime_s = 600;
+        proven_tls_config_t *cc = client_config(NULL), *sc = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &so);
+        proven_tls_session_t session = { 0 }, saved;
+        pair_t p = connect_pair(cc, sc, "example.test", &session, NULL, NULL);
+        PROVEN_TEST_ASSERT(both_up(&p), "a first connection leaves a ticket", "");
+        close_pair(&p);
+        saved = session;
+
+        proven_tls_test_early_tcp_(true);
+        p = early_pair(cc, sc, &session, 3, 300);
+        PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_resumed(p.s) && transfer(p.c, p.s, 3000, 1) && transfer(p.s, p.c, 3000, 2),
+            "three records of early data after a resuming hello are passed over: the handshake resumes and data flows", "");
+        close_pair(&p);
+        p = early_pair(cc, sc, NULL, 3, 300);
+        PROVEN_TEST_ASSERT(both_up(&p) && !proven_tls_resumed(p.s), "and after a hello with no ticket, a full handshake", "");
+        close_pair(&p);
+        session = saved;
+        proven_tls_test_knobs(0, true);
+        p = early_pair(cc, sc, &session, 3, 300);
+        PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_resumed(p.s), "and when the server asks for another hello, until that hello comes", "");
+        close_pair(&p);
+        p = early_pair(cc, sc, NULL, 4, PROVEN_TLS_MAX_CIPHERTEXT);
+        PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 10, "there, four full records are more than 64 KiB: unexpected_message", "");
+        close_pair(&p);
+        proven_tls_test_knobs(0, false);
+
+        session = saved;
+        p = early_pair(cc, sc, &session, 3, PROVEN_TLS_MAX_CIPHERTEXT);
+        PROVEN_TEST_ASSERT(both_up(&p), "three full records are within 64 KiB", "");
+        close_pair(&p);
+        session = saved;
+        p = early_pair(cc, sc, &session, 4, PROVEN_TLS_MAX_CIPHERTEXT);
+        PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 20 && !proven_tls_is_established(p.s),
+            "four are not: the record past the bound is what it looks like, one that does not open (bad_record_mac)", "");
+        close_pair(&p);
+        session = saved;
+        p = early_pair(cc, sc, &session, 1000, 0);
+        PROVEN_TEST_ASSERT(both_up(&p), "a thousand empty records are passed over", "");
+        close_pair(&p);
+        session = saved;
+        p = early_pair(cc, sc, &session, 14000, 0);
+        PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 20, "but each is charged its header: fourteen thousand are past the bound", "");
+        close_pair(&p);
+
+        proven_tls_test_early_tcp_(false);
+        session = saved;
+        p = early_pair(cc, sc, &session, 1, 300);
+        PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 20, "after a hello that did not offer early data, such a record ends the connection", "");
+        close_pair(&p);
+        proven_tls_test_knobs(0, true);
+        p = early_pair(cc, sc, NULL, 1, 300);
+        PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 10, "and after a HelloRetryRequest too", "");
+        close_pair(&p);
+        proven_tls_test_knobs(0, false);
         proven_tls_config_destroy(sc); proven_tls_config_destroy(cc);
     }
 

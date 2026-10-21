@@ -18,6 +18,16 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Fixed
+
+- A TLS server over TCP now passes over early data it does not take, as RFC 8446 section 4.2.10
+  asks: a client of another make that presents a ticket issued over QUIC on a TCP connection,
+  with early data after its ClientHello, completes the handshake instead of failing it. After a
+  HelloRetryRequest the server skips application_data records until the second ClientHello;
+  otherwise records that do not open under the handshake keys, until one does; at most 64 KiB,
+  each record counted with its header. Past that the connection ends as before. No public API
+  change. Test: `test_unit_tls` section "early data over TCP, passed over".
+
 ## [0.73.0] - 2026-10-21
 
 ### Added
