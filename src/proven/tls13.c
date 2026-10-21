@@ -1738,6 +1738,8 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
             c->quic->early = PROVEN_TLS_EARLY_ACCEPTED;
         }
     }
+#else
+    (void)early_id;
 #endif
     tls_wipe(&early_ticket, sizeof early_ticket);
 

@@ -151,7 +151,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_tls_server_create(cfg, &c) == PROVEN_ERR_INVALID_ARG, "a config with no certificate cannot be a server", "");
         proven_tls_config_destroy(cfg);
         /* CLAIM (s6): the session is "a plain block of bytes", of PROVEN_TLS_SESSION_SIZE. */
-        PROVEN_TEST_ASSERT(sizeof(proven_tls_session_t) == PROVEN_TLS_SESSION_SIZE && PROVEN_TLS_SESSION_SIZE == 1024, "a session is 1,024 bytes", "");
+        PROVEN_TEST_ASSERT(sizeof(proven_tls_session_t) == PROVEN_TLS_SESSION_SIZE && PROVEN_TLS_SESSION_SIZE == 2048, "a session is 2,048 bytes", "");
         /* CLAIM (ch 1): PROVEN_ERR_PROTOCOL is what the TLS unit returns - shown above. */
     }
 
