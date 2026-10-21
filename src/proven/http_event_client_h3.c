@@ -870,6 +870,14 @@ static proven_err_t c_open(proven_http_event_client_t *cl, proven_u8str_view_t h
             .idle_timeout_ms = (cl->cfg.idle_timeout_ms > cl->cfg.connect_timeout_ms ? cl->cfg.idle_timeout_ms : cl->cfg.connect_timeout_ms) + 1000,
         };
         const proven_quic_addr_t qa = proven_quic_addr_of_(to);
+        /* An older connection to this origin, closing still, may have had a ticket since its last
+         * request ended: it goes to the cache now, before this one is given what is there - a
+         * ticket that carried early data once is refused it again (RFC-0021). */
+        for (c3conn_t *o = cl->h3; o; o = o->next) {
+            if (o == c || o->dead || !o->q || o->port != c->port || !c3_eq_nocase((proven_u8str_view_t){ .ptr = o->host, .size = o->host_len }, host)) continue;
+            proven_http_event_client_session_keep_(cl, (proven_u8str_view_t){ .ptr = o->host, .size = o->host_len }, o->port, true, &o->session, o->session_mark,
+                                                   &o->session_stored, o->up, proven_quic_conn_resumed(o->q));
+        }
         c->session_mark = proven_http_event_client_session_start_(cl, host, c->port, true, &c->session);    /* RFC-0020 */
         c->session_stored = c->session_mark;
         e = proven_quic_conn_client_create(&qc, host, &c->session, &qa, c3_now_us(), &c->q);
@@ -1076,6 +1084,10 @@ static void call_begin(c3req_t *r) { r_enter(r); if (r->conn) { c_enter(r->conn)
 static void call_end(c3req_t *r, c3conn_t *c) {
     if (c) { c->calls--; if (!c->dead) { c_send(c); c_call_back(c); } c_leave(c); }
     r_leave(r);
+}
+
+void proven_http_event_client_h3_test_retire_(proven_http_event_client_t *client) {
+    for (c3conn_t *c = client->h3; c; c = c->next) c->over = true;
 }
 
 int proven_http_event_client_h3_early_(proven_http_event_request_t *request) {

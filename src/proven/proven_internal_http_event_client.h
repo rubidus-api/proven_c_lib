@@ -199,6 +199,9 @@ bool proven_http_event_client_h3_resumed_(proven_http_event_request_t *request);
 int proven_http_event_client_h3_early_(proven_http_event_request_t *request);
 /* For tests: let any request with its body in memory go early, as another client might. */
 void proven_http_event_client_h3_test_early_any_(bool on);
+/* For tests: no new request on the HTTP/3 connections open now, as after a GOAWAY; they stay
+ * until they close by themselves. */
+void proven_http_event_client_h3_test_retire_(proven_http_event_client_t *client);
 /* In http_event_client_h2.c: whether an HTTP/2 request waits for a place, and "a place can
  * be had" for those - called by the HTTP/1.1 side when none of its own took it. */
 bool proven_http_event_client_h2_waiting_(const proven_http_event_client_t *client);

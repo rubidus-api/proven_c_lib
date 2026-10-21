@@ -131,6 +131,13 @@ int main(void) {
             "the second: the GET went as early data, was accepted, and its handler saw proven_http_stream_early", "");
         call_t d = ask(client, port, "GET", "/", NULL);
         PROVEN_TEST_ASSERT(d.status == 200 && d.early == 0 && memcmp(d.body, "late", 4) == 0, "a GET on the connection once it is up: not early", "");
+        /* That connection had a new ticket after its first request ended; it is still open (no
+         * new request may use it) when the next connection is made: the next one gets the new
+         * ticket, not the one already spent on early data, and its GET is taken early again. */
+        spin(30);
+        proven_http_event_client_h3_test_retire_(client);
+        call_t f = ask(client, port, "GET", "/", NULL);
+        PROVEN_TEST_ASSERT(f.status == 200 && f.early == 1, "a connection made while the last is still open: early again, on the ticket that one learned", "");
         proven_http_event_client_destroy(client);
         spin(50);
     }
