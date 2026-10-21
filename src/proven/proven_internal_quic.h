@@ -340,7 +340,11 @@ bool proven_quic_frame_probing(proven_u64 type);
  * every call. Addresses are opaque bytes the caller chooses (a proven_net_addr_t's, say),
  * compared for equality only: the engine never sends anywhere by itself. */
 
-typedef struct { proven_byte_t len; proven_byte_t b[32]; } proven_quic_addr_t;
+typedef struct {
+    proven_byte_t len;
+    proven_byte_t b[32];
+    proven_byte_t port_at, port_len;               /* where in `b` the port is (len 0: not said): a NEW_TOKEN token is bound to the rest, the client's IP (RFC-0021 P-7) */
+} proven_quic_addr_t;
 
 typedef struct {
     proven_allocator_t alloc;                      /* required */
@@ -376,7 +380,8 @@ typedef enum {
     PROVEN_QUIC_EV_STOP_SENDING,                   /* the peer wants no more on `stream_id` (`code`); this side has reset it */
     PROVEN_QUIC_EV_CID_NEW,                        /* `cid` reaches this connection (for a demultiplexer) */
     PROVEN_QUIC_EV_CID_RETIRED,                    /* `cid` no longer does */
-    PROVEN_QUIC_EV_CLOSED                          /* over: `code` (`app`: an application's code), `remote` when the peer closed; nothing more is sent */
+    PROVEN_QUIC_EV_CLOSED,                         /* over: `code` (`app`: an application's code), `remote` when the peer closed; nothing more is sent */
+    PROVEN_QUIC_EV_EARLY                           /* before ESTABLISHED, 0-RTT (RFC-0021): a client may use streams now (early data); a server accepted the client's and may answer */
 } proven_quic_event_kind_t;
 
 typedef struct {
@@ -398,13 +403,15 @@ typedef struct {
     proven_quic_cid_t odcid;                       /* the client's first Destination Connection ID */
     proven_quic_cid_t retry_scid;                  /* when `retried`: the Source Connection ID of the Retry */
     bool retried;                                  /* the token was a valid Retry token: the address is validated */
+    bool validated;                                /* the token was a valid NEW_TOKEN token (RFC 9000 section 8.1.3): the address is validated, no Retry */
 } proven_quic_accept_t;
 
 /* A server's look at a datagram that matched no connection. Version negotiation for a long
- * header of another version (in a datagram of at least 1,200 bytes); with `require_retry`, a
- * Retry for an Initial without a token, and a token checked (address, age at most ten
- * seconds) when there is one; otherwise a client's Initial in a datagram of at least 1,200
- * bytes is to be accepted. Everything else is dropped. */
+ * header of another version (in a datagram of at least 1,200 bytes); a client's Initial in a
+ * datagram of at least 1,200 bytes is to be accepted - validated when it carries a NEW_TOKEN
+ * token of this server's for its IP address, at most a day old. With `require_retry`, a Retry
+ * for an Initial without a valid token of either kind, and a Retry token checked (address, age
+ * at most ten seconds): one that fails is dropped. Everything else is dropped. */
 proven_quic_stateless_t proven_quic_server_stateless(const proven_quic_config_t *cfg, proven_mem_view_t datagram, const proven_quic_addr_t *from,
                                                       proven_u64 now, bool require_retry, proven_mem_mut_t out, proven_size_t *out_len,
                                                       proven_quic_accept_t *accept);
@@ -432,8 +439,8 @@ void proven_quic_conn_timeout(proven_quic_conn_t *c, proven_u64 now);
 /* The next event; false when there is none. */
 bool proven_quic_conn_poll(proven_quic_conn_t *c, proven_quic_event_t *ev);
 
-/* Streams. PROVEN_ERR_INVALID_STATE before the handshake completes, after the close, or for a
- * stream in the wrong state; PROVEN_ERR_NOT_FOUND for a stream that is not open. */
+/* Streams. PROVEN_ERR_INVALID_STATE before the handshake completes (unless early data is open:
+ * PROVEN_QUIC_EV_EARLY), after the close, or for a stream in the wrong state; PROVEN_ERR_NOT_FOUND for a stream that is not open. */
 proven_err_t proven_quic_stream_open(proven_quic_conn_t *c, bool bidi, proven_u64 *id);   /* PROVEN_ERR_BUSY: the peer's limit */
 proven_err_t proven_quic_stream_write(proven_quic_conn_t *c, proven_u64 id, proven_mem_view_t data, bool fin, proven_size_t *taken);   /* may take less: STREAM_WRITABLE follows when there is room */
 proven_u64 proven_quic_stream_room(proven_quic_conn_t *c, proven_u64 id);   /* what a write would take now (0 for a stream that cannot be written); STREAM_WRITABLE follows when that grows */
@@ -454,6 +461,7 @@ typedef struct {
     proven_u64 key_updates, spurious_losses;
     proven_size_t datagram_size;                   /* what a datagram may take on this path now */
     proven_u64 pmtu_probes, pmtu_probes_lost;      /* PMTU probes sent, and not acknowledged in time */
+    proven_u8 early;                               /* 0-RTT (RFC-0021): 0 none, 1 accepted, 2 refused */
 } proven_quic_stats_t;
 void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s);
 /* Tests only: `payload` read as the frames of a packet that opened at `lvl` (its result: the

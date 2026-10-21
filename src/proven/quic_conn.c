@@ -441,7 +441,7 @@ typedef struct {
 /* ---- A packet number space ---- */
 
 enum { FR_STREAM = 1, FR_CRYPTO, FR_RESET, FR_STOP, FR_MAX_DATA, FR_MAX_STREAM_DATA, FR_MAX_STREAMS_BIDI, FR_MAX_STREAMS_UNI,
-       FR_NEW_CID, FR_RETIRE_CID, FR_HANDSHAKE_DONE, FR_PING, FR_PATH_CHALLENGE };
+       FR_NEW_CID, FR_RETIRE_CID, FR_HANDSHAKE_DONE, FR_PING, FR_PATH_CHALLENGE, FR_NEW_TOKEN };
 
 typedef struct { proven_u8 kind; bool fin; proven_u16 len; proven_u64 id, off; } qfrec_t;
 
@@ -449,6 +449,7 @@ typedef struct {
     proven_u64 pn, time;
     proven_u32 size;                    /* bytes in flight; 0 when not counted */
     bool ack_eliciting, in_flight;
+    bool zero_rtt;                      /* sent under the 0-RTT key: lost as a whole if early data is refused */
     proven_u8 nfr;
     qfrec_t fr[QC_MAX_FRAMES];
 } qsent_t;
@@ -490,6 +491,10 @@ typedef struct {
 
 enum { QS_HANDSHAKE, QS_OPEN, QS_CLOSING, QS_DRAINING, QS_CLOSED };
 
+/* A packet built or sealed at this "level" is a 0-RTT one: the application space's numbers, a
+ * long header and the 0-RTT key (RFC 9000 section 12.3). */
+#define QC_ZRTT 3
+
 struct proven_quic_conn {
     qmem_t mem;
     proven_quic_config_t cfg;
@@ -497,6 +502,14 @@ struct proven_quic_conn {
     proven_tls_conn_t *tls;
     const proven_tls_suite_t *suite;
     qspace_t sp[PROVEN_QUIC_LEVELS];
+
+    /* 0-RTT (RFC-0021): its key, in the application space - a client's to write, a server's to
+     * read - and where early data stands (PROVEN_TLS_EARLY_*, as TLS last said). SECRET: zr */
+    proven_quic_keys_t zr;
+    bool zr_ok, zr_done;                /* installed; dropped for good */
+    int early;
+    bool early_told;                    /* PROVEN_QUIC_EV_EARLY was pushed */
+    bool early_limits;                  /* a client on its session's remembered limits until the server's arrive */
 
     /* 1-RTT secrets, kept for key updates (RFC 9001 section 6). SECRET */
     proven_byte_t rx_secret[PROVEN_HMAC_MAX_SIZE], tx_secret[PROVEN_HMAC_MAX_SIZE];
@@ -512,8 +525,10 @@ struct proven_quic_conn {
     proven_quic_cid_t client_dcid;      /* a server: the DCID the client's Initials carry (odcid, or the Retry's SCID) */
     proven_quic_cid_t retry_scid;
     bool retried, got_server_initial;
-    proven_byte_t token[256];
+    proven_byte_t token[256];           /* a client's for its Initials: a Retry's, or a NEW_TOKEN one its session kept */
     proven_size_t token_len;
+    proven_tls_session_t *session;      /* a client's: where a NEW_TOKEN token is kept for the next connection */
+    bool token_owed;                    /* a server's NEW_TOKEN, sent with HANDSHAKE_DONE (RFC-0021 P-7) */
     qcid_t local[QC_LOCAL_CIDS];
     proven_u64 local_next_seq;
     proven_u64 peer_cid_limit;          /* the peer's active_connection_id_limit */
@@ -599,6 +614,26 @@ struct proven_quic_conn {
     proven_u64 idle_start;              /* the last packet received, or the first ack-eliciting one sent after it */
     bool pace_blocked;                  /* something waited for pacing at the last send */
 };
+
+/* Streams may be used: the handshake is complete, or early data is open - a client holding the
+ * 0-RTT key that has not been refused, a server that accepted (it answers in 0.5-RTT). */
+static bool app_ready(const proven_quic_conn_t *c) {
+    if (c->state == QS_OPEN) return true;
+    if (c->state != QS_HANDSHAKE) return false;
+    return c->server ? c->early == PROVEN_TLS_EARLY_ACCEPTED && c->sp[2].tx_ok : c->zr_ok && c->early != PROVEN_TLS_EARLY_REFUSED;
+}
+
+/* The frames a 0-RTT packet may carry (RFC 9000 section 12.4, table 3): no ACK, CRYPTO,
+ * NEW_TOKEN, HANDSHAKE_DONE, RETIRE_CONNECTION_ID or PATH_RESPONSE. */
+static bool frame_in_0rtt(proven_u64 type) {
+    switch (type) {
+    case PROVEN_QUIC_FT_ACK: case PROVEN_QUIC_FT_ACK_ECN: case PROVEN_QUIC_FT_CRYPTO: case PROVEN_QUIC_FT_NEW_TOKEN:
+    case PROVEN_QUIC_FT_HANDSHAKE_DONE: case PROVEN_QUIC_FT_RETIRE_CONNECTION_ID: case PROVEN_QUIC_FT_PATH_RESPONSE:
+        return false;
+    default:
+        return true;
+    }
+}
 
 static void push_event(proven_quic_conn_t *c, proven_quic_event_t e) {
     if (c->ev_n == QC_EVENTS) return;   /* bounded: the kinds kept here are few per connection */
@@ -892,6 +927,18 @@ static void apply_peer_params(proven_quic_conn_t *c, const proven_quic_tp_t *tp)
     if (c->datagram > c->peer_max_udp) c->datagram = c->peer_max_udp;
     const proven_u64 ours = (proven_u64)c->cfg.idle_timeout_ms * 1000, theirs = tp->max_idle_timeout * 1000;
     c->idle_timeout = theirs == 0 ? ours : qmin(ours, theirs);
+    /* A client that wrote early data on remembered limits: streams it opened take the server's
+     * own, which an accepting server may not have lowered (RFC 9000 section 7.4.1). A refusal
+     * sets them exactly: early_refused. */
+    if (c->early_limits) {
+        c->early_limits = false;
+        for (proven_size_t i = 0; i < c->nstreams; ++i) {
+            qstream_t *s = c->streams[i];
+            if (!s->local) continue;
+            const proven_u64 v = id_kind(s->id) ? tp->initial_max_stream_data_uni : tp->initial_max_stream_data_bidi_remote;
+            if (v > s->tx_max) { s->tx_max = v; s->ev_writable = true; }
+        }
+    }
 }
 
 /* ---- Keys ---- */
@@ -905,6 +952,96 @@ static void next_keys(proven_quic_conn_t *c, const proven_byte_t *secret, const 
     proven_quic_keys_set(out, c->suite, next);
     out->hp = cur->hp;                  /* header protection keys are never updated */
     proven_mem_wipe((proven_mem_mut_t){ .ptr = next, .size = sizeof next });
+}
+
+/* ---- 0-RTT (RFC-0021) ---- */
+
+static void frame_lost(proven_quic_conn_t *c, int lvl, const qfrec_t *f);
+static void sent_gone(proven_quic_conn_t *c, qspace_t *sp, const qsent_t *p);
+static bool static_key_set(const proven_quic_config_t *cfg);
+
+static void zr_drop(proven_quic_conn_t *c) {
+    if (!c->zr_ok && c->zr_done) return;
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&c->zr, .size = sizeof c->zr });
+    c->zr_ok = false;
+    c->zr_done = true;
+}
+
+/* The early secret, once TLS has it: a client's from its ClientHello on, a server's once it
+ * accepted. A client writes on the limits its session remembers until the server's arrive;
+ * without them it sends no early data. */
+static void zr_install(proven_quic_conn_t *c) {
+    if (c->zr_ok || c->zr_done) return;
+    proven_byte_t secret[PROVEN_HMAC_MAX_SIZE];
+    const proven_tls_suite_t *es = NULL;
+    if (proven_tls_quic_early_secret_(c->tls, secret, &es) == 0) return;
+    proven_quic_keys_set(&c->zr, es, secret);
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = secret, .size = sizeof secret });
+    proven_tls_quic_early_drop_(c->tls);
+    c->zr_ok = true;
+    c->keys_new = true;
+    if (c->server) return;
+    proven_u64 lim[7];
+    if (!proven_tls_quic_early_limits_(c->tls, lim)) { zr_drop(c); return; }
+    proven_quic_tp_t *tp = &c->peer_tp;          /* not have_peer_tp: the server's own replace these */
+    tp->initial_max_data = lim[0];
+    tp->initial_max_stream_data_bidi_local = lim[1];
+    tp->initial_max_stream_data_bidi_remote = lim[2];
+    tp->initial_max_stream_data_uni = lim[3];
+    tp->initial_max_streams_bidi = lim[4];
+    tp->initial_max_streams_uni = lim[5];
+    tp->active_connection_id_limit = lim[6];
+    c->tx_max_data = lim[0];
+    c->peer_max_streams[0] = lim[4];
+    c->peer_max_streams[1] = lim[5];
+    c->early_limits = true;
+}
+
+/* A client's early data refused: each 0-RTT packet is gone as a whole, its frames owed again -
+ * under 1-RTT, once the handshake is complete. Nothing sent depended on the remembered limits
+ * but their size (RFC-0021 10.1 P-6), so the streams keep their numbers and bytes; the
+ * server's own limits now apply exactly, and what was sent must fit them, or the connection
+ * cannot go on (RFC 9000 section 7.4.1). */
+static void early_refused(proven_quic_conn_t *c) {
+    qspace_t *sp = &c->sp[2];
+    proven_size_t keep = 0;
+    for (proven_size_t i = 0; i < sp->sent_n; ++i) {
+        qsent_t *p = &sp->sent[i];
+        if (!p->zero_rtt) { sp->sent[keep++] = *p; continue; }
+        sent_gone(c, sp, p);
+        for (unsigned k = 0; k < p->nfr; ++k) frame_lost(c, 2, &p->fr[k]);
+    }
+    sp->sent_n = keep;
+    if (!c->have_peer_tp) return;
+    const proven_quic_tp_t *tp = &c->peer_tp;
+    c->tx_max_data = tp->initial_max_data;
+    c->peer_max_streams[0] = tp->initial_max_streams_bidi;
+    c->peer_max_streams[1] = tp->initial_max_streams_uni;
+    bool fits = c->local_opened[0] <= tp->initial_max_streams_bidi && c->local_opened[1] <= tp->initial_max_streams_uni && c->tx_data <= tp->initial_max_data;
+    for (proven_size_t i = 0; i < c->nstreams; ++i) {
+        qstream_t *s = c->streams[i];
+        if (!s->local) continue;
+        s->tx_max = id_kind(s->id) ? tp->initial_max_stream_data_uni : tp->initial_max_stream_data_bidi_remote;
+        if (s->tx.next > s->tx_max) fits = false;
+    }
+    if (!fits) conn_fail(c, PROVEN_QUIC_INTERNAL_ERROR, 0);
+}
+
+/* Where early data stands, as TLS last said; told once (PROVEN_QUIC_EV_EARLY) when it opens. */
+static void early_after(proven_quic_conn_t *c) {
+    zr_install(c);
+    const int e = proven_tls_quic_early_(c->tls);
+    if (e != c->early) {
+        c->early = e;
+        if (e == PROVEN_TLS_EARLY_REFUSED) {
+            zr_drop(c);
+            if (!c->server) early_refused(c);
+        }
+    }
+    if (!c->early_told && c->zr_ok && app_ready(c) && c->state < QS_CLOSING) {
+        c->early_told = true;
+        push_event(c, (proven_quic_event_t){ .kind = PROVEN_QUIC_EV_EARLY });
+    }
 }
 
 /* After the TLS engine has been fed: its output into CRYPTO, its secrets into keys, the
@@ -942,12 +1079,16 @@ static void tls_after(proven_quic_conn_t *c) {
         if (tp) apply_peer_params(c, tp);
         if (c->state >= QS_CLOSING) return;
     }
+    early_after(c);
+    if (c->state >= QS_CLOSING) return;
     if (!c->complete && proven_tls_is_established(c->tls)) {
         c->complete = true;
         c->state = QS_OPEN;
+        if (!c->server) zr_drop(c);     /* 1-RTT from here (RFC 9001 section 4.9.3) */
         if (c->server) {
             c->confirmed = true;
             c->done_owed = true;
+            c->token_owed = static_key_set(&c->cfg);     /* a token is checked with the configuration's key: none without one */
             space_discard(c, PROVEN_QUIC_LEVEL_HANDSHAKE);
         }
         /* More connection IDs for the peer, up to its limit and ours. */
@@ -1140,6 +1281,7 @@ static void frame_lost(proven_quic_conn_t *c, int lvl, const qfrec_t *f) {
     case FR_NEW_CID: for (int i = 0; i < QC_LOCAL_CIDS; ++i) if (c->local[i].active && c->local[i].seq == f->id) c->local[i].owed = true; break;
     case FR_RETIRE_CID: if (c->retire_n < 16) c->retire_q[c->retire_n++] = f->id; break;
     case FR_HANDSHAKE_DONE: if (!c->sp[2].discarded) c->done_owed = true; break;
+    case FR_NEW_TOKEN: if (!c->sp[2].discarded) c->token_owed = true; break;     /* a new one: tokens are not resent as they were */
     case FR_PATH_CHALLENGE: if (c->challenge_wait) c->challenge_owed = true; break;   /* until the validation timer ends it */
     default: break;
     }
@@ -1466,7 +1608,10 @@ static proven_u64 on_frame(proven_quic_conn_t *c, int lvl, const proven_quic_fra
     case PROVEN_QUIC_FT_STREAM: return on_stream(c, f);
     case PROVEN_QUIC_FT_RESET_STREAM: return on_reset_stream(c, f);
     case PROVEN_QUIC_FT_STOP_SENDING: return on_stop_sending(c, f);
-    case PROVEN_QUIC_FT_NEW_TOKEN: return c->server ? PROVEN_QUIC_PROTOCOL_VIOLATION : 0;   /* no 0-RTT here: not kept */
+    case PROVEN_QUIC_FT_NEW_TOKEN:
+        if (c->server) return PROVEN_QUIC_PROTOCOL_VIOLATION;
+        proven_tls_session_token_keep_(c->session, f->data);   /* for the next connection to this server (RFC 9000 section 8.1.3) */
+        return 0;
     case PROVEN_QUIC_FT_MAX_DATA: if (f->value > c->tx_max_data) c->tx_max_data = f->value; return 0;
     case PROVEN_QUIC_FT_MAX_STREAM_DATA:
         if (!id_local(c, f->id) && id_kind(f->id) == 1) return PROVEN_QUIC_STREAM_STATE_ERROR;
@@ -1606,14 +1751,16 @@ static bool seen(const qspace_t *sp, proven_u64 pn) {
  * datagram (held for keys, or the connection is over). */
 static int read_packet(proven_quic_conn_t *c, proven_byte_t *pkt, const proven_quic_hdr_t *h, const proven_quic_addr_t *from, bool *probing_only) {
     int lvl;
+    bool zrtt = false;
     switch (h->type) {
     case PROVEN_QUIC_PKT_INITIAL: lvl = 0; break;
     case PROVEN_QUIC_PKT_HANDSHAKE: lvl = 1; break;
     case PROVEN_QUIC_PKT_SHORT: lvl = 2; break;
+    case PROVEN_QUIC_PKT_0RTT: lvl = 2; zrtt = true; if (!c->server) return 0; break;   /* only a client sends them */
     default: return 0;
     }
-    /* Whose packet: one of our connection IDs, or - a server's Initial - the client's own choice. */
-    if (!is_local_cid(c, &h->dcid) && !(c->server && lvl == 0 && cid_eq(&h->dcid, &c->client_dcid))) return 0;
+    /* Whose packet: one of our connection IDs, or - a server's Initial or 0-RTT - the client's own choice. */
+    if (!is_local_cid(c, &h->dcid) && !(c->server && (lvl == 0 || zrtt) && cid_eq(&h->dcid, &c->client_dcid))) return 0;
     if (h->type != PROVEN_QUIC_PKT_SHORT) {
         if (!c->server && lvl == 0) {
             if (c->got_server_initial ? !cid_eq(&h->scid, &c->peer_initial_scid) : false) return 0;
@@ -1622,11 +1769,18 @@ static int read_packet(proven_quic_conn_t *c, proven_byte_t *pkt, const proven_q
     }
     qspace_t *sp = &c->sp[lvl];
     if (sp->discarded) return 0;
-    if (!sp->rx_ok) { hold(c, lvl, pkt, h->len, from); return -1; }
+    if (zrtt && !c->zr_ok) {
+        /* Before the ClientHello has been read the key may yet come: held. After, it will not. */
+        if (!c->suite && !c->zr_done) hold(c, lvl, pkt, h->len, from);
+        else ++c->st.packets_dropped;
+        return 0;
+    }
+    if (!zrtt && !sp->rx_ok) { hold(c, lvl, pkt, h->len, from); return -1; }
     proven_u64 pn;
     proven_size_t hlen;
     proven_mem_mut_t payload;
-    const bool ok = lvl == 2 ? open_short(c, pkt, h->pn_offset, h->len, &pn, &hlen, &payload)
+    const bool ok = zrtt ? proven_quic_unprotect(&c->zr, pkt, h->pn_offset, h->len, sp->rx_largest_plus_one, &pn, &hlen, &payload)
+                  : lvl == 2 ? open_short(c, pkt, h->pn_offset, h->len, &pn, &hlen, &payload)
                              : proven_quic_unprotect(&sp->rx, pkt, h->pn_offset, h->len, sp->rx_largest_plus_one, &pn, &hlen, &payload);
     if (!ok) { ++c->st.packets_dropped; return c->state >= QS_CLOSING ? -1 : 0; }
     if (seen(sp, pn)) { ++c->st.packets_dropped; return 0; }
@@ -1643,7 +1797,7 @@ static int read_packet(proven_quic_conn_t *c, proven_byte_t *pkt, const proven_q
         return 1;
     }
     /* RFC 9000 section 17: the reserved bits, now unprotected, must be zero. */
-    if ((pkt[0] & (lvl == 2 ? 0x18 : 0x0c)) != 0) { conn_fail(c, PROVEN_QUIC_PROTOCOL_VIOLATION, 0); return -1; }
+    if ((pkt[0] & (lvl == 2 && !zrtt ? 0x18 : 0x0c)) != 0) { conn_fail(c, PROVEN_QUIC_PROTOCOL_VIOLATION, 0); return -1; }
     if (payload.size == 0) { conn_fail(c, PROVEN_QUIC_PROTOCOL_VIOLATION, 0); return -1; }
     /* Before anything is applied: the stream ranges this packet could add stay within the cap. */
     if (lvl == 2) {
@@ -1672,6 +1826,7 @@ static int read_packet(proven_quic_conn_t *c, proven_byte_t *pkt, const proven_q
     while (r.n > 0 && c->state < QS_CLOSING) {
         proven_quic_frame_t f;
         proven_u64 err = proven_quic_frame_read(&r, &f);
+        if (err == 0 && zrtt && !frame_in_0rtt(f.type)) err = PROVEN_QUIC_PROTOCOL_VIOLATION;
         if (err == 0) {
             if (proven_quic_frame_ack_eliciting(f.type)) eliciting = true;
             if (!proven_quic_frame_probing(f.type)) *probing_only = false;
@@ -1682,6 +1837,8 @@ static int read_packet(proven_quic_conn_t *c, proven_byte_t *pkt, const proven_q
     }
     if (c->state >= QS_DRAINING) return -1;
     if (!sp->discarded) ack_note(c, lvl, pn, eliciting);
+    /* The client writes 1-RTT now: a server needs the 0-RTT key no longer (RFC 9001 section 4.9.3). */
+    if (c->server && lvl == 2 && !zrtt && c->zr_ok) zr_drop(c);
     ++c->st.packets_received;
     c->idle_deadline = 0;               /* recomputed below, from now */
     c->ack_eliciting_since_rx = false;
@@ -1781,6 +1938,62 @@ static void read_datagram(proven_quic_conn_t *c, proven_byte_t *d, proven_size_t
             }
         }
     }
+}
+
+/* ---- Tokens (RFC 9000 section 8.1): a clear first byte says which kind ---- */
+
+#define QC_TOKEN_RETRY 1
+#define QC_TOKEN_NEW 2
+#define QC_NEW_TOKEN_LEN (1 + 12 + 8 + 16)
+#define QC_NEW_TOKEN_AGE (24ull * 3600 * 1000000)   /* microseconds a NEW_TOKEN token is good for */
+
+static bool static_key_set(const proven_quic_config_t *cfg) {
+    for (int i = 0; i < 32; ++i) if (cfg->static_key[i]) return true;
+    return false;
+}
+
+static void token_aead(const proven_quic_config_t *cfg, bool retry, proven_crypto_aes_gcm_t *aead) {
+    proven_byte_t k[PROVEN_HMAC_MAX_SIZE];
+    const char *label = retry ? "proven quic retry" : "proven quic token";
+    (void)proven_hmac(PROVEN_HMAC_SHA256, (proven_mem_view_t){ .ptr = cfg->static_key, .size = 32 }, (proven_mem_view_t){ .ptr = (const proven_byte_t *)label, .size = 17 }, k);
+    (void)proven_crypto_aes_gcm_init(aead, k, 16);
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = k, .size = sizeof k });
+}
+
+/* What a NEW_TOKEN token is bound to: its kind and the address without its port - a client's
+ * next connection comes from another port (RFC 9000 section 8.1.3). */
+static proven_size_t token_bound(const proven_quic_addr_t *a, proven_byte_t out[1 + 32]) {
+    proven_size_t n = 0;
+    out[n++] = QC_TOKEN_NEW;
+    for (proven_size_t i = 0; i < a->len && i < sizeof a->b; ++i) if (a->port_len == 0 || i < a->port_at || i >= (proven_size_t)a->port_at + a->port_len) out[n++] = a->b[i];
+    return n;
+}
+
+/* kind, nonce, then sealed: the time it was made. */
+static void new_token_make(const proven_quic_config_t *cfg, const proven_quic_addr_t *to, proven_u64 now, proven_byte_t tok[QC_NEW_TOKEN_LEN]) {
+    proven_crypto_aes_gcm_t aead;
+    token_aead(cfg, false, &aead);
+    proven_byte_t plain[8], bound[1 + 32];
+    for (int i = 0; i < 8; ++i) plain[i] = (proven_byte_t)(now >> (56 - 8 * i));
+    tok[0] = QC_TOKEN_NEW;
+    proven_tls_config_random(cfg->tls, tok + 1, 12);
+    const proven_size_t bn = token_bound(to, bound);
+    proven_crypto_aes_gcm_seal(&aead, tok + 1, (proven_mem_view_t){ .ptr = bound, .size = bn }, (proven_mem_view_t){ .ptr = plain, .size = 8 }, tok + 13, tok + 21);
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&aead, .size = sizeof aead });
+}
+
+static bool new_token_ok(const proven_quic_config_t *cfg, proven_mem_view_t tok, const proven_quic_addr_t *from, proven_u64 now) {
+    if (tok.size != QC_NEW_TOKEN_LEN || tok.ptr[0] != QC_TOKEN_NEW || !static_key_set(cfg)) return false;
+    proven_crypto_aes_gcm_t aead;
+    token_aead(cfg, false, &aead);
+    proven_byte_t plain[8], bound[1 + 32];
+    const proven_size_t bn = token_bound(from, bound);
+    const bool ok = proven_crypto_aes_gcm_open(&aead, tok.ptr + 1, (proven_mem_view_t){ .ptr = bound, .size = bn }, (proven_mem_view_t){ .ptr = tok.ptr + 13, .size = 8 }, tok.ptr + 21, plain);
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&aead, .size = sizeof aead });
+    if (!ok) return false;
+    proven_u64 t = 0;
+    for (int i = 0; i < 8; ++i) t = (t << 8) | plain[i];
+    return t <= now && now - t <= QC_NEW_TOKEN_AGE;
 }
 
 /* ---- Sending ---- */
@@ -1889,6 +2102,12 @@ static void put_control(proven_quic_conn_t *c, proven_quic_wr_t *w, qsent_t *rec
         proven_quic_frame_t f = { .type = PROVEN_QUIC_FT_HANDSHAKE_DONE };
         if (put_rec(w, rec, &f, FR_HANDSHAKE_DONE, 0)) c->done_owed = false;
     }
+    if (c->token_owed) {
+        proven_byte_t tok[QC_NEW_TOKEN_LEN];
+        new_token_make(&c->cfg, &c->peer_addr, c->now, tok);
+        proven_quic_frame_t f = { .type = PROVEN_QUIC_FT_NEW_TOKEN, .data = { .ptr = tok, .size = sizeof tok } };
+        if (put_rec(w, rec, &f, FR_NEW_TOKEN, 0)) c->token_owed = false;
+    }
     if (c->max_data_owed) {
         proven_quic_frame_t f = { .type = PROVEN_QUIC_FT_MAX_DATA, .value = c->rx_max_data };
         if (put_rec(w, rec, &f, FR_MAX_DATA, 0)) c->max_data_owed = false;
@@ -1935,12 +2154,12 @@ static void put_control(proven_quic_conn_t *c, proven_quic_wr_t *w, qsent_t *rec
 }
 
 static bool space_has_eliciting(const proven_quic_conn_t *c, int lvl) {
-    const qspace_t *sp = &c->sp[lvl];
+    const qspace_t *sp = &c->sp[lvl == QC_ZRTT ? 2 : lvl];
     proven_u64 off, len; bool fin, fresh;
     if (sp->probes) return true;
     if (sendq_next(&sp->crypto_tx, 1000, QC_INF, &off, &len, &fin, &fresh) && len) return true;
-    if (lvl < 2 || c->state != QS_OPEN) return false;
-    if (c->done_owed || c->max_data_owed || c->max_streams_owed[0] || c->max_streams_owed[1] || c->retire_n || c->challenge_owed) return true;
+    if (lvl < 2 || !app_ready(c)) return false;
+    if (c->done_owed || c->token_owed || c->max_data_owed || c->max_streams_owed[0] || c->max_streams_owed[1] || c->retire_n || c->challenge_owed) return true;
     for (int i = 0; i < QC_LOCAL_CIDS; ++i) if (c->local[i].active && c->local[i].owed) return true;
     for (int i = 0; i < 2; ++i) if (c->resp[i].owed && addr_eq(&c->resp[i].to, &c->peer_addr)) return true;
     for (proven_size_t i = 0; i < c->nstreams; ++i) {
@@ -1953,13 +2172,13 @@ static bool space_has_eliciting(const proven_quic_conn_t *c, int lvl) {
 
 /* One packet of space `lvl` at buf[0..room): its plaintext, header in place. */
 static bool build_packet(proven_quic_conn_t *c, int lvl, proven_byte_t *buf, proven_size_t room, bool eliciting_ok, bool close, qpkt_t *pk) {
-    qspace_t *sp = &c->sp[lvl];
+    qspace_t *sp = &c->sp[lvl == QC_ZRTT ? 2 : lvl];
     *pk = (qpkt_t){ .lvl = lvl, .pn = sp->next_pn };
     pk->pn_len = proven_quic_pn_len(sp->next_pn, sp->largest_acked_plus_one);
     const proven_quic_cid_t *dcid = &peer_cid(c)->cid;
     proven_mem_mut_t out = { buf, room };
     if (lvl == 2) pk->hlen = proven_quic_short_header_put(dcid, c->key_phase, pk->pn, pk->pn_len, out);
-    else pk->hlen = proven_quic_long_header_put(lvl == 0 ? PROVEN_QUIC_PKT_INITIAL : PROVEN_QUIC_PKT_HANDSHAKE, dcid, &c->local[0].cid,
+    else pk->hlen = proven_quic_long_header_put(lvl == 0 ? PROVEN_QUIC_PKT_INITIAL : lvl == 1 ? PROVEN_QUIC_PKT_HANDSHAKE : PROVEN_QUIC_PKT_0RTT, dcid, &c->local[0].cid,
                                                 (proven_mem_view_t){ .ptr = c->token, .size = c->server ? 0 : c->token_len }, pk->pn, pk->pn_len, 0, out);
     if (pk->hlen == 0 || room < pk->hlen + 16 + 8) return false;
     proven_quic_wr_t w = { buf + pk->hlen, 0, room - pk->hlen - 16, true };
@@ -1974,10 +2193,10 @@ static bool build_packet(proven_quic_conn_t *c, int lvl, proven_byte_t *buf, pro
          * what came is acknowledged when an ack-eliciting packet is owed it, or with frames that
          * are going anyway - never alone, or two ends would answer each other's ACKs for ever. */
         const bool ack_due = sp->ack_owed && (lvl < 2 || sp->ack_deadline <= c->now);
-        if (ack_due || (eliciting_ok && sp->ack_any && space_has_eliciting(c, lvl))) put_ack(c, lvl, &w);
+        if (lvl != QC_ZRTT && (ack_due || (eliciting_ok && sp->ack_any && space_has_eliciting(c, lvl)))) put_ack(c, lvl, &w);
         if (eliciting_ok) {
-            put_crypto(c, lvl, &w, &pk->rec);
-            if (lvl == 2 && c->state == QS_OPEN) { put_control(c, &w, &pk->rec); put_streams(c, &w, &pk->rec); }
+            if (lvl != QC_ZRTT) put_crypto(c, lvl, &w, &pk->rec);
+            if (lvl >= 2 && app_ready(c)) { put_control(c, &w, &pk->rec); put_streams(c, &w, &pk->rec); }
             if (sp->probes && pk->rec.nfr == 0) {
                 proven_quic_frame_t f = { .type = PROVEN_QUIC_FT_PING };
                 if (proven_quic_frame_put(&w, &f)) (void)rec_add(&pk->rec, FR_PING, 0, 0, 0, false);
@@ -1998,15 +2217,15 @@ static proven_size_t seal(proven_quic_conn_t *c, proven_byte_t *buf, qpkt_t *pk,
     proven_size_t total = 0;
     for (int i = 0; i < n; ++i) {
         qpkt_t *p = &pk[i];
-        qspace_t *sp = &c->sp[p->lvl];
+        qspace_t *sp = &c->sp[p->lvl == QC_ZRTT ? 2 : p->lvl];
         proven_byte_t *at = buf + p->at;
-        if (p->lvl < 2) {
+        if (p->lvl != 2) {
             /* The Length field, now that the payload's size is known. */
             const proven_size_t length = p->pn_len + p->payload + 16;
             at[p->hlen - p->pn_len - 2] = (proven_byte_t)(0x40 | (length >> 8));
             at[p->hlen - p->pn_len - 1] = (proven_byte_t)length;
         }
-        const proven_size_t len = proven_quic_protect(&sp->tx, at, p->hlen, p->pn_len, p->pn, p->payload);
+        const proven_size_t len = proven_quic_protect(p->lvl == QC_ZRTT ? &c->zr : &sp->tx, at, p->hlen, p->pn_len, p->pn, p->payload);
         total = p->at + len;
         ++sp->next_pn;
         if (p->lvl == 2) ++c->phase_sent;
@@ -2023,6 +2242,7 @@ static proven_size_t seal(proven_quic_conn_t *c, proven_byte_t *buf, qpkt_t *pk,
             *r = p->rec;
             r->pn = p->pn; r->time = c->now; r->size = (proven_u32)len;
             r->ack_eliciting = p->eliciting; r->in_flight = true;
+            r->zero_rtt = p->lvl == QC_ZRTT;
             c->bif += len;
             if (p->eliciting) {
                 ++sp->ack_eliciting_in_flight;
@@ -2135,13 +2355,16 @@ proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven
     pace_refill(c);
     const bool window = c->bif + c->datagram <= c->cwnd;
     const bool paced = c->pace_tokens >= c->datagram;
-    qpkt_t pk[3];
+    qpkt_t pk[4];
     int n = 0;
     proven_size_t at = 0;
     bool initial = false, initial_eliciting = false;
-    for (int lvl = 0; lvl < PROVEN_QUIC_LEVELS; ++lvl) {
-        qspace_t *sp = &c->sp[lvl];
-        if (!sp->tx_ok || sp->discarded) continue;
+    for (int lvl = 0; lvl <= QC_ZRTT; ++lvl) {
+        qspace_t *sp = &c->sp[lvl == QC_ZRTT ? 2 : lvl];
+        if (lvl == QC_ZRTT) {
+            /* 0-RTT: a client's early data, after its Initial in the same datagram (RFC 9001 section 4.6.1). */
+            if (c->server || !c->zr_ok || c->complete || !app_ready(c) || sp->discarded) continue;
+        } else if (!sp->tx_ok || sp->discarded) continue;
         if (lvl == 2 && !c->complete && !c->server) continue;   /* a client sends no 1-RTT before its Finished */
         bool ok = sp->probes > 0 || (window && paced && sp->sent_n < QC_MAX_SENT);
         /* Initial and Handshake CRYPTO data is not held behind the window: it is a few kilobytes,
@@ -2230,7 +2453,7 @@ static void replay_held(proven_quic_conn_t *c) {
         c->keys_new = false;
         for (int lvl = 1; lvl < PROVEN_QUIC_LEVELS; ++lvl) {
             qspace_t *sp = &c->sp[lvl];
-            if (!sp->rx_ok || sp->pending_n == 0) continue;
+            if ((!sp->rx_ok && !(lvl == 2 && c->zr_ok)) || sp->pending_n == 0) continue;
             const unsigned n = sp->pending_n;
             proven_byte_t *held[QC_PENDING]; proven_size_t lens[QC_PENDING]; proven_quic_addr_t from[QC_PENDING];
             for (unsigned i = 0; i < n; ++i) { held[i] = sp->pending[i]; lens[i] = sp->pending_len[i]; from[i] = sp->pending_from[i]; }
@@ -2303,7 +2526,7 @@ bool proven_quic_conn_poll(proven_quic_conn_t *c, proven_quic_event_t *ev) {
 
 proven_err_t proven_quic_stream_open(proven_quic_conn_t *c, bool bidi, proven_u64 *id) {
     if (!c || !id) return PROVEN_ERR_INVALID_ARG;
-    if (c->state != QS_OPEN) return PROVEN_ERR_INVALID_STATE;
+    if (!app_ready(c)) return PROVEN_ERR_INVALID_STATE;
     const unsigned k = bidi ? 0 : 1;
     if (c->local_opened[k] >= c->peer_max_streams[k]) return PROVEN_ERR_BUSY;
     const proven_u64 sid = (c->local_opened[k] << 2) | (bidi ? 0u : 2u) | (c->server ? 1u : 0u);
@@ -2317,7 +2540,7 @@ proven_err_t proven_quic_stream_open(proven_quic_conn_t *c, bool bidi, proven_u6
 proven_err_t proven_quic_stream_write(proven_quic_conn_t *c, proven_u64 id, proven_mem_view_t data, bool fin, proven_size_t *taken) {
     if (!c || !taken || (data.size && !data.ptr)) return PROVEN_ERR_INVALID_ARG;
     *taken = 0;
-    if (c->state != QS_OPEN) return PROVEN_ERR_INVALID_STATE;
+    if (!app_ready(c)) return PROVEN_ERR_INVALID_STATE;
     qstream_t *s = stream_find(c, id);
     if (!s) return PROVEN_ERR_NOT_FOUND;
     if (!s->has_tx || s->tx_reset || s->tx.fin) return PROVEN_ERR_INVALID_STATE;
@@ -2333,7 +2556,7 @@ proven_err_t proven_quic_stream_write(proven_quic_conn_t *c, proven_u64 id, prov
 }
 
 proven_u64 proven_quic_stream_room(proven_quic_conn_t *c, proven_u64 id) {
-    if (!c || c->state != QS_OPEN) return 0;
+    if (!c || !app_ready(c)) return 0;
     qstream_t *s = stream_find(c, id);
     if (!s || !s->has_tx || s->tx_reset || s->tx.fin) return 0;
     s->tx_blocked = true;               /* asked because it may wait: told when room is freed */
@@ -2359,7 +2582,7 @@ proven_err_t proven_quic_stream_read(proven_quic_conn_t *c, proven_u64 id, prove
 
 proven_err_t proven_quic_stream_reset(proven_quic_conn_t *c, proven_u64 id, proven_u64 code) {
     if (!c || code > PROVEN_QUIC_VARINT_MAX) return PROVEN_ERR_INVALID_ARG;
-    if (c->state != QS_OPEN) return PROVEN_ERR_INVALID_STATE;
+    if (!app_ready(c)) return PROVEN_ERR_INVALID_STATE;
     qstream_t *s = stream_find(c, id);
     if (!s) return PROVEN_ERR_NOT_FOUND;
     if (!s->has_tx) return PROVEN_ERR_INVALID_STATE;
@@ -2369,7 +2592,7 @@ proven_err_t proven_quic_stream_reset(proven_quic_conn_t *c, proven_u64 id, prov
 
 proven_err_t proven_quic_stream_stop(proven_quic_conn_t *c, proven_u64 id, proven_u64 code) {
     if (!c || code > PROVEN_QUIC_VARINT_MAX) return PROVEN_ERR_INVALID_ARG;
-    if (c->state != QS_OPEN) return PROVEN_ERR_INVALID_STATE;
+    if (!app_ready(c)) return PROVEN_ERR_INVALID_STATE;
     qstream_t *s = stream_find(c, id);
     if (!s) return PROVEN_ERR_NOT_FOUND;
     if (!s->has_rx) return PROVEN_ERR_INVALID_STATE;
@@ -2414,6 +2637,7 @@ void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s)
     s->cwnd = c->cwnd; s->bytes_in_flight = c->bif; s->srtt_us = c->srtt; s->min_rtt_us = c->min_rtt; s->pto_count = c->pto_count;
     s->streams = c->nstreams; s->memory = c->mem.held;
     s->established = c->complete; s->confirmed = c->confirmed; s->closed = c->state == QS_CLOSED;
+    s->early = c->early == PROVEN_TLS_EARLY_ACCEPTED ? 1 : c->early == PROVEN_TLS_EARLY_REFUSED ? 2 : 0;
     s->path_validated = c->validated;
     s->key_updates = c->key_updates;
     s->spurious_losses = c->spurious;
@@ -2510,6 +2734,8 @@ proven_err_t proven_quic_conn_client_create(const proven_quic_config_t *cfg, pro
     random_bytes(c, c->odcid.id, QC_CID_LEN);
     c->peer[0] = (qcid_t){ .seq = 0, .cid = c->odcid, .active = true };
     initial_keys(c, &c->odcid);
+    c->session = session;
+    c->token_len = proven_tls_session_token_take_(session, c->token, sizeof c->token);   /* used once */
     proven_byte_t tp[256];
     const proven_size_t tpn = local_params(c, tp, sizeof tp);
     proven_err_t e = tpn ? proven_tls_quic_client_create_(cfg->tls, server_name, session, (proven_mem_view_t){ .ptr = tp, .size = tpn }, &c->tls)
@@ -2534,7 +2760,7 @@ proven_err_t proven_quic_conn_server_create(const proven_quic_config_t *cfg, con
     c->client_dcid = h.dcid;
     c->retried = accept->retried;
     c->retry_scid = accept->retry_scid;
-    c->validated = accept->retried;
+    c->validated = accept->retried || accept->validated;
     c->peer[0] = (qcid_t){ .seq = 0, .cid = h.scid, .active = true };
     c->peer_initial_scid = h.scid;
     initial_keys(c, &h.dcid);
@@ -2575,13 +2801,6 @@ void proven_quic_conn_destroy(proven_quic_conn_t *c) {
 
 #define QC_TOKEN_AGE 10000000           /* microseconds a Retry token is good for */
 
-static void token_key(const proven_quic_config_t *cfg, proven_crypto_aes_gcm_t *aead) {
-    proven_byte_t k[PROVEN_HMAC_MAX_SIZE];
-    (void)proven_hmac(PROVEN_HMAC_SHA256, (proven_mem_view_t){ .ptr = cfg->static_key, .size = 32 }, (proven_mem_view_t){ .ptr = (const proven_byte_t *)"proven quic retry", .size = 17 }, k);
-    (void)proven_crypto_aes_gcm_init(aead, k, 16);
-    proven_mem_wipe((proven_mem_mut_t){ .ptr = k, .size = sizeof k });
-}
-
 proven_quic_stateless_t proven_quic_server_stateless(const proven_quic_config_t *cfg, proven_mem_view_t d, const proven_quic_addr_t *from,
                                                       proven_u64 now, bool require_retry, proven_mem_mut_t out, proven_size_t *out_len,
                                                       proven_quic_accept_t *accept) {
@@ -2599,34 +2818,42 @@ proven_quic_stateless_t proven_quic_server_stateless(const proven_quic_config_t 
     }
     if (h.type != PROVEN_QUIC_PKT_INITIAL || d.size < PROVEN_QUIC_MIN_INITIAL || h.dcid.len < 8) return PROVEN_QUIC_STATELESS_DROP;
     accept->odcid = h.dcid;
+    /* A NEW_TOKEN token of this server's for this address: validated, and no Retry is needed. One
+     * that does not open is as no token at all (RFC 9000 section 8.1.3). */
+    if (h.token.size > 0 && h.token.ptr[0] == QC_TOKEN_NEW) {
+        if (new_token_ok(cfg, h.token, from, now)) { accept->validated = true; return PROVEN_QUIC_STATELESS_ACCEPT; }
+        h.token.size = 0;
+    }
     if (!require_retry) return PROVEN_QUIC_STATELESS_ACCEPT;
     proven_crypto_aes_gcm_t aead;
-    token_key(cfg, &aead);
+    token_aead(cfg, true, &aead);
     if (h.token.size == 0) {
-        /* A Retry carrying a token: nonce, then sealed {time, odcid, the Retry's scid}, the address as associated data. */
-        proven_byte_t tok[12 + 8 + 1 + 20 + 1 + 20 + 16];
+        /* A Retry carrying a token: its kind, a nonce, then sealed {time, odcid, the Retry's scid},
+         * the address as associated data. */
+        proven_byte_t tok[1 + 12 + 8 + 1 + 20 + 1 + 20 + 16];
         proven_byte_t plain[8 + 1 + 20 + 1 + 20];
         proven_quic_cid_t scid = { .len = QC_CID_LEN };
         proven_tls_config_random(cfg->tls, scid.id, QC_CID_LEN);
-        proven_tls_config_random(cfg->tls, tok, 12);
+        tok[0] = QC_TOKEN_RETRY;
+        proven_tls_config_random(cfg->tls, tok + 1, 12);
         proven_size_t n = 0;
         for (int i = 7; i >= 0; --i) plain[n++] = (proven_byte_t)(now >> (8 * i));
         plain[n++] = h.dcid.len; qcopy(plain + n, h.dcid.id, h.dcid.len); n += h.dcid.len;
         plain[n++] = scid.len; qcopy(plain + n, scid.id, scid.len); n += scid.len;
-        proven_crypto_aes_gcm_seal(&aead, tok, (proven_mem_view_t){ .ptr = from->b, .size = from->len }, (proven_mem_view_t){ .ptr = plain, .size = n }, tok + 12, tok + 12 + n);
+        proven_crypto_aes_gcm_seal(&aead, tok + 1, (proven_mem_view_t){ .ptr = from->b, .size = from->len }, (proven_mem_view_t){ .ptr = plain, .size = n }, tok + 13, tok + 13 + n);
         proven_byte_t r;
         proven_tls_config_random(cfg->tls, &r, 1);
-        *out_len = proven_quic_retry_build(&h.dcid, &h.scid, &scid, (proven_mem_view_t){ .ptr = tok, .size = 12 + n + 16 }, r, out);
+        *out_len = proven_quic_retry_build(&h.dcid, &h.scid, &scid, (proven_mem_view_t){ .ptr = tok, .size = 13 + n + 16 }, r, out);
         proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&aead, .size = sizeof aead });
         return *out_len ? PROVEN_QUIC_STATELESS_REPLY : PROVEN_QUIC_STATELESS_DROP;
     }
-    /* A token: it must open under this server's key for this address, be young, and name the
-     * connection ID the client now writes to. Otherwise the packet is dropped. */
+    /* A Retry token: it must open under this server's key for this address, be young, and name
+     * the connection ID the client now writes to. Otherwise the packet is dropped. */
     proven_byte_t plain[8 + 1 + 20 + 1 + 20];
-    const proven_size_t clen = h.token.size >= 28 ? h.token.size - 28 : 0;
-    bool ok = h.token.size >= 12 + 16 + 10 && clen <= sizeof plain
-              && proven_crypto_aes_gcm_open(&aead, h.token.ptr, (proven_mem_view_t){ .ptr = from->b, .size = from->len },
-                                            (proven_mem_view_t){ .ptr = h.token.ptr + 12, .size = clen }, h.token.ptr + 12 + clen, plain);
+    const proven_size_t clen = h.token.size >= 29 ? h.token.size - 29 : 0;
+    bool ok = h.token.ptr[0] == QC_TOKEN_RETRY && h.token.size >= 1 + 12 + 16 + 10 && clen <= sizeof plain
+              && proven_crypto_aes_gcm_open(&aead, h.token.ptr + 1, (proven_mem_view_t){ .ptr = from->b, .size = from->len },
+                                            (proven_mem_view_t){ .ptr = h.token.ptr + 13, .size = clen }, h.token.ptr + 13 + clen, plain);
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&aead, .size = sizeof aead });
     if (!ok) return PROVEN_QUIC_STATELESS_DROP;
     proven_u64 t = 0;

@@ -31,6 +31,7 @@ static inline proven_quic_addr_t proven_quic_addr_of_(const proven_net_addr_t *a
     proven_quic_addr_t q;
     for (proven_size_t i = 0; i < sizeof q; ++i) ((proven_byte_t *)&q)[i] = 0;
     q.len = 23;
+    q.port_at = 1; q.port_len = 2;
     q.b[0] = (proven_byte_t)a->family;
     q.b[1] = (proven_byte_t)(a->port >> 8);
     q.b[2] = (proven_byte_t)a->port;

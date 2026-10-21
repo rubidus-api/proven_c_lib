@@ -13,7 +13,8 @@
  * streams deliver every byte in order under loss; flow control and the caps hold; each rule's
  * breach closes the connection with its code; closes, idle timeouts, stateless resets, version
  * negotiation, the amplification limit, path validation and key updates behave as RFC 9000
- * says; and every bit change or truncation of captured packets is dropped or refused, never
+ * says; 0-RTT (RFC-0021) answers a request in one round trip, and a refusal or a loss of the
+ * early data still delivers it; a NEW_TOKEN token validates the next connection's address; and every bit change or truncation of captured packets is dropped or refused, never
  * acted on.
  */
 
@@ -294,6 +295,10 @@ static bool hook_server_deaf_after_first(net_t *n, int to, proven_byte_t *b, pro
     if (to != 1) return true;
     return g_hook_count++ == 0;
 }
+static bool hook_server_deaf_first(net_t *n, int to, proven_byte_t *b, proven_size_t *len) {
+    (void)n; (void)b; (void)len;
+    return to != 1 || g_hook_count++ > 0;
+}
 static bool hook_other_version_first(net_t *n, int to, proven_byte_t *b, proven_size_t *len) {
     (void)n; (void)len;
     if (to == 1 && g_hook_count++ == 0) { b[1] = 0x1a; b[2] = 0x2a; b[3] = 0x3a; b[4] = 0x4a; }
@@ -442,6 +447,169 @@ int main(void) {
         PROVEN_TEST_ASSERT(run_xfers(n, t, 10000000), "and data", "");
         free(t);
         net_free(n);
+    }
+
+    PROVEN_TEST_SECTION("0-RTT (RFC-0021)",
+        "With a session whose ticket allows early data, a client writes its request before the handshake and the server answers it in its first flight: one round trip. Refused (a ticket used twice), the request goes again under 1-RTT; lost, it is found lost and sent again; a refused client whose early data does not fit the server's own limits ends the connection.",
+        "Inspect zr_install, early_after, early_refused, app_ready and the QC_ZRTT paths of build_packet, seal and read_packet.");
+    {
+        proven_tls_options_t o = { .alloc = g_alloc, .anchors = g_anchors, .random = test_random, .now = test_now, .now_ctx = &g_now, .alpn = H3, .alpn_count = 1, .early_data = true };
+        proven_tls_config_t *ce = NULL, *se = NULL;
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &ce) == PROVEN_OK, "a client configuration with early_data", "");
+        o = (proven_tls_options_t){ .alloc = g_alloc, .random = test_random, .now = test_now, .now_ctx = &g_now, .alpn = H3, .alpn_count = 1, .early_data = true,
+                                    .certificate_pem = pem(TP_SERVER_P256), .private_key_pem = pem(TP_SERVER_P256_KEY) };
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &se) == PROVEN_OK, "a server configuration with early_data", "");
+        static proven_tls_session_t kept, used;
+
+        /* A first connection leaves a ticket that allows early data. */
+        net_init(n, 40);
+        n->cfg[0].tls = ce; n->cfg[1].tls = se;
+        net_start(n);
+        proven_u64 id;
+        PROVEN_TEST_ASSERT(proven_quic_stream_open(n->ep[0], true, &id) == PROVEN_ERR_INVALID_STATE, "without a session: no stream before the handshake", "");
+        PROVEN_TEST_ASSERT(run_handshake(n, 5000000), "a first handshake", "");
+        run_for(n, 100000);
+        PROVEN_TEST_ASSERT(stats(n, 0).early == 0, "no early data on it", "");
+        memcpy(&kept, &n->session, sizeof kept);
+        net_free(n);
+
+        /* The next one: the request before the handshake, the answer one round trip later. */
+        net_init(n, 41);
+        n->cfg[0].tls = ce; n->cfg[1].tls = se;
+        memcpy(&n->session, &kept, sizeof kept);
+        memcpy(&used, &kept, sizeof used);
+        net_start(n);
+        proven_quic_event_t ev;
+        bool told = false;
+        while (proven_quic_conn_poll(n->ep[0], &ev)) if (ev.kind == PROVEN_QUIC_EV_EARLY) told = true;
+        PROVEN_TEST_ASSERT(told, "the client is told at once that early data may be written", "");
+        xfers_t *t = calloc(1, sizeof *t);
+        const proven_u64 start = n->now;
+        xfer_open(n, t, 0, true, 1000);
+        /* Done is looked for as soon as what arrived has been read: before the clock moves on. */
+        bool answered = false;
+        pump(n, t);
+        for (int i = 0; i < 200 && !answered; ++i) { net_step(n); pump(n, t); answered = xfers_done(t); }
+        PROVEN_TEST_ASSERT(answered, "the request is answered", "");
+        const proven_u64 took = n->now - start;
+        PROVEN_TEST_ASSERT(stats(n, 0).early == 1 && stats(n, 1).early == 1, "both sides say early data was accepted", "");
+        printf("  0-RTT: answered after %llu us (round trip 20,000)\n", (unsigned long long)took);
+        PROVEN_TEST_ASSERT(took <= 20000, "within one round trip of 20 ms: the answer came with the server's first flight", "");
+        PROVEN_TEST_ASSERT(run_handshake(n, 1000000), "the handshake completes as well", "");
+        free(t);
+        net_free(n);
+
+        /* The same ticket again: refused by the register, the request sent again under 1-RTT. */
+        net_init(n, 42);
+        n->cfg[0].tls = ce; n->cfg[1].tls = se;
+        memcpy(&n->session, &used, sizeof used);
+        net_start(n);
+        t = calloc(1, sizeof *t);
+        const proven_u64 start2 = n->now;
+        xfer_open(n, t, 0, true, 3000);
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 2000000), "a refused request is answered all the same", "");
+        PROVEN_TEST_ASSERT(stats(n, 0).early == 2 && stats(n, 1).early == 2, "both sides say early data was refused", "");
+        PROVEN_TEST_ASSERT(n->now - start2 >= 40000, "two round trips: the request went again after the handshake", "");
+        free(t);
+        net_free(n);
+
+        /* The first datagram, Initial and 0-RTT, lost: the request still arrives. */
+        memcpy(&kept, &n->session, sizeof kept);     /* the last connection left a fresh ticket */
+        net_init(n, 43);
+        n->cfg[0].tls = ce; n->cfg[1].tls = se;
+        memcpy(&n->session, &kept, sizeof kept);
+        g_hook_count = 0;
+        n->hook = hook_server_deaf_first;
+        net_start(n);
+        t = calloc(1, sizeof *t);
+        xfer_open(n, t, 0, true, 5000);
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 10000000), "a request whose 0-RTT packets were lost is answered", "");
+        n->hook = NULL;
+        free(t);
+        memcpy(&kept, &n->session, sizeof kept);
+        net_free(n);
+
+        /* Refused by a server whose limits are now smaller than what the early data used. */
+        net_init(n, 44);
+        n->cfg[0].tls = ce; n->cfg[1].tls = se;
+        n->cfg[1].stream_window = 4096; n->cfg[1].conn_window = 4096;
+        memcpy(&n->session, &kept, sizeof kept);
+        net_start(n);
+        t = calloc(1, sizeof *t);
+        xfer_open(n, t, 0, true, 12000);
+        pump(n, t);
+        for (int i = 0; i < 400 && !(n->ep[0] && stats(n, 0).closed); ++i) net_step(n);
+        PROVEN_TEST_ASSERT(stats(n, 0).early == 2 && stats(n, 0).closed, "the client, refused, could not resend what it sent early within the server's new limits: closed", "");
+        bool internal = false;
+        while (proven_quic_conn_poll(n->ep[0], &ev)) if (ev.kind == PROVEN_QUIC_EV_CLOSED && !ev.remote && ev.code == 0x01) internal = true;
+        PROVEN_TEST_ASSERT(internal, "with INTERNAL_ERROR, its own", "");
+        free(t);
+        net_free(n);
+
+        /* A server without early_data: its tickets do not allow it, and the client waits. */
+        net_init(n, 45);
+        n->cfg[0].tls = ce;
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 5000000), "a handshake with a server without early_data", "");
+        run_for(n, 100000);
+        memcpy(&kept, &n->session, sizeof kept);
+        net_free(n);
+        net_init(n, 46);
+        n->cfg[0].tls = ce;
+        memcpy(&n->session, &kept, sizeof kept);
+        net_start(n);
+        PROVEN_TEST_ASSERT(proven_quic_stream_open(n->ep[0], true, &id) == PROVEN_ERR_INVALID_STATE, "its ticket allows no early data: no stream before the handshake", "");
+        PROVEN_TEST_ASSERT(run_handshake(n, 5000000) && stats(n, 0).early == 0, "and the connection resumes without it", "");
+        net_free(n);
+
+        proven_tls_config_destroy(ce); proven_tls_config_destroy(se);
+    }
+
+    PROVEN_TEST_SECTION("NEW_TOKEN (RFC-0021)",
+        "A server gives its client a token; the client's next connection carries it, and the server takes its address as validated at once (no three-times limit) and asks for no Retry. A token from another address, or more than a day old, counts as none; a new port on the same address does not matter.",
+        "Inspect new_token_make, new_token_ok, token_bound and proven_quic_server_stateless; the client's take and keep in proven_quic_conn_client_create and on_frame.");
+    {
+        static proven_tls_session_t with_token;
+        net_init(n, 50);
+        n->addr[0].port_at = 4; n->addr[0].port_len = 2;
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 5000000), "a first connection", "");
+        run_for(n, 100000);
+        const proven_u64 issued = n->now;
+        memcpy(&with_token, &n->session, sizeof with_token);
+        proven_byte_t tok[255];
+        static proven_tls_session_t probe;
+        memcpy(&probe, &with_token, sizeof probe);
+        PROVEN_TEST_ASSERT(proven_tls_session_token_take_(&probe, tok, sizeof tok) == 1 + 12 + 8 + 16 && tok[0] == 2, "the client kept a token of 37 bytes, of the NEW_TOKEN kind", "");
+        net_free(n);
+
+        /* `retry`, `port`, `ip`, `later`: the next connection's conditions. Returns whether the
+         * server took the address as validated with the client's first datagram. */
+        for (int k = 0; k < 6; ++k) {
+            const bool retry = k == 1 || k == 3, other_ip = k == 2 || k == 3, old = k == 4, none = k == 5;
+            net_init(n, 51 + (unsigned)k);
+            n->now = issued + (old ? 25ull * 3600 * 1000000 : 1000000);
+            n->require_retry = retry;
+            n->addr[0].port_at = 4; n->addr[0].port_len = 2;
+            n->addr[0].b[5] = 0x40;                              /* another port each time */
+            if (other_ip) n->addr[0].b[3] = 7;
+            if (!none) memcpy(&n->session, &with_token, sizeof with_token);
+            net_start(n);
+            while (!n->ep[1] && n->now < issued + 30ull * 3600 * 1000000) net_step(n);
+            const bool validated_at_once = n->ep[1] && stats(n, 1).path_validated;
+            PROVEN_TEST_ASSERT(run_handshake(n, 5000000), "the connection completes", "");
+            if (k == 0) PROVEN_TEST_ASSERT(validated_at_once && n->replies == 0, "a token from the last connection, from another port: validated at once", "");
+            if (k == 1) PROVEN_TEST_ASSERT(validated_at_once && n->replies == 0, "and a server that asks for Retries asks none of it", "");
+            if (k == 2) PROVEN_TEST_ASSERT(!validated_at_once && n->replies == 0, "from another address: as no token (and not dropped)", "");
+            if (k == 3) PROVEN_TEST_ASSERT(n->replies == 1 && stats(n, 1).path_validated, "from another address with Retries asked for: a Retry, as without a token", "");
+            if (k == 4) PROVEN_TEST_ASSERT(!validated_at_once, "more than a day old: as no token", "");
+            if (k == 5) PROVEN_TEST_ASSERT(!validated_at_once, "without a token: not validated at once, as before", "");
+            net_free(n);
+        }
+        static proven_tls_session_t once;
+        memcpy(&once, &with_token, sizeof once);
+        PROVEN_TEST_ASSERT(proven_tls_session_token_take_(&once, tok, sizeof tok) > 0 && proven_tls_session_token_take_(&once, tok, sizeof tok) == 0,
+            "a token is taken out of the session once", "");
     }
 
     PROVEN_TEST_SECTION("version negotiation", "A server answers another version with version negotiation; a client ignores one that lists version 1 and gives up on one that does not.", "");
