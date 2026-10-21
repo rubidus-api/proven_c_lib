@@ -27,6 +27,8 @@ written; their tags still exist.
   otherwise records that do not open under the handshake keys, until one does; at most 64 KiB,
   each record counted with its header. Past that the connection ends as before. No public API
   change. Test: `test_unit_tls` section "early data over TCP, passed over".
+- `test_unit_http_event_h2` no longer passes a null pointer to `memcpy` for an empty DATA event
+  (undefined behaviour in the test's own code, seen by UBSan).
 
 ## [0.73.0] - 2026-10-21
 
