@@ -275,6 +275,8 @@ void *proven_http_event_h3_user_(const proven_http_stream_t *stream);
 proven_net_addr_t proven_http_event_h3_peer_(const proven_http_stream_t *stream);
 [[nodiscard]]
 proven_size_t proven_http_event_h3_buffered_(const proven_http_stream_t *stream);
+[[nodiscard]]
+bool proven_http_event_h3_early_(const proven_http_stream_t *stream);
 #endif
 
 /* The server's compression settings, for http_coding.c. */

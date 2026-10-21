@@ -739,6 +739,7 @@
 #define xcv_http_stream_begin proven_http_stream_begin
 #define xcv_http_stream_buffered proven_http_stream_buffered
 #define xcv_http_stream_compress proven_http_stream_compress
+#define xcv_http_stream_early proven_http_stream_early
 #define xcv_http_stream_end proven_http_stream_end
 #define xcv_http_stream_flush proven_http_stream_flush
 #define xcv_http_stream_pause proven_http_stream_pause

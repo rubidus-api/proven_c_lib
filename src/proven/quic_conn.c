@@ -2645,6 +2645,7 @@ void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s)
 }
 
 bool proven_quic_conn_resumed(const proven_quic_conn_t *c) { return c && c->tls && c->complete && proven_tls_resumed(c->tls); }
+bool proven_quic_conn_complete_(const proven_quic_conn_t *c) { return c && c->complete; }
 
 /* ---- For tests: frames as if a packet carried them, and a key update started here ---- */
 

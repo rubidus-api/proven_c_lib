@@ -765,6 +765,7 @@ static bool h3_quic_event(proven_h3_conn_t *h, const proven_quic_event_t *q, pro
     h3s_t *s = NULL;
     switch (q->kind) {
     case PROVEN_QUIC_EV_ESTABLISHED:
+    case PROVEN_QUIC_EV_EARLY:          /* 0-RTT (RFC-0021): streams may be used before the handshake ends */
         h3_open_control(h);
         *ev = (proven_h3_event_t){ .kind = PROVEN_H3_EV_QUIC, .quic = *q };
         return true;

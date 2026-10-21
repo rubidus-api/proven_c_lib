@@ -3254,6 +3254,12 @@ proven_size_t proven_tls_session_token_take_(proven_tls_session_t *session, prov
     return n;
 }
 
+void proven_tls_session_early_off_(proven_tls_session_t *session) {
+    if (!session) return;
+    proven_tls_session_data_t *s = (proven_tls_session_data_t *)(void *)session->opaque;
+    if (s->magic == PROVEN_TLS_SESSION_MAGIC) s->early = 0;
+}
+
 void proven_tls_session_token_keep_(proven_tls_session_t *session, proven_mem_view_t token) {
     if (!session || !token.ptr || token.size == 0 || token.size > PROVEN_TLS_SESSION_TOKEN_MAX) return;
     proven_tls_session_data_t *s = (proven_tls_session_data_t *)(void *)session->opaque;

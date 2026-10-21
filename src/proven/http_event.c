@@ -1162,6 +1162,14 @@ int proven_http_stream_protocol(const proven_http_stream_t *c) {
     return !c ? 1 : PROVEN_HTTP_EVENT_IS_H2_(c) ? 2 : PROVEN_HTTP_EVENT_IS_H3_(c) ? 3 : 1;
 }
 
+bool proven_http_stream_early(const proven_http_stream_t *c) {
+#if !defined(PROVEN_NO_HTTP3)
+    if (c && PROVEN_HTTP_EVENT_IS_H3_(c)) return proven_http_event_h3_early_(c);
+#endif
+    (void)c;
+    return false;
+}
+
 // -----------------------------------------------------------------------------
 // A connection taken over by another protocol (proven_internal_http_event.h)
 // -----------------------------------------------------------------------------

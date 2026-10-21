@@ -64,6 +64,8 @@ typedef struct c3req {
     proven_u8 host_len;
     bool has_id, dead, streamed, end_asked, engine_done, paused, want_writable, blocked;
     bool got_head, head_only, host_is_ipv6, query_alone, waiting_room, delayed;
+    bool sent_early;                   /* submitted before the handshake was complete: early data (RFC-0021) */
+    bool early_again;                  /* sent again once after a 425 or a refusal: never early, never a third time */
     proven_byte_t host[256];
 } c3req_t;
 
@@ -86,6 +88,7 @@ struct c3conn {
     proven_u16 port;
     proven_u8 host_len, want;
     bool dead, up, closed, over, registered, client_going, bye;
+    bool early;                        /* 0-RTT is open: requests that are safe to repeat may go before the handshake (RFC-0021) */
     proven_err_t closed_why;           /* what the close means for a request that was never answered */
     proven_size_t pend_len;            /* datagrams the socket would not take */
     proven_size_t pend_seg;            /* their size (the last may be shorter) */
@@ -248,9 +251,35 @@ static void r_unsent(c3req_t *r) {
     proven_loop_timer_set(cl->loop, &r->wait_timer, ms, r_wait_fire, r);
 }
 
+/* A request sent as early data and not answered as such: once more, never early. On this
+ * connection when it is up, else on another. Not counted against retry_unsent. */
+static void r_again(c3req_t *r) {
+    if (r->dead) return;
+    proven_http_event_client_t *cl = r->h.client;
+    if (cl->closing) { r_finish(r, PROVEN_ERR_AGAIN); return; }
+    r->early_again = true;
+    r->sent_early = false;
+    r_unlink(r);
+    if (r->out) { cl->alloc.free_fn(cl->alloc.ctx, r->out); r->out = (void *)0; r->out_len = r->out_off = 0; }
+    r->has_id = r->end_asked = r->engine_done = r->blocked = false;
+    r->due = 0;
+    r_place(r);
+}
+
 static void c_end_requests(c3conn_t *c) {
+    /* A connection that ended before its handshake did because the server refused the early data
+     * it could no longer take (RFC-0021 P-6): its early requests go once more, elsewhere, and the
+     * origin's next connection sends none. */
+    proven_quic_stats_t st = { 0 };
+    if (c->q) proven_quic_conn_stats(c->q, &st);
+    const bool refused = !c->up && st.early == 2;
+    if (refused) {
+        proven_tls_session_early_off_(&c->session);
+        proven_http_event_client_session_keep_(c->client, (proven_u8str_view_t){ .ptr = c->host, .size = c->host_len }, c->port, true, &c->session, c->session_mark, false, false);
+    }
     while (c->reqs) {
         c3req_t *r = c->reqs;
+        if (refused && r->sent_early && !r->got_head && !r->early_again) { r_again(r); continue; }
         /* One the server never saw may go again elsewhere - but not when the connection never
          * came up: that is the answer for every request to this origin, and is theirs. */
         if (!r->has_id && c->up && !c->client_going) r_unsent(r);
@@ -473,17 +502,32 @@ static proven_err_t r_submit(c3req_t *r) {
         r->send_left = r->body_length;
     }
     /* What it was started with is kept only while it may have to be put to the server again. */
-    if (r->copy && (r->streamed || cl->cfg.retry_unsent == 0)) { cl->alloc.free_fn(cl->alloc.ctx, r->copy); r->copy = (void *)0; }
+    if (r->copy && !r->sent_early && (r->streamed || cl->cfg.retry_unsent == 0)) { cl->alloc.free_fn(cl->alloc.ctx, r->copy); r->copy = (void *)0; }
     r_expect(r);
     return PROVEN_OK;
 }
 
+/* Tests only, on the client's one thread: any request with its body in memory may go early, so
+ * that a server's 425 for what is not safe to repeat can be seen. */
+static bool g_c3_early_any;
+void proven_http_event_client_h3_test_early_any_(bool on) { g_c3_early_any = on; }
+
+/* What may go as early data (RFC-0021 D-3): GET, HEAD or OPTIONS with no body, never twice. */
+static bool r_early_ok(const c3req_t *r) {
+    if (g_c3_early_any && !r->early_again && !r->streamed) return true;
+    if (r->early_again || r->streamed || r->body.size != 0 || r->body_length != 0) return false;
+    const proven_http_method_t m = proven_http_method_from_text(r->method);
+    return m == PROVEN_HTTP_GET || m == PROVEN_HTTP_HEAD || m == PROVEN_HTTP_OPTIONS;
+}
+
 static void c_submit_waiting(c3conn_t *c) {
-    if (c->dead || c->closed || !c->up || c->over) return;
+    if (c->dead || c->closed || (!c->up && !c->early) || c->over) return;
     for (bool again = true; again && !c->dead;) {
         again = false;
         for (c3req_t *r = c->reqs; r; r = r->next) {
             if (r->has_id || r->dead) continue;
+            if (!c->up && !r_early_ok(r)) continue;          /* the rest wait for the handshake */
+            r->sent_early = !c->up;
             const proven_err_t e = r_submit(r);
             if (e == PROVEN_ERR_BUSY) return;
             if (e != PROVEN_OK) r_finish(r, e);
@@ -542,6 +586,12 @@ static bool r_deliver(c3req_t *r, proven_mem_view_t piece, bool last) {
 static void c_response(c3conn_t *c, c3req_t *r, const proven_h3_event_t *ev) {
     proven_http_event_client_t *cl = c->client;
     if (ev->status < 200 || r->got_head) return;          /* an interim response: not the answer, and not passed on */
+    if (ev->status == 425 && r->sent_early && !r->early_again) {
+        /* Too Early (RFC 8470): not the answer. Sent again, once, after the handshake. */
+        if (!ev->end_stream) (void)proven_h3_stream_reset(c->h3, r->id, PROVEN_H3_REQUEST_CANCELLED);
+        r_again(r);
+        return;
+    }
     if (ev->field_count > cl->cfg.max_headers) { r_finish(r, PROVEN_ERR_OUT_OF_BOUNDS); return; }
     for (proven_size_t i = 0; i < ev->field_count; ++i) cl->headers[i] = ev->fields[i];
     proven_http_response_t res = { .status = ev->status, .version_minor = 1, .headers = cl->headers, .header_count = ev->field_count };
@@ -629,6 +679,7 @@ static void c_event(c3conn_t *c, const proven_h3_event_t *ev) {
             break;
         case PROVEN_H3_EV_QUIC:
             if (ev->quic.kind == PROVEN_QUIC_EV_ESTABLISHED) { c->up = true; c_submit_waiting(c); }
+            else if (ev->quic.kind == PROVEN_QUIC_EV_EARLY) { c->early = true; c_submit_waiting(c); }
             break;
         case PROVEN_H3_EV_CLOSED:
             c->closed = true;
@@ -1023,6 +1074,14 @@ static void call_begin(c3req_t *r) { r_enter(r); if (r->conn) { c_enter(r->conn)
 static void call_end(c3req_t *r, c3conn_t *c) {
     if (c) { c->calls--; if (!c->dead) { c_send(c); c_call_back(c); } c_leave(c); }
     r_leave(r);
+}
+
+int proven_http_event_client_h3_early_(proven_http_event_request_t *request) {
+    c3req_t *r = c3_of(request);
+    if (!r->sent_early || !r->conn || !r->conn->q) return 0;
+    proven_quic_stats_t st;
+    proven_quic_conn_stats(r->conn->q, &st);
+    return st.early == 1 ? 1 : st.early == 2 ? 2 : 0;
 }
 
 bool proven_http_event_client_h3_resumed_(proven_http_event_request_t *request) {

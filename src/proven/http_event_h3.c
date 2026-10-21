@@ -61,6 +61,7 @@ typedef struct h3s {
     bool want_writable, compress_asked;
     proven_u8 compress_coding;
     bool in_done;                      /* the request's end has arrived */
+    bool early;                        /* handed to the handler before the handshake was complete: early data (RFC-0021) */
     bool end_asked;                    /* the end goes when `out` has drained */
     bool engine_done;                  /* the engine has this side's end already, or the stream is gone from it */
     bool blocked;                      /* the engine took less than offered: it says when there is room (STREAM_WRITABLE) */
@@ -557,6 +558,15 @@ static void d_request(h3d_t *d, const proven_h3_event_t *ev) {
     }
     d->asked = true;
     if (bad) { (void)proven_h3_stream_reset(d->h3, ev->stream_id, PROVEN_H3_MESSAGE_ERROR); return; }
+    /* Early data (RFC-0021): before the handshake is complete a request may be a replayed copy.
+     * Only what is safe to repeat reaches the handler; the rest is told 425 (RFC 8470), which the
+     * client answers by sending it again after the handshake. */
+    const bool early = !proven_quic_conn_complete_(d->q);
+    if (early) {
+        const proven_http_method_t m = proven_http_method_from_text(rq->method);
+        const bool safe = (m == PROVEN_HTTP_GET || m == PROVEN_HTTP_HEAD || m == PROVEN_HTTP_OPTIONS) && ev->end_stream;
+        if (!safe) { d_refuse(d, ev->stream_id, "425"); return; }
+    }
     const proven_size_t add_host = !has_host && rq->authority.size > 0 ? 1 : 0;
     /* A body of unannounced length is given the field that means it, as over HTTP/2. */
     const proven_size_t add_chunked = !ev->end_stream && !has_length ? 1 : 0;
@@ -582,6 +592,7 @@ static void d_request(h3d_t *d, const proven_h3_event_t *ev) {
     s->response_left = PROVEN_HTTP_EVENT_LENGTH_UNKNOWN;
     s->compress_coding = (proven_u8)proven_http_compress_choose_(sv->headers, n, sv->cfg.compress_zstd);
     s->in_done = ev->end_stream;
+    s->early = early;
     s_expect_body(s);
     s->active = true;
     s->next = d->streams;
@@ -1293,6 +1304,8 @@ proven_net_addr_t proven_http_event_h3_peer_(const proven_http_stream_t *stream)
     const h3s_t *s = h3s_of_const(stream);
     return s->dead || s->d->dead ? (proven_net_addr_t){ 0 } : s->d->peer;
 }
+
+bool proven_http_event_h3_early_(const proven_http_stream_t *stream) { return h3s_of_const(stream)->early; }
 
 proven_size_t proven_http_event_h3_buffered_(const proven_http_stream_t *stream) {
     const h3s_t *s = h3s_of_const(stream);

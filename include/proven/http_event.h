@@ -306,4 +306,13 @@ proven_size_t proven_http_stream_buffered(const proven_http_stream_t *stream);
 [[nodiscard]]
 int proven_http_stream_protocol(const proven_http_stream_t *stream);
 
+/** @brief Whether this request arrived as early data (0-RTT, over HTTP/3, when the TLS
+ *         configuration has `early_data`) and is being handled before the handshake is complete.
+ *         Such a request may be a copy an attacker replayed: act on it only if doing so twice is
+ *         harmless, or answer 425 (Too Early) and the client sends it again after the handshake.
+ *         Only GET, HEAD and OPTIONS without a body reach a handler this way; the server answers
+ *         425 to anything else that arrives early. Always false over HTTP/1.1 and HTTP/2. */
+[[nodiscard]]
+bool proven_http_stream_early(const proven_http_stream_t *stream);
+
 #endif /* PROVEN_HTTP_EVENT_H */

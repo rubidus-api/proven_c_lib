@@ -202,6 +202,8 @@ bool proven_tls_quic_early_limits_(const proven_tls_conn_t *c, proven_u64 out[7]
  * when the server sends one. A token longer than 255 bytes is not kept. */
 proven_size_t proven_tls_session_token_take_(proven_tls_session_t *s, proven_byte_t *out, proven_size_t cap);
 void proven_tls_session_token_keep_(proven_tls_session_t *s, proven_mem_view_t token);
+/* A session whose next connection must not send early data: the ticket stays, its allowance goes. */
+void proven_tls_session_early_off_(proven_tls_session_t *s);
 
 /* ---- Packets and frames (RFC 9000 sections 12, 17 and 19): quic_frame.c ----
  *
@@ -470,6 +472,8 @@ proven_u64 proven_quic_conn_test_frames_(proven_quic_conn_t *c, int lvl, proven_
 bool proven_quic_conn_test_key_update_(proven_quic_conn_t *c);
 /* Whether the handshake resumed a session the client offered (RFC-0020). */
 bool proven_quic_conn_resumed(const proven_quic_conn_t *c);
+/* Whether the handshake is complete: before it, streams carry early data (RFC-0021). */
+bool proven_quic_conn_complete_(const proven_quic_conn_t *c);
 
 #endif /* PROVEN_NO_HTTP3 */
 #endif
