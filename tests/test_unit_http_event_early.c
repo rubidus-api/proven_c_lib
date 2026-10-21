@@ -129,15 +129,15 @@ int main(void) {
         call_t b = ask(client, port, "GET", "/", NULL);
         PROVEN_TEST_ASSERT(b.status == 200 && b.early == 1 && g_early_calls == 1 && b.body_len == 5 && memcmp(b.body, "early", 5) == 0,
             "the second: the GET went as early data, was accepted, and its handler saw proven_http_stream_early", "");
-        call_t d = ask(client, port, "GET", "/", NULL);
-        PROVEN_TEST_ASSERT(d.status == 200 && d.early == 0 && memcmp(d.body, "late", 4) == 0, "a GET on the connection once it is up: not early", "");
-        /* That connection had a new ticket after its first request ended; it is still open (no
-         * new request may use it) when the next connection is made: the next one gets the new
-         * ticket, not the one already spent on early data, and its GET is taken early again. */
+        /* That connection had a new ticket after its request ended; it is still open (no new
+         * request may use it) when the next connection is made: the next one gets the new ticket,
+         * not the one already spent on early data, and its GET is taken early again. */
         spin(30);
         proven_http_event_client_h3_test_retire_(client);
         call_t f = ask(client, port, "GET", "/", NULL);
         PROVEN_TEST_ASSERT(f.status == 200 && f.early == 1, "a connection made while the last is still open: early again, on the ticket that one learned", "");
+        call_t d = ask(client, port, "GET", "/", NULL);
+        PROVEN_TEST_ASSERT(d.status == 200 && d.early == 0 && memcmp(d.body, "late", 4) == 0, "a GET on the connection once it is up: not early", "");
         proven_http_event_client_destroy(client);
         spin(50);
     }
@@ -152,6 +152,15 @@ int main(void) {
         PROVEN_TEST_ASSERT(b.status == 200 && b.early == 0 && g_early_calls == 0 && memcmp(b.body, "posted", 6) == 0, "the POST waited and was answered", "");
         proven_http_event_client_destroy(client);
         spin(50);
+        /* Without a body as well: it is the method that keeps it back. */
+        client = client_of(c_early);
+        (void)ask(client, port, "GET", "/", NULL);
+        spin(400);
+        g_early_calls = 0;
+        b = ask(client, port, "DELETE", "/", NULL);
+        PROVEN_TEST_ASSERT(b.status == 200 && b.early == 0 && g_early_calls == 0, "a DELETE without a body waited too: never sent early, never told 425", "");
+        proven_http_event_client_destroy(client);
+        spin(50);
     }
 
     PROVEN_TEST_SECTION("425 from a handler", "A handler that will not act on an early copy answers 425; the client sends the request again once the handshake is over.", "Check c_response's 425 and r_again.");
@@ -161,7 +170,7 @@ int main(void) {
         spin(400);
         g_calls = g_early_calls = 0;
         call_t b = ask(client, port, "GET", "/too-early", NULL);
-        PROVEN_TEST_ASSERT(b.status == 200 && g_calls == 2 && g_early_calls == 1 && memcmp(b.body, "late", 4) == 0,
+        PROVEN_TEST_ASSERT(b.status == 200 && b.early == 3 && g_calls == 2 && g_early_calls == 1 && memcmp(b.body, "late", 4) == 0,
             "the 425 was not delivered: the request went again after the handshake and was answered (two calls, the first early)", "");
         proven_http_event_client_destroy(client);
         spin(50);

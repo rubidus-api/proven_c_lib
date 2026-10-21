@@ -333,10 +333,14 @@ static void early_data_section(void) {
         "a ticket made under AES-128-GCM, a connection agreeing ChaCha20 (both SHA-256): resumed, early data refused", "");
     pair_free(&p);
 
-    /* A retry: never early data after it. */
+    /* A retry: never early data after it - the second ClientHello offers none (RFC 8446 section 4.1.2). */
     ticket_into(ce, se, &session);
     proven_tls_test_knobs(0, true);
     p = pair_make(ce, se, &session);
+    (void)move(p.c, p.s, 0, NULL);                 /* the first hello, with early_data */
+    (void)move(p.s, p.c, 1, NULL);                 /* the HelloRetryRequest */
+    ch = proven_tls_quic_pending_(p.c, PROVEN_QUIC_LEVEL_INITIAL);
+    PROVEN_TEST_ASSERT(ch.size > 0 && !hello_ext(ch.ptr, ch.size, 42, &ext), "the second ClientHello carries no early_data", "");
     pump(p.c, p.s, NULL);
     proven_tls_test_knobs(0, false);
     PROVEN_TEST_ASSERT(established_both(&p) && proven_tls_quic_early_(p.c) == PROVEN_TLS_EARLY_REFUSED && proven_tls_quic_early_(p.s) != PROVEN_TLS_EARLY_ACCEPTED,

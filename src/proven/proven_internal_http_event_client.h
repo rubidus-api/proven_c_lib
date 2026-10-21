@@ -195,7 +195,8 @@ bool proven_http_event_request_resumed_(proven_http_event_request_t *request);
 bool proven_http_event_client_h2_resumed_(proven_http_event_request_t *request);
 bool proven_http_event_client_h3_resumed_(proven_http_event_request_t *request);
 /* For tests: whether an HTTP/3 request went as early data (RFC-0021): 0 no, 1 and accepted, 2
- * and refused (sent again under 1-RTT); known once the server's answer to the handshake came. */
+ * and refused (sent again under 1-RTT), 3 and answered 425 (sent again after the handshake);
+ * known once the server's answer to the handshake came. */
 int proven_http_event_client_h3_early_(proven_http_event_request_t *request);
 /* For tests: let any request with its body in memory go early, as another client might. */
 void proven_http_event_client_h3_test_early_any_(bool on);

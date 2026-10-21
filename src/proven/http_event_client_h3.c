@@ -1092,6 +1092,7 @@ void proven_http_event_client_h3_test_retire_(proven_http_event_client_t *client
 
 int proven_http_event_client_h3_early_(proven_http_event_request_t *request) {
     c3req_t *r = c3_of(request);
+    if (r->early_again) return 3;
     if (!r->sent_early || !r->conn || !r->conn->q) return 0;
     proven_quic_stats_t st;
     proven_quic_conn_stats(r->conn->q, &st);
