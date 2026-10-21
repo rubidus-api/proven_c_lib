@@ -1652,6 +1652,16 @@ static proven_u64 on_frame(proven_quic_conn_t *c, int lvl, const proven_quic_fra
     }
 }
 
+/* A frame of a packet read at `lvl` (QC_ZRTT: a 0-RTT packet, which carries no ACK, CRYPTO,
+ * NEW_TOKEN, HANDSHAKE_DONE, RETIRE_CONNECTION_ID or PATH_RESPONSE). */
+static proven_u64 on_frame_at(proven_quic_conn_t *c, int lvl, const proven_quic_frame_t *f, const proven_quic_cid_t *dcid, const proven_quic_addr_t *from) {
+    if (lvl == QC_ZRTT) {
+        if (!frame_in_0rtt(f->type)) return PROVEN_QUIC_PROTOCOL_VIOLATION;
+        lvl = 2;
+    }
+    return on_frame(c, lvl, f, dcid, from);
+}
+
 /* ---- Packets received ---- */
 
 /* This side's 1-RTT write key moves to the next phase (its own update, or following the peer's). */
@@ -1826,11 +1836,10 @@ static int read_packet(proven_quic_conn_t *c, proven_byte_t *pkt, const proven_q
     while (r.n > 0 && c->state < QS_CLOSING) {
         proven_quic_frame_t f;
         proven_u64 err = proven_quic_frame_read(&r, &f);
-        if (err == 0 && zrtt && !frame_in_0rtt(f.type)) err = PROVEN_QUIC_PROTOCOL_VIOLATION;
         if (err == 0) {
             if (proven_quic_frame_ack_eliciting(f.type)) eliciting = true;
             if (!proven_quic_frame_probing(f.type)) *probing_only = false;
-            err = on_frame(c, lvl, &f, &h->dcid, from);
+            err = on_frame_at(c, zrtt ? QC_ZRTT : lvl, &f, &h->dcid, from);
         }
         if (err) { conn_fail(c, err, f.type); return -1; }
         if (sp->discarded) break;       /* HANDSHAKE_DONE took this space away */
@@ -2663,7 +2672,7 @@ proven_u64 proven_quic_conn_test_frames_(proven_quic_conn_t *c, int lvl, proven_
     while (r.n > 0 && c->state < QS_CLOSING) {
         proven_quic_frame_t f;
         proven_u64 err = proven_quic_frame_read(&r, &f);
-        if (err == 0) err = on_frame(c, lvl, &f, &dcid, &c->peer_addr);
+        if (err == 0) err = on_frame_at(c, lvl, &f, &dcid, &c->peer_addr);
         if (err) { conn_fail(c, err, f.type); break; }
     }
     replay_held(c);

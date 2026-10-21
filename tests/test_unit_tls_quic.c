@@ -322,6 +322,17 @@ static void early_data_section(void) {
     PROVEN_TEST_ASSERT(established_both(&p) && proven_tls_resumed(p.s) && proven_tls_quic_early_(p.s) == PROVEN_TLS_EARLY_REFUSED, "a server whose limits changed: refused", "");
     pair_free(&p);
 
+    /* The ticket's suite, exactly: another one of the same hash resumes, but takes no early data. */
+    ticket_into(ce, se, &session);
+    proven_tls_test_knobs(PROVEN_TLS_CHACHA20_POLY1305_SHA256, false);
+    p = pair_make(ce, se, &session);
+    pump(p.c, p.s, NULL);
+    proven_tls_test_knobs(0, false);
+    PROVEN_TEST_ASSERT(established_both(&p) && proven_tls_resumed(p.s) && proven_tls_quic_suite_(p.s)->id == PROVEN_TLS_CHACHA20_POLY1305_SHA256 &&
+                       proven_tls_quic_early_(p.s) == PROVEN_TLS_EARLY_REFUSED && proven_tls_quic_early_(p.c) == PROVEN_TLS_EARLY_REFUSED,
+        "a ticket made under AES-128-GCM, a connection agreeing ChaCha20 (both SHA-256): resumed, early data refused", "");
+    pair_free(&p);
+
     /* A retry: never early data after it. */
     ticket_into(ce, se, &session);
     proven_tls_test_knobs(0, true);
@@ -378,6 +389,17 @@ static void early_data_section(void) {
     sd = (const proven_tls_session_data_t *)(const void *)session.opaque;
     PROVEN_TEST_ASSERT(sd->magic != 0 && sd->early == 0, "its ticket is kept and does not allow early data", "");
     proven_tls_conn_destroy(a); proven_tls_conn_destroy(b);
+    /* Its session told otherwise (as a client of another make might be), the ticket offered over
+     * QUIC with early data: the server goes by the ticket and refuses. */
+    proven_tls_session_data_t *forced = (proven_tls_session_data_t *)(void *)session.opaque;
+    forced->early = 1;
+    p = pair_make(ce, se, &session);
+    ch = proven_tls_quic_pending_(p.c, PROVEN_QUIC_LEVEL_INITIAL);
+    PROVEN_TEST_ASSERT(hello_ext(ch.ptr, ch.size, 42, &ext), "the client, told its ticket allows it, offers early data", "");
+    pump(p.c, p.s, NULL);
+    PROVEN_TEST_ASSERT(established_both(&p) && proven_tls_resumed(p.s) && proven_tls_quic_early_(p.s) == PROVEN_TLS_EARLY_REFUSED,
+        "the server, whose ticket says otherwise, refuses it and resumes", "");
+    pair_free(&p);
 
     /* In QUIC, a ticket whose early_data is not 0xffffffff ends the connection. */
     memset(&session, 0, sizeof session);

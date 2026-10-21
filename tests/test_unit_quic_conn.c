@@ -736,6 +736,21 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_quic_conn_test_frames_(n->ep[1], 0, (proven_mem_view_t){ (const proven_byte_t *)"\x10\x05", 2 }, n->now) == PROVEN_QUIC_PROTOCOL_VIOLATION,
             "MAX_DATA in an Initial packet: not allowed there", "");
         net_free(n);
+        /* 0-RTT packets (RFC 9000 section 12.4): what they may not carry, and what they may. */
+        static const struct { const char *frames; proven_u64 code; const char *what; } zr[] = {
+            { "02" "00" "00" "00" "00", PROVEN_QUIC_PROTOCOL_VIOLATION, "ACK in a 0-RTT packet" },
+            { "06" "00" "01" "00",      PROVEN_QUIC_PROTOCOL_VIOLATION, "CRYPTO in a 0-RTT packet" },
+            { "1e",                     PROVEN_QUIC_PROTOCOL_VIOLATION, "HANDSHAKE_DONE in a 0-RTT packet" },
+            { "19" "00",                PROVEN_QUIC_PROTOCOL_VIOLATION, "RETIRE_CONNECTION_ID in a 0-RTT packet" },
+            { "1b" "0102030405060708",  PROVEN_QUIC_PROTOCOL_VIOLATION, "PATH_RESPONSE in a 0-RTT packet" },
+            { "0b00" "01" "61" "01",    0,                              "STREAM and PING in a 0-RTT packet: allowed" },
+        };
+        for (proven_size_t i = 0; i < sizeof zr / sizeof zr[0]; ++i) {
+            fresh(n, 91 + (unsigned)i);
+            proven_size_t k = unhex(zr[i].frames, payload, sizeof payload);
+            PROVEN_TEST_ASSERT(proven_quic_conn_test_frames_(n->ep[1], 3, (proven_mem_view_t){ payload, k }, n->now) == zr[i].code, zr[i].what, "");
+            net_free(n);
+        }
     }
 
     PROVEN_TEST_SECTION("the idle timeout", "A silent network: both sides close without a word after the idle timeout (and not before).", "");

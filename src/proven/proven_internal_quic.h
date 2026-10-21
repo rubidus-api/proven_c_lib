@@ -22,7 +22,8 @@
 #define PROVEN_QUIC_CRYPTO_BUFFER_EXCEEDED    0x0d
 #define PROVEN_QUIC_CRYPTO_ERROR              0x0100
 
-/* The three encryption levels this library uses (no 0-RTT: RFC-0017 B-2). */
+/* The three encryption levels this library uses. 0-RTT (RFC-0021) has a key of its own in the
+ * Application level's packet number space, held by quic_conn.c. */
 typedef enum { PROVEN_QUIC_LEVEL_INITIAL = 0, PROVEN_QUIC_LEVEL_HANDSHAKE = 1, PROVEN_QUIC_LEVEL_APPLICATION = 2 } proven_quic_level_t;
 #define PROVEN_QUIC_LEVELS 3
 
@@ -466,8 +467,8 @@ typedef struct {
     proven_u8 early;                               /* 0-RTT (RFC-0021): 0 none, 1 accepted, 2 refused */
 } proven_quic_stats_t;
 void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s);
-/* Tests only: `payload` read as the frames of a packet that opened at `lvl` (its result: the
- * close code, or 0), and a key update started by this side. */
+/* Tests only: `payload` read as the frames of a packet that opened at `lvl` (3: a 0-RTT packet;
+ * its result: the close code, or 0), and a key update started by this side. */
 proven_u64 proven_quic_conn_test_frames_(proven_quic_conn_t *c, int lvl, proven_mem_view_t payload, proven_u64 now);
 bool proven_quic_conn_test_key_update_(proven_quic_conn_t *c);
 /* Whether the handshake resumed a session the client offered (RFC-0020). */

@@ -38,9 +38,9 @@
  * **What this is not.** A new implementation with no external audit (the manual says what it
  * was tested against). Of TLS 1.2 only the ECDHE and AEAD suites, with the extended master
  * secret required and renegotiation declined; what is older exists only behind the
- * `legacy` bits of the options, each off by default. No 0-RTT. No revocation checking. A
- * program whose users depend on it against a capable adversary should terminate TLS in
- * something audited.
+ * `legacy` bits of the options, each off by default. 0-RTT only over QUIC (HTTP/3), and only
+ * with `early_data`. No revocation checking. A program whose users depend on it against a
+ * capable adversary should terminate TLS in something audited.
  */
 
 /** @brief Fill `out` with `len` unpredictable bytes. Must not fail. */
@@ -146,7 +146,9 @@ void proven_tls_config_destroy(proven_tls_config_t *config);
  * name. The connection writes into it when the server sends a ticket, and the next connection
  * offers that ticket and, if the server accepts, skips the certificates and one signature.
  * It holds a secret: wipe it (proven_mem_wipe) when you are done with it. Not for use by two
- * connections at once.
+ * connections at once. Over QUIC it also keeps what early data needs (the protocol, the
+ * server's limits) and the server's NEW_TOKEN token. 2,048 bytes since v0.73.0 (1,024 before):
+ * a session written by an older version reads as empty.
  */
 typedef struct {
     alignas(8) proven_byte_t opaque[PROVEN_TLS_SESSION_SIZE];   /* aligned for the record the engine keeps in it */

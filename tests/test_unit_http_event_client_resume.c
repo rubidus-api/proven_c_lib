@@ -206,6 +206,25 @@ int main(void) {
         proven_http_event_client_destroy(client);
     }
 
+    PROVEN_TEST_SECTION("a connection that closes late", "Connection A learns a ticket and stores it; B, given it, learns a newer one and stores that; A, closing after B, puts nothing back - the next connection gets B's (v0.73.0; before it, A's older ticket replaced B's).",
+        "Check `*stored` in proven_http_event_client_session_keep_.");
+    {
+        proven_http_event_client_t *client = client_of(g_client_h1, false, false, false);
+        static proven_tls_session_t ta, tb, out;
+        memset(&ta, 0xa1, sizeof ta); memset(&tb, 0xb2, sizeof tb);
+        const proven_u8str_view_t origin = sv("late.test");
+        proven_u64 a_stored = 0;
+        proven_http_event_client_session_keep_(client, origin, 443, true, &ta, 0, &a_stored, true, false);           /* A learned its ticket */
+        const proven_u64 b_given = proven_http_event_client_session_start_(client, origin, 443, true, &out);
+        proven_u64 b_stored = b_given;
+        PROVEN_TEST_ASSERT(b_given != 0 && out.opaque[0] == 0xa1, "B is given A's", "");
+        proven_http_event_client_session_keep_(client, origin, 443, true, &tb, b_given, &b_stored, true, true);      /* B learned a newer one */
+        proven_http_event_client_session_keep_(client, origin, 443, true, &ta, 0, &a_stored, true, false);           /* A closes late */
+        (void)proven_http_event_client_session_start_(client, origin, 443, true, &out);
+        PROVEN_TEST_ASSERT(out.opaque[0] == 0xb2, "the cache still holds B's: A had nothing new to store", "");
+        proven_http_event_client_destroy(client);
+    }
+
     PROVEN_TEST_SECTION("the cache's bound", "64 origins per transport; the 65th gives up the least recently used, and the other transport's are untouched.", "Check the slot choice in proven_http_event_client_session_keep_.");
     {
         proven_http_event_client_t *client = client_of(g_client_h1, false, false, false);
@@ -216,8 +235,8 @@ int main(void) {
             int n = snprintf(host, sizeof host, "host%d.test", i);
             /* host0, the oldest, is used again before the 65th comes: host1 is then the least recently used. */
             if (i == 64) (void)proven_http_event_client_session_start_(client, sv("host0.test"), 443, false, &out);
-            proven_http_event_client_session_keep_(client, (proven_u8str_view_t){ (const proven_byte_t *)host, (proven_size_t)n }, 443, false, &s, 0, true, false);
-            if (i == 0) proven_http_event_client_session_keep_(client, (proven_u8str_view_t){ (const proven_byte_t *)host, (proven_size_t)n }, 443, true, &s, 0, true, false);
+            proven_http_event_client_session_keep_(client, (proven_u8str_view_t){ (const proven_byte_t *)host, (proven_size_t)n }, 443, false, &s, 0, &(proven_u64){ 0 }, true, false);
+            if (i == 0) proven_http_event_client_session_keep_(client, (proven_u8str_view_t){ (const proven_byte_t *)host, (proven_size_t)n }, 443, true, &s, 0, &(proven_u64){ 0 }, true, false);
         }
         proven_http_event_client_session_start_(client, sv("host1.test"), 443, false, &out);
         bool zero = true;

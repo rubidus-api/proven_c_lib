@@ -77,6 +77,7 @@ struct c2conn {
     proven_tls_conn_t *tls;
     proven_tls_session_t session;      /* this connection's copy of the origin's session (RFC-0020) */
     proven_u64 session_mark;           /* what it was given */
+    proven_u64 session_stored;         /* what it last stored, or was given */
     proven_h2_conn_t *engine;
     c2req_t *reqs;
     c2req_t *turn;                     /* the request whose output was moved last in a round: the next round goes on behind it */
@@ -191,7 +192,7 @@ static void r_finish(c2req_t *r, proven_err_t why) {
     }
     /* A ticket the connection has had by now is the next connection's to offer (RFC-0020). */
     if (c && !c->dead && c->https && c->tls && why == PROVEN_OK)
-        proven_http_event_client_session_keep_(r->h.client, (proven_u8str_view_t){ .ptr = c->host, .size = c->host_len }, c->port, false, &c->session, c->session_mark,
+        proven_http_event_client_session_keep_(r->h.client, (proven_u8str_view_t){ .ptr = c->host, .size = c->host_len }, c->port, false, &c->session, c->session_mark, &c->session_stored,
                                                proven_tls_is_established(c->tls), proven_tls_resumed(c->tls));
     r_unlink(r);
     r->h.client->request_count--;
@@ -228,7 +229,7 @@ static void c_close_socket(c2conn_t *c) {
     const bool established = c->tls && proven_tls_is_established(c->tls), resumed = established && proven_tls_resumed(c->tls);
     if (c->tls) { proven_tls_conn_destroy(c->tls); c->tls = (void *)0; }
     if (c->https) {
-        proven_http_event_client_session_keep_(cl, (proven_u8str_view_t){ .ptr = c->host, .size = c->host_len }, c->port, false, &c->session, c->session_mark, established, resumed);
+        proven_http_event_client_session_keep_(cl, (proven_u8str_view_t){ .ptr = c->host, .size = c->host_len }, c->port, false, &c->session, c->session_mark, &c->session_stored, established, resumed);
         proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)(c->session.opaque), .size = sizeof c->session.opaque });
     }
     if (proven_net_conn_is_open(&c->sock)) (void)proven_net_close(&c->sock);
@@ -971,6 +972,7 @@ static proven_err_t c_open(proven_http_event_client_t *cl, bool https, proven_u8
     proven_err_t e = PROVEN_OK;
     if (https) {
         c->session_mark = proven_http_event_client_session_start_(cl, host, port, false, &c->session);
+        c->session_stored = c->session_mark;
         e = proven_tls_client_create(cl->cfg.tls, host, &c->session, &c->tls);
     }
     if (e == PROVEN_OK) {
