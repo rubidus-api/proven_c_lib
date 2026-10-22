@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.75.0] - 2026-10-22
+
 ### Changed
 
 - HTTP/2's windows grow while bodies are read, as HTTP/3's have since v0.71.0: with
