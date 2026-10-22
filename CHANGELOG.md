@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.73.2] - 2026-10-22
+
 ### Fixed
 
 - HTTP/3 is held to the ALPN name `h3` over QUIC (RFC 9114 section 3.1). The event client offered
