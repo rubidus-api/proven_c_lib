@@ -863,6 +863,7 @@ static proven_err_t c_open(proven_http_event_client_t *cl, proven_u8str_view_t h
     if (e == PROVEN_OK) {
         const proven_quic_config_t qc = {
             .alloc = cl->alloc, .tls = cl->cfg.tls,
+            .alpn = { .ptr = (const proven_byte_t *)"h3", .size = 2 },   /* offered alone, whatever else the configuration offers over TCP (RFC 9114 section 3.1) */
             .stream_window = (proven_u32)cl->cfg.http3_window_bytes, .conn_window = (proven_u32)cl->cfg.http3_window_bytes,
             /* No window configured: it starts at the engine's and grows while bodies are read (RFC-0019 section 9). */
             .stream_window_max = cl->cfg.http3_window_bytes ? 0u : PROVEN_QUIC_STREAM_WINDOW_MAX,

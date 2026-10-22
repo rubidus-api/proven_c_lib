@@ -25,7 +25,7 @@ static proven_loop_t *g_loop;
 static proven_http_event_server_t *g_server;
 static proven_job_sys_t *g_threads;
 static proven_job_group_t g_running;
-static proven_tls_config_t *g_server_tls, *g_client_tls, *g_tcp_tls_h1, *g_tcp_tls_h2;
+static proven_tls_config_t *g_server_tls, *g_client_tls, *g_client_tls_h2h3, *g_tcp_tls_h1, *g_tcp_tls_h2;
 static atomic_int g_in_write, g_reentered;
 static atomic_int g_requests, g_done_ok, g_done_reset, g_done_timeout, g_done_other, g_writable, g_bodies_while_paused, g_dispatch_bad, g_protocol;
 
@@ -668,6 +668,9 @@ int main(void) {
     proven_tls_options_t co = { .alloc = g_heap, .anchors = anchors, .alpn = h3, .alpn_count = 1 };
     proven_tls_options_t co_h1 = { .alloc = g_heap, .anchors = anchors };
     proven_tls_options_t co_h2 = { .alloc = g_heap, .anchors = anchors, .alpn = h2, .alpn_count = 1 };
+    static const proven_u8str_view_t h2h3[] = { { (const proven_byte_t *)"h2", 2 }, { (const proven_byte_t *)"h3", 2 } };
+    proven_tls_options_t co_h2h3 = { .alloc = g_heap, .anchors = anchors, .alpn = h2h3, .alpn_count = 2 };
+    PROVEN_TEST_ASSERT(proven_tls_config_create(&co_h2h3, &g_client_tls_h2h3) == PROVEN_OK, "a client TLS configuration that offers h2 and h3", "");
     proven_tls_config_t *server_two = NULL;
     PROVEN_TEST_ASSERT(proven_tls_config_create(&so, &g_server_tls) == PROVEN_OK && proven_tls_config_create(&so_two, &server_two) == PROVEN_OK &&
                        proven_tls_config_create(&co, &g_client_tls) == PROVEN_OK && proven_tls_config_create(&co_h1, &g_tcp_tls_h1) == PROVEN_OK &&
@@ -755,6 +758,22 @@ int main(void) {
         cl_close(c2);
         cl_close(c);
         free(c); free(c2);
+        server_stop();
+    }
+
+    PROVEN_TEST_SECTION("the protocol agreed is h3", "A QUIC client that offers h2 before h3, to a server whose TLS lists h2 first: HTTP/3 agrees h3 alone (RFC 9114 section 3.1), and the request is answered.", "Check the .alpn of x->qc in src/proven/http_event_h3.c, and alpn_allowed in tls13.c.");
+    {
+        const proven_u16 port = server_start((proven_http_event_server_config_t){ 0 });
+        proven_tls_config_t *only_h3 = g_client_tls;
+        g_client_tls = g_client_tls_h2h3;
+        cl_t *c = calloc(1, sizeof *c);
+        PROVEN_TEST_ASSERT(cl_connect(c, port), "a connection", "");
+        const proven_u8str_view_t agreed = proven_quic_conn_alpn_(c->q);
+        const int h = cl_request(c, "GET", "/hello", 0, NULL, 0, true);
+        PROVEN_TEST_ASSERT(agreed.size == 2 && memcmp(agreed.ptr, "h3", 2) == 0 && cl_wait(c, h, h + 1, 3000) && c->r[h].status == 200, "h3 agreed, and the request answered", "");
+        cl_close(c);
+        free(c);
+        g_client_tls = only_h3;
         server_stop();
     }
 
@@ -897,7 +916,7 @@ int main(void) {
         server_stop();
     }
 
-    proven_tls_config_destroy(g_server_tls); proven_tls_config_destroy(server_two); proven_tls_config_destroy(g_client_tls);
+    proven_tls_config_destroy(g_server_tls); proven_tls_config_destroy(server_two); proven_tls_config_destroy(g_client_tls); proven_tls_config_destroy(g_client_tls_h2h3);
     proven_tls_config_destroy(g_tcp_tls_h1); proven_tls_config_destroy(g_tcp_tls_h2);
     proven_cert_store_destroy(anchors);
     proven_job_system_close(g_threads); proven_job_system_destroy(g_threads);

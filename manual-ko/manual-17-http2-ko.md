@@ -1485,7 +1485,10 @@ HTTP/2에 견주어 주는 것은 잃은 패킷이 제 스트림만 붙잡는다
 
 - **listen마다 UDP 소켓도 연다.** TCP 리스너와 같은 주소와 포트에. UDP 소켓을 얻지 못한 listen은 실패하고
   TCP 리스너는 다시 닫힌다. HTTP/3은 TLS 위에서만: TLS 설정이 `h3`를(`h2`, `http/1.1` 곁에) 내야 하고,
-  `http3`가 꺼져 있으면 내지 말아야 한다.
+  `http3`가 꺼져 있으면 내지 말아야 한다. QUIC에서 서버는 목록이 TCP에서 무엇을 어떤 순서로 내든 `h3`만
+  합의한다(RFC 9114 3.1절). `h3`를 내지 않는 QUIC 클라이언트는 `no_application_protocol`로 끝난다. 0.73.2
+  전에는 서버가 클라이언트가 낸 것 중 자기 첫 선택을 골랐으므로, 이 라이브러리의 클라이언트와 서버는
+  QUIC에서 `h2`를 합의하고 그 아래에서 HTTP/3을 말했다.
 - **클라이언트가 찾는 법.** HTTP/1.1과 HTTP/2 응답에 `Alt-Svc: h3=":PORT"` - 연결이 들어온 포트 - 가
   붙는다. 처리기가 제 `Alt-Svc`를 썼으면 그것이 대신 간다. 브라우저나 `curl --alt-svc`는 다음 요청에서
   HTTP/3을 시도하고, `curl --http3-only`는 곧바로 그것을 청한다.
@@ -1592,7 +1595,8 @@ HTTP/2는 TLS 핸드셰이크가 고른다. HTTP/3은 그럴 수 없다 - UDP �
 
 **대체는 없다.** HTTP/3으로 청한 요청의 서버가 UDP로 답하지 않으면 `connect_timeout_ms`가 지난 뒤
 `PROVEN_ERR_TIMEOUT`으로 - 연결하지 않은 UDP 소켓은 거절을 듣지 못한다 - , `h3`를 거절하는 서버면
-`PROVEN_ERR_UNSUPPORTED`로, 믿을 수 없는 서버면 `PROVEN_ERR_UNTRUSTED`로 끝난다. TCP 연결은 시도하지 않는다:
+`PROVEN_ERR_UNSUPPORTED`로, 믿을 수 없는 서버면 `PROVEN_ERR_UNTRUSTED`로 끝난다. QUIC에서 클라이언트는 TLS
+설정이 TCP에서 무엇을 내든 `h3`만 내고 그 밖의 것은 받지 않는다(0.73.2부터). TCP 연결은 시도하지 않는다:
 그것을 원하는 호출자는 `http3` 없이 요청을 다시 시작한다.
 
 ### 주의할 것, 그리고 잘못되는 것

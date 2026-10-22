@@ -594,6 +594,43 @@ int main(void) {
         proven_tls_config_destroy(no_alpn); proven_tls_config_destroy(old); proven_tls_config_destroy(s_no_alpn);
     }
 
+    PROVEN_TEST_SECTION("held to one protocol", "A connection held to one protocol of its configuration's list, as HTTP/3 holds its own to h3 (RFC 9114 section 3.1): a client offers it alone, a server agrees it alone, and either ends the handshake with no_application_protocol when the other has not got it. One the list lacks is refused.", "Check alpn_allowed and quic_attach in src/proven/tls13.c.");
+    {
+        static const proven_u8str_view_t L23[2] = { { (const proven_byte_t *)"h2", 2 }, { (const proven_byte_t *)"h3", 2 } }, L2[1] = { { (const proven_byte_t *)"h2", 2 } };
+        const proven_u8str_view_t only = sv("h3");
+        proven_tls_options_t o = client_options(); o.alpn = L23; o.alpn_count = 2;
+        proven_tls_config_t *c23 = config(&o);
+        o.alpn = L2; o.alpn_count = 1;
+        proven_tls_config_t *c2 = config(&o);
+        o = server_options(TP_SERVER_ED, TP_SERVER_ED_KEY); o.alpn = L23; o.alpn_count = 2;
+        proven_tls_config_t *s23 = config(&o);
+        o.alpn = L2; o.alpn_count = 1;
+        proven_tls_config_t *s2 = config(&o);
+        proven_tls_conn_t *x = NULL;
+        PROVEN_TEST_ASSERT(proven_tls_quic_client_create_for_(c23, sv("example.test"), NULL, (proven_mem_view_t){ g_ctp, g_ctp_len }, sv("h9"), &x) == PROVEN_ERR_INVALID_ARG &&
+                           proven_tls_quic_server_create_for_(s23, (proven_mem_view_t){ g_stp, g_stp_len }, sv("h9"), &x) == PROVEN_ERR_INVALID_ARG,
+            "a protocol the configuration does not list is refused, both sides", "");
+        for (int k = 0; k < 4; ++k) {
+            /* 0: the client held, the server preferring h2; 1: the server held, the client offering h2 first;
+             * 2: the client held, the server with h2 alone; 3: the server held, the client with h2 alone. */
+            pair_t p = { 0 };
+            const bool client_held = k == 0 || k == 2;
+            proven_tls_config_t *cc = k == 3 ? c2 : c23, *sc = k == 2 ? s2 : s23;
+            PROVEN_TEST_ASSERT(proven_tls_quic_client_create_for_(cc, sv("example.test"), NULL, (proven_mem_view_t){ g_ctp, g_ctp_len }, client_held ? only : (proven_u8str_view_t){ 0 }, &p.c) == PROVEN_OK &&
+                               proven_tls_quic_server_create_for_(sc, (proven_mem_view_t){ g_stp, g_stp_len }, client_held ? (proven_u8str_view_t){ 0 } : only, &p.s) == PROVEN_OK, "a pair", "");
+            pump(p.c, p.s, NULL);
+            if (k < 2)
+                PROVEN_TEST_ASSERT(established_both(&p) && proven_tls_alpn(p.c).size == 2 && memcmp(proven_tls_alpn(p.c).ptr, "h3", 2) == 0 &&
+                                   proven_tls_alpn(p.s).size == 2 && memcmp(proven_tls_alpn(p.s).ptr, "h3", 2) == 0,
+                    k == 0 ? "a client held to h3 offers it alone: a server that prefers h2 agrees h3" : "a server held to h3 agrees it though the client offers h2 first", "");
+            else
+                PROVEN_TEST_ASSERT(!proven_tls_is_established(p.s) && !proven_tls_is_established(p.c) && proven_tls_quic_error_(p.s) == 0x0178,
+                    k == 2 ? "a client held to h3, a server with h2 alone: no_application_protocol (0x0178)" : "a server held to h3, a client with h2 alone: the same", "");
+            pair_free(&p);
+        }
+        proven_tls_config_destroy(c23); proven_tls_config_destroy(c2); proven_tls_config_destroy(s23); proven_tls_config_destroy(s2);
+    }
+
     PROVEN_TEST_SECTION("QUIC's rules, broken", "Each refusal ends the handshake with the code RFC 9001 or RFC 9000 names for it.", "The code is in proven_tls_quic_error_.");
     {
         /* No protocol in common: no_application_protocol, 0x0178. */

@@ -898,6 +898,7 @@ proven_err_t proven_http_event_h3_create_(proven_http_event_server_t *sv) {
     const proven_u32 streams = sv->cfg.max_concurrent_streams > 100000 ? 100000 : (proven_u32)sv->cfg.max_concurrent_streams;
     x->qc = (proven_quic_config_t){
         .alloc = sv->alloc, .tls = sv->cfg.tls,
+        .alpn = { .ptr = (const proven_byte_t *)"h3", .size = 2 },   /* whatever else the configuration offers over TCP (RFC 9114 section 3.1) */
         .max_streams_bidi = streams,
         .max_streams_uni = 16,                     /* a client's control and QPACK streams, and a few it may add */
         .stream_window = (proven_u32)sv->cfg.http3_window_bytes,

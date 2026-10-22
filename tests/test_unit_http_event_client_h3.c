@@ -1,6 +1,9 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "test_unit_tls_pki.h"
+#include "test_unit_http_coding_vectors.h"
+#include "../src/proven/proven_internal_quic_net.h"
+#include "../src/proven/proven_internal_h3.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,9 +24,16 @@ static proven_tls_config_t *g_server_tls, *g_client_tls, *g_client_tls_untrustin
 
 static proven_byte_t pattern(proven_size_t i) { return (proven_byte_t)('a' + (i * 7 + i / 251) % 26); }
 
+typedef struct raw raw_t;
+static raw_t *g_raw;                               /* the scripted server, when one runs */
+static void raw_pump(raw_t *x);
+
 static void spin_until(const bool *flag, proven_u32 ms) {
     proven_net_deadline_t until = proven_net_deadline_in(ms);
-    while (!*flag && proven_time_monotonic_now() < until) PROVEN_TEST_ASSERT(proven_loop_poll(g_loop, proven_net_deadline_in(10)) == PROVEN_OK, "a round", "");
+    while (!*flag && proven_time_monotonic_now() < until) {
+        PROVEN_TEST_ASSERT(proven_loop_poll(g_loop, proven_net_deadline_in(g_raw ? 1 : 10)) == PROVEN_OK, "a round", "");
+        if (g_raw) raw_pump(g_raw);
+    }
 }
 static void spin(proven_u32 ms) { bool never = false; spin_until(&never, ms); }
 
@@ -122,12 +132,16 @@ typedef struct {
     proven_size_t got, to_send, sent;
     int status, protocol, responses, dones, writables;
     proven_err_t why;
-    bool done, bad, plain, pause_once, paused_now, body_while_paused;
+    int order;                                     /* when it ended, among the calls of a case */
+    bool done, bad, plain, pause_once, paused_now, body_while_paused, last;
     proven_byte_t first[8];
     char coding[8];
 } call_t;
 
 static bool g_in_start, g_done_in_start;
+static int g_order;
+static call_t *g_keep;                             /* the call whose body is kept, whole, in g_kept */
+static proven_byte_t g_kept[8192];
 static int g_in_write, g_reentered;
 
 static void call_resume(void *ctx) { call_t *c = ctx; c->paused_now = false; proven_http_event_request_resume(c->request); }
@@ -153,13 +167,15 @@ static void on_response(void *ctx, proven_http_event_request_t *r, const proven_
 }
 
 static void on_body(void *ctx, proven_http_event_request_t *r, proven_mem_view_t piece, bool last) {
-    (void)r; (void)last;
+    (void)r;
     call_t *c = ctx;
     if (c->paused_now) c->body_while_paused = true;
     for (proven_size_t i = 0; i < piece.size; i++) {
         if (c->got + i < sizeof c->first) c->first[c->got + i] = piece.ptr[i];
         if (!c->plain && piece.ptr[i] != pattern(c->got + i)) c->bad = true;
     }
+    if (c == g_keep && piece.size > 0 && c->got + piece.size <= sizeof g_kept) memcpy(g_kept + c->got, piece.ptr, piece.size);
+    if (last) c->last = true;
     c->got += piece.size;
 }
 
@@ -192,6 +208,7 @@ static void on_done(void *ctx, proven_http_event_request_t *r, proven_err_t why)
     if (g_in_start) g_done_in_start = true;
     c->dones++;
     c->done = true;
+    c->order = ++g_order;
     c->why = why;
     proven_loop_timer_cancel(g_loop, &c->timer);
 }
@@ -214,6 +231,196 @@ static proven_err_t start_to(proven_http_event_client_t *client, call_t *c, prov
 }
 static proven_err_t start(proven_http_event_client_t *client, call_t *c, const char *method, const char *path, proven_mem_view_t body, proven_u64 body_length) {
     return start_to(client, c, g_port, method, path, body, body_length, true);
+}
+
+// -----------------------------------------------------------------------------
+// A scripted server: QUIC from the engine, HTTP/3 written by hand, so that it can send what the
+// event server never would - an interim response, a head that breaks the rules, a body shorter
+// or longer than it said, a reset, trailers. One connection at a time; it answers by path.
+// -----------------------------------------------------------------------------
+
+struct raw {
+    proven_net_udp_t udp;
+    proven_u16 port;
+    proven_quic_config_t qc;
+    proven_quic_conn_t *q;
+    proven_net_addr_t peer;
+    bool control;                                  /* its control stream is open */
+    proven_u64 reset_id, reset_at;                 /* a stream to reset at that time (0: none), once what went before has arrived */
+    int requests, rejected, conns;                 /* requests seen; how many /rejected has refused; connections taken */
+    struct { proven_u64 id; proven_byte_t buf[2048]; proven_size_t len; bool used; } st[16];
+};
+
+static proven_u64 raw_now(void) { return (proven_u64)proven_time_monotonic_now() / 1000u; }
+
+static void raw_start(raw_t *x, const proven_tls_config_t *tls) {
+    memset(x, 0, sizeof *x);
+    proven_net_addr_t at;
+    PROVEN_TEST_ASSERT(proven_net_udp_open(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &x->udp, &at) == PROVEN_OK, "the scripted server's socket", "");
+    x->port = at.port;
+    x->qc = (proven_quic_config_t){ .alloc = g_heap, .tls = tls };
+    g_raw = x;
+}
+
+static void raw_stop(raw_t *x) {
+    if (x->q) proven_quic_conn_destroy(x->q);
+    (void)proven_net_udp_close(&x->udp);
+    g_raw = NULL;
+}
+
+static void raw_write(raw_t *x, proven_u64 id, const proven_byte_t *p, proven_size_t n, bool fin) {
+    proven_size_t taken = 0;
+    PROVEN_TEST_ASSERT(proven_quic_stream_write(x->q, id, (proven_mem_view_t){ p, n }, fin, &taken) == PROVEN_OK && taken == n, "the scripted server writes", "");
+}
+
+/* A frame: type, length, payload. */
+static proven_size_t raw_frame(proven_byte_t *out, proven_u64 type, const proven_byte_t *p, proven_size_t n) {
+    proven_size_t k = proven_quic_varint_put(type, out);
+    k += proven_quic_varint_put(n, out + k);
+    if (n) memcpy(out + k, p, n);
+    return k + n;
+}
+
+/* A HEADERS frame of `count` fields, each "name", "value" in turn. */
+static proven_size_t raw_headers(proven_byte_t *out, const char *const *f, proven_size_t count) {
+    proven_http_header_t h[8];
+    for (proven_size_t i = 0; i < count; ++i) h[i] = (proven_http_header_t){ sv(f[2 * i]), sv(f[2 * i + 1]) };
+    proven_byte_t block[512];
+    proven_size_t len = 0;
+    PROVEN_TEST_ASSERT(proven_qpack_encode(h, count, NULL, (proven_mem_mut_t){ block, sizeof block }, &len) == PROVEN_OK, "a field section", "");
+    return raw_frame(out, 1, block, len);
+}
+
+static void raw_answer(raw_t *x, proven_u64 id, const char *path) {
+    proven_byte_t out[1024];
+    proven_size_t n = 0;
+    static const proven_byte_t ten[50] = "0123456789012345678901234567890123456789012345678";
+    x->requests++;
+    if (!strcmp(path, "/interim")) {
+        n += raw_headers(out + n, (const char *const[]){ ":status", "103", "link", "</s.css>; rel=preload" }, 2);
+        n += raw_headers(out + n, (const char *const[]){ ":status", "200", "content-length", "5" }, 2);
+        n += raw_frame(out + n, 0, (const proven_byte_t *)"hello", 5);
+        raw_write(x, id, out, n, true);
+    } else if (!strcmp(path, "/interim-only")) {
+        n += raw_headers(out + n, (const char *const[]){ ":status", "100" }, 1);
+        raw_write(x, id, out, n, true);
+    } else if (!strcmp(path, "/upper")) {
+        n += raw_headers(out + n, (const char *const[]){ ":status", "200", "Content-Type", "text/plain" }, 2);
+        n += raw_frame(out + n, 0, (const proven_byte_t *)"hello", 5);
+        raw_write(x, id, out, n, true);
+    } else if (!strcmp(path, "/no-status")) {
+        n += raw_headers(out + n, (const char *const[]){ "content-type", "text/plain" }, 1);
+        raw_write(x, id, out, n, true);
+    } else if (!strcmp(path, "/short") || !strcmp(path, "/long")) {
+        /* The longer one leaves its stream open: the excess alone must end it, not its end. */
+        n += raw_headers(out + n, (const char *const[]){ ":status", "200", "content-length", path[1] == 's' ? "100" : "10" }, 2);
+        n += raw_frame(out + n, 0, ten, sizeof ten);
+        raw_write(x, id, out, n, path[1] == 's');
+    } else if (!strcmp(path, "/reset")) {
+        n += raw_headers(out + n, (const char *const[]){ ":status", "200", "content-length", "100" }, 2);
+        n += raw_frame(out + n, 0, ten, 10);
+        raw_write(x, id, out, n, false);
+        x->reset_id = id;                          /* a reset now would take back what is not yet sent */
+        x->reset_at = raw_now() + 50000;
+    } else if (!strcmp(path, "/rejected") && x->rejected == 0) {
+        x->rejected++;
+        PROVEN_TEST_ASSERT(proven_quic_stream_reset(x->q, id, PROVEN_H3_REQUEST_REJECTED) == PROVEN_OK, "the scripted server refuses a request", "");
+    } else if (!strcmp(path, "/trailers")) {
+        n += raw_headers(out + n, (const char *const[]){ ":status", "200" }, 1);
+        n += raw_frame(out + n, 0, (const proven_byte_t *)"hello", 5);
+        n += raw_headers(out + n, (const char *const[]){ "x-checksum", "1234" }, 1);
+        raw_write(x, id, out, n, true);
+    } else if (!strcmp(path, "/br")) {
+        const coding_vector_t *v = &coding_vectors[36];
+        char len[16];
+        snprintf(len, sizeof len, "%lu", v->size);
+        n += raw_headers(out + n, (const char *const[]){ ":status", "200", "content-encoding", "br", "content-length", len }, 3);
+        n += raw_frame(out + n, 0, v->bytes, v->size);
+        raw_write(x, id, out, n, true);
+    } else {
+        n += raw_headers(out + n, (const char *const[]){ ":status", "200" }, 1);
+        n += raw_frame(out + n, 0, (const proven_byte_t *)"hello", 5);
+        raw_write(x, id, out, n, true);
+    }
+}
+
+/* A request stream's bytes so far: at its end, the path of its HEADERS frame, answered. */
+static void raw_request(raw_t *x, proven_u64 id) {
+    int k = -1;
+    for (int i = 0; i < 16; ++i) if (x->st[i].used && x->st[i].id == id) k = i;
+    for (int i = 0; i < 16 && k < 0; ++i) if (!x->st[i].used) { k = i; x->st[i].used = true; x->st[i].id = id; x->st[i].len = 0; }
+    PROVEN_TEST_ASSERT(k >= 0, "a place for the request", "");
+    proven_size_t got = 0;
+    bool fin = false;
+    (void)proven_quic_stream_read(x->q, id, (proven_mem_mut_t){ x->st[k].buf + x->st[k].len, sizeof x->st[k].buf - x->st[k].len }, &got, &fin);
+    x->st[k].len += got;
+    if (!fin) return;
+    x->st[k].used = false;
+    proven_quic_rd_t r = { .p = x->st[k].buf, .n = x->st[k].len, .ok = true };
+    const proven_u64 type = proven_quic_rd_varint(&r), len = proven_quic_rd_varint(&r);
+    proven_quic_rd_t block = proven_quic_rd_take(&r, (proven_size_t)len);
+    proven_http_header_t h[16];
+    proven_byte_t scratch[512];
+    proven_size_t count = 0;
+    PROVEN_TEST_ASSERT(r.ok && type == 1 && proven_qpack_decode((proven_mem_view_t){ block.p, block.n }, h, NULL, 16, (proven_mem_mut_t){ scratch, sizeof scratch }, 0, &count) == PROVEN_OK,
+        "the scripted server reads a request's head", "");
+    char path[64] = "";
+    for (proven_size_t i = 0; i < count; ++i)
+        if (h[i].name.size == 5 && !memcmp(h[i].name.ptr, ":path", 5) && h[i].value.size < sizeof path) { memcpy(path, h[i].value.ptr, h[i].value.size); path[h[i].value.size] = '\0'; }
+    raw_answer(x, id, path);
+}
+
+static void raw_pump(raw_t *x) {
+    static proven_byte_t dg[2048];
+    for (;;) {
+        proven_net_addr_t from;
+        proven_result_size_t r = proven_net_udp_recv_from(&x->udp, (proven_mem_mut_t){ dg, sizeof dg }, &from, proven_net_deadline_in(0));
+        if (r.err != PROVEN_OK) break;
+        const proven_quic_addr_t qa = proven_quic_addr_of_(&from);
+        if (x->q) { (void)proven_quic_conn_receive(x->q, (proven_mem_view_t){ dg, r.value }, &qa, raw_now()); continue; }
+        proven_quic_accept_t acc;
+        proven_byte_t reply[1500];
+        proven_size_t n = 0;
+        if (proven_quic_server_stateless(&x->qc, (proven_mem_view_t){ dg, r.value }, &qa, raw_now(), false, (proven_mem_mut_t){ reply, sizeof reply }, &n, &acc) != PROVEN_QUIC_STATELESS_ACCEPT) continue;
+        PROVEN_TEST_ASSERT(proven_quic_conn_server_create(&x->qc, &acc, (proven_mem_view_t){ dg, r.value }, &qa, raw_now(), &x->q) == PROVEN_OK, "the scripted server takes a connection", "");
+        x->peer = from;
+        x->control = false;
+        x->conns++;
+    }
+    if (!x->q) return;
+    if (x->reset_at && raw_now() >= x->reset_at) {
+        PROVEN_TEST_ASSERT(proven_quic_stream_reset(x->q, x->reset_id, PROVEN_H3_INTERNAL_ERROR) == PROVEN_OK, "the scripted server resets a stream", "");
+        x->reset_at = 0;
+    }
+    if (raw_now() >= proven_quic_conn_deadline(x->q)) proven_quic_conn_timeout(x->q, raw_now());
+    proven_quic_event_t ev;
+    bool closed = false;
+    while (proven_quic_conn_poll(x->q, &ev)) {
+        if (ev.kind == PROVEN_QUIC_EV_ESTABLISHED && !x->control) {
+            /* The control stream and its SETTINGS, empty: every default. */
+            proven_u64 id;
+            static const proven_byte_t settings[] = { 0x00, 0x04, 0x00 };
+            PROVEN_TEST_ASSERT(proven_quic_stream_open(x->q, false, &id) == PROVEN_OK, "the scripted server's control stream", "");
+            raw_write(x, id, settings, sizeof settings, false);
+            x->control = true;
+        } else if (ev.kind == PROVEN_QUIC_EV_STREAM_READABLE) {
+            if ((ev.stream_id & 2) == 0) raw_request(x, ev.stream_id);
+            else {                                 /* the client's control and QPACK streams: read and let go */
+                proven_byte_t sink[256];
+                proven_size_t got = 0;
+                bool fin = false;
+                (void)proven_quic_stream_read(x->q, ev.stream_id, (proven_mem_mut_t){ sink, sizeof sink }, &got, &fin);
+            }
+        } else if (ev.kind == PROVEN_QUIC_EV_CLOSED) closed = true;
+    }
+    for (;;) {
+        proven_byte_t out[1500];
+        proven_size_t len = 0;
+        proven_quic_addr_t to;
+        if (proven_quic_conn_send(x->q, raw_now(), (proven_mem_mut_t){ out, sizeof out }, &len, &to) != PROVEN_OK || len == 0) break;
+        (void)proven_net_udp_send_to(&x->udp, x->peer, (proven_mem_view_t){ out, len }, proven_net_deadline_in(100));
+    }
+    if (closed) { proven_quic_conn_destroy(x->q); x->q = NULL; }
 }
 
 // -----------------------------------------------------------------------------
@@ -317,7 +524,7 @@ static void cases(void) {
 
 int main(void) {
     PROVEN_TEST_SUITE("the event-driven HTTP client, speaking HTTP/3",
-        "The event-driven client asked for HTTP/3, against the event-driven server on the same loop over real UDP: requests and bodies both ways, compression, pause, abort, idle, destroy; the client's checks; no fallback to TCP; an untrusted server; time.",
+        "The event-driven client asked for HTTP/3, against the event-driven server on the same loop over real UDP: requests and bodies both ways, compression, pause, abort, idle, destroy; the client's checks; no fallback to TCP; an untrusted server; time. Against a scripted server: responses that break the rules, and a server that refuses h3. max_connections across protocols.",
         "Inspect src/proven/http_event_client_h3.c: r_submit and r_push for what leaves, c_event for what arrives, c_round for a round, c_check_time and c_arm for time, c_open for a connection.");
 
     g_heap = proven_heap_allocator();
@@ -444,6 +651,105 @@ int main(void) {
         d.plain = true;
         spin_until(&d.done, 3000);
         PROVEN_TEST_ASSERT(d.done && d.why == PROVEN_OK && d.got == 5, "is answered on the same connection", "");
+        proven_http_event_client_destroy(cl);
+        spin(200);
+        proven_http_event_server_destroy(server);
+    }
+
+    PROVEN_TEST_SECTION("a server that breaks the rules", "A scripted server writes HTTP/3 by hand: an interim response before the answer, and one with nothing after it; a field name in capitals; no :status; a body shorter and longer than its Content-Length; a reset after part of a body; a request refused as not acted on, sent again; trailers; a br body. Each request ends as RFC 9114 section 4.1.2 asks, and the connection serves the next.", "Check c_response, the STREAM_RESET case of c_event and r_deliver in src/proven/http_event_client_h3.c, and the response checks of h3_conn.c (st_fault).");
+    {
+        static raw_t x;
+        raw_start(&x, g_server_tls);
+        proven_http_event_client_config_t cfg = { .alloc = g_heap, .tls = g_client_tls, .http2 = true, .http3 = true, .retry_unsent = 1, .decompress = true,
+#ifndef PROVEN_NO_BROTLI
+                                                  .decompress_brotli = true,
+#endif
+        };
+        proven_http_event_client_t *cl = NULL;
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &cfg, &cl) == PROVEN_OK, "a client", "");
+        static call_t c;
+#define RAW_GET(path) do { PROVEN_TEST_ASSERT(start_to(cl, &c, x.port, "GET", path, mv(""), 0, true) == PROVEN_OK, "a request to the scripted server", ""); c.plain = true; spin_until(&c.done, 3000); } while (0)
+        RAW_GET("/interim");
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.responses == 1 && c.status == 200 && c.got == 5 && c.last && memcmp(c.first, "hello", 5) == 0,
+            "a 103 before the answer is passed over: one response, 200, and its body", "");
+        RAW_GET("/interim-only");
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_ERR_RESET && c.responses == 0, "a stream that ends after an interim response: PROVEN_ERR_RESET, no response", "");
+        RAW_GET("/upper");
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_ERR_RESET && c.responses == 0, "a field name in capitals: malformed, PROVEN_ERR_RESET", "");
+        RAW_GET("/no-status");
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_ERR_RESET && c.responses == 0, "a head without :status: the same", "");
+        RAW_GET("/short");
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_ERR_RESET && c.responses == 1 && c.got <= 50 && !c.last, "a body of 50 bytes under a Content-Length of 100: the head is delivered, the body never as ended, and the request ends PROVEN_ERR_RESET", "");
+        RAW_GET("/long");
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_ERR_RESET && c.got <= 10 && !c.last, "a body of 50 under a Content-Length of 10, the stream left open: no more than 10 bytes delivered, PROVEN_ERR_RESET", "");
+        RAW_GET("/reset");
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_ERR_RESET && c.responses == 1 && c.got == 10 && !c.last, "a reset 50 ms after the head and 10 bytes of the body: both delivered, then PROVEN_ERR_RESET", "");
+        const int before = x.requests;
+        RAW_GET("/rejected");
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.status == 200 && c.got == 5 && x.rejected == 1 && x.requests == before + 2,
+            "H3_REQUEST_REJECTED: not acted on, so sent again (retry_unsent) and answered", "");
+        RAW_GET("/trailers");
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.got == 5 && c.last, "trailers end the body and are not passed on", "");
+#ifndef PROVEN_NO_BROTLI
+        g_keep = &c;
+        RAW_GET("/br");
+        g_keep = NULL;
+        static proven_byte_t text[3000];
+        proven_size_t tn = 0;
+        for (unsigned k = 0; tn < sizeof text; ++k) {
+            char line[64];
+            int len = snprintf(line, sizeof line, "line %u of the body, which repeats itself\n", k);
+            for (int i = 0; i < len && tn < sizeof text; ++i) text[tn++] = (proven_byte_t)line[i];
+        }
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && strcmp(c.coding, "br") == 0 && c.got == 3000 && memcmp(g_kept, text, 3000) == 0, "a br body is decoded: the 3,000 bytes libbrotli was given", "");
+#endif
+        RAW_GET("/hello");
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.got == 5 && x.conns == 1, "and every request went on one connection: a stream's error is the stream's", "");
+#undef RAW_GET
+        proven_http_event_client_destroy(cl);
+        spin(100);
+        raw_stop(&x);
+    }
+
+    PROVEN_TEST_SECTION("a server that refuses h3", "A QUIC server whose TLS offers only h2 ends the handshake with no_application_protocol (alert 120): the request ends with PROVEN_ERR_UNSUPPORTED, never sent.", "Check c_close_reason in src/proven/http_event_client_h3.c.");
+    {
+        static const proven_u8str_view_t h2only[] = { { (const proven_byte_t *)"h2", 2 } };
+        proven_tls_options_t o = { .alloc = g_heap, .certificate_pem = { (const proven_byte_t *)TP_SERVER_P256, strlen(TP_SERVER_P256) },
+                                   .private_key_pem = { (const proven_byte_t *)TP_SERVER_P256_KEY, strlen(TP_SERVER_P256_KEY) }, .alpn = h2only, .alpn_count = 1 };
+        proven_tls_config_t *tls = NULL;
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &tls) == PROVEN_OK, "a server TLS configuration that offers only h2", "");
+        static raw_t x;
+        raw_start(&x, tls);
+        proven_http_event_client_config_t cfg = { .alloc = g_heap, .tls = g_client_tls, .http2 = true, .http3 = true };
+        proven_http_event_client_t *cl = NULL;
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &cfg, &cl) == PROVEN_OK, "a client", "");
+        static call_t c;
+        PROVEN_TEST_ASSERT(start_to(cl, &c, x.port, "GET", "/hello", mv(""), 0, true) == PROVEN_OK, "a request over HTTP/3", "");
+        spin_until(&c.done, 3000);
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_ERR_UNSUPPORTED && c.responses == 0 && x.requests == 0, "ends with PROVEN_ERR_UNSUPPORTED, never sent", "");
+        proven_http_event_client_destroy(cl);
+        spin(100);
+        raw_stop(&x);
+        proven_tls_config_destroy(tls);
+    }
+
+    PROVEN_TEST_SECTION("max_connections across protocols", "A client of one connection: an HTTP/2 request waits while an HTTP/3 request is on the only one, and has it when that is done; the same the other way round.", "Check proven_http_event_client_room_ and proven_http_event_client_freed_ in src/proven/http_event_client.c, r_place and c_round's call to proven_http_event_client_freed_ in http_event_client_h3.c.");
+    for (int first3 = 1; first3 >= 0; --first3) {
+        proven_http_event_server_t *server = server_on();
+        proven_http_event_client_config_t cfg = { .alloc = g_heap, .tls = g_client_tls, .http2 = true, .http3 = true, .max_connections = 1 };
+        proven_http_event_client_t *cl = NULL;
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &cfg, &cl) == PROVEN_OK, "a client of one connection", "");
+        static call_t busy, next;
+        g_order = 0;
+        PROVEN_TEST_ASSERT(start_to(cl, &busy, g_port, "GET", "/later", mv(""), 0, first3 == 1) == PROVEN_OK, "a request answered after 60 ms", "");
+        busy.plain = true;
+        for (int i = 0; i < 300 && g_served < 1; ++i) spin(5);
+        PROVEN_TEST_ASSERT(start_to(cl, &next, g_port, "GET", "/hello", mv(""), 0, first3 == 0) == PROVEN_OK, "a request over the other protocol", "");
+        next.plain = true;
+        spin_until(&next.done, 5000);
+        PROVEN_TEST_ASSERT(busy.done && busy.why == PROVEN_OK && busy.protocol == (first3 ? 3 : 2) && next.done && next.why == PROVEN_OK && next.protocol == (first3 ? 2 : 3) &&
+                           next.got == 5 && busy.order == 1 && next.order == 2 && g_served == 2,
+            first3 ? "an HTTP/2 request waits for the HTTP/3 connection to be done, then has the place" : "an HTTP/3 request waits for the HTTP/2 connection to be done, then has the place", "");
         proven_http_event_client_destroy(cl);
         spin(200);
         proven_http_event_server_destroy(server);

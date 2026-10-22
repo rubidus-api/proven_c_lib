@@ -18,6 +18,28 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Fixed
+
+- HTTP/3 is held to the ALPN name `h3` over QUIC (RFC 9114 section 3.1). The event client offered
+  its TLS configuration's whole list over QUIC (`h2` and `h3`, say) and took whatever the server
+  chose, and the event server chose its own first preference: between this library's client and
+  server every HTTP/3 connection since v0.65.0 agreed `h2` and spoke HTTP/3 under it, unseen
+  because neither end looked at the name. Now the client offers `h3` alone and takes nothing
+  else, and the server agrees `h3` alone whatever its list's order; a QUIC server that does not
+  offer `h3` ends the request with PROVEN_ERR_UNSUPPORTED, as chapter 17 already said. Other
+  implementations were not affected: curl, aioquic and browsers offer `h3` alone over QUIC, and
+  public servers chose `h3`. No public API change.
+
+### Changed
+
+- `test_unit_http_event_client_h3` has a scripted server: QUIC from the engine and HTTP/3 written
+  by hand, so that the client meets what the event server never sends - an interim response, a
+  malformed head, a body shorter or longer than its Content-Length, a reset, a request refused
+  with `H3_REQUEST_REJECTED`, trailers, a `br` body. And `max_connections` across HTTP/2 and
+  HTTP/3, both ways. No library change.
+- The comment on `max_connections` in `proven_http_event_client_config_t` names HTTP/3, which it
+  has counted since v0.65.0.
+
 ## [0.73.1] - 2026-10-22
 
 ### Fixed

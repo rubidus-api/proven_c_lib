@@ -1568,7 +1568,11 @@ underneath:
 - **Each listen opens a UDP socket as well**, on the same address and port as its TCP
   listener; a listen whose UDP socket cannot be had fails, and the TCP listener is closed
   again. HTTP/3 is over TLS only: the TLS configuration must offer `h3` (beside `h2` and
-  `http/1.1`), and must not when `http3` is off.
+  `http/1.1`), and must not when `http3` is off. Over QUIC the server agrees `h3` alone,
+  whatever else the list offers over TCP and in whatever order (RFC 9114 section 3.1); a QUIC
+  client that does not offer it ends with `no_application_protocol`. Before version 0.73.2 the
+  server took its own first choice that the client offered, so this library's client and server
+  agreed `h2` over QUIC and spoke HTTP/3 under it.
 - **How a client finds it.** HTTP/1.1 and HTTP/2 responses carry `Alt-Svc: h3=":PORT"` - the
   port the connection came in on - unless the handler wrote an `Alt-Svc` of its own, which is
   sent instead. A browser, or `curl --alt-svc`, tries HTTP/3 on its next request; `curl
@@ -1702,7 +1706,8 @@ stream and 24 MiB a connection unless `http3_window_bytes` fixes it (v0.71.0).
 **There is no fallback.** A request asked over HTTP/3 whose server does not answer over UDP ends
 with `PROVEN_ERR_TIMEOUT` when `connect_timeout_ms` has passed - an unconnected UDP socket hears
 no refusal - one whose server refuses `h3` with `PROVEN_ERR_UNSUPPORTED`, and one whose server is
-not trusted with `PROVEN_ERR_UNTRUSTED`. No TCP connection is tried: a caller that wants one
+not trusted with `PROVEN_ERR_UNTRUSTED`. Over QUIC the client offers `h3` alone, whatever else its
+TLS configuration offers over TCP, and takes nothing else (since version 0.73.2). No TCP connection is tried: a caller that wants one
 starts the request again without `http3`.
 
 ### Cautions, and what goes wrong

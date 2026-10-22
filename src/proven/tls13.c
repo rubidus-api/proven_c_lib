@@ -192,6 +192,7 @@ typedef struct {
     const proven_tls_suite_t *early_suite;
     bool early_ready;
     proven_u8 early;
+    int alpn_only;                                /* the one protocol of the configuration's list this connection may agree (its index), or -1: any */
 } tls_quic_t;
 #endif
 
@@ -958,10 +959,22 @@ static proven_tls_session_data_t *client_session12(proven_tls_conn_t *c) {
     return s;
 }
 
+/* Whether the configuration's protocol `i` may be agreed on this connection: in QUIC mode a
+ * connection may be held to one (HTTP/3 to "h3", RFC 9114 section 3.1); otherwise any. */
+static bool alpn_allowed(const proven_tls_conn_t *c, proven_size_t i) {
+#ifndef PROVEN_NO_HTTP3
+    if (c->quic && c->quic->alpn_only >= 0) return (proven_size_t)c->quic->alpn_only == i;
+#else
+    (void)c; (void)i;
+#endif
+    return true;
+}
+
 #ifndef PROVEN_NO_HTTP3
 /* The protocol a session was made for is among those offered now: early data assumes it. */
-static bool session_alpn_offered(const proven_tls_config_t *cfg, const proven_tls_session_data_t *s) {
+static bool session_alpn_offered(const proven_tls_conn_t *c, const proven_tls_config_t *cfg, const proven_tls_session_data_t *s) {
     for (proven_size_t i = 0; s->alpn_len > 0 && i < cfg->alpn_count; ++i) {
+        if (!alpn_allowed(c, i)) continue;
         proven_u8str_view_t ours = proven_tls_config_alpn(cfg, i);
         if (ours.size == s->alpn_len && bytes_eq(ours.ptr, s->alpn, s->alpn_len)) return true;
     }
@@ -996,7 +1009,7 @@ static proven_err_t client_hello_send(proven_tls_conn_t *c) {
      * now, and never after a retry (RFC 8446 section 4.1.2). */
     bool offer_early = false;
 #ifndef PROVEN_NO_HTTP3
-    offer_early = is_quic(c) && cfg->early_data && sess && sess->early && !h->retried && session_alpn_offered(cfg, sess);
+    offer_early = is_quic(c) && cfg->early_data && sess && sess->early && !h->retried && session_alpn_offered(c, cfg, sess);
     if (is_quic(c) && h->retried && c->quic->early == PROVEN_TLS_EARLY_OFFERED) c->quic->early = PROVEN_TLS_EARLY_REFUSED;
 #endif
     const bool test_early = g_test_early_tcp && !is_quic(c) && !h->retried;
@@ -1086,6 +1099,13 @@ static proven_err_t client_hello_send(proven_tls_conn_t *c) {
     if (cfg->alpn_count > 0) {
         wr_uint(&w, EXT_ALPN, 2);
         proven_size_t e = wr_open(&w, 2), l = wr_open(&w, 2);
+#ifndef PROVEN_NO_HTTP3
+        if (c->quic && c->quic->alpn_only >= 0) {
+            /* Held to one protocol: only that one is offered. */
+            const proven_u8str_view_t only = proven_tls_config_alpn(cfg, (proven_size_t)c->quic->alpn_only);
+            wr_uint(&w, (proven_u32)only.size, 1); wr_bytes(&w, only.ptr, only.size);
+        } else
+#endif
         wr_bytes(&w, cfg->alpn_wire, cfg->alpn_wire_len);
         wr_close(&w, l, 2); wr_close(&w, e, 2);
     }
@@ -1315,7 +1335,7 @@ static proven_err_t client_encrypted_extensions(proven_tls_conn_t *c, rd_t body,
             c->alpn_index = -1;
             for (proven_size_t i = 0; i < cfg->alpn_count; ++i) {
                 proven_u8str_view_t ours = proven_tls_config_alpn(cfg, i);
-                if (ours.size == name.n && bytes_eq(ours.ptr, name.p, name.n)) c->alpn_index = (int)i;
+                if (ours.size == name.n && bytes_eq(ours.ptr, name.p, name.n) && alpn_allowed(c, i)) c->alpn_index = (int)i;
             }
             if (c->alpn_index < 0) return tls_illegal(c);          /* a protocol that was not offered */
         } else if (type == EXT_RECORD_SIZE_LIMIT) {
@@ -1725,7 +1745,7 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, rd_t body, proven_
             while (list.n > 0) {
                 rd_t name = rd_vec(&list, 1);
                 if (!list.ok || name.n == 0) return tls_decode(c);
-                if (name.n == ours.size && bytes_eq(name.p, ours.ptr, name.n)) { c->alpn_index = (int)i; break; }
+                if (name.n == ours.size && bytes_eq(name.p, ours.ptr, name.n) && alpn_allowed(c, i)) { c->alpn_index = (int)i; break; }
             }
         }
         if (c->alpn_index < 0) return tls_fail(c, AL_NO_APPLICATION_PROTOCOL, PROVEN_ERR_PROTOCOL);
@@ -3081,22 +3101,31 @@ static proven_err_t conn_new(const proven_tls_config_t *config, bool server, pro
 }
 
 #ifndef PROVEN_NO_HTTP3
-/* QUIC mode for a new connection: TLS 1.3 only, a protocol to name, and parameters that fit. */
-static proven_err_t quic_attach(proven_tls_conn_t *c, proven_mem_view_t tp) {
+/* QUIC mode for a new connection: TLS 1.3 only, a protocol to name (`only`, when given, one of
+ * the configuration's), and parameters that fit. */
+static proven_err_t quic_attach(proven_tls_conn_t *c, proven_mem_view_t tp, proven_u8str_view_t only) {
     const proven_tls_config_t *cfg = c->config;
     if (cfg->max_version < PROVEN_TLS_VERSION_1_3 || cfg->alpn_count == 0 || tp.size > TLS_QUIC_TP_MAX || (tp.size > 0 && !tp.ptr)) return PROVEN_ERR_INVALID_ARG;
+    int only_index = -1;
+    for (proven_size_t i = 0; only.size > 0 && i < cfg->alpn_count; ++i) {
+        const proven_u8str_view_t ours = proven_tls_config_alpn(cfg, i);
+        if (ours.size == only.size && bytes_eq(ours.ptr, only.ptr, only.size)) only_index = (int)i;
+    }
+    if (only.size > 0 && only_index < 0) return PROVEN_ERR_INVALID_ARG;
     proven_result_mem_mut_t m = c->alloc.alloc_fn(c->alloc.ctx, sizeof(tls_quic_t), 16);
     if (m.err != PROVEN_OK) return m.err;
     c->quic = (tls_quic_t *)m.value.ptr;
     tls_wipe(c->quic, sizeof *c->quic);
     for (proven_size_t i = 0; i < tp.size; ++i) c->quic->tp_local[i] = tp.ptr[i];
     c->quic->tp_local_len = tp.size;
+    c->quic->alpn_only = only_index;
     return PROVEN_OK;
 }
 #endif
 
 static proven_err_t client_create(const proven_tls_config_t *config, proven_u8str_view_t server_name, proven_tls_session_t *session,
-                                  proven_mem_view_t hello, const proven_byte_t *x25519_private, const proven_mem_view_t *quic_tp, proven_tls_conn_t **out) {
+                                  proven_mem_view_t hello, const proven_byte_t *x25519_private, const proven_mem_view_t *quic_tp, proven_u8str_view_t quic_alpn,
+                                  proven_tls_conn_t **out) {
     if (!out || !config || (server_name.size > 0 && !server_name.ptr) || server_name.size > 253) return PROVEN_ERR_INVALID_ARG;
     if (server_name.size == 0 && config->verify != PROVEN_TLS_VERIFY_PIN_ONLY) return PROVEN_ERR_INVALID_ARG;
     if (config->verify == PROVEN_TLS_VERIFY_CHAIN && !config->anchors) return PROVEN_ERR_INVALID_ARG;
@@ -3121,12 +3150,12 @@ static proven_err_t client_create(const proven_tls_config_t *config, proven_u8st
     h->session_id_len = 32;
 #ifndef PROVEN_NO_HTTP3
     if (quic_tp) {
-        e = quic_attach(c, *quic_tp);
+        e = quic_attach(c, *quic_tp, quic_alpn);
         if (e != PROVEN_OK) { proven_tls_conn_destroy(c); return e; }
         h->session_id_len = 0;
     }
 #else
-    (void)quic_tp;
+    (void)quic_tp; (void)quic_alpn;
 #endif
     proven_tls_config_random(config, h->x25519_priv, 32);
     if (hello.size > 0) {
@@ -3156,13 +3185,13 @@ void proven_tls_test_peek_write(const proven_tls_conn_t *conn, proven_tls_keys_t
 
 proven_err_t proven_tls_client_create(const proven_tls_config_t *config, proven_u8str_view_t server_name,
                                       proven_tls_session_t *session, proven_tls_conn_t **out) {
-    return client_create(config, server_name, session, (proven_mem_view_t){ .ptr = NULL, .size = 0 }, NULL, NULL, out);
+    return client_create(config, server_name, session, (proven_mem_view_t){ .ptr = NULL, .size = 0 }, NULL, NULL, (proven_u8str_view_t){ 0 }, out);
 }
 
 proven_err_t proven_tls_client_create_replay(const proven_tls_config_t *config, proven_u8str_view_t server_name,
                                              proven_mem_view_t hello, const proven_byte_t x25519_private[32], proven_tls_conn_t **out) {
     if (!hello.ptr || !x25519_private) return PROVEN_ERR_INVALID_ARG;
-    return client_create(config, server_name, NULL, hello, x25519_private, NULL, out);
+    return client_create(config, server_name, NULL, hello, x25519_private, NULL, (proven_u8str_view_t){ 0 }, out);
 }
 
 proven_err_t proven_tls_server_create(const proven_tls_config_t *config, proven_tls_conn_t **out) {
@@ -3180,14 +3209,23 @@ proven_err_t proven_tls_server_create(const proven_tls_config_t *config, proven_
 
 proven_err_t proven_tls_quic_client_create_(const proven_tls_config_t *config, proven_u8str_view_t server_name, proven_tls_session_t *session,
                                             proven_mem_view_t transport_params, proven_tls_conn_t **out) {
-    return client_create(config, server_name, session, (proven_mem_view_t){ .ptr = NULL, .size = 0 }, NULL, &transport_params, out);
+    return proven_tls_quic_client_create_for_(config, server_name, session, transport_params, (proven_u8str_view_t){ 0 }, out);
+}
+
+proven_err_t proven_tls_quic_client_create_for_(const proven_tls_config_t *config, proven_u8str_view_t server_name, proven_tls_session_t *session,
+                                                proven_mem_view_t transport_params, proven_u8str_view_t alpn, proven_tls_conn_t **out) {
+    return client_create(config, server_name, session, (proven_mem_view_t){ .ptr = NULL, .size = 0 }, NULL, &transport_params, alpn, out);
 }
 
 proven_err_t proven_tls_quic_server_create_(const proven_tls_config_t *config, proven_mem_view_t transport_params, proven_tls_conn_t **out) {
+    return proven_tls_quic_server_create_for_(config, transport_params, (proven_u8str_view_t){ 0 }, out);
+}
+
+proven_err_t proven_tls_quic_server_create_for_(const proven_tls_config_t *config, proven_mem_view_t transport_params, proven_u8str_view_t alpn, proven_tls_conn_t **out) {
     proven_tls_conn_t *c = NULL;
     proven_err_t e = proven_tls_server_create(config, &c);
     if (e != PROVEN_OK) return e;
-    e = quic_attach(c, transport_params);
+    e = quic_attach(c, transport_params, alpn);
     if (e != PROVEN_OK) { proven_tls_conn_destroy(c); return e; }
     *out = c;
     return PROVEN_OK;

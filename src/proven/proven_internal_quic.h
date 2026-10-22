@@ -161,6 +161,13 @@ proven_u64 proven_quic_tp_decode(proven_mem_view_t in, bool from_server, proven_
 proven_err_t proven_tls_quic_client_create_(const proven_tls_config_t *config, proven_u8str_view_t server_name, proven_tls_session_t *session,
                                             proven_mem_view_t transport_params, proven_tls_conn_t **out);
 proven_err_t proven_tls_quic_server_create_(const proven_tls_config_t *config, proven_mem_view_t transport_params, proven_tls_conn_t **out);
+/* The same, held to one protocol of the configuration's list (`alpn`, empty: any): a client
+ * offers only it and takes only it; a server agrees only it, and ends the handshake with
+ * no_application_protocol when the client does not offer it. PROVEN_ERR_INVALID_ARG when the
+ * configuration does not list it. HTTP/3 holds its connections to "h3" (RFC 9114 section 3.1). */
+proven_err_t proven_tls_quic_client_create_for_(const proven_tls_config_t *config, proven_u8str_view_t server_name, proven_tls_session_t *session,
+                                                proven_mem_view_t transport_params, proven_u8str_view_t alpn, proven_tls_conn_t **out);
+proven_err_t proven_tls_quic_server_create_for_(const proven_tls_config_t *config, proven_mem_view_t transport_params, proven_u8str_view_t alpn, proven_tls_conn_t **out);
 
 /* Handshake bytes the peer sent at `level`, in order and each once (the QUIC layer puts CRYPTO
  * frames in order). Bytes at a level other than the one being read end the connection with
@@ -352,6 +359,7 @@ typedef struct {
 typedef struct {
     proven_allocator_t alloc;                      /* required */
     const proven_tls_config_t *tls;                /* required: names a protocol (ALPN); its random source is this connection's */
+    proven_u8str_view_t alpn;                      /* the one protocol of `tls`'s list the connection may agree (HTTP/3: "h3"); empty: any of them */
     proven_u32 max_streams_bidi;                   /* streams the peer may open, each kind. 0: 100 */
     proven_u32 max_streams_uni;                    /* 0: 100 */
     proven_u32 stream_window;                      /* bytes a stream may receive ahead of the reader. 0: 256 KiB */
@@ -473,6 +481,8 @@ proven_u64 proven_quic_conn_test_frames_(proven_quic_conn_t *c, int lvl, proven_
 bool proven_quic_conn_test_key_update_(proven_quic_conn_t *c);
 /* Whether the handshake resumed a session the client offered (RFC-0020). */
 bool proven_quic_conn_resumed(const proven_quic_conn_t *c);
+/* The protocol agreed (ALPN), as proven_tls_alpn: empty before the handshake has agreed one. */
+proven_u8str_view_t proven_quic_conn_alpn_(const proven_quic_conn_t *c);
 /* Whether the handshake is complete: before it, streams carry early data (RFC-0021). */
 bool proven_quic_conn_complete_(const proven_quic_conn_t *c);
 

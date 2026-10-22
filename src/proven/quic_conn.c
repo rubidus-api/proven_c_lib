@@ -2655,6 +2655,7 @@ void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s)
 
 bool proven_quic_conn_resumed(const proven_quic_conn_t *c) { return c && c->tls && c->complete && proven_tls_resumed(c->tls); }
 bool proven_quic_conn_complete_(const proven_quic_conn_t *c) { return c && c->complete; }
+proven_u8str_view_t proven_quic_conn_alpn_(const proven_quic_conn_t *c) { return c && c->tls ? proven_tls_alpn(c->tls) : (proven_u8str_view_t){ 0 }; }
 
 /* ---- For tests: frames as if a packet carried them, and a key update started here ---- */
 
@@ -2748,7 +2749,7 @@ proven_err_t proven_quic_conn_client_create(const proven_quic_config_t *cfg, pro
     c->token_len = proven_tls_session_token_take_(session, c->token, sizeof c->token);   /* used once */
     proven_byte_t tp[256];
     const proven_size_t tpn = local_params(c, tp, sizeof tp);
-    proven_err_t e = tpn ? proven_tls_quic_client_create_(cfg->tls, server_name, session, (proven_mem_view_t){ .ptr = tp, .size = tpn }, &c->tls)
+    proven_err_t e = tpn ? proven_tls_quic_client_create_for_(cfg->tls, server_name, session, (proven_mem_view_t){ .ptr = tp, .size = tpn }, cfg->alpn, &c->tls)
                          : PROVEN_ERR_INVALID_ARG;
     if (e != PROVEN_OK) { proven_quic_conn_destroy(c); return e; }
     tls_after(c);
@@ -2776,7 +2777,7 @@ proven_err_t proven_quic_conn_server_create(const proven_quic_config_t *cfg, con
     initial_keys(c, &h.dcid);
     proven_byte_t tp[256];
     const proven_size_t tpn = local_params(c, tp, sizeof tp);
-    proven_err_t e = tpn ? proven_tls_quic_server_create_(cfg->tls, (proven_mem_view_t){ .ptr = tp, .size = tpn }, &c->tls) : PROVEN_ERR_INVALID_ARG;
+    proven_err_t e = tpn ? proven_tls_quic_server_create_for_(cfg->tls, (proven_mem_view_t){ .ptr = tp, .size = tpn }, cfg->alpn, &c->tls) : PROVEN_ERR_INVALID_ARG;
     if (e != PROVEN_OK) { proven_quic_conn_destroy(c); return e; }
     e = proven_quic_conn_receive(c, datagram, from, now);
     if (e != PROVEN_OK) { proven_quic_conn_destroy(c); return e; }
