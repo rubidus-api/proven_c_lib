@@ -229,6 +229,8 @@ bool proven_http_event_client_h2_is_h1_(const proven_http_event_request_t *reque
  */
 void proven_h2_conn_test_next_id_(proven_h2_conn_t *conn, proven_u32 next_id);
 void proven_http_event_client_h2_test_next_id_(proven_http_event_client_t *client, proven_u32 next_id);
+/* For tests: what the receive window of a request's stream may grow to (RFC-0019 section 10); 0 when it has none. */
+proven_u32 proven_http_event_client_h2_test_window_(proven_http_event_request_t *request);
 
 #define PROVEN_HTTP_EVENT_REQUEST_IS_H2_(request) (((const cl_head_t *)(const void *)(request))->kind == CL_KIND_H2)
 #define PROVEN_HTTP_EVENT_REQUEST_IS_H3_(request) (((const cl_head_t *)(const void *)(request))->kind == CL_KIND_H3)

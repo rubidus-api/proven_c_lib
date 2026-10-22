@@ -30,6 +30,8 @@ typedef struct {
     proven_i32 recv_win;                   /* what the peer may still send */
     proven_u32 unacked;                    /* credit not yet returned in a WINDOW_UPDATE */
     proven_u32 held;                       /* reported in DATA events and not yet consumed */
+    proven_u32 win;                        /* with growth on (proven_h2_conn_grow_): its window now, once grown past the initial one; 0 before */
+    proven_u32 moved;                      /* with growth on: when its window last moved (an update, or the stream's start); microseconds, wrapping */
     proven_u32 flags;
     proven_u64 expect;                     /* content-length, or H2C_NO_LENGTH */
     proven_u64 got;
@@ -97,6 +99,12 @@ struct proven_h2_conn {
     bool heads_free : 1;                   /* proven_h2_conn_heads_past_bound_: a response head is not refused for the output bound */
     proven_u32 sweep_at;                   /* where the search for a stream that may send again goes on from: each in its turn */
     proven_u32 text_len;                   /* how much of `text` the last GOAWAY filled */
+    /* Windows that grow while they are read (RFC-0019 section 10; proven_h2_conn_grow_): the caps in
+     * KiB, the clock, and in `grow_mark` when this side's first SETTINGS left - then, once they are
+     * acknowledged, the round trip (microseconds, wrapping: only differences are taken). */
+    proven_u16 grow_stream_kib, grow_conn_kib;
+    proven_u32 grow_mark;
+    proven_u64 (*grow_now)(void);
 };
 
 static proven_u32 h2c_u32(const proven_byte_t *p) {
@@ -226,6 +234,18 @@ static void h2c_conn_credit(proven_h2_conn_t *c, proven_size_t n) {
     }
 }
 
+/* The connection's window keeps one and a half of the largest stream window, up to its cap. */
+static void h2c_conn_follow(proven_h2_conn_t *c, proven_u32 stream_window) {
+    const proven_u64 cap = (proven_u64)c->grow_conn_kib * 1024;
+    proven_u64 want = (proven_u64)stream_window + stream_window / 2;
+    if (want > cap) want = cap;
+    if (want <= c->recv_target) return;
+    const proven_u32 add = (proven_u32)(want - c->recv_target);
+    c->recv_target = (proven_u32)want;
+    c->recv_win += add;
+    h2c_q_window(c, 0, add);
+}
+
 static void h2c_stream_credit(proven_h2_conn_t *c, h2c_stream_t *s, proven_size_t n) {
     if (n == 0 || c->closed) return;
     s->unacked += (proven_u32)n;
@@ -233,11 +253,25 @@ static void h2c_stream_credit(proven_h2_conn_t *c, h2c_stream_t *s, proven_size_
     /* Half a window is the batch - and while this side's setting is on its way to the peer
      * there are two windows, the default and the one announced: whichever the peer is
      * holding to, the smaller of the two cannot leave it waiting. */
-    const proven_u32 window = c->local_window < c->cfg_window ? c->local_window : c->cfg_window;
+    proven_u32 window = c->local_window < c->cfg_window ? c->local_window : c->cfg_window;
+    if (s->win > window) window = s->win;
     if ((proven_u64)s->unacked * 2 >= window) {
         proven_u32 inc = s->unacked;
         proven_u32 id = s->id;
         s->unacked = 0;
+        if (c->grow_now && c->settings_acked) {
+            /* A reader that took half the window within two round trips of its last move is held
+             * back by it: the window doubles, and this update carries the added room. */
+            const proven_u32 now = (proven_u32)c->grow_now();
+            const proven_u32 cap = (proven_u32)c->grow_stream_kib * 1024;
+            if ((proven_u64)(proven_u32)(now - s->moved) < 2 * (proven_u64)c->grow_mark && window < cap) {
+                const proven_u32 next = (proven_u64)window * 2 > cap ? cap : window * 2;
+                inc += next - window;
+                s->win = next;
+                h2c_conn_follow(c, next);
+            }
+            s->moved = now;
+        }
         s->recv_win += (proven_i32)inc;
         h2c_q_window(c, id, inc);
     }
@@ -300,7 +334,8 @@ static h2c_stream_t *h2c_add(proven_h2_conn_t *c, proven_u32 id) {
         for (proven_u32 i = 0; i < c->stream_count; i++) h2c_map(c, i);
     }
     h2c_stream_t *s = &c->streams[c->stream_count++];
-    *s = (h2c_stream_t){ .id = id, .send_win = (proven_i32)c->peer_window, .recv_win = (proven_i32)c->local_window, .expect = H2C_NO_LENGTH };
+    *s = (h2c_stream_t){ .id = id, .send_win = (proven_i32)c->peer_window, .recv_win = (proven_i32)c->local_window, .expect = H2C_NO_LENGTH,
+                         .moved = c->grow_now ? (proven_u32)c->grow_now() : 0 };
     h2c_map(c, c->stream_count - 1);
     return s;
 }
@@ -635,6 +670,10 @@ static void h2c_apply_setting(proven_h2_conn_t *c, proven_h2_setting_t st) {
 static void h2c_settings_acked(proven_h2_conn_t *c) {
     if (c->settings_acked) return;
     c->settings_acked = true;
+    if (c->grow_now) {
+        const proven_u32 rtt = (proven_u32)c->grow_now() - c->grow_mark;
+        c->grow_mark = rtt > 0 ? rtt : 1;
+    }
     if (c->dec) proven_hpack_decoder_set_max_table_bytes(c->dec, c->cfg_table);
     const proven_i64 delta = (proven_i64)c->cfg_window - (proven_i64)c->local_window;
     c->local_window = c->cfg_window;
@@ -1433,6 +1472,34 @@ void *proven_h2_conn_stream_user(const proven_h2_conn_t *c, proven_u32 stream_id
 void proven_h2_conn_heads_past_bound_(proven_h2_conn_t *c);
 void proven_h2_conn_heads_past_bound_(proven_h2_conn_t *c) {
     if (c) c->heads_free = true;
+}
+
+/* For the event-driven drivers (declared in proven_internal_http_event.h; RFC-0019 section 10):
+ * windows that grow while they are read. Called right after proven_h2_conn_create, before
+ * anything is fed or sent - the first SETTINGS leave now, and their acknowledgement gives the
+ * round trip. `now` is microseconds on any monotonic clock. The caps are in KiB, at most 65,535;
+ * one below this side's initial window does nothing. */
+void proven_h2_conn_grow_(proven_h2_conn_t *c, proven_u16 stream_kib, proven_u16 conn_kib, proven_u64 (*now)(void));
+void proven_h2_conn_grow_(proven_h2_conn_t *c, proven_u16 stream_kib, proven_u16 conn_kib, proven_u64 (*now)(void)) {
+    if (!c || !now || c->settings_acked) return;
+    c->grow_stream_kib = stream_kib;
+    c->grow_conn_kib = conn_kib;
+    c->grow_now = now;
+    c->grow_mark = (proven_u32)now();
+}
+
+/* For tests (declared in proven_internal_http_event.h): the receive window of stream `id` now -
+ * the initial one until it grows - or, for 0, the connection's; for PROVEN_H2_TEST_CAP, what a
+ * stream's window may grow to (the initial one when nothing grows). 0 for a stream not open. */
+proven_u32 proven_h2_conn_test_window_(const proven_h2_conn_t *c, proven_u32 id);
+proven_u32 proven_h2_conn_test_window_(const proven_h2_conn_t *c, proven_u32 id) {
+    if (!c) return 0;
+    if (id == 0) return c->recv_target;
+    if (id == 0xffffffffu) return c->grow_now ? (proven_u32)c->grow_stream_kib * 1024 : c->cfg_window;
+    const h2c_stream_t *s = h2c_peek(c, id);
+    if (!s) return 0;
+    const proven_u32 base = c->local_window < c->cfg_window ? c->local_window : c->cfg_window;
+    return s->win > base ? s->win : base;
 }
 
 /* For tests (declared in proven_internal_http_event_client.h): a client's next stream number. */

@@ -980,7 +980,7 @@ Both protocols are served on one port, by one handler, at the same time.
 | `max_head_bytes`, `max_headers` | The size of a request's header list as HPACK counts it; more fields than `max_headers` is `431` |
 | `max_body_bytes` | Per request: `413`, sent while the body is still arriving, which tells the client to stop |
 | `max_buffered_output` | What the connection holds for a client that is not reading, **for all its streams together** |
-| `http2_window_bytes` (0: 65,535) | Request-body bytes a client may send on a stream, and on the connection, before the handler has taken them: what a paused request can make the connection hold |
+| `http2_window_bytes` (0: 65,535, growing) | Request-body bytes a client may send on a stream, and on the connection, before the handler has taken them: what a paused request can make the connection hold. With 0 the window starts there and grows while bodies are read - doubling while half of it is taken within two round trips, up to 16 MiB a stream and 24 MiB a connection (v0.75.0, as HTTP/3's since v0.71.0); a body not read stops the growth. A value set stays fixed. |
 | `head_timeout_ms` | From the connection's first byte to its first request |
 | `body_timeout_ms` | Silence from one request whose body is owed: that stream is reset, the connection and its other streams go on |
 | `http2_header_table_bytes` (0: 4,096), `http2_no_header_table` | The header compression table in each direction: what an idle connection may come to hold, against how much a repeated field costs to send |

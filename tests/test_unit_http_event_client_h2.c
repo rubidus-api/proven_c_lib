@@ -2,6 +2,7 @@
 #include "proven_test.h"
 #include "test_unit_tls_pki.h"
 #include "../src/proven/proven_internal_http_event_client.h"
+#include "../src/proven/proven_internal_http_event.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -108,8 +109,14 @@ static void srv_request(void *ctx, proven_http_stream_t *s, const proven_http_re
     else (void)proven_http_stream_respond(s, 404, NULL, 0, mv("no"));
 }
 
+static proven_u32 g_srv_win_min, g_srv_win_max;     /* the windows of HTTP/2 request streams, seen as bodies arrive */
 static void srv_body(void *ctx, proven_http_stream_t *s, proven_mem_view_t piece, bool last) {
     (void)ctx;
+    if (proven_http_stream_protocol(s) == 2 && !last) {
+        const proven_u32 w = proven_http_event_h2_test_window_(s);
+        if (w && (g_srv_win_min == 0 || w < g_srv_win_min)) g_srv_win_min = w;
+        if (w > g_srv_win_max) g_srv_win_max = w;
+    }
     served_t *a = proven_http_stream_user(s);
     if (!a || !a->echoing) return;
     if (a->got + piece.size > a->cap) { a->cap = (a->got + piece.size) * 2 + 1024; a->echo = realloc(a->echo, a->cap); }
@@ -169,9 +176,15 @@ static void on_response(void *ctx, proven_http_event_request_t *r, const proven_
     }
 }
 
+static proven_u32 g_cl_win_min, g_cl_win_max;       /* the windows of HTTP/2 response streams, seen as bodies arrive */
 static void on_body(void *ctx, proven_http_event_request_t *r, proven_mem_view_t piece, bool last) {
-    (void)r; (void)last;
+    (void)last;
     call_t *c = ctx;
+    if (!last) {
+        const proven_u32 w = proven_http_event_client_h2_test_window_(r);
+        if (w && (g_cl_win_min == 0 || w < g_cl_win_min)) g_cl_win_min = w;
+        if (w > g_cl_win_max) g_cl_win_max = w;
+    }
     if (c->paused_now) c->body_while_paused = true;
     for (proven_size_t i = 0; i < piece.size; i++) {
         if (c->got + i < sizeof c->first) c->first[c->got + i] = piece.ptr[i];
@@ -1077,6 +1090,43 @@ static void window(void) {
     (void)proven_net_listener_close(&l);
 }
 
+/* RFC-0019 section 10: with http2_window_bytes 0 each side's windows may grow while bodies are read;
+ * with a value they stay at it. On loopback the round trip is too short for them to need to - the
+ * growth itself is test_unit_h2_conn's - so what is checked is what each may grow to. */
+static void window_growth(void) {
+    static proven_byte_t up[1 << 16];
+    for (proven_size_t i = 0; i < sizeof up; i++) up[i] = pattern(i);
+    for (int set = 0; set < 2; ++set) {
+        const proven_u32 w = set ? 300000u : 0u;
+        proven_http_event_server_config_t scfg = { .on = { srv_request, srv_body, srv_writable, srv_done }, .http2 = true, .http2_window_bytes = w };
+        proven_http_event_server_t *server = NULL;
+        proven_net_addr_t at;
+        PROVEN_TEST_ASSERT(proven_http_event_server_create(g_loop, &scfg, &server) == PROVEN_OK &&
+                           proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server", "");
+        g_port = at.port; g_https = false;
+        proven_http_event_client_config_t ccfg = { .alloc = g_heap, .http2_cleartext = true, .http2_window_bytes = w };
+        proven_http_event_client_t *client = NULL;
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &ccfg, &client) == PROVEN_OK, "a client", "");
+        static call_t c;
+        g_cl_win_min = g_cl_win_max = g_srv_win_min = g_srv_win_max = 0;
+        PROVEN_TEST_ASSERT(start(client, &c, "GET", "/big/8388608", mv(""), 0) == PROVEN_OK, "a download of 8 MiB", "");
+        spin_until(&c.done, 20000);
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.got == 8388608 && !c.bad, "arrives whole", "");
+        PROVEN_TEST_ASSERT(set ? g_cl_win_min == 300000u && g_cl_win_max == 300000u : g_cl_win_min == 16u << 20 && g_cl_win_max == 16u << 20,
+            set ? "with http2_window_bytes 300,000 the client's windows stay 300,000" : "by default the client's windows may grow to 16 MiB", "");
+        PROVEN_TEST_ASSERT(start(client, &c, "POST", "/echo", mv(""), 200000) == PROVEN_OK, "an upload of 200,000 bytes", "");
+        c.to_send = 200000;
+        call_pump(&c);
+        spin_until(&c.done, 20000);
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.got == 200000 && !c.bad, "is taken whole and echoed", "");
+        PROVEN_TEST_ASSERT(set ? g_srv_win_min == 300000u && g_srv_win_max == 300000u : g_srv_win_min == 16u << 20 && g_srv_win_max == 16u << 20,
+            set ? "with http2_window_bytes 300,000 the server's windows stay 300,000" : "by default the server's windows may grow to 16 MiB", "");
+        proven_http_event_client_destroy(client);
+        spin(50);
+        proven_http_event_server_destroy(server);
+    }
+}
+
 static void numbers_run_out(void) {
     proven_net_listener_t l;
     proven_net_addr_t at;
@@ -1484,6 +1534,8 @@ int main(void) {
     mixed_limit();
     PROVEN_TEST_SECTION("http2_window_bytes", "How much of a response body a server may send before the caller has taken any.", "Check initial_window where the engine is made in http_event_client_h2.c, and the limit in proven_http_event_client_create.");
     window();
+    PROVEN_TEST_SECTION("windows that grow", "With http2_window_bytes 0 the client's and the server's windows may grow to 16 MiB while bodies are read (RFC-0019 section 10); with a value set they stay at it.", "Check where proven_h2_conn_grow_ is called in http_event_client_h2.c and http_event_h2.c, and h2c_stream_credit in h2_conn.c.");
+    window_growth();
     PROVEN_TEST_SECTION("a connection out of stream numbers", "A client has 2^30 streams on a connection. The test puts the next number at the end.", "Check proven_http_event_client_h2_start_ and c_submit_waiting: PROVEN_ERR_INVALID_STATE from the engine's submit marks the connection as over, so that c_find passes it by.");
     numbers_run_out();
     PROVEN_TEST_SECTION("an origin that speaks only HTTP/1.1", "A client that asks for HTTP/2, and a server whose TLS does not offer it.", "Check c_fall_back: the requests that were waiting start again as HTTP/1.1 requests, known to their caller by the objects it already had.");

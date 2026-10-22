@@ -1,5 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
+#include "../src/proven/proven_internal_http_event.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -483,6 +484,63 @@ out:
     proven_h2_conn_destroy(cl);
     proven_h2_conn_destroy(sv_);
     return ok;
+}
+
+
+/* Windows that grow (RFC-0019 section 10): a server whose clock is the test's. The opening is fed
+ * at an arbitrary start and the peer's acknowledgement of its SETTINGS `rtt` microseconds later
+ * (never, for 0);
+ * then a request on stream 1 whose body comes in frames of 16 KiB, `step` microseconds apart, as
+ * fast as the windows the server opens allow - consumed at once unless `unread`. Returns the
+ * connection, open, for the caller to look at and destroy. */
+static proven_u64 g_clock;
+static proven_u64 test_clock(void) { return g_clock; }
+static proven_h2_conn_t *grow_run(bool grow, proven_u64 rtt, proven_u64 step, proven_size_t total, bool unread, proven_size_t *sent_out) {
+    static proven_byte_t piece[16384];
+    const proven_u64 start = 5000000;               /* not 0: a clock's start must not stand in for a round trip */
+    g_clock = start;
+    const proven_h2_config_t cfg = { .alloc = g_alloc, .server = true };
+    proven_h2_conn_t *c = conn_new(&cfg);
+    if (grow) proven_h2_conn_grow_(c, 16384, 24576, test_clock);
+    buf_t *b = &g_rec;
+    b->n = 0;
+    memcpy(b->b, PROVEN_H2_PREFACE, 24); b->n = 24;
+    put_frame(b, PROVEN_H2_SETTINGS, 0, 0, (void *)0, 0);
+    log_t log = { 0 };
+    feed(c, b->b, b->n, b->n, &log);
+    seen_t seen = { 0 };
+    drain(c, &seen);
+    if (rtt) {
+        g_clock = start + rtt;
+        b->n = 0;
+        put_frame(b, PROVEN_H2_SETTINGS, PROVEN_H2_FLAG_ACK, 0, (void *)0, 0);
+        feed(c, b->b, b->n, b->n, &log);
+    }
+    b->n = 0;
+    put_headers(b, 1, EH, POST, 4);
+    feed(c, b->b, b->n, b->n, &log);
+    const bool consume = g_consume;
+    g_consume = !unread;
+    proven_size_t sent = 0;
+    proven_u64 allowed_s = PROVEN_H2_DEFAULT_WINDOW, allowed_c = PROVEN_H2_DEFAULT_WINDOW;
+    while (sent < total && log.err == PROVEN_OK && log.closed == 0) {
+        proven_u64 n = total - sent < sizeof piece ? total - sent : sizeof piece;
+        if (allowed_s - sent < n) n = allowed_s - sent;
+        if (allowed_c - sent < n) n = allowed_c - sent;
+        if (n == 0) break;                         /* held back by a window: the reader has stopped */
+        g_clock += step;
+        b->n = 0;
+        put_frame(b, PROVEN_H2_DATA, 0, 1, piece, (proven_size_t)n);
+        feed(c, b->b, b->n, b->n, &log);
+        sent += (proven_size_t)n;
+        drain(c, &seen);
+        allowed_s = PROVEN_H2_DEFAULT_WINDOW + seen.window_streams;
+        allowed_c = PROVEN_H2_DEFAULT_WINDOW + seen.window_conn;
+    }
+    g_consume = consume;
+    PROVEN_TEST_ASSERT(log.err == PROVEN_OK && log.closed == 0 && log.resets == 0, "the body is taken within the windows the server opened", "");
+    *sent_out = sent;
+    return c;
 }
 
 int main(void) {
@@ -1771,6 +1829,35 @@ int main(void) {
         PROVEN_TEST_ASSERT(opened_count > 2500, "thousands of streams came and went", "");
         proven_h2_conn_destroy(c);
     }
+
+    PROVEN_TEST_SECTION("windows that grow", "With growth turned on (an internal call the event-driven drivers make), a stream's window doubles when its reader takes half of it within two round trips of its last move, up to the cap, and the connection's follows; a slow reader, an unread stream, a connection without the call and one whose SETTINGS were never acknowledged keep the window they started with (RFC-0019 section 10).", "Check h2c_stream_credit, h2c_conn_follow and proven_h2_conn_grow_ in src/proven/h2_conn.c.");
+    {
+        proven_size_t sent = 0;
+        proven_h2_conn_t *c = grow_run(true, 10000, 10, (proven_size_t)40 << 20, false, &sent);
+        PROVEN_TEST_ASSERT(sent == (proven_size_t)40 << 20 && proven_h2_conn_test_window_(c, 1) == 16u << 20 && proven_h2_conn_test_window_(c, 0) == 24u << 20,
+            "a reader that keeps up, a 10 ms round trip, 16 KiB every 10 us: the stream's window reaches 16 MiB and the connection's 24 MiB", "");
+        proven_h2_conn_destroy(c);
+        c = grow_run(true, 10000, 1000, (proven_size_t)2 << 20, false, &sent);
+        const proven_u32 w = proven_h2_conn_test_window_(c, 1);
+        PROVEN_TEST_ASSERT(w > PROVEN_H2_DEFAULT_WINDOW && w < 16u << 20, "16 KiB every millisecond: it grows while half a window takes under 20 ms, and stops there", "");
+        proven_h2_conn_destroy(c);
+        c = grow_run(true, 10000, 15000, (proven_size_t)1 << 20, false, &sent);
+        PROVEN_TEST_ASSERT(proven_h2_conn_test_window_(c, 1) == PROVEN_H2_DEFAULT_WINDOW && proven_h2_conn_test_window_(c, 0) == PROVEN_H2_DEFAULT_WINDOW,
+            "16 KiB every 15 ms: half a window takes 30 ms, more than two round trips - nothing grows", "");
+        proven_h2_conn_destroy(c);
+        c = grow_run(true, 10000, 100, (proven_size_t)1 << 20, true, &sent);
+        PROVEN_TEST_ASSERT(sent == PROVEN_H2_DEFAULT_WINDOW && proven_h2_conn_test_window_(c, 1) == PROVEN_H2_DEFAULT_WINDOW,
+            "a body nobody reads: the sender stops at the first window, and it never grows", "");
+        proven_h2_conn_destroy(c);
+        c = grow_run(false, 10000, 100, (proven_size_t)4 << 20, false, &sent);
+        PROVEN_TEST_ASSERT(sent == (proven_size_t)4 << 20 && proven_h2_conn_test_window_(c, 1) == PROVEN_H2_DEFAULT_WINDOW && proven_h2_conn_test_window_(c, 0) == PROVEN_H2_DEFAULT_WINDOW,
+            "without the call nothing grows, however fast it is read: the public engine is as it was", "");
+        proven_h2_conn_destroy(c);
+        c = grow_run(true, 0, 100, (proven_size_t)4 << 20, false, &sent);
+        PROVEN_TEST_ASSERT(proven_h2_conn_test_window_(c, 1) == PROVEN_H2_DEFAULT_WINDOW, "and nothing grows before the round trip is known (no SETTINGS acknowledgement)", "");
+        proven_h2_conn_destroy(c);
+    }
+
 
     PROVEN_TEST_SECTION("memory", "What an idle connection keeps, what a stream costs, and that an allocation failing anywhere is survived.", "Check the release at the end of proven_h2_conn_feed and the paths that set `oom`.");
     {

@@ -18,6 +18,18 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- HTTP/2's windows grow while bodies are read, as HTTP/3's have since v0.71.0: with
+  `http2_window_bytes` 0 (the default) in `proven_http_event_server_config_t` and
+  `proven_http_event_client_config_t`, a stream's receive window starts at 65,535, doubles while
+  its reader takes half of it within two round trips (the round trip taken from this side's
+  first SETTINGS to their acknowledgement), up to 16 MiB, and the connection's follows up to
+  24 MiB; a body not read stops the growth, so a paused request holds what it held. A value set
+  stays fixed. One 64 MiB download between this library's client and server through a relay with
+  10 ms each way: 16 Mbit/s with the window fixed at 65,535, 1,310 growing (25 ms each way: 6
+  and 603). The public `h2_conn` engine is unchanged unless the event drivers turn growth on.
+
 ## [0.74.0] - 2026-10-22
 
 ### Changed

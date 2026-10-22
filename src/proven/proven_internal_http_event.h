@@ -209,6 +209,15 @@ void proven_http_event_h2_raw_kill_(proven_http_stream_t *stream);
  * output is waiting - see there for what bounds it instead. */
 struct proven_h2_conn;
 void proven_h2_conn_heads_past_bound_(struct proven_h2_conn *conn);
+/* The engine, for both event-driven drivers (RFC-0019 section 10): windows that grow while they
+ * are read, up to the caps (KiB); `now` in microseconds. See h2_conn.c. */
+void proven_h2_conn_grow_(struct proven_h2_conn *conn, proven_u16 stream_kib, proven_u16 conn_kib, proven_u64 (*now)(void));
+/* For tests: stream `id`'s receive window now, or (0) the connection's, or (PROVEN_H2_TEST_CAP)
+ * what a stream's may grow to. */
+#define PROVEN_H2_TEST_CAP 0xffffffffu
+proven_u32 proven_h2_conn_test_window_(const struct proven_h2_conn *conn, proven_u32 id);
+/* For tests: what an HTTP/2 request stream's receive window may grow to, on the server's side. */
+proven_u32 proven_http_event_h2_test_window_(proven_http_stream_t *stream);
 [[nodiscard]]
 proven_err_t proven_http_event_h2_respond_(proven_http_stream_t *stream, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count, proven_mem_view_t body);
 void proven_http_event_h2_abort_(proven_http_stream_t *stream);

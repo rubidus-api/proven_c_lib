@@ -96,6 +96,9 @@ struct h2d {
     bool held;                         /* input is left where it is - the connection is not read - until the engine's output is under its bound again */
 };
 
+/* The engine's clock for growing windows: microseconds. */
+static proven_u64 h2_now_us(void) { return (proven_u64)proven_time_monotonic_now() / 1000u; }
+
 static proven_u8str_view_t h2_lit_n(const char *s, proven_size_t n) { return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n }; }
 #define h2_lit(s) h2_lit_n((s), sizeof(s) - 1)
 
@@ -740,6 +743,8 @@ proven_err_t proven_http_event_h2_take_(proven_http_stream_t *conn) {
         .set_header_table = true, .header_table_bytes = (proven_u32)sv->cfg.http2_header_table_bytes,
     };
     if (proven_h2_conn_create(&cfg, &d->engine) != PROVEN_OK) { sv->alloc.free_fn(sv->alloc.ctx, d); return PROVEN_ERR_NOMEM; }
+    /* No window configured: it starts at the protocol's and grows while bodies are read, to HTTP/3's caps (RFC-0019 section 10). */
+    if (sv->cfg.http2_window_bytes == 0) proven_h2_conn_grow_(d->engine, 16384, 24576, h2_now_us);
     proven_h2_conn_heads_past_bound_(d->engine);
     d->ops = &h2_ops;
     d->conn = conn;
@@ -1046,6 +1051,11 @@ void proven_http_event_h2_abort_(proven_http_stream_t *stream) {
     d->calls--;
     d_leave(d);
     s_leave(s);
+}
+
+proven_u32 proven_http_event_h2_test_window_(proven_http_stream_t *stream) {
+    h2s_t *s = h2s_of(stream);
+    return s->dead || !s->d->engine ? 0 : proven_h2_conn_test_window_(s->d->engine, PROVEN_H2_TEST_CAP);
 }
 
 void proven_http_event_h2_pause_(proven_http_stream_t *stream) {

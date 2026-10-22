@@ -2,6 +2,7 @@
 #include "../../platform/proven_sys_mem.h"
 #include "proven_internal_http_event_client.h"
 #include "proven_internal_loop.h"
+#include "proven_internal_http_event.h"
 
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 
@@ -94,6 +95,9 @@ struct c2conn {
     bool client_going;                 /* ended by proven_http_event_client_destroy, not by anything the server did */
     proven_byte_t host[256];
 };
+
+/* The engine's clock for growing windows: microseconds. */
+static proven_u64 h2_now_us(void) { return (proven_u64)proven_time_monotonic_now() / 1000u; }
 
 static proven_u8str_view_t c2_lit_n(const char *s, proven_size_t n) { return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n }; }
 #define c2_lit(s) c2_lit_n((s), sizeof(s) - 1)
@@ -781,6 +785,8 @@ static void c_up(c2conn_t *c) {
         .header_buffer = { .ptr = cl->h2buf, .size = cl->h2buf_size },
     };
     if (proven_h2_conn_create(&cfg, &c->engine) != PROVEN_OK) { c_kill(c, PROVEN_ERR_NOMEM); return; }
+    /* No window configured: it starts at the protocol's and grows while bodies are read, to HTTP/3's caps (RFC-0019 section 10). */
+    if (cl->cfg.http2_window_bytes == 0) proven_h2_conn_grow_(c->engine, 16384, 24576, h2_now_us);
     c->state = C2_UP;
     c->quiet_due = 0;
     c_submit_waiting(c);
@@ -1585,6 +1591,12 @@ bool proven_http_event_client_h2_is_h1_(const proven_http_event_request_t *reque
 void proven_http_event_client_h2_test_next_id_(proven_http_event_client_t *cl, proven_u32 next_id) {
     if (!cl) return;
     for (c2conn_t *k = cl->h2; k; k = k->next) if (k->engine) proven_h2_conn_test_next_id_(k->engine, next_id);
+}
+
+proven_u32 proven_http_event_client_h2_test_window_(proven_http_event_request_t *request) {
+    c2req_t *r = request ? c2_of(request) : (c2req_t *)0;
+    if (!r || r->dead || r->id == 0 || !r->conn || !r->conn->engine) return 0;
+    return proven_h2_conn_test_window_(r->conn->engine, PROVEN_H2_TEST_CAP);
 }
 
 #endif
