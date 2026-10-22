@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.74.0] - 2026-10-22
+
 ### Changed
 
 - HTTP/3 on Windows sends and receives datagrams in batches, as on Linux since v0.68.0: one
