@@ -1633,7 +1633,7 @@ as they end HTTP/2 ones.
 - **How fast HTTP/3 is depends on the platform.** On Linux the datagrams of a round go to the
   kernel together - up to 45 of 1,452 bytes in one call (`UDP_SEGMENT`), and a receive may hand
   several back (`UDP_GRO`); on Windows the same, through USO and URO (`UDP_SEND_MSG_SIZE`,
-  `UDP_RECV_MAX_COALESCED_SIZE`; v0.73.3); everywhere else each datagram is one system call. Each
+  `UDP_RECV_MAX_COALESCED_SIZE`; v0.74.0); everywhere else each datagram is one system call. Each
   is encrypted and protected on its own either way. On the Windows 11 test VM, this server to this
   client in one process over loopback, 256 MiB: 2,545 Mbit/s over HTTP/3 against 1,021 one call a
   datagram, and 1,919 over HTTP/2 (x86-64; i686 1,807, 845 and 1,627). One 100 MiB download from this server to curl on Linux

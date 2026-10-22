@@ -831,6 +831,10 @@ proven_sys_net_result_t proven_sys_net_udp_gro(proven_sys_socket_t sock) {
 #elif defined(_WIN32) || defined(_WIN64)
     /* URO, coalescing no more than a batch, so that a receive always fits the drivers' buffer. */
     if (atomic_load_explicit(&g_segments_off, memory_order_relaxed)) return PROVEN_SYS_NET_UNSUPPORTED;
+    /* Only with WSARecvMsg at hand: without it the size of a coalesced receive could not be read. */
+    native_socket_t ns = (native_socket_t)sock;
+    InitOnceExecuteOnce(&g_recvmsg_once, recvmsg_find, &ns, NULL);
+    if (!g_recvmsg) return PROVEN_SYS_NET_UNSUPPORTED;
     const DWORD most = (DWORD)PROVEN_SYS_NET_SEGMENTS_MAX_BYTES;
     return setsockopt((native_socket_t)sock, IPPROTO_UDP, UDP_RECV_MAX_COALESCED_SIZE, (const char *)&most, (int)sizeof most) == 0 ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_UNSUPPORTED;
 #else

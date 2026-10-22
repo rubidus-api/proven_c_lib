@@ -342,7 +342,7 @@ The whole hosted suite also runs natively on Windows, cross-built with mingw-w64
 
 `-no-run` builds and installs every test executable and runs none. The build driver asks the compiler for its target (`-dumpmachine`); for a Windows target the executables are `.exe`, linked `-static` with `-lbcrypt`, and never `-ldl`. A maintainers' script (`win11kd-full-suite.sh`, not in this repository) builds both word sizes, sends the tracked tree and the executables to a Windows machine, and runs them there with `win11kd-run-suite.ps1`, which records PASS, FAIL, SKIP (a POSIX-only test that skipped itself - counted apart, since it proves nothing on Windows) and TIMEOUT per test.
 
-Last run, 2026-10-22, Windows 11 test VM (v0.73.3): x86-64 361 PASS, 0 FAIL, 10 SKIP; i686 the same. The ten skips are fixtures whose subject is POSIX: `test_portability_nob_std_probe` and `test_portability_nob_clean` (they drive `./nob` through a POSIX shell), `test_portability_compile_nonet`, `test_portability_compile_nobrotli` and `test_portability_compile_nohttp3` (they drive the host compiler through one), `test_regression_fs_walk_errors` (libc interposition with `dlsym`), `test_unit_fs_walk` (chmod 000 and `ln -s` cycles), `test_regression_fs_backslash_parent` (a backslash as an ordinary byte), `test_regression_fs_private_staging` and `test_regression_fs_perms_and_types` (POSIX modes). `test_unit_sysio_streams`, `test_regression_scanner_float_split` and `test_regression_scanner_short_read` run on Windows too.
+Last run, 2026-10-22, Windows 11 test VM (v0.74.0): x86-64 361 PASS, 0 FAIL, 10 SKIP; i686 the same. The ten skips are fixtures whose subject is POSIX: `test_portability_nob_std_probe` and `test_portability_nob_clean` (they drive `./nob` through a POSIX shell), `test_portability_compile_nonet`, `test_portability_compile_nobrotli` and `test_portability_compile_nohttp3` (they drive the host compiler through one), `test_regression_fs_walk_errors` (libc interposition with `dlsym`), `test_unit_fs_walk` (chmod 000 and `ln -s` cycles), `test_regression_fs_backslash_parent` (a backslash as an ordinary byte), `test_regression_fs_private_staging` and `test_regression_fs_perms_and_types` (POSIX modes). `test_unit_sysio_streams`, `test_regression_scanner_float_split` and `test_regression_scanner_short_read` run on Windows too.
 
 ## Test catalog
 
@@ -1804,7 +1804,7 @@ Failure tip: inspect `proven_sys_net_recv_from` in `platform/proven_sys_net.c` -
 
 ### `tests/test_unit_net_udp_segments` - net: batched datagrams
 
-Intent: verify the internal segment calls of RFC-0018 S-3 over loopback: datagrams of one size, the last possibly shorter, sent in one call where the platform can (Linux: `UDP_SEGMENT`, GSO; Windows: `UDP_SEND_MSG_SIZE`, USO, since v0.73.3) and one at a time where it cannot or is told not to, and received with the size reported when the kernel hands several in one receive (Linux: `UDP_GRO`). Whatever the kernel does, the receiving side must see the same datagrams.
+Intent: verify the internal segment calls of RFC-0018 S-3 over loopback: datagrams of one size, the last possibly shorter, sent in one call where the platform can (Linux: `UDP_SEGMENT`, GSO; Windows: `UDP_SEND_MSG_SIZE`, USO, since v0.74.0) and one at a time where it cannot or is told not to, and received with the size reported when the kernel hands several in one receive (Linux: `UDP_GRO`). Whatever the kernel does, the receiving side must see the same datagrams.
 
 Sub-checks:
 
