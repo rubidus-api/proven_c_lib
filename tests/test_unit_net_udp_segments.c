@@ -10,9 +10,9 @@
 
 /*
  * Batched datagrams (RFC-0018 S-3): proven_net_udp_send_segments_ sends datagrams of one size
- * (the last may be shorter) in one call where the platform can (Linux: UDP_SEGMENT) and one at a
- * time elsewhere; proven_net_udp_recv_segments_ reports the size when the kernel hands several
- * in one receive (Linux: UDP_GRO). Run with the platform's way and with the one-at-a-time way
+ * (the last may be shorter) in one call where the platform can (Linux: UDP_SEGMENT; Windows:
+ * UDP_SEND_MSG_SIZE) and one at a time elsewhere; proven_net_udp_recv_segments_ reports the size
+ * when the system hands several in one receive (Linux: UDP_GRO; Windows: URO). Run with the platform's way and with the one-at-a-time way
  * forced, against a receiver with GRO asked for and one without: whatever the kernel does, the
  * receiving side must see the same datagrams - every size and every byte.
  *
@@ -140,7 +140,7 @@ int main(void) {
         }
     }
     proven_net_udp_segments_off_for_test_(false);
-    printf("  receives that held several datagrams: %u (the kernel's choice; 0 off Linux)\n", coalesced);
+    printf("  receives that held several datagrams: %u (the system's choice; 0 where it does not coalesce)\n", coalesced);
 
     (void)proven_net_udp_close(&s);
     (void)proven_net_udp_close(&r);

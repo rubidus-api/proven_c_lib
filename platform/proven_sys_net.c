@@ -25,6 +25,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mstcpip.h>
+#include <mswsock.h>
 #include <afunix.h>
 #include <windows.h>
 
@@ -36,6 +37,17 @@ typedef WSAPOLLFD native_pollfd_t;
 
 #ifndef SIO_UDP_CONNRESET
 #define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif
+/* UDP send and receive offload (USO, URO), from the Windows SDK's ws2ipdef.h; mingw-w64's
+ * headers have none of them. */
+#ifndef UDP_SEND_MSG_SIZE
+#define UDP_SEND_MSG_SIZE 2
+#endif
+#ifndef UDP_RECV_MAX_COALESCED_SIZE
+#define UDP_RECV_MAX_COALESCED_SIZE 3
+#endif
+#ifndef UDP_COALESCED_INFO
+#define UDP_COALESCED_INFO 3
 #endif
 
 static INIT_ONCE g_net_once = INIT_ONCE_STATIC_INIT;
@@ -680,6 +692,37 @@ static void gso_probe(proven_sys_socket_t sock) {
 }
 #endif
 
+#if defined(_WIN32) || defined(_WIN64)
+static atomic_bool g_gso_refused;       /* this Windows has no USO: not asked again */
+static atomic_bool g_gso_probed;
+static atomic_bool g_gso_worked;
+
+/* A Windows without USO might pass over the control message and send the batch as one large
+ * datagram, as a Linux before 4.18 would: the socket option, asked for once (0: no default
+ * size), tells it apart first. */
+static void gso_probe(proven_sys_socket_t sock) {
+    if (atomic_load_explicit(&g_gso_probed, memory_order_relaxed)) return;
+    const DWORD zero = 0;
+    if (setsockopt((native_socket_t)sock, IPPROTO_UDP, UDP_SEND_MSG_SIZE, (const char *)&zero, (int)sizeof zero) != 0)
+        atomic_store_explicit(&g_gso_refused, true, memory_order_relaxed);
+    atomic_store_explicit(&g_gso_probed, true, memory_order_relaxed);
+}
+
+/* WSARecvMsg is reached through a pointer the provider hands out; fetched once, with the first
+ * socket that asks. */
+static INIT_ONCE g_recvmsg_once = INIT_ONCE_STATIC_INIT;
+static LPFN_WSARECVMSG g_recvmsg;
+
+static BOOL CALLBACK recvmsg_find(PINIT_ONCE once, PVOID param, PVOID *context) {
+    (void)once; (void)context;
+    GUID id = WSAID_WSARECVMSG;
+    DWORD n = 0;
+    if (WSAIoctl(*(const native_socket_t *)param, SIO_GET_EXTENSION_FUNCTION_POINTER, &id, (DWORD)sizeof id, &g_recvmsg, (DWORD)sizeof g_recvmsg, &n, NULL, NULL) != 0)
+        g_recvmsg = NULL;
+    return TRUE;
+}
+#endif
+
 void proven_sys_net_segments_off_for_test_(bool off) { atomic_store_explicit(&g_segments_off, off, memory_order_relaxed); }
 
 proven_sys_net_result_t proven_sys_net_send_segments(proven_sys_socket_t sock, const void *buf, proven_size_t total,
@@ -734,6 +777,42 @@ proven_sys_net_result_t proven_sys_net_send_segments(proven_sys_socket_t sock, c
             break;
         }
     }
+#elif defined(_WIN32) || defined(_WIN64)
+    /* USO (RFC-0018 section 12): one WSASendMsg with UDP_SEND_MSG_SIZE, under Linux's rules. */
+    if (total > seg && !atomic_load_explicit(&g_segments_off, memory_order_relaxed)) gso_probe(sock);
+    if (total > seg && !atomic_load_explicit(&g_segments_off, memory_order_relaxed) && !atomic_load_explicit(&g_gso_refused, memory_order_relaxed)) {
+        struct sockaddr_storage ss;
+        const native_len_t sl = to_native(to, &ss);
+        if (sl == 0) return PROVEN_SYS_NET_ADDR_INVALID;
+        WSABUF b = { .len = (ULONG)total, .buf = (CHAR *)(proven_uintptr_t)p };
+        union { char b[WSA_CMSG_SPACE(sizeof(DWORD))]; WSACMSGHDR align; } ctl;
+        memset(&ctl, 0, sizeof ctl);
+        WSAMSG msg;
+        memset(&msg, 0, sizeof msg);
+        msg.name = (LPSOCKADDR)&ss;
+        msg.namelen = sl;
+        msg.lpBuffers = &b;
+        msg.dwBufferCount = 1;
+        msg.Control.buf = ctl.b;
+        msg.Control.len = (ULONG)sizeof ctl.b;
+        WSACMSGHDR *c = WSA_CMSG_FIRSTHDR(&msg);
+        c->cmsg_level = IPPROTO_UDP;
+        c->cmsg_type = UDP_SEND_MSG_SIZE;
+        c->cmsg_len = WSA_CMSG_LEN(sizeof(DWORD));
+        const DWORD size = (DWORD)seg;
+        memcpy(WSA_CMSG_DATA(c), &size, sizeof size);
+        DWORD n = 0;
+        if (WSASendMsg((native_socket_t)sock, &msg, 0, &n, NULL, NULL) == 0) {
+            atomic_store_explicit(&g_gso_worked, true, memory_order_relaxed);
+            *sent = (proven_size_t)n;
+            return (proven_size_t)n == total ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_ERROR;
+        }
+        const int e = net_last_error();
+        if (e == WSAEWOULDBLOCK) return PROVEN_SYS_NET_WOULD_BLOCK;
+        if ((e == WSAEINVAL || e == WSAENOPROTOOPT || e == WSAEOPNOTSUPP) && !atomic_load_explicit(&g_gso_worked, memory_order_relaxed))
+            atomic_store_explicit(&g_gso_refused, true, memory_order_relaxed);
+        /* and this batch goes one datagram at a time */
+    }
 #endif
     while (*sent < total) {
         const proven_size_t n = total - *sent < seg ? total - *sent : seg;
@@ -749,6 +828,11 @@ proven_sys_net_result_t proven_sys_net_udp_gro(proven_sys_socket_t sock) {
     if (atomic_load_explicit(&g_segments_off, memory_order_relaxed)) return PROVEN_SYS_NET_UNSUPPORTED;
     const int on = 1;
     return setsockopt((native_socket_t)sock, IPPROTO_UDP, UDP_GRO, &on, (socklen_t)sizeof on) == 0 ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_UNSUPPORTED;
+#elif defined(_WIN32) || defined(_WIN64)
+    /* URO, coalescing no more than a batch, so that a receive always fits the drivers' buffer. */
+    if (atomic_load_explicit(&g_segments_off, memory_order_relaxed)) return PROVEN_SYS_NET_UNSUPPORTED;
+    const DWORD most = (DWORD)PROVEN_SYS_NET_SEGMENTS_MAX_BYTES;
+    return setsockopt((native_socket_t)sock, IPPROTO_UDP, UDP_RECV_MAX_COALESCED_SIZE, (const char *)&most, (int)sizeof most) == 0 ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_UNSUPPORTED;
 #else
     (void)sock;
     return PROVEN_SYS_NET_UNSUPPORTED;
@@ -814,6 +898,42 @@ proven_sys_net_result_t proven_sys_net_recv_segments(proven_sys_socket_t sock, v
         if (net_interrupted(e)) continue;
         return net_reason(e);
     }
+#elif defined(_WIN32) || defined(_WIN64)
+    /* URO: WSARecvMsg, for the segment size in UDP_COALESCED_INFO. */
+    native_socket_t ns = (native_socket_t)sock;
+    InitOnceExecuteOnce(&g_recvmsg_once, recvmsg_find, &ns, NULL);
+    if (!g_recvmsg || atomic_load_explicit(&g_segments_off, memory_order_relaxed)) return proven_sys_net_recv_from(sock, buf, cap, received, from);
+    *received = 0;
+    struct sockaddr_storage ss;
+    memset(&ss, 0, sizeof ss);
+    WSABUF b = { .len = (ULONG)clamp_len(cap), .buf = (CHAR *)buf };
+    union { char b[WSA_CMSG_SPACE(sizeof(DWORD)) * 4]; WSACMSGHDR align; } ctl;
+    WSAMSG msg;
+    memset(&msg, 0, sizeof msg);
+    msg.name = (LPSOCKADDR)&ss;
+    msg.namelen = (INT)sizeof ss;
+    msg.lpBuffers = &b;
+    msg.dwBufferCount = 1;
+    msg.Control.buf = ctl.b;
+    msg.Control.len = (ULONG)sizeof ctl.b;
+    DWORD n = 0;
+    if (g_recvmsg(ns, &msg, &n, NULL, NULL) != 0) {
+        const int e = net_last_error();
+        if (e != WSAEMSGSIZE) return net_reason(e);
+        /* The buffer was filled and the rest of the datagram discarded. */
+        *received = (proven_size_t)clamp_len(cap);
+        if (from) from_native(&ss, msg.namelen, from);
+        return PROVEN_SYS_NET_TRUNCATED;
+    }
+    *received = (proven_size_t)n;
+    if (from) from_native(&ss, msg.namelen, from);
+    for (WSACMSGHDR *c = WSA_CMSG_FIRSTHDR(&msg); c; c = WSA_CMSG_NXTHDR(&msg, c)) {
+        if (c->cmsg_level != IPPROTO_UDP || c->cmsg_type != UDP_COALESCED_INFO) continue;
+        DWORD size = 0;
+        memcpy(&size, WSA_CMSG_DATA(c), sizeof size);
+        if (size > 0 && (proven_size_t)size < *received) *seg = (proven_size_t)size;
+    }
+    return (msg.dwFlags & MSG_TRUNC) ? PROVEN_SYS_NET_TRUNCATED : PROVEN_SYS_NET_OK;
 #else
     return proven_sys_net_recv_from(sock, buf, cap, received, from);
 #endif

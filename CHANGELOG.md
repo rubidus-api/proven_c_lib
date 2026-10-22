@@ -18,6 +18,17 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- HTTP/3 on Windows sends and receives datagrams in batches, as on Linux since v0.68.0: one
+  `WSASendMsg` with `UDP_SEND_MSG_SIZE` carries a round's datagrams of one size (USO), and a
+  socket asks for `UDP_RECV_MAX_COALESCED_SIZE` (URO, at most 65,507 bytes) and splits what
+  `WSARecvMsg` hands back by the size it reports. A Windows that refuses the option is
+  remembered and sends one datagram a call, as before. On the Windows 11 test VM, this server to
+  this client over loopback, 256 MiB: 2,545 Mbit/s over HTTP/3 against 1,021 one call a datagram
+  (x86-64; i686 1,807 against 845), and kernel time per GiB from 5.62 s to 0.81 s; HTTP/2 1,919.
+  No public API change.
+
 ## [0.73.2] - 2026-10-22
 
 ### Fixed

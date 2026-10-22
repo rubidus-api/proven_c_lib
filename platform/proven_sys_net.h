@@ -144,15 +144,17 @@ proven_sys_net_result_t proven_sys_net_send_to(proven_sys_socket_t sock, const v
 #define PROVEN_SYS_NET_SEGMENTS_MAX_COUNT 64
 
 /** Send `total` bytes as datagrams of `seg` bytes each (the last may be shorter) to one address
- *  (RFC-0018 S-3). On Linux one call carries them (UDP_SEGMENT, GSO) when the kernel takes it;
- *  everywhere else, and after a refusal, one datagram at a time. `sent` says how many bytes
+ *  (RFC-0018 S-3). On Linux one call carries them (UDP_SEGMENT, GSO) when the kernel takes it,
+ *  on Windows likewise (UDP_SEND_MSG_SIZE, USO; RFC-0018 section 12); everywhere else, and
+ *  after a refusal, one datagram at a time. `sent` says how many bytes
  *  went - all of them on OK; on WOULD_BLOCK a whole number of datagrams, the rest not sent. At
  *  most PROVEN_SYS_NET_SEGMENTS_MAX_BYTES and _MAX_COUNT datagrams. */
 proven_sys_net_result_t proven_sys_net_send_segments(proven_sys_socket_t sock, const void *buf, proven_size_t total,
                                                      proven_size_t seg, const proven_sys_net_addr_t *to, proven_size_t *sent);
 
-/** Ask for UDP_GRO (Linux): the kernel may then hand several datagrams of one sender in one
- *  receive, their size reported by proven_sys_net_recv_segments. UNSUPPORTED elsewhere. */
+/** Ask for UDP_GRO (Linux) or URO (Windows, UDP_RECV_MAX_COALESCED_SIZE, at most
+ *  PROVEN_SYS_NET_SEGMENTS_MAX_BYTES): the system may then hand several datagrams of one sender
+ *  in one receive, their size reported by proven_sys_net_recv_segments. UNSUPPORTED elsewhere. */
 proven_sys_net_result_t proven_sys_net_udp_gro(proven_sys_socket_t sock);
 
 /** Set the don't-fragment bit on what the socket sends, and fragment nothing here (RFC-0018
@@ -162,12 +164,12 @@ proven_sys_net_result_t proven_sys_net_udp_gro(proven_sys_socket_t sock);
 proven_sys_net_result_t proven_sys_net_udp_dontfrag(proven_sys_socket_t sock, proven_sys_net_family_t family);
 
 /** proven_sys_net_recv_from, and in `seg` the size of each datagram when the buffer holds
- *  several (a GRO receive; the last may be shorter), or 0 when it holds one. */
+ *  several (a GRO or URO receive; the last may be shorter), or 0 when it holds one. */
 proven_sys_net_result_t proven_sys_net_recv_segments(proven_sys_socket_t sock, void *buf, proven_size_t cap,
                                                      proven_size_t *received, proven_size_t *seg, proven_sys_net_addr_t *from);
 
-/** For tests: true makes the process send one datagram at a time and ask for no GRO, as every
- *  platform but Linux does. */
+/** For tests: true makes the process send one datagram at a time and ask for no GRO or URO, as
+ *  every platform but Linux and Windows does. */
 void proven_sys_net_segments_off_for_test_(bool off);
 
 /** Close the sending side; the peer reads end of input, and this side can still receive. */
