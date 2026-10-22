@@ -85,6 +85,18 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_u8str_view_is_well_formed(past) && past.size == 0, "past the end: empty and well formed");
     EXAMPLE_REQUIRE(!proven_u8str_view_is_well_formed((proven_u8str_view_t){ NULL, 3 }), "only {NULL, n > 0} is not");
 
+    /* --- 대소문자, ASCII 방식 --------------------------------------------------- */
+
+    /* HTTP 필드 이름, URL 스킴, MIME 타입은 ASCII 글자의 대소문자만 무시한다:
+     * 로캘도, 유니코드 대소문자 접기도 없다. */
+    EXAMPLE_REQUIRE(proven_u8str_view_eq_ascii_ci(PROVEN_LIT("Content-Type"), PROVEN_LIT("content-TYPE")), "field names ignore ASCII case");
+    EXAMPLE_REQUIRE(!proven_u8str_view_eq_ascii_ci(PROVEN_LIT("@"), PROVEN_LIT("`")), "a byte next to the letters is only itself");
+    EXAMPLE_REQUIRE(proven_u8str_view_starts_with_ascii_ci(PROVEN_LIT("HTTPS://example.org"), PROVEN_LIT("https:")), "and so does a prefix test");
+
+    /* 어떤 버퍼든 부르는 자리에서 캐스트 없이 view로. */
+    const unsigned char raw[] = { 'G', 'E', 'T' };
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_view_from_bytes(raw, sizeof raw), PROVEN_LIT("GET")), "a view of raw bytes");
+
     printf("%d fields, %zu names sorted\n", n, (size_t)names.len);
     proven_array_destroy(&names);
     return EXAMPLE_OK();

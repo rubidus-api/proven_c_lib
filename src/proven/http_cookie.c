@@ -22,16 +22,11 @@ static bool ck_eq(proven_u8str_view_t a, proven_u8str_view_t b) {
     return true;
 }
 
-static bool ck_eq_nocase(proven_u8str_view_t a, proven_u8str_view_t b) {
-    if (a.size != b.size) return false;
-    for (proven_size_t i = 0; i < a.size; ++i) if (ck_lower(a.ptr[i]) != ck_lower(b.ptr[i])) return false;
-    return true;
-}
 
 static bool ck_is(proven_u8str_view_t a, const char *b) {
     proven_size_t n = 0;
     while (b[n] != '\0') n++;
-    return ck_eq_nocase(a, (proven_u8str_view_t){ .ptr = (const proven_byte_t *)b, .size = n });
+    return proven_u8str_view_eq_ascii_ci(a, (proven_u8str_view_t){ .ptr = (const proven_byte_t *)b, .size = n });
 }
 
 static proven_u8str_view_t ck_trim(proven_u8str_view_t s) {
@@ -89,7 +84,7 @@ proven_size_t proven_http_cookie_jar_count(const proven_http_cookie_jar_t *jar) 
 static bool ck_domain_covers(proven_u8str_view_t domain, proven_u8str_view_t host) {
     if (domain.size == 0 || domain.size > host.size) return false;
     proven_u8str_view_t tail = { .ptr = host.ptr + host.size - domain.size, .size = domain.size };
-    if (!ck_eq_nocase(tail, domain)) return false;
+    if (!proven_u8str_view_eq_ascii_ci(tail, domain)) return false;
     return domain.size == host.size || host.ptr[host.size - domain.size - 1] == '.';
 }
 
@@ -203,7 +198,7 @@ proven_err_t proven_http_cookie_jar_store(proven_http_cookie_jar_t *jar, proven_
     cookie_t *e = ck_entries(jar);
     proven_size_t same = jar->count;
     for (proven_size_t i = 0; i < jar->count; ++i) {
-        if (ck_eq(ck_name(&e[i]), name) && ck_eq_nocase(ck_host(&e[i]), host) && ck_eq(ck_path(&e[i]), cookie_path)) { same = i; break; }
+        if (ck_eq(ck_name(&e[i]), name) && proven_u8str_view_eq_ascii_ci(ck_host(&e[i]), host) && ck_eq(ck_path(&e[i]), cookie_path)) { same = i; break; }
     }
     if (expired) {
         if (same < jar->count) ck_remove(jar, same);
@@ -260,7 +255,7 @@ proven_err_t proven_http_cookie_jar_header(proven_http_cookie_jar_t *jar, proven
     for (;;) {
         proven_size_t best = jar->count;
         for (proven_size_t i = 0; i < jar->count; ++i) {
-            if (!ck_eq_nocase(ck_host(&e[i]), host) || !ck_path_covers(ck_path(&e[i]), path)) continue;
+            if (!proven_u8str_view_eq_ascii_ci(ck_host(&e[i]), host) || !ck_path_covers(ck_path(&e[i]), path)) continue;
             if (e[i].secure && !secure) continue;
             /* Already written: anything ordered at or before the last one taken. */
             bool before_last = e[i].path_len > last_path || (e[i].path_len == last_path && e[i].stamp <= last_stamp);

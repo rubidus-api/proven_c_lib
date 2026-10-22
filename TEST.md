@@ -2060,6 +2060,7 @@ Sub-checks:
 - Input cut mid-character is `PROVEN_ERR_NEED_MORE` in the partial forms and `PROVEN_ERR_INVALID_ENCODING` in the whole forms; a trailing high surrogate likewise.
 - A full output never receives half a character; the atomic forms write nothing on refusal.
 - The grow forms append, and roll back length and terminator on malformed input, aliasing input, and an allocator that fails mid-way.
+- One code point out and a whole text checked (RFC-0022, v0.76.0): `proven_utf8_encode_one` writes every value from 0 to 0x110010 - each scalar value as the reference does, decoding back through `proven_utf8_decode_next` to the same value and length; the 2,048 surrogates, everything past U+10FFFF and 0xFFFFFFFF give 0 and write nothing; each length boundary. `proven_utf8_validate` agrees with the reference, verdict and first bad offset, over every input of one and two bytes and every seventh of three; NULL with size 0 is valid, with a size `PROVEN_ERR_INVALID_ARG`; a character cut off at the end is malformed at its first byte.
 
 Failure tip: inspect `src/proven/utf.c`. A validity mismatch is a hole in the lead-byte range table (Unicode table 3-7); a rollback failure leaves the destination longer or unterminated.
 
@@ -2113,6 +2114,7 @@ Sub-checks:
 - Prefix and suffix removal return the view unchanged when the affix is absent or longer, and empty when it is the whole view.
 - `find_last` counts overlapping occurrences (`"aaa"`/`"aa"` is 1), answers `size` for an empty needle and `NOT_FOUND` otherwise; `contains` equals `find != NOT_FOUND` on every row.
 - `is_well_formed` is false only for `{NULL, n > 0}`, and true for an out-of-range slice.
+- ASCII case-insensitive equality and prefix (RFC-0022, v0.76.0): every pair of bytes, alone and inside longer views, equal exactly when they fold to the same byte with 'A' to 'Z' folded and nothing else ('@', '[', '`', '{' and bytes from 0x80 match only themselves); different lengths, empty views and NULL with size 0; a prefix that is empty, longer, the whole string, or differs in its last byte. `proven_u8str_view_from_bytes` points at the bytes it was given.
 
 Failure tip: inspect the view vocabulary at the end of `src/proven/u8str.c`. `find_last` at scale is `test_differential_find_last_oracle`.
 

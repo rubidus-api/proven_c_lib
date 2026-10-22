@@ -30,12 +30,6 @@
 static proven_u8str_view_t ev_lit_n(const char *s, proven_size_t n) { return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n }; }
 #define ev_lit(s) ev_lit_n((s), sizeof(s) - 1)
 
-static proven_byte_t ev_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
-static bool ev_eq_nocase(proven_u8str_view_t a, proven_u8str_view_t b) {
-    if (a.size != b.size) return false;
-    for (proven_size_t i = 0; i < a.size; ++i) if (ev_lower(a.ptr[i]) != ev_lower(b.ptr[i])) return false;
-    return true;
-}
 
 static void *ev_alloc(proven_allocator_t a, proven_size_t n) {
     proven_result_mem_mut_t m = a.alloc_fn(a.ctx, n, 16);
@@ -795,8 +789,8 @@ void proven_http_event_gone_(proven_http_event_server_t *s) {
 // -----------------------------------------------------------------------------
 
 static bool ev_is_driver_header(proven_u8str_view_t name) {
-    return ev_eq_nocase(name, ev_lit("Content-Length")) || ev_eq_nocase(name, ev_lit("Transfer-Encoding")) ||
-           ev_eq_nocase(name, ev_lit("Connection")) || ev_eq_nocase(name, ev_lit("Date"));
+    return proven_u8str_view_eq_ascii_ci(name, ev_lit("Content-Length")) || proven_u8str_view_eq_ascii_ci(name, ev_lit("Transfer-Encoding")) ||
+           proven_u8str_view_eq_ascii_ci(name, ev_lit("Connection")) || proven_u8str_view_eq_ascii_ci(name, ev_lit("Date"));
 }
 
 /* The response head into the server's head buffer. */

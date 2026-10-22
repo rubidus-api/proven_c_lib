@@ -75,7 +75,6 @@ proven_err_t proven_ws_accept_key(proven_u8str_view_t key, proven_byte_t out[PRO
     return proven_base64_encode((proven_mem_view_t){ .ptr = digest, .size = sizeof digest }, out, PROVEN_WS_ACCEPT_SIZE, &n);
 }
 
-static bool ws_same_nocase(proven_u8str_view_t a, proven_u8str_view_t b);
 
 proven_err_t proven_ws_check_request(const proven_http_request_t *request, proven_u8str_view_t *key) {
     if (!request || !key) return PROVEN_ERR_INVALID_ARG;
@@ -84,7 +83,7 @@ proven_err_t proven_ws_check_request(const proven_http_request_t *request, prove
     /* HTTP/2 (RFC 8441): an extended CONNECT, which the event-driven server presents with a
      * `:protocol` field first. It has no key: the stream itself is the proof. */
     if (request->method == PROVEN_HTTP_CONNECT && n > 0 && proven_u8str_view_eq(h[0].name, ws_lit(":protocol"))) {
-        if (!ws_same_nocase(h[0].value, ws_lit("websocket"))) return PROVEN_ERR_NOT_FOUND;
+        if (!proven_u8str_view_eq_ascii_ci(h[0].value, ws_lit("websocket"))) return PROVEN_ERR_NOT_FOUND;
         proven_u8str_view_t version;
         if (proven_http_header_count(h, n, ws_lit("Sec-WebSocket-Version")) != 1 ||
             !proven_http_header_find(h, n, ws_lit("Sec-WebSocket-Version"), &version)) return PROVEN_ERR_INVALID_FORMAT;
@@ -109,29 +108,19 @@ proven_err_t proven_ws_check_request(const proven_http_request_t *request, prove
     return PROVEN_OK;
 }
 
-static bool ws_same_nocase(proven_u8str_view_t a, proven_u8str_view_t b) {
-    if (a.size != b.size) return false;
-    for (proven_size_t i = 0; i < a.size; ++i) {
-        proven_byte_t x = a.ptr[i], y = b.ptr[i];
-        if (x >= 'A' && x <= 'Z') x = (proven_byte_t)(x + 32);
-        if (y >= 'A' && y <= 'Z') y = (proven_byte_t)(y + 32);
-        if (x != y) return false;
-    }
-    return true;
-}
 
 proven_err_t proven_ws_check_origin(const proven_http_request_t *request, const proven_u8str_view_t *allowed, proven_size_t allowed_count) {
     if (!request || (!allowed && allowed_count > 0)) return PROVEN_ERR_INVALID_ARG;
     static const proven_u8str_view_t field = { .ptr = (const proven_byte_t *)"origin", .size = 6 };
     const proven_u8str_view_t *origin = (void *)0;
     for (proven_size_t i = 0; i < request->header_count; ++i) {
-        if (!ws_same_nocase(request->headers[i].name, field)) continue;
+        if (!proven_u8str_view_eq_ascii_ci(request->headers[i].name, field)) continue;
         if (origin) return PROVEN_ERR_PERMISSION;          /* two of them: which one is true? */
         origin = &request->headers[i].value;
     }
     if (!origin) return PROVEN_ERR_NOT_FOUND;
     for (proven_size_t i = 0; i < allowed_count; ++i) {
-        if (allowed[i].size > 0 && ws_same_nocase(*origin, allowed[i])) return PROVEN_OK;
+        if (allowed[i].size > 0 && proven_u8str_view_eq_ascii_ci(*origin, allowed[i])) return PROVEN_OK;
     }
     return PROVEN_ERR_PERMISSION;
 }
@@ -160,15 +149,8 @@ typedef struct {
     bool whole;                        /* the element was the only thing in the value */
 } ws_deflate_params_t;
 
-static proven_byte_t ws_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
-static bool ws_eq_nocase(proven_u8str_view_t a, const char *b) {
-    proven_size_t n = 0;
-    while (b[n] != '\0') n++;
-    if (a.size != n) return false;
-    for (proven_size_t i = 0; i < n; ++i) if (ws_lower(a.ptr[i]) != (proven_byte_t)b[i]) return false;
-    return true;
-}
+static bool ws_eq_nocase(proven_u8str_view_t a, const char *b) { return proven_u8str_view_eq_ascii_ci(a, proven_u8str_view_from_cstr(b)); }
 
 /* A window size as a parameter value: 8 to 15, bare or in quotes. 0 when it is not one. */
 static int ws_window_value(proven_u8str_view_t v) {

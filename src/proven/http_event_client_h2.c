@@ -104,11 +104,6 @@ static proven_u8str_view_t c2_lit_n(const char *s, proven_size_t n) { return (pr
 
 static proven_byte_t c2_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
-static bool c2_eq_nocase(proven_u8str_view_t a, proven_u8str_view_t b) {
-    if (a.size != b.size) return false;
-    for (proven_size_t i = 0; i < a.size; ++i) if (c2_lower(a.ptr[i]) != c2_lower(b.ptr[i])) return false;
-    return true;
-}
 
 static void *c2_alloc(proven_allocator_t a, proven_size_t n) {
     proven_result_mem_mut_t m = a.alloc_fn(a.ctx, n, 16);
@@ -465,17 +460,17 @@ static proven_err_t r_submit(c2req_t *r) {
     bool has_accept = false, has_range = false;
     for (proven_size_t i = 0; i < r->header_count; ++i) {
         proven_u8str_view_t name = r->headers[i].name;
-        if (c2_eq_nocase(name, c2_lit("accept-encoding"))) has_accept = true;
-        if (c2_eq_nocase(name, c2_lit("range"))) has_range = true;
+        if (proven_u8str_view_eq_ascii_ci(name, c2_lit("accept-encoding"))) has_accept = true;
+        if (proven_u8str_view_eq_ascii_ci(name, c2_lit("range"))) has_range = true;
         /* Fields that describe an HTTP/1.1 connection are not sent on this one. */
-        if (c2_eq_nocase(name, c2_lit("keep-alive")) || c2_eq_nocase(name, c2_lit("proxy-connection")) || c2_eq_nocase(name, c2_lit("upgrade"))) continue;
-        if (c2_eq_nocase(name, c2_lit("te")) && !c2_eq_nocase(r->headers[i].value, c2_lit("trailers"))) continue;
+        if (proven_u8str_view_eq_ascii_ci(name, c2_lit("keep-alive")) || proven_u8str_view_eq_ascii_ci(name, c2_lit("proxy-connection")) || proven_u8str_view_eq_ascii_ci(name, c2_lit("upgrade"))) continue;
+        if (proven_u8str_view_eq_ascii_ci(name, c2_lit("te")) && !proven_u8str_view_eq_ascii_ci(r->headers[i].value, c2_lit("trailers"))) continue;
         if (at + name.size > cl->cfg.max_head_bytes) { e = PROVEN_ERR_OUT_OF_BOUNDS; break; }
         for (proven_size_t k = 0; k < name.size; ++k) cl->hbuf[at + k] = c2_lower(name.ptr[k]);
         list[n++] = (proven_http_header_t){ .name = { .ptr = cl->hbuf + at, .size = name.size }, .value = r->headers[i].value };
         at += name.size;
     }
-    const bool body_method = c2_eq_nocase(r->method, c2_lit("POST")) || c2_eq_nocase(r->method, c2_lit("PUT")) || c2_eq_nocase(r->method, c2_lit("PATCH"));
+    const bool body_method = proven_u8str_view_eq_ascii_ci(r->method, c2_lit("POST")) || proven_u8str_view_eq_ascii_ci(r->method, c2_lit("PUT")) || proven_u8str_view_eq_ascii_ci(r->method, c2_lit("PATCH"));
     if (e == PROVEN_OK) {
         if (cl->cfg.decompress && !has_accept && !has_range) list[n++] = (proven_http_header_t){ .name = c2_lit("accept-encoding"), .value = proven_http_decoder_accept_(cl->cfg.decompress_zstd, cl->cfg.decompress_brotli) };
         proven_u64 length = r->body.size > 0 ? r->body.size : r->body_length;
@@ -488,7 +483,7 @@ static proven_err_t r_submit(c2req_t *r) {
     if (list != small) cl->alloc.free_fn(cl->alloc.ctx, list);
     if (e != PROVEN_OK) { r->id = 0; return e; }
     proven_h2_conn_stream_set_user(c->engine, r->id, r);
-    r->head_only = c2_eq_nocase(r->method, c2_lit("HEAD"));
+    r->head_only = proven_u8str_view_eq_ascii_ci(r->method, c2_lit("HEAD"));
     if (!r->streamed) {
         r->end_asked = true;
         if (r->body.size == 0) r->engine_done = true;
@@ -955,7 +950,7 @@ static bool c2_same_addr(const proven_net_addr_t *a, const proven_net_addr_t *b)
 static c2conn_t *c_find(proven_http_event_client_t *cl, bool https, proven_u8str_view_t host, proven_u16 port, const proven_net_addr_t *to, const c2conn_t *not) {
     for (c2conn_t *k = cl->h2; k; k = k->next) {
         if (k == not || k->dead || k->over || k->peer_eof || k->https != https || k->port != port || !c2_same_addr(&k->to, to)) continue;
-        if (!c2_eq_nocase((proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, host)) continue;
+        if (!proven_u8str_view_eq_ascii_ci((proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, host)) continue;
         return k;
     }
     return (void *)0;

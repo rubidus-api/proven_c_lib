@@ -302,8 +302,7 @@ bool proven_cert_alt_name_next(const proven_cert_t *cert, proven_size_t *pos,
 static proven_byte_t lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
 static bool ascii_eq_nocase(const proven_byte_t *a, const proven_byte_t *b, proven_size_t n) {
-    for (proven_size_t i = 0; i < n; ++i) if (lower(a[i]) != lower(b[i])) return false;
-    return true;
+    return proven_u8str_view_eq_ascii_ci(proven_u8str_view_from_bytes(a, n), proven_u8str_view_from_bytes(b, n));
 }
 
 static bool parse_ipv4(const proven_byte_t *s, proven_size_t n, proven_byte_t out[4]) {

@@ -126,11 +126,6 @@ static proven_u8str_view_t h3_lit_n(const char *s, proven_size_t n) { return (pr
 
 static proven_byte_t h3_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
-static bool h3_eq_nocase(proven_u8str_view_t a, proven_u8str_view_t b) {
-    if (a.size != b.size) return false;
-    for (proven_size_t i = 0; i < a.size; ++i) if (h3_lower(a.ptr[i]) != h3_lower(b.ptr[i])) return false;
-    return true;
-}
 
 static void *h3_alloc(proven_allocator_t a, proven_size_t n) {
     proven_result_mem_mut_t m = a.alloc_fn(a.ctx, n, 16);
@@ -546,11 +541,11 @@ static void d_request(h3d_t *d, const proven_h3_event_t *ev) {
     proven_u64 length = 0;
     for (proven_size_t i = 0; i < rq->field_count; ++i) {
         const proven_http_header_t *f = &rq->fields[i];
-        if (h3_eq_nocase(f->name, h3_lit("host"))) {
+        if (proven_u8str_view_eq_ascii_ci(f->name, h3_lit("host"))) {
             /* Two different targets in one request (RFC 9114 section 4.3.1). */
-            if (has_host || (rq->authority.size > 0 && !h3_eq_nocase(f->value, rq->authority))) bad = true;
+            if (has_host || (rq->authority.size > 0 && !proven_u8str_view_eq_ascii_ci(f->value, rq->authority))) bad = true;
             has_host = true;
-        } else if (h3_eq_nocase(f->name, h3_lit("content-length"))) {
+        } else if (proven_u8str_view_eq_ascii_ci(f->name, h3_lit("content-length"))) {
             has_length = true;
             length = 0;
             for (proven_size_t k = 0; k < f->value.size && length <= sv->cfg.max_body_bytes; ++k) length = length * 10 + (proven_u64)(f->value.ptr[k] - '0');
@@ -1018,7 +1013,7 @@ proven_u16 proven_http_event_h3_port_(const proven_http_event_server_t *sv, prov
 
 proven_size_t proven_http_event_alt_svc_(const proven_http_event_server_t *sv, proven_u16 local_port, const proven_http_header_t *headers,
                                          proven_size_t header_count, proven_byte_t out[16]) {
-    for (proven_size_t i = 0; i < header_count && headers; ++i) if (h3_eq_nocase(headers[i].name, h3_lit("alt-svc"))) return 0;
+    for (proven_size_t i = 0; i < header_count && headers; ++i) if (proven_u8str_view_eq_ascii_ci(headers[i].name, h3_lit("alt-svc"))) return 0;
     proven_u16 port = proven_http_event_h3_port_(sv, local_port);
     if (port == 0) return 0;
     proven_byte_t digits[5];
@@ -1055,14 +1050,14 @@ void proven_http_event_h3_compress_(proven_http_stream_t *stream) {
 }
 
 static bool h3_is_driver_header(proven_u8str_view_t name) {
-    return h3_eq_nocase(name, h3_lit("content-length")) || h3_eq_nocase(name, h3_lit("transfer-encoding")) ||
-           h3_eq_nocase(name, h3_lit("connection")) || h3_eq_nocase(name, h3_lit("date"));
+    return proven_u8str_view_eq_ascii_ci(name, h3_lit("content-length")) || proven_u8str_view_eq_ascii_ci(name, h3_lit("transfer-encoding")) ||
+           proven_u8str_view_eq_ascii_ci(name, h3_lit("connection")) || proven_u8str_view_eq_ascii_ci(name, h3_lit("date"));
 }
 
 /* Fields of an HTTP/1.1 connection: not sent over HTTP/3 (RFC 9114 section 4.2), rather than
  * the response refused for them. */
 static bool h3_is_hop_header(proven_u8str_view_t name) {
-    return h3_eq_nocase(name, h3_lit("keep-alive")) || h3_eq_nocase(name, h3_lit("proxy-connection")) || h3_eq_nocase(name, h3_lit("upgrade"));
+    return proven_u8str_view_eq_ascii_ci(name, h3_lit("keep-alive")) || proven_u8str_view_eq_ascii_ci(name, h3_lit("proxy-connection")) || proven_u8str_view_eq_ascii_ci(name, h3_lit("upgrade"));
 }
 
 static proven_err_t s_head(h3s_t *s, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,

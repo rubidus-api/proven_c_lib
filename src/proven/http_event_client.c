@@ -28,11 +28,6 @@ static proven_u8str_view_t cl_lit_n(const char *s, proven_size_t n) { return (pr
 #define cl_lit(s) cl_lit_n((s), sizeof(s) - 1)
 
 static proven_byte_t cl_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
-static bool cl_eq_nocase(proven_u8str_view_t a, proven_u8str_view_t b) {
-    if (a.size != b.size) return false;
-    for (proven_size_t i = 0; i < a.size; ++i) if (cl_lower(a.ptr[i]) != cl_lower(b.ptr[i])) return false;
-    return true;
-}
 
 static void *cl_alloc(proven_allocator_t a, proven_size_t n) {
     proven_result_mem_mut_t m = a.alloc_fn(a.ctx, n, 16);
@@ -135,7 +130,7 @@ static bool cl_same_addr(const proven_net_addr_t *a, const proven_net_addr_t *b)
 /* Whether the connection leads where the request goes: scheme, host, port, and the address. */
 static bool cl_leads_to(const cl_conn_t *k, const proven_http_event_request_t *c) {
     return k->https == c->https && k->port == c->port && cl_same_addr(&k->to, &c->to) &&
-           cl_eq_nocase((proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, cl_host(c));
+           proven_u8str_view_eq_ascii_ci((proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, cl_host(c));
 }
 
 static proven_size_t cl_origin_conns(const proven_http_event_client_t *cl, const proven_http_event_request_t *c) {
@@ -1015,8 +1010,8 @@ void proven_http_event_client_destroy(proven_http_event_client_t *cl) {
 proven_size_t proven_http_event_client_requests(const proven_http_event_client_t *cl) { return cl ? cl->request_count : 0; }
 
 static bool cl_is_reserved_header(proven_u8str_view_t name) {
-    return cl_eq_nocase(name, cl_lit("Host")) || cl_eq_nocase(name, cl_lit("Content-Length")) ||
-           cl_eq_nocase(name, cl_lit("Transfer-Encoding")) || cl_eq_nocase(name, cl_lit("Connection"));
+    return proven_u8str_view_eq_ascii_ci(name, cl_lit("Host")) || proven_u8str_view_eq_ascii_ci(name, cl_lit("Content-Length")) ||
+           proven_u8str_view_eq_ascii_ci(name, cl_lit("Transfer-Encoding")) || proven_u8str_view_eq_ascii_ci(name, cl_lit("Connection"));
 }
 
 /* Write the request head into the client's head buffer. */
@@ -1058,7 +1053,7 @@ static proven_err_t cl_build_head(proven_http_event_client_t *cl, const proven_h
         !proven_http_header_find(o->headers, o->header_count, cl_lit("Range"), &(proven_u8str_view_t){0})) {
         e = proven_http_write_header(out, len, cl_lit("Accept-Encoding"), proven_http_decoder_accept_(cl->cfg.decompress_zstd, cl->cfg.decompress_brotli));
     }
-    bool body_method = cl_eq_nocase(method, cl_lit("POST")) || cl_eq_nocase(method, cl_lit("PUT")) || cl_eq_nocase(method, cl_lit("PATCH"));
+    bool body_method = proven_u8str_view_eq_ascii_ci(method, cl_lit("POST")) || proven_u8str_view_eq_ascii_ci(method, cl_lit("PUT")) || proven_u8str_view_eq_ascii_ci(method, cl_lit("PATCH"));
     if (e == PROVEN_OK) {
         if (o->body.size > 0) e = proven_http_write_header_u64(out, len, cl_lit("Content-Length"), o->body.size);
         else if (o->body_length == PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) e = proven_http_write_header(out, len, cl_lit("Transfer-Encoding"), cl_lit("chunked"));
@@ -1085,7 +1080,7 @@ proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *cl, 
     if (!https && !proven_url_scheme_is(&u, cl_lit("http"))) return PROVEN_ERR_INVALID_ARG;
     if (https && !cl->cfg.tls) return PROVEN_ERR_INVALID_ARG;      /* never in the clear instead */
     proven_u8str_view_t method = o->method.size ? o->method : cl_lit("GET");
-    if (cl_eq_nocase(method, cl_lit("CONNECT"))) return PROVEN_ERR_INVALID_ARG;
+    if (proven_u8str_view_eq_ascii_ci(method, cl_lit("CONNECT"))) return PROVEN_ERR_INVALID_ARG;
 
     proven_net_addr_t to;
     if (o->address) to = *o->address;
@@ -1118,7 +1113,7 @@ proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *cl, 
     if (!c) return PROVEN_ERR_NOMEM;
     *c = (proven_http_event_request_t){
         .h = { .client = cl, .kind = CL_KIND_H1 }, .on = o->on, .ctx = o->ctx, .state = CL_CONNECTING,
-        .method = cl_eq_nocase(method, cl_lit("HEAD")) ? PROVEN_HTTP_HEAD : PROVEN_HTTP_GET,
+        .method = proven_u8str_view_eq_ascii_ci(method, cl_lit("HEAD")) ? PROVEN_HTTP_HEAD : PROVEN_HTTP_GET,
         .https = https, .to = to, .port = u.has_port ? u.port : proven_url_default_port(u.scheme), .host_len = (proven_u8)u.host.size,
     };
     for (proven_size_t i = 0; i < u.host.size; ++i) ((proven_byte_t *)(c + 1))[i] = u.host.ptr[i];

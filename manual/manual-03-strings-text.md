@@ -200,6 +200,7 @@ proven_u8str_destroy(alloc, &s);
 | `proven_u8str_replace_first(str, start_offset, target, replacement)` | Replace first matching target at or after start. | `PROVEN_OK` even when not found. |
 | `proven_u8str_view_find(haystack, start_offset, needle)` | Find the first occurrence of a byte substring (correctly handles any byte values; not NUL-terminated). | index or `PROVEN_INDEX_NOT_FOUND`. |
 | `proven_u8str_view_starts_with(str, prefix)` | Prefix test. | int truth value. |
+| `proven_u8str_view_starts_with_ascii_ci(str, prefix)` | Prefix test with ASCII letters compared without case (no locale, no Unicode folding). | int truth value. |
 | `proven_u8str_view_ends_with(str, suffix)` | Suffix test. | int truth value. |
 | `proven_u8str_view_slice(str, index, len)` | Return a clamped subview. | `proven_u8str_view_t`. |
 | `proven_u8str_as_cstr(str)` | Return internal NUL-terminated pointer. | `const char *`; invalidated by growth/destroy. |
@@ -207,7 +208,9 @@ proven_u8str_destroy(alloc, &s);
 | `proven_u8str_view_to_cstr(view, alloc)` | Allocate a NUL-terminated C string from any view. | `proven_result_cstr_t`; caller frees with allocator. |
 | `proven_cstr_len(s)` | Count bytes until NUL. | `proven_size_t`. |
 | `proven_u8str_view_from_cstr(s)` | Make a view from a trusted NUL-terminated string. | Empty view for null pointer. |
+| `proven_u8str_view_from_bytes(ptr, size)` | Make a view of `size` bytes at any object pointer, no cast needed. | `proven_u8str_view_t`; nothing copied. |
 | `proven_u8str_view_eq(a, b)` | Byte equality test. | int truth value. |
+| `proven_u8str_view_eq_ascii_ci(a, b)` | Equality with ASCII letters compared without case: HTTP field names, URL schemes, MIME types. | int truth value. |
 | `proven_u8str_destroy(alloc, str)` | Free owned storage with matching allocator. | void. |
 | `proven_u8str_as_view(str)` | Borrow current contents. | `proven_u8str_view_t`. |
 
@@ -419,6 +422,18 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_u8str_view_is_well_formed(past) && past.size == 0, "past the end: empty and well formed");
     EXAMPLE_REQUIRE(!proven_u8str_view_is_well_formed((proven_u8str_view_t){ NULL, 3 }), "only {NULL, n > 0} is not");
 
+    /* --- case, the ASCII way ------------------------------------------------- */
+
+    /* HTTP field names, URL schemes and MIME types ignore the case of ASCII letters
+     * and nothing else: no locale, no Unicode folding. */
+    EXAMPLE_REQUIRE(proven_u8str_view_eq_ascii_ci(PROVEN_LIT("Content-Type"), PROVEN_LIT("content-TYPE")), "field names ignore ASCII case");
+    EXAMPLE_REQUIRE(!proven_u8str_view_eq_ascii_ci(PROVEN_LIT("@"), PROVEN_LIT("`")), "a byte next to the letters is only itself");
+    EXAMPLE_REQUIRE(proven_u8str_view_starts_with_ascii_ci(PROVEN_LIT("HTTPS://example.org"), PROVEN_LIT("https:")), "and so does a prefix test");
+
+    /* A view of any buffer, without a cast at the call site. */
+    const unsigned char raw[] = { 'G', 'E', 'T' };
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_view_from_bytes(raw, sizeof raw), PROVEN_LIT("GET")), "a view of raw bytes");
+
     printf("%d fields, %zu names sorted\n", n, (size_t)names.len);
     proven_array_destroy(&names);
     return EXAMPLE_OK();
@@ -555,6 +570,8 @@ never writes half a surrogate pair or half a UTF-8 sequence.
 | `proven_utf8_append_to_u16str(alloc, dst, src)` | Append the UTF-16 of `src`, growing `dst`; all or nothing. | `proven_err_t` |
 | `proven_utf16_append_to_u8str(alloc, dst, src, n)` | Append the UTF-8 of `n` code units, growing `dst`; all or nothing. | `proven_err_t` |
 | `proven_utf8_decode_next(s, pos)` | The one character at byte `pos`, or why not; `len` is always the step to take. | `proven_utf8_char_t` |
+| `proven_utf8_encode_one(cp, out)` | One code point as UTF-8 into `out[0..3]`. | Its length, 1 to 4; 0 for a surrogate or above U+10FFFF. |
+| `proven_utf8_validate(s, bad_at)` | Whether all of `s` is well-formed UTF-8 (a character cut off at the end is not). | `PROVEN_OK`, or `PROVEN_ERR_INVALID_ENCODING` and the first bad offset in `*bad_at`. |
 
 ```text
 typedef struct {
@@ -715,6 +732,18 @@ int main(void) {
     proven_byte_t u8out[16];
     st = proven_utf16_to_utf8_partial(emoji_half, 3, u8out, sizeof u8out);
     EXAMPLE_REQUIRE(st.err == PROVEN_ERR_NEED_MORE && st.consumed == 2, "a trailing high surrogate waits");
+
+    /* --- one character out, and a whole text checked -------------------------- */
+
+    /* Encoding refuses what is not a character: a lone surrogate, or past U+10FFFF. */
+    proven_byte_t one[4];
+    EXAMPLE_REQUIRE(proven_utf8_encode_one(0xBCF4, one) == 3 && one[0] == 0xEB, "a Hangul syllable is three bytes");
+    EXAMPLE_REQUIRE(proven_utf8_encode_one(0xD83D, one) == 0, "a surrogate is not a character");
+
+    /* Validation says where the text stops being UTF-8. */
+    proven_size_t bad = 0;
+    EXAMPLE_REQUIRE(proven_utf8_validate(name, NULL) == PROVEN_OK, "the name is valid UTF-8");
+    EXAMPLE_REQUIRE(proven_utf8_validate(PROVEN_LIT("ok\xC3"), &bad) == PROVEN_ERR_INVALID_ENCODING && bad == 2, "a cut-off character is found at its first byte");
 
     printf("converted a %zu-byte name to %zu code units and back\n", (size_t)name.size, (size_t)need.value);
 

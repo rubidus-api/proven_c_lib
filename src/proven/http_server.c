@@ -111,13 +111,7 @@ static proven_u8str_view_t sv_lit(const char *s) {
     return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n };
 }
 
-static proven_byte_t sv_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
-static bool sv_eq_nocase(proven_u8str_view_t a, proven_u8str_view_t b) {
-    if (a.size != b.size) return false;
-    for (proven_size_t i = 0; i < a.size; ++i) if (sv_lower(a.ptr[i]) != sv_lower(b.ptr[i])) return false;
-    return true;
-}
 
 static void *sv_alloc(proven_allocator_t a, proven_size_t size) {
     proven_result_mem_mut_t m = a.alloc_fn(a.ctx, size ? size : 1, 16);
@@ -146,8 +140,8 @@ static proven_err_t sv_send(sv_conn_t *c, proven_mem_view_t data) {
 }
 
 static bool sv_is_driver_header(proven_u8str_view_t name) {
-    return sv_eq_nocase(name, sv_lit("Content-Length")) || sv_eq_nocase(name, sv_lit("Transfer-Encoding")) ||
-           sv_eq_nocase(name, sv_lit("Connection")) || sv_eq_nocase(name, sv_lit("Date"));
+    return proven_u8str_view_eq_ascii_ci(name, sv_lit("Content-Length")) || proven_u8str_view_eq_ascii_ci(name, sv_lit("Transfer-Encoding")) ||
+           proven_u8str_view_eq_ascii_ci(name, sv_lit("Connection")) || proven_u8str_view_eq_ascii_ci(name, sv_lit("Date"));
 }
 
 /* Build the response head in c->out. Nothing is sent, and no state changes, unless it returns
@@ -435,7 +429,7 @@ proven_err_t proven_http_exchange_upgrade(proven_http_exchange_t *exchange, prov
     if (e == PROVEN_OK) e = proven_http_write_header(head, &len, sv_lit("Upgrade"), protocol);
     if (e == PROVEN_OK) e = proven_http_write_header(head, &len, sv_lit("Connection"), sv_lit("Upgrade"));
     for (proven_size_t i = 0; i < header_count && e == PROVEN_OK; ++i) {
-        if (sv_is_driver_header(headers[i].name) || sv_eq_nocase(headers[i].name, sv_lit("Upgrade"))) return PROVEN_ERR_INVALID_ARG;
+        if (sv_is_driver_header(headers[i].name) || proven_u8str_view_eq_ascii_ci(headers[i].name, sv_lit("Upgrade"))) return PROVEN_ERR_INVALID_ARG;
         e = proven_http_write_header(head, &len, headers[i].name, headers[i].value);
     }
     if (e == PROVEN_OK) e = proven_http_write_head_end(head, &len);

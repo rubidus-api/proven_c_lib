@@ -92,6 +92,18 @@ int main(void) {
     st = proven_utf16_to_utf8_partial(emoji_half, 3, u8out, sizeof u8out);
     EXAMPLE_REQUIRE(st.err == PROVEN_ERR_NEED_MORE && st.consumed == 2, "a trailing high surrogate waits");
 
+    /* --- 문자 하나 내보내기, 텍스트 전체 검사하기 ------------------------------ */
+
+    /* 인코딩은 문자가 아닌 것을 거절한다: 홀로 선 서로게이트, U+10FFFF 너머. */
+    proven_byte_t one[4];
+    EXAMPLE_REQUIRE(proven_utf8_encode_one(0xBCF4, one) == 3 && one[0] == 0xEB, "a Hangul syllable is three bytes");
+    EXAMPLE_REQUIRE(proven_utf8_encode_one(0xD83D, one) == 0, "a surrogate is not a character");
+
+    /* 검증은 텍스트가 어디서부터 UTF-8이 아닌지 알려 준다. */
+    proven_size_t bad = 0;
+    EXAMPLE_REQUIRE(proven_utf8_validate(name, NULL) == PROVEN_OK, "the name is valid UTF-8");
+    EXAMPLE_REQUIRE(proven_utf8_validate(PROVEN_LIT("ok\xC3"), &bad) == PROVEN_ERR_INVALID_ENCODING && bad == 2, "a cut-off character is found at its first byte");
+
     printf("converted a %zu-byte name to %zu code units and back\n", (size_t)name.size, (size_t)need.value);
 
     proven_u8str_destroy(alloc, &copy);

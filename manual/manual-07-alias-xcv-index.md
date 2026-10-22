@@ -1200,8 +1200,10 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_u8str_view_contains` | `proven_u8str_view_contains` |
 | `xcv_u8str_view_ends_with` | `proven_u8str_view_ends_with` |
 | `xcv_u8str_view_eq` | `proven_u8str_view_eq` |
+| `xcv_u8str_view_eq_ascii_ci` | `proven_u8str_view_eq_ascii_ci` |
 | `xcv_u8str_view_find` | `proven_u8str_view_find` |
 | `xcv_u8str_view_find_last` | `proven_u8str_view_find_last` |
+| `xcv_u8str_view_from_bytes` | `proven_u8str_view_from_bytes` |
 | `xcv_u8str_view_from_cstr` | `proven_u8str_view_from_cstr` |
 | `xcv_u8str_view_is_well_formed` | `proven_u8str_view_is_well_formed` |
 | `xcv_u8str_view_remove_prefix` | `proven_u8str_view_remove_prefix` |
@@ -1211,6 +1213,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_u8str_view_split_next` | `proven_u8str_view_split_next` |
 | `xcv_u8str_view_split_t` | `proven_u8str_view_split_t` |
 | `xcv_u8str_view_starts_with` | `proven_u8str_view_starts_with` |
+| `xcv_u8str_view_starts_with_ascii_ci` | `proven_u8str_view_starts_with_ascii_ci` |
 | `xcv_u8str_view_t` | `proven_u8str_view_t` |
 | `xcv_u8str_view_to_cstr` | `proven_u8str_view_to_cstr` |
 | `xcv_u8str_view_trim` | `proven_u8str_view_trim` |
@@ -1243,6 +1246,8 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_utf8_append_to_u16str` | `proven_utf8_append_to_u16str` |
 | `xcv_utf8_char_t` | `proven_utf8_char_t` |
 | `xcv_utf8_decode_next` | `proven_utf8_decode_next` |
+| `xcv_utf8_encode_one` | `proven_utf8_encode_one` |
+| `xcv_utf8_validate` | `proven_utf8_validate` |
 | `xcv_utf8_to_utf16` | `proven_utf8_to_utf16` |
 | `xcv_utf8_to_utf16_partial` | `proven_utf8_to_utf16_partial` |
 | `xcv_utf8_to_utf16_size` | `proven_utf8_to_utf16_size` |

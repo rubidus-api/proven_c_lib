@@ -197,6 +197,7 @@ proven_u8str_destroy(alloc, &s);
 | `proven_u8str_replace_first(str, start_offset, target, replacement)` | start 이후 처음 일치하는 target을 치환한다. | 찾지 못해도 `PROVEN_OK`. |
 | `proven_u8str_view_find(haystack, start_offset, needle)` | 바이트 부분 문자열의 첫 등장을 찾는다(어떤 바이트 값이든 올바르게 처리하며, NUL 종료를 요구하지 않는다). | 인덱스 또는 `PROVEN_INDEX_NOT_FOUND`. |
 | `proven_u8str_view_starts_with(str, prefix)` | 접두사 검사. | int 진리값. |
+| `proven_u8str_view_starts_with_ascii_ci(str, prefix)` | ASCII 글자의 대소문자를 무시한 접두사 검사(로캘도 유니코드 대소문자 접기도 없음). | int 진리값. |
 | `proven_u8str_view_ends_with(str, suffix)` | 접미사 검사. | int 진리값. |
 | `proven_u8str_view_slice(str, index, len)` | 잘라 맞춘(clamped) 부분 view를 반환한다. | `proven_u8str_view_t`. |
 | `proven_u8str_as_cstr(str)` | 내부의 NUL 종료 포인터를 반환한다. | `const char *`; 성장/파괴에 의해 무효화된다. |
@@ -204,7 +205,9 @@ proven_u8str_destroy(alloc, &s);
 | `proven_u8str_view_to_cstr(view, alloc)` | 임의의 view로부터 NUL 종료 C 문자열을 할당한다. | `proven_result_cstr_t`; 호출자가 allocator로 해제한다. |
 | `proven_cstr_len(s)` | NUL까지의 바이트를 센다. | `proven_size_t`. |
 | `proven_u8str_view_from_cstr(s)` | 신뢰할 수 있는 NUL 종료 문자열로부터 view를 만든다. | 널 포인터에는 빈 view. |
+| `proven_u8str_view_from_bytes(ptr, size)` | 어떤 객체 포인터에서든 `size` 바이트의 view를 캐스트 없이 만든다. | `proven_u8str_view_t`; 복사하지 않음. |
 | `proven_u8str_view_eq(a, b)` | 바이트 동등성 검사. | int 진리값. |
+| `proven_u8str_view_eq_ascii_ci(a, b)` | ASCII 글자의 대소문자를 무시한 동등성: HTTP 필드 이름, URL 스킴, MIME 타입. | int 진리값. |
 | `proven_u8str_destroy(alloc, str)` | 일치하는 allocator로 owned 저장소를 해제한다. | void. |
 | `proven_u8str_as_view(str)` | 현재 내용을 borrow한다. | `proven_u8str_view_t`. |
 
@@ -407,6 +410,18 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_u8str_view_is_well_formed(past) && past.size == 0, "past the end: empty and well formed");
     EXAMPLE_REQUIRE(!proven_u8str_view_is_well_formed((proven_u8str_view_t){ NULL, 3 }), "only {NULL, n > 0} is not");
 
+    /* --- 대소문자, ASCII 방식 --------------------------------------------------- */
+
+    /* HTTP 필드 이름, URL 스킴, MIME 타입은 ASCII 글자의 대소문자만 무시한다:
+     * 로캘도, 유니코드 대소문자 접기도 없다. */
+    EXAMPLE_REQUIRE(proven_u8str_view_eq_ascii_ci(PROVEN_LIT("Content-Type"), PROVEN_LIT("content-TYPE")), "field names ignore ASCII case");
+    EXAMPLE_REQUIRE(!proven_u8str_view_eq_ascii_ci(PROVEN_LIT("@"), PROVEN_LIT("`")), "a byte next to the letters is only itself");
+    EXAMPLE_REQUIRE(proven_u8str_view_starts_with_ascii_ci(PROVEN_LIT("HTTPS://example.org"), PROVEN_LIT("https:")), "and so does a prefix test");
+
+    /* 어떤 버퍼든 부르는 자리에서 캐스트 없이 view로. */
+    const unsigned char raw[] = { 'G', 'E', 'T' };
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_view_from_bytes(raw, sizeof raw), PROVEN_LIT("GET")), "a view of raw bytes");
+
     printf("%d fields, %zu names sorted\n", n, (size_t)names.len);
     proven_array_destroy(&names);
     return EXAMPLE_OK();
@@ -542,6 +557,8 @@ UTF-16인데 프로그램의 나머지는 그것을 UTF-8로 원한다. 이 경�
 | `proven_utf8_append_to_u16str(alloc, dst, src)` | `src`의 UTF-16을 덧붙이며 `dst`를 늘린다; 전부 아니면 전무. | `proven_err_t` |
 | `proven_utf16_append_to_u8str(alloc, dst, src, n)` | 코드 유닛 `n`개의 UTF-8을 덧붙이며 `dst`를 늘린다; 전부 아니면 전무. | `proven_err_t` |
 | `proven_utf8_decode_next(s, pos)` | 바이트 `pos`에서 시작하는 문자 하나, 또는 그렇지 못한 이유; `len`은 언제나 나아갈 거리다. | `proven_utf8_char_t` |
+| `proven_utf8_encode_one(cp, out)` | 코드 포인트 하나를 UTF-8로 `out[0..3]`에. | 길이 1~4; 서로게이트나 U+10FFFF 초과면 0. |
+| `proven_utf8_validate(s, bad_at)` | `s` 전체가 올바른 UTF-8인지(끝에서 잘린 문자는 아님). | `PROVEN_OK`, 또는 `PROVEN_ERR_INVALID_ENCODING`과 `*bad_at`의 첫 잘못된 위치. |
 
 ```text
 typedef struct {
@@ -699,6 +716,18 @@ int main(void) {
     proven_byte_t u8out[16];
     st = proven_utf16_to_utf8_partial(emoji_half, 3, u8out, sizeof u8out);
     EXAMPLE_REQUIRE(st.err == PROVEN_ERR_NEED_MORE && st.consumed == 2, "a trailing high surrogate waits");
+
+    /* --- 문자 하나 내보내기, 텍스트 전체 검사하기 ------------------------------ */
+
+    /* 인코딩은 문자가 아닌 것을 거절한다: 홀로 선 서로게이트, U+10FFFF 너머. */
+    proven_byte_t one[4];
+    EXAMPLE_REQUIRE(proven_utf8_encode_one(0xBCF4, one) == 3 && one[0] == 0xEB, "a Hangul syllable is three bytes");
+    EXAMPLE_REQUIRE(proven_utf8_encode_one(0xD83D, one) == 0, "a surrogate is not a character");
+
+    /* 검증은 텍스트가 어디서부터 UTF-8이 아닌지 알려 준다. */
+    proven_size_t bad = 0;
+    EXAMPLE_REQUIRE(proven_utf8_validate(name, NULL) == PROVEN_OK, "the name is valid UTF-8");
+    EXAMPLE_REQUIRE(proven_utf8_validate(PROVEN_LIT("ok\xC3"), &bad) == PROVEN_ERR_INVALID_ENCODING && bad == 2, "a cut-off character is found at its first byte");
 
     printf("converted a %zu-byte name to %zu code units and back\n", (size_t)name.size, (size_t)need.value);
 

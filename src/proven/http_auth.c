@@ -16,21 +16,9 @@ static bool auth_is_tchar(proven_byte_t c) {
     }
 }
 
-static proven_byte_t auth_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
-static bool auth_eq_nocase(proven_u8str_view_t a, const char *b) {
-    proven_size_t n = 0;
-    while (b[n] != '\0') n++;
-    if (a.size != n) return false;
-    for (proven_size_t i = 0; i < n; ++i) if (auth_lower(a.ptr[i]) != auth_lower((proven_byte_t)b[i])) return false;
-    return true;
-}
+static bool auth_eq_nocase(proven_u8str_view_t a, const char *b) { return proven_u8str_view_eq_ascii_ci(a, proven_u8str_view_from_cstr(b)); }
 
-static bool auth_views_eq_nocase(proven_u8str_view_t a, proven_u8str_view_t b) {
-    if (a.size != b.size) return false;
-    for (proven_size_t i = 0; i < a.size; ++i) if (auth_lower(a.ptr[i]) != auth_lower(b.ptr[i])) return false;
-    return true;
-}
 
 static bool auth_has_control(proven_u8str_view_t s) {
     for (proven_size_t i = 0; i < s.size; ++i) if (s.ptr[i] < 0x20 || s.ptr[i] == 0x7f) return true;
@@ -166,7 +154,7 @@ bool proven_http_auth_offers(proven_u8str_view_t header_value, proven_u8str_view
     proven_u8str_view_t sch, name, value;
     bool escaped = false, bad = false;
     while (auth_next(&c, &sch, &name, &value, &escaped, &bad)) {
-        if (sch.size > 0 && auth_views_eq_nocase(sch, scheme)) return true;
+        if (sch.size > 0 && proven_u8str_view_eq_ascii_ci(sch, scheme)) return true;
     }
     return false;
 }

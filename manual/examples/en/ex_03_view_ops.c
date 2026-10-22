@@ -86,6 +86,18 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_u8str_view_is_well_formed(past) && past.size == 0, "past the end: empty and well formed");
     EXAMPLE_REQUIRE(!proven_u8str_view_is_well_formed((proven_u8str_view_t){ NULL, 3 }), "only {NULL, n > 0} is not");
 
+    /* --- case, the ASCII way ------------------------------------------------- */
+
+    /* HTTP field names, URL schemes and MIME types ignore the case of ASCII letters
+     * and nothing else: no locale, no Unicode folding. */
+    EXAMPLE_REQUIRE(proven_u8str_view_eq_ascii_ci(PROVEN_LIT("Content-Type"), PROVEN_LIT("content-TYPE")), "field names ignore ASCII case");
+    EXAMPLE_REQUIRE(!proven_u8str_view_eq_ascii_ci(PROVEN_LIT("@"), PROVEN_LIT("`")), "a byte next to the letters is only itself");
+    EXAMPLE_REQUIRE(proven_u8str_view_starts_with_ascii_ci(PROVEN_LIT("HTTPS://example.org"), PROVEN_LIT("https:")), "and so does a prefix test");
+
+    /* A view of any buffer, without a cast at the call site. */
+    const unsigned char raw[] = { 'G', 'E', 'T' };
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_view_from_bytes(raw, sizeof raw), PROVEN_LIT("GET")), "a view of raw bytes");
+
     printf("%d fields, %zu names sorted\n", n, (size_t)names.len);
     proven_array_destroy(&names);
     return EXAMPLE_OK();

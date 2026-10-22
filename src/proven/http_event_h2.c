@@ -104,11 +104,6 @@ static proven_u8str_view_t h2_lit_n(const char *s, proven_size_t n) { return (pr
 
 static proven_byte_t h2_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
-static bool h2_eq_nocase(proven_u8str_view_t a, proven_u8str_view_t b) {
-    if (a.size != b.size) return false;
-    for (proven_size_t i = 0; i < a.size; ++i) if (h2_lower(a.ptr[i]) != h2_lower(b.ptr[i])) return false;
-    return true;
-}
 
 static void *h2_alloc(proven_allocator_t a, proven_size_t n) {
     proven_result_mem_mut_t m = a.alloc_fn(a.ctx, n, 16);
@@ -329,12 +324,12 @@ static void d_request(h2d_t *d, const proven_h2_event_t *ev) {
     proven_u64 length = 0;
     for (proven_size_t i = 0; i < rq->field_count; ++i) {
         const proven_http_header_t *f = &rq->fields[i];
-        if (h2_eq_nocase(f->name, h2_lit("host"))) {
+        if (proven_u8str_view_eq_ascii_ci(f->name, h2_lit("host"))) {
             /* A request that names two different targets is how one is smuggled past a
              * front end that looked at the other (RFC 9113, section 8.3.1). */
-            if (has_host || (rq->authority.size > 0 && !h2_eq_nocase(f->value, rq->authority))) bad = true;
+            if (has_host || (rq->authority.size > 0 && !proven_u8str_view_eq_ascii_ci(f->value, rq->authority))) bad = true;
             has_host = true;
-        } else if (h2_eq_nocase(f->name, h2_lit("content-length"))) {
+        } else if (proven_u8str_view_eq_ascii_ci(f->name, h2_lit("content-length"))) {
             has_length = true;
             length = 0;
             for (proven_size_t k = 0; k < f->value.size && length <= sv->cfg.max_body_bytes; ++k) length = length * 10 + (proven_u64)(f->value.ptr[k] - '0');
@@ -772,14 +767,14 @@ void proven_http_event_h2_compress_(proven_http_stream_t *stream) {
 }
 
 static bool h2_is_driver_header(proven_u8str_view_t name) {
-    return h2_eq_nocase(name, h2_lit("content-length")) || h2_eq_nocase(name, h2_lit("transfer-encoding")) ||
-           h2_eq_nocase(name, h2_lit("connection")) || h2_eq_nocase(name, h2_lit("date"));
+    return proven_u8str_view_eq_ascii_ci(name, h2_lit("content-length")) || proven_u8str_view_eq_ascii_ci(name, h2_lit("transfer-encoding")) ||
+           proven_u8str_view_eq_ascii_ci(name, h2_lit("connection")) || proven_u8str_view_eq_ascii_ci(name, h2_lit("date"));
 }
 
 /* Fields that describe an HTTP/1.1 connection. A handler written for HTTP/1.1 may set them;
  * on HTTP/2 they are not sent, rather than the response being refused for them. */
 static bool h2_is_hop_header(proven_u8str_view_t name) {
-    return h2_eq_nocase(name, h2_lit("keep-alive")) || h2_eq_nocase(name, h2_lit("proxy-connection")) || h2_eq_nocase(name, h2_lit("upgrade"));
+    return proven_u8str_view_eq_ascii_ci(name, h2_lit("keep-alive")) || proven_u8str_view_eq_ascii_ci(name, h2_lit("proxy-connection")) || proven_u8str_view_eq_ascii_ci(name, h2_lit("upgrade"));
 }
 
 /* The response head, to the engine. `length`: the body's size on the wire, or LENGTH_UNKNOWN. */

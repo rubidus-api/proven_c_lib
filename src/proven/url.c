@@ -16,15 +16,7 @@ static int url_hex(proven_byte_t c) {
     return -1;
 }
 
-static proven_byte_t url_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
-static bool url_eq_nocase(proven_u8str_view_t a, proven_u8str_view_t b) {
-    if (a.size != b.size) return false;
-    for (proven_size_t i = 0; i < a.size; ++i) {
-        if (url_lower(a.ptr[i]) != url_lower(b.ptr[i])) return false;
-    }
-    return true;
-}
 
 static proven_u8str_view_t url_sub(proven_u8str_view_t s, proven_size_t from, proven_size_t to) {
     return (proven_u8str_view_t){ .ptr = s.ptr + from, .size = to - from };
@@ -144,9 +136,9 @@ proven_err_t proven_url_parse(proven_u8str_view_t text, proven_url_t *out) {
 }
 
 proven_u16 proven_url_default_port(proven_u8str_view_t scheme) {
-    if (url_eq_nocase(scheme, PROVEN_LIT("http")) || url_eq_nocase(scheme, PROVEN_LIT("ws"))) return 80;
-    if (url_eq_nocase(scheme, PROVEN_LIT("https")) || url_eq_nocase(scheme, PROVEN_LIT("wss"))) return 443;
-    if (url_eq_nocase(scheme, PROVEN_LIT("ftp"))) return 21;
+    if (proven_u8str_view_eq_ascii_ci(scheme, PROVEN_LIT("http")) || proven_u8str_view_eq_ascii_ci(scheme, PROVEN_LIT("ws"))) return 80;
+    if (proven_u8str_view_eq_ascii_ci(scheme, PROVEN_LIT("https")) || proven_u8str_view_eq_ascii_ci(scheme, PROVEN_LIT("wss"))) return 443;
+    if (proven_u8str_view_eq_ascii_ci(scheme, PROVEN_LIT("ftp"))) return 21;
     return 0;
 }
 
@@ -156,7 +148,7 @@ proven_u16 proven_url_effective_port(const proven_url_t *url) {
 }
 
 bool proven_url_scheme_is(const proven_url_t *url, proven_u8str_view_t scheme) {
-    return url && url_eq_nocase(url->scheme, scheme);
+    return url && proven_u8str_view_eq_ascii_ci(url->scheme, scheme);
 }
 
 proven_err_t proven_url_split_target(proven_u8str_view_t target, proven_u8str_view_t *path,

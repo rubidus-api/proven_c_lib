@@ -18,6 +18,22 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- Five string helpers (RFC-0022), all pure computation and freestanding-available, with `xcv_`
+  aliases: `proven_u8str_view_eq_ascii_ci` and `proven_u8str_view_starts_with_ascii_ci` (ASCII
+  letters compared without case, every other byte as it is - for HTTP field names, URL schemes,
+  MIME types); `proven_utf8_encode_one` (one code point as UTF-8, 0 for a surrogate or past
+  U+10FFFF); `proven_utf8_validate` (all of a view well-formed UTF-8, with the offset of the first
+  bad byte); `proven_u8str_view_from_bytes` (a view of any object's bytes without a cast).
+
+### Changed
+
+- The library's own fifteen private copies of ASCII case-insensitive comparison (the HTTP, URL,
+  cookie, WebSocket and certificate code) now use `proven_u8str_view_eq_ascii_ci`. No behaviour
+  changes; a view with a NULL pointer and a nonzero size now compares unequal instead of being
+  read.
+
 ## [0.75.0] - 2026-10-22
 
 ### Changed

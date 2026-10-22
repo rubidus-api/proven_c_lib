@@ -93,6 +93,18 @@ int main(void) {
     st = proven_utf16_to_utf8_partial(emoji_half, 3, u8out, sizeof u8out);
     EXAMPLE_REQUIRE(st.err == PROVEN_ERR_NEED_MORE && st.consumed == 2, "a trailing high surrogate waits");
 
+    /* --- one character out, and a whole text checked -------------------------- */
+
+    /* Encoding refuses what is not a character: a lone surrogate, or past U+10FFFF. */
+    proven_byte_t one[4];
+    EXAMPLE_REQUIRE(proven_utf8_encode_one(0xBCF4, one) == 3 && one[0] == 0xEB, "a Hangul syllable is three bytes");
+    EXAMPLE_REQUIRE(proven_utf8_encode_one(0xD83D, one) == 0, "a surrogate is not a character");
+
+    /* Validation says where the text stops being UTF-8. */
+    proven_size_t bad = 0;
+    EXAMPLE_REQUIRE(proven_utf8_validate(name, NULL) == PROVEN_OK, "the name is valid UTF-8");
+    EXAMPLE_REQUIRE(proven_utf8_validate(PROVEN_LIT("ok\xC3"), &bad) == PROVEN_ERR_INVALID_ENCODING && bad == 2, "a cut-off character is found at its first byte");
+
     printf("converted a %zu-byte name to %zu code units and back\n", (size_t)name.size, (size_t)need.value);
 
     proven_u8str_destroy(alloc, &copy);

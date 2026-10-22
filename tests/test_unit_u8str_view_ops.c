@@ -118,6 +118,34 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_u8str_view_split_next(&it, &f) && f.size == 3, "an empty separator {p, 0} yields the input", "");
     }
 
+    PROVEN_TEST_SECTION("RFC-0022: ASCII case-insensitive equality and prefix, a view from bytes",
+        "Every pair of bytes compared one-byte and inside longer views against a reference that folds only 'A' to 'Z'; lengths that differ, empty views and NULL with size 0; the prefix test at every length.",
+        "Check proven_u8str_view_eq_ascii_ci and proven_u8str_view_starts_with_ascii_ci in src/proven/u8str.c, and proven_u8str_view_from_bytes in u8str.h.");
+    {
+        unsigned long wrong = 0;
+        for (unsigned x = 0; x < 256; ++x) {
+            for (unsigned y = 0; y < 256; ++y) {
+                const unsigned fx = x >= 'A' && x <= 'Z' ? x + 32 : x, fy = y >= 'A' && y <= 'Z' ? y + 32 : y;
+                const char a[3] = { 'k', (char)x, 'Q' }, c[3] = { 'K', (char)y, 'q' };
+                const int one = proven_u8str_view_eq_ascii_ci(b(a + 1, 1), b(c + 1, 1));
+                const int three = proven_u8str_view_eq_ascii_ci(b(a, 3), b(c, 3));
+                const int pre = proven_u8str_view_starts_with_ascii_ci(b(a, 3), b(c, 2));
+                if (one != (fx == fy) || three != (fx == fy) || pre != (fx == fy)) wrong++;
+            }
+        }
+        PROVEN_TEST_ASSERT(wrong == 0, "every byte pair: equal exactly when they fold to the same byte, 'A' to 'Z' only - '@', '[', '`', '{' and bytes from 0x80 match only themselves", "");
+        PROVEN_TEST_ASSERT(proven_u8str_view_eq_ascii_ci(z("Content-Length"), z("content-length")) && !proven_u8str_view_eq_ascii_ci(z("abc"), z("abcd")) &&
+                           proven_u8str_view_eq_ascii_ci(b(NULL, 0), z("")) && !proven_u8str_view_eq_ascii_ci(b(NULL, 0), z("a")),
+            "field names; different lengths differ; NULL with size 0 is the empty view", "");
+        PROVEN_TEST_ASSERT(proven_u8str_view_starts_with_ascii_ci(z("HTTPS://x"), z("https:")) && proven_u8str_view_starts_with_ascii_ci(z("abc"), z("")) &&
+                           !proven_u8str_view_starts_with_ascii_ci(z("ab"), z("abc")) && proven_u8str_view_starts_with_ascii_ci(z("abc"), z("ABC")) &&
+                           !proven_u8str_view_starts_with_ascii_ci(z("abd"), z("ABC")),
+            "a prefix: the empty one always, a longer one never, the whole string, and a last byte that differs", "");
+        const unsigned char raw[] = { 'G', 'E', 'T' };
+        const proven_u8str_view_t v = proven_u8str_view_from_bytes(raw, sizeof raw);
+        PROVEN_TEST_ASSERT(v.ptr == raw && v.size == 3 && is(v, "GET"), "a view from bytes points at them, nothing copied", "");
+    }
+
     PROVEN_TEST_PASS("view trim, affixes, reverse search and well-formedness");
     return 0;
 }

@@ -1180,8 +1180,10 @@
 #define xcv_u8str_view_contains proven_u8str_view_contains
 #define xcv_u8str_view_ends_with proven_u8str_view_ends_with
 #define xcv_u8str_view_eq proven_u8str_view_eq
+#define xcv_u8str_view_eq_ascii_ci proven_u8str_view_eq_ascii_ci
 #define xcv_u8str_view_find proven_u8str_view_find
 #define xcv_u8str_view_find_last proven_u8str_view_find_last
+#define xcv_u8str_view_from_bytes proven_u8str_view_from_bytes
 #define xcv_u8str_view_from_cstr proven_u8str_view_from_cstr
 #define xcv_u8str_view_is_well_formed proven_u8str_view_is_well_formed
 #define xcv_u8str_view_remove_prefix proven_u8str_view_remove_prefix
@@ -1191,6 +1193,7 @@
 #define xcv_u8str_view_split_next proven_u8str_view_split_next
 #define xcv_u8str_view_split_t proven_u8str_view_split_t
 #define xcv_u8str_view_starts_with proven_u8str_view_starts_with
+#define xcv_u8str_view_starts_with_ascii_ci proven_u8str_view_starts_with_ascii_ci
 #define xcv_u8str_view_t proven_u8str_view_t
 #define xcv_u8str_view_to_cstr proven_u8str_view_to_cstr
 #define xcv_u8str_view_trim proven_u8str_view_trim
@@ -1223,6 +1226,8 @@
 #define xcv_utf8_append_to_u16str proven_utf8_append_to_u16str
 #define xcv_utf8_char_t proven_utf8_char_t
 #define xcv_utf8_decode_next proven_utf8_decode_next
+#define xcv_utf8_encode_one proven_utf8_encode_one
+#define xcv_utf8_validate proven_utf8_validate
 #define xcv_utf8_to_utf16 proven_utf8_to_utf16
 #define xcv_utf8_to_utf16_partial proven_utf8_to_utf16_partial
 #define xcv_utf8_to_utf16_size proven_utf8_to_utf16_size

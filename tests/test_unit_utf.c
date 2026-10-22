@@ -438,6 +438,53 @@ int main(void) {
         proven_u8str_destroy(g_heap, &s8);
     }
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("one code point out, and a whole text checked (RFC-0022)",
+        "proven_utf8_encode_one writes every scalar value as the reference does and round-trips through proven_utf8_decode_next; surrogates and values past U+10FFFF give 0 and write nothing. proven_utf8_validate agrees with the reference over every input of one and two bytes and a stride of three-byte ones, and names the first bad byte.",
+        "Check proven_utf8_encode_one and proven_utf8_validate in src/proven/utf.c.");
+    {
+        unsigned long wrong = 0;
+        for (unsigned long cp = 0; cp <= 0x110010UL; ++cp) {
+            proven_byte_t out[4] = { 0xAA, 0xAA, 0xAA, 0xAA };
+            unsigned char ref[4];
+            const proven_size_t n = proven_utf8_encode_one((proven_u32)cp, out);
+            const bool scalar = cp <= 0x10FFFF && !(cp >= 0xD800 && cp <= 0xDFFF);
+            if (!scalar) { if (n != 0 || out[0] != 0xAA || out[3] != 0xAA) wrong++; continue; }
+            const size_t rn = ref_utf8_encode(cp, ref);
+            proven_utf8_char_t back = proven_utf8_decode_next(bv(out, n), 0);
+            if (n != rn || memcmp(out, ref, rn) != 0 || back.err != PROVEN_OK || back.cp != cp || back.len != n) wrong++;
+        }
+        proven_byte_t out[4] = { 0 };
+        PROVEN_TEST_ASSERT(wrong == 0 && proven_utf8_encode_one(0xFFFFFFFFu, out) == 0,
+            "every scalar value encodes as the reference and decodes back; the 2,048 surrogates and everything past U+10FFFF give 0 and write nothing", "");
+        PROVEN_TEST_ASSERT(proven_utf8_encode_one(0x7F, out) == 1 && proven_utf8_encode_one(0x80, out) == 2 && proven_utf8_encode_one(0x7FF, out) == 2 &&
+                           proven_utf8_encode_one(0x800, out) == 3 && proven_utf8_encode_one(0xD7FF, out) == 3 && proven_utf8_encode_one(0xE000, out) == 3 &&
+                           proven_utf8_encode_one(0xFFFF, out) == 3 && proven_utf8_encode_one(0x10000, out) == 4 && proven_utf8_encode_one(0x10FFFF, out) == 4,
+            "each length boundary: 0x7F/0x80, 0x7FF/0x800, 0xD7FF and 0xE000 around the surrogates, 0xFFFF/0x10000, 0x10FFFF", "");
+
+        unsigned char t[3];
+        unsigned long mism = 0;
+        for (size_t len = 1; len <= 3; ++len) {
+            const unsigned long total = 1UL << (8 * len), step = len == 3 ? 7 : 1;
+            for (unsigned long v = 0; v < total; v += step) {
+                for (size_t i = 0; i < len; ++i) t[i] = (unsigned char)(v >> (8 * i));
+                size_t first = 0;                                /* the reference's first bad offset */
+                for (size_t i = 0; i < len;) { int r = ref_utf8_one(t + i, len - i); if (r <= 0) { first = i; break; } i += (size_t)r; first = i; }
+                const bool ref_ok = ref_utf8_valid(t, len) == 1;
+                proven_size_t bad = 99;
+                const proven_err_t e = proven_utf8_validate(bv(t, len), &bad);
+                if (ref_ok ? e != PROVEN_OK : (e != PROVEN_ERR_INVALID_ENCODING || bad != first)) mism++;
+            }
+        }
+        PROVEN_TEST_ASSERT(mism == 0, "validate agrees with the reference, verdict and first bad offset, over every one- and two-byte input and every seventh three-byte one", "");
+        PROVEN_TEST_ASSERT(proven_utf8_validate(bv((const void *)0, 0), (void *)0) == PROVEN_OK && proven_utf8_validate(bv((const void *)0, 3), (void *)0) == PROVEN_ERR_INVALID_ARG,
+            "nothing is valid; NULL with a size is INVALID_ARG", "");
+        proven_size_t bad = 0;
+        PROVEN_TEST_ASSERT(proven_utf8_validate(bv("ab\xE2\x82", 4), &bad) == PROVEN_ERR_INVALID_ENCODING && bad == 2 &&
+                           proven_utf8_validate(bv("\xE2\x82\xAC", 3), (void *)0) == PROVEN_OK,
+            "a character cut off at the end is malformed at its first byte; the same character whole is valid", "");
+    }
+
     PROVEN_TEST_PASS("UTF-8 and UTF-16 transcoding");
     return 0;
 }

@@ -35,13 +35,6 @@ static bool http_is_ows(proven_byte_t c) { return c == ' ' || c == '\t'; }
 
 static proven_byte_t http_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
-static bool http_eq_nocase(proven_u8str_view_t a, proven_u8str_view_t b) {
-    if (a.size != b.size) return false;
-    for (proven_size_t i = 0; i < a.size; ++i) {
-        if (http_lower(a.ptr[i]) != http_lower(b.ptr[i])) return false;
-    }
-    return true;
-}
 
 static bool http_eq(proven_u8str_view_t a, proven_u8str_view_t b) {
     if (a.size != b.size) return false;
@@ -254,7 +247,7 @@ bool proven_http_header_find(const proven_http_header_t *headers, proven_size_t 
                              proven_u8str_view_t name, proven_u8str_view_t *value) {
     if (!headers) return false;
     for (proven_size_t i = 0; i < count; ++i) {
-        if (http_eq_nocase(headers[i].name, name)) {
+        if (proven_u8str_view_eq_ascii_ci(headers[i].name, name)) {
             if (value) *value = headers[i].value;
             return true;
         }
@@ -265,7 +258,7 @@ bool proven_http_header_find(const proven_http_header_t *headers, proven_size_t 
 proven_size_t proven_http_header_count(const proven_http_header_t *headers, proven_size_t count, proven_u8str_view_t name) {
     proven_size_t n = 0;
     if (!headers) return 0;
-    for (proven_size_t i = 0; i < count; ++i) if (http_eq_nocase(headers[i].name, name)) n++;
+    for (proven_size_t i = 0; i < count; ++i) if (proven_u8str_view_eq_ascii_ci(headers[i].name, name)) n++;
     return n;
 }
 
@@ -289,10 +282,10 @@ bool proven_http_header_has_token(const proven_http_header_t *headers, proven_si
                                   proven_u8str_view_t name, proven_u8str_view_t token) {
     if (!headers) return false;
     for (proven_size_t i = 0; i < count; ++i) {
-        if (!http_eq_nocase(headers[i].name, name)) continue;
+        if (!proven_u8str_view_eq_ascii_ci(headers[i].name, name)) continue;
         proven_u8str_view_t rest = headers[i].value, item;
         while (http_list_next(&rest, &item)) {
-            if (http_eq_nocase(item, token)) return true;
+            if (proven_u8str_view_eq_ascii_ci(item, token)) return true;
         }
     }
     return false;
@@ -304,11 +297,11 @@ static proven_u8str_view_t http_lit_n(const char *s, proven_size_t n) {
 #define HTTP_LIT(s) http_lit_n("" s, sizeof(s) - 1)
 
 static proven_http_coding_t http_coding_named(proven_u8str_view_t name) {
-    if (http_eq_nocase(name, HTTP_LIT("gzip")) || http_eq_nocase(name, HTTP_LIT("x-gzip"))) return PROVEN_HTTP_CODING_GZIP;
-    if (http_eq_nocase(name, HTTP_LIT("deflate"))) return PROVEN_HTTP_CODING_DEFLATE;
-    if (http_eq_nocase(name, HTTP_LIT("zstd"))) return PROVEN_HTTP_CODING_ZSTD;
-    if (http_eq_nocase(name, HTTP_LIT("br"))) return PROVEN_HTTP_CODING_BROTLI;
-    if (http_eq_nocase(name, HTTP_LIT("identity"))) return PROVEN_HTTP_CODING_IDENTITY;
+    if (proven_u8str_view_eq_ascii_ci(name, HTTP_LIT("gzip")) || proven_u8str_view_eq_ascii_ci(name, HTTP_LIT("x-gzip"))) return PROVEN_HTTP_CODING_GZIP;
+    if (proven_u8str_view_eq_ascii_ci(name, HTTP_LIT("deflate"))) return PROVEN_HTTP_CODING_DEFLATE;
+    if (proven_u8str_view_eq_ascii_ci(name, HTTP_LIT("zstd"))) return PROVEN_HTTP_CODING_ZSTD;
+    if (proven_u8str_view_eq_ascii_ci(name, HTTP_LIT("br"))) return PROVEN_HTTP_CODING_BROTLI;
+    if (proven_u8str_view_eq_ascii_ci(name, HTTP_LIT("identity"))) return PROVEN_HTTP_CODING_IDENTITY;
     return PROVEN_HTTP_CODING_OTHER;
 }
 
@@ -317,7 +310,7 @@ proven_http_coding_t proven_http_content_coding(const proven_http_header_t *head
     proven_size_t fields = 0, items = 0;
     if (!headers) return found;
     for (proven_size_t i = 0; i < count; ++i) {
-        if (!http_eq_nocase(headers[i].name, HTTP_LIT("Content-Encoding"))) continue;
+        if (!proven_u8str_view_eq_ascii_ci(headers[i].name, HTTP_LIT("Content-Encoding"))) continue;
         if (++fields > 1) return PROVEN_HTTP_CODING_OTHER;
         proven_u8str_view_t rest = headers[i].value, item;
         while (http_list_next(&rest, &item)) {
@@ -367,7 +360,7 @@ unsigned proven_http_accept_weight(const proven_http_header_t *headers, proven_s
     unsigned listed_weight = 0, star_weight = 0;
     if (!headers) return identity;
     for (proven_size_t i = 0; i < count; ++i) {
-        if (!http_eq_nocase(headers[i].name, HTTP_LIT("Accept-Encoding"))) continue;
+        if (!proven_u8str_view_eq_ascii_ci(headers[i].name, HTTP_LIT("Accept-Encoding"))) continue;
         proven_u8str_view_t rest = headers[i].value, item;
         while (http_list_next(&rest, &item)) {
             proven_u8str_view_t name;
@@ -477,7 +470,7 @@ static proven_err_t http_framing_headers(const proven_http_header_t *headers, pr
         proven_size_t codings = 0;
         bool only_chunked = true;
         for (proven_size_t i = 0; i < count; ++i) {
-            if (!http_eq_nocase(headers[i].name, te_name)) continue;
+            if (!proven_u8str_view_eq_ascii_ci(headers[i].name, te_name)) continue;
             proven_u8str_view_t rest = headers[i].value, item;
             while (http_list_next(&rest, &item)) {
                 if (item.size == 0) continue;
@@ -486,7 +479,7 @@ static proven_err_t http_framing_headers(const proven_http_header_t *headers, pr
                 while (t < item.size && http_is_tchar(item.ptr[t])) t++;
                 if (t == 0) return PROVEN_ERR_INVALID_FORMAT;
                 codings++;
-                if (t != item.size || !http_eq_nocase(item, http_cstr("chunked"))) only_chunked = false;
+                if (t != item.size || !proven_u8str_view_eq_ascii_ci(item, http_cstr("chunked"))) only_chunked = false;
             }
         }
         if (codings == 0) return PROVEN_ERR_INVALID_FORMAT;
@@ -933,7 +926,7 @@ proven_err_t proven_http_range_parse(proven_u8str_view_t value, proven_u64 size,
     if (eq == value.size || eq == 0) return PROVEN_ERR_INVALID_FORMAT;
     proven_u8str_view_t unit = { .ptr = value.ptr, .size = eq };
     if (!http_is_token(unit)) return PROVEN_ERR_INVALID_FORMAT;
-    if (!http_eq_nocase(unit, http_cstr("bytes"))) return PROVEN_ERR_UNSUPPORTED;
+    if (!proven_u8str_view_eq_ascii_ci(unit, http_cstr("bytes"))) return PROVEN_ERR_UNSUPPORTED;
 
     proven_u8str_view_t spec = { .ptr = value.ptr + eq + 1, .size = value.size - eq - 1 };
     for (proven_size_t i = 0; i < spec.size; ++i) if (spec.ptr[i] == ',') return PROVEN_ERR_UNSUPPORTED;

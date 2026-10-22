@@ -102,11 +102,6 @@ static proven_u8str_view_t c3_lit_n(const char *s, proven_size_t n) { return (pr
 
 static proven_byte_t c3_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
-static bool c3_eq_nocase(proven_u8str_view_t a, proven_u8str_view_t b) {
-    if (a.size != b.size) return false;
-    for (proven_size_t i = 0; i < a.size; ++i) if (c3_lower(a.ptr[i]) != c3_lower(b.ptr[i])) return false;
-    return true;
-}
 
 static void *c3_alloc(proven_allocator_t a, proven_size_t n) {
     proven_result_mem_mut_t m = a.alloc_fn(a.ctx, n, 16);
@@ -459,17 +454,17 @@ static proven_err_t r_submit(c3req_t *r) {
     bool has_accept = false, has_range = false;
     for (proven_size_t i = 0; i < r->header_count; ++i) {
         proven_u8str_view_t name = r->headers[i].name;
-        if (c3_eq_nocase(name, c3_lit("accept-encoding"))) has_accept = true;
-        if (c3_eq_nocase(name, c3_lit("range"))) has_range = true;
+        if (proven_u8str_view_eq_ascii_ci(name, c3_lit("accept-encoding"))) has_accept = true;
+        if (proven_u8str_view_eq_ascii_ci(name, c3_lit("range"))) has_range = true;
         /* Fields that describe an HTTP/1.1 connection are not sent on this one. */
-        if (c3_eq_nocase(name, c3_lit("keep-alive")) || c3_eq_nocase(name, c3_lit("proxy-connection")) || c3_eq_nocase(name, c3_lit("upgrade"))) continue;
-        if (c3_eq_nocase(name, c3_lit("te")) && !c3_eq_nocase(r->headers[i].value, c3_lit("trailers"))) continue;
+        if (proven_u8str_view_eq_ascii_ci(name, c3_lit("keep-alive")) || proven_u8str_view_eq_ascii_ci(name, c3_lit("proxy-connection")) || proven_u8str_view_eq_ascii_ci(name, c3_lit("upgrade"))) continue;
+        if (proven_u8str_view_eq_ascii_ci(name, c3_lit("te")) && !proven_u8str_view_eq_ascii_ci(r->headers[i].value, c3_lit("trailers"))) continue;
         if (at + name.size > cl->cfg.max_head_bytes) { e = PROVEN_ERR_OUT_OF_BOUNDS; break; }
         for (proven_size_t k = 0; k < name.size; ++k) cl->hbuf[at + k] = c3_lower(name.ptr[k]);
         list[n++] = (proven_http_header_t){ .name = { .ptr = cl->hbuf + at, .size = name.size }, .value = r->headers[i].value };
         at += name.size;
     }
-    const bool body_method = c3_eq_nocase(r->method, c3_lit("POST")) || c3_eq_nocase(r->method, c3_lit("PUT")) || c3_eq_nocase(r->method, c3_lit("PATCH"));
+    const bool body_method = proven_u8str_view_eq_ascii_ci(r->method, c3_lit("POST")) || proven_u8str_view_eq_ascii_ci(r->method, c3_lit("PUT")) || proven_u8str_view_eq_ascii_ci(r->method, c3_lit("PATCH"));
     if (e == PROVEN_OK) {
         if (cl->cfg.decompress && !has_accept && !has_range) list[n++] = (proven_http_header_t){ .name = c3_lit("accept-encoding"), .value = proven_http_decoder_accept_(cl->cfg.decompress_zstd, cl->cfg.decompress_brotli) };
         proven_u64 length = r->body.size > 0 ? r->body.size : r->body_length;
@@ -483,7 +478,7 @@ static proven_err_t r_submit(c3req_t *r) {
     if (e == PROVEN_ERR_INVALID_STATE) return PROVEN_ERR_BUSY;          /* the handshake is not over */
     if (e != PROVEN_OK) return e;
     r->has_id = true;
-    r->head_only = c3_eq_nocase(r->method, c3_lit("HEAD"));
+    r->head_only = proven_u8str_view_eq_ascii_ci(r->method, c3_lit("HEAD"));
     if (!r->streamed) {
         r->end_asked = true;
         if (r->body.size == 0) r->engine_done = true;
@@ -841,7 +836,7 @@ static void c_on_io(void *ctx, proven_u8 got) {
 static c3conn_t *c_find(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, const proven_net_addr_t *to) {
     for (c3conn_t *k = cl->h3; k; k = k->next) {
         if (k->dead || k->over || k->closed || k->port != port || !c3_same_addr(&k->to, to)) continue;
-        if (!c3_eq_nocase((proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, host)) continue;
+        if (!proven_u8str_view_eq_ascii_ci((proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, host)) continue;
         return k;
     }
     return (void *)0;
@@ -875,7 +870,7 @@ static proven_err_t c_open(proven_http_event_client_t *cl, proven_u8str_view_t h
          * request ended: it goes to the cache now, before this one is given what is there - a
          * ticket that carried early data once is refused it again (RFC-0021). */
         for (c3conn_t *o = cl->h3; o; o = o->next) {
-            if (o == c || o->dead || !o->q || o->port != c->port || !c3_eq_nocase((proven_u8str_view_t){ .ptr = o->host, .size = o->host_len }, host)) continue;
+            if (o == c || o->dead || !o->q || o->port != c->port || !proven_u8str_view_eq_ascii_ci((proven_u8str_view_t){ .ptr = o->host, .size = o->host_len }, host)) continue;
             proven_http_event_client_session_keep_(cl, (proven_u8str_view_t){ .ptr = o->host, .size = o->host_len }, o->port, true, &o->session, o->session_mark,
                                                    &o->session_stored, o->up, proven_quic_conn_resumed(o->q));
         }
@@ -952,7 +947,7 @@ proven_err_t proven_http_event_client_h3_start_(proven_http_event_client_t *cl, 
     const proven_u16 port = url->has_port ? url->port : 443;
     if (host.size == 0 || host.size > 255) return PROVEN_ERR_INVALID_ARG;
     const proven_u8str_view_t method = o->method.size ? o->method : c3_lit("GET");
-    if (c3_eq_nocase(method, c3_lit("CONNECT"))) return PROVEN_ERR_INVALID_ARG;
+    if (proven_u8str_view_eq_ascii_ci(method, c3_lit("CONNECT"))) return PROVEN_ERR_INVALID_ARG;
     c3conn_t *c = c_find(cl, host, port, &to);
     if (c) {
         proven_size_t waiting = 0;

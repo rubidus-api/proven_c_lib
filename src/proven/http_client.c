@@ -78,11 +78,6 @@ static proven_u8str_view_t cl_lit(const char *s) {
 
 static proven_byte_t cl_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
-static bool cl_eq_nocase(proven_u8str_view_t a, proven_u8str_view_t b) {
-    if (a.size != b.size) return false;
-    for (proven_size_t i = 0; i < a.size; ++i) if (cl_lower(a.ptr[i]) != cl_lower(b.ptr[i])) return false;
-    return true;
-}
 
 static bool cl_has_control(proven_u8str_view_t s) {
     for (proven_size_t i = 0; i < s.size; ++i) if (s.ptr[i] < 0x20 || s.ptr[i] == 0x7f) return true;
@@ -387,7 +382,7 @@ static bool cl_no_proxy(const proven_http_client_t *c, proven_u8str_view_t host)
         const proven_u8str_view_t entry = { .ptr = list.ptr + from, .size = to - from };
         if (entry.size == 0 || entry.size > host.size) continue;
         const proven_u8str_view_t tail = { .ptr = host.ptr + (host.size - entry.size), .size = entry.size };
-        if (!cl_eq_nocase(tail, entry)) continue;
+        if (!proven_u8str_view_eq_ascii_ci(tail, entry)) continue;
         if (entry.size == host.size) return true;
         if (!is_address && host.ptr[host.size - entry.size - 1] == '.') return true;
     }
@@ -496,13 +491,13 @@ static proven_err_t cl_owned_close(void *ctx) {
 }
 
 static bool cl_is_reserved_header(proven_u8str_view_t name) {
-    return cl_eq_nocase(name, cl_lit("Host")) || cl_eq_nocase(name, cl_lit("Content-Length")) ||
-           cl_eq_nocase(name, cl_lit("Transfer-Encoding")) || cl_eq_nocase(name, cl_lit("Connection"));
+    return proven_u8str_view_eq_ascii_ci(name, cl_lit("Host")) || proven_u8str_view_eq_ascii_ci(name, cl_lit("Content-Length")) ||
+           proven_u8str_view_eq_ascii_ci(name, cl_lit("Transfer-Encoding")) || proven_u8str_view_eq_ascii_ci(name, cl_lit("Connection"));
 }
 
 static bool cl_is_credential_header(proven_u8str_view_t name) {
-    return cl_eq_nocase(name, cl_lit("Authorization")) || cl_eq_nocase(name, cl_lit("Cookie")) ||
-           cl_eq_nocase(name, cl_lit("Proxy-Authorization"));
+    return proven_u8str_view_eq_ascii_ci(name, cl_lit("Authorization")) || proven_u8str_view_eq_ascii_ci(name, cl_lit("Cookie")) ||
+           proven_u8str_view_eq_ascii_ci(name, cl_lit("Proxy-Authorization"));
 }
 
 /* What varies between the attempts of one send. */
@@ -563,10 +558,10 @@ static proven_err_t cl_exchange(cl_call_t *call, const proven_http_client_reques
     for (proven_size_t i = 0; i < req->header_count && e == PROVEN_OK; ++i) {
         proven_u8str_view_t name = req->headers[i].name;
         if (at->cross_origin && cl_is_credential_header(name)) continue;
-        if (at->authorization.size > 0 && cl_eq_nocase(name, cl_lit("Authorization"))) continue;
-        if (!at->send_body && (cl_eq_nocase(name, cl_lit("Content-Type")))) continue;
-        if (expecting && cl_eq_nocase(name, cl_lit("Expect"))) continue;      /* this call writes it */
-        if (cl_eq_nocase(name, cl_lit("Cookie"))) caller_cookie = true;
+        if (at->authorization.size > 0 && proven_u8str_view_eq_ascii_ci(name, cl_lit("Authorization"))) continue;
+        if (!at->send_body && (proven_u8str_view_eq_ascii_ci(name, cl_lit("Content-Type")))) continue;
+        if (expecting && proven_u8str_view_eq_ascii_ci(name, cl_lit("Expect"))) continue;      /* this call writes it */
+        if (proven_u8str_view_eq_ascii_ci(name, cl_lit("Cookie"))) caller_cookie = true;
         e = proven_http_write_header(out, &len, name, req->headers[i].value);
     }
     if (e == PROVEN_OK && at->authorization.size > 0) e = proven_http_write_header(out, &len, cl_lit("Authorization"), at->authorization);
@@ -599,7 +594,7 @@ static proven_err_t cl_exchange(cl_call_t *call, const proven_http_client_reques
     }
 
     bool wants_body = at->send_body && (streaming || req->body.size > 0);
-    bool body_method = cl_eq_nocase(at->method, cl_lit("POST")) || cl_eq_nocase(at->method, cl_lit("PUT")) || cl_eq_nocase(at->method, cl_lit("PATCH"));
+    bool body_method = proven_u8str_view_eq_ascii_ci(at->method, cl_lit("POST")) || proven_u8str_view_eq_ascii_ci(at->method, cl_lit("PUT")) || proven_u8str_view_eq_ascii_ci(at->method, cl_lit("PATCH"));
     if (e == PROVEN_OK) {
         if (streaming) e = proven_http_write_header(out, &len, cl_lit("Transfer-Encoding"), cl_lit("chunked"));
         else if (wants_body || body_method) e = proven_http_write_header_u64(out, &len, cl_lit("Content-Length"), at->send_body ? req->body.size : 0);
@@ -725,7 +720,7 @@ static proven_err_t cl_exchange(cl_call_t *call, const proven_http_client_reques
 
     if (c->cfg.cookies) {
         for (proven_size_t i = 0; i < call->res.header_count; ++i) {
-            if (!cl_eq_nocase(call->headers[i].name, cl_lit("Set-Cookie"))) continue;
+            if (!proven_u8str_view_eq_ascii_ci(call->headers[i].name, cl_lit("Set-Cookie"))) continue;
             /* A cookie the jar will not take is the server's problem, not this request's. */
             (void)proven_http_cookie_jar_store(c->cfg.cookies, u->host, u->path.size ? u->path : cl_lit("/"), https,
                                                call->headers[i].value, proven_time_now());
@@ -941,7 +936,7 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
             proven_size_t n = 0;
             bool answered = false;
             for (proven_size_t i = 0; i < call->res.header_count && !answered; ++i) {
-                if (!cl_eq_nocase(call->headers[i].name, cl_lit("WWW-Authenticate"))) continue;
+                if (!proven_u8str_view_eq_ascii_ci(call->headers[i].name, cl_lit("WWW-Authenticate"))) continue;
                 challenge = call->headers[i].value;
                 proven_http_digest_challenge_t dc;
                 if (proven_http_digest_challenge_parse(challenge, &dc) == PROVEN_OK) {
@@ -962,7 +957,7 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
                 }
             }
             for (proven_size_t i = 0; i < call->res.header_count && !answered && !auth_tried; ++i) {
-                if (!cl_eq_nocase(call->headers[i].name, cl_lit("WWW-Authenticate"))) continue;
+                if (!proven_u8str_view_eq_ascii_ci(call->headers[i].name, cl_lit("WWW-Authenticate"))) continue;
                 if (!proven_http_auth_offers(call->headers[i].value, cl_lit("Basic"))) continue;
                 if (proven_http_basic_auth(client->cfg.username, client->cfg.password,
                                            (proven_mem_mut_t){ .ptr = auth_value, .size = sizeof auth_value }, &n) == PROVEN_OK) answered = true;
@@ -981,7 +976,7 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
         proven_u8str_view_t location;
         if (is_redirect && redirects < client->cfg.max_redirects &&
             proven_http_header_find(call->headers, call->res.header_count, cl_lit("Location"), &location)) {
-            bool to_get = status == 303 || ((status == 301 || status == 302) && cl_eq_nocase(at.method, cl_lit("POST")));
+            bool to_get = status == 303 || ((status == 301 || status == 302) && proven_u8str_view_eq_ascii_ci(at.method, cl_lit("POST")));
             bool must_repeat_body = !to_get && at.send_body && streaming;
             proven_byte_t next[CL_URL_MAX];
             proven_size_t nl = 0;
