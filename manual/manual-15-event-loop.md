@@ -959,7 +959,8 @@ line; its own client is HTTP/1.1, which the same server goes on serving.
 - **Each such WebSocket holds a stream** - one of `max_concurrent_streams` (100 by default) -
   for as long as it is open. A connection full of WebSockets refuses new requests.
 - Its frames travel in DATA frames, so HTTP/2's flow control is under the WebSocket's own:
-  `http2_window_bytes` is what a client may send before the WebSocket has taken it, and
+  `http2_window_bytes` is what a client may send before the WebSocket has taken it (with 0, a
+  window that grows while the WebSocket reads, as for any body), and
   `on_writable` comes when the stream's output has moved.
 - Its end is END_STREAM from each side after the close handshake - until the client's arrives
   the stream keeps its place; a peer that resets the stream is a WebSocket closed with 1006 and

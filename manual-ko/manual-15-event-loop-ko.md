@@ -932,7 +932,8 @@ int main(void) {
 - **그런 WebSocket은 각각 스트림 하나를 쥔다** - `max_concurrent_streams`(기본 100) 중 하나 - 열려 있는
   동안. WebSocket으로 가득한 연결은 새 요청을 거절한다.
 - 그 프레임은 DATA 프레임에 실려 가므로 HTTP/2의 흐름 제어가 WebSocket 자신의 것 아래에 있다:
-  `http2_window_bytes`는 WebSocket이 가져가기 전에 클라이언트가 보낼 수 있는 양이고, `on_writable`은
+  `http2_window_bytes`는 WebSocket이 가져가기 전에 클라이언트가 보낼 수 있는 양이고(0이면 여느 본문처럼
+  WebSocket이 읽는 동안 자라는 창), `on_writable`은
   스트림의 출력이 움직였을 때 온다.
 - 끝은 close 핸드셰이크 뒤 양쪽의 END_STREAM이다 - 클라이언트의 것이 올 때까지 스트림은 자리를 지킨다.
   스트림을 리셋하는 상대는 1006과 `PROVEN_ERR_RESET`으로 닫힌 WebSocket이다. 종료는 그것을 1001로 닫는다.
