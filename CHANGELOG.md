@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.76.0] - 2026-10-22
+
 ### Added
 
 - Five string helpers (RFC-0022), all pure computation and freestanding-available, with `xcv_`
