@@ -739,7 +739,7 @@ if (!proven_is_ok(proven_println("hello {}", PROVEN_ARG("world")))) {
 
 `PROVEN_ARG` is built on `_Generic`, and `_Generic` can only dispatch on types it was
 told about at compile time. It cannot be told about yours. So the formatter's argument
-set - integers, floats, strings, pointers, datetimes - was a **closed** one: a `rect_t`,
+set - integers, floats, strings, pointers, datetimes - was a **closed** one: a `ex_rect_t`,
 a `uuid_t`, a `vec3_t` could not be passed to `{}` at all.
 
 The two ways around it were both bad. Pre-format the value into a scratch string and
@@ -783,7 +783,7 @@ Compiled and run by the test suite:
  *
  * `PROVEN_ARG` is built on `_Generic`, which can only dispatch on types it was told
  * about - and it cannot be told about yours. So before `PROVEN_ARG_OF` existed, a
- * `rect_t` simply could not be printed. You either pre-formatted it into a scratch
+ * `ex_rect_t` simply could not be printed. You either pre-formatted it into a scratch
  * string and passed that (an allocation and a copy per value, in the logging path,
  * which is the one path that must not allocate), or you printed the fields one at a
  * time and gave up on ever aligning the column.
@@ -795,10 +795,10 @@ Compiled and run by the test suite:
  * they do on an int.
  */
 
-typedef struct { int w, h; } rect_t;
+typedef struct { int w, h; } ex_rect_t;
 
 static proven_err_t render_rect(proven_fmt_sink_t out, const void *obj) {
-    const rect_t *r = (const rect_t *)obj;
+    const ex_rect_t *r = (const ex_rect_t *)obj;
 
     /* Compose: the formatter, into a stack buffer, no allocator anywhere. */
     proven_byte_t tmp[64];
@@ -811,8 +811,8 @@ static proven_err_t render_rect(proven_fmt_sink_t out, const void *obj) {
 }
 
 int main(void) {
-    rect_t a = { .w = 1920, .h = 1080 };
-    rect_t b = { .w = 640,  .h = 480  };
+    ex_rect_t a = { .w = 1920, .h = 1080 };
+    ex_rect_t b = { .w = 640,  .h = 480  };
 
     proven_byte_t buf[128];
     proven_u8str_t line = proven_u8str_borrow(buf, sizeof buf);

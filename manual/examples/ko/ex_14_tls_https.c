@@ -15,10 +15,10 @@
 
 typedef struct {
     proven_http_server_t *server;
-} app_t;
+} ex_app_t;
 
 static void handle(void *ctx, proven_http_exchange_t *x) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     const proven_http_request_t *req = proven_http_exchange_request(x);
     /* 핸들러는 TLS가 없을 때와 같다: 핸들러가 돌 때쯤 요청은 평문이다. */
     if (proven_u8str_view_eq(req->target, PROVEN_LIT("/quit"))) {
@@ -30,7 +30,7 @@ static void handle(void *ctx, proven_http_exchange_t *x) {
 }
 
 static void serve(void *arg) {
-    (void)proven_http_server_run(((app_t *)arg)->server);
+    (void)proven_http_server_run(((ex_app_t *)arg)->server);
 }
 
 int main(void) {
@@ -58,7 +58,7 @@ int main(void) {
     proven_tls_config_t *server_tls = NULL;
     EXAMPLE_REQUIRE(proven_tls_config_create(&server_options, &server_tls) == PROVEN_OK, "서버의 TLS 설정");
 
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
     proven_http_server_config_t server_config = { .alloc = heap, .handler = handle, .handler_ctx = &app, .tls = server_tls };
     proven_net_addr_t at;
     EXAMPLE_REQUIRE(proven_http_server_create(&server_config, &app.server) == PROVEN_OK &&

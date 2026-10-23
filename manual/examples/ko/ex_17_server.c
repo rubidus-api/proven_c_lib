@@ -12,10 +12,10 @@
  * 클라이언트는 7절에 있다.)
  */
 
-typedef struct { proven_loop_t *loop; int served, over_http2; } app_t;
+typedef struct { proven_loop_t *loop; int served, over_http2; } ex_app_t;
 
 static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     /* 요청은 어느 쪽이든 같아 보인다: 메서드, 대상, 필드 - 그 가운데 Host도 있다. HTTP/2는
      * 그것을 `:authority`로 싣고, 서버는 익숙한 이름으로 넘겨준다. */
     /* HTTP/3에서 TLS 설정에 `early_data`가 있으면 요청은 조기 데이터로 올 수 있고(14장 6절),
@@ -35,10 +35,10 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 
 static void on_done(void *ctx, proven_http_stream_t *stream, proven_err_t why) {
     (void)stream;
-    if (why == PROVEN_OK) ((app_t *)ctx)->served++;
+    if (why == PROVEN_OK) ((ex_app_t *)ctx)->served++;
 }
 
-static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_app_t *)arg)->loop); }
 
 /* 작은 HTTP/2 클라이언트: 엔진, 소켓, 그리고 요청한 스트림이 모두 끝날 때까지 둘 사이로
  * 바이트를 옮기는 루프. 200으로 답을 받은 수를 돌려준다. */
@@ -99,7 +99,7 @@ static int ask_three(proven_u16 port, char answers[3][64]) {
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
 
     /* `http2`가 전부다. 평문에서는 HTTP/2 서문으로 시작하는 클라이언트가 HTTP/2이고 나머지는

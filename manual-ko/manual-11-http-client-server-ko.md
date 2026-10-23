@@ -294,10 +294,10 @@ typedef struct {
     proven_http_server_t *server;
     int served;
     proven_err_t ended;                 /* run이 돌려준 것 */
-} app_t;
+} ex_app_t;
 
 static void handle(void *ctx, proven_http_exchange_t *x) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     const proven_http_request_t *req = proven_http_exchange_request(x);
     app->served++;
 
@@ -348,7 +348,7 @@ static void handle(void *ctx, proven_http_exchange_t *x) {
 }
 
 static void serve(void *arg) {
-    app_t *app = arg;
+    ex_app_t *app = arg;
     app->ended = proven_http_server_run(app->server);   /* 종료가 끝날 때까지 */
 }
 
@@ -372,7 +372,7 @@ static bool fetch_is(proven_http_client_t *client, proven_u16 port, const char *
 }
 
 int main(void) {
-    static app_t app;
+    static ex_app_t app;
     proven_allocator_t heap = proven_heap_allocator();
 
     /* 설정을 0으로 채우고 필요한 것만 정한다. 0인 필드에는 모두 기본값이 있다. */

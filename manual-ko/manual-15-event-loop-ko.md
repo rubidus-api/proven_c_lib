@@ -142,13 +142,13 @@ typedef struct {
     int order[8];
     int count;
     atomic_int from_worker;
-} app_t;
+} ex_app_t;
 
-static void note(app_t *app, int what) { if (app->count < 8) app->order[app->count++] = what; }
+static void note(ex_app_t *app, int what) { if (app->count < 8) app->order[app->count++] = what; }
 
 /* 타이머는 한 번 울린다. 반복해야 하는 타이머는 스스로 다시 맞춘다. */
 static void on_tick(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     note(app, 1);
     if (++app->ticks < 3) proven_loop_timer_set(app->loop, &app->tick, 20, on_tick, app);
 }
@@ -157,7 +157,7 @@ static void on_late(void *ctx) { note(ctx, 9); }
 
 /* 워커 스레드가 요청했지만, 이것은 루프의 스레드에서 실행된다. */
 static void on_result(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     note(app, 5);
     proven_loop_timer_cancel(app->loop, &app->late);      /* 오 초 뒤에 울렸을 것이다. 이제는 영영 울리지 않는다 */
     proven_loop_stop(app->loop);
@@ -165,7 +165,7 @@ static void on_result(void *ctx) {
 
 /* 이것은 워커 스레드에서 실행된다. 얼마든지 오래 걸려도 된다: 루프는 기다리지 않는다. */
 static void slow_work(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     proven_time_sleep(400);
     atomic_store(&app->from_worker, 1);
     if (proven_loop_post(app->loop, on_result, app) != PROVEN_OK) proven_loop_stop(app->loop);   /* 게시는 할당 실패일 때만 거절된다. 그때는 그냥 실행을 끝낸다 */
@@ -173,7 +173,7 @@ static void slow_work(void *ctx) {
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
 
     // ---- 루프 ---------------------------------------------------------------------
     /* 루프는 셀렉터, 타이머 묶음, 그리고 다른 스레드가 게시할 수 있는 큐다. */
@@ -369,20 +369,20 @@ typedef struct {
     int served;
     proven_http_event_server_t *server;
     proven_err_t ended;                /* on_drained가 들은 것 */
-} app_t;
+} ex_app_t;
 
 /* 요청 하나에 답하는 동안 이 프로그램이 간직하는 것. */
 typedef struct {
-    app_t *app;
+    ex_app_t *app;
     proven_http_stream_t *stream;
     proven_loop_timer_t timer;
     proven_size_t sent, total;         /* /count: how far the body has got */
     proven_size_t received;            /* /size: body bytes seen */
-} exchange_t;
+} ex_exchange_t;
 
 /* 서버가 "지금은 그만"이라고 할 때까지 줄을 쓴다. 이미 보낸 것을 클라이언트가 가져가지
  * 않았을 때 그렇게 말한다. 나머지는 on_writable을 기다린다. */
-static void count_pump(exchange_t *x) {
+static void count_pump(ex_exchange_t *x) {
     while (x->sent < x->total) {
         char line[32];
         int n = snprintf(line, sizeof line, "%u\n", (unsigned)x->sent);
@@ -395,13 +395,13 @@ static void count_pump(exchange_t *x) {
 }
 
 static void answer_later(void *ctx) {
-    exchange_t *x = ctx;
+    ex_exchange_t *x = ctx;
     (void)proven_http_stream_respond(x->stream, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("worth the wait\n")));
 }
 
 static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
-    app_t *app = ctx;
-    exchange_t *x = calloc(1, sizeof *x);
+    ex_app_t *app = ctx;
+    ex_exchange_t *x = calloc(1, sizeof *x);
     if (!x) { proven_http_stream_abort(stream); return; }
     x->app = app;
     x->stream = stream;
@@ -427,7 +427,7 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 
 static void on_body(void *ctx, proven_http_stream_t *stream, proven_mem_view_t piece, bool last) {
     (void)ctx;
-    exchange_t *x = proven_http_stream_user(stream);
+    ex_exchange_t *x = proven_http_stream_user(stream);
     x->received += piece.size;
     if (last) {
         char text[32];
@@ -439,14 +439,14 @@ static void on_body(void *ctx, proven_http_stream_t *stream, proven_mem_view_t p
 /* 보류되었던 출력이 나갔다: 쓰기가 멈춘 자리에서 이어 간다. */
 static void on_writable(void *ctx, proven_http_stream_t *stream) {
     (void)ctx;
-    exchange_t *x = proven_http_stream_user(stream);
+    ex_exchange_t *x = proven_http_stream_user(stream);
     if (x->total > 0) count_pump(x);
 }
 
 /* 무슨 일이 있었든 on_request마다 한 번 불린다. 붙여 둔 것을 해제할 자리. */
 static void on_done(void *ctx, proven_http_stream_t *stream, proven_err_t why) {
-    app_t *app = ctx;
-    exchange_t *x = proven_http_stream_user(stream);
+    ex_app_t *app = ctx;
+    ex_exchange_t *x = proven_http_stream_user(stream);
     if (!x) return;
     proven_loop_timer_cancel(app->loop, &x->timer);
     free(x);
@@ -455,16 +455,16 @@ static void on_done(void *ctx, proven_http_stream_t *stream, proven_err_t why) {
 
 /* 끝, 루프의 스레드에서: 열린 것이 끝나고, 그다음 루프를 멈춘다. */
 static void on_drained(void *ctx, proven_err_t why) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     app->ended = why;
     proven_loop_stop(app->loop);
 }
 static void begin_end(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     if (proven_http_event_server_shutdown(app->server, 2000, on_drained, app) != PROVEN_OK) proven_loop_stop(app->loop);
 }
 
-static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_app_t *)arg)->loop); }
 
 static char g_url[64];
 static proven_u8str_view_t url_for(proven_u16 port, const char *path) {
@@ -482,7 +482,7 @@ static bool body_equals(proven_http_client_response_t *resp, proven_allocator_t 
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
 
     // ---- 서버 ----------------------------------------------------------------------
     /* 서버는 루프 위에 만들어지고 듣는다. 루프가 돌 때까지는 아무 일도 하지 않는다. */
@@ -769,19 +769,19 @@ typedef struct {
     proven_loop_t *loop;
     int opened, closed;
     proven_u16 last_code;
-} app_t;
+} ex_app_t;
 
 /* 연결 하나에 대해 이 프로그램이 간직하는 것: 모으고 있는 메시지. */
 typedef struct {
-    app_t *app;
+    ex_app_t *app;
     char text[4096];
     proven_size_t len;
     bool waiting;                 /* 서버가 아직 받아 주지 않은 답 */
-} peer_t;
+} ex_peer_t;
 
 /* 답을 보낸다. 클라이언트가 앞서 보낸 것을 가져가지 않고 있으면 서버가 거절한다:
  * 답을 간직하고, 이 클라이언트에게서 읽기를 멈추고, on_writable이 알려 줄 때 다시 시도한다. */
-static void reply(proven_ws_stream_t *ws, peer_t *peer) {
+static void reply(proven_ws_stream_t *ws, ex_peer_t *peer) {
     proven_err_t err = proven_ws_stream_send(ws, true, (proven_mem_view_t){ (const proven_byte_t *)peer->text, peer->len });
     if (err == PROVEN_ERR_AGAIN) {
         peer->waiting = true;
@@ -796,7 +796,7 @@ static void reply(proven_ws_stream_t *ws, peer_t *peer) {
  * 직접 모은다 - 스스로 정한 한도까지. 손으로 하는 까닭이 바로 그 한도다. */
 static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
     (void)ctx;
-    peer_t *peer = proven_ws_stream_user(ws);
+    ex_peer_t *peer = proven_ws_stream_user(ws);
     if (first) peer->len = 0;
     if (!text || peer->len + piece.size > sizeof peer->text) {
         proven_ws_stream_close(ws, 1009, PROVEN_LIT("short text only"));       /* 1009: 너무 크다 */
@@ -812,7 +812,7 @@ static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
 /* 다시 자리가 생겼다. */
 static void on_writable(void *ctx, proven_ws_stream_t *ws) {
     (void)ctx;
-    peer_t *peer = proven_ws_stream_user(ws);
+    ex_peer_t *peer = proven_ws_stream_user(ws);
     if (!peer->waiting) return;
     reply(ws, peer);
     if (!peer->waiting) proven_ws_stream_resume(ws);
@@ -820,7 +820,7 @@ static void on_writable(void *ctx, proven_ws_stream_t *ws) {
 
 /* 연결이 어떻게 끝났든 한 번 불린다. 붙여 둔 것을 해제할 자리. */
 static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)why;
     free(proven_ws_stream_user(ws));
     app->last_code = code;
@@ -828,8 +828,8 @@ static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven
 }
 
 static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
-    app_t *app = ctx;
-    peer_t *peer = calloc(1, sizeof *peer);
+    ex_app_t *app = ctx;
+    ex_peer_t *peer = calloc(1, sizeof *peer);
     if (!peer) { proven_http_stream_abort(stream); return; }
     peer->app = app;
 
@@ -858,11 +858,11 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
     app->opened++;
 }
 
-static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_app_t *)arg)->loop); }
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
 
     // ---- 루프 위의 서버, 자기 스레드에서 --------------------------------------------
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "루프");
@@ -1006,7 +1006,7 @@ typedef struct {
     int opened, answers, closed, refused;
     proven_u16 code;
     char last[64];
-} app_t;
+} ex_app_t;
 
 // ---- 서버: 무엇을 받았는지 말해 준다 ----
 
@@ -1029,7 +1029,7 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 
 /* 서버가 수락했다. 여기서부터 - 이 호출 안에서도 - 메시지를 보낼 수 있다. */
 static void on_open(void *ctx, proven_ws_stream_t *ws, proven_u8str_view_t protocol) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)protocol;
     app->opened++;
     (void)proven_ws_stream_send(ws, true, proven_mem_view_from_u8(PROVEN_LIT("hello")));
@@ -1037,7 +1037,7 @@ static void on_open(void *ctx, proven_ws_stream_t *ws, proven_u8str_view_t proto
 
 /* 서버가 갖는 것과 같은 콜백. 이쪽은 두 번 묻고 작별한다. */
 static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)text; (void)first;
     if (!last) return;
     proven_size_t n = piece.size < sizeof app->last - 1 ? piece.size : sizeof app->last - 1;
@@ -1055,7 +1055,7 @@ static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
 /* 시작한 연결마다 정확히 한 번 불린다 - 끝내 열리지 않은 연결에도:
  * 그때 코드는 0이고 `why`가 무엇이 잘못되었는지 말한다. */
 static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)ws;
     if (code == 0) {
         /* WebSocket이 되지 못했다: 아무도 듣지 않았거나, 서버가 다른 답을 했거나, 시간이 다 됐다. */
@@ -1071,7 +1071,7 @@ static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
     proven_http_event_server_config_t server_config = { .on = { .on_request = on_request } };
     proven_http_event_server_t *server = NULL;
@@ -1153,7 +1153,7 @@ typedef struct {
     proven_ws_stream_t *ws;           /* 클라이언트의 연결: 루프의 스레드만 */
     atomic_bool open;                 /* 타이핑 스레드가 읽어도 되는 것 */
     int answers, closed;
-} app_t;
+} ex_app_t;
 
 // ---- 서버: 메시지마다 답한다 --------------------------------------------------
 
@@ -1175,14 +1175,14 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 // ---- 클라이언트, 루프의 스레드에서 -------------------------------------------
 
 static void on_open(void *ctx, proven_ws_stream_t *ws, proven_u8str_view_t protocol) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)protocol;
     app->ws = ws;
     atomic_store(&app->open, true);
 }
 
 static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)text; (void)first;
     if (!last) return;
     printf("the server says: %.*s\n", (int)piece.size, (const char *)piece.ptr);
@@ -1190,7 +1190,7 @@ static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
 }
 
 static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)ws; (void)code; (void)why;
     app->ws = NULL;
     app->closed++;
@@ -1200,22 +1200,22 @@ static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven
 // ---- 타이핑 스레드에서 건너오는 것 --------------------------------------------
 
 /* 보낼 한 줄, 자기 메모리에: 그것이 보내질 때쯤 타이핑 스레드는 이미 다음으로 넘어가 있다. */
-typedef struct { app_t *app; proven_size_t len; char text[64]; } line_t;
+typedef struct { ex_app_t *app; proven_size_t len; char text[64]; } ex_line_t;
 
 /* 루프의 스레드에서. */
 static void send_here(void *ctx) {
-    line_t *line = ctx;
+    ex_line_t *line = ctx;
     if (line->app->ws) (void)proven_ws_stream_send(line->app->ws, true, (proven_mem_view_t){ (const proven_byte_t *)line->text, line->len });
     free(line);
 }
 
 /* 타이핑 스레드. 연결은 절대 만지지 않는다: post한다. */
 static void typist(void *arg) {
-    app_t *app = arg;
+    ex_app_t *app = arg;
     static const char *const lines[LINES] = { "hello", "how are you", "goodbye" };
     while (!atomic_load(&app->open)) proven_time_sleep(1);
     for (int i = 0; i < LINES; ++i) {
-        line_t *line = malloc(sizeof *line);
+        ex_line_t *line = malloc(sizeof *line);
         if (!line) return;
         line->app = app;
         line->len = strlen(lines[i]);
@@ -1225,11 +1225,11 @@ static void typist(void *arg) {
     }
 }
 
-static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_app_t *)arg)->loop); }
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    static app_t app;
+    static ex_app_t app;
     atomic_init(&app.open, false);
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
     proven_http_event_server_config_t server_config = { .on = { .on_request = on_request } };
@@ -1482,25 +1482,25 @@ HTTP/2에서는 이 설정이 더 많은 경우를 다룬다: 17장.)
  * 워커에서 해석하고, 답을 게시해 돌려보내고, 요청을 시작한다.
  */
 
-typedef struct app app_t;
+typedef struct app ex_app_t;
 
 /* 요청 하나에 대해 이 프로그램이 간직하는 것. */
 typedef struct {
-    app_t *app;
+    ex_app_t *app;
     const char *path;
     int status;
     char body[64];
     proven_size_t len;
     proven_err_t why;
     bool done;
-} fetch_t;
+} ex_fetch_t;
 
 struct app {
     proven_loop_t *loop;
     proven_http_event_client_t *client;
     proven_job_sys_t *workers;
     proven_u16 port;
-    fetch_t fetch[3];
+    ex_fetch_t fetch[3];
     int finished;
     /* 워커가 쓰고, 게시된 뒤 루프에서 읽는다 */
     proven_net_addr_t found;
@@ -1521,26 +1521,26 @@ static void serve(void *ctx, proven_http_stream_t *stream, const proven_http_req
 /* 헤드: 이 함수가 돌아올 때까지만 유효하므로, 필요한 것을 여기서 꺼낸다. */
 static void on_response(void *ctx, proven_http_event_request_t *request, const proven_http_response_t *head) {
     (void)request;
-    ((fetch_t *)ctx)->status = head->status;
+    ((ex_fetch_t *)ctx)->status = head->status;
 }
 
 /* 본문, 한 번에 한 조각. 대신 모아 주지 않는다. 원하는 것을 직접 모은다. */
 static void on_body(void *ctx, proven_http_event_request_t *request, proven_mem_view_t piece, bool last) {
     (void)request; (void)last;
-    fetch_t *f = ctx;
+    ex_fetch_t *f = ctx;
     for (proven_size_t i = 0; i < piece.size && f->len < sizeof f->body - 1; ++i) f->body[f->len++] = (char)piece.ptr[i];
 }
 
 /* 시작된 요청마다 한 번, 무슨 일이 있었든. */
 static void on_done(void *ctx, proven_http_event_request_t *request, proven_err_t why) {
     (void)request;
-    fetch_t *f = ctx;
+    ex_fetch_t *f = ctx;
     f->why = why;
     f->done = true;
     if (++f->app->finished == 3) proven_loop_stop(f->app->loop);
 }
 
-static proven_err_t fetch(app_t *app, fetch_t *f, const char *path, const proven_net_addr_t *address, const char *host) {
+static proven_err_t fetch(ex_app_t *app, ex_fetch_t *f, const char *path, const proven_net_addr_t *address, const char *host) {
     char url[96];
     int n = snprintf(url, sizeof url, "http://%s:%u%s", host, (unsigned)app->port, path);
     f->app = app;
@@ -1559,7 +1559,7 @@ static proven_err_t fetch(app_t *app, fetch_t *f, const char *path, const proven
 /* 다시 루프의 스레드: 이제 주소가 있으니 요청을 시작할 수 있다.
  * URL은 이름을 그대로 둔다 - Host에 들어가는 것이 그것이다 - 그리고 주소가 어디로 연결할지 말한다. */
 static void resolved(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     if (app->lookup != PROVEN_OK || fetch(app, &app->fetch[2], "/missing", &app->found, "localhost") != PROVEN_OK) {
         app->fetch[2].why = PROVEN_ERR_NOT_FOUND;
         if (++app->finished == 3) proven_loop_stop(app->loop);
@@ -1568,7 +1568,7 @@ static void resolved(void *ctx) {
 
 /* 워커 스레드에서: 이 호출은 리졸버가 걸리는 만큼 기다려도 된다. */
 static void resolve(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     proven_net_addr_t all[8];
     proven_size_t count = 0;
     app->lookup = proven_net_resolve(PROVEN_LIT("localhost"), app->port, all, 8, &count);
@@ -1583,7 +1583,7 @@ static void resolve(void *ctx) {
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
 
     // ---- 루프 하나, 그 위의 서버와 클라이언트 --------------------------------------
     /* 아직 아무것도 돌지 않는다: 루프는 돌릴 때까지 아무 일도 하지 않는다. */
@@ -1604,7 +1604,7 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_http_event_client_requests(app.client) == 2 && !app.fetch[0].done && !app.fetch[1].done, "둘 다 진행 중이고 답은 없다: 아직 아무것도 돌지 않았다");
 
     /* 하나는 이름으로. 주소가 없으면 거절된다 - 그러니 먼저 워커에서 해석한다. */
-    fetch_t unresolved = { 0 };
+    ex_fetch_t unresolved = { 0 };
     EXAMPLE_REQUIRE(fetch(&app, &unresolved, "/missing", NULL, "localhost") == PROVEN_ERR_INVALID_ARG, "주소 없는 이름은 거절된다");
     EXAMPLE_REQUIRE(proven_job_submit(app.workers, resolve, &app), "조회를 워커에 넘겼다");
 
@@ -1688,14 +1688,14 @@ typedef struct {
     proven_loop_t *loop;
     proven_http_event_server_t *server;
     int served;                       /* 루프가 멈춘 뒤에만 메인 스레드가 읽는다 */
-} worker_t;
+} ex_worker_t;
 
-static worker_t g_workers[LOOPS];
+static ex_worker_t g_workers[LOOPS];
 static proven_net_listener_t g_listener;
 static atomic_bool g_stop;
 
 static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
-    worker_t *me = ctx;
+    ex_worker_t *me = ctx;
     (void)head;
     char text[16];
     int n = snprintf(text, sizeof text, "loop %d", me->index);
@@ -1705,11 +1705,11 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 
 /* 받아들이는 스레드에서 루프로 건너가는 것. 열린 연결은 복사해서는 안 되므로
  * 자기 메모리에 담겨 간다. */
-typedef struct { worker_t *to; proven_net_conn_t conn; } handoff_t;
+typedef struct { ex_worker_t *to; proven_net_conn_t conn; } ex_handoff_t;
 
 /* 루프의 스레드에서 - 서버에 연결을 줄 수 있는 유일한 곳. */
 static void adopt_here(void *ctx) {
-    handoff_t *h = ctx;
+    ex_handoff_t *h = ctx;
     if (proven_http_event_server_adopt(h->to->server, &h->conn) != PROVEN_OK) (void)proven_net_close(&h->conn);   /* 거절됨: 여전히 우리 것이니 닫는다 */
     free(h);
 }
@@ -1719,7 +1719,7 @@ static void acceptor(void *arg) {
     (void)arg;
     int next = 0;
     while (!atomic_load(&g_stop)) {
-        handoff_t *h = malloc(sizeof *h);
+        ex_handoff_t *h = malloc(sizeof *h);
         if (!h) break;
         /* 한 번에 잠깐씩만 기다려서, 멈추라는 말을 스레드가 알아채게 한다. */
         if (proven_net_accept(&g_listener, proven_net_deadline_in(20), &h->conn, NULL) != PROVEN_OK) { free(h); continue; }
@@ -1729,7 +1729,7 @@ static void acceptor(void *arg) {
     }
 }
 
-static void run(void *arg) { (void)proven_loop_run(((worker_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_worker_t *)arg)->loop); }
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
@@ -1742,7 +1742,7 @@ int main(void) {
     proven_job_group_init(&accepting);
     EXAMPLE_REQUIRE(proven_job_system_init(heap, LOOPS + 1, 8, &threads) == PROVEN_OK, "스레드 셋");
     for (int i = 0; i < LOOPS; ++i) {
-        worker_t *w = &g_workers[i];
+        ex_worker_t *w = &g_workers[i];
         w->index = i;
         proven_http_event_server_config_t config = { .on = { .on_request = on_request }, .ctx = w };
         EXAMPLE_REQUIRE(proven_loop_create(heap, &w->loop) == PROVEN_OK &&

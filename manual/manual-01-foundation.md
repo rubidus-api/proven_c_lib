@@ -482,7 +482,7 @@ and legally, modulo 2^64. That single rule is behind a large fraction of the ind
 allocation bugs:
 
 ```text
-proven_size_t total = count * sizeof(item_t);   /* wrong: wraps for large count */
+proven_size_t total = count * sizeof(ex_item_t);   /* wrong: wraps for large count */
 void *p = malloc(total);                        /* succeeds, and is far too small */
 items[count - 1] = x;                           /* writes way past the end */
 ```
@@ -526,16 +526,16 @@ Three macros that do the arithmetic and tell you whether it fit.
 Correct:
 
 ```c
-typedef struct { int id; double weight; } item_t;
+typedef struct { int id; double weight; } ex_item_t;
 
 proven_size_t count = 1024;
 proven_size_t total = 0;
 proven_err_t err = PROVEN_OK;
 
-if (PROVEN_CKD_MUL(&total, count, sizeof(item_t))) {
+if (PROVEN_CKD_MUL(&total, count, sizeof(ex_item_t))) {
     err = PROVEN_ERR_OVERFLOW;   /* refuse to allocate a size that wrapped */
 } else {
-    proven_result_mem_mut_t block = alloc.alloc_fn(alloc.ctx, total, alignof(item_t));
+    proven_result_mem_mut_t block = alloc.alloc_fn(alloc.ctx, total, alignof(ex_item_t));
     err = block.err;
     if (proven_is_ok(err)) {
         alloc.free_fn(alloc.ctx, block.value.ptr);
@@ -547,7 +547,7 @@ if (PROVEN_CKD_MUL(&total, count, sizeof(item_t))) {
 Wrong:
 
 ```text
-proven_size_t total = count * sizeof(item_t);   /* wrong: may wrap silently */
+proven_size_t total = count * sizeof(ex_item_t);   /* wrong: may wrap silently */
 ```
 
 You do not need these for every arithmetic expression in your program. You need them wherever a
@@ -590,10 +590,10 @@ code. Zero is never a valid aligned address, so testing for it is unambiguous.
 Correct:
 
 ```c
-typedef struct { int id; double weight; } item_t;
+typedef struct { int id; double weight; } ex_item_t;
 
 proven_size_t size = 100;
-proven_size_t aligned = proven_mem_align_up(size, alignof(item_t));
+proven_size_t aligned = proven_mem_align_up(size, alignof(ex_item_t));
 proven_err_t err = (aligned == 0) ? PROVEN_ERR_OVERFLOW : PROVEN_OK;
 (void)err;
 ```

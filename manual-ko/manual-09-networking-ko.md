@@ -956,7 +956,7 @@ typedef struct {
     proven_net_conn_t conn;
     int number;
     bool open;
-} client_t;
+} ex_client_t;
 
 int main(void) {
     proven_net_listener_t listener;
@@ -985,7 +985,7 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_net_write_all(&far[1], proven_mem_view_from_u8(PROVEN_LIT("from one")), proven_net_deadline_in(5000)).err == PROVEN_OK &&
                     proven_net_write_all(&far[2], proven_mem_view_from_u8(PROVEN_LIT("from two")), proven_net_deadline_in(5000)).err == PROVEN_OK, "two of them send");
 
-    client_t clients[3] = {0};
+    ex_client_t clients[3] = {0};
     int accepted = 0, messages = 0;
     for (int round = 0; round < 20 && messages < 2; ++round) {
         proven_net_ready_t ready[8];
@@ -997,14 +997,14 @@ int main(void) {
             if (ready[i].tag == &listener) {
                 /* 준비됨은 "기다리지 않는다"는 뜻이다: 대기 중인 연결을 기다리지 않고 모두 받는다. */
                 while (accepted < 3 && proven_net_accept(&listener, PROVEN_NET_DONT_WAIT, &clients[accepted].conn, NULL) == PROVEN_OK) {
-                    client_t *c = &clients[accepted];
+                    ex_client_t *c = &clients[accepted];
                     c->number = accepted++;
                     c->open = true;
                     EXAMPLE_REQUIRE(proven_net_selector_add(selector, proven_net_conn_handle(&c->conn), PROVEN_NET_READABLE, c) == PROVEN_OK,
                                     "each accepted connection is registered, with its record as the tag");
                 }
             } else {
-                client_t *c = ready[i].tag;
+                ex_client_t *c = ready[i].tag;
                 proven_byte_t buf[32];
                 proven_result_size_t got = proven_net_read(&c->conn, (proven_mem_mut_t){ buf, sizeof buf }, PROVEN_NET_DONT_WAIT);
                 if (got.err == PROVEN_OK) messages++;

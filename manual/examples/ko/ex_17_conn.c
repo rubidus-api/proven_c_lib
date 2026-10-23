@@ -19,11 +19,11 @@ typedef struct {
     proven_size_t body_bytes;
     proven_u32 last_stream, reset_code, close_code;
     bool hold;                             /* DATA를 소비했다고 알리지 않는다 */
-} end_t;
+} ex_end_t;
 
 /* `in`의 바이트에 든 사건을 모두 받는다. 한 번 호출에 사건 하나다: 사건도 없고 남은 것도 없을
  * 때까지 나머지를 가지고 다시 호출한다. */
-static bool take_events(end_t *e, proven_mem_view_t in) {
+static bool take_events(ex_end_t *e, proven_mem_view_t in) {
     proven_size_t pos = 0;
     for (;;) {
         proven_size_t used = 0;
@@ -63,7 +63,7 @@ static bool take_events(end_t *e, proven_mem_view_t in) {
 
 /* 선: `from`이 쌓아 둔 것이 `to`로 간다. 그런 다음 `from`에게 빈 입력으로 한 번 더 묻는다 -
  * 보낸 덕분에 생긴 사건, 곧 다시 보낼 수 있게 된 스트림이 있는지. */
-static bool carry(end_t *from, end_t *to) {
+static bool carry(ex_end_t *from, ex_end_t *to) {
     static proven_byte_t wire[200000];
     proven_mem_view_t out = proven_h2_conn_pending_output(from->conn);
     if (out.size > sizeof wire) return false;
@@ -76,7 +76,7 @@ static bool carry(end_t *from, end_t *to) {
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    end_t client = { .name = "client" }, server = { .name = "server" };
+    ex_end_t client = { .name = "client" }, server = { .name = "server" };
 
     /* 0은 모든 한계에서 기본값을 뜻한다. 꼭 말해야 하는 것은 `server` 하나다. */
     proven_h2_config_t ccfg = { .alloc = heap };
@@ -146,7 +146,7 @@ int main(void) {
     // ---- 규칙을 어기는 상대 ------------------------------------------------------------------
     /* 아무것도 더하지 않는 WINDOW_UPDATE는 프로토콜 오류다. 연결은 상대에게 그렇게 말하고
      * (GOAWAY), 끝났다고 알리고, 더는 아무것도 받지 않는다. */
-    end_t strict = { .name = "strict" };
+    ex_end_t strict = { .name = "strict" };
     EXAMPLE_REQUIRE(proven_h2_conn_create(&scfg, &strict.conn) == PROVEN_OK, "another server");
     proven_byte_t bad[128];
     proven_size_t len = PROVEN_H2_PREFACE_SIZE;

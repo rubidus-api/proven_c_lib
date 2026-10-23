@@ -23,7 +23,7 @@ typedef struct {
     proven_ws_stream_t *ws;           /* the client's connection: the loop's thread only */
     atomic_bool open;                 /* what the typing thread may read */
     int answers, closed;
-} app_t;
+} ex_app_t;
 
 // ---- the server: it answers each message ------------------------------------
 
@@ -45,14 +45,14 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 // ---- the client, on the loop's thread -----------------------------------------
 
 static void on_open(void *ctx, proven_ws_stream_t *ws, proven_u8str_view_t protocol) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)protocol;
     app->ws = ws;
     atomic_store(&app->open, true);
 }
 
 static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)text; (void)first;
     if (!last) return;
     printf("the server says: %.*s\n", (int)piece.size, (const char *)piece.ptr);
@@ -60,7 +60,7 @@ static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
 }
 
 static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)ws; (void)code; (void)why;
     app->ws = NULL;
     app->closed++;
@@ -70,22 +70,22 @@ static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven
 // ---- what crosses from the typing thread ---------------------------------------
 
 /* A line to send, in memory of its own: the typing thread has moved on by the time it is sent. */
-typedef struct { app_t *app; proven_size_t len; char text[64]; } line_t;
+typedef struct { ex_app_t *app; proven_size_t len; char text[64]; } ex_line_t;
 
 /* On the loop's thread. */
 static void send_here(void *ctx) {
-    line_t *line = ctx;
+    ex_line_t *line = ctx;
     if (line->app->ws) (void)proven_ws_stream_send(line->app->ws, true, (proven_mem_view_t){ (const proven_byte_t *)line->text, line->len });
     free(line);
 }
 
 /* The typing thread. It never touches the connection: it posts. */
 static void typist(void *arg) {
-    app_t *app = arg;
+    ex_app_t *app = arg;
     static const char *const lines[LINES] = { "hello", "how are you", "goodbye" };
     while (!atomic_load(&app->open)) proven_time_sleep(1);
     for (int i = 0; i < LINES; ++i) {
-        line_t *line = malloc(sizeof *line);
+        ex_line_t *line = malloc(sizeof *line);
         if (!line) return;
         line->app = app;
         line->len = strlen(lines[i]);
@@ -95,11 +95,11 @@ static void typist(void *arg) {
     }
 }
 
-static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_app_t *)arg)->loop); }
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    static app_t app;
+    static ex_app_t app;
     atomic_init(&app.open, false);
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
     proven_http_event_server_config_t server_config = { .on = { .on_request = on_request } };

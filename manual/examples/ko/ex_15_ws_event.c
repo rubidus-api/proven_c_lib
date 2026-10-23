@@ -17,19 +17,19 @@ typedef struct {
     proven_loop_t *loop;
     int opened, closed;
     proven_u16 last_code;
-} app_t;
+} ex_app_t;
 
 /* 연결 하나에 대해 이 프로그램이 간직하는 것: 모으고 있는 메시지. */
 typedef struct {
-    app_t *app;
+    ex_app_t *app;
     char text[4096];
     proven_size_t len;
     bool waiting;                 /* 서버가 아직 받아 주지 않은 답 */
-} peer_t;
+} ex_peer_t;
 
 /* 답을 보낸다. 클라이언트가 앞서 보낸 것을 가져가지 않고 있으면 서버가 거절한다:
  * 답을 간직하고, 이 클라이언트에게서 읽기를 멈추고, on_writable이 알려 줄 때 다시 시도한다. */
-static void reply(proven_ws_stream_t *ws, peer_t *peer) {
+static void reply(proven_ws_stream_t *ws, ex_peer_t *peer) {
     proven_err_t err = proven_ws_stream_send(ws, true, (proven_mem_view_t){ (const proven_byte_t *)peer->text, peer->len });
     if (err == PROVEN_ERR_AGAIN) {
         peer->waiting = true;
@@ -44,7 +44,7 @@ static void reply(proven_ws_stream_t *ws, peer_t *peer) {
  * 직접 모은다 - 스스로 정한 한도까지. 손으로 하는 까닭이 바로 그 한도다. */
 static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
     (void)ctx;
-    peer_t *peer = proven_ws_stream_user(ws);
+    ex_peer_t *peer = proven_ws_stream_user(ws);
     if (first) peer->len = 0;
     if (!text || peer->len + piece.size > sizeof peer->text) {
         proven_ws_stream_close(ws, 1009, PROVEN_LIT("short text only"));       /* 1009: 너무 크다 */
@@ -60,7 +60,7 @@ static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
 /* 다시 자리가 생겼다. */
 static void on_writable(void *ctx, proven_ws_stream_t *ws) {
     (void)ctx;
-    peer_t *peer = proven_ws_stream_user(ws);
+    ex_peer_t *peer = proven_ws_stream_user(ws);
     if (!peer->waiting) return;
     reply(ws, peer);
     if (!peer->waiting) proven_ws_stream_resume(ws);
@@ -68,7 +68,7 @@ static void on_writable(void *ctx, proven_ws_stream_t *ws) {
 
 /* 연결이 어떻게 끝났든 한 번 불린다. 붙여 둔 것을 해제할 자리. */
 static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)why;
     free(proven_ws_stream_user(ws));
     app->last_code = code;
@@ -76,8 +76,8 @@ static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven
 }
 
 static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
-    app_t *app = ctx;
-    peer_t *peer = calloc(1, sizeof *peer);
+    ex_app_t *app = ctx;
+    ex_peer_t *peer = calloc(1, sizeof *peer);
     if (!peer) { proven_http_stream_abort(stream); return; }
     peer->app = app;
 
@@ -106,11 +106,11 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
     app->opened++;
 }
 
-static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_app_t *)arg)->loop); }
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
 
     // ---- 루프 위의 서버, 자기 스레드에서 --------------------------------------------
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "루프");

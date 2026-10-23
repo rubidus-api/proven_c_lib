@@ -22,14 +22,14 @@ typedef struct {
     proven_loop_t *loop;
     proven_http_event_server_t *server;
     int served;                       /* read by the main thread only after the loop has stopped */
-} worker_t;
+} ex_worker_t;
 
-static worker_t g_workers[LOOPS];
+static ex_worker_t g_workers[LOOPS];
 static proven_net_listener_t g_listener;
 static atomic_bool g_stop;
 
 static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
-    worker_t *me = ctx;
+    ex_worker_t *me = ctx;
     (void)head;
     char text[16];
     int n = snprintf(text, sizeof text, "loop %d", me->index);
@@ -39,11 +39,11 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 
 /* What crosses from the accepting thread to a loop. An open connection is not to be copied,
  * so it travels in memory of its own. */
-typedef struct { worker_t *to; proven_net_conn_t conn; } handoff_t;
+typedef struct { ex_worker_t *to; proven_net_conn_t conn; } ex_handoff_t;
 
 /* On the loop's thread - the only place a server may be given a connection. */
 static void adopt_here(void *ctx) {
-    handoff_t *h = ctx;
+    ex_handoff_t *h = ctx;
     if (proven_http_event_server_adopt(h->to->server, &h->conn) != PROVEN_OK) (void)proven_net_close(&h->conn);   /* refused: still ours to close */
     free(h);
 }
@@ -53,7 +53,7 @@ static void acceptor(void *arg) {
     (void)arg;
     int next = 0;
     while (!atomic_load(&g_stop)) {
-        handoff_t *h = malloc(sizeof *h);
+        ex_handoff_t *h = malloc(sizeof *h);
         if (!h) break;
         /* A short wait at a time, so that the thread notices when it is told to stop. */
         if (proven_net_accept(&g_listener, proven_net_deadline_in(20), &h->conn, NULL) != PROVEN_OK) { free(h); continue; }
@@ -63,7 +63,7 @@ static void acceptor(void *arg) {
     }
 }
 
-static void run(void *arg) { (void)proven_loop_run(((worker_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_worker_t *)arg)->loop); }
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
@@ -76,7 +76,7 @@ int main(void) {
     proven_job_group_init(&accepting);
     EXAMPLE_REQUIRE(proven_job_system_init(heap, LOOPS + 1, 8, &threads) == PROVEN_OK, "three threads");
     for (int i = 0; i < LOOPS; ++i) {
-        worker_t *w = &g_workers[i];
+        ex_worker_t *w = &g_workers[i];
         w->index = i;
         proven_http_event_server_config_t config = { .on = { .on_request = on_request }, .ctx = w };
         EXAMPLE_REQUIRE(proven_loop_create(heap, &w->loop) == PROVEN_OK &&

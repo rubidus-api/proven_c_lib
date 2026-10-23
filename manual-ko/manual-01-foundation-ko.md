@@ -476,7 +476,7 @@ proven_println("{}", PROVEN_ARG(((proven_u8str_view_t){ bytes, 1 })));     /* pa
 2^64를 법으로 *감긴다*. 그 규칙 하나가 업계 할당 버그의 상당 부분 뒤에 있다:
 
 ```text
-proven_size_t total = count * sizeof(item_t);   /* wrong: wraps for large count */
+proven_size_t total = count * sizeof(ex_item_t);   /* wrong: wraps for large count */
 void *p = malloc(total);                        /* succeeds, and is far too small */
 items[count - 1] = x;                           /* writes way past the end */
 ```
@@ -518,16 +518,16 @@ proven_size_t remaining = view.size - offset;   /* wrong when offset > size: a h
 올바른 예:
 
 ```c
-typedef struct { int id; double weight; } item_t;
+typedef struct { int id; double weight; } ex_item_t;
 
 proven_size_t count = 1024;
 proven_size_t total = 0;
 proven_err_t err = PROVEN_OK;
 
-if (PROVEN_CKD_MUL(&total, count, sizeof(item_t))) {
+if (PROVEN_CKD_MUL(&total, count, sizeof(ex_item_t))) {
     err = PROVEN_ERR_OVERFLOW;   /* refuse to allocate a size that wrapped */
 } else {
-    proven_result_mem_mut_t block = alloc.alloc_fn(alloc.ctx, total, alignof(item_t));
+    proven_result_mem_mut_t block = alloc.alloc_fn(alloc.ctx, total, alignof(ex_item_t));
     err = block.err;
     if (proven_is_ok(err)) {
         alloc.free_fn(alloc.ctx, block.value.ptr);
@@ -539,7 +539,7 @@ if (PROVEN_CKD_MUL(&total, count, sizeof(item_t))) {
 반례:
 
 ```text
-proven_size_t total = count * sizeof(item_t);   /* wrong: may wrap silently */
+proven_size_t total = count * sizeof(ex_item_t);   /* wrong: may wrap silently */
 ```
 
 프로그램의 모든 산술 식에 이것들이 필요하지는 않다. 필요한 곳은 크기가 **여러분이 직접 고르지 않은
@@ -580,10 +580,10 @@ C의 모든 타입에는 정렬이 있다. 하드웨어가 효율적으로, 또�
 올바른 예:
 
 ```c
-typedef struct { int id; double weight; } item_t;
+typedef struct { int id; double weight; } ex_item_t;
 
 proven_size_t size = 100;
-proven_size_t aligned = proven_mem_align_up(size, alignof(item_t));
+proven_size_t aligned = proven_mem_align_up(size, alignof(ex_item_t));
 proven_err_t err = (aligned == 0) ? PROVEN_ERR_OVERFLOW : PROVEN_OK;
 (void)err;
 ```

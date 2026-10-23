@@ -2283,9 +2283,9 @@ The same example covers the record-level calls that go with it:
 typedef struct {
     proven_u32 id;
     proven_u32 score;
-} record_t;
+} ex_record_t;
 
-static proven_err_t write_records(proven_file_t f, const record_t *recs, proven_size_t n) {
+static proven_err_t write_records(proven_file_t f, const ex_record_t *recs, proven_size_t n) {
     proven_mem_view_t view = { .ptr = (const proven_byte_t *)recs, .size = n * sizeof recs[0] };
     return proven_fs_write_all(f, view);
 }
@@ -2305,7 +2305,7 @@ int main(void) {
     EXAMPLE_REQUIRE(!proven_fs_is_absolute(live), "the working paths in this example are relative");
     EXAMPLE_REQUIRE(proven_fs_is_absolute(PROVEN_LIT("/etc/hosts")), "a leading slash is absolute on POSIX");
 
-    static const record_t initial[] = {
+    static const ex_record_t initial[] = {
         { .id = 1, .score = 10 }, { .id = 2, .score = 20 },
         { .id = 3, .score = 30 }, { .id = 4, .score = 40 },
     };
@@ -2341,9 +2341,9 @@ int main(void) {
     /* pread reads at an absolute offset and does NOT move the file position.
      * That is what makes it safe to use from two threads sharing one handle:
      * there is no shared cursor for them to race on. */
-    record_t third = {0};
+    ex_record_t third = {0};
     proven_mem_mut_t into = { .ptr = (proven_byte_t *)&third, .size = sizeof third };
-    proven_result_size_t got = proven_fs_pread(rw.value, into, 2 * sizeof(record_t));
+    proven_result_size_t got = proven_fs_pread(rw.value, into, 2 * sizeof(ex_record_t));
     EXAMPLE_REQUIRE(proven_is_ok(got.err) && got.value == sizeof third, "reading record 2 must succeed");
     EXAMPLE_REQUIRE(third.id == 3 && third.score == 30, "and yield the record that was written there");
 
@@ -2354,15 +2354,15 @@ int main(void) {
     /* pwrite updates that record in place, again without touching the cursor. */
     third.score = 99;
     proven_mem_view_t out_view = { .ptr = (const proven_byte_t *)&third, .size = sizeof third };
-    proven_result_size_t put = proven_fs_pwrite(rw.value, out_view, 2 * sizeof(record_t));
+    proven_result_size_t put = proven_fs_pwrite(rw.value, out_view, 2 * sizeof(ex_record_t));
     EXAMPLE_REQUIRE(proven_is_ok(put.err) && put.value == sizeof third, "writing record 2 back must succeed");
 
     /* seek is the cursor-moving alternative, and it returns the position it
      * arrived at. Seeking from the END with a negative offset is how you find
      * the last record without knowing the file length first. */
-    proven_result_u64_t last = proven_fs_seek(rw.value, -(proven_i64)sizeof(record_t), PROVEN_FS_SEEK_END);
+    proven_result_u64_t last = proven_fs_seek(rw.value, -(proven_i64)sizeof(ex_record_t), PROVEN_FS_SEEK_END);
     EXAMPLE_REQUIRE(proven_is_ok(last.err), "seeking to the last record must succeed");
-    EXAMPLE_REQUIRE(last.val == 3 * sizeof(record_t), "which is three records in");
+    EXAMPLE_REQUIRE(last.val == 3 * sizeof(ex_record_t), "which is three records in");
 
     pos = proven_fs_tell(rw.value);
     EXAMPLE_REQUIRE(proven_is_ok(pos.err) && pos.val == last.val, "tell agrees with the seek result");
@@ -2371,10 +2371,10 @@ int main(void) {
      * and O(1); the old way - read everything, write back the part you keep -
      * was an O(n) copy for an operation the filesystem does by adjusting a
      * number. */
-    err = proven_fs_truncate(rw.value, 3 * sizeof(record_t));
+    err = proven_fs_truncate(rw.value, 3 * sizeof(ex_record_t));
     EXAMPLE_REQUIRE(proven_is_ok(err), "truncating to three records must succeed");
     proven_result_size_t size = proven_fs_size(rw.value);
-    EXAMPLE_REQUIRE(proven_is_ok(size.err) && size.value == 3 * sizeof(record_t),
+    EXAMPLE_REQUIRE(proven_is_ok(size.err) && size.value == 3 * sizeof(ex_record_t),
                     "the file is now exactly three records long");
 
     /* Release the lock explicitly. Closing the handle would also drop it, but
@@ -2386,7 +2386,7 @@ int main(void) {
 
     /* --- the durable replace ---------------------------------------------- */
 
-    static const record_t replacement[] = {
+    static const ex_record_t replacement[] = {
         { .id = 1, .score = 11 }, { .id = 2, .score = 22 },
     };
 
@@ -2426,7 +2426,7 @@ int main(void) {
     proven_result_file_t check = proven_fs_open(alloc, live, PROVEN_FS_READ);
     EXAMPLE_REQUIRE(proven_is_ok(check.err), "the live path must now open");
     size = proven_fs_size(check.value);
-    EXAMPLE_REQUIRE(proven_is_ok(size.err) && size.value == 2 * sizeof(record_t),
+    EXAMPLE_REQUIRE(proven_is_ok(size.err) && size.value == 2 * sizeof(ex_record_t),
                     "and hold exactly the replacement records");
     err = proven_fs_close(check.value);
     EXAMPLE_REQUIRE(proven_is_ok(err), "closing the verification handle must succeed");

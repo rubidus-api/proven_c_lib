@@ -27,10 +27,10 @@ typedef struct {
      * every resume and the loop would never end. */
     int value;
     int remaining;
-} squares_t;
+} ex_squares_t;
 
 /* A coroutine returns proven_i32: 0 = suspended (call me again), 1 = done. */
-static proven_i32 squares_next(squares_t *g) {
+static proven_i32 squares_next(ex_squares_t *g) {
     PROVEN_CORO_BEGIN(&g->coro);
 
     g->remaining = 5;
@@ -55,7 +55,7 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_is_ok(out.err), "creating the output string should succeed");
     if (!proven_is_ok(out.err)) return 1;
 
-    squares_t gen = {0};
+    ex_squares_t gen = {0};
     PROVEN_CORO_INIT(&gen.coro);   /* unconditional, exactly once, before the first call */
 
     int produced = 0;

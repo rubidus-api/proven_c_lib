@@ -23,13 +23,13 @@
 typedef struct {
     proven_u32 client;
     proven_u32 code;      /* an event code; 0 means "connection closed" */
-} event_t;
+} ex_event_t;
 
 /* Search by client id: this is the comparison for finding an event, not for
  * sorting them. The array below is in ARRIVAL order and stays that way. */
 static int by_client(const void *a, const void *b) {
-    const event_t *x = (const event_t *)a;
-    const event_t *y = (const event_t *)b;
+    const ex_event_t *x = (const ex_event_t *)a;
+    const ex_event_t *y = (const ex_event_t *)b;
     return (x->client > y->client) - (x->client < y->client);
 }
 
@@ -38,7 +38,7 @@ int main(void) {
 
     /* --- 1. reserve: decide the capacity once ----------------------------- */
 
-    proven_result_array_t ar = PROVEN_ARRAY_INIT(alloc, event_t, 4);
+    proven_result_array_t ar = PROVEN_ARRAY_INIT(alloc, ex_event_t, 4);
     EXAMPLE_REQUIRE(proven_is_ok(ar.err), "creating the event log must succeed");
     if (!proven_is_ok(ar.err)) {
         return 1;
@@ -63,7 +63,7 @@ int main(void) {
     EXAMPLE_REQUIRE(!proven_array_is_valid(&never_created),
                     "a zero-initialised handle is not a usable array");
 
-    static const event_t batch[] = {
+    static const ex_event_t batch[] = {
         { .client = 7, .code = 200 }, { .client = 3, .code = 200 },
         { .client = 7, .code = 404 }, { .client = 9, .code = 200 },
         { .client = 3, .code = 500 }, { .client = 7, .code = 0   },
@@ -72,7 +72,7 @@ int main(void) {
 
     proven_size_t cap_before = events.cap;
     for (proven_size_t i = 0; i < batch_len; ++i) {
-        err = PROVEN_ARRAY_PUSH(&events, event_t, batch[i]);
+        err = PROVEN_ARRAY_PUSH(&events, ex_event_t, batch[i]);
         EXAMPLE_REQUIRE(proven_is_ok(err), "pushing an event must succeed");
     }
     EXAMPLE_REQUIRE(events.cap == cap_before, "the reserve was enough: nothing reallocated while filling");
@@ -84,18 +84,18 @@ int main(void) {
      * it may only be used on a sorted range - on unsorted data it does not
      * return "not found", it returns nonsense. Linear search is the correct
      * tool, and O(n) over a batch this size is nothing. */
-    event_t key = { .client = 9, .code = 0 };
-    const event_t *found = (const event_t *)proven_array_linear_search(&events, &key, by_client);
+    ex_event_t key = { .client = 9, .code = 0 };
+    const ex_event_t *found = (const ex_event_t *)proven_array_linear_search(&events, &key, by_client);
     EXAMPLE_REQUIRE(found != NULL, "client 9 appears in the batch");
     EXAMPLE_REQUIRE(found->code == 200, "and linear search returns the FIRST match in order");
 
-    event_t absent = { .client = 42, .code = 0 };
+    ex_event_t absent = { .client = 42, .code = 0 };
     EXAMPLE_REQUIRE(proven_array_linear_search(&events, &absent, by_client) == NULL,
                     "a client that never appeared is reported as not found");
 
     /* --- 3. a ring for the most recent events ----------------------------- */
 
-    proven_result_ring_t rr = PROVEN_RING_INIT(alloc, event_t, 4);
+    proven_result_ring_t rr = PROVEN_RING_INIT(alloc, ex_event_t, 4);
     EXAMPLE_REQUIRE(proven_is_ok(rr.err), "creating the recent-events ring must succeed");
     proven_ring_t recent = rr.value;
     EXAMPLE_REQUIRE(proven_ring_is_valid(&recent), "a created ring must be structurally valid");
@@ -107,11 +107,11 @@ int main(void) {
      * recent four" means dropping the oldest ourselves before pushing. */
     for (proven_size_t i = 0; i < batch_len; ++i) {
         if (recent.len == recent.cap) {
-            event_t dropped;
-            err = PROVEN_RING_POP(&recent, event_t, &dropped);
+            ex_event_t dropped;
+            err = PROVEN_RING_POP(&recent, ex_event_t, &dropped);
             EXAMPLE_REQUIRE(proven_is_ok(err), "a full ring must yield its oldest element");
         }
-        err = PROVEN_RING_PUSH(&recent, event_t, batch[i]);
+        err = PROVEN_RING_PUSH(&recent, ex_event_t, batch[i]);
         EXAMPLE_REQUIRE(proven_is_ok(err), "pushing after making room must succeed");
     }
     EXAMPLE_REQUIRE(recent.len == 4, "the ring holds the four most recent events");

@@ -801,7 +801,7 @@ Compiled and run by the test suite. It shows a freed block coming straight back 
 typedef struct {
     int id;
     int score;
-} node_t;
+} ex_node_t;
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
@@ -811,8 +811,8 @@ int main(void) {
      * bin, plus the exact size and alignment of the one type it manages. The
      * last argument caps how many freed blocks are parked for reuse. */
     proven_pool_t pool = {0};
-    proven_err_t err = proven_pool_init(&pool, heap, sizeof(node_t), alignof(node_t), 4);
-    EXAMPLE_REQUIRE(proven_is_ok(err), "initializing a pool of node_t must succeed");
+    proven_err_t err = proven_pool_init(&pool, heap, sizeof(ex_node_t), alignof(ex_node_t), 4);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "initializing a pool of ex_node_t must succeed");
     if (!proven_is_ok(err)) {
         return 1;
     }
@@ -820,15 +820,15 @@ int main(void) {
     proven_allocator_t nodes = proven_pool_as_allocator(&pool);
 
     /* --- first block: nothing in the bin, so it comes from the heap --------- */
-    proven_result_mem_mut_t first = nodes.alloc_fn(nodes.ctx, sizeof(node_t), alignof(node_t));
+    proven_result_mem_mut_t first = nodes.alloc_fn(nodes.ctx, sizeof(ex_node_t), alignof(ex_node_t));
     EXAMPLE_REQUIRE(proven_is_ok(first.err), "the pool must be able to serve its own item type");
     if (!proven_is_ok(first.err)) {
         proven_pool_destroy(&pool);
         return 1;
     }
 
-    node_t *n = (node_t *)first.value.ptr;
-    *n = (node_t){ .id = 1, .score = 100 };
+    ex_node_t *n = (ex_node_t *)first.value.ptr;
+    *n = (ex_node_t){ .id = 1, .score = 100 };
     void *first_addr = n;
 
     /* --- hand it back: it lands in the bin, not back on the heap ------------ */
@@ -837,15 +837,15 @@ int main(void) {
     /* `n` is dangling from here on. The pool owns those bytes again. */
 
     /* --- second block: the freed one is handed straight back ---------------- */
-    proven_result_mem_mut_t second = nodes.alloc_fn(nodes.ctx, sizeof(node_t), alignof(node_t));
+    proven_result_mem_mut_t second = nodes.alloc_fn(nodes.ctx, sizeof(ex_node_t), alignof(ex_node_t));
     EXAMPLE_REQUIRE(proven_is_ok(second.err), "allocating from a non-empty bin must succeed");
     EXAMPLE_REQUIRE(second.value.ptr == first_addr, "the recycled block is the one that was freed");
     EXAMPLE_REQUIRE(pool.bin_len == 0, "taking it back out empties the bin");
 
     /* Recycled memory is NOT zeroed for you - it is whatever the pool left there.
      * Initialize every field, exactly as you would for a fresh malloc. */
-    node_t *m = (node_t *)second.value.ptr;
-    *m = (node_t){ .id = 2, .score = 50 };
+    ex_node_t *m = (ex_node_t *)second.value.ptr;
+    *m = (ex_node_t){ .id = 2, .score = 50 };
     EXAMPLE_REQUIRE(m->id == 2, "the recycled block is ours to overwrite");
 
     /* --- one pool serves one size and one alignment ------------------------- */
@@ -853,7 +853,7 @@ int main(void) {
      * not silently hand you a block of the wrong size. The code is PROVEN_ERR_UNSUPPORTED -
      * "not my job" - and not INVALID_ARG, which would read as "you passed me garbage" and
      * send you hunting for a bug in your own code. */
-    proven_result_mem_mut_t wrong = nodes.alloc_fn(nodes.ctx, sizeof(node_t) * 2, alignof(node_t));
+    proven_result_mem_mut_t wrong = nodes.alloc_fn(nodes.ctx, sizeof(ex_node_t) * 2, alignof(ex_node_t));
     EXAMPLE_REQUIRE(wrong.err == PROVEN_ERR_UNSUPPORTED, "the pool only serves its configured item size");
 
     /* --- return every live block before destroying -------------------------- */
@@ -938,14 +938,14 @@ typedef struct {
     proven_size_t   live_bytes;
     proven_size_t   alloc_calls;
     proven_size_t   free_calls;
-} counting_ctx_t;
+} ex_counting_ctx_t;
 
 /* Each of the three matches one field of proven_allocator_t. Each does its own
  * bookkeeping and then forwards to the arena's public trait function, so the
  * behaviour being measured is exactly the arena's behaviour and not a
  * re-implementation of it. */
 static proven_result_mem_mut_t counting_alloc(void *ctx, proven_size_t size, proven_size_t align) {
-    counting_ctx_t *c = (counting_ctx_t *)ctx;
+    ex_counting_ctx_t *c = (ex_counting_ctx_t *)ctx;
     proven_result_mem_mut_t r = proven_arena_alloc_trait(c->arena, size, align);
     if (proven_is_ok(r.err)) {
         c->live_bytes += size;
@@ -956,7 +956,7 @@ static proven_result_mem_mut_t counting_alloc(void *ctx, proven_size_t size, pro
 
 static proven_result_mem_mut_t counting_realloc(void *ctx, void *old_ptr, proven_size_t old_size,
                                                proven_size_t new_size, proven_size_t align) {
-    counting_ctx_t *c = (counting_ctx_t *)ctx;
+    ex_counting_ctx_t *c = (ex_counting_ctx_t *)ctx;
     proven_result_mem_mut_t r = proven_arena_realloc_trait(c->arena, old_ptr, old_size, new_size, align);
     if (proven_is_ok(r.err)) {
         c->live_bytes = c->live_bytes - old_size + new_size;
@@ -965,7 +965,7 @@ static proven_result_mem_mut_t counting_realloc(void *ctx, void *old_ptr, proven
 }
 
 static void counting_free(void *ctx, void *ptr) {
-    counting_ctx_t *c = (counting_ctx_t *)ctx;
+    ex_counting_ctx_t *c = (ex_counting_ctx_t *)ctx;
     ++c->free_calls;
     proven_arena_free_trait(c->arena, ptr);   /* an arena free is a no-op; the count is the point */
 }
@@ -1032,7 +1032,7 @@ int main(void) {
 
     proven_arena_reset(&arena);
 
-    counting_ctx_t counted = { .arena = &arena };
+    ex_counting_ctx_t counted = { .arena = &arena };
     proven_allocator_t alloc = {
         .ctx        = &counted,
         .alloc_fn   = counting_alloc,

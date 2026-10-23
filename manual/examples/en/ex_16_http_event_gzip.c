@@ -20,7 +20,7 @@ typedef struct {
     unsigned long sum_sent, sum_received;
     bool gzip, intact, done;
     proven_err_t why;
-} app_t;
+} ex_app_t;
 
 /* The report is generated as it is written: there is no buffer holding all of it. */
 static proven_byte_t report_byte(proven_size_t i) { return (proven_byte_t)("measured value \n"[i % 16]); }
@@ -28,7 +28,7 @@ static proven_byte_t report_byte(proven_size_t i) { return (proven_byte_t)("meas
 // ---- the server --------------------------------------------------------------
 
 /* Write until the server takes no more; on_writable calls this again when there is room. */
-static void pump(app_t *app) {
+static void pump(ex_app_t *app) {
     proven_byte_t piece[4096];
     while (app->written < REPORT_BYTES) {
         proven_size_t n = REPORT_BYTES - app->written < sizeof piece ? REPORT_BYTES - app->written : sizeof piece;
@@ -47,7 +47,7 @@ static void pump(app_t *app) {
 
 static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
     (void)head;
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     app->stream = stream;
     /* Before the response begins. From here on the body is written exactly as it would be
      * without it: the length given is still the length to write, though the client is sent
@@ -61,14 +61,14 @@ static void on_writable(void *ctx, proven_http_stream_t *stream) { (void)stream;
 
 static void on_response(void *ctx, proven_http_event_request_t *request, const proven_http_response_t *head) {
     (void)request;
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     app->gzip = proven_http_content_coding(head->headers, head->header_count) == PROVEN_HTTP_CODING_GZIP;
 }
 
 /* Decoded pieces. A piece is a view that is good until this function returns. */
 static void on_body(void *ctx, proven_http_event_request_t *request, proven_mem_view_t piece, bool last) {
     (void)request; (void)last;
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     for (proven_size_t i = 0; i < piece.size; ++i) {
         if (piece.ptr[i] != report_byte(app->received + i)) app->intact = false;
         app->sum_received += piece.ptr[i];
@@ -80,7 +80,7 @@ static void on_body(void *ctx, proven_http_event_request_t *request, proven_mem_
 
 static void on_done(void *ctx, proven_http_event_request_t *request, proven_err_t why) {
     (void)request;
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     app->why = why;
     app->done = true;
     proven_loop_stop(app->loop);
@@ -88,7 +88,7 @@ static void on_done(void *ctx, proven_http_event_request_t *request, proven_err_
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { .intact = true };
+    ex_app_t app = { .intact = true };
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
 
     /* The window sets what each compressed response holds while it is being written: about

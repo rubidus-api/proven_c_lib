@@ -194,7 +194,7 @@ struct node { struct node *next; void *data; };
 typedef struct {
     int                 id;
     proven_list_node_t  link;   /* the list's hook, inside your struct */
-} task_t;
+} ex_task_t;
 ```
 
 이제 삽입은 포인터 두 개를 쓰는 일이다. 아무것도 할당하지 않으므로 **실패할 수 없다** —
@@ -202,7 +202,7 @@ typedef struct {
 바로 그것이 요점이다. 제거도 마찬가지다. 객체는 스택에도, 배열 안에도, 아레나 안에도, 어디에나
 살 수 있다. 리스트는 이미 그 안에 들어 있는 포인터들을 재배치할 뿐이다.
 
-링크에서 다시 당신의 객체로 돌아가는 것은 `PROVEN_LIST_ENTRY(node, task_t, link)`이며, 노드의
+링크에서 다시 당신의 객체로 돌아가는 것은 `PROVEN_LIST_ENTRY(node, ex_task_t, link)`이며, 노드의
 주소에서 멤버의 오프셋을 뺀다. 이것은 맞기를 바라는 캐스트가 아니라, 컴파일러가 타입을 검사하는
 산술이다.
 
@@ -257,14 +257,14 @@ PROVEN_LIST_FOR_EACH(it, &queue) {
 typedef struct {
     int                 id;
     proven_list_node_t  link;
-} task_t;
+} ex_task_t;
 
 int main(void) {
     /* 이 프로그램에는 할당자가 아예 없다. 작업들은 스택에 있고, 리스트는 그 안에 사는
      * 포인터들을 다시 이어 줄 뿐이다. */
-    task_t a = { .id = 1 };
-    task_t b = { .id = 2 };
-    task_t c = { .id = 3 };
+    ex_task_t a = { .id = 1 };
+    ex_task_t b = { .id = 2 };
+    ex_task_t c = { .id = 3 };
 
     proven_list_t queue;
     proven_list_init(&queue);
@@ -280,7 +280,7 @@ int main(void) {
     proven_list_node_t *it = NULL;
     int seen[3] = {0}, n = 0;
     PROVEN_LIST_FOR_EACH(it, &queue) {
-        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        ex_task_t *t = PROVEN_LIST_ENTRY(it, ex_task_t, link);
         if (n < 3) seen[n++] = t->id;
     }
     EXAMPLE_REQUIRE(n == 3 && seen[0] == 1 && seen[1] == 2 && seen[2] == 3,
@@ -292,24 +292,24 @@ int main(void) {
      * 돌기 *전에* 다음 포인터를 읽어 둔다. */
     proven_list_node_t *safe = NULL;
     PROVEN_LIST_FOR_EACH_SAFE(it, safe, &queue) {
-        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        ex_task_t *t = PROVEN_LIST_ENTRY(it, ex_task_t, link);
         if (t->id == 2) proven_list_remove(it);
     }
 
     n = 0;
     PROVEN_LIST_FOR_EACH(it, &queue) {
-        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        ex_task_t *t = PROVEN_LIST_ENTRY(it, ex_task_t, link);
         if (n < 3) seen[n++] = t->id;
     }
     EXAMPLE_REQUIRE(n == 2 && seen[0] == 1 && seen[1] == 3, "task 2 was unlinked");
 
     /* --- 가운데에 끼워 넣기는 포인터 바꿔 끼우기다 --------------------- */
-    task_t d = { .id = 4 };
+    ex_task_t d = { .id = 4 };
     proven_list_insert_after(&a.link, &d.link);
 
     n = 0;
     PROVEN_LIST_FOR_EACH(it, &queue) {
-        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        ex_task_t *t = PROVEN_LIST_ENTRY(it, ex_task_t, link);
         if (n < 3) seen[n++] = t->id;
     }
     EXAMPLE_REQUIRE(n == 3 && seen[0] == 1 && seen[1] == 4 && seen[2] == 3,
@@ -407,7 +407,7 @@ proven_println("total={}", PROVEN_ARG(total));   /* 3 */
 잘못된 예 — 가득 찬 링을 즉시 재시도할 오류로 취급하기:
 
 ```text
-while (PROVEN_RING_PUSH(&ring, event_t, e) != PROVEN_OK) { }   /* wrong: spins forever */
+while (PROVEN_RING_PUSH(&ring, ex_event_t, e) != PROVEN_OK) { }   /* wrong: spins forever */
 ```
 
 그 루프 안의 무엇도 소비하지 않으므로 링은 계속 가득 차 있다. 한계가 있는 큐의 거부는 *소비자*에
@@ -1647,7 +1647,7 @@ int *hit = proven_array_binary_search(&nums, &key, cmp_int);
 typedef struct {
     int priority;
     int id;
-} task_t;
+} ex_task_t;
 
 /* 비교자가 곧 배열의 순서다. 정렬과 이진 탐색에는 *반드시* 같은 것을 써야 한다 -
  * 다른 순서로 찾는 것은 컴파일러가 볼 수 없는 버그다.
@@ -1655,8 +1655,8 @@ typedef struct {
  * (x > y) - (x < y) 꼴은 일부러 쓴 것이다. 두 int 를 빼면 큰 값에서 넘쳐 엉뚱한
  * 부호를 돌려준다. */
 static int cmp_priority(const void *a, const void *b) {
-    int x = ((const task_t *)a)->priority;
-    int y = ((const task_t *)b)->priority;
+    int x = ((const ex_task_t *)a)->priority;
+    int y = ((const ex_task_t *)b)->priority;
     return (x > y) - (x < y);
 }
 
@@ -1666,8 +1666,8 @@ int main(void) {
     /* --- push / get / pop --------------------------------------------------- */
     /* init_cap 은 한계가 아니라 힌트다. push 는 그것을 넘어 늘어난다. 잘 잡아 두면
      * 재할당을 피할 뿐이다. */
-    proven_result_array_t r = PROVEN_ARRAY_INIT(alloc, task_t, 4);
-    EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating an array of task_t must succeed");
+    proven_result_array_t r = PROVEN_ARRAY_INIT(alloc, ex_task_t, 4);
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating an array of ex_task_t must succeed");
     if (!proven_is_ok(r.err)) {
         return 1;
     }
@@ -1675,7 +1675,7 @@ int main(void) {
 
     /* 일부러 중복이 많게 했다. 실제 키가 그렇게 생겼기 때문이다 - 상태 열, enum,
      * 버킷 번호. */
-    static const task_t seed[] = {
+    static const ex_task_t seed[] = {
         { .priority = 2, .id = 10 }, { .priority = 0, .id = 11 },
         { .priority = 2, .id = 12 }, { .priority = 1, .id = 13 },
         { .priority = 2, .id = 14 }, { .priority = 0, .id = 15 },
@@ -1683,7 +1683,7 @@ int main(void) {
     };
 
     for (proven_size_t i = 0; i < sizeof seed / sizeof seed[0]; ++i) {
-        proven_err_t err = PROVEN_ARRAY_PUSH(&tasks, task_t, seed[i]);
+        proven_err_t err = PROVEN_ARRAY_PUSH(&tasks, ex_task_t, seed[i]);
         EXAMPLE_REQUIRE(proven_is_ok(err), "pushing into a growable array must succeed");
         if (!proven_is_ok(err)) {
             PROVEN_ARRAY_DESTROY(&tasks);
@@ -1695,20 +1695,20 @@ int main(void) {
     /* get 은 배열 저장소 *안*을 가리키는 포인터를 돌려준다 - 사본이 아니고, 다음
      * push 가 재할당하면 매달린 포인터가 된다. push 를 다 한 뒤에 얻어 쓰고, 담아
      * 두지는 말 것. */
-    const task_t *front = PROVEN_ARRAY_GET(&tasks, task_t, 0);
+    const ex_task_t *front = PROVEN_ARRAY_GET(&tasks, ex_task_t, 0);
     EXAMPLE_REQUIRE(front && front->id == 10, "element 0 is the first one pushed");
 
     /* 범위를 벗어나면 널 포인터다. 죽는 것도, 미정의 동작도 아니다. */
-    EXAMPLE_REQUIRE(PROVEN_ARRAY_GET(&tasks, task_t, 99) == NULL, "an out-of-range index yields NULL");
+    EXAMPLE_REQUIRE(PROVEN_ARRAY_GET(&tasks, ex_task_t, 99) == NULL, "an out-of-range index yields NULL");
 
     /* pop 은 마지막 원소를 복사해 내보낸다(그냥 버리려면 NULL 을 건넨다). */
-    task_t last = {0};
-    proven_err_t err = PROVEN_ARRAY_POP(&tasks, task_t, &last);
+    ex_task_t last = {0};
+    proven_err_t err = PROVEN_ARRAY_POP(&tasks, ex_task_t, &last);
     EXAMPLE_REQUIRE(proven_is_ok(err), "popping a non-empty array must succeed");
     EXAMPLE_REQUIRE(last.id == 17 && tasks.len == 7, "pop returns the last element and shrinks the array");
 
     /* 도로 넣는다. 이 예제의 나머지가 여덟 개를 모두 필요로 한다. */
-    err = PROVEN_ARRAY_PUSH(&tasks, task_t, last);
+    err = PROVEN_ARRAY_PUSH(&tasks, ex_task_t, last);
     EXAMPLE_REQUIRE(proven_is_ok(err), "pushing the popped element back must succeed");
 
     /* --- 정렬 -------------------------------------------------------------- */
@@ -1721,8 +1721,8 @@ int main(void) {
     proven_array_sort(&tasks, cmp_priority);
 
     for (proven_size_t i = 1; i < tasks.len; ++i) {
-        const task_t *prev = PROVEN_ARRAY_GET(&tasks, task_t, i - 1);
-        const task_t *cur  = PROVEN_ARRAY_GET(&tasks, task_t, i);
+        const ex_task_t *prev = PROVEN_ARRAY_GET(&tasks, ex_task_t, i - 1);
+        const ex_task_t *cur  = PROVEN_ARRAY_GET(&tasks, ex_task_t, i);
         EXAMPLE_REQUIRE(prev && cur && prev->priority <= cur->priority,
                         "after sorting, priorities must be non-decreasing");
     }
@@ -1730,14 +1730,14 @@ int main(void) {
     /* --- 이진 탐색 --------------------------------------------------------- */
     /* 바로 이 비교자로 정렬해 두었기 때문에만 옳다. 키는 원소 하나 통째지만, 비교자가
      * 읽는 필드만 뜻이 있다. */
-    task_t key = { .priority = 1, .id = 0 };
-    const task_t *hit = (const task_t *)proven_array_binary_search(&tasks, &key, cmp_priority);
+    ex_task_t key = { .priority = 1, .id = 0 };
+    const ex_task_t *hit = (const ex_task_t *)proven_array_binary_search(&tasks, &key, cmp_priority);
     EXAMPLE_REQUIRE(hit != NULL, "priority 1 is present, so the search must find it");
     EXAMPLE_REQUIRE(hit && hit->priority == 1, "the hit must be an element with the searched key");
     /* 키가 중복되면 그 키를 가진 *어떤* 원소를 찾지, 첫 번째를 찾지는 않는다. 첫
      * 번째가 필요하면 찾은 자리에서 뒤로 훑을 것. */
 
-    task_t absent = { .priority = 9, .id = 0 };
+    ex_task_t absent = { .priority = 9, .id = 0 };
     EXAMPLE_REQUIRE(proven_array_binary_search(&tasks, &absent, cmp_priority) == NULL,
                     "a key that is not there must return NULL");
 
@@ -1780,38 +1780,38 @@ int main(void) {
 typedef struct {
     int  level;
     long score;
-} player_t;
+} ex_player_t;
 
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
     /* --- 정수 키 ------------------------------------------------------------ */
-    proven_result_map_t r = PROVEN_MAP_INIT_INT(alloc, player_t, 8);
+    proven_result_map_t r = PROVEN_MAP_INIT_INT(alloc, ex_player_t, 8);
     EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating an int-keyed map must succeed");
     if (!proven_is_ok(r.err)) {
         return 1;
     }
     proven_map_t by_id = r.value;
 
-    proven_err_t err = PROVEN_MAP_SET_INT(&by_id, 404, player_t, ((player_t){ .level = 3, .score = 990 }));
+    proven_err_t err = PROVEN_MAP_SET_INT(&by_id, 404, ex_player_t, ((ex_player_t){ .level = 3, .score = 990 }));
     EXAMPLE_REQUIRE(proven_is_ok(err), "inserting into the map must succeed");
-    err = PROVEN_MAP_SET_INT(&by_id, 7, player_t, ((player_t){ .level = 1, .score = 10 }));
+    err = PROVEN_MAP_SET_INT(&by_id, 7, ex_player_t, ((ex_player_t){ .level = 1, .score = 10 }));
     EXAMPLE_REQUIRE(proven_is_ok(err), "inserting a second key must succeed");
 
     /* 이미 있는 키에 set 하면 값을 바꾼다. 항목을 더하지 않는다. */
-    err = PROVEN_MAP_SET_INT(&by_id, 7, player_t, ((player_t){ .level = 2, .score = 40 }));
+    err = PROVEN_MAP_SET_INT(&by_id, 7, ex_player_t, ((ex_player_t){ .level = 2, .score = 40 }));
     EXAMPLE_REQUIRE(proven_is_ok(err), "re-setting an existing key must succeed");
     EXAMPLE_REQUIRE(by_id.len == 2, "re-setting a key replaces its value rather than adding an entry");
 
     /* get 은 버킷 배열 속을 가리키는 포인터를, 없으면 NULL 을 돌려준다. 다시 해싱하는
      * 삽입이 일어나면 무효가 된다 - 찾고, 쓰고, 버릴 것. */
-    const player_t *p = PROVEN_MAP_GET_INT(&by_id, player_t, 7);
+    const ex_player_t *p = PROVEN_MAP_GET_INT(&by_id, ex_player_t, 7);
     EXAMPLE_REQUIRE(p && p->level == 2 && p->score == 40, "get must see the replaced value");
-    EXAMPLE_REQUIRE(PROVEN_MAP_GET_INT(&by_id, player_t, 999) == NULL, "a missing key yields NULL");
+    EXAMPLE_REQUIRE(PROVEN_MAP_GET_INT(&by_id, ex_player_t, 999) == NULL, "a missing key yields NULL");
 
     err = PROVEN_MAP_REMOVE_INT(&by_id, 7);
     EXAMPLE_REQUIRE(proven_is_ok(err), "removing a present key must succeed");
-    EXAMPLE_REQUIRE(PROVEN_MAP_GET_INT(&by_id, player_t, 7) == NULL, "a removed key is gone");
+    EXAMPLE_REQUIRE(PROVEN_MAP_GET_INT(&by_id, ex_player_t, 7) == NULL, "a removed key is gone");
     EXAMPLE_REQUIRE(by_id.len == 1, "removal decrements the live entry count");
 
     PROVEN_MAP_DESTROY(&by_id);
@@ -1819,7 +1819,7 @@ int main(void) {
     /* --- 소유하는 문자열 키 -------------------------------------------------- */
     /* 같은 맵인데, 실행 중에 지어낸 이름을 키로 쓴다 - 빌린 키였다면 매달린 포인터가
      * 되기를 기다리는 자리다. */
-    proven_result_map_t rm = PROVEN_MAP_INIT_U8_OWNED(alloc, player_t, 8);
+    proven_result_map_t rm = PROVEN_MAP_INIT_U8_OWNED(alloc, ex_player_t, 8);
     EXAMPLE_REQUIRE(proven_is_ok(rm.err), "creating an owned-string-keyed map must succeed");
     if (!proven_is_ok(rm.err)) {
         return 1;
@@ -1836,8 +1836,8 @@ int main(void) {
 
     /* set_u8_owned 는 키 바이트를 맵 저장소로 *복사한다*. 돌아온 뒤로 맵의 키는
      * `scratch` 와 아무 상관이 없다. */
-    err = PROVEN_MAP_SET_U8_OWNED(&by_name, proven_u8str_as_view(&name), player_t,
-                                  ((player_t){ .level = 9, .score = 5000 }));
+    err = PROVEN_MAP_SET_U8_OWNED(&by_name, proven_u8str_as_view(&name), ex_player_t,
+                                  ((ex_player_t){ .level = 9, .score = 5000 }));
     EXAMPLE_REQUIRE(proven_is_ok(err), "inserting with an owned key must succeed");
 
     /* 그래서 버퍼는 곧바로 다음 키에 다시 쓸 수 있고... */
@@ -1846,25 +1846,25 @@ int main(void) {
     err = proven_u8str_append(&name, PROVEN_LIT("grace"));
     EXAMPLE_REQUIRE(proven_is_ok(err), "overwriting the buffer with the next key must succeed");
 
-    err = PROVEN_MAP_SET_U8_OWNED(&by_name, proven_u8str_as_view(&name), player_t,
-                                  ((player_t){ .level = 4, .score = 700 }));
+    err = PROVEN_MAP_SET_U8_OWNED(&by_name, proven_u8str_as_view(&name), ex_player_t,
+                                  ((ex_player_t){ .level = 4, .score = 700 }));
     EXAMPLE_REQUIRE(proven_is_ok(err), "inserting the second owned key must succeed");
 
     /* ...첫 항목은 그 덮어쓰기에 조금도 다치지 않는다. 이것이 요점 전부다. 맵은
      * 지금 "grace" 라고 적힌 버퍼의 뷰가 아니라 "ada" 의 제 사본을 쥐고 있다. BORROWED
      * 맵이었다면 둘 다 "grace" 로 키가 잡힌 항목 둘을 보고했을 것이다 - 아니면 더 나쁘게,
      * 해제된 기억이 키인 항목 하나를. */
-    const player_t *ada = PROVEN_MAP_GET_U8_OWNED(&by_name, player_t, PROVEN_LIT("ada"));
+    const ex_player_t *ada = PROVEN_MAP_GET_U8_OWNED(&by_name, ex_player_t, PROVEN_LIT("ada"));
     EXAMPLE_REQUIRE(ada && ada->score == 5000, "the copied key survives the caller reusing its buffer");
 
-    const player_t *grace = PROVEN_MAP_GET_U8_OWNED(&by_name, player_t, PROVEN_LIT("grace"));
+    const ex_player_t *grace = PROVEN_MAP_GET_U8_OWNED(&by_name, ex_player_t, PROVEN_LIT("grace"));
     EXAMPLE_REQUIRE(grace && grace->score == 700, "the second key is a separate entry");
     EXAMPLE_REQUIRE(by_name.len == 2, "two distinct keys means two entries");
 
     /* remove 는 맵이 만든 키 사본을 해제한다 - 여러분이 직접 해제하는 일은 없다. */
     err = PROVEN_MAP_REMOVE_U8_OWNED(&by_name, PROVEN_LIT("ada"));
     EXAMPLE_REQUIRE(proven_is_ok(err), "removing an owned key must succeed");
-    EXAMPLE_REQUIRE(PROVEN_MAP_GET_U8_OWNED(&by_name, player_t, PROVEN_LIT("ada")) == NULL,
+    EXAMPLE_REQUIRE(PROVEN_MAP_GET_U8_OWNED(&by_name, ex_player_t, PROVEN_LIT("ada")) == NULL,
                     "the removed entry is gone");
 
     printf("map: %zu name(s) left, grace at level %d\n",
@@ -1926,13 +1926,13 @@ int main(void) {
 typedef struct {
     proven_u32 client;
     proven_u32 code;      /* 이벤트 코드. 0 은 "연결이 닫혔다" 는 뜻이다 */
-} event_t;
+} ex_event_t;
 
 /* 클라이언트 번호로 찾기. 이것은 이벤트를 *찾기* 위한 비교이지 정렬하기 위한 것이
  * 아니다. 아래 배열은 *도착한 차례*로 있고 그대로 둔다. */
 static int by_client(const void *a, const void *b) {
-    const event_t *x = (const event_t *)a;
-    const event_t *y = (const event_t *)b;
+    const ex_event_t *x = (const ex_event_t *)a;
+    const ex_event_t *y = (const ex_event_t *)b;
     return (x->client > y->client) - (x->client < y->client);
 }
 
@@ -1941,7 +1941,7 @@ int main(void) {
 
     /* --- 1. reserve: 용량을 한 번에 정한다 -------------------------------- */
 
-    proven_result_array_t ar = PROVEN_ARRAY_INIT(alloc, event_t, 4);
+    proven_result_array_t ar = PROVEN_ARRAY_INIT(alloc, ex_event_t, 4);
     EXAMPLE_REQUIRE(proven_is_ok(ar.err), "creating the event log must succeed");
     if (!proven_is_ok(ar.err)) {
         return 1;
@@ -1964,7 +1964,7 @@ int main(void) {
     EXAMPLE_REQUIRE(!proven_array_is_valid(&never_created),
                     "a zero-initialised handle is not a usable array");
 
-    static const event_t batch[] = {
+    static const ex_event_t batch[] = {
         { .client = 7, .code = 200 }, { .client = 3, .code = 200 },
         { .client = 7, .code = 404 }, { .client = 9, .code = 200 },
         { .client = 3, .code = 500 }, { .client = 7, .code = 0   },
@@ -1973,7 +1973,7 @@ int main(void) {
 
     proven_size_t cap_before = events.cap;
     for (proven_size_t i = 0; i < batch_len; ++i) {
-        err = PROVEN_ARRAY_PUSH(&events, event_t, batch[i]);
+        err = PROVEN_ARRAY_PUSH(&events, ex_event_t, batch[i]);
         EXAMPLE_REQUIRE(proven_is_ok(err), "pushing an event must succeed");
     }
     EXAMPLE_REQUIRE(events.cap == cap_before, "the reserve was enough: nothing reallocated while filling");
@@ -1984,18 +1984,18 @@ int main(void) {
      * 때문이다. 여기서 이진 탐색은 더 빠르고 *틀리다*. 정렬된 구간에서만 써야 하는데,
      * 정렬되지 않은 자료에서는 "없다" 를 돌려주는 것이 아니라 헛소리를 돌려준다. 옳은
      * 도구는 선형 탐색이고, 이 크기의 묶음에서 O(n) 은 아무것도 아니다. */
-    event_t key = { .client = 9, .code = 0 };
-    const event_t *found = (const event_t *)proven_array_linear_search(&events, &key, by_client);
+    ex_event_t key = { .client = 9, .code = 0 };
+    const ex_event_t *found = (const ex_event_t *)proven_array_linear_search(&events, &key, by_client);
     EXAMPLE_REQUIRE(found != NULL, "client 9 appears in the batch");
     EXAMPLE_REQUIRE(found->code == 200, "and linear search returns the FIRST match in order");
 
-    event_t absent = { .client = 42, .code = 0 };
+    ex_event_t absent = { .client = 42, .code = 0 };
     EXAMPLE_REQUIRE(proven_array_linear_search(&events, &absent, by_client) == NULL,
                     "a client that never appeared is reported as not found");
 
     /* --- 3. 가장 최근 이벤트를 담는 고리 ---------------------------------- */
 
-    proven_result_ring_t rr = PROVEN_RING_INIT(alloc, event_t, 4);
+    proven_result_ring_t rr = PROVEN_RING_INIT(alloc, ex_event_t, 4);
     EXAMPLE_REQUIRE(proven_is_ok(rr.err), "creating the recent-events ring must succeed");
     proven_ring_t recent = rr.value;
     EXAMPLE_REQUIRE(proven_ring_is_valid(&recent), "a created ring must be structurally valid");
@@ -2007,11 +2007,11 @@ int main(void) {
      * 넣기 전에 가장 오래된 것을 우리가 직접 버린다는 뜻이다. */
     for (proven_size_t i = 0; i < batch_len; ++i) {
         if (recent.len == recent.cap) {
-            event_t dropped;
-            err = PROVEN_RING_POP(&recent, event_t, &dropped);
+            ex_event_t dropped;
+            err = PROVEN_RING_POP(&recent, ex_event_t, &dropped);
             EXAMPLE_REQUIRE(proven_is_ok(err), "a full ring must yield its oldest element");
         }
-        err = PROVEN_RING_PUSH(&recent, event_t, batch[i]);
+        err = PROVEN_RING_PUSH(&recent, ex_event_t, batch[i]);
         EXAMPLE_REQUIRE(proven_is_ok(err), "pushing after making room must succeed");
     }
     EXAMPLE_REQUIRE(recent.len == 4, "the ring holds the four most recent events");
@@ -2122,7 +2122,7 @@ int main(void) {
 반례 — 도착 순서 로그에 이진 탐색을 쓰는 경우:
 
 ```text
-const event_t *e = proven_array_binary_search(&events, &key, by_client);   /* wrong */
+const ex_event_t *e = proven_array_binary_search(&events, &key, by_client);   /* wrong */
 ```
 
 `proven_array_binary_search()`는 같은 비교 함수로 정렬된 구간에서만 쓸 수 있다. 정렬되지 않은

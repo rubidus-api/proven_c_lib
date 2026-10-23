@@ -23,10 +23,10 @@ typedef struct {
      * 필드여야 한다. 아니면 재개할 때마다 처음 값으로 되돌아가 반복문이 끝나지 않는다. */
     int value;
     int remaining;
-} squares_t;
+} ex_squares_t;
 
 /* 코루틴은 proven_i32 를 돌려준다. 0 = 멈췄음(다시 불러 달라), 1 = 끝. */
-static proven_i32 squares_next(squares_t *g) {
+static proven_i32 squares_next(ex_squares_t *g) {
     PROVEN_CORO_BEGIN(&g->coro);
 
     g->remaining = 5;
@@ -51,7 +51,7 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_is_ok(out.err), "creating the output string should succeed");
     if (!proven_is_ok(out.err)) return 1;
 
-    squares_t gen = {0};
+    ex_squares_t gen = {0};
     PROVEN_CORO_INIT(&gen.coro);   /* 조건 없이, 첫 호출 전에, 정확히 한 번 */
 
     int produced = 0;

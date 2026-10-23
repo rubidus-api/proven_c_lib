@@ -683,11 +683,11 @@ typedef struct {
     proven_size_t body_bytes;
     proven_u32 last_stream, reset_code, close_code;
     bool hold;                             /* DATA를 소비했다고 알리지 않는다 */
-} end_t;
+} ex_end_t;
 
 /* `in`의 바이트에 든 사건을 모두 받는다. 한 번 호출에 사건 하나다: 사건도 없고 남은 것도 없을
  * 때까지 나머지를 가지고 다시 호출한다. */
-static bool take_events(end_t *e, proven_mem_view_t in) {
+static bool take_events(ex_end_t *e, proven_mem_view_t in) {
     proven_size_t pos = 0;
     for (;;) {
         proven_size_t used = 0;
@@ -727,7 +727,7 @@ static bool take_events(end_t *e, proven_mem_view_t in) {
 
 /* 선: `from`이 쌓아 둔 것이 `to`로 간다. 그런 다음 `from`에게 빈 입력으로 한 번 더 묻는다 -
  * 보낸 덕분에 생긴 사건, 곧 다시 보낼 수 있게 된 스트림이 있는지. */
-static bool carry(end_t *from, end_t *to) {
+static bool carry(ex_end_t *from, ex_end_t *to) {
     static proven_byte_t wire[200000];
     proven_mem_view_t out = proven_h2_conn_pending_output(from->conn);
     if (out.size > sizeof wire) return false;
@@ -740,7 +740,7 @@ static bool carry(end_t *from, end_t *to) {
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    end_t client = { .name = "client" }, server = { .name = "server" };
+    ex_end_t client = { .name = "client" }, server = { .name = "server" };
 
     /* 0은 모든 한계에서 기본값을 뜻한다. 꼭 말해야 하는 것은 `server` 하나다. */
     proven_h2_config_t ccfg = { .alloc = heap };
@@ -810,7 +810,7 @@ int main(void) {
     // ---- 규칙을 어기는 상대 ------------------------------------------------------------------
     /* 아무것도 더하지 않는 WINDOW_UPDATE는 프로토콜 오류다. 연결은 상대에게 그렇게 말하고
      * (GOAWAY), 끝났다고 알리고, 더는 아무것도 받지 않는다. */
-    end_t strict = { .name = "strict" };
+    ex_end_t strict = { .name = "strict" };
     EXAMPLE_REQUIRE(proven_h2_conn_create(&scfg, &strict.conn) == PROVEN_OK, "another server");
     proven_byte_t bad[128];
     proven_size_t len = PROVEN_H2_PREFACE_SIZE;
@@ -973,10 +973,10 @@ int proven_http_stream_protocol(const proven_http_stream_t *stream);
  * 클라이언트는 7절에 있다.)
  */
 
-typedef struct { proven_loop_t *loop; int served, over_http2; } app_t;
+typedef struct { proven_loop_t *loop; int served, over_http2; } ex_app_t;
 
 static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     /* 요청은 어느 쪽이든 같아 보인다: 메서드, 대상, 필드 - 그 가운데 Host도 있다. HTTP/2는
      * 그것을 `:authority`로 싣고, 서버는 익숙한 이름으로 넘겨준다. */
     /* HTTP/3에서 TLS 설정에 `early_data`가 있으면 요청은 조기 데이터로 올 수 있고(14장 6절),
@@ -996,10 +996,10 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 
 static void on_done(void *ctx, proven_http_stream_t *stream, proven_err_t why) {
     (void)stream;
-    if (why == PROVEN_OK) ((app_t *)ctx)->served++;
+    if (why == PROVEN_OK) ((ex_app_t *)ctx)->served++;
 }
 
-static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_app_t *)arg)->loop); }
 
 /* 작은 HTTP/2 클라이언트: 엔진, 소켓, 그리고 요청한 스트림이 모두 끝날 때까지 둘 사이로
  * 바이트를 옮기는 루프. 200으로 답을 받은 수를 돌려준다. */
@@ -1060,7 +1060,7 @@ static int ask_three(proven_u16 port, char answers[3][64]) {
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
 
     /* `http2`가 전부다. 평문에서는 HTTP/2 서문으로 시작하는 클라이언트가 HTTP/2이고 나머지는
@@ -1222,8 +1222,8 @@ HTTP/1.1로 말한다.
  * 오리진마다 연결 하나를 간직하고, 그 오리진으로 가는 모든 요청을 그 연결에 올린다.
  */
 
-typedef struct { int answered, over_http2; char text[3][32]; bool done[3]; } seen_t;
-typedef struct { seen_t *seen; int which; } call_t;
+typedef struct { int answered, over_http2; char text[3][32]; bool done[3]; } ex_seen_t;
+typedef struct { ex_seen_t *seen; int which; } ex_call_t;
 
 static void serve(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
     (void)ctx;
@@ -1231,7 +1231,7 @@ static void serve(void *ctx, proven_http_stream_t *stream, const proven_http_req
 }
 
 static void on_response(void *ctx, proven_http_event_request_t *request, const proven_http_response_t *head) {
-    call_t *call = ctx;
+    ex_call_t *call = ctx;
     /* 여기서는 2다. 아직 연결을 기다리는 요청이나, 서버가 HTTP/1.1만 말하는 것으로 드러난
      * 요청은 1이다. */
     if (head->status == 200 && proven_http_event_request_protocol(request) == 2) call->seen->over_http2++;
@@ -1239,13 +1239,13 @@ static void on_response(void *ctx, proven_http_event_request_t *request, const p
 
 static void on_body(void *ctx, proven_http_event_request_t *request, proven_mem_view_t piece, bool last) {
     (void)request; (void)last;
-    call_t *call = ctx;
+    ex_call_t *call = ctx;
     snprintf(call->seen->text[call->which], sizeof call->seen->text[0], "%.*s", (int)piece.size, (const char *)piece.ptr);
 }
 
 static void on_done(void *ctx, proven_http_event_request_t *request, proven_err_t why) {
     (void)request;
-    call_t *call = ctx;
+    ex_call_t *call = ctx;
     call->seen->done[call->which] = true;
     if (why == PROVEN_OK) call->seen->answered++;
 }
@@ -1269,8 +1269,8 @@ int main(void) {
     proven_http_event_client_t *client = NULL;
     EXAMPLE_REQUIRE(proven_http_event_client_create(loop, &client_config, &client) == PROVEN_OK, "a client");
 
-    seen_t seen = { 0 };
-    call_t calls[3] = { { &seen, 0 }, { &seen, 1 }, { &seen, 2 } };
+    ex_seen_t seen = { 0 };
+    ex_call_t calls[3] = { { &seen, 0 }, { &seen, 1 }, { &seen, 2 } };
     static const char *const paths[3] = { "/first", "/second", "/third" };
     for (int i = 0; i < 3; i++) {
         char url[64];

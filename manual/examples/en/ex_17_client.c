@@ -10,8 +10,8 @@
  * client keeps a connection for the origin and puts every request to it on that connection.
  */
 
-typedef struct { int answered, over_http2; char text[3][32]; bool done[3]; } seen_t;
-typedef struct { seen_t *seen; int which; } call_t;
+typedef struct { int answered, over_http2; char text[3][32]; bool done[3]; } ex_seen_t;
+typedef struct { ex_seen_t *seen; int which; } ex_call_t;
 
 static void serve(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
     (void)ctx;
@@ -19,7 +19,7 @@ static void serve(void *ctx, proven_http_stream_t *stream, const proven_http_req
 }
 
 static void on_response(void *ctx, proven_http_event_request_t *request, const proven_http_response_t *head) {
-    call_t *call = ctx;
+    ex_call_t *call = ctx;
     /* 2 here; 1 for a request that is still waiting for its connection, or whose server
      * turned out to speak only HTTP/1.1. */
     if (head->status == 200 && proven_http_event_request_protocol(request) == 2) call->seen->over_http2++;
@@ -27,13 +27,13 @@ static void on_response(void *ctx, proven_http_event_request_t *request, const p
 
 static void on_body(void *ctx, proven_http_event_request_t *request, proven_mem_view_t piece, bool last) {
     (void)request; (void)last;
-    call_t *call = ctx;
+    ex_call_t *call = ctx;
     snprintf(call->seen->text[call->which], sizeof call->seen->text[0], "%.*s", (int)piece.size, (const char *)piece.ptr);
 }
 
 static void on_done(void *ctx, proven_http_event_request_t *request, proven_err_t why) {
     (void)request;
-    call_t *call = ctx;
+    ex_call_t *call = ctx;
     call->seen->done[call->which] = true;
     if (why == PROVEN_OK) call->seen->answered++;
 }
@@ -57,8 +57,8 @@ int main(void) {
     proven_http_event_client_t *client = NULL;
     EXAMPLE_REQUIRE(proven_http_event_client_create(loop, &client_config, &client) == PROVEN_OK, "a client");
 
-    seen_t seen = { 0 };
-    call_t calls[3] = { { &seen, 0 }, { &seen, 1 }, { &seen, 2 } };
+    ex_seen_t seen = { 0 };
+    ex_call_t calls[3] = { { &seen, 0 }, { &seen, 1 }, { &seen, 2 } };
     static const char *const paths[3] = { "/first", "/second", "/third" };
     for (int i = 0; i < 3; i++) {
         char url[64];

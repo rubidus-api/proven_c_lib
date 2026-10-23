@@ -16,13 +16,13 @@ typedef struct {
     int order[8];
     int count;
     atomic_int from_worker;
-} app_t;
+} ex_app_t;
 
-static void note(app_t *app, int what) { if (app->count < 8) app->order[app->count++] = what; }
+static void note(ex_app_t *app, int what) { if (app->count < 8) app->order[app->count++] = what; }
 
 /* A timer fires once. One that should repeat sets itself again. */
 static void on_tick(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     note(app, 1);
     if (++app->ticks < 3) proven_loop_timer_set(app->loop, &app->tick, 20, on_tick, app);
 }
@@ -31,7 +31,7 @@ static void on_late(void *ctx) { note(ctx, 9); }
 
 /* This runs on the loop's thread, although a worker thread asked for it. */
 static void on_result(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     note(app, 5);
     proven_loop_timer_cancel(app->loop, &app->late);      /* it would have fired in five seconds; now it never will */
     proven_loop_stop(app->loop);
@@ -39,7 +39,7 @@ static void on_result(void *ctx) {
 
 /* This runs on a worker thread. It may take as long as it likes: the loop is not waiting. */
 static void slow_work(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     proven_time_sleep(400);
     atomic_store(&app->from_worker, 1);
     if (proven_loop_post(app->loop, on_result, app) != PROVEN_OK) proven_loop_stop(app->loop);   /* only a failed allocation refuses a post; then just end the run */
@@ -47,7 +47,7 @@ static void slow_work(void *ctx) {
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
 
     // ---- a loop -------------------------------------------------------------------
     /* A loop is a selector, a set of timers, and a queue other threads can post to. */

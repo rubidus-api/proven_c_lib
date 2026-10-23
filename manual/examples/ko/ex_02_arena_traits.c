@@ -39,13 +39,13 @@ typedef struct {
     proven_size_t   live_bytes;
     proven_size_t   alloc_calls;
     proven_size_t   free_calls;
-} counting_ctx_t;
+} ex_counting_ctx_t;
 
 /* 셋 각각이 proven_allocator_t 의 필드 하나에 대응한다. 각자 제 장부를 적은 뒤 아레나의
  * 공개된 특성 함수로 전달하므로, 재는 대상이 되는 동작은 아레나를 다시 구현한 것이
  * 아니라 정확히 아레나의 동작이다. */
 static proven_result_mem_mut_t counting_alloc(void *ctx, proven_size_t size, proven_size_t align) {
-    counting_ctx_t *c = (counting_ctx_t *)ctx;
+    ex_counting_ctx_t *c = (ex_counting_ctx_t *)ctx;
     proven_result_mem_mut_t r = proven_arena_alloc_trait(c->arena, size, align);
     if (proven_is_ok(r.err)) {
         c->live_bytes += size;
@@ -56,7 +56,7 @@ static proven_result_mem_mut_t counting_alloc(void *ctx, proven_size_t size, pro
 
 static proven_result_mem_mut_t counting_realloc(void *ctx, void *old_ptr, proven_size_t old_size,
                                                proven_size_t new_size, proven_size_t align) {
-    counting_ctx_t *c = (counting_ctx_t *)ctx;
+    ex_counting_ctx_t *c = (ex_counting_ctx_t *)ctx;
     proven_result_mem_mut_t r = proven_arena_realloc_trait(c->arena, old_ptr, old_size, new_size, align);
     if (proven_is_ok(r.err)) {
         c->live_bytes = c->live_bytes - old_size + new_size;
@@ -65,7 +65,7 @@ static proven_result_mem_mut_t counting_realloc(void *ctx, void *old_ptr, proven
 }
 
 static void counting_free(void *ctx, void *ptr) {
-    counting_ctx_t *c = (counting_ctx_t *)ctx;
+    ex_counting_ctx_t *c = (ex_counting_ctx_t *)ctx;
     ++c->free_calls;
     proven_arena_free_trait(c->arena, ptr);   /* 아레나의 free 는 아무 일도 하지 않는다. 세는 것이 요점이다 */
 }
@@ -132,7 +132,7 @@ int main(void) {
 
     proven_arena_reset(&arena);
 
-    counting_ctx_t counted = { .arena = &arena };
+    ex_counting_ctx_t counted = { .arena = &arena };
     proven_allocator_t alloc = {
         .ctx        = &counted,
         .alloc_fn   = counting_alloc,

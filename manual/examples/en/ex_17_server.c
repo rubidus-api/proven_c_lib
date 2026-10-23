@@ -12,10 +12,10 @@
  * lines. (The library's own, which keeps connections and shares them, is section 7's.)
  */
 
-typedef struct { proven_loop_t *loop; int served, over_http2; } app_t;
+typedef struct { proven_loop_t *loop; int served, over_http2; } ex_app_t;
 
 static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     /* The request looks the same either way: a method, a target, fields - Host among them,
      * which HTTP/2 carries as `:authority` and the server hands on under its usual name. */
     /* Over HTTP/3, with `early_data` in the TLS configuration, a request may come as early data
@@ -35,10 +35,10 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 
 static void on_done(void *ctx, proven_http_stream_t *stream, proven_err_t why) {
     (void)stream;
-    if (why == PROVEN_OK) ((app_t *)ctx)->served++;
+    if (why == PROVEN_OK) ((ex_app_t *)ctx)->served++;
 }
 
-static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_app_t *)arg)->loop); }
 
 /* An HTTP/2 client in miniature: the engine, a socket, and a loop that moves bytes between
  * them until every stream it asked for has ended. Returns how many were answered 200. */
@@ -100,7 +100,7 @@ static int ask_three(proven_u16 port, char answers[3][64]) {
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
 
     /* `http2` is the whole of it. In the clear, a client that begins with the HTTP/2 preface

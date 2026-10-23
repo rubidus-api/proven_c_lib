@@ -290,6 +290,11 @@ int main(void) {
 `manual/examples/example.h` and exist so the build can check that every example in this manual
 still does what the text says it does. Your own program would use neither.
 
+The examples' own types carry the prefix `ex_` (`ex_app_t`, `ex_task_t`), as your program's
+should carry its own: POSIX reserves names ending in `_t`, and a bare `task_t` or `node_t` is a
+name a system or SDK header may already define (macOS's Mach headers define `task_t`). This
+library keeps the suffix and prefixes every type it defines with `proven_`.
+
 Three details worth pausing on, because they recur everywhere:
 
 - **`proven_u8str_create(alloc, 64)` asks for 64 bytes of capacity**, and that capacity includes

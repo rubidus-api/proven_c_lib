@@ -702,12 +702,12 @@ typedef struct {
     proven_loop_t *loop;
     bool compressed;                   /* 서버가 합의됐다고 본 것 */
     proven_size_t received, largest, pieces;
-} app_t;
+} ex_app_t;
 
 /* 압축된 메시지는 풀린 채로, 최대 16 KiB 조각으로 도착한다. 여러분이 쥐지 않는 한 전체를
  * 쥐는 것은 없다. 이 핸들러는 세기만 하고, 메시지가 끝나면 답한다. */
 static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)text;
     if (first) { app->received = 0; app->pieces = 0; app->largest = 0; }
     app->received += piece.size;
@@ -721,7 +721,7 @@ static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
 }
 
 static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     proven_ws_event_config_t config = {
         .on = { .on_message = on_message },
         .ctx = app,
@@ -740,11 +740,11 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
     proven_ws_stream_set_compress(ws, true);
 }
 
-static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_app_t *)arg)->loop); }
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
     proven_http_event_server_config_t server_config = { .on = { .on_request = on_request }, .ctx = &app };
     proven_http_event_server_t *server = NULL;

@@ -15,7 +15,7 @@
 typedef struct {
     int priority;
     int id;
-} task_t;
+} ex_task_t;
 
 /* 비교자가 곧 배열의 순서다. 정렬과 이진 탐색에는 *반드시* 같은 것을 써야 한다 -
  * 다른 순서로 찾는 것은 컴파일러가 볼 수 없는 버그다.
@@ -23,8 +23,8 @@ typedef struct {
  * (x > y) - (x < y) 꼴은 일부러 쓴 것이다. 두 int 를 빼면 큰 값에서 넘쳐 엉뚱한
  * 부호를 돌려준다. */
 static int cmp_priority(const void *a, const void *b) {
-    int x = ((const task_t *)a)->priority;
-    int y = ((const task_t *)b)->priority;
+    int x = ((const ex_task_t *)a)->priority;
+    int y = ((const ex_task_t *)b)->priority;
     return (x > y) - (x < y);
 }
 
@@ -34,8 +34,8 @@ int main(void) {
     /* --- push / get / pop --------------------------------------------------- */
     /* init_cap 은 한계가 아니라 힌트다. push 는 그것을 넘어 늘어난다. 잘 잡아 두면
      * 재할당을 피할 뿐이다. */
-    proven_result_array_t r = PROVEN_ARRAY_INIT(alloc, task_t, 4);
-    EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating an array of task_t must succeed");
+    proven_result_array_t r = PROVEN_ARRAY_INIT(alloc, ex_task_t, 4);
+    EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating an array of ex_task_t must succeed");
     if (!proven_is_ok(r.err)) {
         return 1;
     }
@@ -43,7 +43,7 @@ int main(void) {
 
     /* 일부러 중복이 많게 했다. 실제 키가 그렇게 생겼기 때문이다 - 상태 열, enum,
      * 버킷 번호. */
-    static const task_t seed[] = {
+    static const ex_task_t seed[] = {
         { .priority = 2, .id = 10 }, { .priority = 0, .id = 11 },
         { .priority = 2, .id = 12 }, { .priority = 1, .id = 13 },
         { .priority = 2, .id = 14 }, { .priority = 0, .id = 15 },
@@ -51,7 +51,7 @@ int main(void) {
     };
 
     for (proven_size_t i = 0; i < sizeof seed / sizeof seed[0]; ++i) {
-        proven_err_t err = PROVEN_ARRAY_PUSH(&tasks, task_t, seed[i]);
+        proven_err_t err = PROVEN_ARRAY_PUSH(&tasks, ex_task_t, seed[i]);
         EXAMPLE_REQUIRE(proven_is_ok(err), "pushing into a growable array must succeed");
         if (!proven_is_ok(err)) {
             PROVEN_ARRAY_DESTROY(&tasks);
@@ -63,20 +63,20 @@ int main(void) {
     /* get 은 배열 저장소 *안*을 가리키는 포인터를 돌려준다 - 사본이 아니고, 다음
      * push 가 재할당하면 매달린 포인터가 된다. push 를 다 한 뒤에 얻어 쓰고, 담아
      * 두지는 말 것. */
-    const task_t *front = PROVEN_ARRAY_GET(&tasks, task_t, 0);
+    const ex_task_t *front = PROVEN_ARRAY_GET(&tasks, ex_task_t, 0);
     EXAMPLE_REQUIRE(front && front->id == 10, "element 0 is the first one pushed");
 
     /* 범위를 벗어나면 널 포인터다. 죽는 것도, 미정의 동작도 아니다. */
-    EXAMPLE_REQUIRE(PROVEN_ARRAY_GET(&tasks, task_t, 99) == NULL, "an out-of-range index yields NULL");
+    EXAMPLE_REQUIRE(PROVEN_ARRAY_GET(&tasks, ex_task_t, 99) == NULL, "an out-of-range index yields NULL");
 
     /* pop 은 마지막 원소를 복사해 내보낸다(그냥 버리려면 NULL 을 건넨다). */
-    task_t last = {0};
-    proven_err_t err = PROVEN_ARRAY_POP(&tasks, task_t, &last);
+    ex_task_t last = {0};
+    proven_err_t err = PROVEN_ARRAY_POP(&tasks, ex_task_t, &last);
     EXAMPLE_REQUIRE(proven_is_ok(err), "popping a non-empty array must succeed");
     EXAMPLE_REQUIRE(last.id == 17 && tasks.len == 7, "pop returns the last element and shrinks the array");
 
     /* 도로 넣는다. 이 예제의 나머지가 여덟 개를 모두 필요로 한다. */
-    err = PROVEN_ARRAY_PUSH(&tasks, task_t, last);
+    err = PROVEN_ARRAY_PUSH(&tasks, ex_task_t, last);
     EXAMPLE_REQUIRE(proven_is_ok(err), "pushing the popped element back must succeed");
 
     /* --- 정렬 -------------------------------------------------------------- */
@@ -89,8 +89,8 @@ int main(void) {
     proven_array_sort(&tasks, cmp_priority);
 
     for (proven_size_t i = 1; i < tasks.len; ++i) {
-        const task_t *prev = PROVEN_ARRAY_GET(&tasks, task_t, i - 1);
-        const task_t *cur  = PROVEN_ARRAY_GET(&tasks, task_t, i);
+        const ex_task_t *prev = PROVEN_ARRAY_GET(&tasks, ex_task_t, i - 1);
+        const ex_task_t *cur  = PROVEN_ARRAY_GET(&tasks, ex_task_t, i);
         EXAMPLE_REQUIRE(prev && cur && prev->priority <= cur->priority,
                         "after sorting, priorities must be non-decreasing");
     }
@@ -98,14 +98,14 @@ int main(void) {
     /* --- 이진 탐색 --------------------------------------------------------- */
     /* 바로 이 비교자로 정렬해 두었기 때문에만 옳다. 키는 원소 하나 통째지만, 비교자가
      * 읽는 필드만 뜻이 있다. */
-    task_t key = { .priority = 1, .id = 0 };
-    const task_t *hit = (const task_t *)proven_array_binary_search(&tasks, &key, cmp_priority);
+    ex_task_t key = { .priority = 1, .id = 0 };
+    const ex_task_t *hit = (const ex_task_t *)proven_array_binary_search(&tasks, &key, cmp_priority);
     EXAMPLE_REQUIRE(hit != NULL, "priority 1 is present, so the search must find it");
     EXAMPLE_REQUIRE(hit && hit->priority == 1, "the hit must be an element with the searched key");
     /* 키가 중복되면 그 키를 가진 *어떤* 원소를 찾지, 첫 번째를 찾지는 않는다. 첫
      * 번째가 필요하면 찾은 자리에서 뒤로 훑을 것. */
 
-    task_t absent = { .priority = 9, .id = 0 };
+    ex_task_t absent = { .priority = 9, .id = 0 };
     EXAMPLE_REQUIRE(proven_array_binary_search(&tasks, &absent, cmp_priority) == NULL,
                     "a key that is not there must return NULL");
 

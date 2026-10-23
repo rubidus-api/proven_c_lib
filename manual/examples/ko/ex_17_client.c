@@ -10,8 +10,8 @@
  * 오리진마다 연결 하나를 간직하고, 그 오리진으로 가는 모든 요청을 그 연결에 올린다.
  */
 
-typedef struct { int answered, over_http2; char text[3][32]; bool done[3]; } seen_t;
-typedef struct { seen_t *seen; int which; } call_t;
+typedef struct { int answered, over_http2; char text[3][32]; bool done[3]; } ex_seen_t;
+typedef struct { ex_seen_t *seen; int which; } ex_call_t;
 
 static void serve(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
     (void)ctx;
@@ -19,7 +19,7 @@ static void serve(void *ctx, proven_http_stream_t *stream, const proven_http_req
 }
 
 static void on_response(void *ctx, proven_http_event_request_t *request, const proven_http_response_t *head) {
-    call_t *call = ctx;
+    ex_call_t *call = ctx;
     /* 여기서는 2다. 아직 연결을 기다리는 요청이나, 서버가 HTTP/1.1만 말하는 것으로 드러난
      * 요청은 1이다. */
     if (head->status == 200 && proven_http_event_request_protocol(request) == 2) call->seen->over_http2++;
@@ -27,13 +27,13 @@ static void on_response(void *ctx, proven_http_event_request_t *request, const p
 
 static void on_body(void *ctx, proven_http_event_request_t *request, proven_mem_view_t piece, bool last) {
     (void)request; (void)last;
-    call_t *call = ctx;
+    ex_call_t *call = ctx;
     snprintf(call->seen->text[call->which], sizeof call->seen->text[0], "%.*s", (int)piece.size, (const char *)piece.ptr);
 }
 
 static void on_done(void *ctx, proven_http_event_request_t *request, proven_err_t why) {
     (void)request;
-    call_t *call = ctx;
+    ex_call_t *call = ctx;
     call->seen->done[call->which] = true;
     if (why == PROVEN_OK) call->seen->answered++;
 }
@@ -57,8 +57,8 @@ int main(void) {
     proven_http_event_client_t *client = NULL;
     EXAMPLE_REQUIRE(proven_http_event_client_create(loop, &client_config, &client) == PROVEN_OK, "a client");
 
-    seen_t seen = { 0 };
-    call_t calls[3] = { { &seen, 0 }, { &seen, 1 }, { &seen, 2 } };
+    ex_seen_t seen = { 0 };
+    ex_call_t calls[3] = { { &seen, 0 }, { &seen, 1 }, { &seen, 2 } };
     static const char *const paths[3] = { "/first", "/second", "/third" };
     for (int i = 0; i < 3; i++) {
         char url[64];

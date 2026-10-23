@@ -19,11 +19,11 @@ typedef struct {
     proven_size_t body_bytes;
     proven_u32 last_stream, reset_code, close_code;
     bool hold;                             /* do not say that DATA was consumed */
-} end_t;
+} ex_end_t;
 
 /* Take every event the bytes in `in` hold. One call reports one event: call again with the
  * rest until there is no event and nothing left. */
-static bool take_events(end_t *e, proven_mem_view_t in) {
+static bool take_events(ex_end_t *e, proven_mem_view_t in) {
     proven_size_t pos = 0;
     for (;;) {
         proven_size_t used = 0;
@@ -63,7 +63,7 @@ static bool take_events(end_t *e, proven_mem_view_t in) {
 
 /* The wire: what `from` has queued goes to `to`. Then `from` is asked once more, with
  * nothing, for what sending made due - a stream that may go on. */
-static bool carry(end_t *from, end_t *to) {
+static bool carry(ex_end_t *from, ex_end_t *to) {
     static proven_byte_t wire[200000];
     proven_mem_view_t out = proven_h2_conn_pending_output(from->conn);
     if (out.size > sizeof wire) return false;
@@ -76,7 +76,7 @@ static bool carry(end_t *from, end_t *to) {
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    end_t client = { .name = "client" }, server = { .name = "server" };
+    ex_end_t client = { .name = "client" }, server = { .name = "server" };
 
     /* Zero means the default for every limit. `server` is the one thing that must be said. */
     proven_h2_config_t ccfg = { .alloc = heap };
@@ -146,7 +146,7 @@ int main(void) {
     // ---- a peer that breaks a rule ---------------------------------------------------------
     /* A WINDOW_UPDATE that adds nothing is a protocol error. The connection says so to its
      * peer (GOAWAY), reports that it is over, and takes nothing more. */
-    end_t strict = { .name = "strict" };
+    ex_end_t strict = { .name = "strict" };
     EXAMPLE_REQUIRE(proven_h2_conn_create(&scfg, &strict.conn) == PROVEN_OK, "another server");
     proven_byte_t bad[128];
     proven_size_t len = PROVEN_H2_PREFACE_SIZE;

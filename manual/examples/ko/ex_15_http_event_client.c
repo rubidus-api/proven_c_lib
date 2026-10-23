@@ -14,25 +14,25 @@
  * 워커에서 해석하고, 답을 게시해 돌려보내고, 요청을 시작한다.
  */
 
-typedef struct app app_t;
+typedef struct app ex_app_t;
 
 /* 요청 하나에 대해 이 프로그램이 간직하는 것. */
 typedef struct {
-    app_t *app;
+    ex_app_t *app;
     const char *path;
     int status;
     char body[64];
     proven_size_t len;
     proven_err_t why;
     bool done;
-} fetch_t;
+} ex_fetch_t;
 
 struct app {
     proven_loop_t *loop;
     proven_http_event_client_t *client;
     proven_job_sys_t *workers;
     proven_u16 port;
-    fetch_t fetch[3];
+    ex_fetch_t fetch[3];
     int finished;
     /* 워커가 쓰고, 게시된 뒤 루프에서 읽는다 */
     proven_net_addr_t found;
@@ -53,26 +53,26 @@ static void serve(void *ctx, proven_http_stream_t *stream, const proven_http_req
 /* 헤드: 이 함수가 돌아올 때까지만 유효하므로, 필요한 것을 여기서 꺼낸다. */
 static void on_response(void *ctx, proven_http_event_request_t *request, const proven_http_response_t *head) {
     (void)request;
-    ((fetch_t *)ctx)->status = head->status;
+    ((ex_fetch_t *)ctx)->status = head->status;
 }
 
 /* 본문, 한 번에 한 조각. 대신 모아 주지 않는다. 원하는 것을 직접 모은다. */
 static void on_body(void *ctx, proven_http_event_request_t *request, proven_mem_view_t piece, bool last) {
     (void)request; (void)last;
-    fetch_t *f = ctx;
+    ex_fetch_t *f = ctx;
     for (proven_size_t i = 0; i < piece.size && f->len < sizeof f->body - 1; ++i) f->body[f->len++] = (char)piece.ptr[i];
 }
 
 /* 시작된 요청마다 한 번, 무슨 일이 있었든. */
 static void on_done(void *ctx, proven_http_event_request_t *request, proven_err_t why) {
     (void)request;
-    fetch_t *f = ctx;
+    ex_fetch_t *f = ctx;
     f->why = why;
     f->done = true;
     if (++f->app->finished == 3) proven_loop_stop(f->app->loop);
 }
 
-static proven_err_t fetch(app_t *app, fetch_t *f, const char *path, const proven_net_addr_t *address, const char *host) {
+static proven_err_t fetch(ex_app_t *app, ex_fetch_t *f, const char *path, const proven_net_addr_t *address, const char *host) {
     char url[96];
     int n = snprintf(url, sizeof url, "http://%s:%u%s", host, (unsigned)app->port, path);
     f->app = app;
@@ -91,7 +91,7 @@ static proven_err_t fetch(app_t *app, fetch_t *f, const char *path, const proven
 /* 다시 루프의 스레드: 이제 주소가 있으니 요청을 시작할 수 있다.
  * URL은 이름을 그대로 둔다 - Host에 들어가는 것이 그것이다 - 그리고 주소가 어디로 연결할지 말한다. */
 static void resolved(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     if (app->lookup != PROVEN_OK || fetch(app, &app->fetch[2], "/missing", &app->found, "localhost") != PROVEN_OK) {
         app->fetch[2].why = PROVEN_ERR_NOT_FOUND;
         if (++app->finished == 3) proven_loop_stop(app->loop);
@@ -100,7 +100,7 @@ static void resolved(void *ctx) {
 
 /* 워커 스레드에서: 이 호출은 리졸버가 걸리는 만큼 기다려도 된다. */
 static void resolve(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     proven_net_addr_t all[8];
     proven_size_t count = 0;
     app->lookup = proven_net_resolve(PROVEN_LIT("localhost"), app->port, all, 8, &count);
@@ -115,7 +115,7 @@ static void resolve(void *ctx) {
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
 
     // ---- 루프 하나, 그 위의 서버와 클라이언트 --------------------------------------
     /* 아직 아무것도 돌지 않는다: 루프는 돌릴 때까지 아무 일도 하지 않는다. */
@@ -136,7 +136,7 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_http_event_client_requests(app.client) == 2 && !app.fetch[0].done && !app.fetch[1].done, "둘 다 진행 중이고 답은 없다: 아직 아무것도 돌지 않았다");
 
     /* 하나는 이름으로. 주소가 없으면 거절된다 - 그러니 먼저 워커에서 해석한다. */
-    fetch_t unresolved = { 0 };
+    ex_fetch_t unresolved = { 0 };
     EXAMPLE_REQUIRE(fetch(&app, &unresolved, "/missing", NULL, "localhost") == PROVEN_ERR_INVALID_ARG, "주소 없는 이름은 거절된다");
     EXAMPLE_REQUIRE(proven_job_submit(app.workers, resolve, &app), "조회를 워커에 넘겼다");
 

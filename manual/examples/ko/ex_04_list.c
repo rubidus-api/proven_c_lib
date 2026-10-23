@@ -26,14 +26,14 @@
 typedef struct {
     int                 id;
     proven_list_node_t  link;
-} task_t;
+} ex_task_t;
 
 int main(void) {
     /* 이 프로그램에는 할당자가 아예 없다. 작업들은 스택에 있고, 리스트는 그 안에 사는
      * 포인터들을 다시 이어 줄 뿐이다. */
-    task_t a = { .id = 1 };
-    task_t b = { .id = 2 };
-    task_t c = { .id = 3 };
+    ex_task_t a = { .id = 1 };
+    ex_task_t b = { .id = 2 };
+    ex_task_t c = { .id = 3 };
 
     proven_list_t queue;
     proven_list_init(&queue);
@@ -49,7 +49,7 @@ int main(void) {
     proven_list_node_t *it = NULL;
     int seen[3] = {0}, n = 0;
     PROVEN_LIST_FOR_EACH(it, &queue) {
-        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        ex_task_t *t = PROVEN_LIST_ENTRY(it, ex_task_t, link);
         if (n < 3) seen[n++] = t->id;
     }
     EXAMPLE_REQUIRE(n == 3 && seen[0] == 1 && seen[1] == 2 && seen[2] == 3,
@@ -61,24 +61,24 @@ int main(void) {
      * 돌기 *전에* 다음 포인터를 읽어 둔다. */
     proven_list_node_t *safe = NULL;
     PROVEN_LIST_FOR_EACH_SAFE(it, safe, &queue) {
-        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        ex_task_t *t = PROVEN_LIST_ENTRY(it, ex_task_t, link);
         if (t->id == 2) proven_list_remove(it);
     }
 
     n = 0;
     PROVEN_LIST_FOR_EACH(it, &queue) {
-        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        ex_task_t *t = PROVEN_LIST_ENTRY(it, ex_task_t, link);
         if (n < 3) seen[n++] = t->id;
     }
     EXAMPLE_REQUIRE(n == 2 && seen[0] == 1 && seen[1] == 3, "task 2 was unlinked");
 
     /* --- 가운데에 끼워 넣기는 포인터 바꿔 끼우기다 --------------------- */
-    task_t d = { .id = 4 };
+    ex_task_t d = { .id = 4 };
     proven_list_insert_after(&a.link, &d.link);
 
     n = 0;
     PROVEN_LIST_FOR_EACH(it, &queue) {
-        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        ex_task_t *t = PROVEN_LIST_ENTRY(it, ex_task_t, link);
         if (n < 3) seen[n++] = t->id;
     }
     EXAMPLE_REQUIRE(n == 3 && seen[0] == 1 && seen[1] == 4 && seen[2] == 3,

@@ -17,19 +17,19 @@ typedef struct {
     proven_loop_t *loop;
     int opened, closed;
     proven_u16 last_code;
-} app_t;
+} ex_app_t;
 
 /* What this program keeps for one connection: the message being collected. */
 typedef struct {
-    app_t *app;
+    ex_app_t *app;
     char text[4096];
     proven_size_t len;
     bool waiting;                 /* a reply the server would not take yet */
-} peer_t;
+} ex_peer_t;
 
 /* Send the reply. If the client is not taking what was sent before, the server refuses it:
  * keep it, stop reading from this client, and try again when on_writable says so. */
-static void reply(proven_ws_stream_t *ws, peer_t *peer) {
+static void reply(proven_ws_stream_t *ws, ex_peer_t *peer) {
     proven_err_t err = proven_ws_stream_send(ws, true, (proven_mem_view_t){ (const proven_byte_t *)peer->text, peer->len });
     if (err == PROVEN_ERR_AGAIN) {
         peer->waiting = true;
@@ -44,7 +44,7 @@ static void reply(proven_ws_stream_t *ws, peer_t *peer) {
  * so it collects them - up to a limit of its own, which is the point of doing it by hand. */
 static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
     (void)ctx;
-    peer_t *peer = proven_ws_stream_user(ws);
+    ex_peer_t *peer = proven_ws_stream_user(ws);
     if (first) peer->len = 0;
     if (!text || peer->len + piece.size > sizeof peer->text) {
         proven_ws_stream_close(ws, 1009, PROVEN_LIT("short text only"));       /* 1009: too big */
@@ -60,7 +60,7 @@ static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
 /* There is room again. */
 static void on_writable(void *ctx, proven_ws_stream_t *ws) {
     (void)ctx;
-    peer_t *peer = proven_ws_stream_user(ws);
+    ex_peer_t *peer = proven_ws_stream_user(ws);
     if (!peer->waiting) return;
     reply(ws, peer);
     if (!peer->waiting) proven_ws_stream_resume(ws);
@@ -68,7 +68,7 @@ static void on_writable(void *ctx, proven_ws_stream_t *ws) {
 
 /* Called once, however the connection ended. The place to free what was attached. */
 static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)why;
     free(proven_ws_stream_user(ws));
     app->last_code = code;
@@ -76,8 +76,8 @@ static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven
 }
 
 static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
-    app_t *app = ctx;
-    peer_t *peer = calloc(1, sizeof *peer);
+    ex_app_t *app = ctx;
+    ex_peer_t *peer = calloc(1, sizeof *peer);
     if (!peer) { proven_http_stream_abort(stream); return; }
     peer->app = app;
 
@@ -106,11 +106,11 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
     app->opened++;
 }
 
-static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_app_t *)arg)->loop); }
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
 
     // ---- a server on a loop, on its own thread -------------------------------------
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");

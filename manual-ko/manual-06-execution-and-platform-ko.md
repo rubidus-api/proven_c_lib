@@ -370,10 +370,10 @@ C의 추상 기계에서 모든 포인터는 **프로버넌스**를 지닌다: �
   그 워드를 먼저 바꾸지 않았을 때만 한 스레드가 변경을 공표하게 해 준다.
 
   ```text
-  /* Treiber-stack style push (sketch): node_t and n are illustrative, so this
+  /* Treiber-stack style push (sketch): ex_node_t and n are illustrative, so this
      is a listing rather than a compiled block. */
-  _Atomic(node_t *) head;
-  node_t *old = atomic_load(&head);
+  _Atomic(ex_node_t *) head;
+  ex_node_t *old = atomic_load(&head);
   do { n->next = old; } while (!atomic_compare_exchange_weak(&head, &old, n));
   ```
 
@@ -850,10 +850,10 @@ typedef struct {
      * 필드여야 한다. 아니면 재개할 때마다 처음 값으로 되돌아가 반복문이 끝나지 않는다. */
     int value;
     int remaining;
-} squares_t;
+} ex_squares_t;
 
 /* 코루틴은 proven_i32 를 돌려준다. 0 = 멈췄음(다시 불러 달라), 1 = 끝. */
-static proven_i32 squares_next(squares_t *g) {
+static proven_i32 squares_next(ex_squares_t *g) {
     PROVEN_CORO_BEGIN(&g->coro);
 
     g->remaining = 5;
@@ -878,7 +878,7 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_is_ok(out.err), "creating the output string should succeed");
     if (!proven_is_ok(out.err)) return 1;
 
-    squares_t gen = {0};
+    ex_squares_t gen = {0};
     PROVEN_CORO_INIT(&gen.coro);   /* 조건 없이, 첫 호출 전에, 정확히 한 번 */
 
     int produced = 0;

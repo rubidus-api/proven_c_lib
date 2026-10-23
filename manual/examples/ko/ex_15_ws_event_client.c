@@ -18,7 +18,7 @@ typedef struct {
     int opened, answers, closed, refused;
     proven_u16 code;
     char last[64];
-} app_t;
+} ex_app_t;
 
 // ---- 서버: 무엇을 받았는지 말해 준다 ----
 
@@ -41,7 +41,7 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 
 /* 서버가 수락했다. 여기서부터 - 이 호출 안에서도 - 메시지를 보낼 수 있다. */
 static void on_open(void *ctx, proven_ws_stream_t *ws, proven_u8str_view_t protocol) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)protocol;
     app->opened++;
     (void)proven_ws_stream_send(ws, true, proven_mem_view_from_u8(PROVEN_LIT("hello")));
@@ -49,7 +49,7 @@ static void on_open(void *ctx, proven_ws_stream_t *ws, proven_u8str_view_t proto
 
 /* 서버가 갖는 것과 같은 콜백. 이쪽은 두 번 묻고 작별한다. */
 static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)text; (void)first;
     if (!last) return;
     proven_size_t n = piece.size < sizeof app->last - 1 ? piece.size : sizeof app->last - 1;
@@ -67,7 +67,7 @@ static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
 /* 시작한 연결마다 정확히 한 번 불린다 - 끝내 열리지 않은 연결에도:
  * 그때 코드는 0이고 `why`가 무엇이 잘못되었는지 말한다. */
 static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)ws;
     if (code == 0) {
         /* WebSocket이 되지 못했다: 아무도 듣지 않았거나, 서버가 다른 답을 했거나, 시간이 다 됐다. */
@@ -83,7 +83,7 @@ static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
     proven_http_event_server_config_t server_config = { .on = { .on_request = on_request } };
     proven_http_event_server_t *server = NULL;

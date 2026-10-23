@@ -26,14 +26,14 @@
 typedef struct {
     int                 id;
     proven_list_node_t  link;
-} task_t;
+} ex_task_t;
 
 int main(void) {
     /* No allocator anywhere in this program: the tasks are on the stack, and the
      * list only ever rearranges pointers that live inside them. */
-    task_t a = { .id = 1 };
-    task_t b = { .id = 2 };
-    task_t c = { .id = 3 };
+    ex_task_t a = { .id = 1 };
+    ex_task_t b = { .id = 2 };
+    ex_task_t c = { .id = 3 };
 
     proven_list_t queue;
     proven_list_init(&queue);
@@ -49,7 +49,7 @@ int main(void) {
     proven_list_node_t *it = NULL;
     int seen[3] = {0}, n = 0;
     PROVEN_LIST_FOR_EACH(it, &queue) {
-        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        ex_task_t *t = PROVEN_LIST_ENTRY(it, ex_task_t, link);
         if (n < 3) seen[n++] = t->id;
     }
     EXAMPLE_REQUIRE(n == 3 && seen[0] == 1 && seen[1] == 2 && seen[2] == 3,
@@ -61,24 +61,24 @@ int main(void) {
      * unlinked. The _SAFE form reads the next pointer BEFORE the body runs. */
     proven_list_node_t *safe = NULL;
     PROVEN_LIST_FOR_EACH_SAFE(it, safe, &queue) {
-        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        ex_task_t *t = PROVEN_LIST_ENTRY(it, ex_task_t, link);
         if (t->id == 2) proven_list_remove(it);
     }
 
     n = 0;
     PROVEN_LIST_FOR_EACH(it, &queue) {
-        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        ex_task_t *t = PROVEN_LIST_ENTRY(it, ex_task_t, link);
         if (n < 3) seen[n++] = t->id;
     }
     EXAMPLE_REQUIRE(n == 2 && seen[0] == 1 && seen[1] == 3, "task 2 was unlinked");
 
     /* --- inserting in the middle is a pointer swap --------------------- */
-    task_t d = { .id = 4 };
+    ex_task_t d = { .id = 4 };
     proven_list_insert_after(&a.link, &d.link);
 
     n = 0;
     PROVEN_LIST_FOR_EACH(it, &queue) {
-        task_t *t = PROVEN_LIST_ENTRY(it, task_t, link);
+        ex_task_t *t = PROVEN_LIST_ENTRY(it, ex_task_t, link);
         if (n < 3) seen[n++] = t->id;
     }
     EXAMPLE_REQUIRE(n == 3 && seen[0] == 1 && seen[1] == 4 && seen[2] == 3,

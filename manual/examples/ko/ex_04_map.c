@@ -22,38 +22,38 @@
 typedef struct {
     int  level;
     long score;
-} player_t;
+} ex_player_t;
 
 int main(void) {
     proven_allocator_t alloc = proven_heap_allocator();
 
     /* --- 정수 키 ------------------------------------------------------------ */
-    proven_result_map_t r = PROVEN_MAP_INIT_INT(alloc, player_t, 8);
+    proven_result_map_t r = PROVEN_MAP_INIT_INT(alloc, ex_player_t, 8);
     EXAMPLE_REQUIRE(proven_is_ok(r.err), "creating an int-keyed map must succeed");
     if (!proven_is_ok(r.err)) {
         return 1;
     }
     proven_map_t by_id = r.value;
 
-    proven_err_t err = PROVEN_MAP_SET_INT(&by_id, 404, player_t, ((player_t){ .level = 3, .score = 990 }));
+    proven_err_t err = PROVEN_MAP_SET_INT(&by_id, 404, ex_player_t, ((ex_player_t){ .level = 3, .score = 990 }));
     EXAMPLE_REQUIRE(proven_is_ok(err), "inserting into the map must succeed");
-    err = PROVEN_MAP_SET_INT(&by_id, 7, player_t, ((player_t){ .level = 1, .score = 10 }));
+    err = PROVEN_MAP_SET_INT(&by_id, 7, ex_player_t, ((ex_player_t){ .level = 1, .score = 10 }));
     EXAMPLE_REQUIRE(proven_is_ok(err), "inserting a second key must succeed");
 
     /* 이미 있는 키에 set 하면 값을 바꾼다. 항목을 더하지 않는다. */
-    err = PROVEN_MAP_SET_INT(&by_id, 7, player_t, ((player_t){ .level = 2, .score = 40 }));
+    err = PROVEN_MAP_SET_INT(&by_id, 7, ex_player_t, ((ex_player_t){ .level = 2, .score = 40 }));
     EXAMPLE_REQUIRE(proven_is_ok(err), "re-setting an existing key must succeed");
     EXAMPLE_REQUIRE(by_id.len == 2, "re-setting a key replaces its value rather than adding an entry");
 
     /* get 은 버킷 배열 속을 가리키는 포인터를, 없으면 NULL 을 돌려준다. 다시 해싱하는
      * 삽입이 일어나면 무효가 된다 - 찾고, 쓰고, 버릴 것. */
-    const player_t *p = PROVEN_MAP_GET_INT(&by_id, player_t, 7);
+    const ex_player_t *p = PROVEN_MAP_GET_INT(&by_id, ex_player_t, 7);
     EXAMPLE_REQUIRE(p && p->level == 2 && p->score == 40, "get must see the replaced value");
-    EXAMPLE_REQUIRE(PROVEN_MAP_GET_INT(&by_id, player_t, 999) == NULL, "a missing key yields NULL");
+    EXAMPLE_REQUIRE(PROVEN_MAP_GET_INT(&by_id, ex_player_t, 999) == NULL, "a missing key yields NULL");
 
     err = PROVEN_MAP_REMOVE_INT(&by_id, 7);
     EXAMPLE_REQUIRE(proven_is_ok(err), "removing a present key must succeed");
-    EXAMPLE_REQUIRE(PROVEN_MAP_GET_INT(&by_id, player_t, 7) == NULL, "a removed key is gone");
+    EXAMPLE_REQUIRE(PROVEN_MAP_GET_INT(&by_id, ex_player_t, 7) == NULL, "a removed key is gone");
     EXAMPLE_REQUIRE(by_id.len == 1, "removal decrements the live entry count");
 
     PROVEN_MAP_DESTROY(&by_id);
@@ -61,7 +61,7 @@ int main(void) {
     /* --- 소유하는 문자열 키 -------------------------------------------------- */
     /* 같은 맵인데, 실행 중에 지어낸 이름을 키로 쓴다 - 빌린 키였다면 매달린 포인터가
      * 되기를 기다리는 자리다. */
-    proven_result_map_t rm = PROVEN_MAP_INIT_U8_OWNED(alloc, player_t, 8);
+    proven_result_map_t rm = PROVEN_MAP_INIT_U8_OWNED(alloc, ex_player_t, 8);
     EXAMPLE_REQUIRE(proven_is_ok(rm.err), "creating an owned-string-keyed map must succeed");
     if (!proven_is_ok(rm.err)) {
         return 1;
@@ -78,8 +78,8 @@ int main(void) {
 
     /* set_u8_owned 는 키 바이트를 맵 저장소로 *복사한다*. 돌아온 뒤로 맵의 키는
      * `scratch` 와 아무 상관이 없다. */
-    err = PROVEN_MAP_SET_U8_OWNED(&by_name, proven_u8str_as_view(&name), player_t,
-                                  ((player_t){ .level = 9, .score = 5000 }));
+    err = PROVEN_MAP_SET_U8_OWNED(&by_name, proven_u8str_as_view(&name), ex_player_t,
+                                  ((ex_player_t){ .level = 9, .score = 5000 }));
     EXAMPLE_REQUIRE(proven_is_ok(err), "inserting with an owned key must succeed");
 
     /* 그래서 버퍼는 곧바로 다음 키에 다시 쓸 수 있고... */
@@ -88,25 +88,25 @@ int main(void) {
     err = proven_u8str_append(&name, PROVEN_LIT("grace"));
     EXAMPLE_REQUIRE(proven_is_ok(err), "overwriting the buffer with the next key must succeed");
 
-    err = PROVEN_MAP_SET_U8_OWNED(&by_name, proven_u8str_as_view(&name), player_t,
-                                  ((player_t){ .level = 4, .score = 700 }));
+    err = PROVEN_MAP_SET_U8_OWNED(&by_name, proven_u8str_as_view(&name), ex_player_t,
+                                  ((ex_player_t){ .level = 4, .score = 700 }));
     EXAMPLE_REQUIRE(proven_is_ok(err), "inserting the second owned key must succeed");
 
     /* ...첫 항목은 그 덮어쓰기에 조금도 다치지 않는다. 이것이 요점 전부다. 맵은
      * 지금 "grace" 라고 적힌 버퍼의 뷰가 아니라 "ada" 의 제 사본을 쥐고 있다. BORROWED
      * 맵이었다면 둘 다 "grace" 로 키가 잡힌 항목 둘을 보고했을 것이다 - 아니면 더 나쁘게,
      * 해제된 기억이 키인 항목 하나를. */
-    const player_t *ada = PROVEN_MAP_GET_U8_OWNED(&by_name, player_t, PROVEN_LIT("ada"));
+    const ex_player_t *ada = PROVEN_MAP_GET_U8_OWNED(&by_name, ex_player_t, PROVEN_LIT("ada"));
     EXAMPLE_REQUIRE(ada && ada->score == 5000, "the copied key survives the caller reusing its buffer");
 
-    const player_t *grace = PROVEN_MAP_GET_U8_OWNED(&by_name, player_t, PROVEN_LIT("grace"));
+    const ex_player_t *grace = PROVEN_MAP_GET_U8_OWNED(&by_name, ex_player_t, PROVEN_LIT("grace"));
     EXAMPLE_REQUIRE(grace && grace->score == 700, "the second key is a separate entry");
     EXAMPLE_REQUIRE(by_name.len == 2, "two distinct keys means two entries");
 
     /* remove 는 맵이 만든 키 사본을 해제한다 - 여러분이 직접 해제하는 일은 없다. */
     err = PROVEN_MAP_REMOVE_U8_OWNED(&by_name, PROVEN_LIT("ada"));
     EXAMPLE_REQUIRE(proven_is_ok(err), "removing an owned key must succeed");
-    EXAMPLE_REQUIRE(PROVEN_MAP_GET_U8_OWNED(&by_name, player_t, PROVEN_LIT("ada")) == NULL,
+    EXAMPLE_REQUIRE(PROVEN_MAP_GET_U8_OWNED(&by_name, ex_player_t, PROVEN_LIT("ada")) == NULL,
                     "the removed entry is gone");
 
     printf("map: %zu name(s) left, grace at level %d\n",

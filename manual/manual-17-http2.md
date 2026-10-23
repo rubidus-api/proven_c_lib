@@ -709,11 +709,11 @@ typedef struct {
     proven_size_t body_bytes;
     proven_u32 last_stream, reset_code, close_code;
     bool hold;                             /* do not say that DATA was consumed */
-} end_t;
+} ex_end_t;
 
 /* Take every event the bytes in `in` hold. One call reports one event: call again with the
  * rest until there is no event and nothing left. */
-static bool take_events(end_t *e, proven_mem_view_t in) {
+static bool take_events(ex_end_t *e, proven_mem_view_t in) {
     proven_size_t pos = 0;
     for (;;) {
         proven_size_t used = 0;
@@ -753,7 +753,7 @@ static bool take_events(end_t *e, proven_mem_view_t in) {
 
 /* The wire: what `from` has queued goes to `to`. Then `from` is asked once more, with
  * nothing, for what sending made due - a stream that may go on. */
-static bool carry(end_t *from, end_t *to) {
+static bool carry(ex_end_t *from, ex_end_t *to) {
     static proven_byte_t wire[200000];
     proven_mem_view_t out = proven_h2_conn_pending_output(from->conn);
     if (out.size > sizeof wire) return false;
@@ -766,7 +766,7 @@ static bool carry(end_t *from, end_t *to) {
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    end_t client = { .name = "client" }, server = { .name = "server" };
+    ex_end_t client = { .name = "client" }, server = { .name = "server" };
 
     /* Zero means the default for every limit. `server` is the one thing that must be said. */
     proven_h2_config_t ccfg = { .alloc = heap };
@@ -836,7 +836,7 @@ int main(void) {
     // ---- a peer that breaks a rule ---------------------------------------------------------
     /* A WINDOW_UPDATE that adds nothing is a protocol error. The connection says so to its
      * peer (GOAWAY), reports that it is over, and takes nothing more. */
-    end_t strict = { .name = "strict" };
+    ex_end_t strict = { .name = "strict" };
     EXAMPLE_REQUIRE(proven_h2_conn_create(&scfg, &strict.conn) == PROVEN_OK, "another server");
     proven_byte_t bad[128];
     proven_size_t len = PROVEN_H2_PREFACE_SIZE;
@@ -1008,10 +1008,10 @@ ends everything at once, and every open stream's handler gets `on_done(PROVEN_ER
  * lines. (The library's own, which keeps connections and shares them, is section 7's.)
  */
 
-typedef struct { proven_loop_t *loop; int served, over_http2; } app_t;
+typedef struct { proven_loop_t *loop; int served, over_http2; } ex_app_t;
 
 static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     /* The request looks the same either way: a method, a target, fields - Host among them,
      * which HTTP/2 carries as `:authority` and the server hands on under its usual name. */
     /* Over HTTP/3, with `early_data` in the TLS configuration, a request may come as early data
@@ -1031,10 +1031,10 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 
 static void on_done(void *ctx, proven_http_stream_t *stream, proven_err_t why) {
     (void)stream;
-    if (why == PROVEN_OK) ((app_t *)ctx)->served++;
+    if (why == PROVEN_OK) ((ex_app_t *)ctx)->served++;
 }
 
-static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_app_t *)arg)->loop); }
 
 /* An HTTP/2 client in miniature: the engine, a socket, and a loop that moves bytes between
  * them until every stream it asked for has ended. Returns how many were answered 200. */
@@ -1096,7 +1096,7 @@ static int ask_three(proven_u16 port, char answers[3][64]) {
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
 
     /* `http2` is the whole of it. In the clear, a client that begins with the HTTP/2 preface
@@ -1270,8 +1270,8 @@ HTTP/1.1 is spoken to in HTTP/1.1.
  * client keeps a connection for the origin and puts every request to it on that connection.
  */
 
-typedef struct { int answered, over_http2; char text[3][32]; bool done[3]; } seen_t;
-typedef struct { seen_t *seen; int which; } call_t;
+typedef struct { int answered, over_http2; char text[3][32]; bool done[3]; } ex_seen_t;
+typedef struct { ex_seen_t *seen; int which; } ex_call_t;
 
 static void serve(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
     (void)ctx;
@@ -1279,7 +1279,7 @@ static void serve(void *ctx, proven_http_stream_t *stream, const proven_http_req
 }
 
 static void on_response(void *ctx, proven_http_event_request_t *request, const proven_http_response_t *head) {
-    call_t *call = ctx;
+    ex_call_t *call = ctx;
     /* 2 here; 1 for a request that is still waiting for its connection, or whose server
      * turned out to speak only HTTP/1.1. */
     if (head->status == 200 && proven_http_event_request_protocol(request) == 2) call->seen->over_http2++;
@@ -1287,13 +1287,13 @@ static void on_response(void *ctx, proven_http_event_request_t *request, const p
 
 static void on_body(void *ctx, proven_http_event_request_t *request, proven_mem_view_t piece, bool last) {
     (void)request; (void)last;
-    call_t *call = ctx;
+    ex_call_t *call = ctx;
     snprintf(call->seen->text[call->which], sizeof call->seen->text[0], "%.*s", (int)piece.size, (const char *)piece.ptr);
 }
 
 static void on_done(void *ctx, proven_http_event_request_t *request, proven_err_t why) {
     (void)request;
-    call_t *call = ctx;
+    ex_call_t *call = ctx;
     call->seen->done[call->which] = true;
     if (why == PROVEN_OK) call->seen->answered++;
 }
@@ -1317,8 +1317,8 @@ int main(void) {
     proven_http_event_client_t *client = NULL;
     EXAMPLE_REQUIRE(proven_http_event_client_create(loop, &client_config, &client) == PROVEN_OK, "a client");
 
-    seen_t seen = { 0 };
-    call_t calls[3] = { { &seen, 0 }, { &seen, 1 }, { &seen, 2 } };
+    ex_seen_t seen = { 0 };
+    ex_call_t calls[3] = { { &seen, 0 }, { &seen, 1 }, { &seen, 2 } };
     static const char *const paths[3] = { "/first", "/second", "/third" };
     for (int i = 0; i < 3; i++) {
         char url[64];

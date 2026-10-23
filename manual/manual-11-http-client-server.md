@@ -307,10 +307,10 @@ typedef struct {
     proven_http_server_t *server;
     int served;
     proven_err_t ended;                 /* what run returned */
-} app_t;
+} ex_app_t;
 
 static void handle(void *ctx, proven_http_exchange_t *x) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     const proven_http_request_t *req = proven_http_exchange_request(x);
     app->served++;
 
@@ -361,7 +361,7 @@ static void handle(void *ctx, proven_http_exchange_t *x) {
 }
 
 static void serve(void *arg) {
-    app_t *app = arg;
+    ex_app_t *app = arg;
     app->ended = proven_http_server_run(app->server);   /* until the shutdown is over */
 }
 
@@ -385,7 +385,7 @@ static bool fetch_is(proven_http_client_t *client, proven_u16 port, const char *
 }
 
 int main(void) {
-    static app_t app;
+    static ex_app_t app;
     proven_allocator_t heap = proven_heap_allocator();
 
     /* Zero the configuration and set what you need; every zero field has a default. */

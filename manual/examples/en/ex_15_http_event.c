@@ -18,20 +18,20 @@ typedef struct {
     int served;
     proven_http_event_server_t *server;
     proven_err_t ended;                /* what on_drained was told */
-} app_t;
+} ex_app_t;
 
 /* What this program keeps for one request while it is being answered. */
 typedef struct {
-    app_t *app;
+    ex_app_t *app;
     proven_http_stream_t *stream;
     proven_loop_timer_t timer;
     proven_size_t sent, total;         /* /count: how far the body has got */
     proven_size_t received;            /* /size: body bytes seen */
-} exchange_t;
+} ex_exchange_t;
 
 /* Write lines until the server says "no more for now". It says so when the client has not
  * taken what was already sent; the rest waits for on_writable. */
-static void count_pump(exchange_t *x) {
+static void count_pump(ex_exchange_t *x) {
     while (x->sent < x->total) {
         char line[32];
         int n = snprintf(line, sizeof line, "%u\n", (unsigned)x->sent);
@@ -44,13 +44,13 @@ static void count_pump(exchange_t *x) {
 }
 
 static void answer_later(void *ctx) {
-    exchange_t *x = ctx;
+    ex_exchange_t *x = ctx;
     (void)proven_http_stream_respond(x->stream, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("worth the wait\n")));
 }
 
 static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
-    app_t *app = ctx;
-    exchange_t *x = calloc(1, sizeof *x);
+    ex_app_t *app = ctx;
+    ex_exchange_t *x = calloc(1, sizeof *x);
     if (!x) { proven_http_stream_abort(stream); return; }
     x->app = app;
     x->stream = stream;
@@ -76,7 +76,7 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 
 static void on_body(void *ctx, proven_http_stream_t *stream, proven_mem_view_t piece, bool last) {
     (void)ctx;
-    exchange_t *x = proven_http_stream_user(stream);
+    ex_exchange_t *x = proven_http_stream_user(stream);
     x->received += piece.size;
     if (last) {
         char text[32];
@@ -88,14 +88,14 @@ static void on_body(void *ctx, proven_http_stream_t *stream, proven_mem_view_t p
 /* The output that was held back has gone: carry on from where the writing stopped. */
 static void on_writable(void *ctx, proven_http_stream_t *stream) {
     (void)ctx;
-    exchange_t *x = proven_http_stream_user(stream);
+    ex_exchange_t *x = proven_http_stream_user(stream);
     if (x->total > 0) count_pump(x);
 }
 
 /* Called once for every on_request, whatever happened. The place to free what was attached. */
 static void on_done(void *ctx, proven_http_stream_t *stream, proven_err_t why) {
-    app_t *app = ctx;
-    exchange_t *x = proven_http_stream_user(stream);
+    ex_app_t *app = ctx;
+    ex_exchange_t *x = proven_http_stream_user(stream);
     if (!x) return;
     proven_loop_timer_cancel(app->loop, &x->timer);
     free(x);
@@ -104,16 +104,16 @@ static void on_done(void *ctx, proven_http_stream_t *stream, proven_err_t why) {
 
 /* The end, on the loop's thread: what is open finishes, and then the loop is stopped. */
 static void on_drained(void *ctx, proven_err_t why) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     app->ended = why;
     proven_loop_stop(app->loop);
 }
 static void begin_end(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     if (proven_http_event_server_shutdown(app->server, 2000, on_drained, app) != PROVEN_OK) proven_loop_stop(app->loop);
 }
 
-static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_app_t *)arg)->loop); }
 
 static char g_url[64];
 static proven_u8str_view_t url_for(proven_u16 port, const char *path) {
@@ -131,7 +131,7 @@ static bool body_equals(proven_http_client_response_t *resp, proven_allocator_t 
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
 
     // ---- the server ----------------------------------------------------------------
     /* A server is made on a loop and listens; it does nothing until the loop runs. */

@@ -22,7 +22,7 @@ typedef struct {
     proven_ws_stream_t *ws;           /* 클라이언트의 연결: 루프의 스레드만 */
     atomic_bool open;                 /* 타이핑 스레드가 읽어도 되는 것 */
     int answers, closed;
-} app_t;
+} ex_app_t;
 
 // ---- 서버: 메시지마다 답한다 --------------------------------------------------
 
@@ -44,14 +44,14 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 // ---- 클라이언트, 루프의 스레드에서 -------------------------------------------
 
 static void on_open(void *ctx, proven_ws_stream_t *ws, proven_u8str_view_t protocol) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)protocol;
     app->ws = ws;
     atomic_store(&app->open, true);
 }
 
 static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)text; (void)first;
     if (!last) return;
     printf("the server says: %.*s\n", (int)piece.size, (const char *)piece.ptr);
@@ -59,7 +59,7 @@ static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
 }
 
 static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)ws; (void)code; (void)why;
     app->ws = NULL;
     app->closed++;
@@ -69,22 +69,22 @@ static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven
 // ---- 타이핑 스레드에서 건너오는 것 --------------------------------------------
 
 /* 보낼 한 줄, 자기 메모리에: 그것이 보내질 때쯤 타이핑 스레드는 이미 다음으로 넘어가 있다. */
-typedef struct { app_t *app; proven_size_t len; char text[64]; } line_t;
+typedef struct { ex_app_t *app; proven_size_t len; char text[64]; } ex_line_t;
 
 /* 루프의 스레드에서. */
 static void send_here(void *ctx) {
-    line_t *line = ctx;
+    ex_line_t *line = ctx;
     if (line->app->ws) (void)proven_ws_stream_send(line->app->ws, true, (proven_mem_view_t){ (const proven_byte_t *)line->text, line->len });
     free(line);
 }
 
 /* 타이핑 스레드. 연결은 절대 만지지 않는다: post한다. */
 static void typist(void *arg) {
-    app_t *app = arg;
+    ex_app_t *app = arg;
     static const char *const lines[LINES] = { "hello", "how are you", "goodbye" };
     while (!atomic_load(&app->open)) proven_time_sleep(1);
     for (int i = 0; i < LINES; ++i) {
-        line_t *line = malloc(sizeof *line);
+        ex_line_t *line = malloc(sizeof *line);
         if (!line) return;
         line->app = app;
         line->len = strlen(lines[i]);
@@ -94,11 +94,11 @@ static void typist(void *arg) {
     }
 }
 
-static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_app_t *)arg)->loop); }
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    static app_t app;
+    static ex_app_t app;
     atomic_init(&app.open, false);
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
     proven_http_event_server_config_t server_config = { .on = { .on_request = on_request } };

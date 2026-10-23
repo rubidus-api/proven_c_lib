@@ -16,13 +16,13 @@ typedef struct {
     int order[8];
     int count;
     atomic_int from_worker;
-} app_t;
+} ex_app_t;
 
-static void note(app_t *app, int what) { if (app->count < 8) app->order[app->count++] = what; }
+static void note(ex_app_t *app, int what) { if (app->count < 8) app->order[app->count++] = what; }
 
 /* 타이머는 한 번 울린다. 반복해야 하는 타이머는 스스로 다시 맞춘다. */
 static void on_tick(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     note(app, 1);
     if (++app->ticks < 3) proven_loop_timer_set(app->loop, &app->tick, 20, on_tick, app);
 }
@@ -31,7 +31,7 @@ static void on_late(void *ctx) { note(ctx, 9); }
 
 /* 워커 스레드가 요청했지만, 이것은 루프의 스레드에서 실행된다. */
 static void on_result(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     note(app, 5);
     proven_loop_timer_cancel(app->loop, &app->late);      /* 오 초 뒤에 울렸을 것이다. 이제는 영영 울리지 않는다 */
     proven_loop_stop(app->loop);
@@ -39,7 +39,7 @@ static void on_result(void *ctx) {
 
 /* 이것은 워커 스레드에서 실행된다. 얼마든지 오래 걸려도 된다: 루프는 기다리지 않는다. */
 static void slow_work(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     proven_time_sleep(400);
     atomic_store(&app->from_worker, 1);
     if (proven_loop_post(app->loop, on_result, app) != PROVEN_OK) proven_loop_stop(app->loop);   /* 게시는 할당 실패일 때만 거절된다. 그때는 그냥 실행을 끝낸다 */
@@ -47,7 +47,7 @@ static void slow_work(void *ctx) {
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
 
     // ---- 루프 ---------------------------------------------------------------------
     /* 루프는 셀렉터, 타이머 묶음, 그리고 다른 스레드가 게시할 수 있는 큐다. */

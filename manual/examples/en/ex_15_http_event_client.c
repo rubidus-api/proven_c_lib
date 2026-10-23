@@ -14,25 +14,25 @@
  * a worker, post the answer back, start the request.
  */
 
-typedef struct app app_t;
+typedef struct app ex_app_t;
 
 /* What this program keeps for one request. */
 typedef struct {
-    app_t *app;
+    ex_app_t *app;
     const char *path;
     int status;
     char body[64];
     proven_size_t len;
     proven_err_t why;
     bool done;
-} fetch_t;
+} ex_fetch_t;
 
 struct app {
     proven_loop_t *loop;
     proven_http_event_client_t *client;
     proven_job_sys_t *workers;
     proven_u16 port;
-    fetch_t fetch[3];
+    ex_fetch_t fetch[3];
     int finished;
     /* written by the worker, read on the loop after it has been posted */
     proven_net_addr_t found;
@@ -53,26 +53,26 @@ static void serve(void *ctx, proven_http_stream_t *stream, const proven_http_req
 /* The head: good only until this function returns, so take what is wanted from it. */
 static void on_response(void *ctx, proven_http_event_request_t *request, const proven_http_response_t *head) {
     (void)request;
-    ((fetch_t *)ctx)->status = head->status;
+    ((ex_fetch_t *)ctx)->status = head->status;
 }
 
 /* The body, a piece at a time. Nothing is collected for you; collect what you want. */
 static void on_body(void *ctx, proven_http_event_request_t *request, proven_mem_view_t piece, bool last) {
     (void)request; (void)last;
-    fetch_t *f = ctx;
+    ex_fetch_t *f = ctx;
     for (proven_size_t i = 0; i < piece.size && f->len < sizeof f->body - 1; ++i) f->body[f->len++] = (char)piece.ptr[i];
 }
 
 /* Once for every request that was started, whatever happened to it. */
 static void on_done(void *ctx, proven_http_event_request_t *request, proven_err_t why) {
     (void)request;
-    fetch_t *f = ctx;
+    ex_fetch_t *f = ctx;
     f->why = why;
     f->done = true;
     if (++f->app->finished == 3) proven_loop_stop(f->app->loop);
 }
 
-static proven_err_t fetch(app_t *app, fetch_t *f, const char *path, const proven_net_addr_t *address, const char *host) {
+static proven_err_t fetch(ex_app_t *app, ex_fetch_t *f, const char *path, const proven_net_addr_t *address, const char *host) {
     char url[96];
     int n = snprintf(url, sizeof url, "http://%s:%u%s", host, (unsigned)app->port, path);
     f->app = app;
@@ -91,7 +91,7 @@ static proven_err_t fetch(app_t *app, fetch_t *f, const char *path, const proven
 /* On the loop's thread again: now there is an address, and the request can start.
  * The URL keeps the name - it is what goes into Host - and the address says where to connect. */
 static void resolved(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     if (app->lookup != PROVEN_OK || fetch(app, &app->fetch[2], "/missing", &app->found, "localhost") != PROVEN_OK) {
         app->fetch[2].why = PROVEN_ERR_NOT_FOUND;
         if (++app->finished == 3) proven_loop_stop(app->loop);
@@ -100,7 +100,7 @@ static void resolved(void *ctx) {
 
 /* On a worker thread: this call may wait as long as the resolver takes. */
 static void resolve(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     proven_net_addr_t all[8];
     proven_size_t count = 0;
     app->lookup = proven_net_resolve(PROVEN_LIT("localhost"), app->port, all, 8, &count);
@@ -115,7 +115,7 @@ static void resolve(void *ctx) {
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
 
     // ---- one loop, a server and a client on it ------------------------------------
     /* Nothing runs yet: a loop does nothing until it is run. */
@@ -136,7 +136,7 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_http_event_client_requests(app.client) == 2 && !app.fetch[0].done && !app.fetch[1].done, "both in flight, neither answered: nothing has run yet");
 
     /* One by name. Without an address it is refused - so resolve first, on the worker. */
-    fetch_t unresolved = { 0 };
+    ex_fetch_t unresolved = { 0 };
     EXAMPLE_REQUIRE(fetch(&app, &unresolved, "/missing", NULL, "localhost") == PROVEN_ERR_INVALID_ARG, "a name with no address is refused");
     EXAMPLE_REQUIRE(proven_job_submit(app.workers, resolve, &app), "the lookup is handed to a worker");
 

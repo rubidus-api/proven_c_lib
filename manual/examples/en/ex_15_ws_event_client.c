@@ -18,7 +18,7 @@ typedef struct {
     int opened, answers, closed, refused;
     proven_u16 code;
     char last[64];
-} app_t;
+} ex_app_t;
 
 // ---- the server: it says what it was sent ----
 
@@ -41,7 +41,7 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 
 /* The server accepted. From here on - and from inside this call - messages may be sent. */
 static void on_open(void *ctx, proven_ws_stream_t *ws, proven_u8str_view_t protocol) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)protocol;
     app->opened++;
     (void)proven_ws_stream_send(ws, true, proven_mem_view_from_u8(PROVEN_LIT("hello")));
@@ -49,7 +49,7 @@ static void on_open(void *ctx, proven_ws_stream_t *ws, proven_u8str_view_t proto
 
 /* The same callback a server has. This side asks twice and then says goodbye. */
 static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)text; (void)first;
     if (!last) return;
     proven_size_t n = piece.size < sizeof app->last - 1 ? piece.size : sizeof app->last - 1;
@@ -67,7 +67,7 @@ static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
 /* Called exactly once for every connection that was begun - also for one that never opened:
  * its code is then 0, and `why` says what went wrong. */
 static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)ws;
     if (code == 0) {
         /* Never a WebSocket: nothing listened, the server answered something else, or time ran out. */
@@ -83,7 +83,7 @@ static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
     proven_http_event_server_config_t server_config = { .on = { .on_request = on_request } };
     proven_http_event_server_t *server = NULL;

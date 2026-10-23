@@ -20,13 +20,13 @@
 typedef struct {
     proven_u32 client;
     proven_u32 code;      /* 이벤트 코드. 0 은 "연결이 닫혔다" 는 뜻이다 */
-} event_t;
+} ex_event_t;
 
 /* 클라이언트 번호로 찾기. 이것은 이벤트를 *찾기* 위한 비교이지 정렬하기 위한 것이
  * 아니다. 아래 배열은 *도착한 차례*로 있고 그대로 둔다. */
 static int by_client(const void *a, const void *b) {
-    const event_t *x = (const event_t *)a;
-    const event_t *y = (const event_t *)b;
+    const ex_event_t *x = (const ex_event_t *)a;
+    const ex_event_t *y = (const ex_event_t *)b;
     return (x->client > y->client) - (x->client < y->client);
 }
 
@@ -35,7 +35,7 @@ int main(void) {
 
     /* --- 1. reserve: 용량을 한 번에 정한다 -------------------------------- */
 
-    proven_result_array_t ar = PROVEN_ARRAY_INIT(alloc, event_t, 4);
+    proven_result_array_t ar = PROVEN_ARRAY_INIT(alloc, ex_event_t, 4);
     EXAMPLE_REQUIRE(proven_is_ok(ar.err), "creating the event log must succeed");
     if (!proven_is_ok(ar.err)) {
         return 1;
@@ -58,7 +58,7 @@ int main(void) {
     EXAMPLE_REQUIRE(!proven_array_is_valid(&never_created),
                     "a zero-initialised handle is not a usable array");
 
-    static const event_t batch[] = {
+    static const ex_event_t batch[] = {
         { .client = 7, .code = 200 }, { .client = 3, .code = 200 },
         { .client = 7, .code = 404 }, { .client = 9, .code = 200 },
         { .client = 3, .code = 500 }, { .client = 7, .code = 0   },
@@ -67,7 +67,7 @@ int main(void) {
 
     proven_size_t cap_before = events.cap;
     for (proven_size_t i = 0; i < batch_len; ++i) {
-        err = PROVEN_ARRAY_PUSH(&events, event_t, batch[i]);
+        err = PROVEN_ARRAY_PUSH(&events, ex_event_t, batch[i]);
         EXAMPLE_REQUIRE(proven_is_ok(err), "pushing an event must succeed");
     }
     EXAMPLE_REQUIRE(events.cap == cap_before, "the reserve was enough: nothing reallocated while filling");
@@ -78,18 +78,18 @@ int main(void) {
      * 때문이다. 여기서 이진 탐색은 더 빠르고 *틀리다*. 정렬된 구간에서만 써야 하는데,
      * 정렬되지 않은 자료에서는 "없다" 를 돌려주는 것이 아니라 헛소리를 돌려준다. 옳은
      * 도구는 선형 탐색이고, 이 크기의 묶음에서 O(n) 은 아무것도 아니다. */
-    event_t key = { .client = 9, .code = 0 };
-    const event_t *found = (const event_t *)proven_array_linear_search(&events, &key, by_client);
+    ex_event_t key = { .client = 9, .code = 0 };
+    const ex_event_t *found = (const ex_event_t *)proven_array_linear_search(&events, &key, by_client);
     EXAMPLE_REQUIRE(found != NULL, "client 9 appears in the batch");
     EXAMPLE_REQUIRE(found->code == 200, "and linear search returns the FIRST match in order");
 
-    event_t absent = { .client = 42, .code = 0 };
+    ex_event_t absent = { .client = 42, .code = 0 };
     EXAMPLE_REQUIRE(proven_array_linear_search(&events, &absent, by_client) == NULL,
                     "a client that never appeared is reported as not found");
 
     /* --- 3. 가장 최근 이벤트를 담는 고리 ---------------------------------- */
 
-    proven_result_ring_t rr = PROVEN_RING_INIT(alloc, event_t, 4);
+    proven_result_ring_t rr = PROVEN_RING_INIT(alloc, ex_event_t, 4);
     EXAMPLE_REQUIRE(proven_is_ok(rr.err), "creating the recent-events ring must succeed");
     proven_ring_t recent = rr.value;
     EXAMPLE_REQUIRE(proven_ring_is_valid(&recent), "a created ring must be structurally valid");
@@ -101,11 +101,11 @@ int main(void) {
      * 넣기 전에 가장 오래된 것을 우리가 직접 버린다는 뜻이다. */
     for (proven_size_t i = 0; i < batch_len; ++i) {
         if (recent.len == recent.cap) {
-            event_t dropped;
-            err = PROVEN_RING_POP(&recent, event_t, &dropped);
+            ex_event_t dropped;
+            err = PROVEN_RING_POP(&recent, ex_event_t, &dropped);
             EXAMPLE_REQUIRE(proven_is_ok(err), "a full ring must yield its oldest element");
         }
-        err = PROVEN_RING_PUSH(&recent, event_t, batch[i]);
+        err = PROVEN_RING_PUSH(&recent, ex_event_t, batch[i]);
         EXAMPLE_REQUIRE(proven_is_ok(err), "pushing after making room must succeed");
     }
     EXAMPLE_REQUIRE(recent.len == 4, "the ring holds the four most recent events");

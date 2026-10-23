@@ -148,13 +148,13 @@ typedef struct {
     int order[8];
     int count;
     atomic_int from_worker;
-} app_t;
+} ex_app_t;
 
-static void note(app_t *app, int what) { if (app->count < 8) app->order[app->count++] = what; }
+static void note(ex_app_t *app, int what) { if (app->count < 8) app->order[app->count++] = what; }
 
 /* A timer fires once. One that should repeat sets itself again. */
 static void on_tick(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     note(app, 1);
     if (++app->ticks < 3) proven_loop_timer_set(app->loop, &app->tick, 20, on_tick, app);
 }
@@ -163,7 +163,7 @@ static void on_late(void *ctx) { note(ctx, 9); }
 
 /* This runs on the loop's thread, although a worker thread asked for it. */
 static void on_result(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     note(app, 5);
     proven_loop_timer_cancel(app->loop, &app->late);      /* it would have fired in five seconds; now it never will */
     proven_loop_stop(app->loop);
@@ -171,7 +171,7 @@ static void on_result(void *ctx) {
 
 /* This runs on a worker thread. It may take as long as it likes: the loop is not waiting. */
 static void slow_work(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     proven_time_sleep(400);
     atomic_store(&app->from_worker, 1);
     if (proven_loop_post(app->loop, on_result, app) != PROVEN_OK) proven_loop_stop(app->loop);   /* only a failed allocation refuses a post; then just end the run */
@@ -179,7 +179,7 @@ static void slow_work(void *ctx) {
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
 
     // ---- a loop -------------------------------------------------------------------
     /* A loop is a selector, a set of timers, and a queue other threads can post to. */
@@ -380,20 +380,20 @@ typedef struct {
     int served;
     proven_http_event_server_t *server;
     proven_err_t ended;                /* what on_drained was told */
-} app_t;
+} ex_app_t;
 
 /* What this program keeps for one request while it is being answered. */
 typedef struct {
-    app_t *app;
+    ex_app_t *app;
     proven_http_stream_t *stream;
     proven_loop_timer_t timer;
     proven_size_t sent, total;         /* /count: how far the body has got */
     proven_size_t received;            /* /size: body bytes seen */
-} exchange_t;
+} ex_exchange_t;
 
 /* Write lines until the server says "no more for now". It says so when the client has not
  * taken what was already sent; the rest waits for on_writable. */
-static void count_pump(exchange_t *x) {
+static void count_pump(ex_exchange_t *x) {
     while (x->sent < x->total) {
         char line[32];
         int n = snprintf(line, sizeof line, "%u\n", (unsigned)x->sent);
@@ -406,13 +406,13 @@ static void count_pump(exchange_t *x) {
 }
 
 static void answer_later(void *ctx) {
-    exchange_t *x = ctx;
+    ex_exchange_t *x = ctx;
     (void)proven_http_stream_respond(x->stream, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("worth the wait\n")));
 }
 
 static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
-    app_t *app = ctx;
-    exchange_t *x = calloc(1, sizeof *x);
+    ex_app_t *app = ctx;
+    ex_exchange_t *x = calloc(1, sizeof *x);
     if (!x) { proven_http_stream_abort(stream); return; }
     x->app = app;
     x->stream = stream;
@@ -438,7 +438,7 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 
 static void on_body(void *ctx, proven_http_stream_t *stream, proven_mem_view_t piece, bool last) {
     (void)ctx;
-    exchange_t *x = proven_http_stream_user(stream);
+    ex_exchange_t *x = proven_http_stream_user(stream);
     x->received += piece.size;
     if (last) {
         char text[32];
@@ -450,14 +450,14 @@ static void on_body(void *ctx, proven_http_stream_t *stream, proven_mem_view_t p
 /* The output that was held back has gone: carry on from where the writing stopped. */
 static void on_writable(void *ctx, proven_http_stream_t *stream) {
     (void)ctx;
-    exchange_t *x = proven_http_stream_user(stream);
+    ex_exchange_t *x = proven_http_stream_user(stream);
     if (x->total > 0) count_pump(x);
 }
 
 /* Called once for every on_request, whatever happened. The place to free what was attached. */
 static void on_done(void *ctx, proven_http_stream_t *stream, proven_err_t why) {
-    app_t *app = ctx;
-    exchange_t *x = proven_http_stream_user(stream);
+    ex_app_t *app = ctx;
+    ex_exchange_t *x = proven_http_stream_user(stream);
     if (!x) return;
     proven_loop_timer_cancel(app->loop, &x->timer);
     free(x);
@@ -466,16 +466,16 @@ static void on_done(void *ctx, proven_http_stream_t *stream, proven_err_t why) {
 
 /* The end, on the loop's thread: what is open finishes, and then the loop is stopped. */
 static void on_drained(void *ctx, proven_err_t why) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     app->ended = why;
     proven_loop_stop(app->loop);
 }
 static void begin_end(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     if (proven_http_event_server_shutdown(app->server, 2000, on_drained, app) != PROVEN_OK) proven_loop_stop(app->loop);
 }
 
-static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_app_t *)arg)->loop); }
 
 static char g_url[64];
 static proven_u8str_view_t url_for(proven_u16 port, const char *path) {
@@ -493,7 +493,7 @@ static bool body_equals(proven_http_client_response_t *resp, proven_allocator_t 
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
 
     // ---- the server ----------------------------------------------------------------
     /* A server is made on a loop and listens; it does nothing until the loop runs. */
@@ -795,19 +795,19 @@ typedef struct {
     proven_loop_t *loop;
     int opened, closed;
     proven_u16 last_code;
-} app_t;
+} ex_app_t;
 
 /* What this program keeps for one connection: the message being collected. */
 typedef struct {
-    app_t *app;
+    ex_app_t *app;
     char text[4096];
     proven_size_t len;
     bool waiting;                 /* a reply the server would not take yet */
-} peer_t;
+} ex_peer_t;
 
 /* Send the reply. If the client is not taking what was sent before, the server refuses it:
  * keep it, stop reading from this client, and try again when on_writable says so. */
-static void reply(proven_ws_stream_t *ws, peer_t *peer) {
+static void reply(proven_ws_stream_t *ws, ex_peer_t *peer) {
     proven_err_t err = proven_ws_stream_send(ws, true, (proven_mem_view_t){ (const proven_byte_t *)peer->text, peer->len });
     if (err == PROVEN_ERR_AGAIN) {
         peer->waiting = true;
@@ -822,7 +822,7 @@ static void reply(proven_ws_stream_t *ws, peer_t *peer) {
  * so it collects them - up to a limit of its own, which is the point of doing it by hand. */
 static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
     (void)ctx;
-    peer_t *peer = proven_ws_stream_user(ws);
+    ex_peer_t *peer = proven_ws_stream_user(ws);
     if (first) peer->len = 0;
     if (!text || peer->len + piece.size > sizeof peer->text) {
         proven_ws_stream_close(ws, 1009, PROVEN_LIT("short text only"));       /* 1009: too big */
@@ -838,7 +838,7 @@ static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
 /* There is room again. */
 static void on_writable(void *ctx, proven_ws_stream_t *ws) {
     (void)ctx;
-    peer_t *peer = proven_ws_stream_user(ws);
+    ex_peer_t *peer = proven_ws_stream_user(ws);
     if (!peer->waiting) return;
     reply(ws, peer);
     if (!peer->waiting) proven_ws_stream_resume(ws);
@@ -846,7 +846,7 @@ static void on_writable(void *ctx, proven_ws_stream_t *ws) {
 
 /* Called once, however the connection ended. The place to free what was attached. */
 static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)why;
     free(proven_ws_stream_user(ws));
     app->last_code = code;
@@ -854,8 +854,8 @@ static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven
 }
 
 static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
-    app_t *app = ctx;
-    peer_t *peer = calloc(1, sizeof *peer);
+    ex_app_t *app = ctx;
+    ex_peer_t *peer = calloc(1, sizeof *peer);
     if (!peer) { proven_http_stream_abort(stream); return; }
     peer->app = app;
 
@@ -884,11 +884,11 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
     app->opened++;
 }
 
-static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_app_t *)arg)->loop); }
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
 
     // ---- a server on a loop, on its own thread -------------------------------------
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
@@ -1038,7 +1038,7 @@ typedef struct {
     int opened, answers, closed, refused;
     proven_u16 code;
     char last[64];
-} app_t;
+} ex_app_t;
 
 // ---- the server: it says what it was sent ----
 
@@ -1061,7 +1061,7 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 
 /* The server accepted. From here on - and from inside this call - messages may be sent. */
 static void on_open(void *ctx, proven_ws_stream_t *ws, proven_u8str_view_t protocol) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)protocol;
     app->opened++;
     (void)proven_ws_stream_send(ws, true, proven_mem_view_from_u8(PROVEN_LIT("hello")));
@@ -1069,7 +1069,7 @@ static void on_open(void *ctx, proven_ws_stream_t *ws, proven_u8str_view_t proto
 
 /* The same callback a server has. This side asks twice and then says goodbye. */
 static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)text; (void)first;
     if (!last) return;
     proven_size_t n = piece.size < sizeof app->last - 1 ? piece.size : sizeof app->last - 1;
@@ -1087,7 +1087,7 @@ static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
 /* Called exactly once for every connection that was begun - also for one that never opened:
  * its code is then 0, and `why` says what went wrong. */
 static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)ws;
     if (code == 0) {
         /* Never a WebSocket: nothing listened, the server answered something else, or time ran out. */
@@ -1103,7 +1103,7 @@ static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
     proven_http_event_server_config_t server_config = { .on = { .on_request = on_request } };
     proven_http_event_server_t *server = NULL;
@@ -1187,7 +1187,7 @@ typedef struct {
     proven_ws_stream_t *ws;           /* the client's connection: the loop's thread only */
     atomic_bool open;                 /* what the typing thread may read */
     int answers, closed;
-} app_t;
+} ex_app_t;
 
 // ---- the server: it answers each message ------------------------------------
 
@@ -1209,14 +1209,14 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 // ---- the client, on the loop's thread -----------------------------------------
 
 static void on_open(void *ctx, proven_ws_stream_t *ws, proven_u8str_view_t protocol) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)protocol;
     app->ws = ws;
     atomic_store(&app->open, true);
 }
 
 static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)text; (void)first;
     if (!last) return;
     printf("the server says: %.*s\n", (int)piece.size, (const char *)piece.ptr);
@@ -1224,7 +1224,7 @@ static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
 }
 
 static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     (void)ws; (void)code; (void)why;
     app->ws = NULL;
     app->closed++;
@@ -1234,22 +1234,22 @@ static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven
 // ---- what crosses from the typing thread ---------------------------------------
 
 /* A line to send, in memory of its own: the typing thread has moved on by the time it is sent. */
-typedef struct { app_t *app; proven_size_t len; char text[64]; } line_t;
+typedef struct { ex_app_t *app; proven_size_t len; char text[64]; } ex_line_t;
 
 /* On the loop's thread. */
 static void send_here(void *ctx) {
-    line_t *line = ctx;
+    ex_line_t *line = ctx;
     if (line->app->ws) (void)proven_ws_stream_send(line->app->ws, true, (proven_mem_view_t){ (const proven_byte_t *)line->text, line->len });
     free(line);
 }
 
 /* The typing thread. It never touches the connection: it posts. */
 static void typist(void *arg) {
-    app_t *app = arg;
+    ex_app_t *app = arg;
     static const char *const lines[LINES] = { "hello", "how are you", "goodbye" };
     while (!atomic_load(&app->open)) proven_time_sleep(1);
     for (int i = 0; i < LINES; ++i) {
-        line_t *line = malloc(sizeof *line);
+        ex_line_t *line = malloc(sizeof *line);
         if (!line) return;
         line->app = app;
         line->len = strlen(lines[i]);
@@ -1259,11 +1259,11 @@ static void typist(void *arg) {
     }
 }
 
-static void run(void *arg) { (void)proven_loop_run(((app_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_app_t *)arg)->loop); }
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    static app_t app;
+    static ex_app_t app;
     atomic_init(&app.open, false);
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
     proven_http_event_server_config_t server_config = { .on = { .on_request = on_request } };
@@ -1531,25 +1531,25 @@ The test suite compiles and runs this program:
  * a worker, post the answer back, start the request.
  */
 
-typedef struct app app_t;
+typedef struct app ex_app_t;
 
 /* What this program keeps for one request. */
 typedef struct {
-    app_t *app;
+    ex_app_t *app;
     const char *path;
     int status;
     char body[64];
     proven_size_t len;
     proven_err_t why;
     bool done;
-} fetch_t;
+} ex_fetch_t;
 
 struct app {
     proven_loop_t *loop;
     proven_http_event_client_t *client;
     proven_job_sys_t *workers;
     proven_u16 port;
-    fetch_t fetch[3];
+    ex_fetch_t fetch[3];
     int finished;
     /* written by the worker, read on the loop after it has been posted */
     proven_net_addr_t found;
@@ -1570,26 +1570,26 @@ static void serve(void *ctx, proven_http_stream_t *stream, const proven_http_req
 /* The head: good only until this function returns, so take what is wanted from it. */
 static void on_response(void *ctx, proven_http_event_request_t *request, const proven_http_response_t *head) {
     (void)request;
-    ((fetch_t *)ctx)->status = head->status;
+    ((ex_fetch_t *)ctx)->status = head->status;
 }
 
 /* The body, a piece at a time. Nothing is collected for you; collect what you want. */
 static void on_body(void *ctx, proven_http_event_request_t *request, proven_mem_view_t piece, bool last) {
     (void)request; (void)last;
-    fetch_t *f = ctx;
+    ex_fetch_t *f = ctx;
     for (proven_size_t i = 0; i < piece.size && f->len < sizeof f->body - 1; ++i) f->body[f->len++] = (char)piece.ptr[i];
 }
 
 /* Once for every request that was started, whatever happened to it. */
 static void on_done(void *ctx, proven_http_event_request_t *request, proven_err_t why) {
     (void)request;
-    fetch_t *f = ctx;
+    ex_fetch_t *f = ctx;
     f->why = why;
     f->done = true;
     if (++f->app->finished == 3) proven_loop_stop(f->app->loop);
 }
 
-static proven_err_t fetch(app_t *app, fetch_t *f, const char *path, const proven_net_addr_t *address, const char *host) {
+static proven_err_t fetch(ex_app_t *app, ex_fetch_t *f, const char *path, const proven_net_addr_t *address, const char *host) {
     char url[96];
     int n = snprintf(url, sizeof url, "http://%s:%u%s", host, (unsigned)app->port, path);
     f->app = app;
@@ -1608,7 +1608,7 @@ static proven_err_t fetch(app_t *app, fetch_t *f, const char *path, const proven
 /* On the loop's thread again: now there is an address, and the request can start.
  * The URL keeps the name - it is what goes into Host - and the address says where to connect. */
 static void resolved(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     if (app->lookup != PROVEN_OK || fetch(app, &app->fetch[2], "/missing", &app->found, "localhost") != PROVEN_OK) {
         app->fetch[2].why = PROVEN_ERR_NOT_FOUND;
         if (++app->finished == 3) proven_loop_stop(app->loop);
@@ -1617,7 +1617,7 @@ static void resolved(void *ctx) {
 
 /* On a worker thread: this call may wait as long as the resolver takes. */
 static void resolve(void *ctx) {
-    app_t *app = ctx;
+    ex_app_t *app = ctx;
     proven_net_addr_t all[8];
     proven_size_t count = 0;
     app->lookup = proven_net_resolve(PROVEN_LIT("localhost"), app->port, all, 8, &count);
@@ -1632,7 +1632,7 @@ static void resolve(void *ctx) {
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
-    app_t app = { 0 };
+    ex_app_t app = { 0 };
 
     // ---- one loop, a server and a client on it ------------------------------------
     /* Nothing runs yet: a loop does nothing until it is run. */
@@ -1653,7 +1653,7 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_http_event_client_requests(app.client) == 2 && !app.fetch[0].done && !app.fetch[1].done, "both in flight, neither answered: nothing has run yet");
 
     /* One by name. Without an address it is refused - so resolve first, on the worker. */
-    fetch_t unresolved = { 0 };
+    ex_fetch_t unresolved = { 0 };
     EXAMPLE_REQUIRE(fetch(&app, &unresolved, "/missing", NULL, "localhost") == PROVEN_ERR_INVALID_ARG, "a name with no address is refused");
     EXAMPLE_REQUIRE(proven_job_submit(app.workers, resolve, &app), "the lookup is handed to a worker");
 
@@ -1742,14 +1742,14 @@ typedef struct {
     proven_loop_t *loop;
     proven_http_event_server_t *server;
     int served;                       /* read by the main thread only after the loop has stopped */
-} worker_t;
+} ex_worker_t;
 
-static worker_t g_workers[LOOPS];
+static ex_worker_t g_workers[LOOPS];
 static proven_net_listener_t g_listener;
 static atomic_bool g_stop;
 
 static void on_request(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
-    worker_t *me = ctx;
+    ex_worker_t *me = ctx;
     (void)head;
     char text[16];
     int n = snprintf(text, sizeof text, "loop %d", me->index);
@@ -1759,11 +1759,11 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
 
 /* What crosses from the accepting thread to a loop. An open connection is not to be copied,
  * so it travels in memory of its own. */
-typedef struct { worker_t *to; proven_net_conn_t conn; } handoff_t;
+typedef struct { ex_worker_t *to; proven_net_conn_t conn; } ex_handoff_t;
 
 /* On the loop's thread - the only place a server may be given a connection. */
 static void adopt_here(void *ctx) {
-    handoff_t *h = ctx;
+    ex_handoff_t *h = ctx;
     if (proven_http_event_server_adopt(h->to->server, &h->conn) != PROVEN_OK) (void)proven_net_close(&h->conn);   /* refused: still ours to close */
     free(h);
 }
@@ -1773,7 +1773,7 @@ static void acceptor(void *arg) {
     (void)arg;
     int next = 0;
     while (!atomic_load(&g_stop)) {
-        handoff_t *h = malloc(sizeof *h);
+        ex_handoff_t *h = malloc(sizeof *h);
         if (!h) break;
         /* A short wait at a time, so that the thread notices when it is told to stop. */
         if (proven_net_accept(&g_listener, proven_net_deadline_in(20), &h->conn, NULL) != PROVEN_OK) { free(h); continue; }
@@ -1783,7 +1783,7 @@ static void acceptor(void *arg) {
     }
 }
 
-static void run(void *arg) { (void)proven_loop_run(((worker_t *)arg)->loop); }
+static void run(void *arg) { (void)proven_loop_run(((ex_worker_t *)arg)->loop); }
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
@@ -1796,7 +1796,7 @@ int main(void) {
     proven_job_group_init(&accepting);
     EXAMPLE_REQUIRE(proven_job_system_init(heap, LOOPS + 1, 8, &threads) == PROVEN_OK, "three threads");
     for (int i = 0; i < LOOPS; ++i) {
-        worker_t *w = &g_workers[i];
+        ex_worker_t *w = &g_workers[i];
         w->index = i;
         proven_http_event_server_config_t config = { .on = { .on_request = on_request }, .ctx = w };
         EXAMPLE_REQUIRE(proven_loop_create(heap, &w->loop) == PROVEN_OK &&

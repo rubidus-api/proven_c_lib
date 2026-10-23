@@ -42,14 +42,14 @@ typedef struct {
     proven_size_t   live_bytes;
     proven_size_t   alloc_calls;
     proven_size_t   free_calls;
-} counting_ctx_t;
+} ex_counting_ctx_t;
 
 /* Each of the three matches one field of proven_allocator_t. Each does its own
  * bookkeeping and then forwards to the arena's public trait function, so the
  * behaviour being measured is exactly the arena's behaviour and not a
  * re-implementation of it. */
 static proven_result_mem_mut_t counting_alloc(void *ctx, proven_size_t size, proven_size_t align) {
-    counting_ctx_t *c = (counting_ctx_t *)ctx;
+    ex_counting_ctx_t *c = (ex_counting_ctx_t *)ctx;
     proven_result_mem_mut_t r = proven_arena_alloc_trait(c->arena, size, align);
     if (proven_is_ok(r.err)) {
         c->live_bytes += size;
@@ -60,7 +60,7 @@ static proven_result_mem_mut_t counting_alloc(void *ctx, proven_size_t size, pro
 
 static proven_result_mem_mut_t counting_realloc(void *ctx, void *old_ptr, proven_size_t old_size,
                                                proven_size_t new_size, proven_size_t align) {
-    counting_ctx_t *c = (counting_ctx_t *)ctx;
+    ex_counting_ctx_t *c = (ex_counting_ctx_t *)ctx;
     proven_result_mem_mut_t r = proven_arena_realloc_trait(c->arena, old_ptr, old_size, new_size, align);
     if (proven_is_ok(r.err)) {
         c->live_bytes = c->live_bytes - old_size + new_size;
@@ -69,7 +69,7 @@ static proven_result_mem_mut_t counting_realloc(void *ctx, void *old_ptr, proven
 }
 
 static void counting_free(void *ctx, void *ptr) {
-    counting_ctx_t *c = (counting_ctx_t *)ctx;
+    ex_counting_ctx_t *c = (ex_counting_ctx_t *)ctx;
     ++c->free_calls;
     proven_arena_free_trait(c->arena, ptr);   /* an arena free is a no-op; the count is the point */
 }
@@ -136,7 +136,7 @@ int main(void) {
 
     proven_arena_reset(&arena);
 
-    counting_ctx_t counted = { .arena = &arena };
+    ex_counting_ctx_t counted = { .arena = &arena };
     proven_allocator_t alloc = {
         .ctx        = &counted,
         .alloc_fn   = counting_alloc,

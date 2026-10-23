@@ -787,7 +787,7 @@ int main(void) {
 typedef struct {
     int id;
     int score;
-} node_t;
+} ex_node_t;
 
 int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
@@ -797,8 +797,8 @@ int main(void) {
      * 타입의 정확한 크기와 정렬을 받는다. 마지막 인자는 재사용을 위해 세워 둘 해제된
      * 블록의 최대 개수다. */
     proven_pool_t pool = {0};
-    proven_err_t err = proven_pool_init(&pool, heap, sizeof(node_t), alignof(node_t), 4);
-    EXAMPLE_REQUIRE(proven_is_ok(err), "initializing a pool of node_t must succeed");
+    proven_err_t err = proven_pool_init(&pool, heap, sizeof(ex_node_t), alignof(ex_node_t), 4);
+    EXAMPLE_REQUIRE(proven_is_ok(err), "initializing a pool of ex_node_t must succeed");
     if (!proven_is_ok(err)) {
         return 1;
     }
@@ -806,15 +806,15 @@ int main(void) {
     proven_allocator_t nodes = proven_pool_as_allocator(&pool);
 
     /* --- 첫 블록: bin 이 비어 있으니 힙에서 온다 --------------------------- */
-    proven_result_mem_mut_t first = nodes.alloc_fn(nodes.ctx, sizeof(node_t), alignof(node_t));
+    proven_result_mem_mut_t first = nodes.alloc_fn(nodes.ctx, sizeof(ex_node_t), alignof(ex_node_t));
     EXAMPLE_REQUIRE(proven_is_ok(first.err), "the pool must be able to serve its own item type");
     if (!proven_is_ok(first.err)) {
         proven_pool_destroy(&pool);
         return 1;
     }
 
-    node_t *n = (node_t *)first.value.ptr;
-    *n = (node_t){ .id = 1, .score = 100 };
+    ex_node_t *n = (ex_node_t *)first.value.ptr;
+    *n = (ex_node_t){ .id = 1, .score = 100 };
     void *first_addr = n;
 
     /* --- 돌려주기: 힙이 아니라 bin 으로 들어간다 --------------------------- */
@@ -823,15 +823,15 @@ int main(void) {
     /* 여기서부터 `n` 은 매달린 포인터다. 그 바이트는 다시 풀의 것이다. */
 
     /* --- 두 번째 블록: 방금 해제한 것이 곧바로 돌아온다 -------------------- */
-    proven_result_mem_mut_t second = nodes.alloc_fn(nodes.ctx, sizeof(node_t), alignof(node_t));
+    proven_result_mem_mut_t second = nodes.alloc_fn(nodes.ctx, sizeof(ex_node_t), alignof(ex_node_t));
     EXAMPLE_REQUIRE(proven_is_ok(second.err), "allocating from a non-empty bin must succeed");
     EXAMPLE_REQUIRE(second.value.ptr == first_addr, "the recycled block is the one that was freed");
     EXAMPLE_REQUIRE(pool.bin_len == 0, "taking it back out empties the bin");
 
     /* 재활용된 기억은 0 으로 채워지지 *않는다* - 풀이 남겨 둔 그대로다.
      * 갓 받은 malloc 에 하듯 모든 필드를 초기화할 것. */
-    node_t *m = (node_t *)second.value.ptr;
-    *m = (node_t){ .id = 2, .score = 50 };
+    ex_node_t *m = (ex_node_t *)second.value.ptr;
+    *m = (ex_node_t){ .id = 2, .score = 50 };
     EXAMPLE_REQUIRE(m->id == 2, "the recycled block is ours to overwrite");
 
     /* --- 풀 하나는 크기 하나와 정렬 하나만 감당한다 ------------------------ */
@@ -839,7 +839,7 @@ int main(void) {
      * 내주지도 않는다. 코드는 PROVEN_ERR_UNSUPPORTED - "내 일이 아니다" - 이지 INVALID_ARG
      * 가 아니다. 후자였다면 "쓰레기를 건넸다"로 읽혀 여러분이 자기 코드에서 버그를 찾아
      * 헤매게 만들었을 것이다. */
-    proven_result_mem_mut_t wrong = nodes.alloc_fn(nodes.ctx, sizeof(node_t) * 2, alignof(node_t));
+    proven_result_mem_mut_t wrong = nodes.alloc_fn(nodes.ctx, sizeof(ex_node_t) * 2, alignof(ex_node_t));
     EXAMPLE_REQUIRE(wrong.err == PROVEN_ERR_UNSUPPORTED, "the pool only serves its configured item size");
 
     /* --- 지우기 전에 살아 있는 블록을 모두 돌려준다 ------------------------ */
@@ -917,13 +917,13 @@ typedef struct {
     proven_size_t   live_bytes;
     proven_size_t   alloc_calls;
     proven_size_t   free_calls;
-} counting_ctx_t;
+} ex_counting_ctx_t;
 
 /* 셋 각각이 proven_allocator_t 의 필드 하나에 대응한다. 각자 제 장부를 적은 뒤 아레나의
  * 공개된 특성 함수로 전달하므로, 재는 대상이 되는 동작은 아레나를 다시 구현한 것이
  * 아니라 정확히 아레나의 동작이다. */
 static proven_result_mem_mut_t counting_alloc(void *ctx, proven_size_t size, proven_size_t align) {
-    counting_ctx_t *c = (counting_ctx_t *)ctx;
+    ex_counting_ctx_t *c = (ex_counting_ctx_t *)ctx;
     proven_result_mem_mut_t r = proven_arena_alloc_trait(c->arena, size, align);
     if (proven_is_ok(r.err)) {
         c->live_bytes += size;
@@ -934,7 +934,7 @@ static proven_result_mem_mut_t counting_alloc(void *ctx, proven_size_t size, pro
 
 static proven_result_mem_mut_t counting_realloc(void *ctx, void *old_ptr, proven_size_t old_size,
                                                proven_size_t new_size, proven_size_t align) {
-    counting_ctx_t *c = (counting_ctx_t *)ctx;
+    ex_counting_ctx_t *c = (ex_counting_ctx_t *)ctx;
     proven_result_mem_mut_t r = proven_arena_realloc_trait(c->arena, old_ptr, old_size, new_size, align);
     if (proven_is_ok(r.err)) {
         c->live_bytes = c->live_bytes - old_size + new_size;
@@ -943,7 +943,7 @@ static proven_result_mem_mut_t counting_realloc(void *ctx, void *old_ptr, proven
 }
 
 static void counting_free(void *ctx, void *ptr) {
-    counting_ctx_t *c = (counting_ctx_t *)ctx;
+    ex_counting_ctx_t *c = (ex_counting_ctx_t *)ctx;
     ++c->free_calls;
     proven_arena_free_trait(c->arena, ptr);   /* 아레나의 free 는 아무 일도 하지 않는다. 세는 것이 요점이다 */
 }
@@ -1010,7 +1010,7 @@ int main(void) {
 
     proven_arena_reset(&arena);
 
-    counting_ctx_t counted = { .arena = &arena };
+    ex_counting_ctx_t counted = { .arena = &arena };
     proven_allocator_t alloc = {
         .ctx        = &counted,
         .alloc_fn   = counting_alloc,

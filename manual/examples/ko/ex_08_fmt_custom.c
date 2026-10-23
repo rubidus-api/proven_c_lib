@@ -5,7 +5,7 @@
  *
  * `PROVEN_ARG` 는 `_Generic` 위에 서 있고, 그것은 미리 알려 준 타입에만 갈래를 태울 수
  * 있다 - 그리고 여러분의 타입을 알려 줄 방법이 없다. 그래서 `PROVEN_ARG_OF` 가 생기기
- * 전에는 `rect_t` 를 찍을 방법이 아예 없었다. 임시 문자열에 미리 형식화해서 그것을
+ * 전에는 `ex_rect_t` 를 찍을 방법이 아예 없었다. 임시 문자열에 미리 형식화해서 그것을
  * 건네거나(값마다 할당 한 번과 복사 한 번, 그것도 할당하면 안 되는 그 로그 경로에서),
  * 필드를 하나씩 찍고 열 맞추기는 포기하거나 둘 중 하나였다.
  *
@@ -15,10 +15,10 @@
  * 채움과 정렬이 사용자 타입에서도 int 에서와 똑같이 먹는다.
  */
 
-typedef struct { int w, h; } rect_t;
+typedef struct { int w, h; } ex_rect_t;
 
 static proven_err_t render_rect(proven_fmt_sink_t out, const void *obj) {
-    const rect_t *r = (const rect_t *)obj;
+    const ex_rect_t *r = (const ex_rect_t *)obj;
 
     /* 조립: 형식화기를 스택 버퍼로. 할당자는 어디에도 없다. */
     proven_byte_t tmp[64];
@@ -31,8 +31,8 @@ static proven_err_t render_rect(proven_fmt_sink_t out, const void *obj) {
 }
 
 int main(void) {
-    rect_t a = { .w = 1920, .h = 1080 };
-    rect_t b = { .w = 640,  .h = 480  };
+    ex_rect_t a = { .w = 1920, .h = 1080 };
+    ex_rect_t b = { .w = 640,  .h = 480  };
 
     proven_byte_t buf[128];
     proven_u8str_t line = proven_u8str_borrow(buf, sizeof buf);
