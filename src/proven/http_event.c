@@ -637,22 +637,29 @@ proven_err_t proven_http_event_server_listen(proven_http_event_server_t *s, prov
     if (s->listener_count == EV_MAX_LISTENERS) return PROVEN_ERR_OUT_OF_BOUNDS;
     proven_ev_listener_t *l = &s->listeners[s->listener_count];
     proven_net_addr_t got;
-    proven_err_t e = proven_net_listen(at, 1024, &l->listener, &got);
-    if (e != PROVEN_OK) return e;
-    l->server = s;
-    l->io = (proven_loop_io_t){ 0 };
     bool want = !s->stopped && s->conn_count < s->cfg.max_connections;
-    e = proven_loop_io_add(s->loop, &l->io, proven_net_listener_handle(&l->listener), want ? PROVEN_NET_READABLE : 0, ev_on_accept, l);
-    if (e != PROVEN_OK) { (void)proven_net_listener_close(&l->listener); return e; }
+    proven_err_t e;
+    /* Port 0 is any port free for both: the UDP port with the number TCP was given can belong to
+     * someone else, and then another number is tried. A port the caller named is not changed. */
+    for (int tries = 0;; ++tries) {
+        e = proven_net_listen(at, 1024, &l->listener, &got);
+        if (e != PROVEN_OK) return e;
+        l->server = s;
+        l->io = (proven_loop_io_t){ 0 };
+        e = proven_loop_io_add(s->loop, &l->io, proven_net_listener_handle(&l->listener), want ? PROVEN_NET_READABLE : 0, ev_on_accept, l);
+        if (e != PROVEN_OK) { (void)proven_net_listener_close(&l->listener); return e; }
 #if !defined(PROVEN_NO_HTTP3)
-    /* HTTP/3 on the same address and port, or neither: a server that says `Alt-Svc` for a port
-     * it does not serve sends its clients to nothing. */
-    if (s->h3 && (e = proven_http_event_h3_listen_(s, got)) != PROVEN_OK) {
-        proven_loop_io_remove(s->loop, &l->io);
-        (void)proven_net_listener_close(&l->listener);
-        return e;
-    }
+        /* HTTP/3 on the same address and port, or neither: a server that says `Alt-Svc` for a
+         * port it does not serve sends its clients to nothing. */
+        if (s->h3 && (e = proven_http_event_h3_listen_(s, got)) != PROVEN_OK) {
+            proven_loop_io_remove(s->loop, &l->io);
+            (void)proven_net_listener_close(&l->listener);
+            if (e == PROVEN_ERR_BUSY && at.port == 0 && tries < 16) continue;
+            return e;
+        }
 #endif
+        break;
+    }
     s->listener_count++;
     s->accepting = want;
     s->closed_to_new = false;                      /* listening again is taking connections again */

@@ -18,6 +18,25 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Fixed
+
+- `proven_http_event_server_listen` with `http3` at port 0 could fail with
+  `PROVEN_ERR_BUSY` when the UDP port with the number TCP was given belonged to another
+  socket. It now tries another number, up to 17 in all; a port the caller named is unchanged.
+  Seen as a rare failure of `test_unit_http_event_h3` when many ran at once.
+- `test_unit_http_event_h3`'s check that a failed listen leaves its TCP port free took its port
+  from port 0, and a test running at the same time could be given it in between. It now uses a
+  port below every system's ephemeral range. 400 runs, 16 at a time, passed.
+
+### Changed
+
+- Every type the library defines carries its prefix: 105 file-local and internal names ending
+  in `_t` gained `proven_` (no public name changed). The manual's examples name their own types
+  with `ex_`, and chapter 0 says why: POSIX reserves the `_t` suffix, and a prefix is what
+  keeps a name from meeting a system's.
+- `./nob cross` has four more targets, the other optimisation levels: gcc at `-O1` and `-Os`,
+  clang at `-O2`, and 32-bit gcc at `-O1`. Every other mode compiles at `-O0` or `-O3`.
+
 ## [0.77.0] - 2026-10-23
 
 ### Changed

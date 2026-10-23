@@ -112,7 +112,9 @@ proven_err_t proven_http_event_server_create(proven_loop_t *loop, const proven_h
 /** @brief Listen at `at` (up to four addresses per server). `bound` (optional) receives the
  *         address in use, with the port the system chose when `at` asked for port 0. With
  *         `http3`, a UDP socket on the same address and port too: when it cannot be had, the
- *         TCP listener is closed again and the error returned. */
+ *         TCP listener is closed again and the error returned - except that for port 0, when
+ *         the UDP port with the number TCP was given is in use, another is tried (up to 17
+ *         numbers in all), so that the port is one free for both. */
 [[nodiscard]]
 proven_err_t proven_http_event_server_listen(proven_http_event_server_t *server, proven_net_addr_t at, proven_net_addr_t *bound);
 

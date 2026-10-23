@@ -1304,6 +1304,13 @@ static bool run_cross_compile_matrix(const char *build_root, const char *sysroot
         { "linux-armhf-hosted", "arm-linux-gnueabihf-gcc", false, NULL, NULL },
         { "linux-i686-hosted", "i686-linux-gnu-gcc", false, NULL, NULL },
         { "linux-i686-multilib-hosted", "gcc", false, "-m32", NULL },
+        /* The other optimisation levels: every mode above compiles at -O0, where __OPTIMIZE__ is
+         * unset and code guarded by it is not even seen (an optimize pragma once broke -O1 and -Os
+         * and no gate noticed, v0.77.0). */
+        { "native-gcc-hosted-O1", "gcc", false, "-O1", NULL },
+        { "native-gcc-hosted-Os", "gcc", false, "-Os", NULL },
+        { "native-clang-hosted-O2", "clang", false, "-O2", NULL },
+        { "linux-i686-multilib-hosted-O1", "gcc", false, "-m32", "-O1" },
         { "windows-x86_64-winapi", "x86_64-w64-mingw32-gcc", false, NULL, NULL },
         { "windows-i686-winapi", "i686-w64-mingw32-gcc", false, NULL, NULL },
         { "freestanding-arm-cortex-m4", "arm-none-eabi-gcc", true, "-mcpu=cortex-m4", "-mthumb" },

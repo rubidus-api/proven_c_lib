@@ -29,6 +29,25 @@ static proven_tls_config_t *g_server_tls, *g_client_tls, *g_client_tls_h2h3, *g_
 static atomic_int g_in_write, g_reentered;
 static atomic_int g_requests, g_done_ok, g_done_reset, g_done_timeout, g_done_other, g_writable, g_bodies_while_paused, g_dispatch_bad, g_protocol;
 
+/* A loopback port where both a TCP listener and a UDP socket can be had, the UDP one kept open in
+ * `held`. Chosen below every system's ephemeral range (Linux 32768-60999, FreeBSD 10000-65535,
+ * Windows and macOS 49152-65535), so no test that binds port 0 or connects can be given it while
+ * this one closes and reopens the TCP side. */
+static bool udp_port_held(proven_net_udp_t *held, proven_net_addr_t *at) {
+    for (proven_u16 port = 7100; port < 9900; ++port) {
+        const proven_net_addr_t a = proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, port);
+        if (proven_net_udp_open(a, held, NULL) != PROVEN_OK) continue;
+        proven_net_listener_t l;
+        if (proven_net_listen(a, 16, &l, NULL) == PROVEN_OK) {
+            (void)proven_net_listener_close(&l);
+            *at = a;
+            return true;
+        }
+        (void)proven_net_udp_close(held);
+    }
+    return false;
+}
+
 static proven_byte_t pat(proven_size_t i) { return (proven_byte_t)('a' + (i * 7 + i / 251) % 26); }
 
 // -----------------------------------------------------------------------------
@@ -694,7 +713,7 @@ int main(void) {
         /* A UDP port that is taken: the TCP listener is closed again, and the error said. */
         proven_net_udp_t taken;
         proven_net_addr_t at;
-        PROVEN_TEST_ASSERT(proven_net_udp_open(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &taken, &at) == PROVEN_OK, "a UDP port held by someone else", "");
+        PROVEN_TEST_ASSERT(udp_port_held(&taken, &at), "a UDP port held by someone else", "");
         PROVEN_TEST_ASSERT(proven_http_event_server_listen(s, at, NULL) != PROVEN_OK, "a listen whose UDP socket cannot be had fails", "");
         proven_net_listener_t l;
         PROVEN_TEST_ASSERT(proven_net_listen(at, 16, &l, NULL) == PROVEN_OK, "and leaves the TCP port free", "");

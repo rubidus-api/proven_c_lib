@@ -1567,7 +1567,8 @@ underneath:
 
 - **Each listen opens a UDP socket as well**, on the same address and port as its TCP
   listener; a listen whose UDP socket cannot be had fails, and the TCP listener is closed
-  again. HTTP/3 is over TLS only: the TLS configuration must offer `h3` (beside `h2` and
+  again. At port 0 a UDP port already in use under the number TCP was given is not a failure:
+  another number is tried, up to 17 in all. HTTP/3 is over TLS only: the TLS configuration must offer `h3` (beside `h2` and
   `http/1.1`), and must not when `http3` is off. Over QUIC the server agrees `h3` alone,
   whatever else the list offers over TCP and in whatever order (RFC 9114 section 3.1); a QUIC
   client that does not offer it ends with `no_application_protocol`. Before version 0.73.2 the
