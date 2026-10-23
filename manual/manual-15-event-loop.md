@@ -727,7 +727,7 @@ needed:
 | `ping_interval_ms` | Silence from the client after which it is sent a ping. | 30 s |
 | `pong_timeout_ms` | Further silence after which the connection is ended. | 10 s |
 | `close_timeout_ms` | How long to wait for the answer to a close, counted from the last output the client took. | 5 s |
-| `compress`, `compress_level`, `compress_window_bits` | Accept compressed messages when the client offers them: [Chapter 12](manual-12-websocket.md), section 9. A compressed message arrives inflated, in pieces of at most 16 KiB, and `max_message_bytes` counts the inflated size. | off; 6; 15 |
+| `compress`, `compress_level`, `compress_window_bits`, `compress_no_takeover` | Accept compressed messages when the client offers them: [Chapter 12](manual-12-websocket.md), section 9. Each side keeps its window between messages (about 64 KiB held per connection) unless `compress_no_takeover` is set or the client forbids it. A compressed message arrives inflated, in pieces of at most 16 KiB, and `max_message_bytes` counts the inflated size. | off; 6; 11 with takeover, 15 without; off |
 
 **Messages arrive in pieces.** `on_message` is given each message in the pieces the network
 delivered, with `first` and `last` marking its ends: a message of any size passes through
