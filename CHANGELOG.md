@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.77.1] - 2026-10-23
+
 ### Fixed
 
 - `proven_http_event_server_listen` with `http3` at port 0 could fail with
